@@ -11,10 +11,9 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use bollard::models::{
-    Mount, MountBindOptions, MountTmpfsOptions, MountTypeEnum, MountVolumeOptions,
-    MountVolumeOptionsDriverConfig,
+    Mount, MountBindOptions, MountTmpfsOptions, MountType, MountVolumeOptions,
+    MountVolumeOptionsDriverConfig, VolumeCreateRequest,
 };
-use bollard::volume::CreateVolumeOptions;
 use tracing::info;
 
 use crate::compose::types::{
@@ -54,11 +53,20 @@ impl Engine {
                 .map(|c| c.driver_opts.clone())
                 .unwrap_or_default();
 
-            let options = CreateVolumeOptions::<String> {
-                name: volume_name.to_string(),
-                driver: driver.clone(),
-                driver_opts,
-                labels,
+            let options = VolumeCreateRequest {
+                name: Some(volume_name.to_string()),
+                driver: Some(driver.clone()),
+                driver_opts: if driver_opts.is_empty() {
+                    None
+                } else {
+                    Some(driver_opts)
+                },
+                labels: if labels.is_empty() {
+                    None
+                } else {
+                    Some(labels)
+                },
+                ..Default::default()
             };
 
             match self.docker.create_volume(options).await {
@@ -162,11 +170,12 @@ pub(crate) fn build_mounts(service: &Service) -> Vec<Mount> {
                 let tmpfs_options = tmpfs.as_ref().map(|t| MountTmpfsOptions {
                     size_bytes: t.size.map(|s| s as i64),
                     mode: t.mode.map(|m| m as i64),
+                    options: None,
                 });
                 out.push(Mount {
                     target: Some(target.clone()),
                     source: source.clone(),
-                    typ: Some(MountTypeEnum::TMPFS),
+                    typ: Some(MountType::TMPFS),
                     read_only: *read_only,
                     consistency: consistency.clone(),
                     tmpfs_options,
@@ -178,10 +187,10 @@ pub(crate) fn build_mounts(service: &Service) -> Vec<Mount> {
                 continue;
             }
             let mount_type = match volume_type {
-                VolumeType::Bind => MountTypeEnum::BIND,
-                VolumeType::Volume => MountTypeEnum::VOLUME,
-                VolumeType::Npipe => MountTypeEnum::NPIPE,
-                VolumeType::Cluster => MountTypeEnum::CLUSTER,
+                VolumeType::Bind => MountType::BIND,
+                VolumeType::Volume => MountType::VOLUME,
+                VolumeType::Npipe => MountType::NPIPE,
+                VolumeType::Cluster => MountType::CLUSTER,
                 VolumeType::Tmpfs => unreachable!(),
             };
             let bind_options = bind.as_ref().map(|b| MountBindOptions {

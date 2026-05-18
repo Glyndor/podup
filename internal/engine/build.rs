@@ -7,7 +7,8 @@
 
 use std::path::Path;
 
-use bollard::image::{BuildImageOptions, CreateImageOptions, TagImageOptions};
+use bollard::body_full;
+use bollard::query_parameters::{BuildImageOptions, CreateImageOptions, TagImageOptions};
 use bytes::Bytes;
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -32,8 +33,8 @@ impl Engine {
 
         let mut stream = self.docker.create_image(
             Some(CreateImageOptions {
-                from_image: image.as_str(),
-                platform: service.platform.as_deref().unwrap_or(""),
+                from_image: Some(image.clone()),
+                platform: service.platform.clone().unwrap_or_default(),
                 ..Default::default()
             }),
             None,
@@ -116,28 +117,54 @@ impl Engine {
             .unwrap_or(0);
         let extrahosts = build.extra_hosts().join(",");
 
-        let options = BuildImageOptions::<String> {
+        let options = BuildImageOptions {
             dockerfile: dockerfile_name,
-            t: tag.clone(),
+            t: Some(tag.clone()),
             rm: true,
             nocache: build.no_cache(),
-            pull: build.pull(),
-            buildargs: build_args,
-            labels,
-            networkmode: network_owned,
+            pull: if build.pull() {
+                Some("1".to_string())
+            } else {
+                None
+            },
+            buildargs: if build_args.is_empty() {
+                None
+            } else {
+                Some(build_args)
+            },
+            labels: if labels.is_empty() {
+                None
+            } else {
+                Some(labels)
+            },
+            networkmode: if network_owned.is_empty() {
+                None
+            } else {
+                Some(network_owned)
+            },
             platform: platform_owned,
-            shmsize: if shmsize > 0 { Some(shmsize) } else { None },
+            shmsize: if shmsize > 0 {
+                Some(shmsize as i32)
+            } else {
+                None
+            },
             extrahosts: if extrahosts.is_empty() {
                 None
             } else {
                 Some(extrahosts)
             },
-            cachefrom: build.cache_from().to_vec(),
+            cachefrom: if build.cache_from().is_empty() {
+                None
+            } else {
+                Some(build.cache_from().to_vec())
+            },
             ..Default::default()
         };
 
         let body = Bytes::from(tar_bytes);
-        let mut stream = self.docker.build_image(options, None, Some(body));
+        let mut stream = self
+            .docker
+            .build_image(options, None, Some(body_full(body)));
 
         while let Some(result) = stream.next().await {
             match result {
@@ -145,7 +172,7 @@ impl Engine {
                     if let Some(stream_msg) = info.stream {
                         print!("{stream_msg}");
                     }
-                    if let Some(err) = info.error {
+                    if let Some(err) = info.error_detail.and_then(|e| e.message) {
                         return Err(ComposeError::Build(err));
                     }
                 }
@@ -161,7 +188,13 @@ impl Engine {
                 .unwrap_or_else(|| (extra_tag.clone(), "latest".to_string()));
             if let Err(e) = self
                 .docker
-                .tag_image(&tag, Some(TagImageOptions { repo, tag: tag_str }))
+                .tag_image(
+                    &tag,
+                    Some(TagImageOptions {
+                        repo: Some(repo),
+                        tag: Some(tag_str),
+                    }),
+                )
                 .await
             {
                 warn!("failed to apply extra tag {extra_tag}: {e}");

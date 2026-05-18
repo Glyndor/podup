@@ -10,8 +10,8 @@ use std::collections::HashMap;
 
 use bollard::models::{
     EndpointIpamConfig, EndpointSettings, Ipam, IpamConfig as BollardIpamConfig,
+    NetworkConnectRequest, NetworkCreateRequest,
 };
-use bollard::network::{ConnectNetworkOptions, CreateNetworkOptions};
 use tracing::{debug, info};
 
 use crate::compose::types::{ComposeFile, IpamConfig, Service, ServiceNetworkConfig};
@@ -53,19 +53,27 @@ impl Engine {
                 .and_then(|c| c.ipam.as_ref())
                 .map(build_ipam);
 
-            let options = CreateNetworkOptions::<String> {
+            let request = NetworkCreateRequest {
                 name: network_name.to_string(),
-                driver: driver.clone(),
-                internal: config.as_ref().and_then(|c| c.internal).unwrap_or(false),
-                attachable: config.as_ref().and_then(|c| c.attachable).unwrap_or(false),
-                enable_ipv6: config.as_ref().and_then(|c| c.enable_ipv6).unwrap_or(false),
-                options: driver_opts,
-                labels,
-                ipam: ipam.unwrap_or_default(),
+                driver: Some(driver.clone()),
+                internal: config.as_ref().and_then(|c| c.internal),
+                attachable: config.as_ref().and_then(|c| c.attachable),
+                enable_ipv6: config.as_ref().and_then(|c| c.enable_ipv6),
+                options: if driver_opts.is_empty() {
+                    None
+                } else {
+                    Some(driver_opts)
+                },
+                labels: if labels.is_empty() {
+                    None
+                } else {
+                    Some(labels)
+                },
+                ipam,
                 ..Default::default()
             };
 
-            match self.docker.create_network(options).await {
+            match self.docker.create_network(request).await {
                 Ok(_) => info!("created network {network_name}"),
                 Err(bollard::errors::Error::DockerResponseServerError {
                     status_code: 409, ..
@@ -94,9 +102,9 @@ impl Engine {
             self.docker
                 .connect_network(
                     &full_name,
-                    ConnectNetworkOptions {
-                        container: container_name,
-                        endpoint_config,
+                    NetworkConnectRequest {
+                        container: container_name.to_string(),
+                        endpoint_config: Some(endpoint_config),
                     },
                 )
                 .await?;
