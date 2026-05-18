@@ -9,14 +9,13 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use bollard::container::NetworkingConfig;
-use bollard::container::{
-    Config, CreateContainerOptions, RemoveContainerOptions, StartContainerOptions,
-};
 use bollard::models::{
-    DeviceMapping, DeviceRequest, HealthConfig, HostConfig, HostConfigLogConfig,
-    ResourcesBlkioWeightDevice, ResourcesUlimits, RestartPolicy as BollardRestart,
-    RestartPolicyNameEnum, ThrottleDevice,
+    ContainerCreateBody, DeviceMapping, DeviceRequest, HealthConfig, HostConfig,
+    HostConfigLogConfig, NetworkingConfig, ResourcesBlkioWeightDevice, ResourcesUlimits,
+    RestartPolicy as BollardRestart, RestartPolicyNameEnum, ThrottleDevice,
+};
+use bollard::query_parameters::{
+    CreateContainerOptions, RemoveContainerOptions, StartContainerOptions,
 };
 use tracing::warn;
 
@@ -56,15 +55,18 @@ impl Engine {
             .collect();
 
         let parsed_ports = ports::parse_ports(&service.ports)?;
-        let (port_bindings, mut exposed_ports) = ports::to_bollard(&parsed_ports);
+        let (port_bindings, exposed_ports_map) = ports::to_bollard(&parsed_ports);
 
+        let mut exposed_port_keys: Vec<String> = exposed_ports_map.into_keys().collect();
         for raw in &service.expose {
             let key = if raw.contains('/') {
                 raw.clone()
             } else {
                 format!("{raw}/tcp")
             };
-            exposed_ports.entry(key).or_default();
+            if !exposed_port_keys.contains(&key) {
+                exposed_port_keys.push(key);
+            }
         }
 
         let restart_policy = build_restart_policy(service);
@@ -227,21 +229,20 @@ impl Engine {
             let svc_net_cfg = service.networks.config_for(net);
             endpoints.insert(net.clone(), build_endpoint_settings(svc_net_cfg, file));
             NetworkingConfig {
-                endpoints_config: endpoints,
+                endpoints_config: Some(endpoints),
             }
         });
 
         let healthcheck = service.healthcheck.as_ref().map(build_healthcheck);
-        let exposed_ports_json: HashMap<String, HashMap<(), ()>> = exposed_ports;
 
-        let config = Config::<String> {
+        let config = ContainerCreateBody {
             image: Some(image.to_string()),
             env: opt_vec(env),
             cmd,
             entrypoint,
             host_config: Some(host_config),
             labels: opt_map(labels),
-            exposed_ports: opt_map(exposed_ports_json),
+            exposed_ports: opt_vec(exposed_port_keys),
             tty: service.tty,
             open_stdin: service.stdin_open,
             user: service.user.clone(),
@@ -254,7 +255,6 @@ impl Engine {
                 .map(|s| s as i64),
             hostname: service.hostname.clone(),
             domainname: service.domainname.clone(),
-            mac_address: service.mac_address.clone(),
             networking_config,
             healthcheck,
             ..Default::default()
@@ -274,16 +274,16 @@ impl Engine {
 
         self.docker
             .create_container(
-                Some(CreateContainerOptions::<&str> {
-                    name: container_name,
-                    platform: service.platform.as_deref(),
+                Some(CreateContainerOptions {
+                    name: Some(container_name.to_string()),
+                    platform: service.platform.clone().unwrap_or_default(),
                 }),
                 config,
             )
             .await?;
 
         self.docker
-            .start_container(container_name, None::<StartContainerOptions<String>>)
+            .start_container(container_name, None::<StartContainerOptions>)
             .await?;
 
         Ok(())
