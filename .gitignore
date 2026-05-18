@@ -1,0 +1,15 @@
+# Claude / AI agent files
+GAP_ANALYSIS.md
+
+# Coverage & profiling
+*.profraw
+*.profdata
+tarpaulin-report.html
+coverage/
+
+# Fuzzing
+fuzz/corpus/
+fuzz/artifacts/
+
+# Merge conflicts
+*.orig
