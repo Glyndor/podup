@@ -44,6 +44,10 @@ enum Commands {
         /// Remove containers for services not defined in the compose file.
         #[arg(long)]
         remove_orphans: bool,
+        /// Bring up only these services (and their transitive depends_on).
+        /// If omitted, brings up every service in the compose file.
+        #[arg(trailing_var_arg = true)]
+        services: Vec<String>,
     },
     /// Stop and remove containers.
     Down {
@@ -112,11 +116,14 @@ async fn main() -> anyhow::Result<()> {
             detach,
             watch,
             remove_orphans,
+            services,
         } => {
             if remove_orphans {
                 engine.remove_orphans(&file).await?;
             }
-            engine.up_with_options(&file, detach, &cli.profile).await?;
+            engine
+                .up_with_options(&file, detach, &cli.profile, &services)
+                .await?;
             if watch {
                 engine.watch(&file).await?;
             } else if !detach {
