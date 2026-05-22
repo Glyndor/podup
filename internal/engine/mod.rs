@@ -60,7 +60,7 @@ impl Engine {
     // -----------------------------------------------------------------------
 
     pub async fn up(&self, file: &ComposeFile) -> Result<()> {
-        self.up_with_options(file, false, &[]).await
+        self.up_with_options(file, false, &[], &[]).await
     }
 
     pub async fn up_with_options(
@@ -68,14 +68,42 @@ impl Engine {
         file: &ComposeFile,
         _detach: bool,
         active_profiles: &[String],
+        target_services: &[String],
     ) -> Result<()> {
         let order = crate::compose::resolve_order(file)?;
         let active = active_profiles_set(active_profiles);
+
+        // When target_services is non-empty, restrict the start set to those
+        // services plus their transitive dependencies.
+        let target_set: Option<std::collections::HashSet<String>> = if target_services.is_empty() {
+            None
+        } else {
+            let mut set = std::collections::HashSet::new();
+            let mut stack: Vec<String> = target_services.to_vec();
+            while let Some(name) = stack.pop() {
+                if !set.insert(name.clone()) {
+                    continue;
+                }
+                if let Some(service) = file.services.get(&name) {
+                    for dep in service.depends_on.service_names() {
+                        if !set.contains(&dep) {
+                            stack.push(dep);
+                        }
+                    }
+                }
+            }
+            Some(set)
+        };
 
         self.create_networks(file).await?;
         self.create_volumes(file).await?;
 
         for name in &order {
+            if let Some(ref set) = target_set {
+                if !set.contains(name) {
+                    continue;
+                }
+            }
             let service = &file.services[name];
 
             if !service_in_profiles(service, &active) {
