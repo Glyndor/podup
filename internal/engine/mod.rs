@@ -60,7 +60,7 @@ impl Engine {
     // -----------------------------------------------------------------------
 
     pub async fn up(&self, file: &ComposeFile) -> Result<()> {
-        self.up_with_options(file, false, &[], &[]).await
+        self.up_with_options(file, false, &[], &[], false).await
     }
 
     pub async fn up_with_options(
@@ -69,6 +69,7 @@ impl Engine {
         _detach: bool,
         active_profiles: &[String],
         target_services: &[String],
+        no_recreate: bool,
     ) -> Result<()> {
         let order = crate::compose::resolve_order(file)?;
         let active = active_profiles_set(active_profiles);
@@ -163,6 +164,10 @@ impl Engine {
                 } else {
                     format!("{}-{i}", self.container_name(name, service))
                 };
+                if no_recreate && self.is_container_running(&container_name).await {
+                    info!("{container_name} already running — skipping recreate");
+                    continue;
+                }
                 self.create_and_start(&container_name, name, service, file)
                     .await?;
                 self.connect_extra_networks(&container_name, service, file)
@@ -598,6 +603,22 @@ impl Engine {
         }
 
         Ok(())
+    }
+
+    async fn is_container_running(&self, container_name: &str) -> bool {
+        // Use list_containers (not inspect_container) to avoid Bollard
+        // deserialization failures when Podman returns "stopped" state.
+        let mut filters = HashMap::new();
+        filters.insert("name".to_string(), vec![container_name.to_string()]);
+        self.docker
+            .list_containers(Some(ListContainersOptions {
+                all: false,
+                filters: Some(filters),
+                ..Default::default()
+            }))
+            .await
+            .map(|v| !v.is_empty())
+            .unwrap_or(false)
     }
 
     fn container_name(&self, service_name: &str, service: &Service) -> String {

@@ -44,6 +44,9 @@ enum Commands {
         /// Remove containers for services not defined in the compose file.
         #[arg(long)]
         remove_orphans: bool,
+        /// Do not recreate containers that are already running.
+        #[arg(long)]
+        no_recreate: bool,
         /// Bring up only these services (and their transitive depends_on).
         /// If omitted, brings up every service in the compose file.
         #[arg(trailing_var_arg = true)]
@@ -116,13 +119,14 @@ async fn main() -> anyhow::Result<()> {
             detach,
             watch,
             remove_orphans,
+            no_recreate,
             services,
         } => {
             if remove_orphans {
                 engine.remove_orphans(&file).await?;
             }
             engine
-                .up_with_options(&file, detach, &cli.profile, &services)
+                .up_with_options(&file, detach, &cli.profile, &services, no_recreate)
                 .await?;
             if watch {
                 engine.watch(&file).await?;
