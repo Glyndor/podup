@@ -24,7 +24,16 @@ impl Engine {
             .unwrap_or(30);
 
         for _ in 0..retries {
-            let info = self.docker.inspect_container(container_name, None).await?;
+            let info = match self.docker.inspect_container(container_name, None).await {
+                Ok(i) => i,
+                Err(e) => {
+                    // Podman uses "stopped" for exited containers; Bollard can't
+                    // deserialize it. Treat any inspect error as "not healthy yet".
+                    tracing::debug!("inspect_container error (will retry): {e}");
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    continue;
+                }
+            };
             if let Some(state) = info.state {
                 if let Some(health) = state.health {
                     if health.status == Some(HealthStatusEnum::HEALTHY) {
@@ -44,7 +53,14 @@ impl Engine {
     /// exits with a non-zero code or if the deadline is exceeded.
     pub(super) async fn wait_completed(&self, container_name: &str) -> Result<()> {
         for _ in 0..600 {
-            let info = self.docker.inspect_container(container_name, None).await?;
+            let info = match self.docker.inspect_container(container_name, None).await {
+                Ok(i) => i,
+                Err(e) => {
+                    tracing::debug!("inspect_container error (will retry): {e}");
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+            };
             if let Some(state) = info.state {
                 let status = state.status.map(|s| format!("{s:?}").to_lowercase());
                 if status.as_deref() == Some("exited") {
