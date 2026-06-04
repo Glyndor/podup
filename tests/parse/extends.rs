@@ -131,7 +131,6 @@ fn extends_with_external_file() {
     let mut f = std::fs::File::create(&common_path).unwrap();
     writeln!(
         f,
-        "{}",
         r#"
 services:
   base:
@@ -146,7 +145,6 @@ services:
     let mut m = std::fs::File::create(&main_path).unwrap();
     writeln!(
         m,
-        "{}",
         r#"
 services:
   app:

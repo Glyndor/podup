@@ -13,3 +13,6 @@ fuzz/artifacts/
 
 # Merge conflicts
 *.orig
+
+# Build artifacts
+/target

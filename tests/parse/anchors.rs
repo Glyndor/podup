@@ -93,7 +93,6 @@ fn include_absolute_path_rejected() {
     let main = dir.path().join("docker-compose.yml");
     writeln!(
         std::fs::File::create(&main).unwrap(),
-        "{}",
         "include:\n  - /etc/passwd\nservices:\n  app:\n    image: alpine"
     )
     .unwrap();
@@ -106,7 +105,6 @@ fn include_parent_traversal_rejected() {
     let main = dir.path().join("docker-compose.yml");
     writeln!(
         std::fs::File::create(&main).unwrap(),
-        "{}",
         "include:\n  - ../../secret.yml\nservices:\n  app:\n    image: alpine"
     )
     .unwrap();
@@ -119,7 +117,6 @@ fn extends_file_absolute_path_rejected() {
     let main = dir.path().join("docker-compose.yml");
     writeln!(
         std::fs::File::create(&main).unwrap(),
-        "{}",
         "services:\n  app:\n    extends:\n      service: base\n      file: /etc/shadow"
     )
     .unwrap();
@@ -132,7 +129,6 @@ fn extends_file_parent_traversal_rejected() {
     let main = dir.path().join("docker-compose.yml");
     writeln!(
         std::fs::File::create(&main).unwrap(),
-        "{}",
         "services:\n  app:\n    extends:\n      service: base\n      file: ../../other.yml"
     )
     .unwrap();
