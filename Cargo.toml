@@ -12,12 +12,12 @@ name = "lynx_compose"
 path = "internal/lib.rs"
 
 [dependencies]
-tokio = { workspace = true }
-serde = { workspace = true }
-thiserror = { workspace = true }
-anyhow = { workspace = true }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 serde_yaml = { package = "yaml_serde", version = "0.10" }
 bollard = "0.21"
 clap = { version = "4", features = ["derive", "env"] }
@@ -32,3 +32,11 @@ notify = "8"
 
 [dev-dependencies]
 tempfile = "3"
+
+[workspace]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+strip = true
