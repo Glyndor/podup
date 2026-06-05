@@ -64,15 +64,16 @@ log_info "Verifying SHA-256 checksum ..."
 	|| fail "Checksum verification failed for ${ARTIFACT}"
 log_ok "Checksum verified"
 
-# Verify the build provenance attestation when the GitHub CLI is available.
-# This proves the binary was built by this repository's release workflow.
-if command -v gh >/dev/null 2>&1; then
+# Verify the build provenance attestation when the GitHub CLI supports it
+# (gh >= 2.49). This proves the binary was built by this repository's release
+# workflow. When the subcommand actually runs and fails, abort.
+if command -v gh >/dev/null 2>&1 && gh attestation --help >/dev/null 2>&1; then
 	log_info "Verifying artifact attestation ..."
 	gh attestation verify "${TMP_DIR}/${ARTIFACT}" --repo "$REPO" >/dev/null \
 		|| fail "Attestation verification failed for ${ARTIFACT}"
 	log_ok "Attestation verified"
 else
-	log_info "GitHub CLI not found — skipping attestation verification (checksum already verified)"
+	log_info "GitHub CLI with attestation support not found — skipping attestation verification (checksum already verified)"
 fi
 
 # --- Install -----------------------------------------------------------------
