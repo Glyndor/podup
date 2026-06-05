@@ -26,8 +26,11 @@ fail() {
 
 # --- Platform detection ------------------------------------------------------
 
-OS="$(uname -s)"
-[[ "$OS" == "Linux" ]] || fail "Unsupported OS: $OS (podup supports Linux only)"
+case "$(uname -s)" in
+	Linux)  OS="linux" ;;
+	Darwin) OS="darwin" ;;
+	*)      fail "Unsupported OS: $(uname -s) (supported: Linux, macOS)" ;;
+esac
 
 case "$(uname -m)" in
 	x86_64)          ARCH="x86_64" ;;
@@ -35,12 +38,20 @@ case "$(uname -m)" in
 	*)               fail "Unsupported architecture: $(uname -m) (supported: x86_64, arm64)" ;;
 esac
 
-ARTIFACT="podup-linux-${ARCH}"
+ARTIFACT="podup-${OS}-${ARCH}"
 
 # --- Download ----------------------------------------------------------------
 
 command -v curl >/dev/null 2>&1 || fail "curl is required"
-command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required"
+
+# macOS ships shasum instead of sha256sum.
+if command -v sha256sum >/dev/null 2>&1; then
+	SHA256_CMD=(sha256sum)
+elif command -v shasum >/dev/null 2>&1; then
+	SHA256_CMD=(shasum -a 256)
+else
+	fail "sha256sum or shasum is required"
+fi
 
 if [[ "$VERSION" == "latest" ]]; then
 	BASE_URL="https://github.com/${REPO}/releases/latest/download"
@@ -60,7 +71,7 @@ curl --proto '=https' --tlsv1.2 -fsSL -o "${TMP_DIR}/SHA256SUMS" \
 # --- Verify ------------------------------------------------------------------
 
 log_info "Verifying SHA-256 checksum ..."
-(cd "$TMP_DIR" && grep " ${ARTIFACT}\$" SHA256SUMS | sha256sum -c --quiet -) \
+(cd "$TMP_DIR" && grep " ${ARTIFACT}\$" SHA256SUMS | "${SHA256_CMD[@]}" -c --quiet -) \
 	|| fail "Checksum verification failed for ${ARTIFACT}"
 log_ok "Checksum verified"
 

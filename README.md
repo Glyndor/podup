@@ -22,7 +22,7 @@ flowchart LR
 - 📄 **Compose-spec parsing** — YAML anchors, `extends`, `include`, profiles, `env_file`, variable substitution with modifiers
 - 🔁 **Dependency-aware** — `depends_on` ordering with healthcheck conditions
 - 👀 **Watch mode** — sync, rebuild or restart services on file changes per `develop.watch` rules
-- 📦 **Single static binary** — musl-linked, no runtime dependencies
+- 📦 **Single binary** — statically musl-linked on Linux, no runtime dependencies
 - 🦀 **Library too** — embed the parser and engine in your own Rust project
 
 ## 📥 Install
@@ -31,8 +31,9 @@ flowchart LR
 curl -fsSL https://github.com/Glyndor/podup/releases/latest/download/install.sh | bash
 ```
 
-Binaries for Linux x86_64 and arm64, SHA-256 verified, with build provenance
-attestations. Or build from source:
+Binaries for Linux and macOS (x86_64 and arm64), SHA-256 verified, with build
+provenance attestations. On macOS, podup talks to the `podman machine` VM
+through its host-side socket. Or build from source:
 
 ```bash
 cargo build --release
