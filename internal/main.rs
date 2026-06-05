@@ -16,7 +16,7 @@ struct Cli {
     file: PathBuf,
 
     /// Project name (used as a prefix for container names).
-    #[arg(short, long, default_value = "lynx")]
+    #[arg(short, long, default_value = "podup")]
     project: String,
 
     /// Podman socket path (overrides auto-detection and PODMAN_SOCKET env).

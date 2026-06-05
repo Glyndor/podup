@@ -41,7 +41,7 @@ impl Engine {
                 .as_ref()
                 .map(|c| c.labels.to_map())
                 .unwrap_or_default();
-            labels.insert("lynx.compose.project".to_string(), self.project.clone());
+            labels.insert("podup.project".to_string(), self.project.clone());
 
             let driver = config
                 .as_ref()
@@ -425,7 +425,7 @@ impl Engine {
         }
 
         let dir = std::env::temp_dir()
-            .join(format!("lynx-compose-{}", self.project))
+            .join(format!("podup-{}", self.project))
             .join(kind);
 
         // Create dir with 0o700 so only the owning user can list/enter it.
@@ -476,7 +476,7 @@ impl Engine {
 
     /// Remove the per-project temp directory created by `materialize_inline`.
     pub(super) fn cleanup_temp_dir(&self) {
-        let dir = std::env::temp_dir().join(format!("lynx-compose-{}", self.project));
+        let dir = std::env::temp_dir().join(format!("podup-{}", self.project));
         let _ = std::fs::remove_dir_all(dir);
     }
 }
