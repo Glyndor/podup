@@ -1,25 +1,80 @@
 # podup
 
-`podup` — docker-compose translator and runner for rootless Podman,
-built in Rust.
+[![CI](https://github.com/Glyndor/podup/actions/workflows/ci.yml/badge.svg)](https://github.com/Glyndor/podup/actions/workflows/ci.yml)
+[![Release](https://github.com/Glyndor/podup/actions/workflows/release.yml/badge.svg)](https://github.com/Glyndor/podup/actions/workflows/release.yml)
 
-It parses `docker-compose.yml` files and drives rootless Podman to create the
-equivalent containers, networks and volumes. Used by the
-[Glyndor panel](https://github.com/Glyndor/panel) through the
-[panel-agent](https://github.com/Glyndor/panel-agent), and usable standalone
-as a CLI and as a library (`podup`).
+**podup** runs your `docker-compose.yml` on rootless Podman — a single static
+binary, written in Rust, with no daemon and no Python runtime.
 
-## Build
+```mermaid
+flowchart LR
+	A["docker-compose.yml"] --> B["podup"]
+	B -->|"parse · substitute · order"| C["Podman REST API"]
+	C --> D["containers"]
+	C --> E["networks"]
+	C --> F["volumes"]
+```
+
+## ✨ Features
+
+- 🚀 **Drop-in workflow** — `up`, `down`, `ps`, `logs`, `exec`, `pull`, `restart`, `config`
+- 🔒 **Rootless by design** — drives rootless Podman over its Docker-compatible API
+- 📄 **Compose-spec parsing** — YAML anchors, `extends`, `include`, profiles, `env_file`, variable substitution with modifiers
+- 🔁 **Dependency-aware** — `depends_on` ordering with healthcheck conditions
+- 👀 **Watch mode** — sync, rebuild or restart services on file changes per `develop.watch` rules
+- 📦 **Single static binary** — musl-linked, no runtime dependencies
+- 🦀 **Library too** — embed the parser and engine in your own Rust project
+
+## 📥 Install
+
+```bash
+curl -fsSL https://github.com/Glyndor/podup/releases/latest/download/install.sh | bash
+```
+
+Binaries for Linux x86_64 and arm64, SHA-256 verified, with build provenance
+attestations. Or build from source:
 
 ```bash
 cargo build --release
-cargo test
 ```
 
-## Usage
+## 🚀 Quick start
 
 ```bash
-podup up -f docker-compose.yml
+podup up --detach                      # docker-compose.yml in the current directory
+podup -f stack.yml -p myapp up -d      # explicit file and project name
+podup ps                               # list project containers
+podup logs api --follow                # follow one service's logs
+podup down --volumes                   # tear down, removing named volumes
+```
+
+## ⚖️ vs. alternatives
+
+|  | podup | docker-compose | podman-compose (Python) |
+|---|---|---|---|
+| Engine | rootless Podman | Docker daemon | Podman |
+| Runtime | single static binary | Go binary + Docker daemon | Python + pip packages |
+| Root required | no | typically yes (daemon) | no |
+| Implementation | Rust | Go | Python |
+
+## 🦀 Library usage
+
+```rust
+use podup::{parse_file, podman, Engine};
+
+#[tokio::main]
+async fn main() -> podup::Result<()> {
+	let file = parse_file(std::path::Path::new("docker-compose.yml"))?;
+	let docker = podman::connect(None)?;
+	let engine = Engine::new(docker, "myproject".to_string());
+	engine.up(&file).await?;
+	Ok(())
+}
+```
+
+```toml
+[dependencies]
+podup = { git = "https://github.com/Glyndor/podup", tag = "v0.3.0" }
 ```
 
 ## Contributing & security
