@@ -1,6 +1,9 @@
 #!/usr/bin/make -f
 
 export CARGO_HOME = $(CURDIR)/debian/cargo-home
+# Pin the target dir so a CARGO_TARGET_DIR from the environment cannot move
+# the binary away from the path the install step expects.
+export CARGO_TARGET_DIR = $(CURDIR)/target
 
 %:
 	dh $@

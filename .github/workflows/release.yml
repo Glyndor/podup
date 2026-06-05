@@ -83,7 +83,7 @@ jobs:
             echo "::error::RELEASE_SIGN_KEY secret is not configured; refusing to release unsigned binaries."
             exit 1
           fi
-          pip install --quiet cryptography
+          pip install --quiet cryptography==48.0.0
           python3 .github/scripts/sign.py "$RELEASE_SIGN_KEY" "podup-linux-${{ matrix.arch }}"
 
       - name: Attest build provenance
