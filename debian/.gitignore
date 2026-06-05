@@ -1,0 +1,7 @@
+*.debhelper
+*.substvars
+.debhelper/
+cargo-home/
+debhelper-build-stamp
+files
+podup/

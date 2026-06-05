@@ -1,0 +1,22 @@
+#!/usr/bin/make -f
+
+export CARGO_HOME = $(CURDIR)/debian/cargo-home
+# Pin the target dir so a CARGO_TARGET_DIR from the environment cannot move
+# the binary away from the path the install step expects.
+export CARGO_TARGET_DIR = $(CURDIR)/target
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release --locked
+
+override_dh_auto_test:
+	cargo test --release --locked
+
+override_dh_auto_install:
+	install -D -m 0755 target/release/podup debian/podup/usr/bin/podup
+
+override_dh_auto_clean:
+	cargo clean
+	rm -rf debian/cargo-home

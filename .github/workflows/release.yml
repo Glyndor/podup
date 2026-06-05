@@ -72,6 +72,20 @@ jobs:
       - name: Stage artifact
         run: cp "target/${{ matrix.target }}/release/podup" "podup-linux-${{ matrix.arch }}"
 
+      - name: Sign binary
+        env:
+          RELEASE_SIGN_KEY: ${{ secrets.RELEASE_SIGN_KEY }}
+        run: |
+          # The panel installer/updater verifies this Ed25519 signature; a
+          # release without it cannot be consumed. Fail closed when the key
+          # is absent instead of publishing unsigned binaries.
+          if [ -z "$RELEASE_SIGN_KEY" ]; then
+            echo "::error::RELEASE_SIGN_KEY secret is not configured; refusing to release unsigned binaries."
+            exit 1
+          fi
+          pip install --quiet cryptography==48.0.0
+          python3 .github/scripts/sign.py "$RELEASE_SIGN_KEY" "podup-linux-${{ matrix.arch }}"
+
       - name: Attest build provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
@@ -81,7 +95,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: podup-${{ matrix.arch }}
-          path: podup-linux-${{ matrix.arch }}
+          path: |
+            podup-linux-${{ matrix.arch }}
+            podup-linux-${{ matrix.arch }}.sig
           retention-days: 1
           if-no-files-found: error
 
@@ -113,6 +129,8 @@ jobs:
             --generate-notes \
             --verify-tag \
             podup-linux-x86_64 \
+            podup-linux-x86_64.sig \
             podup-linux-arm64 \
+            podup-linux-arm64.sig \
             SHA256SUMS \
             install.sh

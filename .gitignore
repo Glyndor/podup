@@ -16,3 +16,4 @@ fuzz/artifacts/
 
 # Build artifacts
 /target
+__pycache__/
