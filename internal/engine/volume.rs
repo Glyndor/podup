@@ -517,8 +517,6 @@ fn is_safe_project_name(name: &str) -> bool {
 /// of writing secret material under — or later deleting — a path another
 /// local user may control.
 fn staging_base() -> Result<std::path::PathBuf> {
-    use std::os::unix::fs::DirBuilderExt;
-
     // SAFETY: geteuid takes no arguments, touches no memory and cannot fail.
     let euid = unsafe { libc::geteuid() };
 
@@ -527,14 +525,33 @@ fn staging_base() -> Result<std::path::PathBuf> {
         _ => std::env::temp_dir().join(format!("podup-{euid}")),
     };
 
+    ensure_private_dir(&base, euid)?;
+    Ok(base)
+}
+
+/// Create `dir` (0700) if needed and require it to be a private directory.
+///
+/// `DirBuilder` does not reset permissions on a pre-existing directory, so
+/// a leftover directory we own whose bits drifted is self-healed with a
+/// chmod first — only if it is a real directory (never chmod through a
+/// symlink; in the worst race the chmod tightens something we own to 0700).
+/// `verify_private_dir` then rejects anything not ours (fail closed).
+fn ensure_private_dir(dir: &Path, euid: u32) -> Result<()> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+
     std::fs::DirBuilder::new()
         .recursive(true)
         .mode(0o700)
-        .create(&base)
+        .create(dir)
         .map_err(ComposeError::Io)?;
 
-    verify_private_dir(&base, euid)?;
-    Ok(base)
+    let meta = std::fs::symlink_metadata(dir).map_err(ComposeError::Io)?;
+    if meta.is_dir() {
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(ComposeError::Io)?;
+    }
+
+    verify_private_dir(dir, euid)
 }
 
 /// Verify that `dir` is a non-symlink directory owned by `euid` with no
@@ -732,5 +749,51 @@ mod staging_tests {
         // SAFETY: geteuid takes no arguments, touches no memory and cannot fail.
         let euid = unsafe { libc::geteuid() };
         assert!(verify_private_dir(&file, euid).is_err());
+    }
+}
+
+#[cfg(test)]
+mod ensure_dir_tests {
+    use super::ensure_private_dir;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+
+    #[test]
+    fn creates_fresh_private_dir() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let dir = root.path().join("base");
+        // SAFETY: geteuid takes no arguments, touches no memory and cannot fail.
+        let euid = unsafe { libc::geteuid() };
+        ensure_private_dir(&dir, euid).expect("fresh dir");
+        let meta = std::fs::metadata(&dir).expect("metadata");
+        assert_eq!(meta.mode() & 0o777, 0o700);
+    }
+
+    #[test]
+    fn heals_drifted_permissions_on_owned_dir() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let dir = root.path().join("base");
+        std::fs::create_dir(&dir).expect("mkdir");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        // SAFETY: geteuid takes no arguments, touches no memory and cannot fail.
+        let euid = unsafe { libc::geteuid() };
+        ensure_private_dir(&dir, euid).expect("healed dir");
+        let meta = std::fs::metadata(&dir).expect("metadata");
+        assert_eq!(meta.mode() & 0o777, 0o700);
+    }
+
+    #[test]
+    fn symlinked_dir_is_rejected_not_healed() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let target = root.path().join("real");
+        let link = root.path().join("link");
+        std::fs::create_dir(&target).expect("mkdir");
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        std::os::unix::fs::symlink(&target, &link).expect("symlink");
+        // SAFETY: geteuid takes no arguments, touches no memory and cannot fail.
+        let euid = unsafe { libc::geteuid() };
+        assert!(ensure_private_dir(&link, euid).is_err());
+        // Target permissions stay untouched — no chmod through the link.
+        let meta = std::fs::metadata(&target).expect("metadata");
+        assert_eq!(meta.mode() & 0o777, 0o755);
     }
 }
