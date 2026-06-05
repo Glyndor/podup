@@ -1,5 +1,7 @@
-podup (0.3.1) unstable; urgency=medium
+podup (0.3.2) unstable; urgency=medium
 
+  * Harden inline secret staging directory against tmp squatting.
+  * Sign release binaries with the shared release key.
   * Initial Debian packaging.
 
  -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 05 Jun 2026 17:15:00 -0500
