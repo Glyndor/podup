@@ -29,4 +29,4 @@ Report vulnerabilities privately via the Security tab — never in a public issu
 
 ## License
 
-[AGPL-3.0](LICENSE)
+[Apache-2.0](LICENSE)
