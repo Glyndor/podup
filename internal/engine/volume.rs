@@ -22,7 +22,7 @@ use crate::compose::types::{
 };
 use crate::error::{ComposeError, Result};
 
-use super::Engine;
+use super::{staging, Engine};
 
 impl Engine {
     pub(super) async fn create_volumes(&self, file: &ComposeFile) -> Result<()> {
@@ -411,9 +411,6 @@ impl Engine {
         uid: Option<&str>,
         gid: Option<&str>,
     ) -> Result<std::path::PathBuf> {
-        use std::io::Write;
-        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
-
         // Reject names that could escape the temp dir (path traversal).
         if std::path::Path::new(name)
             .components()
@@ -425,49 +422,15 @@ impl Engine {
         }
 
         let dir = self.staging_dir()?.join(kind);
-
-        // Create dir with 0o700 so only the owning user can list/enter it.
-        std::fs::DirBuilder::new()
-            .recursive(true)
-            .mode(0o700)
-            .create(&dir)
-            .map_err(ComposeError::Io)?;
+        staging::create_private_subdir(&dir)?;
 
         let path = dir.join(name);
-
-        // Create file with 0o600 atomically — no world-readable window before chmod.
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(ComposeError::Io)?;
-        file.write_all(content).map_err(ComposeError::Io)?;
-        drop(file);
+        staging::write_private_file(&path, content)?;
 
         if let Some(m) = mode {
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(m))
-                .map_err(ComposeError::Io)?;
+            staging::apply_mode(&path, m)?;
         }
-
-        // Best-effort chown — succeeds in rootful Podman, no-op in rootless.
-        let uid_val: libc::uid_t = uid.and_then(|s| s.parse().ok()).unwrap_or(u32::MAX);
-        let gid_val: libc::gid_t = gid.and_then(|s| s.parse().ok()).unwrap_or(u32::MAX);
-        if uid_val != u32::MAX || gid_val != u32::MAX {
-            use std::ffi::CString;
-            use std::os::unix::ffi::OsStrExt;
-            if let Ok(p) = CString::new(path.as_os_str().as_bytes()) {
-                let rc = unsafe { libc::chown(p.as_ptr(), uid_val, gid_val) };
-                if rc != 0 {
-                    tracing::warn!(
-                        "chown failed for {}: {}",
-                        path.display(),
-                        std::io::Error::last_os_error()
-                    );
-                }
-            }
-        }
+        staging::apply_owner(&path, uid, gid);
 
         Ok(path)
     }
@@ -484,90 +447,15 @@ impl Engine {
     /// The project name is validated first so it can never traverse out of
     /// the base — this same path is later passed to `remove_dir_all`.
     fn staging_dir(&self) -> Result<std::path::PathBuf> {
-        if !is_safe_project_name(&self.project) {
+        if !staging::is_safe_project_name(&self.project) {
             return Err(ComposeError::Unsupported(format!(
                 "project name must be ASCII alphanumeric/dash/underscore/dot \
                  and must not start with a dot: {}",
                 self.project
             )));
         }
-        Ok(staging_base()?.join(&self.project))
+        Ok(staging::staging_base()?.join(&self.project))
     }
-}
-
-/// Whether `name` is safe to use as a single path component and container
-/// name prefix: non-empty, bounded, ASCII alphanumeric plus `-`/`_`/`.`,
-/// not starting with a dot (rejects `.`, `..` and hidden directories).
-fn is_safe_project_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 128
-        && !name.starts_with('.')
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-}
-
-/// Per-user staging base for inline secret/config content.
-///
-/// Prefers `$XDG_RUNTIME_DIR/podup` (per-user and 0700 by contract); falls
-/// back to `temp_dir()/podup-<euid>`. The base sits in a world-writable
-/// parent in the fallback case, so after creation it is verified to be a
-/// real directory (not a symlink), owned by the current user, with no
-/// group/other permission bits. Anything else aborts (fail closed) instead
-/// of writing secret material under — or later deleting — a path another
-/// local user may control.
-fn staging_base() -> Result<std::path::PathBuf> {
-    // SAFETY: geteuid takes no arguments, touches no memory and cannot fail.
-    let euid = unsafe { libc::geteuid() };
-
-    let base = match std::env::var_os("XDG_RUNTIME_DIR") {
-        Some(dir) if Path::new(&dir).is_absolute() => std::path::PathBuf::from(dir).join("podup"),
-        _ => std::env::temp_dir().join(format!("podup-{euid}")),
-    };
-
-    ensure_private_dir(&base, euid)?;
-    Ok(base)
-}
-
-/// Create `dir` (0700) if needed and require it to be a private directory.
-///
-/// `DirBuilder` does not reset permissions on a pre-existing directory, so
-/// a leftover directory we own whose bits drifted is self-healed with a
-/// chmod first — only if it is a real directory (never chmod through a
-/// symlink; in the worst race the chmod tightens something we own to 0700).
-/// `verify_private_dir` then rejects anything not ours (fail closed).
-fn ensure_private_dir(dir: &Path, euid: u32) -> Result<()> {
-    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
-
-    std::fs::DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(dir)
-        .map_err(ComposeError::Io)?;
-
-    let meta = std::fs::symlink_metadata(dir).map_err(ComposeError::Io)?;
-    if meta.is_dir() {
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
-            .map_err(ComposeError::Io)?;
-    }
-
-    verify_private_dir(dir, euid)
-}
-
-/// Verify that `dir` is a non-symlink directory owned by `euid` with no
-/// group/other permission bits.
-fn verify_private_dir(dir: &Path, euid: u32) -> Result<()> {
-    use std::os::unix::fs::MetadataExt;
-
-    let meta = std::fs::symlink_metadata(dir).map_err(ComposeError::Io)?;
-    if !meta.is_dir() || meta.uid() != euid || meta.mode() & 0o077 != 0 {
-        return Err(ComposeError::Unsupported(format!(
-            "staging directory {} is not a private directory owned by the \
-             current user — refusing to use it",
-            dir.display()
-        )));
-    }
-    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -665,135 +553,5 @@ mod tests {
         }]);
         let binds = build_binds(&svc, Path::new("/base"));
         assert!(binds.is_empty());
-    }
-}
-
-#[cfg(test)]
-mod staging_tests {
-    use super::{is_safe_project_name, verify_private_dir};
-    use std::os::unix::fs::PermissionsExt;
-
-    #[test]
-    fn safe_project_names_accepted() {
-        for name in ["web", "my-app", "my_app", "app.v2", "A1"] {
-            assert!(is_safe_project_name(name), "{name:?} must be accepted");
-        }
-    }
-
-    #[test]
-    fn unsafe_project_names_rejected() {
-        let long = "a".repeat(129);
-        for name in [
-            "",
-            ".",
-            "..",
-            ".hidden",
-            "a/b",
-            "../x",
-            "a b",
-            "a\0b",
-            long.as_str(),
-        ] {
-            assert!(!is_safe_project_name(name), "{name:?} must be rejected");
-        }
-    }
-
-    #[test]
-    fn private_dir_accepted() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))
-            .expect("chmod");
-        // SAFETY: geteuid takes no arguments, touches no memory and cannot fail.
-        let euid = unsafe { libc::geteuid() };
-        assert!(verify_private_dir(dir.path(), euid).is_ok());
-    }
-
-    #[test]
-    fn group_accessible_dir_rejected() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o750))
-            .expect("chmod");
-        // SAFETY: geteuid takes no arguments, touches no memory and cannot fail.
-        let euid = unsafe { libc::geteuid() };
-        assert!(verify_private_dir(dir.path(), euid).is_err());
-    }
-
-    #[test]
-    fn foreign_owner_rejected() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700))
-            .expect("chmod");
-        // SAFETY: geteuid takes no arguments, touches no memory and cannot fail.
-        let other = unsafe { libc::geteuid() } + 1;
-        assert!(verify_private_dir(dir.path(), other).is_err());
-    }
-
-    #[test]
-    fn symlink_rejected() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let target = dir.path().join("real");
-        let link = dir.path().join("link");
-        std::fs::create_dir(&target).expect("mkdir");
-        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o700)).expect("chmod");
-        std::os::unix::fs::symlink(&target, &link).expect("symlink");
-        // SAFETY: geteuid takes no arguments, touches no memory and cannot fail.
-        let euid = unsafe { libc::geteuid() };
-        assert!(verify_private_dir(&link, euid).is_err());
-    }
-
-    #[test]
-    fn regular_file_rejected() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let file = dir.path().join("file");
-        std::fs::write(&file, b"x").expect("write");
-        // SAFETY: geteuid takes no arguments, touches no memory and cannot fail.
-        let euid = unsafe { libc::geteuid() };
-        assert!(verify_private_dir(&file, euid).is_err());
-    }
-}
-
-#[cfg(test)]
-mod ensure_dir_tests {
-    use super::ensure_private_dir;
-    use std::os::unix::fs::{MetadataExt, PermissionsExt};
-
-    #[test]
-    fn creates_fresh_private_dir() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let dir = root.path().join("base");
-        // SAFETY: geteuid takes no arguments, touches no memory and cannot fail.
-        let euid = unsafe { libc::geteuid() };
-        ensure_private_dir(&dir, euid).expect("fresh dir");
-        let meta = std::fs::metadata(&dir).expect("metadata");
-        assert_eq!(meta.mode() & 0o777, 0o700);
-    }
-
-    #[test]
-    fn heals_drifted_permissions_on_owned_dir() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let dir = root.path().join("base");
-        std::fs::create_dir(&dir).expect("mkdir");
-        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        // SAFETY: geteuid takes no arguments, touches no memory and cannot fail.
-        let euid = unsafe { libc::geteuid() };
-        ensure_private_dir(&dir, euid).expect("healed dir");
-        let meta = std::fs::metadata(&dir).expect("metadata");
-        assert_eq!(meta.mode() & 0o777, 0o700);
-    }
-
-    #[test]
-    fn symlinked_dir_is_rejected_not_healed() {
-        let root = tempfile::tempdir().expect("tempdir");
-        let target = root.path().join("real");
-        let link = root.path().join("link");
-        std::fs::create_dir(&target).expect("mkdir");
-        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-        std::os::unix::fs::symlink(&target, &link).expect("symlink");
-        // SAFETY: geteuid takes no arguments, touches no memory and cannot fail.
-        let euid = unsafe { libc::geteuid() };
-        assert!(ensure_private_dir(&link, euid).is_err());
-        // Target permissions stay untouched — no chmod through the link.
-        let meta = std::fs::metadata(&target).expect("metadata");
-        assert_eq!(meta.mode() & 0o777, 0o755);
     }
 }
