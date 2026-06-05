@@ -1,5 +1,5 @@
-use lynx_compose::compose::types::PortMapping;
-use lynx_compose::ports::{parse_ports, to_bollard};
+use podup::compose::types::PortMapping;
+use podup::ports::{parse_ports, to_bollard};
 
 fn short(s: &str) -> PortMapping {
     PortMapping::Short(s.to_string())

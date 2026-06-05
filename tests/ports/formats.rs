@@ -1,5 +1,5 @@
-use lynx_compose::compose::types::PortMapping;
-use lynx_compose::ports::parse_ports;
+use podup::compose::types::PortMapping;
+use podup::ports::parse_ports;
 
 fn short(s: &str) -> PortMapping {
     PortMapping::Short(s.to_string())
@@ -95,8 +95,8 @@ fn range_at_limit_accepted() {
 
 #[test]
 fn long_form_invalid_published_string_rejected() {
-    use lynx_compose::compose::types::StringOrU16;
-    let mapping = lynx_compose::compose::types::PortMapping::Long {
+    use podup::compose::types::StringOrU16;
+    let mapping = podup::compose::types::PortMapping::Long {
         target: 80,
         published: Some(StringOrU16::String("invalid".to_string())),
         protocol: None,

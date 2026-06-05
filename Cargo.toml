@@ -1,14 +1,14 @@
 [package]
-name = "lynx-compose"
+name = "podup"
 version = "0.2.0"
 edition = "2021"
 
 [[bin]]
-name = "lynx-compose"
+name = "podup"
 path = "internal/main.rs"
 
 [lib]
-name = "lynx_compose"
+name = "podup"
 path = "internal/lib.rs"
 
 [dependencies]

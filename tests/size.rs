@@ -1,6 +1,6 @@
 //! Tests for the memory / cpu / duration parser helpers.
 
-use lynx_compose::size::{parse_cpus, parse_duration_nanos, parse_duration_secs, parse_memory};
+use podup::size::{parse_cpus, parse_duration_nanos, parse_duration_secs, parse_memory};
 
 #[test]
 fn memory_bytes() {

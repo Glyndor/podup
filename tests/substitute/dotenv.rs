@@ -1,4 +1,4 @@
-use lynx_compose::substitute::{build_vars, load_dotenv};
+use podup::substitute::{build_vars, load_dotenv};
 use std::io::Write;
 
 #[test]
@@ -38,11 +38,11 @@ fn process_env_takes_precedence() {
 fn build_vars_includes_dotenv() {
     let dir = tempfile::tempdir().unwrap();
     let mut f = std::fs::File::create(dir.path().join(".env")).unwrap();
-    writeln!(f, "LYNX_TEST_DOTENV_KEY=from_file").unwrap();
+    writeln!(f, "PODUP_TEST_DOTENV_KEY=from_file").unwrap();
 
     let vars = build_vars(dir.path());
     assert_eq!(
-        vars.get("LYNX_TEST_DOTENV_KEY").map(|s| s.as_str()),
+        vars.get("PODUP_TEST_DOTENV_KEY").map(|s| s.as_str()),
         Some("from_file")
     );
 }

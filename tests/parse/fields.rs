@@ -1,5 +1,5 @@
-use lynx_compose::compose::types::*;
-use lynx_compose::parse_str;
+use podup::compose::types::*;
+use podup::parse_str;
 
 #[test]
 fn sysctls_as_list() {

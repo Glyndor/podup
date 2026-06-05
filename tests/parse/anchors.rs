@@ -1,5 +1,5 @@
-use lynx_compose::parse_file;
-use lynx_compose::parse_str;
+use podup::parse_file;
+use podup::parse_str;
 use std::io::Write;
 
 #[test]

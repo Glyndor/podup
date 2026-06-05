@@ -232,7 +232,7 @@ impl Engine {
     }
 
     pub async fn ps(&self, _file: &ComposeFile) -> Result<()> {
-        let label = format!("lynx.compose.project={}", self.project);
+        let label = format!("podup.project={}", self.project);
         let mut filters: HashMap<String, Vec<String>> = HashMap::new();
         filters.insert("label".to_string(), vec![label]);
 
@@ -427,7 +427,7 @@ impl Engine {
 
     /// Remove containers that belong to this project but are no longer in the compose file.
     pub async fn remove_orphans(&self, file: &ComposeFile) -> Result<()> {
-        let label = format!("lynx.compose.project={}", self.project);
+        let label = format!("podup.project={}", self.project);
         let mut filters: HashMap<String, Vec<String>> = HashMap::new();
         filters.insert("label".to_string(), vec![label]);
 

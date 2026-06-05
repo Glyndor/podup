@@ -1,5 +1,5 @@
-use lynx_compose::substitute::substitute;
-use lynx_compose::ComposeError;
+use podup::substitute::substitute;
+use podup::ComposeError;
 use std::collections::HashMap;
 
 fn vars(pairs: &[(&str, &str)]) -> HashMap<String, String> {
