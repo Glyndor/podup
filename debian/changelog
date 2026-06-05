@@ -1,0 +1,5 @@
+podup (0.3.1) unstable; urgency=medium
+
+  * Initial Debian packaging.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 05 Jun 2026 17:15:00 -0500
