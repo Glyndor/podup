@@ -1,11 +1,11 @@
-//! Error types for the lynx-compose library.
+//! Error types for the podup library.
 //!
 //! All fallible operations return [`Result<T>`], which is an alias for
 //! `std::result::Result<T, ComposeError>`.
 
 use thiserror::Error;
 
-/// All errors produced by lynx-compose.
+/// All errors produced by podup.
 #[derive(Debug, Error)]
 pub enum ComposeError {
     #[error("failed to parse compose file: {0}")]

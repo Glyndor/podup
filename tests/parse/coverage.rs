@@ -1,6 +1,6 @@
 /// Parse tests for features present in the type system but not previously covered.
-use lynx_compose::compose::types::*;
-use lynx_compose::parse_str;
+use podup::compose::types::*;
+use podup::parse_str;
 
 // ---------------------------------------------------------------------------
 // blkio_config

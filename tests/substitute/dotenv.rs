@@ -1,4 +1,4 @@
-use lynx_compose::substitute::{build_vars, load_dotenv};
+use podup::substitute::{build_vars, load_dotenv};
 use std::io::Write;
 
 #[test]

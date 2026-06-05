@@ -1,4 +1,4 @@
-use lynx_compose::env_file::merge_env;
+use podup::env_file::merge_env;
 use std::collections::HashMap;
 
 #[test]

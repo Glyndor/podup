@@ -1,4 +1,4 @@
-use lynx_compose::parse_file;
+use podup::parse_file;
 use std::io::Write;
 
 #[test]
