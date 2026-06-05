@@ -41,7 +41,7 @@ impl Engine {
                 .as_ref()
                 .map(|c| c.labels.to_map())
                 .unwrap_or_default();
-            labels.insert("lynx.compose.project".to_string(), self.project.clone());
+            labels.insert("podup.project".to_string(), self.project.clone());
 
             let driver_opts: HashMap<String, String> = config
                 .as_ref()

@@ -1,5 +1,5 @@
-use lynx_compose::compose::types::ServiceCondition;
-use lynx_compose::{parse_str, resolve_order};
+use podup::compose::types::ServiceCondition;
+use podup::{parse_str, resolve_order};
 
 #[test]
 fn no_deps() {

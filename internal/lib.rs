@@ -1,4 +1,4 @@
-//! `lynx-compose` — docker-compose → Podman translator library.
+//! `podup` — docker-compose → Podman translator library.
 //!
 //! Provides parsing, variable substitution, topological ordering, and an
 //! async engine that drives container lifecycle via Podman's Docker-compatible

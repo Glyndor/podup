@@ -1,4 +1,4 @@
-//! `lynx-compose` — docker-compose to Podman translator CLI.
+//! `podup` — docker-compose to Podman translator CLI.
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -6,7 +6,7 @@ use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
 #[command(
-    name = "lynx-compose",
+    name = "podup",
     version,
     about = "docker-compose translator for Podman"
 )]
@@ -16,7 +16,7 @@ struct Cli {
     file: PathBuf,
 
     /// Project name (used as a prefix for container names).
-    #[arg(short, long, default_value = "lynx")]
+    #[arg(short, long, default_value = "podup")]
     project: String,
 
     /// Podman socket path (overrides auto-detection and PODMAN_SOCKET env).
@@ -97,7 +97,7 @@ async fn main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
-    let file = lynx_compose::parse_file(&cli.file)?;
+    let file = podup::parse_file(&cli.file)?;
 
     // The `config` command does not need a Podman connection.
     if matches!(cli.command, Commands::Config) {
@@ -106,13 +106,13 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let docker = lynx_compose::podman::connect(cli.socket.as_deref())?;
+    let docker = podup::podman::connect(cli.socket.as_deref())?;
     let base_dir = cli
         .file
         .parent()
         .map(|p| p.to_path_buf())
         .unwrap_or_default();
-    let engine = lynx_compose::Engine::with_base_dir(docker, cli.project, base_dir);
+    let engine = podup::Engine::with_base_dir(docker, cli.project, base_dir);
 
     match cli.command {
         Commands::Up {

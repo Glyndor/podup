@@ -88,8 +88,8 @@ impl Engine {
         for (k, v) in service.annotations.to_map() {
             labels.insert(format!("annotation.{k}"), v);
         }
-        labels.insert("lynx.compose.project".to_string(), self.project.clone());
-        labels.insert("lynx.compose.service".to_string(), service_name.to_string());
+        labels.insert("podup.project".to_string(), self.project.clone());
+        labels.insert("podup.service".to_string(), service_name.to_string());
 
         let ulimits: Vec<ResourcesUlimits> = service
             .ulimits

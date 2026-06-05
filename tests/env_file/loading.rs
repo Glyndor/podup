@@ -1,5 +1,5 @@
-use lynx_compose::env_file::load_env_files;
-use lynx_compose::ComposeError;
+use podup::env_file::load_env_files;
+use podup::ComposeError;
 use std::io::Write;
 
 #[test]
@@ -20,7 +20,7 @@ fn basic_key_value() {
 
 #[test]
 fn string_or_list_single() {
-    use lynx_compose::compose::types::StringOrList;
+    use podup::compose::types::StringOrList;
     assert_eq!(
         StringOrList::Single("file.env".to_string()).to_list(),
         vec!["file.env"]
@@ -29,7 +29,7 @@ fn string_or_list_single() {
 
 #[test]
 fn string_or_list_many() {
-    use lynx_compose::compose::types::StringOrList;
+    use podup::compose::types::StringOrList;
     let sol = StringOrList::List(vec!["a.env".to_string(), "b.env".to_string()]);
     assert_eq!(sol.to_list().len(), 2);
 }

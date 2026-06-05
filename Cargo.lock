@@ -747,30 +747,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "953f07c43838f8e6f9758cab68bf5bed85465e7587ebe0b823f1bcd81978ad3a"
 
 [[package]]
-name = "lynx-compose"
-version = "0.2.0"
-dependencies = [
- "anyhow",
- "bollard",
- "bytes",
- "clap",
- "flate2",
- "futures",
- "indexmap",
- "libc",
- "notify",
- "serde",
- "tar",
- "tempfile",
- "thiserror",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "walkdir",
- "yaml_serde",
-]
-
-[[package]]
 name = "matchers"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -889,6 +865,30 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+
+[[package]]
+name = "podup"
+version = "0.3.0"
+dependencies = [
+ "anyhow",
+ "bollard",
+ "bytes",
+ "clap",
+ "flate2",
+ "futures",
+ "indexmap",
+ "libc",
+ "notify",
+ "serde",
+ "tar",
+ "tempfile",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "walkdir",
+ "yaml_serde",
+]
 
 [[package]]
 name = "potential_utf"
