@@ -8,7 +8,6 @@ fn include_string_form_merges_services() {
     let included = dir.path().join("services.yml");
     writeln!(
         std::fs::File::create(&included).unwrap(),
-        "{}",
         r#"
 services:
   helper:
@@ -20,7 +19,6 @@ services:
     let main = dir.path().join("docker-compose.yml");
     writeln!(
         std::fs::File::create(&main).unwrap(),
-        "{}",
         r#"
 include:
   - ./services.yml
@@ -44,7 +42,6 @@ fn include_long_form_parses() {
     let inc = dir.path().join("inc.yml");
     writeln!(
         std::fs::File::create(&inc).unwrap(),
-        "{}",
         r#"
 services:
   inc_svc:
@@ -56,7 +53,6 @@ services:
     let main = dir.path().join("docker-compose.yml");
     writeln!(
         std::fs::File::create(&main).unwrap(),
-        "{}",
         r#"
 include:
   - path: ./inc.yml
@@ -80,7 +76,6 @@ fn parent_overrides_included_service() {
     let inc = dir.path().join("inc.yml");
     writeln!(
         std::fs::File::create(&inc).unwrap(),
-        "{}",
         r#"
 services:
   shared:
@@ -92,7 +87,6 @@ services:
     let main = dir.path().join("docker-compose.yml");
     writeln!(
         std::fs::File::create(&main).unwrap(),
-        "{}",
         r#"
 include:
   - ./inc.yml
