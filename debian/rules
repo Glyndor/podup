@@ -1,0 +1,19 @@
+#!/usr/bin/make -f
+
+export CARGO_HOME = $(CURDIR)/debian/cargo-home
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	cargo build --release --locked
+
+override_dh_auto_test:
+	cargo test --release --locked
+
+override_dh_auto_install:
+	install -D -m 0755 target/release/podup debian/podup/usr/bin/podup
+
+override_dh_auto_clean:
+	cargo clean
+	rm -rf debian/cargo-home
