@@ -24,8 +24,64 @@ pub(super) fn active_profiles_set(active: &[String]) -> HashSet<String> {
 ///
 /// Services with no profiles always start.
 pub(super) fn service_in_profiles(service: &Service, active: &HashSet<String>) -> bool {
-    if service.profiles.is_empty() {
-        return true;
-    }
-    service.profiles.iter().any(|p| active.contains(p))
+	if service.profiles.is_empty() {
+		return true;
+	}
+	service.profiles.iter().any(|p| active.contains(p))
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::compose::types::Service;
+
+	#[test]
+	fn explicit_profiles_ignores_env() {
+		let set = active_profiles_set(&["prod".to_string()]);
+		assert!(set.contains("prod"));
+		assert_eq!(set.len(), 1);
+	}
+
+	#[test]
+	fn empty_slice_with_no_env_returns_empty() {
+		// Ensure COMPOSE_PROFILES is unset for this test.
+		unsafe { std::env::remove_var("COMPOSE_PROFILES") };
+		let set = active_profiles_set(&[]);
+		assert!(set.is_empty());
+	}
+
+	#[test]
+	fn service_with_no_profiles_always_runs() {
+		let svc = Service::default();
+		let active: HashSet<String> = HashSet::new();
+		assert!(service_in_profiles(&svc, &active));
+	}
+
+	#[test]
+	fn service_profile_matches_active() {
+		let mut svc = Service::default();
+		svc.profiles = vec!["debug".to_string()];
+		let active: HashSet<String> = ["debug".to_string()].into();
+		assert!(service_in_profiles(&svc, &active));
+	}
+
+	#[test]
+	fn service_profile_does_not_match() {
+		let mut svc = Service::default();
+		svc.profiles = vec!["debug".to_string()];
+		let active: HashSet<String> = ["prod".to_string()].into();
+		assert!(!service_in_profiles(&svc, &active));
+	}
+
+	#[test]
+	fn service_any_profile_match_sufficient() {
+		let mut svc = Service::default();
+		svc.profiles = vec!["debug".to_string(), "prod".to_string()];
+		let active: HashSet<String> = ["prod".to_string()].into();
+		assert!(service_in_profiles(&svc, &active));
+	}
 }

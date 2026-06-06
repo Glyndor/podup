@@ -179,6 +179,96 @@ pub(super) fn resolve_network_name(network: &str, file: &ComposeFile) -> String 
         .to_string()
 }
 
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::compose::types::{ComposeFile, NetworkConfig, Service};
+	use indexmap::IndexMap;
+
+	fn empty_file() -> ComposeFile {
+		ComposeFile::default()
+	}
+
+	fn file_with_named_network(key: &str, name: &str) -> ComposeFile {
+		let mut cfg = NetworkConfig::default();
+		cfg.name = Some(name.to_string());
+		let mut file = empty_file();
+		file.networks.insert(key.to_string(), Some(cfg));
+		file
+	}
+
+	#[test]
+	fn resolve_network_name_key_not_found_returns_key() {
+		let file = empty_file();
+		assert_eq!(resolve_network_name("mynet", &file), "mynet");
+	}
+
+	#[test]
+	fn resolve_network_name_uses_config_name() {
+		let file = file_with_named_network("mynet", "custom-net-name");
+		assert_eq!(resolve_network_name("mynet", &file), "custom-net-name");
+	}
+
+	#[test]
+	fn resolve_network_mode_explicit_mode() {
+		let mut svc = Service::default();
+		svc.network_mode = Some("host".to_string());
+		let file = empty_file();
+		let (mode, first) = resolve_network_mode(&svc, &file);
+		assert_eq!(mode.as_deref(), Some("host"));
+		assert!(first.is_none());
+	}
+
+	#[test]
+	fn resolve_network_mode_no_networks() {
+		let svc = Service::default();
+		let file = empty_file();
+		let (mode, first) = resolve_network_mode(&svc, &file);
+		assert!(mode.is_none());
+		assert!(first.is_none());
+	}
+
+	#[test]
+	fn build_endpoint_settings_no_config() {
+		let file = empty_file();
+		let settings = build_endpoint_settings(None, &file);
+		assert!(settings.aliases.is_none());
+		assert!(settings.ipam_config.is_none());
+	}
+
+	#[test]
+	fn build_endpoint_settings_with_aliases() {
+		use crate::compose::types::ServiceNetworkConfig;
+		let cfg = ServiceNetworkConfig {
+			aliases: Some(vec!["web".to_string(), "api".to_string()]),
+			..Default::default()
+		};
+		let file = empty_file();
+		let settings = build_endpoint_settings(Some(&cfg), &file);
+		assert_eq!(
+			settings.aliases.as_ref().unwrap(),
+			&vec!["web".to_string(), "api".to_string()]
+		);
+	}
+
+	#[test]
+	fn build_endpoint_settings_with_ipv4() {
+		use crate::compose::types::ServiceNetworkConfig;
+		let cfg = ServiceNetworkConfig {
+			ipv4_address: Some("10.0.0.5".to_string()),
+			..Default::default()
+		};
+		let file = empty_file();
+		let settings = build_endpoint_settings(Some(&cfg), &file);
+		let ipam = settings.ipam_config.unwrap();
+		assert_eq!(ipam.ipv4_address.as_deref(), Some("10.0.0.5"));
+	}
+}
+
 fn build_ipam(ipam: &IpamConfig) -> Ipam {
     let config = if ipam.config.is_empty() {
         None
