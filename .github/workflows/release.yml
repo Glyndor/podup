@@ -149,6 +149,14 @@ jobs:
             podup-windows-x86_64.exe \
             > SHA256SUMS
 
+      - name: Install Rust toolchain
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Publish to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish --locked --allow-dirty
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
