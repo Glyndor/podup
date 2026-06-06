@@ -17,24 +17,24 @@ use super::Labels;
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DeployConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub replicas: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub resources: Option<ResourcesConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub restart_policy: Option<DeployRestartPolicy>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub update_config: Option<DeployUpdateConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub rollback_config: Option<DeployUpdateConfig>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub endpoint_mode: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub mode: Option<String>,
-    #[serde(default)]
-    pub labels: Labels,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub placement: Option<DeployPlacement>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub replicas: Option<u32>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub resources: Option<ResourcesConfig>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub restart_policy: Option<DeployRestartPolicy>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub update_config: Option<DeployUpdateConfig>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub rollback_config: Option<DeployUpdateConfig>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub endpoint_mode: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub mode: Option<String>,
+	#[serde(default)]
+	pub labels: Labels,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub placement: Option<DeployPlacement>,
 }
 
 // ---------------------------------------------------------------------------
@@ -43,22 +43,22 @@ pub struct DeployConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ResourcesConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub limits: Option<ResourceSpec>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub reservations: Option<ResourceSpec>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub limits: Option<ResourceSpec>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub reservations: Option<ResourceSpec>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ResourceSpec {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cpus: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub memory: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub pids: Option<u64>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub devices: Vec<DeviceReservation>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub cpus: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub memory: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub pids: Option<u64>,
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub devices: Vec<DeviceReservation>,
 }
 
 // ---------------------------------------------------------------------------
@@ -68,33 +68,33 @@ pub struct ResourceSpec {
 /// `deploy.resources.reservations.devices` — generic device reservation.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DeviceReservation {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub capabilities: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub count: Option<CountOrAll>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub device_ids: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub driver: Option<String>,
-    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
-    pub options: HashMap<String, String>,
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub capabilities: Vec<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub count: Option<CountOrAll>,
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub device_ids: Vec<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub driver: Option<String>,
+	#[serde(default, skip_serializing_if = "HashMap::is_empty")]
+	pub options: HashMap<String, String>,
 }
 
 /// `count: all` or `count: N`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CountOrAll {
-    Named(String),
-    N(i64),
+	Named(String),
+	N(i64),
 }
 
 impl CountOrAll {
-    pub fn to_i64(&self) -> i64 {
-        match self {
-            CountOrAll::Named(_) => -1,
-            CountOrAll::N(n) => *n,
-        }
-    }
+	pub fn to_i64(&self) -> i64 {
+		match self {
+			CountOrAll::Named(_) => -1,
+			CountOrAll::N(n) => *n,
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -103,38 +103,38 @@ impl CountOrAll {
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DeployRestartPolicy {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub condition: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub delay: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_attempts: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub window: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub condition: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub delay: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub max_attempts: Option<u32>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub window: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DeployUpdateConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub parallelism: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub delay: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub failure_action: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub monitor: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_failure_ratio: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub order: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub parallelism: Option<u32>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub delay: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub failure_action: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub monitor: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub max_failure_ratio: Option<f64>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub order: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DeployPlacement {
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub constraints: Vec<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub preferences: Vec<serde_yaml::Value>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub max_replicas_per_node: Option<u32>,
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub constraints: Vec<String>,
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub preferences: Vec<serde_yaml::Value>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub max_replicas_per_node: Option<u32>,
 }
