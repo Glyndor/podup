@@ -63,14 +63,20 @@ mod tests {
 
 	#[test]
 	fn service_profile_matches_active() {
-		let svc = Service { profiles: vec!["debug".to_string()], ..Default::default() };
+		let svc = Service {
+			profiles: vec!["debug".to_string()],
+			..Default::default()
+		};
 		let active: HashSet<String> = ["debug".to_string()].into();
 		assert!(service_in_profiles(&svc, &active));
 	}
 
 	#[test]
 	fn service_profile_does_not_match() {
-		let svc = Service { profiles: vec!["debug".to_string()], ..Default::default() };
+		let svc = Service {
+			profiles: vec!["debug".to_string()],
+			..Default::default()
+		};
 		let active: HashSet<String> = ["prod".to_string()].into();
 		assert!(!service_in_profiles(&svc, &active));
 	}

@@ -225,7 +225,10 @@ mod tests {
 	}
 
 	fn file_with_named_network(key: &str, name: &str) -> ComposeFile {
-		let cfg = NetworkConfig { name: Some(name.to_string()), ..Default::default() };
+		let cfg = NetworkConfig {
+			name: Some(name.to_string()),
+			..Default::default()
+		};
 		let mut file = empty_file();
 		file.networks.insert(key.to_string(), Some(cfg));
 		file
@@ -245,7 +248,10 @@ mod tests {
 
 	#[test]
 	fn resolve_network_mode_explicit_mode() {
-		let svc = Service { network_mode: Some("host".to_string()), ..Default::default() };
+		let svc = Service {
+			network_mode: Some("host".to_string()),
+			..Default::default()
+		};
 		let file = empty_file();
 		let (mode, first) = resolve_network_mode(&svc, &file);
 		assert_eq!(mode.as_deref(), Some("host"));
@@ -311,7 +317,10 @@ mod tests {
 	#[test]
 	fn build_ipam_with_driver_and_options() {
 		use crate::compose::types::IpamConfig;
-		let mut ipam = IpamConfig { driver: Some("default".into()), ..Default::default() };
+		let mut ipam = IpamConfig {
+			driver: Some("default".into()),
+			..Default::default()
+		};
 		ipam.options.insert("route_metric".into(), "100".into());
 		let result = build_ipam(&ipam);
 		assert_eq!(result.driver.as_deref(), Some("default"));
@@ -327,7 +336,10 @@ mod tests {
 			ip_range: Some("192.168.0.128/25".into()),
 			aux_addresses: Default::default(),
 		};
-		let ipam = IpamConfig { config: vec![pool], ..Default::default() };
+		let ipam = IpamConfig {
+			config: vec![pool],
+			..Default::default()
+		};
 		let result = build_ipam(&ipam);
 		let cfg = result.config.unwrap();
 		assert_eq!(cfg.len(), 1);
@@ -341,8 +353,12 @@ mod tests {
 	fn build_ipam_with_aux_addresses() {
 		use crate::compose::types::{IpamConfig, IpamPool};
 		let mut pool = IpamPool::default();
-		pool.aux_addresses.insert("router".into(), "192.168.0.254".into());
-		let ipam = IpamConfig { config: vec![pool], ..Default::default() };
+		pool.aux_addresses
+			.insert("router".into(), "192.168.0.254".into());
+		let ipam = IpamConfig {
+			config: vec![pool],
+			..Default::default()
+		};
 		let result = build_ipam(&ipam);
 		let cfg = result.config.unwrap();
 		let aux = cfg[0].auxiliary_addresses.as_ref().unwrap();

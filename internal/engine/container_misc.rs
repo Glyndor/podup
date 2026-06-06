@@ -357,7 +357,10 @@ mod tests {
 	#[test]
 	fn build_device_requests_gpus_count() {
 		use crate::compose::types::GpuSpec;
-		let svc = Service { gpus: Some(GpuSpec::Count(2)), ..Default::default() };
+		let svc = Service {
+			gpus: Some(GpuSpec::Count(2)),
+			..Default::default()
+		};
 		let reqs = build_device_requests(&svc);
 		assert_eq!(reqs.len(), 1);
 		assert_eq!(reqs[0].count, Some(2));
@@ -368,7 +371,10 @@ mod tests {
 	#[test]
 	fn build_device_requests_gpus_all() {
 		use crate::compose::types::GpuSpec;
-		let svc = Service { gpus: Some(GpuSpec::Named("all".into())), ..Default::default() };
+		let svc = Service {
+			gpus: Some(GpuSpec::Named("all".into())),
+			..Default::default()
+		};
 		let reqs = build_device_requests(&svc);
 		assert_eq!(reqs.len(), 1);
 		assert_eq!(reqs[0].count, Some(-1));
@@ -376,7 +382,9 @@ mod tests {
 
 	#[test]
 	fn build_device_requests_no_capabilities_skipped() {
-		use crate::compose::types::{DeployConfig, DeviceReservation, ResourceSpec, ResourcesConfig};
+		use crate::compose::types::{
+			DeployConfig, DeviceReservation, ResourceSpec, ResourcesConfig,
+		};
 		let svc = Service {
 			deploy: Some(DeployConfig {
 				resources: Some(ResourcesConfig {
@@ -398,7 +406,9 @@ mod tests {
 
 	#[test]
 	fn build_device_requests_deploy_device_with_ids() {
-		use crate::compose::types::{DeployConfig, DeviceReservation, ResourceSpec, ResourcesConfig};
+		use crate::compose::types::{
+			DeployConfig, DeviceReservation, ResourceSpec, ResourcesConfig,
+		};
 		let svc = Service {
 			deploy: Some(DeployConfig {
 				resources: Some(ResourcesConfig {
@@ -419,7 +429,10 @@ mod tests {
 		let reqs = build_device_requests(&svc);
 		assert_eq!(reqs.len(), 1);
 		assert!(reqs[0].count.is_none());
-		assert_eq!(reqs[0].device_ids.as_ref().unwrap(), &vec!["GPU-abc".to_string()]);
+		assert_eq!(
+			reqs[0].device_ids.as_ref().unwrap(),
+			&vec!["GPU-abc".to_string()]
+		);
 	}
 
 	#[test]
@@ -427,7 +440,10 @@ mod tests {
 		use crate::compose::types::{BlkioConfig, BlkioWeightDevice};
 		let mut svc = default_service();
 		svc.blkio_config = Some(BlkioConfig {
-			weight_device: vec![BlkioWeightDevice { path: "/dev/sda".into(), weight: 300 }],
+			weight_device: vec![BlkioWeightDevice {
+				path: "/dev/sda".into(),
+				weight: 300,
+			}],
 			..Default::default()
 		});
 		let blkio = build_blkio_config(&svc).unwrap();
