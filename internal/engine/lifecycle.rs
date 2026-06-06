@@ -1,6 +1,8 @@
 //! Service lifecycle commands: up, down, restart.
 
-use bollard::query_parameters::{RemoveContainerOptions, StartContainerOptions, StopContainerOptions};
+use bollard::query_parameters::{
+	RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
+};
 use tracing::info;
 
 use crate::compose::types::{ComposeFile, ServiceCondition};

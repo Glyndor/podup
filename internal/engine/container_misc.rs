@@ -3,9 +3,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use bollard::models::{
-	DeviceRequest, ResourcesBlkioWeightDevice, ThrottleDevice,
-};
+use bollard::models::{DeviceRequest, ResourcesBlkioWeightDevice, ThrottleDevice};
 use tracing::warn;
 
 use crate::compose::types::{BlkioConfig, CountOrAll, Service};
@@ -163,7 +161,10 @@ pub(crate) fn tmpfs_options_to_string(
 	parts.join(",")
 }
 
-pub(super) fn build_label_file_labels(service: &Service, base_dir: &Path) -> HashMap<String, String> {
+pub(super) fn build_label_file_labels(
+	service: &Service,
+	base_dir: &Path,
+) -> HashMap<String, String> {
 	let mut labels = HashMap::new();
 	for path in service.label_file.to_list() {
 		let full = if std::path::Path::new(&path).is_absolute() {
@@ -196,11 +197,19 @@ pub(super) fn build_label_file_labels(service: &Service, base_dir: &Path) -> Has
 // ---------------------------------------------------------------------------
 
 pub(crate) fn opt_vec<T>(v: Vec<T>) -> Option<Vec<T>> {
-	if v.is_empty() { None } else { Some(v) }
+	if v.is_empty() {
+		None
+	} else {
+		Some(v)
+	}
 }
 
 pub(crate) fn opt_map<K, V>(m: HashMap<K, V>) -> Option<HashMap<K, V>> {
-	if m.is_empty() { None } else { Some(m) }
+	if m.is_empty() {
+		None
+	} else {
+		Some(m)
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -248,19 +257,28 @@ mod tests {
 
 	#[test]
 	fn tmpfs_options_size_only() {
-		let opts = TmpfsOptions { size: Some(67108864), mode: None };
+		let opts = TmpfsOptions {
+			size: Some(67108864),
+			mode: None,
+		};
 		assert_eq!(tmpfs_options_to_string(Some(&opts)), "size=67108864");
 	}
 
 	#[test]
 	fn tmpfs_options_mode_only() {
-		let opts = TmpfsOptions { size: None, mode: Some(0o1755) };
+		let opts = TmpfsOptions {
+			size: None,
+			mode: Some(0o1755),
+		};
 		assert_eq!(tmpfs_options_to_string(Some(&opts)), "mode=1755");
 	}
 
 	#[test]
 	fn tmpfs_options_size_and_mode() {
-		let opts = TmpfsOptions { size: Some(1024), mode: Some(0o755) };
+		let opts = TmpfsOptions {
+			size: Some(1024),
+			mode: Some(0o755),
+		};
 		let s = tmpfs_options_to_string(Some(&opts));
 		assert!(s.contains("size=1024"));
 		assert!(s.contains("mode=755"));

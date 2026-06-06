@@ -284,7 +284,10 @@ mod tests {
 			read_only: None,
 			bind: None,
 			volume: None,
-			tmpfs: Some(TmpfsOptions { size: Some(65536), mode: Some(0o700) }),
+			tmpfs: Some(TmpfsOptions {
+				size: Some(65536),
+				mode: Some(0o700),
+			}),
 			consistency: None,
 		}]);
 		let mounts = build_mounts(&svc);
@@ -309,6 +312,9 @@ mod tests {
 			consistency: None,
 		}]);
 		let mounts = build_mounts(&svc);
-		assert!(mounts.is_empty(), "plain bind goes through bind string, not Mount API");
+		assert!(
+			mounts.is_empty(),
+			"plain bind goes through bind string, not Mount API"
+		);
 	}
 }

@@ -133,14 +133,22 @@ impl Engine {
 
 		let host_config = HostConfig {
 			binds: opt_vec(all_binds),
-			mounts: if mounts.is_empty() { None } else { Some(mounts) },
+			mounts: if mounts.is_empty() {
+				None
+			} else {
+				Some(mounts)
+			},
 			network_mode: network_mode.clone(),
 			restart_policy,
 			port_bindings: opt_map(port_bindings),
 			cap_add: opt_vec(service.cap_add.clone()),
 			cap_drop: opt_vec(service.cap_drop.clone()),
 			sysctls: opt_map(sysctls),
-			ulimits: if ulimits.is_empty() { None } else { Some(ulimits) },
+			ulimits: if ulimits.is_empty() {
+				None
+			} else {
+				Some(ulimits)
+			},
 			extra_hosts: opt_vec(extra_hosts),
 			dns: opt_vec(dns),
 			dns_search: opt_vec(dns_search),
@@ -187,7 +195,11 @@ impl Engine {
 			blkio_device_write_bps: blkio.as_ref().and_then(|b| b.device_write_bps.clone()),
 			blkio_device_read_iops: blkio.as_ref().and_then(|b| b.device_read_iops.clone()),
 			blkio_device_write_iops: blkio.as_ref().and_then(|b| b.device_write_iops.clone()),
-			device_requests: if device_requests.is_empty() { None } else { Some(device_requests) },
+			device_requests: if device_requests.is_empty() {
+				None
+			} else {
+				Some(device_requests)
+			},
 			annotations: opt_map(service.annotations.to_map()),
 			..Default::default()
 		};

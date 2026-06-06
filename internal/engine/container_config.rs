@@ -214,7 +214,9 @@ mod tests {
 	#[test]
 	fn restart_policy_on_failure_with_retries() {
 		let mut svc = default_service();
-		svc.restart = Some(ComposeRestart::OnFailure { max_attempts: Some(3) });
+		svc.restart = Some(ComposeRestart::OnFailure {
+			max_attempts: Some(3),
+		});
 		let p = build_restart_policy(&svc).unwrap();
 		assert_eq!(p.name, Some(RestartPolicyNameEnum::ON_FAILURE));
 		assert_eq!(p.maximum_retry_count, Some(3));
@@ -310,7 +312,9 @@ mod tests {
 	#[test]
 	fn healthcheck_shell_command() {
 		let hc = HealthCheck {
-			test: Some(ComposeCommand::Shell("curl -f http://localhost/health".into())),
+			test: Some(ComposeCommand::Shell(
+				"curl -f http://localhost/health".into(),
+			)),
 			interval: Some("30s".into()),
 			timeout: Some("10s".into()),
 			retries: Some(3),
@@ -385,7 +389,8 @@ mod tests {
 	fn build_ulimits_single_value() {
 		use crate::compose::types::UlimitConfig;
 		let mut svc = default_service();
-		svc.ulimits.insert("nofile".to_string(), UlimitConfig::Single(1024));
+		svc.ulimits
+			.insert("nofile".to_string(), UlimitConfig::Single(1024));
 		let ul = build_ulimits(&svc);
 		assert_eq!(ul.len(), 1);
 		assert_eq!(ul[0].name.as_deref(), Some("nofile"));
@@ -397,7 +402,13 @@ mod tests {
 	fn build_ulimits_pair() {
 		use crate::compose::types::UlimitConfig;
 		let mut svc = default_service();
-		svc.ulimits.insert("nofile".to_string(), UlimitConfig::Pair { soft: 512, hard: 2048 });
+		svc.ulimits.insert(
+			"nofile".to_string(),
+			UlimitConfig::Pair {
+				soft: 512,
+				hard: 2048,
+			},
+		);
 		let ul = build_ulimits(&svc);
 		assert_eq!(ul[0].soft, Some(512));
 		assert_eq!(ul[0].hard, Some(2048));
