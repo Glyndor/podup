@@ -31,9 +31,12 @@ flowchart LR
 curl -fsSL https://github.com/Glyndor/podup/releases/latest/download/install.sh | bash
 ```
 
-Binaries for Linux and macOS (x86_64 and arm64), SHA-256 verified, with build
-provenance attestations. On macOS, podup talks to the `podman machine` VM
-through its host-side socket. Or build from source:
+Binaries for Linux and macOS (x86_64 and arm64) plus Windows (x86_64),
+SHA-256 verified, with build provenance attestations. On macOS and Windows,
+podup talks to the `podman machine` VM through its host-side socket or named
+pipe. Windows users download `podup-windows-x86_64.exe` from the
+[releases page](https://github.com/Glyndor/podup/releases) directly. Or build
+from source:
 
 ```bash
 cargo build --release

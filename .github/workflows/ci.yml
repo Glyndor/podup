@@ -13,4 +13,4 @@ jobs:
   rust:
     uses: Glyndor/.github/.github/workflows/rust-ci.yml@bc62ab8f95465df2b2f6f23775305f10a44e1502 # main
     with:
-      extra-test-os: '["macos-latest"]'
+      extra-test-os: '["macos-latest", "windows-latest"]'

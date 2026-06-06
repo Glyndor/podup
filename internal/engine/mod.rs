@@ -7,6 +7,7 @@ mod container;
 mod health;
 mod network;
 mod profiles;
+mod staging;
 mod volume;
 mod watch;
 

@@ -51,15 +51,27 @@ jobs:
           - asset: podup-linux-x86_64
             runner: ubuntu-latest
             target: x86_64-unknown-linux-musl
+            bin: podup
           - asset: podup-linux-arm64
             runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
+            bin: podup
           - asset: podup-darwin-arm64
             runner: macos-latest
             target: aarch64-apple-darwin
+            bin: podup
           - asset: podup-darwin-x86_64
             runner: macos-latest
             target: x86_64-apple-darwin
+            bin: podup
+          - asset: podup-windows-x86_64.exe
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: podup.exe
+
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -78,7 +90,7 @@ jobs:
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Stage artifact
-        run: cp "target/${{ matrix.target }}/release/podup" "${{ matrix.asset }}"
+        run: cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "${{ matrix.asset }}"
 
       - name: Sign binary
         env:
@@ -132,6 +144,7 @@ jobs:
             podup-linux-arm64 \
             podup-darwin-arm64 \
             podup-darwin-x86_64 \
+            podup-windows-x86_64.exe \
             > SHA256SUMS
 
       - name: Create GitHub Release
@@ -150,5 +163,7 @@ jobs:
             podup-darwin-arm64.sig \
             podup-darwin-x86_64 \
             podup-darwin-x86_64.sig \
+            podup-windows-x86_64.exe \
+            podup-windows-x86_64.exe.sig \
             SHA256SUMS \
             install.sh

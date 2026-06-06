@@ -2,23 +2,32 @@
 
 use crate::error::Result;
 use bollard::Docker;
+#[cfg(any(not(windows), test))]
 use std::path::Path;
 
+#[cfg(any(not(windows), test))]
 const ROOT_SOCKET: &str = "/run/podman/podman.sock";
 
-/// Connect to Podman's Docker-compatible socket.
+/// Named pipe `podman machine` exposes on Windows for its default machine.
+#[cfg(windows)]
+const DEFAULT_PIPE: &str = "//./pipe/podman-machine-default";
+
+/// Connect to Podman's Docker-compatible API.
 ///
 /// Priority:
 /// 1. `socket_path` if provided.
 /// 2. The first existing platform default — on Linux the rootful or
 ///    per-user runtime socket, on macOS the host-side socket exposed by
-///    `podman machine`.
+///    `podman machine`, on Windows the `podman machine` named pipe.
 /// 3. The conventional path for this platform, so a failed connection
 ///    reports the location podup expected.
 pub fn connect(socket_path: Option<&str>) -> Result<Docker> {
     let default_path = default_socket_path();
     let path = socket_path.unwrap_or(&default_path);
+    #[cfg(not(windows))]
     let client = Docker::connect_with_unix(path, 120, bollard::API_DEFAULT_VERSION)?;
+    #[cfg(windows)]
+    let client = Docker::connect_with_named_pipe(path, 120, bollard::API_DEFAULT_VERSION)?;
     Ok(client)
 }
 
@@ -28,10 +37,14 @@ pub fn connect_from_env() -> Result<Docker> {
         .or_else(|_| std::env::var("DOCKER_HOST"))
         .ok();
 
-    let path = socket.as_deref().and_then(|s| s.strip_prefix("unix://"));
+    let path = socket.as_deref().and_then(|s| {
+        s.strip_prefix("unix://")
+            .or_else(|| s.strip_prefix("npipe://"))
+    });
     connect(path)
 }
 
+#[cfg(not(windows))]
 fn default_socket_path() -> String {
     let candidates = candidate_socket_paths();
     first_existing(&candidates)
@@ -40,7 +53,14 @@ fn default_socket_path() -> String {
         .unwrap_or_else(|| ROOT_SOCKET.to_string())
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Windows: named pipes are not probeable through `Path::exists`, so ask
+/// `podman machine inspect` and fall back to the default machine's pipe.
+#[cfg(windows)]
+fn default_socket_path() -> String {
+    machine_socket_path().unwrap_or_else(|| DEFAULT_PIPE.to_string())
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 fn candidate_socket_paths() -> Vec<String> {
     let uid = unsafe { libc::getuid() };
     runtime_candidates(uid, std::env::var("XDG_RUNTIME_DIR").ok().as_deref())
@@ -57,7 +77,7 @@ fn candidate_socket_paths() -> Vec<String> {
 /// Socket candidates for Linux and other unix hosts: the rootful socket
 /// for uid 0, otherwise the user's runtime directory (preferring
 /// `XDG_RUNTIME_DIR` when set).
-#[cfg(any(not(target_os = "macos"), test))]
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
 fn runtime_candidates(uid: u32, xdg_runtime_dir: Option<&str>) -> Vec<String> {
     if uid == 0 {
         return vec![ROOT_SOCKET.to_string()];
@@ -107,11 +127,33 @@ fn machine_socket_path() -> Option<String> {
     (!path.is_empty() && Path::new(&path).exists()).then_some(path)
 }
 
-#[cfg(not(target_os = "macos"))]
+/// Ask `podman machine inspect` for the named pipe of the default machine.
+/// The pipe path is reported by the machine config; `Path::exists` cannot
+/// probe named pipes, so the value is used as-is.
+#[cfg(windows)]
+fn machine_socket_path() -> Option<String> {
+    let output = std::process::Command::new("podman")
+        .args([
+            "machine",
+            "inspect",
+            "--format",
+            "{{ .ConnectionInfo.PodmanPipe.Path }}",
+        ])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let path = String::from_utf8(output.stdout).ok()?.trim().to_string();
+    (!path.is_empty() && path != "<nil>").then_some(path)
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
 fn machine_socket_path() -> Option<String> {
     None
 }
 
+#[cfg(any(not(windows), test))]
 fn first_existing(candidates: &[String]) -> Option<String> {
     candidates.iter().find(|p| Path::new(p).exists()).cloned()
 }
