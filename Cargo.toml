@@ -1,8 +1,16 @@
 [package]
 name = "podup"
-version = "0.3.2"
+version = "0.4.0"
 edition = "2021"
 rust-version = "1.85"
+description = "Translate and run docker-compose files on rootless Podman"
+license = "Apache-2.0"
+repository = "https://github.com/Glyndor/podup"
+homepage = "https://github.com/Glyndor/podup"
+readme = "README.md"
+keywords = ["podman", "compose", "containers", "docker-compose", "rootless"]
+categories = ["command-line-utilities", "virtualization"]
+exclude = ["/.github", "/debian", "/docs", "/install.sh"]
 
 [[bin]]
 name = "podup"
@@ -24,12 +32,14 @@ bollard = "0.21"
 clap = { version = "4", features = ["derive", "env"] }
 indexmap = { version = "2", features = ["serde"] }
 futures = "0.3"
-libc = "0.2"
 tar = "0.4"
 flate2 = "1.0"
 bytes = "1"
 walkdir = "2"
 notify = "8"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3"

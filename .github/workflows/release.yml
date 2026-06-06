@@ -36,7 +36,7 @@ jobs:
           echo "Releasing version ${VERSION}."
 
   build:
-    name: Build ${{ matrix.arch }}
+    name: Build ${{ matrix.asset }}
     needs: verify
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -48,29 +48,49 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - arch: x86_64
+          - asset: podup-linux-x86_64
             runner: ubuntu-latest
             target: x86_64-unknown-linux-musl
-          - arch: arm64
+            bin: podup
+          - asset: podup-linux-arm64
             runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
+            bin: podup
+          - asset: podup-darwin-arm64
+            runner: macos-latest
+            target: aarch64-apple-darwin
+            bin: podup
+          - asset: podup-darwin-x86_64
+            runner: macos-latest
+            target: x86_64-apple-darwin
+            bin: podup
+          - asset: podup-windows-x86_64.exe
+            runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            bin: podup.exe
+
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
-      - name: Install musl toolchain
+      - name: Install build target
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq musl-tools
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq musl-tools
+          fi
           rustup target add ${{ matrix.target }}
 
-      - name: Build static binary
+      - name: Build binary
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Stage artifact
-        run: cp "target/${{ matrix.target }}/release/podup" "podup-linux-${{ matrix.arch }}"
+        run: cp "target/${{ matrix.target }}/release/${{ matrix.bin }}" "${{ matrix.asset }}"
 
       - name: Sign binary
         env:
@@ -83,21 +103,21 @@ jobs:
             echo "::error::RELEASE_SIGN_KEY secret is not configured; refusing to release unsigned binaries."
             exit 1
           fi
-          pip install --quiet cryptography==48.0.0
-          python3 .github/scripts/sign.py "$RELEASE_SIGN_KEY" "podup-linux-${{ matrix.arch }}"
+          python3 -m pip install --quiet cryptography==48.0.0
+          python3 .github/scripts/sign.py "$RELEASE_SIGN_KEY" "${{ matrix.asset }}"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
         with:
-          subject-path: podup-linux-${{ matrix.arch }}
+          subject-path: ${{ matrix.asset }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: podup-${{ matrix.arch }}
+          name: ${{ matrix.asset }}
           path: |
-            podup-linux-${{ matrix.arch }}
-            podup-linux-${{ matrix.arch }}.sig
+            ${{ matrix.asset }}
+            ${{ matrix.asset }}.sig
           retention-days: 1
           if-no-files-found: error
 
@@ -118,7 +138,14 @@ jobs:
           merge-multiple: true
 
       - name: Generate checksums
-        run: sha256sum podup-linux-x86_64 podup-linux-arm64 > SHA256SUMS
+        run: |
+          sha256sum \
+            podup-linux-x86_64 \
+            podup-linux-arm64 \
+            podup-darwin-arm64 \
+            podup-darwin-x86_64 \
+            podup-windows-x86_64.exe \
+            > SHA256SUMS
 
       - name: Create GitHub Release
         env:
@@ -132,5 +159,11 @@ jobs:
             podup-linux-x86_64.sig \
             podup-linux-arm64 \
             podup-linux-arm64.sig \
+            podup-darwin-arm64 \
+            podup-darwin-arm64.sig \
+            podup-darwin-x86_64 \
+            podup-darwin-x86_64.sig \
+            podup-windows-x86_64.exe \
+            podup-windows-x86_64.exe.sig \
             SHA256SUMS \
             install.sh

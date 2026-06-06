@@ -31,8 +31,10 @@ single file: `/usr/bin/podup`.
    maintainer's identity.
 3. **Sponsorship** — upload through a Debian Developer (the Rust team's
    `team+rust@tracker.debian.org` is the natural reviewer for a Rust tool).
-4. **crates.io publication** — the name `podup` is verified available;
-   `debcargo` consumes crates.io releases, so publishing there first
+4. **crates.io publication** — the name `podup` is verified available and
+   the crate metadata is in place (`cargo package` verifies clean), so
+   publication is a single `cargo publish` with the owner's registry
+   token. `debcargo` consumes crates.io releases, so publishing first
    simplifies everything.
 5. **Stability promise** — official packages imply SemVer discipline and a
    `1.0.0` once the CLI surface is settled.
