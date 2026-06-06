@@ -179,6 +179,38 @@ pub(super) fn resolve_network_name(network: &str, file: &ComposeFile) -> String 
 		.to_string()
 }
 
+fn build_ipam(ipam: &IpamConfig) -> Ipam {
+	let config = if ipam.config.is_empty() {
+		None
+	} else {
+		Some(
+			ipam.config
+				.iter()
+				.map(|pool| BollardIpamConfig {
+					subnet: pool.subnet.clone(),
+					gateway: pool.gateway.clone(),
+					ip_range: pool.ip_range.clone(),
+					auxiliary_addresses: if pool.aux_addresses.is_empty() {
+						None
+					} else {
+						Some(pool.aux_addresses.clone())
+					},
+				})
+				.collect(),
+		)
+	};
+
+	Ipam {
+		driver: ipam.driver.clone(),
+		config,
+		options: if ipam.options.is_empty() {
+			None
+		} else {
+			Some(ipam.options.clone())
+		},
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
@@ -187,15 +219,13 @@ pub(super) fn resolve_network_name(network: &str, file: &ComposeFile) -> String 
 mod tests {
 	use super::*;
 	use crate::compose::types::{ComposeFile, NetworkConfig, Service};
-	use indexmap::IndexMap;
 
 	fn empty_file() -> ComposeFile {
 		ComposeFile::default()
 	}
 
 	fn file_with_named_network(key: &str, name: &str) -> ComposeFile {
-		let mut cfg = NetworkConfig::default();
-		cfg.name = Some(name.to_string());
+		let cfg = NetworkConfig { name: Some(name.to_string()), ..Default::default() };
 		let mut file = empty_file();
 		file.networks.insert(key.to_string(), Some(cfg));
 		file
@@ -215,8 +245,7 @@ mod tests {
 
 	#[test]
 	fn resolve_network_mode_explicit_mode() {
-		let mut svc = Service::default();
-		svc.network_mode = Some("host".to_string());
+		let svc = Service { network_mode: Some("host".to_string()), ..Default::default() };
 		let file = empty_file();
 		let (mode, first) = resolve_network_mode(&svc, &file);
 		assert_eq!(mode.as_deref(), Some("host"));
@@ -267,36 +296,56 @@ mod tests {
 		let ipam = settings.ipam_config.unwrap();
 		assert_eq!(ipam.ipv4_address.as_deref(), Some("10.0.0.5"));
 	}
-}
 
-fn build_ipam(ipam: &IpamConfig) -> Ipam {
-	let config = if ipam.config.is_empty() {
-		None
-	} else {
-		Some(
-			ipam.config
-				.iter()
-				.map(|pool| BollardIpamConfig {
-					subnet: pool.subnet.clone(),
-					gateway: pool.gateway.clone(),
-					ip_range: pool.ip_range.clone(),
-					auxiliary_addresses: if pool.aux_addresses.is_empty() {
-						None
-					} else {
-						Some(pool.aux_addresses.clone())
-					},
-				})
-				.collect(),
-		)
-	};
+	// --- build_ipam ---
 
-	Ipam {
-		driver: ipam.driver.clone(),
-		config,
-		options: if ipam.options.is_empty() {
-			None
-		} else {
-			Some(ipam.options.clone())
-		},
+	#[test]
+	fn build_ipam_defaults_empty() {
+		use crate::compose::types::IpamConfig;
+		let result = build_ipam(&IpamConfig::default());
+		assert!(result.config.is_none());
+		assert!(result.options.is_none());
+		assert!(result.driver.is_none());
+	}
+
+	#[test]
+	fn build_ipam_with_driver_and_options() {
+		use crate::compose::types::IpamConfig;
+		let mut ipam = IpamConfig { driver: Some("default".into()), ..Default::default() };
+		ipam.options.insert("route_metric".into(), "100".into());
+		let result = build_ipam(&ipam);
+		assert_eq!(result.driver.as_deref(), Some("default"));
+		assert!(result.options.is_some());
+	}
+
+	#[test]
+	fn build_ipam_with_subnet_pool() {
+		use crate::compose::types::{IpamConfig, IpamPool};
+		let pool = IpamPool {
+			subnet: Some("192.168.0.0/24".into()),
+			gateway: Some("192.168.0.1".into()),
+			ip_range: Some("192.168.0.128/25".into()),
+			aux_addresses: Default::default(),
+		};
+		let ipam = IpamConfig { config: vec![pool], ..Default::default() };
+		let result = build_ipam(&ipam);
+		let cfg = result.config.unwrap();
+		assert_eq!(cfg.len(), 1);
+		assert_eq!(cfg[0].subnet.as_deref(), Some("192.168.0.0/24"));
+		assert_eq!(cfg[0].gateway.as_deref(), Some("192.168.0.1"));
+		assert_eq!(cfg[0].ip_range.as_deref(), Some("192.168.0.128/25"));
+		assert!(cfg[0].auxiliary_addresses.is_none());
+	}
+
+	#[test]
+	fn build_ipam_with_aux_addresses() {
+		use crate::compose::types::{IpamConfig, IpamPool};
+		let mut pool = IpamPool::default();
+		pool.aux_addresses.insert("router".into(), "192.168.0.254".into());
+		let ipam = IpamConfig { config: vec![pool], ..Default::default() };
+		let result = build_ipam(&ipam);
+		let cfg = result.config.unwrap();
+		let aux = cfg[0].auxiliary_addresses.as_ref().unwrap();
+		assert_eq!(aux.get("router").map(|s| s.as_str()), Some("192.168.0.254"));
 	}
 }

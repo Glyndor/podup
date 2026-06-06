@@ -346,4 +346,94 @@ mod tests {
 		m.insert("k".to_string(), "v".to_string());
 		assert!(opt_map(m).is_some());
 	}
+
+	// --- build_device_requests ---
+
+	#[test]
+	fn build_device_requests_empty() {
+		assert!(build_device_requests(&default_service()).is_empty());
+	}
+
+	#[test]
+	fn build_device_requests_gpus_count() {
+		use crate::compose::types::GpuSpec;
+		let svc = Service { gpus: Some(GpuSpec::Count(2)), ..Default::default() };
+		let reqs = build_device_requests(&svc);
+		assert_eq!(reqs.len(), 1);
+		assert_eq!(reqs[0].count, Some(2));
+		let caps = reqs[0].capabilities.as_ref().unwrap();
+		assert_eq!(caps[0], vec!["gpu".to_string()]);
+	}
+
+	#[test]
+	fn build_device_requests_gpus_all() {
+		use crate::compose::types::GpuSpec;
+		let svc = Service { gpus: Some(GpuSpec::Named("all".into())), ..Default::default() };
+		let reqs = build_device_requests(&svc);
+		assert_eq!(reqs.len(), 1);
+		assert_eq!(reqs[0].count, Some(-1));
+	}
+
+	#[test]
+	fn build_device_requests_no_capabilities_skipped() {
+		use crate::compose::types::{DeployConfig, DeviceReservation, ResourceSpec, ResourcesConfig};
+		let svc = Service {
+			deploy: Some(DeployConfig {
+				resources: Some(ResourcesConfig {
+					reservations: Some(ResourceSpec {
+						devices: vec![DeviceReservation {
+							capabilities: vec![],
+							..Default::default()
+						}],
+						..Default::default()
+					}),
+					..Default::default()
+				}),
+				..Default::default()
+			}),
+			..Default::default()
+		};
+		assert!(build_device_requests(&svc).is_empty());
+	}
+
+	#[test]
+	fn build_device_requests_deploy_device_with_ids() {
+		use crate::compose::types::{DeployConfig, DeviceReservation, ResourceSpec, ResourcesConfig};
+		let svc = Service {
+			deploy: Some(DeployConfig {
+				resources: Some(ResourcesConfig {
+					reservations: Some(ResourceSpec {
+						devices: vec![DeviceReservation {
+							capabilities: vec!["gpu".into()],
+							device_ids: vec!["GPU-abc".into()],
+							..Default::default()
+						}],
+						..Default::default()
+					}),
+					..Default::default()
+				}),
+				..Default::default()
+			}),
+			..Default::default()
+		};
+		let reqs = build_device_requests(&svc);
+		assert_eq!(reqs.len(), 1);
+		assert!(reqs[0].count.is_none());
+		assert_eq!(reqs[0].device_ids.as_ref().unwrap(), &vec!["GPU-abc".to_string()]);
+	}
+
+	#[test]
+	fn build_blkio_config_with_weight_device() {
+		use crate::compose::types::{BlkioConfig, BlkioWeightDevice};
+		let mut svc = default_service();
+		svc.blkio_config = Some(BlkioConfig {
+			weight_device: vec![BlkioWeightDevice { path: "/dev/sda".into(), weight: 300 }],
+			..Default::default()
+		});
+		let blkio = build_blkio_config(&svc).unwrap();
+		let devs = blkio.weight_device.unwrap();
+		assert_eq!(devs.len(), 1);
+		assert_eq!(devs[0].path.as_deref(), Some("/dev/sda"));
+		assert_eq!(devs[0].weight, Some(300));
+	}
 }

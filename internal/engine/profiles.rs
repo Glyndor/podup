@@ -63,24 +63,24 @@ mod tests {
 
 	#[test]
 	fn service_profile_matches_active() {
-		let mut svc = Service::default();
-		svc.profiles = vec!["debug".to_string()];
+		let svc = Service { profiles: vec!["debug".to_string()], ..Default::default() };
 		let active: HashSet<String> = ["debug".to_string()].into();
 		assert!(service_in_profiles(&svc, &active));
 	}
 
 	#[test]
 	fn service_profile_does_not_match() {
-		let mut svc = Service::default();
-		svc.profiles = vec!["debug".to_string()];
+		let svc = Service { profiles: vec!["debug".to_string()], ..Default::default() };
 		let active: HashSet<String> = ["prod".to_string()].into();
 		assert!(!service_in_profiles(&svc, &active));
 	}
 
 	#[test]
 	fn service_any_profile_match_sufficient() {
-		let mut svc = Service::default();
-		svc.profiles = vec!["debug".to_string(), "prod".to_string()];
+		let svc = Service {
+			profiles: vec!["debug".to_string(), "prod".to_string()],
+			..Default::default()
+		};
 		let active: HashSet<String> = ["prod".to_string()].into();
 		assert!(service_in_profiles(&svc, &active));
 	}
