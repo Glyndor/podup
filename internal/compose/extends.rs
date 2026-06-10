@@ -122,18 +122,9 @@ fn resolve_one_extends(
 	let base_name = extends.service().to_string();
 
 	let base_service = if let Some(file_path) = extends.file() {
-		let fp = std::path::Path::new(file_path);
-		if fp.is_absolute() {
+		if !is_safe_extends_path(file_path) {
 			return Err(ComposeError::Extends(format!(
-				"service '{name}' extends.file must be relative, got absolute path: {file_path}"
-			)));
-		}
-		if fp
-			.components()
-			.any(|c| c == std::path::Component::ParentDir)
-		{
-			return Err(ComposeError::Extends(format!(
-				"service '{name}' extends.file must not traverse parent directories: {file_path}"
+				"service '{name}' extends.file must be a relative path with no parent traversal: {file_path}"
 			)));
 		}
 		let abs = base_dir.join(file_path);
@@ -184,6 +175,11 @@ fn resolve_one_extends(
 pub(crate) fn is_safe_extends_path(path: &str) -> bool {
 	let fp = std::path::Path::new(path);
 	if fp.is_absolute() {
+		return false;
+	}
+	// On Windows, paths like "/etc/passwd" are not `is_absolute()` (no drive letter)
+	// but still escape the project directory via the root separator.
+	if fp.components().next() == Some(std::path::Component::RootDir) {
 		return false;
 	}
 	if fp
