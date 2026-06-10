@@ -1,3 +1,10 @@
+podup (0.5.3) unstable; urgency=low
+
+  * Use glyndor.net/install/podup as canonical install URL in README and
+    install.sh.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 10 Jun 2026 03:00:00 -0500
+
 podup (0.5.2) unstable; urgency=low
 
   * Narrow tokio feature set from "full" to only required features
