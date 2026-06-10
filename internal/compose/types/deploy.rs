@@ -11,7 +11,13 @@ use serde::{Deserialize, Serialize};
 
 use super::Labels;
 
-/// `deploy:` service key — resource limits, replica count, restart and update policies.
+/// `deploy:` service key — resource limits, replica count, restart policies, and labels.
+///
+/// The engine uses `replicas`, `resources`, `restart_policy`, and `labels`.
+/// Fields inherited from Docker Swarm (`mode`, `placement`, `update_config`,
+/// `rollback_config`, `endpoint_mode`) are parsed so existing compose files
+/// are accepted without error, but they have no effect on single-host Podman
+/// and emit a warning at runtime.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DeployConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
