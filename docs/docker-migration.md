@@ -1,0 +1,145 @@
+# Migrating from Docker Compose to podup
+
+This guide covers what to expect when you switch a `docker-compose.yml` from
+Docker to podup on rootless Podman.  The short answer is: **most files work
+without any changes**.  Read on for the full picture.
+
+## What works out of the box
+
+Every core Compose spec key is supported:
+
+| Category | Keys |
+|---|---|
+| Images / build | `image`, `build` (context, dockerfile, args, target, cache_from, cache_to, secrets, labels, network) |
+| Execution | `command`, `entrypoint`, `working_dir`, `user`, `platform`, `tty`, `stdin_open` |
+| Environment | `environment`, `env_file` (dotenv format), variable substitution (`${VAR:-default}`) |
+| Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `domainname`, `dns`, `dns_search`, `extra_hosts` |
+| Volumes | `volumes` (bind, named, tmpfs, npipe), `tmpfs`, `volumes_from` |
+| Secrets / configs | `secrets`, `configs` (file, inline content, environment source) |
+| Dependencies | `depends_on` (with `condition:` — `service_started`, `service_healthy`, `service_completed_successfully`) |
+| Health checks | `healthcheck` (test, interval, timeout, retries, start_period, disable) |
+| Lifecycle hooks | `post_start`, `pre_stop` |
+| Restart policies | `restart`, `deploy.restart_policy` |
+| Replicas / scale | `deploy.replicas`, `scale:` |
+| Resource limits | `deploy.resources`, `mem_limit`, `cpus`, `cpu_shares`, `cpu_quota`, `pids_limit`, `ulimits`, `blkio_config` |
+| Devices | `devices`, `device_cgroup_rules`, `deploy.resources.reservations.devices` (GPU) |
+| Security | `cap_add`, `cap_drop`, `security_opt`, `read_only`, `privileged`, `userns_mode` |
+| Namespaces | `pid`, `ipc`, `uts`, `cgroup`, `shm_size` |
+| Metadata | `labels`, `annotations`, `container_name`, `profiles` |
+| Logging | `logging` (driver + options) |
+| Compose features | `extends`, `include`, YAML anchors, x-extensions, `develop.watch` |
+
+## Rootless Podman differences
+
+These are Podman behaviours, not podup limitations.  They apply equally to any
+Podman-based tool.
+
+### Privileged ports (< 1024)
+
+Rootless containers cannot bind host ports below 1024 unless the kernel allows
+it:
+
+```bash
+# Allow a single port (temporary, requires root once):
+sudo sysctl net.ipv4.ip_unprivileged_port_start=80
+
+# Or map through a higher port in your compose file:
+ports:
+  - "8080:80"
+```
+
+### UID/GID mapping
+
+Containers run as your host user's UID inside a user namespace.  If a container
+image writes files with UID 0 (root inside the container), those files appear
+owned by your user on the host.  Bind-mount permissions reflect your host
+user's access.
+
+### Volume SELinux labels
+
+On SELinux-enforcing systems, bind mounts require relabeling.  Append `:z`
+(shared) or `:Z` (private) to the volume spec:
+
+```yaml
+volumes:
+  - ./data:/app/data:Z
+```
+
+### `network_mode: host`
+
+Attaches the container to your user's network namespace, not a privileged host
+namespace.  Traffic is still limited to your user's capabilities.
+
+### `network_mode: none`
+
+Supported.  The container gets a loopback interface only.
+
+## Deprecated fields (honored with a warning)
+
+### `mac_address:` at the service level
+
+The Compose spec deprecated the top-level `mac_address` field in favour of
+per-network configuration.  podup still honours it (for backward compatibility)
+and applies it to the primary network, but logs a deprecation warning.
+
+**Migration:** move it under `networks:`:
+
+```yaml
+# before
+services:
+  web:
+    mac_address: "02:42:ac:11:00:02"
+
+# after
+services:
+  web:
+    networks:
+      default:
+        mac_address: "02:42:ac:11:00:02"
+```
+
+## Swarm-only fields (accepted, no effect)
+
+These fields are part of the Compose spec for Docker Swarm deployments.  They
+are parsed without error so existing compose files validate cleanly, but they
+have no equivalent in single-host rootless Podman.  podup logs a warning for
+each one that is present.
+
+| Field | What it does in Swarm |
+|---|---|
+| `deploy.mode: global` | Run one replica per cluster node |
+| `deploy.placement` | Constrain which nodes a service runs on |
+| `deploy.update_config` | Rolling-update parallelism, delay, failure action |
+| `deploy.rollback_config` | Automatic rollback behaviour |
+| `deploy.endpoint_mode` | VIP vs DNS round-robin load balancing |
+
+If you see warnings for these fields, you can safely remove them from your
+compose file when targeting a single-host Podman deployment.
+
+## Not yet supported
+
+| Feature | Status |
+|---|---|
+| `env_file.format` values other than `dotenv` | Error is emitted; only the `dotenv` format is accepted |
+| Real-hardware smoke tests on macOS and Windows | Pending ([#48](https://github.com/Glyndor/podup/issues/48)); code paths exist but are untested on physical hardware |
+
+## Enabling verbose output
+
+Run with `RUST_LOG=podup=debug` to see network creation, container lifecycle
+events, and deprecation warnings:
+
+```bash
+RUST_LOG=podup=warn podup up     # warnings only (default level)
+RUST_LOG=podup=info podup up     # info + warnings
+RUST_LOG=podup=debug podup up    # full trace
+```
+
+## Quick compatibility checklist
+
+Before running `podup up` on an existing compose file:
+
+- [ ] Remove or remap any host ports below 1024 if running fully rootless.
+- [ ] Add `:Z` to bind mounts on SELinux hosts if containers cannot write to them.
+- [ ] Check for `mac_address:` at the service level — move to `networks:` to silence the warning.
+- [ ] Check for Swarm-only `deploy.*` fields — they are harmless but can be cleaned up.
+- [ ] Verify `env_file` uses dotenv format (key=value lines, `#` comments).

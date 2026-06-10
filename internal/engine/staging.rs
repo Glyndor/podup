@@ -117,8 +117,12 @@ pub(super) fn write_private_file(path: &std::path::Path, content: &[u8]) -> Resu
 
 /// Apply a compose `mode:` value (octal unix permissions) to `path`.
 ///
-/// Rejects any mode with world-readable (`o+r`) or group-readable (`g+r`) bits
-/// set — a secret or config file must never be readable by other users.
+/// Rejects:
+/// - group-readable (`g+r`, 0o040) or world-readable (`o+r`, 0o004) bits — a
+///   secret or config file must never be readable by other users.
+/// - setuid (0o4000), setgid (0o2000), or sticky (0o1000) bits — these have no
+///   legitimate use on a secret/config data file and are either a
+///   misconfiguration or an attack attempt; reject unconditionally.
 #[cfg(unix)]
 pub(super) fn apply_mode(path: &Path, mode: u32) -> Result<()> {
 	use std::os::unix::fs::PermissionsExt;
@@ -127,6 +131,13 @@ pub(super) fn apply_mode(path: &Path, mode: u32) -> Result<()> {
 		return Err(ComposeError::Unsupported(format!(
 			"mode {mode:#o} for {} grants group- or world-read access to a secret/config file; \
 			 use a mode with no g+r or o+r bits (e.g. 0o400 or 0o600)",
+			path.display()
+		)));
+	}
+	if mode & (0o4000 | 0o2000 | 0o1000) != 0 {
+		return Err(ComposeError::Unsupported(format!(
+			"mode {mode:#o} for {} sets setuid, setgid, or sticky bits on a secret/config file; \
+			 only plain owner read/write bits are permitted (e.g. 0o400 or 0o600)",
 			path.display()
 		)));
 	}
@@ -390,6 +401,33 @@ mod apply_mode_tests {
 		assert!(apply_mode(&file, 0o604).is_err());
 		assert!(apply_mode(&file, 0o777).is_err());
 		assert!(apply_mode(&file, 0o444).is_err());
+	}
+
+	#[test]
+	fn setuid_mode_rejected() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let file = dir.path().join("secret");
+		std::fs::write(&file, b"value").expect("write");
+		assert!(apply_mode(&file, 0o4400).is_err());
+		assert!(apply_mode(&file, 0o4000).is_err());
+	}
+
+	#[test]
+	fn setgid_mode_rejected() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let file = dir.path().join("secret");
+		std::fs::write(&file, b"value").expect("write");
+		assert!(apply_mode(&file, 0o2400).is_err());
+		assert!(apply_mode(&file, 0o2000).is_err());
+	}
+
+	#[test]
+	fn sticky_mode_rejected() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let file = dir.path().join("secret");
+		std::fs::write(&file, b"value").expect("write");
+		assert!(apply_mode(&file, 0o1400).is_err());
+		assert!(apply_mode(&file, 0o1000).is_err());
 	}
 }
 

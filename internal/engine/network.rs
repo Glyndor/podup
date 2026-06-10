@@ -99,7 +99,7 @@ impl Engine {
 		for network in network_names.iter().skip(1) {
 			let full_name = resolve_network_name(network, file, &self.project);
 			let endpoint_config =
-				build_endpoint_settings(service.networks.config_for(network), file);
+				build_endpoint_settings(service.networks.config_for(network), file, None);
 			self.docker
 				.connect_network(
 					&full_name,
@@ -123,6 +123,7 @@ impl Engine {
 pub(super) fn build_endpoint_settings(
 	cfg: Option<&ServiceNetworkConfig>,
 	_file: &ComposeFile,
+	fallback_mac: Option<&str>,
 ) -> EndpointSettings {
 	let mut settings = EndpointSettings::default();
 	if let Some(c) = cfg {
@@ -140,14 +141,17 @@ pub(super) fn build_endpoint_settings(
 				},
 			});
 		}
-		if c.mac_address.is_some() {
-			settings.mac_address = c.mac_address.clone();
+		let mac = c.mac_address.as_deref().or(fallback_mac);
+		if mac.is_some() {
+			settings.mac_address = mac.map(|s| s.to_string());
 		}
 		if let Some(prio) = c.priority {
 			let mut m = HashMap::new();
 			m.insert("priority".to_string(), prio.to_string());
 			settings.driver_opts = Some(m);
 		}
+	} else if fallback_mac.is_some() {
+		settings.mac_address = fallback_mac.map(|s| s.to_string());
 	}
 	settings
 }
@@ -277,7 +281,7 @@ mod tests {
 	#[test]
 	fn build_endpoint_settings_no_config() {
 		let file = empty_file();
-		let settings = build_endpoint_settings(None, &file);
+		let settings = build_endpoint_settings(None, &file, None);
 		assert!(settings.aliases.is_none());
 		assert!(settings.ipam_config.is_none());
 	}
@@ -290,7 +294,7 @@ mod tests {
 			..Default::default()
 		};
 		let file = empty_file();
-		let settings = build_endpoint_settings(Some(&cfg), &file);
+		let settings = build_endpoint_settings(Some(&cfg), &file, None);
 		assert_eq!(
 			settings.aliases.as_ref().unwrap(),
 			&vec!["web".to_string(), "api".to_string()]
@@ -305,7 +309,7 @@ mod tests {
 			..Default::default()
 		};
 		let file = empty_file();
-		let settings = build_endpoint_settings(Some(&cfg), &file);
+		let settings = build_endpoint_settings(Some(&cfg), &file, None);
 		let ipam = settings.ipam_config.unwrap();
 		assert_eq!(ipam.ipv4_address.as_deref(), Some("10.0.0.5"));
 	}
@@ -370,5 +374,35 @@ mod tests {
 		let cfg = result.config.unwrap();
 		let aux = cfg[0].auxiliary_addresses.as_ref().unwrap();
 		assert_eq!(aux.get("router").map(|s| s.as_str()), Some("192.168.0.254"));
+	}
+
+	// --- build_endpoint_settings: fallback_mac ---
+
+	#[test]
+	fn fallback_mac_applied_when_no_config() {
+		let file = empty_file();
+		let settings = build_endpoint_settings(None, &file, Some("02:42:ac:11:00:02"));
+		assert_eq!(settings.mac_address.as_deref(), Some("02:42:ac:11:00:02"));
+	}
+
+	#[test]
+	fn fallback_mac_applied_when_config_has_no_mac() {
+		use crate::compose::types::ServiceNetworkConfig;
+		let cfg = ServiceNetworkConfig::default();
+		let file = empty_file();
+		let settings = build_endpoint_settings(Some(&cfg), &file, Some("02:42:ac:11:00:03"));
+		assert_eq!(settings.mac_address.as_deref(), Some("02:42:ac:11:00:03"));
+	}
+
+	#[test]
+	fn per_network_mac_takes_precedence_over_fallback() {
+		use crate::compose::types::ServiceNetworkConfig;
+		let cfg = ServiceNetworkConfig {
+			mac_address: Some("aa:bb:cc:dd:ee:ff".to_string()),
+			..Default::default()
+		};
+		let file = empty_file();
+		let settings = build_endpoint_settings(Some(&cfg), &file, Some("02:42:ac:11:00:03"));
+		assert_eq!(settings.mac_address.as_deref(), Some("aa:bb:cc:dd:ee:ff"));
 	}
 }

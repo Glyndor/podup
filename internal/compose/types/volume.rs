@@ -186,3 +186,103 @@ impl ServiceSecretRef {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	// VolumeMount::target
+
+	#[test]
+	fn volume_mount_short_two_parts_returns_second() {
+		let m = VolumeMount::Short("./data:/app/data".to_string());
+		assert_eq!(m.target(), "/app/data");
+	}
+
+	#[test]
+	fn volume_mount_short_three_parts_returns_second() {
+		let m = VolumeMount::Short("./data:/app/data:ro".to_string());
+		assert_eq!(m.target(), "/app/data");
+	}
+
+	#[test]
+	fn volume_mount_short_no_colon_returns_whole_string() {
+		let m = VolumeMount::Short("/app/data".to_string());
+		assert_eq!(m.target(), "/app/data");
+	}
+
+	#[test]
+	fn volume_mount_long_returns_target_field() {
+		let m = VolumeMount::Long {
+			volume_type: VolumeType::Bind,
+			source: Some("/host/path".to_string()),
+			target: "/container/path".to_string(),
+			read_only: None,
+			bind: None,
+			volume: None,
+			tmpfs: None,
+			consistency: None,
+		};
+		assert_eq!(m.target(), "/container/path");
+	}
+
+	// ServiceConfigRef
+
+	#[test]
+	fn config_ref_short_source() {
+		let r = ServiceConfigRef::Short("my-config".to_string());
+		assert_eq!(r.source(), "my-config");
+		assert!(r.target().is_none());
+	}
+
+	#[test]
+	fn config_ref_long_source_and_target() {
+		let r = ServiceConfigRef::Long {
+			source: "my-config".to_string(),
+			target: Some("/run/configs/my-config".to_string()),
+			uid: None,
+			gid: None,
+			mode: None,
+		};
+		assert_eq!(r.source(), "my-config");
+		assert_eq!(r.target(), Some("/run/configs/my-config"));
+	}
+
+	#[test]
+	fn config_ref_long_no_target() {
+		let r = ServiceConfigRef::Long {
+			source: "my-config".to_string(),
+			target: None,
+			uid: None,
+			gid: None,
+			mode: None,
+		};
+		assert!(r.target().is_none());
+	}
+
+	// ServiceSecretRef
+
+	#[test]
+	fn secret_ref_short_source() {
+		let r = ServiceSecretRef::Short("my-secret".to_string());
+		assert_eq!(r.source(), "my-secret");
+		assert!(r.target().is_none());
+	}
+
+	#[test]
+	fn secret_ref_long_source_and_target() {
+		let r = ServiceSecretRef::Long {
+			source: "my-secret".to_string(),
+			target: Some("/run/secrets/my-secret".to_string()),
+			uid: None,
+			gid: None,
+			mode: None,
+		};
+		assert_eq!(r.source(), "my-secret");
+		assert_eq!(r.target(), Some("/run/secrets/my-secret"));
+	}
+}

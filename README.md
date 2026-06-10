@@ -83,6 +83,11 @@ async fn main() -> podup::Result<()> {
 podup = { git = "https://github.com/Glyndor/podup", tag = "v0.5.5" }
 ```
 
+## 📖 Docs
+
+- [Migrating from Docker Compose](docs/docker-migration.md) — compatibility guide, rootless differences, deprecated fields
+- [Debian packaging](docs/debian-packaging.md) — building and distributing a `.deb`
+
 ## Contributing & security
 
 See the org-wide [contributing guide](https://github.com/Glyndor/.github/blob/main/CONTRIBUTING.md).

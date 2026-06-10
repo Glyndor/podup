@@ -18,7 +18,7 @@ use super::container_config::{
 };
 use super::container_misc::{
 	build_blkio_config, build_device_requests, build_label_file_labels, opt_map, opt_vec,
-	parse_device, tmpfs_options_to_string,
+	parse_device, tmpfs_options_to_string, warn_swarm_only_deploy,
 };
 use super::network::{build_endpoint_settings, resolve_network_mode};
 use super::volume_mounts::{build_binds, build_mounts};
@@ -41,6 +41,8 @@ impl Engine {
 		} else {
 			return Err(ComposeError::NoImageOrBuild(service_name.into()));
 		};
+
+		warn_swarm_only_deploy(service_name, service);
 
 		let env = build_env(service, &self.base_dir)?;
 
@@ -212,10 +214,20 @@ impl Engine {
 		let cmd = service.command.as_ref().map(|c| c.to_exec());
 		let entrypoint = service.entrypoint.as_ref().map(|c| c.to_exec());
 
+		if service.mac_address.is_some() {
+			tracing::warn!(
+				"service \"{service_name}\": top-level mac_address is deprecated; \
+				move it to networks.<network>.mac_address"
+			);
+		}
+
 		let networking_config = first_network.as_ref().map(|net| {
 			let mut endpoints = HashMap::new();
 			let svc_net_cfg = service.networks.config_for(net);
-			endpoints.insert(net.clone(), build_endpoint_settings(svc_net_cfg, file));
+			endpoints.insert(
+				net.clone(),
+				build_endpoint_settings(svc_net_cfg, file, service.mac_address.as_deref()),
+			);
 			NetworkingConfig {
 				endpoints_config: Some(endpoints),
 			}
