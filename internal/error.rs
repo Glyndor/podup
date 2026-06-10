@@ -80,6 +80,7 @@ impl From<bollard::errors::Error> for ComposeError {
 	}
 }
 
+/// Convenience alias for `std::result::Result<T, ComposeError>`.
 pub type Result<T> = std::result::Result<T, ComposeError>;
 
 #[cfg(test)]

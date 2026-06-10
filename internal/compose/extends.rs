@@ -18,10 +18,6 @@ use super::types::{
 };
 use crate::error::{ComposeError, Result};
 
-// ---------------------------------------------------------------------------
-// Public entry points
-// ---------------------------------------------------------------------------
-
 const MAX_EXTENDS_DEPTH: usize = 16;
 
 /// Resolve `extends:` only within the same file (no `file:` references).
@@ -46,10 +42,6 @@ pub(super) fn resolve_all_extends(file: &mut ComposeFile, base_dir: &Path) -> Re
 	}
 	Ok(())
 }
-
-// ---------------------------------------------------------------------------
-// Single-service resolution helpers
-// ---------------------------------------------------------------------------
 
 fn resolve_one_extends_in_memory(
 	file: &mut ComposeFile,
@@ -186,14 +178,6 @@ fn resolve_one_extends(
 	Ok(())
 }
 
-// ---------------------------------------------------------------------------
-// Service merge
-// ---------------------------------------------------------------------------
-
-/// Merge `override_svc` over `base`.
-///
-/// `override_svc` wins for scalar fields it explicitly sets.
-/// `Vec` / `Map` collections are replaced when the override is non-empty.
 pub(super) fn merge_service(base: Service, override_svc: Service) -> Service {
 	fn opt<T>(o: Option<T>, b: Option<T>) -> Option<T> {
 		o.or(b)

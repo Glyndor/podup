@@ -7,20 +7,14 @@
 
 use serde::{Deserialize, Serialize};
 
-// ---------------------------------------------------------------------------
-// DevelopConfig
-// ---------------------------------------------------------------------------
-
+/// `develop:` service key — holds file-watch rules for the `watch` command.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DevelopConfig {
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub watch: Vec<WatchRule>,
 }
 
-// ---------------------------------------------------------------------------
-// WatchRule
-// ---------------------------------------------------------------------------
-
+/// A single `develop.watch` rule: a path to watch, an action to take, and optional ignore filters.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WatchRule {
 	pub path: String,
@@ -37,10 +31,7 @@ pub struct WatchRule {
 	pub exec: Option<WatchExec>,
 }
 
-// ---------------------------------------------------------------------------
-// WatchAction
-// ---------------------------------------------------------------------------
-
+/// Action triggered by a `develop.watch` rule: `sync`, `rebuild`, `restart`, `sync+restart`, or `sync+exec`.
 #[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
 pub enum WatchAction {
 	#[default]
@@ -67,10 +58,7 @@ impl<'de> Deserialize<'de> for WatchAction {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// WatchExec
-// ---------------------------------------------------------------------------
-
+/// Exec command run as part of a `sync+exec` watch action.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WatchExec {
 	pub command: Vec<String>,

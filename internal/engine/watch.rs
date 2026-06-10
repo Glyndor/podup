@@ -35,7 +35,6 @@ use super::Engine;
 // Rule tracking
 // ---------------------------------------------------------------------------
 
-/// Pre-resolved watch rule: service identity + rule + absolute host path for fast matching.
 struct RuleEntry {
 	service_name: String,
 	container_name: String,
@@ -48,6 +47,7 @@ struct RuleEntry {
 // ---------------------------------------------------------------------------
 
 impl Engine {
+	/// Set up filesystem watchers from `develop.watch` rules and dispatch sync/rebuild/restart/exec actions on file changes.
 	pub async fn watch(&self, file: &ComposeFile) -> Result<()> {
 		let mut rule_entries: Vec<RuleEntry> = Vec::new();
 
@@ -70,7 +70,6 @@ impl Engine {
 			return Ok(());
 		}
 
-		// Initial sync.
 		for entry in &rule_entries {
 			if entry.rule.initial_sync {
 				if let Some(target) = &entry.rule.target {
@@ -85,7 +84,6 @@ impl Engine {
 			}
 		}
 
-		// Notify watcher with tokio channel bridge.
 		let (tx, mut rx) = mpsc::unbounded_channel::<notify::Result<notify::Event>>();
 		let mut watcher = RecommendedWatcher::new(
 			move |res| {
@@ -119,14 +117,12 @@ impl Engine {
 				_ = tokio::signal::ctrl_c() => break,
 			};
 
-			// Drain events within debounce window.
 			let mut paths = event.paths;
 			let deadline = tokio::time::Instant::now() + debounce;
 			while let Ok(Some(Ok(e))) = tokio::time::timeout_at(deadline, rx.recv()).await {
 				paths.extend(e.paths);
 			}
 
-			// Dispatch each changed path.
 			'outer: for path in &paths {
 				for entry in &rule_entries {
 					if !path.starts_with(&entry.abs_path) {

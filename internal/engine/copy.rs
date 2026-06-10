@@ -75,7 +75,7 @@ impl Engine {
 			std::env::current_dir().map_err(ComposeError::Io)?
 		};
 
-		// PERF-005: tar extraction is blocking I/O.
+		// tar extraction is blocking I/O.
 		tokio::task::spawn_blocking(move || {
 			let cursor = std::io::Cursor::new(tar_bytes);
 			let mut archive = tar::Archive::new(cursor);
@@ -100,7 +100,7 @@ impl Engine {
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
 		let container_name = self.container_name(service_name, service);
 
-		// PERF-005: tar creation is blocking I/O.
+		// tar creation is blocking I/O.
 		let src_buf = src.to_path_buf();
 		let tar_bytes = tokio::task::spawn_blocking(move || pack_path(&src_buf))
 			.await

@@ -33,6 +33,7 @@ use crate::error::Result;
 // Engine
 // ---------------------------------------------------------------------------
 
+/// Handle through which all Podman operations for a project are dispatched.
 pub struct Engine {
 	pub(super) docker: Docker,
 	pub(super) project: String,
@@ -40,6 +41,7 @@ pub struct Engine {
 }
 
 impl Engine {
+	/// Create an engine for `project_name` using the working directory as the base path for relative volume mounts.
 	pub fn new(docker: Docker, project: String) -> Self {
 		Self {
 			docker,
@@ -48,6 +50,7 @@ impl Engine {
 		}
 	}
 
+	/// Create an engine with an explicit base directory — use when the compose file is not in the working directory.
 	pub fn with_base_dir(docker: Docker, project: String, base_dir: PathBuf) -> Self {
 		Self {
 			docker,
@@ -55,10 +58,6 @@ impl Engine {
 			base_dir,
 		}
 	}
-
-	// -----------------------------------------------------------------------
-	// Internal helpers shared across engine submodules
-	// -----------------------------------------------------------------------
 
 	pub(super) async fn run_lifecycle_hook(
 		&self,
@@ -137,7 +136,6 @@ impl Engine {
 		}
 	}
 
-	/// Name of the first (or only) replica — for commands that target one container.
 	pub(super) fn first_replica_name(&self, service_name: &str, service: &Service) -> String {
 		let replicas = service
 			.scale
@@ -151,6 +149,7 @@ impl Engine {
 		}
 	}
 
+	/// Watch for file changes and apply the service's `develop.watch` rules. Returns an error when the `watch` feature is disabled.
 	#[cfg(not(feature = "watch"))]
 	pub async fn watch(&self, _file: &crate::compose::types::ComposeFile) -> Result<()> {
 		Err(crate::error::ComposeError::Unsupported(
@@ -163,8 +162,6 @@ impl Engine {
 // Filesystem helpers
 // ---------------------------------------------------------------------------
 
-/// Recursively collect all file and directory paths under `root`, in pre-order.
-/// Symlinks are included as entries but are never followed into.
 fn walk_dir(root: &std::path::Path) -> std::io::Result<Vec<PathBuf>> {
 	let mut out = Vec::new();
 	walk_collect(root, &mut out)?;
