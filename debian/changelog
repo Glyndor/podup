@@ -1,3 +1,21 @@
+podup (0.5.5) unstable; urgency=low
+
+  * Migrate yaml_serde to serde_yaml_ng (actively maintained successor).
+  * Remove thiserror; use manual Display + Error impls for ComposeError.
+  * Remove walkdir; use std::fs recursive directory walk.
+  * Feature-gate notify behind optional watch feature (default enabled).
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 10 Jun 2026 14:20:00 -0500
+
+podup (0.5.4) unstable; urgency=medium
+
+  * Fix release workflow: sign SHA256SUMS file, add weekly cargo audit.
+  * Fix cffi and pycparser hashes in sign-requirements.txt.
+  * Fix release artifact cleanup before cargo publish.
+  * Harden CodeQL workflow with explicit permissions block.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 10 Jun 2026 08:30:00 -0500
+
 podup (0.5.3) unstable; urgency=low
 
   * Use glyndor.net/install/podup as canonical install URL in README and
