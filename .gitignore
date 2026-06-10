@@ -6,6 +6,9 @@ GAP_ANALYSIS.md
 *.profdata
 tarpaulin-report.html
 coverage/
+coverage-html*/
+coverage.json
+lcov.info
 
 # Fuzzing
 fuzz/corpus/

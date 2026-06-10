@@ -41,6 +41,9 @@ notify = "8"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[features]
+test-helpers = []
+
 [dev-dependencies]
 tempfile = "3"
 
