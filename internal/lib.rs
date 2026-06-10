@@ -14,5 +14,5 @@ pub mod size;
 pub mod substitute;
 
 pub use compose::{parse_file, parse_str, parse_str_raw, resolve_order};
-pub use engine::Engine;
+pub use engine::{Engine, RunOptions};
 pub use error::{ComposeError, Result};

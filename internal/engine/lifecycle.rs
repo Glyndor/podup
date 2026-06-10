@@ -1,8 +1,11 @@
-//! Service lifecycle commands: up, down, start, stop, restart, kill, rm.
+//! Service lifecycle commands: up, down, start, stop, restart, kill, rm, pause, unpause, run.
 
+use bollard::container::LogOutput;
 use bollard::query_parameters::{
-	KillContainerOptions, RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
+	KillContainerOptions, LogsOptions, RemoveContainerOptions, StartContainerOptions,
+	StopContainerOptions, WaitContainerOptions,
 };
+use futures::StreamExt;
 use tracing::info;
 
 use crate::compose::types::{ComposeFile, ServiceCondition};
@@ -10,6 +13,20 @@ use crate::error::{ComposeError, Result};
 
 use super::profiles::{active_profiles_set, service_in_profiles};
 use super::Engine;
+
+/// Options for [`Engine::run`].
+pub struct RunOptions {
+	/// Override the default service command.
+	pub cmd: Vec<String>,
+	/// Remove the container after it exits.
+	pub rm: bool,
+	/// Start the container in the background without streaming logs.
+	pub detach: bool,
+	/// Additional environment variables (`KEY=VAL` strings, override service env).
+	pub env_overrides: Vec<String>,
+	/// Override the generated container name.
+	pub name_override: Option<String>,
+}
 
 impl Engine {
 	pub async fn up(&self, file: &ComposeFile) -> Result<()> {
@@ -346,6 +363,140 @@ impl Engine {
 				info!("removed {container_name}");
 			}
 		}
+		Ok(())
+	}
+
+	/// Pause running service containers (SIGSTOP).
+	///
+	/// If `target_services` is empty, all services are paused.
+	pub async fn pause(&self, file: &ComposeFile, target_services: &[String]) -> Result<()> {
+		let order = crate::compose::resolve_order(file)?;
+		let order = filter_services(file, order, target_services)?;
+
+		for name in &order {
+			let service = &file.services[name];
+			for container_name in self.replica_names(name, service) {
+				self.docker.pause_container(&container_name).await?;
+				info!("paused {container_name}");
+			}
+		}
+		Ok(())
+	}
+
+	/// Resume paused service containers.
+	///
+	/// If `target_services` is empty, all services are unpaused.
+	pub async fn unpause(&self, file: &ComposeFile, target_services: &[String]) -> Result<()> {
+		let order = crate::compose::resolve_order(file)?;
+		let order = filter_services(file, order, target_services)?;
+
+		for name in &order {
+			let service = &file.services[name];
+			for container_name in self.replica_names(name, service) {
+				self.docker.unpause_container(&container_name).await?;
+				info!("unpaused {container_name}");
+			}
+		}
+		Ok(())
+	}
+
+	/// Run a one-off command in a new container for a service.
+	///
+	/// The container is started, its output streamed, and it is removed when done
+	/// (unless `opts.rm` is false). Non-zero exit codes surface as `ComposeError::RunExited`.
+	pub async fn run(
+		&self,
+		file: &ComposeFile,
+		service_name: &str,
+		opts: RunOptions,
+	) -> Result<()> {
+		let RunOptions {
+			cmd,
+			rm,
+			detach,
+			env_overrides,
+			name_override,
+		} = opts;
+		let service = file
+			.services
+			.get(service_name)
+			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
+
+		let run_name = name_override.unwrap_or_else(|| {
+			format!("{}-{service_name}-run-{}", self.project, std::process::id())
+		});
+
+		let mut run_service = service.clone();
+		if !cmd.is_empty() {
+			run_service.command = Some(crate::compose::types::Command::Exec(cmd));
+		}
+		if !env_overrides.is_empty() {
+			let mut env_list: Vec<String> = {
+				let map = run_service.environment.to_map();
+				map.into_iter()
+					.map(|(k, v)| v.map_or(k.clone(), |v| format!("{k}={v}")))
+					.collect()
+			};
+			env_list.extend(env_overrides);
+			run_service.environment = crate::compose::types::EnvVars::List(env_list);
+		}
+		run_service.restart = None;
+
+		self.create_and_start(&run_name, service_name, &run_service, file)
+			.await?;
+
+		if detach {
+			info!("started run container {run_name}");
+			return Ok(());
+		}
+
+		let mut log_stream = self.docker.logs(
+			&run_name,
+			Some(LogsOptions {
+				stdout: true,
+				stderr: true,
+				follow: true,
+				..Default::default()
+			}),
+		);
+
+		while let Some(msg) = log_stream.next().await {
+			match msg? {
+				LogOutput::StdOut { message } => print!("{}", String::from_utf8_lossy(&message)),
+				LogOutput::StdErr { message } => eprint!("{}", String::from_utf8_lossy(&message)),
+				_ => {}
+			}
+		}
+
+		let exit_code = {
+			let mut wait_stream = self
+				.docker
+				.wait_container(&run_name, None::<WaitContainerOptions>);
+			match wait_stream.next().await {
+				Some(Ok(resp)) => resp.status_code,
+				Some(Err(bollard::errors::Error::DockerContainerWaitError { code, .. })) => code,
+				Some(Err(e)) => return Err(crate::error::ComposeError::Podman(e)),
+				None => 0,
+			}
+		};
+
+		if rm {
+			let _ = self
+				.docker
+				.remove_container(
+					&run_name,
+					Some(RemoveContainerOptions {
+						force: true,
+						..Default::default()
+					}),
+				)
+				.await;
+		}
+
+		if exit_code != 0 {
+			return Err(crate::error::ComposeError::RunExited(exit_code));
+		}
+
 		Ok(())
 	}
 }
