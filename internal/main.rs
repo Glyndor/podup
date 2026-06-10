@@ -247,6 +247,7 @@ async fn run() -> podup::Result<()> {
 				engine.watch(&file).await?;
 			} else if !detach {
 				engine.attach_logs(&file).await?;
+				let _ = engine.stop(&file, &[]).await;
 			}
 		}
 		Commands::Down { volumes } => engine.down_with_options(&file, volumes).await?,
