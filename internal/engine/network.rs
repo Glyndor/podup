@@ -250,7 +250,10 @@ mod tests {
 	#[test]
 	fn resolve_network_name_uses_config_name_over_prefix() {
 		let file = file_with_named_network("mynet", "custom-net-name");
-		assert_eq!(resolve_network_name("mynet", &file, "proj"), "custom-net-name");
+		assert_eq!(
+			resolve_network_name("mynet", &file, "proj"),
+			"custom-net-name"
+		);
 	}
 
 	#[test]

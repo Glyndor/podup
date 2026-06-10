@@ -223,12 +223,16 @@ impl Engine {
 					.unwrap_or_else(|| format!("{}_{}", self.project, key));
 				match self
 					.docker
-					.remove_volume(&volume_name, None::<bollard::query_parameters::RemoveVolumeOptions>)
+					.remove_volume(
+						&volume_name,
+						None::<bollard::query_parameters::RemoveVolumeOptions>,
+					)
 					.await
 				{
 					Ok(_) => info!("removed volume {volume_name}"),
 					Err(bollard::errors::Error::DockerResponseServerError {
-						status_code: 404, ..
+						status_code: 404,
+						..
 					}) => {}
 					Err(e) => tracing::warn!("could not remove volume {volume_name}: {e}"),
 				}
