@@ -4,7 +4,7 @@
 //! secrets, and configs from the included file are added only if the key does
 //! not already exist in the parent (parent wins on conflict).
 
-use super::types::{ComposeFile, Service};
+use super::types::ComposeFile;
 
 /// Merge `other` into `target`.
 ///
@@ -34,6 +34,7 @@ pub(super) fn merge_compose_file(target: &mut ComposeFile, other: ComposeFile) {
 
 #[cfg(test)]
 mod tests {
+	use super::super::types::Service;
 	use super::*;
 
 	fn svc(image: &str) -> Service {
