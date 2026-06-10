@@ -16,6 +16,7 @@ mod query;
 mod staging;
 mod volume;
 mod volume_mounts;
+#[cfg(feature = "watch")]
 mod watch;
 
 use std::path::PathBuf;
@@ -134,5 +135,12 @@ impl Engine {
 		} else {
 			(1..=replicas).map(|i| format!("{base}-{i}")).collect()
 		}
+	}
+
+	#[cfg(not(feature = "watch"))]
+	pub async fn watch(&self, _file: &crate::compose::types::ComposeFile) -> Result<()> {
+		Err(crate::error::ComposeError::Unsupported(
+			"watch requires the 'watch' feature".into(),
+		))
 	}
 }
