@@ -17,10 +17,12 @@ flowchart LR
 
 ## ✨ Features
 
-- 🚀 **Drop-in workflow** — `up`, `down`, `ps`, `logs`, `exec`, `pull`, `restart`, `config`
+- 🚀 **Drop-in workflow** — `up`, `down`, `start`, `stop`, `ps`, `logs`, `exec`, `run`, `cp`, `build`, `pull`, `restart`, `rm`, `kill`, `pause`, `unpause`, `top`, `port`, `images`, `config`, `watch`
 - 🔒 **Rootless by design** — drives rootless Podman over its Docker-compatible API
 - 📄 **Compose-spec parsing** — YAML anchors, `extends`, `include`, profiles, `env_file`, variable substitution with modifiers
-- 🔁 **Dependency-aware** — `depends_on` ordering with healthcheck conditions
+- 🔁 **Dependency-aware** — `depends_on` ordering with `service_started`, `service_healthy`, and `service_completed_successfully` conditions
+- 🔢 **Replicas** — `scale:` and `deploy.replicas` with named replica containers
+- 🔐 **Secrets & configs** — inline content, file, and environment sources staged securely
 - 👀 **Watch mode** — sync, rebuild or restart services on file changes per `develop.watch` rules
 - 📦 **Single binary** — statically musl-linked on Linux, no runtime dependencies
 - 🦀 **Library too** — embed the parser and engine in your own Rust project
@@ -78,7 +80,7 @@ async fn main() -> podup::Result<()> {
 
 ```toml
 [dependencies]
-podup = { git = "https://github.com/Glyndor/podup", tag = "v0.3.0" }
+podup = { git = "https://github.com/Glyndor/podup", tag = "v0.5.5" }
 ```
 
 ## Contributing & security

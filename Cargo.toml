@@ -1,8 +1,8 @@
 [package]
 name = "podup"
-version = "0.5.5"
+version = "0.5.6"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.86"
 description = "Translate and run docker-compose files on rootless Podman"
 license = "Apache-2.0"
 repository = "https://github.com/Glyndor/podup"

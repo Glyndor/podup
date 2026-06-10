@@ -70,11 +70,11 @@ impl Engine {
 				.services
 				.get(svc)
 				.ok_or_else(|| ComposeError::ServiceNotFound(svc.into()))?;
-			vec![self.container_name(svc, service)]
+			self.replica_names(svc, service)
 		} else {
 			file.services
 				.iter()
-				.map(|(n, s)| self.container_name(n, s))
+				.flat_map(|(n, s)| self.replica_names(n, s))
 				.collect()
 		};
 
@@ -115,7 +115,7 @@ impl Engine {
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = self.container_name(service_name, service);
+		let container_name = self.first_replica_name(service_name, service);
 
 		let exec_id = self
 			.docker
@@ -234,20 +234,21 @@ impl Engine {
 
 		for name in &names {
 			let service = &file.services[name];
-			let container_name = self.container_name(name, service);
-			match self.docker.top_processes(&container_name, None).await {
-				Ok(result) => {
-					println!("{container_name}");
-					if let Some(titles) = &result.titles {
-						println!("{}", titles.join("\t"));
-					}
-					if let Some(processes) = &result.processes {
-						for row in processes {
-							println!("{}", row.join("\t"));
+			for container_name in self.replica_names(name, service) {
+				match self.docker.top_processes(&container_name, None).await {
+					Ok(result) => {
+						println!("{container_name}");
+						if let Some(titles) = &result.titles {
+							println!("{}", titles.join("\t"));
+						}
+						if let Some(processes) = &result.processes {
+							for row in processes {
+								println!("{}", row.join("\t"));
+							}
 						}
 					}
+					Err(e) => tracing::warn!("top {container_name}: {e}"),
 				}
-				Err(e) => tracing::warn!("top {container_name}: {e}"),
 			}
 		}
 		Ok(())
@@ -267,7 +268,7 @@ impl Engine {
 			.services
 			.get(service_name)
 			.ok_or_else(|| crate::error::ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = self.container_name(service_name, service);
+		let container_name = self.first_replica_name(service_name, service);
 
 		let info = self
 			.docker
@@ -333,7 +334,16 @@ impl Engine {
 			.services
 			.iter()
 			.filter(|(_, s)| s.attach.unwrap_or(true))
-			.map(|(name, s)| (name.clone(), self.container_name(name, s)))
+			.flat_map(|(name, s)| {
+				let proj_prefix = format!("{}-", self.project);
+				self.replica_names(name, s).into_iter().map(move |cname| {
+					let display = cname
+						.strip_prefix(proj_prefix.as_str())
+						.map(|s| s.to_string())
+						.unwrap_or_else(|| cname.clone());
+					(display, cname)
+				})
+			})
 			.collect();
 
 		if attached.is_empty() {

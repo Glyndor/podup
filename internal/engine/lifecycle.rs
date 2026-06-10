@@ -288,46 +288,48 @@ impl Engine {
 
 		for name in &names {
 			let service = &file.services[name];
-			let container_name = self.container_name(name, service);
 
-			let _ = self
-				.docker
-				.stop_container(
-					&container_name,
-					Some(StopContainerOptions {
-						t: Some(grace_period_secs(service)),
-						..Default::default()
-					}),
-				)
-				.await;
+			for container_name in self.replica_names(name, service) {
+				let _ = self
+					.docker
+					.stop_container(
+						&container_name,
+						Some(StopContainerOptions {
+							t: Some(grace_period_secs(service)),
+							..Default::default()
+						}),
+					)
+					.await;
 
-			self.docker
-				.start_container(&container_name, None::<StartContainerOptions>)
-				.await?;
+				self.docker
+					.start_container(&container_name, None::<StartContainerOptions>)
+					.await?;
 
-			info!("restarted {container_name}");
+				info!("restarted {container_name}");
+			}
 
 			for (dep_name, dep_service) in &file.services {
 				if dep_service.depends_on.restart_for(name) {
-					let dep_container = self.container_name(dep_name, dep_service);
-					let _ = self
-						.docker
-						.stop_container(
-							&dep_container,
-							Some(StopContainerOptions {
-								t: Some(grace_period_secs(dep_service)),
-								..Default::default()
-							}),
-						)
-						.await;
-					if let Err(e) = self
-						.docker
-						.start_container(&dep_container, None::<StartContainerOptions>)
-						.await
-					{
-						tracing::warn!("cascade restart of {dep_name} failed: {e}");
-					} else {
-						info!("cascade-restarted {dep_container} (depends_on.restart)");
+					for dep_container in self.replica_names(dep_name, dep_service) {
+						let _ = self
+							.docker
+							.stop_container(
+								&dep_container,
+								Some(StopContainerOptions {
+									t: Some(grace_period_secs(dep_service)),
+									..Default::default()
+								}),
+							)
+							.await;
+						if let Err(e) = self
+							.docker
+							.start_container(&dep_container, None::<StartContainerOptions>)
+							.await
+						{
+							tracing::warn!("cascade restart of {dep_name} failed: {e}");
+						} else {
+							info!("cascade-restarted {dep_container} (depends_on.restart)");
+						}
 					}
 				}
 			}
