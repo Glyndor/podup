@@ -195,4 +195,48 @@ mod tests {
 		assert_eq!(parse_endpoint(":path"), None);
 		assert_eq!(parse_endpoint("svc:"), None);
 	}
+
+	#[test]
+	fn parse_windows_drive_letter_forward_slash() {
+		assert_eq!(parse_endpoint("C:/Users/foo"), None);
+	}
+
+	#[test]
+	fn parse_service_with_relative_path() {
+		assert_eq!(
+			parse_endpoint("web:data/file.txt"),
+			Some(("web", "data/file.txt"))
+		);
+	}
+
+	#[test]
+	fn parse_service_name_with_dots() {
+		assert_eq!(
+			parse_endpoint("my.service:/app/config"),
+			Some(("my.service", "/app/config"))
+		);
+	}
+
+	#[test]
+	fn pack_path_single_file() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let file = dir.path().join("data.txt");
+		std::fs::write(&file, b"hello").expect("write");
+		let result = super::pack_path(&file);
+		assert!(result.is_ok());
+		let bytes = result.unwrap();
+		assert!(!bytes.is_empty());
+	}
+
+	#[test]
+	fn pack_path_directory() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let subdir = dir.path().join("mydir");
+		std::fs::create_dir(&subdir).expect("mkdir");
+		std::fs::write(subdir.join("a.txt"), b"aaa").expect("write");
+		std::fs::write(subdir.join("b.txt"), b"bbb").expect("write");
+		let result = super::pack_path(&subdir);
+		assert!(result.is_ok());
+		assert!(!result.unwrap().is_empty());
+	}
 }
