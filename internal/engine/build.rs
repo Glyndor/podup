@@ -55,6 +55,35 @@ impl Engine {
 		Ok(())
 	}
 
+	/// Build (or rebuild) images for services that have a `build:` block.
+	///
+	/// If `target_services` is empty, every service with a build config is built.
+	/// Services without a build config are silently skipped.
+	pub async fn build_all(
+		&self,
+		file: &crate::compose::types::ComposeFile,
+		target_services: &[String],
+	) -> Result<()> {
+		let names: Vec<String> = if target_services.is_empty() {
+			file.services.keys().cloned().collect()
+		} else {
+			for name in target_services {
+				if !file.services.contains_key(name) {
+					return Err(crate::error::ComposeError::ServiceNotFound(name.clone()));
+				}
+			}
+			target_services.to_vec()
+		};
+
+		for name in &names {
+			let service = &file.services[name];
+			if service.build.is_some() {
+				self.build_service(name, service).await?;
+			}
+		}
+		Ok(())
+	}
+
 	pub(super) async fn build_service(&self, service_name: &str, service: &Service) -> Result<()> {
 		let build = match &service.build {
 			Some(b) => b,
@@ -431,7 +460,14 @@ fn is_ignored(path: &str, patterns: &[String]) -> bool {
 
 #[cfg(test)]
 mod tests {
-	use super::truncate_dockerfile_to_target;
+	use super::{
+		build_context_tar, build_context_tar_with_inline, build_context_tar_with_target,
+		is_ignored, read_dockerignore, truncate_dockerfile_to_target,
+	};
+	use std::fs;
+	use tempfile::tempdir;
+
+	// truncate_dockerfile_to_target ----------------------------------------
 
 	#[test]
 	fn truncate_drops_stages_after_target() {
@@ -463,5 +499,107 @@ mod tests {
 		let result = truncate_dockerfile_to_target(df, "app");
 		assert!(result.contains("FROM alpine AS app"));
 		assert!(result.contains("echo done"));
+	}
+
+	// is_ignored (build) ---------------------------------------------------
+
+	#[test]
+	fn build_ignored_exact() {
+		let patterns = vec!["secret.txt".to_string()];
+		assert!(is_ignored("secret.txt", &patterns));
+		assert!(!is_ignored("secret.txt.bak", &patterns));
+	}
+
+	#[test]
+	fn build_ignored_dir() {
+		let patterns = vec!["node_modules/".to_string()];
+		assert!(is_ignored("node_modules/foo.js", &patterns));
+		assert!(!is_ignored("other/foo.js", &patterns));
+	}
+
+	#[test]
+	fn build_ignored_path_separator() {
+		let patterns = vec!["vendor".to_string()];
+		assert!(is_ignored("vendor/lib.rs", &patterns));
+		assert!(!is_ignored("notvendor/lib.rs", &patterns));
+	}
+
+	// read_dockerignore ----------------------------------------------------
+
+	#[test]
+	fn dockerignore_parsed_correctly() {
+		let dir = tempdir().unwrap();
+		fs::write(
+			dir.path().join(".dockerignore"),
+			b"# comment\n\ntarget/\n*.log\n",
+		)
+		.unwrap();
+		let patterns = read_dockerignore(dir.path());
+		assert_eq!(patterns, vec!["target/", "*.log"]);
+	}
+
+	#[test]
+	fn dockerignore_missing_returns_empty() {
+		let dir = tempdir().unwrap();
+		let patterns = read_dockerignore(dir.path());
+		assert!(patterns.is_empty());
+	}
+
+	// build_context_tar ----------------------------------------------------
+
+	#[test]
+	fn context_tar_produces_valid_gzip() {
+		let dir = tempdir().unwrap();
+		fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
+		fs::write(dir.path().join("app.rs"), b"fn main() {}").unwrap();
+		let bytes = build_context_tar(dir.path(), "Dockerfile").unwrap();
+		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+	}
+
+	#[test]
+	fn context_tar_respects_dockerignore() {
+		let dir = tempdir().unwrap();
+		fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
+		fs::write(dir.path().join("secret.key"), b"top secret").unwrap();
+		fs::write(dir.path().join(".dockerignore"), b"*.key\n").unwrap();
+		let bytes = build_context_tar(dir.path(), "Dockerfile").unwrap();
+		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+	}
+
+	#[test]
+	fn context_tar_with_subdirectory() {
+		let dir = tempdir().unwrap();
+		fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
+		fs::create_dir(dir.path().join("src")).unwrap();
+		fs::write(dir.path().join("src/main.rs"), b"fn main() {}").unwrap();
+		let bytes = build_context_tar(dir.path(), "Dockerfile").unwrap();
+		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+	}
+
+	// build_context_tar_with_inline ----------------------------------------
+
+	#[test]
+	fn inline_tar_produces_valid_gzip() {
+		let dir = tempdir().unwrap();
+		fs::write(dir.path().join("app.txt"), b"content").unwrap();
+		let inline = "FROM alpine\nRUN echo hello\n";
+		let (bytes, df_name) = build_context_tar_with_inline(dir.path(), inline).unwrap();
+		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+		assert!(!df_name.is_empty());
+	}
+
+	// build_context_tar_with_target ----------------------------------------
+
+	#[test]
+	fn target_tar_truncates_dockerfile() {
+		let dir = tempdir().unwrap();
+		fs::write(
+			dir.path().join("Dockerfile"),
+			b"FROM alpine AS builder\nRUN build\nFROM builder AS final\nRUN run\n",
+		)
+		.unwrap();
+		let (bytes, _) =
+			build_context_tar_with_target(dir.path(), "Dockerfile", "builder").unwrap();
+		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
 	}
 }

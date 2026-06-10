@@ -56,7 +56,9 @@ services:
 	let bc = svc.blkio_config.as_ref().unwrap();
 	assert_eq!(bc.device_read_bps.len(), 1);
 	assert_eq!(bc.device_read_bps[0].path, "/dev/sda");
+	assert_eq!(bc.device_read_bps[0].rate_value(), 12 * 1024 * 1024);
 	assert_eq!(bc.device_write_bps.len(), 1);
+	assert_eq!(bc.device_write_bps[0].rate_value(), 1024 * 1024);
 }
 
 #[test]

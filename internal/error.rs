@@ -52,6 +52,9 @@ pub enum ComposeError {
 
 	#[error("unsupported feature: {0}")]
 	Unsupported(String),
+
+	#[error("run container exited with code {0}")]
+	RunExited(i64),
 }
 
 pub type Result<T> = std::result::Result<T, ComposeError>;

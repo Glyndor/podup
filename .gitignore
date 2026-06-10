@@ -6,6 +6,9 @@ GAP_ANALYSIS.md
 *.profdata
 tarpaulin-report.html
 coverage/
+coverage-html*/
+coverage.json
+lcov.info
 
 # Fuzzing
 fuzz/corpus/
@@ -17,3 +20,12 @@ fuzz/artifacts/
 # Build artifacts
 /target
 __pycache__/
+
+# Debian build artifacts
+debian/cargo-home/
+debian/podup/
+debian/debhelper-build-stamp
+debian/files
+debian/*.substvars
+debian/*.log
+.cargo/config.toml

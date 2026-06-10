@@ -377,3 +377,147 @@ fn is_included(path: &str, patterns: &[String]) -> bool {
 	}
 	false
 }
+
+// ---------------------------------------------------------------------------
+// Test helpers (feature-gated so they never appear in release builds)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "test-helpers")]
+impl Engine {
+	pub async fn test_sync_to_container(
+		&self,
+		container: &str,
+		src: &Path,
+		target: &str,
+	) -> Result<()> {
+		self.sync_to_container(container, src, target).await
+	}
+
+	pub async fn test_watch_restart(&self, container_name: &str) -> Result<()> {
+		self.watch_restart(container_name).await
+	}
+
+	pub async fn test_watch_exec(&self, container_name: &str, cmd: Vec<String>) -> Result<()> {
+		self.watch_exec(container_name, cmd).await
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+	use super::{build_sync_tar, is_ignored, is_included};
+	use std::fs;
+	use tempfile::tempdir;
+
+	fn pats(v: &[&str]) -> Vec<String> {
+		v.iter().map(|s| s.to_string()).collect()
+	}
+
+	// is_ignored -----------------------------------------------------------
+
+	#[test]
+	fn ignored_exact_file() {
+		assert!(is_ignored("Makefile", &pats(&["Makefile"])));
+	}
+
+	#[test]
+	fn ignored_not_prefix_match() {
+		assert!(!is_ignored("Makefile.local", &pats(&["Makefile"])));
+	}
+
+	#[test]
+	fn ignored_dir_prefix() {
+		assert!(is_ignored("node_modules/foo.js", &pats(&["node_modules/"])));
+	}
+
+	#[test]
+	fn ignored_dir_prefix_no_partial() {
+		assert!(!is_ignored("nonode_modules/foo", &pats(&["node_modules/"])));
+	}
+
+	#[test]
+	fn ignored_path_with_slash() {
+		assert!(is_ignored("vendor/lib.rs", &pats(&["vendor"])));
+	}
+
+	#[test]
+	fn ignored_empty_patterns() {
+		assert!(!is_ignored("anything.rs", &[]));
+	}
+
+	#[test]
+	fn ignored_no_match() {
+		assert!(!is_ignored("src/main.rs", &pats(&["target/", "*.log"])));
+	}
+
+	// is_included ----------------------------------------------------------
+
+	#[test]
+	fn included_glob_extension() {
+		assert!(is_included("src/main.rs", &pats(&["*.rs"])));
+	}
+
+	#[test]
+	fn included_glob_no_match() {
+		assert!(!is_included("src/main.go", &pats(&["*.rs"])));
+	}
+
+	#[test]
+	fn included_dir_prefix() {
+		assert!(is_included("src/main.rs", &pats(&["src/"])));
+	}
+
+	#[test]
+	fn included_dir_prefix_no_match() {
+		assert!(!is_included("test/main.rs", &pats(&["src/"])));
+	}
+
+	#[test]
+	fn included_exact_match() {
+		assert!(is_included("Makefile", &pats(&["Makefile"])));
+	}
+
+	#[test]
+	fn included_path_segment_suffix() {
+		assert!(is_included("src/lib.rs", &pats(&["lib.rs"])));
+	}
+
+	#[test]
+	fn included_empty_patterns() {
+		assert!(!is_included("anything", &[]));
+	}
+
+	// build_sync_tar -------------------------------------------------------
+
+	#[test]
+	fn sync_tar_single_file() {
+		let dir = tempdir().unwrap();
+		let file = dir.path().join("hello.txt");
+		fs::write(&file, b"hello world").unwrap();
+		let bytes = build_sync_tar(&file).unwrap();
+		// gzip magic bytes
+		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+	}
+
+	#[test]
+	fn sync_tar_directory() {
+		let dir = tempdir().unwrap();
+		fs::write(dir.path().join("a.txt"), b"file a").unwrap();
+		fs::create_dir(dir.path().join("sub")).unwrap();
+		fs::write(dir.path().join("sub/b.txt"), b"file b").unwrap();
+		let bytes = build_sync_tar(dir.path()).unwrap();
+		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+	}
+
+	#[test]
+	fn sync_tar_path_with_no_file_name() {
+		// A path that has no file_name (e.g. root "/") — tar should be empty but valid.
+		let dir = tempdir().unwrap();
+		// Empty directory — no entries other than root
+		let bytes = build_sync_tar(dir.path()).unwrap();
+		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+	}
+}

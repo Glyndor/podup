@@ -11,7 +11,8 @@ permissions:
 
 jobs:
   rust:
-    uses: Glyndor/.github/.github/workflows/rust-ci.yml@bc62ab8f95465df2b2f6f23775305f10a44e1502 # main
+    uses: Glyndor/.github/.github/workflows/rust-ci.yml@49b960ef2b033f8219e98b5314a5429c3d514a48 # main
     with:
       extra-test-os: '["macos-latest", "windows-latest"]'
-      coverage-threshold: 50
+      podman: true
+      coverage-threshold: 90
