@@ -4,6 +4,8 @@
 
 mod build;
 mod container;
+mod copy;
+pub use lifecycle::RunOptions;
 mod container_config;
 mod container_misc;
 mod health;

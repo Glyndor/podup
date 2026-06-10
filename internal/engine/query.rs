@@ -1,10 +1,12 @@
-//! Query and observation commands: ps, logs, exec, pull, remove_orphans, attach_logs.
+//! Query and observation commands: ps, logs, exec, pull, remove_orphans, attach_logs, top, port, images.
 
 use std::collections::HashMap;
 
 use bollard::container::LogOutput;
 use bollard::exec::{CreateExecOptions, StartExecResults};
-use bollard::query_parameters::{ListContainersOptions, LogsOptions, RemoveContainerOptions};
+use bollard::query_parameters::{
+	InspectContainerOptions, ListContainersOptions, LogsOptions, RemoveContainerOptions,
+};
 use futures::StreamExt;
 
 use crate::compose::types::ComposeFile;
@@ -203,6 +205,114 @@ impl Engine {
 						)
 						.await;
 				}
+			}
+		}
+		Ok(())
+	}
+
+	/// Display running processes in each service container (`docker compose top`).
+	///
+	/// If `target_services` is empty, all services are queried.
+	pub async fn top(&self, file: &ComposeFile, target_services: &[String]) -> Result<()> {
+		let names: Vec<String> = if target_services.is_empty() {
+			file.services.keys().cloned().collect()
+		} else {
+			for name in target_services {
+				if !file.services.contains_key(name) {
+					return Err(crate::error::ComposeError::ServiceNotFound(name.clone()));
+				}
+			}
+			target_services.to_vec()
+		};
+
+		for name in &names {
+			let service = &file.services[name];
+			let container_name = self.container_name(name, service);
+			match self.docker.top_processes(&container_name, None).await {
+				Ok(result) => {
+					println!("{container_name}");
+					if let Some(titles) = &result.titles {
+						println!("{}", titles.join("\t"));
+					}
+					if let Some(processes) = &result.processes {
+						for row in processes {
+							println!("{}", row.join("\t"));
+						}
+					}
+				}
+				Err(e) => tracing::warn!("top {container_name}: {e}"),
+			}
+		}
+		Ok(())
+	}
+
+	/// Print the public port for a given private port of a service container.
+	///
+	/// `proto` should be `"tcp"` or `"udp"`. Prints `HOST:PORT` to stdout.
+	pub async fn port(
+		&self,
+		file: &ComposeFile,
+		service_name: &str,
+		private_port: u16,
+		proto: &str,
+	) -> Result<()> {
+		let service = file
+			.services
+			.get(service_name)
+			.ok_or_else(|| crate::error::ComposeError::ServiceNotFound(service_name.into()))?;
+		let container_name = self.container_name(service_name, service);
+
+		let info = self
+			.docker
+			.inspect_container(&container_name, None::<InspectContainerOptions>)
+			.await?;
+
+		let key = format!("{private_port}/{proto}");
+		let binding = info
+			.network_settings
+			.and_then(|ns| ns.ports)
+			.and_then(|ports| ports.get(&key).cloned().flatten())
+			.and_then(|bindings| bindings.into_iter().next());
+
+		match binding {
+			Some(b) => {
+				let host = b.host_ip.as_deref().unwrap_or("0.0.0.0");
+				let port = b.host_port.as_deref().unwrap_or("");
+				println!("{host}:{port}");
+			}
+			None => println!(),
+		}
+		Ok(())
+	}
+
+	/// List images used by each service.
+	pub async fn images(&self, file: &ComposeFile) -> Result<()> {
+		println!(
+			"{:<30} {:<25} {:<15} {:<20}",
+			"SERVICE", "REPOSITORY", "TAG", "IMAGE ID"
+		);
+		for (name, service) in &file.services {
+			let image_ref = match &service.image {
+				Some(img) => img.clone(),
+				None if service.build.is_some() => format!("{name}:latest"),
+				None => continue,
+			};
+			match self.docker.inspect_image(&image_ref).await {
+				Ok(img) => {
+					let (repo, tag) = image_ref
+						.rsplit_once(':')
+						.map(|(r, t)| (r.to_string(), t.to_string()))
+						.unwrap_or_else(|| (image_ref.clone(), "latest".to_string()));
+					let id = img
+						.id
+						.as_deref()
+						.unwrap_or("")
+						.trim_start_matches("sha256:")
+						.get(..12)
+						.unwrap_or("");
+					println!("{name:<30} {repo:<25} {tag:<15} {id:<20}");
+				}
+				Err(e) => tracing::warn!("images {name}: {e}"),
 			}
 		}
 		Ok(())
