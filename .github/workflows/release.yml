@@ -23,6 +23,15 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
+      - name: Validate tag format
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          if ! echo "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Tag '${TAG}' does not match required format v<major>.<minor>.<patch>."
+            exit 1
+          fi
+
       - name: Tag must equal Cargo.toml version
         env:
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
@@ -157,6 +166,19 @@ jobs:
             podup-windows-x86_64.exe \
             > SHA256SUMS
 
+      - name: Sign SHA256SUMS
+        env:
+          RELEASE_SIGN_KEY: ${{ secrets.RELEASE_SIGN_KEY }}
+          PYTHONUTF8: "1"
+          PIP_BREAK_SYSTEM_PACKAGES: "1"
+        run: |
+          if [ -z "$RELEASE_SIGN_KEY" ]; then
+            echo "::error::RELEASE_SIGN_KEY secret is not configured; refusing to release unsigned checksums."
+            exit 1
+          fi
+          python3 -m pip install --quiet cryptography==48.0.0
+          python3 .github/scripts/sign.py "$RELEASE_SIGN_KEY" SHA256SUMS
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -176,4 +198,5 @@ jobs:
             podup-windows-x86_64.exe \
             podup-windows-x86_64.exe.sig \
             SHA256SUMS \
+            SHA256SUMS.sig \
             install.sh

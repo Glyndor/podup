@@ -55,8 +55,10 @@ fi
 
 if [[ "$VERSION" == "latest" ]]; then
 	BASE_URL="https://github.com/${REPO}/releases/latest/download"
-else
+elif [[ "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 	BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+else
+	fail "PODUP_VERSION must be 'latest' or a semver tag like v1.2.3, got: ${VERSION}"
 fi
 
 TMP_DIR="$(mktemp -d)"
@@ -67,8 +69,40 @@ curl --proto '=https' --tlsv1.2 -fsSL -o "${TMP_DIR}/${ARTIFACT}" \
 	"${BASE_URL}/${ARTIFACT}" || fail "Download failed: ${BASE_URL}/${ARTIFACT}"
 curl --proto '=https' --tlsv1.2 -fsSL -o "${TMP_DIR}/SHA256SUMS" \
 	"${BASE_URL}/SHA256SUMS" || fail "Download failed: ${BASE_URL}/SHA256SUMS"
+curl --proto '=https' --tlsv1.2 -fsSL -o "${TMP_DIR}/SHA256SUMS.sig" \
+	"${BASE_URL}/SHA256SUMS.sig" || fail "Download failed: ${BASE_URL}/SHA256SUMS.sig"
 
 # --- Verify ------------------------------------------------------------------
+
+log_info "Verifying SHA256SUMS signature ..."
+# Base64-encoded raw Ed25519 public key (32 bytes) matching RELEASE_SIGN_KEY.
+# Set PODUP_RELEASE_PUBKEY_B64 to override (e.g. for testing a fork).
+PODUP_RELEASE_PUBKEY_B64="${PODUP_RELEASE_PUBKEY_B64:-}"
+if [[ -n "$PODUP_RELEASE_PUBKEY_B64" ]]; then
+	if command -v python3 >/dev/null 2>&1 && python3 -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey" 2>/dev/null; then
+		if python3 - "${TMP_DIR}/SHA256SUMS.sig" "${TMP_DIR}/SHA256SUMS" "$PODUP_RELEASE_PUBKEY_B64" <<'PYEOF'
+import base64, sys
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from cryptography.exceptions import InvalidSignature
+sig_file, data_file, pubkey_b64 = sys.argv[1], sys.argv[2], sys.argv[3]
+key = Ed25519PublicKey.from_public_bytes(base64.b64decode(pubkey_b64 + "=="))
+try:
+    key.verify(open(sig_file, "rb").read(), open(data_file, "rb").read())
+    sys.exit(0)
+except InvalidSignature:
+    sys.exit(1)
+PYEOF
+		then
+			log_ok "SHA256SUMS signature verified"
+		else
+			fail "SHA256SUMS signature verification failed — release may be tampered"
+		fi
+	else
+		log_info "python3+cryptography not available — skipping SHA256SUMS signature verification"
+	fi
+else
+	log_info "PODUP_RELEASE_PUBKEY_B64 not set — skipping SHA256SUMS signature verification"
+fi
 
 log_info "Verifying SHA-256 checksum ..."
 (cd "$TMP_DIR" && grep " ${ARTIFACT}\$" SHA256SUMS | "${SHA256_CMD[@]}" -c --quiet -) \
