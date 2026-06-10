@@ -1856,4 +1856,188 @@ mod cli_tests {
 			.unwrap();
 		assert!(pull.status.success());
 	}
+
+	#[tokio::test]
+	async fn cli_stop_and_start_subcommands() {
+		if super::podman().await.is_none() {
+			return;
+		}
+		let dir = tempdir().unwrap();
+		let compose = dir.path().join("docker-compose.yml");
+		let proj = format!("t{}-clss", std::process::id());
+		fs::write(
+			&compose,
+			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+		)
+		.unwrap();
+
+		Command::new(bin())
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"up",
+				"--detach",
+			])
+			.output()
+			.unwrap();
+
+		let stop = Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "stop"])
+			.output()
+			.unwrap();
+		assert!(stop.status.success(), "stop failed: {:?}", stop.stderr);
+
+		let start = Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "start"])
+			.output()
+			.unwrap();
+		assert!(start.status.success(), "start failed: {:?}", start.stderr);
+
+		Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "down"])
+			.output()
+			.unwrap();
+	}
+
+	#[tokio::test]
+	async fn cli_kill_subcommand() {
+		if super::podman().await.is_none() {
+			return;
+		}
+		let dir = tempdir().unwrap();
+		let compose = dir.path().join("docker-compose.yml");
+		let proj = format!("t{}-clkl", std::process::id());
+		fs::write(
+			&compose,
+			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+		)
+		.unwrap();
+
+		Command::new(bin())
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"up",
+				"--detach",
+			])
+			.output()
+			.unwrap();
+
+		let kill = Command::new(bin())
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"kill",
+				"--signal",
+				"SIGTERM",
+			])
+			.output()
+			.unwrap();
+		assert!(kill.status.success(), "kill failed: {:?}", kill.stderr);
+
+		Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "down"])
+			.output()
+			.unwrap();
+	}
+
+	#[tokio::test]
+	async fn cli_rm_subcommand() {
+		if super::podman().await.is_none() {
+			return;
+		}
+		let dir = tempdir().unwrap();
+		let compose = dir.path().join("docker-compose.yml");
+		let proj = format!("t{}-clrm", std::process::id());
+		fs::write(
+			&compose,
+			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+		)
+		.unwrap();
+
+		Command::new(bin())
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"up",
+				"--detach",
+			])
+			.output()
+			.unwrap();
+
+		Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "stop"])
+			.output()
+			.unwrap();
+
+		let rm = Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "rm"])
+			.output()
+			.unwrap();
+		assert!(rm.status.success(), "rm failed: {:?}", rm.stderr);
+	}
+
+	#[tokio::test]
+	async fn cli_up_with_build_flag() {
+		if super::podman().await.is_none() {
+			return;
+		}
+		let dir = tempdir().unwrap();
+		let proj = format!("t{}-clbld", std::process::id());
+		fs::write(dir.path().join("Dockerfile"), "FROM alpine:latest\n").unwrap();
+		let compose = dir.path().join("docker-compose.yml");
+		fs::write(
+			&compose,
+			"services:\n  web:\n    build: .\n    command: [\"sleep\", \"infinity\"]\n",
+		)
+		.unwrap();
+
+		let up = Command::new(bin())
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"up",
+				"--detach",
+				"--build",
+			])
+			.output()
+			.unwrap();
+		assert!(up.status.success(), "up --build failed: {:?}", up.stderr);
+
+		Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "down"])
+			.output()
+			.unwrap();
+	}
+
+	#[tokio::test]
+	async fn cli_build_subcommand() {
+		if super::podman().await.is_none() {
+			return;
+		}
+		let dir = tempdir().unwrap();
+		fs::write(dir.path().join("Dockerfile"), "FROM alpine:latest\n").unwrap();
+		let compose = dir.path().join("docker-compose.yml");
+		fs::write(
+			&compose,
+			"services:\n  web:\n    build: .\n    command: [\"sleep\", \"infinity\"]\n",
+		)
+		.unwrap();
+
+		let build = Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "build"])
+			.output()
+			.unwrap();
+		assert!(build.status.success(), "build failed: {:?}", build.stderr);
+	}
 }
