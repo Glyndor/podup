@@ -1,9 +1,11 @@
 //! Service lifecycle commands: up, down, start, stop, restart, kill, rm, pause, unpause, run.
 
+use std::collections::{HashMap, HashSet};
+
 use bollard::container::LogOutput;
 use bollard::query_parameters::{
-	KillContainerOptions, LogsOptions, RemoveContainerOptions, StartContainerOptions,
-	StopContainerOptions, WaitContainerOptions,
+	KillContainerOptions, ListContainersOptions, LogsOptions, RemoveContainerOptions,
+	StartContainerOptions, StopContainerOptions, WaitContainerOptions,
 };
 use futures::StreamExt;
 use tracing::info;
@@ -41,113 +43,144 @@ impl Engine {
 		target_services: &[String],
 		no_recreate: bool,
 	) -> Result<()> {
-		let order = crate::compose::resolve_order(file)?;
-		let active = active_profiles_set(active_profiles);
+		let r: Result<()> = async {
+			let order = crate::compose::resolve_order(file)?;
+			let active = active_profiles_set(active_profiles);
 
-		let target_set: Option<std::collections::HashSet<String>> = if target_services.is_empty() {
-			None
-		} else {
-			let mut set = std::collections::HashSet::new();
-			let mut stack: Vec<String> = target_services.to_vec();
-			while let Some(name) = stack.pop() {
-				if !set.insert(name.clone()) {
-					continue;
-				}
-				if let Some(service) = file.services.get(&name) {
-					for dep in service.depends_on.service_names() {
-						if !set.contains(&dep) {
-							stack.push(dep);
+			let target_set: Option<HashSet<String>> = if target_services.is_empty() {
+				None
+			} else {
+				let mut set = HashSet::new();
+				let mut stack: Vec<String> = target_services.to_vec();
+				while let Some(name) = stack.pop() {
+					if !set.insert(name.clone()) {
+						continue;
+					}
+					if let Some(service) = file.services.get(&name) {
+						for dep in service.depends_on.service_names() {
+							if !set.contains(&dep) {
+								stack.push(dep);
+							}
 						}
 					}
 				}
-			}
-			Some(set)
-		};
+				Some(set)
+			};
 
-		self.create_networks(file).await?;
-		self.create_volumes(file).await?;
+			// PERF-003: prefetch running containers once instead of one API call per replica.
+			let running: HashSet<String> = if no_recreate {
+				let mut filters: HashMap<String, Vec<String>> = HashMap::new();
+				filters.insert(
+					"label".to_string(),
+					vec![format!("podup.project={}", self.project)],
+				);
+				self.docker
+					.list_containers(Some(ListContainersOptions {
+						all: false,
+						filters: Some(filters),
+						..Default::default()
+					}))
+					.await?
+					.into_iter()
+					.flat_map(|c| c.names.unwrap_or_default())
+					.map(|n| n.trim_start_matches('/').to_string())
+					.collect()
+			} else {
+				HashSet::new()
+			};
 
-		for name in &order {
-			if let Some(ref set) = target_set {
-				if !set.contains(name) {
+			self.create_networks(file).await?;
+			self.create_volumes(file).await?;
+
+			for name in &order {
+				if let Some(ref set) = target_set {
+					if !set.contains(name) {
+						continue;
+					}
+				}
+				let service = &file.services[name];
+
+				if !service_in_profiles(service, &active) {
+					tracing::debug!("skipping {name}: no active profile match");
 					continue;
 				}
-			}
-			let service = &file.services[name];
 
-			if !service_in_profiles(service, &active) {
-				tracing::debug!("skipping {name}: no active profile match");
-				continue;
-			}
+				for dep in service.depends_on.service_names() {
+					let condition = service.depends_on.condition_for(&dep);
+					let dep_service = match file.services.get(&dep) {
+						Some(s) => s,
+						None => continue,
+					};
+					if !service_in_profiles(dep_service, &active) {
+						continue;
+					}
+					let dep_container = self.container_name(&dep, dep_service);
 
-			for dep in service.depends_on.service_names() {
-				let condition = service.depends_on.condition_for(&dep);
-				let dep_service = match file.services.get(&dep) {
-					Some(s) => s,
-					None => continue,
-				};
-				if !service_in_profiles(dep_service, &active) {
-					continue;
-				}
-				let dep_container = self.container_name(&dep, dep_service);
-
-				match condition {
-					ServiceCondition::ServiceStarted => {}
-					ServiceCondition::ServiceHealthy => {
-						if dep_service
-							.healthcheck
-							.as_ref()
-							.map(|h| !h.is_disabled())
-							.unwrap_or(false)
-						{
-							self.wait_healthy(&dep_container, dep_service).await?;
-						} else {
-							tracing::debug!(
-								"{dep} requested service_healthy but has no healthcheck — skipping wait"
-							);
+					match condition {
+						ServiceCondition::ServiceStarted => {}
+						ServiceCondition::ServiceHealthy => {
+							if dep_service
+								.healthcheck
+								.as_ref()
+								.map(|h| !h.is_disabled())
+								.unwrap_or(false)
+							{
+								self.wait_healthy(&dep_container, dep_service).await?;
+							} else {
+								tracing::debug!(
+									"{dep} requested service_healthy but has no healthcheck — skipping wait"
+								);
+							}
+						}
+						ServiceCondition::ServiceCompletedSuccessfully => {
+							self.wait_completed(&dep_container).await?;
 						}
 					}
-					ServiceCondition::ServiceCompletedSuccessfully => {
-						self.wait_completed(&dep_container).await?;
+				}
+
+				let policy = service.pull_policy.as_deref().unwrap_or("missing");
+				match (service.build.is_some(), policy) {
+					(true, _) => self.build_service(name, service).await?,
+					(false, "never") => {}
+					(false, _) => self.pull_image(service).await?,
+				}
+
+				let replicas = service
+					.scale
+					.or(service.deploy.as_ref().and_then(|d| d.replicas))
+					.unwrap_or(1) as usize;
+
+				for i in 1..=replicas {
+					let container_name = if replicas == 1 {
+						self.container_name(name, service)
+					} else {
+						format!("{}-{i}", self.container_name(name, service))
+					};
+					if no_recreate && running.contains(&container_name) {
+						info!("{container_name} already running — skipping recreate");
+						continue;
+					}
+					self.create_and_start(&container_name, name, service, file)
+						.await?;
+					self.connect_extra_networks(&container_name, service, file)
+						.await?;
+					info!("started {container_name}");
+
+					for hook in &service.post_start {
+						self.run_lifecycle_hook(&container_name, hook).await?;
 					}
 				}
 			}
 
-			let policy = service.pull_policy.as_deref().unwrap_or("missing");
-			match (service.build.is_some(), policy) {
-				(true, _) => self.build_service(name, service).await?,
-				(false, "never") => {}
-				(false, _) => self.pull_image(service).await?,
-			}
-
-			let replicas = service
-				.scale
-				.or(service.deploy.as_ref().and_then(|d| d.replicas))
-				.unwrap_or(1) as usize;
-
-			for i in 1..=replicas {
-				let container_name = if replicas == 1 {
-					self.container_name(name, service)
-				} else {
-					format!("{}-{i}", self.container_name(name, service))
-				};
-				if no_recreate && self.is_container_running(&container_name).await {
-					info!("{container_name} already running — skipping recreate");
-					continue;
-				}
-				self.create_and_start(&container_name, name, service, file)
-					.await?;
-				self.connect_extra_networks(&container_name, service, file)
-					.await?;
-				info!("started {container_name}");
-
-				for hook in &service.post_start {
-					self.run_lifecycle_hook(&container_name, hook).await?;
-				}
-			}
+			Ok(())
 		}
-
-		Ok(())
+		.await;
+		// STAGE-001: clean up staging dir on partial failure so inline secret/config
+		// files are not left behind when up errors mid-way.
+		if r.is_err() {
+			self.cleanup_temp_dir();
+		}
+		r
 	}
 
 	pub async fn down(&self, file: &ComposeFile) -> Result<()> {

@@ -18,12 +18,10 @@ mod volume;
 mod volume_mounts;
 mod watch;
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 
 use bollard::container::LogOutput;
 use bollard::exec::{CreateExecOptions, StartExecResults};
-use bollard::query_parameters::ListContainersOptions;
 use bollard::Docker;
 use futures::StreamExt;
 
@@ -118,21 +116,6 @@ impl Engine {
 		Ok(())
 	}
 
-	pub(super) async fn is_container_running(&self, container_name: &str) -> bool {
-		// list_containers (not inspect_container) avoids Bollard deserialization
-		// failures when Podman returns "stopped" state.
-		let mut filters = HashMap::new();
-		filters.insert("name".to_string(), vec![container_name.to_string()]);
-		self.docker
-			.list_containers(Some(ListContainersOptions {
-				all: false,
-				filters: Some(filters),
-				..Default::default()
-			}))
-			.await
-			.map(|v| !v.is_empty())
-			.unwrap_or(false)
-	}
 
 	pub(super) fn container_name(&self, service_name: &str, service: &Service) -> String {
 		service
