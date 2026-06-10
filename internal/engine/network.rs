@@ -25,7 +25,8 @@ impl Engine {
 			let network_name = config
 				.as_ref()
 				.and_then(|c| c.name.as_deref())
-				.unwrap_or(name);
+				.map(|s| s.to_string())
+				.unwrap_or_else(|| format!("{}_{}", self.project, name));
 
 			let external = config.as_ref().and_then(|c| c.external).unwrap_or(false);
 			if external {
@@ -54,7 +55,7 @@ impl Engine {
 				.map(build_ipam);
 
 			let request = NetworkCreateRequest {
-				name: network_name.to_string(),
+				name: network_name.clone(),
 				driver: Some(driver.clone()),
 				internal: config.as_ref().and_then(|c| c.internal),
 				attachable: config.as_ref().and_then(|c| c.attachable),
@@ -96,7 +97,7 @@ impl Engine {
 
 		let network_names = service.networks.names();
 		for network in network_names.iter().skip(1) {
-			let full_name = resolve_network_name(network, file);
+			let full_name = resolve_network_name(network, file, &self.project);
 			let endpoint_config =
 				build_endpoint_settings(service.networks.config_for(network), file);
 			self.docker
@@ -157,6 +158,7 @@ pub(super) fn build_endpoint_settings(
 pub(super) fn resolve_network_mode(
 	service: &Service,
 	file: &ComposeFile,
+	project: &str,
 ) -> (Option<String>, Option<String>) {
 	if let Some(mode) = &service.network_mode {
 		return (Some(mode.clone()), None);
@@ -165,18 +167,23 @@ pub(super) fn resolve_network_mode(
 	if networks.is_empty() {
 		(None, None)
 	} else {
-		let first = resolve_network_name(&networks[0], file);
+		let first = resolve_network_name(&networks[0], file, project);
 		(None, Some(first))
 	}
 }
 
-pub(super) fn resolve_network_name(network: &str, file: &ComposeFile) -> String {
+/// Resolve the actual network name on the host for a compose network key.
+///
+/// If the network config has an explicit `name:`, that takes precedence.
+/// Otherwise the name is prefixed with `{project}_` to avoid collisions
+/// between projects that use the same compose key (e.g. "default").
+pub(super) fn resolve_network_name(network: &str, file: &ComposeFile, project: &str) -> String {
 	file.networks
 		.get(network)
 		.and_then(|c| c.as_ref())
 		.and_then(|c| c.name.as_deref())
-		.unwrap_or(network)
-		.to_string()
+		.map(|s| s.to_string())
+		.unwrap_or_else(|| format!("{project}_{network}"))
 }
 
 fn build_ipam(ipam: &IpamConfig) -> Ipam {
@@ -235,15 +242,15 @@ mod tests {
 	}
 
 	#[test]
-	fn resolve_network_name_key_not_found_returns_key() {
+	fn resolve_network_name_key_not_found_prefixes_project() {
 		let file = empty_file();
-		assert_eq!(resolve_network_name("mynet", &file), "mynet");
+		assert_eq!(resolve_network_name("mynet", &file, "proj"), "proj_mynet");
 	}
 
 	#[test]
-	fn resolve_network_name_uses_config_name() {
+	fn resolve_network_name_uses_config_name_over_prefix() {
 		let file = file_with_named_network("mynet", "custom-net-name");
-		assert_eq!(resolve_network_name("mynet", &file), "custom-net-name");
+		assert_eq!(resolve_network_name("mynet", &file, "proj"), "custom-net-name");
 	}
 
 	#[test]
@@ -253,7 +260,7 @@ mod tests {
 			..Default::default()
 		};
 		let file = empty_file();
-		let (mode, first) = resolve_network_mode(&svc, &file);
+		let (mode, first) = resolve_network_mode(&svc, &file, "proj");
 		assert_eq!(mode.as_deref(), Some("host"));
 		assert!(first.is_none());
 	}
@@ -262,7 +269,7 @@ mod tests {
 	fn resolve_network_mode_no_networks() {
 		let svc = Service::default();
 		let file = empty_file();
-		let (mode, first) = resolve_network_mode(&svc, &file);
+		let (mode, first) = resolve_network_mode(&svc, &file, "proj");
 		assert!(mode.is_none());
 		assert!(first.is_none());
 	}

@@ -28,7 +28,8 @@ impl Engine {
 			let volume_name = config
 				.as_ref()
 				.and_then(|c| c.name.as_deref())
-				.unwrap_or(name);
+				.map(|s| s.to_string())
+				.unwrap_or_else(|| format!("{}_{}", self.project, name));
 
 			let mut labels: HashMap<String, String> = config
 				.as_ref()
@@ -47,7 +48,7 @@ impl Engine {
 				.unwrap_or_default();
 
 			let options = VolumeCreateRequest {
-				name: Some(volume_name.to_string()),
+				name: Some(volume_name.clone()),
 				driver: Some(driver.clone()),
 				driver_opts: if driver_opts.is_empty() {
 					None

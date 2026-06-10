@@ -70,7 +70,7 @@ impl Engine {
 
 		let restart_policy = build_restart_policy(service);
 		let log_config = build_log_config(service.logging.as_ref());
-		let (network_mode, first_network) = resolve_network_mode(service, file);
+		let (network_mode, first_network) = resolve_network_mode(service, file, &self.project);
 		let label_file_labels = build_label_file_labels(service, &self.base_dir);
 
 		let mut labels = service.labels.to_map();
