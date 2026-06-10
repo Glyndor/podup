@@ -212,10 +212,20 @@ impl Engine {
 		let cmd = service.command.as_ref().map(|c| c.to_exec());
 		let entrypoint = service.entrypoint.as_ref().map(|c| c.to_exec());
 
+		if service.mac_address.is_some() {
+			tracing::warn!(
+				"service \"{service_name}\": top-level mac_address is deprecated; \
+				move it to networks.<network>.mac_address"
+			);
+		}
+
 		let networking_config = first_network.as_ref().map(|net| {
 			let mut endpoints = HashMap::new();
 			let svc_net_cfg = service.networks.config_for(net);
-			endpoints.insert(net.clone(), build_endpoint_settings(svc_net_cfg, file));
+			endpoints.insert(
+				net.clone(),
+				build_endpoint_settings(svc_net_cfg, file, service.mac_address.as_deref()),
+			);
 			NetworkingConfig {
 				endpoints_config: Some(endpoints),
 			}
