@@ -32,10 +32,15 @@ impl Engine {
 		service: &Service,
 		file: &ComposeFile,
 	) -> Result<()> {
-		let image = service
-			.image
-			.as_deref()
-			.ok_or_else(|| ComposeError::NoImageOrBuild(service_name.into()))?;
+		let derived_image;
+		let image: &str = if let Some(img) = service.image.as_deref() {
+			img
+		} else if service.build.is_some() {
+			derived_image = format!("{}:latest", service_name);
+			&derived_image
+		} else {
+			return Err(ComposeError::NoImageOrBuild(service_name.into()));
+		};
 
 		let env = build_env(service, &self.base_dir)?;
 
