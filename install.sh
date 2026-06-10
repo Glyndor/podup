@@ -3,7 +3,7 @@
 # podup installer — downloads a release binary, verifies it and installs it.
 #
 # Usage:
-#   curl -fsSL https://github.com/Glyndor/podup/releases/latest/download/install.sh | bash
+#   curl -fsSL https://glyndor.net/install/podup | bash
 #
 # Environment:
 #   PODUP_VERSION      Release tag to install (e.g. v0.3.0). Default: latest.

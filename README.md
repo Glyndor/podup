@@ -28,7 +28,7 @@ flowchart LR
 ## 📥 Install
 
 ```bash
-curl -fsSL https://github.com/Glyndor/podup/releases/latest/download/install.sh | bash
+curl -fsSL https://glyndor.net/install/podup | bash
 ```
 
 Binaries for Linux and macOS (x86_64 and arm64) plus Windows (x86_64),
