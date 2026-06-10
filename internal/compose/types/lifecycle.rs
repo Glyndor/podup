@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::env::EnvVars;
 use super::primitives::Command;
 
+/// `depends_on:` value — absent, a bare list of service names, or a map of service name to condition.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(untagged)]
 pub enum DependsOn {
@@ -55,6 +56,7 @@ impl DependsOn {
 	}
 }
 
+/// Long-form per-dependency entry in `depends_on:` — holds the condition and restart flag.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DependsOnCondition {
 	pub condition: ServiceCondition,
@@ -64,6 +66,7 @@ pub struct DependsOnCondition {
 	pub required: Option<bool>,
 }
 
+/// Condition a dependency must satisfy before the dependent service starts.
 #[derive(Debug, Clone, Deserialize, Serialize, Default, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceCondition {
@@ -73,6 +76,7 @@ pub enum ServiceCondition {
 	ServiceCompletedSuccessfully,
 }
 
+/// Inline `healthcheck:` block. `disable: true` overrides any inherited health check.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct HealthCheck {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -100,6 +104,7 @@ impl HealthCheck {
 	}
 }
 
+/// A single `post_start` or `pre_stop` lifecycle hook entry.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LifecycleHook {
 	pub command: Command,
@@ -113,6 +118,7 @@ pub struct LifecycleHook {
 	pub environment: EnvVars,
 }
 
+/// Service-level `restart:` policy — `no`, `always`, `unless-stopped`, or `on-failure` (with optional max-retries).
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub enum RestartPolicy {
 	No,

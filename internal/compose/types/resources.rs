@@ -6,6 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
+/// `ulimits:` entry — either a single integer (soft == hard) or an explicit `{soft, hard}` pair.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum UlimitConfig {
@@ -29,6 +30,7 @@ impl UlimitConfig {
 	}
 }
 
+/// `blkio_config:` service field — controls I/O weight and per-device rate limits.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct BlkioConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -45,12 +47,14 @@ pub struct BlkioConfig {
 	pub device_write_iops: Vec<BlkioRateDevice>,
 }
 
+/// Per-device I/O weight entry under `blkio_config.weight_device`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BlkioWeightDevice {
 	pub path: String,
 	pub weight: u16,
 }
 
+/// Per-device rate limit under `blkio_config` — used for both bps and iops limits.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BlkioRateDevice {
 	pub path: String,

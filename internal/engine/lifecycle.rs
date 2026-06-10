@@ -32,10 +32,12 @@ pub struct RunOptions {
 }
 
 impl Engine {
+	/// Start all services defined in the compose file, creating containers that do not exist.
 	pub async fn up(&self, file: &ComposeFile) -> Result<()> {
 		self.up_with_options(file, false, &[], &[], false).await
 	}
 
+	/// Start services with explicit options. When `no_recreate` is true, running containers are left untouched. On partial failure, staging directories are cleaned up.
 	pub async fn up_with_options(
 		&self,
 		file: &ComposeFile,
@@ -68,7 +70,7 @@ impl Engine {
 				Some(set)
 			};
 
-			// PERF-003: prefetch running containers once instead of one API call per replica.
+			// prefetch running containers once instead of one API call per replica.
 			let running: HashSet<String> = if no_recreate {
 				let mut filters: HashMap<String, Vec<String>> = HashMap::new();
 				filters.insert(
@@ -176,7 +178,7 @@ impl Engine {
 			Ok(())
 		}
 		.await;
-		// STAGE-001: clean up staging dir on partial failure so inline secret/config
+		// clean up staging dir on partial failure so inline secret/config
 		// files are not left behind when up errors mid-way.
 		if r.is_err() {
 			self.cleanup_temp_dir();
@@ -184,10 +186,12 @@ impl Engine {
 		r
 	}
 
+	/// Stop and remove all containers for the project. Does not remove volumes unless `remove_volumes` is set.
 	pub async fn down(&self, file: &ComposeFile) -> Result<()> {
 		self.down_with_options(file, false).await
 	}
 
+	/// Stop and remove services in reverse dependency order. Optionally removes named volumes and orphaned containers.
 	pub async fn down_with_options(&self, file: &ComposeFile, remove_volumes: bool) -> Result<()> {
 		let mut order = crate::compose::resolve_order(file)?;
 		order.reverse();
@@ -226,7 +230,6 @@ impl Engine {
 			}
 		}
 
-		// Remove non-external networks declared in the compose file.
 		for (key, config) in &file.networks {
 			let external = config.as_ref().and_then(|c| c.external).unwrap_or(false);
 			if external {
@@ -242,7 +245,6 @@ impl Engine {
 			}
 		}
 
-		// Remove non-external named volumes when --volumes is requested.
 		if remove_volumes {
 			for (key, config) in &file.volumes {
 				let external = config.as_ref().and_then(|c| c.external).unwrap_or(false);
@@ -276,6 +278,7 @@ impl Engine {
 		Ok(())
 	}
 
+	/// Restart the named service (or all services). Dependents with a `restart` condition in `depends_on` are also restarted.
 	pub async fn restart(&self, file: &ComposeFile, service_name: Option<&str>) -> Result<()> {
 		let names: Vec<String> = if let Some(svc) = service_name {
 			if !file.services.contains_key(svc) {

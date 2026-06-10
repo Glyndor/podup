@@ -106,7 +106,6 @@ impl EnvFile {
 	}
 
 	/// Return just the paths (strips `required` / `format` info).
-	/// Kept for test compatibility; prefer `to_entries()` in engine code.
 	pub fn to_list(&self) -> Vec<String> {
 		self.to_entries()
 			.into_iter()

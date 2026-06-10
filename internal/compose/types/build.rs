@@ -10,10 +10,7 @@ use std::collections::HashMap;
 
 use super::{EnvVars, Labels, StringOrList, UlimitConfig};
 
-// ---------------------------------------------------------------------------
-// IncludeConfig
-// ---------------------------------------------------------------------------
-
+/// Compose `include:` directive — either a bare file path or a long-form block.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum IncludeConfig {
@@ -36,10 +33,7 @@ impl IncludeConfig {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// ExtendsConfig
-// ---------------------------------------------------------------------------
-
+/// Compose `extends:` directive — either a bare service name or a long-form `{service, file}` block.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum ExtendsConfig {
@@ -67,10 +61,7 @@ impl ExtendsConfig {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// BuildConfig
-// ---------------------------------------------------------------------------
-
+/// Compose `build:` directive — either a bare context path or a full build-config block.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 #[allow(clippy::large_enum_variant)]

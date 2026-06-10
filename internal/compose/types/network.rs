@@ -10,10 +10,7 @@ use std::collections::HashMap;
 
 use super::Labels;
 
-// ---------------------------------------------------------------------------
-// ServiceNetworks
-// ---------------------------------------------------------------------------
-
+/// `networks:` value at service level — absent, a bare list of network names, or a detailed map.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(untagged)]
 pub enum ServiceNetworks {
@@ -40,10 +37,7 @@ impl ServiceNetworks {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// ServiceNetworkConfig
-// ---------------------------------------------------------------------------
-
+/// Per-network attachment options: aliases, static IPv4/IPv6, link-local addresses, and priority.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ServiceNetworkConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -66,10 +60,7 @@ pub struct ServiceNetworkConfig {
 	pub interface_name: Option<String>,
 }
 
-// ---------------------------------------------------------------------------
-// Top-level NetworkConfig
-// ---------------------------------------------------------------------------
-
+/// Named network definition in the top-level `networks:` block.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct NetworkConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -94,10 +85,7 @@ pub struct NetworkConfig {
 	pub labels: Labels,
 }
 
-// ---------------------------------------------------------------------------
-// IPAM
-// ---------------------------------------------------------------------------
-
+/// `ipam:` block inside a top-level network definition.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct IpamConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -108,6 +96,7 @@ pub struct IpamConfig {
 	pub options: HashMap<String, String>,
 }
 
+/// A single subnet/range entry within `ipam.config`.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct IpamPool {
 	#[serde(skip_serializing_if = "Option::is_none")]

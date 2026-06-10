@@ -77,7 +77,6 @@ pub(super) fn staging_base() -> Result<PathBuf> {
 pub(super) fn create_private_subdir(dir: &Path) -> Result<()> {
 	use std::os::unix::fs::DirBuilderExt;
 
-	// Create dir with 0o700 so only the owning user can list/enter it.
 	std::fs::DirBuilder::new()
 		.recursive(true)
 		.mode(0o700)
@@ -98,7 +97,7 @@ pub(super) fn write_private_file(path: &Path, content: &[u8]) -> Result<()> {
 	use std::io::Write;
 	use std::os::unix::fs::OpenOptionsExt;
 
-	// Create file with 0o600 atomically — no world-readable window before chmod.
+	// 0o600 on create avoids a world-readable window before any chmod.
 	let mut file = std::fs::OpenOptions::new()
 		.write(true)
 		.create(true)

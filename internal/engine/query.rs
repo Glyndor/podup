@@ -15,6 +15,7 @@ use crate::error::{ComposeError, Result};
 use super::Engine;
 
 impl Engine {
+	/// List containers for this project: name, image, command, state, and port bindings.
 	pub async fn ps(&self, _file: &ComposeFile) -> Result<()> {
 		let label = format!("podup.project={}", self.project);
 		let mut filters: HashMap<String, Vec<String>> = HashMap::new();
@@ -59,6 +60,7 @@ impl Engine {
 		Ok(())
 	}
 
+	/// Stream logs. When `service_name` is `None`, streams from all services. When `follow` is true, tails indefinitely.
 	pub async fn logs(
 		&self,
 		file: &ComposeFile,
@@ -105,6 +107,7 @@ impl Engine {
 		Ok(())
 	}
 
+	/// Run a command in the first replica of the named service. Exits with the command's exit code.
 	pub async fn exec(
 		&self,
 		file: &ComposeFile,
@@ -160,6 +163,7 @@ impl Engine {
 		Ok(())
 	}
 
+	/// Pull images for all services that declare an `image:` key, concurrently.
 	pub async fn pull(&self, file: &ComposeFile) -> Result<()> {
 		let futs: Vec<_> = file
 			.services
@@ -175,6 +179,7 @@ impl Engine {
 		Ok(())
 	}
 
+	/// Remove containers labelled for this project that are not defined in the current compose file.
 	pub async fn remove_orphans(&self, file: &ComposeFile) -> Result<()> {
 		let label = format!("podup.project={}", self.project);
 		let mut filters: HashMap<String, Vec<String>> = HashMap::new();
@@ -326,6 +331,7 @@ impl Engine {
 		Ok(())
 	}
 
+	/// Attach to log streams for all services with `attach: true` (the default). Streams are multiplexed to stdout with a service-name prefix.
 	pub async fn attach_logs(&self, file: &ComposeFile) -> Result<()> {
 		use bollard::query_parameters::LogsOptions;
 		use futures::StreamExt;

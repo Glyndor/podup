@@ -97,7 +97,7 @@ impl Engine {
 
 		info!("building {tag} from {}", context_path.display());
 
-		// PERF-004: directory walk + file I/O are blocking; run off the tokio thread pool.
+		// directory walk + file I/O are blocking; run off the tokio thread pool.
 		let (tar_bytes, dockerfile_name) = if let Some(inline) = build.dockerfile_inline() {
 			let ctx = context_path.clone();
 			let inline_s = inline.to_string();
@@ -225,7 +225,6 @@ impl Engine {
 			}
 		}
 
-		// Apply additional tags.
 		for extra_tag in build.tags() {
 			let (repo, tag_str) = extra_tag
 				.rsplit_once(':')
@@ -262,7 +261,6 @@ fn build_context_tar_with_inline(context: &Path, inline: &str) -> Result<(Vec<u8
 	let encoder = GzEncoder::new(Vec::new(), Compression::default());
 	let mut tar = tar::Builder::new(encoder);
 
-	// Inline Dockerfile first.
 	let mut header = tar::Header::new_gnu();
 	header.set_size(inline.len() as u64);
 	header.set_mode(0o644);
@@ -346,7 +344,6 @@ fn build_context_tar_with_target(
 	let encoder = GzEncoder::new(Vec::new(), Compression::default());
 	let mut tar = tar::Builder::new(encoder);
 
-	// Write truncated Dockerfile first.
 	let df_bytes = truncated.as_bytes();
 	let mut header = tar::Header::new_gnu();
 	header.set_size(df_bytes.len() as u64);
@@ -355,7 +352,6 @@ fn build_context_tar_with_target(
 	tar.append_data(&mut header, dockerfile, df_bytes)
 		.map_err(|e| ComposeError::Build(e.to_string()))?;
 
-	// Add context, skipping the original Dockerfile (already wrote truncated version).
 	for abs in super::walk_dir(context).map_err(ComposeError::Io)? {
 		let rel = abs
 			.strip_prefix(context)

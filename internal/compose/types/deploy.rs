@@ -11,10 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Labels;
 
-// ---------------------------------------------------------------------------
-// DeployConfig
-// ---------------------------------------------------------------------------
-
+/// `deploy:` service key — resource limits, replica count, restart and update policies.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DeployConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -37,10 +34,7 @@ pub struct DeployConfig {
 	pub placement: Option<DeployPlacement>,
 }
 
-// ---------------------------------------------------------------------------
-// Resources
-// ---------------------------------------------------------------------------
-
+/// Resource constraints under `deploy.resources:` — holds `limits` and `reservations`.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ResourcesConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -49,6 +43,7 @@ pub struct ResourcesConfig {
 	pub reservations: Option<ResourceSpec>,
 }
 
+/// A single resource specification: CPU shares, memory limit, pids limit, and device access.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ResourceSpec {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -97,10 +92,6 @@ impl CountOrAll {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Deploy policies
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
 mod tests {
 	use super::CountOrAll;
@@ -116,6 +107,7 @@ mod tests {
 	}
 }
 
+/// Restart policy under `deploy.restart_policy:` — distinct from the service-level `restart:` string.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DeployRestartPolicy {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -128,6 +120,7 @@ pub struct DeployRestartPolicy {
 	pub window: Option<String>,
 }
 
+/// Update (and rollback) configuration — reused for both `deploy.update_config` and `deploy.rollback_config`.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DeployUpdateConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -144,6 +137,7 @@ pub struct DeployUpdateConfig {
 	pub order: Option<String>,
 }
 
+/// Placement constraints and preferences controlling which nodes a service's containers may run on.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DeployPlacement {
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]

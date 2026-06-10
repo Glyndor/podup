@@ -117,7 +117,7 @@ impl Engine {
 }
 
 // ---------------------------------------------------------------------------
-// Free helpers (pub(super) so container.rs can call them)
+// Free helpers
 // ---------------------------------------------------------------------------
 
 pub(super) fn build_endpoint_settings(
@@ -152,9 +152,6 @@ pub(super) fn build_endpoint_settings(
 	settings
 }
 
-/// Determine `network_mode` and the first named network for `NetworkingConfig`.
-///
-/// Returns `(Option<network_mode>, Option<first_network_name>)`.
 pub(super) fn resolve_network_mode(
 	service: &Service,
 	file: &ComposeFile,
