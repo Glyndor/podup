@@ -1639,10 +1639,7 @@ async fn engine_run_command_succeeds() {
 	};
 	let proj = proj("run");
 	let engine = Engine::new(docker, proj.clone());
-	let file = parse_str(
-		"services:\n  job:\n    image: alpine:latest\n",
-	)
-	.unwrap();
+	let file = parse_str("services:\n  job:\n    image: alpine:latest\n").unwrap();
 
 	let result = engine
 		.run(
@@ -1668,10 +1665,7 @@ async fn engine_run_nonzero_exit_returns_run_exited() {
 	};
 	let proj = proj("rxc");
 	let engine = Engine::new(docker, proj.clone());
-	let file = parse_str(
-		"services:\n  job:\n    image: alpine:latest\n",
-	)
-	.unwrap();
+	let file = parse_str("services:\n  job:\n    image: alpine:latest\n").unwrap();
 
 	let result = engine
 		.run(
@@ -2266,7 +2260,14 @@ mod cli_tests {
 		.unwrap();
 
 		Command::new(bin())
-			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "up", "--detach"])
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"up",
+				"--detach",
+			])
 			.output()
 			.unwrap();
 
@@ -2280,7 +2281,11 @@ mod cli_tests {
 			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "unpause"])
 			.output()
 			.unwrap();
-		assert!(unpause.status.success(), "unpause failed: {:?}", unpause.stderr);
+		assert!(
+			unpause.status.success(),
+			"unpause failed: {:?}",
+			unpause.stderr
+		);
 
 		Command::new(bin())
 			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "down"])
@@ -2296,11 +2301,7 @@ mod cli_tests {
 		let dir = tempdir().unwrap();
 		let compose = dir.path().join("docker-compose.yml");
 		let proj = format!("t{}-clrun", std::process::id());
-		fs::write(
-			&compose,
-			"services:\n  job:\n    image: alpine:latest\n",
-		)
-		.unwrap();
+		fs::write(&compose, "services:\n  job:\n    image: alpine:latest\n").unwrap();
 
 		let run = Command::new(bin())
 			.args([
@@ -2328,14 +2329,18 @@ mod cli_tests {
 		let dir = tempdir().unwrap();
 		let compose = dir.path().join("docker-compose.yml");
 		let proj = format!("t{}-clrxc", std::process::id());
-		fs::write(
-			&compose,
-			"services:\n  job:\n    image: alpine:latest\n",
-		)
-		.unwrap();
+		fs::write(&compose, "services:\n  job:\n    image: alpine:latest\n").unwrap();
 
 		let run = Command::new(bin())
-			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "run", "job", "false"])
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"run",
+				"job",
+				"false",
+			])
 			.output()
 			.unwrap();
 		assert!(!run.status.success(), "expected non-zero exit from 'false'");
@@ -2357,7 +2362,14 @@ mod cli_tests {
 		.unwrap();
 
 		Command::new(bin())
-			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "up", "--detach"])
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"up",
+				"--detach",
+			])
 			.output()
 			.unwrap();
 
@@ -2388,7 +2400,14 @@ mod cli_tests {
 		.unwrap();
 
 		Command::new(bin())
-			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "up", "--detach"])
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"up",
+				"--detach",
+			])
 			.output()
 			.unwrap();
 
@@ -2396,9 +2415,16 @@ mod cli_tests {
 			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "images"])
 			.output()
 			.unwrap();
-		assert!(images.status.success(), "images failed: {:?}", images.stderr);
+		assert!(
+			images.status.success(),
+			"images failed: {:?}",
+			images.stderr
+		);
 		let stdout = String::from_utf8_lossy(&images.stdout);
-		assert!(stdout.contains("alpine"), "expected 'alpine' in images output");
+		assert!(
+			stdout.contains("alpine"),
+			"expected 'alpine' in images output"
+		);
 
 		Command::new(bin())
 			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "down"])
@@ -2421,12 +2447,27 @@ mod cli_tests {
 		.unwrap();
 
 		Command::new(bin())
-			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "up", "--detach"])
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"up",
+				"--detach",
+			])
 			.output()
 			.unwrap();
 
 		let port = Command::new(bin())
-			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "port", "web", "80"])
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"port",
+				"web",
+				"80",
+			])
 			.output()
 			.unwrap();
 		assert!(port.status.success(), "port failed: {:?}", port.stderr);
@@ -2452,7 +2493,14 @@ mod cli_tests {
 		.unwrap();
 
 		Command::new(bin())
-			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "up", "--detach"])
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"up",
+				"--detach",
+			])
 			.output()
 			.unwrap();
 
