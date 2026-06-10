@@ -81,3 +81,93 @@ impl From<bollard::errors::Error> for ComposeError {
 }
 
 pub type Result<T> = std::result::Result<T, ComposeError>;
+
+#[cfg(test)]
+mod tests {
+	use super::ComposeError;
+
+	#[test]
+	fn display_covers_all_variants() {
+		let cases: &[(&str, ComposeError)] = &[
+			(
+				"failed to parse compose file:",
+				ComposeError::Parse(serde_yaml::from_str::<serde_yaml::Value>(":\0").unwrap_err()),
+			),
+			(
+				"compose file not found: f",
+				ComposeError::FileNotFound("f".into()),
+			),
+			(
+				"io error:",
+				ComposeError::Io(std::io::Error::other("x")),
+			),
+			(
+				"service 's' not found",
+				ComposeError::ServiceNotFound("s".into()),
+			),
+			(
+				"circular dependency detected: c",
+				ComposeError::CircularDependency("c".into()),
+			),
+			(
+				"service 'svc' has no image or build config",
+				ComposeError::NoImageOrBuild("svc".into()),
+			),
+			(
+				"required variable 'V' is not set: reason",
+				ComposeError::RequiredVarNotSet {
+					var: "V".into(),
+					msg: "reason".into(),
+				},
+			),
+			(
+				"health check timeout for container 'c'",
+				ComposeError::HealthCheckTimeout("c".into()),
+			),
+			(
+				"invalid port mapping: p",
+				ComposeError::InvalidPort("p".into()),
+			),
+			("build error: b", ComposeError::Build("b".into())),
+			("extends error: e", ComposeError::Extends("e".into())),
+			("include error: i", ComposeError::Include("i".into())),
+			("watch error: w", ComposeError::Watch("w".into())),
+			(
+				"unsupported feature: u",
+				ComposeError::Unsupported("u".into()),
+			),
+			(
+				"run container exited with code 1",
+				ComposeError::RunExited(1),
+			),
+		];
+		for (expected_prefix, err) in cases {
+			let msg = err.to_string();
+			assert!(
+				msg.starts_with(expected_prefix),
+				"Display for {:?}: got {msg:?}, expected prefix {expected_prefix:?}",
+				std::mem::discriminant(err),
+			);
+		}
+	}
+
+	#[test]
+	fn source_provided_for_wrapped_variants() {
+		use std::error::Error;
+		let io = ComposeError::Io(std::io::Error::other("x"));
+		assert!(io.source().is_some());
+		let svc = ComposeError::ServiceNotFound("s".into());
+		assert!(svc.source().is_none());
+	}
+
+	#[test]
+	fn from_impls_convert_correctly() {
+		let io_err = std::io::Error::other("x");
+		let e: ComposeError = io_err.into();
+		assert!(matches!(e, ComposeError::Io(_)));
+
+		let yaml_err = serde_yaml::from_str::<serde_yaml::Value>(":\0").unwrap_err();
+		let e: ComposeError = yaml_err.into();
+		assert!(matches!(e, ComposeError::Parse(_)));
+	}
+}
