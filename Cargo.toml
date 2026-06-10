@@ -10,7 +10,7 @@ homepage = "https://github.com/Glyndor/podup"
 readme = "README.md"
 keywords = ["podman", "compose", "containers", "docker-compose", "rootless"]
 categories = ["command-line-utilities", "virtualization"]
-exclude = ["/.github", "/debian", "/docs", "/install.sh"]
+exclude = ["/.github", "/debian", "/docs", "/install.sh", "/tests"]
 
 [[bin]]
 name = "podup"
