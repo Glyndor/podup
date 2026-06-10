@@ -178,7 +178,10 @@ services:
 fn extends_chain_within_depth_limit() {
 	// 16 services = 15 hops — must succeed.
 	let yaml = make_chain_yaml(15);
-	assert!(parse_str(&yaml).is_ok(), "chain of 15 hops must be accepted");
+	assert!(
+		parse_str(&yaml).is_ok(),
+		"chain of 15 hops must be accepted"
+	);
 }
 
 #[test]
