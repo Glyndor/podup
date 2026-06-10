@@ -2,7 +2,7 @@ Source: podup
 Section: utils
 Priority: optional
 Maintainer: Glyndor <75870284+Jaro-c@users.noreply.github.com>
-Build-Depends: debhelper-compat (= 13), cargo, rustc (>= 1.85)
+Build-Depends: debhelper-compat (= 13), cargo, rustc (>= 1.86)
 Standards-Version: 4.7.0
 Homepage: https://github.com/Glyndor/podup
 Vcs-Git: https://github.com/Glyndor/podup.git
@@ -16,10 +16,12 @@ Recommends: podman (>= 4.0)
 Description: docker-compose translator and runner for rootless Podman
  podup parses docker-compose.yml files and drives rootless Podman to
  create the equivalent containers, networks and volumes. It provides
- the familiar compose workflow (up, down, ps, logs, exec, pull,
- restart, config, watch) as a single binary with no daemon and no
- Python runtime.
+ the full compose workflow (up, down, start, stop, ps, logs, exec, run,
+ cp, build, pull, restart, rm, kill, pause, unpause, top, port, images,
+ config, watch) as a single static binary with no daemon and no Python
+ runtime.
  .
  It supports compose-spec parsing including YAML anchors, extends,
  include, profiles, env_file and variable substitution, with
- dependency-aware startup ordering and healthcheck conditions.
+ dependency-aware startup ordering, healthcheck conditions, secrets and
+ configs, replica scaling, and file-watch mode.
