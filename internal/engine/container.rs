@@ -18,7 +18,7 @@ use super::container_config::{
 };
 use super::container_misc::{
 	build_blkio_config, build_device_requests, build_label_file_labels, opt_map, opt_vec,
-	parse_device, tmpfs_options_to_string,
+	parse_device, tmpfs_options_to_string, warn_swarm_only_deploy,
 };
 use super::network::{build_endpoint_settings, resolve_network_mode};
 use super::volume_mounts::{build_binds, build_mounts};
@@ -41,6 +41,8 @@ impl Engine {
 		} else {
 			return Err(ComposeError::NoImageOrBuild(service_name.into()));
 		};
+
+		warn_swarm_only_deploy(service_name, service);
 
 		let env = build_env(service, &self.base_dir)?;
 
