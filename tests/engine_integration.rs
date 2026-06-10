@@ -1474,10 +1474,10 @@ mod watch_tests {
 
 		let proj = proj("wra");
 		let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
-		let yaml = format!(
-			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: src\n          action: restart\n"
-		);
-		let file = parse_str(&yaml).unwrap();
+		let file = parse_str(
+			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: src\n          action: restart\n",
+		)
+		.unwrap();
 
 		engine.up(&file).await.unwrap();
 
@@ -1509,10 +1509,10 @@ mod watch_tests {
 
 		let proj = proj("wsr");
 		let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
-		let yaml = format!(
-			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: src\n          action: sync+restart\n          target: /app/\n"
-		);
-		let file = parse_str(&yaml).unwrap();
+		let file = parse_str(
+			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: src\n          action: sync+restart\n          target: /app/\n",
+		)
+		.unwrap();
 
 		engine.up(&file).await.unwrap();
 
@@ -1544,10 +1544,10 @@ mod watch_tests {
 
 		let proj = proj("wse");
 		let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
-		let yaml = format!(
-			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: src\n          action: sync+exec\n          target: /app/\n          exec:\n            command: [\"echo\", \"reloaded\"]\n"
-		);
-		let file = parse_str(&yaml).unwrap();
+		let file = parse_str(
+			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: src\n          action: sync+exec\n          target: /app/\n          exec:\n            command: [\"echo\", \"reloaded\"]\n",
+		)
+		.unwrap();
 
 		engine.up(&file).await.unwrap();
 
@@ -1579,7 +1579,7 @@ mod watch_tests {
 
 		let proj = proj("wev");
 		let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
-		let rel_path = format!("src");
+		let rel_path = "src";
 		let yaml = format!(
 			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: {rel_path}\n          action: sync\n          target: /app/\n"
 		);
