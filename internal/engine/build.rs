@@ -55,6 +55,35 @@ impl Engine {
 		Ok(())
 	}
 
+	/// Build (or rebuild) images for services that have a `build:` block.
+	///
+	/// If `target_services` is empty, every service with a build config is built.
+	/// Services without a build config are silently skipped.
+	pub async fn build_all(
+		&self,
+		file: &crate::compose::types::ComposeFile,
+		target_services: &[String],
+	) -> Result<()> {
+		let names: Vec<String> = if target_services.is_empty() {
+			file.services.keys().cloned().collect()
+		} else {
+			for name in target_services {
+				if !file.services.contains_key(name) {
+					return Err(crate::error::ComposeError::ServiceNotFound(name.clone()));
+				}
+			}
+			target_services.to_vec()
+		};
+
+		for name in &names {
+			let service = &file.services[name];
+			if service.build.is_some() {
+				self.build_service(name, service).await?;
+			}
+		}
+		Ok(())
+	}
+
 	pub(super) async fn build_service(&self, service_name: &str, service: &Service) -> Result<()> {
 		let build = match &service.build {
 			Some(b) => b,

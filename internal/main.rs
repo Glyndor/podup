@@ -1,7 +1,9 @@
 //! `podup` — docker-compose to Podman translator CLI.
 
-use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::process;
+
+use clap::{Parser, Subcommand};
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -38,6 +40,9 @@ enum Commands {
 		/// Run containers in the background.
 		#[arg(short, long)]
 		detach: bool,
+		/// Build images before starting containers.
+		#[arg(long)]
+		build: bool,
 		/// Watch for file changes and sync/rebuild/restart per develop.watch rules.
 		#[arg(short, long)]
 		watch: bool,
@@ -57,6 +62,42 @@ enum Commands {
 		/// Also remove named volumes declared in the compose file.
 		#[arg(short = 'v', long)]
 		volumes: bool,
+	},
+	/// Start existing stopped containers.
+	Start {
+		/// Start only these services.
+		#[arg(trailing_var_arg = true)]
+		services: Vec<String>,
+	},
+	/// Stop running containers without removing them.
+	Stop {
+		/// Stop only these services.
+		#[arg(trailing_var_arg = true)]
+		services: Vec<String>,
+	},
+	/// Build or rebuild service images.
+	Build {
+		/// Build only these services.
+		#[arg(trailing_var_arg = true)]
+		services: Vec<String>,
+	},
+	/// Remove stopped service containers.
+	Rm {
+		/// Remove even running containers (stop first).
+		#[arg(short, long)]
+		force: bool,
+		/// Remove only these services.
+		#[arg(trailing_var_arg = true)]
+		services: Vec<String>,
+	},
+	/// Send a signal to service containers.
+	Kill {
+		/// Signal to send (default: SIGKILL).
+		#[arg(short, long, default_value = "SIGKILL")]
+		signal: String,
+		/// Signal only these services.
+		#[arg(trailing_var_arg = true)]
+		services: Vec<String>,
 	},
 	/// List containers.
 	Ps,
@@ -90,7 +131,14 @@ enum Commands {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn main() {
+	if let Err(e) = run().await {
+		eprintln!("error: {e}");
+		process::exit(1);
+	}
+}
+
+async fn run() -> podup::Result<()> {
 	tracing_subscriber::fmt()
 		.with_env_filter(EnvFilter::from_default_env())
 		.init();
@@ -101,7 +149,7 @@ async fn main() -> anyhow::Result<()> {
 
 	// The `config` command does not need a Podman connection.
 	if matches!(cli.command, Commands::Config) {
-		let yaml = serde_yaml::to_string(&file)?;
+		let yaml = serde_yaml::to_string(&file).map_err(podup::ComposeError::Parse)?;
 		println!("{yaml}");
 		return Ok(());
 	}
@@ -117,6 +165,7 @@ async fn main() -> anyhow::Result<()> {
 	match cli.command {
 		Commands::Up {
 			detach,
+			build,
 			watch,
 			remove_orphans,
 			no_recreate,
@@ -124,6 +173,9 @@ async fn main() -> anyhow::Result<()> {
 		} => {
 			if remove_orphans {
 				engine.remove_orphans(&file).await?;
+			}
+			if build {
+				engine.build_all(&file, &services).await?;
 			}
 			engine
 				.up_with_options(&file, detach, &cli.profile, &services, no_recreate)
@@ -135,6 +187,11 @@ async fn main() -> anyhow::Result<()> {
 			}
 		}
 		Commands::Down { volumes } => engine.down_with_options(&file, volumes).await?,
+		Commands::Start { services } => engine.start(&file, &services).await?,
+		Commands::Stop { services } => engine.stop(&file, &services).await?,
+		Commands::Build { services } => engine.build_all(&file, &services).await?,
+		Commands::Rm { force, services } => engine.rm(&file, &services, force).await?,
+		Commands::Kill { signal, services } => engine.kill(&file, &services, &signal).await?,
 		Commands::Ps => engine.ps(&file).await?,
 		Commands::Logs { service, follow } => {
 			engine.logs(&file, service.as_deref(), follow).await?

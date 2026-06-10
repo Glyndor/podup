@@ -1,7 +1,7 @@
-//! Service lifecycle commands: up, down, restart.
+//! Service lifecycle commands: up, down, start, stop, restart, kill, rm.
 
 use bollard::query_parameters::{
-	RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
+	KillContainerOptions, RemoveContainerOptions, StartContainerOptions, StopContainerOptions,
 };
 use tracing::info;
 
@@ -237,5 +237,195 @@ impl Engine {
 		}
 
 		Ok(())
+	}
+
+	/// Stop running containers without removing them.
+	///
+	/// Services are stopped in reverse dependency order. If `target_services`
+	/// is empty, all services in the compose file are stopped.
+	pub async fn stop(&self, file: &ComposeFile, target_services: &[String]) -> Result<()> {
+		let mut order = crate::compose::resolve_order(file)?;
+		order.reverse();
+		let order = filter_services(file, order, target_services)?;
+
+		for name in &order {
+			let service = &file.services[name];
+			for container_name in self.replica_names(name, service) {
+				let _ = self
+					.docker
+					.stop_container(
+						&container_name,
+						Some(StopContainerOptions {
+							t: Some(10),
+							..Default::default()
+						}),
+					)
+					.await;
+				info!("stopped {container_name}");
+			}
+		}
+		Ok(())
+	}
+
+	/// Start stopped containers.
+	///
+	/// Services are started in dependency order. If `target_services` is empty,
+	/// all services in the compose file are started.
+	pub async fn start(&self, file: &ComposeFile, target_services: &[String]) -> Result<()> {
+		let order = crate::compose::resolve_order(file)?;
+		let order = filter_services(file, order, target_services)?;
+
+		for name in &order {
+			let service = &file.services[name];
+			for container_name in self.replica_names(name, service) {
+				self.docker
+					.start_container(&container_name, None::<StartContainerOptions>)
+					.await?;
+				info!("started {container_name}");
+			}
+		}
+		Ok(())
+	}
+
+	/// Send a signal to service containers (default: `SIGKILL`).
+	///
+	/// If `target_services` is empty, all services are signalled.
+	pub async fn kill(
+		&self,
+		file: &ComposeFile,
+		target_services: &[String],
+		signal: &str,
+	) -> Result<()> {
+		let order = crate::compose::resolve_order(file)?;
+		let order = filter_services(file, order, target_services)?;
+
+		for name in &order {
+			let service = &file.services[name];
+			for container_name in self.replica_names(name, service) {
+				self.docker
+					.kill_container(
+						&container_name,
+						Some(KillContainerOptions {
+							signal: signal.to_string(),
+						}),
+					)
+					.await?;
+				info!("sent {signal} to {container_name}");
+			}
+		}
+		Ok(())
+	}
+
+	/// Remove stopped service containers.
+	///
+	/// When `force` is true, running containers are stopped before removal.
+	/// Services are removed in reverse dependency order.
+	pub async fn rm(
+		&self,
+		file: &ComposeFile,
+		target_services: &[String],
+		force: bool,
+	) -> Result<()> {
+		let mut order = crate::compose::resolve_order(file)?;
+		order.reverse();
+		let order = filter_services(file, order, target_services)?;
+
+		for name in &order {
+			let service = &file.services[name];
+			for container_name in self.replica_names(name, service) {
+				let _ = self
+					.docker
+					.remove_container(
+						&container_name,
+						Some(RemoveContainerOptions {
+							force,
+							..Default::default()
+						}),
+					)
+					.await;
+				info!("removed {container_name}");
+			}
+		}
+		Ok(())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/// Return the ordered service names filtered to `target_services`.
+///
+/// Returns an error if any name in `target_services` is not in the file.
+fn filter_services(
+	file: &crate::compose::types::ComposeFile,
+	order: Vec<String>,
+	target_services: &[String],
+) -> Result<Vec<String>> {
+	if target_services.is_empty() {
+		return Ok(order);
+	}
+	for name in target_services {
+		if !file.services.contains_key(name) {
+			return Err(ComposeError::ServiceNotFound(name.clone()));
+		}
+	}
+	let set: std::collections::HashSet<&str> = target_services.iter().map(|s| s.as_str()).collect();
+	Ok(order
+		.into_iter()
+		.filter(|n| set.contains(n.as_str()))
+		.collect())
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+	use super::filter_services;
+	use crate::compose::types::{ComposeFile, Service};
+
+	fn file_with_services(names: &[&str]) -> ComposeFile {
+		let mut file = ComposeFile::default();
+		for &name in names {
+			file.services.insert(name.to_string(), Service::default());
+		}
+		file
+	}
+
+	#[test]
+	fn filter_empty_target_returns_all() {
+		let file = file_with_services(&["a", "b", "c"]);
+		let order = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+		let result = filter_services(&file, order.clone(), &[]).unwrap();
+		assert_eq!(result, order);
+	}
+
+	#[test]
+	fn filter_target_subset_returns_intersection() {
+		let file = file_with_services(&["a", "b", "c"]);
+		let order = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+		let result = filter_services(&file, order, &["b".to_string()]).unwrap();
+		assert_eq!(result, vec!["b".to_string()]);
+	}
+
+	#[test]
+	fn filter_target_preserves_order() {
+		let file = file_with_services(&["a", "b", "c"]);
+		let order = vec!["a".to_string(), "b".to_string(), "c".to_string()];
+		let result = filter_services(&file, order, &["c".to_string(), "a".to_string()]).unwrap();
+		assert_eq!(result, vec!["a".to_string(), "c".to_string()]);
+	}
+
+	#[test]
+	fn filter_unknown_service_returns_error() {
+		let file = file_with_services(&["a"]);
+		let order = vec!["a".to_string()];
+		let err = filter_services(&file, order, &["z".to_string()]).unwrap_err();
+		assert!(matches!(
+			err,
+			crate::error::ComposeError::ServiceNotFound(_)
+		));
 	}
 }
