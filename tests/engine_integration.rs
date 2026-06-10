@@ -1605,6 +1605,216 @@ mod watch_tests {
 }
 
 // ---------------------------------------------------------------------------
+// Pause / unpause
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn pause_and_unpause() {
+	let docker = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("pau");
+	let engine = Engine::new(docker, proj.clone());
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	engine.pause(&file, &[]).await.unwrap();
+	engine.unpause(&file, &[]).await.unwrap();
+	engine.down(&file).await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Run
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn engine_run_command_succeeds() {
+	let docker = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("run");
+	let engine = Engine::new(docker, proj.clone());
+	let file = parse_str(
+		"services:\n  job:\n    image: alpine:latest\n",
+	)
+	.unwrap();
+
+	let result = engine
+		.run(
+			&file,
+			"job",
+			podup::RunOptions {
+				cmd: vec!["echo".to_string(), "hello".to_string()],
+				rm: true,
+				detach: false,
+				env_overrides: vec![],
+				name_override: None,
+			},
+		)
+		.await;
+	assert!(result.is_ok(), "run failed: {result:?}");
+}
+
+#[tokio::test]
+async fn engine_run_nonzero_exit_returns_run_exited() {
+	let docker = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("rxc");
+	let engine = Engine::new(docker, proj.clone());
+	let file = parse_str(
+		"services:\n  job:\n    image: alpine:latest\n",
+	)
+	.unwrap();
+
+	let result = engine
+		.run(
+			&file,
+			"job",
+			podup::RunOptions {
+				cmd: vec!["false".to_string()],
+				rm: true,
+				detach: false,
+				env_overrides: vec![],
+				name_override: None,
+			},
+		)
+		.await;
+	assert!(
+		matches!(result, Err(podup::ComposeError::RunExited(_))),
+		"expected RunExited, got {result:?}"
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Top
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn engine_top_running_container() {
+	let docker = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("top");
+	let engine = Engine::new(docker, proj.clone());
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	engine.top(&file, &[]).await.unwrap();
+	engine.down(&file).await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Images
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn engine_images_lists_service_images() {
+	let docker = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("img");
+	let engine = Engine::new(docker, proj.clone());
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	engine.images(&file).await.unwrap();
+	engine.down(&file).await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Port
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn engine_port_returns_binding() {
+	let docker = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("prt");
+	let engine = Engine::new(docker, proj.clone());
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    ports:\n      - \"127.0.0.1:18080:80\"\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	engine.port(&file, "web", 80, "tcp").await.unwrap();
+	engine.down(&file).await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Cp
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn engine_cp_from_container_extracts_file() {
+	let docker = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let dir = tempfile::tempdir().unwrap();
+	let proj = proj("cpf");
+	let engine = Engine::new(docker, proj.clone());
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+
+	let dst = dir.path().to_str().unwrap().to_string();
+	let src = "web:/etc/hostname".to_string();
+	let result = engine.cp(&file, &src, &dst).await;
+	engine.down(&file).await.unwrap();
+
+	result.unwrap();
+	assert!(dir.path().join("hostname").exists());
+}
+
+#[tokio::test]
+async fn engine_cp_to_container_uploads_file() {
+	let docker = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let dir = tempfile::tempdir().unwrap();
+	let local_file = dir.path().join("testfile.txt");
+	fs::write(&local_file, b"hello from host").unwrap();
+
+	let proj = proj("cpt");
+	let engine = Engine::new(docker, proj.clone());
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+
+	let src = local_file.to_str().unwrap().to_string();
+	let dst = "web:/tmp".to_string();
+	let result = engine.cp(&file, &src, &dst).await;
+	engine.down(&file).await.unwrap();
+
+	result.unwrap();
+}
+
+// ---------------------------------------------------------------------------
 // CLI binary (covers main.rs)
 // ---------------------------------------------------------------------------
 
@@ -2039,5 +2249,231 @@ mod cli_tests {
 			.output()
 			.unwrap();
 		assert!(build.status.success(), "build failed: {:?}", build.stderr);
+	}
+
+	#[tokio::test]
+	async fn cli_pause_unpause_subcommands() {
+		if super::podman().await.is_none() {
+			return;
+		}
+		let dir = tempdir().unwrap();
+		let compose = dir.path().join("docker-compose.yml");
+		let proj = format!("t{}-clpu", std::process::id());
+		fs::write(
+			&compose,
+			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+		)
+		.unwrap();
+
+		Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "up", "--detach"])
+			.output()
+			.unwrap();
+
+		let pause = Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "pause"])
+			.output()
+			.unwrap();
+		assert!(pause.status.success(), "pause failed: {:?}", pause.stderr);
+
+		let unpause = Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "unpause"])
+			.output()
+			.unwrap();
+		assert!(unpause.status.success(), "unpause failed: {:?}", unpause.stderr);
+
+		Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "down"])
+			.output()
+			.unwrap();
+	}
+
+	#[tokio::test]
+	async fn cli_run_subcommand() {
+		if super::podman().await.is_none() {
+			return;
+		}
+		let dir = tempdir().unwrap();
+		let compose = dir.path().join("docker-compose.yml");
+		let proj = format!("t{}-clrun", std::process::id());
+		fs::write(
+			&compose,
+			"services:\n  job:\n    image: alpine:latest\n",
+		)
+		.unwrap();
+
+		let run = Command::new(bin())
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"run",
+				"job",
+				"echo",
+				"hello",
+			])
+			.output()
+			.unwrap();
+		assert!(run.status.success(), "run failed: {:?}", run.stderr);
+		let stdout = String::from_utf8_lossy(&run.stdout);
+		assert!(stdout.contains("hello"), "expected 'hello' in output");
+	}
+
+	#[tokio::test]
+	async fn cli_run_nonzero_exit_propagates() {
+		if super::podman().await.is_none() {
+			return;
+		}
+		let dir = tempdir().unwrap();
+		let compose = dir.path().join("docker-compose.yml");
+		let proj = format!("t{}-clrxc", std::process::id());
+		fs::write(
+			&compose,
+			"services:\n  job:\n    image: alpine:latest\n",
+		)
+		.unwrap();
+
+		let run = Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "run", "job", "false"])
+			.output()
+			.unwrap();
+		assert!(!run.status.success(), "expected non-zero exit from 'false'");
+		assert_eq!(run.status.code(), Some(1));
+	}
+
+	#[tokio::test]
+	async fn cli_top_subcommand() {
+		if super::podman().await.is_none() {
+			return;
+		}
+		let dir = tempdir().unwrap();
+		let compose = dir.path().join("docker-compose.yml");
+		let proj = format!("t{}-cltop", std::process::id());
+		fs::write(
+			&compose,
+			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+		)
+		.unwrap();
+
+		Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "up", "--detach"])
+			.output()
+			.unwrap();
+
+		let top = Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "top"])
+			.output()
+			.unwrap();
+		assert!(top.status.success(), "top failed: {:?}", top.stderr);
+
+		Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "down"])
+			.output()
+			.unwrap();
+	}
+
+	#[tokio::test]
+	async fn cli_images_subcommand() {
+		if super::podman().await.is_none() {
+			return;
+		}
+		let dir = tempdir().unwrap();
+		let compose = dir.path().join("docker-compose.yml");
+		let proj = format!("t{}-climg", std::process::id());
+		fs::write(
+			&compose,
+			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+		)
+		.unwrap();
+
+		Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "up", "--detach"])
+			.output()
+			.unwrap();
+
+		let images = Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "images"])
+			.output()
+			.unwrap();
+		assert!(images.status.success(), "images failed: {:?}", images.stderr);
+		let stdout = String::from_utf8_lossy(&images.stdout);
+		assert!(stdout.contains("alpine"), "expected 'alpine' in images output");
+
+		Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "down"])
+			.output()
+			.unwrap();
+	}
+
+	#[tokio::test]
+	async fn cli_port_subcommand() {
+		if super::podman().await.is_none() {
+			return;
+		}
+		let dir = tempdir().unwrap();
+		let compose = dir.path().join("docker-compose.yml");
+		let proj = format!("t{}-clprt", std::process::id());
+		fs::write(
+			&compose,
+			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    ports:\n      - \"127.0.0.1:18081:80\"\n",
+		)
+		.unwrap();
+
+		Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "up", "--detach"])
+			.output()
+			.unwrap();
+
+		let port = Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "port", "web", "80"])
+			.output()
+			.unwrap();
+		assert!(port.status.success(), "port failed: {:?}", port.stderr);
+
+		Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "down"])
+			.output()
+			.unwrap();
+	}
+
+	#[tokio::test]
+	async fn cli_cp_from_container() {
+		if super::podman().await.is_none() {
+			return;
+		}
+		let dir = tempdir().unwrap();
+		let compose = dir.path().join("docker-compose.yml");
+		let proj = format!("t{}-clcp", std::process::id());
+		fs::write(
+			&compose,
+			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+		)
+		.unwrap();
+
+		Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "up", "--detach"])
+			.output()
+			.unwrap();
+
+		let dst = dir.path().to_str().unwrap();
+		let cp = Command::new(bin())
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"cp",
+				"web:/etc/hostname",
+				dst,
+			])
+			.output()
+			.unwrap();
+		assert!(cp.status.success(), "cp failed: {:?}", cp.stderr);
+
+		Command::new(bin())
+			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "down"])
+			.output()
+			.unwrap();
 	}
 }
