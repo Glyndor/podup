@@ -152,3 +152,164 @@ impl<'de> Deserialize<'de> for RestartPolicy {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use indexmap::IndexMap;
+
+	// DependsOn::service_names
+
+	#[test]
+	fn depends_on_empty_has_no_names() {
+		assert!(DependsOn::Empty.service_names().is_empty());
+	}
+
+	#[test]
+	fn depends_on_list_returns_names() {
+		let d = DependsOn::List(vec!["db".into(), "cache".into()]);
+		assert_eq!(d.service_names(), vec!["db", "cache"]);
+	}
+
+	#[test]
+	fn depends_on_map_returns_keys() {
+		let mut m = IndexMap::new();
+		m.insert(
+			"db".to_string(),
+			DependsOnCondition {
+				condition: ServiceCondition::ServiceHealthy,
+				restart: None,
+				required: None,
+			},
+		);
+		assert_eq!(DependsOn::Map(m).service_names(), vec!["db"]);
+	}
+
+	// DependsOn::condition_for
+
+	#[test]
+	fn condition_for_empty_defaults_to_started() {
+		assert_eq!(
+			DependsOn::Empty.condition_for("db"),
+			ServiceCondition::ServiceStarted
+		);
+	}
+
+	#[test]
+	fn condition_for_map_returns_explicit() {
+		let mut m = IndexMap::new();
+		m.insert(
+			"db".to_string(),
+			DependsOnCondition {
+				condition: ServiceCondition::ServiceHealthy,
+				restart: None,
+				required: None,
+			},
+		);
+		assert_eq!(
+			DependsOn::Map(m).condition_for("db"),
+			ServiceCondition::ServiceHealthy
+		);
+	}
+
+	// DependsOn::restart_for / required_for
+
+	#[test]
+	fn restart_for_list_is_false() {
+		assert!(!DependsOn::List(vec!["db".into()]).restart_for("db"));
+	}
+
+	#[test]
+	fn required_for_list_defaults_true() {
+		assert!(DependsOn::List(vec!["db".into()]).required_for("db"));
+	}
+
+	#[test]
+	fn required_for_map_explicit_false() {
+		let mut m = IndexMap::new();
+		m.insert(
+			"db".to_string(),
+			DependsOnCondition {
+				condition: ServiceCondition::ServiceStarted,
+				restart: None,
+				required: Some(false),
+			},
+		);
+		assert!(!DependsOn::Map(m).required_for("db"));
+	}
+
+	// HealthCheck::is_disabled
+
+	#[test]
+	fn healthcheck_disable_true() {
+		let hc = HealthCheck {
+			disable: Some(true),
+			..Default::default()
+		};
+		assert!(hc.is_disabled());
+	}
+
+	#[test]
+	fn healthcheck_test_none_exec_disables() {
+		let hc = HealthCheck {
+			test: Some(Command::Exec(vec!["NONE".to_string()])),
+			..Default::default()
+		};
+		assert!(hc.is_disabled());
+	}
+
+	#[test]
+	fn healthcheck_real_test_not_disabled() {
+		let hc = HealthCheck {
+			test: Some(Command::Shell("curl -f http://localhost/".into())),
+			..Default::default()
+		};
+		assert!(!hc.is_disabled());
+	}
+
+	// RestartPolicy deserialization
+
+	#[test]
+	fn restart_policy_no() {
+		let p: RestartPolicy = serde_yaml::from_str("\"no\"").unwrap();
+		assert_eq!(p, RestartPolicy::No);
+	}
+
+	#[test]
+	fn restart_policy_always() {
+		let p: RestartPolicy = serde_yaml::from_str("\"always\"").unwrap();
+		assert_eq!(p, RestartPolicy::Always);
+	}
+
+	#[test]
+	fn restart_policy_unless_stopped() {
+		let p: RestartPolicy = serde_yaml::from_str("\"unless-stopped\"").unwrap();
+		assert_eq!(p, RestartPolicy::UnlessStopped);
+	}
+
+	#[test]
+	fn restart_policy_on_failure_bare() {
+		let p: RestartPolicy = serde_yaml::from_str("\"on-failure\"").unwrap();
+		assert_eq!(p, RestartPolicy::OnFailure { max_attempts: None });
+	}
+
+	#[test]
+	fn restart_policy_on_failure_with_count() {
+		let p: RestartPolicy = serde_yaml::from_str("\"on-failure:3\"").unwrap();
+		assert_eq!(
+			p,
+			RestartPolicy::OnFailure {
+				max_attempts: Some(3)
+			}
+		);
+	}
+
+	#[test]
+	fn restart_policy_invalid_is_error() {
+		assert!(serde_yaml::from_str::<RestartPolicy>("\"bogus\"").is_err());
+	}
+}
