@@ -59,10 +59,7 @@ mod tests {
 		let mut other = ComposeFile::default();
 		other.services.insert("web".to_string(), svc("nginx:1.24"));
 		merge_compose_file(&mut target, other);
-		assert_eq!(
-			target.services["web"].image.as_deref(),
-			Some("nginx:1.25")
-		);
+		assert_eq!(target.services["web"].image.as_deref(), Some("nginx:1.25"));
 	}
 
 	#[test]
