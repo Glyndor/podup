@@ -4,7 +4,6 @@
 /// `podman` input to the rust-ci reusable starts the socket and sets
 /// `PODMAN_SOCKET` before the coverage gate runs.
 use std::fs;
-use std::time::Duration;
 
 use bollard::Docker;
 use podup::{parse_str, Engine};
@@ -1339,6 +1338,8 @@ async fn target_services_duplicate_entry() {
 
 #[cfg(feature = "test-helpers")]
 mod watch_tests {
+	use std::time::Duration;
+
 	use super::*;
 
 	#[tokio::test]
