@@ -11,6 +11,7 @@ use tracing::info;
 use crate::compose::types::{ComposeFile, ServiceCondition};
 use crate::error::{ComposeError, Result};
 
+use super::network::resolve_network_name;
 use super::profiles::{active_profiles_set, service_in_profiles};
 use super::Engine;
 
@@ -182,13 +183,55 @@ impl Engine {
 						&container_name,
 						Some(RemoveContainerOptions {
 							force: true,
-							v: remove_volumes,
+							v: false,
 							..Default::default()
 						}),
 					)
 					.await;
 
 				info!("removed {container_name}");
+			}
+		}
+
+		// Remove non-external networks declared in the compose file.
+		for (key, config) in &file.networks {
+			let external = config.as_ref().and_then(|c| c.external).unwrap_or(false);
+			if external {
+				continue;
+			}
+			let network_name = resolve_network_name(key, file, &self.project);
+			match self.docker.remove_network(&network_name).await {
+				Ok(_) => info!("removed network {network_name}"),
+				Err(bollard::errors::Error::DockerResponseServerError {
+					status_code: 404, ..
+				}) => {}
+				Err(e) => tracing::warn!("could not remove network {network_name}: {e}"),
+			}
+		}
+
+		// Remove non-external named volumes when --volumes is requested.
+		if remove_volumes {
+			for (key, config) in &file.volumes {
+				let external = config.as_ref().and_then(|c| c.external).unwrap_or(false);
+				if external {
+					continue;
+				}
+				let volume_name = config
+					.as_ref()
+					.and_then(|c| c.name.as_deref())
+					.map(|s| s.to_string())
+					.unwrap_or_else(|| format!("{}_{}", self.project, key));
+				match self
+					.docker
+					.remove_volume(&volume_name, None::<bollard::query_parameters::RemoveVolumeOptions>)
+					.await
+				{
+					Ok(_) => info!("removed volume {volume_name}"),
+					Err(bollard::errors::Error::DockerResponseServerError {
+						status_code: 404, ..
+					}) => {}
+					Err(e) => tracing::warn!("could not remove volume {volume_name}: {e}"),
+				}
 			}
 		}
 
