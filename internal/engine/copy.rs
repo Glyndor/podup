@@ -75,9 +75,14 @@ impl Engine {
 			std::env::current_dir().map_err(ComposeError::Io)?
 		};
 
-		let cursor = std::io::Cursor::new(tar_bytes);
-		let mut archive = tar::Archive::new(cursor);
-		archive.unpack(&dst_path).map_err(ComposeError::Io)?;
+		// PERF-005: tar extraction is blocking I/O.
+		tokio::task::spawn_blocking(move || {
+			let cursor = std::io::Cursor::new(tar_bytes);
+			let mut archive = tar::Archive::new(cursor);
+			archive.unpack(&dst_path).map_err(ComposeError::Io)
+		})
+		.await
+		.map_err(|e| ComposeError::Build(e.to_string()))??;
 
 		Ok(())
 	}
@@ -95,7 +100,11 @@ impl Engine {
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
 		let container_name = self.container_name(service_name, service);
 
-		let tar_bytes = pack_path(src)?;
+		// PERF-005: tar creation is blocking I/O.
+		let src_buf = src.to_path_buf();
+		let tar_bytes = tokio::task::spawn_blocking(move || pack_path(&src_buf))
+			.await
+			.map_err(|e| ComposeError::Build(e.to_string()))??;
 
 		self.docker
 			.upload_to_container(

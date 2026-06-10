@@ -5,9 +5,9 @@
 //! REST API (bollard).
 
 pub mod compose;
-pub mod engine;
+pub(crate) mod engine;
 pub mod env_file;
-pub mod error;
+pub(crate) mod error;
 pub mod podman;
 pub mod ports;
 pub mod size;

@@ -1,6 +1,6 @@
 [package]
 name = "podup"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2021"
 rust-version = "1.85"
 description = "Translate and run docker-compose files on rootless Podman"
@@ -25,13 +25,13 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "syn
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }
 serde_yaml = { package = "yaml_serde", version = "0.10" }
 bollard = "0.21"
 clap = { version = "4", features = ["derive", "env"] }
 indexmap = { version = "2", features = ["serde"] }
-futures = "0.3"
-tar = "0.4"
+futures = { version = "0.3", default-features = false, features = ["async-await", "std"] }
+tar = { version = "0.4", default-features = false }
 flate2 = "1.0"
 bytes = "1"
 walkdir = "2"
@@ -45,11 +45,13 @@ test-helpers = []
 
 [dev-dependencies]
 tempfile = "3"
+temp-env = "0.3"
 
 [workspace]
 
 [profile.release]
 opt-level = 3
-lto = "thin"
+lto = "fat"
 codegen-units = 1
 strip = true
+panic = "abort"

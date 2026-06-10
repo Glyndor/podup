@@ -422,22 +422,26 @@ async fn file_secret_bound() {
 	engine.down(&file).await.unwrap();
 }
 
-#[tokio::test]
-async fn env_secret_materialized() {
-	let docker = match podman().await {
-		Some(d) => d,
-		None => return,
-	};
-	std::env::set_var("PODUP_TEST_SECRET_VAR", "env-secret-value");
-	let proj = proj("esec");
-	let engine = Engine::new(docker, proj.clone());
-	let file = parse_str(
-		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    secrets:\n      - envsecret\nsecrets:\n  envsecret:\n    environment: PODUP_TEST_SECRET_VAR\n",
-	)
-	.unwrap();
+#[test]
+fn env_secret_materialized() {
+	let rt = tokio::runtime::Runtime::new().unwrap();
+	temp_env::with_var("PODUP_TEST_SECRET_VAR", Some("env-secret-value"), || {
+		rt.block_on(async {
+			let docker = match podman().await {
+				Some(d) => d,
+				None => return,
+			};
+			let proj = proj("esec");
+			let engine = Engine::new(docker, proj.clone());
+			let file = parse_str(
+				"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    secrets:\n      - envsecret\nsecrets:\n  envsecret:\n    environment: PODUP_TEST_SECRET_VAR\n",
+			)
+			.unwrap();
 
-	engine.up(&file).await.unwrap();
-	engine.down(&file).await.unwrap();
+			engine.up(&file).await.unwrap();
+			engine.down(&file).await.unwrap();
+		});
+	});
 }
 
 #[tokio::test]
@@ -717,22 +721,26 @@ async fn file_config_bound() {
 	engine.down(&file).await.unwrap();
 }
 
-#[tokio::test]
-async fn env_config_materialized() {
-	let docker = match podman().await {
-		Some(d) => d,
-		None => return,
-	};
-	std::env::set_var("PODUP_TEST_CFG_VAR", "cfg-from-env");
-	let proj = proj("ecfg");
-	let engine = Engine::new(docker, proj.clone());
-	let file = parse_str(
-		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    configs:\n      - envcfg\nconfigs:\n  envcfg:\n    environment: PODUP_TEST_CFG_VAR\n",
-	)
-	.unwrap();
+#[test]
+fn env_config_materialized() {
+	let rt = tokio::runtime::Runtime::new().unwrap();
+	temp_env::with_var("PODUP_TEST_CFG_VAR", Some("cfg-from-env"), || {
+		rt.block_on(async {
+			let docker = match podman().await {
+				Some(d) => d,
+				None => return,
+			};
+			let proj = proj("ecfg");
+			let engine = Engine::new(docker, proj.clone());
+			let file = parse_str(
+				"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    configs:\n      - envcfg\nconfigs:\n  envcfg:\n    environment: PODUP_TEST_CFG_VAR\n",
+			)
+			.unwrap();
 
-	engine.up(&file).await.unwrap();
-	engine.down(&file).await.unwrap();
+			engine.up(&file).await.unwrap();
+			engine.down(&file).await.unwrap();
+		});
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -1039,26 +1047,31 @@ async fn wait_completed_nonzero_error() {
 // Profiles: COMPOSE_PROFILES env var path
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
-async fn active_profiles_via_env() {
-	let docker = match podman().await {
-		Some(d) => d,
-		None => return,
-	};
+#[test]
+fn active_profiles_via_env() {
+	let rt = tokio::runtime::Runtime::new().unwrap();
 	// Set COMPOSE_PROFILES so active_profiles_set reads it (covers profiles.rs L15-19)
-	std::env::set_var("COMPOSE_PROFILES", "prod");
-	let proj = proj("apv");
-	let engine = Engine::new(docker, proj.clone());
-	// "debug" service has profile "debug" — not in "prod" → skipped
-	let file = parse_str(
-		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n  debug:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    profiles: [\"debug\"]\n",
-	)
-	.unwrap();
-	// Pass empty active_profiles slice so it falls back to COMPOSE_PROFILES env
-	let result = engine.up_with_options(&file, false, &[], &[], false).await;
-	std::env::remove_var("COMPOSE_PROFILES");
-	result.unwrap();
-	engine.down(&file).await.unwrap();
+	temp_env::with_var("COMPOSE_PROFILES", Some("prod"), || {
+		rt.block_on(async {
+			let docker = match podman().await {
+				Some(d) => d,
+				None => return,
+			};
+			let proj = proj("apv");
+			let engine = Engine::new(docker, proj.clone());
+			// "debug" service has profile "debug" — not in "prod" → skipped
+			let file = parse_str(
+				"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n  debug:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    profiles: [\"debug\"]\n",
+			)
+			.unwrap();
+			// Pass empty active_profiles slice so it falls back to COMPOSE_PROFILES env
+			engine
+				.up_with_options(&file, false, &[], &[], false)
+				.await
+				.unwrap();
+			engine.down(&file).await.unwrap();
+		});
+	});
 }
 
 // ---------------------------------------------------------------------------
@@ -1224,26 +1237,29 @@ async fn dep_on_profile_filtered_service() {
 // Build: arg with null value (from environment)
 // ---------------------------------------------------------------------------
 
-#[tokio::test]
-async fn build_with_env_arg() {
-	let docker = match podman().await {
-		Some(d) => d,
-		None => return,
-	};
-	let dir = tempfile::tempdir().unwrap();
-	let proj = proj("bea");
-	let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
-	let image_tag = format!("podup-test-bea-{}:latest", std::process::id());
+#[test]
+fn build_with_env_arg() {
+	let rt = tokio::runtime::Runtime::new().unwrap();
 	// FROM_ENV has no explicit value → read from environment (build.rs L89 None branch)
-	std::env::set_var("FROM_ENV", "test-value");
-	let yaml = format!(
-		"services:\n  app:\n    build:\n      context: .\n      dockerfile_inline: |\n        FROM alpine:latest\n        ARG FROM_ENV\n        RUN echo env=$FROM_ENV\n      args:\n        FROM_ENV:\n    image: {image_tag}\n    command: [\"sleep\", \"infinity\"]\n"
-	);
-	let file = parse_str(&yaml).unwrap();
+	temp_env::with_var("FROM_ENV", Some("test-value"), || {
+		rt.block_on(async {
+			let docker = match podman().await {
+				Some(d) => d,
+				None => return,
+			};
+			let dir = tempfile::tempdir().unwrap();
+			let proj = proj("bea");
+			let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+			let image_tag = format!("podup-test-bea-{}:latest", std::process::id());
+			let yaml = format!(
+				"services:\n  app:\n    build:\n      context: .\n      dockerfile_inline: |\n        FROM alpine:latest\n        ARG FROM_ENV\n        RUN echo env=$FROM_ENV\n      args:\n        FROM_ENV:\n    image: {image_tag}\n    command: [\"sleep\", \"infinity\"]\n"
+			);
+			let file = parse_str(&yaml).unwrap();
 
-	engine.up(&file).await.unwrap();
-	engine.down(&file).await.unwrap();
-	std::env::remove_var("FROM_ENV");
+			engine.up(&file).await.unwrap();
+			engine.down(&file).await.unwrap();
+		});
+	});
 }
 
 // ---------------------------------------------------------------------------

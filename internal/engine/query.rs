@@ -150,6 +150,13 @@ impl Engine {
 			StartExecResults::Detached => {}
 		}
 
+		let inspect = self.docker.inspect_exec(&exec_id).await?;
+		if let Some(code) = inspect.exit_code {
+			if code != 0 {
+				return Err(ComposeError::RunExited(code));
+			}
+		}
+
 		Ok(())
 	}
 
@@ -362,6 +369,17 @@ impl Engine {
 			})
 			.collect();
 
+		#[cfg(unix)]
+		{
+			use tokio::signal::unix::{signal, SignalKind};
+			let mut sigterm = signal(SignalKind::terminate()).expect("SIGTERM handler");
+			tokio::select! {
+				_ = futures::future::join_all(streams) => {}
+				_ = tokio::signal::ctrl_c() => {}
+				_ = sigterm.recv() => {}
+			}
+		}
+		#[cfg(not(unix))]
 		tokio::select! {
 			_ = futures::future::join_all(streams) => {}
 			_ = tokio::signal::ctrl_c() => {}

@@ -28,7 +28,8 @@ impl Engine {
 			let volume_name = config
 				.as_ref()
 				.and_then(|c| c.name.as_deref())
-				.unwrap_or(name);
+				.map(|s| s.to_string())
+				.unwrap_or_else(|| format!("{}_{}", self.project, name));
 
 			let mut labels: HashMap<String, String> = config
 				.as_ref()
@@ -47,7 +48,7 @@ impl Engine {
 				.unwrap_or_default();
 
 			let options = VolumeCreateRequest {
-				name: Some(volume_name.to_string()),
+				name: Some(volume_name.clone()),
 				driver: Some(driver.clone()),
 				driver_opts: if driver_opts.is_empty() {
 					None
@@ -123,7 +124,11 @@ impl Engine {
 						environment: Some(env_var),
 						..
 					} => {
-						let value = std::env::var(env_var).unwrap_or_default();
+						let value = std::env::var(env_var).map_err(|_| {
+							ComposeError::Unsupported(format!(
+								"secret '{name}' references env var '{env_var}' which is not set"
+							))
+						})?;
 						let path = self.materialize_inline_full(
 							"secrets",
 							&name,
@@ -197,7 +202,11 @@ impl Engine {
 						environment: Some(env_var),
 						..
 					} => {
-						let value = std::env::var(env_var).unwrap_or_default();
+						let value = std::env::var(env_var).map_err(|_| {
+							ComposeError::Unsupported(format!(
+								"config '{name}' references env var '{env_var}' which is not set"
+							))
+						})?;
 						let path = self.materialize_inline_full(
 							"configs",
 							&name,
