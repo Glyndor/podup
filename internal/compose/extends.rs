@@ -22,6 +22,8 @@ use crate::error::{ComposeError, Result};
 // Public entry points
 // ---------------------------------------------------------------------------
 
+const MAX_EXTENDS_DEPTH: usize = 16;
+
 /// Resolve `extends:` only within the same file (no `file:` references).
 ///
 /// Used by [`super::parse_str`] where there is no on-disk path.
@@ -29,7 +31,7 @@ pub(super) fn resolve_extends_same_file(file: &mut ComposeFile) -> Result<()> {
 	let names: Vec<String> = file.services.keys().cloned().collect();
 	for name in names {
 		let mut visited: HashSet<String> = HashSet::new();
-		resolve_one_extends_in_memory(file, &name, &mut visited)?;
+		resolve_one_extends_in_memory(file, &name, &mut visited, 0)?;
 	}
 	Ok(())
 }
@@ -40,7 +42,7 @@ pub(super) fn resolve_all_extends(file: &mut ComposeFile, base_dir: &Path) -> Re
 	let names: Vec<String> = file.services.keys().cloned().collect();
 	for name in names {
 		let mut visited: HashSet<String> = HashSet::new();
-		resolve_one_extends(file, &name, base_dir, &mut visited)?;
+		resolve_one_extends(file, &name, base_dir, &mut visited, 0)?;
 	}
 	Ok(())
 }
@@ -53,7 +55,13 @@ fn resolve_one_extends_in_memory(
 	file: &mut ComposeFile,
 	name: &str,
 	visited: &mut HashSet<String>,
+	depth: usize,
 ) -> Result<()> {
+	if depth >= MAX_EXTENDS_DEPTH {
+		return Err(ComposeError::Extends(format!(
+			"extends chain exceeds maximum depth ({MAX_EXTENDS_DEPTH}) at service '{name}'"
+		)));
+	}
 	if !visited.insert(name.to_string()) {
 		return Err(ComposeError::Extends(format!("circular extends at {name}")));
 	}
@@ -81,7 +89,7 @@ fn resolve_one_extends_in_memory(
 			"service '{name}' extends unknown service '{base_name}'"
 		)));
 	}
-	resolve_one_extends_in_memory(file, &base_name, visited)?;
+	resolve_one_extends_in_memory(file, &base_name, visited, depth + 1)?;
 
 	let base = file
 		.services
@@ -103,7 +111,13 @@ fn resolve_one_extends(
 	name: &str,
 	base_dir: &Path,
 	visited: &mut HashSet<String>,
+	depth: usize,
 ) -> Result<()> {
+	if depth >= MAX_EXTENDS_DEPTH {
+		return Err(ComposeError::Extends(format!(
+			"extends chain exceeds maximum depth ({MAX_EXTENDS_DEPTH}) at service '{name}'"
+		)));
+	}
 	if !visited.insert(name.to_string()) {
 		return Err(ComposeError::Extends(format!("circular extends at {name}")));
 	}
@@ -138,7 +152,7 @@ fn resolve_one_extends(
 			.unwrap_or_else(|| base_dir.to_path_buf());
 		let mut other = parse_file_inner(&abs, &dir)?;
 		let mut nested_visited: HashSet<String> = HashSet::new();
-		resolve_one_extends(&mut other, &base_name, &dir, &mut nested_visited)?;
+		resolve_one_extends(&mut other, &base_name, &dir, &mut nested_visited, depth + 1)?;
 		other.services.swap_remove(&base_name).ok_or_else(|| {
 			ComposeError::Extends(format!(
 				"service '{base_name}' not found in {}",
@@ -156,7 +170,7 @@ fn resolve_one_extends(
 				"service '{name}' extends unknown service '{base_name}'"
 			)));
 		}
-		resolve_one_extends(file, &base_name, base_dir, visited)?;
+		resolve_one_extends(file, &base_name, base_dir, visited, depth + 1)?;
 		file.services
 			.get(&base_name)
 			.cloned()
