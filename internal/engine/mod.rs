@@ -144,7 +144,11 @@ impl Engine {
 			.or(service.deploy.as_ref().and_then(|d| d.replicas))
 			.unwrap_or(1) as usize;
 		let base = self.container_name(service_name, service);
-		if replicas == 1 { base } else { format!("{base}-1") }
+		if replicas == 1 {
+			base
+		} else {
+			format!("{base}-1")
+		}
 	}
 
 	#[cfg(not(feature = "watch"))]

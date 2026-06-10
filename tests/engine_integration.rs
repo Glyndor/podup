@@ -1914,7 +1914,7 @@ async fn port_scaled_service_targets_first_replica() {
 	let proj = proj("psr");
 	let engine = Engine::new(docker, proj.clone());
 	let file = parse_str(
-		"services:\n  worker:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    ports:\n      - \"127.0.0.1:18090:80\"\n    deploy:\n      replicas: 2\n",
+		"services:\n  worker:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    ports:\n      - \"80\"\n    deploy:\n      replicas: 2\n",
 	)
 	.unwrap();
 
