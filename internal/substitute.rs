@@ -290,3 +290,230 @@ fn resolve_modifier(
 		},
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	fn vars(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+		pairs
+			.iter()
+			.map(|(k, v)| (k.to_string(), v.to_string()))
+			.collect()
+	}
+
+	// Plain passthrough
+
+	#[test]
+	fn plain_text_unchanged() {
+		assert_eq!(
+			substitute("hello world", &vars(&[])).unwrap(),
+			"hello world"
+		);
+	}
+
+	#[test]
+	fn dollar_at_end_emitted_literally() {
+		assert_eq!(substitute("price$", &vars(&[])).unwrap(), "price$");
+	}
+
+	#[test]
+	fn double_dollar_becomes_single() {
+		assert_eq!(substitute("$$", &vars(&[])).unwrap(), "$");
+	}
+
+	// $VAR (unbraced)
+
+	#[test]
+	fn unbraced_var_set_expands() {
+		assert_eq!(substitute("$FOO", &vars(&[("FOO", "bar")])).unwrap(), "bar");
+	}
+
+	#[test]
+	fn unbraced_var_unset_expands_to_empty() {
+		assert_eq!(substitute("$MISSING", &vars(&[])).unwrap(), "");
+	}
+
+	#[test]
+	fn unbraced_var_followed_by_non_ident() {
+		assert_eq!(substitute("$FOO!", &vars(&[("FOO", "x")])).unwrap(), "x!");
+	}
+
+	// ${VAR} (braced, no modifier)
+
+	#[test]
+	fn braced_var_set_expands() {
+		assert_eq!(
+			substitute("${FOO}", &vars(&[("FOO", "val")])).unwrap(),
+			"val"
+		);
+	}
+
+	#[test]
+	fn braced_var_unset_expands_to_empty() {
+		assert_eq!(substitute("${MISSING}", &vars(&[])).unwrap(), "");
+	}
+
+	// ${VAR:-default}
+
+	#[test]
+	fn default_if_unset_or_empty_when_unset() {
+		assert_eq!(
+			substitute("${X:-fallback}", &vars(&[])).unwrap(),
+			"fallback"
+		);
+	}
+
+	#[test]
+	fn default_if_unset_or_empty_when_empty() {
+		assert_eq!(
+			substitute("${X:-fallback}", &vars(&[("X", "")])).unwrap(),
+			"fallback"
+		);
+	}
+
+	#[test]
+	fn default_if_unset_or_empty_when_set() {
+		assert_eq!(
+			substitute("${X:-fallback}", &vars(&[("X", "real")])).unwrap(),
+			"real"
+		);
+	}
+
+	// ${VAR-default}
+
+	#[test]
+	fn default_if_unset_when_unset() {
+		assert_eq!(substitute("${X-fallback}", &vars(&[])).unwrap(), "fallback");
+	}
+
+	#[test]
+	fn default_if_unset_when_empty_keeps_empty() {
+		assert_eq!(
+			substitute("${X-fallback}", &vars(&[("X", "")])).unwrap(),
+			""
+		);
+	}
+
+	#[test]
+	fn default_if_unset_when_set() {
+		assert_eq!(
+			substitute("${X-fallback}", &vars(&[("X", "v")])).unwrap(),
+			"v"
+		);
+	}
+
+	// ${VAR:+alt}
+
+	#[test]
+	fn alt_if_set_and_nonempty_when_unset() {
+		assert_eq!(substitute("${X:+alt}", &vars(&[])).unwrap(), "");
+	}
+
+	#[test]
+	fn alt_if_set_and_nonempty_when_empty() {
+		assert_eq!(substitute("${X:+alt}", &vars(&[("X", "")])).unwrap(), "");
+	}
+
+	#[test]
+	fn alt_if_set_and_nonempty_when_set() {
+		assert_eq!(
+			substitute("${X:+alt}", &vars(&[("X", "v")])).unwrap(),
+			"alt"
+		);
+	}
+
+	// ${VAR+alt}
+
+	#[test]
+	fn alt_if_set_when_unset() {
+		assert_eq!(substitute("${X+alt}", &vars(&[])).unwrap(), "");
+	}
+
+	#[test]
+	fn alt_if_set_when_empty_returns_alt() {
+		assert_eq!(substitute("${X+alt}", &vars(&[("X", "")])).unwrap(), "alt");
+	}
+
+	// ${VAR:?msg}
+
+	#[test]
+	fn error_if_unset_or_empty_when_unset() {
+		assert!(substitute("${X:?required}", &vars(&[])).is_err());
+	}
+
+	#[test]
+	fn error_if_unset_or_empty_when_empty() {
+		assert!(substitute("${X:?required}", &vars(&[("X", "")])).is_err());
+	}
+
+	#[test]
+	fn error_if_unset_or_empty_when_set() {
+		assert_eq!(
+			substitute("${X:?required}", &vars(&[("X", "ok")])).unwrap(),
+			"ok"
+		);
+	}
+
+	// ${VAR?msg}
+
+	#[test]
+	fn error_if_unset_when_unset() {
+		assert!(substitute("${X?required}", &vars(&[])).is_err());
+	}
+
+	#[test]
+	fn error_if_unset_when_empty_returns_empty() {
+		assert_eq!(
+			substitute("${X?required}", &vars(&[("X", "")])).unwrap(),
+			""
+		);
+	}
+
+	// Multiple substitutions in one string
+
+	#[test]
+	fn multiple_vars_in_string() {
+		let v = vars(&[("A", "hello"), ("B", "world")]);
+		assert_eq!(substitute("$A ${B}!", &v).unwrap(), "hello world!");
+	}
+
+	// load_dotenv
+
+	#[test]
+	fn load_dotenv_parses_key_value() {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join(".env"), "FOO=bar\nBAZ=qux\n").unwrap();
+		let map = load_dotenv(dir.path());
+		assert_eq!(map.get("FOO").map(|s| s.as_str()), Some("bar"));
+		assert_eq!(map.get("BAZ").map(|s| s.as_str()), Some("qux"));
+	}
+
+	#[test]
+	fn load_dotenv_skips_comments_and_blank_lines() {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join(".env"), "# comment\n\nFOO=bar\n").unwrap();
+		let map = load_dotenv(dir.path());
+		assert_eq!(map.len(), 1);
+		assert_eq!(map["FOO"], "bar");
+	}
+
+	#[test]
+	fn load_dotenv_key_without_equals_is_empty() {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join(".env"), "BARE_KEY\n").unwrap();
+		let map = load_dotenv(dir.path());
+		assert_eq!(map.get("BARE_KEY").map(|s| s.as_str()), Some(""));
+	}
+
+	#[test]
+	fn load_dotenv_missing_file_returns_empty() {
+		let dir = tempfile::tempdir().unwrap();
+		let map = load_dotenv(dir.path());
+		assert!(map.is_empty());
+	}
+}
