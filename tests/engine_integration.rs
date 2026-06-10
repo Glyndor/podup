@@ -175,7 +175,10 @@ async fn restart_unknown_service_fails() {
 	)
 	.unwrap();
 
-	let err = engine.restart(&file, Some("nonexistent")).await.unwrap_err();
+	let err = engine
+		.restart(&file, Some("nonexistent"))
+		.await
+		.unwrap_err();
 	assert!(matches!(err, podup::ComposeError::ServiceNotFound(_)));
 }
 
@@ -574,7 +577,10 @@ async fn profile_filtered_service_skipped() {
 	)
 	.unwrap();
 
-	engine.up_with_options(&file, false, &[], &[], false).await.unwrap();
+	engine
+		.up_with_options(&file, false, &[], &[], false)
+		.await
+		.unwrap();
 	engine.down(&file).await.unwrap();
 }
 
@@ -1208,7 +1214,10 @@ async fn dep_on_profile_filtered_service() {
 	.unwrap();
 
 	// No active profiles → db is skipped; web still runs but skips db's dep wait
-	engine.up_with_options(&file, false, &[], &[], false).await.unwrap();
+	engine
+		.up_with_options(&file, false, &[], &[], false)
+		.await
+		.unwrap();
 	engine.down(&file).await.unwrap();
 }
 
@@ -1249,8 +1258,11 @@ async fn label_file_labels_applied() {
 		None => return,
 	};
 	let dir = tempfile::tempdir().unwrap();
-	fs::write(dir.path().join("svc.labels"), b"com.example.role=web\ncom.example.env=test\n")
-		.unwrap();
+	fs::write(
+		dir.path().join("svc.labels"),
+		b"com.example.role=web\ncom.example.env=test\n",
+	)
+	.unwrap();
 	let proj = proj("lfl");
 	let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
 	let file = parse_str(
@@ -1309,7 +1321,13 @@ async fn target_services_duplicate_entry() {
 	// Passing "web" twice causes it to be pushed to the target_set stack twice;
 	// the second pop finds "web" already in the set → !set.insert → continue (L37).
 	engine
-		.up_with_options(&file, false, &[], &["web".to_string(), "web".to_string()], false)
+		.up_with_options(
+			&file,
+			false,
+			&[],
+			&["web".to_string(), "web".to_string()],
+			false,
+		)
 		.await
 		.unwrap();
 	engine.down(&file).await.unwrap();
@@ -1351,8 +1369,7 @@ mod watch_tests {
 		fs::write(&src_file, b"initial content").unwrap();
 
 		let proj = proj("wsy");
-		let engine =
-			Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+		let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
 		let file = parse_str(
 			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 		)
@@ -1433,8 +1450,7 @@ mod watch_tests {
 		let docker2 = podup::podman::connect_from_env()
 			.or_else(|_| podup::podman::connect(None))
 			.unwrap();
-		let engine2 =
-			Engine::with_base_dir(docker2, proj.clone(), dir.path().to_path_buf());
+		let engine2 = Engine::with_base_dir(docker2, proj.clone(), dir.path().to_path_buf());
 		let file2 = file.clone();
 		let handle = tokio::spawn(async move { engine2.watch(&file2).await });
 		// Give watch() time to run initial_sync before aborting
@@ -1456,8 +1472,7 @@ mod watch_tests {
 		fs::write(watch_dir.join("main.txt"), b"v1").unwrap();
 
 		let proj = proj("wra");
-		let engine =
-			Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+		let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
 		let yaml = format!(
 			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: src\n          action: restart\n"
 		);
@@ -1468,8 +1483,7 @@ mod watch_tests {
 		let docker2 = podup::podman::connect_from_env()
 			.or_else(|_| podup::podman::connect(None))
 			.unwrap();
-		let engine2 =
-			Engine::with_base_dir(docker2, proj.clone(), dir.path().to_path_buf());
+		let engine2 = Engine::with_base_dir(docker2, proj.clone(), dir.path().to_path_buf());
 		let file2 = file.clone();
 		let handle = tokio::spawn(async move { engine2.watch(&file2).await });
 
@@ -1493,8 +1507,7 @@ mod watch_tests {
 		fs::write(watch_dir.join("main.txt"), b"v1").unwrap();
 
 		let proj = proj("wsr");
-		let engine =
-			Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+		let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
 		let yaml = format!(
 			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: src\n          action: sync+restart\n          target: /app/\n"
 		);
@@ -1505,8 +1518,7 @@ mod watch_tests {
 		let docker2 = podup::podman::connect_from_env()
 			.or_else(|_| podup::podman::connect(None))
 			.unwrap();
-		let engine2 =
-			Engine::with_base_dir(docker2, proj.clone(), dir.path().to_path_buf());
+		let engine2 = Engine::with_base_dir(docker2, proj.clone(), dir.path().to_path_buf());
 		let file2 = file.clone();
 		let handle = tokio::spawn(async move { engine2.watch(&file2).await });
 
@@ -1530,8 +1542,7 @@ mod watch_tests {
 		fs::write(watch_dir.join("main.txt"), b"v1").unwrap();
 
 		let proj = proj("wse");
-		let engine =
-			Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+		let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
 		let yaml = format!(
 			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: src\n          action: sync+exec\n          target: /app/\n          exec:\n            command: [\"echo\", \"reloaded\"]\n"
 		);
@@ -1542,8 +1553,7 @@ mod watch_tests {
 		let docker2 = podup::podman::connect_from_env()
 			.or_else(|_| podup::podman::connect(None))
 			.unwrap();
-		let engine2 =
-			Engine::with_base_dir(docker2, proj.clone(), dir.path().to_path_buf());
+		let engine2 = Engine::with_base_dir(docker2, proj.clone(), dir.path().to_path_buf());
 		let file2 = file.clone();
 		let handle = tokio::spawn(async move { engine2.watch(&file2).await });
 
@@ -1567,8 +1577,7 @@ mod watch_tests {
 		fs::write(watch_dir.join("app.txt"), b"v1").unwrap();
 
 		let proj = proj("wev");
-		let engine =
-			Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+		let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
 		let rel_path = format!("src");
 		let yaml = format!(
 			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: {rel_path}\n          action: sync\n          target: /app/\n"
@@ -1580,8 +1589,7 @@ mod watch_tests {
 		let docker2 = podup::podman::connect_from_env()
 			.or_else(|_| podup::podman::connect(None))
 			.unwrap();
-		let engine2 =
-			Engine::with_base_dir(docker2, proj.clone(), dir.path().to_path_buf());
+		let engine2 = Engine::with_base_dir(docker2, proj.clone(), dir.path().to_path_buf());
 		let file2 = file.clone();
 		let watch_handle = tokio::spawn(async move { engine2.watch(&file2).await });
 
@@ -1612,18 +1620,10 @@ mod cli_tests {
 	fn cli_config_no_podman() {
 		let dir = tempdir().unwrap();
 		let compose = dir.path().join("docker-compose.yml");
-		fs::write(
-			&compose,
-			"services:\n  web:\n    image: alpine:latest\n",
-		)
-		.unwrap();
+		fs::write(&compose, "services:\n  web:\n    image: alpine:latest\n").unwrap();
 
 		let out = Command::new(bin())
-			.args([
-				"-f",
-				compose.to_str().unwrap(),
-				"config",
-			])
+			.args(["-f", compose.to_str().unwrap(), "config"])
 			.output()
 			.expect("podup binary not found");
 
@@ -1694,7 +1694,14 @@ mod cli_tests {
 		.unwrap();
 
 		Command::new(bin())
-			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "up", "--detach"])
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"up",
+				"--detach",
+			])
 			.output()
 			.unwrap();
 
@@ -1725,7 +1732,14 @@ mod cli_tests {
 		.unwrap();
 
 		Command::new(bin())
-			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "up", "--detach"])
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"up",
+				"--detach",
+			])
 			.output()
 			.unwrap();
 
@@ -1756,7 +1770,14 @@ mod cli_tests {
 		.unwrap();
 
 		Command::new(bin())
-			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "up", "--detach"])
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"up",
+				"--detach",
+			])
 			.output()
 			.unwrap();
 
@@ -1796,7 +1817,14 @@ mod cli_tests {
 		.unwrap();
 
 		Command::new(bin())
-			.args(["-f", compose.to_str().unwrap(), "-p", &proj, "up", "--detach"])
+			.args([
+				"-f",
+				compose.to_str().unwrap(),
+				"-p",
+				&proj,
+				"up",
+				"--detach",
+			])
 			.output()
 			.unwrap();
 
@@ -1819,11 +1847,7 @@ mod cli_tests {
 		}
 		let dir = tempdir().unwrap();
 		let compose = dir.path().join("docker-compose.yml");
-		fs::write(
-			&compose,
-			"services:\n  web:\n    image: alpine:latest\n",
-		)
-		.unwrap();
+		fs::write(&compose, "services:\n  web:\n    image: alpine:latest\n").unwrap();
 
 		let pull = Command::new(bin())
 			.args(["-f", compose.to_str().unwrap(), "pull"])

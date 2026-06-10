@@ -32,7 +32,10 @@ mod tests {
 
 	#[test]
 	fn string_variant_returns_string() {
-		assert_eq!(StringOrU16::String("8080-8090".into()).as_str_val(), "8080-8090");
+		assert_eq!(
+			StringOrU16::String("8080-8090".into()).as_str_val(),
+			"8080-8090"
+		);
 	}
 
 	#[test]

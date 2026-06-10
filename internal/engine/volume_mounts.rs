@@ -184,8 +184,8 @@ fn extend_volume_opts(opts: &mut Vec<String>, v: &VolumeOptions) {
 #[cfg(test)]
 mod tests {
 	use super::{build_binds, build_mounts};
-	use bollard::models::MountType;
 	use crate::compose::types::{BindOptions, Service, VolumeMount, VolumeOptions, VolumeType};
+	use bollard::models::MountType;
 	use std::path::Path;
 
 	fn svc_with_volumes(vols: Vec<VolumeMount>) -> Service {

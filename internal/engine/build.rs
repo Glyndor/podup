@@ -554,8 +554,7 @@ mod tests {
 		let dir = tempdir().unwrap();
 		fs::write(dir.path().join("app.txt"), b"content").unwrap();
 		let inline = "FROM alpine\nRUN echo hello\n";
-		let (bytes, df_name) =
-			build_context_tar_with_inline(dir.path(), inline).unwrap();
+		let (bytes, df_name) = build_context_tar_with_inline(dir.path(), inline).unwrap();
 		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
 		assert!(!df_name.is_empty());
 	}
