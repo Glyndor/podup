@@ -184,6 +184,7 @@ fn extend_volume_opts(opts: &mut Vec<String>, v: &VolumeOptions) {
 #[cfg(test)]
 mod tests {
 	use super::{build_binds, build_mounts};
+	use bollard::models::MountType;
 	use crate::compose::types::{BindOptions, Service, VolumeMount, VolumeOptions, VolumeType};
 	use std::path::Path;
 
@@ -316,5 +317,108 @@ mod tests {
 			mounts.is_empty(),
 			"plain bind goes through bind string, not Mount API"
 		);
+	}
+
+	#[test]
+	fn build_binds_volume_with_labels_excluded_from_binds() {
+		use crate::compose::types::Labels;
+		use indexmap::IndexMap;
+		let mut map = IndexMap::new();
+		map.insert("com.example.key".to_string(), "val".to_string());
+		let svc = svc_with_volumes(vec![VolumeMount::Long {
+			volume_type: VolumeType::Volume,
+			source: Some("myvol".into()),
+			target: "/data".into(),
+			read_only: None,
+			bind: None,
+			volume: Some(VolumeOptions {
+				labels: Labels::Map(map),
+				..Default::default()
+			}),
+			tmpfs: None,
+			consistency: None,
+		}]);
+		let binds = build_binds(&svc, Path::new("/base"));
+		assert!(
+			binds.is_empty(),
+			"volume with labels must use Mount API, not bind string"
+		);
+	}
+
+	#[test]
+	fn build_binds_create_host_path_creates_directory() {
+		let dir = tempfile::tempdir().unwrap();
+		let rel = "subdir/nested";
+		let svc = svc_with_volumes(vec![VolumeMount::Long {
+			volume_type: VolumeType::Bind,
+			source: Some(rel.into()),
+			target: "/cont".into(),
+			read_only: None,
+			bind: Some(BindOptions {
+				propagation: None,
+				create_host_path: Some(true),
+				selinux: None,
+			}),
+			volume: None,
+			tmpfs: None,
+			consistency: None,
+		}]);
+		build_binds(&svc, dir.path());
+		assert!(
+			dir.path().join(rel).exists(),
+			"create_host_path should have created the directory"
+		);
+	}
+
+	#[test]
+	fn build_mounts_volume_with_labels_uses_mount_api() {
+		use crate::compose::types::Labels;
+		use indexmap::IndexMap;
+		let mut map = IndexMap::new();
+		map.insert("k".to_string(), "v".to_string());
+		let svc = svc_with_volumes(vec![VolumeMount::Long {
+			volume_type: VolumeType::Volume,
+			source: Some("myvol".into()),
+			target: "/data".into(),
+			read_only: Some(false),
+			bind: None,
+			volume: Some(VolumeOptions {
+				labels: Labels::Map(map),
+				..Default::default()
+			}),
+			tmpfs: None,
+			consistency: None,
+		}]);
+		let mounts = build_mounts(&svc);
+		assert_eq!(mounts.len(), 1);
+		assert_eq!(mounts[0].typ, Some(MountType::VOLUME));
+		let vopts = mounts[0].volume_options.as_ref().unwrap();
+		assert!(vopts.labels.is_some());
+	}
+
+	#[test]
+	fn build_mounts_volume_with_driver_config() {
+		use crate::compose::types::DriverConfig;
+		let svc = svc_with_volumes(vec![VolumeMount::Long {
+			volume_type: VolumeType::Volume,
+			source: Some("myvol".into()),
+			target: "/data".into(),
+			read_only: None,
+			bind: None,
+			volume: Some(VolumeOptions {
+				driver_config: Some(DriverConfig {
+					name: Some("local".into()),
+					options: Default::default(),
+				}),
+				..Default::default()
+			}),
+			tmpfs: None,
+			consistency: None,
+		}]);
+		let mounts = build_mounts(&svc);
+		assert_eq!(mounts.len(), 1);
+		let vopts = mounts[0].volume_options.as_ref().unwrap();
+		let dc = vopts.driver_config.as_ref().unwrap();
+		assert_eq!(dc.name.as_deref(), Some("local"));
 	}
 }
