@@ -117,10 +117,20 @@ pub(super) fn write_private_file(path: &std::path::Path, content: &[u8]) -> Resu
 }
 
 /// Apply a compose `mode:` value (octal unix permissions) to `path`.
+///
+/// Rejects any mode with world-readable (`o+r`) or group-readable (`g+r`) bits
+/// set — a secret or config file must never be readable by other users.
 #[cfg(unix)]
 pub(super) fn apply_mode(path: &Path, mode: u32) -> Result<()> {
 	use std::os::unix::fs::PermissionsExt;
 
+	if mode & 0o044 != 0 {
+		return Err(ComposeError::Unsupported(format!(
+			"mode {mode:#o} for {} grants group- or world-read access to a secret/config file; \
+			 use a mode with no g+r or o+r bits (e.g. 0o400 or 0o600)",
+			path.display()
+		)));
+	}
 	std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).map_err(ComposeError::Io)
 }
 
@@ -345,6 +355,40 @@ mod ensure_dir_tests {
 		// Target permissions stay untouched — no chmod through the link.
 		let meta = std::fs::metadata(&target).expect("metadata");
 		assert_eq!(meta.mode() & 0o777, 0o755);
+	}
+}
+
+#[cfg(all(test, unix))]
+mod apply_mode_tests {
+	use super::apply_mode;
+
+	#[test]
+	fn owner_only_modes_accepted() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let file = dir.path().join("secret");
+		std::fs::write(&file, b"value").expect("write");
+		assert!(apply_mode(&file, 0o400).is_ok());
+		assert!(apply_mode(&file, 0o600).is_ok());
+		assert!(apply_mode(&file, 0o700).is_ok());
+	}
+
+	#[test]
+	fn group_readable_mode_rejected() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let file = dir.path().join("secret");
+		std::fs::write(&file, b"value").expect("write");
+		assert!(apply_mode(&file, 0o640).is_err());
+		assert!(apply_mode(&file, 0o644).is_err());
+	}
+
+	#[test]
+	fn world_readable_mode_rejected() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let file = dir.path().join("secret");
+		std::fs::write(&file, b"value").expect("write");
+		assert!(apply_mode(&file, 0o604).is_err());
+		assert!(apply_mode(&file, 0o777).is_err());
+		assert!(apply_mode(&file, 0o444).is_err());
 	}
 }
 
