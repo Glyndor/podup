@@ -1,3 +1,11 @@
+podup (0.5.1) unstable; urgency=low
+
+  * Fix release workflow: publish crate before downloading artifacts to
+    prevent binary files inflating the crate package above crates.io limit.
+  * Exclude tests/ from published crate package.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 10 Jun 2026 02:15:00 -0500
+
 podup (0.5.0) unstable; urgency=medium
 
   * Add run, pause, unpause, cp, top, port, images commands for full
