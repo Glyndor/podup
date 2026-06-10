@@ -23,7 +23,6 @@ path = "internal/lib.rs"
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
 serde = { version = "1", features = ["derive"] }
-thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }
 serde_yaml = { package = "serde_yaml_ng", version = "0.10" }

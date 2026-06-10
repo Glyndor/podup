@@ -865,7 +865,6 @@ dependencies = [
  "tar",
  "temp-env",
  "tempfile",
- "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
