@@ -63,3 +63,47 @@ impl<'de> Deserialize<'de> for WatchAction {
 pub struct WatchExec {
 	pub command: Vec<String>,
 }
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	#[test]
+	fn watch_action_sync() {
+		let a: WatchAction = serde_yaml::from_str("\"sync\"").unwrap();
+		assert_eq!(a, WatchAction::Sync);
+	}
+
+	#[test]
+	fn watch_action_rebuild() {
+		let a: WatchAction = serde_yaml::from_str("\"rebuild\"").unwrap();
+		assert_eq!(a, WatchAction::Rebuild);
+	}
+
+	#[test]
+	fn watch_action_restart() {
+		let a: WatchAction = serde_yaml::from_str("\"restart\"").unwrap();
+		assert_eq!(a, WatchAction::Restart);
+	}
+
+	#[test]
+	fn watch_action_sync_and_restart() {
+		let a: WatchAction = serde_yaml::from_str("\"sync+restart\"").unwrap();
+		assert_eq!(a, WatchAction::SyncAndRestart);
+	}
+
+	#[test]
+	fn watch_action_sync_and_exec() {
+		let a: WatchAction = serde_yaml::from_str("\"sync+exec\"").unwrap();
+		assert_eq!(a, WatchAction::SyncAndExec);
+	}
+
+	#[test]
+	fn watch_action_unknown_is_error() {
+		assert!(serde_yaml::from_str::<WatchAction>("\"deploy\"").is_err());
+	}
+}

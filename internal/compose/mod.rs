@@ -206,3 +206,72 @@ fn apply_merge_keys(value: &mut serde_yaml::Value) {
 		_ => {}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	// parse_str_raw
+
+	#[test]
+	fn parse_str_raw_minimal_service() {
+		let yaml = "services:\n  web:\n    image: nginx\n";
+		let file = parse_str_raw(yaml).unwrap();
+		assert!(file.services.contains_key("web"));
+		assert_eq!(file.services["web"].image.as_deref(), Some("nginx"));
+	}
+
+	#[test]
+	fn parse_str_raw_invalid_yaml_is_error() {
+		assert!(parse_str_raw(": : :").is_err());
+	}
+
+	// resolve_order
+
+	#[test]
+	fn resolve_order_no_deps_arbitrary_order() {
+		let yaml = "services:\n  a:\n    image: x\n  b:\n    image: y\n";
+		let file = parse_str_raw(yaml).unwrap();
+		let order = resolve_order(&file).unwrap();
+		assert_eq!(order.len(), 2);
+		assert!(order.contains(&"a".to_string()));
+		assert!(order.contains(&"b".to_string()));
+	}
+
+	#[test]
+	fn resolve_order_dep_before_dependent() {
+		let yaml = "services:\n  web:\n    image: nginx\n    depends_on: [db]\n  db:\n    image: postgres\n";
+		let file = parse_str_raw(yaml).unwrap();
+		let order = resolve_order(&file).unwrap();
+		let db_pos = order.iter().position(|s| s == "db").unwrap();
+		let web_pos = order.iter().position(|s| s == "web").unwrap();
+		assert!(db_pos < web_pos, "db must start before web");
+	}
+
+	#[test]
+	fn resolve_order_cycle_is_error() {
+		let yaml = "services:\n  a:\n    image: x\n    depends_on: [b]\n  b:\n    image: y\n    depends_on: [a]\n";
+		let file = parse_str_raw(yaml).unwrap();
+		assert!(resolve_order(&file).is_err());
+	}
+
+	#[test]
+	fn resolve_order_missing_required_dep_is_error() {
+		let yaml = "services:\n  web:\n    image: nginx\n    depends_on: [db]\n";
+		let file = parse_str_raw(yaml).unwrap();
+		assert!(resolve_order(&file).is_err());
+	}
+
+	// YAML merge keys (<<)
+
+	#[test]
+	fn yaml_merge_key_fills_missing_fields() {
+		let yaml = "x-defaults: &defaults\n  image: nginx\n  restart: always\nservices:\n  web:\n    <<: *defaults\n    ports: ['80:80']\n";
+		let file = parse_str_raw(yaml).unwrap();
+		assert_eq!(file.services["web"].image.as_deref(), Some("nginx"));
+	}
+}
