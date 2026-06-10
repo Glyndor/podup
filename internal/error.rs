@@ -97,10 +97,7 @@ mod tests {
 				"compose file not found: f",
 				ComposeError::FileNotFound("f".into()),
 			),
-			(
-				"io error:",
-				ComposeError::Io(std::io::Error::other("x")),
-			),
+			("io error:", ComposeError::Io(std::io::Error::other("x"))),
 			(
 				"service 's' not found",
 				ComposeError::ServiceNotFound("s".into()),
