@@ -1825,6 +1825,105 @@ async fn engine_cp_to_container_uploads_file() {
 }
 
 // ---------------------------------------------------------------------------
+// Replicas: restart, logs, top, exec, port target correct containers
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn restart_scaled_service_all_replicas() {
+	let docker = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("rsr");
+	let engine = Engine::new(docker, proj.clone());
+	let file = parse_str(
+		"services:\n  worker:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    deploy:\n      replicas: 2\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	// Both replicas must be reachable for restart to succeed.
+	engine.restart(&file, Some("worker")).await.unwrap();
+	engine.down(&file).await.unwrap();
+}
+
+#[tokio::test]
+async fn logs_scaled_service_all_replicas() {
+	let docker = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("lsr");
+	let engine = Engine::new(docker, proj.clone());
+	let file = parse_str(
+		"services:\n  worker:\n    image: alpine:latest\n    command: [\"sh\", \"-c\", \"echo hello && sleep infinity\"]\n    deploy:\n      replicas: 2\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	// logs for a named service with replicas: should stream from all without error.
+	engine.logs(&file, Some("worker"), false).await.unwrap();
+	engine.down(&file).await.unwrap();
+}
+
+#[tokio::test]
+async fn top_scaled_service_all_replicas() {
+	let docker = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("tsr");
+	let engine = Engine::new(docker, proj.clone());
+	let file = parse_str(
+		"services:\n  worker:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    deploy:\n      replicas: 2\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	engine.top(&file, &[]).await.unwrap();
+	engine.down(&file).await.unwrap();
+}
+
+#[tokio::test]
+async fn exec_scaled_service_targets_first_replica() {
+	let docker = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("esr");
+	let engine = Engine::new(docker, proj.clone());
+	let file = parse_str(
+		"services:\n  worker:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    deploy:\n      replicas: 2\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	engine
+		.exec(&file, "worker", vec!["echo".to_string(), "ok".to_string()])
+		.await
+		.unwrap();
+	engine.down(&file).await.unwrap();
+}
+
+#[tokio::test]
+async fn port_scaled_service_targets_first_replica() {
+	let docker = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("psr");
+	let engine = Engine::new(docker, proj.clone());
+	let file = parse_str(
+		"services:\n  worker:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    ports:\n      - \"127.0.0.1:18090:80\"\n    deploy:\n      replicas: 2\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	engine.port(&file, "worker", 80, "tcp").await.unwrap();
+	engine.down(&file).await.unwrap();
+}
+
+// ---------------------------------------------------------------------------
 // CLI binary (covers main.rs)
 // ---------------------------------------------------------------------------
 
