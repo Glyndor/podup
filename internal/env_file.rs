@@ -103,3 +103,119 @@ pub fn merge_env(
 		})
 		.collect()
 }
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::compose::types::EnvFileEntry;
+
+	// load_env_file_entries
+
+	#[test]
+	fn loads_key_value_pairs() {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join(".env"), "FOO=bar\nBAZ=qux\n").unwrap();
+		let entries = vec![EnvFileEntry::Path(".env".into())];
+		let m = load_env_file_entries(&entries, dir.path()).unwrap();
+		assert_eq!(m.get("FOO").map(|s| s.as_str()), Some("bar"));
+		assert_eq!(m.get("BAZ").map(|s| s.as_str()), Some("qux"));
+	}
+
+	#[test]
+	fn skips_comments_and_blank_lines() {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join(".env"), "# comment\n\nFOO=bar\n").unwrap();
+		let entries = vec![EnvFileEntry::Path(".env".into())];
+		let m = load_env_file_entries(&entries, dir.path()).unwrap();
+		assert_eq!(m.len(), 1);
+	}
+
+	#[test]
+	fn key_without_equals_has_empty_value() {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join(".env"), "BARE\n").unwrap();
+		let entries = vec![EnvFileEntry::Path(".env".into())];
+		let m = load_env_file_entries(&entries, dir.path()).unwrap();
+		assert_eq!(m.get("BARE").map(|s| s.as_str()), Some(""));
+	}
+
+	#[test]
+	fn first_file_wins_on_duplicate_key() {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join("a.env"), "FOO=first\n").unwrap();
+		std::fs::write(dir.path().join("b.env"), "FOO=second\n").unwrap();
+		let entries = vec![
+			EnvFileEntry::Path("a.env".into()),
+			EnvFileEntry::Path("b.env".into()),
+		];
+		let m = load_env_file_entries(&entries, dir.path()).unwrap();
+		assert_eq!(m.get("FOO").map(|s| s.as_str()), Some("first"));
+	}
+
+	#[test]
+	fn missing_required_file_returns_error() {
+		let dir = tempfile::tempdir().unwrap();
+		let entries = vec![EnvFileEntry::Path("nonexistent.env".into())];
+		assert!(load_env_file_entries(&entries, dir.path()).is_err());
+	}
+
+	#[test]
+	fn missing_optional_file_skipped() {
+		let dir = tempfile::tempdir().unwrap();
+		let entries = vec![EnvFileEntry::Config {
+			path: "nonexistent.env".into(),
+			required: Some(false),
+			format: None,
+		}];
+		let m = load_env_file_entries(&entries, dir.path()).unwrap();
+		assert!(m.is_empty());
+	}
+
+	#[test]
+	fn unsupported_format_returns_error() {
+		let dir = tempfile::tempdir().unwrap();
+		let entries = vec![EnvFileEntry::Config {
+			path: ".env".into(),
+			required: Some(false),
+			format: Some("json".into()),
+		}];
+		assert!(load_env_file_entries(&entries, dir.path()).is_err());
+	}
+
+	// merge_env
+
+	#[test]
+	fn service_env_wins_over_file_env() {
+		let service_env: HashMap<String, Option<String>> =
+			[("FOO".to_string(), Some("from-service".to_string()))].into();
+		let file_env: HashMap<String, String> =
+			[("FOO".to_string(), "from-file".to_string())].into();
+		let result = merge_env(service_env, file_env);
+		let foo_entry = result
+			.iter()
+			.find(|s| s.starts_with("FOO="))
+			.unwrap()
+			.clone();
+		assert_eq!(foo_entry, "FOO=from-service");
+	}
+
+	#[test]
+	fn file_env_fills_missing_keys() {
+		let service_env: HashMap<String, Option<String>> = HashMap::new();
+		let file_env: HashMap<String, String> = [("BAR".to_string(), "baz".to_string())].into();
+		let result = merge_env(service_env, file_env);
+		assert!(result.iter().any(|s| s == "BAR=baz"));
+	}
+
+	#[test]
+	fn key_only_env_var_has_no_equals() {
+		let service_env: HashMap<String, Option<String>> =
+			[("PASSTHROUGH".to_string(), None)].into();
+		let result = merge_env(service_env, HashMap::new());
+		assert!(result.iter().any(|s| s == "PASSTHROUGH"));
+	}
+}

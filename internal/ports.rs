@@ -249,7 +249,7 @@ fn expand_single_host_port(
 	}
 }
 
-const MAX_PORT_RANGE: usize = 1024;
+pub(crate) const MAX_PORT_RANGE: usize = 1024;
 
 /// Expand `start-end` or a single port string.
 fn expand_port_range(s: &str) -> Result<Vec<u16>> {
@@ -278,5 +278,182 @@ fn expand_port_range(s: &str) -> Result<Vec<u16>> {
 			.parse()
 			.map_err(|_| ComposeError::InvalidPort(format!("bad port: {s}")))?;
 		Ok(vec![p])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::compose::types::{PortMapping, StringOrU16};
+
+	fn short(s: &str) -> PortMapping {
+		PortMapping::Short(s.to_string())
+	}
+
+	fn parse_one_short(s: &str) -> Vec<ParsedPort> {
+		parse_ports(&[short(s)]).unwrap()
+	}
+
+	// Container port only
+
+	#[test]
+	fn container_port_only() {
+		let ports = parse_one_short("80");
+		assert_eq!(ports.len(), 1);
+		assert_eq!(ports[0].container_port, 80);
+		assert_eq!(ports[0].protocol, "tcp");
+		assert_eq!(ports[0].host_ip, "");
+		assert!(ports[0].host_port.is_none());
+	}
+
+	#[test]
+	fn container_port_with_explicit_protocol() {
+		let ports = parse_one_short("53/udp");
+		assert_eq!(ports[0].container_port, 53);
+		assert_eq!(ports[0].protocol, "udp");
+	}
+
+	// host:container
+
+	#[test]
+	fn host_colon_container() {
+		let ports = parse_one_short("8080:80");
+		assert_eq!(ports[0].container_port, 80);
+		assert_eq!(ports[0].host_port, Some(8080));
+		assert_eq!(ports[0].host_ip, "");
+	}
+
+	// ip:host:container
+
+	#[test]
+	fn ip_host_container() {
+		let ports = parse_one_short("127.0.0.1:8080:80");
+		assert_eq!(ports[0].container_port, 80);
+		assert_eq!(ports[0].host_port, Some(8080));
+		assert_eq!(ports[0].host_ip, "127.0.0.1");
+	}
+
+	#[test]
+	fn ipv6_bracketed() {
+		let ports = parse_one_short("[::1]:8080:80");
+		assert_eq!(ports[0].container_port, 80);
+		assert_eq!(ports[0].host_port, Some(8080));
+		assert_eq!(ports[0].host_ip, "::1");
+	}
+
+	// Range expansion
+
+	#[test]
+	fn container_port_range() {
+		let ports = parse_one_short("80-82");
+		assert_eq!(ports.len(), 3);
+		assert_eq!(ports[0].container_port, 80);
+		assert_eq!(ports[2].container_port, 82);
+	}
+
+	#[test]
+	fn host_range_to_container_range() {
+		let ports = parse_one_short("8080-8082:80-82");
+		assert_eq!(ports.len(), 3);
+		assert_eq!(ports[0].host_port, Some(8080));
+		assert_eq!(ports[0].container_port, 80);
+		assert_eq!(ports[2].host_port, Some(8082));
+		assert_eq!(ports[2].container_port, 82);
+	}
+
+	#[test]
+	fn single_host_expanded_for_container_range() {
+		let ports = parse_one_short("8080:80-82");
+		assert_eq!(ports.len(), 3);
+		assert_eq!(ports[0].host_port, Some(8080));
+		assert_eq!(ports[1].host_port, Some(8081));
+		assert_eq!(ports[2].host_port, Some(8082));
+	}
+
+	// Error cases
+
+	#[test]
+	fn range_start_greater_than_end_is_error() {
+		assert!(parse_ports(&[short("85-80")]).is_err());
+	}
+
+	#[test]
+	fn range_too_large_is_error() {
+		let big = format!("1-{}", MAX_PORT_RANGE + 1);
+		assert!(parse_ports(&[short(&big)]).is_err());
+	}
+
+	#[test]
+	fn invalid_port_string_is_error() {
+		assert!(parse_ports(&[short("abc")]).is_err());
+	}
+
+	#[test]
+	fn unclosed_ipv6_bracket_is_error() {
+		assert!(parse_ports(&[short("[::1:80")]).is_err());
+	}
+
+	// Long form
+
+	#[test]
+	fn long_form_with_published() {
+		let mapping = PortMapping::Long {
+			target: 80,
+			published: Some(StringOrU16::Number(8080)),
+			protocol: Some("tcp".to_string()),
+			host_ip: Some("0.0.0.0".to_string()),
+			mode: None,
+			app_protocol: None,
+			name: None,
+		};
+		let ports = parse_ports(&[mapping]).unwrap();
+		assert_eq!(ports[0].container_port, 80);
+		assert_eq!(ports[0].host_port, Some(8080));
+		assert_eq!(ports[0].host_ip, "0.0.0.0");
+	}
+
+	#[test]
+	fn long_form_no_published_defaults_to_none() {
+		let mapping = PortMapping::Long {
+			target: 80,
+			published: None,
+			protocol: None,
+			host_ip: None,
+			mode: None,
+			app_protocol: None,
+			name: None,
+		};
+		let ports = parse_ports(&[mapping]).unwrap();
+		assert!(ports[0].host_port.is_none());
+		assert_eq!(ports[0].protocol, "tcp");
+	}
+
+	// to_bollard
+
+	#[test]
+	fn to_bollard_produces_key_and_binding() {
+		let ports = parse_one_short("8080:80");
+		let (bindings, exposed) = to_bollard(&ports);
+		assert!(bindings.contains_key("80/tcp"));
+		assert!(exposed.contains_key("80/tcp"));
+		let b = bindings["80/tcp"].as_ref().unwrap();
+		assert_eq!(b[0].host_port.as_deref(), Some("8080"));
+	}
+
+	#[test]
+	fn to_bollard_port_zero_encodes_empty_string() {
+		let ports = vec![ParsedPort {
+			container_port: 80,
+			protocol: "tcp".to_string(),
+			host_ip: String::new(),
+			host_port: Some(0),
+		}];
+		let (bindings, _) = to_bollard(&ports);
+		let b = bindings["80/tcp"].as_ref().unwrap();
+		assert_eq!(b[0].host_port.as_deref(), Some(""));
 	}
 }

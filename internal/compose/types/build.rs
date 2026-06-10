@@ -198,3 +198,94 @@ impl BuildConfig {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	// IncludeConfig::paths
+
+	#[test]
+	fn include_config_path_returns_single() {
+		let c = IncludeConfig::Path("base.yml".into());
+		assert_eq!(c.paths(), vec!["base.yml"]);
+	}
+
+	#[test]
+	fn include_config_long_returns_list() {
+		let c = IncludeConfig::Long {
+			path: super::super::StringOrList::List(vec!["a.yml".into(), "b.yml".into()]),
+			env_file: None,
+			project_directory: None,
+		};
+		assert_eq!(c.paths(), vec!["a.yml", "b.yml"]);
+	}
+
+	// ExtendsConfig
+
+	#[test]
+	fn extends_service_short_form() {
+		let e = ExtendsConfig::Service("base".into());
+		assert_eq!(e.service(), "base");
+		assert!(e.file().is_none());
+	}
+
+	#[test]
+	fn extends_config_long_form() {
+		let e = ExtendsConfig::Long {
+			service: "base".into(),
+			file: Some("base.yml".into()),
+		};
+		assert_eq!(e.service(), "base");
+		assert_eq!(e.file(), Some("base.yml"));
+	}
+
+	// BuildConfig accessor methods
+
+	#[test]
+	fn build_config_context_string() {
+		let b = BuildConfig::Context("./app".into());
+		assert_eq!(b.context(), "./app");
+		assert!(b.dockerfile().is_none());
+		assert!(!b.no_cache());
+		assert!(!b.pull());
+	}
+
+	#[test]
+	fn build_config_long_form_context() {
+		let b = BuildConfig::Config {
+			context: "./app".into(),
+			dockerfile: Some("Dockerfile.prod".into()),
+			dockerfile_inline: None,
+			args: EnvVars::Empty,
+			target: Some("release".into()),
+			cache_from: vec![],
+			cache_to: vec![],
+			labels: Labels::Empty,
+			shm_size: None,
+			network: None,
+			platforms: vec![],
+			additional_contexts: Default::default(),
+			no_cache: Some(true),
+			pull: None,
+			extra_hosts: vec![],
+			tags: vec![],
+			privileged: None,
+			ssh: vec![],
+			secrets: vec![],
+			ulimits: Default::default(),
+			isolation: None,
+			entitlements: vec![],
+			provenance: None,
+			sbom: None,
+		};
+		assert_eq!(b.context(), "./app");
+		assert_eq!(b.dockerfile(), Some("Dockerfile.prod"));
+		assert_eq!(b.target(), Some("release"));
+		assert!(b.no_cache());
+	}
+}
