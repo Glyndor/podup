@@ -158,7 +158,8 @@ fn parse_short(s: &str) -> Result<Vec<ParsedPort>> {
 			let (left, right) = split_last_colon(rest);
 			let host_ports = expand_port_range(left)?;
 			let container_ports = expand_port_range(right)?;
-			if host_ports.len() != container_ports.len() && host_ports.len() != 1 {
+			let host_ports = expand_single_host_port(host_ports, container_ports.len(), s)?;
+			if host_ports.len() != container_ports.len() {
 				return Err(ComposeError::InvalidPort(format!(
 					"port range mismatch: {s}"
 				)));
@@ -189,7 +190,8 @@ fn parse_with_ip(ip: &str, after: &str, proto: &str, full: &str) -> Result<Vec<P
 	if let Some((left, right)) = after.split_once(':') {
 		let host_ports = expand_port_range(left)?;
 		let container_ports = expand_port_range(right)?;
-		if host_ports.len() != container_ports.len() && host_ports.len() != 1 {
+		let host_ports = expand_single_host_port(host_ports, container_ports.len(), full)?;
+		if host_ports.len() != container_ports.len() {
 			return Err(ComposeError::InvalidPort(format!(
 				"port range mismatch: {full}"
 			)));
@@ -223,6 +225,27 @@ fn split_last_colon(s: &str) -> (&str, &str) {
 		(&s[..idx], &s[idx + 1..])
 	} else {
 		("", s)
+	}
+}
+
+/// When `host_ports` contains exactly one port and `container_count > 1`, expand
+/// the host side to a range starting at `host_ports[0]` (docker-compose semantics
+/// for `8080:80-82` → 8080→80, 8081→81, 8082→82).
+fn expand_single_host_port(
+	host_ports: Vec<u16>,
+	container_count: usize,
+	spec: &str,
+) -> Result<Vec<u16>> {
+	if host_ports.len() == 1 && container_count > 1 {
+		let start = host_ports[0];
+		let end = start
+			.checked_add((container_count - 1) as u16)
+			.ok_or_else(|| {
+				ComposeError::InvalidPort(format!("host port range overflow: {spec}"))
+			})?;
+		Ok((start..=end).collect())
+	} else {
+		Ok(host_ports)
 	}
 }
 
