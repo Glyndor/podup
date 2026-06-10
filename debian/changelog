@@ -1,3 +1,13 @@
+podup (0.5.6) unstable; urgency=medium
+
+  * Fix restart, logs, top to target all replicas in scaled services.
+  * Fix exec and port to target first replica in scaled services.
+  * Fix attach_logs stream labels for replica containers.
+  * Correct declared MSRV from 1.85 to 1.86 (idna_adapter 1.2.2 requirement).
+  * Update README to list all commands and bump library version example.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 10 Jun 2026 20:00:00 -0500
+
 podup (0.5.5) unstable; urgency=low
 
   * Migrate yaml_serde to serde_yaml_ng (actively maintained successor).
