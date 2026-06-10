@@ -137,6 +137,20 @@ impl Engine {
 		}
 	}
 
+	/// Name of the first (or only) replica — for commands that target one container.
+	pub(super) fn first_replica_name(&self, service_name: &str, service: &Service) -> String {
+		let replicas = service
+			.scale
+			.or(service.deploy.as_ref().and_then(|d| d.replicas))
+			.unwrap_or(1) as usize;
+		let base = self.container_name(service_name, service);
+		if replicas == 1 {
+			base
+		} else {
+			format!("{base}-1")
+		}
+	}
+
 	#[cfg(not(feature = "watch"))]
 	pub async fn watch(&self, _file: &crate::compose::types::ComposeFile) -> Result<()> {
 		Err(crate::error::ComposeError::Unsupported(
