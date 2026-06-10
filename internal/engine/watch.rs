@@ -306,20 +306,15 @@ fn build_sync_tar(src: &Path) -> Result<Vec<u8>> {
 	let mut tar = tar::Builder::new(encoder);
 
 	if src.is_dir() {
-		for entry in walkdir::WalkDir::new(src).follow_links(false) {
-			let entry = entry.map_err(|e| ComposeError::Io(e.into()))?;
-			let abs = entry.path();
+		for abs in super::walk_dir(src).map_err(ComposeError::Io)? {
 			let rel = abs
 				.strip_prefix(src)
 				.map_err(|_| ComposeError::Build("path strip".into()))?;
-			if rel.as_os_str().is_empty() {
-				continue;
-			}
 			if abs.is_dir() {
-				tar.append_dir(rel, abs)
+				tar.append_dir(rel, &abs)
 					.map_err(|e| ComposeError::Build(e.to_string()))?;
 			} else {
-				tar.append_path_with_name(abs, rel)
+				tar.append_path_with_name(&abs, rel)
 					.map_err(|e| ComposeError::Build(e.to_string()))?;
 			}
 		}

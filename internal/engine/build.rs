@@ -14,7 +14,6 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 use futures::StreamExt;
 use tracing::{debug, info, warn};
-use walkdir::WalkDir;
 
 use crate::compose::types::{BuildConfig, Service};
 use crate::error::{ComposeError, Result};
@@ -98,7 +97,7 @@ impl Engine {
 
 		info!("building {tag} from {}", context_path.display());
 
-		// PERF-004: walkdir + file I/O are blocking; run off the tokio thread pool.
+		// PERF-004: directory walk + file I/O are blocking; run off the tokio thread pool.
 		let (tar_bytes, dockerfile_name) = if let Some(inline) = build.dockerfile_inline() {
 			let ctx = context_path.clone();
 			let inline_s = inline.to_string();
@@ -271,24 +270,19 @@ fn build_context_tar_with_inline(context: &Path, inline: &str) -> Result<(Vec<u8
 	tar.append_data(&mut header, inline_name, inline.as_bytes())
 		.map_err(|e| ComposeError::Build(e.to_string()))?;
 
-	for entry in WalkDir::new(context).follow_links(false) {
-		let entry = entry.map_err(|e| ComposeError::Io(e.into()))?;
-		let abs = entry.path();
+	for abs in super::walk_dir(context).map_err(ComposeError::Io)? {
 		let rel = abs
 			.strip_prefix(context)
 			.map_err(|_| ComposeError::Build("path strip error".into()))?;
-		if rel.as_os_str().is_empty() {
-			continue;
-		}
 		let rel_str = rel.to_string_lossy();
 		if is_ignored(&rel_str, &ignore_patterns) {
 			continue;
 		}
 		if abs.is_dir() {
-			tar.append_dir(rel, abs)
+			tar.append_dir(rel, &abs)
 				.map_err(|e| ComposeError::Build(e.to_string()))?;
 		} else {
-			tar.append_path_with_name(abs, rel)
+			tar.append_path_with_name(&abs, rel)
 				.map_err(|e| ComposeError::Build(e.to_string()))?;
 		}
 	}
@@ -308,27 +302,19 @@ pub(crate) fn build_context_tar(context: &Path, _dockerfile: &str) -> Result<Vec
 	let encoder = GzEncoder::new(Vec::new(), Compression::default());
 	let mut tar = tar::Builder::new(encoder);
 
-	for entry in WalkDir::new(context).follow_links(false) {
-		let entry = entry.map_err(|e| ComposeError::Io(e.into()))?;
-		let abs = entry.path();
+	for abs in super::walk_dir(context).map_err(ComposeError::Io)? {
 		let rel = abs
 			.strip_prefix(context)
 			.map_err(|_| ComposeError::Build("path strip error".into()))?;
-
-		if rel.as_os_str().is_empty() {
-			continue;
-		}
-
 		let rel_str = rel.to_string_lossy();
 		if is_ignored(&rel_str, &ignore_patterns) {
 			continue;
 		}
-
 		if abs.is_dir() {
-			tar.append_dir(rel, abs)
+			tar.append_dir(rel, &abs)
 				.map_err(|e| ComposeError::Build(e.to_string()))?;
 		} else {
-			tar.append_path_with_name(abs, rel)
+			tar.append_path_with_name(&abs, rel)
 				.map_err(|e| ComposeError::Build(e.to_string()))?;
 		}
 	}
@@ -370,15 +356,10 @@ fn build_context_tar_with_target(
 		.map_err(|e| ComposeError::Build(e.to_string()))?;
 
 	// Add context, skipping the original Dockerfile (already wrote truncated version).
-	for entry in WalkDir::new(context).follow_links(false) {
-		let entry = entry.map_err(|e| ComposeError::Io(e.into()))?;
-		let abs = entry.path();
+	for abs in super::walk_dir(context).map_err(ComposeError::Io)? {
 		let rel = abs
 			.strip_prefix(context)
 			.map_err(|_| ComposeError::Build("path strip error".into()))?;
-		if rel.as_os_str().is_empty() {
-			continue;
-		}
 		let rel_str = rel.to_string_lossy();
 		if is_ignored(&rel_str, &ignore_patterns) {
 			continue;
@@ -387,10 +368,10 @@ fn build_context_tar_with_target(
 			continue; // Replaced by truncated version above.
 		}
 		if abs.is_dir() {
-			tar.append_dir(rel, abs)
+			tar.append_dir(rel, &abs)
 				.map_err(|e| ComposeError::Build(e.to_string()))?;
 		} else {
-			tar.append_path_with_name(abs, rel)
+			tar.append_path_with_name(&abs, rel)
 				.map_err(|e| ComposeError::Build(e.to_string()))?;
 		}
 	}

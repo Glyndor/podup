@@ -34,7 +34,6 @@ futures = { version = "0.3", default-features = false, features = ["async-await"
 tar = { version = "0.4", default-features = false }
 flate2 = "1.0"
 bytes = "1"
-walkdir = "2"
 notify = { version = "8", optional = true }
 
 [target.'cfg(unix)'.dependencies]
