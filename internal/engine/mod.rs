@@ -158,8 +158,7 @@ fn walk_dir(root: &std::path::Path) -> std::io::Result<Vec<PathBuf>> {
 }
 
 fn walk_collect(dir: &std::path::Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
-	let mut entries: Vec<_> = std::fs::read_dir(dir)?
-		.collect::<std::io::Result<Vec<_>>>()?;
+	let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<std::io::Result<Vec<_>>>()?;
 	entries.sort_by_key(|e| e.file_name());
 	for entry in entries {
 		let path = entry.path();
