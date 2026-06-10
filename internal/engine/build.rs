@@ -98,14 +98,31 @@ impl Engine {
 
 		info!("building {tag} from {}", context_path.display());
 
+		// PERF-004: walkdir + file I/O are blocking; run off the tokio thread pool.
 		let (tar_bytes, dockerfile_name) = if let Some(inline) = build.dockerfile_inline() {
-			build_context_tar_with_inline(&context_path, inline)?
+			let ctx = context_path.clone();
+			let inline_s = inline.to_string();
+			tokio::task::spawn_blocking(move || build_context_tar_with_inline(&ctx, &inline_s))
+				.await
+				.map_err(|e| ComposeError::Build(e.to_string()))??
 		} else {
 			let df = build.dockerfile().unwrap_or("Dockerfile");
 			if let Some(target) = build.target() {
-				build_context_tar_with_target(&context_path, df, target)?
+				let ctx = context_path.clone();
+				let df_s = df.to_string();
+				let tgt_s = target.to_string();
+				tokio::task::spawn_blocking(move || {
+					build_context_tar_with_target(&ctx, &df_s, &tgt_s)
+				})
+				.await
+				.map_err(|e| ComposeError::Build(e.to_string()))??
 			} else {
-				(build_context_tar(&context_path, df)?, df.to_string())
+				let ctx = context_path.clone();
+				let df_s = df.to_string();
+				let bytes = tokio::task::spawn_blocking(move || build_context_tar(&ctx, &df_s))
+					.await
+					.map_err(|e| ComposeError::Build(e.to_string()))??;
+				(bytes, df.to_string())
 			}
 		};
 
