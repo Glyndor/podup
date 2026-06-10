@@ -1,3 +1,14 @@
+podup (0.5.0) unstable; urgency=medium
+
+  * Add run, pause, unpause, cp, top, port, images commands for full
+    docker-compose parity (21 commands total).
+  * Add stop, start, kill, build, rm commands and up --build flag.
+  * Remove anyhow dependency; propagate run exit codes via process::exit.
+  * Derive container image tag from service name when only build: is set.
+  * Debian offline build support: vendor/ directory detected in rules.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 10 Jun 2026 01:15:00 -0500
+
 podup (0.4.0) unstable; urgency=medium
 
   * Resolve the Podman socket per platform; macOS and Windows hosts are
