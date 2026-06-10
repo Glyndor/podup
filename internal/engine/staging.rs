@@ -143,6 +143,8 @@ pub(super) fn apply_owner(path: &Path, uid: Option<&str>, gid: Option<&str>) {
 		use std::ffi::CString;
 		use std::os::unix::ffi::OsStrExt;
 		if let Ok(p) = CString::new(path.as_os_str().as_bytes()) {
+			// SAFETY: p is a valid NUL-terminated C string derived from a path we own;
+			// uid_val and gid_val are plain integers; chown has no memory-safety requirements.
 			let rc = unsafe { libc::chown(p.as_ptr(), uid_val, gid_val) };
 			if rc != 0 {
 				tracing::warn!(
