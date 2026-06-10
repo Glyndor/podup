@@ -116,7 +116,6 @@ impl Engine {
 		Ok(())
 	}
 
-
 	pub(super) fn container_name(&self, service_name: &str, service: &Service) -> String {
 		service
 			.container_name

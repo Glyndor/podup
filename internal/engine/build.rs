@@ -119,10 +119,9 @@ impl Engine {
 			} else {
 				let ctx = context_path.clone();
 				let df_s = df.to_string();
-				let bytes =
-					tokio::task::spawn_blocking(move || build_context_tar(&ctx, &df_s))
-						.await
-						.map_err(|e| ComposeError::Build(e.to_string()))??;
+				let bytes = tokio::task::spawn_blocking(move || build_context_tar(&ctx, &df_s))
+					.await
+					.map_err(|e| ComposeError::Build(e.to_string()))??;
 				(bytes, df.to_string())
 			}
 		};
