@@ -16,6 +16,7 @@ mod query;
 mod staging;
 mod volume;
 mod volume_mounts;
+#[cfg(feature = "watch")]
 mod watch;
 
 use std::path::PathBuf;
@@ -135,4 +136,37 @@ impl Engine {
 			(1..=replicas).map(|i| format!("{base}-{i}")).collect()
 		}
 	}
+
+	#[cfg(not(feature = "watch"))]
+	pub async fn watch(&self, _file: &crate::compose::types::ComposeFile) -> Result<()> {
+		Err(crate::error::ComposeError::Unsupported(
+			"watch requires the 'watch' feature".into(),
+		))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Filesystem helpers
+// ---------------------------------------------------------------------------
+
+/// Recursively collect all file and directory paths under `root`, in pre-order.
+/// Symlinks are included as entries but are never followed into.
+fn walk_dir(root: &std::path::Path) -> std::io::Result<Vec<PathBuf>> {
+	let mut out = Vec::new();
+	walk_collect(root, &mut out)?;
+	Ok(out)
+}
+
+fn walk_collect(dir: &std::path::Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
+	let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<std::io::Result<Vec<_>>>()?;
+	entries.sort_by_key(|e| e.file_name());
+	for entry in entries {
+		let path = entry.path();
+		let file_type = entry.file_type()?;
+		out.push(path.clone());
+		if file_type.is_dir() {
+			walk_collect(&path, out)?;
+		}
+	}
+	Ok(())
 }
