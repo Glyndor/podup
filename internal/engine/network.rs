@@ -382,10 +382,7 @@ mod tests {
 	fn fallback_mac_applied_when_no_config() {
 		let file = empty_file();
 		let settings = build_endpoint_settings(None, &file, Some("02:42:ac:11:00:02"));
-		assert_eq!(
-			settings.mac_address.as_deref(),
-			Some("02:42:ac:11:00:02")
-		);
+		assert_eq!(settings.mac_address.as_deref(), Some("02:42:ac:11:00:02"));
 	}
 
 	#[test]
@@ -394,10 +391,7 @@ mod tests {
 		let cfg = ServiceNetworkConfig::default();
 		let file = empty_file();
 		let settings = build_endpoint_settings(Some(&cfg), &file, Some("02:42:ac:11:00:03"));
-		assert_eq!(
-			settings.mac_address.as_deref(),
-			Some("02:42:ac:11:00:03")
-		);
+		assert_eq!(settings.mac_address.as_deref(), Some("02:42:ac:11:00:03"));
 	}
 
 	#[test]
@@ -408,11 +402,7 @@ mod tests {
 			..Default::default()
 		};
 		let file = empty_file();
-		let settings =
-			build_endpoint_settings(Some(&cfg), &file, Some("02:42:ac:11:00:03"));
-		assert_eq!(
-			settings.mac_address.as_deref(),
-			Some("aa:bb:cc:dd:ee:ff")
-		);
+		let settings = build_endpoint_settings(Some(&cfg), &file, Some("02:42:ac:11:00:03"));
+		assert_eq!(settings.mac_address.as_deref(), Some("aa:bb:cc:dd:ee:ff"));
 	}
 }
