@@ -210,7 +210,6 @@ async fn run() -> podup::Result<()> {
 
 	let file = podup::parse_file(&cli.file)?;
 
-	// The `config` command does not need a Podman connection.
 	if matches!(cli.command, Commands::Config) {
 		let yaml = serde_yaml::to_string(&file).map_err(podup::ComposeError::Parse)?;
 		println!("{yaml}");

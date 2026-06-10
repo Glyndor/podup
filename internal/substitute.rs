@@ -28,29 +28,24 @@ pub fn substitute(input: &str, vars: &HashMap<String, String>) -> Result<String>
 
 		match chars.peek() {
 			None => {
-				// Trailing bare `$` — keep as-is.
 				out.push('$');
 			}
 			Some('$') => {
-				// `$$` → literal `$`
 				chars.next();
 				out.push('$');
 			}
 			Some('{') => {
-				// Consume `{`
 				chars.next();
 				let (var, modifier) = parse_braced_var(&mut chars)?;
 				let value = resolve_modifier(var, modifier, vars)?;
 				out.push_str(&value);
 			}
 			Some(c) if is_var_start(*c) => {
-				// Bare `$VAR`
 				let var = collect_var_name(&mut chars);
 				let value = vars.get(&var).cloned().unwrap_or_default();
 				out.push_str(&value);
 			}
 			Some(_) => {
-				// Not a variable — keep the `$`
 				out.push('$');
 			}
 		}
@@ -91,7 +86,6 @@ pub fn load_dotenv(dir: &Path) -> HashMap<String, String> {
 			continue;
 		}
 
-		// Process env takes precedence.
 		if std::env::var(&key).is_ok() {
 			continue;
 		}
@@ -105,7 +99,6 @@ pub fn load_dotenv(dir: &Path) -> HashMap<String, String> {
 /// Build the full variable map: process env + dotenv (process env wins).
 pub fn build_vars(dir: &Path) -> HashMap<String, String> {
 	let mut vars: HashMap<String, String> = std::env::vars().collect();
-	// Merge dotenv; only insert keys not already present.
 	for (k, v) in load_dotenv(dir) {
 		vars.entry(k).or_insert(v);
 	}
@@ -159,7 +152,6 @@ fn is_var_char(c: char) -> bool {
 	c.is_alphanumeric() || c == '_'
 }
 
-/// Collect a bare variable name (alphanumeric + `_`).
 fn collect_var_name(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
 	let mut name = String::new();
 	while let Some(&c) = chars.peek() {
@@ -191,18 +183,14 @@ enum Modifier {
 }
 
 /// Parse the content inside `${…}`.  The opening `{` has already been consumed.
-///
-/// Returns `(variable_name, Modifier)`.
 fn parse_braced_var(
 	chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
 ) -> Result<(String, Modifier)> {
 	let mut name = String::new();
 
-	// Read until we hit `}`, `:`, `+`, `-`, `?`, or end-of-input.
 	loop {
 		match chars.peek() {
 			None => {
-				// Unclosed brace — treat as literal.
 				return Ok((name, Modifier::None));
 			}
 			Some('}') => {
@@ -225,10 +213,7 @@ fn parse_braced_var(
 						chars.next();
 						Modifier::ErrorIfUnsetOrEmpty(collect_until_close(chars))
 					}
-					_ => {
-						// `${VAR:` with unknown char — collect default anyway.
-						Modifier::DefaultIfUnsetOrEmpty(collect_until_close(chars))
-					}
+					_ => Modifier::DefaultIfUnsetOrEmpty(collect_until_close(chars)),
 				};
 				return Ok((name, modifier));
 			}
@@ -274,37 +259,25 @@ fn resolve_modifier(
 	match modifier {
 		Modifier::None => Ok(value.cloned().unwrap_or_default()),
 
-		Modifier::DefaultIfUnsetOrEmpty(default) => {
-			// Use default when unset OR empty.
-			match value {
-				Some(v) if !v.is_empty() => Ok(v.clone()),
-				_ => Ok(default),
-			}
-		}
+		Modifier::DefaultIfUnsetOrEmpty(default) => match value {
+			Some(v) if !v.is_empty() => Ok(v.clone()),
+			_ => Ok(default),
+		},
 
-		Modifier::DefaultIfUnset(default) => {
-			// Use default only when unset.
-			match value {
-				Some(v) => Ok(v.clone()),
-				None => Ok(default),
-			}
-		}
+		Modifier::DefaultIfUnset(default) => match value {
+			Some(v) => Ok(v.clone()),
+			None => Ok(default),
+		},
 
-		Modifier::AltIfSetAndNonEmpty(alt) => {
-			// Use alt when set and non-empty; else empty.
-			match value {
-				Some(v) if !v.is_empty() => Ok(alt),
-				_ => Ok(String::new()),
-			}
-		}
+		Modifier::AltIfSetAndNonEmpty(alt) => match value {
+			Some(v) if !v.is_empty() => Ok(alt),
+			_ => Ok(String::new()),
+		},
 
-		Modifier::AltIfSet(alt) => {
-			// Use alt when set (even if empty); else empty.
-			match value {
-				Some(_) => Ok(alt),
-				None => Ok(String::new()),
-			}
-		}
+		Modifier::AltIfSet(alt) => match value {
+			Some(_) => Ok(alt),
+			None => Ok(String::new()),
+		},
 
 		Modifier::ErrorIfUnsetOrEmpty(msg) => match value {
 			Some(v) if !v.is_empty() => Ok(v.clone()),

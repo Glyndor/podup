@@ -28,10 +28,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-// ---------------------------------------------------------------------------
-// Top-level secrets / configs
-// ---------------------------------------------------------------------------
-
+/// Top-level `secrets:` entry — defines a named secret available to services.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct SecretConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -54,6 +51,7 @@ pub struct SecretConfig {
 	pub template_driver: Option<String>,
 }
 
+/// Top-level `configs:` entry — defines a named config available to services.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ConfigConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -76,10 +74,7 @@ pub struct ConfigConfig {
 	pub template_driver: Option<String>,
 }
 
-// ---------------------------------------------------------------------------
-// ComposeFile (root)
-// ---------------------------------------------------------------------------
-
+/// Root deserialization target for a `docker-compose.yml` file.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ComposeFile {
 	#[serde(skip_serializing_if = "Option::is_none")]

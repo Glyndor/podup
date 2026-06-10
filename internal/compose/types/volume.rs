@@ -10,10 +10,7 @@ use std::collections::HashMap;
 
 use super::Labels;
 
-// ---------------------------------------------------------------------------
-// VolumeType
-// ---------------------------------------------------------------------------
-
+/// Volume mount type: `volume`, `bind`, `tmpfs`, `npipe`, or `cluster`.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum VolumeType {
@@ -24,10 +21,7 @@ pub enum VolumeType {
 	Cluster,
 }
 
-// ---------------------------------------------------------------------------
-// Mount options
-// ---------------------------------------------------------------------------
-
+/// Sub-options for a `bind`-type volume mount.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct BindOptions {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -38,6 +32,7 @@ pub struct BindOptions {
 	pub selinux: Option<String>,
 }
 
+/// Sub-options for a `volume`-type mount — nocopy flag and optional driver config.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct VolumeOptions {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -50,6 +45,7 @@ pub struct VolumeOptions {
 	pub subpath: Option<String>,
 }
 
+/// Driver name and key-value options nested under `VolumeOptions`.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DriverConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -58,6 +54,7 @@ pub struct DriverConfig {
 	pub options: HashMap<String, String>,
 }
 
+/// Sub-options for a `tmpfs`-type mount — size and mode.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct TmpfsOptions {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -66,10 +63,7 @@ pub struct TmpfsOptions {
 	pub mode: Option<u32>,
 }
 
-// ---------------------------------------------------------------------------
-// VolumeMount
-// ---------------------------------------------------------------------------
-
+/// A volume mount entry — either a short-form string or a long-form typed block.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 #[allow(clippy::large_enum_variant)]
@@ -110,10 +104,7 @@ impl VolumeMount {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// Top-level VolumeConfig
-// ---------------------------------------------------------------------------
-
+/// Named volume definition in the top-level `volumes:` block.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct VolumeConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -128,10 +119,7 @@ pub struct VolumeConfig {
 	pub labels: Labels,
 }
 
-// ---------------------------------------------------------------------------
-// Service-level config / secret references
-// ---------------------------------------------------------------------------
-
+/// Reference to a named config from a service — short form (name only) or long form with mount target.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum ServiceConfigRef {
@@ -165,6 +153,7 @@ impl ServiceConfigRef {
 	}
 }
 
+/// Reference to a named secret from a service — short form (name only) or long form with mount target.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum ServiceSecretRef {

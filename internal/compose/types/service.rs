@@ -21,7 +21,6 @@ use super::{
 /// A single service definition.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct Service {
-	// ---------------- core ----------------
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub image: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -33,13 +32,11 @@ pub struct Service {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub entrypoint: Option<Command>,
 
-	// ---------------- ports / network ----------------
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub ports: Vec<PortMapping>,
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub expose: Vec<String>,
 
-	// ---------------- env / mounts ----------------
 	#[serde(default)]
 	pub environment: EnvVars,
 	#[serde(default)]
@@ -55,7 +52,6 @@ pub struct Service {
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub secrets: Vec<ServiceSecretRef>,
 
-	// ---------------- networking ----------------
 	#[serde(default)]
 	pub networks: ServiceNetworks,
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -79,13 +75,11 @@ pub struct Service {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub network_mode: Option<String>,
 
-	// ---------------- ordering / health ----------------
 	#[serde(default)]
 	pub depends_on: DependsOn,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub healthcheck: Option<HealthCheck>,
 
-	// ---------------- lifecycle / restart ----------------
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub restart: Option<RestartPolicy>,
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -99,7 +93,6 @@ pub struct Service {
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub pre_stop: Vec<LifecycleHook>,
 
-	// ---------------- identity / labels ----------------
 	#[serde(default)]
 	pub labels: Labels,
 	#[serde(default)]
@@ -115,7 +108,6 @@ pub struct Service {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub platform: Option<String>,
 
-	// ---------------- security / capabilities ----------------
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub cap_add: Vec<String>,
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -133,7 +125,6 @@ pub struct Service {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub stdin_open: Option<bool>,
 
-	// ---------------- runtime / namespaces ----------------
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub runtime: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -151,7 +142,6 @@ pub struct Service {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub cgroup: Option<String>,
 
-	// ---------------- devices / filesystem ----------------
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub devices: Vec<String>,
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -159,7 +149,6 @@ pub struct Service {
 	#[serde(default, skip_serializing_if = "HashMap::is_empty")]
 	pub storage_opt: HashMap<String, String>,
 
-	// ---------------- resources / limits (top-level) ----------------
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub scale: Option<u32>,
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -197,7 +186,6 @@ pub struct Service {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub blkio_config: Option<BlkioConfig>,
 
-	// ---------------- logging / sysctl / ulimit ----------------
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub logging: Option<LoggingConfig>,
 	#[serde(default)]
@@ -205,27 +193,21 @@ pub struct Service {
 	#[serde(default, skip_serializing_if = "IndexMap::is_empty")]
 	pub ulimits: IndexMap<String, UlimitConfig>,
 
-	// ---------------- labels / annotations ----------------
 	#[serde(default)]
 	pub label_file: StringOrList,
 
-	// ---------------- attach / log collection ----------------
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub attach: Option<bool>,
 
-	// ---------------- pull policy ----------------
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub pull_policy: Option<String>,
 
-	// ---------------- deploy ----------------
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub deploy: Option<DeployConfig>,
 
-	// ---------------- develop (file-watch) ----------------
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub develop: Option<DevelopConfig>,
 
-	// ---------------- gpu shorthand ----------------
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub gpus: Option<GpuSpec>,
 }

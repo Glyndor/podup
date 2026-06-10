@@ -13,10 +13,6 @@ use crate::error::{ComposeError, Result};
 use crate::substitute;
 use types::ComposeFile;
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 /// Parse a compose file from disk, applying variable substitution and
 /// resolving `extends:` / `include:` directives.
 pub fn parse_file(path: &Path) -> Result<ComposeFile> {
@@ -143,10 +139,6 @@ pub fn resolve_order(file: &ComposeFile) -> Result<Vec<String>> {
 	Ok(order)
 }
 
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
 pub(crate) fn parse_file_inner(path: &Path, dir: &Path) -> Result<ComposeFile> {
 	parse_file_inner_with_env(path, dir, &[])
 }
@@ -176,7 +168,7 @@ fn deserialize_with_merge(content: &str) -> Result<ComposeFile> {
 
 /// Recursively resolve YAML merge keys (`<<: *anchor`) in a `Value` tree.
 ///
-/// yaml_serde does not expose `apply_merge()` — this replaces it.
+/// serde_yaml_ng does not expose `apply_merge()` — this replaces it.
 /// Merge semantics: keys from the anchor fill in only where the child has no value.
 fn apply_merge_keys(value: &mut serde_yaml::Value) {
 	match value {

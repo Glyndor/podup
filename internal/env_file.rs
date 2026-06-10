@@ -90,7 +90,6 @@ pub fn merge_env(
 	service_env: HashMap<String, Option<String>>,
 	env_file_vars: HashMap<String, String>,
 ) -> Vec<String> {
-	// Start with service env (higher priority), fill gaps from env_file.
 	let mut merged = service_env;
 	for (k, v) in env_file_vars {
 		merged.entry(k).or_insert(Some(v));

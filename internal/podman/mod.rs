@@ -31,7 +31,7 @@ pub fn connect(socket_path: Option<&str>) -> Result<Docker> {
 	Ok(client)
 }
 
-/// Connect using `PODMAN_SOCKET` or `DOCKER_HOST` environment variables.
+/// Strips the `unix://` or `npipe://` scheme prefix before passing the path to [`connect`].
 pub fn connect_from_env() -> Result<Docker> {
 	let socket = std::env::var("PODMAN_SOCKET")
 		.or_else(|_| std::env::var("DOCKER_HOST"))
