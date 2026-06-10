@@ -8,7 +8,7 @@ use bollard::query_parameters::{
 use futures::StreamExt;
 use tracing::info;
 
-use crate::compose::types::{ComposeFile, ServiceCondition};
+use crate::compose::types::{ComposeFile, Service, ServiceCondition};
 use crate::error::{ComposeError, Result};
 
 use super::network::resolve_network_name;
@@ -171,7 +171,7 @@ impl Engine {
 					.stop_container(
 						&container_name,
 						Some(StopContainerOptions {
-							t: Some(10),
+							t: Some(grace_period_secs(service)),
 							..Default::default()
 						}),
 					)
@@ -262,7 +262,7 @@ impl Engine {
 				.stop_container(
 					&container_name,
 					Some(StopContainerOptions {
-						t: Some(10),
+						t: Some(grace_period_secs(service)),
 						..Default::default()
 					}),
 				)
@@ -282,7 +282,7 @@ impl Engine {
 						.stop_container(
 							&dep_container,
 							Some(StopContainerOptions {
-								t: Some(10),
+								t: Some(grace_period_secs(dep_service)),
 								..Default::default()
 							}),
 						)
@@ -320,7 +320,7 @@ impl Engine {
 					.stop_container(
 						&container_name,
 						Some(StopContainerOptions {
-							t: Some(10),
+							t: Some(grace_period_secs(service)),
 							..Default::default()
 						}),
 					)
@@ -551,6 +551,15 @@ impl Engine {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn grace_period_secs(service: &Service) -> i32 {
+	service
+		.stop_grace_period
+		.as_deref()
+		.and_then(crate::size::parse_duration_secs)
+		.and_then(|s| i32::try_from(s).ok())
+		.unwrap_or(10)
+}
 
 /// Return the ordered service names filtered to `target_services`.
 ///

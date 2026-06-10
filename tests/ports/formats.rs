@@ -94,6 +94,19 @@ fn range_at_limit_accepted() {
 }
 
 #[test]
+fn single_host_port_expands_over_container_range() {
+	// Docker-compose semantics: 8080:80-82 → 8080→80, 8081→81, 8082→82
+	let ports = parse_ports(&[short("8080:80-82")]).unwrap();
+	assert_eq!(ports.len(), 3);
+	assert_eq!(ports[0].host_port, Some(8080));
+	assert_eq!(ports[0].container_port, 80);
+	assert_eq!(ports[1].host_port, Some(8081));
+	assert_eq!(ports[1].container_port, 81);
+	assert_eq!(ports[2].host_port, Some(8082));
+	assert_eq!(ports[2].container_port, 82);
+}
+
+#[test]
 fn long_form_invalid_published_string_rejected() {
 	use podup::compose::types::StringOrU16;
 	let mapping = podup::compose::types::PortMapping::Long {

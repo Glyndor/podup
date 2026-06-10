@@ -150,6 +150,13 @@ impl Engine {
 			StartExecResults::Detached => {}
 		}
 
+		let inspect = self.docker.inspect_exec(&exec_id).await?;
+		if let Some(code) = inspect.exit_code {
+			if code != 0 {
+				return Err(ComposeError::RunExited(code));
+			}
+		}
+
 		Ok(())
 	}
 
