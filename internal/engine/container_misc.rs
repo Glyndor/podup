@@ -193,6 +193,52 @@ pub(super) fn build_label_file_labels(
 }
 
 // ---------------------------------------------------------------------------
+// Swarm-only deploy field diagnostics
+// ---------------------------------------------------------------------------
+
+/// Emit a warning for each `deploy:` sub-field that has no effect on
+/// single-host rootless Podman.  These are Docker Swarm concepts
+/// (`mode: global`, placement constraints, rolling-update config, etc.)
+/// that are silently accepted by the parser so compose files can be
+/// validated without error, but they have no Podman equivalent.
+pub(super) fn warn_swarm_only_deploy(service_name: &str, service: &Service) {
+	let Some(deploy) = &service.deploy else {
+		return;
+	};
+
+	if let Some(mode) = &deploy.mode {
+		warn!(
+			"service \"{service_name}\": deploy.mode=\"{mode}\" is a Docker Swarm field \
+			and has no effect on single-host Podman"
+		);
+	}
+	if deploy.placement.is_some() {
+		warn!(
+			"service \"{service_name}\": deploy.placement is a Docker Swarm field \
+			and has no effect on single-host Podman"
+		);
+	}
+	if deploy.update_config.is_some() {
+		warn!(
+			"service \"{service_name}\": deploy.update_config is a Docker Swarm field \
+			and has no effect on single-host Podman"
+		);
+	}
+	if deploy.rollback_config.is_some() {
+		warn!(
+			"service \"{service_name}\": deploy.rollback_config is a Docker Swarm field \
+			and has no effect on single-host Podman"
+		);
+	}
+	if let Some(mode) = &deploy.endpoint_mode {
+		warn!(
+			"service \"{service_name}\": deploy.endpoint_mode=\"{mode}\" is a Docker Swarm field \
+			and has no effect on single-host Podman"
+		);
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Utilities
 // ---------------------------------------------------------------------------
 
@@ -451,5 +497,45 @@ mod tests {
 		assert_eq!(devs.len(), 1);
 		assert_eq!(devs[0].path.as_deref(), Some("/dev/sda"));
 		assert_eq!(devs[0].weight, Some(300));
+	}
+
+	// --- warn_swarm_only_deploy ---
+
+	#[test]
+	fn warn_swarm_only_deploy_no_deploy_is_noop() {
+		let svc = default_service();
+		warn_swarm_only_deploy("web", &svc);
+	}
+
+	#[test]
+	fn warn_swarm_only_deploy_no_swarm_fields_is_noop() {
+		use crate::compose::types::DeployConfig;
+		let mut svc = default_service();
+		svc.deploy = Some(DeployConfig {
+			replicas: Some(2),
+			..Default::default()
+		});
+		warn_swarm_only_deploy("web", &svc);
+	}
+
+	#[test]
+	fn warn_swarm_only_deploy_all_swarm_fields_no_panic() {
+		use crate::compose::types::{DeployConfig, DeployPlacement, DeployUpdateConfig};
+		let mut svc = default_service();
+		svc.deploy = Some(DeployConfig {
+			mode: Some("global".to_string()),
+			placement: Some(DeployPlacement {
+				constraints: vec!["node.role == manager".to_string()],
+				..Default::default()
+			}),
+			update_config: Some(DeployUpdateConfig {
+				parallelism: Some(1),
+				..Default::default()
+			}),
+			rollback_config: Some(DeployUpdateConfig::default()),
+			endpoint_mode: Some("dnsrr".to_string()),
+			..Default::default()
+		});
+		warn_swarm_only_deploy("web", &svc);
 	}
 }
