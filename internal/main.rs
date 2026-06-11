@@ -71,6 +71,9 @@ enum Commands {
 		/// Recreate containers even if their configuration is unchanged.
 		#[arg(long)]
 		force_recreate: bool,
+		/// Do not start linked services (depends_on) of the named services.
+		#[arg(long)]
+		no_deps: bool,
 		/// Bring up only these services (and their transitive depends_on).
 		/// If omitted, brings up every service in the compose file.
 		#[arg(trailing_var_arg = true)]
@@ -407,6 +410,7 @@ async fn run() -> podup::Result<()> {
 			remove_orphans,
 			no_recreate,
 			force_recreate,
+			no_deps,
 			services,
 		} => {
 			if remove_orphans {
@@ -423,6 +427,7 @@ async fn run() -> podup::Result<()> {
 					&services,
 					no_recreate,
 					force_recreate,
+					no_deps,
 				)
 				.await?;
 			if watch {

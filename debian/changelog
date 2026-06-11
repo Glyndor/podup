@@ -27,6 +27,8 @@ podup (0.11.0) unstable; urgency=medium
     instead of treating the URL as a local directory to tar.
   * Forward NVIDIA GPU reservations (deploy.resources.reservations.devices)
     to Podman as CDI devices instead of warning and ignoring them.
+  * Add up --no-deps to start the named services without their depends_on
+    dependencies.
 
  -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 15:45:00 -0500
 
