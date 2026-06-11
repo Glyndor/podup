@@ -459,4 +459,155 @@ services:
 			.contents
 			.contains("Volume=./html:/usr/share/nginx/html:ro"));
 	}
+
+	#[test]
+	fn maps_the_full_container_field_set() {
+		let yaml = r#"
+services:
+  app:
+    image: app:1.0
+    hostname: app-host
+    user: "1000:1000"
+    working_dir: /srv
+    read_only: true
+    init: true
+    entrypoint: ["/bin/sh", "-c"]
+    command: server --port 9000
+    labels:
+      z_team: core
+      a_tier: web
+    cap_add:
+      - NET_ADMIN
+    cap_drop:
+      - MKNOD
+    ports:
+      - target: 9000
+        published: 9000
+        protocol: udp
+"#;
+		let file = parse_str(yaml).unwrap();
+		let out = generate(&file, "proj");
+		let c = &unit_named(&out, "app.container").contents;
+		assert!(c.contains("HostName=app-host"));
+		assert!(c.contains("User=1000:1000"));
+		assert!(c.contains("WorkingDir=/srv"));
+		assert!(c.contains("ReadOnly=true"));
+		assert!(c.contains("RunInit=true"));
+		assert!(c.contains("Entrypoint=/bin/sh -c"));
+		assert!(c.contains("Exec=server --port 9000"));
+		assert!(c.contains("AddCapability=NET_ADMIN"));
+		assert!(c.contains("DropCapability=MKNOD"));
+		assert!(c.contains("PublishPort=9000:9000/udp"));
+		// Labels sorted by key.
+		let a = c.find("Label=a_tier=web").unwrap();
+		let z = c.find("Label=z_team=core").unwrap();
+		assert!(a < z, "labels must be sorted");
+	}
+
+	#[test]
+	fn long_form_volume_with_named_source_and_readonly() {
+		let yaml = r#"
+services:
+  db:
+    image: postgres
+    volumes:
+      - type: volume
+        source: pgdata
+        target: /var/lib/postgresql/data
+        read_only: true
+volumes:
+  pgdata:
+"#;
+		let file = parse_str(yaml).unwrap();
+		let out = generate(&file, "proj");
+		let c = &unit_named(&out, "db.container").contents;
+		assert!(c.contains("Volume=pgdata.volume:/var/lib/postgresql/data:ro"));
+	}
+
+	#[test]
+	fn restart_policies_map_to_systemd() {
+		let cases = [
+			("no", "Restart=no"),
+			("always", "Restart=always"),
+			("unless-stopped", "Restart=always"),
+			("on-failure", "Restart=on-failure"),
+		];
+		for (policy, expected) in cases {
+			let yaml = format!("services:\n  s:\n    image: x\n    restart: {policy}\n");
+			let file = parse_str(&yaml).unwrap();
+			let out = generate(&file, "p");
+			assert!(
+				unit_named(&out, "s.container").contents.contains(expected),
+				"{policy} -> {expected}"
+			);
+		}
+	}
+
+	#[test]
+	fn optional_dependency_uses_wants_not_requires() {
+		let yaml = r#"
+services:
+  web:
+    image: nginx
+    depends_on:
+      cache:
+        condition: service_started
+        required: false
+  cache:
+    image: redis
+"#;
+		let file = parse_str(yaml).unwrap();
+		let out = generate(&file, "proj");
+		let c = &unit_named(&out, "web.container").contents;
+		assert!(c.contains("After=cache.service"));
+		assert!(c.contains("Wants=cache.service"));
+		assert!(!c.contains("Requires=cache.service"));
+	}
+
+	#[test]
+	fn warns_for_every_unmapped_field() {
+		let yaml = r#"
+services:
+  s:
+    image: x
+    healthcheck:
+      test: ["CMD", "true"]
+    network_mode: host
+    privileged: true
+    profiles: [debug]
+    volumes_from:
+      - other
+    deploy:
+      replicas: 3
+"#;
+		let file = parse_str(yaml).unwrap();
+		let out = generate(&file, "p");
+		let joined = out.warnings.join("\n");
+		for needle in [
+			"healthcheck",
+			"network_mode",
+			"privileged",
+			"profiles",
+			"volumes_from",
+			"scale/replicas",
+		] {
+			assert!(joined.contains(needle), "expected warning for {needle}");
+		}
+	}
+
+	#[test]
+	fn ephemeral_published_port_omits_host_side() {
+		let yaml = r#"
+services:
+  s:
+    image: x
+    ports:
+      - "80"
+"#;
+		let file = parse_str(yaml).unwrap();
+		let out = generate(&file, "p");
+		let c = &unit_named(&out, "s.container").contents;
+		assert!(c.contains("PublishPort=80"));
+		assert!(!c.contains("PublishPort=:80"));
+	}
 }
