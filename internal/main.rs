@@ -13,14 +13,12 @@ use tracing_subscriber::EnvFilter;
 	about = "docker-compose translator for Podman"
 )]
 struct Cli {
-	/// Path to the compose file. May also be set via `COMPOSE_FILE`.
-	#[arg(
-		short,
-		long,
-		env = "COMPOSE_FILE",
-		default_value = "docker-compose.yml"
-	)]
-	file: PathBuf,
+	/// Path to the compose file. May also be set via `COMPOSE_FILE`. When
+	/// unset, the compose-spec precedence list is probed in the current
+	/// directory (compose.yaml, compose.yml, docker-compose.yaml,
+	/// docker-compose.yml).
+	#[arg(short, long, env = "COMPOSE_FILE")]
+	file: Option<PathBuf>,
 
 	/// Project name (used as a prefix for container names).
 	/// May also be set via `COMPOSE_PROJECT_NAME`.
@@ -290,6 +288,30 @@ fn write_quadlet(
 	Ok(())
 }
 
+/// Compose-spec file-name precedence, highest first.
+const COMPOSE_FILE_CANDIDATES: [&str; 4] = [
+	"compose.yaml",
+	"compose.yml",
+	"docker-compose.yaml",
+	"docker-compose.yml",
+];
+
+/// Resolve which compose file to load. An explicit `--file`/`COMPOSE_FILE`
+/// wins; otherwise probe the compose-spec precedence list in the current
+/// directory, falling back to `docker-compose.yml` so a missing-file error
+/// names a sensible path.
+fn resolve_compose_file(explicit: Option<PathBuf>) -> PathBuf {
+	if let Some(path) = explicit {
+		return path;
+	}
+	for candidate in COMPOSE_FILE_CANDIDATES {
+		if Path::new(candidate).is_file() {
+			return PathBuf::from(candidate);
+		}
+	}
+	PathBuf::from("docker-compose.yml")
+}
+
 /// Resolve the base directory for relative-path resolution. An explicit
 /// `--project-directory` wins; otherwise it is the directory containing the
 /// compose file (compose-spec default), or the current directory when the
@@ -336,7 +358,8 @@ async fn run() -> podup::Result<()> {
 			.map_err(|e| podup::ComposeError::Update(format!("update task failed: {e}")))?;
 	}
 
-	let file = podup::parse_file(&cli.file)?;
+	let compose_path = resolve_compose_file(cli.file.clone());
+	let file = podup::parse_file(&compose_path)?;
 
 	if matches!(cli.command, Commands::Config) {
 		let yaml = serde_yaml::to_string(&file).map_err(podup::ComposeError::Parse)?;
@@ -354,7 +377,7 @@ async fn run() -> podup::Result<()> {
 	}
 
 	let client = podup::podman::connect(cli.socket.as_deref())?;
-	let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &cli.file);
+	let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_path);
 	let engine = podup::Engine::with_base_dir(client, cli.project, base_dir);
 
 	// Serialize mutating lifecycle commands against concurrent `podup` runs on
@@ -456,8 +479,28 @@ async fn run() -> podup::Result<()> {
 
 #[cfg(test)]
 mod tests {
-	use super::resolve_base_dir;
+	use super::{resolve_base_dir, resolve_compose_file};
 	use std::path::{Path, PathBuf};
+
+	#[test]
+	fn explicit_compose_file_wins() {
+		let p = resolve_compose_file(Some(PathBuf::from("custom.yml")));
+		assert_eq!(p, PathBuf::from("custom.yml"));
+	}
+
+	#[test]
+	fn missing_compose_file_falls_back_to_default_name() {
+		// In a directory with no candidate files, the default name is returned
+		// so the resulting error names a sensible path.
+		let dir = std::env::temp_dir().join(format!("podup-cf-{}", std::process::id()));
+		std::fs::create_dir_all(&dir).unwrap();
+		let prev = std::env::current_dir().unwrap();
+		std::env::set_current_dir(&dir).unwrap();
+		let p = resolve_compose_file(None);
+		std::env::set_current_dir(prev).unwrap();
+		let _ = std::fs::remove_dir_all(&dir);
+		assert_eq!(p, PathBuf::from("docker-compose.yml"));
+	}
 
 	#[test]
 	fn project_directory_override_wins() {
