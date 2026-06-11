@@ -117,6 +117,16 @@ pub(crate) fn build_mounts_all(
 		}
 	}
 
+	// Top-level `tmpfs:` shorthand — equivalent to volumes with type=tmpfs.
+	for path in service.tmpfs.to_list() {
+		out.push(Mount {
+			mount_type: "tmpfs".into(),
+			source: None,
+			destination: path,
+			options: vec![],
+		});
+	}
+
 	// Materialised secrets and configs are passed as pre-built bind strings.
 	for bind in secret_binds.iter().chain(config_binds.iter()) {
 		if let Some(m) = parse_bind_string(bind) {
@@ -327,5 +337,19 @@ mod tests {
 		}]);
 		build_mounts_all(&svc, dir.path(), &[], &[]);
 		assert!(dir.path().join(rel).exists());
+	}
+
+	#[test]
+	fn top_level_tmpfs_shorthand() {
+		use crate::compose::types::StringOrList;
+		let svc = Service {
+			tmpfs: StringOrList::List(vec!["/tmp".into(), "/run".into()]),
+			..Default::default()
+		};
+		let mounts = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
+		assert_eq!(mounts.len(), 2);
+		assert_eq!(mounts[0].mount_type, "tmpfs");
+		assert_eq!(mounts[0].destination, "/tmp");
+		assert_eq!(mounts[1].destination, "/run");
 	}
 }
