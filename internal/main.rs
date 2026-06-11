@@ -197,6 +197,11 @@ enum Commands {
 	},
 	/// Print the resolved compose file (after substitution / extends / include).
 	Config,
+	/// Generate declarative artifacts from the compose file.
+	Generate {
+		#[command(subcommand)]
+		kind: GenerateCommands,
+	},
 	/// Watch for file changes and sync/rebuild/restart as configured by develop.watch.
 	Watch,
 	/// Update podup to the latest signed release.
@@ -213,6 +218,21 @@ enum Commands {
 		/// Reinstall even if the latest release is not newer than this build.
 		#[arg(long)]
 		force: bool,
+	},
+}
+
+#[derive(Subcommand)]
+enum GenerateCommands {
+	/// Translate the compose file into Podman Quadlet unit files.
+	///
+	/// Emits one `.container` per service plus `.network` and `.volume` units.
+	/// Without --output the units are printed to stdout; warnings about fields
+	/// with no Quadlet mapping go to stderr.
+	Quadlet {
+		/// Directory to write the unit files into (e.g.
+		/// ~/.config/containers/systemd). Prints to stdout when omitted.
+		#[arg(short, long)]
+		output: Option<PathBuf>,
 	},
 }
 
@@ -233,6 +253,38 @@ fn is_mutating(command: &Commands) -> bool {
 			| Commands::Run { .. }
 			| Commands::Restart { .. }
 	)
+}
+
+/// Generate Quadlet units from the compose file and either write them to a
+/// directory or print them to stdout. Warnings about unmapped fields go to
+/// stderr so stdout stays clean for piping.
+fn write_quadlet(
+	file: &podup::compose::types::ComposeFile,
+	project: &str,
+	output: Option<&Path>,
+) -> podup::Result<()> {
+	let result = podup::quadlet::generate(file, project);
+	for warning in &result.warnings {
+		eprintln!("warning: {warning}");
+	}
+	match output {
+		Some(dir) => {
+			std::fs::create_dir_all(dir)?;
+			for unit in &result.units {
+				let path = dir.join(&unit.filename);
+				std::fs::write(&path, &unit.contents)?;
+				println!("wrote {}", path.display());
+			}
+		}
+		None => {
+			for unit in &result.units {
+				println!("# {}", unit.filename);
+				print!("{}", unit.contents);
+				println!();
+			}
+		}
+	}
+	Ok(())
 }
 
 /// Resolve the base directory for relative-path resolution. An explicit
@@ -287,6 +339,15 @@ async fn run() -> podup::Result<()> {
 		let yaml = serde_yaml::to_string(&file).map_err(podup::ComposeError::Parse)?;
 		println!("{yaml}");
 		return Ok(());
+	}
+
+	// `generate` produces declarative artifacts from the compose file alone; it
+	// neither contacts Podman nor mutates project state.
+	if let Commands::Generate {
+		kind: GenerateCommands::Quadlet { output },
+	} = &cli.command
+	{
+		return write_quadlet(&file, &cli.project, output.as_deref());
 	}
 
 	let client = podup::podman::connect(cli.socket.as_deref())?;
@@ -374,6 +435,7 @@ async fn run() -> podup::Result<()> {
 		Commands::Pull => engine.pull(&file).await?,
 		Commands::Restart { service } => engine.restart(&file, service.as_deref()).await?,
 		Commands::Config => unreachable!("handled above"),
+		Commands::Generate { .. } => unreachable!("handled above"),
 		Commands::Watch => engine.watch(&file).await?,
 		Commands::Update { .. } => unreachable!("handled before compose parsing"),
 	}

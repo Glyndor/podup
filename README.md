@@ -66,6 +66,7 @@ podup -f stack.yml -p myapp up -d      # explicit file and project name
 podup ps                               # list project containers
 podup logs api --follow                # follow one service's logs
 podup down --volumes                   # tear down, removing named volumes
+podup generate quadlet -o ~/.config/containers/systemd  # emit systemd Quadlet units
 ```
 
 ## ⚖️ vs. alternatives
