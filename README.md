@@ -18,7 +18,7 @@ flowchart LR
 ## ✨ Features
 
 - 🚀 **Drop-in workflow** — `up`, `down`, `start`, `stop`, `ps`, `logs`, `exec`, `run`, `cp`, `build`, `pull`, `restart`, `rm`, `kill`, `pause`, `unpause`, `top`, `port`, `images`, `config`, `watch`
-- 🔒 **Rootless by design** — drives rootless Podman over its Docker-compatible API
+- 🔒 **Rootless by design** — drives rootless Podman over its native libpod REST API
 - 📄 **Compose-spec parsing** — YAML anchors, `extends`, `include`, profiles, `env_file`, variable substitution with modifiers
 - 🔁 **Dependency-aware** — `depends_on` ordering with `service_started`, `service_healthy`, and `service_completed_successfully` conditions
 - 🔢 **Replicas** — `scale:` and `deploy.replicas` with named replica containers
@@ -71,8 +71,8 @@ use podup::{parse_file, podman, Engine};
 #[tokio::main]
 async fn main() -> podup::Result<()> {
 	let file = parse_file(std::path::Path::new("docker-compose.yml"))?;
-	let docker = podman::connect(None)?;
-	let engine = Engine::new(docker, "myproject".to_string());
+	let client = podman::connect(None)?;
+	let engine = Engine::new(client, "myproject".to_string());
 	engine.up(&file).await?;
 	Ok(())
 }
@@ -80,7 +80,7 @@ async fn main() -> podup::Result<()> {
 
 ```toml
 [dependencies]
-podup = { git = "https://github.com/Glyndor/podup", tag = "v0.5.5" }
+podup = { git = "https://github.com/Glyndor/podup", tag = "v0.5.8" }
 ```
 
 ## 📖 Docs

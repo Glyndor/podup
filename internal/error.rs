@@ -11,7 +11,7 @@ pub enum ComposeError {
 	Parse(serde_yaml::Error),
 	FileNotFound(String),
 	Io(std::io::Error),
-	Podman(bollard::errors::Error),
+	Podman(crate::libpod::PodmanError),
 	ServiceNotFound(String),
 	CircularDependency(String),
 	NoImageOrBuild(String),
@@ -74,8 +74,8 @@ impl From<std::io::Error> for ComposeError {
 	}
 }
 
-impl From<bollard::errors::Error> for ComposeError {
-	fn from(e: bollard::errors::Error) -> Self {
+impl From<crate::libpod::PodmanError> for ComposeError {
+	fn from(e: crate::libpod::PodmanError) -> Self {
 		Self::Podman(e)
 	}
 }
@@ -167,5 +167,12 @@ mod tests {
 		let yaml_err = serde_yaml::from_str::<serde_yaml::Value>(":\0").unwrap_err();
 		let e: ComposeError = yaml_err.into();
 		assert!(matches!(e, ComposeError::Parse(_)));
+
+		let podman_err = crate::libpod::PodmanError::Api {
+			status: 404,
+			message: "not found".into(),
+		};
+		let e: ComposeError = podman_err.into();
+		assert!(matches!(e, ComposeError::Podman(_)));
 	}
 }

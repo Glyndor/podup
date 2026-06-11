@@ -1,3 +1,24 @@
+podup (0.6.0) unstable; urgency=medium
+
+  * Honor COMPOSE_PROJECT_NAME and COMPOSE_FILE environment variables.
+  * Forward build.secrets into the build context; support build.cache_to and
+    build.additional_contexts; warn that build.ssh has no libpod REST mapping.
+  * Support .dockerignore negation (!pattern) and ** recursive globs.
+  * Prevent zip-slip when copying files from a container to the host.
+  * Surface a failed container wait in `run` instead of reporting exit 0.
+  * Serialize mutating commands with a per-project advisory lock.
+  * Split oversized modules, add .editorconfig, document the libpod API prefix.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 08:50:00 -0500
+
+podup (0.5.8) unstable; urgency=low
+
+  * Add mac_address per-network fallback and Swarm-only deploy warnings.
+  * Add Docker migration and deploy documentation.
+  * Reject setuid/setgid/sticky bits in secret/config mode.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Wed, 10 Jun 2026 22:00:00 -0500
+
 podup (0.5.7) unstable; urgency=low
 
   * Add /// doc comments on all public types and engine methods.
