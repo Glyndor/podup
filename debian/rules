@@ -19,7 +19,9 @@ endif
 	dh $@
 
 override_dh_auto_build:
+ifneq ($(wildcard vendor/),)
 	$(if $(wildcard .cargo/config.toml),,$(MAKE) -f debian/rules debian/cargo-config)
+endif
 	cargo build --release --locked $(CARGO_FLAGS)
 
 override_dh_auto_test:
