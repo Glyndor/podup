@@ -161,8 +161,7 @@ impl Engine {
 			.unwrap_or((None, None));
 
 		// --- Links ---
-		let mut links: Vec<String> = service.links.clone();
-		links.extend_from_slice(&service.external_links);
+		let links = resolve_links(service, file, &self.project);
 
 		// --- SHM size ---
 		let shm_size = service.shm_size.as_deref().and_then(size::parse_memory);
@@ -318,6 +317,35 @@ fn resolve_bind_source(src: &str, base_dir: &Path) -> String {
 	}
 }
 
+/// Resolve a service's `links` to concrete container references.
+///
+/// A compose `links:` entry names a sibling service; it is rewritten to that
+/// service's container name with the service name kept as the network alias
+/// (`{container}:{alias}`), so the linked container is reachable by the compose
+/// service name. `external_links` reference containers outside the project and
+/// are passed through verbatim.
+fn resolve_links(service: &Service, file: &ComposeFile, project: &str) -> Vec<String> {
+	let mut links: Vec<String> = service
+		.links
+		.iter()
+		.map(|link| {
+			let (target, alias) = link.split_once(':').unwrap_or((link, link));
+			let container = file
+				.services
+				.get(target)
+				.map(|svc| {
+					svc.container_name
+						.clone()
+						.unwrap_or_else(|| format!("{project}-{target}"))
+				})
+				.unwrap_or_else(|| target.to_string());
+			format!("{container}:{alias}")
+		})
+		.collect();
+	links.extend(service.external_links.iter().cloned());
+	links
+}
+
 /// Stable content hash of a service definition, stored as the
 /// `podup.config-hash` label. On `up`, comparing this against the label on an
 /// existing container tells podup whether the service configuration changed
@@ -351,8 +379,30 @@ fn build_env(service: &Service, base_dir: &Path) -> Result<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-	use super::{config_hash, resolve_volume_name};
+	use super::{config_hash, resolve_links, resolve_volume_name};
 	use crate::parse_str;
+
+	#[test]
+	fn links_resolve_to_container_names_external_links_verbatim() {
+		let file = parse_str(
+			"services:\n  db:\n    image: x\n  web:\n    image: x\n    links:\n      - db\n      - db:primary\n    external_links:\n      - legacy_db:db\n",
+		)
+		.unwrap();
+		let links = resolve_links(&file.services["web"], &file, "proj");
+		assert!(links.contains(&"proj-db:db".to_string()));
+		assert!(links.contains(&"proj-db:primary".to_string()));
+		assert!(links.contains(&"legacy_db:db".to_string()));
+	}
+
+	#[test]
+	fn links_honour_custom_container_name() {
+		let file = parse_str(
+			"services:\n  db:\n    image: x\n    container_name: my-db\n  web:\n    image: x\n    links:\n      - db\n",
+		)
+		.unwrap();
+		let links = resolve_links(&file.services["web"], &file, "proj");
+		assert_eq!(links, vec!["my-db:db".to_string()]);
+	}
 
 	#[test]
 	#[cfg(unix)]
