@@ -29,6 +29,8 @@ podup (0.11.0) unstable; urgency=medium
     to Podman as CDI devices instead of warning and ignoring them.
   * Add up --no-deps to start the named services without their depends_on
     dependencies.
+  * Resolve service links to the linked service's container name (keeping the
+    service name as the alias); external_links are still passed through as-is.
 
  -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 15:45:00 -0500
 
