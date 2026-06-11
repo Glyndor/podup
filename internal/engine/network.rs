@@ -47,15 +47,13 @@ impl Engine {
 				.map(build_subnets)
 				.unwrap_or_default();
 
-			let dns_enabled = config.as_ref().and_then(|c| c.enable_ipv6).map(|_| true);
-
 			let request = NetworkCreateRequest {
 				name: network_name.clone(),
 				driver: Some(driver),
 				internal: config.as_ref().and_then(|c| c.internal),
 				attachable: config.as_ref().and_then(|c| c.attachable),
 				ipv6_enabled: config.as_ref().and_then(|c| c.enable_ipv6),
-				dns_enabled,
+				dns_enabled: Some(true),
 				options: driver_opts,
 				labels,
 				subnets,
