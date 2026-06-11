@@ -344,12 +344,14 @@ fn build_env(service: &Service, base_dir: &Path) -> Result<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-	use super::{config_hash, resolve_bind_source, resolve_volume_name};
+	use super::{config_hash, resolve_volume_name};
 	use crate::parse_str;
-	use std::path::Path;
 
 	#[test]
+	#[cfg(unix)]
 	fn bind_source_resolution() {
+		use super::resolve_bind_source;
+		use std::path::Path;
 		let base = Path::new("/srv/app");
 		assert_eq!(resolve_bind_source("/abs/path", base), "/abs/path");
 		assert_eq!(resolve_bind_source("./data", base), "/srv/app/./data");
