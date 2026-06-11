@@ -137,12 +137,16 @@ fn resolve_one_extends(
 		let mut other = parse_file_inner(&abs, &dir)?;
 		let mut nested_visited: HashSet<String> = HashSet::new();
 		resolve_one_extends(&mut other, &base_name, &dir, &mut nested_visited, depth + 1)?;
-		other.services.swap_remove(&base_name).ok_or_else(|| {
+		let mut base = other.services.swap_remove(&base_name).ok_or_else(|| {
 			ComposeError::Extends(format!(
 				"service '{base_name}' not found in {}",
 				abs.display()
 			))
-		})?
+		})?;
+		// The base service's relative paths are relative to the external file's
+		// directory; anchor them before merging into the current file's service.
+		super::anchor::anchor_service(&mut base, &dir);
+		base
 	} else {
 		if base_name == name {
 			return Err(ComposeError::Extends(format!(

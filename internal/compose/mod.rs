@@ -3,6 +3,7 @@
 
 pub mod types;
 
+mod anchor;
 mod extends;
 mod include;
 
@@ -55,7 +56,8 @@ pub fn parse_file(path: &Path) -> Result<ComposeFile> {
 					.map(|p| p.to_path_buf())
 					.unwrap_or_else(|| dir.clone())
 			});
-			let included = parse_file_inner_with_env(&inc_path, &inc_dir, &extra_env_files)?;
+			let mut included = parse_file_inner_with_env(&inc_path, &inc_dir, &extra_env_files)?;
+			anchor::anchor_compose_file(&mut included, &inc_dir);
 			include::merge_compose_file(&mut file, included);
 		}
 	}
