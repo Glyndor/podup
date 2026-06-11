@@ -352,4 +352,17 @@ mod tests {
 		assert_eq!(mounts[0].destination, "/tmp");
 		assert_eq!(mounts[1].destination, "/run");
 	}
+
+	#[test]
+	fn top_level_tmpfs_single_string() {
+		use crate::compose::types::StringOrList;
+		let svc = Service {
+			tmpfs: StringOrList::Single("/tmp".into()),
+			..Default::default()
+		};
+		let mounts = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
+		assert_eq!(mounts.len(), 1);
+		assert_eq!(mounts[0].mount_type, "tmpfs");
+		assert_eq!(mounts[0].destination, "/tmp");
+	}
 }
