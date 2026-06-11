@@ -84,7 +84,10 @@ mod tests {
 
 	#[test]
 	fn exec_start_config_serializes() {
-		let cfg = ExecStartConfig { detach: false, tty: true };
+		let cfg = ExecStartConfig {
+			detach: false,
+			tty: true,
+		};
 		let v = serde_json::to_value(&cfg).unwrap();
 		assert_eq!(v["Detach"], serde_json::json!(false));
 		assert_eq!(v["Tty"], serde_json::json!(true));

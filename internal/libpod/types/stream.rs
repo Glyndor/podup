@@ -22,6 +22,41 @@ pub enum LogOutput {
 /// Boxed stream alias used for parse_multiplexed and parse_json_lines return types.
 pub type BoxStream<T> = Pin<Box<dyn Stream<Item = Result<T, PodmanError>> + Send>>;
 
+// ---------------------------------------------------------------------------
+// Pure parsing helpers (also used by unit tests)
+// ---------------------------------------------------------------------------
+
+/// Try to consume one complete multiplexed frame from `buf`.
+///
+/// Returns `Some((stream_type, payload, bytes_consumed))` if a complete frame
+/// is available, or `None` if more data is needed.
+pub(crate) fn parse_frame(buf: &[u8]) -> Option<(u8, Bytes, usize)> {
+	if buf.len() < 8 {
+		return None;
+	}
+	let size = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
+	if buf.len() < 8 + size {
+		return None;
+	}
+	let stream_type = buf[0];
+	let payload = Bytes::from(buf[8..8 + size].to_vec());
+	Some((stream_type, payload, 8 + size))
+}
+
+/// Pop the next newline-terminated line from `buf`, excluding the newline byte.
+///
+/// Returns `Some(line_bytes)` when a `\n` is found, or `None` when no
+/// complete line is buffered yet.
+pub(crate) fn take_json_line(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
+	let nl = buf.iter().position(|&b| b == b'\n')?;
+	let line: Vec<u8> = buf.drain(..nl + 1).take(nl).collect();
+	Some(line)
+}
+
+// ---------------------------------------------------------------------------
+// Async stream parsers
+// ---------------------------------------------------------------------------
+
 /// Parse a multiplexed stream from a hyper `Incoming` response body.
 ///
 /// Emits [`LogOutput`] items as frames arrive. The returned stream ends when
@@ -31,20 +66,14 @@ pub fn parse_multiplexed(body: Incoming) -> BoxStream<LogOutput> {
 		(body, Vec::<u8>::new()),
 		|(mut body, mut buf)| async move {
 			loop {
-				// Try to emit a complete frame from the buffer.
-				if buf.len() >= 8 {
-					let size = u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]) as usize;
-					if buf.len() >= 8 + size {
-						let stream_type = buf[0];
-						let payload = Bytes::from(buf[8..8 + size].to_vec());
-						buf.drain(..8 + size);
-						let output = match stream_type {
-							1 => LogOutput::StdOut { message: payload },
-							2 => LogOutput::StdErr { message: payload },
-							_ => continue, // skip stdin / tty frames
-						};
-						return Ok(Some((output, (body, buf))));
-					}
+				if let Some((stream_type, payload, consumed)) = parse_frame(&buf) {
+					buf.drain(..consumed);
+					let output = match stream_type {
+						1 => LogOutput::StdOut { message: payload },
+						2 => LogOutput::StdErr { message: payload },
+						_ => continue, // skip stdin / tty frames
+					};
+					return Ok(Some((output, (body, buf))));
 				}
 
 				// Need more data from the HTTP response body.
@@ -95,8 +124,7 @@ pub fn parse_json_lines<T: serde::de::DeserializeOwned + Send + 'static>(
 		(body, Vec::<u8>::new()),
 		|(mut body, mut buf)| async move {
 			loop {
-				if let Some(nl) = buf.iter().position(|&b| b == b'\n') {
-					let line: Vec<u8> = buf.drain(..nl + 1).take(nl).collect();
+				if let Some(line) = take_json_line(&mut buf) {
 					if line.is_empty() {
 						continue;
 					}
@@ -112,8 +140,7 @@ pub fn parse_json_lines<T: serde::de::DeserializeOwned + Send + 'static>(
 					}
 					Some(Err(e)) => return Err(PodmanError::from(e)),
 					None => {
-						let line: Vec<u8> = buf.clone();
-						buf.clear();
+						let line = std::mem::take(&mut buf);
 						if !line.is_empty() {
 							let item: T =
 								serde_json::from_slice(&line).map_err(PodmanError::Json)?;
@@ -125,4 +152,102 @@ pub fn parse_json_lines<T: serde::de::DeserializeOwned + Send + 'static>(
 			}
 		},
 	))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	// ---------------------------------------------------------------------------
+	// parse_frame tests
+	// ---------------------------------------------------------------------------
+
+	#[test]
+	fn parse_frame_incomplete_header() {
+		assert!(parse_frame(&[0x01, 0x00, 0x00, 0x00]).is_none());
+	}
+
+	#[test]
+	fn parse_frame_header_present_payload_missing() {
+		// Header says 5-byte payload but buffer only has 3.
+		let buf = [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, b'a', b'b', b'c'];
+		assert!(parse_frame(&buf).is_none());
+	}
+
+	#[test]
+	fn parse_frame_stdout_complete() {
+		let payload = b"hello";
+		let mut buf = vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05];
+		buf.extend_from_slice(payload);
+		let (stype, data, consumed) = parse_frame(&buf).unwrap();
+		assert_eq!(stype, 1);
+		assert_eq!(data.as_ref(), b"hello");
+		assert_eq!(consumed, 13);
+	}
+
+	#[test]
+	fn parse_frame_stderr_complete() {
+		let payload = b"err";
+		let mut buf = vec![0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03];
+		buf.extend_from_slice(payload);
+		let (stype, data, consumed) = parse_frame(&buf).unwrap();
+		assert_eq!(stype, 2);
+		assert_eq!(data.as_ref(), b"err");
+		assert_eq!(consumed, 11);
+	}
+
+	#[test]
+	fn parse_frame_zero_length_payload() {
+		let buf = [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+		let (stype, data, consumed) = parse_frame(&buf).unwrap();
+		assert_eq!(stype, 1);
+		assert!(data.is_empty());
+		assert_eq!(consumed, 8);
+	}
+
+	#[test]
+	fn parse_frame_leaves_remainder() {
+		// Buffer has one full frame + extra bytes.
+		let mut buf = vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, b'h', b'i'];
+		buf.extend_from_slice(b"leftover");
+		let (_, data, consumed) = parse_frame(&buf).unwrap();
+		assert_eq!(data.as_ref(), b"hi");
+		assert_eq!(consumed, 10);
+		assert_eq!(&buf[consumed..], b"leftover");
+	}
+
+	// ---------------------------------------------------------------------------
+	// take_json_line tests
+	// ---------------------------------------------------------------------------
+
+	#[test]
+	fn take_json_line_no_newline() {
+		let mut buf = b"partial line".to_vec();
+		assert!(take_json_line(&mut buf).is_none());
+		assert_eq!(buf, b"partial line");
+	}
+
+	#[test]
+	fn take_json_line_with_newline() {
+		let mut buf = b"line1\nline2".to_vec();
+		let line = take_json_line(&mut buf).unwrap();
+		assert_eq!(line, b"line1");
+		assert_eq!(buf, b"line2");
+	}
+
+	#[test]
+	fn take_json_line_empty_line() {
+		let mut buf = b"\nnext".to_vec();
+		let line = take_json_line(&mut buf).unwrap();
+		assert!(line.is_empty());
+		assert_eq!(buf, b"next");
+	}
+
+	#[test]
+	fn take_json_line_multiple_lines() {
+		let mut buf = b"a\nb\nc".to_vec();
+		assert_eq!(take_json_line(&mut buf).unwrap(), b"a");
+		assert_eq!(take_json_line(&mut buf).unwrap(), b"b");
+		assert!(take_json_line(&mut buf).is_none());
+	}
 }

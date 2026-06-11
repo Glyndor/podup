@@ -193,7 +193,8 @@ mod tests {
 
 	#[test]
 	fn container_list_entry_default_fields() {
-		let json = r#"{"Names": ["/mycontainer"], "Image": "nginx", "Status": "running", "Ports": []}"#;
+		let json =
+			r#"{"Names": ["/mycontainer"], "Image": "nginx", "Status": "running", "Ports": []}"#;
 		let entry: ContainerListEntry = serde_json::from_str(json).unwrap();
 		assert_eq!(entry.names, vec!["/mycontainer"]);
 		assert_eq!(entry.image, "nginx");

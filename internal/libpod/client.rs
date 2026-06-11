@@ -352,7 +352,9 @@ pub(crate) fn urlencoded(s: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-	use super::urlencoded;
+	use hyper::StatusCode;
+
+	use super::{urlencoded, Client};
 
 	#[test]
 	fn unreserved_chars_pass_through() {
@@ -393,5 +395,69 @@ mod tests {
 	#[test]
 	fn container_name_with_brackets() {
 		assert_eq!(urlencoded("a[b]"), "a%5Bb%5D");
+	}
+
+	// ---------------------------------------------------------------------------
+	// check_status tests
+	// ---------------------------------------------------------------------------
+
+	#[test]
+	fn check_status_ok_on_200() {
+		Client::check_status(StatusCode::OK, b"").unwrap();
+	}
+
+	#[test]
+	fn check_status_ok_on_201() {
+		Client::check_status(StatusCode::CREATED, b"").unwrap();
+	}
+
+	#[test]
+	fn check_status_error_on_404() {
+		let err = Client::check_status(StatusCode::NOT_FOUND, b"not found").unwrap_err();
+		assert!(err.is_status(404));
+		assert!(err.to_string().contains("not found"));
+	}
+
+	#[test]
+	fn check_status_parses_podman_json_error() {
+		let body = br#"{"message":"container not found","cause":"no such container"}"#;
+		let err = Client::check_status(StatusCode::NOT_FOUND, body).unwrap_err();
+		assert!(err.is_status(404));
+		assert!(err.to_string().contains("container not found"));
+	}
+
+	#[test]
+	fn check_status_falls_back_to_cause_when_no_message() {
+		let body = br#"{"cause":"volume in use"}"#;
+		let err = Client::check_status(StatusCode::CONFLICT, body).unwrap_err();
+		assert!(err.is_status(409));
+		assert!(err.to_string().contains("volume in use"));
+	}
+
+	#[test]
+	fn check_status_falls_back_to_raw_body_on_non_json() {
+		let err = Client::check_status(StatusCode::INTERNAL_SERVER_ERROR, b"plain text error")
+			.unwrap_err();
+		assert!(err.is_status(500));
+		assert!(err.to_string().contains("plain text error"));
+	}
+
+	// ---------------------------------------------------------------------------
+	// build_request tests
+	// ---------------------------------------------------------------------------
+
+	#[test]
+	fn build_request_valid_path() {
+		use hyper::Method;
+		use bytes::Bytes;
+		use http_body_util::Full;
+		Client::build_request(Method::GET, "/libpod/_ping", Full::new(Bytes::new()), None)
+			.unwrap();
+	}
+
+	#[test]
+	fn client_new_stores_socket_path() {
+		let c = Client::new("/run/user/1000/podman/podman.sock");
+		drop(c); // just verify it constructs
 	}
 }

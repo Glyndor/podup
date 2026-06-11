@@ -77,7 +77,10 @@ mod tests {
 
 	#[test]
 	fn network_create_skips_empty_labels() {
-		let req = NetworkCreateRequest { name: "n".into(), ..Default::default() };
+		let req = NetworkCreateRequest {
+			name: "n".into(),
+			..Default::default()
+		};
 		let v = serde_json::to_value(&req).unwrap();
 		assert!(v.get("labels").is_none());
 	}

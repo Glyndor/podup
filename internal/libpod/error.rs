@@ -70,7 +70,10 @@ mod tests {
 
 	#[test]
 	fn is_status_matches_code() {
-		let e = PodmanError::Api { status: 404, message: "not found".into() };
+		let e = PodmanError::Api {
+			status: 404,
+			message: "not found".into(),
+		};
 		assert!(e.is_status(404));
 		assert!(!e.is_status(200));
 		assert!(!e.is_status(500));
@@ -84,7 +87,10 @@ mod tests {
 
 	#[test]
 	fn display_api_error() {
-		let e = PodmanError::Api { status: 500, message: "internal error".into() };
+		let e = PodmanError::Api {
+			status: 500,
+			message: "internal error".into(),
+		};
 		assert_eq!(e.to_string(), "podman API error (HTTP 500): internal error");
 	}
 
