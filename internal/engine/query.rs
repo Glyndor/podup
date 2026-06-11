@@ -77,26 +77,67 @@ impl Engine {
 				.collect()
 		};
 
-		for (container_name, is_tty) in targets {
-			let path = format!(
-				"/libpod/containers/{}/logs?stdout=true&stderr=true&follow={}",
-				urlencoded(&container_name),
-				follow,
-			);
-			let resp = self.client.get_stream(&path).await.map_err(ComposeError::Podman)?;
-			let mut stream = if is_tty {
-				crate::libpod::parse_raw(resp.into_body())
-			} else {
-				crate::libpod::parse_multiplexed(resp.into_body())
-			};
-
-			while let Some(msg) = stream.next().await {
-				match msg.map_err(ComposeError::Podman)? {
-					LogOutput::StdOut { message } => {
-						print!("{}", String::from_utf8_lossy(&message));
+		// When follow=true, streams never end until containers stop. Run them
+		// concurrently so multiple containers don't block each other.
+		if follow && targets.len() > 1 {
+			let futs: Vec<_> = targets
+				.into_iter()
+				.map(|(container_name, is_tty)| {
+					let client = &self.client;
+					async move {
+						let path = format!(
+							"/libpod/containers/{}/logs?stdout=true&stderr=true&follow=true",
+							urlencoded(&container_name),
+						);
+						let resp = match client.get_stream(&path).await {
+							Ok(r) => r,
+							Err(e) => {
+								tracing::warn!("logs {container_name}: {e}");
+								return;
+							}
+						};
+						let mut stream = if is_tty {
+							crate::libpod::parse_raw(resp.into_body())
+						} else {
+							crate::libpod::parse_multiplexed(resp.into_body())
+						};
+						while let Some(msg) = stream.next().await {
+							match msg {
+								Ok(LogOutput::StdOut { message }) => {
+									print!("{}", String::from_utf8_lossy(&message));
+								}
+								Ok(LogOutput::StdErr { message }) => {
+									eprint!("{}", String::from_utf8_lossy(&message));
+								}
+								Err(_) => break,
+							}
+						}
 					}
-					LogOutput::StdErr { message } => {
-						eprint!("{}", String::from_utf8_lossy(&message));
+				})
+				.collect();
+			futures::future::join_all(futs).await;
+		} else {
+			for (container_name, is_tty) in targets {
+				let path = format!(
+					"/libpod/containers/{}/logs?stdout=true&stderr=true&follow={}",
+					urlencoded(&container_name),
+					follow,
+				);
+				let resp = self.client.get_stream(&path).await.map_err(ComposeError::Podman)?;
+				let mut stream = if is_tty {
+					crate::libpod::parse_raw(resp.into_body())
+				} else {
+					crate::libpod::parse_multiplexed(resp.into_body())
+				};
+
+				while let Some(msg) = stream.next().await {
+					match msg.map_err(ComposeError::Podman)? {
+						LogOutput::StdOut { message } => {
+							print!("{}", String::from_utf8_lossy(&message));
+						}
+						LogOutput::StdErr { message } => {
+							eprint!("{}", String::from_utf8_lossy(&message));
+						}
 					}
 				}
 			}
