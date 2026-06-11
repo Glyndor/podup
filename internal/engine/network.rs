@@ -61,7 +61,7 @@ impl Engine {
 
 			match self
 				.client
-				.post_json::<_, serde_json::Value>("/libpod/networks/create", &request)
+				.post_json::<_, serde_json::Value>("/v4.0.0/libpod/networks/create", &request)
 				.await
 			{
 				Ok(_) => info!("created network {network_name}"),

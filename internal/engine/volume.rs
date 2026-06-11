@@ -56,7 +56,7 @@ impl Engine {
 
 			match self
 				.client
-				.post_json::<_, serde_json::Value>("/libpod/volumes/create", &options)
+				.post_json::<_, serde_json::Value>("/v4.0.0/libpod/volumes/create", &options)
 				.await
 			{
 				Ok(_) => info!("created volume {volume_name}"),

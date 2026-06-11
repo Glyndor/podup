@@ -448,11 +448,10 @@ mod tests {
 
 	#[test]
 	fn build_request_valid_path() {
-		use hyper::Method;
 		use bytes::Bytes;
 		use http_body_util::Full;
-		Client::build_request(Method::GET, "/libpod/_ping", Full::new(Bytes::new()), None)
-			.unwrap();
+		use hyper::Method;
+		Client::build_request(Method::GET, "/libpod/_ping", Full::new(Bytes::new()), None).unwrap();
 	}
 
 	#[test]

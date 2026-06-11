@@ -170,7 +170,9 @@ mod tests {
 	#[test]
 	fn parse_frame_header_present_payload_missing() {
 		// Header says 5-byte payload but buffer only has 3.
-		let buf = [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, b'a', b'b', b'c'];
+		let buf = [
+			0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, b'a', b'b', b'c',
+		];
 		assert!(parse_frame(&buf).is_none());
 	}
 

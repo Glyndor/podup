@@ -219,7 +219,7 @@ impl Engine {
 
 		// Remove any existing container (idempotent restart).
 		let rm_path = format!(
-			"/libpod/containers/{}?force=true",
+			"/v4.0.0/libpod/containers/{}?force=true",
 			urlencoded(container_name)
 		);
 		if let Err(e) = self.client.delete_ok(&rm_path).await {
@@ -227,11 +227,14 @@ impl Engine {
 		}
 
 		self.client
-			.post_json::<_, serde_json::Value>("/libpod/containers/create", &spec)
+			.post_json::<_, serde_json::Value>("/v4.0.0/libpod/containers/create", &spec)
 			.await
 			.map_err(ComposeError::Podman)?;
 
-		let start_path = format!("/libpod/containers/{}/start", urlencoded(container_name));
+		let start_path = format!(
+			"/v4.0.0/libpod/containers/{}/start",
+			urlencoded(container_name)
+		);
 		self.client
 			.post_empty_ok(&start_path)
 			.await

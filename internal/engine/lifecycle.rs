@@ -71,7 +71,7 @@ impl Engine {
 					"label": [format!("podup.project={}", self.project)],
 				});
 				let path = format!(
-					"/libpod/containers/json?filters={}",
+					"/v4.0.0/libpod/containers/json?filters={}",
 					crate::libpod::urlencoded(&filters.to_string()),
 				);
 				self.client
@@ -199,7 +199,7 @@ impl Engine {
 
 				let grace = grace_period_secs(service);
 				let stop_path = format!(
-					"/libpod/containers/{}/stop?t={grace}",
+					"/v4.0.0/libpod/containers/{}/stop?t={grace}",
 					crate::libpod::urlencoded(&container_name),
 				);
 				if let Err(e) = self.client.post_empty_ok(&stop_path).await {
@@ -207,7 +207,7 @@ impl Engine {
 				}
 
 				let rm_path = format!(
-					"/libpod/containers/{}?force=true",
+					"/v4.0.0/libpod/containers/{}?force=true",
 					crate::libpod::urlencoded(&container_name),
 				);
 				if let Err(e) = self.client.delete_ok(&rm_path).await {
@@ -225,7 +225,7 @@ impl Engine {
 			}
 			let network_name = resolve_network_name(key, file, &self.project);
 			let net_path = format!(
-				"/libpod/networks/{}",
+				"/v4.0.0/libpod/networks/{}",
 				crate::libpod::urlencoded(&network_name),
 			);
 			match self.client.delete_ok(&net_path).await {
@@ -247,7 +247,7 @@ impl Engine {
 					.map(|s| s.to_string())
 					.unwrap_or_else(|| format!("{}_{}", self.project, key));
 				let vol_path = format!(
-					"/libpod/volumes/{}",
+					"/v4.0.0/libpod/volumes/{}",
 					crate::libpod::urlencoded(&volume_name),
 				);
 				match self.client.delete_ok(&vol_path).await {
@@ -279,7 +279,7 @@ impl Engine {
 			for container_name in self.replica_names(name, service) {
 				let grace = grace_period_secs(service);
 				let stop_path = format!(
-					"/libpod/containers/{}/stop?t={grace}",
+					"/v4.0.0/libpod/containers/{}/stop?t={grace}",
 					crate::libpod::urlencoded(&container_name),
 				);
 				if let Err(e) = self.client.post_empty_ok(&stop_path).await {
@@ -287,7 +287,7 @@ impl Engine {
 				}
 
 				let start_path = format!(
-					"/libpod/containers/{}/start",
+					"/v4.0.0/libpod/containers/{}/start",
 					crate::libpod::urlencoded(&container_name),
 				);
 				self.client
@@ -303,14 +303,14 @@ impl Engine {
 					for dep_container in self.replica_names(dep_name, dep_service) {
 						let grace = grace_period_secs(dep_service);
 						let stop_path = format!(
-							"/libpod/containers/{}/stop?t={grace}",
+							"/v4.0.0/libpod/containers/{}/stop?t={grace}",
 							crate::libpod::urlencoded(&dep_container),
 						);
 						if let Err(e) = self.client.post_empty_ok(&stop_path).await {
 							tracing::debug!("stop before cascade restart {dep_container}: {e}");
 						}
 						let start_path = format!(
-							"/libpod/containers/{}/start",
+							"/v4.0.0/libpod/containers/{}/start",
 							crate::libpod::urlencoded(&dep_container),
 						);
 						if let Err(e) = self.client.post_empty_ok(&start_path).await {
@@ -340,7 +340,7 @@ impl Engine {
 			for container_name in self.replica_names(name, service) {
 				let grace = grace_period_secs(service);
 				let path = format!(
-					"/libpod/containers/{}/stop?t={grace}",
+					"/v4.0.0/libpod/containers/{}/stop?t={grace}",
 					crate::libpod::urlencoded(&container_name),
 				);
 				if let Err(e) = self.client.post_empty_ok(&path).await {
@@ -364,7 +364,7 @@ impl Engine {
 			let service = &file.services[name];
 			for container_name in self.replica_names(name, service) {
 				let path = format!(
-					"/libpod/containers/{}/start",
+					"/v4.0.0/libpod/containers/{}/start",
 					crate::libpod::urlencoded(&container_name),
 				);
 				self.client
@@ -393,7 +393,7 @@ impl Engine {
 			let service = &file.services[name];
 			for container_name in self.replica_names(name, service) {
 				let path = format!(
-					"/libpod/containers/{}/kill?signal={}",
+					"/v4.0.0/libpod/containers/{}/kill?signal={}",
 					crate::libpod::urlencoded(&container_name),
 					crate::libpod::urlencoded(signal),
 				);
@@ -426,7 +426,7 @@ impl Engine {
 			for container_name in self.replica_names(name, service) {
 				let force_str = if force { "true" } else { "false" };
 				let path = format!(
-					"/libpod/containers/{}?force={force_str}",
+					"/v4.0.0/libpod/containers/{}?force={force_str}",
 					crate::libpod::urlencoded(&container_name),
 				);
 				if let Err(e) = self.client.delete_ok(&path).await {
@@ -449,7 +449,7 @@ impl Engine {
 			let service = &file.services[name];
 			for container_name in self.replica_names(name, service) {
 				let path = format!(
-					"/libpod/containers/{}/pause",
+					"/v4.0.0/libpod/containers/{}/pause",
 					crate::libpod::urlencoded(&container_name),
 				);
 				self.client
@@ -473,7 +473,7 @@ impl Engine {
 			let service = &file.services[name];
 			for container_name in self.replica_names(name, service) {
 				let path = format!(
-					"/libpod/containers/{}/unpause",
+					"/v4.0.0/libpod/containers/{}/unpause",
 					crate::libpod::urlencoded(&container_name),
 				);
 				self.client
@@ -541,7 +541,7 @@ impl Engine {
 		}
 
 		let logs_path = format!(
-			"/libpod/containers/{}/logs?follow=true&stdout=true&stderr=true",
+			"/v4.0.0/libpod/containers/{}/logs?follow=true&stdout=true&stderr=true",
 			crate::libpod::urlencoded(&run_name),
 		);
 		let logs_resp = self
@@ -563,7 +563,7 @@ impl Engine {
 		}
 
 		let wait_path = format!(
-			"/libpod/containers/{}/wait?condition=stopped",
+			"/v4.0.0/libpod/containers/{}/wait?condition=stopped",
 			crate::libpod::urlencoded(&run_name),
 		);
 		let exit_code = match self
@@ -585,7 +585,7 @@ impl Engine {
 
 		if rm {
 			let rm_path = format!(
-				"/libpod/containers/{}?force=true",
+				"/v4.0.0/libpod/containers/{}?force=true",
 				crate::libpod::urlencoded(&run_name),
 			);
 			if let Err(e) = self.client.delete_ok(&rm_path).await {

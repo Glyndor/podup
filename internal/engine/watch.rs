@@ -208,7 +208,7 @@ impl Engine {
 		};
 
 		let path = format!(
-			"/libpod/containers/{}/archive?path={}",
+			"/v4.0.0/libpod/containers/{}/archive?path={}",
 			urlencoded(container),
 			urlencoded(&dest_dir),
 		);
@@ -235,11 +235,17 @@ impl Engine {
 
 	async fn watch_restart(&self, container_name: &str) -> Result<()> {
 		info!("restarting {container_name}");
-		let stop_path = format!("/libpod/containers/{}/stop?t=5", urlencoded(container_name));
+		let stop_path = format!(
+			"/v4.0.0/libpod/containers/{}/stop?t=5",
+			urlencoded(container_name)
+		);
 		if let Err(e) = self.client.post_empty_ok(&stop_path).await {
 			tracing::debug!("stop before watch restart {container_name}: {e}");
 		}
-		let start_path = format!("/libpod/containers/{}/start", urlencoded(container_name));
+		let start_path = format!(
+			"/v4.0.0/libpod/containers/{}/start",
+			urlencoded(container_name)
+		);
 		self.client
 			.post_empty_ok(&start_path)
 			.await
@@ -254,7 +260,10 @@ impl Engine {
 			attach_stderr: Some(true),
 			..Default::default()
 		};
-		let create_path = format!("/libpod/containers/{}/exec", urlencoded(container_name));
+		let create_path = format!(
+			"/v4.0.0/libpod/containers/{}/exec",
+			urlencoded(container_name)
+		);
 		let resp: ExecCreateResponse = self
 			.client
 			.post_json(&create_path, &exec_cfg)
@@ -265,7 +274,7 @@ impl Engine {
 			detach: false,
 			tty: false,
 		};
-		let start_path = format!("/libpod/exec/{}/start", urlencoded(&resp.id));
+		let start_path = format!("/v4.0.0/libpod/exec/{}/start", urlencoded(&resp.id));
 		let start_resp = self
 			.client
 			.post_json_stream(&start_path, &start_cfg)

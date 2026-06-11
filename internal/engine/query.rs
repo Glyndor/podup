@@ -18,7 +18,7 @@ impl Engine {
 		let label = format!("podup.project={}", self.project);
 		let filters = serde_json::json!({ "label": [label] });
 		let path = format!(
-			"/libpod/containers/json?all=true&filters={}",
+			"/v4.0.0/libpod/containers/json?all=true&filters={}",
 			urlencoded(&filters.to_string()),
 		);
 
@@ -90,7 +90,7 @@ impl Engine {
 					let client = &self.client;
 					async move {
 						let path = format!(
-							"/libpod/containers/{}/logs?stdout=true&stderr=true&follow=true",
+							"/v4.0.0/libpod/containers/{}/logs?stdout=true&stderr=true&follow=true",
 							urlencoded(&container_name),
 						);
 						let resp = match client.get_stream(&path).await {
@@ -123,7 +123,7 @@ impl Engine {
 		} else {
 			for (container_name, is_tty) in targets {
 				let path = format!(
-					"/libpod/containers/{}/logs?stdout=true&stderr=true&follow={}",
+					"/v4.0.0/libpod/containers/{}/logs?stdout=true&stderr=true&follow={}",
 					urlencoded(&container_name),
 					follow,
 				);
@@ -173,7 +173,10 @@ impl Engine {
 			attach_stderr: Some(true),
 			..Default::default()
 		};
-		let create_path = format!("/libpod/containers/{}/exec", urlencoded(&container_name),);
+		let create_path = format!(
+			"/v4.0.0/libpod/containers/{}/exec",
+			urlencoded(&container_name),
+		);
 		let resp: ExecCreateResponse = self
 			.client
 			.post_json(&create_path, &exec_cfg)
@@ -185,7 +188,7 @@ impl Engine {
 			detach: false,
 			tty: false,
 		};
-		let start_path = format!("/libpod/exec/{}/start", urlencoded(&exec_id));
+		let start_path = format!("/v4.0.0/libpod/exec/{}/start", urlencoded(&exec_id));
 		let start_resp = self
 			.client
 			.post_json_stream(&start_path, &start_cfg)
@@ -204,7 +207,7 @@ impl Engine {
 			}
 		}
 
-		let inspect_path = format!("/libpod/exec/{}/json", urlencoded(&exec_id));
+		let inspect_path = format!("/v4.0.0/libpod/exec/{}/json", urlencoded(&exec_id));
 		let inspect: ExecInspect = self
 			.client
 			.get_json(&inspect_path)
@@ -240,7 +243,7 @@ impl Engine {
 		let label = format!("podup.project={}", self.project);
 		let filters = serde_json::json!({ "label": [label] });
 		let path = format!(
-			"/libpod/containers/json?all=true&filters={}",
+			"/v4.0.0/libpod/containers/json?all=true&filters={}",
 			urlencoded(&filters.to_string()),
 		);
 
@@ -261,7 +264,8 @@ impl Engine {
 				let name = raw.trim_start_matches('/');
 				if !known.contains(name) {
 					tracing::info!("removing orphan container {name}");
-					let rm_path = format!("/libpod/containers/{}?force=true", urlencoded(name));
+					let rm_path =
+						format!("/v4.0.0/libpod/containers/{}?force=true", urlencoded(name));
 					if let Err(e) = self.client.delete_ok(&rm_path).await {
 						tracing::debug!("orphan delete {name}: {e}");
 					}
@@ -289,7 +293,10 @@ impl Engine {
 		for name in &names {
 			let service = &file.services[name];
 			for container_name in self.replica_names(name, service) {
-				let path = format!("/libpod/containers/{}/top", urlencoded(&container_name),);
+				let path = format!(
+					"/v4.0.0/libpod/containers/{}/top",
+					urlencoded(&container_name),
+				);
 				match self
 					.client
 					.get_json::<crate::libpod::types::container::TopResponse>(&path)
@@ -329,7 +336,10 @@ impl Engine {
 			.ok_or_else(|| crate::error::ComposeError::ServiceNotFound(service_name.into()))?;
 		let container_name = self.first_replica_name(service_name, service);
 
-		let path = format!("/libpod/containers/{}/json", urlencoded(&container_name),);
+		let path = format!(
+			"/v4.0.0/libpod/containers/{}/json",
+			urlencoded(&container_name),
+		);
 		let info = self
 			.client
 			.get_json::<crate::libpod::types::container::ContainerInspect>(&path)
@@ -365,7 +375,7 @@ impl Engine {
 				None if service.build.is_some() => format!("{name}:latest"),
 				None => continue,
 			};
-			let path = format!("/libpod/images/{}/json", urlencoded(&image_ref));
+			let path = format!("/v4.0.0/libpod/images/{}/json", urlencoded(&image_ref));
 			match self.client.get_json::<ImageInspect>(&path).await {
 				Ok(img) => {
 					let (repo, tag) = image_ref
@@ -412,7 +422,7 @@ impl Engine {
 			.map(|(display, cname, is_tty)| {
 				let prefix = display.clone();
 				let path = format!(
-					"/libpod/containers/{}/logs?stdout=true&stderr=true&follow=true",
+					"/v4.0.0/libpod/containers/{}/logs?stdout=true&stderr=true&follow=true",
 					urlencoded(cname),
 				);
 				let client = &self.client;

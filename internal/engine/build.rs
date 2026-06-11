@@ -40,7 +40,7 @@ impl Engine {
 			query.push_str(&format!("&platform={}", urlencoded(platform)));
 		}
 
-		let path = format!("/libpod/images/pull?{query}");
+		let path = format!("/v4.0.0/libpod/images/pull?{query}");
 		let resp = self
 			.client
 			.post_empty_stream(&path)
@@ -211,7 +211,7 @@ impl Engine {
 			qs.push_str(&format!("&target={}", urlencoded(target)));
 		}
 
-		let path = format!("/libpod/build?{qs}");
+		let path = format!("/v4.0.0/libpod/build?{qs}");
 		let body_bytes = Bytes::from(tar_bytes);
 		let resp = self
 			.client
@@ -246,7 +246,7 @@ impl Engine {
 				.unwrap_or_else(|| (extra_tag.clone(), "latest".to_string()));
 			let encoded_tag = urlencoded(&tag);
 			let tag_path = format!(
-				"/libpod/images/{encoded_tag}/tag?repo={}&tag={}",
+				"/v4.0.0/libpod/images/{encoded_tag}/tag?repo={}&tag={}",
 				urlencoded(&repo),
 				urlencoded(&tag_str),
 			);

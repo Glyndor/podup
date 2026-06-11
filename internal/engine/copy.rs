@@ -52,7 +52,7 @@ impl Engine {
 		let container_name = self.container_name(service_name, service);
 
 		let path = format!(
-			"/libpod/containers/{}/archive?path={}",
+			"/v4.0.0/libpod/containers/{}/archive?path={}",
 			urlencoded(&container_name),
 			urlencoded(container_path),
 		);
@@ -110,7 +110,7 @@ impl Engine {
 			.map_err(|e| ComposeError::Build(e.to_string()))??;
 
 		let path = format!(
-			"/libpod/containers/{}/archive?path={}",
+			"/v4.0.0/libpod/containers/{}/archive?path={}",
 			urlencoded(&container_name),
 			urlencoded(container_path),
 		);
