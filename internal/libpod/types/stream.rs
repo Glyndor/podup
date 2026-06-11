@@ -62,6 +62,31 @@ pub fn parse_multiplexed(body: Incoming) -> BoxStream<LogOutput> {
 	))
 }
 
+/// Parse a raw (non-multiplexed) stream from a hyper `Incoming` response body.
+///
+/// Used for TTY containers where Podman sends raw bytes without 8-byte frame
+/// headers. All bytes are treated as stdout since TTY merges the streams.
+pub fn parse_raw(body: Incoming) -> BoxStream<LogOutput> {
+	Box::pin(futures::stream::try_unfold(
+		body,
+		|mut body| async move {
+			loop {
+				match body.frame().await {
+					Some(Ok(frame)) => {
+						if let Ok(data) = frame.into_data() {
+							if !data.is_empty() {
+								return Ok(Some((LogOutput::StdOut { message: data }, body)));
+							}
+						}
+					}
+					Some(Err(e)) => return Err(PodmanError::from(e)),
+					None => return Ok(None),
+				}
+			}
+		},
+	))
+}
+
 /// Parse a newline-delimited JSON stream (used for image pull and build output).
 ///
 /// Each line in the stream is expected to be a complete JSON object. Blank

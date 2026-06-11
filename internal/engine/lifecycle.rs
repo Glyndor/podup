@@ -514,6 +514,10 @@ impl Engine {
 			run_service.environment = crate::compose::types::EnvVars::List(env_list);
 		}
 		run_service.restart = None;
+		// Force non-TTY so Podman uses multiplexed log framing that
+		// parse_multiplexed can decode. TTY mode sends raw bytes without
+		// the 8-byte header, which would produce garbled output.
+		run_service.tty = None;
 
 		self.create_and_start(&run_name, service_name, &run_service, file)
 			.await?;

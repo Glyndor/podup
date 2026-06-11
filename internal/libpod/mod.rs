@@ -12,5 +12,5 @@ pub mod types;
 pub use client::Client;
 pub(crate) use client::urlencoded;
 pub use error::PodmanError;
-pub use types::stream::{LogOutput, parse_json_lines, parse_multiplexed};
+pub use types::stream::{LogOutput, parse_json_lines, parse_multiplexed, parse_raw};
 

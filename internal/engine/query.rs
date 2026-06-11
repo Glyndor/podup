@@ -332,18 +332,22 @@ impl Engine {
 
 	/// Attach to log streams for all services with `attach: true` (the default). Streams are multiplexed to stdout with a service-name prefix.
 	pub async fn attach_logs(&self, file: &ComposeFile) -> Result<()> {
-		let attached: Vec<(String, String)> = file
+		// Carry (display_name, container_name, is_tty) so the log parser matches
+		// the container's framing mode: TTY containers emit raw bytes; non-TTY
+		// containers emit multiplexed 8-byte-header frames.
+		let attached: Vec<(String, String, bool)> = file
 			.services
 			.iter()
 			.filter(|(_, s)| s.attach.unwrap_or(true))
 			.flat_map(|(name, s)| {
 				let proj_prefix = format!("{}-", self.project);
+				let is_tty = s.tty.unwrap_or(false);
 				self.replica_names(name, s).into_iter().map(move |cname| {
 					let display = cname
 						.strip_prefix(proj_prefix.as_str())
 						.map(|s| s.to_string())
 						.unwrap_or_else(|| cname.clone());
-					(display, cname)
+					(display, cname, is_tty)
 				})
 			})
 			.collect();
@@ -354,13 +358,14 @@ impl Engine {
 
 		let streams: Vec<_> = attached
 			.iter()
-			.map(|(display, cname)| {
+			.map(|(display, cname, is_tty)| {
 				let prefix = display.clone();
 				let path = format!(
 					"/libpod/containers/{}/logs?stdout=true&stderr=true&follow=true",
 					urlencoded(cname),
 				);
 				let client = &self.client;
+				let is_tty = *is_tty;
 				async move {
 					let resp = match client.get_stream(&path).await {
 						Ok(r) => r,
@@ -369,7 +374,13 @@ impl Engine {
 							return;
 						}
 					};
-					let mut stream = crate::libpod::parse_multiplexed(resp.into_body());
+					// TTY containers produce raw bytes (stdout/stderr merged).
+					// Non-TTY containers produce multiplexed frames with 8-byte headers.
+					let mut stream = if is_tty {
+						crate::libpod::parse_raw(resp.into_body())
+					} else {
+						crate::libpod::parse_multiplexed(resp.into_body())
+					};
 					while let Some(msg) = stream.next().await {
 						match msg {
 							Ok(LogOutput::StdOut { message }) => {
