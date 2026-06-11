@@ -1,18 +1,13 @@
-//! Network creation and service attachment.
-//!
-//! [`Engine::create_networks`] creates all non-external networks declared in
-//! the compose file before any containers start. [`Engine::connect_extra_networks`]
-//! is a no-op with libpod — all networks are passed directly in the SpecGenerator.
+//! Network creation and per-network options for container specs.
 
 use std::collections::HashMap;
 
-use tracing::{debug, info};
+use tracing::info;
 
 use crate::compose::types::{ComposeFile, IpamConfig, Service, ServiceNetworkConfig};
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::container::{Namespace, PerNetworkOptions};
-use crate::libpod::types::network::{NetworkConnectRequest, NetworkCreateRequest, NetworkEndpointOptions, Subnet};
-use crate::libpod::urlencoded;
+use crate::libpod::types::network::{NetworkCreateRequest, Subnet};
 
 use super::Engine;
 
@@ -75,38 +70,6 @@ impl Engine {
 		Ok(())
 	}
 
-	/// No-op with libpod — all networks are declared in the SpecGenerator.
-	pub(super) async fn connect_extra_networks(
-		&self,
-		container_name: &str,
-		service: &Service,
-		file: &ComposeFile,
-	) -> Result<()> {
-		// libpod SpecGenerator accepts all networks at create time via the
-		// `networks` map; secondary network attachment is only needed for the
-		// Docker compat API. This function is retained for API compatibility.
-		if service.network_mode.is_some() {
-			return Ok(());
-		}
-
-		let network_names = service.networks.names();
-		for network in network_names.iter().skip(1) {
-			let full_name = resolve_network_name(network, file, &self.project);
-			let endpoint = build_endpoint_options(service.networks.config_for(network), None);
-			let req = NetworkConnectRequest {
-				container: container_name.to_string(),
-				endpoint_config: Some(endpoint),
-			};
-			let path = format!("/libpod/networks/{}/connect", urlencoded(&full_name));
-			self.client
-				.post_json_ok(&path, &req)
-				.await
-				.map_err(ComposeError::Podman)?;
-			debug!("connected {container_name} to network {full_name}");
-		}
-
-		Ok(())
-	}
 }
 
 // ---------------------------------------------------------------------------
@@ -144,19 +107,6 @@ pub(super) fn build_per_network_options(
 	}
 
 	opts
-}
-
-fn build_endpoint_options(
-	cfg: Option<&ServiceNetworkConfig>,
-	fallback_mac: Option<&str>,
-) -> NetworkEndpointOptions {
-	let per = build_per_network_options(cfg, fallback_mac);
-	NetworkEndpointOptions {
-		aliases: per.aliases,
-		static_ips: per.static_ips,
-		static_mac: per.static_mac,
-		driver_opts: per.driver_opts,
-	}
 }
 
 pub(super) fn resolve_network_mode(

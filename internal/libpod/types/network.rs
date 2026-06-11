@@ -57,31 +57,6 @@ pub struct LeaseRange {
 	pub end_ip: Option<String>,
 }
 
-/// Request body for `POST /libpod/networks/{name}/connect`.
-#[derive(Serialize)]
-pub struct NetworkConnectRequest {
-	pub container: String,
-
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub endpoint_config: Option<NetworkEndpointOptions>,
-}
-
-/// Per-endpoint connection options for `NetworkConnectRequest`.
-#[derive(Serialize, Default)]
-pub struct NetworkEndpointOptions {
-	#[serde(skip_serializing_if = "Vec::is_empty", default)]
-	pub aliases: Vec<String>,
-
-	#[serde(skip_serializing_if = "Vec::is_empty", default)]
-	pub static_ips: Vec<String>,
-
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub static_mac: Option<String>,
-
-	#[serde(skip_serializing_if = "Option::is_none")]
-	pub driver_opts: Option<HashMap<String, String>>,
-}
-
 /// Response from network creation.
 #[allow(dead_code)]
 #[derive(Deserialize)]

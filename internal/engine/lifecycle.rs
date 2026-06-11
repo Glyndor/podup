@@ -159,8 +159,6 @@ impl Engine {
 					}
 					self.create_and_start(&container_name, name, service, file)
 						.await?;
-					self.connect_extra_networks(&container_name, service, file)
-						.await?;
 					info!("started {container_name}");
 
 					for hook in &service.post_start {
