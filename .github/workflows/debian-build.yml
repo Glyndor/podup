@@ -1,0 +1,64 @@
+name: Debian package
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - "debian/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "internal/**"
+      - ".github/workflows/debian-build.yml"
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - "debian/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "internal/**"
+      - ".github/workflows/debian-build.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: dpkg-buildpackage
+    runs-on: ubuntu-latest
+    # The package requires rustc >= 1.86 (idna -> icu chain), which Debian
+    # trixie (1.85) cannot satisfy; sid ships a new enough toolchain.
+    container: debian:sid
+    steps:
+      - name: Install build tooling
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            build-essential \
+            dpkg-dev \
+            debhelper \
+            cargo \
+            rustc
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Confirm build dependencies are satisfiable
+        run: dpkg-checkbuilddeps
+
+      - name: Build the package
+        run: dpkg-buildpackage -us -uc -b
+
+      - name: Confirm the .deb was produced
+        run: |
+          deb=$(ls ../podup_*.deb 2>/dev/null | head -n1)
+          if [ -z "$deb" ]; then
+            echo "::error::no .deb artifact was produced"
+            exit 1
+          fi
+          echo "Built $deb"
+          dpkg-deb --contents "$deb"

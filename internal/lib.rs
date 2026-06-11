@@ -11,6 +11,7 @@ pub(crate) mod error;
 pub(crate) mod libpod;
 pub mod podman;
 pub mod ports;
+pub mod quadlet;
 pub mod size;
 pub mod substitute;
 pub mod update;

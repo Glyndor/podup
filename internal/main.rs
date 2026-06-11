@@ -1,6 +1,6 @@
 //! `podup` — docker-compose to Podman translator CLI.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use clap::{Parser, Subcommand};
@@ -34,6 +34,12 @@ struct Cli {
 	/// Active profiles (comma-separated).  May also be set via `COMPOSE_PROFILES`.
 	#[arg(long, value_delimiter = ',', global = true)]
 	profile: Vec<String>,
+
+	/// Base directory for resolving relative paths (env_file, build context,
+	/// bind mounts, config/secret file sources). Defaults to the directory
+	/// containing the compose file.
+	#[arg(long, global = true)]
+	project_directory: Option<PathBuf>,
 
 	#[command(subcommand)]
 	command: Commands,
@@ -191,6 +197,11 @@ enum Commands {
 	},
 	/// Print the resolved compose file (after substitution / extends / include).
 	Config,
+	/// Generate declarative artifacts from the compose file.
+	Generate {
+		#[command(subcommand)]
+		kind: GenerateCommands,
+	},
 	/// Watch for file changes and sync/rebuild/restart as configured by develop.watch.
 	Watch,
 	/// Update podup to the latest signed release.
@@ -207,6 +218,21 @@ enum Commands {
 		/// Reinstall even if the latest release is not newer than this build.
 		#[arg(long)]
 		force: bool,
+	},
+}
+
+#[derive(Subcommand)]
+enum GenerateCommands {
+	/// Translate the compose file into Podman Quadlet unit files.
+	///
+	/// Emits one `.container` per service plus `.network` and `.volume` units.
+	/// Without --output the units are printed to stdout; warnings about fields
+	/// with no Quadlet mapping go to stderr.
+	Quadlet {
+		/// Directory to write the unit files into (e.g.
+		/// ~/.config/containers/systemd). Prints to stdout when omitted.
+		#[arg(short, long)]
+		output: Option<PathBuf>,
 	},
 }
 
@@ -227,6 +253,48 @@ fn is_mutating(command: &Commands) -> bool {
 			| Commands::Run { .. }
 			| Commands::Restart { .. }
 	)
+}
+
+/// Generate Quadlet units from the compose file and either write them to a
+/// directory or print them to stdout. Warnings about unmapped fields go to
+/// stderr so stdout stays clean for piping.
+fn write_quadlet(
+	file: &podup::compose::types::ComposeFile,
+	project: &str,
+	output: Option<&Path>,
+) -> podup::Result<()> {
+	let result = podup::quadlet::generate(file, project);
+	for warning in &result.warnings {
+		eprintln!("warning: {warning}");
+	}
+	match output {
+		Some(dir) => {
+			std::fs::create_dir_all(dir)?;
+			for unit in &result.units {
+				let path = dir.join(&unit.filename);
+				std::fs::write(&path, &unit.contents)?;
+				println!("wrote {}", path.display());
+			}
+		}
+		None => {
+			for unit in &result.units {
+				println!("# {}", unit.filename);
+				print!("{}", unit.contents);
+				println!();
+			}
+		}
+	}
+	Ok(())
+}
+
+/// Resolve the base directory for relative-path resolution. An explicit
+/// `--project-directory` wins; otherwise it is the directory containing the
+/// compose file (compose-spec default), or the current directory when the
+/// compose file has no parent component.
+fn resolve_base_dir(project_directory: Option<&Path>, file: &Path) -> PathBuf {
+	project_directory
+		.map(Path::to_path_buf)
+		.unwrap_or_else(|| file.parent().map(Path::to_path_buf).unwrap_or_default())
 }
 
 #[tokio::main]
@@ -273,12 +341,17 @@ async fn run() -> podup::Result<()> {
 		return Ok(());
 	}
 
+	// `generate` produces declarative artifacts from the compose file alone; it
+	// neither contacts Podman nor mutates project state.
+	if let Commands::Generate {
+		kind: GenerateCommands::Quadlet { output },
+	} = &cli.command
+	{
+		return write_quadlet(&file, &cli.project, output.as_deref());
+	}
+
 	let client = podup::podman::connect(cli.socket.as_deref())?;
-	let base_dir = cli
-		.file
-		.parent()
-		.map(|p| p.to_path_buf())
-		.unwrap_or_default();
+	let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &cli.file);
 	let engine = podup::Engine::with_base_dir(client, cli.project, base_dir);
 
 	// Serialize mutating lifecycle commands against concurrent `podup` runs on
@@ -362,9 +435,37 @@ async fn run() -> podup::Result<()> {
 		Commands::Pull => engine.pull(&file).await?,
 		Commands::Restart { service } => engine.restart(&file, service.as_deref()).await?,
 		Commands::Config => unreachable!("handled above"),
+		Commands::Generate { .. } => unreachable!("handled above"),
 		Commands::Watch => engine.watch(&file).await?,
 		Commands::Update { .. } => unreachable!("handled before compose parsing"),
 	}
 
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::resolve_base_dir;
+	use std::path::{Path, PathBuf};
+
+	#[test]
+	fn project_directory_override_wins() {
+		let base = resolve_base_dir(
+			Some(Path::new("/srv/app")),
+			Path::new("/etc/compose/docker-compose.yml"),
+		);
+		assert_eq!(base, PathBuf::from("/srv/app"));
+	}
+
+	#[test]
+	fn defaults_to_compose_file_parent() {
+		let base = resolve_base_dir(None, Path::new("/etc/compose/docker-compose.yml"));
+		assert_eq!(base, PathBuf::from("/etc/compose"));
+	}
+
+	#[test]
+	fn bare_filename_resolves_to_current_dir() {
+		let base = resolve_base_dir(None, Path::new("docker-compose.yml"));
+		assert_eq!(base, PathBuf::from(""));
+	}
 }

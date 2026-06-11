@@ -23,7 +23,7 @@ mod watch;
 
 use std::path::PathBuf;
 
-use futures::StreamExt;
+use futures_util::StreamExt;
 
 use crate::compose::types::{LifecycleHook, Service};
 use crate::error::{ComposeError, Result};

@@ -8,7 +8,7 @@
 mod context;
 
 use bytes::Bytes;
-use futures::StreamExt;
+use futures_util::StreamExt;
 use tracing::{debug, info, warn};
 
 use crate::compose::types::{BuildConfig, Service};
