@@ -64,6 +64,9 @@ enum Commands {
 		/// Do not recreate containers that are already running.
 		#[arg(long)]
 		no_recreate: bool,
+		/// Recreate containers even if their configuration is unchanged.
+		#[arg(long)]
+		force_recreate: bool,
 		/// Bring up only these services (and their transitive depends_on).
 		/// If omitted, brings up every service in the compose file.
 		#[arg(trailing_var_arg = true)]
@@ -371,6 +374,7 @@ async fn run() -> podup::Result<()> {
 			watch,
 			remove_orphans,
 			no_recreate,
+			force_recreate,
 			services,
 		} => {
 			if remove_orphans {
@@ -380,7 +384,14 @@ async fn run() -> podup::Result<()> {
 				engine.build_all(&file, &services).await?;
 			}
 			engine
-				.up_with_options(&file, detach, &cli.profile, &services, no_recreate)
+				.up_with_options(
+					&file,
+					detach,
+					&cli.profile,
+					&services,
+					no_recreate,
+					force_recreate,
+				)
 				.await?;
 			if watch {
 				engine.watch(&file).await?;

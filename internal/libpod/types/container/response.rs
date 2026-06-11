@@ -30,6 +30,9 @@ pub struct ContainerListEntry {
 
 	#[serde(rename = "Ports", default, deserialize_with = "null_default")]
 	pub ports: Vec<ContainerPort>,
+
+	#[serde(rename = "Labels", default, deserialize_with = "null_default")]
+	pub labels: HashMap<String, String>,
 }
 
 /// Port mapping entry in container list response.

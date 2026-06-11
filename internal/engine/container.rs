@@ -105,6 +105,7 @@ impl Engine {
 		}
 		labels.insert("podup.project".to_string(), self.project.clone());
 		labels.insert("podup.service".to_string(), service_name.to_string());
+		labels.insert("podup.config-hash".to_string(), config_hash(service));
 
 		// annotations
 		let annotations: HashMap<String, String> = service.annotations.to_map();
@@ -247,6 +248,19 @@ impl Engine {
 	}
 }
 
+/// Stable content hash of a service definition, stored as the
+/// `podup.config-hash` label. On `up`, comparing this against the label on an
+/// existing container tells podup whether the service configuration changed
+/// and the container must be recreated, or is unchanged and can be left as is.
+pub(crate) fn config_hash(service: &Service) -> String {
+	use sha2::{Digest, Sha256};
+	let serialized = serde_json::to_vec(service).unwrap_or_default();
+	Sha256::digest(&serialized)
+		.iter()
+		.map(|b| format!("{b:02x}"))
+		.collect()
+}
+
 fn build_env(service: &Service, base_dir: &Path) -> Result<Vec<String>> {
 	let entries = service.env_file.to_entries();
 	let env_file_vars = if !entries.is_empty() {
@@ -258,4 +272,23 @@ fn build_env(service: &Service, base_dir: &Path) -> Result<Vec<String>> {
 		service.environment.to_map(),
 		env_file_vars,
 	))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::config_hash;
+	use crate::parse_str;
+
+	#[test]
+	fn config_hash_is_stable_and_sensitive() {
+		let a = parse_str("services:\n  web:\n    image: nginx:1.27\n").unwrap();
+		let b = parse_str("services:\n  web:\n    image: nginx:1.27\n").unwrap();
+		let c = parse_str("services:\n  web:\n    image: nginx:1.28\n").unwrap();
+		let ha = config_hash(&a.services["web"]);
+		let hb = config_hash(&b.services["web"]);
+		let hc = config_hash(&c.services["web"]);
+		assert_eq!(ha, hb, "same config produces the same hash");
+		assert_ne!(ha, hc, "a changed image produces a different hash");
+		assert_eq!(ha.len(), 64, "sha-256 hex is 64 chars");
+	}
 }

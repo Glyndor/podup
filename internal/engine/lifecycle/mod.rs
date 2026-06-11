@@ -2,13 +2,15 @@
 
 mod commands;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use tracing::info;
 
 use crate::compose::types::{ComposeFile, Service, ServiceCondition};
 use crate::error::{ComposeError, Result};
 use crate::libpod::API_PREFIX;
+
+use super::container::config_hash;
 
 use super::network::resolve_network_name;
 use super::profiles::{active_profiles_set, service_in_profiles};
@@ -31,7 +33,19 @@ pub struct RunOptions {
 impl Engine {
 	/// Start all services defined in the compose file, creating containers that do not exist.
 	pub async fn up(&self, file: &ComposeFile) -> Result<()> {
-		self.up_with_options(file, false, &[], &[], false).await
+		self.up_with_options(file, false, &[], &[], false, false)
+			.await
+	}
+
+	/// Start a container by name, ignoring an error from an already-running one.
+	/// Used when `up` leaves an unchanged container in place but wants to ensure
+	/// it is running.
+	async fn ensure_started(&self, container_name: &str) {
+		let path = format!(
+			"{API_PREFIX}/containers/{}/start",
+			crate::libpod::urlencoded(container_name)
+		);
+		let _ = self.client.post_empty_ok(&path).await;
 	}
 
 	/// Start services with explicit options. When `no_recreate` is true, running containers are left untouched. On partial failure, staging directories are cleaned up.
@@ -42,6 +56,7 @@ impl Engine {
 		active_profiles: &[String],
 		target_services: &[String],
 		no_recreate: bool,
+		force_recreate: bool,
 	) -> Result<()> {
 		let r: Result<()> = async {
 			let order = crate::compose::resolve_order(file)?;
@@ -67,26 +82,36 @@ impl Engine {
 				Some(set)
 			};
 
-			// prefetch running containers once instead of one API call per replica.
-			let running: HashSet<String> = if no_recreate {
+			// Prefetch the project's containers once (instead of one API call per
+			// replica): which names already exist, and each one's config-hash
+			// label so we can decide whether a container needs recreation.
+			let mut present: HashSet<String> = HashSet::new();
+			let mut existing_hash: HashMap<String, String> = HashMap::new();
+			if !force_recreate {
 				let filters = serde_json::json!({
 					"label": [format!("podup.project={}", self.project)],
 				});
 				let path = format!(
-					"{API_PREFIX}/containers/json?filters={}",
+					"{API_PREFIX}/containers/json?all=true&filters={}",
 					crate::libpod::urlencoded(&filters.to_string()),
 				);
-				self.client
+				let entries = self
+					.client
 					.get_json::<Vec<crate::libpod::types::container::ContainerListEntry>>(&path)
 					.await
-					.map_err(crate::error::ComposeError::Podman)?
-					.into_iter()
-					.flat_map(|c| c.names)
-					.map(|n| n.trim_start_matches('/').to_string())
-					.collect()
-			} else {
-				HashSet::new()
-			};
+					.map_err(crate::error::ComposeError::Podman)?;
+				for entry in entries {
+					if let Some(hash) = entry.labels.get("podup.config-hash") {
+						for raw in &entry.names {
+							existing_hash
+								.insert(raw.trim_start_matches('/').to_string(), hash.clone());
+						}
+					}
+					for raw in entry.names {
+						present.insert(raw.trim_start_matches('/').to_string());
+					}
+				}
+			}
 
 			self.create_networks(file).await?;
 			self.create_volumes(file).await?;
@@ -149,15 +174,25 @@ impl Engine {
 					.or(service.deploy.as_ref().and_then(|d| d.replicas))
 					.unwrap_or(1) as usize;
 
+				let new_hash = config_hash(service);
+
 				for i in 1..=replicas {
 					let container_name = if replicas == 1 {
 						self.container_name(name, service)
 					} else {
 						format!("{}-{i}", self.container_name(name, service))
 					};
-					if no_recreate && running.contains(&container_name) {
-						info!("{container_name} already running — skipping recreate");
-						continue;
+					if !force_recreate {
+						if no_recreate && present.contains(&container_name) {
+							info!("{container_name} already exists — skipping recreate");
+							self.ensure_started(&container_name).await;
+							continue;
+						}
+						if existing_hash.get(&container_name) == Some(&new_hash) {
+							info!("{container_name} is up to date — skipping recreate");
+							self.ensure_started(&container_name).await;
+							continue;
+						}
 					}
 					self.create_and_start(&container_name, name, service, file)
 						.await?;

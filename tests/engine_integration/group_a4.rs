@@ -49,7 +49,7 @@ fn active_profiles_via_env() {
 			.unwrap();
 			// Pass empty active_profiles slice so it falls back to COMPOSE_PROFILES env
 			engine
-				.up_with_options(&file, false, &[], &[], false)
+				.up_with_options(&file, false, &[], &[], false, false)
 				.await
 				.unwrap();
 			engine.down(&file).await.unwrap();
@@ -187,7 +187,7 @@ async fn target_services_skips_non_dep() {
 	.unwrap();
 
 	engine
-		.up_with_options(&file, false, &[], &["web".to_string()], false)
+		.up_with_options(&file, false, &[], &["web".to_string()], false, false)
 		.await
 		.unwrap();
 	engine.down(&file).await.unwrap();
@@ -210,7 +210,7 @@ async fn dep_on_profile_filtered_service() {
 
 	// No active profiles → db is skipped; web still runs but skips db's dep wait
 	engine
-		.up_with_options(&file, false, &[], &[], false)
+		.up_with_options(&file, false, &[], &[], false, false)
 		.await
 		.unwrap();
 	engine.down(&file).await.unwrap();
@@ -293,7 +293,7 @@ async fn optional_dep_not_in_file() {
 	.unwrap();
 
 	engine
-		.up_with_options(&file, false, &[], &["web".to_string()], false)
+		.up_with_options(&file, false, &[], &["web".to_string()], false, false)
 		.await
 		.unwrap();
 	engine.down(&file).await.unwrap();
@@ -324,6 +324,7 @@ async fn target_services_duplicate_entry() {
 			false,
 			&[],
 			&["web".to_string(), "web".to_string()],
+			false,
 			false,
 		)
 		.await
