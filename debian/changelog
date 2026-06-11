@@ -31,6 +31,8 @@ podup (0.11.0) unstable; urgency=medium
     dependencies.
   * Resolve service links to the linked service's container name (keeping the
     service name as the alias); external_links are still passed through as-is.
+  * Accept multiple compose files (repeated -f or a COMPOSE_FILE list) and
+    merge them in order, with later files overriding earlier ones.
 
  -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 15:45:00 -0500
 

@@ -17,8 +17,8 @@ struct Cli {
 	/// unset, the compose-spec precedence list is probed in the current
 	/// directory (compose.yaml, compose.yml, docker-compose.yaml,
 	/// docker-compose.yml).
-	#[arg(short, long, env = "COMPOSE_FILE")]
-	file: Option<PathBuf>,
+	#[arg(short, long)]
+	file: Vec<PathBuf>,
 
 	/// Project name (used as a prefix for container names).
 	/// May also be set via `COMPOSE_PROJECT_NAME`.
@@ -308,20 +308,27 @@ const COMPOSE_FILE_CANDIDATES: [&str; 4] = [
 	"docker-compose.yml",
 ];
 
-/// Resolve which compose file to load. An explicit `--file`/`COMPOSE_FILE`
-/// wins; otherwise probe the compose-spec precedence list in the current
-/// directory, falling back to `docker-compose.yml` so a missing-file error
-/// names a sensible path.
-fn resolve_compose_file(explicit: Option<PathBuf>) -> PathBuf {
-	if let Some(path) = explicit {
-		return path;
+/// Resolve which compose file(s) to load. Explicit `--file` flags win; then the
+/// `COMPOSE_FILE` environment variable (a path-separator-delimited list);
+/// otherwise probe the compose-spec precedence list in the current directory,
+/// falling back to `docker-compose.yml` so a missing-file error names a
+/// sensible path. Multiple files are merged in order, later overriding earlier.
+fn resolve_compose_files(explicit: &[PathBuf]) -> Vec<PathBuf> {
+	if !explicit.is_empty() {
+		return explicit.to_vec();
+	}
+	if let Ok(env) = std::env::var("COMPOSE_FILE") {
+		if !env.is_empty() {
+			let sep = if cfg!(windows) { ';' } else { ':' };
+			return env.split(sep).map(PathBuf::from).collect();
+		}
 	}
 	for candidate in COMPOSE_FILE_CANDIDATES {
 		if Path::new(candidate).is_file() {
-			return PathBuf::from(candidate);
+			return vec![PathBuf::from(candidate)];
 		}
 	}
-	PathBuf::from("docker-compose.yml")
+	vec![PathBuf::from("docker-compose.yml")]
 }
 
 /// Resolve the base directory for relative-path resolution. An explicit
@@ -370,8 +377,8 @@ async fn run() -> podup::Result<()> {
 			.map_err(|e| podup::ComposeError::Update(format!("update task failed: {e}")))?;
 	}
 
-	let compose_path = resolve_compose_file(cli.file.clone());
-	let file = podup::parse_file_with_env_files(&compose_path, &cli.env_file)?;
+	let compose_files = resolve_compose_files(&cli.file);
+	let file = podup::parse_files_with_env_files(&compose_files, &cli.env_file)?;
 
 	if matches!(cli.command, Commands::Config) {
 		let yaml = serde_yaml::to_string(&file).map_err(podup::ComposeError::Parse)?;
@@ -389,7 +396,7 @@ async fn run() -> podup::Result<()> {
 	}
 
 	let client = podup::podman::connect(cli.socket.as_deref())?;
-	let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_path);
+	let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
 	let engine = podup::Engine::with_base_dir(client, cli.project, base_dir);
 
 	// Serialize mutating lifecycle commands against concurrent `podup` runs on
@@ -495,13 +502,19 @@ async fn run() -> podup::Result<()> {
 
 #[cfg(test)]
 mod tests {
-	use super::{resolve_base_dir, resolve_compose_file};
+	use super::{resolve_base_dir, resolve_compose_files};
 	use std::path::{Path, PathBuf};
 
 	#[test]
-	fn explicit_compose_file_wins() {
-		let p = resolve_compose_file(Some(PathBuf::from("custom.yml")));
-		assert_eq!(p, PathBuf::from("custom.yml"));
+	fn explicit_compose_files_win() {
+		let p = resolve_compose_files(&[PathBuf::from("custom.yml")]);
+		assert_eq!(p, vec![PathBuf::from("custom.yml")]);
+	}
+
+	#[test]
+	fn multiple_explicit_compose_files_preserved() {
+		let p = resolve_compose_files(&[PathBuf::from("a.yml"), PathBuf::from("b.yml")]);
+		assert_eq!(p, vec![PathBuf::from("a.yml"), PathBuf::from("b.yml")]);
 	}
 
 	#[test]
@@ -512,10 +525,16 @@ mod tests {
 		std::fs::create_dir_all(&dir).unwrap();
 		let prev = std::env::current_dir().unwrap();
 		std::env::set_current_dir(&dir).unwrap();
-		let p = resolve_compose_file(None);
+		// Guard against a COMPOSE_FILE set in the test environment.
+		let had_env = std::env::var_os("COMPOSE_FILE");
+		std::env::remove_var("COMPOSE_FILE");
+		let p = resolve_compose_files(&[]);
+		if let Some(v) = had_env {
+			std::env::set_var("COMPOSE_FILE", v);
+		}
 		std::env::set_current_dir(prev).unwrap();
 		let _ = std::fs::remove_dir_all(&dir);
-		assert_eq!(p, PathBuf::from("docker-compose.yml"));
+		assert_eq!(p, vec![PathBuf::from("docker-compose.yml")]);
 	}
 
 	#[test]
