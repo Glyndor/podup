@@ -274,22 +274,25 @@ async fn config_long_form_ref() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-async fn external_volume_skipped_on_up() {
+async fn external_volume_missing_errors_on_up() {
 	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("exv");
 	let engine = Engine::new(client, proj.clone());
-	// The external volume is declared but not mounted by the service,
-	// so create_volumes() hits the `continue` branch without creating it.
+	// An external volume that does not exist must surface an error rather than
+	// being silently skipped (compose spec requires the resource to exist).
 	let file = parse_str(
-		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\nvolumes:\n  extdata:\n    external: true\n",
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\nvolumes:\n  extdata-does-not-exist:\n    external: true\n",
 	)
 	.unwrap();
 
-	engine.up(&file).await.unwrap();
-	engine.down(&file).await.unwrap();
+	let result = engine.up(&file).await;
+	assert!(
+		matches!(result, Err(podup::ComposeError::ExternalNotFound(_))),
+		"expected ExternalNotFound, got {result:?}"
+	);
 }
 
 // ---------------------------------------------------------------------------

@@ -48,6 +48,7 @@ async fn engine_run_command_succeeds() {
 				detach: false,
 				env_overrides: vec![],
 				name_override: None,
+				service_ports: false,
 			},
 		)
 		.await;
@@ -74,6 +75,7 @@ async fn engine_run_nonzero_exit_returns_run_exited() {
 				detach: false,
 				env_overrides: vec![],
 				name_override: None,
+				service_ports: false,
 			},
 		)
 		.await;

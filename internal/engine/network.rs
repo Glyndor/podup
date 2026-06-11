@@ -23,6 +23,12 @@ impl Engine {
 
 			let external = config.as_ref().and_then(|c| c.external).unwrap_or(false);
 			if external {
+				let external_name = config
+					.as_ref()
+					.and_then(|c| c.name.as_deref())
+					.unwrap_or(name);
+				self.ensure_external_exists("network", "networks", external_name)
+					.await?;
 				continue;
 			}
 
@@ -160,12 +166,18 @@ pub(super) fn resolve_network_mode(
 
 /// Resolve the actual network name on the host for a compose network key.
 pub(super) fn resolve_network_name(network: &str, file: &ComposeFile, project: &str) -> String {
-	file.networks
-		.get(network)
-		.and_then(|c| c.as_ref())
-		.and_then(|c| c.name.as_deref())
-		.map(|s| s.to_string())
-		.unwrap_or_else(|| format!("{project}_{network}"))
+	match file.networks.get(network).and_then(|c| c.as_ref()) {
+		Some(cfg) => {
+			if let Some(name) = cfg.name.as_deref() {
+				name.to_string()
+			} else if cfg.external.unwrap_or(false) {
+				network.to_string()
+			} else {
+				format!("{project}_{network}")
+			}
+		}
+		None => format!("{project}_{network}"),
+	}
 }
 
 fn build_subnets(ipam: &IpamConfig) -> Vec<Subnet> {
@@ -215,6 +227,17 @@ mod tests {
 			resolve_network_name("mynet", &file, "proj"),
 			"custom-net-name"
 		);
+	}
+
+	#[test]
+	fn resolve_network_name_external_uses_key_not_prefix() {
+		let cfg = NetworkConfig {
+			external: Some(true),
+			..Default::default()
+		};
+		let mut file = empty_file();
+		file.networks.insert("shared".to_string(), Some(cfg));
+		assert_eq!(resolve_network_name("shared", &file, "proj"), "shared");
 	}
 
 	#[test]

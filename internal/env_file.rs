@@ -12,7 +12,7 @@ use crate::error::{ComposeError, Result};
 /// Load all `env_file` paths relative to `base_dir`.
 ///
 /// Returns a merged map.  If the same key appears in multiple files, the
-/// first file wins (earlier entries in the list have higher priority).
+/// last file wins (later entries in the list override earlier ones).
 /// `env_file:` never overrides service-level `environment:`.
 ///
 /// Returns [`ComposeError::FileNotFound`] when an env file does not exist.
@@ -76,7 +76,7 @@ pub fn load_env_file_entries(
 				continue;
 			}
 
-			result.entry(key).or_insert(value);
+			result.insert(key, value);
 		}
 	}
 
@@ -144,7 +144,7 @@ mod tests {
 	}
 
 	#[test]
-	fn first_file_wins_on_duplicate_key() {
+	fn last_file_wins_on_duplicate_key() {
 		let dir = tempfile::tempdir().unwrap();
 		std::fs::write(dir.path().join("a.env"), "FOO=first\n").unwrap();
 		std::fs::write(dir.path().join("b.env"), "FOO=second\n").unwrap();
@@ -153,7 +153,7 @@ mod tests {
 			EnvFileEntry::Path("b.env".into()),
 		];
 		let m = load_env_file_entries(&entries, dir.path()).unwrap();
-		assert_eq!(m.get("FOO").map(|s| s.as_str()), Some("first"));
+		assert_eq!(m.get("FOO").map(|s| s.as_str()), Some("second"));
 	}
 
 	#[test]

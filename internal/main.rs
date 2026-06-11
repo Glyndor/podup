@@ -140,6 +140,9 @@ enum Commands {
 		/// Override the container name.
 		#[arg(long)]
 		name: Option<String>,
+		/// Publish the service's declared ports (off by default).
+		#[arg(long)]
+		service_ports: bool,
 		/// Command (and arguments) to run.
 		#[arg(trailing_var_arg = true, allow_hyphen_values = true)]
 		cmd: Vec<String>,
@@ -437,6 +440,7 @@ async fn run() -> podup::Result<()> {
 			detach,
 			env_overrides,
 			name,
+			service_ports,
 			cmd,
 		} => {
 			engine
@@ -449,6 +453,7 @@ async fn run() -> podup::Result<()> {
 						detach,
 						env_overrides,
 						name_override: name,
+						service_ports,
 					},
 				)
 				.await?

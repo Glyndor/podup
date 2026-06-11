@@ -322,7 +322,12 @@ fn resolve_bind_source(src: &str, base_dir: &Path) -> String {
 /// and the container must be recreated, or is unchanged and can be left as is.
 pub(crate) fn config_hash(service: &Service) -> String {
 	use sha2::{Digest, Sha256};
-	let serialized = serde_json::to_vec(service).unwrap_or_default();
+	// Canonicalise through `serde_json::Value` first: object keys are emitted in
+	// sorted order, so map-typed fields (e.g. `storage_opt`) cannot reorder
+	// between runs and flap the hash into a spurious recreate.
+	let serialized = serde_json::to_value(service)
+		.and_then(|v| serde_json::to_vec(&v))
+		.unwrap_or_default();
 	Sha256::digest(&serialized)
 		.iter()
 		.map(|b| format!("{b:02x}"))
@@ -385,5 +390,24 @@ mod tests {
 		assert_eq!(ha, hb, "same config produces the same hash");
 		assert_ne!(ha, hc, "a changed image produces a different hash");
 		assert_eq!(ha.len(), 64, "sha-256 hex is 64 chars");
+	}
+
+	#[test]
+	fn config_hash_stable_despite_map_field_order() {
+		// `storage_opt` is a HashMap; canonical serialisation must sort its keys
+		// so the hash does not flap and trigger a spurious recreate on `up`.
+		let a = parse_str(
+			"services:\n  web:\n    image: x\n    storage_opt:\n      size: \"10G\"\n      foo: bar\n      baz: qux\n",
+		)
+		.unwrap();
+		let b = parse_str(
+			"services:\n  web:\n    image: x\n    storage_opt:\n      baz: qux\n      size: \"10G\"\n      foo: bar\n",
+		)
+		.unwrap();
+		assert_eq!(
+			config_hash(&a.services["web"]),
+			config_hash(&b.services["web"]),
+			"hash must be independent of storage_opt key order",
+		);
 	}
 }
