@@ -197,6 +197,44 @@ impl BuildConfig {
 			} => dockerfile_inline.as_deref(),
 		}
 	}
+
+	/// `build.cache_to` — cache export targets (image references).
+	pub fn cache_to(&self) -> &[String] {
+		match self {
+			BuildConfig::Context(_) => &[],
+			BuildConfig::Config { cache_to, .. } => cache_to,
+		}
+	}
+
+	/// `build.ssh` — SSH agent sockets/keys for the build.
+	pub fn ssh(&self) -> &[String] {
+		match self {
+			BuildConfig::Context(_) => &[],
+			BuildConfig::Config { ssh, .. } => ssh,
+		}
+	}
+
+	/// `build.secrets` — names of top-level secrets exposed to the build.
+	pub fn secrets(&self) -> &[String] {
+		match self {
+			BuildConfig::Context(_) => &[],
+			BuildConfig::Config { secrets, .. } => secrets,
+		}
+	}
+
+	/// `build.additional_contexts` — named extra build contexts (`name -> value`).
+	pub fn additional_contexts(&self) -> Vec<(String, String)> {
+		match self {
+			BuildConfig::Context(_) => Vec::new(),
+			BuildConfig::Config {
+				additional_contexts,
+				..
+			} => additional_contexts
+				.iter()
+				.map(|(k, v)| (k.clone(), v.clone()))
+				.collect(),
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

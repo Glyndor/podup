@@ -49,6 +49,8 @@ mod tests {
 	#[test]
 	fn empty_slice_with_no_env_returns_empty() {
 		// Ensure COMPOSE_PROFILES is unset for this test.
+		// SAFETY: single-threaded test with no other thread reading the
+		// environment concurrently, so removing the var cannot race.
 		unsafe { std::env::remove_var("COMPOSE_PROFILES") };
 		let set = active_profiles_set(&[]);
 		assert!(set.is_empty());

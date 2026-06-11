@@ -1,0 +1,24 @@
+//! Podman libpod REST API client and types.
+//!
+//! Talks to Podman's native libpod API at `/libpod/...` instead of the
+//! Docker-compatibility layer. Eliminates the Docker compat intermediary,
+//! gives access to Podman-native error messages, and removes the bollard
+//! dependency.
+
+pub mod client;
+pub mod error;
+pub mod types;
+
+/// Path prefix for every libpod REST route.
+///
+/// Podman's libpod routes are version-namespaced: an unversioned path such as
+/// `/libpod/containers/json` is not guaranteed to resolve, so every request
+/// must carry the API version. `v4.0.0` is the published libpod API version
+/// this client targets. The version-independent `/libpod/_ping` endpoint is
+/// the sole exception and deliberately omits this prefix.
+pub(crate) const API_PREFIX: &str = "/v4.0.0/libpod";
+
+pub(crate) use client::urlencoded;
+pub use client::Client;
+pub use error::PodmanError;
+pub use types::stream::{parse_json_lines, parse_multiplexed, parse_raw, LogOutput};

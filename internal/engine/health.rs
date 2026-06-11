@@ -7,6 +7,7 @@
 
 use crate::compose::types::Service;
 use crate::error::{ComposeError, Result};
+use crate::libpod::API_PREFIX;
 
 use super::Engine;
 
@@ -15,8 +16,6 @@ impl Engine {
 	///
 	/// Uses `healthcheck.retries` (default 30) with a 2 s interval between probes.
 	pub(super) async fn wait_healthy(&self, container_name: &str, service: &Service) -> Result<()> {
-		use bollard::models::HealthStatusEnum;
-
 		let retries = service
 			.healthcheck
 			.as_ref()
@@ -24,19 +23,24 @@ impl Engine {
 			.unwrap_or(30);
 
 		for _ in 0..retries {
-			let info = match self.docker.inspect_container(container_name, None).await {
+			let info = match self
+				.client
+				.get_json::<crate::libpod::types::container::ContainerInspect>(&format!(
+					"{API_PREFIX}/containers/{}/json",
+					crate::libpod::urlencoded(container_name),
+				))
+				.await
+			{
 				Ok(i) => i,
 				Err(e) => {
-					// Podman uses "stopped" for exited containers; Bollard can't
-					// deserialize it. Treat any inspect error as "not healthy yet".
-					tracing::debug!("inspect_container error (will retry): {e}");
+					tracing::debug!("inspect error (will retry): {e}");
 					tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 					continue;
 				}
 			};
 			if let Some(state) = info.state {
 				if let Some(health) = state.health {
-					if health.status == Some(HealthStatusEnum::HEALTHY) {
+					if health.status.as_deref() == Some("healthy") {
 						return Ok(());
 					}
 				}
@@ -53,17 +57,23 @@ impl Engine {
 	/// exits with a non-zero code or if the deadline is exceeded.
 	pub(super) async fn wait_completed(&self, container_name: &str) -> Result<()> {
 		for _ in 0..600 {
-			let info = match self.docker.inspect_container(container_name, None).await {
+			let info = match self
+				.client
+				.get_json::<crate::libpod::types::container::ContainerInspect>(&format!(
+					"{API_PREFIX}/containers/{}/json",
+					crate::libpod::urlencoded(container_name),
+				))
+				.await
+			{
 				Ok(i) => i,
 				Err(e) => {
-					tracing::debug!("inspect_container error (will retry): {e}");
+					tracing::debug!("inspect error (will retry): {e}");
 					tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 					continue;
 				}
 			};
 			if let Some(state) = info.state {
-				let status = state.status.map(|s| format!("{s:?}").to_lowercase());
-				if status.as_deref() == Some("exited") {
+				if state.status.as_deref() == Some("exited") {
 					if state.exit_code.unwrap_or(-1) == 0 {
 						return Ok(());
 					}

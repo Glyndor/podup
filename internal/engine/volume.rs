@@ -7,13 +7,14 @@
 
 use std::collections::HashMap;
 
-use bollard::models::VolumeCreateRequest;
 use tracing::info;
 
 use crate::compose::types::{
 	ComposeFile, ConfigConfig, SecretConfig, Service, ServiceConfigRef, ServiceSecretRef,
 };
 use crate::error::{ComposeError, Result};
+use crate::libpod::types::volume::VolumeCreateOptions;
+use crate::libpod::API_PREFIX;
 
 use super::{staging, Engine};
 
@@ -47,27 +48,23 @@ impl Engine {
 				.map(|c| c.driver_opts.clone())
 				.unwrap_or_default();
 
-			let options = VolumeCreateRequest {
+			let options = VolumeCreateOptions {
 				name: Some(volume_name.clone()),
-				driver: Some(driver.clone()),
-				driver_opts: if driver_opts.is_empty() {
-					None
-				} else {
-					Some(driver_opts)
-				},
-				labels: if labels.is_empty() {
-					None
-				} else {
-					Some(labels)
-				},
-				..Default::default()
+				driver: Some(driver),
+				driver_opts,
+				labels,
 			};
 
-			match self.docker.create_volume(options).await {
+			match self
+				.client
+				.post_json::<_, serde_json::Value>(
+					&format!("{API_PREFIX}/volumes/create"),
+					&options,
+				)
+				.await
+			{
 				Ok(_) => info!("created volume {volume_name}"),
-				Err(bollard::errors::Error::DockerResponseServerError {
-					status_code: 409, ..
-				}) => {}
+				Err(ref e) if e.is_status(409) => {}
 				Err(e) => return Err(ComposeError::Podman(e)),
 			}
 		}

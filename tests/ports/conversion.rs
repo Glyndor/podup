@@ -1,32 +1,37 @@
 use podup::compose::types::PortMapping;
-use podup::ports::{parse_ports, to_bollard};
+use podup::ports::{parse_ports, to_libpod};
 
 fn short(s: &str) -> PortMapping {
 	PortMapping::Short(s.to_string())
 }
 
 #[test]
-fn bollard_keys_and_bindings() {
+fn libpod_mapping_fields() {
 	let ports = parse_ports(&[short("8080:80")]).unwrap();
-	let (bindings, exposed) = to_bollard(&ports);
-	assert!(bindings.contains_key("80/tcp"));
-	assert!(exposed.contains_key("80/tcp"));
-	let b = bindings["80/tcp"].as_ref().unwrap();
-	assert_eq!(b[0].host_port.as_deref(), Some("8080"));
-	assert_eq!(b[0].host_ip.as_deref(), Some("0.0.0.0"));
+	let mappings = to_libpod(&ports);
+	assert_eq!(mappings.len(), 1);
+	let m = &mappings[0];
+	assert_eq!(m.container_port, 80);
+	assert_eq!(m.host_port, Some(8080));
+	assert_eq!(m.host_ip, "");
+	assert_eq!(m.protocol, "tcp");
 }
 
 #[test]
-fn bollard_udp_key() {
+fn libpod_udp_protocol() {
 	let ports = parse_ports(&[short("514:514/udp")]).unwrap();
-	let (bindings, _) = to_bollard(&ports);
-	assert!(bindings.contains_key("514/udp"));
+	let mappings = to_libpod(&ports);
+	assert_eq!(mappings.len(), 1);
+	assert_eq!(mappings[0].protocol, "udp");
+	assert_eq!(mappings[0].container_port, 514);
 }
 
 #[test]
-fn bollard_range_produces_multiple_keys() {
+fn libpod_range_produces_multiple_entries() {
 	let ports = parse_ports(&[short("8000-8001:8000-8001")]).unwrap();
-	let (bindings, _) = to_bollard(&ports);
-	assert!(bindings.contains_key("8000/tcp"));
-	assert!(bindings.contains_key("8001/tcp"));
+	let mappings = to_libpod(&ports);
+	assert_eq!(mappings.len(), 2);
+	let cports: Vec<u16> = mappings.iter().map(|m| m.container_port).collect();
+	assert!(cports.contains(&8000));
+	assert!(cports.contains(&8001));
 }
