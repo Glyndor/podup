@@ -125,7 +125,17 @@ impl Engine {
 		let (secret_files, secret_specs) = self.resolve_build_secrets(build, file)?;
 
 		let inline = build.dockerfile_inline().map(|s| s.to_string());
-		let df = build.dockerfile().unwrap_or("Dockerfile").to_string();
+		// Honour an explicit dockerfile; otherwise prefer Dockerfile but fall back
+		// to Podman's native Containerfile when only the latter is present.
+		let df = match build.dockerfile() {
+			Some(name) => name.to_string(),
+			None if !context_path.join("Dockerfile").is_file()
+				&& context_path.join("Containerfile").is_file() =>
+			{
+				"Containerfile".to_string()
+			}
+			None => "Dockerfile".to_string(),
+		};
 		let ctx = context_path.clone();
 		let (tar_bytes, dockerfile_name) =
 			tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, String)> {

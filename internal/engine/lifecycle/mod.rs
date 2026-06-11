@@ -188,7 +188,12 @@ impl Engine {
 							self.ensure_started(&container_name).await;
 							continue;
 						}
-						if existing_hash.get(&container_name) == Some(&new_hash) {
+						// Services with a build section are rebuilt on every up, so
+						// their container must be recreated to pick up the fresh
+						// image even when the compose config is unchanged.
+						if service.build.is_none()
+							&& existing_hash.get(&container_name) == Some(&new_hash)
+						{
 							info!("{container_name} is up to date — skipping recreate");
 							self.ensure_started(&container_name).await;
 							continue;

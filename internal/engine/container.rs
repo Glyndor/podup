@@ -49,19 +49,36 @@ impl Engine {
 		}
 
 		// --- Environment ---
+		// A bare `KEY` (no `=`) is a passthrough: its value comes from podup's
+		// own environment, matching docker-compose. Drop it only when unset.
 		let env: HashMap<String, String> = build_env(service, &self.base_dir)?
 			.into_iter()
-			.filter_map(|s| {
-				let idx = s.find('=')?;
-				Some((s[..idx].to_string(), s[idx + 1..].to_string()))
+			.filter_map(|s| match s.find('=') {
+				Some(idx) => Some((s[..idx].to_string(), s[idx + 1..].to_string())),
+				None => std::env::var(&s).ok().map(|v| (s, v)),
 			})
 			.collect();
 
 		// --- Secrets and configs become bind mounts ---
 		let secret_binds = self.build_secret_binds(service, file)?;
 		let config_binds = self.build_config_binds(service, file)?;
-		let (mounts, named_volumes) =
+		let (mut mounts, mut named_volumes) =
 			build_mounts_all(service, &self.base_dir, &secret_binds, &config_binds);
+		// Resolve relative bind sources against the project base directory (and
+		// expand a leading `~`) so they don't depend on Podman's working
+		// directory; absolute paths (incl. staged secrets/configs) are untouched.
+		for m in &mut mounts {
+			if m.mount_type == "bind" {
+				if let Some(src) = m.source.take() {
+					m.source = Some(resolve_bind_source(&src, &self.base_dir));
+				}
+			}
+		}
+		// Map each named-volume reference to the actual volume name created by
+		// create_volumes (project-prefixed, custom `name:`, or external).
+		for nv in &mut named_volumes {
+			nv.name = self.resolved_volume_name(&nv.name, file);
+		}
 
 		// --- Port mappings ---
 		let parsed_ports = ports::parse_ports(&service.ports)?;
@@ -246,6 +263,57 @@ impl Engine {
 
 		Ok(())
 	}
+
+	/// Resolve a service's named-volume reference to the actual volume name
+	/// that `create_volumes` produced: a custom `name:`, the raw name for an
+	/// external volume, or the `{project}_{name}` form. References not declared
+	/// in the top-level `volumes:` map (anonymous/implicit) are left unchanged.
+	fn resolved_volume_name(&self, reference: &str, file: &ComposeFile) -> String {
+		resolve_volume_name(reference, &self.project, file)
+	}
+}
+
+/// Resolve a named-volume reference to the volume name `create_volumes`
+/// produced: a custom `name:`, the raw name for an external volume, or the
+/// `{project}_{name}` form. References not declared in the top-level `volumes:`
+/// map (anonymous/implicit) are returned unchanged.
+fn resolve_volume_name(reference: &str, project: &str, file: &ComposeFile) -> String {
+	match file.volumes.get(reference) {
+		Some(cfg) => {
+			if let Some(name) = cfg.as_ref().and_then(|c| c.name.as_deref()) {
+				name.to_string()
+			} else if cfg.as_ref().and_then(|c| c.external).unwrap_or(false) {
+				reference.to_string()
+			} else {
+				format!("{project}_{reference}")
+			}
+		}
+		None => reference.to_string(),
+	}
+}
+
+/// Resolve a bind-mount source path: expand a leading `~`, then make a relative
+/// path absolute against the project base directory. Absolute paths (including
+/// staged secret/config files) are returned unchanged.
+fn resolve_bind_source(src: &str, base_dir: &Path) -> String {
+	if src.is_empty() {
+		return src.to_string();
+	}
+	let expanded = if let Some(rest) = src.strip_prefix("~/") {
+		match std::env::var("HOME") {
+			Ok(home) => format!("{home}/{rest}"),
+			Err(_) => src.to_string(),
+		}
+	} else if src == "~" {
+		std::env::var("HOME").unwrap_or_else(|_| src.to_string())
+	} else {
+		src.to_string()
+	};
+	if Path::new(&expanded).is_absolute() {
+		expanded
+	} else {
+		base_dir.join(&expanded).to_string_lossy().into_owned()
+	}
 }
 
 /// Stable content hash of a service definition, stored as the
@@ -276,8 +344,33 @@ fn build_env(service: &Service, base_dir: &Path) -> Result<Vec<String>> {
 
 #[cfg(test)]
 mod tests {
-	use super::config_hash;
+	use super::{config_hash, resolve_bind_source, resolve_volume_name};
 	use crate::parse_str;
+	use std::path::Path;
+
+	#[test]
+	fn bind_source_resolution() {
+		let base = Path::new("/srv/app");
+		assert_eq!(resolve_bind_source("/abs/path", base), "/abs/path");
+		assert_eq!(resolve_bind_source("./data", base), "/srv/app/./data");
+		assert_eq!(resolve_bind_source("data", base), "/srv/app/data");
+		std::env::set_var("HOME", "/home/u");
+		assert_eq!(resolve_bind_source("~/x", base), "/home/u/x");
+		assert_eq!(resolve_bind_source("~", base), "/home/u");
+	}
+
+	#[test]
+	fn volume_name_resolution() {
+		let f = parse_str(
+			"services:\n  s:\n    image: x\nvolumes:\n  data:\n  ext:\n    external: true\n  custom:\n    name: my-vol\n",
+		)
+		.unwrap();
+		assert_eq!(resolve_volume_name("data", "proj", &f), "proj_data");
+		assert_eq!(resolve_volume_name("ext", "proj", &f), "ext");
+		assert_eq!(resolve_volume_name("custom", "proj", &f), "my-vol");
+		// Not declared in top-level volumes -> left as-is.
+		assert_eq!(resolve_volume_name("anon", "proj", &f), "anon");
+	}
 
 	#[test]
 	fn config_hash_is_stable_and_sensitive() {
