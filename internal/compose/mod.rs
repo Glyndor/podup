@@ -17,9 +17,17 @@ use types::ComposeFile;
 /// Parse a compose file from disk, applying variable substitution and
 /// resolving `extends:` / `include:` directives.
 pub fn parse_file(path: &Path) -> Result<ComposeFile> {
+	parse_file_with_env_files(path, &[])
+}
+
+/// Like [`parse_file`], additionally loading `env_files` (the global
+/// `--env-file` flag) into the variable map used for interpolation. These take
+/// effect for the top-level file and any included files; the process
+/// environment and a project `.env` still take precedence.
+pub fn parse_file_with_env_files(path: &Path, env_files: &[String]) -> Result<ComposeFile> {
 	let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 	let dir = abs.parent().unwrap_or(Path::new(".")).to_path_buf();
-	let mut file = parse_file_inner(&abs, &dir)?;
+	let mut file = parse_file_inner_with_env(&abs, &dir, env_files)?;
 
 	let includes = std::mem::take(&mut file.include);
 	for inc in includes {
@@ -56,7 +64,9 @@ pub fn parse_file(path: &Path) -> Result<ComposeFile> {
 					.map(|p| p.to_path_buf())
 					.unwrap_or_else(|| dir.clone())
 			});
-			let mut included = parse_file_inner_with_env(&inc_path, &inc_dir, &extra_env_files)?;
+			let mut combined_env_files = env_files.to_vec();
+			combined_env_files.extend(extra_env_files.iter().cloned());
+			let mut included = parse_file_inner_with_env(&inc_path, &inc_dir, &combined_env_files)?;
 			anchor::anchor_compose_file(&mut included, &inc_dir);
 			include::merge_compose_file(&mut file, included);
 		}

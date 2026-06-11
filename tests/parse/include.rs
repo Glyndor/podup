@@ -105,3 +105,19 @@ services:
 		Some("alpine:override")
 	);
 }
+
+#[test]
+fn global_env_file_feeds_interpolation() {
+	let dir = tempfile::tempdir().unwrap();
+
+	let env_path = dir.path().join("prod.env");
+	let mut e = std::fs::File::create(&env_path).unwrap();
+	writeln!(e, "IMG=nginx:1.27").unwrap();
+
+	let main_path = dir.path().join("docker-compose.yml");
+	let mut m = std::fs::File::create(&main_path).unwrap();
+	writeln!(m, "services:\n  web:\n    image: ${{IMG}}").unwrap();
+
+	let file = podup::parse_file_with_env_files(&main_path, &["prod.env".to_string()]).unwrap();
+	assert_eq!(file.services["web"].image.as_deref(), Some("nginx:1.27"));
+}
