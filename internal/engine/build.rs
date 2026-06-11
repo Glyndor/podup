@@ -30,7 +30,12 @@ impl Engine {
 
 		info!("pulling {image}");
 
-		let mut query = format!("reference={}&policy=missing", urlencoded(&image));
+		let pull_policy = match service.pull_policy.as_deref() {
+			Some("always") => "always",
+			Some("newer") => "newer",
+			_ => "missing",
+		};
+		let mut query = format!("reference={}&policy={}", urlencoded(&image), pull_policy);
 		if let Some(platform) = &service.platform {
 			query.push_str(&format!("&platform={}", urlencoded(platform)));
 		}
