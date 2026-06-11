@@ -6,7 +6,7 @@ use std::path::Path;
 use tracing::warn;
 
 use crate::compose::types::{BlkioConfig, Service};
-use crate::libpod::types::container::{LinuxBlockIO, LinuxDevice};
+use crate::libpod::types::container::{LinuxBlockIO, LinuxDevice, LinuxThrottleDevice, LinuxWeightDevice};
 
 // ---------------------------------------------------------------------------
 // Device helpers
@@ -67,36 +67,37 @@ fn device_major_minor(_path: &str) -> (i64, i64, String) {
 pub(super) fn build_blkio_config(service: &Service) -> Option<LinuxBlockIO> {
 	let cfg: &BlkioConfig = service.blkio_config.as_ref()?;
 
+	let weight_device = cfg
+		.weight_device
+		.iter()
+		.map(|d| {
+			let (major, minor, _) = device_major_minor(&d.path);
+			LinuxWeightDevice { major, minor, weight: Some(d.weight) }
+		})
+		.collect();
+
+	let throttle = |devs: &[crate::compose::types::BlkioRateDevice]| -> Vec<LinuxThrottleDevice> {
+		devs.iter()
+			.map(|d| {
+				let (major, minor, _) = device_major_minor(&d.path);
+				LinuxThrottleDevice { major, minor, rate: d.rate_value() as u64 }
+			})
+			.collect()
+	};
+
 	Some(LinuxBlockIO {
 		weight: cfg.weight,
-		weight_device: vec![],
-		throttle_read_bps_device: vec![],
-		throttle_write_bps_device: vec![],
-		throttle_read_iops_device: vec![],
-		throttle_write_iops_device: vec![],
+		weight_device,
+		throttle_read_bps_device: throttle(&cfg.device_read_bps),
+		throttle_write_bps_device: throttle(&cfg.device_write_bps),
+		throttle_read_iops_device: throttle(&cfg.device_read_iops),
+		throttle_write_iops_device: throttle(&cfg.device_write_iops),
 	})
 }
 
 // ---------------------------------------------------------------------------
-// Tmpfs / label helpers
+// Label helpers
 // ---------------------------------------------------------------------------
-
-pub(crate) fn tmpfs_options_to_string(
-	opts: Option<&crate::compose::types::TmpfsOptions>,
-) -> String {
-	let opts = match opts {
-		Some(o) => o,
-		None => return String::new(),
-	};
-	let mut parts: Vec<String> = Vec::new();
-	if let Some(size) = opts.size {
-		parts.push(format!("size={size}"));
-	}
-	if let Some(mode) = opts.mode {
-		parts.push(format!("mode={mode:o}"));
-	}
-	parts.join(",")
-}
 
 pub(super) fn build_label_file_labels(
 	service: &Service,
@@ -171,33 +172,13 @@ pub(super) fn warn_swarm_only_deploy(service_name: &str, service: &Service) {
 }
 
 // ---------------------------------------------------------------------------
-// Utilities
-// ---------------------------------------------------------------------------
-
-pub(crate) fn opt_vec<T>(v: Vec<T>) -> Option<Vec<T>> {
-	if v.is_empty() {
-		None
-	} else {
-		Some(v)
-	}
-}
-
-pub(crate) fn opt_map<K, V>(m: HashMap<K, V>) -> Option<HashMap<K, V>> {
-	if m.is_empty() {
-		None
-	} else {
-		Some(m)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::compose::types::{Service, TmpfsOptions};
+	use crate::compose::types::Service;
 
 	fn default_service() -> Service {
 		Service::default()
@@ -223,42 +204,6 @@ mod tests {
 		assert_eq!(d.path, "/dev/xvda");
 	}
 
-	// --- tmpfs ---
-
-	#[test]
-	fn tmpfs_options_empty() {
-		assert!(tmpfs_options_to_string(None).is_empty());
-	}
-
-	#[test]
-	fn tmpfs_options_size_only() {
-		let opts = TmpfsOptions {
-			size: Some(67108864),
-			mode: None,
-		};
-		assert_eq!(tmpfs_options_to_string(Some(&opts)), "size=67108864");
-	}
-
-	#[test]
-	fn tmpfs_options_mode_only() {
-		let opts = TmpfsOptions {
-			size: None,
-			mode: Some(0o1755),
-		};
-		assert_eq!(tmpfs_options_to_string(Some(&opts)), "mode=1755");
-	}
-
-	#[test]
-	fn tmpfs_options_size_and_mode() {
-		let opts = TmpfsOptions {
-			size: Some(1024),
-			mode: Some(0o755),
-		};
-		let s = tmpfs_options_to_string(Some(&opts));
-		assert!(s.contains("size=1024"));
-		assert!(s.contains("mode=755"));
-	}
-
 	// --- blkio ---
 
 	#[test]
@@ -280,7 +225,7 @@ mod tests {
 	}
 
 	#[test]
-	fn build_blkio_config_with_rate_device_global_weight_only() {
+	fn build_blkio_config_with_rate_device() {
 		use crate::compose::types::{BlkioConfig, BlkioRateDevice};
 		let mut svc = default_service();
 		svc.blkio_config = Some(BlkioConfig {
@@ -290,33 +235,10 @@ mod tests {
 			}],
 			..Default::default()
 		});
-		// per-device throttle not translated yet, but struct is returned
 		let blkio = build_blkio_config(&svc).unwrap();
-		assert!(blkio.throttle_read_bps_device.is_empty());
-	}
-
-	// --- opt_vec / opt_map ---
-
-	#[test]
-	fn opt_vec_empty() {
-		assert!(opt_vec::<String>(vec![]).is_none());
-	}
-
-	#[test]
-	fn opt_vec_nonempty() {
-		assert!(opt_vec(vec!["x"]).is_some());
-	}
-
-	#[test]
-	fn opt_map_empty() {
-		assert!(opt_map::<String, String>(Default::default()).is_none());
-	}
-
-	#[test]
-	fn opt_map_nonempty() {
-		let mut m = HashMap::new();
-		m.insert("k".to_string(), "v".to_string());
-		assert!(opt_map(m).is_some());
+		assert_eq!(blkio.throttle_read_bps_device.len(), 1);
+		assert_eq!(blkio.throttle_read_bps_device[0].rate, 1048576);
+		assert!(blkio.throttle_write_bps_device.is_empty());
 	}
 
 	// --- warn_swarm_only_deploy ---

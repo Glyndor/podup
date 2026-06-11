@@ -109,8 +109,6 @@ impl Engine {
 			cmd: Some(cmd),
 			attach_stdout: Some(true),
 			attach_stderr: Some(true),
-			attach_stdin: Some(true),
-			tty: Some(true),
 			..Default::default()
 		};
 		let create_path = format!(
@@ -124,7 +122,7 @@ impl Engine {
 			.map_err(ComposeError::Podman)?;
 		let exec_id = resp.id;
 
-		let start_cfg = ExecStartConfig { detach: false, tty: true };
+		let start_cfg = ExecStartConfig { detach: false, tty: false };
 		let start_path = format!("/libpod/exec/{}/start", urlencoded(&exec_id));
 		let start_resp = self
 			.client
@@ -203,7 +201,9 @@ impl Engine {
 					tracing::info!("removing orphan container {name}");
 					let rm_path =
 						format!("/libpod/containers/{}?force=true", urlencoded(name));
-					let _ = self.client.delete_ok(&rm_path).await;
+					if let Err(e) = self.client.delete_ok(&rm_path).await {
+						tracing::debug!("orphan delete {name}: {e}");
+					}
 				}
 			}
 		}

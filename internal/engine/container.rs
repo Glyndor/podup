@@ -210,7 +210,9 @@ impl Engine {
 
 		// Remove any existing container (idempotent restart).
 		let rm_path = format!("/libpod/containers/{}?force=true", urlencoded(container_name));
-		let _ = self.client.delete_ok(&rm_path).await;
+		if let Err(e) = self.client.delete_ok(&rm_path).await {
+			tracing::debug!("pre-create delete {container_name}: {e}");
+		}
 
 		self.client
 			.post_json::<_, serde_json::Value>("/libpod/containers/create", &spec)
