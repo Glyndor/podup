@@ -23,6 +23,8 @@ podup (0.11.0) unstable; urgency=medium
     against the imported file's directory instead of the project directory.
   * Add a global --env-file flag to load extra env files into the variable
     map used for interpolation.
+  * Build a Git/URL build context by having Podman clone it server-side
+    instead of treating the URL as a local directory to tar.
 
  -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 15:45:00 -0500
 
