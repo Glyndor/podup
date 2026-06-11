@@ -5,7 +5,7 @@
 //! Stream type 1 = stdout, 2 = stderr.
 
 use bytes::Bytes;
-use futures::Stream;
+use futures_core::Stream;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use std::pin::Pin;
@@ -62,7 +62,7 @@ pub(crate) fn take_json_line(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
 /// Emits [`LogOutput`] items as frames arrive. The returned stream ends when
 /// the response body is fully consumed.
 pub fn parse_multiplexed(body: Incoming) -> BoxStream<LogOutput> {
-	Box::pin(futures::stream::try_unfold(
+	Box::pin(futures_util::stream::try_unfold(
 		(body, Vec::<u8>::new()),
 		|(mut body, mut buf)| async move {
 			loop {
@@ -96,21 +96,24 @@ pub fn parse_multiplexed(body: Incoming) -> BoxStream<LogOutput> {
 /// Used for TTY containers where Podman sends raw bytes without 8-byte frame
 /// headers. All bytes are treated as stdout since TTY merges the streams.
 pub fn parse_raw(body: Incoming) -> BoxStream<LogOutput> {
-	Box::pin(futures::stream::try_unfold(body, |mut body| async move {
-		loop {
-			match body.frame().await {
-				Some(Ok(frame)) => {
-					if let Ok(data) = frame.into_data() {
-						if !data.is_empty() {
-							return Ok(Some((LogOutput::StdOut { message: data }, body)));
+	Box::pin(futures_util::stream::try_unfold(
+		body,
+		|mut body| async move {
+			loop {
+				match body.frame().await {
+					Some(Ok(frame)) => {
+						if let Ok(data) = frame.into_data() {
+							if !data.is_empty() {
+								return Ok(Some((LogOutput::StdOut { message: data }, body)));
+							}
 						}
 					}
+					Some(Err(e)) => return Err(PodmanError::from(e)),
+					None => return Ok(None),
 				}
-				Some(Err(e)) => return Err(PodmanError::from(e)),
-				None => return Ok(None),
 			}
-		}
-	}))
+		},
+	))
 }
 
 /// Parse a newline-delimited JSON stream (used for image pull and build output).
@@ -120,7 +123,7 @@ pub fn parse_raw(body: Incoming) -> BoxStream<LogOutput> {
 pub fn parse_json_lines<T: serde::de::DeserializeOwned + Send + 'static>(
 	body: Incoming,
 ) -> BoxStream<T> {
-	Box::pin(futures::stream::try_unfold(
+	Box::pin(futures_util::stream::try_unfold(
 		(body, Vec::<u8>::new()),
 		|(mut body, mut buf)| async move {
 			loop {

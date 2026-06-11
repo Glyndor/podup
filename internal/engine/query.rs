@@ -1,6 +1,6 @@
 //! Query and observation commands: ps, logs, exec, pull, remove_orphans, attach_logs, top, port, images.
 
-use futures::StreamExt;
+use futures_util::StreamExt;
 
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
@@ -119,7 +119,7 @@ impl Engine {
 					}
 				})
 				.collect();
-			futures::future::join_all(futs).await;
+			futures_util::future::join_all(futs).await;
 		} else {
 			for (container_name, is_tty) in targets {
 				let path = format!(
@@ -231,7 +231,7 @@ impl Engine {
 			.map(|s| self.pull_image(s))
 			.collect();
 
-		let results = futures::future::join_all(futs).await;
+		let results = futures_util::future::join_all(futs).await;
 		for r in results {
 			r?;
 		}
@@ -462,14 +462,14 @@ impl Engine {
 			use tokio::signal::unix::{signal, SignalKind};
 			let mut sigterm = signal(SignalKind::terminate()).expect("SIGTERM handler");
 			tokio::select! {
-				_ = futures::future::join_all(streams) => {}
+				_ = futures_util::future::join_all(streams) => {}
 				_ = tokio::signal::ctrl_c() => {}
 				_ = sigterm.recv() => {}
 			}
 		}
 		#[cfg(not(unix))]
 		tokio::select! {
-			_ = futures::future::join_all(streams) => {}
+			_ = futures_util::future::join_all(streams) => {}
 			_ = tokio::signal::ctrl_c() => {}
 		}
 

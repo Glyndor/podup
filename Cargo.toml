@@ -32,7 +32,8 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 clap = { version = "4", features = ["derive", "env"] }
 indexmap = { version = "2", features = ["serde"] }
-futures = { version = "0.3", default-features = false, features = ["async-await", "std"] }
+futures-core = { version = "0.3", default-features = false }
+futures-util = { version = "0.3", default-features = false, features = ["std", "async-await"] }
 tar = { version = "0.4", default-features = false }
 flate2 = "1.0"
 bytes = "1"

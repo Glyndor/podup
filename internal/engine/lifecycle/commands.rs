@@ -1,6 +1,6 @@
 //! Lifecycle sub-commands: restart, stop, start, kill, rm, pause, unpause, run.
 
-use futures::StreamExt;
+use futures_util::StreamExt;
 use tracing::info;
 
 use crate::compose::types::ComposeFile;
