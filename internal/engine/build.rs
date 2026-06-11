@@ -2,8 +2,8 @@
 //!
 //! [`Engine::pull_image`] fetches a pre-built image from a registry.
 //! [`Engine::build_service`] compiles a build context tar, passes it to the
-//! Podman/Docker API, and applies any extra tags. Inline Dockerfiles and
-//! multi-stage `--target` trimming are handled before the tar is assembled.
+//! Podman libpod API, and applies any extra tags. Multi-stage targets are
+//! passed as the `target=` query parameter — the full Dockerfile is always sent.
 
 use std::path::Path;
 
@@ -107,23 +107,12 @@ impl Engine {
 				.map_err(|e| ComposeError::Build(e.to_string()))??
 		} else {
 			let df = build.dockerfile().unwrap_or("Dockerfile");
-			if let Some(target) = build.target() {
-				let ctx = context_path.clone();
-				let df_s = df.to_string();
-				let tgt_s = target.to_string();
-				tokio::task::spawn_blocking(move || {
-					build_context_tar_with_target(&ctx, &df_s, &tgt_s)
-				})
+			let ctx = context_path.clone();
+			let df_s = df.to_string();
+			let bytes = tokio::task::spawn_blocking(move || build_context_tar(&ctx, &df_s))
 				.await
-				.map_err(|e| ComposeError::Build(e.to_string()))??
-			} else {
-				let ctx = context_path.clone();
-				let df_s = df.to_string();
-				let bytes = tokio::task::spawn_blocking(move || build_context_tar(&ctx, &df_s))
-					.await
-					.map_err(|e| ComposeError::Build(e.to_string()))??;
-				(bytes, df.to_string())
-			}
+				.map_err(|e| ComposeError::Build(e.to_string()))??;
+			(bytes, df.to_string())
 		};
 
 		let arg_map = build.args().to_map();
@@ -200,6 +189,9 @@ impl Engine {
 		}
 		if let Some(l) = &labels_json {
 			qs.push_str(&format!("&labels={}", urlencoded(l)));
+		}
+		if let Some(target) = build.target() {
+			qs.push_str(&format!("&target={}", urlencoded(target)));
 		}
 
 		let path = format!("/libpod/build?{qs}");
@@ -328,99 +320,6 @@ pub(crate) fn build_context_tar(context: &Path, _dockerfile: &str) -> Result<Vec
 	Ok(bytes)
 }
 
-/// Build a context tar with the Dockerfile truncated to stages up to `target`.
-///
-/// Achieves the same result as `docker build --target=<target>` without requiring
-/// bollard API support for the target parameter.
-fn build_context_tar_with_target(
-	context: &Path,
-	dockerfile: &str,
-	target: &str,
-) -> Result<(Vec<u8>, String)> {
-	let df_path = context.join(dockerfile);
-	let df_content = std::fs::read_to_string(&df_path).map_err(ComposeError::Io)?;
-	let truncated = truncate_dockerfile_to_target(&df_content, target);
-
-	let ignore_patterns = read_dockerignore(context);
-	let encoder = GzEncoder::new(Vec::new(), Compression::default());
-	let mut tar = tar::Builder::new(encoder);
-
-	let df_bytes = truncated.as_bytes();
-	let mut header = tar::Header::new_gnu();
-	header.set_size(df_bytes.len() as u64);
-	header.set_mode(0o644);
-	header.set_cksum();
-	tar.append_data(&mut header, dockerfile, df_bytes)
-		.map_err(|e| ComposeError::Build(e.to_string()))?;
-
-	for abs in super::walk_dir(context).map_err(ComposeError::Io)? {
-		let rel = abs
-			.strip_prefix(context)
-			.map_err(|_| ComposeError::Build("path strip error".into()))?;
-		let rel_str = rel.to_string_lossy();
-		if is_ignored(&rel_str, &ignore_patterns) {
-			continue;
-		}
-		if rel_str == dockerfile {
-			continue; // Replaced by truncated version above.
-		}
-		if abs.is_dir() {
-			tar.append_dir(rel, &abs)
-				.map_err(|e| ComposeError::Build(e.to_string()))?;
-		} else {
-			tar.append_path_with_name(&abs, rel)
-				.map_err(|e| ComposeError::Build(e.to_string()))?;
-		}
-	}
-
-	let gz = tar
-		.into_inner()
-		.map_err(|e| ComposeError::Build(e.to_string()))?;
-	let bytes = gz
-		.finish()
-		.map_err(|e| ComposeError::Build(e.to_string()))?;
-	Ok((bytes, dockerfile.to_string()))
-}
-
-/// Truncate a Dockerfile to only include stages up to and including `target`.
-///
-/// Stages after `target` are dropped, making the target stage the effective
-/// final output — equivalent to `docker build --target=<target>`.
-pub(crate) fn truncate_dockerfile_to_target(content: &str, target: &str) -> String {
-	let target_lower = target.to_lowercase();
-	let mut lines: Vec<&str> = Vec::new();
-	let mut found_target = false;
-
-	for line in content.lines() {
-		let trimmed = line.trim().to_ascii_lowercase();
-
-		if trimmed.starts_with("from ") {
-			if found_target {
-				// First FROM after our target stage — stop here.
-				break;
-			}
-			lines.push(line);
-			if let Some(as_idx) = trimmed.find(" as ") {
-				let stage = trimmed[as_idx + 4..].trim().to_string();
-				if stage == target_lower {
-					found_target = true;
-				}
-			}
-		} else {
-			lines.push(line);
-		}
-	}
-
-	if !found_target {
-		tracing::warn!(
-            "build.target '{target}' not found as a named stage in Dockerfile — using full Dockerfile"
-        );
-		return content.to_string();
-	}
-
-	lines.join("\n")
-}
-
 fn read_dockerignore(context: &Path) -> Vec<String> {
 	let path = context.join(".dockerignore");
 	let Ok(content) = std::fs::read_to_string(path) else {
@@ -439,6 +338,10 @@ fn is_ignored(path: &str, patterns: &[String]) -> bool {
 			if path.starts_with(pattern.as_str()) {
 				return true;
 			}
+		} else if pattern.contains('*') {
+			if glob_match(pattern, path) {
+				return true;
+			}
 		} else if path == pattern.as_str()
 			|| (path.starts_with(pattern.as_str())
 				&& path.as_bytes().get(pattern.len()) == Some(&b'/'))
@@ -449,6 +352,34 @@ fn is_ignored(path: &str, patterns: &[String]) -> bool {
 	false
 }
 
+/// Match path against a glob pattern.
+///
+/// Patterns without `/` are matched against the filename only, so `*.log`
+/// excludes both `error.log` and `logs/error.log`. `*` never crosses a `/`
+/// boundary when the pattern itself contains a `/`.
+fn glob_match(pattern: &str, path: &str) -> bool {
+	if !pattern.contains('/') {
+		let filename = path.rsplit('/').next().unwrap_or(path);
+		return match_star(pattern, filename);
+	}
+	match_star(pattern, path)
+}
+
+/// Match `s` against `pat` where `*` matches any sequence of non-`/` chars.
+fn match_star(pat: &str, s: &str) -> bool {
+	match pat.split_once('*') {
+		None => s == pat,
+		Some((prefix, rest)) => {
+			s.starts_with(prefix) && {
+				let s = &s[prefix.len()..];
+				(0..=s.len())
+					.take_while(|&i| !s[..i].contains('/'))
+					.any(|i| match_star(rest, &s[i..]))
+			}
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
@@ -456,45 +387,11 @@ fn is_ignored(path: &str, patterns: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::{
-		build_context_tar, build_context_tar_with_inline, build_context_tar_with_target,
-		is_ignored, read_dockerignore, truncate_dockerfile_to_target,
+		build_context_tar, build_context_tar_with_inline, glob_match, is_ignored,
+		read_dockerignore,
 	};
 	use std::fs;
 	use tempfile::tempdir;
-
-	// truncate_dockerfile_to_target ----------------------------------------
-
-	#[test]
-	fn truncate_drops_stages_after_target() {
-		let df = "FROM base AS builder\nRUN build\nFROM builder AS production\nRUN run\nFROM production AS final\nRUN finalize\n";
-		let result = truncate_dockerfile_to_target(df, "production");
-		assert!(result.contains("FROM base AS builder"));
-		assert!(result.contains("FROM builder AS production"));
-		assert!(!result.contains("FROM production AS final"));
-	}
-
-	#[test]
-	fn truncate_unknown_target_returns_full() {
-		let df = "FROM alpine\nRUN echo hi\n";
-		let result = truncate_dockerfile_to_target(df, "nonexistent");
-		assert_eq!(result, df);
-	}
-
-	#[test]
-	fn truncate_case_insensitive_target() {
-		let df = "FROM base AS Builder\nRUN step\nFROM Builder AS Next\nRUN other\n";
-		let result = truncate_dockerfile_to_target(df, "builder");
-		assert!(result.contains("AS Builder"));
-		assert!(!result.contains("AS Next"));
-	}
-
-	#[test]
-	fn truncate_single_stage_target() {
-		let df = "FROM alpine AS app\nRUN echo done\n";
-		let result = truncate_dockerfile_to_target(df, "app");
-		assert!(result.contains("FROM alpine AS app"));
-		assert!(result.contains("echo done"));
-	}
 
 	// is_ignored (build) ---------------------------------------------------
 
@@ -517,6 +414,35 @@ mod tests {
 		let patterns = vec!["vendor".to_string()];
 		assert!(is_ignored("vendor/lib.rs", &patterns));
 		assert!(!is_ignored("notvendor/lib.rs", &patterns));
+	}
+
+	#[test]
+	fn build_ignored_glob_extension() {
+		let patterns = vec!["*.key".to_string()];
+		assert!(is_ignored("secret.key", &patterns));
+		assert!(is_ignored("certs/ca.key", &patterns));
+		assert!(!is_ignored("key.txt", &patterns));
+	}
+
+	#[test]
+	fn build_ignored_glob_in_subdir() {
+		let patterns = vec!["logs/*.log".to_string()];
+		assert!(is_ignored("logs/error.log", &patterns));
+		assert!(!is_ignored("other/error.log", &patterns));
+	}
+
+	#[test]
+	fn glob_match_star_extension() {
+		assert!(glob_match("*.env", "production.env"));
+		assert!(glob_match("*.env", "config/.env"));
+		assert!(!glob_match("*.env", "env.txt"));
+	}
+
+	#[test]
+	fn glob_match_star_prefix() {
+		assert!(glob_match("id_*", "id_rsa"));
+		assert!(glob_match("id_*", "id_ed25519"));
+		assert!(!glob_match("id_*", "not_id_rsa"));
 	}
 
 	// read_dockerignore ----------------------------------------------------
@@ -552,13 +478,27 @@ mod tests {
 	}
 
 	#[test]
-	fn context_tar_respects_dockerignore() {
+	fn context_tar_excludes_dockerignore_glob() {
+		use flate2::read::GzDecoder;
+		use std::io::Read;
+
 		let dir = tempdir().unwrap();
 		fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
 		fs::write(dir.path().join("secret.key"), b"top secret").unwrap();
 		fs::write(dir.path().join(".dockerignore"), b"*.key\n").unwrap();
 		let bytes = build_context_tar(dir.path(), "Dockerfile").unwrap();
-		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
+
+		// Decompress and scan for secret.key in tar entry names.
+		let mut gz_content = Vec::new();
+		GzDecoder::new(bytes.as_slice()).read_to_end(&mut gz_content).unwrap();
+		let mut archive = tar::Archive::new(gz_content.as_slice());
+		let names: Vec<String> = archive
+			.entries()
+			.unwrap()
+			.filter_map(|e| e.ok())
+			.filter_map(|e| e.path().ok().map(|p| p.to_string_lossy().into_owned()))
+			.collect();
+		assert!(!names.iter().any(|n| n.contains("secret.key")), "secret.key must be excluded: {names:?}");
 	}
 
 	#[test]
@@ -581,20 +521,5 @@ mod tests {
 		let (bytes, df_name) = build_context_tar_with_inline(dir.path(), inline).unwrap();
 		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
 		assert!(!df_name.is_empty());
-	}
-
-	// build_context_tar_with_target ----------------------------------------
-
-	#[test]
-	fn target_tar_truncates_dockerfile() {
-		let dir = tempdir().unwrap();
-		fs::write(
-			dir.path().join("Dockerfile"),
-			b"FROM alpine AS builder\nRUN build\nFROM builder AS final\nRUN run\n",
-		)
-		.unwrap();
-		let (bytes, _) =
-			build_context_tar_with_target(dir.path(), "Dockerfile", "builder").unwrap();
-		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
 	}
 }
