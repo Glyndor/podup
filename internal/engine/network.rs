@@ -7,7 +7,7 @@ use tracing::info;
 use crate::compose::types::{ComposeFile, IpamConfig, Service, ServiceNetworkConfig};
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::container::{Namespace, PerNetworkOptions};
-use crate::libpod::types::network::{NetworkCreateRequest, Subnet};
+use crate::libpod::types::network::{LeaseRange, NetworkCreateRequest, Subnet};
 use crate::libpod::API_PREFIX;
 
 use super::Engine;
@@ -48,11 +48,9 @@ impl Engine {
 				.map(|c| c.driver_opts.clone())
 				.unwrap_or_default();
 
-			let subnets = config
-				.as_ref()
-				.and_then(|c| c.ipam.as_ref())
-				.map(build_subnets)
-				.unwrap_or_default();
+			let ipam = config.as_ref().and_then(|c| c.ipam.as_ref());
+			let subnets = ipam.map(build_subnets).unwrap_or_default();
+			let ipam_options = ipam.map(build_ipam_options).unwrap_or_default();
 
 			let request = NetworkCreateRequest {
 				name: network_name.clone(),
@@ -62,6 +60,7 @@ impl Engine {
 				ipv6_enabled: config.as_ref().and_then(|c| c.enable_ipv6),
 				dns_enabled: Some(true),
 				options: driver_opts,
+				ipam_options,
 				labels,
 				subnets,
 			};
@@ -112,6 +111,12 @@ pub(super) fn build_per_network_options(
 			let mut driver_opts = HashMap::new();
 			driver_opts.insert("priority".to_string(), prio.to_string());
 			opts.driver_opts = Some(driver_opts);
+		}
+		if let Some(iface) = &c.interface_name {
+			opts.interface_name = Some(iface.clone());
+		}
+		if c.gw_priority.is_some() {
+			tracing::debug!("network gw_priority is not supported by Podman and is ignored");
 		}
 	} else if let Some(mac) = fallback_mac {
 		opts.static_mac = Some(mac.to_string());
@@ -183,12 +188,79 @@ pub(super) fn resolve_network_name(network: &str, file: &ComposeFile, project: &
 fn build_subnets(ipam: &IpamConfig) -> Vec<Subnet> {
 	ipam.config
 		.iter()
-		.map(|pool| Subnet {
-			subnet: pool.subnet.clone(),
-			gateway: pool.gateway.clone(),
-			lease_range: None,
+		.map(|pool| {
+			if !pool.aux_addresses.is_empty() {
+				tracing::warn!(
+					"ipam aux_addresses are not supported by Podman and will be ignored"
+				);
+			}
+			Subnet {
+				subnet: pool.subnet.clone(),
+				gateway: pool.gateway.clone(),
+				lease_range: pool.ip_range.as_deref().and_then(lease_range_from_cidr),
+			}
 		})
 		.collect()
+}
+
+/// Translate `ipam.driver` and `ipam.options` into Podman's `ipam_options` map.
+fn build_ipam_options(ipam: &IpamConfig) -> HashMap<String, String> {
+	let mut opts = ipam.options.clone();
+	if let Some(driver) = &ipam.driver {
+		opts.insert("driver".to_string(), driver.clone());
+	}
+	opts
+}
+
+/// Convert a compose `ip_range` CIDR into a Podman lease range (the usable
+/// host range of the CIDR). Returns `None` for an unparseable CIDR.
+fn lease_range_from_cidr(cidr: &str) -> Option<LeaseRange> {
+	use std::net::{Ipv4Addr, Ipv6Addr};
+
+	let (addr, prefix) = cidr.split_once('/')?;
+	let prefix: u8 = prefix.parse().ok()?;
+
+	if let Ok(v4) = addr.parse::<Ipv4Addr>() {
+		if prefix > 32 {
+			return None;
+		}
+		let mask = if prefix == 0 {
+			0
+		} else {
+			u32::MAX << (32 - prefix)
+		};
+		let base = u32::from(v4) & mask;
+		let last = base | !mask;
+		// Reserve network and broadcast addresses for non-point-to-point ranges.
+		let (start, end) = if prefix >= 31 {
+			(base, last)
+		} else {
+			(base + 1, last - 1)
+		};
+		return Some(LeaseRange {
+			start_ip: Some(Ipv4Addr::from(start).to_string()),
+			end_ip: Some(Ipv4Addr::from(end).to_string()),
+		});
+	}
+
+	if let Ok(v6) = addr.parse::<Ipv6Addr>() {
+		if prefix > 128 {
+			return None;
+		}
+		let mask = if prefix == 0 {
+			0
+		} else {
+			u128::MAX << (128 - prefix)
+		};
+		let base = u128::from(v6) & mask;
+		let last = base | !mask;
+		return Some(LeaseRange {
+			start_ip: Some(Ipv6Addr::from(base).to_string()),
+			end_ip: Some(Ipv6Addr::from(last).to_string()),
+		});
+	}
+
+	None
 }
 
 // ---------------------------------------------------------------------------
@@ -295,6 +367,57 @@ mod tests {
 	fn fallback_mac_applied_when_no_config() {
 		let opts = build_per_network_options(None, Some("02:42:ac:11:00:02"));
 		assert_eq!(opts.static_mac.as_deref(), Some("02:42:ac:11:00:02"));
+	}
+
+	#[test]
+	fn lease_range_ipv4_reserves_network_and_broadcast() {
+		let lr = lease_range_from_cidr("172.28.5.0/24").unwrap();
+		assert_eq!(lr.start_ip.as_deref(), Some("172.28.5.1"));
+		assert_eq!(lr.end_ip.as_deref(), Some("172.28.5.254"));
+	}
+
+	#[test]
+	fn lease_range_ipv4_slash31_uses_both_addresses() {
+		let lr = lease_range_from_cidr("10.0.0.0/31").unwrap();
+		assert_eq!(lr.start_ip.as_deref(), Some("10.0.0.0"));
+		assert_eq!(lr.end_ip.as_deref(), Some("10.0.0.1"));
+	}
+
+	#[test]
+	fn lease_range_ipv6_full_span() {
+		let lr = lease_range_from_cidr("2001:db8::/120").unwrap();
+		assert_eq!(lr.start_ip.as_deref(), Some("2001:db8::"));
+		assert_eq!(lr.end_ip.as_deref(), Some("2001:db8::ff"));
+	}
+
+	#[test]
+	fn lease_range_invalid_cidr_is_none() {
+		assert!(lease_range_from_cidr("not-a-cidr").is_none());
+		assert!(lease_range_from_cidr("10.0.0.0/40").is_none());
+	}
+
+	#[test]
+	fn ipam_options_include_driver_and_options() {
+		use crate::compose::types::IpamConfig;
+		let ipam = IpamConfig {
+			driver: Some("host-local".into()),
+			options: [("foo".to_string(), "bar".to_string())].into(),
+			..Default::default()
+		};
+		let opts = build_ipam_options(&ipam);
+		assert_eq!(opts.get("driver").map(String::as_str), Some("host-local"));
+		assert_eq!(opts.get("foo").map(String::as_str), Some("bar"));
+	}
+
+	#[test]
+	fn per_network_interface_name_forwarded() {
+		use crate::compose::types::ServiceNetworkConfig;
+		let cfg = ServiceNetworkConfig {
+			interface_name: Some("eth1".into()),
+			..Default::default()
+		};
+		let opts = build_per_network_options(Some(&cfg), None);
+		assert_eq!(opts.interface_name.as_deref(), Some("eth1"));
 	}
 
 	#[test]
