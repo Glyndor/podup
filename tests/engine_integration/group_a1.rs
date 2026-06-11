@@ -37,7 +37,7 @@ async fn up_no_recreate_skips_running() {
 	engine.up(&file).await.unwrap();
 	// Second up with no_recreate: already running → skip
 	engine
-		.up_with_options(&file, false, &[], &[], true)
+		.up_with_options(&file, false, &[], &[], true, false)
 		.await
 		.unwrap();
 	engine.down(&file).await.unwrap();
@@ -58,7 +58,7 @@ async fn up_target_services_only() {
 
 	// Only start web (and its dep db)
 	engine
-		.up_with_options(&file, false, &[], &["web".to_string()], false)
+		.up_with_options(&file, false, &[], &["web".to_string()], false, false)
 		.await
 		.unwrap();
 	engine.down(&file).await.unwrap();
@@ -329,3 +329,33 @@ async fn attach_logs_empty_attach_returns() {
 }
 
 // ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn up_skips_recreate_when_config_unchanged() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("rch");
+	let engine = Engine::new(client, proj.clone());
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	// Same config again -> config-hash matches -> skip recreate + ensure started.
+	engine.up(&file).await.unwrap();
+	// force_recreate -> recreate even though config is unchanged.
+	engine
+		.up_with_options(&file, false, &[], &[], false, true)
+		.await
+		.unwrap();
+	// Changed config -> hash differs -> recreate.
+	let file2 = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"120\"]\n",
+	)
+	.unwrap();
+	engine.up(&file2).await.unwrap();
+	engine.down(&file2).await.unwrap();
+}

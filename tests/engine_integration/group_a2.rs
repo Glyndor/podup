@@ -228,7 +228,7 @@ async fn profile_filtered_service_skipped() {
 	.unwrap();
 
 	engine
-		.up_with_options(&file, false, &[], &[], false)
+		.up_with_options(&file, false, &[], &[], false, false)
 		.await
 		.unwrap();
 	engine.down(&file).await.unwrap();
