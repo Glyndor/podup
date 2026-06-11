@@ -246,6 +246,7 @@ pub struct Namespace {
 }
 
 impl Namespace {
+	/// Build a namespace with the given mode and no associated value.
 	pub fn new(mode: impl Into<String>) -> Self {
 		Self {
 			nsmode: mode.into(),
@@ -253,6 +254,7 @@ impl Namespace {
 		}
 	}
 
+	/// Build a `container:<id>` namespace sharing another container's namespace.
 	pub fn container(id: impl Into<String>) -> Self {
 		Self {
 			nsmode: "container".into(),

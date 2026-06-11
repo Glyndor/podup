@@ -8,6 +8,7 @@ use crate::compose::types::{ComposeFile, Service};
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::container::{LinuxResources, Namespace, SpecGenerator};
 use crate::libpod::urlencoded;
+use crate::libpod::API_PREFIX;
 use crate::{env_file, ports, size};
 
 use super::container_config::{
@@ -221,7 +222,7 @@ impl Engine {
 
 		// Remove any existing container (idempotent restart).
 		let rm_path = format!(
-			"/v4.0.0/libpod/containers/{}?force=true",
+			"{API_PREFIX}/containers/{}?force=true",
 			urlencoded(container_name)
 		);
 		if let Err(e) = self.client.delete_ok(&rm_path).await {
@@ -229,12 +230,12 @@ impl Engine {
 		}
 
 		self.client
-			.post_json::<_, serde_json::Value>("/v4.0.0/libpod/containers/create", &spec)
+			.post_json::<_, serde_json::Value>(&format!("{API_PREFIX}/containers/create"), &spec)
 			.await
 			.map_err(ComposeError::Podman)?;
 
 		let start_path = format!(
-			"/v4.0.0/libpod/containers/{}/start",
+			"{API_PREFIX}/containers/{}/start",
 			urlencoded(container_name)
 		);
 		self.client

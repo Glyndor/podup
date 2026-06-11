@@ -62,6 +62,7 @@ pub(crate) fn default_socket_path() -> String {
 
 #[cfg(all(unix, not(target_os = "macos")))]
 fn candidate_socket_paths() -> Vec<String> {
+	// SAFETY: getuid takes no arguments, touches no memory and cannot fail.
 	let uid = unsafe { libc::getuid() };
 	runtime_candidates(uid, std::env::var("XDG_RUNTIME_DIR").ok().as_deref())
 }

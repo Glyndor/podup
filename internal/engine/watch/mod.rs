@@ -9,14 +9,14 @@
 //! - `sync+restart` — sync first, then restart
 //! - `sync+exec` — sync, then run the rule's `exec` command inside the container
 
+mod sync;
+
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use crate::libpod::types::exec::{ExecCreateConfig, ExecCreateResponse, ExecStartConfig};
-use crate::libpod::{urlencoded, LogOutput};
+use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 use bytes::Bytes;
-use flate2::write::GzEncoder;
-use flate2::Compression;
 use futures::StreamExt;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
@@ -24,6 +24,8 @@ use tracing::{debug, info, warn};
 
 use crate::compose::types::{ComposeFile, WatchAction, WatchRule};
 use crate::error::{ComposeError, Result};
+
+use sync::{build_sync_tar, is_ignored, is_included};
 
 use super::Engine;
 
@@ -208,7 +210,7 @@ impl Engine {
 		};
 
 		let path = format!(
-			"/v4.0.0/libpod/containers/{}/archive?path={}",
+			"{API_PREFIX}/containers/{}/archive?path={}",
 			urlencoded(container),
 			urlencoded(&dest_dir),
 		);
@@ -227,7 +229,7 @@ impl Engine {
 			None => return Ok(()),
 		};
 		info!("rebuilding {service_name}");
-		self.build_service(service_name, service).await?;
+		self.build_service(service_name, service, file).await?;
 		let container_name = self.container_name(service_name, service);
 		self.create_and_start(&container_name, service_name, service, file)
 			.await
@@ -236,14 +238,14 @@ impl Engine {
 	async fn watch_restart(&self, container_name: &str) -> Result<()> {
 		info!("restarting {container_name}");
 		let stop_path = format!(
-			"/v4.0.0/libpod/containers/{}/stop?t=5",
+			"{API_PREFIX}/containers/{}/stop?t=5",
 			urlencoded(container_name)
 		);
 		if let Err(e) = self.client.post_empty_ok(&stop_path).await {
 			tracing::debug!("stop before watch restart {container_name}: {e}");
 		}
 		let start_path = format!(
-			"/v4.0.0/libpod/containers/{}/start",
+			"{API_PREFIX}/containers/{}/start",
 			urlencoded(container_name)
 		);
 		self.client
@@ -261,7 +263,7 @@ impl Engine {
 			..Default::default()
 		};
 		let create_path = format!(
-			"/v4.0.0/libpod/containers/{}/exec",
+			"{API_PREFIX}/containers/{}/exec",
 			urlencoded(container_name)
 		);
 		let resp: ExecCreateResponse = self
@@ -274,7 +276,7 @@ impl Engine {
 			detach: false,
 			tty: false,
 		};
-		let start_path = format!("/v4.0.0/libpod/exec/{}/start", urlencoded(&resp.id));
+		let start_path = format!("{API_PREFIX}/exec/{}/start", urlencoded(&resp.id));
 		let start_resp = self
 			.client
 			.post_json_stream(&start_path, &start_cfg)
@@ -296,83 +298,6 @@ impl Engine {
 		Ok(())
 	}
 }
-
-// ---------------------------------------------------------------------------
-// Tar builder for sync
-// ---------------------------------------------------------------------------
-
-fn build_sync_tar(src: &Path) -> Result<Vec<u8>> {
-	let encoder = GzEncoder::new(Vec::new(), Compression::default());
-	let mut tar = tar::Builder::new(encoder);
-
-	if src.is_dir() {
-		for abs in super::walk_dir(src).map_err(ComposeError::Io)? {
-			let rel = abs
-				.strip_prefix(src)
-				.map_err(|_| ComposeError::Build("path strip".into()))?;
-			if abs.is_dir() {
-				tar.append_dir(rel, &abs)
-					.map_err(|e| ComposeError::Build(e.to_string()))?;
-			} else {
-				tar.append_path_with_name(&abs, rel)
-					.map_err(|e| ComposeError::Build(e.to_string()))?;
-			}
-		}
-	} else if let Some(name) = src.file_name() {
-		tar.append_path_with_name(src, name)
-			.map_err(|e| ComposeError::Build(e.to_string()))?;
-	}
-
-	let gz = tar
-		.into_inner()
-		.map_err(|e| ComposeError::Build(e.to_string()))?;
-	let bytes = gz
-		.finish()
-		.map_err(|e| ComposeError::Build(e.to_string()))?;
-	Ok(bytes)
-}
-
-// ---------------------------------------------------------------------------
-// Filter helpers
-// ---------------------------------------------------------------------------
-
-fn is_ignored(path: &str, patterns: &[String]) -> bool {
-	for pat in patterns {
-		if pat.ends_with('/') {
-			if path.starts_with(pat.as_str()) {
-				return true;
-			}
-		} else if path == pat.as_str()
-			|| (path.starts_with(pat.as_str()) && path.as_bytes().get(pat.len()) == Some(&b'/'))
-		{
-			return true;
-		}
-	}
-	false
-}
-
-fn is_included(path: &str, patterns: &[String]) -> bool {
-	for pat in patterns {
-		if pat.starts_with("*.") {
-			let ext = &pat[1..];
-			if path.ends_with(ext) {
-				return true;
-			}
-		} else if pat.ends_with('/') {
-			if path.starts_with(pat.as_str()) {
-				return true;
-			}
-		} else if path == pat.as_str()
-			|| (path.len() > pat.len() + 1
-				&& path.as_bytes()[path.len() - pat.len() - 1] == b'/'
-				&& path.ends_with(pat.as_str()))
-		{
-			return true;
-		}
-	}
-	false
-}
-
 // ---------------------------------------------------------------------------
 // Test helpers (feature-gated so they never appear in release builds)
 // ---------------------------------------------------------------------------
@@ -394,125 +319,5 @@ impl Engine {
 
 	pub async fn test_watch_exec(&self, container_name: &str, cmd: Vec<String>) -> Result<()> {
 		self.watch_exec(container_name, cmd).await
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Unit tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-	use super::{build_sync_tar, is_ignored, is_included};
-	use std::fs;
-	use tempfile::tempdir;
-
-	fn pats(v: &[&str]) -> Vec<String> {
-		v.iter().map(|s| s.to_string()).collect()
-	}
-
-	// is_ignored -----------------------------------------------------------
-
-	#[test]
-	fn ignored_exact_file() {
-		assert!(is_ignored("Makefile", &pats(&["Makefile"])));
-	}
-
-	#[test]
-	fn ignored_not_prefix_match() {
-		assert!(!is_ignored("Makefile.local", &pats(&["Makefile"])));
-	}
-
-	#[test]
-	fn ignored_dir_prefix() {
-		assert!(is_ignored("node_modules/foo.js", &pats(&["node_modules/"])));
-	}
-
-	#[test]
-	fn ignored_dir_prefix_no_partial() {
-		assert!(!is_ignored("nonode_modules/foo", &pats(&["node_modules/"])));
-	}
-
-	#[test]
-	fn ignored_path_with_slash() {
-		assert!(is_ignored("vendor/lib.rs", &pats(&["vendor"])));
-	}
-
-	#[test]
-	fn ignored_empty_patterns() {
-		assert!(!is_ignored("anything.rs", &[]));
-	}
-
-	#[test]
-	fn ignored_no_match() {
-		assert!(!is_ignored("src/main.rs", &pats(&["target/", "*.log"])));
-	}
-
-	// is_included ----------------------------------------------------------
-
-	#[test]
-	fn included_glob_extension() {
-		assert!(is_included("src/main.rs", &pats(&["*.rs"])));
-	}
-
-	#[test]
-	fn included_glob_no_match() {
-		assert!(!is_included("src/main.go", &pats(&["*.rs"])));
-	}
-
-	#[test]
-	fn included_dir_prefix() {
-		assert!(is_included("src/main.rs", &pats(&["src/"])));
-	}
-
-	#[test]
-	fn included_dir_prefix_no_match() {
-		assert!(!is_included("test/main.rs", &pats(&["src/"])));
-	}
-
-	#[test]
-	fn included_exact_match() {
-		assert!(is_included("Makefile", &pats(&["Makefile"])));
-	}
-
-	#[test]
-	fn included_path_segment_suffix() {
-		assert!(is_included("src/lib.rs", &pats(&["lib.rs"])));
-	}
-
-	#[test]
-	fn included_empty_patterns() {
-		assert!(!is_included("anything", &[]));
-	}
-
-	// build_sync_tar -------------------------------------------------------
-
-	#[test]
-	fn sync_tar_single_file() {
-		let dir = tempdir().unwrap();
-		let file = dir.path().join("hello.txt");
-		fs::write(&file, b"hello world").unwrap();
-		let bytes = build_sync_tar(&file).unwrap();
-		// gzip magic bytes
-		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
-	}
-
-	#[test]
-	fn sync_tar_directory() {
-		let dir = tempdir().unwrap();
-		fs::write(dir.path().join("a.txt"), b"file a").unwrap();
-		fs::create_dir(dir.path().join("sub")).unwrap();
-		fs::write(dir.path().join("sub/b.txt"), b"file b").unwrap();
-		let bytes = build_sync_tar(dir.path()).unwrap();
-		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
-	}
-
-	#[test]
-	fn sync_tar_path_with_no_file_name() {
-		// A path that has no file_name (e.g. root "/") — tar should be empty but valid.
-		let dir = tempdir().unwrap();
-		// Empty directory — no entries other than root
-		let bytes = build_sync_tar(dir.path()).unwrap();
-		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
 	}
 }

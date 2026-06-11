@@ -43,7 +43,12 @@ fn device_major_minor(path: &str) -> (i64, i64, String) {
 	let Ok(c_path) = CString::new(path) else {
 		return (0, 0, "c".to_string());
 	};
+	// SAFETY: `libc::stat` is a plain C struct of integers; an all-zero bit
+	// pattern is a valid initial value that `libc::stat()` fully overwrites.
 	let mut st: libc::stat = unsafe { std::mem::zeroed() };
+	// SAFETY: `c_path` is a valid NUL-terminated C string that outlives the
+	// call, and `&mut st` points to a live, correctly-sized `stat`. The return
+	// value is checked before any field of `st` is read.
 	if unsafe { libc::stat(c_path.as_ptr(), &mut st) } != 0 {
 		return (0, 0, "c".to_string());
 	}

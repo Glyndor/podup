@@ -7,6 +7,7 @@
 
 use crate::compose::types::Service;
 use crate::error::{ComposeError, Result};
+use crate::libpod::API_PREFIX;
 
 use super::Engine;
 
@@ -25,7 +26,7 @@ impl Engine {
 			let info = match self
 				.client
 				.get_json::<crate::libpod::types::container::ContainerInspect>(&format!(
-					"/v4.0.0/libpod/containers/{}/json",
+					"{API_PREFIX}/containers/{}/json",
 					crate::libpod::urlencoded(container_name),
 				))
 				.await
@@ -59,7 +60,7 @@ impl Engine {
 			let info = match self
 				.client
 				.get_json::<crate::libpod::types::container::ContainerInspect>(&format!(
-					"/v4.0.0/libpod/containers/{}/json",
+					"{API_PREFIX}/containers/{}/json",
 					crate::libpod::urlencoded(container_name),
 				))
 				.await

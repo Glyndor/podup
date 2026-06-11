@@ -16,6 +16,7 @@ use super::error::PodmanError;
 
 type BoxBody = Full<Bytes>;
 
+/// Result alias for libpod client calls, fixing the error to [`PodmanError`].
 pub type Result<T> = std::result::Result<T, PodmanError>;
 
 /// Podman libpod REST API client.
@@ -24,6 +25,7 @@ pub struct Client {
 }
 
 impl Client {
+	/// Create a client bound to the given Podman socket path (or named pipe).
 	pub fn new(socket_path: impl Into<String>) -> Self {
 		Self {
 			socket_path: socket_path.into(),
@@ -161,6 +163,7 @@ impl Client {
 
 	/// `GET /libpod/_ping` — returns Ok(()) when Podman is reachable.
 	pub async fn ping(&self) -> Result<()> {
+		// Deliberately omits the version prefix: `_ping` is version-independent.
 		let req = Self::build_request(Method::GET, "/libpod/_ping", Full::new(Bytes::new()), None)?;
 		let resp = self.send(req).await?;
 		let (status, body) = Self::read_body(resp).await?;

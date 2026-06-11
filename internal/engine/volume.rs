@@ -14,6 +14,7 @@ use crate::compose::types::{
 };
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::volume::VolumeCreateOptions;
+use crate::libpod::API_PREFIX;
 
 use super::{staging, Engine};
 
@@ -56,7 +57,10 @@ impl Engine {
 
 			match self
 				.client
-				.post_json::<_, serde_json::Value>("/v4.0.0/libpod/volumes/create", &options)
+				.post_json::<_, serde_json::Value>(
+					&format!("{API_PREFIX}/volumes/create"),
+					&options,
+				)
 				.await
 			{
 				Ok(_) => info!("created volume {volume_name}"),

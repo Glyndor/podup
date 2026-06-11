@@ -59,6 +59,7 @@ impl From<serde_json::Error> for PodmanError {
 
 /// Whether an API error has the given HTTP status code.
 impl PodmanError {
+	/// True if this is an API error carrying the given HTTP status code.
 	pub fn is_status(&self, code: u16) -> bool {
 		matches!(self, Self::Api { status, .. } if *status == code)
 	}

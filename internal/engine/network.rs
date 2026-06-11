@@ -8,6 +8,7 @@ use crate::compose::types::{ComposeFile, IpamConfig, Service, ServiceNetworkConf
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::container::{Namespace, PerNetworkOptions};
 use crate::libpod::types::network::{NetworkCreateRequest, Subnet};
+use crate::libpod::API_PREFIX;
 
 use super::Engine;
 
@@ -61,7 +62,10 @@ impl Engine {
 
 			match self
 				.client
-				.post_json::<_, serde_json::Value>("/v4.0.0/libpod/networks/create", &request)
+				.post_json::<_, serde_json::Value>(
+					&format!("{API_PREFIX}/networks/create"),
+					&request,
+				)
 				.await
 			{
 				Ok(_) => info!("created network {network_name}"),

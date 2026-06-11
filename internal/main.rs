@@ -13,12 +13,18 @@ use tracing_subscriber::EnvFilter;
 	about = "docker-compose translator for Podman"
 )]
 struct Cli {
-	/// Path to the compose file.
-	#[arg(short, long, default_value = "docker-compose.yml")]
+	/// Path to the compose file. May also be set via `COMPOSE_FILE`.
+	#[arg(
+		short,
+		long,
+		env = "COMPOSE_FILE",
+		default_value = "docker-compose.yml"
+	)]
 	file: PathBuf,
 
 	/// Project name (used as a prefix for container names).
-	#[arg(short, long, default_value = "podup")]
+	/// May also be set via `COMPOSE_PROJECT_NAME`.
+	#[arg(short, long, env = "COMPOSE_PROJECT_NAME", default_value = "podup")]
 	project: String,
 
 	/// Podman socket path (overrides auto-detection and PODMAN_SOCKET env).
@@ -189,6 +195,25 @@ enum Commands {
 	Watch,
 }
 
+/// Whether a command creates, destroys, or changes the state of containers and
+/// so must hold the exclusive project lock.
+fn is_mutating(command: &Commands) -> bool {
+	matches!(
+		command,
+		Commands::Up { .. }
+			| Commands::Down { .. }
+			| Commands::Start { .. }
+			| Commands::Stop { .. }
+			| Commands::Build { .. }
+			| Commands::Rm { .. }
+			| Commands::Kill { .. }
+			| Commands::Pause { .. }
+			| Commands::Unpause { .. }
+			| Commands::Run { .. }
+			| Commands::Restart { .. }
+	)
+}
+
 #[tokio::main]
 async fn main() {
 	match run().await {
@@ -216,13 +241,23 @@ async fn run() -> podup::Result<()> {
 		return Ok(());
 	}
 
-	let docker = podup::podman::connect(cli.socket.as_deref())?;
+	let client = podup::podman::connect(cli.socket.as_deref())?;
 	let base_dir = cli
 		.file
 		.parent()
 		.map(|p| p.to_path_buf())
 		.unwrap_or_default();
-	let engine = podup::Engine::with_base_dir(docker, cli.project, base_dir);
+	let engine = podup::Engine::with_base_dir(client, cli.project, base_dir);
+
+	// Serialize mutating lifecycle commands against concurrent `podup` runs on
+	// the same project. Read-only / follow commands (ps, logs, top, port,
+	// images, exec, pull, cp, config, watch) take no lock so they don't block
+	// or get blocked. The guard is held until `run` returns.
+	let _lock = if is_mutating(&cli.command) {
+		Some(engine.lock_project()?)
+	} else {
+		None
+	};
 
 	match cli.command {
 		Commands::Up {

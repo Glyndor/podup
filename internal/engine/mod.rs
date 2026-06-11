@@ -6,10 +6,12 @@ mod build;
 mod container;
 mod copy;
 pub use lifecycle::RunOptions;
+pub use lock::ProjectLock;
 mod container_config;
 mod container_misc;
 mod health;
 mod lifecycle;
+mod lock;
 mod network;
 mod profiles;
 mod query;
@@ -26,7 +28,7 @@ use futures::StreamExt;
 use crate::compose::types::{LifecycleHook, Service};
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::exec::{ExecCreateConfig, ExecStartConfig};
-use crate::libpod::{Client, LogOutput};
+use crate::libpod::{Client, LogOutput, API_PREFIX};
 
 // ---------------------------------------------------------------------------
 // Engine
@@ -83,7 +85,7 @@ impl Engine {
 		};
 
 		let path = format!(
-			"/v4.0.0/libpod/containers/{}/exec",
+			"{API_PREFIX}/containers/{}/exec",
 			crate::libpod::urlencoded(container_name)
 		);
 		let resp: crate::libpod::types::exec::ExecCreateResponse = self
@@ -97,7 +99,7 @@ impl Engine {
 			detach: false,
 			tty: false,
 		};
-		let start_path = format!("/v4.0.0/libpod/exec/{exec_id}/start");
+		let start_path = format!("{API_PREFIX}/exec/{exec_id}/start");
 		let resp = self
 			.client
 			.post_json_stream(&start_path, &start_cfg)

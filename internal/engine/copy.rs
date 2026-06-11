@@ -10,6 +10,7 @@ use http_body_util::BodyExt;
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::urlencoded;
+use crate::libpod::API_PREFIX;
 
 use super::Engine;
 
@@ -52,7 +53,7 @@ impl Engine {
 		let container_name = self.container_name(service_name, service);
 
 		let path = format!(
-			"/v4.0.0/libpod/containers/{}/archive?path={}",
+			"{API_PREFIX}/containers/{}/archive?path={}",
 			urlencoded(&container_name),
 			urlencoded(container_path),
 		);
@@ -80,10 +81,28 @@ impl Engine {
 			std::env::current_dir().map_err(ComposeError::Io)?
 		};
 
-		tokio::task::spawn_blocking(move || {
+		tokio::task::spawn_blocking(move || -> Result<()> {
 			let cursor = std::io::Cursor::new(tar_bytes);
 			let mut archive = tar::Archive::new(cursor);
-			archive.unpack(&dst_path).map_err(ComposeError::Io)
+			// Extract entry-by-entry rather than `archive.unpack`: a malicious or
+			// compromised container can craft tar entries whose paths contain `..`
+			// or are absolute, escaping `dst_path` and overwriting host files
+			// (zip-slip). `unpack_in` refuses such entries, returning `Ok(false)`;
+			// we turn that into a hard error so the copy fails loudly instead of
+			// silently skipping data.
+			for entry in archive.entries().map_err(ComposeError::Io)? {
+				let mut entry = entry.map_err(ComposeError::Io)?;
+				if !entry.unpack_in(&dst_path).map_err(ComposeError::Io)? {
+					let p = entry
+						.path()
+						.map(|p| p.display().to_string())
+						.unwrap_or_else(|_| "<unprintable>".into());
+					return Err(ComposeError::Build(format!(
+						"cp: refusing archive entry that escapes destination: {p}"
+					)));
+				}
+			}
+			Ok(())
 		})
 		.await
 		.map_err(|e| ComposeError::Build(e.to_string()))??;
@@ -110,7 +129,7 @@ impl Engine {
 			.map_err(|e| ComposeError::Build(e.to_string()))??;
 
 		let path = format!(
-			"/v4.0.0/libpod/containers/{}/archive?path={}",
+			"{API_PREFIX}/containers/{}/archive?path={}",
 			urlencoded(&container_name),
 			urlencoded(container_path),
 		);

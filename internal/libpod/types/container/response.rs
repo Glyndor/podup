@@ -4,6 +4,10 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
+/// Deserialize a collection field, treating JSON `null` as the default.
+///
+/// Podman sometimes returns `null` instead of `[]`/`{}` for empty collection
+/// fields, which would otherwise fail to deserialize into a `Vec`/`HashMap`.
 fn null_default<'de, D, T>(d: D) -> Result<T, D::Error>
 where
 	D: serde::Deserializer<'de>,
