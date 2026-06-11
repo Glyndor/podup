@@ -76,8 +76,8 @@ pub fn load_dotenv(dir: &Path) -> HashMap<String, String> {
 		}
 		let (key, value) = if let Some(eq) = trimmed.find('=') {
 			let k = trimmed[..eq].trim().to_string();
-			let v = trimmed[eq + 1..].to_string();
-			(k, v)
+			let v = strip_dotenv_quotes(trimmed[eq + 1..].trim());
+			(k, v.to_string())
 		} else {
 			(trimmed.to_string(), String::new())
 		};
@@ -127,7 +127,7 @@ pub fn build_vars_with_env_files(dir: &Path, extra: &[String]) -> HashMap<String
 			let (key, value) = if let Some(eq) = trimmed.find('=') {
 				(
 					trimmed[..eq].trim().to_string(),
-					trimmed[eq + 1..].to_string(),
+					strip_dotenv_quotes(trimmed[eq + 1..].trim()).to_string(),
 				)
 			} else {
 				(trimmed.to_string(), String::new())
@@ -143,6 +143,16 @@ pub fn build_vars_with_env_files(dir: &Path, extra: &[String]) -> HashMap<String
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
+
+fn strip_dotenv_quotes(s: &str) -> &str {
+	if s.len() >= 2
+		&& ((s.starts_with('"') && s.ends_with('"'))
+			|| (s.starts_with('\'') && s.ends_with('\'')))
+	{
+		return &s[1..s.len() - 1];
+	}
+	s
+}
 
 fn is_var_start(c: char) -> bool {
 	c.is_alphabetic() || c == '_'
@@ -483,6 +493,22 @@ mod tests {
 	}
 
 	// load_dotenv
+
+	#[test]
+	fn load_dotenv_strips_double_quoted_value() {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join(".env"), "FOO=\"bar\"\n").unwrap();
+		let map = load_dotenv(dir.path());
+		assert_eq!(map.get("FOO").map(|s| s.as_str()), Some("bar"));
+	}
+
+	#[test]
+	fn load_dotenv_strips_single_quoted_value() {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join(".env"), "FOO='bar'\n").unwrap();
+		let map = load_dotenv(dir.path());
+		assert_eq!(map.get("FOO").map(|s| s.as_str()), Some("bar"));
+	}
 
 	#[test]
 	fn load_dotenv_parses_key_value() {
