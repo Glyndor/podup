@@ -17,7 +17,7 @@ use std::time::Duration;
 use crate::libpod::types::exec::{ExecCreateConfig, ExecCreateResponse, ExecStartConfig};
 use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 use bytes::Bytes;
-use futures::StreamExt;
+use futures_util::StreamExt;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
