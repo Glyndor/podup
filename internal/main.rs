@@ -193,6 +193,21 @@ enum Commands {
 	Config,
 	/// Watch for file changes and sync/rebuild/restart as configured by develop.watch.
 	Watch,
+	/// Update podup to the latest signed release.
+	///
+	/// Downloads the release binary for this platform and replaces the running
+	/// executable, but only after verifying the release's Ed25519 signature
+	/// against the public key embedded in this build and matching its SHA-256
+	/// checksum. Verification fails closed: a missing key, bad signature, or
+	/// checksum mismatch aborts without touching the installed binary.
+	Update {
+		/// Report whether a newer release exists without installing it.
+		#[arg(long)]
+		check: bool,
+		/// Reinstall even if the latest release is not newer than this build.
+		#[arg(long)]
+		force: bool,
+	},
 }
 
 /// Whether a command creates, destroys, or changes the state of containers and
@@ -219,6 +234,10 @@ async fn main() {
 	match run().await {
 		Ok(()) => {}
 		Err(podup::ComposeError::RunExited(code)) => process::exit(code as i32),
+		Err(e @ podup::ComposeError::Update(_)) => {
+			eprintln!("error: {e}");
+			process::exit(podup::update::exit_code(&e));
+		}
 		Err(e) => {
 			eprintln!("error: {e}");
 			process::exit(1);
@@ -232,6 +251,19 @@ async fn run() -> podup::Result<()> {
 		.init();
 
 	let cli = Cli::parse();
+
+	// `update` operates on the binary itself, not a compose project, so it runs
+	// before any compose file is parsed or Podman is contacted. The network and
+	// filesystem work is blocking; keep it off the async path entirely.
+	if let Commands::Update { check, force } = cli.command {
+		let opts = podup::update::UpdateOptions {
+			check_only: check,
+			force,
+		};
+		return tokio::task::spawn_blocking(move || podup::update::run(opts))
+			.await
+			.map_err(|e| podup::ComposeError::Update(format!("update task failed: {e}")))?;
+	}
 
 	let file = podup::parse_file(&cli.file)?;
 
@@ -331,6 +363,7 @@ async fn run() -> podup::Result<()> {
 		Commands::Restart { service } => engine.restart(&file, service.as_deref()).await?,
 		Commands::Config => unreachable!("handled above"),
 		Commands::Watch => engine.watch(&file).await?,
+		Commands::Update { .. } => unreachable!("handled before compose parsing"),
 	}
 
 	Ok(())

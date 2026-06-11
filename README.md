@@ -44,6 +44,20 @@ from source:
 cargo build --release
 ```
 
+### Updating
+
+```bash
+podup update            # download and install the latest signed release
+podup update --check    # report whether a newer release exists, install nothing
+```
+
+`podup update` replaces the running binary in place, but only after verifying
+the release's Ed25519 signature against the public key embedded in your build
+and matching its SHA-256 checksum. It fails closed: a bad signature, missing
+key, or checksum mismatch aborts before the installed binary is touched. See
+[docs/self-update.md](docs/self-update.md) for the trust model. Installing into
+a system directory (e.g. `/usr/local/bin`) needs elevation — re-run with `sudo`.
+
 ## 🚀 Quick start
 
 ```bash
