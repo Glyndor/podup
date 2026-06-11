@@ -12,7 +12,8 @@ use crate::libpod::API_PREFIX;
 use crate::{env_file, ports, size};
 
 use super::container_config::{
-	build_healthcheck, build_log_config, build_resource_limits, build_restart_policy, build_ulimits,
+	build_healthcheck, build_log_config, build_resource_limits, build_restart_policy,
+	build_ulimits, cdi_devices,
 };
 use super::container_misc::{
 	build_blkio_config, build_label_file_labels, parse_device, warn_swarm_only_deploy,
@@ -227,6 +228,7 @@ impl Engine {
 			restart_policy,
 			restart_tries,
 			devices,
+			cdi_devices: cdi_devices(service),
 			device_cgroup_rule: service.device_cgroup_rules.clone(),
 			groups: service.group_add.clone(),
 			oom_score_adj: service.oom_score_adj,
