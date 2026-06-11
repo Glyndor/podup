@@ -1,0 +1,33 @@
+name: Asset name contract
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - "install.sh"
+      - ".github/workflows/release.yml"
+      - ".github/scripts/check-asset-names.py"
+      - ".github/workflows/asset-contract.yml"
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - "install.sh"
+      - ".github/workflows/release.yml"
+      - ".github/scripts/check-asset-names.py"
+      - ".github/workflows/asset-contract.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: install.sh ↔ release.yml asset names
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Verify asset names are in sync
+        run: python3 .github/scripts/check-asset-names.py
