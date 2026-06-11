@@ -25,7 +25,10 @@ impl Engine {
 			let info = match self
 				.client
 				.get_json::<crate::libpod::types::container::ContainerInspect>(
-					&format!("/libpod/containers/{container_name}/json"),
+					&format!(
+						"/libpod/containers/{}/json",
+						crate::libpod::urlencoded(container_name),
+					),
 				)
 				.await
 			{
@@ -58,7 +61,10 @@ impl Engine {
 			let info = match self
 				.client
 				.get_json::<crate::libpod::types::container::ContainerInspect>(
-					&format!("/libpod/containers/{container_name}/json"),
+					&format!(
+						"/libpod/containers/{}/json",
+						crate::libpod::urlencoded(container_name),
+					),
 				)
 				.await
 			{

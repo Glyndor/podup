@@ -62,7 +62,14 @@ impl Client {
 						Err(e) => return Err(PodmanError::Connect(e)),
 					}
 				}
-				result.ok_or_else(|| PodmanError::Connect(last_err.unwrap()))?
+				result.ok_or_else(|| {
+					PodmanError::Connect(last_err.unwrap_or_else(|| {
+						std::io::Error::new(
+							std::io::ErrorKind::TimedOut,
+							"named pipe busy after 20 retries",
+						)
+					}))
+				})?
 			};
 			let io = TokioIo::new(pipe);
 			let (sender, conn) = http1::handshake(io).await?;
@@ -82,7 +89,10 @@ impl Client {
 	) -> Result<Request<BoxBody>> {
 		let uri: hyper::Uri = format!("http://localhost{path}")
 			.parse()
-			.expect("valid path");
+			.map_err(|e: hyper::http::uri::InvalidUri| PodmanError::Api {
+				status: 0,
+				message: format!("invalid API path '{path}': {e}"),
+			})?;
 
 		let mut builder = Request::builder()
 			.method(method)
