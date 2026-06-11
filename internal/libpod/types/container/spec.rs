@@ -302,6 +302,10 @@ pub struct NamedVolume {
 
 	#[serde(rename = "Options", skip_serializing_if = "Vec::is_empty", default)]
 	pub options: Vec<String>,
+
+	/// Mount only this sub-directory of the volume (compose `volume.subpath`).
+	#[serde(rename = "SubPath", skip_serializing_if = "Option::is_none", default)]
+	pub sub_path: Option<String>,
 }
 
 /// Linux OCI resource limits for SpecGenerator.

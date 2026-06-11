@@ -99,6 +99,7 @@ pub(crate) fn build_mounts_all(
 						name: source.clone().unwrap_or_default(),
 						dest: target.clone(),
 						options: opts,
+						sub_path: volume.as_ref().and_then(|v| v.subpath.clone()),
 					});
 				}
 				VolumeType::Npipe => {
@@ -182,6 +183,7 @@ fn parse_volume_string(s: &str) -> Option<(Option<Mount>, Option<NamedVolume>)> 
 				name: src.to_string(),
 				dest: dst.to_string(),
 				options: opts,
+				sub_path: None,
 			}),
 		))
 	}
@@ -333,6 +335,26 @@ mod tests {
 		assert_eq!(named.len(), 1);
 		assert_eq!(named[0].name, "myvolume");
 		assert!(named[0].options.contains(&"nocopy".to_string()));
+	}
+
+	#[test]
+	fn long_form_volume_subpath_forwarded() {
+		let svc = svc_with_volumes(vec![VolumeMount::Long {
+			volume_type: VolumeType::Volume,
+			source: Some("myvolume".into()),
+			target: "/data".into(),
+			read_only: None,
+			bind: None,
+			volume: Some(VolumeOptions {
+				subpath: Some("nested/dir".into()),
+				..Default::default()
+			}),
+			tmpfs: None,
+			consistency: None,
+		}]);
+		let (_, named) = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
+		assert_eq!(named.len(), 1);
+		assert_eq!(named[0].sub_path.as_deref(), Some("nested/dir"));
 	}
 
 	#[test]
