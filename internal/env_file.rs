@@ -15,6 +15,9 @@ use crate::error::{ComposeError, Result};
 /// last file wins (later entries in the list override earlier ones).
 /// `env_file:` never overrides service-level `environment:`.
 ///
+/// Each file is parsed with dotenv rules (quote stripping, escapes, inline
+/// comments, multi-line quoted values).
+///
 /// Returns [`ComposeError::FileNotFound`] when an env file does not exist.
 pub fn load_env_files(paths: &[String], base_dir: &Path) -> Result<HashMap<String, String>> {
 	let entries: Vec<EnvFileEntry> = paths
@@ -58,24 +61,7 @@ pub fn load_env_file_entries(
 			Err(e) => return Err(ComposeError::Io(e)),
 		};
 
-		for line in content.lines() {
-			let trimmed = line.trim();
-			if trimmed.is_empty() || trimmed.starts_with('#') {
-				continue;
-			}
-
-			let (key, value) = if let Some(eq) = trimmed.find('=') {
-				let k = trimmed[..eq].trim().to_string();
-				let v = trimmed[eq + 1..].to_string();
-				(k, v)
-			} else {
-				(trimmed.to_string(), String::new())
-			};
-
-			if key.is_empty() {
-				continue;
-			}
-
+		for (key, value) in crate::dotenv::parse(&content) {
 			result.insert(key, value);
 		}
 	}

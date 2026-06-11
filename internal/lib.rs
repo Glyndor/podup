@@ -5,6 +5,7 @@
 //! REST API over a Unix socket or Windows named pipe.
 
 pub mod compose;
+pub(crate) mod dotenv;
 pub(crate) mod engine;
 pub mod env_file;
 pub(crate) mod error;

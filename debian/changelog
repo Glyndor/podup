@@ -9,6 +9,9 @@ podup (0.11.0) unstable; urgency=medium
     literal name rather than a project-prefixed one.
   * config-hash is now computed from a key-sorted canonical form, so
     services with map-typed fields no longer recreate spuriously on up.
+  * Parse env files and .env with dotenv rules: strip surrounding quotes,
+    honour escape sequences in double-quoted values, drop inline comments
+    on unquoted values, and support multi-line quoted values.
 
  -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 15:45:00 -0500
 

@@ -62,7 +62,8 @@ pub fn substitute(input: &str, vars: &HashMap<String, String>) -> Result<String>
 ///
 /// - Lines starting with `#` are comments and are skipped.
 /// - Empty / whitespace-only lines are skipped.
-/// - `KEY=VALUE` sets KEY to VALUE (quotes are preserved as-is, matching compose-spec).
+/// - `KEY=VALUE` sets KEY to VALUE; surrounding quotes are stripped and
+///   dotenv escapes/inline comments are handled.
 /// - `KEY` without `=` sets KEY to empty string.
 /// - Process environment variables take precedence: if a key already exists in
 ///   the current process env it will *not* be overridden by the `.env` file.
@@ -73,27 +74,11 @@ pub fn load_dotenv(dir: &Path) -> HashMap<String, String> {
 	};
 
 	let mut map = HashMap::new();
-	for line in content.lines() {
-		let trimmed = line.trim();
-		if trimmed.is_empty() || trimmed.starts_with('#') {
-			continue;
-		}
-		let (key, value) = if let Some(eq) = trimmed.find('=') {
-			let k = trimmed[..eq].trim().to_string();
-			let v = strip_dotenv_quotes(trimmed[eq + 1..].trim());
-			(k, v.to_string())
-		} else {
-			(trimmed.to_string(), String::new())
-		};
-
-		if key.is_empty() {
-			continue;
-		}
-
+	for (key, value) in crate::dotenv::parse(&content) {
+		// Process environment variables take precedence over the `.env` file.
 		if std::env::var(&key).is_ok() {
 			continue;
 		}
-
 		map.insert(key, value);
 	}
 
@@ -123,38 +108,11 @@ pub fn build_vars_with_env_files(dir: &Path, extra: &[String]) -> HashMap<String
 		let Ok(content) = std::fs::read_to_string(&abs) else {
 			continue;
 		};
-		for line in content.lines() {
-			let trimmed = line.trim();
-			if trimmed.is_empty() || trimmed.starts_with('#') {
-				continue;
-			}
-			let (key, value) = if let Some(eq) = trimmed.find('=') {
-				(
-					trimmed[..eq].trim().to_string(),
-					strip_dotenv_quotes(trimmed[eq + 1..].trim()).to_string(),
-				)
-			} else {
-				(trimmed.to_string(), String::new())
-			};
-			if !key.is_empty() {
-				vars.entry(key).or_insert(value);
-			}
+		for (key, value) in crate::dotenv::parse(&content) {
+			vars.entry(key).or_insert(value);
 		}
 	}
 	vars
-}
-
-// ---------------------------------------------------------------------------
-// Internal helpers
-// ---------------------------------------------------------------------------
-
-fn strip_dotenv_quotes(s: &str) -> &str {
-	if s.len() >= 2
-		&& ((s.starts_with('"') && s.ends_with('"')) || (s.starts_with('\'') && s.ends_with('\'')))
-	{
-		return &s[1..s.len() - 1];
-	}
-	s
 }
 
 // ---------------------------------------------------------------------------
