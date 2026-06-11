@@ -116,11 +116,11 @@ impl Engine {
 		let devices: Vec<_> = service.devices.iter().map(|s| parse_device(s)).collect();
 
 		// --- Namespace modes ---
-		let pidns = service.pid.as_deref().map(Namespace::new);
-		let ipcns = service.ipc.as_deref().map(Namespace::new);
-		let utsns = service.uts.as_deref().map(Namespace::new);
-		let cgroupns = service.cgroup.as_deref().map(Namespace::new);
-		let userns = service.userns_mode.as_deref().map(Namespace::new);
+		let pidns = service.pid.as_deref().map(Namespace::parse);
+		let ipcns = service.ipc.as_deref().map(Namespace::parse);
+		let utsns = service.uts.as_deref().map(Namespace::parse);
+		let cgroupns = service.cgroup.as_deref().map(Namespace::parse);
+		let userns = service.userns_mode.as_deref().map(Namespace::parse);
 
 		// --- Platform → os / arch ---
 		let (image_os, image_arch) = service

@@ -250,6 +250,19 @@ impl Namespace {
 	pub fn container(id: impl Into<String>) -> Self {
 		Self { nsmode: "container".into(), value: Some(id.into()) }
 	}
+
+	/// Parse a compose-style namespace string.
+	///
+	/// `"container:name"` → `{ nsmode: "container", value: "name" }`.
+	/// Anything else → `{ nsmode: mode, value: None }`.
+	pub fn parse(mode: impl Into<String>) -> Self {
+		let mode = mode.into();
+		if let Some(id) = mode.strip_prefix("container:") {
+			Self::container(id)
+		} else {
+			Self::new(mode)
+		}
+	}
 }
 
 /// OCI mount specification for SpecGenerator.
