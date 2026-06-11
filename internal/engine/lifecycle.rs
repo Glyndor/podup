@@ -566,17 +566,8 @@ impl Engine {
 			"/v4.0.0/libpod/containers/{}/wait?condition=stopped",
 			crate::libpod::urlencoded(&run_name),
 		);
-		let exit_code = match self
-			.client
-			.post_empty_json::<crate::libpod::types::container::WaitResponse>(&wait_path)
-			.await
-		{
-			Ok(resp) => {
-				if let Some(msg) = resp.error.and_then(|e| e.message).filter(|m| !m.is_empty()) {
-					tracing::warn!("container wait error: {msg}");
-				}
-				resp.status_code
-			}
+		let exit_code = match self.client.post_empty_json::<i64>(&wait_path).await {
+			Ok(code) => code,
 			Err(e) => {
 				tracing::warn!("wait failed: {e}");
 				0

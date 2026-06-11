@@ -103,6 +103,9 @@ pub struct SpecGenerator {
 	pub mounts: Vec<Mount>,
 
 	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	pub volumes: Vec<NamedVolume>,
+
+	#[serde(skip_serializing_if = "Vec::is_empty", default)]
 	pub volumes_from: Vec<String>,
 
 	// Namespace modes
@@ -283,6 +286,19 @@ pub struct Mount {
 	pub destination: String,
 
 	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	pub options: Vec<String>,
+}
+
+/// Named volume attachment for SpecGenerator (goes in `volumes`, not `mounts`).
+#[derive(Serialize, Default)]
+pub struct NamedVolume {
+	#[serde(rename = "Name")]
+	pub name: String,
+
+	#[serde(rename = "Dest")]
+	pub dest: String,
+
+	#[serde(rename = "Options", skip_serializing_if = "Vec::is_empty", default)]
 	pub options: Vec<String>,
 }
 

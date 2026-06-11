@@ -1,30 +1,37 @@
 //! Volume mount helpers.
 //!
 //! [`build_mounts_all`] converts all `volumes:` entries, secret bind-strings,
-//! and config bind-strings into OCI `Mount` entries for the SpecGenerator.
-//! Short-form bind strings, long-form binds, named volumes, and tmpfs are all
-//! handled here.
+//! and config bind-strings into OCI `Mount` entries and `NamedVolume` entries
+//! for the SpecGenerator. Named volumes go in `volumes`; everything else
+//! (bind, tmpfs, npipe, cluster) goes in `mounts`.
 
 use std::path::Path;
 
 use crate::compose::types::{BindOptions, Service, VolumeMount, VolumeOptions, VolumeType};
-use crate::libpod::types::container::Mount;
+use crate::libpod::types::container::{Mount, NamedVolume};
 
-/// Build all OCI mounts for a container from its volume declarations plus any
-/// pre-built secret and config bind strings (e.g. `"/host/path:/cont/path:ro"`).
+/// Build all OCI mounts and named volume attachments for a container.
+///
+/// Returns `(mounts, named_volumes)`. Named volumes must go into
+/// `SpecGenerator.volumes`; bind/tmpfs/npipe mounts go into
+/// `SpecGenerator.mounts`.
 pub(crate) fn build_mounts_all(
 	service: &Service,
 	base_dir: &Path,
 	secret_binds: &[String],
 	config_binds: &[String],
-) -> Vec<Mount> {
-	let mut out = Vec::new();
+) -> (Vec<Mount>, Vec<NamedVolume>) {
+	let mut mounts = Vec::new();
+	let mut named = Vec::new();
 
 	for v in &service.volumes {
 		match v {
 			VolumeMount::Short(s) => {
-				if let Some(m) = parse_bind_string(s) {
-					out.push(m);
+				if let Some((m, n)) = parse_volume_string(s) {
+					match n {
+						Some(nv) => named.push(nv),
+						None => mounts.push(m.unwrap()),
+					}
 				}
 			}
 			VolumeMount::Long {
@@ -50,7 +57,7 @@ pub(crate) fn build_mounts_all(
 					if read_only.unwrap_or(false) {
 						opts.push("ro".into());
 					}
-					out.push(Mount {
+					mounts.push(Mount {
 						mount_type: "tmpfs".into(),
 						source: None,
 						destination: target.clone(),
@@ -78,7 +85,7 @@ pub(crate) fn build_mounts_all(
 
 					let mut opts = access_opts(*read_only);
 					extend_bind_opts_str(&mut opts, bind.as_ref());
-					out.push(Mount {
+					mounts.push(Mount {
 						mount_type: "bind".into(),
 						source: Some(src.to_string()),
 						destination: target.clone(),
@@ -88,15 +95,14 @@ pub(crate) fn build_mounts_all(
 				VolumeType::Volume => {
 					let mut opts = access_opts(*read_only);
 					extend_volume_opts_str(&mut opts, volume.as_ref());
-					out.push(Mount {
-						mount_type: "volume".into(),
-						source: source.clone(),
-						destination: target.clone(),
+					named.push(NamedVolume {
+						name: source.clone().unwrap_or_default(),
+						dest: target.clone(),
 						options: opts,
 					});
 				}
 				VolumeType::Npipe => {
-					out.push(Mount {
+					mounts.push(Mount {
 						mount_type: "npipe".into(),
 						source: source.clone(),
 						destination: target.clone(),
@@ -104,7 +110,7 @@ pub(crate) fn build_mounts_all(
 					});
 				}
 				VolumeType::Cluster => {
-					out.push(Mount {
+					mounts.push(Mount {
 						mount_type: "cluster".into(),
 						source: source.clone(),
 						destination: target.clone(),
@@ -117,7 +123,7 @@ pub(crate) fn build_mounts_all(
 
 	// Top-level `tmpfs:` shorthand — equivalent to volumes with type=tmpfs.
 	for path in service.tmpfs.to_list() {
-		out.push(Mount {
+		mounts.push(Mount {
 			mount_type: "tmpfs".into(),
 			source: None,
 			destination: path,
@@ -128,18 +134,60 @@ pub(crate) fn build_mounts_all(
 	// Materialised secrets and configs are passed as pre-built bind strings.
 	for bind in secret_binds.iter().chain(config_binds.iter()) {
 		if let Some(m) = parse_bind_string(bind) {
-			out.push(m);
+			mounts.push(m);
 		}
 	}
 
-	out
+	(mounts, named)
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// Parse a short-form bind string `"src:dst"` or `"src:dst:opts"` into a Mount.
+/// Parse a short-form volume string `"src:dst"` or `"src:dst:opts"`.
+///
+/// Returns `Some((mount, named))` where exactly one of the two is `Some`.
+/// Named volumes go to `SpecGenerator.volumes`; bind mounts go to `mounts`.
+fn parse_volume_string(s: &str) -> Option<(Option<Mount>, Option<NamedVolume>)> {
+	let parts: Vec<&str> = s.splitn(3, ':').collect();
+	let (src, dst, opts_str) = match parts.len() {
+		1 => (parts[0], parts[0], ""),
+		2 => (parts[0], parts[1], ""),
+		_ => (parts[0], parts[1], parts[2]),
+	};
+	let opts: Vec<String> = opts_str
+		.split(',')
+		.map(|o| o.trim().to_string())
+		.filter(|o| !o.is_empty())
+		.collect();
+	if src.starts_with('/') || src.starts_with('.') || src.starts_with('~') {
+		Some((
+			Some(Mount {
+				mount_type: "bind".into(),
+				source: if src.is_empty() {
+					None
+				} else {
+					Some(src.to_string())
+				},
+				destination: dst.to_string(),
+				options: opts,
+			}),
+			None,
+		))
+	} else {
+		Some((
+			None,
+			Some(NamedVolume {
+				name: src.to_string(),
+				dest: dst.to_string(),
+				options: opts,
+			}),
+		))
+	}
+}
+
+/// Parse a pre-built bind string (secret/config) — always produces a bind Mount.
 fn parse_bind_string(s: &str) -> Option<Mount> {
 	let parts: Vec<&str> = s.splitn(3, ':').collect();
 	let (src, dst, opts_str) = match parts.len() {
@@ -152,13 +200,8 @@ fn parse_bind_string(s: &str) -> Option<Mount> {
 		.map(|o| o.trim().to_string())
 		.filter(|o| !o.is_empty())
 		.collect();
-	let mount_type = if src.starts_with('/') || src.starts_with('.') || src.starts_with('~') {
-		"bind"
-	} else {
-		"volume"
-	};
 	Some(Mount {
-		mount_type: mount_type.into(),
+		mount_type: "bind".into(),
 		source: if src.is_empty() {
 			None
 		} else {
@@ -214,8 +257,9 @@ mod tests {
 	#[test]
 	fn short_form_bind_passthrough() {
 		let svc = svc_with_volumes(vec![VolumeMount::Short("./data:/app/data".into())]);
-		let mounts = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
+		let (mounts, named) = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
 		assert_eq!(mounts.len(), 1);
+		assert!(named.is_empty());
 		assert_eq!(mounts[0].mount_type, "bind");
 		assert_eq!(mounts[0].destination, "/app/data");
 	}
@@ -223,9 +267,11 @@ mod tests {
 	#[test]
 	fn short_form_named_volume() {
 		let svc = svc_with_volumes(vec![VolumeMount::Short("myvolume:/data".into())]);
-		let mounts = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
-		assert_eq!(mounts.len(), 1);
-		assert_eq!(mounts[0].mount_type, "volume");
+		let (mounts, named) = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
+		assert!(mounts.is_empty());
+		assert_eq!(named.len(), 1);
+		assert_eq!(named[0].name, "myvolume");
+		assert_eq!(named[0].dest, "/data");
 	}
 
 	#[test]
@@ -240,7 +286,7 @@ mod tests {
 			tmpfs: None,
 			consistency: None,
 		}]);
-		let mounts = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
+		let (mounts, _) = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
 		assert_eq!(mounts.len(), 1);
 		assert_eq!(mounts[0].mount_type, "bind");
 		assert!(mounts[0].options.contains(&"ro".to_string()));
@@ -263,7 +309,7 @@ mod tests {
 			tmpfs: None,
 			consistency: None,
 		}]);
-		let mounts = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
+		let (mounts, _) = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
 		assert!(mounts[0].options.contains(&"rshared".to_string()));
 	}
 
@@ -282,8 +328,11 @@ mod tests {
 			tmpfs: None,
 			consistency: None,
 		}]);
-		let mounts = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
-		assert!(mounts[0].options.contains(&"nocopy".to_string()));
+		let (mounts, named) = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
+		assert!(mounts.is_empty());
+		assert_eq!(named.len(), 1);
+		assert_eq!(named[0].name, "myvolume");
+		assert!(named[0].options.contains(&"nocopy".to_string()));
 	}
 
 	#[test]
@@ -302,7 +351,7 @@ mod tests {
 			}),
 			consistency: None,
 		}]);
-		let mounts = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
+		let (mounts, _) = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
 		assert_eq!(mounts.len(), 1);
 		assert_eq!(mounts[0].mount_type, "tmpfs");
 		assert_eq!(mounts[0].destination, "/tmp/cache");
@@ -314,7 +363,7 @@ mod tests {
 	fn secret_binds_appended() {
 		let svc = svc_with_volumes(vec![]);
 		let secret = "/run/secrets/mydb:/run/secrets/mydb:ro".to_string();
-		let mounts = build_mounts_all(&svc, Path::new("/base"), &[secret], &[]);
+		let (mounts, _) = build_mounts_all(&svc, Path::new("/base"), &[secret], &[]);
 		assert_eq!(mounts.len(), 1);
 		assert_eq!(mounts[0].destination, "/run/secrets/mydb");
 	}
@@ -348,7 +397,7 @@ mod tests {
 			tmpfs: StringOrList::List(vec!["/tmp".into(), "/run".into()]),
 			..Default::default()
 		};
-		let mounts = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
+		let (mounts, _) = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
 		assert_eq!(mounts.len(), 2);
 		assert_eq!(mounts[0].mount_type, "tmpfs");
 		assert_eq!(mounts[0].destination, "/tmp");
@@ -362,7 +411,7 @@ mod tests {
 			tmpfs: StringOrList::Single("/tmp".into()),
 			..Default::default()
 		};
-		let mounts = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
+		let (mounts, _) = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
 		assert_eq!(mounts.len(), 1);
 		assert_eq!(mounts[0].mount_type, "tmpfs");
 		assert_eq!(mounts[0].destination, "/tmp");

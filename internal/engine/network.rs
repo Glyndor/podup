@@ -148,7 +148,10 @@ pub(super) fn resolve_network_mode(
 		})
 		.collect();
 
-	(None, networks)
+	// Podman libpod requires netns=bridge when explicit networks are used.
+	let netns = (!networks.is_empty()).then(|| Namespace::new("bridge"));
+
+	(netns, networks)
 }
 
 /// Resolve the actual network name on the host for a compose network key.

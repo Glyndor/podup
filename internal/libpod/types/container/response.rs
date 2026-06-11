@@ -83,23 +83,6 @@ pub struct HostBinding {
 	pub host_port: Option<String>,
 }
 
-/// Response from `POST /libpod/containers/{name}/wait`.
-#[derive(Deserialize, Default)]
-pub struct WaitResponse {
-	#[serde(rename = "StatusCode", default)]
-	pub status_code: i64,
-
-	#[serde(rename = "Error")]
-	pub error: Option<WaitError>,
-}
-
-/// Error sub-object in wait response.
-#[derive(Deserialize)]
-pub struct WaitError {
-	#[serde(rename = "Message")]
-	pub message: Option<String>,
-}
-
 /// Response from `GET /libpod/containers/{name}/top`.
 #[derive(Deserialize, Default)]
 pub struct TopResponse {
@@ -173,22 +156,6 @@ mod tests {
 		let ci: ContainerInspect = serde_json::from_str(json).unwrap();
 		assert!(ci.state.is_none());
 		assert!(ci.network_settings.is_none());
-	}
-
-	#[test]
-	fn wait_response_deserialize() {
-		let json = r#"{"StatusCode": 0}"#;
-		let wr: WaitResponse = serde_json::from_str(json).unwrap();
-		assert_eq!(wr.status_code, 0);
-		assert!(wr.error.is_none());
-	}
-
-	#[test]
-	fn wait_response_with_error() {
-		let json = r#"{"StatusCode": 1, "Error": {"Message": "oom killed"}}"#;
-		let wr: WaitResponse = serde_json::from_str(json).unwrap();
-		assert_eq!(wr.status_code, 1);
-		assert_eq!(wr.error.unwrap().message.as_deref(), Some("oom killed"));
 	}
 
 	#[test]

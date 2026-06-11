@@ -59,7 +59,8 @@ impl Engine {
 		// --- Secrets and configs become bind mounts ---
 		let secret_binds = self.build_secret_binds(service, file)?;
 		let config_binds = self.build_config_binds(service, file)?;
-		let mounts = build_mounts_all(service, &self.base_dir, &secret_binds, &config_binds);
+		let (mounts, named_volumes) =
+			build_mounts_all(service, &self.base_dir, &secret_binds, &config_binds);
 
 		// --- Port mappings ---
 		let parsed_ports = ports::parse_ports(&service.ports)?;
@@ -190,6 +191,7 @@ impl Engine {
 			dns_search: service.dns_search.to_list(),
 			dns_option: service.dns_opt.to_list(),
 			mounts,
+			volumes: named_volumes,
 			volumes_from: service.volumes_from.clone(),
 			userns,
 			pidns,
