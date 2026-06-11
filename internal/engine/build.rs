@@ -7,8 +7,6 @@
 
 use std::path::Path;
 
-use bollard::body_full;
-use bollard::query_parameters::{BuildImageOptions, CreateImageOptions, TagImageOptions};
 use bytes::Bytes;
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -17,6 +15,8 @@ use tracing::{debug, info, warn};
 
 use crate::compose::types::{BuildConfig, Service};
 use crate::error::{ComposeError, Result};
+use crate::libpod::types::image::{BuildOutput, ImagePullProgress};
+use crate::libpod::urlencoded;
 use crate::size;
 
 use super::Engine;
@@ -30,21 +30,23 @@ impl Engine {
 
 		info!("pulling {image}");
 
-		let mut stream = self.docker.create_image(
-			Some(CreateImageOptions {
-				from_image: Some(image.clone()),
-				platform: service.platform.clone().unwrap_or_default(),
-				..Default::default()
-			}),
-			None,
-			None,
-		);
+		let mut query = format!("reference={}&policy=missing", urlencoded(&image));
+		if let Some(platform) = &service.platform {
+			query.push_str(&format!("&platform={}", urlencoded(platform)));
+		}
+
+		let path = format!("/libpod/images/pull?{query}");
+		let resp = self.client.post_empty_stream(&path).await.map_err(ComposeError::Podman)?;
+		let mut stream = crate::libpod::parse_json_lines::<ImagePullProgress>(resp.into_body());
 
 		while let Some(result) = stream.next().await {
 			match result {
-				Ok(info) => {
-					if let Some(status) = info.status {
-						debug!("{status}");
+				Ok(progress) => {
+					if !progress.stream.is_empty() {
+						debug!("{}", progress.stream.trim_end());
+					}
+					if !progress.error.is_empty() {
+						warn!("pull error: {}", progress.error);
 					}
 				}
 				Err(e) => warn!("pull warning: {e}"),
@@ -97,7 +99,6 @@ impl Engine {
 
 		info!("building {tag} from {}", context_path.display());
 
-		// directory walk + file I/O are blocking; run off the tokio thread pool.
 		let (tar_bytes, dockerfile_name) = if let Some(inline) = build.dockerfile_inline() {
 			let ctx = context_path.clone();
 			let inline_s = inline.to_string();
@@ -129,10 +130,7 @@ impl Engine {
 		let mut build_args: std::collections::HashMap<String, String> =
 			std::collections::HashMap::new();
 		for (k, v) in arg_map {
-			let value = match v {
-				Some(val) => val,
-				None => std::env::var(&k).unwrap_or_default(),
-			};
+			let value = v.unwrap_or_else(|| std::env::var(&k).unwrap_or_default());
 			build_args.insert(k, value);
 		}
 
@@ -142,83 +140,90 @@ impl Engine {
 			labels.extend(l.to_map());
 		}
 
-		let network_owned = if let BuildConfig::Config {
-			network: Some(n), ..
-		} = build
-		{
-			n.clone()
+		let network = if let BuildConfig::Config { network: Some(n), .. } = build {
+			Some(n.clone())
 		} else {
-			String::new()
+			None
 		};
-		let platform_owned = if let BuildConfig::Config { platforms, .. } = build {
-			platforms.first().cloned().unwrap_or_default()
+		let platform = if let BuildConfig::Config { platforms, .. } = build {
+			platforms.first().cloned()
 		} else {
-			String::new()
+			None
 		};
 		let shmsize = build
 			.shm_size()
 			.and_then(size::parse_memory)
-			.map(|s| s as u64)
-			.unwrap_or(0);
-		let extrahosts = build.extra_hosts().join(",");
-
-		let options = BuildImageOptions {
-			dockerfile: dockerfile_name,
-			t: Some(tag.clone()),
-			rm: true,
-			nocache: build.no_cache(),
-			pull: if build.pull() {
-				Some("1".to_string())
-			} else {
-				None
-			},
-			buildargs: if build_args.is_empty() {
-				None
-			} else {
-				Some(build_args)
-			},
-			labels: if labels.is_empty() {
-				None
-			} else {
-				Some(labels)
-			},
-			networkmode: if network_owned.is_empty() {
-				None
-			} else {
-				Some(network_owned)
-			},
-			platform: platform_owned,
-			shmsize: if shmsize > 0 {
-				Some(shmsize as i32)
-			} else {
-				None
-			},
-			extrahosts: if extrahosts.is_empty() {
-				None
-			} else {
-				Some(extrahosts)
-			},
-			cachefrom: if build.cache_from().is_empty() {
-				None
-			} else {
-				Some(build.cache_from().to_vec())
-			},
-			..Default::default()
+			.map(|s| s as i32);
+		let extrahosts_str = build.extra_hosts().join(",");
+		let extrahosts = if extrahosts_str.is_empty() { None } else { Some(extrahosts_str) };
+		let cachefrom = if build.cache_from().is_empty() {
+			None
+		} else {
+			Some(
+				serde_json::to_string(build.cache_from())
+					.unwrap_or_default(),
+			)
+		};
+		let buildargs_json = if build_args.is_empty() {
+			None
+		} else {
+			Some(serde_json::to_string(&build_args).unwrap_or_default())
+		};
+		let labels_json = if labels.is_empty() {
+			None
+		} else {
+			Some(serde_json::to_string(&labels).unwrap_or_default())
 		};
 
-		let body = Bytes::from(tar_bytes);
-		let mut stream = self
-			.docker
-			.build_image(options, None, Some(body_full(body)));
+		let mut qs = format!("t={}&rm=true&nocache={}", urlencoded(&tag), build.no_cache());
+		qs.push_str(&format!("&dockerfile={}", urlencoded(&dockerfile_name)));
+		if build.pull() {
+			qs.push_str("&pull=true");
+		}
+		if let Some(p) = &platform {
+			qs.push_str(&format!("&platform={}", urlencoded(p)));
+		}
+		if let Some(n) = &network {
+			qs.push_str(&format!("&networkmode={}", urlencoded(n)));
+		}
+		if let Some(s) = shmsize {
+			qs.push_str(&format!("&shmsize={s}"));
+		}
+		if let Some(h) = &extrahosts {
+			qs.push_str(&format!("&extrahosts={}", urlencoded(h)));
+		}
+		if let Some(c) = &cachefrom {
+			qs.push_str(&format!("&cachefrom={}", urlencoded(c)));
+		}
+		if let Some(a) = &buildargs_json {
+			qs.push_str(&format!("&buildargs={}", urlencoded(a)));
+		}
+		if let Some(l) = &labels_json {
+			qs.push_str(&format!("&labels={}", urlencoded(l)));
+		}
+
+		let path = format!("/libpod/build?{qs}");
+		let body_bytes = Bytes::from(tar_bytes);
+		let resp = self
+			.client
+			.post_bytes_stream(&path, body_bytes, "application/x-tar")
+			.await
+			.map_err(ComposeError::Podman)?;
+		let mut stream = crate::libpod::parse_json_lines::<BuildOutput>(resp.into_body());
 
 		while let Some(result) = stream.next().await {
 			match result {
-				Ok(info) => {
-					if let Some(stream_msg) = info.stream {
-						print!("{stream_msg}");
+				Ok(output) => {
+					if !output.stream.is_empty() {
+						print!("{}", output.stream);
 					}
-					if let Some(err) = info.error_detail.and_then(|e| e.message) {
+					if let Some(err) = output.error_detail.and_then(|e| e.message) {
 						return Err(ComposeError::Build(err));
+					}
+					if let Some(err) = output.error {
+						if !err.is_empty() {
+							return Err(ComposeError::Build(err));
+						}
 					}
 				}
 				Err(e) => return Err(ComposeError::Podman(e)),
@@ -230,17 +235,13 @@ impl Engine {
 				.rsplit_once(':')
 				.map(|(r, t)| (r.to_string(), t.to_string()))
 				.unwrap_or_else(|| (extra_tag.clone(), "latest".to_string()));
-			if let Err(e) = self
-				.docker
-				.tag_image(
-					&tag,
-					Some(TagImageOptions {
-						repo: Some(repo),
-						tag: Some(tag_str),
-					}),
-				)
-				.await
-			{
+			let encoded_tag = urlencoded(&tag);
+			let tag_path = format!(
+				"/libpod/images/{encoded_tag}/tag?repo={}&tag={}",
+				urlencoded(&repo),
+				urlencoded(&tag_str),
+			);
+			if let Err(e) = self.client.post_empty_ok(&tag_path).await {
 				warn!("failed to apply extra tag {extra_tag}: {e}");
 			}
 		}

@@ -1,13 +1,11 @@
 //! Port mapping parser.
 //!
 //! Handles all docker-compose port format variants and converts them to
-//! bollard's `PortBinding` structures.
-
-use bollard::models::PortBinding;
-use std::collections::HashMap;
+//! libpod `PortMapping` structures.
 
 use crate::compose::types::{PortMapping, StringOrU16};
 use crate::error::{ComposeError, Result};
+use crate::libpod::types::container::PortMapping as LibpodPortMapping;
 
 /// A parsed, normalized port binding.
 #[derive(Debug, Clone)]
@@ -31,46 +29,22 @@ pub fn parse_ports(ports: &[PortMapping]) -> Result<Vec<ParsedPort>> {
 	Ok(result)
 }
 
-/// Convert parsed ports into bollard's `PortBindings` and `ExposedPorts` maps.
-///
-/// Returns `(port_bindings, exposed_ports)`.  Port 0 is encoded as an empty
-/// host_port string per the Docker API convention for "auto-assign".
-#[allow(clippy::type_complexity)]
-pub fn to_bollard(
-	ports: &[ParsedPort],
-) -> (
-	HashMap<String, Option<Vec<PortBinding>>>,
-	HashMap<String, HashMap<(), ()>>,
-) {
-	let mut port_bindings: HashMap<String, Option<Vec<PortBinding>>> = HashMap::new();
-	let mut exposed_ports: HashMap<String, HashMap<(), ()>> = HashMap::new();
-
-	for p in ports {
-		let key = format!("{}/{}", p.container_port, p.protocol);
-		let host_ip = if p.host_ip.is_empty() {
-			"0.0.0.0".to_string()
-		} else {
-			p.host_ip.clone()
-		};
-		let host_port = match p.host_port {
-			Some(0) => Some(String::new()),
-			Some(n) => Some(n.to_string()),
-			None => None,
-		};
-		let binding = PortBinding {
-			host_ip: Some(host_ip),
-			host_port,
-		};
-		let bindings = port_bindings
-			.entry(key.clone())
-			.or_insert_with(|| Some(Vec::new()));
-		if let Some(v) = bindings {
-			v.push(binding);
-		}
-		exposed_ports.entry(key).or_default();
-	}
-
-	(port_bindings, exposed_ports)
+/// Convert parsed ports into libpod `PortMapping` entries for `SpecGenerator`.
+pub fn to_libpod(ports: &[ParsedPort]) -> Vec<LibpodPortMapping> {
+	ports
+		.iter()
+		.map(|p| LibpodPortMapping {
+			container_port: p.container_port,
+			host_port: p.host_port,
+			host_ip: if p.host_ip.is_empty() {
+				String::new()
+			} else {
+				p.host_ip.clone()
+			},
+			protocol: p.protocol.clone(),
+			range: None,
+		})
+		.collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -432,28 +406,34 @@ mod tests {
 		assert_eq!(ports[0].protocol, "tcp");
 	}
 
-	// to_bollard
+	// to_libpod
 
 	#[test]
-	fn to_bollard_produces_key_and_binding() {
+	fn to_libpod_produces_port_mapping() {
 		let ports = parse_one_short("8080:80");
-		let (bindings, exposed) = to_bollard(&ports);
-		assert!(bindings.contains_key("80/tcp"));
-		assert!(exposed.contains_key("80/tcp"));
-		let b = bindings["80/tcp"].as_ref().unwrap();
-		assert_eq!(b[0].host_port.as_deref(), Some("8080"));
+		let mappings = to_libpod(&ports);
+		assert_eq!(mappings.len(), 1);
+		assert_eq!(mappings[0].container_port, 80);
+		assert_eq!(mappings[0].host_port, Some(8080));
+		assert_eq!(mappings[0].protocol, "tcp");
 	}
 
 	#[test]
-	fn to_bollard_port_zero_encodes_empty_string() {
+	fn to_libpod_port_zero_passes_through() {
 		let ports = vec![ParsedPort {
 			container_port: 80,
 			protocol: "tcp".to_string(),
 			host_ip: String::new(),
 			host_port: Some(0),
 		}];
-		let (bindings, _) = to_bollard(&ports);
-		let b = bindings["80/tcp"].as_ref().unwrap();
-		assert_eq!(b[0].host_port.as_deref(), Some(""));
+		let mappings = to_libpod(&ports);
+		assert_eq!(mappings[0].host_port, Some(0));
+	}
+
+	#[test]
+	fn to_libpod_no_host_port_is_none() {
+		let ports = parse_one_short("80");
+		let mappings = to_libpod(&ports);
+		assert_eq!(mappings[0].host_port, None);
 	}
 }

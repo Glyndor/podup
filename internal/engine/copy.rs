@@ -2,15 +2,14 @@
 
 use std::path::Path;
 
-use bollard::body_full;
-use bollard::query_parameters::{DownloadFromContainerOptions, UploadToContainerOptions};
 use bytes::Bytes;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use futures::StreamExt;
+use http_body_util::BodyExt;
 
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
+use crate::libpod::urlencoded;
 
 use super::Engine;
 
@@ -52,17 +51,19 @@ impl Engine {
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
 		let container_name = self.container_name(service_name, service);
 
-		let mut stream = self.docker.download_from_container(
-			&container_name,
-			Some(DownloadFromContainerOptions {
-				path: container_path.to_string(),
-			}),
+		let path = format!(
+			"/libpod/containers/{}/archive?path={}",
+			urlencoded(&container_name),
+			urlencoded(container_path),
 		);
-
-		let mut tar_bytes: Vec<u8> = Vec::new();
-		while let Some(chunk) = stream.next().await {
-			tar_bytes.extend_from_slice(&chunk?);
-		}
+		let resp = self.client.get_stream(&path).await.map_err(ComposeError::Podman)?;
+		let tar_bytes = resp
+			.into_body()
+			.collect()
+			.await
+			.map_err(|e| ComposeError::Podman(crate::libpod::PodmanError::Hyper(e)))?
+			.to_bytes()
+			.to_vec();
 
 		let dst_path = if dst.is_dir() {
 			dst.to_path_buf()
@@ -75,7 +76,6 @@ impl Engine {
 			std::env::current_dir().map_err(ComposeError::Io)?
 		};
 
-		// tar extraction is blocking I/O.
 		tokio::task::spawn_blocking(move || {
 			let cursor = std::io::Cursor::new(tar_bytes);
 			let mut archive = tar::Archive::new(cursor);
@@ -100,22 +100,20 @@ impl Engine {
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
 		let container_name = self.container_name(service_name, service);
 
-		// tar creation is blocking I/O.
 		let src_buf = src.to_path_buf();
 		let tar_bytes = tokio::task::spawn_blocking(move || pack_path(&src_buf))
 			.await
 			.map_err(|e| ComposeError::Build(e.to_string()))??;
 
-		self.docker
-			.upload_to_container(
-				&container_name,
-				Some(UploadToContainerOptions {
-					path: container_path.to_string(),
-					..Default::default()
-				}),
-				body_full(Bytes::from(tar_bytes)),
-			)
-			.await?;
+		let path = format!(
+			"/libpod/containers/{}/archive?path={}",
+			urlencoded(&container_name),
+			urlencoded(container_path),
+		);
+		self.client
+			.put_bytes_ok(&path, Bytes::from(tar_bytes), "application/x-tar")
+			.await
+			.map_err(ComposeError::Podman)?;
 
 		Ok(())
 	}

@@ -1,12 +1,7 @@
 //! Service lifecycle commands: up, down, start, stop, restart, kill, rm, pause, unpause, run.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
-use bollard::container::LogOutput;
-use bollard::query_parameters::{
-	KillContainerOptions, ListContainersOptions, LogsOptions, RemoveContainerOptions,
-	StartContainerOptions, StopContainerOptions, WaitContainerOptions,
-};
 use futures::StreamExt;
 use tracing::info;
 
@@ -72,20 +67,19 @@ impl Engine {
 
 			// prefetch running containers once instead of one API call per replica.
 			let running: HashSet<String> = if no_recreate {
-				let mut filters: HashMap<String, Vec<String>> = HashMap::new();
-				filters.insert(
-					"label".to_string(),
-					vec![format!("podup.project={}", self.project)],
+				let filters = serde_json::json!({
+					"label": [format!("podup.project={}", self.project)],
+				});
+				let path = format!(
+					"/libpod/containers/json?filters={}",
+					crate::libpod::urlencoded(&filters.to_string()),
 				);
-				self.docker
-					.list_containers(Some(ListContainersOptions {
-						all: false,
-						filters: Some(filters),
-						..Default::default()
-					}))
-					.await?
+				self.client
+					.get_json::<Vec<crate::libpod::types::container::ContainerListEntry>>(&path)
+					.await
+					.map_err(crate::error::ComposeError::Podman)?
 					.into_iter()
-					.flat_map(|c| c.names.unwrap_or_default())
+					.flat_map(|c| c.names)
 					.map(|n| n.trim_start_matches('/').to_string())
 					.collect()
 			} else {
@@ -203,28 +197,18 @@ impl Engine {
 					let _ = self.run_lifecycle_hook(&container_name, hook).await;
 				}
 
-				let _ = self
-					.docker
-					.stop_container(
-						&container_name,
-						Some(StopContainerOptions {
-							t: Some(grace_period_secs(service)),
-							..Default::default()
-						}),
-					)
-					.await;
+				let grace = grace_period_secs(service);
+				let stop_path = format!(
+					"/libpod/containers/{}/stop?t={grace}",
+					crate::libpod::urlencoded(&container_name),
+				);
+				let _ = self.client.post_empty_ok(&stop_path).await;
 
-				let _ = self
-					.docker
-					.remove_container(
-						&container_name,
-						Some(RemoveContainerOptions {
-							force: true,
-							v: false,
-							..Default::default()
-						}),
-					)
-					.await;
+				let rm_path = format!(
+					"/libpod/containers/{}?force=true",
+					crate::libpod::urlencoded(&container_name),
+				);
+				let _ = self.client.delete_ok(&rm_path).await;
 
 				info!("removed {container_name}");
 			}
@@ -236,11 +220,13 @@ impl Engine {
 				continue;
 			}
 			let network_name = resolve_network_name(key, file, &self.project);
-			match self.docker.remove_network(&network_name).await {
+			let net_path = format!(
+				"/libpod/networks/{}",
+				crate::libpod::urlencoded(&network_name),
+			);
+			match self.client.delete_ok(&net_path).await {
 				Ok(_) => info!("removed network {network_name}"),
-				Err(bollard::errors::Error::DockerResponseServerError {
-					status_code: 404, ..
-				}) => {}
+				Err(e) if e.is_status(404) => {}
 				Err(e) => tracing::warn!("could not remove network {network_name}: {e}"),
 			}
 		}
@@ -256,19 +242,13 @@ impl Engine {
 					.and_then(|c| c.name.as_deref())
 					.map(|s| s.to_string())
 					.unwrap_or_else(|| format!("{}_{}", self.project, key));
-				match self
-					.docker
-					.remove_volume(
-						&volume_name,
-						None::<bollard::query_parameters::RemoveVolumeOptions>,
-					)
-					.await
-				{
+				let vol_path = format!(
+					"/libpod/volumes/{}",
+					crate::libpod::urlencoded(&volume_name),
+				);
+				match self.client.delete_ok(&vol_path).await {
 					Ok(_) => info!("removed volume {volume_name}"),
-					Err(bollard::errors::Error::DockerResponseServerError {
-						status_code: 404,
-						..
-					}) => {}
+					Err(e) if e.is_status(404) => {}
 					Err(e) => tracing::warn!("could not remove volume {volume_name}: {e}"),
 				}
 			}
@@ -293,20 +273,18 @@ impl Engine {
 			let service = &file.services[name];
 
 			for container_name in self.replica_names(name, service) {
-				let _ = self
-					.docker
-					.stop_container(
-						&container_name,
-						Some(StopContainerOptions {
-							t: Some(grace_period_secs(service)),
-							..Default::default()
-						}),
-					)
-					.await;
+				let grace = grace_period_secs(service);
+				let stop_path = format!(
+					"/libpod/containers/{}/stop?t={grace}",
+					crate::libpod::urlencoded(&container_name),
+				);
+				let _ = self.client.post_empty_ok(&stop_path).await;
 
-				self.docker
-					.start_container(&container_name, None::<StartContainerOptions>)
-					.await?;
+				let start_path = format!(
+					"/libpod/containers/{}/start",
+					crate::libpod::urlencoded(&container_name),
+				);
+				self.client.post_empty_ok(&start_path).await.map_err(ComposeError::Podman)?;
 
 				info!("restarted {container_name}");
 			}
@@ -314,21 +292,17 @@ impl Engine {
 			for (dep_name, dep_service) in &file.services {
 				if dep_service.depends_on.restart_for(name) {
 					for dep_container in self.replica_names(dep_name, dep_service) {
-						let _ = self
-							.docker
-							.stop_container(
-								&dep_container,
-								Some(StopContainerOptions {
-									t: Some(grace_period_secs(dep_service)),
-									..Default::default()
-								}),
-							)
-							.await;
-						if let Err(e) = self
-							.docker
-							.start_container(&dep_container, None::<StartContainerOptions>)
-							.await
-						{
+						let grace = grace_period_secs(dep_service);
+						let stop_path = format!(
+							"/libpod/containers/{}/stop?t={grace}",
+							crate::libpod::urlencoded(&dep_container),
+						);
+						let _ = self.client.post_empty_ok(&stop_path).await;
+						let start_path = format!(
+							"/libpod/containers/{}/start",
+							crate::libpod::urlencoded(&dep_container),
+						);
+						if let Err(e) = self.client.post_empty_ok(&start_path).await {
 							tracing::warn!("cascade restart of {dep_name} failed: {e}");
 						} else {
 							info!("cascade-restarted {dep_container} (depends_on.restart)");
@@ -353,16 +327,12 @@ impl Engine {
 		for name in &order {
 			let service = &file.services[name];
 			for container_name in self.replica_names(name, service) {
-				let _ = self
-					.docker
-					.stop_container(
-						&container_name,
-						Some(StopContainerOptions {
-							t: Some(grace_period_secs(service)),
-							..Default::default()
-						}),
-					)
-					.await;
+				let grace = grace_period_secs(service);
+				let path = format!(
+					"/libpod/containers/{}/stop?t={grace}",
+					crate::libpod::urlencoded(&container_name),
+				);
+				let _ = self.client.post_empty_ok(&path).await;
 				info!("stopped {container_name}");
 			}
 		}
@@ -380,9 +350,11 @@ impl Engine {
 		for name in &order {
 			let service = &file.services[name];
 			for container_name in self.replica_names(name, service) {
-				self.docker
-					.start_container(&container_name, None::<StartContainerOptions>)
-					.await?;
+				let path = format!(
+					"/libpod/containers/{}/start",
+					crate::libpod::urlencoded(&container_name),
+				);
+				self.client.post_empty_ok(&path).await.map_err(ComposeError::Podman)?;
 				info!("started {container_name}");
 			}
 		}
@@ -404,14 +376,12 @@ impl Engine {
 		for name in &order {
 			let service = &file.services[name];
 			for container_name in self.replica_names(name, service) {
-				self.docker
-					.kill_container(
-						&container_name,
-						Some(KillContainerOptions {
-							signal: signal.to_string(),
-						}),
-					)
-					.await?;
+				let path = format!(
+					"/libpod/containers/{}/kill?signal={}",
+					crate::libpod::urlencoded(&container_name),
+					crate::libpod::urlencoded(signal),
+				);
+				self.client.post_empty_ok(&path).await.map_err(ComposeError::Podman)?;
 				info!("sent {signal} to {container_name}");
 			}
 		}
@@ -435,16 +405,12 @@ impl Engine {
 		for name in &order {
 			let service = &file.services[name];
 			for container_name in self.replica_names(name, service) {
-				let _ = self
-					.docker
-					.remove_container(
-						&container_name,
-						Some(RemoveContainerOptions {
-							force,
-							..Default::default()
-						}),
-					)
-					.await;
+				let force_str = if force { "true" } else { "false" };
+				let path = format!(
+					"/libpod/containers/{}?force={force_str}",
+					crate::libpod::urlencoded(&container_name),
+				);
+				let _ = self.client.delete_ok(&path).await;
 				info!("removed {container_name}");
 			}
 		}
@@ -461,7 +427,11 @@ impl Engine {
 		for name in &order {
 			let service = &file.services[name];
 			for container_name in self.replica_names(name, service) {
-				self.docker.pause_container(&container_name).await?;
+				let path = format!(
+					"/libpod/containers/{}/pause",
+					crate::libpod::urlencoded(&container_name),
+				);
+				self.client.post_empty_ok(&path).await.map_err(ComposeError::Podman)?;
 				info!("paused {container_name}");
 			}
 		}
@@ -478,7 +448,11 @@ impl Engine {
 		for name in &order {
 			let service = &file.services[name];
 			for container_name in self.replica_names(name, service) {
-				self.docker.unpause_container(&container_name).await?;
+				let path = format!(
+					"/libpod/containers/{}/unpause",
+					crate::libpod::urlencoded(&container_name),
+				);
+				self.client.post_empty_ok(&path).await.map_err(ComposeError::Podman)?;
 				info!("unpaused {container_name}");
 			}
 		}
@@ -535,47 +509,50 @@ impl Engine {
 			return Ok(());
 		}
 
-		let mut log_stream = self.docker.logs(
-			&run_name,
-			Some(LogsOptions {
-				stdout: true,
-				stderr: true,
-				follow: true,
-				..Default::default()
-			}),
+		let logs_path = format!(
+			"/libpod/containers/{}/logs?follow=true&stdout=true&stderr=true",
+			crate::libpod::urlencoded(&run_name),
 		);
+		let logs_resp = self
+			.client
+			.get_stream(&logs_path)
+			.await
+			.map_err(ComposeError::Podman)?;
+		let mut log_stream = crate::libpod::parse_multiplexed(logs_resp.into_body());
 
 		while let Some(msg) = log_stream.next().await {
-			match msg? {
-				LogOutput::StdOut { message } => print!("{}", String::from_utf8_lossy(&message)),
-				LogOutput::StdErr { message } => eprint!("{}", String::from_utf8_lossy(&message)),
-				_ => {}
+			match msg.map_err(ComposeError::Podman)? {
+				crate::libpod::LogOutput::StdOut { message } => {
+					print!("{}", String::from_utf8_lossy(&message))
+				}
+				crate::libpod::LogOutput::StdErr { message } => {
+					eprint!("{}", String::from_utf8_lossy(&message))
+				}
 			}
 		}
 
-		let exit_code = {
-			let mut wait_stream = self
-				.docker
-				.wait_container(&run_name, None::<WaitContainerOptions>);
-			match wait_stream.next().await {
-				Some(Ok(resp)) => resp.status_code,
-				Some(Err(bollard::errors::Error::DockerContainerWaitError { code, .. })) => code,
-				Some(Err(e)) => return Err(crate::error::ComposeError::Podman(e)),
-				None => 0,
+		let wait_path = format!(
+			"/libpod/containers/{}/wait?condition=stopped",
+			crate::libpod::urlencoded(&run_name),
+		);
+		let exit_code = match self
+			.client
+			.post_empty_json::<crate::libpod::types::container::WaitResponse>(&wait_path)
+			.await
+		{
+			Ok(resp) => resp.status_code,
+			Err(e) => {
+				tracing::warn!("wait failed: {e}");
+				0
 			}
 		};
 
 		if rm {
-			let _ = self
-				.docker
-				.remove_container(
-					&run_name,
-					Some(RemoveContainerOptions {
-						force: true,
-						..Default::default()
-					}),
-				)
-				.await;
+			let rm_path = format!(
+				"/libpod/containers/{}?force=true",
+				crate::libpod::urlencoded(&run_name),
+			);
+			let _ = self.client.delete_ok(&rm_path).await;
 		}
 
 		if exit_code != 0 {

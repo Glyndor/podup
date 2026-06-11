@@ -1,27 +1,23 @@
-//! Container creation and start: assembles bollard `Config` from a [`Service`]
-//! and starts the container. Config-building helpers live in [`super::container_config`].
+//! Container creation and start: assembles a libpod `SpecGenerator` from a
+//! [`Service`] and starts the container.
 
 use std::collections::HashMap;
 use std::path::Path;
 
-use bollard::models::{ContainerCreateBody, HostConfig, NetworkingConfig};
-use bollard::query_parameters::{
-	CreateContainerOptions, RemoveContainerOptions, StartContainerOptions,
-};
-
-use crate::compose::types::{ComposeFile, Service, VolumeMount, VolumeType};
+use crate::compose::types::{ComposeFile, Service};
 use crate::error::{ComposeError, Result};
+use crate::libpod::types::container::{LinuxResources, Namespace, SpecGenerator};
+use crate::libpod::urlencoded;
 use crate::{env_file, ports, size};
 
 use super::container_config::{
-	build_healthcheck, build_log_config, build_restart_policy, build_ulimits, resolve_resources,
+	build_healthcheck, build_log_config, build_restart_policy, build_resource_limits, build_ulimits,
 };
 use super::container_misc::{
-	build_blkio_config, build_device_requests, build_label_file_labels, opt_map, opt_vec,
-	parse_device, tmpfs_options_to_string, warn_swarm_only_deploy,
+	build_blkio_config, build_label_file_labels, parse_device, warn_swarm_only_deploy,
 };
-use super::network::{build_endpoint_settings, resolve_network_mode};
-use super::volume_mounts::{build_binds, build_mounts};
+use super::network::resolve_network_mode;
+use super::volume_mounts::build_mounts_all;
 use super::Engine;
 
 impl Engine {
@@ -44,37 +40,51 @@ impl Engine {
 
 		warn_swarm_only_deploy(service_name, service);
 
-		let env = build_env(service, &self.base_dir)?;
-
-		let binds = build_binds(service, &self.base_dir);
-		let secret_binds = self.build_secret_binds(service, file)?;
-		let config_binds = self.build_config_binds(service, file)?;
-		let all_binds: Vec<String> = binds
+		// --- Environment ---
+		let env: HashMap<String, String> = build_env(service, &self.base_dir)?
 			.into_iter()
-			.chain(secret_binds)
-			.chain(config_binds)
+			.filter_map(|s| {
+				let idx = s.find('=')?;
+				Some((s[..idx].to_string(), s[idx + 1..].to_string()))
+			})
 			.collect();
 
-		let parsed_ports = ports::parse_ports(&service.ports)?;
-		let (port_bindings, exposed_ports_map) = ports::to_bollard(&parsed_ports);
+		// --- Secrets and configs become bind mounts ---
+		let secret_binds = self.build_secret_binds(service, file)?;
+		let config_binds = self.build_config_binds(service, file)?;
+		let mounts = build_mounts_all(service, &self.base_dir, &secret_binds, &config_binds);
 
-		let mut exposed_port_keys: Vec<String> = exposed_ports_map.into_keys().collect();
+		// --- Port mappings ---
+		let parsed_ports = ports::parse_ports(&service.ports)?;
+		let portmappings = ports::to_libpod(&parsed_ports);
+
+		// expose map: port_num → protocol
+		let mut expose: HashMap<u16, String> = parsed_ports
+			.iter()
+			.map(|p| (p.container_port, p.protocol.clone()))
+			.collect();
 		for raw in &service.expose {
-			let key = if raw.contains('/') {
-				raw.clone()
+			let (port_str, proto) = if let Some(idx) = raw.rfind('/') {
+				(&raw[..idx], raw[idx + 1..].to_string())
 			} else {
-				format!("{raw}/tcp")
+				(raw.as_str(), "tcp".to_string())
 			};
-			if !exposed_port_keys.contains(&key) {
-				exposed_port_keys.push(key);
+			if let Ok(p) = port_str.parse::<u16>() {
+				expose.entry(p).or_insert(proto);
 			}
 		}
 
-		let restart_policy = build_restart_policy(service);
-		let log_config = build_log_config(service.logging.as_ref());
-		let (network_mode, first_network) = resolve_network_mode(service, file, &self.project);
-		let label_file_labels = build_label_file_labels(service, &self.base_dir);
+		// --- Restart policy ---
+		let (restart_policy, restart_tries) = build_restart_policy(service);
 
+		// --- Logging ---
+		let log_configuration = build_log_config(service.logging.as_ref());
+
+		// --- Networks ---
+		let (netns, networks) = resolve_network_mode(service, file, &self.project);
+
+		// --- Labels ---
+		let label_file_labels = build_label_file_labels(service, &self.base_dir);
 		let mut labels = service.labels.to_map();
 		for (k, v) in label_file_labels {
 			labels.entry(k).or_insert(v);
@@ -84,135 +94,54 @@ impl Engine {
 				labels.entry(k).or_insert(v);
 			}
 		}
-		for (k, v) in service.annotations.to_map() {
-			labels.insert(format!("annotation.{k}"), v);
-		}
 		labels.insert("podup.project".to_string(), self.project.clone());
 		labels.insert("podup.service".to_string(), service_name.to_string());
 
-		let ulimits = build_ulimits(service);
-		let sysctls: HashMap<String, String> = service.sysctls.to_map();
-		let extra_hosts: Vec<String> = service.extra_hosts.clone();
-		let dns = service.dns.to_list();
-		let dns_search = service.dns_search.to_list();
-		let dns_opt = service.dns_opt.to_list();
+		// annotations
+		let annotations: HashMap<String, String> = service.annotations.to_map();
 
-		let devices: Vec<bollard::models::DeviceMapping> = service
-			.devices
-			.iter()
-			.map(|s| parse_device(s.as_str()))
-			.collect();
+		// --- Sysctls ---
+		let sysctl: HashMap<String, String> = service.sysctls.to_map();
 
-		let device_requests = build_device_requests(service);
-
-		let tmpfs_list = service.tmpfs.to_list();
-		let mut tmpfs_map: HashMap<String, String> =
-			tmpfs_list.into_iter().map(|p| (p, String::new())).collect();
-		for v in &service.volumes {
-			if let VolumeMount::Long {
-				volume_type: VolumeType::Tmpfs,
-				target,
-				tmpfs,
-				..
-			} = v
-			{
-				let opts = tmpfs_options_to_string(tmpfs.as_ref());
-				tmpfs_map.insert(target.clone(), opts);
-			}
+		// --- Resource limits ---
+		let mut resource_limits = build_resource_limits(service);
+		if let Some(blkio) = build_blkio_config(service) {
+			resource_limits.get_or_insert_with(LinuxResources::default).block_io = Some(blkio);
 		}
 
-		let (
-			mem_limit,
-			mem_reservation,
-			memswap,
-			nano_cpus,
-			cpu_quota_eff,
-			cpu_period_eff,
-			pids_limit,
-		) = resolve_resources(service);
+		// --- Ulimits ---
+		let ulimits = build_ulimits(service);
 
-		let blkio = build_blkio_config(service);
+		// --- Devices ---
+		let devices: Vec<_> = service.devices.iter().map(|s| parse_device(s)).collect();
 
-		let mut all_links: Vec<String> = service.links.clone();
-		all_links.extend_from_slice(&service.external_links);
+		// --- Namespace modes ---
+		let pidns = service.pid.as_deref().map(Namespace::new);
+		let ipcns = service.ipc.as_deref().map(Namespace::new);
+		let utsns = service.uts.as_deref().map(Namespace::new);
+		let cgroupns = service.cgroup.as_deref().map(Namespace::new);
+		let userns = service.userns_mode.as_deref().map(Namespace::new);
 
-		let mounts = build_mounts(service);
+		// --- Platform → os / arch ---
+		let (image_os, image_arch) = service
+			.platform
+			.as_deref()
+			.and_then(|p| p.split_once('/'))
+			.map(|(os, arch)| (Some(os.to_string()), Some(arch.to_string())))
+			.unwrap_or((None, None));
 
-		let host_config = HostConfig {
-			binds: opt_vec(all_binds),
-			mounts: if mounts.is_empty() {
-				None
-			} else {
-				Some(mounts)
-			},
-			network_mode: network_mode.clone(),
-			restart_policy,
-			port_bindings: opt_map(port_bindings),
-			cap_add: opt_vec(service.cap_add.clone()),
-			cap_drop: opt_vec(service.cap_drop.clone()),
-			sysctls: opt_map(sysctls),
-			ulimits: if ulimits.is_empty() {
-				None
-			} else {
-				Some(ulimits)
-			},
-			extra_hosts: opt_vec(extra_hosts),
-			dns: opt_vec(dns),
-			dns_search: opt_vec(dns_search),
-			dns_options: opt_vec(dns_opt),
-			init: service.init,
-			privileged: service.privileged,
-			log_config,
-			pid_mode: service.pid.clone(),
-			ipc_mode: service.ipc.clone(),
-			uts_mode: service.uts.clone(),
-			cgroup_parent: service.cgroup_parent.clone(),
-			cgroupns_mode: service.cgroup.as_deref().and_then(|v| v.parse().ok()),
-			shm_size: service.shm_size.as_deref().and_then(size::parse_memory),
-			userns_mode: service.userns_mode.clone(),
-			security_opt: opt_vec(service.security_opt.clone()),
-			readonly_rootfs: service.read_only,
-			devices: opt_vec(devices),
-			device_cgroup_rules: opt_vec(service.device_cgroup_rules.clone()),
-			tmpfs: opt_map(tmpfs_map),
-			volumes_from: opt_vec(service.volumes_from.clone()),
-			links: opt_vec(all_links),
-			runtime: service.runtime.clone(),
-			memory: mem_limit,
-			memory_reservation: mem_reservation,
-			memory_swap: memswap,
-			memory_swappiness: service.mem_swappiness,
-			nano_cpus,
-			cpu_shares: service.cpu_shares.map(|s| s as i64),
-			cpu_quota: cpu_quota_eff,
-			cpu_period: cpu_period_eff,
-			cpuset_cpus: service.cpuset.clone(),
-			pids_limit,
-			cpu_count: service.cpu_count,
-			cpu_percent: service.cpu_percent,
-			cpu_realtime_period: service.cpu_rt_period,
-			cpu_realtime_runtime: service.cpu_rt_runtime,
-			oom_kill_disable: service.oom_kill_disable,
-			oom_score_adj: service.oom_score_adj,
-			storage_opt: opt_map(service.storage_opt.clone()),
-			group_add: opt_vec(service.group_add.clone()),
-			blkio_weight: blkio.as_ref().and_then(|b| b.weight),
-			blkio_weight_device: blkio.as_ref().and_then(|b| b.weight_device.clone()),
-			blkio_device_read_bps: blkio.as_ref().and_then(|b| b.device_read_bps.clone()),
-			blkio_device_write_bps: blkio.as_ref().and_then(|b| b.device_write_bps.clone()),
-			blkio_device_read_iops: blkio.as_ref().and_then(|b| b.device_read_iops.clone()),
-			blkio_device_write_iops: blkio.as_ref().and_then(|b| b.device_write_iops.clone()),
-			device_requests: if device_requests.is_empty() {
-				None
-			} else {
-				Some(device_requests)
-			},
-			annotations: opt_map(service.annotations.to_map()),
-			..Default::default()
-		};
+		// --- Links ---
+		let mut links: Vec<String> = service.links.clone();
+		links.extend_from_slice(&service.external_links);
 
-		let cmd = service.command.as_ref().map(|c| c.to_exec());
-		let entrypoint = service.entrypoint.as_ref().map(|c| c.to_exec());
+		// --- SHM size ---
+		let shm_size = service.shm_size.as_deref().and_then(size::parse_memory);
+
+		// --- Stop timeout ---
+		let stop_timeout = service
+			.stop_grace_period
+			.as_deref()
+			.and_then(size::parse_duration_secs);
 
 		if service.mac_address.is_some() {
 			tracing::warn!(
@@ -221,69 +150,78 @@ impl Engine {
 			);
 		}
 
-		let networking_config = first_network.as_ref().map(|net| {
-			let mut endpoints = HashMap::new();
-			let svc_net_cfg = service.networks.config_for(net);
-			endpoints.insert(
-				net.clone(),
-				build_endpoint_settings(svc_net_cfg, file, service.mac_address.as_deref()),
-			);
-			NetworkingConfig {
-				endpoints_config: Some(endpoints),
-			}
-		});
-
-		let healthcheck = service.healthcheck.as_ref().map(build_healthcheck);
-
-		let config = ContainerCreateBody {
-			image: Some(image.to_string()),
-			env: opt_vec(env),
-			cmd,
-			entrypoint,
-			host_config: Some(host_config),
-			labels: opt_map(labels),
-			exposed_ports: opt_vec(exposed_port_keys),
-			tty: service.tty,
-			open_stdin: service.stdin_open,
+		let spec = SpecGenerator {
+			name: container_name.to_string(),
+			image: image.to_string(),
+			command: service.command.as_ref().map(|c| c.to_exec()),
+			entrypoint: service.entrypoint.as_ref().map(|c| c.to_exec()),
+			env,
+			terminal: service.tty,
+			stdin: service.stdin_open,
 			user: service.user.clone(),
-			working_dir: service.working_dir.clone(),
+			work_dir: service.working_dir.clone(),
 			stop_signal: service.stop_signal.clone(),
-			stop_timeout: service
-				.stop_grace_period
-				.as_deref()
-				.and_then(size::parse_duration_secs)
-				.map(|s| s as i64),
+			stop_timeout: stop_timeout.map(|s| s as u64),
 			hostname: service.hostname.clone(),
 			domainname: service.domainname.clone(),
-			networking_config,
-			healthcheck,
+			labels,
+			annotations,
+			cap_add: service.cap_add.clone(),
+			cap_drop: service.cap_drop.clone(),
+			privileged: service.privileged,
+			read_only_filesystem: service.read_only,
+			security_opt: service.security_opt.clone(),
+			sysctl,
+			expose,
+			portmappings,
+			networks,
+			netns,
+			extra_hosts: service.extra_hosts.clone(),
+			dns_server: service.dns.to_list(),
+			dns_search: service.dns_search.to_list(),
+			dns_option: service.dns_opt.to_list(),
+			mounts,
+			volumes_from: service.volumes_from.clone(),
+			userns,
+			pidns,
+			ipcns,
+			utsns,
+			cgroupns,
+			cgroup_parent: service.cgroup_parent.clone(),
+			resource_limits,
+			ulimits,
+			shm_size,
+			healthconfig: service.healthcheck.as_ref().map(build_healthcheck),
+			log_configuration,
+			init: service.init,
+			restart_policy,
+			restart_tries,
+			devices,
+			device_cgroup_rule: service.device_cgroup_rules.clone(),
+			groups: service.group_add.clone(),
+			oom_score_adj: service.oom_score_adj,
+			runtime: service.runtime.clone(),
+			links,
+			image_os,
+			image_arch,
+			storage_opts: service.storage_opt.clone(),
 			..Default::default()
 		};
 
-		let _ = self
-			.docker
-			.remove_container(
-				container_name,
-				Some(RemoveContainerOptions {
-					force: true,
-					..Default::default()
-				}),
-			)
-			.await;
+		// Remove any existing container (idempotent restart).
+		let rm_path = format!("/libpod/containers/{}?force=true", urlencoded(container_name));
+		let _ = self.client.delete_ok(&rm_path).await;
 
-		self.docker
-			.create_container(
-				Some(CreateContainerOptions {
-					name: Some(container_name.to_string()),
-					platform: service.platform.clone().unwrap_or_default(),
-				}),
-				config,
-			)
-			.await?;
+		self.client
+			.post_json::<_, serde_json::Value>("/libpod/containers/create", &spec)
+			.await
+			.map_err(ComposeError::Podman)?;
 
-		self.docker
-			.start_container(container_name, None::<StartContainerOptions>)
-			.await?;
+		let start_path = format!("/libpod/containers/{}/start", urlencoded(container_name));
+		self.client
+			.post_empty_ok(&start_path)
+			.await
+			.map_err(ComposeError::Podman)?;
 
 		Ok(())
 	}
@@ -296,8 +234,5 @@ fn build_env(service: &Service, base_dir: &Path) -> Result<Vec<String>> {
 	} else {
 		HashMap::new()
 	};
-	Ok(env_file::merge_env(
-		service.environment.to_map(),
-		env_file_vars,
-	))
+	Ok(env_file::merge_env(service.environment.to_map(), env_file_vars))
 }

@@ -5,19 +5,18 @@
 /// `PODMAN_SOCKET` before the coverage gate runs.
 use std::fs;
 
-use bollard::Docker;
-use podup::{parse_str, Engine};
+use podup::{parse_str, Client, Engine};
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
-async fn podman() -> Option<Docker> {
-	let docker = podup::podman::connect_from_env()
+async fn podman() -> Option<Client> {
+	let client = podup::podman::connect_from_env()
 		.or_else(|_| podup::podman::connect(None))
 		.ok()?;
-	docker.ping().await.ok()?;
-	Some(docker)
+	client.ping().await.ok()?;
+	Some(client)
 }
 
 /// Unique project name per test run + per test to avoid parallel conflicts.
@@ -31,12 +30,12 @@ fn proj(tag: &str) -> String {
 
 #[tokio::test]
 async fn up_and_down() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("udn");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -48,12 +47,12 @@ async fn up_and_down() {
 
 #[tokio::test]
 async fn up_no_recreate_skips_running() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("nor");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -70,12 +69,12 @@ async fn up_no_recreate_skips_running() {
 
 #[tokio::test]
 async fn up_target_services_only() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("tgt");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  db:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    depends_on:\n      - db\n",
 	)
@@ -91,12 +90,12 @@ async fn up_target_services_only() {
 
 #[tokio::test]
 async fn down_with_remove_volumes() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("dvol");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(&format!(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    volumes:\n      - {proj}-data:/data\nvolumes:\n  {proj}-data:\n"
 	))
@@ -108,12 +107,12 @@ async fn down_with_remove_volumes() {
 
 #[tokio::test]
 async fn restart_all_services() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("rsa");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -126,12 +125,12 @@ async fn restart_all_services() {
 
 #[tokio::test]
 async fn restart_specific_service() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("rss");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -144,12 +143,12 @@ async fn restart_specific_service() {
 
 #[tokio::test]
 async fn restart_cascade_dep() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("rcd");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  db:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    depends_on:\n      db:\n        condition: service_started\n        restart: true\n",
 	)
@@ -163,12 +162,12 @@ async fn restart_cascade_dep() {
 
 #[tokio::test]
 async fn restart_unknown_service_fails() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("ruf");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -187,12 +186,12 @@ async fn restart_unknown_service_fails() {
 
 #[tokio::test]
 async fn ps_shows_running_container() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("ps");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -205,12 +204,12 @@ async fn ps_shows_running_container() {
 
 #[tokio::test]
 async fn logs_from_named_service() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("lgs");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sh\", \"-c\", \"echo hello && sleep infinity\"]\n",
 	)
@@ -223,12 +222,12 @@ async fn logs_from_named_service() {
 
 #[tokio::test]
 async fn logs_all_services() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("lga");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -241,12 +240,12 @@ async fn logs_all_services() {
 
 #[tokio::test]
 async fn logs_unknown_service_fails() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("lgf");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -261,12 +260,12 @@ async fn logs_unknown_service_fails() {
 
 #[tokio::test]
 async fn exec_command_in_container() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("exc");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -282,12 +281,12 @@ async fn exec_command_in_container() {
 
 #[tokio::test]
 async fn exec_unknown_service_fails() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("exf");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -302,12 +301,12 @@ async fn exec_unknown_service_fails() {
 
 #[tokio::test]
 async fn pull_images() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("pll");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -318,12 +317,12 @@ async fn pull_images() {
 
 #[tokio::test]
 async fn remove_orphans_no_orphans() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("orp");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -336,12 +335,12 @@ async fn remove_orphans_no_orphans() {
 
 #[tokio::test]
 async fn attach_logs_empty_attach_returns() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("atl");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	// attach: false — attach_logs finds no targets and returns immediately
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    attach: false\n",
@@ -359,12 +358,12 @@ async fn attach_logs_empty_attach_returns() {
 
 #[tokio::test]
 async fn named_volume_created_on_up() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("nvol");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(&format!(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    volumes:\n      - {proj}-data:/data\nvolumes:\n  {proj}-data:\n"
 	))
@@ -376,12 +375,12 @@ async fn named_volume_created_on_up() {
 
 #[tokio::test]
 async fn inline_secret_materialized() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("sec");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    secrets:\n      - mysecret\nsecrets:\n  mysecret:\n    content: \"supersecret\"\n",
 	)
@@ -402,7 +401,7 @@ async fn inline_secret_materialized() {
 
 #[tokio::test]
 async fn file_secret_bound() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
@@ -411,7 +410,7 @@ async fn file_secret_bound() {
 	fs::write(&secret_file, b"file-secret-content").unwrap();
 
 	let proj = proj("fsec");
-	let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 	let yaml = format!(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    secrets:\n      - filesecret\nsecrets:\n  filesecret:\n    file: {}\n",
 		secret_file.display()
@@ -427,12 +426,12 @@ fn env_secret_materialized() {
 	let rt = tokio::runtime::Runtime::new().unwrap();
 	temp_env::with_var("PODUP_TEST_SECRET_VAR", Some("env-secret-value"), || {
 		rt.block_on(async {
-			let docker = match podman().await {
+			let client = match podman().await {
 				Some(d) => d,
 				None => return,
 			};
 			let proj = proj("esec");
-			let engine = Engine::new(docker, proj.clone());
+			let engine = Engine::new(client, proj.clone());
 			let file = parse_str(
 				"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    secrets:\n      - envsecret\nsecrets:\n  envsecret:\n    environment: PODUP_TEST_SECRET_VAR\n",
 			)
@@ -446,12 +445,12 @@ fn env_secret_materialized() {
 
 #[tokio::test]
 async fn external_secret_skipped() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("xsec");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    secrets:\n      - extsecret\nsecrets:\n  extsecret:\n    external: true\n",
 	)
@@ -463,12 +462,12 @@ async fn external_secret_skipped() {
 
 #[tokio::test]
 async fn invalid_secret_name_rejected() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("isec");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	// Secret name with path traversal
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    secrets:\n      - evils\nsecrets:\n  evils:\n    content: bad\n",
@@ -485,12 +484,12 @@ async fn invalid_secret_name_rejected() {
 
 #[tokio::test]
 async fn inline_config_materialized() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("cfg");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    configs:\n      - mycfg\nconfigs:\n  mycfg:\n    content: \"key=value\"\n",
 	)
@@ -506,12 +505,12 @@ async fn inline_config_materialized() {
 
 #[tokio::test]
 async fn post_start_and_pre_stop_hooks_run() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("hks");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    post_start:\n      - command: [\"echo\", \"started\"]\n    pre_stop:\n      - command: [\"echo\", \"stopping\"]\n",
 	)
@@ -527,12 +526,12 @@ async fn post_start_and_pre_stop_hooks_run() {
 
 #[tokio::test]
 async fn depends_on_service_healthy() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("hlt");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	// db has a healthcheck (CMD true), web waits for it to be healthy
 	let file = parse_str(
 		"services:\n  db:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    healthcheck:\n      test: [\"CMD\", \"true\"]\n      interval: 1s\n      timeout: 1s\n      retries: 5\n      start_period: 0s\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    depends_on:\n      db:\n        condition: service_healthy\n",
@@ -545,12 +544,12 @@ async fn depends_on_service_healthy() {
 
 #[tokio::test]
 async fn depends_on_service_completed() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("cmp");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	// init exits 0 quickly; app waits for it to complete
 	let file = parse_str(
 		"services:\n  init:\n    image: alpine:latest\n    command: [\"sh\", \"-c\", \"exit 0\"]\n  app:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    depends_on:\n      init:\n        condition: service_completed_successfully\n",
@@ -567,12 +566,12 @@ async fn depends_on_service_completed() {
 
 #[tokio::test]
 async fn profile_filtered_service_skipped() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("prf");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	// "debug" service has profile "debug" — not in active profiles → skipped
 	// "web" has no profiles → always runs
 	let file = parse_str(
@@ -593,12 +592,12 @@ async fn profile_filtered_service_skipped() {
 
 #[tokio::test]
 async fn scale_creates_multiple_replicas() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("rep");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  worker:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    deploy:\n      replicas: 2\n",
 	)
@@ -614,12 +613,12 @@ async fn scale_creates_multiple_replicas() {
 
 #[tokio::test]
 async fn depends_on_healthy_no_healthcheck_skips_wait() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("hns");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	// backend has no healthcheck; frontend depends on it with service_healthy.
 	// podup logs a debug message and skips the wait.
 	let file = parse_str(
@@ -637,12 +636,12 @@ async fn depends_on_healthy_no_healthcheck_skips_wait() {
 
 #[tokio::test]
 async fn ps_with_port_bindings() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("psb");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    ports:\n      - \"19100:80\"\n",
 	)
@@ -659,12 +658,12 @@ async fn ps_with_port_bindings() {
 
 #[tokio::test]
 async fn attach_logs_streams_container_output() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("als");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	// Container writes to stdout and stderr then exits; attach_logs should
 	// stream the output and return when the stream ends (join_all completes).
 	let file = parse_str(
@@ -679,12 +678,12 @@ async fn attach_logs_streams_container_output() {
 
 #[tokio::test]
 async fn logs_with_stderr_output() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("lge");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sh\", \"-c\", \"echo error-msg >&2; sleep infinity\"]\n",
 	)
@@ -701,7 +700,7 @@ async fn logs_with_stderr_output() {
 
 #[tokio::test]
 async fn file_config_bound() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
@@ -710,7 +709,7 @@ async fn file_config_bound() {
 	fs::write(&cfg_file, b"key=from-file").unwrap();
 
 	let proj = proj("fcfg");
-	let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 	let yaml = format!(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    configs:\n      - filecfg\nconfigs:\n  filecfg:\n    file: {}\n",
 		cfg_file.display()
@@ -726,12 +725,12 @@ fn env_config_materialized() {
 	let rt = tokio::runtime::Runtime::new().unwrap();
 	temp_env::with_var("PODUP_TEST_CFG_VAR", Some("cfg-from-env"), || {
 		rt.block_on(async {
-			let docker = match podman().await {
+			let client = match podman().await {
 				Some(d) => d,
 				None => return,
 			};
 			let proj = proj("ecfg");
-			let engine = Engine::new(docker, proj.clone());
+			let engine = Engine::new(client, proj.clone());
 			let file = parse_str(
 				"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    configs:\n      - envcfg\nconfigs:\n  envcfg:\n    environment: PODUP_TEST_CFG_VAR\n",
 			)
@@ -749,12 +748,12 @@ fn env_config_materialized() {
 
 #[tokio::test]
 async fn service_with_expose_deploy_labels_annotations_tmpfs() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("sdl");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	// expose covers container.rs L56-63
 	// deploy.labels covers container.rs L76-78
 	// annotations covers container.rs L81-82
@@ -774,13 +773,13 @@ async fn service_with_expose_deploy_labels_annotations_tmpfs() {
 
 #[tokio::test]
 async fn named_volume_with_driver_opts() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let dir = tempfile::tempdir().unwrap();
 	let proj = proj("vdo");
-	let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 	// driver_opts covers volume.rs L55 (Some(driver_opts) branch)
 	// Use a bind-mount volume pointing to the temp dir (fast, rootless-safe)
 	let yaml = format!(
@@ -799,7 +798,7 @@ async fn named_volume_with_driver_opts() {
 
 #[tokio::test]
 async fn build_with_target_stage() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
@@ -812,7 +811,7 @@ async fn build_with_target_stage() {
 	.unwrap();
 
 	let proj = proj("bst");
-	let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 	let image_tag = format!("podup-test-bst-{}:latest", std::process::id());
 	let yaml = format!(
 		"services:\n  app:\n    build:\n      context: .\n      target: base\n    image: {image_tag}\n    command: [\"sleep\", \"infinity\"]\n"
@@ -825,13 +824,13 @@ async fn build_with_target_stage() {
 
 #[tokio::test]
 async fn build_with_args_and_extra_tags() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let dir = tempfile::tempdir().unwrap();
 	let proj = proj("bat");
-	let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 	let pid = std::process::id();
 	let main_tag = format!("podup-test-bat-{}:latest", pid);
 	let extra_tag = format!("podup-test-bat-extra-{}:v1", pid);
@@ -846,13 +845,13 @@ async fn build_with_args_and_extra_tags() {
 
 #[tokio::test]
 async fn build_inline_dockerfile() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let dir = tempfile::tempdir().unwrap();
 	let proj = proj("bld");
-	let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 	let image_tag = format!("podup-test-build-{}:latest", std::process::id());
 	let yaml = format!(
 		"services:\n  app:\n    build:\n      context: .\n      dockerfile_inline: |\n        FROM alpine:latest\n        RUN echo built\n    image: {image_tag}\n    command: [\"sleep\", \"infinity\"]\n"
@@ -865,7 +864,7 @@ async fn build_inline_dockerfile() {
 
 #[tokio::test]
 async fn build_from_dockerfile_in_context() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
@@ -877,7 +876,7 @@ async fn build_from_dockerfile_in_context() {
 	.unwrap();
 
 	let proj = proj("bdc");
-	let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 	let image_tag = format!("podup-test-build-ctx-{}:latest", std::process::id());
 	let yaml = format!(
 		"services:\n  app:\n    build:\n      context: .\n    image: {image_tag}\n    command: [\"sleep\", \"infinity\"]\n"
@@ -894,12 +893,12 @@ async fn build_from_dockerfile_in_context() {
 
 #[tokio::test]
 async fn explicit_network_created() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("net");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    networks:\n      - mynet\nnetworks:\n  mynet:\n    driver: bridge\n",
 	)
@@ -915,12 +914,12 @@ async fn explicit_network_created() {
 
 #[tokio::test]
 async fn secret_long_form_ref() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("slf");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	// mode: 256 = 0o400; uid exercises apply_owner (best-effort chown)
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    secrets:\n      - source: mysecret\n        target: /run/secrets/custom_name\n        mode: 256\n        uid: \"0\"\nsecrets:\n  mysecret:\n    content: \"topsecret\"\n",
@@ -941,12 +940,12 @@ async fn secret_long_form_ref() {
 
 #[tokio::test]
 async fn config_long_form_ref() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("clf");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    configs:\n      - source: mycfg\n        target: /etc/app.conf\nconfigs:\n  mycfg:\n    content: \"key=value\"\n",
 	)
@@ -970,12 +969,12 @@ async fn config_long_form_ref() {
 
 #[tokio::test]
 async fn external_volume_skipped_on_up() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("exv");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	// The external volume is declared but not mounted by the service,
 	// so create_volumes() hits the `continue` branch without creating it.
 	let file = parse_str(
@@ -993,12 +992,12 @@ async fn external_volume_skipped_on_up() {
 
 #[tokio::test]
 async fn remove_orphans_removes_container() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("orr");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 
 	let file_svc1 = parse_str(
 		"services:\n  svc1:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
@@ -1023,12 +1022,12 @@ async fn remove_orphans_removes_container() {
 
 #[tokio::test]
 async fn wait_completed_nonzero_error() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("cne");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  init:\n    image: alpine:latest\n    command: [\"sh\", \"-c\", \"exit 1\"]\n  app:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    depends_on:\n      init:\n        condition: service_completed_successfully\n",
 	)
@@ -1053,12 +1052,12 @@ fn active_profiles_via_env() {
 	// Set COMPOSE_PROFILES so active_profiles_set reads it (covers profiles.rs L15-19)
 	temp_env::with_var("COMPOSE_PROFILES", Some("prod"), || {
 		rt.block_on(async {
-			let docker = match podman().await {
+			let client = match podman().await {
 				Some(d) => d,
 				None => return,
 			};
 			let proj = proj("apv");
-			let engine = Engine::new(docker, proj.clone());
+			let engine = Engine::new(client, proj.clone());
 			// "debug" service has profile "debug" — not in "prod" → skipped
 			let file = parse_str(
 				"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n  debug:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    profiles: [\"debug\"]\n",
@@ -1080,12 +1079,12 @@ fn active_profiles_via_env() {
 
 #[tokio::test]
 async fn wait_healthy_times_out() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("wht");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	// CMD false always fails; retries:1 means wait_healthy exhausts quickly
 	// Covers health.rs L42-43 (loop body closing braces) and L47 (timeout Err)
 	let file = parse_str(
@@ -1103,12 +1102,12 @@ async fn wait_healthy_times_out() {
 
 #[tokio::test]
 async fn wait_completed_polling() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("wcp");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	// init sleeps 1.5s before exiting; first poll sees it running (L73-75 covered)
 	let file = parse_str(
 		"services:\n  init:\n    image: alpine:latest\n    command: [\"sh\", \"-c\", \"sleep 1.5; exit 0\"]\n  app:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    depends_on:\n      init:\n        condition: service_completed_successfully\n",
@@ -1125,12 +1124,12 @@ async fn wait_completed_polling() {
 
 #[tokio::test]
 async fn external_config_skipped() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("xcfg");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	// Covers volume.rs L215 (external config debug log)
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    configs:\n      - extcfg\nconfigs:\n  extcfg:\n    external: true\n",
@@ -1147,14 +1146,14 @@ async fn external_config_skipped() {
 
 #[tokio::test]
 async fn service_with_expose_proto_and_ulimits() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	// expose "8080/tcp" (with slash) covers container.rs L57 (raw.clone() branch)
 	// ulimits covers container.rs L150 (Some(ulimits))
 	let proj = proj("seu");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    expose:\n      - \"8080/tcp\"\n    ulimits:\n      nofile:\n        soft: 1024\n        hard: 2048\n",
 	)
@@ -1166,7 +1165,7 @@ async fn service_with_expose_proto_and_ulimits() {
 
 #[tokio::test]
 async fn env_file_loaded() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
@@ -1174,7 +1173,7 @@ async fn env_file_loaded() {
 	fs::write(dir.path().join("test.env"), b"MYVAR=hello\n").unwrap();
 
 	let proj = proj("evf");
-	let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 	// env_file covers container.rs L278 (load_env_file_entries)
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    env_file:\n      - test.env\n",
@@ -1191,12 +1190,12 @@ async fn env_file_loaded() {
 
 #[tokio::test]
 async fn target_services_skips_non_dep() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("tsk");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	// "extra" is not depended upon by web → skipped (lifecycle.rs L56 continue)
 	let file = parse_str(
 		"services:\n  extra:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
@@ -1212,12 +1211,12 @@ async fn target_services_skips_non_dep() {
 
 #[tokio::test]
 async fn dep_on_profile_filtered_service() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("dpf");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	// "db" has profile "debug" → not active → dep wait skipped (lifecycle.rs L73)
 	// "web" depends on "db" but db is profile-filtered so its dep wait is skipped
 	let file = parse_str(
@@ -1243,13 +1242,13 @@ fn build_with_env_arg() {
 	// FROM_ENV has no explicit value → read from environment (build.rs L89 None branch)
 	temp_env::with_var("FROM_ENV", Some("test-value"), || {
 		rt.block_on(async {
-			let docker = match podman().await {
+			let client = match podman().await {
 				Some(d) => d,
 				None => return,
 			};
 			let dir = tempfile::tempdir().unwrap();
 			let proj = proj("bea");
-			let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+			let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 			let image_tag = format!("podup-test-bea-{}:latest", std::process::id());
 			let yaml = format!(
 				"services:\n  app:\n    build:\n      context: .\n      dockerfile_inline: |\n        FROM alpine:latest\n        ARG FROM_ENV\n        RUN echo env=$FROM_ENV\n      args:\n        FROM_ENV:\n    image: {image_tag}\n    command: [\"sleep\", \"infinity\"]\n"
@@ -1268,7 +1267,7 @@ fn build_with_env_arg() {
 
 #[tokio::test]
 async fn label_file_labels_applied() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
@@ -1279,7 +1278,7 @@ async fn label_file_labels_applied() {
 	)
 	.unwrap();
 	let proj = proj("lfl");
-	let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    label_file: svc.labels\n",
 	)
@@ -1295,12 +1294,12 @@ async fn label_file_labels_applied() {
 
 #[tokio::test]
 async fn optional_dep_not_in_file() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("odf");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	// ghost_db not in services + required:false → resolve_order skips it,
 	// target_set pushes it (file.services.get → None → L45),
 	// dep-wait loop hits None => continue (L70)
@@ -1322,12 +1321,12 @@ async fn optional_dep_not_in_file() {
 
 #[tokio::test]
 async fn target_services_duplicate_entry() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("tde");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -1360,12 +1359,12 @@ mod watch_tests {
 
 	#[tokio::test]
 	async fn watch_no_develop_rules_returns_immediately() {
-		let docker = match podman().await {
+		let client = match podman().await {
 			Some(d) => d,
 			None => return,
 		};
 		let proj = proj("wno");
-		let engine = Engine::new(docker, proj.clone());
+		let engine = Engine::new(client, proj.clone());
 		// No develop.watch section → watch() returns Ok(()) immediately
 		let file = parse_str(
 			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
@@ -1377,7 +1376,7 @@ mod watch_tests {
 
 	#[tokio::test]
 	async fn watch_sync_file_to_container() {
-		let docker = match podman().await {
+		let client = match podman().await {
 			Some(d) => d,
 			None => return,
 		};
@@ -1386,7 +1385,7 @@ mod watch_tests {
 		fs::write(&src_file, b"initial content").unwrap();
 
 		let proj = proj("wsy");
-		let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+		let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 		let file = parse_str(
 			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 		)
@@ -1402,12 +1401,12 @@ mod watch_tests {
 
 	#[tokio::test]
 	async fn watch_restart_container() {
-		let docker = match podman().await {
+		let client = match podman().await {
 			Some(d) => d,
 			None => return,
 		};
 		let proj = proj("wrs");
-		let engine = Engine::new(docker, proj.clone());
+		let engine = Engine::new(client, proj.clone());
 		let file = parse_str(
 			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 		)
@@ -1423,12 +1422,12 @@ mod watch_tests {
 
 	#[tokio::test]
 	async fn watch_exec_in_container() {
-		let docker = match podman().await {
+		let client = match podman().await {
 			Some(d) => d,
 			None => return,
 		};
 		let proj = proj("wex");
-		let engine = Engine::new(docker, proj.clone());
+		let engine = Engine::new(client, proj.clone());
 		let file = parse_str(
 			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 		)
@@ -1447,7 +1446,7 @@ mod watch_tests {
 
 	#[tokio::test]
 	async fn watch_initial_sync_runs() {
-		let docker = match podman().await {
+		let client = match podman().await {
 			Some(d) => d,
 			None => return,
 		};
@@ -1456,7 +1455,7 @@ mod watch_tests {
 		fs::write(&src, b"initial").unwrap();
 
 		let proj = proj("wis");
-		let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+		let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 		let file = parse_str(
 			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: app.txt\n          action: sync\n          target: /tmp/app.txt\n          initial_sync: true\n",
 		)
@@ -1464,10 +1463,10 @@ mod watch_tests {
 
 		engine.up(&file).await.unwrap();
 
-		let docker2 = podup::podman::connect_from_env()
+		let client2 = podup::podman::connect_from_env()
 			.or_else(|_| podup::podman::connect(None))
 			.unwrap();
-		let engine2 = Engine::with_base_dir(docker2, proj.clone(), dir.path().to_path_buf());
+		let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
 		let file2 = file.clone();
 		let handle = tokio::spawn(async move { engine2.watch(&file2).await });
 		// Give watch() time to run initial_sync before aborting
@@ -1479,7 +1478,7 @@ mod watch_tests {
 
 	#[tokio::test]
 	async fn watch_restart_action_via_event() {
-		let docker = match podman().await {
+		let client = match podman().await {
 			Some(d) => d,
 			None => return,
 		};
@@ -1489,7 +1488,7 @@ mod watch_tests {
 		fs::write(watch_dir.join("main.txt"), b"v1").unwrap();
 
 		let proj = proj("wra");
-		let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+		let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 		let file = parse_str(
 			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: src\n          action: restart\n",
 		)
@@ -1497,10 +1496,10 @@ mod watch_tests {
 
 		engine.up(&file).await.unwrap();
 
-		let docker2 = podup::podman::connect_from_env()
+		let client2 = podup::podman::connect_from_env()
 			.or_else(|_| podup::podman::connect(None))
 			.unwrap();
-		let engine2 = Engine::with_base_dir(docker2, proj.clone(), dir.path().to_path_buf());
+		let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
 		let file2 = file.clone();
 		let handle = tokio::spawn(async move { engine2.watch(&file2).await });
 
@@ -1514,7 +1513,7 @@ mod watch_tests {
 
 	#[tokio::test]
 	async fn watch_sync_and_restart_action_via_event() {
-		let docker = match podman().await {
+		let client = match podman().await {
 			Some(d) => d,
 			None => return,
 		};
@@ -1524,7 +1523,7 @@ mod watch_tests {
 		fs::write(watch_dir.join("main.txt"), b"v1").unwrap();
 
 		let proj = proj("wsr");
-		let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+		let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 		let file = parse_str(
 			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: src\n          action: sync+restart\n          target: /app/\n",
 		)
@@ -1532,10 +1531,10 @@ mod watch_tests {
 
 		engine.up(&file).await.unwrap();
 
-		let docker2 = podup::podman::connect_from_env()
+		let client2 = podup::podman::connect_from_env()
 			.or_else(|_| podup::podman::connect(None))
 			.unwrap();
-		let engine2 = Engine::with_base_dir(docker2, proj.clone(), dir.path().to_path_buf());
+		let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
 		let file2 = file.clone();
 		let handle = tokio::spawn(async move { engine2.watch(&file2).await });
 
@@ -1549,7 +1548,7 @@ mod watch_tests {
 
 	#[tokio::test]
 	async fn watch_sync_and_exec_action_via_event() {
-		let docker = match podman().await {
+		let client = match podman().await {
 			Some(d) => d,
 			None => return,
 		};
@@ -1559,7 +1558,7 @@ mod watch_tests {
 		fs::write(watch_dir.join("main.txt"), b"v1").unwrap();
 
 		let proj = proj("wse");
-		let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+		let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 		let file = parse_str(
 			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: src\n          action: sync+exec\n          target: /app/\n          exec:\n            command: [\"echo\", \"reloaded\"]\n",
 		)
@@ -1567,10 +1566,10 @@ mod watch_tests {
 
 		engine.up(&file).await.unwrap();
 
-		let docker2 = podup::podman::connect_from_env()
+		let client2 = podup::podman::connect_from_env()
 			.or_else(|_| podup::podman::connect(None))
 			.unwrap();
-		let engine2 = Engine::with_base_dir(docker2, proj.clone(), dir.path().to_path_buf());
+		let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
 		let file2 = file.clone();
 		let handle = tokio::spawn(async move { engine2.watch(&file2).await });
 
@@ -1584,7 +1583,7 @@ mod watch_tests {
 
 	#[tokio::test]
 	async fn watch_event_loop_dispatches_sync() {
-		let docker = match podman().await {
+		let client = match podman().await {
 			Some(d) => d,
 			None => return,
 		};
@@ -1594,7 +1593,7 @@ mod watch_tests {
 		fs::write(watch_dir.join("app.txt"), b"v1").unwrap();
 
 		let proj = proj("wev");
-		let engine = Engine::with_base_dir(docker, proj.clone(), dir.path().to_path_buf());
+		let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 		let rel_path = "src";
 		let yaml = format!(
 			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: {rel_path}\n          action: sync\n          target: /app/\n"
@@ -1603,10 +1602,10 @@ mod watch_tests {
 
 		engine.up(&file).await.unwrap();
 
-		let docker2 = podup::podman::connect_from_env()
+		let client2 = podup::podman::connect_from_env()
 			.or_else(|_| podup::podman::connect(None))
 			.unwrap();
-		let engine2 = Engine::with_base_dir(docker2, proj.clone(), dir.path().to_path_buf());
+		let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
 		let file2 = file.clone();
 		let watch_handle = tokio::spawn(async move { engine2.watch(&file2).await });
 
@@ -1626,12 +1625,12 @@ mod watch_tests {
 
 #[tokio::test]
 async fn pause_and_unpause() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("pau");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -1649,12 +1648,12 @@ async fn pause_and_unpause() {
 
 #[tokio::test]
 async fn engine_run_command_succeeds() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("run");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str("services:\n  job:\n    image: alpine:latest\n").unwrap();
 
 	let result = engine
@@ -1675,12 +1674,12 @@ async fn engine_run_command_succeeds() {
 
 #[tokio::test]
 async fn engine_run_nonzero_exit_returns_run_exited() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("rxc");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str("services:\n  job:\n    image: alpine:latest\n").unwrap();
 
 	let result = engine
@@ -1708,12 +1707,12 @@ async fn engine_run_nonzero_exit_returns_run_exited() {
 
 #[tokio::test]
 async fn engine_top_running_container() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("top");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -1730,12 +1729,12 @@ async fn engine_top_running_container() {
 
 #[tokio::test]
 async fn engine_images_lists_service_images() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("img");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -1752,12 +1751,12 @@ async fn engine_images_lists_service_images() {
 
 #[tokio::test]
 async fn engine_port_returns_binding() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("prt");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    ports:\n      - \"127.0.0.1:18080:80\"\n",
 	)
@@ -1774,13 +1773,13 @@ async fn engine_port_returns_binding() {
 
 #[tokio::test]
 async fn engine_cp_from_container_extracts_file() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let dir = tempfile::tempdir().unwrap();
 	let proj = proj("cpf");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -1799,7 +1798,7 @@ async fn engine_cp_from_container_extracts_file() {
 
 #[tokio::test]
 async fn engine_cp_to_container_uploads_file() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
@@ -1808,7 +1807,7 @@ async fn engine_cp_to_container_uploads_file() {
 	fs::write(&local_file, b"hello from host").unwrap();
 
 	let proj = proj("cpt");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -1830,12 +1829,12 @@ async fn engine_cp_to_container_uploads_file() {
 
 #[tokio::test]
 async fn restart_scaled_service_all_replicas() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("rsr");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  worker:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    deploy:\n      replicas: 2\n",
 	)
@@ -1849,12 +1848,12 @@ async fn restart_scaled_service_all_replicas() {
 
 #[tokio::test]
 async fn logs_scaled_service_all_replicas() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("lsr");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  worker:\n    image: alpine:latest\n    command: [\"sh\", \"-c\", \"echo hello && sleep infinity\"]\n    deploy:\n      replicas: 2\n",
 	)
@@ -1868,12 +1867,12 @@ async fn logs_scaled_service_all_replicas() {
 
 #[tokio::test]
 async fn top_scaled_service_all_replicas() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("tsr");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  worker:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    deploy:\n      replicas: 2\n",
 	)
@@ -1886,12 +1885,12 @@ async fn top_scaled_service_all_replicas() {
 
 #[tokio::test]
 async fn exec_scaled_service_targets_first_replica() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("esr");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  worker:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    deploy:\n      replicas: 2\n",
 	)
@@ -1907,12 +1906,12 @@ async fn exec_scaled_service_targets_first_replica() {
 
 #[tokio::test]
 async fn port_scaled_service_targets_first_replica() {
-	let docker = match podman().await {
+	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("psr");
-	let engine = Engine::new(docker, proj.clone());
+	let engine = Engine::new(client, proj.clone());
 	let file = parse_str(
 		"services:\n  worker:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    ports:\n      - \"80\"\n    deploy:\n      replicas: 2\n",
 	)

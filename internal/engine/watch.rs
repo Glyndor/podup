@@ -12,12 +12,8 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use bollard::body_full;
-use bollard::container::LogOutput;
-use bollard::exec::{CreateExecOptions, StartExecResults};
-use bollard::query_parameters::{
-	StartContainerOptions, StopContainerOptions, UploadToContainerOptions,
-};
+use crate::libpod::types::exec::{ExecCreateConfig, ExecCreateResponse, ExecStartConfig};
+use crate::libpod::{urlencoded, LogOutput};
 use bytes::Bytes;
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -211,16 +207,13 @@ impl Engine {
 				.unwrap_or_else(|| "/".to_string())
 		};
 
-		self.docker
-			.upload_to_container(
-				container,
-				Some(UploadToContainerOptions {
-					path: dest_dir,
-					no_overwrite_dir_non_dir: None,
-					copy_uidgid: None,
-				}),
-				body_full(Bytes::from(tar_bytes)),
-			)
+		let path = format!(
+			"/libpod/containers/{}/archive?path={}",
+			urlencoded(container),
+			urlencoded(&dest_dir),
+		);
+		self.client
+			.put_bytes_ok(&path, Bytes::from(tar_bytes), "application/x-tar")
 			.await
 			.map_err(ComposeError::Podman)?;
 
@@ -242,52 +235,46 @@ impl Engine {
 
 	async fn watch_restart(&self, container_name: &str) -> Result<()> {
 		info!("restarting {container_name}");
-		let _ = self
-			.docker
-			.stop_container(
-				container_name,
-				Some(StopContainerOptions {
-					t: Some(5),
-					..Default::default()
-				}),
-			)
-			.await;
-		self.docker
-			.start_container(container_name, None::<StartContainerOptions>)
-			.await?;
+		let stop_path = format!("/libpod/containers/{}/stop?t=5", urlencoded(container_name));
+		let _ = self.client.post_empty_ok(&stop_path).await;
+		let start_path = format!("/libpod/containers/{}/start", urlencoded(container_name));
+		self.client.post_empty_ok(&start_path).await.map_err(ComposeError::Podman)?;
 		Ok(())
 	}
 
 	async fn watch_exec(&self, container_name: &str, cmd: Vec<String>) -> Result<()> {
-		let exec_id = self
-			.docker
-			.create_exec(
-				container_name,
-				CreateExecOptions::<String> {
-					cmd: Some(cmd),
-					attach_stdout: Some(true),
-					attach_stderr: Some(true),
-					..Default::default()
-				},
-			)
-			.await?
-			.id;
+		let exec_cfg = ExecCreateConfig {
+			cmd: Some(cmd),
+			attach_stdout: Some(true),
+			attach_stderr: Some(true),
+			..Default::default()
+		};
+		let create_path = format!("/libpod/containers/{}/exec", urlencoded(container_name));
+		let resp: ExecCreateResponse = self
+			.client
+			.post_json(&create_path, &exec_cfg)
+			.await
+			.map_err(ComposeError::Podman)?;
 
-		match self.docker.start_exec(&exec_id, None).await? {
-			StartExecResults::Attached { mut output, .. } => {
-				while let Some(msg) = output.next().await {
-					match msg? {
-						LogOutput::StdOut { message } => {
-							print!("{}", String::from_utf8_lossy(&message));
-						}
-						LogOutput::StdErr { message } => {
-							eprint!("{}", String::from_utf8_lossy(&message));
-						}
-						_ => {}
-					}
+		let start_cfg = ExecStartConfig { detach: false, tty: false };
+		let start_path = format!("/libpod/exec/{}/start", urlencoded(&resp.id));
+		let start_resp = self
+			.client
+			.post_json_stream(&start_path, &start_cfg)
+			.await
+			.map_err(ComposeError::Podman)?;
+		let mut stream = crate::libpod::parse_multiplexed(start_resp.into_body());
+
+		while let Some(msg) = stream.next().await {
+			match msg {
+				Ok(LogOutput::StdOut { message }) => {
+					print!("{}", String::from_utf8_lossy(&message));
 				}
+				Ok(LogOutput::StdErr { message }) => {
+					eprint!("{}", String::from_utf8_lossy(&message));
+				}
+				Err(_) => break,
 			}
-			StartExecResults::Detached => {}
 		}
 		Ok(())
 	}

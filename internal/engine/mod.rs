@@ -1,6 +1,6 @@
 //! Container orchestration engine.
 //!
-//! Translates a parsed [`ComposeFile`] into Podman API calls via bollard.
+//! Translates a parsed [`ComposeFile`] into Podman API calls via the libpod REST API.
 
 mod build;
 mod container;
@@ -21,13 +21,12 @@ mod watch;
 
 use std::path::PathBuf;
 
-use bollard::container::LogOutput;
-use bollard::exec::{CreateExecOptions, StartExecResults};
-use bollard::Docker;
 use futures::StreamExt;
 
 use crate::compose::types::{LifecycleHook, Service};
-use crate::error::Result;
+use crate::error::{ComposeError, Result};
+use crate::libpod::types::exec::{ExecCreateConfig, ExecStartConfig};
+use crate::libpod::{Client, LogOutput};
 
 // ---------------------------------------------------------------------------
 // Engine
@@ -35,25 +34,25 @@ use crate::error::Result;
 
 /// Handle through which all Podman operations for a project are dispatched.
 pub struct Engine {
-	pub(super) docker: Docker,
+	pub(super) client: Client,
 	pub(super) project: String,
 	pub(super) base_dir: PathBuf,
 }
 
 impl Engine {
 	/// Create an engine for `project_name` using the working directory as the base path for relative volume mounts.
-	pub fn new(docker: Docker, project: String) -> Self {
+	pub fn new(client: Client, project: String) -> Self {
 		Self {
-			docker,
+			client,
 			project,
 			base_dir: std::env::current_dir().unwrap_or_default(),
 		}
 	}
 
 	/// Create an engine with an explicit base directory — use when the compose file is not in the working directory.
-	pub fn with_base_dir(docker: Docker, project: String, base_dir: PathBuf) -> Self {
+	pub fn with_base_dir(client: Client, project: String, base_dir: PathBuf) -> Self {
 		Self {
-			docker,
+			client,
 			project,
 			base_dir,
 		}
@@ -65,52 +64,47 @@ impl Engine {
 		hook: &LifecycleHook,
 	) -> Result<()> {
 		let cmd = hook.command.to_exec();
-		let env: Option<Vec<String>> = {
+		let env: Vec<String> = {
 			let m = hook.environment.to_map();
-			if m.is_empty() {
-				None
-			} else {
-				Some(
-					m.into_iter()
-						.filter_map(|(k, v)| v.map(|v| format!("{k}={v}")))
-						.collect(),
-				)
-			}
+			m.into_iter()
+				.filter_map(|(k, v)| v.map(|v| format!("{k}={v}")))
+				.collect()
 		};
 
-		let exec_id = self
-			.docker
-			.create_exec(
-				container_name,
-				CreateExecOptions::<String> {
-					cmd: Some(cmd),
-					user: hook.user.clone(),
-					privileged: hook.privileged,
-					working_dir: hook.working_dir.clone(),
-					env,
-					attach_stdout: Some(true),
-					attach_stderr: Some(true),
-					..Default::default()
-				},
-			)
-			.await?
-			.id;
+		let exec_cfg = ExecCreateConfig {
+			cmd: Some(cmd),
+			user: hook.user.clone(),
+			privileged: hook.privileged,
+			working_dir: hook.working_dir.clone(),
+			env: if env.is_empty() { None } else { Some(env) },
+			attach_stdout: Some(true),
+			attach_stderr: Some(true),
+			..Default::default()
+		};
 
-		match self.docker.start_exec(&exec_id, None).await? {
-			StartExecResults::Attached { mut output, .. } => {
-				while let Some(msg) = output.next().await {
-					match msg? {
-						LogOutput::StdOut { message } => {
-							print!("{}", String::from_utf8_lossy(&message));
-						}
-						LogOutput::StdErr { message } => {
-							eprint!("{}", String::from_utf8_lossy(&message));
-						}
-						_ => {}
-					}
+		let path = format!("/libpod/containers/{container_name}/exec");
+		let resp: crate::libpod::types::exec::ExecCreateResponse =
+			self.client.post_json(&path, &exec_cfg).await.map_err(ComposeError::Podman)?;
+		let exec_id = resp.id;
+
+		let start_cfg = ExecStartConfig { detach: false, tty: false };
+		let start_path = format!("/libpod/exec/{exec_id}/start");
+		let resp = self
+			.client
+			.post_json_stream(&start_path, &start_cfg)
+			.await
+			.map_err(ComposeError::Podman)?;
+
+		let mut stream = crate::libpod::parse_multiplexed(resp.into_body());
+		while let Some(msg) = stream.next().await {
+			match msg.map_err(ComposeError::Podman)? {
+				LogOutput::StdOut { message } => {
+					print!("{}", String::from_utf8_lossy(&message));
+				}
+				LogOutput::StdErr { message } => {
+					eprint!("{}", String::from_utf8_lossy(&message));
 				}
 			}
-			StartExecResults::Detached => {}
 		}
 
 		Ok(())

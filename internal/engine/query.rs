@@ -1,16 +1,12 @@
 //! Query and observation commands: ps, logs, exec, pull, remove_orphans, attach_logs, top, port, images.
 
-use std::collections::HashMap;
-
-use bollard::container::LogOutput;
-use bollard::exec::{CreateExecOptions, StartExecResults};
-use bollard::query_parameters::{
-	InspectContainerOptions, ListContainersOptions, LogsOptions, RemoveContainerOptions,
-};
 use futures::StreamExt;
 
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
+use crate::libpod::types::exec::{ExecCreateConfig, ExecCreateResponse, ExecInspect, ExecStartConfig};
+use crate::libpod::types::image::ImageInspect;
+use crate::libpod::{urlencoded, LogOutput};
 
 use super::Engine;
 
@@ -18,43 +14,35 @@ impl Engine {
 	/// List containers for this project: name, image, command, state, and port bindings.
 	pub async fn ps(&self, _file: &ComposeFile) -> Result<()> {
 		let label = format!("podup.project={}", self.project);
-		let mut filters: HashMap<String, Vec<String>> = HashMap::new();
-		filters.insert("label".to_string(), vec![label]);
+		let filters = serde_json::json!({ "label": [label] });
+		let path = format!(
+			"/libpod/containers/json?all=true&filters={}",
+			urlencoded(&filters.to_string()),
+		);
 
 		let containers = self
-			.docker
-			.list_containers(Some(ListContainersOptions {
-				all: true,
-				filters: Some(filters),
-				..Default::default()
-			}))
-			.await?;
+			.client
+			.get_json::<Vec<crate::libpod::types::container::ContainerListEntry>>(&path)
+			.await
+			.map_err(ComposeError::Podman)?;
 
 		println!("{:<40} {:<30} {:<20}", "NAME", "IMAGE", "STATUS");
 		for c in containers {
-			let names = c
-				.names
-				.unwrap_or_default()
-				.join(", ")
-				.trim_start_matches('/')
-				.to_string();
-			let image = c.image.unwrap_or_default();
-			let status = c.status.unwrap_or_default();
+			let names = c.names.join(", ").trim_start_matches('/').to_string();
 			let ports = c
 				.ports
-				.unwrap_or_default()
 				.iter()
 				.map(|p| {
 					format!(
 						"{}:{}->{}",
-						p.ip.as_deref().unwrap_or(""),
-						p.public_port.unwrap_or(0),
-						p.private_port
+						p.host_ip.as_deref().unwrap_or(""),
+						p.host_port.unwrap_or(0),
+						p.container_port,
 					)
 				})
 				.collect::<Vec<_>>()
 				.join(", ");
-			println!("{names:<40} {image:<30} {status:<20} {ports}");
+			println!("{names:<40} {:<30} {:<20} {ports}", c.image, c.status);
 		}
 
 		Ok(())
@@ -81,25 +69,22 @@ impl Engine {
 		};
 
 		for container_name in targets {
-			let mut stream = self.docker.logs(
-				&container_name,
-				Some(LogsOptions {
-					stdout: true,
-					stderr: true,
-					follow,
-					..Default::default()
-				}),
+			let path = format!(
+				"/libpod/containers/{}/logs?stdout=true&stderr=true&follow={}",
+				urlencoded(&container_name),
+				follow,
 			);
+			let resp = self.client.get_stream(&path).await.map_err(ComposeError::Podman)?;
+			let mut stream = crate::libpod::parse_multiplexed(resp.into_body());
 
 			while let Some(msg) = stream.next().await {
-				match msg? {
+				match msg.map_err(ComposeError::Podman)? {
 					LogOutput::StdOut { message } => {
 						print!("{}", String::from_utf8_lossy(&message));
 					}
 					LogOutput::StdErr { message } => {
 						eprint!("{}", String::from_utf8_lossy(&message));
 					}
-					_ => {}
 				}
 			}
 		}
@@ -120,40 +105,51 @@ impl Engine {
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
 		let container_name = self.first_replica_name(service_name, service);
 
-		let exec_id = self
-			.docker
-			.create_exec(
-				&container_name,
-				CreateExecOptions::<String> {
-					cmd: Some(cmd),
-					attach_stdout: Some(true),
-					attach_stderr: Some(true),
-					attach_stdin: Some(true),
-					tty: Some(true),
-					..Default::default()
-				},
-			)
-			.await?
-			.id;
+		let exec_cfg = ExecCreateConfig {
+			cmd: Some(cmd),
+			attach_stdout: Some(true),
+			attach_stderr: Some(true),
+			attach_stdin: Some(true),
+			tty: Some(true),
+			..Default::default()
+		};
+		let create_path = format!(
+			"/libpod/containers/{}/exec",
+			urlencoded(&container_name),
+		);
+		let resp: ExecCreateResponse = self
+			.client
+			.post_json(&create_path, &exec_cfg)
+			.await
+			.map_err(ComposeError::Podman)?;
+		let exec_id = resp.id;
 
-		match self.docker.start_exec(&exec_id, None).await? {
-			StartExecResults::Attached { mut output, .. } => {
-				while let Some(msg) = output.next().await {
-					match msg? {
-						LogOutput::StdOut { message } => {
-							print!("{}", String::from_utf8_lossy(&message));
-						}
-						LogOutput::StdErr { message } => {
-							eprint!("{}", String::from_utf8_lossy(&message));
-						}
-						_ => {}
-					}
+		let start_cfg = ExecStartConfig { detach: false, tty: true };
+		let start_path = format!("/libpod/exec/{}/start", urlencoded(&exec_id));
+		let start_resp = self
+			.client
+			.post_json_stream(&start_path, &start_cfg)
+			.await
+			.map_err(ComposeError::Podman)?;
+		let mut stream = crate::libpod::parse_multiplexed(start_resp.into_body());
+
+		while let Some(msg) = stream.next().await {
+			match msg.map_err(ComposeError::Podman)? {
+				LogOutput::StdOut { message } => {
+					print!("{}", String::from_utf8_lossy(&message));
+				}
+				LogOutput::StdErr { message } => {
+					eprint!("{}", String::from_utf8_lossy(&message));
 				}
 			}
-			StartExecResults::Detached => {}
 		}
 
-		let inspect = self.docker.inspect_exec(&exec_id).await?;
+		let inspect_path = format!("/libpod/exec/{}/json", urlencoded(&exec_id));
+		let inspect: ExecInspect = self
+			.client
+			.get_json(&inspect_path)
+			.await
+			.map_err(ComposeError::Podman)?;
 		if let Some(code) = inspect.exit_code {
 			if code != 0 {
 				return Err(ComposeError::RunExited(code));
@@ -182,17 +178,17 @@ impl Engine {
 	/// Remove containers labelled for this project that are not defined in the current compose file.
 	pub async fn remove_orphans(&self, file: &ComposeFile) -> Result<()> {
 		let label = format!("podup.project={}", self.project);
-		let mut filters: HashMap<String, Vec<String>> = HashMap::new();
-		filters.insert("label".to_string(), vec![label]);
+		let filters = serde_json::json!({ "label": [label] });
+		let path = format!(
+			"/libpod/containers/json?all=true&filters={}",
+			urlencoded(&filters.to_string()),
+		);
 
 		let running = self
-			.docker
-			.list_containers(Some(ListContainersOptions {
-				all: true,
-				filters: Some(filters),
-				..Default::default()
-			}))
-			.await?;
+			.client
+			.get_json::<Vec<crate::libpod::types::container::ContainerListEntry>>(&path)
+			.await
+			.map_err(ComposeError::Podman)?;
 
 		let known: std::collections::HashSet<String> = file
 			.services
@@ -201,21 +197,13 @@ impl Engine {
 			.collect();
 
 		for c in running {
-			let names = c.names.unwrap_or_default();
-			for raw in &names {
+			for raw in &c.names {
 				let name = raw.trim_start_matches('/');
 				if !known.contains(name) {
 					tracing::info!("removing orphan container {name}");
-					let _ = self
-						.docker
-						.remove_container(
-							name,
-							Some(RemoveContainerOptions {
-								force: true,
-								..Default::default()
-							}),
-						)
-						.await;
+					let rm_path =
+						format!("/libpod/containers/{}?force=true", urlencoded(name));
+					let _ = self.client.delete_ok(&rm_path).await;
 				}
 			}
 		}
@@ -240,7 +228,15 @@ impl Engine {
 		for name in &names {
 			let service = &file.services[name];
 			for container_name in self.replica_names(name, service) {
-				match self.docker.top_processes(&container_name, None).await {
+				let path = format!(
+					"/libpod/containers/{}/top",
+					urlencoded(&container_name),
+				);
+				match self
+					.client
+					.get_json::<crate::libpod::types::container::TopResponse>(&path)
+					.await
+				{
 					Ok(result) => {
 						println!("{container_name}");
 						if let Some(titles) = &result.titles {
@@ -275,16 +271,20 @@ impl Engine {
 			.ok_or_else(|| crate::error::ComposeError::ServiceNotFound(service_name.into()))?;
 		let container_name = self.first_replica_name(service_name, service);
 
+		let path = format!(
+			"/libpod/containers/{}/json",
+			urlencoded(&container_name),
+		);
 		let info = self
-			.docker
-			.inspect_container(&container_name, None::<InspectContainerOptions>)
-			.await?;
+			.client
+			.get_json::<crate::libpod::types::container::ContainerInspect>(&path)
+			.await
+			.map_err(ComposeError::Podman)?;
 
 		let key = format!("{private_port}/{proto}");
 		let binding = info
 			.network_settings
-			.and_then(|ns| ns.ports)
-			.and_then(|ports| ports.get(&key).cloned().flatten())
+			.and_then(|ns| ns.ports.get(&key).cloned().flatten())
 			.and_then(|bindings| bindings.into_iter().next());
 
 		match binding {
@@ -310,7 +310,8 @@ impl Engine {
 				None if service.build.is_some() => format!("{name}:latest"),
 				None => continue,
 			};
-			match self.docker.inspect_image(&image_ref).await {
+			let path = format!("/libpod/images/{}/json", urlencoded(&image_ref));
+			match self.client.get_json::<ImageInspect>(&path).await {
 				Ok(img) => {
 					let (repo, tag) = image_ref
 						.rsplit_once(':')
@@ -318,8 +319,6 @@ impl Engine {
 						.unwrap_or_else(|| (image_ref.clone(), "latest".to_string()));
 					let id = img
 						.id
-						.as_deref()
-						.unwrap_or("")
 						.trim_start_matches("sha256:")
 						.get(..12)
 						.unwrap_or("");
@@ -333,9 +332,6 @@ impl Engine {
 
 	/// Attach to log streams for all services with `attach: true` (the default). Streams are multiplexed to stdout with a service-name prefix.
 	pub async fn attach_logs(&self, file: &ComposeFile) -> Result<()> {
-		use bollard::query_parameters::LogsOptions;
-		use futures::StreamExt;
-
 		let attached: Vec<(String, String)> = file
 			.services
 			.iter()
@@ -358,18 +354,22 @@ impl Engine {
 
 		let streams: Vec<_> = attached
 			.iter()
-			.map(|(name, cname)| {
-				let prefix = name.clone();
-				let mut stream = self.docker.logs(
-					cname,
-					Some(LogsOptions {
-						stdout: true,
-						stderr: true,
-						follow: true,
-						..Default::default()
-					}),
+			.map(|(display, cname)| {
+				let prefix = display.clone();
+				let path = format!(
+					"/libpod/containers/{}/logs?stdout=true&stderr=true&follow=true",
+					urlencoded(cname),
 				);
+				let client = &self.client;
 				async move {
+					let resp = match client.get_stream(&path).await {
+						Ok(r) => r,
+						Err(e) => {
+							tracing::warn!("attach_logs {prefix}: {e}");
+							return;
+						}
+					};
+					let mut stream = crate::libpod::parse_multiplexed(resp.into_body());
 					while let Some(msg) = stream.next().await {
 						match msg {
 							Ok(LogOutput::StdOut { message }) => {
@@ -378,7 +378,7 @@ impl Engine {
 							Ok(LogOutput::StdErr { message }) => {
 								eprint!("{prefix} | {}", String::from_utf8_lossy(&message));
 							}
-							_ => {}
+							Err(_) => break,
 						}
 					}
 				}

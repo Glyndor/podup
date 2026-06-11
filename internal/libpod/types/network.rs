@@ -1,0 +1,90 @@
+//! Podman libpod network API request and response types.
+
+use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
+
+/// Request body for `POST /libpod/networks/create`.
+#[derive(Serialize, Default)]
+pub struct NetworkCreateRequest {
+	pub name: String,
+
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub driver: Option<String>,
+
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub internal: Option<bool>,
+
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub attachable: Option<bool>,
+
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub dns_enabled: Option<bool>,
+
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub ipv6_enabled: Option<bool>,
+
+	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
+	pub labels: HashMap<String, String>,
+
+	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
+	pub options: HashMap<String, String>,
+
+	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	pub subnets: Vec<Subnet>,
+}
+
+/// Subnet specification for network creation.
+#[derive(Serialize, Default)]
+pub struct Subnet {
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub subnet: Option<String>,
+
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub gateway: Option<String>,
+
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub lease_range: Option<LeaseRange>,
+}
+
+/// Lease range for a subnet.
+#[derive(Serialize)]
+pub struct LeaseRange {
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub start_ip: Option<String>,
+
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub end_ip: Option<String>,
+}
+
+/// Request body for `POST /libpod/networks/{name}/connect`.
+#[derive(Serialize)]
+pub struct NetworkConnectRequest {
+	pub container: String,
+
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub endpoint_config: Option<NetworkEndpointOptions>,
+}
+
+/// Per-endpoint connection options for `NetworkConnectRequest`.
+#[derive(Serialize, Default)]
+pub struct NetworkEndpointOptions {
+	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	pub aliases: Vec<String>,
+
+	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	pub static_ips: Vec<String>,
+
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub static_mac: Option<String>,
+
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub driver_opts: Option<HashMap<String, String>>,
+}
+
+/// Response from network creation.
+#[allow(dead_code)]
+#[derive(Deserialize)]
+pub struct NetworkResponse {
+	pub name: String,
+}

@@ -3,40 +3,28 @@
 //!
 //! Device, blkio, tmpfs, and label-file helpers live in [`super::container_misc`].
 
-use bollard::models::{
-	HealthConfig, HostConfigLogConfig, ResourcesUlimits, RestartPolicy as BollardRestart,
-	RestartPolicyNameEnum,
-};
-
 use crate::compose::types::{
 	Command as ComposeCommand, HealthCheck, LoggingConfig, RestartPolicy as ComposeRestart, Service,
 };
+use crate::libpod::types::container::{HealthConfig, LinuxResources, LogConfig, Ulimit};
 use crate::size;
 
 // ---------------------------------------------------------------------------
 // Restart policy
 // ---------------------------------------------------------------------------
 
-pub(super) fn build_restart_policy(service: &Service) -> Option<BollardRestart> {
+/// Returns `(policy_name, max_retry_tries)` for SpecGenerator.
+pub(super) fn build_restart_policy(service: &Service) -> (Option<String>, Option<u64>) {
 	if let Some(r) = &service.restart {
-		return Some(match r {
-			ComposeRestart::No => BollardRestart {
-				name: Some(RestartPolicyNameEnum::NO),
-				maximum_retry_count: None,
-			},
-			ComposeRestart::Always => BollardRestart {
-				name: Some(RestartPolicyNameEnum::ALWAYS),
-				maximum_retry_count: None,
-			},
-			ComposeRestart::OnFailure { max_attempts } => BollardRestart {
-				name: Some(RestartPolicyNameEnum::ON_FAILURE),
-				maximum_retry_count: max_attempts.map(|n| n as i64),
-			},
-			ComposeRestart::UnlessStopped => BollardRestart {
-				name: Some(RestartPolicyNameEnum::UNLESS_STOPPED),
-				maximum_retry_count: None,
-			},
-		});
+		let (name, tries) = match r {
+			ComposeRestart::No => ("no", None),
+			ComposeRestart::Always => ("always", None),
+			ComposeRestart::OnFailure { max_attempts } => {
+				("on-failure", max_attempts.map(|n| n as u64))
+			}
+			ComposeRestart::UnlessStopped => ("unless-stopped", None),
+		};
+		return (Some(name.to_string()), tries);
 	}
 	if let Some(drp) = service
 		.deploy
@@ -44,30 +32,26 @@ pub(super) fn build_restart_policy(service: &Service) -> Option<BollardRestart> 
 		.and_then(|d| d.restart_policy.as_ref())
 	{
 		let name = match drp.condition.as_deref().unwrap_or("any") {
-			"none" => RestartPolicyNameEnum::NO,
-			"on-failure" => RestartPolicyNameEnum::ON_FAILURE,
-			_ => RestartPolicyNameEnum::UNLESS_STOPPED,
+			"none" => "no",
+			"on-failure" => "on-failure",
+			_ => "unless-stopped",
 		};
-		return Some(BollardRestart {
-			name: Some(name),
-			maximum_retry_count: drp.max_attempts.map(|n| n as i64),
-		});
+		return (
+			Some(name.to_string()),
+			drp.max_attempts.map(|n| n as u64),
+		);
 	}
-	None
+	(None, None)
 }
 
 // ---------------------------------------------------------------------------
 // Logging
 // ---------------------------------------------------------------------------
 
-pub(super) fn build_log_config(logging: Option<&LoggingConfig>) -> Option<HostConfigLogConfig> {
-	logging.map(|l| HostConfigLogConfig {
-		typ: l.driver.clone(),
-		config: if l.options.is_empty() {
-			None
-		} else {
-			Some(l.options.clone())
-		},
+pub(super) fn build_log_config(logging: Option<&LoggingConfig>) -> Option<LogConfig> {
+	logging.map(|l| LogConfig {
+		driver: l.driver.clone(),
+		options: l.options.clone(),
 	})
 }
 
@@ -106,18 +90,9 @@ pub(super) fn build_healthcheck(hc: &HealthCheck) -> HealthConfig {
 // Resource limits
 // ---------------------------------------------------------------------------
 
-#[allow(clippy::type_complexity)]
-pub(super) fn resolve_resources(
-	service: &Service,
-) -> (
-	Option<i64>,
-	Option<i64>,
-	Option<i64>,
-	Option<i64>,
-	Option<i64>,
-	Option<i64>,
-	Option<i64>,
-) {
+pub(super) fn build_resource_limits(service: &Service) -> Option<LinuxResources> {
+	use crate::libpod::types::container::{LinuxCPU, LinuxMemory, LinuxPids};
+
 	let mut memory = service.mem_limit.as_deref().and_then(size::parse_memory);
 	let mut mem_reservation = service
 		.mem_reservation
@@ -129,7 +104,7 @@ pub(super) fn resolve_resources(
 		.and_then(size::parse_memory);
 	let mut nano_cpus = service.cpus.as_deref().and_then(size::parse_cpus);
 	let cpu_quota = service.cpu_quota;
-	let cpu_period = service.cpu_period.map(|p| p as i64);
+	let cpu_period = service.cpu_period.map(|p| p as u64);
 	let mut pids_limit = service.pids_limit;
 
 	if let Some(deploy) = &service.deploy {
@@ -153,25 +128,78 @@ pub(super) fn resolve_resources(
 		}
 	}
 
-	(
-		memory,
-		mem_reservation,
-		memswap,
-		nano_cpus,
-		cpu_quota,
-		cpu_period,
-		pids_limit,
-	)
+	// nano_cpus (Docker) = cpus * 1e9; convert to OCI quota with 100ms period.
+	let derived_cpu_quota = nano_cpus.map(|n| n / 10_000);
+	let effective_cpu_quota = cpu_quota.or(derived_cpu_quota);
+	let effective_cpu_period = if effective_cpu_quota.is_some() && cpu_period.is_none() {
+		Some(100_000u64)
+	} else {
+		cpu_period
+	};
+
+	let has_memory = memory.is_some()
+		|| mem_reservation.is_some()
+		|| memswap.is_some()
+		|| service.mem_swappiness.is_some()
+		|| service.oom_kill_disable.is_some();
+
+	let has_cpu = effective_cpu_quota.is_some()
+		|| effective_cpu_period.is_some()
+		|| service.cpu_shares.is_some()
+		|| service.cpuset.is_some()
+		|| service.cpu_rt_period.is_some()
+		|| service.cpu_rt_runtime.is_some();
+
+	let has_pids = pids_limit.is_some();
+
+	if !has_memory && !has_cpu && !has_pids {
+		return None;
+	}
+
+	let mem = if has_memory {
+		Some(LinuxMemory {
+			limit: memory,
+			reservation: mem_reservation,
+			swap: memswap,
+			swappiness: service.mem_swappiness.map(|v| v as u64),
+			disable_oom_killer: service.oom_kill_disable,
+		})
+	} else {
+		None
+	};
+
+	let cpu = if has_cpu {
+		Some(LinuxCPU {
+			shares: service.cpu_shares.map(|v| v as u64),
+			quota: effective_cpu_quota,
+			period: effective_cpu_period,
+			realtime_period: service.cpu_rt_period.map(|v| v as u64),
+			realtime_runtime: service.cpu_rt_runtime,
+			cpus: service.cpuset.clone(),
+		})
+	} else {
+		None
+	};
+
+	let pids = pids_limit.map(|limit| LinuxPids { limit });
+
+	Some(LinuxResources {
+		memory: mem,
+		cpu,
+		pids,
+		block_io: None,
+		devices: vec![],
+	})
 }
 
-pub(super) fn build_ulimits(service: &Service) -> Vec<ResourcesUlimits> {
+pub(super) fn build_ulimits(service: &Service) -> Vec<Ulimit> {
 	service
 		.ulimits
 		.iter()
-		.map(|(name, cfg)| ResourcesUlimits {
-			name: Some(name.clone()),
-			soft: Some(cfg.soft()),
-			hard: Some(cfg.hard()),
+		.map(|(name, cfg)| Ulimit {
+			ulimit_type: name.clone(),
+			soft: cfg.soft() as u64,
+			hard: cfg.hard() as u64,
 		})
 		.collect()
 }
@@ -198,17 +226,17 @@ mod tests {
 	fn restart_policy_no() {
 		let mut svc = default_service();
 		svc.restart = Some(ComposeRestart::No);
-		let p = build_restart_policy(&svc).unwrap();
-		assert_eq!(p.name, Some(RestartPolicyNameEnum::NO));
-		assert!(p.maximum_retry_count.is_none());
+		let (name, tries) = build_restart_policy(&svc);
+		assert_eq!(name.as_deref(), Some("no"));
+		assert!(tries.is_none());
 	}
 
 	#[test]
 	fn restart_policy_always() {
 		let mut svc = default_service();
 		svc.restart = Some(ComposeRestart::Always);
-		let p = build_restart_policy(&svc).unwrap();
-		assert_eq!(p.name, Some(RestartPolicyNameEnum::ALWAYS));
+		let (name, _) = build_restart_policy(&svc);
+		assert_eq!(name.as_deref(), Some("always"));
 	}
 
 	#[test]
@@ -217,22 +245,23 @@ mod tests {
 		svc.restart = Some(ComposeRestart::OnFailure {
 			max_attempts: Some(3),
 		});
-		let p = build_restart_policy(&svc).unwrap();
-		assert_eq!(p.name, Some(RestartPolicyNameEnum::ON_FAILURE));
-		assert_eq!(p.maximum_retry_count, Some(3));
+		let (name, tries) = build_restart_policy(&svc);
+		assert_eq!(name.as_deref(), Some("on-failure"));
+		assert_eq!(tries, Some(3));
 	}
 
 	#[test]
 	fn restart_policy_unless_stopped() {
 		let mut svc = default_service();
 		svc.restart = Some(ComposeRestart::UnlessStopped);
-		let p = build_restart_policy(&svc).unwrap();
-		assert_eq!(p.name, Some(RestartPolicyNameEnum::UNLESS_STOPPED));
+		let (name, _) = build_restart_policy(&svc);
+		assert_eq!(name.as_deref(), Some("unless-stopped"));
 	}
 
 	#[test]
 	fn restart_policy_none_when_absent() {
-		assert!(build_restart_policy(&default_service()).is_none());
+		let (name, _) = build_restart_policy(&default_service());
+		assert!(name.is_none());
 	}
 
 	#[test]
@@ -247,9 +276,9 @@ mod tests {
 			}),
 			..Default::default()
 		});
-		let p = build_restart_policy(&svc).unwrap();
-		assert_eq!(p.name, Some(RestartPolicyNameEnum::ON_FAILURE));
-		assert_eq!(p.maximum_retry_count, Some(5));
+		let (name, tries) = build_restart_policy(&svc);
+		assert_eq!(name.as_deref(), Some("on-failure"));
+		assert_eq!(tries, Some(5));
 	}
 
 	#[test]
@@ -263,8 +292,8 @@ mod tests {
 			}),
 			..Default::default()
 		});
-		let p = build_restart_policy(&svc).unwrap();
-		assert_eq!(p.name, Some(RestartPolicyNameEnum::NO));
+		let (name, _) = build_restart_policy(&svc);
+		assert_eq!(name.as_deref(), Some("no"));
 	}
 
 	// --- log config ---
@@ -281,8 +310,8 @@ mod tests {
 			options: Default::default(),
 		};
 		let cfg = build_log_config(Some(&logging)).unwrap();
-		assert_eq!(cfg.typ.as_deref(), Some("json-file"));
-		assert!(cfg.config.is_none());
+		assert_eq!(cfg.driver.as_deref(), Some("json-file"));
+		assert!(cfg.options.is_empty());
 	}
 
 	#[test]
@@ -294,7 +323,7 @@ mod tests {
 			options: opts,
 		};
 		let cfg = build_log_config(Some(&logging)).unwrap();
-		assert_eq!(cfg.config.unwrap()["max-size"], "10m");
+		assert_eq!(cfg.options["max-size"], "10m");
 	}
 
 	// --- healthcheck ---
@@ -342,31 +371,23 @@ mod tests {
 		assert_eq!(test[0], "curl");
 	}
 
-	// --- resource resolution ---
+	// --- resource limits ---
 
 	#[test]
-	fn resolve_resources_empty_service() {
-		let (mem, mem_res, memswap, nano_cpus, cpu_quota, cpu_period, pids) =
-			resolve_resources(&default_service());
-		assert!(mem.is_none());
-		assert!(mem_res.is_none());
-		assert!(memswap.is_none());
-		assert!(nano_cpus.is_none());
-		assert!(cpu_quota.is_none());
-		assert!(cpu_period.is_none());
-		assert!(pids.is_none());
+	fn build_resource_limits_empty_service() {
+		assert!(build_resource_limits(&default_service()).is_none());
 	}
 
 	#[test]
-	fn resolve_resources_mem_limit() {
+	fn build_resource_limits_mem_limit() {
 		let mut svc = default_service();
 		svc.mem_limit = Some("512m".into());
-		let (mem, _, _, _, _, _, _) = resolve_resources(&svc);
-		assert_eq!(mem, Some(512 * 1024 * 1024));
+		let res = build_resource_limits(&svc).unwrap();
+		assert_eq!(res.memory.unwrap().limit, Some(512 * 1024 * 1024));
 	}
 
 	#[test]
-	fn resolve_resources_deploy_overrides() {
+	fn build_resource_limits_deploy_overrides() {
 		use crate::compose::types::{DeployConfig, ResourceSpec, ResourcesConfig};
 		let mut svc = default_service();
 		svc.deploy = Some(DeployConfig {
@@ -379,8 +400,19 @@ mod tests {
 			}),
 			..Default::default()
 		});
-		let (mem, _, _, _, _, _, _) = resolve_resources(&svc);
-		assert_eq!(mem, Some(256 * 1024 * 1024));
+		let res = build_resource_limits(&svc).unwrap();
+		assert_eq!(res.memory.unwrap().limit, Some(256 * 1024 * 1024));
+	}
+
+	#[test]
+	fn build_resource_limits_cpus_converts_to_quota() {
+		let mut svc = default_service();
+		svc.cpus = Some("0.5".into());
+		let res = build_resource_limits(&svc).unwrap();
+		let cpu = res.cpu.unwrap();
+		// 0.5 CPUs → 500_000_000 nano_cpus → quota = 50_000 (50ms per 100ms period)
+		assert_eq!(cpu.quota, Some(50_000));
+		assert_eq!(cpu.period, Some(100_000));
 	}
 
 	// --- ulimits ---
@@ -393,9 +425,9 @@ mod tests {
 			.insert("nofile".to_string(), UlimitConfig::Single(1024));
 		let ul = build_ulimits(&svc);
 		assert_eq!(ul.len(), 1);
-		assert_eq!(ul[0].name.as_deref(), Some("nofile"));
-		assert_eq!(ul[0].soft, Some(1024));
-		assert_eq!(ul[0].hard, Some(1024));
+		assert_eq!(ul[0].ulimit_type, "nofile");
+		assert_eq!(ul[0].soft, 1024);
+		assert_eq!(ul[0].hard, 1024);
 	}
 
 	#[test]
@@ -410,7 +442,7 @@ mod tests {
 			},
 		);
 		let ul = build_ulimits(&svc);
-		assert_eq!(ul[0].soft, Some(512));
-		assert_eq!(ul[0].hard, Some(2048));
+		assert_eq!(ul[0].soft, 512);
+		assert_eq!(ul[0].hard, 2048);
 	}
 }

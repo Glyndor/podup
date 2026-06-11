@@ -1,7 +1,7 @@
 //! Podman socket connection helpers.
 
 use crate::error::Result;
-use bollard::Docker;
+use crate::libpod::Client;
 #[cfg(any(not(windows), test))]
 use std::path::Path;
 
@@ -12,7 +12,7 @@ const ROOT_SOCKET: &str = "/run/podman/podman.sock";
 #[cfg(windows)]
 const DEFAULT_PIPE: &str = "//./pipe/podman-machine-default";
 
-/// Connect to Podman's Docker-compatible API.
+/// Connect to Podman's libpod REST API.
 ///
 /// Priority:
 /// 1. `socket_path` if provided.
@@ -21,18 +21,14 @@ const DEFAULT_PIPE: &str = "//./pipe/podman-machine-default";
 ///    `podman machine`, on Windows the `podman machine` named pipe.
 /// 3. The conventional path for this platform, so a failed connection
 ///    reports the location podup expected.
-pub fn connect(socket_path: Option<&str>) -> Result<Docker> {
+pub fn connect(socket_path: Option<&str>) -> Result<Client> {
 	let default_path = default_socket_path();
 	let path = socket_path.unwrap_or(&default_path);
-	#[cfg(not(windows))]
-	let client = Docker::connect_with_unix(path, 120, bollard::API_DEFAULT_VERSION)?;
-	#[cfg(windows)]
-	let client = Docker::connect_with_named_pipe(path, 120, bollard::API_DEFAULT_VERSION)?;
-	Ok(client)
+	Ok(Client::new(path))
 }
 
 /// Strips the `unix://` or `npipe://` scheme prefix before passing the path to [`connect`].
-pub fn connect_from_env() -> Result<Docker> {
+pub fn connect_from_env() -> Result<Client> {
 	let socket = std::env::var("PODMAN_SOCKET")
 		.or_else(|_| std::env::var("DOCKER_HOST"))
 		.ok();
@@ -45,7 +41,7 @@ pub fn connect_from_env() -> Result<Docker> {
 }
 
 #[cfg(not(windows))]
-fn default_socket_path() -> String {
+pub(crate) fn default_socket_path() -> String {
 	let candidates = candidate_socket_paths();
 	first_existing(&candidates)
 		.or_else(machine_socket_path)
@@ -56,7 +52,7 @@ fn default_socket_path() -> String {
 /// Windows: named pipes are not probeable through `Path::exists`, so ask
 /// `podman machine inspect` and fall back to the default machine's pipe.
 #[cfg(windows)]
-fn default_socket_path() -> String {
+pub(crate) fn default_socket_path() -> String {
 	machine_socket_path().unwrap_or_else(|| DEFAULT_PIPE.to_string())
 }
 
