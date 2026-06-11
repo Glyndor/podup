@@ -22,6 +22,10 @@ use context::{build_context_tar, build_context_tar_with_inline, map_additional_c
 
 use super::Engine;
 
+/// Files to ship inside the build-context tar plus their matching `secrets=`
+/// specs (`id=NAME,src=ENTRY`) for the libpod build endpoint.
+type ResolvedBuildSecrets = (Vec<(String, Vec<u8>)>, Vec<String>);
+
 impl Engine {
 	pub(super) async fn pull_image(&self, service: &Service) -> Result<()> {
 		let image = match &service.image {
@@ -281,12 +285,11 @@ impl Engine {
 	/// or `environment:`) and returned as a `(tar-entry-name, bytes)` pair plus a
 	/// matching `id=NAME,src=ENTRY` spec for the build endpoint's `secrets` param.
 	/// `external` secrets cannot be forwarded over the API and are warned + skipped.
-	#[allow(clippy::type_complexity)]
 	fn resolve_build_secrets(
 		&self,
 		build: &BuildConfig,
 		file: &crate::compose::types::ComposeFile,
-	) -> Result<(Vec<(String, Vec<u8>)>, Vec<String>)> {
+	) -> Result<ResolvedBuildSecrets> {
 		let mut files = Vec::new();
 		let mut specs = Vec::new();
 		for name in build.secrets() {
@@ -337,5 +340,64 @@ impl Engine {
 				warn!("failed to apply extra tag {extra_tag}: {e}");
 			}
 		}
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::Engine;
+	use crate::libpod::Client;
+
+	fn engine(base: std::path::PathBuf) -> Engine {
+		Engine::with_base_dir(Client::new("/nonexistent.sock"), "p".into(), base)
+	}
+
+	fn build_of(file: &crate::compose::types::ComposeFile) -> &crate::compose::types::BuildConfig {
+		file.services["app"].build.as_ref().unwrap()
+	}
+
+	#[test]
+	fn build_secret_from_file_shipped_in_tar() {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join("token.txt"), b"s3cr3t").unwrap();
+		let yaml = "services:\n  app:\n    build:\n      context: .\n      secrets:\n        - tok\nsecrets:\n  tok:\n    file: token.txt\n";
+		let file = crate::compose::parse_str(yaml).unwrap();
+		let e = engine(dir.path().to_path_buf());
+		let (files, specs) = e.resolve_build_secrets(build_of(&file), &file).unwrap();
+		assert_eq!(
+			specs,
+			vec!["id=tok,src=.podup-build-secret-tok".to_string()]
+		);
+		assert_eq!(files.len(), 1);
+		assert_eq!(files[0].0, ".podup-build-secret-tok");
+		assert_eq!(files[0].1, b"s3cr3t");
+	}
+
+	#[test]
+	fn build_secret_content_inlined() {
+		let yaml = "services:\n  app:\n    build:\n      context: .\n      secrets:\n        - c\nsecrets:\n  c:\n    content: inline-value\n";
+		let file = crate::compose::parse_str(yaml).unwrap();
+		let e = engine(std::env::temp_dir());
+		let (files, _) = e.resolve_build_secrets(build_of(&file), &file).unwrap();
+		assert_eq!(files[0].1, b"inline-value");
+	}
+
+	#[test]
+	fn build_secret_external_is_skipped() {
+		let yaml = "services:\n  app:\n    build:\n      context: .\n      secrets:\n        - ext\nsecrets:\n  ext:\n    external: true\n";
+		let file = crate::compose::parse_str(yaml).unwrap();
+		let e = engine(std::env::temp_dir());
+		let (files, specs) = e.resolve_build_secrets(build_of(&file), &file).unwrap();
+		assert!(files.is_empty());
+		assert!(specs.is_empty());
+	}
+
+	#[test]
+	fn build_secret_undefined_errors() {
+		let yaml =
+			"services:\n  app:\n    build:\n      context: .\n      secrets:\n        - missing\n";
+		let file = crate::compose::parse_str(yaml).unwrap();
+		let e = engine(std::env::temp_dir());
+		assert!(e.resolve_build_secrets(build_of(&file), &file).is_err());
 	}
 }

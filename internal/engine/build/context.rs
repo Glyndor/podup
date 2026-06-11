@@ -235,10 +235,60 @@ fn glob_rec(pat: &[u8], s: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::{
-		build_context_tar, build_context_tar_with_inline, glob_match, is_ignored, read_dockerignore,
+		build_context_tar, build_context_tar_with_inline, glob_match, is_ignored,
+		map_additional_context, read_dockerignore,
 	};
 	use std::fs;
+	use std::path::Path;
 	use tempfile::tempdir;
+
+	#[test]
+	fn additional_context_prefix_mapping() {
+		let base = Path::new("/proj");
+		assert_eq!(
+			map_additional_context(base, "docker-image://alpine"),
+			"image:alpine"
+		);
+		assert_eq!(
+			map_additional_context(base, "https://example.org/ctx.tar"),
+			"url:https://example.org/ctx.tar"
+		);
+		assert_eq!(
+			map_additional_context(base, "git://example.org/r.git"),
+			"url:git://example.org/r.git"
+		);
+		assert_eq!(
+			map_additional_context(base, "sub/dir"),
+			"localpath:/proj/sub/dir"
+		);
+	}
+
+	#[test]
+	fn extra_files_are_added_to_context_tar() {
+		use flate2::read::GzDecoder;
+		use std::io::Read;
+
+		let dir = tempdir().unwrap();
+		fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
+		let extra = vec![(".podup-build-secret-tok".to_string(), b"hunter2".to_vec())];
+		let bytes = build_context_tar(dir.path(), "Dockerfile", &extra).unwrap();
+
+		let mut raw = Vec::new();
+		GzDecoder::new(bytes.as_slice())
+			.read_to_end(&mut raw)
+			.unwrap();
+		let mut archive = tar::Archive::new(raw.as_slice());
+		let names: Vec<String> = archive
+			.entries()
+			.unwrap()
+			.filter_map(|e| e.ok())
+			.filter_map(|e| e.path().ok().map(|p| p.to_string_lossy().into_owned()))
+			.collect();
+		assert!(
+			names.iter().any(|n| n.contains(".podup-build-secret-tok")),
+			"secret entry must be present: {names:?}"
+		);
+	}
 
 	// is_ignored (build) ---------------------------------------------------
 

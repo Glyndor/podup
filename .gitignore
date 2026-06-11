@@ -1,14 +1,15 @@
 # Local working notes
 GAP_ANALYSIS.md
 
-# Coverage & profiling
+# Coverage & profiling (root-level artifacts only; anchored so they don't
+# swallow source dirs such as tests/parse/coverage/)
 *.profraw
 *.profdata
-tarpaulin-report.html
-coverage/
-coverage-html*/
-coverage.json
-lcov.info
+/tarpaulin-report.html
+/coverage/
+/coverage-html*/
+/coverage.json
+/lcov.info
 
 # Fuzzing
 fuzz/corpus/
