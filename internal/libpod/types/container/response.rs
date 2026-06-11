@@ -4,10 +4,18 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
+fn null_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+	D: serde::Deserializer<'de>,
+	T: Default + Deserialize<'de>,
+{
+	Option::<T>::deserialize(d).map(|v| v.unwrap_or_default())
+}
+
 /// Entry in the `GET /libpod/containers/json` response array.
 #[derive(Deserialize)]
 pub struct ContainerListEntry {
-	#[serde(rename = "Names", default)]
+	#[serde(rename = "Names", default, deserialize_with = "null_default")]
 	pub names: Vec<String>,
 
 	#[serde(rename = "Image", default)]
@@ -16,7 +24,7 @@ pub struct ContainerListEntry {
 	#[serde(rename = "Status", default)]
 	pub status: String,
 
-	#[serde(rename = "Ports", default)]
+	#[serde(rename = "Ports", default, deserialize_with = "null_default")]
 	pub ports: Vec<ContainerPort>,
 }
 
@@ -199,5 +207,13 @@ mod tests {
 		assert_eq!(entry.names, vec!["/mycontainer"]);
 		assert_eq!(entry.image, "nginx");
 		assert_eq!(entry.status, "running");
+	}
+
+	#[test]
+	fn container_list_entry_null_vec_fields() {
+		let json = r#"{"Names": null, "Image": "alpine", "Status": "exited", "Ports": null}"#;
+		let entry: ContainerListEntry = serde_json::from_str(json).unwrap();
+		assert!(entry.names.is_empty());
+		assert!(entry.ports.is_empty());
 	}
 }

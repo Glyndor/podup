@@ -23,7 +23,11 @@ const DEFAULT_PIPE: &str = "//./pipe/podman-machine-default";
 ///    reports the location podup expected.
 pub fn connect(socket_path: Option<&str>) -> Result<Client> {
 	let default_path = default_socket_path();
-	let path = socket_path.unwrap_or(&default_path);
+	let raw = socket_path.unwrap_or(&default_path);
+	let path = raw
+		.strip_prefix("unix://")
+		.or_else(|| raw.strip_prefix("npipe://"))
+		.unwrap_or(raw);
 	Ok(Client::new(path))
 }
 
@@ -224,5 +228,23 @@ mod tests {
 				format!("{machine_dir}/podman-machine-default/podman.sock"),
 			]
 		);
+	}
+
+	#[test]
+	fn connect_strips_unix_scheme() {
+		let c = connect(Some("unix:///run/user/1000/podman/podman.sock")).unwrap();
+		drop(c);
+	}
+
+	#[test]
+	fn connect_strips_npipe_scheme() {
+		let c = connect(Some("npipe:////./pipe/podman")).unwrap();
+		drop(c);
+	}
+
+	#[test]
+	fn connect_passes_plain_path_unchanged() {
+		let c = connect(Some("/run/user/1000/podman/podman.sock")).unwrap();
+		drop(c);
 	}
 }
