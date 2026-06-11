@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 /// Request body for `POST /libpod/networks/create`.
 #[derive(Serialize, Default)]
@@ -57,9 +57,3 @@ pub struct LeaseRange {
 	pub end_ip: Option<String>,
 }
 
-/// Response from network creation.
-#[allow(dead_code)]
-#[derive(Deserialize)]
-pub struct NetworkResponse {
-	pub name: String,
-}

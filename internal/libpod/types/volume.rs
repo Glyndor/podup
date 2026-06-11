@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 /// Request body for `POST /libpod/volumes/create`.
 #[derive(Serialize, Default)]
@@ -20,10 +20,3 @@ pub struct VolumeCreateOptions {
 	pub labels: HashMap<String, String>,
 }
 
-/// Response from volume creation or inspection.
-#[allow(dead_code)]
-#[derive(Deserialize)]
-pub struct VolumeResponse {
-	#[serde(rename = "Name")]
-	pub name: String,
-}
