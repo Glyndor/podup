@@ -17,7 +17,10 @@ pub mod size;
 pub mod substitute;
 pub mod update;
 
-pub use compose::{parse_file, parse_file_with_env_files, parse_str, parse_str_raw, resolve_order};
+pub use compose::{
+	parse_file, parse_file_with_env_files, parse_files_with_env_files, parse_str, parse_str_raw,
+	resolve_order,
+};
 pub use engine::{Engine, ProjectLock, RunOptions};
 pub use error::{ComposeError, Result};
 pub use libpod::Client;

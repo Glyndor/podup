@@ -8,7 +8,7 @@ mod extends;
 mod include;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{ComposeError, Result};
 use crate::substitute;
@@ -74,6 +74,51 @@ pub fn parse_file_with_env_files(path: &Path, env_files: &[String]) -> Result<Co
 
 	extends::resolve_all_extends(&mut file, &dir)?;
 	Ok(file)
+}
+
+/// Parse and merge multiple compose files (the `-f`/`COMPOSE_FILE` list).
+///
+/// Files are merged left to right: a later file overrides an earlier one,
+/// service by service (per-field, like `extends`), with top-level
+/// volumes/networks/secrets/configs replaced on key conflicts. Relative paths
+/// resolve against the first file's directory, matching the compose project
+/// directory. `env_files` feed interpolation for every file.
+pub fn parse_files_with_env_files(paths: &[PathBuf], env_files: &[String]) -> Result<ComposeFile> {
+	let mut iter = paths.iter();
+	let first = iter
+		.next()
+		.ok_or_else(|| ComposeError::FileNotFound("no compose file given".to_string()))?;
+	let mut merged = parse_file_with_env_files(first, env_files)?;
+	for path in iter {
+		let other = parse_file_with_env_files(path, env_files)?;
+		merge_override(&mut merged, other);
+	}
+	Ok(merged)
+}
+
+/// Merge `other` into `target` with `other` winning (compose `-f` override
+/// semantics): services are merged field-by-field, other top-level maps replace
+/// on key conflict.
+fn merge_override(target: &mut ComposeFile, other: ComposeFile) {
+	for (name, svc) in other.services {
+		if let Some(base) = target.services.get_mut(&name) {
+			*base = extends::merge_service(std::mem::take(base), svc);
+		} else {
+			target.services.insert(name, svc);
+		}
+	}
+	for (k, v) in other.volumes {
+		target.volumes.insert(k, v);
+	}
+	for (k, v) in other.networks {
+		target.networks.insert(k, v);
+	}
+	for (k, v) in other.secrets {
+		target.secrets.insert(k, v);
+	}
+	for (k, v) in other.configs {
+		target.configs.insert(k, v);
+	}
 }
 
 /// Parse a compose YAML string (no file I/O).

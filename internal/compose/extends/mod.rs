@@ -17,7 +17,7 @@ use super::parse_file_inner;
 use super::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 
-use merge::merge_service;
+pub(in crate::compose) use merge::merge_service;
 
 const MAX_EXTENDS_DEPTH: usize = 16;
 
