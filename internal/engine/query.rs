@@ -55,27 +55,40 @@ impl Engine {
 		service_name: Option<&str>,
 		follow: bool,
 	) -> Result<()> {
-		let targets: Vec<String> = if let Some(svc) = service_name {
+		// (container_name, is_tty) — TTY containers send raw bytes; non-TTY use
+		// multiplexed 8-byte-header framing.
+		let targets: Vec<(String, bool)> = if let Some(svc) = service_name {
 			let service = file
 				.services
 				.get(svc)
 				.ok_or_else(|| ComposeError::ServiceNotFound(svc.into()))?;
+			let is_tty = service.tty.unwrap_or(false);
 			self.replica_names(svc, service)
+				.into_iter()
+				.map(|n| (n, is_tty))
+				.collect()
 		} else {
 			file.services
 				.iter()
-				.flat_map(|(n, s)| self.replica_names(n, s))
+				.flat_map(|(n, s)| {
+					let is_tty = s.tty.unwrap_or(false);
+					self.replica_names(n, s).into_iter().map(move |cname| (cname, is_tty))
+				})
 				.collect()
 		};
 
-		for container_name in targets {
+		for (container_name, is_tty) in targets {
 			let path = format!(
 				"/libpod/containers/{}/logs?stdout=true&stderr=true&follow={}",
 				urlencoded(&container_name),
 				follow,
 			);
 			let resp = self.client.get_stream(&path).await.map_err(ComposeError::Podman)?;
-			let mut stream = crate::libpod::parse_multiplexed(resp.into_body());
+			let mut stream = if is_tty {
+				crate::libpod::parse_raw(resp.into_body())
+			} else {
+				crate::libpod::parse_multiplexed(resp.into_body())
+			};
 
 			while let Some(msg) = stream.next().await {
 				match msg.map_err(ComposeError::Podman)? {
