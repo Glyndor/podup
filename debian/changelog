@@ -1,3 +1,23 @@
+podup (0.8.0) unstable; urgency=medium
+
+  * Add --project-directory to override the base path for relative-path
+    resolution (env_file, build context, bind mounts, config/secret sources).
+  * Add `podup generate quadlet` to export systemd Quadlet units
+    (.container/.network/.volume) so systemd can own the container lifecycle.
+  * Reduce the dependency surface: drop the futures umbrella crate in favour
+    of futures-util and futures-core.
+  * Fix dpkg-buildpackage for non-vendored builds (override_dh_auto_build no
+    longer invokes a vendored-only cargo-config target).
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 12:10:00 -0500
+
+podup (0.7.0) unstable; urgency=medium
+
+  * Secure self-update: `podup update` downloads signed release assets and
+    verifies the Ed25519 signature and SHA-256 checksum, failing closed.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Wed, 11 Jun 2026 09:00:00 -0500
+
 podup (0.6.0) unstable; urgency=medium
 
   * Honor COMPOSE_PROJECT_NAME and COMPOSE_FILE environment variables.
