@@ -124,6 +124,12 @@ pub(super) fn build_resource_limits(service: &Service) -> Option<LinuxResources>
 				if mem_reservation.is_none() {
 					mem_reservation = reserv.memory.as_deref().and_then(size::parse_memory);
 				}
+				if !reserv.devices.is_empty() {
+					tracing::warn!(
+						"deploy.resources.reservations.devices is not yet supported \
+						— GPU/device reservations will be ignored"
+					);
+				}
 			}
 		}
 	}

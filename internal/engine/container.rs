@@ -40,6 +40,13 @@ impl Engine {
 
 		warn_swarm_only_deploy(service_name, service);
 
+		if service.gpus.is_some() {
+			tracing::warn!(
+				"service \"{service_name}\": top-level gpus: is not yet supported \
+				— use deploy.resources.reservations.devices for GPU access"
+			);
+		}
+
 		// --- Environment ---
 		let env: HashMap<String, String> = build_env(service, &self.base_dir)?
 			.into_iter()
