@@ -18,6 +18,9 @@ podup (0.11.0) unstable; urgency=medium
     per-pool ip_range (as a lease range), and a per-network interface_name.
     Unsupported aux_addresses and gw_priority are warned about rather than
     silently dropped.
+  * Resolve relative paths (build context, env_file, bind mounts, secret and
+    config files) of services pulled in via include or an external extends
+    against the imported file's directory instead of the project directory.
 
  -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 15:45:00 -0500
 
