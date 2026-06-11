@@ -161,7 +161,7 @@ impl Engine {
 			user: service.user.clone(),
 			work_dir: service.working_dir.clone(),
 			stop_signal: service.stop_signal.clone(),
-			stop_timeout: stop_timeout.map(|s| s as u64),
+			stop_timeout,
 			hostname: service.hostname.clone(),
 			domainname: service.domainname.clone(),
 			labels,

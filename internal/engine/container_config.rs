@@ -104,7 +104,7 @@ pub(super) fn build_resource_limits(service: &Service) -> Option<LinuxResources>
 		.and_then(size::parse_memory);
 	let mut nano_cpus = service.cpus.as_deref().and_then(size::parse_cpus);
 	let cpu_quota = service.cpu_quota;
-	let cpu_period = service.cpu_period.map(|p| p as u64);
+	let cpu_period = service.cpu_period;
 	let mut pids_limit = service.pids_limit;
 
 	if let Some(deploy) = &service.deploy {
@@ -170,7 +170,7 @@ pub(super) fn build_resource_limits(service: &Service) -> Option<LinuxResources>
 
 	let cpu = if has_cpu {
 		Some(LinuxCPU {
-			shares: service.cpu_shares.map(|v| v as u64),
+			shares: service.cpu_shares,
 			quota: effective_cpu_quota,
 			period: effective_cpu_period,
 			realtime_period: service.cpu_rt_period.map(|v| v as u64),
