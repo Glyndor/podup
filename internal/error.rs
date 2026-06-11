@@ -25,6 +25,7 @@ pub enum ComposeError {
 	Unsupported(String),
 	RunExited(i64),
 	Update(String),
+	ExternalNotFound(String),
 }
 
 impl fmt::Display for ComposeError {
@@ -49,6 +50,7 @@ impl fmt::Display for ComposeError {
 			Self::Unsupported(s) => write!(f, "unsupported feature: {s}"),
 			Self::RunExited(code) => write!(f, "run container exited with code {code}"),
 			Self::Update(s) => write!(f, "update error: {s}"),
+			Self::ExternalNotFound(s) => write!(f, "external resource not found: {s}"),
 		}
 	}
 }
@@ -141,6 +143,10 @@ mod tests {
 				ComposeError::RunExited(1),
 			),
 			("update error: u", ComposeError::Update("u".into())),
+			(
+				"external resource not found: external volume \"v\" does not exist",
+				ComposeError::ExternalNotFound("external volume \"v\" does not exist".into()),
+			),
 		];
 		for (expected_prefix, err) in cases {
 			let msg = err.to_string();

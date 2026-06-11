@@ -251,6 +251,7 @@ impl Engine {
 			detach,
 			env_overrides,
 			name_override,
+			service_ports,
 		} = opts;
 		let service = file
 			.services
@@ -276,6 +277,12 @@ impl Engine {
 			run_service.environment = crate::compose::types::EnvVars::List(env_list);
 		}
 		run_service.restart = None;
+		// Compose `run` does not publish the service's ports unless
+		// `--service-ports` is given; otherwise a one-off run would collide
+		// with the long-running service's host-port bindings.
+		if !service_ports {
+			run_service.ports.clear();
+		}
 		// Force non-TTY so Podman uses multiplexed log framing that
 		// parse_multiplexed can decode. TTY mode sends raw bytes without
 		// the 8-byte header, which would produce garbled output.

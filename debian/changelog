@@ -1,3 +1,17 @@
+podup (0.11.0) unstable; urgency=medium
+
+  * run no longer publishes the service's declared ports by default; pass
+    --service-ports to opt in, matching compose semantics.
+  * env_file: when a key is defined in multiple files, the last file now
+    wins (later entries override earlier ones).
+  * External volumes and networks that do not exist now fail with an error
+    instead of being silently skipped; external networks resolve to their
+    literal name rather than a project-prefixed one.
+  * config-hash is now computed from a key-sorted canonical form, so
+    services with map-typed fields no longer recreate spuriously on up.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 15:45:00 -0500
+
 podup (0.10.0) unstable; urgency=medium
 
   * Resolve relative bind-mount sources against the project directory and

@@ -28,6 +28,9 @@ pub struct RunOptions {
 	pub env_overrides: Vec<String>,
 	/// Override the generated container name.
 	pub name_override: Option<String>,
+	/// Publish the service's declared `ports:` (compose `run --service-ports`).
+	/// When false, `run` leaves ports unpublished to avoid host-port collisions.
+	pub service_ports: bool,
 }
 
 impl Engine {
