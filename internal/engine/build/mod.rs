@@ -110,44 +110,63 @@ impl Engine {
 			None => return Ok(()),
 		};
 
-		let context_path = self.base_dir.join(build.context());
+		let context_str = build.context().to_string();
+		let remote_context = is_remote_context(&context_str);
 		let tag = service
 			.image
 			.clone()
 			.unwrap_or_else(|| format!("{}:latest", service_name));
 
-		info!("building {tag} from {}", context_path.display());
-
-		// Resolve `build.secrets` to in-tar files before building the context:
-		// each secret value is shipped inside the build-context tar and referenced
-		// by a relative `src=` path, which is the form the libpod build endpoint
-		// expects (`env=`/host-path forms don't work reliably over the socket).
-		let (secret_files, secret_specs) = self.resolve_build_secrets(build, file)?;
-
-		let inline = build.dockerfile_inline().map(|s| s.to_string());
-		// Honour an explicit dockerfile; otherwise prefer Dockerfile but fall back
-		// to Podman's native Containerfile when only the latter is present.
-		let df = match build.dockerfile() {
-			Some(name) => name.to_string(),
-			None if !context_path.join("Dockerfile").is_file()
-				&& context_path.join("Containerfile").is_file() =>
-			{
-				"Containerfile".to_string()
+		// A Git/URL context is cloned server-side by Podman via the `remote`
+		// query parameter — there is no local directory to tar. Tar-only features
+		// (inline Dockerfile, in-tar build secrets) do not apply.
+		let (tar_bytes, dockerfile_name, secret_specs) = if remote_context {
+			info!("building {tag} from remote context {context_str}");
+			if build.dockerfile_inline().is_some() {
+				warn!("build.dockerfile_inline is ignored for a remote build context");
 			}
-			None => "Dockerfile".to_string(),
-		};
-		let ctx = context_path.clone();
-		let (tar_bytes, dockerfile_name) =
-			tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, String)> {
-				if let Some(inline_s) = inline {
-					build_context_tar_with_inline(&ctx, &inline_s, &secret_files)
-				} else {
-					let bytes = build_context_tar(&ctx, &df, &secret_files)?;
-					Ok((bytes, df))
+			if !build.secrets().is_empty() {
+				warn!("build.secrets are ignored for a remote build context");
+			}
+			let df = build.dockerfile().unwrap_or("Dockerfile").to_string();
+			(Vec::new(), df, Vec::new())
+		} else {
+			let context_path = self.base_dir.join(&context_str);
+			info!("building {tag} from {}", context_path.display());
+
+			// Resolve `build.secrets` to in-tar files before building the context:
+			// each secret value is shipped inside the build-context tar and
+			// referenced by a relative `src=` path, which is the form the libpod
+			// build endpoint expects (`env=`/host-path forms don't work reliably
+			// over the socket).
+			let (secret_files, secret_specs) = self.resolve_build_secrets(build, file)?;
+
+			let inline = build.dockerfile_inline().map(|s| s.to_string());
+			// Honour an explicit dockerfile; otherwise prefer Dockerfile but fall
+			// back to Podman's native Containerfile when only the latter is present.
+			let df = match build.dockerfile() {
+				Some(name) => name.to_string(),
+				None if !context_path.join("Dockerfile").is_file()
+					&& context_path.join("Containerfile").is_file() =>
+				{
+					"Containerfile".to_string()
 				}
-			})
-			.await
-			.map_err(|e| ComposeError::Build(e.to_string()))??;
+				None => "Dockerfile".to_string(),
+			};
+			let ctx = context_path.clone();
+			let (bytes, name) =
+				tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, String)> {
+					if let Some(inline_s) = inline {
+						build_context_tar_with_inline(&ctx, &inline_s, &secret_files)
+					} else {
+						let bytes = build_context_tar(&ctx, &df, &secret_files)?;
+						Ok((bytes, df))
+					}
+				})
+				.await
+				.map_err(|e| ComposeError::Build(e.to_string()))??;
+			(bytes, name, secret_specs)
+		};
 
 		let arg_map = build.args().to_map();
 		let mut build_args: std::collections::HashMap<String, String> =
@@ -257,6 +276,10 @@ impl Engine {
 			);
 		}
 
+		if remote_context {
+			qs.push_str(&format!("&remote={}", urlencoded(&context_str)));
+		}
+
 		let path = format!("{API_PREFIX}/build?{qs}");
 		let body_bytes = Bytes::from(tar_bytes);
 		let resp = self
@@ -353,9 +376,15 @@ impl Engine {
 	}
 }
 
+/// A build context is remote when it is a URL or Git reference that Podman
+/// clones server-side, rather than a local directory to tar and upload.
+fn is_remote_context(context: &str) -> bool {
+	context.contains("://") || context.starts_with("git@")
+}
+
 #[cfg(test)]
 mod tests {
-	use super::Engine;
+	use super::{is_remote_context, Engine};
 	use crate::libpod::Client;
 
 	fn engine(base: std::path::PathBuf) -> Engine {
@@ -400,6 +429,16 @@ mod tests {
 		let (files, specs) = e.resolve_build_secrets(build_of(&file), &file).unwrap();
 		assert!(files.is_empty());
 		assert!(specs.is_empty());
+	}
+
+	#[test]
+	fn remote_context_detection() {
+		assert!(is_remote_context("https://github.com/user/repo.git"));
+		assert!(is_remote_context("git://example.com/repo.git"));
+		assert!(is_remote_context("git@github.com:user/repo.git"));
+		assert!(!is_remote_context("."));
+		assert!(!is_remote_context("./build"));
+		assert!(!is_remote_context("/abs/path"));
 	}
 
 	#[test]
