@@ -257,10 +257,11 @@ mod tests {
 			map_additional_context(base, "git://example.org/r.git"),
 			"url:git://example.org/r.git"
 		);
-		assert_eq!(
-			map_additional_context(base, "sub/dir"),
-			"localpath:/proj/sub/dir"
-		);
+		// Local paths are resolved against base_dir using the host's native path
+		// separator, so compare against a `join`ed path rather than a literal.
+		let local = map_additional_context(base, "sub/dir");
+		assert!(local.starts_with("localpath:"));
+		assert!(local.ends_with(&base.join("sub/dir").display().to_string()));
 	}
 
 	#[test]
