@@ -24,6 +24,7 @@ pub enum ComposeError {
 	Watch(String),
 	Unsupported(String),
 	RunExited(i64),
+	Update(String),
 }
 
 impl fmt::Display for ComposeError {
@@ -47,6 +48,7 @@ impl fmt::Display for ComposeError {
 			Self::Watch(s) => write!(f, "watch error: {s}"),
 			Self::Unsupported(s) => write!(f, "unsupported feature: {s}"),
 			Self::RunExited(code) => write!(f, "run container exited with code {code}"),
+			Self::Update(s) => write!(f, "update error: {s}"),
 		}
 	}
 }
@@ -138,6 +140,7 @@ mod tests {
 				"run container exited with code 1",
 				ComposeError::RunExited(1),
 			),
+			("update error: u", ComposeError::Update("u".into())),
 		];
 		for (expected_prefix, err) in cases {
 			let msg = err.to_string();

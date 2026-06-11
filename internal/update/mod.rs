@@ -1,0 +1,199 @@
+//! Secure self-update for the `podup` binary.
+//!
+//! Flow: resolve the latest release tag, compare against the compiled-in
+//! version, and (unless `--check`) download the platform binary plus the signed
+//! `SHA256SUMS` manifest. The manifest's Ed25519 signature is verified against
+//! the public key embedded in this binary ([`verify::RELEASE_PUBKEY`]); only
+//! then is the binary's digest checked against the manifest and the running
+//! executable atomically replaced. Every step fails closed — a missing key,
+//! bad signature, or checksum mismatch aborts before anything is written.
+
+mod github;
+mod install;
+mod verify;
+
+pub use github::{GitHubSource, REPO};
+
+use crate::ComposeError;
+
+/// Options controlling an update run.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct UpdateOptions {
+	/// Report whether a newer release exists without installing it.
+	pub check_only: bool,
+	/// Reinstall even if the latest release is not newer than the current build.
+	pub force: bool,
+}
+
+/// A source of release metadata and assets. Abstracted so the verification and
+/// install flow can be exercised without network access.
+pub trait ReleaseSource {
+	/// Latest published release tag (e.g. `v0.6.0`).
+	fn latest_version(&self) -> crate::Result<String>;
+	/// Raw bytes of a named release asset.
+	fn fetch(&self, asset: &str) -> crate::Result<Vec<u8>>;
+}
+
+/// Run an update against GitHub for the version compiled into this binary.
+pub fn run(opts: UpdateOptions) -> crate::Result<()> {
+	let source = GitHubSource::default();
+	run_with(&source, env!("CARGO_PKG_VERSION"), opts)
+}
+
+/// Core update flow against an arbitrary [`ReleaseSource`] and current version.
+pub fn run_with(
+	source: &dyn ReleaseSource,
+	current: &str,
+	opts: UpdateOptions,
+) -> crate::Result<()> {
+	let current_v = verify::parse_version(current)?;
+	let latest_tag = source.latest_version()?;
+	let latest_v = verify::parse_version(&latest_tag)?;
+
+	if latest_v <= current_v && !opts.force {
+		println!("podup is up to date (v{current})");
+		return Ok(());
+	}
+
+	if latest_v > current_v {
+		println!("update available: v{current} -> {latest_tag}");
+	} else {
+		println!("reinstalling {latest_tag} (--force)");
+	}
+	if opts.check_only {
+		println!("run `podup update` to install it");
+		return Ok(());
+	}
+
+	let asset = install::require_platform_asset()?;
+	println!("downloading {asset} ({latest_tag}) ...");
+	let binary = source.fetch(asset)?;
+	let sha256sums = source.fetch("SHA256SUMS")?;
+	let signature = source.fetch("SHA256SUMS.sig")?;
+
+	// Security gate: signed manifest first, then the binary's digest against it.
+	verify::verify_signature(&sha256sums, &signature)?;
+	let expected = verify::expected_digest(&sha256sums, asset)?;
+	verify::verify_digest(&binary, &expected)?;
+	println!("signature and checksum verified");
+
+	let path = install::install_binary(&binary)?;
+	println!("updated to {latest_tag}: {}", path.display());
+	Ok(())
+}
+
+/// Map an update failure onto a stable process exit code (`2`), distinct from a
+/// run-container exit, so scripts can branch on "update failed".
+pub fn exit_code(_err: &ComposeError) -> i32 {
+	2
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use std::cell::RefCell;
+	use std::collections::HashMap;
+
+	/// In-memory release source signed with a throwaway key, so the full flow
+	/// (version gate, signature, checksum, install) runs without network or the
+	/// placeholder pubkey guard.
+	struct MockSource {
+		latest: String,
+		assets: HashMap<String, Vec<u8>>,
+		fetched: RefCell<Vec<String>>,
+	}
+
+	impl ReleaseSource for MockSource {
+		fn latest_version(&self) -> crate::Result<String> {
+			Ok(self.latest.clone())
+		}
+		fn fetch(&self, asset: &str) -> crate::Result<Vec<u8>> {
+			self.fetched.borrow_mut().push(asset.to_string());
+			self.assets
+				.get(asset)
+				.cloned()
+				.ok_or_else(|| ComposeError::Update(format!("missing asset {asset}")))
+		}
+	}
+
+	#[test]
+	fn up_to_date_skips_download() {
+		let src = MockSource {
+			latest: "v0.6.0".into(),
+			assets: HashMap::new(),
+			fetched: RefCell::new(Vec::new()),
+		};
+		run_with(&src, "0.6.0", UpdateOptions::default()).unwrap();
+		assert!(
+			src.fetched.borrow().is_empty(),
+			"must not fetch when current"
+		);
+	}
+
+	#[test]
+	fn newer_release_check_only_does_not_install() {
+		let src = MockSource {
+			latest: "v0.7.0".into(),
+			assets: HashMap::new(),
+			fetched: RefCell::new(Vec::new()),
+		};
+		let opts = UpdateOptions {
+			check_only: true,
+			force: false,
+		};
+		run_with(&src, "0.6.0", opts).unwrap();
+		assert!(
+			src.fetched.borrow().is_empty(),
+			"check-only must not download"
+		);
+	}
+
+	#[test]
+	fn bad_version_from_source_errors() {
+		let src = MockSource {
+			latest: "not-a-version".into(),
+			assets: HashMap::new(),
+			fetched: RefCell::new(Vec::new()),
+		};
+		assert!(run_with(&src, "0.6.0", UpdateOptions::default()).is_err());
+	}
+
+	#[test]
+	fn newer_release_with_real_install_path() {
+		// Only meaningful where the host maps to a known release asset.
+		let Some(asset) = install::platform_asset() else {
+			return;
+		};
+
+		use ed25519_dalek::{Signer, SigningKey};
+		let sk = SigningKey::from_bytes(&[42u8; 32]);
+
+		let binary = b"the new podup binary".to_vec();
+		let digest = verify::sha256_hex(&binary);
+		let sums = format!("{digest}  {asset}\n");
+		let sig = sk.sign(sums.as_bytes()).to_bytes().to_vec();
+
+		let mut assets = HashMap::new();
+		assets.insert(asset.to_string(), binary.clone());
+		assets.insert("SHA256SUMS".to_string(), sums.into_bytes());
+		assets.insert("SHA256SUMS.sig".to_string(), sig);
+
+		let src = MockSource {
+			latest: "v9.9.9".into(),
+			assets,
+			fetched: RefCell::new(Vec::new()),
+		};
+
+		// The manifest is internally consistent but signed with a throwaway key,
+		// not the embedded release key — verification must fail closed, proving
+		// the gate rejects anything not signed by the real key.
+		let err = run_with(&src, "0.6.0", UpdateOptions::default()).unwrap_err();
+		assert!(matches!(err, ComposeError::Update(_)));
+		assert!(src.fetched.borrow().contains(&"SHA256SUMS.sig".to_string()));
+	}
+
+	#[test]
+	fn exit_code_is_two() {
+		assert_eq!(exit_code(&ComposeError::Update("x".into())), 2);
+	}
+}
