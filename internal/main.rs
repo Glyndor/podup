@@ -1,6 +1,6 @@
 //! `podup` — docker-compose to Podman translator CLI.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 use clap::{Parser, Subcommand};
@@ -34,6 +34,12 @@ struct Cli {
 	/// Active profiles (comma-separated).  May also be set via `COMPOSE_PROFILES`.
 	#[arg(long, value_delimiter = ',', global = true)]
 	profile: Vec<String>,
+
+	/// Base directory for resolving relative paths (env_file, build context,
+	/// bind mounts, config/secret file sources). Defaults to the directory
+	/// containing the compose file.
+	#[arg(long, global = true)]
+	project_directory: Option<PathBuf>,
 
 	#[command(subcommand)]
 	command: Commands,
@@ -229,6 +235,16 @@ fn is_mutating(command: &Commands) -> bool {
 	)
 }
 
+/// Resolve the base directory for relative-path resolution. An explicit
+/// `--project-directory` wins; otherwise it is the directory containing the
+/// compose file (compose-spec default), or the current directory when the
+/// compose file has no parent component.
+fn resolve_base_dir(project_directory: Option<&Path>, file: &Path) -> PathBuf {
+	project_directory
+		.map(Path::to_path_buf)
+		.unwrap_or_else(|| file.parent().map(Path::to_path_buf).unwrap_or_default())
+}
+
 #[tokio::main]
 async fn main() {
 	match run().await {
@@ -274,11 +290,7 @@ async fn run() -> podup::Result<()> {
 	}
 
 	let client = podup::podman::connect(cli.socket.as_deref())?;
-	let base_dir = cli
-		.file
-		.parent()
-		.map(|p| p.to_path_buf())
-		.unwrap_or_default();
+	let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &cli.file);
 	let engine = podup::Engine::with_base_dir(client, cli.project, base_dir);
 
 	// Serialize mutating lifecycle commands against concurrent `podup` runs on
@@ -367,4 +379,31 @@ async fn run() -> podup::Result<()> {
 	}
 
 	Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+	use super::resolve_base_dir;
+	use std::path::{Path, PathBuf};
+
+	#[test]
+	fn project_directory_override_wins() {
+		let base = resolve_base_dir(
+			Some(Path::new("/srv/app")),
+			Path::new("/etc/compose/docker-compose.yml"),
+		);
+		assert_eq!(base, PathBuf::from("/srv/app"));
+	}
+
+	#[test]
+	fn defaults_to_compose_file_parent() {
+		let base = resolve_base_dir(None, Path::new("/etc/compose/docker-compose.yml"));
+		assert_eq!(base, PathBuf::from("/etc/compose"));
+	}
+
+	#[test]
+	fn bare_filename_resolves_to_current_dir() {
+		let base = resolve_base_dir(None, Path::new("docker-compose.yml"));
+		assert_eq!(base, PathBuf::from(""));
+	}
 }
