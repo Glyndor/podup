@@ -1,3 +1,11 @@
+podup (0.9.0) unstable; urgency=medium
+
+  * up now recreates only services whose configuration changed, using a
+    podup.config-hash label; unchanged containers are left in place.
+  * Add up --force-recreate to recreate containers unconditionally.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 13:30:00 -0500
+
 podup (0.8.0) unstable; urgency=medium
 
   * Add --project-directory to override the base path for relative-path
