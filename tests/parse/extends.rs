@@ -175,6 +175,68 @@ services:
 }
 
 #[test]
+fn extends_external_file_anchors_relative_paths() {
+	let dir = tempfile::tempdir().unwrap();
+	let sub = dir.path().join("svc");
+	std::fs::create_dir(&sub).unwrap();
+
+	let common_path = sub.join("common.yml");
+	let mut f = std::fs::File::create(&common_path).unwrap();
+	writeln!(
+		f,
+		r#"
+services:
+  base:
+    image: alpine
+    env_file:
+      - ./base.env
+    volumes:
+      - ./data:/data
+"#
+	)
+	.unwrap();
+
+	let main_path = dir.path().join("docker-compose.yml");
+	let mut m = std::fs::File::create(&main_path).unwrap();
+	writeln!(
+		m,
+		r#"
+services:
+  app:
+    extends:
+      service: base
+      file: ./svc/common.yml
+"#
+	)
+	.unwrap();
+
+	let file = parse_file(&main_path).unwrap();
+	let app = &file.services["app"];
+
+	// The base service's relative env_file/volume paths must be anchored to the
+	// external file's directory, not the top-level project directory.
+	let entries = app.env_file.to_entries();
+	let env_path = std::path::Path::new(entries[0].path());
+	assert!(
+		env_path.is_absolute(),
+		"env_file not anchored: {env_path:?}"
+	);
+	assert!(
+		env_path.ends_with("svc/base.env"),
+		"wrong dir: {env_path:?}"
+	);
+
+	let vol = match &app.volumes[0] {
+		podup::compose::types::VolumeMount::Short(s) => s.clone(),
+		other => panic!("expected short volume, got {other:?}"),
+	};
+	assert!(
+		vol.contains("svc") && vol.ends_with(":/data"),
+		"volume bind not anchored: {vol}"
+	);
+}
+
+#[test]
 fn extends_chain_within_depth_limit() {
 	// 16 services = 15 hops — must succeed.
 	let yaml = make_chain_yaml(15);

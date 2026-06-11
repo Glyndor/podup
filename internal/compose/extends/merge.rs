@@ -9,7 +9,7 @@ use super::super::types::{
 	DependsOn, EnvFile, EnvVars, Labels, Service, ServiceNetworks, StringOrList, Sysctls,
 };
 
-pub(super) fn merge_service(base: Service, override_svc: Service) -> Service {
+pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) -> Service {
 	fn opt<T>(o: Option<T>, b: Option<T>) -> Option<T> {
 		o.or(b)
 	}

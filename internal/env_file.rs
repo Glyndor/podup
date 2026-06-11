@@ -12,8 +12,11 @@ use crate::error::{ComposeError, Result};
 /// Load all `env_file` paths relative to `base_dir`.
 ///
 /// Returns a merged map.  If the same key appears in multiple files, the
-/// first file wins (earlier entries in the list have higher priority).
+/// last file wins (later entries in the list override earlier ones).
 /// `env_file:` never overrides service-level `environment:`.
+///
+/// Each file is parsed with dotenv rules (quote stripping, escapes, inline
+/// comments, multi-line quoted values).
 ///
 /// Returns [`ComposeError::FileNotFound`] when an env file does not exist.
 pub fn load_env_files(paths: &[String], base_dir: &Path) -> Result<HashMap<String, String>> {
@@ -58,25 +61,8 @@ pub fn load_env_file_entries(
 			Err(e) => return Err(ComposeError::Io(e)),
 		};
 
-		for line in content.lines() {
-			let trimmed = line.trim();
-			if trimmed.is_empty() || trimmed.starts_with('#') {
-				continue;
-			}
-
-			let (key, value) = if let Some(eq) = trimmed.find('=') {
-				let k = trimmed[..eq].trim().to_string();
-				let v = trimmed[eq + 1..].to_string();
-				(k, v)
-			} else {
-				(trimmed.to_string(), String::new())
-			};
-
-			if key.is_empty() {
-				continue;
-			}
-
-			result.entry(key).or_insert(value);
+		for (key, value) in crate::dotenv::parse(&content) {
+			result.insert(key, value);
 		}
 	}
 
@@ -144,7 +130,7 @@ mod tests {
 	}
 
 	#[test]
-	fn first_file_wins_on_duplicate_key() {
+	fn last_file_wins_on_duplicate_key() {
 		let dir = tempfile::tempdir().unwrap();
 		std::fs::write(dir.path().join("a.env"), "FOO=first\n").unwrap();
 		std::fs::write(dir.path().join("b.env"), "FOO=second\n").unwrap();
@@ -153,7 +139,7 @@ mod tests {
 			EnvFileEntry::Path("b.env".into()),
 		];
 		let m = load_env_file_entries(&entries, dir.path()).unwrap();
-		assert_eq!(m.get("FOO").map(|s| s.as_str()), Some("first"));
+		assert_eq!(m.get("FOO").map(|s| s.as_str()), Some("second"));
 	}
 
 	#[test]

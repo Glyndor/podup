@@ -14,7 +14,7 @@ use crate::compose::types::{
 };
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::volume::VolumeCreateOptions;
-use crate::libpod::API_PREFIX;
+use crate::libpod::{urlencoded, API_PREFIX};
 
 use super::{staging, Engine};
 
@@ -23,6 +23,12 @@ impl Engine {
 		for (name, config) in &file.volumes {
 			let external = config.as_ref().and_then(|c| c.external).unwrap_or(false);
 			if external {
+				let external_name = config
+					.as_ref()
+					.and_then(|c| c.name.as_deref())
+					.unwrap_or(name);
+				self.ensure_external_exists("volume", "volumes", external_name)
+					.await?;
 				continue;
 			}
 
@@ -69,6 +75,27 @@ impl Engine {
 			}
 		}
 		Ok(())
+	}
+
+	/// Verify an `external: true` volume/network already exists on the host.
+	///
+	/// The compose spec requires podup to error when an external resource is
+	/// declared but absent, rather than silently skipping it and letting
+	/// containers fail later with an opaque mount/attach error.
+	pub(super) async fn ensure_external_exists(
+		&self,
+		kind: &str,
+		api_segment: &str,
+		name: &str,
+	) -> Result<()> {
+		let path = format!("{API_PREFIX}/{api_segment}/{}/json", urlencoded(name));
+		match self.client.get_json::<serde_json::Value>(&path).await {
+			Ok(_) => Ok(()),
+			Err(ref e) if e.is_status(404) => Err(ComposeError::ExternalNotFound(format!(
+				"external {kind} \"{name}\" does not exist; create it before running"
+			))),
+			Err(e) => Err(ComposeError::Podman(e)),
+		}
 	}
 
 	pub(super) fn build_secret_binds(

@@ -37,7 +37,7 @@ async fn up_no_recreate_skips_running() {
 	engine.up(&file).await.unwrap();
 	// Second up with no_recreate: already running → skip
 	engine
-		.up_with_options(&file, false, &[], &[], true, false)
+		.up_with_options(&file, false, &[], &[], true, false, false)
 		.await
 		.unwrap();
 	engine.down(&file).await.unwrap();
@@ -58,7 +58,7 @@ async fn up_target_services_only() {
 
 	// Only start web (and its dep db)
 	engine
-		.up_with_options(&file, false, &[], &["web".to_string()], false, false)
+		.up_with_options(&file, false, &[], &["web".to_string()], false, false, false)
 		.await
 		.unwrap();
 	engine.down(&file).await.unwrap();
@@ -348,7 +348,7 @@ async fn up_skips_recreate_when_config_unchanged() {
 	engine.up(&file).await.unwrap();
 	// force_recreate -> recreate even though config is unchanged.
 	engine
-		.up_with_options(&file, false, &[], &[], false, true)
+		.up_with_options(&file, false, &[], &[], false, true, false)
 		.await
 		.unwrap();
 	// Changed config -> hash differs -> recreate.

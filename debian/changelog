@@ -1,3 +1,41 @@
+podup (0.11.0) unstable; urgency=medium
+
+  * run no longer publishes the service's declared ports by default; pass
+    --service-ports to opt in, matching compose semantics.
+  * env_file: when a key is defined in multiple files, the last file now
+    wins (later entries override earlier ones).
+  * External volumes and networks that do not exist now fail with an error
+    instead of being silently skipped; external networks resolve to their
+    literal name rather than a project-prefixed one.
+  * config-hash is now computed from a key-sorted canonical form, so
+    services with map-typed fields no longer recreate spuriously on up.
+  * Parse env files and .env with dotenv rules: strip surrounding quotes,
+    honour escape sequences in double-quoted values, drop inline comments
+    on unquoted values, and support multi-line quoted values.
+  * Forward a long-form volume's subpath so only the named sub-directory of
+    the volume is mounted instead of dropping the option.
+  * Forward IPAM configuration to Podman: the ipam driver and options, the
+    per-pool ip_range (as a lease range), and a per-network interface_name.
+    Unsupported aux_addresses and gw_priority are warned about rather than
+    silently dropped.
+  * Resolve relative paths (build context, env_file, bind mounts, secret and
+    config files) of services pulled in via include or an external extends
+    against the imported file's directory instead of the project directory.
+  * Add a global --env-file flag to load extra env files into the variable
+    map used for interpolation.
+  * Build a Git/URL build context by having Podman clone it server-side
+    instead of treating the URL as a local directory to tar.
+  * Forward NVIDIA GPU reservations (deploy.resources.reservations.devices)
+    to Podman as CDI devices instead of warning and ignoring them.
+  * Add up --no-deps to start the named services without their depends_on
+    dependencies.
+  * Resolve service links to the linked service's container name (keeping the
+    service name as the alias); external_links are still passed through as-is.
+  * Accept multiple compose files (repeated -f or a COMPOSE_FILE list) and
+    merge them in order, with later files overriding earlier ones.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 15:45:00 -0500
+
 podup (0.10.0) unstable; urgency=medium
 
   * Resolve relative bind-mount sources against the project directory and

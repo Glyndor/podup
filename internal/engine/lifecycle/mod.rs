@@ -28,12 +28,15 @@ pub struct RunOptions {
 	pub env_overrides: Vec<String>,
 	/// Override the generated container name.
 	pub name_override: Option<String>,
+	/// Publish the service's declared `ports:` (compose `run --service-ports`).
+	/// When false, `run` leaves ports unpublished to avoid host-port collisions.
+	pub service_ports: bool,
 }
 
 impl Engine {
 	/// Start all services defined in the compose file, creating containers that do not exist.
 	pub async fn up(&self, file: &ComposeFile) -> Result<()> {
-		self.up_with_options(file, false, &[], &[], false, false)
+		self.up_with_options(file, false, &[], &[], false, false, false)
 			.await
 	}
 
@@ -49,6 +52,7 @@ impl Engine {
 	}
 
 	/// Start services with explicit options. When `no_recreate` is true, running containers are left untouched. On partial failure, staging directories are cleaned up.
+	#[allow(clippy::too_many_arguments)]
 	pub async fn up_with_options(
 		&self,
 		file: &ComposeFile,
@@ -57,30 +61,13 @@ impl Engine {
 		target_services: &[String],
 		no_recreate: bool,
 		force_recreate: bool,
+		no_deps: bool,
 	) -> Result<()> {
 		let r: Result<()> = async {
 			let order = crate::compose::resolve_order(file)?;
 			let active = active_profiles_set(active_profiles);
 
-			let target_set: Option<HashSet<String>> = if target_services.is_empty() {
-				None
-			} else {
-				let mut set = HashSet::new();
-				let mut stack: Vec<String> = target_services.to_vec();
-				while let Some(name) = stack.pop() {
-					if !set.insert(name.clone()) {
-						continue;
-					}
-					if let Some(service) = file.services.get(&name) {
-						for dep in service.depends_on.service_names() {
-							if !set.contains(&dep) {
-								stack.push(dep);
-							}
-						}
-					}
-				}
-				Some(set)
-			};
+			let target_set = expand_targets(file, target_services, no_deps);
 
 			// Prefetch the project's containers once (instead of one API call per
 			// replica): which names already exist, and each one's config-hash
@@ -341,13 +328,45 @@ pub(super) fn filter_services(
 		.collect())
 }
 
+/// Resolve which services `up` should start given an explicit target list.
+///
+/// Returns `None` when no targets are given (start everything). Otherwise the
+/// set contains the targets plus, unless `no_deps` is set, their transitive
+/// `depends_on` services.
+fn expand_targets(
+	file: &ComposeFile,
+	target_services: &[String],
+	no_deps: bool,
+) -> Option<HashSet<String>> {
+	if target_services.is_empty() {
+		return None;
+	}
+	let mut set = HashSet::new();
+	let mut stack: Vec<String> = target_services.to_vec();
+	while let Some(name) = stack.pop() {
+		if !set.insert(name.clone()) {
+			continue;
+		}
+		if !no_deps {
+			if let Some(service) = file.services.get(&name) {
+				for dep in service.depends_on.service_names() {
+					if !set.contains(&dep) {
+						stack.push(dep);
+					}
+				}
+			}
+		}
+	}
+	Some(set)
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
-	use super::filter_services;
+	use super::{expand_targets, filter_services};
 	use crate::compose::types::{ComposeFile, Service};
 
 	fn file_with_services(names: &[&str]) -> ComposeFile {
@@ -391,5 +410,36 @@ mod tests {
 			err,
 			crate::error::ComposeError::ServiceNotFound(_)
 		));
+	}
+
+	// --- expand_targets ---
+
+	fn file_web_depends_db() -> ComposeFile {
+		crate::parse_str(
+			"services:\n  db:\n    image: x\n  web:\n    image: x\n    depends_on:\n      - db\n",
+		)
+		.unwrap()
+	}
+
+	#[test]
+	fn expand_targets_empty_is_none() {
+		let file = file_web_depends_db();
+		assert!(expand_targets(&file, &[], false).is_none());
+	}
+
+	#[test]
+	fn expand_targets_includes_dependencies() {
+		let file = file_web_depends_db();
+		let set = expand_targets(&file, &["web".to_string()], false).unwrap();
+		assert!(set.contains("web"));
+		assert!(set.contains("db"));
+	}
+
+	#[test]
+	fn expand_targets_no_deps_excludes_dependencies() {
+		let file = file_web_depends_db();
+		let set = expand_targets(&file, &["web".to_string()], true).unwrap();
+		assert!(set.contains("web"));
+		assert!(!set.contains("db"));
 	}
 }

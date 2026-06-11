@@ -160,6 +160,10 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "Vec::is_empty", default)]
 	pub devices: Vec<LinuxDevice>,
 
+	/// CDI device names (e.g. `nvidia.com/gpu=all`) for GPU/accelerator access.
+	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	pub cdi_devices: Vec<String>,
+
 	#[serde(skip_serializing_if = "Vec::is_empty", default)]
 	pub device_cgroup_rule: Vec<String>,
 
@@ -302,6 +306,10 @@ pub struct NamedVolume {
 
 	#[serde(rename = "Options", skip_serializing_if = "Vec::is_empty", default)]
 	pub options: Vec<String>,
+
+	/// Mount only this sub-directory of the volume (compose `volume.subpath`).
+	#[serde(rename = "SubPath", skip_serializing_if = "Option::is_none", default)]
+	pub sub_path: Option<String>,
 }
 
 /// Linux OCI resource limits for SpecGenerator.

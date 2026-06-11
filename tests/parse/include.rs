@@ -105,3 +105,49 @@ services:
 		Some("alpine:override")
 	);
 }
+
+#[test]
+fn global_env_file_feeds_interpolation() {
+	let dir = tempfile::tempdir().unwrap();
+
+	let env_path = dir.path().join("prod.env");
+	let mut e = std::fs::File::create(&env_path).unwrap();
+	writeln!(e, "IMG=nginx:1.27").unwrap();
+
+	let main_path = dir.path().join("docker-compose.yml");
+	let mut m = std::fs::File::create(&main_path).unwrap();
+	writeln!(m, "services:\n  web:\n    image: ${{IMG}}").unwrap();
+
+	let file = podup::parse_file_with_env_files(&main_path, &["prod.env".to_string()]).unwrap();
+	assert_eq!(file.services["web"].image.as_deref(), Some("nginx:1.27"));
+}
+
+#[test]
+fn multiple_files_merge_with_override() {
+	let dir = tempfile::tempdir().unwrap();
+
+	let base = dir.path().join("base.yml");
+	let mut b = std::fs::File::create(&base).unwrap();
+	writeln!(
+		b,
+		"services:\n  web:\n    image: nginx:1.0\n    environment:\n      A: \"1\"\n"
+	)
+	.unwrap();
+
+	let over = dir.path().join("override.yml");
+	let mut o = std::fs::File::create(&over).unwrap();
+	writeln!(
+		o,
+		"services:\n  web:\n    image: nginx:2.0\n    environment:\n      B: \"2\"\n  db:\n    image: postgres:16\n"
+	)
+	.unwrap();
+
+	let file = podup::parse_files_with_env_files(&[base, over], &[]).unwrap();
+
+	// Later file overrides the image and adds a service; environment keys merge.
+	assert_eq!(file.services["web"].image.as_deref(), Some("nginx:2.0"));
+	assert!(file.services.contains_key("db"));
+	let env = file.services["web"].environment.to_map();
+	assert!(env.contains_key("A"));
+	assert!(env.contains_key("B"));
+}

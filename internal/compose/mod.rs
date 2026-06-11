@@ -3,11 +3,12 @@
 
 pub mod types;
 
+mod anchor;
 mod extends;
 mod include;
 
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::{ComposeError, Result};
 use crate::substitute;
@@ -16,9 +17,17 @@ use types::ComposeFile;
 /// Parse a compose file from disk, applying variable substitution and
 /// resolving `extends:` / `include:` directives.
 pub fn parse_file(path: &Path) -> Result<ComposeFile> {
+	parse_file_with_env_files(path, &[])
+}
+
+/// Like [`parse_file`], additionally loading `env_files` (the global
+/// `--env-file` flag) into the variable map used for interpolation. These take
+/// effect for the top-level file and any included files; the process
+/// environment and a project `.env` still take precedence.
+pub fn parse_file_with_env_files(path: &Path, env_files: &[String]) -> Result<ComposeFile> {
 	let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 	let dir = abs.parent().unwrap_or(Path::new(".")).to_path_buf();
-	let mut file = parse_file_inner(&abs, &dir)?;
+	let mut file = parse_file_inner_with_env(&abs, &dir, env_files)?;
 
 	let includes = std::mem::take(&mut file.include);
 	for inc in includes {
@@ -55,13 +64,61 @@ pub fn parse_file(path: &Path) -> Result<ComposeFile> {
 					.map(|p| p.to_path_buf())
 					.unwrap_or_else(|| dir.clone())
 			});
-			let included = parse_file_inner_with_env(&inc_path, &inc_dir, &extra_env_files)?;
+			let mut combined_env_files = env_files.to_vec();
+			combined_env_files.extend(extra_env_files.iter().cloned());
+			let mut included = parse_file_inner_with_env(&inc_path, &inc_dir, &combined_env_files)?;
+			anchor::anchor_compose_file(&mut included, &inc_dir);
 			include::merge_compose_file(&mut file, included);
 		}
 	}
 
 	extends::resolve_all_extends(&mut file, &dir)?;
 	Ok(file)
+}
+
+/// Parse and merge multiple compose files (the `-f`/`COMPOSE_FILE` list).
+///
+/// Files are merged left to right: a later file overrides an earlier one,
+/// service by service (per-field, like `extends`), with top-level
+/// volumes/networks/secrets/configs replaced on key conflicts. Relative paths
+/// resolve against the first file's directory, matching the compose project
+/// directory. `env_files` feed interpolation for every file.
+pub fn parse_files_with_env_files(paths: &[PathBuf], env_files: &[String]) -> Result<ComposeFile> {
+	let mut iter = paths.iter();
+	let first = iter
+		.next()
+		.ok_or_else(|| ComposeError::FileNotFound("no compose file given".to_string()))?;
+	let mut merged = parse_file_with_env_files(first, env_files)?;
+	for path in iter {
+		let other = parse_file_with_env_files(path, env_files)?;
+		merge_override(&mut merged, other);
+	}
+	Ok(merged)
+}
+
+/// Merge `other` into `target` with `other` winning (compose `-f` override
+/// semantics): services are merged field-by-field, other top-level maps replace
+/// on key conflict.
+fn merge_override(target: &mut ComposeFile, other: ComposeFile) {
+	for (name, svc) in other.services {
+		if let Some(base) = target.services.get_mut(&name) {
+			*base = extends::merge_service(std::mem::take(base), svc);
+		} else {
+			target.services.insert(name, svc);
+		}
+	}
+	for (k, v) in other.volumes {
+		target.volumes.insert(k, v);
+	}
+	for (k, v) in other.networks {
+		target.networks.insert(k, v);
+	}
+	for (k, v) in other.secrets {
+		target.secrets.insert(k, v);
+	}
+	for (k, v) in other.configs {
+		target.configs.insert(k, v);
+	}
 }
 
 /// Parse a compose YAML string (no file I/O).

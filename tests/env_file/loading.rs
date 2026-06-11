@@ -35,7 +35,7 @@ fn string_or_list_many() {
 }
 
 #[test]
-fn first_file_wins_for_duplicate_keys() {
+fn last_file_wins_for_duplicate_keys() {
 	let dir = tempfile::tempdir().unwrap();
 
 	let mut a = std::fs::File::create(dir.path().join("a.env")).unwrap();
@@ -45,18 +45,18 @@ fn first_file_wins_for_duplicate_keys() {
 	writeln!(b, "KEY=from_b").unwrap();
 
 	let map = load_env_files(&["a.env".to_string(), "b.env".to_string()], dir.path()).unwrap();
-	assert_eq!(map["KEY"], "from_a");
+	assert_eq!(map["KEY"], "from_b");
 }
 
 #[test]
-fn quoted_values_preserved_as_is() {
+fn surrounding_quotes_are_stripped() {
 	let dir = tempfile::tempdir().unwrap();
 	let mut f = std::fs::File::create(dir.path().join("q.env")).unwrap();
 	writeln!(f, r#"KEY="value with spaces""#).unwrap();
 
 	let map = load_env_files(&["q.env".to_string()], dir.path()).unwrap();
-	// Per compose-spec, quotes are preserved literally.
-	assert_eq!(map["KEY"], "\"value with spaces\"");
+	// Per compose-spec dotenv rules, surrounding quotes are stripped.
+	assert_eq!(map["KEY"], "value with spaces");
 }
 
 #[test]
