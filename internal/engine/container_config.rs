@@ -121,12 +121,8 @@ pub(super) fn build_resource_limits(service: &Service) -> Option<LinuxResources>
 				if mem_reservation.is_none() {
 					mem_reservation = reserv.memory.as_deref().and_then(size::parse_memory);
 				}
-				if !reserv.devices.is_empty() {
-					tracing::warn!(
-						"deploy.resources.reservations.devices is not yet supported \
-						— GPU/device reservations will be ignored"
-					);
-				}
+				// GPU/device reservations are forwarded separately as CDI
+				// devices; see [`cdi_devices`].
 			}
 		}
 	}
@@ -205,6 +201,58 @@ pub(super) fn build_ulimits(service: &Service) -> Vec<Ulimit> {
 			hard: cfg.hard() as u64,
 		})
 		.collect()
+}
+
+/// Map `deploy.resources.reservations.devices` GPU reservations to Podman CDI
+/// device names (e.g. `nvidia.com/gpu=all`).
+///
+/// Only NVIDIA GPU reservations are translated — the common case Podman exposes
+/// through CDI. Reservations for other drivers or capabilities are warned about
+/// and skipped, since there is no portable mapping for them.
+pub(super) fn cdi_devices(service: &Service) -> Vec<String> {
+	let mut out = Vec::new();
+
+	let Some(reservations) = service
+		.deploy
+		.as_ref()
+		.and_then(|d| d.resources.as_ref())
+		.and_then(|r| r.reservations.as_ref())
+	else {
+		return out;
+	};
+
+	for dev in &reservations.devices {
+		let is_gpu = dev.capabilities.iter().any(|c| c == "gpu" || c == "nvidia");
+		let driver = dev.driver.as_deref().unwrap_or("nvidia");
+		if !is_gpu || (driver != "nvidia" && !driver.is_empty()) {
+			tracing::warn!(
+				"device reservation (driver {:?}, capabilities {:?}) is not supported and is ignored",
+				dev.driver,
+				dev.capabilities
+			);
+			continue;
+		}
+
+		if !dev.device_ids.is_empty() {
+			for id in &dev.device_ids {
+				out.push(format!("nvidia.com/gpu={id}"));
+			}
+			continue;
+		}
+
+		match dev.count.as_ref().map(|c| c.to_i64()) {
+			// `count: all` (-1) or unspecified → request every GPU.
+			Some(-1) | None => out.push("nvidia.com/gpu=all".to_string()),
+			Some(n) if n > 0 => {
+				for i in 0..n {
+					out.push(format!("nvidia.com/gpu={i}"));
+				}
+			}
+			Some(_) => {}
+		}
+	}
+
+	out
 }
 
 // ---------------------------------------------------------------------------
@@ -447,5 +495,49 @@ mod tests {
 		let ul = build_ulimits(&svc);
 		assert_eq!(ul[0].soft, 512);
 		assert_eq!(ul[0].hard, 2048);
+	}
+
+	// --- cdi devices ---
+
+	fn cdi_for(yaml: &str) -> Vec<String> {
+		let file = crate::parse_str(yaml).unwrap();
+		cdi_devices(&file.services["app"])
+	}
+
+	#[test]
+	fn cdi_gpu_count_all() {
+		let got = cdi_for(
+			"services:\n  app:\n    image: x\n    deploy:\n      resources:\n        reservations:\n          devices:\n            - capabilities: [gpu]\n              count: all\n",
+		);
+		assert_eq!(got, vec!["nvidia.com/gpu=all"]);
+	}
+
+	#[test]
+	fn cdi_gpu_count_n_enumerates() {
+		let got = cdi_for(
+			"services:\n  app:\n    image: x\n    deploy:\n      resources:\n        reservations:\n          devices:\n            - capabilities: [gpu]\n              count: 2\n",
+		);
+		assert_eq!(got, vec!["nvidia.com/gpu=0", "nvidia.com/gpu=1"]);
+	}
+
+	#[test]
+	fn cdi_gpu_device_ids() {
+		let got = cdi_for(
+			"services:\n  app:\n    image: x\n    deploy:\n      resources:\n        reservations:\n          devices:\n            - capabilities: [gpu]\n              device_ids: [\"GPU-abc\", \"1\"]\n",
+		);
+		assert_eq!(got, vec!["nvidia.com/gpu=GPU-abc", "nvidia.com/gpu=1"]);
+	}
+
+	#[test]
+	fn cdi_non_gpu_skipped() {
+		let got = cdi_for(
+			"services:\n  app:\n    image: x\n    deploy:\n      resources:\n        reservations:\n          devices:\n            - capabilities: [tpu]\n              driver: google\n",
+		);
+		assert!(got.is_empty());
+	}
+
+	#[test]
+	fn cdi_absent_without_deploy() {
+		assert!(cdi_devices(&default_service()).is_empty());
 	}
 }

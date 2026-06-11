@@ -25,6 +25,8 @@ podup (0.11.0) unstable; urgency=medium
     map used for interpolation.
   * Build a Git/URL build context by having Podman clone it server-side
     instead of treating the URL as a local directory to tar.
+  * Forward NVIDIA GPU reservations (deploy.resources.reservations.devices)
+    to Podman as CDI devices instead of warning and ignoring them.
 
  -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 15:45:00 -0500
 
