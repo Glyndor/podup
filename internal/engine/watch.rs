@@ -236,7 +236,9 @@ impl Engine {
 	async fn watch_restart(&self, container_name: &str) -> Result<()> {
 		info!("restarting {container_name}");
 		let stop_path = format!("/libpod/containers/{}/stop?t=5", urlencoded(container_name));
-		let _ = self.client.post_empty_ok(&stop_path).await;
+		if let Err(e) = self.client.post_empty_ok(&stop_path).await {
+			tracing::debug!("stop before watch restart {container_name}: {e}");
+		}
 		let start_path = format!("/libpod/containers/{}/start", urlencoded(container_name));
 		self.client.post_empty_ok(&start_path).await.map_err(ComposeError::Podman)?;
 		Ok(())

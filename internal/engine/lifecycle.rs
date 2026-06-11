@@ -194,7 +194,9 @@ impl Engine {
 			let service = &file.services[name];
 			for container_name in self.replica_names(name, service) {
 				for hook in &service.pre_stop {
-					let _ = self.run_lifecycle_hook(&container_name, hook).await;
+					if let Err(e) = self.run_lifecycle_hook(&container_name, hook).await {
+						tracing::debug!("pre_stop hook {container_name}: {e}");
+					}
 				}
 
 				let grace = grace_period_secs(service);
@@ -202,13 +204,17 @@ impl Engine {
 					"/libpod/containers/{}/stop?t={grace}",
 					crate::libpod::urlencoded(&container_name),
 				);
-				let _ = self.client.post_empty_ok(&stop_path).await;
+				if let Err(e) = self.client.post_empty_ok(&stop_path).await {
+					tracing::debug!("stop {container_name}: {e}");
+				}
 
 				let rm_path = format!(
 					"/libpod/containers/{}?force=true",
 					crate::libpod::urlencoded(&container_name),
 				);
-				let _ = self.client.delete_ok(&rm_path).await;
+				if let Err(e) = self.client.delete_ok(&rm_path).await {
+					tracing::debug!("down delete {container_name}: {e}");
+				}
 
 				info!("removed {container_name}");
 			}
@@ -278,7 +284,9 @@ impl Engine {
 					"/libpod/containers/{}/stop?t={grace}",
 					crate::libpod::urlencoded(&container_name),
 				);
-				let _ = self.client.post_empty_ok(&stop_path).await;
+				if let Err(e) = self.client.post_empty_ok(&stop_path).await {
+					tracing::debug!("stop before restart {container_name}: {e}");
+				}
 
 				let start_path = format!(
 					"/libpod/containers/{}/start",
@@ -297,7 +305,9 @@ impl Engine {
 							"/libpod/containers/{}/stop?t={grace}",
 							crate::libpod::urlencoded(&dep_container),
 						);
-						let _ = self.client.post_empty_ok(&stop_path).await;
+						if let Err(e) = self.client.post_empty_ok(&stop_path).await {
+							tracing::debug!("stop before cascade restart {dep_container}: {e}");
+						}
 						let start_path = format!(
 							"/libpod/containers/{}/start",
 							crate::libpod::urlencoded(&dep_container),
@@ -332,7 +342,9 @@ impl Engine {
 					"/libpod/containers/{}/stop?t={grace}",
 					crate::libpod::urlencoded(&container_name),
 				);
-				let _ = self.client.post_empty_ok(&path).await;
+				if let Err(e) = self.client.post_empty_ok(&path).await {
+					tracing::debug!("stop {container_name}: {e}");
+				}
 				info!("stopped {container_name}");
 			}
 		}
@@ -410,7 +422,9 @@ impl Engine {
 					"/libpod/containers/{}?force={force_str}",
 					crate::libpod::urlencoded(&container_name),
 				);
-				let _ = self.client.delete_ok(&path).await;
+				if let Err(e) = self.client.delete_ok(&path).await {
+					tracing::debug!("rm {container_name}: {e}");
+				}
 				info!("removed {container_name}");
 			}
 		}
@@ -540,7 +554,12 @@ impl Engine {
 			.post_empty_json::<crate::libpod::types::container::WaitResponse>(&wait_path)
 			.await
 		{
-			Ok(resp) => resp.status_code,
+			Ok(resp) => {
+				if let Some(msg) = resp.error.and_then(|e| e.message).filter(|m| !m.is_empty()) {
+					tracing::warn!("container wait error: {msg}");
+				}
+				resp.status_code
+			}
 			Err(e) => {
 				tracing::warn!("wait failed: {e}");
 				0
@@ -552,7 +571,9 @@ impl Engine {
 				"/libpod/containers/{}?force=true",
 				crate::libpod::urlencoded(&run_name),
 			);
-			let _ = self.client.delete_ok(&rm_path).await;
+			if let Err(e) = self.client.delete_ok(&rm_path).await {
+				tracing::debug!("run cleanup delete {run_name}: {e}");
+			}
 		}
 
 		if exit_code != 0 {
