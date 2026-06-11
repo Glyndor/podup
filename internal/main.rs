@@ -39,6 +39,12 @@ struct Cli {
 	#[arg(long, global = true)]
 	project_directory: Option<PathBuf>,
 
+	/// Additional env file(s) loaded into the variable map used for
+	/// interpolation. May be given multiple times; later files win. The
+	/// process environment and a project `.env` still take precedence.
+	#[arg(long = "env-file", global = true)]
+	env_file: Vec<String>,
+
 	#[command(subcommand)]
 	command: Commands,
 }
@@ -362,7 +368,7 @@ async fn run() -> podup::Result<()> {
 	}
 
 	let compose_path = resolve_compose_file(cli.file.clone());
-	let file = podup::parse_file(&compose_path)?;
+	let file = podup::parse_file_with_env_files(&compose_path, &cli.env_file)?;
 
 	if matches!(cli.command, Commands::Config) {
 		let yaml = serde_yaml::to_string(&file).map_err(podup::ComposeError::Parse)?;
