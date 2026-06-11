@@ -244,11 +244,17 @@ pub struct Namespace {
 
 impl Namespace {
 	pub fn new(mode: impl Into<String>) -> Self {
-		Self { nsmode: mode.into(), value: None }
+		Self {
+			nsmode: mode.into(),
+			value: None,
+		}
 	}
 
 	pub fn container(id: impl Into<String>) -> Self {
-		Self { nsmode: "container".into(), value: Some(id.into()) }
+		Self {
+			nsmode: "container".into(),
+			value: Some(id.into()),
+		}
 	}
 
 	/// Parse a compose-style namespace string.

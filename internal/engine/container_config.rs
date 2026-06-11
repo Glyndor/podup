@@ -36,10 +36,7 @@ pub(super) fn build_restart_policy(service: &Service) -> (Option<String>, Option
 			"on-failure" => "on-failure",
 			_ => "unless-stopped",
 		};
-		return (
-			Some(name.to_string()),
-			drp.max_attempts.map(|n| n as u64),
-		);
+		return (Some(name.to_string()), drp.max_attempts.map(|n| n as u64));
 	}
 	(None, None)
 }

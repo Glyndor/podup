@@ -63,3 +63,43 @@ impl PodmanError {
 		matches!(self, Self::Api { status, .. } if *status == code)
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::PodmanError;
+
+	#[test]
+	fn is_status_matches_code() {
+		let e = PodmanError::Api { status: 404, message: "not found".into() };
+		assert!(e.is_status(404));
+		assert!(!e.is_status(200));
+		assert!(!e.is_status(500));
+	}
+
+	#[test]
+	fn is_status_false_for_non_api() {
+		let e = PodmanError::Json(serde_json::from_str::<u8>("bad").unwrap_err());
+		assert!(!e.is_status(404));
+	}
+
+	#[test]
+	fn display_api_error() {
+		let e = PodmanError::Api { status: 500, message: "internal error".into() };
+		assert_eq!(e.to_string(), "podman API error (HTTP 500): internal error");
+	}
+
+	#[test]
+	fn display_json_error() {
+		let e = PodmanError::Json(serde_json::from_str::<u8>("bad").unwrap_err());
+		assert!(e.to_string().contains("json error"));
+	}
+
+	#[test]
+	fn display_connect_error() {
+		let e = PodmanError::Connect(std::io::Error::new(
+			std::io::ErrorKind::NotFound,
+			"no socket",
+		));
+		assert!(e.to_string().contains("podman socket connection error"));
+	}
+}

@@ -41,7 +41,11 @@ impl Engine {
 		}
 
 		let path = format!("/libpod/images/pull?{query}");
-		let resp = self.client.post_empty_stream(&path).await.map_err(ComposeError::Podman)?;
+		let resp = self
+			.client
+			.post_empty_stream(&path)
+			.await
+			.map_err(ComposeError::Podman)?;
 		let mut stream = crate::libpod::parse_json_lines::<ImagePullProgress>(resp.into_body());
 
 		while let Some(result) = stream.next().await {
@@ -134,7 +138,10 @@ impl Engine {
 			labels.extend(l.to_map());
 		}
 
-		let network = if let BuildConfig::Config { network: Some(n), .. } = build {
+		let network = if let BuildConfig::Config {
+			network: Some(n), ..
+		} = build
+		{
 			Some(n.clone())
 		} else {
 			None
@@ -149,14 +156,15 @@ impl Engine {
 			.and_then(size::parse_memory)
 			.map(|s| s as i32);
 		let extrahosts_str = build.extra_hosts().join(",");
-		let extrahosts = if extrahosts_str.is_empty() { None } else { Some(extrahosts_str) };
+		let extrahosts = if extrahosts_str.is_empty() {
+			None
+		} else {
+			Some(extrahosts_str)
+		};
 		let cachefrom = if build.cache_from().is_empty() {
 			None
 		} else {
-			Some(
-				serde_json::to_string(build.cache_from())
-					.unwrap_or_default(),
-			)
+			Some(serde_json::to_string(build.cache_from()).unwrap_or_default())
 		};
 		let buildargs_json = if build_args.is_empty() {
 			None
@@ -169,7 +177,11 @@ impl Engine {
 			Some(serde_json::to_string(&labels).unwrap_or_default())
 		};
 
-		let mut qs = format!("t={}&rm=true&nocache={}", urlencoded(&tag), build.no_cache());
+		let mut qs = format!(
+			"t={}&rm=true&nocache={}",
+			urlencoded(&tag),
+			build.no_cache()
+		);
 		qs.push_str(&format!("&dockerfile={}", urlencoded(&dockerfile_name)));
 		if build.pull() {
 			qs.push_str("&pull=true");
@@ -392,8 +404,7 @@ fn match_star(pat: &str, s: &str) -> bool {
 #[cfg(test)]
 mod tests {
 	use super::{
-		build_context_tar, build_context_tar_with_inline, glob_match, is_ignored,
-		read_dockerignore,
+		build_context_tar, build_context_tar_with_inline, glob_match, is_ignored, read_dockerignore,
 	};
 	use std::fs;
 	use tempfile::tempdir;
@@ -495,7 +506,9 @@ mod tests {
 
 		// Decompress and scan for secret.key in tar entry names.
 		let mut gz_content = Vec::new();
-		GzDecoder::new(bytes.as_slice()).read_to_end(&mut gz_content).unwrap();
+		GzDecoder::new(bytes.as_slice())
+			.read_to_end(&mut gz_content)
+			.unwrap();
 		let mut archive = tar::Archive::new(gz_content.as_slice());
 		let names: Vec<String> = archive
 			.entries()
@@ -503,7 +516,10 @@ mod tests {
 			.filter_map(|e| e.ok())
 			.filter_map(|e| e.path().ok().map(|p| p.to_string_lossy().into_owned()))
 			.collect();
-		assert!(!names.iter().any(|n| n.contains("secret.key")), "secret.key must be excluded: {names:?}");
+		assert!(
+			!names.iter().any(|n| n.contains("secret.key")),
+			"secret.key must be excluded: {names:?}"
+		);
 	}
 
 	#[test]

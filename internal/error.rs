@@ -168,7 +168,10 @@ mod tests {
 		let e: ComposeError = yaml_err.into();
 		assert!(matches!(e, ComposeError::Parse(_)));
 
-		let podman_err = crate::libpod::PodmanError::Api { status: 404, message: "not found".into() };
+		let podman_err = crate::libpod::PodmanError::Api {
+			status: 404,
+			message: "not found".into(),
+		};
 		let e: ComposeError = podman_err.into();
 		assert!(matches!(e, ComposeError::Podman(_)));
 	}

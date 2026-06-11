@@ -54,7 +54,11 @@ impl Engine {
 				labels,
 			};
 
-			match self.client.post_json::<_, serde_json::Value>("/libpod/volumes/create", &options).await {
+			match self
+				.client
+				.post_json::<_, serde_json::Value>("/libpod/volumes/create", &options)
+				.await
+			{
 				Ok(_) => info!("created volume {volume_name}"),
 				Err(ref e) if e.is_status(409) => {}
 				Err(e) => return Err(ComposeError::Podman(e)),

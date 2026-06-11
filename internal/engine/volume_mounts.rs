@@ -36,84 +36,82 @@ pub(crate) fn build_mounts_all(
 				volume,
 				tmpfs,
 				..
-			} => {
-				match volume_type {
-					VolumeType::Tmpfs => {
-						let mut opts: Vec<String> = Vec::new();
-						if let Some(t) = tmpfs {
-							if let Some(size) = t.size {
-								opts.push(format!("size={size}"));
-							}
-							if let Some(mode) = t.mode {
-								opts.push(format!("mode={mode:o}"));
-							}
+			} => match volume_type {
+				VolumeType::Tmpfs => {
+					let mut opts: Vec<String> = Vec::new();
+					if let Some(t) = tmpfs {
+						if let Some(size) = t.size {
+							opts.push(format!("size={size}"));
 						}
-						if read_only.unwrap_or(false) {
-							opts.push("ro".into());
+						if let Some(mode) = t.mode {
+							opts.push(format!("mode={mode:o}"));
 						}
-						out.push(Mount {
-							mount_type: "tmpfs".into(),
-							source: None,
-							destination: target.clone(),
-							options: opts,
-						});
 					}
-					VolumeType::Bind => {
-						let src = source.as_deref().unwrap_or("");
-
-						if let Some(b) = bind {
-							if b.create_host_path.unwrap_or(false) && !src.is_empty() {
-								let abs = if Path::new(src).is_absolute() {
-									std::path::PathBuf::from(src)
-								} else {
-									base_dir.join(src)
-								};
-								if let Err(e) = std::fs::create_dir_all(&abs) {
-									tracing::warn!(
-										"create_host_path: failed to create {}: {e}",
-										abs.display()
-									);
-								}
-							}
-						}
-
-						let mut opts = access_opts(*read_only);
-						extend_bind_opts_str(&mut opts, bind.as_ref());
-						out.push(Mount {
-							mount_type: "bind".into(),
-							source: Some(src.to_string()),
-							destination: target.clone(),
-							options: opts,
-						});
+					if read_only.unwrap_or(false) {
+						opts.push("ro".into());
 					}
-					VolumeType::Volume => {
-						let mut opts = access_opts(*read_only);
-						extend_volume_opts_str(&mut opts, volume.as_ref());
-						out.push(Mount {
-							mount_type: "volume".into(),
-							source: source.clone(),
-							destination: target.clone(),
-							options: opts,
-						});
-					}
-					VolumeType::Npipe => {
-						out.push(Mount {
-							mount_type: "npipe".into(),
-							source: source.clone(),
-							destination: target.clone(),
-							options: vec![],
-						});
-					}
-					VolumeType::Cluster => {
-						out.push(Mount {
-							mount_type: "cluster".into(),
-							source: source.clone(),
-							destination: target.clone(),
-							options: vec![],
-						});
-					}
+					out.push(Mount {
+						mount_type: "tmpfs".into(),
+						source: None,
+						destination: target.clone(),
+						options: opts,
+					});
 				}
-			}
+				VolumeType::Bind => {
+					let src = source.as_deref().unwrap_or("");
+
+					if let Some(b) = bind {
+						if b.create_host_path.unwrap_or(false) && !src.is_empty() {
+							let abs = if Path::new(src).is_absolute() {
+								std::path::PathBuf::from(src)
+							} else {
+								base_dir.join(src)
+							};
+							if let Err(e) = std::fs::create_dir_all(&abs) {
+								tracing::warn!(
+									"create_host_path: failed to create {}: {e}",
+									abs.display()
+								);
+							}
+						}
+					}
+
+					let mut opts = access_opts(*read_only);
+					extend_bind_opts_str(&mut opts, bind.as_ref());
+					out.push(Mount {
+						mount_type: "bind".into(),
+						source: Some(src.to_string()),
+						destination: target.clone(),
+						options: opts,
+					});
+				}
+				VolumeType::Volume => {
+					let mut opts = access_opts(*read_only);
+					extend_volume_opts_str(&mut opts, volume.as_ref());
+					out.push(Mount {
+						mount_type: "volume".into(),
+						source: source.clone(),
+						destination: target.clone(),
+						options: opts,
+					});
+				}
+				VolumeType::Npipe => {
+					out.push(Mount {
+						mount_type: "npipe".into(),
+						source: source.clone(),
+						destination: target.clone(),
+						options: vec![],
+					});
+				}
+				VolumeType::Cluster => {
+					out.push(Mount {
+						mount_type: "cluster".into(),
+						source: source.clone(),
+						destination: target.clone(),
+						options: vec![],
+					});
+				}
+			},
 		}
 	}
 
@@ -161,7 +159,11 @@ fn parse_bind_string(s: &str) -> Option<Mount> {
 	};
 	Some(Mount {
 		mount_type: mount_type.into(),
-		source: if src.is_empty() { None } else { Some(src.to_string()) },
+		source: if src.is_empty() {
+			None
+		} else {
+			Some(src.to_string())
+		},
 		destination: dst.to_string(),
 		options: opts,
 	})
@@ -198,7 +200,7 @@ fn extend_volume_opts_str(opts: &mut Vec<String>, v: Option<&VolumeOptions>) {
 
 #[cfg(test)]
 mod tests {
-	use super::{build_mounts_all};
+	use super::build_mounts_all;
 	use crate::compose::types::{BindOptions, Service, VolumeMount, VolumeOptions, VolumeType};
 	use std::path::Path;
 

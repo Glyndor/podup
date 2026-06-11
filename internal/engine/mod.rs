@@ -82,12 +82,21 @@ impl Engine {
 			..Default::default()
 		};
 
-		let path = format!("/libpod/containers/{}/exec", crate::libpod::urlencoded(container_name));
-		let resp: crate::libpod::types::exec::ExecCreateResponse =
-			self.client.post_json(&path, &exec_cfg).await.map_err(ComposeError::Podman)?;
+		let path = format!(
+			"/libpod/containers/{}/exec",
+			crate::libpod::urlencoded(container_name)
+		);
+		let resp: crate::libpod::types::exec::ExecCreateResponse = self
+			.client
+			.post_json(&path, &exec_cfg)
+			.await
+			.map_err(ComposeError::Podman)?;
 		let exec_id = resp.id;
 
-		let start_cfg = ExecStartConfig { detach: false, tty: false };
+		let start_cfg = ExecStartConfig {
+			detach: false,
+			tty: false,
+		};
 		let start_path = format!("/libpod/exec/{exec_id}/start");
 		let resp = self
 			.client

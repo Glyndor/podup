@@ -240,7 +240,10 @@ impl Engine {
 			tracing::debug!("stop before watch restart {container_name}: {e}");
 		}
 		let start_path = format!("/libpod/containers/{}/start", urlencoded(container_name));
-		self.client.post_empty_ok(&start_path).await.map_err(ComposeError::Podman)?;
+		self.client
+			.post_empty_ok(&start_path)
+			.await
+			.map_err(ComposeError::Podman)?;
 		Ok(())
 	}
 
@@ -258,7 +261,10 @@ impl Engine {
 			.await
 			.map_err(ComposeError::Podman)?;
 
-		let start_cfg = ExecStartConfig { detach: false, tty: false };
+		let start_cfg = ExecStartConfig {
+			detach: false,
+			tty: false,
+		};
 		let start_path = format!("/libpod/exec/{}/start", urlencoded(&resp.id));
 		let start_resp = self
 			.client

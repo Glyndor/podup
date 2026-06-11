@@ -4,7 +4,9 @@ use futures::StreamExt;
 
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
-use crate::libpod::types::exec::{ExecCreateConfig, ExecCreateResponse, ExecInspect, ExecStartConfig};
+use crate::libpod::types::exec::{
+	ExecCreateConfig, ExecCreateResponse, ExecInspect, ExecStartConfig,
+};
 use crate::libpod::types::image::ImageInspect;
 use crate::libpod::{urlencoded, LogOutput};
 
@@ -72,7 +74,9 @@ impl Engine {
 				.iter()
 				.flat_map(|(n, s)| {
 					let is_tty = s.tty.unwrap_or(false);
-					self.replica_names(n, s).into_iter().map(move |cname| (cname, is_tty))
+					self.replica_names(n, s)
+						.into_iter()
+						.map(move |cname| (cname, is_tty))
 				})
 				.collect()
 		};
@@ -123,7 +127,11 @@ impl Engine {
 					urlencoded(&container_name),
 					follow,
 				);
-				let resp = self.client.get_stream(&path).await.map_err(ComposeError::Podman)?;
+				let resp = self
+					.client
+					.get_stream(&path)
+					.await
+					.map_err(ComposeError::Podman)?;
 				let mut stream = if is_tty {
 					crate::libpod::parse_raw(resp.into_body())
 				} else {
@@ -165,10 +173,7 @@ impl Engine {
 			attach_stderr: Some(true),
 			..Default::default()
 		};
-		let create_path = format!(
-			"/libpod/containers/{}/exec",
-			urlencoded(&container_name),
-		);
+		let create_path = format!("/libpod/containers/{}/exec", urlencoded(&container_name),);
 		let resp: ExecCreateResponse = self
 			.client
 			.post_json(&create_path, &exec_cfg)
@@ -176,7 +181,10 @@ impl Engine {
 			.map_err(ComposeError::Podman)?;
 		let exec_id = resp.id;
 
-		let start_cfg = ExecStartConfig { detach: false, tty: false };
+		let start_cfg = ExecStartConfig {
+			detach: false,
+			tty: false,
+		};
 		let start_path = format!("/libpod/exec/{}/start", urlencoded(&exec_id));
 		let start_resp = self
 			.client
@@ -253,8 +261,7 @@ impl Engine {
 				let name = raw.trim_start_matches('/');
 				if !known.contains(name) {
 					tracing::info!("removing orphan container {name}");
-					let rm_path =
-						format!("/libpod/containers/{}?force=true", urlencoded(name));
+					let rm_path = format!("/libpod/containers/{}?force=true", urlencoded(name));
 					if let Err(e) = self.client.delete_ok(&rm_path).await {
 						tracing::debug!("orphan delete {name}: {e}");
 					}
@@ -282,10 +289,7 @@ impl Engine {
 		for name in &names {
 			let service = &file.services[name];
 			for container_name in self.replica_names(name, service) {
-				let path = format!(
-					"/libpod/containers/{}/top",
-					urlencoded(&container_name),
-				);
+				let path = format!("/libpod/containers/{}/top", urlencoded(&container_name),);
 				match self
 					.client
 					.get_json::<crate::libpod::types::container::TopResponse>(&path)
@@ -325,10 +329,7 @@ impl Engine {
 			.ok_or_else(|| crate::error::ComposeError::ServiceNotFound(service_name.into()))?;
 		let container_name = self.first_replica_name(service_name, service);
 
-		let path = format!(
-			"/libpod/containers/{}/json",
-			urlencoded(&container_name),
-		);
+		let path = format!("/libpod/containers/{}/json", urlencoded(&container_name),);
 		let info = self
 			.client
 			.get_json::<crate::libpod::types::container::ContainerInspect>(&path)
@@ -371,11 +372,7 @@ impl Engine {
 						.rsplit_once(':')
 						.map(|(r, t)| (r.to_string(), t.to_string()))
 						.unwrap_or_else(|| (image_ref.clone(), "latest".to_string()));
-					let id = img
-						.id
-						.trim_start_matches("sha256:")
-						.get(..12)
-						.unwrap_or("");
+					let id = img.id.trim_start_matches("sha256:").get(..12).unwrap_or("");
 					println!("{name:<30} {repo:<25} {tag:<15} {id:<20}");
 				}
 				Err(e) => tracing::warn!("images {name}: {e}"),

@@ -56,7 +56,11 @@ impl Engine {
 			urlencoded(&container_name),
 			urlencoded(container_path),
 		);
-		let resp = self.client.get_stream(&path).await.map_err(ComposeError::Podman)?;
+		let resp = self
+			.client
+			.get_stream(&path)
+			.await
+			.map_err(ComposeError::Podman)?;
 		let tar_bytes = resp
 			.into_body()
 			.collect()

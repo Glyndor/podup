@@ -19,4 +19,3 @@ pub struct VolumeCreateOptions {
 	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
 	pub labels: HashMap<String, String>,
 }
-

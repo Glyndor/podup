@@ -25,7 +25,9 @@ pub struct Client {
 
 impl Client {
 	pub fn new(socket_path: impl Into<String>) -> Self {
-		Self { socket_path: socket_path.into() }
+		Self {
+			socket_path: socket_path.into(),
+		}
 	}
 
 	/// Open a new HTTP/1.1 sender over the platform socket.
@@ -87,12 +89,12 @@ impl Client {
 		body: BoxBody,
 		content_type: Option<&str>,
 	) -> Result<Request<BoxBody>> {
-		let uri: hyper::Uri = format!("http://localhost{path}")
-			.parse()
-			.map_err(|e: hyper::http::uri::InvalidUri| PodmanError::Api {
+		let uri: hyper::Uri = format!("http://localhost{path}").parse().map_err(
+			|e: hyper::http::uri::InvalidUri| PodmanError::Api {
 				status: 0,
 				message: format!("invalid API path '{path}': {e}"),
-			})?;
+			},
+		)?;
 
 		let mut builder = Request::builder()
 			.method(method)
@@ -140,14 +142,17 @@ impl Client {
 		}
 
 		let msg = if let Ok(e) = serde_json::from_slice::<ApiError>(body) {
-			e.message.or(e.cause).unwrap_or_else(|| {
-				String::from_utf8_lossy(body).into_owned()
-			})
+			e.message
+				.or(e.cause)
+				.unwrap_or_else(|| String::from_utf8_lossy(body).into_owned())
 		} else {
 			String::from_utf8_lossy(body).into_owned()
 		};
 
-		Err(PodmanError::Api { status: status.as_u16(), message: msg })
+		Err(PodmanError::Api {
+			status: status.as_u16(),
+			message: msg,
+		})
 	}
 
 	// ---------------------------------------------------------------------------
@@ -156,12 +161,7 @@ impl Client {
 
 	/// `GET /libpod/_ping` — returns Ok(()) when Podman is reachable.
 	pub async fn ping(&self) -> Result<()> {
-		let req = Self::build_request(
-			Method::GET,
-			"/libpod/_ping",
-			Full::new(Bytes::new()),
-			None,
-		)?;
+		let req = Self::build_request(Method::GET, "/libpod/_ping", Full::new(Bytes::new()), None)?;
 		let resp = self.send(req).await?;
 		let (status, body) = Self::read_body(resp).await?;
 		Self::check_status(status, &body)
@@ -169,12 +169,7 @@ impl Client {
 
 	/// `GET` → deserialize JSON response.
 	pub async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-		let req = Self::build_request(
-			Method::GET,
-			path,
-			Full::new(Bytes::new()),
-			None,
-		)?;
+		let req = Self::build_request(Method::GET, path, Full::new(Bytes::new()), None)?;
 		let resp = self.send(req).await?;
 		let (status, body) = Self::read_body(resp).await?;
 		Self::check_status(status, &body)?;
@@ -183,12 +178,7 @@ impl Client {
 
 	/// `GET` → return raw `Response<Incoming>` for streaming.
 	pub async fn get_stream(&self, path: &str) -> Result<Response<Incoming>> {
-		let req = Self::build_request(
-			Method::GET,
-			path,
-			Full::new(Bytes::new()),
-			None,
-		)?;
+		let req = Self::build_request(Method::GET, path, Full::new(Bytes::new()), None)?;
 		let resp = self.send(req).await?;
 		if !resp.status().is_success() {
 			let (status, body) = Self::read_body(resp).await?;
@@ -259,12 +249,7 @@ impl Client {
 
 	/// `POST` with empty body → ignore response body (expect 2xx or 304).
 	pub async fn post_empty_ok(&self, path: &str) -> Result<()> {
-		let req = Self::build_request(
-			Method::POST,
-			path,
-			Full::new(Bytes::new()),
-			None,
-		)?;
+		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;
 		let resp = self.send(req).await?;
 		let (status, body) = Self::read_body(resp).await?;
 		// 304 Not Modified is fine for idempotent ops
@@ -276,12 +261,7 @@ impl Client {
 
 	/// `POST` with empty body → return raw `Response<Incoming>` for streaming.
 	pub async fn post_empty_stream(&self, path: &str) -> Result<Response<Incoming>> {
-		let req = Self::build_request(
-			Method::POST,
-			path,
-			Full::new(Bytes::new()),
-			None,
-		)?;
+		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;
 		let resp = self.send(req).await?;
 		if !resp.status().is_success() {
 			let (status, body) = Self::read_body(resp).await?;
@@ -295,12 +275,7 @@ impl Client {
 
 	/// `POST` with empty body → deserialize JSON response.
 	pub async fn post_empty_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-		let req = Self::build_request(
-			Method::POST,
-			path,
-			Full::new(Bytes::new()),
-			None,
-		)?;
+		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;
 		let resp = self.send(req).await?;
 		let (status, body) = Self::read_body(resp).await?;
 		Self::check_status(status, &body)?;
@@ -314,12 +289,7 @@ impl Client {
 		bytes: Bytes,
 		content_type: &str,
 	) -> Result<Response<Incoming>> {
-		let req = Self::build_request(
-			Method::POST,
-			path,
-			Full::new(bytes),
-			Some(content_type),
-		)?;
+		let req = Self::build_request(Method::POST, path, Full::new(bytes), Some(content_type))?;
 		let resp = self.send(req).await?;
 		if !resp.status().is_success() {
 			let (status, body) = Self::read_body(resp).await?;
@@ -332,18 +302,8 @@ impl Client {
 	}
 
 	/// `PUT` with raw bytes body → expect 2xx.
-	pub async fn put_bytes_ok(
-		&self,
-		path: &str,
-		bytes: Bytes,
-		content_type: &str,
-	) -> Result<()> {
-		let req = Self::build_request(
-			Method::PUT,
-			path,
-			Full::new(bytes),
-			Some(content_type),
-		)?;
+	pub async fn put_bytes_ok(&self, path: &str, bytes: Bytes, content_type: &str) -> Result<()> {
+		let req = Self::build_request(Method::PUT, path, Full::new(bytes), Some(content_type))?;
 		let resp = self.send(req).await?;
 		let (status, body) = Self::read_body(resp).await?;
 		Self::check_status(status, &body)
@@ -351,12 +311,7 @@ impl Client {
 
 	/// `DELETE` → ignore response body (expect 2xx or 404).
 	pub async fn delete_ok(&self, path: &str) -> Result<()> {
-		let req = Self::build_request(
-			Method::DELETE,
-			path,
-			Full::new(Bytes::new()),
-			None,
-		)?;
+		let req = Self::build_request(Method::DELETE, path, Full::new(Bytes::new()), None)?;
 		let resp = self.send(req).await?;
 		let (status, body) = Self::read_body(resp).await?;
 		if status == StatusCode::NOT_FOUND {
@@ -364,7 +319,6 @@ impl Client {
 		}
 		Self::check_status(status, &body)
 	}
-
 }
 
 // ---------------------------------------------------------------------------
@@ -380,10 +334,64 @@ pub(crate) fn urlencoded(s: &str) -> String {
 			}
 			_ => {
 				out.push('%');
-				out.push(char::from_digit((b >> 4) as u32, 16).unwrap().to_ascii_uppercase());
-				out.push(char::from_digit((b & 0xf) as u32, 16).unwrap().to_ascii_uppercase());
+				out.push(
+					char::from_digit((b >> 4) as u32, 16)
+						.unwrap()
+						.to_ascii_uppercase(),
+				);
+				out.push(
+					char::from_digit((b & 0xf) as u32, 16)
+						.unwrap()
+						.to_ascii_uppercase(),
+				);
 			}
 		}
 	}
 	out
+}
+
+#[cfg(test)]
+mod tests {
+	use super::urlencoded;
+
+	#[test]
+	fn unreserved_chars_pass_through() {
+		assert_eq!(urlencoded("abc-XYZ_0.9~"), "abc-XYZ_0.9~");
+	}
+
+	#[test]
+	fn space_encoded() {
+		assert_eq!(urlencoded("hello world"), "hello%20world");
+	}
+
+	#[test]
+	fn slash_encoded() {
+		assert_eq!(urlencoded("a/b"), "a%2Fb");
+	}
+
+	#[test]
+	fn colon_encoded() {
+		assert_eq!(urlencoded("myproj:v1"), "myproj%3Av1");
+	}
+
+	#[test]
+	fn empty_string() {
+		assert_eq!(urlencoded(""), "");
+	}
+
+	#[test]
+	fn unicode_byte_encoded() {
+		// '€' = 0xE2 0x82 0xAC in UTF-8
+		assert_eq!(urlencoded("€"), "%E2%82%AC");
+	}
+
+	#[test]
+	fn container_name_typical() {
+		assert_eq!(urlencoded("myproject-web"), "myproject-web");
+	}
+
+	#[test]
+	fn container_name_with_brackets() {
+		assert_eq!(urlencoded("a[b]"), "a%5Bb%5D");
+	}
 }

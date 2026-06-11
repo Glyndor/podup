@@ -11,7 +11,7 @@ use crate::libpod::urlencoded;
 use crate::{env_file, ports, size};
 
 use super::container_config::{
-	build_healthcheck, build_log_config, build_restart_policy, build_resource_limits, build_ulimits,
+	build_healthcheck, build_log_config, build_resource_limits, build_restart_policy, build_ulimits,
 };
 use super::container_misc::{
 	build_blkio_config, build_label_file_labels, parse_device, warn_swarm_only_deploy,
@@ -113,7 +113,9 @@ impl Engine {
 		// --- Resource limits ---
 		let mut resource_limits = build_resource_limits(service);
 		if let Some(blkio) = build_blkio_config(service) {
-			resource_limits.get_or_insert_with(LinuxResources::default).block_io = Some(blkio);
+			resource_limits
+				.get_or_insert_with(LinuxResources::default)
+				.block_io = Some(blkio);
 		}
 
 		// --- Ulimits ---
@@ -216,7 +218,10 @@ impl Engine {
 		};
 
 		// Remove any existing container (idempotent restart).
-		let rm_path = format!("/libpod/containers/{}?force=true", urlencoded(container_name));
+		let rm_path = format!(
+			"/libpod/containers/{}?force=true",
+			urlencoded(container_name)
+		);
 		if let Err(e) = self.client.delete_ok(&rm_path).await {
 			tracing::debug!("pre-create delete {container_name}: {e}");
 		}
@@ -243,5 +248,8 @@ fn build_env(service: &Service, base_dir: &Path) -> Result<Vec<String>> {
 	} else {
 		HashMap::new()
 	};
-	Ok(env_file::merge_env(service.environment.to_map(), env_file_vars))
+	Ok(env_file::merge_env(
+		service.environment.to_map(),
+		env_file_vars,
+	))
 }

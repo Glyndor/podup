@@ -59,7 +59,11 @@ impl Engine {
 				subnets,
 			};
 
-			match self.client.post_json::<_, serde_json::Value>("/libpod/networks/create", &request).await {
+			match self
+				.client
+				.post_json::<_, serde_json::Value>("/libpod/networks/create", &request)
+				.await
+			{
 				Ok(_) => info!("created network {network_name}"),
 				Err(ref e) if e.is_status(409) => {}
 				Err(e) => return Err(ComposeError::Podman(e)),
@@ -67,7 +71,6 @@ impl Engine {
 		}
 		Ok(())
 	}
-
 }
 
 // ---------------------------------------------------------------------------

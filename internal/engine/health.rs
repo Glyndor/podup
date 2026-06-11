@@ -24,12 +24,10 @@ impl Engine {
 		for _ in 0..retries {
 			let info = match self
 				.client
-				.get_json::<crate::libpod::types::container::ContainerInspect>(
-					&format!(
-						"/libpod/containers/{}/json",
-						crate::libpod::urlencoded(container_name),
-					),
-				)
+				.get_json::<crate::libpod::types::container::ContainerInspect>(&format!(
+					"/libpod/containers/{}/json",
+					crate::libpod::urlencoded(container_name),
+				))
 				.await
 			{
 				Ok(i) => i,
@@ -60,12 +58,10 @@ impl Engine {
 		for _ in 0..600 {
 			let info = match self
 				.client
-				.get_json::<crate::libpod::types::container::ContainerInspect>(
-					&format!(
-						"/libpod/containers/{}/json",
-						crate::libpod::urlencoded(container_name),
-					),
-				)
+				.get_json::<crate::libpod::types::container::ContainerInspect>(&format!(
+					"/libpod/containers/{}/json",
+					crate::libpod::urlencoded(container_name),
+				))
 				.await
 			{
 				Ok(i) => i,

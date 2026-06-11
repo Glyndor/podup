@@ -6,7 +6,9 @@ use std::path::Path;
 use tracing::warn;
 
 use crate::compose::types::{BlkioConfig, Service};
-use crate::libpod::types::container::{LinuxBlockIO, LinuxDevice, LinuxThrottleDevice, LinuxWeightDevice};
+use crate::libpod::types::container::{
+	LinuxBlockIO, LinuxDevice, LinuxThrottleDevice, LinuxWeightDevice,
+};
 
 // ---------------------------------------------------------------------------
 // Device helpers
@@ -34,7 +36,8 @@ pub(crate) fn parse_device(s: &str) -> LinuxDevice {
 	}
 }
 
-#[cfg(unix)]
+/// Linux device number encoding uses 64-bit `dev_t`; the formula is Linux-kernel specific.
+#[cfg(target_os = "linux")]
 fn device_major_minor(path: &str) -> (i64, i64, String) {
 	use std::ffi::CString;
 	let Ok(c_path) = CString::new(path) else {
@@ -44,7 +47,7 @@ fn device_major_minor(path: &str) -> (i64, i64, String) {
 	if unsafe { libc::stat(c_path.as_ptr(), &mut st) } != 0 {
 		return (0, 0, "c".to_string());
 	}
-	let rdev = st.st_rdev;
+	let rdev = st.st_rdev as u64;
 	let major = (((rdev >> 8) & 0xfff) | ((rdev >> 32) & !0xfff)) as i64;
 	let minor = ((rdev & 0xff) | ((rdev >> 12) & !0xff)) as i64;
 	let dev_type = if st.st_mode & libc::S_IFMT == libc::S_IFBLK {
@@ -53,6 +56,12 @@ fn device_major_minor(path: &str) -> (i64, i64, String) {
 		"c"
 	};
 	(major, minor, dev_type.to_string())
+}
+
+/// Non-Linux Unix (macOS): Podman runs via a VM; host device paths don't translate to Linux device numbers.
+#[cfg(all(unix, not(target_os = "linux")))]
+fn device_major_minor(_path: &str) -> (i64, i64, String) {
+	(0, 0, "c".to_string())
 }
 
 #[cfg(not(unix))]
@@ -72,7 +81,11 @@ pub(super) fn build_blkio_config(service: &Service) -> Option<LinuxBlockIO> {
 		.iter()
 		.map(|d| {
 			let (major, minor, _) = device_major_minor(&d.path);
-			LinuxWeightDevice { major, minor, weight: Some(d.weight) }
+			LinuxWeightDevice {
+				major,
+				minor,
+				weight: Some(d.weight),
+			}
 		})
 		.collect();
 
@@ -80,7 +93,11 @@ pub(super) fn build_blkio_config(service: &Service) -> Option<LinuxBlockIO> {
 		devs.iter()
 			.map(|d| {
 				let (major, minor, _) = device_major_minor(&d.path);
-				LinuxThrottleDevice { major, minor, rate: d.rate_value() as u64 }
+				LinuxThrottleDevice {
+					major,
+					minor,
+					rate: d.rate_value() as u64,
+				}
 			})
 			.collect()
 	};

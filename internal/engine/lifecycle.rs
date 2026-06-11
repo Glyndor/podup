@@ -290,7 +290,10 @@ impl Engine {
 					"/libpod/containers/{}/start",
 					crate::libpod::urlencoded(&container_name),
 				);
-				self.client.post_empty_ok(&start_path).await.map_err(ComposeError::Podman)?;
+				self.client
+					.post_empty_ok(&start_path)
+					.await
+					.map_err(ComposeError::Podman)?;
 
 				info!("restarted {container_name}");
 			}
@@ -364,7 +367,10 @@ impl Engine {
 					"/libpod/containers/{}/start",
 					crate::libpod::urlencoded(&container_name),
 				);
-				self.client.post_empty_ok(&path).await.map_err(ComposeError::Podman)?;
+				self.client
+					.post_empty_ok(&path)
+					.await
+					.map_err(ComposeError::Podman)?;
 				info!("started {container_name}");
 			}
 		}
@@ -391,7 +397,10 @@ impl Engine {
 					crate::libpod::urlencoded(&container_name),
 					crate::libpod::urlencoded(signal),
 				);
-				self.client.post_empty_ok(&path).await.map_err(ComposeError::Podman)?;
+				self.client
+					.post_empty_ok(&path)
+					.await
+					.map_err(ComposeError::Podman)?;
 				info!("sent {signal} to {container_name}");
 			}
 		}
@@ -443,7 +452,10 @@ impl Engine {
 					"/libpod/containers/{}/pause",
 					crate::libpod::urlencoded(&container_name),
 				);
-				self.client.post_empty_ok(&path).await.map_err(ComposeError::Podman)?;
+				self.client
+					.post_empty_ok(&path)
+					.await
+					.map_err(ComposeError::Podman)?;
 				info!("paused {container_name}");
 			}
 		}
@@ -464,7 +476,10 @@ impl Engine {
 					"/libpod/containers/{}/unpause",
 					crate::libpod::urlencoded(&container_name),
 				);
-				self.client.post_empty_ok(&path).await.map_err(ComposeError::Podman)?;
+				self.client
+					.post_empty_ok(&path)
+					.await
+					.map_err(ComposeError::Podman)?;
 				info!("unpaused {container_name}");
 			}
 		}
