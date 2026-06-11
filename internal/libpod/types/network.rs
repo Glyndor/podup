@@ -30,6 +30,9 @@ pub struct NetworkCreateRequest {
 	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
 	pub options: HashMap<String, String>,
 
+	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
+	pub ipam_options: HashMap<String, String>,
+
 	#[serde(skip_serializing_if = "Vec::is_empty", default)]
 	pub subnets: Vec<Subnet>,
 }

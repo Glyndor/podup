@@ -14,6 +14,10 @@ podup (0.11.0) unstable; urgency=medium
     on unquoted values, and support multi-line quoted values.
   * Forward a long-form volume's subpath so only the named sub-directory of
     the volume is mounted instead of dropping the option.
+  * Forward IPAM configuration to Podman: the ipam driver and options, the
+    per-pool ip_range (as a lease range), and a per-network interface_name.
+    Unsupported aux_addresses and gw_priority are warned about rather than
+    silently dropped.
 
  -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 15:45:00 -0500
 
