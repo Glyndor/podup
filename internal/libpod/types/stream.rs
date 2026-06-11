@@ -62,19 +62,6 @@ pub fn parse_multiplexed(body: Incoming) -> BoxStream<LogOutput> {
 	))
 }
 
-/// Collect every `LogOutput` frame from a multiplexed stream body.
-///
-/// Convenience wrapper for callers that do not need incremental framing.
-pub async fn collect_multiplexed(body: Incoming) -> Result<Vec<LogOutput>, PodmanError> {
-	use futures::StreamExt;
-	let mut out = Vec::new();
-	let mut stream = parse_multiplexed(body);
-	while let Some(item) = stream.next().await {
-		out.push(item?);
-	}
-	Ok(out)
-}
-
 /// Parse a newline-delimited JSON stream (used for image pull and build output).
 ///
 /// Each line in the stream is expected to be a complete JSON object. Blank

@@ -55,7 +55,4 @@ pub struct ExecStartConfig {
 pub struct ExecInspect {
 	#[serde(rename = "ExitCode")]
 	pub exit_code: Option<i64>,
-
-	#[serde(rename = "Running", default)]
-	pub running: bool,
 }

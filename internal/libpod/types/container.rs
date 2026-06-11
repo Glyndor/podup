@@ -459,19 +459,9 @@ pub struct LinuxDevice {
 // Response types
 // ---------------------------------------------------------------------------
 
-/// Response from `POST /libpod/containers/create`.
-#[derive(Deserialize)]
-pub struct CreateResponse {
-	#[serde(rename = "Id")]
-	pub id: String,
-}
-
 /// Entry in the `GET /libpod/containers/json` response array.
 #[derive(Deserialize)]
 pub struct ContainerListEntry {
-	#[serde(rename = "Id")]
-	pub id: String,
-
 	#[serde(rename = "Names", default)]
 	pub names: Vec<String>,
 
@@ -491,7 +481,6 @@ pub struct ContainerPort {
 	pub host_ip: Option<String>,
 	pub host_port: Option<u16>,
 	pub container_port: u16,
-	pub protocol: Option<String>,
 }
 
 /// Response from `GET /libpod/containers/{name}/json`.

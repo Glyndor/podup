@@ -11,7 +11,6 @@ use hyper::client::conn::http1;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use serde::{de::DeserializeOwned, Serialize};
-use std::collections::HashMap;
 
 use super::error::PodmanError;
 
@@ -356,29 +355,11 @@ impl Client {
 		Self::check_status(status, &body)
 	}
 
-	/// `DELETE` → ignore 404 but propagate other errors.
-	pub async fn delete_ignore_not_found(&self, path: &str) -> Result<()> {
-		self.delete_ok(path).await
-	}
 }
 
 // ---------------------------------------------------------------------------
 // URL encoding helpers
 // ---------------------------------------------------------------------------
-
-/// Encode a map of query parameters into a URL query string.
-pub fn encode_query(params: &HashMap<&str, String>) -> String {
-	let mut parts: Vec<String> = params
-		.iter()
-		.map(|(k, v)| format!("{}={}", k, urlencoded(v)))
-		.collect();
-	parts.sort(); // deterministic order
-	if parts.is_empty() {
-		String::new()
-	} else {
-		format!("?{}", parts.join("&"))
-	}
-}
 
 pub(crate) fn urlencoded(s: &str) -> String {
 	let mut out = String::with_capacity(s.len());
