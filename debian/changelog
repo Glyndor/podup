@@ -12,6 +12,8 @@ podup (0.11.0) unstable; urgency=medium
   * Parse env files and .env with dotenv rules: strip surrounding quotes,
     honour escape sequences in double-quoted values, drop inline comments
     on unquoted values, and support multi-line quoted values.
+  * Forward a long-form volume's subpath so only the named sub-directory of
+    the volume is mounted instead of dropping the option.
 
  -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 15:45:00 -0500
 
