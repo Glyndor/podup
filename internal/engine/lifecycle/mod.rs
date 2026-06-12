@@ -64,7 +64,7 @@ impl Engine {
 		no_deps: bool,
 	) -> Result<()> {
 		let r: Result<()> = async {
-			let order = crate::compose::resolve_order(file)?;
+			let levels = crate::compose::resolve_levels(file)?;
 			let active = active_profiles_set(active_profiles);
 
 			let target_set = expand_targets(file, target_services, no_deps);
@@ -103,101 +103,25 @@ impl Engine {
 			self.create_networks(file).await?;
 			self.create_volumes(file).await?;
 
-			for name in &order {
-				if let Some(ref set) = target_set {
-					if !set.contains(name) {
-						continue;
-					}
-				}
-				let service = &file.services[name];
-
-				if !service_in_profiles(service, &active) {
-					tracing::debug!("skipping {name}: no active profile match");
-					continue;
-				}
-
-				for dep in service.depends_on.service_names() {
-					let condition = service.depends_on.condition_for(&dep);
-					let dep_service = match file.services.get(&dep) {
-						Some(s) => s,
-						None => continue,
-					};
-					if !service_in_profiles(dep_service, &active) {
-						continue;
-					}
-					let dep_container = self.container_name(&dep, dep_service);
-
-					match condition {
-						ServiceCondition::ServiceStarted => {}
-						ServiceCondition::ServiceHealthy => {
-							// Wait unless the healthcheck is explicitly disabled in
-							// compose. With no compose healthcheck we still wait:
-							// `wait_healthy` consults the container's effective
-							// healthcheck, so image-inherited ones are honored and
-							// the wait short-circuits when none exists.
-							let disabled = dep_service
-								.healthcheck
-								.as_ref()
-								.is_some_and(|h| h.is_disabled());
-							if disabled {
-								tracing::debug!(
-									"{dep} healthcheck disabled — skipping service_healthy wait"
-								);
-							} else {
-								self.wait_healthy(&dep_container, dep_service).await?;
-							}
-						}
-						ServiceCondition::ServiceCompletedSuccessfully => {
-							self.wait_completed(&dep_container).await?;
-						}
-					}
-				}
-
-				let policy = service.pull_policy.as_deref().unwrap_or("missing");
-				match (service.build.is_some(), policy) {
-					(true, _) => self.build_service(name, service, file).await?,
-					(false, "never") => {}
-					(false, _) => self.pull_image(service).await?,
-				}
-
-				let replicas = service
-					.scale
-					.or(service.deploy.as_ref().and_then(|d| d.replicas))
-					.unwrap_or(1) as usize;
-
-				let new_hash = config_hash(service);
-
-				for i in 1..=replicas {
-					let container_name = if replicas == 1 {
-						self.container_name(name, service)
-					} else {
-						format!("{}-{i}", self.container_name(name, service))
-					};
-					if !force_recreate {
-						if no_recreate && present.contains(&container_name) {
-							info!("{container_name} already exists — skipping recreate");
-							self.ensure_started(&container_name).await;
-							continue;
-						}
-						// Services with a build section are rebuilt on every up, so
-						// their container must be recreated to pick up the fresh
-						// image even when the compose config is unchanged.
-						if service.build.is_none()
-							&& existing_hash.get(&container_name) == Some(&new_hash)
-						{
-							info!("{container_name} is up to date — skipping recreate");
-							self.ensure_started(&container_name).await;
-							continue;
-						}
-					}
-					self.create_and_start(&container_name, name, service, file)
-						.await?;
-					info!("started {container_name}");
-
-					for hook in &service.post_start {
-						self.run_lifecycle_hook(&container_name, hook).await?;
-					}
-				}
+			// Start each dependency level in turn; services within a level have
+			// no `depends_on` relationship to each other (guaranteed by the
+			// layering), so they start concurrently. The barrier between levels
+			// preserves ordering and `service_healthy`/`service_completed`
+			// semantics: a level only begins once the previous one is up.
+			for level in &levels {
+				let started = level.iter().map(|name| {
+					self.up_one_service(
+						name,
+						file,
+						&active,
+						&target_set,
+						&present,
+						&existing_hash,
+						no_recreate,
+						force_recreate,
+					)
+				});
+				futures_util::future::try_join_all(started).await?;
 			}
 
 			Ok(())
@@ -209,6 +133,121 @@ impl Engine {
 			self.cleanup_temp_dir();
 		}
 		r
+	}
+
+	/// Bring up a single service: honor profile/target filters, wait on its
+	/// `depends_on` conditions, build or pull the image, and create/start each
+	/// replica (skipping containers that are unchanged unless `force_recreate`).
+	/// Used by [`Self::up_with_options`]; safe to run concurrently for services
+	/// in the same dependency level (the `Engine` holds no per-call mutable
+	/// state — the libpod client is connection-per-request).
+	#[allow(clippy::too_many_arguments)]
+	async fn up_one_service(
+		&self,
+		name: &str,
+		file: &ComposeFile,
+		active: &HashSet<String>,
+		target_set: &Option<HashSet<String>>,
+		present: &HashSet<String>,
+		existing_hash: &HashMap<String, String>,
+		no_recreate: bool,
+		force_recreate: bool,
+	) -> Result<()> {
+		if let Some(set) = target_set {
+			if !set.contains(name) {
+				return Ok(());
+			}
+		}
+		let service = &file.services[name];
+
+		if !service_in_profiles(service, active) {
+			tracing::debug!("skipping {name}: no active profile match");
+			return Ok(());
+		}
+
+		for dep in service.depends_on.service_names() {
+			let condition = service.depends_on.condition_for(&dep);
+			let dep_service = match file.services.get(&dep) {
+				Some(s) => s,
+				None => continue,
+			};
+			if !service_in_profiles(dep_service, active) {
+				continue;
+			}
+			let dep_container = self.container_name(&dep, dep_service);
+
+			match condition {
+				ServiceCondition::ServiceStarted => {}
+				ServiceCondition::ServiceHealthy => {
+					// Wait unless the healthcheck is explicitly disabled in
+					// compose. With no compose healthcheck we still wait:
+					// `wait_healthy` consults the container's effective
+					// healthcheck, so image-inherited ones are honored and
+					// the wait short-circuits when none exists.
+					let disabled = dep_service
+						.healthcheck
+						.as_ref()
+						.is_some_and(|h| h.is_disabled());
+					if disabled {
+						tracing::debug!(
+							"{dep} healthcheck disabled — skipping service_healthy wait"
+						);
+					} else {
+						self.wait_healthy(&dep_container, dep_service).await?;
+					}
+				}
+				ServiceCondition::ServiceCompletedSuccessfully => {
+					self.wait_completed(&dep_container).await?;
+				}
+			}
+		}
+
+		let policy = service.pull_policy.as_deref().unwrap_or("missing");
+		match (service.build.is_some(), policy) {
+			(true, _) => self.build_service(name, service, file).await?,
+			(false, "never") => {}
+			(false, _) => self.pull_image(service).await?,
+		}
+
+		let replicas = service
+			.scale
+			.or(service.deploy.as_ref().and_then(|d| d.replicas))
+			.unwrap_or(1) as usize;
+
+		let new_hash = config_hash(service);
+
+		for i in 1..=replicas {
+			let container_name = if replicas == 1 {
+				self.container_name(name, service)
+			} else {
+				format!("{}-{i}", self.container_name(name, service))
+			};
+			if !force_recreate {
+				if no_recreate && present.contains(&container_name) {
+					info!("{container_name} already exists — skipping recreate");
+					self.ensure_started(&container_name).await;
+					continue;
+				}
+				// Services with a build section are rebuilt on every up, so
+				// their container must be recreated to pick up the fresh
+				// image even when the compose config is unchanged.
+				if service.build.is_none() && existing_hash.get(&container_name) == Some(&new_hash)
+				{
+					info!("{container_name} is up to date — skipping recreate");
+					self.ensure_started(&container_name).await;
+					continue;
+				}
+			}
+			self.create_and_start(&container_name, name, service, file)
+				.await?;
+			info!("started {container_name}");
+
+			for hook in &service.post_start {
+				self.run_lifecycle_hook(&container_name, hook).await?;
+			}
+		}
+
+		Ok(())
 	}
 
 	/// Stop and remove all containers for the project. Does not remove volumes unless `remove_volumes` is set.
