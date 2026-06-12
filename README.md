@@ -103,12 +103,14 @@ async fn main() -> podup::Result<()> {
 
 ```toml
 [dependencies]
-podup = { git = "https://github.com/Glyndor/podup", tag = "v0.5.8" }
+podup = { git = "https://github.com/Glyndor/podup", tag = "v0.12.0" }
 ```
 
 ## 📖 Docs
 
+- [Command reference](docs/commands.md) — every subcommand, its options, and what it does
 - [Migrating from Docker Compose](docs/docker-migration.md) — compatibility guide, rootless differences, deprecated fields
+- [Self-update](docs/self-update.md) — the `podup update` trust model and verification flow
 - [Debian packaging](docs/debian-packaging.md) — building and distributing a `.deb`
 
 ## Contributing & security

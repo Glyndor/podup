@@ -209,6 +209,17 @@ impl Engine {
 				.unwrap_or_else(|| "/".to_string())
 		};
 
+		// docker compose watch creates the sync target directory when it is
+		// missing; match that so a sync to a not-yet-existing path works instead
+		// of failing the archive PUT. Best-effort: if mkdir is unavailable the
+		// PUT below still surfaces the real error.
+		let _ = self
+			.watch_exec(
+				container,
+				vec!["mkdir".into(), "-p".into(), dest_dir.clone()],
+			)
+			.await;
+
 		let path = format!(
 			"{API_PREFIX}/containers/{}/archive?path={}",
 			urlencoded(container),
@@ -319,5 +330,45 @@ impl Engine {
 
 	pub async fn test_watch_exec(&self, container_name: &str, cmd: Vec<String>) -> Result<()> {
 		self.watch_exec(container_name, cmd).await
+	}
+
+	/// Run a command in the named container and return its captured stdout.
+	///
+	/// Integration tests use this to observe the effect of a watch action (e.g.
+	/// that a synced file reached the container) and poll for it, instead of
+	/// sleeping a fixed duration and assuming the action completed.
+	pub async fn test_exec_capture(&self, container: &str, cmd: Vec<String>) -> Result<String> {
+		let exec_cfg = ExecCreateConfig {
+			cmd: Some(cmd),
+			attach_stdout: Some(true),
+			attach_stderr: Some(true),
+			..Default::default()
+		};
+		let create_path = format!("{API_PREFIX}/containers/{}/exec", urlencoded(container));
+		let resp: ExecCreateResponse = self
+			.client
+			.post_json(&create_path, &exec_cfg)
+			.await
+			.map_err(ComposeError::Podman)?;
+
+		let start_cfg = ExecStartConfig {
+			detach: false,
+			tty: false,
+		};
+		let start_path = format!("{API_PREFIX}/exec/{}/start", urlencoded(&resp.id));
+		let start_resp = self
+			.client
+			.post_json_stream(&start_path, &start_cfg)
+			.await
+			.map_err(ComposeError::Podman)?;
+		let mut stream = crate::libpod::parse_multiplexed(start_resp.into_body());
+
+		let mut out = String::new();
+		while let Some(msg) = stream.next().await {
+			if let LogOutput::StdOut { message } = msg.map_err(ComposeError::Podman)? {
+				out.push_str(&String::from_utf8_lossy(&message));
+			}
+		}
+		Ok(out)
 	}
 }

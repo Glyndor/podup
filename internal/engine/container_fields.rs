@@ -1,4 +1,5 @@
-//! Device, blkio, tmpfs, label-file, and small utility helpers for container creation.
+//! Container-spec field builders: device mappings, block-I/O throttling,
+//! label-file labels, and Swarm-only deploy-field warnings.
 
 use std::collections::HashMap;
 use std::path::Path;

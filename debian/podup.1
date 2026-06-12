@@ -1,0 +1,155 @@
+.TH PODUP 1 "June 2026" "podup 0.13.0" "User Commands"
+.SH NAME
+podup \- run docker-compose files on rootless Podman
+.SH SYNOPSIS
+.B podup
+[\fIGLOBAL OPTIONS\fR]
+\fICOMMAND\fR
+[\fICOMMAND OPTIONS\fR]
+[\fISERVICE\fR...]
+.SH DESCRIPTION
+.B podup
+reads a Compose file (\fBdocker-compose.yml\fR or the compose-spec precedence
+list) and translates it into rootless Podman operations over Podman's native
+libpod REST API. It is a single static binary with no daemon and no Python
+runtime, usable both as a standalone docker-compose replacement and as a Rust
+library.
+.SH GLOBAL OPTIONS
+.TP
+.BR \-f ", " \-\-file " " \fIPATH\fR
+Path to the compose file. May be given multiple times to merge files in order;
+later files override earlier ones. May also be set via \fBCOMPOSE_FILE\fR. When
+unset, the compose-spec precedence list is probed in the current directory
+(\fBcompose.yaml\fR, \fBcompose.yml\fR, \fBdocker-compose.yaml\fR,
+\fBdocker-compose.yml\fR).
+.TP
+.BR \-p ", " \-\-project " " \fINAME\fR
+Project name, used as a prefix for container, network and volume names. May
+also be set via \fBCOMPOSE_PROJECT_NAME\fR. When unset, the top-level
+\fBname:\fR field is used, then the sanitized basename of the project directory.
+.TP
+.BR \-\-socket " " \fIPATH\fR
+Podman socket path. Overrides auto-detection and \fBPODMAN_SOCKET\fR.
+.TP
+.BR \-\-profile " " \fINAMES\fR
+Active profiles, comma-separated. May also be set via \fBCOMPOSE_PROFILES\fR.
+.TP
+.BR \-\-project\-directory " " \fIPATH\fR
+Base directory for resolving relative paths (env_file, build context, bind
+mounts, config and secret sources). Defaults to the compose file's directory.
+.TP
+.BR \-\-env\-file " " \fIPATH\fR
+Additional env file loaded into the variable map used for interpolation. May be
+given multiple times; later files win. The process environment and a project
+\fB.env\fR still take precedence.
+.SH COMMANDS
+.TP
+.B up
+Create and start all services. Options: \fB\-d\fR/\fB\-\-detach\fR,
+\fB\-\-build\fR, \fB\-w\fR/\fB\-\-watch\fR, \fB\-\-remove\-orphans\fR,
+\fB\-\-no\-recreate\fR, \fB\-\-force\-recreate\fR, \fB\-\-no\-deps\fR. Accepts a
+trailing list of services to bring up (with their transitive depends_on).
+.TP
+.B down
+Stop and remove containers. \fB\-v\fR/\fB\-\-volumes\fR also removes named
+volumes declared in the compose file.
+.TP
+.B start
+Start existing stopped containers.
+.TP
+.B stop
+Stop running containers without removing them.
+.TP
+.B build
+Build or rebuild service images.
+.TP
+.B rm
+Remove stopped service containers. \fB\-f\fR/\fB\-\-force\fR removes running
+containers (stopping them first).
+.TP
+.B kill
+Send a signal to service containers. \fB\-s\fR/\fB\-\-signal\fR sets the signal
+(default \fBSIGKILL\fR).
+.TP
+.B pause
+Pause running service containers.
+.TP
+.B unpause
+Resume paused service containers.
+.TP
+.B run \fISERVICE\fR [\fICOMMAND\fR...]
+Run a one-off command in a new service container. Options: \fB\-\-rm\fR
+(default true), \fB\-d\fR/\fB\-\-detach\fR, \fB\-e\fR/\fB\-\-env\fR KEY=VAL,
+\fB\-\-name\fR, \fB\-\-service\-ports\fR.
+.TP
+.B cp \fISRC\fR \fIDST\fR
+Copy files between a service container and the host. Use \fBSERVICE:PATH\fR for
+the container side.
+.TP
+.B ps
+List project containers.
+.TP
+.B top
+Display the running processes of service containers.
+.TP
+.B port \fISERVICE\fR \fIPRIVATE_PORT\fR
+Print the public binding for a container port. \fB\-\-proto\fR sets the protocol
+(default \fBtcp\fR).
+.TP
+.B images
+List images used by services.
+.TP
+.B logs \fR[\fISERVICE\fR]
+View container output. \fB\-f\fR/\fB\-\-follow\fR streams new output.
+.TP
+.B exec \fISERVICE\fR \fICOMMAND\fR...
+Execute a command in a running service container.
+.TP
+.B pull
+Pull images for all services.
+.TP
+.B restart \fR[\fISERVICE\fR]
+Restart services, or one named service.
+.TP
+.B config
+Print the resolved compose file after substitution, extends and include.
+.TP
+.B generate quadlet \fR[\fB\-o\fR \fIDIR\fR]
+Translate the compose file into Podman Quadlet unit files (one \fB.container\fR
+per service plus \fB.network\fR and \fB.volume\fR units). Without
+\fB\-o\fR/\fB\-\-output\fR the units are printed to stdout.
+.TP
+.B watch
+Watch for file changes and sync, rebuild or restart services per the
+\fBdevelop.watch\fR rules.
+.TP
+.B update
+Update podup to the latest signed release. Verifies the release's Ed25519
+signature against the embedded public key and its SHA-256 checksum, failing
+closed. \fB\-\-check\fR only reports whether a newer release exists;
+\fB\-\-force\fR reinstalls even when not newer.
+.SH ENVIRONMENT
+.TP
+.B COMPOSE_FILE
+Path-separator-delimited list of compose files (see \fB\-\-file\fR).
+.TP
+.B COMPOSE_PROJECT_NAME
+Default project name (see \fB\-\-project\fR).
+.TP
+.B COMPOSE_PROFILES
+Default active profiles (see \fB\-\-profile\fR).
+.TP
+.B PODMAN_SOCKET
+Podman socket path (see \fB\-\-socket\fR).
+.SH FILES
+.TP
+.B docker-compose.yml
+Default compose file when none is given.
+.TP
+.B .env
+Project environment file, loaded for variable interpolation.
+.SH SEE ALSO
+.BR podman (1),
+.BR podman-systemd.unit (5)
+.PP
+Full documentation at: \fIhttps://github.com/Glyndor/podup\fR

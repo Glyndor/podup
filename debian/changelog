@@ -1,3 +1,29 @@
+podup (0.13.0) unstable; urgency=medium
+
+  * Harden the Quadlet export against hostile compose input: reject path
+    traversal in generated unit file names and strip control characters from
+    unit values, so a crafted compose file can neither escape the --output
+    directory nor inject systemd directives.
+  * Start services concurrently by dependency level instead of serially, and
+    fix self-update and secret-staging path handling.
+  * Add a Windows PowerShell installer (install.ps1).
+  * Upgrade dependencies and deduplicate the crypto and TLS stacks; hold sha2
+    at 0.10 to share a single version with ed25519-dalek.
+  * Lower the minimum supported Rust version to 1.85 (from 1.86); the idna to
+    icu dependency chain that required 1.86 was removed, so Debian trixie can
+    now build the package.
+  * Ship a podup(1) man page and a command-reference doc.
+  * Report every unsupported or unknown compose field at parse time instead of
+    dropping it silently, including unknown keys inside service sub-objects and
+    top-level network and volume definitions, so a typo or a newer Docker or
+    Podman field is surfaced rather than ignored.
+  * Accept the mapping form of extra_hosts and the device-object list form of
+    gpus.
+  * Create the watch sync target directory when it is missing, matching the
+    behaviour of docker compose watch.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 12 Jun 2026 16:00:00 -0500
+
 podup (0.12.0) unstable; urgency=medium
 
   * Derive the project name from the compose-spec precedence when -p and

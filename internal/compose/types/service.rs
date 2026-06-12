@@ -64,7 +64,11 @@ pub struct Service {
 	pub links: Vec<String>,
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub external_links: Vec<String>,
-	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	#[serde(
+		default,
+		deserialize_with = "super::primitives::deserialize_extra_hosts",
+		skip_serializing_if = "Vec::is_empty"
+	)]
 	pub extra_hosts: Vec<String>,
 	#[serde(default)]
 	pub dns: StringOrList,
