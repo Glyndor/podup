@@ -33,6 +33,17 @@ podup (0.11.0) unstable; urgency=medium
     service name as the alias); external_links are still passed through as-is.
   * Accept multiple compose files (repeated -f or a COMPOSE_FILE list) and
     merge them in order, with later files overriding earlier ones.
+  * Derive the project name from the compose-spec precedence when -p and
+    COMPOSE_PROJECT_NAME are unset: the top-level name: field, then the
+    sanitized basename of the project directory, instead of the fixed
+    podup literal. NOTE: this changes the default volume/network/container
+    name prefix for projects that relied on the podup default; set -p podup
+    to keep the previous names.
+  * Wait on service_healthy when a container's healthcheck is inherited from
+    its image (HEALTHCHECK in the Containerfile), not only when one is
+    declared in the compose file; services with no healthcheck no longer
+    stall the dependency wait.
+  * Update sha2 to 0.11.0.
 
  -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 15:45:00 -0500
 

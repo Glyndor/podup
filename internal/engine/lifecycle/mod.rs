@@ -130,17 +130,21 @@ impl Engine {
 					match condition {
 						ServiceCondition::ServiceStarted => {}
 						ServiceCondition::ServiceHealthy => {
-							if dep_service
+							// Wait unless the healthcheck is explicitly disabled in
+							// compose. With no compose healthcheck we still wait:
+							// `wait_healthy` consults the container's effective
+							// healthcheck, so image-inherited ones are honored and
+							// the wait short-circuits when none exists.
+							let disabled = dep_service
 								.healthcheck
 								.as_ref()
-								.map(|h| !h.is_disabled())
-								.unwrap_or(false)
-							{
-								self.wait_healthy(&dep_container, dep_service).await?;
-							} else {
+								.is_some_and(|h| h.is_disabled());
+							if disabled {
 								tracing::debug!(
-									"{dep} requested service_healthy but has no healthcheck — skipping wait"
+									"{dep} healthcheck disabled — skipping service_healthy wait"
 								);
+							} else {
+								self.wait_healthy(&dep_container, dep_service).await?;
 							}
 						}
 						ServiceCondition::ServiceCompletedSuccessfully => {
