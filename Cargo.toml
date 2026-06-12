@@ -43,7 +43,7 @@ notify = { version = "8", optional = true }
 # Ed25519 signature pinned to an embedded key is the real trust anchor, not TLS.
 ureq = { version = "2", default-features = false, features = ["tls"] }
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
-sha2 = "0.10"
+sha2 = "0.11"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
