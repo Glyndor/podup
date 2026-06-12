@@ -10,18 +10,19 @@ page tracks what that gives us and what the official archive still requires.
 dpkg-buildpackage -us -uc -b
 ```
 
-Requires `debhelper`, `cargo` and `rustc >= 1.86` (the crate's declared
-`rust-version`, driven by the `idna_adapter ≥ 1.2` transitive dependency through
-bollard → url → idna). The package installs a single file: `/usr/bin/podup`.
+Requires `debhelper`, `cargo` and `rustc >= 1.85` (the crate's declared
+`rust-version`). The package installs `/usr/bin/podup` and the `podup(1)` man
+page.
 
-> **Debian compatibility note:** Debian trixie ships rustc 1.85; MSRV 1.86
-> requires Debian sid or a backported toolchain. Track
-> https://packages.debian.org/rustc for the trixie toolchain version.
+> **Debian compatibility note:** the MSRV is 1.85, which Debian trixie ships, so
+> trixie and sid can both build the package. (Earlier releases needed 1.86 via
+> an `idna`/`icu` dependency chain that has since been removed.)
 
 ## What the skeleton covers
 
 - `debian/control` — source/binary stanzas, build dependencies, `Recommends: podman`
 - `debian/rules` — debhelper with cargo overrides, `--locked` release build, tests run during the build
+- `debian/podup.1` + `debian/podup.manpages` — the man page, installed by `dh_installman`
 - `debian/copyright` — DEP-5, Apache-2.0
 - Source format `3.0 (native)` — the repository is upstream
 
