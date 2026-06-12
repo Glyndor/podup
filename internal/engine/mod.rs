@@ -8,7 +8,7 @@ mod copy;
 pub use lifecycle::RunOptions;
 pub use lock::ProjectLock;
 mod container_config;
-mod container_misc;
+mod container_fields;
 mod health;
 mod lifecycle;
 mod lock;

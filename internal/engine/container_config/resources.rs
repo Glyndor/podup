@@ -1,93 +1,15 @@
-//! Pure configuration builders for container creation: restart policy, logging,
-//! healthcheck, resource limits, and ulimits.
-//!
-//! Device, blkio, tmpfs, and label-file helpers live in [`super::container_misc`].
+//! Resource-limit builders: CPU/memory/pids limits, ulimits, and CDI device
+//! reservations.
 
-use crate::compose::types::{
-	Command as ComposeCommand, HealthCheck, LoggingConfig, RestartPolicy as ComposeRestart, Service,
-};
-use crate::libpod::types::container::{HealthConfig, LinuxResources, LogConfig, Ulimit};
+use crate::compose::types::Service;
+use crate::libpod::types::container::{LinuxResources, Ulimit};
 use crate::size;
-
-// ---------------------------------------------------------------------------
-// Restart policy
-// ---------------------------------------------------------------------------
-
-/// Returns `(policy_name, max_retry_tries)` for SpecGenerator.
-pub(super) fn build_restart_policy(service: &Service) -> (Option<String>, Option<u64>) {
-	if let Some(r) = &service.restart {
-		let (name, tries) = match r {
-			ComposeRestart::No => ("no", None),
-			ComposeRestart::Always => ("always", None),
-			ComposeRestart::OnFailure { max_attempts } => {
-				("on-failure", max_attempts.map(|n| n as u64))
-			}
-			ComposeRestart::UnlessStopped => ("unless-stopped", None),
-		};
-		return (Some(name.to_string()), tries);
-	}
-	if let Some(drp) = service
-		.deploy
-		.as_ref()
-		.and_then(|d| d.restart_policy.as_ref())
-	{
-		let name = match drp.condition.as_deref().unwrap_or("any") {
-			"none" => "no",
-			"on-failure" => "on-failure",
-			_ => "unless-stopped",
-		};
-		return (Some(name.to_string()), drp.max_attempts.map(|n| n as u64));
-	}
-	(None, None)
-}
-
-// ---------------------------------------------------------------------------
-// Logging
-// ---------------------------------------------------------------------------
-
-pub(super) fn build_log_config(logging: Option<&LoggingConfig>) -> Option<LogConfig> {
-	logging.map(|l| LogConfig {
-		driver: l.driver.clone(),
-		options: l.options.clone(),
-	})
-}
-
-// ---------------------------------------------------------------------------
-// Healthcheck
-// ---------------------------------------------------------------------------
-
-pub(super) fn build_healthcheck(hc: &HealthCheck) -> HealthConfig {
-	if hc.is_disabled() {
-		return HealthConfig {
-			test: Some(vec!["NONE".to_string()]),
-			..Default::default()
-		};
-	}
-	let test = hc.test.as_ref().map(|cmd| match cmd {
-		ComposeCommand::Shell(s) => vec!["CMD-SHELL".to_string(), s.clone()],
-		ComposeCommand::Exec(v) => v.clone(),
-	});
-	HealthConfig {
-		test,
-		interval: hc.interval.as_deref().and_then(size::parse_duration_nanos),
-		timeout: hc.timeout.as_deref().and_then(size::parse_duration_nanos),
-		retries: hc.retries.map(|r| r as i64),
-		start_period: hc
-			.start_period
-			.as_deref()
-			.and_then(size::parse_duration_nanos),
-		start_interval: hc
-			.start_interval
-			.as_deref()
-			.and_then(size::parse_duration_nanos),
-	}
-}
 
 // ---------------------------------------------------------------------------
 // Resource limits
 // ---------------------------------------------------------------------------
 
-pub(super) fn build_resource_limits(service: &Service) -> Option<LinuxResources> {
+pub(crate) fn build_resource_limits(service: &Service) -> Option<LinuxResources> {
 	use crate::libpod::types::container::{LinuxCPU, LinuxMemory, LinuxPids};
 
 	let mut memory = service.mem_limit.as_deref().and_then(size::parse_memory);
@@ -191,7 +113,7 @@ pub(super) fn build_resource_limits(service: &Service) -> Option<LinuxResources>
 	})
 }
 
-pub(super) fn build_ulimits(service: &Service) -> Vec<Ulimit> {
+pub(crate) fn build_ulimits(service: &Service) -> Vec<Ulimit> {
 	service
 		.ulimits
 		.iter()
@@ -209,7 +131,7 @@ pub(super) fn build_ulimits(service: &Service) -> Vec<Ulimit> {
 /// Only NVIDIA GPU reservations are translated — the common case Podman exposes
 /// through CDI. Reservations for other drivers or capabilities are warned about
 /// and skipped, since there is no portable mapping for them.
-pub(super) fn cdi_devices(service: &Service) -> Vec<String> {
+pub(crate) fn cdi_devices(service: &Service) -> Vec<String> {
 	let mut out = Vec::new();
 
 	let Some(reservations) = service
@@ -262,164 +184,10 @@ pub(super) fn cdi_devices(service: &Service) -> Vec<String> {
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::compose::types::{
-		Command as ComposeCommand, HealthCheck, LoggingConfig, RestartPolicy as ComposeRestart,
-		Service,
-	};
+	use crate::compose::types::Service;
 
 	fn default_service() -> Service {
 		Service::default()
-	}
-
-	// --- restart policy ---
-
-	#[test]
-	fn restart_policy_no() {
-		let mut svc = default_service();
-		svc.restart = Some(ComposeRestart::No);
-		let (name, tries) = build_restart_policy(&svc);
-		assert_eq!(name.as_deref(), Some("no"));
-		assert!(tries.is_none());
-	}
-
-	#[test]
-	fn restart_policy_always() {
-		let mut svc = default_service();
-		svc.restart = Some(ComposeRestart::Always);
-		let (name, _) = build_restart_policy(&svc);
-		assert_eq!(name.as_deref(), Some("always"));
-	}
-
-	#[test]
-	fn restart_policy_on_failure_with_retries() {
-		let mut svc = default_service();
-		svc.restart = Some(ComposeRestart::OnFailure {
-			max_attempts: Some(3),
-		});
-		let (name, tries) = build_restart_policy(&svc);
-		assert_eq!(name.as_deref(), Some("on-failure"));
-		assert_eq!(tries, Some(3));
-	}
-
-	#[test]
-	fn restart_policy_unless_stopped() {
-		let mut svc = default_service();
-		svc.restart = Some(ComposeRestart::UnlessStopped);
-		let (name, _) = build_restart_policy(&svc);
-		assert_eq!(name.as_deref(), Some("unless-stopped"));
-	}
-
-	#[test]
-	fn restart_policy_none_when_absent() {
-		let (name, _) = build_restart_policy(&default_service());
-		assert!(name.is_none());
-	}
-
-	#[test]
-	fn restart_policy_from_deploy_on_failure() {
-		use crate::compose::types::{DeployConfig, DeployRestartPolicy};
-		let mut svc = default_service();
-		svc.deploy = Some(DeployConfig {
-			restart_policy: Some(DeployRestartPolicy {
-				condition: Some("on-failure".into()),
-				max_attempts: Some(5),
-				..Default::default()
-			}),
-			..Default::default()
-		});
-		let (name, tries) = build_restart_policy(&svc);
-		assert_eq!(name.as_deref(), Some("on-failure"));
-		assert_eq!(tries, Some(5));
-	}
-
-	#[test]
-	fn restart_policy_from_deploy_none_condition() {
-		use crate::compose::types::{DeployConfig, DeployRestartPolicy};
-		let mut svc = default_service();
-		svc.deploy = Some(DeployConfig {
-			restart_policy: Some(DeployRestartPolicy {
-				condition: Some("none".into()),
-				..Default::default()
-			}),
-			..Default::default()
-		});
-		let (name, _) = build_restart_policy(&svc);
-		assert_eq!(name.as_deref(), Some("no"));
-	}
-
-	// --- log config ---
-
-	#[test]
-	fn log_config_none_when_absent() {
-		assert!(build_log_config(None).is_none());
-	}
-
-	#[test]
-	fn log_config_driver_only() {
-		let logging = LoggingConfig {
-			driver: Some("json-file".into()),
-			options: Default::default(),
-		};
-		let cfg = build_log_config(Some(&logging)).unwrap();
-		assert_eq!(cfg.driver.as_deref(), Some("json-file"));
-		assert!(cfg.options.is_empty());
-	}
-
-	#[test]
-	fn log_config_with_options() {
-		let mut opts = std::collections::HashMap::new();
-		opts.insert("max-size".into(), "10m".into());
-		let logging = LoggingConfig {
-			driver: Some("json-file".into()),
-			options: opts,
-		};
-		let cfg = build_log_config(Some(&logging)).unwrap();
-		assert_eq!(cfg.options["max-size"], "10m");
-	}
-
-	// --- healthcheck ---
-
-	#[test]
-	fn healthcheck_disabled() {
-		let hc = HealthCheck {
-			disable: Some(true),
-			..Default::default()
-		};
-		let cfg = build_healthcheck(&hc);
-		assert_eq!(cfg.test.unwrap(), vec!["NONE"]);
-	}
-
-	#[test]
-	fn healthcheck_shell_command() {
-		let hc = HealthCheck {
-			test: Some(ComposeCommand::Shell(
-				"curl -f http://localhost/health".into(),
-			)),
-			interval: Some("30s".into()),
-			timeout: Some("10s".into()),
-			retries: Some(3),
-			..Default::default()
-		};
-		let cfg = build_healthcheck(&hc);
-		let test = cfg.test.unwrap();
-		assert_eq!(test[0], "CMD-SHELL");
-		assert!(test[1].contains("curl"));
-		assert_eq!(cfg.retries, Some(3));
-	}
-
-	#[test]
-	fn healthcheck_exec_command() {
-		let hc = HealthCheck {
-			test: Some(ComposeCommand::Exec(vec![
-				"curl".into(),
-				"-f".into(),
-				"http://localhost".into(),
-			])),
-			..Default::default()
-		};
-		let cfg = build_healthcheck(&hc);
-		let test = cfg.test.unwrap();
-		assert_eq!(test[0], "curl");
 	}
 
 	// --- resource limits ---

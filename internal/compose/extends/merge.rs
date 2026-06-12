@@ -191,3 +191,100 @@ pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) ->
 		},
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use crate::parse_str;
+
+	#[test]
+	fn override_list_field_replaces_base_wholesale() {
+		let yaml = r#"
+services:
+  base:
+    image: alpine
+    ports:
+      - "80:80"
+      - "81:81"
+  app:
+    extends: base
+    ports:
+      - "90:90"
+"#;
+		let file = parse_str(yaml).unwrap();
+		// A non-empty override list replaces the base list entirely, not appends.
+		assert_eq!(file.services["app"].ports.len(), 1);
+	}
+
+	#[test]
+	fn absent_list_field_falls_back_to_base() {
+		let yaml = r#"
+services:
+  base:
+    image: alpine
+    ports:
+      - "80:80"
+  app:
+    extends: base
+"#;
+		let file = parse_str(yaml).unwrap();
+		assert_eq!(file.services["app"].ports.len(), 1);
+	}
+
+	#[test]
+	fn labels_are_merged_with_override_winning() {
+		let yaml = r#"
+services:
+  base:
+    image: alpine
+    labels:
+      a: base
+      keep: base
+  app:
+    extends: base
+    labels:
+      a: over
+      b: over
+"#;
+		let file = parse_str(yaml).unwrap();
+		let labels = file.services["app"].labels.to_map();
+		assert_eq!(labels.get("a").map(|s| s.as_str()), Some("over"));
+		assert_eq!(labels.get("keep").map(|s| s.as_str()), Some("base"));
+		assert_eq!(labels.get("b").map(|s| s.as_str()), Some("over"));
+	}
+
+	#[test]
+	fn empty_override_keeps_base_depends_on() {
+		let yaml = r#"
+services:
+  db:
+    image: postgres
+  base:
+    image: alpine
+    depends_on:
+      - db
+  app:
+    extends: base
+"#;
+		let file = parse_str(yaml).unwrap();
+		assert_eq!(
+			file.services["app"].depends_on.service_names(),
+			vec!["db".to_string()]
+		);
+	}
+
+	#[test]
+	fn absent_override_keeps_base_environment() {
+		let yaml = r#"
+services:
+  base:
+    image: alpine
+    environment:
+      A: "1"
+  app:
+    extends: base
+"#;
+		let file = parse_str(yaml).unwrap();
+		let env = file.services["app"].environment.to_map();
+		assert_eq!(env.get("A").and_then(|v| v.clone()).as_deref(), Some("1"));
+	}
+}

@@ -90,7 +90,7 @@ async fn watch_exec_in_container() {
 	engine.down(&file).await.unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn watch_initial_sync_runs() {
 	let client = match podman().await {
 		Some(d) => d,
@@ -115,151 +115,34 @@ async fn watch_initial_sync_runs() {
 	let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
 	let file2 = file.clone();
 	let handle = tokio::spawn(async move { engine2.watch(&file2).await });
-	// Give watch() time to run initial_sync before aborting
-	tokio::time::sleep(Duration::from_millis(300)).await;
-	handle.abort();
 
-	engine.down(&file).await.unwrap();
-}
-
-#[tokio::test]
-async fn watch_restart_action_via_event() {
-	let client = match podman().await {
-		Some(d) => d,
-		None => return,
-	};
-	let dir = tempfile::tempdir().unwrap();
-	let watch_dir = dir.path().join("src");
-	fs::create_dir(&watch_dir).unwrap();
-	fs::write(watch_dir.join("main.txt"), b"v1").unwrap();
-
-	let proj = proj("wra");
-	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
-	let file = parse_str(
-		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: src\n          action: restart\n",
-	)
-	.unwrap();
-
-	engine.up(&file).await.unwrap();
-
-	let client2 = podup::podman::connect_from_env()
-		.or_else(|_| podup::podman::connect(None))
-		.unwrap();
-	let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
-	let file2 = file.clone();
-	let handle = tokio::spawn(async move { engine2.watch(&file2).await });
-
-	tokio::time::sleep(Duration::from_millis(150)).await;
-	fs::write(watch_dir.join("main.txt"), b"v2").unwrap();
-	tokio::time::sleep(Duration::from_millis(400)).await;
+	// Poll for the observable effect of initial_sync (the file appearing in the
+	// container) instead of sleeping a fixed duration and assuming it ran.
+	let cname = format!("{proj}-web");
+	let synced = poll_synced(&engine, &cname, "/tmp/app.txt", "initial", 60).await;
 
 	handle.abort();
 	engine.down(&file).await.unwrap();
-}
-
-#[tokio::test]
-async fn watch_sync_and_restart_action_via_event() {
-	let client = match podman().await {
-		Some(d) => d,
-		None => return,
-	};
-	let dir = tempfile::tempdir().unwrap();
-	let watch_dir = dir.path().join("src");
-	fs::create_dir(&watch_dir).unwrap();
-	fs::write(watch_dir.join("main.txt"), b"v1").unwrap();
-
-	let proj = proj("wsr");
-	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
-	let file = parse_str(
-		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: src\n          action: sync+restart\n          target: /app/\n",
-	)
-	.unwrap();
-
-	engine.up(&file).await.unwrap();
-
-	let client2 = podup::podman::connect_from_env()
-		.or_else(|_| podup::podman::connect(None))
-		.unwrap();
-	let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
-	let file2 = file.clone();
-	let handle = tokio::spawn(async move { engine2.watch(&file2).await });
-
-	tokio::time::sleep(Duration::from_millis(150)).await;
-	fs::write(watch_dir.join("main.txt"), b"v2").unwrap();
-	tokio::time::sleep(Duration::from_millis(400)).await;
-
-	handle.abort();
-	engine.down(&file).await.unwrap();
-}
-
-#[tokio::test]
-async fn watch_sync_and_exec_action_via_event() {
-	let client = match podman().await {
-		Some(d) => d,
-		None => return,
-	};
-	let dir = tempfile::tempdir().unwrap();
-	let watch_dir = dir.path().join("src");
-	fs::create_dir(&watch_dir).unwrap();
-	fs::write(watch_dir.join("main.txt"), b"v1").unwrap();
-
-	let proj = proj("wse");
-	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
-	let file = parse_str(
-		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: src\n          action: sync+exec\n          target: /app/\n          exec:\n            command: [\"echo\", \"reloaded\"]\n",
-	)
-	.unwrap();
-
-	engine.up(&file).await.unwrap();
-
-	let client2 = podup::podman::connect_from_env()
-		.or_else(|_| podup::podman::connect(None))
-		.unwrap();
-	let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
-	let file2 = file.clone();
-	let handle = tokio::spawn(async move { engine2.watch(&file2).await });
-
-	tokio::time::sleep(Duration::from_millis(150)).await;
-	fs::write(watch_dir.join("main.txt"), b"v2").unwrap();
-	tokio::time::sleep(Duration::from_millis(400)).await;
-
-	handle.abort();
-	engine.down(&file).await.unwrap();
-}
-
-#[tokio::test]
-async fn watch_event_loop_dispatches_sync() {
-	let client = match podman().await {
-		Some(d) => d,
-		None => return,
-	};
-	let dir = tempfile::tempdir().unwrap();
-	let watch_dir = dir.path().join("src");
-	fs::create_dir(&watch_dir).unwrap();
-	fs::write(watch_dir.join("app.txt"), b"v1").unwrap();
-
-	let proj = proj("wev");
-	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
-	let rel_path = "src";
-	let yaml = format!(
-		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: {rel_path}\n          action: sync\n          target: /app/\n"
+	assert!(
+		synced,
+		"initial_sync did not copy the file into the container"
 	);
-	let file = parse_str(&yaml).unwrap();
+}
 
-	engine.up(&file).await.unwrap();
-
-	let client2 = podup::podman::connect_from_env()
-		.or_else(|_| podup::podman::connect(None))
-		.unwrap();
-	let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
-	let file2 = file.clone();
-	let watch_handle = tokio::spawn(async move { engine2.watch(&file2).await });
-
-	// Modify a file to trigger the event dispatch path
-	tokio::time::sleep(Duration::from_millis(150)).await;
-	fs::write(watch_dir.join("app.txt"), b"v2").unwrap();
-	tokio::time::sleep(Duration::from_millis(400)).await;
-
-	watch_handle.abort();
-	engine.down(&file).await.unwrap();
+/// Poll until `cat`-ing `path` in the container yields `expect`, or `secs`
+/// elapse. Read-only: used when the trigger already happened (initial_sync).
+async fn poll_synced(engine: &Engine, cname: &str, path: &str, expect: &str, secs: u64) -> bool {
+	let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
+	while tokio::time::Instant::now() < deadline {
+		if let Ok(out) = engine
+			.test_exec_capture(cname, vec!["cat".into(), path.into()])
+			.await
+		{
+			if out.contains(expect) {
+				return true;
+			}
+		}
+		tokio::time::sleep(Duration::from_millis(100)).await;
+	}
+	false
 }

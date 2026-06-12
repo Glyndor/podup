@@ -16,7 +16,7 @@ jobs:
       extra-test-os: '["macos-latest", "windows-latest"]'
       podman: true
       coverage-threshold: 90
-      msrv: "1.86"
+      msrv: "1.85"
       package-check: true
       semver-check: true
       doc-warnings: true

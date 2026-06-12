@@ -15,7 +15,7 @@ use super::container_config::{
 	build_healthcheck, build_log_config, build_resource_limits, build_restart_policy,
 	build_ulimits, cdi_devices,
 };
-use super::container_misc::{
+use super::container_fields::{
 	build_blkio_config, build_label_file_labels, parse_device, warn_swarm_only_deploy,
 };
 use super::network::resolve_network_mode;
