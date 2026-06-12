@@ -286,6 +286,18 @@ fn write_quadlet(
 		Some(dir) => {
 			std::fs::create_dir_all(dir)?;
 			for unit in &result.units {
+				// Defense in depth: the unit stem is already sanitized in the
+				// library, but never write a unit whose name is anything but a
+				// plain file inside `dir` (rejects separators, `.` and `..`).
+				if Path::new(&unit.filename).file_name()
+					!= Some(std::ffi::OsStr::new(&unit.filename))
+				{
+					return Err(std::io::Error::new(
+						std::io::ErrorKind::InvalidInput,
+						format!("refusing unsafe quadlet unit file name: {}", unit.filename),
+					)
+					.into());
+				}
 				let path = dir.join(&unit.filename);
 				std::fs::write(&path, &unit.contents)?;
 				println!("wrote {}", path.display());

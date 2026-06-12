@@ -67,19 +67,21 @@ pub fn generate(file: &ComposeFile, project: &str) -> QuadletOutput {
 }
 
 fn network_unit(name: &str, project: &str, _has_config: bool) -> QuadletUnit {
+	let value = sanitize_value(&format!("{project}_{name}"));
 	let contents =
-		format!("[Network]\nNetworkName={project}_{name}\n\n[Install]\nWantedBy=default.target\n");
+		format!("[Network]\nNetworkName={value}\n\n[Install]\nWantedBy=default.target\n");
 	QuadletUnit {
-		filename: format!("{name}.network"),
+		filename: format!("{}.network", safe_unit_stem(name)),
 		contents,
 	}
 }
 
 fn volume_unit(name: &str, project: &str, _has_config: bool) -> QuadletUnit {
+	let value = sanitize_value(&format!("{project}_{name}"));
 	let contents =
-		format!("[Volume]\nVolumeName={project}_{name}\n\n[Install]\nWantedBy=default.target\n");
+		format!("[Volume]\nVolumeName={value}\n\n[Install]\nWantedBy=default.target\n");
 	QuadletUnit {
-		filename: format!("{name}.volume"),
+		filename: format!("{}.volume", safe_unit_stem(name)),
 		contents,
 	}
 }
@@ -185,7 +187,7 @@ fn container_unit(
 	contents.push_str("\n[Install]\nWantedBy=default.target\n");
 
 	QuadletUnit {
-		filename: format!("{name}.container"),
+		filename: format!("{}.container", safe_unit_stem(name)),
 		contents,
 	}
 }
@@ -329,6 +331,37 @@ fn sorted_label_pairs(map: std::collections::HashMap<String, String>) -> Vec<(St
 	sorted.into_iter().collect()
 }
 
+/// Strip ASCII control characters from a value before it is written into a
+/// unit file. systemd unit entries are single-line `Key=Value` pairs; an
+/// embedded newline from a hostile compose field would otherwise inject
+/// arbitrary unit directives (e.g. a `[Service]` `ExecStartPre=`). Compose
+/// input is untrusted, so every dynamic value is sanitized at the boundary.
+fn sanitize_value(value: &str) -> String {
+	value.chars().filter(|c| !c.is_control()).collect()
+}
+
+/// Reduce a compose key to a safe single path-component stem for a unit file
+/// name. Keeps ASCII alphanumerics and `-`/`_`/`.`; replaces anything else
+/// (path separators, control characters) with `_`, and guarantees the result
+/// is non-empty and does not start with a dot, so it can never escape the
+/// output directory or resolve to `.`/`..`.
+fn safe_unit_stem(name: &str) -> String {
+	let mut stem: String = name
+		.chars()
+		.map(|c| {
+			if c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.') {
+				c
+			} else {
+				'_'
+			}
+		})
+		.collect();
+	if stem.is_empty() || stem.starts_with('.') {
+		stem.insert(0, '_');
+	}
+	stem
+}
+
 /// A single `[Section]` accumulating `Key=Value` lines in insertion order.
 struct Section {
 	name: &'static str,
@@ -344,7 +377,7 @@ impl Section {
 	}
 
 	fn add(&mut self, key: &str, value: String) {
-		self.lines.push(format!("{key}={value}"));
+		self.lines.push(format!("{key}={}", sanitize_value(&value)));
 	}
 
 	fn is_empty(&self) -> bool {
@@ -593,6 +626,54 @@ services:
 		] {
 			assert!(joined.contains(needle), "expected warning for {needle}");
 		}
+	}
+
+	#[test]
+	fn hostile_service_name_cannot_escape_output_directory() {
+		// A compose key containing path separators must never yield a unit
+		// file name that escapes the output directory.
+		let yaml = "services:\n  ? \"../../evil\"\n  : { image: x }\n";
+		let file = parse_str(yaml).unwrap();
+		let out = generate(&file, "proj");
+		let unit = &out.units[0];
+		assert!(
+			!unit.filename.contains('/') && !unit.filename.contains('\\'),
+			"unit file name must be a single safe component, got {}",
+			unit.filename
+		);
+		assert!(unit.filename.ends_with(".container"));
+	}
+
+	#[test]
+	fn newline_in_value_cannot_inject_unit_directives() {
+		// An environment value carrying a newline plus a forged directive must
+		// be flattened to a single line, not injected as a new unit entry.
+		let yaml =
+			"services:\n  web:\n    image: x\n    environment:\n      EVIL: \"a\\nExecStartPre=/bin/rm -rf /\"\n";
+		let file = parse_str(yaml).unwrap();
+		let out = generate(&file, "proj");
+		let c = &unit_named(&out, "web.container").contents;
+		assert!(
+			!c.lines().any(|l| l.starts_with("ExecStartPre")),
+			"a newline in a value must not inject a directive line:\n{c}"
+		);
+	}
+
+	#[test]
+	fn safe_unit_stem_neutralizes_traversal_and_control_chars() {
+		assert_eq!(safe_unit_stem("web"), "web");
+		assert_eq!(safe_unit_stem("db-data_1.x"), "db-data_1.x");
+		assert_eq!(safe_unit_stem("../../etc/passwd"), "_.._.._etc_passwd");
+		assert_eq!(safe_unit_stem("/abs"), "_abs");
+		assert_eq!(safe_unit_stem(".hidden"), "_.hidden");
+		assert_eq!(safe_unit_stem(""), "_");
+		assert!(!safe_unit_stem("a\nb").contains('\n'));
+	}
+
+	#[test]
+	fn sanitize_value_strips_control_characters() {
+		assert_eq!(sanitize_value("plain"), "plain");
+		assert_eq!(sanitize_value("a\nb\tc\r"), "abc");
 	}
 
 	#[test]
