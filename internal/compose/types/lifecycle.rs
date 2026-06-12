@@ -93,6 +93,8 @@ pub struct HealthCheck {
 	pub start_interval: Option<String>,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub disable: Option<bool>,
+	#[serde(flatten, default, skip_serializing_if = "IndexMap::is_empty")]
+	pub unknown: IndexMap<String, serde_yaml::Value>,
 }
 
 impl HealthCheck {

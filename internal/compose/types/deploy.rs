@@ -38,6 +38,8 @@ pub struct DeployConfig {
 	pub labels: Labels,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub placement: Option<DeployPlacement>,
+	#[serde(flatten, default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+	pub unknown: indexmap::IndexMap<String, serde_yaml::Value>,
 }
 
 /// Resource constraints under `deploy.resources:` — holds `limits` and `reservations`.
