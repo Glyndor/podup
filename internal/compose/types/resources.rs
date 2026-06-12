@@ -72,19 +72,25 @@ impl BlkioRateDevice {
 	}
 }
 
-/// `gpus: all` or `gpus: 2` top-level service field.
+/// Top-level service `gpus:` field. The spec allows the `all`/`N` shorthand and
+/// a list of device-reservation objects (same shape as
+/// `deploy.resources.reservations.devices`); both forms are accepted so a valid
+/// compose file never fails to parse.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum GpuSpec {
 	Named(String),
 	Count(u32),
+	Devices(Vec<super::deploy::DeviceReservation>),
 }
 
 impl GpuSpec {
-	/// -1 = all; positive = exact count.
+	/// -1 = all; positive = exact count. The device-list form is treated as
+	/// "all" since it is not mapped to CDI from this field (use
+	/// `deploy.resources.reservations.devices` for that).
 	pub fn to_count(&self) -> i64 {
 		match self {
-			GpuSpec::Named(_) => -1,
+			GpuSpec::Named(_) | GpuSpec::Devices(_) => -1,
 			GpuSpec::Count(n) => *n as i64,
 		}
 	}
