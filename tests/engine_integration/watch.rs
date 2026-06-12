@@ -123,7 +123,10 @@ async fn watch_initial_sync_runs() {
 
 	handle.abort();
 	engine.down(&file).await.unwrap();
-	assert!(synced, "initial_sync did not copy the file into the container");
+	assert!(
+		synced,
+		"initial_sync did not copy the file into the container"
+	);
 }
 
 #[tokio::test]
@@ -204,12 +207,21 @@ async fn watch_sync_and_restart_action_via_event() {
 	// writable layer is preserved). Poll for it; restart's 5s stop grace means
 	// triggers are spaced out.
 	let cname = format!("{proj}-web");
-	let synced =
-		poll_synced_spaced(&engine, &cname, &watch_dir.join("main.txt"), "/app/main.txt", 45).await;
+	let synced = poll_synced_spaced(
+		&engine,
+		&cname,
+		&watch_dir.join("main.txt"),
+		"/app/main.txt",
+		45,
+	)
+	.await;
 
 	handle.abort();
 	engine.down(&file).await.unwrap();
-	assert!(synced, "sync+restart did not sync the file into the container");
+	assert!(
+		synced,
+		"sync+restart did not sync the file into the container"
+	);
 }
 
 #[tokio::test]
@@ -278,12 +290,21 @@ async fn watch_event_loop_dispatches_sync() {
 
 	// Poll for the dispatched sync's effect: src/app.txt reaching /app/app.txt.
 	let cname = format!("{proj}-web");
-	let synced =
-		poll_synced_writing(&engine, &cname, &watch_dir.join("app.txt"), "/app/app.txt", 15).await;
+	let synced = poll_synced_writing(
+		&engine,
+		&cname,
+		&watch_dir.join("app.txt"),
+		"/app/app.txt",
+		15,
+	)
+	.await;
 
 	watch_handle.abort();
 	engine.down(&file).await.unwrap();
-	assert!(synced, "event loop did not dispatch the sync into the container");
+	assert!(
+		synced,
+		"event loop did not dispatch the sync into the container"
+	);
 }
 
 /// Poll until `cat`-ing `path` in the container yields `expect`, or `secs`
