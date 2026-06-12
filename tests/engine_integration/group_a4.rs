@@ -332,3 +332,33 @@ async fn target_services_duplicate_entry() {
 		.unwrap();
 	engine.down(&file).await.unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// service_healthy honors a healthcheck baked into the image, even when the
+// compose service declares none (health.rs / lifecycle.rs gate). The db image
+// carries its own HEALTHCHECK; web depends on it with condition: service_healthy
+// and no compose healthcheck. `up` must wait for the inherited check to report
+// healthy and then succeed.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn service_healthy_image_inherited_healthcheck() {
+	let rt = tokio::runtime::Runtime::new().unwrap();
+	rt.block_on(async {
+		let client = match podman().await {
+			Some(d) => d,
+			None => return,
+		};
+		let dir = tempfile::tempdir().unwrap();
+		let proj = proj("ihc");
+		let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
+		let image_tag = format!("podup-test-ihc-{}:latest", std::process::id());
+		let yaml = format!(
+			"services:\n  db:\n    build:\n      context: .\n      dockerfile_inline: |\n        FROM alpine:latest\n        HEALTHCHECK --interval=1s --timeout=2s --retries=3 CMD true\n    image: {image_tag}\n    command: [\"sleep\", \"infinity\"]\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    depends_on:\n      db:\n        condition: service_healthy\n"
+		);
+		let file = parse_str(&yaml).unwrap();
+
+		engine.up(&file).await.unwrap();
+		engine.down(&file).await.unwrap();
+	});
+}
