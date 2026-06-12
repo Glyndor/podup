@@ -10,6 +10,28 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+/// Deserialize `extra_hosts` accepting either the list form (`["host:ip"]`) or
+/// the mapping form (`{host: ip}`), normalizing both to `host:ip` strings so
+/// the rest of the pipeline sees a single shape. Docker Compose accepts both.
+pub(crate) fn deserialize_extra_hosts<'de, D>(de: D) -> Result<Vec<String>, D::Error>
+where
+	D: serde::Deserializer<'de>,
+{
+	#[derive(Deserialize)]
+	#[serde(untagged)]
+	enum ListOrMap {
+		List(Vec<String>),
+		Map(IndexMap<String, String>),
+	}
+	Ok(match ListOrMap::deserialize(de)? {
+		ListOrMap::List(v) => v,
+		ListOrMap::Map(m) => m
+			.into_iter()
+			.map(|(host, ip)| format!("{host}:{ip}"))
+			.collect(),
+	})
+}
+
 /// Container entrypoint / command — either a shell string or exec list.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
