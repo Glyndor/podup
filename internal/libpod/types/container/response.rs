@@ -49,8 +49,36 @@ pub struct ContainerInspect {
 	#[serde(rename = "State")]
 	pub state: Option<ContainerState>,
 
+	#[serde(rename = "Config")]
+	pub config: Option<ContainerConfig>,
+
 	#[serde(rename = "NetworkSettings")]
 	pub network_settings: Option<NetworkSettings>,
+}
+
+/// Container config sub-object from inspect.
+#[derive(Deserialize, Default)]
+pub struct ContainerConfig {
+	#[serde(rename = "Healthcheck")]
+	pub healthcheck: Option<HealthConfig>,
+}
+
+impl ContainerConfig {
+	/// Whether the container has an effective healthcheck that can report a
+	/// `healthy` status. Covers healthchecks inherited from the image as well
+	/// as those declared in compose. A `["NONE"]` test means it was disabled.
+	pub fn has_healthcheck(&self) -> bool {
+		self.healthcheck
+			.as_ref()
+			.is_some_and(|h| h.test.first().is_some_and(|first| first != "NONE"))
+	}
+}
+
+/// Effective healthcheck config baked into the container (image or compose).
+#[derive(Deserialize, Default)]
+pub struct HealthConfig {
+	#[serde(rename = "Test", default, deserialize_with = "null_default")]
+	pub test: Vec<String>,
 }
 
 /// Container state sub-object.
@@ -162,7 +190,38 @@ mod tests {
 		let json = r#"{}"#;
 		let ci: ContainerInspect = serde_json::from_str(json).unwrap();
 		assert!(ci.state.is_none());
+		assert!(ci.config.is_none());
 		assert!(ci.network_settings.is_none());
+	}
+
+	#[test]
+	fn has_healthcheck_true_for_image_inherited() {
+		let json = r#"{
+			"Config": { "Healthcheck": { "Test": ["CMD-SHELL", "curl -f http://localhost || exit 1"] } }
+		}"#;
+		let ci: ContainerInspect = serde_json::from_str(json).unwrap();
+		assert!(ci.config.unwrap().has_healthcheck());
+	}
+
+	#[test]
+	fn has_healthcheck_false_when_disabled_with_none() {
+		let json = r#"{ "Config": { "Healthcheck": { "Test": ["NONE"] } } }"#;
+		let ci: ContainerInspect = serde_json::from_str(json).unwrap();
+		assert!(!ci.config.unwrap().has_healthcheck());
+	}
+
+	#[test]
+	fn has_healthcheck_false_when_absent() {
+		let json = r#"{ "Config": {} }"#;
+		let ci: ContainerInspect = serde_json::from_str(json).unwrap();
+		assert!(!ci.config.unwrap().has_healthcheck());
+	}
+
+	#[test]
+	fn has_healthcheck_false_when_test_null() {
+		let json = r#"{ "Config": { "Healthcheck": { "Test": null } } }"#;
+		let ci: ContainerInspect = serde_json::from_str(json).unwrap();
+		assert!(!ci.config.unwrap().has_healthcheck());
 	}
 
 	#[test]

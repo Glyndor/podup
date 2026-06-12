@@ -15,6 +15,12 @@ impl Engine {
 	/// Poll a container until its health status is `healthy` or timeout.
 	///
 	/// Uses `healthcheck.retries` (default 30) with a 2 s interval between probes.
+	///
+	/// The wait is driven by the container's *effective* healthcheck reported by
+	/// the runtime, so healthchecks inherited from the image count too — not just
+	/// those declared in compose. If the container has no effective healthcheck at
+	/// all (none in the image or compose), it can never report `healthy`, so the
+	/// wait short-circuits as satisfied rather than blocking until timeout.
 	pub(super) async fn wait_healthy(&self, container_name: &str, service: &Service) -> Result<()> {
 		let retries = service
 			.healthcheck
@@ -38,12 +44,20 @@ impl Engine {
 					continue;
 				}
 			};
-			if let Some(state) = info.state {
-				if let Some(health) = state.health {
+			if let Some(state) = &info.state {
+				if let Some(health) = &state.health {
 					if health.status.as_deref() == Some("healthy") {
 						return Ok(());
 					}
 				}
+			}
+			// No `healthy` status yet. If the container has no effective
+			// healthcheck, it never will — treat the dependency as satisfied.
+			if !info.config.map(|c| c.has_healthcheck()).unwrap_or(false) {
+				tracing::debug!(
+					"{container_name} has no effective healthcheck; treating service_healthy as satisfied"
+				);
+				return Ok(());
 			}
 			tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 		}
