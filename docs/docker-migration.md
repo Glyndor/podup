@@ -116,11 +116,34 @@ each one that is present.
 If you see warnings for these fields, you can safely remove them from your
 compose file when targeting a single-host Podman deployment.
 
+## Nothing is dropped silently
+
+podup follows the Compose spec's forward-compatibility rule — an unknown key is
+never a hard error, so `x-*` extensions and newer compose fields keep parsing.
+But anything podup cannot translate is **reported**, never silently ignored, so
+a typo or an unmapped feature can't hide. At parse time podup warns about:
+
+- unknown keys at the top level and inside every modeled object (services and
+  their `healthcheck`, `deploy`, `develop.watch`; top-level `networks`,
+  `networks.*.ipam`, and `volumes`) — usually a typo such as `enviroment:`;
+- fields it models but cannot honor on rootless Podman: `cpu_count` and
+  `cpu_percent` (Windows/Hyper-V only), `networks.*.enable_ipv4`, and the
+  BuildKit-only `build.privileged`, `build.ulimits`, `build.isolation`,
+  `build.entitlements`, `build.provenance`, `build.sbom`.
+
+This is what lets a compose file written for a newer Docker or Podman release
+run under podup: unsupported additions surface as warnings instead of vanishing.
+
+`extra_hosts` is accepted in both the list (`["host:ip"]`) and mapping
+(`{host: ip}`) forms.
+
 ## Not yet supported
 
 | Feature | Status |
 |---|---|
 | `env_file.format` values other than `dotenv` | Error is emitted; only the `dotenv` format is accepted |
+| `gpus:` as a list of device objects | Use `deploy.resources.reservations.devices` for GPU reservations; the scalar `gpus: all` / `gpus: N` shorthand is supported |
+| `provider:` / model-runner services (`provider`, top-level `models`) | No rootless Podman equivalent; reported as an unknown key |
 | Real-hardware smoke tests on macOS and Windows | Pending ([#48](https://github.com/Glyndor/podup/issues/48)); code paths exist but are untested on physical hardware |
 
 ## Enabling verbose output
