@@ -95,7 +95,11 @@ pub enum BuildConfig {
 		no_cache: Option<bool>,
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		pull: Option<bool>,
-		#[serde(default, skip_serializing_if = "Vec::is_empty")]
+		#[serde(
+			default,
+			deserialize_with = "super::primitives::deserialize_extra_hosts",
+			skip_serializing_if = "Vec::is_empty"
+		)]
 		extra_hosts: Vec<String>,
 		#[serde(default, skip_serializing_if = "Vec::is_empty")]
 		tags: Vec<String>,

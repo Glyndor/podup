@@ -250,6 +250,22 @@ services:
 }
 
 #[test]
+fn extra_hosts_mapping_form_normalizes_to_host_colon_ip() {
+	// Compose also allows the mapping form; it must normalize to "host:ip".
+	let yaml = r#"
+services:
+  app:
+    image: alpine
+    extra_hosts:
+      somehost: "162.242.195.82"
+      otherhost: "50.31.209.229"
+"#;
+	let hosts = &parse_str(yaml).unwrap().services["app"].extra_hosts;
+	assert!(hosts.contains(&"somehost:162.242.195.82".to_string()));
+	assert!(hosts.contains(&"otherhost:50.31.209.229".to_string()));
+}
+
+#[test]
 fn tty_and_stdin_open() {
 	let yaml = "services:\n  app:\n    image: alpine\n    tty: true\n    stdin_open: true\n";
 	let file = parse_str(yaml).unwrap();
