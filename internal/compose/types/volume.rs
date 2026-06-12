@@ -117,6 +117,8 @@ pub struct VolumeConfig {
 	pub name: Option<String>,
 	#[serde(default)]
 	pub labels: Labels,
+	#[serde(flatten, default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+	pub unknown: indexmap::IndexMap<String, serde_yaml::Value>,
 }
 
 /// Reference to a named config from a service — short form (name only) or long form with mount target.

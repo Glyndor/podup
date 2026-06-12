@@ -83,6 +83,8 @@ pub struct NetworkConfig {
 	pub ipam: Option<IpamConfig>,
 	#[serde(default)]
 	pub labels: Labels,
+	#[serde(flatten, default, skip_serializing_if = "IndexMap::is_empty")]
+	pub unknown: IndexMap<String, serde_yaml::Value>,
 }
 
 /// `ipam:` block inside a top-level network definition.
@@ -94,6 +96,8 @@ pub struct IpamConfig {
 	pub config: Vec<IpamPool>,
 	#[serde(default, skip_serializing_if = "HashMap::is_empty")]
 	pub options: HashMap<String, String>,
+	#[serde(flatten, default, skip_serializing_if = "IndexMap::is_empty")]
+	pub unknown: IndexMap<String, serde_yaml::Value>,
 }
 
 /// A single subnet/range entry within `ipam.config`.
