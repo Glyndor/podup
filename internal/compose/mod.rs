@@ -4,6 +4,7 @@
 pub mod types;
 
 mod anchor;
+mod diagnostics;
 mod extends;
 mod include;
 
@@ -93,27 +94,10 @@ pub fn parse_files_with_env_files(paths: &[PathBuf], env_files: &[String]) -> Re
 		let other = parse_file_with_env_files(path, env_files)?;
 		merge_override(&mut merged, other);
 	}
-	warn_unknown_service_keys(&merged);
-	Ok(merged)
-}
-
-/// Warn about service keys that don't map to a known compose field. These are
-/// silently tolerated (not a hard error, so `x-*` extensions and
-/// forward-compatible keys still parse), but a likely typo — e.g. `enviroment:`
-/// — is easy to miss when it just vanishes, so surface it. `x-*` extension keys
-/// are skipped per the compose spec.
-fn warn_unknown_service_keys(file: &ComposeFile) {
-	for (service, def) in &file.services {
-		for key in def.unknown.keys() {
-			if key.starts_with("x-") {
-				continue;
-			}
-			tracing::warn!(
-				"service '{service}': unknown key '{key}' is ignored \
-				 (check for a typo or an unsupported compose feature)"
-			);
-		}
+	for warning in diagnostics::collect(&merged) {
+		tracing::warn!("{warning}");
 	}
+	Ok(merged)
 }
 
 /// Merge `other` into `target` with `other` winning (compose `-f` override

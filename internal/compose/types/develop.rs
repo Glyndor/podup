@@ -15,7 +15,7 @@ pub struct DevelopConfig {
 }
 
 /// A single `develop.watch` rule: a path to watch, an action to take, and optional ignore filters.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct WatchRule {
 	pub path: String,
 	pub action: WatchAction,
@@ -29,6 +29,8 @@ pub struct WatchRule {
 	pub initial_sync: bool,
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub exec: Option<WatchExec>,
+	#[serde(flatten, default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+	pub unknown: indexmap::IndexMap<String, serde_yaml::Value>,
 }
 
 /// Action triggered by a `develop.watch` rule: `sync`, `rebuild`, `restart`, `sync+restart`, or `sync+exec`.
