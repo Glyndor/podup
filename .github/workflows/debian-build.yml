@@ -28,8 +28,9 @@ jobs:
   build:
     name: dpkg-buildpackage
     runs-on: ubuntu-latest
-    # The package requires rustc >= 1.86 (idna -> icu chain), which Debian
-    # trixie (1.85) cannot satisfy; sid ships a new enough toolchain.
+    # The package requires rustc >= 1.85, which Debian trixie satisfies; the
+    # idna -> icu chain that previously forced 1.86 was removed. Built on sid
+    # for now; trixie is also viable since the floor dropped.
     container: debian:sid
     steps:
       - name: Install build tooling
