@@ -209,6 +209,17 @@ impl Engine {
 				.unwrap_or_else(|| "/".to_string())
 		};
 
+		// docker compose watch creates the sync target directory when it is
+		// missing; match that so a sync to a not-yet-existing path works instead
+		// of failing the archive PUT. Best-effort: if mkdir is unavailable the
+		// PUT below still surfaces the real error.
+		let _ = self
+			.watch_exec(
+				container,
+				vec!["mkdir".into(), "-p".into(), dest_dir.clone()],
+			)
+			.await;
+
 		let path = format!(
 			"{API_PREFIX}/containers/{}/archive?path={}",
 			urlencoded(container),

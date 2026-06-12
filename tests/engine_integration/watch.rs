@@ -129,6 +129,42 @@ async fn watch_initial_sync_runs() {
 	);
 }
 
+#[tokio::test]
+async fn watch_sync_creates_missing_target_directory() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let dir = tempfile::tempdir().unwrap();
+	let src_file = dir.path().join("app.txt");
+	fs::write(&src_file, b"created").unwrap();
+
+	let proj = proj("wcd");
+	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	let cname = format!("{proj}-web");
+	// Sync into a directory that does not exist in the image; podup must create
+	// it (like docker compose watch) rather than fail.
+	engine
+		.test_sync_to_container(&cname, &src_file, "/newdir/app.txt")
+		.await
+		.unwrap();
+	let out = engine
+		.test_exec_capture(&cname, vec!["cat".into(), "/newdir/app.txt".into()])
+		.await
+		.unwrap_or_default();
+	engine.down(&file).await.unwrap();
+	assert!(
+		out.contains("created"),
+		"sync did not create the missing target directory: {out:?}"
+	);
+}
+
 /// Poll until `cat`-ing `path` in the container yields `expect`, or `secs`
 /// elapse. Read-only: used when the trigger already happened (initial_sync).
 async fn poll_synced(engine: &Engine, cname: &str, path: &str, expect: &str, secs: u64) -> bool {
