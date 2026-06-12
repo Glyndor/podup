@@ -27,10 +27,11 @@ pub struct GitHubSource {
 impl GitHubSource {
 	/// Source for the given `owner/repo`.
 	pub fn new(repo: impl Into<String>) -> Self {
-		let agent = ureq::AgentBuilder::new()
-			.timeout(std::time::Duration::from_secs(60))
+		let agent: ureq::Agent = ureq::Agent::config_builder()
+			.timeout_global(Some(std::time::Duration::from_secs(60)))
 			.user_agent(concat!("podup/", env!("CARGO_PKG_VERSION")))
-			.build();
+			.build()
+			.into();
 		Self {
 			repo: repo.into(),
 			agent,
@@ -67,10 +68,11 @@ impl ReleaseSource for GitHubSource {
 		let body = self
 			.agent
 			.get(&url)
-			.set("Accept", "application/vnd.github+json")
+			.header("Accept", "application/vnd.github+json")
 			.call()
 			.map_err(|e| ComposeError::Update(format!("cannot reach GitHub releases API: {e}")))?
-			.into_string()
+			.body_mut()
+			.read_to_string()
 			.map_err(|e| ComposeError::Update(format!("failed reading release metadata: {e}")))?;
 
 		#[derive(serde::Deserialize)]
@@ -94,7 +96,7 @@ impl ReleaseSource for GitHubSource {
 			.get(&url)
 			.call()
 			.map_err(|e| ComposeError::Update(format!("download failed for {asset}: {e}")))?;
-		read_capped(resp.into_reader())
+		read_capped(resp.into_body().into_reader())
 	}
 }
 
