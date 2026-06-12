@@ -77,6 +77,10 @@ jobs:
             runner: windows-latest
             target: x86_64-pc-windows-msvc
             bin: podup.exe
+          - asset: podup-windows-arm64.exe
+            runner: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            bin: podup.exe
 
     defaults:
       run:
@@ -159,6 +163,7 @@ jobs:
             podup-darwin-arm64 \
             podup-darwin-x86_64 \
             podup-windows-x86_64.exe \
+            podup-windows-arm64.exe \
             > SHA256SUMS
 
       - name: Sign SHA256SUMS
@@ -192,6 +197,8 @@ jobs:
             podup-darwin-x86_64.sig \
             podup-windows-x86_64.exe \
             podup-windows-x86_64.exe.sig \
+            podup-windows-arm64.exe \
+            podup-windows-arm64.exe.sig \
             SHA256SUMS \
             SHA256SUMS.sig \
             install.sh
