@@ -1,0 +1,51 @@
+name: Lint PowerShell scripts
+
+on:
+  push:
+    branches:
+      - develop
+    paths:
+      - "**.ps1"
+      - ".github/workflows/lint-powershell.yml"
+  pull_request:
+    branches:
+      - main
+      - develop
+    paths:
+      - "**.ps1"
+      - ".github/workflows/lint-powershell.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  psscriptanalyzer:
+    name: PSScriptAnalyzer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Syntax check
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path install.ps1), [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) {
+            $errors | ForEach-Object { Write-Error $_.Message }
+            exit 1
+          }
+          Write-Host 'Parse OK'
+
+      - name: Run PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          # Write-Host is intentional: the script is piped to `iex`, so console
+          # status must not leak into the output stream that Write-Output feeds.
+          # Surface every finding (advisory), then fail only on Error severity —
+          # the parse check above is the hard syntax gate.
+          Invoke-ScriptAnalyzer -Path install.ps1 -ExcludeRule PSAvoidUsingWriteHost |
+            Format-Table -AutoSize
+          Invoke-ScriptAnalyzer -Path install.ps1 -Severity Error `
+            -ExcludeRule PSAvoidUsingWriteHost -EnableExit

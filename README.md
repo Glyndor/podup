@@ -29,15 +29,23 @@ flowchart LR
 
 ## 📥 Install
 
+Linux and macOS:
+
 ```bash
 curl -fsSL https://glyndor.net/install/podup | bash
 ```
 
-Binaries for Linux and macOS (x86_64 and arm64) plus Windows (x86_64),
-SHA-256 verified, with build provenance attestations. On macOS and Windows,
-podup talks to the `podman machine` VM through its host-side socket or named
-pipe. Windows users download `podup-windows-x86_64.exe` from the
-[releases page](https://github.com/Glyndor/podup/releases) directly. Or build
+Windows (PowerShell):
+
+```powershell
+irm https://glyndor.net/install/podup.ps1 | iex
+```
+
+Binaries for Linux and macOS (x86_64 and arm64) plus Windows (x86_64 and
+arm64), SHA-256 verified, with build provenance attestations. On macOS and
+Windows, podup talks to the `podman machine` VM through its host-side socket or
+named pipe. Both installers verify the Ed25519 signature over `SHA256SUMS` (or
+the GitHub build-provenance attestation) and fail closed otherwise. Or build
 from source:
 
 ```bash
