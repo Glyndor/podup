@@ -296,7 +296,7 @@ fn resolve_volume_name(reference: &str, project: &str, file: &ComposeFile) -> St
 /// Resolve a bind-mount source path: expand a leading `~`, then make a relative
 /// path absolute against the project base directory. Absolute paths (including
 /// staged secret/config files) are returned unchanged.
-fn resolve_bind_source(src: &str, base_dir: &Path) -> String {
+pub(super) fn resolve_bind_source(src: &str, base_dir: &Path) -> String {
 	if src.is_empty() {
 		return src.to_string();
 	}

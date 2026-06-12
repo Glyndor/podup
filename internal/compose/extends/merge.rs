@@ -181,5 +181,13 @@ pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) ->
 		deploy: override_svc.deploy.or(base.deploy),
 		develop: override_svc.develop.or(base.develop),
 		gpus: override_svc.gpus.or(base.gpus),
+		unknown: {
+			// Keep unknown keys from both sides so a typo in either the base or
+			// the overriding service is still surfaced; the override wins on
+			// conflicting keys.
+			let mut u = base.unknown;
+			u.extend(override_svc.unknown);
+			u
+		},
 	}
 }

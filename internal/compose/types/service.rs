@@ -210,4 +210,12 @@ pub struct Service {
 
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub gpus: Option<GpuSpec>,
+
+	/// Keys present in the YAML that don't map to a known service field. Captured
+	/// (rather than silently dropped) so the parser can warn about likely typos
+	/// while still tolerating compose-spec `x-*` extensions and forward-compatible
+	/// keys. Not part of the container spec; round-tripped by the `config`
+	/// subcommand to preserve fidelity.
+	#[serde(flatten, default, skip_serializing_if = "IndexMap::is_empty")]
+	pub unknown: IndexMap<String, serde_yaml::Value>,
 }

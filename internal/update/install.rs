@@ -15,12 +15,19 @@ use crate::ComposeError;
 /// The release asset name for the platform this binary was built for. Mirrors
 /// the `release.yml` build matrix exactly.
 pub fn platform_asset() -> Option<&'static str> {
-	match (std::env::consts::OS, std::env::consts::ARCH) {
+	asset_for(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+/// Map an OS/ARCH pair to its release asset name. Split out from
+/// [`platform_asset`] so the full matrix is testable without the host's values.
+fn asset_for(os: &str, arch: &str) -> Option<&'static str> {
+	match (os, arch) {
 		("linux", "x86_64") => Some("podup-linux-x86_64"),
 		("linux", "aarch64") => Some("podup-linux-arm64"),
 		("macos", "aarch64") => Some("podup-darwin-arm64"),
 		("macos", "x86_64") => Some("podup-darwin-x86_64"),
 		("windows", "x86_64") => Some("podup-windows-x86_64.exe"),
+		("windows", "aarch64") => Some("podup-windows-arm64.exe"),
 		_ => None,
 	}
 }
@@ -156,6 +163,28 @@ mod tests {
 		// release matrix names.
 		if let Some(asset) = platform_asset() {
 			assert!(asset.starts_with("podup-"));
+		}
+	}
+
+	#[test]
+	fn platform_asset_covers_every_release_target() {
+		// Pins the OS/ARCH → asset mapping to the full `release.yml` build
+		// matrix so a newly added prebuilt (or a dropped arm) is caught here
+		// instead of failing self-update silently in the field.
+		let expected = [
+			(("linux", "x86_64"), "podup-linux-x86_64"),
+			(("linux", "aarch64"), "podup-linux-arm64"),
+			(("macos", "aarch64"), "podup-darwin-arm64"),
+			(("macos", "x86_64"), "podup-darwin-x86_64"),
+			(("windows", "x86_64"), "podup-windows-x86_64.exe"),
+			(("windows", "aarch64"), "podup-windows-arm64.exe"),
+		];
+		for ((os, arch), asset) in expected {
+			assert_eq!(
+				asset_for(os, arch),
+				Some(asset),
+				"self-update mapping drifted for {os}/{arch}"
+			);
 		}
 	}
 
