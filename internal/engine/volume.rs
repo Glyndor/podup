@@ -331,20 +331,25 @@ mod tests {
 	#[test]
 	fn secret_file_relative_path_is_anchored_to_base_dir() {
 		// A relative `file:` must resolve against the project dir, not the
-		// Podman service's cwd — same as a bind-mount source.
+		// Podman service's cwd — same as a bind-mount source. Build the expected
+		// path via `Path::join` so the separator is correct on every platform.
+		let base = PathBuf::from("/srv/project");
 		let yaml = "services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    file: secret.txt\n";
 		let file = crate::compose::parse_str_raw(yaml).unwrap();
-		let engine = engine_with_base("/srv/project");
+		let engine = engine_with_base(&base.to_string_lossy());
 		let binds = engine
 			.build_secret_binds(&file.services["web"], &file)
 			.unwrap();
-		assert_eq!(binds, vec!["/srv/project/secret.txt:/run/secrets/tok:ro"]);
+		let expected = format!("{}:/run/secrets/tok:ro", base.join("secret.txt").display());
+		assert_eq!(binds, vec![expected]);
 	}
 
+	#[cfg(unix)]
 	#[test]
 	fn config_file_absolute_path_is_passed_through() {
 		// Absolute paths are honored unchanged (compose allows mounting any host
-		// file, exactly as `volumes:` does).
+		// file, exactly as `volumes:` does). Uses a Unix-absolute path, so the
+		// assertion is gated to Unix.
 		let yaml = "services:\n  web:\n    image: nginx\n    configs: [cfg]\nconfigs:\n  cfg:\n    file: /etc/app/cfg.yaml\n";
 		let file = crate::compose::parse_str_raw(yaml).unwrap();
 		let engine = engine_with_base("/srv/project");
