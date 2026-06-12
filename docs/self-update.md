@@ -49,11 +49,12 @@ documented opt-out (checksum only) for constrained environments.
 
 ## The embedded public key
 
-The release public key is embedded in two places, both holding the same key
+The release public key is embedded in three places, all holding the same key
 (base64 `APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y=`):
 
 - `internal/update/verify.rs` — `RELEASE_PUBKEY` (raw 32 bytes).
 - `install.sh` — `PODUP_RELEASE_PUBKEY_B64` default (base64, unpadded).
+- `install.ps1` — `PubKeyB64` default (base64, unpadded).
 
 It is verified against the genuine published `SHA256SUMS.sig` by the
 `embedded_key_verifies_real_release` regression test, so an accidental or
@@ -80,7 +81,8 @@ print("verify.rs bytes   :", ", ".join(str(b) for b in raw))
 ' "$RELEASE_SIGN_KEY"
 ```
 
-Paste the base64 form into `install.sh` and the byte array into `RELEASE_PUBKEY`.
+Paste the base64 form into `install.sh` and `install.ps1`, and the byte array
+into `RELEASE_PUBKEY`.
 
 ### Key rotation
 

@@ -204,7 +204,8 @@ jobs:
             podup-windows-arm64.exe.sig \
             SHA256SUMS \
             SHA256SUMS.sig \
-            install.sh
+            install.sh \
+            install.ps1
 
       - name: Remove release artifacts
         run: rm -f podup-* SHA256SUMS SHA256SUMS.sig
