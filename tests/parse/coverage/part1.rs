@@ -113,6 +113,23 @@ services:
 	assert_eq!(gpus.to_count(), 2);
 }
 
+#[test]
+fn gpus_device_object_list_form_parses() {
+	// The spec also allows gpus as a list of device-reservation objects; it
+	// must parse rather than error on a valid compose file.
+	let yaml = r#"
+services:
+  app:
+    image: alpine
+    gpus:
+      - driver: nvidia
+        count: all
+        capabilities: [gpu]
+"#;
+	let svc = &parse_str(yaml).unwrap().services["app"];
+	assert!(svc.gpus.is_some());
+}
+
 // ---------------------------------------------------------------------------
 // deploy.resources.reservations.devices (GPU reservation)
 // ---------------------------------------------------------------------------
