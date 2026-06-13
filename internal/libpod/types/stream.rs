@@ -22,6 +22,19 @@ pub enum LogOutput {
 /// Boxed stream alias used for parse_multiplexed and parse_json_lines return types.
 pub type BoxStream<T> = Pin<Box<dyn Stream<Item = Result<T, PodmanError>> + Send>>;
 
+/// Upper bound on the reassembly buffer for a single frame or JSON line. Bounds
+/// memory when the daemon advertises a huge frame size or never terminates a
+/// line, so a rogue or runaway daemon cannot exhaust memory.
+const MAX_STREAM_BUF: usize = 256 * 1024 * 1024;
+
+/// Error returned when the reassembly buffer exceeds [`MAX_STREAM_BUF`].
+fn stream_buf_overflow() -> PodmanError {
+	PodmanError::Api {
+		status: 0,
+		message: format!("stream chunk exceeds the {MAX_STREAM_BUF} byte limit"),
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Pure parsing helpers (also used by unit tests)
 // ---------------------------------------------------------------------------
@@ -81,6 +94,9 @@ pub fn parse_multiplexed(body: Incoming) -> BoxStream<LogOutput> {
 					Some(Ok(frame)) => {
 						if let Ok(data) = frame.into_data() {
 							buf.extend_from_slice(&data);
+							if buf.len() > MAX_STREAM_BUF {
+								return Err(stream_buf_overflow());
+							}
 						}
 					}
 					Some(Err(e)) => return Err(PodmanError::from(e)),
@@ -139,6 +155,9 @@ pub fn parse_json_lines<T: serde::de::DeserializeOwned + Send + 'static>(
 					Some(Ok(frame)) => {
 						if let Ok(data) = frame.into_data() {
 							buf.extend_from_slice(&data);
+							if buf.len() > MAX_STREAM_BUF {
+								return Err(stream_buf_overflow());
+							}
 						}
 					}
 					Some(Err(e)) => return Err(PodmanError::from(e)),
