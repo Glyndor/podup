@@ -49,7 +49,7 @@ pub fn load_env_file_entries(
 		}
 
 		let abs = base_dir.join(entry.path());
-		let content = match std::fs::read_to_string(&abs) {
+		let content = match crate::fsutil::read_to_string_capped(&abs) {
 			Ok(c) => c,
 			Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
 				if entry.required() {

@@ -100,7 +100,10 @@ impl Engine {
 			detach: false,
 			tty: false,
 		};
-		let start_path = format!("{API_PREFIX}/exec/{exec_id}/start");
+		let start_path = format!(
+			"{API_PREFIX}/exec/{}/start",
+			crate::libpod::urlencoded(&exec_id)
+		);
 		let resp = self
 			.client
 			.post_json_stream(&start_path, &start_cfg)

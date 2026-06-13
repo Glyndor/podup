@@ -14,6 +14,7 @@ pub(crate) mod dotenv;
 pub(crate) mod engine;
 pub mod env_file;
 pub(crate) mod error;
+pub(crate) mod fsutil;
 pub(crate) mod libpod;
 pub mod podman;
 pub mod ports;

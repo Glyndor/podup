@@ -47,8 +47,15 @@ pub fn parse_memory(s: &str) -> Option<i64> {
 
 /// Parse a CPU count string like `"0.5"`, `"1"`, `"2.5"` into nano-CPUs
 /// (1 CPU = 1_000_000_000 nano-CPUs).
+///
+/// Returns `None` for non-finite (`NaN`/`inf`), negative, or out-of-`i64`-range
+/// values instead of silently saturating or wrapping the cast.
 pub fn parse_cpus(s: &str) -> Option<i64> {
-	s.trim().parse::<f64>().ok().map(|f| (f * 1e9) as i64)
+	let nanos = s.trim().parse::<f64>().ok()? * 1e9;
+	if !nanos.is_finite() || nanos < 0.0 || nanos > i64::MAX as f64 {
+		return None;
+	}
+	Some(nanos as i64)
 }
 
 /// Parse a duration like `5s`, `200ms`, `1m`, `1h` into seconds (rounded down).
@@ -97,6 +104,10 @@ pub fn parse_duration_nanos(s: &str) -> Option<i64> {
 		"h" => num * 3600.0 * 1e9,
 		_ => return None,
 	};
+	// Reject non-finite or out-of-range results rather than saturating the cast.
+	if !nanos.is_finite() || nanos < 0.0 || nanos > i64::MAX as f64 {
+		return None;
+	}
 	Some(nanos as i64)
 }
 
@@ -187,6 +198,18 @@ mod tests {
 		assert_eq!(parse_cpus(""), None);
 	}
 
+	#[test]
+	fn cpus_non_finite_is_none() {
+		assert_eq!(parse_cpus("nan"), None);
+		assert_eq!(parse_cpus("inf"), None);
+		assert_eq!(parse_cpus("1e300"), None);
+	}
+
+	#[test]
+	fn cpus_negative_is_none() {
+		assert_eq!(parse_cpus("-1"), None);
+	}
+
 	// parse_duration_secs
 
 	#[test]
@@ -244,5 +267,12 @@ mod tests {
 	#[test]
 	fn duration_nanos_nanoseconds() {
 		assert_eq!(parse_duration_nanos("500ns"), Some(500));
+	}
+
+	#[test]
+	fn duration_nanos_overflow_is_none() {
+		// A large finite value whose nanosecond product exceeds i64::MAX must
+		// return None rather than saturating to i64::MAX.
+		assert_eq!(parse_duration_nanos("99999999999h"), None);
 	}
 }
