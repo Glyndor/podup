@@ -143,10 +143,29 @@ pub fn sha256_hex(data: &[u8]) -> String {
 	out
 }
 
+/// Compare two byte slices in constant time, returning `true` when equal.
+///
+/// The running time depends only on the length, not on where the first
+/// differing byte sits, so it leaks no information about a partial match.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+	if a.len() != b.len() {
+		return false;
+	}
+	let mut diff = 0u8;
+	for (x, y) in a.iter().zip(b.iter()) {
+		diff |= x ^ y;
+	}
+	diff == 0
+}
+
 /// Verify the downloaded bytes hash to `expected_hex` (case-insensitive).
+///
+/// The digest comparison runs in constant time so it cannot leak how many
+/// leading bytes matched.
 pub fn verify_digest(data: &[u8], expected_hex: &str) -> crate::Result<()> {
 	let actual = sha256_hex(data);
-	if actual.eq_ignore_ascii_case(expected_hex) {
+	let expected = expected_hex.to_ascii_lowercase();
+	if constant_time_eq(actual.as_bytes(), expected.as_bytes()) {
 		Ok(())
 	} else {
 		Err(ComposeError::Update(format!(
@@ -288,6 +307,16 @@ efb48becd0c057f6248e91ccbc5b0795edcfbdf66eb5535f24938a5bba7c4ab2  podup-darwin-x
 		verify_digest(data, &hex).unwrap();
 		verify_digest(data, &hex.to_ascii_uppercase()).unwrap();
 		assert!(verify_digest(data, &"0".repeat(64)).is_err());
+		// A length mismatch is rejected, not panicked on.
+		assert!(verify_digest(data, "deadbeef").is_err());
+	}
+
+	#[test]
+	fn constant_time_eq_matches_only_identical_slices() {
+		assert!(constant_time_eq(b"abc", b"abc"));
+		assert!(!constant_time_eq(b"abc", b"abd"));
+		assert!(!constant_time_eq(b"abc", b"ab"));
+		assert!(constant_time_eq(b"", b""));
 	}
 
 	#[test]
