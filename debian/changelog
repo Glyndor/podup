@@ -1,3 +1,15 @@
+podup (0.16.0) unstable; urgency=medium
+
+  * Ship a signed Debian package (podup_<version>_amd64.deb) as a release asset,
+    built on Debian sid and listed in the release SHA256SUMS.
+  * "podup update" now refuses to self-replace a binary installed by dpkg/apt
+    and redirects to the package manager, so an in-place update cannot desync
+    the package's record of the file.
+  * Add a cargo-fuzz harness (developer tooling) for the compose parser,
+    substitution, numeric parsers, dotenv, and the libpod stream framer.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 13 Jun 2026 12:07:11 -0500
+
 podup (0.15.1) unstable; urgency=medium
 
   * Reject non-finite, negative, and out-of-range CPU and duration values in the
