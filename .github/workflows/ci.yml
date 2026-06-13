@@ -13,7 +13,7 @@ jobs:
   rust:
     uses: Glyndor/.github/.github/workflows/rust-ci.yml@2de584f368690524992185b30e23f342c19aab23 # main
     with:
-      extra-test-os: '["macos-latest", "windows-latest"]'
+      extra-test-os: "[\"macos-latest\", \"windows-latest\"]"
       podman: true
       coverage-threshold: 90
       msrv: "1.85"
