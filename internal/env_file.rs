@@ -48,7 +48,13 @@ pub fn load_env_file_entries(
 			}
 		}
 
-		let abs = base_dir.join(entry.path());
+		let rel = entry.path();
+		if !crate::fsutil::is_safe_relative_path(rel) {
+			return Err(ComposeError::Unsupported(format!(
+				"env_file '{rel}' must be a path inside the project directory"
+			)));
+		}
+		let abs = base_dir.join(rel);
 		let content = match crate::fsutil::read_to_string_capped(&abs) {
 			Ok(c) => c,
 			Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -170,6 +176,22 @@ mod tests {
 			format: Some("json".into()),
 		}];
 		assert!(load_env_file_entries(&entries, dir.path()).is_err());
+	}
+
+	#[test]
+	fn rejects_absolute_env_file_path() {
+		let dir = tempfile::tempdir().unwrap();
+		let entries = vec![EnvFileEntry::Path("/etc/passwd".into())];
+		let err = load_env_file_entries(&entries, dir.path()).unwrap_err();
+		assert!(matches!(err, ComposeError::Unsupported(_)));
+	}
+
+	#[test]
+	fn rejects_parent_escaping_env_file_path() {
+		let dir = tempfile::tempdir().unwrap();
+		let entries = vec![EnvFileEntry::Path("../outside.env".into())];
+		let err = load_env_file_entries(&entries, dir.path()).unwrap_err();
+		assert!(matches!(err, ComposeError::Unsupported(_)));
 	}
 
 	// merge_env

@@ -1,0 +1,43 @@
+# cargo-deny configuration. Enforces the supply-chain policy locally and in CI:
+# audited advisories, a permissive-license allowlist, and a ban on wildcard
+# version requirements. Duplicate versions are reported (warn) rather than
+# denied: the only duplicates today come from the Windows target and the
+# dev-only tempfile tree, none of which reach the Linux production binary.
+
+[graph]
+all-features = true
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# Every license present in the dependency tree. A crate carrying anything not
+# listed here fails the check, forcing a deliberate review before it ships.
+allow = [
+	"Apache-2.0",
+	"Apache-2.0 WITH LLVM-exception",
+	"MIT",
+	"0BSD",
+	"BSD-1-Clause",
+	"BSD-3-Clause",
+	"BSL-1.0",
+	"ISC",
+	"Unicode-3.0",
+	"Unlicense",
+	"Zlib",
+	"CC0-1.0",
+	"CDLA-Permissive-2.0",
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

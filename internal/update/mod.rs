@@ -46,6 +46,17 @@ pub fn run_with(
 	current: &str,
 	opts: UpdateOptions,
 ) -> crate::Result<()> {
+	run_with_guard(source, current, opts, install::managing_package_manager())
+}
+
+/// [`run_with`] with the package-manager guard injected, so the refusal branch
+/// can be exercised without a dpkg-managed binary on the test host.
+fn run_with_guard(
+	source: &dyn ReleaseSource,
+	current: &str,
+	opts: UpdateOptions,
+	managed_by: Option<&str>,
+) -> crate::Result<()> {
 	let current_v = verify::parse_version(current)?;
 	let latest_tag = source.latest_version()?;
 	let latest_v = verify::parse_version(&latest_tag)?;
@@ -67,7 +78,7 @@ pub fn run_with(
 
 	// Refuse to self-replace a package-manager-managed binary (even with
 	// --force): overwriting it would desync the package manager's records.
-	if let Some(pm) = install::managing_package_manager() {
+	if let Some(pm) = managed_by {
 		return Err(install::package_managed_error(pm));
 	}
 
@@ -196,6 +207,48 @@ mod tests {
 		let err = run_with(&src, "0.6.0", UpdateOptions::default()).unwrap_err();
 		assert!(matches!(err, ComposeError::Update(_)));
 		assert!(src.fetched.borrow().contains(&"SHA256SUMS.sig".to_string()));
+	}
+
+	#[test]
+	fn package_managed_binary_refuses_and_does_not_download() {
+		// A newer release is available and --force is set, so the flow reaches the
+		// package-manager guard. With a manager owning the binary it must refuse
+		// before fetching anything.
+		let src = MockSource {
+			latest: "v9.9.9".into(),
+			assets: HashMap::new(),
+			fetched: RefCell::new(Vec::new()),
+		};
+		let opts = UpdateOptions {
+			check_only: false,
+			force: true,
+		};
+		let err = run_with_guard(&src, "0.6.0", opts, Some("apt")).unwrap_err();
+		match err {
+			ComposeError::Update(msg) => assert!(msg.contains("apt")),
+			other => panic!("expected Update error, got {other:?}"),
+		}
+		assert!(
+			src.fetched.borrow().is_empty(),
+			"a package-managed binary must not download an update"
+		);
+	}
+
+	#[test]
+	fn check_only_returns_before_package_manager_guard() {
+		// --check must short-circuit even when a package manager owns the binary,
+		// so `podup update --check` never errors on a deb install.
+		let src = MockSource {
+			latest: "v9.9.9".into(),
+			assets: HashMap::new(),
+			fetched: RefCell::new(Vec::new()),
+		};
+		let opts = UpdateOptions {
+			check_only: true,
+			force: false,
+		};
+		run_with_guard(&src, "0.6.0", opts, Some("apt")).unwrap();
+		assert!(src.fetched.borrow().is_empty());
 	}
 
 	#[test]
