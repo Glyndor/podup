@@ -5,7 +5,7 @@
 //! API calls are sequential and infrequent.
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
+use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Incoming;
 use hyper::client::conn::http1;
 use hyper::{Method, Request, Response, StatusCode};
@@ -15,6 +15,15 @@ use serde::{de::DeserializeOwned, Serialize};
 use super::error::PodmanError;
 
 type BoxBody = Full<Bytes>;
+
+/// Upper bound on a buffered (non-streaming) response body. Caps memory use
+/// when the daemon returns an oversized or runaway response.
+const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Ceiling on establishing the socket connection and HTTP handshake. Bounds the
+/// wait when the Podman socket is absent, busy, or unresponsive. This times the
+/// connect only — it does not limit the duration of a streaming response body.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Result alias for libpod client calls, fixing the error to [`PodmanError`].
 pub type Result<T> = std::result::Result<T, PodmanError>;
@@ -115,18 +124,29 @@ impl Client {
 
 	/// Send a request and return the raw response.
 	async fn send(&self, req: Request<BoxBody>) -> Result<Response<Incoming>> {
-		let mut sender = self.connect().await?;
+		let mut sender = tokio::time::timeout(CONNECT_TIMEOUT, self.connect())
+			.await
+			.map_err(|_| PodmanError::Api {
+				status: 0,
+				message: format!(
+					"timed out after {}s connecting to the Podman socket",
+					CONNECT_TIMEOUT.as_secs()
+				),
+			})??;
 		sender.send_request(req).await.map_err(PodmanError::Hyper)
 	}
 
-	/// Read the full response body into a `Vec<u8>`.
+	/// Read the full response body into a `Vec<u8>`, capped at
+	/// [`MAX_RESPONSE_BYTES`] so a rogue or runaway daemon cannot exhaust memory.
 	async fn read_body(resp: Response<Incoming>) -> Result<(StatusCode, Vec<u8>)> {
 		let status = resp.status();
-		let bytes = resp
-			.into_body()
+		let bytes = Limited::new(resp.into_body(), MAX_RESPONSE_BYTES)
 			.collect()
 			.await
-			.map_err(PodmanError::Hyper)?
+			.map_err(|e| PodmanError::Api {
+				status: 0,
+				message: format!("reading response body: {e}"),
+			})?
 			.to_bytes();
 		Ok((status, bytes.to_vec()))
 	}
