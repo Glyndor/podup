@@ -148,3 +148,26 @@ Forward-compatibility warnings about unknown or unsupported compose fields are
 shown by default; set `RUST_LOG=debug` for verbose tracing. An unexpected
 internal error prints a `podup: internal error:` notice with a bug-report link
 and a reminder to redact secrets before sharing logs.
+
+## Environment
+
+Every environment variable `podup` reads, in one place. Each compose variable
+has an equivalent flag (see [Global options](#global-options)); the flag wins
+when both are set.
+
+| Variable | Description |
+|---|---|
+| `COMPOSE_FILE` | Path-separator-delimited list of compose files (`--file`). |
+| `COMPOSE_PROJECT_NAME` | Default project name (`--project`). |
+| `COMPOSE_PROFILES` | Default active profiles (`--profile`). |
+| `PODMAN_SOCKET` | Podman socket path (`--socket`). |
+| `RUST_LOG` | Log verbosity filter. Unset shows warnings and errors; e.g. `RUST_LOG=podup=info` or `RUST_LOG=podup=debug` for more detail. |
+
+## Exit status
+
+| Code | Meaning |
+|---|---|
+| `0` | Success. |
+| `1` | A command failed (parse error, Podman error). |
+| `2` | `update` failed to verify or install a release. |
+| other | `run` propagates the container's own exit code verbatim. |
