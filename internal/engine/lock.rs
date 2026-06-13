@@ -7,6 +7,9 @@
 //! serializes them with a `flock(2)` advisory lock on a per-user, per-project
 //! lock file; the lock is released when the returned guard is dropped.
 
+// libc FFI (flock) is needed here; each block carries a soundness comment.
+#![allow(unsafe_code)]
+
 use crate::error::{ComposeError, Result};
 
 use super::Engine;
