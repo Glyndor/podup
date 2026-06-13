@@ -1,3 +1,16 @@
+podup (0.14.1) unstable; urgency=medium
+
+  * Security: "podup config" no longer prints inline secret and config
+    "content:" values; they are replaced with "<redacted>" before rendering,
+    so secret material is never written to stdout.
+  * Security: verify release digests in constant time instead of a
+    short-circuiting case-insensitive comparison.
+  * Use tab indentation in the release signing script and double-quoted YAML
+    in the CI caller, matching the project style standard.
+  * Test coverage for every Quadlet unmapped-field warning.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 13 Jun 2026 08:19:11 -0500
+
 podup (0.14.0) unstable; urgency=medium
 
   * Surface diagnostics by default: forward-compatibility warnings about unknown
