@@ -59,6 +59,7 @@ tempfile = "3"
 temp-env = "0.3"
 
 [workspace]
+exclude = ["fuzz"]
 
 [profile.release]
 opt-level = 3

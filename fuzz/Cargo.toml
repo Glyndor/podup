@@ -1,0 +1,50 @@
+[package]
+name = "podup-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.podup]
+path = ".."
+features = ["test-helpers"]
+
+[[bin]]
+name = "parse_compose"
+path = "fuzz_targets/parse_compose.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "substitute"
+path = "fuzz_targets/substitute.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "size"
+path = "fuzz_targets/size.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "dotenv"
+path = "fuzz_targets/dotenv.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stream_frame"
+path = "fuzz_targets/stream_frame.rs"
+test = false
+doc = false
+bench = false
