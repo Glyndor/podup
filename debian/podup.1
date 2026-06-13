@@ -128,6 +128,11 @@ Update podup to the latest signed release. Verifies the release's Ed25519
 signature against the embedded public key and its SHA-256 checksum, failing
 closed. \fB\-\-check\fR only reports whether a newer release exists;
 \fB\-\-force\fR reinstalls even when not newer.
+.TP
+.B completions \fISHELL\fR
+Print a shell completion script to stdout for \fBbash\fR, \fBzsh\fR, \fBfish\fR,
+\fBpowershell\fR or \fBelvish\fR. The Debian package installs the bash, zsh and
+fish scripts automatically.
 .SH ENVIRONMENT
 .TP
 .B COMPOSE_FILE
