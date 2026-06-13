@@ -205,7 +205,9 @@ async fn run() -> podup::Result<()> {
 	let file = podup::parse_files_with_env_files(&compose_files, &cli.env_file)?;
 
 	if matches!(cli.command, Commands::Config) {
-		let yaml = serde_yaml::to_string(&file).map_err(podup::ComposeError::Parse)?;
+		let mut redacted = file.clone();
+		redacted.redact_inline_content();
+		let yaml = serde_yaml::to_string(&redacted).map_err(podup::ComposeError::Parse)?;
 		println!("{yaml}");
 		return Ok(());
 	}
