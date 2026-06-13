@@ -65,6 +65,12 @@ pub fn run_with(
 		return Ok(());
 	}
 
+	// Refuse to self-replace a package-manager-managed binary (even with
+	// --force): overwriting it would desync the package manager's records.
+	if let Some(pm) = install::managing_package_manager() {
+		return Err(install::package_managed_error(pm));
+	}
+
 	let asset = install::require_platform_asset()?;
 	println!("downloading {asset} ({latest_tag}) ...");
 	let binary = source.fetch(asset)?;

@@ -30,3 +30,14 @@ pub use compose::{
 pub use engine::{is_safe_project_name, Engine, ProjectLock, RunOptions};
 pub use error::{ComposeError, Result};
 pub use libpod::Client;
+
+/// Internal parsers exposed only under `test-helpers` for fuzzing and tests.
+///
+/// These are not part of the public API (the feature is off by default, so the
+/// published crate does not expose them); they let the fuzz harness reach the
+/// crate-private dotenv parser and the libpod stream framer.
+#[cfg(feature = "test-helpers")]
+pub mod fuzz_api {
+	pub use crate::dotenv::parse as dotenv_parse;
+	pub use crate::libpod::types::stream::{parse_frame, take_json_line};
+}

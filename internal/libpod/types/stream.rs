@@ -43,7 +43,7 @@ fn stream_buf_overflow() -> PodmanError {
 ///
 /// Returns `Some((stream_type, payload, bytes_consumed))` if a complete frame
 /// is available, or `None` if more data is needed.
-pub(crate) fn parse_frame(buf: &[u8]) -> Option<(u8, Bytes, usize)> {
+pub fn parse_frame(buf: &[u8]) -> Option<(u8, Bytes, usize)> {
 	if buf.len() < 8 {
 		return None;
 	}
@@ -60,7 +60,7 @@ pub(crate) fn parse_frame(buf: &[u8]) -> Option<(u8, Bytes, usize)> {
 ///
 /// Returns `Some(line_bytes)` when a `\n` is found, or `None` when no
 /// complete line is buffered yet.
-pub(crate) fn take_json_line(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
+pub fn take_json_line(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
 	let nl = buf.iter().position(|&b| b == b'\n')?;
 	let line: Vec<u8> = buf.drain(..nl + 1).take(nl).collect();
 	Some(line)
