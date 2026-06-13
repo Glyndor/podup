@@ -52,3 +52,69 @@ pub(super) fn collect_warnings(name: &str, service: &Service, warnings: &mut Vec
 		);
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use crate::parse_str;
+	use crate::quadlet::generate;
+
+	#[test]
+	fn warns_for_every_unmapped_field() {
+		let yaml = r#"
+services:
+  everything:
+    image: app:1.0
+    build: .
+    scale: 3
+    privileged: true
+    network_mode: host
+    volumes_from:
+      - other
+    profiles:
+      - debug
+    healthcheck:
+      test: ["CMD", "true"]
+    secrets:
+      - my_secret
+    configs:
+      - my_config
+secrets:
+  my_secret:
+    file: ./s.txt
+configs:
+  my_config:
+    file: ./c.txt
+"#;
+		let file = parse_str(yaml).unwrap();
+		let warnings = generate(&file, "proj").warnings;
+		let joined = warnings.join("\n");
+
+		for field in [
+			"build",
+			"scale/replicas",
+			"healthcheck",
+			"secrets",
+			"configs",
+			"volumes_from",
+			"network_mode",
+			"profiles",
+			"privileged",
+		] {
+			assert!(
+				joined.contains(field),
+				"missing warning for {field}; got:\n{joined}"
+			);
+		}
+	}
+
+	#[test]
+	fn clean_service_warns_about_nothing() {
+		let yaml = r#"
+services:
+  web:
+    image: nginx:1.27
+"#;
+		let file = parse_str(yaml).unwrap();
+		assert!(generate(&file, "proj").warnings.is_empty());
+	}
+}
