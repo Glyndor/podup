@@ -101,6 +101,10 @@ print to stdout; warnings about fields with no Quadlet mapping go to stderr.
 podup generate quadlet -o ~/.config/containers/systemd
 ```
 
+Quadlet units are consumed by systemd, so they only run on Linux. Generating
+them on macOS or Windows is allowed (e.g. to deploy to a remote Linux host) but
+prints a `podup: warning:` to stderr noting the files will not run on the host.
+
 ## Watch
 
 ### `watch`
@@ -121,3 +125,26 @@ Replace the running binary with the latest signed release.
 Verification fails closed: a missing key, bad Ed25519 signature, or SHA-256
 mismatch aborts before the installed binary is touched. See
 [self-update.md](self-update.md) for the trust model.
+
+## Shell completions
+
+### `completions <SHELL>`
+Print a shell completion script to stdout for `bash`, `zsh`, `fish`,
+`powershell`, or `elvish`. The Debian package installs the bash/zsh/fish files
+automatically; otherwise source the output from your shell startup:
+
+```bash
+podup completions bash > ~/.local/share/bash-completion/completions/podup
+podup completions zsh  > "${fpath[1]}/_podup"
+podup completions fish > ~/.config/fish/completions/podup.fish
+```
+
+## Diagnostics
+
+podup writes warnings and errors to **stderr**, prefixed with `podup:` (so the
+emitter is identifiable in journald and multi-tool logs) while stdout stays a
+clean pipe (e.g. the YAML from `config`, the units from `generate quadlet`).
+Forward-compatibility warnings about unknown or unsupported compose fields are
+shown by default; set `RUST_LOG=debug` for verbose tracing. An unexpected
+internal error prints a `podup: internal error:` notice with a bug-report link
+and a reminder to redact secrets before sharing logs.

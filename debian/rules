@@ -29,6 +29,14 @@ override_dh_auto_test:
 
 override_dh_auto_install:
 	install -D -m 0755 target/release/podup debian/podup/usr/bin/podup
+	# Shell completions, generated from the freshly built binary so they can
+	# never drift from the CLI definition.
+	install -d debian/podup/usr/share/bash-completion/completions
+	install -d debian/podup/usr/share/zsh/vendor-completions
+	install -d debian/podup/usr/share/fish/vendor_completions.d
+	target/release/podup completions bash > debian/podup/usr/share/bash-completion/completions/podup
+	target/release/podup completions zsh  > debian/podup/usr/share/zsh/vendor-completions/_podup
+	target/release/podup completions fish > debian/podup/usr/share/fish/vendor_completions.d/podup.fish
 
 override_dh_auto_clean:
 	cargo clean
