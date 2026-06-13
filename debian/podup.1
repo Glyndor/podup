@@ -146,6 +146,23 @@ Default active profiles (see \fB\-\-profile\fR).
 .TP
 .B PODMAN_SOCKET
 Podman socket path (see \fB\-\-socket\fR).
+.TP
+.B RUST_LOG
+Log verbosity filter. With no value set, warnings and errors are shown; set
+e.g. \fBRUST_LOG=podup=info\fR or \fBRUST_LOG=podup=debug\fR for more detail.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+A command failed (for example a parse error or a Podman error).
+.TP
+.B 2
+\fBupdate\fR failed to verify or install a release.
+.PP
+\fBrun\fR propagates the container's own exit code verbatim, so any other
+non-zero status comes from the container that was run.
 .SH FILES
 .TP
 .B docker-compose.yml
