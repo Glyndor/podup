@@ -1,3 +1,20 @@
+podup (0.17.0) unstable; urgency=medium
+
+  * Security: the self-update temporary file is now created with mode 0600 and
+    widened to the target's mode afterwards, so the new binary's bytes are never
+    world-readable in a shared directory during the write window.
+  * Security: reject absolute and parent-escaping paths in "env_file" and
+    "label_file" (consistent with "extends"/"include"), and bound "label_file"
+    and ".dockerignore" reads with the shared size cap.
+  * Document RUST_LOG and the exit-status codes in the man page (.SH ENVIRONMENT
+    and a new .SH EXIT STATUS) and in the command reference.
+  * Add a cargo-deny supply-chain policy (license allowlist, wildcard and
+    unknown-source denial) run weekly alongside cargo audit.
+  * Internal: split five engine/libpod files that were approaching the
+    500-line limit into focused submodules; no behaviour change.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 13 Jun 2026 14:30:00 -0500
+
 podup (0.16.0) unstable; urgency=medium
 
   * Ship a signed Debian package (podup_<version>_amd64.deb) as a release asset,
