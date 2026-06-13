@@ -132,14 +132,17 @@ pub(super) fn build_label_file_labels(
 ) -> HashMap<String, String> {
 	let mut labels = HashMap::new();
 	for path in service.label_file.to_list() {
-		let full = if std::path::Path::new(&path).is_absolute() {
-			std::path::PathBuf::from(&path)
-		} else {
-			base_dir.join(&path)
-		};
-		let Ok(content) = std::fs::read_to_string(&full) else {
-			warn!("label_file: cannot read {}", full.display());
+		if !crate::fsutil::is_safe_relative_path(&path) {
+			warn!("label_file: refusing absolute or parent-escaping path {path}");
 			continue;
+		}
+		let full = base_dir.join(&path);
+		let content = match crate::fsutil::read_to_string_capped(&full) {
+			Ok(c) => c,
+			Err(e) => {
+				warn!("label_file: cannot read {}: {e}", full.display());
+				continue;
+			}
 		};
 		for line in content.lines() {
 			let trimmed = line.trim();

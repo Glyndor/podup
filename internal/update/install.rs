@@ -122,6 +122,24 @@ pub fn install_at(target: &Path, new_bytes: &[u8]) -> crate::Result<()> {
 /// Write the new bytes to `tmp`, copy `target`'s permission bits (default 0755
 /// on Unix when the target does not yet exist), and flush to disk.
 fn write_temp(tmp: &Path, new_bytes: &[u8], target: &Path) -> crate::Result<()> {
+	// Create the temp file private (0600) on Unix so the new binary's bytes are
+	// never world-readable in a shared directory (e.g. /usr/local/bin) during the
+	// window before the target's mode is applied. `File::create` honours the
+	// process umask and could otherwise leave a 0644 file readable by other users.
+	#[cfg(unix)]
+	let mut f = {
+		use std::os::unix::fs::OpenOptionsExt;
+		std::fs::OpenOptions::new()
+			.write(true)
+			.create(true)
+			.truncate(true)
+			.mode(0o600)
+			.open(tmp)
+			.map_err(|e| {
+				ComposeError::Update(format!("cannot write update to {}: {e}", tmp.display()))
+			})?
+	};
+	#[cfg(not(unix))]
 	let mut f = std::fs::File::create(tmp).map_err(|e| {
 		ComposeError::Update(format!("cannot write update to {}: {e}", tmp.display()))
 	})?;
