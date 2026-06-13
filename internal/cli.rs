@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use clap_complete::Shell;
 
 #[derive(Parser)]
 #[command(
@@ -231,6 +232,15 @@ pub(crate) enum Commands {
 		/// Reinstall even if the latest release is not newer than this build.
 		#[arg(long)]
 		force: bool,
+	},
+	/// Print a shell completion script to stdout.
+	///
+	/// Generates a completion script for the named shell from the CLI
+	/// definition. Source it from your shell's startup (or install the file the
+	/// Debian package ships) to get tab completion for podup commands and flags.
+	Completions {
+		/// Shell to generate completions for (bash, zsh, fish, powershell, elvish).
+		shell: Shell,
 	},
 }
 

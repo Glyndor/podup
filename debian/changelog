@@ -1,3 +1,24 @@
+podup (0.14.0) unstable; urgency=medium
+
+  * Surface diagnostics by default: forward-compatibility warnings about unknown
+    or unsupported compose fields now print even with no RUST_LOG set, and all
+    warnings and errors go to stderr (keeping stdout a clean pipe for config and
+    generate output).
+  * Prefix all user-facing output with "podup:" and unify the warning format, so
+    the emitter is identifiable in journald and multi-tool logs.
+  * Install a panic hook that prints a "podup: internal error:" notice with a
+    bug-report link and a reminder to redact secrets before sharing logs, in
+    place of a raw Rust backtrace.
+  * Warn (without blocking) when generating Quadlet units on a non-Linux host,
+    since the systemd units will not run there.
+  * Add a "podup completions <shell>" subcommand (bash, zsh, fish, powershell,
+    elvish); the package installs the bash, zsh and fish scripts.
+  * Fix native-Windows path handling: expand "~" via USERPROFILE and join with
+    the platform separator, and classify a "C:\\..." drive-letter volume source
+    as a bind mount rather than a named volume.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 12 Jun 2026 18:00:00 -0500
+
 podup (0.13.0) unstable; urgency=medium
 
   * Harden the Quadlet export against hostile compose input: reject path

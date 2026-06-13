@@ -301,12 +301,17 @@ pub(super) fn resolve_bind_source(src: &str, base_dir: &Path) -> String {
 		return src.to_string();
 	}
 	let expanded = if let Some(rest) = src.strip_prefix("~/") {
-		match std::env::var("HOME") {
-			Ok(home) => format!("{home}/{rest}"),
-			Err(_) => src.to_string(),
+		// Join with the platform separator rather than hardcoding `/`, and look
+		// up the home directory in a platform-correct way (USERPROFILE on
+		// native Windows, where HOME is usually unset).
+		match home_dir() {
+			Some(home) => home.join(rest).to_string_lossy().into_owned(),
+			None => src.to_string(),
 		}
 	} else if src == "~" {
-		std::env::var("HOME").unwrap_or_else(|_| src.to_string())
+		home_dir()
+			.map(|h| h.to_string_lossy().into_owned())
+			.unwrap_or_else(|| src.to_string())
 	} else {
 		src.to_string()
 	};
@@ -315,6 +320,16 @@ pub(super) fn resolve_bind_source(src: &str, base_dir: &Path) -> String {
 	} else {
 		base_dir.join(&expanded).to_string_lossy().into_owned()
 	}
+}
+
+/// The current user's home directory. Prefers `HOME` (set on Unix and most
+/// shells), falling back to `USERPROFILE` for native Windows where `HOME` is
+/// usually absent. Empty values are treated as unset.
+fn home_dir() -> Option<std::path::PathBuf> {
+	std::env::var_os("HOME")
+		.or_else(|| std::env::var_os("USERPROFILE"))
+		.filter(|v| !v.is_empty())
+		.map(std::path::PathBuf::from)
 }
 
 /// Resolve a service's `links` to concrete container references.
