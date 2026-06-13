@@ -1,3 +1,14 @@
+podup (0.17.1) unstable; urgency=medium
+
+  * Stop rejecting absolute and parent-relative "env_file" and "label_file"
+    paths. podman, podman-compose, and docker-compose all accept them (a shared
+    "../secrets/.env" in a monorepo is a common, valid layout), so confining
+    them broke compose files that work everywhere else. The 0600 self-update
+    temp file and the size caps on "label_file"/".dockerignore" reads from
+    0.17.0 are retained; only the path confinement is reverted.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 13 Jun 2026 15:10:00 -0500
+
 podup (0.17.0) unstable; urgency=medium
 
   * Security: the self-update temporary file is now created with mode 0600 and
