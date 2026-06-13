@@ -1,3 +1,15 @@
+podup (0.15.1) unstable; urgency=medium
+
+  * Reject non-finite, negative, and out-of-range CPU and duration values in the
+    numeric parsers instead of silently saturating the integer cast.
+  * URL-encode the daemon-returned exec id in the libpod exec-start path.
+  * Cap the size of compose, include, extends, and env files read into memory
+    (16 MiB) so an oversized or hostile file fails closed.
+  * Bound libpod response bodies (64 MiB), stream-reassembly buffers (256 MiB),
+    and socket connect time (30s) against a rogue or unresponsive daemon.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 13 Jun 2026 11:02:20 -0500
+
 podup (0.15.0) unstable; urgency=medium
 
   * Security: validate the project name at the CLI boundary, rejecting unsafe
