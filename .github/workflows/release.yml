@@ -139,9 +139,57 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+  build-deb:
+    name: Build Debian package
+    needs: verify
+    runs-on: ubuntu-latest
+    container: debian:sid
+    permissions:
+      contents: read
+    steps:
+      - name: Install build tooling
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            build-essential \
+            dpkg-dev \
+            debhelper \
+            cargo \
+            rustc
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+
+      - name: Build the package
+        run: |
+          dpkg-checkbuilddeps
+          dpkg-buildpackage -us -uc -b
+
+      - name: Stage the .deb into the workspace
+        run: |
+          deb=$(ls ../podup_*_amd64.deb 2>/dev/null | head -n1)
+          if [ -z "$deb" ]; then
+            echo "::error::no .deb artifact was produced"
+            exit 1
+          fi
+          cp "$deb" "$(basename "$deb")"
+          echo "Staged $(basename "$deb")"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: podup-deb
+          path: podup_*_amd64.deb
+          retention-days: 1
+          if-no-files-found: error
+
   release:
     name: Publish release
-    needs: build
+    needs: [build, build-deb]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -158,6 +206,16 @@ jobs:
         with:
           merge-multiple: true
 
+      - name: Resolve Debian package name
+        run: |
+          deb=$(ls podup_*_amd64.deb 2>/dev/null | head -n1)
+          if [ -z "$deb" ]; then
+            echo "::error::Debian package artifact missing"
+            exit 1
+          fi
+          echo "DEB=$deb" >> "$GITHUB_ENV"
+          echo "Releasing Debian package $deb"
+
       - name: Generate checksums
         run: |
           sha256sum \
@@ -167,9 +225,10 @@ jobs:
             podup-darwin-x86_64 \
             podup-windows-x86_64.exe \
             podup-windows-arm64.exe \
+            "$DEB" \
             > SHA256SUMS
 
-      - name: Sign SHA256SUMS
+      - name: Sign SHA256SUMS and the Debian package
         env:
           RELEASE_SIGN_KEY: ${{ secrets.RELEASE_SIGN_KEY }}
           PYTHONUTF8: "1"
@@ -181,6 +240,7 @@ jobs:
           fi
           python3 -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
           python3 .github/scripts/sign.py "$RELEASE_SIGN_KEY" SHA256SUMS
+          python3 .github/scripts/sign.py "$RELEASE_SIGN_KEY" "$DEB"
 
       - name: Create GitHub Release
         env:
@@ -202,13 +262,15 @@ jobs:
             podup-windows-x86_64.exe.sig \
             podup-windows-arm64.exe \
             podup-windows-arm64.exe.sig \
+            "$DEB" \
+            "$DEB.sig" \
             SHA256SUMS \
             SHA256SUMS.sig \
             install.sh \
             install.ps1
 
       - name: Remove release artifacts
-        run: rm -f podup-* SHA256SUMS SHA256SUMS.sig
+        run: rm -f podup-* podup_* SHA256SUMS SHA256SUMS.sig
 
       - name: Publish to crates.io
         env:

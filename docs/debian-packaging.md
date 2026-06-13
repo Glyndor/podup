@@ -14,6 +14,20 @@ Requires `debhelper`, `cargo` and `rustc >= 1.85` (the crate's declared
 `rust-version`). The package installs `/usr/bin/podup` and the `podup(1)` man
 page.
 
+## Prebuilt .deb from releases
+
+Each tagged release attaches a signed `podup_<version>_amd64.deb` (with its
+`.sig`, and an entry in the release `SHA256SUMS`) built on Debian sid. Install
+it directly:
+
+```bash
+sudo apt install ./podup_<version>_amd64.deb
+```
+
+`podup update` refuses to self-replace a binary installed this way — it would
+desync dpkg's record of the file — and points back to the package manager;
+upgrade with `apt` instead.
+
 > **Debian compatibility note:** the MSRV is 1.85, which Debian trixie ships, so
 > trixie and sid can both build the package. (Earlier releases needed 1.86 via
 > an `idna`/`icu` dependency chain that has since been removed.)
