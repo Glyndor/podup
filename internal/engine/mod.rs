@@ -16,6 +16,7 @@ mod network;
 mod profiles;
 mod query;
 mod staging;
+pub use staging::is_safe_project_name;
 mod volume;
 mod volume_mounts;
 #[cfg(feature = "watch")]
