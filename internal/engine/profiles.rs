@@ -48,12 +48,14 @@ mod tests {
 
 	#[test]
 	fn empty_slice_with_no_env_returns_empty() {
-		// Ensure COMPOSE_PROFILES is unset for this test.
-		// SAFETY: single-threaded test with no other thread reading the
-		// environment concurrently, so removing the var cannot race.
-		unsafe { std::env::remove_var("COMPOSE_PROFILES") };
-		let set = active_profiles_set(&[]);
-		assert!(set.is_empty());
+		// Scope COMPOSE_PROFILES to "unset" race-free: `temp-env` serializes
+		// the mutation and restores the prior value, avoiding the data race
+		// that a bare `std::env::remove_var` carries under the parallel test
+		// runner.
+		temp_env::with_var_unset("COMPOSE_PROFILES", || {
+			let set = active_profiles_set(&[]);
+			assert!(set.is_empty());
+		});
 	}
 
 	#[test]

@@ -1,5 +1,8 @@
 //! `podup` — docker-compose to Podman translator CLI.
 
+// The binary carries no `unsafe`; deny it so any future addition is caught.
+#![deny(unsafe_code)]
+
 use std::path::Path;
 use std::process;
 
@@ -214,6 +217,18 @@ async fn run() -> podup::Result<()> {
 
 	let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
 	let project = resolve_project_name(cli.project, file.name.as_deref(), &base_dir);
+
+	// Validate the resolved project name at the trust boundary, before it reaches
+	// any code path that builds a filesystem path from it (staging, lock files,
+	// quadlet generation). Explicit `-p`/`COMPOSE_PROJECT_NAME` values and the
+	// compose `name:` field are otherwise taken verbatim; rejecting an unsafe
+	// name here fails closed regardless of which command runs next.
+	if !podup::is_safe_project_name(&project) {
+		return Err(podup::ComposeError::Unsupported(format!(
+			"project name {project:?} is not a safe path component: use only ASCII \
+			 letters, digits, '-', '_', '.', not starting with '.', max 128 chars"
+		)));
+	}
 
 	// `generate` produces declarative artifacts from the compose file alone; it
 	// neither contacts Podman nor mutates project state.

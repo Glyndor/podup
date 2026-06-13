@@ -119,13 +119,9 @@ mod tests {
 		std::fs::create_dir_all(&dir).unwrap();
 		let prev = std::env::current_dir().unwrap();
 		std::env::set_current_dir(&dir).unwrap();
-		// Guard against a COMPOSE_FILE set in the test environment.
-		let had_env = std::env::var_os("COMPOSE_FILE");
-		std::env::remove_var("COMPOSE_FILE");
-		let p = resolve_compose_files(&[]);
-		if let Some(v) = had_env {
-			std::env::set_var("COMPOSE_FILE", v);
-		}
+		// Scope COMPOSE_FILE to "unset" race-free so a value set in the test
+		// environment cannot leak in and `temp-env` restores it afterwards.
+		let p = temp_env::with_var_unset("COMPOSE_FILE", || resolve_compose_files(&[]));
 		std::env::set_current_dir(prev).unwrap();
 		let _ = std::fs::remove_dir_all(&dir);
 		assert_eq!(p, vec![PathBuf::from("docker-compose.yml")]);

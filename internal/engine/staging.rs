@@ -10,6 +10,10 @@
 //! default ACLs already restrict access to the owning user; only the
 //! non-symlink directory check applies.
 
+// libc FFI (geteuid/chown) is needed here; each block carries a soundness
+// comment. Opt back into `unsafe` for this module only.
+#![allow(unsafe_code)]
+
 use crate::error::{ComposeError, Result};
 use std::path::PathBuf;
 
@@ -19,7 +23,7 @@ use std::path::Path;
 /// Whether `name` is safe to use as a single path component and container
 /// name prefix: non-empty, bounded, ASCII alphanumeric plus `-`/`_`/`.`,
 /// not starting with a dot (rejects `.`, `..` and hidden directories).
-pub(super) fn is_safe_project_name(name: &str) -> bool {
+pub fn is_safe_project_name(name: &str) -> bool {
 	!name.is_empty()
 		&& name.len() <= 128
 		&& !name.starts_with('.')
@@ -120,6 +124,8 @@ pub(super) fn write_private_file(path: &std::path::Path, content: &[u8]) -> Resu
 /// Rejects:
 /// - group-readable (`g+r`, 0o040) or world-readable (`o+r`, 0o004) bits — a
 ///   secret or config file must never be readable by other users.
+/// - any execute bit (`0o111`) — a secret/config file holds data, never code,
+///   so the execute bit has no legitimate use and is rejected unconditionally.
 /// - setuid (0o4000), setgid (0o2000), or sticky (0o1000) bits — these have no
 ///   legitimate use on a secret/config data file and are either a
 ///   misconfiguration or an attack attempt; reject unconditionally.
@@ -131,6 +137,13 @@ pub(super) fn apply_mode(path: &Path, mode: u32) -> Result<()> {
 		return Err(ComposeError::Unsupported(format!(
 			"mode {mode:#o} for {} grants group- or world-read access to a secret/config file; \
 			 use a mode with no g+r or o+r bits (e.g. 0o400 or 0o600)",
+			path.display()
+		)));
+	}
+	if mode & 0o111 != 0 {
+		return Err(ComposeError::Unsupported(format!(
+			"mode {mode:#o} for {} sets an execute bit on a secret/config file; \
+			 only plain owner read/write bits are permitted (e.g. 0o400 or 0o600)",
 			path.display()
 		)));
 	}
@@ -381,7 +394,19 @@ mod apply_mode_tests {
 		std::fs::write(&file, b"value").expect("write");
 		assert!(apply_mode(&file, 0o400).is_ok());
 		assert!(apply_mode(&file, 0o600).is_ok());
-		assert!(apply_mode(&file, 0o700).is_ok());
+		assert!(apply_mode(&file, 0o200).is_ok());
+	}
+
+	#[test]
+	fn executable_mode_rejected() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let file = dir.path().join("secret");
+		std::fs::write(&file, b"value").expect("write");
+		// A secret/config file holds data, never code — the execute bit is
+		// rejected even when only the owner-execute bit is set.
+		assert!(apply_mode(&file, 0o100).is_err());
+		assert!(apply_mode(&file, 0o700).is_err());
+		assert!(apply_mode(&file, 0o500).is_err());
 	}
 
 	#[test]

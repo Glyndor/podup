@@ -1,5 +1,8 @@
 //! Podman socket connection helpers.
 
+// libc FFI (getuid) is needed here; the block carries a soundness comment.
+#![allow(unsafe_code)]
+
 use crate::error::Result;
 use crate::libpod::Client;
 #[cfg(any(not(windows), test))]

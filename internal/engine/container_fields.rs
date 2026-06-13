@@ -1,6 +1,10 @@
 //! Container-spec field builders: device mappings, block-I/O throttling,
 //! label-file labels, and Swarm-only deploy-field warnings.
 
+// libc FFI (stat, for device major/minor) is needed here; each block carries a
+// soundness comment.
+#![allow(unsafe_code)]
+
 use std::collections::HashMap;
 use std::path::Path;
 
