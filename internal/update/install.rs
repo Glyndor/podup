@@ -44,6 +44,42 @@ pub fn require_platform_asset() -> crate::Result<&'static str> {
 	})
 }
 
+/// Name of the system package manager that owns the running binary, if any.
+///
+/// Self-update replaces the executable in place, which would corrupt a package
+/// manager's record of the installed file. When the running binary is tracked
+/// by such a manager the caller refuses and redirects the user to it.
+///
+/// Only `dpkg`/`apt` is detected, on Linux. cargo-install layouts
+/// (`~/.cargo/bin`, `/usr/local/bin`) are not owned by `dpkg` and update
+/// normally. A missing `dpkg-query`, or a path no package owns, returns `None`.
+#[cfg(target_os = "linux")]
+pub fn managing_package_manager() -> Option<&'static str> {
+	let exe = std::env::current_exe().ok()?;
+	let path = std::fs::canonicalize(&exe).unwrap_or(exe);
+	let output = std::process::Command::new("dpkg-query")
+		.arg("-S")
+		.arg(&path)
+		.output()
+		.ok()?;
+	output.status.success().then_some("apt")
+}
+
+/// Non-Linux platforms have no supported package-manager-managed install yet.
+#[cfg(not(target_os = "linux"))]
+pub fn managing_package_manager() -> Option<&'static str> {
+	None
+}
+
+/// Error returned when the running binary is managed by package manager `pm`.
+pub fn package_managed_error(pm: &str) -> ComposeError {
+	ComposeError::Update(format!(
+		"this podup was installed by {pm}; update it with your package manager \
+		 (e.g. `apt upgrade podup`) rather than `podup update`, which would break \
+		 the package's record of the file"
+	))
+}
+
 /// Replace the currently running executable with `new_bytes`. Returns the path
 /// that was updated. The caller MUST have verified `new_bytes` first.
 pub fn install_binary(new_bytes: &[u8]) -> crate::Result<PathBuf> {
@@ -240,5 +276,24 @@ mod tests {
 			(None, Err(_)) => {}
 			_ => panic!("platform_asset and require_platform_asset disagree"),
 		}
+	}
+
+	#[test]
+	fn package_managed_error_names_the_manager() {
+		let e = package_managed_error("apt");
+		match e {
+			ComposeError::Update(msg) => {
+				assert!(msg.contains("apt"));
+				assert!(msg.contains("podup update"));
+			}
+			_ => panic!("expected an Update error"),
+		}
+	}
+
+	#[test]
+	fn test_binary_is_not_package_managed() {
+		// The test runner binary lives under target/, which no package owns, so
+		// detection must not false-positive and block updates for normal builds.
+		assert_eq!(managing_package_manager(), None);
 	}
 }
