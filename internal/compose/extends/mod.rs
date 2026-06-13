@@ -178,22 +178,7 @@ fn resolve_one_extends(
 ///
 /// Exposed for unit testing.
 pub(crate) fn is_safe_extends_path(path: &str) -> bool {
-	let fp = std::path::Path::new(path);
-	if fp.is_absolute() {
-		return false;
-	}
-	// On Windows, paths like "/etc/passwd" are not `is_absolute()` (no drive letter)
-	// but still escape the project directory via the root separator.
-	if fp.components().next() == Some(std::path::Component::RootDir) {
-		return false;
-	}
-	if fp
-		.components()
-		.any(|c| c == std::path::Component::ParentDir)
-	{
-		return false;
-	}
-	true
+	crate::fsutil::is_safe_relative_path(path)
 }
 
 // ---------------------------------------------------------------------------

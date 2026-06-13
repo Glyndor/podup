@@ -123,7 +123,7 @@ pub(super) fn map_additional_context(base_dir: &Path, value: &str) -> String {
 
 fn read_dockerignore(context: &Path) -> Vec<String> {
 	let path = context.join(".dockerignore");
-	let Ok(content) = std::fs::read_to_string(path) else {
+	let Ok(content) = crate::fsutil::read_to_string_capped(path) else {
 		return Vec::new();
 	};
 	content
