@@ -1,3 +1,17 @@
+podup (0.15.0) unstable; urgency=medium
+
+  * Security: validate the project name at the CLI boundary, rejecting unsafe
+    "--project"/"COMPOSE_PROJECT_NAME" values and compose "name:" fields before
+    any filesystem path is built from them (including the "generate quadlet"
+    path, which never locks or stages).
+  * Security: reject any execute bit in secret and config file "mode:" values; a
+    data file is never code.
+  * Deny "unsafe_code" crate-wide, opting back in only on the libc FFI modules so
+    a new unsafe block elsewhere fails the build.
+  * Pin cargo-audit in the security-audit workflow for reproducible runs.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 13 Jun 2026 10:00:07 -0500
+
 podup (0.14.1) unstable; urgency=medium
 
   * Security: "podup config" no longer prints inline secret and config
