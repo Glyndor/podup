@@ -48,13 +48,7 @@ pub fn load_env_file_entries(
 			}
 		}
 
-		let rel = entry.path();
-		if !crate::fsutil::is_safe_relative_path(rel) {
-			return Err(ComposeError::Unsupported(format!(
-				"env_file '{rel}' must be a path inside the project directory"
-			)));
-		}
-		let abs = base_dir.join(rel);
+		let abs = base_dir.join(entry.path());
 		let content = match crate::fsutil::read_to_string_capped(&abs) {
 			Ok(c) => c,
 			Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -179,19 +173,17 @@ mod tests {
 	}
 
 	#[test]
-	fn rejects_absolute_env_file_path() {
-		let dir = tempfile::tempdir().unwrap();
-		let entries = vec![EnvFileEntry::Path("/etc/passwd".into())];
-		let err = load_env_file_entries(&entries, dir.path()).unwrap_err();
-		assert!(matches!(err, ComposeError::Unsupported(_)));
-	}
-
-	#[test]
-	fn rejects_parent_escaping_env_file_path() {
-		let dir = tempfile::tempdir().unwrap();
-		let entries = vec![EnvFileEntry::Path("../outside.env".into())];
-		let err = load_env_file_entries(&entries, dir.path()).unwrap_err();
-		assert!(matches!(err, ComposeError::Unsupported(_)));
+	fn loads_parent_relative_env_file() {
+		// docker-compose, podman, and podman-compose all accept env_file paths
+		// outside the project directory (e.g. a shared `../secrets/.env` in a
+		// monorepo); podup must too.
+		let root = tempfile::tempdir().unwrap();
+		std::fs::write(root.path().join("shared.env"), "FOO=bar\n").unwrap();
+		let project = root.path().join("project");
+		std::fs::create_dir(&project).unwrap();
+		let entries = vec![EnvFileEntry::Path("../shared.env".into())];
+		let m = load_env_file_entries(&entries, &project).unwrap();
+		assert_eq!(m.get("FOO").map(|s| s.as_str()), Some("bar"));
 	}
 
 	// merge_env
