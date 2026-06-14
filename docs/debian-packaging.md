@@ -30,11 +30,15 @@ upgrade with `apt` instead.
 
 ## apt repository (apt.glyndor.net)
 
-For amd64 Debian and Ubuntu, a hosted apt repository keeps podup current through
-the normal `apt upgrade` flow. The release workflow rebuilds the repository on
-every tag — signed with a dedicated Ed25519 OpenPGP key — and publishes it to
-GitHub Pages at `https://apt.glyndor.net`. Only the current release is carried;
-podup ships no old-version support.
+For amd64 Debian and Ubuntu, podup is served from the **Glyndor apt
+repository** at `https://apt.glyndor.net`, alongside other Glyndor packages.
+The repository lives in its own repo, [Glyndor/apt](https://github.com/Glyndor/apt):
+a workflow there downloads the latest amd64 `.deb` release asset of each tracked
+product, builds a signed `reprepro` repository, and publishes it to GitHub
+Pages. It is rebuilt fresh each run, so it always carries the current version of
+every package (no old-version support). podup's only responsibility is to attach
+a `podup_<version>_amd64.deb` asset to each release — which `build-deb` in
+`release.yml` already does.
 
 ### One-line setup
 
@@ -42,37 +46,31 @@ podup ships no old-version support.
 curl -fsSL https://glyndor.net/install/podup | bash -s -- --apt
 ```
 
-This downloads `podup-archive-keyring.deb` from the latest release, verifies it
-against the release Ed25519 signature over `SHA256SUMS`, installs it (registering
-the key and source list), then runs `apt install podup`.
+This downloads `glyndor-archive-keyring.deb` over HTTPS, installs it (registering
+the signing key and source list), then runs `apt install podup`.
 
 ### Manual setup
 
 ```bash
-curl -fsSL https://apt.glyndor.net/podup-apt-key.asc \
-  | sudo gpg --dearmor -o /usr/share/keyrings/podup.gpg
-printf 'Types: deb\nURIs: https://apt.glyndor.net\nSuites: stable\nComponents: main\nArchitectures: amd64\nSigned-By: /usr/share/keyrings/podup.gpg\n' \
-  | sudo tee /etc/apt/sources.list.d/podup.sources
+curl -fsSLO https://apt.glyndor.net/glyndor-archive-keyring.deb
+sudo dpkg -i glyndor-archive-keyring.deb
 sudo apt update && sudo apt install podup
 ```
 
 ### Why key renewal is automatic
 
-The signing key ships as the `podup-archive-keyring` package, so apt owns the
+The signing key ships as the `glyndor-archive-keyring` package, so apt owns the
 key file. When the key is rotated or its expiry extended, a new keyring version
 is published and `apt upgrade` installs it — nothing for users to re-run.
-Dropping the key as a plain file instead would make renewals manual, since apt
-cannot update a file it does not own.
 
-### Maintainer notes
+### Refreshing after a release
 
-- Public key committed at `packaging/apt/podup-apt-key.asc`; the private half is
-  the org secret `PODUP_APT_GPG_PRIVATE_KEY`, scoped to this repository.
-- `packaging/apt/build-keyring.sh` builds the keyring package and
-  `packaging/apt/build-repo.sh` builds and signs the `reprepro` repository; the
-  latter fails closed if the committed public key does not match the secret.
-- amd64-only for now (the `.deb` job is amd64). arm64 users install the
-  standalone binary.
+The apt repository rebuilds on a daily schedule and can be triggered manually
+(`gh workflow run publish.yml -R Glyndor/apt`). For an immediate refresh on each
+release, set an `APT_DISPATCH_TOKEN` secret (a token with `contents:write` on
+`Glyndor/apt`); `release.yml` then sends a `repository_dispatch` after
+publishing. The signing key, keyring builder and repository builder all live in
+the `Glyndor/apt` repo.
 
 > **Debian compatibility note:** the MSRV is 1.85, which Debian trixie ships, so
 > trixie and sid can both build the package. (Earlier releases needed 1.86 via

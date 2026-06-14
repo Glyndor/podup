@@ -7,7 +7,7 @@
 #
 #   curl -fsSL https://glyndor.net/install/podup | bash
 #
-# --apt (Debian/Ubuntu, amd64): register the podup apt repository and install
+# --apt (Debian/Ubuntu, amd64): set up the Glyndor apt repository and install
 # with apt. Updates — including signing-key renewals — come from `apt upgrade`.
 #
 #   curl -fsSL https://glyndor.net/install/podup | bash -s -- --apt
@@ -158,45 +158,16 @@ install_apt() {
 	command -v apt-get >/dev/null 2>&1 || fail "--apt requires apt-get (Debian/Ubuntu)"
 	command -v dpkg >/dev/null 2>&1 || fail "--apt requires dpkg"
 	[[ "$ARCH" == "x86_64" ]] || fail \
-		"the podup apt repository is amd64-only for now; on ${ARCH} install without --apt"
+		"the Glyndor apt repository is amd64-only for now; on ${ARCH} install without --apt"
 
-	local kr="podup-archive-keyring.deb"
-	log_info "Downloading ${kr} (${VERSION}) ..."
-	download "${BASE_URL}/${kr}" "${TMP_DIR}/${kr}"
-	download "${BASE_URL}/SHA256SUMS" "${TMP_DIR}/SHA256SUMS"
-	download "${BASE_URL}/SHA256SUMS.sig" "${TMP_DIR}/SHA256SUMS.sig"
-
-	# The keyring package is the trust root for every later apt update, so it is
-	# verified against the Ed25519 release key before being installed. Build
-	# attestation does not cover .deb assets, so the signature is the only anchor.
-	local verified=0 rc=0
-	log_info "Verifying SHA256SUMS signature ..."
-	ed25519_verify "${TMP_DIR}/SHA256SUMS.sig" "${TMP_DIR}/SHA256SUMS" || rc=$?
-	case "$rc" in
-		0) log_ok "SHA256SUMS signature verified"; verified=1 ;;
-		1) fail "SHA256SUMS signature verification failed — release may be tampered" ;;
-		2)
-			if [[ ${#PUBKEYS[@]} -eq 0 ]]; then
-				log_info "no release public key configured — cannot check Ed25519 signature"
-			else
-				log_info "python3+cryptography not available — cannot check Ed25519 signature"
-			fi
-			;;
-	esac
-
-	if [[ "$verified" -ne 1 ]]; then
-		if [[ "${PODUP_INSECURE_SKIP_VERIFY:-0}" == "1" ]]; then
-			log_info "PODUP_INSECURE_SKIP_VERIFY=1 — proceeding with checksum verification only"
-		else
-			fail "Cannot verify the keyring signature. Install python3 with the \
-'cryptography' package, set PODUP_RELEASE_PUBKEY_B64, or re-run with \
-PODUP_INSECURE_SKIP_VERIFY=1 to accept checksum-only verification."
-		fi
-	fi
-
-	verify_checksum "$kr"
-
-	log_info "Registering the podup apt repository ..."
+	# Bootstrap the repository over HTTPS by installing the glyndor-archive-keyring
+	# package, which registers the signing key and source list. This curl step has
+	# the same trust as running this installer; from then on apt verifies every
+	# package against the repository's GPG signature, and key renewals arrive
+	# automatically through apt upgrade.
+	local kr="glyndor-archive-keyring.deb"
+	log_info "Setting up the Glyndor apt repository ..."
+	download "https://apt.glyndor.net/${kr}" "${TMP_DIR}/${kr}"
 	run_root dpkg -i "${TMP_DIR}/${kr}"
 	run_root apt-get update
 	log_info "Installing podup ..."
