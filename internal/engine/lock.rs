@@ -79,7 +79,7 @@ fn acquire(file: &std::fs::File) -> Result<()> {
 	}
 	let err = std::io::Error::last_os_error();
 	if err.raw_os_error() == Some(libc::EWOULDBLOCK) {
-		tracing::info!("waiting for project lock held by another podup process…");
+		tracing::info!("waiting for project lock held by another podup process...");
 		// SAFETY: same invariants as the non-blocking call above.
 		let rc = unsafe { libc::flock(fd, libc::LOCK_EX) };
 		if rc != 0 {
