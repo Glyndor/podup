@@ -28,6 +28,52 @@ sudo apt install ./podup_<version>_amd64.deb
 desync dpkg's record of the file — and points back to the package manager;
 upgrade with `apt` instead.
 
+## apt repository (apt.glyndor.net)
+
+For amd64 Debian and Ubuntu, a hosted apt repository keeps podup current through
+the normal `apt upgrade` flow. The release workflow rebuilds the repository on
+every tag — signed with a dedicated Ed25519 OpenPGP key — and publishes it to
+GitHub Pages at `https://apt.glyndor.net`. Only the current release is carried;
+podup ships no old-version support.
+
+### One-line setup
+
+```bash
+curl -fsSL https://glyndor.net/install/podup | bash -s -- --apt
+```
+
+This downloads `podup-archive-keyring.deb` from the latest release, verifies it
+against the release Ed25519 signature over `SHA256SUMS`, installs it (registering
+the key and source list), then runs `apt install podup`.
+
+### Manual setup
+
+```bash
+curl -fsSL https://apt.glyndor.net/podup-apt-key.asc \
+  | sudo gpg --dearmor -o /usr/share/keyrings/podup.gpg
+printf 'Types: deb\nURIs: https://apt.glyndor.net\nSuites: stable\nComponents: main\nArchitectures: amd64\nSigned-By: /usr/share/keyrings/podup.gpg\n' \
+  | sudo tee /etc/apt/sources.list.d/podup.sources
+sudo apt update && sudo apt install podup
+```
+
+### Why key renewal is automatic
+
+The signing key ships as the `podup-archive-keyring` package, so apt owns the
+key file. When the key is rotated or its expiry extended, a new keyring version
+is published and `apt upgrade` installs it — nothing for users to re-run.
+Dropping the key as a plain file instead would make renewals manual, since apt
+cannot update a file it does not own.
+
+### Maintainer notes
+
+- Public key committed at `packaging/apt/podup-apt-key.asc`; the private half is
+  the org secret `PODUP_APT_GPG_PRIVATE_KEY`, scoped to this repository.
+- `packaging/apt/build-keyring.sh` builds the keyring package and
+  `packaging/apt/build-repo.sh` builds and signs the `reprepro` repository; the
+  latter fails closed if the committed public key does not match the secret.
+- amd64-only for now (the `.deb` job is amd64). arm64 users install the
+  standalone binary.
+
 > **Debian compatibility note:** the MSRV is 1.85, which Debian trixie ships, so
 > trixie and sid can both build the package. (Earlier releases needed 1.86 via
 > an `idna`/`icu` dependency chain that has since been removed.)
