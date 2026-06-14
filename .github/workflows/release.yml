@@ -122,7 +122,9 @@ jobs:
             exit 1
           fi
           python3 -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
-          python3 .github/scripts/sign.py "$RELEASE_SIGN_KEY" "${{ matrix.asset }}"
+          # The key is passed via RELEASE_SIGN_KEY in the environment, not as a
+          # CLI argument, so it never appears in the process argument list.
+          python3 .github/scripts/sign.py "${{ matrix.asset }}"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
@@ -249,9 +251,10 @@ jobs:
             exit 1
           fi
           python3 -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
-          python3 .github/scripts/sign.py "$RELEASE_SIGN_KEY" SHA256SUMS
+          # The key is read from RELEASE_SIGN_KEY in the environment, not argv.
+          python3 .github/scripts/sign.py SHA256SUMS
           for deb in podup_*_amd64.deb podup_*_arm64.deb; do
-            python3 .github/scripts/sign.py "$RELEASE_SIGN_KEY" "$deb"
+            python3 .github/scripts/sign.py "$deb"
           done
 
       - name: Create GitHub Release
