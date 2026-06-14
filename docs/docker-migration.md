@@ -177,13 +177,9 @@ run under podup: unsupported additions surface as warnings instead of vanishing.
 ## Enabling verbose output
 
 Run with `RUST_LOG=podup=debug` to see network creation, container lifecycle
-events, and deprecation warnings:
-
-```bash
-RUST_LOG=podup=warn podup up     # warnings only (default level)
-RUST_LOG=podup=info podup up     # info + warnings
-RUST_LOG=podup=debug podup up    # full trace
-```
+events, and the parse-time warnings podup emits for any compose field it cannot
+translate. See the [`RUST_LOG` reference in `commands.md`](commands.md#environment)
+for the full level table.
 
 ## Quick compatibility checklist
 
