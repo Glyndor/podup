@@ -100,12 +100,17 @@ fn runtime_candidates(uid: u32, xdg_runtime_dir: Option<&str>) -> Vec<String> {
 }
 
 /// Socket candidates on macOS: the host-side sockets `podman machine`
-/// creates, newest layout first.
+/// creates, newest layout first. Podman 5 names the per-provider directory
+/// after the active machine provider (`applehv` by default, `vz` for the
+/// Virtualization.framework backend), so those are tried before the older
+/// `qemu`/default layouts.
 #[cfg(any(target_os = "macos", test))]
 fn machine_candidates(home: &str) -> Vec<String> {
 	let machine_dir = format!("{home}/.local/share/containers/podman/machine");
 	vec![
 		format!("{machine_dir}/podman.sock"),
+		format!("{machine_dir}/applehv/podman.sock"),
+		format!("{machine_dir}/vz/podman.sock"),
 		format!("{machine_dir}/qemu/podman.sock"),
 		format!("{machine_dir}/podman-machine-default/podman.sock"),
 	]
@@ -228,6 +233,8 @@ mod tests {
 			machine_candidates("/Users/dev"),
 			vec![
 				format!("{machine_dir}/podman.sock"),
+				format!("{machine_dir}/applehv/podman.sock"),
+				format!("{machine_dir}/vz/podman.sock"),
 				format!("{machine_dir}/qemu/podman.sock"),
 				format!("{machine_dir}/podman-machine-default/podman.sock"),
 			]
