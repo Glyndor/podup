@@ -108,6 +108,10 @@ podup generate quadlet -o ~/.config/containers/systemd  # emit systemd Quadlet u
 | Runtime | single static binary | Go binary + Docker daemon | Python + pip packages |
 | Root required | no | typically yes (daemon) | no |
 | Implementation | Rust | Go | Python |
+| Podman API | native libpod REST | n/a | Podman CLI shell-out |
+| Systemd Quadlet export | yes (`generate quadlet`) | no | no |
+| Platforms | Linux · macOS · Windows (single binary) | Linux · macOS · Windows | wherever Python runs |
+| Compose-spec depth | `extends`, profiles, `develop.watch`, inline secrets/configs | full | partial |
 
 ## 🦀 Library usage
 

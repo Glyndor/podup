@@ -16,12 +16,13 @@ page.
 
 ## Prebuilt .deb from releases
 
-Each tagged release attaches a signed `podup_<version>_amd64.deb` (with its
+Each tagged release attaches a signed `.deb` per architecture —
+`podup_<version>_amd64.deb` and `podup_<version>_arm64.deb` (each with its
 `.sig`, and an entry in the release `SHA256SUMS`) built on Debian sid. Install
-it directly:
+the one matching your architecture directly:
 
 ```bash
-sudo apt install ./podup_<version>_amd64.deb
+sudo apt install ./podup_<version>_amd64.deb   # or _arm64.deb on aarch64
 ```
 
 `podup update` refuses to self-replace a binary installed this way — it would
