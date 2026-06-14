@@ -1,8 +1,8 @@
 //! Verification primitives for self-update — the security core.
 //!
-//! Trust anchor is the Ed25519 public key embedded in this binary
-//! ([`RELEASE_PUBKEY`]), not the download domain or TLS. A release is accepted
-//! only if `SHA256SUMS` carries a valid signature from the matching private key
+//! Trust anchor is the set of Ed25519 public keys embedded in this binary
+//! ([`RELEASE_PUBKEYS`]), not the download domain or TLS. A release is accepted
+//! only if `SHA256SUMS` carries a valid signature from a matching private key
 //! (held in CI as `RELEASE_SIGN_KEY`) and the downloaded binary's SHA-256 digest
 //! appears in that signed manifest. Every check fails closed.
 
@@ -11,18 +11,33 @@ use sha2::{Digest, Sha256};
 
 use crate::ComposeError;
 
-/// Raw 32-byte Ed25519 public key matching the Glyndor release signing key
-/// (`RELEASE_SIGN_KEY`, base64 `APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y=`).
-/// The key is public by design — its integrity comes from being baked into the
-/// signed, build-provenance-attested binary, so an attacker cannot swap it
-/// without invalidating the binary itself.
+/// Accepted Ed25519 release public keys — at most two. Slot 0 is the active key
+/// (`RELEASE_SIGN_KEY`, base64 `APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y=`);
+/// slot 1 is the all-zero placeholder except during a key rotation, when it
+/// carries the second accepted key. A signature is trusted if it validates under
+/// any non-placeholder key. The keys are public by design — their integrity
+/// comes from being baked into the signed, build-provenance-attested binary, so
+/// an attacker cannot swap them without invalidating the binary itself.
 ///
 /// Verified against the genuine published `SHA256SUMS.sig` (see
-/// `embedded_key_verifies_real_release`). [`release_pubkey`] still fails closed
-/// if this is ever zeroed, so a misbuild can never trust an unverifiable release.
-pub const RELEASE_PUBKEY: [u8; 32] = [
-	0, 248, 126, 146, 30, 181, 116, 151, 147, 208, 124, 198, 248, 164, 23, 16, 188, 195, 140, 174,
-	28, 114, 250, 152, 244, 175, 133, 166, 211, 153, 223, 230,
+/// `embedded_key_verifies_real_release`). [`release_pubkeys`] still fails closed
+/// if both are zeroed, so a misbuild can never trust an unverifiable release.
+///
+/// # Key rotation (run if the private key may be compromised)
+///
+/// 1. Ship a release embedding `[old, new]` with `SHA256SUMS` signed by the
+///    **old** key. Binaries in the field trust only `old`, so they accept it and
+///    upgrade, picking up `new` in the process.
+/// 2. Ship the next release embedding `[new, zero]` signed by the **new** key.
+///    Every binary from step 1 trusts `new`, so the old key is retired and all
+///    installs converge on the new key.
+pub const RELEASE_PUBKEYS: [[u8; 32]; 2] = [
+	[
+		0, 248, 126, 146, 30, 181, 116, 151, 147, 208, 124, 198, 248, 164, 23, 16, 188, 195, 140,
+		174, 28, 114, 250, 152, 244, 175, 133, 166, 211, 153, 223, 230,
+	],
+	// Rotation slot — all-zero until a second key is being rolled in.
+	[0u8; 32],
 ];
 
 /// A parsed `MAJOR.MINOR.PATCH` version, ordered for comparison.
@@ -60,35 +75,53 @@ pub fn parse_version(s: &str) -> crate::Result<Version> {
 	})
 }
 
-/// Decode the embedded release public key, failing closed if it is still the
-/// all-zero placeholder (verification key not configured for this build).
-pub fn release_pubkey() -> crate::Result<VerifyingKey> {
-	if RELEASE_PUBKEY == [0u8; 32] {
+/// Decode the configured release public keys, skipping empty rotation slots.
+/// Fails closed if none remain (verification key not configured for this build)
+/// or a configured key is malformed.
+pub fn release_pubkeys() -> crate::Result<Vec<VerifyingKey>> {
+	let mut keys = Vec::new();
+	for raw in &RELEASE_PUBKEYS {
+		if raw == &[0u8; 32] {
+			continue;
+		}
+		let key = VerifyingKey::from_bytes(raw)
+			.map_err(|e| ComposeError::Update(format!("embedded release key is invalid: {e}")))?;
+		keys.push(key);
+	}
+	if keys.is_empty() {
 		return Err(ComposeError::Update(
 			"release verification key not configured in this build; refusing to self-update"
 				.to_string(),
 		));
 	}
-	VerifyingKey::from_bytes(&RELEASE_PUBKEY)
-		.map_err(|e| ComposeError::Update(format!("embedded release key is invalid: {e}")))
+	Ok(keys)
 }
 
-/// Verify that `signature` (raw 64-byte Ed25519) over `message` was produced by
-/// the embedded release key. Fails closed on a wrong length, bad key, or any
-/// mismatch.
-pub fn verify_signature(message: &[u8], signature: &[u8]) -> crate::Result<()> {
-	let key = release_pubkey()?;
+/// Verify that `signature` (raw 64-byte Ed25519) over `message` validates under
+/// any of `keys`. Fails closed on a wrong length or a mismatch against every
+/// key. Kept separate from [`verify_signature`] so the multi-key logic is
+/// testable without touching the embedded constant.
+fn verify_with_keys(keys: &[VerifyingKey], message: &[u8], signature: &[u8]) -> crate::Result<()> {
 	let sig = Signature::from_slice(signature).map_err(|_| {
 		ComposeError::Update(format!(
 			"malformed signature: expected 64 bytes, got {}",
 			signature.len()
 		))
 	})?;
-	key.verify(message, &sig).map_err(|_| {
-		ComposeError::Update(
+	if keys.iter().any(|key| key.verify(message, &sig).is_ok()) {
+		Ok(())
+	} else {
+		Err(ComposeError::Update(
 			"signature verification failed — release may be tampered or unsigned".to_string(),
-		)
-	})
+		))
+	}
+}
+
+/// Verify that `signature` (raw 64-byte Ed25519) over `message` was produced by
+/// one of the accepted release keys. Fails closed on a wrong length, no
+/// configured key, or a mismatch against every key.
+pub fn verify_signature(message: &[u8], signature: &[u8]) -> crate::Result<()> {
+	verify_with_keys(&release_pubkeys()?, message, signature)
 }
 
 /// Verify `signature` against the embedded key using an explicitly supplied key
@@ -213,20 +246,47 @@ mod tests {
 	#[test]
 	fn embedded_key_is_configured_and_rejects_garbage() {
 		// A real key is baked in; it must load and reject a bogus signature.
-		assert_ne!(RELEASE_PUBKEY, [0u8; 32]);
-		assert!(release_pubkey().is_ok());
+		assert_ne!(RELEASE_PUBKEYS[0], [0u8; 32]);
+		assert!(release_pubkeys().is_ok());
 		assert!(verify_signature(b"data", &[0u8; 64]).is_err());
 	}
 
 	#[test]
 	fn zeroed_key_would_fail_closed() {
 		// Defence in depth: an all-zero key is a valid curve point, so the
-		// explicit guard in `release_pubkey` — not the curve math — is what
-		// refuses to trust an unverifiable release if the key is ever zeroed.
+		// explicit guard in `release_pubkeys` — not the curve math — is what
+		// refuses to trust an unverifiable release if every key is zeroed.
 		assert!(VerifyingKey::from_bytes(&[0u8; 32]).is_ok());
 		let is_placeholder = |key: [u8; 32]| key == [0u8; 32];
 		assert!(is_placeholder([0u8; 32]));
-		assert!(!is_placeholder(RELEASE_PUBKEY));
+		assert!(!is_placeholder(RELEASE_PUBKEYS[0]));
+	}
+
+	#[test]
+	fn accepts_signature_from_any_configured_key() {
+		// Rotation: a binary embedding two keys must accept a release signed by
+		// EITHER, so an in-field binary can upgrade across a key change.
+		let (sk_a, vk_a) = test_keypair();
+		let sk_b = SigningKey::from_bytes(&[9u8; 32]);
+		let vk_b = sk_b.verifying_key();
+		let msg = b"SHA256SUMS payload";
+
+		let sig_b = sk_b.sign(msg).to_bytes();
+		verify_with_keys(&[vk_a, vk_b], msg, &sig_b).unwrap();
+
+		let sig_a = sk_a.sign(msg).to_bytes();
+		verify_with_keys(&[vk_a, vk_b], msg, &sig_a).unwrap();
+	}
+
+	#[test]
+	fn rejects_signature_from_unconfigured_key() {
+		// A signature from a key that is NOT in the accepted set must fail, even
+		// though other keys are configured.
+		let (_sk_a, vk_a) = test_keypair();
+		let sk_x = SigningKey::from_bytes(&[3u8; 32]);
+		let msg = b"payload";
+		let sig_x = sk_x.sign(msg).to_bytes();
+		assert!(verify_with_keys(&[vk_a], msg, &sig_x).is_err());
 	}
 
 	#[test]

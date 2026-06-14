@@ -84,10 +84,14 @@ try {
 	# If neither verifier can run, the install fails closed. Set
 	# PODUP_INSECURE_SKIP_VERIFY=1 to explicitly opt out (checksum only).
 
-	# Baked-in base64 (unpadded) raw Ed25519 public key (32 bytes) matching the
-	# release signing key (RELEASE_SIGN_KEY). Verified against the genuine published
-	# SHA256SUMS.sig. Override for a fork via the PODUP_RELEASE_PUBKEY_B64 env var.
-	$PubKeyB64 = if ($env:PODUP_RELEASE_PUBKEY_B64) { $env:PODUP_RELEASE_PUBKEY_B64 } else { 'APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y' }
+	# Baked-in base64 (unpadded) raw Ed25519 public keys (32 bytes each) matching
+	# the release signing key (RELEASE_SIGN_KEY). Up to two are accepted: the
+	# second is empty except during a key rotation, when it holds the new key so a
+	# release signed by either key verifies. The signature passes if any key
+	# validates. Override for a fork via PODUP_RELEASE_PUBKEY_B64 / _PUBKEY2_B64.
+	$PubKeyB64  = if ($env:PODUP_RELEASE_PUBKEY_B64) { $env:PODUP_RELEASE_PUBKEY_B64 } else { 'APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y' }
+	$PubKey2B64 = if ($env:PODUP_RELEASE_PUBKEY2_B64) { $env:PODUP_RELEASE_PUBKEY2_B64 } else { '' }
+	$PubKeys = @($PubKeyB64, $PubKey2B64 | Where-Object { $_ })
 
 	$verified = $false
 
@@ -109,7 +113,7 @@ try {
 	}
 
 	Write-LogInfo 'Verifying SHA256SUMS signature ...'
-	if ($PubKeyB64) {
+	if ($PubKeys.Count -gt 0) {
 		$python = Find-Python
 		if ($python) {
 			$pyScript = Join-Path $TmpDir 'verify_ed25519.py'
@@ -118,16 +122,19 @@ try {
 import base64, sys
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.exceptions import InvalidSignature
-sig_file, data_file, pubkey_b64 = sys.argv[1], sys.argv[2], sys.argv[3]
-key = Ed25519PublicKey.from_public_bytes(base64.b64decode(pubkey_b64 + "=="))
-try:
-    key.verify(open(sig_file, "rb").read(), open(data_file, "rb").read())
-    sys.exit(0)
-except InvalidSignature:
-    sys.exit(1)
+sig_file, data_file = sys.argv[1], sys.argv[2]
+sig = open(sig_file, "rb").read()
+data = open(data_file, "rb").read()
+for pubkey_b64 in sys.argv[3:]:
+    try:
+        Ed25519PublicKey.from_public_bytes(base64.b64decode(pubkey_b64 + "==")).verify(sig, data)
+        sys.exit(0)
+    except (InvalidSignature, ValueError):
+        continue
+sys.exit(1)
 '@
 			Set-Content -Path $pyScript -Value $pySource -Encoding ASCII
-			$pyArgs = $python.Pre + @($pyScript, $sigPath, $sumsPath, $PubKeyB64)
+			$pyArgs = $python.Pre + @($pyScript, $sigPath, $sumsPath) + $PubKeys
 			& $python.Exe @pyArgs
 			if ($LASTEXITCODE -eq 0) {
 				Write-LogOk 'SHA256SUMS signature verified'
