@@ -25,16 +25,15 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "syn
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"] }
 serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
-clap = { version = "4", features = ["derive", "env"] }
-clap_complete = "4"
+clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "derive", "env"] }
+clap_complete = { version = "4", optional = true }
 indexmap = { version = "2", features = ["serde"] }
-futures-core = { version = "0.3", default-features = false }
-futures-util = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tar = { version = "0.4", default-features = false }
 flate2 = "1.0"
 bytes = "1"
@@ -50,8 +49,9 @@ sha2 = "0.10"
 libc = "0.2"
 
 [features]
-default = ["watch"]
+default = ["watch", "completions"]
 watch = ["notify"]
+completions = ["dep:clap_complete"]
 test-helpers = []
 
 [dev-dependencies]

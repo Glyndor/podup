@@ -6,7 +6,9 @@
 use std::path::Path;
 use std::process;
 
-use clap::{CommandFactory, Parser};
+#[cfg(feature = "completions")]
+use clap::CommandFactory;
+use clap::Parser;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
@@ -184,6 +186,7 @@ async fn run() -> podup::Result<()> {
 
 	// `completions` derives entirely from the static CLI definition; it neither
 	// parses a compose file nor contacts Podman. Print to stdout for piping.
+	#[cfg(feature = "completions")]
 	if let Commands::Completions { shell } = cli.command {
 		let mut cmd = Cli::command();
 		let name = cmd.get_name().to_string();
@@ -338,6 +341,7 @@ async fn run() -> podup::Result<()> {
 		Commands::Generate { .. } => unreachable!("handled above"),
 		Commands::Watch => engine.watch(&file).await?,
 		Commands::Update { .. } => unreachable!("handled before compose parsing"),
+		#[cfg(feature = "completions")]
 		Commands::Completions { .. } => unreachable!("handled before compose parsing"),
 	}
 
