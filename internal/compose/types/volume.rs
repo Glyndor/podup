@@ -287,4 +287,17 @@ mod tests {
 		assert_eq!(r.source(), "my-secret");
 		assert_eq!(r.target(), Some("/run/secrets/my-secret"));
 	}
+
+	#[test]
+	fn secret_ref_long_no_target() {
+		let r = ServiceSecretRef::Long {
+			source: "my-secret".to_string(),
+			target: None,
+			uid: None,
+			gid: None,
+			mode: None,
+		};
+		assert_eq!(r.source(), "my-secret");
+		assert!(r.target().is_none());
+	}
 }
