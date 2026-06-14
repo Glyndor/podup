@@ -20,6 +20,9 @@ pub(super) fn collect(file: &ComposeFile) -> Vec<String> {
 	ignored_service_fields(file, &mut out);
 	ignored_build_fields(file, &mut out);
 	ignored_network_fields(file, &mut out);
+	ignored_service_network_fields(file, &mut out);
+	ignored_secret_fields(file, &mut out);
+	ignored_config_fields(file, &mut out);
 	out
 }
 
@@ -187,6 +190,52 @@ fn ignored_network_fields(file: &ComposeFile, out: &mut Vec<String>) {
 	}
 }
 
+/// Per-service network attachment fields podup parses but cannot forward.
+/// `gw_priority` has no Podman equivalent, so the engine drops it silently.
+fn ignored_service_network_fields(file: &ComposeFile, out: &mut Vec<String>) {
+	for (service, def) in &file.services {
+		for name in def.networks.names() {
+			if let Some(c) = def.networks.config_for(&name) {
+				if c.gw_priority.is_some() {
+					out.push(format!(
+						"service '{service}' network '{name}': gw_priority is not supported \
+						 by Podman and is ignored"
+					));
+				}
+			}
+		}
+	}
+}
+
+/// Secrets podup parses but cannot inject. Only `file:`, `environment:` and
+/// inline `content:` sources are materialized into the container; an
+/// `external: true` secret has no Podman-native injection path, so it is absent
+/// at runtime — a silent failure for anything that reads `/run/secrets/<name>`.
+fn ignored_secret_fields(file: &ComposeFile, out: &mut Vec<String>) {
+	for (name, cfg) in &file.secrets {
+		if cfg.external == Some(true) {
+			out.push(format!(
+				"secret '{name}': external secrets are not injected — podup supports only \
+				 file:, environment: and inline content: sources, so this secret is absent \
+				 from every service that references it"
+			));
+		}
+	}
+}
+
+/// Configs podup parses but cannot inject, mirroring `ignored_secret_fields`.
+fn ignored_config_fields(file: &ComposeFile, out: &mut Vec<String>) {
+	for (name, cfg) in &file.configs {
+		if cfg.external == Some(true) {
+			out.push(format!(
+				"config '{name}': external configs are not injected — podup supports only \
+				 file:, environment: and inline content: sources, so this config is absent \
+				 from every service that references it"
+			));
+		}
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use crate::parse_str;
@@ -277,6 +326,49 @@ mod tests {
 		assert!(msgs
 			.iter()
 			.any(|m| m.contains("volume 'data'") && m.contains("externl")));
+	}
+
+	#[test]
+	fn warns_on_external_secret() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    external: true\n",
+		);
+		assert!(
+			msgs.iter()
+				.any(|m| m.contains("secret 'tok'") && m.contains("external")),
+			"got: {msgs:?}"
+		);
+	}
+
+	#[test]
+	fn warns_on_external_config() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    image: nginx\n    configs: [cfg]\nconfigs:\n  cfg:\n    external: true\n",
+		);
+		assert!(
+			msgs.iter()
+				.any(|m| m.contains("config 'cfg'") && m.contains("external")),
+			"got: {msgs:?}"
+		);
+	}
+
+	#[test]
+	fn warns_on_service_network_gw_priority() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    image: nginx\n    networks:\n      net:\n        gw_priority: 10\nnetworks:\n  net:\n",
+		);
+		assert!(
+			msgs.iter().any(|m| m.contains("gw_priority")),
+			"got: {msgs:?}"
+		);
+	}
+
+	#[test]
+	fn file_secret_produces_no_diagnostics() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    file: ./tok.txt\n",
+		);
+		assert!(msgs.is_empty(), "unexpected diagnostics: {msgs:?}");
 	}
 
 	#[test]
