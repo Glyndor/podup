@@ -226,6 +226,7 @@ pub(crate) enum Commands {
 	/// against the public key embedded in this build and matching its SHA-256
 	/// checksum. Verification fails closed: a missing key, bad signature, or
 	/// checksum mismatch aborts without touching the installed binary.
+	#[cfg(feature = "update")]
 	Update {
 		/// Report whether a newer release exists without installing it.
 		#[arg(long)]

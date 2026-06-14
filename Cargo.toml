@@ -41,17 +41,20 @@ notify = { version = "8", optional = true }
 # Self-update: HTTPS fetch of signed release assets and verification.
 # ureq (rustls + webpki roots) keeps static musl builds self-contained; the
 # Ed25519 signature pinned to an embedded key is the real trust anchor, not TLS.
-ureq = { version = "3", default-features = false, features = ["rustls"] }
-ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+ureq = { version = "3", default-features = false, features = ["rustls"], optional = true }
+ed25519-dalek = { version = "2", default-features = false, features = ["std"], optional = true }
 sha2 = "0.10"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [features]
-default = ["watch", "completions"]
+default = ["watch", "completions", "update"]
 watch = ["notify"]
 completions = ["dep:clap_complete"]
+# Self-update over HTTPS with Ed25519 verification. Off for package-manager
+# builds (Debian/apt) where the manager owns upgrades; on for direct tarballs.
+update = ["dep:ureq", "dep:ed25519-dalek"]
 test-helpers = []
 
 [dev-dependencies]

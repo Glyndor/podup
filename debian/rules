@@ -15,6 +15,11 @@ export CARGO_UNSTABLE_OFFLINE = true
 CARGO_FLAGS = --frozen --offline
 endif
 
+# Drop the self-update stack (ureq + TLS + Ed25519) from the packaged binary:
+# apt owns upgrades on Debian, so `podup update` is disabled here. `completions`
+# stays on — the install step below generates the shell scripts from the binary.
+CARGO_FEATURES = --no-default-features --features watch,completions
+
 %:
 	dh $@
 
@@ -22,10 +27,10 @@ override_dh_auto_build:
 ifneq ($(wildcard vendor/),)
 	$(if $(wildcard .cargo/config.toml),,$(MAKE) -f debian/rules debian/cargo-config)
 endif
-	cargo build --release --locked $(CARGO_FLAGS)
+	cargo build --release --locked $(CARGO_FLAGS) $(CARGO_FEATURES)
 
 override_dh_auto_test:
-	cargo test --release --locked $(CARGO_FLAGS)
+	cargo test --release --locked $(CARGO_FLAGS) $(CARGO_FEATURES)
 
 override_dh_auto_install:
 	install -D -m 0755 target/release/podup debian/podup/usr/bin/podup
