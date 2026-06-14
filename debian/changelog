@@ -1,3 +1,25 @@
+podup (0.22.0) unstable; urgency=medium
+
+  * Drop-in fidelity: `extends.file` now accepts `../` and absolute paths (the
+    compose file is trusted input, matching docker-compose and podman-compose),
+    and `depends_on` `required: false` is honored so an optional dependency that
+    fails its condition no longer aborts `up`.
+  * Parse-time diagnostics now warn on previously silent drops: service `attach`,
+    long-form port `mode`, per-mount volume `driver_config`, per-network
+    `interface_name`, and non-external secret/config `driver`/`template_driver`.
+  * Quadlet export now maps the full first-class container key set
+    (`env_file`, `tmpfs`, `sysctls`, `ulimits`, resource limits, `devices`,
+    `dns*`, `extra_hosts`, `stop_signal`/`stop_grace_period`, `annotations`,
+    `userns_mode`, healthcheck, `network_mode: host`, `container_name`, and
+    `restart on-failure:N` -> `StartLimitBurst`).
+  * Engine targets the Podman 5 libpod API (`/v5.0.0/libpod`, Podman >= 5.0) and
+    resolves the macOS `applehv`/`vz` machine-provider sockets.
+  * Security: the release signing key is passed to `sign.py` via the environment
+    instead of argv (no longer visible in the process argument list), and the
+    capped file read is now TOCTOU-safe (read through a single bounded handle).
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sun, 14 Jun 2026 16:26:29 -0500
+
 podup (0.21.1) unstable; urgency=medium
 
   * Security: reject setuid/setgid/sticky/execute mode bits on `external: true`

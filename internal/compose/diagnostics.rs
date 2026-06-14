@@ -8,7 +8,7 @@
 //! the operator hearing about it — the same guarantee that lets podup absorb
 //! future Docker/Podman compose additions gracefully.
 
-use super::types::{BuildConfig, ComposeFile};
+use super::types::{BuildConfig, ComposeFile, PortMapping, VolumeMount};
 
 /// Collect a warning for every parsed-but-unsupported key or field in `file`.
 /// Pure (no logging) so it can be unit-tested; the caller emits the messages.
@@ -18,9 +18,12 @@ pub(super) fn collect(file: &ComposeFile) -> Vec<String> {
 	unknown_service_keys(file, &mut out);
 	nested_unknown_keys(file, &mut out);
 	ignored_service_fields(file, &mut out);
+	ignored_port_fields(file, &mut out);
+	ignored_volume_mount_fields(file, &mut out);
 	ignored_build_fields(file, &mut out);
 	ignored_network_fields(file, &mut out);
 	ignored_service_network_fields(file, &mut out);
+	ignored_secret_config_drivers(file, &mut out);
 	out
 }
 
@@ -127,6 +130,46 @@ fn ignored_service_fields(file: &ComposeFile, out: &mut Vec<String>) {
 				 rootless Podman equivalent and is ignored"
 			));
 		}
+		if def.attach.is_some() {
+			out.push(format!(
+				"service '{service}': attach is not honored; podup follows its own \
+				 attach/detach logic for `up` log streaming"
+			));
+		}
+	}
+}
+
+/// Long-form port fields podup parses but does not forward to Podman.
+fn ignored_port_fields(file: &ComposeFile, out: &mut Vec<String>) {
+	for (service, def) in &file.services {
+		for port in &def.ports {
+			if let PortMapping::Long { mode: Some(m), .. } = port {
+				out.push(format!(
+					"service '{service}': port mode '{m}' is a Swarm/ingress control \
+					 with no single-host Podman equivalent and is ignored"
+				));
+			}
+		}
+	}
+}
+
+/// Per-mount long-form volume options podup parses but does not forward.
+fn ignored_volume_mount_fields(file: &ComposeFile, out: &mut Vec<String>) {
+	for (service, def) in &file.services {
+		for mount in &def.volumes {
+			if let VolumeMount::Long {
+				volume: Some(opts), ..
+			} = mount
+			{
+				if opts.driver_config.is_some() {
+					out.push(format!(
+						"service '{service}' volume '{}': per-mount driver_config is not \
+						 forwarded to Podman and is ignored",
+						mount.target()
+					));
+				}
+			}
+		}
 	}
 }
 
@@ -200,6 +243,49 @@ fn ignored_service_network_fields(file: &ComposeFile, out: &mut Vec<String>) {
 						 by Podman and is ignored"
 					));
 				}
+				if c.interface_name.is_some() {
+					out.push(format!(
+						"service '{service}' network '{name}': interface_name is not \
+						 forwarded to Podman and is ignored"
+					));
+				}
+			}
+		}
+	}
+}
+
+/// Top-level secret/config driver fields. An external secret-store driver
+/// (Vault, AWS SM, etc.) on a non-`external` definition is not honored — podup
+/// only stages `file`/`content`/`environment` sources and routes `external:
+/// true` to Podman-native secrets — so warn rather than mount nothing silently.
+fn ignored_secret_config_drivers(file: &ComposeFile, out: &mut Vec<String>) {
+	for (name, cfg) in &file.secrets {
+		if cfg.external != Some(true) {
+			if cfg.driver.is_some() {
+				out.push(format!(
+					"secret '{name}': driver is an external secret-store plugin that podup \
+					 does not invoke; the secret will not be staged"
+				));
+			}
+			if cfg.template_driver.is_some() {
+				out.push(format!(
+					"secret '{name}': template_driver is not supported and is ignored"
+				));
+			}
+		}
+	}
+	for (name, cfg) in &file.configs {
+		if cfg.external != Some(true) {
+			if cfg.driver.is_some() {
+				out.push(format!(
+					"config '{name}': driver is an external plugin that podup does not \
+					 invoke; the config will not be staged"
+				));
+			}
+			if cfg.template_driver.is_some() {
+				out.push(format!(
+					"config '{name}': template_driver is not supported and is ignored"
+				));
 			}
 		}
 	}
@@ -320,5 +406,69 @@ mod tests {
 	fn clean_file_produces_no_diagnostics() {
 		let msgs = diagnostics_for("services:\n  web:\n    image: nginx\n    cpu_shares: 512\n");
 		assert!(msgs.is_empty(), "unexpected diagnostics: {msgs:?}");
+	}
+
+	#[test]
+	fn warns_on_attach() {
+		let msgs = diagnostics_for("services:\n  web:\n    image: nginx\n    attach: false\n");
+		assert!(
+			msgs.iter().any(|m| m.contains("attach is not honored")),
+			"got: {msgs:?}"
+		);
+	}
+
+	#[test]
+	fn warns_on_long_port_mode() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    image: nginx\n    ports:\n      - target: 80\n        published: 8080\n        mode: host\n",
+		);
+		assert!(
+			msgs.iter().any(|m| m.contains("port mode 'host'")),
+			"got: {msgs:?}"
+		);
+	}
+
+	#[test]
+	fn warns_on_per_mount_driver_config() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    image: nginx\n    volumes:\n      - type: volume\n        source: data\n        target: /data\n        volume:\n          driver_config:\n            name: local\nvolumes:\n  data:\n",
+		);
+		assert!(
+			msgs.iter().any(|m| m.contains("per-mount driver_config")),
+			"got: {msgs:?}"
+		);
+	}
+
+	#[test]
+	fn warns_on_interface_name() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    image: nginx\n    networks:\n      net:\n        interface_name: eth9\nnetworks:\n  net:\n",
+		);
+		assert!(
+			msgs.iter().any(|m| m.contains("interface_name")),
+			"got: {msgs:?}"
+		);
+	}
+
+	#[test]
+	fn warns_on_non_external_secret_driver() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    driver: vault\n",
+		);
+		assert!(
+			msgs.iter().any(|m| m.contains("secret 'tok': driver")),
+			"got: {msgs:?}"
+		);
+	}
+
+	#[test]
+	fn external_secret_driver_produces_no_diagnostic() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    external: true\n    driver: vault\n",
+		);
+		assert!(
+			!msgs.iter().any(|m| m.contains("driver")),
+			"unexpected: {msgs:?}"
+		);
 	}
 }
