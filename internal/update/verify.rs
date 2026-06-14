@@ -170,8 +170,9 @@ pub fn sha256_hex(data: &[u8]) -> String {
 	let digest = Sha256::digest(data);
 	let mut out = String::with_capacity(64);
 	for byte in digest {
-		out.push(char::from_digit((byte >> 4) as u32, 16).unwrap());
-		out.push(char::from_digit((byte & 0xf) as u32, 16).unwrap());
+		// Each nibble is in 0..=15, always a valid radix-16 digit.
+		out.push(char::from_digit((byte >> 4) as u32, 16).expect("high nibble is a hex digit"));
+		out.push(char::from_digit((byte & 0xf) as u32, 16).expect("low nibble is a hex digit"));
 	}
 	out
 }

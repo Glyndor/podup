@@ -1,6 +1,7 @@
 //! Filesystem helpers shared across parsing paths.
 
 use std::io;
+use std::io::Read;
 use std::path::{Component, Path};
 
 /// Reject a file reference that is absolute or escapes the project directory.
@@ -37,18 +38,20 @@ pub(crate) fn read_to_string_capped(path: impl AsRef<Path>) -> io::Result<String
 }
 
 fn read_to_string_capped_with(path: &Path, max: u64) -> io::Result<String> {
-	let meta = std::fs::metadata(path)?;
-	if meta.len() > max {
+	// Read through a single file handle capped at `max + 1` bytes. Reading
+	// rather than stat-then-read closes the TOCTOU window: a writer that grows
+	// the file (or swaps in a symlink) after a size check cannot make podup
+	// read past the cap, because the limit is enforced on the read itself.
+	let file = std::fs::File::open(path)?;
+	let mut buf = String::new();
+	let read = file.take(max + 1).read_to_string(&mut buf)?;
+	if read as u64 > max {
 		return Err(io::Error::new(
 			io::ErrorKind::InvalidData,
-			format!(
-				"{} is {} bytes, larger than the {max} byte limit",
-				path.display(),
-				meta.len()
-			),
+			format!("{} is larger than the {max} byte limit", path.display()),
 		));
 	}
-	std::fs::read_to_string(path)
+	Ok(buf)
 }
 
 #[cfg(test)]
