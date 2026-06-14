@@ -15,6 +15,7 @@ mod lock;
 mod network;
 mod profiles;
 mod query;
+mod secrets;
 mod staging;
 pub use staging::is_safe_project_name;
 mod volume;

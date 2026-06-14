@@ -66,6 +66,9 @@ impl Engine {
 		// --- Secrets and configs become bind mounts ---
 		let secret_binds = self.build_secret_binds(service, file)?;
 		let config_binds = self.build_config_binds(service, file)?;
+		// `external: true` secrets/configs are injected as Podman-native secrets
+		// (preflighted for existence), not bind mounts.
+		let native_secrets = self.build_native_secrets(service, file).await?;
 		let (mut mounts, mut named_volumes) =
 			build_mounts_all(service, &self.base_dir, &secret_binds, &config_binds);
 		// Resolve relative bind sources against the project base directory (and
@@ -215,6 +218,7 @@ impl Engine {
 			mounts,
 			volumes: named_volumes,
 			volumes_from: service.volumes_from.clone(),
+			secrets: native_secrets,
 			userns,
 			pidns,
 			ipcns,
