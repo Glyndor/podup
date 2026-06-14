@@ -67,6 +67,19 @@ fn read_capped(mut reader: impl Read, cap: u64) -> crate::Result<Vec<u8>> {
 	Ok(buf)
 }
 
+/// Parse the `tag_name` out of a GitHub "latest release" JSON body. Split from
+/// the HTTP call so the malformed-metadata failure paths are unit-testable
+/// without a network seam.
+fn parse_latest_tag(body: &[u8]) -> crate::Result<String> {
+	#[derive(serde::Deserialize)]
+	struct Latest {
+		tag_name: String,
+	}
+	let latest: Latest = serde_json::from_slice(body)
+		.map_err(|e| ComposeError::Update(format!("malformed release metadata: {e}")))?;
+	Ok(latest.tag_name)
+}
+
 impl ReleaseSource for GitHubSource {
 	fn latest_version(&self) -> crate::Result<String> {
 		let url = format!("https://api.github.com/repos/{}/releases/latest", self.repo);
@@ -77,14 +90,7 @@ impl ReleaseSource for GitHubSource {
 			.call()
 			.map_err(|e| ComposeError::Update(format!("cannot reach GitHub releases API: {e}")))?;
 		let body = read_capped(resp.into_body().into_reader(), MAX_METADATA_BYTES)?;
-
-		#[derive(serde::Deserialize)]
-		struct Latest {
-			tag_name: String,
-		}
-		let latest: Latest = serde_json::from_slice(&body)
-			.map_err(|e| ComposeError::Update(format!("malformed release metadata: {e}")))?;
-		Ok(latest.tag_name)
+		parse_latest_tag(&body)
 	}
 
 	fn fetch(&self, asset: &str) -> crate::Result<Vec<u8>> {
@@ -150,5 +156,24 @@ mod tests {
 	fn default_uses_canonical_repo() {
 		let src = GitHubSource::default();
 		assert_eq!(src.repo, REPO);
+	}
+
+	#[test]
+	fn parse_latest_tag_extracts_tag() {
+		let tag = parse_latest_tag(br#"{"tag_name":"v1.2.3","name":"r"}"#).unwrap();
+		assert_eq!(tag, "v1.2.3");
+	}
+
+	#[test]
+	fn parse_latest_tag_rejects_malformed_json() {
+		assert!(parse_latest_tag(b"not json at all").is_err());
+		assert!(parse_latest_tag(b"").is_err());
+	}
+
+	#[test]
+	fn parse_latest_tag_rejects_missing_field() {
+		// Well-formed JSON object without `tag_name` must fail, not default.
+		let err = parse_latest_tag(br#"{"name":"release"}"#).unwrap_err();
+		assert!(err.to_string().contains("malformed release metadata"));
 	}
 }
