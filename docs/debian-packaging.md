@@ -30,15 +30,15 @@ upgrade with `apt` instead.
 
 ## apt repository (apt.glyndor.net)
 
-For amd64 Debian and Ubuntu, podup is served from the **Glyndor apt
+For Debian and Ubuntu (amd64 and arm64), podup is served from the **Glyndor apt
 repository** at `https://apt.glyndor.net`, alongside other Glyndor packages.
 The repository lives in its own repo, [Glyndor/apt](https://github.com/Glyndor/apt):
 a workflow there downloads the latest amd64 `.deb` release asset of each tracked
 product, builds a signed `reprepro` repository, and publishes it to GitHub
 Pages. It is rebuilt fresh each run, so it always carries the current version of
 every package (no old-version support). podup's only responsibility is to attach
-a `podup_<version>_amd64.deb` asset to each release — which `build-deb` in
-`release.yml` already does.
+a `podup_<version>_<arch>.deb` asset (amd64 and arm64) to each release — which
+the `build-deb` matrix in `release.yml` already does.
 
 ### One-line setup
 

@@ -157,8 +157,6 @@ install_apt() {
 	[[ "$OS" == "linux" ]] || fail "--apt is only supported on Debian/Ubuntu Linux"
 	command -v apt-get >/dev/null 2>&1 || fail "--apt requires apt-get (Debian/Ubuntu)"
 	command -v dpkg >/dev/null 2>&1 || fail "--apt requires dpkg"
-	[[ "$ARCH" == "x86_64" ]] || fail \
-		"the Glyndor apt repository is amd64-only for now; on ${ARCH} install without --apt"
 
 	# Bootstrap the repository over HTTPS by installing the glyndor-archive-keyring
 	# package, which registers the signing key and source list. This curl step has
