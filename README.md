@@ -52,6 +52,21 @@ from source:
 cargo build --release
 ```
 
+### Debian / Ubuntu (apt)
+
+On amd64 Debian and Ubuntu, install from the apt repository so updates arrive
+through `apt upgrade`:
+
+```bash
+curl -fsSL https://glyndor.net/install/podup | bash -s -- --apt
+```
+
+This verifies and installs the `podup-archive-keyring` package (registering the
+signed repository at `https://apt.glyndor.net`), then installs `podup`. Because
+the signing key ships as a package, key renewals are picked up automatically by
+`apt upgrade`; the apt build omits self-update, since apt owns upgrades. For
+manual setup see [docs/debian-packaging.md](docs/debian-packaging.md).
+
 ### Updating
 
 ```bash
@@ -103,7 +118,7 @@ async fn main() -> podup::Result<()> {
 
 ```toml
 [dependencies]
-podup = { git = "https://github.com/Glyndor/podup", tag = "v0.16.0" }
+podup = { git = "https://github.com/Glyndor/podup", tag = "v0.19.0" }
 ```
 
 ## 📖 Docs
