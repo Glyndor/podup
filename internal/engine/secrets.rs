@@ -183,7 +183,7 @@ impl Engine {
 		service: &Service,
 		file: &ComposeFile,
 	) -> Result<Vec<Secret>> {
-		let secrets = collect_native_secrets(service, file);
+		let secrets = collect_native_secrets(service, file)?;
 		for secret in &secrets {
 			self.ensure_external_exists("secret", "secrets", &secret.source)
 				.await?;
@@ -228,7 +228,11 @@ impl Engine {
 /// daemon: every `external: true` secret and config it references becomes a
 /// [`Secret`] pointing at an existing `podman secret`. Pure, so the mapping is
 /// unit-testable; [`Engine::build_native_secrets`] adds the existence preflight.
-fn collect_native_secrets(service: &Service, file: &ComposeFile) -> Vec<Secret> {
+///
+/// A dangerous `mode:` (execute, setuid, setgid or sticky bits) on any
+/// reference is rejected here — the same class of check `apply_mode` enforces
+/// for the bind-mount path — so a hostile mode never reaches the daemon.
+fn collect_native_secrets(service: &Service, file: &ComposeFile) -> Result<Vec<Secret>> {
 	let mut secrets = Vec::new();
 
 	for secret_ref in &service.secrets {
@@ -255,7 +259,7 @@ fn collect_native_secrets(service: &Service, file: &ComposeFile) -> Vec<Secret> 
 				// find /run/secrets/<name> even when the Podman secret is named
 				// differently); a long-form target overrides it.
 				let target = target_override.unwrap_or(name);
-				secrets.push(native_secret(source, target, mode, uid, gid));
+				secrets.push(native_secret(source, target, mode, uid, gid)?);
 			}
 		}
 	}
@@ -283,30 +287,35 @@ fn collect_native_secrets(service: &Service, file: &ComposeFile) -> Vec<Secret> 
 				// Configs default to an absolute container-root path, matching the
 				// bind-mount config behaviour; an absolute target is used as-is.
 				let target = target_override.unwrap_or_else(|| format!("/{name}"));
-				secrets.push(native_secret(source, target, mode, uid, gid));
+				secrets.push(native_secret(source, target, mode, uid, gid)?);
 			}
 		}
 	}
 
-	secrets
+	Ok(secrets)
 }
 
-/// Assemble one [`Secret`] from a compose reference. `uid`/`gid` are numeric in
-/// libpod, so non-numeric values (a user/group name) are dropped to the default.
+/// Assemble one [`Secret`] from a compose reference. A dangerous `mode:`
+/// (execute/setuid/setgid/sticky) is rejected before the spec is built so it
+/// never reaches Podman. `uid`/`gid` are numeric in libpod, so non-numeric
+/// values (a user/group name) are dropped to the default.
 fn native_secret(
 	source: String,
 	target: String,
 	mode: Option<u32>,
 	uid: Option<String>,
 	gid: Option<String>,
-) -> Secret {
-	Secret {
+) -> Result<Secret> {
+	if let Some(m) = mode {
+		staging::reject_dangerous_secret_mode(m, &source)?;
+	}
+	Ok(Secret {
 		source,
 		target: Some(target),
 		uid: uid.and_then(|s| s.parse().ok()),
 		gid: gid.and_then(|s| s.parse().ok()),
 		mode,
-	}
+	})
 }
 
 #[cfg(test)]
@@ -361,7 +370,7 @@ mod tests {
 		// defaults to that name so apps still read /run/secrets/<name>.
 		let yaml = "services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    external: true\n";
 		let file = crate::compose::parse_str_raw(yaml).unwrap();
-		let secrets = collect_native_secrets(&file.services["web"], &file);
+		let secrets = collect_native_secrets(&file.services["web"], &file).unwrap();
 		assert_eq!(secrets.len(), 1);
 		assert_eq!(secrets[0].source, "tok");
 		assert_eq!(secrets[0].target.as_deref(), Some("tok"));
@@ -374,7 +383,7 @@ mod tests {
 		// is the actual Podman secret to look up. Numeric uid/gid/mode pass through.
 		let yaml = "services:\n  web:\n    image: nginx\n    secrets:\n      - source: tok\n        target: app_tok\n        uid: \"100\"\n        gid: \"101\"\n        mode: 256\nsecrets:\n  tok:\n    external: true\n    name: real_tok\n";
 		let file = crate::compose::parse_str_raw(yaml).unwrap();
-		let secrets = collect_native_secrets(&file.services["web"], &file);
+		let secrets = collect_native_secrets(&file.services["web"], &file).unwrap();
 		assert_eq!(secrets.len(), 1);
 		let s = &secrets[0];
 		assert_eq!(s.source, "real_tok");
@@ -390,7 +399,7 @@ mod tests {
 		// bind-mount config behaviour; an absolute target is mounted as-is.
 		let yaml = "services:\n  web:\n    image: nginx\n    configs: [cfg]\nconfigs:\n  cfg:\n    external: true\n";
 		let file = crate::compose::parse_str_raw(yaml).unwrap();
-		let secrets = collect_native_secrets(&file.services["web"], &file);
+		let secrets = collect_native_secrets(&file.services["web"], &file).unwrap();
 		assert_eq!(secrets.len(), 1);
 		assert_eq!(secrets[0].source, "cfg");
 		assert_eq!(secrets[0].target.as_deref(), Some("/cfg"));
@@ -401,7 +410,7 @@ mod tests {
 		// A `file:` secret is materialised as a bind mount, not a native secret.
 		let yaml = "services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    file: ./tok.txt\n";
 		let file = crate::compose::parse_str_raw(yaml).unwrap();
-		let secrets = collect_native_secrets(&file.services["web"], &file);
+		let secrets = collect_native_secrets(&file.services["web"], &file).unwrap();
 		assert!(secrets.is_empty());
 	}
 
@@ -411,8 +420,45 @@ mod tests {
 		// equivalent here and falls back to the default rather than erroring.
 		let yaml = "services:\n  web:\n    image: nginx\n    secrets:\n      - source: tok\n        uid: appuser\nsecrets:\n  tok:\n    external: true\n";
 		let file = crate::compose::parse_str_raw(yaml).unwrap();
-		let secrets = collect_native_secrets(&file.services["web"], &file);
+		let secrets = collect_native_secrets(&file.services["web"], &file).unwrap();
 		assert_eq!(secrets.len(), 1);
 		assert!(secrets[0].uid.is_none());
+	}
+
+	#[test]
+	fn native_secret_rejects_setuid_mode() {
+		// A hostile compose file requesting setuid on an external secret must be
+		// refused before the spec reaches Podman — the same guard the bind-mount
+		// path enforces. 0o4000 is setuid.
+		let yaml = "services:\n  web:\n    image: nginx\n    secrets:\n      - source: tok\n        mode: 2048\nsecrets:\n  tok:\n    external: true\n";
+		let file = crate::compose::parse_str_raw(yaml).unwrap();
+		assert!(collect_native_secrets(&file.services["web"], &file).is_err());
+	}
+
+	#[test]
+	fn native_secret_rejects_execute_mode() {
+		// 0o777 (= 511) sets execute bits; a secret holds data, never code.
+		let yaml = "services:\n  web:\n    image: nginx\n    secrets:\n      - source: tok\n        mode: 511\nsecrets:\n  tok:\n    external: true\n";
+		let file = crate::compose::parse_str_raw(yaml).unwrap();
+		assert!(collect_native_secrets(&file.services["web"], &file).is_err());
+	}
+
+	#[test]
+	fn native_config_rejects_setgid_mode() {
+		// External configs share the same mode guard. 0o2000 (= 1024) is setgid.
+		let yaml = "services:\n  web:\n    image: nginx\n    configs:\n      - source: cfg\n        mode: 1024\nconfigs:\n  cfg:\n    external: true\n";
+		let file = crate::compose::parse_str_raw(yaml).unwrap();
+		assert!(collect_native_secrets(&file.services["web"], &file).is_err());
+	}
+
+	#[test]
+	fn native_secret_allows_world_readable_mode() {
+		// 0o444 (= 292, world-readable) is the Podman/compose default for a
+		// native secret materialised inside the container — it must be allowed,
+		// unlike the shared-host bind-mount path which rejects o+r.
+		let yaml = "services:\n  web:\n    image: nginx\n    secrets:\n      - source: tok\n        mode: 292\nsecrets:\n  tok:\n    external: true\n";
+		let file = crate::compose::parse_str_raw(yaml).unwrap();
+		let secrets = collect_native_secrets(&file.services["web"], &file).unwrap();
+		assert_eq!(secrets[0].mode, Some(0o444));
 	}
 }
