@@ -22,7 +22,7 @@ flowchart LR
 - 📄 **Compose-spec parsing** — YAML anchors, `extends`, `include`, profiles, `env_file`, variable substitution with modifiers
 - 🔁 **Dependency-aware** — `depends_on` ordering with `service_started`, `service_healthy`, and `service_completed_successfully` conditions
 - 🔢 **Replicas** — `scale:` and `deploy.replicas` with named replica containers
-- 🔐 **Secrets & configs** — inline content, file, and environment sources staged securely
+- 🔐 **Secrets & configs** — inline content, file, environment, and `external: true` Podman-native secret sources, staged securely
 - 👀 **Watch mode** — sync, rebuild or restart services on file changes per `develop.watch` rules
 - 📦 **Single binary** — statically musl-linked on Linux, no runtime dependencies
 - 🦀 **Library too** — embed the parser and engine in your own Rust project

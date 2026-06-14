@@ -92,23 +92,6 @@ fn env_secret_materialized() {
 }
 
 #[tokio::test]
-async fn external_secret_skipped() {
-	let client = match podman().await {
-		Some(d) => d,
-		None => return,
-	};
-	let proj = proj("xsec");
-	let engine = Engine::new(client, proj.clone());
-	let file = parse_str(
-		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    secrets:\n      - extsecret\nsecrets:\n  extsecret:\n    external: true\n",
-	)
-	.unwrap();
-
-	engine.up(&file).await.unwrap();
-	engine.down(&file).await.unwrap();
-}
-
-#[tokio::test]
 async fn invalid_secret_name_rejected() {
 	let client = match podman().await {
 		Some(d) => d,

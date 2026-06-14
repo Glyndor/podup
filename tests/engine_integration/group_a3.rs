@@ -296,6 +296,84 @@ async fn external_volume_missing_errors_on_up() {
 }
 
 // ---------------------------------------------------------------------------
+// External (Podman-native) secret injection
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn external_secret_missing_errors_on_up() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("exsec");
+	let engine = Engine::new(client, proj.clone());
+	// An `external: true` secret that no `podman secret` backs must fail closed,
+	// like an external volume, rather than start a container missing the secret.
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    secrets: [absent-secret]\nsecrets:\n  absent-secret:\n    external: true\n",
+	)
+	.unwrap();
+
+	let result = engine.up(&file).await;
+	assert!(
+		matches!(result, Err(podup::ComposeError::ExternalNotFound(_))),
+		"expected ExternalNotFound, got {result:?}"
+	);
+}
+
+#[cfg(feature = "test-helpers")]
+#[tokio::test]
+async fn external_secret_injected_into_container() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("insec");
+	let secret_name = format!("{proj}-tok");
+
+	// Create the backing Podman secret out-of-band — the external-secret idiom.
+	// Skip the test if the podman CLI is unavailable (socket alone is not enough).
+	let dir = tempfile::tempdir().unwrap();
+	let secret_src = dir.path().join("tok");
+	fs::write(&secret_src, b"native-secret-value").unwrap();
+	let created = std::process::Command::new("podman")
+		.args([
+			"secret",
+			"create",
+			&secret_name,
+			secret_src.to_str().unwrap(),
+		])
+		.status();
+	match created {
+		Ok(s) if s.success() => {}
+		_ => return,
+	}
+
+	// The compose name is `tok` (→ /run/secrets/tok); the actual secret is named
+	// differently, exercising the source/target split.
+	let yaml = format!(
+		"services:\n  app:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    secrets: [tok]\nsecrets:\n  tok:\n    external: true\n    name: {secret_name}\n"
+	);
+	let file = parse_str(&yaml).unwrap();
+	let engine = Engine::new(client, proj.clone());
+	engine.up(&file).await.unwrap();
+	let cname = format!("{proj}-app");
+	let out = engine
+		.test_exec_capture(&cname, vec!["cat".into(), "/run/secrets/tok".into()])
+		.await
+		.unwrap_or_default();
+	engine.down(&file).await.unwrap();
+	let _ = std::process::Command::new("podman")
+		.args(["secret", "rm", &secret_name])
+		.status();
+
+	assert!(
+		out.contains("native-secret-value"),
+		"external secret was not injected at /run/secrets/tok: {out:?}"
+	);
+}
+
+// ---------------------------------------------------------------------------
 // Orphan removal
 // ---------------------------------------------------------------------------
 

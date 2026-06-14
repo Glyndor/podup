@@ -12,5 +12,5 @@ pub use response::{
 pub use spec::{
 	HealthConfig, LinuxBlockIO, LinuxCPU, LinuxDevice, LinuxDeviceCgroup, LinuxMemory, LinuxPids,
 	LinuxResources, LinuxThrottleDevice, LinuxWeightDevice, LogConfig, Mount, NamedVolume,
-	Namespace, PerNetworkOptions, PortMapping, SpecGenerator, Ulimit,
+	Namespace, PerNetworkOptions, PortMapping, Secret, SpecGenerator, Ulimit,
 };

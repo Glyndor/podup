@@ -15,7 +15,7 @@ Every core Compose spec key is supported:
 | Environment | `environment`, `env_file` (dotenv format), variable substitution (`${VAR:-default}`) |
 | Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `domainname`, `dns`, `dns_search`, `extra_hosts` |
 | Volumes | `volumes` (bind, named, tmpfs, npipe), `tmpfs`, `volumes_from` |
-| Secrets / configs | `secrets`, `configs` (file, inline content, environment source) |
+| Secrets / configs | `secrets`, `configs` (file, inline content, environment source, and `external: true` Podman-native secrets) |
 | Dependencies | `depends_on` (with `condition:` — `service_started`, `service_healthy`, `service_completed_successfully`) |
 | Health checks | `healthcheck` (test, interval, timeout, retries, start_period, disable) |
 | Lifecycle hooks | `post_start`, `pre_stop` |
@@ -28,6 +28,34 @@ Every core Compose spec key is supported:
 | Metadata | `labels`, `annotations`, `container_name`, `profiles` |
 | Logging | `logging` (driver + options) |
 | Compose features | `extends`, `include`, YAML anchors, x-extensions, `develop.watch` |
+
+### External secrets and configs
+
+A secret or config declared `external: true` is mounted from an existing
+Podman secret rather than from a file in the project tree — the recommended
+pattern for production credentials, since the secret material never lands in a
+bind-mounted file. Create the secret before running, exactly as you would with
+`docker secret`:
+
+```sh
+printf '%s' "$DB_PASSWORD" | podman secret create db_password -
+```
+
+```yaml
+services:
+  db:
+    image: postgres:16
+    secrets:
+      - db_password
+secrets:
+  db_password:
+    external: true
+```
+
+The secret appears at `/run/secrets/db_password` (configs use the long-form
+`target:` path). If the named Podman secret does not exist, `podup up` fails
+fast rather than starting a container without it. Use a top-level `name:` when
+the Podman secret is named differently from the compose reference.
 
 ## Rootless Podman differences
 

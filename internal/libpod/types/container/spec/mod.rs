@@ -111,6 +111,11 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "Vec::is_empty", default)]
 	pub volumes_from: Vec<String>,
 
+	// Podman-native secrets (also used for external configs): each references an
+	// existing `podman secret` by name and is mounted into the container.
+	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	pub secrets: Vec<Secret>,
+
 	// Namespace modes
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub userns: Option<Namespace>,
