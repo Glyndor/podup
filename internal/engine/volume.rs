@@ -1,17 +1,15 @@
-//! Volume creation and secret/config materialisation.
+//! Volume creation and external-resource preflight.
 //!
-//! [`Engine::create_volumes`] pre-creates named volumes before containers start.
-//! [`Engine::build_secret_binds`] and [`Engine::build_config_binds`] materialise
-//! inline secrets/configs to a restricted temp directory. Bind-string and
-//! Mount-API helpers live in [`super::volume_mounts`].
+//! [`Engine::create_volumes`] pre-creates named volumes before containers start
+//! and [`Engine::ensure_external_exists`] verifies declared external resources.
+//! Secret/config materialisation lives in [`super::secrets`]; bind-string and
+//! Mount-API helpers in [`super::volume_mounts`].
 
 use std::collections::HashMap;
 
 use tracing::info;
 
-use crate::compose::types::{
-	ComposeFile, ConfigConfig, SecretConfig, Service, ServiceConfigRef, ServiceSecretRef,
-};
+use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::volume::VolumeCreateOptions;
 use crate::libpod::{urlencoded, API_PREFIX};
@@ -77,7 +75,8 @@ impl Engine {
 		Ok(())
 	}
 
-	/// Verify an `external: true` volume/network already exists on the host.
+	/// Verify an `external: true` resource (volume, network or secret) already
+	/// exists on the host.
 	///
 	/// The compose spec requires podup to error when an external resource is
 	/// declared but absent, rather than silently skipping it and letting
@@ -98,211 +97,13 @@ impl Engine {
 		}
 	}
 
-	pub(super) fn build_secret_binds(
-		&self,
-		service: &Service,
-		file: &ComposeFile,
-	) -> Result<Vec<String>> {
-		let mut binds = Vec::new();
-		for secret_ref in &service.secrets {
-			let (name, target_override, ref_mode, ref_uid, ref_gid) = match secret_ref {
-				ServiceSecretRef::Short(s) => (s.clone(), None, None, None, None),
-				ServiceSecretRef::Long {
-					source,
-					target,
-					mode,
-					uid,
-					gid,
-				} => (
-					source.clone(),
-					target.clone(),
-					*mode,
-					uid.clone(),
-					gid.clone(),
-				),
-			};
-			if let Some(config) = file.secrets.get(&name) {
-				let target = target_override.unwrap_or_else(|| format!("/run/secrets/{name}"));
-				match config {
-					SecretConfig {
-						file: Some(host_path),
-						..
-					} => {
-						// Resolve like a bind-mount source: a relative `file:` is
-						// anchored to the project dir (not the Podman service's cwd)
-						// and `~` is expanded — same handling as `volumes:`, which
-						// already mount arbitrary host paths.
-						let resolved =
-							super::container::resolve_bind_source(host_path, &self.base_dir);
-						binds.push(format!("{resolved}:{target}:ro"));
-					}
-					SecretConfig {
-						content: Some(content),
-						..
-					} => {
-						let path = self.materialize_inline_full(
-							"secrets",
-							&name,
-							content.as_bytes(),
-							ref_mode,
-							ref_uid.as_deref(),
-							ref_gid.as_deref(),
-						)?;
-						binds.push(format!("{}:{target}:ro", path.display()));
-					}
-					SecretConfig {
-						environment: Some(env_var),
-						..
-					} => {
-						let value = std::env::var(env_var).map_err(|_| {
-							ComposeError::Unsupported(format!(
-								"secret '{name}' references env var '{env_var}' which is not set"
-							))
-						})?;
-						let path = self.materialize_inline_full(
-							"secrets",
-							&name,
-							value.as_bytes(),
-							ref_mode,
-							ref_uid.as_deref(),
-							ref_gid.as_deref(),
-						)?;
-						binds.push(format!("{}:{target}:ro", path.display()));
-					}
-					SecretConfig {
-						external: Some(true),
-						..
-					} => {
-						tracing::debug!("external secret {name} — relying on runtime injection");
-					}
-					_ => {}
-				}
-			}
-		}
-		Ok(binds)
-	}
-
-	pub(super) fn build_config_binds(
-		&self,
-		service: &Service,
-		file: &ComposeFile,
-	) -> Result<Vec<String>> {
-		let mut binds = Vec::new();
-		for config_ref in &service.configs {
-			let (name, target_override, ref_mode, ref_uid, ref_gid) = match config_ref {
-				ServiceConfigRef::Short(s) => (s.clone(), None, None, None, None),
-				ServiceConfigRef::Long {
-					source,
-					target,
-					mode,
-					uid,
-					gid,
-				} => (
-					source.clone(),
-					target.clone(),
-					*mode,
-					uid.clone(),
-					gid.clone(),
-				),
-			};
-			if let Some(cfg) = file.configs.get(&name) {
-				let target = target_override.unwrap_or_else(|| format!("/{name}"));
-				match cfg {
-					ConfigConfig {
-						file: Some(host_path),
-						..
-					} => {
-						// Resolve like a bind-mount source: anchor a relative path to
-						// the project dir and expand `~`, matching `volumes:` handling.
-						let resolved =
-							super::container::resolve_bind_source(host_path, &self.base_dir);
-						binds.push(format!("{resolved}:{target}:ro"));
-					}
-					ConfigConfig {
-						content: Some(content),
-						..
-					} => {
-						let path = self.materialize_inline_full(
-							"configs",
-							&name,
-							content.as_bytes(),
-							ref_mode,
-							ref_uid.as_deref(),
-							ref_gid.as_deref(),
-						)?;
-						binds.push(format!("{}:{target}:ro", path.display()));
-					}
-					ConfigConfig {
-						environment: Some(env_var),
-						..
-					} => {
-						let value = std::env::var(env_var).map_err(|_| {
-							ComposeError::Unsupported(format!(
-								"config '{name}' references env var '{env_var}' which is not set"
-							))
-						})?;
-						let path = self.materialize_inline_full(
-							"configs",
-							&name,
-							value.as_bytes(),
-							ref_mode,
-							ref_uid.as_deref(),
-							ref_gid.as_deref(),
-						)?;
-						binds.push(format!("{}:{target}:ro", path.display()));
-					}
-					ConfigConfig {
-						external: Some(true),
-						..
-					} => {
-						tracing::debug!("external config {name} — relying on runtime injection");
-					}
-					_ => {}
-				}
-			}
-		}
-		Ok(binds)
-	}
-
-	fn materialize_inline_full(
-		&self,
-		kind: &str,
-		name: &str,
-		content: &[u8],
-		mode: Option<u32>,
-		uid: Option<&str>,
-		gid: Option<&str>,
-	) -> Result<std::path::PathBuf> {
-		if std::path::Path::new(name)
-			.components()
-			.any(|c| !matches!(c, std::path::Component::Normal(_)))
-		{
-			return Err(ComposeError::Unsupported(format!(
-				"{kind} name must not contain path separators or '..': {name}"
-			)));
-		}
-
-		let dir = self.staging_dir()?.join(kind);
-		staging::create_private_subdir(&dir)?;
-
-		let path = dir.join(name);
-		staging::write_private_file(&path, content)?;
-
-		if let Some(m) = mode {
-			staging::apply_mode(&path, m)?;
-		}
-		staging::apply_owner(&path, uid, gid);
-
-		Ok(path)
-	}
-
 	pub(super) fn cleanup_temp_dir(&self) {
 		if let Ok(dir) = self.staging_dir() {
 			let _ = std::fs::remove_dir_all(dir);
 		}
 	}
 
-	fn staging_dir(&self) -> Result<std::path::PathBuf> {
+	pub(super) fn staging_dir(&self) -> Result<std::path::PathBuf> {
 		if !staging::is_safe_project_name(&self.project) {
 			return Err(ComposeError::Unsupported(format!(
 				"project name must be ASCII alphanumeric/dash/underscore/dot \
@@ -311,51 +112,5 @@ impl Engine {
 			)));
 		}
 		Ok(staging::staging_base()?.join(&self.project))
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-	use crate::libpod::Client;
-	use std::path::PathBuf;
-
-	fn engine_with_base(base: &str) -> Engine {
-		Engine::with_base_dir(
-			Client::new("unused"),
-			"proj".to_string(),
-			PathBuf::from(base),
-		)
-	}
-
-	#[test]
-	fn secret_file_relative_path_is_anchored_to_base_dir() {
-		// A relative `file:` must resolve against the project dir, not the
-		// Podman service's cwd — same as a bind-mount source. Build the expected
-		// path via `Path::join` so the separator is correct on every platform.
-		let base = PathBuf::from("/srv/project");
-		let yaml = "services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    file: secret.txt\n";
-		let file = crate::compose::parse_str_raw(yaml).unwrap();
-		let engine = engine_with_base(&base.to_string_lossy());
-		let binds = engine
-			.build_secret_binds(&file.services["web"], &file)
-			.unwrap();
-		let expected = format!("{}:/run/secrets/tok:ro", base.join("secret.txt").display());
-		assert_eq!(binds, vec![expected]);
-	}
-
-	#[cfg(unix)]
-	#[test]
-	fn config_file_absolute_path_is_passed_through() {
-		// Absolute paths are honored unchanged (compose allows mounting any host
-		// file, exactly as `volumes:` does). Uses a Unix-absolute path, so the
-		// assertion is gated to Unix.
-		let yaml = "services:\n  web:\n    image: nginx\n    configs: [cfg]\nconfigs:\n  cfg:\n    file: /etc/app/cfg.yaml\n";
-		let file = crate::compose::parse_str_raw(yaml).unwrap();
-		let engine = engine_with_base("/srv/project");
-		let binds = engine
-			.build_config_binds(&file.services["web"], &file)
-			.unwrap();
-		assert_eq!(binds, vec!["/etc/app/cfg.yaml:/cfg:ro"]);
 	}
 }

@@ -26,6 +26,29 @@ pub struct PortMapping {
 	pub range: Option<u16>,
 }
 
+/// A Podman-native secret attached to a container create spec, equivalent to
+/// `podman run --secret`. Mirrors the libpod `Secret` type, which carries no
+/// JSON tags upstream, so the wire keys are PascalCase (`Source`, `Target`, …).
+/// `Source` names an existing Podman secret; `Target` is the mount destination
+/// (a bare name lands under `/run/secrets/`, an absolute path is used as-is).
+#[derive(Serialize, Default)]
+pub struct Secret {
+	#[serde(rename = "Source")]
+	pub source: String,
+
+	#[serde(rename = "Target", skip_serializing_if = "Option::is_none")]
+	pub target: Option<String>,
+
+	#[serde(rename = "UID", skip_serializing_if = "Option::is_none")]
+	pub uid: Option<u32>,
+
+	#[serde(rename = "GID", skip_serializing_if = "Option::is_none")]
+	pub gid: Option<u32>,
+
+	#[serde(rename = "Mode", skip_serializing_if = "Option::is_none")]
+	pub mode: Option<u32>,
+}
+
 /// Per-network connection options (for SpecGenerator `networks` map).
 #[derive(Serialize, Default)]
 pub struct PerNetworkOptions {
