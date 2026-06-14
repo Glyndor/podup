@@ -24,9 +24,6 @@ pub(super) fn collect_warnings(name: &str, service: &Service, warnings: &mut Vec
 			"is ignored; Quadlet emits a single container per service",
 		);
 	}
-	if service.healthcheck.is_some() {
-		warn("healthcheck", "is not yet mapped to HealthCmd directives");
-	}
 	if !service.secrets.is_empty() {
 		warn(
 			"secrets",
@@ -39,8 +36,12 @@ pub(super) fn collect_warnings(name: &str, service: &Service, warnings: &mut Vec
 	if !service.volumes_from.is_empty() {
 		warn("volumes_from", "has no Quadlet equivalent and is skipped");
 	}
-	if service.network_mode.is_some() {
-		warn("network_mode", "is not mapped; use networks instead");
+	// `network_mode: host` maps to `Network=host`; other modes have no key.
+	if service.network_mode.as_deref().is_some_and(|m| m != "host") {
+		warn(
+			"network_mode",
+			"is not mapped (only `host` is supported); use networks instead",
+		);
 	}
 	if !service.profiles.is_empty() {
 		warn("profiles", "have no Quadlet equivalent and are ignored");
@@ -67,7 +68,7 @@ services:
     build: .
     scale: 3
     privileged: true
-    network_mode: host
+    network_mode: "container:other"
     volumes_from:
       - other
     profiles:
@@ -92,7 +93,6 @@ configs:
 		for field in [
 			"build",
 			"scale/replicas",
-			"healthcheck",
 			"secrets",
 			"configs",
 			"volumes_from",

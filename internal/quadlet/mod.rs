@@ -275,9 +275,7 @@ services:
 services:
   s:
     image: x
-    healthcheck:
-      test: ["CMD", "true"]
-    network_mode: host
+    network_mode: "container:other"
     privileged: true
     profiles: [debug]
     volumes_from:
@@ -289,7 +287,6 @@ services:
 		let out = generate(&file, "p");
 		let joined = out.warnings.join("\n");
 		for needle in [
-			"healthcheck",
 			"network_mode",
 			"privileged",
 			"profiles",
@@ -297,6 +294,73 @@ services:
 			"scale/replicas",
 		] {
 			assert!(joined.contains(needle), "expected warning for {needle}");
+		}
+	}
+
+	#[test]
+	fn maps_extended_container_field_set() {
+		let yaml = r#"
+services:
+  app:
+    image: x
+    container_name: custom
+    env_file:
+      - ./app.env
+    tmpfs:
+      - /run
+    sysctls:
+      net.core.somaxconn: "1024"
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 2048
+    shm_size: 64m
+    mem_limit: 512m
+    pids_limit: 100
+    userns_mode: keep-id
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+    devices:
+      - /dev/fuse
+    dns:
+      - 1.1.1.1
+    extra_hosts:
+      - "db:10.0.0.2"
+    annotations:
+      run.oci.keep: "1"
+    network_mode: host
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 5s
+      retries: 3
+    restart: "on-failure:5"
+"#;
+		let file = parse_str(yaml).unwrap();
+		let out = generate(&file, "p");
+		let c = &unit_named(&out, "app.container").contents;
+		for needle in [
+			"ContainerName=custom",
+			"EnvironmentFile=./app.env",
+			"Tmpfs=/run",
+			"Sysctl=net.core.somaxconn=1024",
+			"Ulimit=nofile=1024:2048",
+			"ShmSize=64m",
+			"Memory=512m",
+			"PidsLimit=100",
+			"UserNS=keep-id",
+			"StopSignal=SIGTERM",
+			"StopTimeout=30",
+			"AddDevice=/dev/fuse",
+			"DNS=1.1.1.1",
+			"AddHost=db:10.0.0.2",
+			"Annotation=run.oci.keep=1",
+			"Network=host",
+			"HealthCmd=curl -f http://localhost",
+			"HealthInterval=5s",
+			"HealthRetries=3",
+			"StartLimitBurst=5",
+		] {
+			assert!(c.contains(needle), "missing `{needle}` in:\n{c}");
 		}
 	}
 

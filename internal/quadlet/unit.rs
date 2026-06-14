@@ -1,7 +1,8 @@
 //! Build the individual `.network`, `.volume` and `.container` units.
 
-use crate::compose::types::{PortMapping, Service};
+use crate::compose::types::{Command, PortMapping, RestartPolicy, Service};
 use crate::ports::parse_ports;
+use crate::size::parse_duration_secs;
 
 use super::render::{
 	render_command, render_publish_port, render_restart, render_volume, safe_unit_stem,
@@ -9,6 +10,50 @@ use super::render::{
 };
 use super::warnings::collect_warnings;
 use super::QuadletUnit;
+
+/// Map a compose `healthcheck:` onto the Quadlet `Health*=` keys. A disabled
+/// healthcheck emits `HealthCmd=none`; otherwise the compose test (with any
+/// leading `CMD`/`CMD-SHELL`/`NONE` sentinel stripped) and the timing fields
+/// are rendered.
+fn render_healthcheck(service: &Service, container: &mut Section) {
+	let Some(hc) = &service.healthcheck else {
+		return;
+	};
+	if hc.is_disabled() {
+		container.add("HealthCmd", "none".to_string());
+		return;
+	}
+	if let Some(test) = &hc.test {
+		let cmd = match test {
+			Command::Shell(s) => s.clone(),
+			Command::Exec(parts) => {
+				let body = match parts.first().map(String::as_str) {
+					Some("CMD") | Some("CMD-SHELL") | Some("NONE") => &parts[1..],
+					_ => &parts[..],
+				};
+				body.join(" ")
+			}
+		};
+		if !cmd.is_empty() {
+			container.add("HealthCmd", cmd);
+		}
+	}
+	if let Some(v) = &hc.interval {
+		container.add("HealthInterval", v.clone());
+	}
+	if let Some(v) = &hc.timeout {
+		container.add("HealthTimeout", v.clone());
+	}
+	if let Some(v) = hc.retries {
+		container.add("HealthRetries", v.to_string());
+	}
+	if let Some(v) = &hc.start_period {
+		container.add("HealthStartPeriod", v.clone());
+	}
+	if let Some(v) = &hc.start_interval {
+		container.add("HealthStartupInterval", v.clone());
+	}
+}
 
 pub(super) fn network_unit(name: &str, project: &str, _has_config: bool) -> QuadletUnit {
 	let value = sanitize_value(&format!("{project}_{name}"));
@@ -47,7 +92,13 @@ pub(super) fn container_unit(
 	}
 
 	let mut container = Section::new("Container");
-	container.add("ContainerName", name.to_string());
+	container.add(
+		"ContainerName",
+		service
+			.container_name
+			.clone()
+			.unwrap_or_else(|| name.to_string()),
+	);
 	if let Some(image) = &service.image {
 		container.add("Image", image.clone());
 	}
@@ -112,9 +163,79 @@ pub(super) fn container_unit(
 		container.add("Exec", render_command(command));
 	}
 
+	for ann in sorted_label_pairs(service.annotations.to_map()) {
+		container.add("Annotation", format!("{}={}", ann.0, ann.1));
+	}
+	for entry in service.env_file.to_entries() {
+		container.add("EnvironmentFile", entry.path().to_string());
+	}
+	for t in service.tmpfs.to_list() {
+		container.add("Tmpfs", t);
+	}
+	for (key, val) in sorted_label_pairs(service.sysctls.to_map()) {
+		container.add("Sysctl", format!("{key}={val}"));
+	}
+	for (name, limit) in &service.ulimits {
+		let soft = limit.soft();
+		let hard = limit.hard();
+		let value = if soft == hard {
+			format!("{name}={soft}")
+		} else {
+			format!("{name}={soft}:{hard}")
+		};
+		container.add("Ulimit", value);
+	}
+	for dev in &service.devices {
+		container.add("AddDevice", dev.clone());
+	}
+	for host in &service.extra_hosts {
+		container.add("AddHost", host.clone());
+	}
+	for d in service.dns.to_list() {
+		container.add("DNS", d);
+	}
+	for d in service.dns_search.to_list() {
+		container.add("DNSSearch", d);
+	}
+	for d in service.dns_opt.to_list() {
+		container.add("DNSOption", d);
+	}
+	if let Some(shm) = &service.shm_size {
+		container.add("ShmSize", shm.clone());
+	}
+	if let Some(mem) = &service.mem_limit {
+		container.add("Memory", mem.clone());
+	}
+	if let Some(pids) = service.pids_limit {
+		container.add("PidsLimit", pids.to_string());
+	}
+	if let Some(userns) = &service.userns_mode {
+		container.add("UserNS", userns.clone());
+	}
+	if let Some(signal) = &service.stop_signal {
+		container.add("StopSignal", signal.clone());
+	}
+	if let Some(grace) = &service.stop_grace_period {
+		if let Some(secs) = parse_duration_secs(grace) {
+			container.add("StopTimeout", secs.to_string());
+		}
+	}
+	// `network_mode: host` maps to `Network=host`; other modes (service:/
+	// container:) have no Quadlet key and are reported by collect_warnings.
+	if service.network_mode.as_deref() == Some("host") {
+		container.add("Network", "host".to_string());
+	}
+	render_healthcheck(service, &mut container);
+
 	let mut svc = Section::new("Service");
 	if let Some(restart) = &service.restart {
 		svc.add("Restart", render_restart(restart));
+		if let RestartPolicy::OnFailure {
+			max_attempts: Some(n),
+		} = restart
+		{
+			svc.add("StartLimitBurst", n.to_string());
+		}
 	}
 
 	collect_warnings(name, service, warnings);
