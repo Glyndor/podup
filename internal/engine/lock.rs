@@ -122,4 +122,35 @@ mod tests {
 		assert!(engine("../evil").lock_project().is_err());
 		assert!(engine(".hidden").lock_project().is_err());
 	}
+
+	#[test]
+	fn second_holder_blocks_until_first_releases() {
+		use std::sync::atomic::{AtomicBool, Ordering};
+		use std::sync::Arc;
+		use std::thread;
+		use std::time::Duration;
+
+		// Two engines contend for the same project lock. The first holds it; the
+		// second must take the blocking `LOCK_EX` path in `acquire` and only
+		// succeed after the first guard is dropped. `released` proves the order.
+		let project = "podup-lock-contention";
+		let held = engine(project).lock_project().expect("first acquire");
+
+		let released = Arc::new(AtomicBool::new(false));
+		let flag = Arc::clone(&released);
+		let waiter = thread::spawn(move || {
+			let _guard = engine(project).lock_project().expect("second acquire");
+			assert!(
+				flag.load(Ordering::SeqCst),
+				"second holder acquired the lock before the first released it"
+			);
+		});
+
+		// Give the waiter time to reach the blocking flock call, then release.
+		thread::sleep(Duration::from_millis(100));
+		released.store(true, Ordering::SeqCst);
+		drop(held);
+
+		waiter.join().expect("waiter thread panicked");
+	}
 }
