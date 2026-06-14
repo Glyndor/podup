@@ -123,11 +123,9 @@ fn resolve_one_extends(
 	let base_name = extends.service().to_string();
 
 	let base_service = if let Some(file_path) = extends.file() {
-		if !is_safe_extends_path(file_path) {
-			return Err(ComposeError::Extends(format!(
-				"service '{name}' extends.file must be a relative path with no parent traversal: {file_path}"
-			)));
-		}
+		// The compose file is trusted input (like a Makefile): `extends.file`
+		// may use `../` or absolute paths, matching docker-compose and
+		// podman-compose. Do not confine it.
 		let abs = base_dir.join(file_path);
 		let abs = abs.canonicalize().unwrap_or(abs);
 		let dir = abs
@@ -174,13 +172,6 @@ fn resolve_one_extends(
 	Ok(())
 }
 
-/// Security check: reject `extends.file` with absolute or parent-traversing paths.
-///
-/// Exposed for unit testing.
-pub(crate) fn is_safe_extends_path(path: &str) -> bool {
-	crate::fsutil::is_safe_relative_path(path)
-}
-
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
@@ -196,33 +187,6 @@ mod tests {
 			image: Some(image.to_string()),
 			..Default::default()
 		}
-	}
-
-	// is_safe_extends_path
-
-	#[test]
-	fn safe_path_relative() {
-		assert!(is_safe_extends_path("other.yml"));
-	}
-
-	#[test]
-	fn safe_path_subdirectory() {
-		assert!(is_safe_extends_path("bases/db.yml"));
-	}
-
-	#[test]
-	fn unsafe_path_absolute() {
-		assert!(!is_safe_extends_path("/etc/compose.yml"));
-	}
-
-	#[test]
-	fn unsafe_path_parent_traversal() {
-		assert!(!is_safe_extends_path("../secret.yml"));
-	}
-
-	#[test]
-	fn unsafe_path_nested_traversal() {
-		assert!(!is_safe_extends_path("a/../../etc/passwd"));
 	}
 
 	// merge_service — scalar fields
