@@ -18,6 +18,11 @@ pub const REPO: &str = "Glyndor/podup";
 /// broken endpoint streaming unbounded data into memory).
 const MAX_ASSET_BYTES: u64 = 128 * 1024 * 1024;
 
+/// Hard cap on the release-metadata JSON response. A `releases/latest` payload
+/// is a few KiB; 1 MiB is generous headroom while still bounding memory if a
+/// hostile or broken endpoint streams an oversized body.
+const MAX_METADATA_BYTES: u64 = 1024 * 1024;
+
 /// Fetches release metadata and assets from GitHub.
 pub struct GitHubSource {
 	repo: String,
@@ -45,18 +50,18 @@ impl Default for GitHubSource {
 	}
 }
 
-/// Read at most `MAX_ASSET_BYTES` from `reader`, erroring if the stream exceeds
-/// the cap rather than truncating silently.
-fn read_capped(mut reader: impl Read) -> crate::Result<Vec<u8>> {
+/// Read at most `cap` bytes from `reader`, erroring if the stream exceeds the
+/// cap rather than truncating silently.
+fn read_capped(mut reader: impl Read, cap: u64) -> crate::Result<Vec<u8>> {
 	let mut buf = Vec::new();
 	let read = reader
 		.by_ref()
-		.take(MAX_ASSET_BYTES + 1)
+		.take(cap + 1)
 		.read_to_end(&mut buf)
 		.map_err(ComposeError::Io)?;
-	if read as u64 > MAX_ASSET_BYTES {
+	if read as u64 > cap {
 		return Err(ComposeError::Update(
-			"release asset exceeds the maximum allowed size".to_string(),
+			"release data exceeds the maximum allowed size".to_string(),
 		));
 	}
 	Ok(buf)
@@ -65,21 +70,19 @@ fn read_capped(mut reader: impl Read) -> crate::Result<Vec<u8>> {
 impl ReleaseSource for GitHubSource {
 	fn latest_version(&self) -> crate::Result<String> {
 		let url = format!("https://api.github.com/repos/{}/releases/latest", self.repo);
-		let body = self
+		let resp = self
 			.agent
 			.get(&url)
 			.header("Accept", "application/vnd.github+json")
 			.call()
-			.map_err(|e| ComposeError::Update(format!("cannot reach GitHub releases API: {e}")))?
-			.body_mut()
-			.read_to_string()
-			.map_err(|e| ComposeError::Update(format!("failed reading release metadata: {e}")))?;
+			.map_err(|e| ComposeError::Update(format!("cannot reach GitHub releases API: {e}")))?;
+		let body = read_capped(resp.into_body().into_reader(), MAX_METADATA_BYTES)?;
 
 		#[derive(serde::Deserialize)]
 		struct Latest {
 			tag_name: String,
 		}
-		let latest: Latest = serde_json::from_str(&body)
+		let latest: Latest = serde_json::from_slice(&body)
 			.map_err(|e| ComposeError::Update(format!("malformed release metadata: {e}")))?;
 		Ok(latest.tag_name)
 	}
@@ -96,7 +99,7 @@ impl ReleaseSource for GitHubSource {
 			.get(&url)
 			.call()
 			.map_err(|e| ComposeError::Update(format!("download failed for {asset}: {e}")))?;
-		read_capped(resp.into_body().into_reader())
+		read_capped(resp.into_body().into_reader(), MAX_ASSET_BYTES)
 	}
 }
 
@@ -104,25 +107,43 @@ impl ReleaseSource for GitHubSource {
 mod tests {
 	use super::*;
 
+	/// A reader that yields zero bytes forever — used to exercise the cap.
+	struct Endless;
+	impl Read for Endless {
+		fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+			for b in buf.iter_mut() {
+				*b = 0;
+			}
+			Ok(buf.len())
+		}
+	}
+
 	#[test]
 	fn read_capped_accepts_small() {
 		let data = b"hello world".to_vec();
-		let got = read_capped(&data[..]).unwrap();
+		let got = read_capped(&data[..], MAX_ASSET_BYTES).unwrap();
 		assert_eq!(got, data);
 	}
 
 	#[test]
 	fn read_capped_rejects_oversize() {
-		struct Endless;
-		impl Read for Endless {
-			fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-				for b in buf.iter_mut() {
-					*b = 0;
-				}
-				Ok(buf.len())
-			}
-		}
-		assert!(read_capped(Endless).is_err());
+		assert!(read_capped(Endless, MAX_ASSET_BYTES).is_err());
+	}
+
+	#[test]
+	fn read_capped_enforces_metadata_cap() {
+		// The metadata cap is far smaller than the asset cap; an endless stream
+		// must be rejected once it crosses the 1 MiB metadata bound.
+		assert!(read_capped(Endless, MAX_METADATA_BYTES).is_err());
+	}
+
+	#[test]
+	fn read_capped_accepts_up_to_cap() {
+		// Exactly `cap` bytes is allowed; cap+1 is rejected.
+		let exactly = [0u8; 8];
+		assert!(read_capped(&exactly[..], 8).is_ok());
+		let over = [0u8; 9];
+		assert!(read_capped(&over[..], 8).is_err());
 	}
 
 	#[test]

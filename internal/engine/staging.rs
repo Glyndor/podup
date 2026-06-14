@@ -119,16 +119,38 @@ pub(super) fn write_private_file(path: &std::path::Path, content: &[u8]) -> Resu
 	std::fs::write(path, content).map_err(ComposeError::Io)
 }
 
+/// Reject permission bits that are dangerous on a secret/config file no matter
+/// where it is materialised: any execute bit (`0o111`) and the setuid/setgid/
+/// sticky bits (`0o7000`). A secret/config holds data, never code, so these are
+/// a misconfiguration or an attack and are refused unconditionally. `ctx` names
+/// the offending secret/config in the error message.
+///
+/// Unlike [`apply_mode`], this does **not** reject group/world-read bits: a
+/// Podman-native secret is materialised inside the container's own mount
+/// namespace (not the shared host staging directory) and `0o444` is the
+/// Podman/compose default, so a readable mode is legitimate for that path.
+pub(super) fn reject_dangerous_secret_mode(mode: u32, ctx: &str) -> Result<()> {
+	if mode & 0o111 != 0 {
+		return Err(ComposeError::Unsupported(format!(
+			"mode {mode:#o} for {ctx} sets an execute bit on a secret/config; \
+			 a secret holds data, never code (use e.g. 0o400 or 0o444)"
+		)));
+	}
+	if mode & (0o4000 | 0o2000 | 0o1000) != 0 {
+		return Err(ComposeError::Unsupported(format!(
+			"mode {mode:#o} for {ctx} sets setuid, setgid, or sticky bits on a \
+			 secret/config; these are refused (use e.g. 0o400 or 0o444)"
+		)));
+	}
+	Ok(())
+}
+
 /// Apply a compose `mode:` value (octal unix permissions) to `path`.
 ///
-/// Rejects:
-/// - group-readable (`g+r`, 0o040) or world-readable (`o+r`, 0o004) bits — a
-///   secret or config file must never be readable by other users.
-/// - any execute bit (`0o111`) — a secret/config file holds data, never code,
-///   so the execute bit has no legitimate use and is rejected unconditionally.
-/// - setuid (0o4000), setgid (0o2000), or sticky (0o1000) bits — these have no
-///   legitimate use on a secret/config data file and are either a
-///   misconfiguration or an attack attempt; reject unconditionally.
+/// Rejects, on top of [`reject_dangerous_secret_mode`] (execute, setuid,
+/// setgid, sticky), the group-readable (`g+r`, 0o040) and world-readable
+/// (`o+r`, 0o004) bits — a secret/config materialised on the shared host
+/// staging directory must never be readable by another local user.
 #[cfg(unix)]
 pub(super) fn apply_mode(path: &Path, mode: u32) -> Result<()> {
 	use std::os::unix::fs::PermissionsExt;
@@ -140,20 +162,7 @@ pub(super) fn apply_mode(path: &Path, mode: u32) -> Result<()> {
 			path.display()
 		)));
 	}
-	if mode & 0o111 != 0 {
-		return Err(ComposeError::Unsupported(format!(
-			"mode {mode:#o} for {} sets an execute bit on a secret/config file; \
-			 only plain owner read/write bits are permitted (e.g. 0o400 or 0o600)",
-			path.display()
-		)));
-	}
-	if mode & (0o4000 | 0o2000 | 0o1000) != 0 {
-		return Err(ComposeError::Unsupported(format!(
-			"mode {mode:#o} for {} sets setuid, setgid, or sticky bits on a secret/config file; \
-			 only plain owner read/write bits are permitted (e.g. 0o400 or 0o600)",
-			path.display()
-		)));
-	}
+	reject_dangerous_secret_mode(mode, &path.display().to_string())?;
 	std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).map_err(ComposeError::Io)
 }
 

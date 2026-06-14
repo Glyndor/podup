@@ -1,3 +1,17 @@
+podup (0.21.1) unstable; urgency=medium
+
+  * Security: reject setuid/setgid/sticky/execute mode bits on `external: true`
+    Podman-native secrets and configs, matching the guard already applied to the
+    bind-mount materialisation path.
+  * Security: cap the self-update release-metadata read so a hostile or broken
+    endpoint cannot stream an unbounded JSON body into memory.
+  * Add a man-page BUGS section and surface Quadlet export and shell completions
+    in the README feature list.
+  * Fix a stale intra-doc link, replace a non-ASCII log message, and add a shell
+    stanza to `.editorconfig`.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sun, 14 Jun 2026 14:36:35 -0500
+
 podup (0.21.0) unstable; urgency=medium
 
   * Inject `external: true` secrets and configs as Podman-native secrets, mounted

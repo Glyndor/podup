@@ -24,6 +24,8 @@ flowchart LR
 - 🔢 **Replicas** — `scale:` and `deploy.replicas` with named replica containers
 - 🔐 **Secrets & configs** — inline content, file, environment, and `external: true` Podman-native secret sources, staged securely
 - 👀 **Watch mode** — sync, rebuild or restart services on file changes per `develop.watch` rules
+- ⚙️ **Systemd Quadlet export** — `generate quadlet` emits native `podman-systemd.unit` files to run your stack under systemd, no daemon
+- ⌨️ **Shell completions** — `completions <shell>` for bash, zsh, fish and more (the Debian package installs them)
 - 📦 **Single binary** — statically musl-linked on Linux, no runtime dependencies
 - 🦀 **Library too** — embed the parser and engine in your own Rust project
 
@@ -124,7 +126,7 @@ async fn main() -> podup::Result<()> {
 
 ```toml
 [dependencies]
-podup = { git = "https://github.com/Glyndor/podup", tag = "v0.21.0" }
+podup = { git = "https://github.com/Glyndor/podup", tag = "v0.21.1" }
 ```
 
 ## 📖 Docs
