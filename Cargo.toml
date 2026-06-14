@@ -1,6 +1,6 @@
 [package]
 name = "podup"
-version = "0.17.1"
+version = "0.18.0"
 edition = "2021"
 rust-version = "1.85"
 description = "Translate and run docker-compose files on rootless Podman"
@@ -25,16 +25,15 @@ tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "syn
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter", "ansi"] }
+tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "env-filter"] }
 serde_yaml = { package = "serde_yaml_ng", version = "0.10" }
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
-clap = { version = "4", features = ["derive", "env"] }
-clap_complete = "4"
+clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "derive", "env"] }
+clap_complete = { version = "4", optional = true }
 indexmap = { version = "2", features = ["serde"] }
-futures-core = { version = "0.3", default-features = false }
-futures-util = { version = "0.3", default-features = false, features = ["std", "async-await"] }
+futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tar = { version = "0.4", default-features = false }
 flate2 = "1.0"
 bytes = "1"
@@ -42,16 +41,20 @@ notify = { version = "8", optional = true }
 # Self-update: HTTPS fetch of signed release assets and verification.
 # ureq (rustls + webpki roots) keeps static musl builds self-contained; the
 # Ed25519 signature pinned to an embedded key is the real trust anchor, not TLS.
-ureq = { version = "3", default-features = false, features = ["rustls"] }
-ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
+ureq = { version = "3", default-features = false, features = ["rustls"], optional = true }
+ed25519-dalek = { version = "2", default-features = false, features = ["std"], optional = true }
 sha2 = "0.10"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [features]
-default = ["watch"]
+default = ["watch", "completions", "update"]
 watch = ["notify"]
+completions = ["dep:clap_complete"]
+# Self-update over HTTPS with Ed25519 verification. Off for package-manager
+# builds (Debian/apt) where the manager owns upgrades; on for direct tarballs.
+update = ["dep:ureq", "dep:ed25519-dalek"]
 test-helpers = []
 
 [dev-dependencies]

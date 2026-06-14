@@ -6,7 +6,9 @@
 use std::path::Path;
 use std::process;
 
-use clap::{CommandFactory, Parser};
+#[cfg(feature = "completions")]
+use clap::CommandFactory;
+use clap::Parser;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
@@ -157,6 +159,7 @@ async fn main() {
 	match run().await {
 		Ok(()) => {}
 		Err(podup::ComposeError::RunExited(code)) => process::exit(code as i32),
+		#[cfg(feature = "update")]
 		Err(e @ podup::ComposeError::Update(_)) => {
 			eprintln!("podup: error: {e}");
 			process::exit(podup::update::exit_code(&e));
@@ -184,6 +187,7 @@ async fn run() -> podup::Result<()> {
 
 	// `completions` derives entirely from the static CLI definition; it neither
 	// parses a compose file nor contacts Podman. Print to stdout for piping.
+	#[cfg(feature = "completions")]
 	if let Commands::Completions { shell } = cli.command {
 		let mut cmd = Cli::command();
 		let name = cmd.get_name().to_string();
@@ -194,6 +198,7 @@ async fn run() -> podup::Result<()> {
 	// `update` operates on the binary itself, not a compose project, so it runs
 	// before any compose file is parsed or Podman is contacted. The network and
 	// filesystem work is blocking; keep it off the async path entirely.
+	#[cfg(feature = "update")]
 	if let Commands::Update { check, force } = cli.command {
 		let opts = podup::update::UpdateOptions {
 			check_only: check,
@@ -337,7 +342,9 @@ async fn run() -> podup::Result<()> {
 		Commands::Config => unreachable!("handled above"),
 		Commands::Generate { .. } => unreachable!("handled above"),
 		Commands::Watch => engine.watch(&file).await?,
+		#[cfg(feature = "update")]
 		Commands::Update { .. } => unreachable!("handled before compose parsing"),
+		#[cfg(feature = "completions")]
 		Commands::Completions { .. } => unreachable!("handled before compose parsing"),
 	}
 

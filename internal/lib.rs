@@ -21,6 +21,7 @@ pub mod ports;
 pub mod quadlet;
 pub mod size;
 pub mod substitute;
+#[cfg(feature = "update")]
 pub mod update;
 
 pub use compose::{
