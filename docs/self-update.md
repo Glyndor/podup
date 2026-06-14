@@ -7,9 +7,9 @@ install a modified binary.
 
 ## Trust anchor
 
-The trust anchor is **not** the download domain, DNS, or TLS. It is an **Ed25519
-public key compiled into the binary** (`internal/update/verify.rs`,
-`RELEASE_PUBKEY`). The matching private key exists only as the
+The trust anchor is **not** the download domain, DNS, or TLS. It is the set of
+**Ed25519 public keys compiled into the binary** (`internal/update/verify.rs`,
+`RELEASE_PUBKEYS`). The matching private key exists only as the
 `RELEASE_SIGN_KEY` GitHub Actions secret and signs every release in CI
 (`.github/workflows/release.yml`).
 
@@ -47,20 +47,24 @@ build-provenance attestation (`gh attestation verify`). If neither verifier is
 available it refuses to install. `PODUP_INSECURE_SKIP_VERIFY=1` is the explicit,
 documented opt-out (checksum only) for constrained environments.
 
-## The embedded public key
+## The embedded public keys
 
-The release public key is embedded in three places, all holding the same key
-(base64 `APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y=`):
+Each consumer holds **up to two** accepted release keys — an active key plus an
+empty rotation slot. The active key (base64
+`APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y=`) is embedded in three places:
 
-- `internal/update/verify.rs` — `RELEASE_PUBKEY` (raw 32 bytes).
-- `install.sh` — `PODUP_RELEASE_PUBKEY_B64` default (base64, unpadded).
-- `install.ps1` — `PubKeyB64` default (base64, unpadded).
+- `internal/update/verify.rs` — `RELEASE_PUBKEYS[0]` (raw 32 bytes); slot 1 is
+  `[0u8; 32]` until a second key is rolled in.
+- `install.sh` — `PODUP_RELEASE_PUBKEY_B64` default; `PODUP_RELEASE_PUBKEY2_B64`
+  is the (empty) rotation slot.
+- `install.ps1` — `PubKeyB64` default; `PubKey2B64` is the rotation slot.
 
-It is verified against the genuine published `SHA256SUMS.sig` by the
+A signature is trusted if it validates under **any** non-empty key. The active
+key is verified against the genuine published `SHA256SUMS.sig` by the
 `embedded_key_verifies_real_release` regression test, so an accidental or
-malicious edit to the constant fails CI. If the key is ever zeroed, both the
-binary and the installer fail closed and install nothing. The same key signs
-`podup`, `panel`, and `panel-agent` releases (shared `RELEASE_SIGN_KEY`).
+malicious edit to the constant fails CI. If every key is zeroed, both the binary
+and the installer fail closed and install nothing. The same key signs `podup`,
+`panel`, and `panel-agent` releases (shared `RELEASE_SIGN_KEY`).
 
 ### Deriving the public key from the signing secret
 
@@ -82,11 +86,24 @@ print("verify.rs bytes   :", ", ".join(str(b) for b in raw))
 ```
 
 Paste the base64 form into `install.sh` and `install.ps1`, and the byte array
-into `RELEASE_PUBKEY`.
+into `RELEASE_PUBKEYS`.
 
 ### Key rotation
 
-Rotating the signing key requires shipping a new binary that embeds the new
-public key *before* the first release signed with the new private key — older
-binaries verify only against the key they were built with. Plan a release that
-updates the embedded key, then switch the CI secret on the following release.
+Because each binary accepts up to two keys, the signing key can be rotated
+**without stranding installed binaries** — even if the private key leaks. Run the
+two-release procedure:
+
+1. **Transition release.** Add the new key to the rotation slot so the binary
+   embeds `[old, new]` (and add `PODUP_RELEASE_PUBKEY2_B64` / `PubKey2B64` to the
+   installers). Keep `RELEASE_SIGN_KEY` set to the **old** key so `SHA256SUMS` is
+   signed by `old`. Binaries already in the field trust only `old`, so they
+   accept this release and upgrade — gaining `new` in the process.
+2. **Retire release.** Move `new` into slot 0 and zero the rotation slot so the
+   binary embeds `[new]`, and switch the CI `RELEASE_SIGN_KEY` secret to the
+   **new** key. Every binary from step 1 trusts `new`, so all installs converge
+   on the new key and `old` is retired.
+
+During step 1 the leaked `old` key is still accepted for one release — an
+unavoidable cost of any rotation. The GitHub build-provenance attestation, which
+does not depend on the signing key, still proves origin during the window.

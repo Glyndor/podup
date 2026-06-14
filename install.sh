@@ -81,27 +81,37 @@ curl --proto '=https' --tlsv1.2 -fsSL -o "${TMP_DIR}/SHA256SUMS.sig" \
 # If neither verifier can run, the install fails closed. Set
 # PODUP_INSECURE_SKIP_VERIFY=1 to explicitly opt out (checksum only).
 
-# Baked-in base64 (unpadded) raw Ed25519 public key (32 bytes) matching the
-# release signing key (RELEASE_SIGN_KEY). Verified against the genuine published
-# SHA256SUMS.sig. Override for a fork via the PODUP_RELEASE_PUBKEY_B64 env var.
+# Baked-in base64 (unpadded) raw Ed25519 public keys (32 bytes each) matching the
+# release signing key (RELEASE_SIGN_KEY). Up to two are accepted: the second is
+# empty except during a key rotation, when it holds the new key so a release
+# signed by either key verifies. The signature passes if any key validates.
+# Override for a fork via the PODUP_RELEASE_PUBKEY_B64 / _PUBKEY2_B64 env vars.
 PODUP_RELEASE_PUBKEY_B64="${PODUP_RELEASE_PUBKEY_B64:-APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y}"
+PODUP_RELEASE_PUBKEY2_B64="${PODUP_RELEASE_PUBKEY2_B64:-}"
+
+PUBKEYS=()
+[[ -n "$PODUP_RELEASE_PUBKEY_B64" ]]  && PUBKEYS+=("$PODUP_RELEASE_PUBKEY_B64")
+[[ -n "$PODUP_RELEASE_PUBKEY2_B64" ]] && PUBKEYS+=("$PODUP_RELEASE_PUBKEY2_B64")
 
 verified=0
 
 log_info "Verifying SHA256SUMS signature ..."
-if [[ -n "$PODUP_RELEASE_PUBKEY_B64" ]]; then
+if [[ ${#PUBKEYS[@]} -gt 0 ]]; then
 	if command -v python3 >/dev/null 2>&1 && python3 -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey" 2>/dev/null; then
-		if python3 - "${TMP_DIR}/SHA256SUMS.sig" "${TMP_DIR}/SHA256SUMS" "$PODUP_RELEASE_PUBKEY_B64" <<'PYEOF'
+		if python3 - "${TMP_DIR}/SHA256SUMS.sig" "${TMP_DIR}/SHA256SUMS" "${PUBKEYS[@]}" <<'PYEOF'
 import base64, sys
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.exceptions import InvalidSignature
-sig_file, data_file, pubkey_b64 = sys.argv[1], sys.argv[2], sys.argv[3]
-key = Ed25519PublicKey.from_public_bytes(base64.b64decode(pubkey_b64 + "=="))
-try:
-    key.verify(open(sig_file, "rb").read(), open(data_file, "rb").read())
-    sys.exit(0)
-except InvalidSignature:
-    sys.exit(1)
+sig_file, data_file = sys.argv[1], sys.argv[2]
+sig = open(sig_file, "rb").read()
+data = open(data_file, "rb").read()
+for pubkey_b64 in sys.argv[3:]:
+    try:
+        Ed25519PublicKey.from_public_bytes(base64.b64decode(pubkey_b64 + "==")).verify(sig, data)
+        sys.exit(0)
+    except (InvalidSignature, ValueError):
+        continue
+sys.exit(1)
 PYEOF
 		then
 			log_ok "SHA256SUMS signature verified"

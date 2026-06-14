@@ -3,7 +3,7 @@
 //! Flow: resolve the latest release tag, compare against the compiled-in
 //! version, and (unless `--check`) download the platform binary plus the signed
 //! `SHA256SUMS` manifest. The manifest's Ed25519 signature is verified against
-//! the public key embedded in this binary (`verify::RELEASE_PUBKEY`); only
+//! the public keys embedded in this binary (`verify::RELEASE_PUBKEYS`); only
 //! then is the binary's digest checked against the manifest and the running
 //! executable atomically replaced. Every step fails closed — a missing key,
 //! bad signature, or checksum mismatch aborts before anything is written.
