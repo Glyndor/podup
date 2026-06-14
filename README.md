@@ -54,18 +54,24 @@ cargo build --release
 
 ### Debian / Ubuntu (apt)
 
-On amd64 Debian and Ubuntu, install from the apt repository so updates arrive
-through `apt upgrade`:
+On amd64 Debian and Ubuntu, install from the Glyndor apt repository so updates
+arrive through `apt upgrade`:
 
 ```bash
 curl -fsSL https://glyndor.net/install/podup | bash -s -- --apt
 ```
 
-This verifies and installs the `podup-archive-keyring` package (registering the
-signed repository at `https://apt.glyndor.net`), then installs `podup`. Because
-the signing key ships as a package, key renewals are picked up automatically by
-`apt upgrade`; the apt build omits self-update, since apt owns upgrades. For
-manual setup see [docs/debian-packaging.md](docs/debian-packaging.md).
+This installs the `glyndor-archive-keyring` package (registering the signed
+repository at `https://apt.glyndor.net`) and then `podup`. Because the signing
+key ships as a package, key renewals are picked up automatically by `apt
+upgrade`; the apt build omits self-update, since apt owns upgrades. To set it up
+by hand:
+
+```bash
+curl -fsSLO https://apt.glyndor.net/glyndor-archive-keyring.deb
+sudo dpkg -i glyndor-archive-keyring.deb
+sudo apt update && sudo apt install podup
+```
 
 ### Updating
 
