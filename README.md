@@ -54,8 +54,8 @@ cargo build --release
 
 ### Debian / Ubuntu (apt)
 
-On amd64 Debian and Ubuntu, install from the Glyndor apt repository so updates
-arrive through `apt upgrade`:
+On Debian and Ubuntu (amd64 and arm64), install from the Glyndor apt repository
+so updates arrive through `apt upgrade`:
 
 ```bash
 curl -fsSL https://glyndor.net/install/podup | bash -s -- --apt
@@ -124,7 +124,7 @@ async fn main() -> podup::Result<()> {
 
 ```toml
 [dependencies]
-podup = { git = "https://github.com/Glyndor/podup", tag = "v0.19.0" }
+podup = { git = "https://github.com/Glyndor/podup", tag = "v0.20.0" }
 ```
 
 ## 📖 Docs

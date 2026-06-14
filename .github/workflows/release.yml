@@ -140,12 +140,20 @@ jobs:
           if-no-files-found: error
 
   build-deb:
-    name: Build Debian package
+    name: Build Debian package (${{ matrix.arch }})
     needs: verify
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.runner }}
     container: debian:sid
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Install build tooling
         env:
@@ -166,14 +174,16 @@ jobs:
 
       - name: Build the package
         run: |
+          # dpkg-buildpackage builds for the host architecture, so each runner
+          # produces its own arch's .deb natively.
           dpkg-checkbuilddeps
           dpkg-buildpackage -us -uc -b
 
       - name: Stage the .deb into the workspace
         run: |
-          deb=$(ls ../podup_*_amd64.deb 2>/dev/null | head -n1)
+          deb=$(ls ../podup_*_${{ matrix.arch }}.deb 2>/dev/null | head -n1)
           if [ -z "$deb" ]; then
-            echo "::error::no .deb artifact was produced"
+            echo "::error::no ${{ matrix.arch }} .deb artifact was produced"
             exit 1
           fi
           cp "$deb" "$(basename "$deb")"
@@ -182,8 +192,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: podup-deb
-          path: podup_*_amd64.deb
+          name: podup-deb-${{ matrix.arch }}
+          path: podup_*_${{ matrix.arch }}.deb
           retention-days: 1
           if-no-files-found: error
 
@@ -206,15 +216,14 @@ jobs:
         with:
           merge-multiple: true
 
-      - name: Resolve Debian package name
+      - name: Verify both Debian packages are present
         run: |
-          deb=$(ls podup_*_amd64.deb 2>/dev/null | head -n1)
-          if [ -z "$deb" ]; then
-            echo "::error::Debian package artifact missing"
-            exit 1
-          fi
-          echo "DEB=$deb" >> "$GITHUB_ENV"
-          echo "Releasing Debian package $deb"
+          for arch in amd64 arm64; do
+            if ! ls podup_*_${arch}.deb >/dev/null 2>&1; then
+              echo "::error::Debian package artifact for ${arch} is missing"
+              exit 1
+            fi
+          done
 
       - name: Generate checksums
         run: |
@@ -225,10 +234,11 @@ jobs:
             podup-darwin-x86_64 \
             podup-windows-x86_64.exe \
             podup-windows-arm64.exe \
-            "$DEB" \
+            podup_*_amd64.deb \
+            podup_*_arm64.deb \
             > SHA256SUMS
 
-      - name: Sign SHA256SUMS and the Debian package
+      - name: Sign SHA256SUMS and the Debian packages
         env:
           RELEASE_SIGN_KEY: ${{ secrets.RELEASE_SIGN_KEY }}
           PYTHONUTF8: "1"
@@ -240,7 +250,9 @@ jobs:
           fi
           python3 -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
           python3 .github/scripts/sign.py "$RELEASE_SIGN_KEY" SHA256SUMS
-          python3 .github/scripts/sign.py "$RELEASE_SIGN_KEY" "$DEB"
+          for deb in podup_*_amd64.deb podup_*_arm64.deb; do
+            python3 .github/scripts/sign.py "$RELEASE_SIGN_KEY" "$deb"
+          done
 
       - name: Create GitHub Release
         env:
@@ -262,8 +274,10 @@ jobs:
             podup-windows-x86_64.exe.sig \
             podup-windows-arm64.exe \
             podup-windows-arm64.exe.sig \
-            "$DEB" \
-            "$DEB.sig" \
+            podup_*_amd64.deb \
+            podup_*_amd64.deb.sig \
+            podup_*_arm64.deb \
+            podup_*_arm64.deb.sig \
             SHA256SUMS \
             SHA256SUMS.sig \
             install.sh \
