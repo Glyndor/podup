@@ -69,7 +69,7 @@ pub fn substitute(input: &str, vars: &HashMap<String, String>) -> Result<String>
 ///   the current process env it will *not* be overridden by the `.env` file.
 pub fn load_dotenv(dir: &Path) -> HashMap<String, String> {
 	let path = dir.join(".env");
-	let Ok(content) = crate::fsutil::read_to_string_capped(&path) else {
+	let Ok(content) = crate::filesystem::read_to_string_capped(&path) else {
 		return HashMap::new();
 	};
 
@@ -105,7 +105,7 @@ pub fn build_vars_with_env_files(dir: &Path, extra: &[String]) -> HashMap<String
 		} else {
 			dir.join(path)
 		};
-		let Ok(content) = crate::fsutil::read_to_string_capped(&abs) else {
+		let Ok(content) = crate::filesystem::read_to_string_capped(&abs) else {
 			continue;
 		};
 		for (key, value) in crate::dotenv::parse(&content) {

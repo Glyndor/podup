@@ -275,7 +275,7 @@ pub(crate) fn parse_file_inner_with_env(
 	dir: &Path,
 	extra_env_files: &[String],
 ) -> Result<ComposeFile> {
-	let content = crate::fsutil::read_to_string_capped(path).map_err(|e| {
+	let content = crate::filesystem::read_to_string_capped(path).map_err(|e| {
 		if e.kind() == std::io::ErrorKind::NotFound {
 			ComposeError::FileNotFound(path.display().to_string())
 		} else {
