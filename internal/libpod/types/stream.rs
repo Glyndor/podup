@@ -5,7 +5,7 @@
 //! Stream type 1 = stdout, 2 = stderr.
 
 use bytes::Bytes;
-use futures_core::Stream;
+use futures_util::stream::Stream;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
 use std::pin::Pin;
