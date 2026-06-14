@@ -1,3 +1,17 @@
+podup (0.18.0) unstable; urgency=medium
+
+  * Trim dependencies: drop the dead "ansi" tracing-subscriber feature, the
+    no-op futures-util "async-await" feature, the redundant direct futures-core
+    dependency, and clap's default "color"/"suggestions" features — removing
+    eight crates from the binary.
+  * Feature-gate self-update behind a default-on "update" feature; the Debian
+    package now builds without it (apt owns upgrades), dropping the TLS and
+    Ed25519 stack (~24 crates) from the packaged binary.
+  * Accept up to two release signing keys, so the signing key can be rotated
+    across two releases without stranding installed binaries.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 13 Jun 2026 20:46:36 -0500
+
 podup (0.17.1) unstable; urgency=medium
 
   * Stop rejecting absolute and parent-relative "env_file" and "label_file"
