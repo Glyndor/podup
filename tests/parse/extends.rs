@@ -175,6 +175,44 @@ services:
 }
 
 #[test]
+fn extends_external_file_parent_traversal_is_allowed() {
+	// The compose file is trusted input: `extends.file` with `../` must resolve,
+	// matching docker-compose and podman-compose (monorepo shared-base pattern).
+	let dir = tempfile::tempdir().unwrap();
+
+	let common_path = dir.path().join("common.yml");
+	let mut f = std::fs::File::create(&common_path).unwrap();
+	writeln!(
+		f,
+		r#"
+services:
+  base:
+    image: alpine
+"#
+	)
+	.unwrap();
+
+	let sub = dir.path().join("stack");
+	std::fs::create_dir(&sub).unwrap();
+	let main_path = sub.join("docker-compose.yml");
+	let mut m = std::fs::File::create(&main_path).unwrap();
+	writeln!(
+		m,
+		r#"
+services:
+  app:
+    extends:
+      service: base
+      file: ../common.yml
+"#
+	)
+	.unwrap();
+
+	let file = parse_file(&main_path).unwrap();
+	assert_eq!(file.services["app"].image.as_deref(), Some("alpine"));
+}
+
+#[test]
 fn extends_external_file_anchors_relative_paths() {
 	let dir = tempfile::tempdir().unwrap();
 	let sub = dir.path().join("svc");

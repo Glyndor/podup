@@ -170,6 +170,9 @@ impl Engine {
 
 		for dep in service.depends_on.service_names() {
 			let condition = service.depends_on.condition_for(&dep);
+			// `required: false` makes the dependency optional — a failed wait
+			// must not abort `up`, matching docker-compose v2.
+			let required = service.depends_on.required_for(&dep);
 			let dep_service = match file.services.get(&dep) {
 				Some(s) => s,
 				None => continue,
@@ -179,8 +182,8 @@ impl Engine {
 			}
 			let dep_container = self.container_name(&dep, dep_service);
 
-			match condition {
-				ServiceCondition::ServiceStarted => {}
+			let wait = match condition {
+				ServiceCondition::ServiceStarted => Ok(()),
 				ServiceCondition::ServiceHealthy => {
 					// Wait unless the healthcheck is explicitly disabled in
 					// compose. With no compose healthcheck we still wait:
@@ -195,13 +198,23 @@ impl Engine {
 						tracing::debug!(
 							"{dep} healthcheck disabled — skipping service_healthy wait"
 						);
+						Ok(())
 					} else {
-						self.wait_healthy(&dep_container, dep_service).await?;
+						self.wait_healthy(&dep_container, dep_service).await
 					}
 				}
 				ServiceCondition::ServiceCompletedSuccessfully => {
-					self.wait_completed(&dep_container).await?;
+					self.wait_completed(&dep_container).await
 				}
+			};
+			match wait {
+				Ok(()) => {}
+				Err(e) if !required => {
+					tracing::debug!(
+						"optional dependency {dep} (required: false) did not satisfy its condition: {e}"
+					);
+				}
+				Err(e) => return Err(e),
 			}
 		}
 
