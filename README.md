@@ -6,6 +6,10 @@
 **podup** runs your `docker-compose.yml` on rootless Podman — a single static
 binary, written in Rust, with no daemon and no Python runtime.
 
+<p align="center">
+  <img src="docs/assets/podup-demo.gif" alt="podup up and podup ps running a compose stack on rootless Podman" width="760">
+</p>
+
 ```mermaid
 flowchart LR
 	A["docker-compose.yml"] --> B["podup"]
