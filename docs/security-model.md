@@ -40,12 +40,14 @@ non-portable, but this is hardening, not a security guarantee.)
 
 ## Secret and config handling
 
-- `secrets:`/`configs:` sourced from files or inline content are staged into a
-  per-user directory created `0700`, owned by and accessible only to the
-  invoking user; the staging directory is verified (ownership + mode, symlinks
-  rejected) before use and cleaned up afterwards.
+- `secrets:`/`configs:` sourced from inline `content:` or `environment:` are
+  created as Podman-native secrets over the libpod API (under a project-scoped
+  name) and injected into the container — podup writes no secret material to a
+  host directory. They are removed again on `podup down`.
 - `external: true` secrets/configs are injected as Podman-native secrets
-  (pre-flighted for existence), not staged on disk.
+  (pre-flighted for existence), pointing at a pre-existing `podman secret`.
+- `file:` secrets/configs are bind-mounted read-only from the host path you
+  provide; the file already lives on the host, so no copy is made.
 - Dangerous secret file modes (setuid/setgid/sticky/executable) are rejected.
 - The `config` subcommand redacts inline `content:` secrets before printing.
 

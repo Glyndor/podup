@@ -32,10 +32,12 @@ Every core Compose spec key is supported:
 ### External secrets and configs
 
 A secret or config declared `external: true` is mounted from an existing
-Podman secret rather than from a file in the project tree — the recommended
-pattern for production credentials, since the secret material never lands in a
-bind-mounted file. Create the secret before running, exactly as you would with
-`docker secret`:
+Podman secret rather than from a value in the project tree — the recommended
+pattern for production credentials, since the secret material never appears in
+the compose file or its history. (Inline `content:`/`environment:` sources are
+also injected as Podman-native secrets, not host bind-mounts, but their value
+still lives in the compose file.) Create the secret before running, exactly as
+you would with `docker secret`:
 
 ```sh
 printf '%s' "$DB_PASSWORD" | podman secret create db_password -
