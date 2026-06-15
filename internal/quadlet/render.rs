@@ -45,6 +45,8 @@ pub(super) fn render_volume(vol: &VolumeMount, declared_volumes: &[&str]) -> Str
 			source,
 			target,
 			read_only,
+			bind,
+			volume,
 			..
 		} => {
 			let src = source.clone().unwrap_or_default();
@@ -53,13 +55,34 @@ pub(super) fn render_volume(vol: &VolumeMount, declared_volumes: &[&str]) -> Str
 			} else {
 				src
 			};
+			// Collect mount options into the trailing `:opt,opt` field so nothing
+			// is dropped: SELinux relabel (`z`/`Z`) and bind propagation are
+			// security- and correctness-relevant on hardened hosts.
+			let mut opts: Vec<String> = Vec::new();
+			if *read_only == Some(true) {
+				opts.push("ro".to_string());
+			}
+			if let Some(b) = bind {
+				if let Some(selinux) = &b.selinux {
+					opts.push(selinux.clone());
+				}
+				if let Some(propagation) = &b.propagation {
+					opts.push(propagation.clone());
+				}
+			}
+			if let Some(v) = volume {
+				if v.nocopy == Some(true) {
+					opts.push("nocopy".to_string());
+				}
+			}
 			let mut out = if src.is_empty() {
 				target.clone()
 			} else {
 				format!("{src}:{target}")
 			};
-			if *read_only == Some(true) {
-				out.push_str(":ro");
+			if !opts.is_empty() {
+				out.push(':');
+				out.push_str(&opts.join(","));
 			}
 			out
 		}

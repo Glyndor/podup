@@ -1,12 +1,12 @@
 //! Build the individual `.network`, `.volume` and `.container` units.
 
-use crate::compose::types::{Command, PortMapping, RestartPolicy, Service};
+use crate::compose::types::{Command, PortMapping, RestartPolicy, Service, ServiceSecretRef};
 use crate::ports::parse_ports;
 use crate::size::parse_duration_secs;
 
 use super::render::{
 	render_command, render_publish_port, render_restart, render_volume, safe_unit_stem,
-	sanitize_value, sorted_label_pairs, sorted_pairs, Section,
+	sorted_label_pairs, sorted_pairs, Section,
 };
 use super::warnings::collect_warnings;
 use super::QuadletUnit;
@@ -55,19 +55,120 @@ fn render_healthcheck(service: &Service, container: &mut Section) {
 	}
 }
 
-pub(super) fn network_unit(name: &str, project: &str, _has_config: bool) -> QuadletUnit {
-	let value = sanitize_value(&format!("{project}_{name}"));
-	let contents =
-		format!("[Network]\nNetworkName={value}\n\n[Install]\nWantedBy=default.target\n");
+/// Render a service `secrets:` entry into a Quadlet `Secret=` value
+/// (`name[,target=,uid=,gid=,mode=]`).
+fn render_secret(secret: &ServiceSecretRef) -> String {
+	match secret {
+		ServiceSecretRef::Short(name) => name.clone(),
+		ServiceSecretRef::Long {
+			source,
+			target,
+			uid,
+			gid,
+			mode,
+		} => {
+			let mut s = source.clone();
+			if let Some(t) = target {
+				s.push_str(&format!(",target={t}"));
+			}
+			if let Some(u) = uid {
+				s.push_str(&format!(",uid={u}"));
+			}
+			if let Some(g) = gid {
+				s.push_str(&format!(",gid={g}"));
+			}
+			if let Some(m) = mode {
+				s.push_str(&format!(",mode={m:o}"));
+			}
+			s
+		}
+	}
+}
+
+/// Map a single compose `security_opt` entry onto the dedicated Quadlet key
+/// where one exists; unrecognized entries are reported rather than dropped.
+fn map_security_opt(opt: &str, container: &mut Section, name: &str, warnings: &mut Vec<String>) {
+	if let Some(rest) = opt.strip_prefix("no-new-privileges") {
+		let val = rest.trim_start_matches([':', '=']);
+		let enabled = val.is_empty() || val == "true";
+		container.add("NoNewPrivileges", enabled.to_string());
+	} else if let Some(profile) = opt.strip_prefix("seccomp=") {
+		container.add("SeccompProfile", profile.to_string());
+	} else if let Some(profile) = opt
+		.strip_prefix("apparmor=")
+		.or_else(|| opt.strip_prefix("apparmor:"))
+	{
+		container.add("AppArmor", profile.to_string());
+	} else if let Some(label) = opt.strip_prefix("label=") {
+		if label == "disable" {
+			container.add("SecurityLabelDisable", "true".to_string());
+		} else if let Some(t) = label.strip_prefix("type:") {
+			container.add("SecurityLabelType", t.to_string());
+		} else if let Some(l) = label.strip_prefix("level:") {
+			container.add("SecurityLabelLevel", l.to_string());
+		} else {
+			warnings.push(format!(
+				"{name}: security_opt 'label={label}' has no Quadlet key and is skipped"
+			));
+		}
+	} else {
+		warnings.push(format!(
+			"{name}: security_opt '{opt}' has no Quadlet mapping and is skipped"
+		));
+	}
+}
+
+pub(super) fn network_unit(
+	name: &str,
+	project: &str,
+	config: Option<&crate::compose::types::NetworkConfig>,
+) -> QuadletUnit {
+	let mut net = Section::new("Network");
+	net.add("NetworkName", format!("{project}_{name}"));
+	if let Some(cfg) = config {
+		if let Some(driver) = &cfg.driver {
+			net.add("Driver", driver.clone());
+		}
+		if cfg.internal == Some(true) {
+			net.add("Internal", "true".to_string());
+		}
+		if cfg.enable_ipv6 == Some(true) {
+			net.add("IPv6", "true".to_string());
+		}
+		if let Some(ipam) = &cfg.ipam {
+			if let Some(ipam_driver) = &ipam.driver {
+				net.add("IPAMDriver", ipam_driver.clone());
+			}
+		}
+		for (key, val) in sorted_label_pairs(cfg.labels.to_map()) {
+			net.add("Label", format!("{key}={val}"));
+		}
+	}
+	let mut contents = net.render();
+	contents.push_str("\n[Install]\nWantedBy=default.target\n");
 	QuadletUnit {
 		filename: format!("{}.network", safe_unit_stem(name)),
 		contents,
 	}
 }
 
-pub(super) fn volume_unit(name: &str, project: &str, _has_config: bool) -> QuadletUnit {
-	let value = sanitize_value(&format!("{project}_{name}"));
-	let contents = format!("[Volume]\nVolumeName={value}\n\n[Install]\nWantedBy=default.target\n");
+pub(super) fn volume_unit(
+	name: &str,
+	project: &str,
+	config: Option<&crate::compose::types::VolumeConfig>,
+) -> QuadletUnit {
+	let mut vol = Section::new("Volume");
+	vol.add("VolumeName", format!("{project}_{name}"));
+	if let Some(cfg) = config {
+		if let Some(driver) = &cfg.driver {
+			vol.add("Driver", driver.clone());
+		}
+		for (key, val) in sorted_label_pairs(cfg.labels.to_map()) {
+			vol.add("Label", format!("{key}={val}"));
+		}
+	}
+	let mut contents = vol.render();
+	contents.push_str("\n[Install]\nWantedBy=default.target\n");
 	QuadletUnit {
 		filename: format!("{}.volume", safe_unit_stem(name)),
 		contents,
@@ -78,6 +179,7 @@ pub(super) fn container_unit(
 	name: &str,
 	service: &Service,
 	declared_volumes: &[&str],
+	declared_networks: &[&str],
 	warnings: &mut Vec<String>,
 ) -> QuadletUnit {
 	let mut unit = Section::new("Unit");
@@ -106,7 +208,16 @@ pub(super) fn container_unit(
 		container.add("HostName", hostname.clone());
 	}
 	if let Some(user) = &service.user {
-		container.add("User", user.clone());
+		// Quadlet `User=` takes a UID/username only; a `uid:gid` compose value
+		// must be split so the GID lands in the dedicated `Group=` key (Quadlet
+		// recombines them into `--user uid:gid`).
+		match user.split_once(':') {
+			Some((uid, gid)) => {
+				container.add("User", uid.to_string());
+				container.add("Group", gid.to_string());
+			}
+			None => container.add("User", user.clone()),
+		}
 	}
 	if let Some(wd) = &service.working_dir {
 		container.add("WorkingDir", wd.clone());
@@ -145,7 +256,14 @@ pub(super) fn container_unit(
 		container.add("Volume", render_volume(vol, declared_volumes));
 	}
 	for net in service.networks.names() {
-		container.add("Network", format!("{net}.network"));
+		// A declared (non-external) network is backed by a generated `.network`
+		// unit; an external network is referenced by its existing name directly,
+		// since no unit is emitted for it.
+		if declared_networks.contains(&net.as_str()) {
+			container.add("Network", format!("{net}.network"));
+		} else {
+			container.add("Network", net.clone());
+		}
 	}
 	for (key, val) in sorted_label_pairs(service.labels.to_map()) {
 		container.add("Label", format!("{key}={val}"));
@@ -224,6 +342,50 @@ pub(super) fn container_unit(
 	// container:) have no Quadlet key and are reported by collect_warnings.
 	if service.network_mode.as_deref() == Some("host") {
 		container.add("Network", "host".to_string());
+	}
+	for group in &service.group_add {
+		container.add("GroupAdd", group.clone());
+	}
+	for port in &service.expose {
+		container.add("ExposeHostPort", port.clone());
+	}
+	for net in service.networks.names() {
+		if let Some(cfg) = service.networks.config_for(&net) {
+			if let Some(aliases) = &cfg.aliases {
+				for alias in aliases {
+					container.add("NetworkAlias", alias.clone());
+				}
+			}
+		}
+	}
+	for opt in &service.security_opt {
+		map_security_opt(opt, &mut container, name, warnings);
+	}
+	if let Some(logging) = &service.logging {
+		if let Some(driver) = &logging.driver {
+			container.add("LogDriver", driver.clone());
+		}
+		for (key, val) in sorted_label_pairs(logging.options.clone()) {
+			container.add("LogOpt", format!("{key}={val}"));
+		}
+	}
+	if let Some(pull) = &service.pull_policy {
+		container.add("Pull", pull.clone());
+	}
+	// `deploy.resources.limits.memory` is the modern equivalent of `mem_limit`.
+	if service.mem_limit.is_none() {
+		if let Some(mem) = service
+			.deploy
+			.as_ref()
+			.and_then(|d| d.resources.as_ref())
+			.and_then(|r| r.limits.as_ref())
+			.and_then(|l| l.memory.as_ref())
+		{
+			container.add("Memory", mem.clone());
+		}
+	}
+	for secret in &service.secrets {
+		container.add("Secret", render_secret(secret));
 	}
 	render_healthcheck(service, &mut container);
 
