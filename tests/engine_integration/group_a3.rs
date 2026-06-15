@@ -226,7 +226,7 @@ async fn secret_long_form_ref() {
 	};
 	let proj = proj("slf");
 	let engine = Engine::new(client, proj.clone());
-	// mode: 256 = 0o400; uid exercises apply_owner (best-effort chown)
+	// mode: 256 = 0o400; uid is passed through to the native secret spec
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    secrets:\n      - source: mysecret\n        target: /run/secrets/custom_name\n        mode: 256\n        uid: \"0\"\nsecrets:\n  mysecret:\n    content: \"topsecret\"\n",
 	)

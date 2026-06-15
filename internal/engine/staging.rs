@@ -1,17 +1,16 @@
-//! Private staging of inline secret/config content.
+//! Per-user private base directory used by the project lock.
 //!
-//! Inline `content:`/`environment:` secrets and configs are written to a
-//! per-user, per-project staging directory before being bind-mounted into
-//! containers. The base directory must never be usable by another local
-//! user. On unix it is created 0700 under `$XDG_RUNTIME_DIR` (fallback:
+//! [`staging_base`] returns a directory that must never be usable by another
+//! local user. On unix it is created 0700 under `$XDG_RUNTIME_DIR` (fallback:
 //! `temp_dir()/podup-<euid>`) and verified — real directory, owned by the
-//! current user, no group/other bits — failing closed on anything else.
-//! On Windows the base lives under the per-user temp directory, whose
-//! default ACLs already restrict access to the owning user; only the
-//! non-symlink directory check applies.
+//! current user, no group/other bits — failing closed on anything else. On
+//! Windows the base lives under the per-user temp directory, whose default
+//! ACLs already restrict access to the owning user; only the non-symlink
+//! directory check applies. [`reject_dangerous_secret_mode`] guards a compose
+//! `mode:` before it is applied to a native secret.
 
-// libc FFI (geteuid/chown) is needed here; each block carries a soundness
-// comment. Opt back into `unsafe` for this module only.
+// libc FFI (geteuid) is needed here; the block carries a soundness comment.
+// Opt back into `unsafe` for this module only.
 #![allow(unsafe_code)]
 
 use crate::error::{ComposeError, Result};
@@ -76,58 +75,14 @@ pub(super) fn staging_base() -> Result<PathBuf> {
 	Ok(base)
 }
 
-/// Create `dir` (recursively) accessible only to the current user.
-#[cfg(unix)]
-pub(super) fn create_private_subdir(dir: &Path) -> Result<()> {
-	use std::os::unix::fs::DirBuilderExt;
-
-	std::fs::DirBuilder::new()
-		.recursive(true)
-		.mode(0o700)
-		.create(dir)
-		.map_err(ComposeError::Io)
-}
-
-/// Create `dir` (recursively); the staging base already restricts access
-/// to the current user via inherited ACLs.
-#[cfg(windows)]
-pub(super) fn create_private_subdir(dir: &std::path::Path) -> Result<()> {
-	std::fs::create_dir_all(dir).map_err(ComposeError::Io)
-}
-
-/// Create `path` readable only by the current user and write `content`.
-#[cfg(unix)]
-pub(super) fn write_private_file(path: &Path, content: &[u8]) -> Result<()> {
-	use std::io::Write;
-	use std::os::unix::fs::OpenOptionsExt;
-
-	// 0o600 on create avoids a world-readable window before any chmod.
-	let mut file = std::fs::OpenOptions::new()
-		.write(true)
-		.create(true)
-		.truncate(true)
-		.mode(0o600)
-		.open(path)
-		.map_err(ComposeError::Io)?;
-	file.write_all(content).map_err(ComposeError::Io)
-}
-
-/// Create `path` and write `content`; access is restricted by the ACLs
-/// inherited from the per-user staging directory.
-#[cfg(windows)]
-pub(super) fn write_private_file(path: &std::path::Path, content: &[u8]) -> Result<()> {
-	std::fs::write(path, content).map_err(ComposeError::Io)
-}
-
 /// Reject permission bits that are dangerous on a secret/config file no matter
 /// where it is materialised: any execute bit (`0o111`) and the setuid/setgid/
 /// sticky bits (`0o7000`). A secret/config holds data, never code, so these are
 /// a misconfiguration or an attack and are refused unconditionally. `ctx` names
 /// the offending secret/config in the error message.
 ///
-/// Unlike [`apply_mode`], this does **not** reject group/world-read bits: a
-/// Podman-native secret is materialised inside the container's own mount
-/// namespace (not the shared host staging directory) and `0o444` is the
+/// This does **not** reject group/world-read bits: a Podman-native secret is
+/// materialised inside the container's own mount namespace and `0o444` is the
 /// Podman/compose default, so a readable mode is legitimate for that path.
 pub(super) fn reject_dangerous_secret_mode(mode: u32, ctx: &str) -> Result<()> {
 	if mode & 0o111 != 0 {
@@ -143,71 +98,6 @@ pub(super) fn reject_dangerous_secret_mode(mode: u32, ctx: &str) -> Result<()> {
 		)));
 	}
 	Ok(())
-}
-
-/// Apply a compose `mode:` value (octal unix permissions) to `path`.
-///
-/// Rejects, on top of [`reject_dangerous_secret_mode`] (execute, setuid,
-/// setgid, sticky), the group-readable (`g+r`, 0o040) and world-readable
-/// (`o+r`, 0o004) bits — a secret/config materialised on the shared host
-/// staging directory must never be readable by another local user.
-#[cfg(unix)]
-pub(super) fn apply_mode(path: &Path, mode: u32) -> Result<()> {
-	use std::os::unix::fs::PermissionsExt;
-
-	if mode & 0o044 != 0 {
-		return Err(ComposeError::Unsupported(format!(
-			"mode {mode:#o} for {} grants group- or world-read access to a secret/config file; \
-			 use a mode with no g+r or o+r bits (e.g. 0o400 or 0o600)",
-			path.display()
-		)));
-	}
-	reject_dangerous_secret_mode(mode, &path.display().to_string())?;
-	std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).map_err(ComposeError::Io)
-}
-
-/// Unix permission modes have no Windows equivalent — warn and continue.
-#[cfg(windows)]
-pub(super) fn apply_mode(path: &std::path::Path, mode: u32) -> Result<()> {
-	tracing::warn!(
-		"ignoring mode {mode:#o} for {}: unix permissions do not apply on this platform",
-		path.display()
-	);
-	Ok(())
-}
-
-/// Best-effort chown — succeeds in rootful Podman, no-op in rootless.
-#[cfg(unix)]
-pub(super) fn apply_owner(path: &Path, uid: Option<&str>, gid: Option<&str>) {
-	let uid_val: libc::uid_t = uid.and_then(|s| s.parse().ok()).unwrap_or(u32::MAX);
-	let gid_val: libc::gid_t = gid.and_then(|s| s.parse().ok()).unwrap_or(u32::MAX);
-	if uid_val != u32::MAX || gid_val != u32::MAX {
-		use std::ffi::CString;
-		use std::os::unix::ffi::OsStrExt;
-		if let Ok(p) = CString::new(path.as_os_str().as_bytes()) {
-			// SAFETY: p is a valid NUL-terminated C string derived from a path we own;
-			// uid_val and gid_val are plain integers; chown has no memory-safety requirements.
-			let rc = unsafe { libc::chown(p.as_ptr(), uid_val, gid_val) };
-			if rc != 0 {
-				tracing::warn!(
-					"chown failed for {}: {}",
-					path.display(),
-					std::io::Error::last_os_error()
-				);
-			}
-		}
-	}
-}
-
-/// Unix ownership has no Windows equivalent — warn and continue.
-#[cfg(windows)]
-pub(super) fn apply_owner(path: &std::path::Path, uid: Option<&str>, gid: Option<&str>) {
-	if uid.is_some() || gid.is_some() {
-		tracing::warn!(
-			"ignoring uid/gid for {}: unix ownership does not apply on this platform",
-			path.display()
-		);
-	}
 }
 
 /// Create `dir` (0700) if needed and require it to be a private directory.
@@ -392,76 +282,27 @@ mod ensure_dir_tests {
 	}
 }
 
-#[cfg(all(test, unix))]
-mod apply_mode_tests {
-	use super::apply_mode;
+#[cfg(test)]
+mod reject_mode_tests {
+	use super::reject_dangerous_secret_mode;
 
 	#[test]
-	fn owner_only_modes_accepted() {
-		let dir = tempfile::tempdir().expect("tempdir");
-		let file = dir.path().join("secret");
-		std::fs::write(&file, b"value").expect("write");
-		assert!(apply_mode(&file, 0o400).is_ok());
-		assert!(apply_mode(&file, 0o600).is_ok());
-		assert!(apply_mode(&file, 0o200).is_ok());
+	fn data_modes_accepted() {
+		// A secret holds data: read/write owner bits and the world-readable
+		// default are all fine for a native secret.
+		assert!(reject_dangerous_secret_mode(0o400, "s").is_ok());
+		assert!(reject_dangerous_secret_mode(0o600, "s").is_ok());
+		assert!(reject_dangerous_secret_mode(0o444, "s").is_ok());
 	}
 
 	#[test]
-	fn executable_mode_rejected() {
-		let dir = tempfile::tempdir().expect("tempdir");
-		let file = dir.path().join("secret");
-		std::fs::write(&file, b"value").expect("write");
-		// A secret/config file holds data, never code — the execute bit is
-		// rejected even when only the owner-execute bit is set.
-		assert!(apply_mode(&file, 0o100).is_err());
-		assert!(apply_mode(&file, 0o700).is_err());
-		assert!(apply_mode(&file, 0o500).is_err());
-	}
-
-	#[test]
-	fn group_readable_mode_rejected() {
-		let dir = tempfile::tempdir().expect("tempdir");
-		let file = dir.path().join("secret");
-		std::fs::write(&file, b"value").expect("write");
-		assert!(apply_mode(&file, 0o640).is_err());
-		assert!(apply_mode(&file, 0o644).is_err());
-	}
-
-	#[test]
-	fn world_readable_mode_rejected() {
-		let dir = tempfile::tempdir().expect("tempdir");
-		let file = dir.path().join("secret");
-		std::fs::write(&file, b"value").expect("write");
-		assert!(apply_mode(&file, 0o604).is_err());
-		assert!(apply_mode(&file, 0o777).is_err());
-		assert!(apply_mode(&file, 0o444).is_err());
-	}
-
-	#[test]
-	fn setuid_mode_rejected() {
-		let dir = tempfile::tempdir().expect("tempdir");
-		let file = dir.path().join("secret");
-		std::fs::write(&file, b"value").expect("write");
-		assert!(apply_mode(&file, 0o4400).is_err());
-		assert!(apply_mode(&file, 0o4000).is_err());
-	}
-
-	#[test]
-	fn setgid_mode_rejected() {
-		let dir = tempfile::tempdir().expect("tempdir");
-		let file = dir.path().join("secret");
-		std::fs::write(&file, b"value").expect("write");
-		assert!(apply_mode(&file, 0o2400).is_err());
-		assert!(apply_mode(&file, 0o2000).is_err());
-	}
-
-	#[test]
-	fn sticky_mode_rejected() {
-		let dir = tempfile::tempdir().expect("tempdir");
-		let file = dir.path().join("secret");
-		std::fs::write(&file, b"value").expect("write");
-		assert!(apply_mode(&file, 0o1400).is_err());
-		assert!(apply_mode(&file, 0o1000).is_err());
+	fn execute_setuid_setgid_sticky_rejected() {
+		for mode in [0o100, 0o500, 0o700, 0o4000, 0o2000, 0o1000] {
+			assert!(
+				reject_dangerous_secret_mode(mode, "s").is_err(),
+				"{mode:#o} must be rejected"
+			);
+		}
 	}
 }
 

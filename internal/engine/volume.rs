@@ -14,7 +14,7 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::types::volume::VolumeCreateOptions;
 use crate::libpod::{urlencoded, API_PREFIX};
 
-use super::{staging, Engine};
+use super::Engine;
 
 impl Engine {
 	pub(super) async fn create_volumes(&self, file: &ComposeFile) -> Result<()> {
@@ -95,22 +95,5 @@ impl Engine {
 			))),
 			Err(e) => Err(ComposeError::Podman(e)),
 		}
-	}
-
-	pub(super) fn cleanup_temp_dir(&self) {
-		if let Ok(dir) = self.staging_dir() {
-			let _ = std::fs::remove_dir_all(dir);
-		}
-	}
-
-	pub(super) fn staging_dir(&self) -> Result<std::path::PathBuf> {
-		if !staging::is_safe_project_name(&self.project) {
-			return Err(ComposeError::Unsupported(format!(
-				"project name must be ASCII alphanumeric/dash/underscore/dot \
-				 and must not start with a dot: {}",
-				self.project
-			)));
-		}
-		Ok(staging::staging_base()?.join(&self.project))
 	}
 }

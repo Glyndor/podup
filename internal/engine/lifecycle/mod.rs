@@ -66,7 +66,7 @@ impl Engine {
 		force_recreate: bool,
 		no_deps: bool,
 	) -> Result<()> {
-		let r: Result<()> = async {
+		async {
 			let levels = crate::compose::resolve_levels(file)?;
 			let active = active_profiles_set(active_profiles);
 
@@ -129,13 +129,7 @@ impl Engine {
 
 			Ok(())
 		}
-		.await;
-		// clean up staging dir on partial failure so inline secret/config
-		// files are not left behind when up errors mid-way.
-		if r.is_err() {
-			self.cleanup_temp_dir();
-		}
-		r
+		.await
 	}
 
 	/// Bring up a single service: honor profile/target filters, wait on its
@@ -230,7 +224,7 @@ impl Engine {
 			.or(service.deploy.as_ref().and_then(|d| d.replicas))
 			.unwrap_or(1) as usize;
 
-		let new_hash = config_hash(service);
+		let new_hash = config_hash(service, file);
 
 		for i in 1..=replicas {
 			let container_name = if replicas == 1 {
@@ -346,7 +340,9 @@ impl Engine {
 			}
 		}
 
-		self.cleanup_temp_dir();
+		// Internal native secrets are podup-owned (not user data), so remove
+		// them unconditionally — independent of `remove_volumes`.
+		self.remove_internal_secrets(file).await?;
 		Ok(())
 	}
 }

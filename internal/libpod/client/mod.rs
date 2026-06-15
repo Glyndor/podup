@@ -327,6 +327,24 @@ impl Client {
 		Ok(resp)
 	}
 
+	/// `POST` with a raw-bytes body → deserialize JSON response.
+	///
+	/// Used by endpoints that take a binary payload rather than a JSON object —
+	/// e.g. `secrets/create`, whose body is the raw secret data and whose
+	/// response is `{"ID": "..."}`.
+	pub async fn post_bytes_json<T: DeserializeOwned>(
+		&self,
+		path: &str,
+		bytes: Bytes,
+		content_type: &str,
+	) -> Result<T> {
+		let req = Self::build_request(Method::POST, path, Full::new(bytes), Some(content_type))?;
+		let resp = self.send(req).await?;
+		let (status, body) = Self::read_body(resp).await?;
+		Self::check_status(status, &body)?;
+		serde_json::from_slice(&body).map_err(PodmanError::Json)
+	}
+
 	/// `PUT` with raw bytes body → expect 2xx.
 	pub async fn put_bytes_ok(&self, path: &str, bytes: Bytes, content_type: &str) -> Result<()> {
 		let req = Self::build_request(Method::PUT, path, Full::new(bytes), Some(content_type))?;
