@@ -227,6 +227,16 @@ jobs:
             fi
           done
 
+      - name: Generate SBOM and license attribution
+        # Government/enterprise consumers require a machine-readable SBOM
+        # (CycloneDX, per US EO 14028) and a third-party license attribution.
+        run: |
+          cargo install --locked cargo-cyclonedx
+          cargo install --locked --features cli cargo-about
+          cargo cyclonedx --format json --all-features
+          mv "$(ls ./*.cdx.json | head -n1)" podup.cdx.json
+          cargo about generate about.hbs > NOTICES.html
+
       - name: Generate checksums
         run: |
           sha256sum \
@@ -256,6 +266,9 @@ jobs:
           for deb in podup_*_amd64.deb podup_*_arm64.deb; do
             python3 .github/scripts/sign.py "$deb"
           done
+          # Sign the supply-chain artifacts so consumers can verify them offline.
+          python3 .github/scripts/sign.py podup.cdx.json
+          python3 .github/scripts/sign.py NOTICES.html
 
       - name: Create GitHub Release
         env:
@@ -283,11 +296,15 @@ jobs:
             podup_*_arm64.deb.sig \
             SHA256SUMS \
             SHA256SUMS.sig \
+            podup.cdx.json \
+            podup.cdx.json.sig \
+            NOTICES.html \
+            NOTICES.html.sig \
             install.sh \
             install.ps1
 
       - name: Remove release artifacts
-        run: rm -f podup-* podup_* SHA256SUMS SHA256SUMS.sig
+        run: rm -f podup-* podup_* podup.cdx.json* NOTICES.html* SHA256SUMS SHA256SUMS.sig
 
       - name: Publish to crates.io
         env:
