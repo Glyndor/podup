@@ -44,7 +44,7 @@ the `build-deb` matrix in `release.yml` already does.
 ### One-line setup
 
 ```bash
-curl -fsSL https://glyndor.net/install/podup | bash -s -- --apt
+curl -fsSL https://glyndor.net/podup/install/unix | bash -s -- --apt
 ```
 
 This downloads `glyndor-archive-keyring.deb` over HTTPS, installs it (registering

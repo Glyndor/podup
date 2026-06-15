@@ -35,7 +35,8 @@ async fn inline_secret_materialized() {
 	.unwrap();
 
 	engine.up(&file).await.unwrap();
-	// Verify secret was bind-mounted by exec-ing a read
+	// Inline content is created as a Podman-native secret and mounted at the
+	// usual /run/secrets/<name> path — verify by exec-ing a read.
 	engine
 		.exec(
 			&file,

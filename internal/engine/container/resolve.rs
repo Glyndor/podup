@@ -98,18 +98,77 @@ pub(super) fn resolve_links(service: &Service, file: &ComposeFile, project: &str
 /// `podup.config-hash` label. On `up`, comparing this against the label on an
 /// existing container tells podup whether the service configuration changed
 /// and the container must be recreated, or is unchanged and can be left as is.
-pub(crate) fn config_hash(service: &Service) -> String {
+///
+/// The resolved bytes of any inline `content:`/`environment:` secret or config
+/// the service references are folded in, so rotating an inline value recreates
+/// the container to pick it up. Previously these were live host bind-mounts, so
+/// a re-`up` reflected the change without recreation; now they are point-in-time
+/// Podman-native secrets, so the recreate must be driven by the hash. `file:`
+/// sources stay live bind-mounts and `external:` sources are by-reference, so
+/// neither needs to influence the hash.
+pub(crate) fn config_hash(service: &Service, file: &ComposeFile) -> String {
 	use sha2::{Digest, Sha256};
+	let mut hasher = Sha256::new();
 	// Canonicalise through `serde_json::Value` first: object keys are emitted in
 	// sorted order, so map-typed fields (e.g. `storage_opt`) cannot reorder
 	// between runs and flap the hash into a spurious recreate.
 	let serialized = serde_json::to_value(service)
 		.and_then(|v| serde_json::to_vec(&v))
 		.unwrap_or_default();
-	Sha256::digest(&serialized)
+	hasher.update(&serialized);
+	for secret_ref in &service.secrets {
+		if let Some(def) = file.secrets.get(secret_ref.source()) {
+			hash_inline_payload(
+				&mut hasher,
+				b"secret",
+				secret_ref.source(),
+				def.content.as_deref(),
+				def.environment.as_deref(),
+			);
+		}
+	}
+	for config_ref in &service.configs {
+		if let Some(def) = file.configs.get(config_ref.source()) {
+			hash_inline_payload(
+				&mut hasher,
+				b"config",
+				config_ref.source(),
+				def.content.as_deref(),
+				def.environment.as_deref(),
+			);
+		}
+	}
+	hasher
+		.finalize()
 		.iter()
 		.map(|b| format!("{b:02x}"))
 		.collect()
+}
+
+/// Fold an inline secret/config's resolved bytes into the config hasher. Inline
+/// `content:` contributes its literal bytes; `environment:` contributes the
+/// current value of the named variable (empty if unset — `up` errors on a
+/// genuinely missing var later). `file:`/`external:` sources contribute nothing.
+fn hash_inline_payload(
+	hasher: &mut sha2::Sha256,
+	kind: &[u8],
+	name: &str,
+	content: Option<&str>,
+	environment: Option<&str>,
+) {
+	use sha2::Digest;
+	let payload = match (content, environment) {
+		(Some(c), _) => Some(c.as_bytes().to_vec()),
+		(None, Some(var)) => Some(std::env::var(var).unwrap_or_default().into_bytes()),
+		(None, None) => None,
+	};
+	if let Some(payload) = payload {
+		hasher.update(kind);
+		hasher.update(name.as_bytes());
+		// Length-prefix so (name, payload) pairs cannot be confused across refs.
+		hasher.update((payload.len() as u64).to_le_bytes());
+		hasher.update(&payload);
+	}
 }
 
 pub(super) fn build_env(service: &Service, base_dir: &Path) -> Result<Vec<String>> {
@@ -184,12 +243,51 @@ mod tests {
 		let a = parse_str("services:\n  web:\n    image: nginx:1.27\n").unwrap();
 		let b = parse_str("services:\n  web:\n    image: nginx:1.27\n").unwrap();
 		let c = parse_str("services:\n  web:\n    image: nginx:1.28\n").unwrap();
-		let ha = config_hash(&a.services["web"]);
-		let hb = config_hash(&b.services["web"]);
-		let hc = config_hash(&c.services["web"]);
+		let ha = config_hash(&a.services["web"], &a);
+		let hb = config_hash(&b.services["web"], &b);
+		let hc = config_hash(&c.services["web"], &c);
 		assert_eq!(ha, hb, "same config produces the same hash");
 		assert_ne!(ha, hc, "a changed image produces a different hash");
 		assert_eq!(ha.len(), 64, "sha-256 hex is 64 chars");
+	}
+
+	#[test]
+	fn config_hash_tracks_inline_secret_content() {
+		// Rotating an inline `content:` secret must change the hash so the
+		// container is recreated to pick up the new (point-in-time) native secret.
+		let a = parse_str(
+			"services:\n  web:\n    image: x\n    secrets: [tok]\nsecrets:\n  tok:\n    content: v1\n",
+		)
+		.unwrap();
+		let b = parse_str(
+			"services:\n  web:\n    image: x\n    secrets: [tok]\nsecrets:\n  tok:\n    content: v2\n",
+		)
+		.unwrap();
+		assert_ne!(
+			config_hash(&a.services["web"], &a),
+			config_hash(&b.services["web"], &b),
+			"changed inline secret content must change the hash",
+		);
+	}
+
+	#[test]
+	fn config_hash_ignores_external_secret_identity() {
+		// An `external:` secret is by-reference (no payload), so it does not add
+		// to the hash beyond the service's own secret list.
+		let a = parse_str(
+			"services:\n  web:\n    image: x\n    secrets: [tok]\nsecrets:\n  tok:\n    external: true\n",
+		)
+		.unwrap();
+		let b = parse_str(
+			"services:\n  web:\n    image: x\n    secrets: [tok]\nsecrets:\n  tok:\n    external: true\n    name: other\n",
+		)
+		.unwrap();
+		// The service definition is identical; only the top-level external name
+		// differs, which is resolved at attach time, not baked into the hash.
+		assert_eq!(
+			config_hash(&a.services["web"], &a),
+			config_hash(&b.services["web"], &b),
+		);
 	}
 
 	#[test]
@@ -205,8 +303,8 @@ mod tests {
 		)
 		.unwrap();
 		assert_eq!(
-			config_hash(&a.services["web"]),
-			config_hash(&b.services["web"]),
+			config_hash(&a.services["web"], &a),
+			config_hash(&b.services["web"], &b),
 			"hash must be independent of storage_opt key order",
 		);
 	}

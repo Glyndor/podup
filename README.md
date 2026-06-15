@@ -38,13 +38,13 @@ flowchart LR
 Linux and macOS:
 
 ```bash
-curl -fsSL https://glyndor.net/install/podup | bash
+curl -fsSL https://glyndor.net/podup/install/unix | bash
 ```
 
 Windows (PowerShell):
 
 ```powershell
-irm https://glyndor.net/install/podup.ps1 | iex
+irm https://glyndor.net/podup/install/windows | iex
 ```
 
 Binaries for Linux and macOS (x86_64 and arm64) plus Windows (x86_64 and
@@ -64,7 +64,7 @@ On Debian and Ubuntu (amd64 and arm64), install from the Glyndor apt repository
 so updates arrive through `apt upgrade`:
 
 ```bash
-curl -fsSL https://glyndor.net/install/podup | bash -s -- --apt
+curl -fsSL https://glyndor.net/podup/install/unix | bash -s -- --apt
 ```
 
 This installs the `glyndor-archive-keyring` package (registering the signed
@@ -134,7 +134,7 @@ async fn main() -> podup::Result<()> {
 
 ```toml
 [dependencies]
-podup = { git = "https://github.com/Glyndor/podup", tag = "v0.22.2" }
+podup = { git = "https://github.com/Glyndor/podup", tag = "v0.23.0" }
 ```
 
 ## 📖 Docs

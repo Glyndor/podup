@@ -4,7 +4,7 @@
 # installs it.
 #
 # Usage:
-#   irm https://glyndor.net/install/podup.ps1 | iex
+#   irm https://glyndor.net/podup/install/windows | iex
 #
 # Environment:
 #   PODUP_VERSION              Release tag to install (e.g. v0.3.0). Default: latest.
