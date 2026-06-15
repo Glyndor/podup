@@ -1,3 +1,12 @@
+podup (0.22.1) unstable; urgency=medium
+
+  * Internal hygiene only, no behaviour change: rename the `fsutil` module to
+    `filesystem`, split `compose/diagnostics.rs` into a `diagnostics/` directory,
+    and add failure-path unit tests for the self-update metadata parser and the
+    binary-install swap.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sun, 14 Jun 2026 17:30:00 -0500
+
 podup (0.22.0) unstable; urgency=medium
 
   * Drop-in fidelity: `extends.file` now accepts `../` and absolute paths (the

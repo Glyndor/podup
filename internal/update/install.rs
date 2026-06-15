@@ -288,6 +288,17 @@ mod tests {
 	}
 
 	#[test]
+	fn install_at_fails_when_target_dir_is_missing() {
+		// A target whose parent directory does not exist must fail (the sibling
+		// temp cannot be created) and must not leave anything behind.
+		let dir = tempfile::tempdir().unwrap();
+		let missing = dir.path().join("no-such-subdir");
+		let target = missing.join("podup");
+		assert!(install_at(&target, b"data").is_err());
+		assert!(!missing.exists(), "must not create the missing parent dir");
+	}
+
+	#[test]
 	fn require_platform_asset_is_consistent() {
 		match (platform_asset(), require_platform_asset()) {
 			(Some(a), Ok(b)) => assert_eq!(a, b),

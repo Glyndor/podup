@@ -137,7 +137,7 @@ pub(super) fn build_label_file_labels(
 		} else {
 			base_dir.join(&path)
 		};
-		let content = match crate::fsutil::read_to_string_capped(&full) {
+		let content = match crate::filesystem::read_to_string_capped(&full) {
 			Ok(c) => c,
 			Err(e) => {
 				warn!("label_file: cannot read {}: {e}", full.display());
