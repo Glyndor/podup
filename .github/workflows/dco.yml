@@ -25,12 +25,14 @@ jobs:
 
       - name: Verify Signed-off-by trailers
         env:
-          BASE_REF: ${{ github.base_ref }}
+          # The PR's real commits, excluding the synthetic merge commit that the
+          # checkout action creates (which has no sign-off and is not authored).
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          git fetch --no-tags --quiet origin "$BASE_REF"
           missing=0
-          for sha in $(git rev-list "origin/${BASE_REF}..HEAD"); do
+          for sha in $(git rev-list --no-merges "${BASE_SHA}..${HEAD_SHA}"); do
             author="$(git show -s --format='%an <%ae>' "$sha")"
             if ! git show -s --format='%(trailers:key=Signed-off-by)' "$sha" \
               | grep -qi 'Signed-off-by:'; then
