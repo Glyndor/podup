@@ -1,3 +1,11 @@
+podup (0.22.2) unstable; urgency=medium
+
+  * Test-only: add deterministic offline coverage for the self-update failure
+    paths (malformed release metadata, missing install target, HTTP transport
+    errors). No behaviour or public-API change.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sun, 15 Jun 2026 00:00:00 -0500
+
 podup (0.22.1) unstable; urgency=medium
 
   * Internal hygiene only, no behaviour change: rename the `fsutil` module to
