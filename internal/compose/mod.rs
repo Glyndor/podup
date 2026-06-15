@@ -349,8 +349,7 @@ fn count_alias_refs(content: &str) -> usize {
 				'"' if !in_single => in_double = !in_double,
 				'#' if !in_single && !in_double => break,
 				'*' if !in_single && !in_double => {
-					let at_node =
-						matches!(prev, None | Some(' ' | '\t' | '[' | '{' | ',' | ':'));
+					let at_node = matches!(prev, None | Some(' ' | '\t' | '[' | '{' | ',' | ':'));
 					let next_ok = chars
 						.peek()
 						.is_some_and(|n| n.is_ascii_alphanumeric() || *n == '_' || *n == '-');
@@ -437,7 +436,10 @@ mod tests {
 		assert_eq!(count_alias_refs("a: &x 1\nb: *x\n"), 1);
 		assert_eq!(count_alias_refs("c: [*x, *x, *x]\n"), 3);
 		// `*` in quoted strings, comments, and globs (`*.txt`, `**`) are not aliases.
-		assert_eq!(count_alias_refs("cmd: \"rm *x\"\nd: 1 # *x\ng: ['*.txt', '**']\n"), 0);
+		assert_eq!(
+			count_alias_refs("cmd: \"rm *x\"\nd: 1 # *x\ng: ['*.txt', '**']\n"),
+			0
+		);
 	}
 
 	#[test]
