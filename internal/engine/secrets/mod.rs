@@ -160,7 +160,35 @@ impl Engine {
 		Ok(())
 	}
 
+	/// Delete a project-scoped secret, but only after confirming it carries our
+	/// `podup.project=<proj>` label — so a same-named secret the user created by
+	/// hand (and which podup never created) is never destroyed on `down`. A
+	/// missing secret (404) is a no-op.
 	async fn delete_secret(&self, name: &str) {
+		let inspect = format!("{API_PREFIX}/secrets/{}/json", urlencoded(name));
+		match self.client.get_json::<serde_json::Value>(&inspect).await {
+			Ok(info) => {
+				let owned = info
+					.get("Spec")
+					.and_then(|spec| spec.get("Labels"))
+					.and_then(|labels| labels.get("podup.project"))
+					.and_then(|v| v.as_str())
+					== Some(self.project.as_str());
+				if !owned {
+					tracing::warn!(
+						"secret {name} is not labelled podup.project={} — \
+						 leaving it untouched (not created by podup)",
+						self.project
+					);
+					return;
+				}
+			}
+			Err(e) if e.is_status(404) => return,
+			Err(e) => {
+				tracing::warn!("could not inspect secret {name} before removal: {e}");
+				return;
+			}
+		}
 		let path = format!("{API_PREFIX}/secrets/{}", urlencoded(name));
 		match self.client.delete_ok(&path).await {
 			Ok(()) => tracing::info!("removed secret {name}"),
