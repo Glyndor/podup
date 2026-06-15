@@ -32,7 +32,7 @@ pub(crate) struct Cli {
 	pub(crate) socket: Option<String>,
 
 	/// Active profiles (comma-separated).  May also be set via `COMPOSE_PROFILES`.
-	#[arg(long, value_delimiter = ',', global = true)]
+	#[arg(long, value_delimiter = ',', env = "COMPOSE_PROFILES", global = true)]
 	pub(crate) profile: Vec<String>,
 
 	/// Base directory for resolving relative paths (env_file, build context,

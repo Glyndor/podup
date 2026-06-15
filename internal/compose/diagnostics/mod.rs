@@ -271,13 +271,15 @@ mod tests {
 	}
 
 	#[test]
-	fn warns_on_interface_name() {
+	fn does_not_warn_on_interface_name() {
+		// interface_name IS forwarded to Podman (PerNetworkOptions.interface_name),
+		// so it must not produce a "not forwarded / ignored" warning.
 		let msgs = diagnostics_for(
 			"services:\n  web:\n    image: nginx\n    networks:\n      net:\n        interface_name: eth9\nnetworks:\n  net:\n",
 		);
 		assert!(
-			msgs.iter().any(|m| m.contains("interface_name")),
-			"got: {msgs:?}"
+			!msgs.iter().any(|m| m.contains("interface_name")),
+			"interface_name should not be reported as ignored; got: {msgs:?}"
 		);
 	}
 

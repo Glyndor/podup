@@ -36,6 +36,67 @@ services:
 }
 
 #[test]
+fn include_parent_relative_path_resolves() {
+	// The Compose Specification treats `../` as a canonical include path
+	// (monorepos reference shared compose files one level up). It must resolve,
+	// not be rejected as path traversal.
+	let dir = tempfile::tempdir().unwrap();
+
+	let shared = dir.path().join("shared.yml");
+	writeln!(
+		std::fs::File::create(&shared).unwrap(),
+		r#"
+services:
+  shared_svc:
+    image: alpine
+"#
+	)
+	.unwrap();
+
+	let sub = dir.path().join("project");
+	std::fs::create_dir(&sub).unwrap();
+	let main = sub.join("docker-compose.yml");
+	writeln!(
+		std::fs::File::create(&main).unwrap(),
+		r#"
+include:
+  - ../shared.yml
+
+services:
+  app:
+    image: nginx
+"#
+	)
+	.unwrap();
+
+	let file = parse_file(&main).unwrap();
+	assert!(file.services.contains_key("app"));
+	assert!(file.services.contains_key("shared_svc"));
+}
+
+#[test]
+fn include_absolute_path_is_rejected() {
+	// Absolute include paths remain rejected as intentional hardening: they are
+	// not portable across checkouts and the spec does not require them.
+	let dir = tempfile::tempdir().unwrap();
+	let main = dir.path().join("docker-compose.yml");
+	writeln!(
+		std::fs::File::create(&main).unwrap(),
+		r#"
+include:
+  - /etc/shared.yml
+
+services:
+  app:
+    image: nginx
+"#
+	)
+	.unwrap();
+
+	assert!(parse_file(&main).is_err());
+}
+
+#[test]
 fn include_long_form_parses() {
 	let dir = tempfile::tempdir().unwrap();
 
