@@ -46,19 +46,40 @@ pub struct QuadletOutput {
 pub fn generate(file: &ComposeFile, project: &str) -> QuadletOutput {
 	let mut out = QuadletOutput::default();
 
+	// External networks/volumes are assumed to pre-exist. Emitting a unit would
+	// make systemd try to (re-)create them, so skip them here; the container unit
+	// references such resources by their existing name instead.
 	for (name, cfg) in &file.networks {
-		out.units.push(network_unit(name, project, cfg.is_some()));
+		if cfg.as_ref().is_some_and(|c| c.external == Some(true)) {
+			continue;
+		}
+		out.units.push(network_unit(name, project, cfg.as_ref()));
 	}
 	for (name, cfg) in &file.volumes {
-		out.units.push(volume_unit(name, project, cfg.is_some()));
+		if cfg.as_ref().is_some_and(|c| c.external == Some(true)) {
+			continue;
+		}
+		out.units.push(volume_unit(name, project, cfg.as_ref()));
 	}
 
-	let declared_volumes: Vec<&str> = file.volumes.keys().map(String::as_str).collect();
+	let declared_volumes: Vec<&str> = file
+		.volumes
+		.iter()
+		.filter(|(_, cfg)| cfg.as_ref().is_none_or(|c| c.external != Some(true)))
+		.map(|(name, _)| name.as_str())
+		.collect();
+	let declared_networks: Vec<&str> = file
+		.networks
+		.iter()
+		.filter(|(_, cfg)| cfg.as_ref().is_none_or(|c| c.external != Some(true)))
+		.map(|(name, _)| name.as_str())
+		.collect();
 	for (name, service) in &file.services {
 		out.units.push(container_unit(
 			name,
 			service,
 			&declared_volumes,
+			&declared_networks,
 			&mut out.warnings,
 		));
 	}
@@ -194,7 +215,10 @@ services:
 		let out = generate(&file, "proj");
 		let c = &unit_named(&out, "app.container").contents;
 		assert!(c.contains("HostName=app-host"));
-		assert!(c.contains("User=1000:1000"));
+		// `user: "1000:1000"` splits into separate User=/Group= keys.
+		assert!(c.contains("User=1000"));
+		assert!(c.contains("Group=1000"));
+		assert!(!c.contains("User=1000:1000"));
 		assert!(c.contains("WorkingDir=/srv"));
 		assert!(c.contains("ReadOnly=true"));
 		assert!(c.contains("RunInit=true"));
@@ -409,5 +433,174 @@ services:
 		let c = &unit_named(&out, "s.container").contents;
 		assert!(c.contains("PublishPort=80"));
 		assert!(!c.contains("PublishPort=:80"));
+	}
+
+	#[test]
+	fn external_network_and_volume_emit_no_unit_and_use_bare_name() {
+		let yaml = r#"
+services:
+  web:
+    image: nginx
+    networks:
+      - extnet
+    volumes:
+      - extvol:/data
+networks:
+  extnet:
+    external: true
+volumes:
+  extvol:
+    external: true
+"#;
+		let file = parse_str(yaml).unwrap();
+		let out = generate(&file, "proj");
+		// No unit is generated for external resources.
+		assert!(!out.units.iter().any(|u| u.filename == "extnet.network"));
+		assert!(!out.units.iter().any(|u| u.filename == "extvol.volume"));
+		// The container references them by their existing name, not `.network`/`.volume`.
+		let c = &unit_named(&out, "web.container").contents;
+		assert!(c.contains("Network=extnet"));
+		assert!(!c.contains("Network=extnet.network"));
+		assert!(c.contains("Volume=extvol:/data"));
+		assert!(!c.contains("extvol.volume"));
+	}
+
+	#[test]
+	fn user_with_gid_splits_into_user_and_group() {
+		let yaml = "services:\n  s:\n    image: x\n    user: \"1000:2000\"\n";
+		let file = parse_str(yaml).unwrap();
+		let out = generate(&file, "p");
+		let c = &unit_named(&out, "s.container").contents;
+		assert!(c.contains("User=1000"));
+		assert!(c.contains("Group=2000"));
+		assert!(!c.contains("User=1000:2000"));
+	}
+
+	#[test]
+	fn long_form_bind_selinux_and_propagation_preserved() {
+		let yaml = r#"
+services:
+  s:
+    image: x
+    volumes:
+      - type: bind
+        source: /host/data
+        target: /data
+        bind:
+          selinux: z
+          propagation: rshared
+"#;
+		let file = parse_str(yaml).unwrap();
+		let out = generate(&file, "p");
+		let c = &unit_named(&out, "s.container").contents;
+		assert!(
+			c.contains("Volume=/host/data:/data:z,rshared"),
+			"selinux/propagation must be preserved; got:\n{c}"
+		);
+	}
+
+	#[test]
+	fn service_secret_maps_to_secret_key() {
+		let yaml = r#"
+services:
+  s:
+    image: x
+    secrets:
+      - tok
+      - source: cred
+        target: /run/cred
+        uid: "100"
+secrets:
+  tok:
+    file: ./tok
+  cred:
+    file: ./cred
+"#;
+		let file = parse_str(yaml).unwrap();
+		let out = generate(&file, "p");
+		let c = &unit_named(&out, "s.container").contents;
+		assert!(c.contains("Secret=tok"));
+		assert!(c.contains("Secret=cred,target=/run/cred,uid=100"));
+		assert!(!out.warnings.iter().any(|w| w.contains("secrets")));
+	}
+
+	#[test]
+	fn maps_previously_dropped_container_fields() {
+		let yaml = r#"
+services:
+  s:
+    image: x
+    group_add:
+      - audio
+    expose:
+      - "8080"
+    security_opt:
+      - "no-new-privileges:true"
+      - "seccomp=/etc/seccomp.json"
+      - "label=type:container_t"
+    pull_policy: always
+    logging:
+      driver: journald
+      options:
+        tag: mytag
+    networks:
+      net:
+        aliases:
+          - web-alias
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+networks:
+  net:
+"#;
+		let file = parse_str(yaml).unwrap();
+		let out = generate(&file, "p");
+		let c = &unit_named(&out, "s.container").contents;
+		for needle in [
+			"GroupAdd=audio",
+			"ExposeHostPort=8080",
+			"NoNewPrivileges=true",
+			"SeccompProfile=/etc/seccomp.json",
+			"SecurityLabelType=container_t",
+			"Pull=always",
+			"LogDriver=journald",
+			"LogOpt=tag=mytag",
+			"NetworkAlias=web-alias",
+			"Memory=256m",
+		] {
+			assert!(c.contains(needle), "missing `{needle}` in:\n{c}");
+		}
+	}
+
+	#[test]
+	fn network_and_volume_units_carry_config_keys() {
+		let yaml = r#"
+services:
+  s:
+    image: x
+networks:
+  net:
+    driver: bridge
+    internal: true
+    enable_ipv6: true
+    labels:
+      tier: net
+volumes:
+  vol:
+    driver: local
+    labels:
+      tier: vol
+"#;
+		let file = parse_str(yaml).unwrap();
+		let out = generate(&file, "p");
+		let net = &unit_named(&out, "net.network").contents;
+		assert!(net.contains("Driver=bridge"));
+		assert!(net.contains("Internal=true"));
+		assert!(net.contains("IPv6=true"));
+		assert!(net.contains("Label=tier=net"));
+		let vol = &unit_named(&out, "vol.volume").contents;
+		assert!(vol.contains("Driver=local"));
+		assert!(vol.contains("Label=tier=vol"));
 	}
 }

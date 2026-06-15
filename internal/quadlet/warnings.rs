@@ -24,12 +24,6 @@ pub(super) fn collect_warnings(name: &str, service: &Service, warnings: &mut Vec
 			"is ignored; Quadlet emits a single container per service",
 		);
 	}
-	if !service.secrets.is_empty() {
-		warn(
-			"secrets",
-			"are not yet mapped to Quadlet Secret= directives",
-		);
-	}
 	if !service.configs.is_empty() {
 		warn("configs", "have no Quadlet equivalent and are skipped");
 	}
@@ -93,7 +87,6 @@ configs:
 		for field in [
 			"build",
 			"scale/replicas",
-			"secrets",
 			"configs",
 			"volumes_from",
 			"network_mode",
@@ -105,6 +98,11 @@ configs:
 				"missing warning for {field}; got:\n{joined}"
 			);
 		}
+		// secrets are now mapped to Secret=, so they must NOT warn.
+		assert!(
+			!joined.contains("secrets"),
+			"secrets should be mapped, not warned; got:\n{joined}"
+		);
 	}
 
 	#[test]
