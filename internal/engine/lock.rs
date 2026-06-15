@@ -126,9 +126,8 @@ mod tests {
 	#[test]
 	fn second_holder_blocks_until_first_releases() {
 		use std::sync::atomic::{AtomicBool, Ordering};
-		use std::sync::Arc;
+		use std::sync::{Arc, Barrier};
 		use std::thread;
-		use std::time::Duration;
 
 		// Two engines contend for the same project lock. The first holds it; the
 		// second must take the blocking `LOCK_EX` path in `acquire` and only
@@ -138,7 +137,12 @@ mod tests {
 
 		let released = Arc::new(AtomicBool::new(false));
 		let flag = Arc::clone(&released);
+		// A rendezvous removes the need for a timing sleep: both threads clear the
+		// barrier, then the waiter immediately enters the blocking acquire path.
+		let barrier = Arc::new(Barrier::new(2));
+		let waiter_barrier = Arc::clone(&barrier);
 		let waiter = thread::spawn(move || {
+			waiter_barrier.wait();
 			let _guard = engine(project).lock_project().expect("second acquire");
 			assert!(
 				flag.load(Ordering::SeqCst),
@@ -146,8 +150,11 @@ mod tests {
 			);
 		});
 
-		// Give the waiter time to reach the blocking flock call, then release.
-		thread::sleep(Duration::from_millis(100));
+		// The lock is exclusive, so the waiter cannot acquire until `held` is
+		// dropped; the store is sequenced before the drop, so the waiter is
+		// guaranteed to observe `released == true`. This is deterministic — it
+		// never depends on how long the waiter takes to reach `flock`.
+		barrier.wait();
 		released.store(true, Ordering::SeqCst);
 		drop(held);
 

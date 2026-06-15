@@ -131,12 +131,6 @@ pub(super) fn ignored_service_network_fields(file: &ComposeFile, out: &mut Vec<S
 						 by Podman and is ignored"
 					));
 				}
-				if c.interface_name.is_some() {
-					out.push(format!(
-						"service '{service}' network '{name}': interface_name is not \
-						 forwarded to Podman and is ignored"
-					));
-				}
 			}
 		}
 	}

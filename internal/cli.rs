@@ -7,11 +7,7 @@ use clap::{Parser, Subcommand};
 use clap_complete::Shell;
 
 #[derive(Parser)]
-#[command(
-	name = "podup",
-	version,
-	about = "docker-compose translator for Podman"
-)]
+#[command(name = "podup", version)]
 pub(crate) struct Cli {
 	/// Path to the compose file. May also be set via `COMPOSE_FILE`. When
 	/// unset, the compose-spec precedence list is probed in the current
@@ -32,7 +28,7 @@ pub(crate) struct Cli {
 	pub(crate) socket: Option<String>,
 
 	/// Active profiles (comma-separated).  May also be set via `COMPOSE_PROFILES`.
-	#[arg(long, value_delimiter = ',', global = true)]
+	#[arg(long, value_delimiter = ',', env = "COMPOSE_PROFILES", global = true)]
 	pub(crate) profile: Vec<String>,
 
 	/// Base directory for resolving relative paths (env_file, build context,
@@ -106,6 +102,7 @@ pub(crate) enum Commands {
 		services: Vec<String>,
 	},
 	/// Remove stopped service containers.
+	#[command(alias = "remove")]
 	Rm {
 		/// Remove even running containers (stop first).
 		#[arg(short, long)]
@@ -130,6 +127,7 @@ pub(crate) enum Commands {
 		services: Vec<String>,
 	},
 	/// Resume paused service containers.
+	#[command(alias = "resume")]
 	Unpause {
 		/// Unpause only these services.
 		#[arg(trailing_var_arg = true)]
@@ -186,8 +184,10 @@ pub(crate) enum Commands {
 		proto: String,
 	},
 	/// List images used by services.
+	#[command(alias = "image")]
 	Images,
 	/// View output from containers.
+	#[command(alias = "log")]
 	Logs {
 		/// Only show logs for this service.
 		service: Option<String>,
@@ -211,8 +211,10 @@ pub(crate) enum Commands {
 		service: Option<String>,
 	},
 	/// Print the resolved compose file (after substitution / extends / include).
+	#[command(alias = "convert")]
 	Config,
 	/// Generate declarative artifacts from the compose file.
+	#[command(alias = "gen")]
 	Generate {
 		#[command(subcommand)]
 		kind: GenerateCommands,

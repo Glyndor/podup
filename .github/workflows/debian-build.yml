@@ -63,3 +63,41 @@ jobs:
           fi
           echo "Built $deb"
           dpkg-deb --contents "$deb"
+
+  build-vendored:
+    name: build (vendored / offline)
+    runs-on: ubuntu-latest
+    # Proves a classified/air-gapped environment can build podup with no
+    # crates.io access: crates are vendored once (the only networked step), then
+    # the release binary is built with CARGO_NET_OFFLINE=true against the vendor
+    # tree — the same packaged feature set the Debian build uses. A missing crate
+    # fails the build.
+    container: debian:sid
+    steps:
+      - name: Install build tooling
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            build-essential \
+            cargo \
+            rustc
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Vendor dependencies (the only step allowed network access)
+        run: |
+          cargo vendor vendor
+          mkdir -p .cargo
+          printf '[source.crates-io]\nreplace-with = "vendored-sources"\n\n[source.vendored-sources]\ndirectory = "vendor"\n' > .cargo/config.toml
+
+      - name: Build offline from the vendored tree
+        env:
+          CARGO_NET_OFFLINE: "true"
+        run: |
+          cargo build --release --locked --offline \
+            --no-default-features --features watch,completions
+          test -x target/release/podup
+          echo "Built target/release/podup offline from vendored sources"

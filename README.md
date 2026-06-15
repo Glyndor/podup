@@ -142,6 +142,7 @@ podup = { git = "https://github.com/Glyndor/podup", tag = "v0.22.2" }
 - [Command reference](docs/commands.md) — every subcommand, its options, and what it does
 - [Migrating from Docker Compose](docs/docker-migration.md) — compatibility guide, rootless differences, deprecated fields
 - [Self-update](docs/self-update.md) — the `podup update` trust model and verification flow
+- [Security model](docs/security-model.md) — privilege posture, trust boundaries, SBOM and air-gap notes
 - [Debian packaging](docs/debian-packaging.md) — building and distributing a `.deb`
 
 ## Contributing & security

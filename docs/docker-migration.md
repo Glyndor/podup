@@ -165,6 +165,17 @@ run under podup: unsupported additions surface as warnings instead of vanishing.
 `extra_hosts` is accepted in both the list (`["host:ip"]`) and mapping
 (`{host: ip}`) forms.
 
+## File references and path confinement
+
+Compose files are **trusted input**, like a Makefile. Path-valued keys that the
+spec resolves relative to the compose file — `extends.file`, `env_file`,
+`label_file`, and `include` — may use `../` to reach files outside the project
+directory, matching docker-compose. This is an intentional divergence from a
+fully sandboxed parser: do not feed podup a compose file from an untrusted
+source any more than you would `make -f` an untrusted Makefile. The one
+exception is `include`, which still rejects **absolute** paths (they are not
+portable across checkouts and the spec does not require them); `../` is allowed.
+
 ## Not yet supported
 
 | Feature | Status |

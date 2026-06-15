@@ -45,17 +45,16 @@ pub fn parse_file_with_env_files(path: &Path, env_files: &[String]) -> Result<Co
 		};
 		for rel in inc.paths() {
 			let rel_path = std::path::Path::new(&rel);
+			// The Compose Specification resolves `include` paths relative to the
+			// including file and treats `../` as canonical (monorepos routinely use
+			// `include: ../shared/compose.yaml`), so parent-directory traversal is
+			// permitted here — consistent with the trusted-input policy applied to
+			// `extends.file` and `env_file`. Absolute paths remain rejected as an
+			// intentional hardening choice: they are not portable across checkouts
+			// and the spec does not require them.
 			if rel_path.is_absolute() {
 				return Err(ComposeError::Include(format!(
 					"include path must be relative, got absolute path: {rel}"
-				)));
-			}
-			if rel_path
-				.components()
-				.any(|c| c == std::path::Component::ParentDir)
-			{
-				return Err(ComposeError::Include(format!(
-					"include path must not traverse parent directories: {rel}"
 				)));
 			}
 			let inc_path = dir.join(&rel);

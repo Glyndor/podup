@@ -1,0 +1,20 @@
+# Third-party licenses
+
+podup is distributed as a compiled binary that statically links the open-source
+crates listed below. Each distinct license text is reproduced once, followed by
+the crates that use it. This file satisfies the attribution requirement of the
+Apache-2.0 license (§4(d)) and equivalents.
+
+{{#each licenses}}
+## {{name}} ({{id}})
+
+Used by:
+{{#each used_by}}
+- {{crate.name}} {{crate.version}}{{#if crate.repository}} — {{crate.repository}}{{/if}}
+{{/each}}
+
+```
+{{{text}}}
+```
+
+{{/each}}
