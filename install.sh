@@ -5,12 +5,12 @@
 # Default: download a release binary, verify it and install it to a directory.
 # Updates come from `podup update`.
 #
-#   curl -fsSL https://glyndor.net/install/podup | bash
+#   curl -fsSL https://glyndor.net/podup/install/unix | bash
 #
 # --apt (Debian/Ubuntu, amd64): set up the Glyndor apt repository and install
 # with apt. Updates — including signing-key renewals — come from `apt upgrade`.
 #
-#   curl -fsSL https://glyndor.net/install/podup | bash -s -- --apt
+#   curl -fsSL https://glyndor.net/podup/install/unix | bash -s -- --apt
 #
 # Environment:
 #   PODUP_VERSION      Release tag to install (e.g. v0.3.0). Default: latest.
