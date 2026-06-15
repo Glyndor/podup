@@ -232,7 +232,7 @@ jobs:
         # (CycloneDX, per US EO 14028) and a third-party license attribution.
         run: |
           cargo install --locked cargo-cyclonedx
-          cargo install --locked cargo-about
+          cargo install --locked --features cli cargo-about
           cargo cyclonedx --format json --all-features
           mv "$(ls ./*.cdx.json | head -n1)" podup.cdx.json
           cargo about generate about.hbs > NOTICES.html
