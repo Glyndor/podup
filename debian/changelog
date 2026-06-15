@@ -1,3 +1,21 @@
+podup (0.23.0) unstable; urgency=medium
+
+  * Inline `content:`/`environment:` secrets and configs are now injected as
+    Podman-native secrets (created over the libpod API under a project-scoped,
+    `podup.project`-labelled name) instead of being written to a per-user host
+    staging directory and bind-mounted. `file:` sources keep their read-only
+    bind-mount and `external:` sources are unchanged.
+  * Rotating an inline secret/config value now recreates the dependent
+    container on the next `up` (the resolved value folds into the config-hash),
+    preserving the previous live-bind-mount behaviour.
+  * `podup down` removes the internal native secrets it created (guarded by the
+    `podup.project` label so a same-named secret created by hand is left
+    untouched); `external:` secrets are never removed.
+  * Docs: install URLs switched to per-OS `/<product>/install/{unix,windows,apt}`
+    paths.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Mon, 15 Jun 2026 14:30:00 -0500
+
 podup (0.22.2) unstable; urgency=medium
 
   * Test-only: add deterministic offline coverage for the self-update failure
