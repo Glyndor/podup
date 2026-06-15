@@ -75,16 +75,12 @@ pub(crate) fn build_mounts_all(
 
 					if let Some(b) = bind {
 						if b.create_host_path.unwrap_or(false) && !src.is_empty() {
-							let abs = if Path::new(src).is_absolute() {
-								std::path::PathBuf::from(src)
-							} else {
-								base_dir.join(src)
-							};
+							// Resolve exactly like the mount source (expand `~`, anchor a
+							// relative path to the project dir) so the directory is created
+							// at the path actually bind-mounted — not a literal `~` dir.
+							let abs = super::container::resolve_bind_source(src, base_dir);
 							if let Err(e) = std::fs::create_dir_all(&abs) {
-								tracing::warn!(
-									"create_host_path: failed to create {}: {e}",
-									abs.display()
-								);
+								tracing::warn!("create_host_path: failed to create {abs}: {e}");
 							}
 						}
 					}

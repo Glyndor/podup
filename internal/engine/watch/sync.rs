@@ -14,13 +14,20 @@ use crate::error::{ComposeError, Result};
 pub(super) fn build_sync_tar(src: &Path) -> Result<Vec<u8>> {
 	let encoder = GzEncoder::new(Vec::new(), Compression::default());
 	let mut tar = tar::Builder::new(encoder);
+	// Do not dereference symlinks: a symlink inside the watched tree would
+	// otherwise copy the contents of its (possibly out-of-tree) target into the
+	// container. Store the link itself instead.
+	tar.follow_symlinks(false);
 
 	if src.is_dir() {
 		for abs in super::super::walk_dir(src).map_err(ComposeError::Io)? {
 			let rel = abs
 				.strip_prefix(src)
 				.map_err(|_| ComposeError::Build("path strip".into()))?;
-			if abs.is_dir() {
+			// Classify without following symlinks so a symlink-to-dir is stored as
+			// a link, not dereferenced.
+			let is_dir = abs.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
+			if is_dir {
 				tar.append_dir(rel, &abs)
 					.map_err(|e| ComposeError::Build(e.to_string()))?;
 			} else {
