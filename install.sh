@@ -159,13 +159,27 @@ install_apt() {
 	command -v dpkg >/dev/null 2>&1 || fail "--apt requires dpkg"
 
 	# Bootstrap the repository over HTTPS by installing the glyndor-archive-keyring
-	# package, which registers the signing key and source list. This curl step has
-	# the same trust as running this installer; from then on apt verifies every
-	# package against the repository's GPG signature, and key renewals arrive
+	# package, which registers the signing key and source list. The package is
+	# verified against the embedded Ed25519 release key before it is installed, so
+	# a tampered CDN or MITM cannot inject a rogue keyring. From then on apt verifies
+	# every package against the repository's GPG signature, and key renewals arrive
 	# automatically through apt upgrade.
 	local kr="glyndor-archive-keyring.deb"
 	log_info "Setting up the Glyndor apt repository ..."
 	download "https://apt.glyndor.net/${kr}" "${TMP_DIR}/${kr}"
+	download "https://apt.glyndor.net/${kr}.sig" "${TMP_DIR}/${kr}.sig"
+
+	# Fail closed: the keyring package is installed as root, so it must carry a
+	# valid Ed25519 signature from the release key. No checksum-only fallback.
+	log_info "Verifying keyring package signature ..."
+	local kr_rc=0
+	ed25519_verify "${TMP_DIR}/${kr}.sig" "${TMP_DIR}/${kr}" || kr_rc=$?
+	case "$kr_rc" in
+		0) log_ok "Keyring signature verified" ;;
+		1) fail "Keyring signature verification failed — aborting (package may be tampered)" ;;
+		2) fail "Cannot verify keyring signature: install python3 with the 'cryptography' package (and a configured release key) — aborting" ;;
+	esac
+
 	run_root dpkg -i "${TMP_DIR}/${kr}"
 	run_root apt-get update
 	log_info "Installing podup ..."
@@ -187,8 +201,7 @@ install_binary() {
 	# SHA256SUMS. The binary is trusted only after at least one cryptographic proof
 	# tied to the release key or the repository's build identity succeeds — the
 	# Ed25519 signature over SHA256SUMS, or the GitHub build-provenance attestation.
-	# If neither verifier can run, the install fails closed. Set
-	# PODUP_INSECURE_SKIP_VERIFY=1 to explicitly opt out (checksum only).
+	# If neither verifier can run, the install fails closed.
 	local verified=0 rc=0
 
 	log_info "Verifying SHA256SUMS signature ..."
@@ -217,15 +230,12 @@ install_binary() {
 		log_info "GitHub CLI with attestation support not found — cannot check attestation"
 	fi
 
-	# Fail closed unless a strong proof succeeded or the user explicitly opts out.
+	# Fail closed: a strong cryptographic proof is mandatory. A checksum alone is
+	# not a trust anchor, and there is no opt-out — government and hardened
+	# environments require verifiable supply-chain integrity at install time.
 	if [[ "$verified" -ne 1 ]]; then
-		if [[ "${PODUP_INSECURE_SKIP_VERIFY:-0}" == "1" ]]; then
-			log_info "PODUP_INSECURE_SKIP_VERIFY=1 — proceeding with checksum verification only"
-		else
-			fail "No signature or attestation verifier available. Install 'gh' (>= 2.49) \
-or python3 with the 'cryptography' package, set PODUP_RELEASE_PUBKEY_B64, or re-run \
-with PODUP_INSECURE_SKIP_VERIFY=1 to accept checksum-only verification."
-		fi
+		fail "No signature or attestation verifier available. Install 'gh' (>= 2.49) \
+or python3 with the 'cryptography' package, or set PODUP_RELEASE_PUBKEY_B64, then re-run."
 	fi
 
 	verify_checksum "$ARTIFACT"
