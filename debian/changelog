@@ -1,3 +1,26 @@
+podup (0.24.0) unstable; urgency=medium
+
+  * Security/robustness hardening from a pre-launch review:
+    - Reject YAML documents whose alias use could amplify into out-of-memory,
+      clamp an explicit GPU `count:`, reject invalid negative ulimits, and add a
+      read timeout to buffered Podman responses (file-borne DoS).
+    - `cp` from a container now honours the user's destination filename instead
+      of the daemon-supplied tar entry name, bounds the buffered archive, and
+      strips group/other-write and setuid/setgid/sticky bits on extracted files;
+      `watch` no longer dereferences symlinks when syncing.
+    - Lifecycle hooks now fail when the exec exits non-zero (a failing
+      `post_start` no longer silently succeeds); the service config-hash fails
+      closed on serialization error; Quadlet export errors on unit-name
+      collisions instead of silently overwriting.
+    - `file:` secret/config binds reject colon-injection that could redirect the
+      mount or drop the read-only flag, and inline secret/config names are
+      validated.
+    - Self-update writes its temp binary with O_EXCL + O_NOFOLLOW, masks
+      setuid/setgid bits, and verifies the signed manifest before downloading.
+    - Releases are gated on `cargo audit` and the SBOM generators are pinned.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Mon, 15 Jun 2026 17:00:00 -0500
+
 podup (0.23.0) unstable; urgency=medium
 
   * Inline `content:`/`environment:` secrets and configs are now injected as
