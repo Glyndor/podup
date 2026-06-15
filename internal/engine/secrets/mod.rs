@@ -6,8 +6,9 @@
 //! Podman-native secrets attached to the container create spec:
 //!
 //! * inline `content:`/`environment:` → created over the libpod API
-//!   (`secrets/create`, with `replace=true` for idempotent re-`up`) under a
-//!   project-scoped name, so nothing is written to a host staging directory.
+//!   (`secrets/create`, removing any prior secret of the name first so a re-`up`
+//!   is idempotent) under a project-scoped name, so nothing is written to a host
+//!   staging directory.
 //! * `external: true` → mapped to a pre-existing `podman secret`, preflighted
 //!   with [`Engine::ensure_external_exists`] so a missing secret fails closed.
 //!
@@ -104,17 +105,24 @@ impl Engine {
 		Ok(secrets)
 	}
 
-	/// Create (or replace) a Podman-native secret named `name` holding `payload`.
+	/// Create a Podman-native secret named `name` holding `payload`, labelled
+	/// `podup.project=<proj>` so it can be cleaned up on `down`. The payload size
+	/// is checked up front to turn Podman's opaque 500 into a clear message.
 	///
-	/// Uses `replace=true` so a re-`up` refreshes changed content rather than
-	/// failing on the existing name, and labels the secret `podup.project=<proj>`
-	/// so it can be cleaned up on `down`. The payload size is checked up front to
-	/// turn Podman's opaque 500 into a clear message.
+	/// Idempotent across re-`up`s: rather than `replace=true` (which some Podman
+	/// 5.x builds reject when the secret does not yet exist — the internal delete
+	/// fails with "no secret data with ID"), the existing secret of this name is
+	/// removed first (a 404 is fine) and then created fresh.
 	async fn create_secret(&self, name: &str, payload: &[u8]) -> Result<()> {
 		check_secret_size(name, payload.len())?;
+		let delete_path = format!("{API_PREFIX}/secrets/{}", urlencoded(name));
+		self.client
+			.delete_ok(&delete_path)
+			.await
+			.map_err(ComposeError::Podman)?;
 		let labels = serde_json::json!({ "podup.project": self.project }).to_string();
 		let path = format!(
-			"{API_PREFIX}/secrets/create?name={}&replace=true&labels={}",
+			"{API_PREFIX}/secrets/create?name={}&labels={}",
 			urlencoded(name),
 			urlencoded(&labels),
 		);
