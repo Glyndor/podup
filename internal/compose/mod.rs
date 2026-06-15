@@ -290,11 +290,80 @@ pub(crate) fn parse_file_inner_with_env(
 	deserialize_with_merge(&substituted)
 }
 
+/// Upper bound on YAML alias references in a document that uses anchors, and on
+/// the size of such a document. serde_yaml_ng already aborts deeply *nested*
+/// alias expansion (its repetition limit), but a flat document with many alias
+/// references to a non-trivial anchor expands *linearly* while the `Value` tree
+/// is built and can exhaust memory — a ~46 KB file can allocate gigabytes. Real
+/// compose files use a handful of anchors, so these caps never trigger in
+/// practice; the worst-case expansion they allow (refs × doc size) stays bounded.
+const MAX_ALIAS_REFS: usize = 100;
+const MAX_ALIAS_DOC_BYTES: usize = 512 * 1024;
+
 fn deserialize_with_merge(content: &str) -> Result<ComposeFile> {
+	guard_alias_expansion(content)?;
 	let mut value: serde_yaml::Value = serde_yaml::from_str(content)?;
 	apply_merge_keys(&mut value);
 	let file: ComposeFile = serde_yaml::from_value(value)?;
 	Ok(file)
+}
+
+/// Reject YAML documents whose alias use could amplify into an out-of-memory
+/// expansion (a "billion-laughs" linear cousin) before they reach the parser.
+fn guard_alias_expansion(content: &str) -> Result<()> {
+	let refs = count_alias_refs(content);
+	if refs == 0 {
+		return Ok(());
+	}
+	if content.len() > MAX_ALIAS_DOC_BYTES {
+		return Err(ComposeError::Unsupported(format!(
+			"compose document uses YAML aliases and is {} bytes; documents using anchors/aliases \
+			 must be at most {MAX_ALIAS_DOC_BYTES} bytes — inline the repeated content instead",
+			content.len()
+		)));
+	}
+	if refs > MAX_ALIAS_REFS {
+		return Err(ComposeError::Unsupported(format!(
+			"compose document uses {refs} YAML alias references; at most {MAX_ALIAS_REFS} are \
+			 allowed — inline the repeated content instead"
+		)));
+	}
+	Ok(())
+}
+
+/// Count YAML alias references (`*anchor`) outside quoted scalars and comments.
+///
+/// A heuristic — it does not fully parse YAML — but it only needs to bound a
+/// DoS and it is conservative: `*` inside single/double quotes or after `#` is
+/// ignored, and an alias is counted only when `*` sits at a node position and is
+/// followed by an anchor-name character.
+fn count_alias_refs(content: &str) -> usize {
+	let mut count = 0;
+	for line in content.lines() {
+		let mut chars = line.chars().peekable();
+		let (mut in_single, mut in_double) = (false, false);
+		let mut prev: Option<char> = None;
+		while let Some(c) = chars.next() {
+			match c {
+				'\'' if !in_double => in_single = !in_single,
+				'"' if !in_single => in_double = !in_double,
+				'#' if !in_single && !in_double => break,
+				'*' if !in_single && !in_double => {
+					let at_node =
+						matches!(prev, None | Some(' ' | '\t' | '[' | '{' | ',' | ':'));
+					let next_ok = chars
+						.peek()
+						.is_some_and(|n| n.is_ascii_alphanumeric() || *n == '_' || *n == '-');
+					if at_node && next_ok {
+						count += 1;
+					}
+				}
+				_ => {}
+			}
+			prev = Some(c);
+		}
+	}
+	count
 }
 
 /// Recursively resolve YAML merge keys (`<<: *anchor`) in a `Value` tree.
@@ -359,6 +428,42 @@ mod tests {
 	#[test]
 	fn parse_str_raw_invalid_yaml_is_error() {
 		assert!(parse_str_raw(": : :").is_err());
+	}
+
+	// alias-expansion guard
+
+	#[test]
+	fn count_alias_refs_ignores_quotes_comments_and_globs() {
+		assert_eq!(count_alias_refs("a: &x 1\nb: *x\n"), 1);
+		assert_eq!(count_alias_refs("c: [*x, *x, *x]\n"), 3);
+		// `*` in quoted strings, comments, and globs (`*.txt`, `**`) are not aliases.
+		assert_eq!(count_alias_refs("cmd: \"rm *x\"\nd: 1 # *x\ng: ['*.txt', '**']\n"), 0);
+	}
+
+	#[test]
+	fn guard_allows_normal_anchored_file() {
+		// A handful of merge-key aliases in a small file is fine.
+		let yaml = "x: &d {a: 1}\nweb: {<<: *d}\napi: {<<: *d}\n";
+		assert!(guard_alias_expansion(yaml).is_ok());
+	}
+
+	#[test]
+	fn guard_rejects_linear_alias_amplification() {
+		// Many references to one anchor — the OOM vector serde_yaml_ng does not bound.
+		let mut yaml = String::from("anchor: &a [x, y, z]\nlist:\n");
+		for _ in 0..(MAX_ALIAS_REFS + 50) {
+			yaml.push_str("  - *a\n");
+		}
+		let err = guard_alias_expansion(&yaml).unwrap_err();
+		assert!(format!("{err}").contains("alias references"));
+	}
+
+	#[test]
+	fn guard_rejects_large_aliased_document() {
+		let mut yaml = String::from("anchor: &a 1\nb: *a\n");
+		yaml.push_str(&format!("pad: \"{}\"\n", "p".repeat(MAX_ALIAS_DOC_BYTES)));
+		let err = guard_alias_expansion(&yaml).unwrap_err();
+		assert!(format!("{err}").contains("at most"));
 	}
 
 	// resolve_order
