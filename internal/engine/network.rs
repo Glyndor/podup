@@ -107,9 +107,14 @@ pub(super) fn build_per_network_options(
 		if let Some(m) = mac {
 			opts.static_mac = Some(m.to_string());
 		}
+		// Forward per-attachment driver options. `priority` is surfaced by Compose
+		// as a dedicated field but Podman consumes it as a driver option, so fold
+		// it in alongside any explicit `driver_opts`.
+		let mut driver_opts = c.driver_opts.clone();
 		if let Some(prio) = c.priority {
-			let mut driver_opts = HashMap::new();
 			driver_opts.insert("priority".to_string(), prio.to_string());
+		}
+		if !driver_opts.is_empty() {
 			opts.driver_opts = Some(driver_opts);
 		}
 		if let Some(iface) = &c.interface_name {

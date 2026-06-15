@@ -2,8 +2,9 @@
 //!
 //! Scalar fields take the override when present, else the base. Collection
 //! fields (env vars, labels, maps) are merged with the override winning on
-//! overlapping keys; list-shaped fields take the override wholesale when
-//! non-empty, otherwise fall back to the base.
+//! overlapping keys. Sequence fields are combined per the Compose
+//! Specification's `extends` rules: referenced (base) items first, then the
+//! extending service's items, with duplicates removed — not replaced wholesale.
 
 use super::super::types::{
 	DependsOn, EnvFile, EnvVars, Labels, Service, ServiceNetworks, StringOrList, Sysctls,
@@ -46,12 +47,24 @@ pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) ->
 		Labels::Map(map)
 	}
 
-	fn merge_vec<T: Clone>(base: Vec<T>, over: Vec<T>) -> Vec<T> {
-		if over.is_empty() {
-			base
-		} else {
-			over
+	fn merge_vec<T: Clone + serde::Serialize>(base: Vec<T>, over: Vec<T>) -> Vec<T> {
+		// Compose `extends` combines sequences: base items first, then the
+		// extending service's items, dropping exact duplicates. Equality is by
+		// serialized form so the element types need not implement PartialEq.
+		let mut seen: Vec<String> = base
+			.iter()
+			.filter_map(|item| serde_yaml::to_string(item).ok())
+			.collect();
+		let mut out = base;
+		for item in over {
+			match serde_yaml::to_string(&item) {
+				Ok(key) if seen.contains(&key) => continue,
+				Ok(key) => seen.push(key),
+				Err(_) => {}
+			}
+			out.push(item);
 		}
+		out
 	}
 
 	fn merge_sol(base: StringOrList, over: StringOrList) -> StringOrList {
@@ -197,7 +210,7 @@ mod tests {
 	use crate::parse_str;
 
 	#[test]
-	fn override_list_field_replaces_base_wholesale() {
+	fn extends_unions_sequence_fields() {
 		let yaml = r#"
 services:
   base:
@@ -211,8 +224,28 @@ services:
       - "90:90"
 "#;
 		let file = parse_str(yaml).unwrap();
-		// A non-empty override list replaces the base list entirely, not appends.
-		assert_eq!(file.services["app"].ports.len(), 1);
+		// Compose `extends` combines sequences (base first, then the extending
+		// service's items) rather than replacing the base wholesale.
+		assert_eq!(file.services["app"].ports.len(), 3);
+	}
+
+	#[test]
+	fn extends_dedups_identical_sequence_entries() {
+		let yaml = r#"
+services:
+  base:
+    image: alpine
+    ports:
+      - "80:80"
+  app:
+    extends: base
+    ports:
+      - "80:80"
+      - "90:90"
+"#;
+		let file = parse_str(yaml).unwrap();
+		// An exact duplicate from the extending service is dropped.
+		assert_eq!(file.services["app"].ports.len(), 2);
 	}
 
 	#[test]
