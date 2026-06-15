@@ -234,7 +234,11 @@ jobs:
           cargo install --locked cargo-cyclonedx
           cargo install --locked --features cli cargo-about
           cargo cyclonedx --format json --all-features
-          mv "$(ls ./*.cdx.json | head -n1)" podup.cdx.json
+          # cargo-cyclonedx names the file after the package (podup.cdx.json),
+          # so only rename when an older/different layout emitted another name —
+          # mv onto itself errors ("are the same file").
+          src="$(ls ./*.cdx.json | head -n1)"
+          [ "$src" = "./podup.cdx.json" ] || mv "$src" podup.cdx.json
           cargo about generate about.hbs > NOTICES.html
 
       - name: Generate checksums
