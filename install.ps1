@@ -10,7 +10,6 @@
 #   PODUP_VERSION              Release tag to install (e.g. v0.3.0). Default: latest.
 #   PODUP_INSTALL_DIR          Installation directory. Default: %LOCALAPPDATA%\Programs\podup.
 #   PODUP_RELEASE_PUBKEY_B64   Override the baked-in Ed25519 release public key (for forks).
-#   PODUP_INSECURE_SKIP_VERIFY Set to 1 to accept checksum-only verification.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
@@ -81,8 +80,7 @@ try {
 	# SHA256SUMS. The binary is trusted only after at least one cryptographic proof
 	# tied to the release key or the repository's build identity succeeds — the
 	# Ed25519 signature over SHA256SUMS, or the GitHub build-provenance attestation.
-	# If neither verifier can run, the install fails closed. Set
-	# PODUP_INSECURE_SKIP_VERIFY=1 to explicitly opt out (checksum only).
+	# If neither verifier can run, the install fails closed.
 
 	# Baked-in base64 (unpadded) raw Ed25519 public keys (32 bytes each) matching
 	# the release signing key (RELEASE_SIGN_KEY). Up to two are accepted: the
@@ -166,13 +164,11 @@ sys.exit(1)
 		Write-LogInfo 'GitHub CLI with attestation support not found — cannot check attestation'
 	}
 
-	# Fail closed unless a strong proof succeeded or the user explicitly opts out.
+	# Fail closed: a strong cryptographic proof is mandatory. A checksum alone is not
+	# a trust anchor, and there is no opt-out — hardened environments require
+	# verifiable supply-chain integrity at install time.
 	if (-not $verified) {
-		if ($env:PODUP_INSECURE_SKIP_VERIFY -eq '1') {
-			Write-LogInfo 'PODUP_INSECURE_SKIP_VERIFY=1 — proceeding with checksum verification only'
-		} else {
-			Fail "No signature or attestation verifier available. Install 'gh' (>= 2.49) or python3 with the 'cryptography' package, set PODUP_RELEASE_PUBKEY_B64, or re-run with PODUP_INSECURE_SKIP_VERIFY=1 to accept checksum-only verification."
-		}
+		Fail "No signature or attestation verifier available. Install 'gh' (>= 2.49) or python3 with the 'cryptography' package, or set PODUP_RELEASE_PUBKEY_B64, then re-run."
 	}
 
 	Write-LogInfo 'Verifying SHA-256 checksum ...'

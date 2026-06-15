@@ -44,8 +44,10 @@ The one-line installer applies the same fail-closed policy. It requires **at
 least one** strong proof to succeed — the Ed25519 signature (when `python3` +
 `cryptography` and a configured public key are present) **or** the GitHub
 build-provenance attestation (`gh attestation verify`). If neither verifier is
-available it refuses to install. `PODUP_INSECURE_SKIP_VERIFY=1` is the explicit,
-documented opt-out (checksum only) for constrained environments.
+available it refuses to install. There is **no opt-out**: a checksum alone is not
+a trust anchor, so a verifier (`gh` or `python3` + `cryptography`) must be present
+at install time. The `--apt` path likewise verifies the keyring package's Ed25519
+signature before installing it as root.
 
 ## The embedded public keys
 
