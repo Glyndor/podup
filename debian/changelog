@@ -4,7 +4,7 @@ podup (0.22.2) unstable; urgency=medium
     paths (malformed release metadata, missing install target, HTTP transport
     errors). No behaviour or public-API change.
 
- -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sun, 15 Jun 2026 00:00:00 -0500
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sun, 15 Jun 2026 00:00:00 -0500
 
 podup (0.22.1) unstable; urgency=medium
 
@@ -13,7 +13,7 @@ podup (0.22.1) unstable; urgency=medium
     and add failure-path unit tests for the self-update metadata parser and the
     binary-install swap.
 
- -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sun, 14 Jun 2026 17:30:00 -0500
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sun, 14 Jun 2026 17:30:00 -0500
 
 podup (0.22.0) unstable; urgency=medium
 
@@ -35,7 +35,7 @@ podup (0.22.0) unstable; urgency=medium
     instead of argv (no longer visible in the process argument list), and the
     capped file read is now TOCTOU-safe (read through a single bounded handle).
 
- -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sun, 14 Jun 2026 16:26:29 -0500
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sun, 14 Jun 2026 16:26:29 -0500
 
 podup (0.21.1) unstable; urgency=medium
 
