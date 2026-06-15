@@ -83,14 +83,18 @@ fn run_with_guard(
 	}
 
 	let asset = install::require_platform_asset()?;
-	println!("downloading {asset} ({latest_tag}) ...");
-	let binary = source.fetch(asset)?;
+
+	// Security gate: fetch and verify the signed manifest *before* downloading the
+	// binary, so a tampered/unsigned release is rejected without first buffering a
+	// large attacker-controlled payload. The binary's digest is then checked
+	// against the verified manifest (fail-closed).
 	let sha256sums = source.fetch("SHA256SUMS")?;
 	let signature = source.fetch("SHA256SUMS.sig")?;
-
-	// Security gate: signed manifest first, then the binary's digest against it.
 	verify::verify_signature(&sha256sums, &signature)?;
 	let expected = verify::expected_digest(&sha256sums, asset)?;
+
+	println!("downloading {asset} ({latest_tag}) ...");
+	let binary = source.fetch(asset)?;
 	verify::verify_digest(&binary, &expected)?;
 	println!("signature and checksum verified");
 

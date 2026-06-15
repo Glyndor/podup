@@ -129,10 +129,16 @@ fn write_temp(tmp: &Path, new_bytes: &[u8], target: &Path) -> crate::Result<()> 
 	#[cfg(unix)]
 	let mut f = {
 		use std::os::unix::fs::OpenOptionsExt;
+		// Remove any stale temp (e.g. from a crashed run); unlinking a symlink
+		// removes the link itself and does not follow it.
+		let _ = std::fs::remove_file(tmp);
+		// `create_new` (O_EXCL) + O_NOFOLLOW: never follow or clobber a pre-planted
+		// symlink in a shared/attacker-writable install directory, so the verified
+		// bytes can only land in our own freshly created file.
 		std::fs::OpenOptions::new()
 			.write(true)
-			.create(true)
-			.truncate(true)
+			.create_new(true)
+			.custom_flags(libc::O_NOFOLLOW)
 			.mode(0o600)
 			.open(tmp)
 			.map_err(|e| {
@@ -149,8 +155,12 @@ fn write_temp(tmp: &Path, new_bytes: &[u8], target: &Path) -> crate::Result<()> 
 	#[cfg(unix)]
 	{
 		use std::os::unix::fs::PermissionsExt;
+		// Copy the target's permission bits, but mask off setuid/setgid/sticky
+		// (`& 0o777`): podup is an ordinary binary, and propagating a special bit
+		// from a tampered target onto the freshly installed binary would be a
+		// privilege-escalation footgun.
 		let mode = std::fs::metadata(target)
-			.map(|m| m.permissions().mode())
+			.map(|m| m.permissions().mode() & 0o777)
 			.unwrap_or(0o755);
 		std::fs::set_permissions(tmp, std::fs::Permissions::from_mode(mode))
 			.map_err(ComposeError::Io)?;
@@ -271,6 +281,23 @@ mod tests {
 
 		install_at(&target, b"new").unwrap();
 		let mode = std::fs::metadata(&target).unwrap().permissions().mode();
+		assert_eq!(mode & 0o777, 0o755);
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn install_at_strips_setuid_from_target_mode() {
+		use std::os::unix::fs::PermissionsExt;
+		let dir = tempfile::tempdir().unwrap();
+		let target = dir.path().join("podup");
+		std::fs::write(&target, b"old").unwrap();
+		// A tampered/setuid target must not propagate its special bits onto the
+		// freshly installed binary.
+		std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o4755)).unwrap();
+
+		install_at(&target, b"new").unwrap();
+		let mode = std::fs::metadata(&target).unwrap().permissions().mode();
+		assert_eq!(mode & 0o7000, 0, "setuid/setgid/sticky must be stripped");
 		assert_eq!(mode & 0o777, 0o755);
 	}
 
