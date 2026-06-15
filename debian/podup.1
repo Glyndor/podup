@@ -170,6 +170,35 @@ Default compose file when none is given.
 .TP
 .B .env
 Project environment file, loaded for variable interpolation.
+.SH SECURITY CONSIDERATIONS
+.B podup
+runs entirely as the invoking user against a rootless Podman socket; it adds no
+privilege of its own and holds no setuid bit. It talks to Podman over the
+libpod REST API on a Unix socket
+.RB ( PODMAN_SOCKET ),
+which is the trust boundary: any user who can reach that socket already controls
+the container engine.
+.PP
+Compose files are treated as
+.B trusted input
+\(em like a Makefile. Path-valued keys
+.RB ( extends.file ", " env_file ", " include )
+may reference files outside the project directory, so do not run
+.B podup
+on a compose file from an untrusted source.
+.PP
+.B podup update
+and the installer verify every downloaded release against an embedded Ed25519
+public key (and a GitHub build-provenance attestation) before installing,
+failing closed if no verifier is available; there is no bypass. The Debian
+package omits the self-update path and relies on
+.BR apt (8)
+for signed upgrades.
+.PP
+Running with
+.B RUST_LOG=debug
+can emit environment variable values and resolved secret/config file paths to
+the log; avoid debug logging where the terminal or log sink is not trusted.
 .SH SEE ALSO
 .BR podman (1),
 .BR podman-systemd.unit (5)

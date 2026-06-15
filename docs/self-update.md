@@ -109,3 +109,50 @@ two-release procedure:
 During step 1 the leaked `old` key is still accepted for one release — an
 unavoidable cost of any rotation. The GitHub build-provenance attestation, which
 does not depend on the signing key, still proves origin during the window.
+
+## Verifying a release independently
+
+Operators who want to verify a release without trusting the installer can do so
+with standard tooling. The GitHub build-provenance attestation proves the binary
+came from this repository's release workflow:
+
+```bash
+gh attestation verify podup-linux-x86_64 --repo Glyndor/podup
+```
+
+To verify the Ed25519 signature over `SHA256SUMS` offline (no GitHub CLI), use
+the embedded public key:
+
+```bash
+python3 - <<'PY'
+import base64
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+key = Ed25519PublicKey.from_public_bytes(
+    base64.b64decode("APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y" + "=="))
+key.verify(open("SHA256SUMS.sig", "rb").read(), open("SHA256SUMS", "rb").read())
+print("SHA256SUMS signature OK")
+PY
+sha256sum --check --ignore-missing SHA256SUMS
+```
+
+The release also ships a CycloneDX SBOM (`podup.cdx.json`) and a third-party
+license attribution (`NOTICES.html`), each with a detached `.sig` that verifies
+against the same key.
+
+## Air-gapped installation
+
+Networks that block outbound GitHub have no opt-out from verification — they
+carry the artifacts across the boundary instead:
+
+1. On a connected host, download the platform binary, `SHA256SUMS`,
+   `SHA256SUMS.sig` (and optionally the SBOM/NOTICES and their `.sig` files).
+2. Transfer them to the isolated host on approved media.
+3. Verify the Ed25519 signature and checksum there with the offline snippet
+   above — the embedded key is the trust anchor, so no network is needed.
+4. Install the verified binary manually (`install -m 0755 podup-linux-x86_64
+   /usr/local/bin/podup`).
+
+For building from source in an air-gapped environment, vendor the crates on a
+connected host (`cargo vendor vendor`), include the `vendor/` tree in the source
+tarball, and build the Debian package offline — `debian/rules` automatically
+switches Cargo to `--frozen --offline` when `vendor/` is present.
