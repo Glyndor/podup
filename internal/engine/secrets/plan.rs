@@ -107,6 +107,16 @@ fn resolve_source(
 	if external {
 		return Ok(Source::External(external_name.unwrap_or(name).to_string()));
 	}
+	let is_inline = content.is_some() || environment.is_some();
+	if is_inline && !staging::is_safe_project_name(name) {
+		// The name becomes part of the project-scoped Podman secret name and a URL
+		// query parameter, so require a bounded, well-formed identifier rather than
+		// an arbitrary (possibly huge or control-laden) YAML key.
+		return Err(ComposeError::Unsupported(format!(
+			"{kind} name {name:?} must be ASCII alphanumeric/dash/underscore/dot, \
+			 at most 128 chars, and not start with a dot"
+		)));
+	}
 	if let Some(content) = content {
 		return Ok(Source::Inline(
 			scoped_name(project, kind, name),
@@ -387,6 +397,16 @@ mod tests {
 		assert!(check_secret_size("s", MAX_SECRET_BYTES).is_err());
 		assert!(check_secret_size("s", MAX_SECRET_BYTES - 1).is_ok());
 		assert!(check_secret_size("s", 1).is_ok());
+	}
+
+	#[test]
+	fn inline_secret_with_unsafe_name_is_rejected() {
+		// A path-traversal / control-laden key must not become a Podman secret name.
+		let file = crate::compose::parse_str_raw(
+			"services:\n  web:\n    image: x\n    secrets: ['../evil']\nsecrets:\n  '../evil':\n    content: data\n",
+		)
+		.unwrap();
+		assert!(collect_native_plans("proj", &file.services["web"], &file).is_err());
 	}
 
 	#[test]

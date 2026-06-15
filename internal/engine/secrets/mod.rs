@@ -46,7 +46,7 @@ impl Engine {
 					// to the project dir (not the Podman service's cwd) and `~` is
 					// expanded — same handling as `volumes:`.
 					let resolved = super::container::resolve_bind_source(host_path, &self.base_dir);
-					binds.push(format!("{resolved}:{target}:ro"));
+					binds.push(make_bind(&name, &resolved, &target)?);
 				}
 			}
 		}
@@ -67,7 +67,7 @@ impl Engine {
 				if let Some(host_path) = &def.file {
 					let target = target_override.unwrap_or_else(|| format!("/{name}"));
 					let resolved = super::container::resolve_bind_source(host_path, &self.base_dir);
-					binds.push(format!("{resolved}:{target}:ro"));
+					binds.push(make_bind(&name, &resolved, &target)?);
 				}
 			}
 		}
@@ -205,6 +205,28 @@ impl Engine {
 	}
 }
 
+/// Build a `source:target:ro` bind string for a `file:` secret/config, rejecting
+/// a colon in either the resolved host path or the target.
+///
+/// The bind string is later split with `splitn(3, ':')`; a stray colon in the
+/// source or target shifts the field boundaries — redirecting the mount
+/// destination, or merging the `:ro` flag into a malformed `rw:ro` token that
+/// silently drops the read-only guarantee. A colon is not meaningful in a
+/// container mount path, so reject it at the boundary instead of mis-parsing.
+fn make_bind(name: &str, resolved: &str, target: &str) -> Result<String> {
+	if resolved.contains(':') {
+		return Err(ComposeError::Unsupported(format!(
+			"secret/config '{name}': host path must not contain a colon: {resolved}"
+		)));
+	}
+	if target.contains(':') {
+		return Err(ComposeError::Unsupported(format!(
+			"secret/config '{name}': mount target must not contain a colon: {target}"
+		)));
+	}
+	Ok(format!("{resolved}:{target}:ro"))
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -245,6 +267,16 @@ mod tests {
 			.build_config_binds(&file.services["web"], &file)
 			.unwrap();
 		assert_eq!(binds, vec!["/etc/app/cfg.yaml:/cfg:ro"]);
+	}
+
+	#[test]
+	fn make_bind_rejects_colon_in_path_or_target() {
+		assert!(make_bind("s", "/host/a:b", "/run/secrets/s").is_err());
+		assert!(make_bind("s", "/host/a", "/run/secrets/s:rw").is_err());
+		assert_eq!(
+			make_bind("s", "/host/a", "/run/secrets/s").unwrap(),
+			"/host/a:/run/secrets/s:ro"
+		);
 	}
 
 	#[test]
