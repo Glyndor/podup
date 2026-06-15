@@ -63,3 +63,45 @@ jobs:
           fi
           echo "Built $deb"
           dpkg-deb --contents "$deb"
+
+  build-vendored:
+    name: dpkg-buildpackage (vendored / offline)
+    runs-on: ubuntu-latest
+    # Exercises the air-gapped build path debian/rules takes when a vendor/ tree
+    # is present: crates are vendored once (online), then the package is built
+    # with CARGO_NET_OFFLINE=true and --frozen --offline. This guarantees a
+    # classified/air-gapped environment can build podup from a source tarball
+    # with no crates.io access.
+    container: debian:sid
+    steps:
+      - name: Install build tooling
+        env:
+          DEBIAN_FRONTEND: noninteractive
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            build-essential \
+            dpkg-dev \
+            debhelper \
+            cargo \
+            rustc
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+
+      - name: Vendor dependencies (the only step allowed network access)
+        run: cargo vendor vendor
+
+      - name: Build the package offline from the vendored tree
+        # debian/rules detects vendor/ and switches Cargo to --frozen --offline
+        # with CARGO_NET_OFFLINE=true; a missing crate fails the build.
+        run: dpkg-buildpackage -us -uc -b
+
+      - name: Confirm the offline .deb was produced
+        run: |
+          deb=$(ls ../podup_*.deb 2>/dev/null | head -n1)
+          if [ -z "$deb" ]; then
+            echo "::error::no .deb artifact was produced from the vendored build"
+            exit 1
+          fi
+          echo "Built $deb offline from vendored sources"
