@@ -183,7 +183,20 @@ async fn run() -> podup::Result<()> {
 		.event_format(PodupFormat)
 		.init();
 
-	let cli = Cli::parse();
+	// Frame `--help`/`--version` output with a blank line top and bottom. clap
+	// trims template/before/after-help edges, so wrap the rendered text here.
+	let cli = match Cli::try_parse() {
+		Ok(cli) => cli,
+		Err(e) => match e.kind() {
+			clap::error::ErrorKind::DisplayHelp
+			| clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+			| clap::error::ErrorKind::DisplayVersion => {
+				print!("\n{e}\n");
+				process::exit(0);
+			}
+			_ => e.exit(),
+		},
+	};
 
 	// `completions` derives entirely from the static CLI definition; it neither
 	// parses a compose file nor contacts Podman. Print to stdout for piping.
