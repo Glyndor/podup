@@ -185,6 +185,10 @@ impl Engine {
 			);
 		}
 
+		for warning in rootless_caveat_warnings(service_name, service) {
+			tracing::warn!("{warning}");
+		}
+
 		let spec = SpecGenerator {
 			name: container_name.to_string(),
 			image: image.to_string(),
@@ -278,5 +282,71 @@ impl Engine {
 	/// in the top-level `volumes:` map (anonymous/implicit) are left unchanged.
 	fn resolved_volume_name(&self, reference: &str, file: &ComposeFile) -> String {
 		resolve_volume_name(reference, &self.project, file)
+	}
+}
+
+/// Compose fields Podman accepts but cannot honor (or that fail) under rootless
+/// Podman on cgroups v2. Returns advisory messages; pure so it can be
+/// unit-tested. The wording mirrors podman-run(1) so operators are not misled
+/// into assuming a no-op limit took effect.
+fn rootless_caveat_warnings(name: &str, service: &Service) -> Vec<String> {
+	let mut out = Vec::new();
+	if service.privileged == Some(true) {
+		out.push(format!(
+			"service \"{name}\": privileged has reduced effect under rootless Podman — a \
+			container cannot gain more privileges than the user that launched it"
+		));
+	}
+	if service.oom_kill_disable.is_some() {
+		out.push(format!(
+			"service \"{name}\": oom_kill_disable is not supported on cgroups v2 systems and \
+			is ignored"
+		));
+	}
+	if service.mem_swappiness.is_some() {
+		out.push(format!(
+			"service \"{name}\": mem_swappiness is only supported on cgroups v1 rootful systems \
+			and is ignored otherwise"
+		));
+	}
+	if service.cpu_rt_runtime.is_some() || service.cpu_rt_period.is_some() {
+		out.push(format!(
+			"service \"{name}\": cpu_rt_runtime/cpu_rt_period are only supported on cgroups v1 \
+			rootful systems; the container may fail to start rootless"
+		));
+	}
+	out
+}
+
+#[cfg(test)]
+mod tests {
+	use super::rootless_caveat_warnings;
+	use crate::compose::types::Service;
+
+	#[test]
+	fn no_caveat_warnings_for_plain_service() {
+		assert!(rootless_caveat_warnings("web", &Service::default()).is_empty());
+	}
+
+	#[test]
+	fn warns_for_each_rootless_caveat_field() {
+		let service = Service {
+			privileged: Some(true),
+			oom_kill_disable: Some(true),
+			mem_swappiness: Some(10),
+			cpu_rt_runtime: Some(1000),
+			..Service::default()
+		};
+		let warnings = rootless_caveat_warnings("web", &service);
+		assert_eq!(warnings.len(), 4);
+		let joined = warnings.join("\n");
+		for needle in [
+			"privileged",
+			"oom_kill_disable",
+			"mem_swappiness",
+			"cpu_rt_runtime",
+		] {
+			assert!(joined.contains(needle), "missing warning for {needle}");
+		}
 	}
 }
