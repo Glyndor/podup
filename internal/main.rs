@@ -108,6 +108,16 @@ fn write_quadlet(
 	output: Option<&Path>,
 ) -> podup::Result<()> {
 	let result = podup::quadlet::generate(file, project);
+	if let Some(dup) = result.duplicate_filename() {
+		return Err(std::io::Error::new(
+			std::io::ErrorKind::InvalidInput,
+			format!(
+				"quadlet: two resources map to the same unit file {dup:?}; \
+				 rename one so their names do not collide after sanitization"
+			),
+		)
+		.into());
+	}
 	if let Some(advisory) = quadlet_platform_advisory(std::env::consts::OS) {
 		eprintln!("podup: warning: {advisory}");
 	}

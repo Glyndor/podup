@@ -5,7 +5,7 @@ use std::path::Path;
 
 use crate::compose::types::{ComposeFile, Service};
 use crate::env_file;
-use crate::error::Result;
+use crate::error::{ComposeError, Result};
 
 /// Resolve a named-volume reference to the volume name `create_volumes`
 /// produced: a custom `name:`, the raw name for an external volume, or the
@@ -106,15 +106,18 @@ pub(super) fn resolve_links(service: &Service, file: &ComposeFile, project: &str
 /// Podman-native secrets, so the recreate must be driven by the hash. `file:`
 /// sources stay live bind-mounts and `external:` sources are by-reference, so
 /// neither needs to influence the hash.
-pub(crate) fn config_hash(service: &Service, file: &ComposeFile) -> String {
+pub(crate) fn config_hash(service: &Service, file: &ComposeFile) -> Result<String> {
 	use sha2::{Digest, Sha256};
 	let mut hasher = Sha256::new();
 	// Canonicalise through `serde_json::Value` first: object keys are emitted in
 	// sorted order, so map-typed fields (e.g. `storage_opt`) cannot reorder
-	// between runs and flap the hash into a spurious recreate.
+	// between runs and flap the hash into a spurious recreate. Fail closed if
+	// serialization fails (e.g. a non-scalar mapping key in an `x-` extension):
+	// returning an empty/default hash would make distinct services hash
+	// identically and silently suppress recreation and inline-secret rotation.
 	let serialized = serde_json::to_value(service)
 		.and_then(|v| serde_json::to_vec(&v))
-		.unwrap_or_default();
+		.map_err(|e| ComposeError::Unsupported(format!("cannot hash service config: {e}")))?;
 	hasher.update(&serialized);
 	for secret_ref in &service.secrets {
 		if let Some(def) = file.secrets.get(secret_ref.source()) {
@@ -138,11 +141,11 @@ pub(crate) fn config_hash(service: &Service, file: &ComposeFile) -> String {
 			);
 		}
 	}
-	hasher
+	Ok(hasher
 		.finalize()
 		.iter()
 		.map(|b| format!("{b:02x}"))
-		.collect()
+		.collect())
 }
 
 /// Fold an inline secret/config's resolved bytes into the config hasher. Inline
@@ -243,9 +246,9 @@ mod tests {
 		let a = parse_str("services:\n  web:\n    image: nginx:1.27\n").unwrap();
 		let b = parse_str("services:\n  web:\n    image: nginx:1.27\n").unwrap();
 		let c = parse_str("services:\n  web:\n    image: nginx:1.28\n").unwrap();
-		let ha = config_hash(&a.services["web"], &a);
-		let hb = config_hash(&b.services["web"], &b);
-		let hc = config_hash(&c.services["web"], &c);
+		let ha = config_hash(&a.services["web"], &a).unwrap();
+		let hb = config_hash(&b.services["web"], &b).unwrap();
+		let hc = config_hash(&c.services["web"], &c).unwrap();
 		assert_eq!(ha, hb, "same config produces the same hash");
 		assert_ne!(ha, hc, "a changed image produces a different hash");
 		assert_eq!(ha.len(), 64, "sha-256 hex is 64 chars");
@@ -264,8 +267,8 @@ mod tests {
 		)
 		.unwrap();
 		assert_ne!(
-			config_hash(&a.services["web"], &a),
-			config_hash(&b.services["web"], &b),
+			config_hash(&a.services["web"], &a).unwrap(),
+			config_hash(&b.services["web"], &b).unwrap(),
 			"changed inline secret content must change the hash",
 		);
 	}
@@ -285,8 +288,8 @@ mod tests {
 		// The service definition is identical; only the top-level external name
 		// differs, which is resolved at attach time, not baked into the hash.
 		assert_eq!(
-			config_hash(&a.services["web"], &a),
-			config_hash(&b.services["web"], &b),
+			config_hash(&a.services["web"], &a).unwrap(),
+			config_hash(&b.services["web"], &b).unwrap(),
 		);
 	}
 
@@ -303,8 +306,8 @@ mod tests {
 		)
 		.unwrap();
 		assert_eq!(
-			config_hash(&a.services["web"], &a),
-			config_hash(&b.services["web"], &b),
+			config_hash(&a.services["web"], &a).unwrap(),
+			config_hash(&b.services["web"], &b).unwrap(),
 			"hash must be independent of storage_opt key order",
 		);
 	}
