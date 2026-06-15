@@ -27,6 +27,11 @@ const MAX_METADATA_BYTES: u64 = 1024 * 1024;
 pub struct GitHubSource {
 	repo: String,
 	agent: ureq::Agent,
+	/// Base for the releases API (`https://api.github.com`). Overridable in
+	/// tests so the transport-error path can be exercised offline.
+	api_base: String,
+	/// Base for asset downloads (`https://github.com`). Overridable in tests.
+	dl_base: String,
 }
 
 impl GitHubSource {
@@ -40,7 +45,19 @@ impl GitHubSource {
 		Self {
 			repo: repo.into(),
 			agent,
+			api_base: "https://api.github.com".to_string(),
+			dl_base: "https://github.com".to_string(),
 		}
+	}
+
+	/// Construct with overridden host bases — test seam for the transport-error
+	/// path (point at a closed local port to force a connection failure).
+	#[cfg(test)]
+	fn with_bases(repo: impl Into<String>, api_base: &str, dl_base: &str) -> Self {
+		let mut s = Self::new(repo);
+		s.api_base = api_base.to_string();
+		s.dl_base = dl_base.to_string();
+		s
 	}
 }
 
@@ -82,7 +99,7 @@ fn parse_latest_tag(body: &[u8]) -> crate::Result<String> {
 
 impl ReleaseSource for GitHubSource {
 	fn latest_version(&self) -> crate::Result<String> {
-		let url = format!("https://api.github.com/repos/{}/releases/latest", self.repo);
+		let url = format!("{}/repos/{}/releases/latest", self.api_base, self.repo);
 		let resp = self
 			.agent
 			.get(&url)
@@ -97,8 +114,8 @@ impl ReleaseSource for GitHubSource {
 		// Pinned to the latest release; `ureq` follows GitHub's redirect to the
 		// asset host. Always HTTPS — the URL is a compile-time constant scheme.
 		let url = format!(
-			"https://github.com/{}/releases/latest/download/{asset}",
-			self.repo
+			"{}/{}/releases/latest/download/{asset}",
+			self.dl_base, self.repo
 		);
 		let resp = self
 			.agent
@@ -175,5 +192,26 @@ mod tests {
 		// Well-formed JSON object without `tag_name` must fail, not default.
 		let err = parse_latest_tag(br#"{"name":"release"}"#).unwrap_err();
 		assert!(err.to_string().contains("malformed release metadata"));
+	}
+
+	#[test]
+	fn latest_version_maps_transport_error() {
+		// Port 1 is closed → connection refused, offline and deterministic. The
+		// transport failure must map to the friendly "cannot reach" error.
+		use crate::update::ReleaseSource;
+		let src = GitHubSource::with_bases(REPO, "http://127.0.0.1:1", "http://127.0.0.1:1");
+		let err = src.latest_version().unwrap_err();
+		assert!(
+			err.to_string().contains("cannot reach GitHub releases API"),
+			"got: {err}"
+		);
+	}
+
+	#[test]
+	fn fetch_maps_transport_error() {
+		use crate::update::ReleaseSource;
+		let src = GitHubSource::with_bases(REPO, "http://127.0.0.1:1", "http://127.0.0.1:1");
+		let err = src.fetch("podup-linux-x86_64").unwrap_err();
+		assert!(err.to_string().contains("download failed"), "got: {err}");
 	}
 }
