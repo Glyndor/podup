@@ -28,6 +28,12 @@ const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
 /// connect only — it does not limit the duration of a streaming response body.
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Ceiling on reading a *buffered* (non-streaming) response body. Without it a
+/// daemon that accepts the request, sends headers, then stalls would hang the
+/// CLI forever. Streaming helpers (logs, attach, archive) are deliberately not
+/// bounded by this — they are long-lived by design.
+const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
 /// Result alias for libpod client calls, fixing the error to [`PodmanError`].
 pub type Result<T> = std::result::Result<T, PodmanError>;
 
@@ -143,15 +149,23 @@ impl Client {
 	/// [`MAX_RESPONSE_BYTES`] so a rogue or runaway daemon cannot exhaust memory.
 	async fn read_body(resp: Response<Incoming>) -> Result<(StatusCode, Vec<u8>)> {
 		let status = resp.status();
-		let bytes = Limited::new(resp.into_body(), MAX_RESPONSE_BYTES)
-			.collect()
-			.await
-			.map_err(|e| PodmanError::Api {
-				status: 0,
-				message: format!("reading response body: {e}"),
-			})?
-			.to_bytes();
-		Ok((status, bytes.to_vec()))
+		let collected = tokio::time::timeout(
+			READ_TIMEOUT,
+			Limited::new(resp.into_body(), MAX_RESPONSE_BYTES).collect(),
+		)
+		.await
+		.map_err(|_| PodmanError::Api {
+			status: 0,
+			message: format!(
+				"timed out after {}s reading the response body from the Podman socket",
+				READ_TIMEOUT.as_secs()
+			),
+		})?
+		.map_err(|e| PodmanError::Api {
+			status: 0,
+			message: format!("reading response body: {e}"),
+		})?;
+		Ok((status, collected.to_bytes().to_vec()))
 	}
 
 	/// Check status code; on error parse the Podman error message.

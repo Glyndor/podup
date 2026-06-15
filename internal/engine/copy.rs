@@ -5,7 +5,7 @@ use std::path::Path;
 use bytes::Bytes;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use http_body_util::BodyExt;
+use http_body_util::{BodyExt, Limited};
 
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
@@ -13,6 +13,11 @@ use crate::libpod::urlencoded;
 use crate::libpod::API_PREFIX;
 
 use super::Engine;
+
+/// Upper bound on a container→host `cp` archive buffered in memory. Without it a
+/// hostile or huge container path would OOM the CLI. Generous (covers ordinary
+/// file/dir copies); larger transfers should use `podman cp` directly.
+const MAX_CP_ARCHIVE_BYTES: usize = 1024 * 1024 * 1024;
 
 impl Engine {
 	/// Copy between a service container and the local filesystem.
@@ -62,26 +67,22 @@ impl Engine {
 			.get_stream(&path)
 			.await
 			.map_err(ComposeError::Podman)?;
-		let tar_bytes = resp
-			.into_body()
+		// Cap the buffered archive so a huge/hostile container path cannot OOM the
+		// CLI (the streaming `get_stream` path bypasses the client's own cap).
+		let tar_bytes = Limited::new(resp.into_body(), MAX_CP_ARCHIVE_BYTES)
 			.collect()
 			.await
-			.map_err(|e| ComposeError::Podman(crate::libpod::PodmanError::Hyper(e)))?
+			.map_err(|_| {
+				ComposeError::Unsupported(format!(
+					"cp: container archive exceeds {MAX_CP_ARCHIVE_BYTES} bytes; \
+					 copy fewer files or use `podman cp` for very large transfers"
+				))
+			})?
 			.to_bytes()
 			.to_vec();
 
-		let dst_path = if dst.is_dir() {
-			dst.to_path_buf()
-		} else if let Some(parent) = dst.parent() {
-			if !parent.as_os_str().is_empty() && !parent.exists() {
-				std::fs::create_dir_all(parent).map_err(ComposeError::Io)?;
-			}
-			parent.to_path_buf()
-		} else {
-			std::env::current_dir().map_err(ComposeError::Io)?
-		};
-
-		tokio::task::spawn_blocking(move || extract_tar_guarded(&tar_bytes, &dst_path))
+		let dst = dst.to_path_buf();
+		tokio::task::spawn_blocking(move || extract_archive(&tar_bytes, &dst))
 			.await
 			.map_err(|e| ComposeError::Build(e.to_string()))??;
 
@@ -161,8 +162,24 @@ fn pack_path(src: &Path) -> Result<Vec<u8>> {
 	gz.finish().map_err(|e| ComposeError::Build(e.to_string()))
 }
 
+/// Route a container archive to the host destination.
+///
+/// docker/podman `cp` semantics: when `dst` is an existing directory the archive
+/// is extracted into it; otherwise `dst` names the target file and the archive
+/// must contain a single regular file, whose **content** is written to exactly
+/// `dst` — the daemon-supplied entry name is ignored. This matters for security:
+/// a hostile image must not be able to choose the on-host filename (e.g. drop a
+/// `.bashrc`/`authorized_keys` into the destination directory).
+fn extract_archive(tar_bytes: &[u8], dst: &Path) -> Result<()> {
+	if dst.is_dir() {
+		return extract_tar_guarded(tar_bytes, dst);
+	}
+	write_single_entry_to(tar_bytes, dst)
+}
+
 /// Extract a (plain, uncompressed) tar archive into `dst_dir`, refusing any
-/// entry whose path would escape it (zip-slip).
+/// entry whose path would escape it (zip-slip) and stripping group/other-write
+/// and setuid/setgid/sticky bits the (untrusted) container set on each entry.
 ///
 /// Extract entry-by-entry rather than `archive.unpack`: a malicious or
 /// compromised container can craft tar entries whose paths contain `..` or are
@@ -175,6 +192,8 @@ fn extract_tar_guarded(tar_bytes: &[u8], dst_dir: &Path) -> Result<()> {
 	let mut archive = tar::Archive::new(cursor);
 	for entry in archive.entries().map_err(ComposeError::Io)? {
 		let mut entry = entry.map_err(ComposeError::Io)?;
+		let rel = entry.path().map(|p| p.into_owned()).ok();
+		let mode = entry.header().mode().ok();
 		if !entry.unpack_in(dst_dir).map_err(ComposeError::Io)? {
 			let p = entry
 				.path()
@@ -184,9 +203,80 @@ fn extract_tar_guarded(tar_bytes: &[u8], dst_dir: &Path) -> Result<()> {
 				"cp: refusing archive entry that escapes destination: {p}"
 			)));
 		}
+		if let (Some(rel), Some(mode)) = (rel, mode) {
+			sanitize_extracted_mode(&dst_dir.join(rel), mode);
+		}
 	}
 	Ok(())
 }
+
+/// Write the single regular-file entry of `tar_bytes` to exactly `dst`,
+/// honouring the user's destination filename rather than the daemon's. Errors
+/// if the archive is empty, holds more than one entry, or the entry is not a
+/// regular file (those cases only make sense against a directory destination).
+fn write_single_entry_to(tar_bytes: &[u8], dst: &Path) -> Result<()> {
+	use std::io::Read;
+
+	if let Some(parent) = dst.parent() {
+		if !parent.as_os_str().is_empty() && !parent.exists() {
+			std::fs::create_dir_all(parent).map_err(ComposeError::Io)?;
+		}
+	}
+
+	let cursor = std::io::Cursor::new(tar_bytes);
+	let mut archive = tar::Archive::new(cursor);
+	let mut written = false;
+	for entry in archive.entries().map_err(ComposeError::Io)? {
+		let mut entry = entry.map_err(ComposeError::Io)?;
+		if entry.header().entry_type() != tar::EntryType::Regular {
+			return Err(ComposeError::Unsupported(format!(
+				"cp: destination {} is not a directory but the source is not a single file",
+				dst.display()
+			)));
+		}
+		if written {
+			return Err(ComposeError::Unsupported(format!(
+				"cp: destination {} is not a directory but the source has multiple entries",
+				dst.display()
+			)));
+		}
+		let mode = entry.header().mode().ok();
+		let mut buf = Vec::new();
+		entry.read_to_end(&mut buf).map_err(ComposeError::Io)?;
+		std::fs::write(dst, &buf).map_err(ComposeError::Io)?;
+		if let Some(mode) = mode {
+			sanitize_extracted_mode(dst, mode);
+		}
+		written = true;
+	}
+	if !written {
+		return Err(ComposeError::Build(
+			"cp: container archive was empty".into(),
+		));
+	}
+	Ok(())
+}
+
+/// Strip group/other-write and setuid/setgid/sticky bits from a file extracted
+/// from an untrusted container, keeping the owner and read/execute bits. No-op
+/// on non-files (e.g. symlinks) and on non-unix platforms.
+#[cfg(unix)]
+fn sanitize_extracted_mode(path: &Path, mode: u32) {
+	use std::os::unix::fs::PermissionsExt;
+	let Ok(meta) = std::fs::symlink_metadata(path) else {
+		return;
+	};
+	if !meta.is_file() {
+		return;
+	}
+	let masked = mode & 0o7777 & !0o022 & !0o7000;
+	if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(masked)) {
+		tracing::warn!("cp: could not set permissions on {}: {e}", path.display());
+	}
+}
+
+#[cfg(not(unix))]
+fn sanitize_extracted_mode(_path: &Path, _mode: u32) {}
 
 // ---------------------------------------------------------------------------
 // Unit tests
@@ -291,6 +381,64 @@ mod tests {
 			std::fs::read(dir.path().join("hello.txt")).expect("read"),
 			b"hi"
 		);
+	}
+
+	#[test]
+	fn extract_archive_to_file_honors_user_filename() {
+		// dst is NOT a dir: the single entry's content must land at exactly `dst`,
+		// ignoring the daemon-supplied entry name (a hostile image must not pick
+		// the on-host filename).
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dst = dir.path().join("myname.txt");
+		let bytes = tar_bytes_with("evil-name", b"payload");
+		super::extract_archive(&bytes, &dst).expect("extract");
+		assert_eq!(std::fs::read(&dst).expect("read"), b"payload");
+		assert!(
+			!dir.path().join("evil-name").exists(),
+			"daemon entry name must not be used as the on-host filename"
+		);
+	}
+
+	#[test]
+	fn extract_archive_to_file_rejects_multiple_entries() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dst = dir.path().join("out.txt");
+		let mut builder = tar::Builder::new(Vec::new());
+		for n in ["a.txt", "b.txt"] {
+			let mut h = tar::Header::new_gnu();
+			h.set_size(1);
+			h.set_mode(0o644);
+			h.set_entry_type(tar::EntryType::Regular);
+			h.set_path(n).expect("path");
+			h.set_cksum();
+			builder.append(&h, &b"x"[..]).expect("append");
+		}
+		let bytes = builder.into_inner().expect("finish");
+		assert!(super::extract_archive(&bytes, &dst).is_err());
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn extract_strips_group_other_write_and_special_bits() {
+		use std::os::unix::fs::PermissionsExt;
+		let dir = tempfile::tempdir().expect("tempdir");
+		// World-writable + setuid entry from an untrusted container.
+		let mut h = tar::Header::new_gnu();
+		h.set_size(2);
+		h.set_mode(0o4777);
+		h.set_entry_type(tar::EntryType::Regular);
+		h.set_path("f").expect("path");
+		h.set_cksum();
+		let mut builder = tar::Builder::new(Vec::new());
+		builder.append(&h, &b"hi"[..]).expect("append");
+		let bytes = builder.into_inner().expect("finish");
+		super::extract_tar_guarded(&bytes, dir.path()).expect("extract");
+		let mode = std::fs::metadata(dir.path().join("f"))
+			.expect("meta")
+			.permissions()
+			.mode() & 0o7777;
+		assert_eq!(mode & 0o022, 0, "group/other write must be stripped");
+		assert_eq!(mode & 0o7000, 0, "setuid/setgid/sticky must be stripped");
 	}
 
 	#[test]

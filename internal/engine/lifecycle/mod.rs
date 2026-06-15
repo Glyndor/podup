@@ -224,7 +224,7 @@ impl Engine {
 			.or(service.deploy.as_ref().and_then(|d| d.replicas))
 			.unwrap_or(1) as usize;
 
-		let new_hash = config_hash(service, file);
+		let new_hash = config_hash(service, file)?;
 
 		for i in 1..=replicas {
 			let container_name = if replicas == 1 {

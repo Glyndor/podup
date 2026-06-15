@@ -119,11 +119,33 @@ pub(crate) fn build_ulimits(service: &Service) -> Vec<Ulimit> {
 		.iter()
 		.map(|(name, cfg)| Ulimit {
 			ulimit_type: name.clone(),
-			soft: cfg.soft() as u64,
-			hard: cfg.hard() as u64,
+			soft: ulimit_value(cfg.soft(), name, "soft"),
+			hard: ulimit_value(cfg.hard(), name, "hard"),
 		})
 		.collect()
 }
+
+/// Convert a compose ulimit value to the libpod `u64`. `-1` is the conventional
+/// "unlimited" sentinel (`u64::MAX`); any other negative value is invalid and
+/// would otherwise wrap to a huge number via `as u64`, so it is rejected to `0`
+/// with a warning instead of silently becoming an enormous limit.
+fn ulimit_value(value: i64, name: &str, which: &str) -> u64 {
+	match value {
+		-1 => u64::MAX,
+		v if v < 0 => {
+			tracing::warn!(
+				"ulimit {name} {which} value {v} is invalid (only -1 means unlimited); using 0"
+			);
+			0
+		}
+		v => v as u64,
+	}
+}
+
+/// Upper bound on an explicit GPU `count:` — clamps an untrusted compose value
+/// so a huge count cannot allocate billions of device-id strings (OOM). Far
+/// above any real host's GPU count.
+const MAX_GPU_DEVICES: i64 = 64;
 
 /// Map `deploy.resources.reservations.devices` GPU reservations to Podman CDI
 /// device names (e.g. `nvidia.com/gpu=all`).
@@ -166,7 +188,17 @@ pub(crate) fn cdi_devices(service: &Service) -> Vec<String> {
 			// `count: all` (-1) or unspecified → request every GPU.
 			Some(-1) | None => out.push("nvidia.com/gpu=all".to_string()),
 			Some(n) if n > 0 => {
-				for i in 0..n {
+				// Clamp to a sane device count: the value comes from an untrusted
+				// compose file and a huge `count:` would otherwise allocate billions
+				// of device-id strings during spec assembly (OOM) before any
+				// container is created. No host has anywhere near this many GPUs.
+				if n > MAX_GPU_DEVICES {
+					tracing::warn!(
+						"device reservation count {n} exceeds the maximum of {MAX_GPU_DEVICES}; \
+						 clamping (no host has this many GPUs)"
+					);
+				}
+				for i in 0..n.min(MAX_GPU_DEVICES) {
 					out.push(format!("nvidia.com/gpu={i}"));
 				}
 			}
@@ -307,5 +339,36 @@ mod tests {
 	#[test]
 	fn cdi_absent_without_deploy() {
 		assert!(cdi_devices(&default_service()).is_empty());
+	}
+
+	// --- ulimit value conversion ---
+
+	#[test]
+	fn ulimit_minus_one_is_unlimited() {
+		assert_eq!(ulimit_value(-1, "nofile", "soft"), u64::MAX);
+	}
+
+	#[test]
+	fn ulimit_other_negative_clamped_to_zero() {
+		// Must not wrap to a huge u64 via `as`.
+		assert_eq!(ulimit_value(-5, "nofile", "soft"), 0);
+	}
+
+	#[test]
+	fn ulimit_positive_passes_through() {
+		assert_eq!(ulimit_value(1024, "nofile", "hard"), 1024);
+	}
+
+	// --- gpu count clamp ---
+
+	#[test]
+	fn cdi_gpu_count_is_clamped() {
+		let yaml = format!(
+			"services:\n  g:\n    image: x\n    deploy:\n      resources:\n        reservations:\n          devices:\n            - capabilities: [gpu]\n              count: {}\n",
+			MAX_GPU_DEVICES + 10_000
+		);
+		let file = crate::compose::parse_str(&yaml).unwrap();
+		let out = cdi_devices(&file.services["g"]);
+		assert_eq!(out.len(), MAX_GPU_DEVICES as usize);
 	}
 }

@@ -123,6 +123,27 @@ impl Engine {
 			}
 		}
 
+		// A hook that exits non-zero must surface as an error (matching
+		// `Engine::run`): otherwise a failing `post_start` readiness/init step is
+		// silently treated as success and dependents start against a container
+		// that never initialised. `pre_stop` callers deliberately ignore the Err.
+		let inspect_path = format!(
+			"{API_PREFIX}/exec/{}/json",
+			crate::libpod::urlencoded(&exec_id)
+		);
+		let inspect: crate::libpod::types::exec::ExecInspect = self
+			.client
+			.get_json(&inspect_path)
+			.await
+			.map_err(ComposeError::Podman)?;
+		if let Some(code) = inspect.exit_code {
+			if code != 0 {
+				return Err(ComposeError::Build(format!(
+					"lifecycle hook exited with status {code}"
+				)));
+			}
+		}
+
 		Ok(())
 	}
 

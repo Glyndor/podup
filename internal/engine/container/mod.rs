@@ -129,7 +129,7 @@ impl Engine {
 		}
 		labels.insert("podup.project".to_string(), self.project.clone());
 		labels.insert("podup.service".to_string(), service_name.to_string());
-		labels.insert("podup.config-hash".to_string(), config_hash(service, file));
+		labels.insert("podup.config-hash".to_string(), config_hash(service, file)?);
 
 		// annotations
 		let annotations: HashMap<String, String> = service.annotations.to_map();

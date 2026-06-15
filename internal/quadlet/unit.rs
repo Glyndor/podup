@@ -55,6 +55,15 @@ fn render_healthcheck(service: &Service, container: &mut Section) {
 	}
 }
 
+/// Sanitize one `Secret=` option-list field: drop control characters and the
+/// `,`/`=` separators so a hostile compose value cannot inject extra options.
+fn secret_field(value: &str) -> String {
+	value
+		.chars()
+		.filter(|c| !c.is_control() && *c != ',' && *c != '=')
+		.collect()
+}
+
 /// Render a service `secrets:` entry into a Quadlet `Secret=` value
 /// (`name[,target=,uid=,gid=,mode=]`).
 fn render_secret(secret: &ServiceSecretRef) -> String {
@@ -67,15 +76,18 @@ fn render_secret(secret: &ServiceSecretRef) -> String {
 			gid,
 			mode,
 		} => {
-			let mut s = source.clone();
+			// `Secret=` is a comma-separated `key=value` option list, so a `,`
+			// or `=` embedded in any field would inject extra options. Strip
+			// those (and control chars) from each value at the boundary.
+			let mut s = secret_field(source);
 			if let Some(t) = target {
-				s.push_str(&format!(",target={t}"));
+				s.push_str(&format!(",target={}", secret_field(t)));
 			}
 			if let Some(u) = uid {
-				s.push_str(&format!(",uid={u}"));
+				s.push_str(&format!(",uid={}", secret_field(u)));
 			}
 			if let Some(g) = gid {
-				s.push_str(&format!(",gid={g}"));
+				s.push_str(&format!(",gid={}", secret_field(g)));
 			}
 			if let Some(m) = mode {
 				s.push_str(&format!(",mode={m:o}"));
@@ -415,5 +427,34 @@ pub(super) fn container_unit(
 	QuadletUnit {
 		filename: format!("{}.container", safe_unit_stem(name)),
 		contents,
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{render_secret, secret_field};
+	use crate::compose::types::ServiceSecretRef;
+
+	#[test]
+	fn secret_field_strips_separators_and_controls() {
+		assert_eq!(secret_field("a,b=c\nd"), "abcd");
+		assert_eq!(secret_field("plain"), "plain");
+	}
+
+	#[test]
+	fn render_secret_cannot_inject_extra_options() {
+		// A hostile target tries to smuggle a second option via `,` and `=`.
+		let s = ServiceSecretRef::Long {
+			source: "tok".into(),
+			target: Some("/run/x,uid=0".into()),
+			uid: None,
+			gid: None,
+			mode: None,
+		};
+		let out = render_secret(&s);
+		// The injected `,uid=0` must be flattened into the target value, not a
+		// separate option: exactly one comma (the legitimate `,target=`).
+		assert_eq!(out.matches(',').count(), 1);
+		assert_eq!(out, "tok,target=/run/xuid0");
 	}
 }

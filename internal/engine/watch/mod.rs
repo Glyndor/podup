@@ -29,6 +29,12 @@ use sync::{build_sync_tar, is_ignored, is_included};
 
 use super::Engine;
 
+/// Bound on the in-flight watch-event queue (events are dropped when full; a
+/// later event re-triggers the sync) and on the paths coalesced into one batch.
+/// Together they keep memory bounded under heavy filesystem churn.
+const WATCH_CHANNEL_CAP: usize = 1024;
+const WATCH_MAX_BATCH_PATHS: usize = 4096;
+
 // ---------------------------------------------------------------------------
 // Rule tracking
 // ---------------------------------------------------------------------------
@@ -82,10 +88,14 @@ impl Engine {
 			}
 		}
 
-		let (tx, mut rx) = mpsc::unbounded_channel::<notify::Result<notify::Event>>();
+		// Bounded channel: under heavy filesystem churn an unbounded queue (and the
+		// per-batch path accumulation below) can grow without limit. Drop events
+		// when the buffer is full — a later event re-triggers the sync, so no state
+		// is permanently lost, but memory stays bounded.
+		let (tx, mut rx) = mpsc::channel::<notify::Result<notify::Event>>(WATCH_CHANNEL_CAP);
 		let mut watcher = RecommendedWatcher::new(
 			move |res| {
-				let _ = tx.send(res);
+				let _ = tx.try_send(res);
 			},
 			notify::Config::default(),
 		)
@@ -117,8 +127,14 @@ impl Engine {
 
 			let mut paths = event.paths;
 			let deadline = tokio::time::Instant::now() + debounce;
-			while let Ok(Some(Ok(e))) = tokio::time::timeout_at(deadline, rx.recv()).await {
-				paths.extend(e.paths);
+			// Coalesce events within the debounce window, but stop accumulating once
+			// the batch is large so a burst of churn cannot grow `paths` without
+			// bound; the remaining events fall into the next batch.
+			while paths.len() < WATCH_MAX_BATCH_PATHS {
+				match tokio::time::timeout_at(deadline, rx.recv()).await {
+					Ok(Some(Ok(e))) => paths.extend(e.paths),
+					_ => break,
+				}
 			}
 
 			'outer: for path in &paths {

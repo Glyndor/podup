@@ -37,6 +37,21 @@ pub struct QuadletOutput {
 	pub warnings: Vec<String>,
 }
 
+impl QuadletOutput {
+	/// The first unit file name that two different units share, if any. Distinct
+	/// compose keys can sanitize to the same stem (e.g. `web:1` and `web_1` both
+	/// become `web_1`); writing them would silently overwrite one unit, dropping
+	/// a service/network/volume from the export. Callers surface this as an error
+	/// instead of clobbering.
+	pub fn duplicate_filename(&self) -> Option<&str> {
+		let mut seen = std::collections::HashSet::new();
+		self.units
+			.iter()
+			.find(|u| !seen.insert(u.filename.as_str()))
+			.map(|u| u.filename.as_str())
+	}
+}
+
 /// Translate a compose file into Quadlet units for the given project name.
 ///
 /// Emits one `.container` per service, one `.network` per declared network,
@@ -97,6 +112,21 @@ mod tests {
 			.iter()
 			.find(|u| u.filename == filename)
 			.unwrap_or_else(|| panic!("no unit named {filename}"))
+	}
+
+	#[test]
+	fn duplicate_filename_detects_collision() {
+		let mk = |n: &str| QuadletUnit {
+			filename: n.to_string(),
+			contents: String::new(),
+		};
+		let mut out = QuadletOutput {
+			units: vec![mk("web.container"), mk("db.volume")],
+			..Default::default()
+		};
+		assert_eq!(out.duplicate_filename(), None);
+		out.units.push(mk("web.container"));
+		assert_eq!(out.duplicate_filename(), Some("web.container"));
 	}
 
 	#[test]

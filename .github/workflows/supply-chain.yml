@@ -33,8 +33,8 @@ jobs:
 
       - name: Install generators
         run: |
-          cargo install --locked cargo-cyclonedx
-          cargo install --locked --features cli cargo-about
+          cargo install --locked cargo-cyclonedx --version "^0.5"
+          cargo install --locked --features cli cargo-about --version "^0.9"
 
       - name: Generate CycloneDX SBOM
         run: cargo cyclonedx --format json --all-features
