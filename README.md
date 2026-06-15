@@ -134,7 +134,7 @@ async fn main() -> podup::Result<()> {
 
 ```toml
 [dependencies]
-podup = { git = "https://github.com/Glyndor/podup", tag = "v0.22.2" }
+podup = { git = "https://github.com/Glyndor/podup", tag = "v0.23.0" }
 ```
 
 ## 📖 Docs
