@@ -117,12 +117,55 @@ pub(crate) fn build_ulimits(service: &Service) -> Vec<Ulimit> {
 	service
 		.ulimits
 		.iter()
-		.map(|(name, cfg)| Ulimit {
-			ulimit_type: name.clone(),
-			soft: ulimit_value(cfg.soft(), name, "soft"),
-			hard: ulimit_value(cfg.hard(), name, "hard"),
+		.filter_map(|(name, cfg)| {
+			if !is_known_ulimit(name) {
+				tracing::warn!("ulimit '{name}' is not a recognized resource name and is ignored");
+				return None;
+			}
+			let soft = ulimit_value(cfg.soft(), name, "soft");
+			let hard = ulimit_value(cfg.hard(), name, "hard");
+			// POSIX requires soft <= hard; a larger soft is invalid and would
+			// produce undefined behaviour at container start. Clamp it down.
+			let soft = if soft > hard {
+				tracing::warn!(
+					"ulimit {name} soft ({soft}) exceeds hard ({hard}); clamping soft to hard"
+				);
+				hard
+			} else {
+				soft
+			};
+			Some(Ulimit {
+				ulimit_type: name.clone(),
+				soft,
+				hard,
+			})
 		})
 		.collect()
+}
+
+/// The Linux rlimit resource names Podman accepts (without the `RLIMIT_`
+/// prefix). A name outside this set is a typo or an injection attempt and is
+/// rejected rather than forwarded verbatim to the API.
+fn is_known_ulimit(name: &str) -> bool {
+	const KNOWN: [&str; 16] = [
+		"core",
+		"cpu",
+		"data",
+		"fsize",
+		"locks",
+		"memlock",
+		"msgqueue",
+		"nice",
+		"nofile",
+		"nproc",
+		"rss",
+		"rtprio",
+		"rttime",
+		"sigpending",
+		"stack",
+		"as",
+	];
+	KNOWN.contains(&name)
 }
 
 /// Convert a compose ulimit value to the libpod `u64`. `-1` is the conventional
@@ -320,6 +363,34 @@ mod tests {
 		let ul = build_ulimits(&svc);
 		assert_eq!(ul[0].soft, 512);
 		assert_eq!(ul[0].hard, 2048);
+	}
+
+	#[test]
+	fn build_ulimits_clamps_soft_above_hard() {
+		use crate::compose::types::UlimitConfig;
+		let mut svc = default_service();
+		svc.ulimits.insert(
+			"nofile".to_string(),
+			UlimitConfig::Pair {
+				soft: 65535,
+				hard: 1024,
+			},
+		);
+		let ul = build_ulimits(&svc);
+		assert_eq!(ul[0].soft, 1024, "soft must be clamped down to hard");
+		assert_eq!(ul[0].hard, 1024);
+	}
+
+	#[test]
+	fn build_ulimits_rejects_unknown_resource_name() {
+		use crate::compose::types::UlimitConfig;
+		let mut svc = default_service();
+		svc.ulimits
+			.insert("bogus,inject=1".to_string(), UlimitConfig::Single(1024));
+		assert!(
+			build_ulimits(&svc).is_empty(),
+			"an unknown ulimit name must be dropped, not forwarded"
+		);
 	}
 
 	// --- cdi devices ---
