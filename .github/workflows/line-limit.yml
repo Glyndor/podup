@@ -1,0 +1,14 @@
+name: Line limit
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  line-limit:
+    uses: Glyndor/.github/.github/workflows/line-limit.yml@b78620146d50fdbc552e1b86740e64d114c58f0f # v1.0.0
