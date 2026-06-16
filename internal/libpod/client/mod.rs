@@ -194,6 +194,18 @@ impl Client {
 		})
 	}
 
+	/// For streaming endpoints: return the response on success, otherwise read
+	/// the body and surface it through [`check_status`] so the caller gets the
+	/// parsed Podman error message rather than the raw JSON body.
+	async fn stream_or_err(resp: Response<Incoming>) -> Result<Response<Incoming>> {
+		if resp.status().is_success() {
+			return Ok(resp);
+		}
+		let (status, body) = Self::read_body(resp).await?;
+		Self::check_status(status, &body)?;
+		unreachable!("check_status returns Err for a non-success status")
+	}
+
 	// ---------------------------------------------------------------------------
 	// Request helpers
 	// ---------------------------------------------------------------------------
@@ -219,15 +231,7 @@ impl Client {
 	/// `GET` → return raw `Response<Incoming>` for streaming.
 	pub async fn get_stream(&self, path: &str) -> Result<Response<Incoming>> {
 		let req = Self::build_request(Method::GET, path, Full::new(Bytes::new()), None)?;
-		let resp = self.send(req).await?;
-		if !resp.status().is_success() {
-			let (status, body) = Self::read_body(resp).await?;
-			return Err(PodmanError::Api {
-				status: status.as_u16(),
-				message: String::from_utf8_lossy(&body).into_owned(),
-			});
-		}
-		Ok(resp)
+		Self::stream_or_err(self.send(req).await?).await
 	}
 
 	/// `POST` with JSON body → deserialize JSON response.
@@ -276,15 +280,7 @@ impl Client {
 			Full::new(Bytes::from(json)),
 			Some("application/json"),
 		)?;
-		let resp = self.send(req).await?;
-		if !resp.status().is_success() {
-			let (status, body) = Self::read_body(resp).await?;
-			return Err(PodmanError::Api {
-				status: status.as_u16(),
-				message: String::from_utf8_lossy(&body).into_owned(),
-			});
-		}
-		Ok(resp)
+		Self::stream_or_err(self.send(req).await?).await
 	}
 
 	/// `POST` with empty body → ignore response body (expect 2xx or 304).
@@ -302,15 +298,7 @@ impl Client {
 	/// `POST` with empty body → return raw `Response<Incoming>` for streaming.
 	pub async fn post_empty_stream(&self, path: &str) -> Result<Response<Incoming>> {
 		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;
-		let resp = self.send(req).await?;
-		if !resp.status().is_success() {
-			let (status, body) = Self::read_body(resp).await?;
-			return Err(PodmanError::Api {
-				status: status.as_u16(),
-				message: String::from_utf8_lossy(&body).into_owned(),
-			});
-		}
-		Ok(resp)
+		Self::stream_or_err(self.send(req).await?).await
 	}
 
 	/// `POST` with empty body → deserialize JSON response.
@@ -330,15 +318,7 @@ impl Client {
 		content_type: &str,
 	) -> Result<Response<Incoming>> {
 		let req = Self::build_request(Method::POST, path, Full::new(bytes), Some(content_type))?;
-		let resp = self.send(req).await?;
-		if !resp.status().is_success() {
-			let (status, body) = Self::read_body(resp).await?;
-			return Err(PodmanError::Api {
-				status: status.as_u16(),
-				message: String::from_utf8_lossy(&body).into_owned(),
-			});
-		}
-		Ok(resp)
+		Self::stream_or_err(self.send(req).await?).await
 	}
 
 	/// `POST` with a raw-bytes body → deserialize JSON response.
