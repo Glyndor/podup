@@ -7,13 +7,16 @@ mod anchor;
 mod diagnostics;
 mod extends;
 mod include;
+mod merge;
+mod order;
 
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use crate::error::{ComposeError, Result};
 use crate::substitute;
 use types::ComposeFile;
+
+pub use order::{resolve_levels, resolve_order};
 
 /// Parse a compose file from disk, applying variable substitution and
 /// resolving `extends:` / `include:` directives.
@@ -132,7 +135,7 @@ fn merge_override(target: &mut ComposeFile, other: ComposeFile) {
 pub fn parse_str(content: &str) -> Result<ComposeFile> {
 	let vars = substitute::build_vars(Path::new("."));
 	let substituted = substitute::substitute(content, &vars)?;
-	let mut file = deserialize_with_merge(&substituted)?;
+	let mut file = merge::deserialize_with_merge(&substituted)?;
 	extends::resolve_extends_same_file(&mut file)?;
 	Ok(file)
 }
@@ -140,129 +143,7 @@ pub fn parse_str(content: &str) -> Result<ComposeFile> {
 /// Parse raw (already-substituted) YAML into a `ComposeFile` without any
 /// post-processing.
 pub fn parse_str_raw(content: &str) -> Result<ComposeFile> {
-	deserialize_with_merge(content)
-}
-
-/// Compute a topological start order for all services (Kahn's algorithm).
-///
-/// Returns service names dependencies-first.
-/// Errors on cycles ([`ComposeError::CircularDependency`]) or missing required
-/// dependencies ([`ComposeError::ServiceNotFound`]).
-pub fn resolve_order(file: &ComposeFile) -> Result<Vec<String>> {
-	let services: Vec<&str> = file.services.keys().map(|s| s.as_str()).collect();
-	let mut in_degree: HashMap<&str, usize> = services.iter().map(|&s| (s, 0)).collect();
-	let mut graph: HashMap<&str, Vec<&str>> = services.iter().map(|&s| (s, vec![])).collect();
-
-	for (name, service) in &file.services {
-		for dep in service.depends_on.service_names() {
-			if !file.services.contains_key(&dep) {
-				if !service.depends_on.required_for(&dep) {
-					continue;
-				}
-				return Err(ComposeError::ServiceNotFound(dep));
-			}
-			if let Some(neighbors) = graph.get_mut(dep.as_str()) {
-				neighbors.push(name.as_str());
-			}
-			if let Some(deg) = in_degree.get_mut(name.as_str()) {
-				*deg += 1;
-			}
-		}
-	}
-
-	let mut queue: std::collections::VecDeque<&str> = in_degree
-		.iter()
-		.filter(|(_, &deg)| deg == 0)
-		.map(|(&s, _)| s)
-		.collect();
-
-	let mut order = Vec::new();
-	while let Some(node) = queue.pop_front() {
-		order.push(node.to_string());
-		let neighbors: Vec<&str> = graph.get(node).map_or(&[][..], |v| v.as_slice()).to_vec();
-		for neighbor in neighbors {
-			if let Some(deg) = in_degree.get_mut(neighbor) {
-				*deg -= 1;
-				if *deg == 0 {
-					queue.push_back(neighbor);
-				}
-			}
-		}
-	}
-
-	if order.len() != services.len() {
-		return Err(ComposeError::CircularDependency(
-			"cycle detected in depends_on".into(),
-		));
-	}
-
-	Ok(order)
-}
-
-/// Group services into dependency levels (Kahn's algorithm, layered).
-///
-/// Each returned level contains services whose dependencies all live in earlier
-/// levels, so the services within one level have no `depends_on` relationship to
-/// each other and can be started concurrently. Levels are ordered
-/// dependencies-first; names within a level are sorted for deterministic
-/// dispatch. Errors on cycles or missing required dependencies, matching
-/// [`resolve_order`].
-pub fn resolve_levels(file: &ComposeFile) -> Result<Vec<Vec<String>>> {
-	let services: Vec<&str> = file.services.keys().map(|s| s.as_str()).collect();
-	let mut in_degree: HashMap<&str, usize> = services.iter().map(|&s| (s, 0)).collect();
-	let mut graph: HashMap<&str, Vec<&str>> = services.iter().map(|&s| (s, vec![])).collect();
-
-	for (name, service) in &file.services {
-		for dep in service.depends_on.service_names() {
-			if !file.services.contains_key(&dep) {
-				if !service.depends_on.required_for(&dep) {
-					continue;
-				}
-				return Err(ComposeError::ServiceNotFound(dep));
-			}
-			if let Some(neighbors) = graph.get_mut(dep.as_str()) {
-				neighbors.push(name.as_str());
-			}
-			if let Some(deg) = in_degree.get_mut(name.as_str()) {
-				*deg += 1;
-			}
-		}
-	}
-
-	let mut current: Vec<&str> = in_degree
-		.iter()
-		.filter(|(_, &deg)| deg == 0)
-		.map(|(&s, _)| s)
-		.collect();
-
-	let mut levels: Vec<Vec<String>> = Vec::new();
-	let mut processed = 0;
-	while !current.is_empty() {
-		current.sort_unstable();
-		let mut next: Vec<&str> = Vec::new();
-		for &node in &current {
-			processed += 1;
-			let neighbors: Vec<&str> = graph.get(node).map_or(&[][..], |v| v.as_slice()).to_vec();
-			for neighbor in neighbors {
-				if let Some(deg) = in_degree.get_mut(neighbor) {
-					*deg -= 1;
-					if *deg == 0 {
-						next.push(neighbor);
-					}
-				}
-			}
-		}
-		levels.push(current.iter().map(|s| s.to_string()).collect());
-		current = next;
-	}
-
-	if processed != services.len() {
-		return Err(ComposeError::CircularDependency(
-			"cycle detected in depends_on".into(),
-		));
-	}
-
-	Ok(levels)
+	merge::deserialize_with_merge(content)
 }
 
 pub(crate) fn parse_file_inner(path: &Path, dir: &Path) -> Result<ComposeFile> {
@@ -287,128 +168,8 @@ pub(crate) fn parse_file_inner_with_env(
 		substitute::build_vars_with_env_files(dir, extra_env_files)
 	};
 	let substituted = substitute::substitute(&content, &vars)?;
-	deserialize_with_merge(&substituted)
+	merge::deserialize_with_merge(&substituted)
 }
-
-/// Upper bound on YAML alias references in a document that uses anchors, and on
-/// the size of such a document. serde_yaml_ng already aborts deeply *nested*
-/// alias expansion (its repetition limit), but a flat document with many alias
-/// references to a non-trivial anchor expands *linearly* while the `Value` tree
-/// is built and can exhaust memory — a ~46 KB file can allocate gigabytes. Real
-/// compose files use a handful of anchors, so these caps never trigger in
-/// practice; the worst-case expansion they allow (refs × doc size) stays bounded.
-const MAX_ALIAS_REFS: usize = 100;
-const MAX_ALIAS_DOC_BYTES: usize = 512 * 1024;
-
-fn deserialize_with_merge(content: &str) -> Result<ComposeFile> {
-	guard_alias_expansion(content)?;
-	let mut value: serde_yaml::Value = serde_yaml::from_str(content)?;
-	apply_merge_keys(&mut value);
-	let file: ComposeFile = serde_yaml::from_value(value)?;
-	Ok(file)
-}
-
-/// Reject YAML documents whose alias use could amplify into an out-of-memory
-/// expansion (a "billion-laughs" linear cousin) before they reach the parser.
-fn guard_alias_expansion(content: &str) -> Result<()> {
-	let refs = count_alias_refs(content);
-	if refs == 0 {
-		return Ok(());
-	}
-	if content.len() > MAX_ALIAS_DOC_BYTES {
-		return Err(ComposeError::Unsupported(format!(
-			"compose document uses YAML aliases and is {} bytes; documents using anchors/aliases \
-			 must be at most {MAX_ALIAS_DOC_BYTES} bytes — inline the repeated content instead",
-			content.len()
-		)));
-	}
-	if refs > MAX_ALIAS_REFS {
-		return Err(ComposeError::Unsupported(format!(
-			"compose document uses {refs} YAML alias references; at most {MAX_ALIAS_REFS} are \
-			 allowed — inline the repeated content instead"
-		)));
-	}
-	Ok(())
-}
-
-/// Count YAML alias references (`*anchor`) outside quoted scalars and comments.
-///
-/// A heuristic — it does not fully parse YAML — but it only needs to bound a
-/// DoS and it is conservative: `*` inside single/double quotes or after `#` is
-/// ignored, and an alias is counted only when `*` sits at a node position and is
-/// followed by an anchor-name character.
-fn count_alias_refs(content: &str) -> usize {
-	let mut count = 0;
-	for line in content.lines() {
-		let mut chars = line.chars().peekable();
-		let (mut in_single, mut in_double) = (false, false);
-		let mut prev: Option<char> = None;
-		while let Some(c) = chars.next() {
-			match c {
-				'\'' if !in_double => in_single = !in_single,
-				'"' if !in_single => in_double = !in_double,
-				'#' if !in_single && !in_double => break,
-				'*' if !in_single && !in_double => {
-					let at_node = matches!(prev, None | Some(' ' | '\t' | '[' | '{' | ',' | ':'));
-					let next_ok = chars
-						.peek()
-						.is_some_and(|n| n.is_ascii_alphanumeric() || *n == '_' || *n == '-');
-					if at_node && next_ok {
-						count += 1;
-					}
-				}
-				_ => {}
-			}
-			prev = Some(c);
-		}
-	}
-	count
-}
-
-/// Recursively resolve YAML merge keys (`<<: *anchor`) in a `Value` tree.
-///
-/// serde_yaml_ng does not expose `apply_merge()` — this replaces it.
-/// Merge semantics: keys from the anchor fill in only where the child has no value.
-fn apply_merge_keys(value: &mut serde_yaml::Value) {
-	match value {
-		serde_yaml::Value::Mapping(mapping) => {
-			for v in mapping.values_mut() {
-				apply_merge_keys(v);
-			}
-			let merge_key = serde_yaml::Value::String("<<".to_string());
-			if let Some(merge_val) = mapping.remove(&merge_key) {
-				let bases: Vec<serde_yaml::Mapping> = match merge_val {
-					serde_yaml::Value::Mapping(m) => vec![m],
-					serde_yaml::Value::Sequence(seq) => seq
-						.into_iter()
-						.filter_map(|v| match v {
-							serde_yaml::Value::Mapping(m) => Some(m),
-							_ => None,
-						})
-						.collect(),
-					_ => vec![],
-				};
-				for base in bases {
-					for (k, v) in base {
-						if !mapping.contains_key(&k) {
-							mapping.insert(k, v);
-						}
-					}
-				}
-			}
-		}
-		serde_yaml::Value::Sequence(seq) => {
-			for v in seq.iter_mut() {
-				apply_merge_keys(v);
-			}
-		}
-		_ => {}
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Unit tests
-// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -427,109 +188,6 @@ mod tests {
 	#[test]
 	fn parse_str_raw_invalid_yaml_is_error() {
 		assert!(parse_str_raw(": : :").is_err());
-	}
-
-	// alias-expansion guard
-
-	#[test]
-	fn count_alias_refs_ignores_quotes_comments_and_globs() {
-		assert_eq!(count_alias_refs("a: &x 1\nb: *x\n"), 1);
-		assert_eq!(count_alias_refs("c: [*x, *x, *x]\n"), 3);
-		// `*` in quoted strings, comments, and globs (`*.txt`, `**`) are not aliases.
-		assert_eq!(
-			count_alias_refs("cmd: \"rm *x\"\nd: 1 # *x\ng: ['*.txt', '**']\n"),
-			0
-		);
-	}
-
-	#[test]
-	fn guard_allows_normal_anchored_file() {
-		// A handful of merge-key aliases in a small file is fine.
-		let yaml = "x: &d {a: 1}\nweb: {<<: *d}\napi: {<<: *d}\n";
-		assert!(guard_alias_expansion(yaml).is_ok());
-	}
-
-	#[test]
-	fn guard_rejects_linear_alias_amplification() {
-		// Many references to one anchor — the OOM vector serde_yaml_ng does not bound.
-		let mut yaml = String::from("anchor: &a [x, y, z]\nlist:\n");
-		for _ in 0..(MAX_ALIAS_REFS + 50) {
-			yaml.push_str("  - *a\n");
-		}
-		let err = guard_alias_expansion(&yaml).unwrap_err();
-		assert!(format!("{err}").contains("alias references"));
-	}
-
-	#[test]
-	fn guard_rejects_large_aliased_document() {
-		let mut yaml = String::from("anchor: &a 1\nb: *a\n");
-		yaml.push_str(&format!("pad: \"{}\"\n", "p".repeat(MAX_ALIAS_DOC_BYTES)));
-		let err = guard_alias_expansion(&yaml).unwrap_err();
-		assert!(format!("{err}").contains("at most"));
-	}
-
-	// resolve_order
-
-	#[test]
-	fn resolve_order_no_deps_arbitrary_order() {
-		let yaml = "services:\n  a:\n    image: x\n  b:\n    image: y\n";
-		let file = parse_str_raw(yaml).unwrap();
-		let order = resolve_order(&file).unwrap();
-		assert_eq!(order.len(), 2);
-		assert!(order.contains(&"a".to_string()));
-		assert!(order.contains(&"b".to_string()));
-	}
-
-	#[test]
-	fn resolve_order_dep_before_dependent() {
-		let yaml = "services:\n  web:\n    image: nginx\n    depends_on: [db]\n  db:\n    image: postgres\n";
-		let file = parse_str_raw(yaml).unwrap();
-		let order = resolve_order(&file).unwrap();
-		let db_pos = order.iter().position(|s| s == "db").unwrap();
-		let web_pos = order.iter().position(|s| s == "web").unwrap();
-		assert!(db_pos < web_pos, "db must start before web");
-	}
-
-	#[test]
-	fn resolve_order_cycle_is_error() {
-		let yaml = "services:\n  a:\n    image: x\n    depends_on: [b]\n  b:\n    image: y\n    depends_on: [a]\n";
-		let file = parse_str_raw(yaml).unwrap();
-		assert!(resolve_order(&file).is_err());
-	}
-
-	#[test]
-	fn resolve_order_missing_required_dep_is_error() {
-		let yaml = "services:\n  web:\n    image: nginx\n    depends_on: [db]\n";
-		let file = parse_str_raw(yaml).unwrap();
-		assert!(resolve_order(&file).is_err());
-	}
-
-	// resolve_levels
-
-	#[test]
-	fn resolve_levels_groups_independent_services_together() {
-		let yaml = "services:\n  a:\n    image: x\n  b:\n    image: y\n";
-		let file = parse_str_raw(yaml).unwrap();
-		let levels = resolve_levels(&file).unwrap();
-		// No deps → one level holding both, sorted for determinism.
-		assert_eq!(levels, vec![vec!["a".to_string(), "b".to_string()]]);
-	}
-
-	#[test]
-	fn resolve_levels_orders_dependencies_into_earlier_levels() {
-		let yaml = "services:\n  web:\n    image: nginx\n    depends_on: [db]\n  db:\n    image: postgres\n  cache:\n    image: redis\n";
-		let file = parse_str_raw(yaml).unwrap();
-		let levels = resolve_levels(&file).unwrap();
-		// Level 0: db + cache (no deps); level 1: web (depends on db).
-		assert_eq!(levels[0], vec!["cache".to_string(), "db".to_string()]);
-		assert_eq!(levels[1], vec!["web".to_string()]);
-	}
-
-	#[test]
-	fn resolve_levels_cycle_is_error() {
-		let yaml = "services:\n  a:\n    image: x\n    depends_on: [b]\n  b:\n    image: y\n    depends_on: [a]\n";
-		let file = parse_str_raw(yaml).unwrap();
-		assert!(resolve_levels(&file).is_err());
 	}
 
 	// unknown-key capture / warning

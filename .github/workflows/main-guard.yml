@@ -8,15 +8,4 @@ permissions: {}
 
 jobs:
   develop-only:
-    name: develop-only
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require develop as source branch
-        env:
-          HEAD_REF: ${{ github.head_ref }}
-        run: |
-          if [ "$HEAD_REF" != "develop" ]; then
-            echo "::error::Pull requests into main must come from develop (got $HEAD_REF)."
-            exit 1
-          fi
-          echo "Source branch is develop."
+    uses: Glyndor/.github/.github/workflows/main-guard.yml@91a23397a14f0efb46e2b354d72df0e10a0004b6 # main
