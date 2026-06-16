@@ -114,7 +114,7 @@ impl Engine {
 		let log_configuration = build_log_config(service.logging.as_ref());
 
 		// --- Networks ---
-		let (netns, networks) = resolve_network_mode(service, file, &self.project);
+		let (netns, networks) = resolve_network_mode(service_name, service, file, &self.project);
 
 		// --- Labels ---
 		let label_file_labels = build_label_file_labels(service, &self.base_dir);

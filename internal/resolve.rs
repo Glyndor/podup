@@ -38,9 +38,17 @@ pub(crate) fn resolve_compose_files(explicit: &[PathBuf]) -> Vec<PathBuf> {
 /// compose file (compose-spec default), or the current directory when the
 /// compose file has no parent component.
 pub(crate) fn resolve_base_dir(project_directory: Option<&Path>, file: &Path) -> PathBuf {
-	project_directory
-		.map(Path::to_path_buf)
-		.unwrap_or_else(|| file.parent().map(Path::to_path_buf).unwrap_or_default())
+	if let Some(dir) = project_directory {
+		return dir.to_path_buf();
+	}
+	match file.parent() {
+		Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+		// A bare compose filename (e.g. `docker-compose.yml`) has an empty parent
+		// component. Anchor relative paths to the working directory so a relative
+		// `file:` secret/config or bind source resolves against the project
+		// directory, not the working directory the Podman service later runs in.
+		_ => std::env::current_dir().unwrap_or_default(),
+	}
 }
 
 /// Resolve the project name following the compose-spec precedence: an explicit
@@ -144,8 +152,13 @@ mod tests {
 
 	#[test]
 	fn bare_filename_resolves_to_current_dir() {
+		// A bare filename has no directory component, so the base directory must
+		// fall back to the working directory — never an empty path, which would
+		// leave a relative `file:` source to be resolved against the Podman
+		// service's working directory ($HOME) instead of the project directory.
 		let base = resolve_base_dir(None, Path::new("docker-compose.yml"));
-		assert_eq!(base, PathBuf::from(""));
+		assert_eq!(base, std::env::current_dir().unwrap());
+		assert!(base.is_absolute());
 	}
 
 	#[test]

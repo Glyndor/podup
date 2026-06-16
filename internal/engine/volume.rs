@@ -68,7 +68,10 @@ impl Engine {
 				.await
 			{
 				Ok(_) => info!("created volume {volume_name}"),
-				Err(ref e) if e.is_status(409) => {}
+				// Podman's libpod volume-create returns 500 (not 409) for an
+				// existing name; treat an already-exists conflict as success so a
+				// re-`up` over an existing named volume stays idempotent.
+				Err(ref e) if e.is_already_exists() => {}
 				Err(e) => return Err(ComposeError::Podman(e)),
 			}
 		}
