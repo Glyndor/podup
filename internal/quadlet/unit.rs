@@ -68,7 +68,9 @@ fn secret_field(value: &str) -> String {
 /// (`name[,target=,uid=,gid=,mode=]`).
 fn render_secret(secret: &ServiceSecretRef) -> String {
 	match secret {
-		ServiceSecretRef::Short(name) => name.clone(),
+		// Sanitize the short-form name too: `Secret=` is an option list, so a
+		// `,`/`=` in the name would inject extra options (same guard as Long).
+		ServiceSecretRef::Short(name) => secret_field(name),
 		ServiceSecretRef::Long {
 			source,
 			target,
