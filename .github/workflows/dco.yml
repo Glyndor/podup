@@ -1,10 +1,5 @@
 name: DCO
 
-# Enforce the Developer Certificate of Origin: every commit on a pull request
-# must carry a `Signed-off-by:` trailer. This makes contributor attestation a
-# machine-checked gate rather than a convention, which government and
-# enterprise audits expect.
-
 on:
   pull_request:
     branches:
@@ -16,32 +11,4 @@ permissions:
 
 jobs:
   dco:
-    name: Signed-off-by present on every commit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-        with:
-          fetch-depth: 0
-
-      - name: Verify Signed-off-by trailers
-        env:
-          # The PR's real commits, excluding the synthetic merge commit that the
-          # checkout action creates (which has no sign-off and is not authored).
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          missing=0
-          for sha in $(git rev-list --no-merges "${BASE_SHA}..${HEAD_SHA}"); do
-            author="$(git show -s --format='%an <%ae>' "$sha")"
-            if ! git show -s --format='%(trailers:key=Signed-off-by)' "$sha" \
-              | grep -qi 'Signed-off-by:'; then
-              echo "::error::commit $sha ($author) is missing a Signed-off-by trailer"
-              missing=1
-            fi
-          done
-          if [ "$missing" -ne 0 ]; then
-            echo "Add a sign-off with: git commit -s (or git rebase --signoff)."
-            exit 1
-          fi
-          echo "All commits carry a Signed-off-by trailer."
+    uses: Glyndor/.github/.github/workflows/dco.yml@91a23397a14f0efb46e2b354d72df0e10a0004b6 # main
