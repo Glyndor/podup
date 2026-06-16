@@ -1,6 +1,6 @@
 //! Report compose fields that are set but have no Quadlet mapping.
 
-use crate::compose::types::Service;
+use crate::compose::types::{DependsOn, Service, ServiceCondition};
 
 /// Warn for fields that are set but have no Quadlet mapping, so the operator
 /// knows the generated unit is incomplete rather than discovering it at run
@@ -45,6 +45,31 @@ pub(super) fn collect_warnings(name: &str, service: &Service, warnings: &mut Vec
 			"privileged",
 			"is not mapped; add PodmanArgs manually if required",
 		);
+	}
+	if !service.post_start.is_empty() {
+		warn(
+			"post_start",
+			"hooks have no Quadlet equivalent and are skipped",
+		);
+	}
+	if !service.pre_stop.is_empty() {
+		warn(
+			"pre_stop",
+			"hooks have no Quadlet equivalent and are skipped",
+		);
+	}
+	// systemd `After=`/`Requires=` order startup but cannot gate it on a
+	// dependency becoming healthy or completing; those conditions are dropped.
+	if let DependsOn::Map(deps) = &service.depends_on {
+		if deps
+			.values()
+			.any(|c| c.condition != ServiceCondition::ServiceStarted)
+		{
+			warn(
+				"depends_on",
+				"condition service_healthy/service_completed_successfully is not enforceable in Quadlet; only start ordering is emitted",
+			);
+		}
 	}
 }
 
