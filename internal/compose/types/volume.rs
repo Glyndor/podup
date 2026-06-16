@@ -106,6 +106,7 @@ impl VolumeMount {
 
 /// Named volume definition in the top-level `volumes:` block.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[non_exhaustive]
 pub struct VolumeConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub driver: Option<String>,

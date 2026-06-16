@@ -30,6 +30,7 @@ use std::collections::HashMap;
 
 /// Top-level `secrets:` entry — defines a named secret available to services.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[non_exhaustive]
 pub struct SecretConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub file: Option<String>,
@@ -53,6 +54,7 @@ pub struct SecretConfig {
 
 /// Top-level `configs:` entry — defines a named config available to services.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[non_exhaustive]
 pub struct ConfigConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub file: Option<String>,
@@ -76,6 +78,7 @@ pub struct ConfigConfig {
 
 /// Root deserialization target for a `docker-compose.yml` file.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[non_exhaustive]
 pub struct ComposeFile {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub version: Option<String>,

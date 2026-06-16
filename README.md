@@ -137,6 +137,15 @@ async fn main() -> podup::Result<()> {
 podup = { git = "https://github.com/Glyndor/podup", tag = "v0.24.1" }
 ```
 
+## 🔒 Stability & versioning
+
+podup follows [Semantic Versioning](https://semver.org/). From **1.0.0** onward:
+
+- The CLI surface (subcommands, flags, exit codes) and the library surface re-exported from the crate root (`parse_file`, `collect_diagnostics`, `Engine`, `ComposeError`, …) are covered by the stability guarantee. Breaking changes bump the major version and are called out in the release notes.
+- Public enums and the compose/quadlet result structs are `#[non_exhaustive]`, so new variants and fields can be added in a minor release without breaking downstream code — always include a wildcard arm and avoid exhaustive struct construction.
+- The libpod wire types are an internal implementation detail (not re-exported) and may change in any release.
+- **MSRV: Rust 1.85.** A bump to the minimum supported Rust version is a minor-version change, never a patch.
+
 ## 📖 Docs
 
 - [Command reference](docs/commands.md) — every subcommand, its options, and what it does
