@@ -108,9 +108,17 @@ prints a `podup: warning:` to stderr noting the files will not run on the host.
 ## Watch
 
 ### `watch`
-Watch for file changes and sync, rebuild or restart services as configured by
-each service's `develop.watch` rules. (`up --watch` does the same after
-starting the stack.)
+Watch for file changes and react as configured by each service's
+`develop.watch` rules. (`up --watch` does the same after starting the stack.)
+The `action` of each rule may be:
+
+| Action | Effect on change |
+|---|---|
+| `sync` | Copy the changed files into the running container. |
+| `rebuild` | Rebuild the image and recreate the container. |
+| `restart` | Restart the container without rebuilding. |
+| `sync+restart` | Sync the files, then restart the container. |
+| `sync+exec` | Sync the files, then run the rule's `exec` command in the container. |
 
 ## Self-update
 
@@ -161,6 +169,7 @@ when both are set.
 | `COMPOSE_PROJECT_NAME` | Default project name (`--project`). |
 | `COMPOSE_PROFILES` | Default active profiles (`--profile`). |
 | `PODMAN_SOCKET` | Podman socket path (`--socket`). |
+| `DOCKER_HOST` | Docker-compatible fallback for the Podman socket, used only when `PODMAN_SOCKET` is unset. Must be a local `unix://` socket (or `npipe://` on Windows); a remote `tcp://`/`ssh://` value is rejected. |
 | `RUST_LOG` | Log verbosity filter. Unset shows warnings and errors; e.g. `RUST_LOG=podup=info` or `RUST_LOG=podup=debug` for more detail. |
 
 ## Exit status
