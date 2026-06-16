@@ -74,7 +74,10 @@ impl Engine {
 				.await
 			{
 				Ok(_) => info!("created network {network_name}"),
-				Err(ref e) if e.is_status(409) => {}
+				// An existing network is not an error on re-`up`; accept any
+				// already-exists conflict (network-create returns 409, but share
+				// the same predicate as volume-create for consistency).
+				Err(ref e) if e.is_already_exists() => {}
 				Err(e) => return Err(ComposeError::Podman(e)),
 			}
 		}
@@ -87,6 +90,7 @@ impl Engine {
 // ---------------------------------------------------------------------------
 
 pub(super) fn build_per_network_options(
+	service_name: &str,
 	cfg: Option<&ServiceNetworkConfig>,
 	fallback_mac: Option<&str>,
 ) -> PerNetworkOptions {
@@ -127,10 +131,19 @@ pub(super) fn build_per_network_options(
 		opts.static_mac = Some(mac.to_string());
 	}
 
+	// A service is reachable by its service name on every network it joins
+	// (compose-spec DNS contract). Register the service name as a network alias
+	// unless the compose file already lists it, so siblings can resolve it by
+	// name and not only by the container name or the auto-generated id alias.
+	if !service_name.is_empty() && !opts.aliases.iter().any(|a| a == service_name) {
+		opts.aliases.insert(0, service_name.to_string());
+	}
+
 	opts
 }
 
 pub(super) fn resolve_network_mode(
+	service_name: &str,
 	service: &Service,
 	file: &ComposeFile,
 	project: &str,
@@ -161,6 +174,7 @@ pub(super) fn resolve_network_mode(
 		.map(|net_name| {
 			let full = resolve_network_name(net_name, file, project);
 			let opts = build_per_network_options(
+				service_name,
 				service.networks.config_for(net_name),
 				service.mac_address.as_deref(),
 			);
@@ -324,7 +338,7 @@ mod tests {
 			..Default::default()
 		};
 		let file = empty_file();
-		let (ns, nets) = resolve_network_mode(&svc, &file, "proj");
+		let (ns, nets) = resolve_network_mode("web", &svc, &file, "proj");
 		assert!(ns.is_some());
 		assert_eq!(ns.unwrap().nsmode, "host");
 		assert!(nets.is_empty());
@@ -334,26 +348,47 @@ mod tests {
 	fn resolve_network_mode_no_networks() {
 		let svc = Service::default();
 		let file = empty_file();
-		let (ns, nets) = resolve_network_mode(&svc, &file, "proj");
+		let (ns, nets) = resolve_network_mode("web", &svc, &file, "proj");
 		assert!(ns.is_none());
 		assert!(nets.is_empty());
 	}
 
 	#[test]
-	fn build_per_network_options_no_config() {
-		let opts = build_per_network_options(None, None);
-		assert!(opts.aliases.is_empty());
+	fn build_per_network_options_seeds_service_name_alias() {
+		// With no explicit config, the service name is still registered as an
+		// alias so siblings can reach the service by name.
+		let opts = build_per_network_options("web", None, None);
+		assert_eq!(opts.aliases, vec!["web".to_string()]);
 		assert!(opts.static_ips.is_empty());
+	}
+
+	#[test]
+	fn build_per_network_options_empty_service_name_adds_no_alias() {
+		let opts = build_per_network_options("", None, None);
+		assert!(opts.aliases.is_empty());
 	}
 
 	#[test]
 	fn build_per_network_options_with_aliases() {
 		use crate::compose::types::ServiceNetworkConfig;
 		let cfg = ServiceNetworkConfig {
+			aliases: Some(vec!["api".to_string()]),
+			..Default::default()
+		};
+		// The service name is prepended ahead of any explicit aliases.
+		let opts = build_per_network_options("web", Some(&cfg), None);
+		assert_eq!(opts.aliases, vec!["web".to_string(), "api".to_string()]);
+	}
+
+	#[test]
+	fn build_per_network_options_does_not_duplicate_service_name() {
+		use crate::compose::types::ServiceNetworkConfig;
+		let cfg = ServiceNetworkConfig {
 			aliases: Some(vec!["web".to_string(), "api".to_string()]),
 			..Default::default()
 		};
-		let opts = build_per_network_options(Some(&cfg), None);
+		// An explicit alias equal to the service name is not duplicated.
+		let opts = build_per_network_options("web", Some(&cfg), None);
 		assert_eq!(opts.aliases, vec!["web".to_string(), "api".to_string()]);
 	}
 
@@ -364,13 +399,13 @@ mod tests {
 			ipv4_address: Some("10.0.0.5".to_string()),
 			..Default::default()
 		};
-		let opts = build_per_network_options(Some(&cfg), None);
+		let opts = build_per_network_options("web", Some(&cfg), None);
 		assert!(opts.static_ips.contains(&"10.0.0.5".to_string()));
 	}
 
 	#[test]
 	fn fallback_mac_applied_when_no_config() {
-		let opts = build_per_network_options(None, Some("02:42:ac:11:00:02"));
+		let opts = build_per_network_options("web", None, Some("02:42:ac:11:00:02"));
 		assert_eq!(opts.static_mac.as_deref(), Some("02:42:ac:11:00:02"));
 	}
 
@@ -421,7 +456,7 @@ mod tests {
 			interface_name: Some("eth1".into()),
 			..Default::default()
 		};
-		let opts = build_per_network_options(Some(&cfg), None);
+		let opts = build_per_network_options("web", Some(&cfg), None);
 		assert_eq!(opts.interface_name.as_deref(), Some("eth1"));
 	}
 
@@ -432,7 +467,7 @@ mod tests {
 			mac_address: Some("aa:bb:cc:dd:ee:ff".to_string()),
 			..Default::default()
 		};
-		let opts = build_per_network_options(Some(&cfg), Some("02:42:ac:11:00:03"));
+		let opts = build_per_network_options("web", Some(&cfg), Some("02:42:ac:11:00:03"));
 		assert_eq!(opts.static_mac.as_deref(), Some("aa:bb:cc:dd:ee:ff"));
 	}
 }
