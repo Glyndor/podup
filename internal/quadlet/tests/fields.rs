@@ -1,0 +1,258 @@
+use super::unit_named;
+use crate::parse_str;
+use crate::quadlet::generate;
+
+#[test]
+fn maps_the_full_container_field_set() {
+	let yaml = r#"
+services:
+  app:
+    image: app:1.0
+    hostname: app-host
+    user: "1000:1000"
+    working_dir: /srv
+    read_only: true
+    init: true
+    entrypoint: ["/bin/sh", "-c"]
+    command: server --port 9000
+    labels:
+      z_team: core
+      a_tier: web
+    cap_add:
+      - NET_ADMIN
+    cap_drop:
+      - MKNOD
+    ports:
+      - target: 9000
+        published: 9000
+        protocol: udp
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "proj");
+	let c = &unit_named(&out, "app.container").contents;
+	assert!(c.contains("HostName=app-host"));
+	// `user: "1000:1000"` splits into separate User=/Group= keys.
+	assert!(c.contains("User=1000"));
+	assert!(c.contains("Group=1000"));
+	assert!(!c.contains("User=1000:1000"));
+	assert!(c.contains("WorkingDir=/srv"));
+	assert!(c.contains("ReadOnly=true"));
+	assert!(c.contains("RunInit=true"));
+	assert!(c.contains("Entrypoint=/bin/sh -c"));
+	assert!(c.contains("Exec=server --port 9000"));
+	assert!(c.contains("AddCapability=NET_ADMIN"));
+	assert!(c.contains("DropCapability=MKNOD"));
+	assert!(c.contains("PublishPort=9000:9000/udp"));
+	// Labels sorted by key.
+	let a = c.find("Label=a_tier=web").unwrap();
+	let z = c.find("Label=z_team=core").unwrap();
+	assert!(a < z, "labels must be sorted");
+}
+
+#[test]
+fn restart_policies_map_to_systemd() {
+	let cases = [
+		("no", "Restart=no"),
+		("always", "Restart=always"),
+		("unless-stopped", "Restart=always"),
+		("on-failure", "Restart=on-failure"),
+	];
+	for (policy, expected) in cases {
+		let yaml = format!("services:\n  s:\n    image: x\n    restart: {policy}\n");
+		let file = parse_str(&yaml).unwrap();
+		let out = generate(&file, "p");
+		assert!(
+			unit_named(&out, "s.container").contents.contains(expected),
+			"{policy} -> {expected}"
+		);
+	}
+}
+
+#[test]
+fn optional_dependency_uses_wants_not_requires() {
+	let yaml = r#"
+services:
+  web:
+    image: nginx
+    depends_on:
+      cache:
+        condition: service_started
+        required: false
+  cache:
+    image: redis
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "proj");
+	let c = &unit_named(&out, "web.container").contents;
+	assert!(c.contains("After=cache.service"));
+	assert!(c.contains("Wants=cache.service"));
+	assert!(!c.contains("Requires=cache.service"));
+}
+
+#[test]
+fn maps_extended_container_field_set() {
+	let yaml = r#"
+services:
+  app:
+    image: x
+    container_name: custom
+    env_file:
+      - ./app.env
+    tmpfs:
+      - /run
+    sysctls:
+      net.core.somaxconn: "1024"
+    ulimits:
+      nofile:
+        soft: 1024
+        hard: 2048
+    shm_size: 64m
+    mem_limit: 512m
+    pids_limit: 100
+    userns_mode: keep-id
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
+    devices:
+      - /dev/fuse
+    dns:
+      - 1.1.1.1
+    extra_hosts:
+      - "db:10.0.0.2"
+    annotations:
+      run.oci.keep: "1"
+    network_mode: host
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost"]
+      interval: 5s
+      retries: 3
+    restart: "on-failure:5"
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "app.container").contents;
+	for needle in [
+		"ContainerName=custom",
+		"EnvironmentFile=./app.env",
+		"Tmpfs=/run",
+		"Sysctl=net.core.somaxconn=1024",
+		"Ulimit=nofile=1024:2048",
+		"ShmSize=64m",
+		"Memory=512m",
+		"PidsLimit=100",
+		"UserNS=keep-id",
+		"StopSignal=SIGTERM",
+		"StopTimeout=30",
+		"AddDevice=/dev/fuse",
+		"DNS=1.1.1.1",
+		"AddHost=db:10.0.0.2",
+		"Annotation=run.oci.keep=1",
+		"Network=host",
+		"HealthCmd=curl -f http://localhost",
+		"HealthInterval=5s",
+		"HealthRetries=3",
+		"StartLimitBurst=5",
+	] {
+		assert!(c.contains(needle), "missing `{needle}` in:\n{c}");
+	}
+}
+
+#[test]
+fn ephemeral_published_port_omits_host_side() {
+	let yaml = r#"
+services:
+  s:
+    image: x
+    ports:
+      - "80"
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "s.container").contents;
+	assert!(c.contains("PublishPort=80"));
+	assert!(!c.contains("PublishPort=:80"));
+}
+
+#[test]
+fn user_with_gid_splits_into_user_and_group() {
+	let yaml = "services:\n  s:\n    image: x\n    user: \"1000:2000\"\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "s.container").contents;
+	assert!(c.contains("User=1000"));
+	assert!(c.contains("Group=2000"));
+	assert!(!c.contains("User=1000:2000"));
+}
+
+#[test]
+fn service_secret_maps_to_secret_key() {
+	let yaml = r#"
+services:
+  s:
+    image: x
+    secrets:
+      - tok
+      - source: cred
+        target: /run/cred
+        uid: "100"
+secrets:
+  tok:
+    file: ./tok
+  cred:
+    file: ./cred
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "s.container").contents;
+	assert!(c.contains("Secret=tok"));
+	assert!(c.contains("Secret=cred,target=/run/cred,uid=100"));
+	assert!(!out.warnings.iter().any(|w| w.contains("secrets")));
+}
+
+#[test]
+fn maps_previously_dropped_container_fields() {
+	let yaml = r#"
+services:
+  s:
+    image: x
+    group_add:
+      - audio
+    expose:
+      - "8080"
+    security_opt:
+      - "no-new-privileges:true"
+      - "seccomp=/etc/seccomp.json"
+      - "label=type:container_t"
+    pull_policy: always
+    logging:
+      driver: journald
+      options:
+        tag: mytag
+    networks:
+      net:
+        aliases:
+          - web-alias
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+networks:
+  net:
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "s.container").contents;
+	for needle in [
+		"GroupAdd=audio",
+		"ExposeHostPort=8080",
+		"NoNewPrivileges=true",
+		"SeccompProfile=/etc/seccomp.json",
+		"SecurityLabelType=container_t",
+		"Pull=always",
+		"LogDriver=journald",
+		"LogOpt=tag=mytag",
+		"NetworkAlias=web-alias",
+		"Memory=256m",
+	] {
+		assert!(c.contains(needle), "missing `{needle}` in:\n{c}");
+	}
+}
