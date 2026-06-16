@@ -1,7 +1,7 @@
 //! Resource-limit builders: CPU/memory/pids limits, ulimits, and CDI device
 //! reservations.
 
-use crate::compose::types::Service;
+use crate::compose::types::{DeviceReservation, GpuSpec, Service};
 use crate::libpod::types::container::{LinuxResources, Ulimit};
 use crate::size;
 
@@ -156,57 +156,82 @@ const MAX_GPU_DEVICES: i64 = 64;
 pub(crate) fn cdi_devices(service: &Service) -> Vec<String> {
 	let mut out = Vec::new();
 
-	let Some(reservations) = service
+	if let Some(reservations) = service
 		.deploy
 		.as_ref()
 		.and_then(|d| d.resources.as_ref())
 		.and_then(|r| r.reservations.as_ref())
-	else {
-		return out;
-	};
-
-	for dev in &reservations.devices {
-		let is_gpu = dev.capabilities.iter().any(|c| c == "gpu" || c == "nvidia");
-		let driver = dev.driver.as_deref().unwrap_or("nvidia");
-		if !is_gpu || (driver != "nvidia" && !driver.is_empty()) {
-			tracing::warn!(
-				"device reservation (driver {:?}, capabilities {:?}) is not supported and is ignored",
-				dev.driver,
-				dev.capabilities
-			);
-			continue;
+	{
+		for dev in &reservations.devices {
+			push_reservation_devices(dev, &mut out);
 		}
+	}
 
-		if !dev.device_ids.is_empty() {
-			for id in &dev.device_ids {
-				out.push(format!("nvidia.com/gpu={id}"));
-			}
-			continue;
-		}
-
-		match dev.count.as_ref().map(|c| c.to_i64()) {
-			// `count: all` (-1) or unspecified → request every GPU.
-			Some(-1) | None => out.push("nvidia.com/gpu=all".to_string()),
-			Some(n) if n > 0 => {
-				// Clamp to a sane device count: the value comes from an untrusted
-				// compose file and a huge `count:` would otherwise allocate billions
-				// of device-id strings during spec assembly (OOM) before any
-				// container is created. No host has anywhere near this many GPUs.
-				if n > MAX_GPU_DEVICES {
-					tracing::warn!(
-						"device reservation count {n} exceeds the maximum of {MAX_GPU_DEVICES}; \
-						 clamping (no host has this many GPUs)"
-					);
-				}
-				for i in 0..n.min(MAX_GPU_DEVICES) {
-					out.push(format!("nvidia.com/gpu={i}"));
+	// The top-level `gpus:` shorthand maps to the same NVIDIA CDI devices as a
+	// `deploy.resources.reservations.devices` GPU reservation.
+	if let Some(gpus) = &service.gpus {
+		match gpus {
+			GpuSpec::Devices(devs) => {
+				for dev in devs {
+					push_reservation_devices(dev, &mut out);
 				}
 			}
-			Some(_) => {}
+			// `gpus: all` / `gpus: N` request that many NVIDIA GPUs.
+			GpuSpec::Named(_) | GpuSpec::Count(_) => {
+				push_gpu_count(Some(gpus.to_count()), &mut out)
+			}
 		}
 	}
 
 	out
+}
+
+/// Translate one `devices:` GPU reservation into CDI device names, appending to
+/// `out`. Non-NVIDIA / non-GPU reservations are warned about and skipped.
+fn push_reservation_devices(dev: &DeviceReservation, out: &mut Vec<String>) {
+	let is_gpu = dev.capabilities.iter().any(|c| c == "gpu" || c == "nvidia");
+	let driver = dev.driver.as_deref().unwrap_or("nvidia");
+	if !is_gpu || (driver != "nvidia" && !driver.is_empty()) {
+		tracing::warn!(
+			"device reservation (driver {:?}, capabilities {:?}) is not supported and is ignored",
+			dev.driver,
+			dev.capabilities
+		);
+		return;
+	}
+
+	if !dev.device_ids.is_empty() {
+		for id in &dev.device_ids {
+			out.push(format!("nvidia.com/gpu={id}"));
+		}
+		return;
+	}
+
+	push_gpu_count(dev.count.as_ref().map(|c| c.to_i64()), out);
+}
+
+/// Append `count` NVIDIA CDI device names to `out`. `-1`/`None` means "all".
+fn push_gpu_count(count: Option<i64>, out: &mut Vec<String>) {
+	match count {
+		// `count: all` (-1) or unspecified → request every GPU.
+		Some(-1) | None => out.push("nvidia.com/gpu=all".to_string()),
+		Some(n) if n > 0 => {
+			// Clamp to a sane device count: the value comes from an untrusted
+			// compose file and a huge `count:` would otherwise allocate billions
+			// of device-id strings during spec assembly (OOM) before any
+			// container is created. No host has anywhere near this many GPUs.
+			if n > MAX_GPU_DEVICES {
+				tracing::warn!(
+					"GPU device count {n} exceeds the maximum of {MAX_GPU_DEVICES}; \
+					 clamping (no host has this many GPUs)"
+				);
+			}
+			for i in 0..n.min(MAX_GPU_DEVICES) {
+				out.push(format!("nvidia.com/gpu={i}"));
+			}
+		}
+		Some(_) => {}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -326,6 +351,32 @@ mod tests {
 			"services:\n  app:\n    image: x\n    deploy:\n      resources:\n        reservations:\n          devices:\n            - capabilities: [gpu]\n              device_ids: [\"GPU-abc\", \"1\"]\n",
 		);
 		assert_eq!(got, vec!["nvidia.com/gpu=GPU-abc", "nvidia.com/gpu=1"]);
+	}
+
+	#[test]
+	fn cdi_top_level_gpus_all() {
+		assert_eq!(
+			cdi_for("services:\n  app:\n    image: x\n    gpus: all\n"),
+			vec!["nvidia.com/gpu=all"]
+		);
+	}
+
+	#[test]
+	fn cdi_top_level_gpus_count() {
+		assert_eq!(
+			cdi_for("services:\n  app:\n    image: x\n    gpus: 2\n"),
+			vec!["nvidia.com/gpu=0", "nvidia.com/gpu=1"]
+		);
+	}
+
+	#[test]
+	fn cdi_top_level_gpus_device_list() {
+		assert_eq!(
+			cdi_for(
+				"services:\n  app:\n    image: x\n    gpus:\n      - capabilities: [gpu]\n        device_ids: [\"GPU-xyz\"]\n",
+			),
+			vec!["nvidia.com/gpu=GPU-xyz"]
+		);
 	}
 
 	#[test]

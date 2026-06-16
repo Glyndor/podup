@@ -45,13 +45,6 @@ impl Engine {
 
 		warn_swarm_only_deploy(service_name, service);
 
-		if service.gpus.is_some() {
-			tracing::warn!(
-				"service \"{service_name}\": top-level gpus: is not yet supported \
-				— use deploy.resources.reservations.devices for GPU access"
-			);
-		}
-
 		// --- Environment ---
 		// A bare `KEY` (no `=`) is a passthrough: its value comes from podup's
 		// own environment, matching docker-compose. Drop it only when unset.
