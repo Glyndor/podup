@@ -128,7 +128,10 @@ jobs:
             echo "::error::RELEASE_SIGN_KEY secret is not configured; refusing to release unsigned binaries."
             exit 1
           fi
-          python3 -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
+          # --ignore-installed: the macOS runner image ships cryptography
+          # without an uninstall RECORD, so pip cannot replace it to honour the
+          # pin. Install the pinned versions over it instead of uninstalling.
+          python3 -m pip install --quiet --require-hashes --ignore-installed -r .github/scripts/sign-requirements.txt
           # The key is passed via RELEASE_SIGN_KEY in the environment, not as a
           # CLI argument, so it never appears in the process argument list.
           python3 .github/scripts/sign.py "${{ matrix.asset }}"
@@ -271,7 +274,10 @@ jobs:
             echo "::error::RELEASE_SIGN_KEY secret is not configured; refusing to release unsigned checksums."
             exit 1
           fi
-          python3 -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
+          # --ignore-installed: the macOS runner image ships cryptography
+          # without an uninstall RECORD, so pip cannot replace it to honour the
+          # pin. Install the pinned versions over it instead of uninstalling.
+          python3 -m pip install --quiet --require-hashes --ignore-installed -r .github/scripts/sign-requirements.txt
           # The key is read from RELEASE_SIGN_KEY in the environment, not argv.
           python3 .github/scripts/sign.py SHA256SUMS
           for deb in podup_*_amd64.deb podup_*_arm64.deb; do
