@@ -110,7 +110,9 @@ fn map_security_opt(opt: &str, container: &mut Section, name: &str, warnings: &m
 		.strip_prefix("apparmor=")
 		.or_else(|| opt.strip_prefix("apparmor:"))
 	{
-		container.add("AppArmor", profile.to_string());
+		// Quadlet has no `AppArmor=` key in Podman 5.x; the generator rejects the
+		// whole unit on an unknown key. Pass it through as a raw podman flag.
+		container.add("PodmanArgs", format!("--security-opt apparmor={profile}"));
 	} else if let Some(label) = opt.strip_prefix("label=") {
 		if label == "disable" {
 			container.add("SecurityLabelDisable", "true".to_string());
@@ -334,7 +336,9 @@ pub(super) fn container_unit(
 		container.add("ShmSize", shm.clone());
 	}
 	if let Some(mem) = &service.mem_limit {
-		container.add("Memory", mem.clone());
+		// `Memory=` is not a valid Quadlet key in Podman 5.x (the generator
+		// rejects the unit); express the limit as a raw podman flag.
+		container.add("PodmanArgs", format!("--memory={mem}"));
 	}
 	if let Some(pids) = service.pids_limit {
 		container.add("PidsLimit", pids.to_string());
@@ -393,7 +397,7 @@ pub(super) fn container_unit(
 			.and_then(|r| r.limits.as_ref())
 			.and_then(|l| l.memory.as_ref())
 		{
-			container.add("Memory", mem.clone());
+			container.add("PodmanArgs", format!("--memory={mem}"));
 		}
 	}
 	for secret in &service.secrets {
