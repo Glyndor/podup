@@ -12,7 +12,7 @@ Rules-Requires-Root: no
 Package: podup
 Architecture: any
 Depends: ${shlibs:Depends}, ${misc:Depends}
-Recommends: podman (>= 4.0)
+Recommends: podman (>= 5.0)
 Description: docker-compose translator and runner for rootless Podman
  podup parses docker-compose.yml files and drives rootless Podman to
  create the equivalent containers, networks and volumes. It provides
