@@ -43,6 +43,16 @@ override_dh_auto_install:
 	target/release/podup completions zsh  > debian/podup/usr/share/zsh/vendor-completions/_podup
 	target/release/podup completions fish > debian/podup/usr/share/fish/vendor_completions.d/podup.fish
 
+# Stamp the man page's .TH version and date from debian/changelog so they never
+# drift from the release. The date comes from the changelog entry, not the build
+# clock, to keep the build reproducible.
+override_dh_installman:
+	set -e; \
+	ver=$$(dpkg-parsechangelog --show-field Version | sed 's/-[^-]*$$//'); \
+	dat=$$(LC_ALL=C date -u -d "$$(dpkg-parsechangelog --show-field Date)" +'%B %Y'); \
+	sed -i -E "s/\"podup [0-9]+\.[0-9]+\.[0-9]+\"/\"podup $$ver\"/; s/^\.TH PODUP 1 \"[^\"]*\"/.TH PODUP 1 \"$$dat\"/" debian/podup.1; \
+	dh_installman
+
 override_dh_auto_clean:
 	cargo clean
 	rm -rf debian/cargo-home
