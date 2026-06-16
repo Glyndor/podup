@@ -119,7 +119,6 @@ jobs:
         env:
           RELEASE_SIGN_KEY: ${{ secrets.RELEASE_SIGN_KEY }}
           PYTHONUTF8: "1"
-          PIP_BREAK_SYSTEM_PACKAGES: "1"
         run: |
           # The panel installer/updater verifies this Ed25519 signature; a
           # release without it cannot be consumed. Fail closed when the key
@@ -128,13 +127,17 @@ jobs:
             echo "::error::RELEASE_SIGN_KEY secret is not configured; refusing to release unsigned binaries."
             exit 1
           fi
-          # --ignore-installed: the macOS runner image ships cryptography
-          # without an uninstall RECORD, so pip cannot replace it to honour the
-          # pin. Install the pinned versions over it instead of uninstalling.
-          python3 -m pip install --quiet --require-hashes --ignore-installed -r .github/scripts/sign-requirements.txt
+          # Install the signing dependencies into an isolated virtual
+          # environment: a runner image may ship a different, system-managed
+          # cryptography that pip can neither uninstall (no RECORD) nor write
+          # over (read-only prefix). A fresh venv honours the pin on every OS.
+          python3 -m venv "$RUNNER_TEMP/signvenv"
+          venv_py="$RUNNER_TEMP/signvenv/bin/python"
+          [ -x "$venv_py" ] || venv_py="$RUNNER_TEMP/signvenv/Scripts/python.exe"
+          "$venv_py" -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
           # The key is passed via RELEASE_SIGN_KEY in the environment, not as a
           # CLI argument, so it never appears in the process argument list.
-          python3 .github/scripts/sign.py "${{ matrix.asset }}"
+          "$venv_py" .github/scripts/sign.py "${{ matrix.asset }}"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
@@ -268,23 +271,24 @@ jobs:
         env:
           RELEASE_SIGN_KEY: ${{ secrets.RELEASE_SIGN_KEY }}
           PYTHONUTF8: "1"
-          PIP_BREAK_SYSTEM_PACKAGES: "1"
         run: |
           if [ -z "$RELEASE_SIGN_KEY" ]; then
             echo "::error::RELEASE_SIGN_KEY secret is not configured; refusing to release unsigned checksums."
             exit 1
           fi
-          # --ignore-installed: the macOS runner image ships cryptography
-          # without an uninstall RECORD, so pip cannot replace it to honour the
-          # pin. Install the pinned versions over it instead of uninstalling.
-          python3 -m pip install --quiet --require-hashes --ignore-installed -r .github/scripts/sign-requirements.txt
+          # Isolated venv so the pinned cryptography is honoured regardless of
+          # any system-managed copy on the runner (see the per-binary sign step).
+          python3 -m venv "$RUNNER_TEMP/signvenv"
+          venv_py="$RUNNER_TEMP/signvenv/bin/python"
+          [ -x "$venv_py" ] || venv_py="$RUNNER_TEMP/signvenv/Scripts/python.exe"
+          "$venv_py" -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
           # The key is read from RELEASE_SIGN_KEY in the environment, not argv.
-          python3 .github/scripts/sign.py SHA256SUMS
+          "$venv_py" .github/scripts/sign.py SHA256SUMS
           for deb in podup_*_amd64.deb podup_*_arm64.deb; do
-            python3 .github/scripts/sign.py "$deb"
+            "$venv_py" .github/scripts/sign.py "$deb"
           done
           # Sign the supply-chain artifacts so consumers can verify them offline.
-          python3 .github/scripts/sign.py podup.cdx.json
+          "$venv_py" .github/scripts/sign.py podup.cdx.json
           python3 .github/scripts/sign.py NOTICES.html
 
       - name: Create GitHub Release
