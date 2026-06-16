@@ -164,6 +164,10 @@ a typo or an unmapped feature can't hide. At parse time podup warns about:
 This is what lets a compose file written for a newer Docker or Podman release
 run under podup: unsupported additions surface as warnings instead of vanishing.
 
+The `podup` CLI prints these warnings automatically. If you embed podup as a
+**library**, `parse_file` itself stays quiet — call `podup::collect_diagnostics`
+on the parsed file to obtain the same warnings and surface them to your users.
+
 `extra_hosts` is accepted in both the list (`["host:ip"]`) and mapping
 (`{host: ip}`) forms.
 
