@@ -1,3 +1,17 @@
+podup (0.24.1) unstable; urgency=medium
+
+  * Drop-in runtime compatibility fixes:
+    - Resolve a relative `file:` secret/config or bind source against the
+      project directory when the compose file is given as a bare name, rather
+      than the working directory the Podman service later runs in.
+    - Keep `up` idempotent over an existing named volume (Podman's libpod
+      volume-create reports an existing volume as HTTP 500, not 409).
+    - Register each service's name as a network alias so a service is reachable
+      by its service name on shared networks.
+    - Render a multi-line `command:` as a valid single-line Quadlet `Exec=`.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 16 Jun 2026 16:30:00 -0500
+
 podup (0.24.0) unstable; urgency=medium
 
   * Security/robustness hardening from a pre-launch review:
