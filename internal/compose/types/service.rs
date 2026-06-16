@@ -20,6 +20,7 @@ use super::{
 
 /// A single service definition.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[non_exhaustive]
 pub struct Service {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub image: Option<String>,
