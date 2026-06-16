@@ -88,24 +88,14 @@ services:
 }
 
 #[test]
-fn include_absolute_path_rejected() {
+fn include_missing_path_errors() {
+	// `include:` resolves absolute and `../` paths (trusted input); a path that
+	// does not exist still fails cleanly rather than being silently ignored.
 	let dir = tempfile::tempdir().unwrap();
 	let main = dir.path().join("docker-compose.yml");
 	writeln!(
 		std::fs::File::create(&main).unwrap(),
-		"include:\n  - /etc/passwd\nservices:\n  app:\n    image: alpine"
-	)
-	.unwrap();
-	assert!(parse_file(&main).is_err());
-}
-
-#[test]
-fn include_parent_traversal_rejected() {
-	let dir = tempfile::tempdir().unwrap();
-	let main = dir.path().join("docker-compose.yml");
-	writeln!(
-		std::fs::File::create(&main).unwrap(),
-		"include:\n  - ../../secret.yml\nservices:\n  app:\n    image: alpine"
+		"include:\n  - /nonexistent/podup-does-not-exist.yml\nservices:\n  app:\n    image: alpine"
 	)
 	.unwrap();
 	assert!(parse_file(&main).is_err());
