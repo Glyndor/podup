@@ -1,3 +1,30 @@
+podup (1.0.0) unstable; urgency=medium
+
+  * First stable release. The CLI and the crate-root library surface now carry
+    SemVer stability guarantees (public types are #[non_exhaustive]; MSRV 1.85).
+  * quadlet: emit memory and apparmor through PodmanArgs= instead of the invalid
+    Memory=/AppArmor= keys, which made the generator reject the whole unit; warn
+    on dropped post_start/pre_stop hooks and depends_on health/completion
+    conditions.
+  * compose: map every pull_policy value explicitly (never/if_not_present/local/
+    build); accept absolute include: paths; translate the top-level gpus:
+    shorthand to CDI devices; render restart: as the compose-spec string so
+    `config` output round-trips.
+  * engine: reject remote socket schemes (tcp://, ssh://, http(s)://) with a
+    clear error; surface parsed Podman errors on streaming endpoints.
+  * security: verify XDG_RUNTIME_DIR before staging, drop the chmod-heal TOCTOU
+    window, validate ulimit names and clamp soft above hard, sanitize the
+    short-form Quadlet Secret= name.
+  * library: add collect_diagnostics() so consumers see parse-time warnings.
+  * cli: accept a service filter on `pull`.
+  * docs/packaging: document DOCKER_HOST and the full watch action set, stamp
+    the man-page version/date from the changelog, add SECURITY.md, Recommends
+    podman (>= 5.0).
+  * ci: sign NOTICES.html via the pinned venv and refuse release tags not on
+    main.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 16 Jun 2026 15:00:00 -0500
+
 podup (0.24.1) unstable; urgency=medium
 
   * Drop-in runtime compatibility fixes:
