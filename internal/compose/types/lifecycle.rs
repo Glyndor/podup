@@ -121,12 +121,32 @@ pub struct LifecycleHook {
 }
 
 /// Service-level `restart:` policy — `no`, `always`, `unless-stopped`, or `on-failure` (with optional max-retries).
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RestartPolicy {
 	No,
 	Always,
 	OnFailure { max_attempts: Option<u32> },
 	UnlessStopped,
+}
+
+impl Serialize for RestartPolicy {
+	// Emit the compose-spec string form so `config` output round-trips back
+	// through `Deserialize` (the derived form would emit `UnlessStopped`).
+	fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+	where
+		S: serde::Serializer,
+	{
+		let s = match self {
+			RestartPolicy::No => "no".to_string(),
+			RestartPolicy::Always => "always".to_string(),
+			RestartPolicy::UnlessStopped => "unless-stopped".to_string(),
+			RestartPolicy::OnFailure {
+				max_attempts: Some(n),
+			} => format!("on-failure:{n}"),
+			RestartPolicy::OnFailure { max_attempts: None } => "on-failure".to_string(),
+		};
+		serializer.serialize_str(&s)
+	}
 }
 
 impl<'de> Deserialize<'de> for RestartPolicy {
@@ -169,6 +189,40 @@ mod tests {
 	#[test]
 	fn depends_on_empty_has_no_names() {
 		assert!(DependsOn::Empty.service_names().is_empty());
+	}
+
+	#[test]
+	fn restart_policy_serializes_to_compose_string() {
+		let ser = |p: &RestartPolicy| serde_yaml::to_string(p).unwrap().trim().to_string();
+		assert_eq!(ser(&RestartPolicy::No), "no");
+		assert_eq!(ser(&RestartPolicy::Always), "always");
+		assert_eq!(ser(&RestartPolicy::UnlessStopped), "unless-stopped");
+		assert_eq!(
+			ser(&RestartPolicy::OnFailure { max_attempts: None }),
+			"on-failure"
+		);
+		assert_eq!(
+			ser(&RestartPolicy::OnFailure {
+				max_attempts: Some(5)
+			}),
+			"on-failure:5"
+		);
+	}
+
+	#[test]
+	fn restart_policy_round_trips_through_yaml() {
+		for input in [
+			"no",
+			"always",
+			"unless-stopped",
+			"on-failure",
+			"on-failure:3",
+		] {
+			let p: RestartPolicy = serde_yaml::from_str(input).unwrap();
+			let out = serde_yaml::to_string(&p).unwrap();
+			let reparsed: RestartPolicy = serde_yaml::from_str(&out).unwrap();
+			assert_eq!(p, reparsed, "round-trip failed for {input}");
+		}
 	}
 
 	#[test]
