@@ -77,6 +77,15 @@ pub fn parse_file_with_env_files(path: &Path, env_files: &[String]) -> Result<Co
 	Ok(file)
 }
 
+/// Collect parse-time diagnostics for an already-parsed compose file: warnings
+/// about recognized-but-unsupported keys and fields that are accepted but carry
+/// no effect on Podman. The CLI prints these automatically; library consumers
+/// (e.g. panel-agent) can call this to surface the same warnings, since
+/// [`parse_file`] does not emit them itself.
+pub fn collect_diagnostics(file: &ComposeFile) -> Vec<String> {
+	diagnostics::collect(file)
+}
+
 /// Parse and merge multiple compose files (the `-f`/`COMPOSE_FILE` list).
 ///
 /// Files are merged left to right: a later file overrides an earlier one,
@@ -181,6 +190,20 @@ mod tests {
 		let file = parse_str_raw(yaml).unwrap();
 		assert!(file.services.contains_key("web"));
 		assert_eq!(file.services["web"].image.as_deref(), Some("nginx"));
+	}
+
+	#[test]
+	fn collect_diagnostics_surfaces_unknown_keys() {
+		// The public helper lets library consumers see the same warnings the CLI
+		// prints; parse_file itself stays quiet.
+		let file =
+			parse_str_raw("services:\n  web:\n    image: nginx\n    enviroment:\n      - A=1\n")
+				.unwrap();
+		let diags = collect_diagnostics(&file);
+		assert!(
+			diags.iter().any(|d| d.contains("enviroment")),
+			"expected an unknown-key diagnostic, got {diags:?}"
+		);
 	}
 
 	#[test]
