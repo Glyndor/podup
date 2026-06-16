@@ -20,6 +20,7 @@ use unit::{container_unit, network_unit, volume_unit};
 
 /// A single generated unit file: its name and full contents.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct QuadletUnit {
 	/// File name, e.g. `web.container` or `db-data.volume`.
 	pub filename: String,
@@ -30,6 +31,7 @@ pub struct QuadletUnit {
 /// The result of a generation run: the units plus any warnings about set but
 /// unmapped fields.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct QuadletOutput {
 	/// Generated unit files, in a deterministic order.
 	pub units: Vec<QuadletUnit>,

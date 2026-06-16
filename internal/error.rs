@@ -6,25 +6,48 @@
 use std::fmt;
 
 /// All errors produced by podup.
+///
+/// `#[non_exhaustive]`: new variants may be added in a minor release, so
+/// downstream `match` arms must include a wildcard.
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum ComposeError {
+	/// The compose YAML could not be deserialized.
 	Parse(serde_yaml::Error),
+	/// A referenced compose/include/extends file does not exist.
 	FileNotFound(String),
+	/// An underlying filesystem operation failed.
 	Io(std::io::Error),
+	/// The Podman libpod API returned an error or could not be reached.
 	Podman(crate::libpod::PodmanError),
+	/// A named service is not defined in the compose file.
 	ServiceNotFound(String),
+	/// `depends_on` forms a cycle, so no valid start order exists.
 	CircularDependency(String),
+	/// A service has neither an `image:` nor a `build:` section.
 	NoImageOrBuild(String),
+	/// A `${VAR}` with the `?err` modifier was required but unset.
 	RequiredVarNotSet { var: String, msg: String },
+	/// A service did not become healthy within its dependency wait window.
 	HealthCheckTimeout(String),
+	/// A `ports:` entry could not be parsed.
 	InvalidPort(String),
+	/// Image build failed (context assembly or the Podman build step).
 	Build(String),
+	/// `extends:` could not be resolved (missing file/service or a cycle).
 	Extends(String),
+	/// `include:` could not be resolved or merged.
 	Include(String),
+	/// The `watch` command failed (filesystem watch or sync action).
 	Watch(String),
+	/// A compose feature is recognized but unsupported on Podman/podup.
 	Unsupported(String),
+	/// A `run` container exited; carries its non-zero exit code so the CLI can
+	/// propagate it as its own process exit status.
 	RunExited(i64),
+	/// `podup update` (self-update) failed.
 	Update(String),
+	/// An `external: true` secret/config/network/volume is absent.
 	ExternalNotFound(String),
 }
 

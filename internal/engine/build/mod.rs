@@ -35,11 +35,14 @@ impl Engine {
 
 		info!("pulling {image}");
 
-		let pull_policy = match service.pull_policy.as_deref() {
-			Some("always") => "always",
-			Some("newer") => "newer",
-			_ => "missing",
-		};
+		let requested = service.pull_policy.as_deref();
+		let pull_policy = libpod_pull_policy(requested).unwrap_or_else(|| {
+			warn!(
+				"unknown pull_policy '{}', defaulting to 'missing'",
+				requested.unwrap_or_default()
+			);
+			"missing"
+		});
 		let mut query = format!("reference={}&policy={}", urlencoded(&image), pull_policy);
 		if let Some(platform) = &service.platform {
 			query.push_str(&format!("&platform={}", urlencoded(platform)));
@@ -382,10 +385,38 @@ fn is_remote_context(context: &str) -> bool {
 	context.contains("://") || context.starts_with("git@")
 }
 
+/// Map a compose `pull_policy:` value to the libpod images/pull `policy`
+/// parameter. `if_not_present` is the spec alias for `missing`; `build` falls
+/// back to `missing` here (its build behavior is handled by the caller). Returns
+/// `None` for an unrecognized value so the caller can warn and default.
+pub(super) fn libpod_pull_policy(policy: Option<&str>) -> Option<&'static str> {
+	match policy {
+		Some("always") => Some("always"),
+		Some("newer") => Some("newer"),
+		Some("never") => Some("never"),
+		None | Some("missing") | Some("if_not_present") | Some("build") => Some("missing"),
+		Some(_) => None,
+	}
+}
+
 #[cfg(test)]
 mod tests {
-	use super::{is_remote_context, Engine};
+	use super::{is_remote_context, libpod_pull_policy, Engine};
 	use crate::libpod::Client;
+
+	#[test]
+	fn pull_policy_maps_every_spec_value() {
+		assert_eq!(libpod_pull_policy(Some("always")), Some("always"));
+		assert_eq!(libpod_pull_policy(Some("newer")), Some("newer"));
+		assert_eq!(libpod_pull_policy(Some("never")), Some("never"));
+		assert_eq!(libpod_pull_policy(Some("missing")), Some("missing"));
+		// `if_not_present` is the spec alias for `missing`.
+		assert_eq!(libpod_pull_policy(Some("if_not_present")), Some("missing"));
+		assert_eq!(libpod_pull_policy(Some("build")), Some("missing"));
+		assert_eq!(libpod_pull_policy(None), Some("missing"));
+		// Unknown values are reported (None) so the caller warns.
+		assert_eq!(libpod_pull_policy(Some("bogus")), None);
+	}
 
 	fn engine(base: std::path::PathBuf) -> Engine {
 		Engine::with_base_dir(Client::new("/nonexistent.sock"), "p".into(), base)

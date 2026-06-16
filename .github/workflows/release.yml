@@ -44,6 +44,18 @@ jobs:
           fi
           echo "Releasing version ${VERSION}."
 
+      - name: Tag must be on main
+        # Releases are cut only from `main` (develop → main merge, then tag).
+        # Refuse a tag pushed to any other branch so an unreviewed commit can
+        # never be published.
+        run: |
+          git fetch --unshallow --no-tags origin main 2>/dev/null \
+            || git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::Tagged commit is not reachable from origin/main; releases must be cut from main."
+            exit 1
+          fi
+
       - name: Audit dependencies for known advisories
         # Gate the release on `cargo audit`: a RUSTSEC advisory in a pinned
         # dependency must block publishing, not wait for the weekly cron scan.
@@ -289,7 +301,7 @@ jobs:
           done
           # Sign the supply-chain artifacts so consumers can verify them offline.
           "$venv_py" .github/scripts/sign.py podup.cdx.json
-          python3 .github/scripts/sign.py NOTICES.html
+          "$venv_py" .github/scripts/sign.py NOTICES.html
 
       - name: Create GitHub Release
         env:

@@ -92,6 +92,47 @@ mod tests {
 	}
 
 	#[test]
+	fn merge_adds_and_parent_wins_on_secret_conflict() {
+		use super::super::types::SecretConfig;
+		let secret = |f: &str| SecretConfig {
+			file: Some(f.to_string()),
+			..Default::default()
+		};
+		let mut target = ComposeFile::default();
+		target
+			.secrets
+			.insert("tok".to_string(), secret("parent.txt"));
+		let mut other = ComposeFile::default();
+		other.secrets.insert("tok".to_string(), secret("child.txt"));
+		other.secrets.insert("extra".to_string(), secret("e.txt"));
+		merge_compose_file(&mut target, other);
+		// Parent wins on conflict; the included-only secret is added.
+		assert_eq!(target.secrets["tok"].file.as_deref(), Some("parent.txt"));
+		assert_eq!(target.secrets["extra"].file.as_deref(), Some("e.txt"));
+	}
+
+	#[test]
+	fn merge_adds_and_parent_wins_on_config_conflict() {
+		use super::super::types::ConfigConfig;
+		let config = |f: &str| ConfigConfig {
+			file: Some(f.to_string()),
+			..Default::default()
+		};
+		let mut target = ComposeFile::default();
+		target
+			.configs
+			.insert("cfg".to_string(), config("parent.conf"));
+		let mut other = ComposeFile::default();
+		other
+			.configs
+			.insert("cfg".to_string(), config("child.conf"));
+		other.configs.insert("only".to_string(), config("o.conf"));
+		merge_compose_file(&mut target, other);
+		assert_eq!(target.configs["cfg"].file.as_deref(), Some("parent.conf"));
+		assert_eq!(target.configs["only"].file.as_deref(), Some("o.conf"));
+	}
+
+	#[test]
 	fn merge_empty_other_is_noop() {
 		let mut target = ComposeFile::default();
 		target.services.insert("web".to_string(), svc("nginx:1.25"));

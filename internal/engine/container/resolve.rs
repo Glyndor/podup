@@ -223,9 +223,12 @@ mod tests {
 		assert_eq!(resolve_bind_source("/abs/path", base), "/abs/path");
 		assert_eq!(resolve_bind_source("./data", base), "/srv/app/./data");
 		assert_eq!(resolve_bind_source("data", base), "/srv/app/data");
-		std::env::set_var("HOME", "/home/u");
-		assert_eq!(resolve_bind_source("~/x", base), "/home/u/x");
-		assert_eq!(resolve_bind_source("~", base), "/home/u");
+		// Mutating HOME via the process env races other tests under the parallel
+		// runner; temp_env::with_var sets and restores it atomically.
+		temp_env::with_var("HOME", Some("/home/u"), || {
+			assert_eq!(resolve_bind_source("~/x", base), "/home/u/x");
+			assert_eq!(resolve_bind_source("~", base), "/home/u");
+		});
 	}
 
 	#[test]

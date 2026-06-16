@@ -3,7 +3,7 @@
 // libc FFI (getuid) is needed here; the block carries a soundness comment.
 #![allow(unsafe_code)]
 
-use crate::error::Result;
+use crate::error::{ComposeError, Result};
 use crate::libpod::Client;
 #[cfg(any(not(windows), test))]
 use std::path::Path;
@@ -27,6 +27,13 @@ const DEFAULT_PIPE: &str = "//./pipe/podman-machine-default";
 pub fn connect(socket_path: Option<&str>) -> Result<Client> {
 	let default_path = default_socket_path();
 	let raw = socket_path.unwrap_or(&default_path);
+	if let Some(scheme) = remote_scheme(raw) {
+		return Err(ComposeError::Unsupported(format!(
+			"remote Podman over `{scheme}` is not supported; podup talks to a local \
+			 rootless socket. Point PODMAN_SOCKET/--socket at a unix:// socket path \
+			 (or an npipe:// pipe on Windows)."
+		)));
+	}
 	let path = raw
 		.strip_prefix("unix://")
 		.or_else(|| raw.strip_prefix("npipe://"))
@@ -34,17 +41,23 @@ pub fn connect(socket_path: Option<&str>) -> Result<Client> {
 	Ok(Client::new(path))
 }
 
-/// Strips the `unix://` or `npipe://` scheme prefix before passing the path to [`connect`].
+/// Detect a non-local socket scheme (`tcp://`, `ssh://`, `http(s)://`, `fd://`).
+/// `unix://`/`npipe://` and plain paths are local and return `None`.
+fn remote_scheme(raw: &str) -> Option<&'static str> {
+	const REMOTE: [&str; 5] = ["tcp://", "ssh://", "http://", "https://", "fd://"];
+	REMOTE.into_iter().find(|s| raw.starts_with(s))
+}
+
+/// Read the Podman socket from the environment (`PODMAN_SOCKET`, then
+/// `DOCKER_HOST` as a Docker-compatible fallback) and connect. A `unix://` /
+/// `npipe://` scheme is stripped by [`connect`]; a remote scheme is rejected
+/// there with a clear error.
 pub fn connect_from_env() -> Result<Client> {
 	let socket = std::env::var("PODMAN_SOCKET")
 		.or_else(|_| std::env::var("DOCKER_HOST"))
 		.ok();
 
-	let path = socket.as_deref().and_then(|s| {
-		s.strip_prefix("unix://")
-			.or_else(|| s.strip_prefix("npipe://"))
-	});
-	connect(path)
+	connect(socket.as_deref())
 }
 
 #[cfg(not(windows))]
@@ -257,5 +270,28 @@ mod tests {
 	fn connect_passes_plain_path_unchanged() {
 		let c = connect(Some("/run/user/1000/podman/podman.sock")).unwrap();
 		drop(c);
+	}
+
+	#[test]
+	fn connect_rejects_remote_schemes() {
+		for raw in [
+			"tcp://127.0.0.1:2375",
+			"ssh://user@host/run/podman.sock",
+			"http://localhost:8080",
+			"https://localhost:8080",
+			"fd://3",
+		] {
+			assert!(
+				matches!(connect(Some(raw)), Err(ComposeError::Unsupported(_))),
+				"{raw} should be rejected as unsupported"
+			);
+		}
+	}
+
+	#[test]
+	fn remote_scheme_ignores_local_sockets() {
+		assert!(remote_scheme("/run/podman.sock").is_none());
+		assert!(remote_scheme("unix:///run/podman.sock").is_none());
+		assert!(remote_scheme("npipe:////./pipe/podman").is_none());
 	}
 }

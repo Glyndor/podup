@@ -75,25 +75,41 @@ services:
 }
 
 #[test]
-fn include_absolute_path_is_rejected() {
-	// Absolute include paths remain rejected as intentional hardening: they are
-	// not portable across checkouts and the spec does not require them.
+fn include_absolute_path_resolves() {
+	// docker-compose accepts absolute include paths; the compose file is trusted
+	// input (like a Makefile), so podup resolves them as given rather than
+	// rejecting them.
 	let dir = tempfile::tempdir().unwrap();
+
+	let shared = dir.path().join("shared.yml");
+	writeln!(
+		std::fs::File::create(&shared).unwrap(),
+		r#"
+services:
+  shared_svc:
+    image: alpine
+"#
+	)
+	.unwrap();
+
 	let main = dir.path().join("docker-compose.yml");
 	writeln!(
 		std::fs::File::create(&main).unwrap(),
 		r#"
 include:
-  - /etc/shared.yml
+  - {}
 
 services:
   app:
     image: nginx
-"#
+"#,
+		shared.display()
 	)
 	.unwrap();
 
-	assert!(parse_file(&main).is_err());
+	let file = parse_file(&main).unwrap();
+	assert!(file.services.contains_key("app"));
+	assert!(file.services.contains_key("shared_svc"));
 }
 
 #[test]

@@ -147,6 +147,12 @@ Default active profiles (see \fB\-\-profile\fR).
 .B PODMAN_SOCKET
 Podman socket path (see \fB\-\-socket\fR).
 .TP
+.B DOCKER_HOST
+Docker-compatible fallback for the Podman socket, used only when
+\fBPODMAN_SOCKET\fR is unset. Must name a local \fBunix://\fR socket
+(or \fBnpipe://\fR on Windows); a remote \fBtcp://\fR or \fBssh://\fR value is
+rejected.
+.TP
 .B RUST_LOG
 Log verbosity filter. With no value set, warnings and errors are shown; set
 e.g. \fBRUST_LOG=podup=info\fR or \fBRUST_LOG=podup=debug\fR for more detail.

@@ -62,6 +62,7 @@ pub struct ServiceNetworkConfig {
 
 /// Named network definition in the top-level `networks:` block.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[non_exhaustive]
 pub struct NetworkConfig {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub driver: Option<String>,
