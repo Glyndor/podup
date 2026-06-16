@@ -25,79 +25,9 @@ permissions:
   contents: read
 
 jobs:
-  build:
-    name: dpkg-buildpackage
-    runs-on: ubuntu-latest
-    # The package requires rustc >= 1.85, which Debian trixie satisfies; the
-    # idna -> icu chain that previously forced 1.86 was removed. Built on sid
-    # for now; trixie is also viable since the floor dropped.
-    container: debian:sid
-    steps:
-      - name: Install build tooling
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends \
-            ca-certificates \
-            build-essential \
-            dpkg-dev \
-            debhelper \
-            cargo \
-            rustc
-
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Confirm build dependencies are satisfiable
-        run: dpkg-checkbuilddeps
-
-      - name: Build the package
-        run: dpkg-buildpackage -us -uc -b
-
-      - name: Confirm the .deb was produced
-        run: |
-          deb=$(ls ../podup_*.deb 2>/dev/null | head -n1)
-          if [ -z "$deb" ]; then
-            echo "::error::no .deb artifact was produced"
-            exit 1
-          fi
-          echo "Built $deb"
-          dpkg-deb --contents "$deb"
-
-  build-vendored:
-    name: build (vendored / offline)
-    runs-on: ubuntu-latest
-    # Proves a classified/air-gapped environment can build podup with no
-    # crates.io access: crates are vendored once (the only networked step), then
-    # the release binary is built with CARGO_NET_OFFLINE=true against the vendor
-    # tree — the same packaged feature set the Debian build uses. A missing crate
-    # fails the build.
-    container: debian:sid
-    steps:
-      - name: Install build tooling
-        env:
-          DEBIAN_FRONTEND: noninteractive
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends \
-            ca-certificates \
-            build-essential \
-            cargo \
-            rustc
-
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-
-      - name: Vendor dependencies (the only step allowed network access)
-        run: |
-          cargo vendor vendor
-          mkdir -p .cargo
-          printf '[source.crates-io]\nreplace-with = "vendored-sources"\n\n[source.vendored-sources]\ndirectory = "vendor"\n' > .cargo/config.toml
-
-      - name: Build offline from the vendored tree
-        env:
-          CARGO_NET_OFFLINE: "true"
-        run: |
-          cargo build --release --locked --offline \
-            --no-default-features --features watch,completions
-          test -x target/release/podup
-          echo "Built target/release/podup offline from vendored sources"
+  debian:
+    uses: Glyndor/.github/.github/workflows/rust-debian.yml@ef351e0a6632c3688a32c524d09f56abb1c6e2ba # main
+    with:
+      package-name: podup
+      check-vendored: true
+      offline-cargo-args: "--no-default-features --features watch,completions"

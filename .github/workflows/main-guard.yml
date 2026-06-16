@@ -8,4 +8,4 @@ permissions: {}
 
 jobs:
   develop-only:
-    uses: Glyndor/.github/.github/workflows/main-guard.yml@91a23397a14f0efb46e2b354d72df0e10a0004b6 # main
+    uses: Glyndor/.github/.github/workflows/main-guard.yml@ef351e0a6632c3688a32c524d09f56abb1c6e2ba # main
