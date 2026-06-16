@@ -304,4 +304,61 @@ mod tests {
 			"unexpected: {msgs:?}"
 		);
 	}
+
+	#[test]
+	fn warns_on_remaining_unmapped_build_fields() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    build:\n      context: .\n      ulimits:\n        nofile: 1024\n      entitlements: [\"security.insecure\"]\n      provenance: true\n      sbom: true\n",
+		);
+		for field in [
+			"build.ulimits",
+			"build.entitlements",
+			"build.provenance",
+			"build.sbom",
+		] {
+			assert!(
+				msgs.iter().any(|m| m.contains(field)),
+				"missing {field}; got: {msgs:?}"
+			);
+		}
+	}
+
+	#[test]
+	fn warns_on_secret_template_driver() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    template_driver: golang\n",
+		);
+		assert!(
+			msgs.iter()
+				.any(|m| m.contains("secret 'tok': template_driver")),
+			"got: {msgs:?}"
+		);
+	}
+
+	#[test]
+	fn warns_on_non_external_config_driver_and_template_driver() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    image: nginx\nconfigs:\n  conf:\n    driver: vault\n    template_driver: golang\n",
+		);
+		assert!(
+			msgs.iter().any(|m| m.contains("config 'conf': driver")),
+			"got: {msgs:?}"
+		);
+		assert!(
+			msgs.iter()
+				.any(|m| m.contains("config 'conf': template_driver")),
+			"got: {msgs:?}"
+		);
+	}
+
+	#[test]
+	fn external_config_driver_produces_no_diagnostic() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    image: nginx\nconfigs:\n  conf:\n    external: true\n    driver: vault\n",
+		);
+		assert!(
+			!msgs.iter().any(|m| m.contains("driver")),
+			"unexpected: {msgs:?}"
+		);
+	}
 }
