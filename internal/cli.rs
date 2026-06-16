@@ -203,8 +203,11 @@ pub(crate) enum Commands {
 		#[arg(trailing_var_arg = true, allow_hyphen_values = true)]
 		cmd: Vec<String>,
 	},
-	/// Pull images for all services.
-	Pull,
+	/// Pull images for the named services, or all services if none are given.
+	Pull {
+		/// Only pull images for these services.
+		services: Vec<String>,
+	},
 	/// Restart services.
 	Restart {
 		/// Only restart this service.

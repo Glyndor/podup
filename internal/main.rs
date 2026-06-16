@@ -360,7 +360,7 @@ async fn run() -> podup::Result<()> {
 			engine.logs(&file, service.as_deref(), follow).await?
 		}
 		Commands::Exec { service, cmd } => engine.exec(&file, &service, cmd).await?,
-		Commands::Pull => engine.pull(&file).await?,
+		Commands::Pull { services } => engine.pull_services(&file, &services).await?,
 		Commands::Restart { service } => engine.restart(&file, service.as_deref()).await?,
 		Commands::Config => unreachable!("handled above"),
 		Commands::Generate { .. } => unreachable!("handled above"),
