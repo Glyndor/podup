@@ -46,7 +46,14 @@ pub(super) fn staging_base() -> Result<PathBuf> {
 	let euid = unsafe { libc::geteuid() };
 
 	let base = match std::env::var_os("XDG_RUNTIME_DIR") {
-		Some(dir) if Path::new(&dir).is_absolute() => PathBuf::from(dir).join("podup"),
+		Some(dir) if Path::new(&dir).is_absolute() => {
+			let xdg = PathBuf::from(&dir);
+			// The runtime dir must itself be a private directory owned by us. A
+			// hostile XDG_RUNTIME_DIR pointing at a shared/world-writable path
+			// would otherwise host secret staging under another user's control.
+			verify_private_dir(&xdg, euid)?;
+			xdg.join("podup")
+		}
 		_ => std::env::temp_dir().join(format!("podup-{euid}")),
 	};
 
@@ -109,7 +116,7 @@ pub(super) fn reject_dangerous_secret_mode(mode: u32, ctx: &str) -> Result<()> {
 /// `verify_private_dir` then rejects anything not ours (fail closed).
 #[cfg(unix)]
 fn ensure_private_dir(dir: &Path, euid: u32) -> Result<()> {
-	use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+	use std::os::unix::fs::DirBuilderExt;
 
 	std::fs::DirBuilder::new()
 		.recursive(true)
@@ -117,12 +124,11 @@ fn ensure_private_dir(dir: &Path, euid: u32) -> Result<()> {
 		.create(dir)
 		.map_err(ComposeError::Io)?;
 
-	let meta = std::fs::symlink_metadata(dir).map_err(ComposeError::Io)?;
-	if meta.is_dir() {
-		std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))
-			.map_err(ComposeError::Io)?;
-	}
-
+	// No chmod-healing of a pre-existing directory: re-applying the mode through
+	// the path would be a TOCTOU window (a symlink swapped in between the stat
+	// and the chmod). A freshly created directory is already 0700 from the mode
+	// above; a pre-existing directory with the wrong owner or mode is rejected
+	// by verify_private_dir below (fail closed).
 	verify_private_dir(dir, euid)
 }
 
@@ -253,16 +259,21 @@ mod ensure_dir_tests {
 	}
 
 	#[test]
-	fn heals_drifted_permissions_on_owned_dir() {
+	fn drifted_permissions_on_existing_dir_fail_closed() {
+		// A pre-existing directory with looser-than-0700 permissions is rejected
+		// rather than chmod-healed: healing through the path would be a TOCTOU
+		// window, and failing closed never writes secrets under a dir another
+		// user may currently access.
 		let root = tempfile::tempdir().expect("tempdir");
 		let dir = root.path().join("base");
 		std::fs::create_dir(&dir).expect("mkdir");
 		std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).expect("chmod");
 		// SAFETY: geteuid takes no arguments, touches no memory and cannot fail.
 		let euid = unsafe { libc::geteuid() };
-		ensure_private_dir(&dir, euid).expect("healed dir");
+		assert!(ensure_private_dir(&dir, euid).is_err());
+		// Permissions are left untouched (no chmod attempted).
 		let meta = std::fs::metadata(&dir).expect("metadata");
-		assert_eq!(meta.mode() & 0o777, 0o700);
+		assert_eq!(meta.mode() & 0o777, 0o755);
 	}
 
 	#[test]
