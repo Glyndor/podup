@@ -371,3 +371,49 @@ async fn sibling_resolves_service_by_name_on_shared_network() {
 		"service `server` was not reachable by its service name: {out:?}"
 	);
 }
+
+// ---------------------------------------------------------------------------
+// With NO `networks:` block, services still reach each other by service name
+// (the synthesized `default` network — docker-compose parity, #417)
+// ---------------------------------------------------------------------------
+
+#[cfg(feature = "test-helpers")]
+#[tokio::test]
+async fn sibling_resolves_service_by_name_without_networks_block() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("dnsdef");
+	let engine = Engine::new(client, proj.clone());
+
+	// No top-level `networks:` and no per-service `networks:` — the common case.
+	// Parse through the real CLI entry point so the implicit `default` network
+	// is synthesized; `parse_str` deliberately does not normalize.
+	let dir = tempfile::tempdir().unwrap();
+	let compose = dir.path().join("docker-compose.yml");
+	fs::write(
+		&compose,
+		"services:\n  server:\n    image: busybox:latest\n    command: [\"sh\", \"-c\", \"mkdir -p /www; echo ok > /www/index.html; exec httpd -f -p 80 -h /www\"]\n  client:\n    image: busybox:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+	let file = parse_files_with_env_files(&[compose], &[]).unwrap();
+
+	engine.up(&file).await.unwrap();
+	let out = engine
+		.test_exec_capture(
+			&format!("{proj}-client"),
+			vec![
+				"sh".into(),
+				"-c".into(),
+				"for i in $(seq 1 30); do wget -q -O - http://server:80/ && exit 0; sleep 0.3; done; exit 1".into(),
+			],
+		)
+		.await;
+	engine.down(&file).await.unwrap();
+	let out = out.expect("exec in client container failed");
+	assert!(
+		out.contains("ok"),
+		"service `server` was not reachable by name without a networks: block: {out:?}"
+	);
+}
