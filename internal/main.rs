@@ -429,8 +429,8 @@ async fn run() -> podup::Result<()> {
 		Commands::Config => unreachable!("handled above"),
 		Commands::Generate { .. } => unreachable!("handled above"),
 		Commands::Watch => engine.watch(&file).await?,
-		#[cfg(feature = "update")]
 		Commands::Ls { .. } => unreachable!("handled before compose parsing"),
+		#[cfg(feature = "update")]
 		Commands::Update { .. } => unreachable!("handled before compose parsing"),
 		#[cfg(feature = "completions")]
 		Commands::Completions { .. } => unreachable!("handled before compose parsing"),
