@@ -5,8 +5,8 @@ use crate::ports::parse_ports;
 use crate::size::parse_duration_secs;
 
 use super::render::{
-	render_command, render_publish_port, render_restart, render_volume, safe_unit_stem,
-	sorted_label_pairs, sorted_pairs, Section,
+	render_command, render_publish_port, render_restart, render_tmpfs_mount, render_volume,
+	safe_unit_stem, sorted_label_pairs, sorted_pairs, Section,
 };
 use super::warnings::collect_warnings;
 use super::QuadletUnit;
@@ -269,7 +269,13 @@ pub(super) fn container_unit(
 	}
 
 	for vol in &service.volumes {
-		container.add("Volume", render_volume(vol, declared_volumes));
+		// A long-form `type: tmpfs` mount maps to `Tmpfs=`, not `Volume=`
+		// (which would persist it as a volume rather than an in-memory fs).
+		if let Some(t) = render_tmpfs_mount(vol) {
+			container.add("Tmpfs", t);
+		} else {
+			container.add("Volume", render_volume(vol, declared_volumes));
+		}
 	}
 	for net in service.networks.names() {
 		// A declared (non-external) network is backed by a generated `.network`

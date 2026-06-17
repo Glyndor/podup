@@ -339,3 +339,31 @@ services:
 		"missing deploy cpus PodmanArgs in:\n{c}"
 	);
 }
+
+#[test]
+fn long_form_tmpfs_mount_renders_as_tmpfs_not_volume() {
+	// A long-form `type: tmpfs` mount must become `Tmpfs=`, not `Volume=` —
+	// the latter would persist it as a volume instead of an in-memory fs.
+	let yaml = r#"
+services:
+  s:
+    image: app:1.0
+    volumes:
+      - type: tmpfs
+        target: /cache
+        tmpfs:
+          size: 64000000
+          mode: 0o755
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "s.container").contents;
+	assert!(
+		c.contains("Tmpfs=/cache:size=64000000,mode=755"),
+		"tmpfs not rendered as Tmpfs= with options in:\n{c}"
+	);
+	assert!(
+		!c.contains("Volume=/cache"),
+		"tmpfs wrongly emitted as a Volume in:\n{c}"
+	);
+}
