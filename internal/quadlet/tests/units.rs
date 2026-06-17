@@ -266,3 +266,71 @@ volumes:
 	assert!(vol.contains("Driver=local"));
 	assert!(vol.contains("Label=tier=vol"));
 }
+
+#[test]
+fn network_unit_emits_ipam_pools_options_and_custom_name() {
+	let yaml = r#"
+services:
+  s:
+    image: x
+networks:
+  net:
+    name: custom-net
+    driver_opts:
+      mtu: "9000"
+      com.docker.network.bridge.name: br0
+    ipam:
+      driver: host-local
+      config:
+        - subnet: 10.7.0.0/16
+          gateway: 10.7.0.1
+          ip_range: 10.7.0.128/25
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let net = &unit_named(&out, "net.network").contents;
+	// A custom name overrides the project-prefixed default.
+	assert!(net.contains("NetworkName=custom-net"), "in:\n{net}");
+	assert!(!net.contains("NetworkName=p_net"), "in:\n{net}");
+	assert!(net.contains("IPAMDriver=host-local"), "in:\n{net}");
+	assert!(net.contains("Subnet=10.7.0.0/16"), "in:\n{net}");
+	assert!(net.contains("Gateway=10.7.0.1"), "in:\n{net}");
+	assert!(net.contains("IPRange=10.7.0.128/25"), "in:\n{net}");
+	// Each driver option is its own Options= line (Quadlet maps one Options= to
+	// one `--opt`); a comma-joined value would be a single malformed option.
+	assert!(net.contains("Options=mtu=9000"), "in:\n{net}");
+	assert!(
+		net.contains("Options=com.docker.network.bridge.name=br0"),
+		"in:\n{net}"
+	);
+}
+
+#[test]
+fn volume_unit_emits_options_and_custom_name() {
+	let yaml = r#"
+services:
+  s:
+    image: x
+volumes:
+  vol:
+    name: custom-vol
+    driver: local
+    driver_opts:
+      type: nfs
+      device: ":/exports"
+      o: "addr=10.0.0.1,rw"
+      custom: extra
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let vol = &unit_named(&out, "vol.volume").contents;
+	assert!(vol.contains("VolumeName=custom-vol"), "in:\n{vol}");
+	assert!(!vol.contains("VolumeName=p_vol"), "in:\n{vol}");
+	// `local` driver opts map to dedicated keys; `o` is a single mount-option
+	// string. Options= without a Device= would be rejected by Quadlet.
+	assert!(vol.contains("Type=nfs"), "in:\n{vol}");
+	assert!(vol.contains("Device=:/exports"), "in:\n{vol}");
+	assert!(vol.contains("Options=addr=10.0.0.1,rw"), "in:\n{vol}");
+	// An option with no dedicated key falls back to PodmanArgs=--opt.
+	assert!(vol.contains("PodmanArgs=--opt custom=extra"), "in:\n{vol}");
+}

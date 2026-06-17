@@ -341,6 +341,113 @@ services:
 }
 
 #[test]
+fn static_ips_render_as_ip_keys() {
+	// `networks.<n>.ipv4_address`/`ipv6_address` must reach the unit as IP=/IP6=,
+	// not be silently dropped.
+	let yaml = r#"
+services:
+  s:
+    image: x
+    networks:
+      net:
+        ipv4_address: 10.5.0.7
+        ipv6_address: "2001:db8::7"
+networks:
+  net:
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "s.container").contents;
+	assert!(c.contains("IP=10.5.0.7"), "missing IP= in:\n{c}");
+	assert!(c.contains("IP6=2001:db8::7"), "missing IP6= in:\n{c}");
+}
+
+#[test]
+fn network_mode_none_maps_to_network_none() {
+	// `network_mode: none` is a valid Quadlet value; it must map to Network=none
+	// rather than being warned and dropped.
+	let yaml = "services:\n  s:\n    image: x\n    network_mode: none\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "s.container").contents;
+	assert!(c.contains("Network=none"), "missing Network=none in:\n{c}");
+	assert!(
+		!out.warnings.iter().any(|w| w.contains("network_mode")),
+		"network_mode: none must not warn; got: {:?}",
+		out.warnings
+	);
+}
+
+#[test]
+fn security_opt_filetype_and_nested_map_to_keys() {
+	let yaml = r#"
+services:
+  s:
+    image: x
+    security_opt:
+      - "label=filetype:usr_t"
+      - "label=nested"
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "s.container").contents;
+	assert!(c.contains("SecurityLabelFileType=usr_t"), "in:\n{c}");
+	assert!(c.contains("SecurityLabelNested=true"), "in:\n{c}");
+	assert!(
+		!out.warnings.iter().any(|w| w.contains("security_opt")),
+		"mapped labels must not warn; got: {:?}",
+		out.warnings
+	);
+}
+
+#[test]
+fn deploy_restart_policy_maps_to_systemd() {
+	let yaml = r#"
+services:
+  s:
+    image: x
+    deploy:
+      restart_policy:
+        condition: on-failure
+        max_attempts: 4
+        window: 2m
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "s.container").contents;
+	assert!(c.contains("Restart=on-failure"), "in:\n{c}");
+	assert!(c.contains("StartLimitBurst=4"), "in:\n{c}");
+	assert!(c.contains("StartLimitIntervalSec=120"), "in:\n{c}");
+}
+
+#[test]
+fn deploy_restart_condition_none_maps_to_no() {
+	let yaml = "services:\n  s:\n    image: x\n    deploy:\n      restart_policy:\n        condition: none\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	assert!(unit_named(&out, "s.container")
+		.contents
+		.contains("Restart=no"));
+}
+
+#[test]
+fn deploy_limits_pids_maps_to_pids_limit() {
+	let yaml = r#"
+services:
+  s:
+    image: x
+    deploy:
+      resources:
+        limits:
+          pids: 256
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "s.container").contents;
+	assert!(c.contains("PidsLimit=256"), "missing PidsLimit in:\n{c}");
+}
+
+#[test]
 fn long_form_tmpfs_mount_renders_as_tmpfs_not_volume() {
 	// A long-form `type: tmpfs` mount must become `Tmpfs=`, not `Volume=` —
 	// the latter would persist it as a volume instead of an in-memory fs.
