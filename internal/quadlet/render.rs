@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 
-use crate::compose::types::{Command, RestartPolicy, VolumeMount};
+use crate::compose::types::{Command, RestartPolicy, VolumeMount, VolumeType};
 use crate::ports::ParsedPort;
 
 pub(super) fn render_publish_port(p: &ParsedPort) -> String {
@@ -86,6 +86,37 @@ pub(super) fn render_volume(vol: &VolumeMount, declared_volumes: &[&str]) -> Str
 			}
 			out
 		}
+	}
+}
+
+/// If `vol` is a long-form `type: tmpfs` mount, render it as a Quadlet `Tmpfs=`
+/// value (`target[:size=…,mode=…]`); otherwise return `None` so the caller emits
+/// a normal `Volume=`. A tmpfs mount written as `Volume=` would create a
+/// persistent named/anonymous volume instead of an in-memory filesystem — a
+/// silent semantic inversion. Size/mode mirror the runtime mount options.
+pub(super) fn render_tmpfs_mount(vol: &VolumeMount) -> Option<String> {
+	let VolumeMount::Long {
+		volume_type: VolumeType::Tmpfs,
+		target,
+		tmpfs,
+		..
+	} = vol
+	else {
+		return None;
+	};
+	let mut opts: Vec<String> = Vec::new();
+	if let Some(t) = tmpfs {
+		if let Some(size) = t.size {
+			opts.push(format!("size={size}"));
+		}
+		if let Some(mode) = t.mode {
+			opts.push(format!("mode={mode:o}"));
+		}
+	}
+	if opts.is_empty() {
+		Some(target.clone())
+	} else {
+		Some(format!("{target}:{}", opts.join(",")))
 	}
 }
 
