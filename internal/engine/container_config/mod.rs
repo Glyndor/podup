@@ -34,9 +34,14 @@ pub(super) fn build_restart_policy(service: &Service) -> (Option<String>, Option
 		.as_ref()
 		.and_then(|d| d.restart_policy.as_ref())
 	{
+		// Compose `restart_policy.condition`: `any` (the default) means restart
+		// under any circumstance, which docker-compose maps to `always` — not
+		// `unless-stopped` (the latter would skip restarts after an explicit
+		// stop, diverging from docker-compose).
 		let name = match drp.condition.as_deref().unwrap_or("any") {
 			"none" => "no",
 			"on-failure" => "on-failure",
+			"any" => "always",
 			_ => "unless-stopped",
 		};
 		return (Some(name.to_string()), drp.max_attempts.map(|n| n as u64));
@@ -176,6 +181,34 @@ mod tests {
 		});
 		let (name, _) = build_restart_policy(&svc);
 		assert_eq!(name.as_deref(), Some("no"));
+	}
+
+	#[test]
+	fn restart_policy_from_deploy_any_maps_to_always() {
+		use crate::compose::types::{DeployConfig, DeployRestartPolicy};
+		let mut svc = default_service();
+		svc.deploy = Some(DeployConfig {
+			restart_policy: Some(DeployRestartPolicy {
+				condition: Some("any".into()),
+				..Default::default()
+			}),
+			..Default::default()
+		});
+		let (name, _) = build_restart_policy(&svc);
+		assert_eq!(name.as_deref(), Some("always"));
+	}
+
+	#[test]
+	fn restart_policy_from_deploy_default_condition_is_always() {
+		// An unset `condition` defaults to `any` per the compose spec → `always`.
+		use crate::compose::types::{DeployConfig, DeployRestartPolicy};
+		let mut svc = default_service();
+		svc.deploy = Some(DeployConfig {
+			restart_policy: Some(DeployRestartPolicy::default()),
+			..Default::default()
+		});
+		let (name, _) = build_restart_policy(&svc);
+		assert_eq!(name.as_deref(), Some("always"));
 	}
 
 	// --- log config ---
