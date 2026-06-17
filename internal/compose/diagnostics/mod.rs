@@ -192,6 +192,29 @@ mod tests {
 	}
 
 	#[test]
+	fn warns_on_env_file_format() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    image: nginx\n    env_file:\n      - path: ./a.env\n        format: raw\n",
+		);
+		assert!(
+			msgs.iter()
+				.any(|m| m.contains("env_file format") && m.contains("dotenv")),
+			"got: {msgs:?}"
+		);
+	}
+
+	#[test]
+	fn warns_on_build_ssh() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    build:\n      context: .\n      ssh:\n        - default\n",
+		);
+		assert!(
+			msgs.iter().any(|m| m.contains("build.ssh")),
+			"got: {msgs:?}"
+		);
+	}
+
+	#[test]
 	fn warns_on_unknown_key_in_network_and_ipam() {
 		let msgs = diagnostics_for(
 			"services:\n  web:\n    image: nginx\nnetworks:\n  net:\n    drivr: bridge\n    ipam:\n      confg: []\n",
