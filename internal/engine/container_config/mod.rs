@@ -75,11 +75,27 @@ pub(super) fn build_healthcheck(hc: &HealthCheck) -> HealthConfig {
 		ComposeCommand::Shell(s) => vec!["CMD-SHELL".to_string(), s.clone()],
 		ComposeCommand::Exec(v) => v.clone(),
 	});
+	// Apply the compose-spec defaults for any field the user omitted. Podman's
+	// API does NOT default these: a missing `Timeout` is taken as 0s, which makes
+	// every probe fail with "exceeded timeout of 0s" so the container is stuck
+	// `starting`; a missing/zero `Interval` disables the periodic check. Match
+	// docker-compose — interval 30s, timeout 30s, retries 3 (start_period 0).
+	const DEFAULT_NANOS: i64 = 30 * 1_000_000_000;
 	HealthConfig {
 		test,
-		interval: hc.interval.as_deref().and_then(size::parse_duration_nanos),
-		timeout: hc.timeout.as_deref().and_then(size::parse_duration_nanos),
-		retries: hc.retries.map(|r| r as i64),
+		interval: Some(
+			hc.interval
+				.as_deref()
+				.and_then(size::parse_duration_nanos)
+				.unwrap_or(DEFAULT_NANOS),
+		),
+		timeout: Some(
+			hc.timeout
+				.as_deref()
+				.and_then(size::parse_duration_nanos)
+				.unwrap_or(DEFAULT_NANOS),
+		),
+		retries: Some(hc.retries.map(|r| r as i64).unwrap_or(3)),
 		start_period: hc
 			.start_period
 			.as_deref()
@@ -284,5 +300,35 @@ mod tests {
 		let cfg = build_healthcheck(&hc);
 		let test = cfg.test.unwrap();
 		assert_eq!(test[0], "curl");
+	}
+
+	#[test]
+	fn healthcheck_applies_compose_defaults_when_omitted() {
+		// A healthcheck with only a `test` must still get interval/timeout/retries:
+		// Podman treats a missing Timeout as 0s, which makes every probe fail with
+		// "exceeded timeout of 0s" and the container is stuck `starting`.
+		let hc = HealthCheck {
+			test: Some(ComposeCommand::Exec(vec!["true".into()])),
+			..Default::default()
+		};
+		let cfg = build_healthcheck(&hc);
+		assert_eq!(cfg.interval, Some(30 * 1_000_000_000));
+		assert_eq!(cfg.timeout, Some(30 * 1_000_000_000));
+		assert_eq!(cfg.retries, Some(3));
+	}
+
+	#[test]
+	fn healthcheck_honors_explicit_interval_and_timeout() {
+		let hc = HealthCheck {
+			test: Some(ComposeCommand::Exec(vec!["true".into()])),
+			interval: Some("2s".into()),
+			timeout: Some("5s".into()),
+			retries: Some(7),
+			..Default::default()
+		};
+		let cfg = build_healthcheck(&hc);
+		assert_eq!(cfg.interval, Some(2 * 1_000_000_000));
+		assert_eq!(cfg.timeout, Some(5 * 1_000_000_000));
+		assert_eq!(cfg.retries, Some(7));
 	}
 }
