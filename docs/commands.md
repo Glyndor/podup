@@ -39,6 +39,7 @@ Create and start all services (or only the named ones, plus their transitive
 | `--pull <policy>` | Pull policy before starting: `always`, `missing`, `never`. |
 | `--no-build` | Do not build images, even for services with a `build:` section. |
 | `--quiet-pull` | Suppress image-pull progress output. |
+| `--no-start` | Create the containers but do not start them. |
 
 ### `down`
 Stop and remove containers. `-v, --volumes` also removes named volumes declared
