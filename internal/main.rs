@@ -16,28 +16,7 @@ mod startup;
 use cli::*;
 use generate::write_quadlet;
 use resolve::*;
-use startup::{init_tracing, internal_error_notice, parse_cli};
-
-/// Whether a command creates, destroys, or changes the state of containers and
-/// so must hold the exclusive project lock.
-fn is_mutating(command: &Commands) -> bool {
-	matches!(
-		command,
-		Commands::Up { .. }
-			| Commands::Down { .. }
-			| Commands::Start { .. }
-			| Commands::Stop { .. }
-			| Commands::Build { .. }
-			| Commands::Rm { .. }
-			| Commands::Kill { .. }
-			| Commands::Pause { .. }
-			| Commands::Unpause { .. }
-			| Commands::Run { .. }
-			| Commands::Restart { .. }
-			| Commands::Scale { .. }
-			| Commands::Create { .. }
-	)
-}
+use startup::{init_tracing, internal_error_notice, is_mutating, parse_cli};
 
 fn main() {
 	// Replace the default panic output (a raw Rust backtrace) with a `podup:`
@@ -240,6 +219,7 @@ async fn run() -> podup::Result<()> {
 			pull: _,
 			no_build: _,
 			quiet_pull: _,
+			no_start,
 			services,
 		} => {
 			if remove_orphans {
@@ -247,6 +227,21 @@ async fn run() -> podup::Result<()> {
 			}
 			if build {
 				engine.build_all(&file, &services).await?;
+			}
+			// `--no-start` creates the containers but never starts them, so the
+			// wait/watch/attach steps below do not apply.
+			if no_start {
+				engine
+					.create_with_options(
+						&file,
+						&cli.profile,
+						&services,
+						no_recreate,
+						force_recreate,
+						no_deps,
+					)
+					.await?;
+				return Ok(());
 			}
 			engine
 				.up_with_options(

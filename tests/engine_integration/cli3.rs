@@ -250,3 +250,29 @@ async fn cli_pull_quiet_succeeds() {
 	let pull = run(&["-f", compose.to_str().unwrap(), "-p", &proj, "pull", "-q"]);
 	assert!(pull.status.success(), "pull -q failed: {:?}", pull.stderr);
 }
+
+#[tokio::test]
+async fn cli_up_no_start_creates_without_starting() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let proj = format!("t{}-nostart", std::process::id());
+	let compose = dir.path().join("docker-compose.yml");
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+
+	let up = run(&["-f", c, "-p", &proj, "up", "--no-start"]);
+	assert!(up.status.success(), "up --no-start failed: {:?}", up.stderr);
+	assert_eq!(ps_all_count(c, &proj), 1, "container must be created");
+	let running = String::from_utf8_lossy(&run(&["-f", c, "-p", &proj, "ps", "-q"]).stdout)
+		.lines()
+		.filter(|l| !l.trim().is_empty())
+		.count();
+	assert_eq!(running, 0, "--no-start must not start the container");
+	run(&["-f", c, "-p", &proj, "down"]);
+}
