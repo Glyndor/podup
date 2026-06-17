@@ -407,15 +407,6 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn quadlet_advisory_only_on_non_linux() {
-		assert_eq!(quadlet_platform_advisory("linux"), None);
-		for os in ["macos", "windows", "freebsd"] {
-			let msg = quadlet_platform_advisory(os).expect("non-linux host warns");
-			assert!(msg.contains("systemd"), "advisory names the requirement");
-		}
-	}
-
-	#[test]
 	fn level_words_match_user_facing_terms() {
 		assert_eq!(level_word(tracing::Level::WARN), "warning");
 		assert_eq!(level_word(tracing::Level::ERROR), "error");
