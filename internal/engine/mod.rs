@@ -41,6 +41,10 @@ pub struct Engine {
 	pub(super) client: Client,
 	pub(super) project: String,
 	pub(super) base_dir: PathBuf,
+	/// Optional CLI `-t/--timeout` override (seconds) for container shutdown
+	/// grace; when set it takes precedence over each service's
+	/// `stop_grace_period`. `None` falls back to the per-service value.
+	pub(super) stop_timeout: Option<i32>,
 }
 
 impl Engine {
@@ -50,6 +54,7 @@ impl Engine {
 			client,
 			project,
 			base_dir: std::env::current_dir().unwrap_or_default(),
+			stop_timeout: None,
 		}
 	}
 
@@ -59,7 +64,14 @@ impl Engine {
 			client,
 			project,
 			base_dir,
+			stop_timeout: None,
 		}
+	}
+
+	/// Set the CLI `-t/--timeout` shutdown-grace override (seconds). Builder-style.
+	pub fn with_stop_timeout(mut self, timeout: Option<i32>) -> Self {
+		self.stop_timeout = timeout;
+		self
 	}
 
 	pub(super) async fn run_lifecycle_hook(
