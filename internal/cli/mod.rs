@@ -119,6 +119,9 @@ pub(crate) enum Commands {
 		/// Suppress image-pull progress output.
 		#[arg(long)]
 		quiet_pull: bool,
+		/// Create containers but do not start them.
+		#[arg(long)]
+		no_start: bool,
 		/// Bring up only these services (and their transitive depends_on).
 		/// If omitted, brings up every service in the compose file.
 		#[arg(trailing_var_arg = true)]

@@ -10,7 +10,28 @@ use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::EnvFilter;
 
-use crate::cli::Cli;
+use crate::cli::{Cli, Commands};
+
+/// Whether a command creates, destroys, or changes the state of containers and
+/// so must hold the exclusive project lock.
+pub(crate) fn is_mutating(command: &Commands) -> bool {
+	matches!(
+		command,
+		Commands::Up { .. }
+			| Commands::Down { .. }
+			| Commands::Start { .. }
+			| Commands::Stop { .. }
+			| Commands::Build { .. }
+			| Commands::Rm { .. }
+			| Commands::Kill { .. }
+			| Commands::Pause { .. }
+			| Commands::Unpause { .. }
+			| Commands::Run { .. }
+			| Commands::Restart { .. }
+			| Commands::Scale { .. }
+			| Commands::Create { .. }
+	)
+}
 
 /// Canonical project URL, reused for the bug-report hint on internal errors.
 const REPO_URL: &str = "https://github.com/Glyndor/podup";
