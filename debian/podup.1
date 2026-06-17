@@ -79,6 +79,12 @@ Stop running containers without removing them.
 .B build
 Build or rebuild service images.
 .TP
+.B push
+Push each service's image to its registry (imageless services are skipped).
+Credentials come from \fBpodman login\fR. \fB\-\-ignore\-push\-failures\fR
+continues after a failure; \fB\-\-tls\-verify false\fR allows an insecure
+registry.
+.TP
 .B rm
 Remove stopped service containers. \fB\-f\fR/\fB\-\-force\fR removes running
 containers (stopping them first).
