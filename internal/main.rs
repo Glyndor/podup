@@ -129,11 +129,33 @@ async fn run() -> podup::Result<()> {
 	let compose_files = resolve_compose_files(&cli.file);
 	let file = podup::parse_files_with_env_files(&compose_files, &cli.env_file)?;
 
-	if matches!(cli.command, Commands::Config) {
+	if let Commands::Config {
+		format,
+		services,
+		quiet,
+	} = &cli.command
+	{
+		// Reaching here means the file parsed and merged cleanly.
+		if *quiet {
+			return Ok(());
+		}
+		if *services {
+			for name in file.services.keys() {
+				println!("{name}");
+			}
+			return Ok(());
+		}
 		let mut redacted = file.clone();
 		redacted.redact_inline_content();
-		let yaml = serde_yaml::to_string(&redacted).map_err(podup::ComposeError::Parse)?;
-		println!("{yaml}");
+		let rendered = match format {
+			ConfigFormat::Json => serde_json::to_string_pretty(&redacted).map_err(|e| {
+				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
+			})?,
+			ConfigFormat::Yaml => {
+				serde_yaml::to_string(&redacted).map_err(podup::ComposeError::Parse)?
+			}
+		};
+		println!("{rendered}");
 		return Ok(());
 	}
 
@@ -422,7 +444,7 @@ async fn run() -> podup::Result<()> {
 				.restart_with_options(&file, service.as_deref(), no_deps)
 				.await?
 		}
-		Commands::Config => unreachable!("handled above"),
+		Commands::Config { .. } => unreachable!("handled above"),
 		Commands::Generate { .. } => unreachable!("handled above"),
 		Commands::Watch => engine.watch(&file).await?,
 		Commands::Ls { .. } => unreachable!("handled before compose parsing"),
