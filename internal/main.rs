@@ -376,7 +376,33 @@ async fn run() -> podup::Result<()> {
 		Commands::Logs { service, follow } => {
 			engine.logs(&file, service.as_deref(), follow).await?
 		}
-		Commands::Exec { service, cmd } => engine.exec(&file, &service, cmd).await?,
+		Commands::Exec {
+			env,
+			user,
+			workdir,
+			privileged,
+			detach,
+			no_tty: _,
+			index,
+			service,
+			cmd,
+		} => {
+			engine
+				.exec_with_options(
+					&file,
+					&service,
+					cmd,
+					podup::ExecOptions {
+						env,
+						user,
+						workdir,
+						privileged,
+						detach,
+						index,
+					},
+				)
+				.await?
+		}
 		Commands::Pull { services } => engine.pull_services(&file, &services).await?,
 		Commands::Restart {
 			service,

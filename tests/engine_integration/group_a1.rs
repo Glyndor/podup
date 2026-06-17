@@ -249,7 +249,49 @@ async fn exec_command_in_container() {
 
 	engine.up(&file).await.unwrap();
 	engine
-		.exec(&file, "web", vec!["echo".to_string(), "test".to_string()])
+		.exec_with_options(
+			&file,
+			"web",
+			vec!["echo".to_string(), "test".to_string()],
+			podup::ExecOptions::default(),
+		)
+		.await
+		.unwrap();
+	engine.down(&file).await.unwrap();
+}
+
+#[tokio::test]
+async fn exec_with_options_user_workdir_env() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("excopt");
+	let engine = Engine::new(client, proj.clone());
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	// Podman accepts user/workdir/env on the exec; a bad workdir or user would
+	// make this error, so success exercises the option plumbing end to end.
+	engine
+		.exec_with_options(
+			&file,
+			"web",
+			vec![
+				"sh".to_string(),
+				"-c".to_string(),
+				"pwd; echo $FOO".to_string(),
+			],
+			podup::ExecOptions {
+				user: Some("root".to_string()),
+				workdir: Some("/tmp".to_string()),
+				env: vec!["FOO=bar".to_string()],
+				..Default::default()
+			},
+		)
 		.await
 		.unwrap();
 	engine.down(&file).await.unwrap();
@@ -269,7 +311,12 @@ async fn exec_unknown_service_fails() {
 	.unwrap();
 
 	let err = engine
-		.exec(&file, "nonexistent", vec!["echo".to_string()])
+		.exec_with_options(
+			&file,
+			"nonexistent",
+			vec!["echo".to_string()],
+			podup::ExecOptions::default(),
+		)
 		.await
 		.unwrap_err();
 	assert!(matches!(err, podup::ComposeError::ServiceNotFound(_)));
