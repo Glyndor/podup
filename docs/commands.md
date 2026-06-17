@@ -82,7 +82,8 @@ Remove stopped service containers. `-f, --force` stops and removes running ones;
 
 ### `kill`
 Send a signal to service containers. `-s, --signal <SIG>` sets the signal
-(default `SIGKILL`).
+(default `SIGKILL`); `--remove-orphans` then removes containers for services no
+longer in the file.
 
 ### `pause` / `unpause`
 Pause running service containers, or resume paused ones.
@@ -119,7 +120,7 @@ container side, e.g. `podup cp web:/app/data ./local`.
 | `images` | List images used by services. |
 | `logs [SERVICE]` | View container output. `-f/--follow` streams new output, `-n/--tail <N>` limits to the last N lines, `--since`/`--until` bound by time, `-t/--timestamps` prefixes each line. |
 | `config` | Print the resolved compose file (after substitution, extends, include). `--format yaml\|json`, `--services` lists service names, `-q/--quiet` only validates. |
-| `pull` | Pull images for all services. |
+| `pull` | Pull images for all services. `-q/--quiet` suppresses progress output. |
 
 ## Generate
 

@@ -95,7 +95,8 @@ anonymous volumes attached to them.
 .TP
 .B kill
 Send a signal to service containers. \fB\-s\fR/\fB\-\-signal\fR sets the signal
-(default \fBSIGKILL\fR).
+(default \fBSIGKILL\fR); \fB\-\-remove\-orphans\fR removes containers for services
+no longer in the file.
 .TP
 .B pause
 Pause running service containers.
@@ -140,7 +141,8 @@ line with an RFC3339 timestamp.
 Execute a command in a running service container.
 .TP
 .B pull
-Pull images for all services.
+Pull images for all services. \fB\-q\fR/\fB\-\-quiet\fR suppresses progress
+output.
 .TP
 .B restart \fR[\fISERVICE\fR]
 Restart services, or one named service. \fB\-\-no\-deps\fR skips
