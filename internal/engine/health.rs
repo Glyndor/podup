@@ -74,10 +74,32 @@ fn classify_completion(state: Option<&ContainerState>) -> CompletionVerdict {
 	}
 }
 
+/// Compute the `(poll_interval_secs, iterations)` for [`Engine::wait_healthy`]
+/// from a healthcheck's `interval`/`start_period`/`retries`. Poll at `interval`
+/// when given (>=1s) else 2s; run `retries` (default 30) probes plus enough
+/// extra probes to span `start_period`. Pure so the timing can be unit-tested.
+fn health_poll_plan(
+	interval: Option<&str>,
+	start_period: Option<&str>,
+	retries: Option<u32>,
+) -> (u64, u64) {
+	let poll_secs = interval
+		.and_then(crate::size::parse_duration_secs)
+		.filter(|s| *s >= 1)
+		.unwrap_or(2);
+	let start_secs = start_period
+		.and_then(crate::size::parse_duration_secs)
+		.unwrap_or(0);
+	let iterations = retries.unwrap_or(30) as u64 + start_secs / poll_secs;
+	(poll_secs, iterations)
+}
+
 impl Engine {
 	/// Poll a container until its health status is `healthy` or timeout.
 	///
-	/// Uses `healthcheck.retries` (default 30) with a 2 s interval between probes.
+	/// Polls at the compose `healthcheck.interval` (default 2 s) for
+	/// `healthcheck.retries` (default 30) probes, plus extra probes covering
+	/// `healthcheck.start_period` so a slow-starting service is not timed out early.
 	///
 	/// The wait is driven by the container's *effective* healthcheck reported by
 	/// the runtime, so healthchecks inherited from the image count too — not just
@@ -85,13 +107,14 @@ impl Engine {
 	/// all (none in the image or compose), it can never report `healthy`, so the
 	/// wait short-circuits as satisfied rather than blocking until timeout.
 	pub(super) async fn wait_healthy(&self, container_name: &str, service: &Service) -> Result<()> {
-		let retries = service
-			.healthcheck
-			.as_ref()
-			.and_then(|h| h.retries)
-			.unwrap_or(30);
+		let hc = service.healthcheck.as_ref();
+		let (poll_secs, iterations) = health_poll_plan(
+			hc.and_then(|h| h.interval.as_deref()),
+			hc.and_then(|h| h.start_period.as_deref()),
+			hc.and_then(|h| h.retries),
+		);
 
-		for _ in 0..retries {
+		for _ in 0..iterations {
 			let info = match self
 				.client
 				.get_json::<crate::libpod::types::container::ContainerInspect>(&format!(
@@ -103,7 +126,7 @@ impl Engine {
 				Ok(i) => i,
 				Err(e) => {
 					tracing::debug!("inspect error (will retry): {e}");
-					tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+					tokio::time::sleep(std::time::Duration::from_secs(poll_secs)).await;
 					continue;
 				}
 			};
@@ -117,7 +140,7 @@ impl Engine {
 				}
 				HealthVerdict::Pending => {}
 			}
-			tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+			tokio::time::sleep(std::time::Duration::from_secs(poll_secs)).await;
 		}
 
 		Err(ComposeError::HealthCheckTimeout(container_name.into()))
@@ -165,6 +188,28 @@ mod tests {
 
 	fn inspect(json: &str) -> ContainerInspect {
 		serde_json::from_str(json).expect("fixture parses")
+	}
+
+	// --- wait_healthy poll plan (#418) ---------------------------------------
+
+	#[test]
+	fn poll_plan_defaults_match_legacy_60s() {
+		// No healthcheck timing set → 2s poll, 30 probes (the historical budget).
+		assert_eq!(super::health_poll_plan(None, None, None), (2, 30));
+	}
+
+	#[test]
+	fn poll_plan_uses_interval_and_honors_start_period() {
+		// interval=10s, start_period=60s, retries=3 → poll 10s, 3 + 60/10 = 9 probes.
+		let (poll, iters) = super::health_poll_plan(Some("10s"), Some("60s"), Some(3));
+		assert_eq!((poll, iters), (10, 9));
+	}
+
+	#[test]
+	fn poll_plan_sub_second_interval_floors_to_default() {
+		// An interval below 1s falls back to the 2s default (no busy-poll).
+		let (poll, _) = super::health_poll_plan(Some("500ms"), None, Some(5));
+		assert_eq!(poll, 2);
 	}
 
 	// --- wait_completed gating (service_completed_successfully) ---------------
