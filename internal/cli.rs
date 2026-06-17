@@ -72,6 +72,9 @@ pub(crate) enum Commands {
 		/// Do not start linked services (depends_on) of the named services.
 		#[arg(long)]
 		no_deps: bool,
+		/// Seconds to wait for containers to stop when recreating, before killing them.
+		#[arg(short = 't', long)]
+		timeout: Option<i32>,
 		/// Bring up only these services (and their transitive depends_on).
 		/// If omitted, brings up every service in the compose file.
 		#[arg(trailing_var_arg = true)]
@@ -82,6 +85,9 @@ pub(crate) enum Commands {
 		/// Also remove named volumes declared in the compose file.
 		#[arg(short = 'v', long)]
 		volumes: bool,
+		/// Seconds to wait for containers to stop before killing them.
+		#[arg(short = 't', long)]
+		timeout: Option<i32>,
 	},
 	/// Start existing stopped containers.
 	Start {
@@ -91,6 +97,9 @@ pub(crate) enum Commands {
 	},
 	/// Stop running containers without removing them.
 	Stop {
+		/// Seconds to wait for containers to stop before killing them.
+		#[arg(short = 't', long)]
+		timeout: Option<i32>,
 		/// Stop only these services.
 		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
@@ -210,6 +219,9 @@ pub(crate) enum Commands {
 	},
 	/// Restart services.
 	Restart {
+		/// Seconds to wait for containers to stop before killing them.
+		#[arg(short = 't', long)]
+		timeout: Option<i32>,
 		/// Only restart this service.
 		service: Option<String>,
 	},

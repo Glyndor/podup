@@ -73,3 +73,21 @@ fn help_and_version_are_blank_line_framed() {
 		);
 	}
 }
+
+/// `-t/--timeout` (shutdown grace) is accepted by every command that stops
+/// containers — up, down, stop, restart — matching docker compose.
+#[test]
+fn timeout_flag_is_accepted_by_stop_commands() {
+	for cmd in ["up", "down", "stop", "restart"] {
+		let output = Command::new(bin())
+			.args([cmd, "--help"])
+			.output()
+			.expect("run <cmd> --help");
+		assert!(output.status.success(), "`{cmd} --help` failed");
+		let stdout = String::from_utf8_lossy(&output.stdout);
+		assert!(
+			stdout.contains("--timeout"),
+			"`{cmd}` is missing the --timeout flag; got:\n{stdout}"
+		);
+	}
+}

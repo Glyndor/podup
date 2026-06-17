@@ -6,7 +6,7 @@ use tracing::info;
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 
-use super::{filter_services, grace_period_secs, RunOptions};
+use super::{filter_services, RunOptions};
 use crate::engine::Engine;
 use crate::libpod::API_PREFIX;
 
@@ -26,7 +26,7 @@ impl Engine {
 			let service = &file.services[name];
 
 			for container_name in self.replica_names(name, service) {
-				let grace = grace_period_secs(service);
+				let grace = self.grace_period_secs(service);
 				let stop_path = format!(
 					"{API_PREFIX}/containers/{}/stop?t={grace}",
 					crate::libpod::urlencoded(&container_name),
@@ -50,7 +50,7 @@ impl Engine {
 			for (dep_name, dep_service) in &file.services {
 				if dep_service.depends_on.restart_for(name) {
 					for dep_container in self.replica_names(dep_name, dep_service) {
-						let grace = grace_period_secs(dep_service);
+						let grace = self.grace_period_secs(dep_service);
 						let stop_path = format!(
 							"{API_PREFIX}/containers/{}/stop?t={grace}",
 							crate::libpod::urlencoded(&dep_container),
@@ -87,7 +87,7 @@ impl Engine {
 		for name in &order {
 			let service = &file.services[name];
 			for container_name in self.replica_names(name, service) {
-				let grace = grace_period_secs(service);
+				let grace = self.grace_period_secs(service);
 				let path = format!(
 					"{API_PREFIX}/containers/{}/stop?t={grace}",
 					crate::libpod::urlencoded(&container_name),

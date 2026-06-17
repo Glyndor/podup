@@ -268,7 +268,17 @@ async fn run() -> podup::Result<()> {
 	}
 
 	let client = podup::podman::connect(cli.socket.as_deref())?;
-	let engine = podup::Engine::with_base_dir(client, project, base_dir);
+	// The `-t/--timeout` shutdown-grace override applies to every command that
+	// stops containers (up recreate, down, stop, restart).
+	let stop_timeout = match &cli.command {
+		Commands::Up { timeout, .. }
+		| Commands::Down { timeout, .. }
+		| Commands::Stop { timeout, .. }
+		| Commands::Restart { timeout, .. } => *timeout,
+		_ => None,
+	};
+	let engine =
+		podup::Engine::with_base_dir(client, project, base_dir).with_stop_timeout(stop_timeout);
 
 	// Serialize mutating lifecycle commands against concurrent `podup` runs on
 	// the same project. Read-only / follow commands (ps, logs, top, port,
@@ -289,6 +299,7 @@ async fn run() -> podup::Result<()> {
 			no_recreate,
 			force_recreate,
 			no_deps,
+			timeout: _,
 			services,
 		} => {
 			if remove_orphans {
@@ -315,9 +326,15 @@ async fn run() -> podup::Result<()> {
 				let _ = engine.stop(&file, &[]).await;
 			}
 		}
-		Commands::Down { volumes } => engine.down_with_options(&file, volumes).await?,
+		Commands::Down {
+			volumes,
+			timeout: _,
+		} => engine.down_with_options(&file, volumes).await?,
 		Commands::Start { services } => engine.start(&file, &services).await?,
-		Commands::Stop { services } => engine.stop(&file, &services).await?,
+		Commands::Stop {
+			services,
+			timeout: _,
+		} => engine.stop(&file, &services).await?,
 		Commands::Build { services } => engine.build_all(&file, &services).await?,
 		Commands::Rm { force, services } => engine.rm(&file, &services, force).await?,
 		Commands::Kill { signal, services } => engine.kill(&file, &services, &signal).await?,
@@ -361,7 +378,10 @@ async fn run() -> podup::Result<()> {
 		}
 		Commands::Exec { service, cmd } => engine.exec(&file, &service, cmd).await?,
 		Commands::Pull { services } => engine.pull_services(&file, &services).await?,
-		Commands::Restart { service } => engine.restart(&file, service.as_deref()).await?,
+		Commands::Restart {
+			service,
+			timeout: _,
+		} => engine.restart(&file, service.as_deref()).await?,
 		Commands::Config => unreachable!("handled above"),
 		Commands::Generate { .. } => unreachable!("handled above"),
 		Commands::Watch => engine.watch(&file).await?,
