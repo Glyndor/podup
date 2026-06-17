@@ -100,6 +100,7 @@ container side, e.g. `podup cp web:/app/data ./local`.
 | `ps` | List project containers. |
 | `ls` | List podup compose projects on the host. `-a/--all` includes stopped projects, `-q/--quiet` prints names only, `--format table\|json`. Needs no compose file. |
 | `top` | Show running processes of service containers. |
+| `stats` | Live resource usage (CPU, memory, network, block I/O, PIDs) for service containers. `--no-stream` prints one snapshot; a trailing service list narrows it. |
 | `port <SERVICE> <PRIVATE_PORT>` | Print the public binding for a port. `--proto` sets `tcp`/`udp` (default `tcp`). |
 | `images` | List images used by services. |
 | `logs [SERVICE]` | View container output. `-f, --follow` streams new output. |

@@ -138,6 +138,15 @@ pub(crate) enum Commands {
 		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
+	/// Display a live stream of container resource usage.
+	Stats {
+		/// Disable streaming; print a single snapshot and exit.
+		#[arg(long)]
+		no_stream: bool,
+		/// Show only these services.
+		#[arg(trailing_var_arg = true)]
+		services: Vec<String>,
+	},
 	/// List podup compose projects on the host.
 	Ls {
 		/// Show all projects, including stopped ones.

@@ -89,8 +89,7 @@ fn is_mutating(command: &Commands) -> bool {
 	)
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
 	// Replace the default panic output (a raw Rust backtrace) with a `podup:`
 	// internal-error notice that tells the user what to report and where, plus
 	// the reminder to redact secrets first.
@@ -99,7 +98,27 @@ async fn main() {
 		eprintln!("{}", internal_error_notice());
 	}));
 
-	match run().await {
+	// Drive the runtime on a worker thread with a large stack. Clap's
+	// command-building (debug builds especially) is stack-heavy and overflows
+	// Windows' 1 MiB main-thread stack as the subcommand surface grows; an 8 MiB
+	// matches Linux's default and leaves ample headroom.
+	std::thread::Builder::new()
+		.stack_size(8 * 1024 * 1024)
+		.name("podup".into())
+		.spawn(run_to_exit)
+		.expect("spawn podup worker thread")
+		.join()
+		.expect("podup worker thread panicked");
+}
+
+/// Build the Tokio runtime and drive [`run`], mapping its result onto the
+/// process exit status. Runs on the large-stack worker thread spawned by `main`.
+fn run_to_exit() {
+	let runtime = tokio::runtime::Builder::new_multi_thread()
+		.enable_all()
+		.build()
+		.expect("build Tokio runtime");
+	match runtime.block_on(run()) {
 		Ok(()) => {}
 		Err(podup::ComposeError::RunExited(code)) => process::exit(code as i32),
 		#[cfg(feature = "update")]
@@ -375,6 +394,10 @@ async fn run() -> podup::Result<()> {
 				.await?
 		}
 		Commands::Top { services } => engine.top(&file, &services).await?,
+		Commands::Stats {
+			no_stream,
+			services,
+		} => engine.stats(&file, &services, no_stream).await?,
 		Commands::Port {
 			service,
 			private_port,

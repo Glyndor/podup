@@ -21,6 +21,7 @@ pub use projects::{list_projects, LsOptions};
 mod query;
 mod secrets;
 mod staging;
+mod stats;
 pub use staging::is_safe_project_name;
 mod volume;
 mod volume_mounts;

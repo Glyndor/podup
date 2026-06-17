@@ -108,6 +108,11 @@ List project containers.
 .B top
 Display the running processes of service containers.
 .TP
+.B stats
+Live resource usage (CPU, memory, network, block I/O, PIDs) for service
+containers. \fB\-\-no\-stream\fR prints a single snapshot; a trailing service
+list narrows the report.
+.TP
 .B port \fISERVICE\fR \fIPRIVATE_PORT\fR
 Print the public binding for a container port. \fB\-\-proto\fR sets the protocol
 (default \fBtcp\fR).
