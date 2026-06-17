@@ -83,6 +83,7 @@ fn is_mutating(command: &Commands) -> bool {
 			| Commands::Unpause { .. }
 			| Commands::Run { .. }
 			| Commands::Restart { .. }
+			| Commands::Scale { .. }
 	)
 }
 
@@ -277,8 +278,16 @@ async fn run() -> podup::Result<()> {
 		| Commands::Restart { timeout, .. } => *timeout,
 		_ => None,
 	};
-	let engine =
-		podup::Engine::with_base_dir(client, project, base_dir).with_stop_timeout(stop_timeout);
+	// `--scale SERVICE=N` (on `up`) and the `scale` subcommand both feed the
+	// engine's replica overrides so `resolve_replicas` reports the target count.
+	let scale_overrides: std::collections::HashMap<String, u32> = match &cli.command {
+		Commands::Up { scale, .. } => scale.iter().cloned().collect(),
+		Commands::Scale { pairs } => pairs.iter().cloned().collect(),
+		_ => std::collections::HashMap::new(),
+	};
+	let engine = podup::Engine::with_base_dir(client, project, base_dir)
+		.with_stop_timeout(stop_timeout)
+		.with_scale_overrides(scale_overrides);
 
 	// Serialize mutating lifecycle commands against concurrent `podup` runs on
 	// the same project. Read-only / follow commands (ps, logs, top, port,
@@ -300,6 +309,7 @@ async fn run() -> podup::Result<()> {
 			force_recreate,
 			no_deps,
 			timeout: _,
+			scale: _,
 			services,
 		} => {
 			if remove_orphans {
@@ -335,6 +345,7 @@ async fn run() -> podup::Result<()> {
 			services,
 			timeout: _,
 		} => engine.stop(&file, &services).await?,
+		Commands::Scale { pairs } => engine.scale(&file, &pairs).await?,
 		Commands::Build {
 			no_cache,
 			pull,
