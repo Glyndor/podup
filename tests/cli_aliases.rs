@@ -127,3 +127,25 @@ fn build_accepts_override_flags() {
 		);
 	}
 }
+
+/// `ps` and `images` expose output flags (`--format`, `-q/--quiet`; `ps` also
+/// `-a/--all`) so their output can be scripted against.
+#[test]
+fn ps_and_images_expose_output_flags() {
+	let ps = Command::new(bin()).args(["ps", "--help"]).output().unwrap();
+	let ps_out = String::from_utf8_lossy(&ps.stdout);
+	for flag in ["--all", "--quiet", "--format"] {
+		assert!(ps_out.contains(flag), "`ps` missing {flag}:\n{ps_out}");
+	}
+	let img = Command::new(bin())
+		.args(["images", "--help"])
+		.output()
+		.unwrap();
+	let img_out = String::from_utf8_lossy(&img.stdout);
+	for flag in ["--quiet", "--format"] {
+		assert!(
+			img_out.contains(flag),
+			"`images` missing {flag}:\n{img_out}"
+		);
+	}
+}
