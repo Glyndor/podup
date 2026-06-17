@@ -39,12 +39,14 @@ Create and start all services (or only the named ones, plus their transitive
 
 ### `down`
 Stop and remove containers. `-v, --volumes` also removes named volumes declared
-in the compose file.
+in the compose file; `--remove-orphans` also removes containers for services no
+longer in the file.
 
 ### `start` / `stop` / `restart`
 Start existing stopped containers, stop running ones without removing them, or
 restart them. `start`/`stop` accept a trailing service list; `restart [SERVICE]`
-restarts everything or one service.
+restarts everything or one service. `restart --no-deps` skips cascade-restarting
+dependents that declare a `depends_on` restart condition.
 
 ### `scale <SERVICE=N>...`
 Set the number of running containers for one or more services, creating missing

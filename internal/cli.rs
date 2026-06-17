@@ -98,6 +98,9 @@ pub(crate) enum Commands {
 		/// Also remove named volumes declared in the compose file.
 		#[arg(short = 'v', long)]
 		volumes: bool,
+		/// Remove containers for services not defined in the compose file.
+		#[arg(long)]
+		remove_orphans: bool,
 		/// Seconds to wait for containers to stop before killing them.
 		#[arg(short = 't', long)]
 		timeout: Option<i32>,
@@ -352,6 +355,9 @@ pub(crate) enum Commands {
 		/// Seconds to wait for containers to stop before killing them.
 		#[arg(short = 't', long)]
 		timeout: Option<i32>,
+		/// Do not restart dependent services (depends_on with a restart condition).
+		#[arg(long)]
+		no_deps: bool,
 		/// Only restart this service.
 		service: Option<String>,
 	},

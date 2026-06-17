@@ -231,8 +231,14 @@ async fn run() -> podup::Result<()> {
 		}
 		Commands::Down {
 			volumes,
+			remove_orphans,
 			timeout: _,
-		} => engine.down_with_options(&file, volumes).await?,
+		} => {
+			if remove_orphans {
+				engine.remove_orphans(&file).await?;
+			}
+			engine.down_with_options(&file, volumes).await?
+		}
 		Commands::Start { services } => engine.start(&file, &services).await?,
 		Commands::Stop {
 			services,
@@ -410,7 +416,12 @@ async fn run() -> podup::Result<()> {
 		Commands::Restart {
 			service,
 			timeout: _,
-		} => engine.restart(&file, service.as_deref()).await?,
+			no_deps,
+		} => {
+			engine
+				.restart_with_options(&file, service.as_deref(), no_deps)
+				.await?
+		}
 		Commands::Config => unreachable!("handled above"),
 		Commands::Generate { .. } => unreachable!("handled above"),
 		Commands::Watch => engine.watch(&file).await?,

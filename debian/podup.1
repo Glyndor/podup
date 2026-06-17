@@ -68,7 +68,8 @@ projects, \fB\-q\fR/\fB\-\-quiet\fR prints names only, \fB\-\-format\fR selects
 .TP
 .B down
 Stop and remove containers. \fB\-v\fR/\fB\-\-volumes\fR also removes named
-volumes declared in the compose file.
+volumes declared in the compose file; \fB\-\-remove\-orphans\fR also removes
+containers for services no longer in the file.
 .TP
 .B start
 Start existing stopped containers.
@@ -139,7 +140,8 @@ Execute a command in a running service container.
 Pull images for all services.
 .TP
 .B restart \fR[\fISERVICE\fR]
-Restart services, or one named service.
+Restart services, or one named service. \fB\-\-no\-deps\fR skips
+cascade-restarting dependents with a \fBdepends_on\fR restart condition.
 .TP
 .B config
 Print the resolved compose file after substitution, extends and include.
