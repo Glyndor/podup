@@ -212,3 +212,41 @@ async fn cli_rm_volumes_removes_container() {
 	assert!(rm.status.success(), "rm -v failed: {:?}", rm.stderr);
 	assert_eq!(ps_all_count(c, &proj), 0, "rm must remove the container");
 }
+
+#[tokio::test]
+async fn cli_kill_remove_orphans_drops_undeclared() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let proj = format!("t{}-killorph", std::process::id());
+	let svc = "image: alpine:latest\n    command: [\"sleep\", \"infinity\"]";
+	let two = dir.path().join("two.yml");
+	let one = dir.path().join("one.yml");
+	fs::write(
+		&two,
+		format!("services:\n  web:\n    {svc}\n  extra:\n    {svc}\n"),
+	)
+	.unwrap();
+	fs::write(&one, format!("services:\n  web:\n    {svc}\n")).unwrap();
+	let (two, one) = (two.to_str().unwrap(), one.to_str().unwrap());
+
+	run(&["-f", two, "-p", &proj, "up", "-d"]);
+	let kill = run(&["-f", one, "-p", &proj, "kill", "--remove-orphans"]);
+	assert!(kill.status.success(), "kill failed: {:?}", kill.stderr);
+	// The orphan `extra` is removed; the declared `web` is killed but remains.
+	run(&["-f", one, "-p", &proj, "down"]);
+}
+
+#[tokio::test]
+async fn cli_pull_quiet_succeeds() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let proj = format!("t{}-pullq", std::process::id());
+	let compose = dir.path().join("docker-compose.yml");
+	fs::write(&compose, "services:\n  web:\n    image: alpine:latest\n").unwrap();
+	let pull = run(&["-f", compose.to_str().unwrap(), "-p", &proj, "pull", "-q"]);
+	assert!(pull.status.success(), "pull -q failed: {:?}", pull.stderr);
+}
