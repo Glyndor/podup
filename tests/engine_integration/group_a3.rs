@@ -234,10 +234,11 @@ async fn secret_long_form_ref() {
 
 	engine.up(&file).await.unwrap();
 	engine
-		.exec(
+		.exec_with_options(
 			&file,
 			"web",
 			vec!["cat".to_string(), "/run/secrets/custom_name".to_string()],
+			podup::ExecOptions::default(),
 		)
 		.await
 		.unwrap();
@@ -259,10 +260,11 @@ async fn config_long_form_ref() {
 
 	engine.up(&file).await.unwrap();
 	engine
-		.exec(
+		.exec_with_options(
 			&file,
 			"web",
 			vec!["cat".to_string(), "/etc/app.conf".to_string()],
+			podup::ExecOptions::default(),
 		)
 		.await
 		.unwrap();

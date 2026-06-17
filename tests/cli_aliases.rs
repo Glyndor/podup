@@ -91,3 +91,21 @@ fn timeout_flag_is_accepted_by_stop_commands() {
 		);
 	}
 }
+
+/// `exec` accepts the docker-compose-style overrides (`-e/-u/-w/--privileged/
+/// --index`).
+#[test]
+fn exec_accepts_override_flags() {
+	let output = Command::new(bin())
+		.args(["exec", "--help"])
+		.output()
+		.expect("run exec --help");
+	assert!(output.status.success(), "`exec --help` failed");
+	let stdout = String::from_utf8_lossy(&output.stdout);
+	for flag in ["--env", "--user", "--workdir", "--privileged", "--index"] {
+		assert!(
+			stdout.contains(flag),
+			"`exec` is missing the {flag} flag; got:\n{stdout}"
+		);
+	}
+}
