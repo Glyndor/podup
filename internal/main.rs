@@ -384,14 +384,35 @@ async fn run() -> podup::Result<()> {
 				.await?
 		}
 		Commands::Cp { src, dst } => engine.cp(&file, &src, &dst).await?,
-		Commands::Ps => engine.ps(&file).await?,
+		Commands::Ps { all, quiet, format } => {
+			engine
+				.ps_with_options(
+					&file,
+					podup::PsOptions {
+						all,
+						quiet,
+						json: format == OutputFormat::Json,
+					},
+				)
+				.await?
+		}
 		Commands::Top { services } => engine.top(&file, &services).await?,
 		Commands::Port {
 			service,
 			private_port,
 			proto,
 		} => engine.port(&file, &service, private_port, &proto).await?,
-		Commands::Images => engine.images(&file).await?,
+		Commands::Images { quiet, format } => {
+			engine
+				.images_with_options(
+					&file,
+					podup::ImagesOptions {
+						quiet,
+						json: format == OutputFormat::Json,
+					},
+				)
+				.await?
+		}
 		Commands::Logs { service, follow } => {
 			engine.logs(&file, service.as_deref(), follow).await?
 		}
