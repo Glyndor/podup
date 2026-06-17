@@ -357,8 +357,27 @@ async fn run() -> podup::Result<()> {
 				)
 				.await?
 		}
-		Commands::Logs { service, follow } => {
-			engine.logs(&file, service.as_deref(), follow).await?
+		Commands::Logs {
+			service,
+			follow,
+			tail,
+			since,
+			until,
+			timestamps,
+		} => {
+			engine
+				.logs_with_options(
+					&file,
+					service.as_deref(),
+					podup::LogsOptions {
+						follow,
+						tail,
+						since,
+						until,
+						timestamps,
+					},
+				)
+				.await?
 		}
 		Commands::Exec {
 			env,

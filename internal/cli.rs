@@ -300,6 +300,18 @@ pub(crate) enum Commands {
 		/// Follow log output.
 		#[arg(short, long)]
 		follow: bool,
+		/// Number of lines to show from the end of the logs (default: all).
+		#[arg(short = 'n', long)]
+		tail: Option<String>,
+		/// Show logs since a timestamp or relative time (e.g. 2024-01-01T00:00:00, 10m).
+		#[arg(long)]
+		since: Option<String>,
+		/// Show logs before a timestamp or relative time.
+		#[arg(long)]
+		until: Option<String>,
+		/// Prefix each line with an RFC3339 timestamp.
+		#[arg(short = 't', long)]
+		timestamps: bool,
 	},
 	/// Execute a command in a running service container.
 	Exec {
