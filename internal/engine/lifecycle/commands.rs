@@ -167,6 +167,19 @@ impl Engine {
 		target_services: &[String],
 		force: bool,
 	) -> Result<()> {
+		self.rm_with_options(file, target_services, force, false)
+			.await
+	}
+
+	/// Remove stopped service containers. `remove_volumes` (`-v/--volumes`) also
+	/// removes anonymous volumes attached to each container.
+	pub async fn rm_with_options(
+		&self,
+		file: &ComposeFile,
+		target_services: &[String],
+		force: bool,
+		remove_volumes: bool,
+	) -> Result<()> {
 		let mut order = crate::compose::resolve_order(file)?;
 		order.reverse();
 		let order = filter_services(file, order, target_services)?;
@@ -176,7 +189,7 @@ impl Engine {
 			for container_name in self.replica_names(name, service) {
 				let force_str = if force { "true" } else { "false" };
 				let path = format!(
-					"{API_PREFIX}/containers/{}?force={force_str}",
+					"{API_PREFIX}/containers/{}?force={force_str}&v={remove_volumes}",
 					crate::libpod::urlencoded(&container_name),
 				);
 				if let Err(e) = self.client.delete_ok(&path).await {

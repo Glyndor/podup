@@ -268,12 +268,18 @@ async fn run() -> podup::Result<()> {
 		Commands::Down {
 			volumes,
 			remove_orphans,
+			rmi,
 			timeout: _,
 		} => {
 			if remove_orphans {
 				engine.remove_orphans(&file).await?;
 			}
-			engine.down_with_options(&file, volumes).await?
+			engine.down_with_options(&file, volumes).await?;
+			if let Some(scope) = rmi {
+				engine
+					.remove_service_images(&file, scope == RmiScope::Local)
+					.await?;
+			}
 		}
 		Commands::Start { services } => engine.start(&file, &services).await?,
 		Commands::Stop {
@@ -321,7 +327,15 @@ async fn run() -> podup::Result<()> {
 				)
 				.await?
 		}
-		Commands::Rm { force, services } => engine.rm(&file, &services, force).await?,
+		Commands::Rm {
+			force,
+			volumes,
+			services,
+		} => {
+			engine
+				.rm_with_options(&file, &services, force, volumes)
+				.await?
+		}
 		Commands::Kill { signal, services } => engine.kill(&file, &services, &signal).await?,
 		Commands::Pause { services } => engine.pause(&file, &services).await?,
 		Commands::Unpause { services } => engine.unpause(&file, &services).await?,
