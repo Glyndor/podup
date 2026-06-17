@@ -219,6 +219,20 @@ impl Client {
 		Self::check_status(status, &body)
 	}
 
+	/// `GET {API_PREFIX}/version` → the daemon's Podman version string (the
+	/// top-level `Version` field, e.g. `"5.4.2"`).
+	pub async fn podman_version(&self) -> Result<String> {
+		#[derive(serde::Deserialize)]
+		struct SystemVersion {
+			#[serde(rename = "Version")]
+			version: String,
+		}
+		let v: SystemVersion = self
+			.get_json(&format!("{}/version", crate::libpod::API_PREFIX))
+			.await?;
+		Ok(v.version)
+	}
+
 	/// `GET` → deserialize JSON response.
 	pub async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
 		let req = Self::build_request(Method::GET, path, Full::new(Bytes::new()), None)?;

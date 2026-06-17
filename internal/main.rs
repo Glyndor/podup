@@ -200,6 +200,9 @@ async fn run() -> podup::Result<()> {
 	}
 
 	let client = podup::podman::connect(cli.socket.as_deref())?;
+	// Fail fast with a clear message on a Podman older than podup's libpod API
+	// surface, instead of an opaque 404 on the first real call.
+	podup::podman::ensure_supported_version(&client).await?;
 	// The `-t/--timeout` shutdown-grace override applies to every command that
 	// stops containers (up recreate, down, stop, restart).
 	let stop_timeout = match &cli.command {

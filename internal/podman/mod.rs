@@ -180,9 +180,51 @@ fn first_existing(candidates: &[String]) -> Option<String> {
 	candidates.iter().find(|p| Path::new(p).exists()).cloned()
 }
 
+/// The minimum Podman major version podup's libpod API surface requires.
+const MIN_PODMAN_MAJOR: u32 = 5;
+
+/// Whether a Podman version string (e.g. `"5.4.2"`) meets the minimum major
+/// version. An unparsable version is treated as unsupported (fail closed).
+fn version_meets_minimum(version: &str) -> bool {
+	version
+		.split('.')
+		.next()
+		.and_then(|major| major.parse::<u32>().ok())
+		.is_some_and(|major| major >= MIN_PODMAN_MAJOR)
+}
+
+/// Fail fast with a clear message when the connected daemon is older than the
+/// supported Podman major version. podup speaks the versioned libpod API
+/// (`/v5.0.0/libpod/...`); a Podman < 5 answers 404 to every call, which would
+/// otherwise surface as an opaque "HTTP 404" on the first real operation.
+pub async fn ensure_supported_version(client: &Client) -> Result<()> {
+	let version = client
+		.podman_version()
+		.await
+		.map_err(ComposeError::Podman)?;
+	if version_meets_minimum(&version) {
+		Ok(())
+	} else {
+		Err(ComposeError::Unsupported(format!(
+			"podup requires Podman >= {MIN_PODMAN_MAJOR}.0, but the daemon reports {version}; \
+			 upgrade Podman or point --socket at a {MIN_PODMAN_MAJOR}.x daemon"
+		)))
+	}
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn version_minimum_accepts_5_and_above_rejects_older_and_garbage() {
+		for ok in ["5.0.0", "5.4.2", "6.1.0", "10.0.0"] {
+			assert!(version_meets_minimum(ok), "{ok} should be supported");
+		}
+		for bad in ["4.9.4", "3.4.0", "garbage", "", "v5"] {
+			assert!(!version_meets_minimum(bad), "{bad} should be unsupported");
+		}
+	}
 
 	#[test]
 	fn first_existing_picks_first_match() {
