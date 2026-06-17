@@ -8,8 +8,8 @@ use std::collections::{HashMap, HashSet};
 
 use tracing::info;
 
-use crate::compose::types::{ComposeFile, Service, ServiceCondition};
-use crate::error::{ComposeError, Result};
+use crate::compose::types::{ComposeFile, ServiceCondition};
+use crate::error::Result;
 use crate::libpod::API_PREFIX;
 
 use targets::{expand_targets, filter_services};
@@ -67,6 +67,55 @@ impl Engine {
 		force_recreate: bool,
 		no_deps: bool,
 	) -> Result<()> {
+		self.run_up(
+			file,
+			active_profiles,
+			target_services,
+			no_recreate,
+			force_recreate,
+			no_deps,
+			true,
+		)
+		.await
+	}
+
+	/// Create containers for services without starting them (docker compose
+	/// `create`). Shares the `up` path with `start = false`: images are built/
+	/// pulled and containers created, but never started, and no `depends_on`
+	/// waits or `post_start` hooks run (nothing is running to gate on).
+	#[allow(clippy::too_many_arguments)]
+	pub async fn create_with_options(
+		&self,
+		file: &ComposeFile,
+		active_profiles: &[String],
+		target_services: &[String],
+		no_recreate: bool,
+		force_recreate: bool,
+		no_deps: bool,
+	) -> Result<()> {
+		self.run_up(
+			file,
+			active_profiles,
+			target_services,
+			no_recreate,
+			force_recreate,
+			no_deps,
+			false,
+		)
+		.await
+	}
+
+	#[allow(clippy::too_many_arguments)]
+	async fn run_up(
+		&self,
+		file: &ComposeFile,
+		active_profiles: &[String],
+		target_services: &[String],
+		no_recreate: bool,
+		force_recreate: bool,
+		no_deps: bool,
+		start: bool,
+	) -> Result<()> {
 		async {
 			let levels = crate::compose::resolve_levels(file)?;
 			let active = active_profiles_set(active_profiles);
@@ -123,6 +172,7 @@ impl Engine {
 						&existing_hash,
 						no_recreate,
 						force_recreate,
+						start,
 					)
 				});
 				futures_util::future::try_join_all(started).await?;
@@ -150,6 +200,7 @@ impl Engine {
 		existing_hash: &HashMap<String, String>,
 		no_recreate: bool,
 		force_recreate: bool,
+		start: bool,
 	) -> Result<()> {
 		if let Some(set) = target_set {
 			if !set.contains(name) {
@@ -163,7 +214,14 @@ impl Engine {
 			return Ok(());
 		}
 
-		for dep in service.depends_on.service_names() {
+		// `create` (start = false) only builds the containers, so there is nothing
+		// to gate on — skip the `depends_on` readiness waits entirely.
+		for dep in service
+			.depends_on
+			.service_names()
+			.into_iter()
+			.filter(|_| start)
+		{
 			let condition = service.depends_on.condition_for(&dep);
 			// `required: false` makes the dependency optional — a failed wait
 			// must not abort `up`, matching docker-compose v2.
@@ -227,7 +285,7 @@ impl Engine {
 		// A scaled service that publishes a fixed host port cannot start: only
 		// one container can bind it. Fail fast with guidance instead of letting
 		// replicas 2..N die mid-up with `address already in use`.
-		check_scale_port_conflict(name, service, replicas)?;
+		scale::check_scale_port_conflict(name, service, replicas)?;
 
 		let new_hash = config_hash(service, file)?;
 
@@ -240,7 +298,10 @@ impl Engine {
 			if !force_recreate {
 				if no_recreate && present.contains(&container_name) {
 					info!("{container_name} already exists — skipping recreate");
-					self.ensure_started(&container_name).await;
+					// `create` leaves an existing container as-is; `up` ensures it runs.
+					if start {
+						self.ensure_started(&container_name).await;
+					}
 					continue;
 				}
 				// Services with a build section are rebuilt on every up, so
@@ -249,16 +310,24 @@ impl Engine {
 				if service.build.is_none() && existing_hash.get(&container_name) == Some(&new_hash)
 				{
 					info!("{container_name} is up to date — skipping recreate");
-					self.ensure_started(&container_name).await;
+					if start {
+						self.ensure_started(&container_name).await;
+					}
 					continue;
 				}
 			}
-			self.create_and_start(&container_name, name, service, file)
+			self.create_and_start(&container_name, name, service, file, start)
 				.await?;
-			info!("started {container_name}");
+			info!(
+				"{} {container_name}",
+				if start { "started" } else { "created" }
+			);
 
-			for hook in &service.post_start {
-				self.run_lifecycle_hook(&container_name, hook).await?;
+			// `post_start` hooks run inside a running container, so only on `up`.
+			if start {
+				for hook in &service.post_start {
+					self.run_lifecycle_hook(&container_name, hook).await?;
+				}
 			}
 		}
 
@@ -357,75 +426,5 @@ impl Engine {
 		// them unconditionally — independent of `remove_volumes`.
 		self.remove_internal_secrets(file).await?;
 		Ok(())
-	}
-}
-
-/// Reject a scaled service that publishes a fixed host port: only one container
-/// can bind a given host port, so replicas 2..N would fail at runtime with
-/// `address already in use`. A host port of 0/None is runtime-assigned by
-/// Podman, so such a service scales fine. The compose-spec does not define how
-/// scaling interacts with published ports, so podup fails fast rather than
-/// inventing surprising auto-offset semantics.
-pub(super) fn check_scale_port_conflict(
-	service_name: &str,
-	service: &Service,
-	replicas: usize,
-) -> Result<()> {
-	if replicas <= 1 {
-		return Ok(());
-	}
-	let fixed: Vec<u16> = crate::ports::parse_ports(&service.ports)?
-		.iter()
-		.filter_map(|p| p.host_port)
-		.filter(|&hp| hp != 0)
-		.collect();
-	if fixed.is_empty() {
-		return Ok(());
-	}
-	Err(ComposeError::ScalePortConflict {
-		service: service_name.to_string(),
-		replicas,
-		ports: fixed,
-	})
-}
-
-#[cfg(test)]
-mod tests {
-	use super::check_scale_port_conflict;
-
-	fn service(yaml: &str) -> crate::compose::types::Service {
-		let file = crate::parse_str(yaml).unwrap();
-		file.services.into_iter().next().unwrap().1
-	}
-
-	#[test]
-	fn single_replica_never_conflicts() {
-		let svc = service("services:\n  web:\n    image: x\n    ports:\n      - \"8080:80\"\n");
-		assert!(check_scale_port_conflict("web", &svc, 1).is_ok());
-	}
-
-	#[test]
-	fn scaled_fixed_host_port_conflicts() {
-		let svc = service("services:\n  web:\n    image: x\n    ports:\n      - \"8080:80\"\n");
-		let err = check_scale_port_conflict("web", &svc, 3).unwrap_err();
-		assert!(matches!(
-			err,
-			crate::error::ComposeError::ScalePortConflict { .. }
-		));
-		assert!(err.to_string().contains("8080"));
-	}
-
-	#[test]
-	fn scaled_random_host_port_is_allowed() {
-		// A container-only port (`"80"`) gets a runtime-assigned host port per
-		// replica, so scaling is fine.
-		let svc = service("services:\n  web:\n    image: x\n    ports:\n      - \"80\"\n");
-		assert!(check_scale_port_conflict("web", &svc, 3).is_ok());
-	}
-
-	#[test]
-	fn scaled_no_ports_is_allowed() {
-		let svc = service("services:\n  worker:\n    image: x\n");
-		assert!(check_scale_port_conflict("worker", &svc, 5).is_ok());
 	}
 }

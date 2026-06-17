@@ -85,6 +85,7 @@ fn is_mutating(command: &Commands) -> bool {
 			| Commands::Run { .. }
 			| Commands::Restart { .. }
 			| Commands::Scale { .. }
+			| Commands::Create { .. }
 	)
 }
 
@@ -162,6 +163,21 @@ async fn run() -> podup::Result<()> {
 		return tokio::task::spawn_blocking(move || podup::update::run(opts))
 			.await
 			.map_err(|e| podup::ComposeError::Update(format!("update task failed: {e}")))?;
+	}
+
+	// `ls` discovers projects across the host by container label; it needs a
+	// Podman connection but no compose file, so handle it before parsing one.
+	if let Commands::Ls { all, quiet, format } = &cli.command {
+		let client = podup::podman::connect(cli.socket.as_deref())?;
+		return podup::list_projects(
+			&client,
+			podup::LsOptions {
+				all: *all,
+				quiet: *quiet,
+				json: *format == OutputFormat::Json,
+			},
+		)
+		.await;
 	}
 
 	let compose_files = resolve_compose_files(&cli.file);
@@ -277,6 +293,26 @@ async fn run() -> podup::Result<()> {
 			timeout: _,
 		} => engine.stop(&file, &services).await?,
 		Commands::Scale { pairs } => engine.scale(&file, &pairs).await?,
+		Commands::Create {
+			build,
+			force_recreate,
+			no_recreate,
+			services,
+		} => {
+			if build {
+				engine.build_all(&file, &services).await?;
+			}
+			engine
+				.create_with_options(
+					&file,
+					&cli.profile,
+					&services,
+					no_recreate,
+					force_recreate,
+					false,
+				)
+				.await?
+		}
 		Commands::Build {
 			no_cache,
 			pull,
@@ -394,6 +430,7 @@ async fn run() -> podup::Result<()> {
 		Commands::Generate { .. } => unreachable!("handled above"),
 		Commands::Watch => engine.watch(&file).await?,
 		#[cfg(feature = "update")]
+		Commands::Ls { .. } => unreachable!("handled before compose parsing"),
 		Commands::Update { .. } => unreachable!("handled before compose parsing"),
 		#[cfg(feature = "completions")]
 		Commands::Completions { .. } => unreachable!("handled before compose parsing"),

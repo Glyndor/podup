@@ -31,6 +31,11 @@ pub struct ContainerListEntry {
 	#[serde(rename = "Status", default)]
 	pub status: String,
 
+	/// Machine-readable state (`running`, `exited`, `created`, …). Podman's
+	/// libpod list response leaves `Status` empty and reports the state here.
+	#[serde(rename = "State", default)]
+	pub state: String,
+
 	#[serde(rename = "Ports", default, deserialize_with = "null_default")]
 	pub ports: Vec<ContainerPort>,
 

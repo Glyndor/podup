@@ -264,7 +264,7 @@ impl Engine {
 		)
 		.await?;
 		let container_name = self.container_name(service_name, service);
-		self.create_and_start(&container_name, service_name, service, file)
+		self.create_and_start(&container_name, service_name, service, file, true)
 			.await
 	}
 

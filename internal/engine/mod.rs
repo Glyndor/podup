@@ -16,6 +16,8 @@ mod lifecycle;
 mod lock;
 mod network;
 mod profiles;
+mod projects;
+pub use projects::{list_projects, LsOptions};
 mod query;
 mod secrets;
 mod staging;
