@@ -28,7 +28,9 @@ pub use compose::{
 	collect_diagnostics, parse_file, parse_file_with_env_files, parse_files_with_env_files,
 	parse_str, parse_str_raw, resolve_levels, resolve_order,
 };
-pub use engine::{is_safe_project_name, Engine, ExecOptions, ProjectLock, RunOptions};
+pub use engine::{
+	is_safe_project_name, BuildOptions, Engine, ExecOptions, ProjectLock, RunOptions,
+};
 pub use error::{ComposeError, Result};
 pub use libpod::Client;
 

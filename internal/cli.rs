@@ -106,6 +106,18 @@ pub(crate) enum Commands {
 	},
 	/// Build or rebuild service images.
 	Build {
+		/// Do not use cache when building the image.
+		#[arg(long)]
+		no_cache: bool,
+		/// Always attempt to pull a newer version of the base image.
+		#[arg(long)]
+		pull: bool,
+		/// Set build-time variables (KEY=VAL); may be repeated.
+		#[arg(long = "build-arg")]
+		build_arg: Vec<String>,
+		/// Suppress the build output.
+		#[arg(short, long)]
+		quiet: bool,
 		/// Build only these services.
 		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,

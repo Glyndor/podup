@@ -150,6 +150,36 @@ async fn build_with_args_and_extra_tags() {
 }
 
 #[tokio::test]
+async fn build_with_cli_no_cache_and_build_arg() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let dir = tempfile::tempdir().unwrap();
+	let proj = proj("bco");
+	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
+	let tag = format!("podup-test-bco-{}:latest", std::process::id());
+	let yaml = format!(
+		"services:\n  app:\n    build:\n      context: .\n      dockerfile_inline: |\n        FROM alpine:latest\n        ARG VERSION=0\n        RUN echo Version $VERSION\n      args:\n        VERSION: \"1.0\"\n    image: {tag}\n    command: [\"sleep\", \"infinity\"]\n"
+	);
+	let file = parse_str(&yaml).unwrap();
+
+	// CLI overrides: force no-cache and override the compose VERSION build arg.
+	engine
+		.build_all_with_options(
+			&file,
+			&[],
+			&podup::BuildOptions {
+				no_cache: true,
+				build_args: vec!["VERSION=2.0".to_string()],
+				..Default::default()
+			},
+		)
+		.await
+		.unwrap();
+}
+
+#[tokio::test]
 async fn build_inline_dockerfile() {
 	let client = match podman().await {
 		Some(d) => d,

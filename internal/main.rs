@@ -335,7 +335,26 @@ async fn run() -> podup::Result<()> {
 			services,
 			timeout: _,
 		} => engine.stop(&file, &services).await?,
-		Commands::Build { services } => engine.build_all(&file, &services).await?,
+		Commands::Build {
+			no_cache,
+			pull,
+			build_arg,
+			quiet,
+			services,
+		} => {
+			engine
+				.build_all_with_options(
+					&file,
+					&services,
+					&podup::BuildOptions {
+						no_cache,
+						pull,
+						build_args: build_arg,
+						quiet,
+					},
+				)
+				.await?
+		}
 		Commands::Rm { force, services } => engine.rm(&file, &services, force).await?,
 		Commands::Kill { signal, services } => engine.kill(&file, &services, &signal).await?,
 		Commands::Pause { services } => engine.pause(&file, &services).await?,
