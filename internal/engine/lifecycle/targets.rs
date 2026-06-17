@@ -6,13 +6,23 @@ use std::collections::HashSet;
 use crate::compose::types::{ComposeFile, Service};
 use crate::error::{ComposeError, Result};
 
-pub(super) fn grace_period_secs(service: &Service) -> i32 {
+/// The per-service shutdown grace from `stop_grace_period` (default 10s).
+pub(super) fn service_grace_period_secs(service: &Service) -> i32 {
 	service
 		.stop_grace_period
 		.as_deref()
 		.and_then(crate::size::parse_duration_secs)
 		.and_then(|s| i32::try_from(s).ok())
 		.unwrap_or(10)
+}
+
+impl crate::engine::Engine {
+	/// Shutdown grace (seconds) for a service: the CLI `-t/--timeout` override
+	/// when set, otherwise the service's `stop_grace_period`.
+	pub(super) fn grace_period_secs(&self, service: &Service) -> i32 {
+		self.stop_timeout
+			.unwrap_or_else(|| service_grace_period_secs(service))
+	}
 }
 
 /// Return the ordered service names filtered to `target_services`.

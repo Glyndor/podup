@@ -11,7 +11,7 @@ use crate::compose::types::{ComposeFile, ServiceCondition};
 use crate::error::Result;
 use crate::libpod::API_PREFIX;
 
-use targets::{expand_targets, filter_services, grace_period_secs};
+use targets::{expand_targets, filter_services};
 
 use super::container::config_hash;
 
@@ -279,7 +279,7 @@ impl Engine {
 					}
 				}
 
-				let grace = grace_period_secs(service);
+				let grace = self.grace_period_secs(service);
 				let stop_path = format!(
 					"{API_PREFIX}/containers/{}/stop?t={grace}",
 					crate::libpod::urlencoded(&container_name),
