@@ -5,7 +5,7 @@
 //! [`Engine::wait_completed`] polls until the container exits with code 0 (used for
 //! `condition: service_completed_successfully`).
 
-use crate::compose::types::Service;
+use crate::compose::types::{ComposeFile, Service};
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::container::{ContainerInspect, ContainerState};
 use crate::libpod::API_PREFIX;
@@ -106,6 +106,24 @@ impl Engine {
 	/// those declared in compose. If the container has no effective healthcheck at
 	/// all (none in the image or compose), it can never report `healthy`, so the
 	/// wait short-circuits as satisfied rather than blocking until timeout.
+	/// Wait until every targeted service's first replica is healthy (`up
+	/// --wait`). A service with no effective healthcheck is treated as ready
+	/// once started. All services when `target_services` is empty.
+	pub async fn wait_services_healthy(
+		&self,
+		file: &ComposeFile,
+		target_services: &[String],
+	) -> Result<()> {
+		for (name, service) in &file.services {
+			if !target_services.is_empty() && !target_services.iter().any(|t| t == name) {
+				continue;
+			}
+			let container = self.first_replica_name(name, service);
+			self.wait_healthy(&container, service).await?;
+		}
+		Ok(())
+	}
+
 	pub(super) async fn wait_healthy(&self, container_name: &str, service: &Service) -> Result<()> {
 		let hc = service.healthcheck.as_ref();
 		let (poll_secs, iterations) = health_poll_plan(
