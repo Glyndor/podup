@@ -19,6 +19,9 @@ where
 /// Entry in the `GET /libpod/containers/json` response array.
 #[derive(Deserialize)]
 pub struct ContainerListEntry {
+	#[serde(rename = "Id", default)]
+	pub id: String,
+
 	#[serde(rename = "Names", default, deserialize_with = "null_default")]
 	pub names: Vec<String>,
 

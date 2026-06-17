@@ -98,12 +98,21 @@ impl Engine {
 		Ok(())
 	}
 
-	/// List images used by each service.
+	/// List images used by each service as a table (default options).
 	pub async fn images(&self, file: &ComposeFile) -> Result<()> {
-		println!(
-			"{:<30} {:<25} {:<15} {:<20}",
-			"SERVICE", "REPOSITORY", "TAG", "IMAGE ID"
-		);
+		self.images_with_options(file, super::ImagesOptions::default())
+			.await
+	}
+
+	/// List service images with `docker compose images`-style options:
+	/// `-q/--quiet` (IDs only) and `--format` (table | json).
+	pub async fn images_with_options(
+		&self,
+		file: &ComposeFile,
+		opts: super::ImagesOptions,
+	) -> Result<()> {
+		// Collect rows first so quiet/json modes can render without the header.
+		let mut rows: Vec<(String, String, String, String)> = Vec::new();
 		for (name, service) in &file.services {
 			let image_ref = match &service.image {
 				Some(img) => img.clone(),
@@ -118,10 +127,40 @@ impl Engine {
 						.map(|(r, t)| (r.to_string(), t.to_string()))
 						.unwrap_or_else(|| (image_ref.clone(), "latest".to_string()));
 					let id = img.id.trim_start_matches("sha256:").get(..12).unwrap_or("");
-					println!("{name:<30} {repo:<25} {tag:<15} {id:<20}");
+					rows.push((name.clone(), repo, tag, id.to_string()));
 				}
 				Err(e) => tracing::warn!("images {name}: {e}"),
 			}
+		}
+
+		if opts.quiet {
+			for (_, _, _, id) in &rows {
+				println!("{id}");
+			}
+			return Ok(());
+		}
+		if opts.json {
+			let json: Vec<_> = rows
+				.iter()
+				.map(|(svc, repo, tag, id)| {
+					serde_json::json!({
+						"Service": svc, "Repository": repo, "Tag": tag, "ID": id,
+					})
+				})
+				.collect();
+			println!(
+				"{}",
+				serde_json::to_string_pretty(&json).unwrap_or_default()
+			);
+			return Ok(());
+		}
+
+		println!(
+			"{:<30} {:<25} {:<15} {:<20}",
+			"SERVICE", "REPOSITORY", "TAG", "IMAGE ID"
+		);
+		for (svc, repo, tag, id) in &rows {
+			println!("{svc:<30} {repo:<25} {tag:<15} {id:<20}");
 		}
 		Ok(())
 	}

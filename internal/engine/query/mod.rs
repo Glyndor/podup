@@ -30,13 +30,40 @@ pub struct ExecOptions {
 	pub index: Option<u32>,
 }
 
+/// Options for [`Engine::ps_with_options`].
+#[derive(Default)]
+pub struct PsOptions {
+	/// Include stopped containers, `-a/--all` (default: running only).
+	pub all: bool,
+	/// Print only container IDs, `-q/--quiet`.
+	pub quiet: bool,
+	/// Emit JSON instead of the table, `--format json`.
+	pub json: bool,
+}
+
+/// Options for [`Engine::images_with_options`].
+#[derive(Default)]
+pub struct ImagesOptions {
+	/// Print only image IDs, `-q/--quiet`.
+	pub quiet: bool,
+	/// Emit JSON instead of the table, `--format json`.
+	pub json: bool,
+}
+
 impl Engine {
-	/// List containers for this project: name, image, command, state, and port bindings.
-	pub async fn ps(&self, _file: &ComposeFile) -> Result<()> {
+	/// List running containers for this project as a table (default options).
+	pub async fn ps(&self, file: &ComposeFile) -> Result<()> {
+		self.ps_with_options(file, PsOptions::default()).await
+	}
+
+	/// List containers with `docker compose ps`-style options: `-a/--all`
+	/// (include stopped), `-q/--quiet` (IDs only), and `--format` (table | json).
+	pub async fn ps_with_options(&self, _file: &ComposeFile, opts: PsOptions) -> Result<()> {
 		let label = format!("podup.project={}", self.project);
 		let filters = serde_json::json!({ "label": [label] });
 		let path = format!(
-			"{API_PREFIX}/containers/json?all=true&filters={}",
+			"{API_PREFIX}/containers/json?all={}&filters={}",
+			opts.all,
 			urlencoded(&filters.to_string()),
 		);
 
@@ -46,9 +73,39 @@ impl Engine {
 			.await
 			.map_err(ComposeError::Podman)?;
 
+		let name_of = |c: &crate::libpod::types::container::ContainerListEntry| {
+			c.names.join(", ").trim_start_matches('/').to_string()
+		};
+
+		if opts.quiet {
+			for c in &containers {
+				let id = c.id.get(..12).unwrap_or(&c.id);
+				println!("{id}");
+			}
+			return Ok(());
+		}
+
+		if opts.json {
+			let rows: Vec<_> = containers
+				.iter()
+				.map(|c| {
+					serde_json::json!({
+						"Name": name_of(c),
+						"Image": c.image,
+						"Status": c.status,
+						"ID": c.id,
+					})
+				})
+				.collect();
+			println!(
+				"{}",
+				serde_json::to_string_pretty(&rows).unwrap_or_default()
+			);
+			return Ok(());
+		}
+
 		println!("{:<40} {:<30} {:<20}", "NAME", "IMAGE", "STATUS");
-		for c in containers {
-			let names = c.names.join(", ").trim_start_matches('/').to_string();
+		for c in &containers {
 			let ports = c
 				.ports
 				.iter()
@@ -62,7 +119,12 @@ impl Engine {
 				})
 				.collect::<Vec<_>>()
 				.join(", ");
-			println!("{names:<40} {:<30} {:<20} {ports}", c.image, c.status);
+			println!(
+				"{:<40} {:<30} {:<20} {ports}",
+				name_of(c),
+				c.image,
+				c.status
+			);
 		}
 
 		Ok(())

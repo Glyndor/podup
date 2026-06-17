@@ -2,9 +2,19 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "completions")]
 use clap_complete::Shell;
+
+/// Output rendering for list commands (`ps`, `images`).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum OutputFormat {
+	/// Aligned columns for human reading.
+	#[default]
+	Table,
+	/// Machine-readable JSON array.
+	Json,
+}
 
 #[derive(Parser)]
 #[command(name = "podup", version)]
@@ -187,7 +197,17 @@ pub(crate) enum Commands {
 		dst: String,
 	},
 	/// List containers.
-	Ps,
+	Ps {
+		/// Show all containers, including stopped ones.
+		#[arg(short, long)]
+		all: bool,
+		/// Only display container IDs.
+		#[arg(short, long)]
+		quiet: bool,
+		/// Output format.
+		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
+		format: OutputFormat,
+	},
 	/// Display the running processes of service containers.
 	Top {
 		/// Show only these services.
@@ -206,7 +226,14 @@ pub(crate) enum Commands {
 	},
 	/// List images used by services.
 	#[command(alias = "image")]
-	Images,
+	Images {
+		/// Only display image IDs.
+		#[arg(short, long)]
+		quiet: bool,
+		/// Output format.
+		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
+		format: OutputFormat,
+	},
 	/// View output from containers.
 	#[command(alias = "log")]
 	Logs {
