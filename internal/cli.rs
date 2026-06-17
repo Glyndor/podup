@@ -159,6 +159,19 @@ pub(crate) enum Commands {
 		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
 		format: OutputFormat,
 	},
+	/// Push service images to their registry.
+	Push {
+		/// Continue pushing the remaining services after a failure.
+		#[arg(long)]
+		ignore_push_failures: bool,
+		/// Verify the registry's TLS certificate (set false for an insecure
+		/// or local HTTP registry). Omitted leaves Podman's default (on).
+		#[arg(long)]
+		tls_verify: Option<bool>,
+		/// Push only these services.
+		#[arg(trailing_var_arg = true)]
+		services: Vec<String>,
+	},
 	/// Build or rebuild service images.
 	Build {
 		/// Do not use cache when building the image.
