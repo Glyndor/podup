@@ -36,6 +36,9 @@ Create and start all services (or only the named ones, plus their transitive
 | `--force-recreate` | Recreate containers even if their config is unchanged. |
 | `--no-deps` | Do not start the `depends_on` services of the named services. |
 | `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable. |
+| `--pull <policy>` | Pull policy before starting: `always`, `missing`, `never`. |
+| `--no-build` | Do not build images, even for services with a `build:` section. |
+| `--quiet-pull` | Suppress image-pull progress output. |
 
 ### `down`
 Stop and remove containers. `-v, --volumes` also removes named volumes declared

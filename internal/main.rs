@@ -200,9 +200,20 @@ async fn run() -> podup::Result<()> {
 		Commands::Scale { pairs } => pairs.iter().cloned().collect(),
 		_ => std::collections::HashMap::new(),
 	};
+	// `up` image-acquisition overrides: `--pull`, `--no-build`, `--quiet-pull`.
+	let (pull_override, no_build, quiet_pull) = match &cli.command {
+		Commands::Up {
+			pull,
+			no_build,
+			quiet_pull,
+			..
+		} => (pull.clone(), *no_build, *quiet_pull),
+		_ => (None, false, false),
+	};
 	let engine = podup::Engine::with_base_dir(client, project, base_dir)
 		.with_stop_timeout(stop_timeout)
-		.with_scale_overrides(scale_overrides);
+		.with_scale_overrides(scale_overrides)
+		.with_up_overrides(pull_override, no_build, quiet_pull);
 
 	// Serialize mutating lifecycle commands against concurrent `podup` runs on
 	// the same project. Read-only / follow commands (ps, logs, top, port,
@@ -225,6 +236,9 @@ async fn run() -> podup::Result<()> {
 			no_deps,
 			timeout: _,
 			scale: _,
+			pull: _,
+			no_build: _,
+			quiet_pull: _,
 			services,
 		} => {
 			if remove_orphans {

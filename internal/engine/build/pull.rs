@@ -17,9 +17,17 @@ impl Engine {
 			None => return Ok(()),
 		};
 
-		info!("pulling {image}");
+		if self.quiet_pull {
+			debug!("pulling {image}");
+		} else {
+			info!("pulling {image}");
+		}
 
-		let requested = service.pull_policy.as_deref();
+		// `up --pull <policy>` overrides the per-service `pull_policy`.
+		let requested = self
+			.pull_policy_override
+			.as_deref()
+			.or(service.pull_policy.as_deref());
 		let pull_policy = libpod_pull_policy(requested).unwrap_or_else(|| {
 			warn!(
 				"unknown pull_policy '{}', defaulting to 'missing'",

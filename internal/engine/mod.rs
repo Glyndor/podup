@@ -54,6 +54,14 @@ pub struct Engine {
 	/// subcommand); when a service is present it takes precedence over the
 	/// compose `scale:`/`deploy.replicas` value. Empty falls back to compose.
 	pub(super) scale_overrides: std::collections::HashMap<String, u32>,
+	/// CLI `up --pull <policy>` override; takes precedence over each service's
+	/// `pull_policy`. `None` falls back to the per-service value.
+	pub(super) pull_policy_override: Option<String>,
+	/// CLI `up --no-build`: never build images, even for services with a
+	/// `build:` section (they fall back to pulling/using an existing image).
+	pub(super) no_build: bool,
+	/// CLI `up --quiet-pull`: suppress image-pull progress output.
+	pub(super) quiet_pull: bool,
 }
 
 impl Engine {
@@ -65,6 +73,9 @@ impl Engine {
 			base_dir: std::env::current_dir().unwrap_or_default(),
 			stop_timeout: None,
 			scale_overrides: std::collections::HashMap::new(),
+			pull_policy_override: None,
+			no_build: false,
+			quiet_pull: false,
 		}
 	}
 
@@ -76,6 +87,9 @@ impl Engine {
 			base_dir,
 			stop_timeout: None,
 			scale_overrides: std::collections::HashMap::new(),
+			pull_policy_override: None,
+			no_build: false,
+			quiet_pull: false,
 		}
 	}
 
@@ -91,6 +105,20 @@ impl Engine {
 		overrides: std::collections::HashMap<String, u32>,
 	) -> Self {
 		self.scale_overrides = overrides;
+		self
+	}
+
+	/// Set the CLI `up` image-acquisition overrides: `--pull <policy>`,
+	/// `--no-build`, and `--quiet-pull`. Builder-style.
+	pub fn with_up_overrides(
+		mut self,
+		pull_policy: Option<String>,
+		no_build: bool,
+		quiet_pull: bool,
+	) -> Self {
+		self.pull_policy_override = pull_policy;
+		self.no_build = no_build;
+		self.quiet_pull = quiet_pull;
 		self
 	}
 
