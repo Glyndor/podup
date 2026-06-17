@@ -214,7 +214,10 @@ impl Engine {
 
 		let policy = service.pull_policy.as_deref().unwrap_or("missing");
 		match (service.build.is_some(), policy) {
-			(true, _) => self.build_service(name, service, file).await?,
+			(true, _) => {
+				self.build_service(name, service, file, &crate::engine::BuildOptions::default())
+					.await?
+			}
 			(false, "never") => {}
 			(false, _) => self.pull_image(service).await?,
 		}
