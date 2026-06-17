@@ -43,7 +43,8 @@ Create and start all services (or only the named ones, plus their transitive
 ### `down`
 Stop and remove containers. `-v, --volumes` also removes named volumes declared
 in the compose file; `--remove-orphans` also removes containers for services no
-longer in the file.
+longer in the file; `--rmi all|local` also removes the service images (`local`
+only those built from a `build:` section).
 
 ### `start` / `stop` / `restart`
 Start existing stopped containers, stop running ones without removing them, or
@@ -76,7 +77,8 @@ registry (omit it to keep Podman's default verification). Accepts a trailing
 service list.
 
 ### `rm`
-Remove stopped service containers. `-f, --force` stops and removes running ones.
+Remove stopped service containers. `-f, --force` stops and removes running ones;
+`-v, --volumes` also removes anonymous volumes attached to them.
 
 ### `kill`
 Send a signal to service containers. `-s, --signal <SIG>` sets the signal

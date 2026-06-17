@@ -16,6 +16,15 @@ pub(crate) enum OutputFormat {
 	Json,
 }
 
+/// Which images `down --rmi` removes.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub(crate) enum RmiScope {
+	/// All images used by the project's services.
+	All,
+	/// Only images without a custom tag (services that build locally).
+	Local,
+}
+
 /// Output rendering for `config`.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub(crate) enum ConfigFormat {
@@ -120,6 +129,9 @@ pub(crate) enum Commands {
 		/// Remove containers for services not defined in the compose file.
 		#[arg(long)]
 		remove_orphans: bool,
+		/// Also remove service images: `all` or `local` (build-section services).
+		#[arg(long, value_enum)]
+		rmi: Option<RmiScope>,
 		/// Seconds to wait for containers to stop before killing them.
 		#[arg(short = 't', long)]
 		timeout: Option<i32>,
@@ -218,6 +230,9 @@ pub(crate) enum Commands {
 		/// Remove even running containers (stop first).
 		#[arg(short, long)]
 		force: bool,
+		/// Also remove anonymous volumes attached to the containers.
+		#[arg(short = 'v', long)]
+		volumes: bool,
 		/// Remove only these services.
 		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,

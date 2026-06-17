@@ -434,4 +434,32 @@ impl Engine {
 		self.remove_internal_secrets(file).await?;
 		Ok(())
 	}
+
+	/// Remove the images used by the project's services (`down --rmi`). With
+	/// `local_only`, only images of services that build locally (a `build:`
+	/// section) are removed — matching `docker compose down --rmi local`.
+	pub async fn remove_service_images(&self, file: &ComposeFile, local_only: bool) -> Result<()> {
+		for (name, service) in &file.services {
+			let builds_locally = service.build.is_some();
+			if local_only && !builds_locally {
+				continue;
+			}
+			let image = match &service.image {
+				Some(img) => img.clone(),
+				// A build-only service's image defaults to `{service}:latest`.
+				None if builds_locally => format!("{name}:latest"),
+				None => continue,
+			};
+			let path = format!(
+				"{API_PREFIX}/images/{}?force=true",
+				crate::libpod::urlencoded(&image),
+			);
+			match self.client.delete_ok(&path).await {
+				Ok(_) => info!("removed image {image}"),
+				Err(e) if e.is_status(404) => {}
+				Err(e) => tracing::warn!("could not remove image {image}: {e}"),
+			}
+		}
+		Ok(())
+	}
 }
