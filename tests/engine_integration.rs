@@ -9,7 +9,7 @@
 //! crate root so the submodules can reach them via `use super::*;`.
 use std::fs;
 
-use podup::{parse_str, Client, Engine};
+use podup::{parse_files_with_env_files, parse_str, Client, Engine};
 
 // ---------------------------------------------------------------------------
 // Helpers

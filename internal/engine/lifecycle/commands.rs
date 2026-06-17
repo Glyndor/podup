@@ -288,6 +288,11 @@ impl Engine {
 		// the 8-byte header, which would produce garbled output.
 		run_service.tty = None;
 
+		// Ensure the project networks exist (compose `run` brings them up like
+		// `up` does); the service may reference the synthesized `default`
+		// network, which is created here as `{project}_default`.
+		self.create_networks(file).await?;
+
 		self.create_and_start(&run_name, service_name, &run_service, file)
 			.await?;
 
