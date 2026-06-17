@@ -208,6 +208,7 @@ async fn run() -> podup::Result<()> {
 			quiet_pull,
 			..
 		} => (pull.clone(), *no_build, *quiet_pull),
+		Commands::Pull { quiet, .. } => (None, false, *quiet),
 		_ => (None, false, false),
 	};
 	let engine = podup::Engine::with_base_dir(client, project, base_dir)
@@ -336,7 +337,16 @@ async fn run() -> podup::Result<()> {
 				.rm_with_options(&file, &services, force, volumes)
 				.await?
 		}
-		Commands::Kill { signal, services } => engine.kill(&file, &services, &signal).await?,
+		Commands::Kill {
+			signal,
+			remove_orphans,
+			services,
+		} => {
+			engine.kill(&file, &services, &signal).await?;
+			if remove_orphans {
+				engine.remove_orphans(&file).await?;
+			}
+		}
 		Commands::Pause { services } => engine.pause(&file, &services).await?,
 		Commands::Unpause { services } => engine.unpause(&file, &services).await?,
 		Commands::Run {
@@ -462,7 +472,7 @@ async fn run() -> podup::Result<()> {
 				)
 				.await?
 		}
-		Commands::Pull { services } => engine.pull_services(&file, &services).await?,
+		Commands::Pull { quiet: _, services } => engine.pull_services(&file, &services).await?,
 		Commands::Restart {
 			service,
 			timeout: _,
