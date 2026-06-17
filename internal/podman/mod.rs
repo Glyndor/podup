@@ -193,6 +193,19 @@ fn version_meets_minimum(version: &str) -> bool {
 		.is_some_and(|major| major >= MIN_PODMAN_MAJOR)
 }
 
+/// Decide whether a reported version is supported, returning the user-facing
+/// error otherwise. Pure so both branches are unit-tested without a socket.
+fn check_version(version: &str) -> Result<()> {
+	if version_meets_minimum(version) {
+		Ok(())
+	} else {
+		Err(ComposeError::Unsupported(format!(
+			"podup requires Podman >= {MIN_PODMAN_MAJOR}.0, but the daemon reports {version}; \
+			 upgrade Podman or point --socket at a {MIN_PODMAN_MAJOR}.x daemon"
+		)))
+	}
+}
+
 /// Fail fast with a clear message when the connected daemon is older than the
 /// supported Podman major version. podup speaks the versioned libpod API
 /// (`/v5.0.0/libpod/...`); a Podman < 5 answers 404 to every call, which would
@@ -202,14 +215,7 @@ pub async fn ensure_supported_version(client: &Client) -> Result<()> {
 		.podman_version()
 		.await
 		.map_err(ComposeError::Podman)?;
-	if version_meets_minimum(&version) {
-		Ok(())
-	} else {
-		Err(ComposeError::Unsupported(format!(
-			"podup requires Podman >= {MIN_PODMAN_MAJOR}.0, but the daemon reports {version}; \
-			 upgrade Podman or point --socket at a {MIN_PODMAN_MAJOR}.x daemon"
-		)))
-	}
+	check_version(&version)
 }
 
 #[cfg(test)]
@@ -224,6 +230,15 @@ mod tests {
 		for bad in ["4.9.4", "3.4.0", "garbage", "", "v5"] {
 			assert!(!version_meets_minimum(bad), "{bad} should be unsupported");
 		}
+	}
+
+	#[test]
+	fn check_version_passes_supported_and_rejects_old_with_message() {
+		assert!(check_version("5.4.2").is_ok());
+		let err = check_version("4.9.4").unwrap_err();
+		assert!(matches!(err, ComposeError::Unsupported(_)));
+		let msg = err.to_string();
+		assert!(msg.contains("4.9.4") && msg.contains("requires Podman"));
 	}
 
 	#[test]
