@@ -16,6 +16,16 @@ pub(crate) enum OutputFormat {
 	Json,
 }
 
+/// Output rendering for `config`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum ConfigFormat {
+	/// YAML (the compose-file format).
+	#[default]
+	Yaml,
+	/// JSON.
+	Json,
+}
+
 #[derive(Parser)]
 #[command(name = "podup", version)]
 pub(crate) struct Cli {
@@ -363,7 +373,17 @@ pub(crate) enum Commands {
 	},
 	/// Print the resolved compose file (after substitution / extends / include).
 	#[command(alias = "convert")]
-	Config,
+	Config {
+		/// Output format.
+		#[arg(long, value_enum, default_value_t = ConfigFormat::Yaml)]
+		format: ConfigFormat,
+		/// Print only the service names, one per line.
+		#[arg(long)]
+		services: bool,
+		/// Only validate the configuration; print nothing.
+		#[arg(short, long)]
+		quiet: bool,
+	},
 	/// Generate declarative artifacts from the compose file.
 	#[command(alias = "gen")]
 	Generate {
