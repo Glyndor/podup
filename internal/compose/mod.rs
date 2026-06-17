@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{ComposeError, Result};
 use crate::substitute;
-use types::ComposeFile;
+use types::{ComposeFile, ServiceNetworks};
 
 pub use order::{resolve_levels, resolve_order};
 
@@ -103,10 +103,36 @@ pub fn parse_files_with_env_files(paths: &[PathBuf], env_files: &[String]) -> Re
 		let other = parse_file_with_env_files(path, env_files)?;
 		merge_override(&mut merged, other);
 	}
+	normalize_default_network(&mut merged);
 	for warning in diagnostics::collect(&merged) {
 		tracing::warn!("{warning}");
 	}
 	Ok(merged)
+}
+
+/// Synthesize the implicit `default` network, matching docker-compose: any
+/// service that declares neither `networks:` nor `network_mode` is attached to
+/// a project `default` network. Without this, such services are created with no
+/// network namespace at all — they get no IP and cannot resolve each other by
+/// name, silently breaking the common no-`networks:`-block compose file.
+///
+/// The `default` network is created as `{project}_default` (see
+/// `resolve_network_name`) unless the file already defines a top-level
+/// `networks.default`, whose configuration is then respected. Idempotent.
+pub(crate) fn normalize_default_network(file: &mut ComposeFile) {
+	let needs_default = file
+		.services
+		.values()
+		.any(|svc| svc.network_mode.is_none() && matches!(svc.networks, ServiceNetworks::Empty));
+	if !needs_default {
+		return;
+	}
+	file.networks.entry("default".to_string()).or_insert(None);
+	for svc in file.services.values_mut() {
+		if svc.network_mode.is_none() && matches!(svc.networks, ServiceNetworks::Empty) {
+			svc.networks = ServiceNetworks::List(vec!["default".to_string()]);
+		}
+	}
 }
 
 /// Merge `other` into `target` with `other` winning (compose `-f` override
@@ -236,5 +262,48 @@ mod tests {
 		let yaml = "x-defaults: &defaults\n  image: nginx\n  restart: always\nservices:\n  web:\n    <<: *defaults\n    ports: ['80:80']\n";
 		let file = parse_str_raw(yaml).unwrap();
 		assert_eq!(file.services["web"].image.as_deref(), Some("nginx"));
+	}
+
+	// Default-network synthesis (#417)
+
+	#[test]
+	fn normalize_attaches_bare_service_to_default_network() {
+		let mut file = parse_str("services:\n  web:\n    image: nginx\n").unwrap();
+		normalize_default_network(&mut file);
+		assert!(file.networks.contains_key("default"));
+		assert_eq!(file.services["web"].networks.names(), vec!["default"]);
+	}
+
+	#[test]
+	fn normalize_leaves_service_with_explicit_networks_untouched() {
+		let mut file = parse_str(
+			"services:\n  web:\n    image: nginx\n    networks: [front]\nnetworks:\n  front:\n",
+		)
+		.unwrap();
+		normalize_default_network(&mut file);
+		assert_eq!(file.services["web"].networks.names(), vec!["front"]);
+		// No default network is synthesized when nothing needs it.
+		assert!(!file.networks.contains_key("default"));
+	}
+
+	#[test]
+	fn normalize_skips_service_with_network_mode() {
+		let mut file =
+			parse_str("services:\n  web:\n    image: nginx\n    network_mode: host\n").unwrap();
+		normalize_default_network(&mut file);
+		assert!(file.services["web"].networks.names().is_empty());
+		assert!(!file.networks.contains_key("default"));
+	}
+
+	#[test]
+	fn normalize_respects_explicit_default_network_config() {
+		let mut file = parse_str(
+			"services:\n  web:\n    image: nginx\nnetworks:\n  default:\n    driver: bridge\n",
+		)
+		.unwrap();
+		normalize_default_network(&mut file);
+		// The user-defined `default` config is kept, not overwritten with None.
+		assert!(file.networks["default"].is_some());
+		assert_eq!(file.services["web"].networks.names(), vec!["default"]);
 	}
 }
