@@ -70,7 +70,8 @@ projects, \fB\-q\fR/\fB\-\-quiet\fR prints names only, \fB\-\-format\fR selects
 .B down
 Stop and remove containers. \fB\-v\fR/\fB\-\-volumes\fR also removes named
 volumes declared in the compose file; \fB\-\-remove\-orphans\fR also removes
-containers for services no longer in the file.
+containers for services no longer in the file; \fB\-\-rmi\fR \fIall\fR|\fIlocal\fR
+also removes the service images.
 .TP
 .B start
 Start existing stopped containers.
@@ -89,7 +90,8 @@ registry.
 .TP
 .B rm
 Remove stopped service containers. \fB\-f\fR/\fB\-\-force\fR removes running
-containers (stopping them first).
+containers (stopping them first); \fB\-v\fR/\fB\-\-volumes\fR also removes
+anonymous volumes attached to them.
 .TP
 .B kill
 Send a signal to service containers. \fB\-s\fR/\fB\-\-signal\fR sets the signal
