@@ -98,6 +98,15 @@ pub(crate) enum Commands {
 		/// Override the replica count for a service: SERVICE=N (repeatable).
 		#[arg(long, value_parser = parse_scale_pair)]
 		scale: Vec<(String, u32)>,
+		/// Pull policy before starting: always, missing, never.
+		#[arg(long)]
+		pull: Option<String>,
+		/// Do not build images, even for services with a build section.
+		#[arg(long)]
+		no_build: bool,
+		/// Suppress image-pull progress output.
+		#[arg(long)]
+		quiet_pull: bool,
 		/// Bring up only these services (and their transitive depends_on).
 		/// If omitted, brings up every service in the compose file.
 		#[arg(trailing_var_arg = true)]

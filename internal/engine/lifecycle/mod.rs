@@ -271,8 +271,15 @@ impl Engine {
 			}
 		}
 
-		let policy = service.pull_policy.as_deref().unwrap_or("missing");
-		match (service.build.is_some(), policy) {
+		// `up --pull <policy>` overrides the per-service `pull_policy`; `--no-build`
+		// suppresses building even for services with a `build:` section (they fall
+		// back to pulling/using an existing image).
+		let policy = self
+			.pull_policy_override
+			.as_deref()
+			.or(service.pull_policy.as_deref())
+			.unwrap_or("missing");
+		match (service.build.is_some() && !self.no_build, policy) {
 			(true, _) => {
 				self.build_service(name, service, file, &crate::engine::BuildOptions::default())
 					.await?
