@@ -25,7 +25,7 @@ flowchart LR
 - 🔒 **Rootless by design** — drives rootless Podman over its native libpod REST API
 - 📄 **Compose-spec parsing** — YAML anchors, `extends`, `include`, profiles, `env_file`, variable substitution with modifiers
 - 🔁 **Dependency-aware** — `depends_on` ordering with `service_started`, `service_healthy`, and `service_completed_successfully` conditions
-- 🔢 **Replicas** — `scale:` and `deploy.replicas` with named replica containers
+- 🔢 **Replicas** — `scale:`/`deploy.replicas`, the `scale` command, and `up --scale SERVICE=N`, with named replica containers
 - 🔐 **Secrets & configs** — inline content, file, environment, and `external: true` Podman-native secret sources, staged securely
 - 👀 **Watch mode** — sync, rebuild or restart services on file changes per `develop.watch` rules
 - ⚙️ **Systemd Quadlet export** — `generate quadlet` emits native `podman-systemd.unit` files to run your stack under systemd, no daemon

@@ -35,6 +35,7 @@ Create and start all services (or only the named ones, plus their transitive
 | `--no-recreate` | Leave already-running containers in place. |
 | `--force-recreate` | Recreate containers even if their config is unchanged. |
 | `--no-deps` | Do not start the `depends_on` services of the named services. |
+| `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable. |
 
 ### `down`
 Stop and remove containers. `-v, --volumes` also removes named volumes declared
@@ -44,6 +45,14 @@ in the compose file.
 Start existing stopped containers, stop running ones without removing them, or
 restart them. `start`/`stop` accept a trailing service list; `restart [SERVICE]`
 restarts everything or one service.
+
+### `scale <SERVICE=N>...`
+Set the number of running containers for one or more services, creating missing
+replicas and removing surplus ones. A service that publishes a **fixed host
+port** cannot be scaled past one replica (only one container can bind a host
+port) — the command fails fast and tells you to drop the host port (`- "80"`, so
+Podman assigns one per replica), front it with a reverse proxy, or stay at one
+replica.
 
 ### `build`
 Build or rebuild service images (optionally only the named services).
