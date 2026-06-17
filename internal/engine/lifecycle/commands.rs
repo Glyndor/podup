@@ -27,20 +27,14 @@ impl Engine {
 
 			for container_name in self.replica_names(name, service) {
 				let grace = self.grace_period_secs(service);
-				let stop_path = format!(
-					"{API_PREFIX}/containers/{}/stop?t={grace}",
-					crate::libpod::urlencoded(&container_name),
-				);
-				if let Err(e) = self.client.post_empty_ok(&stop_path).await {
-					tracing::debug!("stop before restart {container_name}: {e}");
-				}
-
-				let start_path = format!(
-					"{API_PREFIX}/containers/{}/start",
+				// Single atomic restart (no visible stopped window) instead of a
+				// stop+start round-trip.
+				let restart_path = format!(
+					"{API_PREFIX}/containers/{}/restart?t={grace}",
 					crate::libpod::urlencoded(&container_name),
 				);
 				self.client
-					.post_empty_ok(&start_path)
+					.post_empty_ok(&restart_path)
 					.await
 					.map_err(ComposeError::Podman)?;
 
@@ -51,18 +45,11 @@ impl Engine {
 				if dep_service.depends_on.restart_for(name) {
 					for dep_container in self.replica_names(dep_name, dep_service) {
 						let grace = self.grace_period_secs(dep_service);
-						let stop_path = format!(
-							"{API_PREFIX}/containers/{}/stop?t={grace}",
+						let restart_path = format!(
+							"{API_PREFIX}/containers/{}/restart?t={grace}",
 							crate::libpod::urlencoded(&dep_container),
 						);
-						if let Err(e) = self.client.post_empty_ok(&stop_path).await {
-							tracing::debug!("stop before cascade restart {dep_container}: {e}");
-						}
-						let start_path = format!(
-							"{API_PREFIX}/containers/{}/start",
-							crate::libpod::urlencoded(&dep_container),
-						);
-						if let Err(e) = self.client.post_empty_ok(&start_path).await {
+						if let Err(e) = self.client.post_empty_ok(&restart_path).await {
 							tracing::warn!("cascade restart of {dep_name} failed: {e}");
 						} else {
 							info!("cascade-restarted {dep_container} (depends_on.restart)");
