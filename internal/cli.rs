@@ -206,6 +206,27 @@ pub(crate) enum Commands {
 	},
 	/// Execute a command in a running service container.
 	Exec {
+		/// Set environment variables (KEY=VAL); may be repeated.
+		#[arg(short, long = "env")]
+		env: Vec<String>,
+		/// Run the command as this user (name or UID[:GID]).
+		#[arg(short, long)]
+		user: Option<String>,
+		/// Working directory inside the container.
+		#[arg(short, long)]
+		workdir: Option<String>,
+		/// Give extended privileges to the command.
+		#[arg(long)]
+		privileged: bool,
+		/// Detach: run the command in the background.
+		#[arg(short, long)]
+		detach: bool,
+		/// Disable pseudo-TTY allocation (podup never allocates one; accepted for compatibility).
+		#[arg(short = 'T', long = "no-TTY")]
+		no_tty: bool,
+		/// Index of the container when the service has multiple replicas (1-based).
+		#[arg(long)]
+		index: Option<u32>,
 		/// Service name.
 		service: String,
 		/// Command (and arguments) to execute.

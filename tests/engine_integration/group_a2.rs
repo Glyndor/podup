@@ -38,10 +38,11 @@ async fn inline_secret_materialized() {
 	// Inline content is created as a Podman-native secret and mounted at the
 	// usual /run/secrets/<name> path — verify by exec-ing a read.
 	engine
-		.exec(
+		.exec_with_options(
 			&file,
 			"web",
 			vec!["cat".to_string(), "/run/secrets/mysecret".to_string()],
+			podup::ExecOptions::default(),
 		)
 		.await
 		.unwrap();

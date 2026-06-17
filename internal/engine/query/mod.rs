@@ -13,6 +13,23 @@ use super::Engine;
 
 mod inspect;
 
+/// Options for [`Engine::exec`], mirroring `docker compose exec` flags.
+#[derive(Default)]
+pub struct ExecOptions {
+	/// Extra environment variables (`KEY=VAL`), `-e/--env`.
+	pub env: Vec<String>,
+	/// Run as this user, `-u/--user`.
+	pub user: Option<String>,
+	/// Working directory inside the container, `-w/--workdir`.
+	pub workdir: Option<String>,
+	/// Run with extended privileges, `--privileged`.
+	pub privileged: bool,
+	/// Detach: start the exec and return without streaming output, `-d/--detach`.
+	pub detach: bool,
+	/// 1-based replica index for a scaled service, `--index` (default: first).
+	pub index: Option<u32>,
+}
+
 impl Engine {
 	/// List containers for this project: name, image, command, state, and port bindings.
 	pub async fn ps(&self, _file: &ComposeFile) -> Result<()> {
@@ -155,23 +172,50 @@ impl Engine {
 		Ok(())
 	}
 
-	/// Run a command in the first replica of the named service. Exits with the command's exit code.
+	/// Run a command in the first replica of the named service with default
+	/// options. Exits with the command's exit code.
 	pub async fn exec(
 		&self,
 		file: &ComposeFile,
 		service_name: &str,
 		cmd: Vec<String>,
 	) -> Result<()> {
+		self.exec_with_options(file, service_name, cmd, ExecOptions::default())
+			.await
+	}
+
+	/// Run a command in a service container with `docker compose exec`-style
+	/// overrides (env, user, workdir, privileged, detach, replica index).
+	pub async fn exec_with_options(
+		&self,
+		file: &ComposeFile,
+		service_name: &str,
+		cmd: Vec<String>,
+		opts: ExecOptions,
+	) -> Result<()> {
 		let service = file
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = self.first_replica_name(service_name, service);
+		let container_name = match opts.index {
+			Some(i) => {
+				let names = self.replica_names(service_name, service);
+				let idx = (i as usize).saturating_sub(1);
+				names.get(idx).cloned().ok_or_else(|| {
+					ComposeError::ServiceNotFound(format!("{service_name} (replica index {i})"))
+				})?
+			}
+			None => self.first_replica_name(service_name, service),
+		};
 
 		let exec_cfg = ExecCreateConfig {
 			cmd: Some(cmd),
 			attach_stdout: Some(true),
 			attach_stderr: Some(true),
+			user: opts.user.clone(),
+			working_dir: opts.workdir.clone(),
+			privileged: opts.privileged.then_some(true),
+			env: (!opts.env.is_empty()).then(|| opts.env.clone()),
 			..Default::default()
 		};
 		let create_path = format!(
@@ -184,6 +228,23 @@ impl Engine {
 			.await
 			.map_err(ComposeError::Podman)?;
 		let exec_id = resp.id;
+
+		// `-d/--detach`: start the exec and return without streaming output or
+		// waiting for the exit code. The server returns immediately, so the
+		// response body is dropped.
+		if opts.detach {
+			let start_cfg = ExecStartConfig {
+				detach: true,
+				tty: false,
+			};
+			let start_path = format!("{API_PREFIX}/exec/{}/start", urlencoded(&exec_id));
+			let _ = self
+				.client
+				.post_json_stream(&start_path, &start_cfg)
+				.await
+				.map_err(ComposeError::Podman)?;
+			return Ok(());
+		}
 
 		let start_cfg = ExecStartConfig {
 			detach: false,

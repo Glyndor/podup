@@ -282,7 +282,12 @@ async fn exec_scaled_service_targets_first_replica() {
 
 	engine.up(&file).await.unwrap();
 	engine
-		.exec(&file, "worker", vec!["echo".to_string(), "ok".to_string()])
+		.exec_with_options(
+			&file,
+			"worker",
+			vec!["echo".to_string(), "ok".to_string()],
+			podup::ExecOptions::default(),
+		)
 		.await
 		.unwrap();
 	engine.down(&file).await.unwrap();

@@ -7,6 +7,7 @@ mod container;
 mod copy;
 pub use lifecycle::RunOptions;
 pub use lock::ProjectLock;
+pub use query::ExecOptions;
 mod container_config;
 mod container_fields;
 mod health;
