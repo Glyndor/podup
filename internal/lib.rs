@@ -30,7 +30,7 @@ pub use compose::{
 };
 pub use engine::{
 	is_safe_project_name, list_projects, BuildOptions, Engine, ExecOptions, ImagesOptions,
-	LsOptions, ProjectLock, PsOptions, RunOptions,
+	LsOptions, ProjectLock, PsOptions, PushOptions, RunOptions,
 };
 pub use error::{ComposeError, Result};
 pub use libpod::Client;

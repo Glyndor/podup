@@ -7,6 +7,8 @@
 
 mod context;
 mod pull;
+mod push;
+pub use push::PushOptions;
 
 use bytes::Bytes;
 use futures_util::StreamExt;

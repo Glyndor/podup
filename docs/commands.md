@@ -63,6 +63,13 @@ trailing service list. A later `up`/`start` runs the created containers.
 ### `build`
 Build or rebuild service images (optionally only the named services).
 
+### `push`
+Push each service's `image:` to its registry (services without an image are
+skipped). Credentials come from `podman login`. `--ignore-push-failures`
+continues after a failure; `--tls-verify false` allows an insecure/HTTP
+registry (omit it to keep Podman's default verification). Accepts a trailing
+service list.
+
 ### `rm`
 Remove stopped service containers. `-f, --force` stops and removes running ones.
 

@@ -7,66 +7,16 @@ use std::process;
 
 #[cfg(feature = "completions")]
 use clap::CommandFactory;
-use clap::Parser;
-use tracing::{Event, Subscriber};
-use tracing_subscriber::fmt::format::Writer;
-use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
-use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::EnvFilter;
 
 mod cli;
 mod generate;
 mod resolve;
+mod startup;
 
 use cli::*;
 use generate::write_quadlet;
 use resolve::*;
-
-/// Canonical project URL, reused for the bug-report hint on internal errors.
-const REPO_URL: &str = "https://github.com/Glyndor/podup";
-
-/// Event formatter that renders every diagnostic as `podup: <level>: <message>`
-/// on a single line, matching the prefix used by the CLI's own `eprintln!`
-/// warnings and errors. This unifies the compose forward-compat diagnostics
-/// (emitted via `tracing::warn!`) with the rest of podup's user-facing output.
-struct PodupFormat;
-
-impl<S, N> FormatEvent<S, N> for PodupFormat
-where
-	S: Subscriber + for<'a> LookupSpan<'a>,
-	N: for<'a> FormatFields<'a> + 'static,
-{
-	fn format_event(
-		&self,
-		ctx: &FmtContext<'_, S, N>,
-		mut writer: Writer<'_>,
-		event: &Event<'_>,
-	) -> std::fmt::Result {
-		write!(writer, "podup: {}: ", level_word(*event.metadata().level()))?;
-		ctx.field_format().format_fields(writer.by_ref(), event)?;
-		writeln!(writer)
-	}
-}
-
-/// Map a tracing level to the user-facing word used in `podup:` output.
-fn level_word(level: tracing::Level) -> &'static str {
-	match level {
-		tracing::Level::ERROR => "error",
-		tracing::Level::WARN => "warning",
-		tracing::Level::INFO => "info",
-		tracing::Level::DEBUG => "debug",
-		tracing::Level::TRACE => "trace",
-	}
-}
-
-/// Guidance printed after an internal error or panic: where to report it and a
-/// reminder to scrub secrets first. Kept off ordinary, user-correctable errors.
-fn internal_error_notice() -> String {
-	format!(
-		"podup: this looks like a bug; re-run with RUST_LOG=debug and report it at {REPO_URL}/issues\n\
-		 podup: redact secrets (passwords, tokens, resolved env values) from any logs before sharing"
-	)
-}
+use startup::{init_tracing, internal_error_notice, parse_cli};
 
 /// Whether a command creates, destroys, or changes the state of containers and
 /// so must hold the exclusive project lock.
@@ -134,31 +84,8 @@ fn run_to_exit() {
 }
 
 async fn run() -> podup::Result<()> {
-	// Surface diagnostics by default: with no `RUST_LOG` set, show warnings (so
-	// the forward-compat "unknown field" notices are never silently dropped),
-	// and write them to stderr so a command's stdout stays a clean pipe.
-	tracing_subscriber::fmt()
-		.with_env_filter(
-			EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
-		)
-		.with_writer(std::io::stderr)
-		.event_format(PodupFormat)
-		.init();
-
-	// Frame `--help`/`--version` output with a blank line top and bottom. clap
-	// trims template/before/after-help edges, so wrap the rendered text here.
-	let cli = match Cli::try_parse() {
-		Ok(cli) => cli,
-		Err(e) => match e.kind() {
-			clap::error::ErrorKind::DisplayHelp
-			| clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
-			| clap::error::ErrorKind::DisplayVersion => {
-				print!("\n{e}\n");
-				process::exit(0);
-			}
-			_ => e.exit(),
-		},
-	};
+	init_tracing();
+	let cli = parse_cli();
 
 	// `completions` derives entirely from the static CLI definition; it neither
 	// parses a compose file nor contacts Podman. Print to stdout for piping.
@@ -398,6 +325,22 @@ async fn run() -> podup::Result<()> {
 			no_stream,
 			services,
 		} => engine.stats(&file, &services, no_stream).await?,
+		Commands::Push {
+			ignore_push_failures,
+			tls_verify,
+			services,
+		} => {
+			engine
+				.push(
+					&file,
+					&services,
+					podup::PushOptions {
+						ignore_failures: ignore_push_failures,
+						tls_verify,
+					},
+				)
+				.await?
+		}
 		Commands::Port {
 			service,
 			private_port,
@@ -460,30 +403,4 @@ async fn run() -> podup::Result<()> {
 	}
 
 	Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn level_words_match_user_facing_terms() {
-		assert_eq!(level_word(tracing::Level::WARN), "warning");
-		assert_eq!(level_word(tracing::Level::ERROR), "error");
-	}
-
-	#[test]
-	fn internal_error_notice_reports_and_warns_on_secrets() {
-		let notice = internal_error_notice();
-		assert!(notice.contains(REPO_URL), "points at the issue tracker");
-		assert!(notice.contains("/issues"));
-		assert!(
-			notice.contains("redact"),
-			"reminds the user to scrub secrets"
-		);
-		assert!(
-			notice.contains("RUST_LOG=debug"),
-			"tells the user what to capture"
-		);
-	}
 }
