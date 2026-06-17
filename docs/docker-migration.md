@@ -189,6 +189,7 @@ portable across checkouts and the spec does not require them); `../` is allowed.
 | `env_file.format` values other than `dotenv` | Error is emitted; only the `dotenv` format is accepted |
 | `gpus:` as a list of device objects | Use `deploy.resources.reservations.devices` for GPU reservations; the scalar `gpus: all` / `gpus: N` shorthand is supported |
 | `provider:` / model-runner services (`provider`, top-level `models`) | No rootless Podman equivalent; reported as an unknown key |
+| Container naming | A single-replica service is named `<project>-<service>` (e.g. `myapp-web`); docker-compose v2 always appends a `-1` replica index (`myapp-web-1`). Scaled replicas (>1) do get the `-N` suffix. Scripts that reference containers by exact name should account for this. |
 | Real-hardware smoke tests on macOS and Windows | Pending ([#48](https://github.com/Glyndor/podup/issues/48)); code paths exist but are untested on physical hardware |
 
 ## Enabling verbose output
