@@ -8,7 +8,7 @@ mod copy;
 pub use build::{BuildOptions, PushOptions};
 pub use lifecycle::RunOptions;
 pub use lock::ProjectLock;
-pub use query::{ExecOptions, ImagesOptions, PsOptions};
+pub use query::{ExecOptions, ImagesOptions, LogsOptions, PsOptions};
 mod container_config;
 mod container_fields;
 mod health;

@@ -50,6 +50,39 @@ pub struct ImagesOptions {
 	pub json: bool,
 }
 
+/// Options for [`Engine::logs_with_options`], mirroring `docker compose logs`.
+#[derive(Default)]
+pub struct LogsOptions {
+	/// Follow log output, `-f/--follow`.
+	pub follow: bool,
+	/// Number of lines to show from the end, `-n/--tail` (`None` = all).
+	pub tail: Option<String>,
+	/// Show logs since a timestamp/relative time, `--since`.
+	pub since: Option<String>,
+	/// Show logs until a timestamp/relative time, `--until`.
+	pub until: Option<String>,
+	/// Prefix each line with an RFC3339 timestamp, `-t/--timestamps`.
+	pub timestamps: bool,
+}
+
+/// Build the libpod `containers/{}/logs` query string from the options.
+fn log_query(opts: &LogsOptions) -> String {
+	let mut q = format!(
+		"stdout=true&stderr=true&follow={}&timestamps={}",
+		opts.follow, opts.timestamps
+	);
+	if let Some(tail) = &opts.tail {
+		q.push_str(&format!("&tail={}", urlencoded(tail)));
+	}
+	if let Some(since) = &opts.since {
+		q.push_str(&format!("&since={}", urlencoded(since)));
+	}
+	if let Some(until) = &opts.until {
+		q.push_str(&format!("&until={}", urlencoded(until)));
+	}
+	q
+}
+
 impl Engine {
 	/// List running containers for this project as a table (default options).
 	pub async fn ps(&self, file: &ComposeFile) -> Result<()> {
@@ -137,6 +170,27 @@ impl Engine {
 		service_name: Option<&str>,
 		follow: bool,
 	) -> Result<()> {
+		self.logs_with_options(
+			file,
+			service_name,
+			LogsOptions {
+				follow,
+				..Default::default()
+			},
+		)
+		.await
+	}
+
+	/// Stream logs with `docker compose logs` options (`--tail`, `--since`,
+	/// `--until`, `--timestamps`, `--follow`).
+	pub async fn logs_with_options(
+		&self,
+		file: &ComposeFile,
+		service_name: Option<&str>,
+		opts: LogsOptions,
+	) -> Result<()> {
+		let follow = opts.follow;
+		let query = log_query(&opts);
 		// (container_name, is_tty) — TTY containers send raw bytes; non-TTY use
 		// multiplexed 8-byte-header framing.
 		let targets: Vec<(String, bool)> = if let Some(svc) = service_name {
@@ -168,9 +222,10 @@ impl Engine {
 				.into_iter()
 				.map(|(container_name, is_tty)| {
 					let client = &self.client;
+					let query = query.clone();
 					async move {
 						let path = format!(
-							"{API_PREFIX}/containers/{}/logs?stdout=true&stderr=true&follow=true",
+							"{API_PREFIX}/containers/{}/logs?{query}",
 							urlencoded(&container_name),
 						);
 						let resp = match client.get_stream(&path).await {
@@ -203,9 +258,8 @@ impl Engine {
 		} else {
 			for (container_name, is_tty) in targets {
 				let path = format!(
-					"{API_PREFIX}/containers/{}/logs?stdout=true&stderr=true&follow={}",
+					"{API_PREFIX}/containers/{}/logs?{query}",
 					urlencoded(&container_name),
-					follow,
 				);
 				let resp = self
 					.client
@@ -405,5 +459,33 @@ impl Engine {
 			}
 		}
 		Ok(())
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{log_query, LogsOptions};
+
+	#[test]
+	fn log_query_defaults_to_stdout_stderr_no_follow() {
+		let q = log_query(&LogsOptions::default());
+		assert_eq!(q, "stdout=true&stderr=true&follow=false&timestamps=false");
+	}
+
+	#[test]
+	fn log_query_includes_set_options() {
+		let q = log_query(&LogsOptions {
+			follow: true,
+			tail: Some("20".into()),
+			since: Some("10m".into()),
+			until: Some("2024-01-01T00:00:00".into()),
+			timestamps: true,
+		});
+		assert!(q.contains("follow=true"));
+		assert!(q.contains("timestamps=true"));
+		assert!(q.contains("&tail=20"));
+		assert!(q.contains("&since=10m"));
+		// `:` is percent-encoded in the query value.
+		assert!(q.contains("&until=2024-01-01T00%3A00%3A00"));
 	}
 }
