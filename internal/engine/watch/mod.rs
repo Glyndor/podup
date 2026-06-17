@@ -256,7 +256,13 @@ impl Engine {
 			None => return Ok(()),
 		};
 		info!("rebuilding {service_name}");
-		self.build_service(service_name, service, file).await?;
+		self.build_service(
+			service_name,
+			service,
+			file,
+			&crate::engine::BuildOptions::default(),
+		)
+		.await?;
 		let container_name = self.container_name(service_name, service);
 		self.create_and_start(&container_name, service_name, service, file)
 			.await

@@ -6,14 +6,15 @@
 //! passed as the `target=` query parameter — the full Dockerfile is always sent.
 
 mod context;
+mod pull;
 
 use bytes::Bytes;
 use futures_util::StreamExt;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 use crate::compose::types::{BuildConfig, Service};
 use crate::error::{ComposeError, Result};
-use crate::libpod::types::image::{BuildOutput, ImagePullProgress};
+use crate::libpod::types::image::BuildOutput;
 use crate::libpod::urlencoded;
 use crate::libpod::API_PREFIX;
 use crate::size;
@@ -26,53 +27,22 @@ use super::Engine;
 /// specs (`id=NAME,src=ENTRY`) for the libpod build endpoint.
 type ResolvedBuildSecrets = (Vec<(String, Vec<u8>)>, Vec<String>);
 
+/// `docker compose build`-style CLI overrides. Each augments (never weakens)
+/// the per-service `build:` config: a flag forces the behaviour on even when
+/// the compose file leaves it off.
+#[derive(Default, Clone)]
+pub struct BuildOptions {
+	/// Force a cache-less build (`--no-cache`).
+	pub no_cache: bool,
+	/// Always attempt to pull a newer base image (`--pull`).
+	pub pull: bool,
+	/// Extra build args (`KEY=VAL`); override the compose `build.args` on conflict.
+	pub build_args: Vec<String>,
+	/// Suppress build output (`-q/--quiet`).
+	pub quiet: bool,
+}
+
 impl Engine {
-	pub(super) async fn pull_image(&self, service: &Service) -> Result<()> {
-		let image = match &service.image {
-			Some(img) => img.clone(),
-			None => return Ok(()),
-		};
-
-		info!("pulling {image}");
-
-		let requested = service.pull_policy.as_deref();
-		let pull_policy = libpod_pull_policy(requested).unwrap_or_else(|| {
-			warn!(
-				"unknown pull_policy '{}', defaulting to 'missing'",
-				requested.unwrap_or_default()
-			);
-			"missing"
-		});
-		let mut query = format!("reference={}&policy={}", urlencoded(&image), pull_policy);
-		if let Some(platform) = &service.platform {
-			query.push_str(&format!("&platform={}", urlencoded(platform)));
-		}
-
-		let path = format!("{API_PREFIX}/images/pull?{query}");
-		let resp = self
-			.client
-			.post_empty_stream(&path)
-			.await
-			.map_err(ComposeError::Podman)?;
-		let mut stream = crate::libpod::parse_json_lines::<ImagePullProgress>(resp.into_body());
-
-		while let Some(result) = stream.next().await {
-			match result {
-				Ok(progress) => {
-					if !progress.stream.is_empty() {
-						debug!("{}", progress.stream.trim_end());
-					}
-					if !progress.error.is_empty() {
-						warn!("pull error: {}", progress.error);
-					}
-				}
-				Err(e) => warn!("pull warning: {e}"),
-			}
-		}
-
-		Ok(())
-	}
-
 	/// Build (or rebuild) images for services that have a `build:` block.
 	///
 	/// If `target_services` is empty, every service with a build config is built.
@@ -81,6 +51,18 @@ impl Engine {
 		&self,
 		file: &crate::compose::types::ComposeFile,
 		target_services: &[String],
+	) -> Result<()> {
+		self.build_all_with_options(file, target_services, &BuildOptions::default())
+			.await
+	}
+
+	/// Build service images with `docker compose build`-style overrides
+	/// (`--no-cache`, `--pull`, `--build-arg`, `--quiet`).
+	pub async fn build_all_with_options(
+		&self,
+		file: &crate::compose::types::ComposeFile,
+		target_services: &[String],
+		opts: &BuildOptions,
 	) -> Result<()> {
 		let names: Vec<String> = if target_services.is_empty() {
 			file.services.keys().cloned().collect()
@@ -96,7 +78,7 @@ impl Engine {
 		for name in &names {
 			let service = &file.services[name];
 			if service.build.is_some() {
-				self.build_service(name, service, file).await?;
+				self.build_service(name, service, file, opts).await?;
 			}
 		}
 		Ok(())
@@ -107,6 +89,7 @@ impl Engine {
 		service_name: &str,
 		service: &Service,
 		file: &crate::compose::types::ComposeFile,
+		opts: &BuildOptions,
 	) -> Result<()> {
 		let build = match &service.build {
 			Some(b) => b,
@@ -178,6 +161,16 @@ impl Engine {
 			let value = v.unwrap_or_else(|| std::env::var(&k).unwrap_or_default());
 			build_args.insert(k, value);
 		}
+		// CLI `--build-arg KEY=VAL` overrides the compose `build.args`. A bare
+		// `KEY` (no `=`) takes its value from the process environment, matching
+		// docker compose.
+		for entry in &opts.build_args {
+			let (k, v) = match entry.split_once('=') {
+				Some((k, v)) => (k.to_string(), v.to_string()),
+				None => (entry.clone(), std::env::var(entry).unwrap_or_default()),
+			};
+			build_args.insert(k, v);
+		}
 
 		let mut labels: std::collections::HashMap<String, String> =
 			std::collections::HashMap::new();
@@ -227,10 +220,10 @@ impl Engine {
 		let mut qs = format!(
 			"t={}&rm=true&nocache={}",
 			urlencoded(&tag),
-			build.no_cache()
+			build.no_cache() || opts.no_cache
 		);
 		qs.push_str(&format!("&dockerfile={}", urlencoded(&dockerfile_name)));
-		if build.pull() {
+		if build.pull() || opts.pull {
 			qs.push_str("&pull=true");
 		}
 		if let Some(p) = &platform {
@@ -295,7 +288,7 @@ impl Engine {
 		while let Some(result) = stream.next().await {
 			match result {
 				Ok(output) => {
-					if !output.stream.is_empty() {
+					if !opts.quiet && !output.stream.is_empty() {
 						print!("{}", output.stream);
 					}
 					if let Some(err) = output.error_detail.and_then(|e| e.message) {
@@ -385,38 +378,10 @@ fn is_remote_context(context: &str) -> bool {
 	context.contains("://") || context.starts_with("git@")
 }
 
-/// Map a compose `pull_policy:` value to the libpod images/pull `policy`
-/// parameter. `if_not_present` is the spec alias for `missing`; `build` falls
-/// back to `missing` here (its build behavior is handled by the caller). Returns
-/// `None` for an unrecognized value so the caller can warn and default.
-pub(super) fn libpod_pull_policy(policy: Option<&str>) -> Option<&'static str> {
-	match policy {
-		Some("always") => Some("always"),
-		Some("newer") => Some("newer"),
-		Some("never") => Some("never"),
-		None | Some("missing") | Some("if_not_present") | Some("build") => Some("missing"),
-		Some(_) => None,
-	}
-}
-
 #[cfg(test)]
 mod tests {
-	use super::{is_remote_context, libpod_pull_policy, Engine};
+	use super::{is_remote_context, Engine};
 	use crate::libpod::Client;
-
-	#[test]
-	fn pull_policy_maps_every_spec_value() {
-		assert_eq!(libpod_pull_policy(Some("always")), Some("always"));
-		assert_eq!(libpod_pull_policy(Some("newer")), Some("newer"));
-		assert_eq!(libpod_pull_policy(Some("never")), Some("never"));
-		assert_eq!(libpod_pull_policy(Some("missing")), Some("missing"));
-		// `if_not_present` is the spec alias for `missing`.
-		assert_eq!(libpod_pull_policy(Some("if_not_present")), Some("missing"));
-		assert_eq!(libpod_pull_policy(Some("build")), Some("missing"));
-		assert_eq!(libpod_pull_policy(None), Some("missing"));
-		// Unknown values are reported (None) so the caller warns.
-		assert_eq!(libpod_pull_policy(Some("bogus")), None);
-	}
 
 	fn engine(base: std::path::PathBuf) -> Engine {
 		Engine::with_base_dir(Client::new("/nonexistent.sock"), "p".into(), base)

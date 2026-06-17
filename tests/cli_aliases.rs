@@ -109,3 +109,21 @@ fn exec_accepts_override_flags() {
 		);
 	}
 }
+
+/// `build` accepts the docker-compose build overrides (`--no-cache`, `--pull`,
+/// `--build-arg`, `-q/--quiet`).
+#[test]
+fn build_accepts_override_flags() {
+	let output = Command::new(bin())
+		.args(["build", "--help"])
+		.output()
+		.expect("run build --help");
+	assert!(output.status.success(), "`build --help` failed");
+	let stdout = String::from_utf8_lossy(&output.stdout);
+	for flag in ["--no-cache", "--pull", "--build-arg", "--quiet"] {
+		assert!(
+			stdout.contains(flag),
+			"`build` is missing the {flag} flag; got:\n{stdout}"
+		);
+	}
+}
