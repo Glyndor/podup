@@ -13,6 +13,17 @@ use crate::libpod::API_PREFIX;
 impl Engine {
 	/// Restart the named service (or all services). Dependents with a `restart` condition in `depends_on` are also restarted.
 	pub async fn restart(&self, file: &ComposeFile, service_name: Option<&str>) -> Result<()> {
+		self.restart_with_options(file, service_name, false).await
+	}
+
+	/// Restart with options. When `no_deps` is true, dependents with a
+	/// `depends_on` restart condition are NOT cascade-restarted.
+	pub async fn restart_with_options(
+		&self,
+		file: &ComposeFile,
+		service_name: Option<&str>,
+		no_deps: bool,
+	) -> Result<()> {
 		let names: Vec<String> = if let Some(svc) = service_name {
 			if !file.services.contains_key(svc) {
 				return Err(ComposeError::ServiceNotFound(svc.into()));
@@ -41,6 +52,9 @@ impl Engine {
 				info!("restarted {container_name}");
 			}
 
+			if no_deps {
+				continue;
+			}
 			for (dep_name, dep_service) in &file.services {
 				if dep_service.depends_on.restart_for(name) {
 					for dep_container in self.replica_names(dep_name, dep_service) {

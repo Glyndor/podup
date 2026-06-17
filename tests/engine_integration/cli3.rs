@@ -44,3 +44,70 @@ async fn cli_logs_tail_limits_output() {
 		.output()
 		.unwrap();
 }
+
+fn run(args: &[&str]) -> std::process::Output {
+	Command::new(bin()).args(args).output().unwrap()
+}
+
+fn ps_all_count(compose: &str, proj: &str) -> usize {
+	String::from_utf8_lossy(&run(&["-f", compose, "-p", proj, "ps", "-a", "-q"]).stdout)
+		.lines()
+		.filter(|l| !l.trim().is_empty())
+		.count()
+}
+
+#[tokio::test]
+async fn cli_down_remove_orphans_drops_undeclared_containers() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let proj = format!("t{}-orphan", std::process::id());
+	let two = dir.path().join("two.yml");
+	let one = dir.path().join("one.yml");
+	let svc = "image: alpine:latest\n    command: [\"sleep\", \"infinity\"]";
+	fs::write(
+		&two,
+		format!("services:\n  web:\n    {svc}\n  extra:\n    {svc}\n"),
+	)
+	.unwrap();
+	fs::write(&one, format!("services:\n  web:\n    {svc}\n")).unwrap();
+	let (two, one) = (two.to_str().unwrap(), one.to_str().unwrap());
+
+	run(&["-f", two, "-p", &proj, "up", "-d"]);
+	assert_eq!(ps_all_count(two, &proj), 2);
+
+	// Down against the one-service file: --remove-orphans must also drop `extra`.
+	let down = run(&["-f", one, "-p", &proj, "down", "--remove-orphans"]);
+	assert!(down.status.success(), "down failed: {:?}", down.stderr);
+	assert_eq!(
+		ps_all_count(one, &proj),
+		0,
+		"--remove-orphans must remove the undeclared container too"
+	);
+}
+
+#[tokio::test]
+async fn cli_restart_no_deps_succeeds() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let compose = dir.path().join("docker-compose.yml");
+	let proj = format!("t{}-nodeps", std::process::id());
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+
+	run(&["-f", c, "-p", &proj, "up", "-d"]);
+	let restart = run(&["-f", c, "-p", &proj, "restart", "--no-deps", "web"]);
+	assert!(
+		restart.status.success(),
+		"restart --no-deps failed: {:?}",
+		restart.stderr
+	);
+	run(&["-f", c, "-p", &proj, "down"]);
+}
