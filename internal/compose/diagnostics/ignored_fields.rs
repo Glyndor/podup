@@ -1,7 +1,7 @@
 //! Warnings for service/network/secret fields that podup parses but cannot
 //! translate. Split out of the diagnostics root so each collector stays small.
 
-use crate::compose::types::{BuildConfig, ComposeFile, PortMapping, VolumeMount};
+use crate::compose::types::{BuildConfig, ComposeFile, EnvFileEntry, PortMapping, VolumeMount};
 
 /// Service fields that podup models but cannot honor on rootless Podman.
 pub(super) fn ignored_service_fields(file: &ComposeFile, out: &mut Vec<String>) {
@@ -23,6 +23,17 @@ pub(super) fn ignored_service_fields(file: &ComposeFile, out: &mut Vec<String>) 
 				"service '{service}': attach is not honored; podup follows its own \
 				 attach/detach logic for `up` log streaming"
 			));
+		}
+		for entry in def.env_file.to_entries() {
+			if let EnvFileEntry::Config {
+				format: Some(fmt), ..
+			} = entry
+			{
+				out.push(format!(
+					"service '{service}': env_file format '{fmt}' is not honored; podup \
+					 always parses env files as dotenv"
+				));
+			}
 		}
 	}
 }
@@ -72,6 +83,7 @@ pub(super) fn ignored_build_fields(file: &ComposeFile, out: &mut Vec<String>) {
 			entitlements,
 			provenance,
 			sbom,
+			ssh,
 			..
 		}) = &def.build
 		else {
@@ -80,6 +92,9 @@ pub(super) fn ignored_build_fields(file: &ComposeFile, out: &mut Vec<String>) {
 		let mut unmapped: Vec<&str> = Vec::new();
 		if privileged.is_some() {
 			unmapped.push("privileged");
+		}
+		if !ssh.is_empty() {
+			unmapped.push("ssh");
 		}
 		if !ulimits.is_empty() {
 			unmapped.push("ulimits");
