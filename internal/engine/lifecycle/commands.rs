@@ -280,7 +280,7 @@ impl Engine {
 		// network, which is created here as `{project}_default`.
 		self.create_networks(file).await?;
 
-		self.create_and_start(&run_name, service_name, &run_service, file)
+		self.create_and_start(&run_name, service_name, &run_service, file, true)
 			.await?;
 
 		if detach {

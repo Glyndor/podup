@@ -10,7 +10,34 @@ use crate::engine::Engine;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
-use super::check_scale_port_conflict;
+/// Reject a scaled service that publishes a fixed host port: only one container
+/// can bind a given host port, so replicas 2..N would fail at runtime with
+/// `address already in use`. A host port of 0/None is runtime-assigned by
+/// Podman, so such a service scales fine. The compose-spec does not define how
+/// scaling interacts with published ports, so podup fails fast rather than
+/// inventing surprising auto-offset semantics.
+pub(super) fn check_scale_port_conflict(
+	service_name: &str,
+	service: &Service,
+	replicas: usize,
+) -> Result<()> {
+	if replicas <= 1 {
+		return Ok(());
+	}
+	let fixed: Vec<u16> = crate::ports::parse_ports(&service.ports)?
+		.iter()
+		.filter_map(|p| p.host_port)
+		.filter(|&hp| hp != 0)
+		.collect();
+	if fixed.is_empty() {
+		return Ok(());
+	}
+	Err(ComposeError::ScalePortConflict {
+		service: service_name.to_string(),
+		replicas,
+		ports: fixed,
+	})
+}
 
 impl Engine {
 	/// Set the number of running containers for the named services (docker
@@ -107,5 +134,46 @@ impl Engine {
 			.flat_map(|e| e.names)
 			.map(|raw| raw.trim_start_matches('/').to_string())
 			.collect())
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::check_scale_port_conflict;
+
+	fn service(yaml: &str) -> crate::compose::types::Service {
+		let file = crate::parse_str(yaml).unwrap();
+		file.services.into_iter().next().unwrap().1
+	}
+
+	#[test]
+	fn single_replica_never_conflicts() {
+		let svc = service("services:\n  web:\n    image: x\n    ports:\n      - \"8080:80\"\n");
+		assert!(check_scale_port_conflict("web", &svc, 1).is_ok());
+	}
+
+	#[test]
+	fn scaled_fixed_host_port_conflicts() {
+		let svc = service("services:\n  web:\n    image: x\n    ports:\n      - \"8080:80\"\n");
+		let err = check_scale_port_conflict("web", &svc, 3).unwrap_err();
+		assert!(matches!(
+			err,
+			crate::error::ComposeError::ScalePortConflict { .. }
+		));
+		assert!(err.to_string().contains("8080"));
+	}
+
+	#[test]
+	fn scaled_random_host_port_is_allowed() {
+		// A container-only port (`"80"`) gets a runtime-assigned host port per
+		// replica, so scaling is fine.
+		let svc = service("services:\n  web:\n    image: x\n    ports:\n      - \"80\"\n");
+		assert!(check_scale_port_conflict("web", &svc, 3).is_ok());
+	}
+
+	#[test]
+	fn scaled_no_ports_is_allowed() {
+		let svc = service("services:\n  worker:\n    image: x\n");
+		assert!(check_scale_port_conflict("worker", &svc, 5).is_ok());
 	}
 }

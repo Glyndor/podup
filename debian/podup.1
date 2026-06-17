@@ -56,6 +56,16 @@ Set the number of running containers for services, creating missing replicas and
 removing surplus ones. A service publishing a fixed host port cannot scale past
 one replica and the command fails with guidance.
 .TP
+.B create
+Create the containers for services without starting them. Options:
+\fB\-\-build\fR, \fB\-\-force\-recreate\fR, \fB\-\-no\-recreate\fR, and a trailing
+service list.
+.TP
+.B ls
+List podup compose projects on the host. \fB\-a\fR/\fB\-\-all\fR includes stopped
+projects, \fB\-q\fR/\fB\-\-quiet\fR prints names only, \fB\-\-format\fR selects
+\fItable\fR or \fIjson\fR. Requires no compose file.
+.TP
 .B down
 Stop and remove containers. \fB\-v\fR/\fB\-\-volumes\fR also removes named
 volumes declared in the compose file.

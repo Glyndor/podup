@@ -123,6 +123,33 @@ pub(crate) enum Commands {
 		#[arg(value_parser = parse_scale_pair, required = true)]
 		pairs: Vec<(String, u32)>,
 	},
+	/// Create containers for services without starting them.
+	Create {
+		/// Build images before creating containers.
+		#[arg(long)]
+		build: bool,
+		/// Recreate containers even if their configuration is unchanged.
+		#[arg(long)]
+		force_recreate: bool,
+		/// Do not recreate containers that already exist.
+		#[arg(long)]
+		no_recreate: bool,
+		/// Create only these services.
+		#[arg(trailing_var_arg = true)]
+		services: Vec<String>,
+	},
+	/// List podup compose projects on the host.
+	Ls {
+		/// Show all projects, including stopped ones.
+		#[arg(short, long)]
+		all: bool,
+		/// Only display project names.
+		#[arg(short, long)]
+		quiet: bool,
+		/// Output format.
+		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
+		format: OutputFormat,
+	},
 	/// Build or rebuild service images.
 	Build {
 		/// Do not use cache when building the image.

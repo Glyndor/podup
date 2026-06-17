@@ -56,5 +56,7 @@ mod watch_tests;
 mod cli1;
 #[path = "engine_integration/cli2.rs"]
 mod cli2;
+#[path = "engine_integration/create_ls.rs"]
+mod create_ls;
 #[path = "engine_integration/scale.rs"]
 mod scale;
