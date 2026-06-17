@@ -375,6 +375,10 @@ async fn run() -> podup::Result<()> {
 				.await?
 		}
 		Commands::Top { services } => engine.top(&file, &services).await?,
+		Commands::Stats {
+			no_stream,
+			services,
+		} => engine.stats(&file, &services, no_stream).await?,
 		Commands::Port {
 			service,
 			private_port,
