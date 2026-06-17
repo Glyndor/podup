@@ -47,6 +47,10 @@ pub struct Engine {
 	/// grace; when set it takes precedence over each service's
 	/// `stop_grace_period`. `None` falls back to the per-service value.
 	pub(super) stop_timeout: Option<i32>,
+	/// CLI `--scale SERVICE=N` overrides (from `up --scale` and the `scale`
+	/// subcommand); when a service is present it takes precedence over the
+	/// compose `scale:`/`deploy.replicas` value. Empty falls back to compose.
+	pub(super) scale_overrides: std::collections::HashMap<String, u32>,
 }
 
 impl Engine {
@@ -57,6 +61,7 @@ impl Engine {
 			project,
 			base_dir: std::env::current_dir().unwrap_or_default(),
 			stop_timeout: None,
+			scale_overrides: std::collections::HashMap::new(),
 		}
 	}
 
@@ -67,6 +72,7 @@ impl Engine {
 			project,
 			base_dir,
 			stop_timeout: None,
+			scale_overrides: std::collections::HashMap::new(),
 		}
 	}
 
@@ -74,6 +80,28 @@ impl Engine {
 	pub fn with_stop_timeout(mut self, timeout: Option<i32>) -> Self {
 		self.stop_timeout = timeout;
 		self
+	}
+
+	/// Set the CLI `--scale SERVICE=N` replica overrides. Builder-style.
+	pub fn with_scale_overrides(
+		mut self,
+		overrides: std::collections::HashMap<String, u32>,
+	) -> Self {
+		self.scale_overrides = overrides;
+		self
+	}
+
+	/// Resolve the replica count for a service: a CLI `--scale` override wins,
+	/// else the compose `scale:`, else `deploy.replicas`, else 1. The single
+	/// source of truth so `up`, naming, and teardown never drift.
+	pub(super) fn resolve_replicas(&self, service_name: &str, service: &Service) -> usize {
+		if let Some(&n) = self.scale_overrides.get(service_name) {
+			return n as usize;
+		}
+		service
+			.scale
+			.or(service.deploy.as_ref().and_then(|d| d.replicas))
+			.unwrap_or(1) as usize
 	}
 
 	pub(super) async fn run_lifecycle_hook(
@@ -169,12 +197,9 @@ impl Engine {
 	}
 
 	pub(super) fn replica_names(&self, service_name: &str, service: &Service) -> Vec<String> {
-		let replicas = service
-			.scale
-			.or(service.deploy.as_ref().and_then(|d| d.replicas))
-			.unwrap_or(1) as usize;
+		let replicas = self.resolve_replicas(service_name, service);
 		let base = self.container_name(service_name, service);
-		if replicas == 1 {
+		if replicas <= 1 {
 			vec![base]
 		} else {
 			(1..=replicas).map(|i| format!("{base}-{i}")).collect()
@@ -182,12 +207,9 @@ impl Engine {
 	}
 
 	pub(super) fn first_replica_name(&self, service_name: &str, service: &Service) -> String {
-		let replicas = service
-			.scale
-			.or(service.deploy.as_ref().and_then(|d| d.replicas))
-			.unwrap_or(1) as usize;
+		let replicas = self.resolve_replicas(service_name, service);
 		let base = self.container_name(service_name, service);
-		if replicas == 1 {
+		if replicas <= 1 {
 			base
 		} else {
 			format!("{base}-1")

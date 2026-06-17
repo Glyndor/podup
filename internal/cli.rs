@@ -85,6 +85,9 @@ pub(crate) enum Commands {
 		/// Seconds to wait for containers to stop when recreating, before killing them.
 		#[arg(short = 't', long)]
 		timeout: Option<i32>,
+		/// Override the replica count for a service: SERVICE=N (repeatable).
+		#[arg(long, value_parser = parse_scale_pair)]
+		scale: Vec<(String, u32)>,
 		/// Bring up only these services (and their transitive depends_on).
 		/// If omitted, brings up every service in the compose file.
 		#[arg(trailing_var_arg = true)]
@@ -113,6 +116,12 @@ pub(crate) enum Commands {
 		/// Stop only these services.
 		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
+	},
+	/// Set the number of running containers for services.
+	Scale {
+		/// Target replica counts: SERVICE=N (one or more).
+		#[arg(value_parser = parse_scale_pair, required = true)]
+		pairs: Vec<(String, u32)>,
 	},
 	/// Build or rebuild service images.
 	Build {
@@ -337,4 +346,43 @@ pub(crate) enum GenerateCommands {
 		#[arg(short, long)]
 		output: Option<PathBuf>,
 	},
+}
+
+/// Parse a `SERVICE=N` scale argument into a `(service, replicas)` pair.
+///
+/// Rejects a missing `=`, an empty service name, a non-numeric count, and `N=0`
+/// (use `down`/`stop` to remove a service, not `scale=0`).
+fn parse_scale_pair(value: &str) -> Result<(String, u32), String> {
+	let (service, count) = value
+		.split_once('=')
+		.ok_or_else(|| format!("expected SERVICE=N, got `{value}`"))?;
+	if service.is_empty() {
+		return Err(format!("missing service name in `{value}`"));
+	}
+	let replicas: u32 = count
+		.parse()
+		.map_err(|_| format!("replica count in `{value}` must be a non-negative integer"))?;
+	if replicas == 0 {
+		return Err(format!(
+			"replica count in `{value}` must be at least 1; use `down`/`stop` to remove a service"
+		));
+	}
+	Ok((service.to_string(), replicas))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::parse_scale_pair;
+
+	#[test]
+	fn parse_scale_pair_accepts_valid() {
+		assert_eq!(parse_scale_pair("web=3"), Ok(("web".to_string(), 3)));
+	}
+
+	#[test]
+	fn parse_scale_pair_rejects_bad_input() {
+		for bad in ["web", "=3", "web=", "web=x", "web=0", "web=-1"] {
+			assert!(parse_scale_pair(bad).is_err(), "`{bad}` should be rejected");
+		}
+	}
 }
