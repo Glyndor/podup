@@ -219,6 +219,7 @@ async fn run() -> podup::Result<()> {
 			pull: _,
 			no_build: _,
 			quiet_pull: _,
+			wait,
 			no_start,
 			services,
 		} => {
@@ -254,6 +255,9 @@ async fn run() -> podup::Result<()> {
 					no_deps,
 				)
 				.await?;
+			if wait {
+				engine.wait_services_healthy(&file, &services).await?;
+			}
 			if watch {
 				engine.watch(&file).await?;
 			} else if !detach {

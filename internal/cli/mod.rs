@@ -119,6 +119,9 @@ pub(crate) enum Commands {
 		/// Suppress image-pull progress output.
 		#[arg(long)]
 		quiet_pull: bool,
+		/// Wait until services are running/healthy before returning.
+		#[arg(long)]
+		wait: bool,
 		/// Create containers but do not start them.
 		#[arg(long)]
 		no_start: bool,
