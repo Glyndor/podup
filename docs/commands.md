@@ -110,7 +110,7 @@ container side, e.g. `podup cp web:/app/data ./local`.
 | `stats` | Live resource usage (CPU, memory, network, block I/O, PIDs) for service containers. `--no-stream` prints one snapshot; a trailing service list narrows it. |
 | `port <SERVICE> <PRIVATE_PORT>` | Print the public binding for a port. `--proto` sets `tcp`/`udp` (default `tcp`). |
 | `images` | List images used by services. |
-| `logs [SERVICE]` | View container output. `-f, --follow` streams new output. |
+| `logs [SERVICE]` | View container output. `-f/--follow` streams new output, `-n/--tail <N>` limits to the last N lines, `--since`/`--until` bound by time, `-t/--timestamps` prefixes each line. |
 | `config` | Print the resolved compose file (after substitution, extends, include). |
 | `pull` | Pull images for all services. |
 

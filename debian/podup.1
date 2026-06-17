@@ -127,7 +127,10 @@ Print the public binding for a container port. \fB\-\-proto\fR sets the protocol
 List images used by services.
 .TP
 .B logs \fR[\fISERVICE\fR]
-View container output. \fB\-f\fR/\fB\-\-follow\fR streams new output.
+View container output. \fB\-f\fR/\fB\-\-follow\fR streams new output,
+\fB\-n\fR/\fB\-\-tail\fR \fIN\fR limits to the last N lines, \fB\-\-since\fR and
+\fB\-\-until\fR bound by time, and \fB\-t\fR/\fB\-\-timestamps\fR prefixes each
+line with an RFC3339 timestamp.
 .TP
 .B exec \fISERVICE\fR \fICOMMAND\fR...
 Execute a command in a running service container.
