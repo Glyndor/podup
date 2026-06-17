@@ -113,7 +113,7 @@ container side, e.g. `podup cp web:/app/data ./local`.
 | `port <SERVICE> <PRIVATE_PORT>` | Print the public binding for a port. `--proto` sets `tcp`/`udp` (default `tcp`). |
 | `images` | List images used by services. |
 | `logs [SERVICE]` | View container output. `-f/--follow` streams new output, `-n/--tail <N>` limits to the last N lines, `--since`/`--until` bound by time, `-t/--timestamps` prefixes each line. |
-| `config` | Print the resolved compose file (after substitution, extends, include). |
+| `config` | Print the resolved compose file (after substitution, extends, include). `--format yaml\|json`, `--services` lists service names, `-q/--quiet` only validates. |
 | `pull` | Pull images for all services. |
 
 ## Generate

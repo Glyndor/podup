@@ -145,6 +145,8 @@ cascade-restarting dependents with a \fBdepends_on\fR restart condition.
 .TP
 .B config
 Print the resolved compose file after substitution, extends and include.
+\fB\-\-format\fR selects \fIyaml\fR or \fIjson\fR, \fB\-\-services\fR lists the
+service names, and \fB\-q\fR/\fB\-\-quiet\fR only validates (no output).
 .TP
 .B generate quadlet \fR[\fB\-o\fR \fIDIR\fR]
 Translate the compose file into Podman Quadlet unit files (one \fB.container\fR
