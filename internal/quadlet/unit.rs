@@ -342,6 +342,30 @@ pub(super) fn container_unit(
 		// rejects the unit); express the limit as a raw podman flag.
 		container.add("PodmanArgs", format!("--memory={mem}"));
 	}
+	// CPU limits have no native [Container] Quadlet key (unlike Memory=/
+	// PidsLimit=), so they go through PodmanArgs=, mirroring --memory above.
+	// `cpus` falls back to the modern `deploy.resources.limits.cpus`.
+	let deploy_cpus = service
+		.deploy
+		.as_ref()
+		.and_then(|d| d.resources.as_ref())
+		.and_then(|r| r.limits.as_ref())
+		.and_then(|l| l.cpus.as_deref());
+	if let Some(c) = service.cpus.as_deref().or(deploy_cpus) {
+		container.add("PodmanArgs", format!("--cpus={c}"));
+	}
+	if let Some(cs) = &service.cpuset {
+		container.add("PodmanArgs", format!("--cpuset-cpus={cs}"));
+	}
+	if let Some(sh) = service.cpu_shares {
+		container.add("PodmanArgs", format!("--cpu-shares={sh}"));
+	}
+	if let Some(q) = service.cpu_quota {
+		container.add("PodmanArgs", format!("--cpu-quota={q}"));
+	}
+	if let Some(p) = service.cpu_period {
+		container.add("PodmanArgs", format!("--cpu-period={p}"));
+	}
 	if let Some(pids) = service.pids_limit {
 		container.add("PidsLimit", pids.to_string());
 	}
