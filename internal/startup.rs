@@ -124,6 +124,33 @@ pub(crate) fn render_config(
 	Ok(())
 }
 
+/// Build the `run`-only flag overrides from the parsed command. These are kept
+/// off the frozen public `RunOptions` API and threaded through the engine
+/// builder instead (`Engine::with_run_overrides`).
+pub(crate) fn run_overrides_for(command: &Commands) -> podup::RunOverrides {
+	match command {
+		Commands::Run {
+			user,
+			workdir,
+			entrypoint,
+			volume,
+			publish,
+			interactive,
+			no_deps,
+			..
+		} => podup::RunOverrides {
+			user: user.clone(),
+			workdir: workdir.clone(),
+			entrypoint: entrypoint.clone(),
+			volumes: volume.clone(),
+			publish: publish.clone(),
+			interactive: *interactive,
+			no_deps: *no_deps,
+		},
+		_ => podup::RunOverrides::default(),
+	}
+}
+
 /// Parse the CLI, framing `--help`/`--version` output with a blank line top and
 /// bottom (clap trims template edges, so wrap the rendered text here).
 pub(crate) fn parse_cli() -> Cli {

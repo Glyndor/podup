@@ -172,7 +172,8 @@ async fn run() -> podup::Result<()> {
 	let engine = podup::Engine::with_base_dir(client, project, base_dir)
 		.with_stop_timeout(stop_timeout)
 		.with_scale_overrides(scale_overrides)
-		.with_up_overrides(pull_override, no_build, quiet_pull);
+		.with_up_overrides(pull_override, no_build, quiet_pull)
+		.with_run_overrides(startup::run_overrides_for(&cli.command));
 
 	// Serialize mutating lifecycle commands against concurrent `podup` runs on
 	// the same project. Read-only / follow commands (ps, logs, top, port,
@@ -334,14 +335,14 @@ async fn run() -> podup::Result<()> {
 			env_overrides,
 			name,
 			service_ports,
-			user,
-			workdir,
-			entrypoint,
-			volume,
-			publish,
-			interactive,
+			user: _,
+			workdir: _,
+			entrypoint: _,
+			volume: _,
+			publish: _,
+			interactive: _,
 			no_tty: _,
-			no_deps,
+			no_deps: _,
 			cmd,
 		} => {
 			engine
@@ -355,13 +356,6 @@ async fn run() -> podup::Result<()> {
 						env_overrides,
 						name_override: name,
 						service_ports,
-						user,
-						workdir,
-						entrypoint,
-						volumes: volume,
-						publish,
-						interactive,
-						no_deps,
 					},
 				)
 				.await?

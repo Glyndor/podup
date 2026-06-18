@@ -20,7 +20,7 @@ use super::network::resolve_network_name;
 use super::profiles::{active_profiles_set, service_in_profiles};
 use super::Engine;
 
-/// Options for [`Engine::run`], mirroring `docker compose run` flags.
+/// Options for [`Engine::run`].
 #[derive(Default)]
 pub struct RunOptions {
 	/// Override the default service command.
@@ -36,7 +36,16 @@ pub struct RunOptions {
 	/// Publish the service's declared `ports:` (compose `run --service-ports`).
 	/// When false, `run` leaves ports unpublished to avoid host-port collisions.
 	pub service_ports: bool,
-	/// Run the command as this user (`-u/--user`, `name or UID[:GID]`).
+}
+
+/// Extra `docker compose run` flag overrides threaded through the engine
+/// builder ([`Engine::with_run_overrides`]). These are CLI-only refinements of
+/// a `run` invocation; they live here rather than on the frozen [`RunOptions`]
+/// public struct so the 1.0 library API stays stable, mirroring how the `up`
+/// image-acquisition overrides are carried on the engine.
+#[derive(Default, Clone)]
+pub struct RunOverrides {
+	/// Run the command as this user (`-u/--user`, name or UID[:GID]).
 	pub user: Option<String>,
 	/// Working directory inside the container (`-w/--workdir`).
 	pub workdir: Option<String>,

@@ -266,6 +266,10 @@ impl Engine {
 			env_overrides,
 			name_override,
 			service_ports,
+		} = opts;
+		// CLI-only run flags arrive via the engine builder (see `RunOverrides`),
+		// keeping the public `RunOptions` API frozen at 1.0.
+		let super::RunOverrides {
 			user,
 			workdir,
 			entrypoint,
@@ -273,7 +277,7 @@ impl Engine {
 			publish,
 			interactive,
 			no_deps,
-		} = opts;
+		} = self.run_overrides.clone();
 		let service = file
 			.services
 			.get(service_name)

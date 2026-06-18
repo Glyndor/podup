@@ -1,4 +1,8 @@
 //! `run` flag-parity integration tests (split for the source line limit).
+//!
+//! The CLI-only run flags are threaded through `Engine::with_run_overrides`
+//! (the public `RunOptions` API stays frozen at 1.0), so each test builds an
+//! engine carrying the overrides under test.
 use super::*;
 
 #[tokio::test]
@@ -8,7 +12,12 @@ async fn engine_run_applies_user_workdir_env_and_entrypoint() {
 		None => return,
 	};
 	let proj = proj("ruwe");
-	let engine = Engine::new(client, proj.clone());
+	let engine = Engine::new(client, proj.clone()).with_run_overrides(podup::RunOverrides {
+		entrypoint: Some("sh".to_string()),
+		user: Some("0".to_string()),
+		workdir: Some("/tmp".to_string()),
+		..Default::default()
+	});
 	let file = parse_str("services:\n  job:\n    image: alpine:latest\n").unwrap();
 
 	// --entrypoint sh, cmd is its args; -u root, -w /tmp, -e MARK=ok. The command
@@ -24,9 +33,6 @@ async fn engine_run_applies_user_workdir_env_and_entrypoint() {
 						.to_string(),
 				],
 				rm: true,
-				entrypoint: Some("sh".to_string()),
-				user: Some("0".to_string()),
-				workdir: Some("/tmp".to_string()),
 				env_overrides: vec!["MARK=ok".to_string()],
 				..Default::default()
 			},
@@ -49,7 +55,12 @@ async fn engine_run_applies_volume_publish_and_interactive() {
 	let mount = format!("{}:/mnt/in:ro", dir.path().to_str().unwrap());
 
 	let proj = proj("rvp");
-	let engine = Engine::new(client, proj.clone());
+	let engine = Engine::new(client, proj.clone()).with_run_overrides(podup::RunOverrides {
+		volumes: vec![mount],
+		publish: vec!["127.0.0.1:0:9".to_string()],
+		interactive: true,
+		..Default::default()
+	});
 	let file = parse_str("services:\n  job:\n    image: alpine:latest\n").unwrap();
 
 	// -v bind-mounts the host dir, -i keeps stdin open, -p publishes an ad-hoc
@@ -65,9 +76,6 @@ async fn engine_run_applies_volume_publish_and_interactive() {
 					"test \"$(cat /mnt/in/marker.txt)\" = present".to_string(),
 				],
 				rm: true,
-				volumes: vec![mount],
-				publish: vec!["127.0.0.1:0:9".to_string()],
-				interactive: true,
 				..Default::default()
 			},
 		)
@@ -86,7 +94,10 @@ async fn engine_run_no_deps_skips_dependency_startup() {
 		None => return,
 	};
 	let proj = proj("rnd");
-	let engine = Engine::new(client, proj.clone());
+	let engine = Engine::new(client, proj.clone()).with_run_overrides(podup::RunOverrides {
+		no_deps: true,
+		..Default::default()
+	});
 	let file = parse_str(
 		"services:\n  job:\n    image: alpine:latest\n    depends_on:\n      - dep\n  dep:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
@@ -100,7 +111,6 @@ async fn engine_run_no_deps_skips_dependency_startup() {
 			podup::RunOptions {
 				cmd: vec!["true".to_string()],
 				rm: true,
-				no_deps: true,
 				..Default::default()
 			},
 		)

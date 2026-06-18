@@ -6,7 +6,7 @@ mod build;
 mod container;
 mod copy;
 pub use build::{BuildOptions, PushOptions};
-pub use lifecycle::RunOptions;
+pub use lifecycle::{RunOptions, RunOverrides};
 pub use lock::ProjectLock;
 pub use query::{ExecOptions, ImagesOptions, LogsOptions, PsOptions};
 mod container_config;
@@ -62,6 +62,9 @@ pub struct Engine {
 	pub(super) no_build: bool,
 	/// CLI `up --quiet-pull`: suppress image-pull progress output.
 	pub(super) quiet_pull: bool,
+	/// CLI `run`-only flag overrides (user/workdir/entrypoint/volume/publish/
+	/// interactive/no-deps); empty by default.
+	pub(super) run_overrides: lifecycle::RunOverrides,
 }
 
 impl Engine {
@@ -76,6 +79,7 @@ impl Engine {
 			pull_policy_override: None,
 			no_build: false,
 			quiet_pull: false,
+			run_overrides: lifecycle::RunOverrides::default(),
 		}
 	}
 
@@ -90,6 +94,7 @@ impl Engine {
 			pull_policy_override: None,
 			no_build: false,
 			quiet_pull: false,
+			run_overrides: lifecycle::RunOverrides::default(),
 		}
 	}
 
@@ -119,6 +124,13 @@ impl Engine {
 		self.pull_policy_override = pull_policy;
 		self.no_build = no_build;
 		self.quiet_pull = quiet_pull;
+		self
+	}
+
+	/// Set the CLI `run`-only flag overrides (`-u/-w/--entrypoint/-v/-p/-i/
+	/// --no-deps`). Builder-style; consumed by [`Engine::run`].
+	pub fn with_run_overrides(mut self, overrides: RunOverrides) -> Self {
+		self.run_overrides = overrides;
 		self
 	}
 
