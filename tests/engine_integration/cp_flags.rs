@@ -34,7 +34,7 @@ async fn engine_cp_index_out_of_range_errors() {
 	);
 }
 
-#[cfg(feature = "test-helpers")]
+#[cfg(all(unix, feature = "test-helpers"))]
 #[tokio::test]
 async fn engine_cp_follow_link_uploads_target_contents() {
 	use std::os::unix::fs::symlink;
