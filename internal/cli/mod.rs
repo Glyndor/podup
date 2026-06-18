@@ -299,6 +299,15 @@ pub(crate) enum Commands {
 		src: String,
 		/// Destination path. Use SERVICE:PATH for a container path.
 		dst: String,
+		/// Target this replica index (1-based) of a scaled service.
+		#[arg(long)]
+		index: Option<u32>,
+		/// Follow symlinks in the host source before copying into the container.
+		#[arg(short = 'L', long)]
+		follow_link: bool,
+		/// Archive mode (accepted for compatibility; no effect under rootless Podman).
+		#[arg(short = 'a', long)]
+		archive: bool,
 	},
 	/// List containers.
 	Ps {
