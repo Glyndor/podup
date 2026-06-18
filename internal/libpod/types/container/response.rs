@@ -92,9 +92,14 @@ pub struct HealthConfig {
 /// Container state sub-object.
 #[derive(Deserialize, Default)]
 pub struct ContainerState {
+	// `status`/`exit_code` round-trip the libpod state for completeness and are
+	// asserted in tests; container completion now blocks on `wait?condition`
+	// (which returns the code directly) rather than reading them here.
+	#[allow(dead_code)]
 	#[serde(rename = "Status")]
 	pub status: Option<String>,
 
+	#[allow(dead_code)]
 	#[serde(rename = "ExitCode")]
 	pub exit_code: Option<i64>,
 
