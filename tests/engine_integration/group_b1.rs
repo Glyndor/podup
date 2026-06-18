@@ -45,10 +45,7 @@ async fn engine_run_command_succeeds() {
 			podup::RunOptions {
 				cmd: vec!["echo".to_string(), "hello".to_string()],
 				rm: true,
-				detach: false,
-				env_overrides: vec![],
-				name_override: None,
-				service_ports: false,
+				..Default::default()
 			},
 		)
 		.await;
@@ -72,10 +69,7 @@ async fn engine_run_nonzero_exit_returns_run_exited() {
 			podup::RunOptions {
 				cmd: vec!["false".to_string()],
 				rm: true,
-				detach: false,
-				env_overrides: vec![],
-				name_override: None,
-				service_ports: false,
+				..Default::default()
 			},
 		)
 		.await;

@@ -114,28 +114,7 @@ async fn run() -> podup::Result<()> {
 		quiet,
 	} = &cli.command
 	{
-		// Reaching here means the file parsed and merged cleanly.
-		if *quiet {
-			return Ok(());
-		}
-		if *services {
-			for name in file.services.keys() {
-				println!("{name}");
-			}
-			return Ok(());
-		}
-		let mut redacted = file.clone();
-		redacted.redact_inline_content();
-		let rendered = match format {
-			ConfigFormat::Json => serde_json::to_string_pretty(&redacted).map_err(|e| {
-				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
-			})?,
-			ConfigFormat::Yaml => {
-				serde_yaml::to_string(&redacted).map_err(podup::ComposeError::Parse)?
-			}
-		};
-		println!("{rendered}");
-		return Ok(());
+		return startup::render_config(&file, format, *services, *quiet);
 	}
 
 	let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
@@ -193,7 +172,8 @@ async fn run() -> podup::Result<()> {
 	let engine = podup::Engine::with_base_dir(client, project, base_dir)
 		.with_stop_timeout(stop_timeout)
 		.with_scale_overrides(scale_overrides)
-		.with_up_overrides(pull_override, no_build, quiet_pull);
+		.with_up_overrides(pull_override, no_build, quiet_pull)
+		.with_run_overrides(startup::run_overrides_for(&cli.command));
 
 	// Serialize mutating lifecycle commands against concurrent `podup` runs on
 	// the same project. Read-only / follow commands (ps, logs, top, port,
@@ -355,6 +335,14 @@ async fn run() -> podup::Result<()> {
 			env_overrides,
 			name,
 			service_ports,
+			user: _,
+			workdir: _,
+			entrypoint: _,
+			volume: _,
+			publish: _,
+			interactive: _,
+			no_tty: _,
+			no_deps: _,
 			cmd,
 		} => {
 			engine

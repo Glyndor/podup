@@ -2,41 +2,14 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 #[cfg(feature = "completions")]
 use clap_complete::Shell;
 
 mod parse;
+mod types;
 use parse::parse_scale_pair;
-
-/// Output rendering for list commands (`ps`, `images`).
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
-pub(crate) enum OutputFormat {
-	/// Aligned columns for human reading.
-	#[default]
-	Table,
-	/// Machine-readable JSON array.
-	Json,
-}
-
-/// Which images `down --rmi` removes.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
-pub(crate) enum RmiScope {
-	/// All images used by the project's services.
-	All,
-	/// Only images without a custom tag (services that build locally).
-	Local,
-}
-
-/// Output rendering for `config`.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
-pub(crate) enum ConfigFormat {
-	/// YAML (the compose-file format).
-	#[default]
-	Yaml,
-	/// JSON.
-	Json,
-}
+pub(crate) use types::{ConfigFormat, OutputFormat, RmiScope};
 
 #[derive(Parser)]
 #[command(name = "podup", version)]
@@ -288,8 +261,32 @@ pub(crate) enum Commands {
 		#[arg(long)]
 		name: Option<String>,
 		/// Publish the service's declared ports (off by default).
-		#[arg(long)]
+		#[arg(short = 'P', long)]
 		service_ports: bool,
+		/// Run the command as this user (`name or UID[:GID]`).
+		#[arg(short, long)]
+		user: Option<String>,
+		/// Working directory inside the container.
+		#[arg(short, long)]
+		workdir: Option<String>,
+		/// Override the image entrypoint.
+		#[arg(long)]
+		entrypoint: Option<String>,
+		/// Bind-mount an extra volume (HOST:CONTAINER[:OPTS] or NAME:CONTAINER); repeatable.
+		#[arg(short = 'v', long = "volume")]
+		volume: Vec<String>,
+		/// Publish an extra port (HOST:CONTAINER[/PROTO]); repeatable.
+		#[arg(short = 'p', long = "publish")]
+		publish: Vec<String>,
+		/// Keep STDIN open (accepted for compatibility; run still streams logs).
+		#[arg(short, long)]
+		interactive: bool,
+		/// Disable pseudo-TTY allocation (podup never allocates one; accepted for compatibility).
+		#[arg(short = 'T', long = "no-TTY")]
+		no_tty: bool,
+		/// Do not start linked services (depends_on) before running.
+		#[arg(long)]
+		no_deps: bool,
 		/// Command (and arguments) to run.
 		#[arg(trailing_var_arg = true, allow_hyphen_values = true)]
 		cmd: Vec<String>,
@@ -367,7 +364,7 @@ pub(crate) enum Commands {
 		/// Set environment variables (KEY=VAL); may be repeated.
 		#[arg(short, long = "env")]
 		env: Vec<String>,
-		/// Run the command as this user (name or UID[:GID]).
+		/// Run the command as this user (`name or UID[:GID]`).
 		#[arg(short, long)]
 		user: Option<String>,
 		/// Working directory inside the container.

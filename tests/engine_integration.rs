@@ -47,6 +47,8 @@ mod group_a3;
 mod group_a4;
 #[path = "engine_integration/group_b1.rs"]
 mod group_b1;
+#[path = "engine_integration/run_flags.rs"]
+mod run_flags;
 
 #[cfg(feature = "test-helpers")]
 #[path = "engine_integration/watch.rs"]

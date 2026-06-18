@@ -267,10 +267,34 @@ impl Engine {
 			name_override,
 			service_ports,
 		} = opts;
+		// CLI-only run flags arrive via the engine builder (see `RunOverrides`),
+		// keeping the public `RunOptions` API frozen at 1.0.
+		let super::RunOverrides {
+			user,
+			workdir,
+			entrypoint,
+			volumes,
+			publish,
+			interactive,
+			no_deps,
+		} = self.run_overrides.clone();
 		let service = file
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
+
+		// Compose `run` brings up the service's `depends_on` services first (and
+		// waits on their conditions), unless `--no-deps` is given. The service
+		// itself is excluded — only its transitive dependencies are started.
+		if !no_deps {
+			let deps: Vec<String> = super::expand_targets(file, &[service_name.to_string()], false)
+				.map(|set| set.into_iter().filter(|n| n != service_name).collect())
+				.unwrap_or_default();
+			if !deps.is_empty() {
+				self.up_with_options(file, true, &[], &deps, false, false, false)
+					.await?;
+			}
+		}
 
 		let run_name = name_override.unwrap_or_else(|| {
 			format!("{}-{service_name}-run-{}", self.project, std::process::id())
@@ -279,6 +303,30 @@ impl Engine {
 		let mut run_service = service.clone();
 		if !cmd.is_empty() {
 			run_service.command = Some(crate::compose::types::Command::Exec(cmd));
+		}
+		// `--entrypoint` overrides the image/service entrypoint with a single
+		// executable token (compose/`docker run` semantics); any `cmd` becomes
+		// its arguments.
+		if let Some(ep) = entrypoint {
+			run_service.entrypoint = Some(crate::compose::types::Command::Exec(vec![ep]));
+		}
+		if let Some(u) = user {
+			run_service.user = Some(u);
+		}
+		if let Some(w) = workdir {
+			run_service.working_dir = Some(w);
+		}
+		// `-i/--interactive` keeps STDIN open on the spec; `run` still streams
+		// logs rather than attaching a live terminal.
+		if interactive {
+			run_service.stdin_open = Some(true);
+		}
+		// Ad-hoc `-v/--volume` mounts append to the service's own mounts in
+		// compose short form, parsed downstream like compose file entries.
+		for v in volumes {
+			run_service
+				.volumes
+				.push(crate::compose::types::VolumeMount::Short(v));
 		}
 		if !env_overrides.is_empty() {
 			let mut env_list: Vec<String> = {
@@ -296,6 +344,13 @@ impl Engine {
 		// with the long-running service's host-port bindings.
 		if !service_ports {
 			run_service.ports.clear();
+		}
+		// Explicit `-p/--publish` ports are always bound, even without
+		// `--service-ports`, matching `docker compose run -p`.
+		for p in publish {
+			run_service
+				.ports
+				.push(crate::compose::types::PortMapping::Short(p));
 		}
 		// Force non-TTY so Podman uses multiplexed log framing that
 		// parse_multiplexed can decode. TTY mode sends raw bytes without
