@@ -120,6 +120,12 @@ pub(crate) enum Commands {
 	},
 	/// Start existing stopped containers.
 	Start {
+		/// Wait until services are running/healthy before returning.
+		#[arg(long)]
+		wait: bool,
+		/// Maximum seconds to wait with --wait before giving up.
+		#[arg(long)]
+		wait_timeout: Option<u64>,
 		/// Start only these services.
 		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
@@ -215,6 +221,9 @@ pub(crate) enum Commands {
 		/// Also remove anonymous volumes attached to the containers.
 		#[arg(short = 'v', long)]
 		volumes: bool,
+		/// Stop the containers (gracefully) before removing them.
+		#[arg(short = 's', long)]
+		stop: bool,
 		/// Remove only these services.
 		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
@@ -336,6 +345,9 @@ pub(crate) enum Commands {
 		/// Protocol (tcp or udp).
 		#[arg(long, default_value = "tcp")]
 		proto: String,
+		/// Index of the container when the service has multiple replicas (1-based).
+		#[arg(long)]
+		index: Option<u32>,
 	},
 	/// List images used by services.
 	#[command(alias = "image")]
@@ -449,11 +461,10 @@ pub(crate) enum Commands {
 	Watch,
 	/// Update podup to the latest signed release.
 	///
-	/// Downloads the release binary for this platform and replaces the running
-	/// executable, but only after verifying the release's Ed25519 signature
-	/// against the public key embedded in this build and matching its SHA-256
-	/// checksum. Verification fails closed: a missing key, bad signature, or
-	/// checksum mismatch aborts without touching the installed binary.
+	/// Replaces the running executable only after verifying the release's
+	/// Ed25519 signature against the embedded public key and matching its
+	/// SHA-256 checksum; verification fails closed (bad/missing key, signature,
+	/// or checksum aborts without touching the installed binary).
 	#[cfg(feature = "update")]
 	Update {
 		/// Report whether a newer release exists without installing it.
@@ -463,11 +474,7 @@ pub(crate) enum Commands {
 		#[arg(long)]
 		force: bool,
 	},
-	/// Print a shell completion script to stdout.
-	///
-	/// Generates a completion script for the named shell from the CLI
-	/// definition. Source it from your shell's startup (or install the file the
-	/// Debian package ships) to get tab completion for podup commands and flags.
+	/// Print a shell completion script to stdout for the named shell.
 	#[cfg(feature = "completions")]
 	Completions {
 		/// Shell to generate completions for (bash, zsh, fish, powershell, elvish).
