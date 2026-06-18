@@ -2,41 +2,14 @@
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 #[cfg(feature = "completions")]
 use clap_complete::Shell;
 
 mod parse;
+mod types;
 use parse::parse_scale_pair;
-
-/// Output rendering for list commands (`ps`, `images`).
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
-pub(crate) enum OutputFormat {
-	/// Aligned columns for human reading.
-	#[default]
-	Table,
-	/// Machine-readable JSON array.
-	Json,
-}
-
-/// Which images `down --rmi` removes.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
-pub(crate) enum RmiScope {
-	/// All images used by the project's services.
-	All,
-	/// Only images without a custom tag (services that build locally).
-	Local,
-}
-
-/// Output rendering for `config`.
-#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
-pub(crate) enum ConfigFormat {
-	/// YAML (the compose-file format).
-	#[default]
-	Yaml,
-	/// JSON.
-	Json,
-}
+pub(crate) use types::{ConfigFormat, OutputFormat, RmiScope};
 
 #[derive(Parser)]
 #[command(name = "podup", version)]
@@ -290,7 +263,7 @@ pub(crate) enum Commands {
 		/// Publish the service's declared ports (off by default).
 		#[arg(short = 'P', long)]
 		service_ports: bool,
-		/// Run the command as this user (name or UID[:GID]).
+		/// Run the command as this user (`name or UID[:GID]`).
 		#[arg(short, long)]
 		user: Option<String>,
 		/// Working directory inside the container.
@@ -391,7 +364,7 @@ pub(crate) enum Commands {
 		/// Set environment variables (KEY=VAL); may be repeated.
 		#[arg(short, long = "env")]
 		env: Vec<String>,
-		/// Run the command as this user (name or UID[:GID]).
+		/// Run the command as this user (`name or UID[:GID]`).
 		#[arg(short, long)]
 		user: Option<String>,
 		/// Working directory inside the container.

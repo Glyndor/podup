@@ -36,7 +36,7 @@ pub struct RunOptions {
 	/// Publish the service's declared `ports:` (compose `run --service-ports`).
 	/// When false, `run` leaves ports unpublished to avoid host-port collisions.
 	pub service_ports: bool,
-	/// Run the command as this user (`-u/--user`, name or UID[:GID]).
+	/// Run the command as this user (`-u/--user`, `name or UID[:GID]`).
 	pub user: Option<String>,
 	/// Working directory inside the container (`-w/--workdir`).
 	pub workdir: Option<String>,
