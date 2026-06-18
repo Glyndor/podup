@@ -3,6 +3,8 @@
 //! Translates a parsed [`ComposeFile`] into Podman API calls via the libpod REST API.
 
 mod build;
+mod config_digests;
+pub use config_digests::resolve_image_digests;
 mod container;
 mod copy;
 pub use build::{BuildOptions, PullOptions, PushOptions};

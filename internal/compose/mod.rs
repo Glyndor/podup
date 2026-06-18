@@ -29,9 +29,21 @@ pub fn parse_file(path: &Path) -> Result<ComposeFile> {
 /// effect for the top-level file and any included files; the process
 /// environment and a project `.env` still take precedence.
 pub fn parse_file_with_env_files(path: &Path, env_files: &[String]) -> Result<ComposeFile> {
+	parse_file_with_env_files_interp(path, env_files, true)
+}
+
+/// Like [`parse_file_with_env_files`] but with explicit control over variable
+/// interpolation. `interpolate = false` (the `config --no-interpolate` path)
+/// leaves `${VAR}` placeholders literal while still resolving
+/// `extends:`/`include:`/merge.
+pub fn parse_file_with_env_files_interp(
+	path: &Path,
+	env_files: &[String],
+	interpolate: bool,
+) -> Result<ComposeFile> {
 	let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 	let dir = abs.parent().unwrap_or(Path::new(".")).to_path_buf();
-	let mut file = parse_file_inner_with_env(&abs, &dir, env_files)?;
+	let mut file = parse_file_inner_with_env(&abs, &dir, env_files, interpolate)?;
 
 	let includes = std::mem::take(&mut file.include);
 	for inc in includes {
@@ -67,7 +79,8 @@ pub fn parse_file_with_env_files(path: &Path, env_files: &[String]) -> Result<Co
 			});
 			let mut combined_env_files = env_files.to_vec();
 			combined_env_files.extend(extra_env_files.iter().cloned());
-			let mut included = parse_file_inner_with_env(&inc_path, &inc_dir, &combined_env_files)?;
+			let mut included =
+				parse_file_inner_with_env(&inc_path, &inc_dir, &combined_env_files, interpolate)?;
 			anchor::anchor_compose_file(&mut included, &inc_dir);
 			include::merge_compose_file(&mut file, included);
 		}
@@ -94,13 +107,24 @@ pub fn collect_diagnostics(file: &ComposeFile) -> Vec<String> {
 /// resolve against the first file's directory, matching the compose project
 /// directory. `env_files` feed interpolation for every file.
 pub fn parse_files_with_env_files(paths: &[PathBuf], env_files: &[String]) -> Result<ComposeFile> {
+	parse_files_with_env_files_interp(paths, env_files, true)
+}
+
+/// Like [`parse_files_with_env_files`] but with explicit interpolation control.
+/// `interpolate = false` backs `config --no-interpolate`: `${VAR}` placeholders
+/// are left literal across all merged files.
+pub fn parse_files_with_env_files_interp(
+	paths: &[PathBuf],
+	env_files: &[String],
+	interpolate: bool,
+) -> Result<ComposeFile> {
 	let mut iter = paths.iter();
 	let first = iter
 		.next()
 		.ok_or_else(|| ComposeError::FileNotFound("no compose file given".to_string()))?;
-	let mut merged = parse_file_with_env_files(first, env_files)?;
+	let mut merged = parse_file_with_env_files_interp(first, env_files, interpolate)?;
 	for path in iter {
-		let other = parse_file_with_env_files(path, env_files)?;
+		let other = parse_file_with_env_files_interp(path, env_files, interpolate)?;
 		merge_override(&mut merged, other);
 	}
 	normalize_default_network(&mut merged);
@@ -180,13 +204,14 @@ pub fn parse_str_raw(content: &str) -> Result<ComposeFile> {
 }
 
 pub(crate) fn parse_file_inner(path: &Path, dir: &Path) -> Result<ComposeFile> {
-	parse_file_inner_with_env(path, dir, &[])
+	parse_file_inner_with_env(path, dir, &[], true)
 }
 
 pub(crate) fn parse_file_inner_with_env(
 	path: &Path,
 	dir: &Path,
 	extra_env_files: &[String],
+	interpolate: bool,
 ) -> Result<ComposeFile> {
 	let content = crate::filesystem::read_to_string_capped(path).map_err(|e| {
 		if e.kind() == std::io::ErrorKind::NotFound {
@@ -195,13 +220,19 @@ pub(crate) fn parse_file_inner_with_env(
 			ComposeError::Io(e)
 		}
 	})?;
-	let vars = if extra_env_files.is_empty() {
-		substitute::build_vars(dir)
+	// `config --no-interpolate` leaves `${VAR}` placeholders literal; otherwise
+	// substitute against the env/.env/env-file variable map.
+	let yaml = if interpolate {
+		let vars = if extra_env_files.is_empty() {
+			substitute::build_vars(dir)
+		} else {
+			substitute::build_vars_with_env_files(dir, extra_env_files)
+		};
+		substitute::substitute(&content, &vars)?
 	} else {
-		substitute::build_vars_with_env_files(dir, extra_env_files)
+		content
 	};
-	let substituted = substitute::substitute(&content, &vars)?;
-	merge::deserialize_with_merge(&substituted)
+	merge::deserialize_with_merge(&yaml)
 }
 
 #[cfg(test)]

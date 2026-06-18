@@ -137,3 +137,44 @@ fn config_quiet_validates_without_output() {
 		.unwrap();
 	assert!(!err.status.success(), "invalid config must fail under -q");
 }
+
+#[test]
+fn config_no_interpolate_keeps_placeholders_literal() {
+	let dir = std::env::temp_dir().join(format!("podup-noint-{}", std::process::id()));
+	fs::create_dir_all(&dir).unwrap();
+	let compose = dir.join("docker-compose.yml");
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: \"alpine:${PODUP_TAG}\"\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+
+	// Default config interpolates ${PODUP_TAG} (unset → empty).
+	let interp = Command::new(bin())
+		.args(["-f", c, "config"])
+		.env_remove("PODUP_TAG")
+		.output()
+		.unwrap();
+	assert!(interp.status.success());
+	assert!(
+		!String::from_utf8_lossy(&interp.stdout).contains("${PODUP_TAG}"),
+		"default config must interpolate the placeholder"
+	);
+
+	// --no-interpolate leaves it literal.
+	let raw = Command::new(bin())
+		.args(["-f", c, "config", "--no-interpolate"])
+		.env_remove("PODUP_TAG")
+		.output()
+		.unwrap();
+	assert!(
+		raw.status.success(),
+		"config --no-interpolate failed: {:?}",
+		raw.stderr
+	);
+	assert!(
+		String::from_utf8_lossy(&raw.stdout).contains("${PODUP_TAG}"),
+		"--no-interpolate must keep ${{PODUP_TAG}} literal"
+	);
+}

@@ -406,3 +406,34 @@ async fn cli_volumes_lists_named_volumes() {
 		"volumes --format json must include the volume: {parsed}"
 	);
 }
+
+#[tokio::test]
+async fn cli_config_resolve_image_digests_pins_digest() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let proj = format!("t{}-digests", std::process::id());
+	let compose = dir.path().join("docker-compose.yml");
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+
+	// Ensure the image (with its registry digest) is present locally.
+	run(&["-f", c, "-p", &proj, "pull"]);
+
+	let out = run(&["-f", c, "-p", &proj, "config", "--resolve-image-digests"]);
+	assert!(
+		out.status.success(),
+		"config --resolve-image-digests failed: {:?}",
+		out.stderr
+	);
+	let yaml = String::from_utf8_lossy(&out.stdout);
+	assert!(
+		yaml.contains("alpine@sha256:"),
+		"image must be pinned to a registry digest, got: {yaml}"
+	);
+}
