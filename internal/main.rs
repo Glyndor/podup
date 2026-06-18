@@ -166,7 +166,7 @@ async fn run() -> podup::Result<()> {
 			quiet_pull,
 			..
 		} => (pull.clone(), *no_build, *quiet_pull),
-		Commands::Pull { quiet, .. } => (None, false, *quiet),
+		Commands::Pull { quiet, policy, .. } => (policy.clone(), false, *quiet),
 		_ => (None, false, false),
 	};
 	let engine = podup::Engine::with_base_dir(client, project, base_dir)
@@ -459,7 +459,24 @@ async fn run() -> podup::Result<()> {
 				)
 				.await?
 		}
-		Commands::Pull { quiet: _, services } => engine.pull_services(&file, &services).await?,
+		Commands::Pull {
+			quiet: _,
+			ignore_pull_failures,
+			include_deps,
+			policy: _,
+			services,
+		} => {
+			engine
+				.pull_services_with_options(
+					&file,
+					&services,
+					podup::PullOptions {
+						ignore_failures: ignore_pull_failures,
+						include_deps,
+					},
+				)
+				.await?
+		}
 		Commands::Restart {
 			service,
 			timeout: _,

@@ -393,6 +393,15 @@ pub(crate) enum Commands {
 		/// Suppress image-pull progress output.
 		#[arg(short, long)]
 		quiet: bool,
+		/// Continue pulling the remaining services after a failure.
+		#[arg(long)]
+		ignore_pull_failures: bool,
+		/// Also pull images for the named services' depends_on services.
+		#[arg(long)]
+		include_deps: bool,
+		/// Pull policy: always, missing, never, newer, build (overrides per-service pull_policy).
+		#[arg(long)]
+		policy: Option<String>,
 		/// Only pull images for these services.
 		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,

@@ -5,7 +5,7 @@
 mod build;
 mod container;
 mod copy;
-pub use build::{BuildOptions, PushOptions};
+pub use build::{BuildOptions, PullOptions, PushOptions};
 pub use lifecycle::{RunOptions, RunOverrides};
 pub use lock::ProjectLock;
 pub use query::{ExecOptions, ImagesOptions, LogsOptions, PsOptions};
