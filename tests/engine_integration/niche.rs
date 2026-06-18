@@ -100,3 +100,50 @@ async fn cli_commit_creates_image() {
 	assert!(out.status.success(), "commit failed: {:?}", out.stderr);
 	assert!(exists, "commit must create the target image");
 }
+
+#[tokio::test]
+async fn cli_attach_streams_output_until_exit() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let proj = format!("t{}-attach", std::process::id());
+	let compose = dir.path().join("docker-compose.yml");
+	// Emits a line then exits shortly after, so attach streams output and the
+	// follow stream closes (attach returns) rather than blocking forever.
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sh\", \"-c\", \"echo attached-hi; sleep 1\"]\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+
+	run(&["-f", c, "-p", &proj, "up", "-d"]);
+	let out = run(&["-f", c, "-p", &proj, "attach", "web"]);
+	run(&["-f", c, "-p", &proj, "down"]);
+	assert!(out.status.success(), "attach failed: {:?}", out.stderr);
+	assert!(
+		String::from_utf8_lossy(&out.stdout).contains("attached-hi"),
+		"attach must stream the container's output"
+	);
+}
+
+#[tokio::test]
+async fn engine_events_stream_connects() {
+	let client = match super::podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let engine = Engine::new(client, proj("events"));
+	// The stream runs until interrupted; bound it with a short timeout. A
+	// timeout (not an error) means the event stream connected and stayed open.
+	let res = tokio::time::timeout(
+		std::time::Duration::from_millis(800),
+		engine.stream_events(true),
+	)
+	.await;
+	assert!(
+		res.is_err(),
+		"events stream should stay open until interrupted"
+	);
+}

@@ -244,6 +244,8 @@ pub(crate) async fn dispatch(
 				.await?
 		}
 		Commands::Top { services } => engine.top(file, &services).await?,
+		Commands::Events { json } => engine.stream_events(json).await?,
+		Commands::Attach { service } => engine.attach(file, &service).await?,
 		Commands::Wait { services } => engine.wait_services(file, &services).await?,
 		Commands::Commit {
 			service,

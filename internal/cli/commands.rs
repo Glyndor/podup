@@ -262,9 +262,8 @@ pub(crate) enum Commands {
 		#[arg(trailing_var_arg = true, allow_hyphen_values = true)]
 		cmd: Vec<String>,
 	},
-	/// Copy files between a service container and the local filesystem.
-	///
-	/// Use SERVICE:PATH for the container side (e.g. `web:/app/data ./local`).
+	/// Copy files between a service container and the host (SERVICE:PATH for the
+	/// container side, e.g. `web:/app/data ./local`).
 	Cp {
 		/// Source path. Use SERVICE:PATH for a container path.
 		src: String,
@@ -297,6 +296,17 @@ pub(crate) enum Commands {
 		/// Show only these services.
 		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
+	},
+	/// Stream Podman events for this project's containers.
+	Events {
+		/// Emit each event as a JSON line instead of a summary.
+		#[arg(long)]
+		json: bool,
+	},
+	/// Attach to a service container's output (stdout/stderr).
+	Attach {
+		/// Service whose container to attach to.
+		service: String,
 	},
 	/// Block until service containers stop, printing each exit code.
 	Wait {
@@ -467,12 +477,9 @@ pub(crate) enum Commands {
 	},
 	/// Watch for file changes and sync/rebuild/restart as configured by develop.watch.
 	Watch,
-	/// Update podup to the latest signed release.
-	///
-	/// Replaces the running executable only after verifying the release's
-	/// Ed25519 signature against the embedded public key and matching its
-	/// SHA-256 checksum; verification fails closed (bad/missing key, signature,
-	/// or checksum aborts without touching the installed binary).
+	/// Update podup to the latest signed release (Ed25519 signature + SHA-256
+	/// verified against the embedded key; fails closed, leaving the binary
+	/// untouched on any mismatch).
 	#[cfg(feature = "update")]
 	Update {
 		/// Report whether a newer release exists without installing it.
