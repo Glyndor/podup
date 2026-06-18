@@ -30,3 +30,19 @@ pub(crate) enum ConfigFormat {
 	/// JSON.
 	Json,
 }
+
+/// Subcommands of `generate`.
+#[derive(clap::Subcommand)]
+pub(crate) enum GenerateCommands {
+	/// Translate the compose file into Podman Quadlet unit files.
+	///
+	/// Emits one `.container` per service plus `.network` and `.volume` units.
+	/// Without --output the units are printed to stdout; warnings about fields
+	/// with no Quadlet mapping go to stderr.
+	Quadlet {
+		/// Directory to write the unit files into (e.g.
+		/// ~/.config/containers/systemd). Prints to stdout when omitted.
+		#[arg(short, long)]
+		output: Option<std::path::PathBuf>,
+	},
+}
