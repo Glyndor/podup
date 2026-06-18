@@ -45,7 +45,7 @@ pub struct RunOptions {
 /// image-acquisition overrides are carried on the engine.
 #[derive(Default, Clone)]
 pub struct RunOverrides {
-	/// Run the command as this user (`-u/--user`, name or UID[:GID]).
+	/// Run the command as this user (`-u/--user`, `name or UID[:GID]`).
 	pub user: Option<String>,
 	/// Working directory inside the container (`-w/--workdir`).
 	pub workdir: Option<String>,
