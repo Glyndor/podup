@@ -114,28 +114,7 @@ async fn run() -> podup::Result<()> {
 		quiet,
 	} = &cli.command
 	{
-		// Reaching here means the file parsed and merged cleanly.
-		if *quiet {
-			return Ok(());
-		}
-		if *services {
-			for name in file.services.keys() {
-				println!("{name}");
-			}
-			return Ok(());
-		}
-		let mut redacted = file.clone();
-		redacted.redact_inline_content();
-		let rendered = match format {
-			ConfigFormat::Json => serde_json::to_string_pretty(&redacted).map_err(|e| {
-				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
-			})?,
-			ConfigFormat::Yaml => {
-				serde_yaml::to_string(&redacted).map_err(podup::ComposeError::Parse)?
-			}
-		};
-		println!("{rendered}");
-		return Ok(());
+		return startup::render_config(&file, format, *services, *quiet);
 	}
 
 	let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
