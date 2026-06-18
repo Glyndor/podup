@@ -3,161 +3,22 @@
 // The binary carries no `unsafe`; deny it so any future addition is caught.
 #![deny(unsafe_code)]
 
-use std::path::Path;
 use std::process;
 
 #[cfg(feature = "completions")]
 use clap::CommandFactory;
-use clap::Parser;
-use tracing::{Event, Subscriber};
-use tracing_subscriber::fmt::format::Writer;
-use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
-use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::EnvFilter;
 
 mod cli;
+mod generate;
 mod resolve;
+mod startup;
 
 use cli::*;
+use generate::write_quadlet;
 use resolve::*;
+use startup::{init_tracing, internal_error_notice, is_mutating, parse_cli};
 
-/// Canonical project URL, reused for the bug-report hint on internal errors.
-const REPO_URL: &str = "https://github.com/Glyndor/podup";
-
-/// Event formatter that renders every diagnostic as `podup: <level>: <message>`
-/// on a single line, matching the prefix used by the CLI's own `eprintln!`
-/// warnings and errors. This unifies the compose forward-compat diagnostics
-/// (emitted via `tracing::warn!`) with the rest of podup's user-facing output.
-struct PodupFormat;
-
-impl<S, N> FormatEvent<S, N> for PodupFormat
-where
-	S: Subscriber + for<'a> LookupSpan<'a>,
-	N: for<'a> FormatFields<'a> + 'static,
-{
-	fn format_event(
-		&self,
-		ctx: &FmtContext<'_, S, N>,
-		mut writer: Writer<'_>,
-		event: &Event<'_>,
-	) -> std::fmt::Result {
-		write!(writer, "podup: {}: ", level_word(*event.metadata().level()))?;
-		ctx.field_format().format_fields(writer.by_ref(), event)?;
-		writeln!(writer)
-	}
-}
-
-/// Map a tracing level to the user-facing word used in `podup:` output.
-fn level_word(level: tracing::Level) -> &'static str {
-	match level {
-		tracing::Level::ERROR => "error",
-		tracing::Level::WARN => "warning",
-		tracing::Level::INFO => "info",
-		tracing::Level::DEBUG => "debug",
-		tracing::Level::TRACE => "trace",
-	}
-}
-
-/// Guidance printed after an internal error or panic: where to report it and a
-/// reminder to scrub secrets first. Kept off ordinary, user-correctable errors.
-fn internal_error_notice() -> String {
-	format!(
-		"podup: this looks like a bug; re-run with RUST_LOG=debug and report it at {REPO_URL}/issues\n\
-		 podup: redact secrets (passwords, tokens, resolved env values) from any logs before sharing"
-	)
-}
-
-/// Whether a command creates, destroys, or changes the state of containers and
-/// so must hold the exclusive project lock.
-fn is_mutating(command: &Commands) -> bool {
-	matches!(
-		command,
-		Commands::Up { .. }
-			| Commands::Down { .. }
-			| Commands::Start { .. }
-			| Commands::Stop { .. }
-			| Commands::Build { .. }
-			| Commands::Rm { .. }
-			| Commands::Kill { .. }
-			| Commands::Pause { .. }
-			| Commands::Unpause { .. }
-			| Commands::Run { .. }
-			| Commands::Restart { .. }
-	)
-}
-
-/// Quadlet units are systemd unit files; they only run on Linux hosts (where
-/// systemd consumes them from `~/.config/containers/systemd/`). Generating them
-/// on macOS/Windows is legitimate (e.g. to deploy to a remote Linux host), so
-/// this returns an advisory string rather than blocking. `os` is
-/// [`std::env::consts::OS`]; the function is pure so every platform's branch is
-/// testable in a single run.
-fn quadlet_platform_advisory(os: &str) -> Option<String> {
-	(os != "linux").then(|| {
-		"quadlet units require systemd (Linux); generated files will not run on this host"
-			.to_string()
-	})
-}
-
-/// Generate Quadlet units from the compose file and either write them to a
-/// directory or print them to stdout. Warnings about unmapped fields go to
-/// stderr so stdout stays clean for piping.
-fn write_quadlet(
-	file: &podup::compose::types::ComposeFile,
-	project: &str,
-	output: Option<&Path>,
-) -> podup::Result<()> {
-	let result = podup::quadlet::generate(file, project);
-	if let Some(dup) = result.duplicate_filename() {
-		return Err(std::io::Error::new(
-			std::io::ErrorKind::InvalidInput,
-			format!(
-				"quadlet: two resources map to the same unit file {dup:?}; \
-				 rename one so their names do not collide after sanitization"
-			),
-		)
-		.into());
-	}
-	if let Some(advisory) = quadlet_platform_advisory(std::env::consts::OS) {
-		eprintln!("podup: warning: {advisory}");
-	}
-	for warning in &result.warnings {
-		eprintln!("podup: warning: {warning}");
-	}
-	match output {
-		Some(dir) => {
-			std::fs::create_dir_all(dir)?;
-			for unit in &result.units {
-				// Defense in depth: the unit stem is already sanitized in the
-				// library, but never write a unit whose name is anything but a
-				// plain file inside `dir` (rejects separators, `.` and `..`).
-				if Path::new(&unit.filename).file_name()
-					!= Some(std::ffi::OsStr::new(&unit.filename))
-				{
-					return Err(std::io::Error::new(
-						std::io::ErrorKind::InvalidInput,
-						format!("refusing unsafe quadlet unit file name: {}", unit.filename),
-					)
-					.into());
-				}
-				let path = dir.join(&unit.filename);
-				std::fs::write(&path, &unit.contents)?;
-				println!("wrote {}", path.display());
-			}
-		}
-		None => {
-			for unit in &result.units {
-				println!("# {}", unit.filename);
-				print!("{}", unit.contents);
-				println!();
-			}
-		}
-	}
-	Ok(())
-}
-
-#[tokio::main]
-async fn main() {
+fn main() {
 	// Replace the default panic output (a raw Rust backtrace) with a `podup:`
 	// internal-error notice that tells the user what to report and where, plus
 	// the reminder to redact secrets first.
@@ -166,7 +27,27 @@ async fn main() {
 		eprintln!("{}", internal_error_notice());
 	}));
 
-	match run().await {
+	// Drive the runtime on a worker thread with a large stack. Clap's
+	// command-building (debug builds especially) is stack-heavy and overflows
+	// Windows' 1 MiB main-thread stack as the subcommand surface grows; an 8 MiB
+	// matches Linux's default and leaves ample headroom.
+	std::thread::Builder::new()
+		.stack_size(8 * 1024 * 1024)
+		.name("podup".into())
+		.spawn(run_to_exit)
+		.expect("spawn podup worker thread")
+		.join()
+		.expect("podup worker thread panicked");
+}
+
+/// Build the Tokio runtime and drive [`run`], mapping its result onto the
+/// process exit status. Runs on the large-stack worker thread spawned by `main`.
+fn run_to_exit() {
+	let runtime = tokio::runtime::Builder::new_multi_thread()
+		.enable_all()
+		.build()
+		.expect("build Tokio runtime");
+	match runtime.block_on(run()) {
 		Ok(()) => {}
 		Err(podup::ComposeError::RunExited(code)) => process::exit(code as i32),
 		#[cfg(feature = "update")]
@@ -182,31 +63,8 @@ async fn main() {
 }
 
 async fn run() -> podup::Result<()> {
-	// Surface diagnostics by default: with no `RUST_LOG` set, show warnings (so
-	// the forward-compat "unknown field" notices are never silently dropped),
-	// and write them to stderr so a command's stdout stays a clean pipe.
-	tracing_subscriber::fmt()
-		.with_env_filter(
-			EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
-		)
-		.with_writer(std::io::stderr)
-		.event_format(PodupFormat)
-		.init();
-
-	// Frame `--help`/`--version` output with a blank line top and bottom. clap
-	// trims template/before/after-help edges, so wrap the rendered text here.
-	let cli = match Cli::try_parse() {
-		Ok(cli) => cli,
-		Err(e) => match e.kind() {
-			clap::error::ErrorKind::DisplayHelp
-			| clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
-			| clap::error::ErrorKind::DisplayVersion => {
-				print!("\n{e}\n");
-				process::exit(0);
-			}
-			_ => e.exit(),
-		},
-	};
+	init_tracing();
+	let cli = parse_cli();
 
 	// `completions` derives entirely from the static CLI definition; it neither
 	// parses a compose file nor contacts Podman. Print to stdout for piping.
@@ -232,14 +90,51 @@ async fn run() -> podup::Result<()> {
 			.map_err(|e| podup::ComposeError::Update(format!("update task failed: {e}")))?;
 	}
 
+	// `ls` discovers projects across the host by container label; it needs a
+	// Podman connection but no compose file, so handle it before parsing one.
+	if let Commands::Ls { all, quiet, format } = &cli.command {
+		let client = podup::podman::connect(cli.socket.as_deref())?;
+		return podup::list_projects(
+			&client,
+			podup::LsOptions {
+				all: *all,
+				quiet: *quiet,
+				json: *format == OutputFormat::Json,
+			},
+		)
+		.await;
+	}
+
 	let compose_files = resolve_compose_files(&cli.file);
 	let file = podup::parse_files_with_env_files(&compose_files, &cli.env_file)?;
 
-	if matches!(cli.command, Commands::Config) {
+	if let Commands::Config {
+		format,
+		services,
+		quiet,
+	} = &cli.command
+	{
+		// Reaching here means the file parsed and merged cleanly.
+		if *quiet {
+			return Ok(());
+		}
+		if *services {
+			for name in file.services.keys() {
+				println!("{name}");
+			}
+			return Ok(());
+		}
 		let mut redacted = file.clone();
 		redacted.redact_inline_content();
-		let yaml = serde_yaml::to_string(&redacted).map_err(podup::ComposeError::Parse)?;
-		println!("{yaml}");
+		let rendered = match format {
+			ConfigFormat::Json => serde_json::to_string_pretty(&redacted).map_err(|e| {
+				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
+			})?,
+			ConfigFormat::Yaml => {
+				serde_yaml::to_string(&redacted).map_err(podup::ComposeError::Parse)?
+			}
+		};
+		println!("{rendered}");
 		return Ok(());
 	}
 
@@ -277,8 +172,28 @@ async fn run() -> podup::Result<()> {
 		| Commands::Restart { timeout, .. } => *timeout,
 		_ => None,
 	};
-	let engine =
-		podup::Engine::with_base_dir(client, project, base_dir).with_stop_timeout(stop_timeout);
+	// `--scale SERVICE=N` (on `up`) and the `scale` subcommand both feed the
+	// engine's replica overrides so `resolve_replicas` reports the target count.
+	let scale_overrides: std::collections::HashMap<String, u32> = match &cli.command {
+		Commands::Up { scale, .. } => scale.iter().cloned().collect(),
+		Commands::Scale { pairs } => pairs.iter().cloned().collect(),
+		_ => std::collections::HashMap::new(),
+	};
+	// `up` image-acquisition overrides: `--pull`, `--no-build`, `--quiet-pull`.
+	let (pull_override, no_build, quiet_pull) = match &cli.command {
+		Commands::Up {
+			pull,
+			no_build,
+			quiet_pull,
+			..
+		} => (pull.clone(), *no_build, *quiet_pull),
+		Commands::Pull { quiet, .. } => (None, false, *quiet),
+		_ => (None, false, false),
+	};
+	let engine = podup::Engine::with_base_dir(client, project, base_dir)
+		.with_stop_timeout(stop_timeout)
+		.with_scale_overrides(scale_overrides)
+		.with_up_overrides(pull_override, no_build, quiet_pull);
 
 	// Serialize mutating lifecycle commands against concurrent `podup` runs on
 	// the same project. Read-only / follow commands (ps, logs, top, port,
@@ -300,6 +215,12 @@ async fn run() -> podup::Result<()> {
 			force_recreate,
 			no_deps,
 			timeout: _,
+			scale: _,
+			pull: _,
+			no_build: _,
+			quiet_pull: _,
+			wait,
+			no_start,
 			services,
 		} => {
 			if remove_orphans {
@@ -307,6 +228,21 @@ async fn run() -> podup::Result<()> {
 			}
 			if build {
 				engine.build_all(&file, &services).await?;
+			}
+			// `--no-start` creates the containers but never starts them, so the
+			// wait/watch/attach steps below do not apply.
+			if no_start {
+				engine
+					.create_with_options(
+						&file,
+						&cli.profile,
+						&services,
+						no_recreate,
+						force_recreate,
+						no_deps,
+					)
+					.await?;
+				return Ok(());
 			}
 			engine
 				.up_with_options(
@@ -319,6 +255,9 @@ async fn run() -> podup::Result<()> {
 					no_deps,
 				)
 				.await?;
+			if wait {
+				engine.wait_services_healthy(&file, &services).await?;
+			}
 			if watch {
 				engine.watch(&file).await?;
 			} else if !detach {
@@ -328,13 +267,46 @@ async fn run() -> podup::Result<()> {
 		}
 		Commands::Down {
 			volumes,
+			remove_orphans,
+			rmi,
 			timeout: _,
-		} => engine.down_with_options(&file, volumes).await?,
+		} => {
+			if remove_orphans {
+				engine.remove_orphans(&file).await?;
+			}
+			engine.down_with_options(&file, volumes).await?;
+			if let Some(scope) = rmi {
+				engine
+					.remove_service_images(&file, scope == RmiScope::Local)
+					.await?;
+			}
+		}
 		Commands::Start { services } => engine.start(&file, &services).await?,
 		Commands::Stop {
 			services,
 			timeout: _,
 		} => engine.stop(&file, &services).await?,
+		Commands::Scale { pairs } => engine.scale(&file, &pairs).await?,
+		Commands::Create {
+			build,
+			force_recreate,
+			no_recreate,
+			services,
+		} => {
+			if build {
+				engine.build_all(&file, &services).await?;
+			}
+			engine
+				.create_with_options(
+					&file,
+					&cli.profile,
+					&services,
+					no_recreate,
+					force_recreate,
+					false,
+				)
+				.await?
+		}
 		Commands::Build {
 			no_cache,
 			pull,
@@ -355,8 +327,25 @@ async fn run() -> podup::Result<()> {
 				)
 				.await?
 		}
-		Commands::Rm { force, services } => engine.rm(&file, &services, force).await?,
-		Commands::Kill { signal, services } => engine.kill(&file, &services, &signal).await?,
+		Commands::Rm {
+			force,
+			volumes,
+			services,
+		} => {
+			engine
+				.rm_with_options(&file, &services, force, volumes)
+				.await?
+		}
+		Commands::Kill {
+			signal,
+			remove_orphans,
+			services,
+		} => {
+			engine.kill(&file, &services, &signal).await?;
+			if remove_orphans {
+				engine.remove_orphans(&file).await?;
+			}
+		}
 		Commands::Pause { services } => engine.pause(&file, &services).await?,
 		Commands::Unpause { services } => engine.unpause(&file, &services).await?,
 		Commands::Run {
@@ -397,6 +386,26 @@ async fn run() -> podup::Result<()> {
 				.await?
 		}
 		Commands::Top { services } => engine.top(&file, &services).await?,
+		Commands::Stats {
+			no_stream,
+			services,
+		} => engine.stats(&file, &services, no_stream).await?,
+		Commands::Push {
+			ignore_push_failures,
+			tls_verify,
+			services,
+		} => {
+			engine
+				.push(
+					&file,
+					&services,
+					podup::PushOptions {
+						ignore_failures: ignore_push_failures,
+						tls_verify,
+					},
+				)
+				.await?
+		}
 		Commands::Port {
 			service,
 			private_port,
@@ -413,8 +422,27 @@ async fn run() -> podup::Result<()> {
 				)
 				.await?
 		}
-		Commands::Logs { service, follow } => {
-			engine.logs(&file, service.as_deref(), follow).await?
+		Commands::Logs {
+			service,
+			follow,
+			tail,
+			since,
+			until,
+			timestamps,
+		} => {
+			engine
+				.logs_with_options(
+					&file,
+					service.as_deref(),
+					podup::LogsOptions {
+						follow,
+						tail,
+						since,
+						until,
+						timestamps,
+					},
+				)
+				.await?
 		}
 		Commands::Exec {
 			env,
@@ -443,14 +471,20 @@ async fn run() -> podup::Result<()> {
 				)
 				.await?
 		}
-		Commands::Pull { services } => engine.pull_services(&file, &services).await?,
+		Commands::Pull { quiet: _, services } => engine.pull_services(&file, &services).await?,
 		Commands::Restart {
 			service,
 			timeout: _,
-		} => engine.restart(&file, service.as_deref()).await?,
-		Commands::Config => unreachable!("handled above"),
+			no_deps,
+		} => {
+			engine
+				.restart_with_options(&file, service.as_deref(), no_deps)
+				.await?
+		}
+		Commands::Config { .. } => unreachable!("handled above"),
 		Commands::Generate { .. } => unreachable!("handled above"),
 		Commands::Watch => engine.watch(&file).await?,
+		Commands::Ls { .. } => unreachable!("handled before compose parsing"),
 		#[cfg(feature = "update")]
 		Commands::Update { .. } => unreachable!("handled before compose parsing"),
 		#[cfg(feature = "completions")]
@@ -458,39 +492,4 @@ async fn run() -> podup::Result<()> {
 	}
 
 	Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn quadlet_advisory_only_on_non_linux() {
-		assert_eq!(quadlet_platform_advisory("linux"), None);
-		for os in ["macos", "windows", "freebsd"] {
-			let msg = quadlet_platform_advisory(os).expect("non-linux host warns");
-			assert!(msg.contains("systemd"), "advisory names the requirement");
-		}
-	}
-
-	#[test]
-	fn level_words_match_user_facing_terms() {
-		assert_eq!(level_word(tracing::Level::WARN), "warning");
-		assert_eq!(level_word(tracing::Level::ERROR), "error");
-	}
-
-	#[test]
-	fn internal_error_notice_reports_and_warns_on_secrets() {
-		let notice = internal_error_notice();
-		assert!(notice.contains(REPO_URL), "points at the issue tracker");
-		assert!(notice.contains("/issues"));
-		assert!(
-			notice.contains("redact"),
-			"reminds the user to scrub secrets"
-		);
-		assert!(
-			notice.contains("RUST_LOG=debug"),
-			"tells the user what to capture"
-		);
-	}
 }

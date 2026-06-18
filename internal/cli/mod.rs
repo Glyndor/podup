@@ -6,6 +6,9 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[cfg(feature = "completions")]
 use clap_complete::Shell;
 
+mod parse;
+use parse::parse_scale_pair;
+
 /// Output rendering for list commands (`ps`, `images`).
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub(crate) enum OutputFormat {
@@ -13,6 +16,25 @@ pub(crate) enum OutputFormat {
 	#[default]
 	Table,
 	/// Machine-readable JSON array.
+	Json,
+}
+
+/// Which images `down --rmi` removes.
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+pub(crate) enum RmiScope {
+	/// All images used by the project's services.
+	All,
+	/// Only images without a custom tag (services that build locally).
+	Local,
+}
+
+/// Output rendering for `config`.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum ConfigFormat {
+	/// YAML (the compose-file format).
+	#[default]
+	Yaml,
+	/// JSON.
 	Json,
 }
 
@@ -85,6 +107,24 @@ pub(crate) enum Commands {
 		/// Seconds to wait for containers to stop when recreating, before killing them.
 		#[arg(short = 't', long)]
 		timeout: Option<i32>,
+		/// Override the replica count for a service: SERVICE=N (repeatable).
+		#[arg(long, value_parser = parse_scale_pair)]
+		scale: Vec<(String, u32)>,
+		/// Pull policy before starting: always, missing, never.
+		#[arg(long)]
+		pull: Option<String>,
+		/// Do not build images, even for services with a build section.
+		#[arg(long)]
+		no_build: bool,
+		/// Suppress image-pull progress output.
+		#[arg(long)]
+		quiet_pull: bool,
+		/// Wait until services are running/healthy before returning.
+		#[arg(long)]
+		wait: bool,
+		/// Create containers but do not start them.
+		#[arg(long)]
+		no_start: bool,
 		/// Bring up only these services (and their transitive depends_on).
 		/// If omitted, brings up every service in the compose file.
 		#[arg(trailing_var_arg = true)]
@@ -95,6 +135,12 @@ pub(crate) enum Commands {
 		/// Also remove named volumes declared in the compose file.
 		#[arg(short = 'v', long)]
 		volumes: bool,
+		/// Remove containers for services not defined in the compose file.
+		#[arg(long)]
+		remove_orphans: bool,
+		/// Also remove service images: `all` or `local` (build-section services).
+		#[arg(long, value_enum)]
+		rmi: Option<RmiScope>,
 		/// Seconds to wait for containers to stop before killing them.
 		#[arg(short = 't', long)]
 		timeout: Option<i32>,
@@ -111,6 +157,61 @@ pub(crate) enum Commands {
 		#[arg(short = 't', long)]
 		timeout: Option<i32>,
 		/// Stop only these services.
+		#[arg(trailing_var_arg = true)]
+		services: Vec<String>,
+	},
+	/// Set the number of running containers for services.
+	Scale {
+		/// Target replica counts: SERVICE=N (one or more).
+		#[arg(value_parser = parse_scale_pair, required = true)]
+		pairs: Vec<(String, u32)>,
+	},
+	/// Create containers for services without starting them.
+	Create {
+		/// Build images before creating containers.
+		#[arg(long)]
+		build: bool,
+		/// Recreate containers even if their configuration is unchanged.
+		#[arg(long)]
+		force_recreate: bool,
+		/// Do not recreate containers that already exist.
+		#[arg(long)]
+		no_recreate: bool,
+		/// Create only these services.
+		#[arg(trailing_var_arg = true)]
+		services: Vec<String>,
+	},
+	/// Display a live stream of container resource usage.
+	Stats {
+		/// Disable streaming; print a single snapshot and exit.
+		#[arg(long)]
+		no_stream: bool,
+		/// Show only these services.
+		#[arg(trailing_var_arg = true)]
+		services: Vec<String>,
+	},
+	/// List podup compose projects on the host.
+	Ls {
+		/// Show all projects, including stopped ones.
+		#[arg(short, long)]
+		all: bool,
+		/// Only display project names.
+		#[arg(short, long)]
+		quiet: bool,
+		/// Output format.
+		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
+		format: OutputFormat,
+	},
+	/// Push service images to their registry.
+	Push {
+		/// Continue pushing the remaining services after a failure.
+		#[arg(long)]
+		ignore_push_failures: bool,
+		/// Verify the registry's TLS certificate (set false for an insecure
+		/// or local HTTP registry). Omitted leaves Podman's default (on).
+		#[arg(long)]
+		tls_verify: Option<bool>,
+		/// Push only these services.
 		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
@@ -138,6 +239,9 @@ pub(crate) enum Commands {
 		/// Remove even running containers (stop first).
 		#[arg(short, long)]
 		force: bool,
+		/// Also remove anonymous volumes attached to the containers.
+		#[arg(short = 'v', long)]
+		volumes: bool,
 		/// Remove only these services.
 		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
@@ -147,6 +251,9 @@ pub(crate) enum Commands {
 		/// Signal to send (default: SIGKILL).
 		#[arg(short, long, default_value = "SIGKILL")]
 		signal: String,
+		/// Also remove containers for services not in the compose file.
+		#[arg(long)]
+		remove_orphans: bool,
 		/// Signal only these services.
 		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
@@ -242,6 +349,18 @@ pub(crate) enum Commands {
 		/// Follow log output.
 		#[arg(short, long)]
 		follow: bool,
+		/// Number of lines to show from the end of the logs (default: all).
+		#[arg(short = 'n', long)]
+		tail: Option<String>,
+		/// Show logs since a timestamp or relative time (e.g. 2024-01-01T00:00:00, 10m).
+		#[arg(long)]
+		since: Option<String>,
+		/// Show logs before a timestamp or relative time.
+		#[arg(long)]
+		until: Option<String>,
+		/// Prefix each line with an RFC3339 timestamp.
+		#[arg(short = 't', long)]
+		timestamps: bool,
 	},
 	/// Execute a command in a running service container.
 	Exec {
@@ -274,7 +393,11 @@ pub(crate) enum Commands {
 	},
 	/// Pull images for the named services, or all services if none are given.
 	Pull {
+		/// Suppress image-pull progress output.
+		#[arg(short, long)]
+		quiet: bool,
 		/// Only pull images for these services.
+		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
 	/// Restart services.
@@ -282,12 +405,25 @@ pub(crate) enum Commands {
 		/// Seconds to wait for containers to stop before killing them.
 		#[arg(short = 't', long)]
 		timeout: Option<i32>,
+		/// Do not restart dependent services (depends_on with a restart condition).
+		#[arg(long)]
+		no_deps: bool,
 		/// Only restart this service.
 		service: Option<String>,
 	},
 	/// Print the resolved compose file (after substitution / extends / include).
 	#[command(alias = "convert")]
-	Config,
+	Config {
+		/// Output format.
+		#[arg(long, value_enum, default_value_t = ConfigFormat::Yaml)]
+		format: ConfigFormat,
+		/// Print only the service names, one per line.
+		#[arg(long)]
+		services: bool,
+		/// Only validate the configuration; print nothing.
+		#[arg(short, long)]
+		quiet: bool,
+	},
 	/// Generate declarative artifacts from the compose file.
 	#[command(alias = "gen")]
 	Generate {

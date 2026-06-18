@@ -35,25 +35,57 @@ Create and start all services (or only the named ones, plus their transitive
 | `--no-recreate` | Leave already-running containers in place. |
 | `--force-recreate` | Recreate containers even if their config is unchanged. |
 | `--no-deps` | Do not start the `depends_on` services of the named services. |
+| `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable. |
+| `--pull <policy>` | Pull policy before starting: `always`, `missing`, `never`. |
+| `--no-build` | Do not build images, even for services with a `build:` section. |
+| `--quiet-pull` | Suppress image-pull progress output. |
+| `--wait` | Wait until services are running/healthy before returning. |
+| `--no-start` | Create the containers but do not start them. |
 
 ### `down`
 Stop and remove containers. `-v, --volumes` also removes named volumes declared
-in the compose file.
+in the compose file; `--remove-orphans` also removes containers for services no
+longer in the file; `--rmi all|local` also removes the service images (`local`
+only those built from a `build:` section).
 
 ### `start` / `stop` / `restart`
 Start existing stopped containers, stop running ones without removing them, or
 restart them. `start`/`stop` accept a trailing service list; `restart [SERVICE]`
-restarts everything or one service.
+restarts everything or one service. `restart --no-deps` skips cascade-restarting
+dependents that declare a `depends_on` restart condition.
+
+### `scale <SERVICE=N>...`
+Set the number of running containers for one or more services, creating missing
+replicas and removing surplus ones. A service that publishes a **fixed host
+port** cannot be scaled past one replica (only one container can bind a host
+port) — the command fails fast and tells you to drop the host port (`- "80"`, so
+Podman assigns one per replica), front it with a reverse proxy, or stay at one
+replica.
+
+### `create`
+Create the containers for services without starting them (like `up` stopped at
+the create step). `--build` builds images first; `--force-recreate` recreates
+unchanged containers; `--no-recreate` leaves existing ones in place. Accepts a
+trailing service list. A later `up`/`start` runs the created containers.
 
 ### `build`
 Build or rebuild service images (optionally only the named services).
 
+### `push`
+Push each service's `image:` to its registry (services without an image are
+skipped). Credentials come from `podman login`. `--ignore-push-failures`
+continues after a failure; `--tls-verify false` allows an insecure/HTTP
+registry (omit it to keep Podman's default verification). Accepts a trailing
+service list.
+
 ### `rm`
-Remove stopped service containers. `-f, --force` stops and removes running ones.
+Remove stopped service containers. `-f, --force` stops and removes running ones;
+`-v, --volumes` also removes anonymous volumes attached to them.
 
 ### `kill`
 Send a signal to service containers. `-s, --signal <SIG>` sets the signal
-(default `SIGKILL`).
+(default `SIGKILL`); `--remove-orphans` then removes containers for services no
+longer in the file.
 
 ### `pause` / `unpause`
 Pause running service containers, or resume paused ones.
@@ -83,12 +115,14 @@ container side, e.g. `podup cp web:/app/data ./local`.
 | Command | Description |
 |---|---|
 | `ps` | List project containers. |
+| `ls` | List podup compose projects on the host. `-a/--all` includes stopped projects, `-q/--quiet` prints names only, `--format table\|json`. Needs no compose file. |
 | `top` | Show running processes of service containers. |
+| `stats` | Live resource usage (CPU, memory, network, block I/O, PIDs) for service containers. `--no-stream` prints one snapshot; a trailing service list narrows it. |
 | `port <SERVICE> <PRIVATE_PORT>` | Print the public binding for a port. `--proto` sets `tcp`/`udp` (default `tcp`). |
 | `images` | List images used by services. |
-| `logs [SERVICE]` | View container output. `-f, --follow` streams new output. |
-| `config` | Print the resolved compose file (after substitution, extends, include). |
-| `pull` | Pull images for all services. |
+| `logs [SERVICE]` | View container output. `-f/--follow` streams new output, `-n/--tail <N>` limits to the last N lines, `--since`/`--until` bound by time, `-t/--timestamps` prefixes each line. |
+| `config` | Print the resolved compose file (after substitution, extends, include). `--format yaml\|json`, `--services` lists service names, `-q/--quiet` only validates. |
+| `pull` | Pull images for all services. `-q/--quiet` suppresses progress output. |
 
 ## Generate
 

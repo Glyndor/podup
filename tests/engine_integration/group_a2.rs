@@ -176,6 +176,26 @@ async fn depends_on_service_healthy() {
 }
 
 #[tokio::test]
+async fn depends_on_service_healthy_with_default_timeout() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("hltdef");
+	let engine = Engine::new(client, proj.clone());
+	// db's healthcheck OMITS `timeout`/`retries`. Podman defaults a missing
+	// Timeout to 0s (every probe fails "exceeded timeout of 0s"), so without the
+	// compose-spec default the db never becomes healthy and this up would hang.
+	let file = parse_str(
+		"services:\n  db:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    healthcheck:\n      test: [\"CMD\", \"true\"]\n      interval: 1s\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    depends_on:\n      db:\n        condition: service_healthy\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	engine.down(&file).await.unwrap();
+}
+
+#[tokio::test]
 async fn depends_on_service_completed() {
 	let client = match podman().await {
 		Some(d) => d,

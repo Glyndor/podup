@@ -13,6 +13,17 @@ use crate::libpod::API_PREFIX;
 impl Engine {
 	/// Restart the named service (or all services). Dependents with a `restart` condition in `depends_on` are also restarted.
 	pub async fn restart(&self, file: &ComposeFile, service_name: Option<&str>) -> Result<()> {
+		self.restart_with_options(file, service_name, false).await
+	}
+
+	/// Restart with options. When `no_deps` is true, dependents with a
+	/// `depends_on` restart condition are NOT cascade-restarted.
+	pub async fn restart_with_options(
+		&self,
+		file: &ComposeFile,
+		service_name: Option<&str>,
+		no_deps: bool,
+	) -> Result<()> {
 		let names: Vec<String> = if let Some(svc) = service_name {
 			if !file.services.contains_key(svc) {
 				return Err(ComposeError::ServiceNotFound(svc.into()));
@@ -27,42 +38,32 @@ impl Engine {
 
 			for container_name in self.replica_names(name, service) {
 				let grace = self.grace_period_secs(service);
-				let stop_path = format!(
-					"{API_PREFIX}/containers/{}/stop?t={grace}",
-					crate::libpod::urlencoded(&container_name),
-				);
-				if let Err(e) = self.client.post_empty_ok(&stop_path).await {
-					tracing::debug!("stop before restart {container_name}: {e}");
-				}
-
-				let start_path = format!(
-					"{API_PREFIX}/containers/{}/start",
+				// Single atomic restart (no visible stopped window) instead of a
+				// stop+start round-trip.
+				let restart_path = format!(
+					"{API_PREFIX}/containers/{}/restart?t={grace}",
 					crate::libpod::urlencoded(&container_name),
 				);
 				self.client
-					.post_empty_ok(&start_path)
+					.post_empty_ok(&restart_path)
 					.await
 					.map_err(ComposeError::Podman)?;
 
 				info!("restarted {container_name}");
 			}
 
+			if no_deps {
+				continue;
+			}
 			for (dep_name, dep_service) in &file.services {
 				if dep_service.depends_on.restart_for(name) {
 					for dep_container in self.replica_names(dep_name, dep_service) {
 						let grace = self.grace_period_secs(dep_service);
-						let stop_path = format!(
-							"{API_PREFIX}/containers/{}/stop?t={grace}",
+						let restart_path = format!(
+							"{API_PREFIX}/containers/{}/restart?t={grace}",
 							crate::libpod::urlencoded(&dep_container),
 						);
-						if let Err(e) = self.client.post_empty_ok(&stop_path).await {
-							tracing::debug!("stop before cascade restart {dep_container}: {e}");
-						}
-						let start_path = format!(
-							"{API_PREFIX}/containers/{}/start",
-							crate::libpod::urlencoded(&dep_container),
-						);
-						if let Err(e) = self.client.post_empty_ok(&start_path).await {
+						if let Err(e) = self.client.post_empty_ok(&restart_path).await {
 							tracing::warn!("cascade restart of {dep_name} failed: {e}");
 						} else {
 							info!("cascade-restarted {dep_container} (depends_on.restart)");
@@ -166,6 +167,19 @@ impl Engine {
 		target_services: &[String],
 		force: bool,
 	) -> Result<()> {
+		self.rm_with_options(file, target_services, force, false)
+			.await
+	}
+
+	/// Remove stopped service containers. `remove_volumes` (`-v/--volumes`) also
+	/// removes anonymous volumes attached to each container.
+	pub async fn rm_with_options(
+		&self,
+		file: &ComposeFile,
+		target_services: &[String],
+		force: bool,
+		remove_volumes: bool,
+	) -> Result<()> {
 		let mut order = crate::compose::resolve_order(file)?;
 		order.reverse();
 		let order = filter_services(file, order, target_services)?;
@@ -175,7 +189,7 @@ impl Engine {
 			for container_name in self.replica_names(name, service) {
 				let force_str = if force { "true" } else { "false" };
 				let path = format!(
-					"{API_PREFIX}/containers/{}?force={force_str}",
+					"{API_PREFIX}/containers/{}?force={force_str}&v={remove_volumes}",
 					crate::libpod::urlencoded(&container_name),
 				);
 				if let Err(e) = self.client.delete_ok(&path).await {
@@ -293,7 +307,7 @@ impl Engine {
 		// network, which is created here as `{project}_default`.
 		self.create_networks(file).await?;
 
-		self.create_and_start(&run_name, service_name, &run_service, file)
+		self.create_and_start(&run_name, service_name, &run_service, file, true)
 			.await?;
 
 		if detach {

@@ -49,6 +49,13 @@ pub enum ComposeError {
 	Update(String),
 	/// An `external: true` secret/config/network/volume is absent.
 	ExternalNotFound(String),
+	/// A service is scaled to more than one replica but publishes a fixed host
+	/// port, which only one container can bind.
+	ScalePortConflict {
+		service: String,
+		replicas: usize,
+		ports: Vec<u16>,
+	},
 }
 
 impl fmt::Display for ComposeError {
@@ -74,6 +81,25 @@ impl fmt::Display for ComposeError {
 			Self::RunExited(code) => write!(f, "run container exited with code {code}"),
 			Self::Update(s) => write!(f, "update error: {s}"),
 			Self::ExternalNotFound(s) => write!(f, "external resource not found: {s}"),
+			Self::ScalePortConflict {
+				service,
+				replicas,
+				ports,
+			} => {
+				let ports = ports
+					.iter()
+					.map(u16::to_string)
+					.collect::<Vec<_>>()
+					.join(", ");
+				write!(
+					f,
+					"service '{service}' publishes fixed host port(s) [{ports}] but is scaled to \
+					 {replicas} replicas; only one container can bind a host port. Use one of:\n  \
+					 - remove the host port (e.g. `- \"80\"`) so Podman assigns a random one per \
+					 replica\n  - put the service behind a reverse proxy and publish only the \
+					 proxy's port\n  - reduce the service to a single replica"
+				)
+			}
 		}
 	}
 }
@@ -169,6 +195,14 @@ mod tests {
 			(
 				"external resource not found: external volume \"v\" does not exist",
 				ComposeError::ExternalNotFound("external volume \"v\" does not exist".into()),
+			),
+			(
+				"service 'web' publishes fixed host port(s) [8080] but is scaled to 3 replicas",
+				ComposeError::ScalePortConflict {
+					service: "web".into(),
+					replicas: 3,
+					ports: vec![8080],
+				},
 			),
 		];
 		for (expected_prefix, err) in cases {

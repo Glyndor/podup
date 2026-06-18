@@ -1,6 +1,7 @@
 //! Service lifecycle commands: up, down, start, stop, restart, kill, rm, pause, unpause, run.
 
 mod commands;
+mod scale;
 mod targets;
 
 use std::collections::{HashMap, HashSet};
@@ -66,6 +67,55 @@ impl Engine {
 		force_recreate: bool,
 		no_deps: bool,
 	) -> Result<()> {
+		self.run_up(
+			file,
+			active_profiles,
+			target_services,
+			no_recreate,
+			force_recreate,
+			no_deps,
+			true,
+		)
+		.await
+	}
+
+	/// Create containers for services without starting them (docker compose
+	/// `create`). Shares the `up` path with `start = false`: images are built/
+	/// pulled and containers created, but never started, and no `depends_on`
+	/// waits or `post_start` hooks run (nothing is running to gate on).
+	#[allow(clippy::too_many_arguments)]
+	pub async fn create_with_options(
+		&self,
+		file: &ComposeFile,
+		active_profiles: &[String],
+		target_services: &[String],
+		no_recreate: bool,
+		force_recreate: bool,
+		no_deps: bool,
+	) -> Result<()> {
+		self.run_up(
+			file,
+			active_profiles,
+			target_services,
+			no_recreate,
+			force_recreate,
+			no_deps,
+			false,
+		)
+		.await
+	}
+
+	#[allow(clippy::too_many_arguments)]
+	async fn run_up(
+		&self,
+		file: &ComposeFile,
+		active_profiles: &[String],
+		target_services: &[String],
+		no_recreate: bool,
+		force_recreate: bool,
+		no_deps: bool,
+		start: bool,
+	) -> Result<()> {
 		async {
 			let levels = crate::compose::resolve_levels(file)?;
 			let active = active_profiles_set(active_profiles);
@@ -122,6 +172,7 @@ impl Engine {
 						&existing_hash,
 						no_recreate,
 						force_recreate,
+						start,
 					)
 				});
 				futures_util::future::try_join_all(started).await?;
@@ -149,6 +200,7 @@ impl Engine {
 		existing_hash: &HashMap<String, String>,
 		no_recreate: bool,
 		force_recreate: bool,
+		start: bool,
 	) -> Result<()> {
 		if let Some(set) = target_set {
 			if !set.contains(name) {
@@ -162,7 +214,14 @@ impl Engine {
 			return Ok(());
 		}
 
-		for dep in service.depends_on.service_names() {
+		// `create` (start = false) only builds the containers, so there is nothing
+		// to gate on — skip the `depends_on` readiness waits entirely.
+		for dep in service
+			.depends_on
+			.service_names()
+			.into_iter()
+			.filter(|_| start)
+		{
 			let condition = service.depends_on.condition_for(&dep);
 			// `required: false` makes the dependency optional — a failed wait
 			// must not abort `up`, matching docker-compose v2.
@@ -212,8 +271,15 @@ impl Engine {
 			}
 		}
 
-		let policy = service.pull_policy.as_deref().unwrap_or("missing");
-		match (service.build.is_some(), policy) {
+		// `up --pull <policy>` overrides the per-service `pull_policy`; `--no-build`
+		// suppresses building even for services with a `build:` section (they fall
+		// back to pulling/using an existing image).
+		let policy = self
+			.pull_policy_override
+			.as_deref()
+			.or(service.pull_policy.as_deref())
+			.unwrap_or("missing");
+		match (service.build.is_some() && !self.no_build, policy) {
 			(true, _) => {
 				self.build_service(name, service, file, &crate::engine::BuildOptions::default())
 					.await?
@@ -222,15 +288,16 @@ impl Engine {
 			(false, _) => self.pull_image(service).await?,
 		}
 
-		let replicas = service
-			.scale
-			.or(service.deploy.as_ref().and_then(|d| d.replicas))
-			.unwrap_or(1) as usize;
+		let replicas = self.resolve_replicas(name, service);
+		// A scaled service that publishes a fixed host port cannot start: only
+		// one container can bind it. Fail fast with guidance instead of letting
+		// replicas 2..N die mid-up with `address already in use`.
+		scale::check_scale_port_conflict(name, service, replicas)?;
 
 		let new_hash = config_hash(service, file)?;
 
 		for i in 1..=replicas {
-			let container_name = if replicas == 1 {
+			let container_name = if replicas <= 1 {
 				self.container_name(name, service)
 			} else {
 				format!("{}-{i}", self.container_name(name, service))
@@ -238,7 +305,10 @@ impl Engine {
 			if !force_recreate {
 				if no_recreate && present.contains(&container_name) {
 					info!("{container_name} already exists — skipping recreate");
-					self.ensure_started(&container_name).await;
+					// `create` leaves an existing container as-is; `up` ensures it runs.
+					if start {
+						self.ensure_started(&container_name).await;
+					}
 					continue;
 				}
 				// Services with a build section are rebuilt on every up, so
@@ -247,16 +317,24 @@ impl Engine {
 				if service.build.is_none() && existing_hash.get(&container_name) == Some(&new_hash)
 				{
 					info!("{container_name} is up to date — skipping recreate");
-					self.ensure_started(&container_name).await;
+					if start {
+						self.ensure_started(&container_name).await;
+					}
 					continue;
 				}
 			}
-			self.create_and_start(&container_name, name, service, file)
+			self.create_and_start(&container_name, name, service, file, start)
 				.await?;
-			info!("started {container_name}");
+			info!(
+				"{} {container_name}",
+				if start { "started" } else { "created" }
+			);
 
-			for hook in &service.post_start {
-				self.run_lifecycle_hook(&container_name, hook).await?;
+			// `post_start` hooks run inside a running container, so only on `up`.
+			if start {
+				for hook in &service.post_start {
+					self.run_lifecycle_hook(&container_name, hook).await?;
+				}
 			}
 		}
 
@@ -303,6 +381,14 @@ impl Engine {
 			}
 		}
 
+		// A prior `up --scale`/`scale` may have created replicas the compose
+		// file's default count no longer names; sweep any remaining project
+		// containers by label so teardown is always complete.
+		let grace = self.stop_timeout.unwrap_or(10);
+		for name in self.list_project_container_names(None).await? {
+			self.stop_and_remove(&name, grace).await;
+		}
+
 		for (key, config) in &file.networks {
 			let external = config.as_ref().and_then(|c| c.external).unwrap_or(false);
 			if external {
@@ -346,6 +432,34 @@ impl Engine {
 		// Internal native secrets are podup-owned (not user data), so remove
 		// them unconditionally — independent of `remove_volumes`.
 		self.remove_internal_secrets(file).await?;
+		Ok(())
+	}
+
+	/// Remove the images used by the project's services (`down --rmi`). With
+	/// `local_only`, only images of services that build locally (a `build:`
+	/// section) are removed — matching `docker compose down --rmi local`.
+	pub async fn remove_service_images(&self, file: &ComposeFile, local_only: bool) -> Result<()> {
+		for (name, service) in &file.services {
+			let builds_locally = service.build.is_some();
+			if local_only && !builds_locally {
+				continue;
+			}
+			let image = match &service.image {
+				Some(img) => img.clone(),
+				// A build-only service's image defaults to `{service}:latest`.
+				None if builds_locally => format!("{name}:latest"),
+				None => continue,
+			};
+			let path = format!(
+				"{API_PREFIX}/images/{}?force=true",
+				crate::libpod::urlencoded(&image),
+			);
+			match self.client.delete_ok(&path).await {
+				Ok(_) => info!("removed image {image}"),
+				Err(e) if e.is_status(404) => {}
+				Err(e) => tracing::warn!("could not remove image {image}: {e}"),
+			}
+		}
 		Ok(())
 	}
 }

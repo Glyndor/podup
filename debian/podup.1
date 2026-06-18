@@ -47,12 +47,32 @@ given multiple times; later files win. The process environment and a project
 .B up
 Create and start all services. Options: \fB\-d\fR/\fB\-\-detach\fR,
 \fB\-\-build\fR, \fB\-w\fR/\fB\-\-watch\fR, \fB\-\-remove\-orphans\fR,
-\fB\-\-no\-recreate\fR, \fB\-\-force\-recreate\fR, \fB\-\-no\-deps\fR. Accepts a
-trailing list of services to bring up (with their transitive depends_on).
+\fB\-\-no\-recreate\fR, \fB\-\-force\-recreate\fR, \fB\-\-no\-deps\fR,
+\fB\-\-scale\fR \fISERVICE=N\fR (repeatable), \fB\-\-pull\fR \fIpolicy\fR,
+\fB\-\-no\-build\fR, \fB\-\-quiet\-pull\fR, \fB\-\-wait\fR, \fB\-\-no\-start\fR.
+Accepts a trailing list of services to bring up (with their transitive
+depends_on).
+.TP
+.B scale \fISERVICE=N\fR...
+Set the number of running containers for services, creating missing replicas and
+removing surplus ones. A service publishing a fixed host port cannot scale past
+one replica and the command fails with guidance.
+.TP
+.B create
+Create the containers for services without starting them. Options:
+\fB\-\-build\fR, \fB\-\-force\-recreate\fR, \fB\-\-no\-recreate\fR, and a trailing
+service list.
+.TP
+.B ls
+List podup compose projects on the host. \fB\-a\fR/\fB\-\-all\fR includes stopped
+projects, \fB\-q\fR/\fB\-\-quiet\fR prints names only, \fB\-\-format\fR selects
+\fItable\fR or \fIjson\fR. Requires no compose file.
 .TP
 .B down
 Stop and remove containers. \fB\-v\fR/\fB\-\-volumes\fR also removes named
-volumes declared in the compose file.
+volumes declared in the compose file; \fB\-\-remove\-orphans\fR also removes
+containers for services no longer in the file; \fB\-\-rmi\fR \fIall\fR|\fIlocal\fR
+also removes the service images.
 .TP
 .B start
 Start existing stopped containers.
@@ -63,13 +83,21 @@ Stop running containers without removing them.
 .B build
 Build or rebuild service images.
 .TP
+.B push
+Push each service's image to its registry (imageless services are skipped).
+Credentials come from \fBpodman login\fR. \fB\-\-ignore\-push\-failures\fR
+continues after a failure; \fB\-\-tls\-verify false\fR allows an insecure
+registry.
+.TP
 .B rm
 Remove stopped service containers. \fB\-f\fR/\fB\-\-force\fR removes running
-containers (stopping them first).
+containers (stopping them first); \fB\-v\fR/\fB\-\-volumes\fR also removes
+anonymous volumes attached to them.
 .TP
 .B kill
 Send a signal to service containers. \fB\-s\fR/\fB\-\-signal\fR sets the signal
-(default \fBSIGKILL\fR).
+(default \fBSIGKILL\fR); \fB\-\-remove\-orphans\fR removes containers for services
+no longer in the file.
 .TP
 .B pause
 Pause running service containers.
@@ -92,6 +120,11 @@ List project containers.
 .B top
 Display the running processes of service containers.
 .TP
+.B stats
+Live resource usage (CPU, memory, network, block I/O, PIDs) for service
+containers. \fB\-\-no\-stream\fR prints a single snapshot; a trailing service
+list narrows the report.
+.TP
 .B port \fISERVICE\fR \fIPRIVATE_PORT\fR
 Print the public binding for a container port. \fB\-\-proto\fR sets the protocol
 (default \fBtcp\fR).
@@ -100,19 +133,26 @@ Print the public binding for a container port. \fB\-\-proto\fR sets the protocol
 List images used by services.
 .TP
 .B logs \fR[\fISERVICE\fR]
-View container output. \fB\-f\fR/\fB\-\-follow\fR streams new output.
+View container output. \fB\-f\fR/\fB\-\-follow\fR streams new output,
+\fB\-n\fR/\fB\-\-tail\fR \fIN\fR limits to the last N lines, \fB\-\-since\fR and
+\fB\-\-until\fR bound by time, and \fB\-t\fR/\fB\-\-timestamps\fR prefixes each
+line with an RFC3339 timestamp.
 .TP
 .B exec \fISERVICE\fR \fICOMMAND\fR...
 Execute a command in a running service container.
 .TP
 .B pull
-Pull images for all services.
+Pull images for all services. \fB\-q\fR/\fB\-\-quiet\fR suppresses progress
+output.
 .TP
 .B restart \fR[\fISERVICE\fR]
-Restart services, or one named service.
+Restart services, or one named service. \fB\-\-no\-deps\fR skips
+cascade-restarting dependents with a \fBdepends_on\fR restart condition.
 .TP
 .B config
 Print the resolved compose file after substitution, extends and include.
+\fB\-\-format\fR selects \fIyaml\fR or \fIjson\fR, \fB\-\-services\fR lists the
+service names, and \fB\-q\fR/\fB\-\-quiet\fR only validates (no output).
 .TP
 .B generate quadlet \fR[\fB\-o\fR \fIDIR\fR]
 Translate the compose file into Podman Quadlet unit files (one \fB.container\fR

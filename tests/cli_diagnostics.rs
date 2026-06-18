@@ -74,3 +74,66 @@ fn completions_emit_a_script_to_stdout() {
 		&stdout[..stdout.len().min(200)]
 	);
 }
+
+/// A minimal valid two-service compose file in a fresh temp dir.
+fn compose_two_services() -> std::path::PathBuf {
+	let dir = std::env::temp_dir().join(format!("podup-cfg-{}", std::process::id()));
+	fs::create_dir_all(&dir).expect("create temp dir");
+	let path = dir.join("compose.yaml");
+	fs::write(
+		&path,
+		"services:\n  web:\n    image: nginx:1.27\n  db:\n    image: postgres:16\n",
+	)
+	.expect("write compose file");
+	path
+}
+
+#[test]
+fn config_services_lists_service_names() {
+	let file = compose_two_services();
+	let out = Command::new(bin())
+		.args(["-f", file.to_str().unwrap(), "config", "--services"])
+		.output()
+		.expect("run config --services");
+	assert!(out.status.success());
+	let names: Vec<&str> = std::str::from_utf8(&out.stdout).unwrap().lines().collect();
+	assert!(
+		names.contains(&"web") && names.contains(&"db"),
+		"got: {names:?}"
+	);
+}
+
+#[test]
+fn config_format_json_emits_json() {
+	let file = compose_two_services();
+	let out = Command::new(bin())
+		.args(["-f", file.to_str().unwrap(), "config", "--format", "json"])
+		.output()
+		.expect("run config --format json");
+	assert!(out.status.success());
+	let stdout = String::from_utf8_lossy(&out.stdout);
+	let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("valid JSON");
+	assert!(parsed["services"]["web"].is_object());
+}
+
+#[test]
+fn config_quiet_validates_without_output() {
+	let valid = compose_two_services();
+	let ok = Command::new(bin())
+		.args(["-f", valid.to_str().unwrap(), "config", "-q"])
+		.output()
+		.unwrap();
+	assert!(ok.status.success());
+	assert!(ok.stdout.is_empty(), "quiet must print nothing");
+
+	// A syntactically broken compose file fails validation (non-zero exit).
+	let dir = std::env::temp_dir().join(format!("podup-cfgbad-{}", std::process::id()));
+	fs::create_dir_all(&dir).unwrap();
+	let badfile = dir.join("compose.yaml");
+	fs::write(&badfile, "services:\n  web:\n    image: [unterminated\n").unwrap();
+	let err = Command::new(bin())
+		.args(["-f", badfile.to_str().unwrap(), "config", "-q"])
+		.output()
+		.unwrap();
+	assert!(!err.status.success(), "invalid config must fail under -q");
+}

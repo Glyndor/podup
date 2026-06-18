@@ -44,6 +44,97 @@ async fn cli_rm_subcommand() {
 }
 
 #[tokio::test]
+async fn cli_push_skips_service_without_image() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let compose = dir.path().join("docker-compose.yml");
+	let proj = format!("t{}-pushskip", std::process::id());
+	// A build-only service has no `image:` to push, so push is a no-op success.
+	fs::write(&compose, "services:\n  app:\n    build: .\n").unwrap();
+	let push = Command::new(bin())
+		.args(["-f", compose.to_str().unwrap(), "-p", &proj, "push"])
+		.output()
+		.unwrap();
+	assert!(
+		push.status.success(),
+		"push of an imageless service must succeed: {:?}",
+		String::from_utf8_lossy(&push.stderr)
+	);
+}
+
+#[tokio::test]
+async fn cli_push_to_unreachable_registry_errors() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let compose = dir.path().join("docker-compose.yml");
+	let proj = format!("t{}-pushfail", std::process::id());
+	// Port 1 refuses connections, so the push must fail with a non-zero exit.
+	fs::write(
+		&compose,
+		"services:\n  app:\n    image: localhost:1/podup-nope:1\n",
+	)
+	.unwrap();
+	let push = Command::new(bin())
+		.args([
+			"-f",
+			compose.to_str().unwrap(),
+			"-p",
+			&proj,
+			"push",
+			"--tls-verify",
+			"false",
+		])
+		.output()
+		.unwrap();
+	assert!(
+		!push.status.success(),
+		"push to an unreachable registry must fail"
+	);
+}
+
+#[tokio::test]
+async fn cli_stats_no_stream_reports_running_container() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let compose = dir.path().join("docker-compose.yml");
+	let proj = format!("t{}-stats", std::process::id());
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+
+	Command::new(bin())
+		.args(["-f", c, "-p", &proj, "up", "-d"])
+		.output()
+		.unwrap();
+
+	let stats = Command::new(bin())
+		.args(["-f", c, "-p", &proj, "stats", "--no-stream"])
+		.output()
+		.unwrap();
+	assert!(stats.status.success(), "stats failed: {:?}", stats.stderr);
+	let out = String::from_utf8_lossy(&stats.stdout);
+	assert!(out.contains("CPU %"), "stats must print a header: {out}");
+	assert!(
+		out.contains(&format!("{proj}-web")),
+		"stats must list the running container: {out}"
+	);
+
+	Command::new(bin())
+		.args(["-f", c, "-p", &proj, "down"])
+		.output()
+		.unwrap();
+}
+
+#[tokio::test]
 async fn cli_up_with_build_flag() {
 	if super::podman().await.is_none() {
 		return;

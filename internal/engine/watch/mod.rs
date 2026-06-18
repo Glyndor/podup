@@ -264,25 +264,19 @@ impl Engine {
 		)
 		.await?;
 		let container_name = self.container_name(service_name, service);
-		self.create_and_start(&container_name, service_name, service, file)
+		self.create_and_start(&container_name, service_name, service, file, true)
 			.await
 	}
 
 	async fn watch_restart(&self, container_name: &str) -> Result<()> {
 		info!("restarting {container_name}");
-		let stop_path = format!(
-			"{API_PREFIX}/containers/{}/stop?t=5",
-			urlencoded(container_name)
-		);
-		if let Err(e) = self.client.post_empty_ok(&stop_path).await {
-			tracing::debug!("stop before watch restart {container_name}: {e}");
-		}
-		let start_path = format!(
-			"{API_PREFIX}/containers/{}/start",
+		// Single atomic restart (no visible stopped window) instead of stop+start.
+		let restart_path = format!(
+			"{API_PREFIX}/containers/{}/restart?t=5",
 			urlencoded(container_name)
 		);
 		self.client
-			.post_empty_ok(&start_path)
+			.post_empty_ok(&restart_path)
 			.await
 			.map_err(ComposeError::Podman)?;
 		Ok(())

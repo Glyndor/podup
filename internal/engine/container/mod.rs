@@ -32,6 +32,7 @@ impl Engine {
 		service_name: &str,
 		service: &Service,
 		file: &ComposeFile,
+		start: bool,
 	) -> Result<()> {
 		let derived_image;
 		let image: &str = if let Some(img) = service.image.as_deref() {
@@ -257,14 +258,18 @@ impl Engine {
 			.await
 			.map_err(ComposeError::Podman)?;
 
-		let start_path = format!(
-			"{API_PREFIX}/containers/{}/start",
-			urlencoded(container_name)
-		);
-		self.client
-			.post_empty_ok(&start_path)
-			.await
-			.map_err(ComposeError::Podman)?;
+		// `create` (docker compose create) creates the container but leaves it
+		// stopped; `up`/`run`/`watch` start it.
+		if start {
+			let start_path = format!(
+				"{API_PREFIX}/containers/{}/start",
+				urlencoded(container_name)
+			);
+			self.client
+				.post_empty_ok(&start_path)
+				.await
+				.map_err(ComposeError::Podman)?;
+		}
 
 		Ok(())
 	}
@@ -308,6 +313,12 @@ fn rootless_caveat_warnings(name: &str, service: &Service) -> Vec<String> {
 			rootful systems; the container may fail to start rootless"
 		));
 	}
+	if !service.links.is_empty() {
+		out.push(format!(
+			"service \"{name}\": links has no effect under rootless Podman networking — put the \
+			services on a shared network and reach them by service name instead"
+		));
+	}
 	out
 }
 
@@ -328,16 +339,18 @@ mod tests {
 			oom_kill_disable: Some(true),
 			mem_swappiness: Some(10),
 			cpu_rt_runtime: Some(1000),
+			links: vec!["db".into()],
 			..Service::default()
 		};
 		let warnings = rootless_caveat_warnings("web", &service);
-		assert_eq!(warnings.len(), 4);
+		assert_eq!(warnings.len(), 5);
 		let joined = warnings.join("\n");
 		for needle in [
 			"privileged",
 			"oom_kill_disable",
 			"mem_swappiness",
 			"cpu_rt_runtime",
+			"links",
 		] {
 			assert!(joined.contains(needle), "missing warning for {needle}");
 		}

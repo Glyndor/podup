@@ -1,197 +1,17 @@
-//! Build the individual `.network`, `.volume` and `.container` units.
+//! Build the `.container` unit for a service.
 
-use crate::compose::types::{Command, PortMapping, RestartPolicy, Service, ServiceSecretRef};
+use crate::compose::types::{PortMapping, RestartPolicy, Service};
 use crate::ports::parse_ports;
 use crate::size::parse_duration_secs;
 
-use super::render::{
-	render_command, render_publish_port, render_restart, render_tmpfs_mount, render_volume,
-	safe_unit_stem, sorted_label_pairs, sorted_pairs, Section,
+use super::health::render_healthcheck;
+use super::security::{map_security_opt, render_secret};
+use super::{
+	collect_warnings, render_command, render_publish_port, render_restart, render_tmpfs_mount,
+	render_volume, safe_unit_stem, sorted_label_pairs, sorted_pairs, QuadletUnit, Section,
 };
-use super::warnings::collect_warnings;
-use super::QuadletUnit;
 
-/// Map a compose `healthcheck:` onto the Quadlet `Health*=` keys. A disabled
-/// healthcheck emits `HealthCmd=none`; otherwise the compose test (with any
-/// leading `CMD`/`CMD-SHELL`/`NONE` sentinel stripped) and the timing fields
-/// are rendered.
-fn render_healthcheck(service: &Service, container: &mut Section) {
-	let Some(hc) = &service.healthcheck else {
-		return;
-	};
-	if hc.is_disabled() {
-		container.add("HealthCmd", "none".to_string());
-		return;
-	}
-	if let Some(test) = &hc.test {
-		let cmd = match test {
-			Command::Shell(s) => s.clone(),
-			Command::Exec(parts) => {
-				let body = match parts.first().map(String::as_str) {
-					Some("CMD") | Some("CMD-SHELL") | Some("NONE") => &parts[1..],
-					_ => &parts[..],
-				};
-				body.join(" ")
-			}
-		};
-		if !cmd.is_empty() {
-			container.add("HealthCmd", cmd);
-		}
-	}
-	if let Some(v) = &hc.interval {
-		container.add("HealthInterval", v.clone());
-	}
-	if let Some(v) = &hc.timeout {
-		container.add("HealthTimeout", v.clone());
-	}
-	if let Some(v) = hc.retries {
-		container.add("HealthRetries", v.to_string());
-	}
-	if let Some(v) = &hc.start_period {
-		container.add("HealthStartPeriod", v.clone());
-	}
-	if let Some(v) = &hc.start_interval {
-		container.add("HealthStartupInterval", v.clone());
-	}
-}
-
-/// Sanitize one `Secret=` option-list field: drop control characters and the
-/// `,`/`=` separators so a hostile compose value cannot inject extra options.
-fn secret_field(value: &str) -> String {
-	value
-		.chars()
-		.filter(|c| !c.is_control() && *c != ',' && *c != '=')
-		.collect()
-}
-
-/// Render a service `secrets:` entry into a Quadlet `Secret=` value
-/// (`name[,target=,uid=,gid=,mode=]`).
-fn render_secret(secret: &ServiceSecretRef) -> String {
-	match secret {
-		// Sanitize the short-form name too: `Secret=` is an option list, so a
-		// `,`/`=` in the name would inject extra options (same guard as Long).
-		ServiceSecretRef::Short(name) => secret_field(name),
-		ServiceSecretRef::Long {
-			source,
-			target,
-			uid,
-			gid,
-			mode,
-		} => {
-			// `Secret=` is a comma-separated `key=value` option list, so a `,`
-			// or `=` embedded in any field would inject extra options. Strip
-			// those (and control chars) from each value at the boundary.
-			let mut s = secret_field(source);
-			if let Some(t) = target {
-				s.push_str(&format!(",target={}", secret_field(t)));
-			}
-			if let Some(u) = uid {
-				s.push_str(&format!(",uid={}", secret_field(u)));
-			}
-			if let Some(g) = gid {
-				s.push_str(&format!(",gid={}", secret_field(g)));
-			}
-			if let Some(m) = mode {
-				s.push_str(&format!(",mode={m:o}"));
-			}
-			s
-		}
-	}
-}
-
-/// Map a single compose `security_opt` entry onto the dedicated Quadlet key
-/// where one exists; unrecognized entries are reported rather than dropped.
-fn map_security_opt(opt: &str, container: &mut Section, name: &str, warnings: &mut Vec<String>) {
-	if let Some(rest) = opt.strip_prefix("no-new-privileges") {
-		let val = rest.trim_start_matches([':', '=']);
-		let enabled = val.is_empty() || val == "true";
-		container.add("NoNewPrivileges", enabled.to_string());
-	} else if let Some(profile) = opt.strip_prefix("seccomp=") {
-		container.add("SeccompProfile", profile.to_string());
-	} else if let Some(profile) = opt
-		.strip_prefix("apparmor=")
-		.or_else(|| opt.strip_prefix("apparmor:"))
-	{
-		// Quadlet has no `AppArmor=` key in Podman 5.x; the generator rejects the
-		// whole unit on an unknown key. Pass it through as a raw podman flag.
-		container.add("PodmanArgs", format!("--security-opt apparmor={profile}"));
-	} else if let Some(label) = opt.strip_prefix("label=") {
-		if label == "disable" {
-			container.add("SecurityLabelDisable", "true".to_string());
-		} else if let Some(t) = label.strip_prefix("type:") {
-			container.add("SecurityLabelType", t.to_string());
-		} else if let Some(l) = label.strip_prefix("level:") {
-			container.add("SecurityLabelLevel", l.to_string());
-		} else {
-			warnings.push(format!(
-				"{name}: security_opt 'label={label}' has no Quadlet key and is skipped"
-			));
-		}
-	} else {
-		warnings.push(format!(
-			"{name}: security_opt '{opt}' has no Quadlet mapping and is skipped"
-		));
-	}
-}
-
-pub(super) fn network_unit(
-	name: &str,
-	project: &str,
-	config: Option<&crate::compose::types::NetworkConfig>,
-) -> QuadletUnit {
-	let mut net = Section::new("Network");
-	net.add("NetworkName", format!("{project}_{name}"));
-	if let Some(cfg) = config {
-		if let Some(driver) = &cfg.driver {
-			net.add("Driver", driver.clone());
-		}
-		if cfg.internal == Some(true) {
-			net.add("Internal", "true".to_string());
-		}
-		if cfg.enable_ipv6 == Some(true) {
-			net.add("IPv6", "true".to_string());
-		}
-		if let Some(ipam) = &cfg.ipam {
-			if let Some(ipam_driver) = &ipam.driver {
-				net.add("IPAMDriver", ipam_driver.clone());
-			}
-		}
-		for (key, val) in sorted_label_pairs(cfg.labels.to_map()) {
-			net.add("Label", format!("{key}={val}"));
-		}
-	}
-	let mut contents = net.render();
-	contents.push_str("\n[Install]\nWantedBy=default.target\n");
-	QuadletUnit {
-		filename: format!("{}.network", safe_unit_stem(name)),
-		contents,
-	}
-}
-
-pub(super) fn volume_unit(
-	name: &str,
-	project: &str,
-	config: Option<&crate::compose::types::VolumeConfig>,
-) -> QuadletUnit {
-	let mut vol = Section::new("Volume");
-	vol.add("VolumeName", format!("{project}_{name}"));
-	if let Some(cfg) = config {
-		if let Some(driver) = &cfg.driver {
-			vol.add("Driver", driver.clone());
-		}
-		for (key, val) in sorted_label_pairs(cfg.labels.to_map()) {
-			vol.add("Label", format!("{key}={val}"));
-		}
-	}
-	let mut contents = vol.render();
-	contents.push_str("\n[Install]\nWantedBy=default.target\n");
-	QuadletUnit {
-		filename: format!("{}.volume", safe_unit_stem(name)),
-		contents,
-	}
-}
-
-pub(super) fn container_unit(
+pub(crate) fn container_unit(
 	name: &str,
 	service: &Service,
 	declared_volumes: &[&str],
@@ -372,7 +192,16 @@ pub(super) fn container_unit(
 	if let Some(p) = service.cpu_period {
 		container.add("PodmanArgs", format!("--cpu-period={p}"));
 	}
+	// `deploy.resources.limits.pids` is the modern equivalent of `pids_limit`.
+	let deploy_pids = service
+		.deploy
+		.as_ref()
+		.and_then(|d| d.resources.as_ref())
+		.and_then(|r| r.limits.as_ref())
+		.and_then(|l| l.pids);
 	if let Some(pids) = service.pids_limit {
+		container.add("PidsLimit", pids.to_string());
+	} else if let Some(pids) = deploy_pids {
 		container.add("PidsLimit", pids.to_string());
 	}
 	if let Some(userns) = &service.userns_mode {
@@ -386,10 +215,13 @@ pub(super) fn container_unit(
 			container.add("StopTimeout", secs.to_string());
 		}
 	}
-	// `network_mode: host` maps to `Network=host`; other modes (service:/
-	// container:) have no Quadlet key and are reported by collect_warnings.
-	if service.network_mode.as_deref() == Some("host") {
-		container.add("Network", "host".to_string());
+	// `network_mode: host`/`none` map to `Network=host`/`Network=none`; other
+	// modes (service:/container:) have no Quadlet key and are reported by
+	// collect_warnings.
+	match service.network_mode.as_deref() {
+		Some("host") => container.add("Network", "host".to_string()),
+		Some("none") => container.add("Network", "none".to_string()),
+		_ => {}
 	}
 	for group in &service.group_add {
 		container.add("GroupAdd", group.clone());
@@ -397,6 +229,11 @@ pub(super) fn container_unit(
 	for port in &service.expose {
 		container.add("ExposeHostPort", port.clone());
 	}
+	// `IP=`/`IP6=` are single-valued per container, so the first static address
+	// declared across the service's networks wins (Quadlet has no per-network IP
+	// scoping); a second one is reported by collect_warnings.
+	let mut static_ip: Option<&str> = None;
+	let mut static_ip6: Option<&str> = None;
 	for net in service.networks.names() {
 		if let Some(cfg) = service.networks.config_for(&net) {
 			if let Some(aliases) = &cfg.aliases {
@@ -404,7 +241,19 @@ pub(super) fn container_unit(
 					container.add("NetworkAlias", alias.clone());
 				}
 			}
+			if static_ip.is_none() {
+				static_ip = cfg.ipv4_address.as_deref();
+			}
+			if static_ip6.is_none() {
+				static_ip6 = cfg.ipv6_address.as_deref();
+			}
 		}
+	}
+	if let Some(ip) = static_ip {
+		container.add("IP", ip.to_string());
+	}
+	if let Some(ip6) = static_ip6 {
+		container.add("IP6", ip6.to_string());
 	}
 	for opt in &service.security_opt {
 		map_security_opt(opt, &mut container, name, warnings);
@@ -446,6 +295,27 @@ pub(super) fn container_unit(
 		{
 			svc.add("StartLimitBurst", n.to_string());
 		}
+	} else if let Some(rp) = service
+		.deploy
+		.as_ref()
+		.and_then(|d| d.restart_policy.as_ref())
+	{
+		// `deploy.restart_policy` is the modern equivalent of the service-level
+		// `restart:` string; its `condition` maps onto the systemd `Restart=`
+		// values and `max_attempts`/`window` onto the start-limit window.
+		let restart = match rp.condition.as_deref() {
+			Some("none") => "no",
+			Some("on-failure") => "on-failure",
+			// "any" (the compose default) and any unknown value restart always.
+			_ => "always",
+		};
+		svc.add("Restart", restart.to_string());
+		if let Some(n) = rp.max_attempts {
+			svc.add("StartLimitBurst", n.to_string());
+			if let Some(secs) = rp.window.as_deref().and_then(parse_duration_secs) {
+				svc.add("StartLimitIntervalSec", secs.to_string());
+			}
+		}
 	}
 
 	collect_warnings(name, service, warnings);
@@ -463,34 +333,5 @@ pub(super) fn container_unit(
 	QuadletUnit {
 		filename: format!("{}.container", safe_unit_stem(name)),
 		contents,
-	}
-}
-
-#[cfg(test)]
-mod tests {
-	use super::{render_secret, secret_field};
-	use crate::compose::types::ServiceSecretRef;
-
-	#[test]
-	fn secret_field_strips_separators_and_controls() {
-		assert_eq!(secret_field("a,b=c\nd"), "abcd");
-		assert_eq!(secret_field("plain"), "plain");
-	}
-
-	#[test]
-	fn render_secret_cannot_inject_extra_options() {
-		// A hostile target tries to smuggle a second option via `,` and `=`.
-		let s = ServiceSecretRef::Long {
-			source: "tok".into(),
-			target: Some("/run/x,uid=0".into()),
-			uid: None,
-			gid: None,
-			mode: None,
-		};
-		let out = render_secret(&s);
-		// The injected `,uid=0` must be flattened into the target value, not a
-		// separate option: exactly one comma (the legitimate `,target=`).
-		assert_eq!(out.matches(',').count(), 1);
-		assert_eq!(out, "tok,target=/run/xuid0");
 	}
 }
