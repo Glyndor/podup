@@ -76,6 +76,42 @@ impl Engine {
 		Ok(())
 	}
 
+	/// Block until each targeted service's containers stop, printing each exit
+	/// code (`docker compose wait`). Returns `RunExited` with the last non-zero
+	/// code so the process exit status reflects it, mirroring docker compose.
+	pub async fn wait_services(
+		&self,
+		file: &ComposeFile,
+		target_services: &[String],
+	) -> Result<()> {
+		let order = crate::compose::resolve_order(file)?;
+		let order = filter_services(file, order, target_services)?;
+
+		let mut last_nonzero = 0i64;
+		for name in &order {
+			let service = &file.services[name];
+			for container_name in self.replica_names(name, service) {
+				let path = format!(
+					"{API_PREFIX}/containers/{}/wait?condition=stopped",
+					crate::libpod::urlencoded(&container_name),
+				);
+				let code = self
+					.client
+					.post_empty_json::<i64>(&path)
+					.await
+					.map_err(ComposeError::Podman)?;
+				println!("{code}");
+				if code != 0 {
+					last_nonzero = code;
+				}
+			}
+		}
+		if last_nonzero != 0 {
+			return Err(ComposeError::RunExited(last_nonzero));
+		}
+		Ok(())
+	}
+
 	/// Stop running containers without removing them.
 	///
 	/// Services are stopped in reverse dependency order. If `target_services`

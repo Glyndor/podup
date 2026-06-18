@@ -244,6 +244,17 @@ pub(crate) async fn dispatch(
 				.await?
 		}
 		Commands::Top { services } => engine.top(file, &services).await?,
+		Commands::Wait { services } => engine.wait_services(file, &services).await?,
+		Commands::Commit {
+			service,
+			image,
+			index,
+		} => engine.commit(file, &service, &image, index).await?,
+		Commands::Export {
+			service,
+			output,
+			index,
+		} => engine.export(file, &service, output, index).await?,
 		Commands::Stats {
 			no_stream,
 			services,

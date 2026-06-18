@@ -5,6 +5,7 @@
 mod build;
 mod config_digests;
 pub use config_digests::resolve_image_digests;
+mod commit_export;
 mod container;
 mod copy;
 pub use build::{BuildOptions, PullOptions, PushOptions};
