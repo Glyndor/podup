@@ -26,12 +26,12 @@ pub mod update;
 
 pub use compose::{
 	collect_diagnostics, parse_file, parse_file_with_env_files, parse_files_with_env_files,
-	parse_str, parse_str_raw, resolve_levels, resolve_order,
+	parse_files_with_env_files_interp, parse_str, parse_str_raw, resolve_levels, resolve_order,
 };
 pub use engine::{
-	is_safe_project_name, list_projects, BuildOptions, CpOptions, Engine, ExecOptions,
-	ImagesOptions, LogsOptions, LsOptions, ProjectLock, PsOptions, PullOptions, PushOptions,
-	RunOptions, RunOverrides, VolumesOptions,
+	is_safe_project_name, list_projects, resolve_image_digests, BuildOptions, CpOptions, Engine,
+	ExecOptions, ImagesOptions, LogsOptions, LsOptions, ProjectLock, PsOptions, PullOptions,
+	PushOptions, RunOptions, RunOverrides, VolumesOptions,
 };
 pub use error::{ComposeError, Result};
 pub use libpod::Client;

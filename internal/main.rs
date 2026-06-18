@@ -113,9 +113,26 @@ async fn run() -> podup::Result<()> {
 		format,
 		services,
 		quiet,
+		no_interpolate,
+		resolve_image_digests,
 	} = &cli.command
 	{
-		return startup::render_config(&file, format, *services, *quiet);
+		// `--no-interpolate` re-parses with substitution disabled; `file` (already
+		// parsed with interpolation) is used otherwise.
+		let parsed = if *no_interpolate {
+			podup::parse_files_with_env_files_interp(&compose_files, &cli.env_file, false)?
+		} else {
+			file
+		};
+		// `--resolve-image-digests` pins each image to its registry digest, which
+		// needs a Podman connection to inspect images.
+		let resolved = if *resolve_image_digests {
+			let client = podup::podman::connect(cli.socket.as_deref())?;
+			podup::resolve_image_digests(&client, &parsed).await?
+		} else {
+			parsed
+		};
+		return startup::render_config(&resolved, format, *services, *quiet);
 	}
 
 	let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);

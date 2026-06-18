@@ -32,14 +32,12 @@ pub(crate) struct Cli {
 	#[arg(long, value_delimiter = ',', env = "COMPOSE_PROFILES", global = true)]
 	pub(crate) profile: Vec<String>,
 
-	/// Base directory for resolving relative paths (env_file, build context,
-	/// bind mounts, config/secret file sources). Defaults to the directory
-	/// containing the compose file.
+	/// Base directory for relative paths (env_file, build context, bind mounts,
+	/// config/secret sources). Defaults to the compose file's directory.
 	#[arg(long, global = true)]
 	pub(crate) project_directory: Option<PathBuf>,
 
-	/// Additional env file(s) for the interpolation variable map (repeatable;
-	/// later files win). Process env and a project `.env` still take precedence.
+	/// Extra env file(s) for interpolation (repeatable, later win; process env and `.env` still win).
 	#[arg(long = "env-file", global = true)]
 	pub(crate) env_file: Vec<String>,
 
@@ -57,7 +55,7 @@ pub(crate) enum Commands {
 		/// Build images before starting containers.
 		#[arg(long)]
 		build: bool,
-		/// Watch for file changes and sync/rebuild/restart per develop.watch rules.
+		/// Watch and sync/rebuild/restart per develop.watch rules.
 		#[arg(short, long)]
 		watch: bool,
 		/// Remove containers for services not defined in the compose file.
@@ -72,7 +70,7 @@ pub(crate) enum Commands {
 		/// Do not start linked services (depends_on) of the named services.
 		#[arg(long)]
 		no_deps: bool,
-		/// Seconds to wait for containers to stop when recreating, before killing them.
+		/// Seconds to wait for a container to stop when recreating.
 		#[arg(short = 't', long)]
 		timeout: Option<i32>,
 		/// Override the replica count for a service: SERVICE=N (repeatable).
@@ -99,8 +97,7 @@ pub(crate) enum Commands {
 		/// Recreate anonymous volumes instead of keeping the previous ones.
 		#[arg(short = 'V', long)]
 		renew_anon_volumes: bool,
-		/// Bring up only these services (and their transitive depends_on).
-		/// If omitted, brings up every service in the compose file.
+		/// Bring up only these services (and their depends_on); default: all.
 		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
@@ -187,8 +184,7 @@ pub(crate) enum Commands {
 		/// Continue pushing the remaining services after a failure.
 		#[arg(long)]
 		ignore_push_failures: bool,
-		/// Verify the registry's TLS certificate (set false for an insecure
-		/// or local HTTP registry). Omitted leaves Podman's default (on).
+		/// Verify the registry TLS cert (false for insecure/HTTP; default on).
 		#[arg(long)]
 		tls_verify: Option<bool>,
 		/// Push only these services.
@@ -452,7 +448,7 @@ pub(crate) enum Commands {
 		/// Only restart this service.
 		service: Option<String>,
 	},
-	/// Print the resolved compose file (after substitution / extends / include).
+	/// Print the resolved compose file (substitution/extends/include applied).
 	#[command(alias = "convert")]
 	Config {
 		/// Output format.
@@ -464,6 +460,12 @@ pub(crate) enum Commands {
 		/// Only validate the configuration; print nothing.
 		#[arg(short, long)]
 		quiet: bool,
+		/// Leave ${VAR} placeholders literal instead of interpolating them.
+		#[arg(long)]
+		no_interpolate: bool,
+		/// Rewrite each service image to its registry digest (repo@sha256:...).
+		#[arg(long)]
+		resolve_image_digests: bool,
 	},
 	/// Generate declarative artifacts from the compose file.
 	#[command(alias = "gen")]
