@@ -8,6 +8,7 @@ pub use config_digests::resolve_image_digests;
 mod commit_export;
 mod container;
 mod copy;
+mod events;
 pub use build::{BuildOptions, PullOptions, PushOptions};
 pub use copy::CpOptions;
 pub use lifecycle::{RunOptions, RunOverrides};

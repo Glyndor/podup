@@ -179,6 +179,47 @@ impl Engine {
 		Ok(())
 	}
 
+	/// Attach to a single service container's output (`docker compose attach`).
+	///
+	/// Streams the first replica's stdout/stderr (follow) to this process's
+	/// stdout/stderr with no prefix, until the container stops. podup never
+	/// attaches STDIN (it allocates no TTY), so this is output-only.
+	pub async fn attach(&self, file: &ComposeFile, service_name: &str) -> Result<()> {
+		let service = file
+			.services
+			.get(service_name)
+			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
+		let container = self.first_replica_name(service_name, service);
+		let is_tty = service.tty.unwrap_or(false);
+
+		let path = format!(
+			"{API_PREFIX}/containers/{}/logs?stdout=true&stderr=true&follow=true",
+			urlencoded(&container),
+		);
+		let resp = self
+			.client
+			.get_stream(&path)
+			.await
+			.map_err(ComposeError::Podman)?;
+		let mut stream = if is_tty {
+			crate::libpod::parse_raw(resp.into_body())
+		} else {
+			crate::libpod::parse_multiplexed(resp.into_body())
+		};
+		while let Some(msg) = stream.next().await {
+			match msg {
+				Ok(LogOutput::StdOut { message }) => {
+					print!("{}", String::from_utf8_lossy(&message));
+				}
+				Ok(LogOutput::StdErr { message }) => {
+					eprint!("{}", String::from_utf8_lossy(&message));
+				}
+				Err(_) => break,
+			}
+		}
+		Ok(())
+	}
+
 	/// Attach to log streams for all services with `attach: true` (the default). Streams are multiplexed to stdout with a service-name prefix.
 	pub async fn attach_logs(&self, file: &ComposeFile) -> Result<()> {
 		self.attach_logs_with_options(file, false).await
