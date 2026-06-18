@@ -6,6 +6,7 @@ mod build;
 mod container;
 mod copy;
 pub use build::{BuildOptions, PullOptions, PushOptions};
+pub use copy::CpOptions;
 pub use lifecycle::{RunOptions, RunOverrides};
 pub use lock::ProjectLock;
 pub use query::{ExecOptions, ImagesOptions, LogsOptions, PsOptions};
@@ -256,6 +257,27 @@ impl Engine {
 			base
 		} else {
 			format!("{base}-1")
+		}
+	}
+
+	/// Resolve the container name for a service replica: the 1-based `--index`
+	/// when given (erroring if out of range), else the first replica. Shared by
+	/// the replica-targeting commands (`exec`, `cp`).
+	pub(super) fn replica_name_at(
+		&self,
+		service_name: &str,
+		service: &Service,
+		index: Option<u32>,
+	) -> Result<String> {
+		match index {
+			Some(i) => {
+				let names = self.replica_names(service_name, service);
+				let idx = (i as usize).saturating_sub(1);
+				names.get(idx).cloned().ok_or_else(|| {
+					ComposeError::ServiceNotFound(format!("{service_name} (replica index {i})"))
+				})
+			}
+			None => Ok(self.first_replica_name(service_name, service)),
 		}
 	}
 

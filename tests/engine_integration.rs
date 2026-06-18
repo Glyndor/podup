@@ -37,6 +37,8 @@ fn bin() -> &'static str {
 // Test groups (see engine_integration/*.rs)
 // ---------------------------------------------------------------------------
 
+#[path = "engine_integration/cp_flags.rs"]
+mod cp_flags;
 #[path = "engine_integration/group_a1.rs"]
 mod group_a1;
 #[path = "engine_integration/group_a2.rs"]

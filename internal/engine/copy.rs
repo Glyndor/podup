@@ -19,6 +19,20 @@ use super::Engine;
 /// file/dir copies); larger transfers should use `podman cp` directly.
 const MAX_CP_ARCHIVE_BYTES: usize = 1024 * 1024 * 1024;
 
+/// Options for [`Engine::cp_with_options`], mirroring `docker compose cp` flags.
+#[derive(Default)]
+pub struct CpOptions {
+	/// 1-based replica index for a scaled service, `--index` (default: first).
+	pub index: Option<u32>,
+	/// Follow symlinks in the host source before packing, `-L/--follow-link`.
+	pub follow_link: bool,
+	/// Archive mode, `-a/--archive`. Accepted for command-line compatibility:
+	/// under rootless Podman the original uid/gid cannot be restored, and
+	/// container→host extraction always applies podup's security-hardened mode
+	/// sanitization, so this flag has no effect on the copied bytes.
+	pub archive: bool,
+}
+
 impl Engine {
 	/// Copy between a service container and the local filesystem.
 	///
@@ -26,13 +40,27 @@ impl Engine {
 	/// The other side is a local path. `SERVICE:-` / `-:SERVICE` for stdin/stdout
 	/// is not supported.
 	pub async fn cp(&self, file: &ComposeFile, src: &str, dst: &str) -> Result<()> {
+		self.cp_with_options(file, src, dst, CpOptions::default())
+			.await
+	}
+
+	/// Copy with `docker compose cp` options: `--index` (target a specific
+	/// replica), `-L/--follow-link` (follow host symlinks when uploading) and
+	/// `-a/--archive` (accepted for compatibility — see [`CpOptions::archive`]).
+	pub async fn cp_with_options(
+		&self,
+		file: &ComposeFile,
+		src: &str,
+		dst: &str,
+		opts: CpOptions,
+	) -> Result<()> {
 		match (parse_endpoint(src), parse_endpoint(dst)) {
 			(Some((service, container_path)), None) => {
-				self.cp_from_container(file, service, container_path, Path::new(dst))
+				self.cp_from_container(file, service, container_path, Path::new(dst), &opts)
 					.await
 			}
 			(None, Some((service, container_path))) => {
-				self.cp_to_container(file, service, Path::new(src), container_path)
+				self.cp_to_container(file, service, Path::new(src), container_path, &opts)
 					.await
 			}
 			(Some(_), Some(_)) => Err(ComposeError::Unsupported(
@@ -50,12 +78,13 @@ impl Engine {
 		service_name: &str,
 		container_path: &str,
 		dst: &Path,
+		opts: &CpOptions,
 	) -> Result<()> {
 		let service = file
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = self.container_name(service_name, service);
+		let container_name = self.replica_name_at(service_name, service, opts.index)?;
 
 		let path = format!(
 			"{API_PREFIX}/containers/{}/archive?path={}",
@@ -95,15 +124,17 @@ impl Engine {
 		service_name: &str,
 		src: &Path,
 		container_path: &str,
+		opts: &CpOptions,
 	) -> Result<()> {
 		let service = file
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = self.container_name(service_name, service);
+		let container_name = self.replica_name_at(service_name, service, opts.index)?;
 
 		let src_buf = src.to_path_buf();
-		let tar_bytes = tokio::task::spawn_blocking(move || pack_path(&src_buf))
+		let follow = opts.follow_link;
+		let tar_bytes = tokio::task::spawn_blocking(move || pack_path(&src_buf, follow))
 			.await
 			.map_err(|e| ComposeError::Build(e.to_string()))??;
 
@@ -142,9 +173,12 @@ fn parse_endpoint(s: &str) -> Option<(&str, &str)> {
 	Some((svc, path))
 }
 
-fn pack_path(src: &Path) -> Result<Vec<u8>> {
+fn pack_path(src: &Path, follow_link: bool) -> Result<Vec<u8>> {
 	let encoder = GzEncoder::new(Vec::new(), Compression::default());
 	let mut tar = tar::Builder::new(encoder);
+	// `-L/--follow-link`: archive the symlink target's contents instead of the
+	// link itself.
+	tar.follow_symlinks(follow_link);
 
 	if src.is_dir() {
 		let name = src.file_name().unwrap_or(std::ffi::OsStr::new("."));
@@ -338,7 +372,7 @@ mod tests {
 		let dir = tempfile::tempdir().expect("tempdir");
 		let file = dir.path().join("data.txt");
 		std::fs::write(&file, b"hello").expect("write");
-		let result = super::pack_path(&file);
+		let result = super::pack_path(&file, false);
 		assert!(result.is_ok());
 		let bytes = result.unwrap();
 		assert!(!bytes.is_empty());
@@ -351,7 +385,7 @@ mod tests {
 		std::fs::create_dir(&subdir).expect("mkdir");
 		std::fs::write(subdir.join("a.txt"), b"aaa").expect("write");
 		std::fs::write(subdir.join("b.txt"), b"bbb").expect("write");
-		let result = super::pack_path(&subdir);
+		let result = super::pack_path(&subdir, false);
 		assert!(result.is_ok());
 		assert!(!result.unwrap().is_empty());
 	}

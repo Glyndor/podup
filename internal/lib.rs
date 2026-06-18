@@ -29,9 +29,9 @@ pub use compose::{
 	parse_str, parse_str_raw, resolve_levels, resolve_order,
 };
 pub use engine::{
-	is_safe_project_name, list_projects, BuildOptions, Engine, ExecOptions, ImagesOptions,
-	LogsOptions, LsOptions, ProjectLock, PsOptions, PullOptions, PushOptions, RunOptions,
-	RunOverrides,
+	is_safe_project_name, list_projects, BuildOptions, CpOptions, Engine, ExecOptions,
+	ImagesOptions, LogsOptions, LsOptions, ProjectLock, PsOptions, PullOptions, PushOptions,
+	RunOptions, RunOverrides,
 };
 pub use error::{ComposeError, Result};
 pub use libpod::Client;
