@@ -10,7 +10,7 @@ use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::EnvFilter;
 
-use crate::cli::{Cli, Commands};
+use crate::cli::{Cli, Commands, ConfigFormat};
 
 /// Whether a command creates, destroys, or changes the state of containers and
 /// so must hold the exclusive project lock.
@@ -90,6 +90,65 @@ pub(crate) fn init_tracing() {
 		.with_writer(std::io::stderr)
 		.event_format(PodupFormat)
 		.init();
+}
+
+/// Render `config`: validate-only (`--quiet`), service-name list (`--services`),
+/// or the resolved compose file in YAML/JSON with inline secret content redacted.
+pub(crate) fn render_config(
+	file: &podup::compose::types::ComposeFile,
+	format: &ConfigFormat,
+	services: bool,
+	quiet: bool,
+) -> podup::Result<()> {
+	// Reaching here means the file parsed and merged cleanly.
+	if quiet {
+		return Ok(());
+	}
+	if services {
+		for name in file.services.keys() {
+			println!("{name}");
+		}
+		return Ok(());
+	}
+	let mut redacted = file.clone();
+	redacted.redact_inline_content();
+	let rendered = match format {
+		ConfigFormat::Json => serde_json::to_string_pretty(&redacted).map_err(|e| {
+			podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
+		})?,
+		ConfigFormat::Yaml => {
+			serde_yaml::to_string(&redacted).map_err(podup::ComposeError::Parse)?
+		}
+	};
+	println!("{rendered}");
+	Ok(())
+}
+
+/// Build the `run`-only flag overrides from the parsed command. These are kept
+/// off the frozen public `RunOptions` API and threaded through the engine
+/// builder instead (`Engine::with_run_overrides`).
+pub(crate) fn run_overrides_for(command: &Commands) -> podup::RunOverrides {
+	match command {
+		Commands::Run {
+			user,
+			workdir,
+			entrypoint,
+			volume,
+			publish,
+			interactive,
+			no_deps,
+			..
+		} => podup::RunOverrides {
+			user: user.clone(),
+			workdir: workdir.clone(),
+			entrypoint: entrypoint.clone(),
+			volumes: volume.clone(),
+			publish: publish.clone(),
+			interactive: *interactive,
+			no_deps: *no_deps,
+		},
+		_ => podup::RunOverrides::default(),
+	}
 }
 
 /// Parse the CLI, framing `--help`/`--version` output with a blank line top and

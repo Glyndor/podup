@@ -298,3 +298,142 @@ async fn cli_up_wait_returns_when_healthy() {
 	assert!(up.status.success(), "up --wait failed: {:?}", up.stderr);
 	run(&["-f", c, "-p", &proj, "down"]);
 }
+
+#[tokio::test]
+async fn cli_rm_stop_removes_running_container() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let proj = format!("t{}-rmstop", std::process::id());
+	let compose = dir.path().join("docker-compose.yml");
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+
+	run(&["-f", c, "-p", &proj, "up", "-d"]);
+	assert_eq!(ps_all_count(c, &proj), 1, "container should exist after up");
+
+	// `rm -s` (no -f) must stop the running container first, then remove it.
+	let rm = run(&["-f", c, "-p", &proj, "rm", "-s", "web"]);
+	assert!(rm.status.success(), "rm -s failed: {:?}", rm.stderr);
+	assert_eq!(
+		ps_all_count(c, &proj),
+		0,
+		"rm -s must remove the running container"
+	);
+
+	run(&["-f", c, "-p", &proj, "down"]);
+}
+
+#[tokio::test]
+async fn cli_start_wait_returns_after_starting() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let proj = format!("t{}-startwait", std::process::id());
+	let compose = dir.path().join("docker-compose.yml");
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+
+	// Create the container without starting, then `start --wait` must start it
+	// and return (no healthcheck → ready once started).
+	run(&["-f", c, "-p", &proj, "up", "--no-start"]);
+	let start = run(&[
+		"-f",
+		c,
+		"-p",
+		&proj,
+		"start",
+		"--wait",
+		"--wait-timeout",
+		"30",
+	]);
+	assert!(
+		start.status.success(),
+		"start --wait failed: {:?}",
+		start.stderr
+	);
+
+	run(&["-f", c, "-p", &proj, "down"]);
+}
+
+#[tokio::test]
+async fn cli_volumes_lists_named_volumes() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let proj = format!("t{}-vols", std::process::id());
+	let compose = dir.path().join("docker-compose.yml");
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    volumes:\n      - data:/data\nvolumes:\n  data:\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+
+	// -q prints only the resolved on-host name ({proj}_data).
+	let out = run(&["-f", c, "-p", &proj, "volumes", "-q"]);
+	assert!(out.status.success(), "volumes -q failed: {:?}", out.stderr);
+	let names = String::from_utf8_lossy(&out.stdout);
+	assert!(
+		names.lines().any(|l| l.trim() == format!("{proj}_data")),
+		"volumes -q must list the resolved volume name, got: {names:?}"
+	);
+
+	// JSON format carries the same name.
+	let json = run(&["-f", c, "-p", &proj, "volumes", "--format", "json"]);
+	assert!(
+		json.status.success(),
+		"volumes --format json failed: {:?}",
+		json.stderr
+	);
+	let parsed: serde_json::Value =
+		serde_json::from_str(String::from_utf8_lossy(&json.stdout).trim()).expect("valid JSON");
+	assert!(
+		parsed
+			.as_array()
+			.is_some_and(|a| a.iter().any(|v| v["Name"] == format!("{proj}_data"))),
+		"volumes --format json must include the volume: {parsed}"
+	);
+}
+
+#[tokio::test]
+async fn cli_config_resolve_image_digests_pins_digest() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let proj = format!("t{}-digests", std::process::id());
+	let compose = dir.path().join("docker-compose.yml");
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+
+	// Ensure the image (with its registry digest) is present locally.
+	run(&["-f", c, "-p", &proj, "pull"]);
+
+	let out = run(&["-f", c, "-p", &proj, "config", "--resolve-image-digests"]);
+	assert!(
+		out.status.success(),
+		"config --resolve-image-digests failed: {:?}",
+		out.stderr
+	);
+	let yaml = String::from_utf8_lossy(&out.stdout);
+	assert!(
+		yaml.contains("alpine@sha256:"),
+		"image must be pinned to a registry digest, got: {yaml}"
+	);
+}

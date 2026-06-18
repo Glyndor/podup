@@ -3,10 +3,15 @@
 //! Translates a parsed [`ComposeFile`] into Podman API calls via the libpod REST API.
 
 mod build;
+mod config_digests;
+pub use config_digests::resolve_image_digests;
+mod commit_export;
 mod container;
 mod copy;
-pub use build::{BuildOptions, PushOptions};
-pub use lifecycle::RunOptions;
+mod events;
+pub use build::{BuildOptions, PullOptions, PushOptions};
+pub use copy::CpOptions;
+pub use lifecycle::{RunOptions, RunOverrides};
 pub use lock::ProjectLock;
 pub use query::{ExecOptions, ImagesOptions, LogsOptions, PsOptions};
 mod container_config;
@@ -24,6 +29,8 @@ mod staging;
 mod stats;
 pub use staging::is_safe_project_name;
 mod volume;
+mod volumes_list;
+pub use volumes_list::VolumesOptions;
 mod volume_mounts;
 #[cfg(feature = "watch")]
 mod watch;
@@ -62,6 +69,12 @@ pub struct Engine {
 	pub(super) no_build: bool,
 	/// CLI `up --quiet-pull`: suppress image-pull progress output.
 	pub(super) quiet_pull: bool,
+	/// CLI `run`-only flag overrides (user/workdir/entrypoint/volume/publish/
+	/// interactive/no-deps); empty by default.
+	pub(super) run_overrides: lifecycle::RunOverrides,
+	/// CLI `up -V/--renew-anon-volumes`: when recreating a container, also remove
+	/// its old anonymous volumes instead of leaving them orphaned.
+	pub(super) renew_anon_volumes: bool,
 }
 
 impl Engine {
@@ -76,6 +89,8 @@ impl Engine {
 			pull_policy_override: None,
 			no_build: false,
 			quiet_pull: false,
+			run_overrides: lifecycle::RunOverrides::default(),
+			renew_anon_volumes: false,
 		}
 	}
 
@@ -90,6 +105,8 @@ impl Engine {
 			pull_policy_override: None,
 			no_build: false,
 			quiet_pull: false,
+			run_overrides: lifecycle::RunOverrides::default(),
+			renew_anon_volumes: false,
 		}
 	}
 
@@ -119,6 +136,20 @@ impl Engine {
 		self.pull_policy_override = pull_policy;
 		self.no_build = no_build;
 		self.quiet_pull = quiet_pull;
+		self
+	}
+
+	/// Set the CLI `run`-only flag overrides (`-u/-w/--entrypoint/-v/-p/-i/
+	/// --no-deps`). Builder-style; consumed by [`Engine::run`].
+	pub fn with_run_overrides(mut self, overrides: RunOverrides) -> Self {
+		self.run_overrides = overrides;
+		self
+	}
+
+	/// Set the CLI `up -V/--renew-anon-volumes` flag. Builder-style; when set,
+	/// recreating a container also removes its old anonymous volumes.
+	pub fn with_renew_anon_volumes(mut self, renew: bool) -> Self {
+		self.renew_anon_volumes = renew;
 		self
 	}
 
@@ -244,6 +275,27 @@ impl Engine {
 			base
 		} else {
 			format!("{base}-1")
+		}
+	}
+
+	/// Resolve the container name for a service replica: the 1-based `--index`
+	/// when given (erroring if out of range), else the first replica. Shared by
+	/// the replica-targeting commands (`exec`, `cp`).
+	pub(super) fn replica_name_at(
+		&self,
+		service_name: &str,
+		service: &Service,
+		index: Option<u32>,
+	) -> Result<String> {
+		match index {
+			Some(i) => {
+				let names = self.replica_names(service_name, service);
+				let idx = (i as usize).saturating_sub(1);
+				names.get(idx).cloned().ok_or_else(|| {
+					ComposeError::ServiceNotFound(format!("{service_name} (replica index {i})"))
+				})
+			}
+			None => Ok(self.first_replica_name(service_name, service)),
 		}
 	}
 

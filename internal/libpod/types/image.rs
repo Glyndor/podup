@@ -34,4 +34,9 @@ pub struct BuildErrorDetail {
 pub struct ImageInspect {
 	#[serde(rename = "Id", default)]
 	pub id: String,
+	/// Registry digest references (`repo@sha256:...`) for the image, when it was
+	/// pulled from (or pushed to) a registry. Used by `config
+	/// --resolve-image-digests`. Empty for purely local/built images.
+	#[serde(rename = "RepoDigests", default)]
+	pub repo_digests: Vec<String>,
 }

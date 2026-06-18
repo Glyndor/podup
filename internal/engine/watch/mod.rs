@@ -348,6 +348,13 @@ impl Engine {
 		self.watch_exec(container_name, cmd).await
 	}
 
+	/// All container names carrying this project's label (any state). Lets
+	/// integration tests assert which service containers `run` did or did not
+	/// create (e.g. that `--no-deps` skipped a dependency).
+	pub async fn test_project_container_names(&self) -> Result<Vec<String>> {
+		self.list_project_container_names(None).await
+	}
+
 	/// Run a command in the named container and return its captured stdout.
 	///
 	/// Integration tests use this to observe the effect of a watch action (e.g.

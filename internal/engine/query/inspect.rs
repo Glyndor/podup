@@ -65,11 +65,25 @@ impl Engine {
 		private_port: u16,
 		proto: &str,
 	) -> Result<()> {
+		self.port_with_index(file, service_name, private_port, proto, None)
+			.await
+	}
+
+	/// Like [`Engine::port`] but targets a specific replica via `--index`
+	/// (1-based); `None` uses the first replica.
+	pub async fn port_with_index(
+		&self,
+		file: &ComposeFile,
+		service_name: &str,
+		private_port: u16,
+		proto: &str,
+		index: Option<u32>,
+	) -> Result<()> {
 		let service = file
 			.services
 			.get(service_name)
 			.ok_or_else(|| crate::error::ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = self.first_replica_name(service_name, service);
+		let container_name = self.replica_name_at(service_name, service, index)?;
 
 		let path = format!(
 			"{API_PREFIX}/containers/{}/json",
@@ -165,8 +179,60 @@ impl Engine {
 		Ok(())
 	}
 
+	/// Attach to a single service container's output (`docker compose attach`).
+	///
+	/// Streams the first replica's stdout/stderr (follow) to this process's
+	/// stdout/stderr with no prefix, until the container stops. podup never
+	/// attaches STDIN (it allocates no TTY), so this is output-only.
+	pub async fn attach(&self, file: &ComposeFile, service_name: &str) -> Result<()> {
+		let service = file
+			.services
+			.get(service_name)
+			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
+		let container = self.first_replica_name(service_name, service);
+		let is_tty = service.tty.unwrap_or(false);
+
+		let path = format!(
+			"{API_PREFIX}/containers/{}/logs?stdout=true&stderr=true&follow=true",
+			urlencoded(&container),
+		);
+		let resp = self
+			.client
+			.get_stream(&path)
+			.await
+			.map_err(ComposeError::Podman)?;
+		let mut stream = if is_tty {
+			crate::libpod::parse_raw(resp.into_body())
+		} else {
+			crate::libpod::parse_multiplexed(resp.into_body())
+		};
+		while let Some(msg) = stream.next().await {
+			match msg {
+				Ok(LogOutput::StdOut { message }) => {
+					print!("{}", String::from_utf8_lossy(&message));
+				}
+				Ok(LogOutput::StdErr { message }) => {
+					eprint!("{}", String::from_utf8_lossy(&message));
+				}
+				Err(_) => break,
+			}
+		}
+		Ok(())
+	}
+
 	/// Attach to log streams for all services with `attach: true` (the default). Streams are multiplexed to stdout with a service-name prefix.
 	pub async fn attach_logs(&self, file: &ComposeFile) -> Result<()> {
+		self.attach_logs_with_options(file, false).await
+	}
+
+	/// Like [`Engine::attach_logs`] but with `up --timestamps` support: when
+	/// `timestamps` is set, each streamed line carries the libpod RFC3339
+	/// timestamp prefix.
+	pub async fn attach_logs_with_options(
+		&self,
+		file: &ComposeFile,
+		timestamps: bool,
+	) -> Result<()> {
 		// Carry (display_name, container_name, is_tty) so the log parser matches
 		// the container's framing mode: TTY containers emit raw bytes; non-TTY
 		// containers emit multiplexed 8-byte-header frames.
@@ -196,7 +262,7 @@ impl Engine {
 			.map(|(display, cname, is_tty)| {
 				let prefix = display.clone();
 				let path = format!(
-					"{API_PREFIX}/containers/{}/logs?stdout=true&stderr=true&follow=true",
+					"{API_PREFIX}/containers/{}/logs?stdout=true&stderr=true&follow=true&timestamps={timestamps}",
 					urlencoded(cname),
 				);
 				let client = &self.client;

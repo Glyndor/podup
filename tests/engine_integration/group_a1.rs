@@ -339,6 +339,41 @@ async fn pull_images() {
 }
 
 #[tokio::test]
+async fn pull_ignore_failures_continues_past_bad_image() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("plif");
+	let engine = Engine::new(client, proj.clone());
+	// A bogus registry/image alongside a good one: the bad pull fails.
+	let file = parse_str(
+		"services:\n  good:\n    image: alpine:latest\n  bad:\n    image: localhost:1/nope:nope\n",
+	)
+	.unwrap();
+
+	// Without --ignore-pull-failures the bad image aborts the whole pull.
+	let strict = engine.pull(&file).await;
+	assert!(strict.is_err(), "bad image must fail a strict pull");
+
+	// With --ignore-pull-failures the failure is logged and pull returns Ok.
+	let lenient = engine
+		.pull_services_with_options(
+			&file,
+			&[],
+			podup::PullOptions {
+				ignore_failures: true,
+				include_deps: false,
+			},
+		)
+		.await;
+	assert!(
+		lenient.is_ok(),
+		"ignore-pull-failures must not abort: {lenient:?}"
+	);
+}
+
+#[tokio::test]
 async fn remove_orphans_no_orphans() {
 	let client = match podman().await {
 		Some(d) => d,

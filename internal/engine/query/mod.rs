@@ -400,30 +400,6 @@ impl Engine {
 		Ok(())
 	}
 
-	/// Pull images for all services that declare an `image:` key, concurrently.
-	pub async fn pull(&self, file: &ComposeFile) -> Result<()> {
-		self.pull_services(file, &[]).await
-	}
-
-	/// Pull images for the named services (or every service when `services` is
-	/// empty), matching `docker compose pull [SERVICE...]`.
-	pub async fn pull_services(&self, file: &ComposeFile, services: &[String]) -> Result<()> {
-		let futs: Vec<_> = file
-			.services
-			.iter()
-			.filter(|(name, s)| {
-				s.image.is_some() && (services.is_empty() || services.iter().any(|w| w == *name))
-			})
-			.map(|(_, s)| self.pull_image(s))
-			.collect();
-
-		let results = futures_util::future::join_all(futs).await;
-		for r in results {
-			r?;
-		}
-		Ok(())
-	}
-
 	/// Remove containers labelled for this project that are not defined in the current compose file.
 	pub async fn remove_orphans(&self, file: &ComposeFile) -> Result<()> {
 		let label = format!("podup.project={}", self.project);

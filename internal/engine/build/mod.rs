@@ -8,6 +8,7 @@
 mod context;
 mod pull;
 mod push;
+pub use pull::PullOptions;
 pub use push::PushOptions;
 
 use bytes::Bytes;

@@ -21,6 +21,7 @@ use super::profiles::{active_profiles_set, service_in_profiles};
 use super::Engine;
 
 /// Options for [`Engine::run`].
+#[derive(Default)]
 pub struct RunOptions {
 	/// Override the default service command.
 	pub cmd: Vec<String>,
@@ -35,6 +36,29 @@ pub struct RunOptions {
 	/// Publish the service's declared `ports:` (compose `run --service-ports`).
 	/// When false, `run` leaves ports unpublished to avoid host-port collisions.
 	pub service_ports: bool,
+}
+
+/// Extra `docker compose run` flag overrides threaded through the engine
+/// builder ([`Engine::with_run_overrides`]). These are CLI-only refinements of
+/// a `run` invocation; they live here rather than on the frozen [`RunOptions`]
+/// public struct so the 1.0 library API stays stable, mirroring how the `up`
+/// image-acquisition overrides are carried on the engine.
+#[derive(Default, Clone)]
+pub struct RunOverrides {
+	/// Run the command as this user (`-u/--user`, `name or UID[:GID]`).
+	pub user: Option<String>,
+	/// Working directory inside the container (`-w/--workdir`).
+	pub workdir: Option<String>,
+	/// Override the image entrypoint (`--entrypoint`).
+	pub entrypoint: Option<String>,
+	/// Extra ad-hoc volume mounts in compose short form (`-v/--volume`).
+	pub volumes: Vec<String>,
+	/// Extra published ports in compose short form (`-p/--publish`).
+	pub publish: Vec<String>,
+	/// Keep STDIN open on the container (`-i/--interactive`).
+	pub interactive: bool,
+	/// Do not start `depends_on` services before the run (`--no-deps`).
+	pub no_deps: bool,
 }
 
 impl Engine {

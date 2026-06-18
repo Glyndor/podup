@@ -37,6 +37,8 @@ fn bin() -> &'static str {
 // Test groups (see engine_integration/*.rs)
 // ---------------------------------------------------------------------------
 
+#[path = "engine_integration/cp_flags.rs"]
+mod cp_flags;
 #[path = "engine_integration/group_a1.rs"]
 mod group_a1;
 #[path = "engine_integration/group_a2.rs"]
@@ -47,6 +49,10 @@ mod group_a3;
 mod group_a4;
 #[path = "engine_integration/group_b1.rs"]
 mod group_b1;
+#[path = "engine_integration/niche.rs"]
+mod niche;
+#[path = "engine_integration/run_flags.rs"]
+mod run_flags;
 
 #[cfg(feature = "test-helpers")]
 #[path = "engine_integration/watch.rs"]
