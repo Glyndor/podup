@@ -298,3 +298,70 @@ async fn cli_up_wait_returns_when_healthy() {
 	assert!(up.status.success(), "up --wait failed: {:?}", up.stderr);
 	run(&["-f", c, "-p", &proj, "down"]);
 }
+
+#[tokio::test]
+async fn cli_rm_stop_removes_running_container() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let proj = format!("t{}-rmstop", std::process::id());
+	let compose = dir.path().join("docker-compose.yml");
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+
+	run(&["-f", c, "-p", &proj, "up", "-d"]);
+	assert_eq!(ps_all_count(c, &proj), 1, "container should exist after up");
+
+	// `rm -s` (no -f) must stop the running container first, then remove it.
+	let rm = run(&["-f", c, "-p", &proj, "rm", "-s", "web"]);
+	assert!(rm.status.success(), "rm -s failed: {:?}", rm.stderr);
+	assert_eq!(
+		ps_all_count(c, &proj),
+		0,
+		"rm -s must remove the running container"
+	);
+
+	run(&["-f", c, "-p", &proj, "down"]);
+}
+
+#[tokio::test]
+async fn cli_start_wait_returns_after_starting() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let proj = format!("t{}-startwait", std::process::id());
+	let compose = dir.path().join("docker-compose.yml");
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+
+	// Create the container without starting, then `start --wait` must start it
+	// and return (no healthcheck → ready once started).
+	run(&["-f", c, "-p", &proj, "up", "--no-start"]);
+	let start = run(&[
+		"-f",
+		c,
+		"-p",
+		&proj,
+		"start",
+		"--wait",
+		"--wait-timeout",
+		"30",
+	]);
+	assert!(
+		start.status.success(),
+		"start --wait failed: {:?}",
+		start.stderr
+	);
+
+	run(&["-f", c, "-p", &proj, "down"]);
+}

@@ -65,11 +65,25 @@ impl Engine {
 		private_port: u16,
 		proto: &str,
 	) -> Result<()> {
+		self.port_with_index(file, service_name, private_port, proto, None)
+			.await
+	}
+
+	/// Like [`Engine::port`] but targets a specific replica via `--index`
+	/// (1-based); `None` uses the first replica.
+	pub async fn port_with_index(
+		&self,
+		file: &ComposeFile,
+		service_name: &str,
+		private_port: u16,
+		proto: &str,
+		index: Option<u32>,
+	) -> Result<()> {
 		let service = file
 			.services
 			.get(service_name)
 			.ok_or_else(|| crate::error::ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = self.first_replica_name(service_name, service);
+		let container_name = self.replica_name_at(service_name, service, index)?;
 
 		let path = format!(
 			"{API_PREFIX}/containers/{}/json",

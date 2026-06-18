@@ -92,7 +92,26 @@ pub(crate) async fn dispatch(
 					.await?;
 			}
 		}
-		Commands::Start { services } => engine.start(file, &services).await?,
+		Commands::Start {
+			wait,
+			wait_timeout,
+			services,
+		} => {
+			engine.start(file, &services).await?;
+			if wait {
+				let fut = engine.wait_services_healthy(file, &services);
+				match wait_timeout {
+					Some(secs) => tokio::time::timeout(std::time::Duration::from_secs(secs), fut)
+						.await
+						.map_err(|_| {
+							podup::ComposeError::Unsupported(
+								"start --wait timed out before services became healthy".into(),
+							)
+						})??,
+					None => fut.await?,
+				}
+			}
+		}
 		Commands::Stop {
 			services,
 			timeout: _,
@@ -134,8 +153,14 @@ pub(crate) async fn dispatch(
 		Commands::Rm {
 			force,
 			volumes,
+			stop,
 			services,
 		} => {
+			// `-s/--stop` gracefully stops the targets first so they can be
+			// removed without `--force`.
+			if stop {
+				engine.stop(file, &services).await?;
+			}
 			engine
 				.rm_with_options(file, &services, force, volumes)
 				.await?
@@ -241,7 +266,12 @@ pub(crate) async fn dispatch(
 			service,
 			private_port,
 			proto,
-		} => engine.port(file, &service, private_port, &proto).await?,
+			index,
+		} => {
+			engine
+				.port_with_index(file, &service, private_port, &proto, index)
+				.await?
+		}
 		Commands::Images { quiet, format } => {
 			engine
 				.images_with_options(
