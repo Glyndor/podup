@@ -111,7 +111,7 @@ impl Engine {
 	/// All container names carrying this project's label, optionally narrowed to
 	/// one service via the `podup.service` label. Lets reconciliation find
 	/// scaled replicas that the compose file's default count no longer names.
-	pub(super) async fn list_project_container_names(
+	pub(crate) async fn list_project_container_names(
 		&self,
 		service: Option<&str>,
 	) -> Result<Vec<String>> {

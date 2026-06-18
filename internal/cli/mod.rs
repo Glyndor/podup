@@ -288,8 +288,32 @@ pub(crate) enum Commands {
 		#[arg(long)]
 		name: Option<String>,
 		/// Publish the service's declared ports (off by default).
-		#[arg(long)]
+		#[arg(short = 'P', long)]
 		service_ports: bool,
+		/// Run the command as this user (name or UID[:GID]).
+		#[arg(short, long)]
+		user: Option<String>,
+		/// Working directory inside the container.
+		#[arg(short, long)]
+		workdir: Option<String>,
+		/// Override the image entrypoint.
+		#[arg(long)]
+		entrypoint: Option<String>,
+		/// Bind-mount an extra volume (HOST:CONTAINER[:OPTS] or NAME:CONTAINER); repeatable.
+		#[arg(short = 'v', long = "volume")]
+		volume: Vec<String>,
+		/// Publish an extra port (HOST:CONTAINER[/PROTO]); repeatable.
+		#[arg(short = 'p', long = "publish")]
+		publish: Vec<String>,
+		/// Keep STDIN open (accepted for compatibility; run still streams logs).
+		#[arg(short, long)]
+		interactive: bool,
+		/// Disable pseudo-TTY allocation (podup never allocates one; accepted for compatibility).
+		#[arg(short = 'T', long = "no-TTY")]
+		no_tty: bool,
+		/// Do not start linked services (depends_on) before running.
+		#[arg(long)]
+		no_deps: bool,
 		/// Command (and arguments) to run.
 		#[arg(trailing_var_arg = true, allow_hyphen_values = true)]
 		cmd: Vec<String>,

@@ -355,6 +355,14 @@ async fn run() -> podup::Result<()> {
 			env_overrides,
 			name,
 			service_ports,
+			user,
+			workdir,
+			entrypoint,
+			volume,
+			publish,
+			interactive,
+			no_tty: _,
+			no_deps,
 			cmd,
 		} => {
 			engine
@@ -368,6 +376,13 @@ async fn run() -> podup::Result<()> {
 						env_overrides,
 						name_override: name,
 						service_ports,
+						user,
+						workdir,
+						entrypoint,
+						volumes: volume,
+						publish,
+						interactive,
+						no_deps,
 					},
 				)
 				.await?
