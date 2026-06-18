@@ -66,6 +66,9 @@ pub struct Engine {
 	/// CLI `run`-only flag overrides (user/workdir/entrypoint/volume/publish/
 	/// interactive/no-deps); empty by default.
 	pub(super) run_overrides: lifecycle::RunOverrides,
+	/// CLI `up -V/--renew-anon-volumes`: when recreating a container, also remove
+	/// its old anonymous volumes instead of leaving them orphaned.
+	pub(super) renew_anon_volumes: bool,
 }
 
 impl Engine {
@@ -81,6 +84,7 @@ impl Engine {
 			no_build: false,
 			quiet_pull: false,
 			run_overrides: lifecycle::RunOverrides::default(),
+			renew_anon_volumes: false,
 		}
 	}
 
@@ -96,6 +100,7 @@ impl Engine {
 			no_build: false,
 			quiet_pull: false,
 			run_overrides: lifecycle::RunOverrides::default(),
+			renew_anon_volumes: false,
 		}
 	}
 
@@ -132,6 +137,13 @@ impl Engine {
 	/// --no-deps`). Builder-style; consumed by [`Engine::run`].
 	pub fn with_run_overrides(mut self, overrides: RunOverrides) -> Self {
 		self.run_overrides = overrides;
+		self
+	}
+
+	/// Set the CLI `up -V/--renew-anon-volumes` flag. Builder-style; when set,
+	/// recreating a container also removes its old anonymous volumes.
+	pub fn with_renew_anon_volumes(mut self, renew: bool) -> Self {
+		self.renew_anon_volumes = renew;
 		self
 	}
 

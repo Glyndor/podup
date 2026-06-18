@@ -14,17 +14,13 @@ pub(crate) use types::{ConfigFormat, OutputFormat, RmiScope};
 #[derive(Parser)]
 #[command(name = "podup", version)]
 pub(crate) struct Cli {
-	/// Path to the compose file. May also be set via `COMPOSE_FILE`. When
-	/// unset, the compose-spec precedence list is probed in the current
-	/// directory (compose.yaml, compose.yml, docker-compose.yaml,
-	/// docker-compose.yml).
+	/// Path to the compose file (or `COMPOSE_FILE`). Unset: probe the
+	/// compose-spec precedence list (compose.yaml/.yml, docker-compose.yaml/.yml).
 	#[arg(short, long)]
 	pub(crate) file: Vec<PathBuf>,
 
-	/// Project name (used as a prefix for container names). May also be set via
-	/// `COMPOSE_PROJECT_NAME`. When unset, the compose-spec precedence applies:
-	/// the top-level `name:` field, then the sanitized basename of the project
-	/// directory.
+	/// Project name, the container-name prefix (or `COMPOSE_PROJECT_NAME`).
+	/// Unset: the top-level `name:`, then the sanitized project-directory basename.
 	#[arg(short, long, env = "COMPOSE_PROJECT_NAME")]
 	pub(crate) project: Option<String>,
 
@@ -42,9 +38,8 @@ pub(crate) struct Cli {
 	#[arg(long, global = true)]
 	pub(crate) project_directory: Option<PathBuf>,
 
-	/// Additional env file(s) loaded into the variable map used for
-	/// interpolation. May be given multiple times; later files win. The
-	/// process environment and a project `.env` still take precedence.
+	/// Additional env file(s) for the interpolation variable map (repeatable;
+	/// later files win). Process env and a project `.env` still take precedence.
 	#[arg(long = "env-file", global = true)]
 	pub(crate) env_file: Vec<String>,
 
@@ -98,6 +93,12 @@ pub(crate) enum Commands {
 		/// Create containers but do not start them.
 		#[arg(long)]
 		no_start: bool,
+		/// Prefix attached log lines with a timestamp (ignored with -d).
+		#[arg(long)]
+		timestamps: bool,
+		/// Recreate anonymous volumes instead of keeping the previous ones.
+		#[arg(short = 'V', long)]
+		renew_anon_volumes: bool,
 		/// Bring up only these services (and their transitive depends_on).
 		/// If omitted, brings up every service in the compose file.
 		#[arg(trailing_var_arg = true)]

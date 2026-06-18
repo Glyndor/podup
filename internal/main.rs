@@ -170,11 +170,21 @@ async fn run() -> podup::Result<()> {
 		Commands::Pull { quiet, policy, .. } => (policy.clone(), false, *quiet),
 		_ => (None, false, false),
 	};
+	// `up -V/--renew-anon-volumes`: recreate anonymous volumes on container
+	// recreation instead of leaving the old ones orphaned.
+	let renew_anon_volumes = matches!(
+		&cli.command,
+		Commands::Up {
+			renew_anon_volumes: true,
+			..
+		}
+	);
 	let engine = podup::Engine::with_base_dir(client, project, base_dir)
 		.with_stop_timeout(stop_timeout)
 		.with_scale_overrides(scale_overrides)
 		.with_up_overrides(pull_override, no_build, quiet_pull)
-		.with_run_overrides(startup::run_overrides_for(&cli.command));
+		.with_run_overrides(startup::run_overrides_for(&cli.command))
+		.with_renew_anon_volumes(renew_anon_volumes);
 
 	// Serialize mutating lifecycle commands against concurrent `podup` runs on
 	// the same project. Read-only / follow commands (ps, logs, top, port,

@@ -244,10 +244,13 @@ impl Engine {
 			..Default::default()
 		};
 
-		// Remove any existing container (idempotent restart).
+		// Remove any existing container (idempotent restart). `up
+		// -V/--renew-anon-volumes` also drops its old anonymous volumes (v=true)
+		// so they are recreated fresh instead of orphaned.
 		let rm_path = format!(
-			"{API_PREFIX}/containers/{}?force=true",
-			urlencoded(container_name)
+			"{API_PREFIX}/containers/{}?force=true&v={}",
+			urlencoded(container_name),
+			self.renew_anon_volumes,
 		);
 		if let Err(e) = self.client.delete_ok(&rm_path).await {
 			tracing::debug!("pre-create delete {container_name}: {e}");
