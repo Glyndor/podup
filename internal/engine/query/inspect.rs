@@ -181,6 +181,17 @@ impl Engine {
 
 	/// Attach to log streams for all services with `attach: true` (the default). Streams are multiplexed to stdout with a service-name prefix.
 	pub async fn attach_logs(&self, file: &ComposeFile) -> Result<()> {
+		self.attach_logs_with_options(file, false).await
+	}
+
+	/// Like [`Engine::attach_logs`] but with `up --timestamps` support: when
+	/// `timestamps` is set, each streamed line carries the libpod RFC3339
+	/// timestamp prefix.
+	pub async fn attach_logs_with_options(
+		&self,
+		file: &ComposeFile,
+		timestamps: bool,
+	) -> Result<()> {
 		// Carry (display_name, container_name, is_tty) so the log parser matches
 		// the container's framing mode: TTY containers emit raw bytes; non-TTY
 		// containers emit multiplexed 8-byte-header frames.
@@ -210,7 +221,7 @@ impl Engine {
 			.map(|(display, cname, is_tty)| {
 				let prefix = display.clone();
 				let path = format!(
-					"{API_PREFIX}/containers/{}/logs?stdout=true&stderr=true&follow=true",
+					"{API_PREFIX}/containers/{}/logs?stdout=true&stderr=true&follow=true&timestamps={timestamps}",
 					urlencoded(cname),
 				);
 				let client = &self.client;

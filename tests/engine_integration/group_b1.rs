@@ -428,3 +428,59 @@ async fn sibling_resolves_service_by_name_without_networks_block() {
 		"service `server` was not reachable by name without a networks: block: {out:?}"
 	);
 }
+
+// ---------------------------------------------------------------------------
+// up -V/--renew-anon-volumes and up --timestamps
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn engine_up_renew_anon_volumes_recreates_cleanly() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("renew");
+	// `with_renew_anon_volumes` makes the recreate delete drop old anon volumes
+	// (v=true); a forced re-up must still succeed.
+	let engine = Engine::new(client, proj.clone()).with_renew_anon_volumes(true);
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	// Force recreate: the v=true delete path runs for the existing container.
+	let second = engine
+		.up_with_options(&file, false, &[], &[], false, true, false)
+		.await;
+	engine.down(&file).await.unwrap();
+	second.expect("forced re-up with --renew-anon-volumes must succeed");
+}
+
+#[tokio::test]
+async fn engine_attach_logs_timestamps_returns_when_container_exits() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("ats");
+	let engine = Engine::new(client, proj.clone());
+	// A short-lived container: its follow log stream closes on exit, so
+	// attach_logs returns instead of blocking.
+	let file =
+		parse_str("services:\n  job:\n    image: alpine:latest\n    command: [\"echo\", \"hi\"]\n")
+			.unwrap();
+
+	engine.up(&file).await.unwrap();
+	let res = tokio::time::timeout(
+		std::time::Duration::from_secs(20),
+		engine.attach_logs_with_options(&file, true),
+	)
+	.await;
+	engine.down(&file).await.unwrap();
+	assert!(
+		res.is_ok(),
+		"attach_logs --timestamps did not return for an exited container"
+	);
+	res.unwrap().unwrap();
+}

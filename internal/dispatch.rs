@@ -32,6 +32,8 @@ pub(crate) async fn dispatch(
 			quiet_pull: _,
 			wait,
 			no_start,
+			timestamps,
+			renew_anon_volumes: _,
 			services,
 		} => {
 			if remove_orphans {
@@ -72,7 +74,7 @@ pub(crate) async fn dispatch(
 			if watch {
 				engine.watch(file).await?;
 			} else if !detach {
-				engine.attach_logs(file).await?;
+				engine.attach_logs_with_options(file, timestamps).await?;
 				let _ = engine.stop(file, &[]).await;
 			}
 		}
