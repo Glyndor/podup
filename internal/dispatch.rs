@@ -274,6 +274,22 @@ pub(crate) async fn dispatch(
 				.port_with_index(file, &service, private_port, &proto, index)
 				.await?
 		}
+		Commands::Volumes {
+			quiet,
+			format,
+			services,
+		} => {
+			engine
+				.list_volumes(
+					file,
+					&services,
+					podup::VolumesOptions {
+						quiet,
+						json: format == OutputFormat::Json,
+					},
+				)
+				.await?
+		}
 		Commands::Images { quiet, format } => {
 			engine
 				.images_with_options(

@@ -9,7 +9,7 @@ use clap_complete::Shell;
 mod parse;
 mod types;
 use parse::parse_scale_pair;
-pub(crate) use types::{ConfigFormat, OutputFormat, RmiScope};
+pub(crate) use types::{ConfigFormat, GenerateCommands, OutputFormat, RmiScope};
 
 #[derive(Parser)]
 #[command(name = "podup", version)]
@@ -350,6 +350,19 @@ pub(crate) enum Commands {
 		#[arg(long)]
 		index: Option<u32>,
 	},
+	/// List the project's named volumes.
+	#[command(alias = "volume")]
+	Volumes {
+		/// Only display volume names.
+		#[arg(short, long)]
+		quiet: bool,
+		/// Output format.
+		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
+		format: OutputFormat,
+		/// Show only volumes mounted by these services.
+		#[arg(trailing_var_arg = true)]
+		services: Vec<String>,
+	},
 	/// List images used by services.
 	#[command(alias = "image")]
 	Images {
@@ -480,20 +493,5 @@ pub(crate) enum Commands {
 	Completions {
 		/// Shell to generate completions for (bash, zsh, fish, powershell, elvish).
 		shell: Shell,
-	},
-}
-
-#[derive(Subcommand)]
-pub(crate) enum GenerateCommands {
-	/// Translate the compose file into Podman Quadlet unit files.
-	///
-	/// Emits one `.container` per service plus `.network` and `.volume` units.
-	/// Without --output the units are printed to stdout; warnings about fields
-	/// with no Quadlet mapping go to stderr.
-	Quadlet {
-		/// Directory to write the unit files into (e.g.
-		/// ~/.config/containers/systemd). Prints to stdout when omitted.
-		#[arg(short, long)]
-		output: Option<PathBuf>,
 	},
 }

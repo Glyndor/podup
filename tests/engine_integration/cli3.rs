@@ -365,3 +365,44 @@ async fn cli_start_wait_returns_after_starting() {
 
 	run(&["-f", c, "-p", &proj, "down"]);
 }
+
+#[tokio::test]
+async fn cli_volumes_lists_named_volumes() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let proj = format!("t{}-vols", std::process::id());
+	let compose = dir.path().join("docker-compose.yml");
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    volumes:\n      - data:/data\nvolumes:\n  data:\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+
+	// -q prints only the resolved on-host name ({proj}_data).
+	let out = run(&["-f", c, "-p", &proj, "volumes", "-q"]);
+	assert!(out.status.success(), "volumes -q failed: {:?}", out.stderr);
+	let names = String::from_utf8_lossy(&out.stdout);
+	assert!(
+		names.lines().any(|l| l.trim() == format!("{proj}_data")),
+		"volumes -q must list the resolved volume name, got: {names:?}"
+	);
+
+	// JSON format carries the same name.
+	let json = run(&["-f", c, "-p", &proj, "volumes", "--format", "json"]);
+	assert!(
+		json.status.success(),
+		"volumes --format json failed: {:?}",
+		json.stderr
+	);
+	let parsed: serde_json::Value =
+		serde_json::from_str(String::from_utf8_lossy(&json.stdout).trim()).expect("valid JSON");
+	assert!(
+		parsed
+			.as_array()
+			.is_some_and(|a| a.iter().any(|v| v["Name"] == format!("{proj}_data"))),
+		"volumes --format json must include the volume: {parsed}"
+	);
+}
