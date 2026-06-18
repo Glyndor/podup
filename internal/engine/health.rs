@@ -7,7 +7,7 @@
 
 use crate::compose::types::{ComposeFile, Service};
 use crate::error::{ComposeError, Result};
-use crate::libpod::types::container::{ContainerInspect, ContainerState};
+use crate::libpod::types::container::ContainerInspect;
 use crate::libpod::API_PREFIX;
 
 use super::Engine;
@@ -20,16 +20,6 @@ enum HealthVerdict {
 	/// treat the dependency as satisfied rather than blocking until timeout.
 	NoHealthcheck,
 	/// Not healthy yet — keep polling.
-	Pending,
-}
-
-/// Per-poll verdict while waiting for `service_completed_successfully`.
-enum CompletionVerdict {
-	/// The container exited with status 0.
-	Succeeded,
-	/// The container exited with a non-zero status — the dependency failed.
-	Failed,
-	/// Not exited yet — keep polling.
 	Pending,
 }
 
@@ -54,24 +44,6 @@ fn classify_health(info: &ContainerInspect) -> HealthVerdict {
 		return HealthVerdict::NoHealthcheck;
 	}
 	HealthVerdict::Pending
-}
-
-/// Classify a container state while waiting for `service_completed_successfully`.
-///
-/// Pure decision logic for [`Engine::wait_completed`], split out so the
-/// fail-closed-on-non-zero-exit gating can be unit-tested without Podman. A
-/// missing exit code is treated as failure (`unwrap_or(-1)`).
-fn classify_completion(state: Option<&ContainerState>) -> CompletionVerdict {
-	match state {
-		Some(s) if s.status.as_deref() == Some("exited") => {
-			if s.exit_code.unwrap_or(-1) == 0 {
-				CompletionVerdict::Succeeded
-			} else {
-				CompletionVerdict::Failed
-			}
-		}
-		_ => CompletionVerdict::Pending,
-	}
 }
 
 /// Compute the `(poll_interval_secs, iterations)` for [`Engine::wait_healthy`]
@@ -132,71 +104,68 @@ impl Engine {
 			hc.and_then(|h| h.retries),
 		);
 
-		for _ in 0..iterations {
-			let info = match self
-				.client
-				.get_json::<crate::libpod::types::container::ContainerInspect>(&format!(
-					"{API_PREFIX}/containers/{}/json",
-					crate::libpod::urlencoded(container_name),
-				))
-				.await
-			{
-				Ok(i) => i,
-				Err(e) => {
-					tracing::debug!("inspect error (will retry): {e}");
-					tokio::time::sleep(std::time::Duration::from_secs(poll_secs)).await;
-					continue;
-				}
-			};
-			match classify_health(&info) {
-				HealthVerdict::Healthy => return Ok(()),
-				HealthVerdict::NoHealthcheck => {
-					tracing::debug!(
-						"{container_name} has no effective healthcheck; treating service_healthy as satisfied"
-					);
-					return Ok(());
-				}
-				HealthVerdict::Pending => {}
+		// One inspect decides the short-circuits: already healthy, or no effective
+		// healthcheck at all (image or compose) — in which case a server-side
+		// `wait?condition=healthy` would block forever, so treat it as satisfied.
+		let info = self
+			.client
+			.get_json::<crate::libpod::types::container::ContainerInspect>(&format!(
+				"{API_PREFIX}/containers/{}/json",
+				crate::libpod::urlencoded(container_name),
+			))
+			.await
+			.map_err(ComposeError::Podman)?;
+		match classify_health(&info) {
+			HealthVerdict::Healthy => return Ok(()),
+			HealthVerdict::NoHealthcheck => {
+				tracing::debug!(
+					"{container_name} has no effective healthcheck; treating service_healthy as satisfied"
+				);
+				return Ok(());
 			}
-			tokio::time::sleep(std::time::Duration::from_secs(poll_secs)).await;
+			HealthVerdict::Pending => {}
 		}
 
-		Err(ComposeError::HealthCheckTimeout(container_name.into()))
+		// Block server-side until the container reports healthy, bounded by the
+		// same time budget the poll loop used (interval × iterations), instead of
+		// issuing O(iterations) inspect calls.
+		let budget = std::time::Duration::from_secs(poll_secs * iterations);
+		let path = format!(
+			"{API_PREFIX}/containers/{}/wait?condition=healthy",
+			crate::libpod::urlencoded(container_name),
+		);
+		match tokio::time::timeout(budget, self.client.post_empty_json::<i64>(&path)).await {
+			Ok(Ok(_)) => Ok(()),
+			Ok(Err(e)) => {
+				tracing::debug!("{container_name} wait?condition=healthy failed: {e}");
+				Err(ComposeError::HealthCheckTimeout(container_name.into()))
+			}
+			Err(_elapsed) => Err(ComposeError::HealthCheckTimeout(container_name.into())),
+		}
 	}
 
-	/// Poll a container until it exits with status 0.
+	/// Wait until a container exits, then require status 0.
 	///
-	/// Tries for up to 600 seconds (1 s interval). Errors if the container
-	/// exits with a non-zero code or if the deadline is exceeded.
+	/// Blocks server-side on `wait?condition=stopped` (which returns the exit
+	/// code) instead of polling inspect, bounded by a 600 s client-side timeout.
+	/// Errors if the container exits non-zero or the deadline is exceeded.
 	pub(super) async fn wait_completed(&self, container_name: &str) -> Result<()> {
-		for _ in 0..600 {
-			let info = match self
-				.client
-				.get_json::<crate::libpod::types::container::ContainerInspect>(&format!(
-					"{API_PREFIX}/containers/{}/json",
-					crate::libpod::urlencoded(container_name),
-				))
-				.await
-			{
-				Ok(i) => i,
-				Err(e) => {
-					tracing::debug!("inspect error (will retry): {e}");
-					tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-					continue;
-				}
-			};
-			match classify_completion(info.state.as_ref()) {
-				CompletionVerdict::Succeeded => return Ok(()),
-				CompletionVerdict::Failed => {
-					return Err(ComposeError::HealthCheckTimeout(format!(
-						"{container_name} exited with non-zero status"
-					)));
-				}
-				CompletionVerdict::Pending => {}
+		let path = format!(
+			"{API_PREFIX}/containers/{}/wait?condition=stopped",
+			crate::libpod::urlencoded(container_name),
+		);
+		let budget = std::time::Duration::from_secs(600);
+		match tokio::time::timeout(budget, self.client.post_empty_json::<i64>(&path)).await {
+			Ok(Ok(0)) => Ok(()),
+			Ok(Ok(code)) => Err(ComposeError::HealthCheckTimeout(format!(
+				"{container_name} exited with non-zero status {code}"
+			))),
+			Ok(Err(e)) => {
+				tracing::debug!("{container_name} wait?condition=stopped failed: {e}");
+				Err(ComposeError::HealthCheckTimeout(container_name.into()))
 			}
-			tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+			Err(_elapsed) => Err(ComposeError::HealthCheckTimeout(container_name.into())),
 		}
-		Err(ComposeError::HealthCheckTimeout(container_name.into()))
 	}
 }
 
@@ -228,54 +197,6 @@ mod tests {
 		// An interval below 1s falls back to the 2s default (no busy-poll).
 		let (poll, _) = super::health_poll_plan(Some("500ms"), None, Some(5));
 		assert_eq!(poll, 2);
-	}
-
-	// --- wait_completed gating (service_completed_successfully) ---------------
-
-	#[test]
-	fn completion_exited_zero_succeeds() {
-		let info = inspect(r#"{"State":{"Status":"exited","ExitCode":0}}"#);
-		assert!(matches!(
-			classify_completion(info.state.as_ref()),
-			CompletionVerdict::Succeeded
-		));
-	}
-
-	#[test]
-	fn completion_exited_nonzero_fails() {
-		let info = inspect(r#"{"State":{"Status":"exited","ExitCode":1}}"#);
-		assert!(matches!(
-			classify_completion(info.state.as_ref()),
-			CompletionVerdict::Failed
-		));
-	}
-
-	#[test]
-	fn completion_exited_missing_code_fails_closed() {
-		// No ExitCode → unwrap_or(-1) → must be treated as failure, never success.
-		let info = inspect(r#"{"State":{"Status":"exited"}}"#);
-		assert!(matches!(
-			classify_completion(info.state.as_ref()),
-			CompletionVerdict::Failed
-		));
-	}
-
-	#[test]
-	fn completion_running_pends() {
-		let info = inspect(r#"{"State":{"Status":"running","ExitCode":0}}"#);
-		assert!(matches!(
-			classify_completion(info.state.as_ref()),
-			CompletionVerdict::Pending
-		));
-	}
-
-	#[test]
-	fn completion_no_state_pends() {
-		let info = inspect("{}");
-		assert!(matches!(
-			classify_completion(info.state.as_ref()),
-			CompletionVerdict::Pending
-		));
 	}
 
 	// --- wait_healthy gating (service_healthy) -------------------------------
