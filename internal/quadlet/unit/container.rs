@@ -21,11 +21,15 @@ pub(crate) fn container_unit(
 	let mut unit = Section::new("Unit");
 	unit.add("Description", format!("{name} (podup)"));
 	for dep in service.depends_on.service_names() {
-		unit.add("After", format!("{dep}.service"));
+		// The dependency's generated unit is named `{safe_unit_stem(dep)}.container`,
+		// so its service is `{safe_unit_stem(dep)}.service`; reference that, not the
+		// raw compose key, or the ordering would target a non-existent unit.
+		let dep_service = format!("{}.service", safe_unit_stem(&dep));
+		unit.add("After", dep_service.clone());
 		if service.depends_on.required_for(&dep) {
-			unit.add("Requires", format!("{dep}.service"));
+			unit.add("Requires", dep_service);
 		} else {
-			unit.add("Wants", format!("{dep}.service"));
+			unit.add("Wants", dep_service);
 		}
 	}
 
