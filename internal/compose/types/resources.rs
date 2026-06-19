@@ -10,11 +10,19 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum UlimitConfig {
+	/// Single value applied to both the soft and hard limit.
 	Single(i64),
-	Pair { soft: i64, hard: i64 },
+	/// Explicit soft and hard limit pair.
+	Pair {
+		/// Soft limit value.
+		soft: i64,
+		/// Hard limit value.
+		hard: i64,
+	},
 }
 
 impl UlimitConfig {
+	/// Returns the soft limit.
 	pub fn soft(&self) -> i64 {
 		match self {
 			UlimitConfig::Single(n) => *n,
@@ -22,6 +30,7 @@ impl UlimitConfig {
 		}
 	}
 
+	/// Returns the hard limit.
 	pub fn hard(&self) -> i64 {
 		match self {
 			UlimitConfig::Single(n) => *n,
@@ -33,16 +42,22 @@ impl UlimitConfig {
 /// `blkio_config:` service field — controls I/O weight and per-device rate limits.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct BlkioConfig {
+	/// Default block I/O weight for the service (10-1000).
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub weight: Option<u16>,
+	/// Per-device I/O weight overrides.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub weight_device: Vec<BlkioWeightDevice>,
+	/// Per-device read rate limits in bytes/second.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub device_read_bps: Vec<BlkioRateDevice>,
+	/// Per-device write rate limits in bytes/second.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub device_write_bps: Vec<BlkioRateDevice>,
+	/// Per-device read rate limits in IOPS.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub device_read_iops: Vec<BlkioRateDevice>,
+	/// Per-device write rate limits in IOPS.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub device_write_iops: Vec<BlkioRateDevice>,
 }
@@ -50,14 +65,18 @@ pub struct BlkioConfig {
 /// Per-device I/O weight entry under `blkio_config.weight_device`.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BlkioWeightDevice {
+	/// Host device path the weight applies to.
 	pub path: String,
+	/// I/O weight for the device (10-1000).
 	pub weight: u16,
 }
 
 /// Per-device rate limit under `blkio_config` — used for both bps and iops limits.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct BlkioRateDevice {
+	/// Host device path the limit applies to.
 	pub path: String,
+	/// Rate limit value, as a number or size string.
 	pub rate: serde_yaml::Value,
 }
 
@@ -79,8 +98,11 @@ impl BlkioRateDevice {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum GpuSpec {
+	/// Shorthand string form, e.g. `"all"`.
 	Named(String),
+	/// Number of GPUs to expose.
 	Count(u32),
+	/// Explicit device reservation list.
 	Devices(Vec<super::deploy::DeviceReservation>),
 }
 
