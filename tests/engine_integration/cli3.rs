@@ -25,13 +25,28 @@ async fn cli_logs_tail_limits_output() {
 		.args(["-f", c, "-p", &proj, "up", "-d"])
 		.output()
 		.unwrap();
-	// Give the container a moment to emit its lines.
-	tokio::time::sleep(std::time::Duration::from_millis(800)).await;
 
-	let logs = Command::new(bin())
-		.args(["-f", c, "-p", &proj, "logs", "--tail", "2"])
-		.output()
-		.unwrap();
+	// Poll until the container has emitted its lines instead of sleeping a fixed
+	// duration: `logs --tail 2` must eventually show exactly 2 `line-` rows.
+	let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+	let mut logs;
+	loop {
+		logs = Command::new(bin())
+			.args(["-f", c, "-p", &proj, "logs", "--tail", "2"])
+			.output()
+			.unwrap();
+		let lines = String::from_utf8_lossy(&logs.stdout)
+			.lines()
+			.filter(|l| l.contains("line-"))
+			.count();
+		if logs.status.success() && lines == 2 {
+			break;
+		}
+		if tokio::time::Instant::now() >= deadline {
+			break;
+		}
+		tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+	}
 	assert!(logs.status.success(), "logs failed: {:?}", logs.stderr);
 	let lines = String::from_utf8_lossy(&logs.stdout)
 		.lines()
@@ -173,10 +188,28 @@ async fn cli_down_rmi_all_succeeds_and_removes_containers() {
 	}
 	let dir = tempdir().unwrap();
 	let proj = format!("t{}-rmi", std::process::id());
+
+	// `--rmi all` deletes the image referenced by the compose file. Tests run in
+	// parallel and several rely on the shared `alpine:latest` image, so we tag a
+	// throwaway, project-unique local image and reference THAT here. Removing it
+	// leaves `alpine:latest` intact for the concurrent tests.
+	let throwaway = format!("localhost/podup-rmitest-{proj}:latest");
+	let tag = Command::new("podman")
+		.args(["tag", "alpine:latest", &throwaway])
+		.output()
+		.unwrap();
+	assert!(
+		tag.status.success(),
+		"tagging throwaway image failed: {:?}",
+		tag.stderr
+	);
+
 	let compose = dir.path().join("docker-compose.yml");
 	fs::write(
 		&compose,
-		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+		format!(
+			"services:\n  web:\n    image: {throwaway}\n    command: [\"sleep\", \"infinity\"]\n"
+		),
 	)
 	.unwrap();
 	let c = compose.to_str().unwrap();
@@ -189,6 +222,20 @@ async fn cli_down_rmi_all_succeeds_and_removes_containers() {
 		down.stderr
 	);
 	assert_eq!(ps_all_count(c, &proj), 0, "down must remove the containers");
+
+	// The shared base image must survive; only the throwaway tag was removed.
+	let present = Command::new("podman")
+		.args(["image", "exists", &throwaway])
+		.status()
+		.unwrap();
+	assert!(
+		!present.success(),
+		"down --rmi all must remove the throwaway image"
+	);
+	// Best-effort cleanup in case the assertion above ever changes.
+	let _ = Command::new("podman")
+		.args(["rmi", "-f", &throwaway])
+		.output();
 }
 
 #[tokio::test]

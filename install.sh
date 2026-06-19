@@ -7,7 +7,7 @@
 #
 #   curl -fsSL https://glyndor.net/podup/install/unix | bash
 #
-# --apt (Debian/Ubuntu, amd64): set up the Glyndor apt repository and install
+# --apt (Debian/Ubuntu, amd64/arm64): set up the Glyndor apt repository and install
 # with apt. Updates — including signing-key renewals — come from `apt upgrade`.
 #
 #   curl -fsSL https://glyndor.net/podup/install/unix | bash -s -- --apt

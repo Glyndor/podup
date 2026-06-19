@@ -80,10 +80,26 @@ pub(super) fn expand_targets(
 	Some(set)
 }
 
+/// Whether `name` is part of the started set described by `target_set`.
+///
+/// `target_set` is `None` when no explicit target list was given (every
+/// service is in scope, so the answer is always `true`). Otherwise a name is
+/// "started" only if it is present in the set. Under `up --no-deps`,
+/// [`expand_targets`] omits the targets' dependencies, so this returns `false`
+/// for an intentionally-excluded dependency — letting the caller skip its
+/// `depends_on` readiness wait, matching docker-compose.
+pub(super) fn in_started_set(target_set: &Option<HashSet<String>>, name: &str) -> bool {
+	match target_set {
+		None => true,
+		Some(set) => set.contains(name),
+	}
+}
+
 #[cfg(test)]
 mod tests {
-	use super::{expand_targets, filter_services};
+	use super::{expand_targets, filter_services, in_started_set};
 	use crate::compose::types::{ComposeFile, Service};
+	use std::collections::HashSet;
 
 	fn file_with_services(names: &[&str]) -> ComposeFile {
 		let mut file = ComposeFile::default();
@@ -157,5 +173,41 @@ mod tests {
 		let set = expand_targets(&file, &["web".to_string()], true).unwrap();
 		assert!(set.contains("web"));
 		assert!(!set.contains("db"));
+	}
+
+	// --- in_started_set ---
+
+	#[test]
+	fn in_started_set_none_is_always_true() {
+		// No explicit target list: every service (including any dependency)
+		// is in scope, so the readiness wait is never skipped.
+		assert!(in_started_set(&None, "anything"));
+	}
+
+	#[test]
+	fn in_started_set_member_is_true() {
+		let set: HashSet<String> = ["web".to_string(), "db".to_string()].into_iter().collect();
+		assert!(in_started_set(&Some(set), "db"));
+	}
+
+	#[test]
+	fn in_started_set_excluded_dep_is_false() {
+		// Mirrors `up web --no-deps`: `expand_targets` yields {web} only, so the
+		// excluded dependency `db` is not in the started set and its readiness
+		// wait must be skipped.
+		let file = file_web_depends_db();
+		let target_set = expand_targets(&file, &["web".to_string()], true);
+		assert!(in_started_set(&target_set, "web"));
+		assert!(!in_started_set(&target_set, "db"));
+	}
+
+	#[test]
+	fn in_started_set_partial_target_includes_transitive_dep() {
+		// `up web` (without --no-deps) pulls `db` into the set, so its readiness
+		// wait is still honored.
+		let file = file_web_depends_db();
+		let target_set = expand_targets(&file, &["web".to_string()], false);
+		assert!(in_started_set(&target_set, "web"));
+		assert!(in_started_set(&target_set, "db"));
 	}
 }
