@@ -322,6 +322,12 @@ fn rootless_caveat_warnings(name: &str, service: &Service) -> Vec<String> {
 			services on a shared network and reach them by service name instead"
 		));
 	}
+	if !service.external_links.is_empty() {
+		out.push(format!(
+			"service \"{name}\": external_links has no effect under rootless Podman networking — \
+			attach the target container to a shared network and reach it by service name instead"
+		));
+	}
 	out
 }
 
@@ -343,10 +349,11 @@ mod tests {
 			mem_swappiness: Some(10),
 			cpu_rt_runtime: Some(1000),
 			links: vec!["db".into()],
+			external_links: vec!["legacy_db:db".into()],
 			..Service::default()
 		};
 		let warnings = rootless_caveat_warnings("web", &service);
-		assert_eq!(warnings.len(), 5);
+		assert_eq!(warnings.len(), 6);
 		let joined = warnings.join("\n");
 		for needle in [
 			"privileged",
@@ -354,6 +361,7 @@ mod tests {
 			"mem_swappiness",
 			"cpu_rt_runtime",
 			"links",
+			"external_links",
 		] {
 			assert!(joined.contains(needle), "missing warning for {needle}");
 		}
