@@ -155,11 +155,7 @@ pub(super) fn resolve_network_mode(
 			let cname = file
 				.services
 				.get(svc_name)
-				.map(|s| {
-					s.container_name
-						.clone()
-						.unwrap_or_else(|| format!("{project}-{svc_name}"))
-				})
+				.map(|s| resolve_target_container_name(svc_name, s, project))
 				.unwrap_or_else(|| svc_name.to_string());
 			Namespace::container(cname)
 		} else {
@@ -186,6 +182,35 @@ pub(super) fn resolve_network_mode(
 	let netns = (!networks.is_empty()).then(|| Namespace::new("bridge"));
 
 	(netns, networks)
+}
+
+/// Resolve the container name that a `network_mode: service:<name>` reference
+/// should attach to.
+///
+/// An explicit `container_name` is honoured verbatim. Otherwise the name is
+/// derived from the project + service. A scaled service (replicas > 1 via
+/// `deploy.replicas` or `scale:`) has no base-named container — its replicas are
+/// `{project}-{svc}-1..N` — so we point at replica `-1`, matching docker-compose,
+/// which attaches `network_mode: service:` references to the first replica.
+fn resolve_target_container_name(svc_name: &str, service: &Service, project: &str) -> String {
+	if let Some(name) = &service.container_name {
+		return name.clone();
+	}
+	let base = format!("{project}-{svc_name}");
+	if service_replicas(service) > 1 {
+		format!("{base}-1")
+	} else {
+		base
+	}
+}
+
+/// Number of replicas a service declares in the compose file, via `scale:` or
+/// `deploy.replicas`. Defaults to 1. Does not consult CLI `--scale` overrides.
+fn service_replicas(service: &Service) -> u32 {
+	service
+		.scale
+		.or(service.deploy.as_ref().and_then(|d| d.replicas))
+		.unwrap_or(1)
 }
 
 /// Resolve the actual network name on the host for a compose network key.
@@ -342,6 +367,90 @@ mod tests {
 		assert!(ns.is_some());
 		assert_eq!(ns.unwrap().nsmode, "host");
 		assert!(nets.is_empty());
+	}
+
+	fn file_with_service(svc_name: &str, svc: Service) -> ComposeFile {
+		let mut file = empty_file();
+		file.services.insert(svc_name.to_string(), svc);
+		file
+	}
+
+	#[test]
+	fn network_mode_service_single_replica_uses_base_name() {
+		let target = Service::default();
+		let file = file_with_service("db", target);
+		let svc = Service {
+			network_mode: Some("service:db".to_string()),
+			..Default::default()
+		};
+		let (ns, _) = resolve_network_mode("web", &svc, &file, "proj");
+		let ns = ns.unwrap();
+		assert_eq!(ns.nsmode, "container");
+		assert_eq!(ns.value.as_deref(), Some("proj-db"));
+	}
+
+	#[test]
+	fn network_mode_service_scaled_replicas_resolves_replica_one() {
+		// `scale:`/`deploy.replicas` > 1 means the base name does not exist —
+		// docker-compose attaches to replica `-1`.
+		let target = Service {
+			scale: Some(3),
+			..Default::default()
+		};
+		let file = file_with_service("db", target);
+		let svc = Service {
+			network_mode: Some("service:db".to_string()),
+			..Default::default()
+		};
+		let (ns, _) = resolve_network_mode("web", &svc, &file, "proj");
+		assert_eq!(ns.unwrap().value.as_deref(), Some("proj-db-1"));
+	}
+
+	#[test]
+	fn network_mode_service_deploy_replicas_resolves_replica_one() {
+		use crate::compose::types::DeployConfig;
+		let target = Service {
+			deploy: Some(DeployConfig {
+				replicas: Some(2),
+				..Default::default()
+			}),
+			..Default::default()
+		};
+		let file = file_with_service("db", target);
+		let svc = Service {
+			network_mode: Some("service:db".to_string()),
+			..Default::default()
+		};
+		let (ns, _) = resolve_network_mode("web", &svc, &file, "proj");
+		assert_eq!(ns.unwrap().value.as_deref(), Some("proj-db-1"));
+	}
+
+	#[test]
+	fn network_mode_service_container_name_wins_over_replica() {
+		// An explicit container_name is honoured verbatim even when scaled.
+		let target = Service {
+			scale: Some(4),
+			container_name: Some("custom-db".to_string()),
+			..Default::default()
+		};
+		let file = file_with_service("db", target);
+		let svc = Service {
+			network_mode: Some("service:db".to_string()),
+			..Default::default()
+		};
+		let (ns, _) = resolve_network_mode("web", &svc, &file, "proj");
+		assert_eq!(ns.unwrap().value.as_deref(), Some("custom-db"));
+	}
+
+	#[test]
+	fn network_mode_service_unknown_target_uses_raw_name() {
+		let file = empty_file();
+		let svc = Service {
+			network_mode: Some("service:missing".to_string()),
+			..Default::default()
+		};
+		let (ns, _) = resolve_network_mode("web", &svc, &file, "proj");
+		assert_eq!(ns.unwrap().value.as_deref(), Some("missing"));
 	}
 
 	#[test]
