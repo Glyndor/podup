@@ -38,8 +38,11 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub work_dir: Option<String>,
 
+	/// Stop signal as a numeric `syscall.Signal`. libpod rejects a string here
+	/// with HTTP 500, so the compose `stop_signal:` name is resolved to its
+	/// integer number before being sent.
 	#[serde(skip_serializing_if = "Option::is_none")]
-	pub stop_signal: Option<String>,
+	pub stop_signal: Option<i64>,
 
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub stop_timeout: Option<u64>,

@@ -36,11 +36,14 @@ where
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum Command {
+	/// Shell form: a single string run via `sh -c`.
 	Shell(String),
+	/// Exec form: an explicit argument vector run without a shell.
 	Exec(Vec<String>),
 }
 
 impl Command {
+	/// Returns the command as an exec argument vector, wrapping a shell string in `sh -c`.
 	pub fn to_exec(&self) -> Vec<String> {
 		match self {
 			Command::Shell(s) => vec!["sh".into(), "-c".into(), s.clone()],
@@ -48,6 +51,7 @@ impl Command {
 		}
 	}
 
+	/// Returns the raw arguments without wrapping a shell string in `sh -c`.
 	pub fn to_argv(&self) -> Vec<String> {
 		match self {
 			Command::Shell(s) => vec![s.clone()],
@@ -60,13 +64,17 @@ impl Command {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(untagged)]
 pub enum StringOrList {
+	/// The field was absent.
 	#[default]
 	Empty,
+	/// A single string value.
 	Single(String),
+	/// A list of string values.
 	List(Vec<String>),
 }
 
 impl StringOrList {
+	/// Returns the value as a list of strings.
 	pub fn to_list(&self) -> Vec<String> {
 		match self {
 			StringOrList::Empty => vec![],
@@ -75,6 +83,7 @@ impl StringOrList {
 		}
 	}
 
+	/// Returns whether the field holds no values.
 	pub fn is_empty(&self) -> bool {
 		match self {
 			StringOrList::Empty => true,
@@ -88,13 +97,17 @@ impl StringOrList {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(untagged)]
 pub enum Labels {
+	/// The field was absent.
 	#[default]
 	Empty,
+	/// List form: `KEY=VALUE` entries.
 	List(Vec<String>),
+	/// Map form: key-value pairs.
 	Map(IndexMap<String, String>),
 }
 
 impl Labels {
+	/// Returns the labels as a key-value map, splitting list entries on the first `=`.
 	pub fn to_map(&self) -> HashMap<String, String> {
 		match self {
 			Labels::Empty => HashMap::new(),
@@ -112,6 +125,7 @@ impl Labels {
 		}
 	}
 
+	/// Returns whether no labels are defined.
 	pub fn is_empty(&self) -> bool {
 		match self {
 			Labels::Empty => true,
@@ -124,8 +138,10 @@ impl Labels {
 /// `logging:` configuration — driver name and driver-specific options.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct LoggingConfig {
+	/// Logging driver name; the runtime default is used if absent.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub driver: Option<String>,
+	/// Driver-specific options.
 	#[serde(default, skip_serializing_if = "HashMap::is_empty")]
 	pub options: HashMap<String, String>,
 }
@@ -134,13 +150,17 @@ pub struct LoggingConfig {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(untagged)]
 pub enum Sysctls {
+	/// The field was absent.
 	#[default]
 	Empty,
+	/// List form: `key=value` entries.
 	List(Vec<String>),
+	/// Map form: kernel parameter keys to values.
 	Map(IndexMap<String, serde_yaml::Value>),
 }
 
 impl Sysctls {
+	/// Returns the sysctls as a key-value map, stringifying scalar values.
 	pub fn to_map(&self) -> HashMap<String, String> {
 		match self {
 			Sysctls::Empty => HashMap::new(),

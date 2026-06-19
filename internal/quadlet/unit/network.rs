@@ -54,8 +54,10 @@ pub(crate) fn network_unit(
 			net.add("Label", format!("{key}={val}"));
 		}
 	}
-	let mut contents = net.render();
-	contents.push_str("\n[Install]\nWantedBy=default.target\n");
+	// No [Install] section: the spec defines none for `.network` units, which are
+	// pulled in automatically as dependencies of the `.container` units that use
+	// them. Only `.container` units carry [Install].
+	let contents = net.render();
 	QuadletUnit {
 		filename: format!("{}.network", safe_unit_stem(name)),
 		contents,

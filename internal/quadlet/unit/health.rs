@@ -7,8 +7,14 @@ use super::Section;
 /// Map a compose `healthcheck:` onto the Quadlet `Health*=` keys. A disabled
 /// healthcheck emits `HealthCmd=none`; otherwise the compose test (with any
 /// leading `CMD`/`CMD-SHELL`/`NONE` sentinel stripped) and the timing fields
-/// are rendered.
-pub(super) fn render_healthcheck(service: &Service, container: &mut Section) {
+/// are rendered. Fields with no Quadlet/Podman equivalent push a warning into
+/// `warnings` instead of being silently dropped.
+pub(super) fn render_healthcheck(
+	name: &str,
+	service: &Service,
+	container: &mut Section,
+	warnings: &mut Vec<String>,
+) {
 	let Some(hc) = &service.healthcheck else {
 		return;
 	};
@@ -43,7 +49,15 @@ pub(super) fn render_healthcheck(service: &Service, container: &mut Section) {
 	if let Some(v) = &hc.start_period {
 		container.add("HealthStartPeriod", v.clone());
 	}
-	if let Some(v) = &hc.start_interval {
-		container.add("HealthStartupInterval", v.clone());
+	if hc.start_interval.is_some() {
+		// Compose `start_interval` (the probe interval during the start period)
+		// has no Quadlet/Podman equivalent. The Quadlet `HealthStartupInterval=`
+		// key drives Podman's separate *startup healthcheck* feature, which is a
+		// no-op without a `HealthStartupCmd=`; Podman 5.x exposes no
+		// `--health-start-interval`. Skip it and warn rather than emit a key that
+		// silently does nothing.
+		warnings.push(format!(
+			"{name}: healthcheck.start_interval has no Quadlet/Podman equivalent and is skipped"
+		));
 	}
 }

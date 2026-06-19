@@ -187,10 +187,88 @@ pub(super) fn build_env(service: &Service, base_dir: &Path) -> Result<Vec<String
 	))
 }
 
+/// Resolve a compose `stop_signal:` value to its numeric `syscall.Signal`.
+///
+/// libpod's `SpecGenerator.stop_signal` is an integer; sending the signal name
+/// as a string returns HTTP 500. Accepts a bare number (`"15"`), a signal name
+/// with or without the `SIG` prefix (`"SIGTERM"`, `"term"`), case-insensitively.
+/// An unrecognized name returns a clear [`ComposeError::Unsupported`] rather than
+/// silently dropping the value.
+pub(super) fn resolve_stop_signal(signal: &str) -> Result<i64> {
+	let trimmed = signal.trim();
+	if let Ok(num) = trimmed.parse::<i64>() {
+		return Ok(num);
+	}
+	let upper = trimmed.to_ascii_uppercase();
+	let name = upper.strip_prefix("SIG").unwrap_or(&upper);
+	signal_number(name)
+		.ok_or_else(|| ComposeError::Unsupported(format!("unknown stop_signal '{signal}'")))
+}
+
+/// Map a bare (no `SIG` prefix) upper-case signal name to its Linux number.
+fn signal_number(name: &str) -> Option<i64> {
+	let n = match name {
+		"HUP" => 1,
+		"INT" => 2,
+		"QUIT" => 3,
+		"ILL" => 4,
+		"TRAP" => 5,
+		"ABRT" | "IOT" => 6,
+		"BUS" => 7,
+		"FPE" => 8,
+		"KILL" => 9,
+		"USR1" => 10,
+		"SEGV" => 11,
+		"USR2" => 12,
+		"PIPE" => 13,
+		"ALRM" => 14,
+		"TERM" => 15,
+		"STKFLT" => 16,
+		"CHLD" | "CLD" => 17,
+		"CONT" => 18,
+		"STOP" => 19,
+		"TSTP" => 20,
+		"TTIN" => 21,
+		"TTOU" => 22,
+		"URG" => 23,
+		"XCPU" => 24,
+		"XFSZ" => 25,
+		"VTALRM" => 26,
+		"PROF" => 27,
+		"WINCH" => 28,
+		"IO" | "POLL" => 29,
+		"PWR" => 30,
+		"SYS" => 31,
+		_ => return None,
+	};
+	Some(n)
+}
+
 #[cfg(test)]
 mod tests {
-	use super::{config_hash, resolve_links, resolve_volume_name};
+	use super::{config_hash, resolve_links, resolve_stop_signal, resolve_volume_name};
 	use crate::parse_str;
+
+	#[test]
+	fn stop_signal_resolves_names_numbers_and_prefixes() {
+		// Named, case-insensitive, with and without the SIG prefix.
+		assert_eq!(resolve_stop_signal("SIGTERM").unwrap(), 15);
+		assert_eq!(resolve_stop_signal("TERM").unwrap(), 15);
+		assert_eq!(resolve_stop_signal("sigterm").unwrap(), 15);
+		assert_eq!(resolve_stop_signal("SIGKILL").unwrap(), 9);
+		assert_eq!(resolve_stop_signal("hup").unwrap(), 1);
+		assert_eq!(resolve_stop_signal("SIGUSR1").unwrap(), 10);
+		assert_eq!(resolve_stop_signal("SIGUSR2").unwrap(), 12);
+		// Bare numbers pass through (optionally surrounded by whitespace).
+		assert_eq!(resolve_stop_signal("15").unwrap(), 15);
+		assert_eq!(resolve_stop_signal(" 9 ").unwrap(), 9);
+	}
+
+	#[test]
+	fn stop_signal_unknown_name_errors() {
+		let err = resolve_stop_signal("SIGNOPE").unwrap_err();
+		assert!(err.to_string().contains("SIGNOPE"), "got: {err}");
+	}
 
 	#[test]
 	fn links_resolve_to_container_names_external_links_verbatim() {

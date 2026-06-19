@@ -12,7 +12,7 @@ use crate::compose::types::{ComposeFile, ServiceCondition};
 use crate::error::Result;
 use crate::libpod::API_PREFIX;
 
-use targets::{expand_targets, filter_services};
+use targets::{expand_targets, filter_services, in_started_set};
 
 use super::container::config_hash;
 
@@ -246,6 +246,16 @@ impl Engine {
 			.into_iter()
 			.filter(|_| start)
 		{
+			// Under `--no-deps` (and partial target lists) a dependency may have
+			// been intentionally excluded from the started set. docker-compose
+			// skips its readiness condition in that case; matching that avoids
+			// waiting on (and 404-ing against) a container that was never
+			// created.
+			if !in_started_set(target_set, &dep) {
+				tracing::debug!("{dep} not in started target set — skipping {name} readiness wait");
+				continue;
+			}
+
 			let condition = service.depends_on.condition_for(&dep);
 			// `required: false` makes the dependency optional — a failed wait
 			// must not abort `up`, matching docker-compose v2.

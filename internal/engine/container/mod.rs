@@ -11,7 +11,7 @@ use crate::libpod::API_PREFIX;
 use crate::{ports, size};
 
 mod resolve;
-use resolve::{build_env, resolve_links, resolve_volume_name};
+use resolve::{build_env, resolve_links, resolve_stop_signal, resolve_volume_name};
 pub(crate) use resolve::{config_hash, resolve_bind_source};
 
 use super::container_config::{
@@ -19,7 +19,8 @@ use super::container_config::{
 	build_ulimits, cdi_devices,
 };
 use super::container_fields::{
-	build_blkio_config, build_label_file_labels, parse_device, warn_swarm_only_deploy,
+	build_blkio_config, build_label_file_labels, parse_device, resolve_container_labels,
+	warn_swarm_only_deploy,
 };
 use super::network::resolve_network_mode;
 use super::volume_mounts::build_mounts_all;
@@ -112,15 +113,9 @@ impl Engine {
 
 		// --- Labels ---
 		let label_file_labels = build_label_file_labels(service, &self.base_dir);
-		let mut labels = service.labels.to_map();
-		for (k, v) in label_file_labels {
-			labels.entry(k).or_insert(v);
-		}
-		if let Some(deploy) = &service.deploy {
-			for (k, v) in deploy.labels.to_map() {
-				labels.entry(k).or_insert(v);
-			}
-		}
+		// Per the Compose Specification, deploy.labels are set on the service
+		// only and must NOT be applied to containers, so they are not merged here.
+		let mut labels = resolve_container_labels(service, label_file_labels);
 		labels.insert("podup.project".to_string(), self.project.clone());
 		labels.insert("podup.service".to_string(), service_name.to_string());
 		labels.insert("podup.config-hash".to_string(), config_hash(service, file)?);
@@ -183,6 +178,12 @@ impl Engine {
 			tracing::warn!("{warning}");
 		}
 
+		let stop_signal = service
+			.stop_signal
+			.as_deref()
+			.map(resolve_stop_signal)
+			.transpose()?;
+
 		let spec = SpecGenerator {
 			name: container_name.to_string(),
 			image: image.to_string(),
@@ -193,7 +194,7 @@ impl Engine {
 			stdin: service.stdin_open,
 			user: service.user.clone(),
 			work_dir: service.working_dir.clone(),
-			stop_signal: service.stop_signal.clone(),
+			stop_signal,
 			stop_timeout,
 			hostname: service.hostname.clone(),
 			domainname: service.domainname.clone(),
@@ -322,6 +323,12 @@ fn rootless_caveat_warnings(name: &str, service: &Service) -> Vec<String> {
 			services on a shared network and reach them by service name instead"
 		));
 	}
+	if !service.external_links.is_empty() {
+		out.push(format!(
+			"service \"{name}\": external_links has no effect under rootless Podman networking — \
+			attach the target container to a shared network and reach it by service name instead"
+		));
+	}
 	out
 }
 
@@ -343,10 +350,11 @@ mod tests {
 			mem_swappiness: Some(10),
 			cpu_rt_runtime: Some(1000),
 			links: vec!["db".into()],
+			external_links: vec!["legacy_db:db".into()],
 			..Service::default()
 		};
 		let warnings = rootless_caveat_warnings("web", &service);
-		assert_eq!(warnings.len(), 5);
+		assert_eq!(warnings.len(), 6);
 		let joined = warnings.join("\n");
 		for needle in [
 			"privileged",
@@ -354,6 +362,7 @@ mod tests {
 			"mem_swappiness",
 			"cpu_rt_runtime",
 			"links",
+			"external_links",
 		] {
 			assert!(joined.contains(needle), "missing warning for {needle}");
 		}

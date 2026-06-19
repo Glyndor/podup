@@ -124,9 +124,10 @@ pub(super) fn build_per_network_options(
 		if let Some(iface) = &c.interface_name {
 			opts.interface_name = Some(iface.clone());
 		}
-		if c.gw_priority.is_some() {
-			tracing::debug!("network gw_priority is not supported by Podman and is ignored");
-		}
+		// `gw_priority` has no Podman equivalent and is dropped. The user-facing
+		// notice is emitted once, at parse time, by the compose diagnostics (see
+		// internal/compose/diagnostics/ignored_fields.rs); re-emitting it here on
+		// every engine build would double-warn, so no engine-time log is needed.
 	} else if let Some(mac) = fallback_mac {
 		opts.static_mac = Some(mac.to_string());
 	}
@@ -155,11 +156,7 @@ pub(super) fn resolve_network_mode(
 			let cname = file
 				.services
 				.get(svc_name)
-				.map(|s| {
-					s.container_name
-						.clone()
-						.unwrap_or_else(|| format!("{project}-{svc_name}"))
-				})
+				.map(|s| resolve_target_container_name(svc_name, s, project))
 				.unwrap_or_else(|| svc_name.to_string());
 			Namespace::container(cname)
 		} else {
@@ -186,6 +183,35 @@ pub(super) fn resolve_network_mode(
 	let netns = (!networks.is_empty()).then(|| Namespace::new("bridge"));
 
 	(netns, networks)
+}
+
+/// Resolve the container name that a `network_mode: service:<name>` reference
+/// should attach to.
+///
+/// An explicit `container_name` is honoured verbatim. Otherwise the name is
+/// derived from the project + service. A scaled service (replicas > 1 via
+/// `deploy.replicas` or `scale:`) has no base-named container — its replicas are
+/// `{project}-{svc}-1..N` — so we point at replica `-1`, matching docker-compose,
+/// which attaches `network_mode: service:` references to the first replica.
+fn resolve_target_container_name(svc_name: &str, service: &Service, project: &str) -> String {
+	if let Some(name) = &service.container_name {
+		return name.clone();
+	}
+	let base = format!("{project}-{svc_name}");
+	if service_replicas(service) > 1 {
+		format!("{base}-1")
+	} else {
+		base
+	}
+}
+
+/// Number of replicas a service declares in the compose file, via `scale:` or
+/// `deploy.replicas`. Defaults to 1. Does not consult CLI `--scale` overrides.
+fn service_replicas(service: &Service) -> u32 {
+	service
+		.scale
+		.or(service.deploy.as_ref().and_then(|d| d.replicas))
+		.unwrap_or(1)
 }
 
 /// Resolve the actual network name on the host for a compose network key.
@@ -287,187 +313,5 @@ fn lease_range_from_cidr(cidr: &str) -> Option<LeaseRange> {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-	use crate::compose::types::{ComposeFile, NetworkConfig, Service};
-
-	fn empty_file() -> ComposeFile {
-		ComposeFile::default()
-	}
-
-	fn file_with_named_network(key: &str, name: &str) -> ComposeFile {
-		let cfg = NetworkConfig {
-			name: Some(name.to_string()),
-			..Default::default()
-		};
-		let mut file = empty_file();
-		file.networks.insert(key.to_string(), Some(cfg));
-		file
-	}
-
-	#[test]
-	fn resolve_network_name_key_not_found_prefixes_project() {
-		let file = empty_file();
-		assert_eq!(resolve_network_name("mynet", &file, "proj"), "proj_mynet");
-	}
-
-	#[test]
-	fn resolve_network_name_uses_config_name_over_prefix() {
-		let file = file_with_named_network("mynet", "custom-net-name");
-		assert_eq!(
-			resolve_network_name("mynet", &file, "proj"),
-			"custom-net-name"
-		);
-	}
-
-	#[test]
-	fn resolve_network_name_external_uses_key_not_prefix() {
-		let cfg = NetworkConfig {
-			external: Some(true),
-			..Default::default()
-		};
-		let mut file = empty_file();
-		file.networks.insert("shared".to_string(), Some(cfg));
-		assert_eq!(resolve_network_name("shared", &file, "proj"), "shared");
-	}
-
-	#[test]
-	fn resolve_network_mode_explicit_mode() {
-		let svc = Service {
-			network_mode: Some("host".to_string()),
-			..Default::default()
-		};
-		let file = empty_file();
-		let (ns, nets) = resolve_network_mode("web", &svc, &file, "proj");
-		assert!(ns.is_some());
-		assert_eq!(ns.unwrap().nsmode, "host");
-		assert!(nets.is_empty());
-	}
-
-	#[test]
-	fn resolve_network_mode_no_networks() {
-		let svc = Service::default();
-		let file = empty_file();
-		let (ns, nets) = resolve_network_mode("web", &svc, &file, "proj");
-		assert!(ns.is_none());
-		assert!(nets.is_empty());
-	}
-
-	#[test]
-	fn build_per_network_options_seeds_service_name_alias() {
-		// With no explicit config, the service name is still registered as an
-		// alias so siblings can reach the service by name.
-		let opts = build_per_network_options("web", None, None);
-		assert_eq!(opts.aliases, vec!["web".to_string()]);
-		assert!(opts.static_ips.is_empty());
-	}
-
-	#[test]
-	fn build_per_network_options_empty_service_name_adds_no_alias() {
-		let opts = build_per_network_options("", None, None);
-		assert!(opts.aliases.is_empty());
-	}
-
-	#[test]
-	fn build_per_network_options_with_aliases() {
-		use crate::compose::types::ServiceNetworkConfig;
-		let cfg = ServiceNetworkConfig {
-			aliases: Some(vec!["api".to_string()]),
-			..Default::default()
-		};
-		// The service name is prepended ahead of any explicit aliases.
-		let opts = build_per_network_options("web", Some(&cfg), None);
-		assert_eq!(opts.aliases, vec!["web".to_string(), "api".to_string()]);
-	}
-
-	#[test]
-	fn build_per_network_options_does_not_duplicate_service_name() {
-		use crate::compose::types::ServiceNetworkConfig;
-		let cfg = ServiceNetworkConfig {
-			aliases: Some(vec!["web".to_string(), "api".to_string()]),
-			..Default::default()
-		};
-		// An explicit alias equal to the service name is not duplicated.
-		let opts = build_per_network_options("web", Some(&cfg), None);
-		assert_eq!(opts.aliases, vec!["web".to_string(), "api".to_string()]);
-	}
-
-	#[test]
-	fn build_per_network_options_with_ipv4() {
-		use crate::compose::types::ServiceNetworkConfig;
-		let cfg = ServiceNetworkConfig {
-			ipv4_address: Some("10.0.0.5".to_string()),
-			..Default::default()
-		};
-		let opts = build_per_network_options("web", Some(&cfg), None);
-		assert!(opts.static_ips.contains(&"10.0.0.5".to_string()));
-	}
-
-	#[test]
-	fn fallback_mac_applied_when_no_config() {
-		let opts = build_per_network_options("web", None, Some("02:42:ac:11:00:02"));
-		assert_eq!(opts.static_mac.as_deref(), Some("02:42:ac:11:00:02"));
-	}
-
-	#[test]
-	fn lease_range_ipv4_reserves_network_and_broadcast() {
-		let lr = lease_range_from_cidr("172.28.5.0/24").unwrap();
-		assert_eq!(lr.start_ip.as_deref(), Some("172.28.5.1"));
-		assert_eq!(lr.end_ip.as_deref(), Some("172.28.5.254"));
-	}
-
-	#[test]
-	fn lease_range_ipv4_slash31_uses_both_addresses() {
-		let lr = lease_range_from_cidr("10.0.0.0/31").unwrap();
-		assert_eq!(lr.start_ip.as_deref(), Some("10.0.0.0"));
-		assert_eq!(lr.end_ip.as_deref(), Some("10.0.0.1"));
-	}
-
-	#[test]
-	fn lease_range_ipv6_full_span() {
-		let lr = lease_range_from_cidr("2001:db8::/120").unwrap();
-		assert_eq!(lr.start_ip.as_deref(), Some("2001:db8::"));
-		assert_eq!(lr.end_ip.as_deref(), Some("2001:db8::ff"));
-	}
-
-	#[test]
-	fn lease_range_invalid_cidr_is_none() {
-		assert!(lease_range_from_cidr("not-a-cidr").is_none());
-		assert!(lease_range_from_cidr("10.0.0.0/40").is_none());
-	}
-
-	#[test]
-	fn ipam_options_include_driver_and_options() {
-		use crate::compose::types::IpamConfig;
-		let ipam = IpamConfig {
-			driver: Some("host-local".into()),
-			options: [("foo".to_string(), "bar".to_string())].into(),
-			..Default::default()
-		};
-		let opts = build_ipam_options(&ipam);
-		assert_eq!(opts.get("driver").map(String::as_str), Some("host-local"));
-		assert_eq!(opts.get("foo").map(String::as_str), Some("bar"));
-	}
-
-	#[test]
-	fn per_network_interface_name_forwarded() {
-		use crate::compose::types::ServiceNetworkConfig;
-		let cfg = ServiceNetworkConfig {
-			interface_name: Some("eth1".into()),
-			..Default::default()
-		};
-		let opts = build_per_network_options("web", Some(&cfg), None);
-		assert_eq!(opts.interface_name.as_deref(), Some("eth1"));
-	}
-
-	#[test]
-	fn per_network_mac_takes_precedence_over_fallback() {
-		use crate::compose::types::ServiceNetworkConfig;
-		let cfg = ServiceNetworkConfig {
-			mac_address: Some("aa:bb:cc:dd:ee:ff".to_string()),
-			..Default::default()
-		};
-		let opts = build_per_network_options("web", Some(&cfg), Some("02:42:ac:11:00:03"));
-		assert_eq!(opts.static_mac.as_deref(), Some("aa:bb:cc:dd:ee:ff"));
-	}
-}
+#[path = "network_tests.rs"]
+mod tests;

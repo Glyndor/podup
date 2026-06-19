@@ -28,6 +28,9 @@ pub enum ComposeError {
 	NoImageOrBuild(String),
 	/// A `${VAR}` with the `?err` modifier was required but unset.
 	RequiredVarNotSet { var: String, msg: String },
+	/// A `${…}` interpolation reference is malformed (e.g. an invalid character
+	/// in the variable name, as in `${FOO BAR}` or `${FOO.BAR}`).
+	InvalidSubstitution(String),
 	/// A service did not become healthy within its dependency wait window.
 	HealthCheckTimeout(String),
 	/// A `ports:` entry could not be parsed.
@@ -70,6 +73,9 @@ impl fmt::Display for ComposeError {
 			Self::NoImageOrBuild(s) => write!(f, "service '{s}' has no image or build config"),
 			Self::RequiredVarNotSet { var, msg } => {
 				write!(f, "required variable '{var}' is not set: {msg}")
+			}
+			Self::InvalidSubstitution(s) => {
+				write!(f, "invalid variable substitution: {s}")
 			}
 			Self::HealthCheckTimeout(s) => write!(f, "health check timeout for container '{s}'"),
 			Self::InvalidPort(s) => write!(f, "invalid port mapping: {s}"),

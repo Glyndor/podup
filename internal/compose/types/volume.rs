@@ -14,20 +14,28 @@ use super::Labels;
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum VolumeType {
+	/// A named or anonymous managed volume.
 	Volume,
+	/// A host path bind mount.
 	Bind,
+	/// An in-memory tmpfs mount.
 	Tmpfs,
+	/// A Windows named-pipe mount.
 	Npipe,
+	/// A cluster (Swarm) volume.
 	Cluster,
 }
 
 /// Sub-options for a `bind`-type volume mount.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct BindOptions {
+	/// Mount propagation mode (e.g. `rprivate`, `rshared`).
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub propagation: Option<String>,
+	/// Whether to create the host path if it does not exist.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub create_host_path: Option<bool>,
+	/// SELinux relabeling option (`z` shared or `Z` private).
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub selinux: Option<String>,
 }
@@ -35,12 +43,16 @@ pub struct BindOptions {
 /// Sub-options for a `volume`-type mount — nocopy flag and optional driver config.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct VolumeOptions {
+	/// Whether to skip copying existing target contents into the volume.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub nocopy: Option<bool>,
+	/// Labels applied to the volume.
 	#[serde(default)]
 	pub labels: Labels,
+	/// Volume driver name and options.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub driver_config: Option<DriverConfig>,
+	/// Path within the volume to mount instead of its root.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub subpath: Option<String>,
 }
@@ -48,8 +60,10 @@ pub struct VolumeOptions {
 /// Driver name and key-value options nested under `VolumeOptions`.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DriverConfig {
+	/// Volume driver name.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub name: Option<String>,
+	/// Driver-specific options.
 	#[serde(default, skip_serializing_if = "HashMap::is_empty")]
 	pub options: HashMap<String, String>,
 }
@@ -57,8 +71,10 @@ pub struct DriverConfig {
 /// Sub-options for a `tmpfs`-type mount — size and mode.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct TmpfsOptions {
+	/// Size of the tmpfs mount in bytes.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub size: Option<u64>,
+	/// File mode of the tmpfs mount.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub mode: Option<u32>,
 }
@@ -68,27 +84,38 @@ pub struct TmpfsOptions {
 #[serde(untagged)]
 #[allow(clippy::large_enum_variant)]
 pub enum VolumeMount {
+	/// Short form: a `source:target[:options]` string.
 	Short(String),
+	/// Long form: an explicitly typed mount with per-type options.
 	Long {
+		/// Mount type selecting which options block applies.
 		#[serde(rename = "type")]
 		volume_type: VolumeType,
+		/// Mount source — host path, volume name, or omitted for anonymous/tmpfs.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		source: Option<String>,
+		/// Mount target path inside the container.
 		target: String,
+		/// Whether the mount is read-only.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		read_only: Option<bool>,
+		/// Bind-specific options, when `volume_type` is `bind`.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		bind: Option<BindOptions>,
+		/// Volume-specific options, when `volume_type` is `volume`.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		volume: Option<VolumeOptions>,
+		/// Tmpfs-specific options, when `volume_type` is `tmpfs`.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		tmpfs: Option<TmpfsOptions>,
+		/// Mount consistency requirement (a no-op outside Docker Desktop).
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		consistency: Option<String>,
 	},
 }
 
 impl VolumeMount {
+	/// Returns the container-side target path of the mount.
 	pub fn target(&self) -> &str {
 		match self {
 			VolumeMount::Short(s) => {
@@ -108,16 +135,22 @@ impl VolumeMount {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[non_exhaustive]
 pub struct VolumeConfig {
+	/// Volume driver name; the runtime default is used if absent.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub driver: Option<String>,
+	/// Driver-specific options.
 	#[serde(default, skip_serializing_if = "HashMap::is_empty")]
 	pub driver_opts: HashMap<String, String>,
+	/// Whether the volume is externally managed and not created by podup.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub external: Option<bool>,
+	/// Custom volume name overriding the project-prefixed default.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub name: Option<String>,
+	/// Labels applied to the volume.
 	#[serde(default)]
 	pub labels: Labels,
+	/// Unrecognized keys preserved verbatim for round-tripping.
 	#[serde(flatten, default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
 	pub unknown: indexmap::IndexMap<String, serde_yaml::Value>,
 }
@@ -126,21 +159,29 @@ pub struct VolumeConfig {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum ServiceConfigRef {
+	/// Short form: the name of a top-level config to mount.
 	Short(String),
+	/// Long form: a config name with mount target and ownership options.
 	Long {
+		/// Name of the top-level config to mount.
 		source: String,
+		/// Mount path inside the container; defaults to `/<source>` if absent.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		target: Option<String>,
+		/// Owner UID of the mounted file.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		uid: Option<String>,
+		/// Owner GID of the mounted file.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		gid: Option<String>,
+		/// File permission mode of the mounted file.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		mode: Option<u32>,
 	},
 }
 
 impl ServiceConfigRef {
+	/// Returns the name of the referenced top-level config.
 	pub fn source(&self) -> &str {
 		match self {
 			ServiceConfigRef::Short(s) => s,
@@ -148,6 +189,7 @@ impl ServiceConfigRef {
 		}
 	}
 
+	/// Returns the container mount target, if specified.
 	pub fn target(&self) -> Option<&str> {
 		match self {
 			ServiceConfigRef::Short(_) => None,
@@ -160,21 +202,29 @@ impl ServiceConfigRef {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum ServiceSecretRef {
+	/// Short form: the name of a top-level secret to mount.
 	Short(String),
+	/// Long form: a secret name with mount target and ownership options.
 	Long {
+		/// Name of the top-level secret to mount.
 		source: String,
+		/// Mount path; defaults to `/run/secrets/<source>` if absent.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		target: Option<String>,
+		/// Owner UID of the mounted file.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		uid: Option<String>,
+		/// Owner GID of the mounted file.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		gid: Option<String>,
+		/// File permission mode of the mounted file.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		mode: Option<u32>,
 	},
 }
 
 impl ServiceSecretRef {
+	/// Returns the name of the referenced top-level secret.
 	pub fn source(&self) -> &str {
 		match self {
 			ServiceSecretRef::Short(s) => s,
@@ -182,6 +232,7 @@ impl ServiceSecretRef {
 		}
 	}
 
+	/// Returns the container mount target, if specified.
 	pub fn target(&self) -> Option<&str> {
 		match self {
 			ServiceSecretRef::Short(_) => None,

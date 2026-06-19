@@ -61,7 +61,8 @@ async fn service_with_expose_deploy_labels_annotations_tmpfs() {
 	let proj = proj("sdl");
 	let engine = Engine::new(client, proj.clone());
 	// expose covers container.rs L56-63
-	// deploy.labels covers container.rs L76-78
+	// deploy.labels are accepted but, per the Compose Specification, are set on
+	// the service only and must not be applied to the container
 	// annotations covers container.rs L81-82
 	// long-form tmpfs volume covers container.rs L107-113 and L139
 	let file = parse_str(

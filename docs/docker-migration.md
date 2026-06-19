@@ -176,11 +176,11 @@ on the parsed file to obtain the same warnings and surface them to your users.
 Compose files are **trusted input**, like a Makefile. Path-valued keys that the
 spec resolves relative to the compose file — `extends.file`, `env_file`,
 `label_file`, and `include` — may use `../` to reach files outside the project
-directory, matching docker-compose. This is an intentional divergence from a
-fully sandboxed parser: do not feed podup a compose file from an untrusted
-source any more than you would `make -f` an untrusted Makefile. The one
-exception is `include`, which still rejects **absolute** paths (they are not
-portable across checkouts and the spec does not require them); `../` is allowed.
+directory, matching docker-compose. Absolute paths are accepted too (an
+absolute `include:` is used as given, as in docker-compose). This is an
+intentional divergence from a fully sandboxed parser: do not feed podup a
+compose file from an untrusted source any more than you would `make -f` an
+untrusted Makefile.
 
 ## Not yet supported
 

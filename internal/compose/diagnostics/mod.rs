@@ -12,7 +12,7 @@ use super::types::ComposeFile;
 
 mod ignored_fields;
 use ignored_fields::{
-	ignored_build_fields, ignored_network_fields, ignored_port_fields,
+	ignored_build_fields, ignored_models, ignored_network_fields, ignored_port_fields,
 	ignored_secret_config_drivers, ignored_service_fields, ignored_service_network_fields,
 	ignored_volume_mount_fields,
 };
@@ -31,6 +31,7 @@ pub(super) fn collect(file: &ComposeFile) -> Vec<String> {
 	ignored_network_fields(file, &mut out);
 	ignored_service_network_fields(file, &mut out);
 	ignored_secret_config_drivers(file, &mut out);
+	ignored_models(file, &mut out);
 	out
 }
 
@@ -76,6 +77,23 @@ fn nested_unknown_keys(file: &ComposeFile, out: &mut Vec<String>) {
 				);
 			}
 		}
+		if let Some(cred) = &def.credential_spec {
+			push_unknown(
+				&format!("service '{service}' credential_spec"),
+				&cred.unknown,
+				out,
+			);
+		}
+		if let Some(provider) = &def.provider {
+			push_unknown(
+				&format!("service '{service}' provider"),
+				&provider.unknown,
+				out,
+			);
+		}
+	}
+	for (name, model) in &file.models {
+		push_unknown(&format!("model '{name}'"), &model.unknown, out);
 	}
 	for (name, cfg) in &file.networks {
 		if let Some(c) = cfg {
@@ -382,6 +400,97 @@ mod tests {
 		assert!(
 			!msgs.iter().any(|m| m.contains("driver")),
 			"unexpected: {msgs:?}"
+		);
+	}
+
+	#[test]
+	fn warns_on_credential_spec_not_honored() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    image: nginx\n    credential_spec:\n      config: my-spec\n",
+		);
+		assert!(
+			msgs.iter()
+				.any(|m| m.contains("credential_spec") && m.contains("not honored")),
+			"got: {msgs:?}"
+		);
+		// The recognized key must not also produce a generic "unknown key" warning.
+		assert!(
+			!msgs
+				.iter()
+				.any(|m| m.contains("unknown key 'credential_spec'")),
+			"got: {msgs:?}"
+		);
+	}
+
+	#[test]
+	fn warns_on_service_isolation_not_honored() {
+		let msgs = diagnostics_for("services:\n  web:\n    image: nginx\n    isolation: hyperv\n");
+		assert!(
+			msgs.iter()
+				.any(|m| m.contains("isolation") && m.contains("not honored")),
+			"got: {msgs:?}"
+		);
+		assert!(!msgs.iter().any(|m| m.contains("unknown key 'isolation'")));
+	}
+
+	#[test]
+	fn warns_on_provider_not_honored() {
+		let msgs = diagnostics_for("services:\n  db:\n    provider:\n      type: awesomecloud\n");
+		assert!(
+			msgs.iter()
+				.any(|m| m.contains("provider") && m.contains("not honored")),
+			"got: {msgs:?}"
+		);
+		assert!(!msgs.iter().any(|m| m.contains("unknown key 'provider'")));
+	}
+
+	#[test]
+	fn warns_on_use_api_socket_not_honored() {
+		let msgs =
+			diagnostics_for("services:\n  web:\n    image: nginx\n    use_api_socket: true\n");
+		assert!(
+			msgs.iter()
+				.any(|m| m.contains("use_api_socket") && m.contains("not honored")),
+			"got: {msgs:?}"
+		);
+		assert!(!msgs
+			.iter()
+			.any(|m| m.contains("unknown key 'use_api_socket'")));
+	}
+
+	#[test]
+	fn warns_on_top_level_models_not_honored() {
+		let msgs = diagnostics_for(
+			"services:\n  web:\n    image: nginx\nmodels:\n  llm:\n    model: ai/model\n",
+		);
+		assert!(
+			msgs.iter()
+				.any(|m| m.contains("model 'llm'") && m.contains("not honored")),
+			"got: {msgs:?}"
+		);
+		// `models` is now a recognized top-level element, not an unknown key.
+		assert!(
+			!msgs
+				.iter()
+				.any(|m| m.contains("unknown top-level key 'models'")),
+			"got: {msgs:?}"
+		);
+	}
+
+	#[test]
+	fn warns_on_typo_inside_provider_and_models() {
+		let msgs = diagnostics_for(
+			"services:\n  db:\n    provider:\n      type: cloud\n      optoins: {}\nmodels:\n  llm:\n    modle: ai/model\n",
+		);
+		assert!(
+			msgs.iter()
+				.any(|m| m.contains("provider") && m.contains("optoins")),
+			"got: {msgs:?}"
+		);
+		assert!(
+			msgs.iter()
+				.any(|m| m.contains("model 'llm'") && m.contains("modle")),
+			"got: {msgs:?}"
 		);
 	}
 }

@@ -101,14 +101,42 @@ Run a one-off command in a new container for the service.
 | `-d, --detach` | Run in the background. |
 | `-e, --env <KEY=VAL>` | Set an environment variable. Repeatable. |
 | `--name <NAME>` | Override the container name. |
-| `--service-ports` | Publish the service's declared ports (off by default). |
+| `-P, --service-ports` | Publish the service's declared ports (off by default). |
+| `-u, --user <NAME\|UID[:GID]>` | Run the command as this user. |
+| `-w, --workdir <PATH>` | Working directory inside the container. |
+| `--entrypoint <CMD>` | Override the image entrypoint. |
+| `-v, --volume <SPEC>` | Bind-mount an extra volume (`HOST:CONTAINER[:OPTS]` or `NAME:CONTAINER`). Repeatable. |
+| `-p, --publish <SPEC>` | Publish an extra port (`HOST:CONTAINER[/PROTO]`). Repeatable. |
+| `-i, --interactive` | Keep STDIN open (accepted for compatibility; `run` still streams logs). |
+| `-T, --no-TTY` | Disable pseudo-TTY allocation (accepted for compatibility; podup never allocates one). |
+| `--no-deps` | Do not start the `depends_on` services before running. |
 
 ### `exec <SERVICE> <COMMAND...>`
 Execute a command in a running service container.
 
 ### `cp <SRC> <DST>`
 Copy files between a container and the host. Use `SERVICE:PATH` for the
-container side, e.g. `podup cp web:/app/data ./local`.
+container side, e.g. `podup cp web:/app/data ./local`. `--index <N>` targets a
+specific replica (1-based) of a scaled service; `-L/--follow-link` follows
+symlinks in the host source before copying into the container; `-a/--archive` is
+accepted for compatibility (no effect under rootless Podman).
+
+### `attach <SERVICE>`
+Attach to a service container's output (stdout/stderr), streaming it until the
+container exits or you detach.
+
+### `wait [SERVICE...]`
+Block until the named service containers (default: all) stop, printing each
+container's exit code as it does.
+
+### `commit <SERVICE> <IMAGE>`
+Commit a service container's current state to a new image reference
+(`repo[:tag]`). `--index <N>` selects a replica (1-based) of a scaled service.
+
+### `export <SERVICE>`
+Export a service container's filesystem as a tar archive. By default the archive
+goes to stdout; `-o, --output <FILE>` writes it to a file instead. `--index <N>`
+selects a replica (1-based) of a scaled service.
 
 ## Inspection
 
@@ -119,9 +147,11 @@ container side, e.g. `podup cp web:/app/data ./local`.
 | `top` | Show running processes of service containers. |
 | `stats` | Live resource usage (CPU, memory, network, block I/O, PIDs) for service containers. `--no-stream` prints one snapshot; a trailing service list narrows it. |
 | `port <SERVICE> <PRIVATE_PORT>` | Print the public binding for a port. `--proto` sets `tcp`/`udp` (default `tcp`). |
+| `events` | Stream Podman events for this project's containers. `--json` emits each event as a JSON line instead of a summary. |
 | `images` | List images used by services. |
+| `volumes [SERVICE...]` | List the project's named volumes. `-q/--quiet` prints names only, `--format table\|json`; a trailing service list narrows it to volumes those services mount. |
 | `logs [SERVICE]` | View container output. `-f/--follow` streams new output, `-n/--tail <N>` limits to the last N lines, `--since`/`--until` bound by time, `-t/--timestamps` prefixes each line. |
-| `config` | Print the resolved compose file (after substitution, extends, include). `--format yaml\|json`, `--services` lists service names, `-q/--quiet` only validates. |
+| `config` | Print the resolved compose file (after substitution, extends, include). `--format yaml\|json`, `--services` lists service names, `-q/--quiet` only validates, `--no-interpolate` leaves `${VAR}` placeholders literal, `--resolve-image-digests` rewrites each service `image:` to its registry digest (`repo@sha256:...`). |
 | `pull` | Pull images for all services. `-q/--quiet` suppresses progress output. |
 
 ## Generate

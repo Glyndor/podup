@@ -101,10 +101,7 @@ impl Engine {
 
 		let context_str = build.context().to_string();
 		let remote_context = is_remote_context(&context_str);
-		let tag = service
-			.image
-			.clone()
-			.unwrap_or_else(|| format!("{}:latest", service_name));
+		let tag = primary_build_tag(service_name, service.image.as_deref(), build.tags());
 
 		// A Git/URL context is cloned server-side by Podman via the `remote`
 		// query parameter — there is no local directory to tar. Tar-only features
@@ -189,10 +186,14 @@ impl Engine {
 		} else {
 			None
 		};
-		let platform = if let BuildConfig::Config { platforms, .. } = build {
-			platforms.first().cloned()
-		} else {
-			None
+		let platform = match build {
+			BuildConfig::Config { platforms, .. } => platforms.first().inspect(|first| {
+				let rest_count = platforms.len() - 1;
+				if rest_count > 0 {
+					warn!("build.platforms: libpod builds one platform per request; building {first}, ignoring {rest_count} other(s)");
+				}
+			}).cloned(),
+			_ => None,
 		};
 		let shmsize = build
 			.shm_size()
@@ -356,8 +357,15 @@ impl Engine {
 	}
 
 	/// Apply any `build.tags` aliases to the freshly built image.
+	///
+	/// The primary `tag` is skipped: when no `image:` is set it is already
+	/// `tags[0]`, which the build itself produced, so re-tagging it onto itself
+	/// would be a no-op API call.
 	async fn apply_extra_tags(&self, build: &BuildConfig, tag: &str) {
 		for extra_tag in build.tags() {
+			if extra_tag == tag {
+				continue;
+			}
 			let (repo, tag_str) = extra_tag
 				.rsplit_once(':')
 				.map(|(r, t)| (r.to_string(), t.to_string()))
@@ -381,9 +389,25 @@ fn is_remote_context(context: &str) -> bool {
 	context.contains("://") || context.starts_with("git@")
 }
 
+/// Pick the primary image tag for a built service.
+///
+/// Precedence matches compose-go: an explicit `image:` wins; otherwise the
+/// first entry of `build.tags` is used as the primary tag; with neither, the
+/// image is named `{service}:latest`. Any remaining `build.tags` are applied
+/// as extra tags by [`Engine::apply_extra_tags`].
+fn primary_build_tag(service_name: &str, image: Option<&str>, tags: &[String]) -> String {
+	if let Some(image) = image {
+		return image.to_string();
+	}
+	if let Some(first) = tags.first() {
+		return first.clone();
+	}
+	format!("{service_name}:latest")
+}
+
 #[cfg(test)]
 mod tests {
-	use super::{is_remote_context, Engine};
+	use super::{is_remote_context, primary_build_tag, Engine};
 	use crate::libpod::Client;
 
 	fn engine(base: std::path::PathBuf) -> Engine {
@@ -438,6 +462,29 @@ mod tests {
 		assert!(!is_remote_context("."));
 		assert!(!is_remote_context("./build"));
 		assert!(!is_remote_context("/abs/path"));
+	}
+
+	#[test]
+	fn primary_tag_prefers_explicit_image() {
+		let tags = vec!["registry/app:1.0".to_string()];
+		assert_eq!(
+			primary_build_tag("app", Some("myimage:2.0"), &tags),
+			"myimage:2.0"
+		);
+	}
+
+	#[test]
+	fn primary_tag_uses_first_build_tag_when_image_unset() {
+		let tags = vec![
+			"registry/app:1.0".to_string(),
+			"registry/app:latest".to_string(),
+		];
+		assert_eq!(primary_build_tag("app", None, &tags), "registry/app:1.0");
+	}
+
+	#[test]
+	fn primary_tag_falls_back_to_service_latest() {
+		assert_eq!(primary_build_tag("app", None, &[]), "app:latest");
 	}
 
 	#[test]

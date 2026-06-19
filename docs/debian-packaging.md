@@ -100,8 +100,9 @@ the `Glyndor/apt` repo.
    publication is a single `cargo publish` with the owner's registry
    token. `debcargo` consumes crates.io releases, so publishing first
    simplifies everything.
-5. **Stability promise** — official packages imply SemVer discipline and a
-   `1.0.0` once the CLI surface is settled.
+5. **Stability promise** — official packages imply SemVer discipline, which
+   `1.0.0` (already shipped) puts in force: the CLI surface is stable and
+   breaking changes wait for a major bump.
 
 ## Versioning
 

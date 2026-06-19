@@ -19,7 +19,7 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
@@ -60,7 +60,7 @@ jobs:
         # Gate the release on `cargo audit`: a RUSTSEC advisory in a pinned
         # dependency must block publishing, not wait for the weekly cron scan.
         run: |
-          cargo install cargo-audit --version "^0.22" --locked
+          cargo install cargo-audit --version "=0.22.2" --locked
           cargo audit
 
   build:
@@ -109,7 +109,7 @@ jobs:
         shell: bash
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
@@ -195,7 +195,7 @@ jobs:
             cargo \
             rustc
 
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
@@ -232,7 +232,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
@@ -256,8 +256,8 @@ jobs:
         # Government/enterprise consumers require a machine-readable SBOM
         # (CycloneDX, per US EO 14028) and a third-party license attribution.
         run: |
-          cargo install --locked cargo-cyclonedx --version "^0.5"
-          cargo install --locked --features cli cargo-about --version "^0.9"
+          cargo install --locked cargo-cyclonedx --version "=0.5.9"
+          cargo install --locked --features cli cargo-about --version "=0.9.0"
           cargo cyclonedx --format json --all-features
           # cargo-cyclonedx names the file after the package (podup.cdx.json),
           # so only rename when an older/different layout emitted another name —

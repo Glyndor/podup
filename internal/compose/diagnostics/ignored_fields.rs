@@ -24,6 +24,30 @@ pub(super) fn ignored_service_fields(file: &ComposeFile, out: &mut Vec<String>) 
 				 attach/detach logic for `up` log streaming"
 			));
 		}
+		if def.credential_spec.is_some() {
+			out.push(format!(
+				"service '{service}': credential_spec is a Windows managed-service-account \
+				 control with no rootless Podman equivalent and is not honored"
+			));
+		}
+		if def.isolation.is_some() {
+			out.push(format!(
+				"service '{service}': isolation has no rootless Podman equivalent and is \
+				 not honored"
+			));
+		}
+		if def.provider.is_some() {
+			out.push(format!(
+				"service '{service}': provider delegates the service lifecycle to an \
+				 external plugin that podup does not invoke; the service is not honored"
+			));
+		}
+		if def.use_api_socket.is_some() {
+			out.push(format!(
+				"service '{service}': use_api_socket has no podup equivalent and is not \
+				 honored"
+			));
+		}
 		for entry in def.env_file.to_entries() {
 			if let EnvFileEntry::Config {
 				format: Some(fmt), ..
@@ -35,6 +59,17 @@ pub(super) fn ignored_service_fields(file: &ComposeFile, out: &mut Vec<String>) 
 				));
 			}
 		}
+	}
+}
+
+/// Top-level `models:` (Compose v2.38) — podup runs no model runner, so any
+/// declared model is parsed for fidelity but not honored.
+pub(super) fn ignored_models(file: &ComposeFile, out: &mut Vec<String>) {
+	for name in file.models.keys() {
+		out.push(format!(
+			"model '{name}': podup runs no model runner, so the models element is not \
+			 honored"
+		));
 	}
 }
 
