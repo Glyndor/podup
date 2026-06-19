@@ -7,9 +7,38 @@ use serde::Deserialize;
 
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
-use crate::libpod::{parse_json_lines, API_PREFIX};
+use crate::libpod::{parse_json_lines, urlencoded, API_PREFIX};
 
 use super::Engine;
+
+/// Build the `&containers=<a,b,c>` query fragment scoping a stats request to the
+/// `wanted` containers, or an empty string when none are wanted (which falls
+/// back to the daemon default). Names are sorted for a stable URL and each is
+/// URL-encoded; the comma separators are intentionally left literal.
+fn containers_query(wanted: &HashSet<String>) -> String {
+	if wanted.is_empty() {
+		return String::new();
+	}
+	let mut names: Vec<&String> = wanted.iter().collect();
+	names.sort();
+	let joined = names
+		.iter()
+		.map(|n| urlencoded(n))
+		.collect::<Vec<_>>()
+		.join(",");
+	format!("&containers={joined}")
+}
+
+/// Deserialize a map field, treating an explicit JSON `null` as the default
+/// (empty) map. libpod sends `"Network": null` for a container with no
+/// interfaces, which plain `#[serde(default)]` does not tolerate.
+fn null_default<'de, D, T>(d: D) -> std::result::Result<T, D::Error>
+where
+	D: serde::Deserializer<'de>,
+	T: Default + Deserialize<'de>,
+{
+	Option::<T>::deserialize(d).map(|v| v.unwrap_or_default())
+}
 
 /// One frame of the libpod `/containers/stats` response.
 #[derive(Deserialize)]
@@ -37,7 +66,10 @@ struct ContainerStat {
 	block_out: u64,
 	#[serde(rename = "PIDs", default)]
 	pids: u64,
-	#[serde(rename = "Network", default)]
+	// `#[serde(default)]` also tolerates an explicit `null` frame value: libpod
+	// sends `"network": null` for a container with no interfaces, which would
+	// otherwise fail with `invalid type: null, expected a map`.
+	#[serde(rename = "Network", default, deserialize_with = "null_default")]
 	network: HashMap<String, NetStat>,
 }
 
@@ -101,10 +133,17 @@ impl Engine {
 	) -> Result<()> {
 		let wanted = self.target_container_names(file, target_services);
 
+		// Scope the stats stream to just the wanted containers server-side via the
+		// `containers=` query param, so the daemon does not sample every container
+		// on the host (the response is still filtered locally by `wanted`).
+		let containers = containers_query(&wanted);
+
 		if no_stream {
 			let report: StatsReport = self
 				.client
-				.get_json(&format!("{API_PREFIX}/containers/stats?stream=false"))
+				.get_json(&format!(
+					"{API_PREFIX}/containers/stats?stream=false{containers}"
+				))
 				.await
 				.map_err(ComposeError::Podman)?;
 			print_frame(&report, &wanted);
@@ -113,7 +152,9 @@ impl Engine {
 
 		let resp = self
 			.client
-			.get_stream(&format!("{API_PREFIX}/containers/stats?stream=true"))
+			.get_stream(&format!(
+				"{API_PREFIX}/containers/stats?stream=true{containers}"
+			))
 			.await
 			.map_err(ComposeError::Podman)?;
 		let mut frames = parse_json_lines::<StatsReport>(resp.into_body());
@@ -196,5 +237,38 @@ mod tests {
 		assert!(row.contains("12.50%"));
 		assert!(row.contains("1.0MiB"));
 		assert!(row.contains('3'));
+	}
+
+	#[test]
+	fn stat_tolerates_null_network() {
+		// libpod sends `"Network": null` for a container with no interfaces; it
+		// must deserialize to an empty map rather than erroring.
+		let json = r#"{"Name":"proj-web","CPU":1.0,"Network":null}"#;
+		let stat: ContainerStat = serde_json::from_str(json).unwrap();
+		assert_eq!(stat.name, "proj-web");
+		assert!(stat.network.is_empty());
+	}
+
+	#[test]
+	fn stat_tolerates_missing_network() {
+		let json = r#"{"Name":"proj-web"}"#;
+		let stat: ContainerStat = serde_json::from_str(json).unwrap();
+		assert!(stat.network.is_empty());
+	}
+
+	#[test]
+	fn containers_query_is_sorted_and_scoped() {
+		let mut wanted = HashSet::new();
+		wanted.insert("proj-web-1".to_string());
+		wanted.insert("proj-db-1".to_string());
+		assert_eq!(
+			containers_query(&wanted),
+			"&containers=proj-db-1,proj-web-1"
+		);
+	}
+
+	#[test]
+	fn containers_query_empty_when_none_wanted() {
+		assert_eq!(containers_query(&HashSet::new()), "");
 	}
 }
