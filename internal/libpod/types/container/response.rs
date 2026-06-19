@@ -49,6 +49,15 @@ pub struct ContainerPort {
 	pub host_ip: Option<String>,
 	pub host_port: Option<u16>,
 	pub container_port: u16,
+	/// Transport protocol of the mapping (`tcp`/`udp`/`sctp`), surfaced in `ps`.
+	#[serde(default)]
+	pub protocol: Option<String>,
+	/// Number of consecutive ports this entry covers when libpod collapses a
+	/// published range into a single record. Captured for fidelity; not yet
+	/// rendered, so it is read by serde only.
+	#[serde(default)]
+	#[allow(dead_code)]
+	pub range: Option<u16>,
 }
 
 /// Response from `GET /libpod/containers/{name}/json`.
