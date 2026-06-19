@@ -5,12 +5,24 @@
 //! [`Engine::wait_completed`] polls until the container exits with code 0 (used for
 //! `condition: service_completed_successfully`).
 
+use std::time::Duration;
+
+use serde::Deserialize;
+
 use crate::compose::types::{ComposeFile, Service};
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::container::ContainerInspect;
 use crate::libpod::API_PREFIX;
 
 use super::Engine;
+
+/// Response from `GET {API_PREFIX}/containers/{name}/healthcheck`, which *runs*
+/// the container's healthcheck on demand and reports the resulting status.
+#[derive(Deserialize)]
+struct HealthCheckRun {
+	#[serde(rename = "Status")]
+	status: Option<String>,
+}
 
 /// Per-poll verdict while waiting for `service_healthy`.
 enum HealthVerdict {
@@ -126,22 +138,32 @@ impl Engine {
 			HealthVerdict::Pending => {}
 		}
 
-		// Block server-side until the container reports healthy, bounded by the
-		// same time budget the poll loop used (interval × iterations), instead of
-		// issuing O(iterations) inspect calls.
-		let budget = std::time::Duration::from_secs(poll_secs * iterations);
+		// Actively drive the healthcheck on demand. A server-side
+		// `wait?condition=healthy` only returns once the health *status* flips to
+		// `healthy`, but Podman updates that status only when the healthcheck runs
+		// — and it schedules those runs via systemd transient timers. Without
+		// systemd (containers, minimal hosts) the timer never fires and the status
+		// stays `starting`, so the wait would block until the whole budget elapsed.
+		//
+		// `GET {API_PREFIX}/containers/{name}/healthcheck` *runs* the check and
+		// returns the resulting status, so polling it works with or without
+		// systemd, on Podman 4.9.3 and 5.x alike. Extra on-demand runs on a
+		// systemd host are harmless.
 		let path = format!(
-			"{API_PREFIX}/containers/{}/wait?condition=healthy",
+			"{API_PREFIX}/containers/{}/healthcheck",
 			crate::libpod::urlencoded(container_name),
 		);
-		match tokio::time::timeout(budget, self.client.post_empty_json::<i64>(&path)).await {
-			Ok(Ok(_)) => Ok(()),
-			Ok(Err(e)) => {
-				tracing::debug!("{container_name} wait?condition=healthy failed: {e}");
-				Err(ComposeError::HealthCheckTimeout(container_name.into()))
+		for _ in 0..iterations {
+			match self.client.get_json::<HealthCheckRun>(&path).await {
+				Ok(run) if run.status.as_deref() == Some("healthy") => return Ok(()),
+				Ok(_) => {}
+				// A transient error (container not yet running, 409, 500, …) just
+				// means "not healthy yet" — keep polling rather than failing hard.
+				Err(e) => tracing::debug!("{container_name} healthcheck run failed: {e}"),
 			}
-			Err(_elapsed) => Err(ComposeError::HealthCheckTimeout(container_name.into())),
+			tokio::time::sleep(Duration::from_secs(poll_secs)).await;
 		}
+		Err(ComposeError::HealthCheckTimeout(container_name.into()))
 	}
 
 	/// Wait until a container exits, then require status 0.
