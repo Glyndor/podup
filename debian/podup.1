@@ -1,4 +1,4 @@
-.TH PODUP 1 "June 2026" "podup 0.24.1" "User Commands"
+.TH PODUP 1 "June 2026" "podup 1.1.0" "User Commands"
 .SH NAME
 podup \- run docker-compose files on rootless Podman
 .SH SYNOPSIS
@@ -108,11 +108,30 @@ Resume paused service containers.
 .B run \fISERVICE\fR [\fICOMMAND\fR...]
 Run a one-off command in a new service container. Options: \fB\-\-rm\fR
 (default true), \fB\-d\fR/\fB\-\-detach\fR, \fB\-e\fR/\fB\-\-env\fR KEY=VAL,
-\fB\-\-name\fR, \fB\-\-service\-ports\fR.
+\fB\-\-name\fR, \fB\-P\fR/\fB\-\-service\-ports\fR,
+\fB\-u\fR/\fB\-\-user\fR, \fB\-w\fR/\fB\-\-workdir\fR, \fB\-\-entrypoint\fR,
+\fB\-v\fR/\fB\-\-volume\fR (repeatable), \fB\-p\fR/\fB\-\-publish\fR (repeatable),
+\fB\-i\fR/\fB\-\-interactive\fR, \fB\-T\fR/\fB\-\-no\-TTY\fR, \fB\-\-no\-deps\fR.
 .TP
 .B cp \fISRC\fR \fIDST\fR
 Copy files between a service container and the host. Use \fBSERVICE:PATH\fR for
 the container side.
+.TP
+.B attach \fISERVICE\fR
+Attach to a service container's output (stdout/stderr), streaming it until the
+container exits.
+.TP
+.B wait \fR[\fISERVICE\fR...]
+Block until the named service containers (default: all) stop, printing each
+container's exit code.
+.TP
+.B commit \fISERVICE\fR \fIIMAGE\fR
+Commit a service container to a new image reference (\fBrepo[:tag]\fR).
+\fB\-\-index\fR selects a replica (1-based) of a scaled service.
+.TP
+.B export \fISERVICE\fR
+Export a service container's filesystem as a tar archive. \fB\-o\fR/\fB\-\-output\fR
+writes to a file instead of stdout; \fB\-\-index\fR selects a replica (1-based).
 .TP
 .B ps
 List project containers.
@@ -129,8 +148,17 @@ list narrows the report.
 Print the public binding for a container port. \fB\-\-proto\fR sets the protocol
 (default \fBtcp\fR).
 .TP
+.B events
+Stream Podman events for this project's containers. \fB\-\-json\fR emits each
+event as a JSON line instead of a summary.
+.TP
 .B images
 List images used by services.
+.TP
+.B volumes \fR[\fISERVICE\fR...]
+List the project's named volumes. \fB\-q\fR/\fB\-\-quiet\fR prints names only,
+\fB\-\-format\fR selects \fItable\fR or \fIjson\fR, and a trailing service list
+narrows the report to volumes those services mount.
 .TP
 .B logs \fR[\fISERVICE\fR]
 View container output. \fB\-f\fR/\fB\-\-follow\fR streams new output,
@@ -152,7 +180,10 @@ cascade-restarting dependents with a \fBdepends_on\fR restart condition.
 .B config
 Print the resolved compose file after substitution, extends and include.
 \fB\-\-format\fR selects \fIyaml\fR or \fIjson\fR, \fB\-\-services\fR lists the
-service names, and \fB\-q\fR/\fB\-\-quiet\fR only validates (no output).
+service names, \fB\-q\fR/\fB\-\-quiet\fR only validates (no output),
+\fB\-\-no\-interpolate\fR leaves \fB${VAR}\fR placeholders literal, and
+\fB\-\-resolve\-image\-digests\fR rewrites each service \fBimage:\fR to its
+registry digest (\fBrepo@sha256:...\fR).
 .TP
 .B generate quadlet \fR[\fB\-o\fR \fIDIR\fR]
 Translate the compose file into Podman Quadlet unit files (one \fB.container\fR
