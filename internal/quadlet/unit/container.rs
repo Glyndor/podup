@@ -21,11 +21,15 @@ pub(crate) fn container_unit(
 	let mut unit = Section::new("Unit");
 	unit.add("Description", format!("{name} (podup)"));
 	for dep in service.depends_on.service_names() {
-		unit.add("After", format!("{dep}.service"));
+		// The dependency's generated unit is named `{safe_unit_stem(dep)}.container`,
+		// so its service is `{safe_unit_stem(dep)}.service`; reference that, not the
+		// raw compose key, or the ordering would target a non-existent unit.
+		let dep_service = format!("{}.service", safe_unit_stem(&dep));
+		unit.add("After", dep_service.clone());
 		if service.depends_on.required_for(&dep) {
-			unit.add("Requires", format!("{dep}.service"));
+			unit.add("Requires", dep_service);
 		} else {
-			unit.add("Wants", format!("{dep}.service"));
+			unit.add("Wants", dep_service);
 		}
 	}
 
@@ -60,6 +64,11 @@ pub(crate) fn container_unit(
 	}
 	if service.read_only == Some(true) {
 		container.add("ReadOnly", "true".to_string());
+	}
+	if service.privileged == Some(true) {
+		// No dedicated [Container] key exists for privileged mode; pass it through
+		// as a raw podman flag, like the other escape-hatch fields.
+		container.add("PodmanArgs", "--privileged".to_string());
 	}
 	if service.init == Some(true) {
 		container.add("RunInit", "true".to_string());
@@ -215,13 +224,23 @@ pub(crate) fn container_unit(
 			container.add("StopTimeout", secs.to_string());
 		}
 	}
-	// `network_mode: host`/`none` map to `Network=host`/`Network=none`; other
-	// modes (service:/container:) have no Quadlet key and are reported by
+	// `network_mode: host`/`none` map to `Network=host`/`Network=none`.
+	// `service:X`/`container:X` reuse another container's netns, which Quadlet
+	// expresses as `Network={X}.container` (the `.container` special case);
+	// other modes (bridge:, custom, …) have no key and are reported by
 	// collect_warnings.
 	match service.network_mode.as_deref() {
 		Some("host") => container.add("Network", "host".to_string()),
 		Some("none") => container.add("Network", "none".to_string()),
-		_ => {}
+		Some(m) => {
+			if let Some(target) = m
+				.strip_prefix("service:")
+				.or_else(|| m.strip_prefix("container:"))
+			{
+				container.add("Network", format!("{}.container", safe_unit_stem(target)));
+			}
+		}
+		None => {}
 	}
 	for group in &service.group_add {
 		container.add("GroupAdd", group.clone());
@@ -284,7 +303,7 @@ pub(crate) fn container_unit(
 	for secret in &service.secrets {
 		container.add("Secret", render_secret(secret));
 	}
-	render_healthcheck(service, &mut container);
+	render_healthcheck(name, service, &mut container, warnings);
 
 	let mut svc = Section::new("Service");
 	if let Some(restart) = &service.restart {
