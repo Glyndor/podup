@@ -68,7 +68,8 @@ impl ExtendsConfig {
 pub enum BuildConfig {
 	Context(String),
 	Config {
-		context: String,
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		context: Option<String>,
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		dockerfile: Option<String>,
 		#[serde(default, skip_serializing_if = "Option::is_none")]
@@ -123,10 +124,15 @@ pub enum BuildConfig {
 }
 
 impl BuildConfig {
+	/// Build context path.
+	///
+	/// In the long form, `context` is optional per the Compose Spec (v2.22+):
+	/// a `build:` block carrying only `dockerfile_inline:` has no context and
+	/// defaults to the project directory `.`.
 	pub fn context(&self) -> &str {
 		match self {
 			BuildConfig::Context(ctx) => ctx,
-			BuildConfig::Config { context, .. } => context,
+			BuildConfig::Config { context, .. } => context.as_deref().unwrap_or("."),
 		}
 	}
 
@@ -300,7 +306,7 @@ mod tests {
 	#[test]
 	fn build_config_long_form_context() {
 		let b = BuildConfig::Config {
-			context: "./app".into(),
+			context: Some("./app".into()),
 			dockerfile: Some("Dockerfile.prod".into()),
 			dockerfile_inline: None,
 			args: EnvVars::Empty,
@@ -329,5 +335,15 @@ mod tests {
 		assert_eq!(b.dockerfile(), Some("Dockerfile.prod"));
 		assert_eq!(b.target(), Some("release"));
 		assert!(b.no_cache());
+	}
+
+	#[test]
+	fn build_with_only_dockerfile_inline_defaults_context_to_dot() {
+		// Compose Spec (v2.22+): `build:` may carry only `dockerfile_inline:` with
+		// no `context:` — the context then defaults to the project directory `.`.
+		let b: BuildConfig = serde_yaml::from_str("dockerfile_inline: |\n  FROM alpine\n").unwrap();
+		assert!(matches!(b, BuildConfig::Config { .. }));
+		assert_eq!(b.context(), ".");
+		assert_eq!(b.dockerfile_inline(), Some("FROM alpine\n"));
 	}
 }

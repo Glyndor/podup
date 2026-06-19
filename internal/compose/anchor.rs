@@ -42,8 +42,12 @@ pub(super) fn anchor_service(svc: &mut Service, dir: &Path) {
 				}
 			}
 			BuildConfig::Config { context, .. } => {
-				if let Some(a) = anchor_context(context, dir) {
-					*context = a;
+				// An absent `context` defaults to the project directory `.`;
+				// anchor that default to the included file's directory so a
+				// `dockerfile_inline`-only build resolves against the right dir.
+				let effective = context.as_deref().unwrap_or(".");
+				if let Some(a) = anchor_context(effective, dir) {
+					*context = Some(a);
 				}
 			}
 		}

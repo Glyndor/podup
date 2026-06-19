@@ -42,9 +42,12 @@ pub fn load_env_file_entries(
 		} = entry
 		{
 			if fmt != "dotenv" {
-				return Err(ComposeError::Unsupported(format!(
-					"env_file format '{fmt}' not supported (only 'dotenv')"
-				)));
+				// compose-go logs a warning and falls back to dotenv parsing
+				// rather than failing the file; match that lenient behaviour.
+				tracing::warn!(
+					"env_file format '{fmt}' is not supported; parsing '{}' as dotenv",
+					entry.path()
+				);
 			}
 		}
 
@@ -162,14 +165,18 @@ mod tests {
 	}
 
 	#[test]
-	fn unsupported_format_returns_error() {
+	fn non_dotenv_format_warns_and_parses_as_dotenv() {
+		// compose-go logs a warning for an unknown `format` and falls back to
+		// dotenv parsing rather than failing; podup must not error here.
 		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join(".env"), "FOO=bar\n").unwrap();
 		let entries = vec![EnvFileEntry::Config {
 			path: ".env".into(),
 			required: Some(false),
 			format: Some("json".into()),
 		}];
-		assert!(load_env_file_entries(&entries, dir.path()).is_err());
+		let m = load_env_file_entries(&entries, dir.path()).unwrap();
+		assert_eq!(m.get("FOO").map(|s| s.as_str()), Some("bar"));
 	}
 
 	#[test]
