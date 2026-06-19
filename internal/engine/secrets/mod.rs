@@ -109,14 +109,20 @@ impl Engine {
 	/// `podup.project=<proj>` so it can be cleaned up on `down`. The payload size
 	/// is checked up front to turn Podman's opaque 500 into a clear message.
 	///
-	/// Idempotent across re-`up`s via a single atomic `replace=true` create: it
-	/// overwrites an existing secret of the name and also succeeds when none
-	/// exists, so no separate delete is needed.
+	/// Idempotent across re-`up`s: rather than `replace=true` (which some Podman
+	/// 5.x builds reject when the secret does not yet exist — the internal delete
+	/// fails with "no secret data with ID"), the existing secret of this name is
+	/// removed first (a 404 is fine) and then created fresh.
 	async fn create_secret(&self, name: &str, payload: &[u8]) -> Result<()> {
 		check_secret_size(name, payload.len())?;
+		let delete_path = format!("{API_PREFIX}/secrets/{}", urlencoded(name));
+		self.client
+			.delete_ok(&delete_path)
+			.await
+			.map_err(ComposeError::Podman)?;
 		let labels = serde_json::json!({ "podup.project": self.project }).to_string();
 		let path = format!(
-			"{API_PREFIX}/secrets/create?name={}&replace=true&labels={}",
+			"{API_PREFIX}/secrets/create?name={}&labels={}",
 			urlencoded(name),
 			urlencoded(&labels),
 		);
