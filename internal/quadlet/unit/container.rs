@@ -65,6 +65,11 @@ pub(crate) fn container_unit(
 	if service.read_only == Some(true) {
 		container.add("ReadOnly", "true".to_string());
 	}
+	if service.privileged == Some(true) {
+		// No dedicated [Container] key exists for privileged mode; pass it through
+		// as a raw podman flag, like the other escape-hatch fields.
+		container.add("PodmanArgs", "--privileged".to_string());
+	}
 	if service.init == Some(true) {
 		container.add("RunInit", "true".to_string());
 	}

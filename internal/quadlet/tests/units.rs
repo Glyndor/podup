@@ -130,8 +130,7 @@ fn warns_for_every_unmapped_field() {
 services:
   s:
     image: x
-    network_mode: "container:other"
-    privileged: true
+    network_mode: "bridge:custom"
     profiles: [debug]
     volumes_from:
       - other
@@ -141,13 +140,7 @@ services:
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
 	let joined = out.warnings.join("\n");
-	for needle in [
-		"network_mode",
-		"privileged",
-		"profiles",
-		"volumes_from",
-		"scale/replicas",
-	] {
+	for needle in ["network_mode", "profiles", "volumes_from", "scale/replicas"] {
 		assert!(joined.contains(needle), "expected warning for {needle}");
 	}
 }
@@ -333,4 +326,124 @@ volumes:
 	assert!(vol.contains("Options=addr=10.0.0.1,rw"), "in:\n{vol}");
 	// An option with no dedicated key falls back to PodmanArgs=--opt.
 	assert!(vol.contains("PodmanArgs=--opt custom=extra"), "in:\n{vol}");
+}
+
+#[test]
+fn healthcheck_start_interval_is_warned_and_omitted() {
+	// `start_interval` has no Quadlet/Podman equivalent: it must not emit a
+	// `HealthStartupInterval=` (which drives an unrelated, no-op startup
+	// healthcheck) and must instead produce a warning.
+	let yaml = r#"
+services:
+  s:
+    image: x
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 5s
+      start_interval: 2s
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "s.container").contents;
+	assert!(c.contains("HealthInterval=5s"), "in:\n{c}");
+	assert!(
+		!c.contains("HealthStartupInterval"),
+		"start_interval must not emit HealthStartupInterval=; got:\n{c}"
+	);
+	let joined = out.warnings.join("\n");
+	assert!(
+		joined.contains("start_interval"),
+		"start_interval must warn; got:\n{joined}"
+	);
+}
+
+#[test]
+fn dependency_unit_names_are_sanitized_in_ordering() {
+	// A dependency whose compose key sanitizes to a different stem must be
+	// referenced by that stem in After=/Requires=, matching the generated unit.
+	let yaml = r#"
+services:
+  web:
+    image: nginx
+    depends_on:
+      - "db:1"
+  ? "db:1"
+  : { image: postgres }
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "proj");
+	let web = &unit_named(&out, "web.container").contents;
+	assert!(web.contains("After=db_1.service"), "in:\n{web}");
+	assert!(web.contains("Requires=db_1.service"), "in:\n{web}");
+	// The raw, unsanitized name must not leak into the ordering directives.
+	assert!(!web.contains("db:1.service"), "in:\n{web}");
+	// The dependency's own unit really is named with the sanitized stem.
+	unit_named(&out, "db_1.container");
+}
+
+#[test]
+fn network_mode_service_and_container_map_to_dot_container() {
+	// `network_mode: service:X` / `container:X` reuse another container's netns,
+	// which Quadlet expresses as `Network={X}.container`.
+	for (mode, target) in [("service:db", "db"), ("container:sidecar", "sidecar")] {
+		let yaml = format!("services:\n  s:\n    image: x\n    network_mode: \"{mode}\"\n");
+		let file = parse_str(&yaml).unwrap();
+		let out = generate(&file, "p");
+		let c = &unit_named(&out, "s.container").contents;
+		assert!(
+			c.contains(&format!("Network={target}.container")),
+			"{mode} must map to Network={target}.container; got:\n{c}"
+		);
+	}
+}
+
+#[test]
+fn network_mode_service_target_is_sanitized() {
+	let yaml = "services:\n  s:\n    image: x\n    network_mode: \"service:web:1\"\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "s.container").contents;
+	assert!(c.contains("Network=web_1.container"), "in:\n{c}");
+}
+
+#[test]
+fn volume_and_network_units_have_no_install_section() {
+	let yaml = r#"
+services:
+  s:
+    image: x
+networks:
+  net:
+volumes:
+  vol:
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let net = &unit_named(&out, "net.network").contents;
+	let vol = &unit_named(&out, "vol.volume").contents;
+	assert!(
+		!net.contains("[Install]") && !net.contains("WantedBy"),
+		".network must carry no [Install]; got:\n{net}"
+	);
+	assert!(
+		!vol.contains("[Install]") && !vol.contains("WantedBy"),
+		".volume must carry no [Install]; got:\n{vol}"
+	);
+	// The container unit still carries its [Install].
+	let c = &unit_named(&out, "s.container").contents;
+	assert!(c.contains("[Install]") && c.contains("WantedBy=default.target"));
+}
+
+#[test]
+fn privileged_maps_to_podman_arg() {
+	let yaml = "services:\n  s:\n    image: x\n    privileged: true\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "s.container").contents;
+	assert!(c.contains("PodmanArgs=--privileged"), "in:\n{c}");
+	assert!(
+		!out.warnings.iter().any(|w| w.contains("privileged")),
+		"privileged must be mapped, not warned; got: {:?}",
+		out.warnings
+	);
 }
