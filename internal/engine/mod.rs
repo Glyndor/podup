@@ -289,8 +289,13 @@ impl Engine {
 	) -> Result<String> {
 		match index {
 			Some(i) => {
+				// `--index` is 1-based; `0` is an invalid index, not "first replica".
+				let idx = (i as usize).checked_sub(1).ok_or_else(|| {
+					ComposeError::ServiceNotFound(format!(
+						"{service_name} (replica index {i}: indexes are 1-based)"
+					))
+				})?;
 				let names = self.replica_names(service_name, service);
-				let idx = (i as usize).saturating_sub(1);
 				names.get(idx).cloned().ok_or_else(|| {
 					ComposeError::ServiceNotFound(format!("{service_name} (replica index {i})"))
 				})
@@ -330,4 +335,85 @@ fn walk_collect(dir: &std::path::Path, out: &mut Vec<PathBuf>) -> std::io::Resul
 		}
 	}
 	Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::libpod::Client;
+
+	fn engine(project: &str) -> Engine {
+		Engine::with_base_dir(
+			Client::new("/nonexistent.sock"),
+			project.into(),
+			std::env::temp_dir(),
+		)
+	}
+
+	fn scaled_service(replicas: u32) -> Service {
+		Service {
+			scale: Some(replicas),
+			..Service::default()
+		}
+	}
+
+	#[test]
+	fn replica_name_at_index_zero_is_rejected() {
+		// `--index` is 1-based; index 0 must be an error, never replica 1.
+		let e = engine("proj");
+		let svc = scaled_service(3);
+		let err = e
+			.replica_name_at("web", &svc, Some(0))
+			.expect_err("index 0 must be rejected");
+		assert!(
+			matches!(err, ComposeError::ServiceNotFound(ref m) if m.contains("1-based")),
+			"unexpected error: {err:?}"
+		);
+	}
+
+	#[test]
+	fn replica_name_at_index_one_is_first_replica() {
+		let e = engine("proj");
+		let svc = scaled_service(3);
+		assert_eq!(
+			e.replica_name_at("web", &svc, Some(1)).unwrap(),
+			"proj-web-1"
+		);
+	}
+
+	#[test]
+	fn replica_name_at_index_n_is_nth_replica() {
+		let e = engine("proj");
+		let svc = scaled_service(3);
+		assert_eq!(
+			e.replica_name_at("web", &svc, Some(3)).unwrap(),
+			"proj-web-3"
+		);
+	}
+
+	#[test]
+	fn replica_name_at_out_of_range_is_rejected() {
+		let e = engine("proj");
+		let svc = scaled_service(3);
+		assert!(e.replica_name_at("web", &svc, Some(4)).is_err());
+	}
+
+	#[test]
+	fn replica_name_at_none_is_first_replica() {
+		let e = engine("proj");
+		// Single replica: the unsuffixed container name.
+		assert_eq!(
+			e.replica_name_at("web", &Service::default(), None).unwrap(),
+			"proj-web"
+		);
+		// Multiple replicas: the first suffixed name.
+		assert_eq!(
+			e.replica_name_at("web", &scaled_service(3), None).unwrap(),
+			"proj-web-1"
+		);
+	}
 }
