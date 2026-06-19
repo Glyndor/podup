@@ -216,11 +216,66 @@ pub struct Service {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub gpus: Option<GpuSpec>,
 
+	/// `credential_spec:` — Windows managed-service-account credential source
+	/// (`config`/`file`/`registry`). Parsed for fidelity; podup has no rootless
+	/// Podman equivalent, so the diagnostics pass reports it as not honored.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub credential_spec: Option<CredentialSpec>,
+
+	/// `isolation:` — container isolation technology (e.g. `default`, `process`,
+	/// `hyperv`). Distinct from `build.isolation`. Parsed for fidelity; podup has
+	/// no rootless Podman equivalent, so it is reported as not honored.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub isolation: Option<String>,
+
+	/// `provider:` (Compose v2.36) — delegates the service lifecycle to an
+	/// external provider plugin. Parsed for fidelity; podup invokes no provider
+	/// plugins, so it is reported as not honored.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub provider: Option<ProviderConfig>,
+
+	/// `use_api_socket:` (Compose v2.37.1) — bind-mount the Docker API socket and
+	/// forward credentials into the container. Parsed for fidelity; podup has no
+	/// equivalent, so it is reported as not honored.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub use_api_socket: Option<bool>,
+
 	/// Keys present in the YAML that don't map to a known service field. Captured
 	/// (rather than silently dropped) so the parser can warn about likely typos
 	/// while still tolerating compose-spec `x-*` extensions and forward-compatible
 	/// keys. Not part of the container spec; round-tripped by the `config`
 	/// subcommand to preserve fidelity.
+	#[serde(flatten, default, skip_serializing_if = "IndexMap::is_empty")]
+	pub unknown: IndexMap<String, serde_yaml::Value>,
+}
+
+/// `credential_spec:` — source of a Windows managed-service-account credential
+/// spec. Exactly one of `config`/`file`/`registry` is expected per the Compose
+/// Spec; podup parses all three for fidelity but honors none.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[non_exhaustive]
+pub struct CredentialSpec {
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub config: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub file: Option<String>,
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	pub registry: Option<String>,
+	/// Forward-compatible keys captured so a typo is surfaced rather than dropped.
+	#[serde(flatten, default, skip_serializing_if = "IndexMap::is_empty")]
+	pub unknown: IndexMap<String, serde_yaml::Value>,
+}
+
+/// `provider:` (Compose v2.36) — names an external provider plugin (`type`) and
+/// its free-form `options`. Parsed for fidelity; podup invokes no providers.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[non_exhaustive]
+pub struct ProviderConfig {
+	#[serde(default, rename = "type", skip_serializing_if = "Option::is_none")]
+	pub provider_type: Option<String>,
+	#[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+	pub options: IndexMap<String, serde_yaml::Value>,
+	/// Forward-compatible keys captured so a typo is surfaced rather than dropped.
 	#[serde(flatten, default, skip_serializing_if = "IndexMap::is_empty")]
 	pub unknown: IndexMap<String, serde_yaml::Value>,
 }

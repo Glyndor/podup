@@ -194,6 +194,10 @@ pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) ->
 		deploy: override_svc.deploy.or(base.deploy),
 		develop: override_svc.develop.or(base.develop),
 		gpus: override_svc.gpus.or(base.gpus),
+		credential_spec: override_svc.credential_spec.or(base.credential_spec),
+		isolation: override_svc.isolation.or(base.isolation),
+		provider: override_svc.provider.or(base.provider),
+		use_api_socket: override_svc.use_api_socket.or(base.use_api_socket),
 		unknown: {
 			// Keep unknown keys from both sides so a typo in either the base or
 			// the overriding service is still surfaced; the override wins on

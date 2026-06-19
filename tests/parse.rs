@@ -10,5 +10,7 @@ mod extends;
 mod fields;
 #[path = "parse/include.rs"]
 mod include;
+#[path = "parse/new_keys.rs"]
+mod new_keys;
 #[path = "parse/order.rs"]
 mod order;
