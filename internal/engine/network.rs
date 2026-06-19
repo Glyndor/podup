@@ -124,9 +124,10 @@ pub(super) fn build_per_network_options(
 		if let Some(iface) = &c.interface_name {
 			opts.interface_name = Some(iface.clone());
 		}
-		if c.gw_priority.is_some() {
-			tracing::debug!("network gw_priority is not supported by Podman and is ignored");
-		}
+		// `gw_priority` has no Podman equivalent and is dropped. The user-facing
+		// notice is emitted once, at parse time, by the compose diagnostics (see
+		// internal/compose/diagnostics/ignored_fields.rs); re-emitting it here on
+		// every engine build would double-warn, so no engine-time log is needed.
 	} else if let Some(mac) = fallback_mac {
 		opts.static_mac = Some(mac.to_string());
 	}
