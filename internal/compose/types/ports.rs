@@ -13,11 +13,14 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum StringOrU16 {
+	/// String form, e.g. a quoted port or range like `"8080-8090"`.
 	String(String),
+	/// Numeric port form.
 	Number(u16),
 }
 
 impl StringOrU16 {
+	/// Returns the value as a string.
 	pub fn as_str_val(&self) -> String {
 		match self {
 			StringOrU16::String(s) => s.clone(),
@@ -53,19 +56,28 @@ mod tests {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum PortMapping {
+	/// Short form: a `host:container[/proto]` string.
 	Short(String),
+	/// Long form: each port field expressed individually.
 	Long {
+		/// Container port being exposed.
 		target: u16,
+		/// Host port (or range) the target is published to.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		published: Option<StringOrU16>,
+		/// Transport protocol (`tcp` or `udp`).
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		protocol: Option<String>,
+		/// Host IP to bind the published port to.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		host_ip: Option<String>,
+		/// Publishing mode (`host` or `ingress`).
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		mode: Option<String>,
+		/// Application-level protocol hint (e.g. `http`).
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		app_protocol: Option<String>,
+		/// Human-readable name for the port mapping.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		name: Option<String>,
 	},

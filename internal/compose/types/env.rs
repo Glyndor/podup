@@ -11,13 +11,17 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(untagged)]
 pub enum EnvVars {
+	/// The field was absent.
 	#[default]
 	Empty,
+	/// List form: `KEY=VAL` or bare `KEY` entries.
 	List(Vec<String>),
+	/// Map form: keys to optional values (a null value inherits from the host).
 	Map(IndexMap<String, Option<serde_yaml::Value>>),
 }
 
 impl EnvVars {
+	/// Returns the variables as a map, where `None` means inherit from the host.
 	pub fn to_map(&self) -> HashMap<String, Option<String>> {
 		match self {
 			EnvVars::Empty => HashMap::new(),
@@ -46,6 +50,7 @@ impl EnvVars {
 		}
 	}
 
+	/// Returns whether no environment variables are defined.
 	pub fn is_empty(&self) -> bool {
 		match self {
 			EnvVars::Empty => true,
@@ -59,17 +64,23 @@ impl EnvVars {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum EnvFileEntry {
+	/// Short form: a bare env file path.
 	Path(String),
+	/// Long form: an env file path with `required`/`format` options.
 	Config {
+		/// Path to the env file.
 		path: String,
+		/// Whether a missing file is an error; `true` if absent.
 		#[serde(skip_serializing_if = "Option::is_none")]
 		required: Option<bool>,
+		/// Env file format selector (e.g. `raw`).
 		#[serde(skip_serializing_if = "Option::is_none")]
 		format: Option<String>,
 	},
 }
 
 impl EnvFileEntry {
+	/// Returns the env file path.
 	pub fn path(&self) -> &str {
 		match self {
 			EnvFileEntry::Path(p) => p,
@@ -90,13 +101,17 @@ impl EnvFileEntry {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(untagged)]
 pub enum EnvFile {
+	/// The field was absent.
 	#[default]
 	Empty,
+	/// A single env file entry.
 	Single(EnvFileEntry),
+	/// A list of env file entries.
 	List(Vec<EnvFileEntry>),
 }
 
 impl EnvFile {
+	/// Returns all env file entries.
 	pub fn to_entries(&self) -> Vec<EnvFileEntry> {
 		match self {
 			EnvFile::Empty => vec![],
@@ -113,6 +128,7 @@ impl EnvFile {
 			.collect()
 	}
 
+	/// Returns whether no env files are defined.
 	pub fn is_empty(&self) -> bool {
 		match self {
 			EnvFile::Empty => true,
