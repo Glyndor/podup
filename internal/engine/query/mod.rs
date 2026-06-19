@@ -143,8 +143,13 @@ impl Engine {
 				.ports
 				.iter()
 				.map(|p| {
+					let proto = p
+						.protocol
+						.as_deref()
+						.map(|proto| format!("/{proto}"))
+						.unwrap_or_default();
 					format!(
-						"{}:{}->{}",
+						"{}:{}->{}{proto}",
 						p.host_ip.as_deref().unwrap_or(""),
 						p.host_port.unwrap_or(0),
 						p.container_port,
