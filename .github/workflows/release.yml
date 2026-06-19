@@ -60,7 +60,7 @@ jobs:
         # Gate the release on `cargo audit`: a RUSTSEC advisory in a pinned
         # dependency must block publishing, not wait for the weekly cron scan.
         run: |
-          cargo install cargo-audit --version "^0.22" --locked
+          cargo install cargo-audit --version "=0.22.2" --locked
           cargo audit
 
   build:
@@ -256,8 +256,8 @@ jobs:
         # Government/enterprise consumers require a machine-readable SBOM
         # (CycloneDX, per US EO 14028) and a third-party license attribution.
         run: |
-          cargo install --locked cargo-cyclonedx --version "^0.5"
-          cargo install --locked --features cli cargo-about --version "^0.9"
+          cargo install --locked cargo-cyclonedx --version "=0.5.9"
+          cargo install --locked --features cli cargo-about --version "=0.9.0"
           cargo cyclonedx --format json --all-features
           # cargo-cyclonedx names the file after the package (podup.cdx.json),
           # so only rename when an older/different layout emitted another name —
