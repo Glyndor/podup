@@ -219,13 +219,23 @@ pub(crate) fn container_unit(
 			container.add("StopTimeout", secs.to_string());
 		}
 	}
-	// `network_mode: host`/`none` map to `Network=host`/`Network=none`; other
-	// modes (service:/container:) have no Quadlet key and are reported by
+	// `network_mode: host`/`none` map to `Network=host`/`Network=none`.
+	// `service:X`/`container:X` reuse another container's netns, which Quadlet
+	// expresses as `Network={X}.container` (the `.container` special case);
+	// other modes (bridge:, custom, …) have no key and are reported by
 	// collect_warnings.
 	match service.network_mode.as_deref() {
 		Some("host") => container.add("Network", "host".to_string()),
 		Some("none") => container.add("Network", "none".to_string()),
-		_ => {}
+		Some(m) => {
+			if let Some(target) = m
+				.strip_prefix("service:")
+				.or_else(|| m.strip_prefix("container:"))
+			{
+				container.add("Network", format!("{}.container", safe_unit_stem(target)));
+			}
+		}
+		None => {}
 	}
 	for group in &service.group_add {
 		container.add("GroupAdd", group.clone());

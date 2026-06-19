@@ -30,15 +30,15 @@ pub(super) fn collect_warnings(name: &str, service: &Service, warnings: &mut Vec
 	if !service.volumes_from.is_empty() {
 		warn("volumes_from", "has no Quadlet equivalent and is skipped");
 	}
-	// `network_mode: host`/`none` map to `Network=`; other modes have no key.
-	if service
-		.network_mode
-		.as_deref()
-		.is_some_and(|m| m != "host" && m != "none")
-	{
+	// `host`/`none` map to `Network=`, and `service:X`/`container:X` map to
+	// `Network=X.container`; only the remaining modes (bridge:, custom, …) have
+	// no key.
+	if service.network_mode.as_deref().is_some_and(|m| {
+		m != "host" && m != "none" && !m.starts_with("service:") && !m.starts_with("container:")
+	}) {
 		warn(
 			"network_mode",
-			"is not mapped (only `host`/`none` are supported); use networks instead",
+			"is not mapped (only `host`/`none`/`service:`/`container:` are supported); use networks instead",
 		);
 	}
 	if !service.profiles.is_empty() {
