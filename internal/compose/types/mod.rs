@@ -76,6 +76,28 @@ pub struct ConfigConfig {
 	pub template_driver: Option<String>,
 }
 
+/// Top-level `models:` entry (Compose v2.38) — declares an AI model the
+/// project depends on. podup runs no model runner, so the diagnostics pass
+/// reports any declared model as not honored; the fields are parsed for
+/// fidelity and round-tripped by `config`.
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[non_exhaustive]
+pub struct ModelConfig {
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub model: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub name: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub context_size: Option<u64>,
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub runtime_flags: Vec<String>,
+	#[serde(default, skip_serializing_if = "HashMap::is_empty")]
+	pub model_variables: HashMap<String, String>,
+	/// Forward-compatible keys captured so a typo is surfaced rather than dropped.
+	#[serde(flatten, default, skip_serializing_if = "IndexMap::is_empty")]
+	pub unknown: IndexMap<String, serde_yaml::Value>,
+}
+
 /// Root deserialization target for a `docker-compose.yml` file.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[non_exhaustive]
@@ -96,6 +118,11 @@ pub struct ComposeFile {
 	pub secrets: IndexMap<String, SecretConfig>,
 	#[serde(default)]
 	pub configs: IndexMap<String, ConfigConfig>,
+	/// Top-level `models:` element (Compose v2.38). Parsed for fidelity; podup
+	/// runs no model runner, so the diagnostics pass reports declared models as
+	/// not honored.
+	#[serde(default)]
+	pub models: IndexMap<String, ModelConfig>,
 	/// Top-level `x-*` extension fields — preserved and round-tripped via `config` subcommand.
 	#[serde(flatten, default, skip_serializing_if = "IndexMap::is_empty")]
 	pub extensions: IndexMap<String, serde_yaml::Value>,
