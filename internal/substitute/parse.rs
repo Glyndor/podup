@@ -47,57 +47,59 @@ pub(super) enum Modifier {
 }
 
 /// Parse the content inside `${…}`.  The opening `{` has already been consumed.
+///
+/// The variable name is collected with [`is_var_char`] (matching the unbraced
+/// `$VAR` path and the compose-spec grammar). After the name, only a modifier
+/// delimiter (`}`, `:`, `-`, `+`, `?`) or end-of-input may follow; any other
+/// trailing character (a space in `${FOO BAR}`, a dot in `${FOO.BAR}`, …) makes
+/// the reference malformed and is rejected rather than folded into the lookup
+/// key.
 pub(super) fn parse_braced_var(
 	chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
 ) -> Result<(String, Modifier)> {
-	let mut name = String::new();
+	let name = collect_var_name(chars);
 
-	loop {
-		match chars.peek() {
-			None => {
-				return Ok((name, Modifier::None));
-			}
-			Some('}') => {
-				chars.next();
-				return Ok((name, Modifier::None));
-			}
-			Some(':') => {
-				chars.next();
-				// Peek at what follows `:`.
-				let modifier = match chars.peek() {
-					Some('-') => {
-						chars.next();
-						Modifier::DefaultIfUnsetOrEmpty(collect_until_close(chars))
-					}
-					Some('+') => {
-						chars.next();
-						Modifier::AltIfSetAndNonEmpty(collect_until_close(chars))
-					}
-					Some('?') => {
-						chars.next();
-						Modifier::ErrorIfUnsetOrEmpty(collect_until_close(chars))
-					}
-					_ => Modifier::DefaultIfUnsetOrEmpty(collect_until_close(chars)),
-				};
-				return Ok((name, modifier));
-			}
-			Some('-') => {
-				chars.next();
-				return Ok((name, Modifier::DefaultIfUnset(collect_until_close(chars))));
-			}
-			Some('+') => {
-				chars.next();
-				return Ok((name, Modifier::AltIfSet(collect_until_close(chars))));
-			}
-			Some('?') => {
-				chars.next();
-				return Ok((name, Modifier::ErrorIfUnset(collect_until_close(chars))));
-			}
-			Some(&c) => {
-				name.push(c);
-				chars.next();
-			}
+	match chars.peek() {
+		None => Ok((name, Modifier::None)),
+		Some('}') => {
+			chars.next();
+			Ok((name, Modifier::None))
 		}
+		Some(':') => {
+			chars.next();
+			// Peek at what follows `:`.
+			let modifier = match chars.peek() {
+				Some('-') => {
+					chars.next();
+					Modifier::DefaultIfUnsetOrEmpty(collect_until_close(chars))
+				}
+				Some('+') => {
+					chars.next();
+					Modifier::AltIfSetAndNonEmpty(collect_until_close(chars))
+				}
+				Some('?') => {
+					chars.next();
+					Modifier::ErrorIfUnsetOrEmpty(collect_until_close(chars))
+				}
+				_ => Modifier::DefaultIfUnsetOrEmpty(collect_until_close(chars)),
+			};
+			Ok((name, modifier))
+		}
+		Some('-') => {
+			chars.next();
+			Ok((name, Modifier::DefaultIfUnset(collect_until_close(chars))))
+		}
+		Some('+') => {
+			chars.next();
+			Ok((name, Modifier::AltIfSet(collect_until_close(chars))))
+		}
+		Some('?') => {
+			chars.next();
+			Ok((name, Modifier::ErrorIfUnset(collect_until_close(chars))))
+		}
+		Some(&c) => Err(ComposeError::InvalidSubstitution(format!(
+			"unexpected character {c:?} in variable name '${{{name}…}}'"
+		))),
 	}
 }
 
@@ -254,6 +256,46 @@ mod tests {
 		let mut it = peekable("V:x}");
 		let (_, modifier) = parse_braced_var(&mut it).unwrap();
 		assert!(matches!(modifier, Modifier::DefaultIfUnsetOrEmpty(s) if s == "x"));
+	}
+
+	// --- parse_braced_var: name validation ---
+
+	#[test]
+	fn parse_valid_braced_var() {
+		let mut it = peekable("FOO}");
+		let (name, modifier) = parse_braced_var(&mut it).unwrap();
+		assert_eq!(name, "FOO");
+		assert!(matches!(modifier, Modifier::None));
+	}
+
+	#[test]
+	fn parse_valid_braced_var_with_default() {
+		let mut it = peekable("FOO:-default}");
+		let (name, modifier) = parse_braced_var(&mut it).unwrap();
+		assert_eq!(name, "FOO");
+		assert!(matches!(modifier, Modifier::DefaultIfUnsetOrEmpty(s) if s == "default"));
+	}
+
+	#[test]
+	fn parse_braced_var_rejects_space_in_name() {
+		// `${FOO BAR}` must not produce a lookup key containing a space.
+		let mut it = peekable("FOO BAR}");
+		let err = parse_braced_var(&mut it).expect_err("space in name must be rejected");
+		assert!(
+			matches!(err, ComposeError::InvalidSubstitution(_)),
+			"{err:?}"
+		);
+	}
+
+	#[test]
+	fn parse_braced_var_rejects_dot_in_name() {
+		// `${FOO.BAR}` must not produce a lookup key containing a dot.
+		let mut it = peekable("FOO.BAR}");
+		let err = parse_braced_var(&mut it).expect_err("dot in name must be rejected");
+		assert!(
+			matches!(err, ComposeError::InvalidSubstitution(_)),
+			"{err:?}"
+		);
 	}
 
 	// --- resolve_modifier ---
