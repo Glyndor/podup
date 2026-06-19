@@ -186,10 +186,14 @@ impl Engine {
 		} else {
 			None
 		};
-		let platform = if let BuildConfig::Config { platforms, .. } = build {
-			platforms.first().cloned()
-		} else {
-			None
+		let platform = match build {
+			BuildConfig::Config { platforms, .. } => platforms.first().inspect(|first| {
+				let rest_count = platforms.len() - 1;
+				if rest_count > 0 {
+					warn!("build.platforms: libpod builds one platform per request; building {first}, ignoring {rest_count} other(s)");
+				}
+			}).cloned(),
+			_ => None,
 		};
 		let shmsize = build
 			.shm_size()

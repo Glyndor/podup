@@ -19,7 +19,8 @@ use super::container_config::{
 	build_ulimits, cdi_devices,
 };
 use super::container_fields::{
-	build_blkio_config, build_label_file_labels, parse_device, warn_swarm_only_deploy,
+	build_blkio_config, build_label_file_labels, parse_device, resolve_container_labels,
+	warn_swarm_only_deploy,
 };
 use super::network::resolve_network_mode;
 use super::volume_mounts::build_mounts_all;
@@ -112,15 +113,9 @@ impl Engine {
 
 		// --- Labels ---
 		let label_file_labels = build_label_file_labels(service, &self.base_dir);
-		let mut labels = service.labels.to_map();
-		for (k, v) in label_file_labels {
-			labels.entry(k).or_insert(v);
-		}
-		if let Some(deploy) = &service.deploy {
-			for (k, v) in deploy.labels.to_map() {
-				labels.entry(k).or_insert(v);
-			}
-		}
+		// Per the Compose Specification, deploy.labels are set on the service
+		// only and must NOT be applied to containers, so they are not merged here.
+		let mut labels = resolve_container_labels(service, label_file_labels);
 		labels.insert("podup.project".to_string(), self.project.clone());
 		labels.insert("podup.service".to_string(), service_name.to_string());
 		labels.insert("podup.config-hash".to_string(), config_hash(service, file)?);
