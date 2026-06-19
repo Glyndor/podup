@@ -284,7 +284,7 @@ pub(crate) fn container_unit(
 	for secret in &service.secrets {
 		container.add("Secret", render_secret(secret));
 	}
-	render_healthcheck(service, &mut container);
+	render_healthcheck(name, service, &mut container, warnings);
 
 	let mut svc = Section::new("Service");
 	if let Some(restart) = &service.restart {
