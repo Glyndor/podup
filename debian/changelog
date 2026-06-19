@@ -1,3 +1,31 @@
+podup (1.1.0) unstable; urgency=medium
+
+  * cli: docker-compose command and flag parity — new subcommands (scale, create,
+    ls, stats, push, events, attach, wait, commit, export, volumes) and extensive
+    flag coverage across up/down/run/exec/logs/pull/build/cp/config/rm/start/kill.
+  * engine: send stop_signal to libpod as an integer (string form returned HTTP
+    500, breaking container creation); capture protocol and range on the container
+    port response; tolerate a null network map in stats frames.
+  * engine: skip dependency readiness waits under `up --no-deps`; resolve a scaled
+    service target for `network_mode: service:<name>`; translate bind selinux
+    shared/private to z/Z; warn on external_links under rootless; keep deploy.labels
+    off containers (they are service-scoped per the Compose Specification); warn
+    when build.platforms lists more than one platform.
+  * compose: build context is now optional (dockerfile_inline-only builds);
+    non-dotenv env_file format warns instead of erroring; the first build tag is
+    used as the primary image when image: is unset; parse credential_spec,
+    isolation, provider, use_api_socket and the top-level models element.
+  * quadlet: skip the no-equivalent healthcheck start_interval with a warning;
+    sanitize dependency names in After=/Requires=/Wants=; map network_mode
+    service:/container: to Network=X.container; drop [Install] from .volume and
+    .network units; map privileged to PodmanArgs=--privileged.
+  * cli: reject --index 0 as out of range; validate braced substitution variable
+    names.
+  * build: pin SBOM and audit tooling to exact versions; refresh webpki-roots,
+    getrandom and syn.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 19 Jun 2026 12:00:00 -0500
+
 podup (1.0.0) unstable; urgency=medium
 
   * First stable release. The CLI and the crate-root library surface now carry
