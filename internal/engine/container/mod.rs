@@ -11,7 +11,7 @@ use crate::libpod::API_PREFIX;
 use crate::{ports, size};
 
 mod resolve;
-use resolve::{build_env, resolve_links, resolve_volume_name};
+use resolve::{build_env, resolve_links, resolve_stop_signal, resolve_volume_name};
 pub(crate) use resolve::{config_hash, resolve_bind_source};
 
 use super::container_config::{
@@ -183,6 +183,12 @@ impl Engine {
 			tracing::warn!("{warning}");
 		}
 
+		let stop_signal = service
+			.stop_signal
+			.as_deref()
+			.map(resolve_stop_signal)
+			.transpose()?;
+
 		let spec = SpecGenerator {
 			name: container_name.to_string(),
 			image: image.to_string(),
@@ -193,7 +199,7 @@ impl Engine {
 			stdin: service.stdin_open,
 			user: service.user.clone(),
 			work_dir: service.working_dir.clone(),
-			stop_signal: service.stop_signal.clone(),
+			stop_signal,
 			stop_timeout,
 			hostname: service.hostname.clone(),
 			domainname: service.domainname.clone(),
