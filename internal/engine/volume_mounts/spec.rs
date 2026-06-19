@@ -123,7 +123,21 @@ pub(super) fn extend_bind_opts_str(opts: &mut Vec<String>, b: Option<&BindOption
 		opts.push(p.clone());
 	}
 	if let Some(s) = &b.selinux {
-		opts.push(s.clone());
+		opts.push(map_selinux_option(s));
+	}
+}
+
+/// Translate a Compose `bind.selinux` value into the Podman mount option.
+///
+/// Compose spells the SELinux relabel mode as `shared`/`private`; Podman's mount
+/// options are `z` (shared label, usable by multiple containers) and `Z` (private
+/// label, scoped to one container). Map those two words; pass anything else
+/// through verbatim so a caller can still supply a raw `z`/`Z` directly.
+fn map_selinux_option(value: &str) -> String {
+	match value {
+		"shared" => "z".to_string(),
+		"private" => "Z".to_string(),
+		other => other.to_string(),
 	}
 }
 
@@ -136,7 +150,37 @@ pub(super) fn extend_volume_opts_str(opts: &mut Vec<String>, v: Option<&VolumeOp
 
 #[cfg(test)]
 mod tests {
-	use super::{is_bind_source, split_volume_spec};
+	use super::{extend_bind_opts_str, is_bind_source, map_selinux_option, split_volume_spec};
+	use crate::compose::types::BindOptions;
+
+	#[test]
+	fn selinux_shared_maps_to_lowercase_z() {
+		assert_eq!(map_selinux_option("shared"), "z");
+	}
+
+	#[test]
+	fn selinux_private_maps_to_uppercase_z() {
+		assert_eq!(map_selinux_option("private"), "Z");
+	}
+
+	#[test]
+	fn selinux_other_values_pass_through() {
+		// A raw Podman option (or any unrecognised value) is forwarded verbatim.
+		assert_eq!(map_selinux_option("z"), "z");
+		assert_eq!(map_selinux_option("Z"), "Z");
+		assert_eq!(map_selinux_option("custom"), "custom");
+	}
+
+	#[test]
+	fn extend_bind_opts_translates_selinux() {
+		let bind = BindOptions {
+			selinux: Some("private".into()),
+			..Default::default()
+		};
+		let mut opts = Vec::new();
+		extend_bind_opts_str(&mut opts, Some(&bind));
+		assert!(opts.contains(&"Z".to_string()), "expected Z, got {opts:?}");
+	}
 
 	#[test]
 	fn windows_drive_source_is_a_bind_not_a_named_volume() {
