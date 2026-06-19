@@ -84,11 +84,11 @@ networks:
 
 	assert_eq!(
 		unit(&out, "cache.volume"),
-		"[Volume]\nVolumeName=myproj_cache\n\n[Install]\nWantedBy=default.target\n"
+		"[Volume]\nVolumeName=myproj_cache\n"
 	);
 	assert_eq!(
 		unit(&out, "backend.network"),
-		"[Network]\nNetworkName=myproj_backend\n\n[Install]\nWantedBy=default.target\n"
+		"[Network]\nNetworkName=myproj_backend\n"
 	);
 }
 

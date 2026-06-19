@@ -32,8 +32,10 @@ pub(crate) fn volume_unit(name: &str, project: &str, config: Option<&VolumeConfi
 			vol.add("Label", format!("{key}={val}"));
 		}
 	}
-	let mut contents = vol.render();
-	contents.push_str("\n[Install]\nWantedBy=default.target\n");
+	// No [Install] section: the spec defines none for `.volume` units, which are
+	// pulled in automatically as dependencies of the `.container` units that use
+	// them. Only `.container` units carry [Install].
+	let contents = vol.render();
 	QuadletUnit {
 		filename: format!("{}.volume", safe_unit_stem(name)),
 		contents,

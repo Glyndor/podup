@@ -30,25 +30,19 @@ pub(super) fn collect_warnings(name: &str, service: &Service, warnings: &mut Vec
 	if !service.volumes_from.is_empty() {
 		warn("volumes_from", "has no Quadlet equivalent and is skipped");
 	}
-	// `network_mode: host`/`none` map to `Network=`; other modes have no key.
-	if service
-		.network_mode
-		.as_deref()
-		.is_some_and(|m| m != "host" && m != "none")
-	{
+	// `host`/`none` map to `Network=`, and `service:X`/`container:X` map to
+	// `Network=X.container`; only the remaining modes (bridge:, custom, …) have
+	// no key.
+	if service.network_mode.as_deref().is_some_and(|m| {
+		m != "host" && m != "none" && !m.starts_with("service:") && !m.starts_with("container:")
+	}) {
 		warn(
 			"network_mode",
-			"is not mapped (only `host`/`none` are supported); use networks instead",
+			"is not mapped (only `host`/`none`/`service:`/`container:` are supported); use networks instead",
 		);
 	}
 	if !service.profiles.is_empty() {
 		warn("profiles", "have no Quadlet equivalent and are ignored");
-	}
-	if service.privileged == Some(true) {
-		warn(
-			"privileged",
-			"is not mapped; add PodmanArgs manually if required",
-		);
 	}
 	if !service.post_start.is_empty() {
 		warn(
@@ -163,8 +157,7 @@ services:
     image: app:1.0
     build: .
     scale: 3
-    privileged: true
-    network_mode: "container:other"
+    network_mode: "bridge:custom"
     volumes_from:
       - other
     profiles:
@@ -193,7 +186,6 @@ configs:
 			"volumes_from",
 			"network_mode",
 			"profiles",
-			"privileged",
 		] {
 			assert!(
 				joined.contains(field),
@@ -205,6 +197,26 @@ configs:
 			!joined.contains("secrets"),
 			"secrets should be mapped, not warned; got:\n{joined}"
 		);
+		// privileged is now mapped to PodmanArgs=--privileged, not warned.
+		assert!(
+			!joined.contains("privileged"),
+			"privileged should be mapped, not warned; got:\n{joined}"
+		);
+	}
+
+	#[test]
+	fn service_and_container_network_modes_are_mapped_not_warned() {
+		// `service:X`/`container:X` map to `Network=X.container`, so they must not
+		// warn; only other unmapped modes (bridge:, custom, …) warn.
+		for mode in ["service:db", "container:other"] {
+			let yaml = format!("services:\n  s:\n    image: x\n    network_mode: \"{mode}\"\n");
+			let file = parse_str(&yaml).unwrap();
+			let joined = generate(&file, "proj").warnings.join("\n");
+			assert!(
+				!joined.contains("network_mode"),
+				"{mode} should be mapped, not warned; got:\n{joined}"
+			);
+		}
 	}
 
 	#[test]
