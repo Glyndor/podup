@@ -22,6 +22,7 @@ use super::container_fields::{
 	build_blkio_config, build_label_file_labels, parse_device, resolve_container_labels,
 	warn_swarm_only_deploy,
 };
+use super::container_security::{cdi_device, parse_device_cgroup_rule, parse_security_opts};
 use super::network::resolve_network_mode;
 use super::volume_mounts::build_mounts_all;
 use super::Engine;
@@ -138,7 +139,24 @@ impl Engine {
 		let ulimits = build_ulimits(service);
 
 		// --- Devices ---
-		let devices: Vec<_> = service.devices.iter().map(|s| parse_device(s)).collect();
+		let mut devices: Vec<_> = service.devices.iter().map(|s| parse_device(s)).collect();
+		// CDI device names ride in the same array; Podman pulls them out by path.
+		devices.extend(cdi_devices(service).into_iter().map(cdi_device));
+
+		// --- Security options (decomposed onto SpecGenerator fields) ---
+		let security = parse_security_opts(service);
+
+		// --- Device cgroup rules (parsed to structured form; skip malformed) ---
+		let device_cgroup_rule = service
+			.device_cgroup_rules
+			.iter()
+			.filter_map(|r| {
+				parse_device_cgroup_rule(r).or_else(|| {
+					tracing::warn!("device_cgroup_rules entry '{r}' is malformed and is ignored");
+					None
+				})
+			})
+			.collect();
 
 		// --- Namespace modes ---
 		let pidns = service.pid.as_deref().map(Namespace::parse);
@@ -204,7 +222,12 @@ impl Engine {
 			cap_drop: service.cap_drop.clone(),
 			privileged: service.privileged,
 			read_only_filesystem: service.read_only,
-			security_opt: service.security_opt.clone(),
+			selinux_opts: security.selinux_opts,
+			apparmor_profile: security.apparmor_profile,
+			seccomp_profile_path: security.seccomp_profile_path,
+			no_new_privileges: security.no_new_privileges,
+			mask: security.mask,
+			unmask: security.unmask,
 			sysctl,
 			expose,
 			portmappings,
@@ -233,8 +256,7 @@ impl Engine {
 			restart_policy,
 			restart_tries,
 			devices,
-			cdi_devices: cdi_devices(service),
-			device_cgroup_rule: service.device_cgroup_rules.clone(),
+			device_cgroup_rule,
 			groups: service.group_add.clone(),
 			oom_score_adj: service.oom_score_adj,
 			runtime: service.runtime.clone(),
