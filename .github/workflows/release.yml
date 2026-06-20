@@ -277,6 +277,10 @@ jobs:
             podup-windows-arm64.exe \
             podup_*_amd64.deb \
             podup_*_arm64.deb \
+            podup.cdx.json \
+            NOTICES.html \
+            install.sh \
+            install.ps1 \
             > SHA256SUMS
 
       - name: Sign SHA256SUMS and the Debian packages
@@ -302,6 +306,10 @@ jobs:
           # Sign the supply-chain artifacts so consumers can verify them offline.
           "$venv_py" .github/scripts/sign.py podup.cdx.json
           "$venv_py" .github/scripts/sign.py NOTICES.html
+          # Sign the installers so a user pinning PODUP_VERSION can verify the
+          # script they pipe to a shell, not just the binaries it fetches.
+          "$venv_py" .github/scripts/sign.py install.sh
+          "$venv_py" .github/scripts/sign.py install.ps1
 
       - name: Create GitHub Release
         env:
@@ -334,10 +342,12 @@ jobs:
             NOTICES.html \
             NOTICES.html.sig \
             install.sh \
-            install.ps1
+            install.sh.sig \
+            install.ps1 \
+            install.ps1.sig
 
       - name: Remove release artifacts
-        run: rm -f podup-* podup_* podup.cdx.json* NOTICES.html* SHA256SUMS SHA256SUMS.sig
+        run: rm -f podup-* podup_* podup.cdx.json* NOTICES.html* SHA256SUMS SHA256SUMS.sig install.sh.sig install.ps1.sig
 
       - name: Publish to crates.io
         env:
