@@ -267,7 +267,10 @@ impl Engine {
 			if !service_in_profiles(dep_service, active) {
 				continue;
 			}
-			let dep_container = self.container_name(&dep, dep_service);
+			// A scaled dependency (`deploy.replicas`/`scale`/`--scale` > 1) has
+			// no base-named container; its replicas are `{base}-1..N`. Wait on the
+			// first replica, matching `wait_services_healthy`.
+			let dep_container = self.first_replica_name(&dep, dep_service);
 
 			let wait = match condition {
 				ServiceCondition::ServiceStarted => Ok(()),
