@@ -331,6 +331,7 @@ impl Engine {
 
 #[cfg(feature = "test-helpers")]
 impl Engine {
+	/// Test seam: copy `src` into `container` at `target` via the watch sync path.
 	pub async fn test_sync_to_container(
 		&self,
 		container: &str,
@@ -340,10 +341,12 @@ impl Engine {
 		self.sync_to_container(container, src, target).await
 	}
 
+	/// Test seam: run the watch restart action against `container_name`.
 	pub async fn test_watch_restart(&self, container_name: &str) -> Result<()> {
 		self.watch_restart(container_name).await
 	}
 
+	/// Test seam: run the watch exec action (`cmd`) against `container_name`.
 	pub async fn test_watch_exec(&self, container_name: &str, cmd: Vec<String>) -> Result<()> {
 		self.watch_exec(container_name, cmd).await
 	}

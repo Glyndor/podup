@@ -142,13 +142,13 @@ selects a replica (1-based) of a scaled service.
 
 | Command | Description |
 |---|---|
-| `ps` | List project containers. |
+| `ps` | List project containers. `-a/--all` includes stopped containers, `-q/--quiet` prints container IDs only, `--format table\|json`. |
 | `ls` | List podup compose projects on the host. `-a/--all` includes stopped projects, `-q/--quiet` prints names only, `--format table\|json`. Needs no compose file. |
 | `top` | Show running processes of service containers. |
 | `stats` | Live resource usage (CPU, memory, network, block I/O, PIDs) for service containers. `--no-stream` prints one snapshot; a trailing service list narrows it. |
 | `port <SERVICE> <PRIVATE_PORT>` | Print the public binding for a port. `--proto` sets `tcp`/`udp` (default `tcp`). |
 | `events` | Stream Podman events for this project's containers. `--json` emits each event as a JSON line instead of a summary. |
-| `images` | List images used by services. |
+| `images` | List images used by services. `-q/--quiet` prints image IDs only, `--format table\|json`. |
 | `volumes [SERVICE...]` | List the project's named volumes. `-q/--quiet` prints names only, `--format table\|json`; a trailing service list narrows it to volumes those services mount. |
 | `logs [SERVICE]` | View container output. `-f/--follow` streams new output, `-n/--tail <N>` limits to the last N lines, `--since`/`--until` bound by time, `-t/--timestamps` prefixes each line. |
 | `config` | Print the resolved compose file (after substitution, extends, include). `--format yaml\|json`, `--services` lists service names, `-q/--quiet` only validates, `--no-interpolate` leaves `${VAR}` placeholders literal, `--resolve-image-digests` rewrites each service `image:` to its registry digest (`repo@sha256:...`). |
