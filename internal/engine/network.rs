@@ -231,19 +231,14 @@ pub(super) fn resolve_network_name(network: &str, file: &ComposeFile, project: &
 }
 
 fn build_subnets(ipam: &IpamConfig) -> Vec<Subnet> {
+	// aux_addresses are reported by the parse-time diagnostics pass (they are not
+	// supported by Podman), so the drop is surfaced there rather than logged here.
 	ipam.config
 		.iter()
-		.map(|pool| {
-			if !pool.aux_addresses.is_empty() {
-				tracing::warn!(
-					"ipam aux_addresses are not supported by Podman and will be ignored"
-				);
-			}
-			Subnet {
-				subnet: pool.subnet.clone(),
-				gateway: pool.gateway.clone(),
-				lease_range: pool.ip_range.as_deref().and_then(lease_range_from_cidr),
-			}
+		.map(|pool| Subnet {
+			subnet: pool.subnet.clone(),
+			gateway: pool.gateway.clone(),
+			lease_range: pool.ip_range.as_deref().and_then(lease_range_from_cidr),
 		})
 		.collect()
 }
