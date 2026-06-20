@@ -1,3 +1,13 @@
+podup (1.1.1) unstable; urgency=medium
+
+  * engine: drive healthchecks on demand instead of relying on Podman's
+    systemd-scheduled timers, so `up --wait` and `depends_on: service_healthy`
+    complete in environments without systemd (containers, minimal hosts) rather
+    than hanging until the timeout. Restores docker-compose parity for
+    healthcheck-gated startup.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 19 Jun 2026 17:00:00 -0500
+
 podup (1.1.0) unstable; urgency=medium
 
   * cli: docker-compose command and flag parity — new subcommands (scale, create,
