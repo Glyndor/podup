@@ -165,6 +165,57 @@ pub(super) fn ignored_network_fields(file: &ComposeFile, out: &mut Vec<String>) 
 					 enable IPv4 by default and expose no toggle"
 				));
 			}
+			if let Some(ipam) = &c.ipam {
+				if ipam
+					.config
+					.iter()
+					.any(|pool| !pool.aux_addresses.is_empty())
+				{
+					out.push(format!(
+						"network '{name}': ipam aux_addresses are not supported by Podman \
+						 and are ignored"
+					));
+				}
+			}
+		}
+	}
+}
+
+/// `network_mode: bridge` behaves differently on Docker and Podman. docker-compose
+/// attaches the container to Docker's predefined shared `bridge` network; Podman
+/// reads `--network bridge` as "create a fresh, isolated bridge netns", so the
+/// container has connectivity but cannot reach its project siblings.
+pub(super) fn diverging_network_mode(file: &ComposeFile, out: &mut Vec<String>) {
+	for (service, def) in &file.services {
+		if def.network_mode.as_deref() == Some("bridge") {
+			out.push(format!(
+				"service '{service}': network_mode 'bridge' attaches to a fresh isolated \
+				 bridge under Podman, not Docker's shared default bridge, so project \
+				 siblings are unreachable; declare a shared `networks:` entry instead"
+			));
+		}
+	}
+}
+
+/// `deploy.restart_policy` sub-fields with no Podman restart-policy equivalent.
+/// Only `condition` and `max_attempts` are honored (see container_config); Podman
+/// has no first-class restart delay or attempt-counting window.
+pub(super) fn ignored_restart_policy_fields(file: &ComposeFile, out: &mut Vec<String>) {
+	for (service, def) in &file.services {
+		let Some(drp) = def.deploy.as_ref().and_then(|d| d.restart_policy.as_ref()) else {
+			continue;
+		};
+		if drp.delay.is_some() {
+			out.push(format!(
+				"service '{service}': deploy.restart_policy.delay has no Podman equivalent \
+				 and is ignored"
+			));
+		}
+		if drp.window.is_some() {
+			out.push(format!(
+				"service '{service}': deploy.restart_policy.window has no Podman equivalent \
+				 and is ignored"
+			));
 		}
 	}
 }
