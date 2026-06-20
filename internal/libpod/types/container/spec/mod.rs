@@ -92,7 +92,9 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub netns: Option<Namespace>,
 
-	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	// Podman's SpecGenerator names this field `hostadd` (there is no `extra_hosts`
+	// key); without the rename every extra_hosts entry is silently dropped.
+	#[serde(rename = "hostadd", skip_serializing_if = "Vec::is_empty", default)]
 	pub extra_hosts: Vec<String>,
 
 	#[serde(skip_serializing_if = "Vec::is_empty", default)]
@@ -142,7 +144,10 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub resource_limits: Option<LinuxResources>,
 
-	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	// Podman's SpecGenerator names this field `r_limits` (POSIX rlimits); without
+	// the rename every ulimits entry is silently dropped. The per-element shape
+	// (`{type, soft, hard}`) already matches Podman's POSIXRlimit.
+	#[serde(rename = "r_limits", skip_serializing_if = "Vec::is_empty", default)]
 	pub ulimits: Vec<Ulimit>,
 
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -208,4 +213,40 @@ pub struct SpecGenerator {
 	// Storage options
 	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
 	pub storage_opts: HashMap<String, String>,
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{SpecGenerator, Ulimit};
+
+	#[test]
+	fn extra_hosts_serialize_as_hostadd() {
+		let spec = SpecGenerator {
+			extra_hosts: vec!["db:10.0.0.2".to_string()],
+			..Default::default()
+		};
+		let v = serde_json::to_value(&spec).unwrap();
+		// Podman's SpecGenerator key is `hostadd`; `extra_hosts` matches no field
+		// and is silently dropped.
+		assert_eq!(v["hostadd"][0], "db:10.0.0.2");
+		assert!(v.get("extra_hosts").is_none(), "stale extra_hosts key: {v}");
+	}
+
+	#[test]
+	fn ulimits_serialize_as_r_limits_with_posix_shape() {
+		let spec = SpecGenerator {
+			ulimits: vec![Ulimit {
+				ulimit_type: "nofile".to_string(),
+				soft: 1024,
+				hard: 2048,
+			}],
+			..Default::default()
+		};
+		let v = serde_json::to_value(&spec).unwrap();
+		// Podman's key is `r_limits`; the element shape is POSIXRlimit {type, soft, hard}.
+		assert!(v.get("ulimits").is_none(), "stale ulimits key: {v}");
+		assert_eq!(v["r_limits"][0]["type"], "nofile");
+		assert_eq!(v["r_limits"][0]["soft"], 1024);
+		assert_eq!(v["r_limits"][0]["hard"], 2048);
+	}
 }
