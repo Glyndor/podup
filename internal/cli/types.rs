@@ -17,7 +17,7 @@ pub(crate) enum OutputFormat {
 pub(crate) enum RmiScope {
 	/// All images used by the project's services.
 	All,
-	/// Only images without a custom tag (services that build locally).
+	/// Only images built locally from a service `build:` section.
 	Local,
 }
 
