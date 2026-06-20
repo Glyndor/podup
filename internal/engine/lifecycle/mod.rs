@@ -267,7 +267,8 @@ impl Engine {
 			if !service_in_profiles(dep_service, active) {
 				continue;
 			}
-			let dep_container = self.container_name(&dep, dep_service);
+			// Scaled dep has no base-named container; wait on its first replica.
+			let dep_container = self.first_replica_name(&dep, dep_service);
 
 			let wait = match condition {
 				ServiceCondition::ServiceStarted => Ok(()),

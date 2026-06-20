@@ -213,6 +213,26 @@ async fn depends_on_service_completed() {
 	engine.down(&file).await.unwrap();
 }
 
+// Regression: a dependency scaled to >1 has no base-named container, only
+// `{base}-1..N`. The readiness wait must target the first replica, not the
+// (nonexistent) base name, or `up` 404s and aborts despite the dep completing.
+#[tokio::test]
+async fn depends_on_scaled_service_completed() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("cmpscale");
+	let engine = Engine::new(client, proj.clone());
+	let file = parse_str(
+		"services:\n  init:\n    image: alpine:latest\n    command: [\"sh\", \"-c\", \"exit 0\"]\n    deploy:\n      replicas: 2\n  app:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    depends_on:\n      init:\n        condition: service_completed_successfully\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	engine.down(&file).await.unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // Profiles
 // ---------------------------------------------------------------------------
