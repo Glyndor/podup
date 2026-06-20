@@ -7,7 +7,8 @@
 //! extending service's items, with duplicates removed — not replaced wholesale.
 
 use super::super::types::{
-	DependsOn, EnvFile, EnvVars, Labels, Service, ServiceNetworks, StringOrList, Sysctls,
+	DependsOn, DependsOnCondition, EnvFile, EnvVars, Labels, Service, ServiceCondition,
+	ServiceNetworks, StringOrList, Sysctls,
 };
 
 pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) -> Service {
@@ -83,6 +84,43 @@ pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) ->
 		}
 	}
 
+	// compose-go unions `depends_on` across `extends`: the base's dependencies and
+	// the extending service's are both kept, the override winning per service key
+	// (same rule as `environment`). A bare-list entry canonicalizes to the default
+	// `service_started` condition, which matches `DependsOn`'s list-form defaults.
+	fn merge_depends_on(base: DependsOn, over: DependsOn) -> DependsOn {
+		if matches!(over, DependsOn::Empty) {
+			return base;
+		}
+		if matches!(base, DependsOn::Empty) {
+			return over;
+		}
+		fn to_map(d: DependsOn) -> indexmap::IndexMap<String, DependsOnCondition> {
+			match d {
+				DependsOn::Empty => indexmap::IndexMap::new(),
+				DependsOn::List(v) => v
+					.into_iter()
+					.map(|name| {
+						(
+							name,
+							DependsOnCondition {
+								condition: ServiceCondition::ServiceStarted,
+								restart: None,
+								required: None,
+							},
+						)
+					})
+					.collect(),
+				DependsOn::Map(m) => m,
+			}
+		}
+		let mut merged = to_map(base);
+		for (k, v) in to_map(over) {
+			merged.insert(k, v);
+		}
+		DependsOn::Map(merged)
+	}
+
 	Service {
 		image: opt(override_svc.image, base.image),
 		build: override_svc.build.or(base.build),
@@ -113,11 +151,7 @@ pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) ->
 		dns_search: merge_sol(base.dns_search, override_svc.dns_search),
 		dns_opt: merge_sol(base.dns_opt, override_svc.dns_opt),
 		network_mode: override_svc.network_mode.or(base.network_mode),
-		depends_on: if matches!(override_svc.depends_on, DependsOn::Empty) {
-			base.depends_on
-		} else {
-			override_svc.depends_on
-		},
+		depends_on: merge_depends_on(base.depends_on, override_svc.depends_on),
 		healthcheck: override_svc.healthcheck.or(base.healthcheck),
 		restart: override_svc.restart.or(base.restart),
 		stop_signal: override_svc.stop_signal.or(base.stop_signal),
@@ -306,6 +340,56 @@ services:
 		assert_eq!(
 			file.services["app"].depends_on.service_names(),
 			vec!["db".to_string()]
+		);
+	}
+
+	#[test]
+	fn extends_unions_depends_on() {
+		let yaml = r#"
+services:
+  db:
+    image: postgres
+  cache:
+    image: redis
+  base:
+    image: alpine
+    depends_on:
+      - db
+  app:
+    extends: base
+    depends_on:
+      - cache
+"#;
+		let file = parse_str(yaml).unwrap();
+		// compose-go unions the base and extending depends_on rather than letting
+		// the override replace the base wholesale.
+		let mut names = file.services["app"].depends_on.service_names();
+		names.sort();
+		assert_eq!(names, vec!["cache".to_string(), "db".to_string()]);
+	}
+
+	#[test]
+	fn extends_depends_on_override_wins_on_conflict() {
+		let yaml = r#"
+services:
+  db:
+    image: postgres
+  base:
+    image: alpine
+    depends_on:
+      db:
+        condition: service_started
+  app:
+    extends: base
+    depends_on:
+      db:
+        condition: service_healthy
+"#;
+		let file = parse_str(yaml).unwrap();
+		// On an overlapping key the extending service's condition wins.
+		assert_eq!(
+			file.services["app"].depends_on.condition_for("db"),
+			crate::compose::types::ServiceCondition::ServiceHealthy
 		);
 	}
 

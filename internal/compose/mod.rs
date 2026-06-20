@@ -182,6 +182,9 @@ fn merge_override(target: &mut ComposeFile, other: ComposeFile) {
 	for (k, v) in other.configs {
 		target.configs.insert(k, v);
 	}
+	for (k, v) in other.models {
+		target.models.insert(k, v);
+	}
 }
 
 /// Parse a compose YAML string (no file I/O).
@@ -284,6 +287,26 @@ mod tests {
 		let yaml = "services:\n  web:\n    image: nginx\n    environment:\n      - A=1\n";
 		let file = parse_str_raw(yaml).unwrap();
 		assert!(file.services["web"].unknown.is_empty());
+	}
+
+	// Multi-file `-f` override merge
+
+	#[test]
+	fn merge_override_adds_models_and_override_wins() {
+		use crate::compose::types::ModelConfig;
+		let model = |m: &str| ModelConfig {
+			model: Some(m.to_string()),
+			..Default::default()
+		};
+		let mut target = ComposeFile::default();
+		target.models.insert("llm".to_string(), model("base/m"));
+		let mut other = ComposeFile::default();
+		other.models.insert("llm".to_string(), model("over/m"));
+		other.models.insert("extra".to_string(), model("e/m"));
+		merge_override(&mut target, other);
+		// Override file wins on conflict; the override-only model is added.
+		assert_eq!(target.models["llm"].model.as_deref(), Some("over/m"));
+		assert_eq!(target.models["extra"].model.as_deref(), Some("e/m"));
 	}
 
 	// YAML merge keys (<<)
