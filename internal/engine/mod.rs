@@ -16,6 +16,7 @@ pub use lock::ProjectLock;
 pub use query::{ExecOptions, ImagesOptions, LogsOptions, PsOptions};
 mod container_config;
 mod container_fields;
+mod container_security;
 mod health;
 mod lifecycle;
 mod lock;
