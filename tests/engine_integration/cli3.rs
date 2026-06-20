@@ -194,6 +194,12 @@ async fn cli_down_rmi_all_succeeds_and_removes_containers() {
 	// throwaway, project-unique local image and reference THAT here. Removing it
 	// leaves `alpine:latest` intact for the concurrent tests.
 	let throwaway = format!("localhost/podup-rmitest-{proj}:latest");
+	// In a clean environment `alpine:latest` may not be pulled yet, so `podman
+	// tag` would fail with "image not known". Pull first; ignore the result so a
+	// pre-existing image (or an offline cache) still works.
+	let _ = Command::new("podman")
+		.args(["pull", "alpine:latest"])
+		.output();
 	let tag = Command::new("podman")
 		.args(["tag", "alpine:latest", &throwaway])
 		.output()
