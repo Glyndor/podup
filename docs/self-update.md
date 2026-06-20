@@ -49,6 +49,11 @@ a trust anchor, so a verifier (`gh` or `python3` + `cryptography`) must be prese
 at install time. The `--apt` path likewise verifies the keyring package's Ed25519
 signature before installing it as root.
 
+`install.sh` and `install.ps1` are themselves listed in the signed `SHA256SUMS`
+manifest and carry their own `install.sh.sig` / `install.ps1.sig`, so a user
+pinning a version can verify the script before piping it to a shell — the script
+is no longer the one unverifiable link in the chain.
+
 ## The embedded public keys
 
 Each consumer holds **up to two** accepted release keys — an active key plus an
