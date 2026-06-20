@@ -267,9 +267,7 @@ impl Engine {
 			if !service_in_profiles(dep_service, active) {
 				continue;
 			}
-			// A scaled dependency (`deploy.replicas`/`scale`/`--scale` > 1) has
-			// no base-named container; its replicas are `{base}-1..N`. Wait on the
-			// first replica, matching `wait_services_healthy`.
+			// Scaled dep has no base-named container; wait on its first replica.
 			let dep_container = self.first_replica_name(&dep, dep_service);
 
 			let wait = match condition {
