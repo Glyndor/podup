@@ -16,10 +16,9 @@ Recommends: podman (>= 5.0)
 Description: docker-compose translator and runner for rootless Podman
  podup parses docker-compose.yml files and drives rootless Podman to
  create the equivalent containers, networks and volumes. It provides
- the full compose workflow (up, down, start, stop, ps, logs, exec, run,
- cp, build, pull, restart, rm, kill, pause, unpause, top, port, images,
- config, watch) as a single static binary with no daemon and no Python
- runtime.
+ the full Compose workflow — lifecycle, build/push, exec/run, inspection
+ and Quadlet generation — as a single static binary with no daemon and
+ no Python runtime. Run `podup --help` for the complete command list.
  .
  It supports compose-spec parsing including YAML anchors, extends,
  include, profiles, env_file and variable substitution, with
