@@ -37,6 +37,11 @@ fn append_context<W: std::io::Write>(
 }
 
 /// Append synthesized files (e.g. build secrets) to `tar` at the context root.
+///
+/// Build-secret bytes are placed in the build context as `.podup-build-secret-*`
+/// entries so the libpod build endpoint can expose them through its BuildKit
+/// `secrets=id=NAME,src=ENTRY` mount; they ride inside the context tar by design
+/// of that mount mechanism and are not part of the user's source tree.
 fn append_extra_files<W: std::io::Write>(
 	tar: &mut tar::Builder<W>,
 	extra_files: &[(String, Vec<u8>)],
