@@ -1,5 +1,5 @@
-//! Further CLI binary integration tests (kept separate from cli2.rs to stay
-//! under the source line limit).
+//! Further CLI binary integration tests (kept separate from cli_commands.rs to
+//! stay under the source line limit).
 use std::fs;
 use std::process::Command;
 use tempfile::tempdir;
