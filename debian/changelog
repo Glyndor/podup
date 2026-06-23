@@ -1,3 +1,25 @@
+podup (1.2.0) unstable; urgency=medium
+
+  * quadlet: map `security_opt` mask/unmask to the corresponding [Container]
+    keys and warn on fields that have no Quadlet equivalent instead of dropping
+    them silently.
+  * libpod: correct the wire keys for `extra_hosts`, `ulimits` and volume
+    `driver_opts`, and decompose `security_opt`, structure `device_cgroup_rule`
+    and route CDI devices natively, so these compose fields reach Podman 5
+    intact.
+  * compose: surface `network_mode: bridge`, `aux_addresses` and
+    `restart_policy` fields that were being dropped; union `depends_on` across
+    `extends` and merge top-level models correctly.
+  * engine: wait on the first replica when a scaled service is referenced by
+    `depends_on`, so scaled startup ordering matches docker-compose.
+  * packaging: drop the no-op `CARGO_UNSTABLE_OFFLINE`, refresh the control
+    description, and inherit the org-wide community-health files instead of
+    carrying stale local copies.
+  * release: sign the installers, cover the SBOM and NOTICES in SHA256SUMS, and
+    clean the build tree before packaging.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Mon, 22 Jun 2026 12:00:00 -0500
+
 podup (1.1.1) unstable; urgency=medium
 
   * engine: drive healthchecks on demand instead of relying on Podman's
