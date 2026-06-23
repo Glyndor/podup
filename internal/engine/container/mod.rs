@@ -10,7 +10,9 @@ use crate::libpod::urlencoded;
 use crate::libpod::API_PREFIX;
 use crate::{ports, size};
 
+mod fields;
 mod resolve;
+mod security;
 use resolve::{
 	build_env, resolve_links, resolve_stop_signal, resolve_volume_name, resolve_volumes_from,
 };
@@ -20,14 +22,14 @@ use super::container_config::{
 	build_healthcheck, build_log_config, build_resource_limits, build_restart_policy,
 	build_ulimits, cdi_devices,
 };
-use super::container_fields::{
-	build_blkio_config, build_label_file_labels, parse_device, resolve_container_labels,
-	warn_swarm_only_deploy,
-};
-use super::container_security::{cdi_device, parse_device_cgroup_rule, parse_security_opts};
 use super::network::resolve_network_mode;
 use super::volume_mounts::build_mounts_all;
 use super::Engine;
+use fields::{
+	build_blkio_config, build_label_file_labels, parse_device, resolve_container_labels,
+	warn_swarm_only_deploy,
+};
+use security::{cdi_device, parse_device_cgroup_rule, parse_security_opts};
 
 impl Engine {
 	pub(super) async fn create_and_start(

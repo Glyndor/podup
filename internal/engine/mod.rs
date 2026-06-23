@@ -3,20 +3,17 @@
 //! Translates a parsed [`ComposeFile`] into Podman API calls via the libpod REST API.
 
 mod build;
-mod config_digests;
-pub use config_digests::resolve_image_digests;
-mod commit_export;
 mod container;
 mod copy;
 mod events;
+mod image;
 pub use build::{BuildOptions, PullOptions, PushOptions};
 pub use copy::CpOptions;
+pub use image::resolve_image_digests;
 pub use lifecycle::{RunOptions, RunOverrides};
 pub use lock::ProjectLock;
 pub use query::{ExecOptions, ImagesOptions, LogsOptions, PsOptions};
 mod container_config;
-mod container_fields;
-mod container_security;
 mod health;
 mod lifecycle;
 mod lock;
@@ -30,8 +27,7 @@ mod staging;
 mod stats;
 pub use staging::is_safe_project_name;
 mod volume;
-mod volumes_list;
-pub use volumes_list::VolumesOptions;
+pub use volume::VolumesOptions;
 mod volume_mounts;
 #[cfg(feature = "watch")]
 mod watch;

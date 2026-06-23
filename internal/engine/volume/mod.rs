@@ -16,6 +16,9 @@ use crate::libpod::{urlencoded, API_PREFIX};
 
 use super::Engine;
 
+mod list;
+pub use list::VolumesOptions;
+
 impl Engine {
 	pub(super) async fn create_volumes(&self, file: &ComposeFile) -> Result<()> {
 		for (name, config) in &file.volumes {

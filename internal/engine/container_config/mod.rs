@@ -1,7 +1,7 @@
 //! Pure configuration builders for container creation: restart policy, logging,
 //! healthcheck, resource limits, and ulimits.
 //!
-//! Device, blkio, tmpfs, and label-file helpers live in [`super::container_fields`].
+//! Device, blkio, tmpfs, and label-file helpers live in [`super::container::fields`].
 
 use crate::compose::types::{
 	Command as ComposeCommand, HealthCheck, LoggingConfig, RestartPolicy as ComposeRestart, Service,
