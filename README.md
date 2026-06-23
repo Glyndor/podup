@@ -132,6 +132,46 @@ podup generate quadlet -o ~/.config/containers/systemd  # emit systemd Quadlet u
 | Platforms | Linux · macOS · Windows (single binary) | Linux · macOS · Windows | wherever Python runs |
 | Compose-spec depth | `extends`, profiles, `develop.watch`, inline secrets/configs | full | partial |
 
+## 📊 Benchmarks
+
+Wall-clock medians, lower is better. **podup** and **podman-compose** both drive
+the same Podman, so this is a pure *tool* comparison — identical engine, identical
+digest-pinned and pre-pulled images, identical compose file per scenario. Each
+number is the median over 10 measured iterations (2 warm-up runs discarded), with
+p95 and standard deviation alongside.
+
+| scenario | op | podup | podman-compose |
+|---|---|---|---|
+| single | up | **0.102** (p95 0.111, sd 0.004) | 0.673 (p95 0.696, sd 0.012) |
+| single | down | **0.146** (p95 0.163, sd 0.009) | 0.609 (p95 0.655, sd 0.021) |
+| multi-healthcheck | up | **0.272** (p95 1.348, sd 0.531) | 1.056 (p95 1.161, sd 0.040) |
+| multi-healthcheck | down | **0.305** (p95 0.352, sd 0.044) | 0.774 (p95 0.832, sd 0.027) |
+| scale (×5) | up | **0.431** (p95 0.455, sd 0.017) | 0.706 (p95 0.747, sd 0.021) |
+| scale (×5) | down | **0.444** (p95 0.464, sd 0.013) | 0.628 (p95 0.657, sd 0.015) |
+| network + IPAM | up | **0.120** (p95 0.133, sd 0.005) | 1.002 (p95 1.036, sd 0.013) |
+| network + IPAM | down | **0.218** (p95 0.233, sd 0.008) | 0.763 (p95 0.807, sd 0.030) |
+| volume-heavy | up | **0.116** (p95 0.142, sd 0.009) | 1.565 (p95 1.713, sd 0.054) |
+| volume-heavy | down | **0.163** (p95 0.175, sd 0.008) | 0.940 (p95 0.993, sd 0.033) |
+| warm restart | warm up | **0.027** (p95 0.033, sd 0.004) | 0.660 (p95 0.707, sd 0.023) |
+| many-services (12) | up | **0.462** (p95 0.493, sd 0.028) | 3.777 (p95 4.345, sd 0.220) |
+| many-services (12) | down | **0.964** (p95 1.010, sd 0.017) | 1.960 (p95 2.211, sd 0.087) |
+
+Host: AMD Ryzen 7 5700X (16 threads), Linux 6.17 x86_64, CPU governor
+`performance`, Podman 5.4.2, podman-compose 1.3.0; the tool process pinned with
+`taskset`. Measured 2026-06-23. On `multi-healthcheck` the high p95/stdev on
+podup's `up` is the `service_healthy` gate — it waits on the dependency's
+healthcheck interval, so the tail varies; the median still leads.
+
+> **docker-compose is not in this table.** It drives `dockerd`, a different
+> daemon, so including it would be an end-to-end *stack* comparison, not a
+> pure-tool one — and this host had no Docker Engine, so it is left out rather
+> than estimated.
+
+podup is faster on every scenario measured here, widest on the volume- and
+service-heavy stacks. The harness, scenarios, and full methodology live in
+[`bench/`](bench/); reproduce with `bench/run.sh`. Every scenario is published,
+whoever wins.
+
 ## 🦀 Library usage
 
 ```rust
