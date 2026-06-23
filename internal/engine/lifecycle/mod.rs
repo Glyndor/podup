@@ -405,7 +405,7 @@ impl Engine {
 					crate::libpod::urlencoded(&container_name),
 				);
 				if let Err(e) = self.client.post_empty_ok(&stop_path).await {
-					tracing::debug!("stop {container_name}: {e}");
+					tracing::warn!("could not stop {container_name}: {e}");
 				}
 
 				let rm_path = format!(
@@ -413,10 +413,10 @@ impl Engine {
 					crate::libpod::urlencoded(&container_name),
 				);
 				if let Err(e) = self.client.delete_ok(&rm_path).await {
-					tracing::debug!("down delete {container_name}: {e}");
+					tracing::warn!("could not remove {container_name}: {e}");
+				} else {
+					info!("removed {container_name}");
 				}
-
-				info!("removed {container_name}");
 			}
 		}
 
