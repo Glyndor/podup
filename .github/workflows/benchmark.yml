@@ -1,0 +1,67 @@
+# Compose-tool benchmark.
+#
+# The published numbers must come from a controlled runner (a self-hosted runner
+# or the maintainer's machine), never a shared GitHub runner — shared runners are
+# too noisy to be trustworthy. So this workflow has two jobs:
+#
+#   smoke      — on a shared GitHub runner, runs `bench/run.sh --smoke` to prove
+#                the harness still runs. It produces NO published numbers.
+#   benchmark  — on a self-hosted runner (manual dispatch), runs the full suite
+#                and uploads the report artifact. It is skipped until a runner with
+#                the `bench` label exists.
+name: benchmark
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 1 * *" # monthly
+
+permissions: {}
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Install Podman and podman-compose
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman
+          pipx install podman-compose || pip install --user podman-compose
+      - name: Build podup
+        run: cargo build --release --all-features --locked
+      - name: Pre-pull pinned images
+        run: |
+          grep -rhoE 'docker\.io/[^ ]+@sha256:[a-f0-9]+' bench/scenarios | sort -u | while read -r img; do
+            podman pull -q "$img"
+          done
+      - name: Smoke-run the harness
+        run: PODUP_BIN=target/release/podup bash bench/run.sh --smoke
+      - name: Aggregate (sanity)
+        run: python3 bench/aggregate.py
+
+  benchmark:
+    runs-on: [self-hosted, bench]
+    if: github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Build podup
+        run: cargo build --release --all-features --locked
+      - name: Pre-pull pinned images
+        run: |
+          grep -rhoE 'docker\.io/[^ ]+@sha256:[a-f0-9]+' bench/scenarios | sort -u | while read -r img; do
+            podman pull -q "$img"
+          done
+      - name: Run the full suite
+        run: PODUP_BIN=target/release/podup bash bench/run.sh --iters 12 --warmup 2 --cores 2-9
+      - name: Aggregate
+        run: python3 bench/aggregate.py
+      - name: Upload report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: benchmark-report
+          path: bench/results/

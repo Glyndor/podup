@@ -1,0 +1,8 @@
+# Warm restart: bring the stack up cold (untimed), then run `up -d` again on the
+# already-running project (the warm path) and measure that second up.
+services:
+  web:
+    image: docker.io/library/nginx@sha256:31db9045b34376493fd4fb695d8a8d03bbfffaf6297fcde82d0f925ce2dd329a
+  cache:
+    image: docker.io/library/redis@sha256:09160599abd229764c0fb44cb6be640294e1d360a54b19985ab4843dcf2d90f1
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
