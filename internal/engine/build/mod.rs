@@ -332,7 +332,11 @@ impl Engine {
 				)));
 			};
 			let bytes: Vec<u8> = if let Some(host_path) = &config.file {
-				std::fs::read(self.base_dir.join(host_path)).map_err(ComposeError::Io)?
+				// Read through the bounded reader so a hostile or accidentally
+				// huge secret file is capped at MAX_FILE_BYTES like every other
+				// file read, rather than allocating an unbounded buffer.
+				crate::filesystem::read_capped(self.base_dir.join(host_path))
+					.map_err(ComposeError::Io)?
 			} else if let Some(content) = &config.content {
 				content.clone().into_bytes()
 			} else if let Some(env_var) = &config.environment {
