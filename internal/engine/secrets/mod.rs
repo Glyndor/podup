@@ -8,13 +8,17 @@
 //! * inline `content:`/`environment:` → created over the libpod API
 //!   (`secrets/create`, removing any prior secret of the name first so a re-`up`
 //!   is idempotent) under a project-scoped name, so nothing is written to a host
-//!   staging directory.
+//!   staging directory. The project's whole inline union is created once up
+//!   front by [`Engine::create_inline_secrets`] (before services start
+//!   concurrently), not per-service, so a shared name is never raced.
 //! * `external: true` → mapped to a pre-existing `podman secret`, preflighted
 //!   with [`Engine::ensure_external_exists`] so a missing secret fails closed.
 //!
 //! The pure compose→plan mapping lives in [`plan`].
 
 mod plan;
+
+use std::collections::HashMap;
 
 use crate::compose::types::{ComposeFile, Service};
 use crate::error::{ComposeError, Result};
@@ -75,10 +79,18 @@ impl Engine {
 	}
 
 	/// Build the Podman-native secret references for a service. Inline
-	/// `content:`/`environment:` sources are created on the daemon under a
-	/// project-scoped name; `external: true` sources are preflighted for
-	/// existence so a missing secret fails closed instead of starting a
-	/// container that lacks it. `file:` sources are handled as bind mounts.
+	/// `content:`/`environment:` sources must already have been created by
+	/// [`Engine::create_inline_secrets`] (run once up front), so this only
+	/// preflights `external: true` sources for existence — failing closed
+	/// rather than starting a container that lacks the secret — and assembles
+	/// the per-service references attached to the container spec. `file:`
+	/// sources are handled as bind mounts.
+	///
+	/// Creation is deliberately *not* done here: services in the same
+	/// dependency level are brought up concurrently, and a per-service
+	/// delete-then-create on a shared inline secret name would race (one create
+	/// could clobber a secret another service's container is about to use). The
+	/// up-front pass creates each inline secret exactly once instead.
 	pub(super) async fn build_native_secrets(
 		&self,
 		service: &Service,
@@ -87,12 +99,11 @@ impl Engine {
 		let plans = collect_native_plans(&self.project, service, file)?;
 		let mut secrets = Vec::with_capacity(plans.len());
 		for plan in plans {
-			match &plan.payload {
-				Some(bytes) => self.create_secret(&plan.source, bytes).await?,
-				None => {
-					self.ensure_external_exists("secret", "secrets", &plan.source)
-						.await?
-				}
+			// Inline payloads are created up front; only external sources need a
+			// (read-only, idempotent) existence preflight here.
+			if plan.payload.is_none() {
+				self.ensure_external_exists("secret", "secrets", &plan.source)
+					.await?;
 			}
 			secrets.push(Secret {
 				source: plan.source,
@@ -103,6 +114,25 @@ impl Engine {
 			});
 		}
 		Ok(secrets)
+	}
+
+	/// Create the union of inline `content:`/`environment:` secrets and configs
+	/// declared across *all* services in the project, once, before the
+	/// per-level start loop — mirroring how [`Engine::create_networks`] and
+	/// [`Engine::create_volumes`] pre-create their resources.
+	///
+	/// Doing this up front fixes the race in which two services in the same
+	/// dependency level (started concurrently) both ran the non-atomic
+	/// delete-then-create for the same project-scoped secret name, so one could
+	/// delete the secret the other had just created. The same scoped name is
+	/// created exactly once here (later services share it), and each created
+	/// secret carries the `podup.project=<proj>` label so the label-guarded
+	/// teardown on `down` still only removes secrets podup owns.
+	pub(super) async fn create_inline_secrets(&self, file: &ComposeFile) -> Result<()> {
+		for (name, bytes) in collect_inline_union(&self.project, file)? {
+			self.create_secret(&name, &bytes).await?;
+		}
+		Ok(())
 	}
 
 	/// Create a Podman-native secret named `name` holding `payload`, labelled
@@ -227,6 +257,26 @@ fn make_bind(name: &str, resolved: &str, target: &str) -> Result<String> {
 	Ok(format!("{resolved}:{target}:ro"))
 }
 
+/// Collect the project's inline `content:`/`environment:` secret/config
+/// payloads, deduplicated by their scoped Podman secret name.
+///
+/// The same inline secret referenced by several services resolves to one
+/// project-scoped name, so it is created once and shared. A first writer wins:
+/// every reference to a given name yields the identical payload (the bytes come
+/// from the single compose def), so the dedup is value-stable. No daemon access,
+/// so the union and its dedup are unit-testable.
+fn collect_inline_union(project: &str, file: &ComposeFile) -> Result<HashMap<String, Vec<u8>>> {
+	let mut payloads: HashMap<String, Vec<u8>> = HashMap::new();
+	for service in file.services.values() {
+		for plan in collect_native_plans(project, service, file)? {
+			if let Some(bytes) = plan.payload {
+				payloads.entry(plan.source).or_insert(bytes);
+			}
+		}
+	}
+	Ok(payloads)
+}
+
 #[cfg(test)]
 mod tests {
 	use super::*;
@@ -277,6 +327,34 @@ mod tests {
 			make_bind("s", "/host/a", "/run/secrets/s").unwrap(),
 			"/host/a:/run/secrets/s:ro"
 		);
+	}
+
+	#[test]
+	fn inline_union_dedups_shared_secret_across_services() {
+		// Two services in the same project both reference the same inline secret.
+		// The up-front union must create it once (one scoped name), not once per
+		// service — which is what previously raced delete-then-create.
+		let yaml = "services:\n  a:\n    image: nginx\n    secrets: [tok]\n  b:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    content: shared\n";
+		let file = crate::compose::parse_str_raw(yaml).unwrap();
+		let union = collect_inline_union("proj", &file).unwrap();
+		assert_eq!(union.len(), 1);
+		assert_eq!(
+			union.get("proj_secret_tok").map(Vec::as_slice),
+			Some(b"shared".as_slice())
+		);
+	}
+
+	#[test]
+	fn inline_union_collects_secrets_and_configs_skips_external_and_file() {
+		// The union spans inline secrets and inline configs (distinct scoped
+		// names), and excludes `external:` (podup never creates it) and `file:`
+		// (a bind mount) sources.
+		let yaml = "services:\n  web:\n    image: nginx\n    secrets: [tok, ext, onfile]\n    configs: [cfg]\nsecrets:\n  tok:\n    content: s\n  ext:\n    external: true\n  onfile:\n    file: ./f.txt\nconfigs:\n  cfg:\n    content: c\n";
+		let file = crate::compose::parse_str_raw(yaml).unwrap();
+		let union = collect_inline_union("proj", &file).unwrap();
+		let mut names: Vec<&String> = union.keys().collect();
+		names.sort();
+		assert_eq!(names, vec!["proj_config_cfg", "proj_secret_tok"]);
 	}
 
 	#[test]
