@@ -1,5 +1,7 @@
 //! Query and observation commands: ps, logs, exec, pull, remove_orphans.
 
+use std::io::Write;
+
 use futures_util::StreamExt;
 
 use crate::compose::types::ComposeFile;
@@ -248,13 +250,26 @@ impl Engine {
 						} else {
 							crate::libpod::parse_multiplexed(resp.into_body())
 						};
+						// These futures run concurrently under `join_all` on the
+						// same task, so the stdout/stderr lock is taken and
+						// released within each frame rather than held across the
+						// `.await` above — holding a guard across the await would
+						// let a sibling future block the thread on the same lock
+						// and deadlock. Each frame still locks once and flushes,
+						// keeping interleaved `logs -f` output prompt.
 						while let Some(msg) = stream.next().await {
 							match msg {
 								Ok(LogOutput::StdOut { message }) => {
-									print!("{}", String::from_utf8_lossy(&message));
+									let mut out = std::io::stdout().lock();
+									let _ =
+										out.write_all(String::from_utf8_lossy(&message).as_bytes());
+									let _ = out.flush();
 								}
 								Ok(LogOutput::StdErr { message }) => {
-									eprint!("{}", String::from_utf8_lossy(&message));
+									let mut err = std::io::stderr().lock();
+									let _ =
+										err.write_all(String::from_utf8_lossy(&message).as_bytes());
+									let _ = err.flush();
 								}
 								Err(_) => break,
 							}
@@ -280,13 +295,23 @@ impl Engine {
 					crate::libpod::parse_multiplexed(resp.into_body())
 				};
 
+				// Lock stdout once for the whole stream instead of re-acquiring
+				// the lock (and issuing a syscall) per frame; stdout is ours
+				// exclusively on this path. stderr is locked per frame because
+				// the tracing subscriber also writes there: holding its lock
+				// across the await loop would starve concurrent log emissions.
+				// Flush after each frame so `logs -f` still streams promptly.
+				let mut out = std::io::stdout().lock();
 				while let Some(msg) = stream.next().await {
 					match msg.map_err(ComposeError::Podman)? {
 						LogOutput::StdOut { message } => {
-							print!("{}", String::from_utf8_lossy(&message));
+							let _ = out.write_all(String::from_utf8_lossy(&message).as_bytes());
+							let _ = out.flush();
 						}
 						LogOutput::StdErr { message } => {
-							eprint!("{}", String::from_utf8_lossy(&message));
+							let mut err = std::io::stderr().lock();
+							let _ = err.write_all(String::from_utf8_lossy(&message).as_bytes());
+							let _ = err.flush();
 						}
 					}
 				}
@@ -382,13 +407,25 @@ impl Engine {
 			.map_err(ComposeError::Podman)?;
 		let mut stream = crate::libpod::parse_multiplexed(start_resp.into_body());
 
-		while let Some(msg) = stream.next().await {
-			match msg.map_err(ComposeError::Podman)? {
-				LogOutput::StdOut { message } => {
-					print!("{}", String::from_utf8_lossy(&message));
-				}
-				LogOutput::StdErr { message } => {
-					eprint!("{}", String::from_utf8_lossy(&message));
+		// Lock stdout once for the whole stream instead of re-acquiring the lock
+		// (and issuing a syscall) per frame; stdout is ours exclusively on this
+		// path. stderr is locked per frame because the tracing subscriber also
+		// writes there: holding its lock across the await loop would starve
+		// concurrent log emissions. Flush after each frame so exec streams
+		// promptly.
+		{
+			let mut out = std::io::stdout().lock();
+			while let Some(msg) = stream.next().await {
+				match msg.map_err(ComposeError::Podman)? {
+					LogOutput::StdOut { message } => {
+						let _ = out.write_all(String::from_utf8_lossy(&message).as_bytes());
+						let _ = out.flush();
+					}
+					LogOutput::StdErr { message } => {
+						let mut err = std::io::stderr().lock();
+						let _ = err.write_all(String::from_utf8_lossy(&message).as_bytes());
+						let _ = err.flush();
+					}
 				}
 			}
 		}
