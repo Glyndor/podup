@@ -73,8 +73,27 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub read_only_filesystem: Option<bool>,
 
+	// Podman's SpecGenerator has no `security_opt` field; the compose list is
+	// decomposed into these dedicated fields. A plain `security_opt` array is
+	// silently ignored, so every option (incl. no-new-privileges/seccomp/apparmor)
+	// would otherwise be dropped.
 	#[serde(skip_serializing_if = "Vec::is_empty", default)]
-	pub security_opt: Vec<String>,
+	pub selinux_opts: Vec<String>,
+
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub apparmor_profile: Option<String>,
+
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub seccomp_profile_path: Option<String>,
+
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub no_new_privileges: Option<bool>,
+
+	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	pub mask: Vec<String>,
+
+	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	pub unmask: Vec<String>,
 
 	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
 	pub sysctl: HashMap<String, String>,
@@ -92,7 +111,9 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub netns: Option<Namespace>,
 
-	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	// Podman's SpecGenerator names this field `hostadd` (there is no `extra_hosts`
+	// key); without the rename every extra_hosts entry is silently dropped.
+	#[serde(rename = "hostadd", skip_serializing_if = "Vec::is_empty", default)]
 	pub extra_hosts: Vec<String>,
 
 	#[serde(skip_serializing_if = "Vec::is_empty", default)]
@@ -142,7 +163,10 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub resource_limits: Option<LinuxResources>,
 
-	#[serde(skip_serializing_if = "Vec::is_empty", default)]
+	// Podman's SpecGenerator names this field `r_limits` (POSIX rlimits); without
+	// the rename every ulimits entry is silently dropped. The per-element shape
+	// (`{type, soft, hard}`) already matches Podman's POSIXRlimit.
+	#[serde(rename = "r_limits", skip_serializing_if = "Vec::is_empty", default)]
 	pub ulimits: Vec<Ulimit>,
 
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -167,16 +191,16 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub restart_tries: Option<u64>,
 
-	// Devices
+	// Devices. Podman 5.x has no SpecGenerator CDI field; CDI device names (e.g.
+	// `nvidia.com/gpu=all`) are recognized by ExtractCDIDevices from this array by
+	// their qualified path, so they are appended here as `LinuxDevice` entries.
 	#[serde(skip_serializing_if = "Vec::is_empty", default)]
 	pub devices: Vec<LinuxDevice>,
 
-	/// CDI device names (e.g. `nvidia.com/gpu=all`) for GPU/accelerator access.
+	// Podman expects structured cgroup rules ([]LinuxDeviceCgroup), not strings; a
+	// string array would fail to deserialize.
 	#[serde(skip_serializing_if = "Vec::is_empty", default)]
-	pub cdi_devices: Vec<String>,
-
-	#[serde(skip_serializing_if = "Vec::is_empty", default)]
-	pub device_cgroup_rule: Vec<String>,
+	pub device_cgroup_rule: Vec<LinuxDeviceCgroup>,
 
 	// Groups
 	#[serde(skip_serializing_if = "Vec::is_empty", default)]
@@ -208,4 +232,94 @@ pub struct SpecGenerator {
 	// Storage options
 	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
 	pub storage_opts: HashMap<String, String>,
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{LinuxDeviceCgroup, SpecGenerator, Ulimit};
+
+	#[test]
+	fn security_fields_serialize_decomposed_not_as_security_opt() {
+		let spec = SpecGenerator {
+			selinux_opts: vec!["disable".to_string()],
+			apparmor_profile: Some("prof".to_string()),
+			seccomp_profile_path: Some("unconfined".to_string()),
+			no_new_privileges: Some(true),
+			mask: vec!["/proc/kcore".to_string()],
+			unmask: vec!["ALL".to_string()],
+			..Default::default()
+		};
+		let v = serde_json::to_value(&spec).unwrap();
+		// SpecGenerator has no `security_opt` field — the value must arrive decomposed.
+		assert!(
+			v.get("security_opt").is_none(),
+			"stale security_opt key: {v}"
+		);
+		assert_eq!(v["selinux_opts"][0], "disable");
+		assert_eq!(v["apparmor_profile"], "prof");
+		assert_eq!(v["seccomp_profile_path"], "unconfined");
+		assert_eq!(v["no_new_privileges"], true);
+		assert_eq!(v["mask"][0], "/proc/kcore");
+		assert_eq!(v["unmask"][0], "ALL");
+	}
+
+	#[test]
+	fn device_cgroup_rule_serializes_as_struct_array() {
+		let spec = SpecGenerator {
+			device_cgroup_rule: vec![LinuxDeviceCgroup {
+				allow: true,
+				device_type: Some("c".to_string()),
+				major: Some(1),
+				minor: None,
+				access: Some("rwm".to_string()),
+			}],
+			..Default::default()
+		};
+		let v = serde_json::to_value(&spec).unwrap();
+		// Podman expects []LinuxDeviceCgroup objects, not strings.
+		assert_eq!(v["device_cgroup_rule"][0]["allow"], true);
+		assert_eq!(v["device_cgroup_rule"][0]["type"], "c");
+		assert_eq!(v["device_cgroup_rule"][0]["major"], 1);
+		// minor=None must be omitted (means "all").
+		assert!(v["device_cgroup_rule"][0].get("minor").is_none());
+		assert_eq!(v["device_cgroup_rule"][0]["access"], "rwm");
+	}
+
+	#[test]
+	fn no_cdi_devices_key_is_emitted() {
+		// Podman 5.x has no cdi_devices field; CDI names ride in `devices`.
+		let v = serde_json::to_value(SpecGenerator::default()).unwrap();
+		assert!(v.get("cdi_devices").is_none(), "stale cdi_devices key: {v}");
+	}
+
+	#[test]
+	fn extra_hosts_serialize_as_hostadd() {
+		let spec = SpecGenerator {
+			extra_hosts: vec!["db:10.0.0.2".to_string()],
+			..Default::default()
+		};
+		let v = serde_json::to_value(&spec).unwrap();
+		// Podman's SpecGenerator key is `hostadd`; `extra_hosts` matches no field
+		// and is silently dropped.
+		assert_eq!(v["hostadd"][0], "db:10.0.0.2");
+		assert!(v.get("extra_hosts").is_none(), "stale extra_hosts key: {v}");
+	}
+
+	#[test]
+	fn ulimits_serialize_as_r_limits_with_posix_shape() {
+		let spec = SpecGenerator {
+			ulimits: vec![Ulimit {
+				ulimit_type: "nofile".to_string(),
+				soft: 1024,
+				hard: 2048,
+			}],
+			..Default::default()
+		};
+		let v = serde_json::to_value(&spec).unwrap();
+		// Podman's key is `r_limits`; the element shape is POSIXRlimit {type, soft, hard}.
+		assert!(v.get("ulimits").is_none(), "stale ulimits key: {v}");
+		assert_eq!(v["r_limits"][0]["type"], "nofile");
+		assert_eq!(v["r_limits"][0]["soft"], 1024);
+		assert_eq!(v["r_limits"][0]["hard"], 2048);
+	}
 }

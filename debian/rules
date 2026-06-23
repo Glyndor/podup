@@ -11,7 +11,6 @@ export CARGO_TARGET_DIR = $(CURDIR)/target
 # the source tarball.
 ifneq ($(wildcard vendor/),)
 export CARGO_NET_OFFLINE = true
-export CARGO_UNSTABLE_OFFLINE = true
 CARGO_FLAGS = --frozen --offline
 endif
 
@@ -50,12 +49,20 @@ override_dh_installman:
 	set -e; \
 	ver=$$(dpkg-parsechangelog --show-field Version | sed 's/-[^-]*$$//'); \
 	dat=$$(LC_ALL=C date -u -d "$$(dpkg-parsechangelog --show-field Date)" +'%B %Y'); \
+	cp -p debian/podup.1 debian/podup.1.bak; \
 	sed -i -E "s/\"podup [0-9]+\.[0-9]+\.[0-9]+\"/\"podup $$ver\"/; s/^\.TH PODUP 1 \"[^\"]*\"/.TH PODUP 1 \"$$dat\"/" debian/podup.1; \
-	dh_installman
+	dh_installman; \
+	mv debian/podup.1.bak debian/podup.1
 
 override_dh_auto_clean:
 	cargo clean
 	rm -rf debian/cargo-home
+	# A vendored build writes .cargo/config.toml pointing at vendor/; drop it so a
+	# later non-vendored build does not fail on missing vendored sources.
+	rm -f .cargo/config.toml
+	# Restore the man page if an installman run was interrupted before it could
+	# revert its in-place version stamp.
+	test ! -f debian/podup.1.bak || mv debian/podup.1.bak debian/podup.1
 
 # Generate .cargo/config.toml pointing at the vendor tree (only when vendored).
 debian/cargo-config:

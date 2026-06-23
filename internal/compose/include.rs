@@ -8,8 +8,9 @@ use super::types::ComposeFile;
 
 /// Merge `other` into `target`.
 ///
-/// Services / volumes / networks / secrets / configs from `other` are added;
-/// existing entries in `target` win on conflict (parent file overrides included content).
+/// Services / volumes / networks / secrets / configs / models from `other` are
+/// added; existing entries in `target` win on conflict (parent file overrides
+/// included content).
 pub(super) fn merge_compose_file(target: &mut ComposeFile, other: ComposeFile) {
 	for (k, v) in other.services {
 		target.services.entry(k).or_insert(v);
@@ -25,6 +26,9 @@ pub(super) fn merge_compose_file(target: &mut ComposeFile, other: ComposeFile) {
 	}
 	for (k, v) in other.configs {
 		target.configs.entry(k).or_insert(v);
+	}
+	for (k, v) in other.models {
+		target.models.entry(k).or_insert(v);
 	}
 }
 
@@ -109,6 +113,24 @@ mod tests {
 		// Parent wins on conflict; the included-only secret is added.
 		assert_eq!(target.secrets["tok"].file.as_deref(), Some("parent.txt"));
 		assert_eq!(target.secrets["extra"].file.as_deref(), Some("e.txt"));
+	}
+
+	#[test]
+	fn merge_adds_and_parent_wins_on_model_conflict() {
+		use super::super::types::ModelConfig;
+		let model = |m: &str| ModelConfig {
+			model: Some(m.to_string()),
+			..Default::default()
+		};
+		let mut target = ComposeFile::default();
+		target.models.insert("llm".to_string(), model("parent/m"));
+		let mut other = ComposeFile::default();
+		other.models.insert("llm".to_string(), model("child/m"));
+		other.models.insert("extra".to_string(), model("e/m"));
+		merge_compose_file(&mut target, other);
+		// Parent wins on conflict; the included-only model is added.
+		assert_eq!(target.models["llm"].model.as_deref(), Some("parent/m"));
+		assert_eq!(target.models["extra"].model.as_deref(), Some("e/m"));
 	}
 
 	#[test]

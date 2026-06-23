@@ -113,6 +113,39 @@ pub(super) fn collect_warnings(name: &str, service: &Service, warnings: &mut Vec
 	if service.blkio_config.is_some() {
 		warn("blkio_config", skipped);
 	}
+	if service.gpus.is_some() {
+		warn(
+			"gpus",
+			"has no Quadlet equivalent and is skipped; GPU devices are not assigned",
+		);
+	}
+	if service.platform.is_some() {
+		warn("platform", skipped);
+	}
+	if !service.device_cgroup_rules.is_empty() {
+		warn("device_cgroup_rules", skipped);
+	}
+	if !service.storage_opt.is_empty() {
+		warn("storage_opt", skipped);
+	}
+	if !service.links.is_empty() {
+		warn("links", skipped);
+	}
+	if !service.external_links.is_empty() {
+		warn("external_links", skipped);
+	}
+	if service.domainname.is_some() {
+		warn("domainname", skipped);
+	}
+	if service.mem_swappiness.is_some() {
+		warn("mem_swappiness", skipped);
+	}
+	if service.cpu_rt_runtime.is_some() {
+		warn("cpu_rt_runtime", skipped);
+	}
+	if service.cpu_rt_period.is_some() {
+		warn("cpu_rt_period", skipped);
+	}
 	if !service.label_file.to_list().is_empty() {
 		warn("label_file", skipped);
 	}
@@ -267,6 +300,80 @@ services:
 				"missing warning for {field}; got:\n{joined}"
 			);
 		}
+	}
+
+	#[test]
+	fn warns_for_additional_silently_dropped_fields() {
+		let yaml = r#"
+services:
+  s:
+    image: x
+    gpus: all
+    platform: linux/arm64
+    domainname: example.internal
+    links:
+      - other
+    external_links:
+      - ext:alias
+    device_cgroup_rules:
+      - "c 1:3 rwm"
+    storage_opt:
+      size: 10G
+    mem_swappiness: 50
+    cpu_rt_runtime: 95000
+    cpu_rt_period: 1000000
+"#;
+		let file = parse_str(yaml).unwrap();
+		let joined = generate(&file, "proj").warnings.join("\n");
+		for field in [
+			"gpus",
+			"platform",
+			"domainname",
+			"links",
+			"external_links",
+			"device_cgroup_rules",
+			"storage_opt",
+			"mem_swappiness",
+			"cpu_rt_runtime",
+			"cpu_rt_period",
+		] {
+			assert!(
+				joined.contains(field),
+				"missing warning for {field}; got:\n{joined}"
+			);
+		}
+	}
+
+	#[test]
+	fn security_opt_mask_and_unmask_map_to_keys_not_warned() {
+		let yaml = r#"
+services:
+  s:
+    image: x
+    security_opt:
+      - "mask=/proc/kcore:/proc/timer_list"
+      - "unmask=ALL"
+"#;
+		let file = parse_str(yaml).unwrap();
+		let out = generate(&file, "proj");
+		let contents = out
+			.units
+			.iter()
+			.map(|u| u.contents.as_str())
+			.collect::<String>();
+		assert!(
+			contents.contains("Mask=/proc/kcore:/proc/timer_list"),
+			"missing Mask= key; got:\n{contents}"
+		);
+		assert!(
+			contents.contains("Unmask=ALL"),
+			"missing Unmask= key; got:\n{contents}"
+		);
+		assert!(
+			!out.warnings.iter().any(|w| w.contains("security_opt")),
+			"mask/unmask should be mapped, not warned; got:\n{:?}",
+			out.warnings
+		);
 	}
 
 	#[test]

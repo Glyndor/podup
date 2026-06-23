@@ -85,6 +85,10 @@ pub(super) fn map_security_opt(
 				"{name}: security_opt 'label={label}' has no Quadlet key and is skipped"
 			));
 		}
+	} else if let Some(paths) = opt.strip_prefix("mask=") {
+		container.add("Mask", paths.to_string());
+	} else if let Some(paths) = opt.strip_prefix("unmask=") {
+		container.add("Unmask", paths.to_string());
 	} else {
 		warnings.push(format!(
 			"{name}: security_opt '{opt}' has no Quadlet mapping and is skipped"
