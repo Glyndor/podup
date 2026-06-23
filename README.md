@@ -33,6 +33,21 @@ flowchart LR
 - 📦 **Single binary** — statically musl-linked on Linux, no runtime dependencies
 - 🦀 **Library too** — embed the parser and engine in your own Rust project
 
+## ✅ Requirements
+
+- **Podman ≥ 5.0** — podup talks to Podman's native libpod REST API (the
+  `/v5.0.0/libpod` surface) and assumes a Podman 5.x engine. Rootless is the
+  default and recommended posture.
+- **Supported platforms:**
+  - **Linux** (x86_64, arm64) — talks to the rootless Podman socket directly.
+  - **macOS** (x86_64, arm64) — via `podman machine` (applehv or vz backend);
+    podup uses the host-side `unix://` socket.
+  - **Windows** (x86_64, arm64) — via `podman machine`; podup uses the host-side
+    `npipe://` named pipe.
+
+The socket must be local: only `unix://` (and `npipe://` on Windows) are
+accepted — remote `tcp://`/`ssh://` endpoints are rejected.
+
 ## 📥 Install
 
 Linux and macOS:
