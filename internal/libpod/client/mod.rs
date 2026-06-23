@@ -244,7 +244,7 @@ impl Client {
 	/// Podman answers `_ping` with a `Libpod-API-Version` response header. We read
 	/// it here, while the call is already cheap, and reject a server below the
 	/// `MIN_LIBPOD_API_MAJOR.0` floor with a clear
-	/// [`PodmanError::IncompatibleApiVersion`] rather than letting a later
+	/// `PodmanError::IncompatibleApiVersion` rather than letting a later
 	/// SpecGenerator or libpod-native call fail with an obscure 4xx.
 	pub async fn ping(&self) -> Result<()> {
 		// Deliberately omits the version prefix: `_ping` is version-independent.
@@ -362,7 +362,7 @@ impl Client {
 	/// For blocking endpoints that legitimately hold the connection open for an
 	/// arbitrary, server-side duration — notably `containers/{name}/wait`, which
 	/// does not respond until the container reaches the requested condition. The
-	/// default [`READ_TIMEOUT`] would otherwise abort the call after 120 s and
+	/// default `READ_TIMEOUT` would otherwise abort the call after 120 s and
 	/// surface a spurious timeout instead of the real exit code, so callers of
 	/// this method must impose their own outer budget (e.g. a
 	/// [`tokio::time::timeout`]) to stay bounded.
