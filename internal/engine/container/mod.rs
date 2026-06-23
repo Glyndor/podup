@@ -11,7 +11,9 @@ use crate::libpod::API_PREFIX;
 use crate::{ports, size};
 
 mod resolve;
-use resolve::{build_env, resolve_links, resolve_stop_signal, resolve_volume_name};
+use resolve::{
+	build_env, resolve_links, resolve_stop_signal, resolve_volume_name, resolve_volumes_from,
+};
 pub(crate) use resolve::{config_hash, resolve_bind_source};
 
 use super::container_config::{
@@ -178,6 +180,9 @@ impl Engine {
 		// --- Links ---
 		let links = resolve_links(service, file, &self.project);
 
+		// --- volumes_from ---
+		let volumes_from = resolve_volumes_from(service, file, &self.project);
+
 		// --- SHM size ---
 		let shm_size = service.shm_size.as_deref().and_then(size::parse_memory);
 
@@ -241,7 +246,7 @@ impl Engine {
 			dns_option: service.dns_opt.to_list(),
 			mounts,
 			volumes: named_volumes,
-			volumes_from: service.volumes_from.clone(),
+			volumes_from,
 			secrets: native_secrets,
 			userns,
 			pidns,
