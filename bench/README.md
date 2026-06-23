@@ -38,10 +38,29 @@ A podup loss is published exactly like a podup win.
 | `volume-heavy` | several named volumes created/removed |
 | `warm-restart` | a second `up` on an already-running project |
 | `many-services` | a 12-service compose file |
+| `running-ops` | `ps`, `logs`, `exec`, `restart` on a running stack |
+| `build` | `build --no-cache` from a Dockerfile (base pinned by digest) |
 
-Each scenario times `up -d` and `down -v` (the `warm-restart` scenario times the
-warm second `up`). `init: true` is set on idle `sleep` services so teardown
-measures the tool, not a container ignoring `SIGTERM` as PID 1.
+The lifecycle scenarios time `up -d` and `down -v` (`warm-restart` times the warm
+second `up`); `running-ops` brings a stack up untimed, then times each of `ps`,
+`logs`, `exec -T`, `restart`; `build` times a `--no-cache` image build. `init:
+true` is set on idle `sleep` services so teardown measures the tool, not a
+container ignoring `SIGTERM` as PID 1.
+
+## Metrics
+
+Every timed run is wrapped in `/usr/bin/time -v`, so each row records **wall-clock,
+peak resident memory (max RSS) and CPU time** of the tool process. The memory and
+CPU figures are the **client-side** cost — the tool process and the processes it
+directly spawns and waits on. podup is a thin client to the long-running Podman
+service, so engine-side work is not charged to it; podman-compose shells out to
+`podman` per call and is charged for the work it waits on. The columns therefore
+answer "what does invoking the tool cost on my machine", not "how much work does
+the engine do".
+
+Wall-clock comes from `/usr/bin/time`'s `Elapsed` line (0.01 s resolution), so
+sub-100 ms operations are quantized — equally for both tools, so it limits
+resolution symmetrically rather than biasing the comparison.
 
 ## Running it
 

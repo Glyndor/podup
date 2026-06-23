@@ -1,0 +1,9 @@
+# A single long-running service that prints a log line and stays up, so the
+# harness can time the common on-a-running-stack operations: ps, logs, exec,
+# restart. These are dominated by tool start-up cost, which is where a static
+# binary and a Python wrapper differ most.
+services:
+  app:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sh", "-c", "echo benchmark-ready; exec sleep 3600"]
+    init: true
