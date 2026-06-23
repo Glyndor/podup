@@ -15,6 +15,12 @@ separately in [self-update.md](self-update.md).
   them. Fields that assume more (`privileged`, `oom_kill_disable`,
   `mem_swappiness`, `cpu_rt_*`) are forwarded but warned about, since they are
   reduced or ineffective rootless.
+- The libpod socket is **strictly local**. Only a `unix://` socket path (or an
+  `npipe://` named pipe on Windows) is accepted, whether it comes from
+  `--socket`, `PODMAN_SOCKET`, `DOCKER_HOST`, or auto-detection. Remote schemes
+  (`tcp://`, `ssh://`, `http(s)://`, `fd://`) are **rejected fail-closed** —
+  podup never connects to a remote engine, so the socket boundary is always a
+  local one.
 - podup keeps **no persistent state** of its own outside the Podman objects it
   creates and a per-project advisory lock file under the user's runtime
   directory.
@@ -23,7 +29,7 @@ separately in [self-update.md](self-update.md).
 
 | Boundary | Trusted? | Notes |
 |----------|----------|-------|
-| Podman socket (`PODMAN_SOCKET`/`DOCKER_HOST`) | Trusted | Whoever can reach it controls the engine; this is the primary boundary. |
+| Podman socket (`PODMAN_SOCKET`/`DOCKER_HOST`) | Trusted, local-only | Whoever can reach it controls the engine; this is the primary boundary. Only `unix://`/`npipe://` are accepted — remote schemes are rejected fail-closed. |
 | Compose file and its referenced files | **Trusted input** | Treated like a Makefile (see below). |
 | Release artifacts (`podup update`, installer) | Untrusted transport | Verified against an embedded Ed25519 key + provenance attestation, fail-closed. |
 | Container filesystem (e.g. `cp` archives) | Untrusted | Tar extraction refuses path-traversal (zip-slip) entries. |
@@ -37,6 +43,25 @@ file (`extends.file`, `env_file`, `label_file`, `include`) may reference paths
 outside the project directory, including `../`. Do **not** run podup on a compose
 file from an untrusted source. (`include` still rejects absolute paths as
 non-portable, but this is hardening, not a security guarantee.)
+
+## Container hardening (compose security keys)
+
+The compose keys that constrain a container are translated onto Podman's
+`SpecGenerator` and take effect on the running container — they are not silently
+dropped. Everything below remains bounded by the rootless ceiling: a key can
+only tighten, never widen, what the launching user already has.
+
+- `security_opt` is parsed into the matching SpecGenerator fields:
+  - `no-new-privileges` → `no_new_privileges`
+  - `seccomp=<profile.json>` (and `seccomp=unconfined`) → `seccomp_profile_path`
+  - `apparmor=<profile>` → `apparmor_profile`
+  - `label=<opt>` (SELinux user/role/type/level, or `label=disable`) →
+    `selinux_opts`
+  - `mask=<paths>` / `unmask=<paths>` → `mask` / `unmask`
+- `device_cgroup_rules` entries are parsed and applied as the container's device
+  cgroup rules (a malformed entry is warned about and skipped, not fatal).
+- CDI devices (Container Device Interface, e.g. `nvidia.com/gpu=all`) requested
+  under `devices:` are passed through to Podman, which resolves them by name.
 
 ## Secret and config handling
 
