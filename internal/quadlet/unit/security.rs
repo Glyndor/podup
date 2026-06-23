@@ -66,9 +66,9 @@ pub(super) fn map_security_opt(
 		.strip_prefix("apparmor=")
 		.or_else(|| opt.strip_prefix("apparmor:"))
 	{
-		// Quadlet has no `AppArmor=` key in Podman 5.x; the generator rejects the
-		// whole unit on an unknown key. Pass it through as a raw podman flag.
-		container.add("PodmanArgs", format!("--security-opt apparmor={profile}"));
+		// `AppArmor=` is a native [Container] key in current podman-systemd.unit(5);
+		// emit it directly rather than as a raw `--security-opt apparmor=` flag.
+		container.add("AppArmor", profile.to_string());
 	} else if let Some(label) = opt.strip_prefix("label=") {
 		if label == "disable" {
 			container.add("SecurityLabelDisable", "true".to_string());

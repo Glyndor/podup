@@ -11,8 +11,15 @@ use super::{
 	render_volume, safe_unit_stem, sorted_label_pairs, sorted_pairs, QuadletUnit, Section,
 };
 
+/// Build the `.container` unit for one compose `service`.
+///
+/// `project` is the compose project name; it is stamped onto the unit as the
+/// `podup.project` ownership label (and the service key as `podup.service`),
+/// matching the labels the live engine applies, so generated containers are
+/// traceable back to their project the same way running ones are.
 pub(crate) fn container_unit(
 	name: &str,
+	project: &str,
 	service: &Service,
 	declared_volumes: &[&str],
 	declared_networks: &[&str],
@@ -119,6 +126,11 @@ pub(crate) fn container_unit(
 	for (key, val) in sorted_label_pairs(service.labels.to_map()) {
 		container.add("Label", format!("{key}={val}"));
 	}
+	// Ownership labels, mirroring the live engine: tag every generated container
+	// with its project and service so it is traceable/removable by label the same
+	// way a running one is.
+	container.add("Label", format!("podup.project={project}"));
+	container.add("Label", format!("podup.service={name}"));
 	for cap in &service.cap_add {
 		container.add("AddCapability", cap.clone());
 	}
@@ -173,12 +185,12 @@ pub(crate) fn container_unit(
 		container.add("ShmSize", shm.clone());
 	}
 	if let Some(mem) = &service.mem_limit {
-		// `Memory=` is not a valid Quadlet key in Podman 5.x (the generator
-		// rejects the unit); express the limit as a raw podman flag.
-		container.add("PodmanArgs", format!("--memory={mem}"));
+		// `Memory=` is a native [Container] key in current podman-systemd.unit(5);
+		// emit it directly rather than as a raw podman flag.
+		container.add("Memory", mem.clone());
 	}
 	// CPU limits have no native [Container] Quadlet key (unlike Memory=/
-	// PidsLimit=), so they go through PodmanArgs=, mirroring --memory above.
+	// PidsLimit=), so they go through PodmanArgs=.
 	// `cpus` falls back to the modern `deploy.resources.limits.cpus`.
 	let deploy_cpus = service
 		.deploy
@@ -297,7 +309,7 @@ pub(crate) fn container_unit(
 			.and_then(|r| r.limits.as_ref())
 			.and_then(|l| l.memory.as_ref())
 		{
-			container.add("PodmanArgs", format!("--memory={mem}"));
+			container.add("Memory", mem.clone());
 		}
 	}
 	for secret in &service.secrets {

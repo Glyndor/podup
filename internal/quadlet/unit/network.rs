@@ -54,6 +54,9 @@ pub(crate) fn network_unit(
 			net.add("Label", format!("{key}={val}"));
 		}
 	}
+	// Ownership label, mirroring the live engine: tag every generated network with
+	// its project so it is traceable/removable by label like a running one.
+	net.add("Label", format!("podup.project={project}"));
 	// No [Install] section: the spec defines none for `.network` units, which are
 	// pulled in automatically as dependencies of the `.container` units that use
 	// them. Only `.container` units carry [Install].

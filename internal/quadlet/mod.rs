@@ -94,6 +94,7 @@ pub fn generate(file: &ComposeFile, project: &str) -> QuadletOutput {
 	for (name, service) in &file.services {
 		out.units.push(container_unit(
 			name,
+			project,
 			service,
 			&declared_volumes,
 			&declared_networks,
