@@ -263,6 +263,9 @@ impl Engine {
 			&crate::engine::BuildOptions::default(),
 		)
 		.await?;
+		// Inline secrets/configs are materialised up front rather than in the
+		// per-container path; ensure they exist before recreating the container.
+		self.create_inline_secrets(file).await?;
 		let container_name = self.container_name(service_name, service);
 		self.create_and_start(&container_name, service_name, service, file, true)
 			.await

@@ -397,6 +397,10 @@ impl Engine {
 		// `up` does); the service may reference the synthesized `default`
 		// network, which is created here as `{project}_default`.
 		self.create_networks(file).await?;
+		// Inline secrets/configs are created up front (no longer in the
+		// per-container build path), so materialise them here too before the run
+		// container is created.
+		self.create_inline_secrets(file).await?;
 
 		self.create_and_start(&run_name, service_name, &run_service, file, true)
 			.await?;

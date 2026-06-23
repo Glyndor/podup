@@ -179,6 +179,10 @@ impl Engine {
 
 			self.create_networks(file).await?;
 			self.create_volumes(file).await?;
+			// Pre-create the union of inline secrets/configs once, before the
+			// concurrent per-level start loop, so two services in the same level
+			// can't race the non-atomic delete-then-create of a shared name.
+			self.create_inline_secrets(file).await?;
 
 			// Start each dependency level in turn; services within a level have
 			// no `depends_on` relationship to each other (guaranteed by the
