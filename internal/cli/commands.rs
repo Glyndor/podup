@@ -219,9 +219,12 @@ pub(crate) enum Commands {
 	Run {
 		/// Service to run the command against.
 		service: String,
-		/// Remove the container after it exits (default: true).
-		#[arg(long, default_value_t = true)]
+		/// Remove the container after it exits (the default).
+		#[arg(long, overrides_with = "no_rm")]
 		rm: bool,
+		/// Keep the one-off container after it exits instead of removing it.
+		#[arg(long, overrides_with = "rm")]
+		no_rm: bool,
 		/// Run container in the background.
 		#[arg(short, long)]
 		detach: bool,
@@ -299,8 +302,12 @@ pub(crate) enum Commands {
 	},
 	/// Stream Podman events for this project's containers.
 	Events {
-		/// Emit each event as a JSON line instead of a summary.
-		#[arg(long)]
+		/// Output format: a `TYPE ACTION NAME` summary (table) or one JSON
+		/// object per line.
+		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
+		format: OutputFormat,
+		/// Deprecated alias for `--format json`; kept for backward compatibility.
+		#[arg(long, hide = true)]
 		json: bool,
 	},
 	/// Attach to a service container's output (stdout/stderr).
@@ -374,8 +381,6 @@ pub(crate) enum Commands {
 	/// View output from containers.
 	#[command(alias = "log")]
 	Logs {
-		/// Only show logs for this service.
-		service: Option<String>,
 		/// Follow log output.
 		#[arg(short, long)]
 		follow: bool,
@@ -391,6 +396,9 @@ pub(crate) enum Commands {
 		/// Prefix each line with an RFC3339 timestamp.
 		#[arg(short = 't', long)]
 		timestamps: bool,
+		/// Show logs for these services (default: all).
+		#[arg(trailing_var_arg = true)]
+		services: Vec<String>,
 	},
 	/// Execute a command in a running service container.
 	Exec {
@@ -447,8 +455,9 @@ pub(crate) enum Commands {
 		/// Do not restart dependent services (depends_on with a restart condition).
 		#[arg(long)]
 		no_deps: bool,
-		/// Only restart this service.
-		service: Option<String>,
+		/// Restart only these services (default: all).
+		#[arg(trailing_var_arg = true)]
+		services: Vec<String>,
 	},
 	/// Print the resolved compose file (substitution/extends/include applied).
 	#[command(alias = "convert")]

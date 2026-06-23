@@ -103,10 +103,16 @@ fn run_with_guard(
 	Ok(())
 }
 
-/// Map an update failure onto a stable process exit code (`2`), distinct from a
-/// run-container exit, so scripts can branch on "update failed".
+/// Stable process exit code for an update failure. Distinct from clap's
+/// reserved `2` (usage errors) and from `1` (generic failure), so scripts can
+/// branch reliably on "update failed".
+pub const UPDATE_FAILURE_EXIT_CODE: i32 = 3;
+
+/// Map an update failure onto its stable process exit code
+/// ([`UPDATE_FAILURE_EXIT_CODE`]), distinct from a run-container exit, so
+/// scripts can branch on "update failed".
 pub fn exit_code(_err: &ComposeError) -> i32 {
-	2
+	UPDATE_FAILURE_EXIT_CODE
 }
 
 #[cfg(test)]
@@ -256,7 +262,13 @@ mod tests {
 	}
 
 	#[test]
-	fn exit_code_is_two() {
-		assert_eq!(exit_code(&ComposeError::Update("x".into())), 2);
+	fn exit_code_is_off_claps_reserved_two() {
+		// clap returns 2 for usage errors; the update-failure code must stay
+		// distinct so scripts can tell them apart.
+		assert_eq!(
+			exit_code(&ComposeError::Update("x".into())),
+			UPDATE_FAILURE_EXIT_CODE
+		);
+		assert_ne!(UPDATE_FAILURE_EXIT_CODE, 2);
 	}
 }

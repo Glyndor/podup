@@ -181,7 +181,8 @@ pub(crate) async fn dispatch(
 		Commands::Unpause { services } => engine.unpause(file, &services).await?,
 		Commands::Run {
 			service,
-			rm,
+			rm: _,
+			no_rm,
 			detach,
 			env_overrides,
 			name,
@@ -202,7 +203,9 @@ pub(crate) async fn dispatch(
 					&service,
 					podup::RunOptions {
 						cmd,
-						rm,
+						// Remove the one-off container after exit unless the user
+						// asked to keep it with `--no-rm`.
+						rm: !no_rm,
 						detach,
 						env_overrides,
 						name_override: name,
@@ -244,7 +247,12 @@ pub(crate) async fn dispatch(
 				.await?
 		}
 		Commands::Top { services } => engine.top(file, &services).await?,
-		Commands::Events { json } => engine.stream_events(json).await?,
+		Commands::Events { format, json } => {
+			// `--json` is the deprecated alias for `--format json`; either selects
+			// JSON-line output.
+			let json = json || format == OutputFormat::Json;
+			engine.stream_events(json).await?
+		}
 		Commands::Attach { service } => engine.attach(file, &service).await?,
 		Commands::Wait { services } => engine.wait_services(file, &services).await?,
 		Commands::Commit {
@@ -315,17 +323,17 @@ pub(crate) async fn dispatch(
 				.await?
 		}
 		Commands::Logs {
-			service,
 			follow,
 			tail,
 			since,
 			until,
 			timestamps,
+			services,
 		} => {
 			engine
 				.logs_with_options(
 					file,
-					service.as_deref(),
+					&services,
 					podup::LogsOptions {
 						follow,
 						tail,
@@ -382,12 +390,12 @@ pub(crate) async fn dispatch(
 				.await?
 		}
 		Commands::Restart {
-			service,
 			timeout: _,
 			no_deps,
+			services,
 		} => {
 			engine
-				.restart_with_options(file, service.as_deref(), no_deps)
+				.restart_with_options(file, &services, no_deps)
 				.await?
 		}
 		Commands::Config { .. } => unreachable!("handled above"),

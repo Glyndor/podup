@@ -175,9 +175,12 @@ impl Engine {
 		service_name: Option<&str>,
 		follow: bool,
 	) -> Result<()> {
+		let targets: Vec<String> = service_name
+			.map(|s| vec![s.to_string()])
+			.unwrap_or_default();
 		self.logs_with_options(
 			file,
-			service_name,
+			&targets,
 			LogsOptions {
 				follow,
 				..Default::default()
@@ -188,37 +191,37 @@ impl Engine {
 
 	/// Stream logs with `docker compose logs` options (`--tail`, `--since`,
 	/// `--until`, `--timestamps`, `--follow`).
+	///
+	/// When `target_services` is empty, logs from every service are streamed;
+	/// otherwise only the named services (an unknown name is an error).
 	pub async fn logs_with_options(
 		&self,
 		file: &ComposeFile,
-		service_name: Option<&str>,
+		target_services: &[String],
 		opts: LogsOptions,
 	) -> Result<()> {
 		let follow = opts.follow;
 		let query = log_query(&opts);
+		for svc in target_services {
+			if !file.services.contains_key(svc) {
+				return Err(ComposeError::ServiceNotFound(svc.into()));
+			}
+		}
+		let selected: std::collections::HashSet<&str> =
+			target_services.iter().map(String::as_str).collect();
 		// (container_name, is_tty) — TTY containers send raw bytes; non-TTY use
 		// multiplexed 8-byte-header framing.
-		let targets: Vec<(String, bool)> = if let Some(svc) = service_name {
-			let service = file
-				.services
-				.get(svc)
-				.ok_or_else(|| ComposeError::ServiceNotFound(svc.into()))?;
-			let is_tty = service.tty.unwrap_or(false);
-			self.replica_names(svc, service)
-				.into_iter()
-				.map(|n| (n, is_tty))
-				.collect()
-		} else {
-			file.services
-				.iter()
-				.flat_map(|(n, s)| {
-					let is_tty = s.tty.unwrap_or(false);
-					self.replica_names(n, s)
-						.into_iter()
-						.map(move |cname| (cname, is_tty))
-				})
-				.collect()
-		};
+		let targets: Vec<(String, bool)> = file
+			.services
+			.iter()
+			.filter(|(n, _)| selected.is_empty() || selected.contains(n.as_str()))
+			.flat_map(|(n, s)| {
+				let is_tty = s.tty.unwrap_or(false);
+				self.replica_names(n, s)
+					.into_iter()
+					.map(move |cname| (cname, is_tty))
+			})
+			.collect();
 
 		// When follow=true, streams never end until containers stop. Run them
 		// concurrently so multiple containers don't block each other.
