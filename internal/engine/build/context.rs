@@ -466,4 +466,38 @@ mod tests {
 		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
 		assert!(!df_name.is_empty());
 	}
+
+	#[test]
+	fn build_ignored_empty_pattern_matches_nothing() {
+		// A blank `.dockerignore` line yields an empty pattern that must never
+		// match (otherwise it would exclude every file).
+		let patterns = vec![String::new()];
+		assert!(!is_ignored("anything.txt", &patterns));
+		assert!(!is_ignored("a/b/c", &patterns));
+	}
+
+	#[test]
+	fn glob_match_double_star_suffix_spans_subtree() {
+		// A trailing `**` matches the directory and everything beneath it.
+		assert!(glob_match("build/**", "build/out.o"));
+		assert!(glob_match("build/**", "build/a/b/out.o"));
+		assert!(!glob_match("build/**", "src/out.o"));
+	}
+
+	#[test]
+	fn glob_match_double_star_middle_with_no_match_fails() {
+		// `a/**/z` requires the path to start with `a/` and end with `z`; a path
+		// that never reaches the trailing literal exhausts the `**` prefix loop and
+		// fails rather than matching loosely.
+		assert!(glob_match("a/**/z", "a/b/c/z"));
+		assert!(!glob_match("a/**/z", "a/b/c/y"));
+	}
+
+	#[test]
+	fn glob_match_question_mark_matches_single_non_slash_char() {
+		// `?` matches exactly one character and never a path separator.
+		assert!(glob_match("file?.txt", "file1.txt"));
+		assert!(!glob_match("file?.txt", "file.txt"));
+		assert!(!glob_match("a?b", "a/b"));
+	}
 }

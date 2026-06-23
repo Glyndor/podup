@@ -508,6 +508,43 @@ mod tests {
 	}
 
 	#[test]
+	fn build_request_sets_content_type_when_given() {
+		use bytes::Bytes;
+		use http_body_util::Full;
+		use hyper::Method;
+		let req = Client::build_request(
+			Method::POST,
+			"/libpod/secrets/create",
+			Full::new(Bytes::new()),
+			Some("application/json"),
+		)
+		.unwrap();
+		assert_eq!(
+			req.headers()
+				.get(hyper::header::CONTENT_TYPE)
+				.and_then(|v| v.to_str().ok()),
+			Some("application/json")
+		);
+	}
+
+	#[test]
+	fn build_request_rejects_unparseable_path() {
+		use bytes::Bytes;
+		use http_body_util::Full;
+		use hyper::Method;
+		// A control character makes `http://localhost<path>` an invalid URI, which
+		// must surface as a structured Api error rather than panicking.
+		let err = Client::build_request(
+			Method::GET,
+			"/libpod/bad\u{7f}path",
+			Full::new(Bytes::new()),
+			None,
+		)
+		.unwrap_err();
+		assert!(err.to_string().contains("invalid API path"));
+	}
+
+	#[test]
 	fn client_new_stores_socket_path() {
 		let c = Client::new("/run/user/1000/podman/podman.sock");
 		drop(c); // just verify it constructs

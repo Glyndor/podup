@@ -185,6 +185,17 @@ mod tests {
 				"invalid port mapping: p",
 				ComposeError::InvalidPort("p".into()),
 			),
+			(
+				"podman error:",
+				ComposeError::Podman(crate::libpod::PodmanError::Api {
+					status: 500,
+					message: "boom".into(),
+				}),
+			),
+			(
+				"invalid variable substitution: bad",
+				ComposeError::InvalidSubstitution("bad".into()),
+			),
 			("build error: b", ComposeError::Build("b".into())),
 			("extends error: e", ComposeError::Extends("e".into())),
 			("include error: i", ComposeError::Include("i".into())),
@@ -226,6 +237,15 @@ mod tests {
 		use std::error::Error;
 		let io = ComposeError::Io(std::io::Error::other("x"));
 		assert!(io.source().is_some());
+		// Parse and Podman also wrap a lower-level error and expose it.
+		let parse =
+			ComposeError::Parse(serde_yaml::from_str::<serde_yaml::Value>(":\0").unwrap_err());
+		assert!(parse.source().is_some());
+		let podman = ComposeError::Podman(crate::libpod::PodmanError::Api {
+			status: 500,
+			message: "boom".into(),
+		});
+		assert!(podman.source().is_some());
 		let svc = ComposeError::ServiceNotFound("s".into());
 		assert!(svc.source().is_none());
 	}

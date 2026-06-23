@@ -98,13 +98,45 @@ pub(super) fn map_security_opt(
 
 #[cfg(test)]
 mod tests {
-	use super::{render_secret, secret_field};
+	use super::{map_security_opt, render_secret, secret_field, Section};
 	use crate::compose::types::ServiceSecretRef;
+
+	/// Render a fresh `[Container]` section after applying one `security_opt`,
+	/// returning `(rendered_body, warnings)`.
+	fn map_one(opt: &str) -> (String, Vec<String>) {
+		let mut container = Section::new("Container");
+		let mut warnings = Vec::new();
+		map_security_opt(opt, &mut container, "web", &mut warnings);
+		(container.render(), warnings)
+	}
 
 	#[test]
 	fn secret_field_strips_separators_and_controls() {
 		assert_eq!(secret_field("a,b=c\nd"), "abcd");
 		assert_eq!(secret_field("plain"), "plain");
+	}
+
+	#[test]
+	fn render_secret_short_form_sanitizes_name() {
+		// A short-form name with a `,`/`=` would inject extra `Secret=` options.
+		let s = ServiceSecretRef::Short("tok,uid=0".into());
+		assert_eq!(render_secret(&s), "tokuid0");
+	}
+
+	#[test]
+	fn render_secret_emits_uid_gid_mode() {
+		// uid/gid pass through `secret_field`; mode is rendered octal.
+		let s = ServiceSecretRef::Long {
+			source: "tok".into(),
+			target: Some("/run/tok".into()),
+			uid: Some("1000".into()),
+			gid: Some("1000".into()),
+			mode: Some(0o440),
+		};
+		assert_eq!(
+			render_secret(&s),
+			"tok,target=/run/tok,uid=1000,gid=1000,mode=440"
+		);
 	}
 
 	#[test]
@@ -122,5 +154,79 @@ mod tests {
 		// separate option: exactly one comma (the legitimate `,target=`).
 		assert_eq!(out.matches(',').count(), 1);
 		assert_eq!(out, "tok,target=/run/xuid0");
+	}
+
+	// --- map_security_opt: each recognized form maps to its dedicated key -----
+
+	#[test]
+	fn maps_no_new_privileges_bare_and_explicit() {
+		let (body, warnings) = map_one("no-new-privileges");
+		assert!(body.contains("NoNewPrivileges=true"));
+		assert!(warnings.is_empty());
+
+		assert!(map_one("no-new-privileges:false")
+			.0
+			.contains("NoNewPrivileges=false"));
+		assert!(map_one("no-new-privileges=true")
+			.0
+			.contains("NoNewPrivileges=true"));
+	}
+
+	#[test]
+	fn maps_seccomp_and_apparmor() {
+		assert!(map_one("seccomp=/etc/seccomp.json")
+			.0
+			.contains("SeccompProfile=/etc/seccomp.json"));
+		// Both `apparmor=` and `apparmor:` map to the native AppArmor key.
+		assert!(map_one("apparmor=docker-default")
+			.0
+			.contains("AppArmor=docker-default"));
+		assert!(map_one("apparmor:unconfined")
+			.0
+			.contains("AppArmor=unconfined"));
+	}
+
+	#[test]
+	fn maps_each_label_variant() {
+		assert!(map_one("label=disable")
+			.0
+			.contains("SecurityLabelDisable=true"));
+		assert!(map_one("label=nested")
+			.0
+			.contains("SecurityLabelNested=true"));
+		assert!(map_one("label=type:container_t")
+			.0
+			.contains("SecurityLabelType=container_t"));
+		assert!(map_one("label=level:s0:c1,c2")
+			.0
+			.contains("SecurityLabelLevel=s0:c1,c2"));
+		assert!(map_one("label=filetype:tmp_t")
+			.0
+			.contains("SecurityLabelFileType=tmp_t"));
+	}
+
+	#[test]
+	fn maps_mask_and_unmask() {
+		assert!(map_one("mask=/proc/kcore").0.contains("Mask=/proc/kcore"));
+		assert!(map_one("unmask=/sys/firmware")
+			.0
+			.contains("Unmask=/sys/firmware"));
+	}
+
+	#[test]
+	fn unknown_label_warns_and_emits_no_key() {
+		let (body, warnings) = map_one("label=bogus");
+		// Only the section header — no key added.
+		assert_eq!(body, "[Container]\n");
+		assert_eq!(warnings.len(), 1);
+		assert!(warnings[0].contains("label=bogus"));
+	}
+
+	#[test]
+	fn unrecognized_opt_warns_and_emits_no_key() {
+		let (body, warnings) = map_one("proc-opts=nosuid");
+		assert_eq!(body, "[Container]\n");
+		assert_eq!(warnings.len(), 1);
+		assert!(warnings[0].contains("proc-opts=nosuid"));
 	}
 }

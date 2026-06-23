@@ -176,6 +176,32 @@ mod tests {
 	fn level_words_match_user_facing_terms() {
 		assert_eq!(level_word(tracing::Level::WARN), "warning");
 		assert_eq!(level_word(tracing::Level::ERROR), "error");
+		assert_eq!(level_word(tracing::Level::INFO), "info");
+		assert_eq!(level_word(tracing::Level::DEBUG), "debug");
+		assert_eq!(level_word(tracing::Level::TRACE), "trace");
+	}
+
+	fn sample_file() -> podup::compose::types::ComposeFile {
+		podup::parse_str("services:\n  web:\n    image: nginx\n  db:\n    image: postgres\n")
+			.unwrap()
+	}
+
+	#[test]
+	fn render_config_quiet_is_validate_only() {
+		// `--quiet` validates and prints nothing, returning Ok.
+		render_config(&sample_file(), &ConfigFormat::Yaml, false, true).unwrap();
+	}
+
+	#[test]
+	fn render_config_services_lists_names() {
+		// `--services` reaches the service-name listing branch without error.
+		render_config(&sample_file(), &ConfigFormat::Yaml, true, false).unwrap();
+	}
+
+	#[test]
+	fn render_config_yaml_and_json_render_ok() {
+		render_config(&sample_file(), &ConfigFormat::Yaml, false, false).unwrap();
+		render_config(&sample_file(), &ConfigFormat::Json, false, false).unwrap();
 	}
 
 	#[test]

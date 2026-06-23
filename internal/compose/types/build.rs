@@ -394,4 +394,68 @@ mod tests {
 		assert_eq!(b.context(), ".");
 		assert_eq!(b.dockerfile_inline(), Some("FROM alpine\n"));
 	}
+
+	// --- BuildConfig::Context short-form: every accessor returns its empty default
+
+	#[test]
+	fn build_config_context_accessors_are_empty_defaults() {
+		let b = BuildConfig::Context("./app".into());
+		assert!(matches!(b.args(), EnvVars::Empty));
+		assert!(b.target().is_none());
+		assert!(b.shm_size().is_none());
+		assert!(b.dockerfile_inline().is_none());
+		assert!(b.extra_hosts().is_empty());
+		assert!(b.tags().is_empty());
+		assert!(b.cache_from().is_empty());
+		assert!(b.cache_to().is_empty());
+		assert!(b.ssh().is_empty());
+		assert!(b.secrets().is_empty());
+		assert!(b.additional_contexts().is_empty());
+	}
+
+	// --- BuildConfig::Config long-form: accessors surface the parsed values
+
+	#[test]
+	fn build_config_long_form_lists_and_scalars() {
+		let yaml = "\
+context: ./svc
+dockerfile_inline: |
+  FROM scratch
+args:
+  KEY: value
+shm_size: 128mb
+cache_from:
+  - type=registry,ref=example.com/cache
+cache_to:
+  - type=local,dest=/tmp/c
+extra_hosts:
+  - host.example:10.0.0.1
+tags:
+  - example.com/app:1.0
+  - example.com/app:latest
+ssh:
+  - default
+secrets:
+  - db_password
+additional_contexts:
+  base: docker-image://alpine:3
+";
+		let b: BuildConfig = serde_yaml::from_str(yaml).unwrap();
+		assert_eq!(b.context(), "./svc");
+		assert_eq!(b.dockerfile_inline(), Some("FROM scratch\n"));
+		assert!(matches!(b.args(), EnvVars::Map(_)));
+		assert_eq!(b.shm_size(), Some("128mb"));
+		assert_eq!(b.cache_from(), &["type=registry,ref=example.com/cache"]);
+		assert_eq!(b.cache_to(), &["type=local,dest=/tmp/c"]);
+		assert_eq!(b.extra_hosts(), &["host.example:10.0.0.1"]);
+		assert_eq!(b.tags(), &["example.com/app:1.0", "example.com/app:latest"]);
+		assert_eq!(b.ssh(), &["default"]);
+		assert_eq!(b.secrets(), &["db_password"]);
+		let extra = b.additional_contexts();
+		assert_eq!(extra.len(), 1);
+		assert_eq!(
+			extra[0],
+			("base".to_string(), "docker-image://alpine:3".to_string())
+		);
+	}
 }

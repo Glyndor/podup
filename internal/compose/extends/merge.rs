@@ -408,4 +408,65 @@ services:
 		let env = file.services["app"].environment.to_map();
 		assert_eq!(env.get("A").and_then(|v| v.clone()).as_deref(), Some("1"));
 	}
+
+	#[test]
+	fn scalar_or_list_field_override_replaces_base() {
+		// `dns` is a StringOrList: a non-empty override replaces the base wholesale
+		// (merge_sol), it is not unioned.
+		let yaml = r#"
+services:
+  base:
+    image: alpine
+    dns:
+      - 1.1.1.1
+  app:
+    extends: base
+    dns:
+      - 9.9.9.9
+"#;
+		let file = parse_str(yaml).unwrap();
+		assert_eq!(file.services["app"].dns.to_list(), vec!["9.9.9.9"]);
+	}
+
+	#[test]
+	fn env_file_override_replaces_base() {
+		// env_file is replaced (not unioned) when the extending service sets it.
+		let yaml = r#"
+services:
+  base:
+    image: alpine
+    env_file:
+      - base.env
+  app:
+    extends: base
+    env_file:
+      - app.env
+"#;
+		let file = parse_str(yaml).unwrap();
+		let entries = file.services["app"].env_file.to_entries();
+		assert_eq!(entries.len(), 1);
+		assert_eq!(entries[0].path(), "app.env");
+	}
+
+	#[test]
+	fn depends_on_unions_when_base_has_none() {
+		// The base declares no depends_on; the extending service's dependencies are
+		// carried through unchanged (merge_depends_on base-empty branch).
+		let yaml = r#"
+services:
+  base:
+    image: alpine
+  db:
+    image: postgres
+  app:
+    extends: base
+    depends_on:
+      - db
+"#;
+		let file = parse_str(yaml).unwrap();
+		assert!(file.services["app"]
+			.depends_on
+			.service_names()
+			.contains(&"db".to_string()));
+	}
 }

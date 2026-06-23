@@ -291,6 +291,30 @@ mod tests {
 	}
 
 	#[test]
+	fn verify_with_keys_rejects_wrong_length_signature() {
+		// A signature that is not 64 bytes is rejected at the length gate inside
+		// verify_with_keys (distinct from the single-key verify_signature_with seam).
+		let (_sk, vk) = test_keypair();
+		let err = verify_with_keys(&[vk], b"payload", &[0u8; 10]).unwrap_err();
+		match err {
+			ComposeError::Update(msg) => assert!(msg.contains("expected 64 bytes")),
+			_ => panic!("expected an Update error"),
+		}
+	}
+
+	#[test]
+	fn expected_digest_skips_lines_without_whitespace() {
+		// A manifest line carrying no whitespace separator is skipped rather than
+		// mis-parsed; a well-formed later line still resolves.
+		let sums = "garbageline\n\
+		            52d6148bf50d9d3f24a634402ec39d44302d73b21e3b74ed6a28877fdd7b93ea  podup-linux-x86_64\n";
+		assert_eq!(
+			expected_digest(sums.as_bytes(), "podup-linux-x86_64").unwrap(),
+			"52d6148bf50d9d3f24a634402ec39d44302d73b21e3b74ed6a28877fdd7b93ea"
+		);
+	}
+
+	#[test]
 	fn embedded_key_verifies_real_release() {
 		// Regression vector: the genuine published podup SHA256SUMS and its
 		// signature must verify against the embedded key. If a future edit

@@ -245,6 +245,26 @@ mod tests {
 	}
 
 	#[test]
+	fn force_reinstall_same_version_check_only_announces_reinstall() {
+		// `--force --check` on the *same* version takes the reinstall branch (not
+		// "up to date") and stops at the check-only gate without downloading.
+		let src = MockSource {
+			latest: "v0.6.0".into(),
+			assets: HashMap::new(),
+			fetched: RefCell::new(Vec::new()),
+		};
+		let opts = UpdateOptions {
+			check_only: true,
+			force: true,
+		};
+		run_with_guard(&src, "0.6.0", opts, None).unwrap();
+		assert!(
+			src.fetched.borrow().is_empty(),
+			"check-only must not download even when forcing a reinstall"
+		);
+	}
+
+	#[test]
 	fn check_only_returns_before_package_manager_guard() {
 		// --check must short-circuit even when a package manager owns the binary,
 		// so `podup update --check` never errors on a deb install.

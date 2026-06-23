@@ -352,4 +352,30 @@ mod tests {
 		// detection must not false-positive and block updates for normal builds.
 		assert_eq!(managing_package_manager(), None);
 	}
+
+	#[test]
+	fn rename_error_calls_out_permission_and_generic_cases() {
+		let target = Path::new("/usr/local/bin/podup");
+		// A permission error nudges the user toward elevation.
+		let perm = rename_error(
+			std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+			target,
+		);
+		match perm {
+			ComposeError::Update(msg) => {
+				assert!(msg.contains("permission denied"));
+				assert!(msg.contains("sudo"));
+			}
+			_ => panic!("expected an Update error"),
+		}
+		// Any other error reports the underlying failure verbatim.
+		let other = rename_error(std::io::Error::other("disk full"), target);
+		match other {
+			ComposeError::Update(msg) => {
+				assert!(msg.contains("failed to install update"));
+				assert!(msg.contains("disk full"));
+			}
+			_ => panic!("expected an Update error"),
+		}
+	}
 }
