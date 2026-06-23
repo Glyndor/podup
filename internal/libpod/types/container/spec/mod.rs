@@ -176,6 +176,22 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub healthconfig: Option<HealthConfig>,
 
+	/// What Podman does when the healthcheck flips to unhealthy (Podman 5's
+	/// `--health-on-failure`). Podman's key is `health_check_on_failure_action`.
+	#[serde(
+		rename = "health_check_on_failure_action",
+		skip_serializing_if = "Option::is_none"
+	)]
+	pub health_check_on_failure_action: Option<HealthCheckOnFailureAction>,
+
+	/// Separate startup-phase healthcheck (Podman 5's `--health-startup-*`).
+	/// Podman's key is `startupHealthConfig`.
+	#[serde(
+		rename = "startupHealthConfig",
+		skip_serializing_if = "Option::is_none"
+	)]
+	pub startup_health_config: Option<StartupHealthCheck>,
+
 	// Logging
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub log_configuration: Option<LogConfig>,
@@ -236,7 +252,10 @@ pub struct SpecGenerator {
 
 #[cfg(test)]
 mod tests {
-	use super::{LinuxDeviceCgroup, SpecGenerator, Ulimit};
+	use super::{
+		HealthCheckOnFailureAction, HealthConfig, LinuxDeviceCgroup, SpecGenerator,
+		StartupHealthCheck, Ulimit,
+	};
 
 	#[test]
 	fn security_fields_serialize_decomposed_not_as_security_opt() {
@@ -321,5 +340,44 @@ mod tests {
 		assert_eq!(v["r_limits"][0]["type"], "nofile");
 		assert_eq!(v["r_limits"][0]["soft"], 1024);
 		assert_eq!(v["r_limits"][0]["hard"], 2048);
+	}
+
+	#[test]
+	fn health_on_failure_and_startup_use_podman_wire_names() {
+		let spec = SpecGenerator {
+			health_check_on_failure_action: Some(HealthCheckOnFailureAction::Restart),
+			startup_health_config: Some(StartupHealthCheck {
+				health_config: HealthConfig {
+					test: Some(vec!["CMD".to_string(), "true".to_string()]),
+					interval: Some(1_000_000_000),
+					..Default::default()
+				},
+				successes: Some(3),
+			}),
+			..Default::default()
+		};
+		let v = serde_json::to_value(&spec).unwrap();
+
+		// `--health-on-failure` rides as Podman's integer action code (restart = 3),
+		// under the snake_case key — not as a string and not as `none`(0).
+		assert_eq!(v["health_check_on_failure_action"], 3);
+
+		// The startup probe nests under the PascalCase `startupHealthConfig` key,
+		// with its embedded probe fields flattened (PascalCase) and `Successes`.
+		let startup = &v["startupHealthConfig"];
+		assert_eq!(startup["Test"][0], "CMD");
+		assert_eq!(startup["Test"][1], "true");
+		assert_eq!(startup["Interval"], 1_000_000_000_i64);
+		assert_eq!(startup["Successes"], 3);
+		// Flattened — there is no nested `health_config` wrapper key.
+		assert!(startup.get("health_config").is_none(), "not flattened: {v}");
+	}
+
+	#[test]
+	fn health_fields_omitted_when_unset() {
+		// Both new fields are `Option` and must vanish from the wire when unset.
+		let v = serde_json::to_value(SpecGenerator::default()).unwrap();
+		assert!(v.get("health_check_on_failure_action").is_none());
+		assert!(v.get("startupHealthConfig").is_none());
 	}
 }

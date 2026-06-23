@@ -238,13 +238,31 @@ impl Client {
 	// Request helpers
 	// ---------------------------------------------------------------------------
 
-	/// `GET /libpod/_ping` — returns Ok(()) when Podman is reachable.
+	/// `GET /libpod/_ping` — returns Ok(()) when Podman is reachable *and* speaks
+	/// a libpod API version podup supports.
+	///
+	/// Podman answers `_ping` with a `Libpod-API-Version` response header. We read
+	/// it here, while the call is already cheap, and reject a server below the
+	/// `MIN_LIBPOD_API_MAJOR.0` floor with a clear
+	/// [`PodmanError::IncompatibleApiVersion`] rather than letting a later
+	/// SpecGenerator or libpod-native call fail with an obscure 4xx.
 	pub async fn ping(&self) -> Result<()> {
 		// Deliberately omits the version prefix: `_ping` is version-independent.
 		let req = Self::build_request(Method::GET, "/libpod/_ping", Full::new(Bytes::new()), None)?;
 		let resp = self.send(req).await?;
+		// Read the version header before the body is consumed below.
+		let reported = resp
+			.headers()
+			.get("Libpod-API-Version")
+			.and_then(|v| v.to_str().ok())
+			.unwrap_or_default()
+			.to_owned();
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
-		Self::check_status(status, &body)
+		Self::check_status(status, &body)?;
+		if !meets_minimum(&reported) {
+			return Err(PodmanError::IncompatibleApiVersion { reported });
+		}
+		Ok(())
 	}
 
 	/// `GET` → deserialize JSON response.
@@ -405,11 +423,32 @@ impl Client {
 	}
 }
 
+/// Lowest libpod API major version podup supports. Podman 5.x reports `5.x.y`;
+/// anything below `5.0` lacks SpecGenerator fields podup relies on.
+const MIN_LIBPOD_API_MAJOR: u64 = 5;
+
+/// Whether a `Libpod-API-Version` string (e.g. `"5.0.0"`, `"4.9.3"`) meets the
+/// [`MIN_LIBPOD_API_MAJOR`].0 floor.
+///
+/// Pure and total so it is unit-testable in isolation. Only the major component
+/// gates: any `5.x.y` (or higher major) passes; `4.x.y` is rejected. An empty or
+/// malformed string — a server that sent no header, or a value we cannot parse —
+/// is treated as *not* meeting the minimum, so we fail closed rather than assume
+/// a compatible server.
+fn meets_minimum(version: &str) -> bool {
+	version
+		.trim()
+		.split('.')
+		.next()
+		.and_then(|major| major.parse::<u64>().ok())
+		.is_some_and(|major| major >= MIN_LIBPOD_API_MAJOR)
+}
+
 #[cfg(test)]
 mod tests {
 	use hyper::StatusCode;
 
-	use super::Client;
+	use super::{meets_minimum, Client};
 
 	// ---------------------------------------------------------------------------
 	// check_status tests
@@ -518,5 +557,30 @@ mod tests {
 			.await
 			.unwrap_err();
 		assert!(err.to_string().contains("timed out"));
+	}
+
+	/// The version gate accepts Podman 5.x (and any higher major) and rejects
+	/// anything older, so an incompatible server is caught at ping time.
+	#[test]
+	fn meets_minimum_accepts_5_and_above_rejects_older() {
+		assert!(meets_minimum("5.0.0"));
+		assert!(meets_minimum("5.4.2"));
+		assert!(meets_minimum("6.0.0"));
+		assert!(!meets_minimum("4.9.3"));
+		assert!(!meets_minimum("4.0.0"));
+		assert!(!meets_minimum("3.4.4"));
+	}
+
+	/// A missing or malformed `Libpod-API-Version` fails closed: we never assume a
+	/// compatible server from an unparseable value.
+	#[test]
+	fn meets_minimum_handles_malformed_and_empty() {
+		assert!(!meets_minimum(""));
+		assert!(!meets_minimum("   "));
+		assert!(!meets_minimum("not-a-version"));
+		assert!(!meets_minimum("v5.0.0"));
+		assert!(!meets_minimum(".5"));
+		// Leading/trailing whitespace around a valid version is tolerated.
+		assert!(meets_minimum(" 5.0.0 "));
 	}
 }
