@@ -253,8 +253,22 @@ pub(super) fn resolve_stop_signal(signal: &str) -> Result<i64> {
 		.ok_or_else(|| ComposeError::Unsupported(format!("unknown stop_signal '{signal}'")))
 }
 
+/// First realtime signal number on Linux/glibc (`SIGRTMIN`).
+const SIGRTMIN: i64 = 34;
+/// Last realtime signal number on Linux/glibc (`SIGRTMAX`).
+const SIGRTMAX: i64 = 64;
+
 /// Map a bare (no `SIG` prefix) upper-case signal name to its Linux number.
+///
+/// In addition to the named POSIX signals, the realtime signals are resolved:
+/// `RTMIN`/`RTMAX` and the offset forms `RTMIN+N`/`RTMAX-N`, matching how
+/// docker-compose and Podman interpret them. The computed number must stay within
+/// the realtime range [`SIGRTMIN`]..=[`SIGRTMAX`]; an out-of-range offset (e.g.
+/// `RTMIN+40`) resolves to `None` so the caller reports it as unknown.
 fn signal_number(name: &str) -> Option<i64> {
+	if let Some(n) = realtime_signal_number(name) {
+		return Some(n);
+	}
 	let n = match name {
 		"HUP" => 1,
 		"INT" => 2,
@@ -292,6 +306,33 @@ fn signal_number(name: &str) -> Option<i64> {
 	Some(n)
 }
 
+/// Resolve a realtime signal name (`RTMIN`, `RTMAX`, `RTMIN+N`, `RTMAX-N`) to its
+/// number, or `None` if `name` is not a realtime form or the computed number
+/// falls outside the realtime range [`SIGRTMIN`]..=[`SIGRTMAX`].
+fn realtime_signal_number(name: &str) -> Option<i64> {
+	let (base, rest) = if let Some(rest) = name.strip_prefix("RTMIN") {
+		(SIGRTMIN, rest)
+	} else if let Some(rest) = name.strip_prefix("RTMAX") {
+		(SIGRTMAX, rest)
+	} else {
+		return None;
+	};
+	let number = if rest.is_empty() {
+		base
+	} else {
+		// An offset must be `+N` (only valid after RTMIN) or `-N` (only valid
+		// after RTMAX), matching POSIX/glibc's `SIGRTMIN+n` / `SIGRTMAX-n`.
+		let (sign, digits) = rest.split_at(1);
+		let offset: i64 = digits.parse().ok()?;
+		match (base == SIGRTMIN, sign) {
+			(true, "+") => base + offset,
+			(false, "-") => base - offset,
+			_ => return None,
+		}
+	};
+	(SIGRTMIN..=SIGRTMAX).contains(&number).then_some(number)
+}
+
 #[cfg(test)]
 mod tests {
 	use super::{
@@ -312,6 +353,28 @@ mod tests {
 		// Bare numbers pass through (optionally surrounded by whitespace).
 		assert_eq!(resolve_stop_signal("15").unwrap(), 15);
 		assert_eq!(resolve_stop_signal(" 9 ").unwrap(), 9);
+	}
+
+	#[test]
+	fn stop_signal_resolves_realtime_signals() {
+		// Realtime signals and their offset forms, as docker-compose/Podman accept
+		// them (images on s6-overlay/tini commonly use SIGRTMIN+3).
+		assert_eq!(resolve_stop_signal("SIGRTMIN").unwrap(), 34);
+		assert_eq!(resolve_stop_signal("SIGRTMIN+3").unwrap(), 37);
+		assert_eq!(resolve_stop_signal("SIGRTMAX").unwrap(), 64);
+		assert_eq!(resolve_stop_signal("SIGRTMAX-1").unwrap(), 63);
+		// The SIG prefix is optional here too.
+		assert_eq!(resolve_stop_signal("RTMIN+3").unwrap(), 37);
+	}
+
+	#[test]
+	fn stop_signal_rejects_out_of_range_realtime_offset() {
+		// 34 + 40 = 74 is past SIGRTMAX (64), so it is rejected.
+		let err = resolve_stop_signal("SIGRTMIN+40").unwrap_err();
+		assert!(err.to_string().contains("SIGRTMIN+40"), "got: {err}");
+		// Wrong-direction offsets are rejected too.
+		assert!(resolve_stop_signal("SIGRTMIN-1").is_err());
+		assert!(resolve_stop_signal("SIGRTMAX+1").is_err());
 	}
 
 	#[test]
