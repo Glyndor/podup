@@ -297,6 +297,61 @@ pub struct HealthConfig {
 	pub start_interval: Option<i64>,
 }
 
+/// Action Podman takes when a container's healthcheck transitions to unhealthy
+/// (Podman 5's `--health-on-failure`).
+///
+/// Podman's `define.HealthCheckOnFailureAction` is an untagged `int` with no
+/// custom JSON marshaller, so it travels the wire as a bare number. The explicit
+/// discriminants below pin each variant to Podman's constant value; `Invalid`
+/// (1) is Podman's error sentinel and is never emitted by a valid spec.
+///
+/// The variants are the complete Podman action set so the API surface is correct;
+/// no compose key maps to them yet, hence `allow(dead_code)` until the
+/// `--health-on-failure` plumbing lands.
+#[allow(dead_code)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[repr(u8)]
+pub enum HealthCheckOnFailureAction {
+	/// Take no action; only mark the container unhealthy (Podman's `none`, `0`).
+	None = 0,
+	/// Kill the container (Podman's `kill`, `2`).
+	Kill = 2,
+	/// Restart the container (Podman's `restart`, `3`).
+	Restart = 3,
+	/// Stop the container (Podman's `stop`, `4`).
+	Stop = 4,
+}
+
+impl Serialize for HealthCheckOnFailureAction {
+	fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+	where
+		S: serde::Serializer,
+	{
+		// Wire form is the bare integer Podman assigns each action.
+		serializer.serialize_u8(*self as u8)
+	}
+}
+
+/// Startup-healthcheck configuration (Podman 5's `--health-startup-*`).
+///
+/// Podman's `define.StartupHealthCheck` embeds `Schema2HealthConfig` and adds a
+/// `Successes` count; the embedded probe fields are flattened to the top level of
+/// the `startupHealthConfig` object with their PascalCase keys (`Test`,
+/// `Interval`, …), which is exactly [`HealthConfig`]'s wire shape — so it is
+/// reused here via `#[serde(flatten)]`.
+#[derive(Serialize, Default)]
+pub struct StartupHealthCheck {
+	/// The probe definition (test command, interval, timeout, retries, …),
+	/// flattened so its fields sit alongside `Successes`.
+	#[serde(flatten)]
+	pub health_config: HealthConfig,
+
+	/// Number of consecutive successes required before the container is considered
+	/// started and the regular healthcheck takes over (`--health-startup-success`).
+	#[serde(rename = "Successes", skip_serializing_if = "Option::is_none")]
+	pub successes: Option<i64>,
+}
+
 /// Container log driver configuration.
 #[derive(Serialize)]
 pub struct LogConfig {

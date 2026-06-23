@@ -13,6 +13,10 @@ pub enum PodmanError {
 	Json(serde_json::Error),
 	/// Podman API returned an error response (4xx/5xx).
 	Api { status: u16, message: String },
+	/// The reachable Podman server speaks a libpod API version below the minimum
+	/// podup supports. Carries the version string the server reported (empty when
+	/// the server sent no `Libpod-API-Version` header).
+	IncompatibleApiVersion { reported: String },
 }
 
 impl fmt::Display for PodmanError {
@@ -24,6 +28,17 @@ impl fmt::Display for PodmanError {
 			Self::Api { status, message } => {
 				write!(f, "podman API error (HTTP {status}): {message}")
 			}
+			Self::IncompatibleApiVersion { reported } => {
+				let reported = if reported.is_empty() {
+					"an unknown version"
+				} else {
+					reported.as_str()
+				};
+				write!(
+					f,
+					"podup requires Podman >= 5.0; this server reports libpod API version {reported}"
+				)
+			}
 		}
 	}
 }
@@ -34,7 +49,7 @@ impl std::error::Error for PodmanError {
 			Self::Connect(e) => Some(e),
 			Self::Hyper(e) => Some(e),
 			Self::Json(e) => Some(e),
-			Self::Api { .. } => None,
+			Self::Api { .. } | Self::IncompatibleApiVersion { .. } => None,
 		}
 	}
 }
