@@ -97,7 +97,7 @@ impl Engine {
 				);
 				let code = self
 					.client
-					.post_empty_json::<i64>(&path)
+					.post_empty_json_unbounded::<i64>(&path)
 					.await
 					.map_err(ComposeError::Podman)?;
 				println!("{code}");
@@ -434,7 +434,10 @@ impl Engine {
 		);
 		// Capture the wait result before cleanup so a failed wait is surfaced as an
 		// error rather than masked as a successful (exit 0) run.
-		let wait_result = self.client.post_empty_json::<i64>(&wait_path).await;
+		let wait_result = self
+			.client
+			.post_empty_json_unbounded::<i64>(&wait_path)
+			.await;
 
 		if rm {
 			let rm_path = format!(
