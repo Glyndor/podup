@@ -50,9 +50,10 @@ only those built from a `build:` section).
 
 ### `start` / `stop` / `restart`
 Start existing stopped containers, stop running ones without removing them, or
-restart them. `start`/`stop` accept a trailing service list; `restart [SERVICE]`
-restarts everything or one service. `restart --no-deps` skips cascade-restarting
-dependents that declare a `depends_on` restart condition.
+restart them. `start`/`stop`/`restart` accept a trailing service list;
+`restart [SERVICE...]` restarts everything or the named services.
+`restart --no-deps` skips cascade-restarting dependents that declare a
+`depends_on` restart condition.
 
 ### `scale <SERVICE=N>...`
 Set the number of running containers for one or more services, creating missing
@@ -97,7 +98,8 @@ Run a one-off command in a new container for the service.
 
 | Option | Description |
 |---|---|
-| `--rm` | Remove the container after it exits (default: true). |
+| `--rm` | Remove the container after it exits (the default). |
+| `--no-rm` | Keep the one-off container after it exits instead of removing it. |
 | `-d, --detach` | Run in the background. |
 | `-e, --env <KEY=VAL>` | Set an environment variable. Repeatable. |
 | `--name <NAME>` | Override the container name. |
@@ -147,10 +149,10 @@ selects a replica (1-based) of a scaled service.
 | `top` | Show running processes of service containers. |
 | `stats` | Live resource usage (CPU, memory, network, block I/O, PIDs) for service containers. `--no-stream` prints one snapshot; a trailing service list narrows it. |
 | `port <SERVICE> <PRIVATE_PORT>` | Print the public binding for a port. `--proto` sets `tcp`/`udp` (default `tcp`). |
-| `events` | Stream Podman events for this project's containers. `--json` emits each event as a JSON line instead of a summary. |
+| `events` | Stream Podman events for this project's containers. `--format json` emits each event as a JSON line instead of a `TYPE ACTION NAME` summary (the deprecated `--json` flag is a hidden alias for it). |
 | `images` | List images used by services. `-q/--quiet` prints image IDs only, `--format table\|json`. |
 | `volumes [SERVICE...]` | List the project's named volumes. `-q/--quiet` prints names only, `--format table\|json`; a trailing service list narrows it to volumes those services mount. |
-| `logs [SERVICE]` | View container output. `-f/--follow` streams new output, `-n/--tail <N>` limits to the last N lines, `--since`/`--until` bound by time, `-t/--timestamps` prefixes each line. |
+| `logs [SERVICE...]` | View container output for the named services (or all). `-f/--follow` streams new output, `-n/--tail <N>` limits to the last N lines, `--since`/`--until` bound by time, `-t/--timestamps` prefixes each line. |
 | `config` | Print the resolved compose file (after substitution, extends, include). `--format yaml\|json`, `--services` lists service names, `-q/--quiet` only validates, `--no-interpolate` leaves `${VAR}` placeholders literal, `--resolve-image-digests` rewrites each service `image:` to its registry digest (`repo@sha256:...`). |
 | `pull` | Pull images for all services. `-q/--quiet` suppresses progress output. |
 
@@ -241,6 +243,7 @@ when both are set.
 | Code | Meaning |
 |---|---|
 | `0` | Success. |
-| `1` | A command failed (parse error, Podman error). |
-| `2` | `update` failed to verify or install a release. |
+| `1` | A command failed (Podman error, runtime failure). |
+| `2` | Command-line usage error (unknown flag, bad argument). |
+| `3` | `update` failed to verify or install a release. |
 | other | `run` propagates the container's own exit code verbatim. |
