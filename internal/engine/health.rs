@@ -177,7 +177,9 @@ impl Engine {
 			crate::libpod::urlencoded(container_name),
 		);
 		let budget = std::time::Duration::from_secs(600);
-		match tokio::time::timeout(budget, self.client.post_empty_json::<i64>(&path)).await {
+		match tokio::time::timeout(budget, self.client.post_empty_json_unbounded::<i64>(&path))
+			.await
+		{
 			Ok(Ok(0)) => Ok(()),
 			Ok(Ok(code)) => Err(ComposeError::HealthCheckTimeout(format!(
 				"{container_name} exited with non-zero status {code}"
