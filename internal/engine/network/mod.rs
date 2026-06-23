@@ -308,5 +308,4 @@ fn lease_range_from_cidr(cidr: &str) -> Option<LeaseRange> {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[path = "network_tests.rs"]
 mod tests;

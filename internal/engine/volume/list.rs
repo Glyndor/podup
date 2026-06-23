@@ -10,7 +10,7 @@ use std::collections::BTreeSet;
 use crate::compose::types::{ComposeFile, VolumeMount};
 use crate::error::Result;
 
-use super::Engine;
+use super::super::Engine;
 
 /// Options for [`Engine::list_volumes`], mirroring `docker compose volumes`.
 #[derive(Default)]

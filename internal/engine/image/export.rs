@@ -10,7 +10,7 @@ use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
-use super::Engine;
+use super::super::Engine;
 
 impl Engine {
 	/// Commit a service container to a new image (`docker compose commit`).
