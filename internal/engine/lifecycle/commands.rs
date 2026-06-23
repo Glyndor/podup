@@ -1,5 +1,7 @@
 //! Lifecycle sub-commands: restart, stop, start, kill, rm, pause, unpause, run.
 
+use std::io::Write;
+
 use futures_util::StreamExt;
 use tracing::info;
 
@@ -421,13 +423,23 @@ impl Engine {
 			.map_err(ComposeError::Podman)?;
 		let mut log_stream = crate::libpod::parse_multiplexed(logs_resp.into_body());
 
+		// Lock stdout once for the whole stream instead of re-acquiring the lock
+		// (and issuing a syscall) per frame; stdout is ours exclusively on this
+		// path. stderr is locked per frame because the tracing subscriber also
+		// writes there: holding its lock across the await loop would starve
+		// concurrent log emissions. Flush after each frame so `run` streams
+		// promptly.
+		let mut out = std::io::stdout().lock();
 		while let Some(msg) = log_stream.next().await {
 			match msg.map_err(ComposeError::Podman)? {
 				crate::libpod::LogOutput::StdOut { message } => {
-					print!("{}", String::from_utf8_lossy(&message))
+					let _ = out.write_all(String::from_utf8_lossy(&message).as_bytes());
+					let _ = out.flush();
 				}
 				crate::libpod::LogOutput::StdErr { message } => {
-					eprint!("{}", String::from_utf8_lossy(&message))
+					let mut err = std::io::stderr().lock();
+					let _ = err.write_all(String::from_utf8_lossy(&message).as_bytes());
+					let _ = err.flush();
 				}
 			}
 		}
