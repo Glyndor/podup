@@ -58,6 +58,8 @@ PublishPort=8080:80
 Environment=TZ=UTC
 Volume=data.volume:/var/lib/data
 Network=frontend.network
+Label=podup.project=proj
+Label=podup.service=web
 
 [Service]
 Restart=always
@@ -84,11 +86,11 @@ networks:
 
 	assert_eq!(
 		unit(&out, "cache.volume"),
-		"[Volume]\nVolumeName=myproj_cache\n"
+		"[Volume]\nVolumeName=myproj_cache\nLabel=podup.project=myproj\n"
 	);
 	assert_eq!(
 		unit(&out, "backend.network"),
-		"[Network]\nNetworkName=myproj_backend\n"
+		"[Network]\nNetworkName=myproj_backend\nLabel=podup.project=myproj\n"
 	);
 }
 

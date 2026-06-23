@@ -137,7 +137,7 @@ services:
 		"Sysctl=net.core.somaxconn=1024",
 		"Ulimit=nofile=1024:2048",
 		"ShmSize=64m",
-		"PodmanArgs=--memory=512m",
+		"Memory=512m",
 		"PidsLimit=100",
 		"UserNS=keep-id",
 		"StopSignal=SIGTERM",
@@ -251,17 +251,17 @@ networks:
 		"LogDriver=journald",
 		"LogOpt=tag=mytag",
 		"NetworkAlias=web-alias",
-		"PodmanArgs=--memory=256m",
+		"Memory=256m",
 	] {
 		assert!(c.contains(needle), "missing `{needle}` in:\n{c}");
 	}
 }
 
 #[test]
-fn memory_and_apparmor_render_as_podman_args_not_invalid_keys() {
-	// `Memory=` and `AppArmor=` are not valid Quadlet [Container] keys in Podman
-	// 5.x; emitting them makes the generator reject the whole unit. They must be
-	// expressed through `PodmanArgs=` instead.
+fn memory_and_apparmor_render_as_native_keys() {
+	// `Memory=` and `AppArmor=` are valid native [Container] keys in current
+	// podman-systemd.unit(5); they must be emitted directly, not routed through
+	// `PodmanArgs=`.
 	let yaml = r#"
 services:
   s:
@@ -273,19 +273,18 @@ services:
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
 	let c = &unit_named(&out, "s.container").contents;
+	assert!(c.contains("Memory=512m"), "missing native Memory= in:\n{c}");
 	assert!(
-		c.contains("PodmanArgs=--memory=512m"),
-		"missing memory PodmanArgs in:\n{c}"
+		c.contains("AppArmor=my-profile"),
+		"missing native AppArmor= in:\n{c}"
 	);
-	assert!(
-		c.contains("PodmanArgs=--security-opt apparmor=my-profile"),
-		"missing apparmor PodmanArgs in:\n{c}"
-	);
-	for forbidden in ["\nMemory=", "\nAppArmor="] {
+	for forbidden in [
+		"PodmanArgs=--memory=",
+		"PodmanArgs=--security-opt apparmor=",
+	] {
 		assert!(
 			!c.contains(forbidden),
-			"emitted invalid key `{}` in:\n{c}",
-			forbidden.trim()
+			"memory/apparmor must use the native key, not `{forbidden}` in:\n{c}"
 		);
 	}
 }

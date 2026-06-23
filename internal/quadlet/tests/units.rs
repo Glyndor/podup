@@ -447,3 +447,52 @@ fn privileged_maps_to_podman_arg() {
 		out.warnings
 	);
 }
+
+#[test]
+fn units_carry_podup_ownership_labels() {
+	// Every generated unit must carry the same ownership labels the live engine
+	// stamps: `podup.project` on all three unit types and `podup.service` on the
+	// container, so exported resources are traceable back to their project.
+	let yaml = r#"
+services:
+  web:
+    image: nginx:1.27
+networks:
+  net:
+volumes:
+  vol:
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "proj");
+
+	let c = &unit_named(&out, "web.container").contents;
+	assert!(
+		c.contains("Label=podup.project=proj"),
+		"container missing project ownership label in:\n{c}"
+	);
+	assert!(
+		c.contains("Label=podup.service=web"),
+		"container missing service ownership label in:\n{c}"
+	);
+
+	let net = &unit_named(&out, "net.network").contents;
+	assert!(
+		net.contains("Label=podup.project=proj"),
+		"network missing project ownership label in:\n{net}"
+	);
+	// Networks/volumes are project-scoped, not service-scoped: no service label.
+	assert!(
+		!net.contains("podup.service"),
+		"network must not carry a service label in:\n{net}"
+	);
+
+	let vol = &unit_named(&out, "vol.volume").contents;
+	assert!(
+		vol.contains("Label=podup.project=proj"),
+		"volume missing project ownership label in:\n{vol}"
+	);
+	assert!(
+		!vol.contains("podup.service"),
+		"volume must not carry a service label in:\n{vol}"
+	);
+}
