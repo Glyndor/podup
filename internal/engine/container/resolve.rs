@@ -94,6 +94,54 @@ pub(super) fn resolve_links(service: &Service, file: &ComposeFile, project: &str
 	links
 }
 
+/// Resolve a service's `volumes_from` entries to concrete container references.
+///
+/// libpod's `SpecGenerator.volumes_from` expects container names, but compose
+/// `volumes_from:` names sibling services. Each entry may be `<service>`,
+/// `service:<name>`, or `container:<name>`, any of which may carry a trailing
+/// `:ro`/`:rw` access-mode suffix. The bare-service and `service:` forms are
+/// rewritten to the referenced service's container name (an explicit
+/// `container_name:` is honoured, otherwise `{project}-{service}`), preserving
+/// the access mode. The `container:` form already names a container outside the
+/// project and is passed through verbatim, as is any service name that is not
+/// declared in this compose file.
+pub(super) fn resolve_volumes_from(
+	service: &Service,
+	file: &ComposeFile,
+	project: &str,
+) -> Vec<String> {
+	service
+		.volumes_from
+		.iter()
+		.map(|entry| {
+			// Split off a trailing access mode so it survives the rewrite.
+			let (reference, mode) = match entry.rsplit_once(':') {
+				Some((head, tail @ ("ro" | "rw"))) => (head, Some(tail)),
+				_ => (entry.as_str(), None),
+			};
+			let resolved = if let Some(name) = reference.strip_prefix("container:") {
+				// Already a concrete container outside the project: pass through.
+				name.to_string()
+			} else {
+				let target = reference.strip_prefix("service:").unwrap_or(reference);
+				file.services
+					.get(target)
+					.map(|svc| {
+						svc.container_name
+							.clone()
+							.unwrap_or_else(|| format!("{project}-{target}"))
+					})
+					// Unknown service: leave the reference untouched.
+					.unwrap_or_else(|| target.to_string())
+			};
+			match mode {
+				Some(mode) => format!("{resolved}:{mode}"),
+				None => resolved,
+			}
+		})
+		.collect()
+}
+
 /// Stable content hash of a service definition, stored as the
 /// `podup.config-hash` label. On `up`, comparing this against the label on an
 /// existing container tells podup whether the service configuration changed
@@ -246,7 +294,9 @@ fn signal_number(name: &str) -> Option<i64> {
 
 #[cfg(test)]
 mod tests {
-	use super::{config_hash, resolve_links, resolve_stop_signal, resolve_volume_name};
+	use super::{
+		config_hash, resolve_links, resolve_stop_signal, resolve_volume_name, resolve_volumes_from,
+	};
 	use crate::parse_str;
 
 	#[test]
@@ -290,6 +340,46 @@ mod tests {
 		.unwrap();
 		let links = resolve_links(&file.services["web"], &file, "proj");
 		assert_eq!(links, vec!["my-db:db".to_string()]);
+	}
+
+	#[test]
+	fn volumes_from_resolves_to_container_names() {
+		let file = parse_str(
+			"services:\n  db:\n    image: x\n  cache:\n    image: x\n    container_name: my-cache\n  web:\n    image: x\n    volumes_from:\n      - db\n      - cache\n",
+		)
+		.unwrap();
+		let resolved = resolve_volumes_from(&file.services["web"], &file, "proj");
+		// Bare service name resolves to `{project}-{service}`.
+		assert!(resolved.contains(&"proj-db".to_string()));
+		// An explicit container_name is honoured.
+		assert!(resolved.contains(&"my-cache".to_string()));
+	}
+
+	#[test]
+	fn volumes_from_preserves_access_mode() {
+		let file = parse_str(
+			"services:\n  db:\n    image: x\n  web:\n    image: x\n    volumes_from:\n      - db:ro\n      - service:db:rw\n",
+		)
+		.unwrap();
+		let resolved = resolve_volumes_from(&file.services["web"], &file, "proj");
+		// The `:ro`/`:rw` suffix survives the rewrite, and the `service:` prefix
+		// is stripped before resolving.
+		assert!(resolved.contains(&"proj-db:ro".to_string()));
+		assert!(resolved.contains(&"proj-db:rw".to_string()));
+	}
+
+	#[test]
+	fn volumes_from_passes_through_container_form_and_unknown() {
+		let file = parse_str(
+			"services:\n  web:\n    image: x\n    volumes_from:\n      - container:legacy-data\n      - container:legacy-data:ro\n      - missing\n",
+		)
+		.unwrap();
+		let resolved = resolve_volumes_from(&file.services["web"], &file, "proj");
+		// The `container:` form names a container outside the project verbatim.
+		assert!(resolved.contains(&"legacy-data".to_string()));
+		assert!(resolved.contains(&"legacy-data:ro".to_string()));
+		// An unknown service is left unchanged.
+		assert!(resolved.contains(&"missing".to_string()));
 	}
 
 	#[test]
