@@ -17,12 +17,21 @@ Requires `debhelper`, `cargo` and `rustc >= 1.85` (the crate's declared
 `rust-version`). The package installs `/usr/bin/podup` and the `podup(1)` man
 page.
 
+The packaged binary is built with the self-update feature **compiled out**:
+`debian/rules` builds with `--no-default-features --features watch,completions`,
+dropping the `update` feature (and its `ureq` + TLS + Ed25519 stack). This is
+why `podup update` on a deb-installed binary refuses outright and points back to
+the package manager — the capability is absent from the binary, not merely
+gated at runtime by a dpkg-ownership check.
+
 ## Prebuilt .deb from releases
 
 Each tagged release attaches a signed `.deb` per architecture —
 `podup_<version>_amd64.deb` and `podup_<version>_arm64.deb` (each with its
-`.sig`, and an entry in the release `SHA256SUMS`) built on Debian sid. Install
-the one matching your architecture directly:
+`.sig`, and an entry in the release `SHA256SUMS`). Each architecture is built
+natively in its own `debian:sid` container (amd64 on an x64 runner, arm64 on an
+arm64 runner — no emulation). Install the one matching your architecture
+directly:
 
 ```bash
 sudo apt install ./podup_<version>_amd64.deb   # or _arm64.deb on aarch64
@@ -77,8 +86,7 @@ publishing. The signing key, keyring builder and repository builder all live in
 the `Glyndor/apt` repo.
 
 > **Debian compatibility note:** the MSRV is 1.85, which Debian trixie ships, so
-> trixie and sid can both build the package. (Earlier releases needed 1.86 via
-> an `idna`/`icu` dependency chain that has since been removed.)
+> trixie and sid can both build the package.
 
 ## What the skeleton covers
 
