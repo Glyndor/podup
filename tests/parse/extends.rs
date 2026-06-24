@@ -213,6 +213,78 @@ services:
 }
 
 #[test]
+fn extends_external_file_missing_service_errors() {
+	// The external file exists but does not define the referenced base service.
+	let dir = tempfile::tempdir().unwrap();
+	let common_path = dir.path().join("common.yml");
+	let mut f = std::fs::File::create(&common_path).unwrap();
+	writeln!(f, "services:\n  other:\n    image: alpine\n").unwrap();
+
+	let main_path = dir.path().join("docker-compose.yml");
+	let mut m = std::fs::File::create(&main_path).unwrap();
+	writeln!(
+		m,
+		"services:\n  app:\n    extends:\n      service: base\n      file: ./common.yml\n"
+	)
+	.unwrap();
+
+	let err = parse_file(&main_path).unwrap_err();
+	assert!(err.to_string().contains("base"));
+}
+
+#[test]
+fn extends_external_file_circular_across_files_errors() {
+	// app -> base(in common.yml) -> app(back in the main file) forms a cycle that
+	// spans the on-disk extends resolver; it must be detected, not loop forever.
+	let dir = tempfile::tempdir().unwrap();
+	let common_path = dir.path().join("common.yml");
+	let mut f = std::fs::File::create(&common_path).unwrap();
+	writeln!(
+		f,
+		"services:\n  base:\n    image: alpine\n    extends:\n      service: app\n      file: ./docker-compose.yml\n"
+	)
+	.unwrap();
+
+	let main_path = dir.path().join("docker-compose.yml");
+	let mut m = std::fs::File::create(&main_path).unwrap();
+	writeln!(
+		m,
+		"services:\n  app:\n    extends:\n      service: base\n      file: ./common.yml\n"
+	)
+	.unwrap();
+
+	assert!(parse_file(&main_path).is_err());
+}
+
+#[test]
+fn extends_external_chain_exceeds_max_depth_errors() {
+	// A long cross-file extends chain trips the depth guard rather than recursing
+	// without bound. Each file extends the next; 64 hops is well past the limit.
+	let dir = tempfile::tempdir().unwrap();
+	let levels = 64;
+	for i in 0..levels {
+		let path = dir.path().join(format!("svc{i}.yml"));
+		let mut f = std::fs::File::create(&path).unwrap();
+		writeln!(
+			f,
+			"services:\n  base:\n    image: alpine\n    extends:\n      service: base\n      file: ./svc{}.yml\n",
+			i + 1
+		)
+		.unwrap();
+	}
+
+	let main_path = dir.path().join("docker-compose.yml");
+	let mut m = std::fs::File::create(&main_path).unwrap();
+	writeln!(
+		m,
+		"services:\n  app:\n    extends:\n      service: base\n      file: ./svc0.yml\n"
+	)
+	.unwrap();
+
+	assert!(parse_file(&main_path).is_err());
+}
+
+#[test]
 fn extends_external_file_anchors_relative_paths() {
 	let dir = tempfile::tempdir().unwrap();
 	let sub = dir.path().join("svc");
@@ -293,5 +365,58 @@ fn extends_chain_exceeds_depth_limit() {
 	assert!(
 		msg.contains("exceeds maximum depth"),
 		"error must mention depth limit, got: {msg}"
+	);
+}
+
+/// Write `yaml` to a `docker-compose.yml` in a fresh tempdir and parse it from
+/// disk, returning `(dir, parse_result)`. The on-disk path exercises
+/// `resolve_all_extends`/`resolve_one_extends` rather than the in-memory parser.
+fn parse_file_yaml(
+	yaml: &str,
+) -> (
+	tempfile::TempDir,
+	podup::Result<podup::compose::types::ComposeFile>,
+) {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("docker-compose.yml");
+	std::fs::write(&path, yaml).unwrap();
+	let res = parse_file(&path);
+	(dir, res)
+}
+
+#[test]
+fn extends_same_file_chain_from_disk() {
+	// A same-file `extends:` (no `file:`) parsed FROM DISK takes the on-disk
+	// resolver's in-file recursion + merge path, not just the in-memory one.
+	let (_dir, res) = parse_file_yaml(
+		"services:\n  base:\n    image: alpine\n    environment:\n      ROOT: \"1\"\n  \
+		 mid:\n    extends: base\n    environment:\n      MID: \"1\"\n  \
+		 app:\n    extends: mid\n    environment:\n      APP: \"1\"\n",
+	);
+	let file = res.unwrap();
+	let env = file.services["app"].environment.to_map();
+	// The whole chain merged: app sees its own, mid's, and base's variables.
+	assert_eq!(
+		env.get("ROOT").and_then(|v| v.clone()).as_deref(),
+		Some("1")
+	);
+	assert_eq!(env.get("MID").and_then(|v| v.clone()).as_deref(), Some("1"));
+	assert_eq!(env.get("APP").and_then(|v| v.clone()).as_deref(), Some("1"));
+}
+
+#[test]
+fn extends_same_file_self_reference_from_disk_errors() {
+	let (_dir, res) = parse_file_yaml("services:\n  a:\n    image: alpine\n    extends: a\n");
+	let err = res.unwrap_err();
+	assert!(err.to_string().contains("extends itself"), "got: {err}");
+}
+
+#[test]
+fn extends_same_file_unknown_target_from_disk_errors() {
+	let (_dir, res) = parse_file_yaml("services:\n  a:\n    image: alpine\n    extends: ghost\n");
+	let err = res.unwrap_err();
+	assert!(
+		err.to_string().contains("unknown service 'ghost'"),
+		"got: {err}"
 	);
 }

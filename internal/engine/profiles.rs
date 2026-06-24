@@ -59,6 +59,18 @@ mod tests {
 	}
 
 	#[test]
+	fn empty_slice_falls_back_to_env_var() {
+		// With no explicit profiles, COMPOSE_PROFILES is parsed: comma-separated,
+		// each entry trimmed, empty entries dropped.
+		temp_env::with_var("COMPOSE_PROFILES", Some(" debug , , prod "), || {
+			let set = active_profiles_set(&[]);
+			assert_eq!(set.len(), 2);
+			assert!(set.contains("debug"));
+			assert!(set.contains("prod"));
+		});
+	}
+
+	#[test]
 	fn service_with_no_profiles_always_runs() {
 		let svc = Service::default();
 		let active: HashSet<String> = HashSet::new();

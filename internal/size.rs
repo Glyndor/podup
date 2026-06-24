@@ -181,6 +181,12 @@ mod tests {
 		assert_eq!(parse_memory("100x"), None);
 	}
 
+	#[test]
+	fn memory_negative_is_none() {
+		// A negative memory size is rejected rather than wrapping.
+		assert_eq!(parse_memory("-1g"), None);
+	}
+
 	// parse_cpus
 
 	#[test]
@@ -274,5 +280,16 @@ mod tests {
 		// A large finite value whose nanosecond product exceeds i64::MAX must
 		// return None rather than saturating to i64::MAX.
 		assert_eq!(parse_duration_nanos("99999999999h"), None);
+	}
+
+	#[test]
+	fn duration_nanos_micros_and_hours() {
+		assert_eq!(parse_duration_nanos("3us"), Some(3_000));
+		assert_eq!(parse_duration_nanos("2h"), Some(2 * 3600 * 1_000_000_000));
+	}
+
+	#[test]
+	fn duration_nanos_unknown_suffix_is_none() {
+		assert_eq!(parse_duration_nanos("5days"), None);
 	}
 }

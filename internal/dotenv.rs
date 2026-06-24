@@ -195,6 +195,32 @@ mod tests {
 	}
 
 	#[test]
+	fn double_quoted_expands_all_escape_kinds() {
+		// `\r`, `\\`, `\"`, `\'`, and an unknown escape (`\z` → `z`) all resolve.
+		assert_eq!(map("FOO=\"a\\rb\"\n")["FOO"], "a\rb");
+		assert_eq!(map("FOO=\"x\\\\y\"\n")["FOO"], "x\\y");
+		assert_eq!(map("FOO=\"q\\\"q\"\n")["FOO"], "q\"q");
+		assert_eq!(map("FOO=\"p\\'p\"\n")["FOO"], "p'p");
+		assert_eq!(map("FOO=\"a\\zb\"\n")["FOO"], "azb");
+	}
+
+	#[test]
+	fn export_prefix_bare_key_yields_empty_value() {
+		// `export NAME` with no `=` records the key with an empty value.
+		let m = map("export FOO\n");
+		assert_eq!(m.get("FOO").map(String::as_str), Some(""));
+	}
+
+	#[test]
+	fn double_quoted_value_spanning_multiple_lines() {
+		// A double-quoted value left open on its line continues until the closing
+		// quote on a later line; the newline is preserved.
+		let m = map("FOO=\"line one\nline two\"\nBAR=after\n");
+		assert_eq!(m["FOO"], "line one\nline two");
+		assert_eq!(m["BAR"], "after");
+	}
+
+	#[test]
 	fn export_prefix_stripped() {
 		assert_eq!(map("export FOO=bar\n")["FOO"], "bar");
 	}

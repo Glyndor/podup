@@ -174,4 +174,68 @@ mod tests {
 		));
 		assert!(e.to_string().contains("podman socket connection error"));
 	}
+
+	#[test]
+	fn display_incompatible_api_version_reports_version() {
+		let e = PodmanError::IncompatibleApiVersion {
+			reported: "4.9.3".into(),
+		};
+		let msg = e.to_string();
+		assert!(msg.contains("Podman >= 5.0"));
+		assert!(msg.contains("4.9.3"));
+	}
+
+	#[test]
+	fn display_incompatible_api_version_handles_missing_header() {
+		// An empty reported version (no `Libpod-API-Version` header) renders a
+		// readable placeholder rather than a blank.
+		let e = PodmanError::IncompatibleApiVersion {
+			reported: String::new(),
+		};
+		let msg = e.to_string();
+		assert!(msg.contains("an unknown version"));
+	}
+
+	#[test]
+	fn source_present_for_wrapped_errors_absent_for_owned() {
+		use std::error::Error;
+		// Wrapped lower-level errors expose their source...
+		let connect = PodmanError::Connect(std::io::Error::new(
+			std::io::ErrorKind::NotFound,
+			"no socket",
+		));
+		assert!(connect.source().is_some());
+		let json = PodmanError::Json(serde_json::from_str::<u8>("bad").unwrap_err());
+		assert!(json.source().is_some());
+		// ...while the owned variants have no underlying source.
+		assert!(PodmanError::Api {
+			status: 500,
+			message: "x".into(),
+		}
+		.source()
+		.is_none());
+		assert!(PodmanError::IncompatibleApiVersion {
+			reported: "4.0.0".into(),
+		}
+		.source()
+		.is_none());
+	}
+
+	#[test]
+	fn from_io_error_becomes_connect() {
+		// The `?`-operator conversion an io error takes when bubbling out of the
+		// client maps onto the Connect variant.
+		let io = std::io::Error::new(std::io::ErrorKind::ConnectionRefused, "refused");
+		let e: PodmanError = io.into();
+		assert!(matches!(e, PodmanError::Connect(_)));
+		assert!(e.to_string().contains("podman socket connection error"));
+	}
+
+	#[test]
+	fn from_json_error_becomes_json() {
+		let json_err = serde_json::from_str::<u8>("not-json").unwrap_err();
+		let e: PodmanError = json_err.into();
+		assert!(matches!(e, PodmanError::Json(_)));
+		assert!(e.to_string().contains("json error"));
+	}
 }

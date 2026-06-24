@@ -460,6 +460,25 @@ mod tests {
 			assert_eq!(resolve_bind_source("~/x", base), "/home/u/x");
 			assert_eq!(resolve_bind_source("~", base), "/home/u");
 		});
+		// An empty source is returned verbatim (no base-dir join).
+		assert_eq!(resolve_bind_source("", base), "");
+	}
+
+	#[test]
+	#[cfg(unix)]
+	fn bind_source_tilde_without_home_stays_literal() {
+		use super::resolve_bind_source;
+		use std::path::Path;
+		let base = Path::new("/srv/app");
+		// With no home directory resolvable, a `~`-prefixed path keeps its literal
+		// form, then (being relative) is anchored to the base dir.
+		temp_env::with_vars(
+			[("HOME", None::<&str>), ("USERPROFILE", None::<&str>)],
+			|| {
+				assert_eq!(resolve_bind_source("~/x", base), "/srv/app/~/x");
+				assert_eq!(resolve_bind_source("~", base), "/srv/app/~");
+			},
+		);
 	}
 
 	#[test]
@@ -524,6 +543,45 @@ mod tests {
 		assert_eq!(
 			config_hash(&a.services["web"], &a).unwrap(),
 			config_hash(&b.services["web"], &b).unwrap(),
+		);
+	}
+
+	#[test]
+	fn config_hash_tracks_inline_config_content() {
+		// The same recreate-on-rotation contract as inline secrets applies to
+		// inline `configs:` content.
+		let a = parse_str(
+			"services:\n  web:\n    image: x\n    configs: [cfg]\nconfigs:\n  cfg:\n    content: a\n",
+		)
+		.unwrap();
+		let b = parse_str(
+			"services:\n  web:\n    image: x\n    configs: [cfg]\nconfigs:\n  cfg:\n    content: b\n",
+		)
+		.unwrap();
+		assert_ne!(
+			config_hash(&a.services["web"], &a).unwrap(),
+			config_hash(&b.services["web"], &b).unwrap(),
+			"changed inline config content must change the hash",
+		);
+	}
+
+	#[test]
+	fn config_hash_tracks_environment_sourced_secret() {
+		// An `environment:`-sourced secret folds the *current* value of the named
+		// variable into the hash, so a change to that variable recreates.
+		let file = parse_str(
+			"services:\n  web:\n    image: x\n    secrets: [tok]\nsecrets:\n  tok:\n    environment: PODUP_TEST_SECRET\n",
+		)
+		.unwrap();
+		let with_a = temp_env::with_var("PODUP_TEST_SECRET", Some("alpha"), || {
+			config_hash(&file.services["web"], &file).unwrap()
+		});
+		let with_b = temp_env::with_var("PODUP_TEST_SECRET", Some("beta"), || {
+			config_hash(&file.services["web"], &file).unwrap()
+		});
+		assert_ne!(
+			with_a, with_b,
+			"a changed environment-sourced secret value must change the hash",
 		);
 	}
 

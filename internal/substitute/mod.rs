@@ -356,4 +356,40 @@ mod tests {
 		let map = load_dotenv(dir.path());
 		assert!(map.is_empty());
 	}
+
+	// build_vars_with_env_files
+
+	#[test]
+	fn build_vars_with_env_files_loads_relative_extra_file() {
+		let dir = tempfile::tempdir().unwrap();
+		// A `.env` provides a base var; the extra file adds another and does NOT
+		// override the dotenv value (process env / earlier sources win via entry).
+		std::fs::write(
+			dir.path().join(".env"),
+			"FROM_DOTENV=base\nPODUP_TEST_SHARED=dotenv\n",
+		)
+		.unwrap();
+		std::fs::write(
+			dir.path().join("extra.env"),
+			"FROM_EXTRA=more\nPODUP_TEST_SHARED=extra\n",
+		)
+		.unwrap();
+
+		let vars = build_vars_with_env_files(dir.path(), &["extra.env".to_string()]);
+		assert_eq!(vars.get("FROM_DOTENV").map(String::as_str), Some("base"));
+		assert_eq!(vars.get("FROM_EXTRA").map(String::as_str), Some("more"));
+		// The extra file must not clobber a value an earlier source already set.
+		assert_eq!(
+			vars.get("PODUP_TEST_SHARED").map(String::as_str),
+			Some("dotenv")
+		);
+	}
+
+	#[test]
+	fn build_vars_with_env_files_skips_missing_extra_file() {
+		let dir = tempfile::tempdir().unwrap();
+		// A missing extra file is silently skipped rather than erroring.
+		let vars = build_vars_with_env_files(dir.path(), &["absent.env".to_string()]);
+		assert!(!vars.contains_key("FROM_EXTRA"));
+	}
 }

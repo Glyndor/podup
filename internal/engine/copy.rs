@@ -493,4 +493,44 @@ mod tests {
 			"traversal entry must not be written outside the destination"
 		);
 	}
+
+	#[test]
+	fn extract_archive_to_file_rejects_empty_archive() {
+		// An empty tar (no entries) against a file destination is an error: there
+		// is nothing to write to `dst`.
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dst = dir.path().join("out.txt");
+		let bytes = tar::Builder::new(Vec::new()).into_inner().expect("finish");
+		let err = super::extract_archive(&bytes, &dst).unwrap_err();
+		assert!(format!("{err}").contains("empty"), "got: {err}");
+	}
+
+	#[test]
+	fn extract_archive_to_file_rejects_non_regular_entry() {
+		// A single directory entry (not a regular file) against a file destination
+		// is rejected — only a directory destination accepts a directory tree.
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dst = dir.path().join("out.txt");
+		let mut h = tar::Header::new_gnu();
+		h.set_size(0);
+		h.set_mode(0o755);
+		h.set_entry_type(tar::EntryType::Directory);
+		h.set_path("subdir/").expect("path");
+		h.set_cksum();
+		let mut builder = tar::Builder::new(Vec::new());
+		builder.append(&h, std::io::empty()).expect("append");
+		let bytes = builder.into_inner().expect("finish");
+		assert!(super::extract_archive(&bytes, &dst).is_err());
+	}
+
+	#[test]
+	fn extract_archive_to_file_creates_missing_parent() {
+		// The destination's parent directory is created on demand so a fresh
+		// `cp svc:/f ./new/dir/f` works without a pre-existing tree.
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dst = dir.path().join("new").join("nested").join("file.txt");
+		let bytes = tar_bytes_with("ignored-name", b"data");
+		super::extract_archive(&bytes, &dst).expect("extract");
+		assert_eq!(std::fs::read(&dst).expect("read"), b"data");
+	}
 }
