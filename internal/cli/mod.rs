@@ -10,6 +10,7 @@ mod types;
 pub(crate) use commands::Commands;
 pub(crate) use types::{ConfigFormat, GenerateCommands, OutputFormat, RmiScope};
 
+/// Top-level clap parser for the `podup` CLI; fields carry the per-flag docs.
 #[derive(Parser)]
 #[command(name = "podup", version)]
 pub(crate) struct Cli {

@@ -4,6 +4,11 @@ use crate::compose::types::NetworkConfig;
 
 use super::{safe_unit_stem, sorted_label_pairs, QuadletUnit, Section};
 
+/// Build the `.network` unit for one declared network. Emits a single `[Network]`
+/// section (NetworkName, then driver/internal/IPv6/IPAM/options/labels), always
+/// appending the `podup.project` ownership label. No `[Install]` section is
+/// written: `.network` units are pulled in as dependencies of the `.container`
+/// units that reference them.
 pub(crate) fn network_unit(
 	name: &str,
 	project: &str,

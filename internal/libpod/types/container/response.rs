@@ -19,15 +19,21 @@ where
 /// Entry in the `GET /libpod/containers/json` response array.
 #[derive(Deserialize)]
 pub struct ContainerListEntry {
+	/// Full 64-hex container ID.
 	#[serde(rename = "Id", default)]
 	pub id: String,
 
+	/// Container names, each leading-slash-prefixed as Podman reports them
+	/// (e.g. `/web`). A container may carry multiple names/aliases.
 	#[serde(rename = "Names", default, deserialize_with = "null_default")]
 	pub names: Vec<String>,
 
+	/// Image reference the container was created from (name:tag or an ID).
 	#[serde(rename = "Image", default)]
 	pub image: String,
 
+	/// Human-readable status string for `ps` display (e.g. `Up 3 minutes`,
+	/// `Exited (0) 5 seconds ago`). Empty on libpod, which reports `State`.
 	#[serde(rename = "Status", default)]
 	pub status: String,
 
@@ -36,9 +42,11 @@ pub struct ContainerListEntry {
 	#[serde(rename = "State", default)]
 	pub state: String,
 
+	/// Published port mappings for the container.
 	#[serde(rename = "Ports", default, deserialize_with = "null_default")]
 	pub ports: Vec<ContainerPort>,
 
+	/// Container labels (key/value), including compose project/service labels.
 	#[serde(rename = "Labels", default, deserialize_with = "null_default")]
 	pub labels: HashMap<String, String>,
 }
@@ -46,8 +54,11 @@ pub struct ContainerListEntry {
 /// Port mapping entry in container list response.
 #[derive(Deserialize, Default)]
 pub struct ContainerPort {
+	/// Host IP the port is bound to; absent when bound to all interfaces.
 	pub host_ip: Option<String>,
+	/// Port on the host the mapping is published to; absent when not published.
 	pub host_port: Option<u16>,
+	/// Port inside the container that traffic is forwarded to.
 	pub container_port: u16,
 	/// Transport protocol of the mapping (`tcp`/`udp`/`sctp`), surfaced in `ps`.
 	#[serde(default)]
@@ -63,12 +74,15 @@ pub struct ContainerPort {
 /// Response from `GET /libpod/containers/{name}/json`.
 #[derive(Deserialize, Default)]
 pub struct ContainerInspect {
+	/// Runtime state (status, exit code, health).
 	#[serde(rename = "State")]
 	pub state: Option<ContainerState>,
 
+	/// Static configuration the container was created with.
 	#[serde(rename = "Config")]
 	pub config: Option<ContainerConfig>,
 
+	/// Runtime network settings, including resolved host port bindings.
 	#[serde(rename = "NetworkSettings")]
 	pub network_settings: Option<NetworkSettings>,
 }
@@ -76,6 +90,7 @@ pub struct ContainerInspect {
 /// Container config sub-object from inspect.
 #[derive(Deserialize, Default)]
 pub struct ContainerConfig {
+	/// Effective healthcheck, if any; absent when the image declares none.
 	#[serde(rename = "Healthcheck")]
 	pub healthcheck: Option<HealthConfig>,
 }
@@ -94,6 +109,9 @@ impl ContainerConfig {
 /// Effective healthcheck config baked into the container (image or compose).
 #[derive(Deserialize, Default)]
 pub struct HealthConfig {
+	/// Healthcheck command in Docker's `Test` form: the first element is the
+	/// mode (`NONE`, `CMD`, or `CMD-SHELL`) and the rest are its arguments.
+	/// `["NONE"]` means the healthcheck is explicitly disabled; empty means none.
 	#[serde(rename = "Test", default, deserialize_with = "null_default")]
 	pub test: Vec<String>,
 }
@@ -112,6 +130,7 @@ pub struct ContainerState {
 	#[serde(rename = "ExitCode")]
 	pub exit_code: Option<i64>,
 
+	/// Aggregated healthcheck state; absent when the container has no healthcheck.
 	#[serde(rename = "Health")]
 	pub health: Option<HealthState>,
 }
@@ -119,6 +138,7 @@ pub struct ContainerState {
 /// Container health state sub-object.
 #[derive(Deserialize)]
 pub struct HealthState {
+	/// Current health status (`healthy`, `unhealthy`, `starting`).
 	#[serde(rename = "Status")]
 	pub status: Option<String>,
 }
@@ -126,6 +146,9 @@ pub struct HealthState {
 /// Network settings sub-object from container inspect.
 #[derive(Deserialize, Default)]
 pub struct NetworkSettings {
+	/// Resolved port bindings keyed by container port spec (`"80/tcp"`). The
+	/// value is the list of host bindings, or `None`/empty when the port is
+	/// exposed but not published.
 	#[serde(rename = "Ports", default)]
 	pub ports: HashMap<String, Option<Vec<HostBinding>>>,
 }
@@ -133,9 +156,11 @@ pub struct NetworkSettings {
 /// Host port binding from container inspect network settings.
 #[derive(Deserialize, Clone)]
 pub struct HostBinding {
+	/// Host IP the port is bound to; empty/absent means all interfaces.
 	#[serde(rename = "HostIp")]
 	pub host_ip: Option<String>,
 
+	/// Host port as a string, as Podman reports it in inspect output.
 	#[serde(rename = "HostPort")]
 	pub host_port: Option<String>,
 }
@@ -143,9 +168,11 @@ pub struct HostBinding {
 /// Response from `GET /libpod/containers/{name}/top`.
 #[derive(Deserialize, Default)]
 pub struct TopResponse {
+	/// Column headers for the process table (e.g. `PID`, `USER`, `COMMAND`).
 	#[serde(rename = "Titles")]
 	pub titles: Option<Vec<String>>,
 
+	/// One row per process; each row's columns align with `titles`.
 	#[serde(rename = "Processes")]
 	pub processes: Option<Vec<Vec<String>>>,
 }

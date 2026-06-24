@@ -7,9 +7,11 @@ use serde::Serialize;
 /// Request body for `POST /libpod/volumes/create`.
 #[derive(Serialize, Default)]
 pub struct VolumeCreateOptions {
+	/// Volume name; omitted to let Podman generate an anonymous-volume name.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub name: Option<String>,
 
+	/// Volume driver (e.g. `local`); the daemon default is used when omitted.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub driver: Option<String>,
 
@@ -17,9 +19,12 @@ pub struct VolumeCreateOptions {
 	// Go field name (case-insensitively): the driver-options map is `Options`, not
 	// `driver_opts`. Without this rename volume driver_opts (NFS/CIFS/tmpfs) are
 	// silently dropped while name/driver/labels still match case-insensitively.
+	/// Driver-specific options (e.g. `type`, `device`, `o` for NFS/CIFS/tmpfs
+	/// mounts). Serialized as `Options` to match Podman's wire field (see above).
 	#[serde(rename = "Options", skip_serializing_if = "HashMap::is_empty", default)]
 	pub driver_opts: HashMap<String, String>,
 
+	/// Volume labels (key/value), including compose project/volume labels.
 	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
 	pub labels: HashMap<String, String>,
 }

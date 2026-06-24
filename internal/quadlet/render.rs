@@ -6,6 +6,10 @@ use std::collections::BTreeMap;
 use crate::compose::types::{Command, RestartPolicy, VolumeMount, VolumeType};
 use crate::ports::ParsedPort;
 
+/// Render a parsed port into a Quadlet `PublishPort=` value
+/// (`[host_ip:][host_port:]container[/proto]`). A missing or `0` host port is
+/// omitted so Podman picks one; the protocol suffix is only added when it is not
+/// the default `tcp`.
 pub(super) fn render_publish_port(p: &ParsedPort) -> String {
 	let mut s = String::new();
 	if !p.host_ip.is_empty() {
@@ -26,6 +30,11 @@ pub(super) fn render_publish_port(p: &ParsedPort) -> String {
 	s
 }
 
+/// Render a volume mount into a Quadlet `Volume=` value. A source naming a
+/// declared volume gets a `.volume` suffix (so Quadlet wires it to the generated
+/// unit); an undeclared source passes through verbatim. An empty source renders
+/// as just the target. Long-form `read_only`, SELinux relabel (`z`/`Z`), bind
+/// propagation, and `nocopy` opts are folded into the trailing `:opt,opt` field.
 pub(super) fn render_volume(vol: &VolumeMount, declared_volumes: &[&str]) -> String {
 	match vol {
 		VolumeMount::Short(s) => {
@@ -170,6 +179,8 @@ fn quote_exec_arg(arg: &str) -> String {
 	}
 }
 
+/// Map a compose `restart:` policy onto a systemd `Restart=` value.
+/// `unless-stopped` has no systemd equivalent and is treated as `always`.
 pub(super) fn render_restart(restart: &RestartPolicy) -> String {
 	match restart {
 		RestartPolicy::No => "no".to_string(),
@@ -179,6 +190,8 @@ pub(super) fn render_restart(restart: &RestartPolicy) -> String {
 	}
 }
 
+/// Sort a map of optional-valued entries by key into a stable `Vec`, so the
+/// generated unit is byte-deterministic regardless of `HashMap` iteration order.
 pub(super) fn sorted_pairs(
 	map: std::collections::HashMap<String, Option<String>>,
 ) -> Vec<(String, Option<String>)> {
@@ -186,6 +199,9 @@ pub(super) fn sorted_pairs(
 	sorted.into_iter().collect()
 }
 
+/// Sort a map of string-valued entries (labels, sysctls, …) by key into a stable
+/// `Vec`, so the generated unit is byte-deterministic regardless of `HashMap`
+/// iteration order.
 pub(super) fn sorted_label_pairs(
 	map: std::collections::HashMap<String, String>,
 ) -> Vec<(String, String)> {
@@ -231,6 +247,7 @@ pub(super) struct Section {
 }
 
 impl Section {
+	/// Start an empty section with the given `[name]` header.
 	pub(super) fn new(name: &'static str) -> Self {
 		Section {
 			name,
@@ -238,14 +255,19 @@ impl Section {
 		}
 	}
 
+	/// Append a `Key=Value` line, sanitizing the value (control characters
+	/// stripped) so a hostile compose field cannot inject extra unit directives.
 	pub(super) fn add(&mut self, key: &str, value: String) {
 		self.lines.push(format!("{key}={}", sanitize_value(&value)));
 	}
 
+	/// True when no lines have been added; lets the caller skip emitting an empty
+	/// section.
 	pub(super) fn is_empty(&self) -> bool {
 		self.lines.is_empty()
 	}
 
+	/// Render the section as `[name]` followed by its lines, each newline-terminated.
 	pub(super) fn render(&self) -> String {
 		let mut s = format!("[{}]\n", self.name);
 		for line in &self.lines {

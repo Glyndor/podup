@@ -63,6 +63,12 @@ fn run_to_exit() {
 	}
 }
 
+/// Orchestrate one CLI invocation: parse args, then short-circuit the commands
+/// that need neither a compose file nor (for some) Podman — `completions`,
+/// `update`, `ls`, and `config`. Otherwise resolve and parse the compose
+/// file(s), settle the project name and base directory (validating the name at
+/// the trust boundary), acquire the per-project lock, and dispatch the
+/// remaining commands.
 async fn run() -> podup::Result<()> {
 	init_tracing();
 	let cli = parse_cli();

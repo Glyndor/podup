@@ -63,6 +63,10 @@ pub(super) fn build_sync_tar(src: &Path, entry_name: &Path) -> Result<Vec<u8>> {
 	Ok(bytes)
 }
 
+/// True when `path` matches a watch-rule `ignore` pattern. A pattern ending in
+/// `/` matches `path` by directory prefix; otherwise it matches an exact path or
+/// a leading path segment (the pattern followed by `/`). Matching is anchored at
+/// the start of `path`.
 pub(super) fn is_ignored(path: &str, patterns: &[String]) -> bool {
 	for pat in patterns {
 		if pat.ends_with('/') {
@@ -78,6 +82,10 @@ pub(super) fn is_ignored(path: &str, patterns: &[String]) -> bool {
 	false
 }
 
+/// True when `path` matches a watch-rule `include` pattern. Unlike
+/// [`is_ignored`], a `*.ext` pattern matches by extension suffix, and a bare name
+/// matches not only an exact path or directory prefix but also a trailing path
+/// segment anywhere in `path` (the pattern preceded by `/`).
 pub(super) fn is_included(path: &str, patterns: &[String]) -> bool {
 	for pat in patterns {
 		if pat.starts_with("*.") {

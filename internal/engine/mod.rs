@@ -1,6 +1,6 @@
 //! Container orchestration engine.
 //!
-//! Translates a parsed [`ComposeFile`] into Podman API calls via the libpod REST API.
+//! Translates a parsed [`ComposeFile`](crate::compose::types::ComposeFile) into Podman API calls via the libpod REST API.
 
 mod build;
 mod container;

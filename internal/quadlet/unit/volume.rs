@@ -4,6 +4,11 @@ use crate::compose::types::VolumeConfig;
 
 use super::{safe_unit_stem, sorted_label_pairs, QuadletUnit, Section};
 
+/// Build the `.volume` unit for one declared named volume. Emits a single
+/// `[Volume]` section (VolumeName, then driver/driver-opts/labels), always
+/// appending the `podup.project` ownership label. No `[Install]` section is
+/// written: `.volume` units are pulled in as dependencies of the `.container`
+/// units that reference them.
 pub(crate) fn volume_unit(name: &str, project: &str, config: Option<&VolumeConfig>) -> QuadletUnit {
 	let mut vol = Section::new("Volume");
 	// A custom `name:` overrides Podman's resource name; Quadlet uses the literal
