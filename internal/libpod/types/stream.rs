@@ -15,7 +15,9 @@ use crate::libpod::error::PodmanError;
 /// A single framed chunk from a multiplexed container log or exec stream.
 #[derive(Debug)]
 pub enum LogOutput {
+	/// Payload demuxed from the stdout stream (frame stream type 1).
 	StdOut { message: Bytes },
+	/// Payload demuxed from the stderr stream (frame stream type 2).
 	StdErr { message: Bytes },
 }
 

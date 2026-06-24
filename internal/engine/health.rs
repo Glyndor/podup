@@ -79,17 +79,6 @@ fn health_poll_plan(
 }
 
 impl Engine {
-	/// Poll a container until its health status is `healthy` or timeout.
-	///
-	/// Polls at the compose `healthcheck.interval` (default 2 s) for
-	/// `healthcheck.retries` (default 30) probes, plus extra probes covering
-	/// `healthcheck.start_period` so a slow-starting service is not timed out early.
-	///
-	/// The wait is driven by the container's *effective* healthcheck reported by
-	/// the runtime, so healthchecks inherited from the image count too — not just
-	/// those declared in compose. If the container has no effective healthcheck at
-	/// all (none in the image or compose), it can never report `healthy`, so the
-	/// wait short-circuits as satisfied rather than blocking until timeout.
 	/// Wait until every targeted service's first replica is healthy (`up
 	/// --wait`). A service with no effective healthcheck is treated as ready
 	/// once started. All services when `target_services` is empty.
@@ -108,6 +97,17 @@ impl Engine {
 		Ok(())
 	}
 
+	/// Poll a container until its health status is `healthy` or timeout.
+	///
+	/// Polls at the compose `healthcheck.interval` (default 2 s) for
+	/// `healthcheck.retries` (default 30) probes, plus extra probes covering
+	/// `healthcheck.start_period` so a slow-starting service is not timed out early.
+	///
+	/// The wait is driven by the container's *effective* healthcheck reported by
+	/// the runtime, so healthchecks inherited from the image count too — not just
+	/// those declared in compose. If the container has no effective healthcheck at
+	/// all (none in the image or compose), it can never report `healthy`, so the
+	/// wait short-circuits as satisfied rather than blocking until timeout.
 	pub(super) async fn wait_healthy(&self, container_name: &str, service: &Service) -> Result<()> {
 		let hc = service.healthcheck.as_ref();
 		let (poll_secs, iterations) = health_poll_plan(

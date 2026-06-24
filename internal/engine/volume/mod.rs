@@ -20,6 +20,11 @@ mod list;
 pub use list::VolumesOptions;
 
 impl Engine {
+	/// Pre-create every declared (non-external) named volume before containers
+	/// start, stamping each with the `podup.project` label and applying
+	/// driver/driver-opts/label config. External volumes are verified to already
+	/// exist instead. An already-exists conflict on re-`up` is treated as success
+	/// (libpod returns 500, not 409, for an existing volume name).
 	pub(super) async fn create_volumes(&self, file: &ComposeFile) -> Result<()> {
 		for (name, config) in &file.volumes {
 			let external = config.as_ref().and_then(|c| c.external).unwrap_or(false);

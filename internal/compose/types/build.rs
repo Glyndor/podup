@@ -280,7 +280,7 @@ impl BuildConfig {
 		}
 	}
 
-	/// `build.additional_contexts` — named extra build contexts (`name -> value`).
+	/// `build.additional_contexts` — named extra build contexts (`name -> source`).
 	pub fn additional_contexts(&self) -> Vec<(String, String)> {
 		match self {
 			BuildConfig::Context(_) => Vec::new(),

@@ -2,7 +2,7 @@
 //! digest.
 //!
 //! Like `ls`, this is project-agnostic — it needs only a [`Client`] to inspect
-//! images, not a full [`Engine`] — so it lives as a free function.
+//! images, not a full [`Engine`](crate::engine::Engine) — so it lives as a free function.
 
 use crate::compose::types::ComposeFile;
 use crate::error::Result;

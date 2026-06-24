@@ -17,16 +17,23 @@ pub struct DevelopConfig {
 /// A single `develop.watch` rule: a path to watch, an action to take, and optional ignore filters.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct WatchRule {
+	/// Host path watched for changes, resolved relative to the project base directory.
 	pub path: String,
+	/// What to do when a watched file changes.
 	pub action: WatchAction,
+	/// Sync destination inside the container; sync actions are skipped when absent.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub target: Option<String>,
+	/// Glob patterns (relative to the base dir) whose matches are excluded from triggering.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub ignore: Vec<String>,
+	/// Glob allow-list; when non-empty, only matching paths trigger the rule.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub include: Vec<String>,
+	/// When true, copy `path` to `target` once at startup before watching begins.
 	#[serde(default)]
 	pub initial_sync: bool,
+	/// Command run inside the container for the `sync+exec` action.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub exec: Option<WatchExec>,
 	#[serde(flatten, default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
@@ -36,11 +43,16 @@ pub struct WatchRule {
 /// Action triggered by a `develop.watch` rule: `sync`, `rebuild`, `restart`, `sync+restart`, or `sync+exec`.
 #[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
 pub enum WatchAction {
+	/// `sync` — copy changed files from `path` into the container at `target`.
 	#[default]
 	Sync,
+	/// `rebuild` — rebuild the service image and recreate the container.
 	Rebuild,
+	/// `restart` — restart the running container without rebuilding.
 	Restart,
+	/// `sync+restart` — sync changed files, then restart the container.
 	SyncAndRestart,
+	/// `sync+exec` — sync changed files, then run the rule's `exec` command in the container.
 	SyncAndExec,
 }
 
@@ -63,6 +75,7 @@ impl<'de> Deserialize<'de> for WatchAction {
 /// Exec command run as part of a `sync+exec` watch action.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WatchExec {
+	/// Command and arguments executed in the container (argv form, not shell-parsed).
 	pub command: Vec<String>,
 }
 

@@ -9,6 +9,11 @@ use crate::size;
 // Resource limits
 // ---------------------------------------------------------------------------
 
+/// Build the OCI `LinuxResources` (memory, CPU, pids) for a service, or `None`
+/// when nothing constrains it. Top-level `mem_limit`/`cpus`/`pids_limit` win;
+/// the modern `deploy.resources` block only fills a value the top level left
+/// unset. A Docker `cpus` (nano-CPU) is converted to an OCI quota over a 100ms
+/// period (`nano / 10_000`, default period `100_000`).
 pub(crate) fn build_resource_limits(service: &Service) -> Option<LinuxResources> {
 	use crate::libpod::types::container::{LinuxCPU, LinuxMemory, LinuxPids};
 
@@ -113,6 +118,10 @@ pub(crate) fn build_resource_limits(service: &Service) -> Option<LinuxResources>
 	})
 }
 
+/// Build the validated `Ulimit` list for a service. Unrecognized resource names
+/// are dropped (not forwarded), `-1` means unlimited (`u64::MAX`) while any other
+/// negative value is rejected to `0`, and a soft limit above its hard limit is
+/// clamped down to the hard limit (POSIX requires soft <= hard).
 pub(crate) fn build_ulimits(service: &Service) -> Vec<Ulimit> {
 	service
 		.ulimits

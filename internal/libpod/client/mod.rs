@@ -173,7 +173,7 @@ impl Client {
 	/// With `Some(limit)` a stalled body is aborted once `limit` elapses, yielding
 	/// a timeout [`PodmanError`]. With `None` the future is awaited uncapped, for
 	/// endpoints that legitimately block server-side (the caller supplies its own
-	/// outer budget). Split out from [`read_body`] so the timeout policy is
+	/// outer budget). Split out from [`read_body`](Self::read_body) so the timeout policy is
 	/// testable without a live socket.
 	async fn apply_read_timeout<F, T>(
 		read_timeout: Option<std::time::Duration>,
@@ -223,7 +223,7 @@ impl Client {
 	}
 
 	/// For streaming endpoints: return the response on success, otherwise read
-	/// the body and surface it through [`check_status`] so the caller gets the
+	/// the body and surface it through [`check_status`](Self::check_status) so the caller gets the
 	/// parsed Podman error message rather than the raw JSON body.
 	async fn stream_or_err(resp: Response<Incoming>) -> Result<Response<Incoming>> {
 		if resp.status().is_success() {

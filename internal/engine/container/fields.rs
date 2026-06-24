@@ -19,6 +19,10 @@ use crate::libpod::types::container::{
 // Device helpers
 // ---------------------------------------------------------------------------
 
+/// Parse a compose `devices:` entry (`host:container:permissions`) into a
+/// `LinuxDevice`. The container path defaults to the host path when the
+/// `:container` segment is absent; major/minor/type are derived by `stat`ing the
+/// host node. Trailing permissions, if present, are ignored here.
 pub(crate) fn parse_device(s: &str) -> LinuxDevice {
 	let parts: Vec<&str> = s.splitn(3, ':').collect();
 	let host = parts.first().copied().unwrap_or("").to_string();

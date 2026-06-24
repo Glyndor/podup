@@ -5,9 +5,13 @@ use serde::Deserialize;
 /// Streaming JSON line emitted during image pull (`POST /libpod/images/pull`).
 #[derive(Deserialize, Default)]
 pub struct ImagePullProgress {
+	/// Progress text for this line. Mutually exclusive with `error`: on a normal
+	/// line this is populated and `error` is empty.
 	#[serde(default)]
 	pub stream: String,
 
+	/// Error message for this line. Mutually exclusive with `stream`: when the
+	/// pull fails this is populated and `stream` is empty.
 	#[serde(default)]
 	pub error: String,
 }
@@ -15,23 +19,29 @@ pub struct ImagePullProgress {
 /// Streaming JSON line emitted during image build (`POST /libpod/build`).
 #[derive(Deserialize, Default)]
 pub struct BuildOutput {
+	/// Build log text for this line. Populated on normal output lines; mutually
+	/// exclusive with `error`, which is set instead when the build fails.
 	#[serde(default)]
 	pub stream: String,
 
+	/// Error message for this line; present only when the build fails.
 	pub error: Option<String>,
 
+	/// Structured error detail accompanying `error`, when the daemon provides it.
 	pub error_detail: Option<BuildErrorDetail>,
 }
 
 /// Error detail sub-object in build output.
 #[derive(Deserialize)]
 pub struct BuildErrorDetail {
+	/// Human-readable error message.
 	pub message: Option<String>,
 }
 
 /// Response from `GET /libpod/images/{name}/json`.
 #[derive(Deserialize, Default)]
 pub struct ImageInspect {
+	/// Image ID (`sha256:...` content digest of the image config).
 	#[serde(rename = "Id", default)]
 	pub id: String,
 	/// Registry digest references (`repo@sha256:...`) for the image, when it was

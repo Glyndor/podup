@@ -13,6 +13,10 @@ use crate::libpod::API_PREFIX;
 use super::Engine;
 
 impl Engine {
+	/// Pre-create every declared (non-external) network before containers start,
+	/// stamping each with the `podup.project` label and applying driver/IPAM/label
+	/// config. External networks are verified to already exist instead. An
+	/// already-exists conflict on re-`up` is treated as success (idempotent).
 	pub(super) async fn create_networks(&self, file: &ComposeFile) -> Result<()> {
 		for (name, config) in &file.networks {
 			let network_name = config
@@ -89,6 +93,11 @@ impl Engine {
 // Free helpers
 // ---------------------------------------------------------------------------
 
+/// Build the `PerNetworkOptions` for one service's attachment to a single
+/// network: aliases, static IPv4/IPv6 and link-local IPs, MAC (per-network, else
+/// `fallback_mac`), driver options (with `priority` folded in), and interface
+/// name. The service name is always prepended as an alias unless already present,
+/// so siblings resolve the service by name (compose DNS contract).
 pub(super) fn build_per_network_options(
 	service_name: &str,
 	cfg: Option<&ServiceNetworkConfig>,
@@ -143,6 +152,12 @@ pub(super) fn build_per_network_options(
 	opts
 }
 
+/// Resolve a service's networking into a netns `Namespace` and per-network
+/// options. An explicit `network_mode` wins and yields a namespace with no
+/// per-network options (`container:`/`service:` reuse another container's netns,
+/// the service form resolved to its target container name). Otherwise each
+/// declared network is mapped to its options and `bridge` netns is used (libpod
+/// requires `netns=bridge` when explicit networks are attached).
 pub(super) fn resolve_network_mode(
 	service_name: &str,
 	service: &Service,
