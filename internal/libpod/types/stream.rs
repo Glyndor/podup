@@ -4,7 +4,7 @@
 //! `[stream_type: u8][0][0][0][size_big_endian: u32][payload]`
 //! Stream type 1 = stdout, 2 = stderr.
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures_util::stream::Stream;
 use http_body_util::BodyExt;
 use hyper::body::Incoming;
@@ -39,11 +39,15 @@ fn stream_buf_overflow() -> PodmanError {
 // Pure parsing helpers (also used by unit tests)
 // ---------------------------------------------------------------------------
 
-/// Try to consume one complete multiplexed frame from `buf`.
+/// Try to consume one complete multiplexed frame from the front of `buf`.
 ///
-/// Returns `Some((stream_type, payload, bytes_consumed))` if a complete frame
-/// is available, or `None` if more data is needed.
-pub fn parse_frame(buf: &[u8]) -> Option<(u8, Bytes, usize)> {
+/// On success the 8-byte header and its payload are split off the front of
+/// `buf` (the remaining bytes stay buffered for the next frame) and
+/// `Some((stream_type, payload))` is returned. The payload is a zero-copy
+/// [`Bytes`] sharing the original allocation, so no per-frame copy or tail
+/// memmove occurs. Returns `None` (leaving `buf` untouched) when fewer than a
+/// full frame is buffered and more data is needed.
+pub fn parse_frame(buf: &mut BytesMut) -> Option<(u8, Bytes)> {
 	if buf.len() < 8 {
 		return None;
 	}
@@ -52,18 +56,25 @@ pub fn parse_frame(buf: &[u8]) -> Option<(u8, Bytes, usize)> {
 		return None;
 	}
 	let stream_type = buf[0];
-	let payload = Bytes::from(buf[8..8 + size].to_vec());
-	Some((stream_type, payload, 8 + size))
+	// Split the header + payload off the front of `buf` in O(1); the leftover
+	// bytes remain in `buf` without being moved.
+	let mut frame = buf.split_to(8 + size);
+	let payload = frame.split_off(8).freeze();
+	Some((stream_type, payload))
 }
 
-/// Pop the next newline-terminated line from `buf`, excluding the newline byte.
+/// Pop the next newline-terminated line from the front of `buf`, excluding the
+/// newline byte.
 ///
-/// Returns `Some(line_bytes)` when a `\n` is found, or `None` when no
-/// complete line is buffered yet.
-pub fn take_json_line(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
+/// On success the line and its trailing `\n` are split off the front of `buf`
+/// in O(1) (no tail memmove) and the line is returned as a zero-copy [`Bytes`]
+/// sharing the original allocation. Returns `None` (leaving `buf` untouched)
+/// when no complete line is buffered yet.
+pub fn take_json_line(buf: &mut BytesMut) -> Option<Bytes> {
 	let nl = buf.iter().position(|&b| b == b'\n')?;
-	let line: Vec<u8> = buf.drain(..nl + 1).take(nl).collect();
-	Some(line)
+	let mut line = buf.split_to(nl + 1);
+	line.truncate(nl); // drop the trailing newline byte
+	Some(line.freeze())
 }
 
 // ---------------------------------------------------------------------------
@@ -76,11 +87,10 @@ pub fn take_json_line(buf: &mut Vec<u8>) -> Option<Vec<u8>> {
 /// the response body is fully consumed.
 pub fn parse_multiplexed(body: Incoming) -> BoxStream<LogOutput> {
 	Box::pin(futures_util::stream::try_unfold(
-		(body, Vec::<u8>::new()),
+		(body, BytesMut::new()),
 		|(mut body, mut buf)| async move {
 			loop {
-				if let Some((stream_type, payload, consumed)) = parse_frame(&buf) {
-					buf.drain(..consumed);
+				if let Some((stream_type, payload)) = parse_frame(&mut buf) {
 					let output = match stream_type {
 						1 => LogOutput::StdOut { message: payload },
 						2 => LogOutput::StdErr { message: payload },
@@ -140,7 +150,7 @@ pub fn parse_json_lines<T: serde::de::DeserializeOwned + Send + 'static>(
 	body: Incoming,
 ) -> BoxStream<T> {
 	Box::pin(futures_util::stream::try_unfold(
-		(body, Vec::<u8>::new()),
+		(body, BytesMut::new()),
 		|(mut body, mut buf)| async move {
 			loop {
 				if let Some(line) = take_json_line(&mut buf) {
@@ -162,6 +172,8 @@ pub fn parse_json_lines<T: serde::de::DeserializeOwned + Send + 'static>(
 					}
 					Some(Err(e)) => return Err(PodmanError::from(e)),
 					None => {
+						// Trailing bytes with no terminating newline: parse the
+						// remainder as a final line.
 						let line = std::mem::take(&mut buf);
 						if !line.is_empty() {
 							let item: T =
@@ -186,58 +198,97 @@ mod tests {
 
 	#[test]
 	fn parse_frame_incomplete_header() {
-		assert!(parse_frame(&[0x01, 0x00, 0x00, 0x00]).is_none());
+		let mut buf = BytesMut::from(&[0x01, 0x00, 0x00, 0x00][..]);
+		assert!(parse_frame(&mut buf).is_none());
+		// A `None` result must leave the buffer untouched.
+		assert_eq!(buf.as_ref(), &[0x01, 0x00, 0x00, 0x00]);
 	}
 
 	#[test]
 	fn parse_frame_header_present_payload_missing() {
 		// Header says 5-byte payload but buffer only has 3.
-		let buf = [
-			0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, b'a', b'b', b'c',
-		];
-		assert!(parse_frame(&buf).is_none());
+		let mut buf = BytesMut::from(
+			&[
+				0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05, b'a', b'b', b'c',
+			][..],
+		);
+		assert!(parse_frame(&mut buf).is_none());
+		// Partial frame stays buffered for the next read.
+		assert_eq!(buf.len(), 11);
 	}
 
 	#[test]
 	fn parse_frame_stdout_complete() {
-		let payload = b"hello";
-		let mut buf = vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05];
-		buf.extend_from_slice(payload);
-		let (stype, data, consumed) = parse_frame(&buf).unwrap();
+		let mut buf = BytesMut::from(&[0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05][..]);
+		buf.extend_from_slice(b"hello");
+		let (stype, data) = parse_frame(&mut buf).unwrap();
 		assert_eq!(stype, 1);
 		assert_eq!(data.as_ref(), b"hello");
-		assert_eq!(consumed, 13);
+		// The full frame is consumed from the front.
+		assert!(buf.is_empty());
 	}
 
 	#[test]
 	fn parse_frame_stderr_complete() {
-		let payload = b"err";
-		let mut buf = vec![0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03];
-		buf.extend_from_slice(payload);
-		let (stype, data, consumed) = parse_frame(&buf).unwrap();
+		let mut buf = BytesMut::from(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03][..]);
+		buf.extend_from_slice(b"err");
+		let (stype, data) = parse_frame(&mut buf).unwrap();
 		assert_eq!(stype, 2);
 		assert_eq!(data.as_ref(), b"err");
-		assert_eq!(consumed, 11);
+		assert!(buf.is_empty());
 	}
 
 	#[test]
 	fn parse_frame_zero_length_payload() {
-		let buf = [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-		let (stype, data, consumed) = parse_frame(&buf).unwrap();
+		let mut buf = BytesMut::from(&[0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00][..]);
+		let (stype, data) = parse_frame(&mut buf).unwrap();
 		assert_eq!(stype, 1);
 		assert!(data.is_empty());
-		assert_eq!(consumed, 8);
+		assert!(buf.is_empty());
 	}
 
 	#[test]
 	fn parse_frame_leaves_remainder() {
 		// Buffer has one full frame + extra bytes.
-		let mut buf = vec![0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, b'h', b'i'];
+		let mut buf =
+			BytesMut::from(&[0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, b'h', b'i'][..]);
 		buf.extend_from_slice(b"leftover");
-		let (_, data, consumed) = parse_frame(&buf).unwrap();
+		let (_, data) = parse_frame(&mut buf).unwrap();
 		assert_eq!(data.as_ref(), b"hi");
-		assert_eq!(consumed, 10);
-		assert_eq!(&buf[consumed..], b"leftover");
+		// Only the consumed frame is removed; the remainder is left in place.
+		assert_eq!(buf.as_ref(), b"leftover");
+	}
+
+	#[test]
+	fn parse_frame_two_frames_in_one_buffer_demux() {
+		// One stdout frame ("hi") immediately followed by one stderr frame
+		// ("er") must demux to the correct stream, in order.
+		let mut buf =
+			BytesMut::from(&[0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, b'h', b'i'][..]);
+		buf.extend_from_slice(&[0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, b'e', b'r']);
+		let (stype1, data1) = parse_frame(&mut buf).unwrap();
+		assert_eq!(stype1, 1);
+		assert_eq!(data1.as_ref(), b"hi");
+		let (stype2, data2) = parse_frame(&mut buf).unwrap();
+		assert_eq!(stype2, 2);
+		assert_eq!(data2.as_ref(), b"er");
+		assert!(buf.is_empty());
+		assert!(parse_frame(&mut buf).is_none());
+	}
+
+	#[test]
+	fn parse_frame_split_across_reads_reassembles() {
+		// First read delivers only the header plus a partial payload; the frame
+		// must not parse until the rest arrives in a second read.
+		let mut buf = BytesMut::from(&[0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x05][..]);
+		buf.extend_from_slice(b"hel");
+		assert!(parse_frame(&mut buf).is_none());
+		// Second read completes the payload.
+		buf.extend_from_slice(b"lo");
+		let (stype, data) = parse_frame(&mut buf).unwrap();
+		assert_eq!(stype, 1);
+		assert_eq!(data.as_ref(), b"hello");
+		assert!(buf.is_empty());
 	}
 
 	// ---------------------------------------------------------------------------
@@ -246,32 +297,95 @@ mod tests {
 
 	#[test]
 	fn take_json_line_no_newline() {
-		let mut buf = b"partial line".to_vec();
+		let mut buf = BytesMut::from(&b"partial line"[..]);
 		assert!(take_json_line(&mut buf).is_none());
-		assert_eq!(buf, b"partial line");
+		assert_eq!(buf.as_ref(), b"partial line");
 	}
 
 	#[test]
 	fn take_json_line_with_newline() {
-		let mut buf = b"line1\nline2".to_vec();
+		let mut buf = BytesMut::from(&b"line1\nline2"[..]);
 		let line = take_json_line(&mut buf).unwrap();
-		assert_eq!(line, b"line1");
-		assert_eq!(buf, b"line2");
+		assert_eq!(line.as_ref(), b"line1");
+		assert_eq!(buf.as_ref(), b"line2");
 	}
 
 	#[test]
 	fn take_json_line_empty_line() {
-		let mut buf = b"\nnext".to_vec();
+		let mut buf = BytesMut::from(&b"\nnext"[..]);
 		let line = take_json_line(&mut buf).unwrap();
 		assert!(line.is_empty());
-		assert_eq!(buf, b"next");
+		assert_eq!(buf.as_ref(), b"next");
 	}
 
 	#[test]
 	fn take_json_line_multiple_lines() {
-		let mut buf = b"a\nb\nc".to_vec();
-		assert_eq!(take_json_line(&mut buf).unwrap(), b"a");
-		assert_eq!(take_json_line(&mut buf).unwrap(), b"b");
+		let mut buf = BytesMut::from(&b"a\nb\nc"[..]);
+		assert_eq!(take_json_line(&mut buf).unwrap().as_ref(), b"a");
+		assert_eq!(take_json_line(&mut buf).unwrap().as_ref(), b"b");
 		assert!(take_json_line(&mut buf).is_none());
+	}
+
+	#[test]
+	fn take_json_line_multiple_lines_in_one_buffer_in_order() {
+		// Several complete JSON lines delivered in a single buffer fill must be
+		// returned one at a time, in arrival order, with the remainder kept.
+		let mut buf = BytesMut::from(
+			&br#"{"a":1}
+{"b":2}
+{"c":3}
+"#[..],
+		);
+		assert_eq!(take_json_line(&mut buf).unwrap().as_ref(), br#"{"a":1}"#);
+		assert_eq!(take_json_line(&mut buf).unwrap().as_ref(), br#"{"b":2}"#);
+		assert_eq!(take_json_line(&mut buf).unwrap().as_ref(), br#"{"c":3}"#);
+		assert!(take_json_line(&mut buf).is_none());
+		assert!(buf.is_empty());
+	}
+
+	#[test]
+	fn take_json_line_split_across_reads_reassembles() {
+		// A line whose newline only arrives in the second read must not be
+		// returned until that read completes it.
+		let mut buf = BytesMut::from(&b"{\"a\":"[..]);
+		assert!(take_json_line(&mut buf).is_none());
+		buf.extend_from_slice(b"1}\n");
+		assert_eq!(take_json_line(&mut buf).unwrap().as_ref(), br#"{"a":1}"#);
+		assert!(buf.is_empty());
+	}
+
+	// ---------------------------------------------------------------------------
+	// MAX_STREAM_BUF cap
+	// ---------------------------------------------------------------------------
+
+	/// Mirror of the cap check the async parsers run after each buffer fill
+	/// (`buf.len() > MAX_STREAM_BUF`). Returns the overflow error when, and only
+	/// when, the reassembly buffer has grown strictly past the limit.
+	fn cap_check(buf_len: usize) -> Option<PodmanError> {
+		if buf_len > MAX_STREAM_BUF {
+			Some(stream_buf_overflow())
+		} else {
+			None
+		}
+	}
+
+	#[test]
+	fn over_cap_buffer_is_rejected() {
+		// A buffer that grows one byte past the cap must trip the overflow guard
+		// with the documented Api error (status 0, message naming the limit).
+		match cap_check(MAX_STREAM_BUF + 1) {
+			Some(PodmanError::Api { status, message }) => {
+				assert_eq!(status, 0);
+				assert!(message.contains(&MAX_STREAM_BUF.to_string()));
+			}
+			other => panic!("expected Api overflow error, got {other:?}"),
+		}
+	}
+
+	#[test]
+	fn at_cap_buffer_is_accepted() {
+		// A buffer exactly at the cap must be allowed; the guard rejects only a
+		// buffer strictly greater than MAX_STREAM_BUF.
+		assert!(cap_check(MAX_STREAM_BUF).is_none());
 	}
 }

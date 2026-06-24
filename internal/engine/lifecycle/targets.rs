@@ -97,9 +97,43 @@ pub(super) fn in_started_set(target_set: &Option<HashSet<String>>, name: &str) -
 
 #[cfg(test)]
 mod tests {
-	use super::{expand_targets, filter_services, in_started_set};
+	use super::{expand_targets, filter_services, in_started_set, service_grace_period_secs};
 	use crate::compose::types::{ComposeFile, Service};
 	use std::collections::HashSet;
+
+	// --- service_grace_period_secs ---
+
+	#[test]
+	fn grace_period_defaults_to_ten_seconds() {
+		// No stop_grace_period set → the docker-compose default of 10s.
+		assert_eq!(service_grace_period_secs(&Service::default()), 10);
+	}
+
+	#[test]
+	fn grace_period_parses_duration() {
+		// Plain seconds and a single-unit minutes value both resolve.
+		let svc = Service {
+			stop_grace_period: Some("90s".to_string()),
+			..Default::default()
+		};
+		assert_eq!(service_grace_period_secs(&svc), 90);
+
+		let svc = Service {
+			stop_grace_period: Some("2m".to_string()),
+			..Default::default()
+		};
+		assert_eq!(service_grace_period_secs(&svc), 120);
+	}
+
+	#[test]
+	fn grace_period_falls_back_on_unparseable() {
+		// A value that does not parse as a duration falls back to the default.
+		let svc = Service {
+			stop_grace_period: Some("not-a-duration".to_string()),
+			..Default::default()
+		};
+		assert_eq!(service_grace_period_secs(&svc), 10);
+	}
 
 	fn file_with_services(names: &[&str]) -> ComposeFile {
 		let mut file = ComposeFile::default();

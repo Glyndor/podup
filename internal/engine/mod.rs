@@ -3,20 +3,17 @@
 //! Translates a parsed [`ComposeFile`] into Podman API calls via the libpod REST API.
 
 mod build;
-mod config_digests;
-pub use config_digests::resolve_image_digests;
-mod commit_export;
 mod container;
 mod copy;
 mod events;
+mod image;
 pub use build::{BuildOptions, PullOptions, PushOptions};
 pub use copy::CpOptions;
+pub use image::resolve_image_digests;
 pub use lifecycle::{RunOptions, RunOverrides};
 pub use lock::ProjectLock;
 pub use query::{ExecOptions, ImagesOptions, LogsOptions, PsOptions};
 mod container_config;
-mod container_fields;
-mod container_security;
 mod health;
 mod lifecycle;
 mod lock;
@@ -30,12 +27,12 @@ mod staging;
 mod stats;
 pub use staging::is_safe_project_name;
 mod volume;
-mod volumes_list;
-pub use volumes_list::VolumesOptions;
+pub use volume::VolumesOptions;
 mod volume_mounts;
 #[cfg(feature = "watch")]
 mod watch;
 
+use std::io::Write;
 use std::path::PathBuf;
 
 use futures_util::StreamExt;
@@ -217,13 +214,22 @@ impl Engine {
 			.map_err(ComposeError::Podman)?;
 
 		let mut stream = crate::libpod::parse_multiplexed(resp.into_body());
+		// Lock stdout once for the whole stream instead of re-acquiring the lock
+		// (and issuing a syscall) per frame; stdout is ours exclusively on this
+		// path. stderr is locked per frame because the tracing subscriber also
+		// writes there: holding its lock across the await loop would starve
+		// concurrent log emissions. Flush after each frame so output stays prompt.
+		let mut out = std::io::stdout().lock();
 		while let Some(msg) = stream.next().await {
 			match msg.map_err(ComposeError::Podman)? {
 				LogOutput::StdOut { message } => {
-					print!("{}", String::from_utf8_lossy(&message));
+					let _ = out.write_all(String::from_utf8_lossy(&message).as_bytes());
+					let _ = out.flush();
 				}
 				LogOutput::StdErr { message } => {
-					eprint!("{}", String::from_utf8_lossy(&message));
+					let mut err = std::io::stderr().lock();
+					let _ = err.write_all(String::from_utf8_lossy(&message).as_bytes());
+					let _ = err.flush();
 				}
 			}
 		}

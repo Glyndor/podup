@@ -1,5 +1,7 @@
 //! Lifecycle sub-commands: restart, stop, start, kill, rm, pause, unpause, run.
 
+use std::io::Write;
+
 use futures_util::StreamExt;
 use tracing::info;
 
@@ -13,25 +15,23 @@ use crate::libpod::API_PREFIX;
 impl Engine {
 	/// Restart the named service (or all services). Dependents with a `restart` condition in `depends_on` are also restarted.
 	pub async fn restart(&self, file: &ComposeFile, service_name: Option<&str>) -> Result<()> {
-		self.restart_with_options(file, service_name, false).await
+		let targets: Vec<String> = service_name
+			.map(|s| vec![s.to_string()])
+			.unwrap_or_default();
+		self.restart_with_options(file, &targets, false).await
 	}
 
-	/// Restart with options. When `no_deps` is true, dependents with a
-	/// `depends_on` restart condition are NOT cascade-restarted.
+	/// Restart with options. When `target_services` is empty, all services are
+	/// restarted. When `no_deps` is true, dependents with a `depends_on` restart
+	/// condition are NOT cascade-restarted.
 	pub async fn restart_with_options(
 		&self,
 		file: &ComposeFile,
-		service_name: Option<&str>,
+		target_services: &[String],
 		no_deps: bool,
 	) -> Result<()> {
-		let names: Vec<String> = if let Some(svc) = service_name {
-			if !file.services.contains_key(svc) {
-				return Err(ComposeError::ServiceNotFound(svc.into()));
-			}
-			vec![svc.to_string()]
-		} else {
-			file.services.keys().cloned().collect()
-		};
+		let order = crate::compose::resolve_order(file)?;
+		let names = filter_services(file, order, target_services)?;
 
 		for name in &names {
 			let service = &file.services[name];
@@ -97,7 +97,7 @@ impl Engine {
 				);
 				let code = self
 					.client
-					.post_empty_json::<i64>(&path)
+					.post_empty_json_unbounded::<i64>(&path)
 					.await
 					.map_err(ComposeError::Podman)?;
 				println!("{code}");
@@ -130,9 +130,10 @@ impl Engine {
 					crate::libpod::urlencoded(&container_name),
 				);
 				if let Err(e) = self.client.post_empty_ok(&path).await {
-					tracing::debug!("stop {container_name}: {e}");
+					tracing::warn!("could not stop {container_name}: {e}");
+				} else {
+					info!("stopped {container_name}");
 				}
-				info!("stopped {container_name}");
 			}
 		}
 		Ok(())
@@ -229,9 +230,10 @@ impl Engine {
 					crate::libpod::urlencoded(&container_name),
 				);
 				if let Err(e) = self.client.delete_ok(&path).await {
-					tracing::debug!("rm {container_name}: {e}");
+					tracing::warn!("could not remove {container_name}: {e}");
+				} else {
+					info!("removed {container_name}");
 				}
-				info!("removed {container_name}");
 			}
 		}
 		Ok(())
@@ -397,6 +399,10 @@ impl Engine {
 		// `up` does); the service may reference the synthesized `default`
 		// network, which is created here as `{project}_default`.
 		self.create_networks(file).await?;
+		// Inline secrets/configs are created up front (no longer in the
+		// per-container build path), so materialise them here too before the run
+		// container is created.
+		self.create_inline_secrets(file).await?;
 
 		self.create_and_start(&run_name, service_name, &run_service, file, true)
 			.await?;
@@ -417,13 +423,23 @@ impl Engine {
 			.map_err(ComposeError::Podman)?;
 		let mut log_stream = crate::libpod::parse_multiplexed(logs_resp.into_body());
 
+		// Lock stdout once for the whole stream instead of re-acquiring the lock
+		// (and issuing a syscall) per frame; stdout is ours exclusively on this
+		// path. stderr is locked per frame because the tracing subscriber also
+		// writes there: holding its lock across the await loop would starve
+		// concurrent log emissions. Flush after each frame so `run` streams
+		// promptly.
+		let mut out = std::io::stdout().lock();
 		while let Some(msg) = log_stream.next().await {
 			match msg.map_err(ComposeError::Podman)? {
 				crate::libpod::LogOutput::StdOut { message } => {
-					print!("{}", String::from_utf8_lossy(&message))
+					let _ = out.write_all(String::from_utf8_lossy(&message).as_bytes());
+					let _ = out.flush();
 				}
 				crate::libpod::LogOutput::StdErr { message } => {
-					eprint!("{}", String::from_utf8_lossy(&message))
+					let mut err = std::io::stderr().lock();
+					let _ = err.write_all(String::from_utf8_lossy(&message).as_bytes());
+					let _ = err.flush();
 				}
 			}
 		}
@@ -434,7 +450,10 @@ impl Engine {
 		);
 		// Capture the wait result before cleanup so a failed wait is surfaced as an
 		// error rather than masked as a successful (exit 0) run.
-		let wait_result = self.client.post_empty_json::<i64>(&wait_path).await;
+		let wait_result = self
+			.client
+			.post_empty_json_unbounded::<i64>(&wait_path)
+			.await;
 
 		if rm {
 			let rm_path = format!(

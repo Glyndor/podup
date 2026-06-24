@@ -32,6 +32,9 @@ pub(crate) fn volume_unit(name: &str, project: &str, config: Option<&VolumeConfi
 			vol.add("Label", format!("{key}={val}"));
 		}
 	}
+	// Ownership label, mirroring the live engine: tag every generated volume with
+	// its project so it is traceable/removable by label like a running one.
+	vol.add("Label", format!("podup.project={project}"));
 	// No [Install] section: the spec defines none for `.volume` units, which are
 	// pulled in automatically as dependencies of the `.container` units that use
 	// them. Only `.container` units carry [Install].

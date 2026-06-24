@@ -264,3 +264,93 @@ fn per_network_mac_takes_precedence_over_fallback() {
 	let opts = build_per_network_options("web", Some(&cfg), Some("02:42:ac:11:00:03"));
 	assert_eq!(opts.static_mac.as_deref(), Some("aa:bb:cc:dd:ee:ff"));
 }
+
+#[test]
+fn per_network_ipv6_and_link_local_become_static_ips() {
+	use crate::compose::types::ServiceNetworkConfig;
+	let cfg = ServiceNetworkConfig {
+		ipv4_address: Some("10.0.0.5".to_string()),
+		ipv6_address: Some("2001:db8::5".to_string()),
+		link_local_ips: vec!["169.254.0.1".to_string()],
+		..Default::default()
+	};
+	let opts = build_per_network_options("web", Some(&cfg), None);
+	// All three address forms are folded into the static-IP list.
+	assert!(opts.static_ips.contains(&"10.0.0.5".to_string()));
+	assert!(opts.static_ips.contains(&"2001:db8::5".to_string()));
+	assert!(opts.static_ips.contains(&"169.254.0.1".to_string()));
+}
+
+#[test]
+fn per_network_priority_folds_into_driver_opts() {
+	use crate::compose::types::ServiceNetworkConfig;
+	let mut driver_opts = std::collections::HashMap::new();
+	driver_opts.insert("mtu".to_string(), "1400".to_string());
+	let cfg = ServiceNetworkConfig {
+		priority: Some(100),
+		driver_opts,
+		..Default::default()
+	};
+	let opts = build_per_network_options("web", Some(&cfg), None);
+	let opts = opts.driver_opts.expect("driver opts present");
+	// Compose `priority` is consumed by Podman as a driver option, alongside the
+	// explicit driver_opts.
+	assert_eq!(opts.get("priority").map(String::as_str), Some("100"));
+	assert_eq!(opts.get("mtu").map(String::as_str), Some("1400"));
+}
+
+#[test]
+fn build_subnets_maps_pool_fields_and_ip_range() {
+	use crate::compose::types::{IpamConfig, IpamPool};
+	let ipam = IpamConfig {
+		config: vec![IpamPool {
+			subnet: Some("172.28.0.0/16".to_string()),
+			gateway: Some("172.28.0.1".to_string()),
+			ip_range: Some("172.28.5.0/24".to_string()),
+			..Default::default()
+		}],
+		..Default::default()
+	};
+	let subnets = super::build_subnets(&ipam);
+	assert_eq!(subnets.len(), 1);
+	assert_eq!(subnets[0].subnet.as_deref(), Some("172.28.0.0/16"));
+	assert_eq!(subnets[0].gateway.as_deref(), Some("172.28.0.1"));
+	// The ip_range CIDR is translated into a Podman lease range.
+	let lr = subnets[0]
+		.lease_range
+		.as_ref()
+		.expect("lease range derived");
+	assert_eq!(lr.start_ip.as_deref(), Some("172.28.5.1"));
+	assert_eq!(lr.end_ip.as_deref(), Some("172.28.5.254"));
+}
+
+#[test]
+fn build_subnets_without_ip_range_has_no_lease_range() {
+	use crate::compose::types::{IpamConfig, IpamPool};
+	let ipam = IpamConfig {
+		config: vec![IpamPool {
+			subnet: Some("10.0.0.0/24".to_string()),
+			..Default::default()
+		}],
+		..Default::default()
+	};
+	let subnets = super::build_subnets(&ipam);
+	assert!(subnets[0].lease_range.is_none());
+}
+
+#[test]
+fn lease_range_ipv6_zero_prefix_spans_whole_space() {
+	// A `/0` IPv6 range uses an all-zero mask: the start is `::` and the end is
+	// the maximum address.
+	let lr = lease_range_from_cidr("::/0").unwrap();
+	assert_eq!(lr.start_ip.as_deref(), Some("::"));
+	assert_eq!(
+		lr.end_ip.as_deref(),
+		Some("ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff")
+	);
+}
+
+#[test]
+fn lease_range_ipv6_rejects_oversized_prefix() {
+	assert!(lease_range_from_cidr("2001:db8::/129").is_none());
+}

@@ -288,6 +288,90 @@ mod tests {
 		assert!(blkio.throttle_write_bps_device.is_empty());
 	}
 
+	#[test]
+	fn build_blkio_config_maps_weight_device() {
+		use crate::compose::types::{BlkioConfig, BlkioWeightDevice};
+		let mut svc = default_service();
+		svc.blkio_config = Some(BlkioConfig {
+			weight: Some(300),
+			weight_device: vec![BlkioWeightDevice {
+				// A non-existent path stats to (0, 0); the weight still propagates.
+				path: "/dev/does-not-exist".into(),
+				weight: 800,
+			}],
+			..Default::default()
+		});
+		let blkio = build_blkio_config(&svc).unwrap();
+		assert_eq!(blkio.weight, Some(300));
+		assert_eq!(blkio.weight_device.len(), 1);
+		assert_eq!(blkio.weight_device[0].weight, Some(800));
+	}
+
+	#[test]
+	fn build_blkio_config_maps_all_four_throttle_kinds() {
+		use crate::compose::types::{BlkioConfig, BlkioRateDevice};
+		let dev = |rate: u64| BlkioRateDevice {
+			path: "/dev/sda".into(),
+			rate: serde_yaml::Value::Number(serde_yaml::Number::from(rate)),
+		};
+		let mut svc = default_service();
+		svc.blkio_config = Some(BlkioConfig {
+			device_read_bps: vec![dev(1)],
+			device_write_bps: vec![dev(2)],
+			device_read_iops: vec![dev(3)],
+			device_write_iops: vec![dev(4)],
+			..Default::default()
+		});
+		let blkio = build_blkio_config(&svc).unwrap();
+		assert_eq!(blkio.throttle_read_bps_device[0].rate, 1);
+		assert_eq!(blkio.throttle_write_bps_device[0].rate, 2);
+		assert_eq!(blkio.throttle_read_iops_device[0].rate, 3);
+		assert_eq!(blkio.throttle_write_iops_device[0].rate, 4);
+	}
+
+	// --- build_label_file_labels ---
+
+	#[test]
+	fn label_file_parses_keys_skips_comments_and_blanks() {
+		use crate::compose::types::primitives::StringOrList;
+		let dir = tempfile::tempdir().unwrap();
+		let path = dir.path().join("labels.env");
+		std::fs::write(
+			&path,
+			"# a comment\n\ncom.example.team=blue\nbare-key\n  com.example.tier = gold \n",
+		)
+		.unwrap();
+
+		let mut svc = default_service();
+		svc.label_file = StringOrList::Single("labels.env".to_string());
+		let labels = build_label_file_labels(&svc, dir.path());
+
+		assert_eq!(
+			labels.get("com.example.team").map(String::as_str),
+			Some("blue")
+		);
+		// A bare key with no `=` keeps an empty value.
+		assert_eq!(labels.get("bare-key").map(String::as_str), Some(""));
+		// The whole line is trimmed first, then the key side is trimmed again; the
+		// value keeps its leading space after `=` but loses the line's trailing space.
+		assert_eq!(
+			labels.get("com.example.tier").map(String::as_str),
+			Some(" gold")
+		);
+		// Comment and blank lines contribute nothing.
+		assert_eq!(labels.len(), 3);
+	}
+
+	#[test]
+	fn label_file_missing_file_is_skipped() {
+		use crate::compose::types::primitives::StringOrList;
+		let dir = tempfile::tempdir().unwrap();
+		let mut svc = default_service();
+		svc.label_file = StringOrList::Single("absent.env".to_string());
+		// A missing label file warns and yields no labels rather than erroring.
+		assert!(build_label_file_labels(&svc, dir.path()).is_empty());
+	}
+
 	// --- warn_swarm_only_deploy ---
 
 	#[test]

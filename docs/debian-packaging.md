@@ -1,8 +1,11 @@
 # Debian packaging
 
-podup targets inclusion in the official Debian and Ubuntu archives. The
-`debian/` directory in this repository builds a working package today; this
-page tracks what that gives us and what the official archive still requires.
+podup is distributed for Debian and Ubuntu through the self-hosted signed apt
+repository at [`apt.glyndor.net`](https://apt.glyndor.net) — that is the
+supported path, described below. Inclusion in the official Debian/Ubuntu
+archives is explicitly **not** a goal. The `debian/` directory in this
+repository builds the `.deb` that the apt repository serves; this page covers
+how to build it and how it is published.
 
 ## Build a .deb locally
 
@@ -85,24 +88,21 @@ the `Glyndor/apt` repo.
 - `debian/copyright` — DEP-5, Apache-2.0
 - Source format `3.0 (native)` — the repository is upstream
 
-## Path to the official archive (owner actions)
+## Not the official Debian/Ubuntu archive
 
-1. **Fully offline builds** — the archive forbids network access at build
-   time. Options: `debcargo` (packages each crate dependency) or a vendored
-   source tarball. Decision pending; `debcargo` is the route the Debian Rust
-   team maintains.
-2. **ITP bug** — file an *Intent to Package* against `wnpp` from the
-   maintainer's identity.
-3. **Sponsorship** — upload through a Debian Developer (the Rust team's
-   `team+rust@tracker.debian.org` is the natural reviewer for a Rust tool).
-4. **crates.io publication** — the name `podup` is verified available and
-   the crate metadata is in place (`cargo package` verifies clean), so
-   publication is a single `cargo publish` with the owner's registry
-   token. `debcargo` consumes crates.io releases, so publishing first
-   simplifies everything.
-5. **Stability promise** — official packages imply SemVer discipline, which
-   `1.0.0` (already shipped) puts in force: the CLI surface is stable and
-   breaking changes wait for a major bump.
+Uploading podup to the official Debian or Ubuntu archive is **not** a goal. The
+self-hosted `apt.glyndor.net` repository above is the supported distribution
+channel: it gives Debian/Ubuntu users `apt`-managed installs and upgrades
+without the archive's process overhead (an ITP bug, a Debian Developer sponsor,
+and fully offline `debcargo`/vendored builds), and it stays in lockstep with
+each release on its own schedule.
+
+The packaging mechanics carry over regardless of channel:
+
+- **SemVer discipline** — `1.0.0` (already shipped) is in force: the CLI surface
+  is stable and breaking changes wait for a major bump.
+- **crates.io** — the crate metadata is in place (`cargo package` verifies
+  clean) for publishing podup as a library; this is independent of the `.deb`.
 
 ## Versioning
 

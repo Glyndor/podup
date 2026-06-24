@@ -37,6 +37,11 @@ fn append_context<W: std::io::Write>(
 }
 
 /// Append synthesized files (e.g. build secrets) to `tar` at the context root.
+///
+/// Build-secret bytes are placed in the build context as `.podup-build-secret-*`
+/// entries so the libpod build endpoint can expose them through its BuildKit
+/// `secrets=id=NAME,src=ENTRY` mount; they ride inside the context tar by design
+/// of that mount mechanism and are not part of the user's source tree.
 fn append_extra_files<W: std::io::Write>(
 	tar: &mut tar::Builder<W>,
 	extra_files: &[(String, Vec<u8>)],
@@ -460,5 +465,39 @@ mod tests {
 		let (bytes, df_name) = build_context_tar_with_inline(dir.path(), inline, &[]).unwrap();
 		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
 		assert!(!df_name.is_empty());
+	}
+
+	#[test]
+	fn build_ignored_empty_pattern_matches_nothing() {
+		// A blank `.dockerignore` line yields an empty pattern that must never
+		// match (otherwise it would exclude every file).
+		let patterns = vec![String::new()];
+		assert!(!is_ignored("anything.txt", &patterns));
+		assert!(!is_ignored("a/b/c", &patterns));
+	}
+
+	#[test]
+	fn glob_match_double_star_suffix_spans_subtree() {
+		// A trailing `**` matches the directory and everything beneath it.
+		assert!(glob_match("build/**", "build/out.o"));
+		assert!(glob_match("build/**", "build/a/b/out.o"));
+		assert!(!glob_match("build/**", "src/out.o"));
+	}
+
+	#[test]
+	fn glob_match_double_star_middle_with_no_match_fails() {
+		// `a/**/z` requires the path to start with `a/` and end with `z`; a path
+		// that never reaches the trailing literal exhausts the `**` prefix loop and
+		// fails rather than matching loosely.
+		assert!(glob_match("a/**/z", "a/b/c/z"));
+		assert!(!glob_match("a/**/z", "a/b/c/y"));
+	}
+
+	#[test]
+	fn glob_match_question_mark_matches_single_non_slash_char() {
+		// `?` matches exactly one character and never a path separator.
+		assert!(glob_match("file?.txt", "file1.txt"));
+		assert!(!glob_match("file?.txt", "file.txt"));
+		assert!(!glob_match("a?b", "a/b"));
 	}
 }

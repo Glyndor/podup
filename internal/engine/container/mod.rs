@@ -10,22 +10,26 @@ use crate::libpod::urlencoded;
 use crate::libpod::API_PREFIX;
 use crate::{ports, size};
 
+mod fields;
 mod resolve;
-use resolve::{build_env, resolve_links, resolve_stop_signal, resolve_volume_name};
+mod security;
+use resolve::{
+	build_env, resolve_links, resolve_stop_signal, resolve_volume_name, resolve_volumes_from,
+};
 pub(crate) use resolve::{config_hash, resolve_bind_source};
 
 use super::container_config::{
 	build_healthcheck, build_log_config, build_resource_limits, build_restart_policy,
 	build_ulimits, cdi_devices,
 };
-use super::container_fields::{
-	build_blkio_config, build_label_file_labels, parse_device, resolve_container_labels,
-	warn_swarm_only_deploy,
-};
-use super::container_security::{cdi_device, parse_device_cgroup_rule, parse_security_opts};
 use super::network::resolve_network_mode;
 use super::volume_mounts::build_mounts_all;
 use super::Engine;
+use fields::{
+	build_blkio_config, build_label_file_labels, parse_device, resolve_container_labels,
+	warn_swarm_only_deploy,
+};
+use security::{cdi_device, parse_device_cgroup_rule, parse_security_opts};
 
 impl Engine {
 	pub(super) async fn create_and_start(
@@ -62,8 +66,10 @@ impl Engine {
 		// --- Secrets and configs become bind mounts ---
 		let secret_binds = self.build_secret_binds(service, file)?;
 		let config_binds = self.build_config_binds(service, file)?;
-		// `external: true` secrets/configs are injected as Podman-native secrets
-		// (preflighted for existence), not bind mounts.
+		// Inline and `external: true` secrets/configs are injected as Podman-native
+		// secrets, not bind mounts. Inline ones are created up front by
+		// `create_inline_secrets`; here we only build the references and preflight
+		// external ones for existence.
 		let native_secrets = self.build_native_secrets(service, file).await?;
 		let (mut mounts, mut named_volumes) =
 			build_mounts_all(service, &self.base_dir, &secret_binds, &config_binds);
@@ -176,6 +182,9 @@ impl Engine {
 		// --- Links ---
 		let links = resolve_links(service, file, &self.project);
 
+		// --- volumes_from ---
+		let volumes_from = resolve_volumes_from(service, file, &self.project);
+
 		// --- SHM size ---
 		let shm_size = service.shm_size.as_deref().and_then(size::parse_memory);
 
@@ -239,7 +248,7 @@ impl Engine {
 			dns_option: service.dns_opt.to_list(),
 			mounts,
 			volumes: named_volumes,
-			volumes_from: service.volumes_from.clone(),
+			volumes_from,
 			secrets: native_secrets,
 			userns,
 			pidns,

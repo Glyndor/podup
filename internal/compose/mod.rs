@@ -309,6 +309,62 @@ mod tests {
 		assert_eq!(target.models["extra"].model.as_deref(), Some("e/m"));
 	}
 
+	#[test]
+	fn merge_override_unions_top_level_resource_maps() {
+		use crate::compose::types::{ConfigConfig, NetworkConfig, SecretConfig, VolumeConfig};
+		let mut target = ComposeFile::default();
+		target
+			.volumes
+			.insert("data".to_string(), Some(VolumeConfig::default()));
+		target
+			.networks
+			.insert("net".to_string(), Some(NetworkConfig::default()));
+		target.secrets.insert(
+			"tok".to_string(),
+			SecretConfig {
+				file: Some("base.txt".to_string()),
+				..Default::default()
+			},
+		);
+		target
+			.configs
+			.insert("cfg".to_string(), ConfigConfig::default());
+
+		let mut other = ComposeFile::default();
+		// An override-only volume/network/config is added; an overlapping secret is
+		// replaced by the override file's definition.
+		other
+			.volumes
+			.insert("cache".to_string(), Some(VolumeConfig::default()));
+		other
+			.networks
+			.insert("backend".to_string(), Some(NetworkConfig::default()));
+		other.secrets.insert(
+			"tok".to_string(),
+			SecretConfig {
+				file: Some("override.txt".to_string()),
+				..Default::default()
+			},
+		);
+		other
+			.configs
+			.insert("extra".to_string(), ConfigConfig::default());
+
+		merge_override(&mut target, other);
+
+		assert!(target.volumes.contains_key("data"));
+		assert!(target.volumes.contains_key("cache"));
+		assert!(target.networks.contains_key("net"));
+		assert!(target.networks.contains_key("backend"));
+		assert_eq!(
+			target.secrets["tok"].file.as_deref(),
+			Some("override.txt"),
+			"the override file's secret definition must win"
+		);
+		assert!(target.configs.contains_key("cfg"));
+		assert!(target.configs.contains_key("extra"));
+	}
+
 	// YAML merge keys (<<)
 
 	#[test]

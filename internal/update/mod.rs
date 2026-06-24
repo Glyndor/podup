@@ -103,10 +103,16 @@ fn run_with_guard(
 	Ok(())
 }
 
-/// Map an update failure onto a stable process exit code (`2`), distinct from a
-/// run-container exit, so scripts can branch on "update failed".
+/// Stable process exit code for an update failure. Distinct from clap's
+/// reserved `2` (usage errors) and from `1` (generic failure), so scripts can
+/// branch reliably on "update failed".
+pub const UPDATE_FAILURE_EXIT_CODE: i32 = 3;
+
+/// Map an update failure onto its stable process exit code
+/// ([`UPDATE_FAILURE_EXIT_CODE`]), distinct from a run-container exit, so
+/// scripts can branch on "update failed".
 pub fn exit_code(_err: &ComposeError) -> i32 {
-	2
+	UPDATE_FAILURE_EXIT_CODE
 }
 
 #[cfg(test)]
@@ -239,6 +245,26 @@ mod tests {
 	}
 
 	#[test]
+	fn force_reinstall_same_version_check_only_announces_reinstall() {
+		// `--force --check` on the *same* version takes the reinstall branch (not
+		// "up to date") and stops at the check-only gate without downloading.
+		let src = MockSource {
+			latest: "v0.6.0".into(),
+			assets: HashMap::new(),
+			fetched: RefCell::new(Vec::new()),
+		};
+		let opts = UpdateOptions {
+			check_only: true,
+			force: true,
+		};
+		run_with_guard(&src, "0.6.0", opts, None).unwrap();
+		assert!(
+			src.fetched.borrow().is_empty(),
+			"check-only must not download even when forcing a reinstall"
+		);
+	}
+
+	#[test]
 	fn check_only_returns_before_package_manager_guard() {
 		// --check must short-circuit even when a package manager owns the binary,
 		// so `podup update --check` never errors on a deb install.
@@ -256,7 +282,13 @@ mod tests {
 	}
 
 	#[test]
-	fn exit_code_is_two() {
-		assert_eq!(exit_code(&ComposeError::Update("x".into())), 2);
+	fn exit_code_is_off_claps_reserved_two() {
+		// clap returns 2 for usage errors; the update-failure code must stay
+		// distinct so scripts can tell them apart.
+		assert_eq!(
+			exit_code(&ComposeError::Update("x".into())),
+			UPDATE_FAILURE_EXIT_CODE
+		);
+		assert_ne!(UPDATE_FAILURE_EXIT_CODE, 2);
 	}
 }

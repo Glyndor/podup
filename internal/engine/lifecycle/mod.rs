@@ -179,6 +179,10 @@ impl Engine {
 
 			self.create_networks(file).await?;
 			self.create_volumes(file).await?;
+			// Pre-create the union of inline secrets/configs once, before the
+			// concurrent per-level start loop, so two services in the same level
+			// can't race the non-atomic delete-then-create of a shared name.
+			self.create_inline_secrets(file).await?;
 
 			// Start each dependency level in turn; services within a level have
 			// no `depends_on` relationship to each other (guaranteed by the
@@ -401,7 +405,7 @@ impl Engine {
 					crate::libpod::urlencoded(&container_name),
 				);
 				if let Err(e) = self.client.post_empty_ok(&stop_path).await {
-					tracing::debug!("stop {container_name}: {e}");
+					tracing::warn!("could not stop {container_name}: {e}");
 				}
 
 				let rm_path = format!(
@@ -409,10 +413,10 @@ impl Engine {
 					crate::libpod::urlencoded(&container_name),
 				);
 				if let Err(e) = self.client.delete_ok(&rm_path).await {
-					tracing::debug!("down delete {container_name}: {e}");
+					tracing::warn!("could not remove {container_name}: {e}");
+				} else {
+					info!("removed {container_name}");
 				}
-
-				info!("removed {container_name}");
 			}
 		}
 

@@ -319,6 +319,24 @@ mod tests {
 		assert_eq!(ports[0].host_ip, "::1");
 	}
 
+	#[test]
+	fn ipv6_bracketed_container_only_has_no_host_port() {
+		// `[ip]:container` (no published host port) binds the IPv6 address and
+		// lets Podman assign the host port — the no-host-port arm of parse_with_ip.
+		let ports = parse_one_short("[::1]:80");
+		assert_eq!(ports.len(), 1);
+		assert_eq!(ports[0].container_port, 80);
+		assert_eq!(ports[0].host_ip, "::1");
+		assert!(ports[0].host_port.is_none());
+	}
+
+	#[test]
+	fn malformed_three_part_short_is_error() {
+		// More than one colon but a missing third segment is rejected rather than
+		// silently mis-parsed.
+		assert!(parse_ports(&[short("1.2.3.4:8080:")]).is_err());
+	}
+
 	// Range expansion
 
 	#[test]
@@ -369,6 +387,27 @@ mod tests {
 	#[test]
 	fn unclosed_ipv6_bracket_is_error() {
 		assert!(parse_ports(&[short("[::1:80")]).is_err());
+	}
+
+	#[test]
+	fn mismatched_host_and_container_ranges_is_error() {
+		// A two-port host range cannot map onto a three-port container range.
+		let err = parse_ports(&[short("8080-8081:80-82")]).unwrap_err();
+		assert!(err.to_string().contains("mismatch"));
+	}
+
+	#[test]
+	fn ip_with_mismatched_ranges_is_error() {
+		let err = parse_ports(&[short("127.0.0.1:8080-8081:80-82")]).unwrap_err();
+		assert!(err.to_string().contains("mismatch"));
+	}
+
+	#[test]
+	fn single_host_port_range_overflow_is_error() {
+		// Expanding a single host port across a container range that would carry
+		// it past u16::MAX is rejected rather than wrapping.
+		let err = parse_ports(&[short("65535:80-81")]).unwrap_err();
+		assert!(err.to_string().contains("overflow"));
 	}
 
 	// Long form

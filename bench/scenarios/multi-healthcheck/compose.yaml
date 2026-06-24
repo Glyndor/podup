@@ -1,0 +1,19 @@
+# Multi-service stack with a healthcheck and a depends_on: service_healthy gate.
+# `up -d` must hold the dependent until the dependency reports healthy.
+services:
+  cache:
+    image: docker.io/library/redis@sha256:09160599abd229764c0fb44cb6be640294e1d360a54b19985ab4843dcf2d90f1
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 1s
+      timeout: 2s
+      retries: 10
+      start_period: 1s
+  worker:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+    depends_on:
+      cache:
+        condition: service_healthy

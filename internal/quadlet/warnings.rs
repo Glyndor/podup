@@ -12,7 +12,8 @@ pub(super) fn collect_warnings(name: &str, service: &Service, warnings: &mut Vec
 	if service.build.is_some() {
 		warn(
 			"build",
-			"has no Quadlet equivalent; build the image first and set `image`",
+			"is not emitted; Quadlet's `.build` unit type is the supported path, \
+			 but podup does not generate one yet — build the image first and set `image`",
 		);
 	}
 	let replicas = service
@@ -145,6 +146,30 @@ pub(super) fn collect_warnings(name: &str, service: &Service, warnings: &mut Vec
 	}
 	if service.cpu_rt_period.is_some() {
 		warn("cpu_rt_period", skipped);
+	}
+	if service.cpu_count.is_some() {
+		warn("cpu_count", skipped);
+	}
+	if service.cpu_percent.is_some() {
+		warn("cpu_percent", skipped);
+	}
+	if service.attach.is_some() {
+		warn("attach", skipped);
+	}
+	if service.develop.is_some() {
+		warn("develop", skipped);
+	}
+	if service.credential_spec.is_some() {
+		warn("credential_spec", skipped);
+	}
+	if service.isolation.is_some() {
+		warn("isolation", skipped);
+	}
+	if service.provider.is_some() {
+		warn("provider", skipped);
+	}
+	if service.use_api_socket.is_some() {
+		warn("use_api_socket", skipped);
 	}
 	if !service.label_file.to_list().is_empty() {
 		warn("label_file", skipped);
@@ -396,6 +421,61 @@ networks:
 		assert!(
 			joined.contains("ipv4_address/ipv6_address"),
 			"missing multi-network static-IP warning; got:\n{joined}"
+		);
+	}
+
+	#[test]
+	fn warns_for_parsed_but_unmapped_service_fields() {
+		// These eight fields are parsed for fidelity but have no Quadlet mapping;
+		// they must each warn so nothing is silently dropped from the export.
+		let yaml = r#"
+services:
+  s:
+    image: x
+    cpu_count: 2
+    cpu_percent: 50
+    attach: false
+    develop:
+      watch:
+        - path: ./src
+          action: sync
+          target: /app
+    credential_spec:
+      file: cred.json
+    isolation: process
+    provider:
+      type: terraform
+    use_api_socket: true
+"#;
+		let file = parse_str(yaml).unwrap();
+		let joined = generate(&file, "proj").warnings.join("\n");
+		for field in [
+			"cpu_count",
+			"cpu_percent",
+			"attach",
+			"develop",
+			"credential_spec",
+			"isolation",
+			"provider",
+			"use_api_socket",
+		] {
+			assert!(
+				joined.contains(field),
+				"missing warning for {field}; got:\n{joined}"
+			);
+		}
+	}
+
+	#[test]
+	fn build_warning_mentions_dot_build_unit() {
+		// The build warning must point at Quadlet's `.build` unit as the supported
+		// path, not claim there is no equivalent.
+		let yaml = "services:\n  s:\n    image: x\n    build: .\n";
+		let file = parse_str(yaml).unwrap();
+		let joined = generate(&file, "proj").warnings.join("\n");
+		assert!(
+			joined.contains(".build"),
+			"build warning should mention the .build unit; got:\n{joined}"
 		);
 	}
 

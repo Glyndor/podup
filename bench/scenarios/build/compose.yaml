@@ -1,0 +1,10 @@
+# Image build from a Dockerfile (the base is pinned by digest, so no network is
+# involved beyond the pre-pulled base). Built with --no-cache for determinism so
+# every iteration does the full build.
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: podup-bench-build:latest
+    command: ["true"]

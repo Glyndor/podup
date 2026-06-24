@@ -94,6 +94,54 @@ pub(super) fn resolve_links(service: &Service, file: &ComposeFile, project: &str
 	links
 }
 
+/// Resolve a service's `volumes_from` entries to concrete container references.
+///
+/// libpod's `SpecGenerator.volumes_from` expects container names, but compose
+/// `volumes_from:` names sibling services. Each entry may be `<service>`,
+/// `service:<name>`, or `container:<name>`, any of which may carry a trailing
+/// `:ro`/`:rw` access-mode suffix. The bare-service and `service:` forms are
+/// rewritten to the referenced service's container name (an explicit
+/// `container_name:` is honoured, otherwise `{project}-{service}`), preserving
+/// the access mode. The `container:` form already names a container outside the
+/// project and is passed through verbatim, as is any service name that is not
+/// declared in this compose file.
+pub(super) fn resolve_volumes_from(
+	service: &Service,
+	file: &ComposeFile,
+	project: &str,
+) -> Vec<String> {
+	service
+		.volumes_from
+		.iter()
+		.map(|entry| {
+			// Split off a trailing access mode so it survives the rewrite.
+			let (reference, mode) = match entry.rsplit_once(':') {
+				Some((head, tail @ ("ro" | "rw"))) => (head, Some(tail)),
+				_ => (entry.as_str(), None),
+			};
+			let resolved = if let Some(name) = reference.strip_prefix("container:") {
+				// Already a concrete container outside the project: pass through.
+				name.to_string()
+			} else {
+				let target = reference.strip_prefix("service:").unwrap_or(reference);
+				file.services
+					.get(target)
+					.map(|svc| {
+						svc.container_name
+							.clone()
+							.unwrap_or_else(|| format!("{project}-{target}"))
+					})
+					// Unknown service: leave the reference untouched.
+					.unwrap_or_else(|| target.to_string())
+			};
+			match mode {
+				Some(mode) => format!("{resolved}:{mode}"),
+				None => resolved,
+			}
+		})
+		.collect()
+}
+
 /// Stable content hash of a service definition, stored as the
 /// `podup.config-hash` label. On `up`, comparing this against the label on an
 /// existing container tells podup whether the service configuration changed
@@ -205,8 +253,22 @@ pub(super) fn resolve_stop_signal(signal: &str) -> Result<i64> {
 		.ok_or_else(|| ComposeError::Unsupported(format!("unknown stop_signal '{signal}'")))
 }
 
+/// First realtime signal number on Linux/glibc (`SIGRTMIN`).
+const SIGRTMIN: i64 = 34;
+/// Last realtime signal number on Linux/glibc (`SIGRTMAX`).
+const SIGRTMAX: i64 = 64;
+
 /// Map a bare (no `SIG` prefix) upper-case signal name to its Linux number.
+///
+/// In addition to the named POSIX signals, the realtime signals are resolved:
+/// `RTMIN`/`RTMAX` and the offset forms `RTMIN+N`/`RTMAX-N`, matching how
+/// docker-compose and Podman interpret them. The computed number must stay within
+/// the realtime range [`SIGRTMIN`]..=[`SIGRTMAX`]; an out-of-range offset (e.g.
+/// `RTMIN+40`) resolves to `None` so the caller reports it as unknown.
 fn signal_number(name: &str) -> Option<i64> {
+	if let Some(n) = realtime_signal_number(name) {
+		return Some(n);
+	}
 	let n = match name {
 		"HUP" => 1,
 		"INT" => 2,
@@ -244,9 +306,38 @@ fn signal_number(name: &str) -> Option<i64> {
 	Some(n)
 }
 
+/// Resolve a realtime signal name (`RTMIN`, `RTMAX`, `RTMIN+N`, `RTMAX-N`) to its
+/// number, or `None` if `name` is not a realtime form or the computed number
+/// falls outside the realtime range [`SIGRTMIN`]..=[`SIGRTMAX`].
+fn realtime_signal_number(name: &str) -> Option<i64> {
+	let (base, rest) = if let Some(rest) = name.strip_prefix("RTMIN") {
+		(SIGRTMIN, rest)
+	} else if let Some(rest) = name.strip_prefix("RTMAX") {
+		(SIGRTMAX, rest)
+	} else {
+		return None;
+	};
+	let number = if rest.is_empty() {
+		base
+	} else {
+		// An offset must be `+N` (only valid after RTMIN) or `-N` (only valid
+		// after RTMAX), matching POSIX/glibc's `SIGRTMIN+n` / `SIGRTMAX-n`.
+		let (sign, digits) = rest.split_at(1);
+		let offset: i64 = digits.parse().ok()?;
+		match (base == SIGRTMIN, sign) {
+			(true, "+") => base + offset,
+			(false, "-") => base - offset,
+			_ => return None,
+		}
+	};
+	(SIGRTMIN..=SIGRTMAX).contains(&number).then_some(number)
+}
+
 #[cfg(test)]
 mod tests {
-	use super::{config_hash, resolve_links, resolve_stop_signal, resolve_volume_name};
+	use super::{
+		config_hash, resolve_links, resolve_stop_signal, resolve_volume_name, resolve_volumes_from,
+	};
 	use crate::parse_str;
 
 	#[test]
@@ -262,6 +353,28 @@ mod tests {
 		// Bare numbers pass through (optionally surrounded by whitespace).
 		assert_eq!(resolve_stop_signal("15").unwrap(), 15);
 		assert_eq!(resolve_stop_signal(" 9 ").unwrap(), 9);
+	}
+
+	#[test]
+	fn stop_signal_resolves_realtime_signals() {
+		// Realtime signals and their offset forms, as docker-compose/Podman accept
+		// them (images on s6-overlay/tini commonly use SIGRTMIN+3).
+		assert_eq!(resolve_stop_signal("SIGRTMIN").unwrap(), 34);
+		assert_eq!(resolve_stop_signal("SIGRTMIN+3").unwrap(), 37);
+		assert_eq!(resolve_stop_signal("SIGRTMAX").unwrap(), 64);
+		assert_eq!(resolve_stop_signal("SIGRTMAX-1").unwrap(), 63);
+		// The SIG prefix is optional here too.
+		assert_eq!(resolve_stop_signal("RTMIN+3").unwrap(), 37);
+	}
+
+	#[test]
+	fn stop_signal_rejects_out_of_range_realtime_offset() {
+		// 34 + 40 = 74 is past SIGRTMAX (64), so it is rejected.
+		let err = resolve_stop_signal("SIGRTMIN+40").unwrap_err();
+		assert!(err.to_string().contains("SIGRTMIN+40"), "got: {err}");
+		// Wrong-direction offsets are rejected too.
+		assert!(resolve_stop_signal("SIGRTMIN-1").is_err());
+		assert!(resolve_stop_signal("SIGRTMAX+1").is_err());
 	}
 
 	#[test]
@@ -293,6 +406,46 @@ mod tests {
 	}
 
 	#[test]
+	fn volumes_from_resolves_to_container_names() {
+		let file = parse_str(
+			"services:\n  db:\n    image: x\n  cache:\n    image: x\n    container_name: my-cache\n  web:\n    image: x\n    volumes_from:\n      - db\n      - cache\n",
+		)
+		.unwrap();
+		let resolved = resolve_volumes_from(&file.services["web"], &file, "proj");
+		// Bare service name resolves to `{project}-{service}`.
+		assert!(resolved.contains(&"proj-db".to_string()));
+		// An explicit container_name is honoured.
+		assert!(resolved.contains(&"my-cache".to_string()));
+	}
+
+	#[test]
+	fn volumes_from_preserves_access_mode() {
+		let file = parse_str(
+			"services:\n  db:\n    image: x\n  web:\n    image: x\n    volumes_from:\n      - db:ro\n      - service:db:rw\n",
+		)
+		.unwrap();
+		let resolved = resolve_volumes_from(&file.services["web"], &file, "proj");
+		// The `:ro`/`:rw` suffix survives the rewrite, and the `service:` prefix
+		// is stripped before resolving.
+		assert!(resolved.contains(&"proj-db:ro".to_string()));
+		assert!(resolved.contains(&"proj-db:rw".to_string()));
+	}
+
+	#[test]
+	fn volumes_from_passes_through_container_form_and_unknown() {
+		let file = parse_str(
+			"services:\n  web:\n    image: x\n    volumes_from:\n      - container:legacy-data\n      - container:legacy-data:ro\n      - missing\n",
+		)
+		.unwrap();
+		let resolved = resolve_volumes_from(&file.services["web"], &file, "proj");
+		// The `container:` form names a container outside the project verbatim.
+		assert!(resolved.contains(&"legacy-data".to_string()));
+		assert!(resolved.contains(&"legacy-data:ro".to_string()));
+		// An unknown service is left unchanged.
+		assert!(resolved.contains(&"missing".to_string()));
+	}
+
+	#[test]
 	#[cfg(unix)]
 	fn bind_source_resolution() {
 		use super::resolve_bind_source;
@@ -307,6 +460,25 @@ mod tests {
 			assert_eq!(resolve_bind_source("~/x", base), "/home/u/x");
 			assert_eq!(resolve_bind_source("~", base), "/home/u");
 		});
+		// An empty source is returned verbatim (no base-dir join).
+		assert_eq!(resolve_bind_source("", base), "");
+	}
+
+	#[test]
+	#[cfg(unix)]
+	fn bind_source_tilde_without_home_stays_literal() {
+		use super::resolve_bind_source;
+		use std::path::Path;
+		let base = Path::new("/srv/app");
+		// With no home directory resolvable, a `~`-prefixed path keeps its literal
+		// form, then (being relative) is anchored to the base dir.
+		temp_env::with_vars(
+			[("HOME", None::<&str>), ("USERPROFILE", None::<&str>)],
+			|| {
+				assert_eq!(resolve_bind_source("~/x", base), "/srv/app/~/x");
+				assert_eq!(resolve_bind_source("~", base), "/srv/app/~");
+			},
+		);
 	}
 
 	#[test]
@@ -371,6 +543,45 @@ mod tests {
 		assert_eq!(
 			config_hash(&a.services["web"], &a).unwrap(),
 			config_hash(&b.services["web"], &b).unwrap(),
+		);
+	}
+
+	#[test]
+	fn config_hash_tracks_inline_config_content() {
+		// The same recreate-on-rotation contract as inline secrets applies to
+		// inline `configs:` content.
+		let a = parse_str(
+			"services:\n  web:\n    image: x\n    configs: [cfg]\nconfigs:\n  cfg:\n    content: a\n",
+		)
+		.unwrap();
+		let b = parse_str(
+			"services:\n  web:\n    image: x\n    configs: [cfg]\nconfigs:\n  cfg:\n    content: b\n",
+		)
+		.unwrap();
+		assert_ne!(
+			config_hash(&a.services["web"], &a).unwrap(),
+			config_hash(&b.services["web"], &b).unwrap(),
+			"changed inline config content must change the hash",
+		);
+	}
+
+	#[test]
+	fn config_hash_tracks_environment_sourced_secret() {
+		// An `environment:`-sourced secret folds the *current* value of the named
+		// variable into the hash, so a change to that variable recreates.
+		let file = parse_str(
+			"services:\n  web:\n    image: x\n    secrets: [tok]\nsecrets:\n  tok:\n    environment: PODUP_TEST_SECRET\n",
+		)
+		.unwrap();
+		let with_a = temp_env::with_var("PODUP_TEST_SECRET", Some("alpha"), || {
+			config_hash(&file.services["web"], &file).unwrap()
+		});
+		let with_b = temp_env::with_var("PODUP_TEST_SECRET", Some("beta"), || {
+			config_hash(&file.services["web"], &file).unwrap()
+		});
+		assert_ne!(
+			with_a, with_b,
+			"a changed environment-sourced secret value must change the hash",
 		);
 	}
 

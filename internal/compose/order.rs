@@ -193,4 +193,29 @@ mod tests {
 		let file = parse_str_raw(yaml).unwrap();
 		assert!(resolve_levels(&file).is_err());
 	}
+
+	#[test]
+	fn resolve_levels_missing_required_dep_is_error() {
+		let yaml = "services:\n  web:\n    image: nginx\n    depends_on: [db]\n";
+		let file = parse_str_raw(yaml).unwrap();
+		assert!(resolve_levels(&file).is_err());
+	}
+
+	#[test]
+	fn resolve_order_optional_missing_dep_is_ignored() {
+		// A `required: false` dependency that is not defined is skipped, not an
+		// error — the dependent still resolves.
+		let yaml = "services:\n  web:\n    image: nginx\n    depends_on:\n      ghost:\n        condition: service_started\n        required: false\n";
+		let file = parse_str_raw(yaml).unwrap();
+		let order = resolve_order(&file).unwrap();
+		assert_eq!(order, vec!["web".to_string()]);
+	}
+
+	#[test]
+	fn resolve_levels_optional_missing_dep_is_ignored() {
+		let yaml = "services:\n  web:\n    image: nginx\n    depends_on:\n      ghost:\n        condition: service_started\n        required: false\n";
+		let file = parse_str_raw(yaml).unwrap();
+		let levels = resolve_levels(&file).unwrap();
+		assert_eq!(levels, vec![vec!["web".to_string()]]);
+	}
 }

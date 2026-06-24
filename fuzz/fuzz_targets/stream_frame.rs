@@ -5,13 +5,16 @@
 //! newline-delimited JSON line splitter. Must never panic or index out of
 //! bounds on malformed framing.
 
+use bytes::BytesMut;
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-	// Multiplexed frame parsing over arbitrary bytes.
-	let _ = podup::fuzz_api::parse_frame(data);
+	// Multiplexed frame parsing over arbitrary bytes: drain every complete
+	// frame the input contains, mirroring the streaming reassembly loop.
+	let mut frame_buf = BytesMut::from(data);
+	while podup::fuzz_api::parse_frame(&mut frame_buf).is_some() {}
 
 	// Line splitter: drain every complete line the input contains.
-	let mut buf = data.to_vec();
+	let mut buf = BytesMut::from(data);
 	while podup::fuzz_api::take_json_line(&mut buf).is_some() {}
 });

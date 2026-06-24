@@ -1,0 +1,24 @@
+# Custom bridge network with explicit IPAM (subnet + gateway) and two attached
+# services, exercising network create + address assignment on up/down.
+services:
+  a:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    networks:
+      app_net:
+        ipv4_address: 10.137.0.10
+  b:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    networks:
+      app_net:
+        ipv4_address: 10.137.0.11
+networks:
+  app_net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 10.137.0.0/24
+          gateway: 10.137.0.1

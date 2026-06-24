@@ -37,20 +37,20 @@ fn bin() -> &'static str {
 // Test groups (see engine_integration/*.rs)
 // ---------------------------------------------------------------------------
 
+#[path = "engine_integration/build_resources.rs"]
+mod build_resources;
+#[path = "engine_integration/commands_networking.rs"]
+mod commands_networking;
 #[path = "engine_integration/cp_flags.rs"]
 mod cp_flags;
-#[path = "engine_integration/group_a1.rs"]
-mod group_a1;
-#[path = "engine_integration/group_a2.rs"]
-mod group_a2;
-#[path = "engine_integration/group_a3.rs"]
-mod group_a3;
-#[path = "engine_integration/group_a4.rs"]
-mod group_a4;
-#[path = "engine_integration/group_b1.rs"]
-mod group_b1;
+#[path = "engine_integration/health_targeting.rs"]
+mod health_targeting;
+#[path = "engine_integration/lifecycle.rs"]
+mod lifecycle;
 #[path = "engine_integration/niche.rs"]
 mod niche;
+#[path = "engine_integration/resources_health.rs"]
+mod resources_health;
 #[path = "engine_integration/run_flags.rs"]
 mod run_flags;
 
@@ -58,12 +58,12 @@ mod run_flags;
 #[path = "engine_integration/watch.rs"]
 mod watch_tests;
 
-#[path = "engine_integration/cli1.rs"]
-mod cli1;
-#[path = "engine_integration/cli2.rs"]
-mod cli2;
-#[path = "engine_integration/cli3.rs"]
-mod cli3;
+#[path = "engine_integration/cli_commands.rs"]
+mod cli_commands;
+#[path = "engine_integration/cli_flags.rs"]
+mod cli_flags;
+#[path = "engine_integration/cli_lifecycle.rs"]
+mod cli_lifecycle;
 #[path = "engine_integration/create_ls.rs"]
 mod create_ls;
 #[path = "engine_integration/scale.rs"]

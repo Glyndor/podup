@@ -128,6 +128,113 @@ fn build_accepts_override_flags() {
 	}
 }
 
+/// True when clap rejected the arguments itself (a usage error: exit code 2 with
+/// the `error:`/`Usage:` banner) rather than the command parsing and then
+/// failing later at runtime. Used to prove a flag combination *parses*.
+fn is_clap_usage_error(out: &std::process::Output) -> bool {
+	let stderr = String::from_utf8_lossy(&out.stderr);
+	out.status.code() == Some(2) && stderr.contains("error:") && stderr.contains("Usage:")
+}
+
+/// `run --no-rm` parses and is mutually coherent with `--rm` (the two override
+/// each other), so a one-off container can be kept after it exits. The pair is
+/// also visible in `run --help`, while the default still removes.
+#[test]
+fn run_no_rm_parses_and_is_documented() {
+	let help = Command::new(bin())
+		.args(["run", "--help"])
+		.output()
+		.expect("run run --help");
+	assert!(help.status.success());
+	let help_out = String::from_utf8_lossy(&help.stdout);
+	for flag in ["--rm", "--no-rm"] {
+		assert!(
+			help_out.contains(flag),
+			"`run` is missing the {flag} flag; got:\n{help_out}"
+		);
+	}
+
+	// `run web --no-rm` parses cleanly: it reaches runtime (and fails there,
+	// connecting to a bogus socket) instead of being rejected by clap.
+	let out = Command::new(bin())
+		.args([
+			"--socket",
+			"/nonexistent.sock",
+			"run",
+			"web",
+			"--no-rm",
+			"true",
+		])
+		.output()
+		.expect("run run --no-rm");
+	assert!(
+		!is_clap_usage_error(&out),
+		"`run --no-rm` should parse; got clap usage error:\n{}",
+		String::from_utf8_lossy(&out.stderr)
+	);
+}
+
+/// `logs` and `restart` accept a trailing multi-service list (like every sibling
+/// command), so `logs a b` and `restart a b` parse rather than erroring on the
+/// extra positional.
+#[test]
+fn logs_and_restart_accept_multiple_services() {
+	for cmd in ["logs", "restart"] {
+		let out = Command::new(bin())
+			.args(["--socket", "/nonexistent.sock", cmd, "alpha", "beta"])
+			.output()
+			.unwrap_or_else(|e| panic!("run {cmd} alpha beta: {e}"));
+		assert!(
+			!is_clap_usage_error(&out),
+			"`{cmd} alpha beta` should parse multiple services; got clap usage error:\n{}",
+			String::from_utf8_lossy(&out.stderr)
+		);
+	}
+}
+
+/// `events` exposes `--format <table|json>` (with possible-values in help) and
+/// keeps the legacy `--json` as a hidden, still-accepted alias. Both spellings
+/// parse.
+#[test]
+fn events_format_and_hidden_json_alias() {
+	let help = Command::new(bin())
+		.args(["events", "--help"])
+		.output()
+		.expect("run events --help");
+	assert!(help.status.success());
+	let help_out = String::from_utf8_lossy(&help.stdout);
+	assert!(
+		help_out.contains("--format"),
+		"`events` is missing --format; got:\n{help_out}"
+	);
+	assert!(
+		help_out.contains("table") && help_out.contains("json"),
+		"`events --format` should list its possible values; got:\n{help_out}"
+	);
+	// The deprecated alias is hidden from help.
+	assert!(
+		!help_out.contains("--json"),
+		"`events --json` must stay hidden; got:\n{help_out}"
+	);
+
+	// Both `--format json` and the hidden `--json` parse (reaching runtime).
+	for args in [["events", "--format", "json"], ["events", "--json", ""]] {
+		let argv: Vec<&str> = std::iter::once("--socket")
+			.chain(std::iter::once("/nonexistent.sock"))
+			.chain(args.iter().copied().filter(|a| !a.is_empty()))
+			.collect();
+		let out = Command::new(bin())
+			.args(&argv)
+			.output()
+			.expect("run events variant");
+		assert!(
+			!is_clap_usage_error(&out),
+			"`{argv:?}` should parse; got clap usage error:\n{}",
+			String::from_utf8_lossy(&out.stderr)
+		);
+	}
+}
+
 /// `ps` and `images` expose output flags (`--format`, `-q/--quiet`; `ps` also
 /// `-a/--all`) so their output can be scripted against.
 #[test]

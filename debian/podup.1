@@ -14,6 +14,21 @@ list) and translates it into rootless Podman operations over Podman's native
 libpod REST API. It is a single static binary with no daemon and no Python
 runtime, usable both as a standalone docker-compose replacement and as a Rust
 library.
+.PP
+.B podup
+requires
+.B Podman 5.0
+or newer: it targets the
+.B /v5.0.0/libpod
+API surface. The socket must be local \(em a
+.B unix://
+path (or an
+.B npipe://
+pipe on Windows); remote
+.B tcp://
+or
+.B ssh://
+endpoints are rejected.
 .SH GLOBAL OPTIONS
 .TP
 .BR \-f ", " \-\-file " " \fIPATH\fR
