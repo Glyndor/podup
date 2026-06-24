@@ -1,3 +1,24 @@
+podup (1.3.0) unstable; urgency=medium
+
+  * engine: resolve `volumes_from` service names to container names, pre-create
+    inline secrets once to avoid a concurrent-up race, preserve the `watch` sync
+    subpath and renaming target, and warn instead of claiming success when
+    teardown fails.
+  * libpod: let a blocking container wait outlive the 120s read timeout, enforce
+    the Podman 5 API floor at connect time, and add the health-on-failure and
+    startup-healthcheck SpecGenerator fields.
+  * quadlet: stamp the `podup.project`/`podup.service` ownership labels and use
+    the native `Memory=`/`AppArmor=` keys.
+  * cli: docker-compose parity for `run --no-rm`, multi-service `logs`/`restart`,
+    `events --format`, and a distinct update-failure exit code; resolve realtime
+    `stop_signal` values (`SIGRTMIN+n`).
+  * security: cap the build-secret file read at the 16 MiB limit.
+  * perf: stream container output zero-copy and lock stdout once per stream.
+  * docs: document the Podman >= 5.0 requirement and publish a fair, reproducible
+    benchmark against podman-compose (wall-clock, memory and CPU).
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 23 Jun 2026 12:00:00 -0500
+
 podup (1.2.0) unstable; urgency=medium
 
   * quadlet: map `security_opt` mask/unmask to the corresponding [Container]
