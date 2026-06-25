@@ -79,8 +79,18 @@ async fn run() -> podup::Result<()> {
 	if let Commands::Completions { shell } = cli.command {
 		let mut cmd = Cli::command();
 		let name = cmd.get_name().to_string();
-		clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
-		return Ok(());
+		// Render into a buffer first: clap_complete panics if the writer errors,
+		// which aborts (SIGABRT) when stdout is a closed pipe such as
+		// `podup completions bash | head`. A `Vec` write never fails; then send
+		// it to stdout and treat a broken pipe as a clean exit, like a normal
+		// Unix tool.
+		let mut buf = Vec::new();
+		clap_complete::generate(shell, &mut cmd, name, &mut buf);
+		match std::io::Write::write_all(&mut std::io::stdout(), &buf) {
+			Ok(()) => return Ok(()),
+			Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => return Ok(()),
+			Err(e) => return Err(e.into()),
+		}
 	}
 
 	// `update` operates on the binary itself, not a compose project, so it runs
