@@ -79,13 +79,16 @@ pub(crate) fn internal_error_notice() -> String {
 	)
 }
 
-/// Initialize the global tracing subscriber: warnings by default (so the
-/// forward-compat "unknown field" notices are never silently dropped), written
-/// to stderr in the `podup: <level>: <msg>` format so stdout stays a clean pipe.
-pub(crate) fn init_tracing() {
+/// Initialize the global tracing subscriber, written to stderr in the
+/// `podup: <level>: <msg>` format so stdout stays a clean pipe. `default_level`
+/// is the floor used when `RUST_LOG` is unset — `warn` for most commands (so the
+/// forward-compat "unknown field" notices are never silently dropped), `info`
+/// for interactive long-running ones like `watch` that should surface their
+/// per-action progress. `RUST_LOG` always overrides.
+pub(crate) fn init_tracing(default_level: &str) {
 	tracing_subscriber::fmt()
 		.with_env_filter(
-			EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("warn")),
+			EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default_level)),
 		)
 		.with_writer(std::io::stderr)
 		.event_format(PodupFormat)

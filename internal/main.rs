@@ -70,8 +70,16 @@ fn run_to_exit() {
 /// the trust boundary), acquire the per-project lock, and dispatch the
 /// remaining commands.
 async fn run() -> podup::Result<()> {
-	init_tracing();
 	let cli = parse_cli();
+	// `watch` is an interactive, long-running command; surface its per-action
+	// progress (synced/rebuilt/restarted) by defaulting to INFO instead of the
+	// quiet WARN floor. `RUST_LOG` always overrides.
+	let log_floor = if matches!(cli.command, Commands::Watch) {
+		"info"
+	} else {
+		"warn"
+	};
+	init_tracing(log_floor);
 
 	// `completions` derives entirely from the static CLI definition; it neither
 	// parses a compose file nor contacts Podman. Print to stdout for piping.
