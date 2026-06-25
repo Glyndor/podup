@@ -1,5 +1,20 @@
 # Benchmarks
 
+## vs alternatives
+
+|  | podup | docker-compose | podman-compose (Python) |
+|---|---|---|---|
+| Engine | rootless Podman | Docker daemon | Podman |
+| Runtime | single static binary | Go binary + Docker daemon | Python + pip packages |
+| Root required | no | typically yes (daemon) | no |
+| Implementation | Rust | Go | Python |
+| Podman API | native libpod REST | n/a | Podman CLI shell-out |
+| Systemd Quadlet export | yes (`generate quadlet`) | no | no |
+| Platforms | Linux · macOS · Windows (single binary) | Linux · macOS · Windows | wherever Python runs |
+| Compose-spec depth | `extends`, profiles, `develop.watch`, inline secrets/configs | full | partial |
+
+## Methodology
+
 **podup** and **podman-compose** both drive the same Podman, so this is a pure
 *tool* comparison — identical engine, identical digest-pinned and pre-pulled
 images, identical compose file per scenario, the same op flags for both. Each
