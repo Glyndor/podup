@@ -248,7 +248,7 @@ pub(crate) async fn dispatch(
 		}
 		Commands::Top { format, services } => {
 			engine
-				.top(file, &services, format == OutputFormat::Json)
+				.top_with_options(file, &services, format == OutputFormat::Json)
 				.await?
 		}
 		Commands::Events { format, json } => {

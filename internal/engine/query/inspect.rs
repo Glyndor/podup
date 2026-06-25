@@ -13,7 +13,13 @@ impl Engine {
 	/// Display running processes in each service container (`docker compose top`).
 	///
 	/// If `target_services` is empty, all services are queried.
-	pub async fn top(
+	pub async fn top(&self, file: &ComposeFile, target_services: &[String]) -> Result<()> {
+		self.top_with_options(file, target_services, false).await
+	}
+
+	/// `top` with `docker compose top`-style options: `--format json` emits a
+	/// structured array of `{Container, Titles, Processes}` instead of the table.
+	pub async fn top_with_options(
 		&self,
 		file: &ComposeFile,
 		target_services: &[String],

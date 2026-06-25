@@ -97,7 +97,7 @@ async fn engine_top_running_container() {
 	.unwrap();
 
 	engine.up(&file).await.unwrap();
-	engine.top(&file, &[], false).await.unwrap();
+	engine.top(&file, &[]).await.unwrap();
 	engine.down(&file).await.unwrap();
 }
 
@@ -257,7 +257,7 @@ async fn top_scaled_service_all_replicas() {
 	.unwrap();
 
 	engine.up(&file).await.unwrap();
-	engine.top(&file, &[], false).await.unwrap();
+	engine.top(&file, &[]).await.unwrap();
 	engine.down(&file).await.unwrap();
 }
 
