@@ -12,8 +12,47 @@ use crate::libpod::types::exec::{
 use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 
 use super::Engine;
+use crate::libpod::types::container::{ContainerListEntry, ContainerPort};
 
 mod inspect;
+
+/// Human-readable status for `ps`. Podman's libpod list endpoint leaves
+/// `Status` empty and reports the machine state in `State`, so fall back to it
+/// rather than rendering a blank column.
+fn display_status(c: &ContainerListEntry) -> &str {
+	if c.status.is_empty() {
+		&c.state
+	} else {
+		&c.status
+	}
+}
+
+/// Render a container's published ports the way `docker compose ps` does, e.g.
+/// `0.0.0.0:8080->80/tcp`. An unset host IP means "all interfaces", shown as
+/// `0.0.0.0` (libpod commonly omits it) to match Docker/Podman output.
+fn format_ports(ports: &[ContainerPort]) -> String {
+	ports
+		.iter()
+		.map(|p| {
+			let proto = p
+				.protocol
+				.as_deref()
+				.map(|proto| format!("/{proto}"))
+				.unwrap_or_default();
+			let host_ip = p
+				.host_ip
+				.as_deref()
+				.filter(|s| !s.is_empty())
+				.unwrap_or("0.0.0.0");
+			format!(
+				"{host_ip}:{}->{}{proto}",
+				p.host_port.unwrap_or(0),
+				p.container_port
+			)
+		})
+		.collect::<Vec<_>>()
+		.join(", ")
+}
 
 /// Options for [`Engine::exec`], mirroring `docker compose exec` flags.
 #[derive(Default)]
@@ -127,7 +166,7 @@ impl Engine {
 					serde_json::json!({
 						"Name": name_of(c),
 						"Image": c.image,
-						"Status": c.status,
+						"Status": display_status(c),
 						"ID": c.id,
 					})
 				})
@@ -141,29 +180,12 @@ impl Engine {
 
 		println!("{:<40} {:<30} {:<20}", "NAME", "IMAGE", "STATUS");
 		for c in &containers {
-			let ports = c
-				.ports
-				.iter()
-				.map(|p| {
-					let proto = p
-						.protocol
-						.as_deref()
-						.map(|proto| format!("/{proto}"))
-						.unwrap_or_default();
-					format!(
-						"{}:{}->{}{proto}",
-						p.host_ip.as_deref().unwrap_or(""),
-						p.host_port.unwrap_or(0),
-						p.container_port,
-					)
-				})
-				.collect::<Vec<_>>()
-				.join(", ");
+			let ports = format_ports(&c.ports);
 			println!(
 				"{:<40} {:<30} {:<20} {ports}",
 				name_of(c),
 				c.image,
-				c.status
+				display_status(c)
 			);
 		}
 
@@ -485,7 +507,66 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
-	use super::{log_query, LogsOptions};
+	use super::{display_status, format_ports, log_query, LogsOptions};
+	use crate::libpod::types::container::{ContainerListEntry, ContainerPort};
+	use std::collections::HashMap;
+
+	fn entry(status: &str, state: &str) -> ContainerListEntry {
+		ContainerListEntry {
+			id: "abc123".into(),
+			names: vec!["/web".into()],
+			image: "alpine".into(),
+			status: status.into(),
+			state: state.into(),
+			ports: vec![],
+			labels: HashMap::new(),
+		}
+	}
+
+	#[test]
+	fn display_status_falls_back_to_state_when_status_empty() {
+		// Podman 5's libpod list endpoint sends an empty `Status` and the real
+		// machine state in `State` — `ps` must show the latter, not a blank.
+		assert_eq!(display_status(&entry("", "running")), "running");
+		assert_eq!(display_status(&entry("", "exited")), "exited");
+	}
+
+	#[test]
+	fn display_status_prefers_status_when_present() {
+		assert_eq!(
+			display_status(&entry("Up 2 seconds", "running")),
+			"Up 2 seconds"
+		);
+	}
+
+	#[test]
+	fn format_ports_defaults_missing_host_ip_to_all_interfaces() {
+		let p = ContainerPort {
+			host_ip: None,
+			host_port: Some(8080),
+			container_port: 80,
+			protocol: Some("tcp".into()),
+			..Default::default()
+		};
+		assert_eq!(
+			format_ports(std::slice::from_ref(&p)),
+			"0.0.0.0:8080->80/tcp"
+		);
+	}
+
+	#[test]
+	fn format_ports_keeps_explicit_host_ip() {
+		let p = ContainerPort {
+			host_ip: Some("127.0.0.1".into()),
+			host_port: Some(5432),
+			container_port: 5432,
+			..Default::default()
+		};
+		assert_eq!(
+			format_ports(std::slice::from_ref(&p)),
+			"127.0.0.1:5432->5432"
+		);
+	}
 
 	#[test]
 	fn log_query_defaults_to_stdout_stderr_no_follow() {
