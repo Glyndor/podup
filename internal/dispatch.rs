@@ -246,7 +246,11 @@ pub(crate) async fn dispatch(
 				)
 				.await?
 		}
-		Commands::Top { services } => engine.top(file, &services).await?,
+		Commands::Top { format, services } => {
+			engine
+				.top(file, &services, format == OutputFormat::Json)
+				.await?
+		}
 		Commands::Events { format, json } => {
 			// `--json` is the deprecated alias for `--format json`; either selects
 			// JSON-line output.
