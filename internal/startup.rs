@@ -103,7 +103,15 @@ pub(crate) fn render_config(
 	services: bool,
 	quiet: bool,
 ) -> podup::Result<()> {
-	// Reaching here means the file parsed and merged cleanly.
+	// Reaching here means the file parsed and merged cleanly. Validate that each
+	// resolved service declares an image or a build, the same rule `up` enforces
+	// — and do it before the `--quiet`/`--services` short-circuits so
+	// validate-only (`--quiet`) actually validates, matching `docker compose config`.
+	for (name, svc) in &file.services {
+		if svc.image.is_none() && svc.build.is_none() {
+			return Err(podup::ComposeError::NoImageOrBuild(name.clone()));
+		}
+	}
 	if quiet {
 		return Ok(());
 	}
@@ -116,15 +124,88 @@ pub(crate) fn render_config(
 	let mut redacted = file.clone();
 	redacted.redact_inline_content();
 	let rendered = match format {
-		ConfigFormat::Json => serde_json::to_string_pretty(&redacted).map_err(|e| {
-			podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
-		})?,
+		ConfigFormat::Json => {
+			let mut v = serde_json::to_value(&redacted).map_err(|e| {
+				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
+			})?;
+			prune_json_nulls(&mut v);
+			serde_json::to_string_pretty(&v).map_err(|e| {
+				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
+			})?
+		}
 		ConfigFormat::Yaml => {
-			serde_yaml::to_string(&redacted).map_err(podup::ComposeError::Parse)?
+			let mut v: serde_yaml::Value =
+				serde_yaml::to_value(&redacted).map_err(podup::ComposeError::Parse)?;
+			prune_yaml_nulls(&mut v);
+			serde_yaml::to_string(&v).map_err(podup::ComposeError::Parse)?
 		}
 	};
 	println!("{rendered}");
 	Ok(())
+}
+
+/// Drop unset keys from a JSON value so `config` output omits them (like
+/// `docker compose config`) instead of a wall of `field: null` and empty
+/// `field: {}` sections. Recurses first so a section that becomes empty once its
+/// own nulls are dropped is itself dropped.
+fn prune_json_nulls(v: &mut serde_json::Value) {
+	match v {
+		serde_json::Value::Object(map) => {
+			for val in map.values_mut() {
+				prune_json_nulls(val);
+			}
+			map.retain(|_, val| !is_empty_json(val));
+		}
+		serde_json::Value::Array(arr) => {
+			for val in arr.iter_mut() {
+				prune_json_nulls(val);
+			}
+		}
+		_ => {}
+	}
+}
+
+fn is_empty_json(v: &serde_json::Value) -> bool {
+	match v {
+		serde_json::Value::Null => true,
+		serde_json::Value::Object(m) => m.is_empty(),
+		serde_json::Value::Array(a) => a.is_empty(),
+		_ => false,
+	}
+}
+
+/// The YAML counterpart of [`prune_json_nulls`].
+fn prune_yaml_nulls(v: &mut serde_yaml::Value) {
+	match v {
+		serde_yaml::Value::Mapping(map) => {
+			for (_, val) in map.iter_mut() {
+				prune_yaml_nulls(val);
+			}
+			let drop: Vec<serde_yaml::Value> = map
+				.iter()
+				.filter(|(_, val)| is_empty_yaml(val))
+				.map(|(k, _)| k.clone())
+				.collect();
+			for k in drop {
+				map.remove(&k);
+			}
+		}
+		serde_yaml::Value::Sequence(seq) => {
+			for val in seq.iter_mut() {
+				prune_yaml_nulls(val);
+			}
+		}
+		_ => {}
+	}
+}
+
+fn is_empty_yaml(v: &serde_yaml::Value) -> bool {
+	match v {
+		serde_yaml::Value::Null => true,
+		serde_yaml::Value::Mapping(m) => m.is_empty(),
+		serde_yaml::Value::Sequence(s) => s.is_empty(),
+		_ => false,
+	}
 }
 
 /// Build the `run`-only flag overrides from the parsed command. These are kept
@@ -174,6 +255,32 @@ pub(crate) fn parse_cli() -> Cli {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn prune_json_drops_nulls_and_empty_then_collapses() {
+		let mut v = serde_json::json!({
+			"image": "nginx",
+			"environment": null,
+			"ports": [],
+			"labels": {},
+			"deploy": { "replicas": null }
+		});
+		prune_json_nulls(&mut v);
+		// Only the real value survives; null/empty fields and the section that
+		// became empty after its own nulls were dropped are gone.
+		assert_eq!(v, serde_json::json!({ "image": "nginx" }));
+	}
+
+	#[test]
+	fn prune_yaml_drops_nulls_and_empty() {
+		let mut v: serde_yaml::Value =
+			serde_yaml::from_str("image: nginx\ndns: null\nnetworks: {}\n").unwrap();
+		prune_yaml_nulls(&mut v);
+		let out = serde_yaml::to_string(&v).unwrap();
+		assert!(out.contains("image: nginx"));
+		assert!(!out.contains("dns"));
+		assert!(!out.contains("networks"));
+	}
 
 	#[test]
 	fn level_words_match_user_facing_terms() {
