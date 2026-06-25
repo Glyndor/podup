@@ -10,7 +10,7 @@
 [![MSRV](https://img.shields.io/badge/MSRV-1.85-orange.svg)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-[**Install**](#-install) · [**Quick start**](#-quick-start) · [**Benchmarks**](docs/benchmarks.md) · [**Docs**](docs/)
+[**Website**](https://glyndor.net/projects/podup) · [**Install**](#-install) · [**Quick start**](#-quick-start) · [**Benchmarks**](docs/benchmarks.md) · [**Docs**](docs/)
 
 <img src="docs/assets/podup-demo.gif" alt="podup running a compose stack on rootless Podman" width="760">
 
