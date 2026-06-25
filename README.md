@@ -89,11 +89,42 @@ podup down -v    # tear down and remove volumes
 
 ## ⚡ Why
 
-**~7 MiB, no daemon, up to 13× faster than podman-compose.** Rootless-native
-libpod API, real compose-spec (`extends`, profiles, `develop.watch`, inline
-secrets), and systemd Quadlet export.
+Rootless-native libpod API, real compose-spec (`extends`, profiles,
+`develop.watch`, inline secrets), and systemd Quadlet export —
+[vs alternatives](docs/benchmarks.md#vs-alternatives) · [Rust library](https://docs.rs/podup).
 
-[Benchmarks](docs/benchmarks.md) · [vs alternatives](docs/benchmarks.md#vs-alternatives) · [Rust library](https://docs.rs/podup)
+## 📊 Benchmarks
+
+<div align="center">
+
+### ~7 MiB flat memory &nbsp;•&nbsp; near-zero CPU &nbsp;•&nbsp; up to 14× faster than podman-compose
+
+</div>
+
+Peak memory on a single `up` — lower is better:
+
+```text
+podup            ████ 7 MiB
+podman-compose   ███████████████████████████████████ 69 MiB
+```
+
+Wall-clock per op — podman-compose's bar is full, podup's is the sliver:
+
+```text
+single up         podup █████                          0.10s
+                  vs    ██████████████████████████████ 0.66s    6.6× slower
+
+volume-heavy up   podup ██                             0.11s
+                  vs    ██████████████████████████████ 1.50s     14× slower
+
+many-services up  podup ███████                        0.85s
+                  vs    ██████████████████████████████ 3.84s    4.5× slower
+
+running stack ps  podup ███                            0.015s
+                  vs    ██████████████████████████████ 0.130s   8.7× slower
+```
+
+Same Podman, same digest-pinned images, median of 10 runs. [Full tables & methodology →](docs/benchmarks.md)
 
 ## 📖 Docs
 
