@@ -353,20 +353,3 @@ jobs:
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: cargo publish --locked
-
-      - name: Refresh the Glyndor apt repository
-        env:
-          GH_TOKEN: ${{ secrets.APT_DISPATCH_TOKEN }}
-        run: |
-          # Tell the central apt repo (Glyndor/apt) to rebuild with this new
-          # release. Optional: only fires when an APT_DISPATCH_TOKEN with
-          # contents:write on Glyndor/apt is configured; otherwise the apt repo
-          # picks up the release on its daily schedule.
-          if [ -z "$GH_TOKEN" ]; then
-            echo "APT_DISPATCH_TOKEN not set — Glyndor/apt will refresh on its schedule."
-            exit 0
-          fi
-          gh api -X POST repos/Glyndor/apt/dispatches \
-            -f event_type=product-released \
-            -F "client_payload[product]=podup" \
-            || echo "::warning::apt dispatch failed; the daily schedule will refresh it."
