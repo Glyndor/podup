@@ -41,12 +41,17 @@ pub(crate) fn container_unit(
 	}
 
 	let mut container = Section::new("Container");
+	// Default the container name to `{project}-{service}`, matching how `up`
+	// names containers. Without the project prefix the unit would create a
+	// container called just `web`, colliding with any other project's `web`
+	// service and diverging from the running-stack name. An explicit
+	// `container_name:` still wins.
 	container.add(
 		"ContainerName",
 		service
 			.container_name
 			.clone()
-			.unwrap_or_else(|| name.to_string()),
+			.unwrap_or_else(|| format!("{project}-{name}")),
 	);
 	if let Some(image) = &service.image {
 		container.add("Image", image.clone());
