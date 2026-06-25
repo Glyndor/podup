@@ -33,10 +33,18 @@ curl -fsSL https://glyndor.net/podup/install/unix | bash      # Linux / macOS
 irm https://glyndor.net/podup/install/windows | iex           # Windows
 ```
 
-Signed, SHA-256 verified, fail-closed. Requires **Podman ≥ 5.0** (rootless).
+Signed, SHA-256 verified, fail-closed. Requires **Podman ≥ 5.0** (rootless) — check with `podman --version`.
 
 <details>
-<summary><b>apt · build from source · self-update · platforms</b></summary>
+<summary><b>Podman 5 · apt · build from source · self-update · platforms</b></summary>
+
+### Podman 5
+
+podup talks to Podman's native libpod 5 API, so it needs **Podman ≥ 5.0**. Many
+distributions still ship 4.x — check `podman --version` and upgrade if needed.
+Fedora, Debian trixie/sid and recent Ubuntu releases carry 5.x; on an older
+release, install or upgrade Podman following the official guide:
+<https://podman.io/docs/installation>.
 
 ### Debian / Ubuntu (apt)
 
