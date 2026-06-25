@@ -36,7 +36,7 @@ impl Engine {
 		for name in &names {
 			let service = &file.services[name];
 
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let grace = self.grace_period_secs(service);
 				// Single atomic restart (no visible stopped window) instead of a
 				// stop+start round-trip.
@@ -57,7 +57,7 @@ impl Engine {
 			}
 			for (dep_name, dep_service) in &file.services {
 				if dep_service.depends_on.restart_for(name) {
-					for dep_container in self.replica_names(dep_name, dep_service) {
+					for dep_container in self.live_replica_names(dep_name, dep_service).await? {
 						let grace = self.grace_period_secs(dep_service);
 						let restart_path = format!(
 							"{API_PREFIX}/containers/{}/restart?t={grace}",
@@ -90,7 +90,7 @@ impl Engine {
 		let mut last_nonzero = 0i64;
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let path = format!(
 					"{API_PREFIX}/containers/{}/wait?condition=stopped",
 					crate::libpod::urlencoded(&container_name),
@@ -123,7 +123,7 @@ impl Engine {
 
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let grace = self.grace_period_secs(service);
 				let path = format!(
 					"{API_PREFIX}/containers/{}/stop?t={grace}",
@@ -149,7 +149,7 @@ impl Engine {
 
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let path = format!(
 					"{API_PREFIX}/containers/{}/start",
 					crate::libpod::urlencoded(&container_name),
@@ -178,7 +178,7 @@ impl Engine {
 
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let path = format!(
 					"{API_PREFIX}/containers/{}/kill?signal={}",
 					crate::libpod::urlencoded(&container_name),
@@ -223,7 +223,7 @@ impl Engine {
 
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let force_str = if force { "true" } else { "false" };
 				let path = format!(
 					"{API_PREFIX}/containers/{}?force={force_str}&v={remove_volumes}",
@@ -248,7 +248,7 @@ impl Engine {
 
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let path = format!(
 					"{API_PREFIX}/containers/{}/pause",
 					crate::libpod::urlencoded(&container_name),
@@ -272,7 +272,7 @@ impl Engine {
 
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let path = format!(
 					"{API_PREFIX}/containers/{}/unpause",
 					crate::libpod::urlencoded(&container_name),

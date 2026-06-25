@@ -392,7 +392,7 @@ impl Engine {
 
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				for hook in &service.pre_stop {
 					if let Err(e) = self.run_lifecycle_hook(&container_name, hook).await {
 						tracing::debug!("pre_stop hook {container_name}: {e}");
