@@ -3,6 +3,17 @@ use crate::parse_str;
 use crate::quadlet::{generate, QuadletOutput, QuadletUnit};
 
 #[test]
+fn container_name_defaults_to_project_prefixed() {
+	// A service with no explicit `container_name:` must default to
+	// `{project}-{service}`, matching how `up` names the running container,
+	// rather than a bare `web` that would collide across projects.
+	let file = parse_str("services:\n  web:\n    image: nginx\n").unwrap();
+	let out = generate(&file, "proj");
+	let web = unit_named(&out, "web.container");
+	assert!(web.contents.contains("ContainerName=proj-web"));
+}
+
+#[test]
 fn duplicate_filename_detects_collision() {
 	let mk = |n: &str| QuadletUnit {
 		filename: n.to_string(),
