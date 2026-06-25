@@ -76,15 +76,6 @@ The signing key ships as the `glyndor-archive-keyring` package, so apt owns the
 key file. When the key is rotated or its expiry extended, a new keyring version
 is published and `apt upgrade` installs it — nothing for users to re-run.
 
-### Refreshing after a release
-
-The apt repository rebuilds on a daily schedule and can be triggered manually
-(`gh workflow run publish.yml -R Glyndor/apt`). For an immediate refresh on each
-release, set an `APT_DISPATCH_TOKEN` secret (a token with `contents:write` on
-`Glyndor/apt`); `release.yml` then sends a `repository_dispatch` after
-publishing. The signing key, keyring builder and repository builder all live in
-the `Glyndor/apt` repo.
-
 > **Debian compatibility note:** the MSRV is 1.85, which Debian trixie ships, so
 > trixie and sid can both build the package.
 

@@ -88,45 +88,16 @@ malicious edit to the constant fails CI. If every key is zeroed, both the binary
 and the installer fail closed and install nothing. The same key signs `podup`,
 `panel`, and `panel-agent` releases (shared `RELEASE_SIGN_KEY`).
 
-### Deriving the public key from the signing secret
-
-To re-derive or rotate it, run locally with the `RELEASE_SIGN_KEY` value (the
-raw 32-byte Ed25519 seed, base64). **Never commit or share the private seed** —
-only its public half:
-
-```bash
-python3 -c '
-import base64, sys
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-from cryptography.hazmat.primitives import serialization
-seed = base64.b64decode(sys.argv[1] + "==")
-pub = Ed25519PrivateKey.from_private_bytes(seed).public_key()
-raw = pub.public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
-print("install.sh base64 :", base64.b64encode(raw).decode().rstrip("="))
-print("verify.rs bytes   :", ", ".join(str(b) for b in raw))
-' "$RELEASE_SIGN_KEY"
-```
-
-Paste the base64 form into `install.sh` and `install.ps1`, and the byte array
-into `RELEASE_PUBKEYS`.
-
 ### Key rotation
 
 Because each binary accepts up to two keys, the signing key can be rotated
-**without stranding installed binaries** — even if the private key leaks. Run the
-two-release procedure:
+**without stranding installed binaries** — even if the private key leaks. A
+two-release transition first ships the new key alongside the old, so binaries
+already in the field accept the next release and gain the new key; a later
+release then retires the old key once every install has converged on the new
+one.
 
-1. **Transition release.** Add the new key to the rotation slot so the binary
-   embeds `[old, new]` (and add `PODUP_RELEASE_PUBKEY2_B64` / `PubKey2B64` to the
-   installers). Keep `RELEASE_SIGN_KEY` set to the **old** key so `SHA256SUMS` is
-   signed by `old`. Binaries already in the field trust only `old`, so they
-   accept this release and upgrade — gaining `new` in the process.
-2. **Retire release.** Move `new` into slot 0 and zero the rotation slot so the
-   binary embeds `[new]`, and switch the CI `RELEASE_SIGN_KEY` secret to the
-   **new** key. Every binary from step 1 trusts `new`, so all installs converge
-   on the new key and `old` is retired.
-
-During step 1 the leaked `old` key is still accepted for one release — an
+During the transition the old key is still accepted for one release — an
 unavoidable cost of any rotation. The GitHub build-provenance attestation, which
 does not depend on the signing key, still proves origin during the window.
 
