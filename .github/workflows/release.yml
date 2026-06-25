@@ -357,6 +357,11 @@ jobs:
       - name: Refresh the Glyndor apt repository
         env:
           GH_TOKEN: ${{ secrets.APT_DISPATCH_TOKEN }}
+          # Shared secret apt checks in the dispatch payload to confirm the
+          # rebuild was requested by a Glyndor product, not just anyone able to
+          # POST a repository_dispatch. Passed via env so it is never expanded
+          # into the command line.
+          DISPATCH_TOKEN: ${{ secrets.GLYNDOR_APT_DISPATCH_TOKEN }}
         run: |
           # Tell the central apt repo (Glyndor/apt) to rebuild with this new
           # release. Optional: only fires when an APT_DISPATCH_TOKEN with
@@ -369,4 +374,5 @@ jobs:
           gh api -X POST repos/Glyndor/apt/dispatches \
             -f event_type=product-released \
             -F "client_payload[product]=podup" \
+            -F "client_payload[token]=$DISPATCH_TOKEN" \
             || echo "::warning::apt dispatch failed; the daily schedule will refresh it."
