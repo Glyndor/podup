@@ -15,12 +15,6 @@ separately in [self-update.md](self-update.md).
   them. Fields that assume more (`privileged`, `oom_kill_disable`,
   `mem_swappiness`, `cpu_rt_*`) are forwarded but warned about, since they are
   reduced or ineffective rootless.
-- The libpod socket is **strictly local**. Only a `unix://` socket path (or an
-  `npipe://` named pipe on Windows) is accepted, whether it comes from
-  `--socket`, `PODMAN_SOCKET`, `DOCKER_HOST`, or auto-detection. Remote schemes
-  (`tcp://`, `ssh://`, `http(s)://`, `fd://`) are **rejected fail-closed** —
-  podup never connects to a remote engine, so the socket boundary is always a
-  local one.
 - podup keeps **no persistent state** of its own outside the Podman objects it
   creates and a per-project advisory lock file under the user's runtime
   directory.
@@ -34,6 +28,15 @@ separately in [self-update.md](self-update.md).
 | Release artifacts (`podup update`, installer) | Untrusted transport | Verified against an embedded Ed25519 key + provenance attestation, fail-closed. |
 | Container filesystem (e.g. `cp` archives) | Untrusted | Tar extraction refuses path-traversal (zip-slip) entries. |
 | Network/TLS to GitHub/crates.io | Untrusted | Integrity comes from signatures, not transport. |
+
+## Connection: the libpod socket is local-only
+
+- The libpod socket is **strictly local**. Only a `unix://` socket path (or an
+  `npipe://` named pipe on Windows) is accepted, whether it comes from
+  `--socket`, `PODMAN_SOCKET`, `DOCKER_HOST`, or auto-detection. Remote schemes
+  (`tcp://`, `ssh://`, `http(s)://`, `fd://`) are **rejected fail-closed** —
+  podup never connects to a remote engine, so the socket boundary is always a
+  local one.
 
 ## Compose files are trusted input
 
@@ -83,6 +86,12 @@ only tighten, never widen, what the launching user already has.
   avoid debug logging where the terminal or log sink is not trusted.
 - podup writes no secret material to its own persistent state.
 
+## Memory safety
+
+The crate forbids `unsafe` by default (`#![deny(unsafe_code)]`). The few
+unavoidable FFI calls (rootless uid/gid lookups, `flock`, `stat`) are isolated,
+individually justified with safety comments, and unit-tested.
+
 ## Supply chain
 
 - Dependencies are pinned in `Cargo.lock`; `cargo deny` enforces a license
@@ -94,11 +103,11 @@ only tighten, never widen, what the launching user already has.
 - The Debian package can be built fully offline from a vendored crate tree, for
   air-gapped/classified environments.
 
-## Memory safety
+## Self-update
 
-The crate forbids `unsafe` by default (`#![deny(unsafe_code)]`). The few
-unavoidable FFI calls (rootless uid/gid lookups, `flock`, `stat`) are isolated,
-individually justified with safety comments, and unit-tested.
+The `podup update` mechanism and its release trust chain — the embedded Ed25519
+keys, the verify-before-install flow, key rotation, and independent/offline
+verification — are documented in [self-update.md](self-update.md).
 
 ## Reporting
 

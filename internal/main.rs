@@ -63,9 +63,23 @@ fn run_to_exit() {
 	}
 }
 
+/// Orchestrate one CLI invocation: parse args, then short-circuit the commands
+/// that need neither a compose file nor (for some) Podman — `completions`,
+/// `update`, `ls`, and `config`. Otherwise resolve and parse the compose
+/// file(s), settle the project name and base directory (validating the name at
+/// the trust boundary), acquire the per-project lock, and dispatch the
+/// remaining commands.
 async fn run() -> podup::Result<()> {
-	init_tracing();
 	let cli = parse_cli();
+	// `watch` is an interactive, long-running command; surface its per-action
+	// progress (synced/rebuilt/restarted) by defaulting to INFO instead of the
+	// quiet WARN floor. `RUST_LOG` always overrides.
+	let log_floor = if matches!(cli.command, Commands::Watch) {
+		"info"
+	} else {
+		"warn"
+	};
+	init_tracing(log_floor);
 
 	// `completions` derives entirely from the static CLI definition; it neither
 	// parses a compose file nor contacts Podman. Print to stdout for piping.
@@ -73,8 +87,18 @@ async fn run() -> podup::Result<()> {
 	if let Commands::Completions { shell } = cli.command {
 		let mut cmd = Cli::command();
 		let name = cmd.get_name().to_string();
-		clap_complete::generate(shell, &mut cmd, name, &mut std::io::stdout());
-		return Ok(());
+		// Render into a buffer first: clap_complete panics if the writer errors,
+		// which aborts (SIGABRT) when stdout is a closed pipe such as
+		// `podup completions bash | head`. A `Vec` write never fails; then send
+		// it to stdout and treat a broken pipe as a clean exit, like a normal
+		// Unix tool.
+		let mut buf = Vec::new();
+		clap_complete::generate(shell, &mut cmd, name, &mut buf);
+		match std::io::Write::write_all(&mut std::io::stdout(), &buf) {
+			Ok(()) => return Ok(()),
+			Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => return Ok(()),
+			Err(e) => return Err(e.into()),
+		}
 	}
 
 	// `update` operates on the binary itself, not a compose project, so it runs

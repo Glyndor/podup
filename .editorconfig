@@ -5,18 +5,9 @@ charset = utf-8
 end_of_line = lf
 insert_final_newline = true
 trim_trailing_whitespace = true
-
-[*.rs]
 indent_style = tab
 indent_size = 4
-
-[*.sh]
-indent_style = tab
-indent_size = 4
-
-[*.toml]
-indent_style = tab
-indent_size = 4
+max_line_length = 120
 
 [*.{yml,yaml,json}]
 indent_style = space

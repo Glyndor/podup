@@ -84,7 +84,11 @@ pub fn parse_duration_secs(s: &str) -> Option<u64> {
 	Some(secs as u64)
 }
 
-/// Parse a duration into nanoseconds (used by Docker healthcheck APIs).
+/// Parse a duration like `5s`, `200ms`, `1m`, `1h` into nanoseconds (used by
+/// Docker healthcheck APIs).
+///
+/// Returns `None` for non-finite (`NaN`/`inf`), negative, or out-of-`i64`-range
+/// results instead of saturating or wrapping the cast.
 pub fn parse_duration_nanos(s: &str) -> Option<i64> {
 	let trimmed = s.trim();
 	if trimmed.is_empty() {

@@ -296,6 +296,9 @@ pub(crate) enum Commands {
 	},
 	/// Display the running processes of service containers.
 	Top {
+		/// Output format.
+		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
+		format: OutputFormat,
 		/// Show only these services.
 		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,

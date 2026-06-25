@@ -32,22 +32,31 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[non_exhaustive]
 pub struct SecretConfig {
+	/// Host file supplying the secret value; mutually exclusive with `content` and `environment`.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub file: Option<String>,
+	/// When true, the secret must already exist in the engine; no value source is provided here.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub external: Option<bool>,
+	/// Engine-side name; overrides the map key, and names the pre-existing secret when `external`.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub name: Option<String>,
+	/// Inline secret value; mutually exclusive with `file` and `environment`.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub content: Option<String>,
+	/// Name of an environment variable supplying the value; mutually exclusive with `file` and `content`.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub environment: Option<String>,
+	/// Secret driver name (Swarm-style); parsed for fidelity, not honored by podman.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub driver: Option<String>,
+	/// Options passed to `driver`.
 	#[serde(default, skip_serializing_if = "HashMap::is_empty")]
 	pub driver_opts: HashMap<String, String>,
+	/// Labels attached to the secret.
 	#[serde(default)]
 	pub labels: Labels,
+	/// Driver used to render the secret as a template before delivery.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub template_driver: Option<String>,
 }
@@ -56,22 +65,31 @@ pub struct SecretConfig {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[non_exhaustive]
 pub struct ConfigConfig {
+	/// Host file supplying the config value; mutually exclusive with `content` and `environment`.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub file: Option<String>,
+	/// When true, the config must already exist in the engine; no value source is provided here.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub external: Option<bool>,
+	/// Engine-side name; overrides the map key, and names the pre-existing config when `external`.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub name: Option<String>,
+	/// Inline config value; mutually exclusive with `file` and `environment`.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub content: Option<String>,
+	/// Name of an environment variable supplying the value; mutually exclusive with `file` and `content`.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub environment: Option<String>,
+	/// Labels attached to the config.
 	#[serde(default)]
 	pub labels: Labels,
+	/// Config driver name (Swarm-style); parsed for fidelity, not honored by podman.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub driver: Option<String>,
+	/// Options passed to `driver`.
 	#[serde(default, skip_serializing_if = "HashMap::is_empty")]
 	pub driver_opts: HashMap<String, String>,
+	/// Driver used to render the config as a template before delivery.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub template_driver: Option<String>,
 }
@@ -83,14 +101,19 @@ pub struct ConfigConfig {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[non_exhaustive]
 pub struct ModelConfig {
+	/// OCI reference of the model artifact to pull.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub model: Option<String>,
+	/// Engine-side name; overrides the map key.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub name: Option<String>,
+	/// Maximum context window, in tokens.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub context_size: Option<u64>,
+	/// Raw flags forwarded to the model runner's inference engine.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub runtime_flags: Vec<String>,
+	/// Extra variables injected into the model runtime environment.
 	#[serde(default, skip_serializing_if = "HashMap::is_empty")]
 	pub model_variables: HashMap<String, String>,
 	/// Forward-compatible keys captured so a typo is surfaced rather than dropped.
@@ -102,20 +125,28 @@ pub struct ModelConfig {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[non_exhaustive]
 pub struct ComposeFile {
+	/// Top-level `version:`. Deprecated by the Compose Spec; parsed and round-tripped but otherwise ignored.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub version: Option<String>,
+	/// Project name; overrides the directory-derived default.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub name: Option<String>,
+	/// Other Compose files merged into this project before processing.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub include: Vec<IncludeConfig>,
+	/// Service definitions, keyed by service name.
 	#[serde(default)]
 	pub services: IndexMap<String, Service>,
+	/// Named volumes; a `None` value is a default-configured volume (`name:` with no body).
 	#[serde(default)]
 	pub volumes: IndexMap<String, Option<VolumeConfig>>,
+	/// Named networks; a `None` value is a default-configured network (`name:` with no body).
 	#[serde(default)]
 	pub networks: IndexMap<String, Option<NetworkConfig>>,
+	/// Named secrets available to services.
 	#[serde(default)]
 	pub secrets: IndexMap<String, SecretConfig>,
+	/// Named configs available to services.
 	#[serde(default)]
 	pub configs: IndexMap<String, ConfigConfig>,
 	/// Top-level `models:` element (Compose v2.38). Parsed for fidelity; podup

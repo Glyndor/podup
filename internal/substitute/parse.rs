@@ -115,6 +115,11 @@ fn collect_until_close(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> 
 	buf
 }
 
+/// Apply a parsed `Modifier` to `var`, implementing compose's
+/// `${VAR:-default}` / `${VAR-default}` / `${VAR:+alt}` / `${VAR+alt}` /
+/// `${VAR:?err}` / `${VAR?err}` substitution semantics (the `:` forms treat an
+/// empty value like unset). `Modifier::None` returns the value or an empty
+/// string; the `Error*` variants fail when the condition is unmet.
 pub(super) fn resolve_modifier(
 	var: String,
 	modifier: Modifier,

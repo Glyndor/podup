@@ -1,7 +1,8 @@
 # Command reference
 
-Every `podup` subcommand, its options, and what it does. Run `podup <command>
---help` for the same information at the terminal.
+This page lists every `podup` command, its options, and what it does. Run
+`podup <command> --help` for the same information at the terminal. The
+[global options](#global-options) below apply to every command.
 
 ```
 podup [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS] [SERVICE...]
@@ -9,9 +10,9 @@ podup [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS] [SERVICE...]
 
 ## Global options
 
-These apply to every command and may appear before the subcommand.
+These appear before the subcommand and may also come from the environment.
 
-| Option | Env | Description |
+| Flag | Env | Description |
 |---|---|---|
 | `-f, --file <PATH>` | `COMPOSE_FILE` | Compose file. Repeatable; later files merge over earlier ones. When unset, the compose-spec precedence list is probed: `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`. |
 | `-p, --project <NAME>` | `COMPOSE_PROJECT_NAME` | Project name, prefixing container/network/volume names. When unset: the top-level `name:`, then the sanitized project-directory basename. |
@@ -24,144 +25,296 @@ These apply to every command and may appear before the subcommand.
 
 ### `up`
 Create and start all services (or only the named ones, plus their transitive
-`depends_on`).
+`depends_on`). Accepts a trailing service list.
 
-| Option | Description |
-|---|---|
-| `-d, --detach` | Run containers in the background. |
-| `--build` | Build images before starting. |
-| `-w, --watch` | After starting, watch for changes per `develop.watch`. |
-| `--remove-orphans` | Remove containers for services no longer in the file. |
-| `--no-recreate` | Leave already-running containers in place. |
-| `--force-recreate` | Recreate containers even if their config is unchanged. |
-| `--no-deps` | Do not start the `depends_on` services of the named services. |
-| `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable. |
-| `--pull <policy>` | Pull policy before starting: `always`, `missing`, `never`. |
-| `--no-build` | Do not build images, even for services with a `build:` section. |
-| `--quiet-pull` | Suppress image-pull progress output. |
-| `--wait` | Wait until services are running/healthy before returning. |
-| `--no-start` | Create the containers but do not start them. |
+| Flag | Description | Default |
+|---|---|---|
+| `-d, --detach` | Run containers in the background. | off |
+| `--build` | Build images before starting. | off |
+| `-w, --watch` | After starting, watch for changes per `develop.watch`. | off |
+| `--remove-orphans` | Remove containers for services no longer in the file. | off |
+| `--no-recreate` | Leave already-running containers in place. | off |
+| `--force-recreate` | Recreate containers even if their config is unchanged. | off |
+| `--no-deps` | Do not start the `depends_on` services of the named services. | off |
+| `-t, --timeout <SECS>` | Seconds to wait for a container to stop when recreating. | Podman default |
+| `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable. | from file |
+| `--pull <POLICY>` | Pull policy before starting: `always`, `missing`, `never`. | per service |
+| `--no-build` | Do not build images, even for services with a `build:` section. | off |
+| `--quiet-pull` | Suppress image-pull progress output. | off |
+| `--wait` | Wait until services are running/healthy before returning. | off |
+| `--no-start` | Create the containers but do not start them. | off |
+| `--timestamps` | Prefix attached log lines with a timestamp (ignored with `-d`). | off |
+| `-V, --renew-anon-volumes` | Recreate anonymous volumes instead of keeping the previous ones. | off |
+
+```bash
+podup up -d --build
+```
 
 ### `down`
-Stop and remove containers. `-v, --volumes` also removes named volumes declared
-in the compose file; `--remove-orphans` also removes containers for services no
-longer in the file; `--rmi all|local` also removes the service images (`local`
-only those built from a `build:` section).
+Stop and remove containers, networks, and (with `-v`) volumes.
 
-### `start` / `stop` / `restart`
-Start existing stopped containers, stop running ones without removing them, or
-restart them. `start`/`stop`/`restart` accept a trailing service list;
-`restart [SERVICE...]` restarts everything or the named services.
-`restart --no-deps` skips cascade-restarting dependents that declare a
-`depends_on` restart condition.
-
-### `scale <SERVICE=N>...`
-Set the number of running containers for one or more services, creating missing
-replicas and removing surplus ones. A service that publishes a **fixed host
-port** cannot be scaled past one replica (only one container can bind a host
-port) — the command fails fast and tells you to drop the host port (`- "80"`, so
-Podman assigns one per replica), front it with a reverse proxy, or stay at one
-replica.
+| Flag | Description | Default |
+|---|---|---|
+| `-v, --volumes` | Also remove named volumes declared in the compose file. | off |
+| `--remove-orphans` | Remove containers for services no longer in the file. | off |
+| `--rmi <SCOPE>` | Also remove service images: `all`, or `local` (only those built from a `build:` section). | keep images |
+| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them. | Podman default |
 
 ### `create`
 Create the containers for services without starting them (like `up` stopped at
-the create step). `--build` builds images first; `--force-recreate` recreates
-unchanged containers; `--no-recreate` leaves existing ones in place. Accepts a
-trailing service list. A later `up`/`start` runs the created containers.
+the create step). Accepts a trailing service list. A later `up`/`start` runs the
+created containers.
+
+| Flag | Description | Default |
+|---|---|---|
+| `--build` | Build images before creating containers. | off |
+| `--force-recreate` | Recreate containers even if their config is unchanged. | off |
+| `--no-recreate` | Leave existing containers in place. | off |
+
+### `start`
+Start existing stopped containers. Accepts a trailing service list.
+
+| Flag | Description | Default |
+|---|---|---|
+| `--wait` | Wait until services are running/healthy before returning. | off |
+| `--wait-timeout <SECS>` | Maximum seconds to wait with `--wait` before giving up. | no limit |
+
+### `stop`
+Stop running containers without removing them. Accepts a trailing service list.
+
+| Flag | Description | Default |
+|---|---|---|
+| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them. | Podman default |
+
+### `restart`
+Restart service containers (default: all, or the named ones).
+
+| Flag | Description | Default |
+|---|---|---|
+| `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them. | Podman default |
+| `--no-deps` | Do not cascade-restart dependents that declare a `depends_on` restart condition. | off |
 
 ### `build`
 Build or rebuild service images (optionally only the named services).
 
-### `push`
-Push each service's `image:` to its registry (services without an image are
-skipped). Credentials come from `podman login`. `--ignore-push-failures`
-continues after a failure; `--tls-verify false` allows an insecure/HTTP
-registry (omit it to keep Podman's default verification). Accepts a trailing
-service list.
+| Flag | Description | Default |
+|---|---|---|
+| `--no-cache` | Do not use the build cache. | off |
+| `--pull` | Always attempt to pull a newer base image. | off |
+| `--build-arg <KEY=VAL>` | Set a build-time variable. Repeatable. | none |
+| `-q, --quiet` | Suppress the build output. | off |
 
-### `rm`
-Remove stopped service containers. `-f, --force` stops and removes running ones;
-`-v, --volumes` also removes anonymous volumes attached to them.
+## Inspection
 
-### `kill`
-Send a signal to service containers. `-s, --signal <SIG>` sets the signal
-(default `SIGKILL`); `--remove-orphans` then removes containers for services no
-longer in the file.
+### `ps`
+List project containers.
 
-### `pause` / `unpause`
-Pause running service containers, or resume paused ones.
+| Flag | Description | Default |
+|---|---|---|
+| `-a, --all` | Include stopped containers. | running only |
+| `-q, --quiet` | Print container IDs only. | off |
+| `--format <FMT>` | `table` or `json`. | `table` |
 
-## Running commands
+### `ls`
+List podup compose projects on the host. Needs no compose file.
+
+| Flag | Description | Default |
+|---|---|---|
+| `-a, --all` | Include stopped projects. | running only |
+| `-q, --quiet` | Print project names only. | off |
+| `--format <FMT>` | `table` or `json`. | `table` |
+
+### `logs [SERVICE...]`
+View container output for the named services (or all).
+
+| Flag | Description | Default |
+|---|---|---|
+| `-f, --follow` | Stream new output. | off |
+| `-n, --tail <N>` | Show the last N lines. | all |
+| `--since <TIME>` | Show logs since a timestamp or relative time (e.g. `10m`). | start |
+| `--until <TIME>` | Show logs before a timestamp or relative time. | end |
+| `-t, --timestamps` | Prefix each line with an RFC3339 timestamp. | off |
+
+### `events`
+Stream Podman events for this project's containers.
+
+| Flag | Description | Default |
+|---|---|---|
+| `--format <FMT>` | `table` (a `TYPE ACTION NAME` summary) or `json` (one object per line). | `table` |
+
+`--json` is a hidden deprecated alias for `--format json`.
+
+### `top [SERVICE...]`
+Show the running processes of service containers.
+
+### `stats [SERVICE...]`
+Live resource usage (CPU, memory, network, block I/O, PIDs) for service
+containers.
+
+| Flag | Description | Default |
+|---|---|---|
+| `--no-stream` | Print one snapshot and exit. | stream |
+
+### `port <SERVICE> <PRIVATE_PORT>`
+Print the public binding for a port.
+
+| Flag | Description | Default |
+|---|---|---|
+| `--proto <PROTO>` | `tcp` or `udp`. | `tcp` |
+| `--index <N>` | Target this replica (1-based) of a scaled service. | 1 |
+
+### `images`
+List images used by services.
+
+| Flag | Description | Default |
+|---|---|---|
+| `-q, --quiet` | Print image IDs only. | off |
+| `--format <FMT>` | `table` or `json`. | `table` |
+
+### `volumes [SERVICE...]`
+List the project's named volumes (a trailing service list narrows it to volumes
+those services mount).
+
+| Flag | Description | Default |
+|---|---|---|
+| `-q, --quiet` | Print volume names only. | off |
+| `--format <FMT>` | `table` or `json`. | `table` |
+
+## Container operations
 
 ### `run <SERVICE> [COMMAND...]`
 Run a one-off command in a new container for the service.
 
-| Option | Description |
-|---|---|
-| `--rm` | Remove the container after it exits (the default). |
-| `--no-rm` | Keep the one-off container after it exits instead of removing it. |
-| `-d, --detach` | Run in the background. |
-| `-e, --env <KEY=VAL>` | Set an environment variable. Repeatable. |
-| `--name <NAME>` | Override the container name. |
-| `-P, --service-ports` | Publish the service's declared ports (off by default). |
-| `-u, --user <NAME\|UID[:GID]>` | Run the command as this user. |
-| `-w, --workdir <PATH>` | Working directory inside the container. |
-| `--entrypoint <CMD>` | Override the image entrypoint. |
-| `-v, --volume <SPEC>` | Bind-mount an extra volume (`HOST:CONTAINER[:OPTS]` or `NAME:CONTAINER`). Repeatable. |
-| `-p, --publish <SPEC>` | Publish an extra port (`HOST:CONTAINER[/PROTO]`). Repeatable. |
-| `-i, --interactive` | Keep STDIN open (accepted for compatibility; `run` still streams logs). |
-| `-T, --no-TTY` | Disable pseudo-TTY allocation (accepted for compatibility; podup never allocates one). |
-| `--no-deps` | Do not start the `depends_on` services before running. |
+| Flag | Description | Default |
+|---|---|---|
+| `--rm` | Remove the container after it exits. | on |
+| `--no-rm` | Keep the one-off container after it exits. | off |
+| `-d, --detach` | Run in the background. | off |
+| `-e, --env <KEY=VAL>` | Set an environment variable. Repeatable. | none |
+| `--name <NAME>` | Override the container name. | generated |
+| `-P, --service-ports` | Publish the service's declared ports. | off |
+| `-u, --user <NAME\|UID[:GID]>` | Run the command as this user. | image default |
+| `-w, --workdir <PATH>` | Working directory inside the container. | image default |
+| `--entrypoint <CMD>` | Override the image entrypoint. | image default |
+| `-v, --volume <SPEC>` | Bind-mount an extra volume (`HOST:CONTAINER[:OPTS]` or `NAME:CONTAINER`). Repeatable. | none |
+| `-p, --publish <SPEC>` | Publish an extra port (`HOST:CONTAINER[/PROTO]`). Repeatable. | none |
+| `-i, --interactive` | Keep STDIN open (accepted for compatibility; `run` still streams logs). | off |
+| `-T, --no-TTY` | Disable pseudo-TTY allocation (accepted for compatibility; podup never allocates one). | off |
+| `--no-deps` | Do not start the `depends_on` services before running. | off |
+
+```bash
+podup run --rm web sh -c 'echo hello'
+```
 
 ### `exec <SERVICE> <COMMAND...>`
 Execute a command in a running service container.
 
+| Flag | Description | Default |
+|---|---|---|
+| `-e, --env <KEY=VAL>` | Set an environment variable. Repeatable. | none |
+| `-u, --user <NAME\|UID[:GID]>` | Run the command as this user. | container default |
+| `-w, --workdir <PATH>` | Working directory inside the container. | container default |
+| `--privileged` | Give extended privileges to the command. | off |
+| `-d, --detach` | Run the command in the background. | off |
+| `-T, --no-TTY` | Disable pseudo-TTY allocation (accepted for compatibility; podup never allocates one). | off |
+| `--index <N>` | Target this replica (1-based) of a scaled service. | 1 |
+
+```bash
+podup exec -u root web sh
+```
+
 ### `cp <SRC> <DST>`
 Copy files between a container and the host. Use `SERVICE:PATH` for the
-container side, e.g. `podup cp web:/app/data ./local`. `--index <N>` targets a
-specific replica (1-based) of a scaled service; `-L/--follow-link` follows
-symlinks in the host source before copying into the container; `-a/--archive` is
-accepted for compatibility (no effect under rootless Podman).
+container side, e.g. `podup cp web:/app/data ./local`.
+
+| Flag | Description | Default |
+|---|---|---|
+| `--index <N>` | Target this replica (1-based) of a scaled service. | 1 |
+| `-L, --follow-link` | Follow symlinks in the host source before copying into the container. | off |
+| `-a, --archive` | Accepted for compatibility (no effect under rootless Podman). | off |
 
 ### `attach <SERVICE>`
 Attach to a service container's output (stdout/stderr), streaming it until the
 container exits or you detach.
 
+### `kill [SERVICE...]`
+Send a signal to service containers.
+
+| Flag | Description | Default |
+|---|---|---|
+| `-s, --signal <SIG>` | Signal to send. | `SIGKILL` |
+| `--remove-orphans` | Then remove containers for services no longer in the file. | off |
+
+### `rm [SERVICE...]`
+Remove stopped service containers.
+
+| Flag | Description | Default |
+|---|---|---|
+| `-f, --force` | Remove even running containers (stop first). | off |
+| `-v, --volumes` | Also remove anonymous volumes attached to them. | off |
+| `-s, --stop` | Stop the containers (gracefully) before removing them. | off |
+
+### `pause [SERVICE...]` / `unpause [SERVICE...]`
+Pause running service containers, or resume paused ones. `resume` is an alias
+for `unpause`.
+
 ### `wait [SERVICE...]`
 Block until the named service containers (default: all) stop, printing each
 container's exit code as it does.
 
+### `scale <SERVICE=N>...`
+Set the number of running containers for one or more services, creating missing
+replicas and removing surplus ones. A service that publishes a **fixed host
+port** cannot be scaled past one replica — the command fails fast and tells you
+to drop the host port (`- "80"`, so Podman assigns one per replica), front it
+with a reverse proxy, or stay at one replica.
+
 ### `commit <SERVICE> <IMAGE>`
 Commit a service container's current state to a new image reference
-(`repo[:tag]`). `--index <N>` selects a replica (1-based) of a scaled service.
+(`repo[:tag]`).
+
+| Flag | Description | Default |
+|---|---|---|
+| `--index <N>` | Select a replica (1-based) of a scaled service. | 1 |
 
 ### `export <SERVICE>`
-Export a service container's filesystem as a tar archive. By default the archive
-goes to stdout; `-o, --output <FILE>` writes it to a file instead. `--index <N>`
-selects a replica (1-based) of a scaled service.
+Export a service container's filesystem as a tar archive.
 
-## Inspection
+| Flag | Description | Default |
+|---|---|---|
+| `-o, --output <FILE>` | Write to a file instead of stdout. | stdout |
+| `--index <N>` | Select a replica (1-based) of a scaled service. | 1 |
 
-| Command | Description |
-|---|---|
-| `ps` | List project containers. `-a/--all` includes stopped containers, `-q/--quiet` prints container IDs only, `--format table\|json`. |
-| `ls` | List podup compose projects on the host. `-a/--all` includes stopped projects, `-q/--quiet` prints names only, `--format table\|json`. Needs no compose file. |
-| `top` | Show running processes of service containers. |
-| `stats` | Live resource usage (CPU, memory, network, block I/O, PIDs) for service containers. `--no-stream` prints one snapshot; a trailing service list narrows it. |
-| `port <SERVICE> <PRIVATE_PORT>` | Print the public binding for a port. `--proto` sets `tcp`/`udp` (default `tcp`). |
-| `events` | Stream Podman events for this project's containers. `--format json` emits each event as a JSON line instead of a `TYPE ACTION NAME` summary (the deprecated `--json` flag is a hidden alias for it). |
-| `images` | List images used by services. `-q/--quiet` prints image IDs only, `--format table\|json`. |
-| `volumes [SERVICE...]` | List the project's named volumes. `-q/--quiet` prints names only, `--format table\|json`; a trailing service list narrows it to volumes those services mount. |
-| `logs [SERVICE...]` | View container output for the named services (or all). `-f/--follow` streams new output, `-n/--tail <N>` limits to the last N lines, `--since`/`--until` bound by time, `-t/--timestamps` prefixes each line. |
-| `config` | Print the resolved compose file (after substitution, extends, include). `--format yaml\|json`, `--services` lists service names, `-q/--quiet` only validates, `--no-interpolate` leaves `${VAR}` placeholders literal, `--resolve-image-digests` rewrites each service `image:` to its registry digest (`repo@sha256:...`). |
-| `pull` | Pull images for all services. `-q/--quiet` suppresses progress output. |
+## Images
+
+### `pull [SERVICE...]`
+Pull images for the named services, or all services if none are given.
+
+| Flag | Description | Default |
+|---|---|---|
+| `-q, --quiet` | Suppress image-pull progress output. | off |
+| `--ignore-pull-failures` | Continue pulling the remaining services after a failure. | off |
+| `--include-deps` | Also pull images for the named services' `depends_on` services. | off |
+| `--policy <POLICY>` | Pull policy, overriding per-service `pull_policy`: `always`, `missing`, `never`, `newer`, `build`. | per service |
+
+### `push [SERVICE...]`
+Push each service's `image:` to its registry (services without an image are
+skipped). Credentials come from `podman login`.
+
+| Flag | Description | Default |
+|---|---|---|
+| `--ignore-push-failures` | Continue after a failure. | off |
+| `--tls-verify <BOOL>` | Verify the registry TLS cert; `false` allows an insecure/HTTP registry. | Podman default |
 
 ## Generate
 
-### `generate quadlet [-o <DIR>]`
+### `generate quadlet`
 Translate the compose file into Podman Quadlet unit files — one `.container` per
-service plus `.network` and `.volume` units. Without `-o, --output` the units
-print to stdout; warnings about fields with no Quadlet mapping go to stderr.
+service plus `.network` and `.volume` units. `gen` is an alias for `generate`.
+
+| Flag | Description | Default |
+|---|---|---|
+| `-o, --output <DIR>` | Directory to write the unit files into. Omit to print to stdout. | stdout |
 
 ```bash
 podup generate quadlet -o ~/.config/containers/systemd
@@ -186,21 +339,19 @@ The `action` of each rule may be:
 | `sync+restart` | Sync the files, then restart the container. |
 | `sync+exec` | Sync the files, then run the rule's `exec` command in the container. |
 
-## Self-update
+## Maintenance
 
-### `update`
-Replace the running binary with the latest signed release.
+### `config`
+Print the resolved compose file (after substitution, extends, include).
+`convert` is an alias.
 
-| Option | Description |
-|---|---|
-| `--check` | Report whether a newer release exists; install nothing. |
-| `--force` | Reinstall even if the latest release is not newer. |
-
-Verification fails closed: a missing key, bad Ed25519 signature, or SHA-256
-mismatch aborts before the installed binary is touched. See
-[self-update.md](self-update.md) for the trust model.
-
-## Shell completions
+| Flag | Description | Default |
+|---|---|---|
+| `--format <FMT>` | `yaml` or `json`. | `yaml` |
+| `--services` | List service names, one per line. | off |
+| `-q, --quiet` | Only validate; print nothing. | off |
+| `--no-interpolate` | Leave `${VAR}` placeholders literal. | off |
+| `--resolve-image-digests` | Rewrite each service `image:` to its registry digest (`repo@sha256:...`). | off |
 
 ### `completions <SHELL>`
 Print a shell completion script to stdout for `bash`, `zsh`, `fish`,
@@ -212,6 +363,20 @@ podup completions bash > ~/.local/share/bash-completion/completions/podup
 podup completions zsh  > "${fpath[1]}/_podup"
 podup completions fish > ~/.config/fish/completions/podup.fish
 ```
+
+### `update`
+Replace the running binary with the latest signed release.
+
+| Flag | Description | Default |
+|---|---|---|
+| `--check` | Report whether a newer release exists; install nothing. | off |
+| `--force` | Reinstall even if the latest release is not newer. | off |
+
+Verification fails closed: a missing key, bad Ed25519 signature, or SHA-256
+mismatch aborts before the installed binary is touched. See
+[self-update.md](self-update.md) for the trust model.
+
+Run `podup --version` to print the version.
 
 ## Diagnostics
 

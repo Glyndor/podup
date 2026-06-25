@@ -13,6 +13,26 @@ use crate::engine::Engine;
 use crate::libpod::API_PREFIX;
 
 impl Engine {
+	/// Run a lifecycle POST against one container with a consistent outcome:
+	/// success logs `{done} {container}`; "already in the desired state" (304)
+	/// and "no such container" (404) are idempotent no-ops; any other failure is
+	/// a real error that propagates (setting a non-zero exit) instead of being
+	/// swallowed into a warning. Shared by stop/start/restart/kill/pause/unpause
+	/// so they all behave the same.
+	async fn run_lifecycle_op(&self, path: &str, container: &str, done: &str) -> Result<()> {
+		match self.client.post_empty_ok(path).await {
+			Ok(()) => {
+				info!("{done} {container}");
+				Ok(())
+			}
+			Err(e) if e.is_status(304) || e.is_status(404) => {
+				tracing::debug!("{container}: {done} skipped ({e})");
+				Ok(())
+			}
+			Err(e) => Err(ComposeError::Podman(e)),
+		}
+	}
+
 	/// Restart the named service (or all services). Dependents with a `restart` condition in `depends_on` are also restarted.
 	pub async fn restart(&self, file: &ComposeFile, service_name: Option<&str>) -> Result<()> {
 		let targets: Vec<String> = service_name
@@ -36,7 +56,7 @@ impl Engine {
 		for name in &names {
 			let service = &file.services[name];
 
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let grace = self.grace_period_secs(service);
 				// Single atomic restart (no visible stopped window) instead of a
 				// stop+start round-trip.
@@ -44,12 +64,8 @@ impl Engine {
 					"{API_PREFIX}/containers/{}/restart?t={grace}",
 					crate::libpod::urlencoded(&container_name),
 				);
-				self.client
-					.post_empty_ok(&restart_path)
-					.await
-					.map_err(ComposeError::Podman)?;
-
-				info!("restarted {container_name}");
+				self.run_lifecycle_op(&restart_path, &container_name, "restarted")
+					.await?;
 			}
 
 			if no_deps {
@@ -57,7 +73,7 @@ impl Engine {
 			}
 			for (dep_name, dep_service) in &file.services {
 				if dep_service.depends_on.restart_for(name) {
-					for dep_container in self.replica_names(dep_name, dep_service) {
+					for dep_container in self.live_replica_names(dep_name, dep_service).await? {
 						let grace = self.grace_period_secs(dep_service);
 						let restart_path = format!(
 							"{API_PREFIX}/containers/{}/restart?t={grace}",
@@ -90,7 +106,7 @@ impl Engine {
 		let mut last_nonzero = 0i64;
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let path = format!(
 					"{API_PREFIX}/containers/{}/wait?condition=stopped",
 					crate::libpod::urlencoded(&container_name),
@@ -123,17 +139,14 @@ impl Engine {
 
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let grace = self.grace_period_secs(service);
 				let path = format!(
 					"{API_PREFIX}/containers/{}/stop?t={grace}",
 					crate::libpod::urlencoded(&container_name),
 				);
-				if let Err(e) = self.client.post_empty_ok(&path).await {
-					tracing::warn!("could not stop {container_name}: {e}");
-				} else {
-					info!("stopped {container_name}");
-				}
+				self.run_lifecycle_op(&path, &container_name, "stopped")
+					.await?;
 			}
 		}
 		Ok(())
@@ -149,16 +162,13 @@ impl Engine {
 
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let path = format!(
 					"{API_PREFIX}/containers/{}/start",
 					crate::libpod::urlencoded(&container_name),
 				);
-				self.client
-					.post_empty_ok(&path)
-					.await
-					.map_err(ComposeError::Podman)?;
-				info!("started {container_name}");
+				self.run_lifecycle_op(&path, &container_name, "started")
+					.await?;
 			}
 		}
 		Ok(())
@@ -178,17 +188,14 @@ impl Engine {
 
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let path = format!(
 					"{API_PREFIX}/containers/{}/kill?signal={}",
 					crate::libpod::urlencoded(&container_name),
 					crate::libpod::urlencoded(signal),
 				);
-				self.client
-					.post_empty_ok(&path)
-					.await
-					.map_err(ComposeError::Podman)?;
-				info!("sent {signal} to {container_name}");
+				self.run_lifecycle_op(&path, &container_name, &format!("sent {signal} to"))
+					.await?;
 			}
 		}
 		Ok(())
@@ -223,7 +230,7 @@ impl Engine {
 
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let force_str = if force { "true" } else { "false" };
 				let path = format!(
 					"{API_PREFIX}/containers/{}?force={force_str}&v={remove_volumes}",
@@ -248,16 +255,13 @@ impl Engine {
 
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let path = format!(
 					"{API_PREFIX}/containers/{}/pause",
 					crate::libpod::urlencoded(&container_name),
 				);
-				self.client
-					.post_empty_ok(&path)
-					.await
-					.map_err(ComposeError::Podman)?;
-				info!("paused {container_name}");
+				self.run_lifecycle_op(&path, &container_name, "paused")
+					.await?;
 			}
 		}
 		Ok(())
@@ -272,16 +276,13 @@ impl Engine {
 
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let path = format!(
 					"{API_PREFIX}/containers/{}/unpause",
 					crate::libpod::urlencoded(&container_name),
 				);
-				self.client
-					.post_empty_ok(&path)
-					.await
-					.map_err(ComposeError::Podman)?;
-				info!("unpaused {container_name}");
+				self.run_lifecycle_op(&path, &container_name, "unpaused")
+					.await?;
 			}
 		}
 		Ok(())

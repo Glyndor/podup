@@ -1,10 +1,19 @@
 # Migrating from Docker Compose to podup
 
-This guide covers what to expect when you switch a `docker-compose.yml` from
-Docker to podup on rootless Podman.  The short answer is: **most files work
-without any changes**.  Read on for the full picture.
+Point podup at an existing `docker-compose.yml` and run it — no rewrite, no new
+file format. The short answer is: **most files work without any changes**.
 
-## What works out of the box
+```sh
+cd my-project          # the directory holding docker-compose.yml
+podup up
+```
+
+podup reads the same `compose.yaml` / `docker-compose.yml` files docker-compose
+does and runs them on rootless Podman. The rest of this guide is the full
+picture: what works unchanged, what behaves differently under Podman, what is
+accepted but has no effect, and what is not yet supported.
+
+## Works out of the box
 
 Every core Compose spec key is supported:
 
@@ -19,15 +28,25 @@ Every core Compose spec key is supported:
 | Dependencies | `depends_on` (with `condition:` — `service_started`, `service_healthy`, `service_completed_successfully`) |
 | Health checks | `healthcheck` (test, interval, timeout, retries, start_period, disable) |
 | Lifecycle hooks | `post_start`, `pre_stop` |
-| Restart policies | `restart`, `deploy.restart_policy` |
+| Restart policies | `restart`, `deploy.restart_policy` (`condition`, `max_attempts`) |
 | Replicas / scale | `deploy.replicas`, `scale:` |
 | Resource limits | `deploy.resources`, `mem_limit`, `cpus`, `cpu_shares`, `cpu_quota`, `pids_limit`, `ulimits`, `blkio_config` |
-| Devices | `devices`, `device_cgroup_rules`, `deploy.resources.reservations.devices` (GPU) |
+| Devices | `devices`, `device_cgroup_rules` |
+| GPU | `deploy.resources.reservations.devices`, `gpus:` — see the note below |
 | Security | `cap_add`, `cap_drop`, `security_opt`, `read_only`, `privileged`, `userns_mode` |
 | Namespaces | `pid`, `ipc`, `uts`, `cgroup`, `shm_size` |
 | Metadata | `labels`, `annotations`, `container_name`, `profiles` |
 | Logging | `logging` (driver + options) |
 | Compose features | `extends`, `include`, YAML anchors, x-extensions, `develop.watch` |
+
+### GPU reservations are host-dependent
+
+`deploy.resources.reservations.devices` and the `gpus:` shorthand are honored,
+but only for **NVIDIA** GPUs, and only when the host exposes them through CDI
+(the NVIDIA Container Toolkit must be installed and the CDI spec generated).
+Reservations for other drivers or capabilities are warned about and skipped.
+This is the common case Podman supports natively — but it depends on the host's
+GPU driver and CDI setup, not on podup alone.
 
 ### External secrets and configs
 
@@ -59,10 +78,33 @@ The secret appears at `/run/secrets/db_password` (configs use the long-form
 fast rather than starting a container without it. Use a top-level `name:` when
 the Podman secret is named differently from the compose reference.
 
-## Rootless Podman differences
+## Behaves differently under rootless Podman
 
-These are Podman behaviours, not podup limitations.  They apply equally to any
-Podman-based tool.
+These are Podman behaviours, not podup limitations — they apply equally to any
+Podman-based tool. Each one is something to expect, with the workaround.
+
+### `network_mode: bridge`
+
+| | |
+|---|---|
+| **What to expect** | docker-compose attaches the container to Docker's predefined shared `bridge` network. Podman reads `--network bridge` as "create a fresh, isolated bridge netns", so the container has outbound connectivity but **cannot reach its project siblings** by name or IP. |
+| **Workaround** | Remove `network_mode: bridge` and let the container join the project's default network, or declare a shared `networks:` entry the services share. podup emits a warning when it sees `network_mode: bridge`. |
+
+```yaml
+# before — siblings unreachable under Podman
+services:
+  web:
+    network_mode: bridge
+
+# after — services share a network and resolve each other by name
+services:
+  web:
+    networks: [app]
+  api:
+    networks: [app]
+networks:
+  app: {}
+```
 
 ### Privileged ports (< 1024)
 
@@ -70,7 +112,7 @@ Rootless containers cannot bind host ports below 1024 unless the kernel allows
 it:
 
 ```bash
-# Allow a single port (temporary, requires root once):
+# Allow ports down to 80 (persists; requires root once):
 sudo sysctl net.ipv4.ip_unprivileged_port_start=80
 
 # Or map through a higher port in your compose file:
@@ -80,14 +122,14 @@ ports:
 
 ### UID/GID mapping
 
-Containers run as your host user's UID inside a user namespace.  If a container
+Containers run as your host user's UID inside a user namespace. If a container
 image writes files with UID 0 (root inside the container), those files appear
-owned by your user on the host.  Bind-mount permissions reflect your host
-user's access.
+owned by your user on the host. Bind-mount permissions reflect your host user's
+access.
 
 ### Volume SELinux labels
 
-On SELinux-enforcing systems, bind mounts require relabeling.  Append `:z`
+On SELinux-enforcing systems, bind mounts require relabeling. Append `:z`
 (shared) or `:Z` (private) to the volume spec:
 
 ```yaml
@@ -98,21 +140,18 @@ volumes:
 ### `network_mode: host`
 
 Attaches the container to your user's network namespace, not a privileged host
-namespace.  Traffic is still limited to your user's capabilities.
+namespace. Traffic is still limited to your user's capabilities.
 
 ### `network_mode: none`
 
-Supported.  The container gets a loopback interface only.
-
-## Deprecated fields (honored with a warning)
+Supported. The container gets a loopback interface only.
 
 ### `mac_address:` at the service level
 
 The Compose spec deprecated the top-level `mac_address` field in favour of
-per-network configuration.  podup still honours it (for backward compatibility)
-and applies it to the primary network, but logs a deprecation warning.
-
-**Migration:** move it under `networks:`:
+per-network configuration. podup still honours it (for backward compatibility)
+and applies it to the primary network, but logs a deprecation warning. Move it
+under `networks:` to silence the warning:
 
 ```yaml
 # before
@@ -128,12 +167,15 @@ services:
         mac_address: "02:42:ac:11:00:02"
 ```
 
-## Swarm-only fields (accepted, no effect)
+## Accepted but has no effect
 
-These fields are part of the Compose spec for Docker Swarm deployments.  They
-are parsed without error so existing compose files validate cleanly, but they
-have no equivalent in single-host rootless Podman.  podup logs a warning for
-each one that is present.
+These fields parse cleanly so existing compose files validate, but podup cannot
+translate them on single-host rootless Podman. **podup emits a warning for each
+one it finds**, so nothing is dropped silently. The list below is a set of
+**examples, not exhaustive** — when in doubt, run `podup up` and read the
+warnings (see [Seeing the warnings](#seeing-the-warnings)).
+
+### Swarm / cluster orchestration
 
 | Field | What it does in Swarm |
 |---|---|
@@ -142,9 +184,41 @@ each one that is present.
 | `deploy.update_config` | Rolling-update parallelism, delay, failure action |
 | `deploy.rollback_config` | Automatic rollback behaviour |
 | `deploy.endpoint_mode` | VIP vs DNS round-robin load balancing |
+| `deploy.restart_policy.delay` / `.window` | No first-class Podman restart delay or attempt-counting window (`condition` and `max_attempts` *are* honored) |
+| port long-form `mode:` (`ingress` / `host`) | Swarm ingress routing |
 
-If you see warnings for these fields, you can safely remove them from your
-compose file when targeting a single-host Podman deployment.
+### BuildKit / buildx-only build options
+
+`build.privileged`, `build.ssh`, `build.ulimits`, `build.isolation`,
+`build.entitlements`, `build.provenance`, `build.sbom` — these have no libpod
+build-API equivalent and are ignored.
+
+### Windows / Hyper-V-only
+
+`cpu_count`, `cpu_percent`, `credential_spec`, `isolation` — no rootless Podman
+equivalent.
+
+### Other parsed-but-ignored fields
+
+| Field | Why it has no effect |
+|---|---|
+| `attach` | podup follows its own attach/detach logic for `up` log streaming |
+| `use_api_socket` | no podup equivalent |
+| `provider:` / top-level `models:` | podup runs no model runner; the service/model is not honored (see [Not yet supported](#not-yet-supported)) |
+| volume long-form `driver_config` | not forwarded to Podman |
+| `networks.*.enable_ipv4` | Podman networks enable IPv4 by default and expose no toggle |
+| `networks.*.ipam.config[].aux_addresses` | not supported by Podman |
+| service `networks.*.gw_priority` | not supported by Podman |
+| `secrets`/`configs` `driver` / `template_driver` (on non-`external` defs) | external secret-store plugins (Vault, AWS SM, …) podup does not invoke; the secret/config is not staged |
+
+## Not yet supported
+
+| Feature | Status |
+|---|---|
+| `env_file.format` values other than `dotenv` | A **warning** is emitted (`format is not honored; podup always parses env files as dotenv`); the file is still read as dotenv |
+| `provider:` / model-runner services (`provider`, top-level `models`) | Modeled and parsed, but **not honored** — a not-honored warning is emitted (these are no rootless-Podman equivalent, *not* "unknown key" errors) |
+| Container naming | A single-replica service is named `<project>-<service>` (e.g. `myapp-web`); docker-compose v2 always appends a `-1` replica index (`myapp-web-1`). Scaled replicas (>1) do get the `-N` suffix. Scripts that reference containers by exact name should account for this. |
+| Real-hardware smoke tests on macOS and Windows | Pending ([#48](https://github.com/Glyndor/podup/issues/48)); code paths exist but are untested on physical hardware |
 
 ## Nothing is dropped silently
 
@@ -156,20 +230,25 @@ a typo or an unmapped feature can't hide. At parse time podup warns about:
 - unknown keys at the top level and inside every modeled object (services and
   their `healthcheck`, `deploy`, `develop.watch`; top-level `networks`,
   `networks.*.ipam`, and `volumes`) — usually a typo such as `enviroment:`;
-- fields it models but cannot honor on rootless Podman: `cpu_count` and
-  `cpu_percent` (Windows/Hyper-V only), `networks.*.enable_ipv4`, and the
-  BuildKit-only `build.privileged`, `build.ulimits`, `build.isolation`,
-  `build.entitlements`, `build.provenance`, `build.sbom`.
+- modeled fields it cannot honor on rootless Podman — the
+  [accepted-but-has-no-effect](#accepted-but-has-no-effect) fields above.
 
 This is what lets a compose file written for a newer Docker or Podman release
 run under podup: unsupported additions surface as warnings instead of vanishing.
 
-The `podup` CLI prints these warnings automatically. If you embed podup as a
-**library**, `parse_file` itself stays quiet — call `podup::collect_diagnostics`
-on the parsed file to obtain the same warnings and surface them to your users.
-
 `extra_hosts` is accepted in both the list (`["host:ip"]`) and mapping
 (`{host: ip}`) forms.
+
+### Seeing the warnings
+
+The `podup` CLI prints these warnings automatically. Run with
+`RUST_LOG=podup=debug` to also see network creation and container lifecycle
+events. See the [`RUST_LOG` reference in `commands.md`](commands.md#environment)
+for the full level table.
+
+If you embed podup as a **library**, `parse_file` itself stays quiet — call
+`podup::collect_diagnostics` on the parsed file to obtain the same warnings and
+surface them to your users.
 
 ## File references and path confinement
 
@@ -182,28 +261,14 @@ intentional divergence from a fully sandboxed parser: do not feed podup a
 compose file from an untrusted source any more than you would `make -f` an
 untrusted Makefile.
 
-## Not yet supported
-
-| Feature | Status |
-|---|---|
-| `env_file.format` values other than `dotenv` | Error is emitted; only the `dotenv` format is accepted |
-| `provider:` / model-runner services (`provider`, top-level `models`) | No rootless Podman equivalent; reported as an unknown key |
-| Container naming | A single-replica service is named `<project>-<service>` (e.g. `myapp-web`); docker-compose v2 always appends a `-1` replica index (`myapp-web-1`). Scaled replicas (>1) do get the `-N` suffix. Scripts that reference containers by exact name should account for this. |
-| Real-hardware smoke tests on macOS and Windows | Pending ([#48](https://github.com/Glyndor/podup/issues/48)); code paths exist but are untested on physical hardware |
-
-## Enabling verbose output
-
-Run with `RUST_LOG=podup=debug` to see network creation, container lifecycle
-events, and the parse-time warnings podup emits for any compose field it cannot
-translate. See the [`RUST_LOG` reference in `commands.md`](commands.md#environment)
-for the full level table.
-
 ## Quick compatibility checklist
 
 Before running `podup up` on an existing compose file:
 
+- [ ] Replace `network_mode: bridge` with a shared `networks:` entry if services need to reach each other.
 - [ ] Remove or remap any host ports below 1024 if running fully rootless.
 - [ ] Add `:Z` to bind mounts on SELinux hosts if containers cannot write to them.
 - [ ] Check for `mac_address:` at the service level — move to `networks:` to silence the warning.
 - [ ] Check for Swarm-only `deploy.*` fields — they are harmless but can be cleaned up.
 - [ ] Verify `env_file` uses dotenv format (key=value lines, `#` comments).
+- [ ] For GPUs, confirm the host has an NVIDIA driver + CDI configured.

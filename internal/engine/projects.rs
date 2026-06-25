@@ -2,7 +2,7 @@
 //!
 //! Unlike the other commands this is project-agnostic: it scans every container
 //! carrying a `podup.project` label and groups by project, so it needs only a
-//! [`Client`], not a full [`Engine`] bound to one project/compose file.
+//! [`Client`], not a full [`Engine`](crate::engine::Engine) bound to one project/compose file.
 
 use std::collections::BTreeMap;
 
