@@ -4,6 +4,11 @@
 
 **docker-compose on rootless Podman — one static Rust binary. No daemon. No Python.**
 
+![peak memory ~7 MiB](https://img.shields.io/badge/peak_memory-~7_MiB-3fb950)
+![daemon none](https://img.shields.io/badge/daemon-none-3fb950)
+![rootless](https://img.shields.io/badge/rootless-native-3fb950)
+![Podman 5+](https://img.shields.io/badge/Podman-5%2B-892ca0)
+
 [![CI](https://github.com/Glyndor/podup/actions/workflows/ci.yml/badge.svg)](https://github.com/Glyndor/podup/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/podup.svg)](https://crates.io/crates/podup)
 [![downloads](https://img.shields.io/crates/d/podup.svg)](https://crates.io/crates/podup)
@@ -93,36 +98,28 @@ Rootless-native libpod API, real compose-spec (`extends`, profiles,
 `develop.watch`, inline secrets), and systemd Quadlet export —
 [vs alternatives](docs/benchmarks.md#vs-alternatives) · [Rust library](https://docs.rs/podup).
 
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Y as docker-compose.yml
+    participant P as podup
+    participant L as Podman · libpod REST
+    Y->>P: parse · substitute · resolve depends_on
+    P->>L: create networks · volumes · secrets
+    P->>L: start containers in order
+    L-->>P: health / status
+    P-->>Y: stack up
+```
+
 ## 📊 Benchmarks
 
 <div align="center">
 
 ### ~7 MiB flat memory &nbsp;•&nbsp; near-zero CPU &nbsp;•&nbsp; up to 14× faster than podman-compose
 
+<img src="docs/assets/bench.svg" alt="Bar chart: podup uses ~7 MiB vs 69 MiB for podman-compose, and is 4.5–14x faster per op" width="760">
+
 </div>
-
-Peak memory on a single `up` — lower is better:
-
-```text
-podup            ████ 7 MiB
-podman-compose   ███████████████████████████████████ 69 MiB
-```
-
-Wall-clock per op — podman-compose's bar is full, podup's is the sliver:
-
-```text
-single up         podup █████                          0.10s
-                  vs    ██████████████████████████████ 0.66s    6.6× slower
-
-volume-heavy up   podup ██                             0.11s
-                  vs    ██████████████████████████████ 1.50s     14× slower
-
-many-services up  podup ███████                        0.85s
-                  vs    ██████████████████████████████ 3.84s    4.5× slower
-
-running stack ps  podup ███                            0.015s
-                  vs    ██████████████████████████████ 0.130s   8.7× slower
-```
 
 Same Podman, same digest-pinned images, median of 10 runs. [Full tables & methodology →](docs/benchmarks.md)
 
