@@ -135,6 +135,26 @@ impl Engine {
 			.map(|raw| raw.trim_start_matches('/').to_string())
 			.collect())
 	}
+
+	/// The container names to act on for a service: the ones Podman actually has
+	/// (matched by the `podup.service` label), so lifecycle and query commands
+	/// keep working after a runtime `scale`/`up --scale` that the compose file's
+	/// static replica count no longer names. Falls back to the statically-derived
+	/// names when none exist yet (e.g. a service not yet created).
+	pub(crate) async fn live_replica_names(
+		&self,
+		service_name: &str,
+		service: &Service,
+	) -> Result<Vec<String>> {
+		let live = self
+			.list_project_container_names(Some(service_name))
+			.await?;
+		Ok(if live.is_empty() {
+			self.replica_names(service_name, service)
+		} else {
+			live
+		})
+	}
 }
 
 #[cfg(test)]

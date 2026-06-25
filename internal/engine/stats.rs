@@ -131,7 +131,7 @@ impl Engine {
 		target_services: &[String],
 		no_stream: bool,
 	) -> Result<()> {
-		let wanted = self.target_container_names(file, target_services);
+		let wanted = self.target_container_names(file, target_services).await?;
 
 		// Scope the stats stream to just the wanted containers server-side via the
 		// `containers=` query param, so the daemon does not sample every container
@@ -172,18 +172,20 @@ impl Engine {
 
 	/// The set of container names to report on: every replica of the targeted
 	/// services (all services when `target_services` is empty).
-	fn target_container_names(
+	async fn target_container_names(
 		&self,
 		file: &ComposeFile,
 		target_services: &[String],
-	) -> HashSet<String> {
-		file.services
-			.iter()
-			.filter(|(name, _)| {
-				target_services.is_empty() || target_services.iter().any(|t| t == *name)
-			})
-			.flat_map(|(name, service)| self.replica_names(name, service))
-			.collect()
+	) -> Result<HashSet<String>> {
+		let mut wanted = HashSet::new();
+		for (name, service) in &file.services {
+			if target_services.is_empty() || target_services.iter().any(|t| t == name) {
+				for c in self.live_replica_names(name, service).await? {
+					wanted.insert(c);
+				}
+			}
+		}
+		Ok(wanted)
 	}
 }
 

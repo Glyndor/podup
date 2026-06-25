@@ -27,7 +27,7 @@ impl Engine {
 
 		for name in &names {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let path = format!(
 					"{API_PREFIX}/containers/{}/top",
 					urlencoded(&container_name),
