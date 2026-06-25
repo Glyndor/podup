@@ -15,6 +15,9 @@ use super::Engine;
 use crate::libpod::types::container::{ContainerListEntry, ContainerPort};
 
 mod inspect;
+mod log_prefix;
+
+use log_prefix::LinePrefixer;
 
 /// Human-readable status for `ps`. Podman's libpod list endpoint leaves
 /// `Status` empty and reports the machine state in `State`, so fall back to it
@@ -279,23 +282,21 @@ impl Engine {
 						// let a sibling future block the thread on the same lock
 						// and deadlock. Each frame still locks once and flushes,
 						// keeping interleaved `logs -f` output prompt.
+						let mut out_pfx = LinePrefixer::new(&container_name);
+						let mut err_pfx = LinePrefixer::new(&container_name);
 						while let Some(msg) = stream.next().await {
 							match msg {
 								Ok(LogOutput::StdOut { message }) => {
-									let mut out = std::io::stdout().lock();
-									let _ =
-										out.write_all(String::from_utf8_lossy(&message).as_bytes());
-									let _ = out.flush();
+									out_pfx.write(&mut std::io::stdout().lock(), &message);
 								}
 								Ok(LogOutput::StdErr { message }) => {
-									let mut err = std::io::stderr().lock();
-									let _ =
-										err.write_all(String::from_utf8_lossy(&message).as_bytes());
-									let _ = err.flush();
+									err_pfx.write(&mut std::io::stderr().lock(), &message);
 								}
 								Err(_) => break,
 							}
 						}
+						out_pfx.flush_tail(&mut std::io::stdout().lock());
+						err_pfx.flush_tail(&mut std::io::stderr().lock());
 					}
 				})
 				.collect();
@@ -324,19 +325,18 @@ impl Engine {
 				// across the await loop would starve concurrent log emissions.
 				// Flush after each frame so `logs -f` still streams promptly.
 				let mut out = std::io::stdout().lock();
+				let mut out_pfx = LinePrefixer::new(&container_name);
+				let mut err_pfx = LinePrefixer::new(&container_name);
 				while let Some(msg) = stream.next().await {
 					match msg.map_err(ComposeError::Podman)? {
-						LogOutput::StdOut { message } => {
-							let _ = out.write_all(String::from_utf8_lossy(&message).as_bytes());
-							let _ = out.flush();
-						}
+						LogOutput::StdOut { message } => out_pfx.write(&mut out, &message),
 						LogOutput::StdErr { message } => {
-							let mut err = std::io::stderr().lock();
-							let _ = err.write_all(String::from_utf8_lossy(&message).as_bytes());
-							let _ = err.flush();
+							err_pfx.write(&mut std::io::stderr().lock(), &message)
 						}
 					}
 				}
+				out_pfx.flush_tail(&mut out);
+				err_pfx.flush_tail(&mut std::io::stderr().lock());
 			}
 		}
 
