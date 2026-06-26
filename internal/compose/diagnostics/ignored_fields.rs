@@ -18,12 +18,6 @@ pub(super) fn ignored_service_fields(file: &ComposeFile, out: &mut Vec<String>) 
 				 rootless Podman equivalent and is ignored"
 			));
 		}
-		if def.attach.is_some() {
-			out.push(format!(
-				"service '{service}': attach is not honored; podup follows its own \
-				 attach/detach logic for `up` log streaming"
-			));
-		}
 		if def.credential_spec.is_some() {
 			out.push(format!(
 				"service '{service}': credential_spec is a Windows managed-service-account \

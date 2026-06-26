@@ -168,11 +168,13 @@ fn clean_file_produces_no_diagnostics() {
 }
 
 #[test]
-fn warns_on_attach() {
+fn attach_is_honored_no_warning() {
+	// `attach: false` is honored (it suppresses the service's `up` log streaming,
+	// matching Compose), so it must NOT produce an "ignored field" diagnostic.
 	let msgs = diagnostics_for("services:\n  web:\n    image: nginx\n    attach: false\n");
 	assert!(
-		msgs.iter().any(|m| m.contains("attach is not honored")),
-		"got: {msgs:?}"
+		!msgs.iter().any(|m| m.contains("attach")),
+		"attach should not be flagged as ignored: {msgs:?}"
 	);
 }
 
