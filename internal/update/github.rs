@@ -40,6 +40,11 @@ impl GitHubSource {
 		let agent: ureq::Agent = ureq::Agent::config_builder()
 			.timeout_global(Some(std::time::Duration::from_secs(60)))
 			.user_agent(concat!("podup/", env!("CARGO_PKG_VERSION")))
+			// Reject any non-HTTPS URL, including a redirect target: GitHub's
+			// release download redirects to a CDN, and this prevents that hop (or a
+			// hostile one) from being downgraded to plaintext http. The Ed25519
+			// signature remains the authenticity gate; this hardens transport.
+			.https_only(true)
 			.build()
 			.into();
 		Self {
