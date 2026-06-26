@@ -42,7 +42,13 @@ pub(super) fn build_restart_policy(service: &Service) -> (Option<String>, Option
 			"none" => "no",
 			"on-failure" => "on-failure",
 			"any" => "always",
-			_ => "unless-stopped",
+			other => {
+				tracing::warn!(
+					"deploy.restart_policy.condition '{other}' is not recognized \
+					 (expected none/on-failure/any); falling back to 'unless-stopped'"
+				);
+				"unless-stopped"
+			}
 		};
 		return (Some(name.to_string()), drp.max_attempts.map(|n| n as u64));
 	}
