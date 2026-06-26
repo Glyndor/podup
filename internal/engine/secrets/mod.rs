@@ -145,6 +145,30 @@ impl Engine {
 	/// removed first (a 404 is fine) and then created fresh.
 	async fn create_secret(&self, name: &str, payload: &[u8]) -> Result<()> {
 		check_secret_size(name, payload.len())?;
+		// Guard the delete-then-create: if a secret of this name already exists and
+		// is not labelled as ours, refuse rather than clobber a foreign secret.
+		// Our own secret (or a 404) is replaced fresh, keeping re-`up` idempotent.
+		let inspect = format!("{API_PREFIX}/secrets/{}/json", urlencoded(name));
+		match self.client.get_json::<serde_json::Value>(&inspect).await {
+			Ok(info) => {
+				let owned = info
+					.get("Spec")
+					.and_then(|spec| spec.get("Labels"))
+					.and_then(|labels| labels.get("podup.project"))
+					.and_then(|v| v.as_str())
+					== Some(self.project.as_str());
+				if !owned {
+					return Err(ComposeError::Unsupported(format!(
+						"a secret named '{name}' already exists and is not labelled \
+						 podup.project={} — refusing to overwrite a secret podup did \
+						 not create",
+						self.project
+					)));
+				}
+			}
+			Err(e) if e.is_status(404) => {}
+			Err(e) => return Err(ComposeError::Podman(e)),
+		}
 		let delete_path = format!("{API_PREFIX}/secrets/{}", urlencoded(name));
 		self.client
 			.delete_ok(&delete_path)
