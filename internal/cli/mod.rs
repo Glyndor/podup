@@ -16,16 +16,22 @@ pub(crate) use types::{ConfigFormat, GenerateCommands, OutputFormat, RmiScope};
 pub(crate) struct Cli {
 	/// Path to the compose file (or `COMPOSE_FILE`). Unset: probe the
 	/// compose-spec precedence list (compose.yaml/.yml, docker-compose.yaml/.yml).
+	// Not `global`: its `-f` short would collide with subcommand `-f` flags
+	// (e.g. `rm --force`), which clap forbids. Must precede the subcommand.
 	#[arg(short, long)]
 	pub(crate) file: Vec<PathBuf>,
 
 	/// Project name, the container-name prefix (or `COMPOSE_PROJECT_NAME`).
 	/// Unset: the top-level `name:`, then the sanitized project-directory basename.
+	// Not `global`: its `-p` short would collide with subcommand `-p` flags
+	// (e.g. `run --publish`). Must precede the subcommand.
 	#[arg(short, long, env = "COMPOSE_PROJECT_NAME")]
 	pub(crate) project: Option<String>,
 
 	/// Podman socket path (overrides auto-detection and PODMAN_SOCKET env).
-	#[arg(long, env = "PODMAN_SOCKET")]
+	/// `global` so it can appear before or after the subcommand (it has no
+	/// short flag, so there is no collision).
+	#[arg(long, env = "PODMAN_SOCKET", global = true)]
 	pub(crate) socket: Option<String>,
 
 	/// Active profiles (comma-separated).  May also be set via `COMPOSE_PROFILES`.
