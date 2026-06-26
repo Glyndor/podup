@@ -236,11 +236,14 @@ impl Engine {
 					"{API_PREFIX}/containers/{}?force={force_str}&v={remove_volumes}",
 					crate::libpod::urlencoded(&container_name),
 				);
-				if let Err(e) = self.client.delete_ok(&path).await {
-					tracing::warn!("could not remove {container_name}: {e}");
-				} else {
-					info!("removed {container_name}");
-				}
+				// `delete_ok` treats 404 as success (already gone), so any error
+				// here is a real failure — propagate it (non-zero exit) instead of
+				// swallowing it into a warning, matching the other lifecycle ops.
+				self.client
+					.delete_ok(&path)
+					.await
+					.map_err(ComposeError::Podman)?;
+				info!("removed {container_name}");
 			}
 		}
 		Ok(())
