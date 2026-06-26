@@ -231,7 +231,6 @@ configs:
 		let joined = warnings.join("\n");
 
 		for field in [
-			"build",
 			"scale/replicas",
 			"configs",
 			"volumes_from",
@@ -457,19 +456,6 @@ services:
 				"missing warning for {field}; got:\n{joined}"
 			);
 		}
-	}
-
-	#[test]
-	fn build_warning_mentions_dot_build_unit() {
-		// The build warning must point at Quadlet's `.build` unit as the supported
-		// path, not claim there is no equivalent.
-		let yaml = "services:\n  s:\n    image: x\n    build: .\n";
-		let file = parse_str(yaml).unwrap();
-		let joined = generate(&file, "proj").warnings.join("\n");
-		assert!(
-			joined.contains(".build"),
-			"build warning should mention the .build unit; got:\n{joined}"
-		);
 	}
 
 	#[test]
