@@ -219,7 +219,48 @@ impl Engine {
 					.await;
 			}
 		}
+		// Catch orphans: a secret podup created on a previous `up` whose compose key
+		// was since renamed/removed (or a `down` run without the original file) is
+		// not reached by the loops above. Sweep every secret carrying this project's
+		// label and remove it, so no podup-created secret is left behind.
+		for name in self.list_project_secret_names().await {
+			self.delete_secret(&name).await;
+		}
 		Ok(())
+	}
+
+	/// Names of all native secrets labelled `podup.project=<proj>` — the secrets
+	/// podup created for this project. libpod's `/secrets/json` rejects a `label`
+	/// filter (HTTP 500 `invalid filter "label"`), so the full list is fetched and
+	/// filtered client-side by the `podup.project` label. Best-effort: a list
+	/// failure yields an empty set so teardown still proceeds via the
+	/// compose-driven deletes above.
+	async fn list_project_secret_names(&self) -> Vec<String> {
+		let path = format!("{API_PREFIX}/secrets/json");
+		match self.client.get_json::<Vec<serde_json::Value>>(&path).await {
+			Ok(list) => list
+				.iter()
+				.filter_map(|s| {
+					let spec = s.get("Spec")?;
+					let owned = spec
+						.get("Labels")
+						.and_then(|l| l.get("podup.project"))
+						.and_then(|v| v.as_str())
+						== Some(self.project.as_str());
+					if owned {
+						spec.get("Name")
+							.and_then(|n| n.as_str())
+							.map(str::to_string)
+					} else {
+						None
+					}
+				})
+				.collect(),
+			Err(e) => {
+				tracing::debug!("could not list project secrets for orphan cleanup: {e}");
+				Vec::new()
+			}
+		}
 	}
 
 	/// Delete a project-scoped secret, but only after confirming it carries our
