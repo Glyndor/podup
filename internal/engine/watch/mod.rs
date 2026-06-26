@@ -162,7 +162,12 @@ impl Engine {
 		let (tx, mut rx) = mpsc::channel::<notify::Result<notify::Event>>(WATCH_CHANNEL_CAP);
 		let mut watcher = RecommendedWatcher::new(
 			move |res| {
-				let _ = tx.try_send(res);
+				// A full bounded channel drops this event; a later event
+				// re-triggers the sync, so no state is lost, but trace the drop
+				// instead of swallowing it silently.
+				if let Err(e) = tx.try_send(res) {
+					debug!("watch event dropped (channel full or closed): {e}");
+				}
 			},
 			notify::Config::default(),
 		)
