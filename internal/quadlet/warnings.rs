@@ -9,13 +9,6 @@ pub(super) fn collect_warnings(name: &str, service: &Service, warnings: &mut Vec
 	let mut warn = |field: &str, detail: &str| {
 		warnings.push(format!("{name}: {field} {detail}"));
 	};
-	if service.build.is_some() {
-		warn(
-			"build",
-			"is not emitted; Quadlet's `.build` unit type is the supported path, \
-			 but podup does not generate one yet — build the image first and set `image`",
-		);
-	}
 	let replicas = service
 		.scale
 		.or(service.deploy.as_ref().and_then(|d| d.replicas));

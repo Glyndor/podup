@@ -53,7 +53,11 @@ pub(crate) fn container_unit(
 			.clone()
 			.unwrap_or_else(|| format!("{project}-{name}")),
 	);
-	if let Some(image) = &service.image {
+	// A service with a buildable `build:` references its `.build` unit, so Quadlet
+	// builds the image before running; otherwise the explicit `image:` is used.
+	if super::build::emits_build_unit(service) {
+		container.add("Image", super::build::build_unit_filename(name));
+	} else if let Some(image) = &service.image {
 		container.add("Image", image.clone());
 	}
 	if let Some(hostname) = &service.hostname {
