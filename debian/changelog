@@ -1,3 +1,13 @@
+podup (1.5.1) unstable; urgency=medium
+
+  * cp: copying a host file to a container under a new name now creates a file
+    with that name, not a directory holding the source — the container
+    destination is stat'd to tell an existing directory (copy in) from a target
+    name (rename on copy), matching `docker cp`. A single-character service name
+    (`c:/path`) is also no longer mistaken for a Windows drive letter on Unix.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 26 Jun 2026 10:31:01 -0500
+
 podup (1.5.0) unstable; urgency=medium
 
   * compose: pass an `env_file` bare key through from the host environment
