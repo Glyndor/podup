@@ -136,6 +136,39 @@ impl Engine {
 			.collect())
 	}
 
+	/// All live project containers grouped by their `podup.service` label, in a
+	/// single API call. Lets a whole-project command (e.g. `down`) avoid one
+	/// per-service container-list round-trip; callers fall back to the static
+	/// [`Engine::replica_names`] for a service absent from the map.
+	pub(crate) async fn list_project_containers_by_service(
+		&self,
+	) -> Result<std::collections::HashMap<String, Vec<String>>> {
+		let filters = serde_json::json!({ "label": [format!("podup.project={}", self.project)] });
+		let path = format!(
+			"{API_PREFIX}/containers/json?all=true&filters={}",
+			urlencoded(&filters.to_string()),
+		);
+		let entries = self
+			.client
+			.get_json::<Vec<crate::libpod::types::container::ContainerListEntry>>(&path)
+			.await
+			.map_err(ComposeError::Podman)?;
+		let mut by_service: std::collections::HashMap<String, Vec<String>> =
+			std::collections::HashMap::new();
+		for entry in entries {
+			let Some(service) = entry.labels.get("podup.service") else {
+				continue;
+			};
+			if let Some(raw) = entry.names.first() {
+				by_service
+					.entry(service.clone())
+					.or_default()
+					.push(raw.trim_start_matches('/').to_string());
+			}
+		}
+		Ok(by_service)
+	}
+
 	/// The container names to act on for a service: the ones Podman actually has
 	/// (matched by the `podup.service` label), so lifecycle and query commands
 	/// keep working after a runtime `scale`/`up --scale` that the compose file's

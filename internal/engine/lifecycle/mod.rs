@@ -390,9 +390,17 @@ impl Engine {
 		let mut order = crate::compose::resolve_order(file)?;
 		order.reverse();
 
+		// Prefetch every project container once and group by service, instead of
+		// one container-list round-trip per service (S+1 → 1 for the ordered pass).
+		let live_by_service = self.list_project_containers_by_service().await?;
+
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.live_replica_names(name, service).await? {
+			let container_names = match live_by_service.get(name) {
+				Some(live) if !live.is_empty() => live.clone(),
+				_ => self.replica_names(name, service),
+			};
+			for container_name in container_names {
 				for hook in &service.pre_stop {
 					if let Err(e) = self.run_lifecycle_hook(&container_name, hook).await {
 						tracing::debug!("pre_stop hook {container_name}: {e}");
