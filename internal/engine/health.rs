@@ -87,13 +87,19 @@ impl Engine {
 		file: &ComposeFile,
 		target_services: &[String],
 	) -> Result<()> {
-		for (name, service) in &file.services {
-			if !target_services.is_empty() && !target_services.iter().any(|t| t == name) {
-				continue;
-			}
-			let container = self.first_replica_name(name, service);
-			self.wait_healthy(&container, service).await?;
-		}
+		// Poll services concurrently: each `wait_healthy` is its own poll loop, so
+		// total `--wait` latency is the slowest service, not the sum of all.
+		let waits = file
+			.services
+			.iter()
+			.filter(|(name, _)| {
+				target_services.is_empty() || target_services.iter().any(|t| t == *name)
+			})
+			.map(|(name, service)| {
+				let container = self.first_replica_name(name, service);
+				async move { self.wait_healthy(&container, service).await }
+			});
+		futures_util::future::try_join_all(waits).await?;
 		Ok(())
 	}
 

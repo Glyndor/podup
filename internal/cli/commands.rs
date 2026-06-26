@@ -252,10 +252,12 @@ pub(crate) enum Commands {
 		/// Publish an extra port (HOST:CONTAINER[/PROTO]); repeatable.
 		#[arg(short = 'p', long = "publish")]
 		publish: Vec<String>,
-		/// Keep STDIN open (accepted for compatibility; run still streams logs).
+		/// Keep the container's STDIN open (sets `stdin_open`). `run` streams the
+		/// container's output but does not attach a live interactive terminal.
 		#[arg(short, long)]
 		interactive: bool,
-		/// Disable pseudo-TTY allocation (podup never allocates one; accepted for compatibility).
+		/// No effect; accepted only for docker-compose compatibility. podup never
+		/// allocates a pseudo-TTY.
 		#[arg(short = 'T', long = "no-TTY")]
 		no_tty: bool,
 		/// Do not start linked services (depends_on) before running.
@@ -299,8 +301,10 @@ pub(crate) enum Commands {
 		/// Output format.
 		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
 		format: OutputFormat,
-		/// Show only these services.
-		#[arg(trailing_var_arg = true)]
+		/// Show only these services. Unlike the other service-list commands, `top`
+		/// takes a plain positional (not `trailing_var_arg`) so `--format` parses
+		/// in any position (`top web --format json` as well as `top --format json
+		/// web`); service names are never hyphen-prefixed, so nothing is lost.
 		services: Vec<String>,
 	},
 	/// Stream Podman events for this project's containers.
@@ -420,7 +424,8 @@ pub(crate) enum Commands {
 		/// Detach: run the command in the background.
 		#[arg(short, long)]
 		detach: bool,
-		/// Disable pseudo-TTY allocation (podup never allocates one; accepted for compatibility).
+		/// No effect; accepted only for docker-compose compatibility. podup never
+		/// allocates a pseudo-TTY.
 		#[arg(short = 'T', long = "no-TTY")]
 		no_tty: bool,
 		/// Index of the container when the service has multiple replicas (1-based).

@@ -162,7 +162,12 @@ impl Engine {
 		let (tx, mut rx) = mpsc::channel::<notify::Result<notify::Event>>(WATCH_CHANNEL_CAP);
 		let mut watcher = RecommendedWatcher::new(
 			move |res| {
-				let _ = tx.try_send(res);
+				// A full bounded channel drops this event; a later event
+				// re-triggers the sync, so no state is lost, but trace the drop
+				// instead of swallowing it silently.
+				if let Err(e) = tx.try_send(res) {
+					debug!("watch event dropped (channel full or closed): {e}");
+				}
 			},
 			notify::Config::default(),
 		)
@@ -204,6 +209,12 @@ impl Engine {
 				}
 			}
 
+			// A debounce batch may hold many files that map to the same whole-
+			// container action; rebuild/restart each container at most once per
+			// batch. Sync-type actions stay per-file (each changed file is synced).
+			let mut done: std::collections::HashSet<(u8, String)> =
+				std::collections::HashSet::new();
+
 			'outer: for path in &paths {
 				for entry in &rule_entries {
 					if !path.starts_with(&entry.abs_path) {
@@ -219,6 +230,20 @@ impl Engine {
 					if !entry.rule.include.is_empty() && !is_included(&rel_str, &entry.rule.include)
 					{
 						continue;
+					}
+
+					// Collapse repeated rebuild/restart of the same container within
+					// this batch into one; the action's effect is whole-container, so
+					// a second run is pure waste.
+					let dedup_key = match &entry.rule.action {
+						WatchAction::Rebuild => Some((0, entry.service_name.clone())),
+						WatchAction::Restart => Some((1, entry.container_name.clone())),
+						_ => None,
+					};
+					if let Some(key) = dedup_key {
+						if !done.insert(key) {
+							continue 'outer;
+						}
 					}
 
 					debug!("dispatch {:?} for {}", entry.rule.action, path.display());

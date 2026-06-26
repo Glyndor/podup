@@ -440,4 +440,15 @@ mod tests {
 		assert!(v.get("health_check_on_failure_action").is_none());
 		assert!(v.get("startupHealthConfig").is_none());
 	}
+
+	#[test]
+	fn on_failure_action_serializes_to_podman_integers() {
+		// Podman assigns each action a non-contiguous integer; a wrong discriminant
+		// would silently mis-drive the container, so pin every variant's wire value.
+		use super::HealthCheckOnFailureAction as A;
+		for (action, wire) in [(A::None, 0), (A::Kill, 2), (A::Restart, 3), (A::Stop, 4)] {
+			let v = serde_json::to_value(action).unwrap();
+			assert_eq!(v, wire, "{action:?} should serialize to {wire}");
+		}
+	}
 }

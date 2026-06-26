@@ -16,7 +16,7 @@ mod unit;
 mod warnings;
 
 use crate::compose::types::ComposeFile;
-use unit::{container_unit, network_unit, volume_unit};
+use unit::{build_unit, container_unit, network_unit, volume_unit};
 
 /// A single generated unit file: its name and full contents.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -92,6 +92,11 @@ pub fn generate(file: &ComposeFile, project: &str) -> QuadletOutput {
 		.map(|(name, _)| name.as_str())
 		.collect();
 	for (name, service) in &file.services {
+		// Emit a `.build` unit first so the systemd generator builds the image
+		// before the container that references it via `Image=<stem>.build`.
+		if let Some(unit) = build_unit(name, project, service, &mut out.warnings) {
+			out.units.push(unit);
+		}
 		out.units.push(container_unit(
 			name,
 			project,

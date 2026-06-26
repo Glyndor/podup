@@ -390,9 +390,17 @@ impl Engine {
 		let mut order = crate::compose::resolve_order(file)?;
 		order.reverse();
 
+		// Prefetch every project container once and group by service, instead of
+		// one container-list round-trip per service (S+1 → 1 for the ordered pass).
+		let live_by_service = self.list_project_containers_by_service().await?;
+
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.live_replica_names(name, service).await? {
+			let container_names = match live_by_service.get(name) {
+				Some(live) if !live.is_empty() => live.clone(),
+				_ => self.replica_names(name, service),
+			};
+			for container_name in container_names {
 				for hook in &service.pre_stop {
 					if let Err(e) = self.run_lifecycle_hook(&container_name, hook).await {
 						tracing::debug!("pre_stop hook {container_name}: {e}");
@@ -442,6 +450,38 @@ impl Engine {
 				Ok(_) => info!("removed network {network_name}"),
 				Err(e) if e.is_status(404) => {}
 				Err(e) => tracing::warn!("could not remove network {network_name}: {e}"),
+			}
+		}
+
+		// Sweep any remaining project networks by label — the implicit
+		// `<project>_default` (present only when the file was normalized), or a
+		// network whose compose key changed — mirroring the container sweep so
+		// teardown is complete regardless of how the file was parsed. Only
+		// podup-labelled networks match, so external networks are never touched.
+		let net_filters =
+			serde_json::json!({ "label": [format!("podup.project={}", self.project)] });
+		let list_path = format!(
+			"{API_PREFIX}/networks/json?filters={}",
+			crate::libpod::urlencoded(&net_filters.to_string()),
+		);
+		if let Ok(nets) = self
+			.client
+			.get_json::<Vec<serde_json::Value>>(&list_path)
+			.await
+		{
+			for net in nets {
+				let Some(net_name) = net.get("name").and_then(|n| n.as_str()) else {
+					continue;
+				};
+				let del = format!(
+					"{API_PREFIX}/networks/{}",
+					crate::libpod::urlencoded(net_name)
+				);
+				match self.client.delete_ok(&del).await {
+					Ok(_) => info!("removed network {net_name}"),
+					Err(e) if e.is_status(404) => {}
+					Err(e) => tracing::warn!("could not remove network {net_name}: {e}"),
+				}
 			}
 		}
 

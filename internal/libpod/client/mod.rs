@@ -133,6 +133,7 @@ impl Client {
 
 	/// Send a request and return the raw response.
 	async fn send(&self, req: Request<BoxBody>) -> Result<Response<Incoming>> {
+		tracing::debug!("libpod {} {}", req.method(), req.uri().path());
 		let mut sender = tokio::time::timeout(CONNECT_TIMEOUT, self.connect())
 			.await
 			.map_err(|_| PodmanError::Api {
@@ -438,6 +439,7 @@ const MIN_LIBPOD_API_MAJOR: u64 = 5;
 fn meets_minimum(version: &str) -> bool {
 	version
 		.trim()
+		.trim_start_matches('v')
 		.split('.')
 		.next()
 		.and_then(|major| major.parse::<u64>().ok())
@@ -603,6 +605,9 @@ mod tests {
 		assert!(meets_minimum("5.0.0"));
 		assert!(meets_minimum("5.4.2"));
 		assert!(meets_minimum("6.0.0"));
+		// A leading `v` (some libpod builds report `v5.0.0`) is tolerated.
+		assert!(meets_minimum("v5.0.0"));
+		assert!(!meets_minimum("v4.9.3"));
 		assert!(!meets_minimum("4.9.3"));
 		assert!(!meets_minimum("4.0.0"));
 		assert!(!meets_minimum("3.4.4"));
@@ -615,7 +620,6 @@ mod tests {
 		assert!(!meets_minimum(""));
 		assert!(!meets_minimum("   "));
 		assert!(!meets_minimum("not-a-version"));
-		assert!(!meets_minimum("v5.0.0"));
 		assert!(!meets_minimum(".5"));
 		// Leading/trailing whitespace around a valid version is tolerated.
 		assert!(meets_minimum(" 5.0.0 "));

@@ -87,8 +87,70 @@ pub fn install_binary(new_bytes: &[u8]) -> crate::Result<PathBuf> {
 		.map_err(|e| ComposeError::Update(format!("cannot locate current executable: {e}")))?;
 	// Resolve symlinks so we replace the real file, not a symlink pointing at it.
 	let target = std::fs::canonicalize(&exe).unwrap_or(exe);
+	// Keep the current binary in memory so a failed self-test can roll back. The
+	// signature already proves the new bytes are authentic; the self-test guards
+	// the install mechanics (a partial write, an arch/ABI mismatch the asset name
+	// didn't catch) by confirming the replacement actually runs.
+	let backup = std::fs::read(&target).ok();
 	install_at(&target, new_bytes)?;
+	if let Err(e) = self_test(&target) {
+		return match backup {
+			Some(old) => {
+				install_at(&target, &old)?;
+				Err(ComposeError::Update(format!(
+					"the updated binary failed its self-test ({e}); rolled back to the \
+					 previous version"
+				)))
+			}
+			None => Err(ComposeError::Update(format!(
+				"the updated binary failed its self-test ({e}) and no backup was \
+				 available to roll back"
+			))),
+		};
+	}
 	Ok(target)
+}
+
+/// Confirm a freshly-installed binary runs by invoking `--version`, bounded by a
+/// timeout so a hung binary can't wedge the updater. Output is discarded; only
+/// the exit status matters.
+fn self_test(target: &Path) -> crate::Result<()> {
+	use std::process::{Command, Stdio};
+	use std::time::{Duration, Instant};
+
+	let mut child = Command::new(target)
+		.arg("--version")
+		.stdin(Stdio::null())
+		.stdout(Stdio::null())
+		.stderr(Stdio::null())
+		.spawn()
+		.map_err(|e| ComposeError::Update(format!("could not run the updated binary: {e}")))?;
+
+	let deadline = Instant::now() + Duration::from_secs(10);
+	loop {
+		match child.try_wait() {
+			Ok(Some(status)) if status.success() => return Ok(()),
+			Ok(Some(status)) => {
+				return Err(ComposeError::Update(format!(
+					"updated binary exited with {status} on --version"
+				)))
+			}
+			Ok(None) => {
+				if Instant::now() >= deadline {
+					let _ = child.kill();
+					return Err(ComposeError::Update(
+						"updated binary did not respond to --version within 10s".to_string(),
+					));
+				}
+				std::thread::sleep(Duration::from_millis(50));
+			}
+			Err(e) => {
+				return Err(ComposeError::Update(format!(
+					"waiting on the updated binary failed: {e}"
+				)))
+			}
+		}
+	}
 }
 
 /// Write `new_bytes` to a sibling temp file and atomically move it onto
@@ -323,6 +385,26 @@ mod tests {
 		let target = missing.join("podup");
 		assert!(install_at(&target, b"data").is_err());
 		assert!(!missing.exists(), "must not create the missing parent dir");
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn self_test_passes_for_a_zero_exit_and_fails_otherwise() {
+		use std::os::unix::fs::PermissionsExt;
+		let dir = tempfile::tempdir().unwrap();
+		let mk = |name: &str, body: &str| {
+			let p = dir.path().join(name);
+			std::fs::write(&p, body).unwrap();
+			std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+			p
+		};
+		// A binary that exits 0 on --version passes; one that exits non-zero fails.
+		let ok = mk("ok", "#!/bin/sh\nexit 0\n");
+		let bad = mk("bad", "#!/bin/sh\nexit 1\n");
+		assert!(self_test(&ok).is_ok());
+		assert!(self_test(&bad).is_err());
+		// A non-executable / missing target is a spawn error, not a panic.
+		assert!(self_test(&dir.path().join("nope")).is_err());
 	}
 
 	#[test]

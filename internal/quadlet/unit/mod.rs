@@ -1,11 +1,13 @@
 //! Build the individual `.network`, `.volume` and `.container` units.
 
+mod build;
 mod container;
 mod health;
 mod network;
 mod security;
 mod volume;
 
+pub(super) use build::build_unit;
 pub(super) use container::container_unit;
 pub(super) use network::network_unit;
 pub(super) use volume::volume_unit;

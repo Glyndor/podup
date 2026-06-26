@@ -18,12 +18,6 @@ pub(super) fn ignored_service_fields(file: &ComposeFile, out: &mut Vec<String>) 
 				 rootless Podman equivalent and is ignored"
 			));
 		}
-		if def.attach.is_some() {
-			out.push(format!(
-				"service '{service}': attach is not honored; podup follows its own \
-				 attach/detach logic for `up` log streaming"
-			));
-		}
 		if def.credential_spec.is_some() {
 			out.push(format!(
 				"service '{service}': credential_spec is a Windows managed-service-account \
@@ -177,22 +171,6 @@ pub(super) fn ignored_network_fields(file: &ComposeFile, out: &mut Vec<String>) 
 					));
 				}
 			}
-		}
-	}
-}
-
-/// `network_mode: bridge` behaves differently on Docker and Podman. docker-compose
-/// attaches the container to Docker's predefined shared `bridge` network; Podman
-/// reads `--network bridge` as "create a fresh, isolated bridge netns", so the
-/// container has connectivity but cannot reach its project siblings.
-pub(super) fn diverging_network_mode(file: &ComposeFile, out: &mut Vec<String>) {
-	for (service, def) in &file.services {
-		if def.network_mode.as_deref() == Some("bridge") {
-			out.push(format!(
-				"service '{service}': network_mode 'bridge' attaches to a fresh isolated \
-				 bridge under Podman, not Docker's shared default bridge, so project \
-				 siblings are unreachable; declare a shared `networks:` entry instead"
-			));
 		}
 	}
 }

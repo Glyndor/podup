@@ -169,7 +169,8 @@ fn is_empty_json(v: &serde_json::Value) -> bool {
 	match v {
 		serde_json::Value::Null => true,
 		serde_json::Value::Object(m) => m.is_empty(),
-		serde_json::Value::Array(a) => a.is_empty(),
+		// An empty array is kept: an explicit `command: []`/`entrypoint: []`
+		// overrides the image's value, so dropping it would change meaning.
 		_ => false,
 	}
 }
@@ -203,7 +204,8 @@ fn is_empty_yaml(v: &serde_yaml::Value) -> bool {
 	match v {
 		serde_yaml::Value::Null => true,
 		serde_yaml::Value::Mapping(m) => m.is_empty(),
-		serde_yaml::Value::Sequence(s) => s.is_empty(),
+		// Keep empty sequences: an explicit `command: []`/`entrypoint: []`
+		// overrides the image's value, so dropping it would change meaning.
 		_ => false,
 	}
 }
@@ -261,14 +263,14 @@ mod tests {
 		let mut v = serde_json::json!({
 			"image": "nginx",
 			"environment": null,
-			"ports": [],
+			"command": [],
 			"labels": {},
 			"deploy": { "replicas": null }
 		});
 		prune_json_nulls(&mut v);
-		// Only the real value survives; null/empty fields and the section that
-		// became empty after its own nulls were dropped are gone.
-		assert_eq!(v, serde_json::json!({ "image": "nginx" }));
+		// null fields and the section emptied by its own nulls are gone, but an
+		// explicit empty array (`command: []`) survives — it overrides the image.
+		assert_eq!(v, serde_json::json!({ "image": "nginx", "command": [] }));
 	}
 
 	#[test]
