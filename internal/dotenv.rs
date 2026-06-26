@@ -25,9 +25,14 @@ pub fn parse(content: &str) -> Vec<(String, String)> {
 			.unwrap_or(line);
 
 		let Some(eq) = line.find('=') else {
+			// A bare key (no `=`) means "pass the value through from the host
+			// environment" (compose env_file semantics). If the host doesn't
+			// define it, the variable is omitted, not set to an empty string.
 			let key = line.trim();
 			if !key.is_empty() {
-				out.push((key.to_string(), String::new()));
+				if let Ok(val) = std::env::var(key) {
+					out.push((key.to_string(), val));
+				}
 			}
 			continue;
 		};
@@ -205,10 +210,15 @@ mod tests {
 	}
 
 	#[test]
-	fn export_prefix_bare_key_yields_empty_value() {
-		// `export NAME` with no `=` records the key with an empty value.
-		let m = map("export FOO\n");
-		assert_eq!(m.get("FOO").map(String::as_str), Some(""));
+	fn export_prefix_bare_key_passes_through_host() {
+		// `export NAME` with no `=` passes NAME through from the host environment.
+		std::env::set_var("PODUP_DOTENV_EXPORT_BARE", "fromhost");
+		let m = map("export PODUP_DOTENV_EXPORT_BARE\n");
+		assert_eq!(
+			m.get("PODUP_DOTENV_EXPORT_BARE").map(String::as_str),
+			Some("fromhost")
+		);
+		std::env::remove_var("PODUP_DOTENV_EXPORT_BARE");
 	}
 
 	#[test]
@@ -226,8 +236,17 @@ mod tests {
 	}
 
 	#[test]
-	fn bare_key_has_empty_value() {
-		assert_eq!(map("BARE\n")["BARE"], "");
+	fn bare_key_passes_through_or_is_omitted() {
+		// Present in the host → passed through; absent → omitted (not empty string).
+		std::env::set_var("PODUP_DOTENV_BARE_PRESENT", "v");
+		std::env::remove_var("PODUP_DOTENV_BARE_ABSENT");
+		let m = map("PODUP_DOTENV_BARE_PRESENT\nPODUP_DOTENV_BARE_ABSENT\n");
+		assert_eq!(
+			m.get("PODUP_DOTENV_BARE_PRESENT").map(String::as_str),
+			Some("v")
+		);
+		assert!(!m.contains_key("PODUP_DOTENV_BARE_ABSENT"));
+		std::env::remove_var("PODUP_DOTENV_BARE_PRESENT");
 	}
 
 	#[test]
