@@ -133,6 +133,7 @@ impl Client {
 
 	/// Send a request and return the raw response.
 	async fn send(&self, req: Request<BoxBody>) -> Result<Response<Incoming>> {
+		tracing::debug!("libpod {} {}", req.method(), req.uri().path());
 		let mut sender = tokio::time::timeout(CONNECT_TIMEOUT, self.connect())
 			.await
 			.map_err(|_| PodmanError::Api {
