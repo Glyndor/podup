@@ -1,6 +1,6 @@
 [package]
 name = "podup"
-version = "1.5.0"
+version = "1.5.1"
 edition = "2021"
 rust-version = "1.85"
 description = "Translate and run docker-compose files on rootless Podman"
@@ -45,6 +45,7 @@ notify = { version = "8", optional = true }
 ureq = { version = "3", default-features = false, features = ["rustls"], optional = true }
 ed25519-dalek = { version = "2", default-features = false, features = ["std"], optional = true }
 sha2 = "0.10"
+base64 = "0.22"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

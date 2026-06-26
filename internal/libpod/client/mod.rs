@@ -412,6 +412,48 @@ impl Client {
 		Self::check_status(status, &body)
 	}
 
+	/// `HEAD` a container-archive path, returning `Some(is_dir)` when it exists or
+	/// `None` on 404. Reads the `X-Docker-Container-Path-Stat` header (base64 JSON
+	/// carrying a Go file `mode`); the directory bit is `os.ModeDir` (`1 << 31`).
+	/// Lets `cp` tell an existing destination directory (copy into it) from a
+	/// target name (rename on copy), matching `docker cp`.
+	pub async fn head_path_is_dir(&self, path: &str) -> Result<Option<bool>> {
+		use base64::Engine as _;
+
+		let req = Self::build_request(Method::HEAD, path, Full::new(Bytes::new()), None)?;
+		let resp = self.send(req).await?;
+		let status = resp.status();
+		if status == StatusCode::NOT_FOUND {
+			return Ok(None);
+		}
+		let stat = resp
+			.headers()
+			.get("X-Docker-Container-Path-Stat")
+			.and_then(|v| v.to_str().ok())
+			.map(str::to_string);
+		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
+		if status == StatusCode::NOT_FOUND {
+			return Ok(None);
+		}
+		Self::check_status(status, &body)?;
+		let Some(stat) = stat else {
+			return Ok(Some(false));
+		};
+		let json = base64::engine::general_purpose::STANDARD
+			.decode(stat.as_bytes())
+			.map_err(|e| PodmanError::Api {
+				status: 0,
+				message: format!("malformed container path stat: {e}"),
+			})?;
+		#[derive(serde::Deserialize)]
+		struct Stat {
+			mode: u64,
+		}
+		let parsed: Stat = serde_json::from_slice(&json).map_err(PodmanError::Json)?;
+		// Go's os.ModeDir is the high bit of the 32-bit FileMode.
+		Ok(Some(parsed.mode & (1 << 31) != 0))
+	}
+
 	/// `DELETE` → ignore response body (expect 2xx or 404).
 	pub async fn delete_ok(&self, path: &str) -> Result<()> {
 		let req = Self::build_request(Method::DELETE, path, Full::new(Bytes::new()), None)?;
