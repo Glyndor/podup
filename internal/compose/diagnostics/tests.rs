@@ -347,16 +347,6 @@ fn warns_on_use_api_socket_not_honored() {
 }
 
 #[test]
-fn warns_on_network_mode_bridge_divergence() {
-	let msgs = diagnostics_for("services:\n  web:\n    image: nginx\n    network_mode: bridge\n");
-	assert!(
-		msgs.iter()
-			.any(|m| m.contains("network_mode 'bridge'") && m.contains("siblings")),
-		"got: {msgs:?}"
-	);
-}
-
-#[test]
 fn warns_on_ipam_aux_addresses() {
 	let msgs = diagnostics_for(
 			"services:\n  web:\n    image: nginx\nnetworks:\n  net:\n    ipam:\n      config:\n        - subnet: 10.0.0.0/24\n          aux_addresses:\n            host1: 10.0.0.5\n",

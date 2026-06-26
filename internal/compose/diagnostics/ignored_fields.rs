@@ -175,22 +175,6 @@ pub(super) fn ignored_network_fields(file: &ComposeFile, out: &mut Vec<String>) 
 	}
 }
 
-/// `network_mode: bridge` behaves differently on Docker and Podman. docker-compose
-/// attaches the container to Docker's predefined shared `bridge` network; Podman
-/// reads `--network bridge` as "create a fresh, isolated bridge netns", so the
-/// container has connectivity but cannot reach its project siblings.
-pub(super) fn diverging_network_mode(file: &ComposeFile, out: &mut Vec<String>) {
-	for (service, def) in &file.services {
-		if def.network_mode.as_deref() == Some("bridge") {
-			out.push(format!(
-				"service '{service}': network_mode 'bridge' attaches to a fresh isolated \
-				 bridge under Podman, not Docker's shared default bridge, so project \
-				 siblings are unreachable; declare a shared `networks:` entry instead"
-			));
-		}
-	}
-}
-
 /// `deploy.restart_policy` sub-fields with no Podman restart-policy equivalent.
 /// Only `condition` and `max_attempts` are honored (see container_config); Podman
 /// has no first-class restart delay or attempt-counting window.
