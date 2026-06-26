@@ -103,14 +103,26 @@ pub(super) fn parse_braced_var(
 	}
 }
 
-/// Collect everything until `}` (exclusive), consuming the `}`.
+/// Collect the modifier value up to the matching closing `}` (consumed),
+/// balancing nested braces so an inner `${…}` is captured whole. For
+/// `${FOO:-${BAR}}` the default is `${BAR}` (not `${BAR`), enabling nested
+/// interpolation in [`resolve_modifier`].
 fn collect_until_close(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
 	let mut buf = String::new();
+	let mut depth = 0u32;
 	for c in chars.by_ref() {
-		if c == '}' {
-			break;
+		match c {
+			'{' => {
+				depth += 1;
+				buf.push(c);
+			}
+			'}' if depth == 0 => break,
+			'}' => {
+				depth -= 1;
+				buf.push(c);
+			}
+			_ => buf.push(c),
 		}
-		buf.push(c);
 	}
 	buf
 }
@@ -130,23 +142,25 @@ pub(super) fn resolve_modifier(
 	match modifier {
 		Modifier::None => Ok(value.cloned().unwrap_or_default()),
 
+		// Default/alt values are themselves interpolated (compose allows nesting,
+		// e.g. `${FOO:-${BAR}}`), but only when actually used.
 		Modifier::DefaultIfUnsetOrEmpty(default) => match value {
 			Some(v) if !v.is_empty() => Ok(v.clone()),
-			_ => Ok(default),
+			_ => super::substitute(&default, vars),
 		},
 
 		Modifier::DefaultIfUnset(default) => match value {
 			Some(v) => Ok(v.clone()),
-			None => Ok(default),
+			None => super::substitute(&default, vars),
 		},
 
 		Modifier::AltIfSetAndNonEmpty(alt) => match value {
-			Some(v) if !v.is_empty() => Ok(alt),
+			Some(v) if !v.is_empty() => super::substitute(&alt, vars),
 			_ => Ok(String::new()),
 		},
 
 		Modifier::AltIfSet(alt) => match value {
-			Some(_) => Ok(alt),
+			Some(_) => super::substitute(&alt, vars),
 			None => Ok(String::new()),
 		},
 

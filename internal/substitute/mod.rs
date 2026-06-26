@@ -298,6 +298,44 @@ mod tests {
 		);
 	}
 
+	// Nested interpolation inside modifier values (compose-spec allows nesting).
+
+	#[test]
+	fn nested_default_is_interpolated() {
+		// ${FOO:-${BAR}} → BAR's value when FOO is unset.
+		assert_eq!(
+			substitute("${FOO:-${BAR}}", &vars(&[("BAR", "b")])).unwrap(),
+			"b"
+		);
+	}
+
+	#[test]
+	fn nested_chained_default_falls_through() {
+		// ${FOO:-${BAR:-baz}} → literal baz when both FOO and BAR are unset.
+		assert_eq!(
+			substitute("${FOO:-${BAR:-baz}}", &vars(&[])).unwrap(),
+			"baz"
+		);
+	}
+
+	#[test]
+	fn nested_alt_is_interpolated() {
+		// ${FOO:+${BAR}} → BAR's value when FOO is set and non-empty.
+		assert_eq!(
+			substitute("${FOO:+${BAR}}", &vars(&[("FOO", "x"), ("BAR", "b")])).unwrap(),
+			"b"
+		);
+	}
+
+	#[test]
+	fn nested_default_with_trailing_text() {
+		// The balanced-brace scan stops at the matching close, leaving following text.
+		assert_eq!(
+			substitute("${FOO:-${BAR}}/tail", &vars(&[("BAR", "b")])).unwrap(),
+			"b/tail"
+		);
+	}
+
 	// Multiple substitutions in one string
 
 	#[test]
