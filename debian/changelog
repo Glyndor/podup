@@ -1,3 +1,32 @@
+podup (1.5.0) unstable; urgency=medium
+
+  * compose: pass an `env_file` bare key through from the host environment
+    (was an empty string), expand nested `${VAR:-${INNER}}` interpolation
+    defaults, keep an explicit `command: []`/`entrypoint: []` in `config`
+    output, and stop falsely warning that `attach` is ignored.
+  * engine: `rm` now propagates a real removal failure as a non-zero exit
+    instead of swallowing it; `down` prefetches the project's containers once
+    and sweeps orphaned secrets and the implicit `<project>_default` network by
+    label; `watch` rebuilds/restarts each container once per debounce batch; and
+    `up --wait` polls services concurrently.
+  * cli: `--socket` is a global flag (parses after the subcommand); `top
+    --format` parses after the service args; `run`/`exec` `-i/-T` help no longer
+    implies an interactive TTY podup does not provide.
+  * secrets: refuse to overwrite a same-named secret podup did not create.
+  * libpod: accept a `v`-prefixed API-version header, and emit a request-level
+    trace at `RUST_LOG=debug`.
+  * migration: warn at container-create when `network_mode: bridge` diverges
+    from Docker, and on an unrecognized `deploy.restart_policy.condition`.
+  * update: self-test the freshly installed binary and roll back on failure, and
+    download over HTTPS only (no redirect downgrade). Release signatures are now
+    verified with `verify_strict`.
+  * quadlet: emit a `.build` unit for a service with a `build:` block and point
+    the container at it, instead of only warning.
+  * docs/packaging: correct the man page EXIT STATUS, improve crates.io
+    metadata, and exclude `install.ps1` from the published crate.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 26 Jun 2026 01:26:30 -0500
+
 podup (1.4.0) unstable; urgency=medium
 
   * engine: render the `ps` STATUS from the libpod `State` (was blank on Podman
