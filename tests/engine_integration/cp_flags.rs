@@ -82,3 +82,46 @@ async fn engine_cp_follow_link_uploads_target_contents() {
 		"-L must upload the symlink target's contents"
 	);
 }
+
+#[cfg(all(unix, feature = "test-helpers"))]
+#[tokio::test]
+async fn engine_cp_to_container_renames_a_single_file() {
+	// `cp host-file svc:/tmp/newname.txt` must create a FILE named newname.txt,
+	// not a directory holding the source — matching `docker cp` rename-on-copy.
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let dir = tempfile::tempdir().unwrap();
+	let src = dir.path().join("src.txt");
+	fs::write(&src, b"renamed-content").unwrap();
+
+	let proj = proj("cpren");
+	let engine = Engine::new(client, proj.clone());
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+	engine.up(&file).await.unwrap();
+
+	let result = engine
+		.cp(&file, src.to_str().unwrap(), "web:/tmp/renamed.txt")
+		.await;
+	// `test -f` succeeds only for a regular file; a directory (the old bug) fails it.
+	let out = engine
+		.test_exec_capture(
+			&format!("{proj}-web"),
+			vec![
+				"sh".into(),
+				"-c".into(),
+				"test -f /tmp/renamed.txt && cat /tmp/renamed.txt".into(),
+			],
+		)
+		.await;
+	engine.down(&file).await.unwrap();
+	result.unwrap();
+	assert!(
+		out.unwrap_or_default().contains("renamed-content"),
+		"cp to a new name must create a file with the source's content, not a directory"
+	);
+}
