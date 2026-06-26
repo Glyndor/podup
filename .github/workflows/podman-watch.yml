@@ -1,0 +1,59 @@
+name: podman-version-watch
+# Notifies (opens an issue) when Podman ships a release newer than the version
+# podup was last validated against AND at least one distro has packaged it — the
+# signal to run the validation lane. The last-validated version lives in
+# .github/podman-baseline; bump it after a successful validation.
+on:
+  schedule:
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  issues: write
+jobs:
+  watch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Detect newer packaged Podman
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BASELINE=$(tr -d '[:space:]' < .github/podman-baseline)
+          LATEST=$(gh api repos/containers/podman/releases/latest --jq '.tag_name' | sed 's/^v//')
+          echo "baseline=$BASELINE  latest=$LATEST"
+          # Nothing to do unless LATEST is strictly newer than BASELINE.
+          if [ "$LATEST" = "$BASELINE" ] || \
+             [ "$(printf '%s\n%s\n' "$BASELINE" "$LATEST" | sort -V | tail -1)" != "$LATEST" ]; then
+            echo "No newer Podman than the validated baseline ($BASELINE)."; exit 0
+          fi
+          # Which distros already package LATEST? (testable => packaged somewhere)
+          DISTROS=$(curl -fsSL -H 'User-Agent: podup-podman-watch' \
+            "https://repology.org/api/v1/project/podman" \
+            | python3 -c "import sys,json;d=json.load(sys.stdin);print(', '.join(sorted({p['repo'] for p in d if p.get('version')=='$LATEST'})))")
+          if [ -z "$DISTROS" ]; then
+            echo "Podman $LATEST is released but not packaged in any distro yet — keep watching."; exit 0
+          fi
+          echo "Podman $LATEST is packaged in: $DISTROS"
+          # Major bump => full sweep; otherwise a lighter re-check.
+          MAJ_NEW=${LATEST%%.*}; MAJ_OLD=${BASELINE%%.*}
+          KIND="patch/minor re-check"; [ "$MAJ_NEW" != "$MAJ_OLD" ] && KIND="MAJOR — full command-by-command sweep + wire-field re-probe"
+          TITLE="Validate podup on Podman $LATEST (now packaged)"
+          # Idempotent: skip if an issue for this version is already open.
+          if gh issue list --state open --search "in:title $TITLE" --json title --jq '.[].title' | grep -qxF "$TITLE"; then
+            echo "Issue already open — nothing to do."; exit 0
+          fi
+          gh issue create --title "$TITLE" --body "Podman **$LATEST** is released and now packaged in: **$DISTROS** (baseline validated: $BASELINE).
+
+          This is **$KIND**.
+
+          Validation steps:
+          - [ ] Run the nested-virt Podman-$LATEST lane (Fedora rawhide / a distro that ships it) — command-by-command + the integration suite
+          - [ ] If a new MAJOR: re-probe wire fields (healthcheck / secrets / quadlet) and check the upstream breaking-changes notes
+          - [ ] File issues for any regressions
+          - [ ] If green: bump \`.github/podman-baseline\` to **$LATEST** and refresh the README badge + ai-context
+          - [ ] Close this issue
+
+          _Auto-filed by \`podman-version-watch\`. To stop nagging for this version without validating, bump the baseline._"
+          echo "Opened validation issue for Podman $LATEST."
