@@ -175,6 +175,18 @@ pub(super) fn resolve_network_mode(
 				.unwrap_or_else(|| svc_name.to_string());
 			Namespace::container(cname)
 		} else {
+			if mode == "bridge" {
+				// docker-compose attaches to Docker's shared default `bridge`;
+				// Podman reads `--network bridge` as a fresh isolated bridge netns,
+				// so project siblings are unreachable. Warn here (at container
+				// create) so every path — CLI, library, embedded — surfaces it, not
+				// only the parse-time diagnostics.
+				tracing::warn!(
+					"service '{service_name}': network_mode 'bridge' attaches to a fresh \
+					 isolated bridge under Podman, not Docker's shared default bridge, so \
+					 project siblings are unreachable; declare a shared `networks:` entry instead"
+				);
+			}
 			Namespace::new(mode)
 		};
 		return (Some(ns), HashMap::new());
