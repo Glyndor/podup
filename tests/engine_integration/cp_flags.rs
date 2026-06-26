@@ -83,6 +83,7 @@ async fn engine_cp_follow_link_uploads_target_contents() {
 	);
 }
 
+#[cfg(all(unix, feature = "test-helpers"))]
 #[tokio::test]
 async fn engine_cp_to_container_renames_a_single_file() {
 	// `cp host-file svc:/tmp/newname.txt` must create a FILE named newname.txt,
