@@ -211,6 +211,7 @@ mod tests {
 				propagation: Some("rshared".into()),
 				create_host_path: None,
 				selinux: None,
+				..Default::default()
 			}),
 			volume: None,
 			tmpfs: None,
@@ -316,6 +317,7 @@ mod tests {
 			tmpfs: Some(TmpfsOptions {
 				size: Some(65536),
 				mode: Some(0o700),
+				..Default::default()
 			}),
 			consistency: None,
 		}]);
@@ -349,6 +351,7 @@ mod tests {
 				propagation: None,
 				create_host_path: Some(true),
 				selinux: None,
+				..Default::default()
 			}),
 			volume: None,
 			tmpfs: None,

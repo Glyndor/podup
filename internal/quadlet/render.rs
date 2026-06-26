@@ -450,6 +450,7 @@ mod tests {
 			tmpfs: Some(TmpfsOptions {
 				size: Some(4096),
 				mode: Some(0o700),
+				..Default::default()
 			}),
 			consistency: None,
 		};
