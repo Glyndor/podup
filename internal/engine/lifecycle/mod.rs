@@ -453,6 +453,38 @@ impl Engine {
 			}
 		}
 
+		// Sweep any remaining project networks by label — the implicit
+		// `<project>_default` (present only when the file was normalized), or a
+		// network whose compose key changed — mirroring the container sweep so
+		// teardown is complete regardless of how the file was parsed. Only
+		// podup-labelled networks match, so external networks are never touched.
+		let net_filters =
+			serde_json::json!({ "label": [format!("podup.project={}", self.project)] });
+		let list_path = format!(
+			"{API_PREFIX}/networks/json?filters={}",
+			crate::libpod::urlencoded(&net_filters.to_string()),
+		);
+		if let Ok(nets) = self
+			.client
+			.get_json::<Vec<serde_json::Value>>(&list_path)
+			.await
+		{
+			for net in nets {
+				let Some(net_name) = net.get("name").and_then(|n| n.as_str()) else {
+					continue;
+				};
+				let del = format!(
+					"{API_PREFIX}/networks/{}",
+					crate::libpod::urlencoded(net_name)
+				);
+				match self.client.delete_ok(&del).await {
+					Ok(_) => info!("removed network {net_name}"),
+					Err(e) if e.is_status(404) => {}
+					Err(e) => tracing::warn!("could not remove network {net_name}: {e}"),
+				}
+			}
+		}
+
 		if remove_volumes {
 			for (key, config) in &file.volumes {
 				let external = config.as_ref().and_then(|c| c.external).unwrap_or(false);
