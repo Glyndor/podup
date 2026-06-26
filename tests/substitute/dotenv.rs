@@ -9,12 +9,14 @@ fn basic_key_value() {
 	writeln!(f).unwrap();
 	writeln!(f, "KEY=value").unwrap();
 	writeln!(f, "EMPTY=").unwrap();
-	writeln!(f, "NOVALUE").unwrap();
+	// A bare key takes its value from the host env; unset there, it is omitted.
+	writeln!(f, "PODUP_SUBST_DOTENV_NOVALUE").unwrap();
+	std::env::remove_var("PODUP_SUBST_DOTENV_NOVALUE");
 
 	let map = load_dotenv(dir.path());
 	assert_eq!(map.get("KEY").map(|s| s.as_str()), Some("value"));
 	assert_eq!(map.get("EMPTY").map(|s| s.as_str()), Some(""));
-	assert_eq!(map.get("NOVALUE").map(|s| s.as_str()), Some(""));
+	assert!(!map.contains_key("PODUP_SUBST_DOTENV_NOVALUE"));
 	assert!(!map.contains_key("# comment"));
 }
 

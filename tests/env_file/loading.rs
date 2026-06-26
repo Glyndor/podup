@@ -10,12 +10,14 @@ fn basic_key_value() {
 	writeln!(f).unwrap();
 	writeln!(f, "DB_HOST=localhost").unwrap();
 	writeln!(f, "PORT=5432").unwrap();
-	writeln!(f, "NOVALUE").unwrap();
+	// A bare key takes its value from the host env; unset there, it is omitted.
+	writeln!(f, "PODUP_ENVFILE_LOADING_NOVALUE").unwrap();
+	std::env::remove_var("PODUP_ENVFILE_LOADING_NOVALUE");
 
 	let map = load_env_files(&["app.env".to_string()], dir.path()).unwrap();
 	assert_eq!(map["DB_HOST"], "localhost");
 	assert_eq!(map["PORT"], "5432");
-	assert_eq!(map["NOVALUE"], "");
+	assert!(!map.contains_key("PODUP_ENVFILE_LOADING_NOVALUE"));
 }
 
 #[test]
