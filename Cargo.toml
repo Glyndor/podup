@@ -11,7 +11,7 @@ documentation = "https://docs.rs/podup"
 readme = "README.md"
 keywords = ["podman", "compose", "quadlet", "docker-compose", "rootless"]
 categories = ["command-line-utilities", "virtualization", "development-tools"]
-exclude = ["/.github", "/debian", "/deny.toml", "/docs", "/install.sh", "/tests"]
+exclude = ["/.github", "/debian", "/deny.toml", "/docs", "/install.ps1", "/install.sh", "/tests"]
 
 [[bin]]
 name = "podup"
