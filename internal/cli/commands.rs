@@ -299,8 +299,10 @@ pub(crate) enum Commands {
 		/// Output format.
 		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
 		format: OutputFormat,
-		/// Show only these services.
-		#[arg(trailing_var_arg = true)]
+		/// Show only these services. Unlike the other service-list commands, `top`
+		/// takes a plain positional (not `trailing_var_arg`) so `--format` parses
+		/// in any position (`top web --format json` as well as `top --format json
+		/// web`); service names are never hyphen-prefixed, so nothing is lost.
 		services: Vec<String>,
 	},
 	/// Stream Podman events for this project's containers.
