@@ -407,3 +407,24 @@ fn warns_on_typo_inside_provider_and_models() {
 		"got: {msgs:?}"
 	);
 }
+
+#[test]
+fn warns_on_unknown_nested_volume_network_resource_keys() {
+	// Unknown keys inside long-form volume option blocks, per-network attachment
+	// config, and deploy.resources are surfaced (forward-compat), not dropped.
+	let msgs = diagnostics_for(
+		"services:\n  web:\n    image: nginx\n    networks:\n      net1:\n        bogus_net: 1\n    volumes:\n      - type: bind\n        source: ./x\n        target: /x\n        bind:\n          bogus_bind: 2\n    deploy:\n      resources:\n        limits:\n          bogus_limit: 3\nnetworks:\n  net1:\n",
+	);
+	assert!(
+		msgs.iter().any(|m| m.contains("bogus_net")),
+		"got: {msgs:?}"
+	);
+	assert!(
+		msgs.iter().any(|m| m.contains("bogus_bind")),
+		"got: {msgs:?}"
+	);
+	assert!(
+		msgs.iter().any(|m| m.contains("bogus_limit")),
+		"got: {msgs:?}"
+	);
+}

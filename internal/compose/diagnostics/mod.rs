@@ -92,6 +92,78 @@ fn nested_unknown_keys(file: &ComposeFile, out: &mut Vec<String>) {
 				out,
 			);
 		}
+		// Per-attachment network options.
+		for net in def.networks.names() {
+			if let Some(cfg) = def.networks.config_for(&net) {
+				push_unknown(
+					&format!("service '{service}' networks.{net}"),
+					&cfg.unknown,
+					out,
+				);
+			}
+		}
+		// Long-form volume mount option blocks.
+		for mount in &def.volumes {
+			if let crate::compose::types::VolumeMount::Long {
+				bind,
+				volume,
+				tmpfs,
+				..
+			} = mount
+			{
+				let target = mount.target();
+				if let Some(b) = bind {
+					push_unknown(
+						&format!("service '{service}' volume '{target}' bind"),
+						&b.unknown,
+						out,
+					);
+				}
+				if let Some(v) = volume {
+					push_unknown(
+						&format!("service '{service}' volume '{target}' volume"),
+						&v.unknown,
+						out,
+					);
+					if let Some(dc) = &v.driver_config {
+						push_unknown(
+							&format!("service '{service}' volume '{target}' driver_config"),
+							&dc.unknown,
+							out,
+						);
+					}
+				}
+				if let Some(t) = tmpfs {
+					push_unknown(
+						&format!("service '{service}' volume '{target}' tmpfs"),
+						&t.unknown,
+						out,
+					);
+				}
+			}
+		}
+		// deploy.resources.limits / reservations and their device reservations.
+		if let Some(resources) = def.deploy.as_ref().and_then(|d| d.resources.as_ref()) {
+			for (label, spec) in [
+				("limits", &resources.limits),
+				("reservations", &resources.reservations),
+			] {
+				if let Some(spec) = spec {
+					push_unknown(
+						&format!("service '{service}' deploy.resources.{label}"),
+						&spec.unknown,
+						out,
+					);
+					for (i, dev) in spec.devices.iter().enumerate() {
+						push_unknown(
+							&format!("service '{service}' deploy.resources.{label}.devices[{i}]"),
+							&dev.unknown,
+							out,
+						);
+					}
+				}
+			}
+		}
 	}
 	for (name, model) in &file.models {
 		push_unknown(&format!("model '{name}'"), &model.unknown, out);

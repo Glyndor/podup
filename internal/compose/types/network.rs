@@ -72,6 +72,10 @@ pub struct ServiceNetworkConfig {
 	/// Name of the interface created inside the container.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub interface_name: Option<String>,
+	/// Unknown keys preserved verbatim for round-tripping and forward-compat
+	/// diagnostics.
+	#[serde(flatten, default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+	pub unknown: indexmap::IndexMap<String, serde_yaml::Value>,
 }
 
 /// Named network definition in the top-level `networks:` block.

@@ -38,6 +38,14 @@ pub struct BindOptions {
 	/// SELinux relabeling option (`z` shared or `Z` private).
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub selinux: Option<String>,
+	/// Recursive bind-mount mode (compose `bind.recursive`:
+	/// `enabled`/`disabled`/`writable`/`readonly`). Parsed for fidelity.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub recursive: Option<String>,
+	/// Unknown keys preserved verbatim for round-tripping and forward-compat
+	/// diagnostics, so a future `bind.*` option is surfaced, not silently dropped.
+	#[serde(flatten, default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+	pub unknown: indexmap::IndexMap<String, serde_yaml::Value>,
 }
 
 /// Sub-options for a `volume`-type mount — nocopy flag and optional driver config.
@@ -55,6 +63,10 @@ pub struct VolumeOptions {
 	/// Path within the volume to mount instead of its root.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub subpath: Option<String>,
+	/// Unknown keys preserved verbatim for round-tripping and forward-compat
+	/// diagnostics.
+	#[serde(flatten, default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+	pub unknown: indexmap::IndexMap<String, serde_yaml::Value>,
 }
 
 /// Driver name and key-value options nested under `VolumeOptions`.
@@ -66,6 +78,10 @@ pub struct DriverConfig {
 	/// Driver-specific options.
 	#[serde(default, skip_serializing_if = "HashMap::is_empty")]
 	pub options: HashMap<String, String>,
+	/// Unknown keys preserved verbatim for round-tripping and forward-compat
+	/// diagnostics.
+	#[serde(flatten, default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+	pub unknown: indexmap::IndexMap<String, serde_yaml::Value>,
 }
 
 /// Sub-options for a `tmpfs`-type mount — size and mode.
@@ -77,6 +93,10 @@ pub struct TmpfsOptions {
 	/// File mode of the tmpfs mount.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub mode: Option<u32>,
+	/// Unknown keys preserved verbatim for round-tripping and forward-compat
+	/// diagnostics.
+	#[serde(flatten, default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+	pub unknown: indexmap::IndexMap<String, serde_yaml::Value>,
 }
 
 /// A volume mount entry — either a short-form string or a long-form typed block.

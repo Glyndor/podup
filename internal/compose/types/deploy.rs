@@ -78,6 +78,10 @@ pub struct ResourceSpec {
 	/// Device reservations such as GPUs.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub devices: Vec<DeviceReservation>,
+	/// Unknown keys preserved verbatim for round-tripping and forward-compat
+	/// diagnostics.
+	#[serde(flatten, default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+	pub unknown: indexmap::IndexMap<String, serde_yaml::Value>,
 }
 
 // ---------------------------------------------------------------------------
@@ -102,6 +106,10 @@ pub struct DeviceReservation {
 	/// Driver-specific options.
 	#[serde(default, skip_serializing_if = "HashMap::is_empty")]
 	pub options: HashMap<String, String>,
+	/// Unknown keys preserved verbatim for round-tripping and forward-compat
+	/// diagnostics.
+	#[serde(flatten, default, skip_serializing_if = "indexmap::IndexMap::is_empty")]
+	pub unknown: indexmap::IndexMap<String, serde_yaml::Value>,
 }
 
 /// `count: all` or `count: N`.
