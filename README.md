@@ -7,7 +7,7 @@
 ![peak memory ~7 MiB](https://img.shields.io/badge/peak_memory-~7_MiB-3fb950)
 ![daemon none](https://img.shields.io/badge/daemon-none-3fb950)
 ![rootless](https://img.shields.io/badge/rootless-native-3fb950)
-![Podman 5+](https://img.shields.io/badge/Podman-5%2B-892ca0)
+![Podman 5.x, 6 next](https://img.shields.io/badge/Podman-5.x_·_6_next-892ca0)
 
 [![CI](https://github.com/Glyndor/podup/actions/workflows/ci.yml/badge.svg)](https://github.com/Glyndor/podup/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/podup.svg)](https://crates.io/crates/podup)
@@ -33,18 +33,20 @@ curl -fsSL https://glyndor.net/podup/install/unix | bash      # Linux / macOS
 irm https://glyndor.net/podup/install/windows | iex           # Windows
 ```
 
-Signed, SHA-256 verified, fail-closed. Requires **Podman ≥ 5.0** (rootless) — check with `podman --version`.
+Signed, SHA-256 verified, fail-closed. Requires **Podman ≥ 5.0** (rootless) — check with `podman --version`. podup tracks the latest stable Podman: validated on **5.x** today, with **Podman 6 support landing next**.
 
 <details>
-<summary><b>Podman 5 · apt · build from source · self-update · platforms</b></summary>
+<summary><b>Podman version · apt · build from source · self-update · platforms</b></summary>
 
-### Podman 5
+### Podman version
 
-podup talks to Podman's native libpod 5 API, so it needs **Podman ≥ 5.0**. Many
-distributions still ship 4.x — check `podman --version` and upgrade if needed.
-Fedora, Debian trixie/sid and recent Ubuntu releases carry 5.x; on an older
-release, install or upgrade Podman following the official guide:
-<https://podman.io/docs/installation>.
+podup tracks the **latest stable Podman** and supports the **last two majors**.
+It talks to Podman's native libpod API (still versioned 5.x — 5.2.0 on Podman 6),
+so it needs **Podman ≥ 5.0**. Today podup is validated on **Podman 5.x**;
+**Podman 6 support is landing next**. Many distributions still ship 4.x — check
+`podman --version` and upgrade if needed. Fedora, Debian trixie/sid and recent
+Ubuntu releases carry 5.x; on an older release, install or upgrade Podman
+following the official guide: <https://podman.io/docs/installation>.
 
 ### Debian / Ubuntu (apt)
 
