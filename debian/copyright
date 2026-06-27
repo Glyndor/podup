@@ -1,6 +1,6 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: podup
-Upstream-Contact: Glyndor <75870284+Jaro-c@users.noreply.github.com>
+Upstream-Contact: Glyndor <packages@glyndor.net>
 Source: https://github.com/Glyndor/podup
 
 Files: *

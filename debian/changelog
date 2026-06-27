@@ -6,7 +6,7 @@ podup (1.5.2) unstable; urgency=medium
     5.x and 6.x (floor >= 5.0). CI validates the engine against both Podman 5 and
     6 on every engine change.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 27 Jun 2026 12:37:18 -0500
+ -- Glyndor <packages@glyndor.net>  Sat, 27 Jun 2026 12:37:18 -0500
 
 podup (1.5.1) unstable; urgency=medium
 
@@ -16,7 +16,7 @@ podup (1.5.1) unstable; urgency=medium
     name (rename on copy), matching `docker cp`. A single-character service name
     (`c:/path`) is also no longer mistaken for a Windows drive letter on Unix.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 26 Jun 2026 10:31:01 -0500
+ -- Glyndor <packages@glyndor.net>  Fri, 26 Jun 2026 10:31:01 -0500
 
 podup (1.5.0) unstable; urgency=medium
 
@@ -45,7 +45,7 @@ podup (1.5.0) unstable; urgency=medium
   * docs/packaging: correct the man page EXIT STATUS, improve crates.io
     metadata, and exclude `install.ps1` from the published crate.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 26 Jun 2026 01:26:30 -0500
+ -- Glyndor <packages@glyndor.net>  Fri, 26 Jun 2026 01:26:30 -0500
 
 podup (1.4.0) unstable; urgency=medium
 
@@ -63,7 +63,7 @@ podup (1.4.0) unstable; urgency=medium
     failure is no longer swallowed into a warning).
   * quadlet: default `ContainerName` to `<project>-<service>`, matching `up`.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 25 Jun 2026 17:31:11 -0500
+ -- Glyndor <packages@glyndor.net>  Thu, 25 Jun 2026 17:31:11 -0500
 
 podup (1.3.0) unstable; urgency=medium
 
@@ -84,7 +84,7 @@ podup (1.3.0) unstable; urgency=medium
   * docs: document the Podman >= 5.0 requirement and publish a fair, reproducible
     benchmark against podman-compose (wall-clock, memory and CPU).
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 23 Jun 2026 12:00:00 -0500
+ -- Glyndor <packages@glyndor.net>  Tue, 23 Jun 2026 12:00:00 -0500
 
 podup (1.2.0) unstable; urgency=medium
 
@@ -106,7 +106,7 @@ podup (1.2.0) unstable; urgency=medium
   * release: sign the installers, cover the SBOM and NOTICES in SHA256SUMS, and
     clean the build tree before packaging.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Mon, 22 Jun 2026 12:00:00 -0500
+ -- Glyndor <packages@glyndor.net>  Mon, 22 Jun 2026 12:00:00 -0500
 
 podup (1.1.1) unstable; urgency=medium
 
@@ -116,7 +116,7 @@ podup (1.1.1) unstable; urgency=medium
     than hanging until the timeout. Restores docker-compose parity for
     healthcheck-gated startup.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 19 Jun 2026 17:00:00 -0500
+ -- Glyndor <packages@glyndor.net>  Fri, 19 Jun 2026 17:00:00 -0500
 
 podup (1.1.0) unstable; urgency=medium
 
@@ -144,7 +144,7 @@ podup (1.1.0) unstable; urgency=medium
   * build: pin SBOM and audit tooling to exact versions; refresh webpki-roots,
     getrandom and syn.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 19 Jun 2026 12:00:00 -0500
+ -- Glyndor <packages@glyndor.net>  Fri, 19 Jun 2026 12:00:00 -0500
 
 podup (1.0.0) unstable; urgency=medium
 
@@ -171,7 +171,7 @@ podup (1.0.0) unstable; urgency=medium
   * ci: sign NOTICES.html via the pinned venv and refuse release tags not on
     main.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 16 Jun 2026 15:00:00 -0500
+ -- Glyndor <packages@glyndor.net>  Tue, 16 Jun 2026 15:00:00 -0500
 
 podup (0.24.1) unstable; urgency=medium
 
@@ -185,7 +185,7 @@ podup (0.24.1) unstable; urgency=medium
       by its service name on shared networks.
     - Render a multi-line `command:` as a valid single-line Quadlet `Exec=`.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 16 Jun 2026 16:30:00 -0500
+ -- Glyndor <packages@glyndor.net>  Tue, 16 Jun 2026 16:30:00 -0500
 
 podup (0.24.0) unstable; urgency=medium
 
@@ -208,7 +208,7 @@ podup (0.24.0) unstable; urgency=medium
       setuid/setgid bits, and verifies the signed manifest before downloading.
     - Releases are gated on `cargo audit` and the SBOM generators are pinned.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Mon, 15 Jun 2026 17:00:00 -0500
+ -- Glyndor <packages@glyndor.net>  Mon, 15 Jun 2026 17:00:00 -0500
 
 podup (0.23.0) unstable; urgency=medium
 
@@ -226,7 +226,7 @@ podup (0.23.0) unstable; urgency=medium
   * Docs: install URLs switched to per-OS `/<product>/install/{unix,windows,apt}`
     paths.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Mon, 15 Jun 2026 14:30:00 -0500
+ -- Glyndor <packages@glyndor.net>  Mon, 15 Jun 2026 14:30:00 -0500
 
 podup (0.22.2) unstable; urgency=medium
 
@@ -234,7 +234,7 @@ podup (0.22.2) unstable; urgency=medium
     paths (malformed release metadata, missing install target, HTTP transport
     errors). No behaviour or public-API change.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sun, 15 Jun 2026 00:00:00 -0500
+ -- Glyndor <packages@glyndor.net>  Sun, 15 Jun 2026 00:00:00 -0500
 
 podup (0.22.1) unstable; urgency=medium
 
@@ -243,7 +243,7 @@ podup (0.22.1) unstable; urgency=medium
     and add failure-path unit tests for the self-update metadata parser and the
     binary-install swap.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sun, 14 Jun 2026 17:30:00 -0500
+ -- Glyndor <packages@glyndor.net>  Sun, 14 Jun 2026 17:30:00 -0500
 
 podup (0.22.0) unstable; urgency=medium
 
@@ -265,7 +265,7 @@ podup (0.22.0) unstable; urgency=medium
     instead of argv (no longer visible in the process argument list), and the
     capped file read is now TOCTOU-safe (read through a single bounded handle).
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sun, 14 Jun 2026 16:26:29 -0500
+ -- Glyndor <packages@glyndor.net>  Sun, 14 Jun 2026 16:26:29 -0500
 
 podup (0.21.1) unstable; urgency=medium
 
@@ -279,7 +279,7 @@ podup (0.21.1) unstable; urgency=medium
   * Fix a stale intra-doc link, replace a non-ASCII log message, and add a shell
     stanza to `.editorconfig`.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sun, 14 Jun 2026 14:36:35 -0500
+ -- Glyndor <packages@glyndor.net>  Sun, 14 Jun 2026 14:36:35 -0500
 
 podup (0.21.0) unstable; urgency=medium
 
@@ -288,7 +288,7 @@ podup (0.21.0) unstable; urgency=medium
     message instead of starting a container that silently lacks it.
   * Warn when a per-service `gw_priority` is dropped (unsupported by Podman).
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sun, 14 Jun 2026 10:06:02 -0500
+ -- Glyndor <packages@glyndor.net>  Sun, 14 Jun 2026 10:06:02 -0500
 
 podup (0.20.0) unstable; urgency=medium
 
@@ -296,7 +296,7 @@ podup (0.20.0) unstable; urgency=medium
     be installed with apt on arm64 Debian/Ubuntu (Raspberry Pi, ARM servers).
   * install.sh --apt now supports arm64.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sun, 14 Jun 2026 00:41:13 -0500
+ -- Glyndor <packages@glyndor.net>  Sun, 14 Jun 2026 00:41:13 -0500
 
 podup (0.19.0) unstable; urgency=medium
 
@@ -306,7 +306,7 @@ podup (0.19.0) unstable; urgency=medium
   * Ship the repository signing key as the podup-archive-keyring package so apt
     owns the key file and key renewals propagate automatically.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 13 Jun 2026 22:57:42 -0500
+ -- Glyndor <packages@glyndor.net>  Sat, 13 Jun 2026 22:57:42 -0500
 
 podup (0.18.0) unstable; urgency=medium
 
@@ -320,7 +320,7 @@ podup (0.18.0) unstable; urgency=medium
   * Accept up to two release signing keys, so the signing key can be rotated
     across two releases without stranding installed binaries.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 13 Jun 2026 20:46:36 -0500
+ -- Glyndor <packages@glyndor.net>  Sat, 13 Jun 2026 20:46:36 -0500
 
 podup (0.17.1) unstable; urgency=medium
 
@@ -331,7 +331,7 @@ podup (0.17.1) unstable; urgency=medium
     temp file and the size caps on "label_file"/".dockerignore" reads from
     0.17.0 are retained; only the path confinement is reverted.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 13 Jun 2026 15:10:00 -0500
+ -- Glyndor <packages@glyndor.net>  Sat, 13 Jun 2026 15:10:00 -0500
 
 podup (0.17.0) unstable; urgency=medium
 
@@ -348,7 +348,7 @@ podup (0.17.0) unstable; urgency=medium
   * Internal: split five engine/libpod files that were approaching the
     500-line limit into focused submodules; no behaviour change.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 13 Jun 2026 14:30:00 -0500
+ -- Glyndor <packages@glyndor.net>  Sat, 13 Jun 2026 14:30:00 -0500
 
 podup (0.16.0) unstable; urgency=medium
 
@@ -360,7 +360,7 @@ podup (0.16.0) unstable; urgency=medium
   * Add a cargo-fuzz harness (developer tooling) for the compose parser,
     substitution, numeric parsers, dotenv, and the libpod stream framer.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 13 Jun 2026 12:07:11 -0500
+ -- Glyndor <packages@glyndor.net>  Sat, 13 Jun 2026 12:07:11 -0500
 
 podup (0.15.1) unstable; urgency=medium
 
@@ -372,7 +372,7 @@ podup (0.15.1) unstable; urgency=medium
   * Bound libpod response bodies (64 MiB), stream-reassembly buffers (256 MiB),
     and socket connect time (30s) against a rogue or unresponsive daemon.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 13 Jun 2026 11:02:20 -0500
+ -- Glyndor <packages@glyndor.net>  Sat, 13 Jun 2026 11:02:20 -0500
 
 podup (0.15.0) unstable; urgency=medium
 
@@ -386,7 +386,7 @@ podup (0.15.0) unstable; urgency=medium
     a new unsafe block elsewhere fails the build.
   * Pin cargo-audit in the security-audit workflow for reproducible runs.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 13 Jun 2026 10:00:07 -0500
+ -- Glyndor <packages@glyndor.net>  Sat, 13 Jun 2026 10:00:07 -0500
 
 podup (0.14.1) unstable; urgency=medium
 
@@ -399,7 +399,7 @@ podup (0.14.1) unstable; urgency=medium
     in the CI caller, matching the project style standard.
   * Test coverage for every Quadlet unmapped-field warning.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 13 Jun 2026 08:19:11 -0500
+ -- Glyndor <packages@glyndor.net>  Sat, 13 Jun 2026 08:19:11 -0500
 
 podup (0.14.0) unstable; urgency=medium
 
@@ -420,7 +420,7 @@ podup (0.14.0) unstable; urgency=medium
     the platform separator, and classify a "C:\\..." drive-letter volume source
     as a bind mount rather than a named volume.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 12 Jun 2026 18:00:00 -0500
+ -- Glyndor <packages@glyndor.net>  Fri, 12 Jun 2026 18:00:00 -0500
 
 podup (0.13.0) unstable; urgency=medium
 
@@ -446,7 +446,7 @@ podup (0.13.0) unstable; urgency=medium
   * Create the watch sync target directory when it is missing, matching the
     behaviour of docker compose watch.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 12 Jun 2026 16:00:00 -0500
+ -- Glyndor <packages@glyndor.net>  Fri, 12 Jun 2026 16:00:00 -0500
 
 podup (0.12.0) unstable; urgency=medium
 
@@ -462,7 +462,7 @@ podup (0.12.0) unstable; urgency=medium
     stall the dependency wait.
   * Update sha2 to 0.11.0.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 12 Jun 2026 10:00:00 -0500
+ -- Glyndor <packages@glyndor.net>  Fri, 12 Jun 2026 10:00:00 -0500
 
 podup (0.11.0) unstable; urgency=medium
 
@@ -500,7 +500,7 @@ podup (0.11.0) unstable; urgency=medium
   * Accept multiple compose files (repeated -f or a COMPOSE_FILE list) and
     merge them in order, with later files overriding earlier ones.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 15:45:00 -0500
+ -- Glyndor <packages@glyndor.net>  Thu, 11 Jun 2026 15:45:00 -0500
 
 podup (0.10.0) unstable; urgency=medium
 
@@ -516,7 +516,7 @@ podup (0.10.0) unstable; urgency=medium
   * Fall back to Containerfile when no Dockerfile is present.
   * Always recreate services that have a build section on up.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 14:30:00 -0500
+ -- Glyndor <packages@glyndor.net>  Thu, 11 Jun 2026 14:30:00 -0500
 
 podup (0.9.0) unstable; urgency=medium
 
@@ -524,7 +524,7 @@ podup (0.9.0) unstable; urgency=medium
     podup.config-hash label; unchanged containers are left in place.
   * Add up --force-recreate to recreate containers unconditionally.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 13:30:00 -0500
+ -- Glyndor <packages@glyndor.net>  Thu, 11 Jun 2026 13:30:00 -0500
 
 podup (0.8.0) unstable; urgency=medium
 
@@ -537,14 +537,14 @@ podup (0.8.0) unstable; urgency=medium
   * Fix dpkg-buildpackage for non-vendored builds (override_dh_auto_build no
     longer invokes a vendored-only cargo-config target).
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 12:10:00 -0500
+ -- Glyndor <packages@glyndor.net>  Thu, 11 Jun 2026 12:10:00 -0500
 
 podup (0.7.0) unstable; urgency=medium
 
   * Secure self-update: `podup update` downloads signed release assets and
     verifies the Ed25519 signature and SHA-256 checksum, failing closed.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Wed, 11 Jun 2026 09:00:00 -0500
+ -- Glyndor <packages@glyndor.net>  Wed, 11 Jun 2026 09:00:00 -0500
 
 podup (0.6.0) unstable; urgency=medium
 
@@ -557,7 +557,7 @@ podup (0.6.0) unstable; urgency=medium
   * Serialize mutating commands with a per-project advisory lock.
   * Split oversized modules, add .editorconfig, document the libpod API prefix.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Thu, 11 Jun 2026 08:50:00 -0500
+ -- Glyndor <packages@glyndor.net>  Thu, 11 Jun 2026 08:50:00 -0500
 
 podup (0.5.8) unstable; urgency=low
 
@@ -565,7 +565,7 @@ podup (0.5.8) unstable; urgency=low
   * Add Docker migration and deploy documentation.
   * Reject setuid/setgid/sticky bits in secret/config mode.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Wed, 10 Jun 2026 22:00:00 -0500
+ -- Glyndor <packages@glyndor.net>  Wed, 10 Jun 2026 22:00:00 -0500
 
 podup (0.5.7) unstable; urgency=low
 
@@ -574,7 +574,7 @@ podup (0.5.7) unstable; urgency=low
   * Fix stale serde_yaml_ng reference in compose/mod.rs.
   * Remove stale ticket prefixes from engine comments.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 10 Jun 2026 21:00:00 -0500
+ -- Glyndor <packages@glyndor.net>  Tue, 10 Jun 2026 21:00:00 -0500
 
 podup (0.5.6) unstable; urgency=medium
 
@@ -584,7 +584,7 @@ podup (0.5.6) unstable; urgency=medium
   * Correct declared MSRV from 1.85 to 1.86 (idna_adapter 1.2.2 requirement).
   * Update README to list all commands and bump library version example.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 10 Jun 2026 20:00:00 -0500
+ -- Glyndor <packages@glyndor.net>  Tue, 10 Jun 2026 20:00:00 -0500
 
 podup (0.5.5) unstable; urgency=low
 
@@ -593,7 +593,7 @@ podup (0.5.5) unstable; urgency=low
   * Remove walkdir; use std::fs recursive directory walk.
   * Feature-gate notify behind optional watch feature (default enabled).
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 10 Jun 2026 14:20:00 -0500
+ -- Glyndor <packages@glyndor.net>  Tue, 10 Jun 2026 14:20:00 -0500
 
 podup (0.5.4) unstable; urgency=medium
 
@@ -602,21 +602,21 @@ podup (0.5.4) unstable; urgency=medium
   * Fix release artifact cleanup before cargo publish.
   * Harden CodeQL workflow with explicit permissions block.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 10 Jun 2026 08:30:00 -0500
+ -- Glyndor <packages@glyndor.net>  Tue, 10 Jun 2026 08:30:00 -0500
 
 podup (0.5.3) unstable; urgency=low
 
   * Use glyndor.net/install/podup as canonical install URL in README and
     install.sh.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 10 Jun 2026 03:00:00 -0500
+ -- Glyndor <packages@glyndor.net>  Tue, 10 Jun 2026 03:00:00 -0500
 
 podup (0.5.2) unstable; urgency=low
 
   * Narrow tokio feature set from "full" to only required features
     (macros, rt-multi-thread, signal, sync, time).
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 10 Jun 2026 02:45:00 -0500
+ -- Glyndor <packages@glyndor.net>  Tue, 10 Jun 2026 02:45:00 -0500
 
 podup (0.5.1) unstable; urgency=low
 
@@ -624,7 +624,7 @@ podup (0.5.1) unstable; urgency=low
     prevent binary files inflating the crate package above crates.io limit.
   * Exclude tests/ from published crate package.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 10 Jun 2026 02:15:00 -0500
+ -- Glyndor <packages@glyndor.net>  Tue, 10 Jun 2026 02:15:00 -0500
 
 podup (0.5.0) unstable; urgency=medium
 
@@ -635,7 +635,7 @@ podup (0.5.0) unstable; urgency=medium
   * Derive container image tag from service name when only build: is set.
   * Debian offline build support: vendor/ directory detected in rules.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Tue, 10 Jun 2026 01:15:00 -0500
+ -- Glyndor <packages@glyndor.net>  Tue, 10 Jun 2026 01:15:00 -0500
 
 podup (0.4.0) unstable; urgency=medium
 
@@ -644,7 +644,7 @@ podup (0.4.0) unstable; urgency=medium
   * Extract inline secret/config staging into a per-platform module.
   * Add crates.io package metadata.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 05 Jun 2026 19:00:00 -0500
+ -- Glyndor <packages@glyndor.net>  Fri, 05 Jun 2026 19:00:00 -0500
 
 podup (0.3.2) unstable; urgency=medium
 
@@ -652,4 +652,4 @@ podup (0.3.2) unstable; urgency=medium
   * Sign release binaries with the shared release key.
   * Initial Debian packaging.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Fri, 05 Jun 2026 17:15:00 -0500
+ -- Glyndor <packages@glyndor.net>  Fri, 05 Jun 2026 17:15:00 -0500
