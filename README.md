@@ -11,7 +11,6 @@
 
 [![CI](https://github.com/Glyndor/podup/actions/workflows/ci.yml/badge.svg)](https://github.com/Glyndor/podup/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/podup.svg)](https://crates.io/crates/podup)
-[![downloads](https://img.shields.io/crates/d/podup.svg)](https://crates.io/crates/podup)
 [![MSRV](https://img.shields.io/badge/MSRV-1.85-orange.svg)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
@@ -38,8 +37,7 @@ sudo apt update && sudo apt install podup
 The keyring package registers `https://apt.glyndor.net` and ships the signing
 key, so podup updates (and key renewals) arrive through `apt upgrade` — the apt
 build omits self-update since apt owns upgrades. Signed, SHA-256 verified,
-fail-closed. Requires **Podman ≥ 5.0** (rootless) — podup tracks the latest
-stable Podman, validated on **5.x and 6.0.0**.
+fail-closed. Requires **Podman ≥ 5.0** (rootless).
 
 <details>
 <summary><b>Other methods — Linux/macOS script · Windows · build from source · self-update · Podman version · platforms</b></summary>
