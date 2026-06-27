@@ -1,17 +1,12 @@
-name: podman6-lane
-# Live-Podman integration for podup, validated against the supported window.
-# Boots a Fedora qemu VM inside the runner (nested-virt — the ubuntu-24.04 runner
-# exposes /dev/kvm) with full systemd, then runs the integration suite as a
-# rootless user. Default = Podman 6 (Fedora rawhide); pick `5` to run the latest
-# Podman 5 (Fedora 44) for a specific cross-version check.
+name: podman-lane
+# Live-Podman integration for podup, validated against the FULL supported window.
+# Support policy: the latest Podman major + the one below it — today Podman 5 and 6.
+# Every engine PR runs the integration suite on BOTH majors (matrix), each inside a
+# Fedora qemu VM booted in the runner (nested-virt — the ubuntu-24.04 runner exposes
+# /dev/kvm) with full systemd, as a rootless user. Podman 6 = Fedora rawhide;
+# Podman 5 = Fedora 44.
 on:
   workflow_dispatch:
-    inputs:
-      podman:
-        description: "Podman major to validate: 6 (rawhide, default) or 5 (Fedora 44)"
-        default: "6"
-        type: choice
-        options: ["6", "5"]
   pull_request:
     paths:
       - "internal/engine/**"
@@ -19,20 +14,24 @@ on:
       - "tests/**"
       - "Cargo.toml"
       - "Cargo.lock"
-      - ".github/workflows/podman6-lane.yml"
+      - ".github/workflows/podman-lane.yml"
 permissions:
   contents: read
 jobs:
   podman-vm:
     runs-on: ubuntu-24.04
     timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        podman: ["5", "6"]
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Install qemu + cloud tools
         run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 qemu-utils cloud-image-utils
-      - name: Fetch Fedora cloud image (Podman 6 rawhide, or 5 = Fedora 44)
+      - name: Fetch Fedora cloud image (Podman 6 = rawhide, 5 = Fedora 44)
         run: |
-          SEL="${{ github.event.inputs.podman }}"; [ -z "$SEL" ] && SEL=6
+          SEL="${{ matrix.podman }}"
           echo "PODMAN_MAJOR=$SEL"
           if [ "$SEL" = "5" ]; then
             base="https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/"
@@ -89,12 +88,22 @@ jobs:
           grep -q 'No space left' "$L" && { echo "::error::VM disk full — run invalid"; exit 1; }
           VER=$(grep -oE 'PODMAN=podman version [0-9.]+' "$L" | grep -oE '[0-9.]+' | tail -1)
           grep -qE 'PODMAN=podman version [0-9]' "$L" || { echo "::error::Podman not detected in VM"; exit 1; }
+          # Guard the matrix: the VM must actually run the Podman major it was asked to.
+          case "$VER" in
+            ${{ matrix.podman }}.*) : ;;
+            *) echo "::error::expected Podman ${{ matrix.podman }}.x but VM has $VER"; exit 1 ;;
+          esac
           PASS=$(grep -oE 'test result: (ok|FAILED)\. [0-9]+ passed' "$L" | grep -oE '[0-9]+' | tail -1)
           FAIL=$(grep -oE '[0-9]+ failed' "$L" | grep -oE '[0-9]+' | tail -1)
           FLAKY=$(grep -c 'IncompleteMessage' "$L" || true)
-          echo "Podman $VER: ${PASS:-0} passed, ${FAIL:-0} failed (${FLAKY} IncompleteMessage = known nested-virt connection-drop flake)"
-          # Gate on the core passing. The archive/streaming subset flakes with
-          # IncompleteMessage under nested-virt (proven an environment artifact:
-          # Podman 5.x flakes MORE in the same VM), not a podup/Podman bug.
-          [ "${PASS:-0}" -ge 120 ] || { echo "::error::core suite degraded on Podman $VER ($PASS passed) — investigate"; exit 1; }
-          echo "GREEN: podup core PASSED on Podman $VER ($PASS tests). Archive/stream flake is nested-virt noise."
+          PASS=${PASS:-0}; FAIL=${FAIL:-0}; FLAKY=${FLAKY:-0}
+          REAL_FAIL=$(( FAIL > FLAKY ? FAIL - FLAKY : 0 ))
+          echo "Podman $VER: $PASS passed, $FAIL failed ($FLAKY IncompleteMessage flake; $REAL_FAIL unexplained)"
+          # Two gates. (1) The core must pass. (2) EVERY failure must be accounted
+          # for by an IncompleteMessage connection-drop — the only tolerated flake
+          # under nested-virt (proven an environment artifact: Podman 5.x flakes MORE
+          # in the same VM). Any failure not covered by a flake is a real regression
+          # and fails the lane (a pass-count floor alone would false-green on it).
+          [ "$PASS" -ge 120 ] || { echo "::error::core suite degraded on Podman $VER ($PASS passed) — investigate"; exit 1; }
+          [ "$REAL_FAIL" -eq 0 ] || { echo "::error::$REAL_FAIL non-flake test failure(s) on Podman $VER — real regression"; exit 1; }
+          echo "GREEN: podup core PASSED on Podman $VER ($PASS tests; $FAIL flaky-only). Archive/stream flake is nested-virt noise."

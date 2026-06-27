@@ -36,8 +36,8 @@ flowchart LR
 ## ✅ Requirements
 
 - **Podman ≥ 5.0** — podup talks to Podman's native libpod REST API (the
-  `/v5.0.0/libpod` surface) and assumes a Podman 5.x engine. Rootless is the
-  default and recommended posture.
+  `/v5.0.0/libpod` surface). It supports Podman 5 and 6, and tracks the latest
+  release. Rootless is the default and recommended posture.
 - **Supported platforms:**
   - **Linux** (x86_64, arm64) — talks to the rootless Podman socket directly.
   - **macOS** (x86_64, arm64) — via `podman machine` (applehv or vz backend);
