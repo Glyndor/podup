@@ -84,10 +84,10 @@ release's Ed25519 signature and SHA-256 checksum — it fails closed otherwise. 
 
 ### Podman version
 
-podup tracks the **latest stable Podman** and supports the **last two majors**.
-It talks to Podman's native libpod API (still versioned 5.x — 5.2.0 on Podman 6),
-so it needs **Podman ≥ 5.0**. podup is validated on **Podman 5.x and 6.0.0** (the
-latter in CI against Fedora rawhide). Many distributions still ship 4.x — check
+podup tracks the **latest stable Podman** and supports its **last two majors —
+Podman 5.x and 6.x**. It talks to Podman's native libpod API (still versioned
+5.x — 5.2.0 on Podman 6), so it needs **Podman ≥ 5.0**. Validated on **Podman
+5.x (5.8.1) and 6.0.0** (the latter in CI against Fedora rawhide). Many distributions still ship 4.x — check
 `podman --version` and upgrade if needed. Fedora, Debian trixie/sid and recent
 Ubuntu releases carry 5.x; on an older release, install or upgrade Podman
 following the official guide: <https://podman.io/docs/installation>.
