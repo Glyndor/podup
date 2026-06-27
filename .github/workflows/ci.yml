@@ -17,9 +17,9 @@ jobs:
       coverage-threshold: 90
       # No live-Podman integration here: the runner only ships Podman 4.9.3, which is
       # below podup's floor (>= 5.0) and cannot drive its Podman-5/6 paths — testing it
-      # was misleading. The engine runtime + libpod transport are exercised against real
-      # Podman 6 (and the latest Podman 5 for specific cases) by the dedicated nested-virt
-      # `podman6-lane` workflow. Exclude those integration-covered modules from the
+      # was misleading. The engine runtime + libpod transport are exercised against the
+      # full supported window — both Podman 5 and 6 — by the dedicated nested-virt
+      # `podman-lane` workflow (matrix). Exclude those integration-covered modules from the
       # unit-coverage gate so it measures the unit-testable surface; the runtime stays
       # covered by that lane.
       coverage-ignore-regex: 'internal/(main|dispatch)\.rs|internal/libpod/client/|internal/engine/(lifecycle|query|build|image|volume)/|internal/engine/(mod|health|stats|projects|copy)\.rs|internal/engine/watch/mod\.rs|internal/engine/container/mod\.rs|internal/engine/secrets/mod\.rs|internal/engine/network/mod\.rs'
