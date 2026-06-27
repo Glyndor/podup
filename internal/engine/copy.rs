@@ -132,16 +132,43 @@ impl Engine {
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
 		let container_name = self.replica_name_at(service_name, service, opts.index)?;
 
+		// Match `docker cp` destination semantics. The libpod archive PUT extracts
+		// the tar *at* a directory, so:
+		//  - dest is an existing directory (or ends in `/`)  → copy the source in
+		//    under its own name (PUT to the dest dir);
+		//  - dest is anything else (a new name, or a file)   → rename the source to
+		//    the dest's basename and PUT to the dest's parent.
+		// Without this, `cp file svc:/path/newname` created `newname/` as a
+		// directory holding the source instead of a file named `newname`.
+		let stat_path = format!(
+			"{API_PREFIX}/containers/{}/archive?path={}",
+			urlencoded(&container_name),
+			urlencoded(container_path),
+		);
+		let dest_is_dir = self.client.head_path_is_dir(&stat_path).await? == Some(true);
+
+		let (extract_dir, rename) = if dest_is_dir || container_path.ends_with('/') {
+			(container_path.trim_end_matches('/').to_string(), None)
+		} else {
+			let trimmed = container_path.trim_end_matches('/');
+			let (parent, name) = trimmed.rsplit_once('/').unwrap_or(("", trimmed));
+			let parent = if parent.is_empty() { "/" } else { parent };
+			(parent.to_string(), Some(name.to_string()))
+		};
+
 		let src_buf = src.to_path_buf();
 		let follow = opts.follow_link;
-		let tar_bytes = tokio::task::spawn_blocking(move || pack_path(&src_buf, follow))
-			.await
-			.map_err(|e| ComposeError::Build(e.to_string()))??;
+		let rename_for_pack = rename.clone();
+		let tar_bytes = tokio::task::spawn_blocking(move || {
+			pack_path(&src_buf, follow, rename_for_pack.as_deref())
+		})
+		.await
+		.map_err(|e| ComposeError::Build(e.to_string()))??;
 
 		let path = format!(
 			"{API_PREFIX}/containers/{}/archive?path={}",
 			urlencoded(&container_name),
-			urlencoded(container_path),
+			urlencoded(&extract_dir),
 		);
 		self.client
 			.put_bytes_ok(&path, Bytes::from(tar_bytes), "application/x-tar")
@@ -165,15 +192,18 @@ fn parse_endpoint(s: &str) -> Option<(&str, &str)> {
 	if svc.is_empty() || path.is_empty() {
 		return None;
 	}
-	// Windows absolute paths like `C:\path` have a single-char drive prefix — treat
-	// those as local paths, not as service endpoints.
+	// On Windows, an absolute path like `C:\path` has a single-char drive prefix —
+	// treat those as local paths, not service endpoints. This must NOT apply on
+	// Unix, where a one-character service name (`c:/path`) is perfectly valid and
+	// would otherwise be rejected as a bogus "drive".
+	#[cfg(windows)]
 	if svc.len() == 1 && svc.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
 		return None;
 	}
 	Some((svc, path))
 }
 
-fn pack_path(src: &Path, follow_link: bool) -> Result<Vec<u8>> {
+fn pack_path(src: &Path, follow_link: bool, name_override: Option<&str>) -> Result<Vec<u8>> {
 	let encoder = GzEncoder::new(Vec::new(), Compression::default());
 	let mut tar = tar::Builder::new(encoder);
 	// `-L/--follow-link`: archive the symlink target's contents instead of the
@@ -181,11 +211,15 @@ fn pack_path(src: &Path, follow_link: bool) -> Result<Vec<u8>> {
 	tar.follow_symlinks(follow_link);
 
 	if src.is_dir() {
-		let name = src.file_name().unwrap_or(std::ffi::OsStr::new("."));
+		// `name_override` renames the copied tree (rename-on-copy); otherwise it
+		// keeps the source's own basename and lands inside the destination dir.
+		let default = src.file_name().unwrap_or(std::ffi::OsStr::new("."));
+		let name: &std::ffi::OsStr = name_override.map(std::ffi::OsStr::new).unwrap_or(default);
 		tar.append_dir_all(name, src)
 			.map_err(|e| ComposeError::Build(e.to_string()))?;
 	} else {
-		let name = src.file_name().unwrap_or(std::ffi::OsStr::new("file"));
+		let default = src.file_name().unwrap_or(std::ffi::OsStr::new("file"));
+		let name: &std::ffi::OsStr = name_override.map(std::ffi::OsStr::new).unwrap_or(default);
 		tar.append_path_with_name(src, name)
 			.map_err(|e| ComposeError::Build(e.to_string()))?;
 	}
@@ -335,9 +369,19 @@ mod tests {
 		assert_eq!(parse_endpoint("-"), None);
 	}
 
+	#[cfg(windows)]
 	#[test]
 	fn parse_windows_drive_letter_is_local() {
 		assert_eq!(parse_endpoint("C:\\Users\\foo"), None);
+	}
+
+	#[cfg(not(windows))]
+	#[test]
+	fn single_char_service_parses_on_unix() {
+		// On Unix a one-character service name is valid; only Windows treats a
+		// single-char prefix as a drive letter.
+		assert_eq!(parse_endpoint("c:/tmp/file"), Some(("c", "/tmp/file")));
+		assert_eq!(parse_endpoint("w:data"), Some(("w", "data")));
 	}
 
 	#[test]
@@ -346,6 +390,7 @@ mod tests {
 		assert_eq!(parse_endpoint("svc:"), None);
 	}
 
+	#[cfg(windows)]
 	#[test]
 	fn parse_windows_drive_letter_forward_slash() {
 		assert_eq!(parse_endpoint("C:/Users/foo"), None);
@@ -372,7 +417,7 @@ mod tests {
 		let dir = tempfile::tempdir().expect("tempdir");
 		let file = dir.path().join("data.txt");
 		std::fs::write(&file, b"hello").expect("write");
-		let result = super::pack_path(&file, false);
+		let result = super::pack_path(&file, false, None);
 		assert!(result.is_ok());
 		let bytes = result.unwrap();
 		assert!(!bytes.is_empty());
@@ -385,7 +430,7 @@ mod tests {
 		std::fs::create_dir(&subdir).expect("mkdir");
 		std::fs::write(subdir.join("a.txt"), b"aaa").expect("write");
 		std::fs::write(subdir.join("b.txt"), b"bbb").expect("write");
-		let result = super::pack_path(&subdir, false);
+		let result = super::pack_path(&subdir, false, None);
 		assert!(result.is_ok());
 		assert!(!result.unwrap().is_empty());
 	}

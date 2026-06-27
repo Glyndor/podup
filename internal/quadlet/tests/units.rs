@@ -3,6 +3,17 @@ use crate::parse_str;
 use crate::quadlet::{generate, QuadletOutput, QuadletUnit};
 
 #[test]
+fn container_name_defaults_to_project_prefixed() {
+	// A service with no explicit `container_name:` must default to
+	// `{project}-{service}`, matching how `up` names the running container,
+	// rather than a bare `web` that would collide across projects.
+	let file = parse_str("services:\n  web:\n    image: nginx\n").unwrap();
+	let out = generate(&file, "proj");
+	let web = unit_named(&out, "web.container");
+	assert!(web.contents.contains("ContainerName=proj-web"));
+}
+
+#[test]
 fn duplicate_filename_detects_collision() {
 	let mk = |n: &str| QuadletUnit {
 		filename: n.to_string(),
@@ -72,19 +83,46 @@ networks:
 }
 
 #[test]
-fn warns_about_unmapped_build_field() {
+fn build_field_emits_a_build_unit() {
 	let yaml = r#"
 services:
   app:
-    build: .
+    build:
+      context: ./src
+      dockerfile: Dockerfile.app
+      target: runtime
     image: app:latest
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "proj");
-	assert!(
-		out.warnings.iter().any(|w| w.contains("build")),
-		"a set build field must produce a warning"
-	);
+	// A `.build` unit is generated (no longer just a warning) and the container
+	// references it so Quadlet builds before running.
+	let build = out
+		.units
+		.iter()
+		.find(|u| u.filename == "app.build")
+		.expect("a build service must emit an app.build unit");
+	assert!(build.contents.contains("[Build]"));
+	assert!(build.contents.contains("ImageTag=app:latest"));
+	assert!(build.contents.contains("SetWorkingDirectory=./src"));
+	assert!(build.contents.contains("File=Dockerfile.app"));
+	assert!(build.contents.contains("Target=runtime"));
+	let container = out
+		.units
+		.iter()
+		.find(|u| u.filename == "app.container")
+		.unwrap();
+	assert!(container.contents.contains("Image=app.build"));
+	assert!(!out.warnings.iter().any(|w| w.contains("build")));
+}
+
+#[test]
+fn inline_dockerfile_build_warns_and_emits_no_build_unit() {
+	let yaml = "services:\n  app:\n    build:\n      dockerfile_inline: \"FROM alpine\"\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "proj");
+	assert!(!out.units.iter().any(|u| u.filename == "app.build"));
+	assert!(out.warnings.iter().any(|w| w.contains("dockerfile_inline")));
 }
 
 #[test]

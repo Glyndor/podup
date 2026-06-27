@@ -1,16 +1,17 @@
 [package]
 name = "podup"
-version = "1.3.0"
+version = "1.5.1"
 edition = "2021"
 rust-version = "1.85"
 description = "Translate and run docker-compose files on rootless Podman"
 license = "Apache-2.0"
 repository = "https://github.com/Glyndor/podup"
-homepage = "https://github.com/Glyndor/podup"
+homepage = "https://glyndor.net/projects/podup"
+documentation = "https://docs.rs/podup"
 readme = "README.md"
-keywords = ["podman", "compose", "containers", "docker-compose", "rootless"]
-categories = ["command-line-utilities", "virtualization"]
-exclude = ["/.github", "/debian", "/deny.toml", "/docs", "/install.sh", "/tests"]
+keywords = ["podman", "compose", "quadlet", "docker-compose", "rootless"]
+categories = ["command-line-utilities", "virtualization", "development-tools"]
+exclude = ["/.github", "/debian", "/deny.toml", "/docs", "/install.ps1", "/install.sh", "/tests"]
 
 [[bin]]
 name = "podup"
@@ -44,6 +45,7 @@ notify = { version = "8", optional = true }
 ureq = { version = "3", default-features = false, features = ["rustls"], optional = true }
 ed25519-dalek = { version = "2", default-features = false, features = ["std"], optional = true }
 sha2 = "0.10"
+base64 = "0.22"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

@@ -124,12 +124,25 @@ mod tests {
 	}
 
 	#[test]
-	fn key_without_equals_has_empty_value() {
+	fn bare_key_passes_through_host_or_is_omitted() {
+		// A bare key (no `=`) takes its value from the host environment; absent
+		// from the host, it is omitted rather than set to an empty string.
+		std::env::set_var("PODUP_ENVFILE_BARE_PRESENT", "h");
+		std::env::remove_var("PODUP_ENVFILE_BARE_ABSENT");
 		let dir = tempfile::tempdir().unwrap();
-		std::fs::write(dir.path().join(".env"), "BARE\n").unwrap();
+		std::fs::write(
+			dir.path().join(".env"),
+			"PODUP_ENVFILE_BARE_PRESENT\nPODUP_ENVFILE_BARE_ABSENT\n",
+		)
+		.unwrap();
 		let entries = vec![EnvFileEntry::Path(".env".into())];
 		let m = load_env_file_entries(&entries, dir.path()).unwrap();
-		assert_eq!(m.get("BARE").map(|s| s.as_str()), Some(""));
+		assert_eq!(
+			m.get("PODUP_ENVFILE_BARE_PRESENT").map(|s| s.as_str()),
+			Some("h")
+		);
+		assert!(!m.contains_key("PODUP_ENVFILE_BARE_ABSENT"));
+		std::env::remove_var("PODUP_ENVFILE_BARE_PRESENT");
 	}
 
 	#[test]

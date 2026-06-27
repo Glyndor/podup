@@ -14,13 +14,14 @@ jobs:
     uses: Glyndor/.github/.github/workflows/rust-ci.yml@80523422631014f591b07bc24c507145faabb271 # v1.2.0
     with:
       extra-test-os: "[\"macos-latest\", \"windows-latest\"]"
-      podman: true
       coverage-threshold: 90
-      # The engine runtime and the libpod transport are exercised by the live-Podman
-      # integration suite (the `podman: true` job above), not by unit tests — and the
-      # CI runner ships Podman 4.9.3, which cannot drive podup's Podman-5-only paths.
-      # Exclude those integration-covered modules from the unit-coverage gate so it
-      # measures the unit-testable surface; the runtime stays covered by the suite.
+      # No live-Podman integration here: the runner only ships Podman 4.9.3, which is
+      # below podup's floor (>= 5.0) and cannot drive its Podman-5/6 paths — testing it
+      # was misleading. The engine runtime + libpod transport are exercised against the
+      # full supported window — both Podman 5 and 6 — by the dedicated nested-virt
+      # `podman-lane` workflow (matrix). Exclude those integration-covered modules from the
+      # unit-coverage gate so it measures the unit-testable surface; the runtime stays
+      # covered by that lane.
       coverage-ignore-regex: 'internal/(main|dispatch)\.rs|internal/libpod/client/|internal/engine/(lifecycle|query|build|image|volume)/|internal/engine/(mod|health|stats|projects|copy)\.rs|internal/engine/watch/mod\.rs|internal/engine/container/mod\.rs|internal/engine/secrets/mod\.rs|internal/engine/network/mod\.rs'
       msrv: "1.85"
       package-check: true

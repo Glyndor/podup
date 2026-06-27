@@ -11,22 +11,22 @@ use crate::libpod::{parse_json_lines, urlencoded, API_PREFIX};
 
 use super::Engine;
 
-/// Build the `&containers=<a,b,c>` query fragment scoping a stats request to the
-/// `wanted` containers, or an empty string when none are wanted (which falls
-/// back to the daemon default). Names are sorted for a stable URL and each is
-/// URL-encoded; the comma separators are intentionally left literal.
+/// Build the query fragment scoping a stats request to the `wanted` containers,
+/// or an empty string when none are wanted (which falls back to the daemon
+/// default). libpod's `/containers/stats` expects the `containers` parameter
+/// **repeated** once per container (`&containers=a&containers=b`), not a single
+/// comma-joined value — a comma-joined list is parsed as one container name and
+/// 404s. Names are sorted for a stable URL and each is URL-encoded.
 fn containers_query(wanted: &HashSet<String>) -> String {
 	if wanted.is_empty() {
 		return String::new();
 	}
 	let mut names: Vec<&String> = wanted.iter().collect();
 	names.sort();
-	let joined = names
+	names
 		.iter()
-		.map(|n| urlencoded(n))
-		.collect::<Vec<_>>()
-		.join(",");
-	format!("&containers={joined}")
+		.map(|n| format!("&containers={}", urlencoded(n)))
+		.collect::<String>()
 }
 
 /// Deserialize a map field, treating an explicit JSON `null` as the default
@@ -131,7 +131,7 @@ impl Engine {
 		target_services: &[String],
 		no_stream: bool,
 	) -> Result<()> {
-		let wanted = self.target_container_names(file, target_services);
+		let wanted = self.target_container_names(file, target_services).await?;
 
 		// Scope the stats stream to just the wanted containers server-side via the
 		// `containers=` query param, so the daemon does not sample every container
@@ -172,18 +172,20 @@ impl Engine {
 
 	/// The set of container names to report on: every replica of the targeted
 	/// services (all services when `target_services` is empty).
-	fn target_container_names(
+	async fn target_container_names(
 		&self,
 		file: &ComposeFile,
 		target_services: &[String],
-	) -> HashSet<String> {
-		file.services
-			.iter()
-			.filter(|(name, _)| {
-				target_services.is_empty() || target_services.iter().any(|t| t == *name)
-			})
-			.flat_map(|(name, service)| self.replica_names(name, service))
-			.collect()
+	) -> Result<HashSet<String>> {
+		let mut wanted = HashSet::new();
+		for (name, service) in &file.services {
+			if target_services.is_empty() || target_services.iter().any(|t| t == name) {
+				for c in self.live_replica_names(name, service).await? {
+					wanted.insert(c);
+				}
+			}
+		}
+		Ok(wanted)
 	}
 }
 
@@ -257,13 +259,15 @@ mod tests {
 	}
 
 	#[test]
-	fn containers_query_is_sorted_and_scoped() {
+	fn containers_query_repeats_param_per_container() {
+		// libpod wants `containers` repeated, not comma-joined — a comma-joined
+		// list is read as a single container name and 404s.
 		let mut wanted = HashSet::new();
 		wanted.insert("proj-web-1".to_string());
 		wanted.insert("proj-db-1".to_string());
 		assert_eq!(
 			containers_query(&wanted),
-			"&containers=proj-db-1,proj-web-1"
+			"&containers=proj-db-1&containers=proj-web-1"
 		);
 	}
 

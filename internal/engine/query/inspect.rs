@@ -14,6 +14,17 @@ impl Engine {
 	///
 	/// If `target_services` is empty, all services are queried.
 	pub async fn top(&self, file: &ComposeFile, target_services: &[String]) -> Result<()> {
+		self.top_with_options(file, target_services, false).await
+	}
+
+	/// `top` with `docker compose top`-style options: `--format json` emits a
+	/// structured array of `{Container, Titles, Processes}` instead of the table.
+	pub async fn top_with_options(
+		&self,
+		file: &ComposeFile,
+		target_services: &[String],
+		json: bool,
+	) -> Result<()> {
 		let names: Vec<String> = if target_services.is_empty() {
 			file.services.keys().cloned().collect()
 		} else {
@@ -25,9 +36,10 @@ impl Engine {
 			target_services.to_vec()
 		};
 
+		let mut json_rows: Vec<serde_json::Value> = Vec::new();
 		for name in &names {
 			let service = &file.services[name];
-			for container_name in self.replica_names(name, service) {
+			for container_name in self.live_replica_names(name, service).await? {
 				let path = format!(
 					"{API_PREFIX}/containers/{}/top",
 					urlencoded(&container_name),
@@ -37,6 +49,11 @@ impl Engine {
 					.get_json::<crate::libpod::types::container::TopResponse>(&path)
 					.await
 				{
+					Ok(result) if json => json_rows.push(serde_json::json!({
+						"Container": container_name,
+						"Titles": result.titles,
+						"Processes": result.processes,
+					})),
 					Ok(result) => {
 						println!("{container_name}");
 						if let Some(titles) = &result.titles {
@@ -51,6 +68,12 @@ impl Engine {
 					Err(e) => tracing::warn!("top {container_name}: {e}"),
 				}
 			}
+		}
+		if json {
+			println!(
+				"{}",
+				serde_json::to_string_pretty(&json_rows).unwrap_or_default()
+			);
 		}
 		Ok(())
 	}

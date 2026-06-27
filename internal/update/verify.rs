@@ -6,7 +6,7 @@
 //! (held in CI as `RELEASE_SIGN_KEY`) and the downloaded binary's SHA-256 digest
 //! appears in that signed manifest. Every check fails closed.
 
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
 
 use crate::ComposeError;
@@ -108,7 +108,10 @@ fn verify_with_keys(keys: &[VerifyingKey], message: &[u8], signature: &[u8]) -> 
 			signature.len()
 		))
 	})?;
-	if keys.iter().any(|key| key.verify(message, &sig).is_ok()) {
+	if keys
+		.iter()
+		.any(|key| key.verify_strict(message, &sig).is_ok())
+	{
 		Ok(())
 	} else {
 		Err(ComposeError::Update(
@@ -134,7 +137,7 @@ pub fn verify_signature_with(
 ) -> crate::Result<()> {
 	let sig = Signature::from_slice(signature)
 		.map_err(|_| ComposeError::Update("malformed signature".to_string()))?;
-	key.verify(message, &sig)
+	key.verify_strict(message, &sig)
 		.map_err(|_| ComposeError::Update("signature verification failed".to_string()))
 }
 

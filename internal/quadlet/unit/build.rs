@@ -1,0 +1,109 @@
+//! Build the `.build` unit for a service that declares a `build:` block.
+//!
+//! Quadlet's `.build` unit type (a `[Build]` section) tells the systemd
+//! generator to build the image before the `.container` unit that consumes it
+//! runs. The container references the result via `Image=<stem>.build`.
+
+use crate::compose::types::{BuildConfig, Service};
+
+use super::{safe_unit_stem, sorted_label_pairs, QuadletUnit, Section};
+
+/// The `.build` unit file name for a service, e.g. `web.build`. The container
+/// unit points its `Image=` at this so Quadlet builds then runs.
+pub(crate) fn build_unit_filename(name: &str) -> String {
+	format!("{}.build", safe_unit_stem(name))
+}
+
+/// Whether `service` yields a `.build` unit — it declares `build:` and that
+/// build is expressible as Quadlet (an inline Dockerfile is not). Used by the
+/// container unit to decide whether `Image=` should reference the `.build`.
+pub(crate) fn emits_build_unit(service: &Service) -> bool {
+	match &service.build {
+		None => false,
+		Some(BuildConfig::Context(_)) => true,
+		Some(BuildConfig::Config {
+			dockerfile_inline, ..
+		}) => dockerfile_inline.is_none(),
+	}
+}
+
+/// Build the `.build` unit for `service`, or `None` when the service has no
+/// `build:` block or its build can't be expressed as a Quadlet `.build` unit
+/// (an inline Dockerfile, which Quadlet does not support — a warning is pushed).
+///
+/// `ImageTag=` is the service's `image:` when set, else `<project>-<service>`,
+/// so the generated container's `Image=<stem>.build` resolves to a concrete tag.
+pub(crate) fn build_unit(
+	name: &str,
+	project: &str,
+	service: &Service,
+	warnings: &mut Vec<String>,
+) -> Option<QuadletUnit> {
+	let build = service.build.as_ref()?;
+
+	let mut section = Section::new("Build");
+
+	let image_tag = service
+		.image
+		.clone()
+		.unwrap_or_else(|| format!("{project}-{name}"));
+	section.add("ImageTag", image_tag);
+
+	match build {
+		BuildConfig::Context(context) => {
+			section.add("SetWorkingDirectory", context.clone());
+		}
+		BuildConfig::Config {
+			context,
+			dockerfile,
+			dockerfile_inline,
+			args,
+			target,
+			labels,
+			network,
+			..
+		} => {
+			if dockerfile_inline.is_some() {
+				// Quadlet has no inline-Dockerfile equivalent; emitting a `.build`
+				// without the source would build the wrong thing. Skip and warn.
+				warnings.push(format!(
+					"{name}: build.dockerfile_inline has no Quadlet `.build` equivalent; \
+					 no .build unit emitted — build the image first and set `image`"
+				));
+				return None;
+			}
+			section.add(
+				"SetWorkingDirectory",
+				context.clone().unwrap_or_else(|| ".".to_string()),
+			);
+			if let Some(df) = dockerfile {
+				section.add("File", df.clone());
+			}
+			if let Some(t) = target {
+				section.add("Target", t.clone());
+			}
+			if let Some(net) = network {
+				section.add("Network", net.clone());
+			}
+			let mut build_args: Vec<(String, Option<String>)> = args.to_map().into_iter().collect();
+			build_args.sort_by(|a, b| a.0.cmp(&b.0));
+			for (key, val) in build_args {
+				match val {
+					Some(v) => section.add("BuildArg", format!("{key}={v}")),
+					None => section.add("BuildArg", key),
+				}
+			}
+			for (key, val) in sorted_label_pairs(labels.to_map()) {
+				section.add("Label", format!("{key}={val}"));
+			}
+		}
+	}
+
+	// Ownership label, mirroring every other generated unit.
+	section.add("Label", format!("podup.project={project}"));
+
+	Some(QuadletUnit {
+		filename: build_unit_filename(name),
+		contents: section.render(),
+	})
+}

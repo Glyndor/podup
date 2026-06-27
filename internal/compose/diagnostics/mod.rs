@@ -12,9 +12,9 @@ use super::types::ComposeFile;
 
 mod ignored_fields;
 use ignored_fields::{
-	diverging_network_mode, ignored_build_fields, ignored_models, ignored_network_fields,
-	ignored_port_fields, ignored_restart_policy_fields, ignored_secret_config_drivers,
-	ignored_service_fields, ignored_service_network_fields, ignored_volume_mount_fields,
+	ignored_build_fields, ignored_models, ignored_network_fields, ignored_port_fields,
+	ignored_restart_policy_fields, ignored_secret_config_drivers, ignored_service_fields,
+	ignored_service_network_fields, ignored_volume_mount_fields,
 };
 
 /// Collect a warning for every parsed-but-unsupported key or field in `file`.
@@ -32,7 +32,6 @@ pub(super) fn collect(file: &ComposeFile) -> Vec<String> {
 	ignored_service_network_fields(file, &mut out);
 	ignored_secret_config_drivers(file, &mut out);
 	ignored_models(file, &mut out);
-	diverging_network_mode(file, &mut out);
 	ignored_restart_policy_fields(file, &mut out);
 	out
 }
