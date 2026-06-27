@@ -1,20 +1,46 @@
 name: podman6-lane
+# Live-Podman integration for podup, validated against the supported window.
+# Boots a Fedora qemu VM inside the runner (nested-virt — the ubuntu-24.04 runner
+# exposes /dev/kvm) with full systemd, then runs the integration suite as a
+# rootless user. Default = Podman 6 (Fedora rawhide); pick `5` to run the latest
+# Podman 5 (Fedora 44) for a specific cross-version check.
 on:
   workflow_dispatch:
+    inputs:
+      podman:
+        description: "Podman major to validate: 6 (rawhide, default) or 5 (Fedora 44)"
+        default: "6"
+        type: choice
+        options: ["6", "5"]
+  pull_request:
+    paths:
+      - "internal/engine/**"
+      - "internal/libpod/**"
+      - "tests/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/podman6-lane.yml"
 permissions:
   contents: read
 jobs:
-  podman6-vm:
+  podman-vm:
     runs-on: ubuntu-24.04
     timeout-minutes: 50
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - name: Install qemu + cloud tools
         run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 qemu-utils cloud-image-utils
-      - name: Fetch Fedora rawhide image (Podman 6.0.0) into RUNNER_TEMP
+      - name: Fetch Fedora cloud image (Podman 6 rawhide, or 5 = Fedora 44)
         run: |
-          base="https://dl.fedoraproject.org/pub/fedora/linux/development/rawhide/Cloud/x86_64/images/"
-          img=$(curl -fsSL "$base" | grep -oE 'Fedora-Cloud-Base-Generic-Rawhide-[0-9]+\.n\.[0-9]+\.x86_64\.qcow2' | sort -u | tail -1)
+          SEL="${{ github.event.inputs.podman }}"; [ -z "$SEL" ] && SEL=6
+          echo "PODMAN_MAJOR=$SEL"
+          if [ "$SEL" = "5" ]; then
+            base="https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/"
+            img=$(curl -fsSL "$base" | grep -oE 'Fedora-Cloud-Base-Generic-44-[0-9.]+\.x86_64\.qcow2' | sort -u | tail -1)
+          else
+            base="https://dl.fedoraproject.org/pub/fedora/linux/development/rawhide/Cloud/x86_64/images/"
+            img=$(curl -fsSL "$base" | grep -oE 'Fedora-Cloud-Base-Generic-Rawhide-[0-9]+\.n\.[0-9]+\.x86_64\.qcow2' | sort -u | tail -1)
+          fi
           echo "image: $img"; curl -fsSL -o "$RUNNER_TEMP/vm.qcow2" "${base}${img}"; qemu-img resize "$RUNNER_TEMP/vm.qcow2" 40G
       - name: Build cloud-init seed (script-file for clean RC)
         run: |
@@ -56,18 +82,19 @@ jobs:
             -netdev user,id=n0 -device virtio-net-pci,netdev=n0 \
             -virtfs local,path=${{ github.workspace }},mount_tag=repo,security_model=none,id=repo \
             -display none -serial stdio 2>&1 | tee "$RUNNER_TEMP/vm.log" || true
-      - name: Verify podup suite truly PASSED on Podman 6.0.0
+      - name: Verify podup core suite passed on the target Podman
         run: |
           L="$RUNNER_TEMP/vm.log"
           echo "=== key lines ==="; grep -E 'DISK=|PODMAN=|test result:|PODUP_TESTS_RC|No space' "$L" | tail -10 || true
           grep -q 'No space left' "$L" && { echo "::error::VM disk full — run invalid"; exit 1; }
-          grep -q 'PODMAN=podman version 6' "$L" || { echo "::error::not Podman 6"; exit 1; }
+          VER=$(grep -oE 'PODMAN=podman version [0-9.]+' "$L" | grep -oE '[0-9.]+' | tail -1)
+          grep -qE 'PODMAN=podman version [0-9]' "$L" || { echo "::error::Podman not detected in VM"; exit 1; }
           PASS=$(grep -oE 'test result: (ok|FAILED)\. [0-9]+ passed' "$L" | grep -oE '[0-9]+' | tail -1)
           FAIL=$(grep -oE '[0-9]+ failed' "$L" | grep -oE '[0-9]+' | tail -1)
           FLAKY=$(grep -c 'IncompleteMessage' "$L" || true)
-          echo "Podman 6.0.0: $PASS passed, ${FAIL:-0} failed (${FLAKY} IncompleteMessage = known nested-virt connection-drop flake)"
-          # Real validation = the core passes. The archive/streaming flake is a VM
-          # artifact (proven: Podman 5.x flakes MORE in the same VM), not a v6 or
-          # podup bug. Gate on the core count, not on zero failures.
-          [ "${PASS:-0}" -ge 120 ] || { echo "::error::core suite degraded on Podman 6 ($PASS passed) — investigate"; exit 1; }
-          echo "GREEN: podup core PASSED on Podman 6.0.0 ($PASS tests). Flaky archive/stream tests are nested-virt noise, covered by the normal CI + local sweeps."
+          echo "Podman $VER: ${PASS:-0} passed, ${FAIL:-0} failed (${FLAKY} IncompleteMessage = known nested-virt connection-drop flake)"
+          # Gate on the core passing. The archive/streaming subset flakes with
+          # IncompleteMessage under nested-virt (proven an environment artifact:
+          # Podman 5.x flakes MORE in the same VM), not a podup/Podman bug.
+          [ "${PASS:-0}" -ge 120 ] || { echo "::error::core suite degraded on Podman $VER ($PASS passed) — investigate"; exit 1; }
+          echo "GREEN: podup core PASSED on Podman $VER ($PASS tests). Archive/stream flake is nested-virt noise."
