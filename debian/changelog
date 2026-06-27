@@ -1,3 +1,13 @@
+podup (1.5.2) unstable; urgency=medium
+
+  * Documentation and CI only — no functional change to the binary. The README is
+    redesigned as a concise, visual landing page with an apt-first install. The
+    Podman support policy is now stated explicitly: the latest two majors, Podman
+    5.x and 6.x (floor >= 5.0). CI validates the engine against both Podman 5 and
+    6 on every engine change.
+
+ -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 27 Jun 2026 12:37:18 -0500
+
 podup (1.5.1) unstable; urgency=medium
 
   * cp: copying a host file to a container under a new name now creates a file
