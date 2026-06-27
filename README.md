@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/podup-banner.png" alt="podup — Docker Compose on rootless Podman" width="100%">
+</p>
+
 # podup
 
 [![CI](https://github.com/Glyndor/podup/actions/workflows/ci.yml/badge.svg)](https://github.com/Glyndor/podup/actions/workflows/ci.yml)
