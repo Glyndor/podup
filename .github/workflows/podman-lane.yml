@@ -60,8 +60,22 @@ jobs:
                 systemctl --user start podman.socket
                 export PODMAN_SOCKET=$XDG_RUNTIME_DIR/podman/podman.sock
                 cd "$HOME/podup" || exit 90
-                cargo test --features test-helpers --test engine_integration 2>&1 | tail -50
-                echo "PODUP_TESTS_RC=${PIPESTATUS[0]}"
+                # Capture the FULL output: the per-failure detail (where the flake
+                # marker lives) precedes the summary, so a `tail` on the console
+                # would truncate it and hide why a test failed.
+                cargo test --features test-helpers --test engine_integration > /tmp/cargo.log 2>&1
+                RC=$?
+                tail -60 /tmp/cargo.log
+                echo "=== failures section (full) ==="
+                sed -n '/^failures:$/,/^test result:/p' /tmp/cargo.log | head -120
+                # Machine-readable summary computed from the FULL log. A nested-virt
+                # connection drop surfaces as Hyper(IncompleteMessage) (and kin);
+                # everything else counts as a real failure.
+                PASS=$(grep -oE 'test result: .* [0-9]+ passed' /tmp/cargo.log | grep -oE '[0-9]+ passed' | grep -oE '[0-9]+' | tail -1)
+                FAIL=$(grep -oE '[0-9]+ failed' /tmp/cargo.log | grep -oE '[0-9]+' | tail -1)
+                FLAKY=$(grep -cE 'IncompleteMessage|connection closed before message completed|channel closed|Connection reset' /tmp/cargo.log)
+                echo "PODUP_TESTS_RC=$RC"
+                echo "PODUP_SUMMARY pass=${PASS:-0} fail=${FAIL:-0} flaky=${FLAKY:-0}"
           runcmd:
             - bash -c 'F=$(findmnt -no FSTYPE /); case $F in btrfs) btrfs filesystem resize max / ;; xfs) xfs_growfs / ;; ext4) resize2fs $(findmnt -no SOURCE /) ;; esac >/dev/console 2>&1; echo "DISK=$(df -h / | tail -1)" >/dev/console'
             - bash -c 'dnf install -y podman rust cargo gcc git >/dev/console 2>&1'
@@ -93,9 +107,13 @@ jobs:
             ${{ matrix.podman }}.*) : ;;
             *) echo "::error::expected Podman ${{ matrix.podman }}.x but VM has $VER"; exit 1 ;;
           esac
-          PASS=$(grep -oE 'test result: (ok|FAILED)\. [0-9]+ passed' "$L" | grep -oE '[0-9]+' | tail -1)
-          FAIL=$(grep -oE '[0-9]+ failed' "$L" | grep -oE '[0-9]+' | tail -1)
-          FLAKY=$(grep -c 'IncompleteMessage' "$L" || true)
+          # Read the machine-readable summary the VM computed from the FULL cargo
+          # log (the console here is tail-truncated, so don't recount from it).
+          SUM=$(grep -oE 'PODUP_SUMMARY pass=[0-9]+ fail=[0-9]+ flaky=[0-9]+' "$L" | tail -1)
+          [ -n "$SUM" ] || { echo "::error::no PODUP_SUMMARY from VM on Podman $VER — suite did not report"; exit 1; }
+          PASS=$(echo "$SUM" | grep -oE 'pass=[0-9]+' | cut -d= -f2)
+          FAIL=$(echo "$SUM" | grep -oE 'fail=[0-9]+' | cut -d= -f2)
+          FLAKY=$(echo "$SUM" | grep -oE 'flaky=[0-9]+' | cut -d= -f2)
           PASS=${PASS:-0}; FAIL=${FAIL:-0}; FLAKY=${FLAKY:-0}
           REAL_FAIL=$(( FAIL > FLAKY ? FAIL - FLAKY : 0 ))
           echo "Podman $VER: $PASS passed, $FAIL failed ($FLAKY IncompleteMessage flake; $REAL_FAIL unexplained)"
