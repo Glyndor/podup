@@ -25,30 +25,7 @@
 
 ## 📥 Install
 
-```bash
-curl -fsSL https://glyndor.net/podup/install/unix | bash      # Linux / macOS
-```
-
-```powershell
-irm https://glyndor.net/podup/install/windows | iex           # Windows
-```
-
-Signed, SHA-256 verified, fail-closed. Requires **Podman ≥ 5.0** (rootless) — check with `podman --version`. podup tracks the latest stable Podman — validated on **5.x** and **6.0.0**.
-
-<details>
-<summary><b>Podman version · apt · build from source · self-update · platforms</b></summary>
-
-### Podman version
-
-podup tracks the **latest stable Podman** and supports the **last two majors**.
-It talks to Podman's native libpod API (still versioned 5.x — 5.2.0 on Podman 6),
-so it needs **Podman ≥ 5.0**. Today podup is validated on **Podman 5.x**;
-**Podman 6 support is landing next**. Many distributions still ship 4.x — check
-`podman --version` and upgrade if needed. Fedora, Debian trixie/sid and recent
-Ubuntu releases carry 5.x; on an older release, install or upgrade Podman
-following the official guide: <https://podman.io/docs/installation>.
-
-### Debian / Ubuntu (apt)
+### Debian / Ubuntu (apt) — recommended
 
 Install from the Glyndor apt repository so updates arrive through `apt upgrade`:
 
@@ -59,13 +36,34 @@ curl -fsSL https://glyndor.net/podup/install/unix | bash -s -- --apt
 This installs the `glyndor-archive-keyring` package (registering the signed
 repository at `https://apt.glyndor.net`) and then `podup`. Key renewals are
 picked up automatically by `apt upgrade`; the apt build omits self-update, since
-apt owns upgrades. By hand:
+apt owns upgrades. Signed, SHA-256 verified, fail-closed. Requires **Podman ≥ 5.0**
+(rootless) — podup tracks the latest stable Podman, validated on **5.x and 6.0.0**.
+
+<details>
+<summary><b>Other methods — Linux/macOS script · Windows · build from source · self-update · Podman version · platforms</b></summary>
+
+### apt, by hand
 
 ```bash
 curl -fsSLO https://apt.glyndor.net/glyndor-archive-keyring.deb
 sudo dpkg -i glyndor-archive-keyring.deb
 sudo apt update && sudo apt install podup
 ```
+
+### Linux / macOS (install script)
+
+```bash
+curl -fsSL https://glyndor.net/podup/install/unix | bash
+```
+
+### Windows (PowerShell)
+
+```powershell
+irm https://glyndor.net/podup/install/windows | iex
+```
+
+Both installers verify the Ed25519 signature over `SHA256SUMS` and fail closed
+otherwise.
 
 ### Build from source
 
@@ -83,6 +81,16 @@ podup update --check    # report whether a newer release exists, install nothing
 `podup update` replaces the running binary in place only after verifying the
 release's Ed25519 signature and SHA-256 checksum — it fails closed otherwise. See
 [docs/self-update.md](docs/self-update.md) for the trust model.
+
+### Podman version
+
+podup tracks the **latest stable Podman** and supports the **last two majors**.
+It talks to Podman's native libpod API (still versioned 5.x — 5.2.0 on Podman 6),
+so it needs **Podman ≥ 5.0**. podup is validated on **Podman 5.x and 6.0.0** (the
+latter in CI against Fedora rawhide). Many distributions still ship 4.x — check
+`podman --version` and upgrade if needed. Fedora, Debian trixie/sid and recent
+Ubuntu releases carry 5.x; on an older release, install or upgrade Podman
+following the official guide: <https://podman.io/docs/installation>.
 
 ### Platforms
 
@@ -125,9 +133,9 @@ sequenceDiagram
 
 <div align="center">
 
-### ~7 MiB flat memory &nbsp;•&nbsp; near-zero CPU &nbsp;•&nbsp; up to 14× faster than podman-compose
+### ~7 MiB flat memory &nbsp;•&nbsp; near-zero CPU &nbsp;•&nbsp; up to 15× faster than podman-compose
 
-<img src="docs/assets/bench.svg" alt="Bar chart: podup uses ~7 MiB vs 69 MiB for podman-compose, and is 4.5–14x faster per op" width="760">
+<img src="docs/assets/bench.svg" alt="Bar chart: podup uses ~7 MiB vs 69 MiB for podman-compose, and is 7–15x faster per op" width="760">
 
 </div>
 
