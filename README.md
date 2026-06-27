@@ -7,7 +7,7 @@
 ![peak memory ~7 MiB](https://img.shields.io/badge/peak_memory-~7_MiB-3fb950)
 ![daemon none](https://img.shields.io/badge/daemon-none-3fb950)
 ![rootless](https://img.shields.io/badge/rootless-native-3fb950)
-![Podman 5.x, 6 next](https://img.shields.io/badge/Podman-5.x_·_6_next-892ca0)
+![Podman 5 & 6](https://img.shields.io/badge/Podman-5_%26_6-892ca0)
 
 [![CI](https://github.com/Glyndor/podup/actions/workflows/ci.yml/badge.svg)](https://github.com/Glyndor/podup/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/podup.svg)](https://crates.io/crates/podup)
@@ -33,7 +33,7 @@ curl -fsSL https://glyndor.net/podup/install/unix | bash      # Linux / macOS
 irm https://glyndor.net/podup/install/windows | iex           # Windows
 ```
 
-Signed, SHA-256 verified, fail-closed. Requires **Podman ≥ 5.0** (rootless) — check with `podman --version`. podup tracks the latest stable Podman: validated on **5.x** today, with **Podman 6 support landing next**.
+Signed, SHA-256 verified, fail-closed. Requires **Podman ≥ 5.0** (rootless) — check with `podman --version`. podup tracks the latest stable Podman — validated on **5.x** and **6.0.0**.
 
 <details>
 <summary><b>Podman version · apt · build from source · self-update · platforms</b></summary>
