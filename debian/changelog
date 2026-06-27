@@ -6,7 +6,7 @@ podup (1.5.2) unstable; urgency=medium
     5.x and 6.x (floor >= 5.0). CI validates the engine against both Podman 5 and
     6 on every engine change.
 
- -- Glyndor <75870284+Jaro-c@users.noreply.github.com>  Sat, 27 Jun 2026 12:37:18 -0500
+ -- Glyndor <packages@glyndor.net>  Sat, 27 Jun 2026 12:37:18 -0500
 
 podup (1.5.1) unstable; urgency=medium
 
