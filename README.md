@@ -27,27 +27,29 @@
 
 ### Debian / Ubuntu (apt) — recommended
 
-Install from the Glyndor apt repository so updates arrive through `apt upgrade`:
-
-```bash
-curl -fsSL https://glyndor.net/podup/install/unix | bash -s -- --apt
-```
-
-This installs the `glyndor-archive-keyring` package (registering the signed
-repository at `https://apt.glyndor.net`) and then `podup`. Key renewals are
-picked up automatically by `apt upgrade`; the apt build omits self-update, since
-apt owns upgrades. Signed, SHA-256 verified, fail-closed. Requires **Podman ≥ 5.0**
-(rootless) — podup tracks the latest stable Podman, validated on **5.x and 6.0.0**.
-
-<details>
-<summary><b>Other methods — Linux/macOS script · Windows · build from source · self-update · Podman version · platforms</b></summary>
-
-### apt, by hand
+Register the signed Glyndor repository and install — copy-paste:
 
 ```bash
 curl -fsSLO https://apt.glyndor.net/glyndor-archive-keyring.deb
 sudo dpkg -i glyndor-archive-keyring.deb
 sudo apt update && sudo apt install podup
+```
+
+The keyring package registers `https://apt.glyndor.net` and ships the signing
+key, so podup updates (and key renewals) arrive through `apt upgrade` — the apt
+build omits self-update since apt owns upgrades. Signed, SHA-256 verified,
+fail-closed. Requires **Podman ≥ 5.0** (rootless) — podup tracks the latest
+stable Podman, validated on **5.x and 6.0.0**.
+
+<details>
+<summary><b>Other methods — Linux/macOS script · Windows · build from source · self-update · Podman version · platforms</b></summary>
+
+### apt, one-liner (script)
+
+Same as above via the install script (registers the repo, then installs):
+
+```bash
+curl -fsSL https://glyndor.net/podup/install/unix | bash -s -- --apt
 ```
 
 ### Linux / macOS (install script)
