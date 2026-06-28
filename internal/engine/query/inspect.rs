@@ -214,12 +214,25 @@ impl Engine {
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		let container = self.first_replica_name(service_name, service);
+		// Resolve against the containers Podman actually has so a service scaled at
+		// runtime (`up --scale=3` → `…-1`/`…-2`/`…-3`) attaches to a real replica
+		// instead of the unsuffixed base name, which would 404. Pick the
+		// lowest-numbered live container for a stable choice.
+		let mut live = self
+			.list_project_container_names(Some(service_name))
+			.await?;
+		live.sort();
+		let container = live.into_iter().next().ok_or_else(|| {
+			ComposeError::Unsupported(format!(
+				"attach: no running container for service '{service_name}'"
+			))
+		})?;
 		let is_tty = service.tty.unwrap_or(false);
 
 		let path = format!(
-			"{API_PREFIX}/containers/{}/logs?stdout=true&stderr=true&follow=true",
+			"{API_PREFIX}/containers/{}/logs?{}",
 			urlencoded(&container),
+			attach_log_query(),
 		);
 		let resp = self
 			.client
@@ -342,6 +355,13 @@ impl Engine {
 	}
 }
 
+/// Query string for `attach`: a live-only stdout/stderr stream. `tail=0`
+/// suppresses the historical log backlog so attach shows live output (matching
+/// `docker compose attach`) instead of replaying the container's whole history.
+fn attach_log_query() -> &'static str {
+	"stdout=true&stderr=true&follow=true&tail=0"
+}
+
 /// Resolve the `(port, proto)` for `port` from a `PORT` or `PORT/proto` argument,
 /// the `/proto` suffix overriding the `--protocol` flag — matching
 /// `docker compose port`. Pure so the parsing is unit-tested.
@@ -360,7 +380,15 @@ fn parse_port_proto<'a>(private_port: &'a str, proto_flag: &'a str) -> Result<(u
 
 #[cfg(test)]
 mod tests {
-	use super::parse_port_proto;
+	use super::{attach_log_query, parse_port_proto};
+
+	#[test]
+	fn attach_query_suppresses_log_backlog() {
+		// `tail=0` means attach streams live output only, not the full history.
+		let q = attach_log_query();
+		assert!(q.contains("follow=true"), "got: {q}");
+		assert!(q.contains("tail=0"), "got: {q}");
+	}
 
 	#[test]
 	fn bare_port_uses_flag_proto() {
