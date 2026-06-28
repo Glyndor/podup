@@ -13,6 +13,14 @@ use crate::error::{ComposeError, Result};
 const MAX_ALIAS_REFS: usize = 100;
 const MAX_ALIAS_DOC_BYTES: usize = 512 * 1024;
 
+/// Upper bound on flow-style nesting depth (`[`/`{`). serde_yaml_ng's own
+/// recursion cap eventually rejects pathological nesting, but its tokenizer is
+/// O(n^2) in the depth it scans, so a small file of deeply nested flow
+/// collections (`[[[[…]]]]`) can burn quadratic CPU time before that cap fires.
+/// Real compose files nest only a handful of levels, so this cheap pre-parse
+/// pass bounds the parser's worst-case work without affecting any valid input.
+const MAX_FLOW_DEPTH: usize = 100;
+
 pub(super) fn deserialize_with_merge(content: &str) -> Result<ComposeFile> {
 	deserialize_with_merge_interp(content, None)
 }
@@ -31,6 +39,7 @@ pub(super) fn deserialize_with_merge_interp(
 	content: &str,
 	vars: Option<&HashMap<String, String>>,
 ) -> Result<ComposeFile> {
+	guard_flow_depth(content)?;
 	guard_alias_expansion(content)?;
 	let mut value: serde_yaml::Value = serde_yaml::from_str(content)?;
 	if let Some(vars) = vars {
@@ -124,6 +133,36 @@ fn guard_alias_expansion(content: &str) -> Result<()> {
 			"compose document uses {refs} YAML alias references; at most {MAX_ALIAS_REFS} are \
 			 allowed — inline the repeated content instead"
 		)));
+	}
+	Ok(())
+}
+
+/// Reject documents whose flow-style nesting (`[`/`{`) exceeds [`MAX_FLOW_DEPTH`]
+/// before they reach the O(n^2) tokenizer. Brackets inside single/double-quoted
+/// scalars and after a `#` comment are ignored, mirroring [`count_alias_refs`]'s
+/// conservative scan; the count never fully parses YAML, it only bounds work.
+fn guard_flow_depth(content: &str) -> Result<()> {
+	let mut depth: usize = 0;
+	for line in content.lines() {
+		let (mut in_single, mut in_double) = (false, false);
+		for c in line.chars() {
+			match c {
+				'\'' if !in_double => in_single = !in_single,
+				'"' if !in_single => in_double = !in_double,
+				'#' if !in_single && !in_double => break,
+				'[' | '{' if !in_single && !in_double => {
+					depth += 1;
+					if depth > MAX_FLOW_DEPTH {
+						return Err(ComposeError::Unsupported(format!(
+							"compose document nests flow collections more than {MAX_FLOW_DEPTH} \
+							 levels deep; flatten the structure"
+						)));
+					}
+				}
+				']' | '}' if !in_single && !in_double => depth = depth.saturating_sub(1),
+				_ => {}
+			}
+		}
 	}
 	Ok(())
 }
@@ -302,6 +341,32 @@ mod tests {
 		}
 		let err = guard_alias_expansion(&yaml).unwrap_err();
 		assert!(format!("{err}").contains("alias references"));
+	}
+
+	// flow-depth guard
+
+	#[test]
+	fn guard_flow_depth_allows_shallow_nesting() {
+		// A handful of nested flow collections (typical compose) is fine.
+		assert!(guard_flow_depth("a: [[1, 2], [3, 4]]\nb: {x: {y: 1}}\n").is_ok());
+	}
+
+	#[test]
+	fn guard_flow_depth_rejects_pathological_nesting() {
+		let deep = format!(
+			"a: {}{}\n",
+			"[".repeat(MAX_FLOW_DEPTH + 5),
+			"]".repeat(MAX_FLOW_DEPTH + 5)
+		);
+		let err = guard_flow_depth(&deep).unwrap_err();
+		assert!(format!("{err}").contains("flow collections"));
+	}
+
+	#[test]
+	fn guard_flow_depth_ignores_brackets_in_quotes_and_comments() {
+		// Brackets inside quoted scalars or after `#` do not count toward depth.
+		let yaml = format!("cmd: \"{}\"  # {}\n", "[".repeat(200), "{".repeat(200));
+		assert!(guard_flow_depth(&yaml).is_ok());
 	}
 
 	#[test]

@@ -266,18 +266,7 @@ pub(crate) async fn dispatch(
 				)
 				.await?
 		}
-		Commands::Ps { all, quiet, format } => {
-			engine
-				.ps_with_options(
-					file,
-					podup::PsOptions {
-						all,
-						quiet,
-						json: format == OutputFormat::Json,
-					},
-				)
-				.await?
-		}
+		Commands::Ps { .. } => unreachable!("handled before compose parsing"),
 		Commands::Top { format, services } => {
 			engine
 				.top_with_options(file, &services, format == OutputFormat::Json)

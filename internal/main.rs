@@ -87,7 +87,7 @@ fn print_error(e: &podup::ComposeError) {
 
 /// Orchestrate one CLI invocation: parse args, then short-circuit the commands
 /// that need neither a compose file nor (for some) Podman — `completions`,
-/// `update`, `ls`, and `config`. Otherwise resolve and parse the compose
+/// `update`, `ls`, `ps`, and `config`. Otherwise resolve and parse the compose
 /// file(s), settle the project name and base directory (validating the name at
 /// the trust boundary), acquire the per-project lock, and dispatch the
 /// remaining commands.
@@ -171,6 +171,34 @@ async fn run() -> podup::Result<()> {
 		.await;
 	}
 
+	// `ps` filters running containers purely by the project label and ignores the
+	// compose file entirely, so it must list an already-running project even when
+	// that file is missing or unparseable (matching `docker compose ps`). Handle
+	// it before the compose file is parsed: read the compose `name:` for project
+	// precedence when the file parses, but fall back to the directory basename
+	// rather than failing, unlike the commands that depend on the file's contents.
+	if let Commands::Ps { all, quiet, format } = &cli.command {
+		let compose_files = resolve_compose_files(&cli.file);
+		let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
+		let compose_name = podup::parse_files_with_env_files(&compose_files, &cli.env_file)
+			.ok()
+			.and_then(|f| f.name);
+		let project = resolve_project_name(cli.project.clone(), compose_name.as_deref(), &base_dir);
+		startup::validate_project_name(&project)?;
+		let client = podup::podman::connect(cli.socket.as_deref())?;
+		let engine = podup::Engine::with_base_dir(client, project, base_dir);
+		return engine
+			.ps_with_options(
+				&podup::compose::types::ComposeFile::default(),
+				podup::PsOptions {
+					all: *all,
+					quiet: *quiet,
+					json: *format == OutputFormat::Json,
+				},
+			)
+			.await;
+	}
+
 	let compose_files = resolve_compose_files(&cli.file);
 	// `config --no-interpolate` must skip interpolation *entirely*: parsing with
 	// interpolation enabled would evaluate a required-var `${VAR:?msg}` and fail
@@ -204,6 +232,13 @@ async fn run() -> podup::Result<()> {
 		..
 	} = &cli.command
 	{
+		// Validate the resolved project name in the config path too, at the same
+		// trust boundary the mutating commands use, so `config -p 'bad name!'`
+		// reports the same invalid-name error instead of succeeding. The config
+		// path returns early below, so without this it would never be checked.
+		let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
+		let project = resolve_project_name(cli.project.clone(), file.name.as_deref(), &base_dir);
+		startup::validate_project_name(&project)?;
 		// `file` is already parsed with the correct interpolation setting above.
 		let parsed = file;
 		// `--resolve-image-digests` pins each image to its registry digest, which
@@ -233,13 +268,7 @@ async fn run() -> podup::Result<()> {
 	// quadlet generation). Explicit `-p`/`COMPOSE_PROJECT_NAME` values and the
 	// compose `name:` field are otherwise taken verbatim; rejecting an unsafe
 	// name here fails closed regardless of which command runs next.
-	if !podup::is_safe_project_name(&project) {
-		return Err(podup::ComposeError::Unsupported(format!(
-			"project name {project:?} is not a safe path component: use lowercase ASCII \
-			 letters, digits, '-', '_', starting with a letter or digit, max 128 chars \
-			 (docker-compose rule ^[a-z0-9][a-z0-9_-]*$)"
-		)));
-	}
+	startup::validate_project_name(&project)?;
 
 	// `generate` produces declarative artifacts from the compose file alone; it
 	// neither contacts Podman nor mutates project state.

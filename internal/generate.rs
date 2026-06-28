@@ -134,7 +134,7 @@ pub(crate) fn write_quadlet(
 
 #[cfg(test)]
 mod tests {
-	use super::{quadlet_platform_advisory, validate_for_quadlet};
+	use super::{quadlet_platform_advisory, validate_for_quadlet, write_quadlet};
 	use podup::parse_str;
 
 	#[test]
@@ -144,6 +144,19 @@ mod tests {
 			let msg = quadlet_platform_advisory(os).expect("non-linux host warns");
 			assert!(msg.contains("systemd"), "advisory names the requirement");
 		}
+	}
+
+	#[test]
+	fn cyclic_depends_on_is_rejected_before_emitting_units() {
+		// A `depends_on` cycle must error rather than emit units with mutual
+		// `After=`/`Requires=`; the check runs before any file I/O so `output: None`
+		// is safe here.
+		let file = podup::parse_str(
+			"services:\n  a:\n    image: x\n    depends_on: [b]\n  b:\n    image: y\n    depends_on: [a]\n",
+		)
+		.unwrap();
+		let err = write_quadlet(&file, "proj", None).unwrap_err();
+		assert!(matches!(err, podup::ComposeError::CircularDependency(_)));
 	}
 
 	#[test]

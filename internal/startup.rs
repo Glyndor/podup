@@ -33,6 +33,22 @@ pub(crate) fn is_mutating(command: &Commands) -> bool {
 	)
 }
 
+/// Validate the resolved project name at the trust boundary, before it reaches
+/// any code path that builds a filesystem path from it (staging, lock files,
+/// quadlet generation) or filters containers by it. Shared by the mutating
+/// dispatch path and the read-only `config`/`ps` paths so every command reports
+/// the same invalid-name error.
+pub(crate) fn validate_project_name(project: &str) -> podup::Result<()> {
+	if podup::is_safe_project_name(project) {
+		Ok(())
+	} else {
+		Err(podup::ComposeError::Unsupported(format!(
+			"project name {project:?} is not a safe path component: use only ASCII \
+			 letters, digits, '-', '_', '.', not starting with '.', max 128 chars"
+		)))
+	}
+}
+
 /// Whether a command is scoped purely by the `podup.project` label and never
 /// reads service definitions, so it can run against a project with no compose
 /// file present — matching `docker compose -p NAME events`/`ps`. These commands
@@ -140,19 +156,12 @@ pub(crate) fn render_config(
 	quiet: bool,
 	project: &str,
 ) -> podup::Result<()> {
-	// Reaching here means the file parsed and merged cleanly. Validate that each
-	// resolved service declares an image or a build, the same rule `up` enforces
-	// — and do it before the `--quiet`/`--services` short-circuits so
-	// validate-only (`--quiet`) actually validates, matching `docker compose config`.
-	for (name, svc) in &file.services {
-		if svc.image.is_none() && svc.build.is_none() {
-			return Err(podup::ComposeError::NoImageOrBuild(name.clone()));
-		}
-		// Reject malformed/out-of-range port mappings (e.g. `70000:80`) here too,
-		// so `config` validates them rather than accepting a mapping `up` and
-		// `generate quadlet` would reject.
-		podup::ports::parse_ports(&svc.ports)?;
-	}
+	// Reaching here means the file parsed and merged cleanly. Run the full
+	// config-time validation (non-empty services, image-or-build, service-name
+	// charset, port ranges, undefined volume/network references, and an acyclic
+	// dependency graph) before the `--quiet`/`--services` short-circuits, so
+	// validate-only (`--quiet`) actually validates — matching `docker compose config`.
+	podup::validate_config(file)?;
 	if quiet {
 		return Ok(());
 	}

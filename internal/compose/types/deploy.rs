@@ -66,8 +66,13 @@ pub struct ResourcesConfig {
 /// A single resource specification: CPU shares, memory limit, pids limit, and device access.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ResourceSpec {
-	/// CPU limit expressed in cores (e.g. `"0.5"`).
-	#[serde(skip_serializing_if = "Option::is_none")]
+	/// CPU limit expressed in cores (e.g. `0.5` or `"0.5"`); accepts both the
+	/// unquoted-number and quoted-string spec forms.
+	#[serde(
+		default,
+		deserialize_with = "super::primitives::deserialize_opt_string_or_number",
+		skip_serializing_if = "Option::is_none"
+	)]
 	pub cpus: Option<String>,
 	/// Memory limit as a size string (e.g. `"512M"`).
 	#[serde(skip_serializing_if = "Option::is_none")]

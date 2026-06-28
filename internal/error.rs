@@ -91,7 +91,20 @@ pub enum ComposeError {
 impl fmt::Display for ComposeError {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
-			Self::Parse(e) => write!(f, "failed to parse compose file: {e}"),
+			// Report only the parser's location, never the raw `serde_yaml`
+			// message: that message embeds the offending scalar verbatim (the file's
+			// own content), which would echo a non-compose file pointed at with `-f`
+			// straight onto stderr. Location (line/column) is enough to find the
+			// problem without leaking the bytes.
+			Self::Parse(e) => match e.location() {
+				Some(loc) => write!(
+					f,
+					"failed to parse compose file at line {}, column {}",
+					loc.line(),
+					loc.column()
+				),
+				None => write!(f, "failed to parse compose file"),
+			},
 			Self::FileNotFound(s) => write!(f, "compose file not found: {s}"),
 			Self::Io(e) => write!(f, "io error: {e}"),
 			Self::Podman(e) => write!(f, "podman error: {e}"),
@@ -200,7 +213,7 @@ mod tests {
 	fn display_covers_all_variants() {
 		let cases: &[(&str, ComposeError)] = &[
 			(
-				"failed to parse compose file:",
+				"failed to parse compose file",
 				ComposeError::Parse(serde_yaml::from_str::<serde_yaml::Value>(":\0").unwrap_err()),
 			),
 			(
@@ -307,6 +320,26 @@ mod tests {
 				std::mem::discriminant(err),
 			);
 		}
+	}
+
+	#[test]
+	fn parse_display_does_not_echo_offending_scalar() {
+		// A type error embeds the offending scalar in the raw serde_yaml message
+		// (`invalid type: string "s3cr3t-token", ...`). The Display must not surface
+		// that content — it points at the location instead, so a non-compose file
+		// pointed at with `-f` cannot leak its bytes onto stderr.
+		#[derive(Debug, serde::Deserialize)]
+		struct OnlyMap {
+			#[allow(dead_code)]
+			services: std::collections::BTreeMap<String, String>,
+		}
+		let err = serde_yaml::from_str::<OnlyMap>("services: s3cr3t-token\n").unwrap_err();
+		let msg = ComposeError::Parse(err).to_string();
+		assert!(
+			!msg.contains("s3cr3t-token"),
+			"parse error must not echo file content, got {msg:?}"
+		);
+		assert!(msg.starts_with("failed to parse compose file"));
 	}
 
 	#[test]

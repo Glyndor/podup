@@ -18,6 +18,12 @@ use crate::substitute;
 use types::{ComposeFile, ServiceNetworks};
 
 pub use order::{resolve_levels, resolve_order};
+pub use validate::validate_config;
+
+/// Whether a compose-file path is the stdin sentinel `-` (`docker compose -f -`).
+fn is_stdin(path: &Path) -> bool {
+	path == Path::new("-")
+}
 
 /// Parse a compose file from disk, applying variable substitution and
 /// resolving `extends:` / `include:` directives.
@@ -42,8 +48,17 @@ pub fn parse_file_with_env_files_interp(
 	env_files: &[String],
 	interpolate: bool,
 ) -> Result<ComposeFile> {
-	let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-	let dir = abs.parent().unwrap_or(Path::new(".")).to_path_buf();
+	// `-f -` reads the compose document from stdin (like `docker compose`); there
+	// is no file to canonicalize, so relative paths and `.env` resolve against the
+	// working directory.
+	let (abs, dir) = if is_stdin(path) {
+		let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+		(PathBuf::from("-"), cwd)
+	} else {
+		let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+		let dir = abs.parent().unwrap_or(Path::new(".")).to_path_buf();
+		(abs, dir)
+	};
 	let mut file = parse_file_inner_with_env(&abs, &dir, env_files, interpolate)?;
 
 	let includes = std::mem::take(&mut file.include);
@@ -223,13 +238,17 @@ pub(crate) fn parse_file_inner_with_env(
 	extra_env_files: &[String],
 	interpolate: bool,
 ) -> Result<ComposeFile> {
-	let content = crate::filesystem::read_to_string_capped(path).map_err(|e| {
-		if e.kind() == std::io::ErrorKind::NotFound {
-			ComposeError::FileNotFound(path.display().to_string())
-		} else {
-			ComposeError::Io(e)
-		}
-	})?;
+	let content = if is_stdin(path) {
+		crate::filesystem::read_stdin_to_string_capped().map_err(ComposeError::Io)?
+	} else {
+		crate::filesystem::read_to_string_capped(path).map_err(|e| {
+			if e.kind() == std::io::ErrorKind::NotFound {
+				ComposeError::FileNotFound(path.display().to_string())
+			} else {
+				ComposeError::Io(e)
+			}
+		})?
+	};
 	// `config --no-interpolate` leaves `${VAR}` placeholders literal; otherwise
 	// interpolate against the env/.env/env-file variable map. Interpolation runs
 	// on the parsed YAML scalars (see `deserialize_with_merge_interp`), not the
@@ -251,6 +270,14 @@ mod tests {
 	use super::*;
 
 	// parse_str_raw
+
+	#[test]
+	fn is_stdin_matches_only_the_dash_sentinel() {
+		assert!(is_stdin(Path::new("-")));
+		assert!(!is_stdin(Path::new("docker-compose.yml")));
+		assert!(!is_stdin(Path::new("./-")));
+		assert!(!is_stdin(Path::new("a-b")));
+	}
 
 	#[test]
 	fn parse_str_raw_minimal_service() {
