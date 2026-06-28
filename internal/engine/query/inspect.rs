@@ -33,8 +33,9 @@ impl Engine {
 					return Err(crate::error::ComposeError::ServiceNotFound(name.clone()));
 				}
 			}
-			// Deduplicate so `top web web` queries and prints `web` once, matching
-			// `docker compose top` and avoiding redundant `/top` API calls.
+			// Deduplicate repeated positionals (`top web web`) preserving order, so
+			// a service's process block is not rendered twice and we avoid redundant
+			// `/top` API calls — matching docker compose top.
 			dedup_preserving_order(target_services)
 		};
 
@@ -58,12 +59,15 @@ impl Engine {
 					})),
 					Ok(result) => {
 						crate::ui::print_bold_header(&container_name);
-						if let Some(titles) = &result.titles {
-							crate::ui::print_bold_header(&titles.join("\t"));
-						}
-						if let Some(processes) = &result.processes {
-							for row in processes {
-								println!("{}", row.join("\t"));
+						// Space-pad columns to the widest cell (header + rows) rather
+						// than tab-joining, so the table is aligned as the help promises.
+						let titles = result.titles.clone().unwrap_or_default();
+						let processes = result.processes.clone().unwrap_or_default();
+						let aligned = align_top_columns(&titles, &processes);
+						if let Some((header, rows)) = aligned.split_first() {
+							crate::ui::print_bold_header(header);
+							for row in rows {
+								println!("{row}");
 							}
 						}
 					}
@@ -160,23 +164,30 @@ impl Engine {
 				None if service.build.is_some() => format!("{name}:latest"),
 				None => continue,
 			};
+			let (repo, tag) = split_repo_tag(&image_ref);
 			let path = format!("{API_PREFIX}/images/{}/json", urlencoded(&image_ref));
 			match self.client.get_json::<ImageInspect>(&path).await {
 				Ok(img) => {
-					let (repo, tag) = image_ref
-						.rsplit_once(':')
-						.map(|(r, t)| (r.to_string(), t.to_string()))
-						.unwrap_or_else(|| (image_ref.clone(), "latest".to_string()));
 					let id = img.id.trim_start_matches("sha256:").get(..12).unwrap_or("");
 					rows.push((name.clone(), repo, tag, id.to_string()));
 				}
-				Err(e) => tracing::warn!("images {name}: {e}"),
+				// An image not present locally is listed with an empty ID rather
+				// than silently dropped, so the output is never quietly incomplete.
+				Err(e) => {
+					tracing::warn!("images {name}: {e}");
+					rows.push((name.clone(), repo, tag, String::new()));
+				}
 			}
 		}
 
 		if opts.quiet {
+			// Deduplicate IDs so services sharing an image emit it once, like
+			// docker compose images -q. Empty IDs (not-pulled) are skipped.
+			let mut seen = std::collections::HashSet::new();
 			for (_, _, _, id) in &rows {
-				println!("{id}");
+				if !id.is_empty() && seen.insert(id.as_str()) {
+					println!("{id}");
+				}
 			}
 			return Ok(());
 		}
@@ -382,13 +393,13 @@ fn parse_port_proto<'a>(private_port: &'a str, proto_flag: &'a str) -> Result<(u
 	Ok((port, proto))
 }
 
-/// Deduplicate `names` while preserving first-seen order. Used so `top web web`
-/// queries and prints each service once, matching `docker compose top`.
-fn dedup_preserving_order(names: &[String]) -> Vec<String> {
+/// Deduplicate a list of strings, preserving first-seen order. Used so `top web
+/// web` queries and prints each service once, matching `docker compose top`.
+fn dedup_preserving_order(items: &[String]) -> Vec<String> {
 	let mut seen = std::collections::HashSet::new();
-	names
+	items
 		.iter()
-		.filter(|n| seen.insert((*n).clone()))
+		.filter(|s| seen.insert(s.as_str()))
 		.cloned()
 		.collect()
 }
@@ -400,9 +411,118 @@ fn is_running_status(status: &str) -> bool {
 	status.eq_ignore_ascii_case("running")
 }
 
+/// Split an image reference into `(repository, tag)` for the `images` table.
+///
+/// A trailing `:tag` is only a tag when the segment after it has no `/` (so a
+/// `registry:port/name` host is not mis-split), mirroring the guard in
+/// `export.rs`. A `name@sha256:...` digest reference has no tag, shown as
+/// `<none>` like docker, and the long digest never bloats the TAG column.
+fn split_repo_tag(image_ref: &str) -> (String, String) {
+	if let Some((repo, _digest)) = image_ref.split_once('@') {
+		return (repo.to_string(), "<none>".to_string());
+	}
+	match image_ref.rsplit_once(':') {
+		Some((repo, tag)) if !tag.contains('/') => (repo.to_string(), tag.to_string()),
+		_ => (image_ref.to_string(), "latest".to_string()),
+	}
+}
+
+/// Align a `top` table (the title row followed by process rows) into
+/// space-padded columns sized to the widest cell, returning one rendered line
+/// per input row (titles first). All but the last column are left-padded; the
+/// last is left ragged to avoid trailing whitespace.
+fn align_top_columns(titles: &[String], processes: &[Vec<String>]) -> Vec<String> {
+	let mut rows: Vec<&[String]> = Vec::with_capacity(processes.len() + 1);
+	if !titles.is_empty() {
+		rows.push(titles);
+	}
+	for p in processes {
+		rows.push(p);
+	}
+	let col_count = rows.iter().map(|r| r.len()).max().unwrap_or(0);
+	let mut widths = vec![0usize; col_count];
+	for r in &rows {
+		for (i, cell) in r.iter().enumerate() {
+			widths[i] = widths[i].max(cell.chars().count());
+		}
+	}
+	rows.iter()
+		.map(|r| {
+			r.iter()
+				.enumerate()
+				.map(|(i, cell)| {
+					if i + 1 == r.len() {
+						cell.clone()
+					} else {
+						format!("{cell:<width$}", width = widths[i])
+					}
+				})
+				.collect::<Vec<_>>()
+				.join("  ")
+		})
+		.collect()
+}
+
 #[cfg(test)]
 mod tests {
-	use super::{dedup_preserving_order, is_running_status, parse_port_proto};
+	use super::{
+		align_top_columns, dedup_preserving_order, is_running_status, parse_port_proto,
+		split_repo_tag,
+	};
+
+	#[test]
+	fn split_repo_tag_plain_name_and_tag() {
+		assert_eq!(
+			split_repo_tag("nginx:1.25"),
+			("nginx".into(), "1.25".into())
+		);
+		assert_eq!(split_repo_tag("nginx"), ("nginx".into(), "latest".into()));
+	}
+
+	#[test]
+	fn split_repo_tag_registry_with_port_is_not_a_tag() {
+		// The ':' belongs to the registry host:port, not a tag.
+		assert_eq!(
+			split_repo_tag("registry:5000/team/app"),
+			("registry:5000/team/app".into(), "latest".into())
+		);
+		assert_eq!(
+			split_repo_tag("registry:5000/team/app:v2"),
+			("registry:5000/team/app".into(), "v2".into())
+		);
+	}
+
+	#[test]
+	fn split_repo_tag_digest_has_no_tag() {
+		let (repo, tag) = split_repo_tag(
+			"docker.io/library/alpine@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		);
+		assert_eq!(repo, "docker.io/library/alpine");
+		assert_eq!(tag, "<none>");
+	}
+
+	#[test]
+	fn dedup_preserving_order_keeps_first_occurrence() {
+		let out =
+			dedup_preserving_order(&["web".into(), "db".into(), "web".into(), "cache".into()]);
+		assert_eq!(out, vec!["web", "db", "cache"]);
+	}
+
+	#[test]
+	fn align_top_columns_pads_to_widest_cell() {
+		let titles = vec!["PID".to_string(), "CMD".to_string()];
+		let processes = vec![
+			vec!["1".to_string(), "bash".to_string()],
+			vec!["12345".to_string(), "node".to_string()],
+		];
+		let lines = align_top_columns(&titles, &processes);
+		assert_eq!(lines.len(), 3);
+		// First column is padded to the widest value ("12345" = 5 chars).
+		assert!(lines[0].starts_with("PID  "));
+		assert!(lines[1].starts_with("1      "));
+		// No tabs in the aligned output.
+		assert!(lines.iter().all(|l| !l.contains('\t')));
+	}
 
 	#[test]
 	fn bare_port_uses_flag_proto() {

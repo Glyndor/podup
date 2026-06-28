@@ -119,20 +119,25 @@ impl Engine {
 			.await?
 		{
 			if !desired.contains(&name) {
-				self.stop_and_remove(&name, grace).await;
+				// Scaling down removes surplus replicas but keeps their data
+				// volumes (only `down -v` reclaims volumes).
+				self.stop_and_remove(&name, grace, false).await;
 			}
 		}
 		Ok(())
 	}
 
-	/// Stop (best-effort) then force-remove a container by name.
-	pub(super) async fn stop_and_remove(&self, name: &str, grace: i32) {
+	/// Stop (best-effort) then force-remove a container by name. With
+	/// `remove_volumes`, the container's anonymous volumes are reclaimed too
+	/// (`podman rm -v`), so a label-based teardown sweep does not leave image
+	/// `VOLUME`/anonymous volumes behind.
+	pub(super) async fn stop_and_remove(&self, name: &str, grace: i32, remove_volumes: bool) {
 		let stop_path = format!(
 			"{API_PREFIX}/containers/{}/stop?t={grace}",
 			urlencoded(name)
 		);
 		let _ = self.client.post_empty_ok(&stop_path).await;
-		let rm_path = format!("{API_PREFIX}/containers/{}?force=true", urlencoded(name));
+		let rm_path = super::container_rm_path(name, remove_volumes);
 		if let Err(e) = self.client.delete_ok(&rm_path).await {
 			tracing::debug!("scale-down rm {name}: {e}");
 		} else {

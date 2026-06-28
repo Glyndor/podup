@@ -8,7 +8,7 @@ use clap::Subcommand;
 use clap_complete::Shell;
 
 use super::parse::parse_scale_pair;
-use super::types::{ConfigFormat, GenerateCommands, OutputFormat, RmiScope};
+use super::types::{ConfigFormat, EventsFormat, GenerateCommands, OutputFormat, RmiScope};
 
 #[derive(Subcommand)]
 pub(crate) enum Commands {
@@ -137,8 +137,8 @@ pub(crate) enum Commands {
 		/// Show all projects, including stopped ones.
 		#[arg(short, long)]
 		all: bool,
-		/// Only display project names.
-		#[arg(short, long)]
+		/// Only display project names. Mutually exclusive with `--format`.
+		#[arg(short, long, conflicts_with = "format")]
 		quiet: bool,
 		/// Output format.
 		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
@@ -289,8 +289,8 @@ pub(crate) enum Commands {
 		/// Show all containers, including stopped ones.
 		#[arg(short, long)]
 		all: bool,
-		/// Only display container IDs.
-		#[arg(short, long)]
+		/// Only display container IDs. Mutually exclusive with `--format`.
+		#[arg(short, long, conflicts_with = "format")]
 		quiet: bool,
 		/// Output format.
 		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
@@ -310,9 +310,9 @@ pub(crate) enum Commands {
 	/// Stream Podman events for this project's containers.
 	Events {
 		/// Output format: a `TYPE ACTION NAME` summary (table) or one JSON
-		/// object per line.
-		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
-		format: OutputFormat,
+		/// object per line (NDJSON, not a JSON array).
+		#[arg(long, value_enum, default_value_t = EventsFormat::Table)]
+		format: EventsFormat,
 		/// Deprecated alias for `--format json`; kept for backward compatibility.
 		#[arg(long, hide = true)]
 		json: bool,
@@ -375,8 +375,8 @@ pub(crate) enum Commands {
 	/// List the project's named volumes.
 	#[command(alias = "volume")]
 	Volumes {
-		/// Only display volume names.
-		#[arg(short, long)]
+		/// Only display volume names. Mutually exclusive with `--format`.
+		#[arg(short, long, conflicts_with = "format")]
 		quiet: bool,
 		/// Output format.
 		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
@@ -388,8 +388,8 @@ pub(crate) enum Commands {
 	/// List images used by services.
 	#[command(alias = "image")]
 	Images {
-		/// Only display image IDs.
-		#[arg(short, long)]
+		/// Only display image IDs. Mutually exclusive with `--format`.
+		#[arg(short, long, conflicts_with = "format")]
 		quiet: bool,
 		/// Output format.
 		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]

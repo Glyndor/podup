@@ -25,7 +25,7 @@ impl Engine {
 				info!("{done} {container}");
 				Ok(())
 			}
-			Err(e) if e.is_status(304) || e.is_status(404) => {
+			Err(e) if e.is_status(304) || e.is_status(404) || e.is_kill_of_stopped() => {
 				tracing::debug!("{container}: {done} skipped ({e})");
 				Ok(())
 			}
@@ -100,8 +100,25 @@ impl Engine {
 		file: &ComposeFile,
 		target_services: &[String],
 	) -> Result<()> {
-		let order = crate::compose::resolve_order(file)?;
-		let order = filter_services(file, order, target_services)?;
+		// `docker compose wait` prints each service's exit code in the order the
+		// services were given on the command line (deduplicated). Only fall back to
+		// dependency order when no services were named (the "all" case).
+		let order = if target_services.is_empty() {
+			let order = crate::compose::resolve_order(file)?;
+			filter_services(file, order, &[])?
+		} else {
+			for name in target_services {
+				if !file.services.contains_key(name) {
+					return Err(ComposeError::ServiceNotFound(name.clone()));
+				}
+			}
+			let mut seen = std::collections::HashSet::new();
+			target_services
+				.iter()
+				.filter(|n| seen.insert(n.as_str()))
+				.cloned()
+				.collect::<Vec<_>>()
+		};
 
 		let mut last_nonzero = 0i64;
 		for name in &order {
@@ -183,6 +200,10 @@ impl Engine {
 		target_services: &[String],
 		signal: &str,
 	) -> Result<()> {
+		// Reject an empty/whitespace-only or otherwise invalid signal before
+		// issuing any request — libpod would silently treat `signal=` as SIGKILL.
+		super::signal::validate_signal(signal)?;
+
 		let order = crate::compose::resolve_order(file)?;
 		let order = filter_services(file, order, target_services)?;
 

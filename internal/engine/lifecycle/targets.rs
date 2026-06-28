@@ -48,6 +48,21 @@ pub(super) fn filter_services(
 		.collect())
 }
 
+/// Error if any requested target service name is absent from the file.
+///
+/// The up/create path expands targets into a set without checking membership, so
+/// a bogus name would silently match nothing and exit 0. This validates the list
+/// up front — matching docker-compose and the stop/start/kill commands, which
+/// already reject unknown services via [`filter_services`].
+pub(super) fn validate_targets(file: &ComposeFile, target_services: &[String]) -> Result<()> {
+	for name in target_services {
+		if !file.services.contains_key(name) {
+			return Err(ComposeError::ServiceNotFound(name.clone()));
+		}
+	}
+	Ok(())
+}
+
 /// Resolve which services `up` should start given an explicit target list.
 ///
 /// Returns `None` when no targets are given (start everything). Otherwise the
@@ -97,7 +112,10 @@ pub(super) fn in_started_set(target_set: &Option<HashSet<String>>, name: &str) -
 
 #[cfg(test)]
 mod tests {
-	use super::{expand_targets, filter_services, in_started_set, service_grace_period_secs};
+	use super::{
+		expand_targets, filter_services, in_started_set, service_grace_period_secs,
+		validate_targets,
+	};
 	use crate::compose::types::{ComposeFile, Service};
 	use std::collections::HashSet;
 
@@ -175,6 +193,32 @@ mod tests {
 		assert!(matches!(
 			err,
 			crate::error::ComposeError::ServiceNotFound(_)
+		));
+	}
+
+	// --- validate_targets ---
+
+	#[test]
+	fn validate_targets_empty_is_ok() {
+		let file = file_with_services(&["a", "b"]);
+		assert!(validate_targets(&file, &[]).is_ok());
+	}
+
+	#[test]
+	fn validate_targets_known_names_ok() {
+		let file = file_with_services(&["a", "b"]);
+		assert!(validate_targets(&file, &["a".to_string(), "b".to_string()]).is_ok());
+	}
+
+	#[test]
+	fn validate_targets_unknown_name_errors() {
+		// An `up`/`create` for a service the file does not define must error
+		// rather than silently match nothing and exit 0.
+		let file = file_with_services(&["a"]);
+		let err = validate_targets(&file, &["no-such-service".to_string()]).unwrap_err();
+		assert!(matches!(
+			err,
+			crate::error::ComposeError::ServiceNotFound(name) if name == "no-such-service"
 		));
 	}
 
