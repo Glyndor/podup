@@ -12,6 +12,28 @@ pub(crate) enum OutputFormat {
 	Json,
 }
 
+/// When to colourise human-facing output (`--ansi`, like docker compose).
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum AnsiMode {
+	/// Colour only when writing to a terminal (and `NO_COLOR` is unset).
+	#[default]
+	Auto,
+	/// Always colour, even when piped or redirected.
+	Always,
+	/// Never colour.
+	Never,
+}
+
+impl From<AnsiMode> for anstream::ColorChoice {
+	fn from(m: AnsiMode) -> Self {
+		match m {
+			AnsiMode::Auto => Self::Auto,
+			AnsiMode::Always => Self::Always,
+			AnsiMode::Never => Self::Never,
+		}
+	}
+}
+
 /// Which images `down --rmi` removes.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 pub(crate) enum RmiScope {

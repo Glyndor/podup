@@ -181,15 +181,14 @@ impl Engine {
 			return Ok(());
 		}
 
-		println!("{:<40} {:<30} {:<20} PORTS", "NAME", "IMAGE", "STATUS");
+		crate::ui::print_bold_header(&format!(
+			"{:<40} {:<30} {:<20} PORTS",
+			"NAME", "IMAGE", "STATUS"
+		));
 		for c in &containers {
 			let ports = format_ports(&c.ports);
-			println!(
-				"{:<40} {:<30} {:<20} {ports}",
-				name_of(c),
-				c.image,
-				display_status(c)
-			);
+			let status = crate::ui::status_cell(display_status(c), 20);
+			println!("{:<40} {:<30} {status} {ports}", name_of(c), c.image);
 		}
 
 		Ok(())
