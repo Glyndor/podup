@@ -127,6 +127,32 @@ fn log_query(opts: &LogsOptions) -> String {
 	q
 }
 
+/// Build the exec environment list, expanding a bare `KEY` (no `=`) from podup's
+/// own environment the way docker-compose does. A `KEY=VALUE` entry passes
+/// through unchanged; a value-less `KEY` is replaced with `KEY=<host value>` and
+/// dropped entirely when the variable is unset (libpod rejects a bare key with
+/// HTTP 400). Pure so it is unit-tested without a container.
+fn expand_exec_env(env: &[String]) -> Vec<String> {
+	env.iter()
+		.filter_map(|e| {
+			if e.contains('=') {
+				Some(e.clone())
+			} else {
+				std::env::var(e).ok().map(|v| format!("{e}={v}"))
+			}
+		})
+		.collect()
+}
+
+/// True for the in-band stream-teardown line Podman/conmon emits on the exec
+/// stderr channel when an exec launch fails (e.g. a bad `--workdir`/`--user`):
+/// a secondary `read unixpacket ... connection reset by peer` frame that adds
+/// nothing to the real diagnostic. Matching is deliberately narrow so ordinary
+/// program output is never suppressed.
+fn is_exec_teardown_noise(line: &str) -> bool {
+	line.contains("unixpacket") && line.contains("connection reset by peer")
+}
+
 impl Engine {
 	/// List running containers for this project as a table (default options).
 	pub async fn ps(&self, file: &ComposeFile) -> Result<()> {
@@ -363,21 +389,23 @@ impl Engine {
 		cmd: Vec<String>,
 		opts: ExecOptions,
 	) -> Result<()> {
+		// An empty command would be forwarded as an empty `cmd` and surface a raw
+		// podman HTTP 500; reject it up front with a clear message.
+		if cmd.is_empty() {
+			return Err(ComposeError::Unsupported(
+				"exec: a command is required".into(),
+			));
+		}
 		let service = file
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = match opts.index {
-			Some(i) => {
-				let names = self.replica_names(service_name, service);
-				let idx = (i as usize).saturating_sub(1);
-				names.get(idx).cloned().ok_or_else(|| {
-					ComposeError::ServiceNotFound(format!("{service_name} (replica index {i})"))
-				})?
-			}
-			None => self.first_replica_name(service_name, service),
-		};
+		// Resolve the target replica through the shared helper so `--index 0` (and
+		// out-of-range indexes) are rejected consistently with `cp`/`port`/etc.,
+		// rather than aliasing index 0 to the first replica.
+		let container_name = self.replica_name_at(service_name, service, opts.index)?;
 
+		let env = expand_exec_env(&opts.env);
 		let exec_cfg = ExecCreateConfig {
 			cmd: Some(cmd),
 			attach_stdout: Some(true),
@@ -385,7 +413,7 @@ impl Engine {
 			user: opts.user.clone(),
 			working_dir: opts.workdir.clone(),
 			privileged: opts.privileged.then_some(true),
-			env: (!opts.env.is_empty()).then(|| opts.env.clone()),
+			env: (!env.is_empty()).then_some(env),
 			..Default::default()
 		};
 		let create_path = format!(
@@ -443,8 +471,14 @@ impl Engine {
 						let _ = out.flush();
 					}
 					LogOutput::StdErr { message } => {
+						let text = String::from_utf8_lossy(&message);
+						// Drop the spurious connection-reset teardown frame an OCI
+						// exec launch-failure emits, so only the real diagnostic shows.
+						if is_exec_teardown_noise(&text) {
+							continue;
+						}
 						let mut err = std::io::stderr().lock();
-						let _ = err.write_all(String::from_utf8_lossy(&message).as_bytes());
+						let _ = err.write_all(text.as_bytes());
 						let _ = err.flush();
 					}
 				}
@@ -531,7 +565,10 @@ fn filter_orphans(names: Vec<String>, known: &std::collections::HashSet<String>)
 
 #[cfg(test)]
 mod tests {
-	use super::{display_status, filter_orphans, format_ports, log_query, LogsOptions};
+	use super::{
+		display_status, expand_exec_env, filter_orphans, format_ports, is_exec_teardown_noise,
+		log_query, LogsOptions,
+	};
 	use crate::libpod::types::container::{ContainerListEntry, ContainerPort};
 	use std::collections::{HashMap, HashSet};
 
@@ -630,5 +667,34 @@ mod tests {
 		assert!(q.contains("&since=10m"));
 		// `:` is percent-encoded in the query value.
 		assert!(q.contains("&until=2024-01-01T00%3A00%3A00"));
+	}
+
+	#[test]
+	fn expand_exec_env_passes_through_key_value() {
+		let out = expand_exec_env(&["FOO=bar".to_string(), "BAZ=qux".to_string()]);
+		assert_eq!(out, vec!["FOO=bar".to_string(), "BAZ=qux".to_string()]);
+	}
+
+	#[test]
+	fn expand_exec_env_resolves_bare_key_from_host() {
+		// A bare `KEY` takes its value from podup's own environment; an unset bare
+		// key is dropped (libpod rejects a value-less env entry).
+		std::env::set_var("PODUP_TEST_EXEC_ENV", "from-host");
+		let out = expand_exec_env(&[
+			"PODUP_TEST_EXEC_ENV".to_string(),
+			"PODUP_TEST_EXEC_UNSET_ENV".to_string(),
+		]);
+		std::env::remove_var("PODUP_TEST_EXEC_ENV");
+		assert_eq!(out, vec!["PODUP_TEST_EXEC_ENV=from-host".to_string()]);
+	}
+
+	#[test]
+	fn teardown_noise_matches_only_connection_reset_frame() {
+		assert!(is_exec_teardown_noise(
+			"read unixpacket @->/run/...: read: connection reset by peer"
+		));
+		// Ordinary program output is never suppressed.
+		assert!(!is_exec_teardown_noise("connection reset by peer"));
+		assert!(!is_exec_teardown_noise("hello world"));
 	}
 }
