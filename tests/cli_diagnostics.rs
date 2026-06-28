@@ -178,3 +178,36 @@ fn config_no_interpolate_keeps_placeholders_literal() {
 		"--no-interpolate must keep ${{PODUP_TAG}} literal"
 	);
 }
+
+/// `--no-recreate` and `--force-recreate` are mutually exclusive: clap must
+/// reject them together at parse time (exit non-zero) rather than silently
+/// letting force-recreate win, matching docker compose.
+#[test]
+fn up_rejects_no_recreate_with_force_recreate() {
+	let output = Command::new(bin())
+		.args(["up", "--no-recreate", "--force-recreate"])
+		.output()
+		.expect("run up with conflicting flags");
+	assert!(
+		!output.status.success(),
+		"conflicting recreate flags must be rejected"
+	);
+	let stderr = String::from_utf8_lossy(&output.stderr);
+	assert!(
+		stderr.contains("cannot be used with") || stderr.contains("conflict"),
+		"expected a clap conflict error; got:\n{stderr}"
+	);
+}
+
+/// The same exclusivity holds for `create`.
+#[test]
+fn create_rejects_no_recreate_with_force_recreate() {
+	let output = Command::new(bin())
+		.args(["create", "--no-recreate", "--force-recreate"])
+		.output()
+		.expect("run create with conflicting flags");
+	assert!(
+		!output.status.success(),
+		"conflicting recreate flags must be rejected"
+	);
+}

@@ -27,7 +27,7 @@ pub(crate) enum Commands {
 		#[arg(long)]
 		remove_orphans: bool,
 		/// Do not recreate containers that are already running.
-		#[arg(long)]
+		#[arg(long, conflicts_with = "force_recreate")]
 		no_recreate: bool,
 		/// Recreate containers even if their configuration is unchanged.
 		#[arg(long)]
@@ -117,7 +117,7 @@ pub(crate) enum Commands {
 		#[arg(long)]
 		force_recreate: bool,
 		/// Do not recreate containers that already exist.
-		#[arg(long)]
+		#[arg(long, conflicts_with = "force_recreate")]
 		no_recreate: bool,
 		/// Create only these services.
 		#[arg(trailing_var_arg = true)]
