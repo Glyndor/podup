@@ -1,6 +1,7 @@
 //! Service lifecycle commands: up, down, start, stop, restart, kill, rm, pause, unpause, run.
 
 mod commands;
+mod run;
 mod scale;
 mod signal;
 mod targets;

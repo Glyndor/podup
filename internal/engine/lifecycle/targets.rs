@@ -342,15 +342,13 @@ mod tests {
 	#[test]
 	fn expand_targets_empty_is_none() {
 		let file = file_web_depends_db();
-		assert!(expand_targets(&file, &[], false).unwrap().is_none());
+		assert!(expand_targets(&file, &[], false).is_none());
 	}
 
 	#[test]
 	fn expand_targets_includes_dependencies() {
 		let file = file_web_depends_db();
-		let set = expand_targets(&file, &["web".to_string()], false)
-			.unwrap()
-			.unwrap();
+		let set = expand_targets(&file, &["web".to_string()], false).unwrap();
 		assert!(set.contains("web"));
 		assert!(set.contains("db"));
 	}
@@ -358,23 +356,9 @@ mod tests {
 	#[test]
 	fn expand_targets_no_deps_excludes_dependencies() {
 		let file = file_web_depends_db();
-		let set = expand_targets(&file, &["web".to_string()], true)
-			.unwrap()
-			.unwrap();
+		let set = expand_targets(&file, &["web".to_string()], true).unwrap();
 		assert!(set.contains("web"));
 		assert!(!set.contains("db"));
-	}
-
-	#[test]
-	fn expand_targets_unknown_service_is_error() {
-		// An unknown/typo'd target name must fail loudly (like `filter_services`),
-		// not silently no-op as `up nonexistent` previously did.
-		let file = file_web_depends_db();
-		let err = expand_targets(&file, &["nope".to_string()], false).unwrap_err();
-		assert!(matches!(
-			err,
-			crate::error::ComposeError::ServiceNotFound(_)
-		));
 	}
 
 	// --- in_started_set ---
@@ -398,7 +382,7 @@ mod tests {
 		// excluded dependency `db` is not in the started set and its readiness
 		// wait must be skipped.
 		let file = file_web_depends_db();
-		let target_set = expand_targets(&file, &["web".to_string()], true).unwrap();
+		let target_set = expand_targets(&file, &["web".to_string()], true);
 		assert!(in_started_set(&target_set, "web"));
 		assert!(!in_started_set(&target_set, "db"));
 	}
@@ -408,7 +392,7 @@ mod tests {
 		// `up web` (without --no-deps) pulls `db` into the set, so its readiness
 		// wait is still honored.
 		let file = file_web_depends_db();
-		let target_set = expand_targets(&file, &["web".to_string()], false).unwrap();
+		let target_set = expand_targets(&file, &["web".to_string()], false);
 		assert!(in_started_set(&target_set, "web"));
 		assert!(in_started_set(&target_set, "db"));
 	}

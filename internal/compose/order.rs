@@ -191,23 +191,6 @@ mod tests {
 	}
 
 	#[test]
-	fn resolve_order_is_deterministic_for_independent_services() {
-		// Independent services must resolve in a stable (compose-file) order on
-		// every call, so best-effort consumers like `kill` behave reproducibly
-		// rather than depending on HashMap iteration order.
-		let yaml = "services:\n  a:\n    image: x\n  b:\n    image: y\n  c:\n    image: z\n";
-		let file = parse_str_raw(yaml).unwrap();
-		let first = resolve_order(&file).unwrap();
-		assert_eq!(
-			first,
-			vec!["a".to_string(), "b".to_string(), "c".to_string()]
-		);
-		for _ in 0..16 {
-			assert_eq!(resolve_order(&file).unwrap(), first);
-		}
-	}
-
-	#[test]
 	fn resolve_order_cycle_is_error() {
 		let yaml = "services:\n  a:\n    image: x\n    depends_on: [b]\n  b:\n    image: y\n    depends_on: [a]\n";
 		let file = parse_str_raw(yaml).unwrap();

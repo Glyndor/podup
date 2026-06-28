@@ -420,7 +420,7 @@ mod tests {
 			"services:\n  a:\n    image: x\n    depends_on: [b]\n  b:\n    image: y\n    depends_on: [a]\n",
 		)
 		.unwrap();
-		let err = render_config(&file, &ConfigFormat::Yaml, false, true).unwrap_err();
+		let err = render_config(&file, &ConfigFormat::Yaml, false, true, "proj").unwrap_err();
 		assert!(matches!(err, podup::ComposeError::CircularDependency(_)));
 	}
 
