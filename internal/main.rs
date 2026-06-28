@@ -148,23 +148,30 @@ async fn run() -> podup::Result<()> {
 	}
 
 	let compose_files = resolve_compose_files(&cli.file);
-	let file = podup::parse_files_with_env_files(&compose_files, &cli.env_file)?;
+	// `config --no-interpolate` must skip interpolation *entirely*: parsing with
+	// interpolation enabled would evaluate a required-var `${VAR:?msg}` and fail
+	// before we ever reached the no-interpolate branch. Detect it up front so the
+	// file is parsed only once, with interpolation disabled.
+	let no_interpolate = matches!(
+		&cli.command,
+		Commands::Config {
+			no_interpolate: true,
+			..
+		}
+	);
+	let file =
+		podup::parse_files_with_env_files_interp(&compose_files, &cli.env_file, !no_interpolate)?;
 
 	if let Commands::Config {
 		format,
 		services,
 		quiet,
-		no_interpolate,
 		resolve_image_digests,
+		..
 	} = &cli.command
 	{
-		// `--no-interpolate` re-parses with substitution disabled; `file` (already
-		// parsed with interpolation) is used otherwise.
-		let parsed = if *no_interpolate {
-			podup::parse_files_with_env_files_interp(&compose_files, &cli.env_file, false)?
-		} else {
-			file
-		};
+		// `file` is already parsed with the correct interpolation setting above.
+		let parsed = file;
 		// `--resolve-image-digests` pins each image to its registry digest, which
 		// needs a Podman connection to inspect images.
 		let mut resolved = if *resolve_image_digests {
