@@ -1,6 +1,7 @@
 //! Docker Compose variable substitution.
 //!
-//! Applies `${VAR}` / `$VAR` substitution to raw YAML text before parsing.
+//! Applies `${VAR}` / `$VAR` substitution to individual scalar values of a
+//! parsed compose document (compose-spec value-level interpolation).
 //! Handles all compose-spec modifier forms: `:-`, `-`, `:+`, `+`, `:?`, `?`.
 
 mod parse;
@@ -8,9 +9,14 @@ mod parse;
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::error::Result;
+use crate::error::{ComposeError, Result};
 
 use parse::{collect_var_name, is_var_start, parse_braced_var, resolve_modifier};
+
+/// Maximum nesting depth for interpolated default/alternate values
+/// (`${A:-${A:-…}}`). Real compose files nest a handful of levels at most; this
+/// cap turns a pathological chain into a clean error instead of a stack overflow.
+const MAX_INTERP_DEPTH: usize = 64;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -21,6 +27,22 @@ use parse::{collect_var_name, is_var_start, parse_braced_var, resolve_modifier};
 /// `vars` should contain both the process environment and the `.env` file
 /// entries (process environment takes precedence).
 pub fn substitute(input: &str, vars: &HashMap<String, String>) -> Result<String> {
+	substitute_depth(input, vars, 0)
+}
+
+/// Inner substitution carrying the current nesting `depth` so recursive
+/// interpolation of modifier defaults/alternates (`${A:-${B}}`) is bounded.
+pub(super) fn substitute_depth(
+	input: &str,
+	vars: &HashMap<String, String>,
+	depth: usize,
+) -> Result<String> {
+	if depth > MAX_INTERP_DEPTH {
+		return Err(ComposeError::InvalidSubstitution(format!(
+			"interpolation nesting too deep (more than {MAX_INTERP_DEPTH} levels)"
+		)));
+	}
+
 	let mut out = String::with_capacity(input.len());
 	let mut chars = input.chars().peekable();
 
@@ -41,12 +63,21 @@ pub fn substitute(input: &str, vars: &HashMap<String, String>) -> Result<String>
 			Some('{') => {
 				chars.next();
 				let (var, modifier) = parse_braced_var(&mut chars)?;
-				let value = resolve_modifier(var, modifier, vars)?;
+				let value = resolve_modifier(var, modifier, vars, depth)?;
 				out.push_str(&value);
 			}
 			Some(c) if is_var_start(*c) => {
 				let var = collect_var_name(&mut chars);
-				let value = vars.get(&var).cloned().unwrap_or_default();
+				let value = match vars.get(&var) {
+					Some(v) => v.clone(),
+					None => {
+						// Match docker compose v2: warn before defaulting to blank.
+						tracing::warn!(
+							"The {var} variable is not set. Defaulting to a blank string."
+						);
+						String::new()
+					}
+				};
 				out.push_str(&value);
 			}
 			Some(_) => {
@@ -100,9 +131,36 @@ pub fn build_vars(dir: &Path) -> HashMap<String, String> {
 /// the default `.env` (which is therefore not loaded), and among several files
 /// the **last** one wins. With no explicit files this is just [`build_vars`]
 /// (process env + `.env`). Process env always takes precedence over file values.
+///
+/// A missing, unreadable, or malformed `--env-file` is silently skipped here
+/// (legacy lenient behaviour). This signature is part of the published library
+/// API and is kept for backward compatibility; the CLI drives
+/// [`build_vars_with_env_files_strict`], which fails loudly on a bad file.
 pub fn build_vars_with_env_files(dir: &Path, extra: &[String]) -> HashMap<String, String> {
+	// `strict = false` can never produce an error.
+	build_vars_with_env_files_inner(dir, extra, false).unwrap_or_default()
+}
+
+/// Like [`build_vars_with_env_files`] but rejects a bad `--env-file`.
+///
+/// An explicitly-passed `--env-file` that is missing, unreadable, or malformed
+/// is a hard error (matching docker compose, which fails on a not-found env
+/// file) rather than being silently skipped — a typo'd path must not fall back
+/// to process-env/defaults and exit 0.
+pub fn build_vars_with_env_files_strict(
+	dir: &Path,
+	extra: &[String],
+) -> Result<HashMap<String, String>> {
+	build_vars_with_env_files_inner(dir, extra, true)
+}
+
+fn build_vars_with_env_files_inner(
+	dir: &Path,
+	extra: &[String],
+	strict: bool,
+) -> Result<HashMap<String, String>> {
 	if extra.is_empty() {
-		return build_vars(dir);
+		return Ok(build_vars(dir));
 	}
 
 	// Explicit `--env-file`s replace `.env`; a later file overrides an earlier one.
@@ -113,10 +171,24 @@ pub fn build_vars_with_env_files(dir: &Path, extra: &[String]) -> HashMap<String
 		} else {
 			dir.join(path)
 		};
-		let Ok(content) = crate::filesystem::read_to_string_capped(&abs) else {
-			continue;
+		let content = match crate::filesystem::read_to_string_capped(&abs) {
+			Ok(content) => content,
+			Err(e) => {
+				if strict {
+					return Err(crate::error::ComposeError::EnvFile(format!(
+						"env file not found: {} ({e})",
+						abs.display()
+					)));
+				}
+				continue;
+			}
 		};
-		for (key, value) in crate::dotenv::parse(&content) {
+		let pairs = if strict {
+			crate::dotenv::parse_strict(&content)?
+		} else {
+			crate::dotenv::parse(&content)
+		};
+		for (key, value) in pairs {
 			file_vars.insert(key, value);
 		}
 	}
@@ -126,7 +198,7 @@ pub fn build_vars_with_env_files(dir: &Path, extra: &[String]) -> HashMap<String
 	for (k, v) in file_vars {
 		vars.entry(k).or_insert(v);
 	}
-	vars
+	Ok(vars)
 }
 
 // ---------------------------------------------------------------------------
@@ -350,6 +422,53 @@ mod tests {
 		);
 	}
 
+	// Malformed / pathological references
+
+	#[test]
+	fn empty_name_is_error() {
+		assert!(substitute("${}", &vars(&[])).is_err());
+	}
+
+	#[test]
+	fn digit_leading_name_is_error() {
+		assert!(substitute("${1BAD}", &vars(&[])).is_err());
+	}
+
+	#[test]
+	fn unterminated_modifier_is_error() {
+		// The missing `}` must error rather than consume the rest of the input.
+		assert!(substitute("${TAG:-latest\nmore", &vars(&[])).is_err());
+	}
+
+	#[test]
+	fn deeply_nested_defaults_error_instead_of_overflowing() {
+		// A pathological `${A:-${A:-…}}` chain (all default branches taken, A unset)
+		// returns a clean error past the depth cap rather than overflowing the stack.
+		let depth = MAX_INTERP_DEPTH + 50;
+		let mut s = String::new();
+		for _ in 0..depth {
+			s.push_str("${A:-");
+		}
+		s.push('x');
+		for _ in 0..depth {
+			s.push('}');
+		}
+		let err = substitute(&s, &vars(&[])).expect_err("over-deep nesting must error");
+		assert!(matches!(
+			err,
+			crate::error::ComposeError::InvalidSubstitution(_)
+		));
+	}
+
+	#[test]
+	fn moderate_nesting_still_resolves() {
+		// Well within the cap, nested defaults resolve normally.
+		assert_eq!(
+			substitute("${A:-${B:-${C:-deep}}}", &vars(&[])).unwrap(),
+			"deep"
+		);
+	}
+
 	// Multiple substitutions in one string
 
 	#[test]
@@ -440,7 +559,8 @@ mod tests {
 		)
 		.unwrap();
 
-		let vars = build_vars_with_env_files(dir.path(), &["extra.env".to_string()]);
+		let vars =
+			build_vars_with_env_files_strict(dir.path(), &["extra.env".to_string()]).unwrap();
 		assert_eq!(vars.get("FROM_DOTENV"), None);
 		assert_eq!(vars.get("FROM_EXTRA").map(String::as_str), Some("more"));
 		assert_eq!(
@@ -456,8 +576,11 @@ mod tests {
 		std::fs::write(dir.path().join("a.env"), "FROM_A=a\nSHARED=a\n").unwrap();
 		std::fs::write(dir.path().join("b.env"), "FROM_B=b\nSHARED=b\n").unwrap();
 
-		let vars =
-			build_vars_with_env_files(dir.path(), &["a.env".to_string(), "b.env".to_string()]);
+		let vars = build_vars_with_env_files_strict(
+			dir.path(),
+			&["a.env".to_string(), "b.env".to_string()],
+		)
+		.unwrap();
 		assert_eq!(vars.get("FROM_A").map(String::as_str), Some("a"));
 		assert_eq!(vars.get("FROM_B").map(String::as_str), Some("b"));
 		assert_eq!(vars.get("SHARED").map(String::as_str), Some("b"));
@@ -473,7 +596,7 @@ mod tests {
 		)
 		.unwrap();
 
-		let vars = build_vars_with_env_files(dir.path(), &["x.env".to_string()]);
+		let vars = build_vars_with_env_files_strict(dir.path(), &["x.env".to_string()]).unwrap();
 		assert_eq!(
 			vars.get("PODUP_ENVFILE_PROCESS_WINS").map(String::as_str),
 			Some("from-process")
@@ -486,14 +609,38 @@ mod tests {
 		let dir = tempfile::tempdir().unwrap();
 		// With no `--env-file`, `.env` is loaded as before.
 		std::fs::write(dir.path().join(".env"), "FROM_DOTENV=base\n").unwrap();
-		let vars = build_vars_with_env_files(dir.path(), &[]);
+		let vars = build_vars_with_env_files_strict(dir.path(), &[]).unwrap();
 		assert_eq!(vars.get("FROM_DOTENV").map(String::as_str), Some("base"));
 	}
 
 	#[test]
-	fn build_vars_with_env_files_skips_missing_extra_file() {
+	fn strict_build_vars_errors_on_missing_extra_file() {
 		let dir = tempfile::tempdir().unwrap();
-		// A missing extra file is silently skipped rather than erroring.
+		// An explicitly-passed `--env-file` that does not exist is a hard error
+		// (docker compose parity), not a silent fall-back to defaults.
+		let err =
+			build_vars_with_env_files_strict(dir.path(), &["absent.env".to_string()]).unwrap_err();
+		assert!(
+			matches!(err, crate::error::ComposeError::EnvFile(_)),
+			"expected EnvFile error, got {err:?}"
+		);
+		assert!(err.to_string().contains("env file not found"));
+	}
+
+	#[test]
+	fn strict_build_vars_errors_on_unterminated_quote() {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join("bad.env"), "A=\"oops\nB=keep\n").unwrap();
+		let err =
+			build_vars_with_env_files_strict(dir.path(), &["bad.env".to_string()]).unwrap_err();
+		assert!(matches!(err, crate::error::ComposeError::EnvFile(_)));
+	}
+
+	#[test]
+	fn lenient_build_vars_skips_missing_extra_file() {
+		let dir = tempfile::tempdir().unwrap();
+		// The backward-compatible shim never errors: a missing extra file is
+		// silently skipped rather than failing.
 		let vars = build_vars_with_env_files(dir.path(), &["absent.env".to_string()]);
 		assert!(!vars.contains_key("FROM_EXTRA"));
 	}

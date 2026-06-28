@@ -6,11 +6,34 @@
 //! unquoted values, and the standard double-quote escape sequences. Callers
 //! decide duplicate-key precedence by the order pairs are returned in.
 
-/// Parse dotenv `content` into ordered `(key, value)` pairs.
+/// Parse dotenv `content` into ordered `(key, value)` pairs (lenient).
 ///
 /// Pairs are returned in file order; a later duplicate key appears after an
-/// earlier one, leaving the precedence decision to the caller.
+/// earlier one, leaving the precedence decision to the caller. This variant is
+/// used for the optional default `.env`: it never fails, so an unterminated
+/// quoted value degrades to consuming the rest of the file (historical
+/// behaviour) rather than erroring.
 pub fn parse(content: &str) -> Vec<(String, String)> {
+	// `strict = false` can never produce an error.
+	parse_inner(content, false).unwrap_or_default()
+}
+
+/// Like [`parse`] but rejects malformed input.
+///
+/// Used for explicitly requested env files (`--env-file`, a service `env_file:`)
+/// where a typo'd or truncated file must fail loudly rather than silently drop
+/// variables — matching docker compose, which hard-errors on an unterminated
+/// quoted value.
+pub fn parse_strict(content: &str) -> crate::error::Result<Vec<(String, String)>> {
+	parse_inner(content, true)
+}
+
+fn parse_inner(content: &str, strict: bool) -> crate::error::Result<Vec<(String, String)>> {
+	// Strip a leading UTF-8 BOM so the first key is not captured as
+	// `\u{feff}KEY` (which would silently lose that variable). Matches
+	// docker/godotenv, which drop a leading BOM before parsing.
+	let content = content.strip_prefix('\u{feff}').unwrap_or(content);
+
 	let mut out = Vec::new();
 	let mut lines = content.lines();
 
@@ -41,21 +64,28 @@ pub fn parse(content: &str) -> Vec<(String, String)> {
 		if key.is_empty() {
 			continue;
 		}
-		let value = parse_value(line[eq + 1..].trim_start(), &mut lines);
+		let value = parse_value(line[eq + 1..].trim_start(), &mut lines, key, strict)?;
 		out.push((key.to_string(), value));
 	}
 
-	out
+	Ok(out)
 }
 
 /// Parse the value portion of an assignment, consuming continuation lines for
-/// a quoted value that does not close on the first line.
-fn parse_value(rest: &str, lines: &mut std::str::Lines) -> String {
+/// a quoted value that does not close on the first line. In `strict` mode a
+/// quote that never closes is a hard error instead of swallowing the rest of
+/// the file (which would silently drop every following key).
+fn parse_value(
+	rest: &str,
+	lines: &mut std::str::Lines,
+	key: &str,
+	strict: bool,
+) -> crate::error::Result<String> {
 	match rest.chars().next() {
 		Some(quote @ ('"' | '\'')) => {
 			let body = &rest[quote.len_utf8()..];
 			if let Some(end) = find_closing(body, quote) {
-				return unescape(&body[..end], quote);
+				return Ok(unescape(&body[..end], quote));
 			}
 			// Unterminated on this line: a multi-line quoted value.
 			let mut buf = String::from(body);
@@ -63,13 +93,18 @@ fn parse_value(rest: &str, lines: &mut std::str::Lines) -> String {
 				buf.push('\n');
 				if let Some(end) = find_closing(next, quote) {
 					buf.push_str(&next[..end]);
-					return unescape(&buf, quote);
+					return Ok(unescape(&buf, quote));
 				}
 				buf.push_str(next);
 			}
-			unescape(&buf, quote)
+			if strict {
+				return Err(crate::error::ComposeError::EnvFile(format!(
+					"unterminated quoted value for key '{key}'"
+				)));
+			}
+			Ok(unescape(&buf, quote))
 		}
-		_ => strip_inline_comment(rest).trim_end().to_string(),
+		_ => Ok(strip_inline_comment(rest).trim_end().to_string()),
 	}
 }
 
@@ -260,6 +295,51 @@ mod tests {
 	fn multiline_single_quoted_value() {
 		let m = map("FOO='line1\nline2'\n");
 		assert_eq!(m["FOO"], "line1\nline2");
+	}
+
+	#[test]
+	fn strips_leading_utf8_bom() {
+		// A file saved as UTF-8-with-BOM must not capture the first key as
+		// `\u{feff}FOO`; the BOM is stripped so FOO resolves normally.
+		let m = map("\u{feff}FOO=bar\nBAZ=qux\n");
+		assert_eq!(m.get("FOO").map(String::as_str), Some("bar"));
+		assert_eq!(m.get("BAZ").map(String::as_str), Some("qux"));
+		assert!(!m.keys().any(|k| k.starts_with('\u{feff}')));
+	}
+
+	#[test]
+	fn parse_strict_strips_leading_bom() {
+		let pairs = super::parse_strict("\u{feff}FOO=bar\n").unwrap();
+		assert_eq!(pairs, vec![("FOO".to_string(), "bar".to_string())]);
+	}
+
+	#[test]
+	fn parse_strict_errors_on_unterminated_quote() {
+		// An unterminated quote would otherwise absorb every following key into
+		// one value, silently dropping them. Strict parsing rejects it.
+		let err = super::parse_strict("A=\"oops\nB=keep\n").unwrap_err();
+		let msg = err.to_string();
+		assert!(msg.contains("unterminated"), "got: {msg}");
+		assert!(msg.contains('A'), "should name the offending key: {msg}");
+	}
+
+	#[test]
+	fn parse_strict_ok_on_terminated_multiline() {
+		// A properly closed multi-line value still parses in strict mode and the
+		// following key survives.
+		let pairs = super::parse_strict("FOO=\"line one\nline two\"\nBAR=after\n").unwrap();
+		let m: std::collections::HashMap<_, _> = pairs.into_iter().collect();
+		assert_eq!(m["FOO"], "line one\nline two");
+		assert_eq!(m["BAR"], "after");
+	}
+
+	#[test]
+	fn lenient_parse_does_not_error_on_unterminated_quote() {
+		// The lenient `.env` path never errors: it degrades to consuming the rest
+		// of the file (historical behaviour) rather than failing.
+		let pairs = parse("A=\"oops\nB=keep\n");
+		assert_eq!(pairs.len(), 1);
+		assert_eq!(pairs[0].0, "A");
 	}
 
 	#[test]

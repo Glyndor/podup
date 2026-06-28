@@ -294,7 +294,12 @@ pub struct Service {
 	pub cpuset: Option<String>,
 	/// `cpus:` — fractional number of CPUs to allow (e.g. `0.5`); a hard cap
 	/// converted to a CFS quota. Top-level value wins over `deploy.resources`.
-	#[serde(skip_serializing_if = "Option::is_none")]
+	/// Accepts both the unquoted number (`cpus: 0.5`) and the quoted string form.
+	#[serde(
+		default,
+		deserialize_with = "super::primitives::deserialize_opt_string_or_number",
+		skip_serializing_if = "Option::is_none"
+	)]
 	pub cpus: Option<String>,
 	/// `cpu_count:` — number of usable CPUs (Windows containers); not honored on
 	/// Linux/Podman.

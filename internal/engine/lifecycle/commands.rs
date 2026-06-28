@@ -1,6 +1,6 @@
 //! Lifecycle sub-commands: restart, stop, start, kill, rm, pause, unpause, run.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 
 use futures_util::StreamExt;
@@ -9,6 +9,7 @@ use tracing::info;
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 
+use super::targets::{stop_deadline, stop_timeout_param};
 use super::{filter_services, RunOptions};
 use crate::engine::Engine;
 use crate::libpod::API_PREFIX;
@@ -26,7 +27,7 @@ impl Engine {
 				info!("{done} {container}");
 				Ok(())
 			}
-			Err(e) if e.is_status(304) || e.is_status(404) => {
+			Err(e) if e.is_status(304) || e.is_status(404) || e.is_kill_of_stopped() => {
 				tracing::debug!("{container}: {done} skipped ({e})");
 				Ok(())
 			}
@@ -48,6 +49,60 @@ impl Engine {
 			Err(e) if e.is_status(304) || e.is_status(404) || e.is_state_conflict() => {
 				tracing::debug!("{container}: {done} skipped ({e})");
 				Ok(())
+			}
+			Err(e) => Err(ComposeError::Podman(e)),
+		}
+	}
+
+	/// Stop one container, escalating to an explicit `SIGKILL` if the libpod
+	/// `stop` call does not complete within the grace window.
+	///
+	/// libpod normally `SIGKILL`s a container itself once the grace period lapses,
+	/// so a healthy stop returns inside [`stop_deadline`]. If the call instead
+	/// stalls (a daemon that accepts the request then never replies, or a
+	/// container the server fails to reap), the bounded wait surfaces a timeout
+	/// and we send `kill?signal=SIGKILL` so podup never depends solely on the
+	/// server honouring `?t`. 304/404 are idempotent no-ops, as in
+	/// [`run_lifecycle_op`](Self::run_lifecycle_op).
+	async fn stop_container(&self, container: &str, grace: i32) -> Result<()> {
+		let path = format!(
+			"{API_PREFIX}/containers/{}/stop?t={}",
+			crate::libpod::urlencoded(container),
+			stop_timeout_param(grace),
+		);
+		match self
+			.client
+			.post_empty_ok_within(&path, stop_deadline(grace))
+			.await
+		{
+			Ok(()) => {
+				info!("stopped {container}");
+				Ok(())
+			}
+			Err(e) if e.is_status(304) || e.is_status(404) => {
+				tracing::debug!("{container}: stop skipped ({e})");
+				Ok(())
+			}
+			Err(e) if e.is_timeout() => {
+				tracing::warn!(
+					"{container}: stop did not complete within the grace window; escalating to SIGKILL"
+				);
+				let kill_path = format!(
+					"{API_PREFIX}/containers/{}/kill?signal=SIGKILL",
+					crate::libpod::urlencoded(container),
+				);
+				match self.client.post_empty_ok(&kill_path).await {
+					Ok(()) => {
+						info!("killed {container} (SIGKILL after stop timeout)");
+						Ok(())
+					}
+					// Already gone / not running between the timeout and the kill.
+					Err(e) if e.is_status(404) || e.is_status(409) => {
+						tracing::debug!("{container}: SIGKILL skipped ({e})");
+						Ok(())
+					}
+					Err(e) => Err(ComposeError::Podman(e)),
+				}
 			}
 			Err(e) => Err(ComposeError::Podman(e)),
 		}
@@ -91,8 +146,9 @@ impl Engine {
 				// Single atomic restart (no visible stopped window) instead of a
 				// stop+start round-trip.
 				let restart_path = format!(
-					"{API_PREFIX}/containers/{}/restart?t={grace}",
+					"{API_PREFIX}/containers/{}/restart?t={}",
 					crate::libpod::urlencoded(&container_name),
+					stop_timeout_param(grace),
 				);
 				if let Err(e) = self
 					.run_lifecycle_op(&restart_path, &container_name, "restarted")
@@ -113,8 +169,9 @@ impl Engine {
 						}
 						let grace = self.grace_period_secs(dep_service);
 						let restart_path = format!(
-							"{API_PREFIX}/containers/{}/restart?t={grace}",
+							"{API_PREFIX}/containers/{}/restart?t={}",
 							crate::libpod::urlencoded(&dep_container),
+							stop_timeout_param(grace),
 						);
 						// Same 304/404 idempotency as the main path: a never-created
 						// dependency must not spew a spurious cascade warning.
@@ -143,8 +200,25 @@ impl Engine {
 		file: &ComposeFile,
 		target_services: &[String],
 	) -> Result<()> {
-		let order = crate::compose::resolve_order(file)?;
-		let order = filter_services(file, order, target_services)?;
+		// `docker compose wait` prints each service's exit code in the order the
+		// services were given on the command line (deduplicated). Only fall back to
+		// dependency order when no services were named (the "all" case).
+		let order = if target_services.is_empty() {
+			let order = crate::compose::resolve_order(file)?;
+			filter_services(file, order, &[])?
+		} else {
+			for name in target_services {
+				if !file.services.contains_key(name) {
+					return Err(ComposeError::ServiceNotFound(name.clone()));
+				}
+			}
+			let mut seen = std::collections::HashSet::new();
+			target_services
+				.iter()
+				.filter(|n| seen.insert(n.as_str()))
+				.cloned()
+				.collect::<Vec<_>>()
+		};
 
 		let mut last_nonzero = 0i64;
 		for name in &order {
@@ -184,12 +258,7 @@ impl Engine {
 			let service = &file.services[name];
 			for container_name in self.live_replica_names(name, service).await? {
 				let grace = self.grace_period_secs(service);
-				let path = format!(
-					"{API_PREFIX}/containers/{}/stop?t={grace}",
-					crate::libpod::urlencoded(&container_name),
-				);
-				self.run_lifecycle_op(&path, &container_name, "stopped")
-					.await?;
+				self.stop_container(&container_name, grace).await?;
 			}
 		}
 		Ok(())
@@ -250,6 +319,10 @@ impl Engine {
 		target_services: &[String],
 		signal: &str,
 	) -> Result<()> {
+		// Reject an empty/whitespace-only or otherwise invalid signal before
+		// issuing any request — libpod would silently treat `signal=` as SIGKILL.
+		super::signal::validate_signal(signal)?;
+
 		let order = crate::compose::resolve_order(file)?;
 		let order = filter_services(file, order, target_services)?;
 
@@ -424,6 +497,8 @@ impl Engine {
 			interactive,
 			no_deps,
 		} = self.run_overrides.clone();
+		// `--env-file` is global, so it rides on the engine (not `RunOverrides`).
+		let env_files = self.run_env_files.clone();
 		let service = file
 			.services
 			.get(service_name)
@@ -434,7 +509,7 @@ impl Engine {
 		// itself is excluded — only its transitive dependencies are started.
 		if !no_deps {
 			let deps: Vec<String> =
-				super::expand_targets(file, &[service_name.to_string()], false)?
+				super::expand_targets(file, &[service_name.to_string()], false)
 					.map(|set| set.into_iter().filter(|n| n != service_name).collect())
 					.unwrap_or_default();
 			if !deps.is_empty() {
@@ -475,15 +550,21 @@ impl Engine {
 				.volumes
 				.push(crate::compose::types::VolumeMount::Short(v));
 		}
-		if !env_overrides.is_empty() {
-			let mut env_list: Vec<String> = {
-				let map = run_service.environment.to_map();
-				map.into_iter()
-					.map(|(k, v)| v.map_or(k.clone(), |v| format!("{k}={v}")))
-					.collect()
-			};
-			env_list.extend(env_overrides);
-			run_service.environment = crate::compose::types::EnvVars::List(env_list);
+		// Layer the run container's environment by precedence, matching
+		// `docker compose run --env-file`: global `--env-file` contents are the
+		// lowest layer, the service's own `environment:` overrides them, and `-e`
+		// overrides win over both.
+		let env_file_vars = if env_files.is_empty() {
+			HashMap::new()
+		} else {
+			crate::env_file::load_env_files(&env_files, &self.base_dir)?
+		};
+		if !env_file_vars.is_empty() || !env_overrides.is_empty() {
+			run_service.environment = crate::compose::types::EnvVars::List(merge_run_environment(
+				env_file_vars,
+				run_service.environment.to_map(),
+				env_overrides,
+			));
 		}
 		run_service.restart = None;
 		// Compose `run` does not publish the service's ports unless
@@ -580,5 +661,81 @@ impl Engine {
 		}
 
 		Ok(())
+	}
+}
+
+/// Layer the three `run` environment sources into the final `KEY=VALUE` / `KEY`
+/// list by precedence (`--env-file` < service `environment:` < `-e`), matching
+/// `docker compose run --env-file`. `-e` overrides are appended last so a later
+/// duplicate wins downstream, mirroring the previous `-e`-only handling.
+fn merge_run_environment(
+	env_file_vars: HashMap<String, String>,
+	service_env: HashMap<String, Option<String>>,
+	env_overrides: Vec<String>,
+) -> Vec<String> {
+	// `--env-file` is the base layer; the service's `environment:` overrides it.
+	let mut map: HashMap<String, Option<String>> = env_file_vars
+		.into_iter()
+		.map(|(k, v)| (k, Some(v)))
+		.collect();
+	for (k, v) in service_env {
+		map.insert(k, v);
+	}
+	let mut env_list: Vec<String> = map
+		.into_iter()
+		.map(|(k, v)| v.map_or_else(|| k.clone(), |v| format!("{k}={v}")))
+		.collect();
+	// `-e` overrides win over everything else.
+	env_list.extend(env_overrides);
+	env_list
+}
+
+#[cfg(test)]
+mod tests {
+	use super::merge_run_environment;
+	use std::collections::HashMap;
+
+	fn lookup<'a>(list: &'a [String], key: &str) -> Option<&'a str> {
+		// Mirror downstream "later duplicate wins" semantics.
+		list.iter().rev().find_map(|e| match e.split_once('=') {
+			Some((k, v)) if k == key => Some(v),
+			_ => None,
+		})
+	}
+
+	#[test]
+	fn env_file_seeds_environment() {
+		let file: HashMap<String, String> = [("FOO".to_string(), "from-file".to_string())].into();
+		let list = merge_run_environment(file, HashMap::new(), Vec::new());
+		assert_eq!(lookup(&list, "FOO"), Some("from-file"));
+	}
+
+	#[test]
+	fn service_environment_overrides_env_file() {
+		let file: HashMap<String, String> = [("FOO".to_string(), "from-file".to_string())].into();
+		let service: HashMap<String, Option<String>> =
+			[("FOO".to_string(), Some("from-service".to_string()))].into();
+		let list = merge_run_environment(file, service, Vec::new());
+		assert_eq!(lookup(&list, "FOO"), Some("from-service"));
+	}
+
+	#[test]
+	fn dash_e_override_wins_over_all() {
+		let file: HashMap<String, String> = [("FOO".to_string(), "from-file".to_string())].into();
+		let service: HashMap<String, Option<String>> =
+			[("FOO".to_string(), Some("from-service".to_string()))].into();
+		let list = merge_run_environment(file, service, vec!["FOO=from-cli".to_string()]);
+		assert_eq!(lookup(&list, "FOO"), Some("from-cli"));
+	}
+
+	#[test]
+	fn distinct_keys_from_each_layer_are_kept() {
+		let file: HashMap<String, String> = [("A".to_string(), "a".to_string())].into();
+		let service: HashMap<String, Option<String>> =
+			[("B".to_string(), Some("b".to_string()))].into();
+		let list = merge_run_environment(file, service, vec!["C=c".to_string()]);
+		assert_eq!(lookup(&list, "A"), Some("a"));
+		assert_eq!(lookup(&list, "B"), Some("b"));
+		assert_eq!(lookup(&list, "C"), Some("c"));
 	}
 }

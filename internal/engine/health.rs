@@ -92,6 +92,30 @@ fn health_poll_plan(
 	(poll_secs, iterations)
 }
 
+/// Poll iterations to actually run, given the healthcheck poll-plan and an
+/// optional `--wait-timeout`.
+///
+/// `--wait-timeout` must be able to *extend* the wait, not merely cap it: a
+/// healthcheck with a short `interval × retries` budget would otherwise time
+/// out long before a generous `--wait-timeout` elapsed. So when a wait-timeout
+/// is given we run at least enough iterations to cover it (plus a small margin),
+/// letting the outer `--wait-timeout` deadline — not the poll plan — decide when
+/// to give up. Without a wait-timeout the poll plan governs unchanged. Pure so
+/// the budget arithmetic is unit-tested without a live socket.
+fn effective_iterations(poll_secs: u64, plan_iters: u64, wait_timeout: Option<Duration>) -> u64 {
+	match wait_timeout {
+		Some(wt) => {
+			let poll = poll_secs.max(1);
+			// +2 so the inner loop outlasts the outer deadline, ensuring an
+			// exhausted wait surfaces as the `--wait-timeout` error rather than a
+			// spurious health-check-timeout that fired one poll early.
+			let wt_iters = wt.as_secs().div_ceil(poll) + 2;
+			plan_iters.max(wt_iters)
+		}
+		None => plan_iters,
+	}
+}
+
 impl Engine {
 	/// Wait until every targeted service's first replica is healthy (`up
 	/// --wait`). A service with no effective healthcheck is treated as ready
@@ -100,6 +124,22 @@ impl Engine {
 		&self,
 		file: &ComposeFile,
 		target_services: &[String],
+	) -> Result<()> {
+		self.wait_services_healthy_within(file, target_services, None)
+			.await
+	}
+
+	/// As [`wait_services_healthy`](Self::wait_services_healthy), but a
+	/// `Some(wait_timeout)` extends each service's poll budget to cover the
+	/// supplied `--wait-timeout` (rather than only capping it). The caller still
+	/// wraps the whole wait in a hard `--wait-timeout` deadline, which becomes the
+	/// authoritative limit; this just stops the per-service poll plan from giving
+	/// up early and reporting a misleading health-check timeout.
+	pub async fn wait_services_healthy_within(
+		&self,
+		file: &ComposeFile,
+		target_services: &[String],
+		wait_timeout: Option<Duration>,
 	) -> Result<()> {
 		// Poll services concurrently: each `wait_healthy` is its own poll loop, so
 		// total `--wait` latency is the slowest service, not the sum of all.
@@ -111,7 +151,7 @@ impl Engine {
 			})
 			.map(|(name, service)| {
 				let container = self.first_replica_name(name, service);
-				async move { self.wait_healthy(&container, service).await }
+				async move { self.wait_healthy(&container, service, wait_timeout).await }
 			});
 		futures_util::future::try_join_all(waits).await?;
 		Ok(())
@@ -128,13 +168,21 @@ impl Engine {
 	/// those declared in compose. If the container has no effective healthcheck at
 	/// all (none in the image or compose), it can never report `healthy`, so the
 	/// wait short-circuits as satisfied rather than blocking until timeout.
-	pub(super) async fn wait_healthy(&self, container_name: &str, service: &Service) -> Result<()> {
+	pub(super) async fn wait_healthy(
+		&self,
+		container_name: &str,
+		service: &Service,
+		wait_timeout: Option<Duration>,
+	) -> Result<()> {
 		let hc = service.healthcheck.as_ref();
-		let (poll_secs, iterations) = health_poll_plan(
+		let (poll_secs, plan_iters) = health_poll_plan(
 			hc.and_then(|h| h.interval.as_deref()),
 			hc.and_then(|h| h.start_period.as_deref()),
 			hc.and_then(|h| h.retries),
 		);
+		// `--wait-timeout` extends the poll budget so it, not the (often shorter)
+		// healthcheck interval×retries plan, decides when the wait gives up.
+		let iterations = effective_iterations(poll_secs, plan_iters, wait_timeout);
 
 		// One inspect decides the short-circuits: already healthy, or no effective
 		// healthcheck at all (image or compose) — in which case a server-side
@@ -247,6 +295,30 @@ mod tests {
 		// An interval below 1s falls back to the 2s default (no busy-poll).
 		let (poll, _) = super::health_poll_plan(Some("500ms"), None, Some(5));
 		assert_eq!(poll, 2);
+	}
+
+	// --- effective_iterations (--wait-timeout budget, #891) ------------------
+
+	#[test]
+	fn effective_iterations_without_wait_timeout_uses_plan() {
+		// No --wait-timeout: the healthcheck poll plan governs unchanged.
+		assert_eq!(super::effective_iterations(2, 30, None), 30);
+	}
+
+	#[test]
+	fn effective_iterations_extends_to_cover_wait_timeout() {
+		// A short plan (interval 10s × 1 retry = 1 iter) must be extended so a
+		// generous --wait-timeout actually elapses: 120s / 10s + 2 margin = 14.
+		let iters = super::effective_iterations(10, 1, Some(Duration::from_secs(120)));
+		assert_eq!(iters, 14);
+	}
+
+	#[test]
+	fn effective_iterations_keeps_larger_plan() {
+		// When the poll plan already outlasts --wait-timeout, the plan wins so the
+		// healthcheck's own budget is never shortened.
+		let iters = super::effective_iterations(2, 100, Some(Duration::from_secs(10)));
+		assert_eq!(iters, 100);
 	}
 
 	// --- wait_healthy gating (service_healthy) -------------------------------
