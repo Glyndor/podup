@@ -33,6 +33,10 @@ hyper-util = { version = "0.1", features = ["tokio"] }
 http-body-util = "0.1"
 clap = { version = "4", default-features = false, features = ["std", "help", "usage", "error-context", "derive", "env"] }
 clap_complete = { version = "4", optional = true }
+# Terminal colour: anstyle for the styles, anstream to degrade gracefully
+# (auto-strip on non-TTY, honour NO_COLOR/--ansi, enable VT on Windows).
+anstyle = "1"
+anstream = "1"
 indexmap = { version = "2", features = ["serde"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 tar = { version = "0.4", default-features = false }

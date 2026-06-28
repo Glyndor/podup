@@ -181,7 +181,10 @@ impl Engine {
 			return Ok(());
 		}
 
-		println!("{:<40} {:<30} {:<20} PORTS", "NAME", "IMAGE", "STATUS");
+		let hdr = crate::ui::bold();
+		let cols = format!("{:<40} {:<30} {:<20} PORTS", "NAME", "IMAGE", "STATUS");
+		let (on, off) = (hdr.render(), hdr.render_reset());
+		let _ = writeln!(anstream::stdout(), "{on}{cols}{off}");
 		for c in &containers {
 			let ports = format_ports(&c.ports);
 			println!(

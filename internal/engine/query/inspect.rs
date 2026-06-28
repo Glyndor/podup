@@ -194,9 +194,15 @@ impl Engine {
 			return Ok(());
 		}
 
-		println!(
-			"{:<30} {:<25} {:<15} {:<20}",
-			"SERVICE", "REPOSITORY", "TAG", "IMAGE ID"
+		let hdr = crate::ui::bold();
+		anstream::println!(
+			"{}{:<30} {:<25} {:<15} {:<20}{}",
+			hdr.render(),
+			"SERVICE",
+			"REPOSITORY",
+			"TAG",
+			"IMAGE ID",
+			hdr.render_reset()
 		);
 		for (svc, repo, tag, id) in &rows {
 			println!("{svc:<30} {repo:<25} {tag:<15} {id:<20}");
