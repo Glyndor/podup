@@ -38,6 +38,8 @@ pub(crate) async fn dispatch(
 		} => {
 			if remove_orphans {
 				engine.remove_orphans(file).await?;
+			} else {
+				engine.warn_orphans(file).await?;
 			}
 			if build {
 				engine.build_all(file, &services).await?;
