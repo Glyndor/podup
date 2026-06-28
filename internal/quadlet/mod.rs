@@ -117,6 +117,7 @@ pub fn generate(file: &ComposeFile, project: &str) -> QuadletOutput {
 			service,
 			&declared_volumes,
 			&declared_networks,
+			&file.secrets,
 			&mut out.warnings,
 		));
 	}

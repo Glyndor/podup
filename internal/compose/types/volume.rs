@@ -74,9 +74,55 @@ pub struct TmpfsOptions {
 	/// Size of the tmpfs mount in bytes.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub size: Option<u64>,
-	/// File mode of the tmpfs mount.
-	#[serde(skip_serializing_if = "Option::is_none")]
+	/// File mode of the tmpfs mount, stored as the actual permission bits.
+	///
+	/// A leading-zero string (`0700`) or an explicit `0o700` is interpreted as
+	/// octal — the conventional Unix file-mode notation — rather than erroring or
+	/// being silently re-interpreted; invalid input is a clear error.
+	#[serde(
+		default,
+		deserialize_with = "deserialize_octal_mode",
+		skip_serializing_if = "Option::is_none"
+	)]
 	pub mode: Option<u32>,
+}
+
+/// Deserialize a tmpfs `mode` as octal-aware permission bits.
+///
+/// YAML numeric scalars are already decoded by the parser (`0o700` → 448), so an
+/// integer node is taken as the actual permission bits. A string node — which is
+/// how a leading-zero literal like `0700` reaches us (and what previously failed
+/// with an opaque untagged error) — is parsed as octal, accepting an optional
+/// `0o` prefix and rejecting non-octal digits with a clear message.
+fn deserialize_octal_mode<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+	D: serde::Deserializer<'de>,
+{
+	use serde::de::Error;
+
+	#[derive(Deserialize)]
+	#[serde(untagged)]
+	enum Raw {
+		Int(u32),
+		Str(String),
+	}
+
+	match Option::<Raw>::deserialize(deserializer)? {
+		None => Ok(None),
+		Some(Raw::Int(bits)) => Ok(Some(bits)),
+		Some(Raw::Str(s)) => {
+			let trimmed = s.trim();
+			let digits = trimmed
+				.strip_prefix("0o")
+				.or_else(|| trimmed.strip_prefix("0O"))
+				.unwrap_or(trimmed);
+			u32::from_str_radix(digits, 8).map(Some).map_err(|_| {
+				D::Error::custom(format!(
+					"invalid tmpfs mode {s:?}: use octal notation like 0700 or 0o700"
+				))
+			})
+		}
+	}
 }
 
 /// A volume mount entry — either a short-form string or a long-form typed block.
@@ -248,6 +294,34 @@ impl ServiceSecretRef {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	// TmpfsOptions::mode octal parsing
+
+	#[test]
+	fn tmpfs_mode_octal_string_is_parsed_as_octal() {
+		// A leading-zero literal reaches us as a string and must parse as octal
+		// (0700 → 448 permission bits) instead of failing opaquely.
+		let opts: TmpfsOptions = serde_yaml::from_str("mode: \"0700\"\n").unwrap();
+		assert_eq!(opts.mode, Some(0o700));
+		// An explicit 0o prefix in a string also works.
+		let opts: TmpfsOptions = serde_yaml::from_str("mode: \"0o755\"\n").unwrap();
+		assert_eq!(opts.mode, Some(0o755));
+	}
+
+	#[test]
+	fn tmpfs_mode_octal_yaml_literal_is_preserved_as_bits() {
+		// A YAML `0o700` scalar is decoded to 448 by the parser; we keep those
+		// actual permission bits so the renderer's octal format round-trips.
+		let opts: TmpfsOptions = serde_yaml::from_str("mode: 0o700\n").unwrap();
+		assert_eq!(opts.mode, Some(0o700));
+	}
+
+	#[test]
+	fn tmpfs_mode_invalid_octal_is_clear_error() {
+		// A non-octal string is rejected with a clear error, not silently coerced.
+		let err = serde_yaml::from_str::<TmpfsOptions>("mode: \"0o9\"\n").unwrap_err();
+		assert!(err.to_string().contains("tmpfs mode"), "got: {err}");
+	}
 
 	// VolumeMount::target
 

@@ -1,6 +1,8 @@
 //! Render service `secrets:` and `security_opt:` onto their Quadlet keys.
 
-use crate::compose::types::ServiceSecretRef;
+use indexmap::IndexMap;
+
+use crate::compose::types::{SecretConfig, ServiceSecretRef};
 
 use super::Section;
 
@@ -13,13 +15,44 @@ pub(super) fn secret_field(value: &str) -> String {
 		.collect()
 }
 
+/// Whether a top-level secret definition is an inline `content:`/`environment:`
+/// source — the kind `up` materialises as a project-scoped native Podman secret.
+/// `external:` wins (never created by podup) and a bare `file:`/empty def is a
+/// bind/host source kept under its compose name.
+pub(super) fn is_inline_secret(def: Option<&SecretConfig>) -> bool {
+	def.is_some_and(|d| {
+		d.external != Some(true) && (d.content.is_some() || d.environment.is_some())
+	})
+}
+
+/// Resolve the `Secret=` source name for a service secret reference. An inline
+/// secret resolves to the project-scoped name `{project}_secret_{name}` that
+/// `up` creates (via `plan::scoped_name`), so generated units reference the same
+/// secret `up` would; any other secret keeps its compose source name.
+fn secret_source_name(
+	project: &str,
+	source: &str,
+	secrets: &IndexMap<String, SecretConfig>,
+) -> String {
+	if is_inline_secret(secrets.get(source)) {
+		format!("{project}_secret_{source}")
+	} else {
+		source.to_string()
+	}
+}
+
 /// Render a service `secrets:` entry into a Quadlet `Secret=` value
-/// (`name[,target=,uid=,gid=,mode=]`).
-pub(super) fn render_secret(secret: &ServiceSecretRef) -> String {
+/// (`name[,target=,uid=,gid=,mode=]`), resolving inline secrets to their
+/// project-scoped name so the reference matches what `up` creates.
+pub(super) fn render_secret(
+	secret: &ServiceSecretRef,
+	project: &str,
+	secrets: &IndexMap<String, SecretConfig>,
+) -> String {
 	match secret {
 		// Sanitize the short-form name too: `Secret=` is an option list, so a
 		// `,`/`=` in the name would inject extra options (same guard as Long).
-		ServiceSecretRef::Short(name) => secret_field(name),
+		ServiceSecretRef::Short(name) => secret_field(&secret_source_name(project, name, secrets)),
 		ServiceSecretRef::Long {
 			source,
 			target,
@@ -30,7 +63,7 @@ pub(super) fn render_secret(secret: &ServiceSecretRef) -> String {
 			// `Secret=` is a comma-separated `key=value` option list, so a `,`
 			// or `=` embedded in any field would inject extra options. Strip
 			// those (and control chars) from each value at the boundary.
-			let mut s = secret_field(source);
+			let mut s = secret_field(&secret_source_name(project, source, secrets));
 			if let Some(t) = target {
 				s.push_str(&format!(",target={}", secret_field(t)));
 			}
@@ -66,9 +99,10 @@ pub(super) fn map_security_opt(
 		.strip_prefix("apparmor=")
 		.or_else(|| opt.strip_prefix("apparmor:"))
 	{
-		// `AppArmor=` is a native [Container] key in current podman-systemd.unit(5);
-		// emit it directly rather than as a raw `--security-opt apparmor=` flag.
-		container.add("AppArmor", profile.to_string());
+		// `AppArmor=` is not a recognised [Container] Quadlet key (Quadlet would
+		// drop the whole unit at daemon-reload), so route it through PodmanArgs= as
+		// `--security-opt apparmor=<profile>`, like the other escape-hatch flags.
+		container.add("PodmanArgs", format!("--security-opt apparmor={profile}"));
 	} else if let Some(label) = opt.strip_prefix("label=") {
 		if label == "disable" {
 			container.add("SecurityLabelDisable", "true".to_string());
@@ -98,8 +132,15 @@ pub(super) fn map_security_opt(
 
 #[cfg(test)]
 mod tests {
-	use super::{map_security_opt, render_secret, secret_field, Section};
-	use crate::compose::types::ServiceSecretRef;
+	use super::{is_inline_secret, map_security_opt, render_secret, secret_field, Section};
+	use crate::compose::types::{SecretConfig, ServiceSecretRef};
+	use indexmap::IndexMap;
+
+	/// Render a secret with no top-level definitions in scope (so no inline
+	/// scoping applies).
+	fn render_bare(secret: &ServiceSecretRef) -> String {
+		render_secret(secret, "proj", &IndexMap::new())
+	}
 
 	/// Render a fresh `[Container]` section after applying one `security_opt`,
 	/// returning `(rendered_body, warnings)`.
@@ -120,7 +161,7 @@ mod tests {
 	fn render_secret_short_form_sanitizes_name() {
 		// A short-form name with a `,`/`=` would inject extra `Secret=` options.
 		let s = ServiceSecretRef::Short("tok,uid=0".into());
-		assert_eq!(render_secret(&s), "tokuid0");
+		assert_eq!(render_bare(&s), "tokuid0");
 	}
 
 	#[test]
@@ -134,7 +175,7 @@ mod tests {
 			mode: Some(0o440),
 		};
 		assert_eq!(
-			render_secret(&s),
+			render_bare(&s),
 			"tok,target=/run/tok,uid=1000,gid=1000,mode=440"
 		);
 	}
@@ -149,7 +190,7 @@ mod tests {
 			gid: None,
 			mode: None,
 		};
-		let out = render_secret(&s);
+		let out = render_bare(&s);
 		// The injected `,uid=0` must be flattened into the target value, not a
 		// separate option: exactly one comma (the legitimate `,target=`).
 		assert_eq!(out.matches(',').count(), 1);
@@ -177,13 +218,57 @@ mod tests {
 		assert!(map_one("seccomp=/etc/seccomp.json")
 			.0
 			.contains("SeccompProfile=/etc/seccomp.json"));
-		// Both `apparmor=` and `apparmor:` map to the native AppArmor key.
+		// `AppArmor=` is not a recognised Quadlet key, so both `apparmor=` and
+		// `apparmor:` route through PodmanArgs= as a `--security-opt` flag.
 		assert!(map_one("apparmor=docker-default")
 			.0
-			.contains("AppArmor=docker-default"));
+			.contains("PodmanArgs=--security-opt apparmor=docker-default"));
 		assert!(map_one("apparmor:unconfined")
 			.0
-			.contains("AppArmor=unconfined"));
+			.contains("PodmanArgs=--security-opt apparmor=unconfined"));
+	}
+
+	#[test]
+	fn inline_secret_resolves_to_project_scoped_name() {
+		// An inline (`content:`) secret must reference the project-scoped name
+		// `up` creates, not the bare compose name.
+		let mut defs = IndexMap::new();
+		defs.insert(
+			"tok".to_string(),
+			SecretConfig {
+				content: Some("s3cr3t".into()),
+				..Default::default()
+			},
+		);
+		assert!(is_inline_secret(defs.get("tok")));
+		let s = ServiceSecretRef::Short("tok".into());
+		assert_eq!(render_secret(&s, "proj", &defs), "proj_secret_tok");
+
+		// A file-based secret keeps its compose name (it is a host source, not a
+		// project-scoped native secret).
+		let mut file_defs = IndexMap::new();
+		file_defs.insert(
+			"tok".to_string(),
+			SecretConfig {
+				file: Some("./tok.txt".into()),
+				..Default::default()
+			},
+		);
+		assert!(!is_inline_secret(file_defs.get("tok")));
+		assert_eq!(render_secret(&s, "proj", &file_defs), "tok");
+
+		// An external secret is referenced by its existing name, never scoped.
+		let mut ext_defs = IndexMap::new();
+		ext_defs.insert(
+			"tok".to_string(),
+			SecretConfig {
+				external: Some(true),
+				content: Some("ignored".into()),
+				..Default::default()
+			},
+		);
+		assert!(!is_inline_secret(ext_defs.get("tok")));
+		assert_eq!(render_secret(&s, "proj", &ext_defs), "tok");
 	}
 
 	#[test]

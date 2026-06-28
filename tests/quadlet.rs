@@ -48,16 +48,16 @@ networks:
 	let expected = "\
 [Unit]
 Description=web (podup)
-After=db.service
-Requires=db.service
+After=proj-db.service
+Requires=proj-db.service
 
 [Container]
 ContainerName=web
 Image=nginx:1.27
 PublishPort=8080:80
 Environment=TZ=UTC
-Volume=data.volume:/var/lib/data
-Network=frontend.network
+Volume=proj-data.volume:/var/lib/data
+Network=proj-frontend.network
 Label=podup.project=proj
 Label=podup.service=web
 
@@ -67,7 +67,7 @@ Restart=always
 [Install]
 WantedBy=default.target
 ";
-	assert_eq!(unit(&out, "web.container"), expected);
+	assert_eq!(unit(&out, "proj-web.container"), expected);
 }
 
 #[test]
@@ -85,11 +85,11 @@ networks:
 	let out = generate(&file, "myproj");
 
 	assert_eq!(
-		unit(&out, "cache.volume"),
+		unit(&out, "myproj-cache.volume"),
 		"[Volume]\nVolumeName=myproj_cache\nLabel=podup.project=myproj\n"
 	);
 	assert_eq!(
-		unit(&out, "backend.network"),
+		unit(&out, "myproj-backend.network"),
 		"[Network]\nNetworkName=myproj_backend\nLabel=podup.project=myproj\n"
 	);
 }
@@ -108,15 +108,25 @@ fn cli_writes_units_to_output_dir() {
 	let out_dir = dir.join("units");
 
 	let status = Command::new(bin())
-		.args(["-f", compose.to_str().unwrap(), "generate", "quadlet", "-o"])
+		.args([
+			"-p",
+			"proj",
+			"-f",
+			compose.to_str().unwrap(),
+			"generate",
+			"quadlet",
+			"-o",
+		])
 		.arg(&out_dir)
 		.status()
 		.unwrap();
 	assert!(status.success());
 
-	let web = fs::read_to_string(out_dir.join("web.container")).unwrap();
+	// Unit file names are project-prefixed so multiple projects can share the
+	// systemd directory without clobbering each other.
+	let web = fs::read_to_string(out_dir.join("proj-web.container")).unwrap();
 	assert!(web.contains("Image=nginx"));
-	assert!(fs::read_to_string(out_dir.join("data.volume"))
+	assert!(fs::read_to_string(out_dir.join("proj-data.volume"))
 		.unwrap()
 		.contains("VolumeName="));
 
@@ -132,12 +142,19 @@ fn cli_prints_units_to_stdout() {
 	fs::write(&compose, "services:\n  web:\n    image: nginx\n").unwrap();
 
 	let output = Command::new(bin())
-		.args(["-f", compose.to_str().unwrap(), "generate", "quadlet"])
+		.args([
+			"-p",
+			"proj",
+			"-f",
+			compose.to_str().unwrap(),
+			"generate",
+			"quadlet",
+		])
 		.output()
 		.unwrap();
 	assert!(output.status.success());
 	let stdout = String::from_utf8(output.stdout).unwrap();
-	assert!(stdout.contains("# web.container"));
+	assert!(stdout.contains("# proj-web.container"));
 	assert!(stdout.contains("Image=nginx"));
 
 	let _ = fs::remove_dir_all(&dir);
