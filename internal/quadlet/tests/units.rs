@@ -425,19 +425,68 @@ services:
 }
 
 #[test]
-fn network_mode_service_and_container_map_to_dot_container() {
-	// `network_mode: service:X` / `container:X` reuse another container's netns,
-	// which Quadlet expresses as `Network={X}.container`.
-	for (mode, target) in [("service:db", "db"), ("container:sidecar", "sidecar")] {
-		let yaml = format!("services:\n  s:\n    image: x\n    network_mode: \"{mode}\"\n");
-		let file = parse_str(&yaml).unwrap();
-		let out = generate(&file, "p");
-		let c = &unit_named(&out, "p-s.container").contents;
-		assert!(
-			c.contains(&format!("Network=p-{target}.container")),
-			"{mode} must map to Network=p-{target}.container; got:\n{c}"
-		);
-	}
+fn network_mode_service_maps_to_dot_container() {
+	// `network_mode: service:X` reuses a sibling service's netns, which Quadlet
+	// expresses as the `Network={X}.container` unit dependency. Generated unit
+	// stems are project-prefixed, so the dependency is `p-db.container`.
+	let yaml = "services:\n  s:\n    image: x\n    network_mode: \"service:db\"\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "p-s.container").contents;
+	assert!(
+		c.contains("Network=p-db.container"),
+		"service:db must map to Network=p-db.container; got:\n{c}"
+	);
+}
+
+#[test]
+fn network_mode_container_maps_to_join_form() {
+	// `network_mode: container:X` joins an *existing* container's netns by id/name
+	// via podman's `Network=container:X`; it is not a `.container` unit dependency
+	// (that would name a non-existent unit and fail to start).
+	let yaml = "services:\n  s:\n    image: x\n    network_mode: \"container:sidecar\"\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "p-s.container").contents;
+	assert!(
+		c.contains("Network=container:sidecar"),
+		"container:sidecar must map to the join form; got:\n{c}"
+	);
+	assert!(
+		!c.contains("sidecar.container"),
+		"container: must not emit a .container unit dependency; got:\n{c}"
+	);
+}
+
+#[test]
+fn duplicate_network_aliases_are_emitted_once() {
+	// A repeated alias must not produce duplicate `NetworkAlias=` lines, which
+	// podman may reject at container create.
+	let yaml = "services:\n  s:\n    image: x\n    networks:\n      front:\n        aliases: [dup, dup, uniq]\nnetworks:\n  front:\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	let c = &unit_named(&out, "p-s.container").contents;
+	assert_eq!(
+		c.matches("NetworkAlias=dup").count(),
+		1,
+		"duplicate alias must be emitted once; got:\n{c}"
+	);
+	assert_eq!(c.matches("NetworkAlias=uniq").count(), 1, "in:\n{c}");
+}
+
+#[test]
+fn ipam_options_warn_because_quadlet_cannot_emit_them() {
+	// The live engine forwards `ipam.options` via the libpod API, but podman
+	// network create / Quadlet expose no key for them, so `generate` warns instead
+	// of silently diverging.
+	let yaml = "networks:\n  net:\n    ipam:\n      options:\n        foo: bar\nservices:\n  s:\n    image: x\n    networks: [net]\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate(&file, "p");
+	assert!(
+		out.warnings.iter().any(|w| w.contains("ipam.options")),
+		"expected an ipam.options warning; got: {:?}",
+		out.warnings
+	);
 }
 
 #[test]

@@ -50,7 +50,23 @@ pub(super) fn build_restart_policy(service: &Service) -> (Option<String>, Option
 				"unless-stopped"
 			}
 		};
-		return (Some(name.to_string()), drp.max_attempts.map(|n| n as u64));
+		// Podman only honours a retry cap (`RestartRetries`) when the policy is
+		// `on-failure`. Under any other policy the cap is silently dropped by the
+		// backend, which would turn a bounded "restart at most N times" spec into an
+		// unbounded restart. Only forward `max_attempts` for `on-failure`, and warn
+		// if the user set one under a condition where it cannot take effect.
+		let tries = if name == "on-failure" {
+			drp.max_attempts.map(|n| n as u64)
+		} else {
+			if drp.max_attempts.is_some() {
+				tracing::warn!(
+					"deploy.restart_policy.max_attempts is ignored unless condition \
+					 is 'on-failure' (current condition resolves to '{name}')"
+				);
+			}
+			None
+		};
+		return (Some(name.to_string()), tries);
 	}
 	(None, None)
 }
@@ -231,6 +247,78 @@ mod tests {
 		});
 		let (name, _) = build_restart_policy(&svc);
 		assert_eq!(name.as_deref(), Some("always"));
+	}
+
+	#[test]
+	fn restart_policy_from_deploy_any_drops_max_attempts() {
+		// `condition: any` maps to `always`; Podman ignores a retry cap under
+		// `always`, so we must not forward max_attempts (it would otherwise read
+		// as an honoured bound that the backend silently discards).
+		use crate::compose::types::{DeployConfig, DeployRestartPolicy};
+		let mut svc = default_service();
+		svc.deploy = Some(DeployConfig {
+			restart_policy: Some(DeployRestartPolicy {
+				condition: Some("any".into()),
+				max_attempts: Some(3),
+				..Default::default()
+			}),
+			..Default::default()
+		});
+		let (name, tries) = build_restart_policy(&svc);
+		assert_eq!(name.as_deref(), Some("always"));
+		assert!(tries.is_none());
+	}
+
+	#[test]
+	fn restart_policy_from_deploy_none_drops_max_attempts() {
+		use crate::compose::types::{DeployConfig, DeployRestartPolicy};
+		let mut svc = default_service();
+		svc.deploy = Some(DeployConfig {
+			restart_policy: Some(DeployRestartPolicy {
+				condition: Some("none".into()),
+				max_attempts: Some(4),
+				..Default::default()
+			}),
+			..Default::default()
+		});
+		let (name, tries) = build_restart_policy(&svc);
+		assert_eq!(name.as_deref(), Some("no"));
+		assert!(tries.is_none());
+	}
+
+	#[test]
+	fn restart_policy_from_deploy_unrecognized_condition_drops_max_attempts() {
+		use crate::compose::types::{DeployConfig, DeployRestartPolicy};
+		let mut svc = default_service();
+		svc.deploy = Some(DeployConfig {
+			restart_policy: Some(DeployRestartPolicy {
+				condition: Some("on-success".into()),
+				max_attempts: Some(2),
+				..Default::default()
+			}),
+			..Default::default()
+		});
+		let (name, tries) = build_restart_policy(&svc);
+		assert_eq!(name.as_deref(), Some("unless-stopped"));
+		assert!(tries.is_none());
+	}
+
+	#[test]
+	fn restart_policy_from_deploy_on_failure_keeps_max_attempts() {
+		// The one condition that honours the cap must still forward it.
+		use crate::compose::types::{DeployConfig, DeployRestartPolicy};
+		let mut svc = default_service();
+		svc.deploy = Some(DeployConfig {
+			restart_policy: Some(DeployRestartPolicy {
+				condition: Some("on-failure".into()),
+				max_attempts: Some(3),
+				..Default::default()
+			}),
+			..Default::default()
+		});
+		let (name, tries) = build_restart_policy(&svc);
+		assert_eq!(name.as_deref(), Some("on-failure"));
+		assert_eq!(tries, Some(3));
 	}
 
 	// --- log config ---

@@ -6,14 +6,51 @@ use crate::compose::types::{ComposeFile, Service};
 
 /// Remove services excluded by the active profile set, in place.
 ///
-/// Mirrors what `up` actually starts (a per-service profile match, with no
-/// implicit activation of a profiled `depends_on` target), so `config` presents
-/// the same service set the runtime would bring up. `active` is the CLI
-/// `--profile` list, falling back to `COMPOSE_PROFILES`.
+/// `active` is the CLI `--profile` list, falling back to `COMPOSE_PROFILES`.
+/// A profiled service that is a transitive `depends_on` target of a retained
+/// service is implicitly enabled, matching docker compose — so the output never
+/// carries a dangling dependency reference.
 pub fn retain_active_profiles(file: &mut ComposeFile, active: &[String]) {
+	retain_active_profiles_with_targets(file, active, &[]);
+}
+
+/// Like [`retain_active_profiles`], but also keeps any service named in
+/// `targets` even when its profile is inactive: naming a service on the command
+/// line activates its profile (docker compose), so per-service subcommands
+/// (`start`, `stop`, `build`, `push`, `pull`, …) can still address it.
+pub fn retain_active_profiles_with_targets(
+	file: &mut ComposeFile,
+	active: &[String],
+	targets: &[String],
+) {
 	let set = active_profiles_set(active);
-	file.services
-		.retain(|_, svc| service_in_profiles(svc, &set));
+	let named: HashSet<&str> = targets.iter().map(|s| s.as_str()).collect();
+
+	// Directly enabled: an unprofiled service, a profile match (or `*`), or a
+	// service explicitly named on the command line.
+	let mut enabled: HashSet<String> = file
+		.services
+		.iter()
+		.filter(|(name, svc)| service_in_profiles(svc, &set) || named.contains(name.as_str()))
+		.map(|(name, _)| name.clone())
+		.collect();
+
+	// Implicit activation: pull in profiled `depends_on` targets of enabled
+	// services, transitively, so a retained service never references a dropped
+	// dependency. Mirrors docker compose, which enables a profiled service that
+	// is depended on by a started one.
+	let mut stack: Vec<String> = enabled.iter().cloned().collect();
+	while let Some(name) = stack.pop() {
+		if let Some(svc) = file.services.get(&name) {
+			for dep in svc.depends_on.service_names() {
+				if file.services.contains_key(&dep) && enabled.insert(dep.clone()) {
+					stack.push(dep);
+				}
+			}
+		}
+	}
+
+	file.services.retain(|name, _| enabled.contains(name));
 }
 
 /// Build the active-profile set, falling back to `COMPOSE_PROFILES` env var.
@@ -34,9 +71,14 @@ pub(super) fn active_profiles_set(active: &[String]) -> HashSet<String> {
 
 /// True if the service should be started given the active profile set.
 ///
-/// Services with no profiles always start.
+/// Services with no profiles always start. A literal `*` in the active set is a
+/// wildcard that enables every profiled service (docker compose's
+/// "enable all profiles").
 pub(super) fn service_in_profiles(service: &Service, active: &HashSet<String>) -> bool {
 	if service.profiles.is_empty() {
+		return true;
+	}
+	if active.contains("*") {
 		return true;
 	}
 	service.profiles.iter().any(|p| active.contains(p))
@@ -140,5 +182,89 @@ mod tests {
 		});
 		assert!(file.services.contains_key("web"));
 		assert_eq!(file.services.len(), 1);
+	}
+
+	#[test]
+	fn wildcard_enables_all_profiles() {
+		// `--profile '*'` enables every profiled service, matching docker compose.
+		let svc = Service {
+			profiles: vec!["debug".to_string()],
+			..Default::default()
+		};
+		let active: HashSet<String> = ["*".to_string()].into();
+		assert!(service_in_profiles(&svc, &active));
+
+		let yaml = "services:\n  \
+			web:\n    image: x\n  \
+			debugger:\n    image: x\n    profiles: [debug]\n  \
+			db:\n    image: x\n    profiles: [prod]\n";
+		let mut file = crate::parse_str(yaml).unwrap();
+		retain_active_profiles(&mut file, &["*".to_string()]);
+		assert_eq!(file.services.len(), 3);
+	}
+
+	#[test]
+	fn implicit_activation_keeps_profiled_dependency() {
+		// `app` (active) depends on `db` (profiles: [storage]). With no profile
+		// active, `db` is implicitly enabled so `app` keeps a satisfiable dep —
+		// no dangling reference, matching docker compose.
+		let yaml = "services:\n  \
+			app:\n    image: x\n    depends_on: [db]\n  \
+			db:\n    image: x\n    profiles: [storage]\n";
+		let mut file = crate::parse_str(yaml).unwrap();
+		temp_env::with_var_unset("COMPOSE_PROFILES", || {
+			retain_active_profiles(&mut file, &[]);
+		});
+		assert!(file.services.contains_key("app"));
+		assert!(
+			file.services.contains_key("db"),
+			"profiled depends_on target is implicitly activated"
+		);
+	}
+
+	#[test]
+	fn implicit_activation_is_transitive() {
+		// app -> db -> storage, where both db and storage are profiled. Enabling
+		// app must pull in the whole transitive dependency chain.
+		let yaml = "services:\n  \
+			app:\n    image: x\n    depends_on: [db]\n  \
+			db:\n    image: x\n    profiles: [p]\n    depends_on: [storage]\n  \
+			storage:\n    image: x\n    profiles: [q]\n";
+		let mut file = crate::parse_str(yaml).unwrap();
+		temp_env::with_var_unset("COMPOSE_PROFILES", || {
+			retain_active_profiles(&mut file, &[]);
+		});
+		assert_eq!(file.services.len(), 3);
+	}
+
+	#[test]
+	fn unrelated_profiled_service_still_dropped() {
+		// Implicit activation only reaches dependencies — an unrelated profiled
+		// service is still removed.
+		let yaml = "services:\n  \
+			app:\n    image: x\n    depends_on: [db]\n  \
+			db:\n    image: x\n    profiles: [storage]\n  \
+			extra:\n    image: x\n    profiles: [other]\n";
+		let mut file = crate::parse_str(yaml).unwrap();
+		temp_env::with_var_unset("COMPOSE_PROFILES", || {
+			retain_active_profiles(&mut file, &[]);
+		});
+		assert!(file.services.contains_key("db"));
+		assert!(!file.services.contains_key("extra"));
+	}
+
+	#[test]
+	fn named_target_keeps_inactive_profile_service() {
+		// Naming a profiled service on the command line activates its profile, so
+		// per-service subcommands can still address it.
+		let yaml = "services:\n  \
+			web:\n    image: x\n  \
+			debugger:\n    image: x\n    profiles: [debug]\n";
+		let mut file = crate::parse_str(yaml).unwrap();
+		temp_env::with_var_unset("COMPOSE_PROFILES", || {
+			retain_active_profiles_with_targets(&mut file, &[], &["debugger".to_string()]);
+		});
+		assert!(file.services.contains_key("web"));
+		assert!(file.services.contains_key("debugger"));
 	}
 }

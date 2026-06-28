@@ -1,14 +1,64 @@
 //! Image push to a registry (docker compose `push`).
 
-use futures_util::StreamExt;
+use std::time::Duration;
+
+use futures_util::{Stream, StreamExt};
 use tracing::{info, warn};
 
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::image::ImagePullProgress;
-use crate::libpod::{urlencoded, API_PREFIX};
+use crate::libpod::{urlencoded, PodmanError, API_PREFIX};
 
 use super::super::Engine;
+
+/// Maximum time to wait for the next progress line from a push body stream
+/// before treating the registry as unresponsive.
+///
+/// The client `READ_TIMEOUT` only bounds the request head, not this streamed
+/// body, so without a per-line deadline a push to an unreachable/wedged registry
+/// would block indefinitely while draining the response. Generous so a slow but
+/// progressing upload is never aborted.
+const PUSH_STALL_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Drain a push progress stream, surfacing a mid-stream `error` line and bounding
+/// each read by `stall` so an unresponsive registry fails with a clear timeout
+/// instead of hanging. Generic over the stream so it is unit-tested without a
+/// live socket.
+async fn drain_push_stream<S>(mut stream: S, image: &str, stall: Duration) -> Result<()>
+where
+	S: Stream<Item = std::result::Result<ImagePullProgress, PodmanError>> + Unpin,
+{
+	let mut stream_error: Option<String> = None;
+	loop {
+		match tokio::time::timeout(stall, stream.next()).await {
+			Ok(Some(Ok(progress))) => {
+				if !progress.stream.is_empty() {
+					info!("{}", progress.stream.trim_end());
+				}
+				if !progress.error.is_empty() {
+					stream_error = Some(progress.error.clone());
+				}
+			}
+			Ok(Some(Err(e))) => stream_error = Some(e.to_string()),
+			Ok(None) => break,
+			Err(_elapsed) => {
+				return Err(ComposeError::Build(format!(
+					"push {image}: no progress from the registry for {}s; aborting \
+					 (registry unreachable or unresponsive)",
+					stall.as_secs()
+				)));
+			}
+		}
+	}
+	match stream_error {
+		Some(err) => Err(ComposeError::Build(format!("push {image}: {err}"))),
+		None => {
+			info!("pushed {image}");
+			Ok(())
+		}
+	}
+}
 
 /// Options for [`Engine::push`], mirroring `docker compose push` (plus a Podman
 /// `--tls-verify` escape hatch for insecure/local registries).
@@ -71,27 +121,56 @@ impl Engine {
 			.post_empty_stream(&path)
 			.await
 			.map_err(ComposeError::Podman)?;
-		let mut stream = crate::libpod::parse_json_lines::<ImagePullProgress>(resp.into_body());
-		let mut stream_error: Option<String> = None;
-		while let Some(result) = stream.next().await {
-			match result {
-				Ok(progress) => {
-					if !progress.stream.is_empty() {
-						info!("{}", progress.stream.trim_end());
-					}
-					if !progress.error.is_empty() {
-						stream_error = Some(progress.error.clone());
-					}
-				}
-				Err(e) => stream_error = Some(e.to_string()),
-			}
+		let stream = crate::libpod::parse_json_lines::<ImagePullProgress>(resp.into_body());
+		drain_push_stream(stream, image, PUSH_STALL_TIMEOUT).await
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{drain_push_stream, ImagePullProgress};
+	use crate::error::ComposeError;
+	use crate::libpod::PodmanError;
+	use futures_util::StreamExt;
+	use std::time::Duration;
+
+	fn progress(stream: &str, error: &str) -> ImagePullProgress {
+		ImagePullProgress {
+			stream: stream.to_string(),
+			error: error.to_string(),
 		}
-		match stream_error {
-			Some(err) => Err(ComposeError::Build(format!("push {image}: {err}"))),
-			None => {
-				info!("pushed {image}");
-				Ok(())
-			}
-		}
+	}
+
+	#[tokio::test]
+	async fn drain_ok_when_stream_completes_cleanly() {
+		let items = vec![Ok(progress("pushing", "")), Ok(progress("done", ""))];
+		let stream = futures_util::stream::iter(items);
+		drain_push_stream(stream, "img", Duration::from_secs(5))
+			.await
+			.unwrap();
+	}
+
+	#[tokio::test]
+	async fn drain_surfaces_mid_stream_error_line() {
+		let items = vec![Ok(progress("", "denied: unauthorized"))];
+		let stream = futures_util::stream::iter(items);
+		let err = drain_push_stream(stream, "img", Duration::from_secs(5))
+			.await
+			.unwrap_err();
+		assert!(matches!(err, ComposeError::Build(m) if m.contains("denied: unauthorized")));
+	}
+
+	#[tokio::test]
+	async fn drain_times_out_on_an_unresponsive_stream() {
+		// A stream that yields one line then never another stands in for a registry
+		// that accepts the request then stalls — the per-line deadline must fire.
+		let first = futures_util::stream::iter(vec![Ok(progress("pushing", ""))]);
+		let stream = first.chain(futures_util::stream::pending::<
+			std::result::Result<ImagePullProgress, PodmanError>,
+		>());
+		let err = drain_push_stream(stream, "img", Duration::from_millis(20))
+			.await
+			.unwrap_err();
+		assert!(matches!(err, ComposeError::Build(m) if m.contains("no progress")));
 	}
 }

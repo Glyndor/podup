@@ -36,7 +36,23 @@ pub(crate) fn build_mounts_all(
 				if let Some((m, n)) = parse_volume_string(s) {
 					match n {
 						Some(nv) => named.push(nv),
-						None => mounts.push(m.unwrap()),
+						None => {
+							let m = m.unwrap();
+							// Short-form binds imply `create_host_path` (compose-spec),
+							// so create a missing host source directory before mounting.
+							// Otherwise `up` aborts with a raw podman HTTP 500 statfs
+							// error that leaks the absolute host path. Resolve exactly
+							// like the mount source so the directory is created at the
+							// path actually bind-mounted (relative anchored to the
+							// project dir, leading `~` expanded).
+							if let Some(src) = m.source.as_deref() {
+								let abs = super::container::resolve_bind_source(src, base_dir);
+								if let Err(e) = std::fs::create_dir_all(&abs) {
+									tracing::warn!("create_host_path: failed to create {abs}: {e}");
+								}
+							}
+							mounts.push(m);
+						}
 					}
 				}
 			}
@@ -356,6 +372,25 @@ mod tests {
 		}]);
 		build_mounts_all(&svc, dir.path(), &[], &[]);
 		assert!(dir.path().join(rel).exists());
+	}
+
+	#[test]
+	fn short_form_bind_creates_missing_host_path() {
+		// A short-form bind whose relative source is missing must have its host
+		// directory created (compose-spec implies create_host_path for short
+		// syntax), anchored to the project base dir — not left to fail with a raw
+		// podman statfs 500.
+		let dir = tempfile::tempdir().unwrap();
+		let rel = "missing-dir";
+		let svc = svc_with_volumes(vec![VolumeMount::Short(format!("./{rel}:/app/data"))]);
+		let (mounts, named) = build_mounts_all(&svc, dir.path(), &[], &[]);
+		assert!(named.is_empty());
+		assert_eq!(mounts.len(), 1);
+		assert_eq!(mounts[0].mount_type, "bind");
+		assert!(
+			dir.path().join(rel).is_dir(),
+			"short-form bind source directory should be created"
+		);
 	}
 
 	#[test]
