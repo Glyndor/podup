@@ -10,7 +10,7 @@ mod image;
 pub use build::{BuildOptions, PullOptions, PushOptions};
 pub use copy::CpOptions;
 pub use image::resolve_image_digests;
-pub use lifecycle::{RunOptions, RunOverrides};
+pub use lifecycle::{validate_stop_timeout, RunOptions, RunOverrides};
 pub use lock::ProjectLock;
 pub use query::{ExecOptions, ImagesOptions, LogsOptions, PsOptions};
 mod container_config;

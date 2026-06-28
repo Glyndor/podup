@@ -99,6 +99,14 @@ impl PodmanError {
 		matches!(self, Self::Api { status, .. } if *status == code)
 	}
 
+	/// True if this is a client-side timeout (the request was aborted because the
+	/// socket never responded within the deadline). These carry a synthetic
+	/// status `0` and a `timed out` message; lifecycle callers use this to
+	/// escalate a wedged `stop` to an explicit `SIGKILL`.
+	pub(crate) fn is_timeout(&self) -> bool {
+		matches!(self, Self::Api { status: 0, message } if message.contains("timed out"))
+	}
+
 	/// True if this is the libpod 409 returned when `kill` targets a container
 	/// that is not running ("can only kill running containers …"). `docker
 	/// compose kill` is best-effort across all targets, so this is treated as an
@@ -219,6 +227,29 @@ mod tests {
 		assert!(e.is_status(404));
 		assert!(!e.is_status(200));
 		assert!(!e.is_status(500));
+	}
+
+	#[test]
+	fn is_timeout_matches_synthetic_timeout_error() {
+		// Client-side timeouts carry status 0 and a "timed out" message; lifecycle
+		// stop escalation keys off this.
+		assert!(PodmanError::Api {
+			status: 0,
+			message: "timed out after 40s waiting for the Podman socket to respond".into(),
+		}
+		.is_timeout());
+		// A real HTTP error (non-zero status) is not a timeout.
+		assert!(!PodmanError::Api {
+			status: 500,
+			message: "boom".into(),
+		}
+		.is_timeout());
+		// A status-0 error without the timeout marker is not a timeout.
+		assert!(!PodmanError::Api {
+			status: 0,
+			message: "invalid API path".into(),
+		}
+		.is_timeout());
 	}
 
 	#[test]

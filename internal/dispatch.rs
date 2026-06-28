@@ -118,12 +118,20 @@ pub(crate) async fn dispatch(
 			let file = &profile_filtered(file, profile, &services);
 			engine.start(file, &services).await?;
 			if wait {
-				let fut = engine.wait_services_healthy(file, &services);
 				match wait_timeout {
-					Some(secs) => tokio::time::timeout(std::time::Duration::from_secs(secs), fut)
-						.await
-						.map_err(|_| podup::ComposeError::WaitTimeout { secs })??,
-					None => fut.await?,
+					// `--wait-timeout` both extends the per-service poll budget (so a
+					// short healthcheck plan does not give up early) and caps the
+					// whole wait, so exhaustion surfaces as a clear WaitTimeout rather
+					// than a misleading per-container health-check timeout.
+					Some(secs) => {
+						let budget = std::time::Duration::from_secs(secs);
+						let fut =
+							engine.wait_services_healthy_within(file, &services, Some(budget));
+						tokio::time::timeout(budget, fut)
+							.await
+							.map_err(|_| podup::ComposeError::WaitTimeout { secs })??;
+					}
+					None => engine.wait_services_healthy(file, &services).await?,
 				}
 			}
 		}
