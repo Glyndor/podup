@@ -25,7 +25,7 @@ impl Engine {
 				info!("{done} {container}");
 				Ok(())
 			}
-			Err(e) if e.is_status(304) || e.is_status(404) => {
+			Err(e) if e.is_status(304) || e.is_status(404) || e.is_kill_of_stopped() => {
 				tracing::debug!("{container}: {done} skipped ({e})");
 				Ok(())
 			}
