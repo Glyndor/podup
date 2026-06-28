@@ -1,6 +1,7 @@
 //! Docker Compose variable substitution.
 //!
-//! Applies `${VAR}` / `$VAR` substitution to raw YAML text before parsing.
+//! Applies `${VAR}` / `$VAR` substitution to individual scalar values of a
+//! parsed compose document (compose-spec value-level interpolation).
 //! Handles all compose-spec modifier forms: `:-`, `-`, `:+`, `+`, `:?`, `?`.
 
 mod parse;
@@ -8,9 +9,14 @@ mod parse;
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::error::Result;
+use crate::error::{ComposeError, Result};
 
 use parse::{collect_var_name, is_var_start, parse_braced_var, resolve_modifier};
+
+/// Maximum nesting depth for interpolated default/alternate values
+/// (`${A:-${A:-…}}`). Real compose files nest a handful of levels at most; this
+/// cap turns a pathological chain into a clean error instead of a stack overflow.
+const MAX_INTERP_DEPTH: usize = 64;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -21,6 +27,22 @@ use parse::{collect_var_name, is_var_start, parse_braced_var, resolve_modifier};
 /// `vars` should contain both the process environment and the `.env` file
 /// entries (process environment takes precedence).
 pub fn substitute(input: &str, vars: &HashMap<String, String>) -> Result<String> {
+	substitute_depth(input, vars, 0)
+}
+
+/// Inner substitution carrying the current nesting `depth` so recursive
+/// interpolation of modifier defaults/alternates (`${A:-${B}}`) is bounded.
+pub(super) fn substitute_depth(
+	input: &str,
+	vars: &HashMap<String, String>,
+	depth: usize,
+) -> Result<String> {
+	if depth > MAX_INTERP_DEPTH {
+		return Err(ComposeError::InvalidSubstitution(format!(
+			"interpolation nesting too deep (more than {MAX_INTERP_DEPTH} levels)"
+		)));
+	}
+
 	let mut out = String::with_capacity(input.len());
 	let mut chars = input.chars().peekable();
 
@@ -41,12 +63,21 @@ pub fn substitute(input: &str, vars: &HashMap<String, String>) -> Result<String>
 			Some('{') => {
 				chars.next();
 				let (var, modifier) = parse_braced_var(&mut chars)?;
-				let value = resolve_modifier(var, modifier, vars)?;
+				let value = resolve_modifier(var, modifier, vars, depth)?;
 				out.push_str(&value);
 			}
 			Some(c) if is_var_start(*c) => {
 				let var = collect_var_name(&mut chars);
-				let value = vars.get(&var).cloned().unwrap_or_default();
+				let value = match vars.get(&var) {
+					Some(v) => v.clone(),
+					None => {
+						// Match docker compose v2: warn before defaulting to blank.
+						tracing::warn!(
+							"The {var} variable is not set. Defaulting to a blank string."
+						);
+						String::new()
+					}
+				};
 				out.push_str(&value);
 			}
 			Some(_) => {
@@ -388,6 +419,53 @@ mod tests {
 		assert_eq!(
 			substitute("${FOO:-${BAR}}/tail", &vars(&[("BAR", "b")])).unwrap(),
 			"b/tail"
+		);
+	}
+
+	// Malformed / pathological references
+
+	#[test]
+	fn empty_name_is_error() {
+		assert!(substitute("${}", &vars(&[])).is_err());
+	}
+
+	#[test]
+	fn digit_leading_name_is_error() {
+		assert!(substitute("${1BAD}", &vars(&[])).is_err());
+	}
+
+	#[test]
+	fn unterminated_modifier_is_error() {
+		// The missing `}` must error rather than consume the rest of the input.
+		assert!(substitute("${TAG:-latest\nmore", &vars(&[])).is_err());
+	}
+
+	#[test]
+	fn deeply_nested_defaults_error_instead_of_overflowing() {
+		// A pathological `${A:-${A:-…}}` chain (all default branches taken, A unset)
+		// returns a clean error past the depth cap rather than overflowing the stack.
+		let depth = MAX_INTERP_DEPTH + 50;
+		let mut s = String::new();
+		for _ in 0..depth {
+			s.push_str("${A:-");
+		}
+		s.push('x');
+		for _ in 0..depth {
+			s.push('}');
+		}
+		let err = substitute(&s, &vars(&[])).expect_err("over-deep nesting must error");
+		assert!(matches!(
+			err,
+			crate::error::ComposeError::InvalidSubstitution(_)
+		));
+	}
+
+	#[test]
+	fn moderate_nesting_still_resolves() {
+		// Well within the cap, nested defaults resolve normally.
+		assert_eq!(
+			substitute("${A:-${B:-${C:-deep}}}", &vars(&[])).unwrap(),
+			"deep"
 		);
 	}
 

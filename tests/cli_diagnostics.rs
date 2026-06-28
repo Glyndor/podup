@@ -179,6 +179,75 @@ fn config_no_interpolate_keeps_placeholders_literal() {
 	);
 }
 
+#[test]
+fn config_warns_on_unset_interpolation_variable() {
+	// An unset `${VAR}` interpolates to an empty string but must warn on stderr
+	// (matching docker compose) so a config typo does not pass silently.
+	let dir = std::env::temp_dir().join(format!("podup-unset-warn-{}", std::process::id()));
+	fs::create_dir_all(&dir).unwrap();
+	let compose = dir.join("docker-compose.yml");
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: ${PODUP_UNSET_IMAGE}\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+
+	let out = Command::new(bin())
+		.args(["-f", c, "config"])
+		.env_remove("PODUP_UNSET_IMAGE")
+		.output()
+		.unwrap();
+	let stderr = String::from_utf8_lossy(&out.stderr);
+	assert!(
+		stderr.contains("PODUP_UNSET_IMAGE") && stderr.contains("not set"),
+		"expected an unset-variable warning on stderr, got: {stderr:?}"
+	);
+}
+
+#[test]
+fn config_no_interpolate_skips_required_var_error() {
+	// `--no-interpolate` must not evaluate a required-var `${VAR:?msg}`: with the
+	// variable unset the command should still succeed and print the placeholder
+	// literally, rather than failing on the required-var check.
+	let dir = std::env::temp_dir().join(format!("podup-noint-req-{}", std::process::id()));
+	fs::create_dir_all(&dir).unwrap();
+	let compose = dir.join("docker-compose.yml");
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: ${MUST_SET:?required}\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+
+	// With interpolation on, the required-var error fails the command.
+	let interp = Command::new(bin())
+		.args(["-f", c, "config"])
+		.env_remove("MUST_SET")
+		.output()
+		.unwrap();
+	assert!(
+		!interp.status.success(),
+		"default config must fail on the required-var"
+	);
+
+	// With --no-interpolate, the file is printed uninterpolated and succeeds.
+	let raw = Command::new(bin())
+		.args(["-f", c, "config", "--no-interpolate"])
+		.env_remove("MUST_SET")
+		.output()
+		.unwrap();
+	assert!(
+		raw.status.success(),
+		"config --no-interpolate must not evaluate the required-var: {:?}",
+		String::from_utf8_lossy(&raw.stderr)
+	);
+	assert!(
+		String::from_utf8_lossy(&raw.stdout).contains("${MUST_SET:?required}"),
+		"--no-interpolate must keep the placeholder literal"
+	);
+}
+
 /// `update` only rewrites the podup binary, so the compose-only global value
 /// flags (--socket/--profile/--env-file/--project-directory) cannot affect it.
 /// Passing one on the command line is rejected as a usage error rather than

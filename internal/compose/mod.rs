@@ -202,8 +202,7 @@ fn merge_override(target: &mut ComposeFile, other: ComposeFile) {
 /// use [`parse_file`] for that.
 pub fn parse_str(content: &str) -> Result<ComposeFile> {
 	let vars = substitute::build_vars(Path::new("."));
-	let substituted = substitute::substitute(content, &vars)?;
-	let mut file = merge::deserialize_with_merge(&substituted)?;
+	let mut file = merge::deserialize_with_merge_interp(content, Some(&vars))?;
 	extends::resolve_extends_same_file(&mut file)?;
 	Ok(file)
 }
@@ -232,18 +231,19 @@ pub(crate) fn parse_file_inner_with_env(
 		}
 	})?;
 	// `config --no-interpolate` leaves `${VAR}` placeholders literal; otherwise
-	// substitute against the env/.env/env-file variable map.
-	let yaml = if interpolate {
+	// interpolate against the env/.env/env-file variable map. Interpolation runs
+	// on the parsed YAML scalars (see `deserialize_with_merge_interp`), not the
+	// raw text, so resolved values cannot alter the document structure.
+	if interpolate {
 		let vars = if extra_env_files.is_empty() {
 			substitute::build_vars(dir)
 		} else {
 			substitute::build_vars_with_env_files_strict(dir, extra_env_files)?
 		};
-		substitute::substitute(&content, &vars)?
+		merge::deserialize_with_merge_interp(&content, Some(&vars))
 	} else {
-		content
-	};
-	merge::deserialize_with_merge(&yaml)
+		merge::deserialize_with_merge(&content)
+	}
 }
 
 #[cfg(test)]
