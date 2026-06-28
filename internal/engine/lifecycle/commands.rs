@@ -12,6 +12,53 @@ use super::{filter_services, RunOptions};
 use crate::engine::Engine;
 use crate::libpod::API_PREFIX;
 
+/// The signal names podman/Linux accept for `kill -s` (without the `SIG`
+/// prefix). Real-time signals (`SIGRTMIN+n`) are handled separately.
+const SIGNAL_NAMES: &[&str] = &[
+	"HUP", "INT", "QUIT", "ILL", "TRAP", "ABRT", "IOT", "BUS", "FPE", "KILL", "USR1", "SEGV",
+	"USR2", "PIPE", "ALRM", "TERM", "STKFLT", "CHLD", "CLD", "CONT", "STOP", "TSTP", "TTIN",
+	"TTOU", "URG", "XCPU", "XFSZ", "VTALRM", "PROF", "WINCH", "IO", "POLL", "PWR", "SYS", "UNUSED",
+];
+
+/// Validate a `--signal` value client-side so a typo (`NOTASIGNAL`) is rejected
+/// with a clear local message instead of a raw podman HTTP 500. Accepts a signal
+/// number, or a name with or without the `SIG` prefix (case-insensitive), and
+/// real-time signals like `RTMIN+3`. Pure so it is unit-tested.
+fn validate_signal(signal: &str) -> Result<()> {
+	if is_valid_signal(signal) {
+		Ok(())
+	} else {
+		Err(ComposeError::Unsupported(format!(
+			"invalid signal {signal:?}: expected a signal name (e.g. SIGTERM, KILL) or number"
+		)))
+	}
+}
+
+fn is_valid_signal(signal: &str) -> bool {
+	if signal.is_empty() {
+		return false;
+	}
+	// A bare signal number (e.g. `9`, `15`).
+	if signal.parse::<u8>().is_ok() {
+		return true;
+	}
+	let upper = signal.to_ascii_uppercase();
+	let name = upper.strip_prefix("SIG").unwrap_or(&upper);
+	if SIGNAL_NAMES.contains(&name) {
+		return true;
+	}
+	// Real-time signals: RTMIN, RTMAX, RTMIN+n, RTMAX-n.
+	if let Some(rest) = name
+		.strip_prefix("RTMIN")
+		.or_else(|| name.strip_prefix("RTMAX"))
+	{
+		return rest.is_empty()
+			|| ((rest.starts_with('+') || rest.starts_with('-'))
+				&& rest[1..].parse::<u8>().is_ok());
+	}
+	false
+}
+
 impl Engine {
 	/// Run a lifecycle POST against one container with a consistent outcome:
 	/// success logs `{done} {container}`; "already in the desired state" (304)
@@ -79,11 +126,11 @@ impl Engine {
 							"{API_PREFIX}/containers/{}/restart?t={grace}",
 							crate::libpod::urlencoded(&dep_container),
 						);
-						if let Err(e) = self.client.post_empty_ok(&restart_path).await {
-							tracing::warn!("cascade restart of {dep_name} failed: {e}");
-						} else {
-							info!("cascade-restarted {dep_container} (depends_on.restart)");
-						}
+						// Route through the shared op so a missing dependent container
+						// (404) is the same idempotent no-op as the main restart path,
+						// instead of leaking a raw 404 warning here.
+						self.run_lifecycle_op(&restart_path, &dep_container, "cascade-restarted")
+							.await?;
 					}
 				}
 			}
@@ -183,6 +230,7 @@ impl Engine {
 		target_services: &[String],
 		signal: &str,
 	) -> Result<()> {
+		validate_signal(signal)?;
 		let order = crate::compose::resolve_order(file)?;
 		let order = filter_services(file, order, target_services)?;
 
@@ -475,5 +523,32 @@ impl Engine {
 		}
 
 		Ok(())
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{is_valid_signal, validate_signal};
+
+	#[test]
+	fn valid_signal_names_numbers_and_prefixes() {
+		assert!(is_valid_signal("TERM"));
+		assert!(is_valid_signal("SIGTERM"));
+		assert!(is_valid_signal("sigkill"));
+		assert!(is_valid_signal("9"));
+		assert!(is_valid_signal("15"));
+		assert!(is_valid_signal("RTMIN+3"));
+		assert!(is_valid_signal("SIGRTMAX-1"));
+	}
+
+	#[test]
+	fn invalid_signals_are_rejected() {
+		assert!(!is_valid_signal("NOTASIGNAL"));
+		assert!(!is_valid_signal(""));
+		assert!(!is_valid_signal("SIGFAKE"));
+		assert!(!is_valid_signal("RTMIN+x"));
+		let err = validate_signal("NOTASIGNAL").unwrap_err();
+		assert!(err.to_string().contains("invalid signal"));
+		assert!(err.to_string().contains("NOTASIGNAL"));
 	}
 }
