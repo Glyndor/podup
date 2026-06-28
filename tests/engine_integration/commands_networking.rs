@@ -141,7 +141,7 @@ async fn engine_port_returns_binding() {
 	.unwrap();
 
 	engine.up(&file).await.unwrap();
-	engine.port(&file, "web", 80, "tcp").await.unwrap();
+	engine.port(&file, "web", "80", "tcp").await.unwrap();
 	engine.down(&file).await.unwrap();
 }
 
@@ -301,14 +301,14 @@ async fn port_scaled_service_targets_first_replica() {
 	.unwrap();
 
 	engine.up(&file).await.unwrap();
-	engine.port(&file, "worker", 80, "tcp").await.unwrap();
+	engine.port(&file, "worker", "80", "tcp").await.unwrap();
 	// --index targets a valid replica; an out-of-range index errors.
 	engine
-		.port_with_index(&file, "worker", 80, "tcp", Some(2))
+		.port_with_index(&file, "worker", "80", "tcp", Some(2))
 		.await
 		.unwrap();
 	let bad = engine
-		.port_with_index(&file, "worker", 80, "tcp", Some(9))
+		.port_with_index(&file, "worker", "80", "tcp", Some(9))
 		.await;
 	assert!(
 		matches!(bad, Err(podup::ComposeError::ServiceNotFound(_))),

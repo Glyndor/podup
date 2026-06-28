@@ -181,7 +181,7 @@ impl Engine {
 			return Ok(());
 		}
 
-		println!("{:<40} {:<30} {:<20}", "NAME", "IMAGE", "STATUS");
+		println!("{:<40} {:<30} {:<20} PORTS", "NAME", "IMAGE", "STATUS");
 		for c in &containers {
 			let ports = format_ports(&c.ports);
 			println!(

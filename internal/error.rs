@@ -70,6 +70,8 @@ pub enum ComposeError {
 		replicas: usize,
 		max: u32,
 	},
+	/// `start --wait --wait-timeout` elapsed before services became healthy.
+	WaitTimeout { secs: u64 },
 }
 
 impl fmt::Display for ComposeError {
@@ -129,6 +131,10 @@ impl fmt::Display for ComposeError {
 				f,
 				"service '{service}' requests {replicas} replicas, which exceeds the limit of \
 				 {max}; lower the count or raise the limit with PODUP_MAX_REPLICAS"
+			),
+			Self::WaitTimeout { secs } => write!(
+				f,
+				"timed out after {secs}s waiting for services to become healthy"
 			),
 		}
 	}
@@ -259,6 +265,10 @@ mod tests {
 					replicas: 100_000,
 					max: 256,
 				},
+			),
+			(
+				"timed out after 30s waiting for services to become healthy",
+				ComposeError::WaitTimeout { secs: 30 },
 			),
 		];
 		for (expected_prefix, err) in cases {
