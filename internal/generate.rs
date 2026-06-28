@@ -1,7 +1,10 @@
 //! The `generate quadlet` command: turn the compose file into Quadlet units and
 //! either write them to a directory or print them to stdout.
 
+use std::io::Write;
 use std::path::Path;
+
+use podup::compose::types::ComposeFile;
 
 /// Quadlet units are systemd unit files; they only run on Linux hosts (where
 /// systemd consumes them from `~/.config/containers/systemd/`). Generating them
@@ -16,6 +19,55 @@ fn quadlet_platform_advisory(os: &str) -> Option<String> {
 	})
 }
 
+/// Validate the compose file before emitting Quadlet units, applying the same
+/// rules `up`/`create`/`config` enforce so `generate quadlet` is not more
+/// permissive than the commands that actually run the stack. Rejecting here keeps
+/// the generator from emitting structurally invalid units (a `.container` with
+/// no `Image=`, an out-of-range `PublishPort=`, a `--memory` flag with a
+/// malformed size) or a systemd ordering cycle.
+fn validate_for_quadlet(file: &ComposeFile) -> podup::Result<()> {
+	// `depends_on` cycles would emit mutually `After=`/`Requires=` units that
+	// systemd rejects as an ordering cycle; reject them as `up`/`create` do.
+	// A missing dependency is *not* fatal here: an `After=` may legitimately
+	// reference a unit managed outside this project.
+	if let Err(e @ podup::ComposeError::CircularDependency(_)) = podup::compose::resolve_order(file)
+	{
+		return Err(e);
+	}
+	for (name, svc) in &file.services {
+		// Every service must declare an image or a build, the same rule
+		// `config`/`up` enforce; without it the unit would have no `Image=`.
+		if svc.image.is_none() && svc.build.is_none() {
+			return Err(podup::ComposeError::NoImageOrBuild(name.clone()));
+		}
+		// Reject malformed/out-of-range ports instead of re-emitting them as an
+		// invalid `PublishPort=`.
+		podup::ports::parse_ports(&svc.ports)?;
+		// Reject a malformed memory limit rather than passing it through to a
+		// `--memory` flag systemd/Podman would choke on.
+		if let Some(mem) = &svc.mem_limit {
+			if podup::size::parse_memory(mem).is_none() {
+				return Err(podup::ComposeError::Unsupported(format!(
+					"service '{name}': mem_limit '{mem}' is not a valid memory size"
+				)));
+			}
+		}
+	}
+	Ok(())
+}
+
+/// Write to stdout, treating a closed pipe (e.g. `podup generate quadlet | head`)
+/// as a clean exit instead of a panic. With `panic = "abort"` the panic from a
+/// raw `println!` on `EPIPE` aborts the process (exit 134) with a spurious
+/// "internal error" message; a Unix tool should just stop quietly.
+fn write_stdout(buf: &str) -> podup::Result<()> {
+	match std::io::stdout().write_all(buf.as_bytes()) {
+		Ok(()) => Ok(()),
+		Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+		Err(e) => Err(e.into()),
+	}
+}
+
 /// Generate Quadlet units from the compose file and either write them to a
 /// directory or print them to stdout. Warnings about unmapped fields go to
 /// stderr so stdout stays clean for piping.
@@ -24,11 +76,9 @@ pub(crate) fn write_quadlet(
 	project: &str,
 	output: Option<&Path>,
 ) -> podup::Result<()> {
-	// Validate the dependency graph before emitting any unit. A cyclic `depends_on`
-	// would otherwise produce units with mutual `After=`/`Requires=`, which systemd
-	// cannot order; a dangling required dependency would target a non-existent
-	// `.service`. `resolve_order` rejects both, matching the mutating commands.
-	podup::resolve_order(file)?;
+	// Reject configs the running commands would reject, before emitting anything.
+	validate_for_quadlet(file)?;
+
 	let result = podup::quadlet::generate(file, project);
 	if let Some(dup) = result.duplicate_filename() {
 		return Err(std::io::Error::new(
@@ -49,6 +99,7 @@ pub(crate) fn write_quadlet(
 	match output {
 		Some(dir) => {
 			std::fs::create_dir_all(dir)?;
+			let mut progress = String::new();
 			for unit in &result.units {
 				// Defense in depth: the unit stem is already sanitized in the
 				// library, but never write a unit whose name is anything but a
@@ -64,15 +115,18 @@ pub(crate) fn write_quadlet(
 				}
 				let path = dir.join(&unit.filename);
 				std::fs::write(&path, &unit.contents)?;
-				println!("wrote {}", path.display());
+				progress.push_str(&format!("wrote {}\n", path.display()));
 			}
+			write_stdout(&progress)?;
 		}
 		None => {
+			let mut out = String::new();
 			for unit in &result.units {
-				println!("# {}", unit.filename);
-				print!("{}", unit.contents);
-				println!();
+				out.push_str(&format!("# {}\n", unit.filename));
+				out.push_str(&unit.contents);
+				out.push('\n');
 			}
+			write_stdout(&out)?;
 		}
 	}
 	Ok(())
@@ -80,7 +134,8 @@ pub(crate) fn write_quadlet(
 
 #[cfg(test)]
 mod tests {
-	use super::{quadlet_platform_advisory, write_quadlet};
+	use super::{quadlet_platform_advisory, validate_for_quadlet, write_quadlet};
+	use podup::parse_str;
 
 	#[test]
 	fn quadlet_advisory_only_on_non_linux() {
@@ -102,5 +157,53 @@ mod tests {
 		.unwrap();
 		let err = write_quadlet(&file, "proj", None).unwrap_err();
 		assert!(matches!(err, podup::ComposeError::CircularDependency(_)));
+	}
+
+	#[test]
+	fn valid_compose_passes_validation() {
+		let file = parse_str("services:\n  web:\n    image: nginx\n").unwrap();
+		assert!(validate_for_quadlet(&file).is_ok());
+	}
+
+	#[test]
+	fn service_without_image_or_build_is_rejected() {
+		// `generate quadlet` must reject the same config `config`/`up` reject
+		// rather than emit a `[Container]` with no `Image=`.
+		let file = parse_str("services:\n  web:\n    ports:\n      - \"8080:80\"\n").unwrap();
+		let err = validate_for_quadlet(&file).unwrap_err();
+		assert!(matches!(err, podup::ComposeError::NoImageOrBuild(_)));
+	}
+
+	#[test]
+	fn out_of_range_port_is_rejected() {
+		// A port above u16 must error, not be re-emitted as an invalid PublishPort.
+		let file = parse_str("services:\n  web:\n    image: x\n    ports:\n      - \"70000:80\"\n")
+			.unwrap();
+		assert!(validate_for_quadlet(&file).is_err());
+	}
+
+	#[test]
+	fn malformed_mem_limit_is_rejected() {
+		let file = parse_str("services:\n  web:\n    image: x\n    mem_limit: abc\n").unwrap();
+		let err = validate_for_quadlet(&file).unwrap_err();
+		assert!(matches!(err, podup::ComposeError::Unsupported(_)));
+	}
+
+	#[test]
+	fn dependency_cycle_is_rejected() {
+		// A `depends_on` cycle would emit a systemd ordering cycle; reject it like
+		// `up`/`create` do.
+		let yaml = "services:\n  a:\n    image: x\n    depends_on: [b]\n  b:\n    image: x\n    depends_on: [a]\n";
+		let file = parse_str(yaml).unwrap();
+		let err = validate_for_quadlet(&file).unwrap_err();
+		assert!(matches!(err, podup::ComposeError::CircularDependency(_)));
+	}
+
+	#[test]
+	fn missing_dependency_is_not_fatal() {
+		// An `After=` referencing an externally-managed unit is allowed; only
+		// cycles are rejected.
+		let file = parse_str("services:\n  web:\n    image: x\n    depends_on: [db]\n").unwrap();
+		assert!(validate_for_quadlet(&file).is_ok());
 	}
 }

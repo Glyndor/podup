@@ -17,13 +17,21 @@ mod startup;
 use cli::*;
 use generate::write_quadlet;
 use resolve::*;
-use startup::{init_tracing, internal_error_notice, is_mutating, parse_cli};
+use startup::{init_tracing, internal_error_notice, is_label_only, is_mutating, parse_cli};
 
 fn main() {
 	// Replace the default panic output (a raw Rust backtrace) with a `podup:`
 	// internal-error notice that tells the user what to report and where, plus
 	// the reminder to redact secrets first.
 	std::panic::set_hook(Box::new(|info| {
+		// A broken pipe (a downstream reader closed early, e.g. `podup ls | head`)
+		// surfaces as a panic from the failing `println!`/`eprintln!` because Rust
+		// ignores SIGPIPE. With `panic = "abort"` that would escalate to SIGABRT
+		// (exit 134) and a misleading bug-report notice; instead exit quietly with
+		// success like any well-behaved Unix tool.
+		if startup::is_broken_pipe_panic(&info.to_string()) {
+			std::process::exit(0);
+		}
 		eprintln!("podup: internal error: {info}");
 		eprintln!("{}", internal_error_notice());
 	}));
@@ -123,6 +131,22 @@ async fn run() -> podup::Result<()> {
 	// filesystem work is blocking; keep it off the async path entirely.
 	#[cfg(feature = "update")]
 	if let Commands::Update { check, force } = cli.command {
+		// The compose-only global value-flags (--socket/--profile/--env-file/
+		// --project-directory) never reach the binary-only self-update, so accepting
+		// them silently is a misleading no-op. Reject any that were passed on the
+		// command line (env-sourced values are left alone — they are not a misuse).
+		if let Some(flag) = misused_update_global() {
+			use clap::CommandFactory;
+			Cli::command()
+				.error(
+					clap::error::ErrorKind::ArgumentConflict,
+					format!(
+						"`{flag}` has no effect on `update`, which replaces the podup \
+						 binary itself rather than acting on a compose project"
+					),
+				)
+				.exit();
+		}
 		let opts = podup::update::UpdateOptions {
 			check_only: check,
 			force,
@@ -176,29 +200,47 @@ async fn run() -> podup::Result<()> {
 	}
 
 	let compose_files = resolve_compose_files(&cli.file);
-	let file = podup::parse_files_with_env_files(&compose_files, &cli.env_file)?;
+	// `config --no-interpolate` must skip interpolation *entirely*: parsing with
+	// interpolation enabled would evaluate a required-var `${VAR:?msg}` and fail
+	// before we ever reached the no-interpolate branch. Detect it up front so the
+	// file is parsed only once, with interpolation disabled.
+	let no_interpolate = matches!(
+		&cli.command,
+		Commands::Config {
+			no_interpolate: true,
+			..
+		}
+	);
+	// `events` and `ps` are scoped purely by the `podup.project` label and never
+	// read service definitions, so — like `docker compose -p NAME events`/`ps` —
+	// they must work against a running project even when no compose file is
+	// present. Tolerate a missing file for these label-only commands by falling
+	// back to an empty compose model; any other parse error (a malformed file
+	// that *does* exist, a missing env file) still surfaces.
+	let label_only = is_label_only(&cli.command);
+	let file = if label_only && !compose_files.iter().any(|p| p.is_file()) {
+		podup::compose::types::ComposeFile::default()
+	} else {
+		podup::parse_files_with_env_files_interp(&compose_files, &cli.env_file, !no_interpolate)?
+	};
 
 	if let Commands::Config {
 		format,
 		services,
 		quiet,
-		no_interpolate,
 		resolve_image_digests,
+		..
 	} = &cli.command
 	{
 		// Validate the resolved project name in the config path too, at the same
 		// trust boundary the mutating commands use, so `config -p 'bad name!'`
-		// reports the same invalid-name error instead of succeeding.
+		// reports the same invalid-name error instead of succeeding. The config
+		// path returns early below, so without this it would never be checked.
 		let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
 		let project = resolve_project_name(cli.project.clone(), file.name.as_deref(), &base_dir);
 		startup::validate_project_name(&project)?;
-		// `--no-interpolate` re-parses with substitution disabled; `file` (already
-		// parsed with interpolation) is used otherwise.
-		let parsed = if *no_interpolate {
-			podup::parse_files_with_env_files_interp(&compose_files, &cli.env_file, false)?
-		} else {
-			file
-		};
+		// `file` is already parsed with the correct interpolation setting above.
+		let parsed = file;
 		// `--resolve-image-digests` pins each image to its registry digest, which
 		// needs a Podman connection to inspect images.
 		let mut resolved = if *resolve_image_digests {
@@ -209,7 +251,13 @@ async fn run() -> podup::Result<()> {
 		};
 		// Honor active profiles so `config` prints the same services `up` starts.
 		podup::retain_active_profiles(&mut resolved, &cli.profile);
-		return startup::render_config(&resolved, format, *services, *quiet);
+		// Resolve the effective project name (-p / COMPOSE_PROJECT_NAME, then the
+		// top-level `name:`, then the directory basename) and render it, like
+		// `docker compose config` — rather than echoing the file's literal `name:`.
+		let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
+		let project =
+			resolve_project_name(cli.project.clone(), resolved.name.as_deref(), &base_dir);
+		return startup::render_config(&resolved, format, *services, *quiet, &project);
 	}
 
 	let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
@@ -228,7 +276,12 @@ async fn run() -> podup::Result<()> {
 		kind: GenerateCommands::Quadlet { output },
 	} = &cli.command
 	{
-		return write_quadlet(&file, &project, output.as_deref());
+		// Honor active profiles so `generate quadlet` emits the same services
+		// `up` would start, instead of also emitting units for inactive-profile
+		// services (which would make `--profile` a no-op on this subcommand).
+		let mut filtered = file.clone();
+		podup::retain_active_profiles(&mut filtered, &cli.profile);
+		return write_quadlet(&filtered, &project, output.as_deref());
 	}
 
 	let client = podup::podman::connect(cli.socket.as_deref())?;
@@ -241,6 +294,9 @@ async fn run() -> podup::Result<()> {
 		| Commands::Restart { timeout, .. } => *timeout,
 		_ => None,
 	};
+	// Reject a `-t/--timeout` below -1 here, at the trust boundary, with a clear
+	// message instead of forwarding it to libpod as a raw `?t=<negative>` 400.
+	let stop_timeout = podup::validate_stop_timeout(stop_timeout)?;
 	// `--scale SERVICE=N` (on `up`) and the `scale` subcommand both feed the
 	// engine's replica overrides so `resolve_replicas` reports the target count.
 	let scale_overrides: std::collections::HashMap<String, u32> = match &cli.command {
@@ -273,6 +329,7 @@ async fn run() -> podup::Result<()> {
 		.with_scale_overrides(scale_overrides)
 		.with_up_overrides(pull_override, no_build, quiet_pull)
 		.with_run_overrides(startup::run_overrides_for(&cli.command))
+		.with_run_env_files(cli.env_file.clone())
 		.with_renew_anon_volumes(renew_anon_volumes);
 
 	// Serialize mutating lifecycle commands against concurrent `podup` runs on
@@ -286,4 +343,79 @@ async fn run() -> podup::Result<()> {
 	};
 
 	dispatch::dispatch(&engine, &file, cli.command, &cli.profile).await
+}
+
+/// Compose-only global value-flags that `update` parses (they are declared
+/// `global` on [`Cli`]) but cannot act on, since self-update rewrites the binary
+/// itself rather than a compose project. Each entry is `(arg-id, user-facing
+/// spelling)`.
+#[cfg(feature = "update")]
+const UPDATE_IRRELEVANT_GLOBALS: &[(&str, &str)] = &[
+	("socket", "--socket"),
+	("profile", "--profile"),
+	("project_directory", "--project-directory"),
+	("env_file", "--env-file"),
+];
+
+/// Return the first compose-only global flag that was supplied on the command
+/// line for an `update` invocation, or `None` if none were. Re-parses the
+/// already-validated argv to inspect value sources; env-sourced and default
+/// values are deliberately ignored, so an exported `PODMAN_SOCKET` does not
+/// break `podup update`.
+#[cfg(feature = "update")]
+fn misused_update_global() -> Option<&'static str> {
+	use clap::CommandFactory;
+	// Parsing already succeeded once in `parse_cli`, so this re-parse cannot fail.
+	let matches = Cli::command().try_get_matches().ok()?;
+	first_misused_global(&matches)
+}
+
+/// Core of [`misused_update_global`], split out so it can be tested against
+/// matches built from a fixed argv. A global flag can surface on the root
+/// matches or on the `update` subcommand matches depending on its position
+/// relative to the subcommand, so both are checked.
+#[cfg(feature = "update")]
+fn first_misused_global(matches: &clap::ArgMatches) -> Option<&'static str> {
+	use clap::parser::ValueSource;
+	let update = matches.subcommand_matches("update");
+	UPDATE_IRRELEVANT_GLOBALS.iter().find_map(|(id, flag)| {
+		let from_cli = |m: &clap::ArgMatches| m.value_source(id) == Some(ValueSource::CommandLine);
+		(from_cli(matches) || update.is_some_and(from_cli)).then_some(*flag)
+	})
+}
+
+#[cfg(all(test, feature = "update"))]
+mod tests {
+	use super::*;
+	use clap::CommandFactory;
+
+	fn matches_for(args: &[&str]) -> clap::ArgMatches {
+		Cli::command()
+			.try_get_matches_from(args)
+			.expect("args parse")
+	}
+
+	#[test]
+	fn update_flags_compose_globals_before_subcommand_are_rejected() {
+		let m = matches_for(&[
+			"podup",
+			"--socket",
+			"unix:///tmp/x.sock",
+			"update",
+			"--check",
+		]);
+		assert_eq!(first_misused_global(&m), Some("--socket"));
+	}
+
+	#[test]
+	fn update_flags_compose_globals_after_subcommand_are_rejected() {
+		let m = matches_for(&["podup", "update", "--project-directory", "/tmp"]);
+		assert_eq!(first_misused_global(&m), Some("--project-directory"));
+	}
+
+	#[test]
+	fn update_without_compose_globals_is_accepted() {
+		let m = matches_for(&["podup", "update", "--check", "--force"]);
+		assert_eq!(first_misused_global(&m), None);
+	}
 }

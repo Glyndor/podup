@@ -2,6 +2,7 @@
 
 mod commands;
 mod scale;
+mod signal;
 mod targets;
 
 use std::collections::{HashMap, HashSet};
@@ -12,7 +13,8 @@ use crate::compose::types::{ComposeFile, ServiceCondition};
 use crate::error::Result;
 use crate::libpod::API_PREFIX;
 
-use targets::{expand_targets, filter_services, in_started_set};
+pub use targets::validate_stop_timeout;
+use targets::{expand_targets, filter_services, in_started_set, validate_targets};
 
 use super::container::config_hash;
 
@@ -144,6 +146,19 @@ impl Engine {
 			let levels = crate::compose::resolve_levels(file)?;
 			let active = active_profiles_set(active_profiles);
 
+			// Validate every `--scale SERVICE=N` override against the file before
+			// doing any work: an override naming a service the compose file does
+			// not define is a user error, not a silent no-op (the standalone
+			// `scale` subcommand already rejects it, so the `up` path must too).
+			for svc in self.scale_overrides.keys() {
+				if !file.services.contains_key(svc) {
+					return Err(crate::error::ComposeError::ServiceNotFound(svc.clone()));
+				}
+			}
+
+			// Reject unknown service names before doing any work, so `up`/`create`
+			// of a bogus service errors instead of exiting 0 as a silent no-op.
+			validate_targets(file, target_services)?;
 			let target_set = expand_targets(file, target_services, no_deps);
 
 			// Prefetch the project's containers once (instead of one API call per
@@ -204,6 +219,27 @@ impl Engine {
 					)
 				});
 				futures_util::future::try_join_all(started).await?;
+			}
+
+			// Reconcile surplus replicas for every service carrying an active
+			// `--scale` override. Replica naming is unsuffixed for one replica and
+			// suffixed (`svc-N`) for many, so scaling a service *down* on the `up`
+			// path would otherwise leave the old higher-numbered containers running
+			// (e.g. `up --scale web=3` then `up --scale web=1`). The overrides are a
+			// last-wins map, so create (above) and this prune always agree on one
+			// target count. Keyed off live container names inside
+			// `remove_surplus_replicas`, this is the same reconciliation the `scale`
+			// subcommand relies on.
+			for (svc, &target) in &self.scale_overrides {
+				let Some(service) = file.services.get(svc) else {
+					continue;
+				};
+				if let Some(set) = &target_set {
+					if !set.contains(svc) {
+						continue;
+					}
+				}
+				self.remove_surplus_replicas(svc, service, target).await?;
 			}
 
 			Ok(())
@@ -292,7 +328,7 @@ impl Engine {
 						);
 						Ok(())
 					} else {
-						self.wait_healthy(&dep_container, dep_service).await
+						self.wait_healthy(&dep_container, dep_service, None).await
 					}
 				}
 				ServiceCondition::ServiceCompletedSuccessfully => {
@@ -335,6 +371,10 @@ impl Engine {
 		// one container can bind it. Fail fast with guidance instead of letting
 		// replicas 2..N die mid-up with `address already in use`.
 		scale::check_scale_port_conflict(name, service, replicas)?;
+		// A service pinning an explicit container_name cannot be scaled past one
+		// replica without violating its fixed-name contract; reject it rather
+		// than inventing `name-1`, `name-2`, … (docker compose refuses this too).
+		scale::check_fixed_name_scale(name, service, replicas)?;
 
 		let new_hash = config_hash(service, file)?;
 
@@ -411,18 +451,23 @@ impl Engine {
 				}
 
 				let grace = self.grace_period_secs(service);
+				// Bound the stop by the grace window so a container ignoring SIGTERM
+				// does not pin recreation for the full client READ_TIMEOUT; the
+				// force-remove below SIGKILLs it regardless.
 				let stop_path = format!(
-					"{API_PREFIX}/containers/{}/stop?t={grace}",
+					"{API_PREFIX}/containers/{}/stop?t={}",
 					crate::libpod::urlencoded(&container_name),
+					targets::stop_timeout_param(grace),
 				);
-				if let Err(e) = self.client.post_empty_ok(&stop_path).await {
+				if let Err(e) = self
+					.client
+					.post_empty_ok_within(&stop_path, targets::stop_deadline(grace))
+					.await
+				{
 					tracing::warn!("could not stop {container_name}: {e}");
 				}
 
-				let rm_path = format!(
-					"{API_PREFIX}/containers/{}?force=true",
-					crate::libpod::urlencoded(&container_name),
-				);
+				let rm_path = container_rm_path(&container_name, remove_volumes);
 				if let Err(e) = self.client.delete_ok(&rm_path).await {
 					tracing::warn!("could not remove {container_name}: {e}");
 				} else {
@@ -436,7 +481,7 @@ impl Engine {
 		// containers by label so teardown is always complete.
 		let grace = self.stop_timeout.unwrap_or(10);
 		for name in self.list_project_container_names(None).await? {
-			self.stop_and_remove(&name, grace).await;
+			self.stop_and_remove(&name, grace, remove_volumes).await;
 		}
 
 		for (key, config) in &file.networks {
@@ -543,5 +588,50 @@ impl Engine {
 			}
 		}
 		Ok(())
+	}
+}
+
+/// Build the libpod container-removal path. `force` always terminates a running
+/// container; with `remove_volumes` it also reclaims the anonymous volumes the
+/// container owns (`podman rm -v` / `docker compose down -v` semantics). That is
+/// the only way image `VOLUME` directives and short-form anonymous volumes get
+/// removed: podup never names or labels them, so they cannot be enumerated and
+/// deleted the way declared top-level volumes are.
+pub(super) fn container_rm_path(name: &str, remove_volumes: bool) -> String {
+	let with_volumes = if remove_volumes { "&v=true" } else { "" };
+	format!(
+		"{API_PREFIX}/containers/{}?force=true{with_volumes}",
+		crate::libpod::urlencoded(name),
+	)
+}
+
+#[cfg(test)]
+mod tests {
+	use super::container_rm_path;
+
+	#[test]
+	fn rm_path_omits_volume_flag_by_default() {
+		// A plain `down` (or scale-down) must not drop volumes.
+		let path = container_rm_path("proj-web-1", false);
+		assert!(path.ends_with("/proj-web-1?force=true"), "got: {path}");
+		assert!(!path.contains("v=true"), "got: {path}");
+	}
+
+	#[test]
+	fn rm_path_requests_anonymous_volume_removal() {
+		// `down -v` must pass `v=true` so podman reclaims the container's
+		// anonymous (image VOLUME / short-form) volumes.
+		let path = container_rm_path("proj-web-1", true);
+		assert!(path.contains("force=true"), "got: {path}");
+		assert!(path.contains("&v=true"), "got: {path}");
+	}
+
+	#[test]
+	fn rm_path_url_encodes_container_name() {
+		// Names are URL-encoded so a slash in a container name cannot alter the
+		// request path.
+		let path = container_rm_path("weird/name", true);
+		assert!(!path.contains("weird/name"), "got: {path}");
+		assert!(path.contains("weird%2Fname"), "got: {path}");
 	}
 }

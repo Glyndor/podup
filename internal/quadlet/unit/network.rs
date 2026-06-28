@@ -2,7 +2,7 @@
 
 use crate::compose::types::NetworkConfig;
 
-use super::{safe_unit_stem, sorted_label_pairs, QuadletUnit, Section};
+use super::{sorted_label_pairs, unit_stem, QuadletUnit, Section};
 
 /// Build the `.network` unit for one declared network. Emits a single `[Network]`
 /// section (NetworkName, then driver/internal/IPv6/IPAM/options/labels), always
@@ -67,7 +67,7 @@ pub(crate) fn network_unit(
 	// them. Only `.container` units carry [Install].
 	let contents = net.render();
 	QuadletUnit {
-		filename: format!("{}.network", safe_unit_stem(name)),
+		filename: format!("{}.network", unit_stem(project, name)),
 		contents,
 	}
 }
