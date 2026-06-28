@@ -34,8 +34,8 @@ impl Engine {
 				}
 			}
 			// Deduplicate repeated positionals (`top web web`) preserving order, so
-			// a service's process block is not rendered twice — matching docker
-			// compose top.
+			// a service's process block is not rendered twice and we avoid redundant
+			// `/top` API calls — matching docker compose top.
 			dedup_preserving_order(target_services)
 		};
 
@@ -230,6 +230,28 @@ impl Engine {
 		let container = self.first_replica_name(service_name, service);
 		let is_tty = service.tty.unwrap_or(false);
 
+		// `docker compose attach` errors when the target is not running. Without
+		// this check the libpod logs endpoint replays the *entire* history of a
+		// stopped container and then ends the stream, so `attach` would print the
+		// whole log and exit 0. Inspect the state first and fail closed otherwise.
+		let inspect_path = format!("{API_PREFIX}/containers/{}/json", urlencoded(&container));
+		let info = self
+			.client
+			.get_json::<crate::libpod::types::container::ContainerInspect>(&inspect_path)
+			.await
+			.map_err(ComposeError::Podman)?;
+		let status = info.state.and_then(|s| s.status).unwrap_or_default();
+		if !is_running_status(&status) {
+			let shown = if status.is_empty() {
+				"unknown"
+			} else {
+				&status
+			};
+			return Err(ComposeError::Unsupported(format!(
+				"cannot attach to {container}: container is not running (state: {shown})"
+			)));
+		}
+
 		let path = format!(
 			"{API_PREFIX}/containers/{}/logs?stdout=true&stderr=true&follow=true",
 			urlencoded(&container),
@@ -371,7 +393,8 @@ fn parse_port_proto<'a>(private_port: &'a str, proto_flag: &'a str) -> Result<(u
 	Ok((port, proto))
 }
 
-/// Deduplicate a list of strings, preserving first-seen order.
+/// Deduplicate a list of strings, preserving first-seen order. Used so `top web
+/// web` queries and prints each service once, matching `docker compose top`.
 fn dedup_preserving_order(items: &[String]) -> Vec<String> {
 	let mut seen = std::collections::HashSet::new();
 	items
@@ -379,6 +402,13 @@ fn dedup_preserving_order(items: &[String]) -> Vec<String> {
 		.filter(|s| seen.insert(s.as_str()))
 		.cloned()
 		.collect()
+}
+
+/// Whether a libpod container `Status` string denotes a running container.
+/// `docker compose attach` only attaches to a running container; anything else
+/// (exited, created, paused, empty/unknown) must fail closed.
+fn is_running_status(status: &str) -> bool {
+	status.eq_ignore_ascii_case("running")
 }
 
 /// Split an image reference into `(repository, tag)` for the `images` table.
@@ -435,7 +465,10 @@ fn align_top_columns(titles: &[String], processes: &[Vec<String>]) -> Vec<String
 
 #[cfg(test)]
 mod tests {
-	use super::{align_top_columns, dedup_preserving_order, parse_port_proto, split_repo_tag};
+	use super::{
+		align_top_columns, dedup_preserving_order, is_running_status, parse_port_proto,
+		split_repo_tag,
+	};
 
 	#[test]
 	fn split_repo_tag_plain_name_and_tag() {
@@ -505,5 +538,30 @@ mod tests {
 	fn non_numeric_port_is_rejected() {
 		assert!(parse_port_proto("http", "tcp").is_err());
 		assert!(parse_port_proto("abc/tcp", "tcp").is_err());
+	}
+
+	#[test]
+	fn dedup_keeps_first_occurrence_order() {
+		let input = ["web".to_string(), "web".to_string(), "db".to_string()];
+		assert_eq!(dedup_preserving_order(&input), vec!["web", "db"]);
+		let input = [
+			"a".to_string(),
+			"b".to_string(),
+			"a".to_string(),
+			"c".to_string(),
+			"b".to_string(),
+		];
+		assert_eq!(dedup_preserving_order(&input), vec!["a", "b", "c"]);
+	}
+
+	#[test]
+	fn running_status_detected_case_insensitively() {
+		assert!(is_running_status("running"));
+		assert!(is_running_status("Running"));
+		// Anything else is not attachable.
+		assert!(!is_running_status("exited"));
+		assert!(!is_running_status("created"));
+		assert!(!is_running_status("paused"));
+		assert!(!is_running_status(""));
 	}
 }

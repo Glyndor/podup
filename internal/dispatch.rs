@@ -290,7 +290,12 @@ pub(crate) async fn dispatch(
 			service,
 			image,
 			index,
-		} => engine.commit(file, &service, &image, index).await?,
+			pause,
+		} => {
+			engine
+				.commit_with_pause(file, &service, &image, index, pause)
+				.await?
+		}
 		Commands::Export {
 			service,
 			output,
