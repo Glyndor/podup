@@ -477,15 +477,25 @@ impl Client {
 		Ok(Some(parsed.mode & (1 << 31) != 0))
 	}
 
-	/// `DELETE` → ignore response body (expect 2xx or 404).
-	pub async fn delete_ok(&self, path: &str) -> Result<()> {
+	/// `DELETE` → `Ok(true)` if the resource existed and was removed, `Ok(false)`
+	/// on a 404 (nothing to delete). Lets a caller tell a real deletion from a
+	/// no-op, so it can avoid reporting a phantom "removed" for a container that
+	/// never existed.
+	pub async fn delete_existed(&self, path: &str) -> Result<bool> {
 		let req = Self::build_request(Method::DELETE, path, Full::new(Bytes::new()), None)?;
 		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		if status == StatusCode::NOT_FOUND {
-			return Ok(());
+			return Ok(false);
 		}
-		Self::check_status(status, &body)
+		Self::check_status(status, &body)?;
+		Ok(true)
+	}
+
+	/// `DELETE` → ignore response body (expect 2xx or 404). A 404 is an
+	/// idempotent no-op; see [`Self::delete_existed`] when the distinction matters.
+	pub async fn delete_ok(&self, path: &str) -> Result<()> {
+		self.delete_existed(path).await.map(|_| ())
 	}
 }
 

@@ -48,18 +48,27 @@ pub(super) fn filter_services(
 		.collect())
 }
 
-/// Resolve which services `up` should start given an explicit target list.
+/// Resolve which services `up`/`create` should start given an explicit target
+/// list.
 ///
-/// Returns `None` when no targets are given (start everything). Otherwise the
+/// Returns `Ok(None)` when no targets are given (start everything). Otherwise the
 /// set contains the targets plus, unless `no_deps` is set, their transitive
-/// `depends_on` services.
+/// `depends_on` services. Errors with [`ComposeError::ServiceNotFound`] if any
+/// requested name is not a service in the file, so a typo'd/unknown name fails
+/// loudly instead of being silently skipped — mirroring [`filter_services`] (and
+/// docker compose's "no such service").
 pub(super) fn expand_targets(
 	file: &ComposeFile,
 	target_services: &[String],
 	no_deps: bool,
-) -> Option<HashSet<String>> {
+) -> Result<Option<HashSet<String>>> {
 	if target_services.is_empty() {
-		return None;
+		return Ok(None);
+	}
+	for name in target_services {
+		if !file.services.contains_key(name) {
+			return Err(ComposeError::ServiceNotFound(name.clone()));
+		}
 	}
 	let mut set = HashSet::new();
 	let mut stack: Vec<String> = target_services.to_vec();
@@ -77,7 +86,7 @@ pub(super) fn expand_targets(
 			}
 		}
 	}
-	Some(set)
+	Ok(Some(set))
 }
 
 /// Whether `name` is part of the started set described by `target_set`.
@@ -190,13 +199,15 @@ mod tests {
 	#[test]
 	fn expand_targets_empty_is_none() {
 		let file = file_web_depends_db();
-		assert!(expand_targets(&file, &[], false).is_none());
+		assert!(expand_targets(&file, &[], false).unwrap().is_none());
 	}
 
 	#[test]
 	fn expand_targets_includes_dependencies() {
 		let file = file_web_depends_db();
-		let set = expand_targets(&file, &["web".to_string()], false).unwrap();
+		let set = expand_targets(&file, &["web".to_string()], false)
+			.unwrap()
+			.unwrap();
 		assert!(set.contains("web"));
 		assert!(set.contains("db"));
 	}
@@ -204,9 +215,23 @@ mod tests {
 	#[test]
 	fn expand_targets_no_deps_excludes_dependencies() {
 		let file = file_web_depends_db();
-		let set = expand_targets(&file, &["web".to_string()], true).unwrap();
+		let set = expand_targets(&file, &["web".to_string()], true)
+			.unwrap()
+			.unwrap();
 		assert!(set.contains("web"));
 		assert!(!set.contains("db"));
+	}
+
+	#[test]
+	fn expand_targets_unknown_service_is_error() {
+		// An unknown/typo'd target name must fail loudly (like `filter_services`),
+		// not silently no-op as `up nonexistent` previously did.
+		let file = file_web_depends_db();
+		let err = expand_targets(&file, &["nope".to_string()], false).unwrap_err();
+		assert!(matches!(
+			err,
+			crate::error::ComposeError::ServiceNotFound(_)
+		));
 	}
 
 	// --- in_started_set ---
@@ -230,7 +255,7 @@ mod tests {
 		// excluded dependency `db` is not in the started set and its readiness
 		// wait must be skipped.
 		let file = file_web_depends_db();
-		let target_set = expand_targets(&file, &["web".to_string()], true);
+		let target_set = expand_targets(&file, &["web".to_string()], true).unwrap();
 		assert!(in_started_set(&target_set, "web"));
 		assert!(!in_started_set(&target_set, "db"));
 	}
@@ -240,7 +265,7 @@ mod tests {
 		// `up web` (without --no-deps) pulls `db` into the set, so its readiness
 		// wait is still honored.
 		let file = file_web_depends_db();
-		let target_set = expand_targets(&file, &["web".to_string()], false);
+		let target_set = expand_targets(&file, &["web".to_string()], false).unwrap();
 		assert!(in_started_set(&target_set, "web"));
 		assert!(in_started_set(&target_set, "db"));
 	}

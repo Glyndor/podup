@@ -1,5 +1,6 @@
 //! Lifecycle sub-commands: restart, stop, start, kill, rm, pause, unpause, run.
 
+use std::collections::HashSet;
 use std::io::Write;
 
 use futures_util::StreamExt;
@@ -33,6 +34,25 @@ impl Engine {
 		}
 	}
 
+	/// Like [`Self::run_lifecycle_op`] but also treats a "container state
+	/// improper" error (already paused / not paused / not running) as an
+	/// idempotent no-op. Podman rejects `pause`/`unpause` with a 409/500 when the
+	/// container is not in the expected state; docker compose treats those as
+	/// no-ops, so re-pausing or unpausing a not-paused container is harmless.
+	async fn run_idempotent_state_op(&self, path: &str, container: &str, done: &str) -> Result<()> {
+		match self.client.post_empty_ok(path).await {
+			Ok(()) => {
+				info!("{done} {container}");
+				Ok(())
+			}
+			Err(e) if e.is_status(304) || e.is_status(404) || e.is_state_conflict() => {
+				tracing::debug!("{container}: {done} skipped ({e})");
+				Ok(())
+			}
+			Err(e) => Err(ComposeError::Podman(e)),
+		}
+	}
+
 	/// Restart the named service (or all services). Dependents with a `restart` condition in `depends_on` are also restarted.
 	pub async fn restart(&self, file: &ComposeFile, service_name: Option<&str>) -> Result<()> {
 		let targets: Vec<String> = service_name
@@ -53,10 +73,20 @@ impl Engine {
 		let order = crate::compose::resolve_order(file)?;
 		let names = filter_services(file, order, target_services)?;
 
+		// Containers already restarted, so a service that is both an explicit
+		// target and a restart-dependent of another target is restarted once.
+		let mut restarted: HashSet<String> = HashSet::new();
+		// Attempt every container and surface the first error at the end rather
+		// than aborting mid-batch and leaving later replicas/services unrestarted.
+		let mut first_err: Option<ComposeError> = None;
+
 		for name in &names {
 			let service = &file.services[name];
 
 			for container_name in self.live_replica_names(name, service).await? {
+				if !restarted.insert(container_name.clone()) {
+					continue;
+				}
 				let grace = self.grace_period_secs(service);
 				// Single atomic restart (no visible stopped window) instead of a
 				// stop+start round-trip.
@@ -64,8 +94,12 @@ impl Engine {
 					"{API_PREFIX}/containers/{}/restart?t={grace}",
 					crate::libpod::urlencoded(&container_name),
 				);
-				self.run_lifecycle_op(&restart_path, &container_name, "restarted")
-					.await?;
+				if let Err(e) = self
+					.run_lifecycle_op(&restart_path, &container_name, "restarted")
+					.await
+				{
+					first_err.get_or_insert(e);
+				}
 			}
 
 			if no_deps {
@@ -74,21 +108,30 @@ impl Engine {
 			for (dep_name, dep_service) in &file.services {
 				if dep_service.depends_on.restart_for(name) {
 					for dep_container in self.live_replica_names(dep_name, dep_service).await? {
+						if !restarted.insert(dep_container.clone()) {
+							continue;
+						}
 						let grace = self.grace_period_secs(dep_service);
 						let restart_path = format!(
 							"{API_PREFIX}/containers/{}/restart?t={grace}",
 							crate::libpod::urlencoded(&dep_container),
 						);
-						if let Err(e) = self.client.post_empty_ok(&restart_path).await {
-							tracing::warn!("cascade restart of {dep_name} failed: {e}");
-						} else {
-							info!("cascade-restarted {dep_container} (depends_on.restart)");
+						// Same 304/404 idempotency as the main path: a never-created
+						// dependency must not spew a spurious cascade warning.
+						if let Err(e) = self
+							.run_lifecycle_op(&restart_path, &dep_container, "cascade-restarted")
+							.await
+						{
+							first_err.get_or_insert(e);
 						}
 					}
 				}
 			}
 		}
 
+		if let Some(e) = first_err {
+			return Err(e);
+		}
 		Ok(())
 	}
 
@@ -160,16 +203,40 @@ impl Engine {
 		let order = crate::compose::resolve_order(file)?;
 		let order = filter_services(file, order, target_services)?;
 
+		// Only act on containers Podman actually has. Acting on the static
+		// fallback names (`live_replica_names`) would POST `/start` to containers
+		// that were never created, 404 (swallowed as a no-op), and exit 0
+		// silently — masking that the project was never created. Attempt every
+		// live container and aggregate errors rather than aborting on the first.
+		let mut any_live = false;
+		let mut first_err: Option<ComposeError> = None;
 		for name in &order {
-			let service = &file.services[name];
-			for container_name in self.live_replica_names(name, service).await? {
+			let live = self
+				.list_project_container_names(Some(name.as_str()))
+				.await?;
+			if live.is_empty() {
+				continue;
+			}
+			any_live = true;
+			for container_name in live {
 				let path = format!(
 					"{API_PREFIX}/containers/{}/start",
 					crate::libpod::urlencoded(&container_name),
 				);
-				self.run_lifecycle_op(&path, &container_name, "started")
-					.await?;
+				if let Err(e) = self
+					.run_lifecycle_op(&path, &container_name, "started")
+					.await
+				{
+					first_err.get_or_insert(e);
+				}
 			}
+		}
+
+		if let Some(e) = first_err {
+			return Err(e);
+		}
+		if !any_live {
+			eprintln!("podup: no containers to start (project not created)");
 		}
 		Ok(())
 	}
@@ -228,6 +295,7 @@ impl Engine {
 		order.reverse();
 		let order = filter_services(file, order, target_services)?;
 
+		let mut first_err: Option<ComposeError> = None;
 		for name in &order {
 			let service = &file.services[name];
 			for container_name in self.live_replica_names(name, service).await? {
@@ -236,15 +304,30 @@ impl Engine {
 					"{API_PREFIX}/containers/{}?force={force_str}&v={remove_volumes}",
 					crate::libpod::urlencoded(&container_name),
 				);
-				// `delete_ok` treats 404 as success (already gone), so any error
-				// here is a real failure — propagate it (non-zero exit) instead of
-				// swallowing it into a warning, matching the other lifecycle ops.
-				self.client
-					.delete_ok(&path)
-					.await
-					.map_err(ComposeError::Podman)?;
-				info!("removed {container_name}");
+				match self.client.delete_existed(&path).await {
+					// Only report a removal that actually happened — a phantom
+					// (never-created) container 404s and must not be logged as
+					// "removed".
+					Ok(true) => info!("removed {container_name}"),
+					Ok(false) => {}
+					// Without `--force`, a running container 409s. docker compose rm
+					// skips running containers rather than aborting the batch, so
+					// warn and keep going (later stopped containers still get
+					// removed). The "Remove stopped service containers" help text
+					// already promises this.
+					Err(e) if !force && e.is_status(409) => {
+						tracing::warn!(
+							"{container_name} is running — skipping (pass -f to force removal)"
+						);
+					}
+					Err(e) => {
+						first_err.get_or_insert(ComposeError::Podman(e));
+					}
+				}
 			}
+		}
+		if let Some(e) = first_err {
+			return Err(e);
 		}
 		Ok(())
 	}
@@ -256,6 +339,10 @@ impl Engine {
 		let order = crate::compose::resolve_order(file)?;
 		let order = filter_services(file, order, target_services)?;
 
+		// Idempotent + best-effort: re-pausing an already-paused (or stopped)
+		// container is a no-op, and one state-mismatched container must not abort
+		// the batch and leave the rest in an inconsistent partial state.
+		let mut first_err: Option<ComposeError> = None;
 		for name in &order {
 			let service = &file.services[name];
 			for container_name in self.live_replica_names(name, service).await? {
@@ -263,9 +350,16 @@ impl Engine {
 					"{API_PREFIX}/containers/{}/pause",
 					crate::libpod::urlencoded(&container_name),
 				);
-				self.run_lifecycle_op(&path, &container_name, "paused")
-					.await?;
+				if let Err(e) = self
+					.run_idempotent_state_op(&path, &container_name, "paused")
+					.await
+				{
+					first_err.get_or_insert(e);
+				}
 			}
+		}
+		if let Some(e) = first_err {
+			return Err(e);
 		}
 		Ok(())
 	}
@@ -277,6 +371,9 @@ impl Engine {
 		let order = crate::compose::resolve_order(file)?;
 		let order = filter_services(file, order, target_services)?;
 
+		// Idempotent + best-effort, mirroring `pause`: unpausing a not-paused
+		// container is a no-op, and a single mismatch must not abort the batch.
+		let mut first_err: Option<ComposeError> = None;
 		for name in &order {
 			let service = &file.services[name];
 			for container_name in self.live_replica_names(name, service).await? {
@@ -284,9 +381,16 @@ impl Engine {
 					"{API_PREFIX}/containers/{}/unpause",
 					crate::libpod::urlencoded(&container_name),
 				);
-				self.run_lifecycle_op(&path, &container_name, "unpaused")
-					.await?;
+				if let Err(e) = self
+					.run_idempotent_state_op(&path, &container_name, "unpaused")
+					.await
+				{
+					first_err.get_or_insert(e);
+				}
 			}
+		}
+		if let Some(e) = first_err {
+			return Err(e);
 		}
 		Ok(())
 	}
@@ -329,9 +433,10 @@ impl Engine {
 		// waits on their conditions), unless `--no-deps` is given. The service
 		// itself is excluded — only its transitive dependencies are started.
 		if !no_deps {
-			let deps: Vec<String> = super::expand_targets(file, &[service_name.to_string()], false)
-				.map(|set| set.into_iter().filter(|n| n != service_name).collect())
-				.unwrap_or_default();
+			let deps: Vec<String> =
+				super::expand_targets(file, &[service_name.to_string()], false)?
+					.map(|set| set.into_iter().filter(|n| n != service_name).collect())
+					.unwrap_or_default();
 			if !deps.is_empty() {
 				self.up_with_options(file, true, &[], &deps, false, false, false)
 					.await?;

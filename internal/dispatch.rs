@@ -158,7 +158,11 @@ pub(crate) async fn dispatch(
 		} => {
 			// `-s/--stop` gracefully stops the targets first so they can be
 			// removed without `--force`.
+			// A paused container cannot be stopped (Podman rejects it with a raw
+			// state error), so resume it first — matching `docker compose rm
+			// -s`. `unpause` is idempotent, so this is a no-op when not paused.
 			if stop {
+				engine.unpause(file, &services).await?;
 				engine.stop(file, &services).await?;
 			}
 			engine
