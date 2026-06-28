@@ -246,19 +246,20 @@ pub(crate) fn container_unit(
 		}
 	}
 	// `network_mode: host`/`none` map to `Network=host`/`Network=none`.
-	// `service:X`/`container:X` reuse another container's netns, which Quadlet
-	// expresses as `Network={X}.container` (the `.container` special case);
-	// other modes (bridge:, custom, …) have no key and are reported by
-	// collect_warnings.
+	// `service:X` reuses a *sibling service's* netns, which Quadlet expresses as
+	// `Network={X}.container` (the `.container` unit dependency). `container:X`
+	// reuses an *existing* container's netns by id/name and maps to podman's
+	// `Network=container:X` join form — not a `.container` unit, which would name
+	// a non-existent dependency and fail to start. Other modes (bridge:, custom,
+	// …) have no key and are reported by collect_warnings.
 	match service.network_mode.as_deref() {
 		Some("host") => container.add("Network", "host".to_string()),
 		Some("none") => container.add("Network", "none".to_string()),
 		Some(m) => {
-			if let Some(target) = m
-				.strip_prefix("service:")
-				.or_else(|| m.strip_prefix("container:"))
-			{
+			if let Some(target) = m.strip_prefix("service:") {
 				container.add("Network", format!("{}.container", safe_unit_stem(target)));
+			} else if let Some(target) = m.strip_prefix("container:") {
+				container.add("Network", format!("container:{target}"));
 			}
 		}
 		None => {}
@@ -274,11 +275,17 @@ pub(crate) fn container_unit(
 	// scoping); a second one is reported by collect_warnings.
 	let mut static_ip: Option<&str> = None;
 	let mut static_ip6: Option<&str> = None;
+	// Emit each alias at most once: a repeated alias (within a network or across
+	// networks) would produce duplicate `NetworkAlias=` lines, which podman may
+	// reject at container create.
+	let mut seen_aliases = std::collections::HashSet::new();
 	for net in service.networks.names() {
 		if let Some(cfg) = service.networks.config_for(&net) {
 			if let Some(aliases) = &cfg.aliases {
 				for alias in aliases {
-					container.add("NetworkAlias", alias.clone());
+					if seen_aliases.insert(alias.clone()) {
+						container.add("NetworkAlias", alias.clone());
+					}
 				}
 			}
 			if static_ip.is_none() {
