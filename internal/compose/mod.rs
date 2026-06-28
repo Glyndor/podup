@@ -229,7 +229,7 @@ pub(crate) fn parse_file_inner_with_env(
 		let vars = if extra_env_files.is_empty() {
 			substitute::build_vars(dir)
 		} else {
-			substitute::build_vars_with_env_files(dir, extra_env_files)
+			substitute::build_vars_with_env_files(dir, extra_env_files)?
 		};
 		substitute::substitute(&content, &vars)?
 	} else {
