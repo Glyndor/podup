@@ -145,7 +145,19 @@ impl Engine {
 		let ulimits = build_ulimits(service);
 
 		// --- Devices ---
-		let mut devices: Vec<_> = service.devices.iter().map(|s| parse_device(s)).collect();
+		let mut devices: Vec<_> = Vec::with_capacity(service.devices.len());
+		// A device's `:permissions` segment cannot live on the OCI node, so it
+		// rides alongside as a cgroup access rule (mirroring the quadlet backend's
+		// verbatim `AddDevice`). These are merged with the explicit
+		// `device_cgroup_rules` below.
+		let mut device_cgroup_rule: Vec<_> = Vec::new();
+		for raw in &service.devices {
+			let parsed = parse_device(raw);
+			if let Some(rule) = parsed.cgroup_rule {
+				device_cgroup_rule.push(rule);
+			}
+			devices.push(parsed.device);
+		}
 		// CDI device names ride in the same array; Podman pulls them out by path.
 		devices.extend(cdi_devices(service).into_iter().map(cdi_device));
 
@@ -153,16 +165,12 @@ impl Engine {
 		let security = parse_security_opts(service);
 
 		// --- Device cgroup rules (parsed to structured form; skip malformed) ---
-		let device_cgroup_rule = service
-			.device_cgroup_rules
-			.iter()
-			.filter_map(|r| {
-				parse_device_cgroup_rule(r).or_else(|| {
-					tracing::warn!("device_cgroup_rules entry '{r}' is malformed and is ignored");
-					None
-				})
+		device_cgroup_rule.extend(service.device_cgroup_rules.iter().filter_map(|r| {
+			parse_device_cgroup_rule(r).or_else(|| {
+				tracing::warn!("device_cgroup_rules entry '{r}' is malformed and is ignored");
+				None
 			})
-			.collect();
+		}));
 
 		// --- Namespace modes ---
 		let pidns = service.pid.as_deref().map(Namespace::parse);

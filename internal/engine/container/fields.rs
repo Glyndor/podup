@@ -12,18 +12,32 @@ use tracing::warn;
 
 use crate::compose::types::{BlkioConfig, Service};
 use crate::libpod::types::container::{
-	LinuxBlockIO, LinuxDevice, LinuxThrottleDevice, LinuxWeightDevice,
+	LinuxBlockIO, LinuxDevice, LinuxDeviceCgroup, LinuxThrottleDevice, LinuxWeightDevice,
 };
 
 // ---------------------------------------------------------------------------
 // Device helpers
 // ---------------------------------------------------------------------------
 
+/// A parsed compose `devices:` entry: the device node to create plus, when the
+/// entry carried an explicit `:permissions` segment, the cgroup access rule that
+/// restricts it.
+pub(crate) struct ParsedDevice {
+	/// The device node to expose inside the container.
+	pub device: LinuxDevice,
+	/// The cgroup access rule derived from the trailing `:permissions` segment,
+	/// present only when one was given.
+	pub cgroup_rule: Option<LinuxDeviceCgroup>,
+}
+
 /// Parse a compose `devices:` entry (`host:container:permissions`) into a
-/// `LinuxDevice`. The container path defaults to the host path when the
+/// [`ParsedDevice`]. The container path defaults to the host path when the
 /// `:container` segment is absent; major/minor/type are derived by `stat`ing the
-/// host node. Trailing permissions, if present, are ignored here.
-pub(crate) fn parse_device(s: &str) -> LinuxDevice {
+/// host node. A trailing `:permissions` segment (e.g. `r`, `rwm`) is retained as
+/// a `device_cgroup_rule`: the OCI `LinuxDevice` has no access field, so the
+/// restriction must ride alongside as a cgroup rule for the live up path to
+/// honor it consistently with the quadlet backend and docker-compose.
+pub(crate) fn parse_device(s: &str) -> ParsedDevice {
 	let parts: Vec<&str> = s.splitn(3, ':').collect();
 	let host = parts.first().copied().unwrap_or("").to_string();
 	let cont = parts
@@ -31,17 +45,33 @@ pub(crate) fn parse_device(s: &str) -> LinuxDevice {
 		.copied()
 		.map(|c| c.to_string())
 		.unwrap_or_else(|| host.clone());
+	let access = parts
+		.get(2)
+		.copied()
+		.filter(|p| !p.is_empty())
+		.map(str::to_string);
 
 	let (major, minor, device_type) = device_major_minor(&host);
 
-	LinuxDevice {
-		path: cont,
-		device_type,
-		major,
-		minor,
-		file_mode: None,
-		uid: None,
-		gid: None,
+	let cgroup_rule = access.map(|access| LinuxDeviceCgroup {
+		allow: true,
+		device_type: Some(device_type.clone()),
+		major: Some(major),
+		minor: Some(minor),
+		access: Some(access),
+	});
+
+	ParsedDevice {
+		device: LinuxDevice {
+			path: cont,
+			device_type,
+			major,
+			minor,
+			file_mode: None,
+			uid: None,
+			gid: None,
+		},
+		cgroup_rule,
 	}
 }
 
@@ -239,20 +269,42 @@ mod tests {
 
 	#[test]
 	fn parse_device_host_container_perm() {
-		let d = parse_device("/dev/null:/dev/zero:rwm");
-		assert_eq!(d.path, "/dev/zero");
+		let parsed = parse_device("/dev/null:/dev/zero:rwm");
+		assert_eq!(parsed.device.path, "/dev/zero");
+		// The trailing permission segment becomes a cgroup access rule.
+		let rule = parsed.cgroup_rule.expect("perm should yield a cgroup rule");
+		assert!(rule.allow);
+		assert_eq!(rule.access.as_deref(), Some("rwm"));
 	}
 
 	#[test]
 	fn parse_device_same_path_both_sides() {
-		let d = parse_device("/dev/null");
-		assert_eq!(d.path, "/dev/null");
+		let parsed = parse_device("/dev/null");
+		assert_eq!(parsed.device.path, "/dev/null");
+		// No permission segment → no cgroup rule (Podman defaults to rwm).
+		assert!(parsed.cgroup_rule.is_none());
 	}
 
 	#[test]
 	fn parse_device_two_part() {
-		let d = parse_device("/dev/null:/dev/xvda");
-		assert_eq!(d.path, "/dev/xvda");
+		let parsed = parse_device("/dev/null:/dev/xvda");
+		assert_eq!(parsed.device.path, "/dev/xvda");
+		assert!(parsed.cgroup_rule.is_none());
+	}
+
+	#[test]
+	fn parse_device_restricted_perm_is_preserved() {
+		// `devices: ["/dev/sda:/dev/sda:r"]` must keep the read-only restriction
+		// rather than silently becoming rwm on the live up path.
+		let parsed = parse_device("/dev/sda:/dev/sda:r");
+		assert_eq!(parsed.device.path, "/dev/sda");
+		let rule = parsed.cgroup_rule.expect("perm should yield a cgroup rule");
+		assert!(rule.allow);
+		assert_eq!(rule.access.as_deref(), Some("r"));
+		// The rule targets the same node as the device it restricts.
+		assert_eq!(rule.device_type, Some(parsed.device.device_type));
+		assert_eq!(rule.major, Some(parsed.device.major));
+		assert_eq!(rule.minor, Some(parsed.device.minor));
 	}
 
 	// --- blkio ---
