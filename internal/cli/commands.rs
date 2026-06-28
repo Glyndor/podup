@@ -7,7 +7,7 @@ use clap::Subcommand;
 #[cfg(feature = "completions")]
 use clap_complete::Shell;
 
-use super::parse::parse_scale_pair;
+use super::parse::{parse_pull_policy, parse_scale_pair, parse_timeout};
 use super::types::{ConfigFormat, GenerateCommands, OutputFormat, RmiScope};
 
 #[derive(Subcommand)]
@@ -18,7 +18,7 @@ pub(crate) enum Commands {
 		#[arg(short, long)]
 		detach: bool,
 		/// Build images before starting containers.
-		#[arg(long)]
+		#[arg(long, conflicts_with = "no_build")]
 		build: bool,
 		/// Watch and sync/rebuild/restart per develop.watch rules.
 		#[arg(short, long)]
@@ -27,7 +27,7 @@ pub(crate) enum Commands {
 		#[arg(long)]
 		remove_orphans: bool,
 		/// Do not recreate containers that are already running.
-		#[arg(long)]
+		#[arg(long, conflicts_with = "force_recreate")]
 		no_recreate: bool,
 		/// Recreate containers even if their configuration is unchanged.
 		#[arg(long)]
@@ -36,13 +36,13 @@ pub(crate) enum Commands {
 		#[arg(long)]
 		no_deps: bool,
 		/// Seconds to wait for a container to stop when recreating.
-		#[arg(short = 't', long)]
+		#[arg(short = 't', long, allow_hyphen_values = true, value_parser = parse_timeout)]
 		timeout: Option<i32>,
 		/// Override the replica count for a service: SERVICE=N (repeatable).
 		#[arg(long, value_parser = parse_scale_pair)]
 		scale: Vec<(String, u32)>,
-		/// Pull policy before starting: always, missing, never.
-		#[arg(long)]
+		/// Pull policy before starting: always, missing, never, newer, build.
+		#[arg(long, value_parser = parse_pull_policy)]
 		pull: Option<String>,
 		/// Do not build images, even for services with a build section.
 		#[arg(long)]
@@ -53,6 +53,9 @@ pub(crate) enum Commands {
 		/// Wait until services are running/healthy before returning.
 		#[arg(long)]
 		wait: bool,
+		/// Maximum seconds to wait with --wait before giving up.
+		#[arg(long, requires = "wait")]
+		wait_timeout: Option<u64>,
 		/// Create containers but do not start them.
 		#[arg(long)]
 		no_start: bool,
@@ -78,7 +81,7 @@ pub(crate) enum Commands {
 		#[arg(long, value_enum)]
 		rmi: Option<RmiScope>,
 		/// Seconds to wait for containers to stop before killing them.
-		#[arg(short = 't', long)]
+		#[arg(short = 't', long, allow_hyphen_values = true, value_parser = parse_timeout)]
 		timeout: Option<i32>,
 	},
 	/// Start existing stopped containers.
@@ -87,7 +90,7 @@ pub(crate) enum Commands {
 		#[arg(long)]
 		wait: bool,
 		/// Maximum seconds to wait with --wait before giving up.
-		#[arg(long)]
+		#[arg(long, requires = "wait")]
 		wait_timeout: Option<u64>,
 		/// Start only these services.
 		#[arg(trailing_var_arg = true)]
@@ -96,7 +99,7 @@ pub(crate) enum Commands {
 	/// Stop running containers without removing them.
 	Stop {
 		/// Seconds to wait for containers to stop before killing them.
-		#[arg(short = 't', long)]
+		#[arg(short = 't', long, allow_hyphen_values = true, value_parser = parse_timeout)]
 		timeout: Option<i32>,
 		/// Stop only these services.
 		#[arg(trailing_var_arg = true)]
@@ -117,10 +120,15 @@ pub(crate) enum Commands {
 		#[arg(long)]
 		force_recreate: bool,
 		/// Do not recreate containers that already exist.
-		#[arg(long)]
+		#[arg(long, conflicts_with = "force_recreate")]
 		no_recreate: bool,
+		/// Pull policy before creating: always, missing, never, newer, build.
+		#[arg(long, value_parser = parse_pull_policy)]
+		pull: Option<String>,
+		/// Do not create linked services (depends_on) of the named services.
+		#[arg(long)]
+		no_deps: bool,
 		/// Create only these services.
-		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
 	/// Display a live stream of container resource usage.
@@ -140,6 +148,10 @@ pub(crate) enum Commands {
 		/// Only display project names.
 		#[arg(short, long)]
 		quiet: bool,
+		/// Filter projects by predicate: name=<NAME> or status=<running|exited>
+		/// (repeatable).
+		#[arg(long)]
+		filter: Vec<String>,
 		/// Output format.
 		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
 		format: OutputFormat,
@@ -152,8 +164,10 @@ pub(crate) enum Commands {
 		/// Verify the registry TLS cert (false for insecure/HTTP; default on).
 		#[arg(long)]
 		tls_verify: Option<bool>,
+		/// Suppress the push progress output.
+		#[arg(short, long)]
+		quiet: bool,
 		/// Push only these services.
-		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
 	/// Build or rebuild service images.
@@ -167,11 +181,17 @@ pub(crate) enum Commands {
 		/// Set build-time variables (KEY=VAL); may be repeated.
 		#[arg(long = "build-arg")]
 		build_arg: Vec<String>,
+		/// Set the build progress output style (auto, plain, tty); accepted for
+		/// docker-compose compatibility.
+		#[arg(long)]
+		progress: Option<String>,
+		/// Push each built image to its registry after a successful build.
+		#[arg(long)]
+		push: bool,
 		/// Suppress the build output.
 		#[arg(short, long)]
 		quiet: bool,
 		/// Build only these services.
-		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
 	/// Remove stopped service containers.
@@ -199,7 +219,6 @@ pub(crate) enum Commands {
 		#[arg(long)]
 		remove_orphans: bool,
 		/// Signal only these services.
-		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
 	/// Pause running service containers.
@@ -263,6 +282,9 @@ pub(crate) enum Commands {
 		/// Do not start linked services (depends_on) before running.
 		#[arg(long)]
 		no_deps: bool,
+		/// Add a label to the one-off container (KEY=VAL); may be repeated.
+		#[arg(short = 'l', long = "label")]
+		label: Vec<String>,
 		/// Command (and arguments) to run.
 		#[arg(trailing_var_arg = true, allow_hyphen_values = true)]
 		cmd: Vec<String>,
@@ -292,9 +314,21 @@ pub(crate) enum Commands {
 		/// Only display container IDs.
 		#[arg(short, long)]
 		quiet: bool,
+		/// Print the service names, one per line, instead of the container table.
+		#[arg(long = "services")]
+		services_only: bool,
+		/// Filter containers by predicate: status=<running|exited> or
+		/// name=<NAME> (repeatable).
+		#[arg(long)]
+		filter: Vec<String>,
+		/// Filter by container status (running, exited, ...); repeatable.
+		#[arg(long)]
+		status: Vec<String>,
 		/// Output format.
 		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
 		format: OutputFormat,
+		/// Show only these services.
+		services: Vec<String>,
 	},
 	/// Display the running processes of service containers.
 	Top {
@@ -313,19 +347,41 @@ pub(crate) enum Commands {
 		/// object per line.
 		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
 		format: OutputFormat,
+		/// Only stream events at or after this timestamp/relative time.
+		#[arg(long)]
+		since: Option<String>,
+		/// Only stream events up to this timestamp/relative time.
+		#[arg(long)]
+		until: Option<String>,
+		/// Filter events by predicate (KEY=VALUE, e.g. event=start); repeatable.
+		#[arg(long)]
+		filter: Vec<String>,
 		/// Deprecated alias for `--format json`; kept for backward compatibility.
-		#[arg(long, hide = true)]
+		/// Cannot be combined with an explicit `--format`.
+		#[arg(long, hide = true, conflicts_with = "format")]
 		json: bool,
 	},
 	/// Attach to a service container's output (stdout/stderr).
 	Attach {
 		/// Service whose container to attach to.
 		service: String,
+		/// Index of the container when the service has multiple replicas (1-based).
+		#[arg(long)]
+		index: Option<u32>,
+		/// Do not attach STDIN (accepted for docker-compose compatibility; podup
+		/// attaches output only).
+		#[arg(long)]
+		no_stdin: bool,
+		/// Proxy received signals to the process (accepted for compatibility).
+		#[arg(long)]
+		sig_proxy: Option<bool>,
+		/// Override the detach key sequence (accepted for compatibility).
+		#[arg(long)]
+		detach_keys: Option<String>,
 	},
 	/// Block until service containers stop, printing each exit code.
 	Wait {
 		/// Wait on these services (default: all).
-		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
 	/// Commit a service container to a new image.
@@ -334,6 +390,18 @@ pub(crate) enum Commands {
 		service: String,
 		/// Target image reference (repo[:tag]).
 		image: String,
+		/// Commit message for the new image.
+		#[arg(short, long)]
+		message: Option<String>,
+		/// Author of the new image (e.g. "Name <email>").
+		#[arg(short, long)]
+		author: Option<String>,
+		/// Pause the container during commit (default: true).
+		#[arg(short, long)]
+		pause: Option<bool>,
+		/// Apply a Dockerfile instruction to the committed image (repeatable).
+		#[arg(short = 'c', long = "change")]
+		change: Vec<String>,
 		/// Replica index (1-based) of a scaled service.
 		#[arg(long)]
 		index: Option<u32>,
@@ -372,7 +440,6 @@ pub(crate) enum Commands {
 		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
 		format: OutputFormat,
 		/// Show only volumes mounted by these services.
-		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
 	/// List images used by services.
@@ -384,6 +451,8 @@ pub(crate) enum Commands {
 		/// Output format.
 		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
 		format: OutputFormat,
+		/// Show images for these services only.
+		services: Vec<String>,
 	},
 	/// View output from containers.
 	#[command(alias = "log")]
@@ -403,6 +472,12 @@ pub(crate) enum Commands {
 		/// Prefix each line with an RFC3339 timestamp.
 		#[arg(short = 't', long)]
 		timestamps: bool,
+		/// Produce monochrome output (no colour in the service-name prefix).
+		#[arg(long)]
+		no_color: bool,
+		/// Do not print the service-name prefix on each line.
+		#[arg(long)]
+		no_log_prefix: bool,
 		/// Show logs for these services (default: all).
 		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
@@ -449,16 +524,15 @@ pub(crate) enum Commands {
 		#[arg(long)]
 		include_deps: bool,
 		/// Pull policy: always, missing, never, newer, build (overrides per-service pull_policy).
-		#[arg(long)]
+		#[arg(long, value_parser = parse_pull_policy)]
 		policy: Option<String>,
 		/// Only pull images for these services.
-		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
 	/// Restart services.
 	Restart {
 		/// Seconds to wait for containers to stop before killing them.
-		#[arg(short = 't', long)]
+		#[arg(short = 't', long, allow_hyphen_values = true, value_parser = parse_timeout)]
 		timeout: Option<i32>,
 		/// Do not restart dependent services (depends_on with a restart condition).
 		#[arg(long)]
@@ -476,21 +550,49 @@ pub(crate) enum Commands {
 		/// Print only the service names, one per line.
 		#[arg(long)]
 		services: bool,
+		/// Print only the named volumes, one per line.
+		#[arg(long)]
+		volumes: bool,
+		/// Print only the service image references, one per line.
+		#[arg(long)]
+		images: bool,
+		/// Print only the profile names, one per line.
+		#[arg(long)]
+		profiles: bool,
+		/// Print the config hash of all services, or of the given comma-separated
+		/// services ("*" for all).
+		#[arg(long)]
+		hash: Option<String>,
 		/// Only validate the configuration; print nothing.
 		#[arg(short, long)]
 		quiet: bool,
 		/// Leave ${VAR} placeholders literal instead of interpolating them.
 		#[arg(long)]
 		no_interpolate: bool,
+		/// Accepted for docker-compose compatibility; podup output is already
+		/// normalized.
+		#[arg(long)]
+		no_normalize: bool,
 		/// Rewrite each service image to its registry digest (repo@sha256:...).
 		#[arg(long)]
 		resolve_image_digests: bool,
 	},
 	/// Generate declarative artifacts from the compose file.
-	#[command(alias = "gen")]
+	#[command(
+		alias = "gen",
+		subcommand_required = true,
+		arg_required_else_help = true
+	)]
 	Generate {
 		#[command(subcommand)]
 		kind: GenerateCommands,
+	},
+	/// Print help for podup, or for a specific command.
+	Help {
+		/// Command to show help for. Extra tokens, `-h`/`--help`, and a leading
+		/// `--` are tolerated; only the first command name is used.
+		#[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+		commands: Vec<String>,
 	},
 	/// Watch for file changes and sync/rebuild/restart as configured by develop.watch.
 	Watch,

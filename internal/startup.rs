@@ -4,6 +4,7 @@
 use std::process;
 
 use clap::Parser;
+use sha2::{Digest, Sha256};
 use tracing::{Event, Subscriber};
 use tracing_subscriber::fmt::format::Writer;
 use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
@@ -113,31 +114,82 @@ pub(crate) fn init_tracing(default_level: &str) {
 		.init();
 }
 
-/// Render `config`: validate-only (`--quiet`), service-name list (`--services`),
-/// or the resolved compose file in YAML/JSON with inline secret content redacted.
+/// Output selectors for `config`, mirroring the mutually-exclusive `docker
+/// compose config` list modes. The first set selector wins, in the order
+/// services, volumes, images, profiles, hash.
+#[derive(Default)]
+pub(crate) struct ConfigOutput {
+	/// `--services`: print the service names.
+	pub services: bool,
+	/// `--volumes`: print the named-volume keys.
+	pub volumes: bool,
+	/// `--images`: print each service's image reference.
+	pub images: bool,
+	/// `--profiles`: print the declared profile names.
+	pub profiles: bool,
+	/// `--hash`: print the config hash of all services ("*") or a comma-separated
+	/// subset.
+	pub hash: Option<String>,
+	/// `--quiet`: validate only, print nothing.
+	pub quiet: bool,
+}
+
+/// Render `config`: validate-only (`--quiet`), a list projection (`--services`,
+/// `--volumes`, `--images`, `--profiles`, `--hash`), or the resolved compose file
+/// in YAML/JSON with inline secret content redacted.
 pub(crate) fn render_config(
 	file: &podup::compose::types::ComposeFile,
 	format: &ConfigFormat,
-	services: bool,
-	quiet: bool,
+	out: &ConfigOutput,
 ) -> podup::Result<()> {
 	// Reaching here means the file parsed and merged cleanly. Validate that each
 	// resolved service declares an image or a build, the same rule `up` enforces
-	// — and do it before the `--quiet`/`--services` short-circuits so
-	// validate-only (`--quiet`) actually validates, matching `docker compose config`.
+	// — and do it before the `--quiet`/projection short-circuits so validate-only
+	// (`--quiet`) actually validates, matching `docker compose config`.
 	for (name, svc) in &file.services {
 		if svc.image.is_none() && svc.build.is_none() {
 			return Err(podup::ComposeError::NoImageOrBuild(name.clone()));
 		}
 	}
-	if quiet {
+	if out.quiet {
 		return Ok(());
 	}
-	if services {
+	if out.services {
 		for name in file.services.keys() {
 			println!("{name}");
 		}
 		return Ok(());
+	}
+	if out.volumes {
+		for name in file.volumes.keys() {
+			println!("{name}");
+		}
+		return Ok(());
+	}
+	if out.images {
+		for (name, svc) in &file.services {
+			let image = svc
+				.image
+				.clone()
+				.unwrap_or_else(|| format!("{name}:latest"));
+			println!("{image}");
+		}
+		return Ok(());
+	}
+	if out.profiles {
+		let mut profiles: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+		for svc in file.services.values() {
+			for p in &svc.profiles {
+				profiles.insert(p.as_str());
+			}
+		}
+		for p in profiles {
+			println!("{p}");
+		}
+		return Ok(());
+	}
+	if let Some(selector) = &out.hash {
+		return render_config_hash(file, selector);
 	}
 	let mut redacted = file.clone();
 	redacted.redact_inline_content();
@@ -159,6 +211,42 @@ pub(crate) fn render_config(
 		}
 	};
 	println!("{rendered}");
+	Ok(())
+}
+
+/// SHA-256 of a service's resolved configuration, hex-encoded. Used by
+/// `config --hash` so a deploy pipeline can detect a changed service. Pure so it
+/// is unit-tested.
+fn service_config_hash(svc: &podup::compose::types::Service) -> String {
+	let json = serde_json::to_vec(svc).unwrap_or_default();
+	Sha256::digest(&json)
+		.iter()
+		.map(|b| format!("{b:02x}"))
+		.collect()
+}
+
+/// `config --hash`: print `SERVICE HASH` for all services ("*") or the given
+/// comma-separated subset (an unknown service name is an error).
+fn render_config_hash(
+	file: &podup::compose::types::ComposeFile,
+	selector: &str,
+) -> podup::Result<()> {
+	let names: Vec<String> = if selector == "*" {
+		file.services.keys().cloned().collect()
+	} else {
+		selector
+			.split(',')
+			.map(|s| s.trim().to_string())
+			.filter(|s| !s.is_empty())
+			.collect()
+	};
+	for name in names {
+		let svc = file
+			.services
+			.get(&name)
+			.ok_or_else(|| podup::ComposeError::ServiceNotFound(name.clone()))?;
+		println!("{name} {}", service_config_hash(svc));
+	}
 	Ok(())
 }
 
@@ -241,6 +329,7 @@ pub(crate) fn run_overrides_for(command: &Commands) -> podup::RunOverrides {
 			publish,
 			interactive,
 			no_deps,
+			label,
 			..
 		} => podup::RunOverrides {
 			user: user.clone(),
@@ -250,6 +339,7 @@ pub(crate) fn run_overrides_for(command: &Commands) -> podup::RunOverrides {
 			publish: publish.clone(),
 			interactive: *interactive,
 			no_deps: *no_deps,
+			labels: label.clone(),
 		},
 		_ => podup::RunOverrides::default(),
 	}
@@ -261,9 +351,7 @@ pub(crate) fn parse_cli() -> Cli {
 	match Cli::try_parse() {
 		Ok(cli) => cli,
 		Err(e) => match e.kind() {
-			clap::error::ErrorKind::DisplayHelp
-			| clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
-			| clap::error::ErrorKind::DisplayVersion => {
+			clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
 				// `--help`/`--version` are handled by clap before `--ansi` is parsed,
 				// so colour the rendered text by clap's own styling only when stdout
 				// is a colour sink (TTY + no NO_COLOR); piped output stays plain and
@@ -275,6 +363,14 @@ pub(crate) fn parse_cli() -> Cli {
 					print!("\n{rendered}\n");
 				}
 				process::exit(0);
+			}
+			clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+				// No subcommand (top level) or a required nested subcommand (e.g.
+				// `generate`) was given: print the help to stderr and exit non-zero,
+				// like docker compose, so a script sees the error instead of a silent
+				// success. `podup help` (the explicit Help variant) still exits 0.
+				eprint!("\n{}\n", e.render());
+				process::exit(2);
 			}
 			_ => e.exit(),
 		},
@@ -341,19 +437,90 @@ mod tests {
 	#[test]
 	fn render_config_quiet_is_validate_only() {
 		// `--quiet` validates and prints nothing, returning Ok.
-		render_config(&sample_file(), &ConfigFormat::Yaml, false, true).unwrap();
+		render_config(
+			&sample_file(),
+			&ConfigFormat::Yaml,
+			&ConfigOutput {
+				quiet: true,
+				..Default::default()
+			},
+		)
+		.unwrap();
 	}
 
 	#[test]
 	fn render_config_services_lists_names() {
 		// `--services` reaches the service-name listing branch without error.
-		render_config(&sample_file(), &ConfigFormat::Yaml, true, false).unwrap();
+		render_config(
+			&sample_file(),
+			&ConfigFormat::Yaml,
+			&ConfigOutput {
+				services: true,
+				..Default::default()
+			},
+		)
+		.unwrap();
+	}
+
+	#[test]
+	fn render_config_projection_modes_render_ok() {
+		// Each list-projection selector reaches its branch without error.
+		for out in [
+			ConfigOutput {
+				volumes: true,
+				..Default::default()
+			},
+			ConfigOutput {
+				images: true,
+				..Default::default()
+			},
+			ConfigOutput {
+				profiles: true,
+				..Default::default()
+			},
+			ConfigOutput {
+				hash: Some("*".to_string()),
+				..Default::default()
+			},
+		] {
+			render_config(&sample_file(), &ConfigFormat::Yaml, &out).unwrap();
+		}
+	}
+
+	#[test]
+	fn render_config_hash_rejects_unknown_service() {
+		let out = ConfigOutput {
+			hash: Some("nope".to_string()),
+			..Default::default()
+		};
+		assert!(render_config(&sample_file(), &ConfigFormat::Yaml, &out).is_err());
+	}
+
+	#[test]
+	fn service_config_hash_is_stable_and_distinct() {
+		let file = sample_file();
+		let web = service_config_hash(&file.services["web"]);
+		let db = service_config_hash(&file.services["db"]);
+		// Stable for the same input, and distinct across different services.
+		assert_eq!(web, service_config_hash(&file.services["web"]));
+		assert_ne!(web, db);
+		assert_eq!(web.len(), 64, "sha-256 hex is 64 chars");
 	}
 
 	#[test]
 	fn render_config_yaml_and_json_render_ok() {
-		render_config(&sample_file(), &ConfigFormat::Yaml, false, false).unwrap();
-		render_config(&sample_file(), &ConfigFormat::Json, false, false).unwrap();
+		render_config(
+			&sample_file(),
+			&ConfigFormat::Yaml,
+			&ConfigOutput::default(),
+		)
+		.unwrap();
+		render_config(
+			&sample_file(),
+			&ConfigFormat::Json,
+			&ConfigOutput::default(),
+		)
+		.unwrap();
 	}
 
 	#[test]

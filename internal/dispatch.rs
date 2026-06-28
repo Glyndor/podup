@@ -31,6 +31,7 @@ pub(crate) async fn dispatch(
 			no_build: _,
 			quiet_pull: _,
 			wait,
+			wait_timeout,
 			no_start,
 			timestamps,
 			renew_anon_volumes: _,
@@ -71,7 +72,14 @@ pub(crate) async fn dispatch(
 				)
 				.await?;
 			if wait {
-				engine.wait_services_healthy(file, &services).await?;
+				// `--wait-timeout` bounds the health wait, like `start --wait`.
+				let fut = engine.wait_services_healthy(file, &services);
+				match wait_timeout {
+					Some(secs) => tokio::time::timeout(std::time::Duration::from_secs(secs), fut)
+						.await
+						.map_err(|_| podup::ComposeError::WaitTimeout { secs })??,
+					None => fut.await?,
+				}
 			}
 			if watch {
 				engine.watch(file).await?;
@@ -121,19 +129,34 @@ pub(crate) async fn dispatch(
 			build,
 			force_recreate,
 			no_recreate,
+			// `--pull` is applied via the engine's pull-policy override, set in
+			// `main` (see `with_up_overrides`).
+			pull: _,
+			no_deps,
 			services,
 		} => {
 			if build {
 				engine.build_all(file, &services).await?;
 			}
 			engine
-				.create_with_options(file, profile, &services, no_recreate, force_recreate, false)
+				.create_with_options(
+					file,
+					profile,
+					&services,
+					no_recreate,
+					force_recreate,
+					no_deps,
+				)
 				.await?
 		}
 		Commands::Build {
 			no_cache,
 			pull,
 			build_arg,
+			// `--progress` selects a progress renderer in docker compose; accepted
+			// for compatibility but has no effect on podup's tracing output.
+			progress: _,
+			push,
 			quiet,
 			services,
 		} => {
@@ -148,7 +171,20 @@ pub(crate) async fn dispatch(
 						quiet,
 					},
 				)
-				.await?
+				.await?;
+			// `--push` pushes each freshly built image to its registry.
+			if push {
+				engine
+					.push(
+						file,
+						&services,
+						podup::PushOptions {
+							quiet,
+							..Default::default()
+						},
+					)
+					.await?;
+			}
 		}
 		Commands::Rm {
 			force,
@@ -193,6 +229,7 @@ pub(crate) async fn dispatch(
 			interactive: _,
 			no_tty: _,
 			no_deps: _,
+			label: _,
 			cmd,
 		} => {
 			engine
@@ -232,7 +269,15 @@ pub(crate) async fn dispatch(
 				)
 				.await?
 		}
-		Commands::Ps { all, quiet, format } => {
+		Commands::Ps {
+			all,
+			quiet,
+			services_only,
+			filter,
+			status,
+			format,
+			services,
+		} => {
 			engine
 				.ps_with_options(
 					file,
@@ -240,6 +285,10 @@ pub(crate) async fn dispatch(
 						all,
 						quiet,
 						json: format == OutputFormat::Json,
+						services_only,
+						services,
+						status,
+						filters: filter,
 					},
 				)
 				.await?
@@ -249,19 +298,59 @@ pub(crate) async fn dispatch(
 				.top_with_options(file, &services, format == OutputFormat::Json)
 				.await?
 		}
-		Commands::Events { format, json } => {
-			// `--json` is the deprecated alias for `--format json`; either selects
-			// JSON-line output.
+		Commands::Events {
+			format,
+			since,
+			until,
+			filter,
+			json,
+		} => {
+			// `--json` is the deprecated alias for `--format json` (and conflicts
+			// with an explicit `--format`); either selects JSON-line output.
 			let json = json || format == OutputFormat::Json;
-			engine.stream_events(json).await?
+			engine
+				.stream_events_with_options(
+					json,
+					&podup::EventsOptions {
+						since,
+						until,
+						filters: filter,
+					},
+				)
+				.await?
 		}
-		Commands::Attach { service } => engine.attach(file, &service).await?,
+		Commands::Attach {
+			service,
+			index,
+			no_stdin: _,
+			sig_proxy: _,
+			detach_keys: _,
+		} => engine.attach_with_index(file, &service, index).await?,
 		Commands::Wait { services } => engine.wait_services(file, &services).await?,
 		Commands::Commit {
 			service,
 			image,
+			message,
+			author,
+			pause,
+			change,
 			index,
-		} => engine.commit(file, &service, &image, index).await?,
+		} => {
+			engine
+				.commit_with_options(
+					file,
+					&service,
+					&image,
+					index,
+					podup::CommitOptions {
+						message,
+						author,
+						pause,
+						changes: change,
+					},
+				)
+				.await?
+		}
 		Commands::Export {
 			service,
 			output,
@@ -274,6 +363,7 @@ pub(crate) async fn dispatch(
 		Commands::Push {
 			ignore_push_failures,
 			tls_verify,
+			quiet,
 			services,
 		} => {
 			engine
@@ -283,6 +373,7 @@ pub(crate) async fn dispatch(
 					podup::PushOptions {
 						ignore_failures: ignore_push_failures,
 						tls_verify,
+						quiet,
 					},
 				)
 				.await?
@@ -313,10 +404,15 @@ pub(crate) async fn dispatch(
 				)
 				.await?
 		}
-		Commands::Images { quiet, format } => {
+		Commands::Images {
+			quiet,
+			format,
+			services,
+		} => {
 			engine
 				.images_with_options(
 					file,
+					&services,
 					podup::ImagesOptions {
 						quiet,
 						json: format == OutputFormat::Json,
@@ -330,6 +426,8 @@ pub(crate) async fn dispatch(
 			since,
 			until,
 			timestamps,
+			no_color,
+			no_log_prefix,
 			services,
 		} => {
 			engine
@@ -342,6 +440,8 @@ pub(crate) async fn dispatch(
 						since,
 						until,
 						timestamps,
+						no_color,
+						no_log_prefix,
 					},
 				)
 				.await?
@@ -403,6 +503,7 @@ pub(crate) async fn dispatch(
 		Commands::Config { .. } => unreachable!("handled above"),
 		Commands::Generate { .. } => unreachable!("handled above"),
 		Commands::Watch => engine.watch(file).await?,
+		Commands::Help { .. } => unreachable!("handled before compose parsing"),
 		Commands::Ls { .. } => unreachable!("handled before compose parsing"),
 		#[cfg(feature = "update")]
 		Commands::Update { .. } => unreachable!("handled before compose parsing"),

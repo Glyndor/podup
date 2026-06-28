@@ -139,20 +139,31 @@ impl Engine {
 
 	/// List images used by each service as a table (default options).
 	pub async fn images(&self, file: &ComposeFile) -> Result<()> {
-		self.images_with_options(file, super::ImagesOptions::default())
+		self.images_with_options(file, &[], super::ImagesOptions::default())
 			.await
 	}
 
 	/// List service images with `docker compose images`-style options:
-	/// `-q/--quiet` (IDs only) and `--format` (table | json).
+	/// `-q/--quiet` (IDs only) and `--format` (table | json). When
+	/// `target_services` is non-empty, only those services are listed (an unknown
+	/// name is an error), matching `docker compose images [SERVICE...]`.
 	pub async fn images_with_options(
 		&self,
 		file: &ComposeFile,
+		target_services: &[String],
 		opts: super::ImagesOptions,
 	) -> Result<()> {
+		for name in target_services {
+			if !file.services.contains_key(name) {
+				return Err(ComposeError::ServiceNotFound(name.clone()));
+			}
+		}
 		// Collect rows first so quiet/json modes can render without the header.
 		let mut rows: Vec<(String, String, String, String)> = Vec::new();
 		for (name, service) in &file.services {
+			if !target_services.is_empty() && !target_services.iter().any(|t| t == name) {
+				continue;
+			}
 			let image_ref = match &service.image {
 				Some(img) => img.clone(),
 				None if service.build.is_some() => format!("{name}:latest"),
@@ -210,11 +221,23 @@ impl Engine {
 	/// stdout/stderr with no prefix, until the container stops. podup never
 	/// attaches STDIN (it allocates no TTY), so this is output-only.
 	pub async fn attach(&self, file: &ComposeFile, service_name: &str) -> Result<()> {
+		self.attach_with_index(file, service_name, None).await
+	}
+
+	/// Like [`Engine::attach`] but targets a specific replica via `--index`
+	/// (1-based); `None` uses the first replica. This is what lets `attach` reach
+	/// a scaled service's later replicas.
+	pub async fn attach_with_index(
+		&self,
+		file: &ComposeFile,
+		service_name: &str,
+		index: Option<u32>,
+	) -> Result<()> {
 		let service = file
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		let container = self.first_replica_name(service_name, service);
+		let container = self.replica_name_at(service_name, service, index)?;
 		let is_tty = service.tty.unwrap_or(false);
 
 		let path = format!(
@@ -344,17 +367,41 @@ impl Engine {
 
 /// Resolve the `(port, proto)` for `port` from a `PORT` or `PORT/proto` argument,
 /// the `/proto` suffix overriding the `--protocol` flag — matching
-/// `docker compose port`. Pure so the parsing is unit-tested.
-fn parse_port_proto<'a>(private_port: &'a str, proto_flag: &'a str) -> Result<(u16, &'a str)> {
-	let (port, proto) = match private_port.split_once('/') {
-		Some((p, pr)) => (p, pr),
-		None => (private_port, proto_flag),
-	};
-	let port: u16 = port.parse().map_err(|_| {
+/// `docker compose port`. The port must be a canonical decimal (no leading `+`,
+/// sign, or leading zeros), at most one `/` is allowed, and the protocol is
+/// normalised to lowercase and restricted to `tcp`/`udp` — so a typo errors
+/// instead of silently printing nothing. Pure so the parsing is unit-tested.
+fn parse_port_proto(private_port: &str, proto_flag: &str) -> Result<(u16, String)> {
+	let invalid = || {
 		ComposeError::InvalidPort(format!(
 			"port '{private_port}' is not a valid PORT or PORT/proto"
 		))
-	})?;
+	};
+
+	let mut parts = private_port.split('/');
+	let port_str = parts.next().unwrap_or_default();
+	let proto = parts.next().unwrap_or(proto_flag);
+	// `PORT/proto/extra` has more than one segment and is rejected outright.
+	if parts.next().is_some() {
+		return Err(invalid());
+	}
+
+	// `u16::from_str` accepts `+80` and `080`; reject those non-canonical
+	// spellings so they no longer fall through to an empty lookup.
+	if port_str.is_empty()
+		|| !port_str.bytes().all(|b| b.is_ascii_digit())
+		|| (port_str.len() > 1 && port_str.starts_with('0'))
+	{
+		return Err(invalid());
+	}
+	let port: u16 = port_str.parse().map_err(|_| invalid())?;
+
+	let proto = proto.to_ascii_lowercase();
+	if proto != "tcp" && proto != "udp" {
+		return Err(ComposeError::InvalidPort(format!(
+			"protocol '{proto}' is invalid for port '{private_port}' (expected tcp or udp)"
+		)));
+	}
 	Ok((port, proto))
 }
 
@@ -364,17 +411,56 @@ mod tests {
 
 	#[test]
 	fn bare_port_uses_flag_proto() {
-		assert_eq!(parse_port_proto("80", "tcp").unwrap(), (80, "tcp"));
+		assert_eq!(
+			parse_port_proto("80", "tcp").unwrap(),
+			(80, "tcp".to_string())
+		);
 	}
 
 	#[test]
 	fn suffix_overrides_flag_proto() {
-		assert_eq!(parse_port_proto("53/udp", "tcp").unwrap(), (53, "udp"));
+		assert_eq!(
+			parse_port_proto("53/udp", "tcp").unwrap(),
+			(53, "udp".to_string())
+		);
+	}
+
+	#[test]
+	fn proto_is_normalised_to_lowercase() {
+		assert_eq!(
+			parse_port_proto("80", "TCP").unwrap(),
+			(80, "tcp".to_string())
+		);
+		assert_eq!(
+			parse_port_proto("53/UDP", "tcp").unwrap(),
+			(53, "udp".to_string())
+		);
 	}
 
 	#[test]
 	fn non_numeric_port_is_rejected() {
 		assert!(parse_port_proto("http", "tcp").is_err());
 		assert!(parse_port_proto("abc/tcp", "tcp").is_err());
+	}
+
+	#[test]
+	fn non_canonical_port_is_rejected() {
+		// A leading '+', a sign, or leading zeros all parse via u16 but diverge
+		// from docker's port spec.
+		for bad in ["+80", "080", "0080", "-1", " 80"] {
+			assert!(parse_port_proto(bad, "tcp").is_err(), "`{bad}` should fail");
+		}
+	}
+
+	#[test]
+	fn extra_slash_segment_is_rejected() {
+		assert!(parse_port_proto("80/tcp/extra", "tcp").is_err());
+	}
+
+	#[test]
+	fn invalid_proto_is_rejected() {
+		assert!(parse_port_proto("80", "sctp").is_err());
+		assert!(parse_port_proto("80/bogus", "tcp").is_err());
+		assert!(parse_port_proto("80", "").is_err());
 	}
 }

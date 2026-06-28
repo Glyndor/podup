@@ -22,9 +22,40 @@ pub(crate) fn parse_scale_pair(value: &str) -> Result<(String, u32), String> {
 	Ok((service.to_string(), replicas))
 }
 
+/// Pull-policy values podup accepts for `up --pull` / `pull --policy`. `always`,
+/// `missing`, `never`, and `build` mirror `docker compose`; `newer` is Podman's
+/// extension.
+const PULL_POLICIES: [&str; 5] = ["always", "missing", "never", "newer", "build"];
+
+/// Validate a `--pull` / `--policy` value at parse time, rejecting unknown values
+/// with a clear message instead of silently defaulting to `missing` at runtime.
+pub(crate) fn parse_pull_policy(value: &str) -> Result<String, String> {
+	if PULL_POLICIES.contains(&value) {
+		Ok(value.to_string())
+	} else {
+		Err(format!(
+			"invalid pull policy `{value}` (expected one of: {})",
+			PULL_POLICIES.join(", ")
+		))
+	}
+}
+
+/// Parse a `-t/--timeout` shutdown-grace value, rejecting negatives with a clear
+/// range error rather than forwarding `-5` to Podman or letting clap report a
+/// confusing "unexpected argument" for the space form.
+pub(crate) fn parse_timeout(value: &str) -> Result<i32, String> {
+	let secs: i32 = value
+		.parse()
+		.map_err(|_| format!("timeout `{value}` must be an integer number of seconds"))?;
+	if secs < 0 {
+		return Err(format!("timeout `{value}` must be zero or greater"));
+	}
+	Ok(secs)
+}
+
 #[cfg(test)]
 mod tests {
-	use super::parse_scale_pair;
+	use super::{parse_pull_policy, parse_scale_pair, parse_timeout};
 
 	#[test]
 	fn parse_scale_pair_accepts_valid() {
@@ -36,5 +67,34 @@ mod tests {
 		for bad in ["web", "=3", "web=", "web=x", "web=0", "web=-1"] {
 			assert!(parse_scale_pair(bad).is_err(), "`{bad}` should be rejected");
 		}
+	}
+
+	#[test]
+	fn parse_pull_policy_accepts_known_values() {
+		for ok in ["always", "missing", "never", "newer", "build"] {
+			assert_eq!(parse_pull_policy(ok), Ok(ok.to_string()));
+		}
+	}
+
+	#[test]
+	fn parse_pull_policy_rejects_unknown_values() {
+		for bad in ["bogus", "Always", "if_not_present", ""] {
+			assert!(
+				parse_pull_policy(bad).is_err(),
+				"`{bad}` should be rejected"
+			);
+		}
+	}
+
+	#[test]
+	fn parse_timeout_accepts_zero_and_positive() {
+		assert_eq!(parse_timeout("0"), Ok(0));
+		assert_eq!(parse_timeout("30"), Ok(30));
+	}
+
+	#[test]
+	fn parse_timeout_rejects_negative_and_non_numeric() {
+		assert!(parse_timeout("-5").is_err());
+		assert!(parse_timeout("abc").is_err());
 	}
 }

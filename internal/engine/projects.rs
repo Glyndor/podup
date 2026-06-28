@@ -19,6 +19,31 @@ pub struct LsOptions {
 	pub quiet: bool,
 	/// Emit a JSON array instead of a table.
 	pub json: bool,
+	/// `KEY=VALUE` predicates (`--filter`): name=<NAME> or status=<running|exited>.
+	pub filters: Vec<String>,
+}
+
+/// Split `ls --filter KEY=VALUE` predicates into name, status, and unknown
+/// buckets. Pure so it is unit-tested.
+fn split_ls_filters(filters: &[String]) -> (Vec<String>, Vec<String>, Vec<String>) {
+	let (mut names, mut status, mut unknown) = (Vec::new(), Vec::new(), Vec::new());
+	for f in filters {
+		match f.split_once('=') {
+			Some(("name", v)) => names.push(v.to_string()),
+			Some(("status", v)) => status.push(v.to_ascii_lowercase()),
+			_ => unknown.push(f.clone()),
+		}
+	}
+	(names, status, unknown)
+}
+
+/// Whether a project row passes the parsed name/status filters. `running` is the
+/// project's roll-up running flag. Pure so it is unit-tested.
+fn ls_row_matches(name: &str, running: bool, names: &[String], status: &[String]) -> bool {
+	let name_ok = names.is_empty() || names.iter().any(|n| name.contains(n.as_str()));
+	let status_word = if running { "running" } else { "exited" };
+	let status_ok = status.is_empty() || status.iter().any(|s| s == status_word);
+	name_ok && status_ok
 }
 
 /// Whether a libpod `Status` string denotes a running container. Podman reports
@@ -67,9 +92,14 @@ pub async fn list_projects(client: &Client, opts: LsOptions) -> Result<()> {
 		}
 	}
 
+	let (name_filter, status_filter, unknown) = split_ls_filters(&opts.filters);
+	for u in &unknown {
+		tracing::warn!("ls: ignoring unsupported filter '{u}'");
+	}
 	let rows: Vec<(&String, &Tally)> = projects
 		.iter()
 		.filter(|(_, t)| opts.all || t.running > 0)
+		.filter(|(name, t)| ls_row_matches(name, t.running > 0, &name_filter, &status_filter))
 		.collect();
 
 	if opts.quiet {
@@ -118,6 +148,31 @@ mod tests {
 		for down in ["exited", "Exited (0) 3s ago", "created", "", "stopped"] {
 			assert!(!is_running(down), "{down} should not be running");
 		}
+	}
+
+	#[test]
+	fn split_ls_filters_buckets_and_flags_unknown() {
+		let (names, status, unknown) = split_ls_filters(&[
+			"name=web".to_string(),
+			"status=RUNNING".to_string(),
+			"bogus=1".to_string(),
+		]);
+		assert_eq!(names, vec!["web".to_string()]);
+		assert_eq!(status, vec!["running".to_string()]);
+		assert_eq!(unknown, vec!["bogus=1".to_string()]);
+	}
+
+	#[test]
+	fn ls_row_matches_applies_name_and_status() {
+		// No filters → always matches.
+		assert!(ls_row_matches("app", true, &[], &[]));
+		// name substring.
+		assert!(ls_row_matches("myapp", true, &["app".to_string()], &[]));
+		assert!(!ls_row_matches("other", true, &["app".to_string()], &[]));
+		// status word.
+		assert!(ls_row_matches("app", true, &[], &["running".to_string()]));
+		assert!(!ls_row_matches("app", false, &[], &["running".to_string()]));
+		assert!(ls_row_matches("app", false, &[], &["exited".to_string()]));
 	}
 
 	#[test]

@@ -21,7 +21,16 @@ const HELP_STYLES: clap::builder::Styles = clap::builder::Styles::plain()
 
 /// Top-level clap parser for the `podup` CLI; fields carry the per-flag docs.
 #[derive(Parser)]
-#[command(name = "podup", version, styles = HELP_STYLES)]
+#[command(
+	name = "podup",
+	version,
+	styles = HELP_STYLES,
+	// No subcommand prints help and exits non-zero (like docker compose), and the
+	// built-in `help` is replaced by an explicit `Help` variant that tolerates
+	// extra tokens, `-h`/`--help`, and a leading `--`.
+	arg_required_else_help = true,
+	disable_help_subcommand = true
+)]
 pub(crate) struct Cli {
 	/// Path to the compose file (or `COMPOSE_FILE`). Unset: probe the
 	/// compose-spec precedence list (compose.yaml/.yml, docker-compose.yaml/.yml).
@@ -56,8 +65,8 @@ pub(crate) struct Cli {
 	#[arg(long = "env-file", global = true)]
 	pub(crate) env_file: Vec<String>,
 
-	/// When to colourise output: auto (TTY only), always, or never. `NO_COLOR`
-	/// also forces plain output.
+	/// When to colourise output: auto (TTY only), always, or never. With `auto`,
+	/// `NO_COLOR` also forces plain output; `--ansi always` overrides `NO_COLOR`.
 	#[arg(long, value_enum, default_value_t = AnsiMode::Auto, global = true)]
 	pub(crate) ansi: AnsiMode,
 

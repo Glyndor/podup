@@ -1,22 +1,19 @@
 //! Query and observation commands: ps, logs, exec, pull, remove_orphans.
 
-use std::io::Write;
-
 use futures_util::StreamExt;
 
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
-use crate::libpod::types::exec::{
-	ExecCreateConfig, ExecCreateResponse, ExecInspect, ExecStartConfig,
-};
 use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 
 use super::Engine;
 use crate::libpod::types::container::{ContainerListEntry, ContainerPort};
 
+mod exec;
 mod inspect;
 mod log_prefix;
 
+pub use exec::ExecOptions;
 use log_prefix::LinePrefixer;
 
 /// Human-readable status for `ps`. Podman's libpod list endpoint leaves
@@ -57,24 +54,7 @@ fn format_ports(ports: &[ContainerPort]) -> String {
 		.join(", ")
 }
 
-/// Options for [`Engine::exec`], mirroring `docker compose exec` flags.
-#[derive(Default)]
-pub struct ExecOptions {
-	/// Extra environment variables (`KEY=VAL`), `-e/--env`.
-	pub env: Vec<String>,
-	/// Run as this user, `-u/--user`.
-	pub user: Option<String>,
-	/// Working directory inside the container, `-w/--workdir`.
-	pub workdir: Option<String>,
-	/// Run with extended privileges, `--privileged`.
-	pub privileged: bool,
-	/// Detach: start the exec and return without streaming output, `-d/--detach`.
-	pub detach: bool,
-	/// 1-based replica index for a scaled service, `--index` (default: first).
-	pub index: Option<u32>,
-}
-
-/// Options for [`Engine::ps_with_options`].
+/// Options for [`Engine::ps_with_options`], mirroring `docker compose ps`.
 #[derive(Default)]
 pub struct PsOptions {
 	/// Include stopped containers, `-a/--all` (default: running only).
@@ -83,6 +63,45 @@ pub struct PsOptions {
 	pub quiet: bool,
 	/// Emit JSON instead of the table, `--format json`.
 	pub json: bool,
+	/// Print the service names instead of the container table, `--services`.
+	pub services_only: bool,
+	/// Restrict to these services' containers (positional `SERVICE` filter).
+	pub services: Vec<String>,
+	/// Status filters, `--status` (e.g. running, exited); OR-combined.
+	pub status: Vec<String>,
+	/// Generic `KEY=VALUE` predicates, `--filter` (supports status= and name=).
+	pub filters: Vec<String>,
+}
+
+/// Whether a container status/state word satisfies a `--status`/`status=` filter.
+/// Each wanted value matches case-insensitively as a prefix of the status word
+/// (so `running` matches `running` and `up`-style strings via the state). An
+/// empty `wanted` matches everything. Pure so the predicate is unit-tested.
+fn status_matches(status: &str, wanted: &[String]) -> bool {
+	if wanted.is_empty() {
+		return true;
+	}
+	let s = status.trim().to_ascii_lowercase();
+	wanted.iter().any(|w| {
+		let w = w.trim().to_ascii_lowercase();
+		!w.is_empty() && (s == w || s.starts_with(&w))
+	})
+}
+
+/// Split `--filter KEY=VALUE` predicates into the supported buckets: extra
+/// `status=` values are folded into the status filter, `name=` values into the
+/// name-substring filter, and anything else is returned as `unknown` so the
+/// caller can warn. Pure so it is unit-tested.
+fn split_ps_filters(filters: &[String]) -> (Vec<String>, Vec<String>, Vec<String>) {
+	let (mut status, mut names, mut unknown) = (Vec::new(), Vec::new(), Vec::new());
+	for f in filters {
+		match f.split_once('=') {
+			Some(("status", v)) => status.push(v.to_string()),
+			Some(("name", v)) => names.push(v.to_string()),
+			_ => unknown.push(f.clone()),
+		}
+	}
+	(status, names, unknown)
 }
 
 /// Options for [`Engine::images_with_options`].
@@ -107,6 +126,10 @@ pub struct LogsOptions {
 	pub until: Option<String>,
 	/// Prefix each line with an RFC3339 timestamp, `-t/--timestamps`.
 	pub timestamps: bool,
+	/// Produce monochrome output (no colour in the prefix), `--no-color`.
+	pub no_color: bool,
+	/// Do not print the `{service} | ` prefix, `--no-log-prefix`.
+	pub no_log_prefix: bool,
 }
 
 /// Build the libpod `containers/{}/logs` query string from the options.
@@ -134,8 +157,49 @@ impl Engine {
 	}
 
 	/// List containers with `docker compose ps`-style options: `-a/--all`
-	/// (include stopped), `-q/--quiet` (IDs only), and `--format` (table | json).
-	pub async fn ps_with_options(&self, _file: &ComposeFile, opts: PsOptions) -> Result<()> {
+	/// (include stopped), `-q/--quiet` (IDs only), `--format` (table | json),
+	/// `--services` (service-name list), a positional `SERVICE` filter, and
+	/// `--status`/`--filter` predicates.
+	pub async fn ps_with_options(&self, file: &ComposeFile, opts: PsOptions) -> Result<()> {
+		for name in &opts.services {
+			if !file.services.contains_key(name) {
+				return Err(ComposeError::ServiceNotFound(name.clone()));
+			}
+		}
+
+		// `--services` lists the (optionally filtered) configured service names,
+		// one per line, instead of the container table.
+		if opts.services_only {
+			for name in file.services.keys() {
+				if opts.services.is_empty() || opts.services.iter().any(|s| s == name) {
+					println!("{name}");
+				}
+			}
+			return Ok(());
+		}
+
+		// Fold `--status` and any `status=`/`name=` from `--filter` together;
+		// warn on unsupported `--filter` keys rather than silently ignoring them.
+		let (mut status_filter, name_filter, unknown) = split_ps_filters(&opts.filters);
+		for u in &unknown {
+			tracing::warn!("ps: ignoring unsupported filter '{u}'");
+		}
+		status_filter.extend(opts.status.iter().cloned());
+
+		// A positional `SERVICE` filter restricts to those services' container
+		// names (across replicas).
+		let allowed_names: Option<std::collections::HashSet<String>> = if opts.services.is_empty() {
+			None
+		} else {
+			Some(
+				opts.services
+					.iter()
+					.filter_map(|n| file.services.get(n).map(|s| (n, s)))
+					.flat_map(|(n, s)| self.replica_names(n, s))
+					.collect(),
+			)
+		};
+
 		let label = format!("podup.project={}", self.project);
 		let filters = serde_json::json!({ "label": [label] });
 		let path = format!(
@@ -144,7 +208,7 @@ impl Engine {
 			urlencoded(&filters.to_string()),
 		);
 
-		let containers = self
+		let all_containers = self
 			.client
 			.get_json::<Vec<crate::libpod::types::container::ContainerListEntry>>(&path)
 			.await
@@ -153,6 +217,20 @@ impl Engine {
 		let name_of = |c: &crate::libpod::types::container::ContainerListEntry| {
 			c.names.join(", ").trim_start_matches('/').to_string()
 		};
+
+		let containers: Vec<crate::libpod::types::container::ContainerListEntry> = all_containers
+			.into_iter()
+			.filter(|c| {
+				let name = name_of(c);
+				allowed_names.as_ref().is_none_or(|set| {
+					c.names
+						.iter()
+						.any(|n| set.contains(n.trim_start_matches('/')))
+				}) && (status_matches(&c.state, &status_filter)
+					|| status_matches(&c.status, &status_filter))
+					&& (name_filter.is_empty() || name_filter.iter().any(|nf| name.contains(nf)))
+			})
+			.collect();
 
 		if opts.quiet {
 			for c in &containers {
@@ -227,6 +305,10 @@ impl Engine {
 		opts: LogsOptions,
 	) -> Result<()> {
 		let follow = opts.follow;
+		// `--no-log-prefix` drops the `{service} | ` tag; `--no-color` forces a
+		// monochrome prefix even on a colour-capable stdout.
+		let prefix = !opts.no_log_prefix;
+		let allow_color = !opts.no_color;
 		let query = log_query(&opts);
 		for svc in target_services {
 			if !file.services.contains_key(svc) {
@@ -281,8 +363,8 @@ impl Engine {
 						// let a sibling future block the thread on the same lock
 						// and deadlock. Each frame still locks once and flushes,
 						// keeping interleaved `logs -f` output prompt.
-						let mut out_pfx = LinePrefixer::new(&container_name);
-						let mut err_pfx = LinePrefixer::new(&container_name);
+						let mut out_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
+						let mut err_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
 						while let Some(msg) = stream.next().await {
 							match msg {
 								Ok(LogOutput::StdOut { message }) => {
@@ -324,8 +406,8 @@ impl Engine {
 				// across the await loop would starve concurrent log emissions.
 				// Flush after each frame so `logs -f` still streams promptly.
 				let mut out = std::io::stdout().lock();
-				let mut out_pfx = LinePrefixer::new(&container_name);
-				let mut err_pfx = LinePrefixer::new(&container_name);
+				let mut out_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
+				let mut err_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
 				while let Some(msg) = stream.next().await {
 					match msg.map_err(ComposeError::Podman)? {
 						LogOutput::StdOut { message } => out_pfx.write(&mut out, &message),
@@ -336,130 +418,6 @@ impl Engine {
 				}
 				out_pfx.flush_tail(&mut out);
 				err_pfx.flush_tail(&mut std::io::stderr().lock());
-			}
-		}
-
-		Ok(())
-	}
-
-	/// Run a command in the first replica of the named service with default
-	/// options. Exits with the command's exit code.
-	pub async fn exec(
-		&self,
-		file: &ComposeFile,
-		service_name: &str,
-		cmd: Vec<String>,
-	) -> Result<()> {
-		self.exec_with_options(file, service_name, cmd, ExecOptions::default())
-			.await
-	}
-
-	/// Run a command in a service container with `docker compose exec`-style
-	/// overrides (env, user, workdir, privileged, detach, replica index).
-	pub async fn exec_with_options(
-		&self,
-		file: &ComposeFile,
-		service_name: &str,
-		cmd: Vec<String>,
-		opts: ExecOptions,
-	) -> Result<()> {
-		let service = file
-			.services
-			.get(service_name)
-			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = match opts.index {
-			Some(i) => {
-				let names = self.replica_names(service_name, service);
-				let idx = (i as usize).saturating_sub(1);
-				names.get(idx).cloned().ok_or_else(|| {
-					ComposeError::ServiceNotFound(format!("{service_name} (replica index {i})"))
-				})?
-			}
-			None => self.first_replica_name(service_name, service),
-		};
-
-		let exec_cfg = ExecCreateConfig {
-			cmd: Some(cmd),
-			attach_stdout: Some(true),
-			attach_stderr: Some(true),
-			user: opts.user.clone(),
-			working_dir: opts.workdir.clone(),
-			privileged: opts.privileged.then_some(true),
-			env: (!opts.env.is_empty()).then(|| opts.env.clone()),
-			..Default::default()
-		};
-		let create_path = format!(
-			"{API_PREFIX}/containers/{}/exec",
-			urlencoded(&container_name),
-		);
-		let resp: ExecCreateResponse = self
-			.client
-			.post_json(&create_path, &exec_cfg)
-			.await
-			.map_err(ComposeError::Podman)?;
-		let exec_id = resp.id;
-
-		// `-d/--detach`: start the exec and return without streaming output or
-		// waiting for the exit code. The server returns immediately, so the
-		// response body is dropped.
-		if opts.detach {
-			let start_cfg = ExecStartConfig {
-				detach: true,
-				tty: false,
-			};
-			let start_path = format!("{API_PREFIX}/exec/{}/start", urlencoded(&exec_id));
-			let _ = self
-				.client
-				.post_json_stream(&start_path, &start_cfg)
-				.await
-				.map_err(ComposeError::Podman)?;
-			return Ok(());
-		}
-
-		let start_cfg = ExecStartConfig {
-			detach: false,
-			tty: false,
-		};
-		let start_path = format!("{API_PREFIX}/exec/{}/start", urlencoded(&exec_id));
-		let start_resp = self
-			.client
-			.post_json_stream(&start_path, &start_cfg)
-			.await
-			.map_err(ComposeError::Podman)?;
-		let mut stream = crate::libpod::parse_multiplexed(start_resp.into_body());
-
-		// Lock stdout once for the whole stream instead of re-acquiring the lock
-		// (and issuing a syscall) per frame; stdout is ours exclusively on this
-		// path. stderr is locked per frame because the tracing subscriber also
-		// writes there: holding its lock across the await loop would starve
-		// concurrent log emissions. Flush after each frame so exec streams
-		// promptly.
-		{
-			let mut out = std::io::stdout().lock();
-			while let Some(msg) = stream.next().await {
-				match msg.map_err(ComposeError::Podman)? {
-					LogOutput::StdOut { message } => {
-						let _ = out.write_all(String::from_utf8_lossy(&message).as_bytes());
-						let _ = out.flush();
-					}
-					LogOutput::StdErr { message } => {
-						let mut err = std::io::stderr().lock();
-						let _ = err.write_all(String::from_utf8_lossy(&message).as_bytes());
-						let _ = err.flush();
-					}
-				}
-			}
-		}
-
-		let inspect_path = format!("{API_PREFIX}/exec/{}/json", urlencoded(&exec_id));
-		let inspect: ExecInspect = self
-			.client
-			.get_json(&inspect_path)
-			.await
-			.map_err(ComposeError::Podman)?;
-		if let Some(code) = inspect.exit_code {
-			if code != 0 {
-				return Err(ComposeError::RunExited(code));
 			}
 		}
 
@@ -531,9 +489,39 @@ fn filter_orphans(names: Vec<String>, known: &std::collections::HashSet<String>)
 
 #[cfg(test)]
 mod tests {
-	use super::{display_status, filter_orphans, format_ports, log_query, LogsOptions};
+	use super::{
+		display_status, filter_orphans, format_ports, log_query, split_ps_filters, status_matches,
+		LogsOptions,
+	};
 	use crate::libpod::types::container::{ContainerListEntry, ContainerPort};
 	use std::collections::{HashMap, HashSet};
+
+	#[test]
+	fn status_matches_empty_filter_matches_all() {
+		assert!(status_matches("running", &[]));
+		assert!(status_matches("exited", &[]));
+	}
+
+	#[test]
+	fn status_matches_is_case_insensitive_prefix() {
+		assert!(status_matches("running", &["RUNNING".to_string()]));
+		assert!(status_matches("exited", &["exit".to_string()]));
+		assert!(!status_matches("running", &["exited".to_string()]));
+		// An empty wanted value never matches.
+		assert!(!status_matches("running", &["".to_string()]));
+	}
+
+	#[test]
+	fn split_ps_filters_buckets_known_keys_and_flags_unknown() {
+		let (status, names, unknown) = split_ps_filters(&[
+			"status=running".to_string(),
+			"name=web".to_string(),
+			"label=foo".to_string(),
+		]);
+		assert_eq!(status, vec!["running".to_string()]);
+		assert_eq!(names, vec!["web".to_string()]);
+		assert_eq!(unknown, vec!["label=foo".to_string()]);
+	}
 
 	#[test]
 	fn filter_orphans_keeps_only_unknown_names() {
@@ -623,6 +611,7 @@ mod tests {
 			since: Some("10m".into()),
 			until: Some("2024-01-01T00:00:00".into()),
 			timestamps: true,
+			..Default::default()
 		});
 		assert!(q.contains("follow=true"));
 		assert!(q.contains("timestamps=true"));

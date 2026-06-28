@@ -19,6 +19,8 @@ pub struct PushOptions {
 	/// Override TLS verification of the registry. `None` leaves Podman's default
 	/// (verify on); `Some(false)` allows an insecure/HTTP registry.
 	pub tls_verify: Option<bool>,
+	/// Suppress the push progress output (`-q/--quiet`).
+	pub quiet: bool,
 }
 
 impl Engine {
@@ -59,7 +61,11 @@ impl Engine {
 	/// Push a single image ref and drain its progress stream, surfacing a
 	/// mid-stream `error` line as a failure.
 	async fn push_image(&self, image: &str, opts: &PushOptions) -> Result<()> {
-		info!("pushing {image}");
+		if opts.quiet {
+			tracing::debug!("pushing {image}");
+		} else {
+			info!("pushing {image}");
+		}
 		let mut query = format!("destination={}", urlencoded(image));
 		if let Some(tls) = opts.tls_verify {
 			query.push_str(&format!("&tlsVerify={tls}"));
@@ -76,7 +82,7 @@ impl Engine {
 		while let Some(result) = stream.next().await {
 			match result {
 				Ok(progress) => {
-					if !progress.stream.is_empty() {
+					if !progress.stream.is_empty() && !opts.quiet {
 						info!("{}", progress.stream.trim_end());
 					}
 					if !progress.error.is_empty() {
@@ -89,7 +95,11 @@ impl Engine {
 		match stream_error {
 			Some(err) => Err(ComposeError::Build(format!("push {image}: {err}"))),
 			None => {
-				info!("pushed {image}");
+				if opts.quiet {
+					tracing::debug!("pushed {image}");
+				} else {
+					info!("pushed {image}");
+				}
 				Ok(())
 			}
 		}

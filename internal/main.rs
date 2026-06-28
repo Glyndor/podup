@@ -63,6 +63,39 @@ fn run_to_exit() {
 	}
 }
 
+/// Resolve the Podman socket: an explicit `--socket` / `PODMAN_SOCKET` value
+/// wins (clap already folds the env var into `cli.socket`); otherwise fall back
+/// to `DOCKER_HOST` for Docker compatibility. A remote scheme on either is
+/// rejected by [`podup::podman::connect`], so `DOCKER_HOST=tcp://…` fails closed
+/// rather than being silently ignored.
+fn resolve_socket(cli_socket: Option<&str>) -> Option<String> {
+	cli_socket
+		.map(str::to_string)
+		.or_else(|| std::env::var("DOCKER_HOST").ok().filter(|s| !s.is_empty()))
+}
+
+/// Render help for `help [COMMAND]`, framed and colour-aware to match clap's own
+/// `--help`. Help-flag tokens (`-h`/`--help`) and a leading `--` are tolerated;
+/// the first remaining token selects the subcommand (an unknown one falls back
+/// to the top-level help).
+fn print_command_help(commands: &[String]) -> podup::Result<()> {
+	use clap::CommandFactory;
+	let mut cmd = Cli::command();
+	let target = commands
+		.iter()
+		.find(|t| !matches!(t.as_str(), "-h" | "--help" | "--"));
+	let rendered = match target.and_then(|name| cmd.find_subcommand_mut(name)) {
+		Some(sub) => sub.render_long_help(),
+		None => cmd.render_long_help(),
+	};
+	if podup::ui::stdout_colored() {
+		print!("\n{}\n", rendered.ansi());
+	} else {
+		print!("\n{rendered}\n");
+	}
+	Ok(())
+}
+
 /// Print a top-level error to stderr with a colour-aware bold-red `error:` label.
 /// anstream strips the styling when stderr is not a terminal or colour is off.
 fn print_error(e: &podup::ComposeError) {
@@ -98,6 +131,13 @@ async fn run() -> podup::Result<()> {
 	};
 	init_tracing(log_floor);
 
+	// `help [COMMAND]` is served from the static CLI definition. Unlike clap's
+	// built-in help subcommand it tolerates extra tokens, `-h`/`--help`, and a
+	// leading `--`, and never errors with "unrecognized subcommand".
+	if let Commands::Help { commands } = &cli.command {
+		return print_command_help(commands);
+	}
+
 	// `completions` derives entirely from the static CLI definition; it neither
 	// parses a compose file nor contacts Podman. Print to stdout for piping.
 	#[cfg(feature = "completions")]
@@ -132,16 +172,38 @@ async fn run() -> podup::Result<()> {
 			.map_err(|e| podup::ComposeError::Update(format!("update task failed: {e}")))?;
 	}
 
+	// An explicit `--project-directory` must exist and be a directory before any
+	// command relies on it (staging, lock files, quadlet output, base-dir
+	// resolution); validate it once, at the trust boundary, for every command.
+	validate_project_directory(cli.project_directory.as_deref())?;
+
 	// `ls` discovers projects across the host by container label; it needs a
 	// Podman connection but no compose file, so handle it before parsing one.
-	if let Commands::Ls { all, quiet, format } = &cli.command {
-		let client = podup::podman::connect(cli.socket.as_deref())?;
+	if let Commands::Ls {
+		all,
+		quiet,
+		filter,
+		format,
+	} = &cli.command
+	{
+		// `ls` is project-agnostic and short-circuits before compose parsing, so
+		// validate the global `--env-file` paths it would otherwise silently
+		// ignore (the other paths validate them while parsing).
+		for ef in &cli.env_file {
+			if !std::path::Path::new(ef).is_file() {
+				return Err(podup::ComposeError::Unsupported(format!(
+					"--env-file {ef} does not exist or is not a file"
+				)));
+			}
+		}
+		let client = podup::podman::connect(resolve_socket(cli.socket.as_deref()).as_deref())?;
 		return podup::list_projects(
 			&client,
 			podup::LsOptions {
 				all: *all,
 				quiet: *quiet,
 				json: *format == OutputFormat::Json,
+				filters: filter.clone(),
 			},
 		)
 		.await;
@@ -153,8 +215,13 @@ async fn run() -> podup::Result<()> {
 	if let Commands::Config {
 		format,
 		services,
+		volumes,
+		images,
+		profiles,
+		hash,
 		quiet,
 		no_interpolate,
+		no_normalize: _,
 		resolve_image_digests,
 	} = &cli.command
 	{
@@ -168,14 +235,25 @@ async fn run() -> podup::Result<()> {
 		// `--resolve-image-digests` pins each image to its registry digest, which
 		// needs a Podman connection to inspect images.
 		let mut resolved = if *resolve_image_digests {
-			let client = podup::podman::connect(cli.socket.as_deref())?;
+			let client = podup::podman::connect(resolve_socket(cli.socket.as_deref()).as_deref())?;
 			podup::resolve_image_digests(&client, &parsed).await?
 		} else {
 			parsed
 		};
 		// Honor active profiles so `config` prints the same services `up` starts.
 		podup::retain_active_profiles(&mut resolved, &cli.profile);
-		return startup::render_config(&resolved, format, *services, *quiet);
+		return startup::render_config(
+			&resolved,
+			format,
+			&startup::ConfigOutput {
+				services: *services,
+				volumes: *volumes,
+				images: *images,
+				profiles: *profiles,
+				hash: hash.clone(),
+				quiet: *quiet,
+			},
+		);
 	}
 
 	let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
@@ -202,7 +280,7 @@ async fn run() -> podup::Result<()> {
 		return write_quadlet(&file, &project, output.as_deref());
 	}
 
-	let client = podup::podman::connect(cli.socket.as_deref())?;
+	let client = podup::podman::connect(resolve_socket(cli.socket.as_deref()).as_deref())?;
 	// The `-t/--timeout` shutdown-grace override applies to every command that
 	// stops containers (up recreate, down, stop, restart).
 	let stop_timeout = match &cli.command {
@@ -228,6 +306,7 @@ async fn run() -> podup::Result<()> {
 			..
 		} => (pull.clone(), *no_build, *quiet_pull),
 		Commands::Pull { quiet, policy, .. } => (policy.clone(), false, *quiet),
+		Commands::Create { pull, .. } => (pull.clone(), false, false),
 		_ => (None, false, false),
 	};
 	// `up -V/--renew-anon-volumes`: recreate anonymous volumes on container
