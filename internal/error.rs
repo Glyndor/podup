@@ -72,25 +72,104 @@ pub enum ComposeError {
 	},
 	/// `start --wait --wait-timeout` elapsed before services became healthy.
 	WaitTimeout { secs: u64 },
+	/// A replica index (`--index`) does not name a replica of the service (zero,
+	/// or beyond the replica count). Kept distinct from [`Self::ServiceNotFound`]
+	/// so the index hint renders outside the quoted service name.
+	ReplicaIndex { service: String, index: u32 },
+	/// A filesystem operation failed against a known path; carries the path so the
+	/// message can name the offending file (Rust's `File::create`/`open` errors
+	/// drop it).
+	IoPath {
+		path: String,
+		source: std::io::Error,
+	},
+	/// A service's build context could not be accessed; names the service and the
+	/// resolved context path instead of a bare `io error`.
+	BuildContext {
+		service: String,
+		path: String,
+		source: std::io::Error,
+	},
+	/// A `cp` operation failed (host-side packing, or a destination shape
+	/// mismatch). Distinct from [`Self::Build`] so a copy never reads as a build
+	/// error.
+	Copy(String),
+	/// A targeted service container is not running (e.g. `exec`/`attach` against a
+	/// stopped or never-created container).
+	NotRunning(String),
+}
+
+/// Cap on how much of a wrapped parse error is reflected back to the user.
+/// serde_yaml embeds the offending scalar verbatim, so pointing `-f` at a
+/// non-compose file would otherwise echo its entire contents (a host
+/// file/secret disclosure); truncate it.
+const MAX_PARSE_DETAIL: usize = 200;
+
+/// Escape control characters (tabs, newlines, ESC, …) in an interpolated,
+/// possibly-untrusted name before it reaches a terminal, so a crafted
+/// service/container name cannot emit raw escape sequences. Printable characters
+/// (including non-ASCII) pass through unchanged; only borrows when nothing needs
+/// escaping.
+fn sanitize_name(s: &str) -> std::borrow::Cow<'_, str> {
+	if s.chars().any(char::is_control) {
+		s.chars()
+			.flat_map(|c| {
+				if c.is_control() {
+					c.escape_default().collect::<Vec<_>>()
+				} else {
+					vec![c]
+				}
+			})
+			.collect::<String>()
+			.into()
+	} else {
+		std::borrow::Cow::Borrowed(s)
+	}
+}
+
+/// Truncate a wrapped lower-level error message to [`MAX_PARSE_DETAIL`] so an
+/// embedded file scalar (potential secret) is not reflected untruncated.
+fn truncate_detail(s: &str) -> String {
+	if s.chars().count() <= MAX_PARSE_DETAIL {
+		return s.to_string();
+	}
+	let cut: String = s.chars().take(MAX_PARSE_DETAIL).collect();
+	format!("{cut}… (truncated)")
 }
 
 impl fmt::Display for ComposeError {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
-			Self::Parse(e) => write!(f, "failed to parse compose file: {e}"),
-			Self::FileNotFound(s) => write!(f, "compose file not found: {s}"),
+			Self::Parse(e) => write!(
+				f,
+				"failed to parse compose file: {}",
+				truncate_detail(&e.to_string())
+			),
+			Self::FileNotFound(s) => write!(f, "compose file not found: {}", sanitize_name(s)),
 			Self::Io(e) => write!(f, "io error: {e}"),
 			Self::Podman(e) => write!(f, "podman error: {e}"),
-			Self::ServiceNotFound(s) => write!(f, "service '{s}' not found"),
-			Self::CircularDependency(s) => write!(f, "circular dependency detected: {s}"),
-			Self::NoImageOrBuild(s) => write!(f, "service '{s}' has no image or build config"),
+			Self::ServiceNotFound(s) => write!(f, "service '{}' not found", sanitize_name(s)),
+			Self::CircularDependency(s) => write!(f, "{s}"),
+			Self::NoImageOrBuild(s) => {
+				write!(
+					f,
+					"service '{}' has no image or build config",
+					sanitize_name(s)
+				)
+			}
 			Self::RequiredVarNotSet { var, msg } => {
 				write!(f, "required variable '{var}' is not set: {msg}")
 			}
 			Self::InvalidSubstitution(s) => {
 				write!(f, "invalid variable substitution: {s}")
 			}
-			Self::HealthCheckTimeout(s) => write!(f, "health check timeout for container '{s}'"),
+			Self::HealthCheckTimeout(s) => {
+				write!(
+					f,
+					"health check timeout for container '{}'",
+					sanitize_name(s)
+				)
+			}
 			Self::InvalidPort(s) => write!(f, "invalid port mapping: {s}"),
 			Self::Build(s) => write!(f, "build error: {s}"),
 			Self::Extends(s) => write!(f, "extends error: {s}"),
@@ -121,7 +200,8 @@ impl fmt::Display for ComposeError {
 			}
 			Self::WaitServiceExited { container, code } => write!(
 				f,
-				"container '{container}' exited with code {code} while waiting for it to be ready"
+				"container '{}' exited with code {code} while waiting for it to be ready",
+				sanitize_name(container)
 			),
 			Self::ReplicaLimitExceeded {
 				service,
@@ -136,6 +216,26 @@ impl fmt::Display for ComposeError {
 				f,
 				"timed out after {secs}s waiting for services to become healthy"
 			),
+			Self::ReplicaIndex { service, index } => write!(
+				f,
+				"service '{}' has no replica {index} (replica indexes are 1-based)",
+				sanitize_name(service)
+			),
+			Self::IoPath { path, source } => {
+				write!(f, "io error: {}: {source}", sanitize_name(path))
+			}
+			Self::BuildContext {
+				service,
+				path,
+				source,
+			} => write!(
+				f,
+				"build context '{}' for service '{}': {source}",
+				sanitize_name(path),
+				sanitize_name(service)
+			),
+			Self::Copy(s) => write!(f, "cp error: {s}"),
+			Self::NotRunning(s) => write!(f, "service '{}' is not running", sanitize_name(s)),
 		}
 	}
 }
@@ -146,6 +246,7 @@ impl std::error::Error for ComposeError {
 			Self::Parse(e) => Some(e),
 			Self::Io(e) => Some(e),
 			Self::Podman(e) => Some(e),
+			Self::IoPath { source, .. } | Self::BuildContext { source, .. } => Some(source),
 			_ => None,
 		}
 	}
@@ -192,10 +293,7 @@ mod tests {
 				"service 's' not found",
 				ComposeError::ServiceNotFound("s".into()),
 			),
-			(
-				"circular dependency detected: c",
-				ComposeError::CircularDependency("c".into()),
-			),
+			("c", ComposeError::CircularDependency("c".into())),
 			(
 				"service 'svc' has no image or build config",
 				ComposeError::NoImageOrBuild("svc".into()),
@@ -270,6 +368,33 @@ mod tests {
 				"timed out after 30s waiting for services to become healthy",
 				ComposeError::WaitTimeout { secs: 30 },
 			),
+			(
+				"service 'web' has no replica 99 (replica indexes are 1-based)",
+				ComposeError::ReplicaIndex {
+					service: "web".into(),
+					index: 99,
+				},
+			),
+			(
+				"io error: /out/x.tar:",
+				ComposeError::IoPath {
+					path: "/out/x.tar".into(),
+					source: std::io::Error::other("boom"),
+				},
+			),
+			(
+				"build context './ctx' for service 'web':",
+				ComposeError::BuildContext {
+					service: "web".into(),
+					path: "./ctx".into(),
+					source: std::io::Error::other("boom"),
+				},
+			),
+			("cp error: oops", ComposeError::Copy("oops".into())),
+			(
+				"service 'web' is not running",
+				ComposeError::NotRunning("web".into()),
+			),
 		];
 		for (expected_prefix, err) in cases {
 			let msg = err.to_string();
@@ -297,6 +422,52 @@ mod tests {
 		assert!(podman.source().is_some());
 		let svc = ComposeError::ServiceNotFound("s".into());
 		assert!(svc.source().is_none());
+	}
+
+	#[test]
+	fn service_name_control_chars_are_escaped_in_display() {
+		// A crafted name carrying an ESC sequence and newline must not reach the
+		// terminal raw: the control bytes are escaped, the quotes preserved.
+		let err = ComposeError::ServiceNotFound("we\x1b[31mb\n".into());
+		let msg = err.to_string();
+		assert!(!msg.contains('\x1b'), "ESC must be escaped: {msg:?}");
+		assert!(!msg.contains('\n'), "newline must be escaped: {msg:?}");
+		assert!(
+			msg.contains("\\u{1b}") && msg.contains("\\n"),
+			"got {msg:?}"
+		);
+	}
+
+	#[test]
+	fn parse_error_detail_is_truncated() {
+		// serde_yaml embeds the offending scalar verbatim ("invalid type: string
+		// \"…\""), so a huge value would otherwise be echoed in full — pointing
+		// `-f` at a secret file would leak its contents. The Parse Display must cap
+		// the reflected detail.
+		let big = "x".repeat(5_000);
+		let yaml = format!("\"{big}\"");
+		let err = ComposeError::Parse(serde_yaml::from_str::<u8>(&yaml).unwrap_err());
+		let msg = err.to_string();
+		assert!(msg.starts_with("failed to parse compose file: "));
+		assert!(
+			msg.chars().count() < 400,
+			"parse detail must be truncated, got {} chars",
+			msg.chars().count()
+		);
+		assert!(msg.contains("truncated"));
+	}
+
+	#[test]
+	fn replica_index_hint_is_outside_the_quoted_name() {
+		// The hint must render after the closing quote, not inside the service name.
+		let err = ComposeError::ReplicaIndex {
+			service: "web".into(),
+			index: 0,
+		};
+		let msg = err.to_string();
+		assert!(msg.contains("'web'"), "service name stays clean: {msg:?}");
+		assert!(!msg.contains("'web "), "hint leaked into the name: {msg:?}");
+		assert!(msg.contains("1-based"));
 	}
 
 	#[test]

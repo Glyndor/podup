@@ -51,13 +51,35 @@ impl fmt::Display for PodmanError {
 fn conflict_hint(message: &str) -> Option<&'static str> {
 	let m = message.to_ascii_lowercase();
 	if m.contains("without force") || (m.contains("cannot remove") && m.contains("running")) {
-		Some("the container is running — stop it first, or pass `-f` to force removal")
+		// Podman's removal refusal wording is the same for a running and a paused
+		// container ("running or paused containers cannot be removed without
+		// force"); the state is only in the leading "as it is paused/running"
+		// clause. Match that so a paused container is not mislabelled as running.
+		if m.contains("is paused") {
+			Some("the container is paused — unpause it first, or pass `-f` to force removal")
+		} else {
+			Some("the container is running — stop it first, or pass `-f` to force removal")
+		}
 	} else if m.contains("already paused") {
 		Some("the container is already paused")
 	} else if m.contains("not paused") {
 		Some("the container is not paused")
-	} else if m.contains("not running") {
+	} else if m.contains("not running")
+		|| m.contains("can only kill running containers")
+		|| m.contains("can only create exec sessions on running containers")
+	{
+		// kill/exec against a stopped container, plus the generic "not running".
 		Some("the container is not running")
+	} else if m.contains("already running") {
+		Some("the container is already running")
+	} else if m.contains("must be in created or stopped state")
+		|| (m.contains("unable to start") && m.contains("state"))
+	{
+		// start of a container that is not in a startable state (e.g. paused).
+		Some("the container cannot be started in its current state")
+	} else if m.contains("container state improper") {
+		// restart/other ops that podman rejects with the generic state message.
+		Some("the container is not in a valid state for this operation")
 	} else {
 		None
 	}
@@ -135,6 +157,41 @@ mod tests {
 				.unwrap()
 				.contains("not running")
 		);
+	}
+
+	#[test]
+	fn conflict_hint_paused_rm_is_not_labelled_running() {
+		// Podman's removal refusal for a *paused* container shares the "without
+		// force" wording; the hint must say paused, not running.
+		let paused = "cannot remove container abc as it is paused - running or paused containers \
+			cannot be removed without force: container state improper";
+		let hint = conflict_hint(paused).unwrap();
+		assert!(hint.contains("paused"), "got {hint:?}");
+		assert!(!hint.contains("running"), "must not say running: {hint:?}");
+		assert!(hint.contains("-f"));
+	}
+
+	#[test]
+	fn conflict_hint_covers_kill_exec_and_start() {
+		// kill a stopped container.
+		assert!(
+			conflict_hint("can only kill running containers. abc is in state exited")
+				.unwrap()
+				.contains("not running")
+		);
+		// exec into a stopped container.
+		assert!(conflict_hint(
+			"can only create exec sessions on running containers: container state improper"
+		)
+		.unwrap()
+		.contains("not running"));
+		// start a container that is not startable.
+		assert!(conflict_hint(
+			"unable to start container abc: container must be in Created or Stopped state to be \
+			 started"
+		)
+		.unwrap()
+		.contains("cannot be started"));
 	}
 
 	#[test]

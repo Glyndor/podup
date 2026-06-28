@@ -51,12 +51,26 @@ pub fn resolve_order(file: &ComposeFile) -> Result<Vec<String>> {
 	}
 
 	if order.len() != services.len() {
-		return Err(ComposeError::CircularDependency(
-			"cycle detected in depends_on".into(),
-		));
+		return Err(ComposeError::CircularDependency(cycle_message(&in_degree)));
 	}
 
 	Ok(order)
+}
+
+/// Build the user-facing circular-dependency message naming the services still
+/// holding a nonzero in-degree after Kahn's algorithm — exactly the nodes that
+/// form (or feed into) the cycle. Sorted for a deterministic message.
+fn cycle_message(in_degree: &HashMap<&str, usize>) -> String {
+	let mut involved: Vec<&str> = in_degree
+		.iter()
+		.filter(|(_, &deg)| deg > 0)
+		.map(|(&s, _)| s)
+		.collect();
+	involved.sort_unstable();
+	format!(
+		"circular dependency among services: {}",
+		involved.join(", ")
+	)
 }
 
 /// Group services into dependency levels (Kahn's algorithm, layered).
@@ -117,9 +131,7 @@ pub fn resolve_levels(file: &ComposeFile) -> Result<Vec<Vec<String>>> {
 	}
 
 	if processed != services.len() {
-		return Err(ComposeError::CircularDependency(
-			"cycle detected in depends_on".into(),
-		));
+		return Err(ComposeError::CircularDependency(cycle_message(&in_degree)));
 	}
 
 	Ok(levels)
@@ -156,7 +168,22 @@ mod tests {
 	fn resolve_order_cycle_is_error() {
 		let yaml = "services:\n  a:\n    image: x\n    depends_on: [b]\n  b:\n    image: y\n    depends_on: [a]\n";
 		let file = parse_str_raw(yaml).unwrap();
-		assert!(resolve_order(&file).is_err());
+		let err = resolve_order(&file).unwrap_err();
+		// The message names the services in the cycle and is not the old redundant
+		// "circular dependency detected: cycle detected in depends_on".
+		let msg = err.to_string();
+		assert!(
+			msg.contains("circular dependency among services"),
+			"got {msg:?}"
+		);
+		assert!(
+			msg.contains('a') && msg.contains('b'),
+			"names the cycle: {msg:?}"
+		);
+		assert!(
+			!msg.contains("cycle detected in depends_on"),
+			"no redundancy: {msg:?}"
+		);
 	}
 
 	#[test]
@@ -191,7 +218,16 @@ mod tests {
 	fn resolve_levels_cycle_is_error() {
 		let yaml = "services:\n  a:\n    image: x\n    depends_on: [b]\n  b:\n    image: y\n    depends_on: [a]\n";
 		let file = parse_str_raw(yaml).unwrap();
-		assert!(resolve_levels(&file).is_err());
+		let err = resolve_levels(&file).unwrap_err();
+		let msg = err.to_string();
+		assert!(
+			msg.contains("circular dependency among services"),
+			"got {msg:?}"
+		);
+		assert!(
+			msg.contains('a') && msg.contains('b'),
+			"names the cycle: {msg:?}"
+		);
 	}
 
 	#[test]
