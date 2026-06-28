@@ -54,6 +54,12 @@ impl Engine {
 		dst: &str,
 		opts: CpOptions,
 	) -> Result<()> {
+		// Reject the explicitly-unsupported endpoint forms (`-` for stdin/stdout,
+		// and a `SERVICE:` with an empty container path) with a clear message
+		// before they silently fall through to a local file literally named `-`
+		// or `SERVICE:`.
+		check_endpoint(src)?;
+		check_endpoint(dst)?;
 		match (parse_endpoint(src), parse_endpoint(dst)) {
 			(Some((service, container_path)), None) => {
 				self.cp_from_container(file, service, container_path, Path::new(dst), &opts)
@@ -156,6 +162,31 @@ impl Engine {
 			(parent.to_string(), Some(name.to_string()))
 		};
 
+		// Validate the extraction directory exists and is itself a directory before
+		// PUTting the archive. Without this, libpod silently auto-creates a missing
+		// parent chain (diverging from docker/podman `cp`, which error with "no such
+		// directory"); and when a path component is a regular file the archive PUT
+		// never gets a response, blocking the full READ_TIMEOUT window instead of
+		// failing fast.
+		let extract_stat_path = format!(
+			"{API_PREFIX}/containers/{}/archive?path={}",
+			urlencoded(&container_name),
+			urlencoded(&extract_dir),
+		);
+		match self.client.head_path_is_dir(&extract_stat_path).await? {
+			Some(true) => {}
+			Some(false) => {
+				return Err(ComposeError::Copy(format!(
+					"cp: not a directory: {extract_dir}"
+				)));
+			}
+			None => {
+				return Err(ComposeError::Copy(format!(
+					"cp: no such directory: {extract_dir}"
+				)));
+			}
+		}
+
 		let src_buf = src.to_path_buf();
 		let follow = opts.follow_link;
 		let rename_for_pack = rename.clone();
@@ -182,6 +213,36 @@ impl Engine {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/// Reject the `cp` endpoint forms podup explicitly does not support, with a
+/// clear diagnostic rather than letting them fall through to a local path that
+/// happens to be named `-` or `SERVICE:`.
+///
+/// - `-` (stdin/stdout streaming) is not implemented.
+/// - `SERVICE:` (a colon with an empty container path) is a malformed reference.
+///
+/// A plain local path (no colon, or a colon that is part of an ordinary host
+/// path / Windows drive) is left to [`parse_endpoint`].
+fn check_endpoint(s: &str) -> Result<()> {
+	if s == "-" {
+		return Err(ComposeError::Unsupported(
+			"cp: stdin/stdout ('-') is not supported".into(),
+		));
+	}
+	if let Some((svc, path)) = s.split_once(':') {
+		// A Windows drive letter (`C:\...`) is a local path, not a service ref.
+		#[cfg(windows)]
+		if svc.len() == 1 && svc.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+			return Ok(());
+		}
+		if !svc.is_empty() && path.is_empty() {
+			return Err(ComposeError::Copy(format!(
+				"cp: empty container path in '{s}' (expected SERVICE:PATH)"
+			)));
+		}
+	}
+	Ok(())
+}
 
 fn parse_endpoint(s: &str) -> Option<(&str, &str)> {
 	if s == "-" {
@@ -216,18 +277,19 @@ fn pack_path(src: &Path, follow_link: bool, name_override: Option<&str>) -> Resu
 		let default = src.file_name().unwrap_or(std::ffi::OsStr::new("."));
 		let name: &std::ffi::OsStr = name_override.map(std::ffi::OsStr::new).unwrap_or(default);
 		tar.append_dir_all(name, src)
-			.map_err(|e| ComposeError::Build(e.to_string()))?;
+			.map_err(|e| ComposeError::Copy(format!("cp: {e}")))?;
 	} else {
 		let default = src.file_name().unwrap_or(std::ffi::OsStr::new("file"));
 		let name: &std::ffi::OsStr = name_override.map(std::ffi::OsStr::new).unwrap_or(default);
 		tar.append_path_with_name(src, name)
-			.map_err(|e| ComposeError::Build(e.to_string()))?;
+			.map_err(|e| ComposeError::Copy(format!("cp: {e}")))?;
 	}
 
 	let gz = tar
 		.into_inner()
-		.map_err(|e| ComposeError::Build(e.to_string()))?;
-	gz.finish().map_err(|e| ComposeError::Build(e.to_string()))
+		.map_err(|e| ComposeError::Copy(format!("cp: {e}")))?;
+	gz.finish()
+		.map_err(|e| ComposeError::Copy(format!("cp: {e}")))
 }
 
 /// Route a container archive to the host destination.
@@ -245,11 +307,45 @@ fn extract_archive(tar_bytes: &[u8], dst: &Path) -> Result<()> {
 	if dst.is_dir() {
 		return extract_tar_guarded(tar_bytes, dst);
 	}
+	// `dst` is not an existing directory.
 	if !archive_contains_dir(tar_bytes)? {
-		// A single regular file (or, defensively, a name-only archive) is written
-		// to exactly `dst`; `write_single_entry_to` still rejects a multi-entry
-		// archive against a file destination.
+		// A single regular file (or, defensively, a name-only archive). docker/podman
+		// `cp` require the destination's parent to exist and refuse a trailing-slash
+		// (directory) destination that does not exist, rather than auto-creating it.
+		if has_trailing_separator(dst) {
+			return Err(ComposeError::Copy(format!(
+				"cp: no such directory: {}",
+				dst.display()
+			)));
+		}
+		if let Some(parent) = dst.parent() {
+			if !parent.as_os_str().is_empty() && !parent.exists() {
+				return Err(ComposeError::Copy(format!(
+					"cp: no such directory: {}",
+					parent.display()
+				)));
+			}
+		}
+		// The single entry's content is written to exactly `dst`;
+		// `write_single_entry_to` still rejects a multi-entry archive here.
 		return write_single_entry_to(tar_bytes, dst);
+	}
+	// Directory source. A destination that already exists as a non-directory is a
+	// clear error (docker `cp` cannot copy a directory onto a file), rather than
+	// letting `create_dir_all` surface a misleading "File exists".
+	if dst.exists() {
+		return Err(ComposeError::Copy(format!(
+			"cp: cannot copy a directory onto the existing file {}",
+			dst.display()
+		)));
+	}
+	if let Some(parent) = dst.parent() {
+		if !parent.as_os_str().is_empty() && !parent.exists() {
+			return Err(ComposeError::Copy(format!(
+				"cp: no such directory: {}",
+				parent.display()
+			)));
+		}
 	}
 	// Directory source into a non-existent destination: create it and copy the
 	// source's contents in. The libpod archive is tarred under the source's
@@ -258,6 +354,17 @@ fn extract_archive(tar_bytes: &[u8], dst: &Path) -> Result<()> {
 	std::fs::create_dir_all(dst).map_err(ComposeError::Io)?;
 	extract_tar_guarded(tar_bytes, dst)?;
 	flatten_single_wrapper_dir(dst)
+}
+
+/// True when the destination path was written with a trailing path separator
+/// (e.g. `./newdir/`), which `docker cp` treats as an explicit *directory*
+/// destination — it must already exist.
+fn has_trailing_separator(p: &Path) -> bool {
+	p.as_os_str()
+		.to_string_lossy()
+		.chars()
+		.last()
+		.is_some_and(std::path::is_separator)
 }
 
 /// True if any entry in `tar_bytes` is a directory — the signal that the source
@@ -341,11 +448,9 @@ fn extract_tar_guarded(tar_bytes: &[u8], dst_dir: &Path) -> Result<()> {
 fn write_single_entry_to(tar_bytes: &[u8], dst: &Path) -> Result<()> {
 	use std::io::Read;
 
-	if let Some(parent) = dst.parent() {
-		if !parent.as_os_str().is_empty() && !parent.exists() {
-			std::fs::create_dir_all(parent).map_err(ComposeError::Io)?;
-		}
-	}
+	// The caller (`extract_archive`) has already validated that `dst`'s parent
+	// directory exists; matching docker/podman `cp`, a missing parent is an error
+	// rather than being auto-created here.
 
 	let cursor = std::io::Cursor::new(tar_bytes);
 	let mut archive = tar::Archive::new(cursor);
@@ -678,13 +783,76 @@ mod tests {
 	}
 
 	#[test]
-	fn extract_archive_to_file_creates_missing_parent() {
-		// The destination's parent directory is created on demand so a fresh
-		// `cp svc:/f ./new/dir/f` works without a pre-existing tree.
+	fn extract_archive_to_file_errors_on_missing_parent() {
+		// docker/podman `cp` error when the destination's parent directory does not
+		// exist, rather than silently creating the whole chain.
 		let dir = tempfile::tempdir().expect("tempdir");
 		let dst = dir.path().join("new").join("nested").join("file.txt");
 		let bytes = tar_bytes_with("ignored-name", b"data");
-		super::extract_archive(&bytes, &dst).expect("extract");
-		assert_eq!(std::fs::read(&dst).expect("read"), b"data");
+		let err = super::extract_archive(&bytes, &dst).unwrap_err();
+		assert!(format!("{err}").contains("no such directory"), "got: {err}");
+		assert!(!dst.exists(), "nothing must be created on a missing parent");
+		assert!(
+			!dst.parent().unwrap().exists(),
+			"the parent chain must not be created"
+		);
+	}
+
+	#[test]
+	fn extract_archive_to_trailing_slash_missing_dir_errors() {
+		// A trailing-slash destination names a directory; when it does not exist,
+		// `cp` errors instead of hitting a misleading "Is a directory" (EISDIR).
+		let dir = tempfile::tempdir().expect("tempdir");
+		// Keep the trailing separator on the path string.
+		let dst = std::path::PathBuf::from(format!("{}/newdir/", dir.path().display()));
+		let bytes = tar_bytes_with("hostname", b"data");
+		let err = super::extract_archive(&bytes, &dst).unwrap_err();
+		assert!(format!("{err}").contains("no such directory"), "got: {err}");
+		assert!(!dst.exists(), "nothing must be created");
+	}
+
+	#[test]
+	fn extract_archive_dir_source_onto_existing_file_errors() {
+		// A directory source whose destination already exists as a regular file is
+		// a clear error, not a misleading "File exists" (EEXIST); the file is left
+		// untouched.
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dst = dir.path().join("existing");
+		std::fs::write(&dst, b"keep").expect("write");
+		let bytes = tar_dir_with("srcdir", &[("a.txt", b"aaa")]);
+		let err = super::extract_archive(&bytes, &dst).unwrap_err();
+		assert!(
+			format!("{err}").contains("cannot copy a directory"),
+			"got: {err}"
+		);
+		assert_eq!(
+			std::fs::read(&dst).expect("read"),
+			b"keep",
+			"the existing file must be left untouched"
+		);
+	}
+
+	#[test]
+	fn check_endpoint_rejects_dash() {
+		let err = super::check_endpoint("-").unwrap_err();
+		assert!(format!("{err}").contains("stdin/stdout"), "got: {err}");
+	}
+
+	#[test]
+	fn check_endpoint_rejects_empty_container_path() {
+		let err = super::check_endpoint("web:").unwrap_err();
+		assert!(
+			format!("{err}").contains("empty container path"),
+			"got: {err}"
+		);
+	}
+
+	#[test]
+	fn check_endpoint_allows_normal_forms() {
+		// A plain local path, a proper SERVICE:PATH, and a relative host path are
+		// all fine (validation only rejects `-` and `SERVICE:`).
+		assert!(super::check_endpoint("/tmp/file").is_ok());
+		assert!(super::check_endpoint("web:/app/data").is_ok());
+		assert!(super::check_endpoint("./local").is_ok());
 	}
 }
