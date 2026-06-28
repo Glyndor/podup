@@ -66,8 +66,36 @@ fn run_to_exit() {
 		}
 		Err(e) => {
 			print_error(&e);
-			process::exit(1);
+			// A `run`/`exec` whose command cannot be launched arrives as a Podman
+			// (OCI/crun) error; map it onto docker's conventional codes (127 not
+			// found, 126 not executable) instead of the generic exit 1.
+			let code = match &e {
+				podup::ComposeError::Podman(_) => command_failure_exit_code(&e.to_string()),
+				_ => 1,
+			};
+			process::exit(code);
 		}
+	}
+}
+
+/// Map a failed launch onto docker's conventional exit codes by inspecting the
+/// OCI/crun error text: a "command not found" failure → 127, a
+/// "not executable"/"permission denied"/"exec format error" failure → 126,
+/// anything else → 1. Pure string inspection so it is unit-testable.
+fn command_failure_exit_code(msg: &str) -> i32 {
+	let m = msg.to_ascii_lowercase();
+	let not_found = m.contains("executable file not found")
+		|| m.contains("not found in $path")
+		|| (m.contains("oci runtime") && m.contains("no such file"));
+	let not_executable = m.contains("exec format error")
+		|| m.contains("not executable")
+		|| (m.contains("oci runtime") && m.contains("permission denied"));
+	if not_found {
+		127
+	} else if not_executable {
+		126
+	} else {
+		1
 	}
 }
 
@@ -343,6 +371,41 @@ async fn run() -> podup::Result<()> {
 	};
 
 	dispatch::dispatch(&engine, &file, cli.command, &cli.profile).await
+}
+
+#[cfg(test)]
+mod exit_code_tests {
+	use super::command_failure_exit_code;
+
+	#[test]
+	fn not_found_maps_to_127() {
+		assert_eq!(
+			command_failure_exit_code(
+				"podman error: crun: executable file `foo` not found in $PATH: \
+				 No such file or directory: OCI runtime command not found error"
+			),
+			127
+		);
+		assert_eq!(
+			command_failure_exit_code("OCI runtime error: ...: no such file or directory"),
+			127
+		);
+	}
+
+	#[test]
+	fn not_executable_maps_to_126() {
+		assert_eq!(
+			command_failure_exit_code("OCI runtime error: permission denied"),
+			126
+		);
+		assert_eq!(command_failure_exit_code("exec format error"), 126);
+	}
+
+	#[test]
+	fn unrelated_errors_map_to_1() {
+		assert_eq!(command_failure_exit_code("some other failure"), 1);
+		assert_eq!(command_failure_exit_code("container is restarting"), 1);
+	}
 }
 
 /// Compose-only global value-flags that `update` parses (they are declared

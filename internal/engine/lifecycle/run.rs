@@ -64,6 +64,13 @@ impl Engine {
 			}
 		}
 
+		// A user-supplied `--name` is taken verbatim (no project prefix), so it can
+		// collide with an arbitrary pre-existing container. docker compose errors on
+		// such a conflict; podup must NOT force-remove the unrelated container (the
+		// idempotent recreate in `create_and_start` would otherwise delete it). The
+		// auto-generated default name carries the PID and is unique, so it never
+		// needs this guard.
+		let user_named = name_override.is_some();
 		let run_name = name_override.unwrap_or_else(|| {
 			format!("{}-{service_name}-run-{}", self.project, std::process::id())
 		});
@@ -140,68 +147,96 @@ impl Engine {
 		// container is created.
 		self.create_inline_secrets(file).await?;
 
-		self.create_and_start(&run_name, service_name, &run_service, file, true)
-			.await?;
+		// Refuse to clobber a pre-existing container of the same name (data-loss
+		// footgun): `create_and_start` would force-remove it. Only the verbatim
+		// user-supplied name can collide with something we don't own.
+		if user_named && self.container_exists(&run_name).await? {
+			return Err(ComposeError::Unsupported(format!(
+				"the container name \"{run_name}\" is already in use; remove the existing \
+				 container or choose a different --name"
+			)));
+		}
+
+		let rm_path = format!(
+			"{API_PREFIX}/containers/{}?force=true",
+			crate::libpod::urlencoded(&run_name),
+		);
+
+		// On a start failure (bad --workdir/--user/--entrypoint), the container is
+		// created but never starts; with --rm, remove it here so repeated failures
+		// don't accumulate orphaned 'Created' containers.
+		if let Err(e) = self
+			.create_and_start(&run_name, service_name, &run_service, file, true)
+			.await
+		{
+			if rm {
+				let _ = self.client.delete_ok(&rm_path).await;
+			}
+			return Err(e);
+		}
 
 		if detach {
 			info!("started run container {run_name}");
 			return Ok(());
 		}
 
-		let logs_path = format!(
-			"{API_PREFIX}/containers/{}/logs?follow=true&stdout=true&stderr=true",
-			crate::libpod::urlencoded(&run_name),
-		);
-		let logs_resp = self
-			.client
-			.get_stream(&logs_path)
-			.await
-			.map_err(ComposeError::Podman)?;
-		let mut log_stream = crate::libpod::parse_multiplexed(logs_resp.into_body());
-
-		// Lock stdout once for the whole stream instead of re-acquiring the lock
-		// (and issuing a syscall) per frame; stdout is ours exclusively on this
-		// path. stderr is locked per frame because the tracing subscriber also
-		// writes there: holding its lock across the await loop would starve
-		// concurrent log emissions. Flush after each frame so `run` streams
-		// promptly.
-		let mut out = std::io::stdout().lock();
-		while let Some(msg) = log_stream.next().await {
-			match msg.map_err(ComposeError::Podman)? {
-				crate::libpod::LogOutput::StdOut { message } => {
-					let _ = out.write_all(String::from_utf8_lossy(&message).as_bytes());
-					let _ = out.flush();
-				}
-				crate::libpod::LogOutput::StdErr { message } => {
-					let mut err = std::io::stderr().lock();
-					let _ = err.write_all(String::from_utf8_lossy(&message).as_bytes());
-					let _ = err.flush();
-				}
-			}
-		}
-
-		let wait_path = format!(
-			"{API_PREFIX}/containers/{}/wait?condition=stopped",
-			crate::libpod::urlencoded(&run_name),
-		);
-		// Capture the wait result before cleanup so a failed wait is surfaced as an
-		// error rather than masked as a successful (exit 0) run.
-		let wait_result = self
-			.client
-			.post_empty_json_unbounded::<i64>(&wait_path)
-			.await;
-
-		if rm {
-			let rm_path = format!(
-				"{API_PREFIX}/containers/{}?force=true",
+		// Stream logs and wait for the exit code. Any failure on this path also
+		// triggers the --rm cleanup below, so a failed stream/wait never leaks the
+		// running container either. The wait result is captured before cleanup so a
+		// failed wait surfaces as an error rather than masked as a successful run.
+		let outcome: Result<i64> = async {
+			let logs_path = format!(
+				"{API_PREFIX}/containers/{}/logs?follow=true&stdout=true&stderr=true",
 				crate::libpod::urlencoded(&run_name),
 			);
+			let logs_resp = self
+				.client
+				.get_stream(&logs_path)
+				.await
+				.map_err(ComposeError::Podman)?;
+			let mut log_stream = crate::libpod::parse_multiplexed(logs_resp.into_body());
+
+			// Lock stdout once for the whole stream instead of re-acquiring the lock
+			// (and issuing a syscall) per frame; stdout is ours exclusively on this
+			// path. stderr is locked per frame because the tracing subscriber also
+			// writes there: holding its lock across the await loop would starve
+			// concurrent log emissions. Flush after each frame so `run` streams
+			// promptly.
+			{
+				let mut out = std::io::stdout().lock();
+				while let Some(msg) = log_stream.next().await {
+					match msg.map_err(ComposeError::Podman)? {
+						crate::libpod::LogOutput::StdOut { message } => {
+							let _ = out.write_all(String::from_utf8_lossy(&message).as_bytes());
+							let _ = out.flush();
+						}
+						crate::libpod::LogOutput::StdErr { message } => {
+							let mut err = std::io::stderr().lock();
+							let _ = err.write_all(String::from_utf8_lossy(&message).as_bytes());
+							let _ = err.flush();
+						}
+					}
+				}
+			}
+
+			let wait_path = format!(
+				"{API_PREFIX}/containers/{}/wait?condition=stopped",
+				crate::libpod::urlencoded(&run_name),
+			);
+			self.client
+				.post_empty_json_unbounded::<i64>(&wait_path)
+				.await
+				.map_err(ComposeError::Podman)
+		}
+		.await;
+
+		if rm {
 			if let Err(e) = self.client.delete_ok(&rm_path).await {
 				tracing::debug!("run cleanup delete {run_name}: {e}");
 			}
 		}
 
-		let exit_code = wait_result.map_err(ComposeError::Podman)?;
+		let exit_code = outcome?;
 		if exit_code != 0 {
 			return Err(crate::error::ComposeError::RunExited(exit_code));
 		}
