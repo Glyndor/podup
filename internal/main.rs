@@ -17,7 +17,7 @@ mod startup;
 use cli::*;
 use generate::write_quadlet;
 use resolve::*;
-use startup::{init_tracing, internal_error_notice, is_mutating, parse_cli};
+use startup::{init_tracing, internal_error_notice, is_label_only, is_mutating, parse_cli};
 
 fn main() {
 	// Replace the default panic output (a raw Rust backtrace) with a `podup:`
@@ -148,7 +148,18 @@ async fn run() -> podup::Result<()> {
 	}
 
 	let compose_files = resolve_compose_files(&cli.file);
-	let file = podup::parse_files_with_env_files(&compose_files, &cli.env_file)?;
+	// `events` and `ps` are scoped purely by the `podup.project` label and never
+	// read service definitions, so — like `docker compose -p NAME events`/`ps` —
+	// they must work against a running project even when no compose file is
+	// present. Tolerate a missing file for these label-only commands by falling
+	// back to an empty compose model; any other parse error (a malformed file
+	// that *does* exist, a missing env file) still surfaces.
+	let label_only = is_label_only(&cli.command);
+	let file = if label_only && !compose_files.iter().any(|p| p.is_file()) {
+		podup::compose::types::ComposeFile::default()
+	} else {
+		podup::parse_files_with_env_files(&compose_files, &cli.env_file)?
+	};
 
 	if let Commands::Config {
 		format,

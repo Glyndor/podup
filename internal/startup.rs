@@ -33,6 +33,14 @@ pub(crate) fn is_mutating(command: &Commands) -> bool {
 	)
 }
 
+/// Whether a command is scoped purely by the `podup.project` label and never
+/// reads service definitions, so it can run against a project with no compose
+/// file present — matching `docker compose -p NAME events`/`ps`. These commands
+/// tolerate a missing compose file at startup instead of erroring `FileNotFound`.
+pub(crate) fn is_label_only(command: &Commands) -> bool {
+	matches!(command, Commands::Events { .. } | Commands::Ps { .. })
+}
+
 /// Canonical project URL, reused for the bug-report hint on internal errors.
 const REPO_URL: &str = "https://github.com/Glyndor/podup";
 
@@ -284,6 +292,27 @@ pub(crate) fn parse_cli() -> Cli {
 #[cfg(test)]
 mod tests {
 	use super::*;
+
+	#[test]
+	fn label_only_covers_ps_and_events() {
+		use crate::cli::OutputFormat;
+		// `ps` and `events` are scoped purely by the project label, so they are
+		// label-only and may run without a compose file.
+		assert!(is_label_only(&Commands::Ps {
+			all: false,
+			quiet: false,
+			format: OutputFormat::Table,
+		}));
+		assert!(is_label_only(&Commands::Events {
+			format: OutputFormat::Table,
+			json: false,
+		}));
+		// A command that reads service definitions is not label-only.
+		assert!(!is_label_only(&Commands::Top {
+			format: OutputFormat::Table,
+			services: vec![],
+		}));
+	}
 
 	#[test]
 	fn prune_json_drops_nulls_and_empty_then_collapses() {
