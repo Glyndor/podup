@@ -109,6 +109,110 @@ pub struct LogsOptions {
 	pub timestamps: bool,
 }
 
+/// Map a libpod error from an `exec`/`attach` target into a friendly
+/// [`ComposeError::NotRunning`] when it means the container is absent (404) or
+/// stopped ("can only create exec sessions on running containers"), so the user
+/// sees "service X is not running" instead of a raw HTTP 404/500. Any other
+/// failure passes through unchanged. Pure so it is unit-tested.
+fn map_not_running(e: crate::libpod::PodmanError, service_name: &str) -> ComposeError {
+	let not_running = e.is_status(404)
+		|| matches!(
+			&e,
+			crate::libpod::PodmanError::Api { message, .. }
+				if {
+					let m = message.to_ascii_lowercase();
+					m.contains("can only create exec sessions on running containers")
+						|| m.contains("is not running")
+						|| m.contains("no such container")
+				}
+		);
+	if not_running {
+		ComposeError::NotRunning(service_name.to_string())
+	} else {
+		ComposeError::Podman(e)
+	}
+}
+
+/// Validate the `--tail`/`--since`/`--until` values client-side so a typo is
+/// rejected with a clear local message instead of a raw podman HTTP 400. `tail`
+/// must be `all` or a non-negative integer; `since`/`until` must be a Unix
+/// timestamp or a Go-style duration (e.g. `10m`, `1h30m`) or an RFC3339-ish
+/// timestamp. Pure so it is unit-tested.
+fn validate_log_filters(opts: &LogsOptions) -> Result<()> {
+	if let Some(tail) = &opts.tail {
+		if tail != "all" && tail.parse::<u64>().is_err() {
+			return Err(ComposeError::Unsupported(format!(
+				"invalid --tail value {tail:?}: expected a non-negative integer or 'all'"
+			)));
+		}
+	}
+	for (flag, value) in [("--since", &opts.since), ("--until", &opts.until)] {
+		if let Some(v) = value {
+			if !is_valid_log_time(v) {
+				return Err(ComposeError::Unsupported(format!(
+					"invalid {flag} value {v:?}: expected a duration (e.g. 10m, 1h30m), a Unix \
+					 timestamp, or an RFC3339 time"
+				)));
+			}
+		}
+	}
+	Ok(())
+}
+
+/// Whether a `--since`/`--until` value is a plausible duration, Unix timestamp,
+/// or timestamp string. Conservative: rejects obvious garbage (`abc`) while
+/// accepting the forms podman understands.
+fn is_valid_log_time(v: &str) -> bool {
+	if v.is_empty() {
+		return false;
+	}
+	// Unix timestamp (optionally fractional).
+	if v.parse::<f64>().is_ok() {
+		return true;
+	}
+	// Go-style duration: digit-run + unit, repeated (e.g. 1h30m, 90s, 500ms).
+	if is_go_duration(v) {
+		return true;
+	}
+	// Timestamp-ish: starts with a 4-digit year and contains only the characters
+	// an RFC3339/date string uses. The server does the precise parse; this just
+	// blocks free-form garbage.
+	let bytes = v.as_bytes();
+	bytes.len() >= 4
+		&& bytes[..4].iter().all(u8::is_ascii_digit)
+		&& v.chars().all(|c| {
+			c.is_ascii_digit() || matches!(c, '-' | ':' | 't' | 'T' | 'z' | 'Z' | '.' | '+' | ' ')
+		})
+}
+
+/// Match a Go-style duration: one or more `<number><unit>` segments, units one
+/// of `ns,us,µs,ms,s,m,h`.
+fn is_go_duration(v: &str) -> bool {
+	let mut rest = v.strip_prefix('-').unwrap_or(v);
+	if rest.is_empty() {
+		return false;
+	}
+	let mut segments = 0;
+	while !rest.is_empty() {
+		let digits = rest.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.');
+		if digits.len() == rest.len() {
+			// No digits consumed → not a duration segment.
+			return false;
+		}
+		rest = digits;
+		let unit_len = ["ms", "ns", "us", "µs", "s", "m", "h"]
+			.into_iter()
+			.find(|u| rest.starts_with(u))
+			.map(str::len);
+		match unit_len {
+			Some(n) => rest = &rest[n..],
+			None => return false,
+		}
+		segments += 1;
+	}
+	segments > 0
+}
+
 /// Build the libpod `containers/{}/logs` query string from the options.
 fn log_query(opts: &LogsOptions) -> String {
 	let mut q = format!(
@@ -226,6 +330,7 @@ impl Engine {
 		target_services: &[String],
 		opts: LogsOptions,
 	) -> Result<()> {
+		validate_log_filters(&opts)?;
 		let follow = opts.follow;
 		let query = log_query(&opts);
 		for svc in target_services {
@@ -306,11 +411,17 @@ impl Engine {
 					"{API_PREFIX}/containers/{}/logs?{query}",
 					urlencoded(&container_name),
 				);
-				let resp = self
-					.client
-					.get_stream(&path)
-					.await
-					.map_err(ComposeError::Podman)?;
+				// Tolerate a missing/not-yet-created container the way the
+				// multi-follow path does: warn and move on so the logs of the
+				// services that *do* exist are still shown, instead of aborting the
+				// whole command on the first 404.
+				let resp = match self.client.get_stream(&path).await {
+					Ok(r) => r,
+					Err(e) => {
+						tracing::warn!("logs {container_name}: {e}");
+						continue;
+					}
+				};
 				let mut stream = if is_tty {
 					crate::libpod::parse_raw(resp.into_body())
 				} else {
@@ -327,11 +438,12 @@ impl Engine {
 				let mut out_pfx = LinePrefixer::new(&container_name);
 				let mut err_pfx = LinePrefixer::new(&container_name);
 				while let Some(msg) = stream.next().await {
-					match msg.map_err(ComposeError::Podman)? {
-						LogOutput::StdOut { message } => out_pfx.write(&mut out, &message),
-						LogOutput::StdErr { message } => {
+					match msg {
+						Ok(LogOutput::StdOut { message }) => out_pfx.write(&mut out, &message),
+						Ok(LogOutput::StdErr { message }) => {
 							err_pfx.write(&mut std::io::stderr().lock(), &message)
 						}
+						Err(_) => break,
 					}
 				}
 				out_pfx.flush_tail(&mut out);
@@ -367,16 +479,12 @@ impl Engine {
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = match opts.index {
-			Some(i) => {
-				let names = self.replica_names(service_name, service);
-				let idx = (i as usize).saturating_sub(1);
-				names.get(idx).cloned().ok_or_else(|| {
-					ComposeError::ServiceNotFound(format!("{service_name} (replica index {i})"))
-				})?
-			}
-			None => self.first_replica_name(service_name, service),
-		};
+		if cmd.is_empty() {
+			return Err(ComposeError::Unsupported(format!(
+				"exec into service '{service_name}' requires a command to run"
+			)));
+		}
+		let container_name = self.replica_name_at(service_name, service, opts.index)?;
 
 		let exec_cfg = ExecCreateConfig {
 			cmd: Some(cmd),
@@ -396,7 +504,7 @@ impl Engine {
 			.client
 			.post_json(&create_path, &exec_cfg)
 			.await
-			.map_err(ComposeError::Podman)?;
+			.map_err(|e| map_not_running(e, service_name))?;
 		let exec_id = resp.id;
 
 		// `-d/--detach`: start the exec and return without streaming output or
@@ -531,7 +639,10 @@ fn filter_orphans(names: Vec<String>, known: &std::collections::HashSet<String>)
 
 #[cfg(test)]
 mod tests {
-	use super::{display_status, filter_orphans, format_ports, log_query, LogsOptions};
+	use super::{
+		display_status, filter_orphans, format_ports, is_valid_log_time, log_query,
+		map_not_running, validate_log_filters, LogsOptions,
+	};
 	use crate::libpod::types::container::{ContainerListEntry, ContainerPort};
 	use std::collections::{HashMap, HashSet};
 
@@ -630,5 +741,85 @@ mod tests {
 		assert!(q.contains("&since=10m"));
 		// `:` is percent-encoded in the query value.
 		assert!(q.contains("&until=2024-01-01T00%3A00%3A00"));
+	}
+
+	#[test]
+	fn validate_log_filters_accepts_good_values() {
+		assert!(validate_log_filters(&LogsOptions {
+			tail: Some("all".into()),
+			since: Some("10m".into()),
+			until: Some("2024-01-01T00:00:00Z".into()),
+			..Default::default()
+		})
+		.is_ok());
+		assert!(validate_log_filters(&LogsOptions {
+			tail: Some("100".into()),
+			since: Some("1700000000".into()),
+			..Default::default()
+		})
+		.is_ok());
+		assert!(validate_log_filters(&LogsOptions::default()).is_ok());
+	}
+
+	#[test]
+	fn validate_log_filters_rejects_bad_tail_and_time() {
+		assert!(validate_log_filters(&LogsOptions {
+			tail: Some("abc".into()),
+			..Default::default()
+		})
+		.is_err());
+		assert!(validate_log_filters(&LogsOptions {
+			since: Some("yesterday".into()),
+			..Default::default()
+		})
+		.is_err());
+		assert!(validate_log_filters(&LogsOptions {
+			until: Some("not-a-time".into()),
+			..Default::default()
+		})
+		.is_err());
+	}
+
+	#[test]
+	fn is_valid_log_time_classifies_forms() {
+		assert!(is_valid_log_time("10m"));
+		assert!(is_valid_log_time("1h30m"));
+		assert!(is_valid_log_time("500ms"));
+		assert!(is_valid_log_time("1700000000"));
+		assert!(is_valid_log_time("2024-01-02T03:04:05Z"));
+		assert!(!is_valid_log_time("abc"));
+		assert!(!is_valid_log_time(""));
+		assert!(!is_valid_log_time("10x"));
+	}
+
+	#[test]
+	fn map_not_running_maps_404_and_stopped() {
+		use crate::error::ComposeError;
+		use crate::libpod::PodmanError;
+		let e404 = PodmanError::Api {
+			status: 404,
+			message: "no such container: web".into(),
+		};
+		assert!(matches!(
+			map_not_running(e404, "web"),
+			ComposeError::NotRunning(s) if s == "web"
+		));
+		let e500 = PodmanError::Api {
+			status: 500,
+			message: "can only create exec sessions on running containers".into(),
+		};
+		assert!(matches!(
+			map_not_running(e500, "web"),
+			ComposeError::NotRunning(_)
+		));
+		// An unrelated error passes through unchanged.
+		let other = PodmanError::Api {
+			status: 500,
+			message: "disk full".into(),
+		};
+		assert!(matches!(
+			map_not_running(other, "web"),
+			ComposeError::Podman(_)
+		));
 	}
 }
