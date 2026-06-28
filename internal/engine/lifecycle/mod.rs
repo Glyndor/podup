@@ -1,6 +1,7 @@
 //! Service lifecycle commands: up, down, start, stop, restart, kill, rm, pause, unpause, run.
 
 mod commands;
+mod run;
 mod scale;
 mod signal;
 mod targets;
@@ -459,30 +460,35 @@ impl Engine {
 					crate::libpod::urlencoded(&container_name),
 					targets::stop_timeout_param(grace),
 				);
+				// A 404 (container already gone, or a profile-gated service that was
+				// never created) is an idempotent no-op here, exactly as the network
+				// and volume removal arms below treat it — not a warning.
 				if let Err(e) = self
 					.client
 					.post_empty_ok_within(&stop_path, targets::stop_deadline(grace))
 					.await
 				{
-					tracing::warn!("could not stop {container_name}: {e}");
+					if !e.is_status(404) {
+						tracing::warn!("could not stop {container_name}: {e}");
+					}
 				}
 
 				let rm_path = container_rm_path(&container_name, remove_volumes);
-				if let Err(e) = self.client.delete_ok(&rm_path).await {
-					tracing::warn!("could not remove {container_name}: {e}");
-				} else {
-					info!("removed {container_name}");
+				match self.client.delete_ok(&rm_path).await {
+					Ok(()) => info!("removed {container_name}"),
+					Err(e) if e.is_status(404) => {}
+					Err(e) => tracing::warn!("could not remove {container_name}: {e}"),
 				}
 			}
 		}
 
-		// A prior `up --scale`/`scale` may have created replicas the compose
-		// file's default count no longer names; sweep any remaining project
-		// containers by label so teardown is always complete.
-		let grace = self.stop_timeout.unwrap_or(10);
-		for name in self.list_project_container_names(None).await? {
-			self.stop_and_remove(&name, grace, remove_volumes).await;
-		}
+		// Scaled replicas (`up --scale`/`scale`) carry the `podup.service` label
+		// of a service still in the file, so the ordered pass above already swept
+		// them via `live_by_service`. Orphan containers of services *removed* from
+		// the file are deliberately NOT touched here: docker compose only reaps
+		// them under `--remove-orphans`, which the dispatch layer handles via
+		// `remove_orphans` before teardown. Removing them unconditionally here
+		// made that flag a no-op.
 
 		for (key, config) in &file.networks {
 			let external = config.as_ref().and_then(|c| c.external).unwrap_or(false);
@@ -577,13 +583,18 @@ impl Engine {
 				None if builds_locally => format!("{name}:latest"),
 				None => continue,
 			};
-			let path = format!(
-				"{API_PREFIX}/images/{}?force=true",
-				crate::libpod::urlencoded(&image),
-			);
+			// Do NOT force: a force-removal cascades to every container using the
+			// image — including ones owned by other compose projects that share it
+			// (e.g. two stacks both on `nginx:latest`). docker compose leaves an
+			// in-use image in place, so an "in use" conflict is a skip, not a
+			// failure.
+			let path = format!("{API_PREFIX}/images/{}", crate::libpod::urlencoded(&image),);
 			match self.client.delete_ok(&path).await {
 				Ok(_) => info!("removed image {image}"),
 				Err(e) if e.is_status(404) => {}
+				Err(e) if e.is_image_in_use() => {
+					info!("image {image} is still in use — skipping removal")
+				}
 				Err(e) => tracing::warn!("could not remove image {image}: {e}"),
 			}
 		}

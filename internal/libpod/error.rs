@@ -135,6 +135,43 @@ impl PodmanError {
 			_ => false,
 		}
 	}
+
+	/// True if this API error reports the target image is still referenced by a
+	/// container. A non-force `down --rmi` must skip such an image (matching
+	/// docker compose) instead of force-removing it and cascading the deletion of
+	/// every dependent container — including ones owned by other projects. Podman
+	/// returns this as a 409 conflict, or on some versions a 500 whose message
+	/// names the in-use cause.
+	pub(crate) fn is_image_in_use(&self) -> bool {
+		match self {
+			Self::Api { status: 409, .. } => true,
+			Self::Api {
+				status: 500,
+				message,
+			} => {
+				let m = message.to_ascii_lowercase();
+				m.contains("in use") || m.contains("being used") || m.contains("used by")
+			}
+			_ => false,
+		}
+	}
+
+	/// True if this API error reports a container is in the wrong state for the
+	/// attempted lifecycle op (already paused, not paused, not running). Podman
+	/// returns these as a 409/500 with a "container state improper" cause. Lets
+	/// `pause`/`unpause` stay idempotent no-ops, matching docker compose.
+	pub(crate) fn is_state_conflict(&self) -> bool {
+		match self {
+			Self::Api { status, message } if *status == 409 || *status == 500 => {
+				let m = message.to_ascii_lowercase();
+				m.contains("state improper")
+					|| m.contains("already paused")
+					|| m.contains("not paused")
+					|| m.contains("not running")
+			}
+			_ => false,
+		}
+	}
 }
 
 #[cfg(test)]
@@ -273,6 +310,63 @@ mod tests {
 			message: "volume with name p_v already exists: volume already exists".into(),
 		}
 		.is_already_exists());
+	}
+
+	#[test]
+	fn image_in_use_accepts_409_and_500_with_message() {
+		// A 409 on image delete is always an in-use conflict.
+		assert!(PodmanError::Api {
+			status: 409,
+			message: "image is in use by 1 container".into(),
+		}
+		.is_image_in_use());
+		// Some Podman versions report it as a 500 naming the cause.
+		assert!(PodmanError::Api {
+			status: 500,
+			message: "image used by a container: image in use".into(),
+		}
+		.is_image_in_use());
+		// An unrelated 500 still propagates.
+		assert!(!PodmanError::Api {
+			status: 500,
+			message: "internal error".into(),
+		}
+		.is_image_in_use());
+		assert!(!PodmanError::Api {
+			status: 404,
+			message: "no such image".into(),
+		}
+		.is_image_in_use());
+	}
+
+	#[test]
+	fn state_conflict_recognises_pause_unpause_mismatches() {
+		for msg in [
+			"container abc is already paused: container state improper",
+			"container abc is not paused: container state improper",
+			"cannot pause container abc: container abc is not running",
+			"unpausing container: container state improper",
+		] {
+			assert!(
+				PodmanError::Api {
+					status: 500,
+					message: msg.into(),
+				}
+				.is_state_conflict(),
+				"should treat {msg:?} as a state conflict"
+			);
+		}
+		// A genuine failure is not a state conflict.
+		assert!(!PodmanError::Api {
+			status: 500,
+			message: "internal error".into(),
+		}
+		.is_state_conflict());
+		assert!(!PodmanError::Api {
+			status: 404,
+			message: "no such container".into(),
+		}
+		.is_state_conflict());
 	}
 
 	#[test]

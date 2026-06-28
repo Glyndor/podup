@@ -414,6 +414,17 @@ mod tests {
 	}
 
 	#[test]
+	fn render_config_rejects_depends_on_cycle() {
+		// A `depends_on` cycle must be reported at config time, not deferred to up.
+		let file = podup::parse_str(
+			"services:\n  a:\n    image: x\n    depends_on: [b]\n  b:\n    image: y\n    depends_on: [a]\n",
+		)
+		.unwrap();
+		let err = render_config(&file, &ConfigFormat::Yaml, false, true, "proj").unwrap_err();
+		assert!(matches!(err, podup::ComposeError::CircularDependency(_)));
+	}
+
+	#[test]
 	fn render_config_quiet_is_validate_only() {
 		// `--quiet` validates and prints nothing, returning Ok.
 		render_config(&sample_file(), &ConfigFormat::Yaml, false, true, "proj").unwrap();

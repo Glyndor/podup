@@ -107,11 +107,15 @@ pub(super) fn validate_targets(file: &ComposeFile, target_services: &[String]) -
 	Ok(())
 }
 
-/// Resolve which services `up` should start given an explicit target list.
+/// Resolve which services `up`/`create` should start given an explicit target
+/// list.
 ///
-/// Returns `None` when no targets are given (start everything). Otherwise the
-/// set contains the targets plus, unless `no_deps` is set, their transitive
-/// `depends_on` services.
+/// Returns `None` when no targets are given (start everything). Otherwise the set
+/// contains the targets plus, unless `no_deps` is set, their transitive
+/// `depends_on` services. Callers must validate `target_services` up front via
+/// [`validate_targets`] so a typo'd/unknown name fails loudly instead of being
+/// silently skipped — mirroring [`filter_services`] (and docker compose's "no
+/// such service").
 pub(super) fn expand_targets(
 	file: &ComposeFile,
 	target_services: &[String],
