@@ -5,6 +5,7 @@
 mod build;
 mod container;
 mod copy;
+mod copy_archive;
 mod events;
 mod image;
 pub use build::{BuildOptions, PullOptions, PushOptions};
