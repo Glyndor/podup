@@ -101,7 +101,12 @@ impl Engine {
 
 		let context_str = build.context().to_string();
 		let remote_context = is_remote_context(&context_str);
-		let tag = primary_build_tag(service_name, service.image.as_deref(), build.tags());
+		let tag = primary_build_tag(
+			&self.project,
+			service_name,
+			service.image.as_deref(),
+			build.tags(),
+		);
 
 		// A Git/URL context is cloned server-side by Podman via the `remote`
 		// query parameter — there is no local directory to tar. Tar-only features
@@ -169,6 +174,13 @@ impl Engine {
 				Some((k, v)) => (k.to_string(), v.to_string()),
 				None => (entry.clone(), std::env::var(entry).unwrap_or_default()),
 			};
+			// A bare `=value` (empty key) is a user typo Podman would silently
+			// ignore; reject it with a clear diagnostic instead.
+			if k.is_empty() {
+				return Err(ComposeError::Build(format!(
+					"invalid --build-arg '{entry}': empty argument name"
+				)));
+			}
 			build_args.insert(k, v);
 		}
 
@@ -212,10 +224,14 @@ impl Engine {
 			}).cloned(),
 			_ => None,
 		};
-		let shmsize = build
-			.shm_size()
-			.and_then(size::parse_memory)
-			.map(|s| s as i32);
+		// Distinguish "absent" from "present but unparseable": a malformed
+		// `shm_size` must be rejected, not silently dropped to the default.
+		let shmsize = match build.shm_size() {
+			Some(raw) => Some(size::parse_memory(raw).ok_or_else(|| {
+				ComposeError::Build(format!("invalid build.shm_size value '{raw}'"))
+			})? as i32),
+			None => None,
+		};
 		let extrahosts_str = build.extra_hosts().join(",");
 		let extrahosts = if extrahosts_str.is_empty() {
 			None
@@ -414,16 +430,23 @@ fn is_remote_context(context: &str) -> bool {
 ///
 /// Precedence matches compose-go: an explicit `image:` wins; otherwise the
 /// first entry of `build.tags` is used as the primary tag; with neither, the
-/// image is named `{service}:latest`. Any remaining `build.tags` are applied
-/// as extra tags by [`Engine::apply_extra_tags`].
-fn primary_build_tag(service_name: &str, image: Option<&str>, tags: &[String]) -> String {
+/// image is named `{project}-{service}:latest` (project-scoped, like docker
+/// compose) so two projects sharing a service name don't overwrite each other's
+/// image. Any remaining `build.tags` are applied as extra tags by
+/// [`Engine::apply_extra_tags`].
+fn primary_build_tag(
+	project: &str,
+	service_name: &str,
+	image: Option<&str>,
+	tags: &[String],
+) -> String {
 	if let Some(image) = image {
 		return image.to_string();
 	}
 	if let Some(first) = tags.first() {
 		return first.clone();
 	}
-	format!("{service_name}:latest")
+	format!("{project}-{service_name}:latest")
 }
 
 /// True if a build-arg name looks like it carries a secret, so the caller can
@@ -523,7 +546,7 @@ mod tests {
 	fn primary_tag_prefers_explicit_image() {
 		let tags = vec!["registry/app:1.0".to_string()];
 		assert_eq!(
-			primary_build_tag("app", Some("myimage:2.0"), &tags),
+			primary_build_tag("proj", "app", Some("myimage:2.0"), &tags),
 			"myimage:2.0"
 		);
 	}
@@ -534,12 +557,71 @@ mod tests {
 			"registry/app:1.0".to_string(),
 			"registry/app:latest".to_string(),
 		];
-		assert_eq!(primary_build_tag("app", None, &tags), "registry/app:1.0");
+		assert_eq!(
+			primary_build_tag("proj", "app", None, &tags),
+			"registry/app:1.0"
+		);
 	}
 
 	#[test]
-	fn primary_tag_falls_back_to_service_latest() {
-		assert_eq!(primary_build_tag("app", None, &[]), "app:latest");
+	fn primary_tag_falls_back_to_project_scoped_latest() {
+		// Build-only services (no `image:`, no `tags`) are namespaced by project so
+		// two projects sharing a service name don't clobber each other's image.
+		assert_eq!(
+			primary_build_tag("proj", "app", None, &[]),
+			"proj-app:latest"
+		);
+		assert_eq!(
+			primary_build_tag("other", "app", None, &[]),
+			"other-app:latest"
+		);
+	}
+
+	#[tokio::test]
+	async fn empty_build_arg_key_is_rejected() {
+		// `--build-arg =value` is a user typo Podman would silently ignore; we
+		// reject it before contacting the daemon.
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
+		let yaml = "services:\n  app:\n    build:\n      context: .\n";
+		let file = crate::compose::parse_str(yaml).unwrap();
+		let e = engine(dir.path().to_path_buf());
+		let opts = super::BuildOptions {
+			build_args: vec!["=orphan".to_string()],
+			..Default::default()
+		};
+		let err = e
+			.build_service("app", &file.services["app"], &file, &opts)
+			.await
+			.expect_err("empty build-arg key must be rejected");
+		assert!(
+			err.to_string().contains("build-arg"),
+			"unexpected error: {err}"
+		);
+	}
+
+	#[tokio::test]
+	async fn invalid_shm_size_is_rejected() {
+		// A malformed `build.shm_size` must error rather than silently fall back to
+		// the default shm size.
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
+		let yaml = "services:\n  app:\n    build:\n      context: .\n      shm_size: \"64mb!\"\n";
+		let file = crate::compose::parse_str(yaml).unwrap();
+		let e = engine(dir.path().to_path_buf());
+		let err = e
+			.build_service(
+				"app",
+				&file.services["app"],
+				&file,
+				&super::BuildOptions::default(),
+			)
+			.await
+			.expect_err("malformed shm_size must be rejected");
+		assert!(
+			err.to_string().contains("shm_size"),
+			"unexpected error: {err}"
+		);
 	}
 
 	#[test]
