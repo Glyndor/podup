@@ -121,6 +121,28 @@ impl PodmanError {
 		matches!(self, Self::Api { status, .. } if *status == code)
 	}
 
+	/// True if this is a client-side timeout (the request was aborted because the
+	/// socket never responded within the deadline). These carry a synthetic
+	/// status `0` and a `timed out` message; lifecycle callers use this to
+	/// escalate a wedged `stop` to an explicit `SIGKILL`.
+	pub(crate) fn is_timeout(&self) -> bool {
+		matches!(self, Self::Api { status: 0, message } if message.contains("timed out"))
+	}
+
+	/// True if this is the libpod 409 returned when `kill` targets a container
+	/// that is not running ("can only kill running containers …"). `docker
+	/// compose kill` is best-effort across all targets, so this is treated as an
+	/// idempotent no-op rather than a fatal error that aborts the loop. The
+	/// message is unique to the kill endpoint, so matching it cannot mask another
+	/// op's 409.
+	pub(crate) fn is_kill_of_stopped(&self) -> bool {
+		matches!(
+			self,
+			Self::Api { status: 409, message }
+				if message.to_ascii_lowercase().contains("can only kill running")
+		)
+	}
+
 	/// True if this API error reports that the resource already exists: an HTTP
 	/// 409 conflict, or an HTTP 500 whose message says so. Podman's libpod
 	/// volume-create endpoint returns 500 (not 409) for a duplicate name, so an
@@ -132,6 +154,43 @@ impl PodmanError {
 				status: 500,
 				message,
 			} => message.contains("already exists"),
+			_ => false,
+		}
+	}
+
+	/// True if this API error reports the target image is still referenced by a
+	/// container. A non-force `down --rmi` must skip such an image (matching
+	/// docker compose) instead of force-removing it and cascading the deletion of
+	/// every dependent container — including ones owned by other projects. Podman
+	/// returns this as a 409 conflict, or on some versions a 500 whose message
+	/// names the in-use cause.
+	pub(crate) fn is_image_in_use(&self) -> bool {
+		match self {
+			Self::Api { status: 409, .. } => true,
+			Self::Api {
+				status: 500,
+				message,
+			} => {
+				let m = message.to_ascii_lowercase();
+				m.contains("in use") || m.contains("being used") || m.contains("used by")
+			}
+			_ => false,
+		}
+	}
+
+	/// True if this API error reports a container is in the wrong state for the
+	/// attempted lifecycle op (already paused, not paused, not running). Podman
+	/// returns these as a 409/500 with a "container state improper" cause. Lets
+	/// `pause`/`unpause` stay idempotent no-ops, matching docker compose.
+	pub(crate) fn is_state_conflict(&self) -> bool {
+		match self {
+			Self::Api { status, message } if *status == 409 || *status == 500 => {
+				let m = message.to_ascii_lowercase();
+				m.contains("state improper")
+					|| m.contains("already paused")
+					|| m.contains("not paused")
+					|| m.contains("not running")
+			}
 			_ => false,
 		}
 	}
@@ -156,6 +215,39 @@ mod tests {
 			conflict_hint("cannot kill container abc: container abc is not running")
 				.unwrap()
 				.contains("not running")
+		);
+		// libpod's kill-of-stopped 409 message ("can only kill running
+		// containers …") gets the same friendly "not running" hint.
+		assert!(conflict_hint(
+			"can only kill running containers. abc is in state exited: container state improper"
+		)
+		.unwrap()
+		.contains("not running"));
+	}
+
+	#[test]
+	fn is_kill_of_stopped_matches_only_the_kill_409() {
+		let stopped = PodmanError::Api {
+			status: 409,
+			message: "can only kill running containers. abc is in state exited: \
+				container state improper"
+				.into(),
+		};
+		assert!(stopped.is_kill_of_stopped());
+		// A different 409 (e.g. already-paused) must not be swallowed by kill.
+		let paused = PodmanError::Api {
+			status: 409,
+			message: "container abc is already paused".into(),
+		};
+		assert!(!paused.is_kill_of_stopped());
+		// Wrong status, even with a matching message, is not a kill-of-stopped.
+		let other = PodmanError::Api {
+			status: 500,
+			message: "can only kill running containers".into(),
+		};
+		assert!(!other.is_kill_of_stopped());
+		assert!(
+			!PodmanError::Json(serde_json::from_str::<u8>("bad").unwrap_err()).is_kill_of_stopped()
 		);
 	}
 
@@ -232,6 +324,29 @@ mod tests {
 	}
 
 	#[test]
+	fn is_timeout_matches_synthetic_timeout_error() {
+		// Client-side timeouts carry status 0 and a "timed out" message; lifecycle
+		// stop escalation keys off this.
+		assert!(PodmanError::Api {
+			status: 0,
+			message: "timed out after 40s waiting for the Podman socket to respond".into(),
+		}
+		.is_timeout());
+		// A real HTTP error (non-zero status) is not a timeout.
+		assert!(!PodmanError::Api {
+			status: 500,
+			message: "boom".into(),
+		}
+		.is_timeout());
+		// A status-0 error without the timeout marker is not a timeout.
+		assert!(!PodmanError::Api {
+			status: 0,
+			message: "invalid API path".into(),
+		}
+		.is_timeout());
+	}
+
+	#[test]
 	fn is_status_false_for_non_api() {
 		let e = PodmanError::Json(serde_json::from_str::<u8>("bad").unwrap_err());
 		assert!(!e.is_status(404));
@@ -252,6 +367,63 @@ mod tests {
 			message: "volume with name p_v already exists: volume already exists".into(),
 		}
 		.is_already_exists());
+	}
+
+	#[test]
+	fn image_in_use_accepts_409_and_500_with_message() {
+		// A 409 on image delete is always an in-use conflict.
+		assert!(PodmanError::Api {
+			status: 409,
+			message: "image is in use by 1 container".into(),
+		}
+		.is_image_in_use());
+		// Some Podman versions report it as a 500 naming the cause.
+		assert!(PodmanError::Api {
+			status: 500,
+			message: "image used by a container: image in use".into(),
+		}
+		.is_image_in_use());
+		// An unrelated 500 still propagates.
+		assert!(!PodmanError::Api {
+			status: 500,
+			message: "internal error".into(),
+		}
+		.is_image_in_use());
+		assert!(!PodmanError::Api {
+			status: 404,
+			message: "no such image".into(),
+		}
+		.is_image_in_use());
+	}
+
+	#[test]
+	fn state_conflict_recognises_pause_unpause_mismatches() {
+		for msg in [
+			"container abc is already paused: container state improper",
+			"container abc is not paused: container state improper",
+			"cannot pause container abc: container abc is not running",
+			"unpausing container: container state improper",
+		] {
+			assert!(
+				PodmanError::Api {
+					status: 500,
+					message: msg.into(),
+				}
+				.is_state_conflict(),
+				"should treat {msg:?} as a state conflict"
+			);
+		}
+		// A genuine failure is not a state conflict.
+		assert!(!PodmanError::Api {
+			status: 500,
+			message: "internal error".into(),
+		}
+		.is_state_conflict());
+		assert!(!PodmanError::Api {
+			status: 404,
+			message: "no such container".into(),
+		}
+		.is_state_conflict());
 	}
 
 	#[test]

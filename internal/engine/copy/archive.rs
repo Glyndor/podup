@@ -1,9 +1,49 @@
-//! Archive (un)packing helpers for `cp`: safely route a container→host tar to
-//! the local filesystem, applying zip-slip and permission hardening.
+//! Tar packing and extraction for `cp`.
+//!
+//! The pure, container-free half of `cp`: it moves bytes between the host
+//! filesystem and a tar stream and carries the security hardening — the
+//! zip-slip guard, the extracted-mode sanitization and the docker/podman
+//! destination semantics. Kept synchronous so the guards can be unit-tested
+//! without a container.
 
 use std::path::Path;
 
+use flate2::write::GzEncoder;
+use flate2::Compression;
+
 use crate::error::{ComposeError, Result};
+
+pub(super) fn pack_path(
+	src: &Path,
+	follow_link: bool,
+	name_override: Option<&str>,
+) -> Result<Vec<u8>> {
+	let encoder = GzEncoder::new(Vec::new(), Compression::default());
+	let mut tar = tar::Builder::new(encoder);
+	// `-L/--follow-link`: archive the symlink target's contents instead of the
+	// link itself.
+	tar.follow_symlinks(follow_link);
+
+	if src.is_dir() {
+		// `name_override` renames the copied tree (rename-on-copy); otherwise it
+		// keeps the source's own basename and lands inside the destination dir.
+		let default = src.file_name().unwrap_or(std::ffi::OsStr::new("."));
+		let name: &std::ffi::OsStr = name_override.map(std::ffi::OsStr::new).unwrap_or(default);
+		tar.append_dir_all(name, src)
+			.map_err(|e| ComposeError::Copy(format!("cp: {e}")))?;
+	} else {
+		let default = src.file_name().unwrap_or(std::ffi::OsStr::new("file"));
+		let name: &std::ffi::OsStr = name_override.map(std::ffi::OsStr::new).unwrap_or(default);
+		tar.append_path_with_name(src, name)
+			.map_err(|e| ComposeError::Copy(format!("cp: {e}")))?;
+	}
+
+	let gz = tar
+		.into_inner()
+		.map_err(|e| ComposeError::Copy(format!("cp: {e}")))?;
+	gz.finish()
+		.map_err(|e| ComposeError::Copy(format!("cp: {e}")))
+}
 
 /// Route a container archive to the host destination.
 ///
@@ -20,20 +60,45 @@ pub(super) fn extract_archive(tar_bytes: &[u8], dst: &Path) -> Result<()> {
 	if dst.is_dir() {
 		return extract_tar_guarded(tar_bytes, dst);
 	}
+	// `dst` is not an existing directory.
 	if !archive_contains_dir(tar_bytes)? {
-		// A single regular file (or, defensively, a name-only archive) is written
-		// to exactly `dst`; `write_single_entry_to` still rejects a multi-entry
-		// archive against a file destination.
+		// A single regular file (or, defensively, a name-only archive). docker/podman
+		// `cp` require the destination's parent to exist and refuse a trailing-slash
+		// (directory) destination that does not exist, rather than auto-creating it.
+		if has_trailing_separator(dst) {
+			return Err(ComposeError::Copy(format!(
+				"cp: no such directory: {}",
+				dst.display()
+			)));
+		}
+		if let Some(parent) = dst.parent() {
+			if !parent.as_os_str().is_empty() && !parent.exists() {
+				return Err(ComposeError::Copy(format!(
+					"cp: no such directory: {}",
+					parent.display()
+				)));
+			}
+		}
+		// The single entry's content is written to exactly `dst`;
+		// `write_single_entry_to` still rejects a multi-entry archive here.
 		return write_single_entry_to(tar_bytes, dst);
 	}
-	// Directory source against an existing *file* destination: `create_dir_all`
-	// would fail with a bare "File exists (os error 17)". Detect it up front and
-	// emit a clear message naming the destination.
-	if dst.exists() && !dst.is_dir() {
+	// Directory source. A destination that already exists as a non-directory is a
+	// clear error (docker `cp` cannot copy a directory onto a file), rather than
+	// letting `create_dir_all` surface a misleading "File exists".
+	if dst.exists() {
 		return Err(ComposeError::Copy(format!(
-			"cannot copy a directory onto existing file {}",
+			"cp: cannot copy a directory onto the existing file {}",
 			dst.display()
 		)));
+	}
+	if let Some(parent) = dst.parent() {
+		if !parent.as_os_str().is_empty() && !parent.exists() {
+			return Err(ComposeError::Copy(format!(
+				"cp: no such directory: {}",
+				parent.display()
+			)));
+		}
 	}
 	// Directory source into a non-existent destination: create it and copy the
 	// source's contents in. The libpod archive is tarred under the source's
@@ -42,6 +107,17 @@ pub(super) fn extract_archive(tar_bytes: &[u8], dst: &Path) -> Result<()> {
 	std::fs::create_dir_all(dst).map_err(ComposeError::Io)?;
 	extract_tar_guarded(tar_bytes, dst)?;
 	flatten_single_wrapper_dir(dst)
+}
+
+/// True when the destination path was written with a trailing path separator
+/// (e.g. `./newdir/`), which `docker cp` treats as an explicit *directory*
+/// destination — it must already exist.
+fn has_trailing_separator(p: &Path) -> bool {
+	p.as_os_str()
+		.to_string_lossy()
+		.chars()
+		.last()
+		.is_some_and(std::path::is_separator)
 }
 
 /// True if any entry in `tar_bytes` is a directory — the signal that the source
@@ -125,11 +201,9 @@ fn extract_tar_guarded(tar_bytes: &[u8], dst_dir: &Path) -> Result<()> {
 fn write_single_entry_to(tar_bytes: &[u8], dst: &Path) -> Result<()> {
 	use std::io::Read;
 
-	if let Some(parent) = dst.parent() {
-		if !parent.as_os_str().is_empty() && !parent.exists() {
-			std::fs::create_dir_all(parent).map_err(ComposeError::Io)?;
-		}
-	}
+	// The caller (`extract_archive`) has already validated that `dst`'s parent
+	// directory exists; matching docker/podman `cp`, a missing parent is an error
+	// rather than being auto-created here.
 
 	let cursor = std::io::Cursor::new(tar_bytes);
 	let mut archive = tar::Archive::new(cursor);
@@ -192,6 +266,42 @@ fn sanitize_extracted_mode(_path: &Path, _mode: u32) {}
 
 #[cfg(test)]
 mod tests {
+	#[test]
+	fn pack_path_single_file() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let file = dir.path().join("data.txt");
+		std::fs::write(&file, b"hello").expect("write");
+		let result = super::pack_path(&file, false, None);
+		assert!(result.is_ok());
+		let bytes = result.unwrap();
+		assert!(!bytes.is_empty());
+	}
+
+	#[test]
+	fn pack_path_directory() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let subdir = dir.path().join("mydir");
+		std::fs::create_dir(&subdir).expect("mkdir");
+		std::fs::write(subdir.join("a.txt"), b"aaa").expect("write");
+		std::fs::write(subdir.join("b.txt"), b"bbb").expect("write");
+		let result = super::pack_path(&subdir, false, None);
+		assert!(result.is_ok());
+		assert!(!result.unwrap().is_empty());
+	}
+
+	#[test]
+	fn pack_path_missing_source_is_a_cp_error() {
+		// A missing host source on `cp` must read as a cp error, not a build error.
+		let missing = std::path::Path::new("/nonexistent-host-source-xyz");
+		let err = super::pack_path(missing, false, None).unwrap_err();
+		let msg = err.to_string();
+		assert!(msg.contains("cp error"), "wrong category: {msg:?}");
+		assert!(
+			!msg.contains("build error"),
+			"must not be a build error: {msg:?}"
+		);
+	}
+
 	/// Build an uncompressed tar archive with a single entry at `path`. The name
 	/// is written straight into the GNU header so a hostile `..` path can be
 	/// forged (the safe `set_path`/`append_data` helpers reject `..`).
@@ -379,28 +489,52 @@ mod tests {
 	}
 
 	#[test]
-	fn extract_dir_onto_existing_file_gives_clear_error() {
-		// A directory source against an existing regular-file destination must fail
-		// with a clear cp message naming the destination, not a raw "File exists".
-		let dir = tempfile::tempdir().expect("tempdir");
-		let dst = dir.path().join("afile");
-		std::fs::write(&dst, b"existing").expect("write");
-		let bytes = tar_dir_with("srcdir", &[("a.txt", b"aaa")]);
-		let err = super::extract_archive(&bytes, &dst).unwrap_err();
-		let msg = err.to_string();
-		assert!(msg.contains("cp error"), "wrong category: {msg:?}");
-		assert!(msg.contains("directory onto"), "got {msg:?}");
-		assert!(!msg.contains("os error 17"), "raw errno leaked: {msg:?}");
-	}
-
-	#[test]
-	fn extract_archive_to_file_creates_missing_parent() {
-		// The destination's parent directory is created on demand so a fresh
-		// `cp svc:/f ./new/dir/f` works without a pre-existing tree.
+	fn extract_archive_to_file_errors_on_missing_parent() {
+		// docker/podman `cp` error when the destination's parent directory does not
+		// exist, rather than silently creating the whole chain.
 		let dir = tempfile::tempdir().expect("tempdir");
 		let dst = dir.path().join("new").join("nested").join("file.txt");
 		let bytes = tar_bytes_with("ignored-name", b"data");
-		super::extract_archive(&bytes, &dst).expect("extract");
-		assert_eq!(std::fs::read(&dst).expect("read"), b"data");
+		let err = super::extract_archive(&bytes, &dst).unwrap_err();
+		assert!(format!("{err}").contains("no such directory"), "got: {err}");
+		assert!(!dst.exists(), "nothing must be created on a missing parent");
+		assert!(
+			!dst.parent().unwrap().exists(),
+			"the parent chain must not be created"
+		);
+	}
+
+	#[test]
+	fn extract_archive_to_trailing_slash_missing_dir_errors() {
+		// A trailing-slash destination names a directory; when it does not exist,
+		// `cp` errors instead of hitting a misleading "Is a directory" (EISDIR).
+		let dir = tempfile::tempdir().expect("tempdir");
+		// Keep the trailing separator on the path string.
+		let dst = std::path::PathBuf::from(format!("{}/newdir/", dir.path().display()));
+		let bytes = tar_bytes_with("hostname", b"data");
+		let err = super::extract_archive(&bytes, &dst).unwrap_err();
+		assert!(format!("{err}").contains("no such directory"), "got: {err}");
+		assert!(!dst.exists(), "nothing must be created");
+	}
+
+	#[test]
+	fn extract_archive_dir_source_onto_existing_file_errors() {
+		// A directory source whose destination already exists as a regular file is
+		// a clear error, not a misleading "File exists" (EEXIST); the file is left
+		// untouched.
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dst = dir.path().join("existing");
+		std::fs::write(&dst, b"keep").expect("write");
+		let bytes = tar_dir_with("srcdir", &[("a.txt", b"aaa")]);
+		let err = super::extract_archive(&bytes, &dst).unwrap_err();
+		assert!(
+			format!("{err}").contains("cannot copy a directory"),
+			"got: {err}"
+		);
+		assert_eq!(
+			std::fs::read(&dst).expect("read"),
+			b"keep",
+			"the existing file must be left untouched"
+		);
 	}
 }

@@ -35,8 +35,16 @@ pub enum ComposeError {
 	HealthCheckTimeout(String),
 	/// A `ports:` entry could not be parsed.
 	InvalidPort(String),
+	/// A `kill` signal is empty, malformed, or not a recognised signal
+	/// name/number. Forwarding it verbatim would let libpod silently default to
+	/// SIGKILL, so it is rejected up front.
+	InvalidSignal(String),
 	/// Image build failed (context assembly or the Podman build step).
 	Build(String),
+	/// A `cp` (copy between a container and the host) operation failed — a missing
+	/// destination directory, a non-directory path component, an unsupported
+	/// endpoint, or a host-side packing/extraction error.
+	Copy(String),
 	/// `extends:` could not be resolved (missing file/service or a cycle).
 	Extends(String),
 	/// `include:` could not be resolved or merged.
@@ -90,20 +98,20 @@ pub enum ComposeError {
 		path: String,
 		source: std::io::Error,
 	},
-	/// A `cp` operation failed (host-side packing, or a destination shape
-	/// mismatch). Distinct from [`Self::Build`] so a copy never reads as a build
-	/// error.
-	Copy(String),
 	/// A targeted service container is not running (e.g. `exec`/`attach` against a
 	/// stopped or never-created container).
 	NotRunning(String),
+	/// The `-t/--timeout` shutdown grace was given an unusable value (a number
+	/// below `-1`). `-1` means "wait indefinitely" (docker parity) and any
+	/// non-negative value is a second count; everything else is rejected here
+	/// rather than forwarded to libpod as a raw `HTTP 400`.
+	InvalidTimeout(i32),
+	/// An explicitly requested env file (`--env-file` or a service `env_file:`)
+	/// could not be read or parsed — a missing/unreadable path or a malformed
+	/// entry such as an unterminated quoted value. The string is a ready-to-print
+	/// message.
+	EnvFile(String),
 }
-
-/// Cap on how much of a wrapped parse error is reflected back to the user.
-/// serde_yaml embeds the offending scalar verbatim, so pointing `-f` at a
-/// non-compose file would otherwise echo its entire contents (a host
-/// file/secret disclosure); truncate it.
-const MAX_PARSE_DETAIL: usize = 200;
 
 /// Escape control characters (tabs, newlines, ESC, …) in an interpolated,
 /// possibly-untrusted name before it reaches a terminal, so a crafted
@@ -127,24 +135,23 @@ fn sanitize_name(s: &str) -> std::borrow::Cow<'_, str> {
 	}
 }
 
-/// Truncate a wrapped lower-level error message to [`MAX_PARSE_DETAIL`] so an
-/// embedded file scalar (potential secret) is not reflected untruncated.
-fn truncate_detail(s: &str) -> String {
-	if s.chars().count() <= MAX_PARSE_DETAIL {
-		return s.to_string();
-	}
-	let cut: String = s.chars().take(MAX_PARSE_DETAIL).collect();
-	format!("{cut}… (truncated)")
-}
-
 impl fmt::Display for ComposeError {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
-			Self::Parse(e) => write!(
-				f,
-				"failed to parse compose file: {}",
-				truncate_detail(&e.to_string())
-			),
+			// Report only the parser's location, never the raw `serde_yaml`
+			// message: that message embeds the offending scalar verbatim (the file's
+			// own content), which would echo a non-compose file pointed at with `-f`
+			// straight onto stderr. Location (line/column) is enough to find the
+			// problem without leaking the bytes.
+			Self::Parse(e) => match e.location() {
+				Some(loc) => write!(
+					f,
+					"failed to parse compose file at line {}, column {}",
+					loc.line(),
+					loc.column()
+				),
+				None => write!(f, "failed to parse compose file"),
+			},
 			Self::FileNotFound(s) => write!(f, "compose file not found: {}", sanitize_name(s)),
 			Self::Io(e) => write!(f, "io error: {e}"),
 			Self::Podman(e) => write!(f, "podman error: {e}"),
@@ -171,7 +178,9 @@ impl fmt::Display for ComposeError {
 				)
 			}
 			Self::InvalidPort(s) => write!(f, "invalid port mapping: {s}"),
+			Self::InvalidSignal(s) => write!(f, "invalid signal: {s}"),
 			Self::Build(s) => write!(f, "build error: {s}"),
+			Self::Copy(s) => write!(f, "cp error: {s}"),
 			Self::Extends(s) => write!(f, "extends error: {s}"),
 			Self::Include(s) => write!(f, "include error: {s}"),
 			Self::Watch(s) => write!(f, "watch error: {s}"),
@@ -234,8 +243,12 @@ impl fmt::Display for ComposeError {
 				sanitize_name(path),
 				sanitize_name(service)
 			),
-			Self::Copy(s) => write!(f, "cp error: {s}"),
 			Self::NotRunning(s) => write!(f, "service '{}' is not running", sanitize_name(s)),
+			Self::InvalidTimeout(secs) => write!(
+				f,
+				"invalid --timeout {secs}: use -1 to wait indefinitely or a non-negative number of seconds"
+			),
+			Self::EnvFile(s) => write!(f, "{s}"),
 		}
 	}
 }
@@ -281,7 +294,7 @@ mod tests {
 	fn display_covers_all_variants() {
 		let cases: &[(&str, ComposeError)] = &[
 			(
-				"failed to parse compose file:",
+				"failed to parse compose file",
 				ComposeError::Parse(serde_yaml::from_str::<serde_yaml::Value>(":\0").unwrap_err()),
 			),
 			(
@@ -325,6 +338,7 @@ mod tests {
 				ComposeError::InvalidSubstitution("bad".into()),
 			),
 			("build error: b", ComposeError::Build("b".into())),
+			("cp error: c", ComposeError::Copy("c".into())),
 			("extends error: e", ComposeError::Extends("e".into())),
 			("include error: i", ComposeError::Include("i".into())),
 			("watch error: w", ComposeError::Watch("w".into())),
@@ -390,10 +404,17 @@ mod tests {
 					source: std::io::Error::other("boom"),
 				},
 			),
-			("cp error: oops", ComposeError::Copy("oops".into())),
 			(
 				"service 'web' is not running",
 				ComposeError::NotRunning("web".into()),
+			),
+			(
+				"invalid --timeout -5: use -1 to wait indefinitely or a non-negative number of seconds",
+				ComposeError::InvalidTimeout(-5),
+			),
+			(
+				"env file not found: app.env",
+				ComposeError::EnvFile("env file not found: app.env".into()),
 			),
 		];
 		for (expected_prefix, err) in cases {
@@ -404,6 +425,26 @@ mod tests {
 				std::mem::discriminant(err),
 			);
 		}
+	}
+
+	#[test]
+	fn parse_display_does_not_echo_offending_scalar() {
+		// A type error embeds the offending scalar in the raw serde_yaml message
+		// (`invalid type: string "s3cr3t-token", ...`). The Display must not surface
+		// that content — it points at the location instead, so a non-compose file
+		// pointed at with `-f` cannot leak its bytes onto stderr.
+		#[derive(Debug, serde::Deserialize)]
+		struct OnlyMap {
+			#[allow(dead_code)]
+			services: std::collections::BTreeMap<String, String>,
+		}
+		let err = serde_yaml::from_str::<OnlyMap>("services: s3cr3t-token\n").unwrap_err();
+		let msg = ComposeError::Parse(err).to_string();
+		assert!(
+			!msg.contains("s3cr3t-token"),
+			"parse error must not echo file content, got {msg:?}"
+		);
+		assert!(msg.starts_with("failed to parse compose file"));
 	}
 
 	#[test]
@@ -436,25 +477,6 @@ mod tests {
 			msg.contains("\\u{1b}") && msg.contains("\\n"),
 			"got {msg:?}"
 		);
-	}
-
-	#[test]
-	fn parse_error_detail_is_truncated() {
-		// serde_yaml embeds the offending scalar verbatim ("invalid type: string
-		// \"…\""), so a huge value would otherwise be echoed in full — pointing
-		// `-f` at a secret file would leak its contents. The Parse Display must cap
-		// the reflected detail.
-		let big = "x".repeat(5_000);
-		let yaml = format!("\"{big}\"");
-		let err = ComposeError::Parse(serde_yaml::from_str::<u8>(&yaml).unwrap_err());
-		let msg = err.to_string();
-		assert!(msg.starts_with("failed to parse compose file: "));
-		assert!(
-			msg.chars().count() < 400,
-			"parse detail must be truncated, got {} chars",
-			msg.chars().count()
-		);
-		assert!(msg.contains("truncated"));
 	}
 
 	#[test]

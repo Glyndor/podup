@@ -29,7 +29,7 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "proj");
-	let c = &unit_named(&out, "app.container").contents;
+	let c = &unit_named(&out, "proj-app.container").contents;
 	assert!(c.contains("HostName=app-host"));
 	// `user: "1000:1000"` splits into separate User=/Group= keys.
 	assert!(c.contains("User=1000"));
@@ -62,7 +62,9 @@ fn restart_policies_map_to_systemd() {
 		let file = parse_str(&yaml).unwrap();
 		let out = generate(&file, "p");
 		assert!(
-			unit_named(&out, "s.container").contents.contains(expected),
+			unit_named(&out, "p-s.container")
+				.contents
+				.contains(expected),
 			"{policy} -> {expected}"
 		);
 	}
@@ -83,10 +85,10 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "proj");
-	let c = &unit_named(&out, "web.container").contents;
-	assert!(c.contains("After=cache.service"));
-	assert!(c.contains("Wants=cache.service"));
-	assert!(!c.contains("Requires=cache.service"));
+	let c = &unit_named(&out, "proj-web.container").contents;
+	assert!(c.contains("After=proj-cache.service"));
+	assert!(c.contains("Wants=proj-cache.service"));
+	assert!(!c.contains("Requires=proj-cache.service"));
 }
 
 #[test]
@@ -129,7 +131,7 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "app.container").contents;
+	let c = &unit_named(&out, "p-app.container").contents;
 	for needle in [
 		"ContainerName=custom",
 		"EnvironmentFile=./app.env",
@@ -137,7 +139,6 @@ services:
 		"Sysctl=net.core.somaxconn=1024",
 		"Ulimit=nofile=1024:2048",
 		"ShmSize=64m",
-		"Memory=512m",
 		"PidsLimit=100",
 		"UserNS=keep-id",
 		"StopSignal=SIGTERM",
@@ -147,6 +148,7 @@ services:
 		"AddHost=db:10.0.0.2",
 		"Annotation=run.oci.keep=1",
 		"Network=host",
+		"PodmanArgs=--memory=512m",
 		"HealthCmd=curl -f http://localhost",
 		"HealthInterval=5s",
 		"HealthRetries=3",
@@ -167,7 +169,7 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
+	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("PublishPort=80"));
 	assert!(!c.contains("PublishPort=:80"));
 }
@@ -177,7 +179,7 @@ fn user_with_gid_splits_into_user_and_group() {
 	let yaml = "services:\n  s:\n    image: x\n    user: \"1000:2000\"\n";
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
+	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("User=1000"));
 	assert!(c.contains("Group=2000"));
 	assert!(!c.contains("User=1000:2000"));
@@ -202,7 +204,7 @@ secrets:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
+	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("Secret=tok"));
 	assert!(c.contains("Secret=cred,target=/run/cred,uid=100"));
 	assert!(!out.warnings.iter().any(|w| w.contains("secrets")));
@@ -240,7 +242,7 @@ networks:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
+	let c = &unit_named(&out, "p-s.container").contents;
 	for needle in [
 		"GroupAdd=audio",
 		"ExposeHostPort=8080",
@@ -251,17 +253,18 @@ networks:
 		"LogDriver=journald",
 		"LogOpt=tag=mytag",
 		"NetworkAlias=web-alias",
-		"Memory=256m",
+		"PodmanArgs=--memory=256m",
 	] {
 		assert!(c.contains(needle), "missing `{needle}` in:\n{c}");
 	}
 }
 
 #[test]
-fn memory_and_apparmor_render_as_native_keys() {
-	// `Memory=` and `AppArmor=` are valid native [Container] keys in current
-	// podman-systemd.unit(5); they must be emitted directly, not routed through
-	// `PodmanArgs=`.
+fn memory_and_apparmor_render_as_podman_args() {
+	// `Memory=` and `AppArmor=` are not recognised [Container] keys in
+	// podman-systemd.unit(5) (Quadlet drops the whole unit at daemon-reload), so
+	// they must route through `PodmanArgs=` like the CPU limits, not be emitted as
+	// native keys.
 	let yaml = r#"
 services:
   s:
@@ -272,19 +275,19 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
-	assert!(c.contains("Memory=512m"), "missing native Memory= in:\n{c}");
+	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
-		c.contains("AppArmor=my-profile"),
-		"missing native AppArmor= in:\n{c}"
+		c.contains("PodmanArgs=--memory=512m"),
+		"mem_limit must route through PodmanArgs in:\n{c}"
 	);
-	for forbidden in [
-		"PodmanArgs=--memory=",
-		"PodmanArgs=--security-opt apparmor=",
-	] {
+	assert!(
+		c.contains("PodmanArgs=--security-opt apparmor=my-profile"),
+		"apparmor must route through PodmanArgs in:\n{c}"
+	);
+	for forbidden in ["Memory=512m", "AppArmor=my-profile"] {
 		assert!(
 			!c.contains(forbidden),
-			"memory/apparmor must use the native key, not `{forbidden}` in:\n{c}"
+			"memory/apparmor must not use an unrecognised native key `{forbidden}` in:\n{c}"
 		);
 	}
 }
@@ -305,7 +308,7 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
+	let c = &unit_named(&out, "p-s.container").contents;
 	for expected in [
 		"PodmanArgs=--cpus=1.5",
 		"PodmanArgs=--cpuset-cpus=0,1",
@@ -332,7 +335,7 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
+	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
 		c.contains("PodmanArgs=--cpus=2"),
 		"missing deploy cpus PodmanArgs in:\n{c}"
@@ -356,7 +359,7 @@ networks:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
+	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("IP=10.5.0.7"), "missing IP= in:\n{c}");
 	assert!(c.contains("IP6=2001:db8::7"), "missing IP6= in:\n{c}");
 }
@@ -368,7 +371,7 @@ fn network_mode_none_maps_to_network_none() {
 	let yaml = "services:\n  s:\n    image: x\n    network_mode: none\n";
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
+	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("Network=none"), "missing Network=none in:\n{c}");
 	assert!(
 		!out.warnings.iter().any(|w| w.contains("network_mode")),
@@ -389,7 +392,7 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
+	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("SecurityLabelFileType=usr_t"), "in:\n{c}");
 	assert!(c.contains("SecurityLabelNested=true"), "in:\n{c}");
 	assert!(
@@ -413,7 +416,7 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
+	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("Restart=on-failure"), "in:\n{c}");
 	assert!(c.contains("StartLimitBurst=4"), "in:\n{c}");
 	assert!(c.contains("StartLimitIntervalSec=120"), "in:\n{c}");
@@ -424,7 +427,7 @@ fn deploy_restart_condition_none_maps_to_no() {
 	let yaml = "services:\n  s:\n    image: x\n    deploy:\n      restart_policy:\n        condition: none\n";
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	assert!(unit_named(&out, "s.container")
+	assert!(unit_named(&out, "p-s.container")
 		.contents
 		.contains("Restart=no"));
 }
@@ -442,7 +445,7 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
+	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("PidsLimit=256"), "missing PidsLimit in:\n{c}");
 }
 
@@ -463,7 +466,7 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
+	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
 		c.contains("Tmpfs=/cache:size=64000000,mode=755"),
 		"tmpfs not rendered as Tmpfs= with options in:\n{c}"

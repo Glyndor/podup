@@ -71,6 +71,20 @@ pub fn generate(file: &ComposeFile, project: &str) -> QuadletOutput {
 			continue;
 		}
 		out.units.push(network_unit(name, project, cfg.as_ref()));
+		// `podman network create` (and therefore Quadlet) exposes no key for IPAM
+		// options beyond the IPAM driver, so `ipam.options` cannot be emitted. The
+		// live engine forwards them via the libpod API directly, so warn rather than
+		// let `generate` silently diverge from `up`.
+		if let Some(c) = cfg {
+			if let Some(ipam) = &c.ipam {
+				if !ipam.options.is_empty() {
+					out.warnings.push(format!(
+						"network '{name}': ipam.options have no Quadlet key and are not emitted; \
+						 the live engine forwards them but `generate` cannot"
+					));
+				}
+			}
+		}
 	}
 	for (name, cfg) in &file.volumes {
 		if cfg.as_ref().is_some_and(|c| c.external == Some(true)) {
@@ -103,6 +117,7 @@ pub fn generate(file: &ComposeFile, project: &str) -> QuadletOutput {
 			service,
 			&declared_volumes,
 			&declared_networks,
+			&file.secrets,
 			&mut out.warnings,
 		));
 	}

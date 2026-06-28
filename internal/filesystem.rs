@@ -23,12 +23,25 @@ fn read_to_string_capped_with(path: &Path, max: u64) -> io::Result<String> {
 	// the file (or swaps in a symlink) after a size check cannot make podup
 	// read past the cap, because the limit is enforced on the read itself.
 	let file = std::fs::File::open(path)?;
+	read_capped_from(file, max, &path.display().to_string())
+}
+
+/// Read the compose document from standard input, refusing input larger than
+/// [`MAX_FILE_BYTES`]. Backs the `-f -` form (`cat compose.yaml | podup config
+/// -f -`), which `docker compose` supports by reading the file from stdin.
+pub(crate) fn read_stdin_to_string_capped() -> io::Result<String> {
+	read_capped_from(io::stdin().lock(), MAX_FILE_BYTES, "standard input")
+}
+
+/// Read any [`io::Read`] into a `String`, enforcing the `max`-byte cap on the
+/// read itself. `label` names the source for the over-limit error message.
+fn read_capped_from(reader: impl Read, max: u64, label: &str) -> io::Result<String> {
 	let mut buf = String::new();
-	let read = file.take(max + 1).read_to_string(&mut buf)?;
+	let read = reader.take(max + 1).read_to_string(&mut buf)?;
 	if read as u64 > max {
 		return Err(io::Error::new(
 			io::ErrorKind::InvalidData,
-			format!("{} is larger than the {max} byte limit", path.display()),
+			format!("{label} is larger than the {max} byte limit"),
 		));
 	}
 	Ok(buf)
@@ -61,7 +74,22 @@ fn read_capped_with(path: &Path, max: u64) -> io::Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
-	use super::{read_capped_with, read_to_string_capped_with};
+	use super::{read_capped_from, read_capped_with, read_to_string_capped_with};
+
+	#[test]
+	fn read_capped_from_reads_within_limit() {
+		// The shared reader (used for both files and stdin) returns the content
+		// untouched when it fits under the cap.
+		let out = read_capped_from(std::io::Cursor::new(b"version: 1"), 64, "stdin").unwrap();
+		assert_eq!(out, "version: 1");
+	}
+
+	#[test]
+	fn read_capped_from_rejects_over_limit() {
+		let err = read_capped_from(std::io::Cursor::new(vec![b'x'; 32]), 16, "stdin").unwrap_err();
+		assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+		assert!(err.to_string().contains("stdin"));
+	}
 
 	#[test]
 	fn reads_file_within_limit() {

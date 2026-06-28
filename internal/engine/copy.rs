@@ -3,8 +3,6 @@
 use std::path::Path;
 
 use bytes::Bytes;
-use flate2::write::GzEncoder;
-use flate2::Compression;
 use http_body_util::{BodyExt, Limited};
 
 use crate::compose::types::ComposeFile;
@@ -12,8 +10,11 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::urlencoded;
 use crate::libpod::API_PREFIX;
 
-use super::copy_archive::extract_archive;
 use super::Engine;
+
+mod archive;
+
+use archive::{extract_archive, pack_path};
 
 /// Upper bound on a container→host `cp` archive buffered in memory. Without it a
 /// hostile or huge container path would OOM the CLI. Generous (covers ordinary
@@ -55,6 +56,12 @@ impl Engine {
 		dst: &str,
 		opts: CpOptions,
 	) -> Result<()> {
+		// Reject the explicitly-unsupported endpoint forms (`-` for stdin/stdout,
+		// and a `SERVICE:` with an empty container path) with a clear message
+		// before they silently fall through to a local file literally named `-`
+		// or `SERVICE:`.
+		check_endpoint(src)?;
+		check_endpoint(dst)?;
 		match (parse_endpoint(src), parse_endpoint(dst)) {
 			(Some((service, container_path)), None) => {
 				self.cp_from_container(file, service, container_path, Path::new(dst), &opts)
@@ -85,7 +92,9 @@ impl Engine {
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = self.replica_name_at(service_name, service, opts.index)?;
+		let container_name = self
+			.live_replica_name_at(service_name, service, opts.index)
+			.await?;
 
 		let path = format!(
 			"{API_PREFIX}/containers/{}/archive?path={}",
@@ -131,7 +140,9 @@ impl Engine {
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = self.replica_name_at(service_name, service, opts.index)?;
+		let container_name = self
+			.live_replica_name_at(service_name, service, opts.index)
+			.await?;
 
 		// Match `docker cp` destination semantics. The libpod archive PUT extracts
 		// the tar *at* a directory, so:
@@ -156,6 +167,31 @@ impl Engine {
 			let parent = if parent.is_empty() { "/" } else { parent };
 			(parent.to_string(), Some(name.to_string()))
 		};
+
+		// Validate the extraction directory exists and is itself a directory before
+		// PUTting the archive. Without this, libpod silently auto-creates a missing
+		// parent chain (diverging from docker/podman `cp`, which error with "no such
+		// directory"); and when a path component is a regular file the archive PUT
+		// never gets a response, blocking the full READ_TIMEOUT window instead of
+		// failing fast.
+		let extract_stat_path = format!(
+			"{API_PREFIX}/containers/{}/archive?path={}",
+			urlencoded(&container_name),
+			urlencoded(&extract_dir),
+		);
+		match self.client.head_path_is_dir(&extract_stat_path).await? {
+			Some(true) => {}
+			Some(false) => {
+				return Err(ComposeError::Copy(format!(
+					"cp: not a directory: {extract_dir}"
+				)));
+			}
+			None => {
+				return Err(ComposeError::Copy(format!(
+					"cp: no such directory: {extract_dir}"
+				)));
+			}
+		}
 
 		let src_buf = src.to_path_buf();
 		let follow = opts.follow_link;
@@ -184,6 +220,36 @@ impl Engine {
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Reject the `cp` endpoint forms podup explicitly does not support, with a
+/// clear diagnostic rather than letting them fall through to a local path that
+/// happens to be named `-` or `SERVICE:`.
+///
+/// - `-` (stdin/stdout streaming) is not implemented.
+/// - `SERVICE:` (a colon with an empty container path) is a malformed reference.
+///
+/// A plain local path (no colon, or a colon that is part of an ordinary host
+/// path / Windows drive) is left to [`parse_endpoint`].
+fn check_endpoint(s: &str) -> Result<()> {
+	if s == "-" {
+		return Err(ComposeError::Unsupported(
+			"cp: stdin/stdout ('-') is not supported".into(),
+		));
+	}
+	if let Some((svc, path)) = s.split_once(':') {
+		// A Windows drive letter (`C:\...`) is a local path, not a service ref.
+		#[cfg(windows)]
+		if svc.len() == 1 && svc.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+			return Ok(());
+		}
+		if !svc.is_empty() && path.is_empty() {
+			return Err(ComposeError::Copy(format!(
+				"cp: empty container path in '{s}' (expected SERVICE:PATH)"
+			)));
+		}
+	}
+	Ok(())
+}
+
 fn parse_endpoint(s: &str) -> Option<(&str, &str)> {
 	if s == "-" {
 		return None;
@@ -202,33 +268,6 @@ fn parse_endpoint(s: &str) -> Option<(&str, &str)> {
 		return None;
 	}
 	Some((svc, path))
-}
-
-fn pack_path(src: &Path, follow_link: bool, name_override: Option<&str>) -> Result<Vec<u8>> {
-	let encoder = GzEncoder::new(Vec::new(), Compression::default());
-	let mut tar = tar::Builder::new(encoder);
-	// `-L/--follow-link`: archive the symlink target's contents instead of the
-	// link itself.
-	tar.follow_symlinks(follow_link);
-
-	if src.is_dir() {
-		// `name_override` renames the copied tree (rename-on-copy); otherwise it
-		// keeps the source's own basename and lands inside the destination dir.
-		let default = src.file_name().unwrap_or(std::ffi::OsStr::new("."));
-		let name: &std::ffi::OsStr = name_override.map(std::ffi::OsStr::new).unwrap_or(default);
-		tar.append_dir_all(name, src)
-			.map_err(|e| ComposeError::Copy(format!("{}: {e}", src.display())))?;
-	} else {
-		let default = src.file_name().unwrap_or(std::ffi::OsStr::new("file"));
-		let name: &std::ffi::OsStr = name_override.map(std::ffi::OsStr::new).unwrap_or(default);
-		tar.append_path_with_name(src, name)
-			.map_err(|e| ComposeError::Copy(format!("{}: {e}", src.display())))?;
-	}
-
-	let gz = tar
-		.into_inner()
-		.map_err(|e| ComposeError::Copy(e.to_string()))?;
-	gz.finish().map_err(|e| ComposeError::Copy(e.to_string()))
 }
 
 // ---------------------------------------------------------------------------
@@ -298,38 +337,26 @@ mod tests {
 	}
 
 	#[test]
-	fn pack_path_single_file() {
-		let dir = tempfile::tempdir().expect("tempdir");
-		let file = dir.path().join("data.txt");
-		std::fs::write(&file, b"hello").expect("write");
-		let result = super::pack_path(&file, false, None);
-		assert!(result.is_ok());
-		let bytes = result.unwrap();
-		assert!(!bytes.is_empty());
+	fn check_endpoint_rejects_dash() {
+		let err = super::check_endpoint("-").unwrap_err();
+		assert!(format!("{err}").contains("stdin/stdout"), "got: {err}");
 	}
 
 	#[test]
-	fn pack_path_directory() {
-		let dir = tempfile::tempdir().expect("tempdir");
-		let subdir = dir.path().join("mydir");
-		std::fs::create_dir(&subdir).expect("mkdir");
-		std::fs::write(subdir.join("a.txt"), b"aaa").expect("write");
-		std::fs::write(subdir.join("b.txt"), b"bbb").expect("write");
-		let result = super::pack_path(&subdir, false, None);
-		assert!(result.is_ok());
-		assert!(!result.unwrap().is_empty());
-	}
-
-	#[test]
-	fn pack_path_missing_source_is_a_cp_error() {
-		// A missing host source on `cp` must read as a cp error, not a build error.
-		let missing = std::path::Path::new("/nonexistent-host-source-xyz");
-		let err = super::pack_path(missing, false, None).unwrap_err();
-		let msg = err.to_string();
-		assert!(msg.contains("cp error"), "wrong category: {msg:?}");
+	fn check_endpoint_rejects_empty_container_path() {
+		let err = super::check_endpoint("web:").unwrap_err();
 		assert!(
-			!msg.contains("build error"),
-			"must not be a build error: {msg:?}"
+			format!("{err}").contains("empty container path"),
+			"got: {err}"
 		);
+	}
+
+	#[test]
+	fn check_endpoint_allows_normal_forms() {
+		// A plain local path, a proper SERVICE:PATH, and a relative host path are
+		// all fine (validation only rejects `-` and `SERVICE:`).
+		assert!(super::check_endpoint("/tmp/file").is_ok());
+		assert!(super::check_endpoint("web:/app/data").is_ok());
+		assert!(super::check_endpoint("./local").is_ok());
 	}
 }

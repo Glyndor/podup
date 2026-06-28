@@ -131,6 +131,11 @@ impl Engine {
 		target_services: &[String],
 		no_stream: bool,
 	) -> Result<()> {
+		// Reject unknown/typo service names instead of silently sampling the whole
+		// host and printing a header-only table, matching the other commands.
+		if let Some(unknown) = first_unknown_service(file, target_services) {
+			return Err(ComposeError::ServiceNotFound(unknown.into()));
+		}
 		let wanted = self.target_container_names(file, target_services).await?;
 
 		// Scope the stats stream to just the wanted containers server-side via the
@@ -178,15 +183,28 @@ impl Engine {
 		target_services: &[String],
 	) -> Result<HashSet<String>> {
 		let mut wanted = HashSet::new();
-		for (name, service) in &file.services {
+		for name in file.services.keys() {
 			if target_services.is_empty() || target_services.iter().any(|t| t == name) {
-				for c in self.live_replica_names(name, service).await? {
+				// Only containers that actually exist — no static-name fallback.
+				// Feeding synthesized names for a never-up service to libpod's
+				// `containers=` filter 404s the whole stats request; an absent
+				// service simply contributes no rows (a zero/empty result).
+				for c in self.list_project_container_names(Some(name)).await? {
 					wanted.insert(c);
 				}
 			}
 		}
 		Ok(wanted)
 	}
+}
+
+/// The first targeted service name that the compose file does not define, if any.
+/// Pure so the validation is unit-tested without a live Podman socket.
+fn first_unknown_service<'a>(file: &ComposeFile, targets: &'a [String]) -> Option<&'a str> {
+	targets
+		.iter()
+		.map(String::as_str)
+		.find(|t| !file.services.contains_key(*t))
 }
 
 /// Print one stats frame: a header plus a row per wanted container (sorted for
@@ -274,5 +292,21 @@ mod tests {
 	#[test]
 	fn containers_query_empty_when_none_wanted() {
 		assert_eq!(containers_query(&HashSet::new()), "");
+	}
+
+	#[test]
+	fn first_unknown_service_flags_typos() {
+		let file =
+			crate::parse_str("services:\n  web:\n    image: nginx\n  db:\n    image: postgres\n")
+				.unwrap();
+		assert_eq!(first_unknown_service(&file, &[]), None);
+		assert_eq!(
+			first_unknown_service(&file, &["web".into(), "db".into()]),
+			None
+		);
+		assert_eq!(
+			first_unknown_service(&file, &["web".into(), "bogus".into()]),
+			Some("bogus")
+		);
 	}
 }

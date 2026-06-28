@@ -81,6 +81,11 @@ pub fn parse_duration_secs(s: &str) -> Option<u64> {
 		"h" => num * 3600.0,
 		_ => return None,
 	};
+	// Reject non-finite or out-of-range results rather than saturating the cast
+	// (e.g. `1e24s` would otherwise become u64::MAX and emit a garbage timeout).
+	if !secs.is_finite() || secs < 0.0 || secs > u64::MAX as f64 {
+		return None;
+	}
 	Some(secs as u64)
 }
 
@@ -255,6 +260,14 @@ mod tests {
 	#[test]
 	fn duration_secs_unknown_suffix_is_none() {
 		assert_eq!(parse_duration_secs("5d"), None);
+	}
+
+	#[test]
+	fn duration_secs_out_of_range_is_none() {
+		// A value whose seconds product exceeds u64::MAX must return None rather
+		// than saturating the cast to u64::MAX.
+		assert_eq!(parse_duration_secs("1e24"), None);
+		assert_eq!(parse_duration_secs("1e24h"), None);
 	}
 
 	// parse_duration_nanos

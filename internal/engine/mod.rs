@@ -5,13 +5,12 @@
 mod build;
 mod container;
 mod copy;
-mod copy_archive;
 mod events;
 mod image;
 pub use build::{BuildOptions, PullOptions, PushOptions};
 pub use copy::CpOptions;
 pub use image::resolve_image_digests;
-pub use lifecycle::{RunOptions, RunOverrides};
+pub use lifecycle::{validate_stop_timeout, RunOptions, RunOverrides};
 pub use lock::ProjectLock;
 pub use query::{ExecOptions, ImagesOptions, LogsOptions, PsOptions};
 mod container_config;
@@ -20,7 +19,7 @@ mod lifecycle;
 mod lock;
 mod network;
 mod profiles;
-pub use profiles::retain_active_profiles;
+pub use profiles::{retain_active_profiles, retain_active_profiles_with_targets};
 mod projects;
 pub use projects::{list_projects, LsOptions};
 mod query;
@@ -72,6 +71,12 @@ pub struct Engine {
 	/// CLI `run`-only flag overrides (user/workdir/entrypoint/volume/publish/
 	/// interactive/no-deps); empty by default.
 	pub(super) run_overrides: lifecycle::RunOverrides,
+	/// Global `--env-file` paths that double as `docker compose run --env-file`:
+	/// their contents seed a one-off `run` container's environment at the lowest
+	/// precedence (env-file < service `environment:` < `-e`). Resolved relative
+	/// to `base_dir`; empty by default. Kept off the frozen public
+	/// [`lifecycle::RunOverrides`] struct so the library API stays stable.
+	pub(super) run_env_files: Vec<String>,
 	/// CLI `up -V/--renew-anon-volumes`: when recreating a container, also remove
 	/// its old anonymous volumes instead of leaving them orphaned.
 	pub(super) renew_anon_volumes: bool,
@@ -90,6 +95,7 @@ impl Engine {
 			no_build: false,
 			quiet_pull: false,
 			run_overrides: lifecycle::RunOverrides::default(),
+			run_env_files: Vec::new(),
 			renew_anon_volumes: false,
 		}
 	}
@@ -106,6 +112,7 @@ impl Engine {
 			no_build: false,
 			quiet_pull: false,
 			run_overrides: lifecycle::RunOverrides::default(),
+			run_env_files: Vec::new(),
 			renew_anon_volumes: false,
 		}
 	}
@@ -143,6 +150,15 @@ impl Engine {
 	/// --no-deps`). Builder-style; consumed by [`Engine::run`].
 	pub fn with_run_overrides(mut self, overrides: RunOverrides) -> Self {
 		self.run_overrides = overrides;
+		self
+	}
+
+	/// Set the global `--env-file` paths that also seed a one-off `run`
+	/// container's environment (`docker compose run --env-file`: env-file <
+	/// service `environment:` < `-e`). Builder-style; consumed by
+	/// [`Engine::run`]. Resolved relative to the engine's base dir.
+	pub fn with_run_env_files(mut self, env_files: Vec<String>) -> Self {
+		self.run_env_files = env_files;
 		self
 	}
 
@@ -287,36 +303,42 @@ impl Engine {
 		}
 	}
 
-	/// Resolve the container name for a service replica: the 1-based `--index`
-	/// when given (erroring if out of range), else the first replica. Shared by
-	/// the replica-targeting commands (`exec`, `cp`).
+	/// Resolve the container name for a service replica from the statically
+	/// derived names: the 1-based `--index` when given (erroring if out of
+	/// range), else the first replica.
+	///
+	/// Prefer [`Engine::live_replica_name_at`] for the replica-targeting
+	/// commands (`exec`, `cp`): the static names reflect only the compose
+	/// `scale:`/`deploy.replicas` (plus a `--scale` on the *current* invocation),
+	/// so a later `cp`/`exec` would not see replicas created by a prior
+	/// `up --scale`. This variant stays for callers that cannot await.
 	pub(super) fn replica_name_at(
 		&self,
 		service_name: &str,
 		service: &Service,
 		index: Option<u32>,
 	) -> Result<String> {
-		match index {
-			Some(i) => {
-				// `--index` is 1-based; `0` is an invalid index, not "first replica".
-				let idx =
-					(i as usize)
-						.checked_sub(1)
-						.ok_or_else(|| ComposeError::ReplicaIndex {
-							service: service_name.to_string(),
-							index: i,
-						})?;
-				let names = self.replica_names(service_name, service);
-				names
-					.get(idx)
-					.cloned()
-					.ok_or_else(|| ComposeError::ReplicaIndex {
-						service: service_name.to_string(),
-						index: i,
-					})
-			}
-			None => Ok(self.first_replica_name(service_name, service)),
-		}
+		let names = self.replica_names(service_name, service);
+		let base = self.container_name(service_name, service);
+		resolve_replica_name(service_name, &base, &names, index)
+	}
+
+	/// Resolve the container name for a service replica against the *running*
+	/// scale: the replicas Podman actually has (matched by the `podup.service`
+	/// label), falling back to the statically derived names before anything is
+	/// created. `--index n` therefore targets replica `n` even when it was
+	/// created by an earlier `up --scale`/`scale` rather than the current
+	/// invocation, matching `docker compose cp/exec --index`. Shared by the
+	/// replica-targeting commands (`exec`, `cp`).
+	pub(super) async fn live_replica_name_at(
+		&self,
+		service_name: &str,
+		service: &Service,
+		index: Option<u32>,
+	) -> Result<String> {
+		let names = self.live_replica_names(service_name, service).await?;
+		let base = self.container_name(service_name, service);
+		resolve_replica_name(service_name, &base, &names, index)
 	}
 
 	/// Watch for file changes and apply the service's `develop.watch` rules. Returns an error when the `watch` feature is disabled.
@@ -326,6 +348,74 @@ impl Engine {
 			"watch requires the 'watch' feature".into(),
 		))
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Replica resolution helpers
+// ---------------------------------------------------------------------------
+
+/// Resolve a replica container name from the set of names that exist for a
+/// service (the running replicas, or the statically derived names before
+/// anything is created) and a 1-based `--index`. Each name is either the
+/// unsuffixed base (the sole replica) or `{base}-{n}`.
+///
+/// `--index n` targets the replica numbered `n` — by name, not by position —
+/// so it stays correct after a runtime `scale`/`up --scale` and regardless of
+/// the order Podman lists containers; `0` is rejected (indexes are 1-based);
+/// `None` picks the lowest-numbered replica. Pure so it is unit-testable
+/// without a Podman socket.
+fn resolve_replica_name(
+	service_name: &str,
+	base: &str,
+	names: &[String],
+	index: Option<u32>,
+) -> Result<String> {
+	match index {
+		Some(0) => Err(ComposeError::ReplicaIndex {
+			service: service_name.to_string(),
+			index: 0,
+		}),
+		Some(i) => {
+			let suffixed = format!("{base}-{i}");
+			if names.iter().any(|n| n == &suffixed) {
+				return Ok(suffixed);
+			}
+			// A single, unsuffixed replica answers to index 1 only.
+			if i == 1 && names.iter().any(|n| n == base) {
+				return Ok(base.to_string());
+			}
+			Err(ComposeError::ReplicaIndex {
+				service: service_name.to_string(),
+				index: i,
+			})
+		}
+		None => order_replicas(base, names)
+			.into_iter()
+			.next()
+			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into())),
+	}
+}
+
+/// Order replica container names by their 1-based replica number so callers can
+/// pick the lowest-numbered one independently of Podman's listing order. A name
+/// is the unsuffixed base (the sole replica → number 1) or `{base}-{n}`; names
+/// matching neither are dropped.
+fn order_replicas(base: &str, names: &[String]) -> Vec<String> {
+	let prefix = format!("{base}-");
+	let mut numbered: Vec<(usize, String)> = names
+		.iter()
+		.filter_map(|name| {
+			if name == base {
+				Some((1, name.clone()))
+			} else {
+				name.strip_prefix(&prefix)
+					.and_then(|s| s.parse::<usize>().ok())
+					.map(|n| (n, name.clone()))
+			}
+		})
+		.collect();
+	numbered.sort_by_key(|(n, _)| *n);
+	numbered.into_iter().map(|(_, name)| name).collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -435,6 +525,84 @@ mod tests {
 		assert_eq!(
 			e.replica_name_at("web", &scaled_service(3), None).unwrap(),
 			"proj-web-1"
+		);
+	}
+
+	fn names(list: &[&str]) -> Vec<String> {
+		list.iter().map(|s| s.to_string()).collect()
+	}
+
+	#[test]
+	fn resolve_replica_targets_running_scale_not_compose_default() {
+		// The regression: a later `cp`/`exec` has no `--scale` (empty overrides),
+		// so the static count is the compose default (1). But the service was
+		// scaled up earlier and three replicas are running — `--index 2` must
+		// address the running `proj-web-2`, not fall back to the base name.
+		let live = names(&["proj-web-1", "proj-web-2", "proj-web-3"]);
+		assert_eq!(
+			resolve_replica_name("web", "proj-web", &live, Some(2)).unwrap(),
+			"proj-web-2"
+		);
+		assert_eq!(
+			resolve_replica_name("web", "proj-web", &live, Some(3)).unwrap(),
+			"proj-web-3"
+		);
+	}
+
+	#[test]
+	fn resolve_replica_is_order_independent() {
+		// Podman does not guarantee a listing order; `--index n` targets replica
+		// `n` by name, and `None` picks the lowest-numbered replica regardless.
+		let live = names(&["proj-web-3", "proj-web-1", "proj-web-2"]);
+		assert_eq!(
+			resolve_replica_name("web", "proj-web", &live, Some(1)).unwrap(),
+			"proj-web-1"
+		);
+		assert_eq!(
+			resolve_replica_name("web", "proj-web", &live, None).unwrap(),
+			"proj-web-1"
+		);
+	}
+
+	#[test]
+	fn resolve_replica_out_of_range_against_running_scale() {
+		// Only two replicas running: index 3 is out of range, not a stale base.
+		let live = names(&["proj-web-1", "proj-web-2"]);
+		assert!(resolve_replica_name("web", "proj-web", &live, Some(3)).is_err());
+	}
+
+	#[test]
+	fn resolve_replica_index_zero_is_rejected() {
+		let live = names(&["proj-web-1", "proj-web-2"]);
+		let err = resolve_replica_name("web", "proj-web", &live, Some(0))
+			.expect_err("index 0 must be rejected");
+		assert!(
+			matches!(err, ComposeError::ReplicaIndex { index: 0, ref service } if service == "web"),
+			"unexpected error: {err:?}"
+		);
+	}
+
+	#[test]
+	fn resolve_replica_single_unsuffixed_base() {
+		// A single, unsuffixed replica answers to index 1 (and None), never index 2.
+		let live = names(&["proj-web"]);
+		assert_eq!(
+			resolve_replica_name("web", "proj-web", &live, None).unwrap(),
+			"proj-web"
+		);
+		assert_eq!(
+			resolve_replica_name("web", "proj-web", &live, Some(1)).unwrap(),
+			"proj-web"
+		);
+		assert!(resolve_replica_name("web", "proj-web", &live, Some(2)).is_err());
+	}
+
+	#[test]
+	fn order_replicas_sorts_by_replica_number() {
+		let live = names(&["proj-web-10", "proj-web-2", "proj-web-1"]);
+		assert_eq!(
+			order_replicas("proj-web", &live),
+			names(&["proj-web-1", "proj-web-2", "proj-web-10"])
 		);
 	}
 }

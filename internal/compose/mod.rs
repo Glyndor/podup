@@ -9,6 +9,7 @@ mod extends;
 mod include;
 mod merge;
 mod order;
+mod validate;
 
 use std::path::{Path, PathBuf};
 
@@ -17,6 +18,12 @@ use crate::substitute;
 use types::{ComposeFile, ServiceNetworks};
 
 pub use order::{resolve_levels, resolve_order};
+pub use validate::validate_config;
+
+/// Whether a compose-file path is the stdin sentinel `-` (`docker compose -f -`).
+fn is_stdin(path: &Path) -> bool {
+	path == Path::new("-")
+}
 
 /// Parse a compose file from disk, applying variable substitution and
 /// resolving `extends:` / `include:` directives.
@@ -41,8 +48,17 @@ pub fn parse_file_with_env_files_interp(
 	env_files: &[String],
 	interpolate: bool,
 ) -> Result<ComposeFile> {
-	let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-	let dir = abs.parent().unwrap_or(Path::new(".")).to_path_buf();
+	// `-f -` reads the compose document from stdin (like `docker compose`); there
+	// is no file to canonicalize, so relative paths and `.env` resolve against the
+	// working directory.
+	let (abs, dir) = if is_stdin(path) {
+		let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+		(PathBuf::from("-"), cwd)
+	} else {
+		let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+		let dir = abs.parent().unwrap_or(Path::new(".")).to_path_buf();
+		(abs, dir)
+	};
 	let mut file = parse_file_inner_with_env(&abs, &dir, env_files, interpolate)?;
 
 	let includes = std::mem::take(&mut file.include);
@@ -128,6 +144,13 @@ pub fn parse_files_with_env_files_interp(
 		merge_override(&mut merged, other);
 	}
 	normalize_default_network(&mut merged);
+	// Semantic validation runs only on the interpolated file: `--no-interpolate`
+	// leaves literal `${VAR}` placeholders that cannot be reference- or
+	// range-checked. This makes `config`, `up`, and `generate` reject the same
+	// contradictory files docker-compose does, at config time.
+	if interpolate {
+		validate::validate(&merged)?;
+	}
 	for warning in diagnostics::collect(&merged) {
 		tracing::warn!("{warning}");
 	}
@@ -194,8 +217,7 @@ fn merge_override(target: &mut ComposeFile, other: ComposeFile) {
 /// use [`parse_file`] for that.
 pub fn parse_str(content: &str) -> Result<ComposeFile> {
 	let vars = substitute::build_vars(Path::new("."));
-	let substituted = substitute::substitute(content, &vars)?;
-	let mut file = merge::deserialize_with_merge(&substituted)?;
+	let mut file = merge::deserialize_with_merge_interp(content, Some(&vars))?;
 	extends::resolve_extends_same_file(&mut file)?;
 	Ok(file)
 }
@@ -216,26 +238,31 @@ pub(crate) fn parse_file_inner_with_env(
 	extra_env_files: &[String],
 	interpolate: bool,
 ) -> Result<ComposeFile> {
-	let content = crate::filesystem::read_to_string_capped(path).map_err(|e| {
-		if e.kind() == std::io::ErrorKind::NotFound {
-			ComposeError::FileNotFound(path.display().to_string())
-		} else {
-			ComposeError::Io(e)
-		}
-	})?;
+	let content = if is_stdin(path) {
+		crate::filesystem::read_stdin_to_string_capped().map_err(ComposeError::Io)?
+	} else {
+		crate::filesystem::read_to_string_capped(path).map_err(|e| {
+			if e.kind() == std::io::ErrorKind::NotFound {
+				ComposeError::FileNotFound(path.display().to_string())
+			} else {
+				ComposeError::Io(e)
+			}
+		})?
+	};
 	// `config --no-interpolate` leaves `${VAR}` placeholders literal; otherwise
-	// substitute against the env/.env/env-file variable map.
-	let yaml = if interpolate {
+	// interpolate against the env/.env/env-file variable map. Interpolation runs
+	// on the parsed YAML scalars (see `deserialize_with_merge_interp`), not the
+	// raw text, so resolved values cannot alter the document structure.
+	if interpolate {
 		let vars = if extra_env_files.is_empty() {
 			substitute::build_vars(dir)
 		} else {
-			substitute::build_vars_with_env_files(dir, extra_env_files)
+			substitute::build_vars_with_env_files_strict(dir, extra_env_files)?
 		};
-		substitute::substitute(&content, &vars)?
+		merge::deserialize_with_merge_interp(&content, Some(&vars))
 	} else {
-		content
-	};
-	merge::deserialize_with_merge(&yaml)
+		merge::deserialize_with_merge(&content)
+	}
 }
 
 #[cfg(test)]
@@ -243,6 +270,14 @@ mod tests {
 	use super::*;
 
 	// parse_str_raw
+
+	#[test]
+	fn is_stdin_matches_only_the_dash_sentinel() {
+		assert!(is_stdin(Path::new("-")));
+		assert!(!is_stdin(Path::new("docker-compose.yml")));
+		assert!(!is_stdin(Path::new("./-")));
+		assert!(!is_stdin(Path::new("a-b")));
+	}
 
 	#[test]
 	fn parse_str_raw_minimal_service() {
