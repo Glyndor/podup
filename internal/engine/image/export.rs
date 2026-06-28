@@ -1,7 +1,7 @@
 //! `commit` and `export`: snapshot a service container to an image, or stream
 //! its filesystem out as a tar archive (`docker compose commit` / `export`).
 
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 
 use http_body_util::BodyExt;
@@ -65,6 +65,15 @@ impl Engine {
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
 		let container = self.replica_name_at(service_name, service, index)?;
 
+		// Refuse to flood a terminal with a binary tar stream when no output file
+		// is given, matching `docker export`.
+		if refuse_tar_to_tty(output.is_none(), std::io::stdout().is_terminal()) {
+			return Err(ComposeError::Unsupported(
+				"refusing to write a tar archive to the terminal: pass -o FILE or redirect stdout"
+					.into(),
+			));
+		}
+
 		let path = format!("{API_PREFIX}/containers/{}/export", urlencoded(&container),);
 		let resp = self
 			.client
@@ -85,5 +94,24 @@ impl Engine {
 		}
 		sink.flush().map_err(ComposeError::Io)?;
 		Ok(())
+	}
+}
+
+/// Whether an `export` should be refused: true only when no output file was
+/// given *and* stdout is a terminal. Pure so the guard is unit-tested.
+fn refuse_tar_to_tty(no_output_file: bool, stdout_is_tty: bool) -> bool {
+	no_output_file && stdout_is_tty
+}
+
+#[cfg(test)]
+mod tests {
+	use super::refuse_tar_to_tty;
+
+	#[test]
+	fn refuses_only_when_no_file_and_tty() {
+		assert!(refuse_tar_to_tty(true, true));
+		assert!(!refuse_tar_to_tty(true, false));
+		assert!(!refuse_tar_to_tty(false, true));
+		assert!(!refuse_tar_to_tty(false, false));
 	}
 }
