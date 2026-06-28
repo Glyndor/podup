@@ -132,7 +132,19 @@ impl Client {
 	}
 
 	/// Send a request and return the raw response.
-	async fn send(&self, req: Request<BoxBody>) -> Result<Response<Incoming>> {
+	///
+	/// `response_timeout` bounds how long we wait for the server to return the
+	/// response head. Pass `Some` (the default [`READ_TIMEOUT`]) for ordinary and
+	/// streaming calls, where the head arrives promptly — this stops a socket that
+	/// accepts the connection but never replies from hanging the CLI indefinitely.
+	/// Pass `None` only for endpoints that legitimately block server-side before
+	/// the head (e.g. `wait?condition=stopped`), whose callers impose an outer
+	/// budget.
+	async fn send(
+		&self,
+		req: Request<BoxBody>,
+		response_timeout: Option<std::time::Duration>,
+	) -> Result<Response<Incoming>> {
 		tracing::debug!("libpod {} {}", req.method(), req.uri().path());
 		let mut sender = tokio::time::timeout(CONNECT_TIMEOUT, self.connect())
 			.await
@@ -143,7 +155,14 @@ impl Client {
 					CONNECT_TIMEOUT.as_secs()
 				),
 			})??;
-		sender.send_request(req).await.map_err(PodmanError::Hyper)
+		let request = sender.send_request(req);
+		Self::apply_timeout(
+			response_timeout,
+			"waiting for the Podman socket to respond",
+			request,
+		)
+		.await?
+		.map_err(PodmanError::Hyper)
 	}
 
 	/// Read the full response body into a `Vec<u8>`, capped at
@@ -160,40 +179,44 @@ impl Client {
 	) -> Result<(StatusCode, Vec<u8>)> {
 		let status = resp.status();
 		let read = Limited::new(resp.into_body(), MAX_RESPONSE_BYTES).collect();
-		let collected = Self::apply_read_timeout(read_timeout, read)
-			.await?
-			.map_err(|e| PodmanError::Api {
-				status: 0,
-				message: format!("reading response body: {e}"),
-			})?;
+		let collected = Self::apply_timeout(
+			read_timeout,
+			"reading the response body from the Podman socket",
+			read,
+		)
+		.await?
+		.map_err(|e| PodmanError::Api {
+			status: 0,
+			message: format!("reading response body: {e}"),
+		})?;
 		Ok((status, collected.to_bytes().to_vec()))
 	}
 
-	/// Await `read`, optionally bounded by `read_timeout`.
+	/// Await `fut`, optionally bounded by `timeout`.
 	///
-	/// With `Some(limit)` a stalled body is aborted once `limit` elapses, yielding
-	/// a timeout [`PodmanError`]. With `None` the future is awaited uncapped, for
-	/// endpoints that legitimately block server-side (the caller supplies its own
-	/// outer budget). Split out from [`read_body`](Self::read_body) so the timeout policy is
-	/// testable without a live socket.
-	async fn apply_read_timeout<F, T>(
-		read_timeout: Option<std::time::Duration>,
-		read: F,
+	/// With `Some(limit)` a stalled future is aborted once `limit` elapses, yielding
+	/// a timeout [`PodmanError`] whose message names `phase` (what we were waiting
+	/// on); with `None` it is awaited uncapped, for endpoints that legitimately
+	/// block server-side (the caller supplies its own outer budget). Shared by the
+	/// response-head wait ([`send`](Self::send)) and the body read
+	/// ([`read_body`](Self::read_body)); split out so the policy is testable without
+	/// a live socket.
+	async fn apply_timeout<F, T>(
+		timeout: Option<std::time::Duration>,
+		phase: &str,
+		fut: F,
 	) -> Result<T>
 	where
 		F: std::future::Future<Output = T>,
 	{
-		match read_timeout {
-			Some(limit) => tokio::time::timeout(limit, read)
+		match timeout {
+			Some(limit) => tokio::time::timeout(limit, fut)
 				.await
 				.map_err(|_| PodmanError::Api {
 					status: 0,
-					message: format!(
-						"timed out after {}s reading the response body from the Podman socket",
-						limit.as_secs()
-					),
+					message: format!("timed out after {}s {phase}", limit.as_secs()),
 				}),
-			None => Ok(read.await),
+			None => Ok(fut.await),
 		}
 	}
 
@@ -250,7 +273,7 @@ impl Client {
 	pub async fn ping(&self) -> Result<()> {
 		// Deliberately omits the version prefix: `_ping` is version-independent.
 		let req = Self::build_request(Method::GET, "/libpod/_ping", Full::new(Bytes::new()), None)?;
-		let resp = self.send(req).await?;
+		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		// Read the version header before the body is consumed below.
 		let reported = resp
 			.headers()
@@ -269,7 +292,7 @@ impl Client {
 	/// `GET` → deserialize JSON response.
 	pub async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
 		let req = Self::build_request(Method::GET, path, Full::new(Bytes::new()), None)?;
-		let resp = self.send(req).await?;
+		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		Self::check_status(status, &body)?;
 		serde_json::from_slice(&body).map_err(PodmanError::Json)
@@ -278,7 +301,7 @@ impl Client {
 	/// `GET` → return raw `Response<Incoming>` for streaming.
 	pub async fn get_stream(&self, path: &str) -> Result<Response<Incoming>> {
 		let req = Self::build_request(Method::GET, path, Full::new(Bytes::new()), None)?;
-		Self::stream_or_err(self.send(req).await?).await
+		Self::stream_or_err(self.send(req, Some(READ_TIMEOUT)).await?).await
 	}
 
 	/// `POST` with JSON body → deserialize JSON response.
@@ -294,7 +317,7 @@ impl Client {
 			Full::new(Bytes::from(json)),
 			Some("application/json"),
 		)?;
-		let resp = self.send(req).await?;
+		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		Self::check_status(status, &body)?;
 		serde_json::from_slice(&body).map_err(PodmanError::Json)
@@ -309,7 +332,7 @@ impl Client {
 			Full::new(Bytes::from(json)),
 			Some("application/json"),
 		)?;
-		let resp = self.send(req).await?;
+		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		Self::check_status(status, &body)
 	}
@@ -327,13 +350,13 @@ impl Client {
 			Full::new(Bytes::from(json)),
 			Some("application/json"),
 		)?;
-		Self::stream_or_err(self.send(req).await?).await
+		Self::stream_or_err(self.send(req, Some(READ_TIMEOUT)).await?).await
 	}
 
 	/// `POST` with empty body → ignore response body (expect 2xx or 304).
 	pub async fn post_empty_ok(&self, path: &str) -> Result<()> {
 		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;
-		let resp = self.send(req).await?;
+		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		// 304 Not Modified is fine for idempotent ops
 		if status == StatusCode::NOT_MODIFIED {
@@ -345,13 +368,13 @@ impl Client {
 	/// `POST` with empty body → return raw `Response<Incoming>` for streaming.
 	pub async fn post_empty_stream(&self, path: &str) -> Result<Response<Incoming>> {
 		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;
-		Self::stream_or_err(self.send(req).await?).await
+		Self::stream_or_err(self.send(req, Some(READ_TIMEOUT)).await?).await
 	}
 
 	/// `POST` with empty body → deserialize JSON response.
 	pub async fn post_empty_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
 		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;
-		let resp = self.send(req).await?;
+		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		Self::check_status(status, &body)?;
 		serde_json::from_slice(&body).map_err(PodmanError::Json)
@@ -369,7 +392,7 @@ impl Client {
 	/// [`tokio::time::timeout`]) to stay bounded.
 	pub async fn post_empty_json_unbounded<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
 		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;
-		let resp = self.send(req).await?;
+		let resp = self.send(req, None).await?;
 		let (status, body) = Self::read_body(resp, None).await?;
 		Self::check_status(status, &body)?;
 		serde_json::from_slice(&body).map_err(PodmanError::Json)
@@ -383,7 +406,7 @@ impl Client {
 		content_type: &str,
 	) -> Result<Response<Incoming>> {
 		let req = Self::build_request(Method::POST, path, Full::new(bytes), Some(content_type))?;
-		Self::stream_or_err(self.send(req).await?).await
+		Self::stream_or_err(self.send(req, Some(READ_TIMEOUT)).await?).await
 	}
 
 	/// `POST` with a raw-bytes body → deserialize JSON response.
@@ -398,7 +421,7 @@ impl Client {
 		content_type: &str,
 	) -> Result<T> {
 		let req = Self::build_request(Method::POST, path, Full::new(bytes), Some(content_type))?;
-		let resp = self.send(req).await?;
+		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		Self::check_status(status, &body)?;
 		serde_json::from_slice(&body).map_err(PodmanError::Json)
@@ -407,7 +430,7 @@ impl Client {
 	/// `PUT` with raw bytes body → expect 2xx.
 	pub async fn put_bytes_ok(&self, path: &str, bytes: Bytes, content_type: &str) -> Result<()> {
 		let req = Self::build_request(Method::PUT, path, Full::new(bytes), Some(content_type))?;
-		let resp = self.send(req).await?;
+		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		Self::check_status(status, &body)
 	}
@@ -421,7 +444,7 @@ impl Client {
 		use base64::Engine as _;
 
 		let req = Self::build_request(Method::HEAD, path, Full::new(Bytes::new()), None)?;
-		let resp = self.send(req).await?;
+		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let status = resp.status();
 		if status == StatusCode::NOT_FOUND {
 			return Ok(None);
@@ -457,7 +480,7 @@ impl Client {
 	/// `DELETE` → ignore response body (expect 2xx or 404).
 	pub async fn delete_ok(&self, path: &str) -> Result<()> {
 		let req = Self::build_request(Method::DELETE, path, Full::new(Bytes::new()), None)?;
-		let resp = self.send(req).await?;
+		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		if status == StatusCode::NOT_FOUND {
 			return Ok(());
@@ -595,49 +618,32 @@ mod tests {
 	}
 
 	// ---------------------------------------------------------------------------
-	// read-timeout policy tests
+	// timeout policy tests
 	// ---------------------------------------------------------------------------
 
-	/// A bounded read aborts a future that outlives the limit, surfacing the
-	/// timeout error rather than hanging — the guard for ordinary buffered calls.
+	/// A bounded wait aborts a future that outlives the limit and names the phase
+	/// in the message — the guard that stops a stalled or silent socket (whether
+	/// waiting on the response head or reading a buffered body) from hanging the
+	/// CLI. A never-resolving future stands in for the silent-socket attack.
 	#[tokio::test]
-	async fn apply_read_timeout_some_aborts_slow_read() {
-		let slow = async {
-			tokio::time::sleep(std::time::Duration::from_secs(3600)).await;
-			0u8
-		};
-		let err = Client::apply_read_timeout(Some(std::time::Duration::from_millis(10)), slow)
+	async fn apply_timeout_some_aborts_and_names_phase() {
+		let never: std::future::Pending<u8> = std::future::pending();
+		let d = std::time::Duration::from_millis(10);
+		let msg = Client::apply_timeout(Some(d), "phase-marker", never)
 			.await
-			.unwrap_err();
-		assert!(err.to_string().contains("timed out"));
+			.unwrap_err()
+			.to_string();
+		assert!(msg.contains("timed out") && msg.contains("phase-marker"));
 	}
 
-	/// The unbounded read (the `wait?condition=stopped` path) wraps no timeout: the
-	/// future is awaited directly, so the only bound is the caller's own outer
-	/// budget — never a spurious 120 s abort. Verified by completing well past a
-	/// limit that, applied as `Some`, would have aborted the same future.
+	/// With `None` the future is awaited uncapped (the `wait?condition=stopped`
+	/// path, bounded only by the caller's own outer budget).
 	#[tokio::test]
-	async fn apply_read_timeout_none_outlives_a_bounded_limit() {
-		// Long enough to exceed the bounded-case limit below, short enough to keep
-		// the test fast.
-		let delay = std::time::Duration::from_millis(50);
-		let read = async move {
-			tokio::time::sleep(delay).await;
-			42u8
-		};
-		let value = Client::apply_read_timeout(None, read).await.unwrap();
-		assert_eq!(value, 42);
-
-		// The same delay under a tighter bound aborts — confirming the `None` case
-		// genuinely skips the ceiling rather than racing it.
-		let read = async move {
-			tokio::time::sleep(delay).await;
-			42u8
-		};
-		let err = Client::apply_read_timeout(Some(std::time::Duration::from_millis(1)), read)
+	async fn apply_timeout_none_awaits_uncapped() {
+		let value = Client::apply_timeout(None, "phase-marker", async { 42u8 })
 			.await
-			.unwrap_err();
-		assert!(err.to_string().contains("timed out"));
+			.unwrap();
+		assert_eq!(value, 42);
 	}
 
 	/// The version gate accepts Podman 5.x (and any higher major) and rejects
