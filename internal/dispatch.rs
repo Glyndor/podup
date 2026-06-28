@@ -252,7 +252,7 @@ pub(crate) async fn dispatch(
 		Commands::Events { format, json } => {
 			// `--json` is the deprecated alias for `--format json`; either selects
 			// JSON-line output.
-			let json = json || format == OutputFormat::Json;
+			let json = json || format == EventsFormat::Json;
 			engine.stream_events(json).await?
 		}
 		Commands::Attach { service } => engine.attach(file, &service).await?,
