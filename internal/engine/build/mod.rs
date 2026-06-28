@@ -172,6 +172,23 @@ impl Engine {
 			build_args.insert(k, v);
 		}
 
+		// A secret passed as a build arg is recorded in the image history and, if
+		// promoted via `ENV`, the image config — so it can leak. Warn and point at
+		// `build.secrets` (BuildKit `--mount=type=secret`), which does not persist.
+		let mut secretish: Vec<&str> = build_args
+			.keys()
+			.filter(|k| looks_like_secret(k))
+			.map(String::as_str)
+			.collect();
+		if !secretish.is_empty() {
+			secretish.sort_unstable();
+			warn!(
+				"build-arg(s) [{}] look like secrets; build args are stored in the image history \
+				 and can leak. Use build.secrets for sensitive values.",
+				secretish.join(", ")
+			);
+		}
+
 		let mut labels: std::collections::HashMap<String, String> =
 			std::collections::HashMap::new();
 		if let BuildConfig::Config { labels: l, .. } = build {
@@ -409,9 +426,27 @@ fn primary_build_tag(service_name: &str, image: Option<&str>, tags: &[String]) -
 	format!("{service_name}:latest")
 }
 
+/// True if a build-arg name looks like it carries a secret, so the caller can
+/// warn that build args persist in the image history. Case-insensitive substring
+/// match on common secret tokens, kept conservative to avoid false positives
+/// (e.g. a bare `KEY` is not flagged; `API_KEY`/`PRIVATE_KEY` are).
+fn looks_like_secret(name: &str) -> bool {
+	const MARKERS: [&str; 7] = [
+		"SECRET",
+		"PASSWORD",
+		"PASSWD",
+		"TOKEN",
+		"CREDENTIAL",
+		"API_KEY",
+		"PRIVATE_KEY",
+	];
+	let upper = name.to_ascii_uppercase();
+	MARKERS.iter().any(|m| upper.contains(m))
+}
+
 #[cfg(test)]
 mod tests {
-	use super::{is_remote_context, primary_build_tag, Engine};
+	use super::{is_remote_context, looks_like_secret, primary_build_tag, Engine};
 	use crate::libpod::Client;
 
 	fn engine(base: std::path::PathBuf) -> Engine {
@@ -420,6 +455,22 @@ mod tests {
 
 	fn build_of(file: &crate::compose::types::ComposeFile) -> &crate::compose::types::BuildConfig {
 		file.services["app"].build.as_ref().unwrap()
+	}
+
+	#[test]
+	fn looks_like_secret_flags_sensitive_names_only() {
+		for name in [
+			"DB_PASSWORD",
+			"api_token",
+			"MySecret",
+			"AWS_API_KEY",
+			"private_key",
+		] {
+			assert!(looks_like_secret(name), "{name} should be flagged");
+		}
+		for name in ["VERSION", "BUILD_DATE", "PUBLIC_KEY", "PORT", "RUST_LOG"] {
+			assert!(!looks_like_secret(name), "{name} should not be flagged");
+		}
 	}
 
 	#[test]
