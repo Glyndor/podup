@@ -328,6 +328,9 @@ impl Engine {
 		}
 
 		let replicas = self.resolve_replicas(name, service);
+		// Bound the replica count (covers an untrusted compose `deploy.replicas`/
+		// `scale:` as well as `--scale`) before creating any container.
+		scale::check_replica_limit(name, replicas)?;
 		// A scaled service that publishes a fixed host port cannot start: only
 		// one container can bind it. Fail fast with guidance instead of letting
 		// replicas 2..N die mid-up with `address already in use`.
