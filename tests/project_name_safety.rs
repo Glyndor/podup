@@ -63,6 +63,35 @@ fn rejects_project_name_from_env() {
 }
 
 #[test]
+fn rejects_leading_dash_project_name() {
+	// A leading dash is a latent flag-injection vector and is rejected by
+	// docker-compose's `^[a-z0-9][a-z0-9_-]*$` rule. `-p=` keeps clap from
+	// treating the value itself as a flag so the boundary check is what fails.
+	let dir = compose_dir();
+	let out = podup()
+		.current_dir(dir.path())
+		.args(["-p=-rf", "generate", "quadlet"])
+		.output()
+		.expect("run podup");
+
+	assert!(!out.status.success(), "leading-dash project name must fail");
+	assert!(String::from_utf8_lossy(&out.stderr).contains("not a safe path component"));
+}
+
+#[test]
+fn rejects_uppercase_project_name() {
+	let dir = compose_dir();
+	let out = podup()
+		.current_dir(dir.path())
+		.args(["-p", "MyApp", "generate", "quadlet"])
+		.output()
+		.expect("run podup");
+
+	assert!(!out.status.success(), "uppercase project name must fail");
+	assert!(String::from_utf8_lossy(&out.stderr).contains("not a safe path component"));
+}
+
+#[test]
 fn accepts_safe_project_name() {
 	let dir = compose_dir();
 	let out = podup()
