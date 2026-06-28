@@ -94,11 +94,19 @@ pub fn build_vars(dir: &Path) -> HashMap<String, String> {
 	vars
 }
 
-/// Build vars additionally loading explicit env files (process env + dotenv + extra files).
+/// Build vars, layering explicit `--env-file` files over the process environment.
 ///
-/// Extra files are loaded after dotenv; process env still wins for all keys.
+/// Compose v2 semantics: when one or more `--env-file` are given they *replace*
+/// the default `.env` (which is therefore not loaded), and among several files
+/// the **last** one wins. With no explicit files this is just [`build_vars`]
+/// (process env + `.env`). Process env always takes precedence over file values.
 pub fn build_vars_with_env_files(dir: &Path, extra: &[String]) -> HashMap<String, String> {
-	let mut vars = build_vars(dir);
+	if extra.is_empty() {
+		return build_vars(dir);
+	}
+
+	// Explicit `--env-file`s replace `.env`; a later file overrides an earlier one.
+	let mut file_vars: HashMap<String, String> = HashMap::new();
 	for path in extra {
 		let abs = if std::path::Path::new(path).is_absolute() {
 			std::path::PathBuf::from(path)
@@ -109,8 +117,14 @@ pub fn build_vars_with_env_files(dir: &Path, extra: &[String]) -> HashMap<String
 			continue;
 		};
 		for (key, value) in crate::dotenv::parse(&content) {
-			vars.entry(key).or_insert(value);
+			file_vars.insert(key, value);
 		}
+	}
+
+	// Process env wins over every file value.
+	let mut vars: HashMap<String, String> = std::env::vars().collect();
+	for (k, v) in file_vars {
+		vars.entry(k).or_insert(v);
 	}
 	vars
 }
@@ -411,10 +425,10 @@ mod tests {
 	// build_vars_with_env_files
 
 	#[test]
-	fn build_vars_with_env_files_loads_relative_extra_file() {
+	fn env_file_replaces_dotenv() {
 		let dir = tempfile::tempdir().unwrap();
-		// A `.env` provides a base var; the extra file adds another and does NOT
-		// override the dotenv value (process env / earlier sources win via entry).
+		// Compose v2: an explicit `--env-file` replaces the default `.env`, so the
+		// dotenv-only key is absent and the extra file's value wins for a shared key.
 		std::fs::write(
 			dir.path().join(".env"),
 			"FROM_DOTENV=base\nPODUP_TEST_SHARED=dotenv\n",
@@ -427,13 +441,53 @@ mod tests {
 		.unwrap();
 
 		let vars = build_vars_with_env_files(dir.path(), &["extra.env".to_string()]);
-		assert_eq!(vars.get("FROM_DOTENV").map(String::as_str), Some("base"));
+		assert_eq!(vars.get("FROM_DOTENV"), None);
 		assert_eq!(vars.get("FROM_EXTRA").map(String::as_str), Some("more"));
-		// The extra file must not clobber a value an earlier source already set.
 		assert_eq!(
 			vars.get("PODUP_TEST_SHARED").map(String::as_str),
-			Some("dotenv")
+			Some("extra")
 		);
+	}
+
+	#[test]
+	fn later_env_file_wins() {
+		let dir = tempfile::tempdir().unwrap();
+		// Among several `--env-file`s the last one listed wins.
+		std::fs::write(dir.path().join("a.env"), "FROM_A=a\nSHARED=a\n").unwrap();
+		std::fs::write(dir.path().join("b.env"), "FROM_B=b\nSHARED=b\n").unwrap();
+
+		let vars =
+			build_vars_with_env_files(dir.path(), &["a.env".to_string(), "b.env".to_string()]);
+		assert_eq!(vars.get("FROM_A").map(String::as_str), Some("a"));
+		assert_eq!(vars.get("FROM_B").map(String::as_str), Some("b"));
+		assert_eq!(vars.get("SHARED").map(String::as_str), Some("b"));
+	}
+
+	#[test]
+	fn process_env_wins_over_env_file() {
+		let dir = tempfile::tempdir().unwrap();
+		std::env::set_var("PODUP_ENVFILE_PROCESS_WINS", "from-process");
+		std::fs::write(
+			dir.path().join("x.env"),
+			"PODUP_ENVFILE_PROCESS_WINS=from-file\n",
+		)
+		.unwrap();
+
+		let vars = build_vars_with_env_files(dir.path(), &["x.env".to_string()]);
+		assert_eq!(
+			vars.get("PODUP_ENVFILE_PROCESS_WINS").map(String::as_str),
+			Some("from-process")
+		);
+		std::env::remove_var("PODUP_ENVFILE_PROCESS_WINS");
+	}
+
+	#[test]
+	fn no_env_file_loads_dotenv() {
+		let dir = tempfile::tempdir().unwrap();
+		// With no `--env-file`, `.env` is loaded as before.
+		std::fs::write(dir.path().join(".env"), "FROM_DOTENV=base\n").unwrap();
+		let vars = build_vars_with_env_files(dir.path(), &[]);
+		assert_eq!(vars.get("FROM_DOTENV").map(String::as_str), Some("base"));
 	}
 
 	#[test]
