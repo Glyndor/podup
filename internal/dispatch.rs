@@ -9,6 +9,20 @@ use podup::Engine;
 
 use crate::cli::*;
 
+/// Clone the compose file keeping only services in an active profile, plus any
+/// named on the command line (which activates their profile). Used by the
+/// per-service subcommands so they target exactly the set `up`/`create` would
+/// bring up — never a service hidden behind an inactive profile.
+fn profile_filtered(
+	file: &podup::compose::types::ComposeFile,
+	profile: &[String],
+	targets: &[String],
+) -> podup::compose::types::ComposeFile {
+	let mut filtered = file.clone();
+	podup::retain_active_profiles_with_targets(&mut filtered, profile, targets);
+	filtered
+}
+
 /// Run the command against an already-built engine and parsed compose file.
 pub(crate) async fn dispatch(
 	engine: &Engine,
@@ -101,6 +115,7 @@ pub(crate) async fn dispatch(
 			wait_timeout,
 			services,
 		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine.start(file, &services).await?;
 			if wait {
 				let fut = engine.wait_services_healthy(file, &services);
@@ -115,7 +130,10 @@ pub(crate) async fn dispatch(
 		Commands::Stop {
 			services,
 			timeout: _,
-		} => engine.stop(file, &services).await?,
+		} => {
+			let file = &profile_filtered(file, profile, &services);
+			engine.stop(file, &services).await?
+		}
 		Commands::Scale { pairs } => engine.scale(file, &pairs).await?,
 		Commands::Create {
 			build,
@@ -137,6 +155,7 @@ pub(crate) async fn dispatch(
 			quiet,
 			services,
 		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine
 				.build_all_with_options(
 					file,
@@ -170,13 +189,20 @@ pub(crate) async fn dispatch(
 			remove_orphans,
 			services,
 		} => {
-			engine.kill(file, &services, &signal).await?;
+			let filtered = profile_filtered(file, profile, &services);
+			engine.kill(&filtered, &services, &signal).await?;
 			if remove_orphans {
 				engine.remove_orphans(file).await?;
 			}
 		}
-		Commands::Pause { services } => engine.pause(file, &services).await?,
-		Commands::Unpause { services } => engine.unpause(file, &services).await?,
+		Commands::Pause { services } => {
+			let file = &profile_filtered(file, profile, &services);
+			engine.pause(file, &services).await?
+		}
+		Commands::Unpause { services } => {
+			let file = &profile_filtered(file, profile, &services);
+			engine.unpause(file, &services).await?
+		}
 		Commands::Run {
 			service,
 			rm: _,
@@ -256,7 +282,10 @@ pub(crate) async fn dispatch(
 			engine.stream_events(json).await?
 		}
 		Commands::Attach { service } => engine.attach(file, &service).await?,
-		Commands::Wait { services } => engine.wait_services(file, &services).await?,
+		Commands::Wait { services } => {
+			let file = &profile_filtered(file, profile, &services);
+			engine.wait_services(file, &services).await?
+		}
 		Commands::Commit {
 			service,
 			image,
@@ -276,6 +305,7 @@ pub(crate) async fn dispatch(
 			tls_verify,
 			services,
 		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine
 				.push(
 					file,
@@ -314,6 +344,7 @@ pub(crate) async fn dispatch(
 				.await?
 		}
 		Commands::Images { quiet, format } => {
+			let file = &profile_filtered(file, profile, &[]);
 			engine
 				.images_with_options(
 					file,
@@ -380,6 +411,7 @@ pub(crate) async fn dispatch(
 			policy: _,
 			services,
 		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine
 				.pull_services_with_options(
 					file,
@@ -396,6 +428,7 @@ pub(crate) async fn dispatch(
 			no_deps,
 			services,
 		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine
 				.restart_with_options(file, &services, no_deps)
 				.await?
