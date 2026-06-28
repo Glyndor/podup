@@ -48,6 +48,14 @@ impl Engine {
 		services: &[String],
 		opts: PullOptions,
 	) -> Result<()> {
+		// Reject an unknown service name up front (docker compose errors with "no
+		// such service") instead of silently pulling nothing and exiting 0.
+		for name in services {
+			if !file.services.contains_key(name) {
+				return Err(ComposeError::ServiceNotFound(name.clone()));
+			}
+		}
+
 		// `--include-deps` widens the explicit service list to its transitive
 		// depends_on closure; an empty list already means "every service".
 		let wanted: Option<HashSet<String>> = match (services.is_empty(), opts.include_deps) {
@@ -68,19 +76,33 @@ impl Engine {
 			.map(|(name, s)| async move {
 				// The libpod pull stream reports failure as an in-band progress
 				// line, so `pull_image` returns Ok even when the pull failed;
-				// confirm the image actually landed in local storage.
-				let _ = self.pull_image(s).await;
+				// confirm the image actually landed in local storage. A real
+				// transport error (unreachable/invalid socket) does surface as an
+				// Err — keep it so the true cause is reported, not a generic
+				// "failed to pull image".
+				let pull_result = self.pull_image(s).await;
 				let image = s.image.clone().unwrap_or_default();
 				(
 					name.clone(),
 					image.clone(),
+					pull_result,
 					self.image_present(&image).await,
 				)
 			})
 			.collect();
 
 		let results = futures_util::future::join_all(futs).await;
-		for (name, image, present) in results {
+		for (name, image, pull_result, present) in results {
+			// A transport-level failure carries the real cause (e.g. a connection
+			// error); surface it instead of the generic build error unless the user
+			// asked to ignore pull failures.
+			if let Err(e) = pull_result {
+				if opts.ignore_failures {
+					tracing::warn!("pull {name} ({image}) failed — ignored: {e}");
+					continue;
+				}
+				return Err(e);
+			}
 			if present {
 				continue;
 			}

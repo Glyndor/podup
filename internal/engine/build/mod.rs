@@ -118,6 +118,16 @@ impl Engine {
 			(Vec::new(), df, Vec::new())
 		} else {
 			let context_path = self.base_dir.join(&context_str);
+			// Fail fast with the service name and the resolved context path if the
+			// directory is missing/unreadable, instead of a bare "io error: No such
+			// file or directory" once the context walk hits it.
+			if let Err(e) = std::fs::metadata(&context_path) {
+				return Err(ComposeError::BuildContext {
+					service: service_name.to_string(),
+					path: context_path.display().to_string(),
+					source: e,
+				});
+			}
 			info!("building {tag} from {}", context_path.display());
 
 			// Resolve `build.secrets` to in-tar files before building the context:
