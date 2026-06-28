@@ -31,6 +31,10 @@ enum HealthVerdict {
 	/// The container has no effective healthcheck, so `healthy` is unreachable;
 	/// treat the dependency as satisfied rather than blocking until timeout.
 	NoHealthcheck,
+	/// The container has already exited non-zero. It can never become healthy and
+	/// the service failed to start, so the wait must fail rather than report the
+	/// dependency satisfied. Carries the exit code.
+	Failed(i64),
 	/// Not healthy yet — keep polling.
 	Pending,
 }
@@ -44,6 +48,16 @@ fn classify_health(info: &ContainerInspect) -> HealthVerdict {
 		if let Some(health) = &state.health {
 			if health.status.as_deref() == Some("healthy") {
 				return HealthVerdict::Healthy;
+			}
+		}
+		// A container that has already exited can never become healthy. If it
+		// exited non-zero the service failed to start, so fail the wait instead of
+		// reporting it satisfied (which would mask the failure in `up --wait`/CI).
+		// An exit code of 0 is a one-shot that completed; let it fall through.
+		if state.status.as_deref() == Some("exited") {
+			let code = state.exit_code.unwrap_or(0);
+			if code != 0 {
+				return HealthVerdict::Failed(code);
 			}
 		}
 	}
@@ -140,6 +154,12 @@ impl Engine {
 					"{container_name} has no effective healthcheck; treating service_healthy as satisfied"
 				);
 				return Ok(());
+			}
+			HealthVerdict::Failed(code) => {
+				return Err(ComposeError::WaitServiceExited {
+					container: container_name.to_string(),
+					code,
+				});
 			}
 			HealthVerdict::Pending => {}
 		}
@@ -255,5 +275,23 @@ mod tests {
 			r#"{"State":{"Status":"running","Health":{"Status":"starting"}},"Config":{"Healthcheck":{"Test":["CMD","true"]}}}"#,
 		);
 		assert!(matches!(classify_health(&info), HealthVerdict::Pending));
+	}
+
+	#[test]
+	fn health_exited_nonzero_fails() {
+		// A no-healthcheck service that crashed during the wait must fail, not be
+		// reported satisfied (the `up --wait` masking bug).
+		let info = inspect(r#"{"State":{"Status":"exited","ExitCode":7}}"#);
+		assert!(matches!(classify_health(&info), HealthVerdict::Failed(7)));
+	}
+
+	#[test]
+	fn health_exited_zero_is_satisfied() {
+		// A one-shot that completed cleanly with no healthcheck is still satisfied.
+		let info = inspect(r#"{"State":{"Status":"exited","ExitCode":0}}"#);
+		assert!(matches!(
+			classify_health(&info),
+			HealthVerdict::NoHealthcheck
+		));
 	}
 }
