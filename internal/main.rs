@@ -150,12 +150,14 @@ async fn run() -> podup::Result<()> {
 		};
 		// `--resolve-image-digests` pins each image to its registry digest, which
 		// needs a Podman connection to inspect images.
-		let resolved = if *resolve_image_digests {
+		let mut resolved = if *resolve_image_digests {
 			let client = podup::podman::connect(cli.socket.as_deref())?;
 			podup::resolve_image_digests(&client, &parsed).await?
 		} else {
 			parsed
 		};
+		// Honor active profiles so `config` prints the same services `up` starts.
+		podup::retain_active_profiles(&mut resolved, &cli.profile);
 		return startup::render_config(&resolved, format, *services, *quiet);
 	}
 

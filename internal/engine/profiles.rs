@@ -2,7 +2,18 @@
 
 use std::collections::HashSet;
 
-use crate::compose::types::Service;
+use crate::compose::types::{ComposeFile, Service};
+
+/// Remove services excluded by the active profile set, in place.
+///
+/// Mirrors what `up` actually starts (a per-service profile match, with no
+/// implicit activation of a profiled `depends_on` target), so `config` presents
+/// the same service set the runtime would bring up. `active` is the CLI
+/// `--profile` list, falling back to `COMPOSE_PROFILES`.
+pub fn retain_active_profiles(file: &mut ComposeFile, active: &[String]) {
+	let set = active_profiles_set(active);
+	file.services.retain(|_, svc| service_in_profiles(svc, &set));
+}
 
 /// Build the active-profile set, falling back to `COMPOSE_PROFILES` env var.
 pub(super) fn active_profiles_set(active: &[String]) -> HashSet<String> {
@@ -105,5 +116,28 @@ mod tests {
 		};
 		let active: HashSet<String> = ["prod".to_string()].into();
 		assert!(service_in_profiles(&svc, &active));
+	}
+
+	#[test]
+	fn retain_active_profiles_keeps_unprofiled_and_active() {
+		let yaml = "services:\n  \
+			web:\n    image: x\n  \
+			debugger:\n    image: x\n    profiles: [debug]\n  \
+			db:\n    image: x\n    profiles: [prod]\n";
+		// With `debug` active: the unprofiled `web` and the `debug` service stay,
+		// the `prod`-only `db` is dropped — exactly what `up --profile debug` runs.
+		let mut file = crate::parse_str(yaml).unwrap();
+		retain_active_profiles(&mut file, &["debug".to_string()]);
+		assert!(file.services.contains_key("web"));
+		assert!(file.services.contains_key("debugger"));
+		assert!(!file.services.contains_key("db"));
+
+		// With no active profiles, every profiled service is dropped.
+		let mut file = crate::parse_str(yaml).unwrap();
+		temp_env::with_var_unset("COMPOSE_PROFILES", || {
+			retain_active_profiles(&mut file, &[]);
+		});
+		assert!(file.services.contains_key("web"));
+		assert_eq!(file.services.len(), 1);
 	}
 }
