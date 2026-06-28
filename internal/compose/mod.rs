@@ -9,6 +9,7 @@ mod extends;
 mod include;
 mod merge;
 mod order;
+mod validate;
 
 use std::path::{Path, PathBuf};
 
@@ -128,6 +129,13 @@ pub fn parse_files_with_env_files_interp(
 		merge_override(&mut merged, other);
 	}
 	normalize_default_network(&mut merged);
+	// Semantic validation runs only on the interpolated file: `--no-interpolate`
+	// leaves literal `${VAR}` placeholders that cannot be reference- or
+	// range-checked. This makes `config`, `up`, and `generate` reject the same
+	// contradictory files docker-compose does, at config time.
+	if interpolate {
+		validate::validate(&merged)?;
+	}
 	for warning in diagnostics::collect(&merged) {
 		tracing::warn!("{warning}");
 	}
@@ -230,7 +238,7 @@ pub(crate) fn parse_file_inner_with_env(
 		let vars = if extra_env_files.is_empty() {
 			substitute::build_vars(dir)
 		} else {
-			substitute::build_vars_with_env_files(dir, extra_env_files)
+			substitute::build_vars_with_env_files_strict(dir, extra_env_files)?
 		};
 		merge::deserialize_with_merge_interp(&content, Some(&vars))
 	} else {

@@ -30,10 +30,14 @@ pub fn resolve_order(file: &ComposeFile) -> Result<Vec<String>> {
 		}
 	}
 
-	let mut queue: std::collections::VecDeque<&str> = in_degree
+	// Seed the queue from `services` (compose-file order) rather than iterating
+	// the `in_degree` HashMap, whose order is randomised per run. This keeps the
+	// resolved order deterministic for independent services, so dependent
+	// commands (e.g. best-effort `kill`) behave reproducibly.
+	let mut queue: std::collections::VecDeque<&str> = services
 		.iter()
-		.filter(|(_, &deg)| deg == 0)
-		.map(|(&s, _)| s)
+		.copied()
+		.filter(|s| in_degree.get(s) == Some(&0))
 		.collect();
 
 	let mut order = Vec::new();
@@ -150,6 +154,23 @@ mod tests {
 		let db_pos = order.iter().position(|s| s == "db").unwrap();
 		let web_pos = order.iter().position(|s| s == "web").unwrap();
 		assert!(db_pos < web_pos, "db must start before web");
+	}
+
+	#[test]
+	fn resolve_order_is_deterministic_for_independent_services() {
+		// Independent services must resolve in a stable (compose-file) order on
+		// every call, so best-effort consumers like `kill` behave reproducibly
+		// rather than depending on HashMap iteration order.
+		let yaml = "services:\n  a:\n    image: x\n  b:\n    image: y\n  c:\n    image: z\n";
+		let file = parse_str_raw(yaml).unwrap();
+		let first = resolve_order(&file).unwrap();
+		assert_eq!(
+			first,
+			vec!["a".to_string(), "b".to_string(), "c".to_string()]
+		);
+		for _ in 0..16 {
+			assert_eq!(resolve_order(&file).unwrap(), first);
+		}
 	}
 
 	#[test]
