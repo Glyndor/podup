@@ -35,6 +35,10 @@ pub enum ComposeError {
 	HealthCheckTimeout(String),
 	/// A `ports:` entry could not be parsed.
 	InvalidPort(String),
+	/// A `kill` signal is empty, malformed, or not a recognised signal
+	/// name/number. Forwarding it verbatim would let libpod silently default to
+	/// SIGKILL, so it is rejected up front.
+	InvalidSignal(String),
 	/// Image build failed (context assembly or the Podman build step).
 	Build(String),
 	/// `extends:` could not be resolved (missing file/service or a cycle).
@@ -92,6 +96,7 @@ impl fmt::Display for ComposeError {
 			}
 			Self::HealthCheckTimeout(s) => write!(f, "health check timeout for container '{s}'"),
 			Self::InvalidPort(s) => write!(f, "invalid port mapping: {s}"),
+			Self::InvalidSignal(s) => write!(f, "invalid signal: {s}"),
 			Self::Build(s) => write!(f, "build error: {s}"),
 			Self::Extends(s) => write!(f, "extends error: {s}"),
 			Self::Include(s) => write!(f, "include error: {s}"),
