@@ -10,6 +10,7 @@
 
 mod github;
 mod install;
+mod pkg;
 mod verify;
 
 pub use github::{GitHubSource, REPO};
@@ -46,7 +47,7 @@ pub fn run_with(
 	current: &str,
 	opts: UpdateOptions,
 ) -> crate::Result<()> {
-	run_with_guard(source, current, opts, install::managing_package_manager())
+	run_with_guard(source, current, opts, pkg::managing_package_manager())
 }
 
 /// [`run_with`] with the package-manager guard injected, so the refusal branch
@@ -79,7 +80,7 @@ fn run_with_guard(
 	// Refuse to self-replace a package-manager-managed binary (even with
 	// --force): overwriting it would desync the package manager's records.
 	if let Some(pm) = managed_by {
-		return Err(install::package_managed_error(pm));
+		return Err(pkg::package_managed_error(pm));
 	}
 
 	let asset = install::require_platform_asset()?;
