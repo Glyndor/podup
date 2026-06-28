@@ -86,7 +86,7 @@ impl Engine {
 		// Map each named-volume reference to the actual volume name created by
 		// create_volumes (project-prefixed, custom `name:`, or external).
 		for nv in &mut named_volumes {
-			nv.name = self.resolved_volume_name(&nv.name, file);
+			nv.name = self.resolved_volume_name(&nv.name, file)?;
 		}
 
 		// --- Port mappings ---
@@ -311,9 +311,10 @@ impl Engine {
 
 	/// Resolve a service's named-volume reference to the actual volume name
 	/// that `create_volumes` produced: a custom `name:`, the raw name for an
-	/// external volume, or the `{project}_{name}` form. References not declared
-	/// in the top-level `volumes:` map (anonymous/implicit) are left unchanged.
-	fn resolved_volume_name(&self, reference: &str, file: &ComposeFile) -> String {
+	/// external volume, or the `{project}_{name}` form. An empty reference is an
+	/// anonymous volume and is left unchanged; a non-empty reference that is not
+	/// declared under the top-level `volumes:` map is rejected (compose-spec).
+	fn resolved_volume_name(&self, reference: &str, file: &ComposeFile) -> Result<String> {
 		resolve_volume_name(reference, &self.project, file)
 	}
 }
