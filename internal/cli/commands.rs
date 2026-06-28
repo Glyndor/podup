@@ -337,6 +337,16 @@ pub(crate) enum Commands {
 		/// Replica index (1-based) of a scaled service.
 		#[arg(long)]
 		index: Option<u32>,
+		/// Pause the container during commit for a consistent snapshot
+		/// (default on; `--pause=false` to snapshot a live container).
+		#[arg(
+			long,
+			default_value_t = true,
+			action = clap::ArgAction::Set,
+			num_args = 0..=1,
+			default_missing_value = "true",
+		)]
+		pause: bool,
 	},
 	/// Export a service container's filesystem as a tar archive.
 	Export {
