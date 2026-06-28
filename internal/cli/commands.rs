@@ -353,10 +353,10 @@ pub(crate) enum Commands {
 	Port {
 		/// Service name.
 		service: String,
-		/// Private port number.
-		private_port: u16,
+		/// Private port, e.g. `80` or `80/tcp` (a `/proto` suffix overrides --protocol).
+		private_port: String,
 		/// Protocol (tcp or udp).
-		#[arg(long, default_value = "tcp")]
+		#[arg(long, visible_alias = "protocol", default_value = "tcp")]
 		proto: String,
 		/// Index of the container when the service has multiple replicas (1-based).
 		#[arg(long)]

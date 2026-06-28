@@ -107,11 +107,7 @@ pub(crate) async fn dispatch(
 				match wait_timeout {
 					Some(secs) => tokio::time::timeout(std::time::Duration::from_secs(secs), fut)
 						.await
-						.map_err(|_| {
-							podup::ComposeError::Unsupported(
-								"start --wait timed out before services became healthy".into(),
-							)
-						})??,
+						.map_err(|_| podup::ComposeError::WaitTimeout { secs })??,
 					None => fut.await?,
 				}
 			}
@@ -298,7 +294,7 @@ pub(crate) async fn dispatch(
 			index,
 		} => {
 			engine
-				.port_with_index(file, &service, private_port, &proto, index)
+				.port_with_index(file, &service, &private_port, &proto, index)
 				.await?
 		}
 		Commands::Volumes {
