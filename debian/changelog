@@ -1,3 +1,31 @@
+podup (1.6.0) unstable; urgency=medium
+
+  * Output is now colourised on a terminal and degrades gracefully: a semantic
+    status colour in `ps`/`ls` (green running, red exited, yellow paused), a
+    stable per-service colour in aggregated logs, bold table and help headers,
+    and red error labels. Control it with `--ansi auto|always|never` or
+    `NO_COLOR`; piped or redirected output stays plain.
+  * `up`/`start --wait` now fails when a service exits before becoming ready
+    instead of reporting success, so a crashed startup no longer passes silently
+    in CI.
+  * `--env-file` now replaces the default `.env` and the last file wins, matching
+    docker compose (previously `.env` and the first file wrongly took precedence).
+  * `config` honours `--profile`/`COMPOSE_PROFILES`, printing the same services
+    `up` would start.
+  * `cp` of a directory from a container to a destination that does not yet exist
+    now creates it and copies the contents in, matching `docker cp`.
+  * `scale`/`deploy.replicas` are capped (default 256, override with
+    `PODUP_MAX_REPLICAS`) so an untrusted compose file cannot drive unbounded
+    container creation.
+  * A Podman socket that accepts a connection but never replies no longer hangs
+    podup — the wait for the response head is now bounded.
+  * Smaller polish: a `PORTS` header in `ps`; `port` accepts the `PORT/proto` form
+    and a `--protocol` alias; a plain hint for podman state-conflict errors; an
+    orphan-containers warning on `up` when `--remove-orphans` is absent; and a
+    warning when a `--build-arg` name looks like a secret.
+
+ -- Glyndor <packages@glyndor.net>  Sun, 28 Jun 2026 10:17:11 -0500
+
 podup (1.5.2) unstable; urgency=medium
 
   * Documentation and CI only — no functional change to the binary. The README is
