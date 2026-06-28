@@ -40,6 +40,15 @@ impl Engine {
 		file: &ComposeFile,
 		start: bool,
 	) -> Result<()> {
+		// Reject an invalid container name client-side (podman would otherwise
+		// answer with an opaque HTTP 500 from its name-regex check).
+		if !crate::libpod::is_valid_object_name(container_name) {
+			return Err(ComposeError::Unsupported(format!(
+				"invalid container name {container_name:?}: names must start with an ASCII \
+				 letter or digit and contain only letters, digits, '_', '.', '-'"
+			)));
+		}
+
 		let derived_image;
 		let image: &str = if let Some(img) = service.image.as_deref() {
 			img

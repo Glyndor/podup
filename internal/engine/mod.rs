@@ -298,15 +298,21 @@ impl Engine {
 		match index {
 			Some(i) => {
 				// `--index` is 1-based; `0` is an invalid index, not "first replica".
-				let idx = (i as usize).checked_sub(1).ok_or_else(|| {
-					ComposeError::ServiceNotFound(format!(
-						"{service_name} (replica index {i}: indexes are 1-based)"
-					))
-				})?;
+				let idx =
+					(i as usize)
+						.checked_sub(1)
+						.ok_or_else(|| ComposeError::ReplicaIndex {
+							service: service_name.to_string(),
+							index: i,
+						})?;
 				let names = self.replica_names(service_name, service);
-				names.get(idx).cloned().ok_or_else(|| {
-					ComposeError::ServiceNotFound(format!("{service_name} (replica index {i})"))
-				})
+				names
+					.get(idx)
+					.cloned()
+					.ok_or_else(|| ComposeError::ReplicaIndex {
+						service: service_name.to_string(),
+						index: i,
+					})
 			}
 			None => Ok(self.first_replica_name(service_name, service)),
 		}
@@ -378,8 +384,14 @@ mod tests {
 			.replica_name_at("web", &svc, Some(0))
 			.expect_err("index 0 must be rejected");
 		assert!(
-			matches!(err, ComposeError::ServiceNotFound(ref m) if m.contains("1-based")),
+			matches!(err, ComposeError::ReplicaIndex { index: 0, ref service } if service == "web"),
 			"unexpected error: {err:?}"
+		);
+		// The index hint renders outside the quoted service name.
+		let msg = err.to_string();
+		assert!(
+			msg.contains("'web'") && msg.contains("1-based"),
+			"got {msg:?}"
 		);
 	}
 

@@ -15,7 +15,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use super::error::PodmanError;
 
 mod encode;
-pub(crate) use encode::urlencoded;
+pub(crate) use encode::{is_valid_object_name, urlencoded};
 
 type BoxBody = Full<Bytes>;
 
