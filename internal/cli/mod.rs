@@ -10,9 +10,18 @@ mod types;
 pub(crate) use commands::Commands;
 pub(crate) use types::{AnsiMode, ConfigFormat, GenerateCommands, OutputFormat, RmiScope};
 
+/// Help-screen colours (clap honours its own TTY/`NO_COLOR`/`CLICOLOR` detection
+/// for these, since help is rendered before `--ansi` is parsed): green-bold
+/// section headers and usage, cyan-bold flag/command literals, plain placeholders.
+const HELP_STYLES: clap::builder::Styles = clap::builder::Styles::plain()
+	.header(clap::builder::styling::AnsiColor::Green.on_default().bold())
+	.usage(clap::builder::styling::AnsiColor::Green.on_default().bold())
+	.literal(clap::builder::styling::AnsiColor::Cyan.on_default().bold())
+	.placeholder(clap::builder::styling::AnsiColor::Cyan.on_default());
+
 /// Top-level clap parser for the `podup` CLI; fields carry the per-flag docs.
 #[derive(Parser)]
-#[command(name = "podup", version)]
+#[command(name = "podup", version, styles = HELP_STYLES)]
 pub(crate) struct Cli {
 	/// Path to the compose file (or `COMPOSE_FILE`). Unset: probe the
 	/// compose-spec precedence list (compose.yaml/.yml, docker-compose.yaml/.yml).

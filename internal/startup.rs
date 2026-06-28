@@ -264,7 +264,16 @@ pub(crate) fn parse_cli() -> Cli {
 			clap::error::ErrorKind::DisplayHelp
 			| clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
 			| clap::error::ErrorKind::DisplayVersion => {
-				print!("\n{e}\n");
+				// `--help`/`--version` are handled by clap before `--ansi` is parsed,
+				// so colour the rendered text by clap's own styling only when stdout
+				// is a colour sink (TTY + no NO_COLOR); piped output stays plain and
+				// byte-identical to before.
+				let rendered = e.render();
+				if podup::ui::stdout_colored() {
+					print!("\n{}\n", rendered.ansi());
+				} else {
+					print!("\n{rendered}\n");
+				}
 				process::exit(0);
 			}
 			_ => e.exit(),
