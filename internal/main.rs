@@ -274,6 +274,7 @@ async fn run() -> podup::Result<()> {
 		.with_scale_overrides(scale_overrides)
 		.with_up_overrides(pull_override, no_build, quiet_pull)
 		.with_run_overrides(startup::run_overrides_for(&cli.command))
+		.with_run_env_files(cli.env_file.clone())
 		.with_renew_anon_volumes(renew_anon_volumes);
 
 	// Serialize mutating lifecycle commands against concurrent `podup` runs on
