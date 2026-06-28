@@ -62,6 +62,14 @@ pub enum ComposeError {
 	/// A container being waited on (`up`/`start --wait`, or a `service_healthy`
 	/// dependency) exited non-zero before becoming ready.
 	WaitServiceExited { container: String, code: i64 },
+	/// A service requests more replicas than the configured ceiling, which would
+	/// let an untrusted `deploy.replicas`/`scale:` drive unbounded container
+	/// creation (host DoS).
+	ReplicaLimitExceeded {
+		service: String,
+		replicas: usize,
+		max: u32,
+	},
 }
 
 impl fmt::Display for ComposeError {
@@ -112,6 +120,15 @@ impl fmt::Display for ComposeError {
 			Self::WaitServiceExited { container, code } => write!(
 				f,
 				"container '{container}' exited with code {code} while waiting for it to be ready"
+			),
+			Self::ReplicaLimitExceeded {
+				service,
+				replicas,
+				max,
+			} => write!(
+				f,
+				"service '{service}' requests {replicas} replicas, which exceeds the limit of \
+				 {max}; lower the count or raise the limit with PODUP_MAX_REPLICAS"
 			),
 		}
 	}
@@ -233,6 +250,14 @@ mod tests {
 				ComposeError::WaitServiceExited {
 					container: "web".into(),
 					code: 7,
+				},
+			),
+			(
+				"service 'web' requests 100000 replicas, which exceeds the limit of 256",
+				ComposeError::ReplicaLimitExceeded {
+					service: "web".into(),
+					replicas: 100_000,
+					max: 256,
 				},
 			),
 		];

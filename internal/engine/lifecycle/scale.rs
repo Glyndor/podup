@@ -10,6 +10,36 @@ use crate::engine::Engine;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
+/// The default ceiling on a service's replica count.
+const DEFAULT_MAX_REPLICAS: u32 = 256;
+
+/// The replica ceiling, overridable via the `PODUP_MAX_REPLICAS` environment
+/// variable (a host operator's escape hatch). A missing, unparseable, or zero
+/// override falls back to [`DEFAULT_MAX_REPLICAS`].
+fn max_replicas() -> u32 {
+	std::env::var("PODUP_MAX_REPLICAS")
+		.ok()
+		.and_then(|v| v.parse::<u32>().ok())
+		.filter(|&n| n > 0)
+		.unwrap_or(DEFAULT_MAX_REPLICAS)
+}
+
+/// Reject a replica count beyond the configured ceiling. Guards both the CLI
+/// `scale`/`--scale` path and an untrusted compose `deploy.replicas`/`scale:`
+/// from driving podup into unbounded container creation (a host DoS), since
+/// every command resolves its replica count through this one check.
+pub(super) fn check_replica_limit(service_name: &str, replicas: usize) -> Result<()> {
+	let max = max_replicas();
+	if replicas as u64 > u64::from(max) {
+		return Err(ComposeError::ReplicaLimitExceeded {
+			service: service_name.to_string(),
+			replicas,
+			max,
+		});
+	}
+	Ok(())
+}
+
 /// Reject a scaled service that publishes a fixed host port: only one container
 /// can bind a given host port, so replicas 2..N would fail at runtime with
 /// `address already in use`. A host port of 0/None is runtime-assigned by
@@ -50,8 +80,10 @@ impl Engine {
 				return Err(ComposeError::ServiceNotFound(svc.clone()));
 			}
 		}
-		// Fail fast on a fixed host port before touching any container.
+		// Fail fast on an over-limit count or a fixed host port before touching
+		// any container.
 		for (svc, target) in pairs {
+			check_replica_limit(svc, *target as usize)?;
 			check_scale_port_conflict(svc, &file.services[svc], *target as usize)?;
 		}
 		// Scale up: create only the missing replicas of the named services
@@ -192,7 +224,37 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
-	use super::check_scale_port_conflict;
+	use super::{check_replica_limit, check_scale_port_conflict, DEFAULT_MAX_REPLICAS};
+
+	#[test]
+	fn replica_limit_default_and_env_override() {
+		// One test owns the shared `PODUP_MAX_REPLICAS` env var for its whole body
+		// so a sibling test running in parallel can never race it.
+		let max = DEFAULT_MAX_REPLICAS as usize;
+
+		// Default ceiling: at-limit allowed, over-limit rejected.
+		std::env::remove_var("PODUP_MAX_REPLICAS");
+		assert!(check_replica_limit("web", 1).is_ok());
+		assert!(check_replica_limit("web", max).is_ok());
+		let err = check_replica_limit("web", max + 1).unwrap_err();
+		assert!(matches!(
+			err,
+			crate::error::ComposeError::ReplicaLimitExceeded { .. }
+		));
+		assert!(check_replica_limit("web", 100_000).is_err());
+
+		// Env override lowers the ceiling.
+		std::env::set_var("PODUP_MAX_REPLICAS", "2");
+		assert!(check_replica_limit("web", 2).is_ok());
+		assert!(check_replica_limit("web", 3).is_err());
+
+		// A zero/garbage override falls back to the default ceiling.
+		std::env::set_var("PODUP_MAX_REPLICAS", "0");
+		assert!(check_replica_limit("web", max).is_ok());
+		std::env::set_var("PODUP_MAX_REPLICAS", "nope");
+		assert!(check_replica_limit("web", max).is_ok());
+		std::env::remove_var("PODUP_MAX_REPLICAS");
+	}
 
 	fn service(yaml: &str) -> crate::compose::types::Service {
 		let file = crate::parse_str(yaml).unwrap();
