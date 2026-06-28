@@ -1,14 +1,16 @@
 //! Build the `.container` unit for a service.
 
-use crate::compose::types::{PortMapping, RestartPolicy, Service};
+use indexmap::IndexMap;
+
+use crate::compose::types::{RestartPolicy, SecretConfig, Service};
 use crate::ports::parse_ports;
 use crate::size::parse_duration_secs;
 
 use super::health::render_healthcheck;
-use super::security::{map_security_opt, render_secret};
+use super::security::{is_inline_secret, map_security_opt, render_secret};
 use super::{
 	collect_warnings, render_command, render_publish_port, render_restart, render_tmpfs_mount,
-	render_volume, safe_unit_stem, sorted_label_pairs, sorted_pairs, QuadletUnit, Section,
+	render_volume, sorted_label_pairs, sorted_pairs, unit_stem, QuadletUnit, Section,
 };
 
 /// Build the `.container` unit for one compose `service`.
@@ -23,15 +25,16 @@ pub(crate) fn container_unit(
 	service: &Service,
 	declared_volumes: &[&str],
 	declared_networks: &[&str],
+	secrets: &IndexMap<String, SecretConfig>,
 	warnings: &mut Vec<String>,
 ) -> QuadletUnit {
 	let mut unit = Section::new("Unit");
 	unit.add("Description", format!("{name} (podup)"));
 	for dep in service.depends_on.service_names() {
-		// The dependency's generated unit is named `{safe_unit_stem(dep)}.container`,
-		// so its service is `{safe_unit_stem(dep)}.service`; reference that, not the
+		// The dependency's generated unit is named `{unit_stem(project, dep)}.container`,
+		// so its service is `{unit_stem(project, dep)}.service`; reference that, not the
 		// raw compose key, or the ordering would target a non-existent unit.
-		let dep_service = format!("{}.service", safe_unit_stem(&dep));
+		let dep_service = format!("{}.service", unit_stem(project, &dep));
 		unit.add("After", dep_service.clone());
 		if service.depends_on.required_for(&dep) {
 			unit.add("Requires", dep_service);
@@ -56,7 +59,7 @@ pub(crate) fn container_unit(
 	// A service with a buildable `build:` references its `.build` unit, so Quadlet
 	// builds the image before running; otherwise the explicit `image:` is used.
 	if super::build::emits_build_unit(service) {
-		container.add("Image", super::build::build_unit_filename(name));
+		container.add("Image", super::build::build_unit_filename(project, name));
 	} else if let Some(image) = &service.image {
 		container.add("Image", image.clone());
 	}
@@ -90,19 +93,13 @@ pub(crate) fn container_unit(
 		container.add("RunInit", "true".to_string());
 	}
 
-	match parse_ports(&service.ports) {
-		Ok(ports) => {
-			for p in ports {
-				container.add("PublishPort", render_publish_port(&p));
-			}
-		}
-		Err(_) => {
-			// Fall back to the raw short forms so nothing is dropped.
-			for port in &service.ports {
-				if let PortMapping::Short(s) = port {
-					container.add("PublishPort", s.clone());
-				}
-			}
+	// Ports are validated (range, format) before generation, so parsing succeeds
+	// here. A malformed/out-of-range mapping is rejected at the command boundary
+	// rather than re-emitted verbatim as an invalid `PublishPort=` — emitting the
+	// raw string would produce a unit Quadlet/Podman would reject anyway.
+	if let Ok(ports) = parse_ports(&service.ports) {
+		for p in ports {
+			container.add("PublishPort", render_publish_port(&p));
 		}
 	}
 
@@ -119,7 +116,7 @@ pub(crate) fn container_unit(
 		if let Some(t) = render_tmpfs_mount(vol) {
 			container.add("Tmpfs", t);
 		} else {
-			container.add("Volume", render_volume(vol, declared_volumes));
+			container.add("Volume", render_volume(vol, project, declared_volumes));
 		}
 	}
 	for net in service.networks.names() {
@@ -127,7 +124,7 @@ pub(crate) fn container_unit(
 		// unit; an external network is referenced by its existing name directly,
 		// since no unit is emitted for it.
 		if declared_networks.contains(&net.as_str()) {
-			container.add("Network", format!("{net}.network"));
+			container.add("Network", format!("{}.network", unit_stem(project, &net)));
 		} else {
 			container.add("Network", net.clone());
 		}
@@ -194,9 +191,11 @@ pub(crate) fn container_unit(
 		container.add("ShmSize", shm.clone());
 	}
 	if let Some(mem) = &service.mem_limit {
-		// `Memory=` is a native [Container] key in current podman-systemd.unit(5);
-		// emit it directly rather than as a raw podman flag.
-		container.add("Memory", mem.clone());
+		// `Memory=` is not a recognised [Container] Quadlet key (Quadlet would drop
+		// the whole unit at daemon-reload), so route the limit through PodmanArgs=
+		// as `--memory`, like the CPU limits. The value is validated as a size
+		// before generation, so it is a well-formed limit here.
+		container.add("PodmanArgs", format!("--memory={mem}"));
 	}
 	// CPU limits have no native [Container] Quadlet key (unlike Memory=/
 	// PidsLimit=), so they go through PodmanArgs=.
@@ -258,7 +257,10 @@ pub(crate) fn container_unit(
 				.strip_prefix("service:")
 				.or_else(|| m.strip_prefix("container:"))
 			{
-				container.add("Network", format!("{}.container", safe_unit_stem(target)));
+				container.add(
+					"Network",
+					format!("{}.container", unit_stem(project, target)),
+				);
 			}
 		}
 		None => {}
@@ -318,11 +320,24 @@ pub(crate) fn container_unit(
 			.and_then(|r| r.limits.as_ref())
 			.and_then(|l| l.memory.as_ref())
 		{
-			container.add("Memory", mem.clone());
+			container.add("PodmanArgs", format!("--memory={mem}"));
 		}
 	}
 	for secret in &service.secrets {
-		container.add("Secret", render_secret(secret));
+		// An inline (`content:`/`environment:`) secret is created by `up` under the
+		// project-scoped name `{project}_secret_{name}`; reference that here so the
+		// generated unit points at the secret `up` would create, not an unscoped
+		// (possibly colliding or non-existent) host secret. Quadlet does not create
+		// the secret itself, so warn the operator to provision it first.
+		let source = secret.source();
+		if is_inline_secret(secrets.get(source)) {
+			warnings.push(format!(
+				"{name}: inline secret {source:?} is referenced but Quadlet does not \
+				 create it; provision the project-scoped secret \"{project}_secret_{source}\" \
+				 first (e.g. via `podup up`)"
+			));
+		}
+		container.add("Secret", render_secret(secret, project, secrets));
 	}
 	render_healthcheck(name, service, &mut container, warnings);
 
@@ -371,7 +386,7 @@ pub(crate) fn container_unit(
 	contents.push_str("\n[Install]\nWantedBy=default.target\n");
 
 	QuadletUnit {
-		filename: format!("{}.container", safe_unit_stem(name)),
+		filename: format!("{}.container", unit_stem(project, name)),
 		contents,
 	}
 }

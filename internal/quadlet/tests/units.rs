@@ -9,7 +9,7 @@ fn container_name_defaults_to_project_prefixed() {
 	// rather than a bare `web` that would collide across projects.
 	let file = parse_str("services:\n  web:\n    image: nginx\n").unwrap();
 	let out = generate(&file, "proj");
-	let web = unit_named(&out, "web.container");
+	let web = unit_named(&out, "proj-web.container");
 	assert!(web.contents.contains("ContainerName=proj-web"));
 }
 
@@ -57,7 +57,7 @@ networks:
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "proj");
 
-	let web = unit_named(&out, "web.container");
+	let web = unit_named(&out, "proj-web.container");
 	assert!(web.contents.contains("Image=nginx:1.27"));
 	assert!(web.contents.contains("ContainerName=web"));
 	assert!(web.contents.contains("PublishPort=8080:80"));
@@ -66,18 +66,20 @@ networks:
 	let b = web.contents.find("Environment=B_KEY=two").unwrap();
 	assert!(a < b, "environment keys must be sorted");
 	// Declared named volume is tied to its .volume unit.
-	assert!(web.contents.contains("Volume=data.volume:/var/lib/data"));
-	assert!(web.contents.contains("Network=frontend.network"));
+	assert!(web
+		.contents
+		.contains("Volume=proj-data.volume:/var/lib/data"));
+	assert!(web.contents.contains("Network=proj-frontend.network"));
 	// unless-stopped maps to systemd Restart=always.
 	assert!(web.contents.contains("Restart=always"));
-	assert!(web.contents.contains("After=db.service"));
+	assert!(web.contents.contains("After=proj-db.service"));
 	assert!(web.contents.contains("WantedBy=default.target"));
 
-	unit_named(&out, "db.container");
-	assert!(unit_named(&out, "data.volume")
+	unit_named(&out, "proj-db.container");
+	assert!(unit_named(&out, "proj-data.volume")
 		.contents
 		.contains("VolumeName=proj_data"));
-	assert!(unit_named(&out, "frontend.network")
+	assert!(unit_named(&out, "proj-frontend.network")
 		.contents
 		.contains("NetworkName=proj_frontend"));
 }
@@ -100,7 +102,7 @@ services:
 	let build = out
 		.units
 		.iter()
-		.find(|u| u.filename == "app.build")
+		.find(|u| u.filename == "proj-app.build")
 		.expect("a build service must emit an app.build unit");
 	assert!(build.contents.contains("[Build]"));
 	assert!(build.contents.contains("ImageTag=app:latest"));
@@ -110,9 +112,9 @@ services:
 	let container = out
 		.units
 		.iter()
-		.find(|u| u.filename == "app.container")
+		.find(|u| u.filename == "proj-app.container")
 		.unwrap();
-	assert!(container.contents.contains("Image=app.build"));
+	assert!(container.contents.contains("Image=proj-app.build"));
 	assert!(!out.warnings.iter().any(|w| w.contains("build")));
 }
 
@@ -121,7 +123,7 @@ fn inline_dockerfile_build_warns_and_emits_no_build_unit() {
 	let yaml = "services:\n  app:\n    build:\n      dockerfile_inline: \"FROM alpine\"\n";
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "proj");
-	assert!(!out.units.iter().any(|u| u.filename == "app.build"));
+	assert!(!out.units.iter().any(|u| u.filename == "proj-app.build"));
 	assert!(out.warnings.iter().any(|w| w.contains("dockerfile_inline")));
 }
 
@@ -136,7 +138,7 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "proj");
-	let web = unit_named(&out, "web.container");
+	let web = unit_named(&out, "proj-web.container");
 	assert!(web
 		.contents
 		.contains("Volume=./html:/usr/share/nginx/html:ro"));
@@ -158,8 +160,8 @@ volumes:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "proj");
-	let c = &unit_named(&out, "db.container").contents;
-	assert!(c.contains("Volume=pgdata.volume:/var/lib/postgresql/data:ro"));
+	let c = &unit_named(&out, "proj-db.container").contents;
+	assert!(c.contains("Volume=proj-pgdata.volume:/var/lib/postgresql/data:ro"));
 }
 
 #[test]
@@ -207,7 +209,7 @@ fn newline_in_value_cannot_inject_unit_directives() {
 		"services:\n  web:\n    image: x\n    environment:\n      EVIL: \"a\\nExecStartPre=/bin/rm -rf /\"\n";
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "proj");
-	let c = &unit_named(&out, "web.container").contents;
+	let c = &unit_named(&out, "proj-web.container").contents;
 	assert!(
 		!c.lines().any(|l| l.starts_with("ExecStartPre")),
 		"a newline in a value must not inject a directive line:\n{c}"
@@ -234,12 +236,15 @@ volumes:
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "proj");
 	// No unit is generated for external resources.
-	assert!(!out.units.iter().any(|u| u.filename == "extnet.network"));
-	assert!(!out.units.iter().any(|u| u.filename == "extvol.volume"));
+	assert!(!out
+		.units
+		.iter()
+		.any(|u| u.filename == "proj-extnet.network"));
+	assert!(!out.units.iter().any(|u| u.filename == "proj-extvol.volume"));
 	// The container references them by their existing name, not `.network`/`.volume`.
-	let c = &unit_named(&out, "web.container").contents;
+	let c = &unit_named(&out, "proj-web.container").contents;
 	assert!(c.contains("Network=extnet"));
-	assert!(!c.contains("Network=extnet.network"));
+	assert!(!c.contains("Network=proj-extnet.network"));
 	assert!(c.contains("Volume=extvol:/data"));
 	assert!(!c.contains("extvol.volume"));
 }
@@ -260,7 +265,7 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
+	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
 		c.contains("Volume=/host/data:/data:z,rshared"),
 		"selinux/propagation must be preserved; got:\n{c}"
@@ -288,12 +293,12 @@ volumes:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let net = &unit_named(&out, "net.network").contents;
+	let net = &unit_named(&out, "p-net.network").contents;
 	assert!(net.contains("Driver=bridge"));
 	assert!(net.contains("Internal=true"));
 	assert!(net.contains("IPv6=true"));
 	assert!(net.contains("Label=tier=net"));
-	let vol = &unit_named(&out, "vol.volume").contents;
+	let vol = &unit_named(&out, "p-vol.volume").contents;
 	assert!(vol.contains("Driver=local"));
 	assert!(vol.contains("Label=tier=vol"));
 }
@@ -319,7 +324,7 @@ networks:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let net = &unit_named(&out, "net.network").contents;
+	let net = &unit_named(&out, "p-net.network").contents;
 	// A custom name overrides the project-prefixed default.
 	assert!(net.contains("NetworkName=custom-net"), "in:\n{net}");
 	assert!(!net.contains("NetworkName=p_net"), "in:\n{net}");
@@ -354,7 +359,7 @@ volumes:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let vol = &unit_named(&out, "vol.volume").contents;
+	let vol = &unit_named(&out, "p-vol.volume").contents;
 	assert!(vol.contains("VolumeName=custom-vol"), "in:\n{vol}");
 	assert!(!vol.contains("VolumeName=p_vol"), "in:\n{vol}");
 	// `local` driver opts map to dedicated keys; `o` is a single mount-option
@@ -382,7 +387,7 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
+	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("HealthInterval=5s"), "in:\n{c}");
 	assert!(
 		!c.contains("HealthStartupInterval"),
@@ -410,13 +415,13 @@ services:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "proj");
-	let web = &unit_named(&out, "web.container").contents;
-	assert!(web.contains("After=db_1.service"), "in:\n{web}");
-	assert!(web.contains("Requires=db_1.service"), "in:\n{web}");
+	let web = &unit_named(&out, "proj-web.container").contents;
+	assert!(web.contains("After=proj-db_1.service"), "in:\n{web}");
+	assert!(web.contains("Requires=proj-db_1.service"), "in:\n{web}");
 	// The raw, unsanitized name must not leak into the ordering directives.
 	assert!(!web.contains("db:1.service"), "in:\n{web}");
 	// The dependency's own unit really is named with the sanitized stem.
-	unit_named(&out, "db_1.container");
+	unit_named(&out, "proj-db_1.container");
 }
 
 #[test]
@@ -427,10 +432,10 @@ fn network_mode_service_and_container_map_to_dot_container() {
 		let yaml = format!("services:\n  s:\n    image: x\n    network_mode: \"{mode}\"\n");
 		let file = parse_str(&yaml).unwrap();
 		let out = generate(&file, "p");
-		let c = &unit_named(&out, "s.container").contents;
+		let c = &unit_named(&out, "p-s.container").contents;
 		assert!(
-			c.contains(&format!("Network={target}.container")),
-			"{mode} must map to Network={target}.container; got:\n{c}"
+			c.contains(&format!("Network=p-{target}.container")),
+			"{mode} must map to Network=p-{target}.container; got:\n{c}"
 		);
 	}
 }
@@ -440,8 +445,8 @@ fn network_mode_service_target_is_sanitized() {
 	let yaml = "services:\n  s:\n    image: x\n    network_mode: \"service:web:1\"\n";
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
-	assert!(c.contains("Network=web_1.container"), "in:\n{c}");
+	let c = &unit_named(&out, "p-s.container").contents;
+	assert!(c.contains("Network=p-web_1.container"), "in:\n{c}");
 }
 
 #[test]
@@ -457,8 +462,8 @@ volumes:
 "#;
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let net = &unit_named(&out, "net.network").contents;
-	let vol = &unit_named(&out, "vol.volume").contents;
+	let net = &unit_named(&out, "p-net.network").contents;
+	let vol = &unit_named(&out, "p-vol.volume").contents;
 	assert!(
 		!net.contains("[Install]") && !net.contains("WantedBy"),
 		".network must carry no [Install]; got:\n{net}"
@@ -468,7 +473,7 @@ volumes:
 		".volume must carry no [Install]; got:\n{vol}"
 	);
 	// The container unit still carries its [Install].
-	let c = &unit_named(&out, "s.container").contents;
+	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("[Install]") && c.contains("WantedBy=default.target"));
 }
 
@@ -477,7 +482,7 @@ fn privileged_maps_to_podman_arg() {
 	let yaml = "services:\n  s:\n    image: x\n    privileged: true\n";
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "p");
-	let c = &unit_named(&out, "s.container").contents;
+	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("PodmanArgs=--privileged"), "in:\n{c}");
 	assert!(
 		!out.warnings.iter().any(|w| w.contains("privileged")),
@@ -503,7 +508,7 @@ volumes:
 	let file = parse_str(yaml).unwrap();
 	let out = generate(&file, "proj");
 
-	let c = &unit_named(&out, "web.container").contents;
+	let c = &unit_named(&out, "proj-web.container").contents;
 	assert!(
 		c.contains("Label=podup.project=proj"),
 		"container missing project ownership label in:\n{c}"
@@ -513,7 +518,7 @@ volumes:
 		"container missing service ownership label in:\n{c}"
 	);
 
-	let net = &unit_named(&out, "net.network").contents;
+	let net = &unit_named(&out, "proj-net.network").contents;
 	assert!(
 		net.contains("Label=podup.project=proj"),
 		"network missing project ownership label in:\n{net}"
@@ -524,7 +529,7 @@ volumes:
 		"network must not carry a service label in:\n{net}"
 	);
 
-	let vol = &unit_named(&out, "vol.volume").contents;
+	let vol = &unit_named(&out, "proj-vol.volume").contents;
 	assert!(
 		vol.contains("Label=podup.project=proj"),
 		"volume missing project ownership label in:\n{vol}"

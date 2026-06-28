@@ -2,7 +2,7 @@
 
 use crate::compose::types::VolumeConfig;
 
-use super::{safe_unit_stem, sorted_label_pairs, QuadletUnit, Section};
+use super::{sorted_label_pairs, unit_stem, QuadletUnit, Section};
 
 /// Build the `.volume` unit for one declared named volume. Emits a single
 /// `[Volume]` section (VolumeName, then driver/driver-opts/labels), always
@@ -45,7 +45,7 @@ pub(crate) fn volume_unit(name: &str, project: &str, config: Option<&VolumeConfi
 	// them. Only `.container` units carry [Install].
 	let contents = vol.render();
 	QuadletUnit {
-		filename: format!("{}.volume", safe_unit_stem(name)),
+		filename: format!("{}.volume", unit_stem(project, name)),
 		contents,
 	}
 }
