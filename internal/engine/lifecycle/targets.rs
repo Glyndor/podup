@@ -2,9 +2,18 @@
 //! target-list filtering, and `depends_on` expansion.
 
 use std::collections::HashSet;
+use std::time::Duration;
 
 use crate::compose::types::{ComposeFile, Service};
 use crate::error::{ComposeError, Result};
+
+/// Extra wall-clock slack, beyond the grace period, before podup gives up on a
+/// stalled libpod `stop` and escalates to a client-side `SIGKILL`. Podman stops
+/// a container by sending `SIGTERM`, waiting the grace window, then `SIGKILL`
+/// itself — so a healthy stop returns at most ~`grace` seconds in. The buffer
+/// absorbs daemon/reap latency so a slow-but-working stop is never escalated;
+/// anything past it means the libpod call is wedged and we kill independently.
+const STOP_GRACE_BUFFER_SECS: u64 = 30;
 
 /// The per-service shutdown grace from `stop_grace_period` (default 10s).
 pub(super) fn service_grace_period_secs(service: &Service) -> i32 {
@@ -14,6 +23,41 @@ pub(super) fn service_grace_period_secs(service: &Service) -> i32 {
 		.and_then(crate::size::parse_duration_secs)
 		.and_then(|s| i32::try_from(s).ok())
 		.unwrap_or(10)
+}
+
+/// Validate a CLI `-t/--timeout` value at the trust boundary.
+///
+/// `-1` (docker's "wait indefinitely") and any non-negative second count are
+/// accepted; anything below `-1` is rejected with [`ComposeError::InvalidTimeout`]
+/// so it never reaches libpod as a `?t=<negative>` that surfaces a raw `HTTP 400`.
+/// Pure so the boundary check is unit-tested without a live socket.
+pub fn validate_stop_timeout(timeout: Option<i32>) -> Result<Option<i32>> {
+	match timeout {
+		Some(t) if t < -1 => Err(ComposeError::InvalidTimeout(t)),
+		other => Ok(other),
+	}
+}
+
+/// The libpod `?t=` value for a grace period. A non-negative grace passes through;
+/// `-1` ("wait indefinitely") maps to the largest value libpod accepts so podman
+/// does not escalate to `SIGKILL` on its own, matching `docker stop -t -1`. Pure.
+pub(super) fn stop_timeout_param(grace: i32) -> i64 {
+	if grace < 0 {
+		i64::from(i32::MAX)
+	} else {
+		i64::from(grace)
+	}
+}
+
+/// Client-side deadline for a `stop` call: the grace window plus
+/// [`STOP_GRACE_BUFFER_SECS`]. `-1` ("wait indefinitely") yields `None`, leaving
+/// the call uncapped like `docker stop -t -1`. Pure so the policy is unit-tested.
+pub(super) fn stop_deadline(grace: i32) -> Option<Duration> {
+	if grace < 0 {
+		None
+	} else {
+		Some(Duration::from_secs(grace as u64 + STOP_GRACE_BUFFER_SECS))
+	}
 }
 
 impl crate::engine::Engine {
@@ -97,9 +141,72 @@ pub(super) fn in_started_set(target_set: &Option<HashSet<String>>, name: &str) -
 
 #[cfg(test)]
 mod tests {
-	use super::{expand_targets, filter_services, in_started_set, service_grace_period_secs};
+	use super::{
+		expand_targets, filter_services, in_started_set, service_grace_period_secs, stop_deadline,
+		stop_timeout_param, validate_stop_timeout, STOP_GRACE_BUFFER_SECS,
+	};
 	use crate::compose::types::{ComposeFile, Service};
+	use crate::error::ComposeError;
 	use std::collections::HashSet;
+	use std::time::Duration;
+
+	// --- validate_stop_timeout (#778) ---
+
+	#[test]
+	fn validate_stop_timeout_accepts_none_zero_and_positive() {
+		assert_eq!(validate_stop_timeout(None).unwrap(), None);
+		assert_eq!(validate_stop_timeout(Some(0)).unwrap(), Some(0));
+		assert_eq!(validate_stop_timeout(Some(30)).unwrap(), Some(30));
+	}
+
+	#[test]
+	fn validate_stop_timeout_accepts_minus_one_infinite() {
+		// -1 is docker's "wait indefinitely" sentinel and must pass through.
+		assert_eq!(validate_stop_timeout(Some(-1)).unwrap(), Some(-1));
+	}
+
+	#[test]
+	fn validate_stop_timeout_rejects_below_minus_one() {
+		// A value below -1 is rejected here rather than leaking a raw libpod 400.
+		let err = validate_stop_timeout(Some(-2)).unwrap_err();
+		assert!(matches!(err, ComposeError::InvalidTimeout(-2)));
+		assert!(validate_stop_timeout(Some(-100)).is_err());
+	}
+
+	// --- stop_timeout_param (#778) ---
+
+	#[test]
+	fn stop_timeout_param_passes_through_non_negative() {
+		assert_eq!(stop_timeout_param(0), 0);
+		assert_eq!(stop_timeout_param(10), 10);
+	}
+
+	#[test]
+	fn stop_timeout_param_maps_infinite_to_max() {
+		// -1 (infinite) maps to the largest value libpod accepts so podman never
+		// escalates to SIGKILL on its own, matching `docker stop -t -1`.
+		assert_eq!(stop_timeout_param(-1), i64::from(i32::MAX));
+	}
+
+	// --- stop_deadline (#719) ---
+
+	#[test]
+	fn stop_deadline_is_grace_plus_buffer() {
+		assert_eq!(
+			stop_deadline(10),
+			Some(Duration::from_secs(10 + STOP_GRACE_BUFFER_SECS))
+		);
+		assert_eq!(
+			stop_deadline(0),
+			Some(Duration::from_secs(STOP_GRACE_BUFFER_SECS))
+		);
+	}
+
+	#[test]
+	fn stop_deadline_infinite_is_none() {
+		// -1 leaves the stop uncapped (docker `stop -t -1` parity).
+		assert_eq!(stop_deadline(-1), None);
+	}
 
 	// --- service_grace_period_secs ---
 

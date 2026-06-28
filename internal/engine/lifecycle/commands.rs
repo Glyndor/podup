@@ -8,6 +8,7 @@ use tracing::info;
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 
+use super::targets::{stop_deadline, stop_timeout_param};
 use super::{filter_services, RunOptions};
 use crate::engine::Engine;
 use crate::libpod::API_PREFIX;
@@ -28,6 +29,60 @@ impl Engine {
 			Err(e) if e.is_status(304) || e.is_status(404) => {
 				tracing::debug!("{container}: {done} skipped ({e})");
 				Ok(())
+			}
+			Err(e) => Err(ComposeError::Podman(e)),
+		}
+	}
+
+	/// Stop one container, escalating to an explicit `SIGKILL` if the libpod
+	/// `stop` call does not complete within the grace window.
+	///
+	/// libpod normally `SIGKILL`s a container itself once the grace period lapses,
+	/// so a healthy stop returns inside [`stop_deadline`]. If the call instead
+	/// stalls (a daemon that accepts the request then never replies, or a
+	/// container the server fails to reap), the bounded wait surfaces a timeout
+	/// and we send `kill?signal=SIGKILL` so podup never depends solely on the
+	/// server honouring `?t`. 304/404 are idempotent no-ops, as in
+	/// [`run_lifecycle_op`](Self::run_lifecycle_op).
+	async fn stop_container(&self, container: &str, grace: i32) -> Result<()> {
+		let path = format!(
+			"{API_PREFIX}/containers/{}/stop?t={}",
+			crate::libpod::urlencoded(container),
+			stop_timeout_param(grace),
+		);
+		match self
+			.client
+			.post_empty_ok_within(&path, stop_deadline(grace))
+			.await
+		{
+			Ok(()) => {
+				info!("stopped {container}");
+				Ok(())
+			}
+			Err(e) if e.is_status(304) || e.is_status(404) => {
+				tracing::debug!("{container}: stop skipped ({e})");
+				Ok(())
+			}
+			Err(e) if e.is_timeout() => {
+				tracing::warn!(
+					"{container}: stop did not complete within the grace window; escalating to SIGKILL"
+				);
+				let kill_path = format!(
+					"{API_PREFIX}/containers/{}/kill?signal=SIGKILL",
+					crate::libpod::urlencoded(container),
+				);
+				match self.client.post_empty_ok(&kill_path).await {
+					Ok(()) => {
+						info!("killed {container} (SIGKILL after stop timeout)");
+						Ok(())
+					}
+					// Already gone / not running between the timeout and the kill.
+					Err(e) if e.is_status(404) || e.is_status(409) => {
+						tracing::debug!("{container}: SIGKILL skipped ({e})");
+						Ok(())
+					}
+					Err(e) => Err(ComposeError::Podman(e)),
+				}
 			}
 			Err(e) => Err(ComposeError::Podman(e)),
 		}
@@ -61,8 +116,9 @@ impl Engine {
 				// Single atomic restart (no visible stopped window) instead of a
 				// stop+start round-trip.
 				let restart_path = format!(
-					"{API_PREFIX}/containers/{}/restart?t={grace}",
+					"{API_PREFIX}/containers/{}/restart?t={}",
 					crate::libpod::urlencoded(&container_name),
+					stop_timeout_param(grace),
 				);
 				self.run_lifecycle_op(&restart_path, &container_name, "restarted")
 					.await?;
@@ -76,8 +132,9 @@ impl Engine {
 					for dep_container in self.live_replica_names(dep_name, dep_service).await? {
 						let grace = self.grace_period_secs(dep_service);
 						let restart_path = format!(
-							"{API_PREFIX}/containers/{}/restart?t={grace}",
+							"{API_PREFIX}/containers/{}/restart?t={}",
 							crate::libpod::urlencoded(&dep_container),
+							stop_timeout_param(grace),
 						);
 						if let Err(e) = self.client.post_empty_ok(&restart_path).await {
 							tracing::warn!("cascade restart of {dep_name} failed: {e}");
@@ -141,12 +198,7 @@ impl Engine {
 			let service = &file.services[name];
 			for container_name in self.live_replica_names(name, service).await? {
 				let grace = self.grace_period_secs(service);
-				let path = format!(
-					"{API_PREFIX}/containers/{}/stop?t={grace}",
-					crate::libpod::urlencoded(&container_name),
-				);
-				self.run_lifecycle_op(&path, &container_name, "stopped")
-					.await?;
+				self.stop_container(&container_name, grace).await?;
 			}
 		}
 		Ok(())

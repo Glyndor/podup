@@ -10,6 +10,8 @@ use crate::engine::Engine;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
+use super::targets::{stop_deadline, stop_timeout_param};
+
 /// The default ceiling on a service's replica count.
 const DEFAULT_MAX_REPLICAS: u32 = 256;
 
@@ -127,11 +129,18 @@ impl Engine {
 
 	/// Stop (best-effort) then force-remove a container by name.
 	pub(super) async fn stop_and_remove(&self, name: &str, grace: i32) {
+		// Bound the stop by the grace window: the force-remove below SIGKILLs the
+		// container, so a stop that stalls past the grace must not pin us for the
+		// full client READ_TIMEOUT before we fall through to it.
 		let stop_path = format!(
-			"{API_PREFIX}/containers/{}/stop?t={grace}",
-			urlencoded(name)
+			"{API_PREFIX}/containers/{}/stop?t={}",
+			urlencoded(name),
+			stop_timeout_param(grace),
 		);
-		let _ = self.client.post_empty_ok(&stop_path).await;
+		let _ = self
+			.client
+			.post_empty_ok_within(&stop_path, stop_deadline(grace))
+			.await;
 		let rm_path = format!("{API_PREFIX}/containers/{}?force=true", urlencoded(name));
 		if let Err(e) = self.client.delete_ok(&rm_path).await {
 			tracing::debug!("scale-down rm {name}: {e}");

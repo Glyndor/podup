@@ -72,6 +72,11 @@ pub enum ComposeError {
 	},
 	/// `start --wait --wait-timeout` elapsed before services became healthy.
 	WaitTimeout { secs: u64 },
+	/// The `-t/--timeout` shutdown grace was given an unusable value (a number
+	/// below `-1`). `-1` means "wait indefinitely" (docker parity) and any
+	/// non-negative value is a second count; everything else is rejected here
+	/// rather than forwarded to libpod as a raw `HTTP 400`.
+	InvalidTimeout(i32),
 }
 
 impl fmt::Display for ComposeError {
@@ -135,6 +140,10 @@ impl fmt::Display for ComposeError {
 			Self::WaitTimeout { secs } => write!(
 				f,
 				"timed out after {secs}s waiting for services to become healthy"
+			),
+			Self::InvalidTimeout(secs) => write!(
+				f,
+				"invalid --timeout {secs}: use -1 to wait indefinitely or a non-negative number of seconds"
 			),
 		}
 	}
@@ -269,6 +278,10 @@ mod tests {
 			(
 				"timed out after 30s waiting for services to become healthy",
 				ComposeError::WaitTimeout { secs: 30 },
+			),
+			(
+				"invalid --timeout -5: use -1 to wait indefinitely or a non-negative number of seconds",
+				ComposeError::InvalidTimeout(-5),
 			),
 		];
 		for (expected_prefix, err) in cases {

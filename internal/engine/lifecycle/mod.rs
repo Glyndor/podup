@@ -12,6 +12,7 @@ use crate::compose::types::{ComposeFile, ServiceCondition};
 use crate::error::Result;
 use crate::libpod::API_PREFIX;
 
+pub use targets::validate_stop_timeout;
 use targets::{expand_targets, filter_services, in_started_set};
 
 use super::container::config_hash;
@@ -292,7 +293,7 @@ impl Engine {
 						);
 						Ok(())
 					} else {
-						self.wait_healthy(&dep_container, dep_service).await
+						self.wait_healthy(&dep_container, dep_service, None).await
 					}
 				}
 				ServiceCondition::ServiceCompletedSuccessfully => {
@@ -411,11 +412,19 @@ impl Engine {
 				}
 
 				let grace = self.grace_period_secs(service);
+				// Bound the stop by the grace window so a container ignoring SIGTERM
+				// does not pin recreation for the full client READ_TIMEOUT; the
+				// force-remove below SIGKILLs it regardless.
 				let stop_path = format!(
-					"{API_PREFIX}/containers/{}/stop?t={grace}",
+					"{API_PREFIX}/containers/{}/stop?t={}",
 					crate::libpod::urlencoded(&container_name),
+					targets::stop_timeout_param(grace),
 				);
-				if let Err(e) = self.client.post_empty_ok(&stop_path).await {
+				if let Err(e) = self
+					.client
+					.post_empty_ok_within(&stop_path, targets::stop_deadline(grace))
+					.await
+				{
 					tracing::warn!("could not stop {container_name}: {e}");
 				}
 

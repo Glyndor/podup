@@ -99,6 +99,14 @@ impl PodmanError {
 		matches!(self, Self::Api { status, .. } if *status == code)
 	}
 
+	/// True if this is a client-side timeout (the request was aborted because the
+	/// socket never responded within the deadline). These carry a synthetic
+	/// status `0` and a `timed out` message; lifecycle callers use this to
+	/// escalate a wedged `stop` to an explicit `SIGKILL`.
+	pub(crate) fn is_timeout(&self) -> bool {
+		matches!(self, Self::Api { status: 0, message } if message.contains("timed out"))
+	}
+
 	/// True if this API error reports that the resource already exists: an HTTP
 	/// 409 conflict, or an HTTP 500 whose message says so. Podman's libpod
 	/// volume-create endpoint returns 500 (not 409) for a duplicate name, so an
@@ -172,6 +180,29 @@ mod tests {
 		assert!(e.is_status(404));
 		assert!(!e.is_status(200));
 		assert!(!e.is_status(500));
+	}
+
+	#[test]
+	fn is_timeout_matches_synthetic_timeout_error() {
+		// Client-side timeouts carry status 0 and a "timed out" message; lifecycle
+		// stop escalation keys off this.
+		assert!(PodmanError::Api {
+			status: 0,
+			message: "timed out after 40s waiting for the Podman socket to respond".into(),
+		}
+		.is_timeout());
+		// A real HTTP error (non-zero status) is not a timeout.
+		assert!(!PodmanError::Api {
+			status: 500,
+			message: "boom".into(),
+		}
+		.is_timeout());
+		// A status-0 error without the timeout marker is not a timeout.
+		assert!(!PodmanError::Api {
+			status: 0,
+			message: "invalid API path".into(),
+		}
+		.is_timeout());
 	}
 
 	#[test]

@@ -365,6 +365,30 @@ impl Client {
 		Self::check_status(status, &body)
 	}
 
+	/// `POST` with empty body → ignore response body (expect 2xx or 304), bounded
+	/// by a caller-chosen deadline rather than the default [`READ_TIMEOUT`].
+	///
+	/// `deadline` of `Some` caps both the response-head wait and the body read so a
+	/// `stop` on a container that is slow to die (or a wedged libpod call) returns a
+	/// timeout error after the grace window instead of pinning the CLI for the full
+	/// `READ_TIMEOUT`; `None` leaves it uncapped (docker `stop -t -1` parity). The
+	/// caller decides whether a resulting [`PodmanError::is_timeout`] warrants a
+	/// client-side `SIGKILL`/force-remove escalation.
+	pub async fn post_empty_ok_within(
+		&self,
+		path: &str,
+		deadline: Option<std::time::Duration>,
+	) -> Result<()> {
+		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;
+		let resp = self.send(req, deadline).await?;
+		let (status, body) = Self::read_body(resp, deadline).await?;
+		// 304 Not Modified is fine for idempotent ops
+		if status == StatusCode::NOT_MODIFIED {
+			return Ok(());
+		}
+		Self::check_status(status, &body)
+	}
+
 	/// `POST` with empty body → return raw `Response<Incoming>` for streaming.
 	pub async fn post_empty_stream(&self, path: &str) -> Result<Response<Incoming>> {
 		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;

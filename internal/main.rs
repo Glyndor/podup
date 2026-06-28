@@ -212,6 +212,9 @@ async fn run() -> podup::Result<()> {
 		| Commands::Restart { timeout, .. } => *timeout,
 		_ => None,
 	};
+	// Reject a `-t/--timeout` below -1 here, at the trust boundary, with a clear
+	// message instead of forwarding it to libpod as a raw `?t=<negative>` 400.
+	let stop_timeout = podup::validate_stop_timeout(stop_timeout)?;
 	// `--scale SERVICE=N` (on `up`) and the `scale` subcommand both feed the
 	// engine's replica overrides so `resolve_replicas` reports the target count.
 	let scale_overrides: std::collections::HashMap<String, u32> = match &cli.command {
