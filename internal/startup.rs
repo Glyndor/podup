@@ -328,7 +328,7 @@ mod tests {
 
 	#[test]
 	fn label_only_covers_ps_and_events() {
-		use crate::cli::OutputFormat;
+		use crate::cli::{EventsFormat, OutputFormat};
 		// `ps` and `events` are scoped purely by the project label, so they are
 		// label-only and may run without a compose file.
 		assert!(is_label_only(&Commands::Ps {
@@ -337,7 +337,7 @@ mod tests {
 			format: OutputFormat::Table,
 		}));
 		assert!(is_label_only(&Commands::Events {
-			format: OutputFormat::Table,
+			format: EventsFormat::Table,
 			json: false,
 		}));
 		// A command that reads service definitions is not label-only.
