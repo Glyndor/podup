@@ -59,6 +59,9 @@ pub enum ComposeError {
 		replicas: usize,
 		ports: Vec<u16>,
 	},
+	/// A container being waited on (`up`/`start --wait`, or a `service_healthy`
+	/// dependency) exited non-zero before becoming ready.
+	WaitServiceExited { container: String, code: i64 },
 }
 
 impl fmt::Display for ComposeError {
@@ -106,6 +109,10 @@ impl fmt::Display for ComposeError {
 					 proxy's port\n  - reduce the service to a single replica"
 				)
 			}
+			Self::WaitServiceExited { container, code } => write!(
+				f,
+				"container '{container}' exited with code {code} while waiting for it to be ready"
+			),
 		}
 	}
 }
@@ -219,6 +226,13 @@ mod tests {
 					service: "web".into(),
 					replicas: 3,
 					ports: vec![8080],
+				},
+			),
+			(
+				"container 'web' exited with code 7 while waiting for it to be ready",
+				ComposeError::WaitServiceExited {
+					container: "web".into(),
+					code: 7,
 				},
 			),
 		];

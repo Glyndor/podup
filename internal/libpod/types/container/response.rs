@@ -119,14 +119,13 @@ pub struct HealthConfig {
 /// Container state sub-object.
 #[derive(Deserialize, Default)]
 pub struct ContainerState {
-	// `status`/`exit_code` round-trip the libpod state for completeness and are
-	// asserted in tests; container completion now blocks on `wait?condition`
-	// (which returns the code directly) rather than reading them here.
-	#[allow(dead_code)]
+	/// Lifecycle status (`running`, `exited`, ...). Read while waiting to detect a
+	/// container that exited before becoming ready.
 	#[serde(rename = "Status")]
 	pub status: Option<String>,
 
-	#[allow(dead_code)]
+	/// Exit code once the container has exited; used to fail `--wait` when a
+	/// no-healthcheck service crashes during the wait.
 	#[serde(rename = "ExitCode")]
 	pub exit_code: Option<i64>,
 
