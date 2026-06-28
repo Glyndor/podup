@@ -12,7 +12,7 @@ use crate::compose::types::{ComposeFile, ServiceCondition};
 use crate::error::Result;
 use crate::libpod::API_PREFIX;
 
-use targets::{expand_targets, filter_services, in_started_set};
+use targets::{expand_targets, filter_services, in_started_set, validate_targets};
 
 use super::container::config_hash;
 
@@ -144,6 +144,9 @@ impl Engine {
 			let levels = crate::compose::resolve_levels(file)?;
 			let active = active_profiles_set(active_profiles);
 
+			// Reject unknown service names before doing any work, so `up`/`create`
+			// of a bogus service errors instead of exiting 0 as a silent no-op.
+			validate_targets(file, target_services)?;
 			let target_set = expand_targets(file, target_services, no_deps);
 
 			// Prefetch the project's containers once (instead of one API call per
