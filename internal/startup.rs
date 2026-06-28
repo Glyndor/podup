@@ -129,6 +129,10 @@ pub(crate) fn render_config(
 		if svc.image.is_none() && svc.build.is_none() {
 			return Err(podup::ComposeError::NoImageOrBuild(name.clone()));
 		}
+		// Reject malformed/out-of-range port mappings (e.g. `70000:80`) here too,
+		// so `config` validates them rather than accepting a mapping `up` and
+		// `generate quadlet` would reject.
+		podup::ports::parse_ports(&svc.ports)?;
 	}
 	if quiet {
 		return Ok(());
