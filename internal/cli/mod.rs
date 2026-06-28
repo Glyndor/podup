@@ -52,7 +52,7 @@ pub(crate) struct Cli {
 	#[arg(long, global = true)]
 	pub(crate) project_directory: Option<PathBuf>,
 
-	/// Extra env file(s) for interpolation (repeatable, later win; process env and `.env` still win).
+	/// Env file(s) for interpolation (repeatable, later files win; replaces `.env`; process env still wins).
 	#[arg(long = "env-file", global = true)]
 	pub(crate) env_file: Vec<String>,
 

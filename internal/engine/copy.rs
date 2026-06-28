@@ -216,18 +216,18 @@ fn pack_path(src: &Path, follow_link: bool, name_override: Option<&str>) -> Resu
 		let default = src.file_name().unwrap_or(std::ffi::OsStr::new("."));
 		let name: &std::ffi::OsStr = name_override.map(std::ffi::OsStr::new).unwrap_or(default);
 		tar.append_dir_all(name, src)
-			.map_err(|e| ComposeError::Build(e.to_string()))?;
+			.map_err(|e| ComposeError::Copy(format!("{}: {e}", src.display())))?;
 	} else {
 		let default = src.file_name().unwrap_or(std::ffi::OsStr::new("file"));
 		let name: &std::ffi::OsStr = name_override.map(std::ffi::OsStr::new).unwrap_or(default);
 		tar.append_path_with_name(src, name)
-			.map_err(|e| ComposeError::Build(e.to_string()))?;
+			.map_err(|e| ComposeError::Copy(format!("{}: {e}", src.display())))?;
 	}
 
 	let gz = tar
 		.into_inner()
-		.map_err(|e| ComposeError::Build(e.to_string()))?;
-	gz.finish().map_err(|e| ComposeError::Build(e.to_string()))
+		.map_err(|e| ComposeError::Copy(e.to_string()))?;
+	gz.finish().map_err(|e| ComposeError::Copy(e.to_string()))
 }
 
 /// Route a container archive to the host destination.
@@ -250,6 +250,15 @@ fn extract_archive(tar_bytes: &[u8], dst: &Path) -> Result<()> {
 		// to exactly `dst`; `write_single_entry_to` still rejects a multi-entry
 		// archive against a file destination.
 		return write_single_entry_to(tar_bytes, dst);
+	}
+	// Directory source against an existing *file* destination: `create_dir_all`
+	// would fail with a bare "File exists (os error 17)". Detect it up front and
+	// emit a clear message naming the destination.
+	if dst.exists() && !dst.is_dir() {
+		return Err(ComposeError::Copy(format!(
+			"cannot copy a directory onto existing file {}",
+			dst.display()
+		)));
 	}
 	// Directory source into a non-existent destination: create it and copy the
 	// source's contents in. The libpod archive is tarred under the source's
@@ -675,6 +684,34 @@ mod tests {
 		let bytes = builder.into_inner().expect("finish");
 		super::extract_archive(&bytes, &dst).expect("extract");
 		assert!(dst.is_dir());
+	}
+
+	#[test]
+	fn extract_dir_onto_existing_file_gives_clear_error() {
+		// A directory source against an existing regular-file destination must fail
+		// with a clear cp message naming the destination, not a raw "File exists".
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dst = dir.path().join("afile");
+		std::fs::write(&dst, b"existing").expect("write");
+		let bytes = tar_dir_with("srcdir", &[("a.txt", b"aaa")]);
+		let err = super::extract_archive(&bytes, &dst).unwrap_err();
+		let msg = err.to_string();
+		assert!(msg.contains("cp error"), "wrong category: {msg:?}");
+		assert!(msg.contains("directory onto"), "got {msg:?}");
+		assert!(!msg.contains("os error 17"), "raw errno leaked: {msg:?}");
+	}
+
+	#[test]
+	fn pack_path_missing_source_is_a_cp_error() {
+		// A missing host source on `cp` must read as a cp error, not a build error.
+		let missing = std::path::Path::new("/nonexistent-host-source-xyz");
+		let err = super::pack_path(missing, false, None).unwrap_err();
+		let msg = err.to_string();
+		assert!(msg.contains("cp error"), "wrong category: {msg:?}");
+		assert!(
+			!msg.contains("build error"),
+			"must not be a build error: {msg:?}"
+		);
 	}
 
 	#[test]

@@ -30,6 +30,13 @@ impl Engine {
 		services: &[String],
 		opts: VolumesOptions,
 	) -> Result<()> {
+		// Reject an unknown service name (docker compose errors with "no such
+		// service") instead of silently filtering it out and printing nothing.
+		for s in services {
+			if !file.services.contains_key(s) {
+				return Err(crate::error::ComposeError::ServiceNotFound(s.clone()));
+			}
+		}
 		let keys = self.selected_volume_keys(file, services);
 
 		// (declared key, resolved on-host name, driver, external)
