@@ -12,7 +12,8 @@ use crate::compose::types::{ComposeFile, Service};
 /// `--profile` list, falling back to `COMPOSE_PROFILES`.
 pub fn retain_active_profiles(file: &mut ComposeFile, active: &[String]) {
 	let set = active_profiles_set(active);
-	file.services.retain(|_, svc| service_in_profiles(svc, &set));
+	file.services
+		.retain(|_, svc| service_in_profiles(svc, &set));
 }
 
 /// Build the active-profile set, falling back to `COMPOSE_PROFILES` env var.
