@@ -366,13 +366,13 @@ impl Client {
 	}
 
 	/// `POST` with empty body → ignore response body (expect 2xx or 304), bounded
-	/// by a caller-chosen deadline rather than the default [`READ_TIMEOUT`].
+	/// by a caller-chosen deadline rather than the default `READ_TIMEOUT`.
 	///
 	/// `deadline` of `Some` caps both the response-head wait and the body read so a
 	/// `stop` on a container that is slow to die (or a wedged libpod call) returns a
 	/// timeout error after the grace window instead of pinning the CLI for the full
 	/// `READ_TIMEOUT`; `None` leaves it uncapped (docker `stop -t -1` parity). The
-	/// caller decides whether a resulting [`PodmanError::is_timeout`] warrants a
+	/// caller decides whether a resulting `PodmanError::is_timeout` warrants a
 	/// client-side `SIGKILL`/force-remove escalation.
 	pub async fn post_empty_ok_within(
 		&self,
