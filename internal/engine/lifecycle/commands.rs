@@ -25,7 +25,7 @@ impl Engine {
 				info!("{done} {container}");
 				Ok(())
 			}
-			Err(e) if e.is_status(304) || e.is_status(404) => {
+			Err(e) if e.is_status(304) || e.is_status(404) || e.is_kill_of_stopped() => {
 				tracing::debug!("{container}: {done} skipped ({e})");
 				Ok(())
 			}
@@ -183,6 +183,10 @@ impl Engine {
 		target_services: &[String],
 		signal: &str,
 	) -> Result<()> {
+		// Reject an empty/whitespace-only or otherwise invalid signal before
+		// issuing any request — libpod would silently treat `signal=` as SIGKILL.
+		super::signal::validate_signal(signal)?;
+
 		let order = crate::compose::resolve_order(file)?;
 		let order = filter_services(file, order, target_services)?;
 

@@ -2,6 +2,7 @@
 
 mod commands;
 mod scale;
+mod signal;
 mod targets;
 
 use std::collections::{HashMap, HashSet};

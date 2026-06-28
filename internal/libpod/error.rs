@@ -56,7 +56,7 @@ fn conflict_hint(message: &str) -> Option<&'static str> {
 		Some("the container is already paused")
 	} else if m.contains("not paused") {
 		Some("the container is not paused")
-	} else if m.contains("not running") {
+	} else if m.contains("not running") || m.contains("can only kill running") {
 		Some("the container is not running")
 	} else {
 		None
@@ -99,6 +99,20 @@ impl PodmanError {
 		matches!(self, Self::Api { status, .. } if *status == code)
 	}
 
+	/// True if this is the libpod 409 returned when `kill` targets a container
+	/// that is not running ("can only kill running containers …"). `docker
+	/// compose kill` is best-effort across all targets, so this is treated as an
+	/// idempotent no-op rather than a fatal error that aborts the loop. The
+	/// message is unique to the kill endpoint, so matching it cannot mask another
+	/// op's 409.
+	pub(crate) fn is_kill_of_stopped(&self) -> bool {
+		matches!(
+			self,
+			Self::Api { status: 409, message }
+				if message.to_ascii_lowercase().contains("can only kill running")
+		)
+	}
+
 	/// True if this API error reports that the resource already exists: an HTTP
 	/// 409 conflict, or an HTTP 500 whose message says so. Podman's libpod
 	/// volume-create endpoint returns 500 (not 409) for a duplicate name, so an
@@ -134,6 +148,39 @@ mod tests {
 			conflict_hint("cannot kill container abc: container abc is not running")
 				.unwrap()
 				.contains("not running")
+		);
+		// libpod's kill-of-stopped 409 message ("can only kill running
+		// containers …") gets the same friendly "not running" hint.
+		assert!(conflict_hint(
+			"can only kill running containers. abc is in state exited: container state improper"
+		)
+		.unwrap()
+		.contains("not running"));
+	}
+
+	#[test]
+	fn is_kill_of_stopped_matches_only_the_kill_409() {
+		let stopped = PodmanError::Api {
+			status: 409,
+			message: "can only kill running containers. abc is in state exited: \
+				container state improper"
+				.into(),
+		};
+		assert!(stopped.is_kill_of_stopped());
+		// A different 409 (e.g. already-paused) must not be swallowed by kill.
+		let paused = PodmanError::Api {
+			status: 409,
+			message: "container abc is already paused".into(),
+		};
+		assert!(!paused.is_kill_of_stopped());
+		// Wrong status, even with a matching message, is not a kill-of-stopped.
+		let other = PodmanError::Api {
+			status: 500,
+			message: "can only kill running containers".into(),
+		};
+		assert!(!other.is_kill_of_stopped());
+		assert!(
+			!PodmanError::Json(serde_json::from_str::<u8>("bad").unwrap_err()).is_kill_of_stopped()
 		);
 	}
 
