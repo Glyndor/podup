@@ -231,7 +231,7 @@ fn is_empty_yaml(v: &serde_yaml::Value) -> bool {
 /// Build the `run`-only flag overrides from the parsed command. These are kept
 /// off the frozen public `RunOptions` API and threaded through the engine
 /// builder instead (`Engine::with_run_overrides`).
-pub(crate) fn run_overrides_for(command: &Commands, env_files: &[String]) -> podup::RunOverrides {
+pub(crate) fn run_overrides_for(command: &Commands) -> podup::RunOverrides {
 	match command {
 		Commands::Run {
 			user,
@@ -250,9 +250,6 @@ pub(crate) fn run_overrides_for(command: &Commands, env_files: &[String]) -> pod
 			publish: publish.clone(),
 			interactive: *interactive,
 			no_deps: *no_deps,
-			// The global `--env-file` doubles as `docker compose run --env-file`:
-			// its contents seed the one-off container's environment.
-			env_files: env_files.to_vec(),
 		},
 		_ => podup::RunOverrides::default(),
 	}

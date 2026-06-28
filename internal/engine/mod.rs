@@ -71,6 +71,12 @@ pub struct Engine {
 	/// CLI `run`-only flag overrides (user/workdir/entrypoint/volume/publish/
 	/// interactive/no-deps); empty by default.
 	pub(super) run_overrides: lifecycle::RunOverrides,
+	/// Global `--env-file` paths that double as `docker compose run --env-file`:
+	/// their contents seed a one-off `run` container's environment at the lowest
+	/// precedence (env-file < service `environment:` < `-e`). Resolved relative
+	/// to `base_dir`; empty by default. Kept off the frozen public
+	/// [`lifecycle::RunOverrides`] struct so the library API stays stable.
+	pub(super) run_env_files: Vec<String>,
 	/// CLI `up -V/--renew-anon-volumes`: when recreating a container, also remove
 	/// its old anonymous volumes instead of leaving them orphaned.
 	pub(super) renew_anon_volumes: bool,
@@ -89,6 +95,7 @@ impl Engine {
 			no_build: false,
 			quiet_pull: false,
 			run_overrides: lifecycle::RunOverrides::default(),
+			run_env_files: Vec::new(),
 			renew_anon_volumes: false,
 		}
 	}
@@ -105,6 +112,7 @@ impl Engine {
 			no_build: false,
 			quiet_pull: false,
 			run_overrides: lifecycle::RunOverrides::default(),
+			run_env_files: Vec::new(),
 			renew_anon_volumes: false,
 		}
 	}
@@ -142,6 +150,15 @@ impl Engine {
 	/// --no-deps`). Builder-style; consumed by [`Engine::run`].
 	pub fn with_run_overrides(mut self, overrides: RunOverrides) -> Self {
 		self.run_overrides = overrides;
+		self
+	}
+
+	/// Set the global `--env-file` paths that also seed a one-off `run`
+	/// container's environment (`docker compose run --env-file`: env-file <
+	/// service `environment:` < `-e`). Builder-style; consumed by
+	/// [`Engine::run`]. Resolved relative to the engine's base dir.
+	pub fn with_run_env_files(mut self, env_files: Vec<String>) -> Self {
+		self.run_env_files = env_files;
 		self
 	}
 

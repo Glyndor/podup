@@ -320,8 +320,9 @@ impl Engine {
 			publish,
 			interactive,
 			no_deps,
-			env_files,
 		} = self.run_overrides.clone();
+		// `--env-file` is global, so it rides on the engine (not `RunOverrides`).
+		let env_files = self.run_env_files.clone();
 		let service = file
 			.services
 			.get(service_name)

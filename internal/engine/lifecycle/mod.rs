@@ -59,10 +59,6 @@ pub struct RunOverrides {
 	pub interactive: bool,
 	/// Do not start `depends_on` services before the run (`--no-deps`).
 	pub no_deps: bool,
-	/// Env files whose contents seed the one-off container's environment at the
-	/// lowest precedence (`docker compose run --env-file`: env-file < service
-	/// `environment:` < `-e`). Resolved relative to the engine's base dir.
-	pub env_files: Vec<String>,
 }
 
 impl Engine {

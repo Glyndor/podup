@@ -101,11 +101,33 @@ pub fn build_vars(dir: &Path) -> HashMap<String, String> {
 /// the **last** one wins. With no explicit files this is just [`build_vars`]
 /// (process env + `.env`). Process env always takes precedence over file values.
 ///
+/// A missing, unreadable, or malformed `--env-file` is silently skipped here
+/// (legacy lenient behaviour). This signature is part of the published library
+/// API and is kept for backward compatibility; the CLI drives
+/// [`build_vars_with_env_files_strict`], which fails loudly on a bad file.
+pub fn build_vars_with_env_files(dir: &Path, extra: &[String]) -> HashMap<String, String> {
+	// `strict = false` can never produce an error.
+	build_vars_with_env_files_inner(dir, extra, false).unwrap_or_default()
+}
+
+/// Like [`build_vars_with_env_files`] but rejects a bad `--env-file`.
+///
 /// An explicitly-passed `--env-file` that is missing, unreadable, or malformed
 /// is a hard error (matching docker compose, which fails on a not-found env
 /// file) rather than being silently skipped — a typo'd path must not fall back
 /// to process-env/defaults and exit 0.
-pub fn build_vars_with_env_files(dir: &Path, extra: &[String]) -> Result<HashMap<String, String>> {
+pub fn build_vars_with_env_files_strict(
+	dir: &Path,
+	extra: &[String],
+) -> Result<HashMap<String, String>> {
+	build_vars_with_env_files_inner(dir, extra, true)
+}
+
+fn build_vars_with_env_files_inner(
+	dir: &Path,
+	extra: &[String],
+	strict: bool,
+) -> Result<HashMap<String, String>> {
 	if extra.is_empty() {
 		return Ok(build_vars(dir));
 	}
@@ -118,13 +140,24 @@ pub fn build_vars_with_env_files(dir: &Path, extra: &[String]) -> Result<HashMap
 		} else {
 			dir.join(path)
 		};
-		let content = crate::filesystem::read_to_string_capped(&abs).map_err(|e| {
-			crate::error::ComposeError::EnvFile(format!(
-				"env file not found: {} ({e})",
-				abs.display()
-			))
-		})?;
-		for (key, value) in crate::dotenv::parse_strict(&content)? {
+		let content = match crate::filesystem::read_to_string_capped(&abs) {
+			Ok(content) => content,
+			Err(e) => {
+				if strict {
+					return Err(crate::error::ComposeError::EnvFile(format!(
+						"env file not found: {} ({e})",
+						abs.display()
+					)));
+				}
+				continue;
+			}
+		};
+		let pairs = if strict {
+			crate::dotenv::parse_strict(&content)?
+		} else {
+			crate::dotenv::parse(&content)
+		};
+		for (key, value) in pairs {
 			file_vars.insert(key, value);
 		}
 	}
@@ -448,7 +481,8 @@ mod tests {
 		)
 		.unwrap();
 
-		let vars = build_vars_with_env_files(dir.path(), &["extra.env".to_string()]).unwrap();
+		let vars =
+			build_vars_with_env_files_strict(dir.path(), &["extra.env".to_string()]).unwrap();
 		assert_eq!(vars.get("FROM_DOTENV"), None);
 		assert_eq!(vars.get("FROM_EXTRA").map(String::as_str), Some("more"));
 		assert_eq!(
@@ -464,9 +498,11 @@ mod tests {
 		std::fs::write(dir.path().join("a.env"), "FROM_A=a\nSHARED=a\n").unwrap();
 		std::fs::write(dir.path().join("b.env"), "FROM_B=b\nSHARED=b\n").unwrap();
 
-		let vars =
-			build_vars_with_env_files(dir.path(), &["a.env".to_string(), "b.env".to_string()])
-				.unwrap();
+		let vars = build_vars_with_env_files_strict(
+			dir.path(),
+			&["a.env".to_string(), "b.env".to_string()],
+		)
+		.unwrap();
 		assert_eq!(vars.get("FROM_A").map(String::as_str), Some("a"));
 		assert_eq!(vars.get("FROM_B").map(String::as_str), Some("b"));
 		assert_eq!(vars.get("SHARED").map(String::as_str), Some("b"));
@@ -482,7 +518,7 @@ mod tests {
 		)
 		.unwrap();
 
-		let vars = build_vars_with_env_files(dir.path(), &["x.env".to_string()]).unwrap();
+		let vars = build_vars_with_env_files_strict(dir.path(), &["x.env".to_string()]).unwrap();
 		assert_eq!(
 			vars.get("PODUP_ENVFILE_PROCESS_WINS").map(String::as_str),
 			Some("from-process")
@@ -495,16 +531,17 @@ mod tests {
 		let dir = tempfile::tempdir().unwrap();
 		// With no `--env-file`, `.env` is loaded as before.
 		std::fs::write(dir.path().join(".env"), "FROM_DOTENV=base\n").unwrap();
-		let vars = build_vars_with_env_files(dir.path(), &[]).unwrap();
+		let vars = build_vars_with_env_files_strict(dir.path(), &[]).unwrap();
 		assert_eq!(vars.get("FROM_DOTENV").map(String::as_str), Some("base"));
 	}
 
 	#[test]
-	fn build_vars_with_env_files_errors_on_missing_extra_file() {
+	fn strict_build_vars_errors_on_missing_extra_file() {
 		let dir = tempfile::tempdir().unwrap();
 		// An explicitly-passed `--env-file` that does not exist is a hard error
 		// (docker compose parity), not a silent fall-back to defaults.
-		let err = build_vars_with_env_files(dir.path(), &["absent.env".to_string()]).unwrap_err();
+		let err =
+			build_vars_with_env_files_strict(dir.path(), &["absent.env".to_string()]).unwrap_err();
 		assert!(
 			matches!(err, crate::error::ComposeError::EnvFile(_)),
 			"expected EnvFile error, got {err:?}"
@@ -513,10 +550,20 @@ mod tests {
 	}
 
 	#[test]
-	fn build_vars_with_env_files_errors_on_unterminated_quote() {
+	fn strict_build_vars_errors_on_unterminated_quote() {
 		let dir = tempfile::tempdir().unwrap();
 		std::fs::write(dir.path().join("bad.env"), "A=\"oops\nB=keep\n").unwrap();
-		let err = build_vars_with_env_files(dir.path(), &["bad.env".to_string()]).unwrap_err();
+		let err =
+			build_vars_with_env_files_strict(dir.path(), &["bad.env".to_string()]).unwrap_err();
 		assert!(matches!(err, crate::error::ComposeError::EnvFile(_)));
+	}
+
+	#[test]
+	fn lenient_build_vars_skips_missing_extra_file() {
+		let dir = tempfile::tempdir().unwrap();
+		// The backward-compatible shim never errors: a missing extra file is
+		// silently skipped rather than failing.
+		let vars = build_vars_with_env_files(dir.path(), &["absent.env".to_string()]);
+		assert!(!vars.contains_key("FROM_EXTRA"));
 	}
 }
