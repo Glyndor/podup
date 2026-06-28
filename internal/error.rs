@@ -72,6 +72,11 @@ pub enum ComposeError {
 	},
 	/// `start --wait --wait-timeout` elapsed before services became healthy.
 	WaitTimeout { secs: u64 },
+	/// An explicitly requested env file (`--env-file` or a service `env_file:`)
+	/// could not be read or parsed — a missing/unreadable path or a malformed
+	/// entry such as an unterminated quoted value. The string is a ready-to-print
+	/// message.
+	EnvFile(String),
 }
 
 impl fmt::Display for ComposeError {
@@ -136,6 +141,7 @@ impl fmt::Display for ComposeError {
 				f,
 				"timed out after {secs}s waiting for services to become healthy"
 			),
+			Self::EnvFile(s) => write!(f, "{s}"),
 		}
 	}
 }
@@ -269,6 +275,10 @@ mod tests {
 			(
 				"timed out after 30s waiting for services to become healthy",
 				ComposeError::WaitTimeout { secs: 30 },
+			),
+			(
+				"env file not found: app.env",
+				ComposeError::EnvFile("env file not found: app.env".into()),
 			),
 		];
 		for (expected_prefix, err) in cases {
