@@ -7,63 +7,17 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 
 use super::Engine;
-use crate::libpod::types::container::{ContainerListEntry, ContainerPort};
 
 mod exec;
 mod inspect;
+mod inspect_util;
 mod log_prefix;
+mod ps;
+
+pub use ps::PsOptions;
 
 pub use exec::ExecOptions;
 use log_prefix::LinePrefixer;
-
-/// Human-readable status for `ps`. Podman's libpod list endpoint leaves
-/// `Status` empty and reports the machine state in `State`, so fall back to it
-/// rather than rendering a blank column.
-fn display_status(c: &ContainerListEntry) -> &str {
-	if c.status.is_empty() {
-		&c.state
-	} else {
-		&c.status
-	}
-}
-
-/// Render a container's published ports the way `docker compose ps` does, e.g.
-/// `0.0.0.0:8080->80/tcp`. An unset host IP means "all interfaces", shown as
-/// `0.0.0.0` (libpod commonly omits it) to match Docker/Podman output.
-fn format_ports(ports: &[ContainerPort]) -> String {
-	ports
-		.iter()
-		.map(|p| {
-			let proto = p
-				.protocol
-				.as_deref()
-				.map(|proto| format!("/{proto}"))
-				.unwrap_or_default();
-			let host_ip = p
-				.host_ip
-				.as_deref()
-				.filter(|s| !s.is_empty())
-				.unwrap_or("0.0.0.0");
-			format!(
-				"{host_ip}:{}->{}{proto}",
-				p.host_port.unwrap_or(0),
-				p.container_port
-			)
-		})
-		.collect::<Vec<_>>()
-		.join(", ")
-}
-
-/// Options for [`Engine::ps_with_options`].
-#[derive(Default)]
-pub struct PsOptions {
-	/// Include stopped containers, `-a/--all` (default: running only).
-	pub all: bool,
-	/// Print only container IDs, `-q/--quiet`.
-	pub quiet: bool,
-	/// Emit JSON instead of the table, `--format json`.
-	pub json: bool,
-}
 
 /// Options for [`Engine::images_with_options`].
 #[derive(Default)]
@@ -108,72 +62,6 @@ fn log_query(opts: &LogsOptions) -> String {
 }
 
 impl Engine {
-	/// List running containers for this project as a table (default options).
-	pub async fn ps(&self, file: &ComposeFile) -> Result<()> {
-		self.ps_with_options(file, PsOptions::default()).await
-	}
-
-	/// List containers with `docker compose ps`-style options: `-a/--all`
-	/// (include stopped), `-q/--quiet` (IDs only), and `--format` (table | json).
-	pub async fn ps_with_options(&self, _file: &ComposeFile, opts: PsOptions) -> Result<()> {
-		let label = format!("podup.project={}", self.project);
-		let filters = serde_json::json!({ "label": [label] });
-		let path = format!(
-			"{API_PREFIX}/containers/json?all={}&filters={}",
-			opts.all,
-			urlencoded(&filters.to_string()),
-		);
-
-		let containers = self
-			.client
-			.get_json::<Vec<crate::libpod::types::container::ContainerListEntry>>(&path)
-			.await
-			.map_err(ComposeError::Podman)?;
-
-		let name_of = |c: &crate::libpod::types::container::ContainerListEntry| {
-			c.names.join(", ").trim_start_matches('/').to_string()
-		};
-
-		if opts.quiet {
-			for c in &containers {
-				let id = c.id.get(..12).unwrap_or(&c.id);
-				println!("{id}");
-			}
-			return Ok(());
-		}
-
-		if opts.json {
-			let rows: Vec<_> = containers
-				.iter()
-				.map(|c| {
-					serde_json::json!({
-						"Name": name_of(c),
-						"Image": c.image,
-						"Status": display_status(c),
-						"ID": c.id,
-					})
-				})
-				.collect();
-			println!(
-				"{}",
-				serde_json::to_string_pretty(&rows).unwrap_or_default()
-			);
-			return Ok(());
-		}
-
-		crate::ui::print_bold_header(&format!(
-			"{:<40} {:<30} {:<20} PORTS",
-			"NAME", "IMAGE", "STATUS"
-		));
-		for c in &containers {
-			let ports = format_ports(&c.ports);
-			let status = crate::ui::status_cell(display_status(c), 20);
-			println!("{:<40} {:<30} {status} {ports}", name_of(c), c.image);
-		}
-
-		Ok(())
-	}
-
 	/// Stream logs. When `service_name` is `None`, streams from all services. When `follow` is true, tails indefinitely.
 	pub async fn logs(
 		&self,
@@ -387,9 +275,8 @@ fn filter_orphans(names: Vec<String>, known: &std::collections::HashSet<String>)
 
 #[cfg(test)]
 mod tests {
-	use super::{display_status, filter_orphans, format_ports, log_query, LogsOptions};
-	use crate::libpod::types::container::{ContainerListEntry, ContainerPort};
-	use std::collections::{HashMap, HashSet};
+	use super::{filter_orphans, log_query, LogsOptions};
+	use std::collections::HashSet;
 
 	#[test]
 	fn filter_orphans_keeps_only_unknown_names() {
@@ -406,63 +293,6 @@ mod tests {
 	fn filter_orphans_empty_when_all_known() {
 		let known: HashSet<String> = ["web".to_string()].into();
 		assert!(filter_orphans(vec!["web".to_string()], &known).is_empty());
-	}
-
-	fn entry(status: &str, state: &str) -> ContainerListEntry {
-		ContainerListEntry {
-			id: "abc123".into(),
-			names: vec!["/web".into()],
-			image: "alpine".into(),
-			status: status.into(),
-			state: state.into(),
-			ports: vec![],
-			labels: HashMap::new(),
-		}
-	}
-
-	#[test]
-	fn display_status_falls_back_to_state_when_status_empty() {
-		// Podman 5's libpod list endpoint sends an empty `Status` and the real
-		// machine state in `State` — `ps` must show the latter, not a blank.
-		assert_eq!(display_status(&entry("", "running")), "running");
-		assert_eq!(display_status(&entry("", "exited")), "exited");
-	}
-
-	#[test]
-	fn display_status_prefers_status_when_present() {
-		assert_eq!(
-			display_status(&entry("Up 2 seconds", "running")),
-			"Up 2 seconds"
-		);
-	}
-
-	#[test]
-	fn format_ports_defaults_missing_host_ip_to_all_interfaces() {
-		let p = ContainerPort {
-			host_ip: None,
-			host_port: Some(8080),
-			container_port: 80,
-			protocol: Some("tcp".into()),
-			..Default::default()
-		};
-		assert_eq!(
-			format_ports(std::slice::from_ref(&p)),
-			"0.0.0.0:8080->80/tcp"
-		);
-	}
-
-	#[test]
-	fn format_ports_keeps_explicit_host_ip() {
-		let p = ContainerPort {
-			host_ip: Some("127.0.0.1".into()),
-			host_port: Some(5432),
-			container_port: 5432,
-			..Default::default()
-		};
-		assert_eq!(
-			format_ports(std::slice::from_ref(&p)),
-			"127.0.0.1:5432->5432"
-		);
 	}
 
 	#[test]

@@ -40,14 +40,16 @@ pub mod update;
 pub use compose::{
 	collect_diagnostics, parse_file, parse_file_with_env_files, parse_files_with_env_files,
 	parse_files_with_env_files_interp, parse_str, parse_str_raw, resolve_levels, resolve_order,
+	validate_config,
 };
 /// The lifecycle `Engine` and its per-command option/override types, plus the
 /// project-name/listing helpers — the surface a CLI drives compose operations
 /// through.
 pub use engine::{
 	is_safe_project_name, list_projects, resolve_image_digests, retain_active_profiles,
-	BuildOptions, CpOptions, Engine, ExecOptions, ImagesOptions, LogsOptions, LsOptions,
-	ProjectLock, PsOptions, PullOptions, PushOptions, RunOptions, RunOverrides, VolumesOptions,
+	retain_active_profiles_with_targets, validate_stop_timeout, BuildOptions, CpOptions, Engine,
+	ExecOptions, ImagesOptions, LogsOptions, LsOptions, ProjectLock, PsOptions, PullOptions,
+	PushOptions, RunOptions, RunOverrides, VolumesOptions,
 };
 /// The crate's error type and `Result` alias, surfaced so callers handle one
 /// error enum across parsing and engine calls.

@@ -1,7 +1,7 @@
 //! `commit` and `export`: snapshot a service container to an image, or stream
 //! its filesystem out as a tar archive (`docker compose commit` / `export`).
 
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
 
 use http_body_util::BodyExt;
@@ -12,10 +12,33 @@ use crate::libpod::{urlencoded, API_PREFIX};
 
 use super::super::Engine;
 
+/// Split an `image` reference into `(repo, tag)`. A ':' after the last '/' is a
+/// tag; otherwise it is part of a registry `host:port` and the whole string is
+/// the repo. An omitted tag defaults to `latest`.
+fn split_image_ref(image: &str) -> (&str, &str) {
+	match image.rsplit_once(':') {
+		Some((r, t)) if !t.contains('/') => (r, t),
+		_ => (image, "latest"),
+	}
+}
+
+/// Build the libpod `/commit` request path. `pause` quiesces the container
+/// during the snapshot (docker default) for a consistent filesystem.
+fn commit_path(container: &str, repo: &str, tag: &str, pause: bool) -> String {
+	format!(
+		"{API_PREFIX}/commit?container={}&repo={}&tag={}&pause={pause}",
+		urlencoded(container),
+		urlencoded(repo),
+		urlencoded(tag),
+	)
+}
+
 impl Engine {
-	/// Commit a service container to a new image (`docker compose commit`).
-	/// Targets the given replica (`index`, 1-based) or the first one. `image`
-	/// is `repo[:tag]`; an omitted tag defaults to `latest`.
+	/// Commit a service container to a new image (`docker compose commit`),
+	/// pausing the container during the snapshot for a consistent filesystem
+	/// (docker default). Equivalent to [`Engine::commit_with_pause`] with
+	/// `pause = true`. Targets the given replica (`index`, 1-based) or the first
+	/// one. `image` is `repo[:tag]`; an omitted tag defaults to `latest`.
 	pub async fn commit(
 		&self,
 		file: &ComposeFile,
@@ -23,24 +46,30 @@ impl Engine {
 		image: &str,
 		index: Option<u32>,
 	) -> Result<()> {
+		self.commit_with_pause(file, service_name, image, index, true)
+			.await
+	}
+
+	/// Commit a service container to a new image (`docker compose commit`).
+	/// Targets the given replica (`index`, 1-based) or the first one. `image`
+	/// is `repo[:tag]`; an omitted tag defaults to `latest`. `pause` quiesces the
+	/// container during the snapshot for a consistent filesystem (docker default).
+	pub async fn commit_with_pause(
+		&self,
+		file: &ComposeFile,
+		service_name: &str,
+		image: &str,
+		index: Option<u32>,
+		pause: bool,
+	) -> Result<()> {
 		let service = file
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
 		let container = self.replica_name_at(service_name, service, index)?;
 
-		let (repo, tag) = match image.rsplit_once(':') {
-			// A ':' after the last '/' is a tag; otherwise it's part of a registry
-			// host:port and the whole string is the repo.
-			Some((r, t)) if !t.contains('/') => (r, t),
-			_ => (image, "latest"),
-		};
-		let path = format!(
-			"{API_PREFIX}/commit?container={}&repo={}&tag={}",
-			urlencoded(&container),
-			urlencoded(repo),
-			urlencoded(tag),
-		);
+		let (repo, tag) = split_image_ref(image);
+		let path = commit_path(&container, repo, tag, pause);
 		self.client
 			.post_empty_ok(&path)
 			.await
@@ -65,6 +94,15 @@ impl Engine {
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
 		let container = self.replica_name_at(service_name, service, index)?;
 
+		// Refuse to flood a terminal with a binary tar stream when no output file
+		// is given, matching `docker export`.
+		if refuse_tar_to_tty(output.is_none(), std::io::stdout().is_terminal()) {
+			return Err(ComposeError::Unsupported(
+				"refusing to write a tar archive to the terminal: pass -o FILE or redirect stdout"
+					.into(),
+			));
+		}
+
 		let path = format!("{API_PREFIX}/containers/{}/export", urlencoded(&container),);
 		let resp = self
 			.client
@@ -85,5 +123,53 @@ impl Engine {
 		}
 		sink.flush().map_err(ComposeError::Io)?;
 		Ok(())
+	}
+}
+
+/// Whether an `export` should be refused: true only when no output file was
+/// given *and* stdout is a terminal. Pure so the guard is unit-tested.
+fn refuse_tar_to_tty(no_output_file: bool, stdout_is_tty: bool) -> bool {
+	no_output_file && stdout_is_tty
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{commit_path, refuse_tar_to_tty, split_image_ref};
+
+	#[test]
+	fn image_ref_splits_repo_and_tag() {
+		assert_eq!(split_image_ref("myrepo:v1"), ("myrepo", "v1"));
+		// No tag defaults to latest.
+		assert_eq!(split_image_ref("myrepo"), ("myrepo", "latest"));
+		// A registry host:port is not a tag.
+		assert_eq!(
+			split_image_ref("localhost:5000/app"),
+			("localhost:5000/app", "latest")
+		);
+		assert_eq!(
+			split_image_ref("localhost:5000/app:v2"),
+			("localhost:5000/app", "v2")
+		);
+	}
+
+	#[test]
+	fn commit_path_includes_pause_flag() {
+		// Pausing (docker default) yields a consistent snapshot.
+		let paused = commit_path("proj_web_1", "repo", "latest", true);
+		assert!(paused.contains("container=proj_web_1"));
+		assert!(paused.contains("repo=repo"));
+		assert!(paused.contains("tag=latest"));
+		assert!(paused.contains("pause=true"));
+		// Opting out keeps the container live during commit.
+		let live = commit_path("proj_web_1", "repo", "latest", false);
+		assert!(live.contains("pause=false"));
+	}
+
+	#[test]
+	fn refuses_only_when_no_file_and_tty() {
+		assert!(refuse_tar_to_tty(true, true));
+		assert!(!refuse_tar_to_tty(true, false));
+		assert!(!refuse_tar_to_tty(false, true));
+		assert!(!refuse_tar_to_tty(false, false));
 	}
 }

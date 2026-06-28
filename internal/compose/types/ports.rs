@@ -10,13 +10,18 @@ use serde::{Deserialize, Serialize};
 ///
 /// The spec allows `published: 8080` (integer) or `published: "8080"` (string),
 /// and also string ranges like `"8080-8090"` for port range mappings.
+///
+/// The numeric form is held as a `u32` rather than a `u16` so an out-of-range
+/// value (e.g. `published: 99999`) deserializes and is then reported as a clear
+/// `InvalidPort` error by [`crate::ports`], instead of leaking serde's generic
+/// "data did not match any variant of untagged enum" message to the user.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum StringOrU16 {
 	/// String form, e.g. a quoted port or range like `"8080-8090"`.
 	String(String),
-	/// Numeric port form.
-	Number(u16),
+	/// Numeric port form (range-checked downstream, not at the type level).
+	Number(u32),
 }
 
 impl StringOrU16 {

@@ -10,6 +10,8 @@ use crate::engine::Engine;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
+use super::targets::{stop_deadline, stop_timeout_param};
+
 /// The default ceiling on a service's replica count.
 const DEFAULT_MAX_REPLICAS: u32 = 256;
 
@@ -69,6 +71,25 @@ pub(super) fn check_scale_port_conflict(
 	})
 }
 
+/// Reject scaling a service that pins an explicit `container_name` above one
+/// replica. A fixed container name can only ever name a single container, so
+/// inventing `name-1`, `name-2`, … would break the fixed-name contract; docker
+/// compose refuses this too, so podup fails fast with the same guidance.
+pub(super) fn check_fixed_name_scale(
+	service_name: &str,
+	service: &Service,
+	replicas: usize,
+) -> Result<()> {
+	if replicas > 1 && service.container_name.is_some() {
+		return Err(ComposeError::Unsupported(format!(
+			"service '{service_name}' sets a fixed container_name but is scaled to {replicas} \
+			 replicas; a fixed container_name can name only one container. Remove container_name \
+			 to scale, or keep the service at a single replica."
+		)));
+	}
+	Ok(())
+}
+
 impl Engine {
 	/// Set the number of running containers for the named services (docker
 	/// `compose scale SERVICE=N`). Creates missing replicas and removes any
@@ -80,28 +101,28 @@ impl Engine {
 				return Err(ComposeError::ServiceNotFound(svc.clone()));
 			}
 		}
-		// Fail fast on an over-limit count or a fixed host port before touching
-		// any container.
+		// Fail fast on an over-limit count, a fixed host port, or a fixed
+		// container_name before touching any container.
 		for (svc, target) in pairs {
 			check_replica_limit(svc, *target as usize)?;
 			check_scale_port_conflict(svc, &file.services[svc], *target as usize)?;
+			check_fixed_name_scale(svc, &file.services[svc], *target as usize)?;
 		}
-		// Scale up: create only the missing replicas of the named services
-		// (no_recreate keeps existing ones; no_deps leaves dependencies alone).
+		// Create the missing replicas and prune any surplus. Both halves run on
+		// the shared `up` path, which reconciles every service carrying an active
+		// `--scale` override against the last-wins target (so duplicate pairs such
+		// as `svc=1 svc=3` can no longer drive create and prune to disagree).
 		let targets: Vec<String> = pairs.iter().map(|(s, _)| s.clone()).collect();
 		self.up_with_options(file, true, &[], &targets, true, false, true)
 			.await?;
-		// Scale down: remove replicas beyond the target count.
-		for (svc, target) in pairs {
-			self.remove_surplus_replicas(svc, &file.services[svc], *target)
-				.await?;
-		}
 		Ok(())
 	}
 
 	/// Remove the containers of `service_name` whose names fall outside the
 	/// desired `target`-replica set (the scale-down half of reconciliation).
-	async fn remove_surplus_replicas(
+	/// Surplus containers are stopped and removed concurrently so a large
+	/// scale-down costs roughly one grace period rather than one per replica.
+	pub(super) async fn remove_surplus_replicas(
 		&self,
 		service_name: &str,
 		service: &Service,
@@ -114,25 +135,41 @@ impl Engine {
 			(1..=target).map(|i| format!("{base}-{i}")).collect()
 		};
 		let grace = self.grace_period_secs(service);
-		for name in self
+		let surplus: Vec<String> = self
 			.list_project_container_names(Some(service_name))
 			.await?
-		{
-			if !desired.contains(&name) {
-				self.stop_and_remove(&name, grace).await;
-			}
-		}
+			.into_iter()
+			.filter(|name| !desired.contains(name))
+			.collect();
+		// Scaling down removes surplus replicas but keeps their data volumes
+		// (only `down -v` reclaims volumes).
+		futures_util::future::join_all(
+			surplus
+				.iter()
+				.map(|name| self.stop_and_remove(name, grace, false)),
+		)
+		.await;
 		Ok(())
 	}
 
-	/// Stop (best-effort) then force-remove a container by name.
-	pub(super) async fn stop_and_remove(&self, name: &str, grace: i32) {
+	/// Stop (best-effort) then force-remove a container by name. With
+	/// `remove_volumes`, the container's anonymous volumes are reclaimed too
+	/// (`podman rm -v`), so a label-based teardown sweep does not leave image
+	/// `VOLUME`/anonymous volumes behind.
+	pub(super) async fn stop_and_remove(&self, name: &str, grace: i32, remove_volumes: bool) {
+		// Bound the stop by the grace window: the force-remove below SIGKILLs the
+		// container, so a stop that stalls past the grace must not pin us for the
+		// full client READ_TIMEOUT before we fall through to it.
 		let stop_path = format!(
-			"{API_PREFIX}/containers/{}/stop?t={grace}",
-			urlencoded(name)
+			"{API_PREFIX}/containers/{}/stop?t={}",
+			urlencoded(name),
+			stop_timeout_param(grace),
 		);
-		let _ = self.client.post_empty_ok(&stop_path).await;
-		let rm_path = format!("{API_PREFIX}/containers/{}?force=true", urlencoded(name));
+		let _ = self
+			.client
+			.post_empty_ok_within(&stop_path, stop_deadline(grace))
+			.await;
+		let rm_path = super::container_rm_path(name, remove_volumes);
 		if let Err(e) = self.client.delete_ok(&rm_path).await {
 			tracing::debug!("scale-down rm {name}: {e}");
 		} else {
@@ -224,7 +261,10 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
-	use super::{check_replica_limit, check_scale_port_conflict, DEFAULT_MAX_REPLICAS};
+	use super::{
+		check_fixed_name_scale, check_replica_limit, check_scale_port_conflict,
+		DEFAULT_MAX_REPLICAS,
+	};
 
 	#[test]
 	fn replica_limit_default_and_env_override() {
@@ -290,5 +330,25 @@ mod tests {
 	fn scaled_no_ports_is_allowed() {
 		let svc = service("services:\n  worker:\n    image: x\n");
 		assert!(check_scale_port_conflict("worker", &svc, 5).is_ok());
+	}
+
+	#[test]
+	fn fixed_container_name_single_replica_is_allowed() {
+		let svc = service("services:\n  app:\n    image: x\n    container_name: myapp\n");
+		assert!(check_fixed_name_scale("app", &svc, 1).is_ok());
+	}
+
+	#[test]
+	fn fixed_container_name_scaled_above_one_is_rejected() {
+		let svc = service("services:\n  app:\n    image: x\n    container_name: myapp\n");
+		let err = check_fixed_name_scale("app", &svc, 3).unwrap_err();
+		assert!(matches!(err, crate::error::ComposeError::Unsupported(_)));
+		assert!(err.to_string().contains("container_name"));
+	}
+
+	#[test]
+	fn unnamed_service_scales_freely() {
+		let svc = service("services:\n  app:\n    image: x\n");
+		assert!(check_fixed_name_scale("app", &svc, 5).is_ok());
 	}
 }

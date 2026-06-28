@@ -41,7 +41,7 @@ pub struct WatchRule {
 }
 
 /// Action triggered by a `develop.watch` rule: `sync`, `rebuild`, `restart`, `sync+restart`, or `sync+exec`.
-#[derive(Debug, Clone, Serialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum WatchAction {
 	/// `sync` — copy changed files from `path` into the container at `target`.
 	#[default]
@@ -54,6 +54,38 @@ pub enum WatchAction {
 	SyncAndRestart,
 	/// `sync+exec` — sync changed files, then run the rule's `exec` command in the container.
 	SyncAndExec,
+}
+
+impl WatchAction {
+	/// The lowercase compose token for this action (the inverse of the custom
+	/// [`Deserialize`]). Kept in sync with the parser so `config` output
+	/// round-trips back through podup.
+	pub fn as_token(&self) -> &'static str {
+		match self {
+			WatchAction::Sync => "sync",
+			WatchAction::Rebuild => "rebuild",
+			WatchAction::Restart => "restart",
+			WatchAction::SyncAndRestart => "sync+restart",
+			WatchAction::SyncAndExec => "sync+exec",
+		}
+	}
+
+	/// True for actions whose semantics require a `target` (the sync family).
+	/// `rebuild`/`restart` operate on the whole container and need no target.
+	pub fn requires_target(&self) -> bool {
+		matches!(
+			self,
+			WatchAction::Sync | WatchAction::SyncAndRestart | WatchAction::SyncAndExec
+		)
+	}
+}
+
+impl Serialize for WatchAction {
+	fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+		// Emit the lowercase compose token (not the PascalCase variant name) so
+		// `config` output is re-ingestible by the custom `Deserialize` below.
+		s.serialize_str(self.as_token())
+	}
 }
 
 impl<'de> Deserialize<'de> for WatchAction {
@@ -120,5 +152,52 @@ mod tests {
 	#[test]
 	fn watch_action_unknown_is_error() {
 		assert!(serde_yaml::from_str::<WatchAction>("\"deploy\"").is_err());
+	}
+
+	#[test]
+	fn watch_action_serializes_lowercase_token() {
+		// `config` must emit the compose token, not the PascalCase variant name.
+		assert_eq!(
+			serde_yaml::to_string(&WatchAction::Sync).unwrap().trim(),
+			"sync"
+		);
+		assert_eq!(
+			serde_yaml::to_string(&WatchAction::SyncAndRestart)
+				.unwrap()
+				.trim(),
+			"sync+restart"
+		);
+		assert_eq!(
+			serde_yaml::to_string(&WatchAction::SyncAndExec)
+				.unwrap()
+				.trim(),
+			"sync+exec"
+		);
+	}
+
+	#[test]
+	fn watch_action_round_trips_through_config() {
+		// Every variant must survive a serialize -> deserialize round-trip so
+		// `config` output feeds back into podup unchanged.
+		for action in [
+			WatchAction::Sync,
+			WatchAction::Rebuild,
+			WatchAction::Restart,
+			WatchAction::SyncAndRestart,
+			WatchAction::SyncAndExec,
+		] {
+			let rendered = serde_yaml::to_string(&action).unwrap();
+			let parsed: WatchAction = serde_yaml::from_str(&rendered).unwrap();
+			assert_eq!(parsed, action);
+		}
+	}
+
+	#[test]
+	fn watch_action_requires_target_matches_sync_family() {
+		assert!(WatchAction::Sync.requires_target());
+		assert!(WatchAction::SyncAndRestart.requires_target());
+		assert!(WatchAction::SyncAndExec.requires_target());
+		assert!(!WatchAction::Rebuild.requires_target());
+		assert!(!WatchAction::Restart.requires_target());
 	}
 }

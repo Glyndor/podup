@@ -64,7 +64,10 @@ pub fn load_env_file_entries(
 			Err(e) => return Err(ComposeError::Io(e)),
 		};
 
-		for (key, value) in crate::dotenv::parse(&content) {
+		// A service `env_file:` is explicitly requested, so a malformed entry
+		// (e.g. an unterminated quoted value that would otherwise swallow the
+		// following keys) is a hard error rather than silent data loss.
+		for (key, value) in crate::dotenv::parse_strict(&content)? {
 			result.insert(key, value);
 		}
 	}
@@ -188,6 +191,26 @@ mod tests {
 			required: Some(false),
 			format: Some("json".into()),
 		}];
+		let m = load_env_file_entries(&entries, dir.path()).unwrap();
+		assert_eq!(m.get("FOO").map(|s| s.as_str()), Some("bar"));
+	}
+
+	#[test]
+	fn unterminated_quote_is_an_error() {
+		// A never-closed quote would otherwise absorb every following key; an
+		// explicitly requested env_file must fail loudly instead.
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join(".env"), "A=\"oops\nB=keep\n").unwrap();
+		let entries = vec![EnvFileEntry::Path(".env".into())];
+		let err = load_env_file_entries(&entries, dir.path()).unwrap_err();
+		assert!(matches!(err, ComposeError::EnvFile(_)), "got {err:?}");
+	}
+
+	#[test]
+	fn strips_leading_bom_first_key_kept() {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join(".env"), "\u{feff}FOO=bar\n").unwrap();
+		let entries = vec![EnvFileEntry::Path(".env".into())];
 		let m = load_env_file_entries(&entries, dir.path()).unwrap();
 		assert_eq!(m.get("FOO").map(|s| s.as_str()), Some("bar"));
 	}
