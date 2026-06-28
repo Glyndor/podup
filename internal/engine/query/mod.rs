@@ -367,16 +367,9 @@ impl Engine {
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = match opts.index {
-			Some(i) => {
-				let names = self.replica_names(service_name, service);
-				let idx = (i as usize).saturating_sub(1);
-				names.get(idx).cloned().ok_or_else(|| {
-					ComposeError::ServiceNotFound(format!("{service_name} (replica index {i})"))
-				})?
-			}
-			None => self.first_replica_name(service_name, service),
-		};
+		let container_name = self
+			.live_replica_name_at(service_name, service, opts.index)
+			.await?;
 
 		let exec_cfg = ExecCreateConfig {
 			cmd: Some(cmd),
