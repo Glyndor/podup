@@ -24,6 +24,14 @@ fn main() {
 	// internal-error notice that tells the user what to report and where, plus
 	// the reminder to redact secrets first.
 	std::panic::set_hook(Box::new(|info| {
+		// A broken pipe (a downstream reader closed early, e.g. `podup ls | head`)
+		// surfaces as a panic from the failing `println!`/`eprintln!` because Rust
+		// ignores SIGPIPE. With `panic = "abort"` that would escalate to SIGABRT
+		// (exit 134) and a misleading bug-report notice; instead exit quietly with
+		// success like any well-behaved Unix tool.
+		if startup::is_broken_pipe_panic(&info.to_string()) {
+			std::process::exit(0);
+		}
 		eprintln!("podup: internal error: {info}");
 		eprintln!("{}", internal_error_notice());
 	}));
@@ -175,7 +183,13 @@ async fn run() -> podup::Result<()> {
 		};
 		// Honor active profiles so `config` prints the same services `up` starts.
 		podup::retain_active_profiles(&mut resolved, &cli.profile);
-		return startup::render_config(&resolved, format, *services, *quiet);
+		// Resolve the effective project name (-p / COMPOSE_PROJECT_NAME, then the
+		// top-level `name:`, then the directory basename) and render it, like
+		// `docker compose config` — rather than echoing the file's literal `name:`.
+		let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
+		let project =
+			resolve_project_name(cli.project.clone(), resolved.name.as_deref(), &base_dir);
+		return startup::render_config(&resolved, format, *services, *quiet, &project);
 	}
 
 	let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
