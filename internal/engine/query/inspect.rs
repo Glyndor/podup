@@ -55,9 +55,9 @@ impl Engine {
 						"Processes": result.processes,
 					})),
 					Ok(result) => {
-						println!("{container_name}");
+						crate::ui::print_bold_header(&container_name);
 						if let Some(titles) = &result.titles {
-							println!("{}", titles.join("\t"));
+							crate::ui::print_bold_header(&titles.join("\t"));
 						}
 						if let Some(processes) = &result.processes {
 							for row in processes {
@@ -194,16 +194,10 @@ impl Engine {
 			return Ok(());
 		}
 
-		let hdr = crate::ui::bold();
-		anstream::println!(
-			"{}{:<30} {:<25} {:<15} {:<20}{}",
-			hdr.render(),
-			"SERVICE",
-			"REPOSITORY",
-			"TAG",
-			"IMAGE ID",
-			hdr.render_reset()
-		);
+		crate::ui::print_bold_header(&format!(
+			"{:<30} {:<25} {:<15} {:<20}",
+			"SERVICE", "REPOSITORY", "TAG", "IMAGE ID"
+		));
 		for (svc, repo, tag, id) in &rows {
 			println!("{svc:<30} {repo:<25} {tag:<15} {id:<20}");
 		}

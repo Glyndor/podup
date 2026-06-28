@@ -199,7 +199,7 @@ fn print_frame(report: &StatsReport, wanted: &HashSet<String>) {
 		.collect();
 	rows.sort_by(|a, b| a.name.cmp(&b.name));
 
-	println!("{HEADER}");
+	crate::ui::print_bold_header(HEADER);
 	for s in rows {
 		println!("{}", format_row(s));
 	}

@@ -181,10 +181,10 @@ impl Engine {
 			return Ok(());
 		}
 
-		let hdr = crate::ui::bold();
-		let cols = format!("{:<40} {:<30} {:<20} PORTS", "NAME", "IMAGE", "STATUS");
-		let (on, off) = (hdr.render(), hdr.render_reset());
-		let _ = writeln!(anstream::stdout(), "{on}{cols}{off}");
+		crate::ui::print_bold_header(&format!(
+			"{:<40} {:<30} {:<20} PORTS",
+			"NAME", "IMAGE", "STATUS"
+		));
 		for c in &containers {
 			let ports = format_ports(&c.ports);
 			let status = crate::ui::status_cell(display_status(c), 20);

@@ -5,7 +5,6 @@
 //! [`Client`], not a full [`Engine`](crate::engine::Engine) bound to one project/compose file.
 
 use std::collections::BTreeMap;
-use std::io::Write;
 
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::container::ContainerListEntry;
@@ -89,14 +88,7 @@ pub async fn list_projects(client: &Client, opts: LsOptions) -> Result<()> {
 		return Ok(());
 	}
 
-	let hdr = crate::ui::bold();
-	let (on, off) = (hdr.render(), hdr.render_reset());
-	let _ = writeln!(
-		anstream::stdout(),
-		"{on}{:<32} {:<20}{off}",
-		"NAME",
-		"STATUS"
-	);
+	crate::ui::print_bold_header(&format!("{:<32} {:<20}", "NAME", "STATUS"));
 	for (name, t) in &rows {
 		let status = crate::ui::status_cell(&status_label(t), 20);
 		println!("{name:<32} {status}");

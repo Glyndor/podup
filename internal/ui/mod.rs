@@ -66,14 +66,23 @@ pub fn bold() -> Style {
 	Style::new().bold()
 }
 
+/// Print `cols` as a bold table header through an anstream sink, so the styling
+/// is stripped automatically when colour is off. The single place every list
+/// command renders its header, keeping them consistent.
+pub fn print_bold_header(cols: &str) {
+	use std::io::Write;
+	let s = bold();
+	let _ = writeln!(
+		anstream::stdout(),
+		"{}{cols}{}",
+		s.render(),
+		s.render_reset()
+	);
+}
+
 /// Bold red — the `error:` label.
 pub fn error_style() -> Style {
 	Style::new().bold().fg_color(Some(AnsiColor::Red.into()))
-}
-
-/// Bold yellow — the `warning:` label.
-pub fn warn_style() -> Style {
-	Style::new().bold().fg_color(Some(AnsiColor::Yellow.into()))
 }
 
 /// Wrap `text` in `style` when `enabled`, else return it unchanged. For raw sinks
