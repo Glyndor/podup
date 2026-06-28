@@ -146,6 +146,16 @@ impl Engine {
 			let levels = crate::compose::resolve_levels(file)?;
 			let active = active_profiles_set(active_profiles);
 
+			// Validate every `--scale SERVICE=N` override against the file before
+			// doing any work: an override naming a service the compose file does
+			// not define is a user error, not a silent no-op (the standalone
+			// `scale` subcommand already rejects it, so the `up` path must too).
+			for svc in self.scale_overrides.keys() {
+				if !file.services.contains_key(svc) {
+					return Err(crate::error::ComposeError::ServiceNotFound(svc.clone()));
+				}
+			}
+
 			// Reject unknown service names before doing any work, so `up`/`create`
 			// of a bogus service errors instead of exiting 0 as a silent no-op.
 			validate_targets(file, target_services)?;
@@ -209,6 +219,27 @@ impl Engine {
 					)
 				});
 				futures_util::future::try_join_all(started).await?;
+			}
+
+			// Reconcile surplus replicas for every service carrying an active
+			// `--scale` override. Replica naming is unsuffixed for one replica and
+			// suffixed (`svc-N`) for many, so scaling a service *down* on the `up`
+			// path would otherwise leave the old higher-numbered containers running
+			// (e.g. `up --scale web=3` then `up --scale web=1`). The overrides are a
+			// last-wins map, so create (above) and this prune always agree on one
+			// target count. Keyed off live container names inside
+			// `remove_surplus_replicas`, this is the same reconciliation the `scale`
+			// subcommand relies on.
+			for (svc, &target) in &self.scale_overrides {
+				let Some(service) = file.services.get(svc) else {
+					continue;
+				};
+				if let Some(set) = &target_set {
+					if !set.contains(svc) {
+						continue;
+					}
+				}
+				self.remove_surplus_replicas(svc, service, target).await?;
 			}
 
 			Ok(())
@@ -340,6 +371,10 @@ impl Engine {
 		// one container can bind it. Fail fast with guidance instead of letting
 		// replicas 2..N die mid-up with `address already in use`.
 		scale::check_scale_port_conflict(name, service, replicas)?;
+		// A service pinning an explicit container_name cannot be scaled past one
+		// replica without violating its fixed-name contract; reject it rather
+		// than inventing `name-1`, `name-2`, … (docker compose refuses this too).
+		scale::check_fixed_name_scale(name, service, replicas)?;
 
 		let new_hash = config_hash(service, file)?;
 

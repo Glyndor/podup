@@ -14,6 +14,7 @@ use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 use super::Engine;
 
 mod inspect;
+mod inspect_util;
 mod log_prefix;
 mod ps;
 

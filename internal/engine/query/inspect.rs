@@ -7,6 +7,10 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::types::image::ImageInspect;
 use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 
+use super::inspect_util::{
+	align_top_columns, dedup_preserving_order, is_running_status, parse_port_proto, select_replica,
+	split_repo_tag,
+};
 use super::Engine;
 
 impl Engine {
@@ -114,17 +118,33 @@ impl Engine {
 			.services
 			.get(service_name)
 			.ok_or_else(|| crate::error::ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = self.replica_name_at(service_name, service, index)?;
+		// Resolve against the containers Podman actually has, not the static
+		// compose replica count: a service scaled purely via CLI `--scale` has no
+		// `scale:` in the file, so the static count is 1 and would target the
+		// never-created un-indexed base name. `live_replica_names` falls back to
+		// the static names only when nothing is running yet.
+		let live = self.live_replica_names(service_name, service).await?;
+		let container_name = select_replica(live, service_name, index)?;
 
 		let path = format!(
 			"{API_PREFIX}/containers/{}/json",
 			urlencoded(&container_name),
 		);
-		let info = self
+		let info = match self
 			.client
 			.get_json::<crate::libpod::types::container::ContainerInspect>(&path)
 			.await
-			.map_err(ComposeError::Podman)?;
+		{
+			Ok(info) => info,
+			// Translate a missing container into a friendly not-found rather than
+			// surfacing a raw podman 404.
+			Err(e) if e.is_status(404) => {
+				return Err(crate::error::ComposeError::ServiceNotFound(format!(
+					"{service_name} (no running container '{container_name}')"
+				)));
+			}
+			Err(e) => return Err(ComposeError::Podman(e)),
+		};
 
 		let key = format!("{port}/{proto}");
 		let binding = info
@@ -374,194 +394,5 @@ impl Engine {
 		}
 
 		Ok(())
-	}
-}
-
-/// Resolve the `(port, proto)` for `port` from a `PORT` or `PORT/proto` argument,
-/// the `/proto` suffix overriding the `--protocol` flag — matching
-/// `docker compose port`. Pure so the parsing is unit-tested.
-fn parse_port_proto<'a>(private_port: &'a str, proto_flag: &'a str) -> Result<(u16, &'a str)> {
-	let (port, proto) = match private_port.split_once('/') {
-		Some((p, pr)) => (p, pr),
-		None => (private_port, proto_flag),
-	};
-	let port: u16 = port.parse().map_err(|_| {
-		ComposeError::InvalidPort(format!(
-			"port '{private_port}' is not a valid PORT or PORT/proto"
-		))
-	})?;
-	Ok((port, proto))
-}
-
-/// Deduplicate a list of strings, preserving first-seen order. Used so `top web
-/// web` queries and prints each service once, matching `docker compose top`.
-fn dedup_preserving_order(items: &[String]) -> Vec<String> {
-	let mut seen = std::collections::HashSet::new();
-	items
-		.iter()
-		.filter(|s| seen.insert(s.as_str()))
-		.cloned()
-		.collect()
-}
-
-/// Whether a libpod container `Status` string denotes a running container.
-/// `docker compose attach` only attaches to a running container; anything else
-/// (exited, created, paused, empty/unknown) must fail closed.
-fn is_running_status(status: &str) -> bool {
-	status.eq_ignore_ascii_case("running")
-}
-
-/// Split an image reference into `(repository, tag)` for the `images` table.
-///
-/// A trailing `:tag` is only a tag when the segment after it has no `/` (so a
-/// `registry:port/name` host is not mis-split), mirroring the guard in
-/// `export.rs`. A `name@sha256:...` digest reference has no tag, shown as
-/// `<none>` like docker, and the long digest never bloats the TAG column.
-fn split_repo_tag(image_ref: &str) -> (String, String) {
-	if let Some((repo, _digest)) = image_ref.split_once('@') {
-		return (repo.to_string(), "<none>".to_string());
-	}
-	match image_ref.rsplit_once(':') {
-		Some((repo, tag)) if !tag.contains('/') => (repo.to_string(), tag.to_string()),
-		_ => (image_ref.to_string(), "latest".to_string()),
-	}
-}
-
-/// Align a `top` table (the title row followed by process rows) into
-/// space-padded columns sized to the widest cell, returning one rendered line
-/// per input row (titles first). All but the last column are left-padded; the
-/// last is left ragged to avoid trailing whitespace.
-fn align_top_columns(titles: &[String], processes: &[Vec<String>]) -> Vec<String> {
-	let mut rows: Vec<&[String]> = Vec::with_capacity(processes.len() + 1);
-	if !titles.is_empty() {
-		rows.push(titles);
-	}
-	for p in processes {
-		rows.push(p);
-	}
-	let col_count = rows.iter().map(|r| r.len()).max().unwrap_or(0);
-	let mut widths = vec![0usize; col_count];
-	for r in &rows {
-		for (i, cell) in r.iter().enumerate() {
-			widths[i] = widths[i].max(cell.chars().count());
-		}
-	}
-	rows.iter()
-		.map(|r| {
-			r.iter()
-				.enumerate()
-				.map(|(i, cell)| {
-					if i + 1 == r.len() {
-						cell.clone()
-					} else {
-						format!("{cell:<width$}", width = widths[i])
-					}
-				})
-				.collect::<Vec<_>>()
-				.join("  ")
-		})
-		.collect()
-}
-
-#[cfg(test)]
-mod tests {
-	use super::{
-		align_top_columns, dedup_preserving_order, is_running_status, parse_port_proto,
-		split_repo_tag,
-	};
-
-	#[test]
-	fn split_repo_tag_plain_name_and_tag() {
-		assert_eq!(
-			split_repo_tag("nginx:1.25"),
-			("nginx".into(), "1.25".into())
-		);
-		assert_eq!(split_repo_tag("nginx"), ("nginx".into(), "latest".into()));
-	}
-
-	#[test]
-	fn split_repo_tag_registry_with_port_is_not_a_tag() {
-		// The ':' belongs to the registry host:port, not a tag.
-		assert_eq!(
-			split_repo_tag("registry:5000/team/app"),
-			("registry:5000/team/app".into(), "latest".into())
-		);
-		assert_eq!(
-			split_repo_tag("registry:5000/team/app:v2"),
-			("registry:5000/team/app".into(), "v2".into())
-		);
-	}
-
-	#[test]
-	fn split_repo_tag_digest_has_no_tag() {
-		let (repo, tag) = split_repo_tag(
-			"docker.io/library/alpine@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
-		);
-		assert_eq!(repo, "docker.io/library/alpine");
-		assert_eq!(tag, "<none>");
-	}
-
-	#[test]
-	fn dedup_preserving_order_keeps_first_occurrence() {
-		let out =
-			dedup_preserving_order(&["web".into(), "db".into(), "web".into(), "cache".into()]);
-		assert_eq!(out, vec!["web", "db", "cache"]);
-	}
-
-	#[test]
-	fn align_top_columns_pads_to_widest_cell() {
-		let titles = vec!["PID".to_string(), "CMD".to_string()];
-		let processes = vec![
-			vec!["1".to_string(), "bash".to_string()],
-			vec!["12345".to_string(), "node".to_string()],
-		];
-		let lines = align_top_columns(&titles, &processes);
-		assert_eq!(lines.len(), 3);
-		// First column is padded to the widest value ("12345" = 5 chars).
-		assert!(lines[0].starts_with("PID  "));
-		assert!(lines[1].starts_with("1      "));
-		// No tabs in the aligned output.
-		assert!(lines.iter().all(|l| !l.contains('\t')));
-	}
-
-	#[test]
-	fn bare_port_uses_flag_proto() {
-		assert_eq!(parse_port_proto("80", "tcp").unwrap(), (80, "tcp"));
-	}
-
-	#[test]
-	fn suffix_overrides_flag_proto() {
-		assert_eq!(parse_port_proto("53/udp", "tcp").unwrap(), (53, "udp"));
-	}
-
-	#[test]
-	fn non_numeric_port_is_rejected() {
-		assert!(parse_port_proto("http", "tcp").is_err());
-		assert!(parse_port_proto("abc/tcp", "tcp").is_err());
-	}
-
-	#[test]
-	fn dedup_keeps_first_occurrence_order() {
-		let input = ["web".to_string(), "web".to_string(), "db".to_string()];
-		assert_eq!(dedup_preserving_order(&input), vec!["web", "db"]);
-		let input = [
-			"a".to_string(),
-			"b".to_string(),
-			"a".to_string(),
-			"c".to_string(),
-			"b".to_string(),
-		];
-		assert_eq!(dedup_preserving_order(&input), vec!["a", "b", "c"]);
-	}
-
-	#[test]
-	fn running_status_detected_case_insensitively() {
-		assert!(is_running_status("running"));
-		assert!(is_running_status("Running"));
-		// Anything else is not attachable.
-		assert!(!is_running_status("exited"));
-		assert!(!is_running_status("created"));
-		assert!(!is_running_status("paused"));
-		assert!(!is_running_status(""));
 	}
 }
