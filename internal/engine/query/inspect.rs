@@ -33,7 +33,9 @@ impl Engine {
 					return Err(crate::error::ComposeError::ServiceNotFound(name.clone()));
 				}
 			}
-			target_services.to_vec()
+			// Deduplicate so `top web web` queries and prints `web` once, matching
+			// `docker compose top` and avoiding redundant `/top` API calls.
+			dedup_preserving_order(target_services)
 		};
 
 		let mut json_rows: Vec<serde_json::Value> = Vec::new();
@@ -217,6 +219,28 @@ impl Engine {
 		let container = self.first_replica_name(service_name, service);
 		let is_tty = service.tty.unwrap_or(false);
 
+		// `docker compose attach` errors when the target is not running. Without
+		// this check the libpod logs endpoint replays the *entire* history of a
+		// stopped container and then ends the stream, so `attach` would print the
+		// whole log and exit 0. Inspect the state first and fail closed otherwise.
+		let inspect_path = format!("{API_PREFIX}/containers/{}/json", urlencoded(&container));
+		let info = self
+			.client
+			.get_json::<crate::libpod::types::container::ContainerInspect>(&inspect_path)
+			.await
+			.map_err(ComposeError::Podman)?;
+		let status = info.state.and_then(|s| s.status).unwrap_or_default();
+		if !is_running_status(&status) {
+			let shown = if status.is_empty() {
+				"unknown"
+			} else {
+				&status
+			};
+			return Err(ComposeError::Unsupported(format!(
+				"cannot attach to {container}: container is not running (state: {shown})"
+			)));
+		}
+
 		let path = format!(
 			"{API_PREFIX}/containers/{}/logs?stdout=true&stderr=true&follow=true",
 			urlencoded(&container),
@@ -358,9 +382,27 @@ fn parse_port_proto<'a>(private_port: &'a str, proto_flag: &'a str) -> Result<(u
 	Ok((port, proto))
 }
 
+/// Deduplicate `names` while preserving first-seen order. Used so `top web web`
+/// queries and prints each service once, matching `docker compose top`.
+fn dedup_preserving_order(names: &[String]) -> Vec<String> {
+	let mut seen = std::collections::HashSet::new();
+	names
+		.iter()
+		.filter(|n| seen.insert((*n).clone()))
+		.cloned()
+		.collect()
+}
+
+/// Whether a libpod container `Status` string denotes a running container.
+/// `docker compose attach` only attaches to a running container; anything else
+/// (exited, created, paused, empty/unknown) must fail closed.
+fn is_running_status(status: &str) -> bool {
+	status.eq_ignore_ascii_case("running")
+}
+
 #[cfg(test)]
 mod tests {
-	use super::parse_port_proto;
+	use super::{dedup_preserving_order, is_running_status, parse_port_proto};
 
 	#[test]
 	fn bare_port_uses_flag_proto() {
@@ -376,5 +418,30 @@ mod tests {
 	fn non_numeric_port_is_rejected() {
 		assert!(parse_port_proto("http", "tcp").is_err());
 		assert!(parse_port_proto("abc/tcp", "tcp").is_err());
+	}
+
+	#[test]
+	fn dedup_keeps_first_occurrence_order() {
+		let input = ["web".to_string(), "web".to_string(), "db".to_string()];
+		assert_eq!(dedup_preserving_order(&input), vec!["web", "db"]);
+		let input = [
+			"a".to_string(),
+			"b".to_string(),
+			"a".to_string(),
+			"c".to_string(),
+			"b".to_string(),
+		];
+		assert_eq!(dedup_preserving_order(&input), vec!["a", "b", "c"]);
+	}
+
+	#[test]
+	fn running_status_detected_case_insensitively() {
+		assert!(is_running_status("running"));
+		assert!(is_running_status("Running"));
+		// Anything else is not attachable.
+		assert!(!is_running_status("exited"));
+		assert!(!is_running_status("created"));
+		assert!(!is_running_status("paused"));
+		assert!(!is_running_status(""));
 	}
 }
