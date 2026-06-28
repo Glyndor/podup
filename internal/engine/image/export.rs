@@ -34,11 +34,27 @@ fn commit_path(container: &str, repo: &str, tag: &str, pause: bool) -> String {
 }
 
 impl Engine {
+	/// Commit a service container to a new image (`docker compose commit`),
+	/// pausing the container during the snapshot for a consistent filesystem
+	/// (docker default). Equivalent to [`Engine::commit_with_pause`] with
+	/// `pause = true`. Targets the given replica (`index`, 1-based) or the first
+	/// one. `image` is `repo[:tag]`; an omitted tag defaults to `latest`.
+	pub async fn commit(
+		&self,
+		file: &ComposeFile,
+		service_name: &str,
+		image: &str,
+		index: Option<u32>,
+	) -> Result<()> {
+		self.commit_with_pause(file, service_name, image, index, true)
+			.await
+	}
+
 	/// Commit a service container to a new image (`docker compose commit`).
 	/// Targets the given replica (`index`, 1-based) or the first one. `image`
 	/// is `repo[:tag]`; an omitted tag defaults to `latest`. `pause` quiesces the
 	/// container during the snapshot for a consistent filesystem (docker default).
-	pub async fn commit(
+	pub async fn commit_with_pause(
 		&self,
 		file: &ComposeFile,
 		service_name: &str,
