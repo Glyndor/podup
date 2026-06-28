@@ -199,8 +199,9 @@ async fn run() -> podup::Result<()> {
 	// name here fails closed regardless of which command runs next.
 	if !podup::is_safe_project_name(&project) {
 		return Err(podup::ComposeError::Unsupported(format!(
-			"project name {project:?} is not a safe path component: use only ASCII \
-			 letters, digits, '-', '_', '.', not starting with '.', max 128 chars"
+			"project name {project:?} is not a safe path component: use lowercase ASCII \
+			 letters, digits, '-', '_', starting with a letter or digit, max 128 chars \
+			 (docker-compose rule ^[a-z0-9][a-z0-9_-]*$)"
 		)));
 	}
 
