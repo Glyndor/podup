@@ -19,7 +19,7 @@ mod lifecycle;
 mod lock;
 mod network;
 mod profiles;
-pub use profiles::retain_active_profiles;
+pub use profiles::{retain_active_profiles, retain_active_profiles_with_targets};
 mod projects;
 pub use projects::{list_projects, LsOptions};
 mod query;
