@@ -108,17 +108,33 @@ impl Engine {
 			.services
 			.get(service_name)
 			.ok_or_else(|| crate::error::ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = self.replica_name_at(service_name, service, index)?;
+		// Resolve against the containers Podman actually has, not the static
+		// compose replica count: a service scaled purely via CLI `--scale` has no
+		// `scale:` in the file, so the static count is 1 and would target the
+		// never-created un-indexed base name. `live_replica_names` falls back to
+		// the static names only when nothing is running yet.
+		let live = self.live_replica_names(service_name, service).await?;
+		let container_name = select_replica(live, service_name, index)?;
 
 		let path = format!(
 			"{API_PREFIX}/containers/{}/json",
 			urlencoded(&container_name),
 		);
-		let info = self
+		let info = match self
 			.client
 			.get_json::<crate::libpod::types::container::ContainerInspect>(&path)
 			.await
-			.map_err(ComposeError::Podman)?;
+		{
+			Ok(info) => info,
+			// Translate a missing container into a friendly not-found rather than
+			// surfacing a raw podman 404.
+			Err(e) if e.is_status(404) => {
+				return Err(crate::error::ComposeError::ServiceNotFound(format!(
+					"{service_name} (no running container '{container_name}')"
+				)));
+			}
+			Err(e) => return Err(ComposeError::Podman(e)),
+		};
 
 		let key = format!("{port}/{proto}");
 		let binding = info
@@ -342,6 +358,41 @@ impl Engine {
 	}
 }
 
+/// Pick a service's target replica container from its live container names.
+///
+/// Names are ordered by their trailing `-N` suffix (numerically, so `svc-10`
+/// sorts after `svc-2`); an unsuffixed single-replica name sorts first. `index`
+/// is the 1-based `--index`; `None` selects the first replica. Pure so the
+/// indexing is unit-tested without a live Podman socket.
+fn select_replica(
+	mut names: Vec<String>,
+	service_name: &str,
+	index: Option<u32>,
+) -> Result<String> {
+	names.sort_by_key(|n| {
+		n.rsplit_once('-')
+			.and_then(|(_, suffix)| suffix.parse::<u64>().ok())
+			.unwrap_or(0)
+	});
+	match index {
+		Some(i) => {
+			// `--index` is 1-based; `0` is invalid, not "first replica".
+			let idx = (i as usize).checked_sub(1).ok_or_else(|| {
+				ComposeError::ServiceNotFound(format!(
+					"{service_name} (replica index {i}: indexes are 1-based)"
+				))
+			})?;
+			names.get(idx).cloned().ok_or_else(|| {
+				ComposeError::ServiceNotFound(format!("{service_name} (replica index {i})"))
+			})
+		}
+		None => names
+			.into_iter()
+			.next()
+			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into())),
+	}
+}
+
 /// Resolve the `(port, proto)` for `port` from a `PORT` or `PORT/proto` argument,
 /// the `/proto` suffix overriding the `--protocol` flag — matching
 /// `docker compose port`. Pure so the parsing is unit-tested.
@@ -360,7 +411,60 @@ fn parse_port_proto<'a>(private_port: &'a str, proto_flag: &'a str) -> Result<(u
 
 #[cfg(test)]
 mod tests {
-	use super::parse_port_proto;
+	use super::{parse_port_proto, select_replica};
+
+	#[test]
+	fn select_replica_none_picks_first_by_suffix() {
+		// Live names come back in arbitrary API order; the first replica is the
+		// lowest-suffixed one regardless.
+		let names = vec![
+			"proj-web-3".into(),
+			"proj-web-1".into(),
+			"proj-web-2".into(),
+		];
+		assert_eq!(select_replica(names, "web", None).unwrap(), "proj-web-1");
+	}
+
+	#[test]
+	fn select_replica_orders_suffix_numerically() {
+		// `-10` must sort after `-2`, not lexicographically before it.
+		let names = vec![
+			"proj-web-10".into(),
+			"proj-web-2".into(),
+			"proj-web-1".into(),
+		];
+		assert_eq!(
+			select_replica(names, "web", Some(3)).unwrap(),
+			"proj-web-10"
+		);
+	}
+
+	#[test]
+	fn select_replica_index_targets_nth() {
+		let names = vec!["proj-web-1".into(), "proj-web-2".into()];
+		assert_eq!(
+			select_replica(names.clone(), "web", Some(2)).unwrap(),
+			"proj-web-2"
+		);
+	}
+
+	#[test]
+	fn select_replica_unsuffixed_single() {
+		let names = vec!["proj-web".into()];
+		assert_eq!(select_replica(names, "web", None).unwrap(), "proj-web");
+	}
+
+	#[test]
+	fn select_replica_rejects_index_zero_and_out_of_range() {
+		let names = vec!["proj-web-1".into(), "proj-web-2".into()];
+		assert!(select_replica(names.clone(), "web", Some(0)).is_err());
+		assert!(select_replica(names, "web", Some(5)).is_err());
+	}
+
+	#[test]
+	fn select_replica_empty_is_not_found() {
+		assert!(select_replica(vec![], "web", None).is_err());
+	}
 
 	#[test]
 	fn bare_port_uses_flag_proto() {
