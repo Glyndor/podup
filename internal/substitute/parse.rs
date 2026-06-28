@@ -49,15 +49,25 @@ pub(super) enum Modifier {
 /// Parse the content inside `${…}`.  The opening `{` has already been consumed.
 ///
 /// The variable name is collected with [`is_var_char`] (matching the unbraced
-/// `$VAR` path and the compose-spec grammar). After the name, only a modifier
-/// delimiter (`}`, `:`, `-`, `+`, `?`) or end-of-input may follow; any other
-/// trailing character (a space in `${FOO BAR}`, a dot in `${FOO.BAR}`, …) makes
-/// the reference malformed and is rejected rather than folded into the lookup
-/// key.
+/// `$VAR` path and the compose-spec grammar). It must be non-empty and start
+/// with `[A-Za-z_]`; `${}` and `${1BAD}` are rejected as malformed rather than
+/// resolved to an empty string. After the name, only a modifier delimiter
+/// (`}`, `:`, `-`, `+`, `?`) or end-of-input may follow; any other trailing
+/// character (a space in `${FOO BAR}`, a dot in `${FOO.BAR}`, …) makes the
+/// reference malformed and is rejected rather than folded into the lookup key.
 pub(super) fn parse_braced_var(
 	chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
 ) -> Result<(String, Modifier)> {
 	let name = collect_var_name(chars);
+
+	// The name must be a valid identifier: non-empty and starting with a letter
+	// or `_`. `collect_var_name` accepts digits (they are valid *within* a name),
+	// so an empty name or a digit-leading name only fails here.
+	if name.is_empty() || !name.starts_with(is_var_start) {
+		return Err(ComposeError::InvalidSubstitution(format!(
+			"invalid variable name {name:?} in '${{…}}': names must start with a letter or '_'"
+		)));
+	}
 
 	match chars.peek() {
 		None => Ok((name, Modifier::None)),
@@ -71,31 +81,31 @@ pub(super) fn parse_braced_var(
 			let modifier = match chars.peek() {
 				Some('-') => {
 					chars.next();
-					Modifier::DefaultIfUnsetOrEmpty(collect_until_close(chars))
+					Modifier::DefaultIfUnsetOrEmpty(collect_until_close(chars)?)
 				}
 				Some('+') => {
 					chars.next();
-					Modifier::AltIfSetAndNonEmpty(collect_until_close(chars))
+					Modifier::AltIfSetAndNonEmpty(collect_until_close(chars)?)
 				}
 				Some('?') => {
 					chars.next();
-					Modifier::ErrorIfUnsetOrEmpty(collect_until_close(chars))
+					Modifier::ErrorIfUnsetOrEmpty(collect_until_close(chars)?)
 				}
-				_ => Modifier::DefaultIfUnsetOrEmpty(collect_until_close(chars)),
+				_ => Modifier::DefaultIfUnsetOrEmpty(collect_until_close(chars)?),
 			};
 			Ok((name, modifier))
 		}
 		Some('-') => {
 			chars.next();
-			Ok((name, Modifier::DefaultIfUnset(collect_until_close(chars))))
+			Ok((name, Modifier::DefaultIfUnset(collect_until_close(chars)?)))
 		}
 		Some('+') => {
 			chars.next();
-			Ok((name, Modifier::AltIfSet(collect_until_close(chars))))
+			Ok((name, Modifier::AltIfSet(collect_until_close(chars)?)))
 		}
 		Some('?') => {
 			chars.next();
-			Ok((name, Modifier::ErrorIfUnset(collect_until_close(chars))))
+			Ok((name, Modifier::ErrorIfUnset(collect_until_close(chars)?)))
 		}
 		Some(&c) => Err(ComposeError::InvalidSubstitution(format!(
 			"unexpected character {c:?} in variable name '${{{name}…}}'"
@@ -107,7 +117,12 @@ pub(super) fn parse_braced_var(
 /// balancing nested braces so an inner `${…}` is captured whole. For
 /// `${FOO:-${BAR}}` the default is `${BAR}` (not `${BAR`), enabling nested
 /// interpolation in [`resolve_modifier`].
-fn collect_until_close(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
+///
+/// If the input ends before the matching `}` is reached the reference is
+/// unterminated (e.g. `${TAG:-latest` with no closing brace), which would
+/// otherwise silently swallow the rest of the document as the modifier value;
+/// that is reported as [`ComposeError::InvalidSubstitution`] instead.
+fn collect_until_close(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> Result<String> {
 	let mut buf = String::new();
 	let mut depth = 0u32;
 	for c in chars.by_ref() {
@@ -116,7 +131,7 @@ fn collect_until_close(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> 
 				depth += 1;
 				buf.push(c);
 			}
-			'}' if depth == 0 => break,
+			'}' if depth == 0 => return Ok(buf),
 			'}' => {
 				depth -= 1;
 				buf.push(c);
@@ -124,7 +139,9 @@ fn collect_until_close(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> 
 			_ => buf.push(c),
 		}
 	}
-	buf
+	Err(ComposeError::InvalidSubstitution(
+		"unterminated variable substitution: missing closing '}'".to_string(),
+	))
 }
 
 /// Apply a parsed `Modifier` to `var`, implementing compose's
@@ -136,31 +153,42 @@ pub(super) fn resolve_modifier(
 	var: String,
 	modifier: Modifier,
 	vars: &HashMap<String, String>,
+	depth: usize,
 ) -> Result<String> {
 	let value = vars.get(&var);
 
 	match modifier {
-		Modifier::None => Ok(value.cloned().unwrap_or_default()),
+		Modifier::None => match value {
+			Some(v) => Ok(v.clone()),
+			None => {
+				// Match docker compose v2, which warns on stderr before defaulting an
+				// unreferenced variable to the empty string, so config typos surface.
+				tracing::warn!("The {var} variable is not set. Defaulting to a blank string.");
+				Ok(String::new())
+			}
+		},
 
 		// Default/alt values are themselves interpolated (compose allows nesting,
-		// e.g. `${FOO:-${BAR}}`), but only when actually used.
+		// e.g. `${FOO:-${BAR}}`), but only when actually used. `depth` bounds that
+		// recursion so a pathological `${A:-${A:-…}}` chain returns an error rather
+		// than overflowing the stack.
 		Modifier::DefaultIfUnsetOrEmpty(default) => match value {
 			Some(v) if !v.is_empty() => Ok(v.clone()),
-			_ => super::substitute(&default, vars),
+			_ => super::substitute_depth(&default, vars, depth + 1),
 		},
 
 		Modifier::DefaultIfUnset(default) => match value {
 			Some(v) => Ok(v.clone()),
-			None => super::substitute(&default, vars),
+			None => super::substitute_depth(&default, vars, depth + 1),
 		},
 
 		Modifier::AltIfSetAndNonEmpty(alt) => match value {
-			Some(v) if !v.is_empty() => super::substitute(&alt, vars),
+			Some(v) if !v.is_empty() => super::substitute_depth(&alt, vars, depth + 1),
 			_ => Ok(String::new()),
 		},
 
 		Modifier::AltIfSet(alt) => match value {
-			Some(_) => super::substitute(&alt, vars),
+			Some(_) => super::substitute_depth(&alt, vars, depth + 1),
 			None => Ok(String::new()),
 		},
 
@@ -317,17 +345,60 @@ mod tests {
 		);
 	}
 
+	#[test]
+	fn parse_braced_var_rejects_empty_name() {
+		// `${}` has no name and must be rejected, not resolved to an empty string.
+		let mut it = peekable("}");
+		let err = parse_braced_var(&mut it).expect_err("empty name must be rejected");
+		assert!(
+			matches!(err, ComposeError::InvalidSubstitution(_)),
+			"{err:?}"
+		);
+	}
+
+	#[test]
+	fn parse_braced_var_rejects_digit_leading_name() {
+		// `${1BAD}` is not a valid identifier (must start with a letter or `_`).
+		let mut it = peekable("1BAD}");
+		let err = parse_braced_var(&mut it).expect_err("digit-leading name must be rejected");
+		assert!(
+			matches!(err, ComposeError::InvalidSubstitution(_)),
+			"{err:?}"
+		);
+	}
+
+	#[test]
+	fn parse_braced_var_underscore_name_is_valid() {
+		// A leading underscore is a valid identifier start.
+		let mut it = peekable("_FOO}");
+		let (name, modifier) = parse_braced_var(&mut it).unwrap();
+		assert_eq!(name, "_FOO");
+		assert!(matches!(modifier, Modifier::None));
+	}
+
+	#[test]
+	fn parse_unterminated_modifier_is_error() {
+		// `${TAG:-latest` (no closing `}`) must not swallow the rest of the input as
+		// the default value — it is reported as a malformed substitution.
+		let mut it = peekable("TAG:-latest\nmore: data\n");
+		let err = parse_braced_var(&mut it).expect_err("missing close brace must error");
+		assert!(
+			matches!(err, ComposeError::InvalidSubstitution(_)),
+			"{err:?}"
+		);
+	}
+
 	// --- resolve_modifier ---
 
 	#[test]
 	fn resolve_none_uses_value_or_empty() {
 		let v = vars(&[("A", "1")]);
 		assert_eq!(
-			resolve_modifier("A".into(), Modifier::None, &v).unwrap(),
+			resolve_modifier("A".into(), Modifier::None, &v, 0).unwrap(),
 			"1"
 		);
 		assert_eq!(
-			resolve_modifier("MISSING".into(), Modifier::None, &v).unwrap(),
+			resolve_modifier("MISSING".into(), Modifier::None, &v, 0).unwrap(),
 			""
 		);
 	}
@@ -336,20 +407,35 @@ mod tests {
 	fn resolve_default_if_unset_or_empty() {
 		let v = vars(&[("EMPTY", ""), ("SET", "x")]);
 		let m = || Modifier::DefaultIfUnsetOrEmpty("def".into());
-		assert_eq!(resolve_modifier("EMPTY".into(), m(), &v).unwrap(), "def");
-		assert_eq!(resolve_modifier("MISSING".into(), m(), &v).unwrap(), "def");
-		assert_eq!(resolve_modifier("SET".into(), m(), &v).unwrap(), "x");
+		assert_eq!(resolve_modifier("EMPTY".into(), m(), &v, 0).unwrap(), "def");
+		assert_eq!(
+			resolve_modifier("MISSING".into(), m(), &v, 0).unwrap(),
+			"def"
+		);
+		assert_eq!(resolve_modifier("SET".into(), m(), &v, 0).unwrap(), "x");
 	}
 
 	#[test]
 	fn resolve_default_if_unset_keeps_empty_value() {
 		let v = vars(&[("EMPTY", "")]);
 		assert_eq!(
-			resolve_modifier("EMPTY".into(), Modifier::DefaultIfUnset("def".into()), &v).unwrap(),
+			resolve_modifier(
+				"EMPTY".into(),
+				Modifier::DefaultIfUnset("def".into()),
+				&v,
+				0
+			)
+			.unwrap(),
 			""
 		);
 		assert_eq!(
-			resolve_modifier("MISSING".into(), Modifier::DefaultIfUnset("def".into()), &v).unwrap(),
+			resolve_modifier(
+				"MISSING".into(),
+				Modifier::DefaultIfUnset("def".into()),
+				&v,
+				0
+			)
+			.unwrap(),
 			"def"
 		);
 	}
@@ -358,24 +444,31 @@ mod tests {
 	fn resolve_alt_forms() {
 		let v = vars(&[("EMPTY", ""), ("SET", "x")]);
 		assert_eq!(
-			resolve_modifier("SET".into(), Modifier::AltIfSetAndNonEmpty("a".into()), &v).unwrap(),
+			resolve_modifier(
+				"SET".into(),
+				Modifier::AltIfSetAndNonEmpty("a".into()),
+				&v,
+				0
+			)
+			.unwrap(),
 			"a"
 		);
 		assert_eq!(
 			resolve_modifier(
 				"EMPTY".into(),
 				Modifier::AltIfSetAndNonEmpty("a".into()),
-				&v
+				&v,
+				0
 			)
 			.unwrap(),
 			""
 		);
 		assert_eq!(
-			resolve_modifier("EMPTY".into(), Modifier::AltIfSet("a".into()), &v).unwrap(),
+			resolve_modifier("EMPTY".into(), Modifier::AltIfSet("a".into()), &v, 0).unwrap(),
 			"a"
 		);
 		assert_eq!(
-			resolve_modifier("MISSING".into(), Modifier::AltIfSet("a".into()), &v).unwrap(),
+			resolve_modifier("MISSING".into(), Modifier::AltIfSet("a".into()), &v, 0).unwrap(),
 			""
 		);
 	}
@@ -386,18 +479,25 @@ mod tests {
 		assert!(resolve_modifier(
 			"EMPTY".into(),
 			Modifier::ErrorIfUnsetOrEmpty("e".into()),
-			&v
+			&v,
+			0
 		)
 		.is_err());
 		assert_eq!(
-			resolve_modifier("SET".into(), Modifier::ErrorIfUnsetOrEmpty("e".into()), &v).unwrap(),
+			resolve_modifier(
+				"SET".into(),
+				Modifier::ErrorIfUnsetOrEmpty("e".into()),
+				&v,
+				0
+			)
+			.unwrap(),
 			"x"
 		);
 		assert!(
-			resolve_modifier("MISSING".into(), Modifier::ErrorIfUnset("e".into()), &v).is_err()
+			resolve_modifier("MISSING".into(), Modifier::ErrorIfUnset("e".into()), &v, 0).is_err()
 		);
 		assert_eq!(
-			resolve_modifier("EMPTY".into(), Modifier::ErrorIfUnset("e".into()), &v).unwrap(),
+			resolve_modifier("EMPTY".into(), Modifier::ErrorIfUnset("e".into()), &v, 0).unwrap(),
 			""
 		);
 	}

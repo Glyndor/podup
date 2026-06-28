@@ -33,6 +33,14 @@ pub(crate) fn is_mutating(command: &Commands) -> bool {
 	)
 }
 
+/// Whether a command is scoped purely by the `podup.project` label and never
+/// reads service definitions, so it can run against a project with no compose
+/// file present — matching `docker compose -p NAME events`/`ps`. These commands
+/// tolerate a missing compose file at startup instead of erroring `FileNotFound`.
+pub(crate) fn is_label_only(command: &Commands) -> bool {
+	matches!(command, Commands::Events { .. } | Commands::Ps { .. })
+}
+
 /// Canonical project URL, reused for the bug-report hint on internal errors.
 const REPO_URL: &str = "https://github.com/Glyndor/podup";
 
@@ -97,6 +105,16 @@ pub(crate) fn internal_error_notice() -> String {
 	)
 }
 
+/// Whether a panic message denotes a broken pipe (a downstream reader closed the
+/// pipe early). Rust ignores SIGPIPE, so a failing `println!`/`eprintln!` panics
+/// with this message; we treat it as a clean exit rather than an internal error.
+/// Pure so it can be unit-tested. Matches both the textual reason and the raw OS
+/// error number (EPIPE = 32 on Linux).
+pub(crate) fn is_broken_pipe_panic(msg: &str) -> bool {
+	let lower = msg.to_ascii_lowercase();
+	lower.contains("broken pipe") || lower.contains("os error 32")
+}
+
 /// Initialize the global tracing subscriber, written to stderr in the
 /// `podup: <level>: <msg>` format so stdout stays a clean pipe. `default_level`
 /// is the floor used when `RUST_LOG` is unset — `warn` for most commands (so the
@@ -120,6 +138,7 @@ pub(crate) fn render_config(
 	format: &ConfigFormat,
 	services: bool,
 	quiet: bool,
+	project: &str,
 ) -> podup::Result<()> {
 	// Reaching here means the file parsed and merged cleanly. Validate that each
 	// resolved service declares an image or a build, the same rule `up` enforces
@@ -140,6 +159,9 @@ pub(crate) fn render_config(
 		return Ok(());
 	}
 	let mut redacted = file.clone();
+	// Surface the resolved project name in the rendered output, like
+	// `docker compose config`, rather than the file's literal `name:` (or none).
+	redacted.name = Some(project.to_string());
 	redacted.redact_inline_content();
 	let rendered = match format {
 		ConfigFormat::Json => {
@@ -167,16 +189,26 @@ pub(crate) fn render_config(
 /// `field: {}` sections. Recurses first so a section that becomes empty once its
 /// own nulls are dropped is itself dropped.
 fn prune_json_nulls(v: &mut serde_json::Value) {
+	prune_json(v, false);
+}
+
+/// `preserve_nulls` keeps null leaves at the current mapping level. It is set for
+/// the value under an `environment:` key so a map-form host-passthrough var
+/// (`MYVAR:` → null) is not stripped from the output — it is forwarded at runtime,
+/// so `config` must show it, matching docker compose (which never drops the key).
+fn prune_json(v: &mut serde_json::Value, preserve_nulls: bool) {
 	match v {
 		serde_json::Value::Object(map) => {
-			for val in map.values_mut() {
-				prune_json_nulls(val);
+			for (k, val) in map.iter_mut() {
+				prune_json(val, k == "environment");
 			}
-			map.retain(|_, val| !is_empty_json(val));
+			if !preserve_nulls {
+				map.retain(|_, val| !is_empty_json(val));
+			}
 		}
 		serde_json::Value::Array(arr) => {
 			for val in arr.iter_mut() {
-				prune_json_nulls(val);
+				prune_json(val, false);
 			}
 		}
 		_ => {}
@@ -195,23 +227,32 @@ fn is_empty_json(v: &serde_json::Value) -> bool {
 
 /// The YAML counterpart of [`prune_json_nulls`].
 fn prune_yaml_nulls(v: &mut serde_yaml::Value) {
+	prune_yaml(v, false);
+}
+
+/// YAML counterpart of [`prune_json`]; `preserve_nulls` exempts an
+/// `environment:` map's null (host-passthrough) values from being dropped.
+fn prune_yaml(v: &mut serde_yaml::Value, preserve_nulls: bool) {
 	match v {
 		serde_yaml::Value::Mapping(map) => {
-			for (_, val) in map.iter_mut() {
-				prune_yaml_nulls(val);
+			for (k, val) in map.iter_mut() {
+				let child_preserve = k.as_str() == Some("environment");
+				prune_yaml(val, child_preserve);
 			}
-			let drop: Vec<serde_yaml::Value> = map
-				.iter()
-				.filter(|(_, val)| is_empty_yaml(val))
-				.map(|(k, _)| k.clone())
-				.collect();
-			for k in drop {
-				map.remove(&k);
+			if !preserve_nulls {
+				let drop: Vec<serde_yaml::Value> = map
+					.iter()
+					.filter(|(_, val)| is_empty_yaml(val))
+					.map(|(k, _)| k.clone())
+					.collect();
+				for k in drop {
+					map.remove(&k);
+				}
 			}
 		}
 		serde_yaml::Value::Sequence(seq) => {
 			for val in seq.iter_mut() {
-				prune_yaml_nulls(val);
+				prune_yaml(val, false);
 			}
 		}
 		_ => {}
@@ -286,6 +327,27 @@ mod tests {
 	use super::*;
 
 	#[test]
+	fn label_only_covers_ps_and_events() {
+		use crate::cli::{EventsFormat, OutputFormat};
+		// `ps` and `events` are scoped purely by the project label, so they are
+		// label-only and may run without a compose file.
+		assert!(is_label_only(&Commands::Ps {
+			all: false,
+			quiet: false,
+			format: OutputFormat::Table,
+		}));
+		assert!(is_label_only(&Commands::Events {
+			format: EventsFormat::Table,
+			json: false,
+		}));
+		// A command that reads service definitions is not label-only.
+		assert!(!is_label_only(&Commands::Top {
+			format: OutputFormat::Table,
+			services: vec![],
+		}));
+	}
+
+	#[test]
 	fn prune_json_drops_nulls_and_empty_then_collapses() {
 		let mut v = serde_json::json!({
 			"image": "nginx",
@@ -341,19 +403,72 @@ mod tests {
 	#[test]
 	fn render_config_quiet_is_validate_only() {
 		// `--quiet` validates and prints nothing, returning Ok.
-		render_config(&sample_file(), &ConfigFormat::Yaml, false, true).unwrap();
+		render_config(&sample_file(), &ConfigFormat::Yaml, false, true, "proj").unwrap();
 	}
 
 	#[test]
 	fn render_config_services_lists_names() {
 		// `--services` reaches the service-name listing branch without error.
-		render_config(&sample_file(), &ConfigFormat::Yaml, true, false).unwrap();
+		render_config(&sample_file(), &ConfigFormat::Yaml, true, false, "proj").unwrap();
 	}
 
 	#[test]
 	fn render_config_yaml_and_json_render_ok() {
-		render_config(&sample_file(), &ConfigFormat::Yaml, false, false).unwrap();
-		render_config(&sample_file(), &ConfigFormat::Json, false, false).unwrap();
+		render_config(&sample_file(), &ConfigFormat::Yaml, false, false, "proj").unwrap();
+		render_config(&sample_file(), &ConfigFormat::Json, false, false, "proj").unwrap();
+	}
+
+	#[test]
+	fn render_config_injects_resolved_project_name() {
+		// The rendered output carries the resolved project name, not the file's
+		// literal `name:` (here unset). Render into a buffer via the same path.
+		let mut redacted = sample_file();
+		redacted.name = Some("myproj".to_string());
+		let v: serde_yaml::Value = serde_yaml::to_value(&redacted).unwrap();
+		let out = serde_yaml::to_string(&v).unwrap();
+		assert!(
+			out.contains("name: myproj"),
+			"config should render the resolved name"
+		);
+	}
+
+	#[test]
+	fn prune_preserves_environment_map_nulls() {
+		// A map-form host-passthrough var (`MYVAR:` → null) survives pruning, while
+		// an unrelated null elsewhere is still dropped.
+		let mut v: serde_yaml::Value = serde_yaml::from_str(
+			"services:\n  web:\n    image: nginx\n    dns: null\n    environment:\n      MYVAR: null\n      SET: value\n",
+		)
+		.unwrap();
+		prune_yaml_nulls(&mut v);
+		let out = serde_yaml::to_string(&v).unwrap();
+		assert!(out.contains("MYVAR"), "passthrough env var must be kept");
+		assert!(out.contains("SET"));
+		assert!(!out.contains("dns"), "unrelated null must still be dropped");
+
+		let mut j = serde_json::json!({
+			"services": { "web": {
+				"image": "nginx",
+				"dns": null,
+				"environment": { "MYVAR": null, "SET": "value" }
+			}}
+		});
+		prune_json_nulls(&mut j);
+		let env = &j["services"]["web"]["environment"];
+		assert!(
+			env.get("MYVAR").is_some(),
+			"passthrough env var must be kept"
+		);
+		assert!(j["services"]["web"].get("dns").is_none());
+	}
+
+	#[test]
+	fn broken_pipe_panic_detected() {
+		assert!(is_broken_pipe_panic(
+			"failed printing to stdout: Broken pipe (os error 32)"
+		));
+		assert!(is_broken_pipe_panic("Broken pipe"));
+		assert!(!is_broken_pipe_panic("some other internal error"));
 	}
 
 	#[test]
