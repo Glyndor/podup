@@ -31,16 +31,17 @@ pub(super) fn render_publish_port(p: &ParsedPort) -> String {
 }
 
 /// Render a volume mount into a Quadlet `Volume=` value. A source naming a
-/// declared volume gets a `.volume` suffix (so Quadlet wires it to the generated
-/// unit); an undeclared source passes through verbatim. An empty source renders
-/// as just the target. Long-form `read_only`, SELinux relabel (`z`/`Z`), bind
-/// propagation, and `nocopy` opts are folded into the trailing `:opt,opt` field.
-pub(super) fn render_volume(vol: &VolumeMount, declared_volumes: &[&str]) -> String {
+/// declared volume gets a project-prefixed `.volume` suffix (so Quadlet wires it
+/// to the generated unit, whose file name is also project-prefixed); an
+/// undeclared source passes through verbatim. An empty source renders as just the
+/// target. Long-form `read_only`, SELinux relabel (`z`/`Z`), bind propagation,
+/// and `nocopy` opts are folded into the trailing `:opt,opt` field.
+pub(super) fn render_volume(vol: &VolumeMount, project: &str, declared_volumes: &[&str]) -> String {
 	match vol {
 		VolumeMount::Short(s) => {
 			let parts: Vec<&str> = s.splitn(3, ':').collect();
 			if parts.len() >= 2 && declared_volumes.contains(&parts[0]) {
-				let mut out = format!("{}.volume:{}", parts[0], parts[1]);
+				let mut out = format!("{}.volume:{}", unit_stem(project, parts[0]), parts[1]);
 				if let Some(opts) = parts.get(2) {
 					out.push(':');
 					out.push_str(opts);
@@ -60,7 +61,7 @@ pub(super) fn render_volume(vol: &VolumeMount, declared_volumes: &[&str]) -> Str
 		} => {
 			let src = source.clone().unwrap_or_default();
 			let src = if declared_volumes.contains(&src.as_str()) {
-				format!("{src}.volume")
+				format!("{}.volume", unit_stem(project, &src))
 			} else {
 				src
 			};
@@ -218,11 +219,69 @@ pub(super) fn sanitize_value(value: &str) -> String {
 	value.chars().filter(|c| !c.is_control()).collect()
 }
 
+/// Keys whose value Quadlet/systemd splits on whitespace (a `KEY=VALUE` option
+/// list): an unquoted space would split a single value into a truncated value
+/// plus bogus extra entries, so such values are quoted when they contain
+/// whitespace.
+fn key_is_word_split(key: &str) -> bool {
+	matches!(key, "Environment" | "Label" | "Annotation" | "Sysctl")
+}
+
+/// Keys whose value is an argument line we render (and quote) ourselves
+/// (`PodmanArgs`, `Exec`, `Entrypoint`); systemd must keep splitting these on
+/// whitespace, so they are passed through with only control characters stripped.
+fn key_is_arg_line(key: &str) -> bool {
+	matches!(key, "PodmanArgs" | "Exec" | "Entrypoint")
+}
+
+/// Escape a value for a single-line systemd `Key=Value` entry.
+///
+/// On top of [`sanitize_value`] (control characters stripped so a value can
+/// never inject a second directive) this makes the value byte-faithful to the
+/// compose source the way docker-compose treats it:
+///
+/// * systemd specifiers (`%h`, `%U`, …) are passed through literally by doubling
+///   `%` to `%%`, instead of being expanded at unit-activation time;
+/// * a value ending in a backslash — which would otherwise fold the next
+///   physical line (and the directive on it) into this value — is quoted and the
+///   backslash escaped, closing the line-continuation hole;
+/// * for word-split keys (`Environment`, `Label`, …) a value containing
+///   whitespace is double-quoted so systemd keeps it as one value rather than
+///   splitting it into bogus extra entries.
+///
+/// Argument-line keys keep their own rendering (they encode whitespace splitting
+/// deliberately) and only have control characters stripped.
+pub(super) fn escape_unit_value(key: &str, value: &str) -> String {
+	let stripped = sanitize_value(value);
+	if key_is_arg_line(key) {
+		return stripped;
+	}
+	let escaped = stripped.replace('%', "%%");
+	let needs_quote = (key_is_word_split(key) && escaped.contains(char::is_whitespace))
+		|| escaped.ends_with('\\')
+		|| escaped.starts_with('"');
+	if needs_quote {
+		format!("\"{}\"", escaped.replace('\\', "\\\\").replace('"', "\\\""))
+	} else {
+		escaped
+	}
+}
+
+/// Build the project-prefixed unit-file stem for a resource, e.g. service `web`
+/// in project `proj` → `proj-web`. Generated unit files share a single systemd
+/// directory across projects, so the stem (and every in-unit cross-reference to
+/// it) carries the project name — matching the project-scoped resource names
+/// inside the units — so two projects' `web` services do not clobber each other.
+pub(super) fn unit_stem(project: &str, name: &str) -> String {
+	safe_unit_stem(&format!("{project}-{name}"))
+}
+
 /// Reduce a compose key to a safe single path-component stem for a unit file
 /// name. Keeps ASCII alphanumerics and `-`/`_`/`.`; replaces anything else
 /// (path separators, control characters) with `_`, and guarantees the result
-/// is non-empty and does not start with a dot, so it can never escape the
-/// output directory or resolve to `.`/`..`.
+/// is non-empty and starts with neither a dot nor a dash, so it can never escape
+/// the output directory, resolve to `.`/`..`, or be mistaken for a command-line
+/// flag by downstream tooling that globs the generated file names.
 pub(super) fn safe_unit_stem(name: &str) -> String {
 	let mut stem: String = name
 		.chars()
@@ -234,7 +293,7 @@ pub(super) fn safe_unit_stem(name: &str) -> String {
 			}
 		})
 		.collect();
-	if stem.is_empty() || stem.starts_with('.') {
+	if stem.is_empty() || stem.starts_with('.') || stem.starts_with('-') {
 		stem.insert(0, '_');
 	}
 	stem
@@ -255,10 +314,14 @@ impl Section {
 		}
 	}
 
-	/// Append a `Key=Value` line, sanitizing the value (control characters
-	/// stripped) so a hostile compose field cannot inject extra unit directives.
+	/// Append a `Key=Value` line, escaping the value for systemd unit syntax
+	/// (control characters stripped, specifiers passed through literally,
+	/// whitespace/line-continuation hazards quoted) so a hostile or merely
+	/// awkward compose field cannot inject extra directives, split a value, or
+	/// swallow the following line. See [`escape_unit_value`].
 	pub(super) fn add(&mut self, key: &str, value: String) {
-		self.lines.push(format!("{key}={}", sanitize_value(&value)));
+		self.lines
+			.push(format!("{key}={}", escape_unit_value(key, &value)));
 	}
 
 	/// True when no lines have been added; lets the caller skip emitting an empty
@@ -389,12 +452,16 @@ mod tests {
 
 	#[test]
 	fn render_volume_short_declared_uses_dot_volume_with_options() {
-		let out = render_volume(&VolumeMount::Short("data:/app:ro".into()), &["data"]);
-		// A declared named volume becomes `<name>.volume:<target>:<opts>`.
-		assert_eq!(out, "data.volume:/app:ro");
+		let out = render_volume(
+			&VolumeMount::Short("data:/app:ro".into()),
+			"proj",
+			&["data"],
+		);
+		// A declared named volume becomes `<project>-<name>.volume:<target>:<opts>`.
+		assert_eq!(out, "proj-data.volume:/app:ro");
 		// An undeclared source is passed through verbatim.
 		assert_eq!(
-			render_volume(&VolumeMount::Short("./host:/app".into()), &["data"]),
+			render_volume(&VolumeMount::Short("./host:/app".into()), "proj", &["data"]),
 			"./host:/app"
 		);
 	}
@@ -415,10 +482,11 @@ mod tests {
 			tmpfs: None,
 			consistency: None,
 		};
-		// Declared → `.volume` suffix; ro + nocopy folded into the options field.
+		// Declared → project-prefixed `.volume` suffix; ro + nocopy folded into
+		// the options field.
 		assert_eq!(
-			render_volume(&nocopy, &["vol"]),
-			"vol.volume:/data:ro,nocopy"
+			render_volume(&nocopy, "proj", &["vol"]),
+			"proj-vol.volume:/data:ro,nocopy"
 		);
 
 		// An empty source renders as just the target (anonymous mount).
@@ -432,7 +500,7 @@ mod tests {
 			tmpfs: None,
 			consistency: None,
 		};
-		assert_eq!(render_volume(&anon, &[]), "/scratch");
+		assert_eq!(render_volume(&anon, "proj", &[]), "/scratch");
 	}
 
 	// --- render_tmpfs_mount ---
@@ -473,5 +541,74 @@ mod tests {
 
 		// A non-tmpfs mount returns None so the caller emits a normal Volume=.
 		assert!(render_tmpfs_mount(&VolumeMount::Short("a:/b".into())).is_none());
+	}
+
+	// --- escape_unit_value (bug: incomplete systemd value escaping) ---
+
+	#[test]
+	fn escape_word_split_value_with_whitespace_is_quoted() {
+		// An Environment value with whitespace must be quoted so systemd keeps it
+		// as one value instead of splitting it into bogus extra entries.
+		assert_eq!(
+			escape_unit_value("Environment", "JAVA_OPTS=-Xmx512m -Xms256m"),
+			"\"JAVA_OPTS=-Xmx512m -Xms256m\""
+		);
+		// A Label is word-split too.
+		assert_eq!(
+			escape_unit_value("Label", "note=hello world"),
+			"\"note=hello world\""
+		);
+		// A scalar key that is not word-split keeps whitespace unquoted.
+		assert_eq!(
+			escape_unit_value("Description", "web (podup)"),
+			"web (podup)"
+		);
+	}
+
+	#[test]
+	fn escape_trailing_backslash_is_quoted_and_escaped() {
+		// A value ending in a backslash would otherwise continue onto — and
+		// swallow — the next directive line; it must be quoted and escaped.
+		let out = escape_unit_value("Environment", "WINPATH=C:\\tmp\\");
+		assert!(!out.ends_with('\\') || out.ends_with("\\\""));
+		assert_eq!(out, "\"WINPATH=C:\\\\tmp\\\\\"");
+	}
+
+	#[test]
+	fn escape_percent_is_doubled_for_literal() {
+		// systemd specifiers like %h must be passed through literally, not
+		// expanded at unit-activation time, matching docker-compose semantics.
+		assert_eq!(escape_unit_value("Environment", "HOME=%h"), "HOME=%%h");
+		assert_eq!(escape_unit_value("Image", "img%U"), "img%%U");
+	}
+
+	#[test]
+	fn escape_arg_line_keys_are_left_intact() {
+		// PodmanArgs/Exec/Entrypoint encode their own whitespace splitting and
+		// must not be quoted or have `%` doubled.
+		assert_eq!(
+			escape_unit_value("PodmanArgs", "--security-opt apparmor=foo"),
+			"--security-opt apparmor=foo"
+		);
+		assert_eq!(
+			escape_unit_value("Exec", "sh -c \"echo %s\""),
+			"sh -c \"echo %s\""
+		);
+	}
+
+	#[test]
+	fn safe_unit_stem_strips_leading_dash() {
+		// A name starting with `-`/`--` must not yield a file name beginning with
+		// a dash (a globbing/flag-injection hazard for downstream tooling).
+		assert_eq!(safe_unit_stem("--foo"), "_--foo");
+		assert_eq!(safe_unit_stem("-x"), "_-x");
+		assert!(!safe_unit_stem("--foo").starts_with('-'));
+	}
+
+	#[test]
+	fn unit_stem_is_project_prefixed() {
+		assert_eq!(unit_stem("proj", "web"), "proj-web");
+		// A leading dash in the project still cannot produce a dash-leading stem.
+		assert!(!unit_stem("-p", "web").starts_with('-'));
 	}
 }

@@ -12,20 +12,35 @@ use flate2::Compression;
 use crate::error::{ComposeError, Result};
 
 /// Append the build context to `tar`, honoring `.dockerignore`.
+///
+/// `skip_names` are context-relative paths to omit even when not ignored (used to
+/// drop the user's `.dockerignore` so it can be rewritten with extra rules).
 fn append_context<W: std::io::Write>(
 	tar: &mut tar::Builder<W>,
 	context: &Path,
 	ignore_patterns: &[String],
+	skip_names: &[&str],
 ) -> Result<()> {
+	// Do not dereference symlinks: a symlink in the context would otherwise pack
+	// the bytes of its (possibly out-of-context) target — e.g. `/etc/hostname` or
+	// an SSH key — into the image. Store the link itself instead, matching the
+	// watch-sync and cp paths.
+	tar.follow_symlinks(false);
 	for abs in super::super::walk_dir(context).map_err(ComposeError::Io)? {
 		let rel = abs
 			.strip_prefix(context)
 			.map_err(|_| ComposeError::Build("path strip error".into()))?;
 		let rel_str = rel.to_string_lossy();
+		if skip_names.iter().any(|n| rel_str == *n) {
+			continue;
+		}
 		if is_ignored(&rel_str, ignore_patterns) {
 			continue;
 		}
-		if abs.is_dir() {
+		// Classify without following symlinks so a symlink-to-dir is stored as a
+		// link rather than walked and dereferenced.
+		let is_dir = abs.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
+		if is_dir {
 			tar.append_dir(rel, &abs)
 				.map_err(|e| ComposeError::Build(e.to_string()))?;
 		} else {
@@ -76,7 +91,20 @@ pub(super) fn build_context_tar_with_inline(
 	tar.append_data(&mut header, inline_name, inline.as_bytes())
 		.map_err(|e| ComposeError::Build(e.to_string()))?;
 
-	append_context(&mut tar, context, &ignore_patterns)?;
+	// Skip the user's `.dockerignore` here; it is rewritten below with an extra
+	// rule excluding the synthesized inline Dockerfile.
+	append_context(&mut tar, context, &ignore_patterns, &[".dockerignore"])?;
+
+	// Rewrite `.dockerignore` (merged with any user rules) so a `COPY .` in the
+	// build does not bake the synthesized `.dockerfile-inline` into the image.
+	let dockerignore = inline_dockerignore(context, inline_name);
+	let mut di_header = tar::Header::new_gnu();
+	di_header.set_size(dockerignore.len() as u64);
+	di_header.set_mode(0o644);
+	di_header.set_cksum();
+	tar.append_data(&mut di_header, ".dockerignore", dockerignore.as_bytes())
+		.map_err(|e| ComposeError::Build(e.to_string()))?;
+
 	append_extra_files(&mut tar, extra_files)?;
 
 	let gz = tar
@@ -98,7 +126,7 @@ pub(crate) fn build_context_tar(
 	let encoder = GzEncoder::new(Vec::new(), Compression::default());
 	let mut tar = tar::Builder::new(encoder);
 
-	append_context(&mut tar, context, &ignore_patterns)?;
+	append_context(&mut tar, context, &ignore_patterns, &[])?;
 	append_extra_files(&mut tar, extra_files)?;
 
 	let gz = tar
@@ -109,6 +137,21 @@ pub(crate) fn build_context_tar(
 		.map_err(|e| ComposeError::Build(e.to_string()))?;
 
 	Ok(bytes)
+}
+
+/// Build the `.dockerignore` content for an inline-Dockerfile build: any user
+/// rules plus a final entry excluding the synthesized inline Dockerfile so a
+/// `COPY .` in the build does not capture `.dockerfile-inline`.
+fn inline_dockerignore(context: &Path, inline_name: &str) -> String {
+	let existing =
+		crate::filesystem::read_to_string_capped(context.join(".dockerignore")).unwrap_or_default();
+	let mut out = existing.trim_end_matches(['\n', '\r']).to_string();
+	if !out.is_empty() {
+		out.push('\n');
+	}
+	out.push_str(inline_name);
+	out.push('\n');
+	out
 }
 
 /// Map a compose `additional_contexts` value to the libpod
@@ -465,6 +508,109 @@ mod tests {
 		let (bytes, df_name) = build_context_tar_with_inline(dir.path(), inline, &[]).unwrap();
 		assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
 		assert!(!df_name.is_empty());
+	}
+
+	#[test]
+	fn inline_dockerfile_excluded_via_dockerignore() {
+		use flate2::read::GzDecoder;
+		use std::io::Read;
+
+		let dir = tempdir().unwrap();
+		fs::write(dir.path().join("app.txt"), b"x").unwrap();
+		let (bytes, _) = build_context_tar_with_inline(dir.path(), "FROM alpine\n", &[]).unwrap();
+
+		let mut raw = Vec::new();
+		GzDecoder::new(bytes.as_slice())
+			.read_to_end(&mut raw)
+			.unwrap();
+		let mut archive = tar::Archive::new(raw.as_slice());
+		let mut di = String::new();
+		for entry in archive.entries().unwrap() {
+			let mut entry = entry.unwrap();
+			if entry.path().unwrap().to_string_lossy() == ".dockerignore" {
+				entry.read_to_string(&mut di).unwrap();
+			}
+		}
+		assert!(
+			di.lines().any(|l| l == ".dockerfile-inline"),
+			"inline Dockerfile must be excluded from COPY via .dockerignore: {di:?}"
+		);
+	}
+
+	#[test]
+	fn inline_dockerignore_preserves_user_rules() {
+		use flate2::read::GzDecoder;
+		use std::io::Read;
+
+		let dir = tempdir().unwrap();
+		fs::write(dir.path().join("app.txt"), b"x").unwrap();
+		fs::write(dir.path().join(".dockerignore"), b"*.log\n").unwrap();
+		let (bytes, _) = build_context_tar_with_inline(dir.path(), "FROM alpine\n", &[]).unwrap();
+
+		let mut raw = Vec::new();
+		GzDecoder::new(bytes.as_slice())
+			.read_to_end(&mut raw)
+			.unwrap();
+		let mut archive = tar::Archive::new(raw.as_slice());
+		// The user's `.dockerignore` must appear exactly once, merged with the
+		// synthesized inline-Dockerfile exclusion.
+		let mut di_entries = 0;
+		let mut di = String::new();
+		for entry in archive.entries().unwrap() {
+			let mut entry = entry.unwrap();
+			if entry.path().unwrap().to_string_lossy() == ".dockerignore" {
+				di_entries += 1;
+				entry.read_to_string(&mut di).unwrap();
+			}
+		}
+		assert_eq!(di_entries, 1, "exactly one .dockerignore entry");
+		assert!(di.lines().any(|l| l == "*.log"), "user rule kept: {di:?}");
+		assert!(
+			di.lines().any(|l| l == ".dockerfile-inline"),
+			"inline exclusion added: {di:?}"
+		);
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn context_tar_packs_symlink_as_link_not_target() {
+		use flate2::read::GzDecoder;
+		use std::io::Read;
+
+		// A symlink that points outside the context (e.g. to a host secret) must be
+		// stored as a link, never dereferenced into the image.
+		let outside = tempdir().unwrap();
+		fs::write(outside.path().join("secret"), b"TOPSECRET").unwrap();
+
+		let dir = tempdir().unwrap();
+		fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
+		std::os::unix::fs::symlink(outside.path().join("secret"), dir.path().join("leak")).unwrap();
+
+		let bytes = build_context_tar(dir.path(), "Dockerfile", &[]).unwrap();
+		let mut raw = Vec::new();
+		GzDecoder::new(bytes.as_slice())
+			.read_to_end(&mut raw)
+			.unwrap();
+		let mut archive = tar::Archive::new(raw.as_slice());
+
+		let mut found = false;
+		for entry in archive.entries().unwrap() {
+			let entry = entry.unwrap();
+			if entry.path().unwrap().to_string_lossy() == "leak" {
+				found = true;
+				assert_eq!(
+					entry.header().entry_type(),
+					tar::EntryType::Symlink,
+					"symlink must be packed as a link"
+				);
+				assert_eq!(
+					entry.header().size().unwrap(),
+					0,
+					"link entry must not carry the target's bytes"
+				);
+			}
+		}
+		assert!(found, "symlink entry must be present in the context tar");
 	}
 
 	#[test]

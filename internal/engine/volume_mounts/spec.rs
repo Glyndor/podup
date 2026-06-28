@@ -18,6 +18,21 @@ pub(super) fn parse_volume_string(s: &str) -> Option<(Option<Mount>, Option<Name
 		.map(|o| o.trim().to_string())
 		.filter(|o| !o.is_empty())
 		.collect();
+	// A colon-less entry (`/data`, `cache`) is a single in-container target, not
+	// a `src:dst` pair: per the compose-spec it provisions an anonymous volume at
+	// that path. Without this, `is_bind_source("/data")` is true and the leading
+	// slash would be mistaken for a host bind, mounting the host's `/data`.
+	if !spec_has_separator(s) {
+		return Some((
+			None,
+			Some(NamedVolume {
+				name: String::new(),
+				dest: dst.to_string(),
+				options: opts,
+				sub_path: None,
+			}),
+		));
+	}
 	if is_bind_source(src) {
 		Some((
 			Some(Mount {
@@ -60,6 +75,14 @@ fn is_bind_source(src: &str) -> bool {
 		|| src.starts_with('.')
 		|| src.starts_with('~')
 		|| has_windows_drive_prefix(src)
+}
+
+/// Whether a short-form spec carries a `src:dst` separator, i.e. at least one
+/// colon outside a leading Windows drive prefix. A spec with none is a single
+/// in-container path (anonymous volume) rather than a `src:dst` pair.
+fn spec_has_separator(s: &str) -> bool {
+	let scan_from = if has_windows_drive_prefix(s) { 2 } else { 0 };
+	s.bytes().skip(scan_from).any(|b| b == b':')
 }
 
 /// Split a short-form volume spec into `(src, dst, opts)`. Colons separate the
@@ -150,8 +173,42 @@ pub(super) fn extend_volume_opts_str(opts: &mut Vec<String>, v: Option<&VolumeOp
 
 #[cfg(test)]
 mod tests {
-	use super::{extend_bind_opts_str, is_bind_source, map_selinux_option, split_volume_spec};
+	use super::{
+		extend_bind_opts_str, is_bind_source, map_selinux_option, parse_volume_string,
+		split_volume_spec,
+	};
 	use crate::compose::types::BindOptions;
+
+	#[test]
+	fn colon_less_path_is_anonymous_volume_not_bind() {
+		// `- /data` (no `src:dst`) is a single in-container target: an anonymous
+		// volume, not a host bind of `/data`.
+		let (mount, named) = parse_volume_string("/data").unwrap();
+		assert!(mount.is_none(), "must not be a bind mount");
+		let nv = named.expect("expected an anonymous named volume");
+		assert_eq!(nv.name, "", "anonymous volume carries no name");
+		assert_eq!(nv.dest, "/data");
+	}
+
+	#[test]
+	fn colon_less_relative_token_is_anonymous_volume() {
+		// A bare token with no separator is still a single target, so it produces
+		// an anonymous volume rather than being read as a host bind.
+		let (mount, named) = parse_volume_string("cache").unwrap();
+		assert!(mount.is_none());
+		assert_eq!(named.unwrap().dest, "cache");
+	}
+
+	#[test]
+	fn explicit_pair_still_binds_host_path() {
+		// An explicit `src:dst` with a host-path source is still a bind mount.
+		let (mount, named) = parse_volume_string("/host:/data").unwrap();
+		assert!(named.is_none());
+		let m = mount.expect("expected a bind mount");
+		assert_eq!(m.mount_type, "bind");
+		assert_eq!(m.source.as_deref(), Some("/host"));
+		assert_eq!(m.destination, "/data");
+	}
 
 	#[test]
 	fn selinux_shared_maps_to_lowercase_z() {

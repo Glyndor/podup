@@ -84,7 +84,9 @@ impl Engine {
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = self.replica_name_at(service_name, service, opts.index)?;
+		let container_name = self
+			.live_replica_name_at(service_name, service, opts.index)
+			.await?;
 
 		let path = format!(
 			"{API_PREFIX}/containers/{}/archive?path={}",
@@ -130,7 +132,9 @@ impl Engine {
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = self.replica_name_at(service_name, service, opts.index)?;
+		let container_name = self
+			.live_replica_name_at(service_name, service, opts.index)
+			.await?;
 
 		// Match `docker cp` destination semantics. The libpod archive PUT extracts
 		// the tar *at* a directory, so:

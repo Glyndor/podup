@@ -16,7 +16,7 @@ pub(super) use volume::volume_unit;
 // `QuadletUnit` type, re-exported so the unit submodules import them from here.
 use super::render::{
 	render_command, render_publish_port, render_restart, render_tmpfs_mount, render_volume,
-	safe_unit_stem, sorted_label_pairs, sorted_pairs, Section,
+	sorted_label_pairs, sorted_pairs, unit_stem, Section,
 };
 use super::warnings::collect_warnings;
 use super::QuadletUnit;

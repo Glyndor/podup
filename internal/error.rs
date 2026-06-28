@@ -35,6 +35,10 @@ pub enum ComposeError {
 	HealthCheckTimeout(String),
 	/// A `ports:` entry could not be parsed.
 	InvalidPort(String),
+	/// A `kill` signal is empty, malformed, or not a recognised signal
+	/// name/number. Forwarding it verbatim would let libpod silently default to
+	/// SIGKILL, so it is rejected up front.
+	InvalidSignal(String),
 	/// Image build failed (context assembly or the Podman build step).
 	Build(String),
 	/// `extends:` could not be resolved (missing file/service or a cycle).
@@ -72,6 +76,16 @@ pub enum ComposeError {
 	},
 	/// `start --wait --wait-timeout` elapsed before services became healthy.
 	WaitTimeout { secs: u64 },
+	/// The `-t/--timeout` shutdown grace was given an unusable value (a number
+	/// below `-1`). `-1` means "wait indefinitely" (docker parity) and any
+	/// non-negative value is a second count; everything else is rejected here
+	/// rather than forwarded to libpod as a raw `HTTP 400`.
+	InvalidTimeout(i32),
+	/// An explicitly requested env file (`--env-file` or a service `env_file:`)
+	/// could not be read or parsed — a missing/unreadable path or a malformed
+	/// entry such as an unterminated quoted value. The string is a ready-to-print
+	/// message.
+	EnvFile(String),
 }
 
 impl fmt::Display for ComposeError {
@@ -92,6 +106,7 @@ impl fmt::Display for ComposeError {
 			}
 			Self::HealthCheckTimeout(s) => write!(f, "health check timeout for container '{s}'"),
 			Self::InvalidPort(s) => write!(f, "invalid port mapping: {s}"),
+			Self::InvalidSignal(s) => write!(f, "invalid signal: {s}"),
 			Self::Build(s) => write!(f, "build error: {s}"),
 			Self::Extends(s) => write!(f, "extends error: {s}"),
 			Self::Include(s) => write!(f, "include error: {s}"),
@@ -136,6 +151,11 @@ impl fmt::Display for ComposeError {
 				f,
 				"timed out after {secs}s waiting for services to become healthy"
 			),
+			Self::InvalidTimeout(secs) => write!(
+				f,
+				"invalid --timeout {secs}: use -1 to wait indefinitely or a non-negative number of seconds"
+			),
+			Self::EnvFile(s) => write!(f, "{s}"),
 		}
 	}
 }
@@ -269,6 +289,14 @@ mod tests {
 			(
 				"timed out after 30s waiting for services to become healthy",
 				ComposeError::WaitTimeout { secs: 30 },
+			),
+			(
+				"invalid --timeout -5: use -1 to wait indefinitely or a non-negative number of seconds",
+				ComposeError::InvalidTimeout(-5),
+			),
+			(
+				"env file not found: app.env",
+				ComposeError::EnvFile("env file not found: app.env".into()),
 			),
 		];
 		for (expected_prefix, err) in cases {
