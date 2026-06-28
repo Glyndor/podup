@@ -130,6 +130,10 @@ pub(crate) fn render_config(
 			return Err(podup::ComposeError::NoImageOrBuild(name.clone()));
 		}
 	}
+	// Surface `depends_on` cycles (and missing required dependencies) at config
+	// time too, not just when `up` runs the topological sort — matching docker
+	// compose, which rejects a cyclic config up front.
+	podup::resolve_order(file)?;
 	if quiet {
 		return Ok(());
 	}
@@ -336,6 +340,17 @@ mod tests {
 	fn sample_file() -> podup::compose::types::ComposeFile {
 		podup::parse_str("services:\n  web:\n    image: nginx\n  db:\n    image: postgres\n")
 			.unwrap()
+	}
+
+	#[test]
+	fn render_config_rejects_depends_on_cycle() {
+		// A `depends_on` cycle must be reported at config time, not deferred to up.
+		let file = podup::parse_str(
+			"services:\n  a:\n    image: x\n    depends_on: [b]\n  b:\n    image: y\n    depends_on: [a]\n",
+		)
+		.unwrap();
+		let err = render_config(&file, &ConfigFormat::Yaml, false, true).unwrap_err();
+		assert!(matches!(err, podup::ComposeError::CircularDependency(_)));
 	}
 
 	#[test]
