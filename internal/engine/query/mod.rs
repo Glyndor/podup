@@ -187,12 +187,8 @@ impl Engine {
 		let _ = writeln!(anstream::stdout(), "{on}{cols}{off}");
 		for c in &containers {
 			let ports = format_ports(&c.ports);
-			println!(
-				"{:<40} {:<30} {:<20} {ports}",
-				name_of(c),
-				c.image,
-				display_status(c)
-			);
+			let status = crate::ui::status_cell(display_status(c), 20);
+			println!("{:<40} {:<30} {status} {ports}", name_of(c), c.image);
 		}
 
 		Ok(())

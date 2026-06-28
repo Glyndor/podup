@@ -34,14 +34,21 @@ fn no_color() -> bool {
 	std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty())
 }
 
-/// Whether a stream that is (or isn't) a TTY should be coloured under the global
-/// choice. `Auto` defers to the TTY and `NO_COLOR`.
-fn colored(is_terminal: bool) -> bool {
-	match ColorChoice::global() {
+/// Whether a stream that is (or isn't) a TTY should be coloured under `choice`.
+/// `Auto` defers to the TTY and `NO_COLOR`. Pure (takes the choice as an argument)
+/// so the policy is tested without mutating the process-global choice.
+fn colored_with(choice: ColorChoice, is_terminal: bool) -> bool {
+	match choice {
 		ColorChoice::Always | ColorChoice::AlwaysAnsi => true,
 		ColorChoice::Never => false,
 		ColorChoice::Auto => is_terminal && !no_color(),
 	}
+}
+
+/// Whether a stream that is (or isn't) a TTY should be coloured under the global
+/// choice.
+fn colored(is_terminal: bool) -> bool {
+	colored_with(ColorChoice::global(), is_terminal)
 }
 
 /// Whether a raw (non-anstream) write to stdout should embed ANSI codes.
@@ -79,14 +86,16 @@ pub fn paint(style: Style, text: &str, enabled: bool) -> String {
 	}
 }
 
-/// The distinct colours cycled through for per-service log prefixes.
+/// Identity colours cycled through for per-service log prefixes. Deliberately
+/// excludes red/green/yellow, which are reserved for status/severity meaning, so
+/// a service prefix is never mistaken for an error/ok/warning signal.
 const SERVICE_PALETTE: [AnsiColor; 6] = [
 	AnsiColor::Cyan,
-	AnsiColor::Green,
-	AnsiColor::Yellow,
 	AnsiColor::Magenta,
 	AnsiColor::Blue,
-	AnsiColor::BrightRed,
+	AnsiColor::BrightCyan,
+	AnsiColor::BrightMagenta,
+	AnsiColor::BrightBlue,
 ];
 
 /// Stable palette index for a service name — the same name always maps to the
@@ -103,6 +112,38 @@ fn palette_index(name: &str) -> usize {
 /// The stable colour for a service's aggregated-log prefix.
 pub fn service_style(name: &str) -> Style {
 	Style::new().fg_color(Some(SERVICE_PALETTE[palette_index(name)].into()))
+}
+
+/// The semantic colour for a container status word, or `None` for an unknown one
+/// (left uncoloured). Green = up/healthy, red = exited/dead/unhealthy, yellow =
+/// paused/(re)starting, dim = created. Matches on substrings so it handles both
+/// the bare state (`running`) and Podman's verbose `Status` (`Up 2 minutes`,
+/// `Exited (1)`).
+fn status_style(status: &str) -> Option<Style> {
+	let s = status.to_ascii_lowercase();
+	let colour = if s.contains("unhealthy") || s.contains("exit") || s.contains("dead") {
+		AnsiColor::Red
+	} else if s.contains("running") || s.contains("healthy") || s.starts_with("up") {
+		AnsiColor::Green
+	} else if s.contains("paus") || s.contains("restart") || s.contains("starting") {
+		AnsiColor::Yellow
+	} else if s.contains("created") {
+		return Some(Style::new().dimmed());
+	} else {
+		return None;
+	};
+	Some(Style::new().fg_color(Some(colour.into())))
+}
+
+/// Render a container `status` left-padded to `width`, colourised by its meaning
+/// when stdout is a colour sink. The padding is applied first so the colour codes
+/// (zero display width) never disturb column alignment.
+pub fn status_cell(status: &str, width: usize) -> String {
+	let padded = format!("{status:<width$}");
+	match status_style(status) {
+		Some(style) => paint(style, &padded, stdout_colored()),
+		None => padded,
+	}
 }
 
 #[cfg(test)]
@@ -134,22 +175,38 @@ mod tests {
 	}
 
 	#[test]
-	fn no_color_env_disables_auto() {
-		// `colored` honours NO_COLOR in Auto regardless of the TTY argument.
-		temp_env::with_var("NO_COLOR", Some("1"), || {
-			ColorChoice::Auto.write_global();
-			assert!(!colored(true));
-		});
+	fn colour_choice_resolution() {
+		// Pure resolution — never touches the process-global choice, so it can't
+		// race the production code (LinePrefixer/status_cell) that reads it.
 		temp_env::with_var_unset("NO_COLOR", || {
-			ColorChoice::Never.write_global();
-			assert!(!colored(true));
-			ColorChoice::Always.write_global();
-			assert!(colored(false));
-			ColorChoice::Auto.write_global();
-			assert!(colored(true));
-			assert!(!colored(false));
+			assert!(!colored_with(ColorChoice::Never, true));
+			assert!(colored_with(ColorChoice::Always, false));
+			assert!(colored_with(ColorChoice::Auto, true));
+			assert!(!colored_with(ColorChoice::Auto, false));
 		});
-		// Restore the default for other tests sharing the process-global choice.
-		ColorChoice::Auto.write_global();
+		// NO_COLOR forces plain in Auto, regardless of the TTY.
+		temp_env::with_var("NO_COLOR", Some("1"), || {
+			assert!(!colored_with(ColorChoice::Auto, true));
+			// ...but an explicit `always` still overrides NO_COLOR.
+			assert!(colored_with(ColorChoice::Always, true));
+		});
+	}
+
+	#[test]
+	fn status_style_is_semantic() {
+		assert_ne!(status_style("running"), status_style("exited (1)"));
+		assert_ne!(status_style("unhealthy"), status_style("healthy"));
+		assert!(status_style("Up 2 minutes").is_some());
+		assert!(status_style("paused").is_some());
+		assert!(status_style("created").is_some());
+		assert!(status_style("weird-state").is_none());
+	}
+
+	#[test]
+	fn status_cell_pads_and_keeps_status() {
+		let cell = status_cell("ok", 6);
+		assert!(cell.contains("ok"));
+		// At least the requested width (colour codes, if any, only add length).
+		assert!(cell.len() >= 6);
 	}
 }
