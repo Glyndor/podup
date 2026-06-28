@@ -232,17 +232,73 @@ fn pack_path(src: &Path, follow_link: bool, name_override: Option<&str>) -> Resu
 
 /// Route a container archive to the host destination.
 ///
-/// docker/podman `cp` semantics: when `dst` is an existing directory the archive
-/// is extracted into it; otherwise `dst` names the target file and the archive
-/// must contain a single regular file, whose **content** is written to exactly
-/// `dst` — the daemon-supplied entry name is ignored. This matters for security:
-/// a hostile image must not be able to choose the on-host filename (e.g. drop a
-/// `.bashrc`/`authorized_keys` into the destination directory).
+/// docker/podman `cp` semantics for a container→host extraction:
+/// - `dst` is an existing directory: the archive is extracted into it (a source
+///   directory lands under its own name).
+/// - `dst` does not exist and the source is a single regular file: its
+///   **content** is written to exactly `dst` — the daemon-supplied entry name is
+///   ignored, so a hostile image cannot choose the on-host filename (e.g. drop a
+///   `.bashrc`/`authorized_keys` into the destination directory).
+/// - `dst` does not exist and the source is a directory: `dst` is created and the
+///   source's *contents* are copied into it (matching `docker cp`).
 fn extract_archive(tar_bytes: &[u8], dst: &Path) -> Result<()> {
 	if dst.is_dir() {
 		return extract_tar_guarded(tar_bytes, dst);
 	}
-	write_single_entry_to(tar_bytes, dst)
+	if !archive_contains_dir(tar_bytes)? {
+		// A single regular file (or, defensively, a name-only archive) is written
+		// to exactly `dst`; `write_single_entry_to` still rejects a multi-entry
+		// archive against a file destination.
+		return write_single_entry_to(tar_bytes, dst);
+	}
+	// Directory source into a non-existent destination: create it and copy the
+	// source's contents in. The libpod archive is tarred under the source's
+	// basename, so extract through the zip-slip guard, then collapse that single
+	// wrapper level to leave the contents directly under `dst`.
+	std::fs::create_dir_all(dst).map_err(ComposeError::Io)?;
+	extract_tar_guarded(tar_bytes, dst)?;
+	flatten_single_wrapper_dir(dst)
+}
+
+/// True if any entry in `tar_bytes` is a directory — the signal that the source
+/// of a container→host copy was a directory (libpod tars it under its basename),
+/// as opposed to a single file.
+fn archive_contains_dir(tar_bytes: &[u8]) -> Result<bool> {
+	let cursor = std::io::Cursor::new(tar_bytes);
+	let mut archive = tar::Archive::new(cursor);
+	for entry in archive.entries().map_err(ComposeError::Io)? {
+		let entry = entry.map_err(ComposeError::Io)?;
+		if entry.header().entry_type() == tar::EntryType::Directory {
+			return Ok(true);
+		}
+	}
+	Ok(false)
+}
+
+/// Lift the contents of a single wrapper directory up into `dst`.
+///
+/// The libpod archive for `cp container:/srcdir` is tarred under the source's
+/// basename (`srcdir/...`). When that lands in a freshly-created `dst`, docker
+/// puts the source's *contents* directly in `dst`, so collapse the lone wrapper
+/// level. A no-op unless `dst` holds exactly one entry and it is a directory.
+fn flatten_single_wrapper_dir(dst: &Path) -> Result<()> {
+	let mut children: Vec<std::path::PathBuf> = std::fs::read_dir(dst)
+		.map_err(ComposeError::Io)?
+		.filter_map(|e| e.ok().map(|e| e.path()))
+		.collect();
+	if children.len() != 1 || !children[0].is_dir() {
+		return Ok(());
+	}
+	let wrapper = children.remove(0);
+	for entry in std::fs::read_dir(&wrapper).map_err(ComposeError::Io)? {
+		let from = entry.map_err(ComposeError::Io)?.path();
+		let name = from
+			.file_name()
+			.ok_or_else(|| ComposeError::Build("cp: archive entry has no name".into()))?;
+		std::fs::rename(&from, dst.join(name)).map_err(ComposeError::Io)?;
+	}
+	std::fs::remove_dir(&wrapper).map_err(ComposeError::Io)?;
+	Ok(())
 }
 
 /// Extract a (plain, uncompressed) tar archive into `dst_dir`, refusing any
@@ -496,6 +552,57 @@ mod tests {
 		assert!(super::extract_archive(&bytes, &dst).is_err());
 	}
 
+	/// Build a directory archive shaped like libpod's `cp container:/srcdir`:
+	/// a wrapper directory entry plus its children, all under the basename.
+	fn tar_dir_with(wrapper: &str, files: &[(&str, &[u8])]) -> Vec<u8> {
+		let mut builder = tar::Builder::new(Vec::new());
+		let mut d = tar::Header::new_gnu();
+		d.set_size(0);
+		d.set_mode(0o755);
+		d.set_entry_type(tar::EntryType::Directory);
+		d.set_path(format!("{wrapper}/")).expect("path");
+		d.set_cksum();
+		builder.append(&d, std::io::empty()).expect("dir");
+		for (name, data) in files {
+			let mut h = tar::Header::new_gnu();
+			h.set_size(data.len() as u64);
+			h.set_mode(0o644);
+			h.set_entry_type(tar::EntryType::Regular);
+			h.set_path(format!("{wrapper}/{name}")).expect("path");
+			h.set_cksum();
+			builder.append(&h, *data).expect("file");
+		}
+		builder.into_inner().expect("finish")
+	}
+
+	#[test]
+	fn extract_dir_into_missing_dest_creates_and_flattens() {
+		// dst does not exist and the source is a directory: dst is created and the
+		// source's *contents* land directly in it (the wrapper level is collapsed),
+		// matching `docker cp`.
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dst = dir.path().join("newdir");
+		let bytes = tar_dir_with("srcdir", &[("a.txt", b"aaa"), ("b.txt", b"bbb")]);
+		super::extract_archive(&bytes, &dst).expect("extract");
+		assert!(dst.is_dir());
+		assert_eq!(std::fs::read(dst.join("a.txt")).expect("read"), b"aaa");
+		assert_eq!(std::fs::read(dst.join("b.txt")).expect("read"), b"bbb");
+		assert!(
+			!dst.join("srcdir").exists(),
+			"the wrapper directory level must be collapsed"
+		);
+	}
+
+	#[test]
+	fn extract_single_file_into_missing_dest_still_writes_exact_name() {
+		// The single-file path is unchanged: content at exactly `dst`.
+		let dir = tempfile::tempdir().expect("tempdir");
+		let dst = dir.path().join("renamed.txt");
+		let bytes = tar_bytes_with("original.txt", b"data");
+		super::extract_archive(&bytes, &dst).expect("extract");
+		assert_eq!(std::fs::read(&dst).expect("read"), b"data");
+	}
+
 	#[cfg(unix)]
 	#[test]
 	fn extract_strips_group_other_write_and_special_bits() {
@@ -551,9 +658,10 @@ mod tests {
 	}
 
 	#[test]
-	fn extract_archive_to_file_rejects_non_regular_entry() {
-		// A single directory entry (not a regular file) against a file destination
-		// is rejected — only a directory destination accepts a directory tree.
+	fn extract_archive_dir_source_creates_non_existent_dest() {
+		// A directory source against a non-existent destination creates the
+		// destination directory (matching `docker cp`) rather than erroring,
+		// regardless of the destination's name.
 		let dir = tempfile::tempdir().expect("tempdir");
 		let dst = dir.path().join("out.txt");
 		let mut h = tar::Header::new_gnu();
@@ -565,7 +673,8 @@ mod tests {
 		let mut builder = tar::Builder::new(Vec::new());
 		builder.append(&h, std::io::empty()).expect("append");
 		let bytes = builder.into_inner().expect("finish");
-		assert!(super::extract_archive(&bytes, &dst).is_err());
+		super::extract_archive(&bytes, &dst).expect("extract");
+		assert!(dst.is_dir());
 	}
 
 	#[test]
