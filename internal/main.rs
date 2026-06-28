@@ -199,7 +199,12 @@ async fn run() -> podup::Result<()> {
 		kind: GenerateCommands::Quadlet { output },
 	} = &cli.command
 	{
-		return write_quadlet(&file, &project, output.as_deref());
+		// Honor active profiles so `generate quadlet` emits the same services
+		// `up` would start, instead of also emitting units for inactive-profile
+		// services (which would make `--profile` a no-op on this subcommand).
+		let mut filtered = file.clone();
+		podup::retain_active_profiles(&mut filtered, &cli.profile);
+		return write_quadlet(&filtered, &project, output.as_deref());
 	}
 
 	let client = podup::podman::connect(cli.socket.as_deref())?;
