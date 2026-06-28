@@ -123,6 +123,22 @@ async fn run() -> podup::Result<()> {
 	// filesystem work is blocking; keep it off the async path entirely.
 	#[cfg(feature = "update")]
 	if let Commands::Update { check, force } = cli.command {
+		// The compose-only global value-flags (--socket/--profile/--env-file/
+		// --project-directory) never reach the binary-only self-update, so accepting
+		// them silently is a misleading no-op. Reject any that were passed on the
+		// command line (env-sourced values are left alone — they are not a misuse).
+		if let Some(flag) = misused_update_global() {
+			use clap::CommandFactory;
+			Cli::command()
+				.error(
+					clap::error::ErrorKind::ArgumentConflict,
+					format!(
+						"`{flag}` has no effect on `update`, which replaces the podup \
+						 binary itself rather than acting on a compose project"
+					),
+				)
+				.exit();
+		}
 		let opts = podup::update::UpdateOptions {
 			check_only: check,
 			force,
@@ -257,4 +273,79 @@ async fn run() -> podup::Result<()> {
 	};
 
 	dispatch::dispatch(&engine, &file, cli.command, &cli.profile).await
+}
+
+/// Compose-only global value-flags that `update` parses (they are declared
+/// `global` on [`Cli`]) but cannot act on, since self-update rewrites the binary
+/// itself rather than a compose project. Each entry is `(arg-id, user-facing
+/// spelling)`.
+#[cfg(feature = "update")]
+const UPDATE_IRRELEVANT_GLOBALS: &[(&str, &str)] = &[
+	("socket", "--socket"),
+	("profile", "--profile"),
+	("project_directory", "--project-directory"),
+	("env_file", "--env-file"),
+];
+
+/// Return the first compose-only global flag that was supplied on the command
+/// line for an `update` invocation, or `None` if none were. Re-parses the
+/// already-validated argv to inspect value sources; env-sourced and default
+/// values are deliberately ignored, so an exported `PODMAN_SOCKET` does not
+/// break `podup update`.
+#[cfg(feature = "update")]
+fn misused_update_global() -> Option<&'static str> {
+	use clap::CommandFactory;
+	// Parsing already succeeded once in `parse_cli`, so this re-parse cannot fail.
+	let matches = Cli::command().try_get_matches().ok()?;
+	first_misused_global(&matches)
+}
+
+/// Core of [`misused_update_global`], split out so it can be tested against
+/// matches built from a fixed argv. A global flag can surface on the root
+/// matches or on the `update` subcommand matches depending on its position
+/// relative to the subcommand, so both are checked.
+#[cfg(feature = "update")]
+fn first_misused_global(matches: &clap::ArgMatches) -> Option<&'static str> {
+	use clap::parser::ValueSource;
+	let update = matches.subcommand_matches("update");
+	UPDATE_IRRELEVANT_GLOBALS.iter().find_map(|(id, flag)| {
+		let from_cli = |m: &clap::ArgMatches| m.value_source(id) == Some(ValueSource::CommandLine);
+		(from_cli(matches) || update.is_some_and(from_cli)).then_some(*flag)
+	})
+}
+
+#[cfg(all(test, feature = "update"))]
+mod tests {
+	use super::*;
+	use clap::CommandFactory;
+
+	fn matches_for(args: &[&str]) -> clap::ArgMatches {
+		Cli::command()
+			.try_get_matches_from(args)
+			.expect("args parse")
+	}
+
+	#[test]
+	fn update_flags_compose_globals_before_subcommand_are_rejected() {
+		let m = matches_for(&[
+			"podup",
+			"--socket",
+			"unix:///tmp/x.sock",
+			"update",
+			"--check",
+		]);
+		assert_eq!(first_misused_global(&m), Some("--socket"));
+	}
+
+	#[test]
+	fn update_flags_compose_globals_after_subcommand_are_rejected() {
+		let m = matches_for(&["podup", "update", "--project-directory", "/tmp"]);
+		assert_eq!(first_misused_global(&m), Some("--project-directory"));
+	}
+
+	#[test]
+	fn update_without_compose_globals_is_accepted() {
+		let m = matches_for(&["podup", "update", "--check", "--force"]);
+		assert_eq!(first_misused_global(&m), None);
+	}
 }
