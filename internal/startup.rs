@@ -53,7 +53,13 @@ where
 		mut writer: Writer<'_>,
 		event: &Event<'_>,
 	) -> std::fmt::Result {
-		write!(writer, "podup: {}: ", level_word(*event.metadata().level()))?;
+		let level = *event.metadata().level();
+		let label = podup::ui::paint(
+			level_style(level),
+			level_word(level),
+			podup::ui::stderr_colored(),
+		);
+		write!(writer, "podup: {label}: ")?;
 		ctx.field_format().format_fields(writer.by_ref(), event)?;
 		writeln!(writer)
 	}
@@ -67,6 +73,18 @@ fn level_word(level: tracing::Level) -> &'static str {
 		tracing::Level::INFO => "info",
 		tracing::Level::DEBUG => "debug",
 		tracing::Level::TRACE => "trace",
+	}
+}
+
+/// The colour for a level's word: bold red (error), bold yellow (warning), green
+/// (info), dim (debug/trace).
+fn level_style(level: tracing::Level) -> anstyle::Style {
+	use anstyle::{AnsiColor, Style};
+	match level {
+		tracing::Level::ERROR => Style::new().bold().fg_color(Some(AnsiColor::Red.into())),
+		tracing::Level::WARN => Style::new().bold().fg_color(Some(AnsiColor::Yellow.into())),
+		tracing::Level::INFO => Style::new().fg_color(Some(AnsiColor::Green.into())),
+		_ => Style::new().dimmed(),
 	}
 }
 
@@ -246,7 +264,16 @@ pub(crate) fn parse_cli() -> Cli {
 			clap::error::ErrorKind::DisplayHelp
 			| clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
 			| clap::error::ErrorKind::DisplayVersion => {
-				print!("\n{e}\n");
+				// `--help`/`--version` are handled by clap before `--ansi` is parsed,
+				// so colour the rendered text by clap's own styling only when stdout
+				// is a colour sink (TTY + no NO_COLOR); piped output stays plain and
+				// byte-identical to before.
+				let rendered = e.render();
+				if podup::ui::stdout_colored() {
+					print!("\n{}\n", rendered.ansi());
+				} else {
+					print!("\n{rendered}\n");
+				}
 				process::exit(0);
 			}
 			_ => e.exit(),
@@ -291,6 +318,19 @@ mod tests {
 		assert_eq!(level_word(tracing::Level::INFO), "info");
 		assert_eq!(level_word(tracing::Level::DEBUG), "debug");
 		assert_eq!(level_word(tracing::Level::TRACE), "trace");
+		// Each severity gets a distinct style; debug/trace share the dim style.
+		assert_ne!(
+			level_style(tracing::Level::ERROR),
+			level_style(tracing::Level::INFO)
+		);
+		assert_ne!(
+			level_style(tracing::Level::WARN),
+			level_style(tracing::Level::ERROR)
+		);
+		assert_eq!(
+			level_style(tracing::Level::DEBUG),
+			level_style(tracing::Level::TRACE)
+		);
 	}
 
 	fn sample_file() -> podup::compose::types::ComposeFile {

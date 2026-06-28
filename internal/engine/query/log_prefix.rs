@@ -12,8 +12,17 @@ pub(super) struct LinePrefixer {
 
 impl LinePrefixer {
 	pub(super) fn new(label: &str) -> Self {
+		// Colour the whole prefix with the service's stable colour so aggregated
+		// multi-service output is easy to scan. Gated on stdout being a colour sink
+		// (a raw write anstream does not strip for us).
+		let plain = format!("{label}  | ");
+		let label = crate::ui::paint(
+			crate::ui::service_style(label),
+			&plain,
+			crate::ui::stdout_colored(),
+		);
 		Self {
-			label: format!("{label}  | "),
+			label,
 			pending: Vec::new(),
 		}
 	}

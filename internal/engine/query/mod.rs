@@ -181,15 +181,14 @@ impl Engine {
 			return Ok(());
 		}
 
-		println!("{:<40} {:<30} {:<20}", "NAME", "IMAGE", "STATUS");
+		crate::ui::print_bold_header(&format!(
+			"{:<40} {:<30} {:<20} PORTS",
+			"NAME", "IMAGE", "STATUS"
+		));
 		for c in &containers {
 			let ports = format_ports(&c.ports);
-			println!(
-				"{:<40} {:<30} {:<20} {ports}",
-				name_of(c),
-				c.image,
-				display_status(c)
-			);
+			let status = crate::ui::status_cell(display_status(c), 20);
+			println!("{:<40} {:<30} {status} {ports}", name_of(c), c.image);
 		}
 
 		Ok(())
@@ -467,8 +466,9 @@ impl Engine {
 		Ok(())
 	}
 
-	/// Remove containers labelled for this project that are not defined in the current compose file.
-	pub async fn remove_orphans(&self, file: &ComposeFile) -> Result<()> {
+	/// Names of this project's containers (by label) that the current compose file
+	/// no longer defines — the orphans, shared by removal and the warning.
+	async fn orphan_container_names(&self, file: &ComposeFile) -> Result<Vec<String>> {
 		let label = format!("podup.project={}", self.project);
 		let filters = serde_json::json!({ "label": [label] });
 		let path = format!(
@@ -488,28 +488,69 @@ impl Engine {
 			.flat_map(|(n, s)| self.replica_names(n, s))
 			.collect();
 
-		for c in running {
-			for raw in &c.names {
-				let name = raw.trim_start_matches('/');
-				if !known.contains(name) {
-					tracing::info!("removing orphan container {name}");
-					let rm_path =
-						format!("{API_PREFIX}/containers/{}?force=true", urlencoded(name));
-					if let Err(e) = self.client.delete_ok(&rm_path).await {
-						tracing::debug!("orphan delete {name}: {e}");
-					}
-				}
+		let names: Vec<String> = running
+			.iter()
+			.flat_map(|c| c.names.iter())
+			.map(|raw| raw.trim_start_matches('/').to_string())
+			.collect();
+		Ok(filter_orphans(names, &known))
+	}
+
+	/// Remove containers labelled for this project that are not defined in the current compose file.
+	pub async fn remove_orphans(&self, file: &ComposeFile) -> Result<()> {
+		for name in self.orphan_container_names(file).await? {
+			tracing::info!("removing orphan container {name}");
+			let rm_path = format!("{API_PREFIX}/containers/{}?force=true", urlencoded(&name));
+			if let Err(e) = self.client.delete_ok(&rm_path).await {
+				tracing::debug!("orphan delete {name}: {e}");
 			}
+		}
+		Ok(())
+	}
+
+	/// Warn (without removing) when this project has orphan containers and
+	/// `--remove-orphans` was not given, matching docker compose's `up`.
+	pub async fn warn_orphans(&self, file: &ComposeFile) -> Result<()> {
+		let orphans = self.orphan_container_names(file).await?;
+		if !orphans.is_empty() {
+			eprintln!(
+				"Found orphan container(s) ({}) for this project. If you removed or renamed a \
+				 service in your compose file, run with --remove-orphans to remove them.",
+				orphans.join(", ")
+			);
 		}
 		Ok(())
 	}
 }
 
+/// The subset of `names` not present in `known` (the orphan containers). Pure so
+/// the membership logic is unit-tested without a live Podman socket.
+fn filter_orphans(names: Vec<String>, known: &std::collections::HashSet<String>) -> Vec<String> {
+	names.into_iter().filter(|n| !known.contains(n)).collect()
+}
+
 #[cfg(test)]
 mod tests {
-	use super::{display_status, format_ports, log_query, LogsOptions};
+	use super::{display_status, filter_orphans, format_ports, log_query, LogsOptions};
 	use crate::libpod::types::container::{ContainerListEntry, ContainerPort};
-	use std::collections::HashMap;
+	use std::collections::{HashMap, HashSet};
+
+	#[test]
+	fn filter_orphans_keeps_only_unknown_names() {
+		let known: HashSet<String> = ["web-1".to_string(), "db".to_string()].into();
+		let names = vec![
+			"web-1".to_string(),
+			"db".to_string(),
+			"old-cache".to_string(),
+		];
+		assert_eq!(filter_orphans(names, &known), vec!["old-cache".to_string()]);
+	}
+
+	#[test]
+	fn filter_orphans_empty_when_all_known() {
+		let known: HashSet<String> = ["web".to_string()].into();
+		assert!(filter_orphans(vec!["web".to_string()], &known).is_empty());
+	}
 
 	fn entry(status: &str, state: &str) -> ContainerListEntry {
 		ContainerListEntry {

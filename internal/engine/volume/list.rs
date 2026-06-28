@@ -67,7 +67,7 @@ impl Engine {
 			return Ok(());
 		}
 
-		println!("{:<40} {:<12}", "NAME", "DRIVER");
+		crate::ui::print_bold_header(&format!("{:<40} {:<12}", "NAME", "DRIVER"));
 		for (_, name, driver, _) in &rows {
 			println!("{name:<40} {driver:<12}");
 		}

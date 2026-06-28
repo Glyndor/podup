@@ -53,14 +53,28 @@ fn run_to_exit() {
 		Err(podup::ComposeError::RunExited(code)) => process::exit(code as i32),
 		#[cfg(feature = "update")]
 		Err(e @ podup::ComposeError::Update(_)) => {
-			eprintln!("podup: error: {e}");
+			print_error(&e);
 			process::exit(podup::update::exit_code(&e));
 		}
 		Err(e) => {
-			eprintln!("podup: error: {e}");
+			print_error(&e);
 			process::exit(1);
 		}
 	}
+}
+
+/// Print a top-level error to stderr with a colour-aware bold-red `error:` label.
+/// anstream strips the styling when stderr is not a terminal or colour is off.
+fn print_error(e: &podup::ComposeError) {
+	use std::io::Write;
+	let style = podup::ui::error_style();
+	let mut err = anstream::stderr();
+	let _ = writeln!(
+		err,
+		"podup: {}error:{} {e}",
+		style.render(),
+		style.render_reset()
+	);
 }
 
 /// Orchestrate one CLI invocation: parse args, then short-circuit the commands
@@ -71,6 +85,9 @@ fn run_to_exit() {
 /// remaining commands.
 async fn run() -> podup::Result<()> {
 	let cli = parse_cli();
+	// Resolve the colour choice before any output (including tracing setup below)
+	// so `--ansi`/`NO_COLOR`/TTY detection apply consistently everywhere.
+	podup::ui::set_color_choice(cli.ansi.into());
 	// `watch` is an interactive, long-running command; surface its per-action
 	// progress (synced/rebuilt/restarted) by defaulting to INFO instead of the
 	// quiet WARN floor. `RUST_LOG` always overrides.
@@ -150,12 +167,14 @@ async fn run() -> podup::Result<()> {
 		};
 		// `--resolve-image-digests` pins each image to its registry digest, which
 		// needs a Podman connection to inspect images.
-		let resolved = if *resolve_image_digests {
+		let mut resolved = if *resolve_image_digests {
 			let client = podup::podman::connect(cli.socket.as_deref())?;
 			podup::resolve_image_digests(&client, &parsed).await?
 		} else {
 			parsed
 		};
+		// Honor active profiles so `config` prints the same services `up` starts.
+		podup::retain_active_profiles(&mut resolved, &cli.profile);
 		return startup::render_config(&resolved, format, *services, *quiet);
 	}
 

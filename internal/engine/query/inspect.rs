@@ -55,9 +55,9 @@ impl Engine {
 						"Processes": result.processes,
 					})),
 					Ok(result) => {
-						println!("{container_name}");
+						crate::ui::print_bold_header(&container_name);
 						if let Some(titles) = &result.titles {
-							println!("{}", titles.join("\t"));
+							crate::ui::print_bold_header(&titles.join("\t"));
 						}
 						if let Some(processes) = &result.processes {
 							for row in processes {
@@ -85,7 +85,7 @@ impl Engine {
 		&self,
 		file: &ComposeFile,
 		service_name: &str,
-		private_port: u16,
+		private_port: &str,
 		proto: &str,
 	) -> Result<()> {
 		self.port_with_index(file, service_name, private_port, proto, None)
@@ -98,10 +98,12 @@ impl Engine {
 		&self,
 		file: &ComposeFile,
 		service_name: &str,
-		private_port: u16,
+		private_port: &str,
 		proto: &str,
 		index: Option<u32>,
 	) -> Result<()> {
+		let (port, proto) = parse_port_proto(private_port, proto)?;
+
 		let service = file
 			.services
 			.get(service_name)
@@ -118,7 +120,7 @@ impl Engine {
 			.await
 			.map_err(ComposeError::Podman)?;
 
-		let key = format!("{private_port}/{proto}");
+		let key = format!("{port}/{proto}");
 		let binding = info
 			.network_settings
 			.and_then(|ns| ns.ports.get(&key).cloned().flatten())
@@ -192,10 +194,10 @@ impl Engine {
 			return Ok(());
 		}
 
-		println!(
+		crate::ui::print_bold_header(&format!(
 			"{:<30} {:<25} {:<15} {:<20}",
 			"SERVICE", "REPOSITORY", "TAG", "IMAGE ID"
-		);
+		));
 		for (svc, repo, tag, id) in &rows {
 			println!("{svc:<30} {repo:<25} {tag:<15} {id:<20}");
 		}
@@ -337,5 +339,42 @@ impl Engine {
 		}
 
 		Ok(())
+	}
+}
+
+/// Resolve the `(port, proto)` for `port` from a `PORT` or `PORT/proto` argument,
+/// the `/proto` suffix overriding the `--protocol` flag — matching
+/// `docker compose port`. Pure so the parsing is unit-tested.
+fn parse_port_proto<'a>(private_port: &'a str, proto_flag: &'a str) -> Result<(u16, &'a str)> {
+	let (port, proto) = match private_port.split_once('/') {
+		Some((p, pr)) => (p, pr),
+		None => (private_port, proto_flag),
+	};
+	let port: u16 = port.parse().map_err(|_| {
+		ComposeError::InvalidPort(format!(
+			"port '{private_port}' is not a valid PORT or PORT/proto"
+		))
+	})?;
+	Ok((port, proto))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::parse_port_proto;
+
+	#[test]
+	fn bare_port_uses_flag_proto() {
+		assert_eq!(parse_port_proto("80", "tcp").unwrap(), (80, "tcp"));
+	}
+
+	#[test]
+	fn suffix_overrides_flag_proto() {
+		assert_eq!(parse_port_proto("53/udp", "tcp").unwrap(), (53, "udp"));
+	}
+
+	#[test]
+	fn non_numeric_port_is_rejected() {
+		assert!(parse_port_proto("http", "tcp").is_err());
+		assert!(parse_port_proto("abc/tcp", "tcp").is_err());
 	}
 }
