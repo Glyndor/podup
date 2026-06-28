@@ -25,9 +25,10 @@ impl fmt::Display for PodmanError {
 			Self::Connect(e) => write!(f, "podman socket connection error: {e}"),
 			Self::Hyper(e) => write!(f, "http error: {e}"),
 			Self::Json(e) => write!(f, "json error: {e}"),
-			Self::Api { status, message } => {
-				write!(f, "podman API error (HTTP {status}): {message}")
-			}
+			Self::Api { status, message } => match conflict_hint(message) {
+				Some(hint) => write!(f, "{hint} (podman: {message})"),
+				None => write!(f, "podman API error (HTTP {status}): {message}"),
+			},
 			Self::IncompatibleApiVersion { reported } => {
 				let reported = if reported.is_empty() {
 					"an unknown version"
@@ -40,6 +41,25 @@ impl fmt::Display for PodmanError {
 				)
 			}
 		}
+	}
+}
+
+/// A short, actionable hint for the common Podman container state-conflict
+/// errors, so the CLI leads with plain guidance instead of the raw HTTP message
+/// (which still follows in parentheses). Returns `None` for anything unrecognised
+/// so the original message is shown verbatim. Pure, so it is unit-tested.
+fn conflict_hint(message: &str) -> Option<&'static str> {
+	let m = message.to_ascii_lowercase();
+	if m.contains("without force") || (m.contains("cannot remove") && m.contains("running")) {
+		Some("the container is running — stop it first, or pass `-f` to force removal")
+	} else if m.contains("already paused") {
+		Some("the container is already paused")
+	} else if m.contains("not paused") {
+		Some("the container is not paused")
+	} else if m.contains("not running") {
+		Some("the container is not running")
+	} else {
+		None
 	}
 }
 
@@ -97,7 +117,51 @@ impl PodmanError {
 
 #[cfg(test)]
 mod tests {
-	use super::PodmanError;
+	use super::{conflict_hint, PodmanError};
+
+	#[test]
+	fn conflict_hint_recognises_common_state_errors() {
+		let rm = "cannot remove container abc as it is running - running or paused containers \
+			cannot be removed without force: container state improper";
+		assert!(conflict_hint(rm).unwrap().contains("-f"));
+		assert!(conflict_hint("container abc is already paused")
+			.unwrap()
+			.contains("already paused"));
+		assert!(conflict_hint("container abc is not paused")
+			.unwrap()
+			.contains("not paused"));
+		assert!(
+			conflict_hint("cannot kill container abc: container abc is not running")
+				.unwrap()
+				.contains("not running")
+		);
+	}
+
+	#[test]
+	fn conflict_hint_none_for_unrecognised() {
+		assert!(conflict_hint("some unrelated error").is_none());
+		assert!(conflict_hint("no such container: abc").is_none());
+	}
+
+	#[test]
+	fn api_error_display_leads_with_hint_and_keeps_message() {
+		let e = PodmanError::Api {
+			status: 409,
+			message: "container abc is already paused".into(),
+		};
+		let s = e.to_string();
+		assert!(s.starts_with("the container is already paused"));
+		assert!(s.contains("podman: container abc is already paused"));
+	}
+
+	#[test]
+	fn api_error_display_raw_when_no_hint() {
+		let e = PodmanError::Api {
+			status: 500,
+			message: "boom".into(),
+		};
+		assert_eq!(e.to_string(), "podman API error (HTTP 500): boom");
+	}
 
 	#[test]
 	fn is_status_matches_code() {
