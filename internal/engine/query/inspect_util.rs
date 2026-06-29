@@ -42,20 +42,63 @@ pub(super) fn select_replica(
 /// Resolve the `(port, proto)` for `port` from a `PORT` or `PORT/proto` argument,
 /// the `/proto` suffix overriding the `--protocol` flag — matching
 /// `docker compose port`. Pure so the parsing is unit-tested.
-pub(super) fn parse_port_proto<'a>(
-	private_port: &'a str,
-	proto_flag: &'a str,
-) -> Result<(u16, &'a str)> {
-	let (port, proto) = match private_port.split_once('/') {
+///
+/// The private port is parsed strictly like docker's port spec: only a canonical
+/// decimal `1..=65535` is accepted, so a leading `+`/`-`, leading zeros
+/// (`080`), surrounding whitespace, or any trailing junk (`80/tcp/extra`) are
+/// rejected rather than silently coerced. The protocol is validated to
+/// `tcp`/`udp` (case-insensitive) and normalised to lowercase so it matches the
+/// lowercase keys Podman reports — an unknown or empty protocol errors clearly
+/// instead of yielding an empty, exit-0 "no mapping" result.
+pub(super) fn parse_port_proto(
+	private_port: &str,
+	proto_flag: &str,
+) -> Result<(u16, &'static str)> {
+	let (port_str, proto_str) = match private_port.split_once('/') {
 		Some((p, pr)) => (p, pr),
 		None => (private_port, proto_flag),
 	};
-	let port: u16 = port.parse().map_err(|_| {
+	let port = parse_strict_port(port_str, private_port)?;
+	let proto = normalise_proto(proto_str)?;
+	Ok((port, proto))
+}
+
+/// Parse a private port strictly: a canonical decimal in `1..=65535`. Rejects an
+/// empty string, a leading sign (`+80`/`-80`), leading zeros (`080`), embedded
+/// whitespace, and any non-digit (so trailing junk cannot slip through).
+fn parse_strict_port(port_str: &str, private_port: &str) -> Result<u16> {
+	let invalid = || {
 		ComposeError::InvalidPort(format!(
 			"port '{private_port}' is not a valid PORT or PORT/proto"
 		))
-	})?;
-	Ok((port, proto))
+	};
+	if port_str.is_empty() || !port_str.bytes().all(|b| b.is_ascii_digit()) {
+		return Err(invalid());
+	}
+	// Reject non-canonical leading zeros (e.g. `080`); a bare `0` is caught below.
+	if port_str.len() > 1 && port_str.starts_with('0') {
+		return Err(invalid());
+	}
+	let port: u16 = port_str.parse().map_err(|_| invalid())?;
+	if port == 0 {
+		return Err(invalid());
+	}
+	Ok(port)
+}
+
+/// Validate and normalise a protocol to `tcp`/`udp` (case-insensitive). Returns a
+/// lowercase `&'static str` so it matches the keys Podman reports; anything else
+/// (including an empty string) is a clear error.
+fn normalise_proto(proto: &str) -> Result<&'static str> {
+	if proto.eq_ignore_ascii_case("tcp") {
+		Ok("tcp")
+	} else if proto.eq_ignore_ascii_case("udp") {
+		Ok("udp")
+	} else {
+		Err(ComposeError::InvalidPort(format!(
+			"protocol '{proto}' is not valid (expected 'tcp' or 'udp')"
+		)))
+	}
 }
 
 /// Deduplicate a list of strings, preserving first-seen order. Used so `top web
@@ -256,6 +299,35 @@ mod tests {
 	fn non_numeric_port_is_rejected() {
 		assert!(parse_port_proto("http", "tcp").is_err());
 		assert!(parse_port_proto("abc/tcp", "tcp").is_err());
+	}
+
+	#[test]
+	fn protocol_flag_is_case_insensitive() {
+		assert_eq!(parse_port_proto("80", "TCP").unwrap(), (80, "tcp"));
+		assert_eq!(parse_port_proto("80", "Udp").unwrap(), (80, "udp"));
+		assert_eq!(parse_port_proto("53/UDP", "tcp").unwrap(), (53, "udp"));
+	}
+
+	#[test]
+	fn unknown_or_empty_protocol_is_rejected() {
+		// Previously these silently produced an empty, exit-0 "no mapping".
+		assert!(parse_port_proto("80", "sctp").is_err());
+		assert!(parse_port_proto("80", "").is_err());
+		assert!(parse_port_proto("80/sctp", "tcp").is_err());
+	}
+
+	#[test]
+	fn non_canonical_private_port_is_rejected() {
+		// Leading sign, leading zeros, whitespace, and trailing junk must all
+		// error rather than being coerced or silently mis-handled.
+		assert!(parse_port_proto("+80", "tcp").is_err());
+		assert!(parse_port_proto("-80", "tcp").is_err());
+		assert!(parse_port_proto("080", "tcp").is_err());
+		assert!(parse_port_proto(" 80", "tcp").is_err());
+		assert!(parse_port_proto("80 ", "tcp").is_err());
+		assert!(parse_port_proto("80/tcp/extra", "tcp").is_err());
+		assert!(parse_port_proto("0", "tcp").is_err());
+		assert!(parse_port_proto("65536", "tcp").is_err());
 	}
 
 	#[test]
