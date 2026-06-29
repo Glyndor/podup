@@ -437,6 +437,7 @@ async fn run() -> podup::Result<()> {
 				quiet: *quiet,
 			},
 			&project,
+			&base_dir,
 		);
 	}
 

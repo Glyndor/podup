@@ -191,12 +191,33 @@ impl Engine {
 		while let Some(frame) = body.frame().await {
 			let frame = frame.map_err(|e| ComposeError::Build(format!("export stream: {e}")))?;
 			if let Ok(data) = frame.into_data() {
-				sink.write_all(&data).map_err(|e| io_to_err(&output, e))?;
+				if let Err(e) = sink.write_all(&data) {
+					// A downstream reader that closed early (`podup export svc | head`)
+					// surfaces as a broken pipe; stop quietly and successfully like any
+					// well-behaved Unix tool instead of printing an error and exiting 1.
+					if is_stdout_broken_pipe(to_stdout, &e) {
+						return Ok(());
+					}
+					return Err(io_to_err(&output, e));
+				}
 			}
 		}
-		sink.flush().map_err(|e| io_to_err(&output, e))?;
+		if let Err(e) = sink.flush() {
+			if is_stdout_broken_pipe(to_stdout, &e) {
+				return Ok(());
+			}
+			return Err(io_to_err(&output, e));
+		}
 		Ok(())
 	}
+}
+
+/// Whether a write error is a broken pipe on the stdout sink — a downstream
+/// reader closed early. A broken pipe never applies to a `-o FILE` sink, so it
+/// only short-circuits to a clean exit when streaming to stdout. Pure so it is
+/// unit-tested.
+fn is_stdout_broken_pipe(to_stdout: bool, e: &std::io::Error) -> bool {
+	to_stdout && e.kind() == std::io::ErrorKind::BrokenPipe
 }
 
 /// Map a write error to one that names the `-o` output path when present, so the
@@ -266,5 +287,21 @@ mod tests {
 		assert!(!refuse_tar_to_tty(true, false));
 		assert!(!refuse_tar_to_tty(false, true));
 		assert!(!refuse_tar_to_tty(false, false));
+	}
+
+	#[test]
+	fn stdout_broken_pipe_is_a_clean_stop_only_on_stdout() {
+		use super::is_stdout_broken_pipe;
+		use std::io::{Error, ErrorKind};
+		let epipe = || Error::from(ErrorKind::BrokenPipe);
+		// A broken pipe while streaming to stdout (`| head`) is a clean stop.
+		assert!(is_stdout_broken_pipe(true, &epipe()));
+		// The same error against a `-o FILE` sink is a real failure to report.
+		assert!(!is_stdout_broken_pipe(false, &epipe()));
+		// Any other write error on stdout is still a real failure.
+		assert!(!is_stdout_broken_pipe(
+			true,
+			&Error::from(ErrorKind::PermissionDenied)
+		));
 	}
 }
