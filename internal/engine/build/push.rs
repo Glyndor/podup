@@ -23,9 +23,15 @@ const PUSH_STALL_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Drain a push progress stream, surfacing a mid-stream `error` line and bounding
 /// each read by `stall` so an unresponsive registry fails with a clear timeout
-/// instead of hanging. Generic over the stream so it is unit-tested without a
-/// live socket.
-async fn drain_push_stream<S>(mut stream: S, image: &str, stall: Duration) -> Result<()>
+/// instead of hanging. `quiet` (`-q/--quiet`) suppresses the per-line progress
+/// and the final "pushed" line. Generic over the stream so it is unit-tested
+/// without a live socket.
+async fn drain_push_stream<S>(
+	mut stream: S,
+	image: &str,
+	quiet: bool,
+	stall: Duration,
+) -> Result<()>
 where
 	S: Stream<Item = std::result::Result<ImagePullProgress, PodmanError>> + Unpin,
 {
@@ -33,7 +39,7 @@ where
 	loop {
 		match tokio::time::timeout(stall, stream.next()).await {
 			Ok(Some(Ok(progress))) => {
-				if !progress.stream.is_empty() {
+				if !progress.stream.is_empty() && !quiet {
 					info!("{}", progress.stream.trim_end());
 				}
 				if !progress.error.is_empty() {
@@ -54,7 +60,11 @@ where
 	match stream_error {
 		Some(err) => Err(ComposeError::Build(format!("push {image}: {err}"))),
 		None => {
-			info!("pushed {image}");
+			if quiet {
+				tracing::debug!("pushed {image}");
+			} else {
+				info!("pushed {image}");
+			}
 			Ok(())
 		}
 	}
@@ -81,6 +91,20 @@ impl Engine {
 		target_services: &[String],
 		opts: PushOptions,
 	) -> Result<()> {
+		self.push_with_quiet(file, target_services, opts, false)
+			.await
+	}
+
+	/// Push each service's image like [`Engine::push`], with `quiet` (`-q/--quiet`)
+	/// suppressing the per-image progress output. Kept off the frozen
+	/// [`PushOptions`] struct so the 1.0 library API stays stable.
+	pub async fn push_with_quiet(
+		&self,
+		file: &ComposeFile,
+		target_services: &[String],
+		opts: PushOptions,
+		quiet: bool,
+	) -> Result<()> {
 		for svc in target_services {
 			if !file.services.contains_key(svc) {
 				return Err(ComposeError::ServiceNotFound(svc.clone()));
@@ -95,7 +119,7 @@ impl Engine {
 				tracing::debug!("{name}: no image to push, skipping");
 				continue;
 			};
-			if let Err(e) = self.push_image(image, &opts).await {
+			if let Err(e) = self.push_image(image, &opts, quiet).await {
 				if opts.ignore_failures {
 					warn!("push {image} failed (ignored): {e}");
 				} else {
@@ -108,8 +132,12 @@ impl Engine {
 
 	/// Push a single image ref and drain its progress stream, surfacing a
 	/// mid-stream `error` line as a failure.
-	async fn push_image(&self, image: &str, opts: &PushOptions) -> Result<()> {
-		info!("pushing {image}");
+	async fn push_image(&self, image: &str, opts: &PushOptions, quiet: bool) -> Result<()> {
+		if quiet {
+			tracing::debug!("pushing {image}");
+		} else {
+			info!("pushing {image}");
+		}
 		let mut query = format!("destination={}", urlencoded(image));
 		if let Some(tls) = opts.tls_verify {
 			query.push_str(&format!("&tlsVerify={tls}"));
@@ -122,7 +150,7 @@ impl Engine {
 			.await
 			.map_err(ComposeError::Podman)?;
 		let stream = crate::libpod::parse_json_lines::<ImagePullProgress>(resp.into_body());
-		drain_push_stream(stream, image, PUSH_STALL_TIMEOUT).await
+		drain_push_stream(stream, image, quiet, PUSH_STALL_TIMEOUT).await
 	}
 }
 
@@ -145,7 +173,7 @@ mod tests {
 	async fn drain_ok_when_stream_completes_cleanly() {
 		let items = vec![Ok(progress("pushing", "")), Ok(progress("done", ""))];
 		let stream = futures_util::stream::iter(items);
-		drain_push_stream(stream, "img", Duration::from_secs(5))
+		drain_push_stream(stream, "img", false, Duration::from_secs(5))
 			.await
 			.unwrap();
 	}
@@ -154,7 +182,7 @@ mod tests {
 	async fn drain_surfaces_mid_stream_error_line() {
 		let items = vec![Ok(progress("", "denied: unauthorized"))];
 		let stream = futures_util::stream::iter(items);
-		let err = drain_push_stream(stream, "img", Duration::from_secs(5))
+		let err = drain_push_stream(stream, "img", false, Duration::from_secs(5))
 			.await
 			.unwrap_err();
 		assert!(matches!(err, ComposeError::Build(m) if m.contains("denied: unauthorized")));
@@ -168,7 +196,7 @@ mod tests {
 		let stream = first.chain(futures_util::stream::pending::<
 			std::result::Result<ImagePullProgress, PodmanError>,
 		>());
-		let err = drain_push_stream(stream, "img", Duration::from_millis(20))
+		let err = drain_push_stream(stream, "img", false, Duration::from_millis(20))
 			.await
 			.unwrap_err();
 		assert!(matches!(err, ComposeError::Build(m) if m.contains("no progress")));

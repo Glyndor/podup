@@ -132,7 +132,7 @@ impl Engine {
 			.or(service.pull_policy.as_deref());
 		let pull_policy = libpod_pull_policy(requested).unwrap_or_else(|| {
 			warn!(
-				"unknown pull_policy '{}', defaulting to 'missing'",
+				"unknown pull policy '{}', defaulting to 'missing'",
 				requested.unwrap_or_default()
 			);
 			"missing"

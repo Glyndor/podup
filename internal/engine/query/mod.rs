@@ -14,7 +14,7 @@ mod inspect_util;
 mod log_prefix;
 mod ps;
 
-pub use ps::PsOptions;
+pub use ps::{PsFilterOptions, PsOptions};
 
 pub use exec::ExecOptions;
 use log_prefix::LinePrefixer;
@@ -41,6 +41,17 @@ pub struct LogsOptions {
 	pub until: Option<String>,
 	/// Prefix each line with an RFC3339 timestamp, `-t/--timestamps`.
 	pub timestamps: bool,
+}
+
+/// Prefix-display options for [`Engine::logs_with_display`] (`docker compose
+/// logs --no-color` / `--no-log-prefix`). Kept off the frozen [`LogsOptions`]
+/// struct so the 1.0 library API stays stable.
+#[derive(Default)]
+pub struct LogsDisplay {
+	/// Produce monochrome output (no colour in the prefix), `--no-color`.
+	pub no_color: bool,
+	/// Do not print the `{service} | ` prefix, `--no-log-prefix`.
+	pub no_log_prefix: bool,
 }
 
 /// Validate the `--tail`/`--since`/`--until` values client-side so a typo is
@@ -164,7 +175,8 @@ impl Engine {
 	}
 
 	/// Stream logs with `docker compose logs` options (`--tail`, `--since`,
-	/// `--until`, `--timestamps`, `--follow`).
+	/// `--until`, `--timestamps`, `--follow`). For the `--no-color`/
+	/// `--no-log-prefix` prefix-display options use [`Engine::logs_with_display`].
 	///
 	/// When `target_services` is empty, logs from every service are streamed;
 	/// otherwise only the named services (an unknown name is an error).
@@ -174,8 +186,28 @@ impl Engine {
 		target_services: &[String],
 		opts: LogsOptions,
 	) -> Result<()> {
+		self.logs_with_display(file, target_services, opts, LogsDisplay::default())
+			.await
+	}
+
+	/// Stream logs with `docker compose logs` options plus the prefix-display
+	/// controls (`--no-color`, `--no-log-prefix`).
+	///
+	/// When `target_services` is empty, logs from every service are streamed;
+	/// otherwise only the named services (an unknown name is an error).
+	pub async fn logs_with_display(
+		&self,
+		file: &ComposeFile,
+		target_services: &[String],
+		opts: LogsOptions,
+		display: LogsDisplay,
+	) -> Result<()> {
 		validate_log_filters(&opts)?;
 		let follow = opts.follow;
+		// `--no-log-prefix` drops the `{service} | ` tag; `--no-color` forces a
+		// monochrome prefix even on a colour-capable stdout.
+		let prefix = !display.no_log_prefix;
+		let allow_color = !display.no_color;
 		let query = log_query(&opts);
 		for svc in target_services {
 			if !file.services.contains_key(svc) {
@@ -230,8 +262,8 @@ impl Engine {
 						// let a sibling future block the thread on the same lock
 						// and deadlock. Each frame still locks once and flushes,
 						// keeping interleaved `logs -f` output prompt.
-						let mut out_pfx = LinePrefixer::new(&container_name);
-						let mut err_pfx = LinePrefixer::new(&container_name);
+						let mut out_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
+						let mut err_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
 						while let Some(msg) = stream.next().await {
 							match msg {
 								Ok(LogOutput::StdOut { message }) => {
@@ -279,8 +311,8 @@ impl Engine {
 				// across the await loop would starve concurrent log emissions.
 				// Flush after each frame so `logs -f` still streams promptly.
 				let mut out = std::io::stdout().lock();
-				let mut out_pfx = LinePrefixer::new(&container_name);
-				let mut err_pfx = LinePrefixer::new(&container_name);
+				let mut out_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
+				let mut err_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
 				while let Some(msg) = stream.next().await {
 					match msg {
 						Ok(LogOutput::StdOut { message }) => out_pfx.write(&mut out, &message),

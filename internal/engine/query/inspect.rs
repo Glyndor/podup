@@ -177,15 +177,36 @@ impl Engine {
 	}
 
 	/// List service images with `docker compose images`-style options:
-	/// `-q/--quiet` (IDs only) and `--format` (table | json).
+	/// `-q/--quiet` (IDs only) and `--format` (table | json), across all services.
+	/// To restrict to specific services use [`Engine::images_with_services`].
 	pub async fn images_with_options(
 		&self,
 		file: &ComposeFile,
 		opts: super::ImagesOptions,
 	) -> Result<()> {
+		self.images_with_services(file, &[], opts).await
+	}
+
+	/// List service images like [`Engine::images_with_options`]. When
+	/// `target_services` is non-empty, only those services are listed (an unknown
+	/// name is an error), matching `docker compose images [SERVICE...]`.
+	pub async fn images_with_services(
+		&self,
+		file: &ComposeFile,
+		target_services: &[String],
+		opts: super::ImagesOptions,
+	) -> Result<()> {
+		for name in target_services {
+			if !file.services.contains_key(name) {
+				return Err(ComposeError::ServiceNotFound(name.clone()));
+			}
+		}
 		// Collect rows first so quiet/json modes can render without the header.
 		let mut rows: Vec<(String, String, String, String)> = Vec::new();
 		for (name, service) in &file.services {
+			if !target_services.is_empty() && !target_services.iter().any(|t| t == name) {
+				continue;
+			}
 			let image_ref = match &service.image {
 				Some(img) => img.clone(),
 				None if service.build.is_some() => format!("{name}:latest"),
@@ -254,23 +275,46 @@ impl Engine {
 	/// stdout/stderr with no prefix, until the container stops. podup never
 	/// attaches STDIN (it allocates no TTY), so this is output-only.
 	pub async fn attach(&self, file: &ComposeFile, service_name: &str) -> Result<()> {
+		self.attach_with_index(file, service_name, None).await
+	}
+
+	/// Like [`Engine::attach`] but targets a specific replica via `--index`
+	/// (1-based); `None` uses the first replica. This is what lets `attach` reach
+	/// a scaled service's later replicas.
+	pub async fn attach_with_index(
+		&self,
+		file: &ComposeFile,
+		service_name: &str,
+		index: Option<u32>,
+	) -> Result<()> {
 		let service = file
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
 		// Resolve against the containers Podman actually has so a service scaled at
 		// runtime (`up --scale=3` → `…-1`/`…-2`/`…-3`) attaches to a real replica
-		// instead of the unsuffixed base name, which would 404. Pick the
+		// instead of the unsuffixed base name, which would 404. `--index`
+		// (1-based) selects a specific live replica; `None` picks the
 		// lowest-numbered live container for a stable choice.
 		let mut live = self
 			.list_project_container_names(Some(service_name))
 			.await?;
 		live.sort();
-		let container = live.into_iter().next().ok_or_else(|| {
-			ComposeError::Unsupported(format!(
-				"attach: no running container for service '{service_name}'"
-			))
-		})?;
+		let container = match index {
+			Some(i) => {
+				let idx = (i as usize).checked_sub(1).ok_or_else(|| {
+					ComposeError::Unsupported(format!("attach: --index must be >= 1 (got {i})"))
+				})?;
+				live.into_iter().nth(idx).ok_or_else(|| {
+					ComposeError::ServiceNotFound(format!("{service_name} (replica index {i})"))
+				})?
+			}
+			None => live.into_iter().next().ok_or_else(|| {
+				ComposeError::Unsupported(format!(
+					"attach: no running container for service '{service_name}'"
+				))
+			})?,
+		};
 		let is_tty = service.tty.unwrap_or(false);
 
 		// `docker compose attach` errors when the target is not running. Without

@@ -5,3 +5,4 @@ mod digests;
 mod export;
 
 pub use digests::resolve_image_digests;
+pub use export::CommitOptions;

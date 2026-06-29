@@ -10,7 +10,10 @@ use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::EnvFilter;
 
-use crate::cli::{Cli, Commands, ConfigFormat};
+use crate::cli::{Cli, Commands};
+
+mod config_render;
+pub(crate) use config_render::{render_config, ConfigOutput};
 
 /// Whether a command creates, destroys, or changes the state of containers and
 /// so must hold the exclusive project lock.
@@ -147,141 +150,6 @@ pub(crate) fn init_tracing(default_level: &str) {
 		.init();
 }
 
-/// Render `config`: validate-only (`--quiet`), service-name list (`--services`),
-/// or the resolved compose file in YAML/JSON with inline secret content redacted.
-pub(crate) fn render_config(
-	file: &podup::compose::types::ComposeFile,
-	format: &ConfigFormat,
-	services: bool,
-	quiet: bool,
-	project: &str,
-) -> podup::Result<()> {
-	// Reaching here means the file parsed and merged cleanly. Run the full
-	// config-time validation (non-empty services, image-or-build, service-name
-	// charset, port ranges, undefined volume/network references, and an acyclic
-	// dependency graph) before the `--quiet`/`--services` short-circuits, so
-	// validate-only (`--quiet`) actually validates — matching `docker compose config`.
-	podup::validate_config(file)?;
-	if quiet {
-		return Ok(());
-	}
-	if services {
-		for name in file.services.keys() {
-			println!("{name}");
-		}
-		return Ok(());
-	}
-	let mut redacted = file.clone();
-	// Surface the resolved project name in the rendered output, like
-	// `docker compose config`, rather than the file's literal `name:` (or none).
-	redacted.name = Some(project.to_string());
-	redacted.redact_inline_content();
-	let rendered = match format {
-		ConfigFormat::Json => {
-			let mut v = serde_json::to_value(&redacted).map_err(|e| {
-				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
-			})?;
-			prune_json_nulls(&mut v);
-			serde_json::to_string_pretty(&v).map_err(|e| {
-				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
-			})?
-		}
-		ConfigFormat::Yaml => {
-			let mut v: serde_yaml::Value =
-				serde_yaml::to_value(&redacted).map_err(podup::ComposeError::Parse)?;
-			prune_yaml_nulls(&mut v);
-			serde_yaml::to_string(&v).map_err(podup::ComposeError::Parse)?
-		}
-	};
-	println!("{rendered}");
-	Ok(())
-}
-
-/// Drop unset keys from a JSON value so `config` output omits them (like
-/// `docker compose config`) instead of a wall of `field: null` and empty
-/// `field: {}` sections. Recurses first so a section that becomes empty once its
-/// own nulls are dropped is itself dropped.
-fn prune_json_nulls(v: &mut serde_json::Value) {
-	prune_json(v, false);
-}
-
-/// `preserve_nulls` keeps null leaves at the current mapping level. It is set for
-/// the value under an `environment:` key so a map-form host-passthrough var
-/// (`MYVAR:` → null) is not stripped from the output — it is forwarded at runtime,
-/// so `config` must show it, matching docker compose (which never drops the key).
-fn prune_json(v: &mut serde_json::Value, preserve_nulls: bool) {
-	match v {
-		serde_json::Value::Object(map) => {
-			for (k, val) in map.iter_mut() {
-				prune_json(val, k == "environment");
-			}
-			if !preserve_nulls {
-				map.retain(|_, val| !is_empty_json(val));
-			}
-		}
-		serde_json::Value::Array(arr) => {
-			for val in arr.iter_mut() {
-				prune_json(val, false);
-			}
-		}
-		_ => {}
-	}
-}
-
-fn is_empty_json(v: &serde_json::Value) -> bool {
-	match v {
-		serde_json::Value::Null => true,
-		serde_json::Value::Object(m) => m.is_empty(),
-		// An empty array is kept: an explicit `command: []`/`entrypoint: []`
-		// overrides the image's value, so dropping it would change meaning.
-		_ => false,
-	}
-}
-
-/// The YAML counterpart of [`prune_json_nulls`].
-fn prune_yaml_nulls(v: &mut serde_yaml::Value) {
-	prune_yaml(v, false);
-}
-
-/// YAML counterpart of [`prune_json`]; `preserve_nulls` exempts an
-/// `environment:` map's null (host-passthrough) values from being dropped.
-fn prune_yaml(v: &mut serde_yaml::Value, preserve_nulls: bool) {
-	match v {
-		serde_yaml::Value::Mapping(map) => {
-			for (k, val) in map.iter_mut() {
-				let child_preserve = k.as_str() == Some("environment");
-				prune_yaml(val, child_preserve);
-			}
-			if !preserve_nulls {
-				let drop: Vec<serde_yaml::Value> = map
-					.iter()
-					.filter(|(_, val)| is_empty_yaml(val))
-					.map(|(k, _)| k.clone())
-					.collect();
-				for k in drop {
-					map.remove(&k);
-				}
-			}
-		}
-		serde_yaml::Value::Sequence(seq) => {
-			for val in seq.iter_mut() {
-				prune_yaml(val, false);
-			}
-		}
-		_ => {}
-	}
-}
-
-fn is_empty_yaml(v: &serde_yaml::Value) -> bool {
-	match v {
-		serde_yaml::Value::Null => true,
-		serde_yaml::Value::Mapping(m) => m.is_empty(),
-		// Keep empty sequences: an explicit `command: []`/`entrypoint: []`
-		// overrides the image's value, so dropping it would change meaning.
-		_ => false,
-	}
-}
-
 /// Build the `run`-only flag overrides from the parsed command. These are kept
 /// off the frozen public `RunOptions` API and threaded through the engine
 /// builder instead (`Engine::with_run_overrides`).
@@ -309,15 +177,24 @@ pub(crate) fn run_overrides_for(command: &Commands) -> podup::RunOverrides {
 	}
 }
 
+/// Extract the `docker compose run -l/--label KEY=VAL` ad-hoc labels for the
+/// engine builder ([`podup::Engine::with_run_labels`]). Carried on the engine
+/// rather than the frozen `RunOverrides` struct so the 1.0 library API stays
+/// stable, mirroring `run_overrides_for`.
+pub(crate) fn run_labels_for(command: &Commands) -> Vec<String> {
+	match command {
+		Commands::Run { label, .. } => label.clone(),
+		_ => Vec::new(),
+	}
+}
+
 /// Parse the CLI, framing `--help`/`--version` output with a blank line top and
 /// bottom (clap trims template edges, so wrap the rendered text here).
 pub(crate) fn parse_cli() -> Cli {
 	match Cli::try_parse() {
 		Ok(cli) => cli,
 		Err(e) => match e.kind() {
-			clap::error::ErrorKind::DisplayHelp
-			| clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
-			| clap::error::ErrorKind::DisplayVersion => {
+			clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
 				// `--help`/`--version` are handled by clap before `--ansi` is parsed,
 				// so colour the rendered text by clap's own styling only when stdout
 				// is a colour sink (TTY + no NO_COLOR); piped output stays plain and
@@ -329,6 +206,14 @@ pub(crate) fn parse_cli() -> Cli {
 					print!("\n{rendered}\n");
 				}
 				process::exit(0);
+			}
+			clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+				// No subcommand (top level) or a required nested subcommand (e.g.
+				// `generate`) was given: print the help to stderr and exit non-zero,
+				// like docker compose, so a script sees the error instead of a silent
+				// success. `podup help` (the explicit Help variant) still exits 0.
+				eprint!("\n{}\n", e.render());
+				process::exit(2);
 			}
 			_ => e.exit(),
 		},
@@ -347,10 +232,17 @@ mod tests {
 		assert!(is_label_only(&Commands::Ps {
 			all: false,
 			quiet: false,
+			services_only: false,
+			filter: vec![],
+			status: vec![],
 			format: OutputFormat::Table,
+			services: vec![],
 		}));
 		assert!(is_label_only(&Commands::Events {
 			format: EventsFormat::Table,
+			since: None,
+			until: None,
+			filter: vec![],
 			json: false,
 		}));
 		// A command that reads service definitions is not label-only.
@@ -358,32 +250,6 @@ mod tests {
 			format: OutputFormat::Table,
 			services: vec![],
 		}));
-	}
-
-	#[test]
-	fn prune_json_drops_nulls_and_empty_then_collapses() {
-		let mut v = serde_json::json!({
-			"image": "nginx",
-			"environment": null,
-			"command": [],
-			"labels": {},
-			"deploy": { "replicas": null }
-		});
-		prune_json_nulls(&mut v);
-		// null fields and the section emptied by its own nulls are gone, but an
-		// explicit empty array (`command: []`) survives — it overrides the image.
-		assert_eq!(v, serde_json::json!({ "image": "nginx", "command": [] }));
-	}
-
-	#[test]
-	fn prune_yaml_drops_nulls_and_empty() {
-		let mut v: serde_yaml::Value =
-			serde_yaml::from_str("image: nginx\ndns: null\nnetworks: {}\n").unwrap();
-		prune_yaml_nulls(&mut v);
-		let out = serde_yaml::to_string(&v).unwrap();
-		assert!(out.contains("image: nginx"));
-		assert!(!out.contains("dns"));
-		assert!(!out.contains("networks"));
 	}
 
 	#[test]
@@ -406,84 +272,6 @@ mod tests {
 			level_style(tracing::Level::DEBUG),
 			level_style(tracing::Level::TRACE)
 		);
-	}
-
-	fn sample_file() -> podup::compose::types::ComposeFile {
-		podup::parse_str("services:\n  web:\n    image: nginx\n  db:\n    image: postgres\n")
-			.unwrap()
-	}
-
-	#[test]
-	fn render_config_rejects_depends_on_cycle() {
-		// A `depends_on` cycle must be reported at config time, not deferred to up.
-		let file = podup::parse_str(
-			"services:\n  a:\n    image: x\n    depends_on: [b]\n  b:\n    image: y\n    depends_on: [a]\n",
-		)
-		.unwrap();
-		let err = render_config(&file, &ConfigFormat::Yaml, false, true, "proj").unwrap_err();
-		assert!(matches!(err, podup::ComposeError::CircularDependency(_)));
-	}
-
-	#[test]
-	fn render_config_quiet_is_validate_only() {
-		// `--quiet` validates and prints nothing, returning Ok.
-		render_config(&sample_file(), &ConfigFormat::Yaml, false, true, "proj").unwrap();
-	}
-
-	#[test]
-	fn render_config_services_lists_names() {
-		// `--services` reaches the service-name listing branch without error.
-		render_config(&sample_file(), &ConfigFormat::Yaml, true, false, "proj").unwrap();
-	}
-
-	#[test]
-	fn render_config_yaml_and_json_render_ok() {
-		render_config(&sample_file(), &ConfigFormat::Yaml, false, false, "proj").unwrap();
-		render_config(&sample_file(), &ConfigFormat::Json, false, false, "proj").unwrap();
-	}
-
-	#[test]
-	fn render_config_injects_resolved_project_name() {
-		// The rendered output carries the resolved project name, not the file's
-		// literal `name:` (here unset). Render into a buffer via the same path.
-		let mut redacted = sample_file();
-		redacted.name = Some("myproj".to_string());
-		let v: serde_yaml::Value = serde_yaml::to_value(&redacted).unwrap();
-		let out = serde_yaml::to_string(&v).unwrap();
-		assert!(
-			out.contains("name: myproj"),
-			"config should render the resolved name"
-		);
-	}
-
-	#[test]
-	fn prune_preserves_environment_map_nulls() {
-		// A map-form host-passthrough var (`MYVAR:` → null) survives pruning, while
-		// an unrelated null elsewhere is still dropped.
-		let mut v: serde_yaml::Value = serde_yaml::from_str(
-			"services:\n  web:\n    image: nginx\n    dns: null\n    environment:\n      MYVAR: null\n      SET: value\n",
-		)
-		.unwrap();
-		prune_yaml_nulls(&mut v);
-		let out = serde_yaml::to_string(&v).unwrap();
-		assert!(out.contains("MYVAR"), "passthrough env var must be kept");
-		assert!(out.contains("SET"));
-		assert!(!out.contains("dns"), "unrelated null must still be dropped");
-
-		let mut j = serde_json::json!({
-			"services": { "web": {
-				"image": "nginx",
-				"dns": null,
-				"environment": { "MYVAR": null, "SET": "value" }
-			}}
-		});
-		prune_json_nulls(&mut j);
-		let env = &j["services"]["web"]["environment"];
-		assert!(
-			env.get("MYVAR").is_some(),
-			"passthrough env var must be kept"
-		);
-		assert!(j["services"]["web"].get("dns").is_none());
 	}
 
 	#[test]

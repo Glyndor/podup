@@ -12,6 +12,22 @@ use crate::libpod::{urlencoded, API_PREFIX};
 
 use super::super::Engine;
 
+/// Options for [`Engine::commit_with_options`], mirroring `docker compose commit`
+/// (`-m/--message`, `-a/--author`, `-p/--pause`, `-c/--change`). Kept off the
+/// frozen `commit` signature so the 1.0 library API stays stable.
+#[derive(Debug, Clone, Default)]
+pub struct CommitOptions {
+	/// Commit message recorded on the new image (`-m/--message`).
+	pub message: Option<String>,
+	/// Author recorded on the new image (`-a/--author`).
+	pub author: Option<String>,
+	/// Pause the container during the commit (`-p/--pause`); `None` leaves
+	/// Podman's default (pause on).
+	pub pause: Option<bool>,
+	/// Dockerfile instructions to apply to the committed image (`-c/--change`).
+	pub changes: Vec<String>,
+}
+
 /// Split a `commit` image reference into `(repo, tag)`, defaulting the tag to
 /// `latest`. Rejects an empty reference or an empty repository (`""` or `:tag`),
 /// which podman would otherwise accept and turn into a dangling `<none>` image.
@@ -77,6 +93,29 @@ impl Engine {
 		index: Option<u32>,
 		pause: bool,
 	) -> Result<()> {
+		self.commit_with_options(
+			file,
+			service_name,
+			image,
+			index,
+			CommitOptions {
+				pause: Some(pause),
+				..Default::default()
+			},
+		)
+		.await
+	}
+
+	/// Commit a service container with `docker compose commit`-style options
+	/// (message, author, pause, change).
+	pub async fn commit_with_options(
+		&self,
+		file: &ComposeFile,
+		service_name: &str,
+		image: &str,
+		index: Option<u32>,
+		opts: CommitOptions,
+	) -> Result<()> {
 		let service = file
 			.services
 			.get(service_name)
@@ -84,7 +123,18 @@ impl Engine {
 		let container = self.replica_name_at(service_name, service, index)?;
 
 		let (repo, tag) = split_image_ref(image)?;
-		let path = commit_path(&container, repo, tag, pause);
+		// `None` leaves Podman's default (pause on), matching `docker commit`.
+		let pause = opts.pause.unwrap_or(true);
+		let mut path = commit_path(&container, repo, tag, pause);
+		if let Some(message) = &opts.message {
+			path.push_str(&format!("&comment={}", urlencoded(message)));
+		}
+		if let Some(author) = &opts.author {
+			path.push_str(&format!("&author={}", urlencoded(author)));
+		}
+		for change in &opts.changes {
+			path.push_str(&format!("&changes={}", urlencoded(change)));
+		}
 		self.client
 			.post_empty_ok(&path)
 			.await
@@ -125,12 +175,17 @@ impl Engine {
 			.await
 			.map_err(ComposeError::Podman)?;
 
-		let mut sink: Box<dyn Write> = match &output {
-			Some(p) => Box::new(std::fs::File::create(p).map_err(|e| ComposeError::IoPath {
+		// `-o -` streams to stdout (the coreutils/docker dash convention) rather
+		// than creating a file literally named `-`.
+		let to_stdout = output.is_none() || output.as_deref() == Some(std::path::Path::new("-"));
+		let mut sink: Box<dyn Write> = if to_stdout {
+			Box::new(std::io::stdout().lock())
+		} else {
+			let p = output.as_ref().unwrap();
+			Box::new(std::fs::File::create(p).map_err(|e| ComposeError::IoPath {
 				path: p.display().to_string(),
 				source: e,
-			})?),
-			None => Box::new(std::io::stdout().lock()),
+			})?)
 		};
 		let mut body = resp.into_body();
 		while let Some(frame) = body.frame().await {

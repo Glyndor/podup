@@ -44,8 +44,10 @@ impl Engine {
 			interactive,
 			no_deps,
 		} = self.run_overrides.clone();
-		// `--env-file` is global, so it rides on the engine (not `RunOverrides`).
+		// `--env-file` and `-l/--label` are carried on the engine (not
+		// `RunOverrides`) to keep the public struct frozen.
 		let env_files = self.run_env_files.clone();
+		let labels = self.run_labels.clone();
 		let service = file
 			.services
 			.get(service_name)
@@ -102,6 +104,18 @@ impl Engine {
 			run_service
 				.volumes
 				.push(crate::compose::types::VolumeMount::Short(v));
+		}
+		// `-l/--label` adds ad-hoc labels to the one-off container, merged over the
+		// service's own labels in compose `KEY=VALUE` list form.
+		if !labels.is_empty() {
+			let mut list: Vec<String> = run_service
+				.labels
+				.to_map()
+				.into_iter()
+				.map(|(k, v)| if v.is_empty() { k } else { format!("{k}={v}") })
+				.collect();
+			list.extend(labels);
+			run_service.labels = crate::compose::types::Labels::List(list);
 		}
 		// Layer the run container's environment by precedence, matching
 		// `docker compose run --env-file`: global `--env-file` contents are the
