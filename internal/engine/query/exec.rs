@@ -152,10 +152,13 @@ impl Engine {
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		// Resolve the target replica through the shared helper so `--index 0` (and
-		// out-of-range indexes) are rejected consistently with `cp`/`port`/etc.,
-		// rather than aliasing index 0 to the first replica.
-		let container_name = self.replica_name_at(service_name, service, opts.index)?;
+		// Resolve the target replica against the *running* containers (matching
+		// `cp`), so `--index N` and a bare `exec` reach a live replica of a service
+		// scaled by an earlier `up --scale`/`scale` — not just the compose static
+		// count. `--index 0`/out-of-range indexes stay rejected consistently.
+		let container_name = self
+			.live_replica_name_at(service_name, service, opts.index)
+			.await?;
 
 		let env = expand_exec_env(&opts.env);
 		let exec_cfg = ExecCreateConfig {
