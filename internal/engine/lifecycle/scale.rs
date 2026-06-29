@@ -12,6 +12,25 @@ use crate::libpod::{urlencoded, API_PREFIX};
 
 use super::targets::{stop_deadline, stop_timeout_param};
 
+/// A live project container: the name to act on plus its machine-readable
+/// state, as reported by the libpod container-list endpoint. Returned by
+/// [`Engine::live_service_containers`] so callers can act on (and report) only
+/// containers in the right state.
+pub(crate) struct LiveContainer {
+	/// Container name with the leading slash stripped.
+	pub name: String,
+	/// Machine-readable state (`running`, `created`, `exited`, `paused`, …).
+	pub state: String,
+}
+
+/// Whether a container in this state is currently active — i.e. `stop` would
+/// actually transition it. A `running` or `paused` container is stopped; a
+/// `created`/`exited`/`dead`/… one is already not running, so stopping it is a
+/// no-op that must not be reported as "stopped" (#876). Pure for unit testing.
+pub(crate) fn state_is_active(state: &str) -> bool {
+	matches!(state, "running" | "paused")
+}
+
 /// The default ceiling on a service's replica count.
 const DEFAULT_MAX_REPLICAS: u32 = 256;
 
@@ -238,6 +257,45 @@ impl Engine {
 		Ok(by_service)
 	}
 
+	/// The live containers of a service (matched by the `podup.service` label),
+	/// each paired with its machine-readable state (`running`, `created`,
+	/// `exited`, `paused`, …). Unlike [`Self::live_replica_names`] this does NOT
+	/// fall back to statically-predicted names: a service with no live container
+	/// yields an empty vec, so a lifecycle op (stop/wait/…) on a defined-but-
+	/// never-created service is a quiet no-op instead of POSTing to a phantom
+	/// name and surfacing a raw 404 (#758). The state lets `stop` report
+	/// "stopped" only for containers that were actually running (#876).
+	pub(crate) async fn live_service_containers(
+		&self,
+		service_name: &str,
+	) -> Result<Vec<LiveContainer>> {
+		let filters = serde_json::json!({
+			"label": [
+				format!("podup.project={}", self.project),
+				format!("podup.service={service_name}"),
+			],
+		});
+		let path = format!(
+			"{API_PREFIX}/containers/json?all=true&filters={}",
+			urlencoded(&filters.to_string()),
+		);
+		let entries = self
+			.client
+			.get_json::<Vec<crate::libpod::types::container::ContainerListEntry>>(&path)
+			.await
+			.map_err(ComposeError::Podman)?;
+		Ok(entries
+			.into_iter()
+			.filter_map(|e| {
+				let state = e.state;
+				e.names.into_iter().next().map(|raw| LiveContainer {
+					name: raw.trim_start_matches('/').to_string(),
+					state,
+				})
+			})
+			.collect())
+	}
+
 	/// The container names to act on for a service: the ones Podman actually has
 	/// (matched by the `podup.service` label), so lifecycle and query commands
 	/// keep working after a runtime `scale`/`up --scale` that the compose file's
@@ -262,9 +320,23 @@ impl Engine {
 #[cfg(test)]
 mod tests {
 	use super::{
-		check_fixed_name_scale, check_replica_limit, check_scale_port_conflict,
+		check_fixed_name_scale, check_replica_limit, check_scale_port_conflict, state_is_active,
 		DEFAULT_MAX_REPLICAS,
 	};
+
+	#[test]
+	fn state_is_active_only_for_running_and_paused() {
+		// `stop` actually transitions only a running or paused container; for any
+		// other state it is a no-op that must not be reported as "stopped" (#876).
+		assert!(state_is_active("running"));
+		assert!(state_is_active("paused"));
+		assert!(!state_is_active("created"));
+		assert!(!state_is_active("exited"));
+		assert!(!state_is_active("stopped"));
+		assert!(!state_is_active("dead"));
+		assert!(!state_is_active("configured"));
+		assert!(!state_is_active(""));
+	}
 
 	#[test]
 	fn replica_limit_default_and_env_override() {
