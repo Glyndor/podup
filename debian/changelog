@@ -1,3 +1,37 @@
+podup (1.7.0) unstable; urgency=medium
+
+  * Safety: `down --rmi all|local` no longer force-removes an in-use image and so
+    can no longer cascade into deleting other projects' containers; `run --name`
+    no longer silently replaces a pre-existing container of the same name; and a
+    duplicated service in `scale`/`up --scale` no longer wipes the service.
+  * Hardening: variable interpolation can no longer inject YAML structure from an
+    env value; a deeply nested `${VAR:-…}` default no longer overflows the stack;
+    build contexts no longer dereference symlinks into the image; Quadlet values
+    are properly escaped; and `kill` signals, `--socket`, port/`--protocol`,
+    `--timeout`, project names and other inputs are validated client-side instead
+    of leaking a raw Podman error.
+  * Correctness: `port`/`exec`/`cp`/`attach` resolve runtime-scaled replicas;
+    service start/stop ordering and `wait` output and exit code are deterministic;
+    profiles are honoured across `pull`/`push`/`start`/`wait`/`images`/`stats`
+    and `generate quadlet`; build-only images are tagged per project (and the
+    resulting `up --build` lookup is fixed); a broken pipe exits cleanly instead
+    of aborting; and `config` validates dependency cycles, undefined volume and
+    network references, port ranges, project and service names.
+  * Performance: independent services within a dependency level now start, stop
+    and restart in parallel.
+  * CLI parity: many missing flags were added, including `ps --services/--filter/
+    --status` and a positional service filter, `commit -m/-a/-p/-c`,
+    `stats --format/--all/--no-trunc`, `up --wait-timeout`, `create --pull/
+    --no-deps`, `ls --filter`, `push -q`, `build --progress/--push`, `run -l`,
+    `events --since/--until/--filter`, `logs --no-color/--no-log-prefix`,
+    `attach --index` and `config --volumes/--images/--profiles/--hash`.
+  * Output: lifecycle commands now print per-container progress and a summary on
+    success (suppressed with `--quiet`); `ls`/`ps`/`images` tables size to their
+    content and truncate long values; and many commands now emit a clear,
+    friendly error instead of a raw Podman HTTP status.
+
+ -- Glyndor <packages@glyndor.net>  Mon, 29 Jun 2026 08:34:19 -0500
+
 podup (1.6.0) unstable; urgency=medium
 
   * Output is now colourised on a terminal and degrades gracefully: a semantic
