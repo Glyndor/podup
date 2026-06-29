@@ -207,10 +207,14 @@ impl Engine {
 			if !target_services.is_empty() && !target_services.iter().any(|t| t == name) {
 				continue;
 			}
-			let image_ref = match &service.image {
-				Some(img) => img.clone(),
-				None if service.build.is_some() => format!("{name}:latest"),
-				None => continue,
+			let image_ref = match (&service.image, &service.build) {
+				(Some(img), _) => img.clone(),
+				// A build-only service's image is the tag the build step produced
+				// (project-scoped `{project}-{service}:latest`, or `build.tags[0]`).
+				(None, Some(build)) => {
+					super::super::build::primary_build_tag(&self.project, name, None, build.tags())
+				}
+				(None, None) => continue,
 			};
 			let (repo, tag) = split_repo_tag(&image_ref);
 			let path = format!("{API_PREFIX}/images/{}/json", urlencoded(&image_ref));

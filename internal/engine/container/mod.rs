@@ -52,8 +52,14 @@ impl Engine {
 		let derived_image;
 		let image: &str = if let Some(img) = service.image.as_deref() {
 			img
-		} else if service.build.is_some() {
-			derived_image = format!("{}:latest", service_name);
+		} else if let Some(build) = service.build.as_ref() {
+			// No `image:` — reference the exact tag the build step produced for this
+			// build-only service (project-scoped `{project}-{service}:latest`, or
+			// the first `build.tags` entry). Must stay in lockstep with
+			// `primary_build_tag`, or `up --build` creates the container against a
+			// name no built image carries (HTTP 404: no such image).
+			derived_image =
+				super::build::primary_build_tag(&self.project, service_name, None, build.tags());
 			&derived_image
 		} else {
 			return Err(ComposeError::NoImageOrBuild(service_name.into()));
