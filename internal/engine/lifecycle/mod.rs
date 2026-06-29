@@ -144,6 +144,11 @@ impl Engine {
 		start: bool,
 	) -> Result<()> {
 		async {
+			// Reject any volume/network/container name Podman's regex would refuse
+			// before issuing a single create, so a bad name surfaces as a clear
+			// client-side error (not an opaque HTTP 500) with nothing created.
+			self.validate_object_names(file)?;
+
 			let levels = crate::compose::resolve_levels(file)?;
 			let active = active_profiles_set(active_profiles);
 			// Which services this `up`/`create` should start. A profiled service
