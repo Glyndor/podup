@@ -45,6 +45,21 @@ fn display_status(c: &ContainerListEntry) -> &str {
 	}
 }
 
+/// Table STATUS cell. Podman's list endpoint reports an exited container with a
+/// bare `exited` state and no code, which is indistinguishable from a clean exit;
+/// surface the exit code the way `docker compose ps` does (`Exited (0)` /
+/// `Exited (7)`). For every other state fall back to [`display_status`].
+fn table_status(c: &ContainerListEntry) -> String {
+	let status = display_status(c);
+	let exited = c.state.eq_ignore_ascii_case("exited") || c.state.eq_ignore_ascii_case("dead");
+	// Only synthesize when the status text doesn't already carry the code, so a
+	// richer Docker-style `Exited (7) 4 seconds ago` is left untouched.
+	if exited && !status.contains("Exited (") {
+		return format!("Exited ({})", c.exit_code.unwrap_or(0));
+	}
+	status.to_string()
+}
+
 /// The container's display name (leading slash stripped).
 fn name_of(c: &ContainerListEntry) -> String {
 	c.names.join(", ").trim_start_matches('/').to_string()
@@ -300,7 +315,7 @@ impl Engine {
 			table.push(vec![
 				name_of(c),
 				c.image.clone(),
-				display_status(c).to_string(),
+				table_status(c),
 				format_ports(&c.ports),
 			]);
 		}
@@ -367,6 +382,40 @@ mod tests {
 			display_status(&entry("Up 2 seconds", "running")),
 			"Up 2 seconds"
 		);
+	}
+
+	fn entry_exit(state: &str, code: Option<i32>) -> ContainerListEntry {
+		ContainerListEntry {
+			exit_code: code,
+			..entry("", state)
+		}
+	}
+
+	#[test]
+	fn table_status_shows_exit_code_for_bare_exited() {
+		// A crash (non-zero) and a clean exit (zero) must be distinguishable,
+		// even though libpod reports both as a bare `exited` state.
+		assert_eq!(table_status(&entry_exit("exited", Some(7))), "Exited (7)");
+		assert_eq!(table_status(&entry_exit("exited", Some(0))), "Exited (0)");
+		// Missing exit code defaults to 0 rather than rendering a bare word.
+		assert_eq!(table_status(&entry_exit("exited", None)), "Exited (0)");
+		// `dead` is treated like an exit too.
+		assert_eq!(table_status(&entry_exit("dead", Some(255))), "Exited (255)");
+	}
+
+	#[test]
+	fn table_status_keeps_running_and_rich_status_text() {
+		assert_eq!(
+			table_status(&entry("Up 2 seconds", "running")),
+			"Up 2 seconds"
+		);
+		assert_eq!(table_status(&entry("", "running")), "running");
+		// A Docker-style status that already carries the code is left untouched.
+		let c = ContainerListEntry {
+			exit_code: Some(7),
+			..entry("Exited (7) 4 seconds ago", "exited")
+		};
+		assert_eq!(table_status(&c), "Exited (7) 4 seconds ago");
 	}
 
 	#[test]

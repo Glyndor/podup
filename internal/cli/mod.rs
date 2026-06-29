@@ -67,7 +67,7 @@ pub(crate) struct Cli {
 	#[arg(long, global = true)]
 	pub(crate) project_directory: Option<PathBuf>,
 
-	/// Extra env file(s) for interpolation (repeatable, later win; process env and `.env` still win).
+	/// Extra env file(s) for interpolation (repeatable; later `--env-file` wins, and these replace the default `.env`; process env still wins).
 	/// With `run`, they also seed the one-off container's environment (below `environment:`/`-e`).
 	#[arg(long = "env-file", global = true)]
 	pub(crate) env_file: Vec<String>,
