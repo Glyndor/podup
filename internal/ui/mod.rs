@@ -17,6 +17,9 @@ use anstyle::{AnsiColor, Style};
 
 pub use anstream::ColorChoice;
 
+mod table;
+pub use table::{fit_cell, Table};
+
 /// Apply the resolved colour choice process-wide and enable Windows VT once.
 ///
 /// anstream's `stdout()`/`stderr()` then honour this choice together with

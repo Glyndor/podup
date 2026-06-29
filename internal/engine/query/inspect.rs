@@ -263,13 +263,14 @@ impl Engine {
 			return Ok(());
 		}
 
-		crate::ui::print_bold_header(&format!(
-			"{:<30} {:<25} {:<15} {:<20}",
-			"SERVICE", "REPOSITORY", "TAG", "IMAGE ID"
-		));
+		let mut table = crate::ui::Table::new(&["SERVICE", "REPOSITORY", "TAG", "IMAGE ID"])
+			.cap(0, 48)
+			.cap(1, 48)
+			.cap(2, 24);
 		for (svc, repo, tag, id) in &rows {
-			println!("{svc:<30} {repo:<25} {tag:<15} {id:<20}");
+			table.push(vec![svc.clone(), repo.clone(), tag.clone(), id.clone()]);
 		}
+		table.print();
 		Ok(())
 	}
 
