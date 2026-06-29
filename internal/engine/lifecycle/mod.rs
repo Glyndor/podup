@@ -62,8 +62,6 @@ pub struct RunOverrides {
 	pub interactive: bool,
 	/// Do not start `depends_on` services before the run (`--no-deps`).
 	pub no_deps: bool,
-	/// Extra labels to apply to the one-off container (`-l/--label`, `KEY=VAL`).
-	pub labels: Vec<String>,
 }
 
 impl Engine {

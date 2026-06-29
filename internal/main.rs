@@ -249,14 +249,14 @@ async fn run() -> podup::Result<()> {
 			}
 		}
 		let client = podup::podman::connect(resolve_socket(cli.socket.as_deref()).as_deref())?;
-		return podup::list_projects(
+		return podup::list_projects_filtered(
 			&client,
 			podup::LsOptions {
 				all: *all,
 				quiet: *quiet,
 				json: *format == OutputFormat::Json,
-				filters: filter.clone(),
 			},
+			filter,
 		)
 		.await;
 	}
@@ -291,12 +291,14 @@ async fn run() -> podup::Result<()> {
 		let client = podup::podman::connect(resolve_socket(cli.socket.as_deref()).as_deref())?;
 		let engine = podup::Engine::with_base_dir(client, project, base_dir);
 		return engine
-			.ps_with_options(
+			.ps_filtered(
 				&file,
 				podup::PsOptions {
 					all: *all,
 					quiet: *quiet,
 					json: *format == OutputFormat::Json,
+				},
+				podup::PsFilterOptions {
 					services_only: *services_only,
 					services: services.clone(),
 					status: status.clone(),
@@ -452,6 +454,7 @@ async fn run() -> podup::Result<()> {
 		.with_up_overrides(pull_override, no_build, quiet_pull)
 		.with_run_overrides(startup::run_overrides_for(&cli.command))
 		.with_run_env_files(cli.env_file.clone())
+		.with_run_labels(startup::run_labels_for(&cli.command))
 		.with_renew_anon_volumes(renew_anon_volumes);
 
 	// Serialize mutating lifecycle commands against concurrent `podup` runs on

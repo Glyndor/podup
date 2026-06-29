@@ -17,6 +17,13 @@ pub struct PsOptions {
 	pub quiet: bool,
 	/// Emit JSON instead of the table, `--format json`.
 	pub json: bool,
+}
+
+/// Service/status/name filters for [`Engine::ps_filtered`] (`docker compose ps`
+/// `--services`, `[SERVICE...]`, `--status`, `--filter`). Kept off the frozen
+/// [`PsOptions`] struct so the 1.0 library API stays stable.
+#[derive(Default)]
+pub struct PsFilterOptions {
 	/// Print the service names instead of the container table, `--services`.
 	pub services_only: bool,
 	/// Restrict to these services' containers (positional `SERVICE` filter).
@@ -180,12 +187,25 @@ impl Engine {
 		self.ps_with_options(file, PsOptions::default()).await
 	}
 
+	/// List containers with `docker compose ps`-style options (`-a/--all`,
+	/// `-q/--quiet`, `--format`). For the `--services`/`[SERVICE...]`/`--status`/
+	/// `--filter` predicates use [`Engine::ps_filtered`].
+	pub async fn ps_with_options(&self, file: &ComposeFile, opts: PsOptions) -> Result<()> {
+		self.ps_filtered(file, opts, PsFilterOptions::default())
+			.await
+	}
+
 	/// List containers with `docker compose ps`-style options: `-a/--all`
 	/// (include stopped), `-q/--quiet` (full IDs only), `--format`
 	/// (table | json), `--services` (service-name list), a positional `SERVICE`
 	/// filter, and `--status`/`--filter` predicates.
-	pub async fn ps_with_options(&self, file: &ComposeFile, opts: PsOptions) -> Result<()> {
-		for name in &opts.services {
+	pub async fn ps_filtered(
+		&self,
+		file: &ComposeFile,
+		opts: PsOptions,
+		filters: PsFilterOptions,
+	) -> Result<()> {
+		for name in &filters.services {
 			if !file.services.contains_key(name) {
 				return Err(ComposeError::ServiceNotFound(name.clone()));
 			}
@@ -193,9 +213,9 @@ impl Engine {
 
 		// `--services` lists the (optionally filtered) configured service names,
 		// one per line, instead of the container table.
-		if opts.services_only {
+		if filters.services_only {
 			for name in file.services.keys() {
-				if opts.services.is_empty() || opts.services.iter().any(|s| s == name) {
+				if filters.services.is_empty() || filters.services.iter().any(|s| s == name) {
 					println!("{name}");
 				}
 			}
@@ -204,25 +224,27 @@ impl Engine {
 
 		// Fold `--status` and any `status=`/`name=` from `--filter` together;
 		// warn on unsupported `--filter` keys rather than silently ignoring them.
-		let (mut status_filter, name_filter, unknown) = split_ps_filters(&opts.filters);
+		let (mut status_filter, name_filter, unknown) = split_ps_filters(&filters.filters);
 		for u in &unknown {
 			tracing::warn!("ps: ignoring unsupported filter '{u}'");
 		}
-		status_filter.extend(opts.status.iter().cloned());
+		status_filter.extend(filters.status.iter().cloned());
 
 		// A positional `SERVICE` filter restricts to those services' container
 		// names (across replicas).
-		let allowed_names: Option<std::collections::HashSet<String>> = if opts.services.is_empty() {
-			None
-		} else {
-			Some(
-				opts.services
-					.iter()
-					.filter_map(|n| file.services.get(n).map(|s| (n, s)))
-					.flat_map(|(n, s)| self.replica_names(n, s))
-					.collect(),
-			)
-		};
+		let allowed_names: Option<std::collections::HashSet<String>> =
+			if filters.services.is_empty() {
+				None
+			} else {
+				Some(
+					filters
+						.services
+						.iter()
+						.filter_map(|n| file.services.get(n).map(|s| (n, s)))
+						.flat_map(|(n, s)| self.replica_names(n, s))
+						.collect(),
+				)
+			};
 
 		let label = format!("podup.project={}", self.project);
 		let filters = serde_json::json!({ "label": [label] });

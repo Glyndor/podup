@@ -13,7 +13,7 @@ pub use copy::CpOptions;
 pub use image::{resolve_image_digests, CommitOptions};
 pub use lifecycle::{validate_stop_timeout, RunOptions, RunOverrides};
 pub use lock::ProjectLock;
-pub use query::{ExecOptions, ImagesOptions, LogsOptions, PsOptions};
+pub use query::{ExecOptions, ImagesOptions, LogsDisplay, LogsOptions, PsFilterOptions, PsOptions};
 mod container_config;
 mod health;
 mod lifecycle;
@@ -22,7 +22,7 @@ mod network;
 mod profiles;
 pub use profiles::{retain_active_profiles, retain_active_profiles_with_targets};
 mod projects;
-pub use projects::{list_projects, LsOptions};
+pub use projects::{list_projects, list_projects_filtered, LsOptions};
 mod query;
 mod secrets;
 mod staging;
@@ -78,6 +78,10 @@ pub struct Engine {
 	/// to `base_dir`; empty by default. Kept off the frozen public
 	/// [`lifecycle::RunOverrides`] struct so the library API stays stable.
 	pub(super) run_env_files: Vec<String>,
+	/// CLI `docker compose run -l/--label KEY=VAL` ad-hoc labels for the one-off
+	/// `run` container; empty by default. Kept off the frozen public
+	/// [`lifecycle::RunOverrides`] struct so the library API stays stable.
+	pub(super) run_labels: Vec<String>,
 	/// CLI `up -V/--renew-anon-volumes`: when recreating a container, also remove
 	/// its old anonymous volumes instead of leaving them orphaned.
 	pub(super) renew_anon_volumes: bool,
@@ -97,6 +101,7 @@ impl Engine {
 			quiet_pull: false,
 			run_overrides: lifecycle::RunOverrides::default(),
 			run_env_files: Vec::new(),
+			run_labels: Vec::new(),
 			renew_anon_volumes: false,
 		}
 	}
@@ -114,6 +119,7 @@ impl Engine {
 			quiet_pull: false,
 			run_overrides: lifecycle::RunOverrides::default(),
 			run_env_files: Vec::new(),
+			run_labels: Vec::new(),
 			renew_anon_volumes: false,
 		}
 	}
@@ -160,6 +166,13 @@ impl Engine {
 	/// [`Engine::run`]. Resolved relative to the engine's base dir.
 	pub fn with_run_env_files(mut self, env_files: Vec<String>) -> Self {
 		self.run_env_files = env_files;
+		self
+	}
+
+	/// Set the CLI `docker compose run -l/--label KEY=VAL` ad-hoc labels for the
+	/// one-off `run` container. Builder-style; consumed by [`Engine::run`].
+	pub fn with_run_labels(mut self, labels: Vec<String>) -> Self {
+		self.run_labels = labels;
 		self
 	}
 

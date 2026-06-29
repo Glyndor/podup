@@ -172,15 +172,25 @@ impl Engine {
 
 	/// List images used by each service as a table (default options).
 	pub async fn images(&self, file: &ComposeFile) -> Result<()> {
-		self.images_with_options(file, &[], super::ImagesOptions::default())
+		self.images_with_options(file, super::ImagesOptions::default())
 			.await
 	}
 
 	/// List service images with `docker compose images`-style options:
-	/// `-q/--quiet` (IDs only) and `--format` (table | json). When
+	/// `-q/--quiet` (IDs only) and `--format` (table | json), across all services.
+	/// To restrict to specific services use [`Engine::images_with_services`].
+	pub async fn images_with_options(
+		&self,
+		file: &ComposeFile,
+		opts: super::ImagesOptions,
+	) -> Result<()> {
+		self.images_with_services(file, &[], opts).await
+	}
+
+	/// List service images like [`Engine::images_with_options`]. When
 	/// `target_services` is non-empty, only those services are listed (an unknown
 	/// name is an error), matching `docker compose images [SERVICE...]`.
-	pub async fn images_with_options(
+	pub async fn images_with_services(
 		&self,
 		file: &ComposeFile,
 		target_services: &[String],

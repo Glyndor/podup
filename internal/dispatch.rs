@@ -202,14 +202,7 @@ pub(crate) async fn dispatch(
 			// `--push` pushes each freshly built image to its registry.
 			if push {
 				engine
-					.push(
-						file,
-						&services,
-						podup::PushOptions {
-							quiet,
-							..Default::default()
-						},
-					)
+					.push_with_quiet(file, &services, podup::PushOptions::default(), quiet)
 					.await?;
 			}
 		}
@@ -363,7 +356,7 @@ pub(crate) async fn dispatch(
 					podup::CommitOptions {
 						message,
 						author,
-						pause,
+						pause: Some(pause),
 						changes: change,
 					},
 				)
@@ -386,14 +379,14 @@ pub(crate) async fn dispatch(
 		} => {
 			let file = &profile_filtered(file, profile, &services);
 			engine
-				.push(
+				.push_with_quiet(
 					file,
 					&services,
 					podup::PushOptions {
 						ignore_failures: ignore_push_failures,
 						tls_verify,
-						quiet,
 					},
+					quiet,
 				)
 				.await?
 		}
@@ -430,7 +423,7 @@ pub(crate) async fn dispatch(
 		} => {
 			let file = &profile_filtered(file, profile, &services);
 			engine
-				.images_with_options(
+				.images_with_services(
 					file,
 					&services,
 					podup::ImagesOptions {
@@ -451,7 +444,7 @@ pub(crate) async fn dispatch(
 			services,
 		} => {
 			engine
-				.logs_with_options(
+				.logs_with_display(
 					file,
 					&services,
 					podup::LogsOptions {
@@ -460,6 +453,8 @@ pub(crate) async fn dispatch(
 						since,
 						until,
 						timestamps,
+					},
+					podup::LogsDisplay {
 						no_color,
 						no_log_prefix,
 					},

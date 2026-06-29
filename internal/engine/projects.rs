@@ -19,8 +19,6 @@ pub struct LsOptions {
 	pub quiet: bool,
 	/// Emit a JSON array instead of a table.
 	pub json: bool,
-	/// `KEY=VALUE` predicates (`--filter`): name=<NAME> or status=<running|exited>.
-	pub filters: Vec<String>,
 }
 
 /// Split `ls --filter KEY=VALUE` predicates into name, status, and unknown
@@ -73,11 +71,23 @@ struct Tally {
 /// List podup projects on the host (`docker compose ls`). Groups every
 /// `podup.project`-labelled container by project; by default shows only
 /// projects with at least one running container (`all` includes stopped ones).
+/// For the `--filter name=/status=` predicates use [`list_projects_filtered`].
 pub async fn list_projects(client: &Client, opts: LsOptions) -> Result<()> {
-	let filters = serde_json::json!({ "label": ["podup.project"] });
+	list_projects_filtered(client, opts, &[]).await
+}
+
+/// List podup projects (`docker compose ls`) narrowed by `--filter` predicates
+/// (`name=<NAME>`, `status=<running|exited>`). The `filters` slice is kept off
+/// the frozen [`LsOptions`] struct so the 1.0 library API stays stable.
+pub async fn list_projects_filtered(
+	client: &Client,
+	opts: LsOptions,
+	filters: &[String],
+) -> Result<()> {
+	let label_filters = serde_json::json!({ "label": ["podup.project"] });
 	let path = format!(
 		"{API_PREFIX}/containers/json?all=true&filters={}",
-		urlencoded(&filters.to_string()),
+		urlencoded(&label_filters.to_string()),
 	);
 	let containers = client
 		.get_json::<Vec<ContainerListEntry>>(&path)
@@ -107,7 +117,7 @@ pub async fn list_projects(client: &Client, opts: LsOptions) -> Result<()> {
 		}
 	}
 
-	let (name_filter, status_filter, unknown) = split_ls_filters(&opts.filters);
+	let (name_filter, status_filter, unknown) = split_ls_filters(filters);
 	for u in &unknown {
 		tracing::warn!("ls: ignoring unsupported filter '{u}'");
 	}

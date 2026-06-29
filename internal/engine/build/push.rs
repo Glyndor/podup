@@ -79,8 +79,6 @@ pub struct PushOptions {
 	/// Override TLS verification of the registry. `None` leaves Podman's default
 	/// (verify on); `Some(false)` allows an insecure/HTTP registry.
 	pub tls_verify: Option<bool>,
-	/// Suppress the push progress output (`-q/--quiet`).
-	pub quiet: bool,
 }
 
 impl Engine {
@@ -92,6 +90,20 @@ impl Engine {
 		file: &ComposeFile,
 		target_services: &[String],
 		opts: PushOptions,
+	) -> Result<()> {
+		self.push_with_quiet(file, target_services, opts, false)
+			.await
+	}
+
+	/// Push each service's image like [`Engine::push`], with `quiet` (`-q/--quiet`)
+	/// suppressing the per-image progress output. Kept off the frozen
+	/// [`PushOptions`] struct so the 1.0 library API stays stable.
+	pub async fn push_with_quiet(
+		&self,
+		file: &ComposeFile,
+		target_services: &[String],
+		opts: PushOptions,
+		quiet: bool,
 	) -> Result<()> {
 		for svc in target_services {
 			if !file.services.contains_key(svc) {
@@ -107,7 +119,7 @@ impl Engine {
 				tracing::debug!("{name}: no image to push, skipping");
 				continue;
 			};
-			if let Err(e) = self.push_image(image, &opts).await {
+			if let Err(e) = self.push_image(image, &opts, quiet).await {
 				if opts.ignore_failures {
 					warn!("push {image} failed (ignored): {e}");
 				} else {
@@ -120,8 +132,8 @@ impl Engine {
 
 	/// Push a single image ref and drain its progress stream, surfacing a
 	/// mid-stream `error` line as a failure.
-	async fn push_image(&self, image: &str, opts: &PushOptions) -> Result<()> {
-		if opts.quiet {
+	async fn push_image(&self, image: &str, opts: &PushOptions, quiet: bool) -> Result<()> {
+		if quiet {
 			tracing::debug!("pushing {image}");
 		} else {
 			info!("pushing {image}");
@@ -138,7 +150,7 @@ impl Engine {
 			.await
 			.map_err(ComposeError::Podman)?;
 		let stream = crate::libpod::parse_json_lines::<ImagePullProgress>(resp.into_body());
-		drain_push_stream(stream, image, opts.quiet, PUSH_STALL_TIMEOUT).await
+		drain_push_stream(stream, image, quiet, PUSH_STALL_TIMEOUT).await
 	}
 }
 

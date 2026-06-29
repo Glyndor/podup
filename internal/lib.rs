@@ -46,10 +46,11 @@ pub use compose::{
 /// project-name/listing helpers — the surface a CLI drives compose operations
 /// through.
 pub use engine::{
-	is_safe_project_name, list_projects, resolve_image_digests, retain_active_profiles,
-	retain_active_profiles_with_targets, validate_stop_timeout, BuildOptions, CommitOptions,
-	CpOptions, Engine, EventsOptions, ExecOptions, ImagesOptions, LogsOptions, LsOptions,
-	ProjectLock, PsOptions, PullOptions, PushOptions, RunOptions, RunOverrides, VolumesOptions,
+	is_safe_project_name, list_projects, list_projects_filtered, resolve_image_digests,
+	retain_active_profiles, retain_active_profiles_with_targets, validate_stop_timeout,
+	BuildOptions, CommitOptions, CpOptions, Engine, EventsOptions, ExecOptions, ImagesOptions,
+	LogsDisplay, LogsOptions, LsOptions, ProjectLock, PsFilterOptions, PsOptions, PullOptions,
+	PushOptions, RunOptions, RunOverrides, VolumesOptions,
 };
 /// The crate's error type and `Result` alias, surfaced so callers handle one
 /// error enum across parsing and engine calls.

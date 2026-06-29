@@ -396,9 +396,6 @@ pub(crate) enum Commands {
 		/// Author of the new image (e.g. "Name <email>").
 		#[arg(short, long)]
 		author: Option<String>,
-		/// Pause the container during commit (default: true).
-		#[arg(short, long)]
-		pause: Option<bool>,
 		/// Apply a Dockerfile instruction to the committed image (repeatable).
 		#[arg(short = 'c', long = "change")]
 		change: Vec<String>,
@@ -408,6 +405,7 @@ pub(crate) enum Commands {
 		/// Pause the container during commit for a consistent snapshot
 		/// (default on; `--pause=false` to snapshot a live container).
 		#[arg(
+			short,
 			long,
 			default_value_t = true,
 			action = clap::ArgAction::Set,

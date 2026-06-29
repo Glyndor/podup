@@ -43,10 +43,11 @@ impl Engine {
 			publish,
 			interactive,
 			no_deps,
-			labels,
 		} = self.run_overrides.clone();
-		// `--env-file` is global, so it rides on the engine (not `RunOverrides`).
+		// `--env-file` and `-l/--label` are carried on the engine (not
+		// `RunOverrides`) to keep the public struct frozen.
 		let env_files = self.run_env_files.clone();
+		let labels = self.run_labels.clone();
 		let service = file
 			.services
 			.get(service_name)
