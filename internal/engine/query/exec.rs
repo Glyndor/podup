@@ -13,6 +13,18 @@ use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 
 use super::Engine;
 
+/// Ceiling on how long to wait for the libpod exec-start *response head*. A
+/// healthy engine returns it almost instantly — either the hijacked stream or a
+/// prompt error (e.g. HTTP 500 "unable to find user … no matching entries in
+/// passwd file"). When the target user/workdir does not resolve, some engine
+/// builds instead stall before answering, which the default client read timeout
+/// would only abort after ~120s and then report as a misleading socket-timeout.
+/// Bounding the head here lets [`Engine::exec_with_options`] fail fast with a
+/// clear, exec-specific message. It covers only the head; the streamed exec
+/// output is left unbounded so a legitimate long-running command runs to
+/// completion.
+const EXEC_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// Options for [`Engine::exec`], mirroring `docker compose exec` flags.
 #[derive(Default)]
 pub struct ExecOptions {
@@ -78,6 +90,33 @@ fn map_not_running(e: crate::libpod::PodmanError, service_name: &str) -> Compose
 	} else {
 		ComposeError::Podman(e)
 	}
+}
+
+/// Translate a failure *starting* the exec session into a clear error. A
+/// client-side timeout means the libpod exec-start never returned its response
+/// head within [`EXEC_START_TIMEOUT`] — almost always a wedged launch (e.g. a
+/// nonexistent `--user`/`--workdir` the server stalls resolving) rather than an
+/// unhealthy socket, so surface that with the likely cause instead of the
+/// generic "timed out waiting for the Podman socket" message. Every other error
+/// — including the prompt HTTP error an engine *does* return for a bad user
+/// ("unable to find user … no matching entries in passwd file") — passes through
+/// unchanged so legitimate diagnostics are never masked. Pure so it is
+/// unit-tested.
+fn map_exec_start_err(e: crate::libpod::PodmanError, opts: &ExecOptions) -> ComposeError {
+	if e.is_timeout() {
+		let cause = if let Some(user) = &opts.user {
+			format!(" (the requested user '{user}' may not exist in the container)")
+		} else if let Some(dir) = &opts.workdir {
+			format!(" (the requested working directory '{dir}' may not exist)")
+		} else {
+			String::new()
+		};
+		return ComposeError::ExecFailed(format!(
+			"the exec session did not start within {}s{cause}",
+			EXEC_START_TIMEOUT.as_secs()
+		));
+	}
+	ComposeError::Podman(e)
 }
 
 impl Engine {
@@ -151,9 +190,9 @@ impl Engine {
 			let start_path = format!("{API_PREFIX}/exec/{}/start", urlencoded(&exec_id));
 			let _ = self
 				.client
-				.post_json_stream(&start_path, &start_cfg)
+				.post_json_stream_within(&start_path, &start_cfg, Some(EXEC_START_TIMEOUT))
 				.await
-				.map_err(ComposeError::Podman)?;
+				.map_err(|e| map_exec_start_err(e, &opts))?;
 			return Ok(());
 		}
 
@@ -164,9 +203,9 @@ impl Engine {
 		let start_path = format!("{API_PREFIX}/exec/{}/start", urlencoded(&exec_id));
 		let start_resp = self
 			.client
-			.post_json_stream(&start_path, &start_cfg)
+			.post_json_stream_within(&start_path, &start_cfg, Some(EXEC_START_TIMEOUT))
 			.await
-			.map_err(ComposeError::Podman)?;
+			.map_err(|e| map_exec_start_err(e, &opts))?;
 		let mut stream = crate::libpod::parse_multiplexed(start_resp.into_body());
 
 		// Lock stdout once for the whole stream instead of re-acquiring the lock
@@ -216,7 +255,10 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
-	use super::{expand_exec_env, is_exec_teardown_noise, map_not_running};
+	use super::{
+		expand_exec_env, is_exec_teardown_noise, map_exec_start_err, map_not_running, ExecOptions,
+		EXEC_START_TIMEOUT,
+	};
 
 	#[test]
 	fn expand_exec_env_passes_through_key_value() {
@@ -276,5 +318,76 @@ mod tests {
 			map_not_running(other, "web"),
 			ComposeError::Podman(_)
 		));
+	}
+
+	#[test]
+	fn exec_start_timeout_with_user_names_the_user() {
+		use crate::libpod::PodmanError;
+		// A client-side head timeout (the wedged-launch symptom) becomes a clear,
+		// fast ExecFailed naming the likely culprit — never the raw socket-timeout.
+		let timeout = PodmanError::Api {
+			status: 0,
+			message: format!(
+				"timed out after {}s waiting for the Podman socket to respond",
+				EXEC_START_TIMEOUT.as_secs()
+			),
+		};
+		let opts = ExecOptions {
+			user: Some("doesnotexist".into()),
+			..Default::default()
+		};
+		let mapped = map_exec_start_err(timeout, &opts);
+		match mapped {
+			crate::error::ComposeError::ExecFailed(msg) => {
+				assert!(msg.contains("doesnotexist"), "got {msg}");
+				assert!(msg.contains("did not start"), "got {msg}");
+				assert!(
+					!msg.to_ascii_lowercase().contains("podman socket"),
+					"must not leak the socket-timeout wording: {msg}"
+				);
+			}
+			other => panic!("expected ExecFailed, got {other:?}"),
+		}
+	}
+
+	#[test]
+	fn exec_start_timeout_without_user_names_the_workdir() {
+		use crate::libpod::PodmanError;
+		let timeout = PodmanError::Api {
+			status: 0,
+			message: "timed out after 20s waiting for the Podman socket to respond".into(),
+		};
+		let opts = ExecOptions {
+			workdir: Some("/no/such/dir".into()),
+			..Default::default()
+		};
+		match map_exec_start_err(timeout, &opts) {
+			crate::error::ComposeError::ExecFailed(msg) => {
+				assert!(msg.contains("/no/such/dir"), "got {msg}");
+			}
+			other => panic!("expected ExecFailed, got {other:?}"),
+		}
+	}
+
+	#[test]
+	fn exec_start_real_api_error_passes_through() {
+		use crate::error::ComposeError;
+		use crate::libpod::PodmanError;
+		// The prompt HTTP error an engine returns for a bad user is a genuine
+		// diagnostic and must reach the user verbatim, not be rewritten.
+		let api = PodmanError::Api {
+			status: 500,
+			message: "unable to find user doesnotexist: no matching entries in passwd file".into(),
+		};
+		let opts = ExecOptions {
+			user: Some("doesnotexist".into()),
+			..Default::default()
+		};
+		match map_exec_start_err(api, &opts) {
+			ComposeError::Podman(e) => {
+				assert!(e.to_string().contains("no matching entries in passwd file"));
+			}
+			other => panic!("expected Podman passthrough, got {other:?}"),
+		}
 	}
 }

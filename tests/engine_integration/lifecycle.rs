@@ -323,6 +323,68 @@ async fn exec_unknown_service_fails() {
 }
 
 #[tokio::test]
+async fn exec_nonexistent_user_fails_fast() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("exbu");
+	let engine = Engine::new(client, proj.clone());
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	// A nonexistent named user must surface a prompt, clear error — never hang for
+	// the full client read timeout (~120s) and then report a misleading
+	// socket-timeout (issue #720).
+	let started = std::time::Instant::now();
+	let err = engine
+		.exec_with_options(
+			&file,
+			"web",
+			vec!["echo".to_string(), "hi".to_string()],
+			podup::ExecOptions {
+				user: Some("definitelynosuchuser".to_string()),
+				..Default::default()
+			},
+		)
+		.await
+		.unwrap_err();
+	let elapsed = started.elapsed();
+	engine.down(&file).await.unwrap();
+
+	assert!(
+		elapsed < std::time::Duration::from_secs(60),
+		"exec with a bad user must fail fast, took {elapsed:?}"
+	);
+	let msg = err.to_string().to_ascii_lowercase();
+	// Either the engine's prompt diagnostic (it names the user / passwd file) or
+	// podup's exec-specific timeout message — but never the bare socket-timeout.
+	assert!(
+		msg.contains("user") || msg.contains("passwd") || msg.contains("exec"),
+		"unexpected error for a bad exec user: {msg}"
+	);
+	assert!(
+		!msg.contains("waiting for the podman socket"),
+		"bad-user exec leaked a socket-timeout message: {msg}"
+	);
+	// A normal exec into the same service still works after the failure.
+	engine.up(&file).await.unwrap();
+	engine
+		.exec_with_options(
+			&file,
+			"web",
+			vec!["echo".to_string(), "ok".to_string()],
+			podup::ExecOptions::default(),
+		)
+		.await
+		.unwrap();
+	engine.down(&file).await.unwrap();
+}
+
+#[tokio::test]
 async fn pull_images() {
 	let client = match podman().await {
 		Some(d) => d,
