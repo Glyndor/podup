@@ -3,8 +3,11 @@
 //! file in YAML/JSON with unset keys pruned and inline secrets redacted. Split
 //! out of `startup` so each file stays within the source line limit.
 
+use std::path::Path;
+
 use sha2::{Digest, Sha256};
 
+use super::config_normalize::{quote_yaml11_booleans, resolve_bind_sources};
 use crate::cli::ConfigFormat;
 
 /// Output selectors for `config`, mirroring the mutually-exclusive `docker
@@ -35,6 +38,7 @@ pub(crate) fn render_config(
 	format: &ConfigFormat,
 	out: &ConfigOutput,
 	project: &str,
+	base_dir: &Path,
 ) -> podup::Result<()> {
 	// Reaching here means the file parsed and merged cleanly. Run the full
 	// config-time validation (non-empty services, image-or-build, service-name
@@ -86,6 +90,14 @@ pub(crate) fn render_config(
 	// Surface the resolved project name in the rendered output, like
 	// `docker compose config`, rather than the file's literal `name:` (or none).
 	redacted.name = Some(project.to_string());
+	// Don't echo keys the diagnostics pass warned were ignored: the rendered
+	// config should reflect what podup actually applies, and re-feeding it must
+	// not re-trigger the same warning. `x-*` extensions are kept.
+	redacted.strip_ignored_unknown_keys();
+	// Resolve relative bind-mount sources to absolute paths against the project
+	// directory, like `docker compose config`. Runtime mounting is unaffected —
+	// this only normalizes the rendered output.
+	resolve_bind_sources(&mut redacted, base_dir);
 	redacted.redact_inline_content();
 	let rendered = match format {
 		ConfigFormat::Json => {
@@ -101,7 +113,12 @@ pub(crate) fn render_config(
 			let mut v: serde_yaml::Value =
 				serde_yaml::to_value(&redacted).map_err(podup::ComposeError::Parse)?;
 			prune_yaml_nulls(&mut v);
-			serde_yaml::to_string(&v).map_err(podup::ComposeError::Parse)?
+			let yaml = serde_yaml::to_string(&v).map_err(podup::ComposeError::Parse)?;
+			// serde_yaml_ng emits YAML 1.2, where `yes`/`no`/`on`/`off` are plain
+			// strings and stay unquoted. A strict YAML 1.1 reader (docker compose's
+			// emitter among them) would misread those as booleans, so quote any
+			// string scalar that looks like a YAML 1.1 boolean to match.
+			quote_yaml11_booleans(&yaml)
 		}
 	};
 	println!("{rendered}");
@@ -279,6 +296,7 @@ mod tests {
 				..Default::default()
 			},
 			"proj",
+			Path::new("/proj"),
 		)
 		.unwrap_err();
 		assert!(matches!(err, podup::ComposeError::CircularDependency(_)));
@@ -295,6 +313,7 @@ mod tests {
 				..Default::default()
 			},
 			"proj",
+			Path::new("/proj"),
 		)
 		.unwrap();
 	}
@@ -310,6 +329,7 @@ mod tests {
 				..Default::default()
 			},
 			"proj",
+			Path::new("/proj"),
 		)
 		.unwrap();
 	}
@@ -335,7 +355,14 @@ mod tests {
 				..Default::default()
 			},
 		] {
-			render_config(&sample_file(), &ConfigFormat::Yaml, &out, "proj").unwrap();
+			render_config(
+				&sample_file(),
+				&ConfigFormat::Yaml,
+				&out,
+				"proj",
+				Path::new("/proj"),
+			)
+			.unwrap();
 		}
 	}
 
@@ -345,7 +372,14 @@ mod tests {
 			hash: Some("nope".to_string()),
 			..Default::default()
 		};
-		assert!(render_config(&sample_file(), &ConfigFormat::Yaml, &out, "proj").is_err());
+		assert!(render_config(
+			&sample_file(),
+			&ConfigFormat::Yaml,
+			&out,
+			"proj",
+			Path::new("/proj")
+		)
+		.is_err());
 	}
 
 	#[test]
@@ -366,6 +400,7 @@ mod tests {
 			&ConfigFormat::Yaml,
 			&ConfigOutput::default(),
 			"proj",
+			Path::new("/proj"),
 		)
 		.unwrap();
 		render_config(
@@ -373,6 +408,7 @@ mod tests {
 			&ConfigFormat::Json,
 			&ConfigOutput::default(),
 			"proj",
+			Path::new("/proj"),
 		)
 		.unwrap();
 	}
@@ -419,5 +455,31 @@ mod tests {
 			"passthrough env var must be kept"
 		);
 		assert!(j["services"]["web"].get("dns").is_none());
+	}
+
+	#[test]
+	fn render_config_strips_ignored_unknown_keys() {
+		// An unknown (non-`x-`) top-level and service key is dropped from the
+		// rendered output, while a valid `x-` extension is round-tripped. Rendered
+		// via the YAML path through a clone so the public method is exercised.
+		let mut file = podup::parse_str(
+			"x-anchors: keep\nbogus_top: 1\nservices:\n  web:\n    image: nginx\n    bogus_svc: 2\n",
+		)
+		.unwrap();
+		file.strip_ignored_unknown_keys();
+		let v: serde_yaml::Value = serde_yaml::to_value(&file).unwrap();
+		let out = serde_yaml::to_string(&v).unwrap();
+		assert!(
+			!out.contains("bogus_top"),
+			"ignored top key re-emitted: {out}"
+		);
+		assert!(
+			!out.contains("bogus_svc"),
+			"ignored svc key re-emitted: {out}"
+		);
+		assert!(
+			out.contains("x-anchors"),
+			"x- extension must survive: {out}"
+		);
 	}
 }

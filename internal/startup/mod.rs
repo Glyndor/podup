@@ -12,6 +12,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::cli::{Cli, Commands};
 
+mod config_normalize;
 mod config_render;
 pub(crate) use config_render::{render_config, ConfigOutput};
 
