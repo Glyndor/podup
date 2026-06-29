@@ -160,13 +160,15 @@ services:
         target: /run
         tmpfs:
           size: 67108864
-          mode: 1023
+          mode: 1750
 "#;
 	let v = &parse_str(yaml).unwrap().services["app"].volumes[0];
 	match v {
 		VolumeMount::Long { tmpfs: Some(t), .. } => {
 			assert_eq!(t.size, Some(67108864));
-			assert_eq!(t.mode, Some(1023));
+			// A bare `mode:` is octal (issue #917): `1750` is `0o1750`, the same
+			// bits `0o1750`/`01750` would yield, not the decimal 1750.
+			assert_eq!(t.mode, Some(0o1750));
 		}
 		_ => panic!("expected tmpfs mount"),
 	}
