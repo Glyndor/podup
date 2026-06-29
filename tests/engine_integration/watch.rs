@@ -4,20 +4,30 @@ use std::time::Duration;
 use super::*;
 
 #[tokio::test]
-async fn watch_no_develop_rules_returns_immediately() {
+async fn watch_no_develop_rules_errors() {
 	let client = match podman().await {
 		Some(d) => d,
 		None => return,
 	};
 	let proj = proj("wno");
 	let engine = Engine::new(client, proj.clone());
-	// No develop.watch section → watch() returns Ok(()) immediately
+	// No develop.watch section → watch() errors, matching docker compose, which
+	// reports "none of the selected services is configured for watch" rather than
+	// silently exiting 0 (an invocation with nothing to watch is almost always a
+	// misconfiguration the user wants flagged).
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
 	)
 	.unwrap();
 
-	engine.watch(&file).await.unwrap();
+	let err = engine
+		.watch(&file)
+		.await
+		.expect_err("watch with no rules must error");
+	assert!(
+		matches!(err, podup::ComposeError::Watch(_)),
+		"expected a Watch error, got {err:?}"
+	);
 }
 
 #[tokio::test]

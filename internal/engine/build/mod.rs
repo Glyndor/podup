@@ -11,6 +11,9 @@ mod push;
 mod tags;
 pub use pull::PullOptions;
 pub use push::PushOptions;
+/// Shared with the container-create path so an `up`/`create` references the same
+/// image tag the build step produced for a build-only service.
+pub(crate) use tags::primary_build_tag;
 
 use bytes::Bytes;
 use futures_util::StreamExt;
@@ -24,7 +27,7 @@ use crate::libpod::API_PREFIX;
 use crate::size;
 
 use context::{build_context_tar, build_context_tar_with_inline, map_additional_context};
-use tags::{is_remote_context, looks_like_secret, primary_build_tag};
+use tags::{is_remote_context, looks_like_secret};
 
 use super::Engine;
 

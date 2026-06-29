@@ -19,7 +19,7 @@ pub(super) fn is_remote_context(context: &str) -> bool {
 /// compose) so two projects sharing a service name don't overwrite each other's
 /// image. Any remaining `build.tags` are applied as extra tags by
 /// [`super::Engine::apply_extra_tags`].
-pub(super) fn primary_build_tag(
+pub(crate) fn primary_build_tag(
 	project: &str,
 	service_name: &str,
 	image: Option<&str>,

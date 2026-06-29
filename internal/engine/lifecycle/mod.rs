@@ -555,8 +555,14 @@ impl Engine {
 			}
 			let image = match &service.image {
 				Some(img) => img.clone(),
-				// A build-only service's image defaults to `{service}:latest`.
-				None if builds_locally => format!("{name}:latest"),
+				// A build-only service's image is the tag the build step produced
+				// (project-scoped `{project}-{service}:latest`, or `build.tags[0]`).
+				None if builds_locally => super::build::primary_build_tag(
+					&self.project,
+					name,
+					None,
+					service.build.as_ref().map(|b| b.tags()).unwrap_or(&[]),
+				),
 				None => continue,
 			};
 			// Do NOT force: a force-removal cascades to every container using the
