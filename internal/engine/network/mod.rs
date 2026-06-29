@@ -215,30 +215,16 @@ pub(super) fn resolve_network_mode(
 /// Resolve the container name that a `network_mode: service:<name>` reference
 /// should attach to.
 ///
-/// An explicit `container_name` is honoured verbatim. Otherwise the name is
-/// derived from the project + service. A scaled service (replicas > 1 via
-/// `deploy.replicas` or `scale:`) has no base-named container — its replicas are
-/// `{project}-{svc}-1..N` — so we point at replica `-1`, matching docker-compose,
-/// which attaches `network_mode: service:` references to the first replica.
+/// An explicit `container_name` is honoured verbatim. Otherwise the auto-generated
+/// replicas are always index-suffixed `{project}-{svc}-1..N` (there is no
+/// base-named container at any replica count), so we point at replica `-1`,
+/// matching docker-compose, which attaches `network_mode: service:` references to
+/// the first replica.
 fn resolve_target_container_name(svc_name: &str, service: &Service, project: &str) -> String {
 	if let Some(name) = &service.container_name {
 		return name.clone();
 	}
-	let base = format!("{project}-{svc_name}");
-	if service_replicas(service) > 1 {
-		format!("{base}-1")
-	} else {
-		base
-	}
-}
-
-/// Number of replicas a service declares in the compose file, via `scale:` or
-/// `deploy.replicas`. Defaults to 1. Does not consult CLI `--scale` overrides.
-fn service_replicas(service: &Service) -> u32 {
-	service
-		.scale
-		.or(service.deploy.as_ref().and_then(|d| d.replicas))
-		.unwrap_or(1)
+	format!("{project}-{svc_name}-1")
 }
 
 /// Resolve the actual network name on the host for a compose network key.

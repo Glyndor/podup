@@ -136,7 +136,7 @@ async fn external_config_injected_into_container() {
 	let file = parse_str(&yaml).unwrap();
 	let engine = Engine::new(client, proj.clone());
 	engine.up(&file).await.unwrap();
-	let cname = format!("{proj}-app");
+	let cname = format!("{proj}-app-1");
 	let out = engine
 		.test_exec_capture(&cname, vec!["cat".into(), "/etc/app.conf".into()])
 		.await

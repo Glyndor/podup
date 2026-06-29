@@ -145,12 +145,14 @@ impl Engine {
 		service: &Service,
 		target: u32,
 	) -> Result<()> {
-		let base = self.container_name(service_name, service);
-		let desired: HashSet<String> = if target <= 1 {
-			std::iter::once(base).collect()
-		} else {
-			(1..=target).map(|i| format!("{base}-{i}")).collect()
-		};
+		// The desired set is the index-suffixed name at every count (`svc-1`
+		// even for a single replica), so a scale N→1 keeps the running `svc-1`
+		// instead of treating the bare `svc` as desired and destroying every
+		// numbered replica (#815).
+		let desired: HashSet<String> = self
+			.replica_names_for(service_name, service, target as usize)
+			.into_iter()
+			.collect();
 		let grace = self.grace_period_secs(service);
 		let surplus: Vec<String> = self
 			.list_project_container_names(Some(service_name))

@@ -26,8 +26,8 @@ async fn cli_stats_flags_truncate_all_and_format() {
 	)
 	.unwrap();
 	let c = compose.to_str().unwrap();
-	// A single-replica service's container is named `{proj}-{svc}` (no `-1`).
-	let full = format!("{proj}-{svc}");
+	// A container is always index-suffixed `{proj}-{svc}-1`, even at one replica.
+	let full = format!("{proj}-{svc}-1");
 
 	Command::new(bin())
 		.args(["-f", c, "-p", &proj, "up", "-d"])
