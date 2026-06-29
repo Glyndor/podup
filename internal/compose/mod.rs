@@ -154,7 +154,52 @@ pub fn parse_files_with_env_files_interp(
 	for warning in diagnostics::collect(&merged) {
 		tracing::warn!("{warning}");
 	}
+	// Unknown keys nested inside option blocks (bind/volume/tmpfs mounts, long-form
+	// service networks, deploy.resources specs) are dropped by the typed model and
+	// so are invisible to `diagnostics::collect`. Re-read each input file's raw,
+	// interpolated YAML and diff those blocks directly. This runs per input file
+	// (pre-merge): an unknown key in ANY `-f` file should warn, and `-` (stdin) is
+	// skipped because the parse above already consumed it and it cannot be re-read.
+	for path in paths {
+		if is_stdin(path) {
+			continue;
+		}
+		let Ok(yaml) = interpolated_yaml_text(path, env_files, interpolate) else {
+			continue;
+		};
+		for warning in diagnostics::raw_nested_unknown_warnings(&yaml) {
+			tracing::warn!("{warning}");
+		}
+	}
 	Ok(merged)
+}
+
+/// Re-read `path` and return the interpolated, merge-resolved YAML as text — the
+/// same document shape the parser builds before deserializing into a
+/// `ComposeFile`. Used only by the raw nested-key diagnostic, which needs the
+/// pre-typed document to spot keys the model drops. `interpolate = false` (the
+/// `config --no-interpolate` path) leaves `${VAR}` placeholders literal.
+fn interpolated_yaml_text(path: &Path, env_files: &[String], interpolate: bool) -> Result<String> {
+	let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+	let dir = abs.parent().unwrap_or(Path::new(".")).to_path_buf();
+	let content = crate::filesystem::read_to_string_capped(&abs).map_err(|e| {
+		if e.kind() == std::io::ErrorKind::NotFound {
+			ComposeError::FileNotFound(abs.display().to_string())
+		} else {
+			ComposeError::Io(e)
+		}
+	})?;
+	let value = if interpolate {
+		let vars = if env_files.is_empty() {
+			substitute::build_vars(&dir)
+		} else {
+			substitute::build_vars_with_env_files_strict(&dir, env_files)?
+		};
+		merge::interpolated_value(&content, Some(&vars))?
+	} else {
+		merge::interpolated_value(&content, None)?
+	};
+	Ok(serde_yaml::to_string(&value)?)
 }
 
 /// Synthesize the implicit `default` network, matching docker-compose: any
