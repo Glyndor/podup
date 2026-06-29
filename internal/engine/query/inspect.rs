@@ -75,7 +75,14 @@ impl Engine {
 							}
 						}
 					}
-					Err(e) => tracing::warn!("top {container_name}: {e}"),
+					// A not-created container (404) is tolerated; any other failure
+					// (e.g. a stopped container's HTTP 500, or an unreachable socket)
+					// is a real error that must surface with a non-zero exit instead
+					// of being swallowed into a warning.
+					Err(e) if e.is_status(404) => {
+						tracing::debug!("top {container_name}: {e}")
+					}
+					Err(e) => return Err(ComposeError::Podman(e)),
 				}
 			}
 		}
@@ -191,12 +198,16 @@ impl Engine {
 					let id = img.id.trim_start_matches("sha256:").get(..12).unwrap_or("");
 					rows.push((name.clone(), repo, tag, id.to_string()));
 				}
-				// An image not present locally is listed with an empty ID rather
-				// than silently dropped, so the output is never quietly incomplete.
-				Err(e) => {
-					tracing::warn!("images {name}: {e}");
+				// A 404 means the image is simply not present locally — list it with
+				// an empty ID rather than silently dropping it, matching docker
+				// compose. Any other error (a connection failure / unreachable
+				// socket, or an HTTP 500) is a real failure that must propagate with
+				// a non-zero exit rather than printing an empty table and exiting 0.
+				Err(e) if e.is_status(404) => {
+					tracing::debug!("images {name}: not present ({e})");
 					rows.push((name.clone(), repo, tag, String::new()));
 				}
+				Err(e) => return Err(ComposeError::Podman(e)),
 			}
 		}
 
@@ -289,11 +300,17 @@ impl Engine {
 			urlencoded(&container),
 			attach_log_query(),
 		);
-		let resp = self
-			.client
-			.get_stream(&path)
-			.await
-			.map_err(ComposeError::Podman)?;
+		// A service that exists in the compose file but has no created container
+		// answers 404 here; surface a friendly "service X is not running" instead
+		// of leaking a raw libpod HTTP 404, mirroring the ServiceNotFound a service
+		// absent from compose gets.
+		let resp = match self.client.get_stream(&path).await {
+			Ok(r) => r,
+			Err(e) if e.is_status(404) => {
+				return Err(ComposeError::NotRunning(service_name.into()))
+			}
+			Err(e) => return Err(ComposeError::Podman(e)),
+		};
 		let mut stream = if is_tty {
 			crate::libpod::parse_raw(resp.into_body())
 		} else {

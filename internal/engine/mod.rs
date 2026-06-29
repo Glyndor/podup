@@ -371,9 +371,10 @@ fn resolve_replica_name(
 	index: Option<u32>,
 ) -> Result<String> {
 	match index {
-		Some(0) => Err(ComposeError::ServiceNotFound(format!(
-			"{service_name} (replica index 0: indexes are 1-based)"
-		))),
+		Some(0) => Err(ComposeError::ReplicaIndex {
+			service: service_name.to_string(),
+			index: 0,
+		}),
 		Some(i) => {
 			let suffixed = format!("{base}-{i}");
 			if names.iter().any(|n| n == &suffixed) {
@@ -383,9 +384,10 @@ fn resolve_replica_name(
 			if i == 1 && names.iter().any(|n| n == base) {
 				return Ok(base.to_string());
 			}
-			Err(ComposeError::ServiceNotFound(format!(
-				"{service_name} (replica index {i})"
-			)))
+			Err(ComposeError::ReplicaIndex {
+				service: service_name.to_string(),
+				index: i,
+			})
 		}
 		None => order_replicas(base, names)
 			.into_iter()
@@ -473,8 +475,14 @@ mod tests {
 			.replica_name_at("web", &svc, Some(0))
 			.expect_err("index 0 must be rejected");
 		assert!(
-			matches!(err, ComposeError::ServiceNotFound(ref m) if m.contains("1-based")),
+			matches!(err, ComposeError::ReplicaIndex { index: 0, ref service } if service == "web"),
 			"unexpected error: {err:?}"
+		);
+		// The index hint renders outside the quoted service name.
+		let msg = err.to_string();
+		assert!(
+			msg.contains("'web'") && msg.contains("1-based"),
+			"got {msg:?}"
 		);
 	}
 
@@ -569,7 +577,7 @@ mod tests {
 		let err = resolve_replica_name("web", "proj-web", &live, Some(0))
 			.expect_err("index 0 must be rejected");
 		assert!(
-			matches!(err, ComposeError::ServiceNotFound(ref m) if m.contains("1-based")),
+			matches!(err, ComposeError::ReplicaIndex { index: 0, ref service } if service == "web"),
 			"unexpected error: {err:?}"
 		);
 	}

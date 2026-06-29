@@ -56,6 +56,30 @@ fn is_exec_teardown_noise(line: &str) -> bool {
 	line.contains("unixpacket") && line.contains("connection reset by peer")
 }
 
+/// Map a libpod error from an `exec` target into a friendly
+/// [`ComposeError::NotRunning`] when it means the container is absent (404) or
+/// stopped ("can only create exec sessions on running containers"), so the user
+/// sees "service X is not running" instead of a raw HTTP 404/500. Any other
+/// failure passes through unchanged. Pure so it is unit-tested.
+fn map_not_running(e: crate::libpod::PodmanError, service_name: &str) -> ComposeError {
+	let not_running = e.is_status(404)
+		|| matches!(
+			&e,
+			crate::libpod::PodmanError::Api { message, .. }
+				if {
+					let m = message.to_ascii_lowercase();
+					m.contains("can only create exec sessions on running containers")
+						|| m.contains("is not running")
+						|| m.contains("no such container")
+				}
+		);
+	if not_running {
+		ComposeError::NotRunning(service_name.to_string())
+	} else {
+		ComposeError::Podman(e)
+	}
+}
+
 impl Engine {
 	/// Run a command in the first replica of the named service with default
 	/// options. Exits with the command's exit code.
@@ -113,7 +137,7 @@ impl Engine {
 			.client
 			.post_json(&create_path, &exec_cfg)
 			.await
-			.map_err(ComposeError::Podman)?;
+			.map_err(|e| map_not_running(e, service_name))?;
 		let exec_id = resp.id;
 
 		// `-d/--detach`: start the exec and return without streaming output or
@@ -192,7 +216,7 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
-	use super::{expand_exec_env, is_exec_teardown_noise};
+	use super::{expand_exec_env, is_exec_teardown_noise, map_not_running};
 
 	#[test]
 	fn expand_exec_env_passes_through_key_value() {
@@ -221,5 +245,36 @@ mod tests {
 		// Ordinary program output is never suppressed.
 		assert!(!is_exec_teardown_noise("connection reset by peer"));
 		assert!(!is_exec_teardown_noise("hello world"));
+	}
+
+	#[test]
+	fn map_not_running_maps_404_and_stopped() {
+		use crate::error::ComposeError;
+		use crate::libpod::PodmanError;
+		let e404 = PodmanError::Api {
+			status: 404,
+			message: "no such container: web".into(),
+		};
+		assert!(matches!(
+			map_not_running(e404, "web"),
+			ComposeError::NotRunning(s) if s == "web"
+		));
+		let e500 = PodmanError::Api {
+			status: 500,
+			message: "can only create exec sessions on running containers".into(),
+		};
+		assert!(matches!(
+			map_not_running(e500, "web"),
+			ComposeError::NotRunning(_)
+		));
+		// An unrelated error passes through unchanged.
+		let other = PodmanError::Api {
+			status: 500,
+			message: "disk full".into(),
+		};
+		assert!(matches!(
+			map_not_running(other, "web"),
+			ComposeError::Podman(_)
+		));
 	}
 }

@@ -12,14 +12,29 @@ use crate::libpod::{urlencoded, API_PREFIX};
 
 use super::super::Engine;
 
-/// Split an `image` reference into `(repo, tag)`. A ':' after the last '/' is a
-/// tag; otherwise it is part of a registry `host:port` and the whole string is
-/// the repo. An omitted tag defaults to `latest`.
-fn split_image_ref(image: &str) -> (&str, &str) {
-	match image.rsplit_once(':') {
+/// Split a `commit` image reference into `(repo, tag)`, defaulting the tag to
+/// `latest`. Rejects an empty reference or an empty repository (`""` or `:tag`),
+/// which podman would otherwise accept and turn into a dangling `<none>` image.
+/// Pure so it is unit-tested.
+fn split_image_ref(image: &str) -> Result<(&str, &str)> {
+	let (repo, tag) = match image.rsplit_once(':') {
+		// A ':' after the last '/' is a tag; otherwise it's part of a registry
+		// host:port and the whole string is the repo.
 		Some((r, t)) if !t.contains('/') => (r, t),
 		_ => (image, "latest"),
+	};
+	if repo.is_empty() {
+		return Err(ComposeError::Unsupported(format!(
+			"invalid image reference {image:?}: a non-empty repository name is required \
+			 (e.g. myimage or myimage:tag)"
+		)));
 	}
+	if tag.is_empty() {
+		return Err(ComposeError::Unsupported(format!(
+			"invalid image reference {image:?}: the tag after ':' must not be empty"
+		)));
+	}
+	Ok((repo, tag))
 }
 
 /// Build the libpod `/commit` request path. `pause` quiesces the container
@@ -68,7 +83,7 @@ impl Engine {
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
 		let container = self.replica_name_at(service_name, service, index)?;
 
-		let (repo, tag) = split_image_ref(image);
+		let (repo, tag) = split_image_ref(image)?;
 		let path = commit_path(&container, repo, tag, pause);
 		self.client
 			.post_empty_ok(&path)
@@ -111,18 +126,33 @@ impl Engine {
 			.map_err(ComposeError::Podman)?;
 
 		let mut sink: Box<dyn Write> = match &output {
-			Some(p) => Box::new(std::fs::File::create(p).map_err(ComposeError::Io)?),
+			Some(p) => Box::new(std::fs::File::create(p).map_err(|e| ComposeError::IoPath {
+				path: p.display().to_string(),
+				source: e,
+			})?),
 			None => Box::new(std::io::stdout().lock()),
 		};
 		let mut body = resp.into_body();
 		while let Some(frame) = body.frame().await {
 			let frame = frame.map_err(|e| ComposeError::Build(format!("export stream: {e}")))?;
 			if let Ok(data) = frame.into_data() {
-				sink.write_all(&data).map_err(ComposeError::Io)?;
+				sink.write_all(&data).map_err(|e| io_to_err(&output, e))?;
 			}
 		}
-		sink.flush().map_err(ComposeError::Io)?;
+		sink.flush().map_err(|e| io_to_err(&output, e))?;
 		Ok(())
+	}
+}
+
+/// Map a write error to one that names the `-o` output path when present, so the
+/// user learns which destination failed.
+fn io_to_err(output: &Option<PathBuf>, e: std::io::Error) -> ComposeError {
+	match output {
+		Some(p) => ComposeError::IoPath {
+			path: p.display().to_string(),
+			source: e,
+		},
+		None => ComposeError::Io(e),
 	}
 }
 
@@ -137,19 +167,29 @@ mod tests {
 	use super::{commit_path, refuse_tar_to_tty, split_image_ref};
 
 	#[test]
-	fn image_ref_splits_repo_and_tag() {
-		assert_eq!(split_image_ref("myrepo:v1"), ("myrepo", "v1"));
-		// No tag defaults to latest.
-		assert_eq!(split_image_ref("myrepo"), ("myrepo", "latest"));
-		// A registry host:port is not a tag.
+	fn split_image_ref_defaults_tag() {
+		assert_eq!(split_image_ref("myimage").unwrap(), ("myimage", "latest"));
+		assert_eq!(split_image_ref("myimage:1.0").unwrap(), ("myimage", "1.0"));
+	}
+
+	#[test]
+	fn split_image_ref_keeps_registry_port() {
+		// A ':' that is part of a registry host:port is not a tag.
 		assert_eq!(
-			split_image_ref("localhost:5000/app"),
-			("localhost:5000/app", "latest")
+			split_image_ref("registry:5000/app").unwrap(),
+			("registry:5000/app", "latest")
 		);
 		assert_eq!(
-			split_image_ref("localhost:5000/app:v2"),
+			split_image_ref("localhost:5000/app:v2").unwrap(),
 			("localhost:5000/app", "v2")
 		);
+	}
+
+	#[test]
+	fn split_image_ref_rejects_empty_and_empty_repo() {
+		assert!(split_image_ref("").is_err());
+		assert!(split_image_ref(":tag").is_err());
+		assert!(split_image_ref("repo:").is_err());
 	}
 
 	#[test]

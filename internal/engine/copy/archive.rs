@@ -289,6 +289,19 @@ mod tests {
 		assert!(!result.unwrap().is_empty());
 	}
 
+	#[test]
+	fn pack_path_missing_source_is_a_cp_error() {
+		// A missing host source on `cp` must read as a cp error, not a build error.
+		let missing = std::path::Path::new("/nonexistent-host-source-xyz");
+		let err = super::pack_path(missing, false, None).unwrap_err();
+		let msg = err.to_string();
+		assert!(msg.contains("cp error"), "wrong category: {msg:?}");
+		assert!(
+			!msg.contains("build error"),
+			"must not be a build error: {msg:?}"
+		);
+	}
+
 	/// Build an uncompressed tar archive with a single entry at `path`. The name
 	/// is written straight into the GNU header so a hostile `..` path can be
 	/// forged (the safe `set_path`/`append_data` helpers reject `..`).

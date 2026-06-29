@@ -22,7 +22,7 @@ pub mod types;
 /// exception and deliberately omits this prefix.
 pub(crate) const API_PREFIX: &str = "/v5.0.0/libpod";
 
-pub(crate) use client::urlencoded;
 pub use client::Client;
+pub(crate) use client::{is_valid_object_name, urlencoded};
 pub use error::PodmanError;
 pub use types::stream::{parse_json_lines, parse_multiplexed, parse_raw, LogOutput};
