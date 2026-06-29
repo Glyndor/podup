@@ -1,3 +1,25 @@
+podup (1.7.1) unstable; urgency=medium
+
+  * `port` now validates its arguments: `--protocol` accepts only tcp/udp
+    (case-insensitive) and rejects anything else instead of printing nothing,
+    and the port argument is parsed strictly (no leading `+`, no leading zeros,
+    no trailing junk).
+  * `podup ps` shows the exit code in the human table (`Exited (7)`), matching
+    the JSON output and docker compose, so a crash is distinguishable from a
+    clean stop.
+  * `exec --index` now targets running scaled replicas (like `cp`), so it can
+    reach any replica of a service scaled with `--scale`.
+  * `up` now implicitly starts a profiled service that an active service depends
+    on, matching docker compose (without over-activating unrelated profiles).
+  * Invalid volume/network names are rejected client-side with a clear error
+    before the engine call, instead of surfacing a raw Podman HTTP 500.
+  * `generate quadlet` renders a bare numeric tmpfs `mode` correctly
+    (`mode: 700` -> `mode=700`, no longer re-encoded to octal).
+  * Corrected the `--env-file` help text (it replaces the default `.env`; the
+    old "`.env` still wins" note was wrong).
+
+ -- Glyndor <packages@glyndor.net>  Mon, 29 Jun 2026 12:43:26 -0500
+
 podup (1.7.0) unstable; urgency=medium
 
   * Safety: `down --rmi all|local` no longer force-removes an in-use image and so
