@@ -7,14 +7,15 @@ name: podman-lane
 # Podman 5 = Fedora 44.
 on:
   workflow_dispatch:
+  # Nightly safety net on the default branch: catches a runtime regression that
+  # slipped past PR review within 24h (a scheduled run reports on the default branch).
+  schedule:
+    - cron: "0 9 * * *"
+  # Runs on EVERY pull request (no path filter) so it can be a required status
+  # check that always reports — runtime behaviour is podup's whole point, so it
+  # gates the merge. The internal suite distinguishes nested-virt flakes from real
+  # failures and retries a transient once.
   pull_request:
-    paths:
-      - "internal/engine/**"
-      - "internal/libpod/**"
-      - "tests/**"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - ".github/workflows/podman-lane.yml"
 permissions:
   contents: read
 jobs:
@@ -69,8 +70,17 @@ jobs:
                 # Capture the FULL output: the per-failure detail (where the flake
                 # marker lives) precedes the summary, so a `tail` on the console
                 # would truncate it and hide why a test failed.
-                cargo test --features test-helpers --test engine_integration > /tmp/cargo.log 2>&1
-                RC=$?
+                # Retry once on a nested-virt transient (a connection drop surfaces
+                # as Hyper(IncompleteMessage) and kin). A real failure reproduces on
+                # the second run, so this stabilises the lane for required-check gating
+                # without masking genuine bugs.
+                for attempt in 1 2; do
+                  cargo test --features test-helpers --test engine_integration > /tmp/cargo.log 2>&1
+                  RC=$?
+                  [ "$RC" -eq 0 ] && break
+                  grep -qE 'IncompleteMessage|connection closed before message completed|channel closed|Connection reset' /tmp/cargo.log || break
+                  echo "=== nested-virt transient on attempt $attempt; retrying suite ==="
+                done
                 tail -60 /tmp/cargo.log
                 echo "=== failures section (full) ==="
                 sed -n '/^failures:$/,/^test result:/p' /tmp/cargo.log | head -120
