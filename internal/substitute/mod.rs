@@ -154,6 +154,18 @@ pub fn build_vars_with_env_files_strict(
 	build_vars_with_env_files_inner(dir, extra, true)
 }
 
+/// The first control character in `value` that is never legitimate in an
+/// env-file value, or `None` if there is none. Tab, newline and carriage return
+/// are allowed — dotenv escapes (`\t`, `\n`, `\r`) and multi-line quoted values
+/// produce them legitimately, and post-parse interpolation stores them verbatim
+/// as scalar data. Everything else in the C0/C1 ranges (NUL, ESC, …) is
+/// rejected. Pure so it is unit-tested.
+fn first_disallowed_control_char(value: &str) -> Option<char> {
+	value
+		.chars()
+		.find(|&c| c.is_control() && !matches!(c, '\t' | '\n' | '\r'))
+}
+
 fn build_vars_with_env_files_inner(
 	dir: &Path,
 	extra: &[String],
@@ -189,6 +201,24 @@ fn build_vars_with_env_files_inner(
 			crate::dotenv::parse(&content)
 		};
 		for (key, value) in pairs {
+			// A disallowed control character (e.g. NUL) in a value would be
+			// interpolated verbatim into a compose scalar, where it is meaningless
+			// at best and corrupts the container's config at worst. Reject it here,
+			// at load time, with an error that names the originating env file and
+			// key — instead of letting it surface later as a compose-file parse
+			// error at a meaningless post-substitution offset. Only the explicit
+			// (strict) `--env-file`/`env_file:` path errors; the lenient `.env`
+			// fallback keeps its historical pass-through behaviour.
+			if strict {
+				if let Some(bad) = first_disallowed_control_char(&value) {
+					return Err(crate::error::ComposeError::EnvFile(format!(
+						"env file {}: value of '{key}' contains a disallowed control \
+						 character ({}); remove it before use",
+						abs.display(),
+						bad.escape_default(),
+					)));
+				}
+			}
 			file_vars.insert(key, value);
 		}
 	}
@@ -643,5 +673,55 @@ mod tests {
 		// silently skipped rather than failing.
 		let vars = build_vars_with_env_files(dir.path(), &["absent.env".to_string()]);
 		assert!(!vars.contains_key("FROM_EXTRA"));
+	}
+
+	#[test]
+	fn first_disallowed_control_char_allows_tab_newline_cr() {
+		// Legitimate dotenv escapes / multi-line values must pass.
+		assert_eq!(first_disallowed_control_char("plain value"), None);
+		assert_eq!(first_disallowed_control_char("a\tb\nc\rd"), None);
+		// NUL, ESC and other C0/C1 controls are rejected.
+		assert_eq!(first_disallowed_control_char("a\0b"), Some('\0'));
+		assert_eq!(first_disallowed_control_char("x\x1by"), Some('\x1b'));
+	}
+
+	#[test]
+	fn strict_build_vars_errors_on_control_char_value_naming_file_and_key() {
+		let dir = tempfile::tempdir().unwrap();
+		// A NUL in an env-file value is rejected at load time, before any compose
+		// parse, with an error that names the originating env file and key — not a
+		// misattributed parse offset into the post-substitution document (#885).
+		std::fs::write(dir.path().join("bad.env"), "SECRET=ab\0cd\n").unwrap();
+		let err =
+			build_vars_with_env_files_strict(dir.path(), &["bad.env".to_string()]).unwrap_err();
+		assert!(
+			matches!(err, crate::error::ComposeError::EnvFile(_)),
+			"expected EnvFile error, got {err:?}"
+		);
+		let msg = err.to_string();
+		assert!(msg.contains("bad.env"), "names the env file: {msg}");
+		assert!(msg.contains("SECRET"), "names the offending key: {msg}");
+		assert!(
+			msg.contains("control"),
+			"explains the control-char cause: {msg}"
+		);
+	}
+
+	#[test]
+	fn strict_build_vars_allows_multiline_and_tab_values() {
+		let dir = tempfile::tempdir().unwrap();
+		// A multi-line quoted value (real newline) and a `\t` escape are legitimate
+		// and must not be rejected by the control-char guard.
+		std::fs::write(
+			dir.path().join("ok.env"),
+			"MULTI=\"line one\nline two\"\nTABBED=\"a\\tb\"\n",
+		)
+		.unwrap();
+		let vars = build_vars_with_env_files_strict(dir.path(), &["ok.env".to_string()]).unwrap();
+		assert_eq!(
+			vars.get("MULTI").map(String::as_str),
+			Some("line one\nline two")
+		);
+		assert_eq!(vars.get("TABBED").map(String::as_str), Some("a\tb"));
 	}
 }

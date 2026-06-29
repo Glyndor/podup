@@ -132,6 +132,15 @@ fn command_failure_exit_code(msg: &str) -> i32 {
 	}
 }
 
+/// Whether a `down` invocation should tear the project down purely by its
+/// `podup.project` label: the command is `down`, an explicit project name was
+/// given (`-p` / `COMPOSE_PROJECT_NAME`), and no compose file resolves on disk.
+/// Matches `docker compose -p NAME down` against a running project whose compose
+/// file is absent. Pure so it is unit-testable without a Podman daemon.
+fn down_by_label_path(command: &Commands, project: Option<&str>, compose_present: bool) -> bool {
+	matches!(command, Commands::Down { .. }) && project.is_some() && !compose_present
+}
+
 /// Print a top-level error to stderr with a colour-aware bold-red `error:` label.
 /// anstream strips the styling when stderr is not a terminal or colour is off.
 fn print_error(e: &podup::ComposeError) {
@@ -309,6 +318,48 @@ async fn run() -> podup::Result<()> {
 	}
 
 	let compose_files = resolve_compose_files(&cli.file);
+
+	// `down -p NAME` must tear a running project down purely from its
+	// `podup.project` label when no compose file is present — matching `docker
+	// compose -p NAME down`. The startup flow otherwise parses the compose file
+	// before dispatch, so a label-only teardown by project name fails on the
+	// missing file. Handle it here, before that parse, but only when an explicit
+	// project name was given and no file resolves, so a stray `down` in an empty
+	// directory still errors rather than guessing a project from the basename.
+	if down_by_label_path(
+		&cli.command,
+		cli.project.as_deref(),
+		compose_files.iter().any(|p| p.is_file()),
+	) {
+		if let Commands::Down {
+			volumes,
+			rmi,
+			timeout,
+			..
+		} = &cli.command
+		{
+			let project = cli.project.clone().expect("checked by down_by_label_path");
+			startup::validate_project_name(&project)?;
+			// `--rmi` removes the images of the file's services, which cannot be
+			// resolved without a file; warn rather than silently dropping it.
+			if rmi.is_some() {
+				tracing::warn!(
+					"--rmi has no effect without a compose file; containers, networks and \
+					 volumes are still removed by project label"
+				);
+			}
+			let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
+			let stop_timeout = podup::validate_stop_timeout(*timeout)?;
+			let client = podup::podman::connect(resolve_socket(cli.socket.as_deref()).as_deref())?;
+			let engine = podup::Engine::with_base_dir(client, project, base_dir)
+				.with_stop_timeout(stop_timeout);
+			// `down` is mutating, so serialize it against concurrent runs as the
+			// normal teardown path does.
+			let _lock = engine.lock_project()?;
+			return engine.down_by_label(*volumes).await;
+		}
+	}
+
 	// `config --no-interpolate` must skip interpolation *entirely*: parsing with
 	// interpolation enabled would evaluate a required-var `${VAR:?msg}` and fail
 	// before we ever reached the no-interpolate branch. Detect it up front so the
@@ -468,6 +519,42 @@ async fn run() -> podup::Result<()> {
 	};
 
 	dispatch::dispatch(&engine, &file, cli.command, &cli.profile).await
+}
+
+#[cfg(test)]
+mod down_by_label_tests {
+	use super::down_by_label_path;
+	use crate::cli::Commands;
+
+	fn down() -> Commands {
+		Commands::Down {
+			volumes: false,
+			remove_orphans: false,
+			rmi: None,
+			timeout: None,
+		}
+	}
+
+	#[test]
+	fn down_with_project_and_no_file_takes_label_path() {
+		// `down -p NAME` with no compose file present is the label-only teardown.
+		assert!(down_by_label_path(&down(), Some("proj"), false));
+	}
+
+	#[test]
+	fn down_without_project_or_with_file_does_not() {
+		// Without an explicit project name there is nothing to scope the teardown to,
+		// and when a file is present the normal compose-parse path handles `down`.
+		assert!(!down_by_label_path(&down(), None, false));
+		assert!(!down_by_label_path(&down(), Some("proj"), true));
+	}
+
+	#[test]
+	fn other_commands_never_take_the_down_label_path() {
+		// Only `down` is routed by label here; another command with `-p` and no file
+		// must not be diverted.
+		assert!(!down_by_label_path(&Commands::Watch, Some("proj"), false));
+	}
 }
 
 #[cfg(test)]

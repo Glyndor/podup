@@ -1,6 +1,7 @@
 //! Service lifecycle commands: up, down, start, stop, restart, kill, rm, pause, unpause, run.
 
 mod commands;
+mod down_label;
 mod run;
 mod scale;
 mod signal;
@@ -512,32 +513,7 @@ impl Engine {
 		// network whose compose key changed — mirroring the container sweep so
 		// teardown is complete regardless of how the file was parsed. Only
 		// podup-labelled networks match, so external networks are never touched.
-		let net_filters =
-			serde_json::json!({ "label": [format!("podup.project={}", self.project)] });
-		let list_path = format!(
-			"{API_PREFIX}/networks/json?filters={}",
-			crate::libpod::urlencoded(&net_filters.to_string()),
-		);
-		if let Ok(nets) = self
-			.client
-			.get_json::<Vec<serde_json::Value>>(&list_path)
-			.await
-		{
-			for net in nets {
-				let Some(net_name) = net.get("name").and_then(|n| n.as_str()) else {
-					continue;
-				};
-				let del = format!(
-					"{API_PREFIX}/networks/{}",
-					crate::libpod::urlencoded(net_name)
-				);
-				match self.client.delete_ok(&del).await {
-					Ok(_) => info!("removed network {net_name}"),
-					Err(e) if e.is_status(404) => {}
-					Err(e) => tracing::warn!("could not remove network {net_name}: {e}"),
-				}
-			}
-		}
+		self.remove_project_networks_by_label().await;
 
 		if remove_volumes {
 			for (key, config) in &file.volumes {
