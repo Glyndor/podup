@@ -1,0 +1,412 @@
+//! Intra-level parallelism for the lifecycle commands.
+//!
+//! The order resolver groups services into dependency *levels*
+//! ([`crate::compose::resolve_levels`]): every service in one level has its
+//! `depends_on` satisfied by an earlier level, so services *within* a level have
+//! no ordering between them and can be acted on concurrently. The whole-project
+//! lifecycle commands (stop/start/restart/kill/rm/pause/unpause) walk the levels
+//! in order — preserving the cross-level dependency ordering — but dispatch each
+//! level's per-service operations in parallel instead of strictly serially, so a
+//! restart/stop of many independent services no longer serializes every grace
+//! period (#757). This mirrors what the `up`/`create` path already does.
+
+use std::collections::HashSet;
+
+use tracing::info;
+
+use crate::compose::types::{ComposeFile, Service};
+use crate::engine::Engine;
+use crate::error::{ComposeError, Result};
+use crate::libpod::{urlencoded, API_PREFIX};
+
+use super::targets::stop_timeout_param;
+
+/// Upper bound on the number of same-level services a lifecycle command acts on
+/// concurrently. Services within a dependency level have no ordering between
+/// them, so they run in parallel; the cap keeps a very wide compose file from
+/// opening an unbounded number of simultaneous libpod connections at once.
+const MAX_LIFECYCLE_CONCURRENCY: usize = 16;
+
+/// Run a batch of independent per-service futures concurrently, bounded by
+/// [`MAX_LIFECYCLE_CONCURRENCY`], and return their results in the *input* order
+/// (not completion order) so error selection and reporting stay deterministic
+/// regardless of which service happens to finish first.
+pub(super) async fn join_bounded<F>(futs: impl IntoIterator<Item = F>) -> Vec<Result<()>>
+where
+	F: std::future::Future<Output = Result<()>>,
+{
+	use futures_util::stream::StreamExt;
+	let mut indexed: Vec<(usize, Result<()>)> = futures_util::stream::iter(
+		futs.into_iter()
+			.enumerate()
+			.map(|(i, fut)| async move { (i, fut.await) }),
+	)
+	.buffer_unordered(MAX_LIFECYCLE_CONCURRENCY)
+	.collect()
+	.await;
+	indexed.sort_by_key(|(i, _)| *i);
+	indexed.into_iter().map(|(_, r)| r).collect()
+}
+
+/// Reduce a level's per-service results to the first error in service order, so
+/// one failing service is still reported clearly while the rest of the level is
+/// allowed to complete.
+pub(super) fn first_error(results: Vec<Result<()>>) -> Option<ComposeError> {
+	results.into_iter().find_map(Result::err)
+}
+
+/// Filter each dependency level down to `target_services`, dropping levels that
+/// end up empty. An empty target list keeps every level. Returns an error if any
+/// requested name is not in the file, matching [`super::targets::filter_services`]
+/// (and docker compose's "no such service").
+pub(super) fn filter_levels(
+	file: &ComposeFile,
+	levels: Vec<Vec<String>>,
+	target_services: &[String],
+) -> Result<Vec<Vec<String>>> {
+	for name in target_services {
+		if !file.services.contains_key(name) {
+			return Err(ComposeError::ServiceNotFound(name.clone()));
+		}
+	}
+	if target_services.is_empty() {
+		return Ok(levels);
+	}
+	let set: HashSet<&str> = target_services.iter().map(|s| s.as_str()).collect();
+	Ok(retain_levels(levels, |n| set.contains(n)))
+}
+
+/// Keep only the level entries matching `keep`, dropping levels left empty.
+pub(super) fn retain_levels(
+	levels: Vec<Vec<String>>,
+	keep: impl Fn(&str) -> bool,
+) -> Vec<Vec<String>> {
+	levels
+		.into_iter()
+		.map(|level| {
+			level
+				.into_iter()
+				.filter(|n| keep(n.as_str()))
+				.collect::<Vec<_>>()
+		})
+		.filter(|level| !level.is_empty())
+		.collect()
+}
+
+/// Compute the set of services a `restart` should act on, plus the explicit
+/// target subset (used only to label cascade-restarts distinctly in the logs).
+///
+/// With no targets every service is restarted. With targets, the set is the
+/// targets plus — unless `no_deps` — every service whose `depends_on` carries a
+/// `restart: true` condition pointing at one of the targets (one hop, matching
+/// the previous serial implementation).
+pub(super) fn restart_service_set(
+	file: &ComposeFile,
+	target_services: &[String],
+	no_deps: bool,
+) -> (HashSet<String>, HashSet<String>) {
+	if target_services.is_empty() {
+		let all: HashSet<String> = file.services.keys().cloned().collect();
+		return (all.clone(), all);
+	}
+	let targets: HashSet<String> = target_services.iter().cloned().collect();
+	let mut full = targets.clone();
+	if !no_deps {
+		for (dep_name, dep_service) in &file.services {
+			if targets
+				.iter()
+				.any(|t| dep_service.depends_on.restart_for(t))
+			{
+				full.insert(dep_name.clone());
+			}
+		}
+	}
+	(full, targets)
+}
+
+impl Engine {
+	/// Stop a single service's live containers (only those actually running), as
+	/// one unit of work in a concurrent level. See [`Engine::stop`].
+	pub(super) async fn stop_one_service(&self, service_name: &str, grace: i32) -> Result<()> {
+		for container in self.live_service_containers(service_name).await? {
+			if super::scale::state_is_active(&container.state) {
+				self.stop_container(&container.name, grace).await?;
+			} else {
+				tracing::debug!(
+					"{}: not running ({}) — stop is a no-op",
+					container.name,
+					container.state
+				);
+			}
+		}
+		Ok(())
+	}
+
+	/// Start a single service's live containers, recording in `any_live` whether
+	/// the service had any container to act on. See [`Engine::start`].
+	pub(super) async fn start_one_service(
+		&self,
+		service_name: &str,
+		any_live: &std::sync::atomic::AtomicBool,
+	) -> Result<()> {
+		let live = self
+			.list_project_container_names(Some(service_name))
+			.await?;
+		if live.is_empty() {
+			return Ok(());
+		}
+		any_live.store(true, std::sync::atomic::Ordering::Relaxed);
+		let mut first_err: Option<ComposeError> = None;
+		for container_name in live {
+			let path = format!(
+				"{API_PREFIX}/containers/{}/start",
+				urlencoded(&container_name),
+			);
+			if let Err(e) = self
+				.run_lifecycle_op(&path, &container_name, "started")
+				.await
+			{
+				first_err.get_or_insert(e);
+			}
+		}
+		first_err.map_or(Ok(()), Err)
+	}
+
+	/// Restart a single service's live containers. `done` is the log verb
+	/// (`restarted` for a direct target, `cascade-restarted` for a dependent).
+	pub(super) async fn restart_one_service(
+		&self,
+		service_name: &str,
+		service: &Service,
+		done: &str,
+	) -> Result<()> {
+		let grace = self.grace_period_secs(service);
+		let mut first_err: Option<ComposeError> = None;
+		for container_name in self.live_replica_names(service_name, service).await? {
+			// Single atomic restart (no visible stopped window) instead of a
+			// stop+start round-trip.
+			let restart_path = format!(
+				"{API_PREFIX}/containers/{}/restart?t={}",
+				urlencoded(&container_name),
+				stop_timeout_param(grace),
+			);
+			if let Err(e) = self
+				.run_lifecycle_op(&restart_path, &container_name, done)
+				.await
+			{
+				first_err.get_or_insert(e);
+			}
+		}
+		first_err.map_or(Ok(()), Err)
+	}
+
+	/// Send `signal` to a single service's live containers. See [`Engine::kill`].
+	pub(super) async fn kill_one_service(
+		&self,
+		service_name: &str,
+		service: &Service,
+		signal: &str,
+	) -> Result<()> {
+		let mut first_err: Option<ComposeError> = None;
+		for container_name in self.live_replica_names(service_name, service).await? {
+			let path = format!(
+				"{API_PREFIX}/containers/{}/kill?signal={}",
+				urlencoded(&container_name),
+				urlencoded(signal),
+			);
+			if let Err(e) = self
+				.run_lifecycle_op(&path, &container_name, &format!("sent {signal} to"))
+				.await
+			{
+				first_err.get_or_insert(e);
+			}
+		}
+		first_err.map_or(Ok(()), Err)
+	}
+
+	/// Remove a single service's containers. See [`Engine::rm_with_options`].
+	pub(super) async fn rm_one_service(
+		&self,
+		service_name: &str,
+		service: &Service,
+		force: bool,
+		remove_volumes: bool,
+	) -> Result<()> {
+		let mut first_err: Option<ComposeError> = None;
+		for container_name in self.live_replica_names(service_name, service).await? {
+			let force_str = if force { "true" } else { "false" };
+			let path = format!(
+				"{API_PREFIX}/containers/{}?force={force_str}&v={remove_volumes}",
+				urlencoded(&container_name),
+			);
+			match self.client.delete_existed(&path).await {
+				// Only report a removal that actually happened — a phantom
+				// (never-created) container 404s and must not be logged as
+				// "removed".
+				Ok(true) => info!("removed {container_name}"),
+				Ok(false) => {}
+				// Without `--force`, a running container 409s. docker compose rm
+				// skips running containers rather than aborting, so warn and keep
+				// going (later stopped containers still get removed).
+				Err(e) if !force && e.is_status(409) => {
+					tracing::warn!(
+						"{container_name} is running — skipping (pass -f to force removal)"
+					);
+				}
+				Err(e) => {
+					first_err.get_or_insert(ComposeError::Podman(e));
+				}
+			}
+		}
+		first_err.map_or(Ok(()), Err)
+	}
+
+	/// Pause or unpause a single service's live containers, treating a state
+	/// mismatch as an idempotent no-op. `endpoint` is `pause`/`unpause`.
+	pub(super) async fn idempotent_state_service(
+		&self,
+		service_name: &str,
+		service: &Service,
+		endpoint: &str,
+		done: &str,
+	) -> Result<()> {
+		let mut first_err: Option<ComposeError> = None;
+		for container_name in self.live_replica_names(service_name, service).await? {
+			let path = format!(
+				"{API_PREFIX}/containers/{}/{endpoint}",
+				urlencoded(&container_name),
+			);
+			if let Err(e) = self
+				.run_idempotent_state_op(&path, &container_name, done)
+				.await
+			{
+				first_err.get_or_insert(e);
+			}
+		}
+		first_err.map_or(Ok(()), Err)
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::error::ComposeError;
+
+	fn levels(input: &[&[&str]]) -> Vec<Vec<String>> {
+		input
+			.iter()
+			.map(|lvl| lvl.iter().map(|s| s.to_string()).collect())
+			.collect()
+	}
+
+	fn file_with(services: &[&str]) -> ComposeFile {
+		let mut file = ComposeFile::default();
+		for &s in services {
+			file.services.insert(s.to_string(), Service::default());
+		}
+		file
+	}
+
+	#[tokio::test]
+	async fn join_bounded_preserves_input_order() {
+		// Futures finish out of order (later index resolves first) but the
+		// collected results are returned in input order.
+		let futs = (0..5usize).map(|i| async move {
+			// Smaller i yields later via more yields, so completion order != input.
+			for _ in 0..(5 - i) {
+				tokio::task::yield_now().await;
+			}
+			if i == 2 {
+				Err(ComposeError::ServiceNotFound(format!("svc{i}")))
+			} else {
+				Ok(())
+			}
+		});
+		let results = join_bounded(futs).await;
+		assert_eq!(results.len(), 5);
+		// Only index 2 is an error, proving order is preserved.
+		for (i, r) in results.iter().enumerate() {
+			assert_eq!(r.is_err(), i == 2, "index {i}");
+		}
+	}
+
+	#[test]
+	fn first_error_returns_first_in_order() {
+		let results = vec![
+			Ok(()),
+			Err(ComposeError::ServiceNotFound("a".into())),
+			Err(ComposeError::ServiceNotFound("b".into())),
+		];
+		let err = first_error(results).unwrap();
+		assert!(matches!(err, ComposeError::ServiceNotFound(n) if n == "a"));
+	}
+
+	#[test]
+	fn first_error_none_when_all_ok() {
+		assert!(first_error(vec![Ok(()), Ok(())]).is_none());
+	}
+
+	#[test]
+	fn filter_levels_empty_targets_keeps_all() {
+		let file = file_with(&["a", "b", "c"]);
+		let lv = levels(&[&["a", "b"], &["c"]]);
+		let out = filter_levels(&file, lv.clone(), &[]).unwrap();
+		assert_eq!(out, lv);
+	}
+
+	#[test]
+	fn filter_levels_drops_empty_levels() {
+		let file = file_with(&["a", "b", "c"]);
+		let lv = levels(&[&["a", "b"], &["c"]]);
+		let out = filter_levels(&file, lv, &["c".into()]).unwrap();
+		assert_eq!(out, levels(&[&["c"]]));
+	}
+
+	#[test]
+	fn filter_levels_unknown_target_errors() {
+		let file = file_with(&["a"]);
+		let lv = levels(&[&["a"]]);
+		let err = filter_levels(&file, lv, &["z".into()]).unwrap_err();
+		assert!(matches!(err, ComposeError::ServiceNotFound(n) if n == "z"));
+	}
+
+	#[test]
+	fn retain_levels_filters_and_drops() {
+		let lv = levels(&[&["a", "b"], &["c"]]);
+		let keep: HashSet<&str> = ["a", "c"].into_iter().collect();
+		let out = retain_levels(lv, |n| keep.contains(n));
+		assert_eq!(out, levels(&[&["a"], &["c"]]));
+	}
+
+	#[test]
+	fn restart_service_set_empty_targets_is_all() {
+		let file = file_with(&["a", "b"]);
+		let (full, targets) = restart_service_set(&file, &[], false);
+		assert_eq!(full, targets);
+		assert_eq!(full.len(), 2);
+		assert!(full.contains("a") && full.contains("b"));
+	}
+
+	#[test]
+	fn restart_service_set_includes_cascade_dependents() {
+		// web depends_on db with restart: true → restarting db cascades to web.
+		let file = crate::parse_str(
+			"services:\n  db:\n    image: x\n  web:\n    image: x\n    depends_on:\n      db:\n        condition: service_started\n        restart: true\n",
+		)
+		.unwrap();
+		let (full, targets) = restart_service_set(&file, &["db".into()], false);
+		assert!(targets.contains("db") && targets.len() == 1);
+		assert!(full.contains("db") && full.contains("web"));
+	}
+
+	#[test]
+	fn restart_service_set_no_deps_excludes_cascade() {
+		let file = crate::parse_str(
+			"services:\n  db:\n    image: x\n  web:\n    image: x\n    depends_on:\n      db:\n        condition: service_started\n        restart: true\n",
+		)
+		.unwrap();
+		let (full, _) = restart_service_set(&file, &["db".into()], true);
+		assert!(full.contains("db"));
+		assert!(!full.contains("web"));
+	}
+}

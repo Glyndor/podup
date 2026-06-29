@@ -2,6 +2,7 @@
 
 mod commands;
 mod down_label;
+mod parallel;
 mod run;
 mod scale;
 mod signal;
