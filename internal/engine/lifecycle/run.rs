@@ -1,0 +1,338 @@
+//! One-off `run` command: start a throwaway container for a service, stream its
+//! output, and remove it when done.
+
+use std::collections::HashMap;
+use std::io::Write;
+
+use futures_util::StreamExt;
+
+use crate::compose::types::ComposeFile;
+use crate::error::{ComposeError, Result};
+
+use super::RunOptions;
+use crate::engine::Engine;
+use crate::libpod::API_PREFIX;
+
+impl Engine {
+	/// Run a one-off command in a new container for a service.
+	///
+	/// The container is started, its output streamed, and it is removed when done
+	/// (unless `opts.rm` is false). Non-zero exit codes surface as `ComposeError::RunExited`.
+	pub async fn run(
+		&self,
+		file: &ComposeFile,
+		service_name: &str,
+		opts: RunOptions,
+	) -> Result<()> {
+		let RunOptions {
+			cmd,
+			rm,
+			detach,
+			env_overrides,
+			name_override,
+			service_ports,
+		} = opts;
+		// CLI-only run flags arrive via the engine builder (see `RunOverrides`),
+		// keeping the public `RunOptions` API frozen at 1.0.
+		let super::RunOverrides {
+			user,
+			workdir,
+			entrypoint,
+			volumes,
+			publish,
+			interactive,
+			no_deps,
+		} = self.run_overrides.clone();
+		// `--env-file` and `-l/--label` are carried on the engine (not
+		// `RunOverrides`) to keep the public struct frozen.
+		let env_files = self.run_env_files.clone();
+		let labels = self.run_labels.clone();
+		let service = file
+			.services
+			.get(service_name)
+			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
+
+		// Compose `run` brings up the service's `depends_on` services first (and
+		// waits on their conditions), unless `--no-deps` is given. The service
+		// itself is excluded — only its transitive dependencies are started.
+		if !no_deps {
+			let deps: Vec<String> = super::expand_targets(file, &[service_name.to_string()], false)
+				.map(|set| set.into_iter().filter(|n| n != service_name).collect())
+				.unwrap_or_default();
+			if !deps.is_empty() {
+				self.up_with_options(file, true, &[], &deps, false, false, false)
+					.await?;
+			}
+		}
+
+		// A user-supplied `--name` is taken verbatim (no project prefix), so it can
+		// collide with an arbitrary pre-existing container. docker compose errors on
+		// such a conflict; podup must NOT force-remove the unrelated container (the
+		// idempotent recreate in `create_and_start` would otherwise delete it). The
+		// auto-generated default name carries the PID and is unique, so it never
+		// needs this guard.
+		let user_named = name_override.is_some();
+		let run_name = name_override.unwrap_or_else(|| {
+			format!("{}-{service_name}-run-{}", self.project, std::process::id())
+		});
+
+		let mut run_service = service.clone();
+		if !cmd.is_empty() {
+			run_service.command = Some(crate::compose::types::Command::Exec(cmd));
+		}
+		// `--entrypoint` overrides the image/service entrypoint with a single
+		// executable token (compose/`docker run` semantics); any `cmd` becomes
+		// its arguments.
+		if let Some(ep) = entrypoint {
+			run_service.entrypoint = Some(crate::compose::types::Command::Exec(vec![ep]));
+		}
+		if let Some(u) = user {
+			run_service.user = Some(u);
+		}
+		if let Some(w) = workdir {
+			run_service.working_dir = Some(w);
+		}
+		// `-i/--interactive` keeps STDIN open on the spec; `run` still streams
+		// logs rather than attaching a live terminal.
+		if interactive {
+			run_service.stdin_open = Some(true);
+		}
+		// Ad-hoc `-v/--volume` mounts append to the service's own mounts in
+		// compose short form, parsed downstream like compose file entries.
+		for v in volumes {
+			run_service
+				.volumes
+				.push(crate::compose::types::VolumeMount::Short(v));
+		}
+		// `-l/--label` adds ad-hoc labels to the one-off container, merged over the
+		// service's own labels in compose `KEY=VALUE` list form.
+		if !labels.is_empty() {
+			let mut list: Vec<String> = run_service
+				.labels
+				.to_map()
+				.into_iter()
+				.map(|(k, v)| if v.is_empty() { k } else { format!("{k}={v}") })
+				.collect();
+			list.extend(labels);
+			run_service.labels = crate::compose::types::Labels::List(list);
+		}
+		// Layer the run container's environment by precedence, matching
+		// `docker compose run --env-file`: global `--env-file` contents are the
+		// lowest layer, the service's own `environment:` overrides them, and `-e`
+		// overrides win over both.
+		let env_file_vars = if env_files.is_empty() {
+			HashMap::new()
+		} else {
+			crate::env_file::load_env_files(&env_files, &self.base_dir)?
+		};
+		if !env_file_vars.is_empty() || !env_overrides.is_empty() {
+			run_service.environment = crate::compose::types::EnvVars::List(merge_run_environment(
+				env_file_vars,
+				run_service.environment.to_map(),
+				env_overrides,
+			));
+		}
+		run_service.restart = None;
+		// Compose `run` does not publish the service's ports unless
+		// `--service-ports` is given; otherwise a one-off run would collide
+		// with the long-running service's host-port bindings.
+		if !service_ports {
+			run_service.ports.clear();
+		}
+		// Explicit `-p/--publish` ports are always bound, even without
+		// `--service-ports`, matching `docker compose run -p`.
+		for p in publish {
+			run_service
+				.ports
+				.push(crate::compose::types::PortMapping::Short(p));
+		}
+		// Force non-TTY so Podman uses multiplexed log framing that
+		// parse_multiplexed can decode. TTY mode sends raw bytes without
+		// the 8-byte header, which would produce garbled output.
+		run_service.tty = None;
+
+		// Ensure the project networks exist (compose `run` brings them up like
+		// `up` does); the service may reference the synthesized `default`
+		// network, which is created here as `{project}_default`.
+		self.create_networks(file).await?;
+		// Inline secrets/configs are created up front (no longer in the
+		// per-container build path), so materialise them here too before the run
+		// container is created.
+		self.create_inline_secrets(file).await?;
+
+		// Refuse to clobber a pre-existing container of the same name (data-loss
+		// footgun): `create_and_start` would force-remove it. Only the verbatim
+		// user-supplied name can collide with something we don't own.
+		if user_named && self.container_exists(&run_name).await? {
+			return Err(ComposeError::Unsupported(format!(
+				"the container name \"{run_name}\" is already in use; remove the existing \
+				 container or choose a different --name"
+			)));
+		}
+
+		let rm_path = format!(
+			"{API_PREFIX}/containers/{}?force=true",
+			crate::libpod::urlencoded(&run_name),
+		);
+
+		// On a start failure (bad --workdir/--user/--entrypoint), the container is
+		// created but never starts; with --rm, remove it here so repeated failures
+		// don't accumulate orphaned 'Created' containers.
+		if let Err(e) = self
+			.create_and_start(&run_name, service_name, &run_service, file, true)
+			.await
+		{
+			if rm {
+				let _ = self.client.delete_ok(&rm_path).await;
+			}
+			return Err(e);
+		}
+
+		if detach {
+			// Echo the started container's name to stdout (gated by progress
+			// output), so scripts capturing stdout get an id like
+			// `docker compose run -d`.
+			crate::ui::result_line(&run_name);
+			return Ok(());
+		}
+
+		// Stream logs and wait for the exit code. Any failure on this path also
+		// triggers the --rm cleanup below, so a failed stream/wait never leaks the
+		// running container either. The wait result is captured before cleanup so a
+		// failed wait surfaces as an error rather than masked as a successful run.
+		let outcome: Result<i64> = async {
+			let logs_path = format!(
+				"{API_PREFIX}/containers/{}/logs?follow=true&stdout=true&stderr=true",
+				crate::libpod::urlencoded(&run_name),
+			);
+			let logs_resp = self
+				.client
+				.get_stream(&logs_path)
+				.await
+				.map_err(ComposeError::Podman)?;
+			let mut log_stream = crate::libpod::parse_multiplexed(logs_resp.into_body());
+
+			// Lock stdout once for the whole stream instead of re-acquiring the lock
+			// (and issuing a syscall) per frame; stdout is ours exclusively on this
+			// path. stderr is locked per frame because the tracing subscriber also
+			// writes there: holding its lock across the await loop would starve
+			// concurrent log emissions. Flush after each frame so `run` streams
+			// promptly.
+			{
+				let mut out = std::io::stdout().lock();
+				while let Some(msg) = log_stream.next().await {
+					match msg.map_err(ComposeError::Podman)? {
+						crate::libpod::LogOutput::StdOut { message } => {
+							let _ = out.write_all(String::from_utf8_lossy(&message).as_bytes());
+							let _ = out.flush();
+						}
+						crate::libpod::LogOutput::StdErr { message } => {
+							let mut err = std::io::stderr().lock();
+							let _ = err.write_all(String::from_utf8_lossy(&message).as_bytes());
+							let _ = err.flush();
+						}
+					}
+				}
+			}
+
+			let wait_path = format!(
+				"{API_PREFIX}/containers/{}/wait?condition=stopped",
+				crate::libpod::urlencoded(&run_name),
+			);
+			self.client
+				.post_empty_json_unbounded::<i64>(&wait_path)
+				.await
+				.map_err(ComposeError::Podman)
+		}
+		.await;
+
+		if rm {
+			if let Err(e) = self.client.delete_ok(&rm_path).await {
+				tracing::debug!("run cleanup delete {run_name}: {e}");
+			}
+		}
+
+		let exit_code = outcome?;
+		if exit_code != 0 {
+			return Err(crate::error::ComposeError::RunExited(exit_code));
+		}
+
+		Ok(())
+	}
+}
+
+/// Layer the three `run` environment sources into the final `KEY=VALUE` / `KEY`
+/// list by precedence (`--env-file` < service `environment:` < `-e`), matching
+/// `docker compose run --env-file`. `-e` overrides are appended last so a later
+/// duplicate wins downstream, mirroring the previous `-e`-only handling.
+fn merge_run_environment(
+	env_file_vars: HashMap<String, String>,
+	service_env: HashMap<String, Option<String>>,
+	env_overrides: Vec<String>,
+) -> Vec<String> {
+	// `--env-file` is the base layer; the service's `environment:` overrides it.
+	let mut map: HashMap<String, Option<String>> = env_file_vars
+		.into_iter()
+		.map(|(k, v)| (k, Some(v)))
+		.collect();
+	for (k, v) in service_env {
+		map.insert(k, v);
+	}
+	let mut env_list: Vec<String> = map
+		.into_iter()
+		.map(|(k, v)| v.map_or_else(|| k.clone(), |v| format!("{k}={v}")))
+		.collect();
+	// `-e` overrides win over everything else.
+	env_list.extend(env_overrides);
+	env_list
+}
+
+#[cfg(test)]
+mod tests {
+	use super::merge_run_environment;
+	use std::collections::HashMap;
+
+	fn lookup<'a>(list: &'a [String], key: &str) -> Option<&'a str> {
+		// Mirror downstream "later duplicate wins" semantics.
+		list.iter().rev().find_map(|e| match e.split_once('=') {
+			Some((k, v)) if k == key => Some(v),
+			_ => None,
+		})
+	}
+
+	#[test]
+	fn env_file_seeds_environment() {
+		let file: HashMap<String, String> = [("FOO".to_string(), "from-file".to_string())].into();
+		let list = merge_run_environment(file, HashMap::new(), Vec::new());
+		assert_eq!(lookup(&list, "FOO"), Some("from-file"));
+	}
+
+	#[test]
+	fn service_environment_overrides_env_file() {
+		let file: HashMap<String, String> = [("FOO".to_string(), "from-file".to_string())].into();
+		let service: HashMap<String, Option<String>> =
+			[("FOO".to_string(), Some("from-service".to_string()))].into();
+		let list = merge_run_environment(file, service, Vec::new());
+		assert_eq!(lookup(&list, "FOO"), Some("from-service"));
+	}
+
+	#[test]
+	fn dash_e_override_wins_over_all() {
+		let file: HashMap<String, String> = [("FOO".to_string(), "from-file".to_string())].into();
+		let service: HashMap<String, Option<String>> =
+			[("FOO".to_string(), Some("from-service".to_string()))].into();
+		let list = merge_run_environment(file, service, vec!["FOO=from-cli".to_string()]);
+		assert_eq!(lookup(&list, "FOO"), Some("from-cli"));
+	}
+
+	#[test]
+	fn distinct_keys_from_each_layer_are_kept() {
+		let file: HashMap<String, String> = [("A".to_string(), "a".to_string())].into();
+		let service: HashMap<String, Option<String>> =
+			[("B".to_string(), Some("b".to_string()))].into();
+		let list = merge_run_environment(file, service, vec!["C=c".to_string()]);
+		assert_eq!(lookup(&list, "A"), Some("a"));
+		assert_eq!(lookup(&list, "B"), Some("b"));
+		assert_eq!(lookup(&list, "C"), Some("c"));
+	}
+}

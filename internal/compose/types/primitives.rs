@@ -32,6 +32,28 @@ where
 	})
 }
 
+/// Deserialize a field that the compose spec allows as either a YAML number or a
+/// quoted string, normalizing to `Option<String>`. `cpus: 0.5` (number) and
+/// `cpus: "0.5"` (string) both parse; an absent key stays `None`. Used for the
+/// `cpus:` limits, which the spec writes unquoted but podup stores as a string.
+pub(crate) fn deserialize_opt_string_or_number<'de, D>(de: D) -> Result<Option<String>, D::Error>
+where
+	D: serde::Deserializer<'de>,
+{
+	#[derive(Deserialize)]
+	#[serde(untagged)]
+	enum StringOrNumber {
+		Str(String),
+		Int(i64),
+		Float(f64),
+	}
+	Ok(Option::<StringOrNumber>::deserialize(de)?.map(|v| match v {
+		StringOrNumber::Str(s) => s,
+		StringOrNumber::Int(i) => i.to_string(),
+		StringOrNumber::Float(fl) => fl.to_string(),
+	}))
+}
+
 /// Container entrypoint / command — either a shell string or exec list.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
@@ -222,6 +244,38 @@ mod tests {
 	fn command_exec_to_argv_passthrough() {
 		let cmd = Command::Exec(vec!["ls".into()]);
 		assert_eq!(cmd.to_argv(), vec!["ls"]);
+	}
+
+	// string-or-number (cpus)
+
+	#[derive(Deserialize)]
+	struct CpusHolder {
+		#[serde(default, deserialize_with = "deserialize_opt_string_or_number")]
+		cpus: Option<String>,
+	}
+
+	#[test]
+	fn opt_string_or_number_accepts_unquoted_float() {
+		let h: CpusHolder = serde_yaml::from_str("cpus: 0.5\n").unwrap();
+		assert_eq!(h.cpus.as_deref(), Some("0.5"));
+	}
+
+	#[test]
+	fn opt_string_or_number_accepts_quoted_string() {
+		let h: CpusHolder = serde_yaml::from_str("cpus: \"0.5\"\n").unwrap();
+		assert_eq!(h.cpus.as_deref(), Some("0.5"));
+	}
+
+	#[test]
+	fn opt_string_or_number_accepts_integer() {
+		let h: CpusHolder = serde_yaml::from_str("cpus: 2\n").unwrap();
+		assert_eq!(h.cpus.as_deref(), Some("2"));
+	}
+
+	#[test]
+	fn opt_string_or_number_absent_is_none() {
+		let h: CpusHolder = serde_yaml::from_str("other: 1\n").unwrap();
+		assert_eq!(h.cpus, None);
 	}
 
 	// StringOrList

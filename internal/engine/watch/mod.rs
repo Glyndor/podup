@@ -9,8 +9,10 @@
 //! - `sync+restart` — sync first, then restart
 //! - `sync+exec` — sync, then run the rule's `exec` command inside the container
 
+mod placement;
 mod sync;
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -25,6 +27,10 @@ use tracing::{debug, info, warn};
 use crate::compose::types::{ComposeFile, WatchAction, WatchRule};
 use crate::error::{ComposeError, Result};
 
+use placement::{
+	is_dispatch_event, mark_dir_ensured, mkdir_p_argv, plan_sync_placement, validate_sync_target,
+	SyncPlacement,
+};
 use sync::{build_sync_tar, is_ignored, is_included};
 
 use super::Engine;
@@ -46,68 +52,6 @@ struct RuleEntry {
 	abs_path: PathBuf,
 }
 
-/// Where a changed host path lands inside the container for a `sync` action:
-/// the archive entry name and the directory the tar is extracted at.
-struct SyncPlacement {
-	/// Archive path the changed entry occupies inside the tar.
-	entry_name: String,
-	/// Container directory the archive is PUT (extracted) at.
-	dest_dir: String,
-}
-
-/// Map a changed host path to its container archive placement, matching
-/// docker-compose `watch` semantics.
-///
-/// `root` is the watch rule's absolute host path, `changed` the path that
-/// actually changed (equal to `root` for a single-file rule, a descendant for a
-/// directory rule), and `target` the rule's container target.
-///
-/// For a directory rule the changed entry keeps its path relative to `root`
-/// (subdirectories preserved) and is extracted under `target` treated as a
-/// directory. For a single-file rule the entry is stored under
-/// `basename(target)` and extracted into `target`'s parent, so a renaming
-/// target is honoured.
-fn plan_sync_placement(root: &Path, changed: &Path, target: &str) -> SyncPlacement {
-	if root.is_dir() {
-		// Directory rule: preserve the changed file's subpath under `target`,
-		// which is treated as a directory.
-		let rel = changed.strip_prefix(root).unwrap_or(changed);
-		let entry_name = rel.to_string_lossy().into_owned();
-		let dest_dir = target.trim_end_matches('/').to_string();
-		let dest_dir = if dest_dir.is_empty() {
-			"/".to_string()
-		} else {
-			dest_dir
-		};
-		SyncPlacement {
-			entry_name,
-			dest_dir,
-		}
-	} else {
-		// Single-file rule: store under the target basename so a renaming target
-		// is honoured, and extract into the target's parent directory.
-		let target_path = Path::new(target);
-		let entry_name = target_path
-			.file_name()
-			.map(|n| n.to_string_lossy().into_owned())
-			.or_else(|| {
-				changed
-					.file_name()
-					.map(|n| n.to_string_lossy().into_owned())
-			})
-			.unwrap_or_default();
-		let dest_dir = target_path
-			.parent()
-			.map(|p| p.to_string_lossy().into_owned())
-			.filter(|s| !s.is_empty())
-			.unwrap_or_else(|| "/".to_string());
-		SyncPlacement {
-			entry_name,
-			dest_dir,
-		}
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Public watch command
 // ---------------------------------------------------------------------------
@@ -120,6 +64,7 @@ impl Engine {
 		for (name, service) in &file.services {
 			if let Some(dev) = &service.develop {
 				for rule in &dev.watch {
+					validate_sync_target(rule)?;
 					let abs = self.base_dir.join(&rule.path);
 					rule_entries.push(RuleEntry {
 						service_name: name.clone(),
@@ -132,9 +77,16 @@ impl Engine {
 		}
 
 		if rule_entries.is_empty() {
-			info!("no develop.watch rules found");
-			return Ok(());
+			// docker compose watch errors when nothing is configured; match that
+			// instead of silently exiting 0.
+			return Err(ComposeError::Watch(
+				"no develop.watch rules configured".into(),
+			));
 		}
+
+		// Track which (container, dest) directories have been ensured so the
+		// best-effort `mkdir -p` exec runs once per target rather than per event.
+		let mut ensured: HashSet<(String, String)> = HashSet::new();
 
 		for entry in &rule_entries {
 			if entry.rule.initial_sync {
@@ -146,6 +98,7 @@ impl Engine {
 							&entry.abs_path,
 							&entry.abs_path,
 							target,
+							&mut ensured,
 						)
 						.await
 					{
@@ -197,6 +150,13 @@ impl Engine {
 				_ = tokio::signal::ctrl_c() => break,
 			};
 
+			// Ignore Access/Other events: only create/modify/remove/rename drive a
+			// sync, matching docker compose and avoiding the read-triggered
+			// self-feedback loop.
+			if !is_dispatch_event(&event.kind) {
+				continue;
+			}
+
 			let mut paths = event.paths;
 			let deadline = tokio::time::Instant::now() + debounce;
 			// Coalesce events within the debounce window, but stop accumulating once
@@ -204,7 +164,11 @@ impl Engine {
 			// bound; the remaining events fall into the next batch.
 			while paths.len() < WATCH_MAX_BATCH_PATHS {
 				match tokio::time::timeout_at(deadline, rx.recv()).await {
-					Ok(Some(Ok(e))) => paths.extend(e.paths),
+					Ok(Some(Ok(e))) => {
+						if is_dispatch_event(&e.kind) {
+							paths.extend(e.paths);
+						}
+					}
 					_ => break,
 				}
 			}
@@ -248,7 +212,7 @@ impl Engine {
 
 					debug!("dispatch {:?} for {}", entry.rule.action, path.display());
 
-					if let Err(e) = self.dispatch_action(file, path, entry).await {
+					if let Err(e) = self.dispatch_action(file, path, entry, &mut ensured).await {
 						warn!("watch action failed: {e}");
 					}
 
@@ -265,12 +229,19 @@ impl Engine {
 		file: &ComposeFile,
 		path: &Path,
 		entry: &RuleEntry,
+		ensured: &mut HashSet<(String, String)>,
 	) -> Result<()> {
 		match &entry.rule.action {
 			WatchAction::Sync => {
 				if let Some(target) = &entry.rule.target {
-					self.sync_to_container(&entry.container_name, &entry.abs_path, path, target)
-						.await?;
+					self.sync_to_container(
+						&entry.container_name,
+						&entry.abs_path,
+						path,
+						target,
+						ensured,
+					)
+					.await?;
 				}
 			}
 			WatchAction::Rebuild => {
@@ -281,15 +252,27 @@ impl Engine {
 			}
 			WatchAction::SyncAndRestart => {
 				if let Some(target) = &entry.rule.target {
-					self.sync_to_container(&entry.container_name, &entry.abs_path, path, target)
-						.await?;
+					self.sync_to_container(
+						&entry.container_name,
+						&entry.abs_path,
+						path,
+						target,
+						ensured,
+					)
+					.await?;
 				}
 				self.watch_restart(&entry.container_name).await?;
 			}
 			WatchAction::SyncAndExec => {
 				if let Some(target) = &entry.rule.target {
-					self.sync_to_container(&entry.container_name, &entry.abs_path, path, target)
-						.await?;
+					self.sync_to_container(
+						&entry.container_name,
+						&entry.abs_path,
+						path,
+						target,
+						ensured,
+					)
+					.await?;
 				}
 				if let Some(exec) = &entry.rule.exec {
 					self.watch_exec(&entry.container_name, exec.command.clone())
@@ -310,6 +293,7 @@ impl Engine {
 		root: &Path,
 		changed: &Path,
 		target: &str,
+		ensured: &mut HashSet<(String, String)>,
 	) -> Result<()> {
 		let SyncPlacement {
 			entry_name,
@@ -320,13 +304,11 @@ impl Engine {
 		// docker compose watch creates the sync target directory when it is
 		// missing; match that so a sync to a not-yet-existing path works instead
 		// of failing the archive PUT. Best-effort: if mkdir is unavailable the
-		// PUT below still surfaces the real error.
-		let _ = self
-			.watch_exec(
-				container,
-				vec!["mkdir".into(), "-p".into(), dest_dir.clone()],
-			)
-			.await;
+		// PUT below still surfaces the real error. Run it once per (container,
+		// dest) so repeated syncs to the same target skip the redundant exec.
+		if mark_dir_ensured(ensured, container, &dest_dir) {
+			let _ = self.watch_exec(container, mkdir_p_argv(&dest_dir)).await;
+		}
 
 		let path = format!(
 			"{API_PREFIX}/containers/{}/archive?path={}",
@@ -435,7 +417,9 @@ impl Engine {
 		src: &Path,
 		target: &str,
 	) -> Result<()> {
-		self.sync_to_container(container, src, src, target).await
+		let mut ensured = HashSet::new();
+		self.sync_to_container(container, src, src, target, &mut ensured)
+			.await
 	}
 
 	/// Test seam: run the watch restart action against `container_name`.
@@ -493,77 +477,5 @@ impl Engine {
 			}
 		}
 		Ok(out)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Unit tests
-// ---------------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-	use super::plan_sync_placement;
-	use std::fs;
-	use tempfile::tempdir;
-
-	#[test]
-	fn placement_directory_rule_preserves_subpath() {
-		// A directory rule: a change to <root>/sub/b.txt must keep the `sub/`
-		// subpath under the target directory.
-		let dir = tempdir().unwrap();
-		fs::create_dir(dir.path().join("sub")).unwrap();
-		let changed = dir.path().join("sub/b.txt");
-		fs::write(&changed, b"b").unwrap();
-
-		let p = plan_sync_placement(dir.path(), &changed, "/app");
-		assert_eq!(p.entry_name, "sub/b.txt");
-		assert_eq!(p.dest_dir, "/app");
-	}
-
-	#[test]
-	fn placement_directory_rule_trailing_slash_target() {
-		let dir = tempdir().unwrap();
-		let changed = dir.path().join("a.txt");
-		fs::write(&changed, b"a").unwrap();
-
-		let p = plan_sync_placement(dir.path(), &changed, "/app/");
-		assert_eq!(p.entry_name, "a.txt");
-		assert_eq!(p.dest_dir, "/app");
-	}
-
-	#[test]
-	fn placement_single_file_rule_honours_renaming_target() {
-		// A single-file rule whose target renames the file must store the entry
-		// under the target basename and extract into the target's parent.
-		let dir = tempdir().unwrap();
-		let src = dir.path().join("settings.yml");
-		fs::write(&src, b"k: v").unwrap();
-
-		let p = plan_sync_placement(&src, &src, "/app/config.yml");
-		assert_eq!(p.entry_name, "config.yml");
-		assert_eq!(p.dest_dir, "/app");
-	}
-
-	#[test]
-	fn placement_single_file_rule_same_basename() {
-		// The existing same-basename case still lands the file at the target.
-		let dir = tempdir().unwrap();
-		let src = dir.path().join("app.txt");
-		fs::write(&src, b"x").unwrap();
-
-		let p = plan_sync_placement(&src, &src, "/newdir/app.txt");
-		assert_eq!(p.entry_name, "app.txt");
-		assert_eq!(p.dest_dir, "/newdir");
-	}
-
-	#[test]
-	fn placement_single_file_rule_target_at_root() {
-		let dir = tempdir().unwrap();
-		let src = dir.path().join("app.txt");
-		fs::write(&src, b"x").unwrap();
-
-		let p = plan_sync_placement(&src, &src, "/app.txt");
-		assert_eq!(p.entry_name, "app.txt");
-		assert_eq!(p.dest_dir, "/");
 	}
 }

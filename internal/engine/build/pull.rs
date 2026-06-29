@@ -1,7 +1,7 @@
 //! Image pull from a registry (the non-build half of image acquisition).
 
 use futures_util::StreamExt;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 use std::collections::HashSet;
 
@@ -48,6 +48,14 @@ impl Engine {
 		services: &[String],
 		opts: PullOptions,
 	) -> Result<()> {
+		// Reject unknown service names up front, matching `docker compose pull`
+		// (and `logs`), rather than silently doing nothing.
+		for name in services {
+			if !file.services.contains_key(name) {
+				return Err(ComposeError::ServiceNotFound(name.clone()));
+			}
+		}
+
 		// `--include-deps` widens the explicit service list to its transitive
 		// depends_on closure; an empty list already means "every service".
 		let wanted: Option<HashSet<String>> = match (services.is_empty(), opts.include_deps) {
@@ -68,27 +76,34 @@ impl Engine {
 			.map(|(name, s)| async move {
 				// The libpod pull stream reports failure as an in-band progress
 				// line, so `pull_image` returns Ok even when the pull failed;
-				// confirm the image actually landed in local storage.
-				let _ = self.pull_image(s).await;
+				// confirm the image actually landed in local storage. Keep the
+				// real transport error (e.g. socket unreachable) so a failed pull
+				// surfaces the underlying cause rather than a generic message.
+				let pull_err = self.pull_image(s).await.err();
 				let image = s.image.clone().unwrap_or_default();
 				(
 					name.clone(),
 					image.clone(),
 					self.image_present(&image).await,
+					pull_err,
 				)
 			})
 			.collect();
 
 		let results = futures_util::future::join_all(futs).await;
-		for (name, image, present) in results {
+		for (name, image, present, pull_err) in results {
 			if present {
 				continue;
 			}
 			if opts.ignore_failures {
-				tracing::warn!("pull {name} ({image}) failed — ignored");
+				match &pull_err {
+					Some(e) => tracing::warn!("pull {name} ({image}) failed — ignored: {e}"),
+					None => tracing::warn!("pull {name} ({image}) failed — ignored"),
+				}
 			} else {
+				let detail = pull_err.map(|e| format!(": {e}")).unwrap_or_default();
 				return Err(ComposeError::Build(format!(
-					"failed to pull image {image} for service {name}"
+					"failed to pull image {image} for service {name}{detail}"
 				)));
 			}
 		}
@@ -101,10 +116,13 @@ impl Engine {
 			None => return Ok(()),
 		};
 
+		// Progress goes to stderr so it shows at default verbosity (the non-watch
+		// log floor is WARN, so info!/debug! would print nothing) and `--quiet`
+		// actually suppresses it, matching `docker compose pull`.
 		if self.quiet_pull {
 			debug!("pulling {image}");
 		} else {
-			info!("pulling {image}");
+			eprintln!("Pulling {image}");
 		}
 
 		// `up --pull <policy>` overrides the per-service `pull_policy`.
@@ -114,7 +132,7 @@ impl Engine {
 			.or(service.pull_policy.as_deref());
 		let pull_policy = libpod_pull_policy(requested).unwrap_or_else(|| {
 			warn!(
-				"unknown pull_policy '{}', defaulting to 'missing'",
+				"unknown pull policy '{}', defaulting to 'missing'",
 				requested.unwrap_or_default()
 			);
 			"missing"
@@ -219,6 +237,24 @@ mod tests {
 			.into_iter()
 			.collect();
 		assert_eq!(got, vec!["db"]);
+	}
+
+	#[tokio::test]
+	async fn pull_unknown_service_is_rejected() {
+		// `pull bogus` must error on the unknown name instead of silently exiting 0.
+		let file = crate::parse_str("services:\n  web:\n    image: a\n").unwrap();
+		let e = crate::engine::Engine::new(
+			crate::libpod::Client::new("/nonexistent.sock"),
+			"proj".into(),
+		);
+		let err = e
+			.pull_services(&file, &["nope".to_string()])
+			.await
+			.expect_err("unknown service must be rejected");
+		assert!(
+			matches!(err, crate::error::ComposeError::ServiceNotFound(_)),
+			"unexpected error: {err:?}"
+		);
 	}
 
 	#[test]

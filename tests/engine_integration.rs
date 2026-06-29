@@ -66,5 +66,9 @@ mod cli_flags;
 mod cli_lifecycle;
 #[path = "engine_integration/create_ls.rs"]
 mod create_ls;
+#[path = "engine_integration/lifecycle_output.rs"]
+mod lifecycle_output;
 #[path = "engine_integration/scale.rs"]
 mod scale;
+#[path = "engine_integration/stats_flags.rs"]
+mod stats_flags;

@@ -11,15 +11,25 @@ pub(super) struct LinePrefixer {
 }
 
 impl LinePrefixer {
-	pub(super) fn new(label: &str) -> Self {
+	/// Build a prefixer for `label`. `prefix` gates whether any `{label} | ` is
+	/// emitted at all (`logs --no-log-prefix`); `allow_color` gates the colour of
+	/// the prefix (`logs --no-color`), still subject to stdout being a colour sink.
+	pub(super) fn new(label: &str, prefix: bool, allow_color: bool) -> Self {
+		// `--no-log-prefix`: emit the bare line with no `{label} | ` tag.
+		if !prefix {
+			return Self {
+				label: String::new(),
+				pending: Vec::new(),
+			};
+		}
 		// Colour the whole prefix with the service's stable colour so aggregated
 		// multi-service output is easy to scan. Gated on stdout being a colour sink
-		// (a raw write anstream does not strip for us).
+		// (a raw write anstream does not strip for us) and on `--no-color`.
 		let plain = format!("{label}  | ");
 		let label = crate::ui::paint(
 			crate::ui::service_style(label),
 			&plain,
-			crate::ui::stdout_colored(),
+			allow_color && crate::ui::stdout_colored(),
 		);
 		Self {
 			label,
@@ -56,7 +66,7 @@ mod tests {
 
 	#[test]
 	fn line_prefixer_tags_lines_and_buffers_partials() {
-		let mut p = LinePrefixer::new("web");
+		let mut p = LinePrefixer::new("web", true, false);
 		let mut out: Vec<u8> = Vec::new();
 		p.write(&mut out, b"hello\nwor");
 		// The complete line is tagged; the partial "wor" waits for its newline.
@@ -67,11 +77,23 @@ mod tests {
 
 	#[test]
 	fn line_prefixer_flush_tail_emits_unterminated_line() {
-		let mut p = LinePrefixer::new("db");
+		let mut p = LinePrefixer::new("db", true, false);
 		let mut out: Vec<u8> = Vec::new();
 		p.write(&mut out, b"partial");
 		assert!(out.is_empty(), "a line with no newline is held back");
 		p.flush_tail(&mut out);
 		assert_eq!(out, b"db  | partial\n");
+	}
+
+	#[test]
+	fn line_prefixer_no_prefix_emits_bare_lines() {
+		// `--no-log-prefix`: lines pass through with no `{label} | ` tag.
+		let mut p = LinePrefixer::new("web", false, false);
+		let mut out: Vec<u8> = Vec::new();
+		p.write(&mut out, b"hello\n");
+		assert_eq!(out, b"hello\n");
+		p.write(&mut out, b"tail");
+		p.flush_tail(&mut out);
+		assert_eq!(out, b"hello\ntail\n");
 	}
 }

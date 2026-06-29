@@ -30,6 +30,13 @@ impl Engine {
 		services: &[String],
 		opts: VolumesOptions,
 	) -> Result<()> {
+		// Reject an unknown service name (docker compose errors with "no such
+		// service") instead of silently filtering it out and printing nothing.
+		for s in services {
+			if !file.services.contains_key(s) {
+				return Err(crate::error::ComposeError::ServiceNotFound(s.clone()));
+			}
+		}
 		let keys = self.selected_volume_keys(file, services);
 
 		// (declared key, resolved on-host name, driver, external)
@@ -67,9 +74,16 @@ impl Engine {
 			return Ok(());
 		}
 
+		// Skip the header entirely when there are no volumes, instead of printing a
+		// lone NAME/DRIVER header with no rows.
+		if rows.is_empty() {
+			return Ok(());
+		}
 		crate::ui::print_bold_header(&format!("{:<40} {:<12}", "NAME", "DRIVER"));
 		for (_, name, driver, _) in &rows {
-			println!("{name:<40} {driver:<12}");
+			// Escape control characters so an ANSI/BEL/tab sequence in a volume
+			// name or driver cannot be interpreted by the terminal.
+			println!("{:<40} {:<12}", sanitize_cell(name), sanitize_cell(driver));
 		}
 		Ok(())
 	}
@@ -94,6 +108,21 @@ impl Engine {
 	}
 }
 
+/// Escape control characters (ANSI escapes, BEL, tab, newline, …) in a table
+/// cell so a hostile volume name or driver cannot drive the terminal. Printable
+/// characters pass through unchanged. Pure so it can be unit-tested.
+fn sanitize_cell(s: &str) -> String {
+	s.chars()
+		.flat_map(|c| {
+			if c.is_control() {
+				c.escape_default().collect::<Vec<_>>()
+			} else {
+				vec![c]
+			}
+		})
+		.collect()
+}
+
 /// The source (named-volume) component of a mount, if any. Bind mounts and
 /// anonymous volumes (no source) return `None`.
 fn mount_source_name(m: &VolumeMount) -> Option<String> {
@@ -113,8 +142,23 @@ fn mount_source_name(m: &VolumeMount) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-	use super::mount_source_name;
+	use super::{mount_source_name, sanitize_cell};
 	use crate::compose::types::VolumeMount;
+
+	#[test]
+	fn sanitize_cell_escapes_control_chars() {
+		// An ANSI/BEL/tab sequence is escaped rather than emitted raw.
+		let out = sanitize_cell("evil\x1b[31m\x07\tname");
+		assert!(!out.contains('\x1b'));
+		assert!(!out.contains('\x07'));
+		assert!(!out.contains('\t'));
+		assert!(out.contains("name"));
+	}
+
+	#[test]
+	fn sanitize_cell_passes_printable_through() {
+		assert_eq!(sanitize_cell("proj_data-1"), "proj_data-1");
+	}
 
 	#[test]
 	fn named_volume_short_form_has_source() {

@@ -15,7 +15,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use super::error::PodmanError;
 
 mod encode;
-pub(crate) use encode::urlencoded;
+pub(crate) use encode::{is_valid_object_name, urlencoded};
 
 type BoxBody = Full<Bytes>;
 
@@ -365,6 +365,58 @@ impl Client {
 		Self::check_status(status, &body)
 	}
 
+	/// `POST` with empty body → ignore response body (expect 2xx or 304), bounded
+	/// by a caller-chosen deadline rather than the default `READ_TIMEOUT`.
+	///
+	/// `deadline` of `Some` caps both the response-head wait and the body read so a
+	/// `stop` on a container that is slow to die (or a wedged libpod call) returns a
+	/// timeout error after the grace window instead of pinning the CLI for the full
+	/// `READ_TIMEOUT`; `None` leaves it uncapped (docker `stop -t -1` parity). The
+	/// caller decides whether a resulting `PodmanError::is_timeout` warrants a
+	/// client-side `SIGKILL`/force-remove escalation.
+	pub async fn post_empty_ok_within(
+		&self,
+		path: &str,
+		deadline: Option<std::time::Duration>,
+	) -> Result<()> {
+		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;
+		let resp = self.send(req, deadline).await?;
+		let (status, body) = Self::read_body(resp, deadline).await?;
+		// 304 Not Modified is fine for idempotent ops
+		if status == StatusCode::NOT_MODIFIED {
+			return Ok(());
+		}
+		Self::check_status(status, &body)
+	}
+
+	/// `POST` with JSON body → return raw `Response<Incoming>` for streaming,
+	/// bounding the wait for the response head by `head_timeout` instead of the
+	/// default `READ_TIMEOUT`.
+	///
+	/// `exec`-start uses this with a short, exec-specific ceiling: a healthy engine
+	/// returns the start head (the hijack, or a prompt error) almost immediately, so
+	/// a long wait means the launch is wedged — e.g. a nonexistent target user the
+	/// server stalls resolving. Bounding the head lets the caller fail fast with a
+	/// clear, exec-specific message rather than pinning the CLI for the full
+	/// `READ_TIMEOUT` and then reporting a misleading socket-timeout. The streamed
+	/// body is left unbounded (`head_timeout` covers only the head), so a legitimate
+	/// long-running exec still streams normally.
+	pub async fn post_json_stream_within<B: Serialize>(
+		&self,
+		path: &str,
+		body: &B,
+		head_timeout: Option<std::time::Duration>,
+	) -> Result<Response<Incoming>> {
+		let json = serde_json::to_vec(body).map_err(PodmanError::Json)?;
+		let req = Self::build_request(
+			Method::POST,
+			path,
+			Full::new(Bytes::from(json)),
+			Some("application/json"),
+		)?;
+		Self::stream_or_err(self.send(req, head_timeout).await?).await
+	}
+
 	/// `POST` with empty body → return raw `Response<Incoming>` for streaming.
 	pub async fn post_empty_stream(&self, path: &str) -> Result<Response<Incoming>> {
 		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;
@@ -477,15 +529,25 @@ impl Client {
 		Ok(Some(parsed.mode & (1 << 31) != 0))
 	}
 
-	/// `DELETE` → ignore response body (expect 2xx or 404).
-	pub async fn delete_ok(&self, path: &str) -> Result<()> {
+	/// `DELETE` → `Ok(true)` if the resource existed and was removed, `Ok(false)`
+	/// on a 404 (nothing to delete). Lets a caller tell a real deletion from a
+	/// no-op, so it can avoid reporting a phantom "removed" for a container that
+	/// never existed.
+	pub async fn delete_existed(&self, path: &str) -> Result<bool> {
 		let req = Self::build_request(Method::DELETE, path, Full::new(Bytes::new()), None)?;
 		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		if status == StatusCode::NOT_FOUND {
-			return Ok(());
+			return Ok(false);
 		}
-		Self::check_status(status, &body)
+		Self::check_status(status, &body)?;
+		Ok(true)
+	}
+
+	/// `DELETE` → ignore response body (expect 2xx or 404). A 404 is an
+	/// idempotent no-op; see [`Self::delete_existed`] when the distinction matters.
+	pub async fn delete_ok(&self, path: &str) -> Result<()> {
+		self.delete_existed(path).await.map(|_| ())
 	}
 }
 

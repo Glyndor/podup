@@ -20,15 +20,22 @@ use std::path::PathBuf;
 use std::path::Path;
 
 /// Whether `name` is safe to use as a single path component and container
-/// name prefix: non-empty, bounded, ASCII alphanumeric plus `-`/`_`/`.`,
-/// not starting with a dot (rejects `.`, `..` and hidden directories).
+/// name prefix. Matches docker-compose's project-name rule `^[a-z0-9][a-z0-9_-]*$`:
+/// non-empty, bounded, lowercase ASCII letters/digits/`-`/`_` only, and a first
+/// character that is a letter or digit. This rejects a leading separator
+/// (`-rf`, `--all`, `_x` — a latent flag-injection vector for forwarding paths),
+/// uppercase, dots (`.`, `..`, hidden directories, `bad.` trailing-dot names),
+/// and all-separator names.
 pub fn is_safe_project_name(name: &str) -> bool {
-	!name.is_empty()
-		&& name.len() <= 128
-		&& !name.starts_with('.')
-		&& name
-			.chars()
-			.all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+	if name.is_empty() || name.len() > 128 {
+		return false;
+	}
+	let mut chars = name.chars();
+	let first = chars.next().expect("name is non-empty");
+	if !(first.is_ascii_lowercase() || first.is_ascii_digit()) {
+		return false;
+	}
+	chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '_'))
 }
 
 /// Per-user staging base for inline secret/config content.
@@ -159,7 +166,9 @@ mod name_tests {
 
 	#[test]
 	fn safe_project_names_accepted() {
-		for name in ["web", "my-app", "my_app", "app.v2", "A1"] {
+		// Matches docker-compose `^[a-z0-9][a-z0-9_-]*$`: lowercase letters/digits,
+		// `-`/`_`, first char a letter or digit.
+		for name in ["web", "my-app", "my_app", "appv2", "a1", "1app", "x"] {
 			assert!(is_safe_project_name(name), "{name:?} must be accepted");
 		}
 	}
@@ -176,6 +185,15 @@ mod name_tests {
 			"../x",
 			"a b",
 			"a\0b",
+			// docker-compose rejects these too; previously accepted by podup.
+			"-rf",    // leading dash (flag-injection vector)
+			"--all",  // leading dash
+			"---",    // all-dash
+			"_x",     // leading underscore
+			"App",    // uppercase
+			"MYAPP",  // uppercase
+			"app.v2", // dot
+			"bad.",   // trailing dot
 			long.as_str(),
 		] {
 			assert!(!is_safe_project_name(name), "{name:?} must be rejected");

@@ -5,9 +5,23 @@
 //! fields); `Config`/`Generate`/`Ls`/`Update`/`Completions` are handled earlier
 //! in `main` and reached here only as `unreachable!` guards.
 
-use podup::Engine;
+use podup::{Engine, StatsOptions};
 
 use crate::cli::*;
+
+/// Clone the compose file keeping only services in an active profile, plus any
+/// named on the command line (which activates their profile). Used by the
+/// per-service subcommands so they target exactly the set `up`/`create` would
+/// bring up — never a service hidden behind an inactive profile.
+fn profile_filtered(
+	file: &podup::compose::types::ComposeFile,
+	profile: &[String],
+	targets: &[String],
+) -> podup::compose::types::ComposeFile {
+	let mut filtered = file.clone();
+	podup::retain_active_profiles_with_targets(&mut filtered, profile, targets);
+	filtered
+}
 
 /// Run the command against an already-built engine and parsed compose file.
 pub(crate) async fn dispatch(
@@ -31,6 +45,7 @@ pub(crate) async fn dispatch(
 			no_build: _,
 			quiet_pull: _,
 			wait,
+			wait_timeout,
 			no_start,
 			timestamps,
 			renew_anon_volumes: _,
@@ -71,7 +86,14 @@ pub(crate) async fn dispatch(
 				)
 				.await?;
 			if wait {
-				engine.wait_services_healthy(file, &services).await?;
+				// `--wait-timeout` bounds the health wait, like `start --wait`.
+				let fut = engine.wait_services_healthy(file, &services);
+				match wait_timeout {
+					Some(secs) => tokio::time::timeout(std::time::Duration::from_secs(secs), fut)
+						.await
+						.map_err(|_| podup::ComposeError::WaitTimeout { secs })??,
+					None => fut.await?,
+				}
 			}
 			if watch {
 				engine.watch(file).await?;
@@ -101,42 +123,70 @@ pub(crate) async fn dispatch(
 			wait_timeout,
 			services,
 		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine.start(file, &services).await?;
 			if wait {
-				let fut = engine.wait_services_healthy(file, &services);
 				match wait_timeout {
-					Some(secs) => tokio::time::timeout(std::time::Duration::from_secs(secs), fut)
-						.await
-						.map_err(|_| podup::ComposeError::WaitTimeout { secs })??,
-					None => fut.await?,
+					// `--wait-timeout` both extends the per-service poll budget (so a
+					// short healthcheck plan does not give up early) and caps the
+					// whole wait, so exhaustion surfaces as a clear WaitTimeout rather
+					// than a misleading per-container health-check timeout.
+					Some(secs) => {
+						let budget = std::time::Duration::from_secs(secs);
+						let fut =
+							engine.wait_services_healthy_within(file, &services, Some(budget));
+						tokio::time::timeout(budget, fut)
+							.await
+							.map_err(|_| podup::ComposeError::WaitTimeout { secs })??;
+					}
+					None => engine.wait_services_healthy(file, &services).await?,
 				}
 			}
 		}
 		Commands::Stop {
 			services,
 			timeout: _,
-		} => engine.stop(file, &services).await?,
+		} => {
+			let file = &profile_filtered(file, profile, &services);
+			engine.stop(file, &services).await?
+		}
 		Commands::Scale { pairs } => engine.scale(file, &pairs).await?,
 		Commands::Create {
 			build,
 			force_recreate,
 			no_recreate,
+			// `--pull` is applied via the engine's pull-policy override, set in
+			// `main` (see `with_up_overrides`).
+			pull: _,
+			no_deps,
 			services,
 		} => {
 			if build {
 				engine.build_all(file, &services).await?;
 			}
 			engine
-				.create_with_options(file, profile, &services, no_recreate, force_recreate, false)
+				.create_with_options(
+					file,
+					profile,
+					&services,
+					no_recreate,
+					force_recreate,
+					no_deps,
+				)
 				.await?
 		}
 		Commands::Build {
 			no_cache,
 			pull,
 			build_arg,
+			// `--progress` selects a progress renderer in docker compose; accepted
+			// for compatibility but has no effect on podup's tracing output.
+			progress: _,
+			push,
 			quiet,
 			services,
 		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine
 				.build_all_with_options(
 					file,
@@ -148,7 +198,13 @@ pub(crate) async fn dispatch(
 						quiet,
 					},
 				)
-				.await?
+				.await?;
+			// `--push` pushes each freshly built image to its registry.
+			if push {
+				engine
+					.push_with_quiet(file, &services, podup::PushOptions::default(), quiet)
+					.await?;
+			}
 		}
 		Commands::Rm {
 			force,
@@ -158,7 +214,11 @@ pub(crate) async fn dispatch(
 		} => {
 			// `-s/--stop` gracefully stops the targets first so they can be
 			// removed without `--force`.
+			// A paused container cannot be stopped (Podman rejects it with a raw
+			// state error), so resume it first — matching `docker compose rm
+			// -s`. `unpause` is idempotent, so this is a no-op when not paused.
 			if stop {
+				engine.unpause(file, &services).await?;
 				engine.stop(file, &services).await?;
 			}
 			engine
@@ -170,13 +230,20 @@ pub(crate) async fn dispatch(
 			remove_orphans,
 			services,
 		} => {
-			engine.kill(file, &services, &signal).await?;
+			let filtered = profile_filtered(file, profile, &services);
+			engine.kill(&filtered, &services, &signal).await?;
 			if remove_orphans {
 				engine.remove_orphans(file).await?;
 			}
 		}
-		Commands::Pause { services } => engine.pause(file, &services).await?,
-		Commands::Unpause { services } => engine.unpause(file, &services).await?,
+		Commands::Pause { services } => {
+			let file = &profile_filtered(file, profile, &services);
+			engine.pause(file, &services).await?
+		}
+		Commands::Unpause { services } => {
+			let file = &profile_filtered(file, profile, &services);
+			engine.unpause(file, &services).await?
+		}
 		Commands::Run {
 			service,
 			rm: _,
@@ -193,6 +260,7 @@ pub(crate) async fn dispatch(
 			interactive: _,
 			no_tty: _,
 			no_deps: _,
+			label: _,
 			cmd,
 		} => {
 			engine
@@ -232,36 +300,68 @@ pub(crate) async fn dispatch(
 				)
 				.await?
 		}
-		Commands::Ps { all, quiet, format } => {
-			engine
-				.ps_with_options(
-					file,
-					podup::PsOptions {
-						all,
-						quiet,
-						json: format == OutputFormat::Json,
-					},
-				)
-				.await?
-		}
+		Commands::Ps { .. } => unreachable!("handled before compose parsing"),
 		Commands::Top { format, services } => {
 			engine
 				.top_with_options(file, &services, format == OutputFormat::Json)
 				.await?
 		}
-		Commands::Events { format, json } => {
-			// `--json` is the deprecated alias for `--format json`; either selects
-			// JSON-line output.
-			let json = json || format == OutputFormat::Json;
-			engine.stream_events(json).await?
+		Commands::Events {
+			format,
+			since,
+			until,
+			filter,
+			json,
+		} => {
+			// `--json` is the deprecated alias for `--format json` (and conflicts
+			// with an explicit `--format`); either selects JSON-line output.
+			let json = json || format == EventsFormat::Json;
+			engine
+				.stream_events_with_options(
+					json,
+					&podup::EventsOptions {
+						since,
+						until,
+						filters: filter,
+					},
+				)
+				.await?
 		}
-		Commands::Attach { service } => engine.attach(file, &service).await?,
-		Commands::Wait { services } => engine.wait_services(file, &services).await?,
+		Commands::Attach {
+			service,
+			index,
+			no_stdin: _,
+			sig_proxy: _,
+			detach_keys: _,
+		} => engine.attach_with_index(file, &service, index).await?,
+		Commands::Wait { services } => {
+			let file = &profile_filtered(file, profile, &services);
+			engine.wait_services(file, &services).await?
+		}
 		Commands::Commit {
 			service,
 			image,
+			message,
+			author,
+			pause,
+			change,
 			index,
-		} => engine.commit(file, &service, &image, index).await?,
+		} => {
+			engine
+				.commit_with_options(
+					file,
+					&service,
+					&image,
+					index,
+					podup::CommitOptions {
+						message,
+						author,
+						pause: Some(pause),
+						changes: change,
+					},
+				)
+				.await?
+		}
 		Commands::Export {
 			service,
 			output,
@@ -269,21 +369,30 @@ pub(crate) async fn dispatch(
 		} => engine.export(file, &service, output, index).await?,
 		Commands::Stats {
 			no_stream,
+			all,
+			no_trunc,
+			format,
 			services,
-		} => engine.stats(file, &services, no_stream).await?,
+		} => {
+			let opts = StatsOptions::new(no_stream, all, no_trunc, format == OutputFormat::Json);
+			engine.stats_with_options(file, &services, opts).await?
+		}
 		Commands::Push {
 			ignore_push_failures,
 			tls_verify,
+			quiet,
 			services,
 		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine
-				.push(
+				.push_with_quiet(
 					file,
 					&services,
 					podup::PushOptions {
 						ignore_failures: ignore_push_failures,
 						tls_verify,
 					},
+					quiet,
 				)
 				.await?
 		}
@@ -313,10 +422,16 @@ pub(crate) async fn dispatch(
 				)
 				.await?
 		}
-		Commands::Images { quiet, format } => {
+		Commands::Images {
+			quiet,
+			format,
+			services,
+		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine
-				.images_with_options(
+				.images_with_services(
 					file,
+					&services,
 					podup::ImagesOptions {
 						quiet,
 						json: format == OutputFormat::Json,
@@ -330,10 +445,12 @@ pub(crate) async fn dispatch(
 			since,
 			until,
 			timestamps,
+			no_color,
+			no_log_prefix,
 			services,
 		} => {
 			engine
-				.logs_with_options(
+				.logs_with_display(
 					file,
 					&services,
 					podup::LogsOptions {
@@ -342,6 +459,10 @@ pub(crate) async fn dispatch(
 						since,
 						until,
 						timestamps,
+					},
+					podup::LogsDisplay {
+						no_color,
+						no_log_prefix,
 					},
 				)
 				.await?
@@ -380,6 +501,7 @@ pub(crate) async fn dispatch(
 			policy: _,
 			services,
 		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine
 				.pull_services_with_options(
 					file,
@@ -396,6 +518,7 @@ pub(crate) async fn dispatch(
 			no_deps,
 			services,
 		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine
 				.restart_with_options(file, &services, no_deps)
 				.await?
@@ -403,6 +526,7 @@ pub(crate) async fn dispatch(
 		Commands::Config { .. } => unreachable!("handled above"),
 		Commands::Generate { .. } => unreachable!("handled above"),
 		Commands::Watch => engine.watch(file).await?,
+		Commands::Help { .. } => unreachable!("handled before compose parsing"),
 		Commands::Ls { .. } => unreachable!("handled before compose parsing"),
 		#[cfg(feature = "update")]
 		Commands::Update { .. } => unreachable!("handled before compose parsing"),

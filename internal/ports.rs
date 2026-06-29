@@ -62,14 +62,18 @@ fn parse_one(mapping: &PortMapping) -> Result<Vec<ParsedPort>> {
 			..
 		} => {
 			let proto = protocol.clone().unwrap_or_else(|| "tcp".into());
+			validate_protocol(&proto, &format!("{target}/{proto}"))?;
 			let hip = host_ip.clone().unwrap_or_default();
 			let host_port = published
 				.as_ref()
 				.map(|p| match p {
-					StringOrU16::Number(n) => Ok(*n),
-					StringOrU16::String(s) => s.parse::<u16>().map_err(|_| {
-						ComposeError::InvalidPort(format!("invalid published port: {s}"))
-					}),
+					StringOrU16::Number(n) => port_in_range(*n, &n.to_string()),
+					StringOrU16::String(s) => {
+						let n: u32 = s.parse().map_err(|_| {
+							ComposeError::InvalidPort(format!("invalid published port: {s}"))
+						})?;
+						port_in_range(n, s)
+					}
 				})
 				.transpose()?;
 			Ok(vec![ParsedPort {
@@ -99,6 +103,7 @@ fn parse_short(s: &str) -> Result<Vec<ParsedPort>> {
 	} else {
 		(s, "tcp".to_string())
 	};
+	validate_protocol(&proto, s)?;
 
 	// IPv6 form: `[::1]:host:container` or `[::1]:container`.
 	if let Some(rest) = rest.strip_prefix('[') {
@@ -181,8 +186,7 @@ fn parse_with_ip(ip: &str, after: &str, proto: &str, full: &str) -> Result<Vec<P
 			})
 			.collect())
 	} else {
-		let cp: u16 = after
-			.parse()
+		let cp = parse_port_num(after)
 			.map_err(|_| ComposeError::InvalidPort(format!("bad port: {full}")))?;
 		Ok(vec![ParsedPort {
 			container_port: cp,
@@ -225,16 +229,44 @@ fn expand_single_host_port(
 
 pub(crate) const MAX_PORT_RANGE: usize = 1024;
 
+/// The set of transport protocols podman accepts for a published port. A value
+/// outside this set is rejected at config time rather than passed verbatim to
+/// podman, which would only surface as an opaque create-time error.
+const VALID_PROTOCOLS: [&str; 3] = ["tcp", "udp", "sctp"];
+
+/// Validate a port's protocol suffix against the `tcp`/`udp`/`sctp` allow-list.
+fn validate_protocol(proto: &str, full: &str) -> Result<()> {
+	if VALID_PROTOCOLS.contains(&proto) {
+		Ok(())
+	} else {
+		Err(ComposeError::InvalidPort(format!(
+			"unsupported protocol '{proto}' in '{full}'; use tcp, udp, or sctp"
+		)))
+	}
+}
+
+/// Range-check a numeric port and narrow it to `u16`. Surfaces an out-of-range
+/// value (e.g. `99999`) as a clear config error so the short and long port forms
+/// fail the same way instead of overflowing or leaking a serde enum message.
+fn port_in_range(n: u32, label: &str) -> Result<u16> {
+	u16::try_from(n)
+		.map_err(|_| ComposeError::InvalidPort(format!("port out of range (1-65535): {label}")))
+}
+
+/// Parse a single port number, range-checked against 1-65535.
+fn parse_port_num(s: &str) -> Result<u16> {
+	let n: u32 = s
+		.parse()
+		.map_err(|_| ComposeError::InvalidPort(format!("bad port: {s}")))?;
+	port_in_range(n, s)
+}
+
 /// Expand `start-end` or a single port string.
 fn expand_port_range(s: &str) -> Result<Vec<u16>> {
 	let s = s.trim();
 	if let Some(idx) = s.find('-') {
-		let start: u16 = s[..idx]
-			.parse()
-			.map_err(|_| ComposeError::InvalidPort(format!("bad port: {s}")))?;
-		let end: u16 = s[idx + 1..]
-			.parse()
-			.map_err(|_| ComposeError::InvalidPort(format!("bad port: {s}")))?;
+		let start = parse_port_num(&s[..idx])?;
+		let end = parse_port_num(&s[idx + 1..])?;
 		if start > end {
 			return Err(ComposeError::InvalidPort(format!(
 				"start > end in range: {s}"
@@ -248,10 +280,7 @@ fn expand_port_range(s: &str) -> Result<Vec<u16>> {
 		}
 		Ok((start..=end).collect())
 	} else {
-		let p: u16 = s
-			.parse()
-			.map_err(|_| ComposeError::InvalidPort(format!("bad port: {s}")))?;
-		Ok(vec![p])
+		Ok(vec![parse_port_num(s)?])
 	}
 }
 
@@ -382,6 +411,56 @@ mod tests {
 	#[test]
 	fn invalid_port_string_is_error() {
 		assert!(parse_ports(&[short("abc")]).is_err());
+	}
+
+	#[test]
+	fn invalid_protocol_suffix_is_rejected() {
+		// A protocol outside tcp/udp/sctp is a config error, not something to pass
+		// verbatim to podman.
+		let err = parse_ports(&[short("80/banana")]).unwrap_err();
+		assert!(err.to_string().contains("banana"), "got: {err}");
+		assert!(parse_ports(&[short("53/udp")]).is_ok());
+		assert!(parse_ports(&[short("9/sctp")]).is_ok());
+	}
+
+	#[test]
+	fn out_of_range_short_port_reports_range() {
+		// 99999 overflows the 1-65535 port space; surface a clear range error
+		// rather than a generic parse failure.
+		let err = parse_ports(&[short("99999:80")]).unwrap_err();
+		assert!(err.to_string().contains("out of range"), "got: {err}");
+	}
+
+	#[test]
+	fn out_of_range_long_published_reports_range() {
+		// The numeric long form deserializes (u32) and is range-checked here, so the
+		// user sees the same clear message as the short form instead of a serde
+		// untagged-enum error.
+		let mapping = PortMapping::Long {
+			target: 80,
+			published: Some(StringOrU16::Number(99999)),
+			protocol: None,
+			host_ip: None,
+			mode: None,
+			app_protocol: None,
+			name: None,
+		};
+		let err = parse_ports(&[mapping]).unwrap_err();
+		assert!(err.to_string().contains("out of range"), "got: {err}");
+	}
+
+	#[test]
+	fn long_form_invalid_protocol_is_rejected() {
+		let mapping = PortMapping::Long {
+			target: 80,
+			published: Some(StringOrU16::Number(8080)),
+			protocol: Some("banana".to_string()),
+			host_ip: None,
+			mode: None,
+			app_protocol: None,
+			name: None,
+		};
+		assert!(parse_ports(&[mapping]).is_err());
 	}
 
 	#[test]

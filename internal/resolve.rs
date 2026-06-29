@@ -2,6 +2,24 @@
 
 use std::path::{Path, PathBuf};
 
+use podup::ComposeError;
+
+/// Validate an explicit `--project-directory`: it must exist and be a directory.
+/// A `None` (unset) directory is always fine — it is derived from the compose
+/// file's location. Matches `docker compose`, which errors on a missing working
+/// directory instead of silently accepting it.
+pub(crate) fn validate_project_directory(dir: Option<&Path>) -> podup::Result<()> {
+	if let Some(dir) = dir {
+		if !dir.is_dir() {
+			return Err(ComposeError::Unsupported(format!(
+				"--project-directory {} does not exist or is not a directory",
+				dir.display()
+			)));
+		}
+	}
+	Ok(())
+}
+
 /// Compose-spec file-name precedence, highest first.
 const COMPOSE_FILE_CANDIDATES: [&str; 4] = [
 	"compose.yaml",
@@ -104,8 +122,27 @@ pub(crate) fn sanitize_project_name(raw: &str) -> String {
 mod tests {
 	use super::{
 		resolve_base_dir, resolve_compose_files, resolve_project_name, sanitize_project_name,
+		validate_project_directory,
 	};
 	use std::path::{Path, PathBuf};
+
+	#[test]
+	fn validate_project_directory_accepts_none_and_existing_dir() {
+		validate_project_directory(None).unwrap();
+		let dir = std::env::temp_dir();
+		validate_project_directory(Some(&dir)).unwrap();
+	}
+
+	#[test]
+	fn validate_project_directory_rejects_missing_and_file() {
+		let missing = std::env::temp_dir().join(format!("podup-pd-{}-nope", std::process::id()));
+		assert!(validate_project_directory(Some(&missing)).is_err());
+
+		let file = std::env::temp_dir().join(format!("podup-pd-{}.tmp", std::process::id()));
+		std::fs::write(&file, b"x").unwrap();
+		assert!(validate_project_directory(Some(&file)).is_err());
+		let _ = std::fs::remove_file(&file);
+	}
 
 	#[test]
 	fn explicit_compose_files_win() {

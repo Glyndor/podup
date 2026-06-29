@@ -10,7 +10,11 @@ use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::EnvFilter;
 
-use crate::cli::{Cli, Commands, ConfigFormat};
+use crate::cli::{Cli, Commands};
+
+mod config_normalize;
+mod config_render;
+pub(crate) use config_render::{render_config, ConfigOutput};
 
 /// Whether a command creates, destroys, or changes the state of containers and
 /// so must hold the exclusive project lock.
@@ -31,6 +35,30 @@ pub(crate) fn is_mutating(command: &Commands) -> bool {
 			| Commands::Scale { .. }
 			| Commands::Create { .. }
 	)
+}
+
+/// Validate the resolved project name at the trust boundary, before it reaches
+/// any code path that builds a filesystem path from it (staging, lock files,
+/// quadlet generation) or filters containers by it. Shared by the mutating
+/// dispatch path and the read-only `config`/`ps` paths so every command reports
+/// the same invalid-name error.
+pub(crate) fn validate_project_name(project: &str) -> podup::Result<()> {
+	if podup::is_safe_project_name(project) {
+		Ok(())
+	} else {
+		Err(podup::ComposeError::Unsupported(format!(
+			"project name {project:?} is not a safe path component: use only ASCII \
+			 letters, digits, '-', '_', '.', not starting with '.', max 128 chars"
+		)))
+	}
+}
+
+/// Whether a command is scoped purely by the `podup.project` label and never
+/// reads service definitions, so it can run against a project with no compose
+/// file present — matching `docker compose -p NAME events`/`ps`. These commands
+/// tolerate a missing compose file at startup instead of erroring `FileNotFound`.
+pub(crate) fn is_label_only(command: &Commands) -> bool {
+	matches!(command, Commands::Events { .. } | Commands::Ps { .. })
 }
 
 /// Canonical project URL, reused for the bug-report hint on internal errors.
@@ -97,6 +125,16 @@ pub(crate) fn internal_error_notice() -> String {
 	)
 }
 
+/// Whether a panic message denotes a broken pipe (a downstream reader closed the
+/// pipe early). Rust ignores SIGPIPE, so a failing `println!`/`eprintln!` panics
+/// with this message; we treat it as a clean exit rather than an internal error.
+/// Pure so it can be unit-tested. Matches both the textual reason and the raw OS
+/// error number (EPIPE = 32 on Linux).
+pub(crate) fn is_broken_pipe_panic(msg: &str) -> bool {
+	let lower = msg.to_ascii_lowercase();
+	lower.contains("broken pipe") || lower.contains("os error 32")
+}
+
 /// Initialize the global tracing subscriber, written to stderr in the
 /// `podup: <level>: <msg>` format so stdout stays a clean pipe. `default_level`
 /// is the floor used when `RUST_LOG` is unset — `warn` for most commands (so the
@@ -111,121 +149,6 @@ pub(crate) fn init_tracing(default_level: &str) {
 		.with_writer(std::io::stderr)
 		.event_format(PodupFormat)
 		.init();
-}
-
-/// Render `config`: validate-only (`--quiet`), service-name list (`--services`),
-/// or the resolved compose file in YAML/JSON with inline secret content redacted.
-pub(crate) fn render_config(
-	file: &podup::compose::types::ComposeFile,
-	format: &ConfigFormat,
-	services: bool,
-	quiet: bool,
-) -> podup::Result<()> {
-	// Reaching here means the file parsed and merged cleanly. Validate that each
-	// resolved service declares an image or a build, the same rule `up` enforces
-	// — and do it before the `--quiet`/`--services` short-circuits so
-	// validate-only (`--quiet`) actually validates, matching `docker compose config`.
-	for (name, svc) in &file.services {
-		if svc.image.is_none() && svc.build.is_none() {
-			return Err(podup::ComposeError::NoImageOrBuild(name.clone()));
-		}
-	}
-	if quiet {
-		return Ok(());
-	}
-	if services {
-		for name in file.services.keys() {
-			println!("{name}");
-		}
-		return Ok(());
-	}
-	let mut redacted = file.clone();
-	redacted.redact_inline_content();
-	let rendered = match format {
-		ConfigFormat::Json => {
-			let mut v = serde_json::to_value(&redacted).map_err(|e| {
-				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
-			})?;
-			prune_json_nulls(&mut v);
-			serde_json::to_string_pretty(&v).map_err(|e| {
-				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
-			})?
-		}
-		ConfigFormat::Yaml => {
-			let mut v: serde_yaml::Value =
-				serde_yaml::to_value(&redacted).map_err(podup::ComposeError::Parse)?;
-			prune_yaml_nulls(&mut v);
-			serde_yaml::to_string(&v).map_err(podup::ComposeError::Parse)?
-		}
-	};
-	println!("{rendered}");
-	Ok(())
-}
-
-/// Drop unset keys from a JSON value so `config` output omits them (like
-/// `docker compose config`) instead of a wall of `field: null` and empty
-/// `field: {}` sections. Recurses first so a section that becomes empty once its
-/// own nulls are dropped is itself dropped.
-fn prune_json_nulls(v: &mut serde_json::Value) {
-	match v {
-		serde_json::Value::Object(map) => {
-			for val in map.values_mut() {
-				prune_json_nulls(val);
-			}
-			map.retain(|_, val| !is_empty_json(val));
-		}
-		serde_json::Value::Array(arr) => {
-			for val in arr.iter_mut() {
-				prune_json_nulls(val);
-			}
-		}
-		_ => {}
-	}
-}
-
-fn is_empty_json(v: &serde_json::Value) -> bool {
-	match v {
-		serde_json::Value::Null => true,
-		serde_json::Value::Object(m) => m.is_empty(),
-		// An empty array is kept: an explicit `command: []`/`entrypoint: []`
-		// overrides the image's value, so dropping it would change meaning.
-		_ => false,
-	}
-}
-
-/// The YAML counterpart of [`prune_json_nulls`].
-fn prune_yaml_nulls(v: &mut serde_yaml::Value) {
-	match v {
-		serde_yaml::Value::Mapping(map) => {
-			for (_, val) in map.iter_mut() {
-				prune_yaml_nulls(val);
-			}
-			let drop: Vec<serde_yaml::Value> = map
-				.iter()
-				.filter(|(_, val)| is_empty_yaml(val))
-				.map(|(k, _)| k.clone())
-				.collect();
-			for k in drop {
-				map.remove(&k);
-			}
-		}
-		serde_yaml::Value::Sequence(seq) => {
-			for val in seq.iter_mut() {
-				prune_yaml_nulls(val);
-			}
-		}
-		_ => {}
-	}
-}
-
-fn is_empty_yaml(v: &serde_yaml::Value) -> bool {
-	match v {
-		serde_yaml::Value::Null => true,
-		serde_yaml::Value::Mapping(m) => m.is_empty(),
-		// Keep empty sequences: an explicit `command: []`/`entrypoint: []`
-		// overrides the image's value, so dropping it would change meaning.
-		_ => false,
-	}
 }
 
 /// Build the `run`-only flag overrides from the parsed command. These are kept
@@ -255,15 +178,24 @@ pub(crate) fn run_overrides_for(command: &Commands) -> podup::RunOverrides {
 	}
 }
 
+/// Extract the `docker compose run -l/--label KEY=VAL` ad-hoc labels for the
+/// engine builder ([`podup::Engine::with_run_labels`]). Carried on the engine
+/// rather than the frozen `RunOverrides` struct so the 1.0 library API stays
+/// stable, mirroring `run_overrides_for`.
+pub(crate) fn run_labels_for(command: &Commands) -> Vec<String> {
+	match command {
+		Commands::Run { label, .. } => label.clone(),
+		_ => Vec::new(),
+	}
+}
+
 /// Parse the CLI, framing `--help`/`--version` output with a blank line top and
 /// bottom (clap trims template edges, so wrap the rendered text here).
 pub(crate) fn parse_cli() -> Cli {
 	match Cli::try_parse() {
 		Ok(cli) => cli,
 		Err(e) => match e.kind() {
-			clap::error::ErrorKind::DisplayHelp
-			| clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
-			| clap::error::ErrorKind::DisplayVersion => {
+			clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
 				// `--help`/`--version` are handled by clap before `--ansi` is parsed,
 				// so colour the rendered text by clap's own styling only when stdout
 				// is a colour sink (TTY + no NO_COLOR); piped output stays plain and
@@ -276,6 +208,14 @@ pub(crate) fn parse_cli() -> Cli {
 				}
 				process::exit(0);
 			}
+			clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+				// No subcommand (top level) or a required nested subcommand (e.g.
+				// `generate`) was given: print the help to stderr and exit non-zero,
+				// like docker compose, so a script sees the error instead of a silent
+				// success. `podup help` (the explicit Help variant) still exits 0.
+				eprint!("\n{}\n", e.render());
+				process::exit(2);
+			}
 			_ => e.exit(),
 		},
 	}
@@ -286,29 +226,31 @@ mod tests {
 	use super::*;
 
 	#[test]
-	fn prune_json_drops_nulls_and_empty_then_collapses() {
-		let mut v = serde_json::json!({
-			"image": "nginx",
-			"environment": null,
-			"command": [],
-			"labels": {},
-			"deploy": { "replicas": null }
-		});
-		prune_json_nulls(&mut v);
-		// null fields and the section emptied by its own nulls are gone, but an
-		// explicit empty array (`command: []`) survives — it overrides the image.
-		assert_eq!(v, serde_json::json!({ "image": "nginx", "command": [] }));
-	}
-
-	#[test]
-	fn prune_yaml_drops_nulls_and_empty() {
-		let mut v: serde_yaml::Value =
-			serde_yaml::from_str("image: nginx\ndns: null\nnetworks: {}\n").unwrap();
-		prune_yaml_nulls(&mut v);
-		let out = serde_yaml::to_string(&v).unwrap();
-		assert!(out.contains("image: nginx"));
-		assert!(!out.contains("dns"));
-		assert!(!out.contains("networks"));
+	fn label_only_covers_ps_and_events() {
+		use crate::cli::{EventsFormat, OutputFormat};
+		// `ps` and `events` are scoped purely by the project label, so they are
+		// label-only and may run without a compose file.
+		assert!(is_label_only(&Commands::Ps {
+			all: false,
+			quiet: false,
+			services_only: false,
+			filter: vec![],
+			status: vec![],
+			format: OutputFormat::Table,
+			services: vec![],
+		}));
+		assert!(is_label_only(&Commands::Events {
+			format: EventsFormat::Table,
+			since: None,
+			until: None,
+			filter: vec![],
+			json: false,
+		}));
+		// A command that reads service definitions is not label-only.
+		assert!(!is_label_only(&Commands::Top {
+			format: OutputFormat::Table,
+			services: vec![],
+		}));
 	}
 
 	#[test]
@@ -333,27 +275,13 @@ mod tests {
 		);
 	}
 
-	fn sample_file() -> podup::compose::types::ComposeFile {
-		podup::parse_str("services:\n  web:\n    image: nginx\n  db:\n    image: postgres\n")
-			.unwrap()
-	}
-
 	#[test]
-	fn render_config_quiet_is_validate_only() {
-		// `--quiet` validates and prints nothing, returning Ok.
-		render_config(&sample_file(), &ConfigFormat::Yaml, false, true).unwrap();
-	}
-
-	#[test]
-	fn render_config_services_lists_names() {
-		// `--services` reaches the service-name listing branch without error.
-		render_config(&sample_file(), &ConfigFormat::Yaml, true, false).unwrap();
-	}
-
-	#[test]
-	fn render_config_yaml_and_json_render_ok() {
-		render_config(&sample_file(), &ConfigFormat::Yaml, false, false).unwrap();
-		render_config(&sample_file(), &ConfigFormat::Json, false, false).unwrap();
+	fn broken_pipe_panic_detected() {
+		assert!(is_broken_pipe_panic(
+			"failed printing to stdout: Broken pipe (os error 32)"
+		));
+		assert!(is_broken_pipe_panic("Broken pipe"));
+		assert!(!is_broken_pipe_panic("some other internal error"));
 	}
 
 	#[test]

@@ -12,6 +12,19 @@ pub(crate) enum OutputFormat {
 	Json,
 }
 
+/// Output rendering for `events`. Distinct from [`OutputFormat`] because the
+/// event stream is NDJSON (one object per line), not a JSON array, and the table
+/// form is a plain summary line with no header — so the help text must not claim
+/// "JSON array" / "aligned columns".
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum EventsFormat {
+	/// A plain `TYPE ACTION NAME` summary, one event per line (no header/alignment).
+	#[default]
+	Table,
+	/// One JSON object per line (NDJSON) — not a JSON array.
+	Json,
+}
+
 /// When to colourise human-facing output (`--ansi`, like docker compose).
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub(crate) enum AnsiMode {

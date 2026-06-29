@@ -181,6 +181,54 @@ impl ComposeFile {
 			}
 		}
 	}
+
+	/// Drop every captured unknown key that the diagnostics pass reports as
+	/// "ignored", so a rendered `config` reflects only what podup actually
+	/// applies. Compose-spec `x-*` extension keys are kept — they are valid and
+	/// round-tripped — but a typo or an unmapped key is removed rather than
+	/// echoed back, which is what makes re-feeding the output stop re-triggering
+	/// the same warning. Mirrors the levels walked by the diagnostics collector.
+	pub fn strip_ignored_unknown_keys(&mut self) {
+		retain_extension_keys(&mut self.extensions);
+		for model in self.models.values_mut() {
+			retain_extension_keys(&mut model.unknown);
+		}
+		for net in self.networks.values_mut().flatten() {
+			retain_extension_keys(&mut net.unknown);
+			if let Some(ipam) = net.ipam.as_mut() {
+				retain_extension_keys(&mut ipam.unknown);
+			}
+		}
+		for vol in self.volumes.values_mut().flatten() {
+			retain_extension_keys(&mut vol.unknown);
+		}
+		for svc in self.services.values_mut() {
+			retain_extension_keys(&mut svc.unknown);
+			if let Some(hc) = svc.healthcheck.as_mut() {
+				retain_extension_keys(&mut hc.unknown);
+			}
+			if let Some(deploy) = svc.deploy.as_mut() {
+				retain_extension_keys(&mut deploy.unknown);
+			}
+			if let Some(develop) = svc.develop.as_mut() {
+				for rule in &mut develop.watch {
+					retain_extension_keys(&mut rule.unknown);
+				}
+			}
+			if let Some(cred) = svc.credential_spec.as_mut() {
+				retain_extension_keys(&mut cred.unknown);
+			}
+			if let Some(provider) = svc.provider.as_mut() {
+				retain_extension_keys(&mut provider.unknown);
+			}
+		}
+	}
+}
+
+/// Keep only Compose-spec `x-*` extension keys in a captured-unknowns map,
+/// discarding the keys the diagnostics pass warns are ignored.
+fn retain_extension_keys(map: &mut IndexMap<String, serde_yaml::Value>) {
+	map.retain(|k, _| k.starts_with("x-"));
 }
 
 #[cfg(test)]
@@ -239,5 +287,47 @@ secrets:
 		let rendered = serde_yaml::to_string(&file).unwrap();
 		assert!(!rendered.contains("hunter2-do-not-leak"));
 		assert!(rendered.contains("<redacted>"));
+	}
+
+	#[test]
+	fn strip_ignored_unknown_keys_drops_non_extension_at_every_level() {
+		// Unknown keys at the top level, in a service, a service sub-object
+		// (deploy), a network, and a volume are all dropped, while `x-*` extension
+		// keys at any level survive — so the rendered config agrees with the
+		// diagnostics that flagged the rest as ignored.
+		let yaml = r#"
+bogus_top: 1
+x-keep-top: ok
+services:
+  web:
+    image: nginx
+    bogus_svc: 2
+    x-keep-svc: ok
+    deploy:
+      bogus_deploy: 3
+networks:
+  netA:
+    bogus_net: 4
+volumes:
+  volA:
+    bogus_vol: 5
+"#;
+		let mut file = parse_str(yaml).unwrap();
+		file.strip_ignored_unknown_keys();
+		let out = serde_yaml::to_string(&file).unwrap();
+		for dropped in [
+			"bogus_top",
+			"bogus_svc",
+			"bogus_deploy",
+			"bogus_net",
+			"bogus_vol",
+		] {
+			assert!(
+				!out.contains(dropped),
+				"{dropped} should be stripped: {out}"
+			);
+		}
+		assert!(out.contains("x-keep-top"), "top x- kept: {out}");
+		assert!(out.contains("x-keep-svc"), "svc x- kept: {out}");
 	}
 }

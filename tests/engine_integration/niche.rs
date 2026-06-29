@@ -109,11 +109,15 @@ async fn cli_attach_streams_output_until_exit() {
 	let dir = tempdir().unwrap();
 	let proj = format!("t{}-attach", std::process::id());
 	let compose = dir.path().join("docker-compose.yml");
-	// Emits a line then exits shortly after, so attach streams output and the
-	// follow stream closes (attach returns) rather than blocking forever.
+	// `attach` streams LIVE output only (libpod `tail=0`), like `docker attach`:
+	// anything emitted before the client connects is not replayed. So the
+	// container must keep emitting after start, or the test races the attach
+	// connection. It prints a line every second for a few seconds, then exits —
+	// attach connects, catches a live line, and the follow stream closes when the
+	// container stops (attach returns rather than blocking forever).
 	fs::write(
 		&compose,
-		"services:\n  web:\n    image: alpine:latest\n    command: [\"sh\", \"-c\", \"echo attached-hi; sleep 1\"]\n",
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sh\", \"-c\", \"for i in 1 2 3 4 5; do echo attached-hi; sleep 1; done\"]\n",
 	)
 	.unwrap();
 	let c = compose.to_str().unwrap();
@@ -124,7 +128,7 @@ async fn cli_attach_streams_output_until_exit() {
 	assert!(out.status.success(), "attach failed: {:?}", out.stderr);
 	assert!(
 		String::from_utf8_lossy(&out.stdout).contains("attached-hi"),
-		"attach must stream the container's output"
+		"attach must stream the container's live output"
 	);
 }
 
