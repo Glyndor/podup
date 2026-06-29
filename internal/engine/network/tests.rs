@@ -61,7 +61,9 @@ fn file_with_service(svc_name: &str, svc: Service) -> ComposeFile {
 }
 
 #[test]
-fn network_mode_service_single_replica_uses_base_name() {
+fn network_mode_service_single_replica_uses_first_replica_name() {
+	// Auto-generated container names are always index-suffixed, so even a
+	// single-replica `network_mode: service:` target attaches to `-1`.
 	let target = Service::default();
 	let file = file_with_service("db", target);
 	let svc = Service {
@@ -71,7 +73,7 @@ fn network_mode_service_single_replica_uses_base_name() {
 	let (ns, _) = resolve_network_mode("web", &svc, &file, "proj");
 	let ns = ns.unwrap();
 	assert_eq!(ns.nsmode, "container");
-	assert_eq!(ns.value.as_deref(), Some("proj-db"));
+	assert_eq!(ns.value.as_deref(), Some("proj-db-1"));
 }
 
 #[test]

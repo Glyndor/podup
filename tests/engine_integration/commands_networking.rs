@@ -367,7 +367,7 @@ async fn sibling_resolves_service_by_name_on_shared_network() {
 	// a network alias. Retry briefly while the server's httpd comes up.
 	let out = engine
 		.test_exec_capture(
-			&format!("{proj}-client"),
+			&format!("{proj}-client-1"),
 			vec![
 				"sh".into(),
 				"-c".into(),
@@ -413,7 +413,7 @@ async fn sibling_resolves_service_by_name_without_networks_block() {
 	engine.up(&file).await.unwrap();
 	let out = engine
 		.test_exec_capture(
-			&format!("{proj}-client"),
+			&format!("{proj}-client-1"),
 			vec![
 				"sh".into(),
 				"-c".into(),

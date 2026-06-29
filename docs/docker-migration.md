@@ -217,7 +217,6 @@ equivalent.
 |---|---|
 | `env_file.format` values other than `dotenv` | A **warning** is emitted (`format is not honored; podup always parses env files as dotenv`); the file is still read as dotenv |
 | `provider:` / model-runner services (`provider`, top-level `models`) | Modeled and parsed, but **not honored** — a not-honored warning is emitted (these are no rootless-Podman equivalent, *not* "unknown key" errors) |
-| Container naming | A single-replica service is named `<project>-<service>` (e.g. `myapp-web`); docker-compose v2 always appends a `-1` replica index (`myapp-web-1`). Scaled replicas (>1) do get the `-N` suffix. Scripts that reference containers by exact name should account for this. |
 | Real-hardware smoke tests on macOS and Windows | Pending ([#48](https://github.com/Glyndor/podup/issues/48)); code paths exist but are untested on physical hardware |
 
 ## Nothing is dropped silently

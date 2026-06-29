@@ -77,7 +77,7 @@ async fn engine_cp_follow_link_uploads_target_contents() {
 		.await;
 	let out = engine
 		.test_exec_capture(
-			&format!("{proj}-web"),
+			&format!("{proj}-web-1"),
 			vec!["cat".into(), "/tmp/link.txt".into()],
 		)
 		.await;
@@ -116,7 +116,7 @@ async fn engine_cp_to_container_renames_a_single_file() {
 	// `test -f` succeeds only for a regular file; a directory (the old bug) fails it.
 	let out = engine
 		.test_exec_capture(
-			&format!("{proj}-web"),
+			&format!("{proj}-web-1"),
 			vec![
 				"sh".into(),
 				"-c".into(),

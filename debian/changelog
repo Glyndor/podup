@@ -1,3 +1,21 @@
+podup (1.8.0) unstable; urgency=medium
+
+  * Container names are now always index-suffixed (`project-service-1`, even for
+    a single replica), matching docker compose and podman-compose, which never
+    expose a bare, unnumbered container name. Scaling a service down to one
+    replica now keeps the surviving container (`service-1`) instead of removing
+    every numbered replica and recreating a fresh unnumbered one, so the
+    survivor keeps its identity, uptime and in-memory state (named volumes were
+    already preserved either way). A `links:`/`volumes_from:`/`network_mode:
+    service:` reference to another service now resolves to that service's first
+    replica. Services reach each other by their bare service name on the network
+    exactly as before. An explicit `container_name:` is still honoured verbatim.
+  * Upgrade note: on the first `up` after upgrading, an existing project's old
+    `project-service` container is seen as an orphan and recreated once as
+    `project-service-1`.
+
+ -- Glyndor <packages@glyndor.net>  Mon, 29 Jun 2026 15:42:29 -0500
+
 podup (1.7.1) unstable; urgency=medium
 
   * `port` now validates its arguments: `--protocol` accepts only tcp/udp
