@@ -220,8 +220,14 @@ impl Engine {
 
 		let mut last_nonzero = 0i64;
 		for name in &order {
-			let service = &file.services[name];
-			for container_name in self.live_replica_names(name, service).await? {
+			// Only wait on containers Podman actually has. The static-name fallback
+			// would POST `/wait` to a never-created predicted name and surface a raw
+			// HTTP 404; docker compose treats "nothing to wait on" as an idempotent
+			// no-op, so a defined-but-never-created service is simply skipped (#758).
+			for container_name in self
+				.list_project_container_names(Some(name.as_str()))
+				.await?
+			{
 				let path = format!(
 					"{API_PREFIX}/containers/{}/wait?condition=stopped",
 					crate::libpod::urlencoded(&container_name),
@@ -254,9 +260,23 @@ impl Engine {
 
 		for name in &order {
 			let service = &file.services[name];
-			for container_name in self.live_replica_names(name, service).await? {
-				let grace = self.grace_period_secs(service);
-				self.stop_container(&container_name, grace).await?;
+			let grace = self.grace_period_secs(service);
+			// Enumerate only the containers Podman actually has (no static-name
+			// fallback): a defined-but-never-created service is a quiet no-op
+			// rather than a phantom stop. Report "stopped" solely for containers
+			// that were actually running/paused — stopping a Created/Exited one is
+			// a harmless no-op and must not claim it stopped (#876), matching
+			// docker compose, which acts only on running containers.
+			for container in self.live_service_containers(name).await? {
+				if super::scale::state_is_active(&container.state) {
+					self.stop_container(&container.name, grace).await?;
+				} else {
+					tracing::debug!(
+						"{}: not running ({}) — stop is a no-op",
+						container.name,
+						container.state
+					);
+				}
 			}
 		}
 		Ok(())

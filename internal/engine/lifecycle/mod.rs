@@ -441,13 +441,19 @@ impl Engine {
 
 		for name in &order {
 			let service = &file.services[name];
-			let container_names = match live_by_service.get(name) {
-				Some(live) if !live.is_empty() => live.clone(),
-				_ => self.replica_names(name, service),
+			// Act only on containers Podman actually has. A defined-but-never-
+			// created service (or one already torn down) has no live containers,
+			// so skip it rather than synthesizing predicted names and POSTing
+			// stop/rm to them — those 404 and, pre-fix, leaked warnings. docker
+			// compose enumerates by label and treats "nothing there" as a quiet
+			// idempotent no-op (#758).
+			let Some(container_names) = live_by_service.get(name).filter(|live| !live.is_empty())
+			else {
+				continue;
 			};
 			for container_name in container_names {
 				for hook in &service.pre_stop {
-					if let Err(e) = self.run_lifecycle_hook(&container_name, hook).await {
+					if let Err(e) = self.run_lifecycle_hook(container_name, hook).await {
 						tracing::debug!("pre_stop hook {container_name}: {e}");
 					}
 				}
@@ -458,7 +464,7 @@ impl Engine {
 				// force-remove below SIGKILLs it regardless.
 				let stop_path = format!(
 					"{API_PREFIX}/containers/{}/stop?t={}",
-					crate::libpod::urlencoded(&container_name),
+					crate::libpod::urlencoded(container_name),
 					targets::stop_timeout_param(grace),
 				);
 				// A 404 (container already gone, or a profile-gated service that was
@@ -474,7 +480,7 @@ impl Engine {
 					}
 				}
 
-				let rm_path = container_rm_path(&container_name, remove_volumes);
+				let rm_path = container_rm_path(container_name, remove_volumes);
 				match self.client.delete_ok(&rm_path).await {
 					Ok(()) => info!("removed {container_name}"),
 					Err(e) if e.is_status(404) => {}
