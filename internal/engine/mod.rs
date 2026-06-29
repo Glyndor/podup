@@ -28,6 +28,7 @@ mod secrets;
 mod staging;
 mod stats;
 pub use staging::is_safe_project_name;
+pub use stats::StatsOptions;
 mod volume;
 pub use volume::VolumesOptions;
 mod volume_mounts;

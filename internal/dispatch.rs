@@ -5,7 +5,7 @@
 //! fields); `Config`/`Generate`/`Ls`/`Update`/`Completions` are handled earlier
 //! in `main` and reached here only as `unreachable!` guards.
 
-use podup::Engine;
+use podup::{Engine, StatsOptions};
 
 use crate::cli::*;
 
@@ -369,8 +369,14 @@ pub(crate) async fn dispatch(
 		} => engine.export(file, &service, output, index).await?,
 		Commands::Stats {
 			no_stream,
+			all,
+			no_trunc,
+			format,
 			services,
-		} => engine.stats(file, &services, no_stream).await?,
+		} => {
+			let opts = StatsOptions::new(no_stream, all, no_trunc, format == OutputFormat::Json);
+			engine.stats_with_options(file, &services, opts).await?
+		}
 		Commands::Push {
 			ignore_push_failures,
 			tls_verify,

@@ -50,7 +50,7 @@ pub use engine::{
 	retain_active_profiles, retain_active_profiles_with_targets, validate_stop_timeout,
 	BuildOptions, CommitOptions, CpOptions, Engine, EventsOptions, ExecOptions, ImagesOptions,
 	LogsDisplay, LogsOptions, LsOptions, ProjectLock, PsFilterOptions, PsOptions, PullOptions,
-	PushOptions, RunOptions, RunOverrides, VolumesOptions,
+	PushOptions, RunOptions, RunOverrides, StatsOptions, VolumesOptions,
 };
 /// The crate's error type and `Result` alias, surfaced so callers handle one
 /// error enum across parsing and engine calls.

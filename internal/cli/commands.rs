@@ -136,8 +136,16 @@ pub(crate) enum Commands {
 		/// Disable streaming; print a single snapshot and exit.
 		#[arg(long)]
 		no_stream: bool,
+		/// Include non-running containers as zeroed rows.
+		#[arg(short, long)]
+		all: bool,
+		/// Do not truncate long container names in the table.
+		#[arg(long)]
+		no_trunc: bool,
+		/// Output format.
+		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
+		format: OutputFormat,
 		/// Show only these services.
-		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
 	/// List podup compose projects on the host.
