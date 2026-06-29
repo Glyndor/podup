@@ -18,6 +18,7 @@ mod container_config;
 mod health;
 mod lifecycle;
 mod lock;
+mod names;
 mod network;
 mod profiles;
 pub use profiles::{retain_active_profiles, retain_active_profiles_with_targets};

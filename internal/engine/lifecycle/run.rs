@@ -52,6 +52,10 @@ impl Engine {
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
 
+		// Reject any bad volume/network/container name before creating anything
+		// (the run path pre-creates the project networks below).
+		self.validate_object_names(file)?;
+
 		// Compose `run` brings up the service's `depends_on` services first (and
 		// waits on their conditions), unless `--no-deps` is given. The service
 		// itself is excluded — only its transitive dependencies are started.
