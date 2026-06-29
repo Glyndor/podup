@@ -286,6 +286,10 @@ fn config_no_interpolate_skips_required_var_error() {
 /// Passing one on the command line is rejected as a usage error rather than
 /// silently accepted as a no-op — and the rejection happens before any network
 /// access, so the test never reaches GitHub.
+///
+/// Gated on the `update` feature: package-manager builds (Debian/apt) compile
+/// without it, so the `update` subcommand does not exist there.
+#[cfg(feature = "update")]
 #[test]
 fn update_rejects_compose_only_global_flags() {
 	for flag in [
