@@ -28,9 +28,42 @@ pub(crate) fn urlencoded(s: &str) -> String {
 	out
 }
 
+/// Whether `name` matches podman's object-name pattern
+/// (`[a-zA-Z0-9][a-zA-Z0-9_.-]*`): a leading ASCII alphanumeric followed by
+/// alphanumerics, `_`, `.`, or `-`. Used to reject an invalid container/network/
+/// volume name client-side with a clear message instead of deferring to an
+/// opaque podman HTTP 500. Pure so it is unit-tested.
+pub(crate) fn is_valid_object_name(name: &str) -> bool {
+	let mut chars = name.chars();
+	match chars.next() {
+		Some(c) if c.is_ascii_alphanumeric() => {}
+		_ => return false,
+	}
+	chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
+}
+
 #[cfg(test)]
 mod tests {
-	use super::urlencoded;
+	use super::{is_valid_object_name, urlencoded};
+
+	#[test]
+	fn valid_object_names_accepted() {
+		assert!(is_valid_object_name("web"));
+		assert!(is_valid_object_name("proj-web-1"));
+		assert!(is_valid_object_name("a.b_c-1"));
+		assert!(is_valid_object_name("0abc"));
+	}
+
+	#[test]
+	fn invalid_object_names_rejected() {
+		assert!(!is_valid_object_name(""));
+		assert!(!is_valid_object_name("-leading-dash"));
+		assert!(!is_valid_object_name(".leading-dot"));
+		assert!(!is_valid_object_name("has space"));
+		assert!(!is_valid_object_name("has/slash"));
+		assert!(!is_valid_object_name("tab\tname"));
+		assert!(!is_valid_object_name("emoji😀"));
+	}
 
 	#[test]
 	fn unreserved_chars_pass_through() {

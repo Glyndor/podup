@@ -6,12 +6,14 @@
 
 use crate::compose::types::{BuildConfig, Service};
 
-use super::{safe_unit_stem, sorted_label_pairs, QuadletUnit, Section};
+use super::{sorted_label_pairs, unit_stem, QuadletUnit, Section};
 
-/// The `.build` unit file name for a service, e.g. `web.build`. The container
-/// unit points its `Image=` at this so Quadlet builds then runs.
-pub(crate) fn build_unit_filename(name: &str) -> String {
-	format!("{}.build", safe_unit_stem(name))
+/// The `.build` unit file name for a service, e.g. `proj-web.build`. The
+/// container unit points its `Image=` at this so Quadlet builds then runs; the
+/// stem is project-prefixed so two projects' build units do not clobber each
+/// other in the shared systemd directory.
+pub(crate) fn build_unit_filename(project: &str, name: &str) -> String {
+	format!("{}.build", unit_stem(project, name))
 }
 
 /// Whether `service` yields a `.build` unit — it declares `build:` and that
@@ -88,9 +90,12 @@ pub(crate) fn build_unit(
 			let mut build_args: Vec<(String, Option<String>)> = args.to_map().into_iter().collect();
 			build_args.sort_by(|a, b| a.0.cmp(&b.0));
 			for (key, val) in build_args {
+				// `BuildArg=` is not a recognised [Build] Quadlet key (Quadlet would
+				// drop the whole unit at daemon-reload), so route build args through
+				// PodmanArgs= as `--build-arg`, like the container CPU/memory limits.
 				match val {
-					Some(v) => section.add("BuildArg", format!("{key}={v}")),
-					None => section.add("BuildArg", key),
+					Some(v) => section.add("PodmanArgs", format!("--build-arg {key}={v}")),
+					None => section.add("PodmanArgs", format!("--build-arg {key}")),
 				}
 			}
 			for (key, val) in sorted_label_pairs(labels.to_map()) {
@@ -103,7 +108,7 @@ pub(crate) fn build_unit(
 	section.add("Label", format!("podup.project={project}"));
 
 	Some(QuadletUnit {
-		filename: build_unit_filename(name),
+		filename: build_unit_filename(project, name),
 		contents: section.render(),
 	})
 }

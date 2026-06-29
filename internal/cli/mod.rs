@@ -8,7 +8,9 @@ mod commands;
 mod parse;
 mod types;
 pub(crate) use commands::Commands;
-pub(crate) use types::{AnsiMode, ConfigFormat, GenerateCommands, OutputFormat, RmiScope};
+pub(crate) use types::{
+	AnsiMode, ConfigFormat, EventsFormat, GenerateCommands, OutputFormat, RmiScope,
+};
 
 /// Help-screen colours (clap honours its own TTY/`NO_COLOR`/`CLICOLOR` detection
 /// for these, since help is rendered before `--ansi` is parsed): green-bold
@@ -20,10 +22,14 @@ const HELP_STYLES: clap::builder::Styles = clap::builder::Styles::plain()
 	.placeholder(clap::builder::styling::AnsiColor::Cyan.on_default());
 
 /// Top-level clap parser for the `podup` CLI; fields carry the per-flag docs.
+//
+// An explicit `about` is set on `#[command]` so clap does not promote this
+// internal doc comment to the program's `--help` description.
 #[derive(Parser)]
 #[command(
 	name = "podup",
 	version,
+	about = "Run docker-compose projects on Podman.",
 	styles = HELP_STYLES,
 	// No subcommand prints help and exits non-zero (like docker compose), and the
 	// built-in `help` is replaced by an explicit `Help` variant that tolerates
@@ -62,6 +68,7 @@ pub(crate) struct Cli {
 	pub(crate) project_directory: Option<PathBuf>,
 
 	/// Extra env file(s) for interpolation (repeatable, later win; process env and `.env` still win).
+	/// With `run`, they also seed the one-off container's environment (below `environment:`/`-e`).
 	#[arg(long = "env-file", global = true)]
 	pub(crate) env_file: Vec<String>,
 

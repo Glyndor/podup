@@ -7,6 +7,10 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::types::image::ImageInspect;
 use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 
+use super::inspect_util::{
+	align_top_columns, dedup_preserving_order, is_running_status, parse_port_proto, select_replica,
+	split_repo_tag,
+};
 use super::Engine;
 
 impl Engine {
@@ -33,7 +37,10 @@ impl Engine {
 					return Err(crate::error::ComposeError::ServiceNotFound(name.clone()));
 				}
 			}
-			target_services.to_vec()
+			// Deduplicate repeated positionals (`top web web`) preserving order, so
+			// a service's process block is not rendered twice and we avoid redundant
+			// `/top` API calls — matching docker compose top.
+			dedup_preserving_order(target_services)
 		};
 
 		let mut json_rows: Vec<serde_json::Value> = Vec::new();
@@ -56,16 +63,26 @@ impl Engine {
 					})),
 					Ok(result) => {
 						crate::ui::print_bold_header(&container_name);
-						if let Some(titles) = &result.titles {
-							crate::ui::print_bold_header(&titles.join("\t"));
-						}
-						if let Some(processes) = &result.processes {
-							for row in processes {
-								println!("{}", row.join("\t"));
+						// Space-pad columns to the widest cell (header + rows) rather
+						// than tab-joining, so the table is aligned as the help promises.
+						let titles = result.titles.clone().unwrap_or_default();
+						let processes = result.processes.clone().unwrap_or_default();
+						let aligned = align_top_columns(&titles, &processes);
+						if let Some((header, rows)) = aligned.split_first() {
+							crate::ui::print_bold_header(header);
+							for row in rows {
+								println!("{row}");
 							}
 						}
 					}
-					Err(e) => tracing::warn!("top {container_name}: {e}"),
+					// A not-created container (404) is tolerated; any other failure
+					// (e.g. a stopped container's HTTP 500, or an unreachable socket)
+					// is a real error that must surface with a non-zero exit instead
+					// of being swallowed into a warning.
+					Err(e) if e.is_status(404) => {
+						tracing::debug!("top {container_name}: {e}")
+					}
+					Err(e) => return Err(ComposeError::Podman(e)),
 				}
 			}
 		}
@@ -108,17 +125,33 @@ impl Engine {
 			.services
 			.get(service_name)
 			.ok_or_else(|| crate::error::ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = self.replica_name_at(service_name, service, index)?;
+		// Resolve against the containers Podman actually has, not the static
+		// compose replica count: a service scaled purely via CLI `--scale` has no
+		// `scale:` in the file, so the static count is 1 and would target the
+		// never-created un-indexed base name. `live_replica_names` falls back to
+		// the static names only when nothing is running yet.
+		let live = self.live_replica_names(service_name, service).await?;
+		let container_name = select_replica(live, service_name, index)?;
 
 		let path = format!(
 			"{API_PREFIX}/containers/{}/json",
 			urlencoded(&container_name),
 		);
-		let info = self
+		let info = match self
 			.client
 			.get_json::<crate::libpod::types::container::ContainerInspect>(&path)
 			.await
-			.map_err(ComposeError::Podman)?;
+		{
+			Ok(info) => info,
+			// Translate a missing container into a friendly not-found rather than
+			// surfacing a raw podman 404.
+			Err(e) if e.is_status(404) => {
+				return Err(crate::error::ComposeError::ServiceNotFound(format!(
+					"{service_name} (no running container '{container_name}')"
+				)));
+			}
+			Err(e) => return Err(ComposeError::Podman(e)),
+		};
 
 		let key = format!("{port}/{proto}");
 		let binding = info
@@ -169,23 +202,34 @@ impl Engine {
 				None if service.build.is_some() => format!("{name}:latest"),
 				None => continue,
 			};
+			let (repo, tag) = split_repo_tag(&image_ref);
 			let path = format!("{API_PREFIX}/images/{}/json", urlencoded(&image_ref));
 			match self.client.get_json::<ImageInspect>(&path).await {
 				Ok(img) => {
-					let (repo, tag) = image_ref
-						.rsplit_once(':')
-						.map(|(r, t)| (r.to_string(), t.to_string()))
-						.unwrap_or_else(|| (image_ref.clone(), "latest".to_string()));
 					let id = img.id.trim_start_matches("sha256:").get(..12).unwrap_or("");
 					rows.push((name.clone(), repo, tag, id.to_string()));
 				}
-				Err(e) => tracing::warn!("images {name}: {e}"),
+				// A 404 means the image is simply not present locally — list it with
+				// an empty ID rather than silently dropping it, matching docker
+				// compose. Any other error (a connection failure / unreachable
+				// socket, or an HTTP 500) is a real failure that must propagate with
+				// a non-zero exit rather than printing an empty table and exiting 0.
+				Err(e) if e.is_status(404) => {
+					tracing::debug!("images {name}: not present ({e})");
+					rows.push((name.clone(), repo, tag, String::new()));
+				}
+				Err(e) => return Err(ComposeError::Podman(e)),
 			}
 		}
 
 		if opts.quiet {
+			// Deduplicate IDs so services sharing an image emit it once, like
+			// docker compose images -q. Empty IDs (not-pulled) are skipped.
+			let mut seen = std::collections::HashSet::new();
 			for (_, _, _, id) in &rows {
-				println!("{id}");
+				if !id.is_empty() && seen.insert(id.as_str()) {
+					println!("{id}");
+				}
 			}
 			return Ok(());
 		}
@@ -237,18 +281,70 @@ impl Engine {
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		let container = self.replica_name_at(service_name, service, index)?;
+		// Resolve against the containers Podman actually has so a service scaled at
+		// runtime (`up --scale=3` → `…-1`/`…-2`/`…-3`) attaches to a real replica
+		// instead of the unsuffixed base name, which would 404. `--index`
+		// (1-based) selects a specific live replica; `None` picks the
+		// lowest-numbered live container for a stable choice.
+		let mut live = self
+			.list_project_container_names(Some(service_name))
+			.await?;
+		live.sort();
+		let container = match index {
+			Some(i) => {
+				let idx = (i as usize).checked_sub(1).ok_or_else(|| {
+					ComposeError::Unsupported(format!("attach: --index must be >= 1 (got {i})"))
+				})?;
+				live.into_iter().nth(idx).ok_or_else(|| {
+					ComposeError::ServiceNotFound(format!("{service_name} (replica index {i})"))
+				})?
+			}
+			None => live.into_iter().next().ok_or_else(|| {
+				ComposeError::Unsupported(format!(
+					"attach: no running container for service '{service_name}'"
+				))
+			})?,
+		};
 		let is_tty = service.tty.unwrap_or(false);
 
-		let path = format!(
-			"{API_PREFIX}/containers/{}/logs?stdout=true&stderr=true&follow=true",
-			urlencoded(&container),
-		);
-		let resp = self
+		// `docker compose attach` errors when the target is not running. Without
+		// this check the libpod logs endpoint replays the *entire* history of a
+		// stopped container and then ends the stream, so `attach` would print the
+		// whole log and exit 0. Inspect the state first and fail closed otherwise.
+		let inspect_path = format!("{API_PREFIX}/containers/{}/json", urlencoded(&container));
+		let info = self
 			.client
-			.get_stream(&path)
+			.get_json::<crate::libpod::types::container::ContainerInspect>(&inspect_path)
 			.await
 			.map_err(ComposeError::Podman)?;
+		let status = info.state.and_then(|s| s.status).unwrap_or_default();
+		if !is_running_status(&status) {
+			let shown = if status.is_empty() {
+				"unknown"
+			} else {
+				&status
+			};
+			return Err(ComposeError::Unsupported(format!(
+				"cannot attach to {container}: container is not running (state: {shown})"
+			)));
+		}
+
+		let path = format!(
+			"{API_PREFIX}/containers/{}/logs?{}",
+			urlencoded(&container),
+			attach_log_query(),
+		);
+		// A service that exists in the compose file but has no created container
+		// answers 404 here; surface a friendly "service X is not running" instead
+		// of leaking a raw libpod HTTP 404, mirroring the ServiceNotFound a service
+		// absent from compose gets.
+		let resp = match self.client.get_stream(&path).await {
+			Ok(r) => r,
+			Err(e) if e.is_status(404) => {
+				return Err(ComposeError::NotRunning(service_name.into()))
+			}
+			Err(e) => return Err(ComposeError::Podman(e)),
+		};
 		let mut stream = if is_tty {
 			crate::libpod::parse_raw(resp.into_body())
 		} else {
@@ -365,102 +461,22 @@ impl Engine {
 	}
 }
 
-/// Resolve the `(port, proto)` for `port` from a `PORT` or `PORT/proto` argument,
-/// the `/proto` suffix overriding the `--protocol` flag — matching
-/// `docker compose port`. The port must be a canonical decimal (no leading `+`,
-/// sign, or leading zeros), at most one `/` is allowed, and the protocol is
-/// normalised to lowercase and restricted to `tcp`/`udp` — so a typo errors
-/// instead of silently printing nothing. Pure so the parsing is unit-tested.
-fn parse_port_proto(private_port: &str, proto_flag: &str) -> Result<(u16, String)> {
-	let invalid = || {
-		ComposeError::InvalidPort(format!(
-			"port '{private_port}' is not a valid PORT or PORT/proto"
-		))
-	};
-
-	let mut parts = private_port.split('/');
-	let port_str = parts.next().unwrap_or_default();
-	let proto = parts.next().unwrap_or(proto_flag);
-	// `PORT/proto/extra` has more than one segment and is rejected outright.
-	if parts.next().is_some() {
-		return Err(invalid());
-	}
-
-	// `u16::from_str` accepts `+80` and `080`; reject those non-canonical
-	// spellings so they no longer fall through to an empty lookup.
-	if port_str.is_empty()
-		|| !port_str.bytes().all(|b| b.is_ascii_digit())
-		|| (port_str.len() > 1 && port_str.starts_with('0'))
-	{
-		return Err(invalid());
-	}
-	let port: u16 = port_str.parse().map_err(|_| invalid())?;
-
-	let proto = proto.to_ascii_lowercase();
-	if proto != "tcp" && proto != "udp" {
-		return Err(ComposeError::InvalidPort(format!(
-			"protocol '{proto}' is invalid for port '{private_port}' (expected tcp or udp)"
-		)));
-	}
-	Ok((port, proto))
+/// Query string for `attach`: a live-only stdout/stderr stream. `tail=0`
+/// suppresses the historical log backlog so attach shows live output (matching
+/// `docker compose attach`) instead of replaying the container's whole history.
+fn attach_log_query() -> &'static str {
+	"stdout=true&stderr=true&follow=true&tail=0"
 }
 
 #[cfg(test)]
 mod tests {
-	use super::parse_port_proto;
+	use super::attach_log_query;
 
 	#[test]
-	fn bare_port_uses_flag_proto() {
-		assert_eq!(
-			parse_port_proto("80", "tcp").unwrap(),
-			(80, "tcp".to_string())
-		);
-	}
-
-	#[test]
-	fn suffix_overrides_flag_proto() {
-		assert_eq!(
-			parse_port_proto("53/udp", "tcp").unwrap(),
-			(53, "udp".to_string())
-		);
-	}
-
-	#[test]
-	fn proto_is_normalised_to_lowercase() {
-		assert_eq!(
-			parse_port_proto("80", "TCP").unwrap(),
-			(80, "tcp".to_string())
-		);
-		assert_eq!(
-			parse_port_proto("53/UDP", "tcp").unwrap(),
-			(53, "udp".to_string())
-		);
-	}
-
-	#[test]
-	fn non_numeric_port_is_rejected() {
-		assert!(parse_port_proto("http", "tcp").is_err());
-		assert!(parse_port_proto("abc/tcp", "tcp").is_err());
-	}
-
-	#[test]
-	fn non_canonical_port_is_rejected() {
-		// A leading '+', a sign, or leading zeros all parse via u16 but diverge
-		// from docker's port spec.
-		for bad in ["+80", "080", "0080", "-1", " 80"] {
-			assert!(parse_port_proto(bad, "tcp").is_err(), "`{bad}` should fail");
-		}
-	}
-
-	#[test]
-	fn extra_slash_segment_is_rejected() {
-		assert!(parse_port_proto("80/tcp/extra", "tcp").is_err());
-	}
-
-	#[test]
-	fn invalid_proto_is_rejected() {
-		assert!(parse_port_proto("80", "sctp").is_err());
-		assert!(parse_port_proto("80/bogus", "tcp").is_err());
-		assert!(parse_port_proto("80", "").is_err());
+	fn attach_query_suppresses_log_backlog() {
+		// `tail=0` means attach streams live output only, not the full history.
+		let q = attach_log_query();
+		assert!(q.contains("follow=true"), "got: {q}");
+		assert!(q.contains("tail=0"), "got: {q}");
 	}
 }

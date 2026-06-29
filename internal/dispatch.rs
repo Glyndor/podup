@@ -9,6 +9,20 @@ use podup::Engine;
 
 use crate::cli::*;
 
+/// Clone the compose file keeping only services in an active profile, plus any
+/// named on the command line (which activates their profile). Used by the
+/// per-service subcommands so they target exactly the set `up`/`create` would
+/// bring up — never a service hidden behind an inactive profile.
+fn profile_filtered(
+	file: &podup::compose::types::ComposeFile,
+	profile: &[String],
+	targets: &[String],
+) -> podup::compose::types::ComposeFile {
+	let mut filtered = file.clone();
+	podup::retain_active_profiles_with_targets(&mut filtered, profile, targets);
+	filtered
+}
+
 /// Run the command against an already-built engine and parsed compose file.
 pub(crate) async fn dispatch(
 	engine: &Engine,
@@ -109,21 +123,33 @@ pub(crate) async fn dispatch(
 			wait_timeout,
 			services,
 		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine.start(file, &services).await?;
 			if wait {
-				let fut = engine.wait_services_healthy(file, &services);
 				match wait_timeout {
-					Some(secs) => tokio::time::timeout(std::time::Duration::from_secs(secs), fut)
-						.await
-						.map_err(|_| podup::ComposeError::WaitTimeout { secs })??,
-					None => fut.await?,
+					// `--wait-timeout` both extends the per-service poll budget (so a
+					// short healthcheck plan does not give up early) and caps the
+					// whole wait, so exhaustion surfaces as a clear WaitTimeout rather
+					// than a misleading per-container health-check timeout.
+					Some(secs) => {
+						let budget = std::time::Duration::from_secs(secs);
+						let fut =
+							engine.wait_services_healthy_within(file, &services, Some(budget));
+						tokio::time::timeout(budget, fut)
+							.await
+							.map_err(|_| podup::ComposeError::WaitTimeout { secs })??;
+					}
+					None => engine.wait_services_healthy(file, &services).await?,
 				}
 			}
 		}
 		Commands::Stop {
 			services,
 			timeout: _,
-		} => engine.stop(file, &services).await?,
+		} => {
+			let file = &profile_filtered(file, profile, &services);
+			engine.stop(file, &services).await?
+		}
 		Commands::Scale { pairs } => engine.scale(file, &pairs).await?,
 		Commands::Create {
 			build,
@@ -160,6 +186,7 @@ pub(crate) async fn dispatch(
 			quiet,
 			services,
 		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine
 				.build_all_with_options(
 					file,
@@ -194,7 +221,11 @@ pub(crate) async fn dispatch(
 		} => {
 			// `-s/--stop` gracefully stops the targets first so they can be
 			// removed without `--force`.
+			// A paused container cannot be stopped (Podman rejects it with a raw
+			// state error), so resume it first — matching `docker compose rm
+			// -s`. `unpause` is idempotent, so this is a no-op when not paused.
 			if stop {
+				engine.unpause(file, &services).await?;
 				engine.stop(file, &services).await?;
 			}
 			engine
@@ -206,13 +237,20 @@ pub(crate) async fn dispatch(
 			remove_orphans,
 			services,
 		} => {
-			engine.kill(file, &services, &signal).await?;
+			let filtered = profile_filtered(file, profile, &services);
+			engine.kill(&filtered, &services, &signal).await?;
 			if remove_orphans {
 				engine.remove_orphans(file).await?;
 			}
 		}
-		Commands::Pause { services } => engine.pause(file, &services).await?,
-		Commands::Unpause { services } => engine.unpause(file, &services).await?,
+		Commands::Pause { services } => {
+			let file = &profile_filtered(file, profile, &services);
+			engine.pause(file, &services).await?
+		}
+		Commands::Unpause { services } => {
+			let file = &profile_filtered(file, profile, &services);
+			engine.unpause(file, &services).await?
+		}
 		Commands::Run {
 			service,
 			rm: _,
@@ -269,30 +307,7 @@ pub(crate) async fn dispatch(
 				)
 				.await?
 		}
-		Commands::Ps {
-			all,
-			quiet,
-			services_only,
-			filter,
-			status,
-			format,
-			services,
-		} => {
-			engine
-				.ps_with_options(
-					file,
-					podup::PsOptions {
-						all,
-						quiet,
-						json: format == OutputFormat::Json,
-						services_only,
-						services,
-						status,
-						filters: filter,
-					},
-				)
-				.await?
-		}
+		Commands::Ps { .. } => unreachable!("handled before compose parsing"),
 		Commands::Top { format, services } => {
 			engine
 				.top_with_options(file, &services, format == OutputFormat::Json)
@@ -307,7 +322,7 @@ pub(crate) async fn dispatch(
 		} => {
 			// `--json` is the deprecated alias for `--format json` (and conflicts
 			// with an explicit `--format`); either selects JSON-line output.
-			let json = json || format == OutputFormat::Json;
+			let json = json || format == EventsFormat::Json;
 			engine
 				.stream_events_with_options(
 					json,
@@ -326,7 +341,10 @@ pub(crate) async fn dispatch(
 			sig_proxy: _,
 			detach_keys: _,
 		} => engine.attach_with_index(file, &service, index).await?,
-		Commands::Wait { services } => engine.wait_services(file, &services).await?,
+		Commands::Wait { services } => {
+			let file = &profile_filtered(file, profile, &services);
+			engine.wait_services(file, &services).await?
+		}
 		Commands::Commit {
 			service,
 			image,
@@ -366,6 +384,7 @@ pub(crate) async fn dispatch(
 			quiet,
 			services,
 		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine
 				.push(
 					file,
@@ -409,6 +428,7 @@ pub(crate) async fn dispatch(
 			format,
 			services,
 		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine
 				.images_with_options(
 					file,
@@ -480,6 +500,7 @@ pub(crate) async fn dispatch(
 			policy: _,
 			services,
 		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine
 				.pull_services_with_options(
 					file,
@@ -496,6 +517,7 @@ pub(crate) async fn dispatch(
 			no_deps,
 			services,
 		} => {
+			let file = &profile_filtered(file, profile, &services);
 			engine
 				.restart_with_options(file, &services, no_deps)
 				.await?

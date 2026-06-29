@@ -40,6 +40,15 @@ impl Engine {
 		file: &ComposeFile,
 		start: bool,
 	) -> Result<()> {
+		// Reject an invalid container name client-side (podman would otherwise
+		// answer with an opaque HTTP 500 from its name-regex check).
+		if !crate::libpod::is_valid_object_name(container_name) {
+			return Err(ComposeError::Unsupported(format!(
+				"invalid container name {container_name:?}: names must start with an ASCII \
+				 letter or digit and contain only letters, digits, '_', '.', '-'"
+			)));
+		}
+
 		let derived_image;
 		let image: &str = if let Some(img) = service.image.as_deref() {
 			img
@@ -86,7 +95,7 @@ impl Engine {
 		// Map each named-volume reference to the actual volume name created by
 		// create_volumes (project-prefixed, custom `name:`, or external).
 		for nv in &mut named_volumes {
-			nv.name = self.resolved_volume_name(&nv.name, file);
+			nv.name = self.resolved_volume_name(&nv.name, file)?;
 		}
 
 		// --- Port mappings ---
@@ -145,7 +154,19 @@ impl Engine {
 		let ulimits = build_ulimits(service);
 
 		// --- Devices ---
-		let mut devices: Vec<_> = service.devices.iter().map(|s| parse_device(s)).collect();
+		let mut devices: Vec<_> = Vec::with_capacity(service.devices.len());
+		// A device's `:permissions` segment cannot live on the OCI node, so it
+		// rides alongside as a cgroup access rule (mirroring the quadlet backend's
+		// verbatim `AddDevice`). These are merged with the explicit
+		// `device_cgroup_rules` below.
+		let mut device_cgroup_rule: Vec<_> = Vec::new();
+		for raw in &service.devices {
+			let parsed = parse_device(raw);
+			if let Some(rule) = parsed.cgroup_rule {
+				device_cgroup_rule.push(rule);
+			}
+			devices.push(parsed.device);
+		}
 		// CDI device names ride in the same array; Podman pulls them out by path.
 		devices.extend(cdi_devices(service).into_iter().map(cdi_device));
 
@@ -153,16 +174,12 @@ impl Engine {
 		let security = parse_security_opts(service);
 
 		// --- Device cgroup rules (parsed to structured form; skip malformed) ---
-		let device_cgroup_rule = service
-			.device_cgroup_rules
-			.iter()
-			.filter_map(|r| {
-				parse_device_cgroup_rule(r).or_else(|| {
-					tracing::warn!("device_cgroup_rules entry '{r}' is malformed and is ignored");
-					None
-				})
+		device_cgroup_rule.extend(service.device_cgroup_rules.iter().filter_map(|r| {
+			parse_device_cgroup_rule(r).or_else(|| {
+				tracing::warn!("device_cgroup_rules entry '{r}' is malformed and is ignored");
+				None
 			})
-			.collect();
+		}));
 
 		// --- Namespace modes ---
 		let pidns = service.pid.as_deref().map(Namespace::parse);
@@ -311,9 +328,10 @@ impl Engine {
 
 	/// Resolve a service's named-volume reference to the actual volume name
 	/// that `create_volumes` produced: a custom `name:`, the raw name for an
-	/// external volume, or the `{project}_{name}` form. References not declared
-	/// in the top-level `volumes:` map (anonymous/implicit) are left unchanged.
-	fn resolved_volume_name(&self, reference: &str, file: &ComposeFile) -> String {
+	/// external volume, or the `{project}_{name}` form. An empty reference is an
+	/// anonymous volume and is left unchanged; a non-empty reference that is not
+	/// declared under the top-level `volumes:` map is rejected (compose-spec).
+	fn resolved_volume_name(&self, reference: &str, file: &ComposeFile) -> Result<String> {
 		resolve_volume_name(reference, &self.project, file)
 	}
 }

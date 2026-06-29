@@ -8,6 +8,7 @@
 mod context;
 mod pull;
 mod push;
+mod tags;
 pub use pull::PullOptions;
 pub use push::PushOptions;
 
@@ -23,6 +24,7 @@ use crate::libpod::API_PREFIX;
 use crate::size;
 
 use context::{build_context_tar, build_context_tar_with_inline, map_additional_context};
+use tags::{is_remote_context, looks_like_secret, primary_build_tag};
 
 use super::Engine;
 
@@ -101,7 +103,12 @@ impl Engine {
 
 		let context_str = build.context().to_string();
 		let remote_context = is_remote_context(&context_str);
-		let tag = primary_build_tag(service_name, service.image.as_deref(), build.tags());
+		let tag = primary_build_tag(
+			&self.project,
+			service_name,
+			service.image.as_deref(),
+			build.tags(),
+		);
 
 		// A Git/URL context is cloned server-side by Podman via the `remote`
 		// query parameter — there is no local directory to tar. Tar-only features
@@ -118,6 +125,16 @@ impl Engine {
 			(Vec::new(), df, Vec::new())
 		} else {
 			let context_path = self.base_dir.join(&context_str);
+			// Fail fast with the service name and the resolved context path if the
+			// directory is missing/unreadable, instead of a bare "io error: No such
+			// file or directory" once the context walk hits it.
+			if let Err(e) = std::fs::metadata(&context_path) {
+				return Err(ComposeError::BuildContext {
+					service: service_name.to_string(),
+					path: context_path.display().to_string(),
+					source: e,
+				});
+			}
 			info!("building {tag} from {}", context_path.display());
 
 			// Resolve `build.secrets` to in-tar files before building the context:
@@ -169,6 +186,13 @@ impl Engine {
 				Some((k, v)) => (k.to_string(), v.to_string()),
 				None => (entry.clone(), std::env::var(entry).unwrap_or_default()),
 			};
+			// A bare `=value` (empty key) is a user typo Podman would silently
+			// ignore; reject it with a clear diagnostic instead.
+			if k.is_empty() {
+				return Err(ComposeError::Build(format!(
+					"invalid --build-arg '{entry}': empty argument name"
+				)));
+			}
 			build_args.insert(k, v);
 		}
 
@@ -212,10 +236,14 @@ impl Engine {
 			}).cloned(),
 			_ => None,
 		};
-		let shmsize = build
-			.shm_size()
-			.and_then(size::parse_memory)
-			.map(|s| s as i32);
+		// Distinguish "absent" from "present but unparseable": a malformed
+		// `shm_size` must be rejected, not silently dropped to the default.
+		let shmsize = match build.shm_size() {
+			Some(raw) => Some(size::parse_memory(raw).ok_or_else(|| {
+				ComposeError::Build(format!("invalid build.shm_size value '{raw}'"))
+			})? as i32),
+			None => None,
+		};
 		let extrahosts_str = build.extra_hosts().join(",");
 		let extrahosts = if extrahosts_str.is_empty() {
 			None
@@ -404,49 +432,9 @@ impl Engine {
 	}
 }
 
-/// A build context is remote when it is a URL or Git reference that Podman
-/// clones server-side, rather than a local directory to tar and upload.
-fn is_remote_context(context: &str) -> bool {
-	context.contains("://") || context.starts_with("git@")
-}
-
-/// Pick the primary image tag for a built service.
-///
-/// Precedence matches compose-go: an explicit `image:` wins; otherwise the
-/// first entry of `build.tags` is used as the primary tag; with neither, the
-/// image is named `{service}:latest`. Any remaining `build.tags` are applied
-/// as extra tags by [`Engine::apply_extra_tags`].
-fn primary_build_tag(service_name: &str, image: Option<&str>, tags: &[String]) -> String {
-	if let Some(image) = image {
-		return image.to_string();
-	}
-	if let Some(first) = tags.first() {
-		return first.clone();
-	}
-	format!("{service_name}:latest")
-}
-
-/// True if a build-arg name looks like it carries a secret, so the caller can
-/// warn that build args persist in the image history. Case-insensitive substring
-/// match on common secret tokens, kept conservative to avoid false positives
-/// (e.g. a bare `KEY` is not flagged; `API_KEY`/`PRIVATE_KEY` are).
-fn looks_like_secret(name: &str) -> bool {
-	const MARKERS: [&str; 7] = [
-		"SECRET",
-		"PASSWORD",
-		"PASSWD",
-		"TOKEN",
-		"CREDENTIAL",
-		"API_KEY",
-		"PRIVATE_KEY",
-	];
-	let upper = name.to_ascii_uppercase();
-	MARKERS.iter().any(|m| upper.contains(m))
-}
-
 #[cfg(test)]
 mod tests {
-	use super::{is_remote_context, looks_like_secret, primary_build_tag, Engine};
+	use super::Engine;
 	use crate::libpod::Client;
 
 	fn engine(base: std::path::PathBuf) -> Engine {
@@ -455,22 +443,6 @@ mod tests {
 
 	fn build_of(file: &crate::compose::types::ComposeFile) -> &crate::compose::types::BuildConfig {
 		file.services["app"].build.as_ref().unwrap()
-	}
-
-	#[test]
-	fn looks_like_secret_flags_sensitive_names_only() {
-		for name in [
-			"DB_PASSWORD",
-			"api_token",
-			"MySecret",
-			"AWS_API_KEY",
-			"private_key",
-		] {
-			assert!(looks_like_secret(name), "{name} should be flagged");
-		}
-		for name in ["VERSION", "BUILD_DATE", "PUBLIC_KEY", "PORT", "RUST_LOG"] {
-			assert!(!looks_like_secret(name), "{name} should not be flagged");
-		}
 	}
 
 	#[test]
@@ -509,37 +481,51 @@ mod tests {
 		assert!(specs.is_empty());
 	}
 
-	#[test]
-	fn remote_context_detection() {
-		assert!(is_remote_context("https://github.com/user/repo.git"));
-		assert!(is_remote_context("git://example.com/repo.git"));
-		assert!(is_remote_context("git@github.com:user/repo.git"));
-		assert!(!is_remote_context("."));
-		assert!(!is_remote_context("./build"));
-		assert!(!is_remote_context("/abs/path"));
-	}
-
-	#[test]
-	fn primary_tag_prefers_explicit_image() {
-		let tags = vec!["registry/app:1.0".to_string()];
-		assert_eq!(
-			primary_build_tag("app", Some("myimage:2.0"), &tags),
-			"myimage:2.0"
+	#[tokio::test]
+	async fn empty_build_arg_key_is_rejected() {
+		// `--build-arg =value` is a user typo Podman would silently ignore; we
+		// reject it before contacting the daemon.
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
+		let yaml = "services:\n  app:\n    build:\n      context: .\n";
+		let file = crate::compose::parse_str(yaml).unwrap();
+		let e = engine(dir.path().to_path_buf());
+		let opts = super::BuildOptions {
+			build_args: vec!["=orphan".to_string()],
+			..Default::default()
+		};
+		let err = e
+			.build_service("app", &file.services["app"], &file, &opts)
+			.await
+			.expect_err("empty build-arg key must be rejected");
+		assert!(
+			err.to_string().contains("build-arg"),
+			"unexpected error: {err}"
 		);
 	}
 
-	#[test]
-	fn primary_tag_uses_first_build_tag_when_image_unset() {
-		let tags = vec![
-			"registry/app:1.0".to_string(),
-			"registry/app:latest".to_string(),
-		];
-		assert_eq!(primary_build_tag("app", None, &tags), "registry/app:1.0");
-	}
-
-	#[test]
-	fn primary_tag_falls_back_to_service_latest() {
-		assert_eq!(primary_build_tag("app", None, &[]), "app:latest");
+	#[tokio::test]
+	async fn invalid_shm_size_is_rejected() {
+		// A malformed `build.shm_size` must error rather than silently fall back to
+		// the default shm size.
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
+		let yaml = "services:\n  app:\n    build:\n      context: .\n      shm_size: \"64mb!\"\n";
+		let file = crate::compose::parse_str(yaml).unwrap();
+		let e = engine(dir.path().to_path_buf());
+		let err = e
+			.build_service(
+				"app",
+				&file.services["app"],
+				&file,
+				&super::BuildOptions::default(),
+			)
+			.await
+			.expect_err("malformed shm_size must be rejected");
+		assert!(
+			err.to_string().contains("shm_size"),
+			"unexpected error: {err}"
+		);
 	}
 
 	#[test]

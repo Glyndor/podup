@@ -35,8 +35,16 @@ pub enum ComposeError {
 	HealthCheckTimeout(String),
 	/// A `ports:` entry could not be parsed.
 	InvalidPort(String),
+	/// A `kill` signal is empty, malformed, or not a recognised signal
+	/// name/number. Forwarding it verbatim would let libpod silently default to
+	/// SIGKILL, so it is rejected up front.
+	InvalidSignal(String),
 	/// Image build failed (context assembly or the Podman build step).
 	Build(String),
+	/// A `cp` (copy between a container and the host) operation failed — a missing
+	/// destination directory, a non-directory path component, an unsupported
+	/// endpoint, or a host-side packing/extraction error.
+	Copy(String),
 	/// `extends:` could not be resolved (missing file/service or a cycle).
 	Extends(String),
 	/// `include:` could not be resolved or merged.
@@ -72,27 +80,107 @@ pub enum ComposeError {
 	},
 	/// `start --wait --wait-timeout` elapsed before services became healthy.
 	WaitTimeout { secs: u64 },
+	/// A replica index (`--index`) does not name a replica of the service (zero,
+	/// or beyond the replica count). Kept distinct from [`Self::ServiceNotFound`]
+	/// so the index hint renders outside the quoted service name.
+	ReplicaIndex { service: String, index: u32 },
+	/// A filesystem operation failed against a known path; carries the path so the
+	/// message can name the offending file (Rust's `File::create`/`open` errors
+	/// drop it).
+	IoPath {
+		path: String,
+		source: std::io::Error,
+	},
+	/// A service's build context could not be accessed; names the service and the
+	/// resolved context path instead of a bare `io error`.
+	BuildContext {
+		service: String,
+		path: String,
+		source: std::io::Error,
+	},
+	/// A targeted service container is not running (e.g. `exec`/`attach` against a
+	/// stopped or never-created container).
+	NotRunning(String),
+	/// The `-t/--timeout` shutdown grace was given an unusable value (a number
+	/// below `-1`). `-1` means "wait indefinitely" (docker parity) and any
+	/// non-negative value is a second count; everything else is rejected here
+	/// rather than forwarded to libpod as a raw `HTTP 400`.
+	InvalidTimeout(i32),
+	/// An explicitly requested env file (`--env-file` or a service `env_file:`)
+	/// could not be read or parsed — a missing/unreadable path or a malformed
+	/// entry such as an unterminated quoted value. The string is a ready-to-print
+	/// message.
+	EnvFile(String),
+}
+
+/// Escape control characters (tabs, newlines, ESC, …) in an interpolated,
+/// possibly-untrusted name before it reaches a terminal, so a crafted
+/// service/container name cannot emit raw escape sequences. Printable characters
+/// (including non-ASCII) pass through unchanged; only borrows when nothing needs
+/// escaping.
+fn sanitize_name(s: &str) -> std::borrow::Cow<'_, str> {
+	if s.chars().any(char::is_control) {
+		s.chars()
+			.flat_map(|c| {
+				if c.is_control() {
+					c.escape_default().collect::<Vec<_>>()
+				} else {
+					vec![c]
+				}
+			})
+			.collect::<String>()
+			.into()
+	} else {
+		std::borrow::Cow::Borrowed(s)
+	}
 }
 
 impl fmt::Display for ComposeError {
 	fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
 		match self {
-			Self::Parse(e) => write!(f, "failed to parse compose file: {e}"),
-			Self::FileNotFound(s) => write!(f, "compose file not found: {s}"),
+			// Report only the parser's location, never the raw `serde_yaml`
+			// message: that message embeds the offending scalar verbatim (the file's
+			// own content), which would echo a non-compose file pointed at with `-f`
+			// straight onto stderr. Location (line/column) is enough to find the
+			// problem without leaking the bytes.
+			Self::Parse(e) => match e.location() {
+				Some(loc) => write!(
+					f,
+					"failed to parse compose file at line {}, column {}",
+					loc.line(),
+					loc.column()
+				),
+				None => write!(f, "failed to parse compose file"),
+			},
+			Self::FileNotFound(s) => write!(f, "compose file not found: {}", sanitize_name(s)),
 			Self::Io(e) => write!(f, "io error: {e}"),
 			Self::Podman(e) => write!(f, "podman error: {e}"),
-			Self::ServiceNotFound(s) => write!(f, "service '{s}' not found"),
-			Self::CircularDependency(s) => write!(f, "circular dependency detected: {s}"),
-			Self::NoImageOrBuild(s) => write!(f, "service '{s}' has no image or build config"),
+			Self::ServiceNotFound(s) => write!(f, "service '{}' not found", sanitize_name(s)),
+			Self::CircularDependency(s) => write!(f, "{s}"),
+			Self::NoImageOrBuild(s) => {
+				write!(
+					f,
+					"service '{}' has no image or build config",
+					sanitize_name(s)
+				)
+			}
 			Self::RequiredVarNotSet { var, msg } => {
 				write!(f, "required variable '{var}' is not set: {msg}")
 			}
 			Self::InvalidSubstitution(s) => {
 				write!(f, "invalid variable substitution: {s}")
 			}
-			Self::HealthCheckTimeout(s) => write!(f, "health check timeout for container '{s}'"),
+			Self::HealthCheckTimeout(s) => {
+				write!(
+					f,
+					"health check timeout for container '{}'",
+					sanitize_name(s)
+				)
+			}
 			Self::InvalidPort(s) => write!(f, "invalid port mapping: {s}"),
+			Self::InvalidSignal(s) => write!(f, "invalid signal: {s}"),
 			Self::Build(s) => write!(f, "build error: {s}"),
+			Self::Copy(s) => write!(f, "cp error: {s}"),
 			Self::Extends(s) => write!(f, "extends error: {s}"),
 			Self::Include(s) => write!(f, "include error: {s}"),
 			Self::Watch(s) => write!(f, "watch error: {s}"),
@@ -121,7 +209,8 @@ impl fmt::Display for ComposeError {
 			}
 			Self::WaitServiceExited { container, code } => write!(
 				f,
-				"container '{container}' exited with code {code} while waiting for it to be ready"
+				"container '{}' exited with code {code} while waiting for it to be ready",
+				sanitize_name(container)
 			),
 			Self::ReplicaLimitExceeded {
 				service,
@@ -136,6 +225,30 @@ impl fmt::Display for ComposeError {
 				f,
 				"timed out after {secs}s waiting for services to become healthy"
 			),
+			Self::ReplicaIndex { service, index } => write!(
+				f,
+				"service '{}' has no replica {index} (replica indexes are 1-based)",
+				sanitize_name(service)
+			),
+			Self::IoPath { path, source } => {
+				write!(f, "io error: {}: {source}", sanitize_name(path))
+			}
+			Self::BuildContext {
+				service,
+				path,
+				source,
+			} => write!(
+				f,
+				"build context '{}' for service '{}': {source}",
+				sanitize_name(path),
+				sanitize_name(service)
+			),
+			Self::NotRunning(s) => write!(f, "service '{}' is not running", sanitize_name(s)),
+			Self::InvalidTimeout(secs) => write!(
+				f,
+				"invalid --timeout {secs}: use -1 to wait indefinitely or a non-negative number of seconds"
+			),
+			Self::EnvFile(s) => write!(f, "{s}"),
 		}
 	}
 }
@@ -146,6 +259,7 @@ impl std::error::Error for ComposeError {
 			Self::Parse(e) => Some(e),
 			Self::Io(e) => Some(e),
 			Self::Podman(e) => Some(e),
+			Self::IoPath { source, .. } | Self::BuildContext { source, .. } => Some(source),
 			_ => None,
 		}
 	}
@@ -180,7 +294,7 @@ mod tests {
 	fn display_covers_all_variants() {
 		let cases: &[(&str, ComposeError)] = &[
 			(
-				"failed to parse compose file:",
+				"failed to parse compose file",
 				ComposeError::Parse(serde_yaml::from_str::<serde_yaml::Value>(":\0").unwrap_err()),
 			),
 			(
@@ -192,10 +306,7 @@ mod tests {
 				"service 's' not found",
 				ComposeError::ServiceNotFound("s".into()),
 			),
-			(
-				"circular dependency detected: c",
-				ComposeError::CircularDependency("c".into()),
-			),
+			("c", ComposeError::CircularDependency("c".into())),
 			(
 				"service 'svc' has no image or build config",
 				ComposeError::NoImageOrBuild("svc".into()),
@@ -227,6 +338,7 @@ mod tests {
 				ComposeError::InvalidSubstitution("bad".into()),
 			),
 			("build error: b", ComposeError::Build("b".into())),
+			("cp error: c", ComposeError::Copy("c".into())),
 			("extends error: e", ComposeError::Extends("e".into())),
 			("include error: i", ComposeError::Include("i".into())),
 			("watch error: w", ComposeError::Watch("w".into())),
@@ -270,6 +382,40 @@ mod tests {
 				"timed out after 30s waiting for services to become healthy",
 				ComposeError::WaitTimeout { secs: 30 },
 			),
+			(
+				"service 'web' has no replica 99 (replica indexes are 1-based)",
+				ComposeError::ReplicaIndex {
+					service: "web".into(),
+					index: 99,
+				},
+			),
+			(
+				"io error: /out/x.tar:",
+				ComposeError::IoPath {
+					path: "/out/x.tar".into(),
+					source: std::io::Error::other("boom"),
+				},
+			),
+			(
+				"build context './ctx' for service 'web':",
+				ComposeError::BuildContext {
+					service: "web".into(),
+					path: "./ctx".into(),
+					source: std::io::Error::other("boom"),
+				},
+			),
+			(
+				"service 'web' is not running",
+				ComposeError::NotRunning("web".into()),
+			),
+			(
+				"invalid --timeout -5: use -1 to wait indefinitely or a non-negative number of seconds",
+				ComposeError::InvalidTimeout(-5),
+			),
+			(
+				"env file not found: app.env",
+				ComposeError::EnvFile("env file not found: app.env".into()),
+			),
 		];
 		for (expected_prefix, err) in cases {
 			let msg = err.to_string();
@@ -279,6 +425,26 @@ mod tests {
 				std::mem::discriminant(err),
 			);
 		}
+	}
+
+	#[test]
+	fn parse_display_does_not_echo_offending_scalar() {
+		// A type error embeds the offending scalar in the raw serde_yaml message
+		// (`invalid type: string "s3cr3t-token", ...`). The Display must not surface
+		// that content — it points at the location instead, so a non-compose file
+		// pointed at with `-f` cannot leak its bytes onto stderr.
+		#[derive(Debug, serde::Deserialize)]
+		struct OnlyMap {
+			#[allow(dead_code)]
+			services: std::collections::BTreeMap<String, String>,
+		}
+		let err = serde_yaml::from_str::<OnlyMap>("services: s3cr3t-token\n").unwrap_err();
+		let msg = ComposeError::Parse(err).to_string();
+		assert!(
+			!msg.contains("s3cr3t-token"),
+			"parse error must not echo file content, got {msg:?}"
+		);
+		assert!(msg.starts_with("failed to parse compose file"));
 	}
 
 	#[test]
@@ -297,6 +463,33 @@ mod tests {
 		assert!(podman.source().is_some());
 		let svc = ComposeError::ServiceNotFound("s".into());
 		assert!(svc.source().is_none());
+	}
+
+	#[test]
+	fn service_name_control_chars_are_escaped_in_display() {
+		// A crafted name carrying an ESC sequence and newline must not reach the
+		// terminal raw: the control bytes are escaped, the quotes preserved.
+		let err = ComposeError::ServiceNotFound("we\x1b[31mb\n".into());
+		let msg = err.to_string();
+		assert!(!msg.contains('\x1b'), "ESC must be escaped: {msg:?}");
+		assert!(!msg.contains('\n'), "newline must be escaped: {msg:?}");
+		assert!(
+			msg.contains("\\u{1b}") && msg.contains("\\n"),
+			"got {msg:?}"
+		);
+	}
+
+	#[test]
+	fn replica_index_hint_is_outside_the_quoted_name() {
+		// The hint must render after the closing quote, not inside the service name.
+		let err = ComposeError::ReplicaIndex {
+			service: "web".into(),
+			index: 0,
+		};
+		let msg = err.to_string();
+		assert!(msg.contains("'web'"), "service name stays clean: {msg:?}");
+		assert!(!msg.contains("'web "), "hint leaked into the name: {msg:?}");
+		assert!(msg.contains("1-based"));
 	}
 
 	#[test]

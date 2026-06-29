@@ -8,7 +8,7 @@ use clap::Subcommand;
 use clap_complete::Shell;
 
 use super::parse::{parse_pull_policy, parse_scale_pair, parse_timeout};
-use super::types::{ConfigFormat, GenerateCommands, OutputFormat, RmiScope};
+use super::types::{ConfigFormat, EventsFormat, GenerateCommands, OutputFormat, RmiScope};
 
 #[derive(Subcommand)]
 pub(crate) enum Commands {
@@ -145,8 +145,8 @@ pub(crate) enum Commands {
 		/// Show all projects, including stopped ones.
 		#[arg(short, long)]
 		all: bool,
-		/// Only display project names.
-		#[arg(short, long)]
+		/// Only display project names. Mutually exclusive with `--format`.
+		#[arg(short, long, conflicts_with = "format")]
 		quiet: bool,
 		/// Filter projects by predicate: name=<NAME> or status=<running|exited>
 		/// (repeatable).
@@ -311,8 +311,8 @@ pub(crate) enum Commands {
 		/// Show all containers, including stopped ones.
 		#[arg(short, long)]
 		all: bool,
-		/// Only display container IDs.
-		#[arg(short, long)]
+		/// Only display container IDs. Mutually exclusive with `--format`.
+		#[arg(short, long, conflicts_with = "format")]
 		quiet: bool,
 		/// Print the service names, one per line, instead of the container table.
 		#[arg(long = "services")]
@@ -344,9 +344,9 @@ pub(crate) enum Commands {
 	/// Stream Podman events for this project's containers.
 	Events {
 		/// Output format: a `TYPE ACTION NAME` summary (table) or one JSON
-		/// object per line.
-		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
-		format: OutputFormat,
+		/// object per line (NDJSON, not a JSON array).
+		#[arg(long, value_enum, default_value_t = EventsFormat::Table)]
+		format: EventsFormat,
 		/// Only stream events at or after this timestamp/relative time.
 		#[arg(long)]
 		since: Option<String>,
@@ -405,6 +405,16 @@ pub(crate) enum Commands {
 		/// Replica index (1-based) of a scaled service.
 		#[arg(long)]
 		index: Option<u32>,
+		/// Pause the container during commit for a consistent snapshot
+		/// (default on; `--pause=false` to snapshot a live container).
+		#[arg(
+			long,
+			default_value_t = true,
+			action = clap::ArgAction::Set,
+			num_args = 0..=1,
+			default_missing_value = "true",
+		)]
+		pause: bool,
 	},
 	/// Export a service container's filesystem as a tar archive.
 	Export {
@@ -433,8 +443,8 @@ pub(crate) enum Commands {
 	/// List the project's named volumes.
 	#[command(alias = "volume")]
 	Volumes {
-		/// Only display volume names.
-		#[arg(short, long)]
+		/// Only display volume names. Mutually exclusive with `--format`.
+		#[arg(short, long, conflicts_with = "format")]
 		quiet: bool,
 		/// Output format.
 		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
@@ -445,8 +455,8 @@ pub(crate) enum Commands {
 	/// List images used by services.
 	#[command(alias = "image")]
 	Images {
-		/// Only display image IDs.
-		#[arg(short, long)]
+		/// Only display image IDs. Mutually exclusive with `--format`.
+		#[arg(short, long, conflicts_with = "format")]
 		quiet: bool,
 		/// Output format.
 		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]

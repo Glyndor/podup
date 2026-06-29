@@ -46,6 +46,12 @@ pub struct ContainerListEntry {
 	#[serde(rename = "Ports", default, deserialize_with = "null_default")]
 	pub ports: Vec<ContainerPort>,
 
+	/// Exit code of the last run, present once the container has exited. libpod's
+	/// list endpoint reports it (0 while running/created), letting `ps`
+	/// distinguish a clean exit from a crash without a follow-up inspect.
+	#[serde(rename = "ExitCode", default)]
+	pub exit_code: Option<i32>,
+
 	/// Container labels (key/value), including compose project/service labels.
 	#[serde(rename = "Labels", default, deserialize_with = "null_default")]
 	pub labels: HashMap<String, String>,
@@ -64,10 +70,9 @@ pub struct ContainerPort {
 	#[serde(default)]
 	pub protocol: Option<String>,
 	/// Number of consecutive ports this entry covers when libpod collapses a
-	/// published range into a single record. Captured for fidelity; not yet
-	/// rendered, so it is read by serde only.
+	/// published range into a single record (e.g. `51251-51253->8080-8082` is one
+	/// record with `range = 3`). Rendered by `ps` so the full range is shown.
 	#[serde(default)]
-	#[allow(dead_code)]
 	pub range: Option<u16>,
 }
 

@@ -7,102 +7,17 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 
 use super::Engine;
-use crate::libpod::types::container::{ContainerListEntry, ContainerPort};
 
 mod exec;
 mod inspect;
+mod inspect_util;
 mod log_prefix;
+mod ps;
+
+pub use ps::PsOptions;
 
 pub use exec::ExecOptions;
 use log_prefix::LinePrefixer;
-
-/// Human-readable status for `ps`. Podman's libpod list endpoint leaves
-/// `Status` empty and reports the machine state in `State`, so fall back to it
-/// rather than rendering a blank column.
-fn display_status(c: &ContainerListEntry) -> &str {
-	if c.status.is_empty() {
-		&c.state
-	} else {
-		&c.status
-	}
-}
-
-/// Render a container's published ports the way `docker compose ps` does, e.g.
-/// `0.0.0.0:8080->80/tcp`. An unset host IP means "all interfaces", shown as
-/// `0.0.0.0` (libpod commonly omits it) to match Docker/Podman output.
-fn format_ports(ports: &[ContainerPort]) -> String {
-	ports
-		.iter()
-		.map(|p| {
-			let proto = p
-				.protocol
-				.as_deref()
-				.map(|proto| format!("/{proto}"))
-				.unwrap_or_default();
-			let host_ip = p
-				.host_ip
-				.as_deref()
-				.filter(|s| !s.is_empty())
-				.unwrap_or("0.0.0.0");
-			format!(
-				"{host_ip}:{}->{}{proto}",
-				p.host_port.unwrap_or(0),
-				p.container_port
-			)
-		})
-		.collect::<Vec<_>>()
-		.join(", ")
-}
-
-/// Options for [`Engine::ps_with_options`], mirroring `docker compose ps`.
-#[derive(Default)]
-pub struct PsOptions {
-	/// Include stopped containers, `-a/--all` (default: running only).
-	pub all: bool,
-	/// Print only container IDs, `-q/--quiet`.
-	pub quiet: bool,
-	/// Emit JSON instead of the table, `--format json`.
-	pub json: bool,
-	/// Print the service names instead of the container table, `--services`.
-	pub services_only: bool,
-	/// Restrict to these services' containers (positional `SERVICE` filter).
-	pub services: Vec<String>,
-	/// Status filters, `--status` (e.g. running, exited); OR-combined.
-	pub status: Vec<String>,
-	/// Generic `KEY=VALUE` predicates, `--filter` (supports status= and name=).
-	pub filters: Vec<String>,
-}
-
-/// Whether a container status/state word satisfies a `--status`/`status=` filter.
-/// Each wanted value matches case-insensitively as a prefix of the status word
-/// (so `running` matches `running` and `up`-style strings via the state). An
-/// empty `wanted` matches everything. Pure so the predicate is unit-tested.
-fn status_matches(status: &str, wanted: &[String]) -> bool {
-	if wanted.is_empty() {
-		return true;
-	}
-	let s = status.trim().to_ascii_lowercase();
-	wanted.iter().any(|w| {
-		let w = w.trim().to_ascii_lowercase();
-		!w.is_empty() && (s == w || s.starts_with(&w))
-	})
-}
-
-/// Split `--filter KEY=VALUE` predicates into the supported buckets: extra
-/// `status=` values are folded into the status filter, `name=` values into the
-/// name-substring filter, and anything else is returned as `unknown` so the
-/// caller can warn. Pure so it is unit-tested.
-fn split_ps_filters(filters: &[String]) -> (Vec<String>, Vec<String>, Vec<String>) {
-	let (mut status, mut names, mut unknown) = (Vec::new(), Vec::new(), Vec::new());
-	for f in filters {
-		match f.split_once('=') {
-			Some(("status", v)) => status.push(v.to_string()),
-			Some(("name", v)) => names.push(v.to_string()),
-			_ => unknown.push(f.clone()),
-		}
-	}
-	(status, names, unknown)
-}
 
 /// Options for [`Engine::images_with_options`].
 #[derive(Default)]
@@ -132,6 +47,86 @@ pub struct LogsOptions {
 	pub no_log_prefix: bool,
 }
 
+/// Validate the `--tail`/`--since`/`--until` values client-side so a typo is
+/// rejected with a clear local message instead of a raw podman HTTP 400. `tail`
+/// must be `all` or a non-negative integer; `since`/`until` must be a Unix
+/// timestamp or a Go-style duration (e.g. `10m`, `1h30m`) or an RFC3339-ish
+/// timestamp. Pure so it is unit-tested.
+fn validate_log_filters(opts: &LogsOptions) -> Result<()> {
+	if let Some(tail) = &opts.tail {
+		if tail != "all" && tail.parse::<u64>().is_err() {
+			return Err(ComposeError::Unsupported(format!(
+				"invalid --tail value {tail:?}: expected a non-negative integer or 'all'"
+			)));
+		}
+	}
+	for (flag, value) in [("--since", &opts.since), ("--until", &opts.until)] {
+		if let Some(v) = value {
+			if !is_valid_log_time(v) {
+				return Err(ComposeError::Unsupported(format!(
+					"invalid {flag} value {v:?}: expected a duration (e.g. 10m, 1h30m), a Unix \
+					 timestamp, or an RFC3339 time"
+				)));
+			}
+		}
+	}
+	Ok(())
+}
+
+/// Whether a `--since`/`--until` value is a plausible duration, Unix timestamp,
+/// or timestamp string. Conservative: rejects obvious garbage (`abc`) while
+/// accepting the forms podman understands.
+fn is_valid_log_time(v: &str) -> bool {
+	if v.is_empty() {
+		return false;
+	}
+	// Unix timestamp (optionally fractional).
+	if v.parse::<f64>().is_ok() {
+		return true;
+	}
+	// Go-style duration: digit-run + unit, repeated (e.g. 1h30m, 90s, 500ms).
+	if is_go_duration(v) {
+		return true;
+	}
+	// Timestamp-ish: starts with a 4-digit year and contains only the characters
+	// an RFC3339/date string uses. The server does the precise parse; this just
+	// blocks free-form garbage.
+	let bytes = v.as_bytes();
+	bytes.len() >= 4
+		&& bytes[..4].iter().all(u8::is_ascii_digit)
+		&& v.chars().all(|c| {
+			c.is_ascii_digit() || matches!(c, '-' | ':' | 't' | 'T' | 'z' | 'Z' | '.' | '+' | ' ')
+		})
+}
+
+/// Match a Go-style duration: one or more `<number><unit>` segments, units one
+/// of `ns,us,µs,ms,s,m,h`.
+fn is_go_duration(v: &str) -> bool {
+	let mut rest = v.strip_prefix('-').unwrap_or(v);
+	if rest.is_empty() {
+		return false;
+	}
+	let mut segments = 0;
+	while !rest.is_empty() {
+		let digits = rest.trim_start_matches(|c: char| c.is_ascii_digit() || c == '.');
+		if digits.len() == rest.len() {
+			// No digits consumed → not a duration segment.
+			return false;
+		}
+		rest = digits;
+		let unit_len = ["ms", "ns", "us", "µs", "s", "m", "h"]
+			.into_iter()
+			.find(|u| rest.starts_with(u))
+			.map(str::len);
+		match unit_len {
+			Some(n) => rest = &rest[n..],
+			None => return false,
+		}
+		segments += 1;
+	}
+	segments > 0
+}
+
 /// Build the libpod `containers/{}/logs` query string from the options.
 fn log_query(opts: &LogsOptions) -> String {
 	let mut q = format!(
@@ -151,127 +146,6 @@ fn log_query(opts: &LogsOptions) -> String {
 }
 
 impl Engine {
-	/// List running containers for this project as a table (default options).
-	pub async fn ps(&self, file: &ComposeFile) -> Result<()> {
-		self.ps_with_options(file, PsOptions::default()).await
-	}
-
-	/// List containers with `docker compose ps`-style options: `-a/--all`
-	/// (include stopped), `-q/--quiet` (IDs only), `--format` (table | json),
-	/// `--services` (service-name list), a positional `SERVICE` filter, and
-	/// `--status`/`--filter` predicates.
-	pub async fn ps_with_options(&self, file: &ComposeFile, opts: PsOptions) -> Result<()> {
-		for name in &opts.services {
-			if !file.services.contains_key(name) {
-				return Err(ComposeError::ServiceNotFound(name.clone()));
-			}
-		}
-
-		// `--services` lists the (optionally filtered) configured service names,
-		// one per line, instead of the container table.
-		if opts.services_only {
-			for name in file.services.keys() {
-				if opts.services.is_empty() || opts.services.iter().any(|s| s == name) {
-					println!("{name}");
-				}
-			}
-			return Ok(());
-		}
-
-		// Fold `--status` and any `status=`/`name=` from `--filter` together;
-		// warn on unsupported `--filter` keys rather than silently ignoring them.
-		let (mut status_filter, name_filter, unknown) = split_ps_filters(&opts.filters);
-		for u in &unknown {
-			tracing::warn!("ps: ignoring unsupported filter '{u}'");
-		}
-		status_filter.extend(opts.status.iter().cloned());
-
-		// A positional `SERVICE` filter restricts to those services' container
-		// names (across replicas).
-		let allowed_names: Option<std::collections::HashSet<String>> = if opts.services.is_empty() {
-			None
-		} else {
-			Some(
-				opts.services
-					.iter()
-					.filter_map(|n| file.services.get(n).map(|s| (n, s)))
-					.flat_map(|(n, s)| self.replica_names(n, s))
-					.collect(),
-			)
-		};
-
-		let label = format!("podup.project={}", self.project);
-		let filters = serde_json::json!({ "label": [label] });
-		let path = format!(
-			"{API_PREFIX}/containers/json?all={}&filters={}",
-			opts.all,
-			urlencoded(&filters.to_string()),
-		);
-
-		let all_containers = self
-			.client
-			.get_json::<Vec<crate::libpod::types::container::ContainerListEntry>>(&path)
-			.await
-			.map_err(ComposeError::Podman)?;
-
-		let name_of = |c: &crate::libpod::types::container::ContainerListEntry| {
-			c.names.join(", ").trim_start_matches('/').to_string()
-		};
-
-		let containers: Vec<crate::libpod::types::container::ContainerListEntry> = all_containers
-			.into_iter()
-			.filter(|c| {
-				let name = name_of(c);
-				allowed_names.as_ref().is_none_or(|set| {
-					c.names
-						.iter()
-						.any(|n| set.contains(n.trim_start_matches('/')))
-				}) && (status_matches(&c.state, &status_filter)
-					|| status_matches(&c.status, &status_filter))
-					&& (name_filter.is_empty() || name_filter.iter().any(|nf| name.contains(nf)))
-			})
-			.collect();
-
-		if opts.quiet {
-			for c in &containers {
-				let id = c.id.get(..12).unwrap_or(&c.id);
-				println!("{id}");
-			}
-			return Ok(());
-		}
-
-		if opts.json {
-			let rows: Vec<_> = containers
-				.iter()
-				.map(|c| {
-					serde_json::json!({
-						"Name": name_of(c),
-						"Image": c.image,
-						"Status": display_status(c),
-						"ID": c.id,
-					})
-				})
-				.collect();
-			println!(
-				"{}",
-				serde_json::to_string_pretty(&rows).unwrap_or_default()
-			);
-			return Ok(());
-		}
-
-		crate::ui::print_bold_header(&format!(
-			"{:<40} {:<30} {:<20} PORTS",
-			"NAME", "IMAGE", "STATUS"
-		));
-		for c in &containers {
-			let ports = format_ports(&c.ports);
-			let status = crate::ui::status_cell(display_status(c), 20);
-			println!("{:<40} {:<30} {status} {ports}", name_of(c), c.image);
-		}
-
-		Ok(())
-	}
-
 	/// Stream logs. When `service_name` is `None`, streams from all services. When `follow` is true, tails indefinitely.
 	pub async fn logs(
 		&self,
@@ -294,7 +168,7 @@ impl Engine {
 	}
 
 	/// Stream logs with `docker compose logs` options (`--tail`, `--since`,
-	/// `--until`, `--timestamps`, `--follow`).
+	/// `--until`, `--timestamps`, `--follow`, `--no-color`, `--no-log-prefix`).
 	///
 	/// When `target_services` is empty, logs from every service are streamed;
 	/// otherwise only the named services (an unknown name is an error).
@@ -304,6 +178,7 @@ impl Engine {
 		target_services: &[String],
 		opts: LogsOptions,
 	) -> Result<()> {
+		validate_log_filters(&opts)?;
 		let follow = opts.follow;
 		// `--no-log-prefix` drops the `{service} | ` tag; `--no-color` forces a
 		// monochrome prefix even on a colour-capable stdout.
@@ -388,11 +263,17 @@ impl Engine {
 					"{API_PREFIX}/containers/{}/logs?{query}",
 					urlencoded(&container_name),
 				);
-				let resp = self
-					.client
-					.get_stream(&path)
-					.await
-					.map_err(ComposeError::Podman)?;
+				// Tolerate a missing/not-yet-created container the way the
+				// multi-follow path does: warn and move on so the logs of the
+				// services that *do* exist are still shown, instead of aborting the
+				// whole command on the first 404.
+				let resp = match self.client.get_stream(&path).await {
+					Ok(r) => r,
+					Err(e) => {
+						tracing::warn!("logs {container_name}: {e}");
+						continue;
+					}
+				};
 				let mut stream = if is_tty {
 					crate::libpod::parse_raw(resp.into_body())
 				} else {
@@ -409,11 +290,12 @@ impl Engine {
 				let mut out_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
 				let mut err_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
 				while let Some(msg) = stream.next().await {
-					match msg.map_err(ComposeError::Podman)? {
-						LogOutput::StdOut { message } => out_pfx.write(&mut out, &message),
-						LogOutput::StdErr { message } => {
+					match msg {
+						Ok(LogOutput::StdOut { message }) => out_pfx.write(&mut out, &message),
+						Ok(LogOutput::StdErr { message }) => {
 							err_pfx.write(&mut std::io::stderr().lock(), &message)
 						}
+						Err(_) => break,
 					}
 				}
 				out_pfx.flush_tail(&mut out);
@@ -489,39 +371,8 @@ fn filter_orphans(names: Vec<String>, known: &std::collections::HashSet<String>)
 
 #[cfg(test)]
 mod tests {
-	use super::{
-		display_status, filter_orphans, format_ports, log_query, split_ps_filters, status_matches,
-		LogsOptions,
-	};
-	use crate::libpod::types::container::{ContainerListEntry, ContainerPort};
-	use std::collections::{HashMap, HashSet};
-
-	#[test]
-	fn status_matches_empty_filter_matches_all() {
-		assert!(status_matches("running", &[]));
-		assert!(status_matches("exited", &[]));
-	}
-
-	#[test]
-	fn status_matches_is_case_insensitive_prefix() {
-		assert!(status_matches("running", &["RUNNING".to_string()]));
-		assert!(status_matches("exited", &["exit".to_string()]));
-		assert!(!status_matches("running", &["exited".to_string()]));
-		// An empty wanted value never matches.
-		assert!(!status_matches("running", &["".to_string()]));
-	}
-
-	#[test]
-	fn split_ps_filters_buckets_known_keys_and_flags_unknown() {
-		let (status, names, unknown) = split_ps_filters(&[
-			"status=running".to_string(),
-			"name=web".to_string(),
-			"label=foo".to_string(),
-		]);
-		assert_eq!(status, vec!["running".to_string()]);
-		assert_eq!(names, vec!["web".to_string()]);
-		assert_eq!(unknown, vec!["label=foo".to_string()]);
-	}
+	use super::{filter_orphans, is_valid_log_time, log_query, validate_log_filters, LogsOptions};
+	use std::collections::HashSet;
 
 	#[test]
 	fn filter_orphans_keeps_only_unknown_names() {
@@ -538,63 +389,6 @@ mod tests {
 	fn filter_orphans_empty_when_all_known() {
 		let known: HashSet<String> = ["web".to_string()].into();
 		assert!(filter_orphans(vec!["web".to_string()], &known).is_empty());
-	}
-
-	fn entry(status: &str, state: &str) -> ContainerListEntry {
-		ContainerListEntry {
-			id: "abc123".into(),
-			names: vec!["/web".into()],
-			image: "alpine".into(),
-			status: status.into(),
-			state: state.into(),
-			ports: vec![],
-			labels: HashMap::new(),
-		}
-	}
-
-	#[test]
-	fn display_status_falls_back_to_state_when_status_empty() {
-		// Podman 5's libpod list endpoint sends an empty `Status` and the real
-		// machine state in `State` — `ps` must show the latter, not a blank.
-		assert_eq!(display_status(&entry("", "running")), "running");
-		assert_eq!(display_status(&entry("", "exited")), "exited");
-	}
-
-	#[test]
-	fn display_status_prefers_status_when_present() {
-		assert_eq!(
-			display_status(&entry("Up 2 seconds", "running")),
-			"Up 2 seconds"
-		);
-	}
-
-	#[test]
-	fn format_ports_defaults_missing_host_ip_to_all_interfaces() {
-		let p = ContainerPort {
-			host_ip: None,
-			host_port: Some(8080),
-			container_port: 80,
-			protocol: Some("tcp".into()),
-			..Default::default()
-		};
-		assert_eq!(
-			format_ports(std::slice::from_ref(&p)),
-			"0.0.0.0:8080->80/tcp"
-		);
-	}
-
-	#[test]
-	fn format_ports_keeps_explicit_host_ip() {
-		let p = ContainerPort {
-			host_ip: Some("127.0.0.1".into()),
-			host_port: Some(5432),
-			container_port: 5432,
-			..Default::default()
-		};
-		assert_eq!(
-			format_ports(std::slice::from_ref(&p)),
-			"127.0.0.1:5432->5432"
-		);
 	}
 
 	#[test]
@@ -619,5 +413,54 @@ mod tests {
 		assert!(q.contains("&since=10m"));
 		// `:` is percent-encoded in the query value.
 		assert!(q.contains("&until=2024-01-01T00%3A00%3A00"));
+	}
+
+	#[test]
+	fn validate_log_filters_accepts_good_values() {
+		assert!(validate_log_filters(&LogsOptions {
+			tail: Some("all".into()),
+			since: Some("10m".into()),
+			until: Some("2024-01-01T00:00:00Z".into()),
+			..Default::default()
+		})
+		.is_ok());
+		assert!(validate_log_filters(&LogsOptions {
+			tail: Some("100".into()),
+			since: Some("1700000000".into()),
+			..Default::default()
+		})
+		.is_ok());
+		assert!(validate_log_filters(&LogsOptions::default()).is_ok());
+	}
+
+	#[test]
+	fn validate_log_filters_rejects_bad_tail_and_time() {
+		assert!(validate_log_filters(&LogsOptions {
+			tail: Some("abc".into()),
+			..Default::default()
+		})
+		.is_err());
+		assert!(validate_log_filters(&LogsOptions {
+			since: Some("yesterday".into()),
+			..Default::default()
+		})
+		.is_err());
+		assert!(validate_log_filters(&LogsOptions {
+			until: Some("not-a-time".into()),
+			..Default::default()
+		})
+		.is_err());
+	}
+
+	#[test]
+	fn is_valid_log_time_classifies_forms() {
+		assert!(is_valid_log_time("10m"));
+		assert!(is_valid_log_time("1h30m"));
+		assert!(is_valid_log_time("500ms"));
+		assert!(is_valid_log_time("1700000000"));
+		assert!(is_valid_log_time("2024-01-02T03:04:05Z"));
+		assert!(!is_valid_log_time("abc"));
+		assert!(!is_valid_log_time(""));
+		assert!(!is_valid_log_time("10x"));
 	}
 }

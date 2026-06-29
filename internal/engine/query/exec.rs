@@ -1,6 +1,4 @@
-//! `exec` — run a command in a running service container (`docker compose
-//! exec`), split out of `query/mod.rs` to keep that file within the source line
-//! limit as the CLI surface grows.
+//! `exec` command: run a command inside a service container.
 
 use std::io::Write;
 
@@ -32,6 +30,56 @@ pub struct ExecOptions {
 	pub index: Option<u32>,
 }
 
+/// Build the exec environment list, expanding a bare `KEY` (no `=`) from podup's
+/// own environment the way docker-compose does. A `KEY=VALUE` entry passes
+/// through unchanged; a value-less `KEY` is replaced with `KEY=<host value>` and
+/// dropped entirely when the variable is unset (libpod rejects a bare key with
+/// HTTP 400). Pure so it is unit-tested without a container.
+fn expand_exec_env(env: &[String]) -> Vec<String> {
+	env.iter()
+		.filter_map(|e| {
+			if e.contains('=') {
+				Some(e.clone())
+			} else {
+				std::env::var(e).ok().map(|v| format!("{e}={v}"))
+			}
+		})
+		.collect()
+}
+
+/// True for the in-band stream-teardown line Podman/conmon emits on the exec
+/// stderr channel when an exec launch fails (e.g. a bad `--workdir`/`--user`):
+/// a secondary `read unixpacket ... connection reset by peer` frame that adds
+/// nothing to the real diagnostic. Matching is deliberately narrow so ordinary
+/// program output is never suppressed.
+fn is_exec_teardown_noise(line: &str) -> bool {
+	line.contains("unixpacket") && line.contains("connection reset by peer")
+}
+
+/// Map a libpod error from an `exec` target into a friendly
+/// [`ComposeError::NotRunning`] when it means the container is absent (404) or
+/// stopped ("can only create exec sessions on running containers"), so the user
+/// sees "service X is not running" instead of a raw HTTP 404/500. Any other
+/// failure passes through unchanged. Pure so it is unit-tested.
+fn map_not_running(e: crate::libpod::PodmanError, service_name: &str) -> ComposeError {
+	let not_running = e.is_status(404)
+		|| matches!(
+			&e,
+			crate::libpod::PodmanError::Api { message, .. }
+				if {
+					let m = message.to_ascii_lowercase();
+					m.contains("can only create exec sessions on running containers")
+						|| m.contains("is not running")
+						|| m.contains("no such container")
+				}
+		);
+	if not_running {
+		ComposeError::NotRunning(service_name.to_string())
+	} else {
+		ComposeError::Podman(e)
+	}
+}
+
 impl Engine {
 	/// Run a command in the first replica of the named service with default
 	/// options. Exits with the command's exit code.
@@ -54,21 +102,23 @@ impl Engine {
 		cmd: Vec<String>,
 		opts: ExecOptions,
 	) -> Result<()> {
+		// An empty command would be forwarded as an empty `cmd` and surface a raw
+		// podman HTTP 500; reject it up front with a clear message.
+		if cmd.is_empty() {
+			return Err(ComposeError::Unsupported(
+				"exec: a command is required".into(),
+			));
+		}
 		let service = file
 			.services
 			.get(service_name)
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
-		let container_name = match opts.index {
-			Some(i) => {
-				let names = self.replica_names(service_name, service);
-				let idx = (i as usize).saturating_sub(1);
-				names.get(idx).cloned().ok_or_else(|| {
-					ComposeError::ServiceNotFound(format!("{service_name} (replica index {i})"))
-				})?
-			}
-			None => self.first_replica_name(service_name, service),
-		};
+		// Resolve the target replica through the shared helper so `--index 0` (and
+		// out-of-range indexes) are rejected consistently with `cp`/`port`/etc.,
+		// rather than aliasing index 0 to the first replica.
+		let container_name = self.replica_name_at(service_name, service, opts.index)?;
 
+		let env = expand_exec_env(&opts.env);
 		let exec_cfg = ExecCreateConfig {
 			cmd: Some(cmd),
 			attach_stdout: Some(true),
@@ -76,7 +126,7 @@ impl Engine {
 			user: opts.user.clone(),
 			working_dir: opts.workdir.clone(),
 			privileged: opts.privileged.then_some(true),
-			env: (!opts.env.is_empty()).then(|| opts.env.clone()),
+			env: (!env.is_empty()).then_some(env),
 			..Default::default()
 		};
 		let create_path = format!(
@@ -87,7 +137,7 @@ impl Engine {
 			.client
 			.post_json(&create_path, &exec_cfg)
 			.await
-			.map_err(ComposeError::Podman)?;
+			.map_err(|e| map_not_running(e, service_name))?;
 		let exec_id = resp.id;
 
 		// `-d/--detach`: start the exec and return without streaming output or
@@ -134,8 +184,14 @@ impl Engine {
 						let _ = out.flush();
 					}
 					LogOutput::StdErr { message } => {
+						let text = String::from_utf8_lossy(&message);
+						// Drop the spurious connection-reset teardown frame an OCI
+						// exec launch-failure emits, so only the real diagnostic shows.
+						if is_exec_teardown_noise(&text) {
+							continue;
+						}
 						let mut err = std::io::stderr().lock();
-						let _ = err.write_all(String::from_utf8_lossy(&message).as_bytes());
+						let _ = err.write_all(text.as_bytes());
 						let _ = err.flush();
 					}
 				}
@@ -155,5 +211,70 @@ impl Engine {
 		}
 
 		Ok(())
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::{expand_exec_env, is_exec_teardown_noise, map_not_running};
+
+	#[test]
+	fn expand_exec_env_passes_through_key_value() {
+		let out = expand_exec_env(&["FOO=bar".to_string(), "BAZ=qux".to_string()]);
+		assert_eq!(out, vec!["FOO=bar".to_string(), "BAZ=qux".to_string()]);
+	}
+
+	#[test]
+	fn expand_exec_env_resolves_bare_key_from_host() {
+		// A bare `KEY` takes its value from podup's own environment; an unset bare
+		// key is dropped (libpod rejects a value-less env entry).
+		std::env::set_var("PODUP_TEST_EXEC_ENV", "from-host");
+		let out = expand_exec_env(&[
+			"PODUP_TEST_EXEC_ENV".to_string(),
+			"PODUP_TEST_EXEC_UNSET_ENV".to_string(),
+		]);
+		std::env::remove_var("PODUP_TEST_EXEC_ENV");
+		assert_eq!(out, vec!["PODUP_TEST_EXEC_ENV=from-host".to_string()]);
+	}
+
+	#[test]
+	fn teardown_noise_matches_only_connection_reset_frame() {
+		assert!(is_exec_teardown_noise(
+			"read unixpacket @->/run/...: read: connection reset by peer"
+		));
+		// Ordinary program output is never suppressed.
+		assert!(!is_exec_teardown_noise("connection reset by peer"));
+		assert!(!is_exec_teardown_noise("hello world"));
+	}
+
+	#[test]
+	fn map_not_running_maps_404_and_stopped() {
+		use crate::error::ComposeError;
+		use crate::libpod::PodmanError;
+		let e404 = PodmanError::Api {
+			status: 404,
+			message: "no such container: web".into(),
+		};
+		assert!(matches!(
+			map_not_running(e404, "web"),
+			ComposeError::NotRunning(s) if s == "web"
+		));
+		let e500 = PodmanError::Api {
+			status: 500,
+			message: "can only create exec sessions on running containers".into(),
+		};
+		assert!(matches!(
+			map_not_running(e500, "web"),
+			ComposeError::NotRunning(_)
+		));
+		// An unrelated error passes through unchanged.
+		let other = PodmanError::Api {
+			status: 500,
+			message: "disk full".into(),
+		};
+		assert!(matches!(
+			map_not_running(other, "web"),
+			ComposeError::Podman(_)
+		));
 	}
 }

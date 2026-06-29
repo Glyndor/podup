@@ -5,7 +5,7 @@
 //! images, not a full [`Engine`](crate::engine::Engine) — so it lives as a free function.
 
 use crate::compose::types::ComposeFile;
-use crate::error::Result;
+use crate::error::{ComposeError, Result};
 use crate::libpod::types::image::ImageInspect;
 use crate::libpod::{urlencoded, Client, API_PREFIX};
 
@@ -28,9 +28,16 @@ pub async fn resolve_image_digests(client: &Client, file: &ComposeFile) -> Resul
 					 (service {name}); left unchanged"
 				),
 			},
-			Err(e) => tracing::warn!(
-				"config --resolve-image-digests: cannot inspect {image} (service {name}): {e}"
-			),
+			// A backend failure (unreachable socket, HTTP 500) must be a hard
+			// error: emitting the original UNPINNED config with exit 0 would let a
+			// script that relies on digest pinning silently get unpinned images.
+			// A genuinely-absent image (404) is reported the same way: the user
+			// asked to pin and we could not.
+			Err(e) => {
+				return Err(ComposeError::Build(format!(
+					"config --resolve-image-digests: cannot inspect {image} (service {name}): {e}"
+				)))
+			}
 		}
 	}
 	Ok(out)

@@ -9,20 +9,36 @@ use crate::error::{ComposeError, Result};
 
 /// Resolve a named-volume reference to the volume name `create_volumes`
 /// produced: a custom `name:`, the raw name for an external volume, or the
-/// `{project}_{name}` form. References not declared in the top-level `volumes:`
-/// map (anonymous/implicit) are returned unchanged.
-pub(super) fn resolve_volume_name(reference: &str, project: &str, file: &ComposeFile) -> String {
+/// `{project}_{name}` form.
+///
+/// An empty reference is an anonymous volume (an image `VOLUME` directive or a
+/// colon-less short-form mount); it carries no name, so Podman assigns one and
+/// it is returned unchanged. A non-empty reference that is *not* declared under
+/// the top-level `volumes:` map is rejected, matching the compose-spec: leaving
+/// it unprefixed would make Podman auto-create a bare, unlabelled global volume
+/// that escapes project namespacing and is never reclaimed by `down -v`.
+pub(super) fn resolve_volume_name(
+	reference: &str,
+	project: &str,
+	file: &ComposeFile,
+) -> Result<String> {
+	if reference.is_empty() {
+		return Ok(String::new());
+	}
 	match file.volumes.get(reference) {
-		Some(cfg) => {
+		Some(cfg) => Ok(
 			if let Some(name) = cfg.as_ref().and_then(|c| c.name.as_deref()) {
 				name.to_string()
 			} else if cfg.as_ref().and_then(|c| c.external).unwrap_or(false) {
 				reference.to_string()
 			} else {
 				format!("{project}_{reference}")
-			}
-		}
-		None => reference.to_string(),
+			},
+		),
+		None => Err(ComposeError::Unsupported(format!(
+			"service refers to undefined volume \"{reference}\"; declare it under the \
+			 top-level `volumes:` key, or use a bind mount or anonymous volume instead"
+		))),
 	}
 }
 
@@ -487,11 +503,18 @@ mod tests {
 			"services:\n  s:\n    image: x\nvolumes:\n  data:\n  ext:\n    external: true\n  custom:\n    name: my-vol\n",
 		)
 		.unwrap();
-		assert_eq!(resolve_volume_name("data", "proj", &f), "proj_data");
-		assert_eq!(resolve_volume_name("ext", "proj", &f), "ext");
-		assert_eq!(resolve_volume_name("custom", "proj", &f), "my-vol");
-		// Not declared in top-level volumes -> left as-is.
-		assert_eq!(resolve_volume_name("anon", "proj", &f), "anon");
+		assert_eq!(
+			resolve_volume_name("data", "proj", &f).unwrap(),
+			"proj_data"
+		);
+		assert_eq!(resolve_volume_name("ext", "proj", &f).unwrap(), "ext");
+		assert_eq!(resolve_volume_name("custom", "proj", &f).unwrap(), "my-vol");
+		// An empty reference is an anonymous volume: no name to resolve.
+		assert_eq!(resolve_volume_name("", "proj", &f).unwrap(), "");
+		// A non-empty reference not declared under top-level `volumes:` is
+		// rejected rather than escaping into a bare, unprefixed global volume.
+		let err = resolve_volume_name("missing", "proj", &f).unwrap_err();
+		assert!(err.to_string().contains("missing"), "got: {err}");
 	}
 
 	#[test]
