@@ -76,9 +76,10 @@ pub struct TmpfsOptions {
 	pub size: Option<u64>,
 	/// File mode of the tmpfs mount, stored as the actual permission bits.
 	///
-	/// A leading-zero string (`0700`) or an explicit `0o700` is interpreted as
-	/// octal — the conventional Unix file-mode notation — rather than erroring or
-	/// being silently re-interpreted; invalid input is a clear error.
+	/// A compose `mode:` is conventionally octal, so every spelling is normalised
+	/// to the same permission bits: a leading-zero string (`0700`), an explicit
+	/// `0o700`, and a bare `700` all yield `0o700` (448). Invalid input is a clear
+	/// error rather than a silent re-interpretation.
 	#[serde(
 		default,
 		deserialize_with = "deserialize_octal_mode",
@@ -89,11 +90,14 @@ pub struct TmpfsOptions {
 
 /// Deserialize a tmpfs `mode` as octal-aware permission bits.
 ///
-/// YAML numeric scalars are already decoded by the parser (`0o700` → 448), so an
-/// integer node is taken as the actual permission bits. A string node — which is
-/// how a leading-zero literal like `0700` reaches us (and what previously failed
-/// with an opaque untagged error) — is parsed as octal, accepting an optional
-/// `0o` prefix and rejecting non-octal digits with a clear message.
+/// A compose `mode:` is conventionally octal, but serde_yaml decodes the spelling
+/// before we see it: a `0o`-prefixed literal arrives as its numeric value
+/// (`0o700` → 448), a leading-zero literal (`0700`) arrives as a string, and a
+/// bare `700` arrives unchanged. We normalise all of them to the actual
+/// permission bits (see [`int_mode_bits`] for the integer case), so the renderer
+/// can octal-encode a single canonical value. A string is parsed as octal,
+/// accepting an optional `0o` prefix and rejecting non-octal digits with a clear
+/// message.
 fn deserialize_octal_mode<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
 where
 	D: serde::Deserializer<'de>,
@@ -109,7 +113,7 @@ where
 
 	match Option::<Raw>::deserialize(deserializer)? {
 		None => Ok(None),
-		Some(Raw::Int(bits)) => Ok(Some(bits)),
+		Some(Raw::Int(n)) => Ok(Some(int_mode_bits(n))),
 		Some(Raw::Str(s)) => {
 			let trimmed = s.trim();
 			let digits = trimmed
@@ -123,6 +127,18 @@ where
 			})
 		}
 	}
+}
+
+/// Interpret a bare YAML integer `mode:` as octal permission bits.
+///
+/// A bare `700` is the octal file-mode the user typed, so its decimal digits are
+/// read as octal (`700` → `0o700` = 448). A digit of `8` or `9` cannot be a real
+/// octal digit, so such a value can only be a `0o` literal that serde_yaml has
+/// already decoded to its numeric value (`0o700` → 448, `0o755` → 493); it is
+/// taken as the actual permission bits verbatim. The same fallback covers an
+/// out-of-range octal reading, so the conversion never panics.
+fn int_mode_bits(n: u32) -> u32 {
+	u32::from_str_radix(&n.to_string(), 8).unwrap_or(n)
 }
 
 /// A volume mount entry — either a short-form string or a long-form typed block.
@@ -321,6 +337,27 @@ mod tests {
 		// A non-octal string is rejected with a clear error, not silently coerced.
 		let err = serde_yaml::from_str::<TmpfsOptions>("mode: \"0o9\"\n").unwrap_err();
 		assert!(err.to_string().contains("tmpfs mode"), "got: {err}");
+	}
+
+	#[test]
+	fn tmpfs_mode_bare_decimal_is_interpreted_as_octal() {
+		// A bare `700` is the octal file-mode the user typed, not a decimal value:
+		// it must yield the same permission bits as `0700`/`0o700` (issue #917)
+		// instead of being octal-encoded a second time at render time.
+		let opts: TmpfsOptions = serde_yaml::from_str("mode: 700\n").unwrap();
+		assert_eq!(opts.mode, Some(0o700));
+		let opts: TmpfsOptions = serde_yaml::from_str("mode: 644\n").unwrap();
+		assert_eq!(opts.mode, Some(0o644));
+	}
+
+	#[test]
+	fn int_mode_bits_treats_decoded_0o_literals_as_bits() {
+		// A value carrying an 8/9 digit can only be a `0o` literal serde_yaml
+		// already decoded (`0o755` → 493), so it is taken as the bits verbatim;
+		// a value of valid octal digits is read as the octal the user typed.
+		assert_eq!(int_mode_bits(700), 0o700);
+		assert_eq!(int_mode_bits(0o755), 0o755);
+		assert_eq!(int_mode_bits(0o700), 0o700);
 	}
 
 	// VolumeMount::target

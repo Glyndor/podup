@@ -543,6 +543,15 @@ mod tests {
 		assert!(render_tmpfs_mount(&VolumeMount::Short("a:/b".into())).is_none());
 	}
 
+	#[test]
+	fn render_tmpfs_mount_bare_decimal_mode_is_not_octal_re_encoded() {
+		// Regression for #917: a long-form tmpfs with a bare `mode: 700` must
+		// render `mode=700`, not `mode=1274` (700 octal-encoded a second time).
+		let yaml = "type: tmpfs\ntarget: /run\ntmpfs:\n  mode: 700\n";
+		let mount: VolumeMount = serde_yaml::from_str(yaml).expect("parse tmpfs mount");
+		assert_eq!(render_tmpfs_mount(&mount).as_deref(), Some("/run:mode=700"));
+	}
+
 	// --- escape_unit_value (bug: incomplete systemd value escaping) ---
 
 	#[test]
