@@ -15,8 +15,11 @@ async fn engine_cp_index_out_of_range_errors() {
 	let engine = Engine::new(client, proj.clone());
 	let file = parse_str("services:\n  web:\n    image: alpine:latest\n").unwrap();
 
-	// No --index target replica 9 of a single-replica service: must error rather
-	// than silently fall back to the first container.
+	// Target replica 9 of a single-replica service: must error rather than
+	// silently fall back to the first container. The replica-resolution fix
+	// reports this as a typed `ReplicaIndex` (named service, 1-based index)
+	// instead of a generic `ServiceNotFound`, so the user sees exactly which
+	// index is out of range.
 	let result = engine
 		.cp_with_options(
 			&file,
@@ -29,8 +32,11 @@ async fn engine_cp_index_out_of_range_errors() {
 		)
 		.await;
 	assert!(
-		matches!(result, Err(podup::ComposeError::ServiceNotFound(_))),
-		"out-of-range --index must error, got {result:?}"
+		matches!(
+			result,
+			Err(podup::ComposeError::ReplicaIndex { ref service, index: 9 }) if service == "web"
+		),
+		"out-of-range --index must error with ReplicaIndex, got {result:?}"
 	);
 }
 
