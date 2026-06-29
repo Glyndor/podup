@@ -188,6 +188,7 @@ mod tests {
 		assert!(out.ends_with('\n'));
 	}
 
+	#[cfg(unix)]
 	#[test]
 	fn short_bind_source_resolves_relative_only() {
 		let base = Path::new("/home/user/proj");
@@ -210,6 +211,7 @@ mod tests {
 		assert!(rewrite_short_bind("/data", base).is_none());
 	}
 
+	#[cfg(unix)]
 	#[test]
 	fn resolve_bind_sources_rewrites_short_and_long_binds() {
 		let mut file = podup::parse_str(
