@@ -3,8 +3,6 @@
 
 use std::collections::HashSet;
 
-use tracing::info;
-
 use crate::compose::types::{ComposeFile, Service};
 use crate::engine::Engine;
 use crate::error::{ComposeError, Result};
@@ -192,7 +190,7 @@ impl Engine {
 		if let Err(e) = self.client.delete_ok(&rm_path).await {
 			tracing::debug!("scale-down rm {name}: {e}");
 		} else {
-			info!("removed {name}");
+			crate::ui::progress_line("Container", name, "Removed");
 		}
 	}
 

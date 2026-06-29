@@ -7,8 +7,6 @@
 //! every labelled container, network, named volume and internal secret without
 //! reading a single service definition.
 
-use tracing::info;
-
 use crate::compose::types::ComposeFile;
 use crate::error::Result;
 use crate::libpod::{urlencoded, API_PREFIX};
@@ -54,7 +52,7 @@ impl Engine {
 
 			let rm_path = super::container_rm_path(&container_name, remove_volumes);
 			match self.client.delete_ok(&rm_path).await {
-				Ok(()) => info!("removed {container_name}"),
+				Ok(()) => crate::ui::progress_line("Container", &container_name, "Removed"),
 				Err(e) if e.is_status(404) => {}
 				Err(e) => tracing::warn!("could not remove {container_name}: {e}"),
 			}
@@ -99,7 +97,7 @@ impl Engine {
 			};
 			let del = format!("{API_PREFIX}/networks/{}", urlencoded(net_name));
 			match self.client.delete_ok(&del).await {
-				Ok(_) => info!("removed network {net_name}"),
+				Ok(_) => crate::ui::progress_line("Network", net_name, "Removed"),
 				Err(e) if e.is_status(404) => {}
 				Err(e) => tracing::warn!("could not remove network {net_name}: {e}"),
 			}
@@ -125,7 +123,7 @@ impl Engine {
 			};
 			let del = format!("{API_PREFIX}/volumes/{}", urlencoded(name));
 			match self.client.delete_ok(&del).await {
-				Ok(_) => info!("removed volume {name}"),
+				Ok(_) => crate::ui::progress_line("Volume", name, "Removed"),
 				Err(e) if e.is_status(404) => {}
 				Err(e) => tracing::warn!("could not remove volume {name}: {e}"),
 			}

@@ -61,6 +61,68 @@ pub fn stderr_colored() -> bool {
 	colored(std::io::stderr().is_terminal())
 }
 
+/// Process-wide switch for user-facing lifecycle progress output. Off by default
+/// so the library (consumed by other crates) stays silent unless asked; the CLI
+/// turns it on for the human-facing lifecycle commands. Progress is written to
+/// stderr (matching docker compose) so stdout stays a clean pipe for scripting
+/// and machine/JSON output.
+static PROGRESS_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Enable or disable user-facing lifecycle progress output process-wide. The CLI
+/// enables it for the lifecycle commands; embedders that want podup silent leave
+/// it off (the default).
+pub fn set_progress(enabled: bool) {
+	PROGRESS_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether user-facing lifecycle progress output is currently enabled.
+pub fn progress_enabled() -> bool {
+	PROGRESS_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Emit a concise per-resource lifecycle progress line to stderr, mirroring
+/// docker compose's `Container <name>  <Action>` progress stream (which also
+/// goes to stderr). `kind` is the resource noun (`Container`, `Network`,
+/// `Volume`, `Image`); `action` is the past-tense verb (`Started`, `Removed`,
+/// …), tinted green on a colour sink. A no-op unless [`set_progress`] enabled
+/// progress output, so stdout consumers and machine output are never polluted.
+pub fn progress_line(kind: &str, name: &str, action: &str) {
+	use std::io::Write;
+	if !progress_enabled() {
+		return;
+	}
+	let style = Style::new().fg_color(Some(AnsiColor::Green.into()));
+	// anstream::stderr strips the ANSI codes itself when colour is off.
+	let _ = writeln!(
+		anstream::stderr(),
+		" {kind} {name}  {}{action}{}",
+		style.render(),
+		style.render_reset()
+	);
+}
+
+/// Emit a plain user-facing progress note to stderr (e.g. a "nothing to do"
+/// line). A no-op unless [`set_progress`] enabled progress output.
+pub fn progress_note(msg: &str) {
+	use std::io::Write;
+	if !progress_enabled() {
+		return;
+	}
+	let _ = writeln!(anstream::stderr(), "{msg}");
+}
+
+/// Print a result line to stdout — used by `run -d` to echo the started
+/// container's name so scripts capturing stdout get the id, matching
+/// `docker compose run -d`. A no-op unless [`set_progress`] enabled progress
+/// output, so embedders and machine paths stay silent.
+pub fn result_line(msg: &str) {
+	use std::io::Write;
+	if !progress_enabled() {
+		return;
+	}
+	let _ = writeln!(anstream::stdout(), "{msg}");
+}
+
 /// Bold — table headers and emphasis.
 pub fn bold() -> Style {
 	Style::new().bold()
@@ -209,6 +271,18 @@ mod tests {
 		assert!(status_style("paused").is_some());
 		assert!(status_style("created").is_some());
 		assert!(status_style("weird-state").is_none());
+	}
+
+	#[test]
+	fn progress_toggle_is_observable() {
+		// Off by default-or-restored; toggling flips the observable state. Restore
+		// afterwards so the process-global flag does not leak into other tests.
+		let prev = progress_enabled();
+		set_progress(false);
+		assert!(!progress_enabled());
+		set_progress(true);
+		assert!(progress_enabled());
+		set_progress(prev);
 	}
 
 	#[test]
