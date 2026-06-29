@@ -5,7 +5,6 @@ use std::collections::HashMap;
 use std::io::Write;
 
 use futures_util::StreamExt;
-use tracing::info;
 
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
@@ -190,7 +189,10 @@ impl Engine {
 		}
 
 		if detach {
-			info!("started run container {run_name}");
+			// Echo the started container's name to stdout (gated by progress
+			// output), so scripts capturing stdout get an id like
+			// `docker compose run -d`.
+			crate::ui::result_line(&run_name);
 			return Ok(());
 		}
 

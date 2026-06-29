@@ -10,8 +10,6 @@ mod targets;
 
 use std::collections::{HashMap, HashSet};
 
-use tracing::info;
-
 use crate::compose::types::{ComposeFile, ServiceCondition};
 use crate::error::Result;
 use crate::libpod::API_PREFIX;
@@ -389,11 +387,16 @@ impl Engine {
 			};
 			if !force_recreate {
 				if no_recreate && present.contains(&container_name) {
-					info!("{container_name} already exists — skipping recreate");
+					tracing::debug!("{container_name} already exists — skipping recreate");
 					// `create` leaves an existing container as-is; `up` ensures it runs.
 					if start {
 						self.ensure_started(&container_name).await;
 					}
+					crate::ui::progress_line(
+						"Container",
+						&container_name,
+						if start { "Running" } else { "Exists" },
+					);
 					continue;
 				}
 				// Services with a build section are rebuilt on every up, so
@@ -401,18 +404,24 @@ impl Engine {
 				// image even when the compose config is unchanged.
 				if service.build.is_none() && existing_hash.get(&container_name) == Some(&new_hash)
 				{
-					info!("{container_name} is up to date — skipping recreate");
+					tracing::debug!("{container_name} is up to date — skipping recreate");
 					if start {
 						self.ensure_started(&container_name).await;
 					}
+					crate::ui::progress_line(
+						"Container",
+						&container_name,
+						if start { "Running" } else { "Exists" },
+					);
 					continue;
 				}
 			}
 			self.create_and_start(&container_name, name, service, file, start)
 				.await?;
-			info!(
-				"{} {container_name}",
-				if start { "started" } else { "created" }
+			crate::ui::progress_line(
+				"Container",
+				&container_name,
+				if start { "Started" } else { "Created" },
 			);
 
 			// `post_start` hooks run inside a running container, so only on `up`.
@@ -483,7 +492,7 @@ impl Engine {
 
 				let rm_path = container_rm_path(container_name, remove_volumes);
 				match self.client.delete_ok(&rm_path).await {
-					Ok(()) => info!("removed {container_name}"),
+					Ok(()) => crate::ui::progress_line("Container", container_name, "Removed"),
 					Err(e) if e.is_status(404) => {}
 					Err(e) => tracing::warn!("could not remove {container_name}: {e}"),
 				}
@@ -509,7 +518,7 @@ impl Engine {
 				crate::libpod::urlencoded(&network_name),
 			);
 			match self.client.delete_ok(&net_path).await {
-				Ok(_) => info!("removed network {network_name}"),
+				Ok(_) => crate::ui::progress_line("Network", &network_name, "Removed"),
 				Err(e) if e.is_status(404) => {}
 				Err(e) => tracing::warn!("could not remove network {network_name}: {e}"),
 			}
@@ -538,7 +547,7 @@ impl Engine {
 					crate::libpod::urlencoded(&volume_name),
 				);
 				match self.client.delete_ok(&vol_path).await {
-					Ok(_) => info!("removed volume {volume_name}"),
+					Ok(_) => crate::ui::progress_line("Volume", &volume_name, "Removed"),
 					Err(e) if e.is_status(404) => {}
 					Err(e) => tracing::warn!("could not remove volume {volume_name}: {e}"),
 				}
@@ -579,10 +588,10 @@ impl Engine {
 			// failure.
 			let path = format!("{API_PREFIX}/images/{}", crate::libpod::urlencoded(&image),);
 			match self.client.delete_ok(&path).await {
-				Ok(_) => info!("removed image {image}"),
+				Ok(_) => crate::ui::progress_line("Image", &image, "Removed"),
 				Err(e) if e.is_status(404) => {}
 				Err(e) if e.is_image_in_use() => {
-					info!("image {image} is still in use — skipping removal")
+					tracing::debug!("image {image} is still in use — skipping removal")
 				}
 				Err(e) => tracing::warn!("could not remove image {image}: {e}"),
 			}

@@ -12,8 +12,6 @@
 
 use std::collections::HashSet;
 
-use tracing::info;
-
 use crate::compose::types::{ComposeFile, Service};
 use crate::engine::Engine;
 use crate::error::{ComposeError, Result};
@@ -163,7 +161,7 @@ impl Engine {
 				urlencoded(&container_name),
 			);
 			if let Err(e) = self
-				.run_lifecycle_op(&path, &container_name, "started")
+				.run_lifecycle_op(&path, &container_name, "Started")
 				.await
 			{
 				first_err.get_or_insert(e);
@@ -215,7 +213,7 @@ impl Engine {
 				urlencoded(signal),
 			);
 			if let Err(e) = self
-				.run_lifecycle_op(&path, &container_name, &format!("sent {signal} to"))
+				.run_lifecycle_op(&path, &container_name, "Killed")
 				.await
 			{
 				first_err.get_or_insert(e);
@@ -243,7 +241,7 @@ impl Engine {
 				// Only report a removal that actually happened — a phantom
 				// (never-created) container 404s and must not be logged as
 				// "removed".
-				Ok(true) => info!("removed {container_name}"),
+				Ok(true) => crate::ui::progress_line("Container", &container_name, "Removed"),
 				Ok(false) => {}
 				// Without `--force`, a running container 409s. docker compose rm
 				// skips running containers rather than aborting, so warn and keep

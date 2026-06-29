@@ -166,6 +166,12 @@ async fn run() -> podup::Result<()> {
 	// Resolve the colour choice before any output (including tracing setup below)
 	// so `--ansi`/`NO_COLOR`/TTY detection apply consistently everywhere.
 	podup::ui::set_color_choice(cli.ansi.into());
+	// Enable user-facing lifecycle progress for the CLI: per-container
+	// Started/Stopped/Removed lines on stderr (and the `run -d` id on stdout),
+	// matching docker compose. The library leaves this off so embedders stay
+	// silent. Only the lifecycle commands emit it, so enabling it globally here
+	// is inert for read-only/machine-output commands.
+	podup::ui::set_progress(true);
 	// `watch` is an interactive, long-running command; surface its per-action
 	// progress (synced/rebuilt/restarted) by defaulting to INFO instead of the
 	// quiet WARN floor. `RUST_LOG` always overrides.

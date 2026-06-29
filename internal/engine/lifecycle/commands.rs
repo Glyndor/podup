@@ -1,7 +1,5 @@
 //! Lifecycle sub-commands: restart, stop, start, kill, rm, pause, unpause, run.
 
-use tracing::info;
-
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 
@@ -15,7 +13,8 @@ use crate::libpod::API_PREFIX;
 
 impl Engine {
 	/// Run a lifecycle POST against one container with a consistent outcome:
-	/// success logs `{done} {container}`; "already in the desired state" (304)
+	/// success prints a `Container {container}  {done}` progress line; "already
+	/// in the desired state" (304)
 	/// and "no such container" (404) are idempotent no-ops; any other failure is
 	/// a real error that propagates (setting a non-zero exit) instead of being
 	/// swallowed into a warning. Shared by stop/start/restart/kill/pause/unpause
@@ -28,7 +27,7 @@ impl Engine {
 	) -> Result<()> {
 		match self.client.post_empty_ok(path).await {
 			Ok(()) => {
-				info!("{done} {container}");
+				crate::ui::progress_line("Container", container, done);
 				Ok(())
 			}
 			Err(e) if e.is_status(304) || e.is_status(404) || e.is_kill_of_stopped() => {
@@ -52,7 +51,7 @@ impl Engine {
 	) -> Result<()> {
 		match self.client.post_empty_ok(path).await {
 			Ok(()) => {
-				info!("{done} {container}");
+				crate::ui::progress_line("Container", container, done);
 				Ok(())
 			}
 			Err(e) if e.is_status(304) || e.is_status(404) || e.is_state_conflict() => {
@@ -85,7 +84,7 @@ impl Engine {
 			.await
 		{
 			Ok(()) => {
-				info!("stopped {container}");
+				crate::ui::progress_line("Container", container, "Stopped");
 				Ok(())
 			}
 			Err(e) if e.is_status(304) || e.is_status(404) => {
@@ -102,7 +101,11 @@ impl Engine {
 				);
 				match self.client.post_empty_ok(&kill_path).await {
 					Ok(()) => {
-						info!("killed {container} (SIGKILL after stop timeout)");
+						crate::ui::progress_line(
+							"Container",
+							container,
+							"Killed (after stop timeout)",
+						);
 						Ok(())
 					}
 					// Already gone / not running between the timeout and the kill.
@@ -155,9 +158,9 @@ impl Engine {
 			let futs = level.iter().map(|name| {
 				let service = &file.services[name];
 				let done = if targets.contains(name) {
-					"restarted"
+					"Restarted"
 				} else {
-					"cascade-restarted"
+					"Restarted (dependency)"
 				};
 				self.restart_one_service(name, service, done)
 			});
@@ -290,7 +293,7 @@ impl Engine {
 			return Err(e);
 		}
 		if !any_live.load(std::sync::atomic::Ordering::Relaxed) {
-			eprintln!("podup: no containers to start (project not created)");
+			crate::ui::progress_note("no containers to start (project not created)");
 		}
 		Ok(())
 	}
@@ -380,7 +383,7 @@ impl Engine {
 		let mut first_err: Option<ComposeError> = None;
 		for level in &levels {
 			let futs = level.iter().map(|name| {
-				self.idempotent_state_service(name, &file.services[name], "pause", "paused")
+				self.idempotent_state_service(name, &file.services[name], "pause", "Paused")
 			});
 			if let Some(e) = first_error(join_bounded(futs).await) {
 				first_err.get_or_insert(e);
@@ -405,7 +408,7 @@ impl Engine {
 		let mut first_err: Option<ComposeError> = None;
 		for level in &levels {
 			let futs = level.iter().map(|name| {
-				self.idempotent_state_service(name, &file.services[name], "unpause", "unpaused")
+				self.idempotent_state_service(name, &file.services[name], "unpause", "Unpaused")
 			});
 			if let Some(e) = first_error(join_bounded(futs).await) {
 				first_err.get_or_insert(e);
