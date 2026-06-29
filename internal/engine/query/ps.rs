@@ -292,15 +292,19 @@ impl Engine {
 			return Ok(());
 		}
 
-		crate::ui::print_bold_header(&format!(
-			"{:<40} {:<30} {:<20} PORTS",
-			"NAME", "IMAGE", "STATUS"
-		));
+		let mut table = crate::ui::Table::new(&["NAME", "IMAGE", "STATUS", "PORTS"])
+			.cap(0, 48)
+			.cap(1, 48)
+			.status_col(2);
 		for c in &containers {
-			let ports = format_ports(&c.ports);
-			let status = crate::ui::status_cell(display_status(c), 20);
-			println!("{:<40} {:<30} {status} {ports}", name_of(c), c.image);
+			table.push(vec![
+				name_of(c),
+				c.image.clone(),
+				display_status(c).to_string(),
+				format_ports(&c.ports),
+			]);
 		}
+		table.print();
 
 		Ok(())
 	}

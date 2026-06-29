@@ -143,11 +143,13 @@ pub async fn list_projects_filtered(
 		return Ok(());
 	}
 
-	crate::ui::print_bold_header(&format!("{:<32} {:<20}", "NAME", "STATUS"));
+	let mut table = crate::ui::Table::new(&["NAME", "STATUS"])
+		.cap(0, 48)
+		.status_col(1);
 	for (name, t) in &rows {
-		let status = crate::ui::status_cell(&status_label(t), 20);
-		println!("{name:<32} {status}");
+		table.push(vec![name.to_string(), status_label(t)]);
 	}
+	table.print();
 	Ok(())
 }
 
