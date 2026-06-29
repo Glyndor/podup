@@ -20,7 +20,7 @@ use targets::{expand_targets, filter_services, in_started_set, validate_targets}
 use super::container::config_hash;
 
 use super::network::resolve_network_name;
-use super::profiles::{active_profiles_set, service_in_profiles};
+use super::profiles::{active_profiles_set, enabled_profile_services};
 use super::Engine;
 
 /// Options for [`Engine::run`].
@@ -146,6 +146,11 @@ impl Engine {
 		async {
 			let levels = crate::compose::resolve_levels(file)?;
 			let active = active_profiles_set(active_profiles);
+			// Which services this `up`/`create` should start. A profiled service
+			// that an active service depends on is implicitly activated here —
+			// the same set `config` reports — so `up` never leaves a started
+			// service with an unsatisfied (never-created) dependency.
+			let enabled = enabled_profile_services(file, &active, target_services);
 
 			// Validate every `--scale SERVICE=N` override against the file before
 			// doing any work: an override naming a service the compose file does
@@ -210,7 +215,7 @@ impl Engine {
 					self.up_one_service(
 						name,
 						file,
-						&active,
+						&enabled,
 						&target_set,
 						&present,
 						&existing_hash,
@@ -259,7 +264,7 @@ impl Engine {
 		&self,
 		name: &str,
 		file: &ComposeFile,
-		active: &HashSet<String>,
+		enabled: &HashSet<String>,
 		target_set: &Option<HashSet<String>>,
 		present: &HashSet<String>,
 		existing_hash: &HashMap<String, String>,
@@ -274,7 +279,7 @@ impl Engine {
 		}
 		let service = &file.services[name];
 
-		if !service_in_profiles(service, active) {
+		if !enabled.contains(name) {
 			tracing::debug!("skipping {name}: no active profile match");
 			return Ok(());
 		}
@@ -305,7 +310,7 @@ impl Engine {
 				Some(s) => s,
 				None => continue,
 			};
-			if !service_in_profiles(dep_service, active) {
+			if !enabled.contains(&dep) {
 				continue;
 			}
 			// Scaled dep has no base-named container; wait on its first replica.

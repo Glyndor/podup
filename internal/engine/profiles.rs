@@ -24,6 +24,29 @@ pub fn retain_active_profiles_with_targets(
 	targets: &[String],
 ) {
 	let set = active_profiles_set(active);
+	let enabled = enabled_profile_services(file, &set, targets);
+	file.services.retain(|name, _| enabled.contains(name));
+}
+
+/// The set of service names that should run under the active profile set.
+///
+/// A service is enabled when it is unprofiled, matches an active profile (or the
+/// `*` wildcard), or is explicitly named in `targets` (naming a service on the
+/// command line activates its profile). Implicit activation then pulls in the
+/// transitive `depends_on` targets of every enabled service — even profiled
+/// ones whose profile is inactive — so a started service never depends on a
+/// service that was filtered out. Mirrors docker compose, which activates a
+/// profiled service that is depended on by a started one.
+///
+/// This is the single source of truth for "which services does an `up`/`config`
+/// with these profiles touch": [`retain_active_profiles_with_targets`] uses it
+/// to prune the config, and the `up`/`create` lifecycle path uses it to decide
+/// which services to actually start — so the two never disagree.
+pub(crate) fn enabled_profile_services(
+	file: &ComposeFile,
+	active: &HashSet<String>,
+	targets: &[String],
+) -> HashSet<String> {
 	let named: HashSet<&str> = targets.iter().map(|s| s.as_str()).collect();
 
 	// Directly enabled: an unprofiled service, a profile match (or `*`), or a
@@ -31,14 +54,13 @@ pub fn retain_active_profiles_with_targets(
 	let mut enabled: HashSet<String> = file
 		.services
 		.iter()
-		.filter(|(name, svc)| service_in_profiles(svc, &set) || named.contains(name.as_str()))
+		.filter(|(name, svc)| service_in_profiles(svc, active) || named.contains(name.as_str()))
 		.map(|(name, _)| name.clone())
 		.collect();
 
 	// Implicit activation: pull in profiled `depends_on` targets of enabled
 	// services, transitively, so a retained service never references a dropped
-	// dependency. Mirrors docker compose, which enables a profiled service that
-	// is depended on by a started one.
+	// dependency.
 	let mut stack: Vec<String> = enabled.iter().cloned().collect();
 	while let Some(name) = stack.pop() {
 		if let Some(svc) = file.services.get(&name) {
@@ -50,7 +72,7 @@ pub fn retain_active_profiles_with_targets(
 		}
 	}
 
-	file.services.retain(|name, _| enabled.contains(name));
+	enabled
 }
 
 /// Build the active-profile set, falling back to `COMPOSE_PROFILES` env var.
@@ -251,6 +273,41 @@ mod tests {
 		});
 		assert!(file.services.contains_key("db"));
 		assert!(!file.services.contains_key("extra"));
+	}
+
+	#[test]
+	fn enabled_set_activates_profiled_dependency_for_up() {
+		// The `up`/`create` lifecycle path consults this set directly. `app`
+		// (unprofiled, started) depends on `db` (profiles: [storage]). With no
+		// profile active, `db` must be in the enabled set so `up` actually
+		// creates it — otherwise `app` runs with an unsatisfied dependency.
+		let yaml = "services:\n  \
+			app:\n    image: x\n    depends_on: [db]\n  \
+			db:\n    image: x\n    profiles: [storage]\n";
+		let file = crate::parse_str(yaml).unwrap();
+		let active: HashSet<String> = HashSet::new();
+		let enabled = enabled_profile_services(&file, &active, &[]);
+		assert!(enabled.contains("app"));
+		assert!(
+			enabled.contains("db"),
+			"profiled depends_on target is in the started set"
+		);
+	}
+
+	#[test]
+	fn enabled_set_excludes_unrelated_profiled_service() {
+		// Only dependencies are pulled in — an unrelated profiled service stays
+		// out of the started set, so `up` does not over-activate it.
+		let yaml = "services:\n  \
+			app:\n    image: x\n    depends_on: [db]\n  \
+			db:\n    image: x\n    profiles: [storage]\n  \
+			extra:\n    image: x\n    profiles: [other]\n";
+		let file = crate::parse_str(yaml).unwrap();
+		let active: HashSet<String> = HashSet::new();
+		let enabled = enabled_profile_services(&file, &active, &[]);
+		assert!(enabled.contains("app"));
+		assert!(enabled.contains("db"));
+		assert!(!enabled.contains("extra"));
 	}
 
 	#[test]
