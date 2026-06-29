@@ -390,7 +390,7 @@ async fn external_secret_injected_into_container() {
 	let file = parse_str(&yaml).unwrap();
 	let engine = Engine::new(client, proj.clone());
 	engine.up(&file).await.unwrap();
-	let cname = format!("{proj}-app");
+	let cname = format!("{proj}-app-1");
 	let out = engine
 		.test_exec_capture(&cname, vec!["cat".into(), "/run/secrets/tok".into()])
 		.await

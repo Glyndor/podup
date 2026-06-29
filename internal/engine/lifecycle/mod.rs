@@ -389,12 +389,7 @@ impl Engine {
 
 		let new_hash = config_hash(service, file)?;
 
-		for i in 1..=replicas {
-			let container_name = if replicas <= 1 {
-				self.container_name(name, service)
-			} else {
-				format!("{}-{i}", self.container_name(name, service))
-			};
+		for container_name in self.replica_names_for(name, service, replicas) {
 			if !force_recreate {
 				if no_recreate && present.contains(&container_name) {
 					tracing::debug!("{container_name} already exists — skipping recreate");

@@ -49,7 +49,7 @@ async fn watch_sync_file_to_container() {
 
 	engine.up(&file).await.unwrap();
 	engine
-		.test_sync_to_container(&format!("{proj}-web"), &src_file, "/tmp/app.txt")
+		.test_sync_to_container(&format!("{proj}-web-1"), &src_file, "/tmp/app.txt")
 		.await
 		.unwrap();
 	engine.down(&file).await.unwrap();
@@ -70,7 +70,7 @@ async fn watch_restart_container() {
 
 	engine.up(&file).await.unwrap();
 	engine
-		.test_watch_restart(&format!("{proj}-web"))
+		.test_watch_restart(&format!("{proj}-web-1"))
 		.await
 		.unwrap();
 	engine.down(&file).await.unwrap();
@@ -92,7 +92,7 @@ async fn watch_exec_in_container() {
 	engine.up(&file).await.unwrap();
 	engine
 		.test_watch_exec(
-			&format!("{proj}-web"),
+			&format!("{proj}-web-1"),
 			vec!["echo".to_string(), "from-watch-exec".to_string()],
 		)
 		.await
@@ -128,7 +128,7 @@ async fn watch_initial_sync_runs() {
 
 	// Poll for the observable effect of initial_sync (the file appearing in the
 	// container) instead of sleeping a fixed duration and assuming it ran.
-	let cname = format!("{proj}-web");
+	let cname = format!("{proj}-web-1");
 	let synced = poll_synced(&engine, &cname, "/tmp/app.txt", "initial", 60).await;
 
 	handle.abort();
@@ -157,7 +157,7 @@ async fn watch_sync_creates_missing_target_directory() {
 	.unwrap();
 
 	engine.up(&file).await.unwrap();
-	let cname = format!("{proj}-web");
+	let cname = format!("{proj}-web-1");
 	// Sync into a directory that does not exist in the image; podup must create
 	// it (like docker compose watch) rather than fail.
 	engine

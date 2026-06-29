@@ -299,24 +299,49 @@ impl Engine {
 			.unwrap_or_else(|| format!("{}-{}", self.project, service_name))
 	}
 
-	pub(super) fn replica_names(&self, service_name: &str, service: &Service) -> Vec<String> {
-		let replicas = self.resolve_replicas(service_name, service);
-		let base = self.container_name(service_name, service);
-		if replicas <= 1 {
-			vec![base]
-		} else {
-			(1..=replicas).map(|i| format!("{base}-{i}")).collect()
+	/// Container names for `service` at exactly `count` replicas.
+	///
+	/// The auto-generated name is **always** index-suffixed (`{project}-{svc}-1`
+	/// even for a single replica), matching docker-compose and podman-compose,
+	/// which never expose a bare, unnumbered container name. An explicit
+	/// `container_name:` is honoured verbatim at a single replica (and
+	/// `{name}-1..-N` only when forced past one), since the user asked for that
+	/// exact name. A `count` of 0 (`--scale svc=0`) yields no names.
+	pub(super) fn replica_names_for(
+		&self,
+		service_name: &str,
+		service: &Service,
+		count: usize,
+	) -> Vec<String> {
+		match &service.container_name {
+			Some(explicit) if count <= 1 => {
+				if count == 0 {
+					Vec::new()
+				} else {
+					vec![explicit.clone()]
+				}
+			}
+			Some(explicit) => (1..=count).map(|i| format!("{explicit}-{i}")).collect(),
+			None => {
+				let base = format!("{}-{}", self.project, service_name);
+				(1..=count).map(|i| format!("{base}-{i}")).collect()
+			}
 		}
 	}
 
-	pub(super) fn first_replica_name(&self, service_name: &str, service: &Service) -> String {
+	pub(super) fn replica_names(&self, service_name: &str, service: &Service) -> Vec<String> {
 		let replicas = self.resolve_replicas(service_name, service);
-		let base = self.container_name(service_name, service);
-		if replicas <= 1 {
-			base
-		} else {
-			format!("{base}-1")
-		}
+		self.replica_names_for(service_name, service, replicas)
+	}
+
+	pub(super) fn first_replica_name(&self, service_name: &str, service: &Service) -> String {
+		// Falls back to the bare base only when the service resolves to zero
+		// replicas (`--scale svc=0`), so callers that cannot represent "no
+		// container" still get a stable, addressable name.
+		self.replica_names(service_name, service)
+			.into_iter()
+			.next()
+			.unwrap_or_else(|| self.container_name(service_name, service))
 	}
 
 	/// Resolve the container name for a service replica from the statically
@@ -483,6 +508,47 @@ mod tests {
 	}
 
 	#[test]
+	fn replica_names_always_index_suffix_default_name() {
+		// The #815 contract: an auto-generated container name is ALWAYS
+		// index-suffixed, even for a single replica (docker/podman parity).
+		let e = engine("proj");
+		assert_eq!(
+			e.replica_names("web", &Service::default()),
+			vec!["proj-web-1".to_string()]
+		);
+		assert_eq!(
+			e.replica_names("web", &scaled_service(3)),
+			vec![
+				"proj-web-1".to_string(),
+				"proj-web-2".to_string(),
+				"proj-web-3".to_string(),
+			]
+		);
+	}
+
+	#[test]
+	fn replica_names_honour_explicit_container_name_verbatim() {
+		// An explicit `container_name:` is the user's exact choice and is never
+		// index-suffixed at a single replica.
+		let e = engine("proj");
+		let svc = Service {
+			container_name: Some("my-db".to_string()),
+			..Service::default()
+		};
+		assert_eq!(e.replica_names("db", &svc), vec!["my-db".to_string()]);
+		assert_eq!(e.first_replica_name("db", &svc), "my-db");
+	}
+
+	#[test]
+	fn replica_names_for_zero_scale_is_empty() {
+		// `--scale svc=0` resolves to no containers, so the name set is empty.
+		let e = engine("proj");
+		assert!(e
+			.replica_names_for("web", &Service::default(), 0)
+			.is_empty());
+	}
+
+	#[test]
 	fn replica_name_at_index_zero_is_rejected() {
 		// `--index` is 1-based; index 0 must be an error, never replica 1.
 		let e = engine("proj");
@@ -532,10 +598,11 @@ mod tests {
 	#[test]
 	fn replica_name_at_none_is_first_replica() {
 		let e = engine("proj");
-		// Single replica: the unsuffixed container name.
+		// Single replica: the first index-suffixed name (always-suffix parity
+		// with docker/podman — there is no bare, unnumbered container).
 		assert_eq!(
 			e.replica_name_at("web", &Service::default(), None).unwrap(),
-			"proj-web"
+			"proj-web-1"
 		);
 		// Multiple replicas: the first suffixed name.
 		assert_eq!(
