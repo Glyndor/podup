@@ -389,6 +389,34 @@ impl Client {
 		Self::check_status(status, &body)
 	}
 
+	/// `POST` with JSON body → return raw `Response<Incoming>` for streaming,
+	/// bounding the wait for the response head by `head_timeout` instead of the
+	/// default `READ_TIMEOUT`.
+	///
+	/// `exec`-start uses this with a short, exec-specific ceiling: a healthy engine
+	/// returns the start head (the hijack, or a prompt error) almost immediately, so
+	/// a long wait means the launch is wedged — e.g. a nonexistent target user the
+	/// server stalls resolving. Bounding the head lets the caller fail fast with a
+	/// clear, exec-specific message rather than pinning the CLI for the full
+	/// `READ_TIMEOUT` and then reporting a misleading socket-timeout. The streamed
+	/// body is left unbounded (`head_timeout` covers only the head), so a legitimate
+	/// long-running exec still streams normally.
+	pub async fn post_json_stream_within<B: Serialize>(
+		&self,
+		path: &str,
+		body: &B,
+		head_timeout: Option<std::time::Duration>,
+	) -> Result<Response<Incoming>> {
+		let json = serde_json::to_vec(body).map_err(PodmanError::Json)?;
+		let req = Self::build_request(
+			Method::POST,
+			path,
+			Full::new(Bytes::from(json)),
+			Some("application/json"),
+		)?;
+		Self::stream_or_err(self.send(req, head_timeout).await?).await
+	}
+
 	/// `POST` with empty body → return raw `Response<Incoming>` for streaming.
 	pub async fn post_empty_stream(&self, path: &str) -> Result<Response<Incoming>> {
 		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;

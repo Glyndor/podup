@@ -101,6 +101,13 @@ pub enum ComposeError {
 	/// A targeted service container is not running (e.g. `exec`/`attach` against a
 	/// stopped or never-created container).
 	NotRunning(String),
+	/// An `exec` session could not be launched. Most often the requested
+	/// `--user`/`--workdir` does not resolve inside the container and the libpod
+	/// exec-start stalls without returning a response head; podup bounds that wait
+	/// with an exec-specific deadline and surfaces this instead of pinning the CLI
+	/// for the full read timeout and then reporting a misleading socket-timeout.
+	/// The string is a ready-to-print message.
+	ExecFailed(String),
 	/// The `-t/--timeout` shutdown grace was given an unusable value (a number
 	/// below `-1`). `-1` means "wait indefinitely" (docker parity) and any
 	/// non-negative value is a second count; everything else is rejected here
@@ -244,6 +251,7 @@ impl fmt::Display for ComposeError {
 				sanitize_name(service)
 			),
 			Self::NotRunning(s) => write!(f, "service '{}' is not running", sanitize_name(s)),
+			Self::ExecFailed(s) => write!(f, "exec failed: {s}"),
 			Self::InvalidTimeout(secs) => write!(
 				f,
 				"invalid --timeout {secs}: use -1 to wait indefinitely or a non-negative number of seconds"
@@ -407,6 +415,10 @@ mod tests {
 			(
 				"service 'web' is not running",
 				ComposeError::NotRunning("web".into()),
+			),
+			(
+				"exec failed: the exec session did not start within 20s",
+				ComposeError::ExecFailed("the exec session did not start within 20s".into()),
 			),
 			(
 				"invalid --timeout -5: use -1 to wait indefinitely or a non-negative number of seconds",
