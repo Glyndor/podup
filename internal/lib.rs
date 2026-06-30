@@ -9,6 +9,9 @@
 // new `unsafe` block elsewhere fails the build.
 #![deny(unsafe_code)]
 
+/// `podup autostart`: render and manage a rootless `systemctl --user` unit that
+/// brings a compose stack up at boot (service mode).
+pub mod autostart;
 /// Compose-file parsing, `extends:`/`include:` resolution, and topological
 /// service ordering.
 pub mod compose;

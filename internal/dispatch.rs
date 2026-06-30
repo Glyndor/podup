@@ -525,6 +525,7 @@ pub(crate) async fn dispatch(
 		}
 		Commands::Config { .. } => unreachable!("handled above"),
 		Commands::Generate { .. } => unreachable!("handled above"),
+		Commands::Autostart { .. } => unreachable!("handled above"),
 		Commands::Watch => engine.watch(file).await?,
 		Commands::Help { .. } => unreachable!("handled before compose parsing"),
 		Commands::Ls { .. } => unreachable!("handled before compose parsing"),

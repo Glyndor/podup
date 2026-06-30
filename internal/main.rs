@@ -8,6 +8,7 @@ use std::process;
 #[cfg(feature = "completions")]
 use clap::CommandFactory;
 
+mod autostart_cmd;
 mod cli;
 mod dispatch;
 mod generate;
@@ -463,6 +464,19 @@ async fn run() -> podup::Result<()> {
 		let mut filtered = file.clone();
 		podup::retain_active_profiles(&mut filtered, &cli.profile);
 		return write_quadlet(&filtered, &project, output.as_deref());
+	}
+
+	// `autostart` manages a rootless `systemctl --user` unit that brings the stack
+	// up at boot. Like `generate` it works from the compose file alone and never
+	// contacts Podman — except `uninstall --purge`, which tears the stack's volumes
+	// down and so connects only in that branch.
+	if let Commands::Autostart { kind } = &cli.command {
+		let env = autostart_cmd::AutostartEnv {
+			profile: &cli.profile,
+			env_files: &cli.env_file,
+			socket: resolve_socket(cli.socket.as_deref()),
+		};
+		return autostart_cmd::dispatch(&env, &compose_files, project, base_dir, &file, kind).await;
 	}
 
 	let client = podup::podman::connect(resolve_socket(cli.socket.as_deref()).as_deref())?;

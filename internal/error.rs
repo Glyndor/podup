@@ -118,6 +118,11 @@ pub enum ComposeError {
 	/// entry such as an unterminated quoted value. The string is a ready-to-print
 	/// message.
 	EnvFile(String),
+	/// A `podup autostart` operation failed — a `systemctl --user`/`loginctl`
+	/// command could not run or returned non-zero, a unit file could not be
+	/// written/removed, or the requested mode is not yet available. The string is
+	/// a ready-to-print message.
+	Autostart(String),
 }
 
 /// Escape control characters (tabs, newlines, ESC, …) in an interpolated,
@@ -257,6 +262,7 @@ impl fmt::Display for ComposeError {
 				"invalid --timeout {secs}: use -1 to wait indefinitely or a non-negative number of seconds"
 			),
 			Self::EnvFile(s) => write!(f, "{s}"),
+			Self::Autostart(s) => write!(f, "{s}"),
 		}
 	}
 }
@@ -427,6 +433,10 @@ mod tests {
 			(
 				"env file not found: app.env",
 				ComposeError::EnvFile("env file not found: app.env".into()),
+			),
+			(
+				"linger is not enabled",
+				ComposeError::Autostart("linger is not enabled".into()),
 			),
 		];
 		for (expected_prefix, err) in cases {

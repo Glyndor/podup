@@ -9,7 +9,8 @@ mod parse;
 mod types;
 pub(crate) use commands::Commands;
 pub(crate) use types::{
-	AnsiMode, ConfigFormat, EventsFormat, GenerateCommands, OutputFormat, RmiScope,
+	AnsiMode, AutostartCommands, AutostartMode, ConfigFormat, EventsFormat, GenerateCommands,
+	OutputFormat, RmiScope,
 };
 
 /// Help-screen colours (clap honours its own TTY/`NO_COLOR`/`CLICOLOR` detection
