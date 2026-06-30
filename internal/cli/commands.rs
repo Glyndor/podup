@@ -8,7 +8,9 @@ use clap::Subcommand;
 use clap_complete::Shell;
 
 use super::parse::{parse_pull_policy, parse_scale_pair, parse_timeout};
-use super::types::{ConfigFormat, EventsFormat, GenerateCommands, OutputFormat, RmiScope};
+use super::types::{
+	AutostartCommands, ConfigFormat, EventsFormat, GenerateCommands, OutputFormat, RmiScope,
+};
 
 #[derive(Subcommand)]
 pub(crate) enum Commands {
@@ -602,6 +604,17 @@ pub(crate) enum Commands {
 	Generate {
 		#[command(subcommand)]
 		kind: GenerateCommands,
+	},
+	/// Manage a boot-time autostart unit for this compose project (rootless,
+	/// user-scope `systemctl --user`).
+	#[command(
+		alias = "boot",
+		subcommand_required = true,
+		arg_required_else_help = true
+	)]
+	Autostart {
+		#[command(subcommand)]
+		kind: AutostartCommands,
 	},
 	/// Print help for podup, or for a specific command.
 	Help {
