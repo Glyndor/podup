@@ -22,4 +22,4 @@ permissions:
 
 jobs:
   check:
-    uses: Glyndor/.github/.github/workflows/installer-contract.yml@61be27ae252d2133fab5bf17dcf03f7c13a86cb3 # v1.6.0
+    uses: Glyndor/.github/.github/workflows/installer-contract.yml@367c6651f8a8055085e7cb1e3c289e68f105e1c4 # v1.7.0
