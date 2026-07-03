@@ -46,18 +46,30 @@ pub fn require_platform_asset() -> crate::Result<&'static str> {
 
 /// Replace the currently running executable with `new_bytes`. Returns the path
 /// that was updated. The caller MUST have verified `new_bytes` first.
-pub fn install_binary(new_bytes: &[u8]) -> crate::Result<PathBuf> {
+///
+/// `expected_version` is the resolved release version (no `v` prefix). The
+/// self-test confirms the installed binary actually reports it: the signed
+/// manifest binds asset bytes but not the release tag, so without this check a
+/// man-in-the-middle able to spoof the release metadata could replay an older,
+/// genuinely-signed release as the "latest" one (a rollback attack).
+pub fn install_binary(new_bytes: &[u8], expected_version: &str) -> crate::Result<PathBuf> {
 	let exe = std::env::current_exe()
 		.map_err(|e| ComposeError::Update(format!("cannot locate current executable: {e}")))?;
 	// Resolve symlinks so we replace the real file, not a symlink pointing at it.
-	let target = std::fs::canonicalize(&exe).unwrap_or(exe);
+	// Fail closed: replacing the symlink itself would orphan the real target.
+	let target = std::fs::canonicalize(&exe).map_err(|e| {
+		ComposeError::Update(format!(
+			"cannot resolve the real path of {}: {e}",
+			exe.display()
+		))
+	})?;
 	// Keep the current binary in memory so a failed self-test can roll back. The
 	// signature already proves the new bytes are authentic; the self-test guards
 	// the install mechanics (a partial write, an arch/ABI mismatch the asset name
-	// didn't catch) by confirming the replacement actually runs.
+	// didn't catch) and pins the reported version against the resolved tag.
 	let backup = std::fs::read(&target).ok();
 	install_at(&target, new_bytes)?;
-	if let Err(e) = self_test(&target) {
+	if let Err(e) = self_test(&target, expected_version) {
 		return match backup {
 			Some(old) => {
 				install_at(&target, &old)?;
@@ -75,30 +87,27 @@ pub fn install_binary(new_bytes: &[u8]) -> crate::Result<PathBuf> {
 	Ok(target)
 }
 
-/// Confirm a freshly-installed binary runs by invoking `--version`, bounded by a
-/// timeout so a hung binary can't wedge the updater. Output is discarded; only
-/// the exit status matters.
-fn self_test(target: &Path) -> crate::Result<()> {
+/// Confirm a freshly-installed binary runs and reports `expected_version` by
+/// invoking `--version`, bounded by a timeout so a hung binary can't wedge the
+/// updater. The version check closes the rollback window: a replayed older
+/// (signed) release fails here and is rolled back.
+fn self_test(target: &Path, expected_version: &str) -> crate::Result<()> {
+	use std::io::Read;
 	use std::process::{Command, Stdio};
 	use std::time::{Duration, Instant};
 
 	let mut child = Command::new(target)
 		.arg("--version")
 		.stdin(Stdio::null())
-		.stdout(Stdio::null())
+		.stdout(Stdio::piped())
 		.stderr(Stdio::null())
 		.spawn()
 		.map_err(|e| ComposeError::Update(format!("could not run the updated binary: {e}")))?;
 
 	let deadline = Instant::now() + Duration::from_secs(10);
-	loop {
+	let status = loop {
 		match child.try_wait() {
-			Ok(Some(status)) if status.success() => return Ok(()),
-			Ok(Some(status)) => {
-				return Err(ComposeError::Update(format!(
-					"updated binary exited with {status} on --version"
-				)))
-			}
+			Ok(Some(status)) => break status,
 			Ok(None) => {
 				if Instant::now() >= deadline {
 					let _ = child.kill();
@@ -114,7 +123,29 @@ fn self_test(target: &Path) -> crate::Result<()> {
 				)))
 			}
 		}
+	};
+	if !status.success() {
+		return Err(ComposeError::Update(format!(
+			"updated binary exited with {status} on --version"
+		)));
 	}
+	// `--version` output is a single short line; reading after exit is safe
+	// (it fits the pipe buffer, so the child never blocks on a full pipe).
+	let mut out = String::new();
+	if let Some(mut stdout) = child.stdout.take() {
+		let _ = stdout.read_to_string(&mut out);
+	}
+	let reported_matches = out
+		.split_whitespace()
+		.any(|t| t == expected_version || t.trim_start_matches('v') == expected_version);
+	if !reported_matches {
+		return Err(ComposeError::Update(format!(
+			"updated binary reports {:?} instead of the resolved release version \
+			 {expected_version} — possible release-metadata tampering (rollback)",
+			out.trim()
+		)));
+	}
+	Ok(())
 }
 
 /// Write `new_bytes` to a sibling temp file and atomically move it onto
@@ -362,13 +393,34 @@ mod tests {
 			std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
 			p
 		};
-		// A binary that exits 0 on --version passes; one that exits non-zero fails.
-		let ok = mk("ok", "#!/bin/sh\nexit 0\n");
+		// A binary that exits 0 and reports the expected version passes; a
+		// non-zero exit fails.
+		let ok = mk("ok", "#!/bin/sh\necho \"podup 9.9.9\"\nexit 0\n");
 		let bad = mk("bad", "#!/bin/sh\nexit 1\n");
-		assert!(self_test(&ok).is_ok());
-		assert!(self_test(&bad).is_err());
+		assert!(self_test(&ok, "9.9.9").is_ok());
+		assert!(self_test(&bad, "9.9.9").is_err());
 		// A non-executable / missing target is a spawn error, not a panic.
-		assert!(self_test(&dir.path().join("nope")).is_err());
+		assert!(self_test(&dir.path().join("nope"), "9.9.9").is_err());
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn self_test_rejects_a_version_mismatch() {
+		use std::os::unix::fs::PermissionsExt;
+		let dir = tempfile::tempdir().unwrap();
+		let p = dir.path().join("older");
+		// A genuinely-signed but *older* replayed release exits 0 yet reports the
+		// wrong version — the rollback gate must reject it.
+		std::fs::write(&p, "#!/bin/sh\necho \"podup 1.0.0\"\nexit 0\n").unwrap();
+		std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+		let err = self_test(&p, "9.9.9").unwrap_err();
+		let msg = format!("{err}");
+		assert!(msg.contains("rollback"), "{msg}");
+		// A `v`-prefixed report still matches its unprefixed expectation.
+		let v = dir.path().join("vprefixed");
+		std::fs::write(&v, "#!/bin/sh\necho \"podup v9.9.9\"\nexit 0\n").unwrap();
+		std::fs::set_permissions(&v, std::fs::Permissions::from_mode(0o755)).unwrap();
+		assert!(self_test(&v, "9.9.9").is_ok());
 	}
 
 	#[test]
