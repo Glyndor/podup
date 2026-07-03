@@ -300,7 +300,7 @@ jobs:
           venv_py="$RUNNER_TEMP/signvenv/bin/python"
           [ -x "$venv_py" ] || venv_py="$RUNNER_TEMP/signvenv/Scripts/python.exe"
           "$venv_py" -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
-          # The key is read from RELEASE_SIGN_KEY in the environment, not argv.
+          # The key is read from GLYNDOR_RELEASE_ED25519_KEY in the environment, not argv.
           "$venv_py" .github/scripts/sign.py SHA256SUMS
           for deb in podup_*_amd64.deb podup_*_arm64.deb; do
             "$venv_py" .github/scripts/sign.py "$deb"
