@@ -46,11 +46,13 @@ upgrade with `apt` instead.
 For Debian and Ubuntu (amd64 and arm64), podup is served from the **Glyndor apt
 repository** at `https://apt.glyndor.net`, alongside other Glyndor packages.
 The repository lives in its own repo, [Glyndor-net/apt](https://github.com/Glyndor-net/apt):
-a workflow there downloads the latest amd64 `.deb` release asset of each tracked
-product, builds a signed `reprepro` repository, and publishes it to GitHub
-Pages. It is rebuilt fresh each run, so it always carries the current version of
-every package (no old-version support). podup's only responsibility is to attach
-a `podup_<version>_<arch>.deb` asset (amd64 and arm64) to each release — which
+a workflow there downloads the latest `.deb` release asset of each tracked
+product for every served architecture (amd64 and arm64), verifies each against
+the release signing key, builds a signed `reprepro` repository, and publishes
+it to Cloudflare R2 behind `apt.glyndor.net`. It is rebuilt fresh each run, so
+it always carries the current version of every package (no old-version
+support). podup's only responsibility is to attach a
+`podup_<version>_<arch>.deb` asset (amd64 and arm64) to each release — which
 the `build-deb` matrix in `release.yml` already does.
 
 ### One-line setup
@@ -67,8 +69,13 @@ the signing key and source list), then runs `apt install podup`.
 ```bash
 curl -fsSLO https://apt.glyndor.net/glyndor-archive-keyring.deb
 sudo dpkg -i glyndor-archive-keyring.deb
+gpg --show-keys /usr/share/keyrings/glyndor.gpg   # compare the fingerprint
 sudo apt update && sudo apt install podup
 ```
+
+Check the printed fingerprint against the one published in the
+[apt repository README](https://github.com/Glyndor-net/apt#verify-the-signing-key)
+— a channel independent of `apt.glyndor.net`.
 
 ### Why key renewal is automatic
 

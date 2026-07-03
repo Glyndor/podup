@@ -12,9 +12,8 @@ network or the download host — can make `podup` install a modified binary.
 
 The trust anchor is **not** the download domain, DNS, or TLS. It is the set of
 **Ed25519 public keys compiled into the binary** (`internal/update/verify.rs`,
-`RELEASE_PUBKEYS`). The matching private key exists only as the
-`RELEASE_SIGN_KEY` GitHub Actions secret and signs every release in CI
-(`.github/workflows/release.yml`).
+`RELEASE_PUBKEYS`). The matching private key is held only as a CI secret and
+signs every release in CI (`.github/workflows/release.yml`).
 
 Because the public key is baked into a binary that is itself signed and carries
 a GitHub build-provenance attestation, an attacker cannot swap the key without
@@ -55,14 +54,16 @@ from a generic `1`) and leaves the installed binary untouched.
 
 ## install.sh
 
-The one-line installer applies the same fail-closed policy. It requires **at
-least one** strong proof to succeed — the Ed25519 signature (when `python3` +
-`cryptography` and a configured public key are present) **or** the GitHub
-build-provenance attestation (`gh attestation verify`). If neither verifier is
-available it refuses to install. There is **no opt-out**: a checksum alone is not
-a trust anchor, so a verifier (`gh` or `python3` + `cryptography`) must be present
-at install time. The `--apt` path likewise verifies the keyring package's Ed25519
-signature before installing it as root.
+The one-line installer applies the same fail-closed policy. With a release
+public key configured (the default — the key ships embedded in the script), the
+**Ed25519 signature check is mandatory**: it requires `python3` with the
+`cryptography` package and refuses to install if the check cannot run, so the
+pinned key is never silently bypassed. The GitHub build-provenance attestation
+(`gh attestation verify`, pinned to the release workflow) runs as
+defence-in-depth alongside it, and serves as the trust anchor only when no
+release public key is configured. There is **no opt-out**: a checksum alone is
+not a trust anchor. The `--apt` path likewise verifies the keyring package's
+Ed25519 signature before installing it as root.
 
 `install.sh` and `install.ps1` are themselves listed in the signed `SHA256SUMS`
 manifest and carry their own `install.sh.sig` / `install.ps1.sig`, so a user
@@ -80,11 +81,7 @@ currently populated (base64 `YUn5BN/lYIxJzDvjoUROgGGQjmlq100/SqbnhF1vvfM` and
 - `install.ps1` — `PubKeyB64` and `PubKey2B64`.
 
 A signature is trusted if it validates under **any** non-empty key. If every key
-is zeroed, both the binary and the installer fail closed and install nothing. The
-same keys sign `podup`, `panel`, and `panel-agent` releases (shared
-`GLYNDOR_RELEASE_ED25519_KEY` / `GLYNDOR_RELEASE_ED25519_KEY_2`). The
-`embedded_key_verifies_real_release` regression test is `#[ignore]`d until it is
-re-vectored from the first release signed with the rotated keys.
+is zeroed, both the binary and the installer fail closed and install nothing.
 
 ### Key rotation
 
@@ -97,11 +94,9 @@ retires the old key once every install has converged on the new one. The GitHub
 build-provenance attestation, which does not depend on the signing key, still
 proves origin during the window.
 
-**Both keys above are freshly generated** because the previous key's private
-half was lost. With no old private key to sign a migration release, binaries
-already deployed with only the old key cannot migrate in-band and must be
-re-installed via the rotated `install.sh` / apt; keep both new keys live and
-signed until a normal (key-available) rotation retires one.
+Binaries that predate the current key set cannot verify newer releases in-band;
+they are reinstalled once via the current `install.sh` / apt and update normally
+from then on.
 
 ## Verifying a release independently
 

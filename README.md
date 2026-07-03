@@ -29,15 +29,25 @@
 Register the signed Glyndor repository and install — copy-paste:
 
 ```bash
-curl -fsSLO https://apt.glyndor.net/glyndor-archive-keyring.deb
-sudo dpkg -i glyndor-archive-keyring.deb
-sudo apt update && sudo apt install podup
+curl -fsSL https://raw.githubusercontent.com/Glyndor-net/podup/main/install.sh | bash -s -- --apt
 ```
 
-The keyring package registers `https://apt.glyndor.net` and ships the signing
-key, so podup updates (and key renewals) arrive through `apt upgrade` — the apt
-build omits self-update since apt owns upgrades. Signed, SHA-256 verified,
-fail-closed. Requires **Podman ≥ 5.0** (rootless).
+The installer verifies the keyring package's Ed25519 signature against its
+pinned release key before anything is installed (fail-closed). The keyring
+package registers `https://apt.glyndor.net` and ships the signing key, so podup
+updates (and key renewals) arrive through `apt upgrade` — the apt build omits
+self-update since apt owns upgrades. Requires **Podman ≥ 5.0** (rootless).
+
+To register the repository by hand instead, fetch the keyring and check the
+key's fingerprint against the one published in the
+[apt repository README](https://github.com/Glyndor-net/apt#verify-the-signing-key):
+
+```bash
+curl -fsSLO https://apt.glyndor.net/glyndor-archive-keyring.deb
+sudo dpkg -i glyndor-archive-keyring.deb
+gpg --show-keys /usr/share/keyrings/glyndor.gpg   # compare the fingerprint
+sudo apt update && sudo apt install podup
+```
 
 <details>
 <summary><b>Other methods — Linux/macOS script · Windows · build from source · self-update · Podman version · platforms</b></summary>
@@ -86,8 +96,9 @@ release's Ed25519 signature and SHA-256 checksum — it fails closed otherwise. 
 
 podup tracks the **latest stable Podman** and supports its **last two majors —
 Podman 5.x and 6.x**. It talks to Podman's native libpod API (still versioned
-5.x — 5.2.0 on Podman 6), so it needs **Podman ≥ 5.0**. Validated on **Podman
-5.x (5.8.1) and 6.0.0** (the latter in CI against Fedora rawhide). Many distributions still ship 4.x — check
+5.x — 5.2.0 on Podman 6), so it needs **Podman ≥ 5.0**. Both supported majors
+run the integration suite in CI on every engine change (Fedora 44 for the
+latest 5.x, rawhide for 6.x). Many distributions still ship 4.x — check
 `podman --version` and upgrade if needed. Fedora, Debian trixie/sid and recent
 Ubuntu releases carry 5.x; on an older release, install or upgrade Podman
 following the official guide: <https://podman.io/docs/installation>.
