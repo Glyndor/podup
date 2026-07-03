@@ -12,7 +12,7 @@ use crate::ComposeError;
 use super::ReleaseSource;
 
 /// `owner/repo` slug of the canonical release repository.
-pub const REPO: &str = "Glyndor/podup";
+pub const REPO: &str = "Glyndor-net/podup";
 
 /// Hard cap on any single downloaded asset (defensive against a hostile or
 /// broken endpoint streaming unbounded data into memory).

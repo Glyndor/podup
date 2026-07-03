@@ -37,7 +37,7 @@ pub fn require_platform_asset() -> crate::Result<&'static str> {
 	platform_asset().ok_or_else(|| {
 		ComposeError::Update(format!(
 			"self-update is not supported on {}/{}; reinstall manually from \
-			 https://github.com/Glyndor/podup/releases",
+			 https://github.com/Glyndor-net/podup/releases",
 			std::env::consts::OS,
 			std::env::consts::ARCH
 		))

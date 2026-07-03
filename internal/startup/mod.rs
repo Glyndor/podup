@@ -62,7 +62,7 @@ pub(crate) fn is_label_only(command: &Commands) -> bool {
 }
 
 /// Canonical project URL, reused for the bug-report hint on internal errors.
-const REPO_URL: &str = "https://github.com/Glyndor/podup";
+const REPO_URL: &str = "https://github.com/Glyndor-net/podup";
 
 /// Event formatter that renders every diagnostic as `podup: <level>: <message>`
 /// on a single line, matching the prefix used by the CLI's own `eprintln!`

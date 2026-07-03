@@ -4,9 +4,9 @@ Priority: optional
 Maintainer: Glyndor <packages@glyndor.net>
 Build-Depends: debhelper-compat (= 13), cargo, rustc (>= 1.85)
 Standards-Version: 4.7.0
-Homepage: https://github.com/Glyndor/podup
-Vcs-Git: https://github.com/Glyndor/podup.git
-Vcs-Browser: https://github.com/Glyndor/podup
+Homepage: https://github.com/Glyndor-net/podup
+Vcs-Git: https://github.com/Glyndor-net/podup.git
+Vcs-Browser: https://github.com/Glyndor-net/podup
 Rules-Requires-Root: no
 
 Package: podup

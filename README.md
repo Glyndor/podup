@@ -9,7 +9,7 @@
 ![rootless](https://img.shields.io/badge/rootless-native-3fb950)
 ![Podman 5 & 6](https://img.shields.io/badge/Podman-5_%26_6-892ca0)
 
-[![CI](https://github.com/Glyndor/podup/actions/workflows/ci.yml/badge.svg)](https://github.com/Glyndor/podup/actions/workflows/ci.yml)
+[![CI](https://github.com/Glyndor-net/podup/actions/workflows/ci.yml/badge.svg)](https://github.com/Glyndor-net/podup/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/podup.svg)](https://crates.io/crates/podup)
 [![MSRV](https://img.shields.io/badge/MSRV-1.85-orange.svg)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
