@@ -118,12 +118,19 @@ pub fn progress_note(msg: &str) {
 /// container's name so scripts capturing stdout get the id, matching
 /// `docker compose run -d`. A no-op unless [`set_progress`] enabled progress
 /// output, so embedders and machine paths stay silent.
-pub fn result_line(msg: &str) {
+///
+/// The result line is the one thing scripts capture from stdout, so a failed
+/// write is a real error (exit non-zero), not something to swallow — except a
+/// broken pipe, which follows the process-wide quiet-exit convention.
+pub fn result_line(msg: &str) -> std::io::Result<()> {
 	use std::io::Write;
 	if !progress_enabled() {
-		return;
+		return Ok(());
 	}
-	let _ = writeln!(anstream::stdout(), "{msg}");
+	match writeln!(anstream::stdout(), "{msg}") {
+		Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => Err(e),
+		_ => Ok(()),
+	}
 }
 
 /// Bold — table headers and emphasis.

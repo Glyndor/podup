@@ -99,7 +99,9 @@ pub(crate) async fn dispatch(
 				engine.watch(file).await?;
 			} else if !detach {
 				engine.attach_logs_with_options(file, timestamps).await?;
-				let _ = engine.stop(file, &[]).await;
+				// A failed teardown must surface as a non-zero exit, not be
+				// swallowed after the log streams end.
+				engine.stop(file, &[]).await?;
 			}
 		}
 		Commands::Down {

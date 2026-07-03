@@ -196,7 +196,7 @@ impl Engine {
 			// Echo the started container's name to stdout (gated by progress
 			// output), so scripts capturing stdout get an id like
 			// `docker compose run -d`.
-			crate::ui::result_line(&run_name);
+			crate::ui::result_line(&run_name).map_err(ComposeError::Io)?;
 			return Ok(());
 		}
 
