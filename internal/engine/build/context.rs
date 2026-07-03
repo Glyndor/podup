@@ -91,19 +91,13 @@ pub(super) fn build_context_tar_with_inline(
 	tar.append_data(&mut header, inline_name, inline.as_bytes())
 		.map_err(|e| ComposeError::Build(e.to_string()))?;
 
-	// Skip the user's `.dockerignore` here; it is rewritten below with an extra
-	// rule excluding the synthesized inline Dockerfile.
+	// Skip the user's `.dockerignore` here; it is rewritten below with extra
+	// rules excluding every synthesized entry (inline Dockerfile, build secrets).
 	append_context(&mut tar, context, &ignore_patterns, &[".dockerignore"])?;
 
-	// Rewrite `.dockerignore` (merged with any user rules) so a `COPY .` in the
-	// build does not bake the synthesized `.dockerfile-inline` into the image.
-	let dockerignore = inline_dockerignore(context, inline_name);
-	let mut di_header = tar::Header::new_gnu();
-	di_header.set_size(dockerignore.len() as u64);
-	di_header.set_mode(0o644);
-	di_header.set_cksum();
-	tar.append_data(&mut di_header, ".dockerignore", dockerignore.as_bytes())
-		.map_err(|e| ComposeError::Build(e.to_string()))?;
+	let mut synthesized: Vec<&str> = vec![inline_name];
+	synthesized.extend(extra_files.iter().map(|(n, _)| n.as_str()));
+	append_dockerignore(&mut tar, &synthesized_dockerignore(context, &synthesized))?;
 
 	append_extra_files(&mut tar, extra_files)?;
 
@@ -126,7 +120,16 @@ pub(crate) fn build_context_tar(
 	let encoder = GzEncoder::new(Vec::new(), Compression::default());
 	let mut tar = tar::Builder::new(encoder);
 
-	append_context(&mut tar, context, &ignore_patterns, &[])?;
+	if extra_files.is_empty() {
+		append_context(&mut tar, context, &ignore_patterns, &[])?;
+	} else {
+		// Skip the user's `.dockerignore`; it is rewritten with an exclusion per
+		// synthesized entry so a `COPY .` in the build cannot bake secret bytes
+		// into image layers.
+		append_context(&mut tar, context, &ignore_patterns, &[".dockerignore"])?;
+		let synthesized: Vec<&str> = extra_files.iter().map(|(n, _)| n.as_str()).collect();
+		append_dockerignore(&mut tar, &synthesized_dockerignore(context, &synthesized))?;
+	}
 	append_extra_files(&mut tar, extra_files)?;
 
 	let gz = tar
@@ -139,17 +142,32 @@ pub(crate) fn build_context_tar(
 	Ok(bytes)
 }
 
-/// Build the `.dockerignore` content for an inline-Dockerfile build: any user
-/// rules plus a final entry excluding the synthesized inline Dockerfile so a
-/// `COPY .` in the build does not capture `.dockerfile-inline`.
-fn inline_dockerignore(context: &Path, inline_name: &str) -> String {
+/// Append a synthesized `.dockerignore` entry to the context tar.
+fn append_dockerignore<W: std::io::Write>(tar: &mut tar::Builder<W>, content: &str) -> Result<()> {
+	let mut header = tar::Header::new_gnu();
+	header.set_size(content.len() as u64);
+	header.set_mode(0o644);
+	header.set_cksum();
+	tar.append_data(&mut header, ".dockerignore", content.as_bytes())
+		.map_err(|e| ComposeError::Build(e.to_string()))
+}
+
+/// Build the `.dockerignore` content for a context tar carrying synthesized
+/// entries: any user rules plus a final exclusion per synthesized name, so a
+/// `COPY .` in the build does not capture the inline Dockerfile or a build
+/// secret. The libpod `secrets=id=…,src=…` mount reads straight from the
+/// extracted context, which `.dockerignore` does not filter, so excluded
+/// secret entries remain mountable.
+fn synthesized_dockerignore(context: &Path, names: &[&str]) -> String {
 	let existing =
 		crate::filesystem::read_to_string_capped(context.join(".dockerignore")).unwrap_or_default();
 	let mut out = existing.trim_end_matches(['\n', '\r']).to_string();
-	if !out.is_empty() {
-		out.push('\n');
+	for name in names {
+		if !out.is_empty() {
+			out.push('\n');
+		}
+		out.push_str(name);
 	}
-	out.push_str(inline_name);
 	out.push('\n');
 	out
 }
@@ -336,6 +354,72 @@ mod tests {
 		assert!(
 			names.iter().any(|n| n.contains(".podup-build-secret-tok")),
 			"secret entry must be present: {names:?}"
+		);
+	}
+
+	#[test]
+	fn build_secret_entries_excluded_from_copy_via_dockerignore() {
+		use flate2::read::GzDecoder;
+		use std::io::Read;
+
+		let dir = tempdir().unwrap();
+		fs::write(dir.path().join("Dockerfile"), b"FROM alpine\nCOPY . /app\n").unwrap();
+		fs::write(dir.path().join(".dockerignore"), b"*.log\n").unwrap();
+		let extra = vec![(".podup-build-secret-tok".to_string(), b"hunter2".to_vec())];
+		let bytes = build_context_tar(dir.path(), "Dockerfile", &extra).unwrap();
+
+		let mut raw = Vec::new();
+		GzDecoder::new(bytes.as_slice())
+			.read_to_end(&mut raw)
+			.unwrap();
+		let mut archive = tar::Archive::new(raw.as_slice());
+		let mut di_entries = 0;
+		let mut di = String::new();
+		for entry in archive.entries().unwrap() {
+			let mut entry = entry.unwrap();
+			if entry.path().unwrap().to_string_lossy() == ".dockerignore" {
+				di_entries += 1;
+				entry.read_to_string(&mut di).unwrap();
+			}
+		}
+		assert_eq!(di_entries, 1, "exactly one .dockerignore entry");
+		assert!(di.lines().any(|l| l == "*.log"), "user rule kept: {di:?}");
+		assert!(
+			di.lines().any(|l| l == ".podup-build-secret-tok"),
+			"secret entry must be COPY-excluded via .dockerignore: {di:?}"
+		);
+	}
+
+	#[test]
+	fn inline_tar_excludes_build_secrets_via_dockerignore() {
+		use flate2::read::GzDecoder;
+		use std::io::Read;
+
+		let dir = tempdir().unwrap();
+		fs::write(dir.path().join("app.txt"), b"x").unwrap();
+		let extra = vec![(".podup-build-secret-db".to_string(), b"s3cret".to_vec())];
+		let (bytes, _) =
+			build_context_tar_with_inline(dir.path(), "FROM alpine\n", &extra).unwrap();
+
+		let mut raw = Vec::new();
+		GzDecoder::new(bytes.as_slice())
+			.read_to_end(&mut raw)
+			.unwrap();
+		let mut archive = tar::Archive::new(raw.as_slice());
+		let mut di = String::new();
+		for entry in archive.entries().unwrap() {
+			let mut entry = entry.unwrap();
+			if entry.path().unwrap().to_string_lossy() == ".dockerignore" {
+				entry.read_to_string(&mut di).unwrap();
+			}
+		}
+		assert!(
+			di.lines().any(|l| l == ".dockerfile-inline"),
+			"inline exclusion kept: {di:?}"
+		);
+		assert!(
+			di.lines().any(|l| l == ".podup-build-secret-db"),
+			"secret entry must be COPY-excluded via .dockerignore: {di:?}"
 		);
 	}
 
