@@ -213,16 +213,24 @@ install_binary() {
 			if [[ ${#PUBKEYS[@]} -eq 0 ]]; then
 				log_info "no release public key configured — skipping Ed25519 signature check"
 			else
-				log_info "python3+cryptography not available — cannot check Ed25519 signature"
+				# A release public key IS configured: the pinned key is the trust
+				# anchor and must not be silently bypassed in favour of the
+				# (repo-scoped) attestation. Fail closed.
+				fail "python3 with the 'cryptography' package is required to verify the \
+release signature against the pinned key. Install it and re-run."
 			fi
 			;;
 	esac
 
 	# Build-provenance attestation: proves the binary was produced by this repo's
-	# release workflow (GitHub OIDC). Strong even without the release public key.
+	# release workflow (GitHub OIDC). Defence-in-depth next to the pinned key;
+	# the trust anchor when no release public key is configured. Pinned to the
+	# release workflow — a repo-scoped check would accept an attestation from any
+	# workflow in the repo.
 	if command -v gh >/dev/null 2>&1 && gh attestation --help >/dev/null 2>&1; then
 		log_info "Verifying artifact attestation ..."
-		gh attestation verify "${TMP_DIR}/${ARTIFACT}" --repo "$REPO" >/dev/null \
+		gh attestation verify "${TMP_DIR}/${ARTIFACT}" --repo "$REPO" \
+			--signer-workflow "${REPO}/.github/workflows/release.yml" >/dev/null \
 			|| fail "Attestation verification failed for ${ARTIFACT}"
 		log_ok "Attestation verified"
 		verified=1
@@ -240,12 +248,16 @@ or python3 with the 'cryptography' package, or set PODUP_RELEASE_PUBKEY_B64, the
 
 	verify_checksum "$ARTIFACT"
 
-	local install_cmd=(install -m 0755 "${TMP_DIR}/${ARTIFACT}" "${INSTALL_DIR}/podup")
+	# Stage next to the target and rename into place, so a kill mid-install can
+	# never leave a partial yet executable binary on PATH.
+	local staged="${INSTALL_DIR}/.podup.install-$$"
+	local install_cmd=(install -m 0755 "${TMP_DIR}/${ARTIFACT}" "$staged")
+	local move_cmd=(mv -f "$staged" "${INSTALL_DIR}/podup")
 	if [[ -w "$INSTALL_DIR" ]]; then
-		"${install_cmd[@]}"
+		"${install_cmd[@]}" && "${move_cmd[@]}"
 	elif command -v sudo >/dev/null 2>&1; then
 		log_info "Installing to ${INSTALL_DIR} (requires sudo) ..."
-		sudo "${install_cmd[@]}"
+		sudo "${install_cmd[@]}" && sudo "${move_cmd[@]}"
 	else
 		fail "Cannot write to ${INSTALL_DIR} and sudo is not available. Set PODUP_INSTALL_DIR to a writable directory."
 	fi
