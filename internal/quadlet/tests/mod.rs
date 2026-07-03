@@ -1,6 +1,7 @@
 use crate::quadlet::{QuadletOutput, QuadletUnit};
 
 mod fields;
+mod network_volume;
 mod units;
 
 fn unit_named<'a>(out: &'a QuadletOutput, filename: &str) -> &'a QuadletUnit {
