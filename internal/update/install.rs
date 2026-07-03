@@ -382,23 +382,46 @@ mod tests {
 		assert!(!missing.exists(), "must not create the missing parent dir");
 	}
 
+	/// Write an executable stub script and return its path.
+	#[cfg(unix)]
+	fn write_stub(dir: &Path, name: &str, body: &str) -> PathBuf {
+		use std::os::unix::fs::PermissionsExt;
+		let p = dir.join(name);
+		std::fs::write(&p, body).unwrap();
+		std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+		p
+	}
+
+	/// Run [`self_test`], retrying while the spawn hits ETXTBSY: a concurrent
+	/// test thread forking between our write and exec briefly holds the
+	/// script's write fd open, which makes exec fail spuriously.
+	#[cfg(unix)]
+	fn self_test_retrying(target: &Path, expected: &str) -> crate::Result<()> {
+		for _ in 0..100 {
+			match self_test(target, expected) {
+				Err(e) if format!("{e}").contains("Text file busy") => {
+					std::thread::sleep(std::time::Duration::from_millis(10));
+				}
+				other => return other,
+			}
+		}
+		self_test(target, expected)
+	}
+
 	#[cfg(unix)]
 	#[test]
 	fn self_test_passes_for_a_zero_exit_and_fails_otherwise() {
-		use std::os::unix::fs::PermissionsExt;
 		let dir = tempfile::tempdir().unwrap();
-		let mk = |name: &str, body: &str| {
-			let p = dir.path().join(name);
-			std::fs::write(&p, body).unwrap();
-			std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
-			p
-		};
 		// A binary that exits 0 and reports the expected version passes; a
 		// non-zero exit fails.
-		let ok = mk("ok", "#!/bin/sh\necho \"podup 9.9.9\"\nexit 0\n");
-		let bad = mk("bad", "#!/bin/sh\nexit 1\n");
-		assert!(self_test(&ok, "9.9.9").is_ok());
-		assert!(self_test(&bad, "9.9.9").is_err());
+		let ok = write_stub(
+			dir.path(),
+			"ok",
+			"#!/bin/sh\necho \"podup 9.9.9\"\nexit 0\n",
+		);
+		let bad = write_stub(dir.path(), "bad", "#!/bin/sh\nexit 1\n");
+		assert!(self_test_retrying(&ok, "9.9.9").is_ok());
+		assert!(self_test_retrying(&bad, "9.9.9").is_err());
 		// A non-executable / missing target is a spawn error, not a panic.
 		assert!(self_test(&dir.path().join("nope"), "9.9.9").is_err());
 	}
@@ -406,21 +429,24 @@ mod tests {
 	#[cfg(unix)]
 	#[test]
 	fn self_test_rejects_a_version_mismatch() {
-		use std::os::unix::fs::PermissionsExt;
 		let dir = tempfile::tempdir().unwrap();
-		let p = dir.path().join("older");
 		// A genuinely-signed but *older* replayed release exits 0 yet reports the
 		// wrong version — the rollback gate must reject it.
-		std::fs::write(&p, "#!/bin/sh\necho \"podup 1.0.0\"\nexit 0\n").unwrap();
-		std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
-		let err = self_test(&p, "9.9.9").unwrap_err();
+		let p = write_stub(
+			dir.path(),
+			"older",
+			"#!/bin/sh\necho \"podup 1.0.0\"\nexit 0\n",
+		);
+		let err = self_test_retrying(&p, "9.9.9").unwrap_err();
 		let msg = format!("{err}");
 		assert!(msg.contains("rollback"), "{msg}");
 		// A `v`-prefixed report still matches its unprefixed expectation.
-		let v = dir.path().join("vprefixed");
-		std::fs::write(&v, "#!/bin/sh\necho \"podup v9.9.9\"\nexit 0\n").unwrap();
-		std::fs::set_permissions(&v, std::fs::Permissions::from_mode(0o755)).unwrap();
-		assert!(self_test(&v, "9.9.9").is_ok());
+		let v = write_stub(
+			dir.path(),
+			"vprefixed",
+			"#!/bin/sh\necho \"podup v9.9.9\"\nexit 0\n",
+		);
+		assert!(self_test_retrying(&v, "9.9.9").is_ok());
 	}
 
 	#[test]
