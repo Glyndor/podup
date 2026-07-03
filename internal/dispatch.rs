@@ -530,6 +530,7 @@ pub(crate) async fn dispatch(
 		Commands::Autostart { .. } => unreachable!("handled above"),
 		Commands::Watch => engine.watch(file).await?,
 		Commands::Help { .. } => unreachable!("handled before compose parsing"),
+		Commands::Version { .. } => unreachable!("handled before compose parsing"),
 		Commands::Ls { .. } => unreachable!("handled before compose parsing"),
 		#[cfg(feature = "update")]
 		Commands::Update { .. } => unreachable!("handled before compose parsing"),

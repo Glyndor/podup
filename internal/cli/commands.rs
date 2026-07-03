@@ -637,6 +637,15 @@ pub(crate) enum Commands {
 		#[arg(long)]
 		force: bool,
 	},
+	/// Print version information (like `docker compose version`).
+	Version {
+		/// Print only the version number.
+		#[arg(long)]
+		short: bool,
+		/// Output format: pretty or json.
+		#[arg(long, value_parser = ["pretty", "json"], default_value = "pretty")]
+		format: String,
+	},
 	/// Print a shell completion script to stdout for the named shell.
 	#[cfg(feature = "completions")]
 	Completions {
