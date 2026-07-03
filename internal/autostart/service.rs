@@ -63,6 +63,37 @@ fn quote_arg(token: &str) -> String {
 	out
 }
 
+/// Reject any unit-embedded value containing ASCII control characters.
+///
+/// `WorkingDirectory=` (unlike exec-line tokens) takes the rest of its line
+/// literally and honours no C-escapes, so a path with an embedded newline
+/// would terminate the directive and inject arbitrary unit lines (e.g. an
+/// `ExecStartPre=`). No legitimate path or flag value contains control bytes;
+/// fail closed instead of trying to escape the unescapable.
+pub fn validate_unit_opts(opts: &ServiceUnitOpts) -> Result<(), String> {
+	fn check(field: &str, value: &str) -> Result<(), String> {
+		if value.chars().any(|c| c.is_ascii_control()) {
+			return Err(format!(
+				"{field} contains a control character and cannot be embedded in a systemd unit: {value:?}"
+			));
+		}
+		Ok(())
+	}
+	check("executable path", &opts.exe.to_string_lossy())?;
+	check("working directory", &opts.working_dir.to_string_lossy())?;
+	check("project name", &opts.project)?;
+	for f in &opts.compose_files {
+		check("compose file path", &f.to_string_lossy())?;
+	}
+	for p in &opts.profiles {
+		check("profile", p)?;
+	}
+	for e in &opts.env_files {
+		check("env file path", e)?;
+	}
+	Ok(())
+}
+
 /// The leading `podup` arguments shared by both the start and stop commands:
 /// `-f <file>...  -p <project>  [--profile P]...  [--env-file E]...`. These must
 /// precede the subcommand (`-f`/`-p` are not global flags).
@@ -211,6 +242,37 @@ mod tests {
 	#[test]
 	fn ends_with_newline() {
 		assert!(render_service_unit(&opts_single()).ends_with("WantedBy=default.target\n"));
+	}
+
+	#[test]
+	fn validate_rejects_control_chars_in_workdir() {
+		let mut o = opts_single();
+		o.working_dir = PathBuf::from("/srv/app\nExecStartPre=/bin/evil");
+		let err = validate_unit_opts(&o).unwrap_err();
+		assert!(err.contains("working directory"), "{err}");
+	}
+
+	#[test]
+	fn validate_rejects_control_chars_in_exe_and_files() {
+		let mut o = opts_single();
+		o.exe = PathBuf::from("/usr/local/bin/pod\x07up");
+		assert!(validate_unit_opts(&o).is_err());
+
+		let mut o = opts_single();
+		o.compose_files = vec![PathBuf::from("/srv/app/com\npose.yml")];
+		assert!(validate_unit_opts(&o).is_err());
+
+		let mut o = opts_single();
+		o.env_files = vec!["/srv/app/.env\r".to_string()];
+		assert!(validate_unit_opts(&o).is_err());
+	}
+
+	#[test]
+	fn validate_accepts_normal_paths() {
+		assert!(validate_unit_opts(&opts_single()).is_ok());
+		let mut o = opts_single();
+		o.working_dir = PathBuf::from("/srv/my app (prod)");
+		assert!(validate_unit_opts(&o).is_ok());
 	}
 
 	#[test]
