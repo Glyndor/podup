@@ -20,6 +20,7 @@ fn append_context<W: std::io::Write>(
 	context: &Path,
 	ignore_patterns: &[String],
 	skip_names: &[&str],
+	force_include: &[&str],
 ) -> Result<()> {
 	// Do not dereference symlinks: a symlink in the context would otherwise pack
 	// the bytes of its (possibly out-of-context) target — e.g. `/etc/hostname` or
@@ -34,7 +35,14 @@ fn append_context<W: std::io::Write>(
 		if skip_names.iter().any(|n| rel_str == *n) {
 			continue;
 		}
-		if is_ignored(&rel_str, ignore_patterns) {
+		// The active Dockerfile is always sent to the builder even when
+		// `.dockerignore` would match it: Docker keeps the Dockerfile (and
+		// `.dockerignore`) available for the build itself — they just can't be
+		// COPY'd into the image. Without this, a `.dockerignore` listing
+		// `Dockerfile` (or a blanket `*`) drops it from the context tar and the
+		// build fails with "stat .../Dockerfile: no such file or directory".
+		let forced = force_include.iter().any(|n| rel_str == *n);
+		if !forced && is_ignored(&rel_str, ignore_patterns) {
 			continue;
 		}
 		// Classify without following symlinks so a symlink-to-dir is stored as a
@@ -93,7 +101,7 @@ pub(super) fn build_context_tar_with_inline(
 
 	// Skip the user's `.dockerignore` here; it is rewritten below with extra
 	// rules excluding every synthesized entry (inline Dockerfile, build secrets).
-	append_context(&mut tar, context, &ignore_patterns, &[".dockerignore"])?;
+	append_context(&mut tar, context, &ignore_patterns, &[".dockerignore"], &[])?;
 
 	let mut synthesized: Vec<&str> = vec![inline_name];
 	synthesized.extend(extra_files.iter().map(|(n, _)| n.as_str()));
@@ -112,7 +120,7 @@ pub(super) fn build_context_tar_with_inline(
 
 pub(crate) fn build_context_tar(
 	context: &Path,
-	_dockerfile: &str,
+	dockerfile: &str,
 	extra_files: &[(String, Vec<u8>)],
 ) -> Result<Vec<u8>> {
 	let ignore_patterns = read_dockerignore(context);
@@ -120,13 +128,21 @@ pub(crate) fn build_context_tar(
 	let encoder = GzEncoder::new(Vec::new(), Compression::default());
 	let mut tar = tar::Builder::new(encoder);
 
+	// Force-include the active Dockerfile so a `.dockerignore` that matches it
+	// cannot drop it from the context the builder receives (Docker parity).
 	if extra_files.is_empty() {
-		append_context(&mut tar, context, &ignore_patterns, &[])?;
+		append_context(&mut tar, context, &ignore_patterns, &[], &[dockerfile])?;
 	} else {
 		// Skip the user's `.dockerignore`; it is rewritten with an exclusion per
 		// synthesized entry so a `COPY .` in the build cannot bake secret bytes
 		// into image layers.
-		append_context(&mut tar, context, &ignore_patterns, &[".dockerignore"])?;
+		append_context(
+			&mut tar,
+			context,
+			&ignore_patterns,
+			&[".dockerignore"],
+			&[dockerfile],
+		)?;
 		let synthesized: Vec<&str> = extra_files.iter().map(|(n, _)| n.as_str()).collect();
 		append_dockerignore(&mut tar, &synthesized_dockerignore(context, &synthesized))?;
 	}
@@ -358,7 +374,7 @@ mod tests {
 	}
 
 	#[test]
-	fn build_secret_entries_excluded_from_copy_via_dockerignore() {
+fn build_secret_entries_excluded_from_copy_via_dockerignore() {
 		use flate2::read::GzDecoder;
 		use std::io::Read;
 
@@ -420,6 +436,36 @@ mod tests {
 		assert!(
 			di.lines().any(|l| l == ".podup-build-secret-db"),
 			"secret entry must be COPY-excluded via .dockerignore: {di:?}"
+		);
+	}
+
+	#[test]
+	fn dockerfile_is_force_included_despite_dockerignore() {
+		use flate2::read::GzDecoder;
+		use std::io::Read;
+
+		// A `.dockerignore` that matches the Dockerfile (here a blanket `*`) must
+		// not drop it from the context tar — Docker keeps the active Dockerfile
+		// available to the builder regardless. Without the force-include the build
+		// fails with "stat .../Dockerfile: no such file or directory".
+		let dir = tempdir().unwrap();
+		fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
+		fs::write(dir.path().join(".dockerignore"), b"*\n").unwrap();
+		let bytes = build_context_tar(dir.path(), "Dockerfile", &[]).unwrap();
+
+		let mut raw = Vec::new();
+		GzDecoder::new(bytes.as_slice())
+			.read_to_end(&mut raw)
+			.unwrap();
+		let names: Vec<String> = tar::Archive::new(raw.as_slice())
+			.entries()
+			.unwrap()
+			.filter_map(|e| e.ok())
+			.filter_map(|e| e.path().ok().map(|p| p.to_string_lossy().into_owned()))
+			.collect();
+		assert!(
+			names.iter().any(|n| n == "Dockerfile"),
+			"Dockerfile must survive a `*` .dockerignore: {names:?}"
 		);
 	}
 
