@@ -71,35 +71,37 @@ is no longer the one unverifiable link in the chain.
 
 ## The embedded public keys
 
-Each consumer holds **up to two** accepted release keys — an active key plus an
-empty rotation slot. The active key (base64
-`APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y=`) is embedded in three places:
+Each consumer holds **up to two** accepted release keys. Both slots are
+currently populated (base64 `YUn5BN/lYIxJzDvjoUROgGGQjmlq100/SqbnhF1vvfM` and
+`gWmPpZyqOogAwSDRonGyL21u3Xj2GTfcvjwXrmA8qQE`), embedded in three places:
 
-- `internal/update/verify.rs` — `RELEASE_PUBKEYS[0]` (raw 32 bytes); slot 1 is
-  `[0u8; 32]` until a second key is rolled in.
-- `install.sh` — `PODUP_RELEASE_PUBKEY_B64` default; `PODUP_RELEASE_PUBKEY2_B64`
-  is the (empty) rotation slot.
-- `install.ps1` — `PubKeyB64` default; `PubKey2B64` is the rotation slot.
+- `internal/update/verify.rs` — `RELEASE_PUBKEYS[0]` and `[1]` (raw 32 bytes).
+- `install.sh` — `PODUP_RELEASE_PUBKEY_B64` and `PODUP_RELEASE_PUBKEY2_B64`.
+- `install.ps1` — `PubKeyB64` and `PubKey2B64`.
 
-A signature is trusted if it validates under **any** non-empty key. The active
-key is verified against the genuine published `SHA256SUMS.sig` by the
-`embedded_key_verifies_real_release` regression test, so an accidental or
-malicious edit to the constant fails CI. If every key is zeroed, both the binary
-and the installer fail closed and install nothing. The same key signs `podup`,
-`panel`, and `panel-agent` releases (shared `RELEASE_SIGN_KEY`).
+A signature is trusted if it validates under **any** non-empty key. If every key
+is zeroed, both the binary and the installer fail closed and install nothing. The
+same keys sign `podup`, `panel`, and `panel-agent` releases (shared
+`GLYNDOR_RELEASE_ED25519_KEY` / `GLYNDOR_RELEASE_ED25519_KEY_2`). The
+`embedded_key_verifies_real_release` regression test is `#[ignore]`d until it is
+re-vectored from the first release signed with the rotated keys.
 
 ### Key rotation
 
 Because each binary accepts up to two keys, the signing key can be rotated
-**without stranding installed binaries** — even if the private key leaks. A
-two-release transition first ships the new key alongside the old, so binaries
-already in the field accept the next release and gain the new key; a later
-release then retires the old key once every install has converged on the new
-one.
+**without stranding installed binaries** — provided the outgoing private key is
+still available to sign the migration release. A two-release transition first
+ships the new key alongside the old (signed by the old key), so binaries already
+in the field accept the next release and gain the new key; a later release then
+retires the old key once every install has converged on the new one. The GitHub
+build-provenance attestation, which does not depend on the signing key, still
+proves origin during the window.
 
-During the transition the old key is still accepted for one release — an
-unavoidable cost of any rotation. The GitHub build-provenance attestation, which
-does not depend on the signing key, still proves origin during the window.
+**Both keys above are freshly generated** because the previous key's private
+half was lost. With no old private key to sign a migration release, binaries
+already deployed with only the old key cannot migrate in-band and must be
+re-installed via the rotated `install.sh` / apt; keep both new keys live and
+signed until a normal (key-available) rotation retires one.
 
 ## Verifying a release independently
 
@@ -119,7 +121,7 @@ python3 - <<'PY'
 import base64
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 key = Ed25519PublicKey.from_public_bytes(
-    base64.b64decode("APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y" + "=="))
+    base64.b64decode("YUn5BN/lYIxJzDvjoUROgGGQjmlq100/SqbnhF1vvfM" + "=="))
 key.verify(open("SHA256SUMS.sig", "rb").read(), open("SHA256SUMS", "rb").read())
 print("SHA256SUMS signature OK")
 PY

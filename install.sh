@@ -93,12 +93,12 @@ download() {
 }
 
 # Baked-in base64 (unpadded) raw Ed25519 public keys (32 bytes each) matching the
-# release signing key (RELEASE_SIGN_KEY). Up to two are accepted: the second is
-# empty except during a key rotation, when it holds the new key so a release
-# signed by either key verifies. The signature passes if any key validates.
+# release signing keys (GLYNDOR_RELEASE_ED25519_KEY / _2). Both are populated so a
+# release signed by either key verifies during a make-before-break rotation; the
+# signature passes if any key validates. Retire a key by clearing its slot here.
 # Override for a fork via the PODUP_RELEASE_PUBKEY_B64 / _PUBKEY2_B64 env vars.
-PODUP_RELEASE_PUBKEY_B64="${PODUP_RELEASE_PUBKEY_B64:-APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y}"
-PODUP_RELEASE_PUBKEY2_B64="${PODUP_RELEASE_PUBKEY2_B64:-}"
+PODUP_RELEASE_PUBKEY_B64="${PODUP_RELEASE_PUBKEY_B64:-YUn5BN/lYIxJzDvjoUROgGGQjmlq100/SqbnhF1vvfM}"
+PODUP_RELEASE_PUBKEY2_B64="${PODUP_RELEASE_PUBKEY2_B64:-gWmPpZyqOogAwSDRonGyL21u3Xj2GTfcvjwXrmA8qQE}"
 
 PUBKEYS=()
 [[ -n "$PODUP_RELEASE_PUBKEY_B64" ]]  && PUBKEYS+=("$PODUP_RELEASE_PUBKEY_B64")

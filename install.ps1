@@ -87,8 +87,8 @@ try {
 	# second is empty except during a key rotation, when it holds the new key so a
 	# release signed by either key verifies. The signature passes if any key
 	# validates. Override for a fork via PODUP_RELEASE_PUBKEY_B64 / _PUBKEY2_B64.
-	$PubKeyB64  = if ($env:PODUP_RELEASE_PUBKEY_B64) { $env:PODUP_RELEASE_PUBKEY_B64 } else { 'APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y' }
-	$PubKey2B64 = if ($env:PODUP_RELEASE_PUBKEY2_B64) { $env:PODUP_RELEASE_PUBKEY2_B64 } else { '' }
+	$PubKeyB64  = if ($env:PODUP_RELEASE_PUBKEY_B64) { $env:PODUP_RELEASE_PUBKEY_B64 } else { 'YUn5BN/lYIxJzDvjoUROgGGQjmlq100/SqbnhF1vvfM' }
+	$PubKey2B64 = if ($env:PODUP_RELEASE_PUBKEY2_B64) { $env:PODUP_RELEASE_PUBKEY2_B64 } else { 'gWmPpZyqOogAwSDRonGyL21u3Xj2GTfcvjwXrmA8qQE' }
 	$PubKeys = @($PubKeyB64, $PubKey2B64 | Where-Object { $_ })
 
 	$verified = $false
