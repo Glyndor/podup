@@ -1,28 +1,17 @@
-<div align="center">
-
 # podup
 
-**docker-compose on rootless Podman — one static Rust binary. No daemon. No Python.**
-
-![peak memory ~7 MiB](https://img.shields.io/badge/peak_memory-~7_MiB-3fb950)
-![daemon none](https://img.shields.io/badge/daemon-none-3fb950)
-![rootless](https://img.shields.io/badge/rootless-native-3fb950)
-![Podman 5 & 6](https://img.shields.io/badge/Podman-5_%26_6-892ca0)
+docker-compose translator and runner for rootless Podman. Reads a
+docker-compose file, translates it to the native libpod REST API, and manages
+the container lifecycle (`up`/`down`/`logs`/`exec`/…). A single static Rust
+binary — no daemon, no Python runtime.
 
 [![CI](https://github.com/Glyndor/podup/actions/workflows/ci.yml/badge.svg)](https://github.com/Glyndor/podup/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/podup.svg)](https://crates.io/crates/podup)
-[![MSRV](https://img.shields.io/badge/MSRV-1.85-orange.svg)](Cargo.toml)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-[**Website**](https://glyndor.net/projects/podup) · [**Install**](#-install) · [**Quick start**](#-quick-start) · [**Benchmarks**](docs/benchmarks.md) · [**Docs**](docs/)
+Package: [crates.io/crates/podup](https://crates.io/crates/podup) · MSRV 1.85 · License: Apache-2.0
 
 <img src="docs/assets/podup-demo.gif" alt="podup running a compose stack on rootless Podman" width="760">
 
-</div>
-
----
-
-## 📥 Install
+## Install
 
 ### Debian / Ubuntu (apt) — recommended
 
@@ -111,7 +100,7 @@ named pipe; the socket must be local (remote `tcp://`/`ssh://` are rejected).
 
 </details>
 
-## 🚀 Quick start
+## Quick start
 
 ```bash
 podup up -d      # start the stack in the current directory
@@ -119,13 +108,14 @@ podup ps         # see what's running
 podup down -v    # tear down and remove volumes
 ```
 
-[Every command →](docs/commands.md)
+Full command reference: [docs/commands.md](docs/commands.md).
 
-## ⚡ Why
+## Design
 
-Rootless-native libpod API, real compose-spec (`extends`, profiles,
-`develop.watch`, inline secrets), and systemd Quadlet export —
-[vs alternatives](docs/benchmarks.md#vs-alternatives) · [Rust library](https://docs.rs/podup).
+Rootless-native libpod API, real compose-spec support (`extends`, profiles,
+`develop.watch`, inline secrets), and systemd Quadlet export. The Rust library
+crate is consumed by [helmly-agent](https://github.com/Glyndor/helmly-agent);
+API docs at [docs.rs/podup](https://docs.rs/podup).
 
 ```mermaid
 sequenceDiagram
@@ -140,21 +130,23 @@ sequenceDiagram
     P-->>Y: stack up
 ```
 
-## 📊 Benchmarks
+## Benchmarks
 
-<div align="center">
-
-### ~7 MiB flat memory &nbsp;•&nbsp; near-zero CPU &nbsp;•&nbsp; up to 15× faster than podman-compose
+Peak memory and per-operation latency measured against docker-compose and
+podman-compose, same Podman instance, same digest-pinned images, median of 10
+runs.
 
 <img src="docs/assets/bench.svg" alt="Bar chart: podup uses ~7 MiB vs 69 MiB for podman-compose, and is 7–15x faster per op" width="760">
 
-</div>
+Full tables and methodology: [docs/benchmarks.md](docs/benchmarks.md).
 
-Same Podman, same digest-pinned images, median of 10 runs. [Full tables & methodology →](docs/benchmarks.md)
+## Documentation
 
-## 📖 Docs
-
-[Commands](docs/commands.md) · [Migrating from Compose](docs/docker-migration.md) · [Benchmarks](docs/benchmarks.md) · [Self-update](docs/self-update.md) · [Security model](docs/security-model.md)
+- [Commands](docs/commands.md)
+- [Migrating from Compose](docs/docker-migration.md)
+- [Benchmarks](docs/benchmarks.md)
+- [Self-update](docs/self-update.md)
+- [Security model](docs/security-model.md)
 
 ## License
 
