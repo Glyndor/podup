@@ -45,7 +45,7 @@ upgrade with `apt` instead.
 
 For Debian and Ubuntu (amd64 and arm64), podup is served from the **Glyndor apt
 repository** at `https://apt.glyndor.net`, alongside other Glyndor packages.
-The repository lives in its own repo, [Glyndor-net/apt](https://github.com/Glyndor-net/apt):
+The repository lives in its own repo, [Glyndor/apt](https://github.com/Glyndor/apt):
 a workflow there downloads the latest `.deb` release asset of each tracked
 product for every served architecture (amd64 and arm64), verifies each against
 the release signing key, builds a signed `reprepro` repository, and publishes
@@ -74,7 +74,7 @@ sudo apt update && sudo apt install podup
 ```
 
 Check the printed fingerprint against the one published in the
-[apt repository README](https://github.com/Glyndor-net/apt#verify-the-signing-key)
+[apt repository README](https://github.com/Glyndor/apt#verify-the-signing-key)
 — a channel independent of `apt.glyndor.net`.
 
 ### Why key renewal is automatic

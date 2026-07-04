@@ -113,5 +113,5 @@ verification — are documented in [self-update.md](self-update.md).
 
 Report vulnerabilities privately via the repository's **Security tab → Report a
 vulnerability** (never a public issue). See the organization
-[security policy](https://github.com/Glyndor-net/.github/blob/main/SECURITY.md) for
+[security policy](https://github.com/Glyndor/.github/blob/main/SECURITY.md) for
 response targets.

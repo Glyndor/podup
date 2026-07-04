@@ -9,7 +9,7 @@
 ![rootless](https://img.shields.io/badge/rootless-native-3fb950)
 ![Podman 5 & 6](https://img.shields.io/badge/Podman-5_%26_6-892ca0)
 
-[![CI](https://github.com/Glyndor-net/podup/actions/workflows/ci.yml/badge.svg)](https://github.com/Glyndor-net/podup/actions/workflows/ci.yml)
+[![CI](https://github.com/Glyndor/podup/actions/workflows/ci.yml/badge.svg)](https://github.com/Glyndor/podup/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/podup.svg)](https://crates.io/crates/podup)
 [![MSRV](https://img.shields.io/badge/MSRV-1.85-orange.svg)](Cargo.toml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
@@ -29,7 +29,7 @@
 Register the signed Glyndor repository and install — copy-paste:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Glyndor-net/podup/main/install.sh | bash -s -- --apt
+curl -fsSL https://raw.githubusercontent.com/Glyndor/podup/main/install.sh | bash -s -- --apt
 ```
 
 The installer verifies the keyring package's Ed25519 signature against its
@@ -40,7 +40,7 @@ self-update since apt owns upgrades. Requires **Podman ≥ 5.0** (rootless).
 
 To register the repository by hand instead, fetch the keyring and check the
 key's fingerprint against the one published in the
-[apt repository README](https://github.com/Glyndor-net/apt#verify-the-signing-key):
+[apt repository README](https://github.com/Glyndor/apt#verify-the-signing-key):
 
 ```bash
 curl -fsSLO https://apt.glyndor.net/glyndor-archive-keyring.deb

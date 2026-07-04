@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-REPO="Glyndor-net/podup"
+REPO="Glyndor/podup"
 INSTALL_DIR="${PODUP_INSTALL_DIR:-/usr/local/bin}"
 VERSION="${PODUP_VERSION:-latest}"
 MODE="binary"

@@ -105,7 +105,7 @@ with standard tooling. The GitHub build-provenance attestation proves the binary
 came from this repository's release workflow:
 
 ```bash
-gh attestation verify podup-linux-x86_64 --repo Glyndor-net/podup
+gh attestation verify podup-linux-x86_64 --repo Glyndor/podup
 ```
 
 To verify the Ed25519 signature over `SHA256SUMS` offline (no GitHub CLI), use

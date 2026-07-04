@@ -20,7 +20,7 @@ $ProgressPreference = 'SilentlyContinue'
 # Harmless no-op on Windows PowerShell 5.1, which lacks this variable.
 $PSNativeCommandUseErrorActionPreference = $false
 
-$Repo = 'Glyndor-net/podup'
+$Repo = 'Glyndor/podup'
 $Version = if ($env:PODUP_VERSION) { $env:PODUP_VERSION } else { 'latest' }
 $InstallDir = if ($env:PODUP_INSTALL_DIR) { $env:PODUP_INSTALL_DIR } else { Join-Path $env:LOCALAPPDATA 'Programs\podup' }
 

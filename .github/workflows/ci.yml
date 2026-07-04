@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   rust:
-    uses: Glyndor-net/.github/.github/workflows/rust-ci.yml@367c6651f8a8055085e7cb1e3c289e68f105e1c4 # v1.7.0
+    uses: Glyndor/.github/.github/workflows/rust-ci.yml@367c6651f8a8055085e7cb1e3c289e68f105e1c4 # v1.7.0
     with:
       extra-test-os: "[\"macos-latest\", \"windows-latest\"]"
       coverage-threshold: 90
