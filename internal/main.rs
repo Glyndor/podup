@@ -190,6 +190,24 @@ async fn run() -> podup::Result<()> {
 		return print_command_help(commands);
 	}
 
+	// `version` mirrors `docker compose version` (scripts probe it); it needs
+	// neither a compose file nor Podman.
+	if let Commands::Version { short, ref format } = cli.command {
+		use std::io::Write;
+		let version = env!("CARGO_PKG_VERSION");
+		let line = if short {
+			version.to_string()
+		} else if format == "json" {
+			format!("{{\"version\":\"v{version}\"}}")
+		} else {
+			format!("podup version v{version}")
+		};
+		match writeln!(std::io::stdout(), "{line}") {
+			Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => return Err(e.into()),
+			_ => return Ok(()),
+		}
+	}
+
 	// `completions` derives entirely from the static CLI definition; it neither
 	// parses a compose file nor contacts Podman. Print to stdout for piping.
 	#[cfg(feature = "completions")]

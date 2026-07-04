@@ -196,6 +196,10 @@ pub fn install<S: SystemCtl>(sc: &S, opts: &InstallOptions) -> crate::Result<()>
 		)));
 	}
 
+	// Fail closed on values a unit line cannot represent (control characters
+	// would inject directives via the literal `WorkingDirectory=` line).
+	service::validate_unit_opts(&opts.unit).map_err(ComposeError::Autostart)?;
+
 	let unit_text = render_service_unit(&opts.unit);
 	let unit_name = unit_file_name(project);
 

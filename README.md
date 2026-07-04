@@ -1,43 +1,42 @@
-<div align="center">
-
 # podup
 
-**docker-compose on rootless Podman — one static Rust binary. No daemon. No Python.**
-
-![peak memory ~7 MiB](https://img.shields.io/badge/peak_memory-~7_MiB-3fb950)
-![daemon none](https://img.shields.io/badge/daemon-none-3fb950)
-![rootless](https://img.shields.io/badge/rootless-native-3fb950)
-![Podman 5 & 6](https://img.shields.io/badge/Podman-5_%26_6-892ca0)
+docker-compose translator and runner for rootless Podman. Reads a
+docker-compose file, translates it to the native libpod REST API, and manages
+the container lifecycle (`up`/`down`/`logs`/`exec`/…). A single static Rust
+binary — no daemon, no Python runtime.
 
 [![CI](https://github.com/Glyndor/podup/actions/workflows/ci.yml/badge.svg)](https://github.com/Glyndor/podup/actions/workflows/ci.yml)
-[![crates.io](https://img.shields.io/crates/v/podup.svg)](https://crates.io/crates/podup)
-[![MSRV](https://img.shields.io/badge/MSRV-1.85-orange.svg)](Cargo.toml)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-[**Website**](https://glyndor.net/projects/podup) · [**Install**](#-install) · [**Quick start**](#-quick-start) · [**Benchmarks**](docs/benchmarks.md) · [**Docs**](docs/)
+Package: [crates.io/crates/podup](https://crates.io/crates/podup) · MSRV 1.85 · License: Apache-2.0
 
 <img src="docs/assets/podup-demo.gif" alt="podup running a compose stack on rootless Podman" width="760">
 
-</div>
-
----
-
-## 📥 Install
+## Install
 
 ### Debian / Ubuntu (apt) — recommended
 
 Register the signed Glyndor repository and install — copy-paste:
 
 ```bash
-curl -fsSLO https://apt.glyndor.net/glyndor-archive-keyring.deb
-sudo dpkg -i glyndor-archive-keyring.deb
-sudo apt update && sudo apt install podup
+curl -fsSL https://raw.githubusercontent.com/Glyndor/podup/main/install.sh | bash -s -- --apt
 ```
 
-The keyring package registers `https://apt.glyndor.net` and ships the signing
-key, so podup updates (and key renewals) arrive through `apt upgrade` — the apt
-build omits self-update since apt owns upgrades. Signed, SHA-256 verified,
-fail-closed. Requires **Podman ≥ 5.0** (rootless).
+The installer verifies the keyring package's Ed25519 signature against its
+pinned release key before anything is installed (fail-closed). The keyring
+package registers `https://apt.glyndor.net` and ships the signing key, so podup
+updates (and key renewals) arrive through `apt upgrade` — the apt build omits
+self-update since apt owns upgrades. Requires **Podman ≥ 5.0** (rootless).
+
+To register the repository by hand instead, fetch the keyring and check the
+key's fingerprint against the one published in the
+[apt repository README](https://github.com/Glyndor/apt#verify-the-signing-key):
+
+```bash
+curl -fsSLO https://apt.glyndor.net/glyndor-archive-keyring.deb
+sudo dpkg -i glyndor-archive-keyring.deb
+gpg --show-keys /usr/share/keyrings/glyndor.gpg   # compare the fingerprint
+sudo apt update && sudo apt install podup
+```
 
 <details>
 <summary><b>Other methods — Linux/macOS script · Windows · build from source · self-update · Podman version · platforms</b></summary>
@@ -86,8 +85,9 @@ release's Ed25519 signature and SHA-256 checksum — it fails closed otherwise. 
 
 podup tracks the **latest stable Podman** and supports its **last two majors —
 Podman 5.x and 6.x**. It talks to Podman's native libpod API (still versioned
-5.x — 5.2.0 on Podman 6), so it needs **Podman ≥ 5.0**. Validated on **Podman
-5.x (5.8.1) and 6.0.0** (the latter in CI against Fedora rawhide). Many distributions still ship 4.x — check
+5.x — 5.2.0 on Podman 6), so it needs **Podman ≥ 5.0**. Both supported majors
+run the integration suite in CI on every engine change (Fedora 44 for the
+latest 5.x, rawhide for 6.x). Many distributions still ship 4.x — check
 `podman --version` and upgrade if needed. Fedora, Debian trixie/sid and recent
 Ubuntu releases carry 5.x; on an older release, install or upgrade Podman
 following the official guide: <https://podman.io/docs/installation>.
@@ -100,7 +100,7 @@ named pipe; the socket must be local (remote `tcp://`/`ssh://` are rejected).
 
 </details>
 
-## 🚀 Quick start
+## Quick start
 
 ```bash
 podup up -d      # start the stack in the current directory
@@ -108,13 +108,14 @@ podup ps         # see what's running
 podup down -v    # tear down and remove volumes
 ```
 
-[Every command →](docs/commands.md)
+Full command reference: [docs/commands.md](docs/commands.md).
 
-## ⚡ Why
+## Design
 
-Rootless-native libpod API, real compose-spec (`extends`, profiles,
-`develop.watch`, inline secrets), and systemd Quadlet export —
-[vs alternatives](docs/benchmarks.md#vs-alternatives) · [Rust library](https://docs.rs/podup).
+Rootless-native libpod API, real compose-spec support (`extends`, profiles,
+`develop.watch`, inline secrets), and systemd Quadlet export. The Rust library
+crate is consumed by [helmly-agent](https://github.com/Glyndor/helmly-agent);
+API docs at [docs.rs/podup](https://docs.rs/podup).
 
 ```mermaid
 sequenceDiagram
@@ -129,21 +130,23 @@ sequenceDiagram
     P-->>Y: stack up
 ```
 
-## 📊 Benchmarks
+## Benchmarks
 
-<div align="center">
-
-### ~7 MiB flat memory &nbsp;•&nbsp; near-zero CPU &nbsp;•&nbsp; up to 15× faster than podman-compose
+Peak memory and per-operation latency measured against docker-compose and
+podman-compose, same Podman instance, same digest-pinned images, median of 10
+runs.
 
 <img src="docs/assets/bench.svg" alt="Bar chart: podup uses ~7 MiB vs 69 MiB for podman-compose, and is 7–15x faster per op" width="760">
 
-</div>
+Full tables and methodology: [docs/benchmarks.md](docs/benchmarks.md).
 
-Same Podman, same digest-pinned images, median of 10 runs. [Full tables & methodology →](docs/benchmarks.md)
+## Documentation
 
-## 📖 Docs
-
-[Commands](docs/commands.md) · [Migrating from Compose](docs/docker-migration.md) · [Benchmarks](docs/benchmarks.md) · [Self-update](docs/self-update.md) · [Security model](docs/security-model.md)
+- [Commands](docs/commands.md)
+- [Migrating from Compose](docs/docker-migration.md)
+- [Benchmarks](docs/benchmarks.md)
+- [Self-update](docs/self-update.md)
+- [Security model](docs/security-model.md)
 
 ## License
 

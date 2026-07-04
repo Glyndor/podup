@@ -122,7 +122,7 @@ where
 				.unwrap_or(trimmed);
 			u32::from_str_radix(digits, 8).map(Some).map_err(|_| {
 				D::Error::custom(format!(
-					"invalid tmpfs mode {s:?}: use octal notation like 0700 or 0o700"
+					"invalid mode {s:?}: use octal notation like 0700 or 0o700"
 				))
 			})
 		}
@@ -236,8 +236,14 @@ pub enum ServiceConfigRef {
 		/// Owner GID of the mounted file.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		gid: Option<String>,
-		/// File permission mode of the mounted file.
-		#[serde(default, skip_serializing_if = "Option::is_none")]
+		/// File permission mode of the mounted file. Octal notation per the
+		/// Compose Specification (`0444`, `0o444`, or a bare number), so a
+		/// leading-zero literal like `0444` is read as octal, not decimal.
+		#[serde(
+			default,
+			deserialize_with = "deserialize_octal_mode",
+			skip_serializing_if = "Option::is_none"
+		)]
 		mode: Option<u32>,
 	},
 }
@@ -279,8 +285,14 @@ pub enum ServiceSecretRef {
 		/// Owner GID of the mounted file.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		gid: Option<String>,
-		/// File permission mode of the mounted file.
-		#[serde(default, skip_serializing_if = "Option::is_none")]
+		/// File permission mode of the mounted file. Octal notation per the
+		/// Compose Specification (`0444`, `0o444`, or a bare number), so a
+		/// leading-zero literal like `0444` is read as octal, not decimal.
+		#[serde(
+			default,
+			deserialize_with = "deserialize_octal_mode",
+			skip_serializing_if = "Option::is_none"
+		)]
 		mode: Option<u32>,
 	},
 }
@@ -336,7 +348,7 @@ mod tests {
 	fn tmpfs_mode_invalid_octal_is_clear_error() {
 		// A non-octal string is rejected with a clear error, not silently coerced.
 		let err = serde_yaml::from_str::<TmpfsOptions>("mode: \"0o9\"\n").unwrap_err();
-		assert!(err.to_string().contains("tmpfs mode"), "got: {err}");
+		assert!(err.to_string().contains("octal notation"), "got: {err}");
 	}
 
 	#[test]

@@ -49,8 +49,14 @@ pub(crate) struct Cli {
 	/// Project name, the container-name prefix (or `COMPOSE_PROJECT_NAME`).
 	/// Unset: the top-level `name:`, then the sanitized project-directory basename.
 	// Not `global`: its `-p` short would collide with subcommand `-p` flags
-	// (e.g. `run --publish`). Must precede the subcommand.
-	#[arg(short, long, env = "COMPOSE_PROJECT_NAME")]
+	// (e.g. `run --publish`). Must precede the subcommand. `--project-name` is
+	// docker compose's long form; scripts written for it must work verbatim.
+	#[arg(
+		short,
+		long,
+		visible_alias = "project-name",
+		env = "COMPOSE_PROJECT_NAME"
+	)]
 	pub(crate) project: Option<String>,
 
 	/// Podman socket path (overrides auto-detection and PODMAN_SOCKET env).

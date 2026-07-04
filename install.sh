@@ -93,12 +93,12 @@ download() {
 }
 
 # Baked-in base64 (unpadded) raw Ed25519 public keys (32 bytes each) matching the
-# release signing key (RELEASE_SIGN_KEY). Up to two are accepted: the second is
-# empty except during a key rotation, when it holds the new key so a release
-# signed by either key verifies. The signature passes if any key validates.
+# release signing keys (GLYNDOR_RELEASE_ED25519_KEY / _2). Both are populated so a
+# release signed by either key verifies during a make-before-break rotation; the
+# signature passes if any key validates. Retire a key by clearing its slot here.
 # Override for a fork via the PODUP_RELEASE_PUBKEY_B64 / _PUBKEY2_B64 env vars.
-PODUP_RELEASE_PUBKEY_B64="${PODUP_RELEASE_PUBKEY_B64:-APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y}"
-PODUP_RELEASE_PUBKEY2_B64="${PODUP_RELEASE_PUBKEY2_B64:-}"
+PODUP_RELEASE_PUBKEY_B64="${PODUP_RELEASE_PUBKEY_B64:-YUn5BN/lYIxJzDvjoUROgGGQjmlq100/SqbnhF1vvfM}"
+PODUP_RELEASE_PUBKEY2_B64="${PODUP_RELEASE_PUBKEY2_B64:-gWmPpZyqOogAwSDRonGyL21u3Xj2GTfcvjwXrmA8qQE}"
 
 PUBKEYS=()
 [[ -n "$PODUP_RELEASE_PUBKEY_B64" ]]  && PUBKEYS+=("$PODUP_RELEASE_PUBKEY_B64")
@@ -213,16 +213,24 @@ install_binary() {
 			if [[ ${#PUBKEYS[@]} -eq 0 ]]; then
 				log_info "no release public key configured — skipping Ed25519 signature check"
 			else
-				log_info "python3+cryptography not available — cannot check Ed25519 signature"
+				# A release public key IS configured: the pinned key is the trust
+				# anchor and must not be silently bypassed in favour of the
+				# (repo-scoped) attestation. Fail closed.
+				fail "python3 with the 'cryptography' package is required to verify the \
+release signature against the pinned key. Install it and re-run."
 			fi
 			;;
 	esac
 
 	# Build-provenance attestation: proves the binary was produced by this repo's
-	# release workflow (GitHub OIDC). Strong even without the release public key.
+	# release workflow (GitHub OIDC). Defence-in-depth next to the pinned key;
+	# the trust anchor when no release public key is configured. Pinned to the
+	# release workflow — a repo-scoped check would accept an attestation from any
+	# workflow in the repo.
 	if command -v gh >/dev/null 2>&1 && gh attestation --help >/dev/null 2>&1; then
 		log_info "Verifying artifact attestation ..."
-		gh attestation verify "${TMP_DIR}/${ARTIFACT}" --repo "$REPO" >/dev/null \
+		gh attestation verify "${TMP_DIR}/${ARTIFACT}" --repo "$REPO" \
+			--signer-workflow "${REPO}/.github/workflows/release.yml" >/dev/null \
 			|| fail "Attestation verification failed for ${ARTIFACT}"
 		log_ok "Attestation verified"
 		verified=1
@@ -240,12 +248,16 @@ or python3 with the 'cryptography' package, or set PODUP_RELEASE_PUBKEY_B64, the
 
 	verify_checksum "$ARTIFACT"
 
-	local install_cmd=(install -m 0755 "${TMP_DIR}/${ARTIFACT}" "${INSTALL_DIR}/podup")
+	# Stage next to the target and rename into place, so a kill mid-install can
+	# never leave a partial yet executable binary on PATH.
+	local staged="${INSTALL_DIR}/.podup.install-$$"
+	local install_cmd=(install -m 0755 "${TMP_DIR}/${ARTIFACT}" "$staged")
+	local move_cmd=(mv -f "$staged" "${INSTALL_DIR}/podup")
 	if [[ -w "$INSTALL_DIR" ]]; then
-		"${install_cmd[@]}"
+		"${install_cmd[@]}" && "${move_cmd[@]}"
 	elif command -v sudo >/dev/null 2>&1; then
 		log_info "Installing to ${INSTALL_DIR} (requires sudo) ..."
-		sudo "${install_cmd[@]}"
+		sudo "${install_cmd[@]}" && sudo "${move_cmd[@]}"
 	else
 		fail "Cannot write to ${INSTALL_DIR} and sudo is not available. Set PODUP_INSTALL_DIR to a writable directory."
 	fi
