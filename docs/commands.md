@@ -376,7 +376,31 @@ Verification fails closed: a missing key, bad Ed25519 signature, or SHA-256
 mismatch aborts before the installed binary is touched. See
 [self-update.md](self-update.md) for the trust model.
 
-Run `podup --version` to print the version.
+### `autostart` (alias `boot`)
+Manage a boot-time autostart unit for this compose project — rootless,
+user-scope `systemctl --user` (enable lingering with
+`loginctl enable-linger` so the unit starts without a login session).
+
+| Subcommand | Description |
+|---|---|
+| `install` | Install (and, by default, enable + start) the unit. Writes only under `${XDG_CONFIG_HOME:-~/.config}/systemd/user/`. |
+| `uninstall` | Disable, stop, and remove this project's unit. |
+| `status` | Report this project's unit and session state. |
+
+| Flag (`install`) | Description | Default |
+|---|---|---|
+| `--mode <MODE>` | Autostart backend; only `service` (a `Type=oneshot` unit running `podup up -d --build` at boot, `podup down` on stop) is implemented. | `service` |
+| `--no-start` | Install the unit but do not enable or start it. | off |
+| `--dry-run` | Print the unit and the actions that would run; change nothing. | off |
+
+### `version`
+Print version information, like `docker compose version`. `podup --version`
+prints the same.
+
+| Flag | Description | Default |
+|---|---|---|
+| `--short` | Print only the version number. | off |
+| `--format <FMT>` | `pretty` or `json`. | `pretty` |
 
 ## Diagnostics
 
@@ -411,4 +435,6 @@ when both are set.
 | `1` | A command failed (Podman error, runtime failure). |
 | `2` | Command-line usage error (unknown flag, bad argument). |
 | `3` | `update` failed to verify or install a release. |
+| `126` | `run`/`exec`: the command exists but is not executable. |
+| `127` | `run`/`exec`: the command was not found. |
 | other | `run` propagates the container's own exit code verbatim. |

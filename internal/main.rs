@@ -8,6 +8,7 @@ use std::process;
 #[cfg(feature = "completions")]
 use clap::CommandFactory;
 
+mod autostart_cmd;
 mod cli;
 mod dispatch;
 mod generate;
@@ -187,6 +188,24 @@ async fn run() -> podup::Result<()> {
 	// leading `--`, and never errors with "unrecognized subcommand".
 	if let Commands::Help { commands } = &cli.command {
 		return print_command_help(commands);
+	}
+
+	// `version` mirrors `docker compose version` (scripts probe it); it needs
+	// neither a compose file nor Podman.
+	if let Commands::Version { short, ref format } = cli.command {
+		use std::io::Write;
+		let version = env!("CARGO_PKG_VERSION");
+		let line = if short {
+			version.to_string()
+		} else if format == "json" {
+			format!("{{\"version\":\"v{version}\"}}")
+		} else {
+			format!("podup version v{version}")
+		};
+		match writeln!(std::io::stdout(), "{line}") {
+			Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => return Err(e.into()),
+			_ => return Ok(()),
+		}
 	}
 
 	// `completions` derives entirely from the static CLI definition; it neither
@@ -463,6 +482,19 @@ async fn run() -> podup::Result<()> {
 		let mut filtered = file.clone();
 		podup::retain_active_profiles(&mut filtered, &cli.profile);
 		return write_quadlet(&filtered, &project, output.as_deref());
+	}
+
+	// `autostart` manages a rootless `systemctl --user` unit that brings the stack
+	// up at boot. Like `generate` it works from the compose file alone and never
+	// contacts Podman — except `uninstall --purge`, which tears the stack's volumes
+	// down and so connects only in that branch.
+	if let Commands::Autostart { kind } = &cli.command {
+		let env = autostart_cmd::AutostartEnv {
+			profile: &cli.profile,
+			env_files: &cli.env_file,
+			socket: resolve_socket(cli.socket.as_deref()),
+		};
+		return autostart_cmd::dispatch(&env, &compose_files, project, base_dir, &file, kind).await;
 	}
 
 	let client = podup::podman::connect(resolve_socket(cli.socket.as_deref()).as_deref())?;

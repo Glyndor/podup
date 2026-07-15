@@ -11,19 +11,21 @@ use sha2::{Digest, Sha256};
 
 use crate::ComposeError;
 
-/// Accepted Ed25519 release public keys — at most two. Slot 0 is the active key
-/// (`RELEASE_SIGN_KEY`, base64 `APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y=`);
-/// slot 1 is the all-zero placeholder except during a key rotation, when it
-/// carries the second accepted key. A signature is trusted if it validates under
-/// any non-placeholder key. The keys are public by design — their integrity
-/// comes from being baked into the signed, build-provenance-attested binary, so
-/// an attacker cannot swap them without invalidating the binary itself.
+/// Accepted Ed25519 release public keys — at most two. Both slots are populated
+/// with the current release keys (`GLYNDOR_RELEASE_ED25519_KEY` in slot 0,
+/// `GLYNDOR_RELEASE_ED25519_KEY_2` in slot 1); a signature is trusted if it
+/// validates under either. The keys are public by design — their integrity comes
+/// from being baked into the signed, build-provenance-attested binary, so an
+/// attacker cannot swap them without invalidating the binary itself.
 ///
 /// Verified against the genuine published `SHA256SUMS.sig` (see
 /// `embedded_key_verifies_real_release`). [`release_pubkeys`] still fails closed
 /// if both are zeroed, so a misbuild can never trust an unverifiable release.
 ///
-/// # Key rotation (run if the private key may be compromised)
+/// # Key rotation
+///
+/// The make-before-break procedure below assumes the outgoing private key is
+/// still available to sign the migration release. That is the normal case.
 ///
 /// 1. Ship a release embedding `[old, new]` with `SHA256SUMS` signed by the
 ///    **old** key. Binaries in the field trust only `old`, so they accept it and
@@ -31,13 +33,23 @@ use crate::ComposeError;
 /// 2. Ship the next release embedding `[new, zero]` signed by the **new** key.
 ///    Every binary from step 1 trusts `new`, so the old key is retired and all
 ///    installs converge on the new key.
+///
+/// If the outgoing private key is LOST, step 1 is impossible — no release can be
+/// signed by the old key — so fielded self-updaters cannot migrate in-band and
+/// must be re-installed out-of-band (rotated `install.sh` / apt). The two keys
+/// below are both freshly generated for exactly that reason; keep both live and
+/// signed until a normal (key-available) rotation can retire one.
 pub const RELEASE_PUBKEYS: [[u8; 32]; 2] = [
+	// GLYNDOR_RELEASE_ED25519_KEY = YUn5BN/lYIxJzDvjoUROgGGQjmlq100/SqbnhF1vvfM
 	[
-		0, 248, 126, 146, 30, 181, 116, 151, 147, 208, 124, 198, 248, 164, 23, 16, 188, 195, 140,
-		174, 28, 114, 250, 152, 244, 175, 133, 166, 211, 153, 223, 230,
+		97, 73, 249, 4, 223, 229, 96, 140, 73, 204, 59, 227, 161, 68, 78, 128, 97, 144, 142, 105,
+		106, 215, 77, 63, 74, 166, 231, 132, 93, 111, 189, 243,
 	],
-	// Rotation slot — all-zero until a second key is being rolled in.
-	[0u8; 32],
+	// GLYNDOR_RELEASE_ED25519_KEY_2 = gWmPpZyqOogAwSDRonGyL21u3Xj2GTfcvjwXrmA8qQE
+	[
+		129, 105, 143, 165, 156, 170, 58, 136, 0, 193, 32, 209, 162, 113, 178, 47, 109, 110, 221,
+		120, 246, 25, 55, 220, 190, 60, 23, 174, 96, 60, 169, 1,
+	],
 ];
 
 /// A parsed `MAJOR.MINOR.PATCH` version, ordered for comparison.
@@ -317,7 +329,14 @@ mod tests {
 		);
 	}
 
+	// STALE VECTOR after the 2026 key rotation: this SHA256SUMS + signature was
+	// signed by the previous release key, whose private half was lost, so it no
+	// longer validates against the rotated RELEASE_PUBKEYS. Re-vector it from the
+	// first release signed with GLYNDOR_RELEASE_ED25519_KEY (take that release's
+	// SHA256SUMS and SHA256SUMS.sig), then drop the #[ignore]. The synthetic
+	// tests below still exercise the verify path against known keypairs.
 	#[test]
+	#[ignore = "re-vector from the first release signed with the rotated key"]
 	fn embedded_key_verifies_real_release() {
 		// Regression vector: the genuine published podup SHA256SUMS and its
 		// signature must verify against the embedded key. If a future edit

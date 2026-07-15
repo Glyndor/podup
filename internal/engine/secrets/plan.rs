@@ -154,6 +154,11 @@ fn push_plan(
 		Source::Inline(s, p) => (s, Some(p)),
 		Source::External(s) => (s, None),
 	};
+	// Default to the Compose Specification's world-readable `0444` when no `mode:`
+	// is given. A Podman-native secret otherwise mounts at `0000`, which a non-root
+	// container user cannot read (only root reads it via DAC override), diverging
+	// from docker-compose where the default is readable.
+	let mode = mode.or(Some(0o444));
 	if let Some(m) = mode {
 		staging::reject_dangerous_secret_mode(m, &source)?;
 	}
@@ -328,14 +333,15 @@ mod tests {
 	#[test]
 	fn external_secret_long_form_maps_source_target_and_perms() {
 		// A long-form ref overrides the mount name, a custom top-level `name:` is
-		// the real podman secret, and numeric uid/gid/mode pass through.
-		let p = plans("services:\n  web:\n    image: nginx\n    secrets:\n      - source: tok\n        target: app_tok\n        uid: \"100\"\n        gid: \"101\"\n        mode: 256\nsecrets:\n  tok:\n    external: true\n    name: real_tok\n");
+		// the real podman secret, and numeric uid/gid/mode pass through. `mode:` is
+		// octal notation per the Compose Specification (leading-zero `0400`).
+		let p = plans("services:\n  web:\n    image: nginx\n    secrets:\n      - source: tok\n        target: app_tok\n        uid: \"100\"\n        gid: \"101\"\n        mode: 0400\nsecrets:\n  tok:\n    external: true\n    name: real_tok\n");
 		assert_eq!(p.len(), 1);
 		assert_eq!(p[0].source, "real_tok");
 		assert_eq!(p[0].target, "app_tok");
 		assert_eq!(p[0].uid, Some(100));
 		assert_eq!(p[0].gid, Some(101));
-		assert_eq!(p[0].mode, Some(256));
+		assert_eq!(p[0].mode, Some(0o400));
 	}
 
 	#[test]
@@ -407,6 +413,23 @@ mod tests {
 		)
 		.unwrap();
 		assert!(collect_native_plans("proj", &file.services["web"], &file).is_err());
+	}
+
+	#[test]
+	fn native_secret_without_mode_defaults_to_0444() {
+		// The Compose Specification default is world-readable 0444; a Podman-native
+		// secret otherwise mounts at 0000 and a non-root container user can't read it.
+		let p = plans("services:\n  web:\n    image: x\n    secrets: [tok]\nsecrets:\n  tok:\n    content: data\n");
+		assert_eq!(p.len(), 1);
+		assert_eq!(p[0].mode, Some(0o444));
+	}
+
+	#[test]
+	fn secret_mode_leading_zero_is_octal() {
+		// `0444` (leading-zero octal, the Compose Specification spelling) parses as
+		// octal 0o444, not decimal 444 (which would fail) — issue #2.
+		let p = plans("services:\n  web:\n    image: x\n    secrets:\n      - source: tok\n        mode: 0444\nsecrets:\n  tok:\n    content: data\n");
+		assert_eq!(p[0].mode, Some(0o444));
 	}
 
 	#[test]

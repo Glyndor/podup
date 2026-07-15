@@ -87,8 +87,8 @@ try {
 	# second is empty except during a key rotation, when it holds the new key so a
 	# release signed by either key verifies. The signature passes if any key
 	# validates. Override for a fork via PODUP_RELEASE_PUBKEY_B64 / _PUBKEY2_B64.
-	$PubKeyB64  = if ($env:PODUP_RELEASE_PUBKEY_B64) { $env:PODUP_RELEASE_PUBKEY_B64 } else { 'APh+kh61dJeT0HzG+KQXELzDjK4ccvqY9K+FptOZ3+Y' }
-	$PubKey2B64 = if ($env:PODUP_RELEASE_PUBKEY2_B64) { $env:PODUP_RELEASE_PUBKEY2_B64 } else { '' }
+	$PubKeyB64  = if ($env:PODUP_RELEASE_PUBKEY_B64) { $env:PODUP_RELEASE_PUBKEY_B64 } else { 'YUn5BN/lYIxJzDvjoUROgGGQjmlq100/SqbnhF1vvfM' }
+	$PubKey2B64 = if ($env:PODUP_RELEASE_PUBKEY2_B64) { $env:PODUP_RELEASE_PUBKEY2_B64 } else { 'gWmPpZyqOogAwSDRonGyL21u3Xj2GTfcvjwXrmA8qQE' }
 	$PubKeys = @($PubKeyB64, $PubKey2B64 | Where-Object { $_ })
 
 	$verified = $false
@@ -141,14 +141,20 @@ sys.exit(1)
 				Fail 'SHA256SUMS signature verification failed — release may be tampered'
 			}
 		} else {
-			Write-LogInfo 'python3+cryptography not available — cannot check Ed25519 signature'
+			# A release public key IS configured: the pinned key is the trust anchor
+			# and must not be silently bypassed in favour of the (repo-scoped)
+			# attestation. Fail closed.
+			Fail "python3 with the 'cryptography' package is required to verify the release signature against the pinned key. Install it and re-run."
 		}
 	} else {
 		Write-LogInfo 'no release public key configured — skipping Ed25519 signature check'
 	}
 
 	# Build-provenance attestation: proves the binary was produced by this repo's
-	# release workflow (GitHub OIDC). Strong even without the release public key.
+	# release workflow (GitHub OIDC). Defence-in-depth next to the pinned key; the
+	# trust anchor when no release public key is configured. Pinned to the release
+	# workflow — a repo-scoped check would accept an attestation from any workflow
+	# in the repo.
 	$ghAttestation = $false
 	if (Get-Command gh -ErrorAction SilentlyContinue) {
 		& gh attestation --help *> $null
@@ -156,7 +162,7 @@ sys.exit(1)
 	}
 	if ($ghAttestation) {
 		Write-LogInfo 'Verifying artifact attestation ...'
-		& gh attestation verify $artifactPath --repo $Repo | Out-Null
+		& gh attestation verify $artifactPath --repo $Repo --signer-workflow "$Repo/.github/workflows/release.yml" | Out-Null
 		if ($LASTEXITCODE -ne 0) { Fail "Attestation verification failed for $Artifact" }
 		Write-LogOk 'Attestation verified'
 		$verified = $true
@@ -185,7 +191,11 @@ sys.exit(1)
 		New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 	}
 	$target = Join-Path $InstallDir 'podup.exe'
-	Copy-Item -Path $artifactPath -Destination $target -Force
+	# Stage next to the target and rename into place, so an interrupted install
+	# can never leave a partial yet executable binary on PATH.
+	$staged = Join-Path $InstallDir ".podup.install-$PID.exe"
+	Copy-Item -Path $artifactPath -Destination $staged -Force
+	Move-Item -Path $staged -Destination $target -Force
 
 	# Add the install dir to the user PATH if it is not already there.
 	$userPath = [Environment]::GetEnvironmentVariable('Path', 'User')

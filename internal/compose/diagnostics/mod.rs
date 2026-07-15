@@ -11,11 +11,13 @@
 use super::types::ComposeFile;
 
 mod ignored_fields;
+mod nested_raw;
 use ignored_fields::{
 	ignored_build_fields, ignored_models, ignored_network_fields, ignored_port_fields,
 	ignored_restart_policy_fields, ignored_secret_config_drivers, ignored_service_fields,
 	ignored_service_network_fields, ignored_volume_mount_fields,
 };
+pub(super) use nested_raw::raw_nested_unknown_warnings;
 
 /// Collect a warning for every parsed-but-unsupported key or field in `file`.
 /// Pure (no logging) so it can be unit-tested; the caller emits the messages.

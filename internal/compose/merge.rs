@@ -39,6 +39,22 @@ pub(super) fn deserialize_with_merge_interp(
 	content: &str,
 	vars: Option<&HashMap<String, String>>,
 ) -> Result<ComposeFile> {
+	let value = interpolated_value(content, vars)?;
+	let file: ComposeFile = serde_yaml::from_value(value)?;
+	Ok(file)
+}
+
+/// Produce the interpolated, merge-key-resolved YAML `Value` for `content` — the
+/// exact transformation [`deserialize_with_merge_interp`] applies before it
+/// deserializes into a [`ComposeFile`], stopping one step short.
+///
+/// The raw nested-key diagnostic needs this post-interpolation document shape:
+/// the typed `ComposeFile` has already dropped unknown keys nested inside option
+/// blocks, so the diagnostic must diff against the raw document the parser saw.
+pub(super) fn interpolated_value(
+	content: &str,
+	vars: Option<&HashMap<String, String>>,
+) -> Result<serde_yaml::Value> {
 	guard_flow_depth(content)?;
 	guard_alias_expansion(content)?;
 	let mut value: serde_yaml::Value = serde_yaml::from_str(content)?;
@@ -46,8 +62,7 @@ pub(super) fn deserialize_with_merge_interp(
 		interpolate_value(&mut value, vars)?;
 	}
 	apply_merge_keys(&mut value);
-	let file: ComposeFile = serde_yaml::from_value(value)?;
-	Ok(file)
+	Ok(value)
 }
 
 /// Recursively interpolate every string scalar of a parsed YAML `value`.

@@ -8,7 +8,9 @@ use clap::Subcommand;
 use clap_complete::Shell;
 
 use super::parse::{parse_pull_policy, parse_scale_pair, parse_timeout};
-use super::types::{ConfigFormat, EventsFormat, GenerateCommands, OutputFormat, RmiScope};
+use super::types::{
+	AutostartCommands, ConfigFormat, EventsFormat, GenerateCommands, OutputFormat, RmiScope,
+};
 
 #[derive(Subcommand)]
 pub(crate) enum Commands {
@@ -603,6 +605,17 @@ pub(crate) enum Commands {
 		#[command(subcommand)]
 		kind: GenerateCommands,
 	},
+	/// Manage a boot-time autostart unit for this compose project (rootless,
+	/// user-scope `systemctl --user`).
+	#[command(
+		alias = "boot",
+		subcommand_required = true,
+		arg_required_else_help = true
+	)]
+	Autostart {
+		#[command(subcommand)]
+		kind: AutostartCommands,
+	},
 	/// Print help for podup, or for a specific command.
 	Help {
 		/// Command to show help for. Extra tokens, `-h`/`--help`, and a leading
@@ -623,6 +636,15 @@ pub(crate) enum Commands {
 		/// Reinstall even if the latest release is not newer than this build.
 		#[arg(long)]
 		force: bool,
+	},
+	/// Print version information (like `docker compose version`).
+	Version {
+		/// Print only the version number.
+		#[arg(long)]
+		short: bool,
+		/// Output format: pretty or json.
+		#[arg(long, value_parser = ["pretty", "json"], default_value = "pretty")]
+		format: String,
 	},
 	/// Print a shell completion script to stdout for the named shell.
 	#[cfg(feature = "completions")]

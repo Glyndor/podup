@@ -411,7 +411,8 @@ services:
 		ServiceSecretRef::Long { uid, gid, mode, .. } => {
 			assert_eq!(uid.as_deref(), Some("1000"));
 			assert_eq!(gid.as_deref(), Some("1000"));
-			assert_eq!(*mode, Some(256));
+			// The compose spec defines mode as octal: 256 == 0o256 == 174.
+			assert_eq!(*mode, Some(0o256));
 		}
 		_ => panic!("expected long-form secret ref"),
 	}

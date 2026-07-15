@@ -66,6 +66,43 @@ pub(crate) enum ConfigFormat {
 	Json,
 }
 
+/// Which autostart backend `autostart install` sets up.
+#[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum AutostartMode {
+	/// A single `Type=oneshot` `systemctl --user` service that runs `podup up`
+	/// at boot and `podup down` on stop. The only mode implemented today.
+	#[default]
+	Service,
+	/// Per-service Podman Quadlet units. Not yet implemented (tracked by #993).
+	Quadlet,
+}
+
+/// Subcommands of `autostart`.
+#[derive(clap::Subcommand)]
+pub(crate) enum AutostartCommands {
+	/// Install (and, by default, enable + start) the autostart unit for this
+	/// project. User-scope only: writes under `${XDG_CONFIG_HOME:-~/.config}`.
+	Install {
+		/// Autostart backend to use (only `service` is implemented).
+		#[arg(long, value_enum, default_value_t)]
+		mode: AutostartMode,
+		/// Install the unit but do not enable or start it immediately.
+		#[arg(long)]
+		no_start: bool,
+		/// Print the unit and the actions that would run, but change nothing.
+		#[arg(long)]
+		dry_run: bool,
+	},
+	/// Disable, stop, and remove this project's autostart unit.
+	Uninstall {
+		/// Also tear the stack down and remove its named volumes (`down -v`).
+		#[arg(long)]
+		purge: bool,
+	},
+	/// Report this project's autostart unit and session state.
+	Status,
+}
+
 /// Subcommands of `generate`.
 #[derive(clap::Subcommand)]
 pub(crate) enum GenerateCommands {

@@ -129,14 +129,16 @@ jobs:
 
       - name: Sign binary
         env:
-          RELEASE_SIGN_KEY: ${{ secrets.RELEASE_SIGN_KEY }}
+          GLYNDOR_RELEASE_ED25519_KEY: ${{ secrets.GLYNDOR_RELEASE_ED25519_KEY }}
           PYTHONUTF8: "1"
         run: |
-          # The panel installer/updater verifies this Ed25519 signature; a
-          # release without it cannot be consumed. Fail closed when the key
-          # is absent instead of publishing unsigned binaries.
-          if [ -z "$RELEASE_SIGN_KEY" ]; then
-            echo "::error::RELEASE_SIGN_KEY secret is not configured; refusing to release unsigned binaries."
+          # The installer/updater verifies this Ed25519 signature; a release
+          # without it cannot be consumed. Rotation is by dual-TRUST — consumers
+          # bake both accepted public keys — so only the active key signs here,
+          # producing the single .sig every verifier reads. Fail closed when the
+          # key is absent instead of publishing unsigned binaries.
+          if [ -z "$GLYNDOR_RELEASE_ED25519_KEY" ]; then
+            echo "::error::GLYNDOR_RELEASE_ED25519_KEY is not configured; refusing to release unsigned binaries."
             exit 1
           fi
           # Install the signing dependencies into an isolated virtual
@@ -147,8 +149,8 @@ jobs:
           venv_py="$RUNNER_TEMP/signvenv/bin/python"
           [ -x "$venv_py" ] || venv_py="$RUNNER_TEMP/signvenv/Scripts/python.exe"
           "$venv_py" -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
-          # The key is passed via RELEASE_SIGN_KEY in the environment, not as a
-          # CLI argument, so it never appears in the process argument list.
+          # Keys are passed via the environment, not argv, so they never appear
+          # in the process argument list.
           "$venv_py" .github/scripts/sign.py "${{ matrix.asset }}"
 
       - name: Attest build provenance
@@ -285,11 +287,11 @@ jobs:
 
       - name: Sign SHA256SUMS and the Debian packages
         env:
-          RELEASE_SIGN_KEY: ${{ secrets.RELEASE_SIGN_KEY }}
+          GLYNDOR_RELEASE_ED25519_KEY: ${{ secrets.GLYNDOR_RELEASE_ED25519_KEY }}
           PYTHONUTF8: "1"
         run: |
-          if [ -z "$RELEASE_SIGN_KEY" ]; then
-            echo "::error::RELEASE_SIGN_KEY secret is not configured; refusing to release unsigned checksums."
+          if [ -z "$GLYNDOR_RELEASE_ED25519_KEY" ]; then
+            echo "::error::GLYNDOR_RELEASE_ED25519_KEY is not configured; refusing to release unsigned checksums."
             exit 1
           fi
           # Isolated venv so the pinned cryptography is honoured regardless of
@@ -298,7 +300,7 @@ jobs:
           venv_py="$RUNNER_TEMP/signvenv/bin/python"
           [ -x "$venv_py" ] || venv_py="$RUNNER_TEMP/signvenv/Scripts/python.exe"
           "$venv_py" -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
-          # The key is read from RELEASE_SIGN_KEY in the environment, not argv.
+          # The key is read from GLYNDOR_RELEASE_ED25519_KEY in the environment, not argv.
           "$venv_py" .github/scripts/sign.py SHA256SUMS
           for deb in podup_*_amd64.deb podup_*_arm64.deb; do
             "$venv_py" .github/scripts/sign.py "$deb"
