@@ -97,8 +97,8 @@ download() {
 # release signed by either key verifies during a make-before-break rotation; the
 # signature passes if any key validates. Retire a key by clearing its slot here.
 # Override for a fork via the PODUP_RELEASE_PUBKEY_B64 / _PUBKEY2_B64 env vars.
-PODUP_RELEASE_PUBKEY_B64="${PODUP_RELEASE_PUBKEY_B64:-YUn5BN/lYIxJzDvjoUROgGGQjmlq100/SqbnhF1vvfM}"
-PODUP_RELEASE_PUBKEY2_B64="${PODUP_RELEASE_PUBKEY2_B64:-gWmPpZyqOogAwSDRonGyL21u3Xj2GTfcvjwXrmA8qQE}"
+PODUP_RELEASE_PUBKEY_B64="${PODUP_RELEASE_PUBKEY_B64:-HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM}"
+PODUP_RELEASE_PUBKEY2_B64="${PODUP_RELEASE_PUBKEY2_B64:-}"
 
 PUBKEYS=()
 [[ -n "$PODUP_RELEASE_PUBKEY_B64" ]]  && PUBKEYS+=("$PODUP_RELEASE_PUBKEY_B64")

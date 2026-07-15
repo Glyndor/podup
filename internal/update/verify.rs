@@ -11,12 +11,13 @@ use sha2::{Digest, Sha256};
 
 use crate::ComposeError;
 
-/// Accepted Ed25519 release public keys — at most two. Both slots are populated
-/// with the current release keys (`GLYNDOR_RELEASE_ED25519_KEY` in slot 0,
-/// `GLYNDOR_RELEASE_ED25519_KEY_2` in slot 1); a signature is trusted if it
-/// validates under either. The keys are public by design — their integrity comes
-/// from being baked into the signed, build-provenance-attested binary, so an
-/// attacker cannot swap them without invalidating the binary itself.
+/// Accepted Ed25519 release public keys — at most two. Slot 0 holds the active
+/// release key (`GLYNDOR_RELEASE_ED25519_KEY`); slot 1 is the empty rotation
+/// slot, populated only during a key rotation (see below). A signature is
+/// trusted if it validates under either non-zero slot. The keys are public by
+/// design — their integrity comes from being baked into the signed,
+/// build-provenance-attested binary, so an attacker cannot swap them without
+/// invalidating the binary itself.
 ///
 /// Verified against the genuine published `SHA256SUMS.sig` (see
 /// `embedded_key_verifies_real_release`). [`release_pubkeys`] still fails closed
@@ -36,20 +37,18 @@ use crate::ComposeError;
 ///
 /// If the outgoing private key is LOST, step 1 is impossible — no release can be
 /// signed by the old key — so fielded self-updaters cannot migrate in-band and
-/// must be re-installed out-of-band (rotated `install.sh` / apt). The two keys
-/// below are both freshly generated for exactly that reason; keep both live and
-/// signed until a normal (key-available) rotation can retire one.
+/// must be re-installed out-of-band (rotated `install.sh` / apt). That happened
+/// here: the key below is a fresh key with no relationship to any previously
+/// embedded key, and slot 1 starts zeroed (the normal steady state) rather than
+/// carrying a second live key.
 pub const RELEASE_PUBKEYS: [[u8; 32]; 2] = [
-	// GLYNDOR_RELEASE_ED25519_KEY = YUn5BN/lYIxJzDvjoUROgGGQjmlq100/SqbnhF1vvfM
+	// GLYNDOR_RELEASE_ED25519_KEY = HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM
 	[
-		97, 73, 249, 4, 223, 229, 96, 140, 73, 204, 59, 227, 161, 68, 78, 128, 97, 144, 142, 105,
-		106, 215, 77, 63, 74, 166, 231, 132, 93, 111, 189, 243,
+		28, 91, 251, 190, 14, 69, 9, 142, 216, 200, 165, 3, 108, 152, 90, 65, 39, 193, 245, 38,
+		232, 36, 100, 155, 148, 155, 69, 108, 185, 139, 31, 51,
 	],
-	// GLYNDOR_RELEASE_ED25519_KEY_2 = gWmPpZyqOogAwSDRonGyL21u3Xj2GTfcvjwXrmA8qQE
-	[
-		129, 105, 143, 165, 156, 170, 58, 136, 0, 193, 32, 209, 162, 113, 178, 47, 109, 110, 221,
-		120, 246, 25, 55, 220, 190, 60, 23, 174, 96, 60, 169, 1,
-	],
+	// Empty rotation slot — populate during the next key rotation.
+	[0u8; 32],
 ];
 
 /// A parsed `MAJOR.MINOR.PATCH` version, ordered for comparison.
