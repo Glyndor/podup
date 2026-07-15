@@ -1,3 +1,17 @@
+podup (1.9.2) unstable; urgency=medium
+
+  * The short `tmpfs:` form ignored its options. `- /tmp:size=64m,noexec`
+    mounted a tmpfs at a directory *named* `/tmp:size=64m,noexec` and applied
+    none of the options, leaving the real /tmp untouched — read-only, when the
+    service also set `read_only: true`. It exited 0 and warned about nothing.
+    The size cap is the part that matters: an undeclared tmpfs is sized to half
+    the host's RAM and every page is charged to the container's cgroup, so a
+    service asking for a capped 64 MiB got tens of gigabytes uncapped, and
+    `noexec` silently did not apply. The path is now split from its options on
+    the first colon, matching docker compose exactly.
+
+ -- Glyndor <packages@glyndor.net>  Wed, 15 Jul 2026 10:55:00 -0500
+
 podup (1.9.1) unstable; urgency=medium
 
   * The Debian package was still built as 1.8.0 for the 1.9.0 release: the
