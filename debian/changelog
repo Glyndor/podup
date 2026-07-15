@@ -1,3 +1,28 @@
+podup (1.9.1) unstable; urgency=medium
+
+  * The Debian package was still built as 1.8.0 for the 1.9.0 release: the
+    version bump touched Cargo.toml but not this file, so apt saw no upgrade
+    and Debian users were left on 1.8.0. This release carries the correct
+    version, and CI now fails when the two disagree.
+  * `podup autostart` installs a systemd user service that runs `podup up`
+    for a project, with `--no-start`, `--dry-run` and uninstall.
+  * New `podup version` subcommand, and `--project-name` as an alias for
+    `-p/--project-name`.
+  * `config` now warns about unknown keys inside nested option blocks, not
+    only at the top level.
+  * The release signing key has been rotated. A binary installed before this
+    release cannot verify a newer one and `podup update` will refuse; apt is
+    unaffected, since the archive keyring already trusts the new key.
+  * `secrets`: the file mode is parsed as octal and defaults to 0444, per the
+    compose spec.
+  * `build`: the Dockerfile is always sent even when .dockerignore matches it,
+    and build secrets are kept out of the COPY-able context.
+  * `update`: the self-test is pinned to the resolved release version, and
+    transient release downloads are retried with backoff.
+  * `autostart`: control characters in unit-embedded paths are rejected.
+
+ -- Glyndor <packages@glyndor.net>  Wed, 15 Jul 2026 06:45:00 -0500
+
 podup (1.8.0) unstable; urgency=medium
 
   * Container names are now always index-suffixed (`project-service-1`, even for

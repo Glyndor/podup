@@ -44,6 +44,28 @@ jobs:
           fi
           echo "Releasing version ${VERSION}."
 
+      - name: Debian package version must equal Cargo.toml version
+        # dpkg-buildpackage takes the .deb version from debian/changelog, which
+        # is a separate hand-maintained file. 1.9.0 shipped with the bump applied
+        # to Cargo.toml but not here, so the release carried podup_1.8.0_*.deb:
+        # apt saw the version it already had, reported no upgrade, and Debian
+        # users were stranded — with no self-update either, since podup redirects
+        # a dpkg-owned binary to `apt upgrade`. The tag check above cannot catch
+        # this; only comparing the two versions can.
+        run: |
+          # Read the version off the first line rather than with
+          # dpkg-parsechangelog: that tool lives in dpkg-dev, which this job
+          # never installs, and a gate that only runs at tag time must not
+          # depend on what happens to be on the runner image. The first-line
+          # format is fixed by Debian policy.
+          DEB_VERSION="$(sed -n '1s/^[^(]*(\([^)]*\)).*/\1/p' debian/changelog)"
+          CRATE_VERSION="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          if [ "$DEB_VERSION" != "$CRATE_VERSION" ]; then
+            echo "::error::debian/changelog is at ${DEB_VERSION} but Cargo.toml is at ${CRATE_VERSION}; add a changelog entry so the .deb carries the released version."
+            exit 1
+          fi
+          echo "Debian package version ${DEB_VERSION} matches."
+
       - name: Tag must be on main
         # Releases are cut only from `main` (develop → main merge, then tag).
         # Refuse a tag pushed to any other branch so an unreviewed commit can
