@@ -141,13 +141,8 @@ pub(crate) fn build_mounts_all(
 	}
 
 	// Top-level `tmpfs:` shorthand — equivalent to volumes with type=tmpfs.
-	for path in service.tmpfs.to_list() {
-		mounts.push(Mount {
-			mount_type: "tmpfs".into(),
-			source: None,
-			destination: path,
-			options: vec![],
-		});
+	for entry in service.tmpfs.to_list() {
+		mounts.push(spec::parse_tmpfs_string(&entry));
 	}
 
 	// Materialised secrets and configs are passed as pre-built bind strings.

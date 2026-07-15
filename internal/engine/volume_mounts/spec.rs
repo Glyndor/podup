@@ -107,6 +107,32 @@ fn split_volume_spec(s: &str) -> (&str, &str, &str) {
 	}
 }
 
+/// Parse one entry of the short `tmpfs:` list into a tmpfs Mount.
+///
+/// The entry is `<path>` or `<path>:<opt>[,<opt>…]`, split on the **first**
+/// colon: everything after it is handed to the engine as mount options. That is
+/// what docker compose does, measured against it rather than inferred — for
+/// `/multi:size=64m,mode=1777,noexec` it produces the Tmpfs entry
+/// `/multi -> size=64m,mode=1777,noexec,…`, and a bare `/plain` or a trailing
+/// `/trail:` yields the path with no options.
+///
+/// Options are passed through verbatim, not trimmed or validated: docker compose
+/// does not sanitise them either, and letting the engine reject `unknown mount
+/// option " noexec"` is a better answer than silently repairing a typo.
+pub(super) fn parse_tmpfs_string(s: &str) -> Mount {
+	let (dst, opts_str) = s.split_once(':').unwrap_or((s, ""));
+	Mount {
+		mount_type: "tmpfs".into(),
+		source: None,
+		destination: dst.to_string(),
+		options: opts_str
+			.split(',')
+			.filter(|o| !o.is_empty())
+			.map(str::to_string)
+			.collect(),
+	}
+}
+
 /// Parse a pre-built bind string (secret/config) — always produces a bind Mount.
 pub(super) fn parse_bind_string(s: &str) -> Option<Mount> {
 	let parts: Vec<&str> = s.splitn(3, ':').collect();
@@ -174,10 +200,54 @@ pub(super) fn extend_volume_opts_str(opts: &mut Vec<String>, v: Option<&VolumeOp
 #[cfg(test)]
 mod tests {
 	use super::{
-		extend_bind_opts_str, is_bind_source, map_selinux_option, parse_volume_string,
-		split_volume_spec,
+		extend_bind_opts_str, is_bind_source, map_selinux_option, parse_tmpfs_string,
+		parse_volume_string, split_volume_spec,
 	};
 	use crate::compose::types::BindOptions;
+
+	#[test]
+	fn tmpfs_short_form_splits_path_from_options() {
+		// Regression: the whole entry used to become the destination, so
+		// `/multi:size=64m,…` mounted a tmpfs at a directory *named* that, with no
+		// size cap — while the real path stayed untouched. Silent, exit 0.
+		let m = parse_tmpfs_string("/multi:size=64m,mode=1777,noexec,nosuid,nodev");
+		assert_eq!(m.destination, "/multi", "path must not carry the options");
+		assert_eq!(
+			m.options,
+			vec!["size=64m", "mode=1777", "noexec", "nosuid", "nodev"],
+			"every option must reach the engine"
+		);
+		assert_eq!(m.mount_type, "tmpfs");
+		assert!(m.source.is_none(), "a tmpfs has no source");
+	}
+
+	#[test]
+	fn tmpfs_short_form_without_options_is_unchanged() {
+		let m = parse_tmpfs_string("/plain");
+		assert_eq!(m.destination, "/plain");
+		assert!(m.options.is_empty(), "no colon means no options");
+	}
+
+	#[test]
+	fn tmpfs_short_form_trailing_colon_yields_no_options() {
+		// Matches docker compose, measured: `/trail:` mounts /trail with defaults
+		// rather than an empty-string option the engine would reject.
+		let m = parse_tmpfs_string("/trail:");
+		assert_eq!(m.destination, "/trail");
+		assert!(m.options.is_empty());
+	}
+
+	#[test]
+	fn tmpfs_short_form_splits_on_the_first_colon_only() {
+		// An option value may itself contain a colon; only the first separates
+		// the path from the options.
+		let m = parse_tmpfs_string("/x:size=1m,context=system_u:object_r:tmp_t:s0");
+		assert_eq!(m.destination, "/x");
+		assert_eq!(
+			m.options,
+			vec!["size=1m", "context=system_u:object_r:tmp_t:s0"]
+		);
+	}
 
 	#[test]
 	fn colon_less_path_is_anonymous_volume_not_bind() {
