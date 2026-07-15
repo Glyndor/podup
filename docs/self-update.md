@@ -72,9 +72,9 @@ is no longer the one unverifiable link in the chain.
 
 ## The embedded public keys
 
-Each consumer holds **up to two** accepted release keys. Both slots are
-currently populated (base64 `YUn5BN/lYIxJzDvjoUROgGGQjmlq100/SqbnhF1vvfM` and
-`gWmPpZyqOogAwSDRonGyL21u3Xj2GTfcvjwXrmA8qQE`), embedded in three places:
+Each consumer holds **up to two** accepted release keys. Slot 0 holds the
+active key; slot 1 is the empty rotation slot, populated only during a
+rotation. Embedded in three places:
 
 - `internal/update/verify.rs` — `RELEASE_PUBKEYS[0]` and `[1]` (raw 32 bytes).
 - `install.sh` — `PODUP_RELEASE_PUBKEY_B64` and `PODUP_RELEASE_PUBKEY2_B64`.
@@ -116,7 +116,7 @@ python3 - <<'PY'
 import base64
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 key = Ed25519PublicKey.from_public_bytes(
-    base64.b64decode("YUn5BN/lYIxJzDvjoUROgGGQjmlq100/SqbnhF1vvfM" + "=="))
+    base64.b64decode("HFv7vg5FCY7YyKUDbJhaQSfB9SboJGSblJtFbLmLHzM" + "=="))
 key.verify(open("SHA256SUMS.sig", "rb").read(), open("SHA256SUMS", "rb").read())
 print("SHA256SUMS signature OK")
 PY
