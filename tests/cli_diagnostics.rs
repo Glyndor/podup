@@ -3,29 +3,43 @@
 //! `podup:` program prefix — while stdout stays a clean YAML pipe for `config`.
 
 use std::fs;
+use std::path::PathBuf;
 use std::process::Command;
+
+use tempfile::TempDir;
 
 fn bin() -> &'static str {
 	env!("CARGO_BIN_EXE_podup")
 }
 
-/// Write a compose file with an unsupported key into a fresh temp dir and
-/// return its path. The unknown key drives the forward-compat diagnostic.
-fn compose_with_unknown_key() -> std::path::PathBuf {
-	let dir = std::env::temp_dir().join(format!("podup-diag-{}", std::process::id()));
-	fs::create_dir_all(&dir).expect("create temp dir");
-	let path = dir.join("compose.yaml");
-	fs::write(
-		&path,
+/// Write `contents` as a compose file in a temp dir of its own.
+///
+/// The directory must be unique **per call**, not per process: cargo runs the
+/// tests in one binary as threads, so a path keyed on the pid is shared by every
+/// test in this file. Two tests writing the same compose file then race —
+/// `fs::write` truncates before it writes, so a concurrent reader can see an
+/// empty file and fail validation. Returning the [`TempDir`] hands the caller
+/// the directory's lifetime: hold it for the length of the test, and it is
+/// removed on drop rather than left in /tmp forever.
+fn compose_file(name: &str, contents: &str) -> (TempDir, PathBuf) {
+	let dir = tempfile::tempdir().expect("create temp dir");
+	let path = dir.path().join(name);
+	fs::write(&path, contents).expect("write compose file");
+	(dir, path)
+}
+
+/// A compose file with an unsupported key, which drives the forward-compat
+/// diagnostic.
+fn compose_with_unknown_key() -> (TempDir, PathBuf) {
+	compose_file(
+		"compose.yaml",
 		"services:\n  web:\n    image: nginx:1.27\n    bogus_field: oops\n",
 	)
-	.expect("write compose file");
-	path
 }
 
 #[test]
 fn config_warns_on_stderr_with_clean_stdout_and_no_rust_log() {
-	let file = compose_with_unknown_key();
+	let (_dir, file) = compose_with_unknown_key();
 	let output = Command::new(bin())
 		.arg("-f")
 		.arg(&file)
@@ -56,8 +70,6 @@ fn config_warns_on_stderr_with_clean_stdout_and_no_rust_log() {
 		!stdout.contains("warning"),
 		"stdout stays a clean pipe; got stdout:\n{stdout}"
 	);
-
-	let _ = fs::remove_dir_all(file.parent().unwrap());
 }
 
 #[test]
@@ -76,21 +88,16 @@ fn completions_emit_a_script_to_stdout() {
 }
 
 /// A minimal valid two-service compose file in a fresh temp dir.
-fn compose_two_services() -> std::path::PathBuf {
-	let dir = std::env::temp_dir().join(format!("podup-cfg-{}", std::process::id()));
-	fs::create_dir_all(&dir).expect("create temp dir");
-	let path = dir.join("compose.yaml");
-	fs::write(
-		&path,
+fn compose_two_services() -> (TempDir, PathBuf) {
+	compose_file(
+		"compose.yaml",
 		"services:\n  web:\n    image: nginx:1.27\n  db:\n    image: postgres:16\n",
 	)
-	.expect("write compose file");
-	path
 }
 
 #[test]
 fn config_services_lists_service_names() {
-	let file = compose_two_services();
+	let (_dir, file) = compose_two_services();
 	let out = Command::new(bin())
 		.args(["-f", file.to_str().unwrap(), "config", "--services"])
 		.output()
@@ -105,7 +112,7 @@ fn config_services_lists_service_names() {
 
 #[test]
 fn config_format_json_emits_json() {
-	let file = compose_two_services();
+	let (_dir, file) = compose_two_services();
 	let out = Command::new(bin())
 		.args(["-f", file.to_str().unwrap(), "config", "--format", "json"])
 		.output()
@@ -118,7 +125,7 @@ fn config_format_json_emits_json() {
 
 #[test]
 fn config_quiet_validates_without_output() {
-	let valid = compose_two_services();
+	let (_dir, valid) = compose_two_services();
 	let ok = Command::new(bin())
 		.args(["-f", valid.to_str().unwrap(), "config", "-q"])
 		.output()
@@ -127,10 +134,10 @@ fn config_quiet_validates_without_output() {
 	assert!(ok.stdout.is_empty(), "quiet must print nothing");
 
 	// A syntactically broken compose file fails validation (non-zero exit).
-	let dir = std::env::temp_dir().join(format!("podup-cfgbad-{}", std::process::id()));
-	fs::create_dir_all(&dir).unwrap();
-	let badfile = dir.join("compose.yaml");
-	fs::write(&badfile, "services:\n  web:\n    image: [unterminated\n").unwrap();
+	let (_bad_dir, badfile) = compose_file(
+		"compose.yaml",
+		"services:\n  web:\n    image: [unterminated\n",
+	);
 	let err = Command::new(bin())
 		.args(["-f", badfile.to_str().unwrap(), "config", "-q"])
 		.output()
@@ -140,14 +147,10 @@ fn config_quiet_validates_without_output() {
 
 #[test]
 fn config_no_interpolate_keeps_placeholders_literal() {
-	let dir = std::env::temp_dir().join(format!("podup-noint-{}", std::process::id()));
-	fs::create_dir_all(&dir).unwrap();
-	let compose = dir.join("docker-compose.yml");
-	fs::write(
-		&compose,
+	let (_dir, compose) = compose_file(
+		"docker-compose.yml",
 		"services:\n  web:\n    image: \"alpine:${PODUP_TAG}\"\n",
-	)
-	.unwrap();
+	);
 	let c = compose.to_str().unwrap();
 
 	// Default config interpolates ${PODUP_TAG} (unset → empty).
@@ -216,14 +219,10 @@ fn create_rejects_no_recreate_with_force_recreate() {
 fn config_warns_on_unset_interpolation_variable() {
 	// An unset `${VAR}` interpolates to an empty string but must warn on stderr
 	// (matching docker compose) so a config typo does not pass silently.
-	let dir = std::env::temp_dir().join(format!("podup-unset-warn-{}", std::process::id()));
-	fs::create_dir_all(&dir).unwrap();
-	let compose = dir.join("docker-compose.yml");
-	fs::write(
-		&compose,
+	let (_dir, compose) = compose_file(
+		"docker-compose.yml",
 		"services:\n  web:\n    image: ${PODUP_UNSET_IMAGE}\n",
-	)
-	.unwrap();
+	);
 	let c = compose.to_str().unwrap();
 
 	let out = Command::new(bin())
@@ -243,14 +242,10 @@ fn config_no_interpolate_skips_required_var_error() {
 	// `--no-interpolate` must not evaluate a required-var `${VAR:?msg}`: with the
 	// variable unset the command should still succeed and print the placeholder
 	// literally, rather than failing on the required-var check.
-	let dir = std::env::temp_dir().join(format!("podup-noint-req-{}", std::process::id()));
-	fs::create_dir_all(&dir).unwrap();
-	let compose = dir.join("docker-compose.yml");
-	fs::write(
-		&compose,
+	let (_dir, compose) = compose_file(
+		"docker-compose.yml",
 		"services:\n  web:\n    image: ${MUST_SET:?required}\n",
-	)
-	.unwrap();
+	);
 	let c = compose.to_str().unwrap();
 
 	// With interpolation on, the required-var error fails the command.
