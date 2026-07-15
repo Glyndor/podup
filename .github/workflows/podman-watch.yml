@@ -38,13 +38,24 @@ jobs:
           echo "Podman $LATEST is packaged in: $DISTROS"
           # Major bump => full sweep; otherwise a lighter re-check.
           MAJ_NEW=${LATEST%%.*}; MAJ_OLD=${BASELINE%%.*}
-          KIND="patch/minor re-check"; [ "$MAJ_NEW" != "$MAJ_OLD" ] && KIND="MAJOR — full command-by-command sweep + wire-field re-probe"
+          KIND="patch/minor re-check"; EFFORT="effort:M"
+          if [ "$MAJ_NEW" != "$MAJ_OLD" ]; then
+            KIND="MAJOR — full command-by-command sweep + wire-field re-probe"
+            # A major re-probes the wire fields on top of the suite: a size more.
+            EFFORT="effort:L"
+          fi
           TITLE="Validate podup on Podman $LATEST (now packaged)"
           # Idempotent: skip if an issue for this version is already open.
           if gh issue list --state open --search "in:title $TITLE" --json title --jq '.[].title' | grep -qxF "$TITLE"; then
             echo "Issue already open — nothing to do."; exit 0
           fi
-          gh issue create --title "$TITLE" --body "Podman **$LATEST** is released and now packaged in: **$DISTROS** (baseline validated: $BASELINE).
+          # Label on creation. An unlabelled issue is a process bug, and one filed
+          # by a bot is no exception — #673 and #1016 both landed bare because this
+          # step never passed --label, and both had to be labelled by hand later.
+          gh issue create --title "$TITLE" \
+            --label "type:test" --label "prio:P2" --label "status:ready" \
+            --label "area:engine" --label "$EFFORT" \
+            --body "Podman **$LATEST** is released and now packaged in: **$DISTROS** (baseline validated: $BASELINE).
 
           This is **$KIND**.
 
