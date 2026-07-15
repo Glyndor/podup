@@ -333,10 +333,9 @@ fn signal_number(name: &str) -> Option<i64> {
 fn realtime_signal_number(name: &str) -> Option<i64> {
 	let (base, rest) = if let Some(rest) = name.strip_prefix("RTMIN") {
 		(SIGRTMIN, rest)
-	} else if let Some(rest) = name.strip_prefix("RTMAX") {
-		(SIGRTMAX, rest)
 	} else {
-		return None;
+		let rest = name.strip_prefix("RTMAX")?;
+		(SIGRTMAX, rest)
 	};
 	let number = if rest.is_empty() {
 		base
