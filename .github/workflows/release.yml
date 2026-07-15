@@ -313,6 +313,18 @@ jobs:
           "$venv_py" .github/scripts/sign.py install.sh
           "$venv_py" .github/scripts/sign.py install.ps1
 
+      - name: Verify the signature against the keys consumers embed
+        run: |
+          # sign.py only checks the seed is base64 of 32 bytes, so a wrong-but-
+          # well-formed GLYNDOR_RELEASE_ED25519_KEY signs happily and publishes a
+          # release nothing can verify. Releases are immutable, so that mistake
+          # burns the version. Do here, once, what every installer does on every
+          # machine: verify SHA256SUMS.sig against the keys install.sh ships. A
+          # mismatch fails the release instead of shipping it.
+          venv_py="$RUNNER_TEMP/signvenv/bin/python"
+          [ -x "$venv_py" ] || venv_py="$RUNNER_TEMP/signvenv/Scripts/python.exe"
+          "$venv_py" .github/scripts/verify-signing-key.py SHA256SUMS
+
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
