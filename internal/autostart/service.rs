@@ -1,9 +1,9 @@
 //! Pure rendering of the `podup-<project>.service` systemd user unit.
 //!
 //! The unit is a `Type=oneshot` `RemainAfterExit=yes` service that runs `podup
-//! ... up -d --build` at boot and `podup ... down` on stop. systemd has no cwd
-//! and no relative-path context, so every path the unit embeds is absolute and
-//! every argument is escaped per the systemd exec-line syntax.
+//! ... up -d` at boot and `podup ... stop` on stop. systemd has no cwd and no
+//! relative-path context, so every path the unit embeds is absolute and every
+//! argument is escaped per the systemd exec-line syntax.
 
 use std::path::PathBuf;
 
@@ -132,8 +132,18 @@ fn exec_line(opts: &ServiceUnitOpts, trailing: &[&str]) -> String {
 
 /// Render the full `.service` unit file content for service-mode autostart.
 pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
-	let start = exec_line(opts, &["up", "-d", "--build"]);
-	let stop = exec_line(opts, &["down"]);
+	// `up -d`, not `up -d --build`: a boot must not depend on a build. A build
+	// needs the network, takes minutes, and a registry that is briefly
+	// unreachable would leave the stack down on an unattended machine. Build at
+	// deploy time, where someone is watching.
+	let start = exec_line(opts, &["up", "-d"]);
+	// `stop`, not `down`: `down` REMOVES the containers, so a clean shutdown
+	// would delete the stack and every boot would recreate it from scratch —
+	// losing container identity and logs, and dragging the whole compose
+	// front-end (.env, interpolation, the parse) onto the boot path. `stop`
+	// leaves them on disk, which is exactly what ExecStart expects to find, and
+	// honours each container's own stop_signal / stop_grace_period.
+	let stop = exec_line(opts, &["stop"]);
 	// No `network-online.target` ordering: that target is a system-manager
 	// concept and stays inert in the `--user` instance, so depending on it would
 	// imply a network-readiness gate that never fires. Under linger the user
@@ -187,10 +197,10 @@ mod tests {
 		assert!(s.contains("WorkingDirectory=/srv/app"));
 		assert!(s.contains("WantedBy=default.target"));
 		assert!(s.contains(
-			"ExecStart=/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app up -d --build"
+			"ExecStart=/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app up -d"
 		));
 		assert!(
-			s.contains("ExecStop=/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app down")
+			s.contains("ExecStop=/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app stop")
 		);
 	}
 
@@ -203,10 +213,10 @@ mod tests {
 		];
 		let s = render_service_unit(&o);
 		assert!(s.contains(
-			"ExecStart=/usr/local/bin/podup -f /srv/app/base.yml -f /srv/app/override.yml -p app up -d --build"
+			"ExecStart=/usr/local/bin/podup -f /srv/app/base.yml -f /srv/app/override.yml -p app up -d"
 		));
 		assert!(s.contains(
-			"ExecStop=/usr/local/bin/podup -f /srv/app/base.yml -f /srv/app/override.yml -p app down"
+			"ExecStop=/usr/local/bin/podup -f /srv/app/base.yml -f /srv/app/override.yml -p app stop"
 		));
 	}
 
@@ -216,11 +226,30 @@ mod tests {
 		o.profiles = vec!["prod".to_string(), "web".to_string()];
 		o.env_files = vec!["/srv/app/.env.prod".to_string()];
 		let s = render_service_unit(&o);
-		assert!(s.contains(
-			"-p app --profile prod --profile web --env-file /srv/app/.env.prod up -d --build"
-		));
 		assert!(
-			s.contains("-p app --profile prod --profile web --env-file /srv/app/.env.prod down")
+			s.contains("-p app --profile prod --profile web --env-file /srv/app/.env.prod up -d")
+		);
+		assert!(
+			s.contains("-p app --profile prod --profile web --env-file /srv/app/.env.prod stop")
+		);
+	}
+
+	#[test]
+	fn boot_neither_builds_nor_destroys() {
+		// The contract, pinned. `--build` on ExecStart puts an image build on the
+		// boot path of an unattended machine — it needs the network and a briefly
+		// unreachable registry leaves the stack down. `down` on ExecStop removes
+		// the containers, so a clean shutdown would delete the stack and every
+		// boot would recreate it. Both shipped in 1.9.0; neither may come back
+		// without this test being deleted on purpose.
+		let s = render_service_unit(&opts_single());
+		assert!(
+			!s.contains("--build"),
+			"a boot must not depend on a build:\n{s}"
+		);
+		assert!(
+			!s.contains(" down"),
+			"ExecStop must stop, not remove the containers:\n{s}"
 		);
 	}
 
@@ -233,7 +262,7 @@ mod tests {
 		let s = render_service_unit(&o);
 		// The exe and the compose path are double-quoted as single arguments.
 		assert!(s.contains(
-			"ExecStart=\"/opt/my tools/podup\" -f \"/srv/my app/compose.yml\" -p app up -d --build"
+			"ExecStart=\"/opt/my tools/podup\" -f \"/srv/my app/compose.yml\" -p app up -d"
 		));
 		// WorkingDirectory takes the rest of the line literally, so it is not quoted.
 		assert!(s.contains("WorkingDirectory=/srv/my app"));
