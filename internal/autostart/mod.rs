@@ -7,8 +7,10 @@
 //! the system systemd. External-command calls go through the `SystemCtl` seam so
 //! the install/uninstall/status logic is unit-testable without a live systemd.
 
+mod quadlet;
 mod service;
 
+pub use quadlet::{install_quadlet, rebuild_quadlet, uninstall_quadlet};
 pub use service::{render_service_unit, ServiceUnitOpts};
 
 use std::io;
@@ -261,6 +263,30 @@ pub fn uninstall<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
 
 	checked(sc.systemctl(&["daemon-reload"]), "daemon-reload")?;
 	Ok(())
+}
+
+/// Which autostart mode, if any, is installed for a project. Service and quadlet
+/// mode cannot coexist — each install refuses the other — so at most one is present.
+/// `uninstall` uses this to remove whichever is there without the caller naming a
+/// mode (and mistakenly no-op'ing against the wrong one).
+pub enum InstalledMode {
+	/// The service-mode `podup-<project>.service` unit is present.
+	Service,
+	/// Quadlet `<project>-*.container` units are present.
+	Quadlet,
+	/// Neither — nothing is installed.
+	None,
+}
+
+/// Detect the installed autostart mode for `project` from what is on disk.
+pub fn installed_mode(project: &str) -> InstalledMode {
+	if unit_path(project).exists() {
+		InstalledMode::Service
+	} else if !quadlet_units_present(project).is_empty() {
+		InstalledMode::Quadlet
+	} else {
+		InstalledMode::None
+	}
 }
 
 /// A snapshot of the autostart unit's state, gathered for `status`.

@@ -69,11 +69,13 @@ pub(crate) enum ConfigFormat {
 /// Which autostart backend `autostart install` sets up.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub(crate) enum AutostartMode {
-	/// A single `Type=oneshot` `systemctl --user` service that runs `podup up`
-	/// at boot and `podup down` on stop. The only mode implemented today.
+	/// A single `Type=oneshot` `systemctl --user` service that runs `podup up -d`
+	/// at boot and `podup stop` on shutdown. The default.
 	#[default]
 	Service,
-	/// Per-service Podman Quadlet units. Not yet implemented (tracked by #993).
+	/// Per-service Podman Quadlet units: hand the stack to systemd as native
+	/// `.container`/`.build`/`.volume`/`.network` units, so systemd owns boot,
+	/// restart and dependency ordering directly.
 	Quadlet,
 }
 
@@ -83,7 +85,8 @@ pub(crate) enum AutostartCommands {
 	/// Install (and, by default, enable + start) the autostart unit for this
 	/// project. User-scope only: writes under `${XDG_CONFIG_HOME:-~/.config}`.
 	Install {
-		/// Autostart backend to use (only `service` is implemented).
+		/// Autostart backend: `service` (one unit that runs `podup up`) or
+		/// `quadlet` (native systemd units, one per service).
 		#[arg(long, value_enum, default_value_t)]
 		mode: AutostartMode,
 		/// Install the unit but do not enable or start it immediately.
@@ -101,6 +104,15 @@ pub(crate) enum AutostartCommands {
 	},
 	/// Report this project's autostart unit and session state.
 	Status,
+	/// Rebuild the image(s) of a quadlet-mode install and restart the container(s).
+	///
+	/// A Quadlet `.build` unit is `Type=oneshot`, so an image only rebuilds when its
+	/// build service is restarted. This restarts `<project>-<service>-build.service`
+	/// then the container service. Applies to `--mode quadlet` installs only.
+	Rebuild {
+		/// Rebuild only this service; omit to rebuild every built service.
+		service: Option<String>,
+	},
 }
 
 /// Subcommands of `generate`.

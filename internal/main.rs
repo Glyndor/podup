@@ -481,7 +481,10 @@ async fn run() -> podup::Result<()> {
 		// services (which would make `--profile` a no-op on this subcommand).
 		let mut filtered = file.clone();
 		podup::retain_active_profiles(&mut filtered, &cli.profile);
-		return write_quadlet(&filtered, &project, output.as_deref());
+		// Absolute base dir so a `.build` unit's context resolves under the compose
+		// file, not the unit directory the systemd generator would otherwise use.
+		let base_dir = std::fs::canonicalize(&base_dir).unwrap_or(base_dir);
+		return write_quadlet(&filtered, &project, &base_dir, output.as_deref());
 	}
 
 	// `autostart` manages a rootless `systemctl --user` unit that brings the stack
