@@ -1,3 +1,19 @@
+podup (1.9.3) unstable; urgency=medium
+
+  * The autostart service unit destroyed the stack on a clean shutdown and
+    rebuilt it on every boot. `ExecStop` ran `down`, which removes the
+    containers, so shutting the machine down deleted the stack and the next
+    boot recreated it from scratch, losing container identity and logs.
+    `ExecStop` now runs `stop`, which leaves the containers on disk for
+    `ExecStart` to find and honours each container's own stop_signal and
+    stop_grace_period. `ExecStart` also ran `up -d --build`, making a boot
+    depend on the network and a reachable registry; a build that failed left
+    the stack down on an unattended machine. It now runs `up -d`.
+    If you installed autostart with 1.9.0-1.9.2, re-run
+    `podup autostart install` to regenerate the unit.
+
+ -- Glyndor <packages@glyndor.net>  Thu, 16 Jul 2026 01:05:00 -0500
+
 podup (1.9.2) unstable; urgency=medium
 
   * The short `tmpfs:` form ignored its options. `- /tmp:size=64m,noexec`
