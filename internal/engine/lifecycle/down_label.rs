@@ -35,8 +35,8 @@ impl Engine {
 	/// failure is remembered and returned at the end instead of being swallowed
 	/// into a warning — mirroring the fix applied to [`Engine::down_with_options`]
 	/// (#598). A stalled or failed `stop` does NOT count towards this: the
-	/// force-remove that follows SIGKILLs the container regardless (see
-	/// [`super::container_rm_path`]), so only a genuine removal failure
+	/// force-remove that follows SIGKILLs the container regardless (the
+	/// container-removal path forces removal), so only a genuine removal failure
 	/// aggregates. A 404 (already gone) stays an idempotent no-op throughout.
 	pub async fn down_by_label(&self, remove_volumes: bool) -> Result<()> {
 		let grace = self.stop_timeout.unwrap_or(DEFAULT_STOP_GRACE_SECS);
