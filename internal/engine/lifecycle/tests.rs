@@ -3,6 +3,8 @@ use super::container_rm_path;
 #[cfg(unix)]
 use super::Engine;
 #[cfg(unix)]
+use crate::compose::types::{ComposeFile, Service};
+#[cfg(unix)]
 use crate::engine::fake_podman;
 #[cfg(unix)]
 use crate::error::ComposeError;
@@ -61,6 +63,77 @@ async fn ensure_started_tolerates_404_and_304() {
 	e.ensure_started("proj-web-1")
 		.await
 		.expect("304 must be an idempotent no-op");
+}
+
+/// Two containers to tear down: one whose removal genuinely fails (a busy
+/// mount, an active exec session), one that removes cleanly. `down` must
+/// still attempt (and complete) the second before exiting non-zero for the
+/// first (#598) — a CI teardown must not be told it succeeded.
+#[tokio::test]
+#[cfg(unix)]
+async fn down_propagates_a_real_removal_failure_after_completing_the_rest() {
+	let containers = r#"[
+		{"Names":["/proj-web-1"],"Labels":{"podup.service":"web"}},
+		{"Names":["/proj-db-1"],"Labels":{"podup.service":"db"}}
+	]"#;
+	let fake = fake_podman::start(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			(200, containers.to_string())
+		} else if method == "POST" && target.contains("/stop") {
+			(200, String::new())
+		} else if method == "DELETE" && target.contains("/proj-web-1?force=true") {
+			(500, r#"{"message":"device or resource busy"}"#.to_string())
+		} else if method == "DELETE" && target.contains("/proj-db-1?force=true") {
+			(200, String::new())
+		} else {
+			(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+
+	let mut file = ComposeFile::default();
+	file.services.insert("web".into(), Service::default());
+	file.services.insert("db".into(), Service::default());
+
+	let err = e
+		.down_with_options(&file, false)
+		.await
+		.expect_err("a real container-removal failure must propagate");
+	assert!(
+		matches!(err, ComposeError::Podman(ref pe) if pe.is_status(500)),
+		"got {err:?}"
+	);
+
+	// Best-effort: the healthy container must still have been reached even
+	// though the other one failed.
+	let seen = fake.requests.lock().unwrap();
+	assert!(
+		seen.iter()
+			.any(|r| r.contains("DELETE") && r.contains("/proj-db-1?force=true")),
+		"expected proj-db-1 to be removed despite proj-web-1 failing: {seen:?}"
+	);
+}
+
+/// A second `down` on an already torn-down project (no live containers,
+/// nothing left to sweep) must still exit 0 — idempotency is preserved.
+#[tokio::test]
+#[cfg(unix)]
+async fn down_on_an_already_torn_down_project_is_still_ok() {
+	let fake = fake_podman::start(|method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			(200, "[]".to_string())
+		} else {
+			(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+
+	let mut file = ComposeFile::default();
+	file.services.insert("web".into(), Service::default());
+
+	e.down_with_options(&file, false)
+		.await
+		.expect("a re-run down on a torn-down project must still exit 0");
 }
 
 #[test]

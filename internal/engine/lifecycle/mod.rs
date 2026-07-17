@@ -463,6 +463,14 @@ impl Engine {
 		// one container-list round-trip per service (S+1 → 1 for the ordered pass).
 		let live_by_service = self.list_project_containers_by_service().await?;
 
+		// Best-effort across every container/network/volume so one failure never
+		// leaves the rest of the teardown undone, but the first real failure is
+		// remembered and returned at the end instead of being swallowed into a
+		// warning — a `down` whose container removal genuinely fails (storage
+		// error, active exec session) must exit non-zero, not print a warning and
+		// exit 0 (#598). A 404 (already gone) stays an idempotent no-op throughout.
+		let mut first_err: Option<crate::error::ComposeError> = None;
+
 		for name in &order {
 			let service = &file.services[name];
 			// Act only on containers Podman actually has. A defined-but-never-
@@ -501,6 +509,7 @@ impl Engine {
 				{
 					if !e.is_status(404) {
 						tracing::warn!("could not stop {container_name}: {e}");
+						first_err.get_or_insert(crate::error::ComposeError::Podman(e));
 					}
 				}
 
@@ -508,7 +517,10 @@ impl Engine {
 				match self.client.delete_ok(&rm_path).await {
 					Ok(()) => crate::ui::progress_line("Container", container_name, "Removed"),
 					Err(e) if e.is_status(404) => {}
-					Err(e) => tracing::warn!("could not remove {container_name}: {e}"),
+					Err(e) => {
+						tracing::warn!("could not remove {container_name}: {e}");
+						first_err.get_or_insert(crate::error::ComposeError::Podman(e));
+					}
 				}
 			}
 		}
@@ -534,7 +546,10 @@ impl Engine {
 			match self.client.delete_ok(&net_path).await {
 				Ok(_) => crate::ui::progress_line("Network", &network_name, "Removed"),
 				Err(e) if e.is_status(404) => {}
-				Err(e) => tracing::warn!("could not remove network {network_name}: {e}"),
+				Err(e) => {
+					tracing::warn!("could not remove network {network_name}: {e}");
+					first_err.get_or_insert(crate::error::ComposeError::Podman(e));
+				}
 			}
 		}
 
@@ -563,7 +578,10 @@ impl Engine {
 				match self.client.delete_ok(&vol_path).await {
 					Ok(_) => crate::ui::progress_line("Volume", &volume_name, "Removed"),
 					Err(e) if e.is_status(404) => {}
-					Err(e) => tracing::warn!("could not remove volume {volume_name}: {e}"),
+					Err(e) => {
+						tracing::warn!("could not remove volume {volume_name}: {e}");
+						first_err.get_or_insert(crate::error::ComposeError::Podman(e));
+					}
 				}
 			}
 		}
@@ -571,6 +589,10 @@ impl Engine {
 		// Internal native secrets are podup-owned (not user data), so remove
 		// them unconditionally — independent of `remove_volumes`.
 		self.remove_internal_secrets(file).await?;
+
+		if let Some(e) = first_err {
+			return Err(e);
+		}
 		Ok(())
 	}
 
