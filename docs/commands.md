@@ -379,19 +379,22 @@ mismatch aborts before the installed binary is touched. See
 ### `autostart` (alias `boot`)
 Manage a boot-time autostart unit for this compose project — rootless,
 user-scope `systemctl --user` (enable lingering with
-`loginctl enable-linger` so the unit starts without a login session).
+`loginctl enable-linger` so the unit starts without a login session). See
+[Rootless autostart](autostart.md) for the full setup, the two backends, and
+running it under an isolated service account.
 
 | Subcommand | Description |
 |---|---|
-| `install` | Install (and, by default, enable + start) the unit. Writes only under `${XDG_CONFIG_HOME:-~/.config}/systemd/user/`. |
-| `uninstall` | Disable, stop, and remove this project's unit. |
+| `install` | Install (and, by default, start) the autostart unit(s) for this project. Writes only under `${XDG_CONFIG_HOME:-~/.config}`. |
+| `uninstall` | Remove whichever mode is installed (auto-detected). `--purge` also tears the stack down and drops its volumes. |
 | `status` | Report this project's unit and session state. |
+| `rebuild [service]` | Quadlet mode only: rebuild the built image(s) and restart the container(s). Omit the argument to rebuild every built service. |
 
 | Flag (`install`) | Description | Default |
 |---|---|---|
-| `--mode <MODE>` | Autostart backend; only `service` (a `Type=oneshot` unit running `podup up -d --build` at boot, `podup down` on stop) is implemented. | `service` |
-| `--no-start` | Install the unit but do not enable or start it. | off |
-| `--dry-run` | Print the unit and the actions that would run; change nothing. | off |
+| `--mode <MODE>` | Autostart backend: `service` (one `Type=oneshot` unit running `podup up -d` at boot, `podup stop` on shutdown) or `quadlet` (one native Podman Quadlet unit per service, owned by systemd directly). | `service` |
+| `--no-start` | Install the unit(s) but do not start them. | off |
+| `--dry-run` | Print what would be written and run; change nothing. | off |
 
 ### `version`
 Print version information, like `docker compose version`. `podup --version`
