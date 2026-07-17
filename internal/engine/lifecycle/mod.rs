@@ -464,11 +464,15 @@ impl Engine {
 		let live_by_service = self.list_project_containers_by_service().await?;
 
 		// Best-effort across every container/network/volume so one failure never
-		// leaves the rest of the teardown undone, but the first real failure is
-		// remembered and returned at the end instead of being swallowed into a
-		// warning — a `down` whose container removal genuinely fails (storage
-		// error, active exec session) must exit non-zero, not print a warning and
-		// exit 0 (#598). A 404 (already gone) stays an idempotent no-op throughout.
+		// leaves the rest of the teardown undone, but the first real REMOVAL
+		// failure is remembered and returned at the end instead of being
+		// swallowed into a warning — a `down` whose container/network/volume
+		// removal genuinely fails (storage error, active exec session) must exit
+		// non-zero, not print a warning and exit 0 (#598). A stalled or failed
+		// `stop` does NOT count towards this: the force-remove below SIGKILLs the
+		// container regardless (see `container_rm_path`), so only the removal
+		// outcome is aggregated. A 404 (already gone) stays an idempotent no-op
+		// throughout.
 		let mut first_err: Option<crate::error::ComposeError> = None;
 
 		for name in &order {
@@ -501,7 +505,10 @@ impl Engine {
 				);
 				// A 404 (container already gone, or a profile-gated service that was
 				// never created) is an idempotent no-op here, exactly as the network
-				// and volume removal arms below treat it — not a warning.
+				// and volume removal arms below treat it — not a warning. A stalled
+				// or failed stop is not fatal either: the force-remove just below
+				// SIGKILLs the container regardless, so its outcome is logged but
+				// never folded into `first_err` — only a genuine removal failure is.
 				if let Err(e) = self
 					.client
 					.post_empty_ok_within(&stop_path, targets::stop_deadline(grace))
@@ -509,7 +516,6 @@ impl Engine {
 				{
 					if !e.is_status(404) {
 						tracing::warn!("could not stop {container_name}: {e}");
-						first_err.get_or_insert(crate::error::ComposeError::Podman(e));
 					}
 				}
 
@@ -558,7 +564,11 @@ impl Engine {
 		// network whose compose key changed — mirroring the container sweep so
 		// teardown is complete regardless of how the file was parsed. Only
 		// podup-labelled networks match, so external networks are never touched.
-		self.remove_project_networks_by_label().await;
+		// This is a supplementary catch-all on top of the file-driven network
+		// loop above (which already aggregates its own failures into
+		// `first_err`), so a failure here is intentionally swallowed rather than
+		// folded in again.
+		let _ = self.remove_project_networks_by_label().await;
 
 		if remove_volumes {
 			for (key, config) in &file.volumes {

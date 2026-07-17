@@ -114,6 +114,52 @@ async fn down_propagates_a_real_removal_failure_after_completing_the_rest() {
 	);
 }
 
+/// #598 regression: `container_rm_path` always forces removal (`?force=true`),
+/// which SIGKILLs the container regardless of how `stop` went — so a stop
+/// that fails or stalls (HTTP 500) is superseded, not fatal, once the
+/// force-remove that follows it succeeds. This pins the exact gap that let the
+/// bug through: folding the `stop` failure into `first_err` made `down` return
+/// `Err` even though teardown fully succeeded.
+#[tokio::test]
+#[cfg(unix)]
+async fn down_tolerates_a_stalled_stop_when_the_force_remove_succeeds() {
+	let containers = r#"[{"Names":["/proj-web-1"],"Labels":{"podup.service":"web"}}]"#;
+	let fake = fake_podman::start(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			(200, containers.to_string())
+		} else if method == "POST" && target.contains("/stop") {
+			(
+				500,
+				r#"{"message":"timed out waiting for container to exit"}"#.to_string(),
+			)
+		} else if method == "DELETE" && target.contains("/proj-web-1?force=true") {
+			(200, String::new())
+		} else {
+			(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+
+	let mut file = ComposeFile::default();
+	file.services.insert("web".into(), Service::default());
+
+	e.down_with_options(&file, false)
+		.await
+		.expect("a stalled/failed stop superseded by a successful force-remove must not fail down");
+
+	let seen = fake.requests.lock().unwrap();
+	assert!(
+		seen.iter()
+			.any(|r| r.contains("POST") && r.contains("/stop")),
+		"expected the stop to have been attempted: {seen:?}"
+	);
+	assert!(
+		seen.iter()
+			.any(|r| r.contains("DELETE") && r.contains("/proj-web-1?force=true")),
+		"expected the force-remove to have been attempted: {seen:?}"
+	);
+}
+
 /// A second `down` on an already torn-down project (no live containers,
 /// nothing left to sweep) must still exit 0 — idempotency is preserved.
 #[tokio::test]
