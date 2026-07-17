@@ -4,8 +4,13 @@
 # or the maintainer's machine), never a shared GitHub runner — shared runners are
 # too noisy to be trustworthy. So this workflow has two jobs:
 #
-#   smoke      — on a shared GitHub runner, runs `bench/run.sh --smoke` to prove
-#                the harness still runs. It produces NO published numbers.
+#   smoke      — on a shared GitHub runner, validates the harness code itself:
+#                shell syntax, Python syntax, and the aggregation stats path run
+#                against inline sample rows. It does NOT install Podman or drive
+#                podup — ubuntu-latest ships Podman 4.9, below podup's floor
+#                (Podman >= 5.0), so a shared-runner engine run would either fail
+#                or exercise an unsupported configuration. It produces NO
+#                published numbers and proves nothing about podup on real Podman.
 #   benchmark  — on a self-hosted runner (manual dispatch), runs the full suite
 #                and uploads the report artifact. It is skipped until a runner with
 #                the `bench` label exists.
@@ -25,22 +30,12 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-      - name: Install Podman and podman-compose
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y podman
-          pipx install podman-compose || pip install --user podman-compose
-      - name: Build podup
-        run: cargo build --release --all-features --locked
-      - name: Pre-pull pinned images
-        run: |
-          grep -rhoE 'docker\.io/[^ ]+@sha256:[a-f0-9]+' bench/scenarios | sort -u | while read -r img; do
-            podman pull -q "$img"
-          done
-      - name: Smoke-run the harness
-        run: PODUP_BIN=target/release/podup bash bench/run.sh --smoke
-      - name: Aggregate (sanity)
-        run: python3 bench/aggregate.py
+      - name: Check the harness shell syntax
+        run: bash -n bench/run.sh
+      - name: Check the harness Python syntax
+        run: python3 -m py_compile bench/aggregate.py
+      - name: Exercise the aggregation stats path on inline sample rows
+        run: python3 bench/aggregate.py --self-test
 
   benchmark:
     runs-on: [self-hosted, bench]

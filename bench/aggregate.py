@@ -30,6 +30,22 @@ OP_LABEL = {
 	"exec": "exec", "restart": "restart", "build": "build",
 }
 
+# Inline sample rows, shaped exactly like raw.csv, for `--self-test`. bench/results/
+# is a local, git-ignored artifact directory (real numbers only come from the
+# controlled, self-hosted benchmark run), so a shared-runner smoke check has no
+# raw.csv to read. These rows exercise the same filtering and statistics path
+# (warm-up discarded, failed rows discarded, median/p95/stdev computed) without
+# depending on committed benchmark data or a real Podman engine.
+SELF_TEST_ROWS = [
+	{"tool": "podup", "scenario": "single", "op": "up", "iter": "0", "phase": "warmup", "seconds": "0.520", "max_rss_kb": "10240", "cpu_s": "0.110", "rc": "0"},
+	{"tool": "podup", "scenario": "single", "op": "up", "iter": "1", "phase": "measured", "seconds": "0.500", "max_rss_kb": "10000", "cpu_s": "0.100", "rc": "0"},
+	{"tool": "podup", "scenario": "single", "op": "up", "iter": "2", "phase": "measured", "seconds": "0.510", "max_rss_kb": "10100", "cpu_s": "0.105", "rc": "0"},
+	{"tool": "podup", "scenario": "single", "op": "down", "iter": "1", "phase": "measured", "seconds": "0.200", "max_rss_kb": "9500", "cpu_s": "0.050", "rc": "0"},
+	{"tool": "podup", "scenario": "single", "op": "down", "iter": "2", "phase": "measured", "seconds": "0.210", "max_rss_kb": "9600", "cpu_s": "0.052", "rc": "0"},
+	{"tool": "podman-compose", "scenario": "single", "op": "up", "iter": "1", "phase": "measured", "seconds": "0.800", "max_rss_kb": "30000", "cpu_s": "0.300", "rc": "0"},
+	{"tool": "podman-compose", "scenario": "single", "op": "up", "iter": "2", "phase": "measured", "seconds": "0.001", "max_rss_kb": "1", "cpu_s": "0.001", "rc": "1"},
+]
+
 
 def pct(values, p):
 	"""Nearest-rank percentile; honest for small n."""
@@ -50,21 +66,25 @@ def stats(values):
 	}
 
 
+def filter_measured(rows):
+	"""Keep only completed, successful iterations (drop warm-up and failures)."""
+	return [r for r in rows if r["phase"] == "measured" and int(r["rc"]) == 0]
+
+
 def load(path):
-	rows = []
 	with open(path, newline="") as f:
-		for r in csv.DictReader(f):
-			if r["phase"] != "measured" or int(r["rc"]) != 0:
-				continue
-			rows.append(r)
-	return rows
+		return filter_measured(list(csv.DictReader(f)))
 
 
 def main():
-	if not os.path.exists(RAW):
-		print(f"no raw data at {RAW}", file=sys.stderr)
-		return 1
-	rows = load(RAW)
+	self_test = "--self-test" in sys.argv
+	if self_test:
+		rows = filter_measured(SELF_TEST_ROWS)
+	else:
+		if not os.path.exists(RAW):
+			print(f"no raw data at {RAW}", file=sys.stderr)
+			return 1
+		rows = load(RAW)
 	tools = sorted({r["tool"] for r in rows})
 	scenarios = [s for s in SCEN_ORDER if any(r["scenario"] == s for r in rows)]
 

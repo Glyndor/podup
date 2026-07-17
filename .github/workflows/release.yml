@@ -226,6 +226,8 @@ jobs:
     container: debian:sid
     permissions:
       contents: read
+      id-token: write
+      attestations: write
     strategy:
       fail-fast: false
       matrix:
@@ -270,6 +272,11 @@ jobs:
           fi
           cp "$deb" "$(basename "$deb")"
           echo "Staged $(basename "$deb")"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: podup_*_${{ matrix.arch }}.deb
 
       - name: Upload artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
