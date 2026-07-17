@@ -15,6 +15,8 @@ pub use lifecycle::{validate_stop_timeout, RunOptions, RunOverrides};
 pub use lock::ProjectLock;
 pub use query::{ExecOptions, ImagesOptions, LogsDisplay, LogsOptions, PsFilterOptions, PsOptions};
 mod container_config;
+#[cfg(test)]
+mod fake_podman;
 mod health;
 mod lifecycle;
 mod lock;

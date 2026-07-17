@@ -71,15 +71,24 @@ impl Engine {
 			.await
 	}
 
-	/// Start a container by name, ignoring an error from an already-running one.
-	/// Used when `up` leaves an unchanged container in place but wants to ensure
-	/// it is running.
-	async fn ensure_started(&self, container_name: &str) {
+	/// Start a container by name. Used when `up` leaves an unchanged container in
+	/// place but wants to ensure it is running. "Already in the desired state"
+	/// (304) and "no such container" (404) are idempotent no-ops, matching
+	/// [`Self::run_lifecycle_op`]; any other failure (e.g. the container's
+	/// published port is now taken) propagates instead of being swallowed.
+	async fn ensure_started(&self, container_name: &str) -> Result<()> {
 		let path = format!(
 			"{API_PREFIX}/containers/{}/start",
 			crate::libpod::urlencoded(container_name)
 		);
-		let _ = self.client.post_empty_ok(&path).await;
+		match self.client.post_empty_ok(&path).await {
+			Ok(()) => Ok(()),
+			Err(e) if e.is_status(304) || e.is_status(404) => {
+				tracing::debug!("{container_name}: start skipped ({e})");
+				Ok(())
+			}
+			Err(e) => Err(crate::error::ComposeError::Podman(e)),
+		}
 	}
 
 	/// Start services with explicit options. When `no_recreate` is true, running containers are left untouched. On partial failure, staging directories are cleaned up.
@@ -395,7 +404,7 @@ impl Engine {
 					tracing::debug!("{container_name} already exists — skipping recreate");
 					// `create` leaves an existing container as-is; `up` ensures it runs.
 					if start {
-						self.ensure_started(&container_name).await;
+						self.ensure_started(&container_name).await?;
 					}
 					crate::ui::progress_line(
 						"Container",
@@ -411,7 +420,7 @@ impl Engine {
 				{
 					tracing::debug!("{container_name} is up to date — skipping recreate");
 					if start {
-						self.ensure_started(&container_name).await;
+						self.ensure_started(&container_name).await?;
 					}
 					crate::ui::progress_line(
 						"Container",
@@ -620,32 +629,4 @@ pub(super) fn container_rm_path(name: &str, remove_volumes: bool) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::container_rm_path;
-
-	#[test]
-	fn rm_path_omits_volume_flag_by_default() {
-		// A plain `down` (or scale-down) must not drop volumes.
-		let path = container_rm_path("proj-web-1", false);
-		assert!(path.ends_with("/proj-web-1?force=true"), "got: {path}");
-		assert!(!path.contains("v=true"), "got: {path}");
-	}
-
-	#[test]
-	fn rm_path_requests_anonymous_volume_removal() {
-		// `down -v` must pass `v=true` so podman reclaims the container's
-		// anonymous (image VOLUME / short-form) volumes.
-		let path = container_rm_path("proj-web-1", true);
-		assert!(path.contains("force=true"), "got: {path}");
-		assert!(path.contains("&v=true"), "got: {path}");
-	}
-
-	#[test]
-	fn rm_path_url_encodes_container_name() {
-		// Names are URL-encoded so a slash in a container name cannot alter the
-		// request path.
-		let path = container_rm_path("weird/name", true);
-		assert!(!path.contains("weird/name"), "got: {path}");
-		assert!(path.contains("weird%2Fname"), "got: {path}");
-	}
-}
+mod tests;
