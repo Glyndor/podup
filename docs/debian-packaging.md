@@ -91,7 +91,7 @@ is published and `apt upgrade` installs it — nothing for users to re-run.
 - `debian/control` — source/binary stanzas, build dependencies, `Recommends: podman`
 - `debian/rules` — debhelper with cargo overrides, `--locked` release build, tests run during the build
 - `debian/podup.1` + `debian/podup.manpages` — the man page, installed by `dh_installman`
-- `debian/copyright` — DEP-5, Apache-2.0
+- `debian/copyright` — DEP-5, MIT
 - Source format `3.0 (native)` — the repository is upstream
 
 ## Not the official Debian/Ubuntu archive
