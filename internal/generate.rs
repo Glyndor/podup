@@ -74,12 +74,13 @@ fn write_stdout(buf: &str) -> podup::Result<()> {
 pub(crate) fn write_quadlet(
 	file: &podup::compose::types::ComposeFile,
 	project: &str,
+	base_dir: &Path,
 	output: Option<&Path>,
 ) -> podup::Result<()> {
 	// Reject configs the running commands would reject, before emitting anything.
 	validate_for_quadlet(file)?;
 
-	let result = podup::quadlet::generate(file, project);
+	let result = podup::quadlet::generate_at(file, project, base_dir);
 	if let Some(dup) = result.duplicate_filename() {
 		return Err(std::io::Error::new(
 			std::io::ErrorKind::InvalidInput,
@@ -98,23 +99,8 @@ pub(crate) fn write_quadlet(
 	}
 	match output {
 		Some(dir) => {
-			std::fs::create_dir_all(dir)?;
 			let mut progress = String::new();
-			for unit in &result.units {
-				// Defense in depth: the unit stem is already sanitized in the
-				// library, but never write a unit whose name is anything but a
-				// plain file inside `dir` (rejects separators, `.` and `..`).
-				if Path::new(&unit.filename).file_name()
-					!= Some(std::ffi::OsStr::new(&unit.filename))
-				{
-					return Err(std::io::Error::new(
-						std::io::ErrorKind::InvalidInput,
-						format!("refusing unsafe quadlet unit file name: {}", unit.filename),
-					)
-					.into());
-				}
-				let path = dir.join(&unit.filename);
-				std::fs::write(&path, &unit.contents)?;
+			for path in podup::quadlet::write_units(dir, &result.units)? {
 				progress.push_str(&format!("wrote {}\n", path.display()));
 			}
 			write_stdout(&progress)?;
@@ -155,7 +141,7 @@ mod tests {
 			"services:\n  a:\n    image: x\n    depends_on: [b]\n  b:\n    image: y\n    depends_on: [a]\n",
 		)
 		.unwrap();
-		let err = write_quadlet(&file, "proj", None).unwrap_err();
+		let err = write_quadlet(&file, "proj", std::path::Path::new("/srv/app"), None).unwrap_err();
 		assert!(matches!(err, podup::ComposeError::CircularDependency(_)));
 	}
 

@@ -1,3 +1,23 @@
+podup (1.10.0) unstable; urgency=medium
+
+  * `autostart` gained a second backend: `--mode quadlet` hands the stack to
+    systemd as native Podman Quadlet units (one `.container`/`.build`/`.volume`/
+    `.network` per resource) under `~/.config/containers/systemd/`, instead of
+    the single `podup up` unit `--mode service` installs. systemd then owns each
+    service's boot, restart and ordering directly. `uninstall` auto-detects which
+    mode is installed and removes it; a new `autostart rebuild [service]` restarts
+    a service's oneshot `.build` unit and its container to pick up a fresh image.
+  * Fixed a `generate quadlet` bug the new mode exposed: a service's `.build`
+    unit carried its build `context` verbatim (e.g. `.`), which the systemd
+    generator resolves against the unit directory rather than the compose file,
+    so every build failed with "no Dockerfile in context directory". The context
+    is now resolved to an absolute path against the compose file's directory.
+    This also fixes `generate quadlet -o` for build-based stacks.
+  * Documented the rootless autostart flow in docs/autostart.md (lingering, the
+    two modes, the login-less-account XDG_RUNTIME_DIR requirement, subuid/subgid).
+
+ -- Glyndor <packages@glyndor.net>  Fri, 17 Jul 2026 04:05:00 -0500
+
 podup (1.9.3) unstable; urgency=medium
 
   * The autostart service unit destroyed the stack on a clean shutdown and

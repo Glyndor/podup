@@ -1,6 +1,6 @@
 use super::unit_named;
 use crate::parse_str;
-use crate::quadlet::generate;
+use crate::quadlet::generate_at;
 
 #[test]
 fn external_network_and_volume_emit_no_unit_and_use_bare_name() {
@@ -20,7 +20,7 @@ volumes:
     external: true
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "proj");
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	// No unit is generated for external resources.
 	assert!(!out
 		.units
@@ -50,7 +50,7 @@ services:
           propagation: rshared
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
 		c.contains("Volume=/host/data:/data:z,rshared"),
@@ -78,7 +78,7 @@ volumes:
       tier: vol
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let net = &unit_named(&out, "p-net.network").contents;
 	assert!(net.contains("Driver=bridge"));
 	assert!(net.contains("Internal=true"));
@@ -109,7 +109,7 @@ networks:
           ip_range: 10.7.0.128/25
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let net = &unit_named(&out, "p-net.network").contents;
 	// A custom name overrides the project-prefixed default.
 	assert!(net.contains("NetworkName=custom-net"), "in:\n{net}");
@@ -144,7 +144,7 @@ volumes:
       custom: extra
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let vol = &unit_named(&out, "p-vol.volume").contents;
 	assert!(vol.contains("VolumeName=custom-vol"), "in:\n{vol}");
 	assert!(!vol.contains("VolumeName=p_vol"), "in:\n{vol}");
@@ -172,7 +172,7 @@ services:
       start_interval: 2s
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("HealthInterval=5s"), "in:\n{c}");
 	assert!(
@@ -200,7 +200,7 @@ services:
   : { image: postgres }
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "proj");
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	let web = &unit_named(&out, "proj-web.container").contents;
 	assert!(web.contains("After=proj-db_1.service"), "in:\n{web}");
 	assert!(web.contains("Requires=proj-db_1.service"), "in:\n{web}");
@@ -217,7 +217,7 @@ fn network_mode_service_maps_to_dot_container() {
 	// stems are project-prefixed, so the dependency is `p-db.container`.
 	let yaml = "services:\n  s:\n    image: x\n    network_mode: \"service:db\"\n";
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
 		c.contains("Network=p-db.container"),
@@ -232,7 +232,7 @@ fn network_mode_container_maps_to_join_form() {
 	// (that would name a non-existent unit and fail to start).
 	let yaml = "services:\n  s:\n    image: x\n    network_mode: \"container:sidecar\"\n";
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
 		c.contains("Network=container:sidecar"),
@@ -250,7 +250,7 @@ fn duplicate_network_aliases_are_emitted_once() {
 	// podman may reject at container create.
 	let yaml = "services:\n  s:\n    image: x\n    networks:\n      front:\n        aliases: [dup, dup, uniq]\nnetworks:\n  front:\n";
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert_eq!(
 		c.matches("NetworkAlias=dup").count(),
@@ -267,7 +267,7 @@ fn ipam_options_warn_because_quadlet_cannot_emit_them() {
 	// of silently diverging.
 	let yaml = "networks:\n  net:\n    ipam:\n      options:\n        foo: bar\nservices:\n  s:\n    image: x\n    networks: [net]\n";
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	assert!(
 		out.warnings.iter().any(|w| w.contains("ipam.options")),
 		"expected an ipam.options warning; got: {:?}",
@@ -279,7 +279,7 @@ fn ipam_options_warn_because_quadlet_cannot_emit_them() {
 fn network_mode_service_target_is_sanitized() {
 	let yaml = "services:\n  s:\n    image: x\n    network_mode: \"service:web:1\"\n";
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("Network=p-web_1.container"), "in:\n{c}");
 }
@@ -296,7 +296,7 @@ volumes:
   vol:
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let net = &unit_named(&out, "p-net.network").contents;
 	let vol = &unit_named(&out, "p-vol.volume").contents;
 	assert!(

@@ -54,13 +54,52 @@ impl QuadletOutput {
 	}
 }
 
-/// Translate a compose file into Quadlet units for the given project name.
+/// Write `units` into `dir`, creating it if needed, and return the paths written
+/// in order. Defense in depth: refuse any unit whose file name is not a plain path
+/// component. The library already sanitizes stems, but a write target must never
+/// contain a separator, `.` or `..` that could escape `dir`. Shared by
+/// `generate quadlet -o` and `autostart --mode quadlet`, so both place units
+/// through the identical safety check.
+pub fn write_units(
+	dir: &std::path::Path,
+	units: &[QuadletUnit],
+) -> std::io::Result<Vec<std::path::PathBuf>> {
+	std::fs::create_dir_all(dir)?;
+	let mut written = Vec::with_capacity(units.len());
+	for unit in units {
+		if std::path::Path::new(&unit.filename).file_name()
+			!= Some(std::ffi::OsStr::new(&unit.filename))
+		{
+			return Err(std::io::Error::new(
+				std::io::ErrorKind::InvalidInput,
+				format!("refusing unsafe quadlet unit file name: {}", unit.filename),
+			));
+		}
+		let path = dir.join(&unit.filename);
+		std::fs::write(&path, &unit.contents)?;
+		written.push(path);
+	}
+	Ok(written)
+}
+
+/// Translate a compose file into Quadlet units for the given project name,
+/// resolving relative build contexts against the current directory (the common
+/// case: running from the project directory). Use [`generate_at`] to resolve them
+/// against an explicit base directory instead.
+pub fn generate(file: &ComposeFile, project: &str) -> QuadletOutput {
+	generate_at(file, project, &std::env::current_dir().unwrap_or_default())
+}
+
+/// As [`generate`], but resolves a service's relative `build:` context against
+/// `base_dir` (the compose file's directory) rather than the current directory.
+/// The systemd generator runs a `.build` unit with no cwd, so a unit written for
+/// it must carry an absolute `SetWorkingDirectory`; pass the compose base here.
 ///
 /// Emits one `.container` per service, one `.network` per declared network,
-/// and one `.volume` per declared named volume. Replica scaling, build
-/// services, and other fields without a Quadlet mapping are reported as
-/// warnings rather than silently dropped.
-pub fn generate(file: &ComposeFile, project: &str) -> QuadletOutput {
+/// and one `.volume` per declared named volume. Replica scaling, inline-Dockerfile
+/// builds, and other fields without a Quadlet mapping are reported as warnings
+/// rather than silently dropped.
+pub fn generate_at(file: &ComposeFile, project: &str, base_dir: &std::path::Path) -> QuadletOutput {
 	let mut out = QuadletOutput::default();
 
 	// External networks/volumes are assumed to pre-exist. Emitting a unit would
@@ -108,7 +147,7 @@ pub fn generate(file: &ComposeFile, project: &str) -> QuadletOutput {
 	for (name, service) in &file.services {
 		// Emit a `.build` unit first so the systemd generator builds the image
 		// before the container that references it via `Image=<stem>.build`.
-		if let Some(unit) = build_unit(name, project, service, &mut out.warnings) {
+		if let Some(unit) = build_unit(name, project, service, base_dir, &mut out.warnings) {
 			out.units.push(unit);
 		}
 		out.units.push(container_unit(

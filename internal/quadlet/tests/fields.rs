@@ -1,6 +1,6 @@
 use super::unit_named;
 use crate::parse_str;
-use crate::quadlet::generate;
+use crate::quadlet::generate_at;
 
 #[test]
 fn maps_the_full_container_field_set() {
@@ -28,7 +28,7 @@ services:
         protocol: udp
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "proj");
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "proj-app.container").contents;
 	assert!(c.contains("HostName=app-host"));
 	// `user: "1000:1000"` splits into separate User=/Group= keys.
@@ -60,7 +60,7 @@ fn restart_policies_map_to_systemd() {
 	for (policy, expected) in cases {
 		let yaml = format!("services:\n  s:\n    image: x\n    restart: {policy}\n");
 		let file = parse_str(&yaml).unwrap();
-		let out = generate(&file, "p");
+		let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 		assert!(
 			unit_named(&out, "p-s.container")
 				.contents
@@ -84,7 +84,7 @@ services:
     image: redis
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "proj");
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "proj-web.container").contents;
 	assert!(c.contains("After=proj-cache.service"));
 	assert!(c.contains("Wants=proj-cache.service"));
@@ -130,7 +130,7 @@ services:
     restart: "on-failure:5"
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-app.container").contents;
 	for needle in [
 		"ContainerName=custom",
@@ -168,7 +168,7 @@ services:
       - "80"
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("PublishPort=80"));
 	assert!(!c.contains("PublishPort=:80"));
@@ -178,7 +178,7 @@ services:
 fn user_with_gid_splits_into_user_and_group() {
 	let yaml = "services:\n  s:\n    image: x\n    user: \"1000:2000\"\n";
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("User=1000"));
 	assert!(c.contains("Group=2000"));
@@ -203,7 +203,7 @@ secrets:
     file: ./cred
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("Secret=tok"));
 	assert!(c.contains("Secret=cred,target=/run/cred,uid=100"));
@@ -241,7 +241,7 @@ networks:
   net:
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	for needle in [
 		"GroupAdd=audio",
@@ -274,7 +274,7 @@ services:
       - "apparmor=my-profile"
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
 		c.contains("PodmanArgs=--memory=512m"),
@@ -307,7 +307,7 @@ services:
     cpu_period: 100000
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	for expected in [
 		"PodmanArgs=--cpus=1.5",
@@ -334,7 +334,7 @@ services:
           cpus: "2"
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
 		c.contains("PodmanArgs=--cpus=2"),
@@ -358,7 +358,7 @@ networks:
   net:
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("IP=10.5.0.7"), "missing IP= in:\n{c}");
 	assert!(c.contains("IP6=2001:db8::7"), "missing IP6= in:\n{c}");
@@ -370,7 +370,7 @@ fn network_mode_none_maps_to_network_none() {
 	// rather than being warned and dropped.
 	let yaml = "services:\n  s:\n    image: x\n    network_mode: none\n";
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("Network=none"), "missing Network=none in:\n{c}");
 	assert!(
@@ -391,7 +391,7 @@ services:
       - "label=nested"
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("SecurityLabelFileType=usr_t"), "in:\n{c}");
 	assert!(c.contains("SecurityLabelNested=true"), "in:\n{c}");
@@ -415,7 +415,7 @@ services:
         window: 2m
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("Restart=on-failure"), "in:\n{c}");
 	assert!(c.contains("StartLimitBurst=4"), "in:\n{c}");
@@ -426,7 +426,7 @@ services:
 fn deploy_restart_condition_none_maps_to_no() {
 	let yaml = "services:\n  s:\n    image: x\n    deploy:\n      restart_policy:\n        condition: none\n";
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	assert!(unit_named(&out, "p-s.container")
 		.contents
 		.contains("Restart=no"));
@@ -444,7 +444,7 @@ services:
           pids: 256
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("PidsLimit=256"), "missing PidsLimit in:\n{c}");
 }
@@ -465,7 +465,7 @@ services:
           mode: 0o755
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(
 		c.contains("Tmpfs=/cache:size=64000000,mode=755"),

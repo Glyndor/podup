@@ -198,7 +198,7 @@ pub(super) fn collect_warnings(name: &str, service: &Service, warnings: &mut Vec
 #[cfg(test)]
 mod tests {
 	use crate::parse_str;
-	use crate::quadlet::generate;
+	use crate::quadlet::generate_at;
 
 	#[test]
 	fn warns_for_every_unmapped_field() {
@@ -227,7 +227,7 @@ configs:
     file: ./c.txt
 "#;
 		let file = parse_str(yaml).unwrap();
-		let warnings = generate(&file, "proj").warnings;
+		let warnings = generate_at(&file, "proj", std::path::Path::new("/srv/app")).warnings;
 		let joined = warnings.join("\n");
 
 		for field in [
@@ -261,7 +261,9 @@ configs:
 		for mode in ["service:db", "container:other"] {
 			let yaml = format!("services:\n  s:\n    image: x\n    network_mode: \"{mode}\"\n");
 			let file = parse_str(&yaml).unwrap();
-			let joined = generate(&file, "proj").warnings.join("\n");
+			let joined = generate_at(&file, "proj", std::path::Path::new("/srv/app"))
+				.warnings
+				.join("\n");
 			assert!(
 				!joined.contains("network_mode"),
 				"{mode} should be mapped, not warned; got:\n{joined}"
@@ -294,7 +296,9 @@ services:
       weight: 300
 "#;
 		let file = parse_str(yaml).unwrap();
-		let joined = generate(&file, "proj").warnings.join("\n");
+		let joined = generate_at(&file, "proj", std::path::Path::new("/srv/app"))
+			.warnings
+			.join("\n");
 		for field in [
 			"ipc",
 			"pid",
@@ -341,7 +345,9 @@ services:
     cpu_rt_period: 1000000
 "#;
 		let file = parse_str(yaml).unwrap();
-		let joined = generate(&file, "proj").warnings.join("\n");
+		let joined = generate_at(&file, "proj", std::path::Path::new("/srv/app"))
+			.warnings
+			.join("\n");
 		for field in [
 			"gpus",
 			"platform",
@@ -372,7 +378,7 @@ services:
       - "unmask=ALL"
 "#;
 		let file = parse_str(yaml).unwrap();
-		let out = generate(&file, "proj");
+		let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 		let contents = out
 			.units
 			.iter()
@@ -409,7 +415,9 @@ networks:
   b:
 "#;
 		let file = parse_str(yaml).unwrap();
-		let joined = generate(&file, "proj").warnings.join("\n");
+		let joined = generate_at(&file, "proj", std::path::Path::new("/srv/app"))
+			.warnings
+			.join("\n");
 		assert!(
 			joined.contains("ipv4_address/ipv6_address"),
 			"missing multi-network static-IP warning; got:\n{joined}"
@@ -440,7 +448,9 @@ services:
     use_api_socket: true
 "#;
 		let file = parse_str(yaml).unwrap();
-		let joined = generate(&file, "proj").warnings.join("\n");
+		let joined = generate_at(&file, "proj", std::path::Path::new("/srv/app"))
+			.warnings
+			.join("\n");
 		for field in [
 			"cpu_count",
 			"cpu_percent",
@@ -466,6 +476,8 @@ services:
     image: nginx:1.27
 "#;
 		let file = parse_str(yaml).unwrap();
-		assert!(generate(&file, "proj").warnings.is_empty());
+		assert!(generate_at(&file, "proj", std::path::Path::new("/srv/app"))
+			.warnings
+			.is_empty());
 	}
 }
