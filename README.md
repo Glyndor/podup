@@ -7,7 +7,7 @@ binary — no daemon, no Python runtime.
 
 [![CI](https://github.com/Glyndor/podup/actions/workflows/ci.yml/badge.svg)](https://github.com/Glyndor/podup/actions/workflows/ci.yml)
 
-Package: [crates.io/crates/podup](https://crates.io/crates/podup) · MSRV 1.85 · License: Apache-2.0
+Package: [crates.io/crates/podup](https://crates.io/crates/podup) · MSRV 1.85 · License: MIT
 
 <img src="docs/assets/podup-demo.gif" alt="podup running a compose stack on rootless Podman" width="760">
 
@@ -150,4 +150,4 @@ Full tables and methodology: [docs/benchmarks.md](docs/benchmarks.md).
 
 ## License
 
-[Apache-2.0](LICENSE) — report vulnerabilities privately via the **Security** tab, never in a public issue.
+[MIT](LICENSE) — report vulnerabilities privately via the **Security** tab, never in a public issue.
