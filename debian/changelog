@@ -1,3 +1,12 @@
+podup (1.10.1) unstable; urgency=medium
+
+  * Relicensed from Apache-2.0 to MIT, part of the org-wide switch to a single
+    MIT license. LICENSE, Cargo.toml, debian/copyright and the README now read
+    MIT; the NOTICE file (an Apache-2.0 §4(d) mechanism) is removed. No code
+    change. Third-party dependency-license tooling is unchanged.
+
+ -- Glyndor <packages@glyndor.net>  Fri, 17 Jul 2026 05:55:00 -0500
+
 podup (1.10.0) unstable; urgency=medium
 
   * `autostart` gained a second backend: `--mode quadlet` hands the stack to
