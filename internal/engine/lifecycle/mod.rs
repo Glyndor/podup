@@ -83,7 +83,7 @@ impl Engine {
 		);
 		match self.client.post_empty_ok(&path).await {
 			Ok(()) => Ok(()),
-			Err(e) if e.is_status(304) || e.is_status(404) => {
+			Err(e) if e.is_status(404) => {
 				tracing::debug!("{container_name}: start skipped ({e})");
 				Ok(())
 			}
