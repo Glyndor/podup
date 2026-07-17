@@ -66,6 +66,23 @@ jobs:
           fi
           echo "Debian package version ${DEB_VERSION} matches."
 
+      - name: Cargo.lock must record the released version
+        # Cargo.lock carries podup's own version too, and `cargo build --locked`
+        # in the build jobs would catch a stale one — but only after the matrix
+        # has started, mid-release. Gate it here in verify, before anything is
+        # built, so all three version files (Cargo.toml, debian/changelog,
+        # Cargo.lock) are proven to agree at the same fail-fast point. Match the
+        # version on the line right after the podup package's name entry, not any
+        # dependency that happens to share the number.
+        run: |
+          CRATE_VERSION="$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)"
+          LOCK_VERSION="$(awk -F'"' '/^name = "podup"$/{getline; if ($0 ~ /^version = /) {print $2; exit}}' Cargo.lock)"
+          if [ "$LOCK_VERSION" != "$CRATE_VERSION" ]; then
+            echo "::error::Cargo.lock records podup ${LOCK_VERSION:-<none>} but Cargo.toml is at ${CRATE_VERSION}; run cargo update -p podup so the lockfile matches."
+            exit 1
+          fi
+          echo "Cargo.lock version ${LOCK_VERSION} matches."
+
       - name: Tag must be on main
         # Releases are cut only from `main` (develop → main merge, then tag).
         # Refuse a tag pushed to any other branch so an unreviewed commit can
@@ -136,12 +153,24 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
       - name: Install build target
+        env:
+          TARGET: ${{ matrix.target }}
+          # Keep this in step with the `toolchain` default in Glyndor/.github's
+          # rust-ci.yml. It is NOT a repo-root rust-toolchain.toml on purpose: that
+          # file is a directory override that beats `rustup default`, so it would
+          # silently pull the MSRV job (which does `rustup default <msrv>`) up to
+          # this version and defeat the MSRV gate. A release still must not float
+          # on whatever Rust the runner ships, so pin it here, in the release path
+          # only.
+          RUST_TOOLCHAIN: "1.97"
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update -qq
             sudo apt-get install -y -qq musl-tools
           fi
-          rustup target add ${{ matrix.target }}
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup default "$RUST_TOOLCHAIN"
+          rustup target add "$TARGET"
 
       - name: Build binary
         run: cargo build --release --locked --target ${{ matrix.target }}
@@ -263,7 +292,13 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
       - name: Install Rust toolchain
-        run: rustup toolchain install stable --profile minimal
+        # Pin rather than `stable`: a release runs once at tag time and is
+        # immutable, so it must not be built by whatever Rust the runner ships
+        # that day. Keep in step with rust-ci.yml's toolchain default (see the
+        # build job for why this is not a repo-root rust-toolchain.toml).
+        env:
+          RUST_TOOLCHAIN: "1.97"
+        run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
 
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
