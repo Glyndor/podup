@@ -21,31 +21,10 @@ permissions:
 jobs:
   psscriptanalyzer:
     name: PSScriptAnalyzer
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      - name: Syntax check
-        shell: pwsh
-        run: |
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile(
-            (Resolve-Path install.ps1), [ref]$null, [ref]$errors) | Out-Null
-          if ($errors) {
-            $errors | ForEach-Object { Write-Error $_.Message }
-            exit 1
-          }
-          Write-Host 'Parse OK'
-
-      - name: Run PSScriptAnalyzer
-        shell: pwsh
-        run: |
-          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
-          # Write-Host is intentional: the script is piped to `iex`, so console
-          # status must not leak into the output stream that Write-Output feeds.
-          # Surface every finding (advisory), then fail only on Error severity —
-          # the parse check above is the hard syntax gate.
-          Invoke-ScriptAnalyzer -Path install.ps1 -ExcludeRule PSAvoidUsingWriteHost |
-            Format-Table -AutoSize
-          Invoke-ScriptAnalyzer -Path install.ps1 -Severity Error `
-            -ExcludeRule PSAvoidUsingWriteHost -EnableExit
+    uses: Glyndor/.github/.github/workflows/powershell-ci.yml@b12b4c0bb5c2caec50ea8e46a21a5c0519b73ad9 # v1.10.0-pre
+    with:
+      paths: "install.ps1"
+      # install.ps1 is piped to `iex`, so human-facing status must go through
+      # Write-Host — Write-Output would leak into the stream the pipe feeds.
+      # Same exclusion the previous inline job carried.
+      exclude-rules: "PSAvoidUsingWriteHost"

@@ -5,26 +5,15 @@ on:
     - cron: "0 7 * * 1"  # Every Monday at 07:00 UTC
   workflow_dispatch:
 
-permissions: {}
+permissions:
+  contents: read
 
 jobs:
   fuzz:
     name: cargo fuzz (smoke)
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        target: [parse_compose, substitute, size, dotenv, stream_frame]
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-
-      - name: Install nightly toolchain
-        run: |
-          rustup toolchain install nightly --profile minimal --component rust-src
-          rustup default nightly
-
-      - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --version "^0.13" --locked
-
-      - name: Fuzz ${{ matrix.target }}
-        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=60 -rss_limit_mb=2048 -timeout=10
+    uses: Glyndor/.github/.github/workflows/rust-fuzz.yml@b12b4c0bb5c2caec50ea8e46a21a5c0519b73ad9 # v1.10.0-pre
+    with:
+      targets: '["parse_compose", "substitute", "size", "dotenv", "stream_frame"]'
+      max-total-time: "60"
+      timeout: "10"
+      rss-limit-mb: "2048"

@@ -1,0 +1,14 @@
+name: Workflow lint
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+jobs:
+  workflow-lint:
+    uses: Glyndor/.github/.github/workflows/workflow-lint.yml@b12b4c0bb5c2caec50ea8e46a21a5c0519b73ad9 # v1.10.0-pre
