@@ -26,7 +26,7 @@ permissions:
 
 jobs:
   debian:
-    uses: Glyndor/.github/.github/workflows/rust-debian.yml@7f386e098ac242fc82e2e9a2b5e02c50cf00eedf # v1.10.0-pre
+    uses: Glyndor/.github/.github/workflows/rust-debian.yml@b12b4c0bb5c2caec50ea8e46a21a5c0519b73ad9 # v1.10.0-pre
     with:
       package-name: podup
       check-vendored: true
