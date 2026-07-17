@@ -1,6 +1,6 @@
 use super::unit_named;
 use crate::parse_str;
-use crate::quadlet::{generate, QuadletOutput, QuadletUnit};
+use crate::quadlet::{generate_at, QuadletOutput, QuadletUnit};
 
 #[test]
 fn container_name_defaults_to_project_prefixed() {
@@ -8,7 +8,7 @@ fn container_name_defaults_to_project_prefixed() {
 	// `{project}-{service}`, matching how `up` names the running container,
 	// rather than a bare `web` that would collide across projects.
 	let file = parse_str("services:\n  web:\n    image: nginx\n").unwrap();
-	let out = generate(&file, "proj");
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	let web = unit_named(&out, "proj-web.container");
 	assert!(web.contents.contains("ContainerName=proj-web"));
 }
@@ -55,7 +55,7 @@ networks:
   frontend:
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "proj");
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 
 	let web = unit_named(&out, "proj-web.container");
 	assert!(web.contents.contains("Image=nginx:1.27"));
@@ -96,7 +96,7 @@ services:
     image: app:latest
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "proj");
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	// A `.build` unit is generated (no longer just a warning) and the container
 	// references it so Quadlet builds before running.
 	let build = out
@@ -106,7 +106,14 @@ services:
 		.expect("a build service must emit an app.build unit");
 	assert!(build.contents.contains("[Build]"));
 	assert!(build.contents.contains("ImageTag=app:latest"));
-	assert!(build.contents.contains("SetWorkingDirectory=./src"));
+	// `abs_context` joins with the OS separator, so build the expected path the
+	// same way — `/srv/app/src` on Unix, `/srv/app\src` on Windows — rather than a
+	// POSIX literal that fails the render tests (which are not Unix-gated) on Windows.
+	let expected_ctx = format!(
+		"SetWorkingDirectory={}",
+		std::path::Path::new("/srv/app").join("src").display()
+	);
+	assert!(build.contents.contains(&expected_ctx), "{}", build.contents);
 	assert!(build.contents.contains("File=Dockerfile.app"));
 	assert!(build.contents.contains("Target=runtime"));
 	let container = out
@@ -122,7 +129,7 @@ services:
 fn inline_dockerfile_build_warns_and_emits_no_build_unit() {
 	let yaml = "services:\n  app:\n    build:\n      dockerfile_inline: \"FROM alpine\"\n";
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "proj");
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	assert!(!out.units.iter().any(|u| u.filename == "proj-app.build"));
 	assert!(out.warnings.iter().any(|w| w.contains("dockerfile_inline")));
 }
@@ -137,7 +144,7 @@ services:
       - ./html:/usr/share/nginx/html:ro
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "proj");
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	let web = unit_named(&out, "proj-web.container");
 	assert!(web
 		.contents
@@ -159,7 +166,7 @@ volumes:
   pgdata:
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "proj");
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "proj-db.container").contents;
 	assert!(c.contains("Volume=proj-pgdata.volume:/var/lib/postgresql/data:ro"));
 }
@@ -178,7 +185,7 @@ services:
       replicas: 3
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let joined = out.warnings.join("\n");
 	for needle in ["network_mode", "profiles", "volumes_from", "scale/replicas"] {
 		assert!(joined.contains(needle), "expected warning for {needle}");
@@ -191,7 +198,7 @@ fn hostile_service_name_cannot_escape_output_directory() {
 	// file name that escapes the output directory.
 	let yaml = "services:\n  ? \"../../evil\"\n  : { image: x }\n";
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "proj");
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	let unit = &out.units[0];
 	assert!(
 		!unit.filename.contains('/') && !unit.filename.contains('\\'),
@@ -208,7 +215,7 @@ fn newline_in_value_cannot_inject_unit_directives() {
 	let yaml =
 		"services:\n  web:\n    image: x\n    environment:\n      EVIL: \"a\\nExecStartPre=/bin/rm -rf /\"\n";
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "proj");
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "proj-web.container").contents;
 	assert!(
 		!c.lines().any(|l| l.starts_with("ExecStartPre")),
@@ -220,7 +227,7 @@ fn newline_in_value_cannot_inject_unit_directives() {
 fn privileged_maps_to_podman_arg() {
 	let yaml = "services:\n  s:\n    image: x\n    privileged: true\n";
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "p");
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("PodmanArgs=--privileged"), "in:\n{c}");
 	assert!(
@@ -245,7 +252,7 @@ volumes:
   vol:
 "#;
 	let file = parse_str(yaml).unwrap();
-	let out = generate(&file, "proj");
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 
 	let c = &unit_named(&out, "proj-web.container").contents;
 	assert!(

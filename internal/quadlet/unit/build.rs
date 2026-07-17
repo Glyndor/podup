@@ -4,9 +4,32 @@
 //! generator to build the image before the `.container` unit that consumes it
 //! runs. The container references the result via `Image=<stem>.build`.
 
+use std::path::Path;
+
 use crate::compose::types::{BuildConfig, Service};
 
 use super::{sorted_label_pairs, unit_stem, QuadletUnit, Section};
+
+/// Resolve a compose build `context` to an absolute `SetWorkingDirectory` value.
+///
+/// The systemd generator runs a `.build` unit with no working directory of its
+/// own, resolving a relative `SetWorkingDirectory` against the unit file's own
+/// directory (`~/.config/containers/systemd`) — where there is no Dockerfile. So
+/// the context, which compose interprets relative to the compose file, must be
+/// made absolute against that base directory here. `.` means the base dir itself.
+fn abs_context(base_dir: &Path, context: &str) -> String {
+	let ctx = Path::new(context);
+	if ctx.is_absolute() {
+		return context.to_string();
+	}
+	if ctx == Path::new(".") {
+		return base_dir.display().to_string();
+	}
+	// Strip a leading `./` so the joined path stays clean (`/base/src`, not
+	// `/base/./src`) — cosmetic, both resolve identically.
+	let rel = context.strip_prefix("./").unwrap_or(context);
+	base_dir.join(rel).display().to_string()
+}
 
 /// The `.build` unit file name for a service, e.g. `proj-web.build`. The
 /// container unit points its `Image=` at this so Quadlet builds then runs; the
@@ -39,6 +62,7 @@ pub(crate) fn build_unit(
 	name: &str,
 	project: &str,
 	service: &Service,
+	base_dir: &Path,
 	warnings: &mut Vec<String>,
 ) -> Option<QuadletUnit> {
 	let build = service.build.as_ref()?;
@@ -53,7 +77,7 @@ pub(crate) fn build_unit(
 
 	match build {
 		BuildConfig::Context(context) => {
-			section.add("SetWorkingDirectory", context.clone());
+			section.add("SetWorkingDirectory", abs_context(base_dir, context));
 		}
 		BuildConfig::Config {
 			context,
@@ -76,7 +100,7 @@ pub(crate) fn build_unit(
 			}
 			section.add(
 				"SetWorkingDirectory",
-				context.clone().unwrap_or_else(|| ".".to_string()),
+				abs_context(base_dir, context.as_deref().unwrap_or(".")),
 			);
 			if let Some(df) = dockerfile {
 				section.add("File", df.clone());
@@ -111,4 +135,27 @@ pub(crate) fn build_unit(
 		filename: build_unit_filename(project, name),
 		contents: section.render(),
 	})
+}
+
+// Unix-gated: the asserted paths are POSIX (separators and `/`-absolute), so the
+// values differ on Windows. `abs_context` itself is cross-platform; only the
+// literal expectations are Unix-specific.
+#[cfg(all(test, unix))]
+mod tests {
+	use super::abs_context;
+	use std::path::Path;
+
+	#[test]
+	fn abs_context_makes_relative_build_contexts_absolute() {
+		let base = Path::new("/srv/app");
+		// `.` is the compose file's own directory.
+		assert_eq!(abs_context(base, "."), "/srv/app");
+		// A `./`-prefixed or bare relative path joins under the base, kept clean.
+		assert_eq!(abs_context(base, "./src"), "/srv/app/src");
+		assert_eq!(abs_context(base, "src"), "/srv/app/src");
+		// A parent traversal is preserved (systemd/podman resolve it).
+		assert_eq!(abs_context(base, "../shared"), "/srv/app/../shared");
+		// An already-absolute context is passed through untouched.
+		assert_eq!(abs_context(base, "/opt/build"), "/opt/build");
+	}
 }

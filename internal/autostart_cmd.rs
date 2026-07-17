@@ -33,18 +33,29 @@ pub(crate) async fn dispatch(
 ) -> podup::Result<()> {
 	match kind {
 		AutostartCommands::Install {
-			mode,
+			mode: AutostartMode::Quadlet,
 			no_start,
 			dry_run,
 		} => {
-			// Only service mode is implemented; quadlet mode is honest about it.
-			if *mode == AutostartMode::Quadlet {
-				return Err(ComposeError::Autostart(
-					"autostart --mode quadlet is not yet implemented (see #993); \
-					 use the default --mode service"
-						.to_string(),
-				));
-			}
+			// Quadlet mode hands the stack to systemd as native units rendered from
+			// the compose file. It still needs the base directory absolute: a
+			// `.build` unit's context is resolved by the systemd generator with no
+			// cwd, so a relative context would look under the unit directory.
+			let base_dir = std::fs::canonicalize(&base_dir).unwrap_or(base_dir);
+			podup::autostart::install_quadlet(
+				&podup::autostart::RealSystemCtl,
+				file,
+				&project,
+				&base_dir,
+				*no_start,
+				*dry_run,
+			)
+		}
+		AutostartCommands::Install {
+			mode: AutostartMode::Service,
+			no_start,
+			dry_run,
+		} => {
 			// systemd has no relative-path context, so resolve the exe, every compose
 			// file, and the working directory to absolute paths the unit can embed.
 			let exe = std::env::current_exe().map_err(|e| {
@@ -76,7 +87,16 @@ pub(crate) async fn dispatch(
 			podup::autostart::install(&podup::autostart::RealSystemCtl, &opts)
 		}
 		AutostartCommands::Uninstall { purge } => {
-			podup::autostart::uninstall(&podup::autostart::RealSystemCtl, &project)?;
+			// Remove whichever mode is installed — the two never coexist, and asking
+			// the user to name the mode only risks a no-op against the wrong one.
+			match podup::autostart::installed_mode(&project) {
+				podup::autostart::InstalledMode::Quadlet => {
+					podup::autostart::uninstall_quadlet(&podup::autostart::RealSystemCtl, &project)?
+				}
+				// Service or nothing installed: the service uninstall is idempotent and
+				// prints "already removed" when there is nothing there.
+				_ => podup::autostart::uninstall(&podup::autostart::RealSystemCtl, &project)?,
+			}
 			if *purge {
 				// `--purge` is the only autostart branch that touches Podman: tear the
 				// stack down and remove its named volumes via the normal `down -v` path.
@@ -90,5 +110,10 @@ pub(crate) async fn dispatch(
 		AutostartCommands::Status => {
 			podup::autostart::status(&podup::autostart::RealSystemCtl, &project)
 		}
+		AutostartCommands::Rebuild { service } => podup::autostart::rebuild_quadlet(
+			&podup::autostart::RealSystemCtl,
+			&project,
+			service.as_deref(),
+		),
 	}
 }
