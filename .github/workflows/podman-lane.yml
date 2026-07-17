@@ -132,18 +132,31 @@ jobs:
           FLAKY=$(echo "$SUM" | grep -oE 'flaky=[0-9]+' | cut -d= -f2)
           PASS=${PASS:-0}; FAIL=${FAIL:-0}; FLAKY=${FLAKY:-0}
           echo "Podman $VER: $PASS passed, $FAIL failed ($FLAKY look like connection-drop flakes)"
-          # Gate: the CORE must pass (>= 120 of ~145). A subset of archive/streaming
-          # tests fails non-deterministically under nested-virt — proven an
-          # environment artifact, not a podup/Podman bug: a controlled run on Podman
-          # 5.x in the same VM fails MORE than 6.x, with differing failure sets. We
-          # report the fail/flaky breakdown for visibility, but do NOT fail the lane
-          # on that subset (it would be red on every run). Reliably classifying each
-          # failure as real-vs-flake needs clean per-test capture (the serial console
-          # is too noisy) — tracked as a follow-up; until then the core floor is the
-          # signal a real regression would breach (a regression knocks the core
-          # below 120).
-          [ "$PASS" -ge 120 ] || { echo "::error::core suite degraded on Podman $VER ($PASS passed, expected >= 120) — real regression"; exit 1; }
+          # This lane is a required check, so its gate must fail a real
+          # regression — a green here is a promise the merge is safe. Two gates,
+          # both hard:
+          #
+          #   1. Floor: PASS must meet the baseline in .github/podman-baseline-tests.
+          #      Below it, the suite either regressed or silently ran fewer tests.
+          #      The baseline is versioned so it is bumped deliberately as the
+          #      suite grows, never drifting as a magic number in this file.
+          #   2. No unexplained failures: every failure must be accounted for by a
+          #      nested-virt connection-drop signature (FAIL <= FLAKY). The suite
+          #      already retries once on such a transient (a real failure
+          #      reproduces on the second run and is not retried), so a failure
+          #      that survives the retry AND carries no drop signature is a real
+          #      bug, not noise — and it fails the lane. This was previously only
+          #      a warning, which let a runtime regression confined to the
+          #      archive/streaming subset merge; that is the hole being closed.
+          #
+          # The FLAKY heuristic (a log-line grep) is the interim instrument;
+          # clean per-test capture to attribute each failure exactly is the
+          # follow-up that will replace the FAIL <= FLAKY proxy. Until then this
+          # errs toward failing closed: an unexplained failure blocks the merge.
+          BASELINE="$(cat "$GITHUB_WORKSPACE/.github/podman-baseline-tests")"
+          [ "$PASS" -ge "$BASELINE" ] || { echo "::error::core suite degraded on Podman $VER ($PASS passed, baseline >= $BASELINE) — real regression or fewer tests ran"; exit 1; }
           if [ "$FAIL" -gt "$FLAKY" ]; then
-            echo "::warning::Podman $VER: $FAIL failures, only $FLAKY match a known flake signature — inspect the failures section above."
+            echo "::error::Podman $VER: $FAIL failures but only $FLAKY carry a connection-drop signature — at least $((FAIL - FLAKY)) real failure(s) survived the retry. See the failures section above."
+            exit 1
           fi
-          echo "GREEN: podup core PASSED on Podman $VER ($PASS tests; $FAIL in the nested-virt-noisy subset)."
+          echo "GREEN: podup core PASSED on Podman $VER ($PASS tests >= baseline $BASELINE; $FAIL flake-explained failures in the nested-virt-noisy subset)."
