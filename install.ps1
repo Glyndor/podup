@@ -66,15 +66,20 @@ $TmpDir = New-Item -ItemType Directory -Path (Join-Path ([System.IO.Path]::GetTe
 try {
 	# --- Download ------------------------------------------------------------
 
-	# 200 MB ceiling on any downloaded release asset - bounds a hostile/broken
-	# endpoint so it cannot fill the temp directory before verification runs.
+	# 200 MB ceiling on any downloaded release asset. Invoke-WebRequest runs the
+	# download to completion before -OutFile can be checked, so this is a
+	# post-hoc guard - it rejects an oversized file after it lands on disk, it
+	# does not cap a hostile stream mid-flight. -TimeoutSec is the bound that
+	# actually applies while the request is in flight: it caps the whole
+	# request so a stalled or never-ending response cannot hang the installer.
 	$MaxDownloadBytes = 209715200
+	$DownloadTimeoutSec = 300
 
 	function Get-ReleaseFile($name) {
 		$dest = Join-Path $TmpDir $name
 		$url = "$BaseUrl/$name"
 		try {
-			Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+			Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -TimeoutSec $DownloadTimeoutSec
 		} catch {
 			Fail "Download failed: $url"
 		}

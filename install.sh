@@ -91,12 +91,19 @@ download() {
 	# download <url> <dest>
 	#
 	# --proto '=https' only restricts the initial URL: GitHub release assets
-	# redirect to its CDN, and that redirect is governed by --proto-redir,
-	# which defaults to allowing http. Pin it too so a redirect can never
-	# downgrade the transfer. --max-filesize bounds a hostile/broken endpoint
-	# to 200 MB so it cannot fill the tempdir before checksum/signature
-	# verification runs.
-	curl --proto '=https' --proto-redir '=https' --tlsv1.2 --max-filesize 209715200 \
+	# redirect to its CDN, and that redirect is governed by --proto-redir, not
+	# --proto, so it needs its own pin - this is the fix that actually closes
+	# the downgrade (an unpinned redirect could otherwise fall back to http).
+	# --max-filesize caps the response at 200 MB, but only on curl that honours
+	# it: it aborts mid-stream on curl >= 8.4.0, or on any curl version when the
+	# server sends Content-Length. It does NOT bound the size on an older curl
+	# (still the default on several supported distros) talking to a server that
+	# omits Content-Length - that combination is not covered by this flag.
+	# --max-time is the version-independent backstop: it caps the whole request
+	# at 300s regardless of curl version or response headers, so a stalled or
+	# never-ending response cannot hang the installer.
+	curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+		--max-filesize 209715200 --max-time 300 \
 		-fsSL -o "$2" "$1" || fail "Download failed: $1"
 }
 
