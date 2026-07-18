@@ -361,13 +361,28 @@ impl Engine {
 	}
 
 	/// Remove containers labelled for this project that are not defined in the current compose file.
+	///
+	/// Best-effort across every orphan — one that fails to remove must not stop
+	/// the rest from being reaped — but the first real failure is remembered and
+	/// returned once every orphan has been attempted, so a removal that
+	/// genuinely fails does not exit 0 with the orphan left behind (#598). A 404
+	/// (already gone) stays an idempotent no-op.
 	pub async fn remove_orphans(&self, file: &ComposeFile) -> Result<()> {
+		let mut first_err: Option<ComposeError> = None;
 		for name in self.orphan_container_names(file).await? {
 			tracing::info!("removing orphan container {name}");
 			let rm_path = format!("{API_PREFIX}/containers/{}?force=true", urlencoded(&name));
-			if let Err(e) = self.client.delete_ok(&rm_path).await {
-				tracing::debug!("orphan delete {name}: {e}");
+			match self.client.delete_ok(&rm_path).await {
+				Ok(()) => {}
+				Err(e) if e.is_status(404) => {}
+				Err(e) => {
+					tracing::debug!("orphan delete {name}: {e}");
+					first_err.get_or_insert(ComposeError::Podman(e));
+				}
 			}
+		}
+		if let Some(e) = first_err {
+			return Err(e);
 		}
 		Ok(())
 	}
@@ -397,6 +412,86 @@ fn filter_orphans(names: Vec<String>, known: &std::collections::HashSet<String>)
 mod tests {
 	use super::{filter_orphans, is_valid_log_time, log_query, validate_log_filters, LogsOptions};
 	use std::collections::HashSet;
+
+	#[cfg(unix)]
+	use crate::compose::types::{ComposeFile, Service};
+	#[cfg(unix)]
+	use crate::engine::fake_podman;
+	#[cfg(unix)]
+	use crate::engine::Engine;
+	#[cfg(unix)]
+	use crate::error::ComposeError;
+
+	#[cfg(unix)]
+	fn engine_with(client: crate::libpod::Client, project: &str) -> Engine {
+		Engine::with_base_dir(client, project.into(), std::env::temp_dir())
+	}
+
+	/// #598: `--remove-orphans` that can't remove every orphan (e.g. an active
+	/// exec session) must not exit 0 with one silently left behind — but a
+	/// sibling orphan that removes cleanly must still be reclaimed.
+	#[tokio::test]
+	#[cfg(unix)]
+	async fn remove_orphans_propagates_a_real_failure_after_completing_the_rest() {
+		// "web" is still declared in the file (known); the two "ghost" containers
+		// are not, so both are orphans.
+		let containers = r#"[
+			{"Names":["/proj-web-1"]},
+			{"Names":["/proj-ghost-1"]},
+			{"Names":["/proj-ghost-2"]}
+		]"#;
+		let fake = fake_podman::start(move |method, target| {
+			if method == "GET" && target.contains("/containers/json") {
+				(200, containers.to_string())
+			} else if method == "DELETE" && target.contains("/proj-ghost-1?force=true") {
+				(200, String::new())
+			} else if method == "DELETE" && target.contains("/proj-ghost-2?force=true") {
+				(500, r#"{"message":"device or resource busy"}"#.to_string())
+			} else {
+				(404, r#"{"message":"not found"}"#.to_string())
+			}
+		});
+		let e = engine_with(fake.client(), "proj");
+
+		let mut file = ComposeFile::default();
+		file.services.insert("web".into(), Service::default());
+
+		let err = e
+			.remove_orphans(&file)
+			.await
+			.expect_err("a real orphan-removal failure must propagate");
+		assert!(
+			matches!(err, ComposeError::Podman(ref pe) if pe.is_status(500)),
+			"got {err:?}"
+		);
+
+		let seen = fake.requests.lock().unwrap();
+		assert!(
+			seen.iter()
+				.any(|r| r.contains("DELETE") && r.contains("/proj-ghost-1?force=true")),
+			"expected proj-ghost-1 to still be removed despite proj-ghost-2 failing: {seen:?}"
+		);
+	}
+
+	/// An orphan that is already gone (404) stays an idempotent no-op.
+	#[tokio::test]
+	#[cfg(unix)]
+	async fn remove_orphans_tolerates_already_gone() {
+		let containers = r#"[{"Names":["/proj-ghost-1"]}]"#;
+		let fake = fake_podman::start(move |method, target| {
+			if method == "GET" && target.contains("/containers/json") {
+				(200, containers.to_string())
+			} else {
+				(404, r#"{"message":"not found"}"#.to_string())
+			}
+		});
+		let e = engine_with(fake.client(), "proj");
+		let file = ComposeFile::default();
+
+		e.remove_orphans(&file)
+			.await
+			.expect("an already-gone orphan must still exit 0");
+	}
 
 	#[test]
 	fn filter_orphans_keeps_only_unknown_names() {

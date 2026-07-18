@@ -8,6 +8,7 @@ use crate::engine::Engine;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
+use super::parallel::first_error;
 use super::targets::{stop_deadline, stop_timeout_param};
 
 /// A live project container: the name to act on plus its machine-readable
@@ -139,6 +140,12 @@ impl Engine {
 	/// desired `target`-replica set (the scale-down half of reconciliation).
 	/// Surplus containers are stopped and removed concurrently so a large
 	/// scale-down costs roughly one grace period rather than one per replica.
+	///
+	/// Best-effort across every surplus replica — one that fails to stop/remove
+	/// must not block the rest from being reclaimed — but the first real
+	/// failure is remembered and returned once every replica has been
+	/// attempted, so `scale`/`up --scale` does not exit 0 with a surplus
+	/// replica silently left running (#598).
 	pub(super) async fn remove_surplus_replicas(
 		&self,
 		service_name: &str,
@@ -162,20 +169,27 @@ impl Engine {
 			.collect();
 		// Scaling down removes surplus replicas but keeps their data volumes
 		// (only `down -v` reclaims volumes).
-		futures_util::future::join_all(
+		let results = futures_util::future::join_all(
 			surplus
 				.iter()
 				.map(|name| self.stop_and_remove(name, grace, false)),
 		)
 		.await;
-		Ok(())
+		first_error(results).map_or(Ok(()), Err)
 	}
 
 	/// Stop (best-effort) then force-remove a container by name. With
 	/// `remove_volumes`, the container's anonymous volumes are reclaimed too
 	/// (`podman rm -v`), so a label-based teardown sweep does not leave image
-	/// `VOLUME`/anonymous volumes behind.
-	pub(super) async fn stop_and_remove(&self, name: &str, grace: i32, remove_volumes: bool) {
+	/// `VOLUME`/anonymous volumes behind. "No such container" (404) is an
+	/// idempotent no-op; any other removal failure propagates instead of being
+	/// swallowed into a debug log.
+	pub(super) async fn stop_and_remove(
+		&self,
+		name: &str,
+		grace: i32,
+		remove_volumes: bool,
+	) -> Result<()> {
 		// Bound the stop by the grace window: the force-remove below SIGKILLs the
 		// container, so a stop that stalls past the grace must not pin us for the
 		// full client READ_TIMEOUT before we fall through to it.
@@ -189,10 +203,16 @@ impl Engine {
 			.post_empty_ok_within(&stop_path, stop_deadline(grace))
 			.await;
 		let rm_path = super::container_rm_path(name, remove_volumes);
-		if let Err(e) = self.client.delete_ok(&rm_path).await {
-			tracing::debug!("scale-down rm {name}: {e}");
-		} else {
-			crate::ui::progress_line("Container", name, "Removed");
+		match self.client.delete_ok(&rm_path).await {
+			Ok(()) => {
+				crate::ui::progress_line("Container", name, "Removed");
+				Ok(())
+			}
+			Err(e) if e.is_status(404) => {
+				tracing::debug!("scale-down rm {name}: already gone ({e})");
+				Ok(())
+			}
+			Err(e) => Err(ComposeError::Podman(e)),
 		}
 	}
 
@@ -319,6 +339,79 @@ impl Engine {
 
 #[cfg(test)]
 mod tests {
+	#[cfg(unix)]
+	use crate::engine::fake_podman;
+	#[cfg(unix)]
+	use crate::engine::Engine;
+	#[cfg(unix)]
+	use crate::error::ComposeError;
+
+	#[cfg(unix)]
+	fn engine_with(client: crate::libpod::Client, project: &str) -> Engine {
+		Engine::with_base_dir(client, project.into(), std::env::temp_dir())
+	}
+
+	/// #598: a `scale`/`up --scale` down-sizing that can't remove a surplus
+	/// replica (e.g. an active exec session) must not exit 0 with it left
+	/// running — but a sibling replica that removes cleanly must still be
+	/// reclaimed.
+	#[tokio::test]
+	#[cfg(unix)]
+	async fn remove_surplus_replicas_propagates_a_real_rm_failure_after_completing_the_rest() {
+		let live = r#"[{"Names":["/proj-web-1"]},{"Names":["/proj-web-2"]}]"#;
+		let fake = fake_podman::start(move |method, target| {
+			if method == "GET" && target.contains("/containers/json") {
+				(200, live.to_string())
+			} else if (method == "POST" && target.contains("/stop"))
+				|| (method == "DELETE" && target.contains("/proj-web-1?force=true"))
+			{
+				(200, String::new())
+			} else if method == "DELETE" && target.contains("/proj-web-2?force=true") {
+				(500, r#"{"message":"device or resource busy"}"#.to_string())
+			} else {
+				(404, r#"{"message":"not found"}"#.to_string())
+			}
+		});
+		let e = engine_with(fake.client(), "proj");
+
+		// target = 0 desired replicas, so every live container is surplus
+		// (mirrors the `replica_names_for_zero_scale_is_empty` contract).
+		let err = e
+			.remove_surplus_replicas("web", &crate::compose::types::Service::default(), 0)
+			.await
+			.expect_err("a real surplus-removal failure must propagate");
+		assert!(
+			matches!(err, ComposeError::Podman(ref pe) if pe.is_status(500)),
+			"got {err:?}"
+		);
+
+		let seen = fake.requests.lock().unwrap();
+		assert!(
+			seen.iter()
+				.any(|r| r.contains("DELETE") && r.contains("/proj-web-1?force=true")),
+			"expected proj-web-1 to still be removed despite proj-web-2 failing: {seen:?}"
+		);
+	}
+
+	/// Surplus replicas that are already gone (404 on removal) stay an
+	/// idempotent no-op — a re-run of `scale` down must still exit 0.
+	#[tokio::test]
+	#[cfg(unix)]
+	async fn remove_surplus_replicas_tolerates_already_gone() {
+		let live = r#"[{"Names":["/proj-web-1"]}]"#;
+		let fake = fake_podman::start(move |method, target| {
+			if method == "GET" && target.contains("/containers/json") {
+				(200, live.to_string())
+			} else {
+				(404, r#"{"message":"not found"}"#.to_string())
+			}
+		});
+		let e = engine_with(fake.client(), "proj");
+		e.remove_surplus_replicas("web", &crate::compose::types::Service::default(), 0)
+			.await
+			.expect("an already-gone surplus replica must still exit 0");
+	}
+
 	use super::{
 		check_fixed_name_scale, check_replica_limit, check_scale_port_conflict, state_is_active,
 		DEFAULT_MAX_REPLICAS,

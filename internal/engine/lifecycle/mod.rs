@@ -71,15 +71,24 @@ impl Engine {
 			.await
 	}
 
-	/// Start a container by name, ignoring an error from an already-running one.
-	/// Used when `up` leaves an unchanged container in place but wants to ensure
-	/// it is running.
-	async fn ensure_started(&self, container_name: &str) {
+	/// Start a container by name. Used when `up` leaves an unchanged container in
+	/// place but wants to ensure it is running. "Already in the desired state"
+	/// (304) and "no such container" (404) are idempotent no-ops, matching
+	/// [`Self::run_lifecycle_op`]; any other failure (e.g. the container's
+	/// published port is now taken) propagates instead of being swallowed.
+	async fn ensure_started(&self, container_name: &str) -> Result<()> {
 		let path = format!(
 			"{API_PREFIX}/containers/{}/start",
 			crate::libpod::urlencoded(container_name)
 		);
-		let _ = self.client.post_empty_ok(&path).await;
+		match self.client.post_empty_ok(&path).await {
+			Ok(()) => Ok(()),
+			Err(e) if e.is_status(404) => {
+				tracing::debug!("{container_name}: start skipped ({e})");
+				Ok(())
+			}
+			Err(e) => Err(crate::error::ComposeError::Podman(e)),
+		}
 	}
 
 	/// Start services with explicit options. When `no_recreate` is true, running containers are left untouched. On partial failure, staging directories are cleaned up.
@@ -395,7 +404,7 @@ impl Engine {
 					tracing::debug!("{container_name} already exists — skipping recreate");
 					// `create` leaves an existing container as-is; `up` ensures it runs.
 					if start {
-						self.ensure_started(&container_name).await;
+						self.ensure_started(&container_name).await?;
 					}
 					crate::ui::progress_line(
 						"Container",
@@ -411,7 +420,7 @@ impl Engine {
 				{
 					tracing::debug!("{container_name} is up to date — skipping recreate");
 					if start {
-						self.ensure_started(&container_name).await;
+						self.ensure_started(&container_name).await?;
 					}
 					crate::ui::progress_line(
 						"Container",
@@ -454,6 +463,18 @@ impl Engine {
 		// one container-list round-trip per service (S+1 → 1 for the ordered pass).
 		let live_by_service = self.list_project_containers_by_service().await?;
 
+		// Best-effort across every container/network/volume so one failure never
+		// leaves the rest of the teardown undone, but the first real REMOVAL
+		// failure is remembered and returned at the end instead of being
+		// swallowed into a warning — a `down` whose container/network/volume
+		// removal genuinely fails (storage error, active exec session) must exit
+		// non-zero, not print a warning and exit 0 (#598). A stalled or failed
+		// `stop` does NOT count towards this: the force-remove below SIGKILLs the
+		// container regardless (see `container_rm_path`), so only the removal
+		// outcome is aggregated. A 404 (already gone) stays an idempotent no-op
+		// throughout.
+		let mut first_err: Option<crate::error::ComposeError> = None;
+
 		for name in &order {
 			let service = &file.services[name];
 			// Act only on containers Podman actually has. A defined-but-never-
@@ -484,7 +505,10 @@ impl Engine {
 				);
 				// A 404 (container already gone, or a profile-gated service that was
 				// never created) is an idempotent no-op here, exactly as the network
-				// and volume removal arms below treat it — not a warning.
+				// and volume removal arms below treat it — not a warning. A stalled
+				// or failed stop is not fatal either: the force-remove just below
+				// SIGKILLs the container regardless, so its outcome is logged but
+				// never folded into `first_err` — only a genuine removal failure is.
 				if let Err(e) = self
 					.client
 					.post_empty_ok_within(&stop_path, targets::stop_deadline(grace))
@@ -499,7 +523,10 @@ impl Engine {
 				match self.client.delete_ok(&rm_path).await {
 					Ok(()) => crate::ui::progress_line("Container", container_name, "Removed"),
 					Err(e) if e.is_status(404) => {}
-					Err(e) => tracing::warn!("could not remove {container_name}: {e}"),
+					Err(e) => {
+						tracing::warn!("could not remove {container_name}: {e}");
+						first_err.get_or_insert(crate::error::ComposeError::Podman(e));
+					}
 				}
 			}
 		}
@@ -525,7 +552,10 @@ impl Engine {
 			match self.client.delete_ok(&net_path).await {
 				Ok(_) => crate::ui::progress_line("Network", &network_name, "Removed"),
 				Err(e) if e.is_status(404) => {}
-				Err(e) => tracing::warn!("could not remove network {network_name}: {e}"),
+				Err(e) => {
+					tracing::warn!("could not remove network {network_name}: {e}");
+					first_err.get_or_insert(crate::error::ComposeError::Podman(e));
+				}
 			}
 		}
 
@@ -534,7 +564,11 @@ impl Engine {
 		// network whose compose key changed — mirroring the container sweep so
 		// teardown is complete regardless of how the file was parsed. Only
 		// podup-labelled networks match, so external networks are never touched.
-		self.remove_project_networks_by_label().await;
+		// This is a supplementary catch-all on top of the file-driven network
+		// loop above (which already aggregates its own failures into
+		// `first_err`), so a failure here is intentionally swallowed rather than
+		// folded in again.
+		let _ = self.remove_project_networks_by_label().await;
 
 		if remove_volumes {
 			for (key, config) in &file.volumes {
@@ -554,7 +588,10 @@ impl Engine {
 				match self.client.delete_ok(&vol_path).await {
 					Ok(_) => crate::ui::progress_line("Volume", &volume_name, "Removed"),
 					Err(e) if e.is_status(404) => {}
-					Err(e) => tracing::warn!("could not remove volume {volume_name}: {e}"),
+					Err(e) => {
+						tracing::warn!("could not remove volume {volume_name}: {e}");
+						first_err.get_or_insert(crate::error::ComposeError::Podman(e));
+					}
 				}
 			}
 		}
@@ -562,6 +599,10 @@ impl Engine {
 		// Internal native secrets are podup-owned (not user data), so remove
 		// them unconditionally — independent of `remove_volumes`.
 		self.remove_internal_secrets(file).await?;
+
+		if let Some(e) = first_err {
+			return Err(e);
+		}
 		Ok(())
 	}
 
@@ -620,32 +661,4 @@ pub(super) fn container_rm_path(name: &str, remove_volumes: bool) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::container_rm_path;
-
-	#[test]
-	fn rm_path_omits_volume_flag_by_default() {
-		// A plain `down` (or scale-down) must not drop volumes.
-		let path = container_rm_path("proj-web-1", false);
-		assert!(path.ends_with("/proj-web-1?force=true"), "got: {path}");
-		assert!(!path.contains("v=true"), "got: {path}");
-	}
-
-	#[test]
-	fn rm_path_requests_anonymous_volume_removal() {
-		// `down -v` must pass `v=true` so podman reclaims the container's
-		// anonymous (image VOLUME / short-form) volumes.
-		let path = container_rm_path("proj-web-1", true);
-		assert!(path.contains("force=true"), "got: {path}");
-		assert!(path.contains("&v=true"), "got: {path}");
-	}
-
-	#[test]
-	fn rm_path_url_encodes_container_name() {
-		// Names are URL-encoded so a slash in a container name cannot alter the
-		// request path.
-		let path = container_rm_path("weird/name", true);
-		assert!(!path.contains("weird/name"), "got: {path}");
-		assert!(path.contains("weird%2Fname"), "got: {path}");
-	}
-}
+mod tests;
