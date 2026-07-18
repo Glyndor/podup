@@ -32,16 +32,69 @@ fn container_services(units: &[quadlet::QuadletUnit]) -> Vec<String> {
 		.collect()
 }
 
-/// This project's installed quadlet unit files (`<project>-*`), sorted. Drives
-/// uninstall (remove by prefix) and rebuild (find `.build` units).
+/// The exact `podup.project` value embedded in a generated unit file, or
+/// `None` if the file carries no such label. Every unit builder in
+/// `crate::quadlet` (`container_unit`, `build_unit`, `network_unit`,
+/// `volume_unit`) stamps a `Label=podup.project=<project>` line — mirroring
+/// the ownership label the live engine and native secrets use — inside
+/// whichever `[Section]` that unit type uses. The line shape is stable
+/// regardless of section, so a plain text scan for it (rather than a full
+/// unit-file parse) is enough to recover the owner.
+fn unit_owner(path: &Path) -> Option<String> {
+	let contents = std::fs::read_to_string(path).ok()?;
+	contents.lines().find_map(|line| {
+		line.trim()
+			.strip_prefix("Label=podup.project=")
+			.map(|v| v.trim_matches('"').to_string())
+	})
+}
+
+/// This project's installed quadlet unit files, sorted. Drives uninstall
+/// (remove) and rebuild (find `.build` units).
+///
+/// A file name starting with `<project>-` is only a candidate: project names
+/// may themselves contain `-`, so `app-extra-web.container` also starts with
+/// `app-`. Matching on that prefix alone (the old behaviour) meant
+/// `uninstall -p app` matched — and `uninstall_quadlet` then stopped and
+/// deleted — the sibling project `app-extra`'s units. Each candidate is
+/// therefore opened and kept only when its embedded `podup.project` label
+/// equals `project` EXACTLY (see `unit_owner` above); the label is exact by
+/// construction; a prefix never is.
+///
+/// A candidate with no label at all (installed before this ownership check
+/// existed) cannot be proven to belong to `project` — treating "no label" as
+/// "assume it's ours" would just reopen the same hole for those legacy
+/// installs. So it is left in place, not deleted, and reported via
+/// `tracing::warn!` so the user can re-install (which re-marks it) or remove
+/// it by hand. Quadlet-mode autostart is recent, so few if any pre-existing
+/// unmarked units are expected in the field; leaving one stale file behind
+/// for a user to clean up once is a far smaller cost than deleting a
+/// sibling project's unit.
 fn installed_units(project: &str) -> Vec<PathBuf> {
 	let dir = quadlet_dir();
 	let prefix = format!("{project}-");
 	let mut found = Vec::new();
 	if let Ok(entries) = std::fs::read_dir(&dir) {
 		for entry in entries.flatten() {
-			if entry.file_name().to_string_lossy().starts_with(&prefix) {
-				found.push(entry.path());
+			let path = entry.path();
+			if !entry.file_name().to_string_lossy().starts_with(&prefix) {
+				continue;
+			}
+			match unit_owner(&path) {
+				Some(owner) if owner == project => found.push(path),
+				// A sibling project's unit that happens to share this filename
+				// prefix (e.g. `app-extra-web.container` when `project` is `app`);
+				// the label proves it is not ours, so it is left untouched.
+				Some(_) => {}
+				None => {
+					tracing::warn!(
+						"quadlet unit {} has no podup.project ownership label and cannot be \
+						 proven to belong to '{project}'; skipping it rather than risking a \
+						 sibling project's unit — re-run `podup autostart install --mode quadlet` \
+						 to re-mark it, or remove it by hand if it is stale",
+						path.display()
+					);
+				}
 			}
 		}
 	}
@@ -388,6 +441,111 @@ mod tests {
 			let calls = sc.log();
 			assert!(calls.contains(&vec!["stop".to_string(), "proj-web.service".to_string()]));
 			assert_eq!(calls.last().unwrap(), &vec!["daemon-reload".to_string()]);
+		});
+	}
+
+	// --- bug: uninstall matched units by filename prefix alone, so
+	// `uninstall -p app` also matched (and deleted) sibling project
+	// `app-extra`'s units. installed_units must scope by the exact embedded
+	// `podup.project` ownership label instead. ---
+
+	#[test]
+	fn uninstall_scoped_by_ownership_label_leaves_sibling_project_untouched() {
+		with_env(|root| {
+			install_quadlet(
+				&FakeCtl::new(),
+				&parse_str(IMG).unwrap(),
+				"app",
+				Path::new(BASE),
+				true,
+				false,
+			)
+			.unwrap();
+			install_quadlet(
+				&FakeCtl::new(),
+				&parse_str(IMG).unwrap(),
+				"app-extra",
+				Path::new(BASE),
+				true,
+				false,
+			)
+			.unwrap();
+			let sc = FakeCtl::new();
+			uninstall_quadlet(&sc, "app").unwrap();
+			// Only 'app's own unit is gone...
+			assert!(!root.join("containers/systemd/app-web.container").exists());
+			// ...the sibling 'app-extra', whose file name shares the `app-` prefix,
+			// must survive untouched.
+			assert!(root
+				.join("containers/systemd/app-extra-web.container")
+				.is_file());
+			let calls = sc.log();
+			assert!(calls.contains(&vec!["stop".to_string(), "app-web.service".to_string()]));
+			assert!(!calls.contains(&vec![
+				"stop".to_string(),
+				"app-extra-web.service".to_string()
+			]));
+		});
+	}
+
+	#[test]
+	fn uninstall_skips_legacy_unmarked_unit_instead_of_deleting_it() {
+		with_env(|root| {
+			let dir = root.join("containers/systemd");
+			std::fs::create_dir_all(&dir).unwrap();
+			// A unit installed before ownership labels existed: same naming scheme
+			// as a real 'app' unit, but no `Label=podup.project=` line anywhere in
+			// it, so it cannot be proven to belong to 'app'.
+			std::fs::write(
+				dir.join("app-web.container"),
+				"[Unit]\nDescription=web (podup)\n\n\
+				 [Container]\nImage=nginx\nContainerName=app-web\n\n\
+				 [Install]\nWantedBy=default.target\n",
+			)
+			.unwrap();
+			let sc = FakeCtl::new();
+			uninstall_quadlet(&sc, "app").unwrap();
+			// Unproven ownership: skip it, never delete it.
+			assert!(dir.join("app-web.container").is_file());
+			// The reload still runs (uninstall is otherwise a no-op success, not an
+			// error) even though nothing was removed.
+			assert_eq!(sc.log().last().unwrap(), &vec!["daemon-reload".to_string()]);
+		});
+	}
+
+	#[test]
+	fn rebuild_is_scoped_by_ownership_label_and_ignores_sibling_build_units() {
+		with_env(|_root| {
+			// 'app-extra' shares the `app-` filename prefix with 'app', so a naive
+			// prefix match would treat its `.build`/container as buildable under
+			// 'app' too.
+			install_quadlet(
+				&FakeCtl::new(),
+				&parse_str(BUILD).unwrap(),
+				"app",
+				Path::new(BASE),
+				true,
+				false,
+			)
+			.unwrap();
+			install_quadlet(
+				&FakeCtl::new(),
+				&parse_str(BUILD).unwrap(),
+				"app-extra",
+				Path::new(BASE),
+				true,
+				false,
+			)
+			.unwrap();
+			let sc = FakeCtl::new();
+			rebuild_quadlet(&sc, "app", None).unwrap();
+			assert_eq!(
+				sc.log(),
+				vec![
+					vec!["restart".to_string(), "app-web-build.service".to_string()],
+					vec!["restart".to_string(), "app-web.service".to_string()],
+				]
+			);
 		});
 	}
 
