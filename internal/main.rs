@@ -69,8 +69,10 @@ fn run_to_exit() {
 			print_error(&e);
 			// A `run`/`exec` whose command cannot be launched arrives as a Podman
 			// (OCI/crun) error; map it onto docker's conventional codes (127 not
-			// found, 126 not executable) instead of the generic exit 1.
-			let code = match &e {
+			// found, 126 not executable) instead of the generic exit 1. Peel a
+			// `DependencyNotReady` wrapper first so a failed readiness wait maps on
+			// its real cause, exactly as an unwrapped one would.
+			let code = match e.innermost() {
 				podup::ComposeError::Podman(_) => command_failure_exit_code(&e.to_string()),
 				_ => 1,
 			};
