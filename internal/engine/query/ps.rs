@@ -117,6 +117,17 @@ fn span_len(p: &ContainerPort) -> u16 {
 	p.range.filter(|&r| r > 0).unwrap_or(1)
 }
 
+/// `base + offset` widened to `u32` before adding. `host_port`,
+/// `container_port` and `range` all come straight off libpod's JSON — untrusted
+/// input a hostile or buggy daemon could set to any `u16` value — so a plain
+/// `u16 + u16` (e.g. `host_port: 65535` with a `range` of 2) can overflow: it
+/// wraps silently in a release build and panics under overflow-checks. Doing
+/// the addition in `u32` keeps every legitimate port value identical while a
+/// pathological one renders as the (larger) real number instead of wrapping.
+fn widen_add(base: u16, offset: u16) -> u32 {
+	u32::from(base) + u32::from(offset)
+}
+
 /// Host IP for display: an unset/empty value means all interfaces (`0.0.0.0`),
 /// matching Docker/Podman output (libpod commonly omits it).
 fn display_host_ip(p: &ContainerPort) -> &str {
@@ -141,9 +152,9 @@ fn format_port_record(p: &ContainerPort) -> String {
 	if n > 1 {
 		format!(
 			"{host_ip}:{hp}-{}->{}-{}{proto}",
-			hp + n - 1,
+			widen_add(hp, n - 1),
 			p.container_port,
-			p.container_port + n - 1,
+			widen_add(p.container_port, n - 1),
 		)
 	} else {
 		format!("{host_ip}:{hp}->{}{proto}", p.container_port)
@@ -169,8 +180,8 @@ fn publishers(ports: &[ContainerPort]) -> Vec<serde_json::Value> {
 		for i in 0..n {
 			out.push(serde_json::json!({
 				"URL": display_host_ip(p),
-				"TargetPort": p.container_port + i,
-				"PublishedPort": p.host_port.map(|hp| hp + i),
+				"TargetPort": widen_add(p.container_port, i),
+				"PublishedPort": p.host_port.map(|hp| widen_add(hp, i)),
 				"Protocol": p.protocol.as_deref().unwrap_or("tcp"),
 			}));
 		}
@@ -465,6 +476,26 @@ mod tests {
 	}
 
 	#[test]
+	fn format_port_record_does_not_overflow_u16_on_pathological_range() {
+		// `host_port`/`container_port`/`range` come straight from libpod's JSON —
+		// untrusted input. host_port=65535 with a range of 2 needs
+		// `host_port + (range - 1)` = 65536, which does not fit in a u16: it
+		// wraps to 0 in release and panics under overflow-checks (this test runs
+		// in a debug build, so a regression here panics rather than silently
+		// passing). The rendered end-of-range must show the real, wider number
+		// instead of wrapping.
+		let p = ContainerPort {
+			host_ip: None,
+			host_port: Some(65535),
+			container_port: 65535,
+			protocol: Some("tcp".into()),
+			range: Some(2),
+		};
+		let rendered = format_ports(std::slice::from_ref(&p));
+		assert_eq!(rendered, "0.0.0.0:65535-65536->65535-65536/tcp");
+	}
+
+	#[test]
 	fn publishers_expand_each_port_in_a_range() {
 		let p = ContainerPort {
 			host_ip: Some("0.0.0.0".into()),
@@ -480,6 +511,24 @@ mod tests {
 		assert_eq!(pubs[2]["TargetPort"], 8082);
 		assert_eq!(pubs[2]["PublishedPort"], 51253);
 		assert_eq!(pubs[1]["Protocol"], "tcp");
+	}
+
+	#[test]
+	fn publishers_does_not_overflow_u16_on_pathological_range() {
+		// Same untrusted-input hazard as `format_port_record`: expanding
+		// container_port=65535 over a range of 2 must not wrap the last entry's
+		// TargetPort/PublishedPort to 0.
+		let p = ContainerPort {
+			host_ip: Some("0.0.0.0".into()),
+			host_port: Some(65535),
+			container_port: 65535,
+			protocol: Some("tcp".into()),
+			range: Some(2),
+		};
+		let pubs = publishers(std::slice::from_ref(&p));
+		assert_eq!(pubs.len(), 2);
+		assert_eq!(pubs[1]["TargetPort"], 65536);
+		assert_eq!(pubs[1]["PublishedPort"], 65536);
 	}
 
 	#[test]
