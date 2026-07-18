@@ -170,6 +170,14 @@ pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
 	// here collapses back to one literal `%` exactly as it does on an exec
 	// line, and reaches the filesystem unexpanded by any specifier.
 	let workdir = opts.working_dir.display().to_string().replace('%', "%%");
+	// `Description=` takes its value literally, exactly like `WorkingDirectory=`
+	// above: systemd's specifier expansion runs over every unit-file value, not
+	// only the ones this module treats specially. `opts.project` is gated
+	// upstream by `is_safe_project_name` (which forbids `%`), but this module
+	// must not lean on that external guarantee for its own %-invariant — every
+	// other interpolated value here is escaped regardless of what validates it
+	// elsewhere, so the project name is too.
+	let project = opts.project.replace('%', "%%");
 	format!(
 		"[Unit]\n\
 		 Description=podup {project}\n\
@@ -183,7 +191,7 @@ pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
 		 \n\
 		 [Install]\n\
 		 WantedBy=default.target\n",
-		project = opts.project,
+		project = project,
 		workdir = workdir,
 		start = start,
 		stop = stop,
@@ -389,6 +397,23 @@ mod tests {
 		assert!(s.contains(
 			"ExecStart=/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app up -d"
 		));
+	}
+
+	#[test]
+	fn render_service_unit_escapes_percent_in_project_description() {
+		// `Description=` interpolates `opts.project` directly; a literal `%` in
+		// it must be doubled exactly like every other in-unit value, so systemd's
+		// specifier expansion does not treat e.g. `%h` as a specifier. This holds
+		// regardless of the external `is_safe_project_name` gate — the module's
+		// own %-invariant should not depend on it.
+		let mut o = opts_single();
+		o.project = "50%h".to_string();
+		let s = render_service_unit(&o);
+		assert!(
+			s.contains("Description=podup 50%%h"),
+			"Description= must double a literal '%' in the project name:\n{s}"
+		);
+		assert!(!s.contains("Description=podup 50%h\n"), "{s}");
 	}
 
 	#[test]
