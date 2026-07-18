@@ -123,6 +123,26 @@ pub enum ComposeError {
 	/// written/removed, or the requested mode is not yet available. The string is
 	/// a ready-to-print message.
 	Autostart(String),
+	/// A `service_healthy` dependency did not become ready. Wraps the shared
+	/// readiness error in an `Arc` so one poller's result can fan out to every
+	/// dependent waiting on the same container (the error type is otherwise not
+	/// `Clone`). Transparent: it displays as, and sources, the wrapped error.
+	DependencyNotReady(std::sync::Arc<ComposeError>),
+}
+
+impl ComposeError {
+	/// Peel [`Self::DependencyNotReady`] wrappers to the underlying cause.
+	///
+	/// The readiness fan-out wraps a poller's error so it can be shared; callers
+	/// that classify an error by variant (e.g. the CLI's exit-code mapping) want
+	/// the real cause, not the wrapper.
+	pub fn innermost(&self) -> &ComposeError {
+		let mut e = self;
+		while let Self::DependencyNotReady(inner) = e {
+			e = inner;
+		}
+		e
+	}
 }
 
 /// Escape control characters (tabs, newlines, ESC, …) in an interpolated,
@@ -263,6 +283,8 @@ impl fmt::Display for ComposeError {
 			),
 			Self::EnvFile(s) => write!(f, "{s}"),
 			Self::Autostart(s) => write!(f, "{s}"),
+			// Transparent: the wrapper only exists to make the cause shareable.
+			Self::DependencyNotReady(inner) => write!(f, "{inner}"),
 		}
 	}
 }
@@ -274,6 +296,7 @@ impl std::error::Error for ComposeError {
 			Self::Io(e) => Some(e),
 			Self::Podman(e) => Some(e),
 			Self::IoPath { source, .. } | Self::BuildContext { source, .. } => Some(source),
+			Self::DependencyNotReady(inner) => Some(inner),
 			_ => None,
 		}
 	}
