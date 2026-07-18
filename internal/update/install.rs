@@ -245,7 +245,8 @@ fn swap_into_place(tmp: &Path, target: &Path) -> crate::Result<()> {
 fn swap_into_place(tmp: &Path, target: &Path) -> crate::Result<()> {
 	// A running .exe cannot be overwritten, but it can be renamed. Move it aside,
 	// put the new binary in place, then best-effort delete the old one (it may
-	// still be locked while running — the next run cleans it up).
+	// still be locked while running - if so, it is removed at the start of the
+	// next updater run by `cleanup_stale_backup`).
 	let backup = target.with_extension("old");
 	let _ = std::fs::remove_file(&backup);
 	if target.exists() {
