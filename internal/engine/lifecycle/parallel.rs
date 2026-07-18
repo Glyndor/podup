@@ -27,15 +27,20 @@ use super::targets::{stop_deadline, stop_timeout_param};
 const MAX_LIFECYCLE_CONCURRENCY: usize = 16;
 
 /// Run a batch of independent per-service futures concurrently, bounded by
-/// [`MAX_LIFECYCLE_CONCURRENCY`], and return their results in the *input* order
-/// (not completion order) so error selection and reporting stay deterministic
-/// regardless of which service happens to finish first.
-pub(super) async fn join_bounded<F>(futs: impl IntoIterator<Item = F>) -> Vec<Result<()>>
+/// [`MAX_LIFECYCLE_CONCURRENCY`], and return their outputs in the *input*
+/// order (not completion order) so error selection and reporting stay
+/// deterministic regardless of which service happens to finish first.
+/// Generic over the output type so both a fallible per-service unit
+/// (`Result<()>`, reduced via [`first_error`]) and a best-effort one that
+/// never fails (`()`, e.g. the image-prefetch stage) share this one bounded
+/// dispatcher.
+pub(super) async fn join_bounded<F, T>(futs: impl IntoIterator<Item = F>) -> Vec<T>
 where
-	F: std::future::Future<Output = Result<()>>,
+	F: std::future::Future<Output = T>,
+	T: Send,
 {
 	use futures_util::stream::StreamExt;
-	let mut indexed: Vec<(usize, Result<()>)> = futures_util::stream::iter(
+	let mut indexed: Vec<(usize, T)> = futures_util::stream::iter(
 		futs.into_iter()
 			.enumerate()
 			.map(|(i, fut)| async move { (i, fut.await) }),

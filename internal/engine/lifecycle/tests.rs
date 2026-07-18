@@ -337,6 +337,62 @@ async fn down_first_error_is_deterministic_across_levels() {
 	);
 }
 
+/// #6.3 regression: before this fix, each service's image was pulled inside
+/// `up_one_service`, gated behind the level barrier — so a level-2 service's
+/// pull never even started until level 1 finished. `web depends_on db` puts
+/// db alone in level 1 and web alone in level 2; both images must now be
+/// pulled by the up-front prefetch stage, before the very first container is
+/// created, instead of web's pull waiting its turn behind db's whole level.
+#[tokio::test]
+#[cfg(unix)]
+async fn up_prefetches_every_levels_image_before_any_container_create() {
+	let fake = fake_podman::start(|method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			(200, "[]".to_string())
+		} else if method == "POST" && target.contains("/images/pull") {
+			(200, String::new())
+		} else if method == "POST" && target.contains("/containers/create") {
+			(200, "{}".to_string())
+		} else if method == "POST" && target.contains("/start") {
+			(200, String::new())
+		} else {
+			(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+
+	let file = crate::parse_str(
+		"services:\n  db:\n    image: img-db\n  web:\n    image: img-web\n    depends_on:\n      - db\n",
+	)
+	.unwrap();
+
+	e.up_with_options(&file, false, &[], &[], false, false, false)
+		.await
+		.expect("a healthy two-level up must succeed");
+
+	let seen = fake.requests.lock().unwrap();
+	let first_create = seen
+		.iter()
+		.position(|r| r.contains("/containers/create"))
+		.expect("expected at least one container create");
+	let db_pull = seen
+		.iter()
+		.position(|r| r.contains("/images/pull") && r.contains("img-db"))
+		.expect("expected db's image to be pulled");
+	let web_pull = seen
+		.iter()
+		.position(|r| r.contains("/images/pull") && r.contains("img-web"))
+		.expect("expected web's image to be pulled");
+	assert!(
+		db_pull < first_create,
+		"db's image must be prefetched before any container is created: {seen:?}"
+	);
+	assert!(
+		web_pull < first_create,
+		"web's (level 2) image must be prefetched up front too, not deferred behind level 1's barrier: {seen:?}"
+	);
+}
+
 #[test]
 fn rm_path_omits_volume_flag_by_default() {
 	// A plain `down` (or scale-down) must not drop volumes.

@@ -3,6 +3,7 @@
 mod commands;
 mod down_label;
 mod parallel;
+mod prefetch;
 mod run;
 mod scale;
 mod signal;
@@ -218,6 +219,13 @@ impl Engine {
 			// concurrent per-level start loop, so two services in the same level
 			// can't race the non-atomic delete-then-create of a shared name.
 			self.create_inline_secrets(file).await?;
+
+			// Best-effort: warm the image cache for every service this pass will
+			// pull, concurrently, before the per-level walk below serializes a
+			// level-2+ service's image acquisition behind the level-1 barrier.
+			// A prefetch miss here is never fatal — `up_one_service`'s own pull
+			// below is still authoritative and the only path that can fail `up`.
+			self.prefetch_images(file, &enabled, &target_set).await;
 
 			// Start each dependency level in turn; services within a level have
 			// no `depends_on` relationship to each other (guaranteed by the

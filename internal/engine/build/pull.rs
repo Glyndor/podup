@@ -169,8 +169,10 @@ impl Engine {
 
 	/// Whether an image reference is present in local storage. Used by the
 	/// `pull` command to verify each pull actually landed (the streaming pull
-	/// endpoint reports failures as in-band progress lines, not an HTTP error).
-	async fn image_present(&self, image: &str) -> bool {
+	/// endpoint reports failures as in-band progress lines, not an HTTP error),
+	/// and by the `up` image-prefetch stage to skip a redundant pull request
+	/// for an image a `missing`-policy service already has cached.
+	pub(in crate::engine) async fn image_present(&self, image: &str) -> bool {
 		let path = format!("{API_PREFIX}/images/{}/json", urlencoded(image));
 		self.client
 			.get_json::<crate::libpod::types::image::ImageInspect>(&path)
