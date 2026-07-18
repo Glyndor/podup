@@ -8,7 +8,7 @@
 #   curl -fsSL https://glyndor.net/podup/install/unix | bash
 #
 # --apt (Debian/Ubuntu, amd64/arm64): set up the Glyndor apt repository and install
-# with apt. Updates — including signing-key renewals — come from `apt upgrade`.
+# with apt. Updates - including signing-key renewals - come from `apt upgrade`.
 #
 #   curl -fsSL https://glyndor.net/podup/install/unix | bash -s -- --apt
 #
@@ -89,7 +89,22 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 download() {
 	# download <url> <dest>
-	curl --proto '=https' --tlsv1.2 -fsSL -o "$2" "$1" || fail "Download failed: $1"
+	#
+	# --proto '=https' only restricts the initial URL: GitHub release assets
+	# redirect to its CDN, and that redirect is governed by --proto-redir, not
+	# --proto, so it needs its own pin - this is the fix that actually closes
+	# the downgrade (an unpinned redirect could otherwise fall back to http).
+	# --max-filesize caps the response at 200 MB, but only on curl that honours
+	# it: it aborts mid-stream on curl >= 8.4.0, or on any curl version when the
+	# server sends Content-Length. It does NOT bound the size on an older curl
+	# (still the default on several supported distros) talking to a server that
+	# omits Content-Length - that combination is not covered by this flag.
+	# --max-time is the version-independent backstop: it caps the whole request
+	# at 300s regardless of curl version or response headers, so a stalled or
+	# never-ending response cannot hang the installer.
+	curl --proto '=https' --proto-redir '=https' --tlsv1.2 \
+		--max-filesize 209715200 --max-time 300 \
+		-fsSL -o "$2" "$1" || fail "Download failed: $1"
 }
 
 # Baked-in base64 (unpadded) raw Ed25519 public keys (32 bytes each) matching the
@@ -176,8 +191,8 @@ install_apt() {
 	ed25519_verify "${TMP_DIR}/${kr}.sig" "${TMP_DIR}/${kr}" || kr_rc=$?
 	case "$kr_rc" in
 		0) log_ok "Keyring signature verified" ;;
-		1) fail "Keyring signature verification failed — aborting (package may be tampered)" ;;
-		2) fail "Cannot verify keyring signature: install python3 with the 'cryptography' package (and a configured release key) — aborting" ;;
+		1) fail "Keyring signature verification failed - aborting (package may be tampered)" ;;
+		2) fail "Cannot verify keyring signature: install python3 with the 'cryptography' package (and a configured release key) - aborting" ;;
 	esac
 
 	run_root dpkg -i "${TMP_DIR}/${kr}"
@@ -199,7 +214,7 @@ install_binary() {
 
 	# Checksum alone is not a trust anchor: a tampered release can ship a matching
 	# SHA256SUMS. The binary is trusted only after at least one cryptographic proof
-	# tied to the release key or the repository's build identity succeeds — the
+	# tied to the release key or the repository's build identity succeeds - the
 	# Ed25519 signature over SHA256SUMS, or the GitHub build-provenance attestation.
 	# If neither verifier can run, the install fails closed.
 	local verified=0 rc=0
@@ -208,10 +223,10 @@ install_binary() {
 	ed25519_verify "${TMP_DIR}/SHA256SUMS.sig" "${TMP_DIR}/SHA256SUMS" || rc=$?
 	case "$rc" in
 		0) log_ok "SHA256SUMS signature verified"; verified=1 ;;
-		1) fail "SHA256SUMS signature verification failed — release may be tampered" ;;
+		1) fail "SHA256SUMS signature verification failed - release may be tampered" ;;
 		2)
 			if [[ ${#PUBKEYS[@]} -eq 0 ]]; then
-				log_info "no release public key configured — skipping Ed25519 signature check"
+				log_info "no release public key configured - skipping Ed25519 signature check"
 			else
 				# A release public key IS configured: the pinned key is the trust
 				# anchor and must not be silently bypassed in favour of the
@@ -225,7 +240,7 @@ release signature against the pinned key. Install it and re-run."
 	# Build-provenance attestation: proves the binary was produced by this repo's
 	# release workflow (GitHub OIDC). Defence-in-depth next to the pinned key;
 	# the trust anchor when no release public key is configured. Pinned to the
-	# release workflow — a repo-scoped check would accept an attestation from any
+	# release workflow - a repo-scoped check would accept an attestation from any
 	# workflow in the repo.
 	if command -v gh >/dev/null 2>&1 && gh attestation --help >/dev/null 2>&1; then
 		log_info "Verifying artifact attestation ..."
@@ -235,11 +250,11 @@ release signature against the pinned key. Install it and re-run."
 		log_ok "Attestation verified"
 		verified=1
 	else
-		log_info "GitHub CLI with attestation support not found — cannot check attestation"
+		log_info "GitHub CLI with attestation support not found - cannot check attestation"
 	fi
 
 	# Fail closed: a strong cryptographic proof is mandatory. A checksum alone is
-	# not a trust anchor, and there is no opt-out — government and hardened
+	# not a trust anchor, and there is no opt-out - government and hardened
 	# environments require verifiable supply-chain integrity at install time.
 	if [[ "$verified" -ne 1 ]]; then
 		fail "No signature or attestation verifier available. Install 'gh' (>= 2.49) \

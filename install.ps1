@@ -50,21 +50,41 @@ if ($Version -eq 'latest') {
 	Fail "PODUP_VERSION must be 'latest' or a semver tag like v1.2.3, got: $Version"
 }
 
-# Windows PowerShell 5.1 defaults to TLS 1.0/1.1; force TLS 1.2 for GitHub.
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+# Windows PowerShell 5.1 defaults to TLS 1.0/1.1; force at least TLS 1.2 for
+# GitHub, and allow TLS 1.3 too where the host's .NET Framework defines it
+# (an exact Tls12 assignment would exclude a newer, already-supported
+# protocol; older .NET Framework builds do not expose the Tls13 member, so
+# fall back to Tls12 alone rather than fail the install over it).
+try {
+	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+} catch {
+	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+}
 
 $TmpDir = New-Item -ItemType Directory -Path (Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName()))
 
 try {
 	# --- Download ------------------------------------------------------------
 
+	# 200 MB ceiling on any downloaded release asset. Invoke-WebRequest runs the
+	# download to completion before -OutFile can be checked, so this is a
+	# post-hoc guard - it rejects an oversized file after it lands on disk, it
+	# does not cap a hostile stream mid-flight. -TimeoutSec is the bound that
+	# actually applies while the request is in flight: it caps the whole
+	# request so a stalled or never-ending response cannot hang the installer.
+	$MaxDownloadBytes = 209715200
+	$DownloadTimeoutSec = 300
+
 	function Get-ReleaseFile($name) {
 		$dest = Join-Path $TmpDir $name
 		$url = "$BaseUrl/$name"
 		try {
-			Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+			Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -TimeoutSec $DownloadTimeoutSec
 		} catch {
 			Fail "Download failed: $url"
+		}
+		if ((Get-Item -Path $dest).Length -gt $MaxDownloadBytes) {
+			Fail "Download too large (over 200 MB): $url"
 		}
 		return $dest
 	}
