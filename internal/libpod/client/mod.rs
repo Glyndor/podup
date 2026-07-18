@@ -5,8 +5,9 @@
 //! API calls are sequential and infrequent.
 
 use bytes::Bytes;
-use http_body_util::{BodyExt, Full, Limited};
-use hyper::body::Incoming;
+use futures_util::Stream;
+use http_body_util::{BodyExt, Full, Limited, StreamBody};
+use hyper::body::{Frame, Incoming};
 use hyper::client::conn::http1;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
@@ -17,7 +18,20 @@ use super::error::PodmanError;
 mod encode;
 pub(crate) use encode::{is_valid_object_name, urlencoded};
 
-type BoxBody = Full<Bytes>;
+/// The request body every call shares. A boxed body so a fully-buffered
+/// `Full<Bytes>` (almost every call) and a lazily-streamed build-context body
+/// (the `build` endpoint) travel the same client path. `Unsync` because hyper's
+/// `send_request` only requires the body to be `Send`, and the streamed body is
+/// not `Sync`.
+type BoxBody = http_body_util::combinators::UnsyncBoxBody<Bytes, std::io::Error>;
+
+/// Box a fully-buffered byte payload into [`BoxBody`]. `Full`'s error is
+/// `Infallible`, mapped to the unified `io::Error` (which it never produces).
+fn full(bytes: Bytes) -> BoxBody {
+	Full::new(bytes)
+		.map_err(|never| match never {})
+		.boxed_unsync()
+}
 
 /// Upper bound on a buffered (non-streaming) response body. Caps memory use
 /// when the daemon returns an oversized or runaway response.
@@ -272,7 +286,7 @@ impl Client {
 	/// SpecGenerator or libpod-native call fail with an obscure 4xx.
 	pub async fn ping(&self) -> Result<()> {
 		// Deliberately omits the version prefix: `_ping` is version-independent.
-		let req = Self::build_request(Method::GET, "/libpod/_ping", Full::new(Bytes::new()), None)?;
+		let req = Self::build_request(Method::GET, "/libpod/_ping", full(Bytes::new()), None)?;
 		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		// Read the version header before the body is consumed below.
 		let reported = resp
@@ -291,7 +305,7 @@ impl Client {
 
 	/// `GET` → deserialize JSON response.
 	pub async fn get_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-		let req = Self::build_request(Method::GET, path, Full::new(Bytes::new()), None)?;
+		let req = Self::build_request(Method::GET, path, full(Bytes::new()), None)?;
 		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		Self::check_status(status, &body)?;
@@ -300,7 +314,7 @@ impl Client {
 
 	/// `GET` → return raw `Response<Incoming>` for streaming.
 	pub async fn get_stream(&self, path: &str) -> Result<Response<Incoming>> {
-		let req = Self::build_request(Method::GET, path, Full::new(Bytes::new()), None)?;
+		let req = Self::build_request(Method::GET, path, full(Bytes::new()), None)?;
 		Self::stream_or_err(self.send(req, Some(READ_TIMEOUT)).await?).await
 	}
 
@@ -314,7 +328,7 @@ impl Client {
 		let req = Self::build_request(
 			Method::POST,
 			path,
-			Full::new(Bytes::from(json)),
+			full(Bytes::from(json)),
 			Some("application/json"),
 		)?;
 		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
@@ -329,7 +343,7 @@ impl Client {
 		let req = Self::build_request(
 			Method::POST,
 			path,
-			Full::new(Bytes::from(json)),
+			full(Bytes::from(json)),
 			Some("application/json"),
 		)?;
 		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
@@ -347,7 +361,7 @@ impl Client {
 		let req = Self::build_request(
 			Method::POST,
 			path,
-			Full::new(Bytes::from(json)),
+			full(Bytes::from(json)),
 			Some("application/json"),
 		)?;
 		Self::stream_or_err(self.send(req, Some(READ_TIMEOUT)).await?).await
@@ -355,7 +369,7 @@ impl Client {
 
 	/// `POST` with empty body → ignore response body (expect 2xx or 304).
 	pub async fn post_empty_ok(&self, path: &str) -> Result<()> {
-		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;
+		let req = Self::build_request(Method::POST, path, full(Bytes::new()), None)?;
 		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		// 304 Not Modified is fine for idempotent ops
@@ -379,7 +393,7 @@ impl Client {
 		path: &str,
 		deadline: Option<std::time::Duration>,
 	) -> Result<()> {
-		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;
+		let req = Self::build_request(Method::POST, path, full(Bytes::new()), None)?;
 		let resp = self.send(req, deadline).await?;
 		let (status, body) = Self::read_body(resp, deadline).await?;
 		// 304 Not Modified is fine for idempotent ops
@@ -411,7 +425,7 @@ impl Client {
 		let req = Self::build_request(
 			Method::POST,
 			path,
-			Full::new(Bytes::from(json)),
+			full(Bytes::from(json)),
 			Some("application/json"),
 		)?;
 		Self::stream_or_err(self.send(req, head_timeout).await?).await
@@ -419,13 +433,13 @@ impl Client {
 
 	/// `POST` with empty body → return raw `Response<Incoming>` for streaming.
 	pub async fn post_empty_stream(&self, path: &str) -> Result<Response<Incoming>> {
-		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;
+		let req = Self::build_request(Method::POST, path, full(Bytes::new()), None)?;
 		Self::stream_or_err(self.send(req, Some(READ_TIMEOUT)).await?).await
 	}
 
 	/// `POST` with empty body → deserialize JSON response.
 	pub async fn post_empty_json<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;
+		let req = Self::build_request(Method::POST, path, full(Bytes::new()), None)?;
 		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		Self::check_status(status, &body)?;
@@ -443,7 +457,7 @@ impl Client {
 	/// this method must impose their own outer budget (e.g. a
 	/// [`tokio::time::timeout`]) to stay bounded.
 	pub async fn post_empty_json_unbounded<T: DeserializeOwned>(&self, path: &str) -> Result<T> {
-		let req = Self::build_request(Method::POST, path, Full::new(Bytes::new()), None)?;
+		let req = Self::build_request(Method::POST, path, full(Bytes::new()), None)?;
 		let resp = self.send(req, None).await?;
 		let (status, body) = Self::read_body(resp, None).await?;
 		Self::check_status(status, &body)?;
@@ -457,7 +471,28 @@ impl Client {
 		bytes: Bytes,
 		content_type: &str,
 	) -> Result<Response<Incoming>> {
-		let req = Self::build_request(Method::POST, path, Full::new(bytes), Some(content_type))?;
+		let req = Self::build_request(Method::POST, path, full(bytes), Some(content_type))?;
+		Self::stream_or_err(self.send(req, Some(READ_TIMEOUT)).await?).await
+	}
+
+	/// `POST` with a **streamed** body → return raw `Response<Incoming>` for
+	/// streaming.
+	///
+	/// The body is produced lazily from `chunks` rather than buffered whole, so a
+	/// large upload (a multi-gigabyte build-context tar) never inflates the
+	/// process's RSS. Each item is an `http_body`-style frame or a terminal
+	/// `io::Error` that aborts the request.
+	pub async fn post_stream_body<S>(
+		&self,
+		path: &str,
+		chunks: S,
+		content_type: &str,
+	) -> Result<Response<Incoming>>
+	where
+		S: Stream<Item = std::result::Result<Frame<Bytes>, std::io::Error>> + Send + 'static,
+	{
+		let body = StreamBody::new(chunks).boxed_unsync();
+		let req = Self::build_request(Method::POST, path, body, Some(content_type))?;
 		Self::stream_or_err(self.send(req, Some(READ_TIMEOUT)).await?).await
 	}
 
@@ -472,7 +507,7 @@ impl Client {
 		bytes: Bytes,
 		content_type: &str,
 	) -> Result<T> {
-		let req = Self::build_request(Method::POST, path, Full::new(bytes), Some(content_type))?;
+		let req = Self::build_request(Method::POST, path, full(bytes), Some(content_type))?;
 		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		Self::check_status(status, &body)?;
@@ -481,7 +516,7 @@ impl Client {
 
 	/// `PUT` with raw bytes body → expect 2xx.
 	pub async fn put_bytes_ok(&self, path: &str, bytes: Bytes, content_type: &str) -> Result<()> {
-		let req = Self::build_request(Method::PUT, path, Full::new(bytes), Some(content_type))?;
+		let req = Self::build_request(Method::PUT, path, full(bytes), Some(content_type))?;
 		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		Self::check_status(status, &body)
@@ -495,7 +530,7 @@ impl Client {
 	pub async fn head_path_is_dir(&self, path: &str) -> Result<Option<bool>> {
 		use base64::Engine as _;
 
-		let req = Self::build_request(Method::HEAD, path, Full::new(Bytes::new()), None)?;
+		let req = Self::build_request(Method::HEAD, path, full(Bytes::new()), None)?;
 		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let status = resp.status();
 		if status == StatusCode::NOT_FOUND {
@@ -534,7 +569,7 @@ impl Client {
 	/// no-op, so it can avoid reporting a phantom "removed" for a container that
 	/// never existed.
 	pub async fn delete_existed(&self, path: &str) -> Result<bool> {
-		let req = Self::build_request(Method::DELETE, path, Full::new(Bytes::new()), None)?;
+		let req = Self::build_request(Method::DELETE, path, full(Bytes::new()), None)?;
 		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		if status == StatusCode::NOT_FOUND {

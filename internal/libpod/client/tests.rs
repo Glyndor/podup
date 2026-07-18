@@ -54,20 +54,24 @@ fn check_status_falls_back_to_raw_body_on_non_json() {
 #[test]
 fn build_request_valid_path() {
 	use bytes::Bytes;
-	use http_body_util::Full;
 	use hyper::Method;
-	Client::build_request(Method::GET, "/libpod/_ping", Full::new(Bytes::new()), None).unwrap();
+	Client::build_request(
+		Method::GET,
+		"/libpod/_ping",
+		super::full(Bytes::new()),
+		None,
+	)
+	.unwrap();
 }
 
 #[test]
 fn build_request_sets_content_type_when_given() {
 	use bytes::Bytes;
-	use http_body_util::Full;
 	use hyper::Method;
 	let req = Client::build_request(
 		Method::POST,
 		"/libpod/secrets/create",
-		Full::new(Bytes::new()),
+		super::full(Bytes::new()),
 		Some("application/json"),
 	)
 	.unwrap();
@@ -82,14 +86,13 @@ fn build_request_sets_content_type_when_given() {
 #[test]
 fn build_request_rejects_unparseable_path() {
 	use bytes::Bytes;
-	use http_body_util::Full;
 	use hyper::Method;
 	// A control character makes `http://localhost<path>` an invalid URI, which
 	// must surface as a structured Api error rather than panicking.
 	let err = Client::build_request(
 		Method::GET,
 		"/libpod/bad\u{7f}path",
-		Full::new(Bytes::new()),
+		super::full(Bytes::new()),
 		None,
 	)
 	.unwrap_err();
