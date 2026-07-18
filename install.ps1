@@ -50,13 +50,25 @@ if ($Version -eq 'latest') {
 	Fail "PODUP_VERSION must be 'latest' or a semver tag like v1.2.3, got: $Version"
 }
 
-# Windows PowerShell 5.1 defaults to TLS 1.0/1.1; force TLS 1.2 for GitHub.
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+# Windows PowerShell 5.1 defaults to TLS 1.0/1.1; force at least TLS 1.2 for
+# GitHub, and allow TLS 1.3 too where the host's .NET Framework defines it
+# (an exact Tls12 assignment would exclude a newer, already-supported
+# protocol; older .NET Framework builds do not expose the Tls13 member, so
+# fall back to Tls12 alone rather than fail the install over it).
+try {
+	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+} catch {
+	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+}
 
 $TmpDir = New-Item -ItemType Directory -Path (Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName()))
 
 try {
 	# --- Download ------------------------------------------------------------
+
+	# 200 MB ceiling on any downloaded release asset - bounds a hostile/broken
+	# endpoint so it cannot fill the temp directory before verification runs.
+	$MaxDownloadBytes = 209715200
 
 	function Get-ReleaseFile($name) {
 		$dest = Join-Path $TmpDir $name
@@ -65,6 +77,9 @@ try {
 			Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
 		} catch {
 			Fail "Download failed: $url"
+		}
+		if ((Get-Item -Path $dest).Length -gt $MaxDownloadBytes) {
+			Fail "Download too large (over 200 MB): $url"
 		}
 		return $dest
 	}

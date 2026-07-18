@@ -89,7 +89,15 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 download() {
 	# download <url> <dest>
-	curl --proto '=https' --tlsv1.2 -fsSL -o "$2" "$1" || fail "Download failed: $1"
+	#
+	# --proto '=https' only restricts the initial URL: GitHub release assets
+	# redirect to its CDN, and that redirect is governed by --proto-redir,
+	# which defaults to allowing http. Pin it too so a redirect can never
+	# downgrade the transfer. --max-filesize bounds a hostile/broken endpoint
+	# to 200 MB so it cannot fill the tempdir before checksum/signature
+	# verification runs.
+	curl --proto '=https' --proto-redir '=https' --tlsv1.2 --max-filesize 209715200 \
+		-fsSL -o "$2" "$1" || fail "Download failed: $1"
 }
 
 # Baked-in base64 (unpadded) raw Ed25519 public keys (32 bytes each) matching the
