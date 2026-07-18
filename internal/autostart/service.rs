@@ -43,9 +43,19 @@ fn is_bare_safe(token: &str) -> bool {
 /// made only of the safe subset are emitted verbatim; everything else is wrapped
 /// in double quotes with `\` and `"` (and the C-style control escapes systemd
 /// understands) backslash-escaped, so a path with spaces survives as one argument.
+///
+/// A literal `%` is doubled to `%%` first, before the bare/quoted decision:
+/// systemd expands `%`-specifiers (`%h`, `%i`, `%o`, ...) in a unit value
+/// during specifier expansion, a pass that happens before the line is split
+/// into arguments and runs whether or not the token ends up quoted. `%` is not
+/// in `is_bare_safe`'s allowed set, so a token containing it already takes the
+/// quoted path — but doubling it up front (rather than only inside the quoted
+/// branch) means the escape holds even if that allowed set ever changes, and a
+/// bare-looking token like `50%off` still comes out as `50%%off`.
 fn quote_arg(token: &str) -> String {
-	if is_bare_safe(token) {
-		return token.to_string();
+	let token = token.replace('%', "%%");
+	if is_bare_safe(&token) {
+		return token;
 	}
 	let mut out = String::with_capacity(token.len() + 2);
 	out.push('"');
@@ -149,6 +159,25 @@ pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
 	// imply a network-readiness gate that never fires. Under linger the user
 	// manager starts after the system network is already up, and podup reaches
 	// Podman over a socket on demand, so no explicit network ordering is needed.
+	//
+	// `WorkingDirectory=` takes the rest of its line literally — unlike an
+	// exec-line token, it understands none of the C-style backslash escapes
+	// `quote_arg` uses — but `%%` is not one of those escapes: it is systemd's
+	// specifier-level escape, resolved during the same specifier-expansion pass
+	// that runs over every unit-file value before the value is otherwise
+	// interpreted. That pass does not care whether the value is a directive
+	// meant to be split into words or taken whole, so doubling a literal `%`
+	// here collapses back to one literal `%` exactly as it does on an exec
+	// line, and reaches the filesystem unexpanded by any specifier.
+	let workdir = opts.working_dir.display().to_string().replace('%', "%%");
+	// `Description=` takes its value literally, exactly like `WorkingDirectory=`
+	// above: systemd's specifier expansion runs over every unit-file value, not
+	// only the ones this module treats specially. `opts.project` is gated
+	// upstream by `is_safe_project_name` (which forbids `%`), but this module
+	// must not lean on that external guarantee for its own %-invariant — every
+	// other interpolated value here is escaped regardless of what validates it
+	// elsewhere, so the project name is too.
+	let project = opts.project.replace('%', "%%");
 	format!(
 		"[Unit]\n\
 		 Description=podup {project}\n\
@@ -162,8 +191,8 @@ pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
 		 \n\
 		 [Install]\n\
 		 WantedBy=default.target\n",
-		project = opts.project,
-		workdir = opts.working_dir.display(),
+		project = project,
+		workdir = workdir,
 		start = start,
 		stop = stop,
 	)
@@ -318,5 +347,82 @@ mod tests {
 		assert_eq!(quote_arg("a b"), "\"a b\"");
 		assert_eq!(quote_arg("a\"b"), "\"a\\\"b\"");
 		assert_eq!(quote_arg("a\\b"), "\"a\\\\b\"");
+	}
+
+	// --- bug: `%`-specifiers are not escaped in unit values (systemd expands
+	// `%h`/`%i`/`%o`/... in every unit-file value, exec tokens and
+	// `WorkingDirectory=` alike; a literal `%` must be doubled to `%%` or a path
+	// like `/srv/50%off` gets `%o`-expanded, mis-resolving or failing to start). ---
+
+	#[test]
+	fn quote_arg_doubles_percent_even_in_a_bare_looking_token() {
+		// `50%off` has no space/quote/control byte — the only reason it must be
+		// quoted at all is the `%`, and the `%` itself must be doubled so systemd's
+		// specifier expansion collapses it back to one literal `%` instead of
+		// trying to expand `%o` as a specifier.
+		assert_eq!(quote_arg("50%off"), "\"50%%off\"");
+		assert_eq!(quote_arg("100%"), "\"100%%\"");
+	}
+
+	#[test]
+	fn render_service_unit_escapes_percent_in_working_directory() {
+		let mut o = opts_single();
+		o.working_dir = PathBuf::from("/srv/50%off");
+		let s = render_service_unit(&o);
+		assert!(
+			s.contains("WorkingDirectory=/srv/50%%off"),
+			"WorkingDirectory must double a literal '%' so systemd does not expand \
+			 '%o' as a specifier:\n{s}"
+		);
+		assert!(!s.contains("WorkingDirectory=/srv/50%off\n"), "{s}");
+	}
+
+	#[test]
+	fn render_service_unit_escapes_percent_in_exec_line_tokens() {
+		let mut o = opts_single();
+		o.compose_files = vec![PathBuf::from("/srv/50%off/docker-compose.yml")];
+		let s = render_service_unit(&o);
+		assert!(
+			s.contains("50%%off/docker-compose.yml"),
+			"an exec-line token containing '%' must render it doubled as '%%':\n{s}"
+		);
+		assert!(!s.contains("50%off/docker-compose.yml"), "{s}");
+	}
+
+	#[test]
+	fn render_service_unit_normal_path_round_trips_unchanged() {
+		// A path with no '%' must not be touched by the escaping fix.
+		let s = render_service_unit(&opts_single());
+		assert!(s.contains("WorkingDirectory=/srv/app"));
+		assert!(s.contains(
+			"ExecStart=/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app up -d"
+		));
+	}
+
+	#[test]
+	fn render_service_unit_escapes_percent_in_project_description() {
+		// `Description=` interpolates `opts.project` directly; a literal `%` in
+		// it must be doubled exactly like every other in-unit value, so systemd's
+		// specifier expansion does not treat e.g. `%h` as a specifier. This holds
+		// regardless of the external `is_safe_project_name` gate — the module's
+		// own %-invariant should not depend on it.
+		let mut o = opts_single();
+		o.project = "50%h".to_string();
+		let s = render_service_unit(&o);
+		assert!(
+			s.contains("Description=podup 50%%h"),
+			"Description= must double a literal '%' in the project name:\n{s}"
+		);
+		assert!(!s.contains("Description=podup 50%h\n"), "{s}");
+	}
+
+	#[test]
+	fn validate_accepts_percent_in_paths() {
+		// A literal '%' is a legitimate path/flag character (e.g. `/srv/50%off`);
+		// it must be escaped at render time, never rejected at validation time.
+		let mut o = opts_single();
+		o.working_dir = PathBuf::from("/srv/50%off");
+		o.compose_files = vec![PathBuf::from("/srv/50%off/docker-compose.yml")];
+		assert!(validate_unit_opts(&o).is_ok());
 	}
 }

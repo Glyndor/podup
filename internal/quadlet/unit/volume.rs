@@ -2,7 +2,7 @@
 
 use crate::compose::types::VolumeConfig;
 
-use super::{sorted_label_pairs, unit_stem, QuadletUnit, Section};
+use super::{owner_marker, sorted_label_pairs, unit_stem, QuadletUnit, Section};
 
 /// Build the `.volume` unit for one declared named volume. Emits a single
 /// `[Volume]` section (VolumeName, then driver/driver-opts/labels), always
@@ -43,7 +43,11 @@ pub(crate) fn volume_unit(name: &str, project: &str, config: Option<&VolumeConfi
 	// No [Install] section: the spec defines none for `.volume` units, which are
 	// pulled in automatically as dependencies of the `.container` units that use
 	// them. Only `.container` units carry [Install].
-	let contents = vol.render();
+	//
+	// The unforgeable ownership marker comes first, as its own comment line;
+	// see `owner_marker` for why it must stay separate from the `Label=` line.
+	let mut contents = owner_marker(project);
+	contents.push_str(&vol.render());
 	QuadletUnit {
 		filename: format!("{}.volume", unit_stem(project, name)),
 		contents,
