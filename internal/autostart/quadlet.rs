@@ -32,21 +32,28 @@ fn container_services(units: &[quadlet::QuadletUnit]) -> Vec<String> {
 		.collect()
 }
 
-/// The exact `podup.project` value embedded in a generated unit file, or
-/// `None` if the file carries no such label. Every unit builder in
-/// `crate::quadlet` (`container_unit`, `build_unit`, `network_unit`,
-/// `volume_unit`) stamps a `Label=podup.project=<project>` line — mirroring
-/// the ownership label the live engine and native secrets use — inside
-/// whichever `[Section]` that unit type uses. The line shape is stable
-/// regardless of section, so a plain text scan for it (rather than a full
-/// unit-file parse) is enough to recover the owner.
+/// The project name recorded in a generated unit file's `# podup-owner:`
+/// marker, or `None` if the file carries no such marker.
+///
+/// This deliberately does NOT read the `Label=podup.project=<project>` line
+/// every unit builder in `crate::quadlet` also stamps (that label stays, but
+/// only for its original purpose — Podman uses `podup.project` for
+/// container/secret scoping at runtime). A compose service's user-supplied
+/// `labels:` renders into the very same `[Section]`, in the very same
+/// `Key=Value` shape, so a service declaring `labels: {podup.project:
+/// other}` produces a forged `Label=podup.project=other` line that is
+/// textually indistinguishable from the real one — and would be the FIRST
+/// such line if it precedes the trusted stamp, defeating a scan that takes
+/// the first match. The `# podup-owner: <project>` marker every unit builder
+/// emits as its literal first line cannot be forged the same way: systemd
+/// treats `#`-prefixed lines as comments, and compose labels only ever
+/// render as `Label=key=value` entries, never as a comment line. So this is
+/// the one place ownership is decided.
 fn unit_owner(path: &Path) -> Option<String> {
 	let contents = std::fs::read_to_string(path).ok()?;
-	contents.lines().find_map(|line| {
-		line.trim()
-			.strip_prefix("Label=podup.project=")
-			.map(|v| v.trim_matches('"').to_string())
-	})
+	contents
+		.lines()
+		.find_map(|line| line.strip_prefix("# podup-owner: ").map(str::to_string))
 }
 
 /// This project's installed quadlet unit files, sorted. Drives uninstall
@@ -57,12 +64,13 @@ fn unit_owner(path: &Path) -> Option<String> {
 /// `app-`. Matching on that prefix alone (the old behaviour) meant
 /// `uninstall -p app` matched — and `uninstall_quadlet` then stopped and
 /// deleted — the sibling project `app-extra`'s units. Each candidate is
-/// therefore opened and kept only when its embedded `podup.project` label
-/// equals `project` EXACTLY (see `unit_owner` above); the label is exact by
-/// construction; a prefix never is.
+/// therefore opened and kept only when its `# podup-owner:` marker equals
+/// `project` EXACTLY (see `unit_owner` above); the marker is exact by
+/// construction and, unlike the `Label=podup.project=` line, cannot be
+/// pre-empted by a forged line from the compose file's own `labels:`.
 ///
-/// A candidate with no label at all (installed before this ownership check
-/// existed) cannot be proven to belong to `project` — treating "no label" as
+/// A candidate with no marker at all (installed before this ownership check
+/// existed) cannot be proven to belong to `project` — treating "no marker" as
 /// "assume it's ours" would just reopen the same hole for those legacy
 /// installs. So it is left in place, not deleted, and reported via
 /// `tracing::warn!` so the user can re-install (which re-marks it) or remove
@@ -84,11 +92,11 @@ fn installed_units(project: &str) -> Vec<PathBuf> {
 				Some(owner) if owner == project => found.push(path),
 				// A sibling project's unit that happens to share this filename
 				// prefix (e.g. `app-extra-web.container` when `project` is `app`);
-				// the label proves it is not ours, so it is left untouched.
+				// the marker proves it is not ours, so it is left untouched.
 				Some(_) => {}
 				None => {
 					tracing::warn!(
-						"quadlet unit {} has no podup.project ownership label and cannot be \
+						"quadlet unit {} has no podup-owner ownership marker and cannot be \
 						 proven to belong to '{project}'; skipping it rather than risking a \
 						 sibling project's unit — re-run `podup autostart install --mode quadlet` \
 						 to re-mark it, or remove it by hand if it is stale",
@@ -275,320 +283,4 @@ pub fn rebuild_quadlet<S: SystemCtl>(
 // asserted are POSIX. Autostart is a `systemctl --user` feature, so this matches
 // the service-mode tests, which gate the same way.
 #[cfg(all(test, unix))]
-mod tests {
-	use super::{container_services, install_quadlet, rebuild_quadlet, uninstall_quadlet};
-	use crate::autostart::SystemCtl;
-	use crate::{parse_str, quadlet};
-	use std::cell::RefCell;
-	use std::os::unix::process::ExitStatusExt;
-	use std::path::Path;
-	use std::process::{ExitStatus, Output};
-
-	/// Records every `systemctl` arg vector; `loginctl` always reports linger on.
-	struct FakeCtl {
-		calls: RefCell<Vec<Vec<String>>>,
-	}
-	impl FakeCtl {
-		fn new() -> Self {
-			FakeCtl {
-				calls: RefCell::new(Vec::new()),
-			}
-		}
-		fn log(&self) -> Vec<Vec<String>> {
-			self.calls.borrow().clone()
-		}
-	}
-	impl SystemCtl for FakeCtl {
-		fn systemctl(&self, args: &[&str]) -> std::io::Result<Output> {
-			self.calls
-				.borrow_mut()
-				.push(args.iter().map(|s| s.to_string()).collect());
-			Ok(Output {
-				status: ExitStatus::from_raw(0),
-				stdout: Vec::new(),
-				stderr: Vec::new(),
-			})
-		}
-		fn loginctl(&self, _args: &[&str]) -> std::io::Result<Output> {
-			Ok(Output {
-				status: ExitStatus::from_raw(0),
-				stdout: b"yes".to_vec(),
-				stderr: Vec::new(),
-			})
-		}
-	}
-
-	/// Run `f` with a fresh temp `XDG_CONFIG_HOME`/`XDG_RUNTIME_DIR`/`USER`, so
-	/// `quadlet_dir` and the guards resolve under the temp dir.
-	fn with_env<R>(f: impl FnOnce(&Path) -> R) -> R {
-		let tmp = tempfile::tempdir().unwrap();
-		let root = tmp.path().to_path_buf();
-		temp_env::with_vars(
-			[
-				("XDG_CONFIG_HOME", Some(root.as_os_str())),
-				("XDG_RUNTIME_DIR", Some(root.as_os_str())),
-				("USER", Some(std::ffi::OsStr::new("tester"))),
-			],
-			|| f(&root),
-		)
-	}
-
-	const IMG: &str = "services:\n  web:\n    image: nginx\n";
-	const BUILD: &str = "services:\n  web:\n    build: .\n";
-	const BASE: &str = "/srv/app";
-
-	#[test]
-	fn container_services_names_only_containers() {
-		let file = parse_str(IMG).unwrap();
-		let units = quadlet::generate_at(&file, "proj", Path::new(BASE)).units;
-		// The default network unit is present too, but only `.container`s become services.
-		assert_eq!(
-			container_services(&units),
-			vec!["proj-web.service".to_string()]
-		);
-	}
-
-	#[test]
-	fn install_writes_units_reloads_then_starts() {
-		with_env(|root| {
-			let sc = FakeCtl::new();
-			install_quadlet(
-				&sc,
-				&parse_str(IMG).unwrap(),
-				"proj",
-				Path::new(BASE),
-				false,
-				false,
-			)
-			.unwrap();
-			assert!(root.join("containers/systemd/proj-web.container").is_file());
-			let calls = sc.log();
-			assert_eq!(calls[0], vec!["daemon-reload"]);
-			assert_eq!(calls[1], vec!["start", "proj-web.service"]);
-		});
-	}
-
-	#[test]
-	fn no_start_reloads_but_starts_nothing() {
-		with_env(|root| {
-			let sc = FakeCtl::new();
-			install_quadlet(
-				&sc,
-				&parse_str(IMG).unwrap(),
-				"proj",
-				Path::new(BASE),
-				true,
-				false,
-			)
-			.unwrap();
-			assert!(root.join("containers/systemd/proj-web.container").is_file());
-			assert_eq!(sc.log(), vec![vec!["daemon-reload".to_string()]]);
-		});
-	}
-
-	#[test]
-	fn dry_run_writes_nothing_and_runs_no_systemctl() {
-		with_env(|root| {
-			let sc = FakeCtl::new();
-			install_quadlet(
-				&sc,
-				&parse_str(IMG).unwrap(),
-				"proj",
-				Path::new(BASE),
-				false,
-				true,
-			)
-			.unwrap();
-			assert!(!root.join("containers/systemd/proj-web.container").exists());
-			assert!(sc.log().is_empty());
-		});
-	}
-
-	#[test]
-	fn install_refuses_when_service_mode_is_present() {
-		with_env(|root| {
-			let sd = root.join("systemd/user");
-			std::fs::create_dir_all(&sd).unwrap();
-			std::fs::write(sd.join("podup-proj.service"), "x").unwrap();
-			let err = install_quadlet(
-				&FakeCtl::new(),
-				&parse_str(IMG).unwrap(),
-				"proj",
-				Path::new(BASE),
-				false,
-				false,
-			)
-			.unwrap_err();
-			assert!(format!("{err}").contains("service-mode autostart unit"));
-		});
-	}
-
-	#[test]
-	fn uninstall_stops_removes_and_reloads() {
-		with_env(|root| {
-			install_quadlet(
-				&FakeCtl::new(),
-				&parse_str(IMG).unwrap(),
-				"proj",
-				Path::new(BASE),
-				true,
-				false,
-			)
-			.unwrap();
-			let sc = FakeCtl::new();
-			uninstall_quadlet(&sc, "proj").unwrap();
-			assert!(!root.join("containers/systemd/proj-web.container").exists());
-			let calls = sc.log();
-			assert!(calls.contains(&vec!["stop".to_string(), "proj-web.service".to_string()]));
-			assert_eq!(calls.last().unwrap(), &vec!["daemon-reload".to_string()]);
-		});
-	}
-
-	// --- bug: uninstall matched units by filename prefix alone, so
-	// `uninstall -p app` also matched (and deleted) sibling project
-	// `app-extra`'s units. installed_units must scope by the exact embedded
-	// `podup.project` ownership label instead. ---
-
-	#[test]
-	fn uninstall_scoped_by_ownership_label_leaves_sibling_project_untouched() {
-		with_env(|root| {
-			install_quadlet(
-				&FakeCtl::new(),
-				&parse_str(IMG).unwrap(),
-				"app",
-				Path::new(BASE),
-				true,
-				false,
-			)
-			.unwrap();
-			install_quadlet(
-				&FakeCtl::new(),
-				&parse_str(IMG).unwrap(),
-				"app-extra",
-				Path::new(BASE),
-				true,
-				false,
-			)
-			.unwrap();
-			let sc = FakeCtl::new();
-			uninstall_quadlet(&sc, "app").unwrap();
-			// Only 'app's own unit is gone...
-			assert!(!root.join("containers/systemd/app-web.container").exists());
-			// ...the sibling 'app-extra', whose file name shares the `app-` prefix,
-			// must survive untouched.
-			assert!(root
-				.join("containers/systemd/app-extra-web.container")
-				.is_file());
-			let calls = sc.log();
-			assert!(calls.contains(&vec!["stop".to_string(), "app-web.service".to_string()]));
-			assert!(!calls.contains(&vec![
-				"stop".to_string(),
-				"app-extra-web.service".to_string()
-			]));
-		});
-	}
-
-	#[test]
-	fn uninstall_skips_legacy_unmarked_unit_instead_of_deleting_it() {
-		with_env(|root| {
-			let dir = root.join("containers/systemd");
-			std::fs::create_dir_all(&dir).unwrap();
-			// A unit installed before ownership labels existed: same naming scheme
-			// as a real 'app' unit, but no `Label=podup.project=` line anywhere in
-			// it, so it cannot be proven to belong to 'app'.
-			std::fs::write(
-				dir.join("app-web.container"),
-				"[Unit]\nDescription=web (podup)\n\n\
-				 [Container]\nImage=nginx\nContainerName=app-web\n\n\
-				 [Install]\nWantedBy=default.target\n",
-			)
-			.unwrap();
-			let sc = FakeCtl::new();
-			uninstall_quadlet(&sc, "app").unwrap();
-			// Unproven ownership: skip it, never delete it.
-			assert!(dir.join("app-web.container").is_file());
-			// The reload still runs (uninstall is otherwise a no-op success, not an
-			// error) even though nothing was removed.
-			assert_eq!(sc.log().last().unwrap(), &vec!["daemon-reload".to_string()]);
-		});
-	}
-
-	#[test]
-	fn rebuild_is_scoped_by_ownership_label_and_ignores_sibling_build_units() {
-		with_env(|_root| {
-			// 'app-extra' shares the `app-` filename prefix with 'app', so a naive
-			// prefix match would treat its `.build`/container as buildable under
-			// 'app' too.
-			install_quadlet(
-				&FakeCtl::new(),
-				&parse_str(BUILD).unwrap(),
-				"app",
-				Path::new(BASE),
-				true,
-				false,
-			)
-			.unwrap();
-			install_quadlet(
-				&FakeCtl::new(),
-				&parse_str(BUILD).unwrap(),
-				"app-extra",
-				Path::new(BASE),
-				true,
-				false,
-			)
-			.unwrap();
-			let sc = FakeCtl::new();
-			rebuild_quadlet(&sc, "app", None).unwrap();
-			assert_eq!(
-				sc.log(),
-				vec![
-					vec!["restart".to_string(), "app-web-build.service".to_string()],
-					vec!["restart".to_string(), "app-web.service".to_string()],
-				]
-			);
-		});
-	}
-
-	#[test]
-	fn rebuild_restarts_build_then_container() {
-		with_env(|_root| {
-			install_quadlet(
-				&FakeCtl::new(),
-				&parse_str(BUILD).unwrap(),
-				"proj",
-				Path::new(BASE),
-				true,
-				false,
-			)
-			.unwrap();
-			let sc = FakeCtl::new();
-			rebuild_quadlet(&sc, "proj", Some("web")).unwrap();
-			assert_eq!(
-				sc.log(),
-				vec![
-					vec!["restart".to_string(), "proj-web-build.service".to_string()],
-					vec!["restart".to_string(), "proj-web.service".to_string()],
-				]
-			);
-		});
-	}
-
-	#[test]
-	fn rebuild_unknown_service_errors_and_lists_valid_ones() {
-		with_env(|_root| {
-			install_quadlet(
-				&FakeCtl::new(),
-				&parse_str(BUILD).unwrap(),
-				"proj",
-				Path::new(BASE),
-				true,
-				false,
-			)
-			.unwrap();
-			let err = rebuild_quadlet(&FakeCtl::new(), "proj", Some("nope")).unwrap_err();
-			let msg = format!("{err}");
-			assert!(msg.contains("has no build unit"), "{msg}");
-			assert!(msg.contains("web"), "{msg}");
-		});
-	}
-}
+mod tests;

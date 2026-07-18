@@ -8,7 +8,7 @@ use std::path::Path;
 
 use crate::compose::types::{BuildConfig, Service};
 
-use super::{sorted_label_pairs, unit_stem, QuadletUnit, Section};
+use super::{owner_marker, sorted_label_pairs, unit_stem, QuadletUnit, Section};
 
 /// Resolve a compose build `context` to an absolute `SetWorkingDirectory` value.
 ///
@@ -131,9 +131,14 @@ pub(crate) fn build_unit(
 	// Ownership label, mirroring every other generated unit.
 	section.add("Label", format!("podup.project={project}"));
 
+	// The unforgeable ownership marker comes first, as its own comment line;
+	// see `owner_marker` for why it must stay separate from the `Label=` line.
+	let mut contents = owner_marker(project);
+	contents.push_str(&section.render());
+
 	Some(QuadletUnit {
 		filename: build_unit_filename(project, name),
-		contents: section.render(),
+		contents,
 	})
 }
 
