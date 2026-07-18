@@ -132,18 +132,29 @@ jobs:
           FLAKY=$(echo "$SUM" | grep -oE 'flaky=[0-9]+' | cut -d= -f2)
           PASS=${PASS:-0}; FAIL=${FAIL:-0}; FLAKY=${FLAKY:-0}
           echo "Podman $VER: $PASS passed, $FAIL failed ($FLAKY look like connection-drop flakes)"
-          # Gate: the CORE must pass (>= 120 of ~145). A subset of archive/streaming
-          # tests fails non-deterministically under nested-virt — proven an
-          # environment artifact, not a podup/Podman bug: a controlled run on Podman
-          # 5.x in the same VM fails MORE than 6.x, with differing failure sets. We
-          # report the fail/flaky breakdown for visibility, but do NOT fail the lane
-          # on that subset (it would be red on every run). Reliably classifying each
-          # failure as real-vs-flake needs clean per-test capture (the serial console
-          # is too noisy) — tracked as a follow-up; until then the core floor is the
-          # signal a real regression would breach (a regression knocks the core
-          # below 120).
-          [ "$PASS" -ge 120 ] || { echo "::error::core suite degraded on Podman $VER ($PASS passed, expected >= 120) — real regression"; exit 1; }
+          # Gate: the core must pass the baseline in .github/podman-baseline-tests.
+          # A real regression breaks previously-passing tests and knocks PASS
+          # below the floor; the baseline is versioned so it is bumped
+          # deliberately as the suite grows rather than sitting as a magic number
+          # here.
+          #
+          # Why the floor is the ONLY hard gate, and the failure count is a
+          # warning: the nested-virt environment produces a broad, run-to-run
+          # variable set of failures that are NOT all connection-drops. Measured
+          # on this very lane: Podman 5 fails the same ~10 streaming/attach/run
+          # tests every run with ZERO connection-drop signatures, and Podman 6
+          # ranges from ~9 to ~34 failures spanning core lifecycle commands
+          # (stop/start/up/down/exec) depending on how loaded the runner is. So
+          # neither "FAIL <= connection-drop count" nor a per-test allowlist can
+          # separate a real regression from nested-virt noise without either
+          # reddening every run or allowlisting the core commands (which would
+          # mask a genuine regression in them). Tightening this gate REQUIRES
+          # first reducing the nested-virt flakiness so the failure set is small
+          # and stable — tracked as a follow-up. Until then the floor is the
+          # honest signal and the breakdown below is informational.
+          BASELINE="$(cat "$GITHUB_WORKSPACE/.github/podman-baseline-tests")"
+          [ "$PASS" -ge "$BASELINE" ] || { echo "::error::core suite degraded on Podman $VER ($PASS passed, baseline >= $BASELINE) — real regression or fewer tests ran"; exit 1; }
           if [ "$FAIL" -gt "$FLAKY" ]; then
-            echo "::warning::Podman $VER: $FAIL failures, only $FLAKY match a known flake signature — inspect the failures section above."
+            echo "::warning::Podman $VER: $FAIL failures, $FLAKY match a connection-drop signature — the rest are the known nested-virt-unstable subset (see the failures section). Not gated until that flakiness is reduced."
           fi
-          echo "GREEN: podup core PASSED on Podman $VER ($PASS tests; $FAIL in the nested-virt-noisy subset)."
+          echo "GREEN: podup core PASSED on Podman $VER ($PASS tests >= baseline $BASELINE; $FAIL in the nested-virt-noisy subset)."

@@ -20,3 +20,21 @@ use super::render::{
 };
 use super::warnings::collect_warnings;
 use super::QuadletUnit;
+
+/// The ownership marker every generated unit carries as its literal first
+/// line: a `#` comment, ignored by systemd, naming the project that owns the
+/// unit.
+///
+/// This is deliberately separate from the `Label=podup.project=<project>`
+/// line each unit also carries (kept for runtime scoping — Podman uses it for
+/// container/secret lookups). A compose service's user-supplied `labels:` are
+/// rendered into the same section as that `Label=` line, in the same
+/// `Key=Value` shape, so a service declaring `labels: {podup.project: other}`
+/// produces an indistinguishable forged `Label=podup.project=other` line
+/// ahead of the real one. A `#`-prefixed line cannot be forged the same way:
+/// compose labels only ever become `Label=key=value` entries, never a
+/// comment, so this marker is the line ownership checks (`unit_owner` in
+/// `crate::autostart::quadlet`) must read instead.
+fn owner_marker(project: &str) -> String {
+	format!("# podup-owner: {project}\n")
+}

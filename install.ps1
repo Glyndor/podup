@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 #
-# podup installer for Windows — downloads a release binary, verifies it and
+# podup installer for Windows - downloads a release binary, verifies it and
 # installs it.
 #
 # Usage:
@@ -50,21 +50,41 @@ if ($Version -eq 'latest') {
 	Fail "PODUP_VERSION must be 'latest' or a semver tag like v1.2.3, got: $Version"
 }
 
-# Windows PowerShell 5.1 defaults to TLS 1.0/1.1; force TLS 1.2 for GitHub.
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+# Windows PowerShell 5.1 defaults to TLS 1.0/1.1; force at least TLS 1.2 for
+# GitHub, and allow TLS 1.3 too where the host's .NET Framework defines it
+# (an exact Tls12 assignment would exclude a newer, already-supported
+# protocol; older .NET Framework builds do not expose the Tls13 member, so
+# fall back to Tls12 alone rather than fail the install over it).
+try {
+	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.SecurityProtocolType]::Tls13
+} catch {
+	[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+}
 
 $TmpDir = New-Item -ItemType Directory -Path (Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName()))
 
 try {
 	# --- Download ------------------------------------------------------------
 
+	# 200 MB ceiling on any downloaded release asset. Invoke-WebRequest runs the
+	# download to completion before -OutFile can be checked, so this is a
+	# post-hoc guard - it rejects an oversized file after it lands on disk, it
+	# does not cap a hostile stream mid-flight. -TimeoutSec is the bound that
+	# actually applies while the request is in flight: it caps the whole
+	# request so a stalled or never-ending response cannot hang the installer.
+	$MaxDownloadBytes = 209715200
+	$DownloadTimeoutSec = 300
+
 	function Get-ReleaseFile($name) {
 		$dest = Join-Path $TmpDir $name
 		$url = "$BaseUrl/$name"
 		try {
-			Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing
+			Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -TimeoutSec $DownloadTimeoutSec
 		} catch {
 			Fail "Download failed: $url"
+		}
+		if ((Get-Item -Path $dest).Length -gt $MaxDownloadBytes) {
+			Fail "Download too large (over 200 MB): $url"
 		}
 		return $dest
 	}
@@ -78,7 +98,7 @@ try {
 
 	# Checksum alone is not a trust anchor: a tampered release can ship a matching
 	# SHA256SUMS. The binary is trusted only after at least one cryptographic proof
-	# tied to the release key or the repository's build identity succeeds — the
+	# tied to the release key or the repository's build identity succeeds - the
 	# Ed25519 signature over SHA256SUMS, or the GitHub build-provenance attestation.
 	# If neither verifier can run, the install fails closed.
 
@@ -115,7 +135,7 @@ try {
 		$python = Find-Python
 		if ($python) {
 			$pyScript = Join-Path $TmpDir 'verify_ed25519.py'
-			# Python source — indentation is significant, keep as-is.
+			# Python source - indentation is significant, keep as-is.
 			$pySource = @'
 import base64, sys
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -138,7 +158,7 @@ sys.exit(1)
 				Write-LogOk 'SHA256SUMS signature verified'
 				$verified = $true
 			} else {
-				Fail 'SHA256SUMS signature verification failed — release may be tampered'
+				Fail 'SHA256SUMS signature verification failed - release may be tampered'
 			}
 		} else {
 			# A release public key IS configured: the pinned key is the trust anchor
@@ -147,13 +167,13 @@ sys.exit(1)
 			Fail "python3 with the 'cryptography' package is required to verify the release signature against the pinned key. Install it and re-run."
 		}
 	} else {
-		Write-LogInfo 'no release public key configured — skipping Ed25519 signature check'
+		Write-LogInfo 'no release public key configured - skipping Ed25519 signature check'
 	}
 
 	# Build-provenance attestation: proves the binary was produced by this repo's
 	# release workflow (GitHub OIDC). Defence-in-depth next to the pinned key; the
 	# trust anchor when no release public key is configured. Pinned to the release
-	# workflow — a repo-scoped check would accept an attestation from any workflow
+	# workflow - a repo-scoped check would accept an attestation from any workflow
 	# in the repo.
 	$ghAttestation = $false
 	if (Get-Command gh -ErrorAction SilentlyContinue) {
@@ -167,11 +187,11 @@ sys.exit(1)
 		Write-LogOk 'Attestation verified'
 		$verified = $true
 	} else {
-		Write-LogInfo 'GitHub CLI with attestation support not found — cannot check attestation'
+		Write-LogInfo 'GitHub CLI with attestation support not found - cannot check attestation'
 	}
 
 	# Fail closed: a strong cryptographic proof is mandatory. A checksum alone is not
-	# a trust anchor, and there is no opt-out — hardened environments require
+	# a trust anchor, and there is no opt-out - hardened environments require
 	# verifiable supply-chain integrity at install time.
 	if (-not $verified) {
 		Fail "No signature or attestation verifier available. Install 'gh' (>= 2.49) or python3 with the 'cryptography' package, or set PODUP_RELEASE_PUBKEY_B64, then re-run."

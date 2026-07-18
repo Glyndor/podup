@@ -46,6 +46,7 @@ networks:
 	let out = generate(&file, "proj");
 
 	let expected = "\
+# podup-owner: proj
 [Unit]
 Description=web (podup)
 After=proj-db.service
@@ -86,11 +87,11 @@ networks:
 
 	assert_eq!(
 		unit(&out, "myproj-cache.volume"),
-		"[Volume]\nVolumeName=myproj_cache\nLabel=podup.project=myproj\n"
+		"# podup-owner: myproj\n[Volume]\nVolumeName=myproj_cache\nLabel=podup.project=myproj\n"
 	);
 	assert_eq!(
 		unit(&out, "myproj-backend.network"),
-		"[Network]\nNetworkName=myproj_backend\nLabel=podup.project=myproj\n"
+		"# podup-owner: myproj\n[Network]\nNetworkName=myproj_backend\nLabel=podup.project=myproj\n"
 	);
 }
 

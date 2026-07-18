@@ -3,6 +3,7 @@
 mod commands;
 mod down_label;
 mod parallel;
+mod prefetch;
 mod run;
 mod scale;
 mod signal;
@@ -10,7 +11,7 @@ mod targets;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::compose::types::{ComposeFile, ServiceCondition};
+use crate::compose::types::{ComposeFile, Service, ServiceCondition};
 use crate::error::Result;
 use crate::libpod::API_PREFIX;
 
@@ -71,15 +72,24 @@ impl Engine {
 			.await
 	}
 
-	/// Start a container by name, ignoring an error from an already-running one.
-	/// Used when `up` leaves an unchanged container in place but wants to ensure
-	/// it is running.
-	async fn ensure_started(&self, container_name: &str) {
+	/// Start a container by name. Used when `up` leaves an unchanged container in
+	/// place but wants to ensure it is running. "Already in the desired state"
+	/// (304) and "no such container" (404) are idempotent no-ops, matching
+	/// [`Self::run_lifecycle_op`]; any other failure (e.g. the container's
+	/// published port is now taken) propagates instead of being swallowed.
+	async fn ensure_started(&self, container_name: &str) -> Result<()> {
 		let path = format!(
 			"{API_PREFIX}/containers/{}/start",
 			crate::libpod::urlencoded(container_name)
 		);
-		let _ = self.client.post_empty_ok(&path).await;
+		match self.client.post_empty_ok(&path).await {
+			Ok(()) => Ok(()),
+			Err(e) if e.is_status(404) => {
+				tracing::debug!("{container_name}: start skipped ({e})");
+				Ok(())
+			}
+			Err(e) => Err(crate::error::ComposeError::Podman(e)),
+		}
 	}
 
 	/// Start services with explicit options. When `no_recreate` is true, running containers are left untouched. On partial failure, staging directories are cleaned up.
@@ -209,6 +219,13 @@ impl Engine {
 			// concurrent per-level start loop, so two services in the same level
 			// can't race the non-atomic delete-then-create of a shared name.
 			self.create_inline_secrets(file).await?;
+
+			// Best-effort: warm the image cache for every service this pass will
+			// pull, concurrently, before the per-level walk below serializes a
+			// level-2+ service's image acquisition behind the level-1 barrier.
+			// A prefetch miss here is never fatal — `up_one_service`'s own pull
+			// below is still authoritative and the only path that can fail `up`.
+			self.prefetch_images(file, &enabled, &target_set).await;
 
 			// Start each dependency level in turn; services within a level have
 			// no `depends_on` relationship to each other (guaranteed by the
@@ -389,51 +406,103 @@ impl Engine {
 
 		let new_hash = config_hash(service, file)?;
 
-		for container_name in self.replica_names_for(name, service, replicas) {
-			if !force_recreate {
-				if no_recreate && present.contains(&container_name) {
-					tracing::debug!("{container_name} already exists — skipping recreate");
-					// `create` leaves an existing container as-is; `up` ensures it runs.
-					if start {
-						self.ensure_started(&container_name).await;
-					}
-					crate::ui::progress_line(
-						"Container",
-						&container_name,
-						if start { "Running" } else { "Exists" },
-					);
-					continue;
-				}
-				// Services with a build section are rebuilt on every up, so
-				// their container must be recreated to pick up the fresh
-				// image even when the compose config is unchanged.
-				if service.build.is_none() && existing_hash.get(&container_name) == Some(&new_hash)
-				{
-					tracing::debug!("{container_name} is up to date — skipping recreate");
-					if start {
-						self.ensure_started(&container_name).await;
-					}
-					crate::ui::progress_line(
-						"Container",
-						&container_name,
-						if start { "Running" } else { "Exists" },
-					);
-					continue;
-				}
-			}
-			self.create_and_start(&container_name, name, service, file, start)
-				.await?;
-			crate::ui::progress_line(
-				"Container",
-				&container_name,
-				if start { "Started" } else { "Created" },
-			);
+		// Fan the replicas out with the same bounded concurrency the level
+		// walk uses, instead of creating and starting them one at a time —
+		// `up --scale web=5` used to pay 5x (create+start) in strict
+		// sequence. Every replica is still attempted even when one fails
+		// (`join_bounded` runs the whole batch), and `first_error` picks the
+		// earliest one in replica-index order, so the reported failure stays
+		// deterministic regardless of which replica's future happens to
+		// finish first.
+		let futs = self
+			.replica_names_for(name, service, replicas)
+			.into_iter()
+			.map(|container_name| {
+				self.up_one_replica(
+					container_name,
+					name,
+					service,
+					file,
+					present,
+					existing_hash,
+					&new_hash,
+					no_recreate,
+					force_recreate,
+					start,
+				)
+			});
+		if let Some(e) = parallel::first_error(parallel::join_bounded(futs).await) {
+			return Err(e);
+		}
 
-			// `post_start` hooks run inside a running container, so only on `up`.
-			if start {
-				for hook in &service.post_start {
-					self.run_lifecycle_hook(&container_name, hook).await?;
+		Ok(())
+	}
+
+	/// Bring up one replica container of `service`: honor the `no_recreate`/
+	/// config-hash skip logic, then fall through to create+start. One future
+	/// in the per-service replica fan-out ([`Self::up_one_service`]); safe to
+	/// run concurrently with the service's other replicas, since replicas of
+	/// one service share no per-replica mutable state — a fixed host port
+	/// that would make concurrent starts race is already rejected up front by
+	/// [`scale::check_scale_port_conflict`].
+	#[allow(clippy::too_many_arguments)]
+	async fn up_one_replica(
+		&self,
+		container_name: String,
+		name: &str,
+		service: &Service,
+		file: &ComposeFile,
+		present: &HashSet<String>,
+		existing_hash: &HashMap<String, String>,
+		new_hash: &str,
+		no_recreate: bool,
+		force_recreate: bool,
+		start: bool,
+	) -> Result<()> {
+		if !force_recreate {
+			if no_recreate && present.contains(&container_name) {
+				tracing::debug!("{container_name} already exists — skipping recreate");
+				// `create` leaves an existing container as-is; `up` ensures it runs.
+				if start {
+					self.ensure_started(&container_name).await?;
 				}
+				crate::ui::progress_line(
+					"Container",
+					&container_name,
+					if start { "Running" } else { "Exists" },
+				);
+				return Ok(());
+			}
+			// Services with a build section are rebuilt on every up, so
+			// their container must be recreated to pick up the fresh
+			// image even when the compose config is unchanged.
+			if service.build.is_none()
+				&& existing_hash.get(&container_name).map(String::as_str) == Some(new_hash)
+			{
+				tracing::debug!("{container_name} is up to date — skipping recreate");
+				if start {
+					self.ensure_started(&container_name).await?;
+				}
+				crate::ui::progress_line(
+					"Container",
+					&container_name,
+					if start { "Running" } else { "Exists" },
+				);
+				return Ok(());
+			}
+		}
+		self.create_and_start(&container_name, name, service, file, start)
+			.await?;
+		crate::ui::progress_line(
+			"Container",
+			&container_name,
+			if start { "Started" } else { "Created" },
+		);
+
+		// `post_start` hooks run inside a running container, so only on `up`.
+		if start {
+			for hook in &service.post_start {
+				self.run_lifecycle_hook(&container_name, hook).await?;
 			}
 		}
 
@@ -447,65 +516,72 @@ impl Engine {
 
 	/// Stop and remove services in reverse dependency order. Optionally removes named volumes and orphaned containers.
 	pub async fn down_with_options(&self, file: &ComposeFile, remove_volumes: bool) -> Result<()> {
-		let mut order = crate::compose::resolve_order(file)?;
-		order.reverse();
+		let mut levels = crate::compose::resolve_levels(file)?;
+		// Teardown inverts startup: a dependent must stop before the service it
+		// depends on, so the dependency levels `up` would walk front-to-back are
+		// walked back-to-front here (the same inversion the other lifecycle
+		// commands' level walk uses, see `parallel.rs`).
+		levels.reverse();
 
 		// Prefetch every project container once and group by service, instead of
-		// one container-list round-trip per service (S+1 → 1 for the ordered pass).
+		// one container-list round-trip per service (S+1 → 1 for the level walk).
 		let live_by_service = self.list_project_containers_by_service().await?;
 
-		for name in &order {
-			let service = &file.services[name];
-			// Act only on containers Podman actually has. A defined-but-never-
-			// created service (or one already torn down) has no live containers,
-			// so skip it rather than synthesizing predicted names and POSTing
-			// stop/rm to them — those 404 and, pre-fix, leaked warnings. docker
-			// compose enumerates by label and treats "nothing there" as a quiet
-			// idempotent no-op (#758).
-			let Some(container_names) = live_by_service.get(name).filter(|live| !live.is_empty())
-			else {
-				continue;
-			};
-			for container_name in container_names {
-				for hook in &service.pre_stop {
-					if let Err(e) = self.run_lifecycle_hook(container_name, hook).await {
-						tracing::debug!("pre_stop hook {container_name}: {e}");
-					}
-				}
+		// Best-effort across every level/container/network/volume so one failure
+		// never leaves the rest of the teardown undone, but the first real
+		// REMOVAL failure is remembered and returned at the end instead of being
+		// swallowed into a warning — a `down` whose container/network/volume
+		// removal genuinely fails (storage error, active exec session) must exit
+		// non-zero, not print a warning and exit 0 (#598). A stalled or failed
+		// `stop` does NOT count towards this: the force-remove below SIGKILLs the
+		// container regardless (see `container_rm_path`), so only the removal
+		// outcome is aggregated. A 404 (already gone) stays an idempotent no-op
+		// throughout.
+		//
+		// Levels are walked strictly in order — every container in one level is
+		// attempted before the next level starts, preserving the dependency
+		// inversion above — but the containers *within* one level tear down
+		// concurrently via `join_bounded`, which returns results in input
+		// (service, then container) order rather than completion order. That
+		// keeps "the first error" deterministic regardless of which container
+		// happens to finish first: `first_error` picks the earliest in that
+		// fixed order, and since levels themselves are visited in a fixed
+		// sequence, only the first level with any failure can ever set
+		// `first_err` — a later level's failure is never mistaken for "first".
+		let mut first_err: Option<crate::error::ComposeError> = None;
 
+		for level in &levels {
+			let futs = level.iter().flat_map(|name| {
+				let service = &file.services[name];
 				let grace = self.grace_period_secs(service);
-				// Bound the stop by the grace window so a container ignoring SIGTERM
-				// does not pin recreation for the full client READ_TIMEOUT; the
-				// force-remove below SIGKILLs it regardless.
-				let stop_path = format!(
-					"{API_PREFIX}/containers/{}/stop?t={}",
-					crate::libpod::urlencoded(container_name),
-					targets::stop_timeout_param(grace),
-				);
-				// A 404 (container already gone, or a profile-gated service that was
-				// never created) is an idempotent no-op here, exactly as the network
-				// and volume removal arms below treat it — not a warning.
-				if let Err(e) = self
-					.client
-					.post_empty_ok_within(&stop_path, targets::stop_deadline(grace))
-					.await
-				{
-					if !e.is_status(404) {
-						tracing::warn!("could not stop {container_name}: {e}");
-					}
-				}
-
-				let rm_path = container_rm_path(container_name, remove_volumes);
-				match self.client.delete_ok(&rm_path).await {
-					Ok(()) => crate::ui::progress_line("Container", container_name, "Removed"),
-					Err(e) if e.is_status(404) => {}
-					Err(e) => tracing::warn!("could not remove {container_name}: {e}"),
-				}
+				// Act only on containers Podman actually has. A defined-but-never-
+				// created service (or one already torn down) has no live
+				// containers, so it contributes nothing here rather than
+				// synthesizing predicted names and POSTing stop/rm to them —
+				// those 404 and, pre-fix, leaked warnings. docker compose
+				// enumerates by label and treats "nothing there" as a quiet
+				// idempotent no-op (#758).
+				live_by_service
+					.get(name)
+					.filter(|live| !live.is_empty())
+					.into_iter()
+					.flatten()
+					.map(move |container_name| {
+						self.teardown_one_container(
+							container_name,
+							grace,
+							&service.pre_stop,
+							remove_volumes,
+						)
+					})
+			});
+			if let Some(e) = parallel::first_error(parallel::join_bounded(futs).await) {
+				first_err.get_or_insert(e);
 			}
 		}
 
 		// Scaled replicas (`up --scale`/`scale`) carry the `podup.service` label
-		// of a service still in the file, so the ordered pass above already swept
+		// of a service still in the file, so the level walk above already swept
 		// them via `live_by_service`. Orphan containers of services *removed* from
 		// the file are deliberately NOT touched here: docker compose only reaps
 		// them under `--remove-orphans`, which the dispatch layer handles via
@@ -525,7 +601,10 @@ impl Engine {
 			match self.client.delete_ok(&net_path).await {
 				Ok(_) => crate::ui::progress_line("Network", &network_name, "Removed"),
 				Err(e) if e.is_status(404) => {}
-				Err(e) => tracing::warn!("could not remove network {network_name}: {e}"),
+				Err(e) => {
+					tracing::warn!("could not remove network {network_name}: {e}");
+					first_err.get_or_insert(crate::error::ComposeError::Podman(e));
+				}
 			}
 		}
 
@@ -534,7 +613,11 @@ impl Engine {
 		// network whose compose key changed — mirroring the container sweep so
 		// teardown is complete regardless of how the file was parsed. Only
 		// podup-labelled networks match, so external networks are never touched.
-		self.remove_project_networks_by_label().await;
+		// This is a supplementary catch-all on top of the file-driven network
+		// loop above (which already aggregates its own failures into
+		// `first_err`), so a failure here is intentionally swallowed rather than
+		// folded in again.
+		let _ = self.remove_project_networks_by_label().await;
 
 		if remove_volumes {
 			for (key, config) in &file.volumes {
@@ -554,7 +637,10 @@ impl Engine {
 				match self.client.delete_ok(&vol_path).await {
 					Ok(_) => crate::ui::progress_line("Volume", &volume_name, "Removed"),
 					Err(e) if e.is_status(404) => {}
-					Err(e) => tracing::warn!("could not remove volume {volume_name}: {e}"),
+					Err(e) => {
+						tracing::warn!("could not remove volume {volume_name}: {e}");
+						first_err.get_or_insert(crate::error::ComposeError::Podman(e));
+					}
 				}
 			}
 		}
@@ -562,6 +648,10 @@ impl Engine {
 		// Internal native secrets are podup-owned (not user data), so remove
 		// them unconditionally — independent of `remove_volumes`.
 		self.remove_internal_secrets(file).await?;
+
+		if let Some(e) = first_err {
+			return Err(e);
+		}
 		Ok(())
 	}
 
@@ -620,32 +710,4 @@ pub(super) fn container_rm_path(name: &str, remove_volumes: bool) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::container_rm_path;
-
-	#[test]
-	fn rm_path_omits_volume_flag_by_default() {
-		// A plain `down` (or scale-down) must not drop volumes.
-		let path = container_rm_path("proj-web-1", false);
-		assert!(path.ends_with("/proj-web-1?force=true"), "got: {path}");
-		assert!(!path.contains("v=true"), "got: {path}");
-	}
-
-	#[test]
-	fn rm_path_requests_anonymous_volume_removal() {
-		// `down -v` must pass `v=true` so podman reclaims the container's
-		// anonymous (image VOLUME / short-form) volumes.
-		let path = container_rm_path("proj-web-1", true);
-		assert!(path.contains("force=true"), "got: {path}");
-		assert!(path.contains("&v=true"), "got: {path}");
-	}
-
-	#[test]
-	fn rm_path_url_encodes_container_name() {
-		// Names are URL-encoded so a slash in a container name cannot alter the
-		// request path.
-		let path = container_rm_path("weird/name", true);
-		assert!(!path.contains("weird/name"), "got: {path}");
-		assert!(path.contains("weird%2Fname"), "got: {path}");
-	}
-}
+mod tests;

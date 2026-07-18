@@ -1,3 +1,27 @@
+podup (1.11.0) unstable; urgency=medium
+
+  * up, down and scale now exit non-zero when the operation actually fails,
+    instead of reporting success. A repeated up that can't restart a stopped
+    container no longer prints Running with exit 0, and a down or scale whose
+    teardown genuinely fails now exits non-zero. A stalled stop stays
+    non-fatal (the forced remove supersedes it).
+  * logs shows every replica of a scaled service, ps --status returns the
+    filtered containers without needing -a, port rendering no longer overflows
+    on a pathological libpod record, and a restarting container without a
+    healthcheck is no longer reported as health: starting.
+  * autostart escapes systemd %-specifiers in the generated unit, and
+    autostart uninstall no longer removes a sibling project's units (ownership
+    is now proven by an unforgeable marker).
+  * The installers pin the redirect transport and bound the download; the
+    Windows self-update cleans up its old backup on the next run; the invalid
+    project-name message now matches the rule it enforces.
+  * down tears containers down in parallel within each dependency level
+    (per-level max instead of the sum of every stop grace), up prefetches
+    cold images concurrently and creates a scaled service's replicas
+    concurrently, and logs bounds its per-line buffer so a newline-less
+    stream can't grow it without limit.
+
+ -- Glyndor <packages@glyndor.net>  Sat, 18 Jul 2026 01:57:34 -0500
 podup (1.10.1) unstable; urgency=medium
 
   * Relicensed from Apache-2.0 to MIT, part of the org-wide switch to a single

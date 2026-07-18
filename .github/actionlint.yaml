@@ -1,0 +1,7 @@
+# actionlint repository configuration.
+self-hosted-runner:
+  # "bench" is the label of the controlled self-hosted benchmark runner that
+  # benchmark.yml targets; declared here so actionlint's runner-label check
+  # recognizes it instead of flagging it as unknown.
+  labels:
+    - bench

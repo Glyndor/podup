@@ -217,18 +217,36 @@ impl Engine {
 		let selected: std::collections::HashSet<&str> =
 			target_services.iter().map(String::as_str).collect();
 		// (container_name, is_tty) — TTY containers send raw bytes; non-TTY use
-		// multiplexed 8-byte-header framing.
-		let targets: Vec<(String, bool)> = file
+		// multiplexed 8-byte-header framing. Resolved against the containers
+		// Podman actually has (`live_replica_names`), not the static compose
+		// replica count: after a runtime `scale`/`up --scale` the file's count no
+		// longer matches the live replicas, so `logs` would otherwise miss every
+		// replica beyond the first (falls back to the static names when none are
+		// running yet).
+		// One `live_replica_names` round-trip per selected service (a future
+		// optimization: batch this through scale.rs's
+		// `list_project_containers_by_service` instead). A resolution failure for
+		// one service must not blank the whole command the way an `.await?` would:
+		// warn and skip that service so the rest still stream, matching the
+		// per-container tolerance below.
+		let mut targets: Vec<(String, bool)> = Vec::new();
+		for (n, s) in file
 			.services
 			.iter()
 			.filter(|(n, _)| selected.is_empty() || selected.contains(n.as_str()))
-			.flat_map(|(n, s)| {
-				let is_tty = s.tty.unwrap_or(false);
-				self.replica_names(n, s)
-					.into_iter()
-					.map(move |cname| (cname, is_tty))
-			})
-			.collect();
+		{
+			let is_tty = s.tty.unwrap_or(false);
+			let names = match self.live_replica_names(n, s).await {
+				Ok(names) => names,
+				Err(e) => {
+					tracing::warn!("logs: resolving replicas for service {n}: {e}");
+					continue;
+				}
+			};
+			for cname in names {
+				targets.push((cname, is_tty));
+			}
+		}
 
 		// When follow=true, streams never end until containers stop. Run them
 		// concurrently so multiple containers don't block each other.
@@ -361,13 +379,28 @@ impl Engine {
 	}
 
 	/// Remove containers labelled for this project that are not defined in the current compose file.
+	///
+	/// Best-effort across every orphan — one that fails to remove must not stop
+	/// the rest from being reaped — but the first real failure is remembered and
+	/// returned once every orphan has been attempted, so a removal that
+	/// genuinely fails does not exit 0 with the orphan left behind (#598). A 404
+	/// (already gone) stays an idempotent no-op.
 	pub async fn remove_orphans(&self, file: &ComposeFile) -> Result<()> {
+		let mut first_err: Option<ComposeError> = None;
 		for name in self.orphan_container_names(file).await? {
 			tracing::info!("removing orphan container {name}");
 			let rm_path = format!("{API_PREFIX}/containers/{}?force=true", urlencoded(&name));
-			if let Err(e) = self.client.delete_ok(&rm_path).await {
-				tracing::debug!("orphan delete {name}: {e}");
+			match self.client.delete_ok(&rm_path).await {
+				Ok(()) => {}
+				Err(e) if e.is_status(404) => {}
+				Err(e) => {
+					tracing::debug!("orphan delete {name}: {e}");
+					first_err.get_or_insert(ComposeError::Podman(e));
+				}
 			}
+		}
+		if let Some(e) = first_err {
+			return Err(e);
 		}
 		Ok(())
 	}
@@ -394,96 +427,4 @@ fn filter_orphans(names: Vec<String>, known: &std::collections::HashSet<String>)
 }
 
 #[cfg(test)]
-mod tests {
-	use super::{filter_orphans, is_valid_log_time, log_query, validate_log_filters, LogsOptions};
-	use std::collections::HashSet;
-
-	#[test]
-	fn filter_orphans_keeps_only_unknown_names() {
-		let known: HashSet<String> = ["web-1".to_string(), "db".to_string()].into();
-		let names = vec![
-			"web-1".to_string(),
-			"db".to_string(),
-			"old-cache".to_string(),
-		];
-		assert_eq!(filter_orphans(names, &known), vec!["old-cache".to_string()]);
-	}
-
-	#[test]
-	fn filter_orphans_empty_when_all_known() {
-		let known: HashSet<String> = ["web".to_string()].into();
-		assert!(filter_orphans(vec!["web".to_string()], &known).is_empty());
-	}
-
-	#[test]
-	fn log_query_defaults_to_stdout_stderr_no_follow() {
-		let q = log_query(&LogsOptions::default());
-		assert_eq!(q, "stdout=true&stderr=true&follow=false&timestamps=false");
-	}
-
-	#[test]
-	fn log_query_includes_set_options() {
-		let q = log_query(&LogsOptions {
-			follow: true,
-			tail: Some("20".into()),
-			since: Some("10m".into()),
-			until: Some("2024-01-01T00:00:00".into()),
-			timestamps: true,
-		});
-		assert!(q.contains("follow=true"));
-		assert!(q.contains("timestamps=true"));
-		assert!(q.contains("&tail=20"));
-		assert!(q.contains("&since=10m"));
-		// `:` is percent-encoded in the query value.
-		assert!(q.contains("&until=2024-01-01T00%3A00%3A00"));
-	}
-
-	#[test]
-	fn validate_log_filters_accepts_good_values() {
-		assert!(validate_log_filters(&LogsOptions {
-			tail: Some("all".into()),
-			since: Some("10m".into()),
-			until: Some("2024-01-01T00:00:00Z".into()),
-			..Default::default()
-		})
-		.is_ok());
-		assert!(validate_log_filters(&LogsOptions {
-			tail: Some("100".into()),
-			since: Some("1700000000".into()),
-			..Default::default()
-		})
-		.is_ok());
-		assert!(validate_log_filters(&LogsOptions::default()).is_ok());
-	}
-
-	#[test]
-	fn validate_log_filters_rejects_bad_tail_and_time() {
-		assert!(validate_log_filters(&LogsOptions {
-			tail: Some("abc".into()),
-			..Default::default()
-		})
-		.is_err());
-		assert!(validate_log_filters(&LogsOptions {
-			since: Some("yesterday".into()),
-			..Default::default()
-		})
-		.is_err());
-		assert!(validate_log_filters(&LogsOptions {
-			until: Some("not-a-time".into()),
-			..Default::default()
-		})
-		.is_err());
-	}
-
-	#[test]
-	fn is_valid_log_time_classifies_forms() {
-		assert!(is_valid_log_time("10m"));
-		assert!(is_valid_log_time("1h30m"));
-		assert!(is_valid_log_time("500ms"));
-		assert!(is_valid_log_time("1700000000"));
-		assert!(is_valid_log_time("2024-01-02T03:04:05Z"));
-		assert!(!is_valid_log_time("abc"));
-		assert!(!is_valid_log_time(""));
-		assert!(!is_valid_log_time("10x"));
-	}
-}
+mod tests;

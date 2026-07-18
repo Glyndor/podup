@@ -23,8 +23,9 @@ A podup loss is published exactly like a podup win.
 - **Controlled environment.** The real run happens on a dedicated/self-hosted
   runner or the maintainer's machine, with the CPU governor pinned and the tool
   process taskset-pinned to reduce variance. **Shared CI runners are too noisy for
-  published numbers** — CI only runs a smoke check (`--smoke`) that proves the
-  harness works, never the numbers in the README.
+  published numbers** — CI only static-checks the harness (`bash -n`, a Python
+  compile, and `aggregate.py --self-test` on fixture rows), never running the
+  scenarios or the numbers in the README.
 - **No cherry-picking.** Every scenario is published, whoever wins.
 
 ## Scenarios
@@ -71,7 +72,7 @@ python3 bench/aggregate.py
 # -> bench/results/report.md and bench/results/summary.json
 ```
 
-`--smoke` runs a single scenario once (used by CI to check the harness runs).
+`--smoke` runs a single scenario once, for a quick local check against a real engine (CI no longer uses it — it static-checks the harness instead; see above).
 
 ## Output
 

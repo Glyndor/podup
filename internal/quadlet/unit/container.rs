@@ -9,8 +9,9 @@ use crate::size::parse_duration_secs;
 use super::health::render_healthcheck;
 use super::security::{is_inline_secret, map_security_opt, render_secret};
 use super::{
-	collect_warnings, render_command, render_publish_port, render_restart, render_tmpfs_mount,
-	render_volume, sorted_label_pairs, sorted_pairs, unit_stem, QuadletUnit, Section,
+	collect_warnings, owner_marker, render_command, render_publish_port, render_restart,
+	render_tmpfs_mount, render_volume, sorted_label_pairs, sorted_pairs, unit_stem, QuadletUnit,
+	Section,
 };
 
 /// Build the `.container` unit for one compose `service`.
@@ -382,7 +383,9 @@ pub(crate) fn container_unit(
 
 	collect_warnings(name, service, warnings);
 
-	let mut contents = String::new();
+	// The unforgeable ownership marker comes first, as its own comment line;
+	// see `owner_marker` for why it must stay separate from the `Label=` line.
+	let mut contents = owner_marker(project);
 	contents.push_str(&unit.render());
 	contents.push('\n');
 	contents.push_str(&container.render());

@@ -2,7 +2,7 @@
 
 use crate::compose::types::NetworkConfig;
 
-use super::{sorted_label_pairs, unit_stem, QuadletUnit, Section};
+use super::{owner_marker, sorted_label_pairs, unit_stem, QuadletUnit, Section};
 
 /// Build the `.network` unit for one declared network. Emits a single `[Network]`
 /// section (NetworkName, then driver/internal/IPv6/IPAM/options/labels), always
@@ -65,7 +65,11 @@ pub(crate) fn network_unit(
 	// No [Install] section: the spec defines none for `.network` units, which are
 	// pulled in automatically as dependencies of the `.container` units that use
 	// them. Only `.container` units carry [Install].
-	let contents = net.render();
+	//
+	// The unforgeable ownership marker comes first, as its own comment line;
+	// see `owner_marker` for why it must stay separate from the `Label=` line.
+	let mut contents = owner_marker(project);
+	contents.push_str(&net.render());
 	QuadletUnit {
 		filename: format!("{}.network", unit_stem(project, name)),
 		contents,
