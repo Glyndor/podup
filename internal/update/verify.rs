@@ -328,30 +328,32 @@ mod tests {
 		);
 	}
 
-	// STALE VECTOR after the 2026 key rotation: this SHA256SUMS + signature was
-	// signed by the previous release key, whose private half was lost, so it no
-	// longer validates against the rotated RELEASE_PUBKEYS. Re-vector it from the
-	// first release signed with GLYNDOR_RELEASE_ED25519_KEY (take that release's
-	// SHA256SUMS and SHA256SUMS.sig), then drop the #[ignore]. The synthetic
-	// tests below still exercise the verify path against known keypairs.
 	#[test]
-	#[ignore = "re-vector from the first release signed with the rotated key"]
 	fn embedded_key_verifies_real_release() {
 		// Regression vector: the genuine published podup SHA256SUMS and its
 		// signature must verify against the embedded key. If a future edit
-		// swaps the key, this fails loudly.
+		// swaps the key, this fails loudly. Vectored from the v1.11.0 release
+		// (the first signed with GLYNDOR_RELEASE_ED25519_KEY); the signature
+		// covers the full manifest byte-for-byte, so all listed assets are here.
 		let sha256sums = "\
-52d6148bf50d9d3f24a634402ec39d44302d73b21e3b74ed6a28877fdd7b93ea  podup-linux-x86_64
-95202fc77b4ff60d1f67f198c312baafe710bec2e9d3a6d48fc92ba0f5a0774f  podup-linux-arm64
-8e935c2b28d5955867ea0c94fe2a4fc1a6aa6951011b02eff850eb98ae41e239  podup-darwin-arm64
-efb48becd0c057f6248e91ccbc5b0795edcfbdf66eb5535f24938a5bba7c4ab2  podup-darwin-x86_64
-2fcbef1ae50e976b4d072c101fa2d03a235b2c17ee1ff6a3bfdf6e3df1d15389  podup-windows-x86_64.exe
+0be7f2b09d518ea452a5711ea845fa76a6a6283bc883972d24b9caa3a78902d0  podup-linux-x86_64
+b9e041bb9177e482b887531c383fe9ba12fd8a636208c5e9f1e8e79e02776b77  podup-linux-arm64
+c0d896932ada2a391e7115c05cc940a9d42d7ee67f5ada35408a40a3d3be9f19  podup-darwin-arm64
+255530d6dfcffb7fa7df282be2e6987b708d770afee0bca3a5cbbf6303138cdd  podup-darwin-x86_64
+cfae018f6078e40289c15003ce5b24843864b8bb65cd03ecbd16d57212ae2e62  podup-windows-x86_64.exe
+bdf2296df8eb75d36c11244d7d433398719b5aed61e6c601151de92170018b2c  podup-windows-arm64.exe
+6f8fea9446de2ac4c7ec4c7a0cfebb18263befabb824fa585058a50932d08a5d  podup_1.11.0_amd64.deb
+1a24b7a4972c07e66088c486c15852c70affbb6970b43f2eaa1b85ec3218ea1b  podup_1.11.0_arm64.deb
+4f3a3b3e008ca5b4a8d2fa0eff91762b580d7a2fa4f1ccb707e6e3846b8468b3  podup.cdx.json
+6739b03a00653b7ffa755cf032985c38cef03ebb46d8e8675b1469b6fe13f9d8  NOTICES.html
+f12e41867749c42afd77ac027fe77e406e2272a4f28e2de6700b73ee134d5e89  install.sh
+f4aa771d1bf238fea5b764d90258ec43e6b034de74ce1cd41ef41af1500d7cf9  install.ps1
 ";
 		let signature: [u8; 64] = [
-			242, 54, 152, 188, 196, 207, 89, 151, 84, 217, 6, 0, 46, 45, 6, 218, 150, 236, 75, 144,
-			192, 84, 216, 67, 161, 125, 33, 43, 162, 172, 217, 138, 252, 241, 202, 49, 40, 147,
-			184, 80, 158, 122, 152, 153, 175, 99, 167, 132, 8, 171, 166, 43, 170, 39, 149, 74, 219,
-			134, 101, 155, 15, 109, 136, 11,
+			135, 229, 99, 176, 177, 206, 51, 152, 206, 73, 1, 225, 53, 63, 104, 166, 202, 110, 104,
+			21, 165, 52, 193, 38, 82, 186, 106, 125, 158, 3, 95, 175, 226, 114, 80, 249, 215, 173,
+			19, 60, 56, 205, 224, 100, 216, 54, 237, 79, 215, 111, 4, 157, 78, 70, 150, 192, 63,
+			145, 10, 249, 7, 17, 109, 12,
 		];
 		verify_signature(sha256sums.as_bytes(), &signature).unwrap();
 
@@ -359,7 +361,7 @@ efb48becd0c057f6248e91ccbc5b0795edcfbdf66eb5535f24938a5bba7c4ab2  podup-darwin-x
 		let digest = expected_digest(sha256sums.as_bytes(), "podup-linux-x86_64").unwrap();
 		assert_eq!(
 			digest,
-			"52d6148bf50d9d3f24a634402ec39d44302d73b21e3b74ed6a28877fdd7b93ea"
+			"0be7f2b09d518ea452a5711ea845fa76a6a6283bc883972d24b9caa3a78902d0"
 		);
 	}
 
