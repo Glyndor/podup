@@ -217,18 +217,23 @@ impl Engine {
 		let selected: std::collections::HashSet<&str> =
 			target_services.iter().map(String::as_str).collect();
 		// (container_name, is_tty) — TTY containers send raw bytes; non-TTY use
-		// multiplexed 8-byte-header framing.
-		let targets: Vec<(String, bool)> = file
+		// multiplexed 8-byte-header framing. Resolved against the containers
+		// Podman actually has (`live_replica_names`), not the static compose
+		// replica count: after a runtime `scale`/`up --scale` the file's count no
+		// longer matches the live replicas, so `logs` would otherwise miss every
+		// replica beyond the first (falls back to the static names when none are
+		// running yet).
+		let mut targets: Vec<(String, bool)> = Vec::new();
+		for (n, s) in file
 			.services
 			.iter()
 			.filter(|(n, _)| selected.is_empty() || selected.contains(n.as_str()))
-			.flat_map(|(n, s)| {
-				let is_tty = s.tty.unwrap_or(false);
-				self.replica_names(n, s)
-					.into_iter()
-					.map(move |cname| (cname, is_tty))
-			})
-			.collect();
+		{
+			let is_tty = s.tty.unwrap_or(false);
+			for cname in self.live_replica_names(n, s).await? {
+				targets.push((cname, is_tty));
+			}
+		}
 
 		// When follow=true, streams never end until containers stop. Run them
 		// concurrently so multiple containers don't block each other.
@@ -491,6 +496,46 @@ mod tests {
 		e.remove_orphans(&file)
 			.await
 			.expect("an already-gone orphan must still exit 0");
+	}
+
+	/// After a runtime `scale web=3`, Podman has three `proj-web-*` containers
+	/// while the compose file still declares a single (unscaled) replica.
+	/// `logs web` must target every live container, not just the one the
+	/// static replica count predicts.
+	#[tokio::test]
+	#[cfg(unix)]
+	async fn logs_targets_every_live_replica_after_scale() {
+		let containers = r#"[
+			{"Names":["/proj-web-1"],"Labels":{"podup.service":"web"}},
+			{"Names":["/proj-web-2"],"Labels":{"podup.service":"web"}},
+			{"Names":["/proj-web-3"],"Labels":{"podup.service":"web"}}
+		]"#;
+		let fake = fake_podman::start(move |method, target| {
+			if method == "GET" && target.contains("/containers/json") {
+				(200, containers.to_string())
+			} else if method == "GET" && target.contains("/logs") {
+				(200, String::new())
+			} else {
+				(404, r#"{"message":"not found"}"#.to_string())
+			}
+		});
+		let e = engine_with(fake.client(), "proj");
+
+		let mut file = ComposeFile::default();
+		file.services.insert("web".into(), Service::default());
+
+		e.logs_with_options(&file, &["web".to_string()], LogsOptions::default())
+			.await
+			.expect("logs should succeed");
+
+		let seen = fake.requests.lock().unwrap();
+		for i in 1..=3 {
+			assert!(
+				seen.iter()
+					.any(|r| r.contains(&format!("/proj-web-{i}/logs"))),
+				"expected proj-web-{i} to be targeted after scale: {seen:?}"
+			);
+		}
 	}
 
 	#[test]
