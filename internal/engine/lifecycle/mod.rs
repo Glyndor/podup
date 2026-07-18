@@ -3,6 +3,7 @@
 mod commands;
 mod down_label;
 mod parallel;
+mod prefetch;
 mod run;
 mod scale;
 mod signal;
@@ -10,7 +11,7 @@ mod targets;
 
 use std::collections::{HashMap, HashSet};
 
-use crate::compose::types::{ComposeFile, ServiceCondition};
+use crate::compose::types::{ComposeFile, Service, ServiceCondition};
 use crate::error::Result;
 use crate::libpod::API_PREFIX;
 
@@ -219,6 +220,13 @@ impl Engine {
 			// can't race the non-atomic delete-then-create of a shared name.
 			self.create_inline_secrets(file).await?;
 
+			// Best-effort: warm the image cache for every service this pass will
+			// pull, concurrently, before the per-level walk below serializes a
+			// level-2+ service's image acquisition behind the level-1 barrier.
+			// A prefetch miss here is never fatal — `up_one_service`'s own pull
+			// below is still authoritative and the only path that can fail `up`.
+			self.prefetch_images(file, &enabled, &target_set).await;
+
 			// Start each dependency level in turn; services within a level have
 			// no `depends_on` relationship to each other (guaranteed by the
 			// layering), so they start concurrently. The barrier between levels
@@ -398,51 +406,103 @@ impl Engine {
 
 		let new_hash = config_hash(service, file)?;
 
-		for container_name in self.replica_names_for(name, service, replicas) {
-			if !force_recreate {
-				if no_recreate && present.contains(&container_name) {
-					tracing::debug!("{container_name} already exists — skipping recreate");
-					// `create` leaves an existing container as-is; `up` ensures it runs.
-					if start {
-						self.ensure_started(&container_name).await?;
-					}
-					crate::ui::progress_line(
-						"Container",
-						&container_name,
-						if start { "Running" } else { "Exists" },
-					);
-					continue;
-				}
-				// Services with a build section are rebuilt on every up, so
-				// their container must be recreated to pick up the fresh
-				// image even when the compose config is unchanged.
-				if service.build.is_none() && existing_hash.get(&container_name) == Some(&new_hash)
-				{
-					tracing::debug!("{container_name} is up to date — skipping recreate");
-					if start {
-						self.ensure_started(&container_name).await?;
-					}
-					crate::ui::progress_line(
-						"Container",
-						&container_name,
-						if start { "Running" } else { "Exists" },
-					);
-					continue;
-				}
-			}
-			self.create_and_start(&container_name, name, service, file, start)
-				.await?;
-			crate::ui::progress_line(
-				"Container",
-				&container_name,
-				if start { "Started" } else { "Created" },
-			);
+		// Fan the replicas out with the same bounded concurrency the level
+		// walk uses, instead of creating and starting them one at a time —
+		// `up --scale web=5` used to pay 5x (create+start) in strict
+		// sequence. Every replica is still attempted even when one fails
+		// (`join_bounded` runs the whole batch), and `first_error` picks the
+		// earliest one in replica-index order, so the reported failure stays
+		// deterministic regardless of which replica's future happens to
+		// finish first.
+		let futs = self
+			.replica_names_for(name, service, replicas)
+			.into_iter()
+			.map(|container_name| {
+				self.up_one_replica(
+					container_name,
+					name,
+					service,
+					file,
+					present,
+					existing_hash,
+					&new_hash,
+					no_recreate,
+					force_recreate,
+					start,
+				)
+			});
+		if let Some(e) = parallel::first_error(parallel::join_bounded(futs).await) {
+			return Err(e);
+		}
 
-			// `post_start` hooks run inside a running container, so only on `up`.
-			if start {
-				for hook in &service.post_start {
-					self.run_lifecycle_hook(&container_name, hook).await?;
+		Ok(())
+	}
+
+	/// Bring up one replica container of `service`: honor the `no_recreate`/
+	/// config-hash skip logic, then fall through to create+start. One future
+	/// in the per-service replica fan-out ([`Self::up_one_service`]); safe to
+	/// run concurrently with the service's other replicas, since replicas of
+	/// one service share no per-replica mutable state — a fixed host port
+	/// that would make concurrent starts race is already rejected up front by
+	/// [`scale::check_scale_port_conflict`].
+	#[allow(clippy::too_many_arguments)]
+	async fn up_one_replica(
+		&self,
+		container_name: String,
+		name: &str,
+		service: &Service,
+		file: &ComposeFile,
+		present: &HashSet<String>,
+		existing_hash: &HashMap<String, String>,
+		new_hash: &str,
+		no_recreate: bool,
+		force_recreate: bool,
+		start: bool,
+	) -> Result<()> {
+		if !force_recreate {
+			if no_recreate && present.contains(&container_name) {
+				tracing::debug!("{container_name} already exists — skipping recreate");
+				// `create` leaves an existing container as-is; `up` ensures it runs.
+				if start {
+					self.ensure_started(&container_name).await?;
 				}
+				crate::ui::progress_line(
+					"Container",
+					&container_name,
+					if start { "Running" } else { "Exists" },
+				);
+				return Ok(());
+			}
+			// Services with a build section are rebuilt on every up, so
+			// their container must be recreated to pick up the fresh
+			// image even when the compose config is unchanged.
+			if service.build.is_none()
+				&& existing_hash.get(&container_name).map(String::as_str) == Some(new_hash)
+			{
+				tracing::debug!("{container_name} is up to date — skipping recreate");
+				if start {
+					self.ensure_started(&container_name).await?;
+				}
+				crate::ui::progress_line(
+					"Container",
+					&container_name,
+					if start { "Running" } else { "Exists" },
+				);
+				return Ok(());
+			}
+		}
+		self.create_and_start(&container_name, name, service, file, start)
+			.await?;
+		crate::ui::progress_line(
+			"Container",
+			&container_name,
+			if start { "Started" } else { "Created" },
+		);
+
+		// `post_start` hooks run inside a running container, so only on `up`.
+		if start {
+			for hook in &service.post_start {
+				self.run_lifecycle_hook(&container_name, hook).await?;
 			}
 		}
 

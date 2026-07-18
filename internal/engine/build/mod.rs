@@ -9,6 +9,9 @@ mod context;
 mod pull;
 mod push;
 mod tags;
+/// Shared with the `up` image-prefetch stage so it resolves a service's
+/// effective pull policy identically to the pull path below.
+pub(in crate::engine) use pull::libpod_pull_policy;
 pub use pull::PullOptions;
 pub use push::PushOptions;
 /// Shared with the container-create path so an `up`/`create` references the same
