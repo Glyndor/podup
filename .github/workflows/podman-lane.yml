@@ -92,6 +92,17 @@ jobs:
                 FLAKY=$(grep -cE 'IncompleteMessage|connection closed before message completed|channel closed|Connection reset' /tmp/cargo.log)
                 echo "PODUP_TESTS_RC=$RC"
                 echo "PODUP_SUMMARY pass=${PASS:-0} fail=${FAIL:-0} flaky=${FLAKY:-0}"
+                # Emit the IDENTITIES of the failing tests, not just the count.
+                # The floor gate can only tighten to a per-test known-flaky
+                # allowlist once the flaky set is small and stable (#1039), and
+                # building that allowlist starts with observing which tests
+                # actually fail across nested-virt runs — which the count alone
+                # cannot tell you. cargo prints a final `failures:` block of bare
+                # test names (the earlier block carries `---- name stdout ----`
+                # detail lines, which the 4-space-exact match skips); no failures
+                # yields an empty list, not an error.
+                FAILED_TESTS=$(sed -n '/^failures:$/,/^test result:/p' /tmp/cargo.log | grep -oE '^    [A-Za-z0-9_:]+$' | tr -d ' ' | paste -sd, -)
+                echo "PODUP_FAILED_TESTS=${FAILED_TESTS}"
           runcmd:
             - bash -c 'F=$(findmnt -no FSTYPE /); case $F in btrfs) btrfs filesystem resize max / ;; xfs) xfs_growfs / ;; ext4) resize2fs $(findmnt -no SOURCE /) ;; esac >/dev/console 2>&1; echo "DISK=$(df -h / | tail -1)" >/dev/console'
             - bash -c 'dnf install -y podman rust cargo gcc git >/dev/console 2>&1'
@@ -132,6 +143,13 @@ jobs:
           FLAKY=$(echo "$SUM" | grep -oE 'flaky=[0-9]+' | cut -d= -f2)
           PASS=${PASS:-0}; FAIL=${FAIL:-0}; FLAKY=${FLAKY:-0}
           echo "Podman $VER: $PASS passed, $FAIL failed ($FLAKY look like connection-drop flakes)"
+          # Surface the failing-test identities (informational) so the nightly
+          # runs accumulate the data a per-test known-flaky allowlist will need
+          # before the gate can tighten past the floor (#1039).
+          FAILED_TESTS=$(grep -oE 'PODUP_FAILED_TESTS=.*' "$L" | tail -1 | cut -d= -f2- || true)
+          if [ -n "$FAILED_TESTS" ]; then
+            echo "Failing tests on Podman $VER: $FAILED_TESTS"
+          fi
           # Gate: the core must pass the baseline in .github/podman-baseline-tests.
           # A real regression breaks previously-passing tests and knocks PASS
           # below the floor; the baseline is versioned so it is bumped
