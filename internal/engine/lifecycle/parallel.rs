@@ -4,20 +4,21 @@
 //! ([`crate::compose::resolve_levels`]): every service in one level has its
 //! `depends_on` satisfied by an earlier level, so services *within* a level have
 //! no ordering between them and can be acted on concurrently. The whole-project
-//! lifecycle commands (stop/start/restart/kill/rm/pause/unpause) walk the levels
-//! in order — preserving the cross-level dependency ordering — but dispatch each
-//! level's per-service operations in parallel instead of strictly serially, so a
-//! restart/stop of many independent services no longer serializes every grace
-//! period (#757). This mirrors what the `up`/`create` path already does.
+//! lifecycle commands (stop/start/restart/kill/rm/pause/unpause/down) walk the
+//! levels in order — preserving the cross-level dependency ordering — but
+//! dispatch each level's per-service (or, for teardown, per-container)
+//! operations in parallel instead of strictly serially, so a restart/stop/down
+//! of many independent services no longer serializes every grace period (#757).
+//! This mirrors what the `up`/`create` path already does.
 
 use std::collections::HashSet;
 
-use crate::compose::types::{ComposeFile, Service};
+use crate::compose::types::{ComposeFile, LifecycleHook, Service};
 use crate::engine::Engine;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
-use super::targets::stop_timeout_param;
+use super::targets::{stop_deadline, stop_timeout_param};
 
 /// Upper bound on the number of same-level services a lifecycle command acts on
 /// concurrently. Services within a dependency level have no ordering between
@@ -282,6 +283,71 @@ impl Engine {
 			}
 		}
 		first_err.map_or(Ok(()), Err)
+	}
+
+	/// Tear down one already-known-live container: run its `pre_stop` hooks (if
+	/// any), a best-effort stop bounded by `grace`, then a forced removal. One
+	/// unit of work in a concurrent teardown level/batch — shared by
+	/// [`super::Engine::down_with_options`] (per dependency level) and
+	/// [`super::Engine::down_by_label`] (one label-scoped batch, no dependency
+	/// graph to level).
+	///
+	/// A stalled or failed `stop` is never surfaced as an error here — the
+	/// forced removal that follows SIGKILLs the container regardless of how
+	/// `stop` went (`container_rm_path` always passes `force=true`), so only a
+	/// genuine removal failure propagates. A 404 (container already gone) is an
+	/// idempotent no-op at every step. This preserves the pre-parallel `down`
+	/// error semantics (#598) byte-for-byte; only the dispatch became
+	/// concurrent.
+	pub(super) async fn teardown_one_container(
+		&self,
+		container_name: &str,
+		grace: i32,
+		pre_stop: &[LifecycleHook],
+		remove_volumes: bool,
+	) -> Result<()> {
+		for hook in pre_stop {
+			if let Err(e) = self.run_lifecycle_hook(container_name, hook).await {
+				tracing::debug!("pre_stop hook {container_name}: {e}");
+			}
+		}
+
+		// Bound the stop by the grace window so a container ignoring SIGTERM
+		// does not pin recreation for the full client READ_TIMEOUT; the
+		// force-remove below SIGKILLs it regardless.
+		let stop_path = format!(
+			"{API_PREFIX}/containers/{}/stop?t={}",
+			urlencoded(container_name),
+			stop_timeout_param(grace),
+		);
+		// A 404 (container already gone, or a profile-gated service that was
+		// never created) is an idempotent no-op here, exactly as the network and
+		// volume removal arms treat it — not a warning. A stalled or failed stop
+		// is not fatal either: the force-remove just below SIGKILLs the
+		// container regardless, so its outcome is logged but never returned as
+		// an error — only a genuine removal failure is.
+		if let Err(e) = self
+			.client
+			.post_empty_ok_within(&stop_path, stop_deadline(grace))
+			.await
+		{
+			if !e.is_status(404) {
+				tracing::warn!("could not stop {container_name}: {e}");
+			}
+		}
+
+		let rm_path = super::container_rm_path(container_name, remove_volumes);
+		match self.client.delete_ok(&rm_path).await {
+			Ok(()) => {
+				crate::ui::progress_line("Container", container_name, "Removed");
+				Ok(())
+			}
+			Err(e) if e.is_status(404) => Ok(()),
+			Err(e) => {
+				tracing::warn!("could not remove {container_name}: {e}");
+				Err(ComposeError::Podman(e))
+			}
+		}
 	}
 }
 

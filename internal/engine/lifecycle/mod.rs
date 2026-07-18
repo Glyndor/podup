@@ -456,16 +456,20 @@ impl Engine {
 
 	/// Stop and remove services in reverse dependency order. Optionally removes named volumes and orphaned containers.
 	pub async fn down_with_options(&self, file: &ComposeFile, remove_volumes: bool) -> Result<()> {
-		let mut order = crate::compose::resolve_order(file)?;
-		order.reverse();
+		let mut levels = crate::compose::resolve_levels(file)?;
+		// Teardown inverts startup: a dependent must stop before the service it
+		// depends on, so the dependency levels `up` would walk front-to-back are
+		// walked back-to-front here (the same inversion the other lifecycle
+		// commands' level walk uses, see `parallel.rs`).
+		levels.reverse();
 
 		// Prefetch every project container once and group by service, instead of
-		// one container-list round-trip per service (S+1 → 1 for the ordered pass).
+		// one container-list round-trip per service (S+1 → 1 for the level walk).
 		let live_by_service = self.list_project_containers_by_service().await?;
 
-		// Best-effort across every container/network/volume so one failure never
-		// leaves the rest of the teardown undone, but the first real REMOVAL
-		// failure is remembered and returned at the end instead of being
+		// Best-effort across every level/container/network/volume so one failure
+		// never leaves the rest of the teardown undone, but the first real
+		// REMOVAL failure is remembered and returned at the end instead of being
 		// swallowed into a warning — a `down` whose container/network/volume
 		// removal genuinely fails (storage error, active exec session) must exit
 		// non-zero, not print a warning and exit 0 (#598). A stalled or failed
@@ -473,66 +477,51 @@ impl Engine {
 		// container regardless (see `container_rm_path`), so only the removal
 		// outcome is aggregated. A 404 (already gone) stays an idempotent no-op
 		// throughout.
+		//
+		// Levels are walked strictly in order — every container in one level is
+		// attempted before the next level starts, preserving the dependency
+		// inversion above — but the containers *within* one level tear down
+		// concurrently via `join_bounded`, which returns results in input
+		// (service, then container) order rather than completion order. That
+		// keeps "the first error" deterministic regardless of which container
+		// happens to finish first: `first_error` picks the earliest in that
+		// fixed order, and since levels themselves are visited in a fixed
+		// sequence, only the first level with any failure can ever set
+		// `first_err` — a later level's failure is never mistaken for "first".
 		let mut first_err: Option<crate::error::ComposeError> = None;
 
-		for name in &order {
-			let service = &file.services[name];
-			// Act only on containers Podman actually has. A defined-but-never-
-			// created service (or one already torn down) has no live containers,
-			// so skip it rather than synthesizing predicted names and POSTing
-			// stop/rm to them — those 404 and, pre-fix, leaked warnings. docker
-			// compose enumerates by label and treats "nothing there" as a quiet
-			// idempotent no-op (#758).
-			let Some(container_names) = live_by_service.get(name).filter(|live| !live.is_empty())
-			else {
-				continue;
-			};
-			for container_name in container_names {
-				for hook in &service.pre_stop {
-					if let Err(e) = self.run_lifecycle_hook(container_name, hook).await {
-						tracing::debug!("pre_stop hook {container_name}: {e}");
-					}
-				}
-
+		for level in &levels {
+			let futs = level.iter().flat_map(|name| {
+				let service = &file.services[name];
 				let grace = self.grace_period_secs(service);
-				// Bound the stop by the grace window so a container ignoring SIGTERM
-				// does not pin recreation for the full client READ_TIMEOUT; the
-				// force-remove below SIGKILLs it regardless.
-				let stop_path = format!(
-					"{API_PREFIX}/containers/{}/stop?t={}",
-					crate::libpod::urlencoded(container_name),
-					targets::stop_timeout_param(grace),
-				);
-				// A 404 (container already gone, or a profile-gated service that was
-				// never created) is an idempotent no-op here, exactly as the network
-				// and volume removal arms below treat it — not a warning. A stalled
-				// or failed stop is not fatal either: the force-remove just below
-				// SIGKILLs the container regardless, so its outcome is logged but
-				// never folded into `first_err` — only a genuine removal failure is.
-				if let Err(e) = self
-					.client
-					.post_empty_ok_within(&stop_path, targets::stop_deadline(grace))
-					.await
-				{
-					if !e.is_status(404) {
-						tracing::warn!("could not stop {container_name}: {e}");
-					}
-				}
-
-				let rm_path = container_rm_path(container_name, remove_volumes);
-				match self.client.delete_ok(&rm_path).await {
-					Ok(()) => crate::ui::progress_line("Container", container_name, "Removed"),
-					Err(e) if e.is_status(404) => {}
-					Err(e) => {
-						tracing::warn!("could not remove {container_name}: {e}");
-						first_err.get_or_insert(crate::error::ComposeError::Podman(e));
-					}
-				}
+				// Act only on containers Podman actually has. A defined-but-never-
+				// created service (or one already torn down) has no live
+				// containers, so it contributes nothing here rather than
+				// synthesizing predicted names and POSTing stop/rm to them —
+				// those 404 and, pre-fix, leaked warnings. docker compose
+				// enumerates by label and treats "nothing there" as a quiet
+				// idempotent no-op (#758).
+				live_by_service
+					.get(name)
+					.filter(|live| !live.is_empty())
+					.into_iter()
+					.flatten()
+					.map(move |container_name| {
+						self.teardown_one_container(
+							container_name,
+							grace,
+							&service.pre_stop,
+							remove_volumes,
+						)
+					})
+			});
+			if let Some(e) = parallel::first_error(parallel::join_bounded(futs).await) {
+				first_err.get_or_insert(e);
 			}
 		}
 
 		// Scaled replicas (`up --scale`/`scale`) carry the `podup.service` label
-		// of a service still in the file, so the ordered pass above already swept
+		// of a service still in the file, so the level walk above already swept
 		// them via `live_by_service`. Orphan containers of services *removed* from
 		// the file are deliberately NOT touched here: docker compose only reaps
 		// them under `--remove-orphans`, which the dispatch layer handles via

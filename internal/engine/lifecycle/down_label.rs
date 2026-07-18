@@ -38,37 +38,21 @@ impl Engine {
 	/// force-remove that follows SIGKILLs the container regardless (the
 	/// container-removal path forces removal), so only a genuine removal failure
 	/// aggregates. A 404 (already gone) stays an idempotent no-op throughout.
+	///
+	/// With no compose file there is no dependency graph to level, so — unlike
+	/// [`Engine::down_with_options`]'s level walk — every labelled container is
+	/// independent from podup's point of view and all of them tear down in one
+	/// bounded concurrent batch instead of strictly sequentially.
 	pub async fn down_by_label(&self, remove_volumes: bool) -> Result<()> {
 		let grace = self.stop_timeout.unwrap_or(DEFAULT_STOP_GRACE_SECS);
 		let mut first_err: Option<crate::error::ComposeError> = None;
 
-		for container_name in self.list_project_container_names(None).await? {
-			let stop_path = format!(
-				"{API_PREFIX}/containers/{}/stop?t={}",
-				urlencoded(&container_name),
-				super::targets::stop_timeout_param(grace),
-			);
-			// A 404 (already gone) is an idempotent no-op, like the network/volume
-			// arms below; the force-remove that follows SIGKILLs a stubborn one.
-			if let Err(e) = self
-				.client
-				.post_empty_ok_within(&stop_path, super::targets::stop_deadline(grace))
-				.await
-			{
-				if !e.is_status(404) {
-					tracing::warn!("could not stop {container_name}: {e}");
-				}
-			}
-
-			let rm_path = super::container_rm_path(&container_name, remove_volumes);
-			match self.client.delete_ok(&rm_path).await {
-				Ok(()) => crate::ui::progress_line("Container", &container_name, "Removed"),
-				Err(e) if e.is_status(404) => {}
-				Err(e) => {
-					tracing::warn!("could not remove {container_name}: {e}");
-					first_err.get_or_insert(crate::error::ComposeError::Podman(e));
-				}
-			}
+		let containers = self.list_project_container_names(None).await?;
+		let futs = containers.iter().map(|container_name| {
+			self.teardown_one_container(container_name, grace, &[], remove_volumes)
+		});
+		if let Some(e) = super::parallel::first_error(super::parallel::join_bounded(futs).await) {
+			first_err.get_or_insert(e);
 		}
 
 		// Networks and named volumes are reaped by label; each sweep is
