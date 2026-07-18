@@ -105,7 +105,7 @@ fn health_from_status(status: &str) -> &'static str {
 		"unhealthy"
 	} else if s.contains("healthy") {
 		"healthy"
-	} else if s.contains("health: starting") || s.contains("starting") {
+	} else if s.contains("health: starting") {
 		"starting"
 	} else {
 		""
@@ -491,6 +491,9 @@ mod tests {
 			"starting"
 		);
 		assert_eq!(health_from_status("Exited (1) 4 seconds ago"), "");
+		// A restarting container with no healthcheck must not be misread as
+		// "starting" health — only the real `health: starting` token counts.
+		assert_eq!(health_from_status("Restarting (1) 3 seconds ago"), "");
 	}
 
 	#[test]
