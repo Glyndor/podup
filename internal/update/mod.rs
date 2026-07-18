@@ -37,6 +37,14 @@ pub trait ReleaseSource {
 
 /// Run an update against GitHub for the version compiled into this binary.
 pub fn run(opts: UpdateOptions) -> crate::Result<()> {
+	// Best-effort cleanup of a `.old` backup a prior Windows swap could not
+	// delete immediately (the old process still held it open). By the time
+	// any updater run starts, that process has exited, so this is the
+	// earliest point the leftover can go - see the module doc on
+	// `install::swap_into_place`.
+	#[cfg(windows)]
+	install::cleanup_stale_backup();
+
 	let source = GitHubSource::default();
 	run_with(&source, env!("CARGO_PKG_VERSION"), opts)
 }

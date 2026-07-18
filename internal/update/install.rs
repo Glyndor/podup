@@ -4,8 +4,11 @@
 //! directory as the target (so the final swap is a same-filesystem rename, which
 //! is atomic) and then moved into place. On Unix the running binary's inode can
 //! be replaced directly. On Windows a running `.exe` cannot be overwritten, so
-//! the current file is renamed aside (`.old`) first and cleaned up on the next
-//! run.
+//! the current file is renamed aside (`.old`) first. The immediate best-effort
+//! delete of that backup can fail while the old process still holds the file
+//! open; when it does, the leftover is removed at the start of the next
+//! updater run (`cleanup_stale_backup`, called from [`crate::update::run`]),
+//! not merely "the next run" of the binary in general.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -257,6 +260,20 @@ fn swap_into_place(tmp: &Path, target: &Path) -> crate::Result<()> {
 	Ok(())
 }
 
+/// Best-effort removal of a `.old` backup [`swap_into_place`] could not delete
+/// immediately because the old process still held the file open. Call once at
+/// the start of every updater run ([`crate::update::run`]): by then the
+/// process that produced the backup has exited, so the file is no longer
+/// locked and the leftover clears on this run rather than lingering until the
+/// user happens to run another update. Silently does nothing if there is no
+/// leftover, or if removal still fails for some other reason.
+#[cfg(windows)]
+pub(crate) fn cleanup_stale_backup() {
+	if let Ok(exe) = std::env::current_exe() {
+		let _ = std::fs::remove_file(exe.with_extension("old"));
+	}
+}
+
 /// Turn a rename failure into an actionable error, calling out the common
 /// permission case (system install dirs need elevation).
 fn rename_error(e: std::io::Error, target: &Path) -> ComposeError {
@@ -482,5 +499,35 @@ mod tests {
 			}
 			_ => panic!("expected an Update error"),
 		}
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn cleanup_stale_backup_removes_a_leftover_old_file() {
+		// Simulates the case swap_into_place leaves behind: an `.old` sibling of
+		// the running executable that its own best-effort delete could not
+		// remove because the old process still held it open. The next updater
+		// run calls this once nothing holds the file anymore, and it must go.
+		let exe = std::env::current_exe().unwrap();
+		let backup = exe.with_extension("old");
+		std::fs::write(&backup, b"leftover backup").unwrap();
+
+		cleanup_stale_backup();
+
+		assert!(!backup.exists(), "the stale .old backup must be removed");
+	}
+
+	#[cfg(windows)]
+	#[test]
+	fn cleanup_stale_backup_is_a_no_op_without_a_leftover() {
+		// No `.old` file present is the common case (a normal run, or a
+		// platform that never took the Windows swap path) - must not error.
+		let exe = std::env::current_exe().unwrap();
+		let backup = exe.with_extension("old");
+		let _ = std::fs::remove_file(&backup);
+
+		cleanup_stale_backup();
+
+		assert!(!backup.exists());
 	}
 }
