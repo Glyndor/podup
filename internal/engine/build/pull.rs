@@ -3,7 +3,7 @@
 use futures_util::StreamExt;
 use tracing::{debug, warn};
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::compose::types::{ComposeFile, Service};
 use crate::error::{ComposeError, Result};
@@ -24,6 +24,26 @@ pub struct PullOptions {
 	pub include_deps: bool,
 }
 
+/// Upper bound on how many distinct images a standalone `pull` fetches
+/// concurrently. Mirrors the lifecycle level fan-out's own concurrency cap: a
+/// compose file with many distinct images must not open an unbounded number
+/// of simultaneous pull streams against the Podman socket.
+const MAX_PULL_CONCURRENCY: usize = 16;
+
+/// Run `futs` concurrently, capped at `limit` in flight at once. Unlike the
+/// lifecycle fan-out's `join_bounded`, callers here have no use for
+/// input-order results (the outcomes are reduced into an image-keyed map
+/// right after), so this stays a plain bounded join.
+async fn bounded_join_all<F, T>(futs: impl IntoIterator<Item = F>, limit: usize) -> Vec<T>
+where
+	F: std::future::Future<Output = T>,
+{
+	futures_util::stream::iter(futs)
+		.buffer_unordered(limit)
+		.collect()
+		.await
+}
+
 impl Engine {
 	/// Pull images for all services that declare an `image:` key, concurrently.
 	pub async fn pull(&self, file: &ComposeFile) -> Result<()> {
@@ -42,6 +62,11 @@ impl Engine {
 	/// `depends_on`) and `--ignore-pull-failures` (warn and continue instead of
 	/// aborting on the first failure). The `--policy` override is applied via
 	/// the engine's pull-policy override (see [`Engine::with_up_overrides`]).
+	///
+	/// Services sharing an image reference pull it once, not once per service:
+	/// the actual pull is deduplicated by image, dispatched with bounded
+	/// concurrency, and each service still gets its own present/error report
+	/// derived from its image's single shared outcome.
 	pub async fn pull_services_with_options(
 		&self,
 		file: &ComposeFile,
@@ -64,7 +89,11 @@ impl Engine {
 			(false, false) => Some(services.iter().cloned().collect()),
 		};
 
-		let futs: Vec<_> = file
+		// Every service this pull pass covers, in file order — kept so the
+		// per-service reporting loop below stays deterministic — paired with
+		// its own service config (needed to report `name`/`image` even though
+		// the actual pull below runs once per unique image, not once here).
+		let candidates: Vec<(&str, &Service)> = file
 			.services
 			.iter()
 			.filter(|(name, s)| {
@@ -73,25 +102,44 @@ impl Engine {
 						.as_ref()
 						.is_none_or(|set| set.contains(name.as_str()))
 			})
-			.map(|(name, s)| async move {
+			.map(|(name, s)| (name.as_str(), s))
+			.collect();
+
+		// Dedup by image reference: 50 services on one image must issue one
+		// pull, not 50. One representative service per unique image is enough
+		// to issue it (only `image`/`pull_policy`/`platform` matter to the pull
+		// itself).
+		let mut representative: HashMap<&str, &Service> = HashMap::new();
+		for (_, service) in &candidates {
+			let image = service.image.as_deref().unwrap_or_default();
+			representative.entry(image).or_insert(service);
+		}
+
+		// Pull each unique image once, bounded, and record its outcome — the
+		// same present/error pair the per-service loop used to compute for
+		// itself, now shared by every service that names the same image.
+		let futs = representative
+			.into_iter()
+			.map(|(image, service)| async move {
 				// The libpod pull stream reports failure as an in-band progress
 				// line, so `pull_image` returns Ok even when the pull failed;
 				// confirm the image actually landed in local storage. Keep the
 				// real transport error (e.g. socket unreachable) so a failed pull
 				// surfaces the underlying cause rather than a generic message.
-				let pull_err = self.pull_image(s).await.err();
-				let image = s.image.clone().unwrap_or_default();
-				(
-					name.clone(),
-					image.clone(),
-					self.image_present(&image).await,
-					pull_err,
-				)
-			})
-			.collect();
+				let pull_err = self.pull_image(service).await.err().map(|e| e.to_string());
+				let present = self.image_present(image).await;
+				(image.to_string(), present, pull_err)
+			});
+		let outcomes: HashMap<String, (bool, Option<String>)> =
+			bounded_join_all(futs, MAX_PULL_CONCURRENCY)
+				.await
+				.into_iter()
+				.map(|(image, present, err)| (image, (present, err)))
+				.collect();
 
-		let results = futures_util::future::join_all(futs).await;
-		for (name, image, present, pull_err) in results {
+		for (name, service) in candidates {
+			let image = service.image.as_deref().unwrap_or_default();
+			let (present, pull_err) = outcomes.get(image).cloned().unwrap_or((false, None));
 			if present {
 				continue;
 			}
@@ -272,4 +320,121 @@ mod tests {
 		// Unknown values are reported (None) so the caller warns.
 		assert_eq!(libpod_pull_policy(Some("bogus")), None);
 	}
+
+	#[cfg(unix)]
+	use crate::engine::fake_podman;
+
+	/// #8: `pull_services_with_options` used to build one future per service,
+	/// so two services sharing an image pulled it twice. They must now
+	/// dedupe down to a single pull request, with both services still
+	/// reported as successful.
+	#[tokio::test]
+	#[cfg(unix)]
+	async fn pull_dedupes_a_shared_image_into_a_single_pull() {
+		let fake = fake_podman::start(|method, target| {
+			if method == "POST" && target.contains("/images/pull") {
+				(200, String::new())
+			} else if method == "GET" && target.contains("/images/") && target.contains("/json") {
+				(200, "{}".to_string())
+			} else {
+				(404, r#"{"message":"not found"}"#.to_string())
+			}
+		});
+		let e = crate::engine::Engine::new(fake.client(), "proj".into());
+		let file =
+			crate::parse_str("services:\n  a:\n    image: shared\n  b:\n    image: shared\n")
+				.unwrap();
+
+		e.pull_services(&file, &[])
+			.await
+			.expect("pulling two services that share an image must succeed");
+
+		let seen = fake.requests.lock().unwrap();
+		let pulls = seen
+			.iter()
+			.filter(|r| r.contains("/images/pull") && r.contains("reference=shared"))
+			.count();
+		assert_eq!(
+			pulls, 1,
+			"two services sharing one image must issue a single pull: {seen:?}"
+		);
+	}
+
+	/// A shared image that fails to pull must still be reported for *every*
+	/// service that names it — derived from the one shared outcome, not from
+	/// a redundant pull per service. `ignore_failures` lets both warnings
+	/// through instead of aborting on the first.
+	#[tokio::test]
+	#[cfg(unix)]
+	async fn pull_failure_on_a_shared_image_is_still_only_pulled_once() {
+		let fake = fake_podman::start(|method, target| {
+			if method == "POST" && target.contains("/images/pull") {
+				(500, r#"{"message":"registry unreachable"}"#.to_string())
+			} else {
+				(404, r#"{"message":"not found"}"#.to_string())
+			}
+		});
+		let e = crate::engine::Engine::new(fake.client(), "proj".into());
+		let file =
+			crate::parse_str("services:\n  a:\n    image: shared\n  b:\n    image: shared\n")
+				.unwrap();
+
+		let opts = super::PullOptions {
+			ignore_failures: true,
+			include_deps: false,
+		};
+		e.pull_services_with_options(&file, &[], opts)
+			.await
+			.expect("ignore_failures must not error even though the shared pull failed");
+
+		let seen = fake.requests.lock().unwrap();
+		let pulls = seen
+			.iter()
+			.filter(|r| r.contains("/images/pull") && r.contains("reference=shared"))
+			.count();
+		assert_eq!(
+			pulls, 1,
+			"a failing shared image must still be pulled once, not once per service: {seen:?}"
+		);
+	}
+
+	/// Without `ignore_failures`, a shared image that never lands must still
+	/// abort the whole pull — the per-service error report is derived from
+	/// the image's single shared outcome, so the failure is not silently
+	/// dropped for services 2..N once service 1 already reported it.
+	#[tokio::test]
+	#[cfg(unix)]
+	async fn pull_failure_on_a_shared_image_aborts_without_ignore_failures() {
+		let fake = fake_podman::start(|method, target| {
+			if method == "POST" && target.contains("/images/pull") {
+				(500, r#"{"message":"registry unreachable"}"#.to_string())
+			} else {
+				(404, r#"{"message":"not found"}"#.to_string())
+			}
+		});
+		let e = crate::engine::Engine::new(fake.client(), "proj".into());
+		let file =
+			crate::parse_str("services:\n  a:\n    image: shared\n  b:\n    image: shared\n")
+				.unwrap();
+
+		let err = e
+			.pull_services(&file, &[])
+			.await
+			.expect_err("a shared image that fails to pull must abort the pull");
+		assert!(
+			matches!(err, crate::error::ComposeError::Build(ref msg) if msg.contains("shared")),
+			"unexpected error: {err:?}"
+		);
+	}
+
+	// Bounding the standalone pull's concurrency (`MAX_PULL_CONCURRENCY`) is
+	// exercised structurally rather than by asserting a live in-flight count:
+	// `bounded_join_all` runs every future through the same
+	// `buffer_unordered(MAX_PULL_CONCURRENCY)` dispatcher the lifecycle
+	// fan-out's `join_bounded` uses (see `parallel::tests::
+	// join_bounded_preserves_input_order`), and a synchronous fake responder
+	// cannot observe real concurrency without a multi-thread runtime and a
+	// blocking rendezvous — exactly the flakiness the testing standard rules
+	// out. The dedup tests above already pin the dispatch contract (every
+	// unique image is attempted, exactly once).
 }
