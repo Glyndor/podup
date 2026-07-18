@@ -108,6 +108,30 @@ pub(super) fn check_fixed_name_scale(
 	Ok(())
 }
 
+/// The trailing `-<N>` numeric index of a replica container name, if any
+/// (e.g. `proj-web-2` -> `Some(2)`).
+fn trailing_index(name: &str) -> Option<usize> {
+	name.rsplit_once('-')
+		.and_then(|(_, suffix)| suffix.parse().ok())
+}
+
+/// Sort live replica names into the same deterministic ascending order the
+/// static [`Engine::replica_names_for`] path always produces (`-1, -2, -3,
+/// ...`). libpod's `/containers/json` does not sort its results, so without
+/// this a scaled service's `logs`/by-service lifecycle output order would
+/// depend on whatever order the daemon happens to return, drifting between
+/// polls. A name without a parseable trailing index (an unusual custom
+/// `container_name`) sorts after every indexed name, falling back to a
+/// lexical compare so it never panics.
+fn sort_replica_names(names: &mut [String]) {
+	names.sort_by(|a, b| match (trailing_index(a), trailing_index(b)) {
+		(Some(ia), Some(ib)) => ia.cmp(&ib),
+		(Some(_), None) => std::cmp::Ordering::Less,
+		(None, Some(_)) => std::cmp::Ordering::Greater,
+		(None, None) => a.cmp(b),
+	});
+}
+
 impl Engine {
 	/// Set the number of running containers for the named services (docker
 	/// `compose scale SERVICE=N`). Creates missing replicas and removes any
@@ -320,18 +344,22 @@ impl Engine {
 	/// (matched by the `podup.service` label), so lifecycle and query commands
 	/// keep working after a runtime `scale`/`up --scale` that the compose file's
 	/// static replica count no longer names. Falls back to the statically-derived
-	/// names when none exist yet (e.g. a service not yet created).
+	/// names when none exist yet (e.g. a service not yet created). Live names are
+	/// always returned in ascending `-1, -2, -3, ...` order (see
+	/// [`sort_replica_names`]), matching the static path regardless of the order
+	/// libpod's container list happens to report.
 	pub(crate) async fn live_replica_names(
 		&self,
 		service_name: &str,
 		service: &Service,
 	) -> Result<Vec<String>> {
-		let live = self
+		let mut live = self
 			.list_project_container_names(Some(service_name))
 			.await?;
 		Ok(if live.is_empty() {
 			self.replica_names(service_name, service)
 		} else {
+			sort_replica_names(&mut live);
 			live
 		})
 	}
@@ -410,6 +438,43 @@ mod tests {
 		e.remove_surplus_replicas("web", &crate::compose::types::Service::default(), 0)
 			.await
 			.expect("an already-gone surplus replica must still exit 0");
+	}
+
+	/// libpod's `/containers/json` does not guarantee order; `logs` and every
+	/// other by-service lifecycle/query command must still see a scaled
+	/// service's replicas in the same ascending `-1, -2, -3` order the static
+	/// `replica_names_for` path always produces, even when the fake (like a
+	/// real libpod) hands them back shuffled.
+	#[tokio::test]
+	#[cfg(unix)]
+	async fn live_replica_names_sorts_shuffled_replicas_ascending() {
+		let containers = r#"[
+			{"Names":["/proj-web-3"]},
+			{"Names":["/proj-web-1"]},
+			{"Names":["/proj-web-2"]}
+		]"#;
+		let fake = fake_podman::start(move |method, target| {
+			if method == "GET" && target.contains("/containers/json") {
+				(200, containers.to_string())
+			} else {
+				(404, r#"{"message":"not found"}"#.to_string())
+			}
+		});
+		let e = engine_with(fake.client(), "proj");
+
+		let names = e
+			.live_replica_names("web", &crate::compose::types::Service::default())
+			.await
+			.expect("live_replica_names should succeed");
+
+		assert_eq!(
+			names,
+			vec![
+				"proj-web-1".to_string(),
+				"proj-web-2".to_string(),
+				"proj-web-3".to_string(),
+			]
+		);
 	}
 
 	use super::{
