@@ -143,7 +143,13 @@ jobs:
           FLAKY=$(echo "$SUM" | grep -oE 'flaky=[0-9]+' | cut -d= -f2)
           PASS=${PASS:-0}; FAIL=${FAIL:-0}; FLAKY=${FLAKY:-0}
           echo "Podman $VER: $PASS passed, $FAIL failed ($FLAKY look like connection-drop flakes)"
-          FAILED_TESTS=$(grep -oE 'PODUP_FAILED_TESTS=.*' "$L" | tail -1 | cut -d= -f2- || true)
+          # Strip CR: the VM talks to us over `-serial stdio`, so every line of
+          # this log arrives CRLF-terminated. The counts survive because they are
+          # extracted with numeric patterns, but the identity list keeps the CR on
+          # its final element — which then matches nothing in the classified list
+          # and reports the last failing test as an unexpected regression. That is
+          # exactly how this gate false-reddened on its first run.
+          FAILED_TESTS=$(grep -oE 'PODUP_FAILED_TESTS=.*' "$L" | tail -1 | cut -d= -f2- | tr -d '\r' || true)
           if [ -n "$FAILED_TESTS" ]; then
             echo "Failing tests on Podman $VER: $FAILED_TESTS"
           fi
@@ -158,19 +164,25 @@ jobs:
           major="${VER%%.*}"
           known="$GITHUB_WORKSPACE/.github/podman-known-failures-$major"
           if [ -f "$known" ]; then
+            # `comm` compares bytes while `sort` orders by locale, so pin both to
+            # C. Defensive rather than observed: the first-run false red was the
+            # CR above, not collation, but the two must agree or comm reports
+            # present entries as missing.
+            LC_ALL=C
+            export LC_ALL
             grep -vE '^[[:space:]]*(#|$)' "$known" | tr -d '[:blank:]' | sort -u > "$RUNNER_TEMP/known.txt"
             printf '%s' "$FAILED_TESTS" | tr ',' '\n' | sed '/^$/d' | sort -u > "$RUNNER_TEMP/failed.txt"
             unexpected="$(comm -23 "$RUNNER_TEMP/failed.txt" "$RUNNER_TEMP/known.txt")"
             if [ -n "$unexpected" ]; then
               echo "::error::Podman $VER: these failing tests are not in $(basename "$known") — a test that used to pass is failing, which is a regression, not nested-virt noise:"
-              echo "$unexpected" | sed 's/^/  /'
+              echo "$unexpected" | awk '{print "  " $0}'
               echo "If a run proves the failure is environmental, add it to that file with the evidence; do not add it to make this red go away."
               exit 1
             fi
             stale="$(comm -13 "$RUNNER_TEMP/failed.txt" "$RUNNER_TEMP/known.txt")"
             if [ -n "$stale" ]; then
               echo "::notice::Podman $VER: listed as environmentally-broken but passing in this run — drop them from $(basename "$known") once that holds:"
-              echo "$stale" | sed 's/^/  /'
+              echo "$stale" | awk '{print "  " $0}'
             fi
             echo "Podman $VER: every failure is on the classified list ($(wc -l < "$RUNNER_TEMP/known.txt") entries)."
           fi
