@@ -143,12 +143,36 @@ jobs:
           FLAKY=$(echo "$SUM" | grep -oE 'flaky=[0-9]+' | cut -d= -f2)
           PASS=${PASS:-0}; FAIL=${FAIL:-0}; FLAKY=${FLAKY:-0}
           echo "Podman $VER: $PASS passed, $FAIL failed ($FLAKY look like connection-drop flakes)"
-          # Surface the failing-test identities (informational) so the nightly
-          # runs accumulate the data a per-test known-flaky allowlist will need
-          # before the gate can tighten past the floor (#1039).
           FAILED_TESTS=$(grep -oE 'PODUP_FAILED_TESTS=.*' "$L" | tail -1 | cut -d= -f2- || true)
           if [ -n "$FAILED_TESTS" ]; then
             echo "Failing tests on Podman $VER: $FAILED_TESTS"
+          fi
+          # Identity gate, per major, when that major has a classified list.
+          # A count cannot tell a regression from noise: the #1072 regression
+          # broke one test and left the pass count at 144, far above the floor,
+          # so nothing went red and it shipped. WHICH tests fail does tell you.
+          # Derive the major from the Podman the VM actually booted (the matrix
+          # guard above already proved they agree), so dropping in a
+          # podman-known-failures-<major> file is all it takes to gate a new
+          # major — no edit here.
+          major="${VER%%.*}"
+          known="$GITHUB_WORKSPACE/.github/podman-known-failures-$major"
+          if [ -f "$known" ]; then
+            grep -vE '^[[:space:]]*(#|$)' "$known" | tr -d '[:blank:]' | sort -u > "$RUNNER_TEMP/known.txt"
+            printf '%s' "$FAILED_TESTS" | tr ',' '\n' | sed '/^$/d' | sort -u > "$RUNNER_TEMP/failed.txt"
+            unexpected="$(comm -23 "$RUNNER_TEMP/failed.txt" "$RUNNER_TEMP/known.txt")"
+            if [ -n "$unexpected" ]; then
+              echo "::error::Podman $VER: these failing tests are not in $(basename "$known") — a test that used to pass is failing, which is a regression, not nested-virt noise:"
+              echo "$unexpected" | sed 's/^/  /'
+              echo "If a run proves the failure is environmental, add it to that file with the evidence; do not add it to make this red go away."
+              exit 1
+            fi
+            stale="$(comm -13 "$RUNNER_TEMP/failed.txt" "$RUNNER_TEMP/known.txt")"
+            if [ -n "$stale" ]; then
+              echo "::notice::Podman $VER: listed as environmentally-broken but passing in this run — drop them from $(basename "$known") once that holds:"
+              echo "$stale" | sed 's/^/  /'
+            fi
+            echo "Podman $VER: every failure is on the classified list ($(wc -l < "$RUNNER_TEMP/known.txt") entries)."
           fi
           # Gate: the core must pass the baseline in .github/podman-baseline-tests.
           # A real regression breaks previously-passing tests and knocks PASS
@@ -156,20 +180,23 @@ jobs:
           # deliberately as the suite grows rather than sitting as a magic number
           # here.
           #
-          # Why the floor is the ONLY hard gate, and the failure count is a
-          # warning: the nested-virt environment produces a broad, run-to-run
-          # variable set of failures that are NOT all connection-drops. Measured
-          # on this very lane: Podman 5 fails the same ~10 streaming/attach/run
-          # tests every run with ZERO connection-drop signatures, and Podman 6
-          # ranges from ~9 to ~34 failures spanning core lifecycle commands
-          # (stop/start/up/down/exec) depending on how loaded the runner is. So
-          # neither "FAIL <= connection-drop count" nor a per-test allowlist can
-          # separate a real regression from nested-virt noise without either
-          # reddening every run or allowlisting the core commands (which would
-          # mask a genuine regression in them). Tightening this gate REQUIRES
-          # first reducing the nested-virt flakiness so the failure set is small
-          # and stable — tracked as a follow-up. Until then the floor is the
-          # honest signal and the breakdown below is informational.
+          # The floor is a second, cruder signal: it catches "fewer tests ran"
+          # (a suite that half-executed reports few failures and few passes),
+          # which the identity gate above cannot see. It stays for both majors.
+          #
+          # Why the failure COUNT is still only a warning, and why Podman 6 has
+          # no identity list yet: the count never separated a regression from
+          # noise — measured on this lane, Podman 5 fails the same ~10
+          # streaming/attach/run tests every run with ZERO connection-drop
+          # signatures, so "FAIL <= drop count" would redden every run. The
+          # identity gate replaces it for any major with a classified list.
+          # Podman 5 has one: every entry was proved environmental by running
+          # the same suite on a real host (155/155 passed) while the lane
+          # reported 10 failures. Podman 6 does not, because its set carries a
+          # variable tail (identities seen in 1-of-5 runs) that would redden
+          # innocent pull requests — the exact failure that forced this floor
+          # down from 120 to 115. Classifying it is #1039; until then Podman 6
+          # keeps the floor alone, and that gap is deliberate.
           BASELINE="$(cat "$GITHUB_WORKSPACE/.github/podman-baseline-tests")"
           [ "$PASS" -ge "$BASELINE" ] || { echo "::error::core suite degraded on Podman $VER ($PASS passed, baseline >= $BASELINE) — real regression or fewer tests ran"; exit 1; }
           if [ "$FAIL" -gt "$FLAKY" ]; then

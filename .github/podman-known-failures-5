@@ -1,0 +1,34 @@
+# Integration tests that fail on the Podman 5 nested-virt lane for environmental
+# reasons, not because podup is broken. The lane fails when a failing test is NOT
+# on this list — a new identity is a real regression, whatever the pass count says.
+#
+# Every entry below was classified by running the SAME suite against real Podman
+# on a physical host (5.4.2, no VM, serial): 155 passed, 0 failed. The lane
+# reports 10 failures for the same code, so these ten are the environment.
+#
+# Adding a line here is a claim that a test cannot pass under nested-virt. Make
+# that claim with a run, not a guess — the whole point of this file is that the
+# 2026-07 regression (#1072) hid inside a count-only gate for a day and a
+# release. Remove a line the moment its test starts passing in the lane.
+#
+# Podman 6 is deliberately NOT gated this way, and this is not an oversight to
+# fix: its failing set carries a variable tail (identities that appear in 1-of-5
+# runs), so a list built from observation would redden innocent pull requests —
+# the failure mode that already forced the pass-count floor down from 120 to 115.
+# Podman 6 keeps the floor until its set is both classified and stable (#1039).
+
+# The `run` family: needs a controlling terminal the VM's serial console cannot
+# provide. All four pass on a real host.
+commands_networking::engine_run_command_succeeds
+commands_networking::engine_run_nonzero_exit_returns_run_exited
+run_flags::engine_run_applies_user_workdir_env_and_entrypoint
+run_flags::engine_run_applies_volume_publish_and_interactive
+run_flags::engine_run_no_deps_skips_dependency_startup
+run_flags::engine_run_starts_dependencies_by_default
+cli_commands::cli_run_subcommand
+
+# Streaming reads that depend on timely delivery through the guest's virtio
+# console; under nested-virt the stream is cut or arrives late.
+cli_flags::cli_logs_tail_limits_output
+niche::cli_attach_streams_output_until_exit
+niche::engine_events_stream_connects
