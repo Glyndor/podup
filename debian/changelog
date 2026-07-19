@@ -1,3 +1,16 @@
+podup (1.11.1) unstable; urgency=medium
+
+  * build streams the build context to the engine instead of buffering the
+    whole tar in memory, so building a large context no longer grows memory
+    with the size of the context.
+  * up shares a single healthcheck poller across all of a container's
+    dependents instead of starting one per dependent, cutting the redundant
+    polling when several services wait on the same dependency.
+  * Every release artifact now ships a per-target CycloneDX SBOM alongside it,
+    so the exact dependency set of each binary and .deb can be audited.
+
+ -- Glyndor <packages@glyndor.net>  Sat, 18 Jul 2026 20:32:01 -0500
+
 podup (1.11.0) unstable; urgency=medium
 
   * up, down and scale now exit non-zero when the operation actually fails,
