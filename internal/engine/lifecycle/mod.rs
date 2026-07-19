@@ -13,7 +13,7 @@ mod targets;
 use std::collections::{HashMap, HashSet};
 
 use crate::compose::types::{ComposeFile, Service, ServiceCondition};
-use crate::error::{ComposeError, Result};
+use crate::error::Result;
 use crate::libpod::API_PREFIX;
 
 use readiness::SharedReady;
@@ -372,7 +372,7 @@ impl Engine {
 							Some(shared) => shared
 								.clone()
 								.await
-								.map_err(ComposeError::DependencyNotReady),
+								.map_err(|e| readiness::unshare_readiness_error(&e)),
 							None => self.wait_healthy(&dep_container, dep_service, None).await,
 						}
 					}

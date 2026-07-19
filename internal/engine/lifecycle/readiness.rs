@@ -99,11 +99,42 @@ impl Engine {
 	}
 }
 
+/// Rebuild an owned error from a shared readiness failure, preserving the
+/// variant a caller matches on.
+///
+/// Sharing one poller across dependents forces its error behind an `Arc`
+/// ([`SharedReady`]), and `ComposeError` is not `Clone`. Wrapping that `Arc` in
+/// [`ComposeError::DependencyNotReady`] for every failure changes what `up()`
+/// returns: code matching `ComposeError::HealthCheckTimeout(_)` stops matching
+/// once the poller is shared, even though the message and the exit code are
+/// identical — an invisible break of a frozen public API.
+///
+/// `wait_healthy` fails exactly three ways. Two carry cheap owned data and are
+/// reconstructed exactly, so a caller sees the variant it saw before the poller
+/// was shared. A [`ComposeError::Podman`] transport error holds a non-`Clone`
+/// payload and cannot be rebuilt, so it keeps the transparent wrapper — which is
+/// what [`ComposeError::innermost`] exists to peel.
+pub(super) fn unshare_readiness_error(shared: &Arc<ComposeError>) -> ComposeError {
+	match &**shared {
+		ComposeError::HealthCheckTimeout(container) => {
+			ComposeError::HealthCheckTimeout(container.clone())
+		}
+		ComposeError::WaitServiceExited { container, code } => ComposeError::WaitServiceExited {
+			container: container.clone(),
+			code: *code,
+		},
+		_ => ComposeError::DependencyNotReady(Arc::clone(shared)),
+	}
+}
+
 #[cfg(all(test, unix))]
 mod tests {
 	use std::collections::HashSet;
+	use std::sync::Arc;
 
+	use super::unshare_readiness_error;
 	use crate::engine::Engine;
+	use crate::error::ComposeError;
 	use crate::libpod::Client;
 
 	fn engine(project: &str) -> Engine {
@@ -174,6 +205,41 @@ services:
 		assert!(e
 			.build_readiness_map(&file, &enabled_all(&file), &None, false)
 			.is_empty());
+	}
+
+	#[test]
+	fn sharing_a_poller_preserves_the_error_variant() {
+		// Regression guard for the public error contract: sharing the poller must
+		// not change which variant `up()` returns. Both reconstructible causes are
+		// asserted by variant, not by message — the wrapper displays transparently,
+		// so a message assertion would have passed while the contract was broken.
+		let timeout = Arc::new(ComposeError::HealthCheckTimeout("db-1".into()));
+		assert!(matches!(
+			unshare_readiness_error(&timeout),
+			ComposeError::HealthCheckTimeout(c) if c == "db-1"
+		));
+
+		let exited = Arc::new(ComposeError::WaitServiceExited {
+			container: "db-1".into(),
+			code: 3,
+		});
+		assert!(matches!(
+			unshare_readiness_error(&exited),
+			ComposeError::WaitServiceExited { container, code } if container == "db-1" && code == 3
+		));
+	}
+
+	#[test]
+	fn a_non_reconstructible_cause_keeps_the_transparent_wrapper() {
+		// `ComposeError::Podman` holds a non-`Clone` payload, so it cannot be
+		// rebuilt; it stays wrapped, and `innermost()` is what peels it.
+		let podman = Arc::new(ComposeError::Podman(crate::libpod::PodmanError::Api {
+			status: 500,
+			message: "boom".into(),
+		}));
+		let out = unshare_readiness_error(&podman);
+		assert!(matches!(out, ComposeError::DependencyNotReady(_)));
+		assert!(matches!(out.innermost(), ComposeError::Podman(_)));
 	}
 
 	#[test]
