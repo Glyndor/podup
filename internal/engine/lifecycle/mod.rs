@@ -4,6 +4,7 @@ mod commands;
 mod down_label;
 mod parallel;
 mod prefetch;
+mod readiness;
 mod run;
 mod scale;
 mod signal;
@@ -12,8 +13,10 @@ mod targets;
 use std::collections::{HashMap, HashSet};
 
 use crate::compose::types::{ComposeFile, Service, ServiceCondition};
-use crate::error::Result;
+use crate::error::{ComposeError, Result};
 use crate::libpod::API_PREFIX;
+
+use readiness::SharedReady;
 
 pub use targets::validate_stop_timeout;
 use targets::{expand_targets, filter_services, in_started_set, validate_targets};
@@ -232,6 +235,9 @@ impl Engine {
 			// layering), so they start concurrently. The barrier between levels
 			// preserves ordering and `service_healthy`/`service_completed`
 			// semantics: a level only begins once the previous one is up.
+			// One shared healthcheck poller per waited-on container, so several
+			// dependents in a level don't each run the same container's healthcheck.
+			let readiness = self.build_readiness_map(file, &enabled, &target_set, start);
 			for level in &levels {
 				let started = level.iter().map(|name| {
 					self.up_one_service(
@@ -244,6 +250,7 @@ impl Engine {
 						no_recreate,
 						force_recreate,
 						start,
+						&readiness,
 					)
 				});
 				futures_util::future::try_join_all(started).await?;
@@ -293,6 +300,7 @@ impl Engine {
 		no_recreate: bool,
 		force_recreate: bool,
 		start: bool,
+		readiness: &HashMap<String, SharedReady<'_>>,
 	) -> Result<()> {
 		if let Some(set) = target_set {
 			if !set.contains(name) {
@@ -356,7 +364,17 @@ impl Engine {
 						);
 						Ok(())
 					} else {
-						self.wait_healthy(&dep_container, dep_service, None).await
+						// Await the one shared poller for this container instead of
+						// starting our own, so a container N services wait on has its
+						// healthcheck run once per interval, not N times. Fall back to
+						// a direct wait if the map somehow lacks this container.
+						match readiness.get(&dep_container) {
+							Some(shared) => shared
+								.clone()
+								.await
+								.map_err(ComposeError::DependencyNotReady),
+							None => self.wait_healthy(&dep_container, dep_service, None).await,
+						}
 					}
 				}
 				ServiceCondition::ServiceCompletedSuccessfully => {

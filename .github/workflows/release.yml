@@ -320,18 +320,56 @@ jobs:
             fi
           done
 
-      - name: Generate SBOM and license attribution
+      - name: Generate per-target SBOMs and license attribution
         # Government/enterprise consumers require a machine-readable SBOM
-        # (CycloneDX, per US EO 14028) and a third-party license attribution.
+        # (CycloneDX, per US EO 14028). A single --all-features run over-declares
+        # every artifact: the .deb drops the self-update stack (ureq/TLS/Ed25519)
+        # and each OS pulls different cfg-gated deps, yet all shipped the same
+        # union SBOM. Generate one CycloneDX per released artifact with that
+        # artifact's exact target triple and feature set, so each lists only what
+        # its binary actually contains (releases standard: "the per-artifact SBOM
+        # lists only that platform's dependencies").
+        #
+        # cargo-cyclonedx's --target uses cargo's --filter-platform resolution,
+        # which needs only the triple, not an installed std — so the six
+        # cross-platform binary targets resolve here without `rustup target add`.
+        # The binaries carry the default feature set; the .debs are built
+        # --no-default-features --features watch,completions (debian/rules), so
+        # their SBOMs pass the same flags or they would misdeclare the package.
+        # License attribution (NOTICES.html) stays a single union — over-listing
+        # licenses is the safe direction for attribution, never under-listing.
         run: |
           cargo install --locked cargo-cyclonedx --version "=0.5.9"
           cargo install --locked --features cli cargo-about --version "=0.9.0"
-          cargo cyclonedx --format json --all-features
-          # cargo-cyclonedx names the file after the package (podup.cdx.json),
-          # so only rename when an older/different layout emitted another name —
-          # mv onto itself errors ("are the same file").
-          src="$(find . -maxdepth 1 -name "*.cdx.json" | sort | head -n1)"
-          [ "$src" = "./podup.cdx.json" ] || mv "$src" podup.cdx.json
+
+          # $1 = output basename (the artifact the SBOM describes; ".cdx.json" is
+          #      appended), $2 = target triple, $3.. = extra cargo-cyclonedx flags.
+          gen_sbom() {
+            local out="$1" target="$2"
+            shift 2
+            cargo cyclonedx --format json --target "$target" \
+              --override-filename "${out}.cdx" "$@"
+          }
+
+          # Binaries — default feature set, one SBOM per target triple.
+          gen_sbom podup-linux-x86_64        x86_64-unknown-linux-musl
+          gen_sbom podup-linux-arm64         aarch64-unknown-linux-musl
+          gen_sbom podup-darwin-arm64        aarch64-apple-darwin
+          gen_sbom podup-darwin-x86_64       x86_64-apple-darwin
+          gen_sbom podup-windows-x86_64.exe  x86_64-pc-windows-msvc
+          gen_sbom podup-windows-arm64.exe   aarch64-pc-windows-msvc
+
+          # Debian packages — the packaged binary drops the `update` feature and
+          # links glibc (gnu), not musl. Name each SBOM after its own .deb.
+          for arch in amd64 arm64; do
+            case "$arch" in
+              amd64) triple=x86_64-unknown-linux-gnu ;;
+              arm64) triple=aarch64-unknown-linux-gnu ;;
+            esac
+            deb="$(ls podup_*_"${arch}".deb)"
+            gen_sbom "$deb" "$triple" --no-default-features --features watch,completions
+          done
+
           cargo about generate about.hbs > NOTICES.html
 
       - name: Generate checksums
@@ -345,7 +383,14 @@ jobs:
             podup-windows-arm64.exe \
             podup_*_amd64.deb \
             podup_*_arm64.deb \
-            podup.cdx.json \
+            podup-linux-x86_64.cdx.json \
+            podup-linux-arm64.cdx.json \
+            podup-darwin-arm64.cdx.json \
+            podup-darwin-x86_64.cdx.json \
+            podup-windows-x86_64.exe.cdx.json \
+            podup-windows-arm64.exe.cdx.json \
+            podup_*_amd64.deb.cdx.json \
+            podup_*_arm64.deb.cdx.json \
             NOTICES.html \
             install.sh \
             install.ps1 \
@@ -372,7 +417,10 @@ jobs:
             "$venv_py" .github/scripts/sign.py "$deb"
           done
           # Sign the supply-chain artifacts so consumers can verify them offline.
-          "$venv_py" .github/scripts/sign.py podup.cdx.json
+          # Every per-target SBOM (the only *.cdx.json files in the workspace).
+          for sbom in *.cdx.json; do
+            "$venv_py" .github/scripts/sign.py "$sbom"
+          done
           "$venv_py" .github/scripts/sign.py NOTICES.html
           # Sign the installers so a user pinning PODUP_VERSION can verify the
           # script they pipe to a shell, not just the binaries it fetches.
@@ -417,8 +465,8 @@ jobs:
             podup_*_arm64.deb.sig \
             SHA256SUMS \
             SHA256SUMS.sig \
-            podup.cdx.json \
-            podup.cdx.json.sig \
+            podup*.cdx.json \
+            podup*.cdx.json.sig \
             NOTICES.html \
             NOTICES.html.sig \
             install.sh \
@@ -427,7 +475,7 @@ jobs:
             install.ps1.sig
 
       - name: Remove release artifacts
-        run: rm -f podup-* podup_* podup.cdx.json* NOTICES.html* SHA256SUMS SHA256SUMS.sig install.sh.sig install.ps1.sig
+        run: rm -f podup-* podup_* NOTICES.html* SHA256SUMS SHA256SUMS.sig install.sh.sig install.ps1.sig
 
       - name: Publish to crates.io
         env:

@@ -80,52 +80,23 @@ fn append_extra_files<W: std::io::Write>(
 	Ok(())
 }
 
-/// Write inline Dockerfile content into the context tar as `.dockerfile-inline`.
-pub(super) fn build_context_tar_with_inline(
-	context: &Path,
-	inline: &str,
-	extra_files: &[(String, Vec<u8>)],
-) -> Result<(Vec<u8>, String)> {
-	let inline_name = ".dockerfile-inline";
-	let ignore_patterns = read_dockerignore(context);
+/// The `.dockerfile-inline` entry name synthesized for an inline Dockerfile.
+pub(super) const INLINE_DOCKERFILE_NAME: &str = ".dockerfile-inline";
 
-	let encoder = GzEncoder::new(Vec::new(), Compression::default());
-	let mut tar = tar::Builder::new(encoder);
-
-	let mut header = tar::Header::new_gnu();
-	header.set_size(inline.len() as u64);
-	header.set_mode(0o644);
-	header.set_cksum();
-	tar.append_data(&mut header, inline_name, inline.as_bytes())
-		.map_err(|e| ComposeError::Build(e.to_string()))?;
-
-	// Skip the user's `.dockerignore` here; it is rewritten below with extra
-	// rules excluding every synthesized entry (inline Dockerfile, build secrets).
-	append_context(&mut tar, context, &ignore_patterns, &[".dockerignore"], &[])?;
-
-	let mut synthesized: Vec<&str> = vec![inline_name];
-	synthesized.extend(extra_files.iter().map(|(n, _)| n.as_str()));
-	append_dockerignore(&mut tar, &synthesized_dockerignore(context, &synthesized))?;
-
-	append_extra_files(&mut tar, extra_files)?;
-
-	let gz = tar
-		.into_inner()
-		.map_err(|e| ComposeError::Build(e.to_string()))?;
-	let bytes = gz
-		.finish()
-		.map_err(|e| ComposeError::Build(e.to_string()))?;
-	Ok((bytes, inline_name.to_string()))
-}
-
-pub(crate) fn build_context_tar(
+/// Assemble the gzipped build-context tar and write it straight to `writer`.
+///
+/// This is the shared core of context assembly. `build_context_tar` wraps it
+/// to collect the bytes into a `Vec` (tests, non-streaming callers); the build
+/// path feeds a channel-backed writer so a multi-gigabyte context is streamed to
+/// the socket without ever inflating the process's RSS.
+pub(super) fn stream_build_context<W: std::io::Write>(
+	writer: W,
 	context: &Path,
 	dockerfile: &str,
 	extra_files: &[(String, Vec<u8>)],
-) -> Result<Vec<u8>> {
+) -> Result<()> {
 	let ignore_patterns = read_dockerignore(context);
-
-	let encoder = GzEncoder::new(Vec::new(), Compression::default());
+	let encoder = GzEncoder::new(writer, Compression::default());
 	let mut tar = tar::Builder::new(encoder);
 
 	// Force-include the active Dockerfile so a `.dockerignore` that matches it
@@ -147,15 +118,81 @@ pub(crate) fn build_context_tar(
 		append_dockerignore(&mut tar, &synthesized_dockerignore(context, &synthesized))?;
 	}
 	append_extra_files(&mut tar, extra_files)?;
+	finish_tar(tar)
+}
 
+/// As [`stream_build_context`], but injects an inline Dockerfile as
+/// [`INLINE_DOCKERFILE_NAME`] instead of shipping one from the context.
+pub(super) fn stream_build_context_with_inline<W: std::io::Write>(
+	writer: W,
+	context: &Path,
+	inline: &str,
+	extra_files: &[(String, Vec<u8>)],
+) -> Result<()> {
+	let ignore_patterns = read_dockerignore(context);
+	let encoder = GzEncoder::new(writer, Compression::default());
+	let mut tar = tar::Builder::new(encoder);
+
+	let mut header = tar::Header::new_gnu();
+	header.set_size(inline.len() as u64);
+	header.set_mode(0o644);
+	header.set_cksum();
+	tar.append_data(&mut header, INLINE_DOCKERFILE_NAME, inline.as_bytes())
+		.map_err(|e| ComposeError::Build(e.to_string()))?;
+
+	// Skip the user's `.dockerignore` here; it is rewritten below with extra
+	// rules excluding every synthesized entry (inline Dockerfile, build secrets).
+	append_context(&mut tar, context, &ignore_patterns, &[".dockerignore"], &[])?;
+
+	let mut synthesized: Vec<&str> = vec![INLINE_DOCKERFILE_NAME];
+	synthesized.extend(extra_files.iter().map(|(n, _)| n.as_str()));
+	append_dockerignore(&mut tar, &synthesized_dockerignore(context, &synthesized))?;
+
+	append_extra_files(&mut tar, extra_files)?;
+	finish_tar(tar)
+}
+
+/// Finish the gzip stream and flush the sink. `GzEncoder::finish` writes the
+/// trailer but does not flush the underlying writer, so a channel-backed writer
+/// would strand its last buffered chunk without this explicit flush.
+fn finish_tar<W: std::io::Write>(tar: tar::Builder<GzEncoder<W>>) -> Result<()> {
 	let gz = tar
 		.into_inner()
 		.map_err(|e| ComposeError::Build(e.to_string()))?;
-	let bytes = gz
+	let mut writer = gz
 		.finish()
 		.map_err(|e| ComposeError::Build(e.to_string()))?;
+	writer
+		.flush()
+		.map_err(|e| ComposeError::Build(e.to_string()))?;
+	Ok(())
+}
 
-	Ok(bytes)
+/// Collect [`stream_build_context_with_inline`] into a `Vec`. Test-only: the
+/// build path streams the tar; these wrappers let the tar assembly be asserted
+/// on its bytes.
+#[cfg(test)]
+pub(super) fn build_context_tar_with_inline(
+	context: &Path,
+	inline: &str,
+	extra_files: &[(String, Vec<u8>)],
+) -> Result<(Vec<u8>, String)> {
+	let mut buf = Vec::new();
+	stream_build_context_with_inline(&mut buf, context, inline, extra_files)?;
+	Ok((buf, INLINE_DOCKERFILE_NAME.to_string()))
+}
+
+/// Collect [`stream_build_context`] into a `Vec`. Test-only (see
+/// [`build_context_tar_with_inline`]).
+#[cfg(test)]
+pub(crate) fn build_context_tar(
+	context: &Path,
+	dockerfile: &str,
+	extra_files: &[(String, Vec<u8>)],
+) -> Result<Vec<u8>> {
+	let mut buf = Vec::new();
+	stream_build_context(&mut buf, context, dockerfile, extra_files)?;
+	Ok(buf)
 }
 
 /// Append a synthesized `.dockerignore` entry to the context tar.

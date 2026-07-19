@@ -123,9 +123,12 @@ PY
 sha256sum --check --ignore-missing SHA256SUMS
 ```
 
-The release also ships a CycloneDX SBOM (`podup.cdx.json`) and a third-party
-license attribution (`NOTICES.html`), each with a detached `.sig` that verifies
-against the same key.
+The release also ships a CycloneDX SBOM **per artifact** — one for each binary
+(e.g. `podup-linux-x86_64.cdx.json`) and each Debian package
+(`podup_<version>_amd64.deb.cdx.json`), listing only that target's actual
+dependencies rather than a union across every platform — plus a third-party
+license attribution (`NOTICES.html`). Each carries a detached `.sig` that
+verifies against the same key.
 
 ## Air-gapped installation
 

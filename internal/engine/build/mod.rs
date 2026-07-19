@@ -8,6 +8,7 @@
 mod context;
 mod pull;
 mod push;
+mod stream;
 mod tags;
 /// Shared with the `up` image-prefetch stage so it resolves a service's
 /// effective pull policy identically to the pull path below.
@@ -29,7 +30,8 @@ use crate::libpod::urlencoded;
 use crate::libpod::API_PREFIX;
 use crate::size;
 
-use context::{build_context_tar, build_context_tar_with_inline, map_additional_context};
+use context::{map_additional_context, INLINE_DOCKERFILE_NAME};
+use stream::{context_body, ContextSource};
 use tags::{is_remote_context, looks_like_secret};
 
 use super::Engine;
@@ -37,6 +39,19 @@ use super::Engine;
 /// Files to ship inside the build-context tar plus their matching `secrets=`
 /// specs (`id=NAME,src=ENTRY`) for the libpod build endpoint.
 type ResolvedBuildSecrets = (Vec<(String, Vec<u8>)>, Vec<String>);
+
+/// How `build_service` sends the context to the libpod build endpoint.
+enum BodyPlan {
+	/// A Git/URL context — Podman clones it server-side, so the body is empty.
+	Empty,
+	/// A local context, streamed to the socket from a `spawn_blocking` tar writer
+	/// so its size never drives the process's RSS.
+	Stream {
+		context: std::path::PathBuf,
+		source: ContextSource,
+		secrets: Vec<(String, Vec<u8>)>,
+	},
+}
 
 /// `docker compose build`-style CLI overrides. Each augments (never weakens)
 /// the per-service `build:` config: a flag forces the behaviour on even when
@@ -119,7 +134,7 @@ impl Engine {
 		// A Git/URL context is cloned server-side by Podman via the `remote`
 		// query parameter — there is no local directory to tar. Tar-only features
 		// (inline Dockerfile, in-tar build secrets) do not apply.
-		let (tar_bytes, dockerfile_name, secret_specs) = if remote_context {
+		let (body_plan, dockerfile_name, secret_specs) = if remote_context {
 			info!("building {tag} from remote context {context_str}");
 			if build.dockerfile_inline().is_some() {
 				warn!("build.dockerfile_inline is ignored for a remote build context");
@@ -128,7 +143,7 @@ impl Engine {
 				warn!("build.secrets are ignored for a remote build context");
 			}
 			let df = build.dockerfile().unwrap_or("Dockerfile").to_string();
-			(Vec::new(), df, Vec::new())
+			(BodyPlan::Empty, df, Vec::new())
 		} else {
 			let context_path = self.base_dir.join(&context_str);
 			// Fail fast with the service name and the resolved context path if the
@@ -150,31 +165,40 @@ impl Engine {
 			// over the socket).
 			let (secret_files, secret_specs) = self.resolve_build_secrets(build, file)?;
 
-			let inline = build.dockerfile_inline().map(|s| s.to_string());
-			// Honour an explicit dockerfile; otherwise prefer Dockerfile but fall
-			// back to Podman's native Containerfile when only the latter is present.
-			let df = match build.dockerfile() {
-				Some(name) => name.to_string(),
-				None if !context_path.join("Dockerfile").is_file()
-					&& context_path.join("Containerfile").is_file() =>
-				{
-					"Containerfile".to_string()
+			// The context tar is streamed to the socket (see the POST below), never
+			// buffered, so a multi-gigabyte context doesn't inflate RSS. Decide the
+			// source and the dockerfile name here; the blocking tar walk happens
+			// while the request body is being sent.
+			let (source, dockerfile_name) = match build.dockerfile_inline() {
+				Some(inline) => (
+					ContextSource::Inline(inline.to_string()),
+					INLINE_DOCKERFILE_NAME.to_string(),
+				),
+				None => {
+					// Honour an explicit dockerfile; otherwise prefer Dockerfile
+					// but fall back to Podman's native Containerfile when only the
+					// latter is present.
+					let df = match build.dockerfile() {
+						Some(name) => name.to_string(),
+						None if !context_path.join("Dockerfile").is_file()
+							&& context_path.join("Containerfile").is_file() =>
+						{
+							"Containerfile".to_string()
+						}
+						None => "Dockerfile".to_string(),
+					};
+					(ContextSource::Dockerfile(df.clone()), df)
 				}
-				None => "Dockerfile".to_string(),
 			};
-			let ctx = context_path.clone();
-			let (bytes, name) =
-				tokio::task::spawn_blocking(move || -> Result<(Vec<u8>, String)> {
-					if let Some(inline_s) = inline {
-						build_context_tar_with_inline(&ctx, &inline_s, &secret_files)
-					} else {
-						let bytes = build_context_tar(&ctx, &df, &secret_files)?;
-						Ok((bytes, df))
-					}
-				})
-				.await
-				.map_err(|e| ComposeError::Build(e.to_string()))??;
-			(bytes, name, secret_specs)
+			(
+				BodyPlan::Stream {
+					context: context_path,
+					source,
+					secrets: secret_files,
+				},
+				dockerfile_name,
+				secret_specs,
+			)
 		};
 
 		let arg_map = build.args().to_map();
@@ -332,12 +356,39 @@ impl Engine {
 		}
 
 		let path = format!("{API_PREFIX}/build?{qs}");
-		let body_bytes = Bytes::from(tar_bytes);
-		let resp = self
-			.client
-			.post_bytes_stream(&path, body_bytes, "application/x-tar")
-			.await
-			.map_err(ComposeError::Podman)?;
+		let resp = match body_plan {
+			BodyPlan::Empty => self
+				.client
+				.post_bytes_stream(&path, Bytes::new(), "application/x-tar")
+				.await
+				.map_err(ComposeError::Podman)?,
+			BodyPlan::Stream {
+				context,
+				source,
+				secrets,
+			} => {
+				// The tar writer runs on a blocking thread feeding the request
+				// body; drain the body first, then join the writer — joining
+				// before the body is drained would deadlock on the bounded
+				// channel. If the request itself failed, that transport error is
+				// the real cause; otherwise surface any context-assembly error.
+				let (producer, body) = context_body(context, source, secrets);
+				let sent = self
+					.client
+					.post_stream_body(&path, body, "application/x-tar")
+					.await;
+				let produced = producer
+					.await
+					.map_err(|e| ComposeError::Build(e.to_string()))?;
+				match sent {
+					Ok(resp) => {
+						produced?;
+						resp
+					}
+					Err(e) => return Err(ComposeError::Podman(e)),
+				}
+			}
+		};
 		let mut stream = crate::libpod::parse_json_lines::<BuildOutput>(resp.into_body());
 
 		while let Some(result) = stream.next().await {
