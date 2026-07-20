@@ -1,0 +1,67 @@
+# The shape where a level-barrier scheduler loses to a per-service DAG (#1071).
+#
+# `up` starts services in dependency LEVELS: every service in level N must finish
+# before any service in level N+1 begins. docker compose walks a per-service DAG
+# instead, so a service starts the moment *its own* dependencies are ready.
+#
+# The two are indistinguishable unless a level contains both a fast and a slow
+# member with something behind the fast one. That is what this builds:
+#
+#   level 0:  slow (≈8s to healthy)   fast (≈1s to healthy)
+#   level 1:  after_fast  ->  fast     [waits for `slow` too, under barriers]
+#   level 2:  chain2      ->  after_fast
+#   level 3:  chain3      ->  chain2
+#
+# Under barriers, `after_fast` cannot start until `slow` is healthy, even though
+# it does not depend on it — and everything behind it inherits that wait. Under a
+# DAG the whole chain runs while `slow` is still coming up.
+#
+# The predicted gap is therefore roughly (slow − fast), once, not per level. The
+# point of measuring is to find out whether that is worth a scheduler rewrite.
+services:
+  # Slow to report healthy: a long start_period plus a first check that fails.
+  slow:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sh", "-c", "sleep 8 && touch /tmp/ready && sleep 3600"]
+    init: true
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/ready"]
+      interval: 1s
+      timeout: 2s
+      retries: 20
+
+  # Healthy almost immediately.
+  fast:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sh", "-c", "touch /tmp/ready && sleep 3600"]
+    init: true
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/ready"]
+      interval: 1s
+      timeout: 2s
+      retries: 20
+
+  # Depends only on `fast`. Under barriers it waits for `slow` as well.
+  after_fast:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+    depends_on:
+      fast:
+        condition: service_healthy
+
+  chain2:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+    depends_on:
+      after_fast:
+        condition: service_started
+
+  chain3:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+    depends_on:
+      chain2:
+        condition: service_started
