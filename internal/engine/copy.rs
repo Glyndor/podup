@@ -208,7 +208,12 @@ impl Engine {
 			urlencoded(&extract_dir),
 		);
 		self.client
-			.put_bytes_ok(&path, Bytes::from(tar_bytes), "application/x-tar")
+			// `pack_path` gzips, so the body is a gzipped tar and saying
+			// `application/x-tar` was simply false. Podman 5 sniffs the magic bytes
+			// and forgives either label. This does NOT fix #1097 — the lane proved
+			// Podman 6 rejects the upload identically both ways — it just stops
+			// podup lying about what it sends.
+			.put_bytes_ok(&path, Bytes::from(tar_bytes), "application/gzip")
 			.await
 			.map_err(ComposeError::Podman)?;
 
