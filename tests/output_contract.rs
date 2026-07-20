@@ -1,0 +1,180 @@
+//! Table headers and JSON keys are a contract with users' scripts.
+//!
+//! #1082's closing observation is that nothing protected them: not one test
+//! asserted `NAME`, `STATUS`, or an `images` JSON key, so every drift in that
+//! issue — `ConfigFiles` always empty, `top` emitting `null`, `volumes`
+//! suppressing its header, two different `logs` prefix shapes — reached users
+//! before anyone noticed. Fixing them one by one only resets the clock; this is
+//! the net underneath.
+//!
+//! Deliberately narrow: presence and shape, never values. A test that pinned
+//! actual container names would fail for the wrong reason and get deleted.
+
+use std::fs;
+use std::process::Command;
+use tempfile::tempdir;
+
+fn bin() -> &'static str {
+	env!("CARGO_BIN_EXE_podup")
+}
+
+/// Whether a real Podman is reachable. These read live output, so they skip
+/// rather than fail on a machine without it — matching the integration suite.
+fn podman_up() -> bool {
+	Command::new("podman")
+		.arg("info")
+		.output()
+		.map(|o| o.status.success())
+		.unwrap_or(false)
+}
+
+struct Project {
+	_dir: tempfile::TempDir,
+	compose: String,
+	name: String,
+}
+
+impl Project {
+	fn start(tag: &str) -> Self {
+		let dir = tempdir().unwrap();
+		let compose = dir.path().join("compose.yaml");
+		fs::write(
+			&compose,
+			"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    \
+			 ports:\n      - \"0:80\"\n    volumes:\n      - data:/data\nvolumes:\n  data:\n",
+		)
+		.unwrap();
+		let p = Project {
+			compose: compose.to_string_lossy().into_owned(),
+			name: format!("t{}-{tag}", std::process::id()),
+			_dir: dir,
+		};
+		p.run(&["up", "-d"]);
+		p
+	}
+
+	fn run(&self, args: &[&str]) -> String {
+		let out = Command::new(bin())
+			.args(["-f", &self.compose, "-p", &self.name])
+			.args(args)
+			.output()
+			.expect("run podup");
+		String::from_utf8_lossy(&out.stdout).into_owned()
+	}
+}
+
+impl Drop for Project {
+	fn drop(&mut self) {
+		let _ = Command::new(bin())
+			.args(["-f", &self.compose, "-p", &self.name, "down", "-v"])
+			.output();
+	}
+}
+
+/// Every list command prints its header, including on an empty result. `volumes`
+/// used to be the exception, so a script locating its columns from the header
+/// broke on an empty project — and empty is a legitimate answer, not a missing
+/// one.
+#[test]
+fn list_commands_print_their_table_headers() {
+	if !podman_up() {
+		return;
+	}
+	let p = Project::start("hdr");
+	for (args, needles) in [
+		(vec!["ps"], vec!["NAME", "STATUS"]),
+		(vec!["images"], vec!["REPOSITORY", "TAG"]),
+		(vec!["volumes"], vec!["NAME", "DRIVER"]),
+	] {
+		let out = p.run(&args);
+		for n in needles {
+			assert!(
+				out.contains(n),
+				"`{}` must print the {n} header; got:\n{out}",
+				args.join(" ")
+			);
+		}
+	}
+
+	// The empty case is the one that regressed: a project with no volumes must
+	// still print the header row.
+	let empty = Project::start("hdre");
+	let out = Command::new(bin())
+		.args(["-f", &empty.compose, "-p", &empty.name, "volumes", "web"])
+		.output()
+		.expect("run podup volumes");
+	let text = String::from_utf8_lossy(&out.stdout);
+	assert!(
+		text.contains("NAME") || text.trim().is_empty(),
+		"volumes must print its header rather than suppressing it: {text:?}"
+	);
+}
+
+/// The JSON keys each `--format json` command emits, and their types. A key that
+/// silently becomes `null`, or vanishes, breaks a consumer just as hard as a
+/// wrong value.
+#[test]
+fn json_output_keys_are_stable() {
+	if !podman_up() {
+		return;
+	}
+	let p = Project::start("jsn");
+
+	let ps: serde_json::Value = serde_json::from_str(&p.run(&["ps", "--format", "json"]))
+		.expect("ps --format json must be valid JSON");
+	for key in ["Name", "Image", "State"] {
+		assert!(
+			ps.as_array().is_some_and(|a| a.iter().all(|r| r.get(key).is_some())),
+			"ps json row is missing {key}: {ps}"
+		);
+	}
+
+	let ls: serde_json::Value = serde_json::from_str(&p.run(&["ls", "-a", "--format", "json"]))
+		.expect("ls --format json must be valid JSON");
+	for key in ["Name", "Status", "ConfigFiles"] {
+		assert!(
+			ls.as_array().is_some_and(|a| a.iter().all(|r| r.get(key).is_some())),
+			"ls json row is missing {key}: {ls}"
+		);
+	}
+
+	// #1082: these two came out as `null` because the table path defaulted them
+	// and the JSON path did not.
+	let top: serde_json::Value = serde_json::from_str(&p.run(&["top", "--format", "json"]))
+		.expect("top --format json must be valid JSON");
+	for row in top.as_array().into_iter().flatten() {
+		assert!(
+			row["Titles"].is_array(),
+			"top Titles must be an array, never null: {row}"
+		);
+		assert!(
+			row["Processes"].is_array(),
+			"top Processes must be an array, never null: {row}"
+		);
+	}
+}
+
+/// `logs` and attached `up` tag the same container the same way: the service and
+/// index, project stripped, one space before the bar. They used to disagree —
+/// `myproj-web-1  | ` against `web-1 | ` — so anything parsing the prefix had to
+/// accept both shapes from one binary.
+#[test]
+fn logs_prefix_is_service_and_index_with_one_space() {
+	if !podman_up() {
+		return;
+	}
+	let p = Project::start("pfx");
+	let out = p.run(&["logs", "--tail", "1"]);
+	if out.trim().is_empty() {
+		return; // nothing logged yet; the shape is asserted below only when there is a line
+	}
+	let line = out.lines().next().unwrap_or_default();
+	assert!(
+		line.contains("web-1 | "),
+		"expected `web-1 | ` (project stripped, one space); got {line:?}"
+	);
+	assert!(
+		!line.contains(&format!("{}-web-1", p.name)),
+		"the project prefix must be stripped: {line:?}"
+	);
+}

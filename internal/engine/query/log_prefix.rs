@@ -33,7 +33,11 @@ impl LinePrefixer {
 		// Colour the whole prefix with the service's stable colour so aggregated
 		// multi-service output is easy to scan. Gated on stdout being a colour sink
 		// (a raw write anstream does not strip for us) and on `--no-color`.
-		let plain = format!("{label}  | ");
+		// One space before the bar, not two. Attached `up` already prints
+		// `{prefix} | ` with one, so the same container was tagged two different
+		// ways by two commands in the same binary — and anything parsing the
+		// prefix had to accept both. docker compose uses one space too.
+		let plain = format!("{label} | ");
 		let label = crate::ui::paint(
 			crate::ui::service_style(label),
 			&plain,
@@ -92,15 +96,18 @@ impl LinePrefixer {
 mod tests {
 	use super::LinePrefixer;
 
+	/// #1082: one space before the bar. Attached `up` already used one, so the
+	/// same container was tagged two different ways by two commands in the same
+	/// binary; docker compose uses one too.
 	#[test]
 	fn line_prefixer_tags_lines_and_buffers_partials() {
 		let mut p = LinePrefixer::new("web", true, false);
 		let mut out: Vec<u8> = Vec::new();
 		p.write(&mut out, b"hello\nwor").unwrap();
 		// The complete line is tagged; the partial "wor" waits for its newline.
-		assert_eq!(out, b"web  | hello\n");
+		assert_eq!(out, b"web | hello\n");
 		p.write(&mut out, b"ld\n").unwrap();
-		assert_eq!(out, b"web  | hello\nweb  | world\n");
+		assert_eq!(out, b"web | hello\nweb | world\n");
 	}
 
 	#[test]
@@ -110,7 +117,7 @@ mod tests {
 		p.write(&mut out, b"partial").unwrap();
 		assert!(out.is_empty(), "a line with no newline is held back");
 		p.flush_tail(&mut out);
-		assert_eq!(out, b"db  | partial\n");
+		assert_eq!(out, b"db | partial\n");
 	}
 
 	#[test]
@@ -135,7 +142,7 @@ mod tests {
 			p.pending.len()
 		);
 		assert!(
-			out.starts_with(b"web  | "),
+			out.starts_with(b"web | "),
 			"the flushed partial is prefixed"
 		);
 	}

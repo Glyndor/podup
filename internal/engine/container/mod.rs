@@ -138,6 +138,20 @@ impl Engine {
 		labels.insert("podup.project".to_string(), self.project.clone());
 		labels.insert("podup.service".to_string(), service_name.to_string());
 		labels.insert("podup.config-hash".to_string(), config_hash(service, file)?);
+		// Where this project's compose file lives. `ls` discovers projects purely
+		// by label and keeps no other record, so without this its `ConfigFiles`
+		// column can only ever be blank. Omitted rather than written empty when the
+		// caller did not supply the paths, so a reader can tell "not recorded" from
+		// "recorded as nothing".
+		if !self.compose_files.is_empty() {
+			let joined = self
+				.compose_files
+				.iter()
+				.map(|p| p.display().to_string())
+				.collect::<Vec<_>>()
+				.join(",");
+			labels.insert("podup.config-files".to_string(), joined);
+		}
 
 		// annotations
 		let annotations: HashMap<String, String> = service.annotations.to_map();

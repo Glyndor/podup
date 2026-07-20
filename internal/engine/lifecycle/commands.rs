@@ -205,6 +205,15 @@ impl Engine {
 
 		let mut last_nonzero = 0i64;
 		for name in &order {
+			// One line per service, not per replica. docker compose prints a single
+			// exit code for each service it was asked to wait on, so a caller can
+			// pair its input list with the output line for line; printing per
+			// replica made a service scaled to 3 return 3 lines and silently broke
+			// that pairing. A scaled service reports the last non-zero code it saw,
+			// falling back to 0 when every replica exited cleanly — the same rule
+			// the command already used for its own exit status.
+			let mut service_code = 0i64;
+			let mut waited = false;
 			// Only wait on containers Podman actually has. The static-name fallback
 			// would POST `/wait` to a never-created predicted name and surface a raw
 			// HTTP 404; docker compose treats "nothing to wait on" as an idempotent
@@ -222,10 +231,16 @@ impl Engine {
 					.post_empty_json_unbounded::<i64>(&path)
 					.await
 					.map_err(ComposeError::Podman)?;
-				println!("{code}");
+				waited = true;
 				if code != 0 {
+					service_code = code;
 					last_nonzero = code;
 				}
+			}
+			// A service with no containers stays the idempotent no-op it was: it
+			// contributes no line at all, rather than a spurious 0.
+			if waited {
+				println!("{service_code}");
 			}
 		}
 		if last_nonzero != 0 {

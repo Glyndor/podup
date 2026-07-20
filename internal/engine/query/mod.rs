@@ -134,6 +134,20 @@ fn is_go_duration(v: &str) -> bool {
 	segments > 0
 }
 
+/// The label `logs` tags a container's lines with: the container name minus the
+/// project prefix, so `myproj-web-1` reads as `web-1`.
+///
+/// Attached `up` already strips it this way (`inspect.rs`), so before this the
+/// same container was tagged `myproj-web-1  | ` by one command and `web-1 | ` by
+/// the other — two shapes for one thing, in one binary. docker compose prints
+/// the short form.
+fn display_label(container_name: &str, project: &str) -> String {
+	container_name
+		.strip_prefix(&format!("{project}-"))
+		.unwrap_or(container_name)
+		.to_string()
+}
+
 /// Whether a failed write to the log sink should end the follow loop.
 ///
 /// A `BrokenPipe` is the ordinary way a piped consumer signals it has read
@@ -299,8 +313,9 @@ impl Engine {
 						// let a sibling future block the thread on the same lock
 						// and deadlock. Each frame still locks once and flushes,
 						// keeping interleaved `logs -f` output prompt.
-						let mut out_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
-						let mut err_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
+						let label = display_label(&container_name, &self.project);
+						let mut out_pfx = LinePrefixer::new(&label, prefix, allow_color);
+						let mut err_pfx = LinePrefixer::new(&label, prefix, allow_color);
 						while let Some(msg) = stream.next().await {
 							let wrote = match msg {
 								Ok(LogOutput::StdOut { message }) => {
@@ -351,8 +366,9 @@ impl Engine {
 				// across the await loop would starve concurrent log emissions.
 				// Flush after each frame so `logs -f` still streams promptly.
 				let mut out = std::io::stdout().lock();
-				let mut out_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
-				let mut err_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
+				let label = display_label(&container_name, &self.project);
+				let mut out_pfx = LinePrefixer::new(&label, prefix, allow_color);
+				let mut err_pfx = LinePrefixer::new(&label, prefix, allow_color);
 				while let Some(msg) = stream.next().await {
 					let wrote = match msg {
 						Ok(LogOutput::StdOut { message }) => out_pfx.write(&mut out, &message),

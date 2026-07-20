@@ -564,6 +564,7 @@ async fn run() -> podup::Result<()> {
 		}
 	);
 	let engine = podup::Engine::with_base_dir(client, project, base_dir)
+		.with_compose_files(compose_files.iter().map(|f| resolve::absolute(f)).collect())
 		.with_stop_timeout(stop_timeout)
 		.with_scale_overrides(scale_overrides)
 		.with_up_overrides(pull_override, no_build, quiet_pull)
