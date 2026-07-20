@@ -523,8 +523,8 @@ pub(crate) enum Commands {
 		/// No effect; accepted only for docker-compose compatibility. podup never
 		/// allocates a pseudo-TTY.
 		// `docker compose exec` spells the long form `--no-tty`, so that is the
-		// primary here; `--no-TTY` stays accepted so the spelling `run` takes
-		// also works on `exec`. See the note on `run`'s field.
+		// primary here; `--no-TTY` stays accepted so the spelling `run` uses also
+		// works on `exec`. See the note on `run`'s field.
 		#[arg(short = 'T', long = "no-tty", visible_alias = "no-TTY")]
 		no_tty: bool,
 		/// Index of the container when the service has multiple replicas (1-based).
