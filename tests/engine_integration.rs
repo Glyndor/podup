@@ -1,8 +1,9 @@
 //! Integration tests that exercise the engine against a real Podman daemon.
 //!
-//! All tests skip gracefully when Podman is not reachable. In CI the
-//! `podman` input to the rust-ci reusable starts the socket and sets
-//! `PODMAN_SOCKET` before the coverage gate runs.
+//! All tests skip gracefully when Podman is not reachable, so they are safe to
+//! run on a machine without it. Set `PODUP_REQUIRE_PODMAN=1` where Podman is
+//! guaranteed — the nested-virt lane does — and an unreachable Podman becomes a
+//! hard failure rather than a suite that reports `ok` having run nothing.
 //!
 //! The test bodies are split across the `engine_integration/` submodules to
 //! keep each file under the source line limit. Shared helpers live here at the
@@ -16,11 +17,22 @@ use podup::{parse_files_with_env_files, parse_str, Client, Engine};
 // ---------------------------------------------------------------------------
 
 async fn podman() -> Option<Client> {
-	let client = podup::podman::connect_from_env()
-		.or_else(|_| podup::podman::connect(None))
-		.ok()?;
-	client.ping().await.ok()?;
-	Some(client)
+	let connected =
+		match podup::podman::connect_from_env().or_else(|_| podup::podman::connect(None)) {
+			Ok(client) => client.ping().await.is_ok().then_some(client),
+			Err(_) => None,
+		};
+	// Skipping is the right default: these tests must not fail on a developer
+	// machine without Podman. But a silent skip reports `ok` for a test that
+	// executed nothing, and libtest counts it as passed — so an environment
+	// where Podman never came up looks identical to a clean run. Somewhere that
+	// Podman is guaranteed (the nested-virt lane), set PODUP_REQUIRE_PODMAN and
+	// the skip becomes a hard failure instead of a green lie.
+	assert!(
+		!(connected.is_none() && std::env::var_os("PODUP_REQUIRE_PODMAN").is_some()),
+		"PODUP_REQUIRE_PODMAN is set but Podman is unreachable — refusing to report this suite as passing without running it"
+	);
+	connected
 }
 
 /// Unique project name per test run + per test to avoid parallel conflicts.

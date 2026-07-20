@@ -13,7 +13,7 @@ mod targets;
 use std::collections::{HashMap, HashSet};
 
 use crate::compose::types::{ComposeFile, Service, ServiceCondition};
-use crate::error::{ComposeError, Result};
+use crate::error::Result;
 use crate::libpod::API_PREFIX;
 
 use readiness::SharedReady;
@@ -372,7 +372,7 @@ impl Engine {
 							Some(shared) => shared
 								.clone()
 								.await
-								.map_err(ComposeError::DependencyNotReady),
+								.map_err(|e| readiness::unshare_readiness_error(&e)),
 							None => self.wait_healthy(&dep_container, dep_service, None).await,
 						}
 					}
@@ -677,6 +677,10 @@ impl Engine {
 	/// `local_only`, only images of services that build locally (a `build:`
 	/// section) are removed — matching `docker compose down --rmi local`.
 	pub async fn remove_service_images(&self, file: &ComposeFile, local_only: bool) -> Result<()> {
+		// Aggregate like every sibling loop in this teardown: complete the sweep,
+		// then report the first real failure. Warning and returning Ok meant
+		// `down --rmi` exited 0 having left images behind.
+		let mut first_err: Option<crate::error::ComposeError> = None;
 		for (name, service) in &file.services {
 			let builds_locally = service.build.is_some();
 			if local_only && !builds_locally {
@@ -706,10 +710,13 @@ impl Engine {
 				Err(e) if e.is_image_in_use() => {
 					tracing::debug!("image {image} is still in use — skipping removal")
 				}
-				Err(e) => tracing::warn!("could not remove image {image}: {e}"),
+				Err(e) => {
+					tracing::warn!("could not remove image {image}: {e}");
+					first_err.get_or_insert(crate::error::ComposeError::Podman(e));
+				}
 			}
 		}
-		Ok(())
+		first_err.map_or(Ok(()), Err)
 	}
 }
 

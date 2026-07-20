@@ -410,7 +410,7 @@ impl Engine {
 			}
 		}
 
-		self.apply_extra_tags(build, &tag).await;
+		self.apply_extra_tags(build, &tag).await?;
 		Ok(())
 	}
 
@@ -467,7 +467,7 @@ impl Engine {
 	/// The primary `tag` is skipped: when no `image:` is set it is already
 	/// `tags[0]`, which the build itself produced, so re-tagging it onto itself
 	/// would be a no-op API call.
-	async fn apply_extra_tags(&self, build: &BuildConfig, tag: &str) {
+	async fn apply_extra_tags(&self, build: &BuildConfig, tag: &str) -> Result<()> {
 		for extra_tag in build.tags() {
 			if extra_tag == tag {
 				continue;
@@ -482,10 +482,14 @@ impl Engine {
 				urlencoded(&repo),
 				urlencoded(&tag_str),
 			);
-			if let Err(e) = self.client.post_empty_ok(&tag_path).await {
-				warn!("failed to apply extra tag {extra_tag}: {e}");
-			}
+			// Returning () here meant `build` could not report a failed tag at
+			// all: it exited 0 with the requested tags missing.
+			self.client
+				.post_empty_ok(&tag_path)
+				.await
+				.map_err(ComposeError::Podman)?;
 		}
+		Ok(())
 	}
 }
 

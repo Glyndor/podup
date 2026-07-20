@@ -564,3 +564,56 @@ fn rm_path_url_encodes_container_name() {
 	assert!(!path.contains("weird/name"), "got: {path}");
 	assert!(path.contains("weird%2Fname"), "got: {path}");
 }
+
+/// `down --rmi` used to warn and return Ok on a real removal failure, so it
+/// reported success having left images behind — the one arm of this teardown
+/// that did not aggregate, while its network, volume and container siblings all
+/// did.
+#[cfg(unix)]
+#[tokio::test]
+async fn remove_service_images_reports_a_real_failure_after_trying_them_all() {
+	let attempted = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+	let seen = std::sync::Arc::clone(&attempted);
+	let fake = fake_podman::start(move |method, target| {
+		if method == "DELETE" && target.contains("/images/") {
+			seen.lock().expect("lock").push(target.to_string());
+			// A 500 that is neither 404 nor an in-use conflict is a real failure.
+			if target.contains("broken") {
+				return (500, r#"{"message":"internal error"}"#.to_string());
+			}
+			return (200, String::new());
+		}
+		(404, r#"{"message":"not found"}"#.to_string())
+	});
+	let engine = engine_with(fake.client(), "proj");
+
+	let mut file = ComposeFile::default();
+	file.services.insert(
+		"a".into(),
+		Service {
+			image: Some("broken:latest".into()),
+			..Default::default()
+		},
+	);
+	file.services.insert(
+		"b".into(),
+		Service {
+			image: Some("fine:latest".into()),
+			..Default::default()
+		},
+	);
+
+	let err = engine
+		.remove_service_images(&file, false)
+		.await
+		.expect_err("a real image-removal failure must propagate");
+	assert!(
+		matches!(err, ComposeError::Podman(ref pe) if pe.is_status(500)),
+		"got: {err}"
+	);
+	assert_eq!(
+		attempted.lock().expect("lock").len(),
+		2,
+		"the sweep must finish before reporting: both images are attempted"
+	);
+}
