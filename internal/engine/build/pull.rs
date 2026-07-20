@@ -162,7 +162,13 @@ impl Engine {
 		for (name, _service, key) in candidates {
 			let image = key.0;
 			let (present, pull_err) = outcomes.get(&key).cloned().unwrap_or((false, None));
-			if present {
+			// Presence alone is not success. A stale copy of the image already in
+			// local storage makes the probe pass while the pull actually failed,
+			// so `pull` against an unreachable registry exited 0 and reported
+			// nothing — the same way `up --pull always` did (#1076). The pull
+			// having reported an error is decisive; the probe only covers the
+			// case where it reported nothing and the image still is not there.
+			if present && pull_err.is_none() {
 				continue;
 			}
 			if opts.ignore_failures {
@@ -242,6 +248,15 @@ impl Engine {
 			.map_err(ComposeError::Podman)?;
 		let mut stream = crate::libpod::parse_json_lines::<ImagePullProgress>(resp.into_body());
 
+		// libpod reports a failed pull as an in-band `error` line on a 200
+		// response, not as an HTTP status, so the first one has to be kept and
+		// returned. It used to be warned about and dropped, which made every
+		// caller believe the pull had succeeded.
+		//
+		// A transport error mid-stream stays a warning: the same
+		// finished-stream-looks-like-an-error ambiguity that #1104 is about, and
+		// unlike the in-band line it is not libpod telling us the pull failed.
+		let mut pull_err: Option<String> = None;
 		while let Some(result) = stream.next().await {
 			match result {
 				Ok(progress) => {
@@ -250,13 +265,17 @@ impl Engine {
 					}
 					if !progress.error.is_empty() {
 						warn!("pull error: {}", progress.error);
+						pull_err.get_or_insert_with(|| progress.error.clone());
 					}
 				}
 				Err(e) => warn!("pull warning: {e}"),
 			}
 		}
 
-		Ok(())
+		match pull_err {
+			Some(e) => Err(ComposeError::Build(format!("pull {image} failed: {e}"))),
+			None => Ok(()),
+		}
 	}
 
 	/// Whether an image reference is present in local storage. Used by the
@@ -527,4 +546,72 @@ mod tests {
 	// blocking rendezvous — exactly the flakiness the testing standard rules
 	// out. The dedup tests above already pin the dispatch contract (every
 	// unique image is attempted, exactly once).
+
+	/// #1076: libpod reports a failed pull as an in-band `error` line on a 200
+	/// response. That line used to be warned about and dropped, so every caller
+	/// believed the pull had succeeded.
+	///
+	/// The image is present here — a stale copy from an earlier pull — which is
+	/// exactly the case a presence probe cannot catch: it passes while the pull
+	/// failed. `up --pull always` against an unreachable registry therefore
+	/// started yesterday's image and exited 0.
+	#[tokio::test]
+	#[cfg(unix)]
+	async fn a_failed_pull_is_reported_even_when_a_stale_image_is_present() {
+		let fake = fake_podman::start(|method, target| {
+			if method == "POST" && target.contains("/images/pull") {
+				// 200 with an in-band error, the way libpod reports it.
+				(
+					200,
+					r#"{"error":"initializing source: pinging container registry: connection refused"}"#
+						.to_string(),
+				)
+			} else if method == "GET" && target.contains("/images/") && target.contains("/json") {
+				// The stale image is in local storage.
+				(200, "{}".to_string())
+			} else {
+				(404, r#"{"message":"not found"}"#.to_string())
+			}
+		});
+		let e = crate::engine::Engine::new(fake.client(), "proj".into());
+		let file = crate::parse_str("services:\n  a:\n    image: stale:v1\n").unwrap();
+
+		let err = e
+			.pull_services(&file, &[])
+			.await
+			.expect_err("a pull that libpod reported as failed must not be reported as success");
+		assert!(
+			format!("{err}").contains("connection refused"),
+			"the underlying cause must survive: {err}"
+		);
+	}
+
+	/// The escape hatch still works: `--ignore-pull-failures` is deliberately
+	/// exit-0, and that must not change just because the failure is now visible.
+	#[tokio::test]
+	#[cfg(unix)]
+	async fn ignore_pull_failures_still_exits_zero_on_an_in_band_error() {
+		let fake = fake_podman::start(|method, target| {
+			if method == "POST" && target.contains("/images/pull") {
+				(200, r#"{"error":"connection refused"}"#.to_string())
+			} else if method == "GET" && target.contains("/images/") && target.contains("/json") {
+				(200, "{}".to_string())
+			} else {
+				(404, r#"{"message":"not found"}"#.to_string())
+			}
+		});
+		let e = crate::engine::Engine::new(fake.client(), "proj".into());
+		let file = crate::parse_str("services:\n  a:\n    image: stale:v1\n").unwrap();
+
+		e.pull_services_with_options(
+			&file,
+			&[],
+			crate::engine::PullOptions {
+				ignore_failures: true,
+				..Default::default()
+			},
+		)
+		.await
+		.expect("--ignore-pull-failures must stay exit 0");
+	}
 }
