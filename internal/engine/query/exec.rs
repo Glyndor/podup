@@ -364,7 +364,15 @@ impl Engine {
 /// Pure except for the `isatty` probe, which is behind `stdin_is_terminal` so
 /// the decision itself is unit-testable.
 fn interactive_exec(opts: &ExecOptions) -> bool {
-	!opts.no_tty && !opts.detach && stdin_is_terminal()
+	wants_interactive(opts, stdin_is_terminal())
+}
+
+/// The decision itself, with the environment passed in.
+///
+/// Split out so it can be tested: reading stdin here would make every
+/// assertion depend on how `cargo test` happened to be invoked.
+fn wants_interactive(opts: &ExecOptions, stdin_is_tty: bool) -> bool {
+	!opts.no_tty && !opts.detach && stdin_is_tty
 }
 
 /// Whether stdin is a terminal. Always false off Unix, where the interactive
@@ -384,30 +392,37 @@ fn stdin_is_terminal() -> bool {
 
 #[cfg(test)]
 mod interactive_decision_tests {
-	use super::{interactive_exec, ExecOptions};
+	use super::{wants_interactive, ExecOptions};
 
 	/// #1079: `-T` opts out, matching `docker compose exec` — which has no `-i`
 	/// because a TTY on both ends is the default.
 	#[test]
 	fn no_tty_flag_disables_the_pty() {
 		let opts = ExecOptions::default().with_no_tty_for_test(true);
-		assert!(!interactive_exec(&opts));
+		assert!(!wants_interactive(&opts, true));
 	}
 
 	/// `-d` detaches, so there is nobody to be interactive with.
 	#[test]
 	fn detach_disables_the_pty() {
 		let opts = ExecOptions::default().with_detach_for_test(true);
-		assert!(!interactive_exec(&opts));
+		assert!(!wants_interactive(&opts, true));
 	}
 
-	/// The decisive one for existing users: in a test harness — as in any script
-	/// or pipeline — stdin is not a terminal, so `exec` stays on the unchanged
-	/// streaming path. Allocating a pty there would change output framing for
-	/// every script that already calls `podup exec`.
+	/// The decisive one for existing users: with stdin not a terminal — any
+	/// script or pipeline — `exec` stays on the unchanged streaming path.
+	/// Allocating a pty there would change output framing for every script that
+	/// already calls `podup exec`.
 	#[test]
 	fn a_non_terminal_stdin_stays_on_the_streaming_path() {
-		assert!(!interactive_exec(&ExecOptions::default()));
+		assert!(!wants_interactive(&ExecOptions::default(), false));
+	}
+
+	/// And the positive case, which the old ambient-stdin test could never
+	/// assert: defaults plus a terminal is what turns the pty on.
+	#[test]
+	fn a_terminal_stdin_with_defaults_is_interactive() {
+		assert!(wants_interactive(&ExecOptions::default(), true));
 	}
 }
 

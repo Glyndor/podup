@@ -16,6 +16,10 @@ use serde::{de::DeserializeOwned, Serialize};
 use super::error::PodmanError;
 
 mod encode;
+// Unix only: a hijacked stream is a `UnixStream`, and podup reaches
+// `podman machine` over a named pipe on Windows, where interactive exec is a
+// different implementation entirely (#1079).
+#[cfg(unix)]
 mod hijack;
 pub(crate) use encode::{is_valid_object_name, urlencoded};
 

@@ -36,7 +36,17 @@ impl RawMode {
 	/// pipeline, not an error: there is no line discipline to disable, and the
 	/// caller streams bytes as before.
 	pub(super) fn enable() -> Option<Self> {
-		let fd = std::io::stdin().as_raw_fd();
+		Self::enable_on(std::io::stdin().as_raw_fd())
+	}
+
+	/// The same, on an explicit descriptor.
+	///
+	/// `enable` is the only place that consults the ambient stdin, which keeps
+	/// this testable: a test that asserted on `enable()` directly would be
+	/// asserting that whoever runs `cargo test` has no terminal — true under a
+	/// pipe, false in a shell, and on the way to being false it would put the
+	/// developer's own terminal into raw mode.
+	pub(super) fn enable_on(fd: i32) -> Option<Self> {
 		// SAFETY: `isatty` only inspects the descriptor and cannot write through
 		// it; a non-terminal descriptor returns 0 rather than misbehaving.
 		if unsafe { libc::isatty(fd) } != 1 {
@@ -115,21 +125,25 @@ fn size_of(fd: i32) -> Option<(u16, u16)> {
 mod tests {
 	use super::*;
 
-	/// In a test harness stdin is not a terminal, so `enable` declines rather
-	/// than failing — the same path `podup exec` takes inside a pipeline, which
-	/// must keep working.
+	/// A non-terminal descriptor is declined rather than failing — the path
+	/// `podup exec` takes inside a pipeline, which must keep working.
+	///
+	/// Asked of an explicit `/dev/null` rather than of ambient stdin: the same
+	/// assertion on `enable()` would be testing the harness, not the code, and
+	/// would put a real terminal into raw mode on the way to failing.
 	#[test]
-	fn enable_declines_when_stdin_is_not_a_terminal() {
+	fn a_non_terminal_descriptor_is_declined() {
+		let devnull = std::fs::File::open("/dev/null").expect("/dev/null opens");
 		assert!(
-			RawMode::enable().is_none(),
-			"a non-terminal stdin must not be switched to raw mode"
+			RawMode::enable_on(devnull.as_raw_fd()).is_none(),
+			"a non-terminal descriptor must not be switched to raw mode"
 		);
 	}
 
-	/// Likewise the size query: absence is a valid answer, not an error to
-	/// propagate.
+	/// Likewise the size query: absence is a valid answer, not an error.
 	#[test]
-	fn window_size_is_none_without_a_terminal() {
-		let _ = window_size();
+	fn a_non_terminal_descriptor_has_no_size() {
+		let devnull = std::fs::File::open("/dev/null").expect("/dev/null opens");
+		assert_eq!(size_of(devnull.as_raw_fd()), None);
 	}
 }

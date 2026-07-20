@@ -40,7 +40,6 @@ impl Client {
 	/// Returns once the response head is read, so a rejected exec (404, 409)
 	/// surfaces as an error instead of hanging with the terminal already in raw
 	/// mode — which would leave the user's shell unusable.
-	#[cfg(unix)]
 	pub(crate) async fn post_hijack(&self, path: &str, body: &[u8]) -> Result<Hijacked> {
 		let mut stream = tokio::net::UnixStream::connect(&self.socket_path).await?;
 
@@ -78,7 +77,6 @@ impl Client {
 /// swallow part of the command's output into its own buffer, and that output
 /// belongs to the caller. Slow, but the head is a few hundred bytes and it only
 /// happens once per exec.
-#[cfg(unix)]
 async fn read_response_head(stream: &mut tokio::net::UnixStream) -> Result<u16> {
 	use tokio::io::AsyncReadExt;
 
@@ -114,21 +112,7 @@ async fn read_response_head(stream: &mut tokio::net::UnixStream) -> Result<u16> 
 		})
 }
 
-/// Unused on non-Unix: podup talks to `podman machine` over a named pipe there,
-/// and interactive exec is not implemented for it yet (#1079). Kept so the
-/// module compiles everywhere rather than being `cfg`-ed out of existence at the
-/// call site.
-#[cfg(not(unix))]
-impl Client {
-	pub(crate) async fn post_hijack(&self, _path: &str, _body: &[u8]) -> Result<Hijacked> {
-		Err(PodmanError::Api {
-			status: 0,
-			message: "interactive exec is not supported on this platform yet".to_string(),
-		})
-	}
-}
-
-#[cfg(all(test, unix))]
+#[cfg(test)]
 mod tests {
 	use super::*;
 
