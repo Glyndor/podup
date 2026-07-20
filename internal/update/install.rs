@@ -90,21 +90,74 @@ pub fn install_binary(new_bytes: &[u8], expected_version: &str) -> crate::Result
 	Ok(target)
 }
 
+/// How long to keep retrying a spawn that reports ETXTBSY.
+///
+/// The window is short by nature — it lasts only as long as some other process
+/// holds a write descriptor to the file across its own exec — so a second is
+/// generous. Bounded on purpose: a binary that is genuinely unrunnable must
+/// reach the rollback, not wedge the updater retrying forever.
+#[cfg(unix)]
+const TEXT_FILE_BUSY_BUDGET: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Spawn `target --version`, retrying while the kernel says the file is still
+/// open for writing somewhere.
+///
+/// ETXTBSY is not a property of the binary — it means another process holds a
+/// write descriptor to it across its own `exec`, and `O_CLOEXEC` does not close
+/// that window. Treating it as a failed self-test rolls back a signed, verified,
+/// perfectly good update over a race that resolves in milliseconds, and tells
+/// the user their new version is broken.
+fn spawn_version_probe(target: &Path) -> std::io::Result<std::process::Child> {
+	use std::process::{Command, Stdio};
+
+	let probe = || {
+		Command::new(target)
+			.arg("--version")
+			.stdin(Stdio::null())
+			.stdout(Stdio::piped())
+			.stderr(Stdio::null())
+			.spawn()
+	};
+
+	#[cfg(unix)]
+	{
+		let deadline = std::time::Instant::now() + TEXT_FILE_BUSY_BUDGET;
+		loop {
+			match probe() {
+				Err(e) if is_text_file_busy(&e) && std::time::Instant::now() < deadline => {
+					std::thread::sleep(std::time::Duration::from_millis(10));
+				}
+				other => return other,
+			}
+		}
+	}
+	#[cfg(not(unix))]
+	{
+		probe()
+	}
+}
+
+/// Whether a spawn error is ETXTBSY, asked of the `io::Error` itself.
+///
+/// This has to happen before the error is formatted into a message: once it is
+/// a `String` the errno is gone, and matching on the text would break under any
+/// locale or libc that words it differently.
+#[cfg(unix)]
+fn is_text_file_busy(e: &std::io::Error) -> bool {
+	// `ExecutableFileBusy` is the named form; the raw errno is compared too so
+	// this holds on a toolchain where the mapping differs.
+	e.kind() == std::io::ErrorKind::ExecutableFileBusy || e.raw_os_error() == Some(libc::ETXTBSY)
+}
+
 /// Confirm a freshly-installed binary runs and reports `expected_version` by
 /// invoking `--version`, bounded by a timeout so a hung binary can't wedge the
 /// updater. The version check closes the rollback window: a replayed older
 /// (signed) release fails here and is rolled back.
 fn self_test(target: &Path, expected_version: &str) -> crate::Result<()> {
 	use std::io::Read;
-	use std::process::{Command, Stdio};
 	use std::time::{Duration, Instant};
 
-	let mut child = Command::new(target)
-		.arg("--version")
-		.stdin(Stdio::null())
-		.stdout(Stdio::piped())
-		.stderr(Stdio::null())
-		.spawn()
+	let mut child = spawn_version_probe(target)
 		.map_err(|e| ComposeError::Update(format!("could not run the updated binary: {e}")))?;
 
 	let deadline = Instant::now() + Duration::from_secs(10);
@@ -410,53 +463,6 @@ mod tests {
 		p
 	}
 
-	/// Run [`self_test`], retrying while the spawn hits ETXTBSY.
-	///
-	/// The race is real and not podup's: a sibling test thread forking between
-	/// our write and our exec holds the script's write fd open across its own
-	/// exec window, and `O_CLOEXEC` does not close that window. Any
-	/// `Command::spawn` anywhere in this test binary can be the forker, so a
-	/// lock around these helpers would not close it either — removing the retry
-	/// means restructuring what the test proves, which is tracked in #1083.
-	///
-	/// What is fixed here is the predicate. It used to decide by
-	/// `format!("{e}").contains("Text file busy")` — a substring match on an OS
-	/// message that is localised, so on a non-English host the retry silently
-	/// stops happening and the flake comes back as a hard failure. The errno is
-	/// the same everywhere.
-	#[cfg(unix)]
-	fn self_test_retrying(target: &Path, expected: &str) -> crate::Result<()> {
-		for _ in 0..100 {
-			match self_test(target, expected) {
-				Err(e) if is_text_file_busy(&e) => {
-					std::thread::sleep(std::time::Duration::from_millis(10));
-				}
-				other => return other,
-			}
-		}
-		self_test(target, expected)
-	}
-
-	/// Whether an error is ETXTBSY, by errno rather than by message text.
-	#[cfg(unix)]
-	fn is_text_file_busy(e: &crate::error::ComposeError) -> bool {
-		use std::error::Error;
-		let mut source: Option<&(dyn Error + 'static)> = Some(e);
-		while let Some(err) = source {
-			if let Some(io) = err.downcast_ref::<std::io::Error>() {
-				// ErrorKind::ExecutableFileBusy is the named form; compare the raw
-				// errno too so this holds on a toolchain where the mapping differs.
-				if io.kind() == std::io::ErrorKind::ExecutableFileBusy
-					|| io.raw_os_error() == Some(26)
-				{
-					return true;
-				}
-			}
-			source = err.source();
-		}
-		false
-	}
-
 	#[cfg(unix)]
 	#[test]
 	fn self_test_passes_for_a_zero_exit_and_fails_otherwise() {
@@ -469,10 +475,36 @@ mod tests {
 			"#!/bin/sh\necho \"podup 9.9.9\"\nexit 0\n",
 		);
 		let bad = write_stub(dir.path(), "bad", "#!/bin/sh\nexit 1\n");
-		assert!(self_test_retrying(&ok, "9.9.9").is_ok());
-		assert!(self_test_retrying(&bad, "9.9.9").is_err());
+		assert!(self_test(&ok, "9.9.9").is_ok());
+		assert!(self_test(&bad, "9.9.9").is_err());
 		// A non-executable / missing target is a spawn error, not a panic.
 		assert!(self_test(&dir.path().join("nope"), "9.9.9").is_err());
+	}
+
+	/// The classification that silently did not work.
+	///
+	/// A file held open for writing cannot be executed — the kernel returns
+	/// ETXTBSY — so this produces the real errno rather than a hand-built error,
+	/// and asserts the predicate the retry depends on. The previous version of
+	/// this check ran on an error that had already been formatted into a
+	/// `String`, where the errno no longer exists: it returned false every time,
+	/// the retry never fired, and the flake it was written to prevent stayed.
+	#[cfg(unix)]
+	#[test]
+	fn a_file_open_for_writing_is_classified_as_text_file_busy() {
+		let dir = tempfile::tempdir().unwrap();
+		let p = write_stub(dir.path(), "held", "#!/bin/sh\nexit 0\n");
+		// Held across the spawn on purpose; dropping it would close the window.
+		let _writer = std::fs::OpenOptions::new().write(true).open(&p).unwrap();
+
+		let err = std::process::Command::new(&p)
+			.arg("--version")
+			.spawn()
+			.expect_err("a file open for writing must not be executable");
+		assert!(
+			is_text_file_busy(&err),
+			"ETXTBSY must be recognised from the io::Error itself, got {err:?}"
+		);
 	}
 
 	#[cfg(unix)]
@@ -486,7 +518,7 @@ mod tests {
 			"older",
 			"#!/bin/sh\necho \"podup 1.0.0\"\nexit 0\n",
 		);
-		let err = self_test_retrying(&p, "9.9.9").unwrap_err();
+		let err = self_test(&p, "9.9.9").unwrap_err();
 		let msg = format!("{err}");
 		assert!(msg.contains("rollback"), "{msg}");
 		// A `v`-prefixed report still matches its unprefixed expectation.
@@ -495,7 +527,7 @@ mod tests {
 			"vprefixed",
 			"#!/bin/sh\necho \"podup v9.9.9\"\nexit 0\n",
 		);
-		assert!(self_test_retrying(&v, "9.9.9").is_ok());
+		assert!(self_test(&v, "9.9.9").is_ok());
 	}
 
 	#[test]
