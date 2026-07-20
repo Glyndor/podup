@@ -45,10 +45,43 @@ pub(crate) fn resolve_compose_files(explicit: &[PathBuf]) -> Vec<PathBuf> {
 	}
 	for candidate in COMPOSE_FILE_CANDIDATES {
 		if Path::new(candidate).is_file() {
-			return vec![PathBuf::from(candidate)];
+			let mut files = vec![PathBuf::from(candidate)];
+			files.extend(override_for(Path::new(candidate)));
+			return files;
 		}
 	}
 	vec![PathBuf::from("docker-compose.yml")]
+}
+
+/// Override-file names, in the compose-spec precedence order. Only the first one
+/// present is used — docker compose does not merge two overrides.
+const OVERRIDE_FILE_CANDIDATES: [&str; 4] = [
+	"compose.override.yaml",
+	"compose.override.yml",
+	"docker-compose.override.yaml",
+	"docker-compose.override.yml",
+];
+
+/// The override file to merge on top of an auto-discovered `base`, if one sits
+/// beside it.
+///
+/// Base file plus `docker-compose.override.yml` is how nearly every repository
+/// separates dev from prod, and docker compose merges it automatically whenever
+/// no explicit `-f` is given. podup ran the base alone and said nothing: wrong
+/// image tags, wrong published ports, missing dev bind mounts, exit 0 — about a
+/// file the user never named on the command line, so nothing in the invocation
+/// hinted at what went wrong.
+///
+/// Discovery is deliberately limited to the auto-discovery path. An explicit
+/// `-f` means the caller is choosing the file set themselves, and `COMPOSE_FILE`
+/// is that same choice by another name; docker compose skips the override in
+/// both cases too.
+fn override_for(base: &Path) -> Option<PathBuf> {
+	let dir = base.parent().unwrap_or(Path::new(""));
+	OVERRIDE_FILE_CANDIDATES
+		.iter()
+		.map(|name| dir.join(name))
+		.find(|path| path.is_file())
 }
 
 /// Resolve the base directory for relative-path resolution. An explicit
@@ -121,8 +154,8 @@ pub(crate) fn sanitize_project_name(raw: &str) -> String {
 #[cfg(test)]
 mod tests {
 	use super::{
-		resolve_base_dir, resolve_compose_files, resolve_project_name, sanitize_project_name,
-		validate_project_directory,
+		override_for, resolve_base_dir, resolve_compose_files, resolve_project_name,
+		sanitize_project_name, validate_project_directory,
 	};
 	use std::path::{Path, PathBuf};
 
@@ -249,5 +282,53 @@ mod tests {
 	fn sanitize_empty_result_falls_back_to_podup() {
 		assert_eq!(sanitize_project_name("!!!"), "podup");
 		assert_eq!(sanitize_project_name(""), "podup");
+	}
+
+	/// #1077: base plus `docker-compose.override.yml` is how nearly every
+	/// repository separates dev from prod, and docker compose merges it
+	/// automatically when no `-f` is given. podup ran the base alone, silently.
+	#[test]
+	fn auto_discovery_picks_up_the_override_file() {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join("compose.yaml"), b"services: {}\n").unwrap();
+		std::fs::write(dir.path().join("compose.override.yaml"), b"services: {}\n").unwrap();
+		let found = override_for(&dir.path().join("compose.yaml"));
+		assert_eq!(found, Some(dir.path().join("compose.override.yaml")));
+	}
+
+	/// Only the first override in precedence order is used — docker compose does
+	/// not merge two of them.
+	#[test]
+	fn only_the_highest_precedence_override_is_used() {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join("compose.yaml"), b"services: {}\n").unwrap();
+		for name in [
+			"compose.override.yml",
+			"docker-compose.override.yaml",
+			"compose.override.yaml",
+		] {
+			std::fs::write(dir.path().join(name), b"services: {}\n").unwrap();
+		}
+		assert_eq!(
+			override_for(&dir.path().join("compose.yaml")),
+			Some(dir.path().join("compose.override.yaml")),
+			"compose.override.yaml outranks the rest"
+		);
+	}
+
+	/// No override beside the base is the ordinary case and must stay silent.
+	#[test]
+	fn no_override_file_is_not_an_error() {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join("compose.yaml"), b"services: {}\n").unwrap();
+		assert_eq!(override_for(&dir.path().join("compose.yaml")), None);
+	}
+
+	/// An explicit `-f` means the caller is choosing the file set, so the
+	/// override is not added behind their back. docker compose skips it too.
+	#[test]
+	fn explicit_files_suppress_override_discovery() {
+		let explicit = vec![std::path::PathBuf::from("only.yaml")];
+		assert_eq!(resolve_compose_files(&explicit), explicit);
 	}
 }
