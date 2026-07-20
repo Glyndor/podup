@@ -38,7 +38,8 @@ A podup loss is published exactly like a podup win.
 | `network-ipam` | custom bridge network with explicit IPAM |
 | `volume-heavy` | several named volumes created/removed |
 | `warm-restart` | a second `up` on an already-running project |
-| `many-services` | a 12-service compose file |
+| `many-services
+- **deep-chain** — a fast and a slow service in the same dependency level, with a chain behind the fast one. The shape where a level-barrier scheduler would lose to a per-service DAG (#1071); kept so that claim stays falsifiable rather than assumed.` | a 12-service compose file |
 | `running-ops` | `ps`, `logs`, `exec`, `restart` on a running stack |
 | `build` | `build --no-cache` from a Dockerfile (base pinned by digest) |
 

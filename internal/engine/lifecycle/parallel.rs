@@ -24,7 +24,7 @@ use super::targets::{stop_deadline, stop_timeout_param};
 /// concurrently. Services within a dependency level have no ordering between
 /// them, so they run in parallel; the cap keeps a very wide compose file from
 /// opening an unbounded number of simultaneous libpod connections at once.
-const MAX_LIFECYCLE_CONCURRENCY: usize = 16;
+pub(super) const MAX_LIFECYCLE_CONCURRENCY: usize = 16;
 
 /// Run a batch of independent per-service futures concurrently, bounded by
 /// [`MAX_LIFECYCLE_CONCURRENCY`], and return their outputs in the *input*
