@@ -2,6 +2,7 @@
 
 mod commands;
 mod down_label;
+mod images;
 mod parallel;
 mod prefetch;
 mod readiness;
@@ -392,22 +393,7 @@ impl Engine {
 			}
 		}
 
-		// `up --pull <policy>` overrides the per-service `pull_policy`; `--no-build`
-		// suppresses building even for services with a `build:` section (they fall
-		// back to pulling/using an existing image).
-		let policy = self
-			.pull_policy_override
-			.as_deref()
-			.or(service.pull_policy.as_deref())
-			.unwrap_or("missing");
-		match (service.build.is_some() && !self.no_build, policy) {
-			(true, _) => {
-				self.build_service(name, service, file, &crate::engine::BuildOptions::default())
-					.await?
-			}
-			(false, "never") => {}
-			(false, _) => self.pull_image(service).await?,
-		}
+		self.acquire_service_image(name, service, file).await?;
 
 		let replicas = self.resolve_replicas(name, service);
 		// Bound the replica count (covers an untrusted compose `deploy.replicas`/
@@ -688,14 +674,7 @@ impl Engine {
 			}
 			let image = match &service.image {
 				Some(img) => img.clone(),
-				// A build-only service's image is the tag the build step produced
-				// (project-scoped `{project}-{service}:latest`, or `build.tags[0]`).
-				None if builds_locally => super::build::primary_build_tag(
-					&self.project,
-					name,
-					None,
-					service.build.as_ref().map(|b| b.tags()).unwrap_or(&[]),
-				),
+				None if builds_locally => self.service_image_tag(name, service),
 				None => continue,
 			};
 			// Do NOT force: a force-removal cascades to every container using the
