@@ -13,6 +13,22 @@ use super::inspect_util::{
 };
 use super::Engine;
 
+/// How an attached `up` stopped streaming.
+///
+/// The distinction has to survive back to the caller because the two endings
+/// mean opposite things to a script: the containers finishing on their own is
+/// success, and the operator pressing Ctrl-C is not. The caller still tears the
+/// project down either way — reporting the interrupt as an error from `attach`
+/// would short-circuit that and leave the containers running, which is a worse
+/// bug than the exit code this exists to fix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttachOutcome {
+	/// Every stream ended on its own.
+	StreamsEnded,
+	/// SIGINT or SIGTERM arrived while streaming.
+	Interrupted,
+}
+
 impl Engine {
 	/// Display running processes in each service container (`docker compose top`).
 	///
@@ -386,7 +402,7 @@ impl Engine {
 	}
 
 	/// Attach to log streams for all services with `attach: true` (the default). Streams are multiplexed to stdout with a service-name prefix.
-	pub async fn attach_logs(&self, file: &ComposeFile) -> Result<()> {
+	pub async fn attach_logs(&self, file: &ComposeFile) -> Result<AttachOutcome> {
 		self.attach_logs_with_options(file, false).await
 	}
 
@@ -397,7 +413,7 @@ impl Engine {
 		&self,
 		file: &ComposeFile,
 		timestamps: bool,
-	) -> Result<()> {
+	) -> Result<AttachOutcome> {
 		// Carry (display_name, container_name, is_tty) so the log parser matches
 		// the container's framing mode: TTY containers emit raw bytes; non-TTY
 		// containers emit multiplexed 8-byte-header frames.
@@ -419,7 +435,8 @@ impl Engine {
 			.collect();
 
 		if attached.is_empty() {
-			return Ok(());
+			// Nothing to stream is not an interruption.
+			return Ok(AttachOutcome::StreamsEnded);
 		}
 
 		let streams: Vec<_> = attached
@@ -462,23 +479,28 @@ impl Engine {
 			})
 			.collect();
 
+		// Which arm wins is the whole point: `docker compose up` exits 130 on both
+		// SIGINT and SIGTERM (measured against v5.1.3, not assumed — it is 130 for
+		// SIGTERM too, not the 143 the signal number would suggest), and podup
+		// exited 0 for both. A CI job that runs `up` in the foreground and is
+		// cancelled therefore reported success.
 		#[cfg(unix)]
-		{
+		let outcome = {
 			use tokio::signal::unix::{signal, SignalKind};
 			let mut sigterm = signal(SignalKind::terminate()).expect("SIGTERM handler");
 			tokio::select! {
-				_ = futures_util::future::join_all(streams) => {}
-				_ = tokio::signal::ctrl_c() => {}
-				_ = sigterm.recv() => {}
+				_ = futures_util::future::join_all(streams) => AttachOutcome::StreamsEnded,
+				_ = tokio::signal::ctrl_c() => AttachOutcome::Interrupted,
+				_ = sigterm.recv() => AttachOutcome::Interrupted,
 			}
-		}
+		};
 		#[cfg(not(unix))]
-		tokio::select! {
-			_ = futures_util::future::join_all(streams) => {}
-			_ = tokio::signal::ctrl_c() => {}
-		}
+		let outcome = tokio::select! {
+			_ = futures_util::future::join_all(streams) => AttachOutcome::StreamsEnded,
+			_ = tokio::signal::ctrl_c() => AttachOutcome::Interrupted,
+		};
 
-		Ok(())
+		Ok(outcome)
 	}
 }
 
@@ -499,5 +521,18 @@ mod tests {
 		let q = attach_log_query();
 		assert!(q.contains("follow=true"), "got: {q}");
 		assert!(q.contains("tail=0"), "got: {q}");
+	}
+}
+
+#[cfg(test)]
+mod attach_outcome_tests {
+	use super::AttachOutcome;
+
+	/// The two endings must stay distinguishable. They are the difference
+	/// between a CI job that ran to completion and one that was cancelled, and
+	/// before this existed both reported exit 0.
+	#[test]
+	fn the_two_endings_are_not_equal() {
+		assert_ne!(AttachOutcome::StreamsEnded, AttachOutcome::Interrupted);
 	}
 }
