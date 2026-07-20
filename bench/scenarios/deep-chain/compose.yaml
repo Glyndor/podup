@@ -16,8 +16,12 @@
 # it does not depend on it — and everything behind it inherits that wait. Under a
 # DAG the whole chain runs while `slow` is still coming up.
 #
-# The predicted gap is therefore roughly (slow − fast), once, not per level. The
-# point of measuring is to find out whether that is worth a scheduler rewrite.
+# NOTE: this file does NOT show the scheduler cost, and that is worth knowing
+# before reading a run of it. Readiness is gated per dependency, so `after_fast`
+# starts while `slow` is still `starting` even under level barriers, and the
+# barrier looks free. The cost lives in level WIDTH, not depth — see the
+# `wide-level` scenario. This one stays as the readiness-ordering case, which is
+# what it actually measures.
 services:
   # Slow to report healthy: a long start_period plus a first check that fails.
   slow:

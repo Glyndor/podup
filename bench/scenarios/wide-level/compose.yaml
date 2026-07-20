@@ -1,0 +1,189 @@
+# Where a level-barrier scheduler actually loses to a per-service DAG (#1071).
+#
+# `up` creates each dependency level with bounded concurrency
+# (MAX_LIFECYCLE_CONCURRENCY = 16), so a wide level is created in batches. Under
+# a level barrier, NOTHING in level 1 may start until the whole of level 0 has
+# been created — including services it does not depend on. A per-service DAG
+# starts a dependent the moment its own dependencies are up.
+#
+# 41 services in level 0 (2.5 batches) and one dependent behind exactly one of
+# them. The gap is the time the dependent spends waiting for the other 40.
+#
+# Measured on real Podman 5.4.2, anchor -> dependent:
+#   podup            809 ms
+#   docker compose   129 ms
+#
+# A two-service level shows nothing (see `deep-chain`) — readiness is already
+# gated per dependency. It is the batching that costs.
+services:
+  anchor:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk01:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk02:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk03:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk04:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk05:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk06:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk07:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk08:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk09:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk10:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk11:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk12:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk13:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk14:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk15:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk16:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk17:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk18:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk19:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk20:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk21:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk22:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk23:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk24:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk25:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk26:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk27:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk28:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk29:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk30:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk31:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk32:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk33:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk34:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk35:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk36:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk37:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk38:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk39:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  bulk40:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+  dependent:
+    image: docker.io/library/busybox@sha256:1cfa4e2b09e127b9c4ed43578d3f3c18e7d44ea47b9ea98475c0cbe9086525f8
+    command: ["sleep", "3600"]
+    init: true
+    depends_on:
+      anchor:
+        condition: service_started
