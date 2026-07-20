@@ -58,6 +58,14 @@ struct RuleEntry {
 
 impl Engine {
 	/// Set up filesystem watchers from `develop.watch` rules and dispatch sync/rebuild/restart/exec actions on file changes.
+	///
+	/// **The session's exit status does not reflect the actions it ran.** A sync,
+	/// rebuild, restart or exec that fails is warned about and the loop
+	/// continues, so this returns `Ok(())` unless the watchers cannot be set up
+	/// at all. That is deliberate and matches `docker compose watch`: a
+	/// long-running developer loop should survive one failed rebuild rather than
+	/// exit. Unlike every other command here, it means a caller cannot gate on
+	/// the status — see the exit-status section of `docs/commands.md`.
 	pub async fn watch(&self, file: &ComposeFile) -> Result<()> {
 		let mut rule_entries: Vec<RuleEntry> = Vec::new();
 
