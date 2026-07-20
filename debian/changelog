@@ -1,3 +1,41 @@
+podup (1.13.0) unstable; urgency=medium
+
+  * up now builds a service only when its image is missing, matching compose.
+    It used to rebuild unconditionally with the cache, which could retag the
+    image back to an older layer chain and silently discard a `build
+    --no-cache` that had just run.
+  * A failed pull is no longer reported as success. libpod reports it as an
+    in-band error on a 200 response; that line was dropped, so `up --pull
+    always` against an unreachable registry started the stale local image and
+    exited 0.
+  * .containerignore is read, and never combined with .dockerignore. Podman
+    prefers its own name and applies exactly one file; applying both produced
+    an image missing content that `podman build` includes.
+  * The compose override file (compose.override.yaml and its three siblings) is
+    discovered and merged when no explicit -f is given, as docker compose does.
+  * Service merging across -f and extends now unions networks and merges
+    sysctls per key, and appends env_file, dns, dns_search, dns_opt, tmpfs and
+    label_file instead of replacing them. A service losing a network on an
+    override was the worst of these: it dropped off the network and service
+    discovery failed at run time.
+  * Quadlet units emit EnvironmentFile= as an absolute path. systemd resolves a
+    relative one against the unit's own directory, so an `env_file: .env` unit
+    looked for a file that is not there and the container never started.
+  * autostart uninstall reports a unit it could not stop instead of printing
+    its removal lines and exiting 0.
+  * An unknown --filter predicate is rejected rather than silently returning
+    the unfiltered set, and `build --progress` validates its value.
+  * stats --format json emits NDJSON while streaming (it was concatenated
+    pretty-printed arrays, which no parser accepts), and `port` exits non-zero
+    when there is no host binding.
+  * logs -f exits when the reader closes the pipe instead of streaming into it
+    forever.
+  * Documented: the known Podman 6 limitation on `cp` into a container and
+    `watch` sync, the deliberate compatibility no-op flags, and the corrected
+    --env-file precedence rule (a project .env is replaced, not preserved).
+
+ -- Glyndor <packages@glyndor.net>  Mon, 20 Jul 2026 04:15:00 -0500
+
 podup (1.12.0) unstable; urgency=medium
 
   * cp no longer applies an archive entry's permissions outside the destination

@@ -132,9 +132,17 @@ services:
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-app.container").contents;
+	// Absolute, resolved against the compose base dir: systemd resolves a relative
+	// `EnvironmentFile=` against the unit's own directory, not the project's, so
+	// `./app.env` would never be found once installed. Built with `join` so the
+	// separator matches the host (this test is not Unix-gated).
+	let env_file = format!(
+		"EnvironmentFile={}",
+		std::path::Path::new("/srv/app").join("app.env").display()
+	);
 	for needle in [
 		"ContainerName=custom",
-		"EnvironmentFile=./app.env",
+		&env_file,
 		"Tmpfs=/run",
 		"Sysctl=net.core.somaxconn=1024",
 		"Ulimit=nofile=1024:2048",
@@ -475,4 +483,53 @@ services:
 		!c.contains("Volume=/cache"),
 		"tmpfs wrongly emitted as a Volume in:\n{c}"
 	);
+}
+
+/// #1091: `EnvironmentFile=` is resolved by podman-systemd.unit(5) against the
+/// unit file's own directory, not the compose file's. Units land in
+/// `~/.config/containers/systemd`, so a relative entry emitted verbatim points
+/// at a file that is not there — and `--env-file` on a missing path is fatal, so
+/// the container never starts. Every relative entry must come out absolute
+/// against the compose base directory; an already-absolute one is untouched.
+#[test]
+fn env_file_entries_are_absolute_against_the_compose_base_dir() {
+	let yaml = r#"
+services:
+  app:
+    image: app:1.0
+    env_file:
+      - .env
+      - ./config/extra.env
+      - ../shared/team.env
+      - /etc/glyndor/absolute.env
+"#;
+	let file = parse_str(yaml).unwrap();
+	// A base directory that is deliberately not the process's cwd, so a bug that
+	// resolved against the cwd instead would still show up here.
+	let base = std::path::Path::new("/srv/app");
+	let out = generate_at(&file, "p", base);
+	let c = &unit_named(&out, "p-app.container").contents;
+	// `abs_against` joins with the OS separator, so build the expectations the
+	// same way rather than as POSIX literals — these render tests are not
+	// Unix-gated and would otherwise fail on Windows.
+	for rel in [".env", "config/extra.env", "../shared/team.env"] {
+		let needle = format!("EnvironmentFile={}", base.join(rel).display());
+		assert!(c.contains(&needle), "missing `{needle}` in:\n{c}");
+	}
+	// An already-absolute entry is passed through verbatim, separators included.
+	assert!(
+		c.contains("EnvironmentFile=/etc/glyndor/absolute.env"),
+		"an absolute entry must be untouched in:\n{c}"
+	);
+	// No entry may survive as a compose-relative path: systemd would resolve it
+	// against the unit directory. Checked by prefix rather than `is_absolute()`,
+	// which on Windows demands a drive letter that a `/srv/app` base never has.
+	let base_prefix = base.display().to_string();
+	for line in c.lines().filter(|l| l.starts_with("EnvironmentFile=")) {
+		let value = line.trim_start_matches("EnvironmentFile=");
+		assert!(
+			value.starts_with(&base_prefix) || value.starts_with("/etc/"),
+			"`{line}` was not resolved against the compose base directory"
+		);
+	}
 }

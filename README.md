@@ -92,6 +92,13 @@ latest 5.x, rawhide for 6.x). Many distributions still ship 4.x — check
 Ubuntu releases carry 5.x; on an older release, install or upgrade Podman
 following the official guide: <https://podman.io/docs/installation>.
 
+**Known limitation on Podman 6.** Copying *into* a container — `podup cp
+./file web:/path` — and `watch` rules whose action includes `sync` fail with a
+transport error. Copying *out* of a container works on both majors, and both
+directions work on Podman 5. Fedora, Arch and Manjaro ship Podman 6 today, so
+this affects them now; it is tracked in
+[#1097](https://github.com/Glyndor/podup/issues/1097).
+
 ### Platforms
 
 Linux, macOS and Windows (x86_64 and arm64). On macOS and Windows podup talks to

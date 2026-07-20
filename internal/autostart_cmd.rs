@@ -89,14 +89,20 @@ pub(crate) async fn dispatch(
 		AutostartCommands::Uninstall { purge } => {
 			// Remove whichever mode is installed — the two never coexist, and asking
 			// the user to name the mode only risks a no-op against the wrong one.
-			match podup::autostart::installed_mode(&project) {
+			// Hold the uninstall's outcome rather than `?`-ing it here. By the time
+			// it can fail, the unit files are already gone and `installed_mode`
+			// would no longer recognise the project — so short-circuiting would
+			// skip `--purge` exactly when the stack is still up and most needs
+			// tearing down, leaving its named volumes behind and the state
+			// unrecognisable. Purge first, report the failure after.
+			let uninstalled = match podup::autostart::installed_mode(&project) {
 				podup::autostart::InstalledMode::Quadlet => {
-					podup::autostart::uninstall_quadlet(&podup::autostart::RealSystemCtl, &project)?
+					podup::autostart::uninstall_quadlet(&podup::autostart::RealSystemCtl, &project)
 				}
 				// Service or nothing installed: the service uninstall is idempotent and
 				// prints "already removed" when there is nothing there.
-				_ => podup::autostart::uninstall(&podup::autostart::RealSystemCtl, &project)?,
-			}
+				_ => podup::autostart::uninstall(&podup::autostart::RealSystemCtl, &project),
+			};
 			if *purge {
 				// `--purge` is the only autostart branch that touches Podman: tear the
 				// stack down and remove its named volumes via the normal `down -v` path.
@@ -105,7 +111,7 @@ pub(crate) async fn dispatch(
 				let _lock = engine.lock_project()?;
 				engine.down_with_options(file, true).await?;
 			}
-			Ok(())
+			uninstalled
 		}
 		AutostartCommands::Status => {
 			podup::autostart::status(&podup::autostart::RealSystemCtl, &project)

@@ -64,6 +64,20 @@ pub(super) fn collect_warnings(name: &str, service: &Service, warnings: &mut Vec
 		}
 	}
 
+	// `env_file: [{path, required: false}]` means a missing file is not an error.
+	// Quadlet has no way to say that: `EnvironmentFile=` becomes
+	// `podman run --env-file`, which is fatal on a missing path. So an entry the
+	// compose file marks optional becomes a container that refuses to start —
+	// and this is the deployment-local override pattern (a `.env.production`
+	// deliberately absent from the repo), so it fails exactly where the file is
+	// meant to be missing.
+	if service.env_file.to_entries().iter().any(|e| !e.required()) {
+		warn(
+			"env_file",
+			"`required: false` cannot be expressed in Quadlet; the file will be required at run time and the container will not start without it",
+		);
+	}
+
 	// Fields that are honoured at runtime but have no [Container] Quadlet key and
 	// no unambiguous PodmanArgs= fallback. Warn so the generated unit is never
 	// silently incomplete; add the flag by hand if it is required.

@@ -100,3 +100,101 @@ fn run(c: &str, proj: &str, args: &[&str]) -> String {
 	);
 	String::from_utf8_lossy(&out.stdout).into_owned()
 }
+
+/// #1082: `stats --format json` while streaming emitted one pretty-printed array
+/// per sampling frame, concatenated. That is neither a single JSON document nor
+/// NDJSON, so no parser accepts it — the machine-readable format was unreadable
+/// by machines for as long as it streamed.
+///
+/// Streaming now emits one compact array per line. `--no-stream` prints a single
+/// frame and exits, so it stays a pretty document, which is valid on its own.
+#[tokio::test]
+async fn cli_stats_streaming_json_is_ndjson() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let compose = dir.path().join("docker-compose.yml");
+	let proj = format!("t{}-ndj", std::process::id());
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+	let run = |args: &[&str]| {
+		Command::new(bin())
+			.args(["-f", c, "-p", &proj])
+			.args(args)
+			.output()
+			.expect("run podup")
+	};
+	run(&["up", "-d"]);
+
+	// Take a couple of frames, then stop: the stream never ends on its own.
+	let out = Command::new("timeout")
+		.args([
+			"4",
+			bin(),
+			"-f",
+			c,
+			"-p",
+			&proj,
+			"stats",
+			"--format",
+			"json",
+		])
+		.output()
+		.expect("run podup stats");
+	let text = String::from_utf8_lossy(&out.stdout);
+	let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+	assert!(!lines.is_empty(), "no stats frames were emitted");
+	for line in &lines {
+		serde_json::from_str::<serde_json::Value>(line).unwrap_or_else(|e| {
+			panic!("streaming frame is not valid JSON on its own ({e}): {line}")
+		});
+	}
+
+	// `--no-stream` stays a single valid document.
+	let one = run(&["stats", "--no-stream", "--format", "json"]);
+	serde_json::from_slice::<serde_json::Value>(&one.stdout)
+		.expect("--no-stream must emit one valid JSON document");
+
+	run(&["down", "-v"]);
+}
+
+/// #1082: `port` with no host binding printed a blank line and exited 0, so
+/// `HOST=$(podup port web 80)` yielded an empty string with a success status and
+/// a script could not tell "not published" from "published at ''".
+#[tokio::test]
+async fn cli_port_without_a_binding_exits_nonzero() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	let dir = tempdir().unwrap();
+	let compose = dir.path().join("docker-compose.yml");
+	let proj = format!("t{}-prt", std::process::id());
+	fs::write(
+		&compose,
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+	let run = |args: &[&str]| {
+		Command::new(bin())
+			.args(["-f", c, "-p", &proj])
+			.args(args)
+			.output()
+			.expect("run podup")
+	};
+	run(&["up", "-d"]);
+
+	let out = run(&["port", "web", "80"]);
+	assert!(
+		!out.status.success(),
+		"an unpublished port must not report success: stdout={:?}",
+		String::from_utf8_lossy(&out.stdout)
+	);
+
+	run(&["down", "-v"]);
+}

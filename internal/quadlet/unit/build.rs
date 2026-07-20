@@ -16,19 +16,13 @@ use super::{owner_marker, sorted_label_pairs, unit_stem, QuadletUnit, Section};
 /// own, resolving a relative `SetWorkingDirectory` against the unit file's own
 /// directory (`~/.config/containers/systemd`) — where there is no Dockerfile. So
 /// the context, which compose interprets relative to the compose file, must be
-/// made absolute against that base directory here. `.` means the base dir itself.
+/// made absolute against that base directory here.
+///
+/// The rule is not specific to a build context: every compose-relative path a
+/// generated unit carries needs it, which is why the resolution itself lives in
+/// [`abs_against`].
 fn abs_context(base_dir: &Path, context: &str) -> String {
-	let ctx = Path::new(context);
-	if ctx.is_absolute() {
-		return context.to_string();
-	}
-	if ctx == Path::new(".") {
-		return base_dir.display().to_string();
-	}
-	// Strip a leading `./` so the joined path stays clean (`/base/src`, not
-	// `/base/./src`) — cosmetic, both resolve identically.
-	let rel = context.strip_prefix("./").unwrap_or(context);
-	base_dir.join(rel).display().to_string()
+	super::abs_against(base_dir, context)
 }
 
 /// The `.build` unit file name for a service, e.g. `proj-web.build`. The

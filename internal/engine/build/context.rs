@@ -1,8 +1,11 @@
-//! Build context tar assembly and `.dockerignore` matching.
+//! Build context tar assembly and ignore-file matching (`.containerignore` / `.dockerignore`).
 //!
-//! Walks the build context directory, applies `.dockerignore` semantics
-//! (last-match-wins with `!` re-includes, `*`/`?`/`**` globs), and packs the
-//! result into a gzipped tar suitable for the libpod build endpoint.
+//! Walks the build context directory, applies ignore semantics (last-match-wins
+//! with `!` re-includes, `*`/`?`/`**` globs), and packs the result into a
+//! gzipped tar suitable for the libpod build endpoint.
+//!
+//! Podman reads `.containerignore` or `.dockerignore` and prefers its own when
+//! both exist; exactly one applies, never the union. See [`ignore_file`].
 
 use std::path::Path;
 
@@ -95,27 +98,32 @@ pub(super) fn stream_build_context<W: std::io::Write>(
 	dockerfile: &str,
 	extra_files: &[(String, Vec<u8>)],
 ) -> Result<()> {
-	let ignore_patterns = read_dockerignore(context);
+	let (ignore_name, ignore_patterns) = ignore_file(context);
 	let encoder = GzEncoder::new(writer, Compression::default());
 	let mut tar = tar::Builder::new(encoder);
 
-	// Force-include the active Dockerfile so a `.dockerignore` that matches it
+	// Force-include the active Dockerfile so an ignore file that matches it
 	// cannot drop it from the context the builder receives (Docker parity).
 	if extra_files.is_empty() {
 		append_context(&mut tar, context, &ignore_patterns, &[], &[dockerfile])?;
 	} else {
-		// Skip the user's `.dockerignore`; it is rewritten with an exclusion per
+		// Skip the user's ignore file; it is rewritten with an exclusion per
 		// synthesized entry so a `COPY .` in the build cannot bake secret bytes
-		// into image layers.
+		// into image layers. It must be skipped and re-emitted under the same
+		// name the server will read, or the exclusions never apply.
 		append_context(
 			&mut tar,
 			context,
 			&ignore_patterns,
-			&[".dockerignore"],
+			&[ignore_name],
 			&[dockerfile],
 		)?;
 		let synthesized: Vec<&str> = extra_files.iter().map(|(n, _)| n.as_str()).collect();
-		append_dockerignore(&mut tar, &synthesized_dockerignore(context, &synthesized))?;
+		append_ignore_file(
+			&mut tar,
+			ignore_name,
+			&synthesized_ignore_file(context, ignore_name, &synthesized),
+		)?;
 	}
 	append_extra_files(&mut tar, extra_files)?;
 	finish_tar(tar)
@@ -129,7 +137,7 @@ pub(super) fn stream_build_context_with_inline<W: std::io::Write>(
 	inline: &str,
 	extra_files: &[(String, Vec<u8>)],
 ) -> Result<()> {
-	let ignore_patterns = read_dockerignore(context);
+	let (ignore_name, ignore_patterns) = ignore_file(context);
 	let encoder = GzEncoder::new(writer, Compression::default());
 	let mut tar = tar::Builder::new(encoder);
 
@@ -140,13 +148,18 @@ pub(super) fn stream_build_context_with_inline<W: std::io::Write>(
 	tar.append_data(&mut header, INLINE_DOCKERFILE_NAME, inline.as_bytes())
 		.map_err(|e| ComposeError::Build(e.to_string()))?;
 
-	// Skip the user's `.dockerignore` here; it is rewritten below with extra
-	// rules excluding every synthesized entry (inline Dockerfile, build secrets).
-	append_context(&mut tar, context, &ignore_patterns, &[".dockerignore"], &[])?;
+	// Skip the user's ignore file here; it is rewritten below with extra rules
+	// excluding every synthesized entry (inline Dockerfile, build secrets), under
+	// the same name the server will read.
+	append_context(&mut tar, context, &ignore_patterns, &[ignore_name], &[])?;
 
 	let mut synthesized: Vec<&str> = vec![INLINE_DOCKERFILE_NAME];
 	synthesized.extend(extra_files.iter().map(|(n, _)| n.as_str()));
-	append_dockerignore(&mut tar, &synthesized_dockerignore(context, &synthesized))?;
+	append_ignore_file(
+		&mut tar,
+		ignore_name,
+		&synthesized_ignore_file(context, ignore_name, &synthesized),
+	)?;
 
 	append_extra_files(&mut tar, extra_files)?;
 	finish_tar(tar)
@@ -196,24 +209,30 @@ pub(crate) fn build_context_tar(
 }
 
 /// Append a synthesized `.dockerignore` entry to the context tar.
-fn append_dockerignore<W: std::io::Write>(tar: &mut tar::Builder<W>, content: &str) -> Result<()> {
+fn append_ignore_file<W: std::io::Write>(
+	tar: &mut tar::Builder<W>,
+	name: &str,
+	content: &str,
+) -> Result<()> {
 	let mut header = tar::Header::new_gnu();
 	header.set_size(content.len() as u64);
 	header.set_mode(0o644);
 	header.set_cksum();
-	tar.append_data(&mut header, ".dockerignore", content.as_bytes())
+	tar.append_data(&mut header, name, content.as_bytes())
 		.map_err(|e| ComposeError::Build(e.to_string()))
 }
 
-/// Build the `.dockerignore` content for a context tar carrying synthesized
-/// entries: any user rules plus a final exclusion per synthesized name, so a
-/// `COPY .` in the build does not capture the inline Dockerfile or a build
-/// secret. The libpod `secrets=id=…,src=…` mount reads straight from the
-/// extracted context, which `.dockerignore` does not filter, so excluded
-/// secret entries remain mountable.
-fn synthesized_dockerignore(context: &Path, names: &[&str]) -> String {
-	let existing =
-		crate::filesystem::read_to_string_capped(context.join(".dockerignore")).unwrap_or_default();
+/// Build the ignore-file content for a context tar carrying synthesized entries:
+/// any user rules plus a final exclusion per synthesized name, so a `COPY .` in
+/// the build does not capture the inline Dockerfile or a build secret. The
+/// libpod `secrets=id=…,src=…` mount reads straight from the extracted context,
+/// which the ignore file does not filter, so excluded secret entries remain
+/// mountable.
+///
+/// `name` is the ignore file the server will read (see [`ignore_file`]); the
+/// user rules are carried over from that same file, never from the other one.
+fn synthesized_ignore_file(context: &Path, name: &str, names: &[&str]) -> String {
+	let existing = crate::filesystem::read_to_string_capped(context.join(name)).unwrap_or_default();
 	let mut out = existing.trim_end_matches(['\n', '\r']).to_string();
 	for name in names {
 		if !out.is_empty() {
@@ -240,16 +259,34 @@ pub(super) fn map_additional_context(base_dir: &Path, value: &str) -> String {
 	}
 }
 
-fn read_dockerignore(context: &Path) -> Vec<String> {
-	let path = context.join(".dockerignore");
-	let Ok(content) = crate::filesystem::read_to_string_capped(path) else {
-		return Vec::new();
-	};
-	content
-		.lines()
-		.map(|l| l.trim().to_string())
-		.filter(|l| !l.is_empty() && !l.starts_with('#'))
-		.collect()
+/// The ignore file podman would read for `context`, and its patterns.
+///
+/// podman-build(1): "If the file `.containerignore` or `.dockerignore` exists in
+/// the context directory, podman build reads its contents. […] if both are in
+/// the context directory, podman build only uses `.containerignore`."
+///
+/// So exactly one file applies — never the union. Applying both client-side
+/// produced an image missing content that `podman build` puts in, because we
+/// filtered by `.dockerignore` (a file podman would have ignored entirely) and
+/// the server then filtered by `.containerignore`.
+///
+/// The returned name is also the name any synthesized ignore file must be
+/// written under, or the server would read the *other* one and our exclusions
+/// would not apply. When neither file exists, `.containerignore` is the name to
+/// synthesize: podman prefers it, so it cannot be shadowed.
+fn ignore_file(context: &Path) -> (&'static str, Vec<String>) {
+	for name in [".containerignore", ".dockerignore"] {
+		let Ok(content) = crate::filesystem::read_to_string_capped(context.join(name)) else {
+			continue;
+		};
+		let patterns = content
+			.lines()
+			.map(|l| l.trim().to_string())
+			.filter(|l| !l.is_empty() && !l.starts_with('#'))
+			.collect();
+		return (name, patterns);
+	}
+	(".containerignore", Vec::new())
 }
 
 /// Decide whether `path` is excluded from the build context.

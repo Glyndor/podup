@@ -9,26 +9,48 @@ use crate::size::parse_duration_secs;
 use super::health::render_healthcheck;
 use super::security::{is_inline_secret, map_security_opt, render_secret};
 use super::{
-	collect_warnings, owner_marker, render_command, render_publish_port, render_restart,
-	render_tmpfs_mount, render_volume, sorted_label_pairs, sorted_pairs, unit_stem, QuadletUnit,
-	Section,
+	abs_against, collect_warnings, owner_marker, render_command, render_publish_port,
+	render_restart, render_tmpfs_mount, render_volume, sorted_label_pairs, sorted_pairs, unit_stem,
+	QuadletUnit, Section,
 };
+
+/// Project-wide inputs every generated unit needs, as opposed to the per-service
+/// ones (`name`, `service`). Grouped rather than passed loose because the set
+/// only grows as more compose keys gain a Quadlet mapping, and because they are
+/// identical for every service in one `generate_at` call.
+pub(crate) struct UnitContext<'a> {
+	/// Compose project name, stamped as the `podup.project` ownership label.
+	pub project: &'a str,
+	/// Volumes the compose file declares (external ones excluded).
+	pub declared_volumes: &'a [&'a str],
+	/// Networks the compose file declares (external ones excluded).
+	pub declared_networks: &'a [&'a str],
+	/// Top-level `secrets:` definitions, for resolving a service's secret refs.
+	pub secrets: &'a IndexMap<String, SecretConfig>,
+	/// Directory compose resolves relative paths against — the compose file's
+	/// own directory, not the unit's. See [`abs_against`].
+	pub base_dir: &'a std::path::Path,
+}
 
 /// Build the `.container` unit for one compose `service`.
 ///
-/// `project` is the compose project name; it is stamped onto the unit as the
-/// `podup.project` ownership label (and the service key as `podup.service`),
-/// matching the labels the live engine applies, so generated containers are
-/// traceable back to their project the same way running ones are.
+/// The project name is stamped onto the unit as the `podup.project` ownership
+/// label (and the service key as `podup.service`), matching the labels the live
+/// engine applies, so generated containers are traceable back to their project
+/// the same way running ones are.
 pub(crate) fn container_unit(
 	name: &str,
-	project: &str,
 	service: &Service,
-	declared_volumes: &[&str],
-	declared_networks: &[&str],
-	secrets: &IndexMap<String, SecretConfig>,
+	ctx: &UnitContext<'_>,
 	warnings: &mut Vec<String>,
 ) -> QuadletUnit {
+	let UnitContext {
+		project,
+		declared_volumes,
+		declared_networks,
+		secrets,
+		base_dir,
+	} = ctx;
 	let mut unit = Section::new("Unit");
 	unit.add("Description", format!("{name} (podup)"));
 	for dep in service.depends_on.service_names() {
@@ -154,8 +176,14 @@ pub(crate) fn container_unit(
 	for ann in sorted_label_pairs(service.annotations.to_map()) {
 		container.add("Annotation", format!("{}={}", ann.0, ann.1));
 	}
+	// `EnvironmentFile=` is resolved by podman-systemd.unit(5) against the unit
+	// file's own directory, not the compose file's. Units are installed to
+	// `~/.config/containers/systemd`, so `env_file: .env` would render to a unit
+	// looking for `~/.config/containers/systemd/.env` — and `--env-file` on a
+	// missing path is fatal, so the container never starts. Resolve against the
+	// compose base directory, the same way the build context is.
 	for entry in service.env_file.to_entries() {
-		container.add("EnvironmentFile", entry.path().to_string());
+		container.add("EnvironmentFile", abs_against(base_dir, entry.path()));
 	}
 	for t in service.tmpfs.to_list() {
 		container.add("Tmpfs", t);

@@ -178,11 +178,16 @@ fn prune_json_nulls(v: &mut serde_json::Value) {
 /// the value under an `environment:` key so a map-form host-passthrough var
 /// (`MYVAR:` → null) is not stripped from the output — it is forwarded at runtime,
 /// so `config` must show it, matching docker compose (which never drops the key).
+///
+/// It is set for `networks:` for the same reason: a null value there means
+/// "attach with default options", not "nothing". Dropping it removed a network
+/// the service is genuinely on — visible once merging could produce a map mixing
+/// a configured network with a bare one (#1078).
 fn prune_json(v: &mut serde_json::Value, preserve_nulls: bool) {
 	match v {
 		serde_json::Value::Object(map) => {
 			for (k, val) in map.iter_mut() {
-				prune_json(val, k == "environment");
+				prune_json(val, k == "environment" || k == "networks");
 			}
 			if !preserve_nulls {
 				map.retain(|_, val| !is_empty_json(val));
@@ -218,7 +223,7 @@ fn prune_yaml(v: &mut serde_yaml::Value, preserve_nulls: bool) {
 	match v {
 		serde_yaml::Value::Mapping(map) => {
 			for (k, val) in map.iter_mut() {
-				let child_preserve = k.as_str() == Some("environment");
+				let child_preserve = matches!(k.as_str(), Some("environment" | "networks"));
 				prune_yaml(val, child_preserve);
 			}
 			if !preserve_nulls {
@@ -489,5 +494,25 @@ mod tests {
 			out.contains("x-anchors"),
 			"x- extension must survive: {out}"
 		);
+	}
+
+	/// #1078: a null value under `networks:` means "attach with default
+	/// options", not "nothing". It used to be pruned like any other empty leaf,
+	/// which silently removed a network the service is genuinely on — reachable
+	/// once merging could produce a map mixing a configured network with a bare
+	/// one.
+	#[test]
+	fn a_bare_network_entry_survives_pruning() {
+		let mut v: serde_yaml::Value = serde_yaml::from_str(
+			"networks:\n  backend:\n    aliases:\n    - db\n  monitoring: null\n",
+		)
+		.unwrap();
+		prune_yaml_nulls(&mut v);
+		let out = serde_yaml::to_string(&v).unwrap();
+		assert!(
+			out.contains("monitoring"),
+			"a bare network entry must not be pruned: {out}"
+		);
+		assert!(out.contains("backend"), "{out}");
 	}
 }

@@ -200,14 +200,37 @@ pub fn install_quadlet<S: SystemCtl>(
 
 /// Uninstall quadlet-mode autostart: stop this project's container services, remove
 /// its `<project>-*` unit files, and reload the user manager. Idempotent — a
-/// service that was never loaded, or a file already gone, is not an error.
+/// service that was never started, or a file already gone, is not an error.
+///
+/// A service that *is* running and refuses to stop is a different matter: the
+/// unit files are still removed and the manager still reloaded, but the failure
+/// is returned, so uninstall cannot report success while a container keeps
+/// running.
 pub fn uninstall_quadlet<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
 	let units = installed_units(project);
-	// Stop the container services first (best-effort) while their units still exist.
+	let mut first_err: Option<ComposeError> = None;
+	// Stop the container services first, while their units still exist.
 	for path in &units {
 		if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
 			if let Some(stem) = name.strip_suffix(".container") {
-				let _ = sc.systemctl(&["stop", &format!("{stem}.service")]);
+				let service = format!("{stem}.service");
+				// Stop unconditionally. There is no state here worth probing for
+				// first: measured against real systemd, `stop` on a unit whose
+				// fragment is on disk exits 0 whether it is running, inactive, or
+				// was never started at all — and every unit in this loop has its
+				// fragment on disk, because that is what `installed_units` found.
+				// (`stop` only fails with "not loaded" when no fragment exists,
+				// which cannot happen here.)
+				//
+				// Gating on `is-active` would be worse than redundant: a service
+				// that is still coming up reports `activating`, which `is-active`
+				// calls a failure — so a stack caught mid-start, or one sitting in
+				// `activating (auto-restart)`, would be skipped and left running
+				// while uninstall deleted its units and reported success.
+				if let Err(e) = checked(sc.systemctl(&["stop", &service]), "stop") {
+					tracing::warn!("{e}");
+					first_err.get_or_insert(e);
+				}
 			}
 		}
 	}
@@ -223,7 +246,7 @@ pub fn uninstall_quadlet<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<(
 		eprintln!("podup: no quadlet autostart units for '{project}' (already removed)");
 	}
 	checked(sc.systemctl(&["daemon-reload"]), "daemon-reload")?;
-	Ok(())
+	first_err.map_or(Ok(()), Err)
 }
 
 /// Rebuild one or all built images of a quadlet-mode install. A `.build` unit is

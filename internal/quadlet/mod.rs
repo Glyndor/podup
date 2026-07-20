@@ -16,7 +16,7 @@ mod unit;
 mod warnings;
 
 use crate::compose::types::ComposeFile;
-use unit::{build_unit, container_unit, network_unit, volume_unit};
+use unit::{build_unit, container_unit, network_unit, volume_unit, UnitContext};
 
 /// The `# podup-owner: <project>` marker a unit carries as its literal first
 /// line, if present.
@@ -208,21 +208,21 @@ pub fn generate_at(file: &ComposeFile, project: &str, base_dir: &std::path::Path
 		.filter(|(_, cfg)| cfg.as_ref().is_none_or(|c| c.external != Some(true)))
 		.map(|(name, _)| name.as_str())
 		.collect();
+	let ctx = UnitContext {
+		project,
+		declared_volumes: &declared_volumes,
+		declared_networks: &declared_networks,
+		secrets: &file.secrets,
+		base_dir,
+	};
 	for (name, service) in &file.services {
 		// Emit a `.build` unit first so the systemd generator builds the image
 		// before the container that references it via `Image=<stem>.build`.
 		if let Some(unit) = build_unit(name, project, service, base_dir, &mut out.warnings) {
 			out.units.push(unit);
 		}
-		out.units.push(container_unit(
-			name,
-			project,
-			service,
-			&declared_volumes,
-			&declared_networks,
-			&file.secrets,
-			&mut out.warnings,
-		));
+		out.units
+			.push(container_unit(name, service, &ctx, &mut out.warnings));
 	}
 
 	out
