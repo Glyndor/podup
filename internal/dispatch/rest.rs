@@ -248,7 +248,7 @@ pub(super) async fn dispatch_rest(
 			workdir,
 			privileged,
 			detach,
-			no_tty: _,
+			no_tty,
 			index,
 			service,
 			cmd,
@@ -258,14 +258,7 @@ pub(super) async fn dispatch_rest(
 					file,
 					&service,
 					cmd,
-					podup::ExecOptions {
-						env,
-						user,
-						workdir,
-						privileged,
-						detach,
-						index,
-					},
+					podup::ExecOptions::new(env, user, workdir, privileged, detach, index, no_tty),
 				)
 				.await?
 		}

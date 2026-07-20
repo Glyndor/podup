@@ -1,0 +1,149 @@
+//! Terminal raw mode and window size, for interactive `exec`.
+//!
+//! Unix only. podup talks to `podman machine` over a named pipe on Windows, and
+//! raw mode there is a different API entirely (the console handles, not
+//! termios); that is tracked in #1079 rather than faked here.
+//!
+//! The invariant this module exists to hold: **the terminal is restored no
+//! matter how the exec ends.** A command that exits, a socket that dies, a
+//! panic, or a `?` on some unrelated error must all leave the user's shell
+//! usable. Raw mode with no echo and no line discipline is not something to
+//! leave behind on an error path, so the restore lives in `Drop` rather than at
+//! the end of the happy path.
+
+#![cfg(unix)]
+// termios and the winsize ioctl are libc FFI. The crate denies `unsafe` and
+// modules that need it opt back in locally, with a soundness comment per block —
+// see `engine::lock` and `engine::staging` for the same pattern.
+#![allow(unsafe_code)]
+
+use std::os::fd::AsRawFd;
+
+/// A terminal switched to raw mode, restored on drop.
+///
+/// Holding the original `termios` rather than reconstructing a "sane" one
+/// matters: the caller's shell may have its own settings, and putting the
+/// terminal into what podup thinks is normal would quietly change them.
+pub(super) struct RawMode {
+	fd: i32,
+	original: libc::termios,
+}
+
+impl RawMode {
+	/// Switch stdin to raw mode, or return `None` when it is not a terminal.
+	///
+	/// Not being a TTY is the ordinary case for `podup exec` in a script or a
+	/// pipeline, not an error: there is no line discipline to disable, and the
+	/// caller streams bytes as before.
+	pub(super) fn enable() -> Option<Self> {
+		Self::enable_on(std::io::stdin().as_raw_fd())
+	}
+
+	/// The same, on an explicit descriptor.
+	///
+	/// `enable` is the only place that consults the ambient stdin, which keeps
+	/// this testable: a test that asserted on `enable()` directly would be
+	/// asserting that whoever runs `cargo test` has no terminal — true under a
+	/// pipe, false in a shell, and on the way to being false it would put the
+	/// developer's own terminal into raw mode.
+	pub(super) fn enable_on(fd: i32) -> Option<Self> {
+		// SAFETY: `isatty` only inspects the descriptor and cannot write through
+		// it; a non-terminal descriptor returns 0 rather than misbehaving.
+		if unsafe { libc::isatty(fd) } != 1 {
+			return None;
+		}
+
+		let mut original: libc::termios = unsafe { std::mem::zeroed() };
+		// SAFETY: `original` is a correctly sized, zeroed `termios` owned here,
+		// and `fd` is a terminal (checked above). `tcgetattr` only writes into it.
+		if unsafe { libc::tcgetattr(fd, &mut original) } != 0 {
+			return None;
+		}
+
+		let mut raw = original;
+		// SAFETY: `cfmakeraw` only mutates the struct it is given.
+		unsafe { libc::cfmakeraw(&mut raw) };
+		// SAFETY: `raw` is a fully initialized `termios` derived from the current
+		// settings. TCSANOW applies immediately, which is what an interactive
+		// session wants — a drained flush would swallow keystrokes already typed.
+		if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &raw) } != 0 {
+			return None;
+		}
+
+		Some(Self { fd, original })
+	}
+}
+
+impl Drop for RawMode {
+	fn drop(&mut self) {
+		// SAFETY: `self.original` is the exact `termios` read from this same
+		// descriptor in `enable`, so restoring it cannot leave the terminal in a
+		// state it was not already in. Errors are ignored because there is
+		// nothing useful to do while unwinding, and reporting one would replace
+		// the real error the caller is already handling.
+		unsafe {
+			libc::tcsetattr(self.fd, libc::TCSANOW, &self.original);
+		}
+	}
+}
+
+/// The terminal's current size as `(rows, cols)`, or `None` when no descriptor
+/// can answer.
+///
+/// Used to size the remote pty at start and to follow it on `SIGWINCH`: without
+/// this, a full-screen program inside the container draws to an 80x24 default
+/// and redraws wrong the moment the window changes.
+///
+/// **stdin first, then stdout.** Asking only stdout looks natural — that is
+/// where the drawing goes — but the two can differ: `podup exec -it db psql >
+/// out.txt` types into a terminal and writes to a file, and stdout then answers
+/// "not a terminal" while a perfectly good size sits on stdin. Interactivity is
+/// decided by stdin, so the size is asked of stdin too, and stdout is the
+/// fallback for the reverse case.
+pub(super) fn window_size() -> Option<(u16, u16)> {
+	size_of(std::io::stdin().as_raw_fd()).or_else(|| size_of(std::io::stdout().as_raw_fd()))
+}
+
+/// `TIOCGWINSZ` on one descriptor.
+fn size_of(fd: i32) -> Option<(u16, u16)> {
+	let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+	// SAFETY: `ws` is a correctly sized, zeroed `winsize` owned here, and
+	// TIOCGWINSZ only writes into it. A non-terminal descriptor returns an error
+	// rather than writing garbage.
+	if unsafe { libc::ioctl(fd, libc::TIOCGWINSZ, &mut ws) } != 0 {
+		return None;
+	}
+	// A terminal that reports 0x0 has no usable geometry — treat it as unknown
+	// rather than sizing the remote pty to nothing.
+	if ws.ws_row == 0 || ws.ws_col == 0 {
+		return None;
+	}
+	Some((ws.ws_row, ws.ws_col))
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	/// A non-terminal descriptor is declined rather than failing — the path
+	/// `podup exec` takes inside a pipeline, which must keep working.
+	///
+	/// Asked of an explicit `/dev/null` rather than of ambient stdin: the same
+	/// assertion on `enable()` would be testing the harness, not the code, and
+	/// would put a real terminal into raw mode on the way to failing.
+	#[test]
+	fn a_non_terminal_descriptor_is_declined() {
+		let devnull = std::fs::File::open("/dev/null").expect("/dev/null opens");
+		assert!(
+			RawMode::enable_on(devnull.as_raw_fd()).is_none(),
+			"a non-terminal descriptor must not be switched to raw mode"
+		);
+	}
+
+	/// Likewise the size query: absence is a valid answer, not an error.
+	#[test]
+	fn a_non_terminal_descriptor_has_no_size() {
+		let devnull = std::fs::File::open("/dev/null").expect("/dev/null opens");
+		assert_eq!(size_of(devnull.as_raw_fd()), None);
+	}
+}
