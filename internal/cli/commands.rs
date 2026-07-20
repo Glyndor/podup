@@ -7,7 +7,7 @@ use clap::Subcommand;
 #[cfg(feature = "completions")]
 use clap_complete::Shell;
 
-use super::parse::{parse_pull_policy, parse_scale_pair, parse_timeout};
+use super::parse::{parse_progress, parse_pull_policy, parse_scale_pair, parse_timeout};
 use super::types::{
 	AutostartCommands, ConfigFormat, EventsFormat, GenerateCommands, OutputFormat, RmiScope,
 };
@@ -192,8 +192,9 @@ pub(crate) enum Commands {
 		#[arg(long = "build-arg")]
 		build_arg: Vec<String>,
 		/// Set the build progress output style (auto, plain, tty); accepted for
-		/// docker-compose compatibility.
-		#[arg(long)]
+		/// docker-compose compatibility. Validated but inert: podup renders build
+		/// output one way.
+		#[arg(long, value_parser = parse_progress)]
 		progress: Option<String>,
 		/// Push each built image to its registry after a successful build.
 		#[arg(long)]

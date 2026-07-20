@@ -248,11 +248,16 @@ impl Engine {
 			return Ok(());
 		}
 
-		// Fold `--status` and any `status=`/`name=` from `--filter` together;
-		// warn on unsupported `--filter` keys rather than silently ignoring them.
+		// Fold `--status` and any `status=`/`name=` from `--filter` together. An
+		// unsupported key is an error, not a warning: a dropped predicate means
+		// the command answers a question the caller did not ask, and a script
+		// filtering for a condition reads the unfiltered set back as a match.
+		// docker compose errors here too.
 		let (mut status_filter, name_filter, unknown) = split_ps_filters(&filters.filters);
-		for u in &unknown {
-			tracing::warn!("ps: ignoring unsupported filter '{u}'");
+		if let Some(u) = unknown.first() {
+			return Err(ComposeError::Unsupported(format!(
+				"unsupported ps filter {u:?}: expected name=<NAME> or status=<STATE>"
+			)));
 		}
 		status_filter.extend(filters.status.iter().cloned());
 

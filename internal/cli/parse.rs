@@ -48,6 +48,24 @@ pub(crate) fn parse_pull_policy(value: &str) -> Result<String, String> {
 	}
 }
 
+/// Progress styles `docker compose build --progress` accepts. podup renders build
+/// output one way, so the flag is inert — but an unknown value must still be
+/// rejected rather than accepted and ignored, or a typo silently changes nothing
+/// and reports success.
+const PROGRESS_STYLES: [&str; 3] = ["auto", "plain", "tty"];
+
+/// Validate a `build --progress` value at parse time.
+pub(crate) fn parse_progress(value: &str) -> Result<String, String> {
+	if PROGRESS_STYLES.contains(&value) {
+		Ok(value.to_string())
+	} else {
+		Err(format!(
+			"invalid progress style `{value}` (expected one of: {})",
+			PROGRESS_STYLES.join(", ")
+		))
+	}
+}
+
 /// Parse a `-t/--timeout` shutdown-grace value, rejecting negatives with a clear
 /// range error rather than forwarding `-5` to Podman or letting clap report a
 /// confusing "unexpected argument" for the space form.
