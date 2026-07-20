@@ -134,6 +134,25 @@ fn is_go_duration(v: &str) -> bool {
 	segments > 0
 }
 
+/// Whether a failed write to the log sink should end the follow loop.
+///
+/// A `BrokenPipe` is the ordinary way a piped consumer signals it has read
+/// enough — `logs -f | head`, `| grep -q`, `| less` and quit. It is a clean end
+/// of output, not a failure, and the loop must stop: podup used to discard the
+/// write result entirely and go on streaming into a dead pipe until the process
+/// was killed. Any other io error is worth a warning before stopping, since it
+/// means output is being lost for a reason the user cannot see.
+fn stop_on_write_error(container_name: &str, result: std::io::Result<()>) -> bool {
+	match result {
+		Ok(()) => false,
+		Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => true,
+		Err(e) => {
+			tracing::warn!("logs {container_name}: cannot write output: {e}");
+			true
+		}
+	}
+}
+
 /// Build the libpod `containers/{}/logs` query string from the options.
 fn log_query(opts: &LogsOptions) -> String {
 	let mut q = format!(
@@ -283,14 +302,17 @@ impl Engine {
 						let mut out_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
 						let mut err_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
 						while let Some(msg) = stream.next().await {
-							match msg {
+							let wrote = match msg {
 								Ok(LogOutput::StdOut { message }) => {
-									out_pfx.write(&mut std::io::stdout().lock(), &message);
+									out_pfx.write(&mut std::io::stdout().lock(), &message)
 								}
 								Ok(LogOutput::StdErr { message }) => {
-									err_pfx.write(&mut std::io::stderr().lock(), &message);
+									err_pfx.write(&mut std::io::stderr().lock(), &message)
 								}
 								Err(_) => break,
+							};
+							if stop_on_write_error(&container_name, wrote) {
+								break;
 							}
 						}
 						out_pfx.flush_tail(&mut std::io::stdout().lock());
@@ -332,12 +354,15 @@ impl Engine {
 				let mut out_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
 				let mut err_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
 				while let Some(msg) = stream.next().await {
-					match msg {
+					let wrote = match msg {
 						Ok(LogOutput::StdOut { message }) => out_pfx.write(&mut out, &message),
 						Ok(LogOutput::StdErr { message }) => {
 							err_pfx.write(&mut std::io::stderr().lock(), &message)
 						}
 						Err(_) => break,
+					};
+					if stop_on_write_error(&container_name, wrote) {
+						break;
 					}
 				}
 				out_pfx.flush_tail(&mut out);
