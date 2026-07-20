@@ -10,6 +10,18 @@
 //! The reverse (documented flags that no longer exist) is a different failure
 //! and a different fix, and folding both into one assertion would make the
 //! message ambiguous.
+//!
+//! The match is scoped to the command's own `###` section. Searching the whole
+//! document — which this did until #1132 — means a flag documented anywhere
+//! satisfies every command, so eight flags sat undocumented in their own tables
+//! while the test stayed green. Scoping it is also the honest reading of what
+//! the test claims to check: that a reader looking up `create` finds `--pull`
+//! under `create`, not somewhere else entirely.
+//!
+//! It still checks names, never descriptions. A row can say the opposite of
+//! what the code does and this will not notice — `exec`'s pseudo-TTY shipped
+//! next to "podup never allocates one" (#1079), and `commit --pause` documented
+//! a default of off while the code defaults it on (#1132).
 
 use std::collections::BTreeSet;
 use std::process::Command;
@@ -57,10 +69,47 @@ const COMMANDS: [&str; 29] = [
 	"wait", "scale", "commit", "export", "pull", "push", "config",
 ];
 
+/// The lines of `docs/commands.md` documenting one command: from its `###`
+/// heading to the next heading of any level.
+///
+/// Headings carry their positional arguments — ``### `cp <SRC> <DST>` `` — so a
+/// command matches when the first backticked word of the heading is its name.
+/// `pause` and `unpause` share one heading, which the `/`-separated form covers.
+fn section_for(docs: &str, cmd: &str) -> Option<String> {
+	let mut lines = docs.lines();
+	let heading = lines.by_ref().find(|line| {
+		line.strip_prefix("### ").is_some_and(|rest| {
+			rest.split('/').any(|part| {
+				part.trim().trim_start_matches('`').split(['`', ' ']).next() == Some(cmd)
+			})
+		})
+	});
+	heading?;
+	Some(
+		lines
+			// Both levels, and not a bare `#` test: a fenced bash block starts its
+			// comments with `#` at column zero, and stopping there would truncate
+			// the section early and fail a documented flag.
+			.take_while(|line| !line.starts_with("## ") && !line.starts_with("### "))
+			.collect::<Vec<_>>()
+			.join("\n"),
+	)
+}
+
 #[test]
 fn every_cli_flag_is_documented() {
 	let docs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/commands.md"))
 		.expect("read docs/commands.md");
+
+	// clap marks the compose-wide options `global`, so every command's `--help`
+	// reprints them — but they are documented once, in the global table, not in
+	// each command's own. Subtract them or the per-command check demands that
+	// `--socket` be listed under all twenty-nine.
+	let global = Command::new(bin())
+		.arg("--help")
+		.output()
+		.expect("run --help");
+	let globals = flags_in_help(&String::from_utf8_lossy(&global.stdout));
 
 	let mut missing: Vec<String> = Vec::new();
 	for cmd in COMMANDS {
@@ -70,8 +119,13 @@ fn every_cli_flag_is_documented() {
 			.unwrap_or_else(|e| panic!("run {cmd} --help: {e}"));
 		assert!(out.status.success(), "`{cmd} --help` failed");
 		let help = String::from_utf8_lossy(&out.stdout);
+		let section = section_for(&docs, cmd)
+			.unwrap_or_else(|| panic!("docs/commands.md has no `### {cmd}` section"));
 		for flag in flags_in_help(&help) {
-			if !docs.contains(&flag) {
+			if globals.contains(&flag) {
+				continue;
+			}
+			if !section.contains(&flag) {
 				missing.push(format!("{cmd}: {flag}"));
 			}
 		}

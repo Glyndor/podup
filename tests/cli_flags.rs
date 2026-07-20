@@ -356,3 +356,30 @@ fn config_projections_render_lists() {
 
 	let _ = fs::remove_dir_all(&dir);
 }
+
+/// `--sig-proxy` must accept docker's bare spelling.
+///
+/// It lives in the "accepted for compatibility" set, whose entire promise is
+/// that a script written against docker compose runs unchanged. Docker declares
+/// it as a bare boolean; podup declared it as one that demands a value, so
+/// `docker compose attach --sig-proxy web` came back as a usage error and exit
+/// 2 — a no-op flag rejecting the command it was supposed to tolerate.
+///
+/// Asserted as "not a clap error": these never reach Podman, so the run fails
+/// later on the missing compose file, which is exactly the point — parsing got
+/// past the flag.
+#[test]
+fn sig_proxy_accepts_dockers_bare_form_and_an_explicit_value() {
+	for args in [
+		vec!["attach", "web", "--sig-proxy"],
+		vec!["attach", "web", "--sig-proxy=true"],
+		vec!["attach", "web", "--sig-proxy=false"],
+	] {
+		let out = run_offline(&args);
+		assert!(
+			!is_clap_usage_error(&out) && !is_clap_value_error(&out),
+			"{args:?} must parse; got {}",
+			String::from_utf8_lossy(&out.stderr)
+		);
+	}
+}
