@@ -229,14 +229,6 @@ impl Engine {
 		// one service must not blank the whole command the way an `.await?` would:
 		// warn and skip that service so the rest still stream, matching the
 		// per-container tolerance below.
-		//
-		// Tolerating a failure is not the same as reporting success, though: each
-		// tolerated fault is recorded here and returned once every stream has been
-		// drained, so `logs` against a dead socket exits non-zero instead of
-		// printing warnings and exiting 0. A 404 is deliberately *not* recorded —
-		// a service with no container yet is not an error, and docker compose
-		// exits 0 for it too.
-		let mut first_err: Option<ComposeError> = None;
 		let mut targets: Vec<(String, bool)> = Vec::new();
 		for (n, s) in file
 			.services
@@ -248,7 +240,6 @@ impl Engine {
 				Ok(names) => names,
 				Err(e) => {
 					tracing::warn!("logs: resolving replicas for service {n}: {e}");
-					first_err.get_or_insert(e);
 					continue;
 				}
 			};
@@ -272,10 +263,9 @@ impl Engine {
 						);
 						let resp = match client.get_stream(&path).await {
 							Ok(r) => r,
-							Err(e) if e.is_status(404) => return None,
 							Err(e) => {
 								tracing::warn!("logs {container_name}: {e}");
-								return Some(ComposeError::Podman(e));
+								return;
 							}
 						};
 						let mut stream = if is_tty {
@@ -300,26 +290,15 @@ impl Engine {
 								Ok(LogOutput::StdErr { message }) => {
 									err_pfx.write(&mut std::io::stderr().lock(), &message);
 								}
-								// Warned but deliberately NOT treated as a command
-								// failure — see the note in the sequential branch.
-								Err(e) => {
-									tracing::warn!(
-										"logs {container_name}: stream ended early: {e}"
-									);
-									break;
-								}
+								Err(_) => break,
 							}
 						}
 						out_pfx.flush_tail(&mut std::io::stdout().lock());
 						err_pfx.flush_tail(&mut std::io::stderr().lock());
-						None
 					}
 				})
 				.collect();
-			let open_errs = futures_util::future::join_all(futs).await;
-			// Keep the earliest failure: a replica-resolution error happened
-			// before any of these streams was opened.
-			first_err = first_err.or_else(|| open_errs.into_iter().flatten().next());
+			futures_util::future::join_all(futs).await;
 		} else {
 			for (container_name, is_tty) in targets {
 				let path = format!(
@@ -332,10 +311,8 @@ impl Engine {
 				// whole command on the first 404.
 				let resp = match self.client.get_stream(&path).await {
 					Ok(r) => r,
-					Err(e) if e.is_status(404) => continue,
 					Err(e) => {
 						tracing::warn!("logs {container_name}: {e}");
-						first_err.get_or_insert(ComposeError::Podman(e));
 						continue;
 					}
 				};
@@ -360,25 +337,7 @@ impl Engine {
 						Ok(LogOutput::StdErr { message }) => {
 							err_pfx.write(&mut std::io::stderr().lock(), &message)
 						}
-						// Warned, never fatal. A mid-stream error here is NOT
-						// reliably a fault: the live lane showed six `logs` tests
-						// (plus `run`, `attach` and `events`, which stream the same
-						// way) going red on Podman 5.8.1 when this was treated as a
-						// failure, while the identical suite is green on 5.4.2. So
-						// on at least some versions libpod ends a finished log
-						// stream in a way hyper reports as an error rather than a
-						// clean EOF, and podup cannot yet tell that apart from a
-						// socket that genuinely died mid-read.
-						//
-						// The two unambiguous faults above — a replica lookup that
-						// fails, and a stream that will not open — are still
-						// reported, and they are what makes `logs` against a dead
-						// socket non-zero. Distinguishing a real mid-stream failure
-						// is tracked separately rather than guessed at here.
-						Err(e) => {
-							tracing::warn!("logs {container_name}: stream ended early: {e}");
-							break;
-						}
+						Err(_) => break,
 					}
 				}
 				out_pfx.flush_tail(&mut out);
@@ -386,7 +345,7 @@ impl Engine {
 			}
 		}
 
-		first_err.map_or(Ok(()), Err)
+		Ok(())
 	}
 
 	/// Names of this project's containers (by label) that the current compose file
