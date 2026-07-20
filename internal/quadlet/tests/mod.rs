@@ -1,6 +1,7 @@
 use crate::quadlet::{QuadletOutput, QuadletUnit};
 
 mod fields;
+mod health;
 mod network_volume;
 mod units;
 
