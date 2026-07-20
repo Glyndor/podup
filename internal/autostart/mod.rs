@@ -44,7 +44,33 @@ impl SystemCtl for RealSystemCtl {
 	}
 }
 
+/// The longest `stop_grace_period` across a compose file's services, in seconds.
+///
+/// systemd bounds `ExecStop` independently of what runs inside it, and its
+/// default `DefaultTimeoutStopUSec` is 90s. `podup stop` honours each
+/// container's own grace period, so a stack whose slowest container needs more
+/// than that stops cleanly when a human runs it and gets killed mid-stop at
+/// reboot — the difference only shows up during an unattended shutdown, which
+/// is the worst version of it.
+///
+/// `None` when no service sets one, or when none parses, so the unit simply
+/// omits `TimeoutStopSec=` and keeps systemd's default. An unparseable duration
+/// is skipped rather than defaulted: the value is validated elsewhere, and
+/// guessing a timeout from a malformed one would be worse than not setting it.
+pub fn max_stop_grace_secs(file: &crate::compose::types::ComposeFile) -> Option<u64> {
+	file.services
+		.values()
+		.filter_map(|s| s.stop_grace_period.as_deref())
+		.filter_map(crate::size::parse_duration_secs)
+		.max()
+}
+
 /// Options for [`install`].
+///
+/// `#[non_exhaustive]`: see [`ServiceUnitOpts`] — same reason, same construction
+/// pattern.
+#[non_exhaustive]
+#[derive(Default)]
 pub struct InstallOptions {
 	/// The unit to render and install.
 	pub unit: ServiceUnitOpts,
@@ -52,6 +78,29 @@ pub struct InstallOptions {
 	pub no_start: bool,
 	/// Print the unit and the actions that would run, but change nothing.
 	pub dry_run: bool,
+}
+
+impl InstallOptions {
+	/// Install `unit` with the default flags (start it, really write it).
+	pub fn new(unit: ServiceUnitOpts) -> Self {
+		Self {
+			unit,
+			no_start: false,
+			dry_run: false,
+		}
+	}
+
+	/// Install the unit but do not `enable --now` it. Builder-style.
+	pub fn with_no_start(mut self, no_start: bool) -> Self {
+		self.no_start = no_start;
+		self
+	}
+
+	/// Print what would happen and change nothing. Builder-style.
+	pub fn with_dry_run(mut self, dry_run: bool) -> Self {
+		self.dry_run = dry_run;
+		self
+	}
 }
 
 /// `${XDG_CONFIG_HOME:-~/.config}`. Falls back to `$HOME/.config`, then `.config`
