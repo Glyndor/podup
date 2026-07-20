@@ -68,20 +68,42 @@ pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) ->
 		out
 	}
 
+	/// Append, do not replace. docker compose concatenates these sequences
+	/// across `-f` and `extends`; replacing silently dropped the base's entries,
+	/// so an override adding one nameserver removed every other one.
 	fn merge_sol(base: StringOrList, over: StringOrList) -> StringOrList {
 		if over.is_empty() {
-			base
-		} else {
-			over
+			return base;
 		}
+		if base.is_empty() {
+			return over;
+		}
+		let mut out = base.to_list();
+		for item in over.to_list() {
+			if !out.contains(&item) {
+				out.push(item);
+			}
+		}
+		StringOrList::List(out)
 	}
 
+	/// Append, do not replace: docker compose reads the base's env files *and*
+	/// the override's, in order. Replacing meant an override adding one file
+	/// silently stopped loading every other one.
 	fn merge_env_file(base: EnvFile, over: EnvFile) -> EnvFile {
 		if over.is_empty() {
-			base
-		} else {
-			over
+			return base;
 		}
+		if base.is_empty() {
+			return over;
+		}
+		let mut out = base.to_entries();
+		for entry in over.to_entries() {
+			if !out.iter().any(|e| e.path() == entry.path()) {
+				out.push(entry);
+			}
+		}
+		EnvFile::List(out)
 	}
 
 	// compose-go unions `depends_on` across `extends`: the base's dependencies and
@@ -136,11 +158,12 @@ pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) ->
 		volumes_from: merge_vec(base.volumes_from, override_svc.volumes_from),
 		configs: merge_vec(base.configs, override_svc.configs),
 		secrets: merge_vec(base.secrets, override_svc.secrets),
-		networks: if matches!(override_svc.networks, ServiceNetworks::Empty) {
-			base.networks
-		} else {
-			override_svc.networks
-		},
+		// Union, not replace. A service on `backend` in the base and `monitoring`
+		// in the override silently lost `backend`, dropped off the network, and
+		// service discovery failed at run time — far from the config that caused
+		// it. docker compose unions them; the override's per-network config wins
+		// for a network both declare.
+		networks: merge_networks(base.networks, override_svc.networks),
 		hostname: override_svc.hostname.or(base.hostname),
 		domainname: override_svc.domainname.or(base.domainname),
 		mac_address: override_svc.mac_address.or(base.mac_address),
@@ -210,11 +233,8 @@ pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) ->
 		oom_score_adj: override_svc.oom_score_adj.or(base.oom_score_adj),
 		blkio_config: override_svc.blkio_config.or(base.blkio_config),
 		logging: override_svc.logging.or(base.logging),
-		sysctls: if matches!(override_svc.sysctls, Sysctls::Empty) {
-			base.sysctls
-		} else {
-			override_svc.sysctls
-		},
+		// Merged per key, like `environment` and `labels` — not replaced.
+		sysctls: merge_sysctls(base.sysctls, override_svc.sysctls),
 		ulimits: {
 			let mut m = base.ulimits;
 			for (k, v) in override_svc.ulimits {
@@ -243,230 +263,69 @@ pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) ->
 	}
 }
 
-#[cfg(test)]
-mod tests {
-	use crate::parse_str;
-
-	#[test]
-	fn extends_unions_sequence_fields() {
-		let yaml = r#"
-services:
-  base:
-    image: alpine
-    ports:
-      - "80:80"
-      - "81:81"
-  app:
-    extends: base
-    ports:
-      - "90:90"
-"#;
-		let file = parse_str(yaml).unwrap();
-		// Compose `extends` combines sequences (base first, then the extending
-		// service's items) rather than replacing the base wholesale.
-		assert_eq!(file.services["app"].ports.len(), 3);
+/// Union two `networks:` declarations, keeping the base's attachments and adding
+/// the override's. For a network both declare, the override's per-network config
+/// wins; a bare-list entry contributes no config, so it never erases one.
+///
+/// The short (list) and long (map) forms mix freely across `-f` and `extends`,
+/// so both collapse to the map form whenever either side carries config.
+fn merge_networks(base: ServiceNetworks, over: ServiceNetworks) -> ServiceNetworks {
+	if matches!(over, ServiceNetworks::Empty) {
+		return base;
 	}
-
-	#[test]
-	fn extends_dedups_identical_sequence_entries() {
-		let yaml = r#"
-services:
-  base:
-    image: alpine
-    ports:
-      - "80:80"
-  app:
-    extends: base
-    ports:
-      - "80:80"
-      - "90:90"
-"#;
-		let file = parse_str(yaml).unwrap();
-		// An exact duplicate from the extending service is dropped.
-		assert_eq!(file.services["app"].ports.len(), 2);
+	if matches!(base, ServiceNetworks::Empty) {
+		return over;
 	}
-
-	#[test]
-	fn absent_list_field_falls_back_to_base() {
-		let yaml = r#"
-services:
-  base:
-    image: alpine
-    ports:
-      - "80:80"
-  app:
-    extends: base
-"#;
-		let file = parse_str(yaml).unwrap();
-		assert_eq!(file.services["app"].ports.len(), 1);
+	// Preserve declaration order: the base's networks first, then any the
+	// override introduces.
+	let mut out: indexmap::IndexMap<String, Option<crate::compose::types::ServiceNetworkConfig>> =
+		indexmap::IndexMap::new();
+	for name in base.names() {
+		let cfg = base.config_for(&name).cloned();
+		out.insert(name, cfg);
 	}
-
-	#[test]
-	fn labels_are_merged_with_override_winning() {
-		let yaml = r#"
-services:
-  base:
-    image: alpine
-    labels:
-      a: base
-      keep: base
-  app:
-    extends: base
-    labels:
-      a: over
-      b: over
-"#;
-		let file = parse_str(yaml).unwrap();
-		let labels = file.services["app"].labels.to_map();
-		assert_eq!(labels.get("a").map(|s| s.as_str()), Some("over"));
-		assert_eq!(labels.get("keep").map(|s| s.as_str()), Some("base"));
-		assert_eq!(labels.get("b").map(|s| s.as_str()), Some("over"));
+	for name in over.names() {
+		let cfg = over.config_for(&name).cloned();
+		match out.entry(name) {
+			indexmap::map::Entry::Occupied(mut e) => {
+				// A bare name in the override must not wipe config the base set.
+				if cfg.is_some() {
+					e.insert(cfg);
+				}
+			}
+			indexmap::map::Entry::Vacant(e) => {
+				e.insert(cfg);
+			}
+		}
 	}
-
-	#[test]
-	fn empty_override_keeps_base_depends_on() {
-		let yaml = r#"
-services:
-  db:
-    image: postgres
-  base:
-    image: alpine
-    depends_on:
-      - db
-  app:
-    extends: base
-"#;
-		let file = parse_str(yaml).unwrap();
-		assert_eq!(
-			file.services["app"].depends_on.service_names(),
-			vec!["db".to_string()]
-		);
+	// Stay in the short form when nothing carries per-network config. That is the
+	// form the user wrote and the one docker keeps — and a map of all-`None`
+	// values is pruned as empty by the `config` renderer's null-stripping, which
+	// would drop the networks from the rendered file entirely.
+	if out.values().all(Option::is_none) {
+		return ServiceNetworks::List(out.into_keys().collect());
 	}
-
-	#[test]
-	fn extends_unions_depends_on() {
-		let yaml = r#"
-services:
-  db:
-    image: postgres
-  cache:
-    image: redis
-  base:
-    image: alpine
-    depends_on:
-      - db
-  app:
-    extends: base
-    depends_on:
-      - cache
-"#;
-		let file = parse_str(yaml).unwrap();
-		// compose-go unions the base and extending depends_on rather than letting
-		// the override replace the base wholesale.
-		let mut names = file.services["app"].depends_on.service_names();
-		names.sort();
-		assert_eq!(names, vec!["cache".to_string(), "db".to_string()]);
-	}
-
-	#[test]
-	fn extends_depends_on_override_wins_on_conflict() {
-		let yaml = r#"
-services:
-  db:
-    image: postgres
-  base:
-    image: alpine
-    depends_on:
-      db:
-        condition: service_started
-  app:
-    extends: base
-    depends_on:
-      db:
-        condition: service_healthy
-"#;
-		let file = parse_str(yaml).unwrap();
-		// On an overlapping key the extending service's condition wins.
-		assert_eq!(
-			file.services["app"].depends_on.condition_for("db"),
-			crate::compose::types::ServiceCondition::ServiceHealthy
-		);
-	}
-
-	#[test]
-	fn absent_override_keeps_base_environment() {
-		let yaml = r#"
-services:
-  base:
-    image: alpine
-    environment:
-      A: "1"
-  app:
-    extends: base
-"#;
-		let file = parse_str(yaml).unwrap();
-		let env = file.services["app"].environment.to_map();
-		assert_eq!(env.get("A").and_then(|v| v.clone()).as_deref(), Some("1"));
-	}
-
-	#[test]
-	fn scalar_or_list_field_override_replaces_base() {
-		// `dns` is a StringOrList: a non-empty override replaces the base wholesale
-		// (merge_sol), it is not unioned.
-		let yaml = r#"
-services:
-  base:
-    image: alpine
-    dns:
-      - 1.1.1.1
-  app:
-    extends: base
-    dns:
-      - 9.9.9.9
-"#;
-		let file = parse_str(yaml).unwrap();
-		assert_eq!(file.services["app"].dns.to_list(), vec!["9.9.9.9"]);
-	}
-
-	#[test]
-	fn env_file_override_replaces_base() {
-		// env_file is replaced (not unioned) when the extending service sets it.
-		let yaml = r#"
-services:
-  base:
-    image: alpine
-    env_file:
-      - base.env
-  app:
-    extends: base
-    env_file:
-      - app.env
-"#;
-		let file = parse_str(yaml).unwrap();
-		let entries = file.services["app"].env_file.to_entries();
-		assert_eq!(entries.len(), 1);
-		assert_eq!(entries[0].path(), "app.env");
-	}
-
-	#[test]
-	fn depends_on_unions_when_base_has_none() {
-		// The base declares no depends_on; the extending service's dependencies are
-		// carried through unchanged (merge_depends_on base-empty branch).
-		let yaml = r#"
-services:
-  base:
-    image: alpine
-  db:
-    image: postgres
-  app:
-    extends: base
-    depends_on:
-      - db
-"#;
-		let file = parse_str(yaml).unwrap();
-		assert!(file.services["app"]
-			.depends_on
-			.service_names()
-			.contains(&"db".to_string()));
-	}
+	ServiceNetworks::Map(out)
 }
+
+/// Merge `sysctls:` per key, the way `environment` and `labels` already merge —
+/// the override wins for a key both set, and the base keeps the rest.
+fn merge_sysctls(base: Sysctls, over: Sysctls) -> Sysctls {
+	if matches!(over, Sysctls::Empty) {
+		return base;
+	}
+	if matches!(base, Sysctls::Empty) {
+		return over;
+	}
+	let mut out: indexmap::IndexMap<String, serde_yaml::Value> = indexmap::IndexMap::new();
+	for (k, v) in base.to_map() {
+		out.insert(k, serde_yaml::Value::String(v));
+	}
+	for (k, v) in over.to_map() {
+		out.insert(k, serde_yaml::Value::String(v));
+	}
+	Sysctls::Map(out)
+}
+
+#[cfg(test)]
+mod tests;
