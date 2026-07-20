@@ -237,8 +237,25 @@ Execute a command in a running service container.
 | `-w, --workdir <PATH>` | Working directory inside the container. | container default |
 | `--privileged` | Give extended privileges to the command. | off |
 | `-d, --detach` | Run the command in the background. | off |
-| `-T, --no-tty` (alias `--no-TTY`) | Disable pseudo-TTY allocation (accepted for compatibility; podup never allocates one). | off |
+| `-T, --no-tty` (alias `--no-TTY`) | Disable pseudo-TTY allocation. | off |
 | `--index <N>` | Target this replica (1-based) of a scaled service. | 1 |
+
+On Unix, `exec` allocates a pseudo-TTY and attaches your stdin when stdin is a
+terminal, so `podup exec -it db psql` drops you into an interactive session that
+follows your window size. It is not on `-i`: like `docker compose exec`, a TTY on
+both ends is the default, and `-T` is how you turn it off.
+
+Interactivity engages **only** when stdin is a terminal, so a script or a
+pipeline keeps the plain streaming behaviour with no change to output framing:
+
+```bash
+podup exec db psql -c 'select 1' > out.txt   # streams, no TTY
+echo 'select 1' | podup exec -T db psql      # streams, no TTY
+```
+
+Windows keeps the streaming behaviour in every case; podup reaches
+`podman machine` over a named pipe there, where raw mode and window-resize are a
+different API ([#1079](https://github.com/Glyndor/podup/issues/1079)).
 
 ```bash
 podup exec -u root web sh
@@ -522,7 +539,7 @@ covers, and the only other way to find out was to read the dispatch code.
 | `config --no-normalize` | `config` always emits the normalized form. |
 | `cp -a, --archive` | Ownership/permission preservation is not meaningful for a rootless copy. |
 | `attach --no-stdin`, `--sig-proxy`, `--detach-keys` | `attach` streams output only; stdin is never attached (see [#1079](https://github.com/Glyndor/podup/issues/1079)). |
-| `run -T, --no-TTY` / `exec -T, --no-tty` | podup never allocates a pseudo-TTY, so disabling one is a no-op (see [#1079](https://github.com/Glyndor/podup/issues/1079)). |
+| `run -T, --no-TTY` | `run` never allocates a pseudo-TTY, so disabling one is a no-op. `exec -T` is real: it turns off a pseudo-TTY that `exec` does allocate. |
 
 Everything else that parses does something. An **unknown** `--filter` predicate
 is rejected outright rather than dropped: a filter that silently does not apply
