@@ -450,3 +450,14 @@ when both are set.
 | `126` | `run`/`exec`: the command exists but is not executable. |
 | `127` | `run`/`exec`: the command was not found. |
 | other | `run` propagates the container's own exit code verbatim. |
+
+`exec` propagates the command's exit code the same way `run` does, and `wait`
+returns the last non-zero code it saw.
+
+**`watch` is the exception.** A sync, rebuild, restart or exec that fails during
+a watch session is reported as a warning and the session keeps going; `watch`
+exits 0 unless it cannot start at all. This matches `docker compose watch` — a
+long-running developer loop should not die because one rebuild failed — but it
+does mean the exit code of a `watch` session says nothing about whether every
+action in it succeeded. Read the warnings, not the status, and do not gate
+automation on it.

@@ -283,11 +283,20 @@ impl Engine {
 			.await
 			.map_err(ComposeError::Podman)?;
 		let mut frames = parse_json_lines::<StatsReport>(resp.into_body());
+		// Raised from `debug!` to `warn!` so a stream that dies mid-sample is at
+		// least visible at the default level — it used to vanish entirely, and a
+		// monitor scraping `stats` read a truncated sample as a complete one.
+		//
+		// Not fatal, though. The sibling streaming commands showed on the live
+		// lane that a finished libpod stream can end in a way hyper reports as an
+		// error on some Podman versions, so failing the command here would fail
+		// runs that worked. Making the exit code trustworthy needs that
+		// distinction first.
 		while let Some(frame) = frames.next().await {
 			match frame {
 				Ok(report) => print_frame(&report, &running, &stopped, &opts),
 				Err(e) => {
-					tracing::debug!("stats stream ended: {e}");
+					tracing::warn!("stats: stream ended early: {e}");
 					break;
 				}
 			}

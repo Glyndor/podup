@@ -50,10 +50,17 @@ impl Engine {
 			.await
 			.map_err(ComposeError::Podman)?;
 		let mut stream = crate::libpod::parse_json_lines::<Value>(resp.into_body());
+		// Warned, never fatal. The parser only yields `Err` on a transport
+		// failure or an unparseable frame — but "transport failure" turns out to
+		// include how libpod ends a finished stream on some versions:
+		// `engine_events_stream_connects` went red on the live lane's Podman
+		// 5.8.1 when this was treated as a command failure, while the same suite
+		// is green on 5.4.2. Until podup can tell that apart from a socket that
+		// genuinely died, reporting it would fail commands that worked.
 		while let Some(event) = stream.next().await {
 			match event {
 				Ok(value) => println!("{}", format_event(&value, json)),
-				Err(e) => tracing::warn!("events: {e}"),
+				Err(e) => tracing::warn!("events: stream ended early: {e}"),
 			}
 		}
 		Ok(())

@@ -240,15 +240,48 @@ pub fn install<S: SystemCtl>(sc: &S, opts: &InstallOptions) -> crate::Result<()>
 	Ok(())
 }
 
+/// Whether systemd knows anything about `unit` — loaded, enabled, running, or
+/// merely present as a fragment.
+///
+/// `systemctl is-active` exits **4** for a unit it has never heard of and
+/// something else for every other state (0 active, 3 inactive/failed/activating).
+/// That numeric 4 is the only reliable "there is nothing here" signal: the
+/// message text is localised, and the *fragment file* is not a proxy for it —
+/// measured, a unit whose file is deleted out of band stays loaded, enabled and
+/// running, and `disable --now` still exits 0, removes its `.wants/` symlink and
+/// stops it. Gating on the file would delete the only way out of that state.
+///
+/// A probe that cannot even be spawned returns `true`: the right response to
+/// "I could not ask" is to attempt the disable anyway and let `checked` report
+/// whatever happens, never to assume there is nothing to do.
+fn unit_is_known<S: SystemCtl>(sc: &S, unit: &str) -> bool {
+	sc.systemctl(&["is-active", "--quiet", unit])
+		.map(|o| o.status.code() != Some(4))
+		.unwrap_or(true)
+}
+
 /// Uninstall the service-mode autostart unit: disable + stop it, remove the unit
-/// file, and reload the user manager. A "unit not loaded" disable failure is
-/// ignored so uninstall is idempotent.
+/// file, and reload the user manager.
+///
+/// Idempotent — uninstalling when nothing is installed is a quiet no-op — but a
+/// `disable` that genuinely fails is reported rather than swallowed, so the
+/// command cannot claim success while the service is still enabled and running.
 pub fn uninstall<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
 	let unit_name = unit_file_name(project);
-	// Best-effort: ignore failures (e.g. the unit was never loaded).
-	let _ = sc.systemctl(&["disable", "--now", &unit_name]);
-
 	let path = unit_path(project);
+
+	// Disable whenever systemd knows the unit, whether or not its file is still
+	// there. `disable --now` is idempotent across every state it can be in
+	// (enabled, never enabled, running, stopped, fragment deleted out of band),
+	// so the only case worth skipping is the one where systemd has never heard
+	// of it — which is exactly what `unit_is_known` answers.
+	if unit_is_known(sc, &unit_name) {
+		checked(
+			sc.systemctl(&["disable", "--now", &unit_name]),
+			"disable --now",
+		)?;
+	}
+
 	if path.exists() {
 		std::fs::remove_file(&path).map_err(|e| {
 			ComposeError::Autostart(format!("cannot remove {}: {e}", path.display()))
@@ -380,234 +413,4 @@ pub fn status<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
 }
 
 #[cfg(all(test, unix))]
-mod tests {
-	use super::*;
-	use std::cell::RefCell;
-	use std::os::unix::process::ExitStatusExt;
-	use std::process::ExitStatus;
-
-	/// Recording fake: captures every `systemctl`/`loginctl` arg vector and returns
-	/// canned output keyed off the first argument.
-	struct FakeCtl {
-		systemctl_calls: RefCell<Vec<Vec<String>>>,
-		loginctl_calls: RefCell<Vec<Vec<String>>>,
-		linger: String,
-		is_active: String,
-		is_enabled: String,
-		fail: bool,
-	}
-
-	impl FakeCtl {
-		fn new() -> Self {
-			FakeCtl {
-				systemctl_calls: RefCell::new(Vec::new()),
-				loginctl_calls: RefCell::new(Vec::new()),
-				linger: "yes".to_string(),
-				is_active: "active".to_string(),
-				is_enabled: "enabled".to_string(),
-				fail: false,
-			}
-		}
-
-		fn systemctl_log(&self) -> Vec<Vec<String>> {
-			self.systemctl_calls.borrow().clone()
-		}
-	}
-
-	fn out(code: i32, stdout: &str) -> Output {
-		Output {
-			status: ExitStatus::from_raw(code),
-			stdout: stdout.as_bytes().to_vec(),
-			stderr: Vec::new(),
-		}
-	}
-
-	impl SystemCtl for FakeCtl {
-		fn systemctl(&self, args: &[&str]) -> io::Result<Output> {
-			self.systemctl_calls
-				.borrow_mut()
-				.push(args.iter().map(|s| s.to_string()).collect());
-			let code = if self.fail { 256 } else { 0 };
-			let stdout = match args.first().copied() {
-				Some("is-active") => self.is_active.as_str(),
-				Some("is-enabled") => self.is_enabled.as_str(),
-				_ => "",
-			};
-			// is-active/is-enabled report through stdout; their exit status is not
-			// consulted, so leave it successful for those queries.
-			let code = if matches!(args.first().copied(), Some("is-active" | "is-enabled")) {
-				0
-			} else {
-				code
-			};
-			Ok(out(code, stdout))
-		}
-
-		fn loginctl(&self, args: &[&str]) -> io::Result<Output> {
-			self.loginctl_calls
-				.borrow_mut()
-				.push(args.iter().map(|s| s.to_string()).collect());
-			Ok(out(0, &self.linger))
-		}
-	}
-
-	fn opts(dir: &Path, project: &str, dry_run: bool, no_start: bool) -> InstallOptions {
-		InstallOptions {
-			unit: ServiceUnitOpts {
-				exe: PathBuf::from("/usr/local/bin/podup"),
-				compose_files: vec![dir.join("docker-compose.yml")],
-				project: project.to_string(),
-				working_dir: dir.to_path_buf(),
-				profiles: Vec::new(),
-				env_files: Vec::new(),
-			},
-			no_start,
-			dry_run,
-		}
-	}
-
-	/// Run `f` with a fresh temp `XDG_CONFIG_HOME`, `USER`, and `XDG_RUNTIME_DIR`
-	/// set, so the install/status paths resolve under the temp dir.
-	fn with_env<R>(f: impl FnOnce(&Path) -> R) -> R {
-		let tmp = tempfile::tempdir().unwrap();
-		let root = tmp.path().to_path_buf();
-		temp_env::with_vars(
-			[
-				("XDG_CONFIG_HOME", Some(root.as_os_str())),
-				("XDG_RUNTIME_DIR", Some(root.as_os_str())),
-				("USER", Some(std::ffi::OsStr::new("tester"))),
-			],
-			|| f(&root),
-		)
-	}
-
-	#[test]
-	fn install_writes_unit_and_enables() {
-		with_env(|root| {
-			let sc = FakeCtl::new();
-			install(&sc, &opts(root, "app", false, false)).unwrap();
-			let path = root.join("systemd/user/podup-app.service");
-			assert!(path.is_file(), "unit file written");
-			let body = std::fs::read_to_string(&path).unwrap();
-			assert!(body.contains("Description=podup app"));
-			let calls = sc.systemctl_log();
-			assert_eq!(calls[0], vec!["daemon-reload"]);
-			assert_eq!(calls[1], vec!["enable", "--now", "podup-app.service"]);
-		});
-	}
-
-	#[test]
-	fn install_no_start_skips_enable() {
-		with_env(|root| {
-			let sc = FakeCtl::new();
-			install(&sc, &opts(root, "app", false, true)).unwrap();
-			let calls = sc.systemctl_log();
-			assert_eq!(calls, vec![vec!["daemon-reload"]]);
-		});
-	}
-
-	#[test]
-	fn dry_run_writes_nothing_and_runs_no_systemctl() {
-		with_env(|root| {
-			let sc = FakeCtl::new();
-			install(&sc, &opts(root, "app", true, false)).unwrap();
-			assert!(!root.join("systemd/user/podup-app.service").exists());
-			assert!(sc.systemctl_log().is_empty());
-		});
-	}
-
-	#[test]
-	fn uninstall_disables_removes_and_reloads() {
-		with_env(|root| {
-			let sc = FakeCtl::new();
-			install(&sc, &opts(root, "app", false, true)).unwrap();
-			let path = root.join("systemd/user/podup-app.service");
-			assert!(path.exists());
-
-			let sc2 = FakeCtl::new();
-			uninstall(&sc2, "app").unwrap();
-			assert!(!path.exists(), "unit file removed");
-			let calls = sc2.systemctl_log();
-			assert_eq!(calls[0], vec!["disable", "--now", "podup-app.service"]);
-			assert_eq!(calls[1], vec!["daemon-reload"]);
-		});
-	}
-
-	#[test]
-	fn install_refuses_on_quadlet_conflict() {
-		with_env(|root| {
-			let qdir = root.join("containers/systemd");
-			std::fs::create_dir_all(&qdir).unwrap();
-			std::fs::write(qdir.join("app-web.container"), b"[Container]\n").unwrap();
-			let sc = FakeCtl::new();
-			let err = install(&sc, &opts(root, "app", false, false)).unwrap_err();
-			assert!(matches!(err, ComposeError::Autostart(_)));
-			assert!(err.to_string().contains("quadlet"));
-			// Nothing was installed.
-			assert!(!root.join("systemd/user/podup-app.service").exists());
-			assert!(sc.systemctl_log().is_empty());
-		});
-	}
-
-	#[test]
-	fn linger_off_produces_warning() {
-		let mut sc = FakeCtl::new();
-		sc.linger = "no".to_string();
-		temp_env::with_var("USER", Some("tester"), || {
-			assert!(linger_warning(&sc).is_some());
-		});
-	}
-
-	#[test]
-	fn linger_on_produces_no_warning() {
-		let sc = FakeCtl::new(); // linger = "yes"
-		temp_env::with_var("USER", Some("tester"), || {
-			assert!(linger_warning(&sc).is_none());
-		});
-	}
-
-	#[test]
-	fn missing_runtime_dir_produces_warning() {
-		temp_env::with_var_unset("XDG_RUNTIME_DIR", || {
-			assert!(runtime_dir_warning().is_some());
-		});
-		temp_env::with_var("XDG_RUNTIME_DIR", Some("/run/user/1000"), || {
-			assert!(runtime_dir_warning().is_none());
-		});
-	}
-
-	#[test]
-	fn collect_status_reports_installed_and_state() {
-		with_env(|root| {
-			let sc = FakeCtl::new();
-			install(&sc, &opts(root, "app", false, true)).unwrap();
-			let r = collect_status(&sc, "app");
-			assert!(r.unit_exists);
-			assert!(r.unit_mode.is_some());
-			assert_eq!(r.is_active, "active");
-			assert_eq!(r.is_enabled, "enabled");
-			assert!(r.linger);
-			assert!(r.runtime_dir);
-		});
-	}
-
-	#[test]
-	fn collect_status_reports_absent_unit() {
-		with_env(|_root| {
-			let sc = FakeCtl::new();
-			let r = collect_status(&sc, "nope");
-			assert!(!r.unit_exists);
-			assert!(r.unit_mode.is_none());
-		});
-	}
-
-	#[test]
-	fn install_surfaces_systemctl_failure() {
-		with_env(|root| {
-			let mut sc = FakeCtl::new();
-			sc.fail = true;
-			let err = install(&sc, &opts(root, "app", false, false)).unwrap_err();
-			assert!(matches!(err, ComposeError::Autostart(_)));
-		});
-	}
-}
+mod tests;
