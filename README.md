@@ -3,7 +3,7 @@
 docker-compose translator and runner for rootless Podman. Reads a
 docker-compose file, translates it to the native libpod REST API, and manages
 the container lifecycle (`up`/`down`/`logs`/`exec`/…). A single static Rust
-binary — no daemon, no Python runtime.
+binary, with no daemon and no Python runtime.
 
 [![CI](https://github.com/Glyndor/podup/actions/workflows/ci.yml/badge.svg)](https://github.com/Glyndor/podup/actions/workflows/ci.yml)
 
@@ -13,9 +13,9 @@ Package: [crates.io/crates/podup](https://crates.io/crates/podup) · MSRV 1.85 �
 
 ## Install
 
-### Debian / Ubuntu (apt) — recommended
+### Debian / Ubuntu (apt), recommended
 
-Register the signed Glyndor repository and install — copy-paste:
+Register the signed Glyndor repository and install. Copy-paste:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Glyndor/podup/main/install.sh | bash -s -- --apt
@@ -24,8 +24,8 @@ curl -fsSL https://raw.githubusercontent.com/Glyndor/podup/main/install.sh | bas
 The installer verifies the keyring package's Ed25519 signature against its
 pinned release key before anything is installed (fail-closed). The keyring
 package registers `https://apt.glyndor.net` and ships the signing key, so podup
-updates (and key renewals) arrive through `apt upgrade` — the apt build omits
-self-update since apt owns upgrades. Requires **Podman ≥ 5.0** (rootless).
+updates (and key renewals) arrive through `apt upgrade`. The apt build omits
+self-update, since apt owns upgrades. Requires **Podman ≥ 5.0** (rootless).
 
 To register the repository by hand instead, fetch the keyring and check the
 key's fingerprint against the one published in the
@@ -39,7 +39,7 @@ sudo apt update && sudo apt install podup
 ```
 
 <details>
-<summary><b>Other methods — Linux/macOS script · Windows · build from source · self-update · Podman version · platforms</b></summary>
+<summary><b>Other methods: Linux/macOS script · Windows · build from source · self-update · Podman version · platforms</b></summary>
 
 ### apt, one-liner (script)
 
@@ -78,22 +78,22 @@ podup update --check    # report whether a newer release exists, install nothing
 ```
 
 `podup update` replaces the running binary in place only after verifying the
-release's Ed25519 signature and SHA-256 checksum — it fails closed otherwise. See
+release's Ed25519 signature and SHA-256 checksum, failing closed otherwise. See
 [docs/self-update.md](docs/self-update.md) for the trust model.
 
 ### Podman version
 
-podup tracks the **latest stable Podman** and supports its **last two majors —
+podup tracks the **latest stable Podman** and supports its **last two majors,
 Podman 5.x and 6.x**. It talks to Podman's native libpod API (still versioned
-5.x — 5.2.0 on Podman 6), so it needs **Podman ≥ 5.0**. Both supported majors
+5.x, at 5.2.0 on Podman 6), so it needs **Podman ≥ 5.0**. Both supported majors
 run the integration suite in CI on every engine change (Fedora 44 for the
-latest 5.x, rawhide for 6.x). Many distributions still ship 4.x — check
+latest 5.x, rawhide for 6.x). Many distributions still ship 4.x, so check
 `podman --version` and upgrade if needed. Fedora, Debian trixie/sid and recent
 Ubuntu releases carry 5.x; on an older release, install or upgrade Podman
 following the official guide: <https://podman.io/docs/installation>.
 
-**Known limitation on Podman 6.** Copying *into* a container — `podup cp
-./file web:/path` — and `watch` rules whose action includes `sync` fail with a
+**Known limitation on Podman 6.** Copying *into* a container (`podup cp
+./file web:/path`) and `watch` rules whose action includes `sync` fail with a
 transport error. Copying *out* of a container works on both majors, and both
 directions work on Podman 5. Fedora, Arch and Manjaro ship Podman 6 today, so
 this affects them now; it is tracked in
@@ -157,4 +157,4 @@ Full tables and methodology: [docs/benchmarks.md](docs/benchmarks.md).
 
 ## License
 
-[MIT](LICENSE) — report vulnerabilities privately via the **Security** tab, never in a public issue.
+[MIT](LICENSE). Report vulnerabilities privately via the **Security** tab, never in a public issue.
