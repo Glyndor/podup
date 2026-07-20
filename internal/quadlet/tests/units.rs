@@ -217,12 +217,16 @@ services:
 		"expected a warning naming the unmappable `required: false`, got:\n{joined}"
 	);
 	// The entry is still emitted — dropping it would lose configuration the user
-	// asked for whenever the file does exist.
+	// asked for whenever the file does exist. Built with `join` so the separator
+	// matches the host (this test is not Unix-gated).
 	let c = &unit_named(&out, "p-s.container").contents;
-	assert!(
-		c.contains("EnvironmentFile=/srv/app/.env.production"),
-		"{c}"
+	let needle = format!(
+		"EnvironmentFile={}",
+		std::path::Path::new("/srv/app")
+			.join(".env.production")
+			.display()
 	);
+	assert!(c.contains(&needle), "missing `{needle}` in:\n{c}");
 }
 
 /// The warning is about `required: false` specifically, so an env_file list

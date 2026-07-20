@@ -132,12 +132,17 @@ services:
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-app.container").contents;
+	// Absolute, resolved against the compose base dir: systemd resolves a relative
+	// `EnvironmentFile=` against the unit's own directory, not the project's, so
+	// `./app.env` would never be found once installed. Built with `join` so the
+	// separator matches the host (this test is not Unix-gated).
+	let env_file = format!(
+		"EnvironmentFile={}",
+		std::path::Path::new("/srv/app").join("app.env").display()
+	);
 	for needle in [
 		"ContainerName=custom",
-		// Absolute, resolved against the compose base dir: systemd resolves a
-		// relative `EnvironmentFile=` against the unit's own directory, not the
-		// project's, so `./app.env` here would never be found once installed.
-		"EnvironmentFile=/srv/app/app.env",
+		&env_file,
 		"Tmpfs=/run",
 		"Sysctl=net.core.somaxconn=1024",
 		"Ulimit=nofile=1024:2048",
@@ -501,23 +506,30 @@ services:
 	let file = parse_str(yaml).unwrap();
 	// A base directory that is deliberately not the process's cwd, so a bug that
 	// resolved against the cwd instead would still show up here.
-	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let base = std::path::Path::new("/srv/app");
+	let out = generate_at(&file, "p", base);
 	let c = &unit_named(&out, "p-app.container").contents;
-	for needle in [
-		"EnvironmentFile=/srv/app/.env",
-		"EnvironmentFile=/srv/app/config/extra.env",
-		"EnvironmentFile=/srv/app/../shared/team.env",
-		"EnvironmentFile=/etc/glyndor/absolute.env",
-	] {
-		assert!(c.contains(needle), "missing `{needle}` in:\n{c}");
+	// `abs_against` joins with the OS separator, so build the expectations the
+	// same way rather than as POSIX literals — these render tests are not
+	// Unix-gated and would otherwise fail on Windows.
+	for rel in [".env", "config/extra.env", "../shared/team.env"] {
+		let needle = format!("EnvironmentFile={}", base.join(rel).display());
+		assert!(c.contains(&needle), "missing `{needle}` in:\n{c}");
 	}
-	// No entry may survive as a relative path: systemd would resolve it against
-	// the unit directory.
+	// An already-absolute entry is passed through verbatim, separators included.
+	assert!(
+		c.contains("EnvironmentFile=/etc/glyndor/absolute.env"),
+		"an absolute entry must be untouched in:\n{c}"
+	);
+	// No entry may survive as a compose-relative path: systemd would resolve it
+	// against the unit directory. Checked by prefix rather than `is_absolute()`,
+	// which on Windows demands a drive letter that a `/srv/app` base never has.
+	let base_prefix = base.display().to_string();
 	for line in c.lines().filter(|l| l.starts_with("EnvironmentFile=")) {
 		let value = line.trim_start_matches("EnvironmentFile=");
 		assert!(
-			std::path::Path::new(value).is_absolute(),
-			"`{line}` is relative; it would resolve against the unit directory"
+			value.starts_with(&base_prefix) || value.starts_with("/etc/"),
+			"`{line}` was not resolved against the compose base directory"
 		);
 	}
 }
