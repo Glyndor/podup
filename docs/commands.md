@@ -233,6 +233,10 @@ container side, e.g. `podup cp web:/app/data ./local`.
 | `-L, --follow-link` | Follow symlinks in the host source before copying into the container. | off |
 | `-a, --archive` | Accepted for compatibility (no effect under rootless Podman). | off |
 
+> **Podman 6:** copying *into* a container fails with a transport error.
+> Copying *out* works on both majors, and both directions work on Podman 5.
+> Tracked in [#1097](https://github.com/Glyndor/podup/issues/1097).
+
 ### `attach <SERVICE>`
 Attach to a service container's output (stdout/stderr), streaming it until the
 container exits or you detach.
@@ -338,6 +342,11 @@ The `action` of each rule may be:
 | `restart` | Restart the container without rebuilding. |
 | `sync+restart` | Sync the files, then restart the container. |
 | `sync+exec` | Sync the files, then run the rule's `exec` command in the container. |
+
+> **Podman 6:** the `sync` step copies into the container through the same path
+> as `cp`, so `sync`, `sync+restart` and `sync+exec` fail there. `rebuild` and
+> `restart` are unaffected, and every action works on Podman 5. Tracked in
+> [#1097](https://github.com/Glyndor/podup/issues/1097).
 
 ## Maintenance
 
