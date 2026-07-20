@@ -240,15 +240,48 @@ pub fn install<S: SystemCtl>(sc: &S, opts: &InstallOptions) -> crate::Result<()>
 	Ok(())
 }
 
+/// Whether systemd knows anything about `unit` — loaded, enabled, running, or
+/// merely present as a fragment.
+///
+/// `systemctl is-active` exits **4** for a unit it has never heard of and
+/// something else for every other state (0 active, 3 inactive/failed/activating).
+/// That numeric 4 is the only reliable "there is nothing here" signal: the
+/// message text is localised, and the *fragment file* is not a proxy for it —
+/// measured, a unit whose file is deleted out of band stays loaded, enabled and
+/// running, and `disable --now` still exits 0, removes its `.wants/` symlink and
+/// stops it. Gating on the file would delete the only way out of that state.
+///
+/// A probe that cannot even be spawned returns `true`: the right response to
+/// "I could not ask" is to attempt the disable anyway and let `checked` report
+/// whatever happens, never to assume there is nothing to do.
+fn unit_is_known<S: SystemCtl>(sc: &S, unit: &str) -> bool {
+	sc.systemctl(&["is-active", "--quiet", unit])
+		.map(|o| o.status.code() != Some(4))
+		.unwrap_or(true)
+}
+
 /// Uninstall the service-mode autostart unit: disable + stop it, remove the unit
-/// file, and reload the user manager. A "unit not loaded" disable failure is
-/// ignored so uninstall is idempotent.
+/// file, and reload the user manager.
+///
+/// Idempotent — uninstalling when nothing is installed is a quiet no-op — but a
+/// `disable` that genuinely fails is reported rather than swallowed, so the
+/// command cannot claim success while the service is still enabled and running.
 pub fn uninstall<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
 	let unit_name = unit_file_name(project);
-	// Best-effort: ignore failures (e.g. the unit was never loaded).
-	let _ = sc.systemctl(&["disable", "--now", &unit_name]);
-
 	let path = unit_path(project);
+
+	// Disable whenever systemd knows the unit, whether or not its file is still
+	// there. `disable --now` is idempotent across every state it can be in
+	// (enabled, never enabled, running, stopped, fragment deleted out of band),
+	// so the only case worth skipping is the one where systemd has never heard
+	// of it — which is exactly what `unit_is_known` answers.
+	if unit_is_known(sc, &unit_name) {
+		checked(
+			sc.systemctl(&["disable", "--now", &unit_name]),
+			"disable --now",
+		)?;
+	}
+
 	if path.exists() {
 		std::fs::remove_file(&path).map_err(|e| {
 			ComposeError::Autostart(format!("cannot remove {}: {e}", path.display()))
@@ -394,6 +427,10 @@ mod tests {
 		linger: String,
 		is_active: String,
 		is_enabled: String,
+		/// Exit code for `is-active`, as a raw wait status (code << 8). 0 by
+		/// default; `4 << 8` is systemd's "no such unit", the only value
+		/// `unit_is_known` treats as "there is nothing here".
+		is_active_code: i32,
 		fail: bool,
 	}
 
@@ -405,6 +442,7 @@ mod tests {
 				linger: "yes".to_string(),
 				is_active: "active".to_string(),
 				is_enabled: "enabled".to_string(),
+				is_active_code: 0,
 				fail: false,
 			}
 		}
@@ -433,12 +471,14 @@ mod tests {
 				Some("is-enabled") => self.is_enabled.as_str(),
 				_ => "",
 			};
-			// is-active/is-enabled report through stdout; their exit status is not
-			// consulted, so leave it successful for those queries.
-			let code = if matches!(args.first().copied(), Some("is-active" | "is-enabled")) {
-				0
-			} else {
-				code
+			// `is-enabled` is read through stdout only, so its status stays
+			// successful. `is-active`'s status *is* consulted (`unit_is_known`
+			// keys off exit 4), so it comes from its own field rather than the
+			// blanket `fail` flag.
+			let code = match args.first().copied() {
+				Some("is-active") => self.is_active_code,
+				Some("is-enabled") => 0,
+				_ => code,
 			};
 			Ok(out(code, stdout))
 		}
@@ -528,8 +568,77 @@ mod tests {
 			uninstall(&sc2, "app").unwrap();
 			assert!(!path.exists(), "unit file removed");
 			let calls = sc2.systemctl_log();
-			assert_eq!(calls[0], vec!["disable", "--now", "podup-app.service"]);
-			assert_eq!(calls[1], vec!["daemon-reload"]);
+			// The `is-active` probe only asks whether systemd knows the unit at
+			// all; anything but exit 4 means disable it.
+			assert_eq!(calls[0], vec!["is-active", "--quiet", "podup-app.service"]);
+			assert_eq!(calls[1], vec!["disable", "--now", "podup-app.service"]);
+			assert_eq!(calls[2], vec!["daemon-reload"]);
+		});
+	}
+
+	/// #1080: a `disable --now` that fails on an installed unit was swallowed by
+	/// `let _ =`, so uninstall exited 0 with the service still enabled and
+	/// running. Measured against real systemd: with the unit file present,
+	/// `disable --now` exits 0 whether or not the unit was ever enabled or
+	/// started, so a non-zero exit here is always a real failure.
+	#[test]
+	fn uninstall_reports_a_failed_disable() {
+		with_env(|root| {
+			install(&FakeCtl::new(), &opts(root, "app", false, true)).unwrap();
+			let path = root.join("systemd/user/podup-app.service");
+			assert!(path.exists());
+
+			let mut sc = FakeCtl::new();
+			sc.fail = true;
+			let err = uninstall(&sc, "app")
+				.expect_err("a failed disable must not be reported as a clean uninstall");
+			assert!(matches!(err, ComposeError::Autostart(_)), "got {err:?}");
+			assert!(err.to_string().contains("disable"), "got {err}");
+		});
+	}
+
+	/// Uninstalling when systemd has never heard of the unit stays a silent
+	/// no-op. `is-active` exit 4 ("no such unit") is the signal — not the unit
+	/// file, which is a poor proxy: a fragment deleted out of band leaves the
+	/// unit loaded, enabled and running, and only `disable --now` clears it.
+	#[test]
+	fn uninstall_runs_no_disable_when_systemd_does_not_know_the_unit() {
+		with_env(|_root| {
+			let mut sc = FakeCtl::new();
+			sc.is_active_code = 4 << 8; // systemd: no such unit
+			uninstall(&sc, "app").expect("uninstalling nothing is not a failure");
+			let calls = sc.systemctl_log();
+			assert!(
+				!calls
+					.iter()
+					.any(|c| c.first().map(String::as_str) == Some("disable")),
+				"nothing is installed, so nothing should be disabled: {calls:?}"
+			);
+			assert_eq!(calls.last().unwrap(), &vec!["daemon-reload".to_string()]);
+		});
+	}
+
+	/// The mirror case, and the reason the file is not the gate: the unit file is
+	/// gone but systemd still has the unit loaded and running (a manual `rm`, a
+	/// restored `~/.config`, a half-finished uninstall). `disable --now` is the
+	/// only thing that clears that state, so it must still run.
+	#[test]
+	fn uninstall_disables_a_known_unit_whose_file_is_already_gone() {
+		with_env(|root| {
+			let path = root.join("systemd/user/podup-app.service");
+			assert!(!path.exists());
+			// Default `is_active_code` is 0 — systemd knows the unit.
+			let sc = FakeCtl::new();
+			uninstall(&sc, "app").expect("uninstall must still succeed");
+			let calls = sc.systemctl_log();
+			assert!(
+				calls.contains(&vec![
+					"disable".to_string(),
+					"--now".to_string(),
+					"podup-app.service".to_string()
+				]),
+				"a unit systemd still knows must be disabled even with no file: {calls:?}"
+			);
 		});
 	}
 

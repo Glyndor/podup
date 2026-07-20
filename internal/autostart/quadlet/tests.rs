@@ -40,6 +40,49 @@ impl SystemCtl for FakeCtl {
 	}
 }
 
+/// A [`FakeCtl`] whose exit status is decided per call, so a test can make one
+/// specific `systemctl` verb fail while the rest succeed. `FakeCtl` always
+/// reports 0, which cannot express "this service is not running" (`is-active`
+/// non-zero) or "the stop was refused".
+struct ScriptedCtl {
+	calls: RefCell<Vec<Vec<String>>>,
+	/// Exit code for a given arg vector; 0 means success.
+	code: ExitCodeFor,
+}
+
+/// Decides a scripted `systemctl` call's exit code from its arguments.
+type ExitCodeFor = Box<dyn Fn(&[&str]) -> i32>;
+impl ScriptedCtl {
+	fn new(code: impl Fn(&[&str]) -> i32 + 'static) -> Self {
+		ScriptedCtl {
+			calls: RefCell::new(Vec::new()),
+			code: Box::new(code),
+		}
+	}
+	fn log(&self) -> Vec<Vec<String>> {
+		self.calls.borrow().clone()
+	}
+}
+impl SystemCtl for ScriptedCtl {
+	fn systemctl(&self, args: &[&str]) -> std::io::Result<Output> {
+		self.calls
+			.borrow_mut()
+			.push(args.iter().map(|s| s.to_string()).collect());
+		Ok(Output {
+			status: ExitStatus::from_raw((self.code)(args) << 8),
+			stdout: Vec::new(),
+			stderr: b"scripted failure".to_vec(),
+		})
+	}
+	fn loginctl(&self, _args: &[&str]) -> std::io::Result<Output> {
+		Ok(Output {
+			status: ExitStatus::from_raw(0),
+			stdout: b"yes".to_vec(),
+			stderr: Vec::new(),
+		})
+	}
+}
+
 /// Run `f` with a fresh temp `XDG_CONFIG_HOME`/`XDG_RUNTIME_DIR`/`USER`, so
 /// `quadlet_dir` and the guards resolve under the temp dir.
 fn with_env<R>(f: impl FnOnce(&Path) -> R) -> R {
@@ -163,6 +206,81 @@ fn uninstall_stops_removes_and_reloads() {
 		let calls = sc.log();
 		assert!(calls.contains(&vec!["stop".to_string(), "proj-web.service".to_string()]));
 		assert_eq!(calls.last().unwrap(), &vec!["daemon-reload".to_string()]);
+	});
+}
+
+/// The stop is unconditional, and must stay that way.
+///
+/// An earlier version probed `is-active` first and skipped the stop when it
+/// failed. Measured against real systemd, that is wrong twice over: `stop` on a
+/// unit whose fragment is on disk exits 0 in *every* state (running, inactive,
+/// never started), so the probe bought nothing — and a service still coming up
+/// reports `activating`, which `is-active` calls a failure, so a stack caught
+/// mid-start would have been skipped and left running while its units were
+/// deleted.
+///
+/// Here `is-active` would report "not active"; the stop must be issued anyway.
+#[test]
+fn uninstall_stops_unconditionally_without_probing_is_active() {
+	with_env(|_root| {
+		install_quadlet(
+			&FakeCtl::new(),
+			&parse_str(IMG).unwrap(),
+			"proj",
+			Path::new(BASE),
+			true,
+			false,
+		)
+		.unwrap();
+		// Anything that asks `is-active` gets "not active"; everything else succeeds.
+		let sc = ScriptedCtl::new(|args| i32::from(args.first() == Some(&"is-active")) * 3);
+		uninstall_quadlet(&sc, "proj").expect("stopping an inactive unit is not a failure");
+		let calls = sc.log();
+		assert!(
+			calls.contains(&vec!["stop".to_string(), "proj-web.service".to_string()]),
+			"the stop must be issued regardless of is-active: {calls:?}"
+		);
+		assert!(
+			!calls
+				.iter()
+				.any(|c| c.first().map(String::as_str) == Some("is-active")),
+			"uninstall must not probe is-active at all: {calls:?}"
+		);
+	});
+}
+
+/// #1080: a running service that refuses to stop was swallowed by `let _ =`, so
+/// uninstall exited 0 with the container still up. It must now report — while
+/// still removing the unit files and reloading, so the uninstall is not left
+/// half-done.
+#[test]
+fn uninstall_reports_a_stop_failure_but_still_removes_and_reloads() {
+	with_env(|root| {
+		install_quadlet(
+			&FakeCtl::new(),
+			&parse_str(IMG).unwrap(),
+			"proj",
+			Path::new(BASE),
+			true,
+			false,
+		)
+		.unwrap();
+		// Running (`is-active` 0), but the stop is refused.
+		let sc = ScriptedCtl::new(|args| i32::from(args.first() == Some(&"stop")));
+		let err = uninstall_quadlet(&sc, "proj")
+			.expect_err("a refused stop must not be reported as a clean uninstall");
+		assert!(format!("{err}").contains("stop"), "got {err:?}");
+
+		assert!(
+			!root.join("containers/systemd/proj-web.container").exists(),
+			"the unit file must still be removed"
+		);
+		let calls = sc.log();
+		assert_eq!(
+			calls.last().unwrap(),
+			&vec!["daemon-reload".to_string()],
+			"the manager must still be reloaded: {calls:?}"
+		);
 	});
 }
 
