@@ -49,6 +49,8 @@ fn bin() -> &'static str {
 // Test groups (see engine_integration/*.rs)
 // ---------------------------------------------------------------------------
 
+#[path = "engine_integration/autostart_quadlet.rs"]
+mod autostart_quadlet;
 #[path = "engine_integration/build_resources.rs"]
 mod build_resources;
 #[path = "engine_integration/commands_networking.rs"]
