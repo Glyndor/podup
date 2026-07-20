@@ -33,7 +33,7 @@ impl Engine {
 	/// [`Engine::stream_events`] with `docker compose events`-style `--since`,
 	/// `--until`, and `--filter` options.
 	pub async fn stream_events_with_options(&self, json: bool, opts: &EventsOptions) -> Result<()> {
-		let filters = build_event_filters(&self.project, &opts.filters);
+		let filters = build_event_filters(&self.project, &opts.filters)?;
 		let mut path = format!(
 			"{API_PREFIX}/events?stream=true&filters={}",
 			urlencoded(&filters.to_string()),
@@ -69,9 +69,13 @@ impl Engine {
 
 /// Build the libpod events `filters` object: always scope to this project's
 /// `podup.project` label, then merge each user `KEY=VALUE` predicate (appending
-/// to that key's value array). A predicate with no `=` is skipped. Pure so the
-/// merge is unit-tested.
-fn build_event_filters(project: &str, user_filters: &[String]) -> Value {
+/// to that key's value array). Pure so the merge is unit-tested.
+///
+/// A predicate with no `=` is an error rather than a skip. Dropping it scoped
+/// the stream to the whole project instead — `events --filter garbage` printed
+/// everything, which a caller reads as "these all matched". docker compose
+/// errors on a malformed filter too.
+fn build_event_filters(project: &str, user_filters: &[String]) -> Result<Value> {
 	use serde_json::{Map, Value};
 	let mut map: Map<String, Value> = Map::new();
 	map.insert(
@@ -80,8 +84,9 @@ fn build_event_filters(project: &str, user_filters: &[String]) -> Value {
 	);
 	for f in user_filters {
 		let Some((key, value)) = f.split_once('=') else {
-			tracing::warn!("events: ignoring malformed filter '{f}' (expected KEY=VALUE)");
-			continue;
+			return Err(ComposeError::Unsupported(format!(
+				"malformed events filter {f:?}: expected KEY=VALUE (e.g. event=start)"
+			)));
 		};
 		match map
 			.entry(key.to_string())
@@ -91,7 +96,7 @@ fn build_event_filters(project: &str, user_filters: &[String]) -> Value {
 			other => *other = Value::Array(vec![Value::String(value.to_string())]),
 		}
 	}
-	Value::Object(map)
+	Ok(Value::Object(map))
 }
 
 /// Render one event. `json` emits the raw object as a compact line; otherwise a
@@ -123,7 +128,7 @@ mod tests {
 
 	#[test]
 	fn build_event_filters_scopes_to_project_label() {
-		let f = build_event_filters("demo", &[]);
+		let f = build_event_filters("demo", &[]).unwrap();
 		assert_eq!(f, json!({ "label": ["podup.project=demo"] }));
 	}
 
@@ -135,9 +140,9 @@ mod tests {
 				"event=start".to_string(),
 				"event=die".to_string(),
 				"type=container".to_string(),
-				"bogus".to_string(),
 			],
-		);
+		)
+		.unwrap();
 		assert_eq!(
 			f,
 			json!({
@@ -146,6 +151,16 @@ mod tests {
 				"type": ["container"],
 			})
 		);
+	}
+
+	/// #1081: a predicate with no `=` used to be dropped, so `events --filter
+	/// garbage` silently scoped to the whole project and printed everything — a
+	/// caller reads that back as "these all matched".
+	#[test]
+	fn malformed_filter_is_rejected_not_dropped() {
+		let err = build_event_filters("demo", &["bogus".to_string()])
+			.expect_err("a filter with no `=` must not be silently ignored");
+		assert!(format!("{err}").contains("bogus"), "got {err}");
 	}
 
 	#[test]

@@ -102,6 +102,7 @@ Build or rebuild service images (optionally only the named services).
 | `--no-cache` | Do not use the build cache. | off |
 | `--pull` | Always attempt to pull a newer base image. | off |
 | `--build-arg <KEY=VAL>` | Set a build-time variable. Repeatable. | none |
+| `--progress <STYLE>` | `auto`, `plain` or `tty`. Validated but inert — see [accepted for compatibility](#accepted-for-compatibility). | `auto` |
 | `-q, --quiet` | Suppress the build output. | off |
 
 ## Inspection
@@ -438,6 +439,25 @@ when both are set.
 | `PODMAN_SOCKET` | Podman socket path (`--socket`). |
 | `DOCKER_HOST` | Docker-compatible fallback for the Podman socket, used only when `PODMAN_SOCKET` is unset. Must be a local `unix://` socket (or `npipe://` on Windows); a remote `tcp://`/`ssh://` value is rejected. |
 | `RUST_LOG` | Log verbosity filter. Unset shows warnings and errors; e.g. `RUST_LOG=podup=info` or `RUST_LOG=podup=debug` for more detail. |
+
+## Accepted for compatibility
+
+These flags parse and are validated, so a script written against docker compose
+runs unchanged — but podup does not act on them. They are listed here because
+`--help` says "accepted for compatibility" without saying which flags that
+covers, and the only other way to find out was to read the dispatch code.
+
+| Flag | Why it does nothing |
+|---|---|
+| `build --progress <STYLE>` | podup renders build output one way. The value is still validated, so a typo is rejected rather than silently ignored. |
+| `config --no-normalize` | `config` always emits the normalized form. |
+| `cp -a, --archive` | Ownership/permission preservation is not meaningful for a rootless copy. |
+| `attach --no-stdin`, `--sig-proxy`, `--detach-keys` | `attach` streams output only; stdin is never attached (see [#1079](https://github.com/Glyndor/podup/issues/1079)). |
+| `run -T, --no-TTY` / `exec -T, --no-tty` | podup never allocates a pseudo-TTY, so disabling one is a no-op (see [#1079](https://github.com/Glyndor/podup/issues/1079)). |
+
+Everything else that parses does something. An **unknown** `--filter` predicate
+is rejected outright rather than dropped: a filter that silently does not apply
+returns the whole set, which a script reads as a match.
 
 ## Exit status
 

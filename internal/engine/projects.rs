@@ -117,9 +117,13 @@ pub async fn list_projects_filtered(
 		}
 	}
 
+	// An unsupported key is an error, not a warning — see the note on the ps
+	// filters: silently answering a different question is worse than refusing.
 	let (name_filter, status_filter, unknown) = split_ls_filters(filters);
-	for u in &unknown {
-		tracing::warn!("ls: ignoring unsupported filter '{u}'");
+	if let Some(u) = unknown.first() {
+		return Err(ComposeError::Unsupported(format!(
+			"unsupported ls filter {u:?}: expected name=<NAME> or status=<running|exited>"
+		)));
 	}
 	// A project is "active" (shown without `--all`) when any replica is running
 	// or paused; only all-stopped projects are hidden by default. The `--filter`
