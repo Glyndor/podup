@@ -229,6 +229,14 @@ impl Engine {
 		// one service must not blank the whole command the way an `.await?` would:
 		// warn and skip that service so the rest still stream, matching the
 		// per-container tolerance below.
+		//
+		// Tolerating a failure is not the same as reporting success, though: each
+		// tolerated fault is recorded here and returned once every stream has been
+		// drained, so `logs` against a dead socket exits non-zero instead of
+		// printing warnings and exiting 0. A 404 is deliberately *not* recorded —
+		// a service with no container yet is not an error, and docker compose
+		// exits 0 for it too.
+		let mut first_err: Option<ComposeError> = None;
 		let mut targets: Vec<(String, bool)> = Vec::new();
 		for (n, s) in file
 			.services
@@ -240,6 +248,7 @@ impl Engine {
 				Ok(names) => names,
 				Err(e) => {
 					tracing::warn!("logs: resolving replicas for service {n}: {e}");
+					first_err.get_or_insert(e);
 					continue;
 				}
 			};
@@ -263,9 +272,10 @@ impl Engine {
 						);
 						let resp = match client.get_stream(&path).await {
 							Ok(r) => r,
+							Err(e) if e.is_status(404) => return None,
 							Err(e) => {
 								tracing::warn!("logs {container_name}: {e}");
-								return;
+								return Some(ComposeError::Podman(e));
 							}
 						};
 						let mut stream = if is_tty {
@@ -282,6 +292,7 @@ impl Engine {
 						// keeping interleaved `logs -f` output prompt.
 						let mut out_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
 						let mut err_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
+						let mut stream_err = None;
 						while let Some(msg) = stream.next().await {
 							match msg {
 								Ok(LogOutput::StdOut { message }) => {
@@ -290,15 +301,25 @@ impl Engine {
 								Ok(LogOutput::StdErr { message }) => {
 									err_pfx.write(&mut std::io::stderr().lock(), &message);
 								}
-								Err(_) => break,
+								Err(e) => {
+									tracing::warn!(
+										"logs {container_name}: stream ended early: {e}"
+									);
+									stream_err = Some(ComposeError::Podman(e));
+									break;
+								}
 							}
 						}
 						out_pfx.flush_tail(&mut std::io::stdout().lock());
 						err_pfx.flush_tail(&mut std::io::stderr().lock());
+						stream_err
 					}
 				})
 				.collect();
-			futures_util::future::join_all(futs).await;
+			let stream_errs = futures_util::future::join_all(futs).await;
+			// Keep the earliest failure: a replica-resolution error happened
+			// before any of these streams was opened.
+			first_err = first_err.or_else(|| stream_errs.into_iter().flatten().next());
 		} else {
 			for (container_name, is_tty) in targets {
 				let path = format!(
@@ -311,8 +332,10 @@ impl Engine {
 				// whole command on the first 404.
 				let resp = match self.client.get_stream(&path).await {
 					Ok(r) => r,
+					Err(e) if e.is_status(404) => continue,
 					Err(e) => {
 						tracing::warn!("logs {container_name}: {e}");
+						first_err.get_or_insert(ComposeError::Podman(e));
 						continue;
 					}
 				};
@@ -337,7 +360,11 @@ impl Engine {
 						Ok(LogOutput::StdErr { message }) => {
 							err_pfx.write(&mut std::io::stderr().lock(), &message)
 						}
-						Err(_) => break,
+						Err(e) => {
+							tracing::warn!("logs {container_name}: stream ended early: {e}");
+							first_err.get_or_insert(ComposeError::Podman(e));
+							break;
+						}
 					}
 				}
 				out_pfx.flush_tail(&mut out);
@@ -345,7 +372,7 @@ impl Engine {
 			}
 		}
 
-		Ok(())
+		first_err.map_or(Ok(()), Err)
 	}
 
 	/// Names of this project's containers (by label) that the current compose file
