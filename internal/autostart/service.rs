@@ -10,6 +10,12 @@ use std::path::PathBuf;
 /// Inputs to render a service-mode autostart unit. Every path must be absolute:
 /// systemd resolves the `ExecStart`/`ExecStop` lines with no working directory of
 /// its own, so a relative path would be interpreted against `/`.
+///
+/// `#[non_exhaustive]`: this gained a field once and will again as more of the
+/// unit becomes configurable, so it is constructed with `..Default::default()`
+/// rather than by a literal that breaks on every addition.
+#[non_exhaustive]
+#[derive(Default)]
 pub struct ServiceUnitOpts {
 	/// Absolute path to the `podup` executable.
 	pub exe: PathBuf,
@@ -23,6 +29,55 @@ pub struct ServiceUnitOpts {
 	pub profiles: Vec<String>,
 	/// Extra env files, passed through as `--env-file` flags.
 	pub env_files: Vec<String>,
+	/// Longest `stop_grace_period` across the project's services, in seconds.
+	///
+	/// systemd bounds the whole `ExecStop` independently of what podup does
+	/// inside it, and its default is 90s — so a stack whose slowest container
+	/// needs longer gets killed mid-stop at reboot, while a manual `podup stop`
+	/// honours it. `None` leaves `TimeoutStopSec=` off, which is right when no
+	/// service asks for anything unusual.
+	pub max_stop_grace_secs: Option<u64>,
+}
+
+impl ServiceUnitOpts {
+	/// The four values a unit cannot be rendered without. Everything else has a
+	/// sensible empty default and is added with the `with_*` methods.
+	pub fn new(
+		exe: PathBuf,
+		compose_files: Vec<PathBuf>,
+		project: String,
+		working_dir: PathBuf,
+	) -> Self {
+		Self {
+			exe,
+			compose_files,
+			project,
+			working_dir,
+			profiles: Vec::new(),
+			env_files: Vec::new(),
+			max_stop_grace_secs: None,
+		}
+	}
+
+	/// Active profiles, passed through as `--profile` flags. Builder-style.
+	pub fn with_profiles(mut self, profiles: Vec<String>) -> Self {
+		self.profiles = profiles;
+		self
+	}
+
+	/// Extra env files, passed through as `--env-file` flags. Builder-style.
+	pub fn with_env_files(mut self, env_files: Vec<String>) -> Self {
+		self.env_files = env_files;
+		self
+	}
+
+	/// The longest `stop_grace_period` in the project, so the unit can bound
+	/// `ExecStop` above it rather than letting systemd's 90s default cut a
+	/// slower stack off mid-shutdown. Builder-style.
+	pub fn with_max_stop_grace_secs(mut self, secs: Option<u64>) -> Self {
+		self.max_stop_grace_secs = secs;
+		self
+	}
 }
 
 /// Whether a token is safe to place on a systemd exec line without quoting:
@@ -178,6 +233,17 @@ pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
 	// other interpolated value here is escaped regardless of what validates it
 	// elsewhere, so the project name is too.
 	let project = opts.project.replace('%', "%%");
+	// systemd bounds ExecStop on its own, at DefaultTimeoutStopUSec (90s), no
+	// matter that `podup stop` honours each container's own grace period inside
+	// it. Give it headroom over the slowest container rather than the exact
+	// value: the stop has per-container teardown around it, and a bound equal to
+	// the grace period would cut the last container off just as it finishes.
+	// Quadlet mode already gets this right via StopTimeout=, so this closes an
+	// inconsistency between the two modes rather than adding a new behaviour.
+	let stop_timeout = match opts.max_stop_grace_secs {
+		Some(secs) => format!("TimeoutStopSec={}\n", secs.saturating_add(30)),
+		None => String::new(),
+	};
 	format!(
 		"[Unit]\n\
 		 Description=podup {project}\n\
@@ -188,6 +254,7 @@ pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
 		 WorkingDirectory={workdir}\n\
 		 ExecStart={start}\n\
 		 ExecStop={stop}\n\
+		 {stop_timeout}\
 		 \n\
 		 [Install]\n\
 		 WantedBy=default.target\n",
@@ -195,6 +262,7 @@ pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
 		workdir = workdir,
 		start = start,
 		stop = stop,
+		stop_timeout = stop_timeout,
 	)
 }
 
@@ -211,6 +279,7 @@ mod tests {
 			working_dir: PathBuf::from("/srv/app"),
 			profiles: Vec::new(),
 			env_files: Vec::new(),
+			max_stop_grace_secs: None,
 		}
 	}
 
@@ -424,5 +493,45 @@ mod tests {
 		o.working_dir = PathBuf::from("/srv/50%off");
 		o.compose_files = vec![PathBuf::from("/srv/50%off/docker-compose.yml")];
 		assert!(validate_unit_opts(&o).is_ok());
+	}
+
+	/// #1093: systemd bounds `ExecStop` independently of what podup does inside
+	/// it, at a 90s default. A stack whose slowest container needs longer stops
+	/// cleanly when a human runs `podup stop` and gets killed mid-stop at
+	/// reboot — the difference only appears during an unattended shutdown,
+	/// which is the worst version of it.
+	#[test]
+	fn render_service_unit_bounds_stop_above_the_longest_grace_period() {
+		let mut o = opts_single();
+		o.max_stop_grace_secs = Some(120);
+		let s = render_service_unit(&o);
+		assert!(
+			s.contains("TimeoutStopSec=150"),
+			"expected the longest grace plus headroom:\n{s}"
+		);
+	}
+
+	/// Headroom, not the exact value: the stop has per-container teardown around
+	/// it, so a bound equal to the grace period would cut the last container off
+	/// just as it finishes.
+	#[test]
+	fn stop_timeout_leaves_headroom_over_the_grace_period() {
+		let mut o = opts_single();
+		o.max_stop_grace_secs = Some(10);
+		let s = render_service_unit(&o);
+		let line = s
+			.lines()
+			.find(|l| l.starts_with("TimeoutStopSec="))
+			.expect("the key is present");
+		let secs: u64 = line.trim_start_matches("TimeoutStopSec=").parse().unwrap();
+		assert!(secs > 10, "must exceed the grace period, got {secs}");
+	}
+
+	/// No service asking for anything unusual leaves the key off entirely, so
+	/// systemd keeps its own default rather than podup restating it.
+	#[test]
+	fn no_grace_period_emits_no_stop_timeout() {
+		let s = render_service_unit(&opts_single());
+		assert!(!s.contains("TimeoutStopSec"), "{s}");
 	}
 }
