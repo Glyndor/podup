@@ -19,6 +19,8 @@ pub use ps::{PsFilterOptions, PsOptions};
 pub use exec::ExecOptions;
 use log_prefix::LinePrefixer;
 
+pub use inspect::AttachOutcome;
+
 /// Options for [`Engine::images_with_options`].
 #[derive(Default)]
 pub struct ImagesOptions {

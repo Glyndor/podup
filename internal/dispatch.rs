@@ -100,10 +100,17 @@ pub(crate) async fn dispatch(
 			if watch {
 				engine.watch(file).await?;
 			} else if !detach {
-				engine.attach_logs_with_options(file, timestamps).await?;
+				let outcome = engine.attach_logs_with_options(file, timestamps).await?;
 				// A failed teardown must surface as a non-zero exit, not be
 				// swallowed after the log streams end.
 				engine.stop(file, &[]).await?;
+				// Reported after the teardown, never instead of it: returning the
+				// interrupt straight from `attach` would short-circuit the `?`
+				// above and leave the project running, which is a worse bug than
+				// the exit code.
+				if outcome == podup::AttachOutcome::Interrupted {
+					return Err(podup::ComposeError::Interrupted);
+				}
 			}
 		}
 		Commands::Down {

@@ -69,6 +69,11 @@ fn run_to_exit() {
 	match runtime.block_on(run()) {
 		Ok(()) => {}
 		Err(podup::ComposeError::RunExited(code)) => process::exit(code as i32),
+		// 128 + SIGINT, the shell convention, and what `docker compose up` returns
+		// for SIGTERM as well as SIGINT. Nothing is printed: the operator pressed
+		// Ctrl-C and knows it, and a compose file's own teardown output has
+		// already gone to the terminal.
+		Err(podup::ComposeError::Interrupted) => process::exit(interrupt_exit_code()),
 		#[cfg(feature = "update")]
 		Err(e @ podup::ComposeError::Update(_)) => {
 			print_error(&e);
@@ -127,6 +132,12 @@ fn print_command_help(commands: &[String]) -> podup::Result<()> {
 /// OCI/crun error text: a "command not found" failure → 127, a
 /// "not executable"/"permission denied"/"exec format error" failure → 126,
 /// anything else → 1. Pure string inspection so it is unit-testable.
+/// Exit status for an attached `up` ended by a signal: 128 + SIGINT, the shell
+/// convention, and what `docker compose up` returns for SIGTERM as well.
+const fn interrupt_exit_code() -> i32 {
+	130
+}
+
 fn command_failure_exit_code(msg: &str) -> i32 {
 	let m = msg.to_ascii_lowercase();
 	let not_found = m.contains("executable file not found")
@@ -698,6 +709,15 @@ fn first_misused_global(matches: &clap::ArgMatches) -> Option<&'static str> {
 
 #[cfg(all(test, feature = "update"))]
 mod tests {
+
+	/// 130 is 128 + SIGINT, and it is what `docker compose up` returns for
+	/// SIGTERM too — measured against v5.1.3 rather than derived from the signal
+	/// number, which would have said 143. podup returned 0 for both, so a
+	/// cancelled CI job reported success.
+	#[test]
+	fn an_interrupt_maps_onto_the_shell_convention() {
+		assert_eq!(interrupt_exit_code(), 130);
+	}
 	use super::*;
 	use clap::CommandFactory;
 

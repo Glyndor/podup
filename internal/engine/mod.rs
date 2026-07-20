@@ -13,7 +13,9 @@ pub use copy::CpOptions;
 pub use image::{resolve_image_digests, CommitOptions};
 pub use lifecycle::{validate_stop_timeout, RunOptions, RunOverrides};
 pub use lock::ProjectLock;
-pub use query::{ExecOptions, ImagesOptions, LogsDisplay, LogsOptions, PsFilterOptions, PsOptions};
+pub use query::{
+	AttachOutcome, ExecOptions, ImagesOptions, LogsDisplay, LogsOptions, PsFilterOptions, PsOptions,
+};
 mod container_config;
 #[cfg(test)]
 mod fake_podman;
