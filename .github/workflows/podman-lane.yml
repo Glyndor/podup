@@ -151,11 +151,20 @@ jobs:
           grep -q 'No space left' "$L" && { echo "::error::VM disk full — run invalid"; exit 1; }
           VER=$(grep -oE 'PODMAN=podman version [0-9.]+' "$L" | grep -oE '[0-9.]+' | tail -1)
           grep -qE 'PODMAN=podman version [0-9]' "$L" || { echo "::error::Podman not detected in VM"; exit 1; }
-          # The log driver must have taken. journald cannot open its library in this
-          # image, so logs 500 — and the five tests that only unwrap the result then
-          # pass without fetching a byte. A config silently ignored would put them
-          # straight back to green-and-meaningless, which is worse than a red run.
-          grep -q 'LOGDRIVER=k8s-file' "$L" || { echo "::error::log driver is not k8s-file — logs tests would pass without reading anything"; exit 1; }
+          # The VM must be able to serve logs. Gate on that, not on which driver
+          # provides it: Fedora 44's journald cannot open its library here and every
+          # logs request 500s, while rawhide's works fine — so requiring a specific
+          # driver reddens the major that never had the problem.
+          #
+          # This is not cosmetic. With logs unavailable, the five tests that only
+          # `unwrap()` the result passed without fetching a byte, because `logs`
+          # swallowed the 500 and returned success. Green-and-meaningless is worse
+          # than red, so the signature is a hard failure.
+          echo "log driver: $(grep -oE 'LOGDRIVER=[a-z0-9-]+' "$L" | tail -1)"
+          if grep -q 'unable to open a handle to the library' "$L"; then
+            echo "::error::the VM could not serve logs (journald cannot open its library) — the logs tests would pass without reading anything"
+            exit 1
+          fi
           # Guard the matrix: the VM must actually run the Podman major it was asked to.
           case "$VER" in
             ${{ matrix.podman }}.*) : ;;
