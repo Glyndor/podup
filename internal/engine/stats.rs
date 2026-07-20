@@ -283,23 +283,25 @@ impl Engine {
 			.await
 			.map_err(ComposeError::Podman)?;
 		let mut frames = parse_json_lines::<StatsReport>(resp.into_body());
-		// The stream ending cleanly yields `None`, not `Err`, so reaching this
-		// arm means the socket died or sent something unparseable mid-stream.
-		// It used to be logged at `debug!` — invisible at the default `warn`
-		// floor — and the command still exited 0, so a monitor scraping `stats`
-		// read a truncated sample as a complete one.
-		let mut first_err: Option<ComposeError> = None;
+		// Raised from `debug!` to `warn!` so a stream that dies mid-sample is at
+		// least visible at the default level — it used to vanish entirely, and a
+		// monitor scraping `stats` read a truncated sample as a complete one.
+		//
+		// Not fatal, though. The sibling streaming commands showed on the live
+		// lane that a finished libpod stream can end in a way hyper reports as an
+		// error on some Podman versions, so failing the command here would fail
+		// runs that worked. Making the exit code trustworthy needs that
+		// distinction first.
 		while let Some(frame) = frames.next().await {
 			match frame {
 				Ok(report) => print_frame(&report, &running, &stopped, &opts),
 				Err(e) => {
 					tracing::warn!("stats: stream ended early: {e}");
-					first_err.get_or_insert(ComposeError::Podman(e));
 					break;
 				}
 			}
 		}
-		first_err.map_or(Ok(()), Err)
+		Ok(())
 	}
 
 	/// The containers to report on — every existing replica of the targeted

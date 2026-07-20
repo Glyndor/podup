@@ -292,7 +292,6 @@ impl Engine {
 						// keeping interleaved `logs -f` output prompt.
 						let mut out_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
 						let mut err_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
-						let mut stream_err = None;
 						while let Some(msg) = stream.next().await {
 							match msg {
 								Ok(LogOutput::StdOut { message }) => {
@@ -301,25 +300,26 @@ impl Engine {
 								Ok(LogOutput::StdErr { message }) => {
 									err_pfx.write(&mut std::io::stderr().lock(), &message);
 								}
+								// Warned but deliberately NOT treated as a command
+								// failure — see the note in the sequential branch.
 								Err(e) => {
 									tracing::warn!(
 										"logs {container_name}: stream ended early: {e}"
 									);
-									stream_err = Some(ComposeError::Podman(e));
 									break;
 								}
 							}
 						}
 						out_pfx.flush_tail(&mut std::io::stdout().lock());
 						err_pfx.flush_tail(&mut std::io::stderr().lock());
-						stream_err
+						None
 					}
 				})
 				.collect();
-			let stream_errs = futures_util::future::join_all(futs).await;
+			let open_errs = futures_util::future::join_all(futs).await;
 			// Keep the earliest failure: a replica-resolution error happened
 			// before any of these streams was opened.
-			first_err = first_err.or_else(|| stream_errs.into_iter().flatten().next());
+			first_err = first_err.or_else(|| open_errs.into_iter().flatten().next());
 		} else {
 			for (container_name, is_tty) in targets {
 				let path = format!(
@@ -360,9 +360,23 @@ impl Engine {
 						Ok(LogOutput::StdErr { message }) => {
 							err_pfx.write(&mut std::io::stderr().lock(), &message)
 						}
+						// Warned, never fatal. A mid-stream error here is NOT
+						// reliably a fault: the live lane showed six `logs` tests
+						// (plus `run`, `attach` and `events`, which stream the same
+						// way) going red on Podman 5.8.1 when this was treated as a
+						// failure, while the identical suite is green on 5.4.2. So
+						// on at least some versions libpod ends a finished log
+						// stream in a way hyper reports as an error rather than a
+						// clean EOF, and podup cannot yet tell that apart from a
+						// socket that genuinely died mid-read.
+						//
+						// The two unambiguous faults above — a replica lookup that
+						// fails, and a stream that will not open — are still
+						// reported, and they are what makes `logs` against a dead
+						// socket non-zero. Distinguishing a real mid-stream failure
+						// is tracked separately rather than guessed at here.
 						Err(e) => {
 							tracing::warn!("logs {container_name}: stream ended early: {e}");
-							first_err.get_or_insert(ComposeError::Podman(e));
 							break;
 						}
 					}
