@@ -46,10 +46,7 @@ async fn engine_exec_reaches_live_scaled_replicas() {
 				"-c".into(),
 				"echo idx2 > /tmp/exec_marker".into(),
 			],
-			podup::ExecOptions {
-				index: Some(2),
-				..Default::default()
-			},
+			podup::ExecOptions::default().with_index(Some(2)),
 		)
 		.await;
 
@@ -74,10 +71,7 @@ async fn engine_exec_reaches_live_scaled_replicas() {
 			&file,
 			"web",
 			vec!["true".into()],
-			podup::ExecOptions {
-				index: Some(4),
-				..Default::default()
-			},
+			podup::ExecOptions::default().with_index(Some(4)),
 		)
 		.await;
 

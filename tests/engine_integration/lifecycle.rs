@@ -285,12 +285,10 @@ async fn exec_with_options_user_workdir_env() {
 				"-c".to_string(),
 				"pwd; echo $FOO".to_string(),
 			],
-			podup::ExecOptions {
-				user: Some("root".to_string()),
-				workdir: Some("/tmp".to_string()),
-				env: vec!["FOO=bar".to_string()],
-				..Default::default()
-			},
+			podup::ExecOptions::default()
+				.with_user(Some("root".to_string()))
+				.with_workdir(Some("/tmp".to_string()))
+				.with_env(vec!["FOO=bar".to_string()]),
 		)
 		.await
 		.unwrap();
@@ -345,10 +343,7 @@ async fn exec_nonexistent_user_fails_fast() {
 			&file,
 			"web",
 			vec!["echo".to_string(), "hi".to_string()],
-			podup::ExecOptions {
-				user: Some("definitelynosuchuser".to_string()),
-				..Default::default()
-			},
+			podup::ExecOptions::default().with_user(Some("definitelynosuchuser".to_string())),
 		)
 		.await
 		.unwrap_err();

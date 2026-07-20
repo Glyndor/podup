@@ -16,6 +16,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use super::error::PodmanError;
 
 mod encode;
+mod hijack;
 pub(crate) use encode::{is_valid_object_name, urlencoded};
 
 /// The request body every call shares. A boxed body so a fully-buffered
