@@ -18,14 +18,18 @@ fn bin() -> &'static str {
 	env!("CARGO_BIN_EXE_podup")
 }
 
-/// Whether a real Podman is reachable. These read live output, so they skip
-/// rather than fail on a machine without it — matching the integration suite.
-fn podman_up() -> bool {
-	Command::new("podman")
-		.arg("info")
-		.output()
-		.map(|o| o.status.success())
-		.unwrap_or(false)
+/// Whether a Podman podup can actually drive is reachable.
+///
+/// This is the integration suite's guard, not a `podman info` probe. The CI
+/// runner ships a podman binary that is *below podup's floor* with no socket
+/// running, so `podman info` succeeds while every command here fails — the
+/// weaker check let these run in the main CI job and fail for the environment
+/// rather than the code.
+async fn podman_up() -> bool {
+	match podup::podman::connect_from_env().or_else(|_| podup::podman::connect(None)) {
+		Ok(client) => client.ping().await.is_ok(),
+		Err(_) => false,
+	}
 }
 
 struct Project {
@@ -75,9 +79,9 @@ impl Drop for Project {
 /// used to be the exception, so a script locating its columns from the header
 /// broke on an empty project — and empty is a legitimate answer, not a missing
 /// one.
-#[test]
-fn list_commands_print_their_table_headers() {
-	if !podman_up() {
+#[tokio::test]
+async fn list_commands_print_their_table_headers() {
+	if !podman_up().await {
 		return;
 	}
 	let p = Project::start("hdr");
@@ -113,9 +117,9 @@ fn list_commands_print_their_table_headers() {
 /// The JSON keys each `--format json` command emits, and their types. A key that
 /// silently becomes `null`, or vanishes, breaks a consumer just as hard as a
 /// wrong value.
-#[test]
-fn json_output_keys_are_stable() {
-	if !podman_up() {
+#[tokio::test]
+async fn json_output_keys_are_stable() {
+	if !podman_up().await {
 		return;
 	}
 	let p = Project::start("jsn");
@@ -124,7 +128,8 @@ fn json_output_keys_are_stable() {
 		.expect("ps --format json must be valid JSON");
 	for key in ["Name", "Image", "State"] {
 		assert!(
-			ps.as_array().is_some_and(|a| a.iter().all(|r| r.get(key).is_some())),
+			ps.as_array()
+				.is_some_and(|a| a.iter().all(|r| r.get(key).is_some())),
 			"ps json row is missing {key}: {ps}"
 		);
 	}
@@ -133,7 +138,8 @@ fn json_output_keys_are_stable() {
 		.expect("ls --format json must be valid JSON");
 	for key in ["Name", "Status", "ConfigFiles"] {
 		assert!(
-			ls.as_array().is_some_and(|a| a.iter().all(|r| r.get(key).is_some())),
+			ls.as_array()
+				.is_some_and(|a| a.iter().all(|r| r.get(key).is_some())),
 			"ls json row is missing {key}: {ls}"
 		);
 	}
@@ -158,9 +164,9 @@ fn json_output_keys_are_stable() {
 /// index, project stripped, one space before the bar. They used to disagree —
 /// `myproj-web-1  | ` against `web-1 | ` — so anything parsing the prefix had to
 /// accept both shapes from one binary.
-#[test]
-fn logs_prefix_is_service_and_index_with_one_space() {
-	if !podman_up() {
+#[tokio::test]
+async fn logs_prefix_is_service_and_index_with_one_space() {
+	if !podman_up().await {
 		return;
 	}
 	let p = Project::start("pfx");
