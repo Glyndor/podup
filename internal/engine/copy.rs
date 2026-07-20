@@ -208,7 +208,13 @@ impl Engine {
 			urlencoded(&extract_dir),
 		);
 		self.client
-			.put_bytes_ok(&path, Bytes::from(tar_bytes), "application/x-tar")
+			// `pack_path` gzips, so the body is a gzipped tar and saying
+			// `application/x-tar` is simply false. Podman 5 sniffs the magic bytes
+			// and forgives it; the working theory for #1097 is that Podman 6 no
+			// longer does, which would explain why every archive PUT there dies
+			// mid-message on bodies of ~110 bytes — the size of a gzipped tar, not
+			// of a tar (a bare tar header alone is 512).
+			.put_bytes_ok(&path, Bytes::from(tar_bytes), "application/gzip")
 			.await
 			.map_err(ComposeError::Podman)?;
 
