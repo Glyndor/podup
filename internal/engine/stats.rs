@@ -403,10 +403,18 @@ fn print_frame(
 
 	if opts.json {
 		let json: Vec<_> = rows.iter().map(stat_json_row).collect();
-		println!(
-			"{}",
-			serde_json::to_string_pretty(&json).unwrap_or_default()
-		);
+		// While streaming, one compact array per line — NDJSON, the shape
+		// `events` already emits. A pretty-printed array per frame, concatenated,
+		// is neither a single JSON document nor NDJSON, so no parser accepts it:
+		// `stats --format json` was unreadable by anything for as long as it
+		// streamed. `--no-stream` prints one frame and exits, so it stays a
+		// single pretty document, which is valid JSON and nicer to read.
+		let text = if opts.no_stream {
+			serde_json::to_string_pretty(&json)
+		} else {
+			serde_json::to_string(&json)
+		};
+		println!("{}", text.unwrap_or_default());
 		return;
 	}
 

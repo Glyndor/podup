@@ -164,10 +164,16 @@ impl Engine {
 				let host = b.host_ip.as_deref().unwrap_or("0.0.0.0");
 				let port = b.host_port.as_deref().unwrap_or("");
 				println!("{host}:{port}");
+				Ok(())
 			}
-			None => println!(),
+			// No binding is a failure, not an empty answer. Printing a blank line
+			// and exiting 0 made `HOST=$(podup port web 80)` yield an empty string
+			// with a success status, so a script cannot tell "not published" from
+			// "published at ''". docker compose exits 1 with a message here.
+			None => Err(ComposeError::Unsupported(format!(
+				"no host binding for {service_name} port {port}/{proto}"
+			))),
 		}
-		Ok(())
 	}
 
 	/// List images used by each service as a table (default options).
