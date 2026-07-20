@@ -134,7 +134,10 @@ services:
 	let c = &unit_named(&out, "p-app.container").contents;
 	for needle in [
 		"ContainerName=custom",
-		"EnvironmentFile=./app.env",
+		// Absolute, resolved against the compose base dir: systemd resolves a
+		// relative `EnvironmentFile=` against the unit's own directory, not the
+		// project's, so `./app.env` here would never be found once installed.
+		"EnvironmentFile=/srv/app/app.env",
 		"Tmpfs=/run",
 		"Sysctl=net.core.somaxconn=1024",
 		"Ulimit=nofile=1024:2048",
@@ -475,4 +478,46 @@ services:
 		!c.contains("Volume=/cache"),
 		"tmpfs wrongly emitted as a Volume in:\n{c}"
 	);
+}
+
+/// #1091: `EnvironmentFile=` is resolved by podman-systemd.unit(5) against the
+/// unit file's own directory, not the compose file's. Units land in
+/// `~/.config/containers/systemd`, so a relative entry emitted verbatim points
+/// at a file that is not there — and `--env-file` on a missing path is fatal, so
+/// the container never starts. Every relative entry must come out absolute
+/// against the compose base directory; an already-absolute one is untouched.
+#[test]
+fn env_file_entries_are_absolute_against_the_compose_base_dir() {
+	let yaml = r#"
+services:
+  app:
+    image: app:1.0
+    env_file:
+      - .env
+      - ./config/extra.env
+      - ../shared/team.env
+      - /etc/glyndor/absolute.env
+"#;
+	let file = parse_str(yaml).unwrap();
+	// A base directory that is deliberately not the process's cwd, so a bug that
+	// resolved against the cwd instead would still show up here.
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-app.container").contents;
+	for needle in [
+		"EnvironmentFile=/srv/app/.env",
+		"EnvironmentFile=/srv/app/config/extra.env",
+		"EnvironmentFile=/srv/app/../shared/team.env",
+		"EnvironmentFile=/etc/glyndor/absolute.env",
+	] {
+		assert!(c.contains(needle), "missing `{needle}` in:\n{c}");
+	}
+	// No entry may survive as a relative path: systemd would resolve it against
+	// the unit directory.
+	for line in c.lines().filter(|l| l.starts_with("EnvironmentFile=")) {
+		let value = line.trim_start_matches("EnvironmentFile=");
+		assert!(
+			std::path::Path::new(value).is_absolute(),
+			"`{line}` is relative; it would resolve against the unit directory"
+		);
+	}
 }
