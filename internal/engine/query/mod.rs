@@ -324,7 +324,18 @@ impl Engine {
 								Ok(LogOutput::StdErr { message }) => {
 									err_pfx.write(&mut std::io::stderr().lock(), &message)
 								}
-								Err(_) => break,
+								// Diagnostic only — nothing branches on this. Naming the
+								// classification is what lets a lane run answer whether a
+								// finished stream is distinguishable from a broken one
+								// (#1104), instead of the question being argued from the
+								// source. Real 5.4.2 never reaches this arm.
+								Err(e) => {
+									tracing::warn!(
+										"logs {container_name}: stream ended [{}]: {e}",
+										e.stream_end_kind()
+									);
+									break;
+								}
 							};
 							if stop_on_write_error(&container_name, wrote) {
 								break;
@@ -375,7 +386,13 @@ impl Engine {
 						Ok(LogOutput::StdErr { message }) => {
 							err_pfx.write(&mut std::io::stderr().lock(), &message)
 						}
-						Err(_) => break,
+						Err(e) => {
+							tracing::warn!(
+								"logs {container_name}: stream ended [{}]: {e}",
+								e.stream_end_kind()
+							);
+							break;
+						}
 					};
 					if stop_on_write_error(&container_name, wrote) {
 						break;

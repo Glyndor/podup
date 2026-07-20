@@ -60,7 +60,9 @@ impl Engine {
 		while let Some(event) = stream.next().await {
 			match event {
 				Ok(value) => println!("{}", format_event(&value, json)),
-				Err(e) => tracing::warn!("events: stream ended early: {e}"),
+				Err(e) => {
+					tracing::warn!("events: stream ended early [{}]: {e}", e.stream_end_kind())
+				}
 			}
 		}
 		Ok(())

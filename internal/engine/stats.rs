@@ -296,7 +296,7 @@ impl Engine {
 			match frame {
 				Ok(report) => print_frame(&report, &running, &stopped, &opts),
 				Err(e) => {
-					tracing::warn!("stats: stream ended early: {e}");
+					tracing::warn!("stats: stream ended early [{}]: {e}", e.stream_end_kind());
 					break;
 				}
 			}
