@@ -160,3 +160,27 @@ fn meets_minimum_handles_malformed_and_empty() {
 	// Leading/trailing whitespace around a valid version is tolerated.
 	assert!(meets_minimum(" 5.0.0 "));
 }
+
+/// #1097: does a buffered PUT body keep its exact size hint after boxing?
+///
+/// This is the crux of the leading hypothesis for `cp` into a container failing
+/// on Podman 6. hyper sets `Content-Length` when a body reports an exact size
+/// and falls back to `Transfer-Encoding: chunked` when it does not. If boxing
+/// erased the hint, every `PUT /containers/{id}/archive` would go out chunked —
+/// and a server that expects a length would close the connection mid-body,
+/// which is exactly the `IncompleteMessage` the lane reports.
+///
+/// Asserting it here means the hypothesis is settled locally instead of costing
+/// a lane round trip, whichever way it falls.
+#[test]
+fn a_buffered_put_body_reports_an_exact_size() {
+	use hyper::body::Body as _;
+
+	let payload = bytes::Bytes::from_static(b"hello world");
+	let body = super::full(payload.clone());
+	assert_eq!(
+		body.size_hint().exact(),
+		Some(payload.len() as u64),
+		"a boxed Full body must keep its exact size, or hyper sends it chunked"
+	);
+}

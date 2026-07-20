@@ -121,6 +121,38 @@ impl PodmanError {
 		matches!(self, Self::Api { status, .. } if *status == code)
 	}
 
+	/// How a streaming read ended, for the one question podup cannot currently
+	/// answer: was the stream *finished* or *broken*?
+	///
+	/// The parsers return `Ok(None)` on a clean body end, so in principle every
+	/// `Err` is a fault. In practice it is not — treating a mid-stream `Err` as a
+	/// command failure reddened fifteen tests on the lane's Podman 5.8.1 leg
+	/// while real 5.4.2 stayed green on the identical commit (#1104). Something
+	/// about how libpod ends a finished stream differs by version, and podup has
+	/// no way to tell which.
+	///
+	/// This names the hyper classification so a lane run can say *which* one
+	/// occurs, instead of the question being argued from the source. It is
+	/// diagnostic, not yet a decision: nothing branches on it.
+	pub(crate) fn stream_end_kind(&self) -> &'static str {
+		match self {
+			Self::Hyper(e) if e.is_incomplete_message() => "incomplete-message",
+			Self::Hyper(e) if e.is_body_write_aborted() => "body-write-aborted",
+			Self::Hyper(e) if e.is_canceled() => "canceled",
+			Self::Hyper(e) if e.is_closed() => "closed",
+			Self::Hyper(e) if e.is_timeout() => "hyper-timeout",
+			Self::Hyper(_) => "hyper-other",
+			Self::Connect(e) => match e.kind() {
+				std::io::ErrorKind::UnexpectedEof => "io-unexpected-eof",
+				std::io::ErrorKind::ConnectionReset => "io-connection-reset",
+				std::io::ErrorKind::BrokenPipe => "io-broken-pipe",
+				_ => "io-other",
+			},
+			Self::Json(_) => "malformed-frame",
+			_ => "other",
+		}
+	}
+
 	/// True if this is a client-side timeout (the request was aborted because the
 	/// socket never responded within the deadline). These carry a synthetic
 	/// status `0` and a `timed out` message; lifecycle callers use this to
