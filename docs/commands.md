@@ -19,7 +19,8 @@ These appear before the subcommand and may also come from the environment.
 | `--socket <PATH>` | `PODMAN_SOCKET` | Podman socket path; overrides auto-detection. |
 | `--profile <NAMES>` | `COMPOSE_PROFILES` | Active profiles, comma-separated. |
 | `--project-directory <PATH>` | | Base directory for relative paths (env_file, build context, bind mounts, config/secret sources). Defaults to the compose file's directory. |
-| `--env-file <PATH>` | | Extra env file for interpolation. Repeatable; later files win. The process environment and a project `.env` still take precedence. |
+| `--ansi <WHEN>` | | Colour output: `auto`, `always` or `never`. `always` forces colour even into a pipe or file. | 
+| `--env-file <PATH>` | | Env file(s) for interpolation. Repeatable; later files win. **Replaces** a project `.env` rather than adding to it — when this is given, `.env` is not read. The process environment still takes precedence over both. |
 
 ## Lifecycle
 
@@ -38,7 +39,7 @@ Create and start all services (or only the named ones, plus their transitive
 | `--no-deps` | Do not start the `depends_on` services of the named services. | off |
 | `-t, --timeout <SECS>` | Seconds to wait for a container to stop when recreating. | Podman default |
 | `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable. | from file |
-| `--pull <POLICY>` | Pull policy before starting: `always`, `missing`, `never`. | per service |
+| `--pull <POLICY>` | Pull policy before starting: `always`, `missing`, `never`, `newer`, `build`. (`newer` is Podman's extension.) | per service |
 | `--no-build` | Do not build images, even for services with a `build:` section. | off |
 | `--quiet-pull` | Suppress image-pull progress output. | off |
 | `--wait` | Wait until services are running/healthy before returning. | off |
@@ -103,6 +104,7 @@ Build or rebuild service images (optionally only the named services).
 | `--pull` | Always attempt to pull a newer base image. | off |
 | `--build-arg <KEY=VAL>` | Set a build-time variable. Repeatable. | none |
 | `--progress <STYLE>` | `auto`, `plain` or `tty`. Validated but inert — see [accepted for compatibility](#accepted-for-compatibility). | `auto` |
+| `--push` | Push each built image to its registry after a successful build. | off |
 | `-q, --quiet` | Suppress the build output. | off |
 
 ## Inspection
@@ -115,6 +117,9 @@ List project containers.
 | `-a, --all` | Include stopped containers. | running only |
 | `-q, --quiet` | Print container IDs only. | off |
 | `--format <FMT>` | `table` or `json`. | `table` |
+| `--status <STATE>` | Show only containers in this state. Repeatable; folded together with any `status=` from `--filter`. | all |
+| `--filter <KEY=VAL>` | `name=<NAME>` or `status=<STATE>`. An unknown key is an error. | none |
+| `--services` | Print service names only. | off |
 
 ### `ls`
 List podup compose projects on the host. Needs no compose file.
@@ -135,6 +140,8 @@ View container output for the named services (or all).
 | `--since <TIME>` | Show logs since a timestamp or relative time (e.g. `10m`). | start |
 | `--until <TIME>` | Show logs before a timestamp or relative time. | end |
 | `-t, --timestamps` | Prefix each line with an RFC3339 timestamp. | off |
+| `--no-color` | Monochrome prefix even on a colour-capable stdout. | off |
+| `--no-log-prefix` | Drop the `{service} \| ` tag entirely. | off |
 
 ### `events`
 Stream Podman events for this project's containers.
@@ -148,6 +155,10 @@ Stream Podman events for this project's containers.
 ### `top [SERVICE...]`
 Show the running processes of service containers.
 
+| Flag | Description | Default |
+|---|---|---|
+| `--format <FMT>` | `table` or `json` (an array of `{Container, Titles, Processes}`). | `table` |
+
 ### `stats [SERVICE...]`
 Live resource usage (CPU, memory, network, block I/O, PIDs) for service
 containers.
@@ -155,6 +166,9 @@ containers.
 | Flag | Description | Default |
 |---|---|---|
 | `--no-stream` | Print one snapshot and exit. | stream |
+| `-a, --all` | Include non-running containers as zeroed rows. | running only |
+| `--no-trunc` | Do not truncate long container names. | truncate at 32 |
+| `--format <FMT>` | `table` or `json`. While streaming, `json` is NDJSON — one compact array per line. | `table` |
 
 ### `port <SERVICE> <PRIVATE_PORT>`
 Print the public binding for a port.
@@ -194,6 +208,7 @@ Run a one-off command in a new container for the service.
 | `-e, --env <KEY=VAL>` | Set an environment variable. Repeatable. | none |
 | `--name <NAME>` | Override the container name. | generated |
 | `-P, --service-ports` | Publish the service's declared ports. | off |
+| `-l, --label <KEY=VAL>` | Add a label to the one-off container. Repeatable. | none |
 | `-u, --user <NAME\|UID[:GID]>` | Run the command as this user. | image default |
 | `-w, --workdir <PATH>` | Working directory inside the container. | image default |
 | `--entrypoint <CMD>` | Override the image entrypoint. | image default |
@@ -206,6 +221,11 @@ Run a one-off command in a new container for the service.
 ```bash
 podup run --rm web sh -c 'echo hello'
 ```
+
+> **Differs from docker on purpose.** `run` removes the container by default
+> here; `docker compose run` keeps it unless you pass `--rm`. Migrating a script
+> means its existing `--rm` becomes a no-op and a container it expected to
+> inspect afterwards is gone — pass `--no-rm` to keep it.
 
 ### `exec <SERVICE> <COMMAND...>`
 Execute a command in a running service container.
@@ -240,7 +260,14 @@ container side, e.g. `podup cp web:/app/data ./local`.
 
 ### `attach <SERVICE>`
 Attach to a service container's output (stdout/stderr), streaming it until the
-container exits or you detach.
+container exits or you detach. Output only — stdin is never attached.
+
+| Flag | Description | Default |
+|---|---|---|
+| `--index <N>` | Target this replica (1-based) of a scaled service. | 1 |
+| `--no-stdin` | Accepted for compatibility; stdin is never attached anyway. | off |
+| `--sig-proxy` | Accepted for compatibility; no effect. | off |
+| `--detach-keys <KEYS>` | Accepted for compatibility; no effect. | none |
 
 ### `kill [SERVICE...]`
 Send a signal to service containers.
@@ -281,6 +308,10 @@ Commit a service container's current state to a new image reference
 | Flag | Description | Default |
 |---|---|---|
 | `--index <N>` | Select a replica (1-based) of a scaled service. | 1 |
+| `-m, --message <MSG>` | Commit message recorded on the image. | none |
+| `-a, --author <AUTHOR>` | Author recorded on the image. | none |
+| `-c, --change <INSTRUCTION>` | Apply a Dockerfile instruction to the created image. Repeatable. | none |
+| `--pause` | Pause the container while committing. | off |
 
 ### `export <SERVICE>`
 Export a service container's filesystem as a tar archive.
@@ -359,6 +390,11 @@ Print the resolved compose file (after substitution, extends, include).
 |---|---|---|
 | `--format <FMT>` | `yaml` or `json`. | `yaml` |
 | `--services` | List service names, one per line. | off |
+| `--volumes` | List named volumes, one per line. | off |
+| `--images` | List the images services use, one per line. | off |
+| `--profiles` | List the profiles the file declares, one per line. | off |
+| `--hash` | Print a stable per-service config hash. | off |
+| `--no-normalize` | Accepted for compatibility; `config` always emits the normalized form. | off |
 | `-q, --quiet` | Only validate; print nothing. | off |
 | `--no-interpolate` | Leave `${VAR}` placeholders literal. | off |
 | `--resolve-image-digests` | Rewrite each service `image:` to its registry digest (`repo@sha256:...`). | off |
@@ -473,6 +509,12 @@ returns the whole set, which a script reads as a match.
 
 `exec` propagates the command's exit code the same way `run` does, and `wait`
 returns the last non-zero code it saw.
+
+**`stats --format json` differs from docker on purpose.** podup emits numbers
+(`"CPUPerc": 12.5`) where docker emits preformatted strings (`"12.50%"`), and
+splits `NetIO`/`BlockIO` into separate input/output fields. Raw numbers are
+exact and need no parsing, but it does mean a docker-compose JSON consumer needs
+adapting rather than working unchanged.
 
 **`watch` is the exception.** A sync, rebuild, restart or exec that fails during
 a watch session is reported as a warning and the session keeps going; `watch`
