@@ -46,11 +46,18 @@ impl LinePrefixer {
 	}
 
 	/// Buffer `chunk` and write every complete line it now completes.
-	pub(super) fn write(&mut self, out: &mut impl Write, chunk: &[u8]) {
+	///
+	/// Returns `Err` when the sink is gone. Every write used to be discarded with
+	/// `let _ =`, so a reader that closed the pipe — `logs -f | head`,
+	/// `| grep -q`, `| less` and quit — was never noticed and the follow loop
+	/// streamed into a dead pipe until the process was killed. The error is
+	/// returned rather than handled here so the caller decides: a broken pipe is
+	/// a clean end of output, any other io error is a real failure.
+	pub(super) fn write(&mut self, out: &mut impl Write, chunk: &[u8]) -> std::io::Result<()> {
 		self.pending.extend_from_slice(chunk);
 		while let Some(nl) = self.pending.iter().position(|&b| b == b'\n') {
-			let _ = out.write_all(self.label.as_bytes());
-			let _ = out.write_all(&self.pending[..=nl]);
+			out.write_all(self.label.as_bytes())?;
+			out.write_all(&self.pending[..=nl])?;
 			self.pending.drain(..=nl);
 		}
 		// The remaining bytes are a partial line with no newline yet. Bound it:
@@ -58,15 +65,18 @@ impl LinePrefixer {
 		// data) would otherwise grow `pending` without limit. Break the
 		// over-long partial into its own prefixed line and start fresh.
 		if self.pending.len() >= MAX_PENDING {
-			let _ = out.write_all(self.label.as_bytes());
-			let _ = out.write_all(&self.pending);
-			let _ = out.write_all(b"\n");
+			out.write_all(self.label.as_bytes())?;
+			out.write_all(&self.pending)?;
+			out.write_all(b"\n")?;
 			self.pending.clear();
 		}
-		let _ = out.flush();
+		out.flush()
 	}
 
 	/// Flush a trailing line that never received a newline (e.g. at stream end).
+	///
+	/// Best-effort: this runs after the stream is done, so a sink that has gone
+	/// away has nothing left to tell the caller.
 	pub(super) fn flush_tail(&mut self, out: &mut impl Write) {
 		if !self.pending.is_empty() {
 			let _ = out.write_all(self.label.as_bytes());
@@ -86,10 +96,10 @@ mod tests {
 	fn line_prefixer_tags_lines_and_buffers_partials() {
 		let mut p = LinePrefixer::new("web", true, false);
 		let mut out: Vec<u8> = Vec::new();
-		p.write(&mut out, b"hello\nwor");
+		p.write(&mut out, b"hello\nwor").unwrap();
 		// The complete line is tagged; the partial "wor" waits for its newline.
 		assert_eq!(out, b"web  | hello\n");
-		p.write(&mut out, b"ld\n");
+		p.write(&mut out, b"ld\n").unwrap();
 		assert_eq!(out, b"web  | hello\nweb  | world\n");
 	}
 
@@ -97,7 +107,7 @@ mod tests {
 	fn line_prefixer_flush_tail_emits_unterminated_line() {
 		let mut p = LinePrefixer::new("db", true, false);
 		let mut out: Vec<u8> = Vec::new();
-		p.write(&mut out, b"partial");
+		p.write(&mut out, b"partial").unwrap();
 		assert!(out.is_empty(), "a line with no newline is held back");
 		p.flush_tail(&mut out);
 		assert_eq!(out, b"db  | partial\n");
@@ -111,7 +121,7 @@ mod tests {
 		// Feed more than the cap with no newline in sight, in small chunks.
 		let chunk = vec![b'x'; 4096];
 		for _ in 0..((MAX_PENDING / chunk.len()) + 2) {
-			p.write(&mut out, &chunk);
+			p.write(&mut out, &chunk).unwrap();
 		}
 		// The partial was flushed as a prefixed line instead of being buffered
 		// unbounded, and nothing is left pending beyond the last sub-cap chunk.
@@ -135,10 +145,36 @@ mod tests {
 		// `--no-log-prefix`: lines pass through with no `{label} | ` tag.
 		let mut p = LinePrefixer::new("web", false, false);
 		let mut out: Vec<u8> = Vec::new();
-		p.write(&mut out, b"hello\n");
+		p.write(&mut out, b"hello\n").unwrap();
 		assert_eq!(out, b"hello\n");
-		p.write(&mut out, b"tail");
+		p.write(&mut out, b"tail").unwrap();
 		p.flush_tail(&mut out);
 		assert_eq!(out, b"hello\ntail\n");
+	}
+
+	/// #1102: a sink that has gone away must surface as an error, not be
+	/// swallowed. Every write here used to be `let _ =`, so `logs -f | head`
+	/// streamed into a closed pipe forever instead of exiting.
+	#[test]
+	fn line_prefixer_surfaces_a_broken_pipe() {
+		/// A writer that refuses everything the way a closed pipe does.
+		struct ClosedPipe;
+		impl std::io::Write for ClosedPipe {
+			fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+				Err(std::io::Error::new(
+					std::io::ErrorKind::BrokenPipe,
+					"broken pipe",
+				))
+			}
+			fn flush(&mut self) -> std::io::Result<()> {
+				Ok(())
+			}
+		}
+
+		let mut p = LinePrefixer::new("web", true, false);
+		let err = p
+			.write(&mut ClosedPipe, b"hello\n")
+			.expect_err("a closed sink must be reported");
+		assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
 	}
 }
