@@ -209,11 +209,10 @@ impl Engine {
 		);
 		self.client
 			// `pack_path` gzips, so the body is a gzipped tar and saying
-			// `application/x-tar` is simply false. Podman 5 sniffs the magic bytes
-			// and forgives it; the working theory for #1097 is that Podman 6 no
-			// longer does, which would explain why every archive PUT there dies
-			// mid-message on bodies of ~110 bytes — the size of a gzipped tar, not
-			// of a tar (a bare tar header alone is 512).
+			// `application/x-tar` was simply false. Podman 5 sniffs the magic bytes
+			// and forgives either label. This does NOT fix #1097 — the lane proved
+			// Podman 6 rejects the upload identically both ways — it just stops
+			// podup lying about what it sends.
 			.put_bytes_ok(&path, Bytes::from(tar_bytes), "application/gzip")
 			.await
 			.map_err(ComposeError::Podman)?;
