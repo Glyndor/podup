@@ -66,6 +66,11 @@ jobs:
                 export XDG_RUNTIME_DIR=/run/user/$(id -u)
                 systemctl --user start podman.socket
                 export PODMAN_SOCKET=$XDG_RUNTIME_DIR/podman/podman.sock
+                # In here Podman is guaranteed, so a test that cannot reach it
+                # must fail rather than skip: a skipped test reports `ok`, and a
+                # VM whose socket never came up would otherwise look like a
+                # flawless 155-pass run and clear the floor comfortably.
+                export PODUP_REQUIRE_PODMAN=1
                 cd "$HOME/podup" || exit 90
                 # Capture the FULL output: the per-failure detail (where the flake
                 # marker lives) precedes the summary, so a `tail` on the console
