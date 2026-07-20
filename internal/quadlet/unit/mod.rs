@@ -8,7 +8,7 @@ mod security;
 mod volume;
 
 pub(super) use build::build_unit;
-pub(super) use container::container_unit;
+pub(super) use container::{container_unit, UnitContext};
 pub(super) use network::network_unit;
 pub(super) use volume::volume_unit;
 
@@ -37,4 +37,27 @@ use super::QuadletUnit;
 /// `crate::autostart::quadlet`) must read instead.
 fn owner_marker(project: &str) -> String {
 	format!("# podup-owner: {project}\n")
+}
+
+/// Resolve a compose-relative path against the compose base directory.
+///
+/// Compose interprets a relative path against the compose file's directory.
+/// systemd interprets one against **the unit file's** directory — units are
+/// installed under `~/.config/containers/systemd`, which is not where the
+/// project lives. Any path a generated unit carries must therefore be made
+/// absolute here, or it silently resolves somewhere else once installed.
+///
+/// An already-absolute path is returned untouched, and `.` means the base
+/// directory itself. A leading `./` is stripped so the result stays clean
+/// (`/base/src`, not `/base/./src`) — cosmetic, both resolve identically.
+fn abs_against(base_dir: &std::path::Path, path: &str) -> String {
+	let p = std::path::Path::new(path);
+	if p.is_absolute() {
+		return path.to_string();
+	}
+	if p == std::path::Path::new(".") {
+		return base_dir.display().to_string();
+	}
+	let rel = path.strip_prefix("./").unwrap_or(path);
+	base_dir.join(rel).display().to_string()
 }
