@@ -1,3 +1,25 @@
+podup (1.12.0) unstable; urgency=medium
+
+  * cp no longer applies an archive entry's permissions outside the destination
+    directory: an entry stored with an absolute name sent the permission fix to
+    the real host path instead of the extracted copy.
+  * Quadlet units are written with 0600 permissions and are no longer
+    overwritten when they belong to another project. Units embed environment
+    values, so the previous default left compose passwords readable by any
+    local user; re-installing tightens a unit an older version left loose.
+  * Several commands no longer report success on a real failure: a panic whose
+    message merely mentioned a broken pipe exited 0, ps exited 0 on a compose
+    file that does not parse, down --rmi exited 0 when an image could not be
+    removed, build exited 0 with requested extra tags missing, and config --hash
+    printed the hash of an empty string when a service could not be serialised.
+  * The live-Podman integration suite can no longer report success without
+    running: where Podman is guaranteed, an unreachable one is now a failure
+    rather than a silent skip.
+  * The live lane gates on which tests fail rather than how many, against a
+    per-major list of failures classified as environmental on real hardware.
+
+ -- Glyndor <packages@glyndor.net>  Sun, 19 Jul 2026 20:21:15 -0500
+
 podup (1.11.1) unstable; urgency=medium
 
   * build streams the build context to the engine instead of buffering the
