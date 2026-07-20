@@ -80,7 +80,7 @@ jobs:
                 # the second run, so this stabilises the lane for required-check gating
                 # without masking genuine bugs.
                 for attempt in 1 2; do
-                  cargo test --features test-helpers --test engine_integration > /tmp/cargo.log 2>&1
+                  RUST_LOG=podup=warn cargo test --features test-helpers --test engine_integration > /tmp/cargo.log 2>&1
                   RC=$?
                   [ "$RC" -eq 0 ] && break
                   grep -qE 'IncompleteMessage|connection closed before message completed|channel closed|Connection reset' /tmp/cargo.log || break
