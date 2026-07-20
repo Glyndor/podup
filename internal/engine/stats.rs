@@ -283,16 +283,23 @@ impl Engine {
 			.await
 			.map_err(ComposeError::Podman)?;
 		let mut frames = parse_json_lines::<StatsReport>(resp.into_body());
+		// The stream ending cleanly yields `None`, not `Err`, so reaching this
+		// arm means the socket died or sent something unparseable mid-stream.
+		// It used to be logged at `debug!` — invisible at the default `warn`
+		// floor — and the command still exited 0, so a monitor scraping `stats`
+		// read a truncated sample as a complete one.
+		let mut first_err: Option<ComposeError> = None;
 		while let Some(frame) = frames.next().await {
 			match frame {
 				Ok(report) => print_frame(&report, &running, &stopped, &opts),
 				Err(e) => {
-					tracing::debug!("stats stream ended: {e}");
+					tracing::warn!("stats: stream ended early: {e}");
+					first_err.get_or_insert(ComposeError::Podman(e));
 					break;
 				}
 			}
 		}
-		Ok(())
+		first_err.map_or(Ok(()), Err)
 	}
 
 	/// The containers to report on — every existing replica of the targeted
