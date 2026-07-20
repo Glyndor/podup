@@ -3,8 +3,8 @@
 //! line limit).
 
 use super::{
-	build_context_tar, build_context_tar_with_inline, glob_match, is_ignored,
-	map_additional_context, read_dockerignore,
+	build_context_tar, build_context_tar_with_inline, glob_match, ignore_file, is_ignored,
+	map_additional_context,
 };
 use std::fs;
 use std::path::Path;
@@ -110,7 +110,10 @@ fn inline_tar_excludes_build_secrets_via_dockerignore() {
 	let mut di = String::new();
 	for entry in archive.entries().unwrap() {
 		let mut entry = entry.unwrap();
-		if entry.path().unwrap().to_string_lossy() == ".dockerignore" {
+		// No user ignore file in this context, so the synthesized one is
+		// written as `.containerignore` — the name podman prefers, so a
+		// stray `.dockerignore` cannot shadow our exclusions.
+		if entry.path().unwrap().to_string_lossy() == ".containerignore" {
 			entry.read_to_string(&mut di).unwrap();
 		}
 	}
@@ -242,7 +245,7 @@ fn dockerignore_negation_order_matters() {
 	assert!(is_ignored("logs/keep/secret.txt", &patterns));
 }
 
-// read_dockerignore ----------------------------------------------------
+// ignore_file ----------------------------------------------------------
 
 #[test]
 fn dockerignore_parsed_correctly() {
@@ -252,14 +255,45 @@ fn dockerignore_parsed_correctly() {
 		b"# comment\n\ntarget/\n*.log\n",
 	)
 	.unwrap();
-	let patterns = read_dockerignore(dir.path());
+	let (name, patterns) = ignore_file(dir.path());
+	assert_eq!(name, ".dockerignore");
 	assert_eq!(patterns, vec!["target/", "*.log"]);
 }
 
 #[test]
-fn dockerignore_missing_returns_empty() {
+fn containerignore_is_read_when_it_is_the_only_one() {
 	let dir = tempdir().unwrap();
-	let patterns = read_dockerignore(dir.path());
+	fs::write(dir.path().join(".containerignore"), b"secrets/\n*.key\n").unwrap();
+	let (name, patterns) = ignore_file(dir.path());
+	assert_eq!(name, ".containerignore");
+	assert_eq!(patterns, vec!["secrets/", "*.key"]);
+}
+
+/// podman-build(1): "if both are in the context directory, podman build only
+/// uses `.containerignore`". Applying both client-side is what produced an image
+/// missing content that `podman build` includes.
+#[test]
+fn containerignore_wins_and_dockerignore_is_not_merged() {
+	let dir = tempdir().unwrap();
+	fs::write(dir.path().join(".containerignore"), b"a.txt\n").unwrap();
+	fs::write(dir.path().join(".dockerignore"), b"b.txt\n").unwrap();
+	let (name, patterns) = ignore_file(dir.path());
+	assert_eq!(name, ".containerignore");
+	assert_eq!(
+		patterns,
+		vec!["a.txt"],
+		"the two files must never be unioned"
+	);
+}
+
+/// With neither present the name still matters: it is what a synthesized ignore
+/// file is written under, and podman prefers `.containerignore`, so choosing it
+/// means our exclusions cannot be shadowed by a `.dockerignore`.
+#[test]
+fn no_ignore_file_defaults_to_containerignore_with_no_patterns() {
+	let dir = tempdir().unwrap();
+	let (name, patterns) = ignore_file(dir.path());
+	assert_eq!(name, ".containerignore");
 	assert!(patterns.is_empty());
 }
 
@@ -342,7 +376,10 @@ fn inline_dockerfile_excluded_via_dockerignore() {
 	let mut di = String::new();
 	for entry in archive.entries().unwrap() {
 		let mut entry = entry.unwrap();
-		if entry.path().unwrap().to_string_lossy() == ".dockerignore" {
+		// No user ignore file in this context, so the synthesized one is
+		// written as `.containerignore` — the name podman prefers, so a
+		// stray `.dockerignore` cannot shadow our exclusions.
+		if entry.path().unwrap().to_string_lossy() == ".containerignore" {
 			entry.read_to_string(&mut di).unwrap();
 		}
 	}
@@ -460,4 +497,72 @@ fn glob_match_question_mark_matches_single_non_slash_char() {
 	assert!(glob_match("file?.txt", "file1.txt"));
 	assert!(!glob_match("file?.txt", "file.txt"));
 	assert!(!glob_match("a?b", "a/b"));
+}
+
+/// #1096: with both ignore files present, only `.containerignore` may filter the
+/// context tar. Applying both client-side is what made podup ship an image
+/// missing content that `podman build` includes: we dropped `b.txt` per
+/// `.dockerignore` — a file podman ignores entirely here — and the server then
+/// dropped `a.txt` per `.containerignore`, so the union of both applied.
+#[test]
+fn context_tar_filters_by_containerignore_only_when_both_exist() {
+	use flate2::read::GzDecoder;
+	use std::io::Read;
+
+	let dir = tempdir().unwrap();
+	fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
+	fs::write(dir.path().join("a.txt"), b"A").unwrap();
+	fs::write(dir.path().join("b.txt"), b"B").unwrap();
+	fs::write(dir.path().join(".containerignore"), b"a.txt\n").unwrap();
+	fs::write(dir.path().join(".dockerignore"), b"b.txt\n").unwrap();
+
+	let bytes = build_context_tar(dir.path(), "Dockerfile", &[]).unwrap();
+	let mut raw = Vec::new();
+	GzDecoder::new(bytes.as_slice())
+		.read_to_end(&mut raw)
+		.unwrap();
+	let mut archive = tar::Archive::new(raw.as_slice());
+	let names: Vec<String> = archive
+		.entries()
+		.unwrap()
+		.map(|e| e.unwrap().path().unwrap().to_string_lossy().into_owned())
+		.collect();
+
+	assert!(
+		!names.iter().any(|n| n == "a.txt"),
+		"`.containerignore` must exclude a.txt: {names:?}"
+	);
+	assert!(
+		names.iter().any(|n| n == "b.txt"),
+		"`.dockerignore` must NOT apply when `.containerignore` exists: {names:?}"
+	);
+}
+
+/// The mirror: with only `.dockerignore` present it is the one that applies, so
+/// existing projects that never had a `.containerignore` are unaffected.
+#[test]
+fn context_tar_falls_back_to_dockerignore_when_alone() {
+	use flate2::read::GzDecoder;
+	use std::io::Read;
+
+	let dir = tempdir().unwrap();
+	fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
+	fs::write(dir.path().join("b.txt"), b"B").unwrap();
+	fs::write(dir.path().join(".dockerignore"), b"b.txt\n").unwrap();
+
+	let bytes = build_context_tar(dir.path(), "Dockerfile", &[]).unwrap();
+	let mut raw = Vec::new();
+	GzDecoder::new(bytes.as_slice())
+		.read_to_end(&mut raw)
+		.unwrap();
+	let mut archive = tar::Archive::new(raw.as_slice());
+	let names: Vec<String> = archive
+		.entries()
+		.unwrap()
+		.map(|e| e.unwrap().path().unwrap().to_string_lossy().into_owned())
+		.collect();
+	assert!(
+		!names.iter().any(|n| n == "b.txt"),
+		"`.dockerignore` must still apply when it is the only one: {names:?}"
+	);
 }
