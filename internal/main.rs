@@ -30,7 +30,16 @@ fn main() {
 		// ignores SIGPIPE. With `panic = "abort"` that would escalate to SIGABRT
 		// (exit 134) and a misleading bug-report notice; instead exit quietly with
 		// success like any well-behaved Unix tool.
-		if startup::is_broken_pipe_panic(&info.to_string()) {
+		// Match the panic PAYLOAD, not `info.to_string()`: the latter also carries
+		// the source location, widening a substring search to text the panic
+		// itself never chose.
+		let payload = info.payload();
+		let message = payload
+			.downcast_ref::<&str>()
+			.copied()
+			.or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+			.unwrap_or_default();
+		if startup::is_broken_pipe_panic(message) {
 			std::process::exit(0);
 		}
 		eprintln!("podup: internal error: {info}");
@@ -318,8 +327,19 @@ async fn run() -> podup::Result<()> {
 		// Parse the compose file when it is present and valid so `--services` and a
 		// positional `SERVICE` filter can resolve service names and replicas;
 		// otherwise fall back to an empty model (and the directory basename for the
-		// project name) rather than failing, matching `docker compose ps`.
-		let parsed = podup::parse_files_with_env_files(&compose_files, &cli.env_file).ok();
+		// project name) rather than failing.
+		//
+		// A file that is PRESENT but does not parse is a different case and is
+		// propagated: the old `.ok()` swallowed it, so `podup ps` printed a bare
+		// header and exited 0 on a broken compose file, which a health check or a
+		// deploy gate reads as "nothing running, no error". `docker compose ps`
+		// exits non-zero there, and so does every other podup command on the same
+		// file.
+		let parsed = match podup::parse_files_with_env_files(&compose_files, &cli.env_file) {
+			Ok(f) => Some(f),
+			Err(e) if compose_files.iter().any(|p| p.exists()) => return Err(e),
+			Err(_) => None,
+		};
 		let compose_name = parsed.as_ref().and_then(|f| f.name.clone());
 		let file = parsed.unwrap_or_default();
 		let project = resolve_project_name(cli.project.clone(), compose_name.as_deref(), &base_dir);

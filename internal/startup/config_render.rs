@@ -128,12 +128,17 @@ pub(crate) fn render_config(
 /// SHA-256 of a service's resolved configuration, hex-encoded. Used by
 /// `config --hash` so a deploy pipeline can detect a changed service. Pure so it
 /// is unit-tested.
-fn service_config_hash(svc: &podup::compose::types::Service) -> String {
-	let json = serde_json::to_vec(svc).unwrap_or_default();
-	Sha256::digest(&json)
+fn service_config_hash(svc: &podup::compose::types::Service) -> podup::Result<String> {
+	// Not `unwrap_or_default()`: an empty vec hashes to the SHA-256 of the empty
+	// string, which looks like a perfectly stable hash. A deploy pipeline keyed
+	// on `config --hash` would quietly stop noticing that the service changed.
+	let json = serde_json::to_vec(svc)
+		.map_err(|e| podup::ComposeError::Build(format!("could not hash service config: {e}")))?;
+	let hash = Sha256::digest(&json)
 		.iter()
 		.map(|b| format!("{b:02x}"))
-		.collect()
+		.collect();
+	Ok(hash)
 }
 
 /// `config --hash`: print `SERVICE HASH` for all services ("*") or the given
@@ -156,7 +161,7 @@ fn render_config_hash(
 			.services
 			.get(&name)
 			.ok_or_else(|| podup::ComposeError::ServiceNotFound(name.clone()))?;
-		println!("{name} {}", service_config_hash(svc));
+		println!("{name} {}", service_config_hash(svc)?);
 	}
 	Ok(())
 }
@@ -385,10 +390,13 @@ mod tests {
 	#[test]
 	fn service_config_hash_is_stable_and_distinct() {
 		let file = sample_file();
-		let web = service_config_hash(&file.services["web"]);
-		let db = service_config_hash(&file.services["db"]);
+		let web = service_config_hash(&file.services["web"]).expect("hash");
+		let db = service_config_hash(&file.services["db"]).expect("hash");
 		// Stable for the same input, and distinct across different services.
-		assert_eq!(web, service_config_hash(&file.services["web"]));
+		assert_eq!(
+			web,
+			service_config_hash(&file.services["web"]).expect("hash")
+		);
 		assert_ne!(web, db);
 		assert_eq!(web.len(), 64, "sha-256 hex is 64 chars");
 	}

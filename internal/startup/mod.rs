@@ -128,11 +128,24 @@ pub(crate) fn internal_error_notice() -> String {
 
 /// Whether a panic message denotes a broken pipe (a downstream reader closed the
 /// pipe early). Rust ignores SIGPIPE, so a failing `println!`/`eprintln!` panics
-/// with this message; we treat it as a clean exit rather than an internal error.
-/// Pure so it can be unit-tested. Matches both the textual reason and the raw OS
-/// error number (EPIPE = 32 on Linux).
+/// rather than dying by signal; that specific panic is a clean exit, not an
+/// internal error.
+///
+/// The match is anchored to the exact prefix the standard library uses, because
+/// a bare substring search over the panic text is far too wide: it exits 0 for
+/// **any** panic whose message happens to mention a broken pipe — an
+/// `.expect()` on an unrelated io error, or a Podman error quoting a downstream
+/// EPIPE — and with `panic = "abort"` this hook is the only thing between a
+/// panic and the exit status, so a real crash would report success and print
+/// nothing. Pure so it can be unit-tested.
 pub(crate) fn is_broken_pipe_panic(msg: &str) -> bool {
-	let lower = msg.to_ascii_lowercase();
+	let Some(reason) = msg
+		.strip_prefix("failed printing to stdout: ")
+		.or_else(|| msg.strip_prefix("failed printing to stderr: "))
+	else {
+		return false;
+	};
+	let lower = reason.to_ascii_lowercase();
 	lower.contains("broken pipe") || lower.contains("os error 32")
 }
 
@@ -307,8 +320,25 @@ mod tests {
 		assert!(is_broken_pipe_panic(
 			"failed printing to stdout: Broken pipe (os error 32)"
 		));
-		assert!(is_broken_pipe_panic("Broken pipe"));
+		assert!(is_broken_pipe_panic(
+			"failed printing to stderr: Broken pipe (os error 32)"
+		));
 		assert!(!is_broken_pipe_panic("some other internal error"));
+	}
+
+	#[test]
+	fn an_unrelated_panic_mentioning_a_broken_pipe_is_not_swallowed() {
+		// These are real crashes. Matching them would exit 0 and print nothing,
+		// and `panic = "abort"` leaves this hook as the only gate before the exit
+		// status, so the process would report success on a genuine bug.
+		assert!(!is_broken_pipe_panic("Broken pipe"));
+		assert!(!is_broken_pipe_panic(
+			"called `Result::unwrap()` on an `Err` value: Os { code: 32, kind: BrokenPipe, message: \"Broken pipe\" }"
+		));
+		assert!(!is_broken_pipe_panic(
+			"podman refused the request: broken pipe reading from the container"
+		));
+		assert!(!is_broken_pipe_panic("assertion failed at os error 32"));
 	}
 
 	#[test]
