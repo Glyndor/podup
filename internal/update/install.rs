@@ -490,11 +490,15 @@ mod tests {
 	/// `String`, where the errno no longer exists: it returned false every time,
 	/// the retry never fired, and the flake it was written to prevent stayed.
 	///
-	/// A copy of a real binary, not a shell script: the shebang path execs the
-	/// *interpreter*, and which file the write-count check then applies to is
-	/// the kernel's business and differs between Unixes. A binary asks the
-	/// question directly.
-	#[cfg(unix)]
+	/// Linux only, deliberately. Whether a given kernel refuses to exec a file
+	/// held open for writing — and for a script, whether the check lands on the
+	/// script or on its interpreter — is that kernel's business, and I verified
+	/// it on Linux. Asserting it elsewhere tests the platform rather than the
+	/// classifier, and writing the test so it passes vacuously where ETXTBSY
+	/// never fires would repeat the mistake this whole change is about. The
+	/// retry itself stays on every Unix: it is a no-op where the errno does not
+	/// occur.
+	#[cfg(target_os = "linux")]
 	#[test]
 	fn a_binary_open_for_writing_is_classified_as_text_file_busy() {
 		let dir = tempfile::tempdir().unwrap();
