@@ -17,8 +17,8 @@
 # the failure mode that already forced the pass-count floor down from 120 to 115.
 # Podman 6 keeps the floor until its set is both classified and stable (#1039).
 
-# The `run` family: needs a controlling terminal the VM's serial console cannot
-# provide. All four pass on a real host.
+# The `run` family (7): needs a controlling terminal the VM's serial console
+# cannot provide. All seven passed in the real-host run that classified them.
 commands_networking::engine_run_command_succeeds
 commands_networking::engine_run_nonzero_exit_returns_run_exited
 run_flags::engine_run_applies_user_workdir_env_and_entrypoint
