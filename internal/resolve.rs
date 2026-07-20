@@ -84,6 +84,16 @@ fn override_for(base: &Path) -> Option<PathBuf> {
 		.find(|path| path.is_file())
 }
 
+/// Make a compose-file path absolute for recording on a container label.
+///
+/// The label is read back by `ls` from a different working directory than the
+/// one the project was started in, so a relative path there would be
+/// meaningless. Falls back to the path as given when the filesystem cannot
+/// resolve it — a best-effort label must never fail the command that sets it.
+pub(crate) fn absolute(path: &Path) -> PathBuf {
+	std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
 /// Resolve the base directory for relative-path resolution. An explicit
 /// `--project-directory` wins; otherwise it is the directory containing the
 /// compose file (compose-spec default), or the current directory when the

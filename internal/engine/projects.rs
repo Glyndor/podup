@@ -62,10 +62,15 @@ fn is_paused(status: &str) -> bool {
 
 /// A project's roll-up: running, paused, and total replica counts. Stopped
 /// replicas are the remainder (`total - running - paused`).
+#[derive(Default)]
 struct Tally {
 	running: usize,
 	paused: usize,
 	total: usize,
+	/// The `podup.config-files` label, from the first container that carries one.
+	/// Empty when no container in the project has it — created before the label
+	/// existed, or by an embedder that supplied no paths.
+	config_files: String,
 }
 
 /// List podup projects on the host (`docker compose ls`). Groups every
@@ -104,8 +109,18 @@ pub async fn list_projects_filtered(
 			running: 0,
 			paused: 0,
 			total: 0,
+			config_files: String::new(),
 		});
 		tally.total += 1;
+		// Take the first container that carries the label. Every container in a
+		// project is created from the same file set, so they agree; taking the
+		// first also means a project with one pre-label container still reports
+		// the path once any container is recreated.
+		if tally.config_files.is_empty() {
+			if let Some(files) = c.labels.get("podup.config-files") {
+				tally.config_files = files.clone();
+			}
+		}
 		// Podman's libpod list leaves `Status` empty and uses `State`; accept
 		// either so the roll-up is robust across response shapes. A paused
 		// container is counted separately so it is neither hidden nor mislabelled
@@ -142,7 +157,10 @@ pub async fn list_projects_filtered(
 	}
 
 	if opts.json {
-		let arr: Vec<_> = rows.iter().map(|(name, t)| project_row(name, t)).collect();
+		let arr: Vec<_> = rows
+			.iter()
+			.map(|(name, t)| project_row(name, t, &t.config_files))
+			.collect();
 		println!("{}", serde_json::to_string_pretty(&arr).unwrap_or_default());
 		return Ok(());
 	}
@@ -179,14 +197,17 @@ fn status_label(t: &Tally) -> String {
 	parts.join(", ")
 }
 
-/// One `ls --format json` row. `ConfigFiles` is always present for parity with
-/// `docker compose ls --format json`; podup discovers projects by container
-/// label and tracks no compose path per project, so the field is empty.
-fn project_row(name: &str, t: &Tally) -> serde_json::Value {
+/// One `ls --format json` row, matching `docker compose ls --format json`.
+///
+/// `ConfigFiles` comes from the `podup.config-files` label the containers carry
+/// — projects are discovered by label and there is no other record of where a
+/// compose file lives. It is empty for a container created before that label
+/// existed, or by an embedder that did not supply the paths.
+fn project_row(name: &str, t: &Tally, config_files: &str) -> serde_json::Value {
 	serde_json::json!({
 		"Name": name,
 		"Status": status_label(t),
-		"ConfigFiles": "",
+		"ConfigFiles": config_files,
 	})
 }
 
@@ -253,7 +274,8 @@ mod tests {
 			status_label(&Tally {
 				running: 2,
 				paused: 0,
-				total: 3
+				total: 3,
+				..Default::default()
 			}),
 			"running(2), exited(1)"
 		);
@@ -262,7 +284,8 @@ mod tests {
 			status_label(&Tally {
 				running: 0,
 				paused: 1,
-				total: 1
+				total: 1,
+				..Default::default()
 			}),
 			"paused(1)"
 		);
@@ -271,7 +294,8 @@ mod tests {
 			status_label(&Tally {
 				running: 1,
 				paused: 1,
-				total: 3
+				total: 3,
+				..Default::default()
 			}),
 			"running(1), paused(1), exited(1)"
 		);
@@ -279,25 +303,38 @@ mod tests {
 			status_label(&Tally {
 				running: 0,
 				paused: 0,
-				total: 3
+				total: 3,
+				..Default::default()
 			}),
 			"exited(3)"
 		);
 	}
 
+	/// #1082: `ConfigFiles` was hard-coded empty, present only for shape parity
+	/// with docker. It now carries the `podup.config-files` label the containers
+	/// were stamped with at creation.
 	#[test]
-	fn project_row_includes_config_files_field() {
-		let row = project_row(
-			"web",
-			&Tally {
-				running: 1,
-				paused: 0,
-				total: 1,
-			},
-		);
+	fn project_row_reports_the_recorded_config_files() {
+		let tally = Tally {
+			running: 1,
+			total: 1,
+			..Default::default()
+		};
+		let row = project_row("web", &tally, "/srv/app/compose.yaml");
 		assert_eq!(row["Name"], "web");
 		assert_eq!(row["Status"], "running(1)");
-		// Present for docker-compose parity even though podup tracks no path.
-		assert_eq!(row["ConfigFiles"], "");
+		assert_eq!(row["ConfigFiles"], "/srv/app/compose.yaml");
+	}
+
+	/// A container created before the label existed, or by an embedder that
+	/// supplied no paths, reports empty rather than failing.
+	#[test]
+	fn project_row_tolerates_an_unrecorded_config_file() {
+		let tally = Tally {
+			running: 1,
+			total: 1,
+			..Default::default()
+		};
+		assert_eq!(project_row("web", &tally, "")["ConfigFiles"], "");
 	}
 }

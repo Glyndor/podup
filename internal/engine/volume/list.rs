@@ -74,11 +74,11 @@ impl Engine {
 			return Ok(());
 		}
 
-		// Skip the header entirely when there are no volumes, instead of printing a
-		// lone NAME/DRIVER header with no rows.
-		if rows.is_empty() {
-			return Ok(());
-		}
+		// The header prints even with no rows, matching `ps`, `ls`, `images` and
+		// `stats`. `volumes` was the only list command that suppressed it, so a
+		// script parsing the header line to locate its columns broke on an empty
+		// project — and an empty result is a legitimate answer, not an absence of
+		// one.
 		crate::ui::print_bold_header(&format!("{:<40} {:<12}", "NAME", "DRIVER"));
 		for (_, name, driver, _) in &rows {
 			// Escape control characters so an ANSI/BEL/tab sequence in a volume

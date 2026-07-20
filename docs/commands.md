@@ -175,7 +175,7 @@ Print the public binding for a port.
 
 | Flag | Description | Default |
 |---|---|---|
-| `--proto <PROTO>` | `tcp` or `udp`. | `tcp` |
+| `--proto <PROTO>` (alias `--protocol`) | `tcp` or `udp`. | `tcp` |
 | `--index <N>` | Target this replica (1-based) of a scaled service. | 1 |
 
 ### `images`
