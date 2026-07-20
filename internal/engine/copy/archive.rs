@@ -162,6 +162,31 @@ fn flatten_single_wrapper_dir(dst: &Path) -> Result<()> {
 }
 
 /// Extract a (plain, uncompressed) tar archive into `dst_dir`, refusing any
+/// Rebuild the on-disk path `unpack_in` chose for an entry.
+///
+/// `unpack_in` keeps only [`Component::Normal`] parts — a leading `/` or a `..`
+/// is dropped rather than honoured — so an entry named `/etc/passwd` lands at
+/// `dst_dir/etc/passwd`. Reconstructing that path as `dst_dir.join(rel)` is
+/// wrong in exactly that case: [`Path::join`] with an absolute path **discards
+/// the base**, so the follow-up chmod would leave the destination and land on
+/// the real host file — a hostile image could hand back an entry named
+/// `/home/user/.ssh/id_ed25519` with mode 0o644 and have the copy loosen it.
+/// Mirroring `unpack_in`'s own rule keeps the two in agreement.
+///
+/// Returns `None` when no normal component survives (`/`, `..`, `.`), which is
+/// nothing to chmod.
+fn unpacked_path(dst_dir: &Path, rel: &Path) -> Option<std::path::PathBuf> {
+	let mut out = dst_dir.to_path_buf();
+	let mut pushed = false;
+	for component in rel.components() {
+		if let std::path::Component::Normal(part) = component {
+			out.push(part);
+			pushed = true;
+		}
+	}
+	pushed.then_some(out)
+}
+
 /// entry whose path would escape it (zip-slip) and stripping group/other-write
 /// and setuid/setgid/sticky bits the (untrusted) container set on each entry.
 ///
@@ -187,8 +212,14 @@ fn extract_tar_guarded(tar_bytes: &[u8], dst_dir: &Path) -> Result<()> {
 				"cp: refusing archive entry that escapes destination: {p}"
 			)));
 		}
-		if let (Some(rel), Some(mode)) = (rel, mode) {
-			sanitize_extracted_mode(&dst_dir.join(rel), mode);
+		match (rel, mode) {
+			(Some(rel), Some(mode)) => match unpacked_path(dst_dir, &rel) {
+				Some(path) => sanitize_extracted_mode(&path, mode),
+				None => {
+					tracing::warn!("cp: entry with no usable path component — mode not sanitized")
+				}
+			},
+			_ => tracing::warn!("cp: unreadable entry path or mode — mode not sanitized"),
 		}
 	}
 	Ok(())
@@ -266,6 +297,8 @@ fn sanitize_extracted_mode(_path: &Path, _mode: u32) {}
 
 #[cfg(test)]
 mod tests {
+	use std::path::Path;
+
 	#[test]
 	fn pack_path_single_file() {
 		let dir = tempfile::tempdir().expect("tempdir");
@@ -536,5 +569,74 @@ mod tests {
 			b"keep",
 			"the existing file must be left untouched"
 		);
+	}
+
+	#[test]
+	fn unpacked_path_mirrors_unpack_in_and_never_leaves_the_destination() {
+		// `unpack_in` drops every non-Normal component, so the chmod target must
+		// be rebuilt the same way. `dst.join(rel)` cannot be used: joining an
+		// absolute path discards the base, which is how a hostile entry name
+		// would have redirected the chmod onto a real host file.
+		let dst = Path::new("/tmp/dest");
+		assert_eq!(
+			super::unpacked_path(dst, Path::new("/etc/passwd")),
+			Some(std::path::PathBuf::from("/tmp/dest/etc/passwd"))
+		);
+		assert_eq!(
+			super::unpacked_path(dst, Path::new("../../home/u/.ssh/id_ed25519")),
+			Some(std::path::PathBuf::from("/tmp/dest/home/u/.ssh/id_ed25519"))
+		);
+		assert_eq!(
+			super::unpacked_path(dst, Path::new("a/b.txt")),
+			Some(std::path::PathBuf::from("/tmp/dest/a/b.txt"))
+		);
+		assert_eq!(super::unpacked_path(dst, Path::new("/")), None);
+		assert_eq!(super::unpacked_path(dst, Path::new("..")), None);
+	}
+
+	#[cfg(unix)]
+	#[test]
+	fn absolute_entry_name_cannot_chmod_a_file_outside_the_destination() {
+		use std::os::unix::fs::PermissionsExt;
+
+		// The victim lives outside the destination and starts private.
+		let dir = tempfile::tempdir().expect("tempdir");
+		let victim = dir.path().join("secret");
+		std::fs::write(&victim, b"private").expect("write");
+		std::fs::set_permissions(&victim, std::fs::Permissions::from_mode(0o600)).expect("chmod");
+
+		let dst = dir.path().join("dest");
+		std::fs::create_dir(&dst).expect("mkdir");
+
+		// Build an entry whose stored name is the victim's ABSOLUTE path. The
+		// safe setter refuses absolute paths, but a hostile archive is not built
+		// with the safe setter, so write the header's name field directly — this
+		// is the shape the guard has to survive.
+		let target = victim.to_str().expect("utf-8");
+		let mut header = tar::Header::new_gnu();
+		header.set_size(4);
+		header.set_mode(0o644);
+		header.set_entry_type(tar::EntryType::Regular);
+		{
+			let name = &mut header.as_gnu_mut().expect("gnu header").name;
+			name.iter_mut().for_each(|b| *b = 0);
+			name[..target.len()].copy_from_slice(target.as_bytes());
+		}
+		header.set_cksum();
+		let mut builder = tar::Builder::new(Vec::new());
+		builder.append(&header, &b"evil"[..]).expect("append");
+		let bytes = builder.into_inner().expect("tar");
+
+		super::extract_tar_guarded(&bytes, &dst).expect("extraction should succeed");
+
+		let mode = std::fs::metadata(&victim)
+			.expect("stat")
+			.permissions()
+			.mode() & 0o777;
+		assert_eq!(
+			mode, 0o600,
+			"a file outside the destination must keep its mode: dst.join(absolute) discards the base"
+		);
+		assert_eq!(std::fs::read(&victim).expect("read"), b"private");
 	}
 }

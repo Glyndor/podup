@@ -18,6 +18,69 @@ mod warnings;
 use crate::compose::types::ComposeFile;
 use unit::{build_unit, container_unit, network_unit, volume_unit};
 
+/// The `# podup-owner: <project>` marker a unit carries as its literal first
+/// line, if present.
+fn marker_owner(contents: &str) -> Option<&str> {
+	contents
+		.lines()
+		.find_map(|line| line.strip_prefix("# podup-owner: "))
+}
+
+/// Refuse to overwrite a unit that belongs to another project.
+///
+/// Unit stems are `{project}-{service}`, so project `app` with service
+/// `extra-web` and project `app-extra` with service `web` both produce
+/// `app-extra-web.container`. Uninstall already resolves that ambiguity by
+/// reading the ownership marker, but writing had no counterpart: installing one
+/// project would overwrite the other's unit *and re-stamp the marker*, so the
+/// next `uninstall` of the wrong project would delete it.
+///
+/// An existing file with no marker is left to be overwritten with a warning
+/// rather than refused: it is either a unit from a podup old enough to predate
+/// the marker, or a foreign file, and hard-failing would strand upgrades.
+fn guard_existing_owner(
+	path: &std::path::Path,
+	filename: &str,
+	contents: &str,
+) -> std::io::Result<()> {
+	let Ok(existing) = std::fs::read_to_string(path) else {
+		return Ok(());
+	};
+	match (marker_owner(&existing), marker_owner(contents)) {
+		(Some(existing_owner), Some(new_owner)) if existing_owner != new_owner => {
+			Err(std::io::Error::new(
+				std::io::ErrorKind::AlreadyExists,
+				format!(
+					"refusing to overwrite {filename}: it belongs to project '{existing_owner}', not '{new_owner}'"
+				),
+			))
+		}
+		(None, _) => {
+			tracing::warn!("overwriting {filename}, which carries no podup ownership marker");
+			Ok(())
+		}
+		_ => Ok(()),
+	}
+}
+
+/// Write a unit private to its owner.
+///
+/// Units render each `environment:` entry as an `Environment=KEY=VALUE` line,
+/// so a compose file's database password ends up in this file verbatim. The
+/// default umask would leave it world-readable; systemd reads user units as the
+/// owning user, so 0600 costs nothing. Permissions are reset explicitly as well
+/// as at creation, so re-installing over a unit written by an older podup
+/// tightens it rather than leaving it as it was.
+fn write_unit_file(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+	std::fs::write(path, contents)?;
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+	}
+	Ok(())
+}
+
 /// A single generated unit file: its name and full contents.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[non_exhaustive]
@@ -76,7 +139,8 @@ pub fn write_units(
 			));
 		}
 		let path = dir.join(&unit.filename);
-		std::fs::write(&path, &unit.contents)?;
+		guard_existing_owner(&path, &unit.filename, &unit.contents)?;
+		write_unit_file(&path, &unit.contents)?;
 		written.push(path);
 	}
 	Ok(written)
@@ -166,3 +230,79 @@ pub fn generate_at(file: &ComposeFile, project: &str, base_dir: &std::path::Path
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(test, unix))]
+mod write_guard_tests {
+	use std::os::unix::fs::PermissionsExt;
+
+	use super::{write_units, QuadletUnit};
+
+	fn unit(filename: &str, owner: &str) -> QuadletUnit {
+		QuadletUnit {
+			filename: filename.to_string(),
+			contents: format!(
+				"# podup-owner: {owner}\n[Container]\nEnvironment=PGPASSWORD=hunter2\n"
+			),
+		}
+	}
+
+	#[test]
+	fn refuses_to_overwrite_a_sibling_projects_unit() {
+		// `app` + service `extra-web` and `app-extra` + service `web` collide on
+		// one filename. Overwriting would also re-stamp the marker, so the next
+		// uninstall of the wrong project would delete the survivor.
+		let dir = tempfile::tempdir().expect("tempdir");
+		write_units(dir.path(), &[unit("app-extra-web.container", "app-extra")]).expect("first");
+
+		let err = write_units(dir.path(), &[unit("app-extra-web.container", "app")])
+			.expect_err("must refuse");
+		assert!(
+			format!("{err}").contains("belongs to project 'app-extra'"),
+			"got: {err}"
+		);
+
+		let kept =
+			std::fs::read_to_string(dir.path().join("app-extra-web.container")).expect("read");
+		assert!(
+			kept.contains("# podup-owner: app-extra"),
+			"the original owner's marker must survive"
+		);
+	}
+
+	#[test]
+	fn rewriting_your_own_unit_is_allowed() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		write_units(dir.path(), &[unit("app-web.container", "app")]).expect("first");
+		write_units(dir.path(), &[unit("app-web.container", "app")]).expect("second");
+	}
+
+	#[test]
+	fn units_are_written_private_because_they_carry_environment_values() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let written = write_units(dir.path(), &[unit("app-web.container", "app")]).expect("write");
+		let mode = std::fs::metadata(&written[0])
+			.expect("stat")
+			.permissions()
+			.mode() & 0o777;
+		assert_eq!(
+			mode, 0o600,
+			"a unit holding Environment= secrets must not be world-readable"
+		);
+	}
+
+	#[test]
+	fn an_existing_unit_written_by_an_older_podup_is_tightened() {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let path = dir.path().join("app-web.container");
+		std::fs::write(&path, "[Container]\n").expect("seed");
+		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+
+		write_units(dir.path(), &[unit("app-web.container", "app")]).expect("write");
+
+		let mode = std::fs::metadata(&path).expect("stat").permissions().mode() & 0o777;
+		assert_eq!(
+			mode, 0o600,
+			"re-installing must tighten a unit left loose by an older version"
+		);
+	}
+}
