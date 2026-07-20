@@ -59,6 +59,20 @@ jobs:
               sudo: 'ALL=(ALL) NOPASSWD:ALL'
               shell: /bin/bash
           write_files:
+            # Podman's default log driver on Fedora is journald, and in this image
+            # every logs request comes back `500 ... unable to open a handle to the
+            # library` — its go-systemd binding cannot open the journal. Installing
+            # systemd-devel does not help (measured: the package installs and the
+            # error persists), so rather than keep guessing at the dlopen, use the
+            # file-based driver, which has no library to open.
+            #
+            # This is not cosmetic. With logs unavailable the suite's five logs
+            # tests passed without fetching a byte — `logs` swallowed the 500 and
+            # returned success, so their `unwrap()` succeeded on nothing.
+            - path: /etc/containers/containers.conf
+              content: |
+                [containers]
+                log_driver = "k8s-file"
             - path: /usr/local/bin/run-suite.sh
               permissions: '0755'
               content: |
@@ -110,15 +124,10 @@ jobs:
                 echo "PODUP_FAILED_TESTS=${FAILED_TESTS}"
           runcmd:
             - bash -c 'F=$(findmnt -no FSTYPE /); case $F in btrfs) btrfs filesystem resize max / ;; xfs) xfs_growfs / ;; ext4) resize2fs $(findmnt -no SOURCE /) ;; esac >/dev/console 2>&1; echo "DISK=$(df -h / | tail -1)" >/dev/console'
-            # systemd-devel provides the libsystemd.so symlink Podman dlopen()s for
-            # the journald log driver, which is the default on Fedora. Without it
-            # every logs request 500s with "unable to open a handle to the
-            # library", so the VM could not serve a single log line — and nobody
-            # noticed, because `logs` swallowed the 500 and returned success. The
-            # tests that only unwrapped the result passed without reading
-            # anything; the one that checks its output (cli_logs_tail_limits_output)
-            # has been on the known-failures list all along, filed as nested-virt.
-            - bash -c 'dnf install -y podman rust cargo gcc git systemd-devel >/dev/console 2>&1'
+            - bash -c 'dnf install -y podman rust cargo gcc git >/dev/console 2>&1'
+            # Prove the driver took, so a silently-ignored config cannot put the
+            # logs tests back to passing without reading anything.
+            - bash -c 'echo "LOGDRIVER=$(podman info --format {{.Host.LogDriver}} 2>/dev/null)" >/dev/console'
             - bash -c 'echo "PODMAN=$(podman --version)  RUST=$(rustc --version)" >/dev/console'
             - bash -c 'echo "tester:100000:65536" >/etc/subuid; echo "tester:100000:65536" >/etc/subgid'
             - bash -c 'loginctl enable-linger tester; sleep 6'
@@ -142,6 +151,11 @@ jobs:
           grep -q 'No space left' "$L" && { echo "::error::VM disk full — run invalid"; exit 1; }
           VER=$(grep -oE 'PODMAN=podman version [0-9.]+' "$L" | grep -oE '[0-9.]+' | tail -1)
           grep -qE 'PODMAN=podman version [0-9]' "$L" || { echo "::error::Podman not detected in VM"; exit 1; }
+          # The log driver must have taken. journald cannot open its library in this
+          # image, so logs 500 — and the five tests that only unwrap the result then
+          # pass without fetching a byte. A config silently ignored would put them
+          # straight back to green-and-meaningless, which is worse than a red run.
+          grep -q 'LOGDRIVER=k8s-file' "$L" || { echo "::error::log driver is not k8s-file — logs tests would pass without reading anything"; exit 1; }
           # Guard the matrix: the VM must actually run the Podman major it was asked to.
           case "$VER" in
             ${{ matrix.podman }}.*) : ;;
