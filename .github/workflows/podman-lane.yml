@@ -110,7 +110,15 @@ jobs:
                 echo "PODUP_FAILED_TESTS=${FAILED_TESTS}"
           runcmd:
             - bash -c 'F=$(findmnt -no FSTYPE /); case $F in btrfs) btrfs filesystem resize max / ;; xfs) xfs_growfs / ;; ext4) resize2fs $(findmnt -no SOURCE /) ;; esac >/dev/console 2>&1; echo "DISK=$(df -h / | tail -1)" >/dev/console'
-            - bash -c 'dnf install -y podman rust cargo gcc git >/dev/console 2>&1'
+            # systemd-devel provides the libsystemd.so symlink Podman dlopen()s for
+            # the journald log driver, which is the default on Fedora. Without it
+            # every logs request 500s with "unable to open a handle to the
+            # library", so the VM could not serve a single log line — and nobody
+            # noticed, because `logs` swallowed the 500 and returned success. The
+            # tests that only unwrapped the result passed without reading
+            # anything; the one that checks its output (cli_logs_tail_limits_output)
+            # has been on the known-failures list all along, filed as nested-virt.
+            - bash -c 'dnf install -y podman rust cargo gcc git systemd-devel >/dev/console 2>&1'
             - bash -c 'echo "PODMAN=$(podman --version)  RUST=$(rustc --version)" >/dev/console'
             - bash -c 'echo "tester:100000:65536" >/etc/subuid; echo "tester:100000:65536" >/etc/subgid'
             - bash -c 'loginctl enable-linger tester; sleep 6'
