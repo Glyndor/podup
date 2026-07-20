@@ -483,24 +483,38 @@ mod tests {
 
 	/// The classification that silently did not work.
 	///
-	/// A file held open for writing cannot be executed — the kernel returns
-	/// ETXTBSY — so this produces the real errno rather than a hand-built error,
-	/// and asserts the predicate the retry depends on. The previous version of
-	/// this check ran on an error that had already been formatted into a
+	/// A real executable held open for writing cannot be run — the kernel
+	/// returns ETXTBSY — so this produces the genuine errno rather than a
+	/// hand-built error, and asserts the predicate the retry depends on. The
+	/// previous version of this check ran on an error already formatted into a
 	/// `String`, where the errno no longer exists: it returned false every time,
 	/// the retry never fired, and the flake it was written to prevent stayed.
+	///
+	/// A copy of a real binary, not a shell script: the shebang path execs the
+	/// *interpreter*, and which file the write-count check then applies to is
+	/// the kernel's business and differs between Unixes. A binary asks the
+	/// question directly.
 	#[cfg(unix)]
 	#[test]
-	fn a_file_open_for_writing_is_classified_as_text_file_busy() {
+	fn a_binary_open_for_writing_is_classified_as_text_file_busy() {
 		let dir = tempfile::tempdir().unwrap();
-		let p = write_stub(dir.path(), "held", "#!/bin/sh\nexit 0\n");
-		// Held across the spawn on purpose; dropping it would close the window.
-		let _writer = std::fs::OpenOptions::new().write(true).open(&p).unwrap();
+		let target = dir.path().join("held");
+		std::fs::copy("/bin/sh", &target).expect("/bin/sh is copyable");
+		{
+			use std::os::unix::fs::PermissionsExt;
+			std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+		}
+		// Held across the spawn on purpose; dropping it closes the window.
+		let _writer = std::fs::OpenOptions::new()
+			.write(true)
+			.open(&target)
+			.unwrap();
 
-		let err = std::process::Command::new(&p)
-			.arg("--version")
+		let err = std::process::Command::new(&target)
+			.arg("-c")
+			.arg("exit 0")
 			.spawn()
-			.expect_err("a file open for writing must not be executable");
+			.expect_err("a binary open for writing must not be executable");
 		assert!(
 			is_text_file_busy(&err),
 			"ETXTBSY must be recognised from the io::Error itself, got {err:?}"
