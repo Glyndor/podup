@@ -410,20 +410,51 @@ mod tests {
 		p
 	}
 
-	/// Run [`self_test`], retrying while the spawn hits ETXTBSY: a concurrent
-	/// test thread forking between our write and exec briefly holds the
-	/// script's write fd open, which makes exec fail spuriously.
+	/// Run [`self_test`], retrying while the spawn hits ETXTBSY.
+	///
+	/// The race is real and not podup's: a sibling test thread forking between
+	/// our write and our exec holds the script's write fd open across its own
+	/// exec window, and `O_CLOEXEC` does not close that window. Any
+	/// `Command::spawn` anywhere in this test binary can be the forker, so a
+	/// lock around these helpers would not close it either — removing the retry
+	/// means restructuring what the test proves, which is tracked in #1083.
+	///
+	/// What is fixed here is the predicate. It used to decide by
+	/// `format!("{e}").contains("Text file busy")` — a substring match on an OS
+	/// message that is localised, so on a non-English host the retry silently
+	/// stops happening and the flake comes back as a hard failure. The errno is
+	/// the same everywhere.
 	#[cfg(unix)]
 	fn self_test_retrying(target: &Path, expected: &str) -> crate::Result<()> {
 		for _ in 0..100 {
 			match self_test(target, expected) {
-				Err(e) if format!("{e}").contains("Text file busy") => {
+				Err(e) if is_text_file_busy(&e) => {
 					std::thread::sleep(std::time::Duration::from_millis(10));
 				}
 				other => return other,
 			}
 		}
 		self_test(target, expected)
+	}
+
+	/// Whether an error is ETXTBSY, by errno rather than by message text.
+	#[cfg(unix)]
+	fn is_text_file_busy(e: &crate::error::ComposeError) -> bool {
+		use std::error::Error;
+		let mut source: Option<&(dyn Error + 'static)> = Some(e);
+		while let Some(err) = source {
+			if let Some(io) = err.downcast_ref::<std::io::Error>() {
+				// ErrorKind::ExecutableFileBusy is the named form; compare the raw
+				// errno too so this holds on a toolchain where the mapping differs.
+				if io.kind() == std::io::ErrorKind::ExecutableFileBusy
+					|| io.raw_os_error() == Some(26)
+				{
+					return true;
+				}
+			}
+			source = err.source();
+		}
+		false
 	}
 
 	#[cfg(unix)]
