@@ -16,7 +16,34 @@ use podup::{parse_files_with_env_files, parse_str, Client, Engine};
 // Helpers
 // ---------------------------------------------------------------------------
 
+/// Turn podup's own `tracing` output on for the suite, once per test binary.
+///
+/// The diagnostics added for #1104 and #1097 are `tracing::warn!` calls, and
+/// `tracing` is a facade: a `warn!` with no subscriber installed in the process
+/// is discarded silently. `main` installs one, but every integration test runs
+/// in a process that never calls `main`, so the instrumentation compiled, passed
+/// review, merged — and emitted nothing on the lane, which is the one place it
+/// was written to answer a question.
+///
+/// libtest captures output and prints it only for tests that fail, which is
+/// exactly the wanted shape: a green run stays quiet, and a red one carries the
+/// classification of how the stream actually ended.
+fn enable_tracing() {
+	static ONCE: std::sync::Once = std::sync::Once::new();
+	ONCE.call_once(|| {
+		use tracing_subscriber::{fmt, EnvFilter};
+		// `warn` covers the diagnostics without the per-request noise of `debug`.
+		// RUST_LOG still wins when someone wants more.
+		let filter =
+			EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("podup=warn"));
+		// `with_test_writer` routes through libtest's capture; a plain writer
+		// would bypass it and interleave across parallel tests.
+		let _ = fmt().with_env_filter(filter).with_test_writer().try_init();
+	});
+}
+
 async fn podman() -> Option<Client> {
+	enable_tracing();
 	let connected =
 		match podup::podman::connect_from_env().or_else(|_| podup::podman::connect(None)) {
 			Ok(client) => client.ping().await.is_ok().then_some(client),
