@@ -476,6 +476,39 @@ when both are set.
 | `DOCKER_HOST` | Docker-compatible fallback for the Podman socket, used only when `PODMAN_SOCKET` is unset. Must be a local `unix://` socket (or `npipe://` on Windows); a remote `tcp://`/`ssh://` value is rejected. |
 | `RUST_LOG` | Log verbosity filter. Unset shows warnings and errors; e.g. `RUST_LOG=podup=info` or `RUST_LOG=podup=debug` for more detail. |
 
+## Podman extensions
+
+Podman does more than the Compose Specification, and a few of those extras
+change behaviour rather than just observability. podup exposes them under the
+spec's reserved `x-` prefix, so a file using one **stays a valid compose file**:
+docker compose ignores an unknown `x-` key instead of erroring, and the same
+file still runs there — it just does not act on the extra.
+
+| Key | Where | What it does |
+|---|---|---|
+| `x-podman-on-failure` | under a service's `healthcheck:` | `none`, `kill`, `restart` or `stop` — what Podman does when the check flips to unhealthy. Default `none`. |
+
+Without it, a compose healthcheck detects a sick container and does nothing
+about it: a restart policy reacts to the process *exiting*, not to the container
+being unhealthy, so an app that hangs without dying stays in rotation
+indefinitely.
+
+> **`kill` and a restart policy do not combine the way you would expect.**
+> `--health-on-failure=kill` with `restart: unless-stopped` leaves the container
+> **exited and never revived** — the kill is not the kind of exit the restart
+> policy acts on. Use `restart` if you want it to come back.
+>
+> podman-run(1) suggests `kill` or `stop` "when running inside of a systemd
+> unit… to make use of systemd's restart policy". That advice assumes the unit
+> restarts the container. `autostart --mode service` writes a
+> `Type=oneshot` + `RemainAfterExit=yes` unit, which does **not** — so under
+> podup's own service-mode unit that recommendation turns a degraded container
+> into a stopped one.
+
+An invalid value is rejected by `up`/`create`; `generate quadlet` warns and
+omits the key instead, because an unrecognised `HealthOnFailure=` makes Quadlet
+drop the whole unit at daemon-reload.
+
 ## Accepted for compatibility
 
 These flags parse and are validated, so a script written against docker compose

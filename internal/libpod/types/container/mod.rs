@@ -10,7 +10,8 @@ pub use response::{
 };
 #[allow(unused_imports)]
 pub use spec::{
-	HealthConfig, LinuxBlockIO, LinuxCPU, LinuxDevice, LinuxDeviceCgroup, LinuxMemory, LinuxPids,
-	LinuxResources, LinuxThrottleDevice, LinuxWeightDevice, LogConfig, Mount, NamedVolume,
-	Namespace, PerNetworkOptions, PortMapping, Secret, SpecGenerator, Ulimit,
+	HealthCheckOnFailureAction, HealthConfig, LinuxBlockIO, LinuxCPU, LinuxDevice,
+	LinuxDeviceCgroup, LinuxMemory, LinuxPids, LinuxResources, LinuxThrottleDevice,
+	LinuxWeightDevice, LogConfig, Mount, NamedVolume, Namespace, PerNetworkOptions, PortMapping,
+	Secret, SpecGenerator, Ulimit,
 };
