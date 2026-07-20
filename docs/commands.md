@@ -199,7 +199,7 @@ Run a one-off command in a new container for the service.
 | `-v, --volume <SPEC>` | Bind-mount an extra volume (`HOST:CONTAINER[:OPTS]` or `NAME:CONTAINER`). Repeatable. | none |
 | `-p, --publish <SPEC>` | Publish an extra port (`HOST:CONTAINER[/PROTO]`). Repeatable. | none |
 | `-i, --interactive` | Keep STDIN open (accepted for compatibility; `run` still streams logs). | off |
-| `-T, --no-TTY` | Disable pseudo-TTY allocation (accepted for compatibility; podup never allocates one). | off |
+| `-T, --no-TTY` (alias `--no-tty`) | Disable pseudo-TTY allocation (accepted for compatibility; podup never allocates one). | off |
 | `--no-deps` | Do not start the `depends_on` services before running. | off |
 
 ```bash
@@ -216,7 +216,7 @@ Execute a command in a running service container.
 | `-w, --workdir <PATH>` | Working directory inside the container. | container default |
 | `--privileged` | Give extended privileges to the command. | off |
 | `-d, --detach` | Run the command in the background. | off |
-| `-T, --no-TTY` | Disable pseudo-TTY allocation (accepted for compatibility; podup never allocates one). | off |
+| `-T, --no-tty` (alias `--no-TTY`) | Disable pseudo-TTY allocation (accepted for compatibility; podup never allocates one). | off |
 | `--index <N>` | Target this replica (1-based) of a scaled service. | 1 |
 
 ```bash

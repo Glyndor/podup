@@ -174,6 +174,43 @@ fn run_no_rm_parses_and_is_documented() {
 	);
 }
 
+/// Both spellings of the no-TTY flag parse on both `run` and `exec`, and both
+/// are listed in each command's help.
+///
+/// docker-compose is inconsistent with itself here: `docker compose run` spells
+/// the long form `--no-TTY` while `docker compose exec` spells it `--no-tty`.
+/// A script copied from either command has to work, so podup accepts both on
+/// both — a superset of docker rather than a guess at which one is canonical.
+#[test]
+fn no_tty_accepts_both_spellings_on_run_and_exec() {
+	for cmd in ["run", "exec"] {
+		let help = Command::new(bin())
+			.args([cmd, "--help"])
+			.output()
+			.expect("run --help");
+		assert!(help.status.success(), "`{cmd} --help` failed");
+		let help_out = String::from_utf8_lossy(&help.stdout);
+		for flag in ["--no-TTY", "--no-tty"] {
+			assert!(
+				help_out.contains(flag),
+				"`{cmd}` help is missing {flag}; got:\n{help_out}"
+			);
+		}
+
+		for flag in ["--no-TTY", "--no-tty", "-T"] {
+			let out = Command::new(bin())
+				.args(["--socket", "/nonexistent.sock", cmd, flag, "web", "true"])
+				.output()
+				.expect("run no-tty flag");
+			assert!(
+				!is_clap_usage_error(&out),
+				"`{cmd} {flag}` should parse; got clap usage error:\n{}",
+				String::from_utf8_lossy(&out.stderr)
+			);
+		}
+	}
+}
+
 /// `logs` and `restart` accept a trailing multi-service list (like every sibling
 /// command), so `logs a b` and `restart a b` parse rather than erroring on the
 /// extra positional.

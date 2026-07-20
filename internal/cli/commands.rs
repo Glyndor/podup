@@ -287,7 +287,10 @@ pub(crate) enum Commands {
 		interactive: bool,
 		/// No effect; accepted only for docker-compose compatibility. podup never
 		/// allocates a pseudo-TTY.
-		#[arg(short = 'T', long = "no-TTY")]
+		// Both spellings are accepted on purpose: `docker compose run` spells the
+		// long form `--no-TTY` while `docker compose exec` spells it `--no-tty`.
+		// A script copied from either one has to work, so each command takes both.
+		#[arg(short = 'T', long = "no-TTY", visible_alias = "no-tty")]
 		no_tty: bool,
 		/// Do not start linked services (depends_on) before running.
 		#[arg(long)]
@@ -519,7 +522,10 @@ pub(crate) enum Commands {
 		detach: bool,
 		/// No effect; accepted only for docker-compose compatibility. podup never
 		/// allocates a pseudo-TTY.
-		#[arg(short = 'T', long = "no-TTY")]
+		// `docker compose exec` spells the long form `--no-tty`, so that is the
+		// primary here; `--no-TTY` stays accepted so the spelling `run` takes
+		// also works on `exec`. See the note on `run`'s field.
+		#[arg(short = 'T', long = "no-tty", visible_alias = "no-TTY")]
 		no_tty: bool,
 		/// Index of the container when the service has multiple replicas (1-based).
 		#[arg(long)]
