@@ -11,6 +11,76 @@ use super::super::types::{
 	ServiceNetworks, StringOrList, Sysctls,
 };
 
+/// [`merge_service`] with the overriding file's `!override`/`!reset` tags.
+///
+/// A key tagged `!override` takes the overriding value whole, skipping whatever
+/// combine rule would normally apply; `!reset` drops the key entirely, leaving
+/// the type's default. Both were accepted and silently ignored before, so a file
+/// asking for replacement got an append instead — the opposite of what it said.
+///
+/// Implemented by pre-shaping the two sides and then running the ordinary merge,
+/// rather than by branching inside it: `!reset` empties both sides so the result
+/// is the default, and `!override` empties only the base so the combine rule has
+/// nothing to combine with and the overriding value survives whole. One rule
+/// each, and the field-by-field merge below stays the single place that knows
+/// how any given key combines.
+pub(in crate::compose) fn merge_service_tagged(
+	base: Service,
+	override_svc: Service,
+	tagged: Option<&std::collections::HashMap<String, crate::compose::tags::MergeTag>>,
+) -> Service {
+	let Some(tagged) = tagged.filter(|t| !t.is_empty()) else {
+		return merge_service(base, override_svc);
+	};
+	let mut base = base;
+	let mut over = override_svc;
+	for (key, tag) in tagged {
+		clear_service_key(&mut base, key);
+		if matches!(tag, crate::compose::tags::MergeTag::Reset) {
+			clear_service_key(&mut over, key);
+		}
+	}
+	merge_service(base, over)
+}
+
+/// Reset one service key to its default, by name — the primitive both tags are
+/// built from.
+///
+/// A key podup does not model is ignored: a tag cannot change a merge that never
+/// happens, and refusing it would reject a file that is valid elsewhere.
+fn clear_service_key(svc: &mut Service, key: &str) {
+	match key {
+		"ports" => svc.ports = Vec::new(),
+		"expose" => svc.expose = Vec::new(),
+		"volumes" => svc.volumes = Vec::new(),
+		"volumes_from" => svc.volumes_from = Vec::new(),
+		"networks" => svc.networks = Default::default(),
+		"environment" => svc.environment = Default::default(),
+		"env_file" => svc.env_file = Default::default(),
+		"labels" => svc.labels = Default::default(),
+		"label_file" => svc.label_file = Default::default(),
+		"dns" => svc.dns = Default::default(),
+		"dns_search" => svc.dns_search = Default::default(),
+		"dns_opt" => svc.dns_opt = Default::default(),
+		"tmpfs" => svc.tmpfs = Default::default(),
+		"sysctls" => svc.sysctls = Default::default(),
+		"cap_add" => svc.cap_add = Vec::new(),
+		"cap_drop" => svc.cap_drop = Vec::new(),
+		"devices" => svc.devices = Vec::new(),
+		"extra_hosts" => svc.extra_hosts = Vec::new(),
+		"ulimits" => svc.ulimits = Default::default(),
+		"depends_on" => svc.depends_on = Default::default(),
+		"secrets" => svc.secrets = Vec::new(),
+		"configs" => svc.configs = Vec::new(),
+		"links" => svc.links = Vec::new(),
+		"external_links" => svc.external_links = Vec::new(),
+		"group_add" => svc.group_add = Vec::new(),
+		"security_opt" => svc.security_opt = Vec::new(),
+		"profiles" => svc.profiles = Vec::new(),
+		_ => {}
+	}
+}
+
 pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) -> Service {
 	fn opt<T>(o: Option<T>, b: Option<T>) -> Option<T> {
 		o.or(b)
@@ -153,7 +223,7 @@ pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) ->
 		expose: merge_vec(base.expose, override_svc.expose),
 		environment: merge_envvars(base.environment, override_svc.environment),
 		env_file: merge_env_file(base.env_file, override_svc.env_file),
-		volumes: merge_vec(base.volumes, override_svc.volumes),
+		volumes: merge_volumes(base.volumes, override_svc.volumes),
 		tmpfs: merge_sol(base.tmpfs, override_svc.tmpfs),
 		volumes_from: merge_vec(base.volumes_from, override_svc.volumes_from),
 		configs: merge_vec(base.configs, override_svc.configs),
@@ -261,6 +331,30 @@ pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) ->
 			u
 		},
 	}
+}
+
+/// Merge `volumes:` by **container-side target**, with the override winning.
+///
+/// `merge_vec` dedups by serialized form, so a base mounting `./a:/data` and an
+/// override remapping it to `./b:/data` produced both entries — and
+/// `podman create` refused the container with `duplicate mount destination`.
+/// docker compose replaces the mount at a target it already has, which is what
+/// remapping a path in an override is *for*.
+///
+/// Base order is preserved so an unchanged mount stays where it was; an override
+/// introducing a new target appends.
+fn merge_volumes(
+	base: Vec<crate::compose::types::VolumeMount>,
+	over: Vec<crate::compose::types::VolumeMount>,
+) -> Vec<crate::compose::types::VolumeMount> {
+	let mut out = base;
+	for item in over {
+		match out.iter().position(|m| m.target() == item.target()) {
+			Some(i) => out[i] = item,
+			None => out.push(item),
+		}
+	}
+	out
 }
 
 /// Union two `networks:` declarations, keeping the base's attachments and adding

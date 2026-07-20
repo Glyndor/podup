@@ -9,6 +9,7 @@ mod extends;
 mod include;
 mod merge;
 mod order;
+mod tags;
 mod validate;
 
 use std::path::{Path, PathBuf};
@@ -145,7 +146,11 @@ pub fn parse_files_with_env_files_interp(
 	let mut merged = parse_file_with_env_files_interp(first, env_files, interpolate)?;
 	for path in iter {
 		let other = parse_file_with_env_files_interp(path, env_files, interpolate)?;
-		merge_override(&mut merged, other);
+		// `!override`/`!reset` are attached to keys in the raw document and are
+		// gone by the time it is a typed `ComposeFile`, so they are collected
+		// from the file itself and passed alongside.
+		let directives = tags::collect_from_file(path);
+		merge_override(&mut merged, other, &directives);
 	}
 	normalize_default_network(&mut merged);
 	// Semantic validation runs only on the interpolated file: `--no-interpolate`
@@ -234,10 +239,11 @@ pub(crate) fn normalize_default_network(file: &mut ComposeFile) {
 /// Merge `other` into `target` with `other` winning (compose `-f` override
 /// semantics): services are merged field-by-field, other top-level maps replace
 /// on key conflict.
-fn merge_override(target: &mut ComposeFile, other: ComposeFile) {
+fn merge_override(target: &mut ComposeFile, other: ComposeFile, directives: &tags::Directives) {
 	for (name, svc) in other.services {
 		if let Some(base) = target.services.get_mut(&name) {
-			*base = extends::merge_service(std::mem::take(base), svc);
+			let tagged = directives.get(&name);
+			*base = extends::merge_service_tagged(std::mem::take(base), svc, tagged);
 		} else {
 			target.services.insert(name, svc);
 		}
@@ -387,7 +393,7 @@ mod tests {
 		let mut other = ComposeFile::default();
 		other.models.insert("llm".to_string(), model("over/m"));
 		other.models.insert("extra".to_string(), model("e/m"));
-		merge_override(&mut target, other);
+		merge_override(&mut target, other, &tags::Directives::new());
 		// Override file wins on conflict; the override-only model is added.
 		assert_eq!(target.models["llm"].model.as_deref(), Some("over/m"));
 		assert_eq!(target.models["extra"].model.as_deref(), Some("e/m"));
@@ -434,7 +440,7 @@ mod tests {
 			.configs
 			.insert("extra".to_string(), ConfigConfig::default());
 
-		merge_override(&mut target, other);
+		merge_override(&mut target, other, &tags::Directives::new());
 
 		assert!(target.volumes.contains_key("data"));
 		assert!(target.volumes.contains_key("cache"));
