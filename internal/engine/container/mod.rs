@@ -280,6 +280,35 @@ impl Engine {
 			ulimits,
 			shm_size,
 			healthconfig: service.healthcheck.as_ref().map(build_healthcheck),
+			// The `x-podman-on-failure` extension. Rejected at create time when the
+			// value is not one of Podman's four actions, so a typo cannot silently
+			// leave a sick container in rotation.
+			health_check_on_failure_action: match service
+				.healthcheck
+				.as_ref()
+				.map(crate::compose::types::HealthCheck::podman_on_failure)
+				.transpose()
+			{
+				Ok(action) => action.flatten().map(|a| match a {
+					crate::compose::types::HealthOnFailure::None => {
+						crate::libpod::types::container::HealthCheckOnFailureAction::None
+					}
+					crate::compose::types::HealthOnFailure::Kill => {
+						crate::libpod::types::container::HealthCheckOnFailureAction::Kill
+					}
+					crate::compose::types::HealthOnFailure::Restart => {
+						crate::libpod::types::container::HealthCheckOnFailureAction::Restart
+					}
+					crate::compose::types::HealthOnFailure::Stop => {
+						crate::libpod::types::container::HealthCheckOnFailureAction::Stop
+					}
+				}),
+				Err(e) => {
+					return Err(crate::error::ComposeError::Unsupported(format!(
+						"{service_name}: {e}"
+					)))
+				}
+			},
 			log_configuration,
 			init: service.init,
 			restart_policy,

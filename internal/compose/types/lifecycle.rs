@@ -118,7 +118,83 @@ pub struct HealthCheck {
 	pub unknown: IndexMap<String, serde_yaml::Value>,
 }
 
+/// The Compose Spec extension key carrying Podman's `--health-on-failure`.
+///
+/// `x-` is the spec's reserved prefix for extensions: docker compose ignores an
+/// unknown `x-` key rather than erroring, so a file using this stays a valid
+/// compose file and still runs under docker — it just does not act on a sick
+/// container there. That is the whole reason for the prefix rather than a bare
+/// `on_failure`, which would make the file podup-only.
+pub const X_PODMAN_ON_FAILURE: &str = "x-podman-on-failure";
+
+/// What Podman does when a container's healthcheck flips to unhealthy.
+///
+/// The Compose Spec has no equivalent: a compose healthcheck detects a sick
+/// container and does nothing about it. A restart policy does not cover this —
+/// it reacts to the process exiting, not to the container being unhealthy — so
+/// an app that hangs without dying stays in rotation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealthOnFailure {
+	/// Mark unhealthy and take no further action. Podman's default.
+	None,
+	/// Kill the container.
+	Kill,
+	/// Restart the container.
+	Restart,
+	/// Stop the container.
+	Stop,
+}
+
+impl std::str::FromStr for HealthOnFailure {
+	type Err = String;
+
+	fn from_str(value: &str) -> std::result::Result<Self, Self::Err> {
+		match value {
+			"none" => Ok(Self::None),
+			"kill" => Ok(Self::Kill),
+			"restart" => Ok(Self::Restart),
+			"stop" => Ok(Self::Stop),
+			other => Err(format!(
+				"invalid {X_PODMAN_ON_FAILURE} value {other:?} (expected one of: none, kill, restart, stop)"
+			)),
+		}
+	}
+}
+
+impl HealthOnFailure {
+	/// The Quadlet `HealthOnFailure=` value.
+	pub fn as_str(self) -> &'static str {
+		match self {
+			Self::None => "none",
+			Self::Kill => "kill",
+			Self::Restart => "restart",
+			Self::Stop => "stop",
+		}
+	}
+}
+
 impl HealthCheck {
+	/// The `x-podman-on-failure` extension, parsed and validated.
+	///
+	/// Spec-defined keys are typed fields on this struct; a Podman extension
+	/// lives in `unknown` (where `#[serde(flatten)]` already preserves it for
+	/// round-tripping) and is read through here. That split is deliberate — it
+	/// keeps the type honest about which keys are portable.
+	///
+	/// `Err` for a value that is not one of Podman's four actions, so a typo is
+	/// rejected rather than silently doing nothing.
+	pub fn podman_on_failure(&self) -> std::result::Result<Option<HealthOnFailure>, String> {
+		let Some(raw) = self.unknown.get(X_PODMAN_ON_FAILURE) else {
+			return Ok(None);
+		};
+		let Some(text) = raw.as_str() else {
+			return Err(format!(
+				"{X_PODMAN_ON_FAILURE} must be a string (expected one of: none, kill, restart, stop)"
+			));
+		};
+		text.parse().map(Some)
+	}
+
 	/// Returns whether the health check is disabled, either via `disable: true` or a `NONE` test.
 	pub fn is_disabled(&self) -> bool {
 		if self.disable.unwrap_or(false) {
@@ -401,5 +477,52 @@ mod tests {
 	#[test]
 	fn restart_policy_invalid_is_error() {
 		assert!(serde_yaml::from_str::<RestartPolicy>("\"bogus\"").is_err());
+	}
+
+	/// #1095: the extension parses to a typed action.
+	#[test]
+	fn podman_on_failure_parses_each_action() {
+		for (raw, want) in [
+			("none", HealthOnFailure::None),
+			("kill", HealthOnFailure::Kill),
+			("restart", HealthOnFailure::Restart),
+			("stop", HealthOnFailure::Stop),
+		] {
+			let yaml = format!("test: [\"CMD\", \"true\"]\n{X_PODMAN_ON_FAILURE}: {raw}\n");
+			let hc: HealthCheck = serde_yaml::from_str(&yaml).unwrap();
+			assert_eq!(hc.podman_on_failure().unwrap(), Some(want), "{raw}");
+		}
+	}
+
+	/// A typo is rejected rather than silently leaving a sick container in
+	/// rotation — the failure this key exists to prevent.
+	#[test]
+	fn podman_on_failure_rejects_an_unknown_action() {
+		let yaml = format!("test: [\"CMD\", \"true\"]\n{X_PODMAN_ON_FAILURE}: bogus\n");
+		let hc: HealthCheck = serde_yaml::from_str(&yaml).unwrap();
+		let err = hc
+			.podman_on_failure()
+			.expect_err("bogus must not be accepted");
+		assert!(err.contains("bogus") && err.contains("restart"), "{err}");
+	}
+
+	/// Absent is the ordinary case: no extension, no action, no error.
+	#[test]
+	fn podman_on_failure_is_absent_by_default() {
+		let hc: HealthCheck = serde_yaml::from_str("test: [\"CMD\", \"true\"]\n").unwrap();
+		assert_eq!(hc.podman_on_failure().unwrap(), None);
+	}
+
+	/// The key round-trips through `config`: it lands in `unknown`, which is
+	/// `#[serde(flatten)]`, so re-serializing the file keeps it. A dropped
+	/// extension would make `config` output that no longer does what the input
+	/// did.
+	#[test]
+	fn podman_on_failure_survives_a_round_trip() {
+		let yaml = format!("test: [\"CMD\", \"true\"]\n{X_PODMAN_ON_FAILURE}: kill\n");
+		let hc: HealthCheck = serde_yaml::from_str(&yaml).unwrap();
+		let out = serde_yaml::to_string(&hc).unwrap();
+		assert!(out.contains(X_PODMAN_ON_FAILURE), "{out}");
+		assert!(out.contains("kill"), "{out}");
 	}
 }
