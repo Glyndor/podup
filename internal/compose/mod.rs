@@ -33,8 +33,12 @@ pub fn parse_file(path: &Path) -> Result<ComposeFile> {
 
 /// Like [`parse_file`], additionally loading `env_files` (the global
 /// `--env-file` flag) into the variable map used for interpolation. These take
-/// effect for the top-level file and any included files; the process
-/// environment and a project `.env` still take precedence.
+/// effect for the top-level file and any included files.
+///
+/// They **replace** a project `.env` rather than adding to it: when `env_files`
+/// is non-empty, `.env` is not read. That is docker-correct — and the opposite
+/// of what this comment used to claim, which also reached docs.rs readers. The
+/// process environment still takes precedence over both.
 pub fn parse_file_with_env_files(path: &Path, env_files: &[String]) -> Result<ComposeFile> {
 	parse_file_with_env_files_interp(path, env_files, true)
 }
