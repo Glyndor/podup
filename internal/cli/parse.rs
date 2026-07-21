@@ -31,7 +31,7 @@ pub(crate) fn parse_scale_pair(value: &str) -> Result<(String, u32), String> {
 }
 
 /// Pull-policy values podup accepts for `up --pull` / `pull --policy`. `always`,
-/// `missing`, `never`, and `build` mirror `docker compose`; `newer` is Podman's
+/// `missing`, `never`, and `build` are the Compose Spec policies; `newer` is Podman's
 /// extension.
 const PULL_POLICIES: [&str; 5] = ["always", "missing", "never", "newer", "build"];
 
@@ -48,7 +48,7 @@ pub(crate) fn parse_pull_policy(value: &str) -> Result<String, String> {
 	}
 }
 
-/// Progress styles `docker compose build --progress` accepts. podup renders build
+/// The progress styles the Compose Spec defines. podup renders build
 /// output one way, so the flag is inert — but an unknown value must still be
 /// rejected rather than accepted and ignored, or a typo silently changes nothing
 /// and reports success.

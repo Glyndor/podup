@@ -364,7 +364,12 @@ impl Engine {
 /// Pure except for the `isatty` probe, which is behind `stdin_is_terminal` so
 /// the decision itself is unit-testable.
 fn interactive_exec(opts: &ExecOptions) -> bool {
-	wants_interactive(opts, stdin_is_terminal())
+	// Both ends, not just stdin. A pty merges stdout and stderr and writes
+	// CRLF, so `podup exec db psql > out.txt` typed at a shell — stdin still a
+	// terminal, stdout a file — wrote pty bytes with stderr folded in where it
+	// used to write clean demultiplexed output. Measured against
+	// `docker compose`, which keeps that redirect clean.
+	wants_interactive(opts, stdin_is_terminal() && stdout_is_terminal())
 }
 
 /// The decision itself, with the environment passed in.
@@ -378,7 +383,24 @@ fn wants_interactive(opts: &ExecOptions, stdin_is_tty: bool) -> bool {
 /// Whether stdin is a terminal. Always false off Unix, where the interactive
 /// path is not implemented (#1079) — so `exec` there keeps its current
 /// behaviour rather than half-entering a mode it cannot finish.
-fn stdin_is_terminal() -> bool {
+/// Whether stdout is a terminal.
+///
+/// A pty merges stdout and stderr and writes CRLF, so allocating one when
+/// stdout is redirected changes the bytes a file receives. Asked alongside
+/// stdin, never instead of it.
+pub(crate) fn stdout_is_terminal() -> bool {
+	#[cfg(unix)]
+	{
+		use std::io::IsTerminal;
+		std::io::stdout().is_terminal()
+	}
+	#[cfg(not(unix))]
+	{
+		false
+	}
+}
+
+pub(crate) fn stdin_is_terminal() -> bool {
 	#[cfg(unix)]
 	{
 		use std::io::IsTerminal;

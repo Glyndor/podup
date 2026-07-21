@@ -32,6 +32,8 @@ pub(super) async fn dispatch_rest(
 			entrypoint: _,
 			volume: _,
 			publish: _,
+			// Both act now: they reach the engine through `RunOverrides`, which
+			// `run_overrides_for` builds from this same command.
 			interactive: _,
 			no_tty: _,
 			no_deps: _,

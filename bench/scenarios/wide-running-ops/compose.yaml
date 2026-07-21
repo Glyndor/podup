@@ -1,0 +1,57 @@
+# Read-path cost across many containers, which running-ops (one service) cannot
+# show. `ps` renders a table of twelve rows, `logs` aggregates twelve streams and
+# prefixes each line with its service — the work grows with the container count,
+# and every tool does it differently.
+services:
+  svc01:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sh", "-c", "echo svc01 ready; sleep 3600"]
+    init: true
+  svc02:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sh", "-c", "echo svc02 ready; sleep 3600"]
+    init: true
+  svc03:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sh", "-c", "echo svc03 ready; sleep 3600"]
+    init: true
+  svc04:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sh", "-c", "echo svc04 ready; sleep 3600"]
+    init: true
+  svc05:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sh", "-c", "echo svc05 ready; sleep 3600"]
+    init: true
+  svc06:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sh", "-c", "echo svc06 ready; sleep 3600"]
+    init: true
+  svc07:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sh", "-c", "echo svc07 ready; sleep 3600"]
+    init: true
+  svc08:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sh", "-c", "echo svc08 ready; sleep 3600"]
+    init: true
+  svc09:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sh", "-c", "echo svc09 ready; sleep 3600"]
+    init: true
+  svc10:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sh", "-c", "echo svc10 ready; sleep 3600"]
+    init: true
+  svc11:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sh", "-c", "echo svc11 ready; sleep 3600"]
+    init: true
+  svc12:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sh", "-c", "echo svc12 ready; sleep 3600"]
+    init: true
+  app:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sh", "-c", "echo app ready; sleep 3600"]
+    init: true

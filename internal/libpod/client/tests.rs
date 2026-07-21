@@ -184,3 +184,48 @@ fn a_buffered_put_body_reports_an_exact_size() {
 		"a boxed Full body must keep its exact size, or hyper sends it chunked"
 	);
 }
+
+/// The operator's report (#1146): `podman socket connection error: No such
+/// file or directory (os error 2)` — no path, no way to tell "it is not there"
+/// from "I cannot open it", nothing to act on. Everything needed was already in
+/// hand one call earlier.
+#[test]
+fn a_missing_socket_names_the_path_and_the_fix() {
+	let e = super::socket_error(
+		"/run/user/1000/podman/podman.sock",
+		std::io::Error::from(std::io::ErrorKind::NotFound),
+	);
+	let msg = e.to_string();
+	assert!(msg.contains("/run/user/1000/podman/podman.sock"), "{msg}");
+	assert!(
+		msg.contains("systemctl --user enable --now podman.socket"),
+		"{msg}"
+	);
+	assert!(msg.contains("XDG_RUNTIME_DIR"), "{msg}");
+}
+
+/// A socket that exists but cannot be opened is a different problem with a
+/// different fix, and the old message could not tell them apart.
+#[test]
+fn a_denied_socket_says_so_rather_than_suggesting_enabling_it() {
+	let e = super::socket_error(
+		"/tmp/s.sock",
+		std::io::Error::from(std::io::ErrorKind::PermissionDenied),
+	);
+	let msg = e.to_string();
+	assert!(msg.contains("/tmp/s.sock"), "{msg}");
+	assert!(msg.contains("cannot be opened"), "{msg}");
+	assert!(
+		!msg.contains("enable --now"),
+		"enabling the socket does not fix a permission problem: {msg}"
+	);
+}
+
+/// The io::ErrorKind must survive, since it is what distinguishes the two.
+#[test]
+fn the_error_kind_is_preserved() {
+	let e = super::socket_error("/x", std::io::Error::from(std::io::ErrorKind::NotFound));
+	assert!(
+		matches!(&e, super::super::PodmanError::Connect(io) if io.kind() == std::io::ErrorKind::NotFound)
+	);
+}

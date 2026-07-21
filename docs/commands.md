@@ -221,8 +221,8 @@ Run a one-off command in a new container for the service.
 | `--entrypoint <CMD>` | Override the image entrypoint. | image default |
 | `-v, --volume <SPEC>` | Bind-mount an extra volume (`HOST:CONTAINER[:OPTS]` or `NAME:CONTAINER`). Repeatable. | none |
 | `-p, --publish <SPEC>` | Publish an extra port (`HOST:CONTAINER[/PROTO]`). Repeatable. | none |
-| `-i, --interactive` | Keep STDIN open (accepted for compatibility; `run` still streams logs). | off |
-| `-T, --no-TTY` (alias `--no-tty`) | Disable pseudo-TTY allocation (accepted for compatibility; podup never allocates one). | off |
+| `-i, --interactive` | Keep the container's STDIN open (`stdin_open`). Whether a live terminal is attached is decided by stdin/stdout being terminals and by `-T`, not by this flag. | off |
+| `-T, --no-TTY` (alias `--no-tty`) | Disable pseudo-TTY allocation. | off |
 | `--no-deps` | Do not start the `depends_on` services before running. | off |
 
 ```bash
@@ -233,6 +233,30 @@ podup run --rm web sh -c 'echo hello'
 > here; `docker compose run` keeps it unless you pass `--rm`. Migrating a script
 > means its existing `--rm` becomes a no-op and a container it expected to
 > inspect afterwards is gone — pass `--no-rm` to keep it.
+
+On Unix, `run` allocates a pseudo-TTY and attaches your stdin when stdin is a
+terminal, so `podup run -it app sh` drops you into an interactive session that
+follows your window size. Like `docker compose run`, a TTY on both ends is the
+default and `-T` is how you turn it off; `-d` never allocates one, since there
+is nobody to be interactive with.
+
+It engages **only** when *both* stdin and stdout are terminals, so a script, a
+pipeline or a redirect keeps the plain streaming behaviour with no change to
+output framing:
+
+```bash
+podup run --rm app echo hola > salida.txt   # stdout is a file  -> streams, no TTY
+echo x | podup run --rm app ./migrar.sh     # stdin is a pipe   -> streams, no TTY
+podup run --rm -T app ./migrar.sh           # -T                -> streams, no TTY
+```
+
+Requiring stdout matters because a pty **merges stdout and stderr and writes
+CRLF**. Checking stdin alone would mean `podup run app cmd > out.txt`, typed at
+a shell, silently wrote different bytes into that file than the same command in
+a script.
+
+Windows keeps the streaming behaviour in every case
+([#1154](https://github.com/Glyndor/podup/issues/1154)).
 
 ### `exec <SERVICE> <COMMAND...>`
 Execute a command in a running service container.
@@ -513,6 +537,28 @@ file still runs there — it just does not act on the extra.
 |---|---|---|
 | `x-podman-on-failure` | under a service's `healthcheck:` | `none`, `kill`, `restart` or `stop` — what Podman does when the check flips to unhealthy. Default `none`. |
 
+### Healthcheck timing on a `service_healthy` gate
+
+When `up` waits on `depends_on: {condition: service_healthy}`, podup drives the
+check itself — Podman schedules its own runs through systemd transient timers,
+which never fire on a host without systemd, so a purely passive wait would block
+until the whole budget elapsed.
+
+| | |
+|---|---|
+| how often the check is **run** | the healthcheck's `interval`, floored at **100ms** |
+| how often the status is **read** | every 150ms |
+| how long the wait lasts | `interval × retries` plus `start_period`, extended by `--wait-timeout` |
+
+Running a check executes a command *inside* the container, so it happens no
+faster than `interval` and the floor keeps `interval: 1ms` from becoming a
+thousand executions a second. Reading the status is a plain inspect — it runs no
+command — so it is cheap and frequent, and it is what notices promptly when
+Podman's own timer flips the status between podup's runs.
+
+A container that fails during the wait is reported as soon as the next read sees
+it, rather than at the end of the budget.
+
 Without it, a compose healthcheck detects a sick container and does nothing
 about it: a restart policy reacts to the process *exiting*, not to the container
 being unhealthy, so an app that hangs without dying stays in rotation
@@ -547,7 +593,6 @@ covers, and the only other way to find out was to read the dispatch code.
 | `config --no-normalize` | `config` always emits the normalized form. |
 | `cp -a, --archive` | Ownership/permission preservation is not meaningful for a rootless copy. |
 | `attach --no-stdin`, `--sig-proxy`, `--detach-keys` | `attach` streams output only; stdin is never attached (see [#1079](https://github.com/Glyndor/podup/issues/1079)). |
-| `run -T, --no-TTY` | `run` never allocates a pseudo-TTY, so disabling one is a no-op. `exec -T` is real: it turns off a pseudo-TTY that `exec` does allocate. |
 
 Everything else that parses does something. An **unknown** `--filter` predicate
 is rejected outright rather than dropped: a filter that silently does not apply

@@ -30,7 +30,7 @@ const HELP_STYLES: clap::builder::Styles = clap::builder::Styles::plain()
 #[command(
 	name = "podup",
 	version,
-	about = "Run docker-compose projects on Podman.",
+	about = "Run Compose projects on Podman.",
 	styles = HELP_STYLES,
 	// No subcommand prints help and exits non-zero (like docker compose), and the
 	// built-in `help` is replaced by an explicit `Help` variant that tolerates

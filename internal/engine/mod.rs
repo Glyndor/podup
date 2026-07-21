@@ -6,6 +6,8 @@ mod build;
 mod container;
 mod copy;
 mod events;
+#[cfg(unix)]
+mod terminal_pump;
 pub use events::EventsOptions;
 mod image;
 pub use build::{BuildOptions, PullOptions, PushOptions};
@@ -13,6 +15,33 @@ pub use copy::CpOptions;
 pub use image::{resolve_image_digests, CommitOptions};
 pub use lifecycle::{validate_stop_timeout, RunOptions, RunOverrides};
 pub use lock::ProjectLock;
+/// Whether `run` should allocate a pseudo-TTY and attach stdin.
+///
+/// A TTY on both ends by default, `-T` to opt out, `-d` excluded because there
+/// is nobody to be interactive with — and **both** stdin and stdout must be
+/// terminals.
+///
+/// Requiring stdout too is not symmetry for its own sake. A pty merges stdout
+/// and stderr and emits CRLF, so `podup run app cmd > out.txt` typed at a shell
+/// — stdin still a terminal, stdout a file — would have written pty bytes with
+/// stderr folded in, where it used to write clean demultiplexed output. That is
+/// the most common redirect there is, and `docker compose` keeps it clean
+/// (measured). Checking stdin alone silently changed the format of a file.
+pub(crate) fn wants_interactive_run(no_tty: bool, detach: bool) -> bool {
+	wants_interactive_with(
+		no_tty,
+		detach,
+		query::stdin_is_terminal(),
+		query::stdout_is_terminal(),
+	)
+}
+
+/// The decision with the environment passed in, so both terminal cases are
+/// testable rather than depending on how the suite happened to be invoked.
+fn wants_interactive_with(no_tty: bool, detach: bool, stdin_tty: bool, stdout_tty: bool) -> bool {
+	!no_tty && !detach && stdin_tty && stdout_tty
+}
+
 pub use query::{
 	AttachOutcome, ExecOptions, ImagesOptions, LogsDisplay, LogsOptions, PsFilterOptions, PsOptions,
 };
@@ -94,6 +123,8 @@ pub struct Engine {
 	/// `run` container; empty by default. Kept off the frozen public
 	/// [`lifecycle::RunOverrides`] struct so the library API stays stable.
 	pub(super) run_labels: Vec<String>,
+	/// CLI `run -T/--no-TTY`: opt out of the pseudo-TTY.
+	pub(super) run_no_tty: bool,
 	/// CLI `up -V/--renew-anon-volumes`: when recreating a container, also remove
 	/// its old anonymous volumes instead of leaving them orphaned.
 	pub(super) renew_anon_volumes: bool,
@@ -115,6 +146,7 @@ impl Engine {
 			run_overrides: lifecycle::RunOverrides::default(),
 			run_env_files: Vec::new(),
 			run_labels: Vec::new(),
+			run_no_tty: false,
 			renew_anon_volumes: false,
 		}
 	}
@@ -134,6 +166,7 @@ impl Engine {
 			run_overrides: lifecycle::RunOverrides::default(),
 			run_env_files: Vec::new(),
 			run_labels: Vec::new(),
+			run_no_tty: false,
 			renew_anon_volumes: false,
 		}
 	}
@@ -196,6 +229,18 @@ impl Engine {
 	/// one-off `run` container. Builder-style; consumed by [`Engine::run`].
 	pub fn with_run_labels(mut self, labels: Vec<String>) -> Self {
 		self.run_labels = labels;
+		self
+	}
+
+	/// Set the CLI `run -T/--no-TTY` flag. Builder-style.
+	///
+	/// Carried here rather than on [`RunOverrides`] for the reason that struct
+	/// already documents: it is public and not `#[non_exhaustive]`, so a new
+	/// field is a breaking change. `run_env_files` and `run_labels` are on the
+	/// engine for exactly this, and semver-checks caught me putting this one in
+	/// the wrong place.
+	pub fn with_run_no_tty(mut self, no_tty: bool) -> Self {
+		self.run_no_tty = no_tty;
 		self
 	}
 
@@ -510,3 +555,42 @@ fn walk_collect(dir: &std::path::Path, out: &mut Vec<PathBuf>) -> std::io::Resul
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod interactive_run_tests {
+	use super::wants_interactive_run;
+
+	/// `-T` opts out, matching `docker compose run` — which has no `-i` because
+	/// a TTY on both ends is the default.
+	#[test]
+	fn no_tty_disables_the_pty() {
+		assert!(!wants_interactive_run(true, false));
+	}
+
+	/// `-d` detaches, so there is nobody to be interactive with.
+	#[test]
+	fn detach_disables_the_pty() {
+		assert!(!wants_interactive_run(false, true));
+	}
+
+	/// The decisive one for existing users: in a test harness — as in any script
+	/// or pipeline — stdin is not a terminal, so `run` stays on the unchanged
+	/// streaming path. Allocating a pty there would change output framing for
+	/// every script that already calls `podup run`.
+	#[test]
+	fn a_non_terminal_stdin_stays_on_the_streaming_path() {
+		assert!(!wants_interactive_run(false, false));
+	}
+
+	/// Both ends are required, and this is the case that made it necessary:
+	/// `podup run app cmd > out.txt` typed at a shell leaves stdin a terminal
+	/// while stdout is a file. Checking stdin alone allocated a pty, and a pty
+	/// merges stdout with stderr and writes CRLF — so the redirect silently
+	/// changed the bytes the file received. Verified against `docker compose`,
+	/// which keeps it clean.
+	#[test]
+	fn a_redirected_stdout_stays_on_the_streaming_path() {
+		assert!(!super::wants_interactive_with(false, false, true, false));
+		assert!(super::wants_interactive_with(false, false, true, true));
+	}
+}

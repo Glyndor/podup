@@ -53,29 +53,67 @@ mkdir -p "$OUT_DIR"
 #   reup    : time a warm second `up -d`
 #   running : bring up untimed, then time `ps`, `logs`, `exec -T`, `restart`
 #   build   : time `build --no-cache`
-SCENARIOS=(single multi-healthcheck deep-chain wide-level scale network-ipam volume-heavy warm-restart many-services running-ops build)
+SCENARIOS=(single multi-healthcheck deep-chain wide-level scale network-ipam volume-heavy warm-restart many-services running-ops wide-running-ops config-heavy build)
 declare -A OP=(
 	[single]=updown [multi-healthcheck]=updown [scale]=scale
 	[network-ipam]=updown [volume-heavy]=updown [warm-restart]=reup
 	[many-services]=updown [running-ops]=running [build]=build
+	[config-heavy]=parse [wide-running-ops]=running
+	[deep-chain]=updown [wide-level]=updown
 )
+
+# Every scenario must have an op, or the run dies partway through with an
+# unbound-variable error under `set -u`. deep-chain and wide-level were added to
+# SCENARIOS in #1123 and never added here, so the suite has been unable to
+# complete since — nobody noticed because those two were only ever run by hand,
+# one at a time, to measure the scheduler change that introduced them.
+for _s in "${SCENARIOS[@]}"; do
+	[ -n "${OP[$_s]:-}" ] || { echo "bench: scenario '$_s' has no entry in OP" >&2; exit 2; }
+done
 if [ "$SMOKE" -eq 1 ]; then SCENARIOS=(single running-ops); fi
 
 TOOLS=(podup podman-compose)
-if docker info >/dev/null 2>&1 && command -v docker-compose >/dev/null 2>&1; then
-	TOOLS+=(docker-compose)
-	echo "note: Docker Engine present — including docker-compose as a labelled cross-engine run."
+# docker compose is the tool podup targets for parity, so it is the comparison
+# that matters most — but WHICH engine it drives changes what the numbers mean.
+#
+#   against Podman  a pure tool comparison: same engine, so the difference is
+#                   the orchestrator and nothing else. This is the fair one, and
+#                   it needs no Docker installed — only DOCKER_HOST pointed at
+#                   the Podman socket.
+#   against dockerd a whole-stack comparison: engine differences are folded in,
+#                   so it cannot be read as "tool A is faster than tool B".
+#
+# Both are reported; the label says which, because a reader seeing
+# "docker-compose" will assume dockerd.
+if command -v docker-compose >/dev/null 2>&1; then
+	if docker info >/dev/null 2>&1; then
+		TOOLS+=(docker-compose)
+		export BENCH_DOCKER_ENGINE=docker
+		echo "note: Docker Engine present — docker-compose measured as a CROSS-ENGINE (whole-stack) run."
+	elif [ -n "${DOCKER_HOST:-}" ] && docker-compose ls >/dev/null 2>&1; then
+		TOOLS+=(docker-compose)
+		# Recorded so the report puts these rows under the right heading; the
+		# tool's name does not say which engine it drove.
+		export BENCH_DOCKER_ENGINE=podman
+		echo "note: docker-compose driving Podman via DOCKER_HOST — measured as a SAME-ENGINE (pure tool) run."
+	else
+		echo "note: docker-compose found but no reachable engine — NOT measured. Set DOCKER_HOST to the Podman socket to include it."
+	fi
 else
-	echo "note: no Docker Engine on this host — docker-compose (cross-engine) is NOT measured."
+	echo "note: docker-compose not installed — NOT measured."
 fi
 
 run() { # tool, compose-file, project, op-args...
 	local tool="$1" file="$2" proj="$3"; shift 3
 	local pre=(); [ -n "$CORES" ] && pre=(taskset -c "$CORES")
+	# `file` may name several compose files separated by spaces, so a scenario can
+	# exercise the base+override merge every real project has. One name yields one
+	# -f, exactly as before.
+	local fargs=(); local f; for f in $file; do fargs+=(-f "$f"); done
 	case "$tool" in
-		podup)          "${pre[@]}" "$PODUP_BIN" -f "$file" -p "$proj" "$@" ;;
-		podman-compose) "${pre[@]}" podman-compose -f "$file" -p "$proj" "$@" ;;
-		docker-compose) "${pre[@]}" docker-compose -f "$file" -p "$proj" "$@" ;;
+		podup)          "${pre[@]}" "$PODUP_BIN" "${fargs[@]}" -p "$proj" "$@" ;;
+		podman-compose) "${pre[@]}" podman-compose "${fargs[@]}" -p "$proj" "$@" ;;
+		docker-compose) "${pre[@]}" docker-compose "${fargs[@]}" -p "$proj" "$@" ;;
 	esac
 }
 
@@ -84,10 +122,11 @@ run() { # tool, compose-file, project, op-args...
 timed() { # tool, compose-file, project, op-args...
 	local tool="$1" file="$2" proj="$3"; shift 3
 	local cmd=(); [ -n "$CORES" ] && cmd=(taskset -c "$CORES")
+	local fargs=(); local f; for f in $file; do fargs+=(-f "$f"); done
 	case "$tool" in
-		podup)          cmd+=("$PODUP_BIN" -f "$file" -p "$proj" "$@") ;;
-		podman-compose) cmd+=(podman-compose -f "$file" -p "$proj" "$@") ;;
-		docker-compose) cmd+=(docker-compose -f "$file" -p "$proj" "$@") ;;
+		podup)          cmd+=("$PODUP_BIN" "${fargs[@]}" -p "$proj" "$@") ;;
+		podman-compose) cmd+=(podman-compose "${fargs[@]}" -p "$proj" "$@") ;;
+		docker-compose) cmd+=(docker-compose "${fargs[@]}" -p "$proj" "$@") ;;
 	esac
 	local tf; tf="$(mktemp)"
 	LC_ALL=C "$TIME_BIN" -v "${cmd[@]}" >/dev/null 2>"$tf"
@@ -118,6 +157,12 @@ echo "tool,scenario,op,iter,phase,seconds,max_rss_kb,cpu_s,rc" > "$RAW"
 for tool in "${TOOLS[@]}"; do
 	for scen in "${SCENARIOS[@]}"; do
 		file="$SCEN_DIR/$scen/compose.yaml"
+		# A scenario may ship an override alongside its base file; merging the two
+		# is what real projects do and what no single-file scenario can measure.
+		# Passed explicitly rather than relying on auto-discovery, since the tools
+		# disagree about that and this must compare the same work.
+		[ -f "$SCEN_DIR/$scen/compose.override.yaml" ] &&
+			file="$file $SCEN_DIR/$scen/compose.override.yaml"
 		op="${OP[$scen]}"
 		proj="bench_${tool//-/_}_${scen//-/_}"
 		echo ">>> $tool / $scen (op=$op)"
@@ -146,6 +191,13 @@ for tool in "${TOOLS[@]}"; do
 					row exec    "$(timed "$tool" "$file" "$proj" exec -T app true)"
 					row restart "$(timed "$tool" "$file" "$proj" restart app)"
 					teardown "$tool" "$file" "$proj"
+					;;
+				parse)
+					# The only op with no engine on the other side: read, interpolate,
+					# merge and re-render. No containers means no daemon variance, so
+					# this is the least noisy number the suite produces — and it is
+					# what CI runs most, to validate a file before deploying it.
+					row config "$(timed "$tool" "$file" "$proj" config)"
 					;;
 				build)
 					row build "$(timed "$tool" "$file" "$proj" build --no-cache)"
