@@ -209,7 +209,7 @@ fn emit_guards<S: SystemCtl>(sc: &S) {
 		.into_iter()
 		.flatten()
 	{
-		eprintln!("podup: warning: {warning}");
+		tracing::warn!("{warning}");
 	}
 }
 

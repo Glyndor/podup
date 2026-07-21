@@ -228,6 +228,34 @@ impl Table {
 mod tests {
 	use super::*;
 
+	/// Cell contents come from outside podup — an image tag, a container name, a
+	/// volume driver, a process argv. A raw escape sequence in one repaints the
+	/// caller's terminal and desynchronises podup's own colour resets, so every
+	/// row after it inherits whatever was injected.
+	#[test]
+	fn a_cell_cannot_drive_the_terminal() {
+		let out = fit_cell("evil\x1b[31m\x07\tname", 0);
+		assert!(!out.contains('\x1b'), "{out:?}");
+		assert!(!out.contains('\x07'), "{out:?}");
+		assert!(!out.contains('\t'), "{out:?}");
+		assert!(out.contains("name"), "{out:?}");
+	}
+
+	/// Printable text is untouched.
+	#[test]
+	fn a_printable_cell_passes_through() {
+		assert_eq!(fit_cell("proj_data-1", 0), "proj_data-1");
+	}
+
+	/// Escaping happens before padding, so the width a column reserves is the
+	/// width actually printed — otherwise an escaped cell overflows its column
+	/// and breaks alignment on every row.
+	#[test]
+	fn escaping_happens_before_padding() {
+		// One control char escapes to two visible characters.
+		assert_eq!(fit_cell("a\tb", 6).len(), 6);
+	}
+
 	#[test]
 	fn fit_cell_pads_short_values_to_width() {
 		assert_eq!(fit_cell("web", 6), "web   ");
