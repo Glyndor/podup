@@ -1,17 +1,57 @@
 podup (2.0.0) unstable; urgency=medium
 
-  * BREAKING: autostart::ServiceUnitOpts and autostart::InstallOptions are
-    #[non_exhaustive] and gain a field. Build them with the new ::new()
-    constructors and with_* builders instead of a struct literal. Neither had
-    the attribute the crate's other public types carry, so every future
-    widening would have been another break; fixing it now means this is the
-    last one either needs.
-  * up starts each service as soon as its own dependencies are up, instead of
-    walking dependency levels with a barrier between them. On a 41-service
-    level, up went from 1326ms to 1135ms.
+  Breaking changes
+
+  * exec allocates a pseudo-TTY and attaches stdin on Unix when stdin is a
+    terminal, so `podup exec -it db psql` is an interactive session that
+    follows the window size. It engages ONLY when stdin is a terminal, so a
+    script or a pipeline keeps the streaming behaviour it had. `-T` opts out.
+    Windows is unchanged. `run` is still not interactive.
+  * An attached `up` ended by SIGINT or SIGTERM exits 130 instead of 0. A CI
+    job running `podup up` in the foreground and cancelled used to report
+    success. The project is still torn down before the code is returned.
+  * `--sig-proxy` accepts docker's bare form. It required a value, so
+    `docker compose attach --sig-proxy web` failed with a usage error against
+    podup — inside the set of flags whose purpose is that such a script runs
+    unchanged.
   * autostart service mode bounds ExecStop above the project's longest
     stop_grace_period. systemd's own 90s default was cutting a slower stack off
     mid-shutdown at reboot, while a manual `podup stop` honoured it.
+  * Library API: ExecOptions, autostart::ServiceUnitOpts and
+    autostart::InstallOptions are #[non_exhaustive] and gain fields. Build them
+    with the new ::new() constructors and with_* builders instead of a struct
+    literal. None carried the attribute the crate's other public types do, so
+    every future widening would have been another break.
+  * Library API: Engine::attach_logs and attach_logs_with_options return
+    Result<AttachOutcome> rather than Result<()>, so a caller can tell a
+    finished stream from an interrupted one. The teardown still runs either
+    way.
+
+  Other changes
+
+  * up starts each service as soon as its own dependencies are up, instead of
+    walking dependency levels with a barrier between them. On a 41-service
+    level, up went from 1326ms to 1135ms.
+  * A self-update no longer rolls itself back over a transient ETXTBSY. The
+    retry existed but could never fire: the errno was formatted into a string
+    before the check read it, so a signed, verified, working update was
+    discarded and reported as broken.
+  * logs exits non-zero when it could reach nothing at all. Against an
+    unreachable engine it printed nothing and exited 0, which is
+    indistinguishable from a project with no logs.
+  * Output carries colour consistently: one stable colour per container across
+    ps, logs, stats, top, events and the up/down progress lines; status words
+    tinted by meaning; CPU and memory banded by threshold. Two colours that
+    said the opposite of the truth are fixed — a half-running project rendered
+    entirely red, and a container that finished cleanly rendered as a failure.
+    Machine output (--json, --quiet, config, port, wait) stays plain, and
+    colour is off automatically when stdout is not a terminal.
+  * volumes reports an EXTERNAL column. podup neither creates nor deletes an
+    external volume, and the table was the only place that fact was missing.
+  * Eight flags the CLI accepts were absent from their own command's table in
+    the reference, and three rows described the opposite of what the code does.
+    The docs test now checks each command's own section rather than the whole
+    document.
   * The coverage gate measures the whole crate. It read 90% while a third of
     the code was excluded from the measurement.
 

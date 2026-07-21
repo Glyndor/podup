@@ -563,10 +563,22 @@ returns the whole set, which a script reads as a match.
 | `3` | `update` failed to verify or install a release. |
 | `126` | `run`/`exec`: the command exists but is not executable. |
 | `127` | `run`/`exec`: the command was not found. |
+| `130` | An attached `up` was ended by SIGINT or SIGTERM. |
 | other | `run` propagates the container's own exit code verbatim. |
 
 `exec` propagates the command's exit code the same way `run` does, and `wait`
 returns the last non-zero code it saw.
+
+**`130` for SIGTERM as well as SIGINT.** The signal number would suggest 143 for
+SIGTERM, but `docker compose up` returns 130 for both and podup matches it
+(measured against v5.1.3 pointed at the same Podman socket). The project is
+still torn down before the code is returned, so an interrupted `up` leaves
+nothing running.
+
+This matters most in CI: a job that runs `podup up` in the foreground and is
+cancelled — by a timeout, by an operator, by the runner shutting down — used to
+report **success**. Anything gating on that exit status could not tell a
+completed run from an abandoned one.
 
 **`stats --format json` differs from docker on purpose.** podup emits numbers
 (`"CPUPerc": 12.5`) where docker emits preformatted strings (`"12.50%"`), and

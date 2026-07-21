@@ -21,6 +21,10 @@ use super::Engine;
 /// project down either way — reporting the interrupt as an error from `attach`
 /// would short-circuit that and leave the containers running, which is a worse
 /// bug than the exit code this exists to fix.
+/// `#[non_exhaustive]` for the same reason the other public types in this
+/// release gained it: a later ending — a stream that died rather than finished
+/// — is a variant, and without this it would be a major bump to add one.
+#[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttachOutcome {
 	/// Every stream ended on its own.
