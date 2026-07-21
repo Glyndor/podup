@@ -118,5 +118,19 @@ Podman groundwork, done once:
        podman system migrate
   ```
 
+- **The Podman API socket** — `podman` is daemonless and needs no socket, so a
+  fresh account can run `podman` fine and still have every `podup` command fail
+  with a connection error. podup speaks the libpod API, so the socket has to be
+  listening:
+
+  ```bash
+  sudo -u appuser env XDG_RUNTIME_DIR=/run/user/$(id -u appuser) \
+       systemctl --user enable --now podman.socket
+  ```
+
+  The `env XDG_RUNTIME_DIR=…` is the same requirement as above and for the same
+  reason: an account with no login shell has no user session, so `systemctl
+  --user` cannot find the manager without being told where it lives.
+
 After that, `podup autostart install` writes the unit(s), reloads the user
 manager, and starts the stack; a reboot brings it back on its own.
