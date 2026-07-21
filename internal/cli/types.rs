@@ -25,7 +25,7 @@ pub(crate) enum EventsFormat {
 	Json,
 }
 
-/// When to colourise human-facing output (`--ansi`, like docker compose).
+/// When to colourise human-facing output (`--ansi`).
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub(crate) enum AnsiMode {
 	/// Colour only when writing to a terminal (and `NO_COLOR` is unset).
