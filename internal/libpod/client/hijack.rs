@@ -41,7 +41,9 @@ impl Client {
 	/// surfaces as an error instead of hanging with the terminal already in raw
 	/// mode — which would leave the user's shell unusable.
 	pub(crate) async fn post_hijack(&self, path: &str, body: &[u8]) -> Result<Hijacked> {
-		let mut stream = tokio::net::UnixStream::connect(&self.socket_path).await?;
+		let mut stream = tokio::net::UnixStream::connect(&self.socket_path)
+			.await
+			.map_err(|e| super::socket_error(&self.socket_path, e))?;
 
 		// `Connection: close` is deliberate: this socket is never returned to a
 		// pool, and saying so stops the server holding it open after the command

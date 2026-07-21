@@ -25,7 +25,13 @@ The installer verifies the keyring package's Ed25519 signature against its
 pinned release key before anything is installed (fail-closed). The keyring
 package registers `https://apt.glyndor.net` and ships the signing key, so podup
 updates (and key renewals) arrive through `apt upgrade`. The apt build omits
-self-update, since apt owns upgrades. Requires **Podman ≥ 5.0** (rootless).
+self-update, since apt owns upgrades. Requires **Podman ≥ 5.0** (rootless) with
+its **API socket listening** — `podman` itself is daemonless, but podup speaks
+the libpod API:
+
+```bash
+systemctl --user enable --now podman.socket
+```
 
 To register the repository by hand instead, fetch the keyring and check the
 key's fingerprint against the one published in the
