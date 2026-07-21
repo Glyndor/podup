@@ -1,0 +1,337 @@
+# Parse-heavy: the one scenario with no engine in it at all.
+#
+# `config` reads, interpolates, merges and re-renders — pure client-side work,
+# so the numbers carry no container noise and no daemon variance. It is also
+# what CI does most often, to validate a compose file before deploying it.
+#
+# The shape real projects have and no other scenario here does: two files merged
+# (compose + override), an env_file, and interpolation with defaults on nearly
+# every service. Every other scenario is a single flat file.
+#
+# Dependencies are deliberately SHALLOW. An earlier version of this file chained
+# all 24 services one after another, and podman-compose took 7.4s on it against
+# 0.10s for the same file with the chain removed — a 70x cost in dependency
+# resolution, not in parsing. Leaving the chain in would have made this scenario
+# report that number as a parse cost, which is not what it is. The deep-chain
+# scenario is where dependency shape belongs.
+services:
+  svc01:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_01:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "01"
+  svc02:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_02:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "02"
+  svc03:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_03:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "03"
+  svc04:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_04:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "04"
+  svc05:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_05:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "05"
+  svc06:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_06:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "06"
+    depends_on:
+      - svc01
+  svc07:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_07:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "07"
+  svc08:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_08:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "08"
+  svc09:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_09:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "09"
+  svc10:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_10:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "10"
+  svc11:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_11:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "11"
+  svc12:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_12:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "12"
+    depends_on:
+      - svc01
+  svc13:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_13:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "13"
+  svc14:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_14:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "14"
+  svc15:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_15:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "15"
+  svc16:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_16:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "16"
+  svc17:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_17:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "17"
+  svc18:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_18:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "18"
+    depends_on:
+      - svc01
+  svc19:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_19:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "19"
+  svc20:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_20:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "20"
+  svc21:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_21:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "21"
+  svc22:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_22:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "22"
+  svc23:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_23:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "23"
+  svc24:
+    image: docker.io/library/alpine@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b
+    command: ["sleep", "3600"]
+    init: true
+    environment:
+      REGION: "${REGION:-eu-west-1}"
+      TIER: "${TIER_24:-standard}"
+      SHARED: "${SHARED_SECRET}"
+    env_file:
+      - common.env
+    labels:
+      owner: "${OWNER:-platform}"
+      idx: "24"
+    depends_on:
+      - svc01

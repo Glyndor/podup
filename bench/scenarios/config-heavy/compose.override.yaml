@@ -1,0 +1,63 @@
+# The override half of the merge. Real projects almost always have one, and no
+# other scenario in this suite exercises the merge at all.
+services:
+  svc01:
+    environment:
+      TIER: "premium"
+    labels:
+      tier: "premium"
+  svc03:
+    environment:
+      TIER: "premium"
+    labels:
+      tier: "premium"
+  svc05:
+    environment:
+      TIER: "premium"
+    labels:
+      tier: "premium"
+  svc07:
+    environment:
+      TIER: "premium"
+    labels:
+      tier: "premium"
+  svc09:
+    environment:
+      TIER: "premium"
+    labels:
+      tier: "premium"
+  svc11:
+    environment:
+      TIER: "premium"
+    labels:
+      tier: "premium"
+  svc13:
+    environment:
+      TIER: "premium"
+    labels:
+      tier: "premium"
+  svc15:
+    environment:
+      TIER: "premium"
+    labels:
+      tier: "premium"
+  svc17:
+    environment:
+      TIER: "premium"
+    labels:
+      tier: "premium"
+  svc19:
+    environment:
+      TIER: "premium"
+    labels:
+      tier: "premium"
+  svc21:
+    environment:
+      TIER: "premium"
+    labels:
+      tier: "premium"
+  svc23:
+    environment:
+      TIER: "premium"
+    labels:
+      tier: "premium"
