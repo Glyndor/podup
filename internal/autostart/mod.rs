@@ -439,24 +439,30 @@ pub fn collect_status<S: SystemCtl>(sc: &S, project: &str) -> StatusReport {
 /// Print the autostart status for a project.
 pub fn status<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
 	let r = collect_status(sc, project);
-	println!("unit:       {}", r.unit_path.display());
-	println!("installed:  {}", if r.unit_exists { "yes" } else { "no" });
+	// Every line here is a yes/no an operator is scanning for, and the whole
+	// screen was one colour — so "is it actually running?" meant reading six
+	// labels to find the one word that answers it. The label is scaffolding
+	// (dimmed); the value carries the meaning (tinted by what it says).
+	let row = |label: &str, value: &str| {
+		crate::ui::print_labelled(label, value);
+	};
+	row("unit", &r.unit_path.display().to_string());
+	row("installed", if r.unit_exists { "yes" } else { "no" });
 	if let Some(mode) = r.unit_mode {
-		println!("mode:       {:04o}", mode & 0o7777);
+		row("mode", &format!("{:04o}", mode & 0o7777));
 	}
-	println!("active:     {}", r.is_active);
-	println!("enabled:    {}", r.is_enabled);
-	println!(
-		"linger:     {}",
-		if r.linger { "enabled" } else { "disabled" }
-	);
-	println!(
-		"session:    {}",
+	row("active", &r.is_active);
+	row("enabled", &r.is_enabled);
+	row("linger", if r.linger { "enabled" } else { "disabled" });
+	// Prose, not a state word, so the meaning is stated rather than inferred.
+	crate::ui::print_labelled_with(
+		"session",
 		if r.runtime_dir {
 			"XDG_RUNTIME_DIR set"
 		} else {
 			"XDG_RUNTIME_DIR unset (systemctl --user needs a user session)"
-		}
+		},
+		Some(r.runtime_dir),
 	);
 	Ok(())
 }

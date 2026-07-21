@@ -192,6 +192,48 @@ pub fn result_line(msg: &str) -> std::io::Result<()> {
 	}
 }
 
+/// Print a `label: value` line where the label is scaffolding and the value
+/// carries the meaning.
+///
+/// `autostart status` is the densest meaning-per-line surface in the CLI — six
+/// consecutive yes/no answers — and it was entirely monochrome, so finding the
+/// one line that answers "is it running?" meant reading all six. The label is
+/// dimmed and the value tinted by [`status_style`], which knows systemd's
+/// vocabulary as well as Podman's.
+///
+/// Values with no status meaning (a path, a file mode) are left alone rather
+/// than given an arbitrary colour.
+pub fn print_labelled(label: &str, value: &str) {
+	print_labelled_with(label, value, None);
+}
+
+/// [`print_labelled`] with the value's meaning stated rather than inferred.
+///
+/// Some values are prose, not a state word — `XDG_RUNTIME_DIR unset (systemctl
+/// --user needs a user session)` is the answer to a yes/no question written as a
+/// sentence. `Some(true)`/`Some(false)` colours it green/red; `None` falls back
+/// to reading the text.
+pub fn print_labelled_with(label: &str, value: &str, good: Option<bool>) {
+	use std::io::Write;
+	let dim = Style::new().dimmed();
+	let padded = format!("{label}:");
+	let explicit = good.map(|ok| {
+		Style::new().fg_color(Some(
+			if ok { AnsiColor::Green } else { AnsiColor::Red }.into(),
+		))
+	});
+	let styled_value = match explicit.or_else(|| status_style(value)) {
+		Some(style) => paint(style, value, true),
+		None => value.to_string(),
+	};
+	let _ = writeln!(
+		anstream::stdout(),
+		"{}{padded:<11}{} {styled_value}",
+		dim.render(),
+		dim.render_reset()
+	);
+}
+
 /// Bold — table headers and emphasis.
 pub fn bold() -> Style {
 	Style::new().bold()
@@ -208,6 +250,19 @@ pub fn print_bold_header(cols: &str) {
 		"{}{cols}{}",
 		s.render(),
 		s.render_reset()
+	);
+}
+
+/// Print a bold header tinted with its identity colour — used where a block is
+/// headed by a container name rather than by column titles.
+pub fn print_identity_header(name: &str) {
+	use std::io::Write;
+	let style = identity_style(name).bold();
+	let _ = writeln!(
+		anstream::stdout(),
+		"{}{name}{}",
+		style.render(),
+		style.render_reset()
 	);
 }
 
@@ -317,6 +372,29 @@ fn status_style(status: &str) -> Option<Style> {
 		return None;
 	};
 	Some(Style::new().fg_color(Some(colour.into())))
+}
+
+/// The colour for an event action or a container state word, whichever matches.
+///
+/// `events` streams verbs (`start`, `die`, `kill`, `health_status`) that are not
+/// container states but mean the same kinds of thing, so they resolve through
+/// the lifecycle bands first and fall back to the status vocabulary.
+pub fn action_or_status_style(word: &str) -> Option<Style> {
+	let w = word.to_ascii_lowercase();
+	if w.starts_with("die")
+		|| w.starts_with("kill")
+		|| w.starts_with("destroy")
+		|| w.starts_with("remove")
+	{
+		return Some(Style::new().fg_color(Some(AnsiColor::Red.into())));
+	}
+	if w.starts_with("start") || w.starts_with("create") || w.starts_with("health") {
+		return Some(Style::new().fg_color(Some(AnsiColor::Green.into())));
+	}
+	if w.starts_with("stop") || w.starts_with("pause") || w.starts_with("restart") {
+		return Some(Style::new().fg_color(Some(AnsiColor::Yellow.into())));
+	}
+	status_style(word)
 }
 
 /// Colourise a status cell, tinting each comma-separated segment on its own.

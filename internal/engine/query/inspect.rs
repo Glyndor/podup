@@ -78,7 +78,10 @@ impl Engine {
 						"Processes": result.processes,
 					})),
 					Ok(result) => {
-						crate::ui::print_bold_header(&container_name);
+						// The container name is the only navigation aid when several
+						// are listed, so it carries the same identity colour it has in
+						// `ps` and `logs` rather than being merely bold.
+						crate::ui::print_identity_header(&container_name);
 						// Space-pad columns to the widest cell (header + rows) rather
 						// than tab-joining, so the table is aligned as the help promises.
 						let titles = result.titles.clone().unwrap_or_default();
