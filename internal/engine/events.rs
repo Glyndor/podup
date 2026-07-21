@@ -120,6 +120,23 @@ fn format_event(value: &Value, json: bool) -> String {
 		.or_else(|| value.get("id"))
 		.and_then(Value::as_str)
 		.unwrap_or("");
+	format_event_line(typ, action, name, crate::ui::stdout_colored() && !json)
+}
+
+/// Join an event's three fields, tinting the two that carry meaning.
+///
+/// A `--follow` stream is a wall of near-identical lines; `ACTION` is what
+/// distinguishes a `start` from a `die`, and `NAME` is which container it
+/// happened to. The type (`container`, `network`) repeats on almost every line
+/// and is dimmed so it stops competing.
+fn format_event_line(typ: &str, action: &str, name: &str, colour: bool) -> String {
+	use crate::ui::{identity_style, paint, Style};
+	let typ = paint(Style::new().dimmed(), typ, colour);
+	let action = match crate::ui::action_or_status_style(action) {
+		Some(style) => paint(style, action, colour),
+		None => action.to_string(),
+	};
+	let name = paint(identity_style(name), name, colour && !name.is_empty());
 	format!("{typ} {action} {name}").trim().to_string()
 }
 
@@ -187,5 +204,43 @@ mod tests {
 		let out = format_event(&ev, true);
 		assert!(out.contains("\"Type\":\"container\""));
 		assert!(out.contains("\"Action\":\"start\""));
+	}
+}
+
+#[cfg(test)]
+mod event_colour_tests {
+	use super::format_event_line;
+
+	/// Without a colour sink the line is byte-identical to what it always was,
+	/// so `--json`, a pipe and the output contract are untouched.
+	#[test]
+	fn plain_output_is_unchanged() {
+		assert_eq!(
+			format_event_line("container", "start", "proj-web-1", false),
+			"container start proj-web-1"
+		);
+	}
+
+	/// The two fields that distinguish one line from the next carry colour; the
+	/// type, which repeats on nearly every line, is dimmed rather than absent.
+	#[test]
+	fn action_and_name_are_tinted_apart() {
+		let died = format_event_line("container", "die", "proj-web-1", true);
+		let started = format_event_line("container", "start", "proj-web-1", true);
+		assert_ne!(
+			died,
+			started.replace("start", "die"),
+			"die and start must differ by more than the verb"
+		);
+	}
+
+	/// An event with no container name must not emit a stray colour reset.
+	#[test]
+	fn an_empty_name_is_not_painted() {
+		let out = format_event_line("network", "create", "", true);
+		assert!(
+			out.ends_with("create\u{1b}[0m") || !out.ends_with("\u{1b}[0m "),
+			"{out:?}"
+		);
 	}
 }
