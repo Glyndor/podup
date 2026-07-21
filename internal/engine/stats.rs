@@ -156,21 +156,71 @@ fn truncate_name(name: &str, no_trunc: bool) -> String {
 /// Format one stats row into the table layout. With `no_trunc` a long name is
 /// left intact (and may overflow its column); otherwise it is truncated to
 /// [`NAME_WIDTH`]. Pure for testing.
-fn format_row(s: &ContainerStat, no_trunc: bool) -> String {
+/// Colour band for a utilisation percentage.
+///
+/// A container at 95% of its memory limit is minutes from being OOM-killed, and
+/// in a plain table that number looks exactly like 0.02%. The whole reason to
+/// read `stats` is to find the row that is in trouble, so the number that says
+/// so should be the one that catches the eye.
+fn load_style(pct: f64) -> crate::ui::Style {
+	use crate::ui::AnsiColor;
+	let colour = if pct >= 90.0 {
+		AnsiColor::Red
+	} else if pct >= 70.0 {
+		AnsiColor::Yellow
+	} else {
+		AnsiColor::Green
+	};
+	crate::ui::Style::new().fg_color(Some(colour.into()))
+}
+
+/// Format one stats row into the table layout, optionally coloured. With
+/// `no_trunc` a long name is left intact (and may overflow its column);
+/// otherwise it is truncated to [`NAME_WIDTH`]. Pure, so the layout is testable
+/// without a terminal — the tests pass `colour = false`.
+///
+/// Each cell is padded to its width *before* being painted: the ANSI codes are
+/// zero-width, so padding afterwards would count them and knock every later
+/// column out of alignment.
+fn format_row_with(s: &ContainerStat, no_trunc: bool, colour: bool) -> String {
+	use crate::ui::{identity_style, paint};
 	let (rx, tx) = net_totals(s);
-	format!(
-		"{:<NAME_WIDTH$} {:>7.2}% {:>10} / {:<10} {:>6.2}% {:>9} / {:<9} {:>9} / {:<9} {:>5}",
-		truncate_name(&s.name, no_trunc),
-		s.cpu,
-		format_bytes(s.mem_usage),
-		format_bytes(s.mem_limit),
-		s.mem_perc,
-		format_bytes(rx),
-		format_bytes(tx),
-		format_bytes(s.block_in),
-		format_bytes(s.block_out),
-		s.pids,
-	)
+	let dim = crate::ui::Style::new().dimmed();
+
+	let name = format!("{:<NAME_WIDTH$}", truncate_name(&s.name, no_trunc));
+	let name = paint(identity_style(s.name.trim()), &name, colour);
+	let cpu = paint(load_style(s.cpu), &format!("{:>7.2}%", s.cpu), colour);
+	let mem_pct = paint(
+		load_style(s.mem_perc),
+		&format!("{:>6.2}%", s.mem_perc),
+		colour,
+	);
+	// Secondary detail: the absolute figures matter once a percentage has drawn
+	// you to the row, not before.
+	let mem = paint(
+		dim,
+		&format!(
+			"{:>10} / {:<10}",
+			format_bytes(s.mem_usage),
+			format_bytes(s.mem_limit)
+		),
+		colour,
+	);
+	let net = paint(
+		dim,
+		&format!("{:>9} / {:<9}", format_bytes(rx), format_bytes(tx)),
+		colour,
+	);
+	let block = paint(
+		dim,
+		&format!(
+			"{:>9} / {:<9}",
+			format_bytes(s.block_in),
+			format_bytes(s.block_out)
+		),
+		colour,
+	);
+	format!("{name} {cpu} {mem} {mem_pct} {net} {block} {:>5}", s.pids)
 }
 
 /// Build one `stats --format json` row with numeric values (raw bytes/percent),
@@ -296,7 +346,7 @@ impl Engine {
 			match frame {
 				Ok(report) => print_frame(&report, &running, &stopped, &opts),
 				Err(e) => {
-					tracing::warn!("stats: stream ended early: {e}");
+					tracing::warn!("stats: stream ended early [{}]: {e}", e.stream_end_kind());
 					break;
 				}
 			}
@@ -419,188 +469,13 @@ fn print_frame(
 	}
 
 	crate::ui::print_bold_header(HEADER);
+	let colour = crate::ui::stdout_colored();
 	for s in &rows {
-		println!("{}", format_row(s, opts.no_trunc));
+		println!("{}", format_row_with(s, opts.no_trunc, colour));
 	}
 	println!();
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn format_bytes_scales_units() {
-		assert_eq!(format_bytes(512), "512B");
-		assert_eq!(format_bytes(1024), "1.0KiB");
-		assert_eq!(format_bytes(1536), "1.5KiB");
-		assert_eq!(format_bytes(1024 * 1024), "1.0MiB");
-		assert_eq!(format_bytes(3 * 1024 * 1024 * 1024), "3.0GiB");
-	}
-
-	#[test]
-	fn format_row_sums_network_and_shows_name() {
-		let mut network = HashMap::new();
-		network.insert("eth0".to_string(), NetStat { rx: 1024, tx: 2048 });
-		let s = ContainerStat {
-			name: "proj-web".into(),
-			cpu: 12.5,
-			mem_usage: 1024 * 1024,
-			mem_limit: 1024 * 1024 * 1024,
-			mem_perc: 0.1,
-			block_in: 0,
-			block_out: 0,
-			pids: 3,
-			network,
-		};
-		let row = format_row(&s, false);
-		assert!(row.contains("proj-web"));
-		assert!(row.contains("12.50%"));
-		assert!(row.contains("1.0MiB"));
-		assert!(row.contains('3'));
-	}
-
-	#[test]
-	fn truncate_name_shortens_long_names_with_ellipsis() {
-		let short = "proj-web-1";
-		assert_eq!(truncate_name(short, false), short);
-		// Exactly the column width is kept verbatim.
-		let exact = "a".repeat(NAME_WIDTH);
-		assert_eq!(truncate_name(&exact, false), exact);
-		// One over the width is truncated to width-1 chars plus an ellipsis.
-		let long = "a".repeat(NAME_WIDTH + 10);
-		let cut = truncate_name(&long, false);
-		assert_eq!(cut.chars().count(), NAME_WIDTH);
-		assert!(cut.ends_with('…'));
-		// `--no-trunc` keeps the full name regardless of length.
-		assert_eq!(truncate_name(&long, true), long);
-	}
-
-	#[test]
-	fn format_row_truncates_long_name_but_no_trunc_keeps_it() {
-		let s = ContainerStat {
-			name: "really-long-project-web-container-name-1".into(),
-			..Default::default()
-		};
-		// Default: the long name is truncated (ellipsis present, full name gone).
-		let row = format_row(&s, false);
-		assert!(row.contains('…'));
-		assert!(!row.contains(&s.name));
-		// `--no-trunc`: the full name survives intact.
-		let row_full = format_row(&s, true);
-		assert!(row_full.contains(&s.name));
-	}
-
-	#[test]
-	fn stat_json_row_emits_numeric_fields() {
-		let mut network = HashMap::new();
-		network.insert("eth0".to_string(), NetStat { rx: 100, tx: 200 });
-		let s = ContainerStat {
-			name: "proj-db-1".into(),
-			cpu: 5.5,
-			mem_usage: 2048,
-			mem_limit: 4096,
-			mem_perc: 50.0,
-			block_in: 1,
-			block_out: 2,
-			pids: 7,
-			network,
-		};
-		let row = stat_json_row(&s);
-		assert_eq!(row["Name"], "proj-db-1");
-		assert_eq!(row["CPUPerc"], 5.5);
-		assert_eq!(row["MemUsage"], 2048);
-		assert_eq!(row["MemLimit"], 4096);
-		assert_eq!(row["NetInput"], 100);
-		assert_eq!(row["NetOutput"], 200);
-		assert_eq!(row["PIDs"], 7);
-	}
-
-	#[test]
-	fn frame_rows_keeps_running_and_adds_stopped_zeros_sorted() {
-		let report = StatsReport {
-			stats: vec![
-				ContainerStat {
-					name: "proj-web-1".into(),
-					cpu: 1.0,
-					..Default::default()
-				},
-				// Not in `running` → must be dropped (stale daemon sample).
-				ContainerStat {
-					name: "other".into(),
-					..Default::default()
-				},
-			],
-		};
-		let mut running = HashSet::new();
-		running.insert("proj-web-1".to_string());
-		let stopped = vec!["proj-db-1".to_string()];
-		let rows = frame_rows(&report, &running, &stopped);
-		// Sorted: db (stopped) before web (running); the unrelated sample is gone.
-		assert_eq!(rows.len(), 2);
-		assert_eq!(rows[0].name, "proj-db-1");
-		assert_eq!(rows[0].cpu, 0.0);
-		assert_eq!(rows[1].name, "proj-web-1");
-		assert_eq!(rows[1].cpu, 1.0);
-	}
-
-	#[test]
-	fn frame_rows_without_all_has_no_stopped_rows() {
-		let report = StatsReport::default();
-		let running = HashSet::new();
-		// `--all` off → caller passes an empty `stopped` slice → no rows.
-		let rows = frame_rows(&report, &running, &[]);
-		assert!(rows.is_empty());
-	}
-
-	#[test]
-	fn stat_tolerates_null_network() {
-		// libpod sends `"Network": null` for a container with no interfaces; it
-		// must deserialize to an empty map rather than erroring.
-		let json = r#"{"Name":"proj-web","CPU":1.0,"Network":null}"#;
-		let stat: ContainerStat = serde_json::from_str(json).unwrap();
-		assert_eq!(stat.name, "proj-web");
-		assert!(stat.network.is_empty());
-	}
-
-	#[test]
-	fn stat_tolerates_missing_network() {
-		let json = r#"{"Name":"proj-web"}"#;
-		let stat: ContainerStat = serde_json::from_str(json).unwrap();
-		assert!(stat.network.is_empty());
-	}
-
-	#[test]
-	fn containers_query_repeats_param_per_container() {
-		// libpod wants `containers` repeated, not comma-joined — a comma-joined
-		// list is read as a single container name and 404s.
-		let mut wanted = HashSet::new();
-		wanted.insert("proj-web-1".to_string());
-		wanted.insert("proj-db-1".to_string());
-		assert_eq!(
-			containers_query(&wanted),
-			"&containers=proj-db-1&containers=proj-web-1"
-		);
-	}
-
-	#[test]
-	fn containers_query_empty_when_none_wanted() {
-		assert_eq!(containers_query(&HashSet::new()), "");
-	}
-
-	#[test]
-	fn first_unknown_service_flags_typos() {
-		let file =
-			crate::parse_str("services:\n  web:\n    image: nginx\n  db:\n    image: postgres\n")
-				.unwrap();
-		assert_eq!(first_unknown_service(&file, &[]), None);
-		assert_eq!(
-			first_unknown_service(&file, &["web".into(), "db".into()]),
-			None
-		);
-		assert_eq!(
-			first_unknown_service(&file, &["web".into(), "bogus".into()]),
-			Some("bogus")
-		);
-	}
-}
+#[path = "stats_tests.rs"]
+mod tests;

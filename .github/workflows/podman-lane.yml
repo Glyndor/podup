@@ -59,6 +59,20 @@ jobs:
               sudo: 'ALL=(ALL) NOPASSWD:ALL'
               shell: /bin/bash
           write_files:
+            # Podman's default log driver on Fedora is journald, and in this image
+            # every logs request comes back `500 ... unable to open a handle to the
+            # library` — its go-systemd binding cannot open the journal. Installing
+            # systemd-devel does not help (measured: the package installs and the
+            # error persists), so rather than keep guessing at the dlopen, use the
+            # file-based driver, which has no library to open.
+            #
+            # This is not cosmetic. With logs unavailable the suite's five logs
+            # tests passed without fetching a byte — `logs` swallowed the 500 and
+            # returned success, so their `unwrap()` succeeded on nothing.
+            - path: /etc/containers/containers.conf
+              content: |
+                [containers]
+                log_driver = "k8s-file"
             - path: /usr/local/bin/run-suite.sh
               permissions: '0755'
               content: |
@@ -80,7 +94,7 @@ jobs:
                 # the second run, so this stabilises the lane for required-check gating
                 # without masking genuine bugs.
                 for attempt in 1 2; do
-                  cargo test --features test-helpers --test engine_integration > /tmp/cargo.log 2>&1
+                  RUST_LOG=podup=warn cargo test --features test-helpers --test engine_integration > /tmp/cargo.log 2>&1
                   RC=$?
                   [ "$RC" -eq 0 ] && break
                   grep -qE 'IncompleteMessage|connection closed before message completed|channel closed|Connection reset' /tmp/cargo.log || break
@@ -111,6 +125,9 @@ jobs:
           runcmd:
             - bash -c 'F=$(findmnt -no FSTYPE /); case $F in btrfs) btrfs filesystem resize max / ;; xfs) xfs_growfs / ;; ext4) resize2fs $(findmnt -no SOURCE /) ;; esac >/dev/console 2>&1; echo "DISK=$(df -h / | tail -1)" >/dev/console'
             - bash -c 'dnf install -y podman rust cargo gcc git >/dev/console 2>&1'
+            # Prove the driver took, so a silently-ignored config cannot put the
+            # logs tests back to passing without reading anything.
+            - bash -c 'echo "LOGDRIVER=$(podman info --format {{.Host.LogDriver}} 2>/dev/null)" >/dev/console'
             - bash -c 'echo "PODMAN=$(podman --version)  RUST=$(rustc --version)" >/dev/console'
             - bash -c 'echo "tester:100000:65536" >/etc/subuid; echo "tester:100000:65536" >/etc/subgid'
             - bash -c 'loginctl enable-linger tester; sleep 6'
@@ -134,6 +151,20 @@ jobs:
           grep -q 'No space left' "$L" && { echo "::error::VM disk full — run invalid"; exit 1; }
           VER=$(grep -oE 'PODMAN=podman version [0-9.]+' "$L" | grep -oE '[0-9.]+' | tail -1)
           grep -qE 'PODMAN=podman version [0-9]' "$L" || { echo "::error::Podman not detected in VM"; exit 1; }
+          # The VM must be able to serve logs. Gate on that, not on which driver
+          # provides it: Fedora 44's journald cannot open its library here and every
+          # logs request 500s, while rawhide's works fine — so requiring a specific
+          # driver reddens the major that never had the problem.
+          #
+          # This is not cosmetic. With logs unavailable, the five tests that only
+          # `unwrap()` the result passed without fetching a byte, because `logs`
+          # swallowed the 500 and returned success. Green-and-meaningless is worse
+          # than red, so the signature is a hard failure.
+          echo "log driver: $(grep -oE 'LOGDRIVER=[a-z0-9-]+' "$L" | tail -1)"
+          if grep -q 'unable to open a handle to the library' "$L"; then
+            echo "::error::the VM could not serve logs (journald cannot open its library) — the logs tests would pass without reading anything"
+            exit 1
+          fi
           # Guard the matrix: the VM must actually run the Podman major it was asked to.
           case "$VER" in
             ${{ matrix.podman }}.*) : ;;

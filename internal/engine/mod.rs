@@ -13,7 +13,9 @@ pub use copy::CpOptions;
 pub use image::{resolve_image_digests, CommitOptions};
 pub use lifecycle::{validate_stop_timeout, RunOptions, RunOverrides};
 pub use lock::ProjectLock;
-pub use query::{ExecOptions, ImagesOptions, LogsDisplay, LogsOptions, PsFilterOptions, PsOptions};
+pub use query::{
+	AttachOutcome, ExecOptions, ImagesOptions, LogsDisplay, LogsOptions, PsFilterOptions, PsOptions,
+};
 mod container_config;
 #[cfg(test)]
 mod fake_podman;
@@ -57,6 +59,12 @@ pub struct Engine {
 	pub(super) client: Client,
 	pub(super) project: String,
 	pub(super) base_dir: PathBuf,
+	/// Absolute compose-file paths this engine was built from, in `-f` order.
+	/// Stamped onto every container as `podup.config-files` so `ls` can report
+	/// them: projects are discovered by label, with no other record of where
+	/// their compose file lives. Empty when the caller did not supply them, in
+	/// which case the label is omitted rather than written blank.
+	pub(super) compose_files: Vec<PathBuf>,
 	/// Optional CLI `-t/--timeout` override (seconds) for container shutdown
 	/// grace; when set it takes precedence over each service's
 	/// `stop_grace_period`. `None` falls back to the per-service value.
@@ -98,6 +106,7 @@ impl Engine {
 			client,
 			project,
 			base_dir: std::env::current_dir().unwrap_or_default(),
+			compose_files: Vec::new(),
 			stop_timeout: None,
 			scale_overrides: std::collections::HashMap::new(),
 			pull_policy_override: None,
@@ -116,6 +125,7 @@ impl Engine {
 			client,
 			project,
 			base_dir,
+			compose_files: Vec::new(),
 			stop_timeout: None,
 			scale_overrides: std::collections::HashMap::new(),
 			pull_policy_override: None,
@@ -154,6 +164,15 @@ impl Engine {
 		self.pull_policy_override = pull_policy;
 		self.no_build = no_build;
 		self.quiet_pull = quiet_pull;
+		self
+	}
+
+	/// Record the compose files this engine was built from, so containers it
+	/// creates carry them as a `podup.config-files` label and `ls` can report
+	/// where a project's compose file lives. Builder-style; additive, so an
+	/// embedder that does not call it simply gets no label.
+	pub fn with_compose_files(mut self, files: Vec<PathBuf>) -> Self {
+		self.compose_files = files;
 		self
 	}
 

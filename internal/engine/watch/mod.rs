@@ -324,7 +324,10 @@ impl Engine {
 			urlencoded(&dest_dir),
 		);
 		self.client
-			.put_bytes_ok(&path, Bytes::from(tar_bytes), "application/x-tar")
+			// Gzipped, like `cp`'s: `watch` has its own copy of this upload rather
+			// than reusing `Engine::cp`, which is how the two drifted to different
+			// content types for the same body.
+			.put_bytes_ok(&path, Bytes::from(tar_bytes), "application/gzip")
 			.await
 			.map_err(ComposeError::Podman)?;
 

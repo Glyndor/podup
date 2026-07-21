@@ -257,3 +257,77 @@ fn is_valid_log_time_classifies_forms() {
 	assert!(!is_valid_log_time(""));
 	assert!(!is_valid_log_time("10x"));
 }
+
+/// The other side of the tolerance: when *nothing* resolves, there is no
+/// partial result left to protect.
+///
+/// An unreachable engine made `logs` print nothing and exit 0, which is
+/// indistinguishable from a project that simply has no logs — so a health check
+/// or deploy gate built on `compose logs` read success from an engine that was
+/// not there. Every service 500s here, so no target survives.
+///
+/// This is not #1104: nothing classifies how a stream *ended*. The requests
+/// never opened.
+#[tokio::test]
+#[cfg(unix)]
+async fn logs_fails_when_no_service_resolves_at_all() {
+	let fake = fake_podman::start(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			(500, r#"{"message":"internal server error"}"#.to_string())
+		} else {
+			(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+
+	let mut file = ComposeFile::default();
+	file.services.insert("a".into(), Service::default());
+	file.services.insert("b".into(), Service::default());
+
+	let out = e
+		.logs_with_options(
+			&file,
+			&["a".to_string(), "b".to_string()],
+			LogsOptions::default(),
+		)
+		.await;
+	assert!(
+		out.is_err(),
+		"logs must not report success when it could reach nothing at all"
+	);
+}
+
+/// And one container failing to stream while another succeeds stays tolerated,
+/// so the logs that exist are still shown.
+#[tokio::test]
+#[cfg(unix)]
+async fn logs_tolerates_one_container_that_will_not_stream() {
+	let fake = fake_podman::start(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			if target.contains("podup.service%3Da") {
+				(200, r#"[{"Names":["/proj-a-1"]}]"#.to_string())
+			} else {
+				(200, r#"[{"Names":["/proj-b-1"]}]"#.to_string())
+			}
+		} else if method == "GET" && target.contains("/proj-a-1/logs") {
+			(500, r#"{"message":"boom"}"#.to_string())
+		} else if method == "GET" && target.contains("/logs") {
+			(200, String::new())
+		} else {
+			(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+
+	let mut file = ComposeFile::default();
+	file.services.insert("a".into(), Service::default());
+	file.services.insert("b".into(), Service::default());
+
+	e.logs_with_options(
+		&file,
+		&["a".to_string(), "b".to_string()],
+		LogsOptions::default(),
+	)
+	.await
+	.expect("one container failing to stream must not blank the other");
+}

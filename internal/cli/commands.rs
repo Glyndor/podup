@@ -387,8 +387,20 @@ pub(crate) enum Commands {
 		#[arg(long)]
 		no_stdin: bool,
 		/// Proxy received signals to the process (accepted for compatibility).
-		#[arg(long)]
-		sig_proxy: Option<bool>,
+		///
+		/// Takes an optional value so both spellings parse: docker declares this
+		/// as a bare boolean, and demanding a value made
+		/// `docker compose attach --sig-proxy web` fail with a usage error
+		/// against podup — inside the set of flags whose entire purpose is that
+		/// such a script runs unchanged.
+		#[arg(
+			long,
+			default_value_t = false,
+			action = clap::ArgAction::Set,
+			num_args = 0..=1,
+			default_missing_value = "true",
+		)]
+		sig_proxy: bool,
 		/// Override the detach key sequence (accepted for compatibility).
 		#[arg(long)]
 		detach_keys: Option<String>,

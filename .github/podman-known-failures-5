@@ -2,33 +2,19 @@
 # reasons, not because podup is broken. The lane fails when a failing test is NOT
 # on this list — a new identity is a real regression, whatever the pass count says.
 #
-# Every entry below was classified by running the SAME suite against real Podman
-# on a physical host (5.4.2, no VM, serial): 155 passed, 0 failed. The lane
-# reports 10 failures for the same code, so these ten are the environment.
-#
 # Adding a line here is a claim that a test cannot pass under nested-virt. Make
 # that claim with a run, not a guess — the whole point of this file is that the
 # 2026-07 regression (#1072) hid inside a count-only gate for a day and a
 # release. Remove a line the moment its test starts passing in the lane.
 #
-# Podman 6 is deliberately NOT gated this way, and this is not an oversight to
-# fix: its failing set carries a variable tail (identities that appear in 1-of-5
-# runs), so a list built from observation would redden innocent pull requests —
-# the failure mode that already forced the pass-count floor down from 120 to 115.
-# Podman 6 keeps the floor until its set is both classified and stable (#1039).
+# 2026-07-20: eight of the ten entries were removed, and they were never about
+# nested virt. Podman's journald log driver could not open its library in this
+# image, so every logs request returned HTTP 500 and the VM served no logs at
+# all. With the file-based driver configured the lane went from 10 failures to
+# 2 — the six run/attach tests and cli_run_subcommand and cli_logs_tail_limits_output
+# all pass now. The claim "cannot pass under nested virt" was made honestly, with
+# a run, and was still wrong: the physical host that proved 155/155 also had a
+# working journald, so the comparison could not see the difference.
 
-# The `run` family (7): needs a controlling terminal the VM's serial console
-# cannot provide. All seven passed in the real-host run that classified them.
-commands_networking::engine_run_command_succeeds
-commands_networking::engine_run_nonzero_exit_returns_run_exited
-run_flags::engine_run_applies_user_workdir_env_and_entrypoint
-run_flags::engine_run_applies_volume_publish_and_interactive
-run_flags::engine_run_no_deps_skips_dependency_startup
-run_flags::engine_run_starts_dependencies_by_default
-cli_commands::cli_run_subcommand
-
-# Streaming reads that depend on timely delivery through the guest's virtio
-# console; under nested-virt the stream is cut or arrives late.
-cli_flags::cli_logs_tail_limits_output
-niche::cli_attach_streams_output_until_exit
 niche::engine_events_stream_connects
+run_flags::engine_run_applies_volume_publish_and_interactive

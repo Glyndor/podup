@@ -56,6 +56,11 @@ pub enum ComposeError {
 	/// A `run` container exited; carries its non-zero exit code so the CLI can
 	/// propagate it as its own process exit status.
 	RunExited(i64),
+	/// An attached `up` was ended by SIGINT or SIGTERM rather than by its
+	/// streams finishing. Carried as an error only so it reaches the exit-status
+	/// mapping; it is not printed, because the operator who pressed Ctrl-C does
+	/// not need to be told what they just did.
+	Interrupted,
 	/// `podup update` (self-update) failed.
 	Update(String),
 	/// An `external: true` secret/config/network/volume is absent.
@@ -218,6 +223,7 @@ impl fmt::Display for ComposeError {
 			Self::Watch(s) => write!(f, "watch error: {s}"),
 			Self::Unsupported(s) => write!(f, "unsupported feature: {s}"),
 			Self::RunExited(code) => write!(f, "run container exited with code {code}"),
+			Self::Interrupted => write!(f, "interrupted"),
 			Self::Update(s) => write!(f, "update error: {s}"),
 			Self::ExternalNotFound(s) => write!(f, "external resource not found: {s}"),
 			Self::ScalePortConflict {

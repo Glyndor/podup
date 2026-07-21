@@ -43,6 +43,7 @@ Create and start all services (or only the named ones, plus their transitive
 | `--no-build` | Do not build images, even for services with a `build:` section. | off |
 | `--quiet-pull` | Suppress image-pull progress output. | off |
 | `--wait` | Wait until services are running/healthy before returning. | off |
+| `--wait-timeout <SECS>` | Maximum seconds to wait with `--wait` before giving up. | no limit |
 | `--no-start` | Create the containers but do not start them. | off |
 | `--timestamps` | Prefix attached log lines with a timestamp (ignored with `-d`). | off |
 | `-V, --renew-anon-volumes` | Recreate anonymous volumes instead of keeping the previous ones. | off |
@@ -71,6 +72,8 @@ created containers.
 | `--build` | Build images before creating containers. | off |
 | `--force-recreate` | Recreate containers even if their config is unchanged. | off |
 | `--no-recreate` | Leave existing containers in place. | off |
+| `--no-deps` | Do not create the `depends_on` services of the named ones. | off |
+| `--pull <POLICY>` | Pull policy before creating: `always`, `missing`, `never`, `newer`, `build`. | Podman default |
 
 ### `start`
 Start existing stopped containers. Accepts a trailing service list.
@@ -129,6 +132,7 @@ List podup compose projects on the host. Needs no compose file.
 | `-a, --all` | Include stopped projects. | running only |
 | `-q, --quiet` | Print project names only. | off |
 | `--format <FMT>` | `table` or `json`. | `table` |
+| `--filter <FILTER>` | Keep only projects matching a predicate: `name=<NAME>` or `status=<running\|exited>`. Repeatable. | none |
 
 ### `logs [SERVICE...]`
 View container output for the named services (or all).
@@ -149,6 +153,9 @@ Stream Podman events for this project's containers.
 | Flag | Description | Default |
 |---|---|---|
 | `--format <FMT>` | `table` (a `TYPE ACTION NAME` summary) or `json` (one object per line). | `table` |
+| `--filter <FILTER>` | Keep only events matching a predicate (`KEY=VALUE`, e.g. `event=start`). Repeatable. | none |
+| `--since <TIME>` | Only stream events at or after this timestamp or relative time. | stream start |
+| `--until <TIME>` | Only stream events up to this timestamp or relative time. | no end |
 
 `--json` is a hidden deprecated alias for `--format json`.
 
@@ -175,7 +182,7 @@ Print the public binding for a port.
 
 | Flag | Description | Default |
 |---|---|---|
-| `--proto <PROTO>` | `tcp` or `udp`. | `tcp` |
+| `--proto <PROTO>` (alias `--protocol`) | `tcp` or `udp`. | `tcp` |
 | `--index <N>` | Target this replica (1-based) of a scaled service. | 1 |
 
 ### `images`
@@ -237,8 +244,25 @@ Execute a command in a running service container.
 | `-w, --workdir <PATH>` | Working directory inside the container. | container default |
 | `--privileged` | Give extended privileges to the command. | off |
 | `-d, --detach` | Run the command in the background. | off |
-| `-T, --no-tty` (alias `--no-TTY`) | Disable pseudo-TTY allocation (accepted for compatibility; podup never allocates one). | off |
+| `-T, --no-tty` (alias `--no-TTY`) | Disable pseudo-TTY allocation. | off |
 | `--index <N>` | Target this replica (1-based) of a scaled service. | 1 |
+
+On Unix, `exec` allocates a pseudo-TTY and attaches your stdin when stdin is a
+terminal, so `podup exec -it db psql` drops you into an interactive session that
+follows your window size. It is not on `-i`: like `docker compose exec`, a TTY on
+both ends is the default, and `-T` is how you turn it off.
+
+Interactivity engages **only** when stdin is a terminal, so a script or a
+pipeline keeps the plain streaming behaviour with no change to output framing:
+
+```bash
+podup exec db psql -c 'select 1' > out.txt   # streams, no TTY
+echo 'select 1' | podup exec -T db psql      # streams, no TTY
+```
+
+Windows keeps the streaming behaviour in every case; podup reaches
+`podman machine` over a named pipe there, where raw mode and window-resize are a
+different API ([#1079](https://github.com/Glyndor/podup/issues/1079)).
 
 ```bash
 podup exec -u root web sh
@@ -266,7 +290,7 @@ container exits or you detach. Output only — stdin is never attached.
 |---|---|---|
 | `--index <N>` | Target this replica (1-based) of a scaled service. | 1 |
 | `--no-stdin` | Accepted for compatibility; stdin is never attached anyway. | off |
-| `--sig-proxy` | Accepted for compatibility; no effect. | off |
+| `--sig-proxy [<BOOL>]` | Accepted for compatibility; no effect. Takes docker's bare form or an explicit value. | off |
 | `--detach-keys <KEYS>` | Accepted for compatibility; no effect. | none |
 
 ### `kill [SERVICE...]`
@@ -311,7 +335,7 @@ Commit a service container's current state to a new image reference
 | `-m, --message <MSG>` | Commit message recorded on the image. | none |
 | `-a, --author <AUTHOR>` | Author recorded on the image. | none |
 | `-c, --change <INSTRUCTION>` | Apply a Dockerfile instruction to the created image. Repeatable. | none |
-| `--pause` | Pause the container while committing. | off |
+| `-p, --pause [<BOOL>]` | Pause the container during commit for a consistent snapshot. `--pause=false` snapshots it live. | **on** |
 
 ### `export <SERVICE>`
 Export a service container's filesystem as a tar archive.
@@ -339,6 +363,7 @@ skipped). Credentials come from `podman login`.
 
 | Flag | Description | Default |
 |---|---|---|
+| `-q, --quiet` | Suppress the push progress output. | off |
 | `--ignore-push-failures` | Continue after a failure. | off |
 | `--tls-verify <BOOL>` | Verify the registry TLS cert; `false` allows an insecure/HTTP registry. | Podman default |
 
@@ -393,7 +418,7 @@ Print the resolved compose file (after substitution, extends, include).
 | `--volumes` | List named volumes, one per line. | off |
 | `--images` | List the images services use, one per line. | off |
 | `--profiles` | List the profiles the file declares, one per line. | off |
-| `--hash` | Print a stable per-service config hash. | off |
+| `--hash <SERVICES>` | Print a stable per-service config hash for the given comma-separated services, or `'*'` for all. | none |
 | `--no-normalize` | Accepted for compatibility; `config` always emits the normalized form. | off |
 | `-q, --quiet` | Only validate; print nothing. | off |
 | `--no-interpolate` | Leave `${VAR}` placeholders literal. | off |
@@ -476,6 +501,39 @@ when both are set.
 | `DOCKER_HOST` | Docker-compatible fallback for the Podman socket, used only when `PODMAN_SOCKET` is unset. Must be a local `unix://` socket (or `npipe://` on Windows); a remote `tcp://`/`ssh://` value is rejected. |
 | `RUST_LOG` | Log verbosity filter. Unset shows warnings and errors; e.g. `RUST_LOG=podup=info` or `RUST_LOG=podup=debug` for more detail. |
 
+## Podman extensions
+
+Podman does more than the Compose Specification, and a few of those extras
+change behaviour rather than just observability. podup exposes them under the
+spec's reserved `x-` prefix, so a file using one **stays a valid compose file**:
+docker compose ignores an unknown `x-` key instead of erroring, and the same
+file still runs there — it just does not act on the extra.
+
+| Key | Where | What it does |
+|---|---|---|
+| `x-podman-on-failure` | under a service's `healthcheck:` | `none`, `kill`, `restart` or `stop` — what Podman does when the check flips to unhealthy. Default `none`. |
+
+Without it, a compose healthcheck detects a sick container and does nothing
+about it: a restart policy reacts to the process *exiting*, not to the container
+being unhealthy, so an app that hangs without dying stays in rotation
+indefinitely.
+
+> **`kill` and a restart policy do not combine the way you would expect.**
+> `--health-on-failure=kill` with `restart: unless-stopped` leaves the container
+> **exited and never revived** — the kill is not the kind of exit the restart
+> policy acts on. Use `restart` if you want it to come back.
+>
+> podman-run(1) suggests `kill` or `stop` "when running inside of a systemd
+> unit… to make use of systemd's restart policy". That advice assumes the unit
+> restarts the container. `autostart --mode service` writes a
+> `Type=oneshot` + `RemainAfterExit=yes` unit, which does **not** — so under
+> podup's own service-mode unit that recommendation turns a degraded container
+> into a stopped one.
+
+An invalid value is rejected by `up`/`create`; `generate quadlet` warns and
+omits the key instead, because an unrecognised `HealthOnFailure=` makes Quadlet
+drop the whole unit at daemon-reload.
+
 ## Accepted for compatibility
 
 These flags parse and are validated, so a script written against docker compose
@@ -489,7 +547,7 @@ covers, and the only other way to find out was to read the dispatch code.
 | `config --no-normalize` | `config` always emits the normalized form. |
 | `cp -a, --archive` | Ownership/permission preservation is not meaningful for a rootless copy. |
 | `attach --no-stdin`, `--sig-proxy`, `--detach-keys` | `attach` streams output only; stdin is never attached (see [#1079](https://github.com/Glyndor/podup/issues/1079)). |
-| `run -T, --no-TTY` / `exec -T, --no-tty` | podup never allocates a pseudo-TTY, so disabling one is a no-op (see [#1079](https://github.com/Glyndor/podup/issues/1079)). |
+| `run -T, --no-TTY` | `run` never allocates a pseudo-TTY, so disabling one is a no-op. `exec -T` is real: it turns off a pseudo-TTY that `exec` does allocate. |
 
 Everything else that parses does something. An **unknown** `--filter` predicate
 is rejected outright rather than dropped: a filter that silently does not apply
@@ -505,10 +563,22 @@ returns the whole set, which a script reads as a match.
 | `3` | `update` failed to verify or install a release. |
 | `126` | `run`/`exec`: the command exists but is not executable. |
 | `127` | `run`/`exec`: the command was not found. |
+| `130` | An attached `up` was ended by SIGINT or SIGTERM. |
 | other | `run` propagates the container's own exit code verbatim. |
 
 `exec` propagates the command's exit code the same way `run` does, and `wait`
 returns the last non-zero code it saw.
+
+**`130` for SIGTERM as well as SIGINT.** The signal number would suggest 143 for
+SIGTERM, but `docker compose up` returns 130 for both and podup matches it
+(measured against v5.1.3 pointed at the same Podman socket). The project is
+still torn down before the code is returned, so an interrupted `up` leaves
+nothing running.
+
+This matters most in CI: a job that runs `podup up` in the foreground and is
+cancelled — by a timeout, by an operator, by the runner shutting down — used to
+report **success**. Anything gating on that exit status could not tell a
+completed run from an abandoned one.
 
 **`stats --format json` differs from docker on purpose.** podup emits numbers
 (`"CPUPerc": 12.5`) where docker emits preformatted strings (`"12.50%"`), and

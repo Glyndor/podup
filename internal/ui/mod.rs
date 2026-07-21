@@ -13,7 +13,7 @@
 
 use std::io::IsTerminal;
 
-use anstyle::{AnsiColor, Style};
+pub use anstyle::{AnsiColor, Style};
 
 pub use anstream::ColorChoice;
 
@@ -71,6 +71,42 @@ pub fn stderr_colored() -> bool {
 /// and machine/JSON output.
 static PROGRESS_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// The project name, so an identity colour can be keyed on the same label
+/// everywhere.
+///
+/// `logs` prefixes lines with the project-stripped `web-1`; `ps` prints the full
+/// container name `proj-web-1`; the progress lines print the full name too.
+/// Hashing whatever string each site happens to hold gives the same container a
+/// different colour in each command — which defeats the point of a stable
+/// palette. Stripping the project first makes one container one colour.
+static PROJECT: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+/// Record the project name for identity colouring. Set once per invocation.
+pub fn set_project(name: &str) {
+	if let Ok(mut slot) = PROJECT.write() {
+		name.clone_into(&mut slot);
+	}
+}
+
+/// The stable identity colour for a container or service label, keyed on the
+/// label with the project prefix removed.
+///
+/// Callers pass whatever they display — `proj-web-1`, `web-1`, `web` — and get
+/// the same colour for the same container, which is what makes `ps`, `logs`,
+/// `stats` and the progress lines agree.
+pub fn identity_style(label: &str) -> Style {
+	let key = PROJECT
+		.read()
+		.ok()
+		.and_then(|p| {
+			(!p.is_empty())
+				.then(|| label.strip_prefix(&format!("{p}-")).map(str::to_string))
+				.flatten()
+		})
+		.unwrap_or_else(|| label.to_string());
+	service_style(&key)
+}
+
 /// Enable or disable user-facing lifecycle progress output process-wide. The CLI
 /// enables it for the lifecycle commands; embedders that want podup silent leave
 /// it off (the default).
@@ -94,14 +130,37 @@ pub fn progress_line(kind: &str, name: &str, action: &str) {
 	if !progress_enabled() {
 		return;
 	}
-	let style = Style::new().fg_color(Some(AnsiColor::Green.into()));
+	let verb = action_style(action);
+	let ident = identity_style(name);
 	// anstream::stderr strips the ANSI codes itself when colour is off.
 	let _ = writeln!(
 		anstream::stderr(),
-		" {kind} {name}  {}{action}{}",
-		style.render(),
-		style.render_reset()
+		" {kind} {}{name}{}  {}{action}{}",
+		ident.render(),
+		ident.render_reset(),
+		verb.render(),
+		verb.render_reset()
 	);
+}
+
+/// The colour band for a lifecycle verb.
+///
+/// Every verb used to be the same green, so `Volume data Removed` — which
+/// destroys data and cannot be undone — was styled exactly like `Started`. The
+/// bands say what kind of thing happened: something now exists (green),
+/// something stopped but survives (yellow), something is gone (red), nothing
+/// changed (dim).
+fn action_style(action: &str) -> Style {
+	let a = action.to_ascii_lowercase();
+	if a.starts_with("remov") || a.starts_with("kill") || a.starts_with("delet") {
+		Style::new().fg_color(Some(AnsiColor::Red.into()))
+	} else if a.starts_with("stop") || a.starts_with("paus") || a.starts_with("restart") {
+		Style::new().fg_color(Some(AnsiColor::Yellow.into()))
+	} else if a.starts_with("exist") || a.starts_with("running") || a.starts_with("skip") {
+		Style::new().dimmed()
+	} else {
+		Style::new().fg_color(Some(AnsiColor::Green.into()))
+	}
 }
 
 /// Emit a plain user-facing progress note to stderr (e.g. a "nothing to do"
@@ -133,6 +192,48 @@ pub fn result_line(msg: &str) -> std::io::Result<()> {
 	}
 }
 
+/// Print a `label: value` line where the label is scaffolding and the value
+/// carries the meaning.
+///
+/// `autostart status` is the densest meaning-per-line surface in the CLI — six
+/// consecutive yes/no answers — and it was entirely monochrome, so finding the
+/// one line that answers "is it running?" meant reading all six. The label is
+/// dimmed and the value tinted by its own status meaning, which covers systemd's
+/// vocabulary as well as Podman's.
+///
+/// Values with no status meaning (a path, a file mode) are left alone rather
+/// than given an arbitrary colour.
+pub fn print_labelled(label: &str, value: &str) {
+	print_labelled_with(label, value, None);
+}
+
+/// [`print_labelled`] with the value's meaning stated rather than inferred.
+///
+/// Some values are prose, not a state word — `XDG_RUNTIME_DIR unset (systemctl
+/// --user needs a user session)` is the answer to a yes/no question written as a
+/// sentence. `Some(true)`/`Some(false)` colours it green/red; `None` falls back
+/// to reading the text.
+pub fn print_labelled_with(label: &str, value: &str, good: Option<bool>) {
+	use std::io::Write;
+	let dim = Style::new().dimmed();
+	let padded = format!("{label}:");
+	let explicit = good.map(|ok| {
+		Style::new().fg_color(Some(
+			if ok { AnsiColor::Green } else { AnsiColor::Red }.into(),
+		))
+	});
+	let styled_value = match explicit.or_else(|| status_style(value)) {
+		Some(style) => paint(style, value, true),
+		None => value.to_string(),
+	};
+	let _ = writeln!(
+		anstream::stdout(),
+		"{}{padded:<11}{} {styled_value}",
+		dim.render(),
+		dim.render_reset()
+	);
+}
+
 /// Bold — table headers and emphasis.
 pub fn bold() -> Style {
 	Style::new().bold()
@@ -149,6 +250,19 @@ pub fn print_bold_header(cols: &str) {
 		"{}{cols}{}",
 		s.render(),
 		s.render_reset()
+	);
+}
+
+/// Print a bold header tinted with its identity colour — used where a block is
+/// headed by a container name rather than by column titles.
+pub fn print_identity_header(name: &str) {
+	use std::io::Write;
+	let style = identity_style(name).bold();
+	let _ = writeln!(
+		anstream::stdout(),
+		"{}{name}{}",
+		style.render(),
+		style.render_reset()
 	);
 }
 
@@ -195,25 +309,115 @@ pub fn service_style(name: &str) -> Style {
 	Style::new().fg_color(Some(SERVICE_PALETTE[palette_index(name)].into()))
 }
 
+/// Whether an `Exited (N)` / `exited(N)` label reports a clean finish.
+///
+/// A container that ran to completion is not a failure, and colouring it red
+/// says it is. One-shot services — migrations, seeds, a `command` that simply
+/// ends — spend their whole life in this state, so red here is not a rare
+/// cosmetic slip but the normal reading of a healthy project.
+fn is_clean_exit(lower: &str) -> bool {
+	// `exited (0)` and `exited(0)`, but not `exited (07)` or `exited (10)`.
+	let Some(rest) = lower
+		.split_once("exit")
+		.map(|(_, r)| r.trim_start_matches(['e', 'd', ' ', '(']))
+	else {
+		return false;
+	};
+	rest.starts_with('0')
+		&& !rest
+			.trim_start_matches('0')
+			.starts_with(|c: char| c.is_ascii_digit())
+}
+
 /// The semantic colour for a container status word, or `None` for an unknown one
-/// (left uncoloured). Green = up/healthy, red = exited/dead/unhealthy, yellow =
-/// paused/(re)starting, dim = created. Matches on substrings so it handles both
-/// the bare state (`running`) and Podman's verbose `Status` (`Up 2 minutes`,
-/// `Exited (1)`).
+/// (left uncoloured). Green = up/healthy, red = failed/dead/unhealthy, yellow =
+/// paused/(re)starting/stopping, dim = created or finished cleanly. Matches on
+/// substrings so it handles the bare state (`running`), Podman's verbose
+/// `Status` (`Up 2 minutes`, `Exited (1)`), and systemd's vocabulary, which
+/// `autostart status` reports.
 fn status_style(status: &str) -> Option<Style> {
 	let s = status.to_ascii_lowercase();
-	let colour = if s.contains("unhealthy") || s.contains("exit") || s.contains("dead") {
+	// Checked before the red arm: `Exited (0)` contains "exit" and would
+	// otherwise be indistinguishable from `Exited (7)`.
+	if s.contains("exit") && is_clean_exit(&s) {
+		return Some(Style::new().dimmed());
+	}
+	let colour = if s.contains("unhealthy")
+		|| s.contains("exit")
+		|| s.contains("dead")
+		|| s.contains("failed")
+		|| s.contains("not-found")
+		|| s.contains("error")
+	{
 		AnsiColor::Red
-	} else if s.contains("running") || s.contains("healthy") || s.starts_with("up") {
+	} else if s.contains("running")
+		|| s.contains("healthy")
+		|| s.starts_with("up")
+		|| s == "active"
+		|| s == "enabled"
+		|| s == "yes"
+	{
 		AnsiColor::Green
-	} else if s.contains("paus") || s.contains("restart") || s.contains("starting") {
+	} else if s.contains("paus")
+		|| s.contains("restart")
+		|| s.contains("starting")
+		|| s.contains("stopping")
+		|| s.contains("removing")
+		|| s.contains("activating")
+	{
 		AnsiColor::Yellow
-	} else if s.contains("created") {
+	} else if s.contains("created") || s == "inactive" || s == "disabled" || s == "no" {
 		return Some(Style::new().dimmed());
 	} else {
 		return None;
 	};
 	Some(Style::new().fg_color(Some(colour.into())))
+}
+
+/// The colour for an event action or a container state word, whichever matches.
+///
+/// `events` streams verbs (`start`, `die`, `kill`, `health_status`) that are not
+/// container states but mean the same kinds of thing, so they resolve through
+/// the lifecycle bands first and fall back to the status vocabulary.
+pub fn action_or_status_style(word: &str) -> Option<Style> {
+	let w = word.to_ascii_lowercase();
+	if w.starts_with("die")
+		|| w.starts_with("kill")
+		|| w.starts_with("destroy")
+		|| w.starts_with("remove")
+	{
+		return Some(Style::new().fg_color(Some(AnsiColor::Red.into())));
+	}
+	if w.starts_with("start") || w.starts_with("create") || w.starts_with("health") {
+		return Some(Style::new().fg_color(Some(AnsiColor::Green.into())));
+	}
+	if w.starts_with("stop") || w.starts_with("pause") || w.starts_with("restart") {
+		return Some(Style::new().fg_color(Some(AnsiColor::Yellow.into())));
+	}
+	status_style(word)
+}
+
+/// Colourise a status cell, tinting each comma-separated segment on its own.
+///
+/// `ls` reports a project as `running(1), exited(1)`, and styling that as one
+/// string made the first matching substring win: `exit` came first, so a project
+/// with a service up rendered **entirely red** — visually identical to one that
+/// is completely dead. Splitting first means each state carries its own colour
+/// and the mixed case reads as mixed.
+///
+/// Trailing padding is preserved verbatim so column alignment is untouched.
+pub(crate) fn paint_status_cell(padded: &str) -> String {
+	let trimmed = padded.trim_end();
+	let pad = &padded[trimmed.len()..];
+	let body = trimmed
+		.split(", ")
+		.map(|seg| match status_style(seg) {
+			Some(style) => paint(style, seg, true),
+			None => seg.to_string(),
+		})
+		.collect::<Vec<_>>()
+		.join(", ");
+	format!("{body}{pad}")
 }
 
 /// Render a container `status` left-padded to `width`, colourised by its meaning
@@ -228,78 +432,5 @@ pub fn status_cell(status: &str, width: usize) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-	use super::*;
-
-	#[test]
-	fn service_colour_is_stable_per_name() {
-		// Same name → same index every call; different names spread across the
-		// palette (not all collapsed to one colour).
-		assert_eq!(palette_index("web"), palette_index("web"));
-		let distinct: std::collections::HashSet<usize> =
-			["web", "db", "cache", "worker", "proxy", "queue"]
-				.iter()
-				.map(|n| palette_index(n))
-				.collect();
-		assert!(distinct.len() > 1, "palette should spread service names");
-		assert!(palette_index("web") < SERVICE_PALETTE.len());
-	}
-
-	#[test]
-	fn paint_gates_on_enabled() {
-		let plain = paint(bold(), "hi", false);
-		assert_eq!(plain, "hi");
-		let coloured = paint(bold(), "hi", true);
-		assert!(coloured.contains("hi"));
-		assert!(coloured.len() > "hi".len(), "enabled paint adds ANSI codes");
-		assert!(coloured.starts_with('\u{1b}'), "starts with an ESC");
-	}
-
-	#[test]
-	fn colour_choice_resolution() {
-		// Pure resolution — never touches the process-global choice, so it can't
-		// race the production code (LinePrefixer/status_cell) that reads it.
-		temp_env::with_var_unset("NO_COLOR", || {
-			assert!(!colored_with(ColorChoice::Never, true));
-			assert!(colored_with(ColorChoice::Always, false));
-			assert!(colored_with(ColorChoice::Auto, true));
-			assert!(!colored_with(ColorChoice::Auto, false));
-		});
-		// NO_COLOR forces plain in Auto, regardless of the TTY.
-		temp_env::with_var("NO_COLOR", Some("1"), || {
-			assert!(!colored_with(ColorChoice::Auto, true));
-			// ...but an explicit `always` still overrides NO_COLOR.
-			assert!(colored_with(ColorChoice::Always, true));
-		});
-	}
-
-	#[test]
-	fn status_style_is_semantic() {
-		assert_ne!(status_style("running"), status_style("exited (1)"));
-		assert_ne!(status_style("unhealthy"), status_style("healthy"));
-		assert!(status_style("Up 2 minutes").is_some());
-		assert!(status_style("paused").is_some());
-		assert!(status_style("created").is_some());
-		assert!(status_style("weird-state").is_none());
-	}
-
-	#[test]
-	fn progress_toggle_is_observable() {
-		// Off by default-or-restored; toggling flips the observable state. Restore
-		// afterwards so the process-global flag does not leak into other tests.
-		let prev = progress_enabled();
-		set_progress(false);
-		assert!(!progress_enabled());
-		set_progress(true);
-		assert!(progress_enabled());
-		set_progress(prev);
-	}
-
-	#[test]
-	fn status_cell_pads_and_keeps_status() {
-		let cell = status_cell("ok", 6);
-		assert!(cell.contains("ok"));
-		// At least the requested width (colour codes, if any, only add length).
-		assert!(cell.len() >= 6);
-	}
-}
+#[path = "mod_tests.rs"]
+mod tests;

@@ -16,6 +16,11 @@ use serde::{de::DeserializeOwned, Serialize};
 use super::error::PodmanError;
 
 mod encode;
+// Unix only: a hijacked stream is a `UnixStream`, and podup reaches
+// `podman machine` over a named pipe on Windows, where interactive exec is a
+// different implementation entirely (#1079).
+#[cfg(unix)]
+mod hijack;
 pub(crate) use encode::{is_valid_object_name, urlencoded};
 
 /// The request body every call shares. A boxed body so a fully-buffered
@@ -515,9 +520,30 @@ impl Client {
 	}
 
 	/// `PUT` with raw bytes body → expect 2xx.
+	///
+	/// The failure mode here is #1097: `cp` into a container, and `watch` sync
+	/// with it, have never worked on Podman 6 — the connection closes before the
+	/// response completes. Copying *out* (`GET`) is fine on both majors, so it is
+	/// specific to this direction.
+	///
+	/// Diagnostic rather than fix: podup cannot reproduce it on Podman 5, so this
+	/// names what happened for the nested-virt lane to report. The leading
+	/// hypothesis was a `Content-Length` versus chunked mismatch, and that is now
+	/// ruled out — see `a_buffered_put_body_reports_an_exact_size` — so what
+	/// libpod 6 objects to is still open.
 	pub async fn put_bytes_ok(&self, path: &str, bytes: Bytes, content_type: &str) -> Result<()> {
+		let len = bytes.len();
 		let req = Self::build_request(Method::PUT, path, full(bytes), Some(content_type))?;
-		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
+		let resp = match self.send(req, Some(READ_TIMEOUT)).await {
+			Ok(r) => r,
+			Err(e) => {
+				tracing::warn!(
+					"PUT {path} ({content_type}, {len} bytes) failed [{}]: {e}",
+					e.stream_end_kind()
+				);
+				return Err(e);
+			}
+		};
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		Self::check_status(status, &body)
 	}

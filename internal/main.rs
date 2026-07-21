@@ -11,11 +11,13 @@ use clap::CommandFactory;
 mod autostart_cmd;
 mod cli;
 mod dispatch;
+mod exit_status;
 mod generate;
 mod resolve;
 mod startup;
 
 use cli::*;
+use exit_status::{command_failure_exit_code, interrupt_exit_code, print_error};
 use generate::write_quadlet;
 use resolve::*;
 use startup::{init_tracing, internal_error_notice, is_label_only, is_mutating, parse_cli};
@@ -69,6 +71,11 @@ fn run_to_exit() {
 	match runtime.block_on(run()) {
 		Ok(()) => {}
 		Err(podup::ComposeError::RunExited(code)) => process::exit(code as i32),
+		// 128 + SIGINT, the shell convention, and what `docker compose up` returns
+		// for SIGTERM as well as SIGINT. Nothing is printed: the operator pressed
+		// Ctrl-C and knows it, and a compose file's own teardown output has
+		// already gone to the terminal.
+		Err(podup::ComposeError::Interrupted) => process::exit(interrupt_exit_code()),
 		#[cfg(feature = "update")]
 		Err(e @ podup::ComposeError::Update(_)) => {
 			print_error(&e);
@@ -123,27 +130,6 @@ fn print_command_help(commands: &[String]) -> podup::Result<()> {
 	Ok(())
 }
 
-/// Map a failed launch onto docker's conventional exit codes by inspecting the
-/// OCI/crun error text: a "command not found" failure → 127, a
-/// "not executable"/"permission denied"/"exec format error" failure → 126,
-/// anything else → 1. Pure string inspection so it is unit-testable.
-fn command_failure_exit_code(msg: &str) -> i32 {
-	let m = msg.to_ascii_lowercase();
-	let not_found = m.contains("executable file not found")
-		|| m.contains("not found in $path")
-		|| (m.contains("oci runtime") && m.contains("no such file"));
-	let not_executable = m.contains("exec format error")
-		|| m.contains("not executable")
-		|| (m.contains("oci runtime") && m.contains("permission denied"));
-	if not_found {
-		127
-	} else if not_executable {
-		126
-	} else {
-		1
-	}
-}
-
 /// Whether a `down` invocation should tear the project down purely by its
 /// `podup.project` label: the command is `down`, an explicit project name was
 /// given (`-p` / `COMPOSE_PROJECT_NAME`), and no compose file resolves on disk.
@@ -151,20 +137,6 @@ fn command_failure_exit_code(msg: &str) -> i32 {
 /// file is absent. Pure so it is unit-testable without a Podman daemon.
 fn down_by_label_path(command: &Commands, project: Option<&str>, compose_present: bool) -> bool {
 	matches!(command, Commands::Down { .. }) && project.is_some() && !compose_present
-}
-
-/// Print a top-level error to stderr with a colour-aware bold-red `error:` label.
-/// anstream strips the styling when stderr is not a terminal or colour is off.
-fn print_error(e: &podup::ComposeError) {
-	use std::io::Write;
-	let style = podup::ui::error_style();
-	let mut err = anstream::stderr();
-	let _ = writeln!(
-		err,
-		"podup: {}error:{} {e}",
-		style.render(),
-		style.render_reset()
-	);
 }
 
 /// Orchestrate one CLI invocation: parse args, then short-circuit the commands
@@ -344,6 +316,9 @@ async fn run() -> podup::Result<()> {
 		let file = parsed.unwrap_or_default();
 		let project = resolve_project_name(cli.project.clone(), compose_name.as_deref(), &base_dir);
 		startup::validate_project_name(&project)?;
+		// Identity colours key on the project-stripped label, so every command
+		// tints the same container the same way.
+		podup::ui::set_project(&project);
 		let client = podup::podman::connect(resolve_socket(cli.socket.as_deref()).as_deref())?;
 		let engine = podup::Engine::with_base_dir(client, project, base_dir);
 		return engine
@@ -387,6 +362,9 @@ async fn run() -> podup::Result<()> {
 		{
 			let project = cli.project.clone().expect("checked by down_by_label_path");
 			startup::validate_project_name(&project)?;
+			// Identity colours key on the project-stripped label, so every command
+			// tints the same container the same way.
+			podup::ui::set_project(&project);
 			// `--rmi` removes the images of the file's services, which cannot be
 			// resolved without a file; warn rather than silently dropping it.
 			if rmi.is_some() {
@@ -450,6 +428,9 @@ async fn run() -> podup::Result<()> {
 		let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
 		let project = resolve_project_name(cli.project.clone(), file.name.as_deref(), &base_dir);
 		startup::validate_project_name(&project)?;
+		// Identity colours key on the project-stripped label, so every command
+		// tints the same container the same way.
+		podup::ui::set_project(&project);
 		// `file` is already parsed with the correct interpolation setting above.
 		let parsed = file;
 		// `--resolve-image-digests` pins each image to its registry digest, which
@@ -491,6 +472,10 @@ async fn run() -> podup::Result<()> {
 	// compose `name:` field are otherwise taken verbatim; rejecting an unsafe
 	// name here fails closed regardless of which command runs next.
 	startup::validate_project_name(&project)?;
+	// Identity colours key on the project-stripped label, so ps, logs, stats and
+	// the progress lines all tint the same container the same way. This is the
+	// path every lifecycle command takes.
+	podup::ui::set_project(&project);
 
 	// `generate` produces declarative artifacts from the compose file alone; it
 	// neither contacts Podman nor mutates project state.
@@ -564,6 +549,7 @@ async fn run() -> podup::Result<()> {
 		}
 	);
 	let engine = podup::Engine::with_base_dir(client, project, base_dir)
+		.with_compose_files(compose_files.iter().map(|f| resolve::absolute(f)).collect())
 		.with_stop_timeout(stop_timeout)
 		.with_scale_overrides(scale_overrides)
 		.with_up_overrides(pull_override, no_build, quiet_pull)
@@ -621,41 +607,6 @@ mod down_by_label_tests {
 	}
 }
 
-#[cfg(test)]
-mod exit_code_tests {
-	use super::command_failure_exit_code;
-
-	#[test]
-	fn not_found_maps_to_127() {
-		assert_eq!(
-			command_failure_exit_code(
-				"podman error: crun: executable file `foo` not found in $PATH: \
-				 No such file or directory: OCI runtime command not found error"
-			),
-			127
-		);
-		assert_eq!(
-			command_failure_exit_code("OCI runtime error: ...: no such file or directory"),
-			127
-		);
-	}
-
-	#[test]
-	fn not_executable_maps_to_126() {
-		assert_eq!(
-			command_failure_exit_code("OCI runtime error: permission denied"),
-			126
-		);
-		assert_eq!(command_failure_exit_code("exec format error"), 126);
-	}
-
-	#[test]
-	fn unrelated_errors_map_to_1() {
-		assert_eq!(command_failure_exit_code("some other failure"), 1);
-		assert_eq!(command_failure_exit_code("container is restarting"), 1);
-	}
-}
-
 /// Compose-only global value-flags that `update` parses (they are declared
 /// `global` on [`Cli`]) but cannot act on, since self-update rewrites the binary
 /// itself rather than a compose project. Each entry is `(arg-id, user-facing
@@ -697,6 +648,15 @@ fn first_misused_global(matches: &clap::ArgMatches) -> Option<&'static str> {
 
 #[cfg(all(test, feature = "update"))]
 mod tests {
+
+	/// 130 is 128 + SIGINT, and it is what `docker compose up` returns for
+	/// SIGTERM too — measured against v5.1.3 rather than derived from the signal
+	/// number, which would have said 143. podup returned 0 for both, so a
+	/// cancelled CI job reported success.
+	#[test]
+	fn an_interrupt_maps_onto_the_shell_convention() {
+		assert_eq!(interrupt_exit_code(), 130);
+	}
 	use super::*;
 	use clap::CommandFactory;
 

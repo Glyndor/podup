@@ -26,7 +26,12 @@ use super::Engine;
 const EXEC_START_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// Options for [`Engine::exec`], mirroring `docker compose exec` flags.
+///
+/// `#[non_exhaustive]`: built with `..Default::default()`, so adding a flag as
+/// the exec surface grows is not another breaking change. The two autostart
+/// option structs learned the same lesson in the same release.
 #[derive(Default)]
+#[non_exhaustive]
 pub struct ExecOptions {
 	/// Extra environment variables (`KEY=VAL`), `-e/--env`.
 	pub env: Vec<String>,
@@ -40,6 +45,76 @@ pub struct ExecOptions {
 	pub detach: bool,
 	/// 1-based replica index for a scaled service, `--index` (default: first).
 	pub index: Option<u32>,
+	/// Suppress the pseudo-terminal, `-T/--no-tty`.
+	///
+	/// Interactive is the default when stdin is a terminal, matching
+	/// `docker compose exec`; this is how a caller opts out. It is also what a
+	/// non-terminal stdin implies, so a scripted `exec` behaves the same with or
+	/// without the flag.
+	pub no_tty: bool,
+}
+
+impl ExecOptions {
+	/// Every `docker compose exec` flag, in CLI order. A constructor rather than
+	/// a struct literal because the type is `#[non_exhaustive]`, so the next flag
+	/// to land is not a breaking change for anyone building one.
+	/// Run the command as this user, `-u/--user`. Builder-style.
+	pub fn with_user(mut self, user: Option<String>) -> Self {
+		self.user = user;
+		self
+	}
+
+	/// Working directory inside the container, `-w/--workdir`. Builder-style.
+	pub fn with_workdir(mut self, workdir: Option<String>) -> Self {
+		self.workdir = workdir;
+		self
+	}
+
+	#[cfg(test)]
+	fn with_no_tty_for_test(mut self, v: bool) -> Self {
+		self.no_tty = v;
+		self
+	}
+
+	#[cfg(test)]
+	fn with_detach_for_test(mut self, v: bool) -> Self {
+		self.detach = v;
+		self
+	}
+
+	/// Target this replica (1-based) of a scaled service, `--index`.
+	/// Builder-style.
+	pub fn with_index(mut self, index: Option<u32>) -> Self {
+		self.index = index;
+		self
+	}
+
+	/// Extra environment variables (`KEY=VAL`), `-e/--env`. Builder-style.
+	pub fn with_env(mut self, env: Vec<String>) -> Self {
+		self.env = env;
+		self
+	}
+
+	#[allow(clippy::too_many_arguments)]
+	pub fn new(
+		env: Vec<String>,
+		user: Option<String>,
+		workdir: Option<String>,
+		privileged: bool,
+		detach: bool,
+		index: Option<u32>,
+		no_tty: bool,
+	) -> Self {
+		Self {
+			env,
+			user,
+			workdir,
+			privileged,
+			detach,
+			index,
+			no_tty,
+		}
+	}
 }
 
 /// Build the exec environment list, expanding a bare `KEY` (no `=`) from podup's
@@ -160,16 +235,24 @@ impl Engine {
 			.live_replica_name_at(service_name, service, opts.index)
 			.await?;
 
+		// Interactive when there is a terminal to be interactive with, unless the
+		// caller opted out or detached. This is `docker compose exec`'s rule: no
+		// `-i` flag, because a TTY on both ends is the default and `-T` is how you
+		// say no. A non-terminal stdin (a script, a pipeline) takes the
+		// unchanged streaming path, so nothing about scripted `exec` moves.
+		let interactive = interactive_exec(&opts);
+
 		let env = expand_exec_env(&opts.env);
 		let exec_cfg = ExecCreateConfig {
 			cmd: Some(cmd),
 			attach_stdout: Some(true),
 			attach_stderr: Some(true),
+			attach_stdin: interactive.then_some(true),
+			tty: interactive.then_some(true),
 			user: opts.user.clone(),
 			working_dir: opts.workdir.clone(),
 			privileged: opts.privileged.then_some(true),
 			env: (!env.is_empty()).then_some(env),
-			..Default::default()
 		};
 		let create_path = format!(
 			"{API_PREFIX}/containers/{}/exec",
@@ -197,6 +280,14 @@ impl Engine {
 				.await
 				.map_err(|e| map_exec_start_err(e, &opts))?;
 			return Ok(());
+		}
+
+		// The interactive path takes over here: it needs the connection kept open
+		// in both directions, which the request/response client cannot give it.
+		#[cfg(unix)]
+		if interactive {
+			self.exec_interactive(&exec_id).await?;
+			return self.exec_exit_status(&exec_id).await;
 		}
 
 		let start_cfg = ExecStartConfig {
@@ -240,7 +331,15 @@ impl Engine {
 			}
 		}
 
-		let inspect_path = format!("{API_PREFIX}/exec/{}/json", urlencoded(&exec_id));
+		self.exec_exit_status(&exec_id).await
+	}
+
+	/// Read the session's exit code and turn a non-zero one into
+	/// `RunExited`, so `podup exec` propagates the command's status the way
+	/// `docker compose exec` does. Shared by the streaming and interactive
+	/// paths — an interactive shell that exits 1 must still exit 1.
+	async fn exec_exit_status(&self, exec_id: &str) -> Result<()> {
+		let inspect_path = format!("{API_PREFIX}/exec/{}/json", urlencoded(exec_id));
 		let inspect: ExecInspect = self
 			.client
 			.get_json(&inspect_path)
@@ -251,8 +350,79 @@ impl Engine {
 				return Err(ComposeError::RunExited(code));
 			}
 		}
-
 		Ok(())
+	}
+}
+
+/// Whether this exec should get a pseudo-terminal and a live stdin.
+///
+/// Three things must all hold: the caller did not pass `-T`, the caller did not
+/// detach, and stdin is actually a terminal. The last is what keeps a scripted
+/// `podup exec` on the unchanged streaming path — allocating a pty for a
+/// pipeline would change output framing for every existing script.
+///
+/// Pure except for the `isatty` probe, which is behind `stdin_is_terminal` so
+/// the decision itself is unit-testable.
+fn interactive_exec(opts: &ExecOptions) -> bool {
+	wants_interactive(opts, stdin_is_terminal())
+}
+
+/// The decision itself, with the environment passed in.
+///
+/// Split out so it can be tested: reading stdin here would make every
+/// assertion depend on how `cargo test` happened to be invoked.
+fn wants_interactive(opts: &ExecOptions, stdin_is_tty: bool) -> bool {
+	!opts.no_tty && !opts.detach && stdin_is_tty
+}
+
+/// Whether stdin is a terminal. Always false off Unix, where the interactive
+/// path is not implemented (#1079) — so `exec` there keeps its current
+/// behaviour rather than half-entering a mode it cannot finish.
+fn stdin_is_terminal() -> bool {
+	#[cfg(unix)]
+	{
+		use std::io::IsTerminal;
+		std::io::stdin().is_terminal()
+	}
+	#[cfg(not(unix))]
+	{
+		false
+	}
+}
+
+#[cfg(test)]
+mod interactive_decision_tests {
+	use super::{wants_interactive, ExecOptions};
+
+	/// #1079: `-T` opts out, matching `docker compose exec` — which has no `-i`
+	/// because a TTY on both ends is the default.
+	#[test]
+	fn no_tty_flag_disables_the_pty() {
+		let opts = ExecOptions::default().with_no_tty_for_test(true);
+		assert!(!wants_interactive(&opts, true));
+	}
+
+	/// `-d` detaches, so there is nobody to be interactive with.
+	#[test]
+	fn detach_disables_the_pty() {
+		let opts = ExecOptions::default().with_detach_for_test(true);
+		assert!(!wants_interactive(&opts, true));
+	}
+
+	/// The decisive one for existing users: with stdin not a terminal — any
+	/// script or pipeline — `exec` stays on the unchanged streaming path.
+	/// Allocating a pty there would change output framing for every script that
+	/// already calls `podup exec`.
+	#[test]
+	fn a_non_terminal_stdin_stays_on_the_streaming_path() {
+		assert!(!wants_interactive(&ExecOptions::default(), false));
+	}
+
+	/// And the positive case, which the old ambient-stdin test could never
+	/// assert: defaults plus a terminal is what turns the pty on.
+	#[test]
+	fn a_terminal_stdin_with_defaults_is_interactive() {
+		assert!(wants_interactive(&ExecOptions::default(), true));
 	}
 }
 

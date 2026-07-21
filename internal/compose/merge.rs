@@ -39,7 +39,12 @@ pub(super) fn deserialize_with_merge_interp(
 	content: &str,
 	vars: Option<&HashMap<String, String>>,
 ) -> Result<ComposeFile> {
-	let value = interpolated_value(content, vars)?;
+	let mut value = interpolated_value(content, vars)?;
+	// Drop the merge tags before typing: whether serde tolerates one depends on
+	// the field's Rust type, so leaving them in makes `!reset` fail the file on
+	// `dns` and do nothing on `ports`. What each tag means is decided by the
+	// merge (see `compose::tags`), not by which type happens to be behind a key.
+	super::tags::strip(&mut value);
 	let file: ComposeFile = serde_yaml::from_value(value)?;
 	Ok(file)
 }

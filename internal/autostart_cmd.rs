@@ -72,18 +72,18 @@ pub(crate) async fn dispatch(
 				})?);
 			}
 			let working_dir = std::fs::canonicalize(&base_dir).unwrap_or(base_dir);
-			let opts = podup::autostart::InstallOptions {
-				unit: podup::autostart::ServiceUnitOpts {
-					exe,
-					compose_files: abs_files,
-					project,
-					working_dir,
-					profiles: env.profile.to_vec(),
-					env_files: env.env_files.to_vec(),
-				},
-				no_start: *no_start,
-				dry_run: *dry_run,
-			};
+			// The longest stop_grace_period in the project. systemd bounds the whole
+			// ExecStop independently of what podup does inside it, and its default
+			// is 90s — so without this a stack whose slowest container needs longer
+			// is killed mid-stop at reboot, while a manual `podup stop` honours it.
+			let max_grace = podup::autostart::max_stop_grace_secs(file);
+			let unit = podup::autostart::ServiceUnitOpts::new(exe, abs_files, project, working_dir)
+				.with_profiles(env.profile.to_vec())
+				.with_env_files(env.env_files.to_vec())
+				.with_max_stop_grace_secs(max_grace);
+			let opts = podup::autostart::InstallOptions::new(unit)
+				.with_no_start(*no_start)
+				.with_dry_run(*dry_run);
 			podup::autostart::install(&podup::autostart::RealSystemCtl, &opts)
 		}
 		AutostartCommands::Uninstall { purge } => {

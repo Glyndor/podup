@@ -9,15 +9,21 @@ use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 use super::Engine;
 
 mod exec;
+#[cfg(unix)]
+mod exec_interactive;
 mod inspect;
 mod inspect_util;
 mod log_prefix;
 mod ps;
+#[cfg(unix)]
+mod terminal;
 
 pub use ps::{PsFilterOptions, PsOptions};
 
 pub use exec::ExecOptions;
 use log_prefix::LinePrefixer;
+
+pub use inspect::AttachOutcome;
 
 /// Options for [`Engine::images_with_options`].
 #[derive(Default)]
@@ -134,6 +140,20 @@ fn is_go_duration(v: &str) -> bool {
 	segments > 0
 }
 
+/// The label `logs` tags a container's lines with: the container name minus the
+/// project prefix, so `myproj-web-1` reads as `web-1`.
+///
+/// Attached `up` already strips it this way (`inspect.rs`), so before this the
+/// same container was tagged `myproj-web-1  | ` by one command and `web-1 | ` by
+/// the other — two shapes for one thing, in one binary. docker compose prints
+/// the short form.
+pub(crate) fn display_label(container_name: &str, project: &str) -> String {
+	container_name
+		.strip_prefix(&format!("{project}-"))
+		.unwrap_or(container_name)
+		.to_string()
+}
+
 /// Whether a failed write to the log sink should end the follow loop.
 ///
 /// A `BrokenPipe` is the ordinary way a piped consumer signals it has read
@@ -248,6 +268,12 @@ impl Engine {
 		// one service must not blank the whole command the way an `.await?` would:
 		// warn and skip that service so the rest still stream, matching the
 		// per-container tolerance below.
+		// A failure resolving ONE service is tolerated so the others still print —
+		// that is deliberate and tested. But when nothing resolves at all, the
+		// command printed nothing and still reported success, which is how an
+		// unreachable engine looked identical to a project with no logs. Kept and
+		// only consulted when there is no output to salvage.
+		let mut first_err: Option<ComposeError> = None;
 		let mut targets: Vec<(String, bool)> = Vec::new();
 		for (n, s) in file
 			.services
@@ -259,6 +285,7 @@ impl Engine {
 				Ok(names) => names,
 				Err(e) => {
 					tracing::warn!("logs: resolving replicas for service {n}: {e}");
+					first_err.get_or_insert(e);
 					continue;
 				}
 			};
@@ -266,6 +293,28 @@ impl Engine {
 				targets.push((cname, is_tty));
 			}
 		}
+
+		// A container that is simply not there yet is tolerated per-container so
+		// the services that *do* exist still stream — that is deliberate. Anything
+		// else (the socket refusing, a 500) is not a per-container fact, it is the
+		// command failing, and `logs` reported exit 0 for it. Collected here and
+		// returned at the end so every reachable container is still shown first.
+		//
+		// Nothing resolved and something went wrong: there is no partial result to
+		// preserve, so the tolerance has nothing left to protect. This is separate
+		// from #1104 — nothing here classifies how a stream *ended*, the request
+		// never opened.
+		if targets.is_empty() {
+			if let Some(e) = first_err {
+				return Err(e);
+			}
+		}
+
+		// Same rule one level down: a container that will not stream is tolerated
+		// while another does, but every target failing is the command failing.
+		let mut streamed_err: Option<ComposeError> = None;
+		let mut streamed_any = false;
+		let target_count = targets.len();
 
 		// When follow=true, streams never end until containers stop. Run them
 		// concurrently so multiple containers don't block each other.
@@ -284,7 +333,7 @@ impl Engine {
 							Ok(r) => r,
 							Err(e) => {
 								tracing::warn!("logs {container_name}: {e}");
-								return;
+								return Some(e);
 							}
 						};
 						let mut stream = if is_tty {
@@ -299,8 +348,9 @@ impl Engine {
 						// let a sibling future block the thread on the same lock
 						// and deadlock. Each frame still locks once and flushes,
 						// keeping interleaved `logs -f` output prompt.
-						let mut out_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
-						let mut err_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
+						let label = display_label(&container_name, &self.project);
+						let mut out_pfx = LinePrefixer::new(&label, prefix, allow_color);
+						let mut err_pfx = LinePrefixer::new(&label, prefix, allow_color);
 						while let Some(msg) = stream.next().await {
 							let wrote = match msg {
 								Ok(LogOutput::StdOut { message }) => {
@@ -309,7 +359,18 @@ impl Engine {
 								Ok(LogOutput::StdErr { message }) => {
 									err_pfx.write(&mut std::io::stderr().lock(), &message)
 								}
-								Err(_) => break,
+								// Diagnostic only — nothing branches on this. Naming the
+								// classification is what lets a lane run answer whether a
+								// finished stream is distinguishable from a broken one
+								// (#1104), instead of the question being argued from the
+								// source. Real 5.4.2 never reaches this arm.
+								Err(e) => {
+									tracing::warn!(
+										"logs {container_name}: stream ended [{}]: {e}",
+										e.stream_end_kind()
+									);
+									break;
+								}
 							};
 							if stop_on_write_error(&container_name, wrote) {
 								break;
@@ -317,10 +378,20 @@ impl Engine {
 						}
 						out_pfx.flush_tail(&mut std::io::stdout().lock());
 						err_pfx.flush_tail(&mut std::io::stderr().lock());
+						None
 					}
 				})
 				.collect();
-			futures_util::future::join_all(futs).await;
+			let mut failures = 0usize;
+			for e in futures_util::future::join_all(futs)
+				.await
+				.into_iter()
+				.flatten()
+			{
+				failures += 1;
+				streamed_err.get_or_insert(ComposeError::Podman(e));
+			}
+			streamed_any = failures < target_count;
 		} else {
 			for (container_name, is_tty) in targets {
 				let path = format!(
@@ -335,6 +406,7 @@ impl Engine {
 					Ok(r) => r,
 					Err(e) => {
 						tracing::warn!("logs {container_name}: {e}");
+						streamed_err.get_or_insert(ComposeError::Podman(e));
 						continue;
 					}
 				};
@@ -351,15 +423,22 @@ impl Engine {
 				// across the await loop would starve concurrent log emissions.
 				// Flush after each frame so `logs -f` still streams promptly.
 				let mut out = std::io::stdout().lock();
-				let mut out_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
-				let mut err_pfx = LinePrefixer::new(&container_name, prefix, allow_color);
+				let label = display_label(&container_name, &self.project);
+				let mut out_pfx = LinePrefixer::new(&label, prefix, allow_color);
+				let mut err_pfx = LinePrefixer::new(&label, prefix, allow_color);
 				while let Some(msg) = stream.next().await {
 					let wrote = match msg {
 						Ok(LogOutput::StdOut { message }) => out_pfx.write(&mut out, &message),
 						Ok(LogOutput::StdErr { message }) => {
 							err_pfx.write(&mut std::io::stderr().lock(), &message)
 						}
-						Err(_) => break,
+						Err(e) => {
+							tracing::warn!(
+								"logs {container_name}: stream ended [{}]: {e}",
+								e.stream_end_kind()
+							);
+							break;
+						}
 					};
 					if stop_on_write_error(&container_name, wrote) {
 						break;
@@ -367,10 +446,14 @@ impl Engine {
 				}
 				out_pfx.flush_tail(&mut out);
 				err_pfx.flush_tail(&mut std::io::stderr().lock());
+				streamed_any = true;
 			}
 		}
 
-		Ok(())
+		if streamed_any {
+			return Ok(());
+		}
+		streamed_err.map_or(Ok(()), Err)
 	}
 
 	/// Names of this project's containers (by label) that the current compose file
@@ -435,8 +518,11 @@ impl Engine {
 	pub async fn warn_orphans(&self, file: &ComposeFile) -> Result<()> {
 		let orphans = self.orphan_container_names(file).await?;
 		if !orphans.is_empty() {
-			eprintln!(
-				"Found orphan container(s) ({}) for this project. If you removed or renamed a \
+			// Through tracing like every other warning: this printed with no
+			// `podup:` prefix and no `warning` label at all, so the one message
+			// telling a user their compose file drifted read as stray output.
+			tracing::warn!(
+				"found orphan container(s) ({}) for this project. If you removed or renamed a \
 				 service in your compose file, run with --remove-orphans to remove them.",
 				orphans.join(", ")
 			);

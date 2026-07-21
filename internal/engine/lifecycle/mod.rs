@@ -8,6 +8,7 @@ mod prefetch;
 mod readiness;
 mod run;
 mod scale;
+mod schedule;
 mod signal;
 mod targets;
 
@@ -239,23 +240,20 @@ impl Engine {
 			// One shared healthcheck poller per waited-on container, so several
 			// dependents in a level don't each run the same container's healthcheck.
 			let readiness = self.build_readiness_map(file, &enabled, &target_set, start);
-			for level in &levels {
-				let started = level.iter().map(|name| {
-					self.up_one_service(
-						name,
-						file,
-						&enabled,
-						&target_set,
-						&present,
-						&existing_hash,
-						no_recreate,
-						force_recreate,
-						start,
-						&readiness,
-					)
-				});
-				futures_util::future::try_join_all(started).await?;
-			}
+
+			self.start_services_by_dependency(
+				&levels,
+				file,
+				&enabled,
+				&target_set,
+				&present,
+				&existing_hash,
+				no_recreate,
+				force_recreate,
+				start,
+				&readiness,
+			)
+			.await?;
 
 			// Reconcile surplus replicas for every service carrying an active
 			// `--scale` override. Replica naming is unsuffixed for one replica and
