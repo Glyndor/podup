@@ -60,7 +60,13 @@ pub struct Table {
 	caps: Vec<Option<usize>>,
 	/// The column (if any) whose cells are colourised by container status.
 	status_col: Option<usize>,
+	/// The column (if any) carrying an identity — a service or container name —
+	/// tinted with that identity's stable colour.
+	identity_col: Option<usize>,
 	rows: Vec<Vec<String>>,
+	/// Per-row identity key, parallel to `rows`. `None` falls back to the
+	/// identity cell's own text.
+	keys: Vec<Option<String>>,
 }
 
 impl Table {
@@ -71,7 +77,9 @@ impl Table {
 			headers: headers.iter().map(|h| (*h).to_string()).collect(),
 			caps: vec![None; headers.len()],
 			status_col: None,
+			identity_col: None,
 			rows: Vec::new(),
+			keys: Vec::new(),
 		}
 	}
 
@@ -92,10 +100,34 @@ impl Table {
 		self
 	}
 
+	/// Tint column `col` with each row's stable identity colour, so the same
+	/// service or container is the same colour in every command that lists it.
+	///
+	/// The palette deliberately excludes red, green and yellow — those carry
+	/// status meaning — so an identity colour can never be misread as a state.
+	pub fn identity_col(mut self, col: usize) -> Self {
+		self.identity_col = Some(col);
+		self
+	}
+
 	/// Append one data row. The cell count should match the header count; missing
 	/// cells render blank and extra cells are ignored.
 	pub fn push(&mut self, cells: Vec<String>) {
 		self.rows.push(cells);
+		self.keys.push(None);
+	}
+
+	/// Append a row whose identity colour is keyed on `key` rather than on the
+	/// displayed cell.
+	///
+	/// The two differ where the column shows something longer than the identity:
+	/// `ps` prints the full container name `proj-web-1` while `logs` prefixes the
+	/// project-stripped `web-1`. Keying both on `web-1` is what makes one
+	/// container the same colour in both commands — which is the entire point of
+	/// a stable palette.
+	pub fn push_keyed(&mut self, cells: Vec<String>, key: String) {
+		self.rows.push(cells);
+		self.keys.push(Some(key));
 	}
 
 	/// Content-sized width of each column: the widest of the header and its cells,
@@ -127,6 +159,17 @@ impl Table {
 	/// meaning (the padding is applied first so the zero-width ANSI codes never
 	/// disturb alignment).
 	fn format_row(&self, cells: &[String], widths: &[usize], colour: bool) -> String {
+		self.format_row_keyed(cells, widths, colour, None)
+	}
+
+	/// [`Table::format_row`] with the row's identity key, when it has one.
+	fn format_row_keyed(
+		&self,
+		cells: &[String],
+		widths: &[usize],
+		colour: bool,
+		key: Option<&str>,
+	) -> String {
 		let last = self.headers.len().saturating_sub(1);
 		(0..self.headers.len())
 			.map(|i| {
@@ -135,6 +178,12 @@ impl Table {
 				let padded = fit_cell(cell, w);
 				if colour && Some(i) == self.status_col {
 					return super::paint_status_cell(&padded);
+				}
+				if colour && Some(i) == self.identity_col && !cell.trim().is_empty() {
+					// The padding is inside the paint so the colour does not stop
+					// at the name and leave the gap bare; the codes are zero-width
+					// either way, so alignment is untouched.
+					return super::paint(super::identity_style(key.unwrap_or(cell)), &padded, true);
 				}
 				padded
 			})
@@ -160,9 +209,11 @@ impl Table {
 	pub fn print(&self) {
 		let widths = self.widths();
 		crate::ui::print_bold_header(&self.format_row(&self.headers, &widths, false));
-		let colour = self.status_col.is_some() && super::stdout_colored();
-		for row in &self.rows {
-			println!("{}", self.format_row(row, &widths, colour));
+		let colour =
+			(self.status_col.is_some() || self.identity_col.is_some()) && super::stdout_colored();
+		for (i, row) in self.rows.iter().enumerate() {
+			let key = self.keys.get(i).and_then(Option::as_deref);
+			println!("{}", self.format_row_keyed(row, &widths, colour, key));
 		}
 	}
 }
