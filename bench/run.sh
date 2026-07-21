@@ -88,9 +88,13 @@ TOOLS=(podup podman-compose)
 if command -v docker-compose >/dev/null 2>&1; then
 	if docker info >/dev/null 2>&1; then
 		TOOLS+=(docker-compose)
+		export BENCH_DOCKER_ENGINE=docker
 		echo "note: Docker Engine present — docker-compose measured as a CROSS-ENGINE (whole-stack) run."
 	elif [ -n "${DOCKER_HOST:-}" ] && docker-compose ls >/dev/null 2>&1; then
 		TOOLS+=(docker-compose)
+		# Recorded so the report puts these rows under the right heading; the
+		# tool's name does not say which engine it drove.
+		export BENCH_DOCKER_ENGINE=podman
 		echo "note: docker-compose driving Podman via DOCKER_HOST — measured as a SAME-ENGINE (pure tool) run."
 	else
 		echo "note: docker-compose found but no reachable engine — NOT measured. Set DOCKER_HOST to the Podman socket to include it."

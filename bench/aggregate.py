@@ -20,14 +20,19 @@ RAW = os.path.join(HERE, "results", "raw.csv")
 MD = os.path.join(HERE, "results", "report.md")
 JSON = os.path.join(HERE, "results", "summary.json")
 
+# Preferred ordering only. Anything measured but not listed here is appended
+# rather than dropped: this list silently discarded four scenarios' worth of
+# results (config-heavy, wide-running-ops, deep-chain, wide-level) because it was
+# a filter, not an order — 972 rows measured, four scenarios never printed.
 SCEN_ORDER = [
-	"single", "multi-healthcheck", "scale", "network-ipam", "volume-heavy",
-	"warm-restart", "many-services", "running-ops", "build",
+	"single", "multi-healthcheck", "deep-chain", "wide-level", "scale",
+	"network-ipam", "volume-heavy", "warm-restart", "many-services",
+	"running-ops", "wide-running-ops", "config-heavy", "build",
 ]
-OP_ORDER = ["up", "reup", "down", "ps", "logs", "exec", "restart", "build"]
+OP_ORDER = ["up", "reup", "down", "config", "ps", "logs", "exec", "restart", "build"]
 OP_LABEL = {
 	"up": "up", "down": "down", "reup": "warm up", "ps": "ps", "logs": "logs",
-	"exec": "exec", "restart": "restart", "build": "build",
+	"exec": "exec", "restart": "restart", "build": "build", "config": "config",
 }
 
 # Inline sample rows, shaped exactly like raw.csv, for `--self-test`. bench/results/
@@ -86,7 +91,13 @@ def main():
 			return 1
 		rows = load(RAW)
 	tools = sorted({r["tool"] for r in rows})
-	scenarios = [s for s in SCEN_ORDER if any(r["scenario"] == s for r in rows)]
+	measured = {r["scenario"] for r in rows}
+	# Ordered by preference, then anything else that was measured. A scenario
+	# absent from SCEN_ORDER used to vanish from the report with no warning,
+	# which is worse than an ugly order: the run costs half an hour and the
+	# missing rows look like they were never measured.
+	scenarios = [s for s in SCEN_ORDER if s in measured]
+	scenarios += sorted(measured - set(scenarios))
 
 	# summary[tool][scenario][op] = {seconds:..., rss_mib:..., cpu_s:...}
 	summary = {}
@@ -107,8 +118,17 @@ def main():
 	with open(JSON, "w") as f:
 		json.dump(summary, f, indent="\t", sort_keys=True)
 
+	# Which engine docker-compose drove decides which table it belongs in, and
+	# that is a property of the RUN, not of the tool's name. run.sh records it;
+	# assuming "docker-compose means dockerd" printed a same-engine measurement
+	# under a heading that said "different daemon", which is the report saying
+	# the opposite of what happened.
+	dc_engine = os.environ.get("BENCH_DOCKER_ENGINE", "")
+	dc_same = dc_engine == "podman"
 	same = [t for t in tools if t in ("podup", "podman-compose")]
-	cross = [t for t in tools if t == "docker-compose"]
+	if dc_same:
+		same += [t for t in tools if t == "docker-compose"]
+	cross = [] if dc_same else [t for t in tools if t == "docker-compose"]
 	lines = []
 
 	def metric_table(title, intro, cols, fmt):
@@ -144,12 +164,14 @@ def main():
 				 "same compose file per scenario.\n")
 
 	metric_table(
-		"Wall-clock — pure tool comparison (both drive Podman)",
+		"Wall-clock — pure tool comparison (all drive Podman)",
 		"Seconds, lower is better. Median with p95 and stdev in parentheses. "
-		"Identical engine, only the compose tool differs.",
+		"Identical engine, so the only difference is the compose tool. "
+		"docker-compose appears here when it was pointed at the Podman socket "
+		"rather than at a Docker daemon.",
 		same, wall)
 	metric_table(
-		"Memory + CPU — pure tool comparison (both drive Podman)",
+		"Memory + CPU — pure tool comparison (all drive Podman)",
 		"Peak resident memory (max RSS) and CPU time of the tool process per "
 		"command, median. This is the client-side cost of running the tool: "
 		"podup is a static binary talking to the Podman service, podman-compose "
@@ -161,9 +183,9 @@ def main():
 		"comparison, not pure-tool. Only present when a Docker Engine was "
 		"available on the benchmark host.",
 		cross, wall)
-	if not cross:
-		lines.append("> docker-compose was not measured on this host (no Docker "
-					 "Engine available); the cross-engine comparison is left blank "
+	if not cross and not dc_same:
+		lines.append("> docker-compose was not measured against a Docker daemon "
+					 "on this host, so the cross-engine comparison is left blank "
 					 "rather than estimated.\n")
 
 	with open(MD, "w") as f:
