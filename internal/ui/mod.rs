@@ -198,7 +198,7 @@ pub fn result_line(msg: &str) -> std::io::Result<()> {
 /// `autostart status` is the densest meaning-per-line surface in the CLI — six
 /// consecutive yes/no answers — and it was entirely monochrome, so finding the
 /// one line that answers "is it running?" meant reading all six. The label is
-/// dimmed and the value tinted by [`status_style`], which knows systemd's
+/// dimmed and the value tinted by its own status meaning, which covers systemd's
 /// vocabulary as well as Podman's.
 ///
 /// Values with no status meaning (a path, a file mode) are left alone rather
