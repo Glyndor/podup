@@ -195,25 +195,92 @@ pub fn service_style(name: &str) -> Style {
 	Style::new().fg_color(Some(SERVICE_PALETTE[palette_index(name)].into()))
 }
 
+/// Whether an `Exited (N)` / `exited(N)` label reports a clean finish.
+///
+/// A container that ran to completion is not a failure, and colouring it red
+/// says it is. One-shot services — migrations, seeds, a `command` that simply
+/// ends — spend their whole life in this state, so red here is not a rare
+/// cosmetic slip but the normal reading of a healthy project.
+fn is_clean_exit(lower: &str) -> bool {
+	// `exited (0)` and `exited(0)`, but not `exited (07)` or `exited (10)`.
+	let Some(rest) = lower
+		.split_once("exit")
+		.map(|(_, r)| r.trim_start_matches(['e', 'd', ' ', '(']))
+	else {
+		return false;
+	};
+	rest.starts_with('0')
+		&& !rest
+			.trim_start_matches('0')
+			.starts_with(|c: char| c.is_ascii_digit())
+}
+
 /// The semantic colour for a container status word, or `None` for an unknown one
-/// (left uncoloured). Green = up/healthy, red = exited/dead/unhealthy, yellow =
-/// paused/(re)starting, dim = created. Matches on substrings so it handles both
-/// the bare state (`running`) and Podman's verbose `Status` (`Up 2 minutes`,
-/// `Exited (1)`).
+/// (left uncoloured). Green = up/healthy, red = failed/dead/unhealthy, yellow =
+/// paused/(re)starting/stopping, dim = created or finished cleanly. Matches on
+/// substrings so it handles the bare state (`running`), Podman's verbose
+/// `Status` (`Up 2 minutes`, `Exited (1)`), and systemd's vocabulary, which
+/// `autostart status` reports.
 fn status_style(status: &str) -> Option<Style> {
 	let s = status.to_ascii_lowercase();
-	let colour = if s.contains("unhealthy") || s.contains("exit") || s.contains("dead") {
+	// Checked before the red arm: `Exited (0)` contains "exit" and would
+	// otherwise be indistinguishable from `Exited (7)`.
+	if s.contains("exit") && is_clean_exit(&s) {
+		return Some(Style::new().dimmed());
+	}
+	let colour = if s.contains("unhealthy")
+		|| s.contains("exit")
+		|| s.contains("dead")
+		|| s.contains("failed")
+		|| s.contains("not-found")
+		|| s.contains("error")
+	{
 		AnsiColor::Red
-	} else if s.contains("running") || s.contains("healthy") || s.starts_with("up") {
+	} else if s.contains("running")
+		|| s.contains("healthy")
+		|| s.starts_with("up")
+		|| s == "active"
+		|| s == "enabled"
+		|| s == "yes"
+	{
 		AnsiColor::Green
-	} else if s.contains("paus") || s.contains("restart") || s.contains("starting") {
+	} else if s.contains("paus")
+		|| s.contains("restart")
+		|| s.contains("starting")
+		|| s.contains("stopping")
+		|| s.contains("removing")
+		|| s.contains("activating")
+	{
 		AnsiColor::Yellow
-	} else if s.contains("created") {
+	} else if s.contains("created") || s == "inactive" || s == "disabled" || s == "no" {
 		return Some(Style::new().dimmed());
 	} else {
 		return None;
 	};
 	Some(Style::new().fg_color(Some(colour.into())))
+}
+
+/// Colourise a status cell, tinting each comma-separated segment on its own.
+///
+/// `ls` reports a project as `running(1), exited(1)`, and styling that as one
+/// string made the first matching substring win: `exit` came first, so a project
+/// with a service up rendered **entirely red** — visually identical to one that
+/// is completely dead. Splitting first means each state carries its own colour
+/// and the mixed case reads as mixed.
+///
+/// Trailing padding is preserved verbatim so column alignment is untouched.
+pub(crate) fn paint_status_cell(padded: &str) -> String {
+	let trimmed = padded.trim_end();
+	let pad = &padded[trimmed.len()..];
+	let body = trimmed
+		.split(", ")
+		.map(|seg| match status_style(seg) {
+			Some(style) => paint(style, seg, true),
+			None => seg.to_string(),
+		})
+		.collect::<Vec<_>>()
+		.join(", ");
+	format!("{body}{pad}")
 }
 
 /// Render a container `status` left-padded to `width`, colourised by its meaning
@@ -224,6 +291,67 @@ pub fn status_cell(status: &str, width: usize) -> String {
 	match status_style(status) {
 		Some(style) => paint(style, &padded, stdout_colored()),
 		None => padded,
+	}
+}
+
+#[cfg(test)]
+mod status_colour_tests {
+	use super::*;
+
+	/// The bug this exists to stop: `ls` reports `running(1), exited(1)`, and
+	/// styling it as one string let the first matching substring win — `exit`
+	/// came first, so a project with a service up rendered entirely red,
+	/// indistinguishable from one that is completely dead.
+	#[test]
+	fn a_mixed_project_is_not_painted_as_one_state() {
+		let out = paint_status_cell("running(1), exited(1)");
+		let (running, exited) = out.split_once(", ").expect("both segments survive");
+		assert_ne!(
+			running.replace("running(1)", ""),
+			exited.replace("exited(1)", ""),
+			"each state must carry its own colour: {out:?}"
+		);
+	}
+
+	/// A container that ran to completion is not a failure. One-shot services —
+	/// migrations, seeds, a `command` that simply ends — live in this state.
+	#[test]
+	fn a_clean_exit_is_not_red() {
+		let red = Style::new().fg_color(Some(AnsiColor::Red.into()));
+		let clean = paint_status_cell("Exited (0)");
+		assert!(
+			!clean.contains(&red.render().to_string()),
+			"a zero exit must not be red: {clean:?}"
+		);
+		let failed = paint_status_cell("Exited (7)");
+		assert!(
+			failed.contains(&red.render().to_string()),
+			"a non-zero exit must stay red: {failed:?}"
+		);
+	}
+
+	/// Digits after the first must not be mistaken for a clean exit.
+	#[test]
+	fn only_a_bare_zero_counts_as_clean() {
+		assert!(is_clean_exit("exited (0)"));
+		assert!(is_clean_exit("exited(0)"));
+		assert!(!is_clean_exit("exited (10)"));
+		assert!(!is_clean_exit("exited (07)"));
+	}
+
+	/// Padding is what keeps columns aligned, so colourising must not eat it.
+	#[test]
+	fn trailing_padding_survives_colourising() {
+		let out = paint_status_cell("running   ");
+		assert!(out.ends_with("   "), "{out:?}");
+	}
+
+	/// systemd's vocabulary reaches this through `autostart status`.
+	#[test]
+	fn systemd_states_are_coloured() {
+		for word in ["active", "inactive", "failed", "not-found", "enabled"] {
+			assert!(status_style(word).is_some(), "{word} should carry a colour");
+		}
 	}
 }
 
