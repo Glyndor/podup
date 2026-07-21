@@ -160,3 +160,53 @@ fn every_global_flag_is_documented() {
 		missing.join("\n  ")
 	);
 }
+
+/// The CLI names the open standard, not another vendor's product.
+///
+/// `podup` implements the **Compose Spec**, which is a published standard with
+/// its own name — so saying "Compose" is both brand-free and more accurate than
+/// naming a particular implementation of it.
+///
+/// The one allowed exception is a literal filename. `docker-compose.yaml` is
+/// what the file on disk is called, the same way `.gitignore` is, and the `-f`
+/// help has to say which names it probes or it is hiding real behaviour.
+/// Removing it would not remove a brand mention; it would remove a fact.
+///
+/// Compatibility itself is untouched by any of this: it lives in what the flags
+/// do, not in what the help text calls them.
+#[test]
+fn the_cli_help_names_no_other_vendor() {
+	let mut offenders: Vec<String> = Vec::new();
+	let mut check = |label: &str, text: &str| {
+		for line in text.lines() {
+			let lower = line.to_ascii_lowercase();
+			if !lower.contains("docker") {
+				continue;
+			}
+			// Filenames are data, not branding.
+			if lower.contains("docker-compose.yaml") || lower.contains("docker-compose.yml") {
+				continue;
+			}
+			offenders.push(format!("{label}: {}", line.trim()));
+		}
+	};
+
+	let out = Command::new(bin())
+		.arg("--help")
+		.output()
+		.expect("run --help");
+	check("(top level)", &String::from_utf8_lossy(&out.stdout));
+	for cmd in COMMANDS {
+		let out = Command::new(bin())
+			.args([cmd, "--help"])
+			.output()
+			.unwrap_or_else(|e| panic!("run {cmd} --help: {e}"));
+		check(cmd, &String::from_utf8_lossy(&out.stdout));
+	}
+
+	assert!(
+		offenders.is_empty(),
+		"the CLI help should name the Compose Spec, not a vendor:\n  {}",
+		offenders.join("\n  ")
+	);
+}

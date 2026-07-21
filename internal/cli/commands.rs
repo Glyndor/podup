@@ -192,7 +192,7 @@ pub(crate) enum Commands {
 		#[arg(long = "build-arg")]
 		build_arg: Vec<String>,
 		/// Set the build progress output style (auto, plain, tty); accepted for
-		/// docker-compose compatibility. Validated but inert: podup renders build
+		/// compatibility with other Compose tools. Validated but inert: podup renders build
 		/// output one way.
 		#[arg(long, value_parser = parse_progress)]
 		progress: Option<String>,
@@ -286,8 +286,8 @@ pub(crate) enum Commands {
 		/// container's output but does not attach a live interactive terminal.
 		#[arg(short, long)]
 		interactive: bool,
-		/// No effect; accepted only for docker-compose compatibility. podup never
-		/// allocates a pseudo-TTY.
+		/// Disable pseudo-TTY allocation. `run` allocates one on Unix when stdin
+		/// is a terminal; this opts out, so a script keeps plain streaming.
 		// Both spellings are accepted on purpose: `docker compose run` spells the
 		// long form `--no-TTY` while `docker compose exec` spells it `--no-tty`.
 		// A script copied from either one has to work, so each command takes both.
@@ -382,17 +382,16 @@ pub(crate) enum Commands {
 		/// Index of the container when the service has multiple replicas (1-based).
 		#[arg(long)]
 		index: Option<u32>,
-		/// Do not attach STDIN (accepted for docker-compose compatibility; podup
+		/// Do not attach STDIN (accepted for compatibility; podup
 		/// attaches output only).
 		#[arg(long)]
 		no_stdin: bool,
 		/// Proxy received signals to the process (accepted for compatibility).
 		///
-		/// Takes an optional value so both spellings parse: docker declares this
-		/// as a bare boolean, and demanding a value made
-		/// `docker compose attach --sig-proxy web` fail with a usage error
-		/// against podup — inside the set of flags whose entire purpose is that
-		/// such a script runs unchanged.
+		/// Takes an optional value so both spellings parse. Other Compose tools
+		/// declare it as a bare flag, and demanding a value turned a script
+		/// copied from one of them into a usage error — inside the very set of
+		/// flags whose purpose is that such a script runs unchanged.
 		#[arg(
 			long,
 			default_value_t = false,
@@ -422,7 +421,8 @@ pub(crate) enum Commands {
 		/// Author of the new image (e.g. "Name <email>").
 		#[arg(short, long)]
 		author: Option<String>,
-		/// Apply a Dockerfile instruction to the committed image (repeatable).
+		/// Apply a Containerfile instruction to the committed image, e.g.
+		/// `CMD=/bin/sh` or `ENV=KEY=value` (repeatable).
 		#[arg(short = 'c', long = "change")]
 		change: Vec<String>,
 		/// Replica index (1-based) of a scaled service.
@@ -533,8 +533,8 @@ pub(crate) enum Commands {
 		/// Detach: run the command in the background.
 		#[arg(short, long)]
 		detach: bool,
-		/// No effect; accepted only for docker-compose compatibility. podup never
-		/// allocates a pseudo-TTY.
+		/// Disable pseudo-TTY allocation. `exec` allocates one on Unix when stdin
+		/// is a terminal; this opts out, so a script keeps plain streaming.
 		// `docker compose exec` spells the long form `--no-tty`, so that is the
 		// primary here; `--no-TTY` stays accepted so the spelling `run` uses also
 		// works on `exec`. See the note on `run`'s field.
@@ -606,7 +606,7 @@ pub(crate) enum Commands {
 		/// Leave ${VAR} placeholders literal instead of interpolating them.
 		#[arg(long)]
 		no_interpolate: bool,
-		/// Accepted for docker-compose compatibility; podup output is already
+		/// Accepted for compatibility; podup output is already
 		/// normalized.
 		#[arg(long)]
 		no_normalize: bool,
@@ -656,7 +656,7 @@ pub(crate) enum Commands {
 		#[arg(long)]
 		force: bool,
 	},
-	/// Print version information (like `docker compose version`).
+	/// Print version information.
 	Version {
 		/// Print only the version number.
 		#[arg(long)]
