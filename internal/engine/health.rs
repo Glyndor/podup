@@ -72,24 +72,49 @@ fn classify_health(info: &ContainerInspect) -> HealthVerdict {
 	HealthVerdict::Pending
 }
 
-/// Compute the `(poll_interval_secs, iterations)` for [`Engine::wait_healthy`]
-/// from a healthcheck's `interval`/`start_period`/`retries`. Poll at `interval`
-/// when given (>=1s) else 2s; run `retries` (default 30) probes plus enough
-/// extra probes to span `start_period`. Pure so the timing can be unit-tested.
+/// How often the health *status* is read while waiting between check runs.
+///
+/// Reading is a plain inspect: it does not execute the healthcheck, so it costs
+/// a request and nothing inside the container. Podman runs the check on its own
+/// schedule where systemd is available, and this is what notices promptly when
+/// it does — previously the status was only ever looked at once per `interval`,
+/// so a container that turned healthy just after a probe went unnoticed for the
+/// rest of the window.
+const STATUS_READ_INTERVAL: Duration = Duration::from_millis(150);
+
+/// Lower bound on how often podup will *run* a healthcheck.
+///
+/// Running is not free — it executes the command inside the container — so an
+/// `interval` of `10ms` must not turn into a hundred executions a second.
+const MIN_RUN_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Compute the `(run_interval, budget)` for [`Engine::wait_healthy`] from a
+/// healthcheck's `interval`/`start_period`/`retries`.
+///
+/// `run_interval` is how often podup actively executes the check; `budget` is
+/// how long it keeps trying. Sub-second intervals are honoured down to
+/// [`MIN_RUN_INTERVAL`]: they used to be discarded and replaced by the 2s
+/// default, so asking for `500ms` polling produced *slower* polling than asking
+/// for `1s` — the opposite of the request. Pure so the timing is unit-testable.
 fn health_poll_plan(
 	interval: Option<&str>,
 	start_period: Option<&str>,
 	retries: Option<u32>,
-) -> (u64, u64) {
-	let poll_secs = interval
-		.and_then(crate::size::parse_duration_secs)
-		.filter(|s| *s >= 1)
-		.unwrap_or(2);
-	let start_secs = start_period
-		.and_then(crate::size::parse_duration_secs)
-		.unwrap_or(0);
-	let iterations = retries.unwrap_or(30) as u64 + start_secs / poll_secs;
-	(poll_secs, iterations)
+) -> (Duration, Duration) {
+	let run_interval = interval
+		.and_then(crate::size::parse_duration_nanos)
+		.filter(|n| *n > 0)
+		.map(|n| Duration::from_nanos(n as u64).max(MIN_RUN_INTERVAL))
+		.unwrap_or(Duration::from_secs(2));
+	let start = start_period
+		.and_then(crate::size::parse_duration_nanos)
+		.filter(|n| *n > 0)
+		.map(|n| Duration::from_nanos(n as u64))
+		.unwrap_or_default();
+	// Same budget as before, expressed as time rather than as a probe count: a
+	// count stopped meaning a duration once the wait polls at two cadences.
+	let budget = run_interval.saturating_mul(retries.unwrap_or(30)) + start;
+	(run_interval, budget)
 }
 
 /// Poll iterations to actually run, given the healthcheck poll-plan and an
@@ -102,17 +127,17 @@ fn health_poll_plan(
 /// letting the outer `--wait-timeout` deadline — not the poll plan — decide when
 /// to give up. Without a wait-timeout the poll plan governs unchanged. Pure so
 /// the budget arithmetic is unit-tested without a live socket.
-fn effective_iterations(poll_secs: u64, plan_iters: u64, wait_timeout: Option<Duration>) -> u64 {
+fn effective_budget(
+	run_interval: Duration,
+	plan_budget: Duration,
+	wait_timeout: Option<Duration>,
+) -> Duration {
 	match wait_timeout {
-		Some(wt) => {
-			let poll = poll_secs.max(1);
-			// +2 so the inner loop outlasts the outer deadline, ensuring an
-			// exhausted wait surfaces as the `--wait-timeout` error rather than a
-			// spurious health-check-timeout that fired one poll early.
-			let wt_iters = wt.as_secs().div_ceil(poll) + 2;
-			plan_iters.max(wt_iters)
-		}
-		None => plan_iters,
+		// Two extra run intervals so this wait outlasts the outer deadline,
+		// ensuring an exhausted wait surfaces as the `--wait-timeout` error
+		// rather than a spurious health-check timeout that fired just early.
+		Some(wt) => plan_budget.max(wt + run_interval.saturating_mul(2)),
+		None => plan_budget,
 	}
 }
 
@@ -175,14 +200,14 @@ impl Engine {
 		wait_timeout: Option<Duration>,
 	) -> Result<()> {
 		let hc = service.healthcheck.as_ref();
-		let (poll_secs, plan_iters) = health_poll_plan(
+		let (run_interval, plan_budget) = health_poll_plan(
 			hc.and_then(|h| h.interval.as_deref()),
 			hc.and_then(|h| h.start_period.as_deref()),
 			hc.and_then(|h| h.retries),
 		);
-		// `--wait-timeout` extends the poll budget so it, not the (often shorter)
+		// `--wait-timeout` extends the budget so it, not the (often shorter)
 		// healthcheck interval×retries plan, decides when the wait gives up.
-		let iterations = effective_iterations(poll_secs, plan_iters, wait_timeout);
+		let budget = effective_budget(run_interval, plan_budget, wait_timeout);
 
 		// One inspect decides the short-circuits: already healthy, or no effective
 		// healthcheck at all (image or compose) — in which case a server-side
@@ -227,15 +252,55 @@ impl Engine {
 			"{API_PREFIX}/containers/{}/healthcheck",
 			crate::libpod::urlencoded(container_name),
 		);
-		for _ in 0..iterations {
-			match self.client.get_json::<HealthCheckRun>(&path).await {
-				Ok(run) if run.status.as_deref() == Some("healthy") => return Ok(()),
-				Ok(_) => {}
-				// A transient error (container not yet running, 409, 500, …) just
-				// means "not healthy yet" — keep polling rather than failing hard.
-				Err(e) => tracing::debug!("{container_name} healthcheck run failed: {e}"),
+		// Two cadences, because running a check and observing its result are not
+		// the same cost. Running executes a command inside the container, so it
+		// happens at the interval the compose file asked for and no faster.
+		// Observing is a plain inspect, so it happens often — Podman runs the
+		// check on its own systemd schedule where one exists, and this is what
+		// notices promptly when it does.
+		//
+		// Before, the status was read only once per run, so a container that
+		// turned healthy a moment after a probe went unseen for the rest of the
+		// interval: measured at 2507ms to notice a service healthy at ~1200ms,
+		// against 1706ms for docker compose (#1147).
+		let inspect_path = format!(
+			"{API_PREFIX}/containers/{}/json",
+			crate::libpod::urlencoded(container_name),
+		);
+		let deadline = tokio::time::Instant::now() + budget;
+		let mut next_run = tokio::time::Instant::now();
+		while tokio::time::Instant::now() < deadline {
+			if tokio::time::Instant::now() >= next_run {
+				match self.client.get_json::<HealthCheckRun>(&path).await {
+					Ok(run) if run.status.as_deref() == Some("healthy") => return Ok(()),
+					Ok(_) => {}
+					// A transient error (container not yet running, 409, 500, …)
+					// just means "not healthy yet" — keep going rather than
+					// failing hard.
+					Err(e) => tracing::debug!("{container_name} healthcheck run failed: {e}"),
+				}
+				next_run = tokio::time::Instant::now() + run_interval;
+			} else if let Ok(info) = self
+				.client
+				.get_json::<crate::libpod::types::container::ContainerInspect>(&inspect_path)
+				.await
+			{
+				match classify_health(&info) {
+					HealthVerdict::Healthy => return Ok(()),
+					HealthVerdict::Failed(code) => {
+						return Err(ComposeError::WaitServiceExited {
+							container: container_name.to_string(),
+							code,
+						})
+					}
+					_ => {}
+				}
 			}
-			tokio::time::sleep(Duration::from_secs(poll_secs)).await;
+			let nap = STATUS_READ_INTERVAL.min(run_interval);
+			tokio::time::sleep(
+				nap.min(deadline.saturating_duration_since(tokio::time::Instant::now())),
+			)
+			.await;
 		}
 		Err(ComposeError::HealthCheckTimeout(container_name.into()))
 	}
@@ -279,49 +344,79 @@ mod tests {
 
 	#[test]
 	fn poll_plan_defaults_match_legacy_60s() {
-		// No healthcheck timing set → 2s poll, 30 probes (the historical budget).
-		assert_eq!(super::health_poll_plan(None, None, None), (2, 30));
+		// No healthcheck timing set → 2s between runs, 30 runs (60s budget).
+		assert_eq!(
+			super::health_poll_plan(None, None, None),
+			(Duration::from_secs(2), Duration::from_secs(60))
+		);
 	}
 
 	#[test]
 	fn poll_plan_uses_interval_and_honors_start_period() {
-		// interval=10s, start_period=60s, retries=3 → poll 10s, 3 + 60/10 = 9 probes.
-		let (poll, iters) = super::health_poll_plan(Some("10s"), Some("60s"), Some(3));
-		assert_eq!((poll, iters), (10, 9));
+		// interval=10s, start_period=60s, retries=3 → run every 10s, budget
+		// 3×10s + 60s.
+		let (run, budget) = super::health_poll_plan(Some("10s"), Some("60s"), Some(3));
+		assert_eq!(
+			(run, budget),
+			(Duration::from_secs(10), Duration::from_secs(90))
+		);
+	}
+
+	/// A sub-second interval used to be discarded and replaced by the 2s
+	/// default, so asking for 500ms polling produced *slower* polling than
+	/// asking for 1s — the opposite of the request (#1147). It is honoured now,
+	/// with a floor so `10ms` cannot become a hundred check executions a second.
+	#[test]
+	fn poll_plan_honours_a_sub_second_interval() {
+		let (run, _) = super::health_poll_plan(Some("500ms"), None, Some(5));
+		assert_eq!(run, Duration::from_millis(500));
 	}
 
 	#[test]
-	fn poll_plan_sub_second_interval_floors_to_default() {
-		// An interval below 1s falls back to the 2s default (no busy-poll).
-		let (poll, _) = super::health_poll_plan(Some("500ms"), None, Some(5));
-		assert_eq!(poll, 2);
+	fn poll_plan_floors_a_pathological_interval() {
+		let (run, _) = super::health_poll_plan(Some("1ms"), None, Some(5));
+		assert_eq!(run, super::MIN_RUN_INTERVAL);
 	}
 
-	// --- effective_iterations (--wait-timeout budget, #891) ------------------
+	/// Reading the status must never be slower than running the check, or the
+	/// fast observation path would be pointless.
+	#[test]
+	fn the_status_read_is_never_slower_than_the_default_run() {
+		assert!(super::STATUS_READ_INTERVAL < Duration::from_secs(2));
+	}
+
+	// --- effective_budget (--wait-timeout, #891) -----------------------------
 
 	#[test]
-	fn effective_iterations_without_wait_timeout_uses_plan() {
-		// No --wait-timeout: the healthcheck poll plan governs unchanged.
-		assert_eq!(super::effective_iterations(2, 30, None), 30);
+	fn budget_without_wait_timeout_uses_the_plan() {
+		let plan = Duration::from_secs(60);
+		assert_eq!(
+			super::effective_budget(Duration::from_secs(2), plan, None),
+			plan
+		);
 	}
 
 	#[test]
-	fn effective_iterations_extends_to_cover_wait_timeout() {
-		// A short plan (interval 10s × 1 retry = 1 iter) must be extended so a
-		// generous --wait-timeout actually elapses: 120s / 10s + 2 margin = 14.
-		let iters = super::effective_iterations(10, 1, Some(Duration::from_secs(120)));
-		assert_eq!(iters, 14);
+	fn budget_extends_to_cover_wait_timeout() {
+		// A short plan must not cut a generous --wait-timeout short.
+		let b = super::effective_budget(
+			Duration::from_secs(10),
+			Duration::from_secs(10),
+			Some(Duration::from_secs(120)),
+		);
+		assert!(b > Duration::from_secs(120), "{b:?}");
 	}
 
 	#[test]
-	fn effective_iterations_keeps_larger_plan() {
-		// When the poll plan already outlasts --wait-timeout, the plan wins so the
-		// healthcheck's own budget is never shortened.
-		let iters = super::effective_iterations(2, 100, Some(Duration::from_secs(10)));
-		assert_eq!(iters, 100);
+	fn budget_keeps_the_larger_plan() {
+		// A generous plan is not shortened by a small --wait-timeout.
+		let b = super::effective_budget(
+			Duration::from_secs(2),
+			Duration::from_secs(200),
+			Some(Duration::from_secs(10)),
+		);
+		assert_eq!(b, Duration::from_secs(200));
 	}
-
-	// --- wait_healthy gating (service_healthy) -------------------------------
 
 	#[test]
 	fn health_reported_healthy() {
