@@ -1,74 +1,51 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 560" width="760" role="img" aria-label="podup benchmarks: ~7 MiB peak memory vs 69 MiB for podman-compose, and 7x to 15x faster wall-clock per op, with both absolute times shown">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 760 544" width="760" role="img" aria-label="podup benchmark chart: podup leads every measured scenario in both memory and latency">
   <style>
     .card { fill:#0d1117; stroke:#30363d; }
-    .t    { font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; fill:#e6edf3; }
-    .dim  { fill:#8b949e; }
-    .pod  { fill:#3fb950; }
-    .pc   { fill:#484f58; }
-    .mul  { fill:#f0883e; font-weight:700; }
-    .h    { fill:#e6edf3; font-weight:700; }
+    .t { fill:#e6edf3; font:600 13px ui-sans-serif,system-ui,sans-serif; }
+    .l { fill:#8b949e; font:12px ui-sans-serif,system-ui,sans-serif; }
+    .v { fill:#e6edf3; font:600 12px ui-monospace,monospace; }
   </style>
-
-  <rect class="card" x="1" y="1" width="758" height="558" rx="14"/>
-
-  <!-- title -->
-  <text class="h t" x="28" y="46" font-size="22">podup vs podman-compose</text>
-  <text class="dim t" x="28" y="70" font-size="13">same Podman · same digest-pinned images · median of 10 runs · lower is better</text>
-
-  <!-- MEMORY -->
-  <text class="t h" x="28" y="112" font-size="15">Peak memory · one `up`</text>
-
-  <text class="t" x="28" y="146" font-size="13">podup</text>
-  <rect class="pod" x="150" y="134" height="16" rx="3" width="0">
-    <animate attributeName="width" to="55" dur="0.9s" begin="0.2s" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.2 0.8 0.2 1" values="0;55"/>
-  </rect>
-  <text class="t pod" x="214" y="146" font-size="13" opacity="0">7 MiB
-    <animate attributeName="opacity" to="1" dur="0.3s" begin="1.0s" fill="freeze"/>
-  </text>
-
-  <text class="t" x="28" y="176" font-size="13">p-compose</text>
-  <rect class="pc" x="150" y="164" height="16" rx="3" width="0">
-    <animate attributeName="width" to="540" dur="0.9s" begin="0.35s" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.2 0.8 0.2 1" values="0;540"/>
-  </rect>
-  <text class="t dim" x="698" y="176" font-size="13" opacity="0">69 MiB
-    <animate attributeName="opacity" to="1" dur="0.3s" begin="1.15s" fill="freeze"/>
-  </text>
-
-  <!-- WALL CLOCK -->
-  <text class="t h" x="28" y="232" font-size="15">Wall-clock per op · green = podup, grey = podman-compose</text>
-
-  <!-- single up -->
-  <text class="t" x="28" y="270" font-size="13">single up</text>
-  <rect class="pod" x="190" y="258" height="16" rx="3" width="0"><animate attributeName="width" to="24"  dur="0.8s" begin="0.5s"  fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.2 0.8 0.2 1" values="0;24"/></rect>
-  <rect class="pc"  x="190" y="280" height="10" rx="3" width="0" opacity="0.55"><animate attributeName="width" to="520" dur="0.8s" begin="0.6s" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.2 0.8 0.2 1" values="0;520"/></rect>
-  <text class="t pod" x="222" y="270" font-size="12">0.08s</text>
-  <text class="t mul" x="708" y="293" font-size="12" text-anchor="end" opacity="0">0.57s · 7.1× slower<animate attributeName="opacity" to="1" dur="0.3s" begin="1.4s" fill="freeze"/></text>
-
-  <!-- volume-heavy up -->
-  <text class="t" x="28" y="330" font-size="13">volume-heavy up</text>
-  <rect class="pod" x="190" y="318" height="16" rx="3" width="0"><animate attributeName="width" to="28"  dur="0.8s" begin="0.7s"  fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.2 0.8 0.2 1" values="0;28"/></rect>
-  <rect class="pc"  x="190" y="340" height="10" rx="3" width="0" opacity="0.55"><animate attributeName="width" to="520" dur="0.8s" begin="0.8s" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.2 0.8 0.2 1" values="0;520"/></rect>
-  <text class="t pod" x="226" y="330" font-size="12">0.10s</text>
-  <text class="t mul" x="708" y="353" font-size="12" text-anchor="end" opacity="0">1.46s · 15× slower<animate attributeName="opacity" to="1" dur="0.3s" begin="1.6s" fill="freeze"/></text>
-
-  <!-- many-services up -->
-  <text class="t" x="28" y="390" font-size="13">many-services up</text>
-  <rect class="pod" x="190" y="378" height="16" rx="3" width="0"><animate attributeName="width" to="115" dur="0.8s" begin="0.9s"  fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.2 0.8 0.2 1" values="0;115"/></rect>
-  <rect class="pc"  x="190" y="400" height="10" rx="3" width="0" opacity="0.55"><animate attributeName="width" to="520" dur="0.8s" begin="1.0s" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.2 0.8 0.2 1" values="0;520"/></rect>
-  <text class="t pod" x="313" y="390" font-size="12">0.39s</text>
-  <text class="t mul" x="708" y="413" font-size="12" text-anchor="end" opacity="0">3.22s · 8.3× slower<animate attributeName="opacity" to="1" dur="0.3s" begin="1.8s" fill="freeze"/></text>
-
-  <!-- running stack ps -->
-  <text class="t" x="28" y="450" font-size="13">running ps</text>
-  <rect class="pod" x="190" y="438" height="16" rx="3" width="0"><animate attributeName="width" to="8"   dur="0.8s" begin="1.1s"  fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.2 0.8 0.2 1" values="0;8"/></rect>
-  <rect class="pc"  x="190" y="460" height="10" rx="3" width="0" opacity="0.55"><animate attributeName="width" to="520" dur="0.8s" begin="1.2s" fill="freeze" calcMode="spline" keyTimes="0;1" keySplines="0.2 0.8 0.2 1" values="0;520"/></rect>
-  <text class="t pod" x="206" y="450" font-size="12">&lt;0.01s</text>
-  <text class="t mul" x="708" y="473" font-size="12" text-anchor="end" opacity="0">0.14s · near-instant<animate attributeName="opacity" to="1" dur="0.3s" begin="2.0s" fill="freeze"/></text>
-
-  <!-- legend -->
-  <rect class="pod" x="28" y="512" width="12" height="12" rx="2"/>
-  <text class="t" x="46" y="522" font-size="12">podup</text>
-  <rect class="pc" x="120" y="512" width="12" height="12" rx="2" opacity="0.55"/>
-  <text class="t" x="138" y="522" font-size="12">podman-compose</text>
-  <text class="t dim" x="732" y="522" font-size="11" text-anchor="end">Ryzen 7 5700X · Podman 5.4.2 · podup 1.5.0 · 2026-06-26</text>
+  <rect class="card" x="0.5" y="0.5" width="759" height="543" rx="10"/>
+  <text class="t" x="24" y="30">podup vs docker-compose vs podman-compose — same rootless Podman</text>
+  <text class="l" x="24" y="47">median of 10 measured runs · lower is better</text>
+  <text class="t" x="24" y="72">memory per command</text>
+  <text class="l" x="168" y="97" text-anchor="end">podup</text>
+  <rect x="176" y="82" width="71" height="22" rx="3" fill="#3fb950"/>
+  <text class="v" x="255" y="97">7.46 MiB</text>
+  <text class="l" x="168" y="123" text-anchor="end">docker-compose</text>
+  <rect x="176" y="108" width="273" height="22" rx="3" fill="#58a6ff"/>
+  <text class="v" x="457" y="123">28.68 MiB</text>
+  <text class="l" x="168" y="149" text-anchor="end">podman-compose</text>
+  <rect x="176" y="134" width="488" height="22" rx="3" fill="#f778ba"/>
+  <text class="v" x="672" y="149">51.16 MiB</text>
+  <text class="t" x="24" y="188">up · 42 services</text>
+  <text class="l" x="168" y="213" text-anchor="end">podup</text>
+  <rect x="176" y="198" width="73" height="22" rx="3" fill="#3fb950"/>
+  <text class="v" x="257" y="213">1.18 s</text>
+  <text class="l" x="168" y="239" text-anchor="end">docker-compose</text>
+  <rect x="176" y="224" width="102" height="22" rx="3" fill="#58a6ff"/>
+  <text class="v" x="286" y="239">1.65 s</text>
+  <text class="l" x="168" y="265" text-anchor="end">podman-compose</text>
+  <rect x="176" y="250" width="488" height="22" rx="3" fill="#f778ba"/>
+  <text class="v" x="672" y="265">7.85 s</text>
+  <text class="t" x="24" y="304">up · 12 services</text>
+  <text class="l" x="168" y="329" text-anchor="end">podup</text>
+  <rect x="176" y="314" width="76" height="22" rx="3" fill="#3fb950"/>
+  <text class="v" x="260" y="329">0.38 s</text>
+  <text class="l" x="168" y="355" text-anchor="end">docker-compose</text>
+  <rect x="176" y="340" width="99" height="22" rx="3" fill="#58a6ff"/>
+  <text class="v" x="283" y="355">0.49 s</text>
+  <text class="l" x="168" y="381" text-anchor="end">podman-compose</text>
+  <rect x="176" y="366" width="488" height="22" rx="3" fill="#f778ba"/>
+  <text class="v" x="672" y="381">2.43 s</text>
+  <text class="t" x="24" y="420">config · parse only</text>
+  <text class="l" x="168" y="445" text-anchor="end">podup</text>
+  <rect x="176" y="430" width="2" height="22" rx="3" fill="#3fb950"/>
+  <text class="v" x="186" y="445">&lt;0.01 s</text>
+  <text class="l" x="168" y="471" text-anchor="end">docker-compose</text>
+  <rect x="176" y="456" width="195" height="22" rx="3" fill="#58a6ff"/>
+  <text class="v" x="379" y="471">0.04 s</text>
+  <text class="l" x="168" y="497" text-anchor="end">podman-compose</text>
+  <rect x="176" y="482" width="488" height="22" rx="3" fill="#f778ba"/>
+  <text class="v" x="672" y="497">0.10 s</text>
 </svg>
