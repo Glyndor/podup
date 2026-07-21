@@ -61,3 +61,23 @@ impl super::super::Engine {
 			.map_err(ComposeError::Podman)
 	}
 }
+
+impl super::super::Engine {
+	/// Attach, start, hand over the terminal, then clean up per `--rm` and map
+	/// the exit code. Split from `run` so the non-Unix build can drop it whole.
+	pub(super) async fn finish_interactive_run(
+		&self,
+		run_name: &str,
+		rm: bool,
+		rm_path: &str,
+	) -> Result<()> {
+		let outcome = self.run_attached(run_name).await;
+		if rm {
+			let _ = self.client.delete_ok(rm_path).await;
+		}
+		match outcome? {
+			0 => Ok(()),
+			code => Err(ComposeError::RunExited(code)),
+		}
+	}
+}

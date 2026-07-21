@@ -70,10 +70,6 @@ pub struct RunOverrides {
 	pub interactive: bool,
 	/// Do not start `depends_on` services before the run (`--no-deps`).
 	pub no_deps: bool,
-	/// Opt out of the pseudo-TTY (`-T/--no-TTY`), the way `docker compose run`
-	/// does. A TTY on both ends is the default when stdin is a terminal, so this
-	/// is how a script says it does not want one.
-	pub no_tty: bool,
 }
 
 impl Engine {

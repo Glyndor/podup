@@ -177,7 +177,6 @@ pub(crate) fn run_overrides_for(command: &Commands) -> podup::RunOverrides {
 			volume,
 			publish,
 			interactive,
-			no_tty,
 			no_deps,
 			..
 		} => podup::RunOverrides {
@@ -187,11 +186,19 @@ pub(crate) fn run_overrides_for(command: &Commands) -> podup::RunOverrides {
 			volumes: volume.clone(),
 			publish: publish.clone(),
 			interactive: *interactive,
-			no_tty: *no_tty,
 			no_deps: *no_deps,
 		},
 		_ => podup::RunOverrides::default(),
 	}
+}
+
+/// Whether `run` was given `-T/--no-TTY`.
+///
+/// Carried on the engine rather than on `RunOverrides`, which is public and not
+/// `#[non_exhaustive]` — a new field there is a breaking change, which is what
+/// the semver gate told me when I tried it.
+pub(crate) fn run_no_tty_for(command: &Commands) -> bool {
+	matches!(command, Commands::Run { no_tty, .. } if *no_tty)
 }
 
 /// Extract the `docker compose run -l/--label KEY=VAL` ad-hoc labels for the

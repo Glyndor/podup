@@ -41,9 +41,9 @@ impl Engine {
 			volumes,
 			publish,
 			interactive,
-			no_tty,
 			no_deps,
 		} = self.run_overrides.clone();
+		let no_tty = self.run_no_tty;
 		// Same rule as `exec`: a TTY on both ends by default, `-T` to opt out,
 		// and only when stdin is actually a terminal — so a script or a pipeline
 		// keeps the streaming path it has always had, unchanged.
@@ -212,26 +212,12 @@ impl Engine {
 			return Ok(());
 		}
 
+		// The interactive path takes over here: it needs the connection kept open
+		// in both directions, which the request/response client cannot give it.
+		// Same shape `exec` uses, and cfg-ed the same way.
+		#[cfg(unix)]
 		if want_tty {
-			// Attach, then start, then hand the terminal over. The exit code is
-			// read afterwards, and --rm cleanup below runs either way.
-			let outcome = self.run_attached(&run_name).await;
-			let code = match outcome {
-				Ok(code) => code,
-				Err(e) => {
-					if rm {
-						let _ = self.client.delete_ok(&rm_path).await;
-					}
-					return Err(e);
-				}
-			};
-			if rm {
-				let _ = self.client.delete_ok(&rm_path).await;
-			}
-			if code != 0 {
-				return Err(ComposeError::RunExited(code));
-			}
-			return Ok(());
+			return self.finish_interactive_run(&run_name, rm, &rm_path).await;
 		}
 
 		// Stream logs and wait for the exit code. Any failure on this path also

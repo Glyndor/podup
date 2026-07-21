@@ -107,6 +107,8 @@ pub struct Engine {
 	/// `run` container; empty by default. Kept off the frozen public
 	/// [`lifecycle::RunOverrides`] struct so the library API stays stable.
 	pub(super) run_labels: Vec<String>,
+	/// CLI `run -T/--no-TTY`: opt out of the pseudo-TTY.
+	pub(super) run_no_tty: bool,
 	/// CLI `up -V/--renew-anon-volumes`: when recreating a container, also remove
 	/// its old anonymous volumes instead of leaving them orphaned.
 	pub(super) renew_anon_volumes: bool,
@@ -128,6 +130,7 @@ impl Engine {
 			run_overrides: lifecycle::RunOverrides::default(),
 			run_env_files: Vec::new(),
 			run_labels: Vec::new(),
+			run_no_tty: false,
 			renew_anon_volumes: false,
 		}
 	}
@@ -147,6 +150,7 @@ impl Engine {
 			run_overrides: lifecycle::RunOverrides::default(),
 			run_env_files: Vec::new(),
 			run_labels: Vec::new(),
+			run_no_tty: false,
 			renew_anon_volumes: false,
 		}
 	}
@@ -209,6 +213,18 @@ impl Engine {
 	/// one-off `run` container. Builder-style; consumed by [`Engine::run`].
 	pub fn with_run_labels(mut self, labels: Vec<String>) -> Self {
 		self.run_labels = labels;
+		self
+	}
+
+	/// Set the CLI `run -T/--no-TTY` flag. Builder-style.
+	///
+	/// Carried here rather than on [`RunOverrides`] for the reason that struct
+	/// already documents: it is public and not `#[non_exhaustive]`, so a new
+	/// field is a breaking change. `run_env_files` and `run_labels` are on the
+	/// engine for exactly this, and semver-checks caught me putting this one in
+	/// the wrong place.
+	pub fn with_run_no_tty(mut self, no_tty: bool) -> Self {
+		self.run_no_tty = no_tty;
 		self
 	}
 
