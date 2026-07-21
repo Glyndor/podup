@@ -282,8 +282,9 @@ pub(crate) enum Commands {
 		/// Publish an extra port (HOST:CONTAINER[/PROTO]); repeatable.
 		#[arg(short = 'p', long = "publish")]
 		publish: Vec<String>,
-		/// Keep the container's STDIN open (sets `stdin_open`). `run` streams the
-		/// container's output but does not attach a live interactive terminal.
+		/// Keep the container's STDIN open (sets `stdin_open`). Whether a live
+		/// terminal is attached is decided by stdin and stdout both being
+		/// terminals, and by `-T` — not by this flag.
 		#[arg(short, long)]
 		interactive: bool,
 		/// Disable pseudo-TTY allocation. `run` allocates one on Unix when stdin

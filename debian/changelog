@@ -1,3 +1,50 @@
+podup (2.1.0) unstable; urgency=medium
+
+  New
+
+  * run allocates a pseudo-TTY and attaches stdin on Unix when stdin is a
+    terminal, so `podup run -it app sh` is an interactive session that follows
+    the window size. `-T` opts out and `-d` never allocates one. It engages only
+    when stdin is a terminal, so a script or a pipeline keeps the streaming
+    behaviour it had. Windows is unchanged.
+
+  Fixes
+
+  * A connection failure now names the socket it tried and separates "not
+    listening" from "cannot be opened", instead of a bare `No such file or
+    directory (os error 2)`. A fresh rootless account had nothing to act on:
+    podman is daemonless and works there, so nothing looks wrong until every
+    podup command fails. The socket prerequisite is documented now too, in the
+    README and in the autostart guide.
+  * `podup` with no subcommand printed a list of forty-five subcommand names
+    instead of its help whenever COMPOSE_PROJECT_NAME, PODMAN_SOCKET or
+    COMPOSE_PROFILES was set — the normal state of a deployment. Both cases
+    print the help now.
+  * That help is also coloured, like every other screen. It was the only one
+    that was not.
+  * A sub-second healthcheck interval is honoured instead of being discarded
+    and replaced by the 2s default, which made `interval: 200ms` poll more
+    slowly than the 1s nobody asked for. Measured on a service healthy at
+    ~400ms: 2406ms before, 806ms after. Values below 100ms are raised to that
+    floor, since running a check executes a command inside the container.
+  * While waiting on a service_healthy gate, the container's health status is
+    read every 150ms between check runs. Reading runs no command, so this costs
+    a request rather than container work, and it is what notices promptly when
+    Podman's own timer flips the status between podup's runs.
+  * A container that fails during such a wait is now reported as soon as it is
+    seen, instead of exhausting the whole budget and reporting a timeout.
+
+  Other
+
+  * The CLI names the Compose Spec rather than another vendor's product. No
+    behaviour changes: the same files are read, the same flags accepted, and
+    DOCKER_HOST, COMPOSE_FILE and COMPOSE_PROJECT_NAME are all still honoured.
+  * `run --help` and `exec --help` said podup never allocates a pseudo-TTY,
+    which stopped being true when both gained one.
+  * Library API: Engine::with_run_no_tty carries the `run -T` flag, additive.
+
+ -- Glyndor <packages@glyndor.net>  Tue, 21 Jul 2026 09:30:00 -0500
+
 podup (2.0.0) unstable; urgency=medium
 
   Breaking changes
