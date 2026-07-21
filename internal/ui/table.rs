@@ -14,6 +14,7 @@ const ELLIPSIS: char = '…';
 /// boundary and stay aligned. A `width` of 0 returns the cell unchanged — used
 /// for the trailing column, which is never padded or truncated.
 pub fn fit_cell(cell: &str, width: usize) -> String {
+	let cell = &sanitize_cell(cell);
 	if width == 0 {
 		return cell.to_string();
 	}
@@ -24,6 +25,29 @@ pub fn fit_cell(cell: &str, width: usize) -> String {
 	let mut out: String = cell.chars().take(width - 1).collect();
 	out.push(ELLIPSIS);
 	out
+}
+
+/// Escape control characters so a cell cannot drive the terminal.
+///
+/// Cell contents are not ours: an image tag, a container name, a volume driver
+/// and a process `argv` all come from outside podup. A raw `\x1b[` in one of
+/// them repaints the caller's terminal, and — now that columns carry colour of
+/// their own — desynchronises podup's own resets, so the rest of the table
+/// inherits whatever the injected sequence set.
+///
+/// Escaping happens before padding, so the width the column reserves is the
+/// width actually printed. Doing it after would let an escaped cell overflow its
+/// column and break every row's alignment.
+fn sanitize_cell(s: &str) -> String {
+	s.chars()
+		.flat_map(|c| {
+			if c.is_control() {
+				c.escape_default().collect::<Vec<_>>()
+			} else {
+				vec![c]
+			}
+		})
+		.collect()
 }
 
 /// A list-command table whose columns size to their content (capped, so a
@@ -110,9 +134,7 @@ impl Table {
 				let w = if i == last { 0 } else { widths[i] };
 				let padded = fit_cell(cell, w);
 				if colour && Some(i) == self.status_col {
-					if let Some(style) = super::status_style(cell) {
-						return super::paint(style, &padded, true);
-					}
+					return super::paint_status_cell(&padded);
 				}
 				padded
 			})
