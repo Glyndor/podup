@@ -415,3 +415,32 @@ fn bare_podup_prints_help_to_stderr_and_stays_plain_when_piped() {
 		"a pipe must receive no escape codes: {stderr:?}"
 	);
 }
+
+/// The same screen, whether or not the caller's environment happens to set one
+/// of podup's env-backed globals.
+///
+/// `arg_required_else_help` only fires when there are NO arguments at all, and
+/// an env-sourced one counts — so with `COMPOSE_PROJECT_NAME` or
+/// `PODMAN_SOCKET` exported, which is the normal state of a real deployment,
+/// bare `podup` printed a wall of forty-five subcommand names instead of its
+/// help. This is how CI found it: the runner had one of them set and my first
+/// version of the test above failed there while passing here.
+#[test]
+fn bare_podup_prints_the_same_help_with_env_globals_set() {
+	for (key, value) in [
+		("COMPOSE_PROJECT_NAME", "someproject"),
+		("PODMAN_SOCKET", "/tmp/nonexistent.sock"),
+		("COMPOSE_PROFILES", "dev"),
+	] {
+		let out = Command::new(bin())
+			.env(key, value)
+			.output()
+			.unwrap_or_else(|e| panic!("run podup with {key} set: {e}"));
+		let stderr = String::from_utf8_lossy(&out.stderr);
+		assert_eq!(out.status.code(), Some(2), "with {key} set");
+		assert!(
+			stderr.contains("Commands:"),
+			"{key} set must not replace the help with a subcommand list: {stderr:?}"
+		);
+	}
+}
