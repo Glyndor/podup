@@ -142,7 +142,7 @@ pub fn install_quadlet<S: SystemCtl>(
 		)));
 	}
 	for warning in &result.warnings {
-		eprintln!("podup: warning: {warning}");
+		tracing::warn!("{warning}");
 	}
 
 	let dir = quadlet_dir();

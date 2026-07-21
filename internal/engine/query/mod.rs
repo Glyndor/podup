@@ -518,8 +518,11 @@ impl Engine {
 	pub async fn warn_orphans(&self, file: &ComposeFile) -> Result<()> {
 		let orphans = self.orphan_container_names(file).await?;
 		if !orphans.is_empty() {
-			eprintln!(
-				"Found orphan container(s) ({}) for this project. If you removed or renamed a \
+			// Through tracing like every other warning: this printed with no
+			// `podup:` prefix and no `warning` label at all, so the one message
+			// telling a user their compose file drifted read as stray output.
+			tracing::warn!(
+				"found orphan container(s) ({}) for this project. If you removed or renamed a \
 				 service in your compose file, run with --remove-orphans to remove them.",
 				orphans.join(", ")
 			);

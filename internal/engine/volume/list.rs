@@ -79,12 +79,25 @@ impl Engine {
 		// script parsing the header line to locate its columns broke on an empty
 		// project — and an empty result is a legitimate answer, not an absence of
 		// one.
-		crate::ui::print_bold_header(&format!("{:<40} {:<12}", "NAME", "DRIVER"));
-		for (_, name, driver, _) in &rows {
-			// Escape control characters so an ANSI/BEL/tab sequence in a volume
-			// name or driver cannot be interpreted by the terminal.
-			println!("{:<40} {:<12}", sanitize_cell(name), sanitize_cell(driver));
+		// EXTERNAL is the most consequential fact about a volume — podup neither
+		// creates nor deletes an external one — and the table dropped it while the
+		// JSON path above has always carried it. A `down -v` that leaves a volume
+		// standing is only explicable if you can see which volumes are external.
+		//
+		// On `ui::Table` rather than a hand-rolled `{:<40} {:<12}`: cells are
+		// escaped and columns sized in one place, so this stops being a third
+		// layout dialect that has to be fixed separately every time.
+		let mut table = crate::ui::Table::new(&["NAME", "DRIVER", "EXTERNAL"])
+			.cap(0, 48)
+			.identity_col(0);
+		for (_, name, driver, external) in &rows {
+			table.push(vec![
+				name.clone(),
+				driver.clone(),
+				if *external { "yes" } else { "no" }.to_string(),
+			]);
 		}
+		table.print();
 		Ok(())
 	}
 
@@ -108,21 +121,6 @@ impl Engine {
 	}
 }
 
-/// Escape control characters (ANSI escapes, BEL, tab, newline, …) in a table
-/// cell so a hostile volume name or driver cannot drive the terminal. Printable
-/// characters pass through unchanged. Pure so it can be unit-tested.
-fn sanitize_cell(s: &str) -> String {
-	s.chars()
-		.flat_map(|c| {
-			if c.is_control() {
-				c.escape_default().collect::<Vec<_>>()
-			} else {
-				vec![c]
-			}
-		})
-		.collect()
-}
-
 /// The source (named-volume) component of a mount, if any. Bind mounts and
 /// anonymous volumes (no source) return `None`.
 fn mount_source_name(m: &VolumeMount) -> Option<String> {
@@ -142,23 +140,8 @@ fn mount_source_name(m: &VolumeMount) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-	use super::{mount_source_name, sanitize_cell};
+	use super::mount_source_name;
 	use crate::compose::types::VolumeMount;
-
-	#[test]
-	fn sanitize_cell_escapes_control_chars() {
-		// An ANSI/BEL/tab sequence is escaped rather than emitted raw.
-		let out = sanitize_cell("evil\x1b[31m\x07\tname");
-		assert!(!out.contains('\x1b'));
-		assert!(!out.contains('\x07'));
-		assert!(!out.contains('\t'));
-		assert!(out.contains("name"));
-	}
-
-	#[test]
-	fn sanitize_cell_passes_printable_through() {
-		assert_eq!(sanitize_cell("proj_data-1"), "proj_data-1");
-	}
 
 	#[test]
 	fn named_volume_short_form_has_source() {

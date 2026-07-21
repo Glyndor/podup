@@ -92,10 +92,10 @@ pub(crate) fn write_quadlet(
 		.into());
 	}
 	if let Some(advisory) = quadlet_platform_advisory(std::env::consts::OS) {
-		eprintln!("podup: warning: {advisory}");
+		tracing::warn!("{advisory}");
 	}
 	for warning in &result.warnings {
-		eprintln!("podup: warning: {warning}");
+		tracing::warn!("{warning}");
 	}
 	match output {
 		Some(dir) => {
