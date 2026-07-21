@@ -214,6 +214,25 @@ pub(crate) fn run_labels_for(command: &Commands) -> Vec<String> {
 
 /// Parse the CLI, framing `--help`/`--version` output with a blank line top and
 /// bottom (clap trims template edges, so wrap the rendered text here).
+/// Render a clap help/usage screen, with or without its styling.
+///
+/// Split from the two call sites so the choice is testable: both arms used to
+/// live inside `parse_cli`, which calls `process::exit` and so cannot be
+/// exercised by a unit test at all — the coloured arm was unreachable from the
+/// suite, and adding it dropped coverage below the gate.
+///
+/// Which sink to ask about is the caller's business and differs between them:
+/// `--help` goes to stdout, a missing subcommand is a usage error and goes to
+/// stderr. Asking the wrong one would emit escape codes into a redirected
+/// stream.
+fn render_help(rendered: &clap::builder::StyledStr, colour: bool) -> String {
+	if colour {
+		rendered.ansi().to_string()
+	} else {
+		rendered.to_string()
+	}
+}
+
 pub(crate) fn parse_cli() -> Cli {
 	match Cli::try_parse() {
 		Ok(cli) => cli,
@@ -223,24 +242,76 @@ pub(crate) fn parse_cli() -> Cli {
 				// so colour the rendered text by clap's own styling only when stdout
 				// is a colour sink (TTY + no NO_COLOR); piped output stays plain and
 				// byte-identical to before.
-				let rendered = e.render();
-				if podup::ui::stdout_colored() {
-					print!("\n{}\n", rendered.ansi());
-				} else {
-					print!("\n{rendered}\n");
-				}
+				print!(
+					"\n{}\n",
+					render_help(&e.render(), podup::ui::stdout_colored())
+				);
 				process::exit(0);
 			}
-			clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
+			// `MissingSubcommand` is the same situation wearing a different hat.
+			// `arg_required_else_help` only fires when there are NO arguments at
+			// all, and an env-sourced one counts — so with `COMPOSE_PROJECT_NAME`
+			// or `PODMAN_SOCKET` exported, which is the normal state of a real
+			// deployment, bare `podup` printed a wall of forty-five subcommand
+			// names instead of its help. Same user, same mistake, worse answer,
+			// decided by an environment variable they did not think was involved.
+			clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+			| clap::error::ErrorKind::MissingSubcommand => {
 				// No subcommand (top level) or a required nested subcommand (e.g.
 				// `generate`) was given: print the help to stderr and exit non-zero,
-				// like docker compose, so a script sees the error instead of a silent
-				// success. `podup help` (the explicit Help variant) still exits 0.
-				eprint!("\n{}\n", e.render());
+				// so a script sees the error instead of a silent success. `podup
+				// help` (the explicit Help variant) still exits 0.
+				//
+				// Coloured the same way the `--help` branch above is, but gated on
+				// *stderr* since that is where this goes. Bare `podup` is the first
+				// screen anyone sees after installing, and it was the one help path
+				// that rendered plain — so podup looked like a tool with no colour
+				// while every other screen had it.
+				// Rendered from the command, not from the error: a
+				// `MissingSubcommand` error renders as a one-line complaint plus
+				// that subcommand wall, and the help is the useful answer to
+				// both kinds.
+				let help = <Cli as clap::CommandFactory>::command().render_help();
+				eprint!("\n{}\n", render_help(&help, podup::ui::stderr_colored()));
 				process::exit(2);
 			}
 			_ => e.exit(),
 		},
+	}
+}
+
+#[cfg(test)]
+mod render_help_tests {
+	use super::render_help;
+
+	fn styled() -> clap::builder::StyledStr {
+		let mut s = clap::builder::StyledStr::new();
+		s.push_str("Usage: podup [OPTIONS] <COMMAND>");
+		s
+	}
+
+	/// Piped output must be byte-clean: a script reading the usage screen gets
+	/// text, not terminal control codes.
+	#[test]
+	fn without_colour_the_text_carries_no_escapes() {
+		let out = render_help(&styled(), false);
+		assert!(!out.contains('\u{1b}'), "{out:?}");
+		assert!(out.contains("Usage: podup"), "{out:?}");
+	}
+
+	/// And the coloured arm actually differs, rather than being a no-op nobody
+	/// noticed — which is what a plain `assert!(out.contains("Usage"))` on both
+	/// arms would have failed to catch.
+	#[test]
+	fn with_colour_the_text_still_reads_the_same() {
+		let plain = render_help(&styled(), false);
+		let coloured = render_help(&styled(), true);
+		assert!(coloured.contains("Usage: podup"), "{coloured:?}");
+		assert_eq!(
+			coloured.replace('\u{1b}', ""),
+			plain.replace('\u{1b}', ""),
+			"colour must not change the words"
+		);
 	}
 }
 
