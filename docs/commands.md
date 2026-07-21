@@ -222,7 +222,7 @@ Run a one-off command in a new container for the service.
 | `-v, --volume <SPEC>` | Bind-mount an extra volume (`HOST:CONTAINER[:OPTS]` or `NAME:CONTAINER`). Repeatable. | none |
 | `-p, --publish <SPEC>` | Publish an extra port (`HOST:CONTAINER[/PROTO]`). Repeatable. | none |
 | `-i, --interactive` | Keep STDIN open (accepted for compatibility; `run` still streams logs). | off |
-| `-T, --no-TTY` (alias `--no-tty`) | Disable pseudo-TTY allocation (accepted for compatibility; podup never allocates one). | off |
+| `-T, --no-TTY` (alias `--no-tty`) | Disable pseudo-TTY allocation. | off |
 | `--no-deps` | Do not start the `depends_on` services before running. | off |
 
 ```bash
@@ -233,6 +233,23 @@ podup run --rm web sh -c 'echo hello'
 > here; `docker compose run` keeps it unless you pass `--rm`. Migrating a script
 > means its existing `--rm` becomes a no-op and a container it expected to
 > inspect afterwards is gone — pass `--no-rm` to keep it.
+
+On Unix, `run` allocates a pseudo-TTY and attaches your stdin when stdin is a
+terminal, so `podup run -it app sh` drops you into an interactive session that
+follows your window size. Like `docker compose run`, a TTY on both ends is the
+default and `-T` is how you turn it off; `-d` never allocates one, since there
+is nobody to be interactive with.
+
+It engages **only** when stdin is a terminal, so a script or a pipeline keeps
+the plain streaming behaviour with no change to output framing:
+
+```bash
+podup run --rm app echo hola > salida.txt   # streams, no TTY
+podup run --rm -T app ./migrar.sh           # streams, no TTY
+```
+
+Windows keeps the streaming behaviour in every case
+([#1140](https://github.com/Glyndor/podup/issues/1140)).
 
 ### `exec <SERVICE> <COMMAND...>`
 Execute a command in a running service container.
@@ -547,7 +564,6 @@ covers, and the only other way to find out was to read the dispatch code.
 | `config --no-normalize` | `config` always emits the normalized form. |
 | `cp -a, --archive` | Ownership/permission preservation is not meaningful for a rootless copy. |
 | `attach --no-stdin`, `--sig-proxy`, `--detach-keys` | `attach` streams output only; stdin is never attached (see [#1079](https://github.com/Glyndor/podup/issues/1079)). |
-| `run -T, --no-TTY` | `run` never allocates a pseudo-TTY, so disabling one is a no-op. `exec -T` is real: it turns off a pseudo-TTY that `exec` does allocate. |
 
 Everything else that parses does something. An **unknown** `--filter` predicate
 is rejected outright rather than dropped: a filter that silently does not apply

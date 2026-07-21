@@ -6,6 +6,8 @@ mod build;
 mod container;
 mod copy;
 mod events;
+#[cfg(unix)]
+mod terminal_pump;
 pub use events::EventsOptions;
 mod image;
 pub use build::{BuildOptions, PullOptions, PushOptions};
@@ -13,6 +15,17 @@ pub use copy::CpOptions;
 pub use image::{resolve_image_digests, CommitOptions};
 pub use lifecycle::{validate_stop_timeout, RunOptions, RunOverrides};
 pub use lock::ProjectLock;
+/// Whether `run` should allocate a pseudo-TTY and attach stdin.
+///
+/// The same rule `exec` uses, kept in one place so the two cannot drift: a TTY
+/// on both ends by default, `-T` to opt out, `-d` excluded because there is
+/// nobody to be interactive with, and only when stdin is genuinely a terminal —
+/// which is what keeps every existing script and pipeline on the unchanged
+/// streaming path.
+pub(crate) fn wants_interactive_run(no_tty: bool, detach: bool) -> bool {
+	!no_tty && !detach && query::stdin_is_terminal()
+}
+
 pub use query::{
 	AttachOutcome, ExecOptions, ImagesOptions, LogsDisplay, LogsOptions, PsFilterOptions, PsOptions,
 };
@@ -510,3 +523,30 @@ fn walk_collect(dir: &std::path::Path, out: &mut Vec<PathBuf>) -> std::io::Resul
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod interactive_run_tests {
+	use super::wants_interactive_run;
+
+	/// `-T` opts out, matching `docker compose run` — which has no `-i` because
+	/// a TTY on both ends is the default.
+	#[test]
+	fn no_tty_disables_the_pty() {
+		assert!(!wants_interactive_run(true, false));
+	}
+
+	/// `-d` detaches, so there is nobody to be interactive with.
+	#[test]
+	fn detach_disables_the_pty() {
+		assert!(!wants_interactive_run(false, true));
+	}
+
+	/// The decisive one for existing users: in a test harness — as in any script
+	/// or pipeline — stdin is not a terminal, so `run` stays on the unchanged
+	/// streaming path. Allocating a pty there would change output framing for
+	/// every script that already calls `podup run`.
+	#[test]
+	fn a_non_terminal_stdin_stays_on_the_streaming_path() {
+		assert!(!wants_interactive_run(false, false));
+	}
+}

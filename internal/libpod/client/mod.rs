@@ -22,6 +22,7 @@ mod encode;
 #[cfg(unix)]
 mod hijack;
 pub(crate) use encode::{is_valid_object_name, urlencoded};
+pub(crate) use hijack::Hijacked;
 
 /// The request body every call shares. A boxed body so a fully-buffered
 /// `Full<Bytes>` (almost every call) and a lazily-streamed build-context body

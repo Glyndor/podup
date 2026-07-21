@@ -177,6 +177,7 @@ pub(crate) fn run_overrides_for(command: &Commands) -> podup::RunOverrides {
 			volume,
 			publish,
 			interactive,
+			no_tty,
 			no_deps,
 			..
 		} => podup::RunOverrides {
@@ -186,6 +187,7 @@ pub(crate) fn run_overrides_for(command: &Commands) -> podup::RunOverrides {
 			volumes: volume.clone(),
 			publish: publish.clone(),
 			interactive: *interactive,
+			no_tty: *no_tty,
 			no_deps: *no_deps,
 		},
 		_ => podup::RunOverrides::default(),
