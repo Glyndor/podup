@@ -59,7 +59,17 @@ declare -A OP=(
 	[network-ipam]=updown [volume-heavy]=updown [warm-restart]=reup
 	[many-services]=updown [running-ops]=running [build]=build
 	[config-heavy]=parse [wide-running-ops]=running
+	[deep-chain]=updown [wide-level]=updown
 )
+
+# Every scenario must have an op, or the run dies partway through with an
+# unbound-variable error under `set -u`. deep-chain and wide-level were added to
+# SCENARIOS in #1123 and never added here, so the suite has been unable to
+# complete since — nobody noticed because those two were only ever run by hand,
+# one at a time, to measure the scheduler change that introduced them.
+for _s in "${SCENARIOS[@]}"; do
+	[ -n "${OP[$_s]:-}" ] || { echo "bench: scenario '$_s' has no entry in OP" >&2; exit 2; }
+done
 if [ "$SMOKE" -eq 1 ]; then SCENARIOS=(single running-ops); fi
 
 TOOLS=(podup podman-compose)
