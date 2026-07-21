@@ -234,9 +234,20 @@ pub(crate) fn parse_cli() -> Cli {
 			clap::error::ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand => {
 				// No subcommand (top level) or a required nested subcommand (e.g.
 				// `generate`) was given: print the help to stderr and exit non-zero,
-				// like docker compose, so a script sees the error instead of a silent
-				// success. `podup help` (the explicit Help variant) still exits 0.
-				eprint!("\n{}\n", e.render());
+				// so a script sees the error instead of a silent success. `podup
+				// help` (the explicit Help variant) still exits 0.
+				//
+				// Coloured the same way the `--help` branch above is, but gated on
+				// *stderr* since that is where this goes. Bare `podup` is the first
+				// screen anyone sees after installing, and it was the one help path
+				// that rendered plain — so podup looked like a tool with no colour
+				// while every other screen had it.
+				let rendered = e.render();
+				if podup::ui::stderr_colored() {
+					eprint!("\n{}\n", rendered.ansi());
+				} else {
+					eprint!("\n{rendered}\n");
+				}
 				process::exit(2);
 			}
 			_ => e.exit(),

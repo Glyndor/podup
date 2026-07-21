@@ -383,3 +383,35 @@ fn sig_proxy_accepts_dockers_bare_form_and_an_explicit_value() {
 		);
 	}
 }
+
+/// Bare `podup` is the first screen anyone sees after installing, and it was
+/// the one help path that rendered without colour — every other screen had it,
+/// so podup looked like a tool that does not colourise at all.
+///
+/// This checks the piped side, which is what a test harness can observe: the
+/// help must reach **stderr** (it is a usage error, not output), carry no
+/// escape codes when stderr is not a terminal, and stay on exit 2. The coloured
+/// side is verified by running it under a pty, which no `Command::output()`
+/// test can do — 50 escapes against 0 before.
+#[test]
+fn bare_podup_prints_help_to_stderr_and_stays_plain_when_piped() {
+	let out = Command::new(bin())
+		.output()
+		.expect("run podup with no args");
+	let stderr = String::from_utf8_lossy(&out.stderr);
+	let stdout = String::from_utf8_lossy(&out.stdout);
+
+	assert_eq!(out.status.code(), Some(2), "no args is a usage error");
+	assert!(
+		stderr.contains("Usage:") && stderr.contains("Commands:"),
+		"the help belongs on stderr: {stderr:?}"
+	);
+	assert!(
+		stdout.is_empty(),
+		"stdout must stay clean for scripts: {stdout:?}"
+	);
+	assert!(
+		!stderr.contains('\u{1b}'),
+		"a pipe must receive no escape codes: {stderr:?}"
+	);
+}
