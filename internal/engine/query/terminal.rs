@@ -24,7 +24,7 @@ use std::os::fd::AsRawFd;
 /// Holding the original `termios` rather than reconstructing a "sane" one
 /// matters: the caller's shell may have its own settings, and putting the
 /// terminal into what podup thinks is normal would quietly change them.
-pub(super) struct RawMode {
+pub(crate) struct RawMode {
 	fd: i32,
 	original: libc::termios,
 }
@@ -35,7 +35,7 @@ impl RawMode {
 	/// Not being a TTY is the ordinary case for `podup exec` in a script or a
 	/// pipeline, not an error: there is no line discipline to disable, and the
 	/// caller streams bytes as before.
-	pub(super) fn enable() -> Option<Self> {
+	pub(crate) fn enable() -> Option<Self> {
 		Self::enable_on(std::io::stdin().as_raw_fd())
 	}
 
@@ -100,7 +100,7 @@ impl Drop for RawMode {
 /// "not a terminal" while a perfectly good size sits on stdin. Interactivity is
 /// decided by stdin, so the size is asked of stdin too, and stdout is the
 /// fallback for the reverse case.
-pub(super) fn window_size() -> Option<(u16, u16)> {
+pub(crate) fn window_size() -> Option<(u16, u16)> {
 	size_of(std::io::stdin().as_raw_fd()).or_else(|| size_of(std::io::stdout().as_raw_fd()))
 }
 

@@ -16,10 +16,11 @@ mod inspect_util;
 mod log_prefix;
 mod ps;
 #[cfg(unix)]
-mod terminal;
+pub(crate) mod terminal;
 
 pub use ps::{PsFilterOptions, PsOptions};
 
+pub(crate) use exec::stdin_is_terminal;
 pub use exec::ExecOptions;
 use log_prefix::LinePrefixer;
 

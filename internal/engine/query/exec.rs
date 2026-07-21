@@ -378,7 +378,7 @@ fn wants_interactive(opts: &ExecOptions, stdin_is_tty: bool) -> bool {
 /// Whether stdin is a terminal. Always false off Unix, where the interactive
 /// path is not implemented (#1079) — so `exec` there keeps its current
 /// behaviour rather than half-entering a mode it cannot finish.
-fn stdin_is_terminal() -> bool {
+pub(crate) fn stdin_is_terminal() -> bool {
 	#[cfg(unix)]
 	{
 		use std::io::IsTerminal;

@@ -43,6 +43,11 @@ impl Engine {
 			interactive,
 			no_deps,
 		} = self.run_overrides.clone();
+		let no_tty = self.run_no_tty;
+		// Same rule as `exec`: a TTY on both ends by default, `-T` to opt out,
+		// and only when stdin is actually a terminal — so a script or a pipeline
+		// keeps the streaming path it has always had, unchanged.
+		let want_tty = crate::engine::wants_interactive_run(no_tty, detach);
 		// `--env-file` and `-l/--label` are carried on the engine (not
 		// `RunOverrides`) to keep the public struct frozen.
 		let env_files = self.run_env_files.clone();
@@ -96,9 +101,10 @@ impl Engine {
 		if let Some(w) = workdir {
 			run_service.working_dir = Some(w);
 		}
-		// `-i/--interactive` keeps STDIN open on the spec; `run` still streams
-		// logs rather than attaching a live terminal.
-		if interactive {
+		// `-i/--interactive` keeps STDIN open on the spec. With a terminal on both
+		// ends the container also gets a live stdin attached below; without one
+		// this is the same flag it always was.
+		if interactive || want_tty {
 			run_service.stdin_open = Some(true);
 		}
 		// Ad-hoc `-v/--volume` mounts append to the service's own mounts in
@@ -150,10 +156,12 @@ impl Engine {
 				.ports
 				.push(crate::compose::types::PortMapping::Short(p));
 		}
-		// Force non-TTY so Podman uses multiplexed log framing that
-		// parse_multiplexed can decode. TTY mode sends raw bytes without
-		// the 8-byte header, which would produce garbled output.
-		run_service.tty = None;
+		// Non-TTY forces Podman's multiplexed log framing, which is what the
+		// streaming path below decodes — TTY mode sends raw bytes with no 8-byte
+		// header and would garble that reader. The interactive path does not use
+		// that reader at all: it attaches to the raw stream, which is exactly the
+		// framing a TTY produces. So the two are consistent, not contradictory.
+		run_service.tty = want_tty.then_some(true);
 
 		// Ensure the project networks exist (compose `run` brings them up like
 		// `up` does); the service may reference the synthesized `default`
@@ -182,8 +190,12 @@ impl Engine {
 		// On a start failure (bad --workdir/--user/--entrypoint), the container is
 		// created but never starts; with --rm, remove it here so repeated failures
 		// don't accumulate orphaned 'Created' containers.
+		// Interactive runs create first and start later, with the attach in
+		// between: a container started before anything is listening loses
+		// whatever it printed in that gap, and for `run` — a one-shot command —
+		// that gap is often the entire output.
 		if let Err(e) = self
-			.create_and_start(&run_name, service_name, &run_service, file, true)
+			.create_and_start(&run_name, service_name, &run_service, file, !want_tty)
 			.await
 		{
 			if rm {
@@ -198,6 +210,14 @@ impl Engine {
 			// `docker compose run -d`.
 			crate::ui::result_line(&run_name).map_err(ComposeError::Io)?;
 			return Ok(());
+		}
+
+		// The interactive path takes over here: it needs the connection kept open
+		// in both directions, which the request/response client cannot give it.
+		// Same shape `exec` uses, and cfg-ed the same way.
+		#[cfg(unix)]
+		if want_tty {
+			return self.finish_interactive_run(&run_name, rm, &rm_path).await;
 		}
 
 		// Stream logs and wait for the exit code. Any failure on this path also

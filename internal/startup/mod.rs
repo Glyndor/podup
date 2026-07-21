@@ -192,6 +192,15 @@ pub(crate) fn run_overrides_for(command: &Commands) -> podup::RunOverrides {
 	}
 }
 
+/// Whether `run` was given `-T/--no-TTY`.
+///
+/// Carried on the engine rather than on `RunOverrides`, which is public and not
+/// `#[non_exhaustive]` — a new field there is a breaking change, which is what
+/// the semver gate told me when I tried it.
+pub(crate) fn run_no_tty_for(command: &Commands) -> bool {
+	matches!(command, Commands::Run { no_tty, .. } if *no_tty)
+}
+
 /// Extract the `docker compose run -l/--label KEY=VAL` ad-hoc labels for the
 /// engine builder ([`podup::Engine::with_run_labels`]). Carried on the engine
 /// rather than the frozen `RunOverrides` struct so the 1.0 library API stays
