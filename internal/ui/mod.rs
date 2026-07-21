@@ -13,7 +13,7 @@
 
 use std::io::IsTerminal;
 
-use anstyle::{AnsiColor, Style};
+pub use anstyle::{AnsiColor, Style};
 
 pub use anstream::ColorChoice;
 
@@ -71,6 +71,42 @@ pub fn stderr_colored() -> bool {
 /// and machine/JSON output.
 static PROGRESS_ENABLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// The project name, so an identity colour can be keyed on the same label
+/// everywhere.
+///
+/// `logs` prefixes lines with the project-stripped `web-1`; `ps` prints the full
+/// container name `proj-web-1`; the progress lines print the full name too.
+/// Hashing whatever string each site happens to hold gives the same container a
+/// different colour in each command — which defeats the point of a stable
+/// palette. Stripping the project first makes one container one colour.
+static PROJECT: std::sync::RwLock<String> = std::sync::RwLock::new(String::new());
+
+/// Record the project name for identity colouring. Set once per invocation.
+pub fn set_project(name: &str) {
+	if let Ok(mut slot) = PROJECT.write() {
+		name.clone_into(&mut slot);
+	}
+}
+
+/// The stable identity colour for a container or service label, keyed on the
+/// label with the project prefix removed.
+///
+/// Callers pass whatever they display — `proj-web-1`, `web-1`, `web` — and get
+/// the same colour for the same container, which is what makes `ps`, `logs`,
+/// `stats` and the progress lines agree.
+pub fn identity_style(label: &str) -> Style {
+	let key = PROJECT
+		.read()
+		.ok()
+		.and_then(|p| {
+			(!p.is_empty())
+				.then(|| label.strip_prefix(&format!("{p}-")).map(str::to_string))
+				.flatten()
+		})
+		.unwrap_or_else(|| label.to_string());
+	service_style(&key)
+}
+
 /// Enable or disable user-facing lifecycle progress output process-wide. The CLI
 /// enables it for the lifecycle commands; embedders that want podup silent leave
 /// it off (the default).
@@ -94,14 +130,37 @@ pub fn progress_line(kind: &str, name: &str, action: &str) {
 	if !progress_enabled() {
 		return;
 	}
-	let style = Style::new().fg_color(Some(AnsiColor::Green.into()));
+	let verb = action_style(action);
+	let ident = identity_style(name);
 	// anstream::stderr strips the ANSI codes itself when colour is off.
 	let _ = writeln!(
 		anstream::stderr(),
-		" {kind} {name}  {}{action}{}",
-		style.render(),
-		style.render_reset()
+		" {kind} {}{name}{}  {}{action}{}",
+		ident.render(),
+		ident.render_reset(),
+		verb.render(),
+		verb.render_reset()
 	);
+}
+
+/// The colour band for a lifecycle verb.
+///
+/// Every verb used to be the same green, so `Volume data Removed` — which
+/// destroys data and cannot be undone — was styled exactly like `Started`. The
+/// bands say what kind of thing happened: something now exists (green),
+/// something stopped but survives (yellow), something is gone (red), nothing
+/// changed (dim).
+fn action_style(action: &str) -> Style {
+	let a = action.to_ascii_lowercase();
+	if a.starts_with("remov") || a.starts_with("kill") || a.starts_with("delet") {
+		Style::new().fg_color(Some(AnsiColor::Red.into()))
+	} else if a.starts_with("stop") || a.starts_with("paus") || a.starts_with("restart") {
+		Style::new().fg_color(Some(AnsiColor::Yellow.into()))
+	} else if a.starts_with("exist") || a.starts_with("running") || a.starts_with("skip") {
+		Style::new().dimmed()
+	} else {
+		Style::new().fg_color(Some(AnsiColor::Green.into()))
+	}
 }
 
 /// Emit a plain user-facing progress note to stderr (e.g. a "nothing to do"
@@ -429,5 +488,35 @@ mod tests {
 		assert!(cell.contains("ok"));
 		// At least the requested width (colour codes, if any, only add length).
 		assert!(cell.len() >= 6);
+	}
+}
+
+#[cfg(test)]
+mod identity_key_tests {
+	use super::*;
+
+	/// The whole point of the shared key: `ps` prints `proj-web-1`, `logs`
+	/// prefixes `web-1`, and the progress lines print `proj-web-1` — all three
+	/// must resolve to one colour, or the palette is not stable at all.
+	#[test]
+	fn every_spelling_of_one_container_gets_one_colour() {
+		set_project("proj");
+		let from_ps = identity_style("proj-web-1");
+		let from_logs = identity_style("web-1");
+		assert_eq!(
+			from_ps.render().to_string(),
+			from_logs.render().to_string(),
+			"the same container must be the same colour in ps and logs"
+		);
+	}
+
+	/// A label that does not carry the project prefix is left alone.
+	#[test]
+	fn an_unprefixed_label_is_keyed_on_itself() {
+		set_project("proj");
+		assert_eq!(
+			identity_style("web").render().to_string(),
+			service_style("web").render().to_string()
+		);
 	}
 }

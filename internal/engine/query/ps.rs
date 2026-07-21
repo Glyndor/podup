@@ -333,7 +333,8 @@ impl Engine {
 		let mut table = crate::ui::Table::new(&["NAME", "IMAGE", "STATUS", "PORTS"])
 			.cap(0, 48)
 			.cap(1, 48)
-			.status_col(2);
+			.status_col(2)
+			.identity_col(0);
 		for c in &containers {
 			table.push(vec![
 				name_of(c),

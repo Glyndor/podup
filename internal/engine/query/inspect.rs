@@ -288,7 +288,8 @@ impl Engine {
 		let mut table = crate::ui::Table::new(&["SERVICE", "REPOSITORY", "TAG", "IMAGE ID"])
 			.cap(0, 48)
 			.cap(1, 48)
-			.cap(2, 24);
+			.cap(2, 24)
+			.identity_col(0);
 		for (svc, repo, tag, id) in &rows {
 			table.push(vec![svc.clone(), repo.clone(), tag.clone(), id.clone()]);
 		}

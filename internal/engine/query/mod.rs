@@ -147,7 +147,7 @@ fn is_go_duration(v: &str) -> bool {
 /// same container was tagged `myproj-web-1  | ` by one command and `web-1 | ` by
 /// the other — two shapes for one thing, in one binary. docker compose prints
 /// the short form.
-fn display_label(container_name: &str, project: &str) -> String {
+pub(crate) fn display_label(container_name: &str, project: &str) -> String {
 	container_name
 		.strip_prefix(&format!("{project}-"))
 		.unwrap_or(container_name)

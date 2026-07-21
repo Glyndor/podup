@@ -316,6 +316,9 @@ async fn run() -> podup::Result<()> {
 		let file = parsed.unwrap_or_default();
 		let project = resolve_project_name(cli.project.clone(), compose_name.as_deref(), &base_dir);
 		startup::validate_project_name(&project)?;
+		// Identity colours key on the project-stripped label, so every command
+		// tints the same container the same way.
+		podup::ui::set_project(&project);
 		let client = podup::podman::connect(resolve_socket(cli.socket.as_deref()).as_deref())?;
 		let engine = podup::Engine::with_base_dir(client, project, base_dir);
 		return engine
@@ -359,6 +362,9 @@ async fn run() -> podup::Result<()> {
 		{
 			let project = cli.project.clone().expect("checked by down_by_label_path");
 			startup::validate_project_name(&project)?;
+			// Identity colours key on the project-stripped label, so every command
+			// tints the same container the same way.
+			podup::ui::set_project(&project);
 			// `--rmi` removes the images of the file's services, which cannot be
 			// resolved without a file; warn rather than silently dropping it.
 			if rmi.is_some() {
@@ -422,6 +428,9 @@ async fn run() -> podup::Result<()> {
 		let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
 		let project = resolve_project_name(cli.project.clone(), file.name.as_deref(), &base_dir);
 		startup::validate_project_name(&project)?;
+		// Identity colours key on the project-stripped label, so every command
+		// tints the same container the same way.
+		podup::ui::set_project(&project);
 		// `file` is already parsed with the correct interpolation setting above.
 		let parsed = file;
 		// `--resolve-image-digests` pins each image to its registry digest, which
@@ -463,6 +472,10 @@ async fn run() -> podup::Result<()> {
 	// compose `name:` field are otherwise taken verbatim; rejecting an unsafe
 	// name here fails closed regardless of which command runs next.
 	startup::validate_project_name(&project)?;
+	// Identity colours key on the project-stripped label, so ps, logs, stats and
+	// the progress lines all tint the same container the same way. This is the
+	// path every lifecycle command takes.
+	podup::ui::set_project(&project);
 
 	// `generate` produces declarative artifacts from the compose file alone; it
 	// neither contacts Podman nor mutates project state.
