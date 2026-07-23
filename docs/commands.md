@@ -234,7 +234,7 @@ podup run --rm web sh -c 'echo hello'
 > means its existing `--rm` becomes a no-op and a container it expected to
 > inspect afterwards is gone — pass `--no-rm` to keep it.
 
-On Unix, `run` allocates a pseudo-TTY and attaches your stdin when stdin is a
+`run` allocates a pseudo-TTY and attaches your stdin when stdin is a
 terminal, so `podup run -it app sh` drops you into an interactive session that
 follows your window size. Like `docker compose run`, a TTY on both ends is the
 default and `-T` is how you turn it off; `-d` never allocates one, since there
@@ -255,9 +255,6 @@ CRLF**. Checking stdin alone would mean `podup run app cmd > out.txt`, typed at
 a shell, silently wrote different bytes into that file than the same command in
 a script.
 
-Windows keeps the streaming behaviour in every case
-([#1154](https://github.com/Glyndor/podup/issues/1154)).
-
 ### `exec <SERVICE> <COMMAND...>`
 Execute a command in a running service container.
 
@@ -271,7 +268,7 @@ Execute a command in a running service container.
 | `-T, --no-tty` (alias `--no-TTY`) | Disable pseudo-TTY allocation. | off |
 | `--index <N>` | Target this replica (1-based) of a scaled service. | 1 |
 
-On Unix, `exec` allocates a pseudo-TTY and attaches your stdin when stdin is a
+`exec` allocates a pseudo-TTY and attaches your stdin when stdin is a
 terminal, so `podup exec -it db psql` drops you into an interactive session that
 follows your window size. It is not on `-i`: like `docker compose exec`, a TTY on
 both ends is the default, and `-T` is how you turn it off.
@@ -283,10 +280,6 @@ pipeline keeps the plain streaming behaviour with no change to output framing:
 podup exec db psql -c 'select 1' > out.txt   # streams, no TTY
 echo 'select 1' | podup exec -T db psql      # streams, no TTY
 ```
-
-Windows keeps the streaming behaviour in every case; podup reaches
-`podman machine` over a named pipe there, where raw mode and window-resize are a
-different API ([#1079](https://github.com/Glyndor/podup/issues/1079)).
 
 ```bash
 podup exec -u root web sh
