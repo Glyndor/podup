@@ -137,6 +137,27 @@ volumes:
   - ./data:/app/data:Z
 ```
 
+### Per-mount hardening options (`noexec`, `nosuid`, `nodev`)
+
+The short form carries these as raw mount options (`cache:/app/cache:noexec`),
+and the long form accepts them as booleans under `volume:`:
+
+```yaml
+volumes:
+  - type: volume
+    source: cache
+    target: /app/cache
+    volume:
+      noexec: true
+      nosuid: true
+      nodev: true
+```
+
+The long-form spelling is a podup extension — the Compose Specification defines
+no per-mount hardening flags there — so a compose file using it is not portable
+back to `docker compose`, which rejects the unknown keys. `generate quadlet`
+carries the options into the exported unit.
+
 ### `network_mode: host`
 
 Attaches the container to your user's network namespace, not a privileged host

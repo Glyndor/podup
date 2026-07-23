@@ -253,6 +253,36 @@ mod tests {
 		assert!(named[0].options.contains(&"nocopy".to_string()));
 	}
 
+	/// The mount-hardening trio reaches the engine from the long form, matching
+	/// what the short form's raw options have always done (#1160). `false` and
+	/// absent both mean "not hardened": only an explicit `true` emits the flag.
+	#[test]
+	fn long_form_volume_hardening_options_forwarded() {
+		let svc = svc_with_volumes(vec![VolumeMount::Long {
+			volume_type: VolumeType::Volume,
+			source: Some("myvolume".into()),
+			target: "/data".into(),
+			read_only: None,
+			bind: None,
+			volume: Some(VolumeOptions {
+				noexec: Some(true),
+				nosuid: Some(true),
+				nodev: Some(false),
+				..Default::default()
+			}),
+			tmpfs: None,
+			consistency: None,
+		}]);
+		let (_, named) = build_mounts_all(&svc, Path::new("/base"), &[], &[]);
+		assert_eq!(named.len(), 1);
+		assert!(named[0].options.contains(&"noexec".to_string()));
+		assert!(named[0].options.contains(&"nosuid".to_string()));
+		assert!(
+			!named[0].options.contains(&"nodev".to_string()),
+			"an explicit false must not emit the flag"
+		);
+	}
+
 	#[test]
 	fn long_form_volume_subpath_forwarded() {
 		let svc = svc_with_volumes(vec![VolumeMount::Long {

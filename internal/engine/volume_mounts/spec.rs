@@ -195,6 +195,18 @@ pub(super) fn extend_volume_opts_str(opts: &mut Vec<String>, v: Option<&VolumeOp
 	if v.nocopy.unwrap_or(false) {
 		opts.push("nocopy".into());
 	}
+	// The mount-hardening trio. The short form has always carried these as raw
+	// options; the long form dropped them with an unknown-key warning, so the
+	// spelled-out mount was the one that could not be hardened (#1160).
+	if v.noexec.unwrap_or(false) {
+		opts.push("noexec".into());
+	}
+	if v.nosuid.unwrap_or(false) {
+		opts.push("nosuid".into());
+	}
+	if v.nodev.unwrap_or(false) {
+		opts.push("nodev".into());
+	}
 }
 
 #[cfg(test)]

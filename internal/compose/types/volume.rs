@@ -27,6 +27,12 @@ pub enum VolumeType {
 }
 
 /// Sub-options for a `bind`-type volume mount.
+///
+/// `#[non_exhaustive]` (3.0.0), like every compose option block below: these
+/// structs grow a field whenever the compose surface does, and each addition
+/// used to be a breaking change for anyone building the literal. Construct via
+/// `Default::default()` and assign the fields you need.
+#[non_exhaustive]
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct BindOptions {
 	/// Mount propagation mode (e.g. `rprivate`, `rshared`).
@@ -41,6 +47,9 @@ pub struct BindOptions {
 }
 
 /// Sub-options for a `volume`-type mount — nocopy flag and optional driver config.
+///
+/// `#[non_exhaustive]` (3.0.0): see [`BindOptions`].
+#[non_exhaustive]
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct VolumeOptions {
 	/// Whether to skip copying existing target contents into the volume.
@@ -55,9 +64,28 @@ pub struct VolumeOptions {
 	/// Path within the volume to mount instead of its root.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub subpath: Option<String>,
+	/// Mount with `noexec`, denying execution of binaries from the volume.
+	///
+	/// A podup extension, like its two siblings below: the Compose
+	/// Specification defines no per-mount hardening flags on the long form,
+	/// while the short form has always carried them as raw mount options
+	/// (`cache:/app/cache:noexec`). The long form deserved the same reach —
+	/// these are the standard mount-hardening trio, and a compose file that
+	/// spells a mount out longhand should not lose them (#1160).
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub noexec: Option<bool>,
+	/// Mount with `nosuid`, ignoring setuid/setgid bits on files in the volume.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub nosuid: Option<bool>,
+	/// Mount with `nodev`, denying access to device nodes in the volume.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub nodev: Option<bool>,
 }
 
 /// Driver name and key-value options nested under `VolumeOptions`.
+///
+/// `#[non_exhaustive]` (3.0.0): see [`BindOptions`].
+#[non_exhaustive]
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DriverConfig {
 	/// Volume driver name.
@@ -69,6 +97,9 @@ pub struct DriverConfig {
 }
 
 /// Sub-options for a `tmpfs`-type mount — size and mode.
+///
+/// `#[non_exhaustive]` (3.0.0): see [`BindOptions`].
+#[non_exhaustive]
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct TmpfsOptions {
 	/// Size of the tmpfs mount in bytes.
