@@ -153,8 +153,8 @@ volumes:
       nodev: true
 ```
 
-The long-form spelling is a podup extension — the Compose Specification defines
-no per-mount hardening flags there — so a compose file using it is not portable
+The long-form spelling is a podup extension (the Compose Specification defines
+no per-mount hardening flags there), so a compose file using it is not portable
 back to `docker compose`, which rejects the unknown keys. `generate quadlet`
 carries the options into the exported unit.
 
