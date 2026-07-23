@@ -107,8 +107,11 @@ Go binary talking to a socket, like podup.
 
 ## Reading these numbers honestly
 
-podup leads every row here, and two of them deserve a caveat rather than a
-victory lap.
+podup leads every row in this memory-and-latency table, and two of them deserve
+a caveat rather than a victory lap. (In the full latency table above, one
+scenario goes the other way: deep-chain `down`, where docker-compose's 0.380 s
+is a hair under podup's 0.390 s, well within a standard deviation. The point of
+this benchmark is to publish the numbers whoever wins, so that row stands.)
 
 `running-ops ps` and `config-heavy config` show podup at **0.000s**. That is the
 floor of `/usr/bin/time -v`, which resolves to 10ms — the real figure is around

@@ -105,12 +105,13 @@ each release on its own schedule.
 
 The packaging mechanics carry over regardless of channel:
 
-- **SemVer discipline** — `1.0.0` (already shipped) is in force: the CLI surface
-  is stable and breaking changes wait for a major bump.
+- **SemVer discipline**, in force since `1.0.0`: the CLI surface is stable and
+  breaking changes wait for a major bump.
 - **crates.io** — the crate metadata is in place (`cargo package` verifies
   clean) for publishing podup as a library; this is independent of the `.deb`.
 
 ## Versioning
 
 `debian/changelog` tracks the upstream version (native package, no `-1`
-revision). Bump it as part of each release PR.
+revision), and is bumped with each release so `dpkg-buildpackage` stamps the
+`.deb` with the matching version.

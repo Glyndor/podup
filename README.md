@@ -147,8 +147,10 @@ sequenceDiagram
 
 Peak memory and per-operation latency against docker-compose and podman-compose,
 **all three driving the same rootless Podman**, same digest-pinned images,
-median of 10 measured runs (12 iterations, 2 warm-up discarded). podup leads every scenario; the widest gaps are the
-ones with many services.
+median of 10 measured runs (12 iterations, 2 warm-up discarded), on podup 2.1.0.
+podup leads all but one scenario — deep-chain `down`, where docker-compose's
+0.380 s edges podup's 0.390 s, inside a single standard deviation — and the
+widest gaps are the ones with many services.
 
 | | podup | docker-compose | podman-compose |
 |---|---|---|---|
@@ -157,7 +159,7 @@ ones with many services.
 | `up`, 12 services | **0.38 s** | 0.49 s | 2.43 s |
 | `config` (parse only) | **&lt;0.01 s** | 0.04 s | 0.10 s |
 
-<img src="docs/assets/bench.svg" alt="Bar chart: podup uses about 7 MiB per command against 29 MiB for docker-compose and 51 MiB for podman-compose, and leads every measured scenario" width="760">
+<img src="docs/assets/bench.svg" alt="Bar chart: podup uses about 7 MiB per command against 29 MiB for docker-compose and 51 MiB for podman-compose, and is faster in all but one measured scenario" width="760">
 
 Full tables and methodology: [docs/benchmarks.md](docs/benchmarks.md).
 
@@ -165,9 +167,11 @@ Full tables and methodology: [docs/benchmarks.md](docs/benchmarks.md).
 
 - [Commands](docs/commands.md)
 - [Migrating from Compose](docs/docker-migration.md)
+- [Autostart at boot](docs/autostart.md)
 - [Benchmarks](docs/benchmarks.md)
 - [Self-update](docs/self-update.md)
 - [Security model](docs/security-model.md)
+- [Debian packaging](docs/debian-packaging.md)
 
 ## License
 
