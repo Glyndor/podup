@@ -6,7 +6,6 @@ mod build;
 mod container;
 mod copy;
 mod events;
-#[cfg(unix)]
 mod terminal_pump;
 pub use events::EventsOptions;
 mod image;

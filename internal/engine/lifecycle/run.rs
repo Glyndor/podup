@@ -214,8 +214,7 @@ impl Engine {
 
 		// The interactive path takes over here: it needs the connection kept open
 		// in both directions, which the request/response client cannot give it.
-		// Same shape `exec` uses, and cfg-ed the same way.
-		#[cfg(unix)]
+		// Same shape `exec` uses.
 		if want_tty {
 			return self.finish_interactive_run(&run_name, rm, &rm_path).await;
 		}

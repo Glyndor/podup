@@ -4,8 +4,10 @@
 //! command ends. They differ only in which libpod object gets resized — an exec
 //! session or a container — so that is the one parameter, and the loop that must
 //! not get raw mode wrong lives once rather than twice.
-
-#![cfg(unix)]
+//!
+//! The loop itself is platform-independent: raw mode, the size query and the
+//! resize events differ per platform, and all three live behind the one
+//! signature `query::terminal` exports.
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -13,7 +15,7 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::client::Hijacked;
 use crate::libpod::API_PREFIX;
 
-use super::query::terminal::{window_size, RawMode};
+use super::query::terminal::{window_size, RawMode, ResizeWatcher};
 use super::Engine;
 
 impl Engine {
@@ -45,11 +47,9 @@ impl Engine {
 		let mut stdout = tokio::io::stdout();
 
 		// Follow the window. libpod has no way to learn the caller's terminal
-		// size on its own, so every SIGWINCH has to be forwarded or a resized
+		// size on its own, so every change has to be forwarded or a resized
 		// window leaves the remote program drawing at the old geometry.
-		let mut winch =
-			tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())
-				.map_err(ComposeError::Io)?;
+		let mut resize = ResizeWatcher::new().map_err(ComposeError::Io)?;
 
 		let mut to_server = [0u8; 8 * 1024];
 		let mut from_server = [0u8; 32 * 1024];
@@ -90,10 +90,9 @@ impl Engine {
 						Err(_) => break,
 					}
 				}
-				_ = winch.recv() => {
-					if let Some((rows, cols)) = window_size() {
-						self.resize_pty(resize_base, rows, cols).await;
-					}
+				size = resize.next() => {
+					let (rows, cols) = size;
+					self.resize_pty(resize_base, rows, cols).await;
 				}
 			}
 		}

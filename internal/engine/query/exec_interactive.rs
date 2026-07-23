@@ -1,17 +1,12 @@
-//! Interactive `exec`: a pseudo-terminal and a live stdin, on Unix.
+//! Interactive `exec`: a pseudo-terminal and a live stdin.
 //!
 //! `podup exec -it db psql` is the most-used shell-into-a-container habit in
 //! compose, and it did not work: podup allocated no TTY and attached no stdin,
 //! so `-i` set a flag nothing read and `-T` disabled something that never
-//! existed (#1079).
-//!
-//! Unix only for now. podup reaches `podman machine` over a named pipe on
-//! Windows, and both raw mode and resize events there are a different API — two
-//! implementations, not one behind a `cfg`. The non-interactive path is
-//! unchanged everywhere, so `podup exec` in a script behaves exactly as before
-//! on every platform.
-
-#![cfg(unix)]
+//! existed (#1079). Unix shipped first; Windows followed once the hijack ran
+//! over the named pipe and raw mode spoke the console API (#1154). The
+//! non-interactive path is unchanged everywhere, so `podup exec` in a script
+//! behaves exactly as before on every platform.
 
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};

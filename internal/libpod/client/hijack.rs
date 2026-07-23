@@ -13,9 +13,9 @@
 //! the upgrade out of the general client, which every other call would then have
 //! to reason about.
 
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncRead, AsyncWriteExt};
 
-use super::{Client, PodmanError, Result};
+use super::{Client, PodmanError, Result, SocketStream};
 
 /// Cap on the response head podup will read before deciding the server is not
 /// speaking HTTP. A hijacked stream's head is a status line and a handful of
@@ -31,7 +31,7 @@ const MAX_HEAD_BYTES: usize = 16 * 1024;
 /// them — the same is true of `podman exec -it`.
 #[derive(Debug)]
 pub(crate) struct Hijacked {
-	pub(crate) stream: tokio::net::UnixStream,
+	pub(crate) stream: SocketStream,
 }
 
 impl Client {
@@ -41,9 +41,7 @@ impl Client {
 	/// surfaces as an error instead of hanging with the terminal already in raw
 	/// mode — which would leave the user's shell unusable.
 	pub(crate) async fn post_hijack(&self, path: &str, body: &[u8]) -> Result<Hijacked> {
-		let mut stream = tokio::net::UnixStream::connect(&self.socket_path)
-			.await
-			.map_err(|e| super::socket_error(&self.socket_path, e))?;
+		let mut stream = SocketStream::connect(&self.socket_path).await?;
 
 		// `Connection: close` is deliberate: this socket is never returned to a
 		// pool, and saying so stops the server holding it open after the command
@@ -79,7 +77,7 @@ impl Client {
 /// swallow part of the command's output into its own buffer, and that output
 /// belongs to the caller. Slow, but the head is a few hundred bytes and it only
 /// happens once per exec.
-async fn read_response_head(stream: &mut tokio::net::UnixStream) -> Result<u16> {
+async fn read_response_head<S: AsyncRead + Unpin>(stream: &mut S) -> Result<u16> {
 	use tokio::io::AsyncReadExt;
 
 	let mut head = Vec::with_capacity(256);
@@ -114,7 +112,10 @@ async fn read_response_head(stream: &mut tokio::net::UnixStream) -> Result<u16> 
 		})
 }
 
-#[cfg(test)]
+// The harness listens on a Unix socket; the code under test is the same on
+// Windows via the transport enum, whose named-pipe variant CI exercises through
+// the client's request path.
+#[cfg(all(test, unix))]
 mod tests {
 	use super::*;
 

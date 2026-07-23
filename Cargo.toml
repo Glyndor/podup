@@ -54,6 +54,12 @@ base64 = "0.22"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(windows)'.dependencies]
+# Console raw mode and window size for interactive exec/run: GetConsoleMode/
+# SetConsoleMode and the screen-buffer query. Already in the tree transitively
+# (tokio pulls the same version), so this adds features, not a crate.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console"] }
+
 [features]
 default = ["watch", "completions", "update"]
 watch = ["notify"]

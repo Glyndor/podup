@@ -1,17 +1,6 @@
-//! Terminal raw mode and window size, for interactive `exec`.
-//!
-//! Unix only. podup talks to `podman machine` over a named pipe on Windows, and
-//! raw mode there is a different API entirely (the console handles, not
-//! termios); that is tracked in #1079 rather than faked here.
-//!
-//! The invariant this module exists to hold: **the terminal is restored no
-//! matter how the exec ends.** A command that exits, a socket that dies, a
-//! panic, or a `?` on some unrelated error must all leave the user's shell
-//! usable. Raw mode with no echo and no line discipline is not something to
-//! leave behind on an error path, so the restore lives in `Drop` rather than at
-//! the end of the happy path.
+//! The termios implementation of the terminal contract — see the module doc
+//! in `mod.rs` for the contract and the restore-on-drop invariant.
 
-#![cfg(unix)]
 // termios and the winsize ioctl are libc FFI. The crate denies `unsafe` and
 // modules that need it opt back in locally, with a soundness comment per block —
 // see `engine::lock` and `engine::staging` for the same pattern.
@@ -119,6 +108,41 @@ fn size_of(fd: i32) -> Option<(u16, u16)> {
 		return None;
 	}
 	Some((ws.ws_row, ws.ws_col))
+}
+
+/// Resize events for the interactive pump: yields a size to apply whenever the
+/// caller's window changes.
+///
+/// On Unix the kernel says when: each `SIGWINCH` is followed by a fresh
+/// [`window_size`] query, so the size handed out is the one current at
+/// delivery, not at registration.
+pub(crate) struct ResizeWatcher {
+	signal: tokio::signal::unix::Signal,
+}
+
+impl ResizeWatcher {
+	/// Register for window-change signals.
+	pub(crate) fn new() -> std::io::Result<Self> {
+		Ok(Self {
+			signal: tokio::signal::unix::signal(tokio::signal::unix::SignalKind::window_change())?,
+		})
+	}
+
+	/// The next size to apply.
+	///
+	/// Pends forever once no further signal can arrive, so a `select!` arm on
+	/// it goes quiet rather than spinning on a closed stream; and a signal
+	/// whose size cannot be read is skipped, since there is nothing to apply.
+	pub(crate) async fn next(&mut self) -> (u16, u16) {
+		loop {
+			if self.signal.recv().await.is_none() {
+				std::future::pending::<()>().await;
+			}
+			if let Some(size) = window_size() {
+				return size;
+			}
+		}
+	}
 }
 
 #[cfg(test)]
