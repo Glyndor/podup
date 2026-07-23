@@ -245,9 +245,9 @@ pipeline or a redirect keeps the plain streaming behaviour with no change to
 output framing:
 
 ```bash
-podup run --rm app echo hola > salida.txt   # stdout is a file  -> streams, no TTY
-echo x | podup run --rm app ./migrar.sh     # stdin is a pipe   -> streams, no TTY
-podup run --rm -T app ./migrar.sh           # -T                -> streams, no TTY
+podup run --rm app echo hello > out.txt     # stdout is a file  -> streams, no TTY
+echo x | podup run --rm app ./migrate.sh    # stdin is a pipe   -> streams, no TTY
+podup run --rm -T app ./migrate.sh          # -T                -> streams, no TTY
 ```
 
 Requiring stdout matters because a pty **merges stdout and stderr and writes
@@ -268,17 +268,19 @@ Execute a command in a running service container.
 | `-T, --no-tty` (alias `--no-TTY`) | Disable pseudo-TTY allocation. | off |
 | `--index <N>` | Target this replica (1-based) of a scaled service. | 1 |
 
-`exec` allocates a pseudo-TTY and attaches your stdin when stdin is a
-terminal, so `podup exec -it db psql` drops you into an interactive session that
-follows your window size. It is not on `-i`: like `docker compose exec`, a TTY on
-both ends is the default, and `-T` is how you turn it off.
+`exec` allocates a pseudo-TTY and attaches your stdin when both stdin and stdout
+are terminals, so `podup exec -it db psql` drops you into an interactive session
+that follows your window size. It is not on `-i`: like `docker compose exec`, a
+TTY on both ends is the default, and `-T` is how you turn it off.
 
-Interactivity engages **only** when stdin is a terminal, so a script or a
-pipeline keeps the plain streaming behaviour with no change to output framing:
+Requiring stdout too, not just stdin, keeps a redirect clean: a pty merges
+stdout and stderr and writes CRLF, so interactivity engages **only** when both
+ends are terminals, and a script, a pipeline or a redirect keeps the plain
+streaming behaviour with no change to output framing:
 
 ```bash
-podup exec db psql -c 'select 1' > out.txt   # streams, no TTY
-echo 'select 1' | podup exec -T db psql      # streams, no TTY
+podup exec db psql -c 'select 1' > out.txt   # stdout is a file -> streams, no TTY
+echo 'select 1' | podup exec -T db psql      # stdin is a pipe  -> streams, no TTY
 ```
 
 ```bash
@@ -447,9 +449,16 @@ Print a shell completion script to stdout for `bash`, `zsh`, `fish`,
 automatically; otherwise source the output from your shell startup:
 
 ```bash
+mkdir -p ~/.local/share/bash-completion/completions
 podup completions bash > ~/.local/share/bash-completion/completions/podup
-podup completions zsh  > "${fpath[1]}/_podup"
 podup completions fish > ~/.config/fish/completions/podup.fish
+```
+
+For zsh, write to a directory on your `$fpath` (run this from zsh, where
+`fpath` is defined):
+
+```zsh
+podup completions zsh > "${fpath[1]}/_podup"
 ```
 
 ### `update`
@@ -521,14 +530,17 @@ when both are set.
 ## Podman extensions
 
 Podman does more than the Compose Specification, and a few of those extras
-change behaviour rather than just observability. podup exposes them under the
-spec's reserved `x-` prefix, so a file using one **stays a valid compose file**:
-docker compose ignores an unknown `x-` key instead of erroring, and the same
-file still runs there — it just does not act on the extra.
+change behaviour rather than just observability. Most sit under the spec's
+reserved `x-` prefix, so a file using one **stays a valid compose file**: docker
+compose ignores an unknown `x-` key instead of erroring, and the same file still
+runs there, it just does not act on the extra. Two extensions are not `x-`
+prefixed and so are **not** portable back to docker compose, which rejects the
+keys; they are called out below.
 
-| Key | Where | What it does |
-|---|---|---|
-| `x-podman-on-failure` | under a service's `healthcheck:` | `none`, `kill`, `restart` or `stop` — what Podman does when the check flips to unhealthy. Default `none`. |
+| Key | Where | What it does | Portable |
+|---|---|---|---|
+| `x-podman-on-failure` | under a service's `healthcheck:` | `none`, `kill`, `restart` or `stop` — what Podman does when the check flips to unhealthy. Default `none`. | yes |
+| `noexec`, `nosuid`, `nodev` | under a long-form volume's `volume:` | mount-hardening flags; see [Per-mount hardening options](docker-migration.md#per-mount-hardening-options-noexec-nosuid-nodev). The short form carries them as raw mount options. | no |
 
 ### Healthcheck timing on a `service_healthy` gate
 
@@ -585,7 +597,7 @@ covers, and the only other way to find out was to read the dispatch code.
 | `build --progress <STYLE>` | podup renders build output one way. The value is still validated, so a typo is rejected rather than silently ignored. |
 | `config --no-normalize` | `config` always emits the normalized form. |
 | `cp -a, --archive` | Ownership/permission preservation is not meaningful for a rootless copy. |
-| `attach --no-stdin`, `--sig-proxy`, `--detach-keys` | `attach` streams output only; stdin is never attached (see [#1079](https://github.com/Glyndor/podup/issues/1079)). |
+| `attach --no-stdin`, `--sig-proxy`, `--detach-keys` | `attach` streams output only; stdin is never attached. Use `exec`/`run` for an interactive session. |
 
 Everything else that parses does something. An **unknown** `--filter` predicate
 is rejected outright rather than dropped: a filter that silently does not apply

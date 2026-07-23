@@ -14,7 +14,7 @@ use super::Engine;
 
 /// Options for [`Engine::stats_with_options`], mirroring `docker compose stats`
 /// and the table-shaping flags the other list commands expose. Kept off the
-/// frozen [`Engine::stats`] signature so the 1.0 library API stays stable.
+/// frozen [`Engine::stats`] signature so the published library API stays stable across minors.
 #[derive(Default)]
 pub struct StatsOptions {
 	/// Disable streaming; print a single snapshot and exit, `--no-stream`.

@@ -50,7 +50,7 @@ pub struct LogsOptions {
 
 /// Prefix-display options for [`Engine::logs_with_display`] (`docker compose
 /// logs --no-color` / `--no-log-prefix`). Kept off the frozen [`LogsOptions`]
-/// struct so the 1.0 library API stays stable.
+/// struct so the published library API stays stable across minors.
 #[derive(Default)]
 pub struct LogsDisplay {
 	/// Produce monochrome output (no colour in the prefix), `--no-color`.

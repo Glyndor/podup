@@ -492,8 +492,8 @@ mod tests {
 	///
 	/// Linux only, deliberately. Whether a given kernel refuses to exec a file
 	/// held open for writing — and for a script, whether the check lands on the
-	/// script or on its interpreter — is that kernel's business, and I verified
-	/// it on Linux. Asserting it elsewhere tests the platform rather than the
+	/// script or on its interpreter — is that kernel's business, verified on
+	/// Linux. Asserting it elsewhere tests the platform rather than the
 	/// classifier, and writing the test so it passes vacuously where ETXTBSY
 	/// never fires would repeat the mistake this whole change is about. The
 	/// retry itself stays on every Unix: it is a no-op where the errno does not

@@ -55,9 +55,6 @@ pub struct ExecOptions {
 }
 
 impl ExecOptions {
-	/// Every `docker compose exec` flag, in CLI order. A constructor rather than
-	/// a struct literal because the type is `#[non_exhaustive]`, so the next flag
-	/// to land is not a breaking change for anyone building one.
 	/// Run the command as this user, `-u/--user`. Builder-style.
 	pub fn with_user(mut self, user: Option<String>) -> Self {
 		self.user = user;
@@ -95,6 +92,9 @@ impl ExecOptions {
 		self
 	}
 
+	/// Every `docker compose exec` flag, in CLI order. A constructor rather than
+	/// a struct literal because the type is `#[non_exhaustive]`, so the next flag
+	/// to land is not a breaking change for anyone building one.
 	#[allow(clippy::too_many_arguments)]
 	pub fn new(
 		env: Vec<String>,
@@ -383,9 +383,10 @@ fn wants_interactive(opts: &ExecOptions, stdin_is_tty: bool) -> bool {
 ///
 /// A pty merges stdout and stderr and writes CRLF, so allocating one when
 /// stdout is redirected changes the bytes a file receives. Asked alongside
-/// stdin, never instead of it. On Windows this is `GetConsoleMode` succeeding
-/// on the handle — the same probe raw mode later relies on, so the two cannot
-/// disagree.
+/// stdin, never instead of it. On a native Windows console this agrees with the
+/// `GetConsoleMode` probe raw mode uses; under an emulated pty (MSYS/Cygwin,
+/// e.g. Git Bash) `IsTerminal` can say terminal where raw mode cannot engage,
+/// in which case the session degrades to plain streaming rather than failing.
 pub(crate) fn stdout_is_terminal() -> bool {
 	use std::io::IsTerminal;
 	std::io::stdout().is_terminal()
