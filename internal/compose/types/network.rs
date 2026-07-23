@@ -43,6 +43,12 @@ impl ServiceNetworks {
 }
 
 /// Per-network attachment options: aliases, static IPv4/IPv6, link-local addresses, and priority.
+///
+/// `#[non_exhaustive]` (3.0.0), like the volume option blocks: this grows a
+/// field whenever the compose surface does, and each addition used to be a
+/// breaking change for anyone building the literal. Construct via
+/// `Default::default()` and assign the fields you need.
+#[non_exhaustive]
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct ServiceNetworkConfig {
 	/// Additional network aliases the container is reachable by.
