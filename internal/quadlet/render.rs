@@ -84,6 +84,18 @@ pub(super) fn render_volume(vol: &VolumeMount, project: &str, declared_volumes: 
 				if v.nocopy == Some(true) {
 					opts.push("nocopy".to_string());
 				}
+				// The mount-hardening trio (#1160). Dropping these here would
+				// mean a compose file that hardens a mount exports a Quadlet
+				// unit that silently does not.
+				if v.noexec == Some(true) {
+					opts.push("noexec".to_string());
+				}
+				if v.nosuid == Some(true) {
+					opts.push("nosuid".to_string());
+				}
+				if v.nodev == Some(true) {
+					opts.push("nodev".to_string());
+				}
 			}
 			let mut out = if src.is_empty() {
 				target.clone()
@@ -487,6 +499,28 @@ mod tests {
 		assert_eq!(
 			render_volume(&nocopy, "proj", &["vol"]),
 			"proj-vol.volume:/data:ro,nocopy"
+		);
+
+		// The hardening trio survives the Quadlet export (#1160): a compose
+		// file that hardens a mount must not export a unit that does not.
+		let hardened = VolumeMount::Long {
+			volume_type: VolumeType::Volume,
+			source: Some("vol".into()),
+			target: "/data".into(),
+			read_only: None,
+			bind: None,
+			volume: Some(VolumeOptions {
+				noexec: Some(true),
+				nosuid: Some(true),
+				nodev: Some(true),
+				..Default::default()
+			}),
+			tmpfs: None,
+			consistency: None,
+		};
+		assert_eq!(
+			render_volume(&hardened, "proj", &["vol"]),
+			"proj-vol.volume:/data:noexec,nosuid,nodev"
 		);
 
 		// An empty source renders as just the target (anonymous mount).

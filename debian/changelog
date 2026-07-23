@@ -1,3 +1,31 @@
+podup (3.0.0) unstable; urgency=medium
+
+  New
+
+  * Interactive `exec` and `run` work on Windows: raw console mode, window
+    resize (250ms poll; the console has no resize signal), and the hijacked
+    stream over the named pipe. The both-ends-are-terminals rule is unchanged,
+    so scripts, pipelines and redirects keep their exact streaming bytes.
+  * The long-form volume syntax carries the mount-hardening options
+    `noexec`, `nosuid` and `nodev`, matching what the short form's raw
+    options always did. Quadlet export carries them too.
+
+  Fixes
+
+  * An interactive session that ended with exit code 0 left podup waiting for
+    one more keypress before exiting. Sessions ending non-zero were unaffected,
+    which is what hid it.
+
+  Breaking (library only; the CLI is unchanged)
+
+  * The compose option blocks (BindOptions, VolumeOptions, DriverConfig,
+    TmpfsOptions, ServiceNetworkConfig) are #[non_exhaustive] now: construct
+    them with Default::default() and assign fields instead of a struct
+    literal. They gain a field whenever the compose surface grows, and each
+    addition used to be a breaking change.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Thu, 23 Jul 2026 06:43:00 -0500
+
 podup (2.1.0) unstable; urgency=medium
 
   New
