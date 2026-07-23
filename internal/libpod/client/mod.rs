@@ -71,6 +71,11 @@ pub struct Client {
 /// error variant so `PodmanError` keeps its shape: it is public API and 2.0.0
 /// shipped hours ago. `kind()` survives, which is what tells the two cases
 /// apart.
+///
+/// Unix only because the hints are: `systemctl --user` means nothing to a
+/// `podman machine` install, and the named-pipe connect path reports its
+/// errors raw.
+#[cfg(unix)]
 pub(crate) fn socket_error(path: &str, e: std::io::Error) -> super::PodmanError {
 	let hint = match e.kind() {
 		std::io::ErrorKind::NotFound => {

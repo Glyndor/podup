@@ -1,4 +1,4 @@
-//! Interactive `run`: a pseudo-terminal on a one-shot container, on Unix.
+//! Interactive `run`: a pseudo-terminal on a one-shot container.
 //!
 //! `podup run -it app bash` parsed `-i` and `-T` and acted on neither: the
 //! container got no TTY and no live stdin, so the flags described something that
@@ -9,8 +9,6 @@
 //! that missed output is often all the output there was. `exec` does not have
 //! this problem — the container is already up — which is why it can attach and
 //! start in a single call and this cannot.
-
-#![cfg(unix)]
 
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
@@ -64,7 +62,8 @@ impl super::super::Engine {
 
 impl super::super::Engine {
 	/// Attach, start, hand over the terminal, then clean up per `--rm` and map
-	/// the exit code. Split from `run` so the non-Unix build can drop it whole.
+	/// the exit code. Split from `run` so the interactive tail reads as one
+	/// piece.
 	pub(super) async fn finish_interactive_run(
 		&self,
 		run_name: &str,

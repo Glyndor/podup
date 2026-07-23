@@ -284,7 +284,6 @@ impl Engine {
 
 		// The interactive path takes over here: it needs the connection kept open
 		// in both directions, which the request/response client cannot give it.
-		#[cfg(unix)]
 		if interactive {
 			self.exec_interactive(&exec_id).await?;
 			return self.exec_exit_status(&exec_id).await;
@@ -380,36 +379,23 @@ fn wants_interactive(opts: &ExecOptions, stdin_is_tty: bool) -> bool {
 	!opts.no_tty && !opts.detach && stdin_is_tty
 }
 
-/// Whether stdin is a terminal. Always false off Unix, where the interactive
-/// path is not implemented (#1079) — so `exec` there keeps its current
-/// behaviour rather than half-entering a mode it cannot finish.
 /// Whether stdout is a terminal.
 ///
 /// A pty merges stdout and stderr and writes CRLF, so allocating one when
 /// stdout is redirected changes the bytes a file receives. Asked alongside
-/// stdin, never instead of it.
+/// stdin, never instead of it. On Windows this is `GetConsoleMode` succeeding
+/// on the handle — the same probe raw mode later relies on, so the two cannot
+/// disagree.
 pub(crate) fn stdout_is_terminal() -> bool {
-	#[cfg(unix)]
-	{
-		use std::io::IsTerminal;
-		std::io::stdout().is_terminal()
-	}
-	#[cfg(not(unix))]
-	{
-		false
-	}
+	use std::io::IsTerminal;
+	std::io::stdout().is_terminal()
 }
 
+/// Whether stdin is a terminal — the gate that keeps a scripted `exec` on the
+/// unchanged streaming path.
 pub(crate) fn stdin_is_terminal() -> bool {
-	#[cfg(unix)]
-	{
-		use std::io::IsTerminal;
-		std::io::stdin().is_terminal()
-	}
-	#[cfg(not(unix))]
-	{
-		false
-	}
+	use std::io::IsTerminal;
+	std::io::stdin().is_terminal()
 }
 
 #[cfg(test)]
