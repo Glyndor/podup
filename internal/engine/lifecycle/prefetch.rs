@@ -1,9 +1,9 @@
 //! Best-effort image prefetch ahead of the per-level `up` walk.
 //!
-//! Today, each service's image is pulled inside `up_one_service`, gated
-//! behind the dependency-level barrier: on a cold start, a level-2 service's
-//! image acquisition does not even begin until every level-1 service is fully
-//! up. This stage collects every image the upcoming `up`/`create` pass will
+//! Without this stage each service's image is pulled inside `up_one_service`,
+//! gated behind the dependency-level barrier: on a cold start, a level-2
+//! service's image acquisition does not even begin until every level-1 service
+//! is fully up. This stage collects every image the upcoming `up`/`create` pass will
 //! pull and warms the local Podman cache for all of them up front,
 //! concurrently, before the first level barrier — instead of one at a time as
 //! each level's services reach their turn.

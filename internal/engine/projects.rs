@@ -83,7 +83,7 @@ pub async fn list_projects(client: &Client, opts: LsOptions) -> Result<()> {
 
 /// List podup projects (`docker compose ls`) narrowed by `--filter` predicates
 /// (`name=<NAME>`, `status=<running|exited>`). The `filters` slice is kept off
-/// the frozen [`LsOptions`] struct so the 1.0 library API stays stable.
+/// the frozen [`LsOptions`] struct so the published library API stays stable across minors.
 pub async fn list_projects_filtered(
 	client: &Client,
 	opts: LsOptions,

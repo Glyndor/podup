@@ -14,7 +14,7 @@ use super::super::Engine;
 
 /// Options for [`Engine::commit_with_options`], mirroring `docker compose commit`
 /// (`-m/--message`, `-a/--author`, `-p/--pause`, `-c/--change`). Kept off the
-/// frozen `commit` signature so the 1.0 library API stays stable.
+/// frozen `commit` signature so the published library API stays stable across minors.
 #[derive(Debug, Clone, Default)]
 pub struct CommitOptions {
 	/// Commit message recorded on the new image (`-m/--message`).

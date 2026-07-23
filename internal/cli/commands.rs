@@ -287,8 +287,9 @@ pub(crate) enum Commands {
 		/// terminals, and by `-T` — not by this flag.
 		#[arg(short, long)]
 		interactive: bool,
-		/// Disable pseudo-TTY allocation. `run` allocates one on Unix when stdin
-		/// is a terminal; this opts out, so a script keeps plain streaming.
+		/// Disable pseudo-TTY allocation. `run` allocates one when stdin and
+		/// stdout are both terminals; this opts out, so a script keeps plain
+		/// streaming.
 		// Both spellings are accepted on purpose: `docker compose run` spells the
 		// long form `--no-TTY` while `docker compose exec` spells it `--no-tty`.
 		// A script copied from either one has to work, so each command takes both.
@@ -534,8 +535,9 @@ pub(crate) enum Commands {
 		/// Detach: run the command in the background.
 		#[arg(short, long)]
 		detach: bool,
-		/// Disable pseudo-TTY allocation. `exec` allocates one on Unix when stdin
-		/// is a terminal; this opts out, so a script keeps plain streaming.
+		/// Disable pseudo-TTY allocation. `exec` allocates one when stdin and
+		/// stdout are both terminals; this opts out, so a script keeps plain
+		/// streaming.
 		// `docker compose exec` spells the long form `--no-tty`, so that is the
 		// primary here; `--no-TTY` stays accepted so the spelling `run` uses also
 		// works on `exec`. See the note on `run`'s field.

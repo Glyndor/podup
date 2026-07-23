@@ -68,9 +68,8 @@ pub struct Client {
 /// in hand one call earlier (#1146).
 ///
 /// The path is folded into the `io::Error`'s message rather than into a new
-/// error variant so `PodmanError` keeps its shape: it is public API and 2.0.0
-/// shipped hours ago. `kind()` survives, which is what tells the two cases
-/// apart.
+/// error variant so `PodmanError` keeps its shape: it is public API, frozen
+/// since 2.0.0. `kind()` survives, which is what tells the two cases apart.
 ///
 /// Unix only because the hints are: `systemctl --user` means nothing to a
 /// `podman machine` install, and the named-pipe connect path reports its

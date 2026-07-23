@@ -51,7 +51,7 @@ pub struct RunOptions {
 /// Extra `docker compose run` flag overrides threaded through the engine
 /// builder ([`Engine::with_run_overrides`]). These are CLI-only refinements of
 /// a `run` invocation; they live here rather than on the frozen [`RunOptions`]
-/// public struct so the 1.0 library API stays stable, mirroring how the `up`
+/// public struct so the published library API stays stable across minors, mirroring how the `up`
 /// image-acquisition overrides are carried on the engine.
 #[derive(Default, Clone)]
 pub struct RunOverrides {

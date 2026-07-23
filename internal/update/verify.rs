@@ -3,8 +3,8 @@
 //! Trust anchor is the set of Ed25519 public keys embedded in this binary
 //! ([`RELEASE_PUBKEYS`]), not the download domain or TLS. A release is accepted
 //! only if `SHA256SUMS` carries a valid signature from a matching private key
-//! (held in CI as `RELEASE_SIGN_KEY`) and the downloaded binary's SHA-256 digest
-//! appears in that signed manifest. Every check fails closed.
+//! (held as a CI secret) and the downloaded binary's SHA-256 digest appears in
+//! that signed manifest. Every check fails closed.
 
 use ed25519_dalek::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};

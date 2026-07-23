@@ -103,7 +103,7 @@ try {
 	# If neither verifier can run, the install fails closed.
 
 	# Baked-in base64 (unpadded) raw Ed25519 public keys (32 bytes each) matching
-	# the release signing key (RELEASE_SIGN_KEY). Up to two are accepted: the
+	# the release signing key. Up to two are accepted: the
 	# second is empty except during a key rotation, when it holds the new key so a
 	# release signed by either key verifies. The signature passes if any key
 	# validates. Override for a fork via PODUP_RELEASE_PUBKEY_B64 / _PUBKEY2_B64.

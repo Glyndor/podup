@@ -97,7 +97,7 @@ impl Engine {
 
 	/// Push each service's image like [`Engine::push`], with `quiet` (`-q/--quiet`)
 	/// suppressing the per-image progress output. Kept off the frozen
-	/// [`PushOptions`] struct so the 1.0 library API stays stable.
+	/// [`PushOptions`] struct so the published library API stays stable across minors.
 	pub async fn push_with_quiet(
 		&self,
 		file: &ComposeFile,
