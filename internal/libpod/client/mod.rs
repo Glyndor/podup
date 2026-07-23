@@ -16,14 +16,11 @@ use serde::{de::DeserializeOwned, Serialize};
 use super::error::PodmanError;
 
 mod encode;
-// Unix only: a hijacked stream is a `UnixStream`, and podup reaches
-// `podman machine` over a named pipe on Windows, where interactive exec is a
-// different implementation entirely (#1079).
-#[cfg(unix)]
 mod hijack;
+mod stream;
 pub(crate) use encode::{is_valid_object_name, urlencoded};
-#[cfg(unix)]
 pub(crate) use hijack::Hijacked;
+use stream::SocketStream;
 
 /// The request body every call shares. A boxed body so a fully-buffered
 /// `Full<Bytes>` (almost every call) and a lazily-streamed build-context body
@@ -103,56 +100,13 @@ impl Client {
 
 	/// Open a new HTTP/1.1 sender over the platform socket.
 	async fn connect(&self) -> Result<http1::SendRequest<BoxBody>> {
-		#[cfg(unix)]
-		{
-			let stream = tokio::net::UnixStream::connect(&self.socket_path)
-				.await
-				.map_err(|e| socket_error(&self.socket_path, e))?;
-			let io = TokioIo::new(stream);
-			let (sender, conn) = http1::handshake(io).await?;
-			tokio::spawn(async move {
-				let _ = conn.await;
-			});
-			Ok(sender)
-		}
-
-		#[cfg(windows)]
-		{
-			// Named pipes may be momentarily busy; retry a few times.
-			let pipe = {
-				let mut last_err = None;
-				let mut result = None;
-				for _ in 0..20 {
-					match tokio::net::windows::named_pipe::ClientOptions::new()
-						.open(&self.socket_path)
-					{
-						Ok(p) => {
-							result = Some(p);
-							break;
-						}
-						Err(e) if e.raw_os_error() == Some(231) => {
-							last_err = Some(e);
-							tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-						}
-						Err(e) => return Err(PodmanError::Connect(e)),
-					}
-				}
-				result.ok_or_else(|| {
-					PodmanError::Connect(last_err.unwrap_or_else(|| {
-						std::io::Error::new(
-							std::io::ErrorKind::TimedOut,
-							"named pipe busy after 20 retries",
-						)
-					}))
-				})?
-			};
-			let io = TokioIo::new(pipe);
-			let (sender, conn) = http1::handshake(io).await?;
-			tokio::spawn(async move {
-				let _ = conn.await;
-			});
-			Ok(sender)
-		}
+		let stream = SocketStream::connect(&self.socket_path).await?;
+		let io = TokioIo::new(stream);
+		let (sender, conn) = http1::handshake(io).await?;
+		tokio::spawn(async move {
+			let _ = conn.await;
+		});
+		Ok(sender)
 	}
 
 	/// Build a request with an optional JSON body.
