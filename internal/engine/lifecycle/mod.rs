@@ -7,7 +7,6 @@ mod parallel;
 mod prefetch;
 mod readiness;
 mod run;
-#[cfg(unix)]
 mod run_attached;
 mod scale;
 mod schedule;

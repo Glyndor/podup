@@ -68,7 +68,16 @@ fn run_to_exit() {
 		.enable_all()
 		.build()
 		.expect("build Tokio runtime");
-	match runtime.block_on(run()) {
+	let outcome = runtime.block_on(run());
+	// Shut the runtime down without waiting for its blocking pool. An
+	// interactive exec/run always leaves one stdin read in flight there
+	// (tokio's stdin reads on a blocking thread), and a plain drop waits for
+	// it — so a session that ended with code 0 hung until the next keypress,
+	// while any other code left through `process::exit` below and never
+	// noticed (#1161). Everything user-visible is written and flushed by the
+	// time `block_on` returns.
+	runtime.shutdown_background();
+	match outcome {
 		Ok(()) => {}
 		Err(podup::ComposeError::RunExited(code)) => process::exit(code as i32),
 		// 128 + SIGINT, the shell convention, and what `docker compose up` returns

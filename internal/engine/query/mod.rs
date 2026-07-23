@@ -9,13 +9,11 @@ use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 use super::Engine;
 
 mod exec;
-#[cfg(unix)]
 mod exec_interactive;
 mod inspect;
 mod inspect_util;
 mod log_prefix;
 mod ps;
-#[cfg(unix)]
 pub(crate) mod terminal;
 
 pub use ps::{PsFilterOptions, PsOptions};

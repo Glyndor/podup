@@ -714,7 +714,7 @@ dependencies = [
 
 [[package]]
 name = "podup"
-version = "2.1.0"
+version = "3.0.0"
 dependencies = [
  "anstream",
  "anstyle",
@@ -742,6 +742,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ureq",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

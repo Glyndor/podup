@@ -189,6 +189,7 @@ fn a_buffered_put_body_reports_an_exact_size() {
 /// file or directory (os error 2)` — no path, no way to tell "it is not there"
 /// from "I cannot open it", nothing to act on. Everything needed was already in
 /// hand one call earlier.
+#[cfg(unix)]
 #[test]
 fn a_missing_socket_names_the_path_and_the_fix() {
 	let e = super::socket_error(
@@ -206,6 +207,7 @@ fn a_missing_socket_names_the_path_and_the_fix() {
 
 /// A socket that exists but cannot be opened is a different problem with a
 /// different fix, and the old message could not tell them apart.
+#[cfg(unix)]
 #[test]
 fn a_denied_socket_says_so_rather_than_suggesting_enabling_it() {
 	let e = super::socket_error(
@@ -222,6 +224,7 @@ fn a_denied_socket_says_so_rather_than_suggesting_enabling_it() {
 }
 
 /// The io::ErrorKind must survive, since it is what distinguishes the two.
+#[cfg(unix)]
 #[test]
 fn the_error_kind_is_preserved() {
 	let e = super::socket_error("/x", std::io::Error::from(std::io::ErrorKind::NotFound));

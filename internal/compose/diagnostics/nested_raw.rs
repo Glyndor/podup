@@ -33,7 +33,15 @@
 /// `BindOptions` (volume.rs).
 const BIND_OPTIONS_KEYS: &[&str] = &["propagation", "create_host_path", "selinux"];
 /// `VolumeOptions` (volume.rs).
-const VOLUME_OPTIONS_KEYS: &[&str] = &["nocopy", "labels", "driver_config", "subpath"];
+const VOLUME_OPTIONS_KEYS: &[&str] = &[
+	"nocopy",
+	"labels",
+	"driver_config",
+	"subpath",
+	"noexec",
+	"nosuid",
+	"nodev",
+];
 /// `DriverConfig` (volume.rs).
 const DRIVER_CONFIG_KEYS: &[&str] = &["name", "options"];
 /// `TmpfsOptions` (volume.rs).
@@ -264,6 +272,9 @@ mod tests {
 				options: one_entry_map(),
 			}),
 			subpath: Some("sub".to_string()),
+			noexec: Some(true),
+			nosuid: Some(true),
+			nodev: Some(true),
 		};
 		assert_eq!(serialized_keys(&v), allowlist(VOLUME_OPTIONS_KEYS));
 	}
