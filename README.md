@@ -148,8 +148,8 @@ sequenceDiagram
 Peak memory and per-operation latency against docker-compose and podman-compose,
 **all three driving the same rootless Podman**, same digest-pinned images,
 median of 10 measured runs (12 iterations, 2 warm-up discarded), on podup 2.1.0.
-podup leads all but one scenario — deep-chain `down`, where docker-compose's
-0.380 s edges podup's 0.390 s, inside a single standard deviation — and the
+podup leads all but one scenario (deep-chain `down`, where docker-compose's
+0.380 s edges podup's 0.390 s, inside a single standard deviation), and the
 widest gaps are the ones with many services.
 
 | | podup | docker-compose | podman-compose |

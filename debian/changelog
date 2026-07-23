@@ -1,3 +1,25 @@
+podup (3.0.1) unstable; urgency=medium
+
+  Docs
+
+  * The `exec` reference and the `-T` help text described interactivity as
+    engaging on stdin alone; it needs both stdin and stdout to be terminals,
+    and works on Windows now, not only Unix. Corrected in the CLI help,
+    docs/commands.md and the man page.
+  * The long-form volume hardening options (noexec/nosuid/nodev) are listed in
+    the extensions table and the security model, marked as a non-portable
+    podup extension.
+  * The benchmark prose no longer claims a clean sweep: docker-compose edges
+    deep-chain `down` by 0.380 s to 0.390 s, within a standard deviation, and
+    the fairness policy keeps that row.
+  * The man page, frozen at 1.2.0, now documents `autostart`, `version`, the
+    interactive run/exec path, exit codes 126/127, and the flags added since.
+  * Removed a stale reference to the release signing secret's old name and two
+    links to closed issues; reworded doc comments anchored to "1.0" and to the
+    author's writing session.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Thu, 23 Jul 2026 13:40:00 -0500
+
 podup (3.0.0) unstable; urgency=medium
 
   New
