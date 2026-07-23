@@ -1,3 +1,11 @@
+//! Dependency ordering for `depends_on`: a topological sort of the service
+//! graph.
+//!
+//! [`resolve_order`] gives a single start sequence; [`resolve_levels`] groups
+//! services into levels that can start concurrently. Both reject a dependency
+//! cycle and a reference to a missing service rather than starting in an
+//! arbitrary order.
+
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 

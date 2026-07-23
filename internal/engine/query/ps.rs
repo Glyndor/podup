@@ -21,7 +21,7 @@ pub struct PsOptions {
 
 /// Service/status/name filters for [`Engine::ps_filtered`] (`docker compose ps`
 /// `--services`, `[SERVICE...]`, `--status`, `--filter`). Kept off the frozen
-/// [`PsOptions`] struct so the 1.0 library API stays stable.
+/// [`PsOptions`] struct so the published library API stays stable across minors.
 #[derive(Default)]
 pub struct PsFilterOptions {
 	/// Print the service names instead of the container table, `--services`.

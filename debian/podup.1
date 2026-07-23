@@ -1,4 +1,4 @@
-.TH PODUP 1 "June 2026" "podup 1.2.0" "User Commands"
+.TH PODUP 1 "July 2026" "podup 3.0.1" "User Commands"
 .SH NAME
 podup \- run docker-compose files on rootless Podman
 .SH SYNOPSIS
@@ -64,9 +64,11 @@ Create and start all services. Options: \fB\-d\fR/\fB\-\-detach\fR,
 \fB\-\-build\fR, \fB\-w\fR/\fB\-\-watch\fR, \fB\-\-remove\-orphans\fR,
 \fB\-\-no\-recreate\fR, \fB\-\-force\-recreate\fR, \fB\-\-no\-deps\fR,
 \fB\-\-scale\fR \fISERVICE=N\fR (repeatable), \fB\-\-pull\fR \fIpolicy\fR,
-\fB\-\-no\-build\fR, \fB\-\-quiet\-pull\fR, \fB\-\-wait\fR, \fB\-\-no\-start\fR.
-Accepts a trailing list of services to bring up (with their transitive
-depends_on).
+\fB\-\-no\-build\fR, \fB\-\-quiet\-pull\fR, \fB\-\-wait\fR,
+\fB\-\-wait\-timeout\fR \fISECONDS\fR, \fB\-t\fR/\fB\-\-timeout\fR \fISECONDS\fR,
+\fB\-V\fR/\fB\-\-renew\-anon\-volumes\fR, \fB\-\-timestamps\fR,
+\fB\-\-no\-start\fR. Accepts a trailing list of services to bring up (with their
+transitive depends_on).
 .TP
 .B scale \fISERVICE=N\fR...
 Set the number of running containers for services, creating missing replicas and
@@ -122,11 +124,15 @@ Resume paused service containers.
 .TP
 .B run \fISERVICE\fR [\fICOMMAND\fR...]
 Run a one-off command in a new service container. Options: \fB\-\-rm\fR
-(default true), \fB\-d\fR/\fB\-\-detach\fR, \fB\-e\fR/\fB\-\-env\fR KEY=VAL,
-\fB\-\-name\fR, \fB\-P\fR/\fB\-\-service\-ports\fR,
+(default true), \fB\-\-no\-rm\fR, \fB\-d\fR/\fB\-\-detach\fR,
+\fB\-e\fR/\fB\-\-env\fR KEY=VAL, \fB\-\-name\fR, \fB\-P\fR/\fB\-\-service\-ports\fR,
 \fB\-u\fR/\fB\-\-user\fR, \fB\-w\fR/\fB\-\-workdir\fR, \fB\-\-entrypoint\fR,
 \fB\-v\fR/\fB\-\-volume\fR (repeatable), \fB\-p\fR/\fB\-\-publish\fR (repeatable),
+\fB\-l\fR/\fB\-\-label\fR KEY=VAL (repeatable),
 \fB\-i\fR/\fB\-\-interactive\fR, \fB\-T\fR/\fB\-\-no\-TTY\fR, \fB\-\-no\-deps\fR.
+A pseudo-TTY with live stdin is allocated when both stdin and stdout are
+terminals (\fB\-T\fR opts out, \fB\-d\fR never allocates one), so
+\fBpodup run -it app sh\fR is an interactive session on Linux, macOS and Windows.
 .TP
 .B cp \fISRC\fR \fIDST\fR
 Copy files between a service container and the host. Use \fBSERVICE:PATH\fR for
@@ -182,7 +188,13 @@ View container output. \fB\-f\fR/\fB\-\-follow\fR streams new output,
 line with an RFC3339 timestamp.
 .TP
 .B exec \fISERVICE\fR \fICOMMAND\fR...
-Execute a command in a running service container.
+Execute a command in a running service container. Options:
+\fB\-e\fR/\fB\-\-env\fR KEY=VAL (repeatable), \fB\-u\fR/\fB\-\-user\fR,
+\fB\-w\fR/\fB\-\-workdir\fR, \fB\-\-privileged\fR, \fB\-d\fR/\fB\-\-detach\fR,
+\fB\-T\fR/\fB\-\-no\-tty\fR, \fB\-\-index\fR \fIN\fR. Like
+\fBdocker compose exec\fR, a pseudo-TTY with live stdin is allocated by default
+when both stdin and stdout are terminals (\fB\-T\fR opts out), on Linux, macOS
+and Windows.
 .TP
 .B pull
 Pull images for all services. \fB\-q\fR/\fB\-\-quiet\fR suppresses progress
@@ -214,6 +226,17 @@ Update podup to the latest signed release. Verifies the release's Ed25519
 signature against the embedded public key and its SHA-256 checksum, failing
 closed. \fB\-\-check\fR only reports whether a newer release exists;
 \fB\-\-force\fR reinstalls even when not newer.
+.TP
+.B autostart \fISUBCOMMAND\fR
+Manage a boot-time autostart unit for this project, rootless and user-scope via
+\fBsystemctl \-\-user\fR (units under \fB${XDG_CONFIG_HOME:-~/.config}\fR).
+Subcommands: \fBinstall\fR (\fB\-\-mode\fR \fIservice\fR|\fIquadlet\fR,
+\fB\-\-no\-start\fR, \fB\-\-dry\-run\fR), \fBuninstall\fR, \fBstatus\fR, and
+\fBrebuild\fR (for a quadlet-mode install).
+.TP
+.B version
+Print podup's version. \fB\-\-short\fR prints just the number;
+\fB\-\-format json\fR emits it as JSON. Mirrors \fBdocker compose version\fR.
 .TP
 .B completions \fISHELL\fR
 Print a shell completion script to stdout for \fBbash\fR, \fBzsh\fR, \fBfish\fR,
@@ -255,6 +278,12 @@ A usage error (invalid arguments or flags).
 .TP
 .B 3
 \fBupdate\fR failed to verify or install a release.
+.TP
+.B 126
+\fBrun\fR/\fBexec\fR: the command exists but is not executable.
+.TP
+.B 127
+\fBrun\fR/\fBexec\fR: the command was not found.
 .PP
 \fBrun\fR propagates the container's own exit code verbatim, so any other
 non-zero status comes from the container that was run.

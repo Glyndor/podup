@@ -236,8 +236,8 @@ impl Engine {
 	/// Carried here rather than on [`RunOverrides`] for the reason that struct
 	/// already documents: it is public and not `#[non_exhaustive]`, so a new
 	/// field is a breaking change. `run_env_files` and `run_labels` are on the
-	/// engine for exactly this, and semver-checks caught me putting this one in
-	/// the wrong place.
+	/// engine for exactly this; cargo-semver-checks flagged this field when it
+	/// was placed on `RunOverrides`.
 	pub fn with_run_no_tty(mut self, no_tty: bool) -> Self {
 		self.run_no_tty = no_tty;
 		self

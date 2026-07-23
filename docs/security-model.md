@@ -65,6 +65,12 @@ only tighten, never widen, what the launching user already has.
   cgroup rules (a malformed entry is warned about and skipped, not fatal).
 - CDI devices (Container Device Interface, e.g. `nvidia.com/gpu=all`) requested
   under `devices:` are passed through to Podman, which resolves them by name.
+- Per-mount hardening — `noexec`, `nosuid` and `nodev` — is carried onto a
+  volume's mount options, so a mount can deny binary execution, ignore
+  setuid/setgid bits, and block device nodes. The short form spells them as raw
+  mount options (`cache:/app/cache:noexec`); the long form takes them as
+  booleans under `volume:`. See [Per-mount hardening
+  options](docker-migration.md#per-mount-hardening-options-noexec-nosuid-nodev).
 
 ## Secret and config handling
 

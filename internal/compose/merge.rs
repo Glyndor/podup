@@ -1,3 +1,9 @@
+//! YAML merge-key (`<<:`) and anchor resolution ahead of typing a compose file.
+//!
+//! serde's tolerance of a merge key depends on the type behind it, so the tags
+//! are resolved on the raw `Value` first and the merged document is what gets
+//! deserialized — the type never sees a `<<:` key.
+
 use std::collections::HashMap;
 
 use crate::compose::types::ComposeFile;
