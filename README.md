@@ -18,7 +18,7 @@ Package: [crates.io/crates/podup](https://crates.io/crates/podup) Â· MSRV 1.85 Â
 Register the signed Glyndor repository and install. Copy-paste:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Glyndor/podup/main/install.sh | bash -s -- --apt
+curl -fsSL https://glyndor.net/podup/install/unix | bash -s -- --apt
 ```
 
 The installer verifies the keyring package's Ed25519 signature against its
@@ -147,17 +147,17 @@ sequenceDiagram
 
 Peak memory and per-operation latency against docker-compose and podman-compose,
 **all three driving the same rootless Podman**, same digest-pinned images,
-median of 10 measured runs (12 iterations, 2 warm-up discarded), on podup 2.1.0.
-podup leads all but one scenario (deep-chain `down`, where docker-compose's
-0.380 s edges podup's 0.390 s, inside a single standard deviation), and the
-widest gaps are the ones with many services.
+median of 10 measured runs (12 iterations, 2 warm-up discarded), on podup 3.0.1.
+podup is fastest in every scenario but one teardown (`many-services down`, where
+docker-compose's 0.565 s edges podup's 0.580 s, inside a single standard
+deviation), and the widest gaps are the ones with many services.
 
 | | podup | docker-compose | podman-compose |
 |---|---|---|---|
-| memory per command | **7.5 MiB** | 28.7 MiB | 51.2 MiB |
-| `up`, 42 services | **1.18 s** | 1.65 s | 7.85 s |
-| `up`, 12 services | **0.38 s** | 0.49 s | 2.43 s |
-| `config` (parse only) | **&lt;0.01 s** | 0.04 s | 0.10 s |
+| memory per command | **7.8 MiB** | 28.7 MiB | 51.7 MiB |
+| `up`, 42 services | **1.12 s** | 1.54 s | 7.69 s |
+| `up`, 12 services | **0.38 s** | 0.48 s | 2.37 s |
+| `config` (parse only) | **&lt;0.01 s** | 0.04 s | 0.13 s |
 
 <img src="docs/assets/bench.svg" alt="Bar chart: podup uses about 7 MiB per command against 29 MiB for docker-compose and 51 MiB for podman-compose, and is faster in all but one measured scenario" width="760">
 
