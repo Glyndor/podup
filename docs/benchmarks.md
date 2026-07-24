@@ -114,7 +114,7 @@ tied-fastest in all but one of the wall-clock rows. The exception is
 so it is a coin toss rather than a real gap. Two teardown rows land in an exact
 tie (`deep-chain down` and `running-ops restart`, both 0.170–0.380 s to the
 millisecond). The point of this benchmark is to publish the numbers whoever
-wins, so those rows stand as measured — and which teardown row falls on which
+wins, so those rows stand as measured, and which teardown row falls on which
 side of the line shifts run to run within that noise.
 
 `running-ops ps` and `config-heavy config` show podup at **0.000s**. That is the
