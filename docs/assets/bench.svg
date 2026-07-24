@@ -10,42 +10,42 @@
   <text class="l" x="24" y="47">median of 10 measured runs · lower is better</text>
   <text class="t" x="24" y="72">memory per command</text>
   <text class="l" x="168" y="97" text-anchor="end">podup</text>
-  <rect x="176" y="82" width="71" height="22" rx="3" fill="#3fb950"/>
-  <text class="v" x="255" y="97">7.46 MiB</text>
+  <rect x="176" y="82" width="73" height="22" rx="3" fill="#3fb950"/>
+  <text class="v" x="257" y="97">7.78 MiB</text>
   <text class="l" x="168" y="123" text-anchor="end">docker-compose</text>
-  <rect x="176" y="108" width="273" height="22" rx="3" fill="#58a6ff"/>
-  <text class="v" x="457" y="123">28.68 MiB</text>
+  <rect x="176" y="108" width="270" height="22" rx="3" fill="#58a6ff"/>
+  <text class="v" x="454" y="123">28.68 MiB</text>
   <text class="l" x="168" y="149" text-anchor="end">podman-compose</text>
   <rect x="176" y="134" width="488" height="22" rx="3" fill="#f778ba"/>
-  <text class="v" x="672" y="149">51.16 MiB</text>
+  <text class="v" x="672" y="149">51.68 MiB</text>
   <text class="t" x="24" y="188">up · 42 services</text>
   <text class="l" x="168" y="213" text-anchor="end">podup</text>
-  <rect x="176" y="198" width="73" height="22" rx="3" fill="#3fb950"/>
-  <text class="v" x="257" y="213">1.18 s</text>
+  <rect x="176" y="198" width="71" height="22" rx="3" fill="#3fb950"/>
+  <text class="v" x="255" y="213">1.12 s</text>
   <text class="l" x="168" y="239" text-anchor="end">docker-compose</text>
-  <rect x="176" y="224" width="102" height="22" rx="3" fill="#58a6ff"/>
-  <text class="v" x="286" y="239">1.65 s</text>
+  <rect x="176" y="224" width="98" height="22" rx="3" fill="#58a6ff"/>
+  <text class="v" x="282" y="239">1.54 s</text>
   <text class="l" x="168" y="265" text-anchor="end">podman-compose</text>
   <rect x="176" y="250" width="488" height="22" rx="3" fill="#f778ba"/>
-  <text class="v" x="672" y="265">7.85 s</text>
+  <text class="v" x="672" y="265">7.69 s</text>
   <text class="t" x="24" y="304">up · 12 services</text>
   <text class="l" x="168" y="329" text-anchor="end">podup</text>
-  <rect x="176" y="314" width="76" height="22" rx="3" fill="#3fb950"/>
-  <text class="v" x="260" y="329">0.38 s</text>
+  <rect x="176" y="314" width="78" height="22" rx="3" fill="#3fb950"/>
+  <text class="v" x="262" y="329">0.38 s</text>
   <text class="l" x="168" y="355" text-anchor="end">docker-compose</text>
-  <rect x="176" y="340" width="99" height="22" rx="3" fill="#58a6ff"/>
-  <text class="v" x="283" y="355">0.49 s</text>
+  <rect x="176" y="340" width="100" height="22" rx="3" fill="#58a6ff"/>
+  <text class="v" x="284" y="355">0.48 s</text>
   <text class="l" x="168" y="381" text-anchor="end">podman-compose</text>
   <rect x="176" y="366" width="488" height="22" rx="3" fill="#f778ba"/>
-  <text class="v" x="672" y="381">2.43 s</text>
+  <text class="v" x="672" y="381">2.37 s</text>
   <text class="t" x="24" y="420">config · parse only</text>
   <text class="l" x="168" y="445" text-anchor="end">podup</text>
   <rect x="176" y="430" width="2" height="22" rx="3" fill="#3fb950"/>
   <text class="v" x="186" y="445">&lt;0.01 s</text>
   <text class="l" x="168" y="471" text-anchor="end">docker-compose</text>
-  <rect x="176" y="456" width="195" height="22" rx="3" fill="#58a6ff"/>
-  <text class="v" x="379" y="471">0.04 s</text>
+  <rect x="176" y="456" width="150" height="22" rx="3" fill="#58a6ff"/>
+  <text class="v" x="334" y="471">0.04 s</text>
   <text class="l" x="168" y="497" text-anchor="end">podman-compose</text>
   <rect x="176" y="482" width="488" height="22" rx="3" fill="#f778ba"/>
-  <text class="v" x="672" y="497">0.10 s</text>
+  <text class="v" x="672" y="497">0.13 s</text>
 </svg>
