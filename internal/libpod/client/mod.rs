@@ -354,30 +354,68 @@ impl Client {
 		}
 	}
 
-	/// Check status code; on error parse the Podman error message.
-	fn check_status(status: StatusCode, body: &[u8]) -> Result<()> {
-		if status.is_success() {
-			return Ok(());
-		}
-
+	/// Extract the human-readable message from a libpod error body. The body is
+	/// JSON shaped like `{"message": "...", "cause": "..."}`; prefer `message`,
+	/// fall back to `cause`, and to the raw body when the JSON is malformed (a
+	/// proxy or a 502 from a fronting process can return plain text). Pure, so
+	/// `check_status` and `check_status_with_field` share it without duplication.
+	pub(crate) fn parse_error_message(body: &[u8]) -> String {
 		#[derive(serde::Deserialize)]
 		struct ApiError {
 			cause: Option<String>,
 			message: Option<String>,
 		}
 
-		let msg = if let Ok(e) = serde_json::from_slice::<ApiError>(body) {
+		if let Ok(e) = serde_json::from_slice::<ApiError>(body) {
 			e.message
 				.or(e.cause)
 				.unwrap_or_else(|| String::from_utf8_lossy(body).into_owned())
 		} else {
 			String::from_utf8_lossy(body).into_owned()
-		};
+		}
+	}
 
+	/// Check status code; on error parse the Podman error message.
+	fn check_status(status: StatusCode, body: &[u8]) -> Result<()> {
+		if status.is_success() {
+			return Ok(());
+		}
 		Err(PodmanError::Api {
 			status: status.as_u16(),
-			message: msg,
+			message: Self::parse_error_message(body),
 		})
+	}
+
+	/// Check status code and, on a 4xx/5xx, promote the failure to a
+	/// [`PodmanError::Field`] when a single field is in scope.
+	///
+	/// The pre-validators in [`super::validate`] catch the field-level
+	/// rejections libpod makes on its own (namespace modes, `device_cgroup_rule`
+	/// access, build-arg/label keys). For other fields — `cap_add`, `runtime`,
+	/// `devices`, `extra_hosts` — podup does not have a pre-validator (the
+	/// failure surfaces from the OCI runtime or the cgroup manager, not from
+	/// libpod's specgen), and podup does not know which compose-side key libpod
+	/// rejected. When the caller does know, passing `field` turns an opaque
+	/// `podman API error (HTTP 400): <message>` into the field-shaped
+	/// `field: <message> (value: <value>)` form so the operator sees the
+	/// compose-side key, not the libpod body. The libpod message is preserved
+	/// inside the `Field`'s own `message` so the cause is not lost (#1357).
+	fn check_status_with_field(
+		status: StatusCode,
+		body: &[u8],
+		field: Option<(&'static str, &str)>,
+	) -> Result<()> {
+		if status.is_success() {
+			return Ok(());
+		}
+		let msg = Self::parse_error_message(body);
+		match field {
+			Some((name, value)) => Err(super::validate::spec_field_error("", name, value, msg)),
+			None => Err(PodmanError::Api {
+				status: status.as_u16(),
+				message: msg,
+			}),
+		}
 	}
 
 	/// For streaming endpoints: return the response on success, otherwise read
@@ -390,6 +428,62 @@ impl Client {
 		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
 		Self::check_status(status, &body)?;
 		unreachable!("check_status returns Err for a non-success status")
+	}
+
+	/// `POST` with JSON body → deserialize JSON response, promoting a 4xx/5xx
+	/// to a [`PodmanError::Field`] when `field` names a compose-side key the
+	/// caller knows was being attempted.
+	///
+	/// Prefer this over [`post_json`](Self::post_json) at call sites where a
+	/// single field is in scope: the error then reads `field: <libpod message>
+	/// (value: <value>)` instead of the generic HTTP framing, so the operator
+	/// sees what podup was trying to set. The libpod message is preserved
+	/// inside the `Field` so the cause is not lost (#1357).
+	pub async fn post_json_with_field<B, T>(
+		&self,
+		path: &str,
+		body: &B,
+		field: Option<(&'static str, &str)>,
+	) -> Result<T>
+	where
+		B: Serialize,
+		T: DeserializeOwned,
+	{
+		let json = serde_json::to_vec(body).map_err(PodmanError::Json)?;
+		let req = Self::build_request(
+			Method::POST,
+			path,
+			full(Bytes::from(json)),
+			Some("application/json"),
+		)?;
+		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
+		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
+		Self::check_status_with_field(status, &body, field)?;
+		serde_json::from_slice(&body).map_err(PodmanError::Json)
+	}
+
+	/// `POST` with JSON body → ignore response body, promoting a 4xx/5xx to a
+	/// [`PodmanError::Field`] when `field` names a compose-side key. See
+	/// [`post_json_with_field`](Self::post_json_with_field).
+	pub async fn post_json_ok_with_field<B>(
+		&self,
+		path: &str,
+		body: &B,
+		field: Option<(&'static str, &str)>,
+	) -> Result<()>
+	where
+		B: Serialize,
+	{
+		let json = serde_json::to_vec(body).map_err(PodmanError::Json)?;
+		let req = Self::build_request(
+			Method::POST,
+			path,
+			full(Bytes::from(json)),
+			Some("application/json"),
+		)?;
+		let resp = self.send(req, Some(READ_TIMEOUT)).await?;
+		let (status, body) = Self::read_body(resp, Some(READ_TIMEOUT)).await?;
+		Self::check_status_with_field(status, &body, field)
 	}
 
 	// ---------------------------------------------------------------------------
@@ -772,4 +866,124 @@ fn meets_minimum(version: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests;
+mod tests {
+	use super::{Client, PodmanError};
+
+	#[test]
+	fn parse_error_message_prefers_message_field() {
+		// Podman's libpod JSON error body carries `message` (operator-facing)
+		// and `cause` (lower-level chain). `message` is the one to surface
+		// because it is the human-readable reason; `cause` is the wrapped
+		// driver detail.
+		let body = br#"{"message":"namespace \"evil\" not recognised","cause":"ParseNamespace"}"#;
+		let msg = Client::parse_error_message(body);
+		assert!(msg.contains("namespace"), "got: {msg}");
+		assert!(!msg.contains("ParseNamespace"), "got: {msg}");
+	}
+
+	#[test]
+	fn parse_error_message_falls_back_to_cause() {
+		// Some endpoints populate only `cause`. Falling back keeps the
+		// operator looking at libpod's own wording rather than an empty
+		// placeholder.
+		let body = br#"{"cause":"internal: cgroup mount not found"}"#;
+		let msg = Client::parse_error_message(body);
+		assert!(msg.contains("cgroup mount"), "got: {msg}");
+	}
+
+	#[test]
+	fn parse_error_message_uses_raw_body_when_not_json() {
+		// A proxy or a 502 from a fronting process can return plain text.
+		// The raw body is the only signal then, so it goes through verbatim
+		// rather than being dropped to an empty string.
+		let body = b"upstream connect error: connection refused";
+		let msg = Client::parse_error_message(body);
+		assert!(msg.contains("connection refused"), "got: {msg}");
+	}
+
+	#[test]
+	fn parse_error_message_uses_raw_body_when_json_has_no_message() {
+		// An empty `{}` body is JSON but carries no signal; fall through to
+		// the raw body so the operator sees at least the byte content.
+		let body = b"{}";
+		let msg = Client::parse_error_message(body);
+		assert!(!msg.is_empty(), "got: {msg}");
+	}
+
+	#[test]
+	fn check_status_with_field_promotes_to_field_error() {
+		// A 4xx with a field context renders as `field: <libpod message>
+		// (value: <value>)` — the field-shaped form the operator wants,
+		// not the raw HTTP framing. The libpod message is preserved inside
+		// the Field so the cause is not lost (#1357).
+		let body = br#"{"message":"namespace \"evil\" not recognised"}"#;
+		let err = Client::check_status_with_field(
+			hyper::StatusCode::BAD_REQUEST,
+			body,
+			Some(("pid", "evil")),
+		)
+		.unwrap_err();
+		match err {
+			PodmanError::Field {
+				service,
+				field,
+				value,
+				message,
+			} => {
+				assert_eq!(service, "");
+				assert_eq!(field, "pid");
+				assert_eq!(value, "evil");
+				assert!(message.contains("namespace"), "got: {message}");
+			}
+			other => panic!("expected Field variant, got {other:?}"),
+		}
+	}
+
+	#[test]
+	fn check_status_with_field_without_context_keeps_api_shape() {
+		// No field context → the existing `Api` shape is preserved, so
+		// callers that do not opt in to the new method see the same
+		// error as before. The new method is purely additive (#1357).
+		let body = br#"{"message":"bad request"}"#;
+		let err = Client::check_status_with_field(hyper::StatusCode::BAD_REQUEST, body, None)
+			.unwrap_err();
+		assert!(err.is_status(400));
+	}
+
+	#[test]
+	fn check_status_with_field_preserves_non_json_message() {
+		// A non-JSON body is fed through `parse_error_message` and lands
+		// inside the `Field`'s `message` verbatim. The libpod detail is
+		// not lost when the body is not the usual JSON shape (#1357).
+		let body = b"plain text body";
+		let err = Client::check_status_with_field(
+			hyper::StatusCode::INTERNAL_SERVER_ERROR,
+			body,
+			Some(("runtime", "/nonexistent")),
+		)
+		.unwrap_err();
+		match err {
+			PodmanError::Field {
+				field,
+				value,
+				message,
+				..
+			} => {
+				assert_eq!(field, "runtime");
+				assert_eq!(value, "/nonexistent");
+				assert_eq!(message, "plain text body");
+			}
+			other => panic!("expected Field variant, got {other:?}"),
+		}
+	}
+
+	#[test]
+	fn check_status_with_field_passes_through_on_success() {
+		// 2xx responses are never promoted to an error regardless of
+		// whether a field context is provided. The field context is
+		// strictly an *error-shaping* tool.
+		let body = b"{}";
+		Client::check_status_with_field(hyper::StatusCode::OK, body, Some(("pid", "evil")))
+			.expect("2xx must be a no-op");
+	}
+}
