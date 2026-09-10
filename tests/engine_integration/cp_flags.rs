@@ -125,3 +125,81 @@ async fn engine_cp_to_container_renames_a_single_file() {
 		"cp to a new name must create a file with the source's content, not a directory"
 	);
 }
+
+/// A directory carrying one file with holes, copied to a live container.
+///
+/// The `cp` endpoint refuses a GNU sparse entry with its own wording,
+/// `unrecognized Typeflag S`, and refuses the archive rather than the entry, so
+/// the ordinary file travelling beside the sparse one is lost too. The
+/// directory branch is the one that matters here: it also creates the
+/// destination before the stream is rejected, which reads as success to
+/// anything that only checks the path exists. #1775.
+#[cfg(all(unix, feature = "test-helpers"))]
+#[tokio::test]
+async fn engine_cp_uploads_a_directory_holding_a_sparse_file() {
+	use std::io::{Seek, SeekFrom, Write};
+	use std::os::unix::fs::MetadataExt;
+
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let dir = tempfile::tempdir().unwrap();
+	let payload = dir.path().join("payload");
+	fs::create_dir(&payload).unwrap();
+	fs::write(payload.join("plain.txt"), b"beside-the-hole").unwrap();
+
+	let hole: u64 = 1 << 20;
+	let holey = payload.join("holey.bin");
+	let mut f = fs::File::create(&holey).unwrap();
+	f.set_len(hole).unwrap();
+	// `set_len` leaves the cursor at 0, so without the seek the tail lands at
+	// the start and the file is not the one this test describes.
+	f.seek(SeekFrom::Start(hole)).unwrap();
+	f.write_all(b"tail").unwrap();
+	f.sync_all().unwrap();
+	drop(f);
+	let meta = fs::metadata(&holey).unwrap();
+	if meta.blocks() * 512 >= meta.size() {
+		eprintln!("cp sparse: no hole on this filesystem, nothing measured");
+		return;
+	}
+
+	let proj = proj("cpsparse");
+	let engine = Engine::new(client, proj.clone());
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+	engine.up(&file).await.unwrap();
+
+	let result = engine
+		.cp(&file, payload.to_str().unwrap(), "web:/tmp")
+		.await;
+	// Both files, and the length of the sparse one: an upload that arrived
+	// truncated would pass a check that only asked whether the call returned Ok.
+	let out = engine
+		.test_exec_capture(
+			&format!("{proj}-web-1"),
+			vec![
+				"sh".into(),
+				"-c".into(),
+				"cat /tmp/payload/plain.txt && stat -c %s /tmp/payload/holey.bin".into(),
+			],
+		)
+		.await;
+	engine.down(&file).await.unwrap();
+
+	result.unwrap_or_else(|e| {
+		panic!("cp of a directory holding a sparse file must upload; podman said: {e}")
+	});
+	let out = out.unwrap_or_default();
+	assert!(
+		out.contains("beside-the-hole"),
+		"the ordinary file beside the sparse one must arrive too, got {out:?}"
+	);
+	assert!(
+		out.contains(&(hole + 4).to_string()),
+		"the sparse file must arrive at its full length, got {out:?}"
+	);
+}
