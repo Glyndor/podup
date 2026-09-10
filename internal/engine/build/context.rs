@@ -145,7 +145,7 @@ pub(super) fn stream_build_context<W: std::io::Write>(
 ) -> Result<()> {
 	let (ignore_name, ignore_patterns) = ignore_file(context);
 	let encoder = GzEncoder::new(writer, Compression::default());
-	let mut tar = tar::Builder::new(encoder);
+	let mut tar = crate::engine::tar_stream::builder(encoder);
 
 	// Force-include the active Dockerfile so an ignore file that matches it
 	// cannot drop it from the context the builder receives (Docker parity).
@@ -184,7 +184,7 @@ pub(super) fn stream_build_context_with_inline<W: std::io::Write>(
 ) -> Result<()> {
 	let (ignore_name, ignore_patterns) = ignore_file(context);
 	let encoder = GzEncoder::new(writer, Compression::default());
-	let mut tar = tar::Builder::new(encoder);
+	let mut tar = crate::engine::tar_stream::builder(encoder);
 
 	let mut header = tar::Header::new_gnu();
 	header.set_size(inline.len() as u64);

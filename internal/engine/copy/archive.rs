@@ -19,7 +19,7 @@ pub(super) fn pack_path(
 	name_override: Option<&str>,
 ) -> Result<Vec<u8>> {
 	let encoder = GzEncoder::new(Vec::new(), Compression::default());
-	let mut tar = tar::Builder::new(encoder);
+	let mut tar = crate::engine::tar_stream::builder(encoder);
 	// `-L/--follow-link`: archive the symlink target's contents instead of the
 	// link itself.
 	tar.follow_symlinks(follow_link);

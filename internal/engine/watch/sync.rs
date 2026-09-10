@@ -25,7 +25,7 @@ use crate::error::{ComposeError, Result};
 /// preserving the in-tree layout.
 pub(super) fn build_sync_tar(src: &Path, entry_name: &Path) -> Result<Vec<u8>> {
 	let encoder = GzEncoder::new(Vec::new(), Compression::default());
-	let mut tar = tar::Builder::new(encoder);
+	let mut tar = crate::engine::tar_stream::builder(encoder);
 	// Do not dereference symlinks: a symlink inside the watched tree would
 	// otherwise copy the contents of its (possibly out-of-tree) target into the
 	// container. Store the link itself instead.
