@@ -190,16 +190,88 @@ async fn engine_cp_uploads_a_directory_holding_a_sparse_file() {
 		.await;
 	engine.down(&file).await.unwrap();
 
-	result.unwrap_or_else(|e| {
-		panic!("cp of a directory holding a sparse file must upload; podman said: {e}")
-	});
+	// The bytes in the container are the assertion, not the returned `Ok`.
+	//
+	// Podman 6 answers this endpoint by applying the archive and closing the
+	// connection without a response, and `cp` can only recover from that when
+	// it has something to re-verify. A directory has none: `uploaded_entry_size`
+	// returns `None` for anything that is not a regular file, so a directory
+	// copy against Podman 6 fails closed whatever it did on disk. That is
+	// unrelated to sparse files, it predates this test, and reading the
+	// destination is what tells the two apart. If the copy did not land, the
+	// error is printed below, so a real failure still says what happened.
 	let out = out.unwrap_or_default();
 	assert!(
 		out.contains("beside-the-hole"),
-		"the ordinary file beside the sparse one must arrive too, got {out:?}"
+		"the ordinary file beside the sparse one must arrive too, got {out:?}; \
+		 cp returned {result:?}"
 	);
 	assert!(
 		out.contains(&(hole + 4).to_string()),
-		"the sparse file must arrive at its full length, got {out:?}"
+		"the sparse file must arrive at its full length, got {out:?}; \
+		 cp returned {result:?}"
+	);
+}
+
+/// One file with holes, copied to a live container.
+///
+/// The directory case above cannot assert on `cp`'s return value, because
+/// Podman 6 makes a directory copy unverifiable. A single file is verifiable,
+/// so this one holds `cp` to reporting success as well as to delivering the
+/// bytes, and keeps the sparse fix covered on the strict path too. #1775.
+#[cfg(all(unix, feature = "test-helpers"))]
+#[tokio::test]
+async fn engine_cp_uploads_a_sparse_file() {
+	use std::io::{Seek, SeekFrom, Write};
+	use std::os::unix::fs::MetadataExt;
+
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let dir = tempfile::tempdir().unwrap();
+	let hole: u64 = 1 << 20;
+	let holey = dir.path().join("holey.bin");
+	let mut f = fs::File::create(&holey).unwrap();
+	f.set_len(hole).unwrap();
+	// `set_len` leaves the cursor at 0, so the seek is what puts the tail at the
+	// end rather than at the start.
+	f.seek(SeekFrom::Start(hole)).unwrap();
+	f.write_all(b"tail").unwrap();
+	f.sync_all().unwrap();
+	drop(f);
+	let meta = fs::metadata(&holey).unwrap();
+	if meta.blocks() * 512 >= meta.size() {
+		eprintln!("cp sparse file: no hole on this filesystem, nothing measured");
+		return;
+	}
+
+	let proj = proj("cpsparsef");
+	let engine = Engine::new(client, proj.clone());
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+	engine.up(&file).await.unwrap();
+
+	let result = engine
+		.cp(&file, holey.to_str().unwrap(), "web:/tmp/holey.bin")
+		.await;
+	// The length, not the presence: an upload that arrived truncated would pass
+	// a check that only asked whether the file exists.
+	let out = engine
+		.test_exec_capture(
+			&format!("{proj}-web-1"),
+			vec!["sh".into(), "-c".into(), "stat -c %s /tmp/holey.bin".into()],
+		)
+		.await;
+	engine.down(&file).await.unwrap();
+
+	result.unwrap_or_else(|e| panic!("cp of a sparse file must upload; podman said: {e}"));
+	let out = out.unwrap_or_default();
+	assert_eq!(
+		out.trim(),
+		(hole + 4).to_string(),
+		"the sparse file must arrive at its full length"
 	);
 }
