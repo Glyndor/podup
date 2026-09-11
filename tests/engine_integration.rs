@@ -166,6 +166,8 @@ mod autostart_quadlet;
 mod build_images;
 #[path = "engine_integration/build_resources.rs"]
 mod build_resources;
+#[path = "engine_integration/build_sparse_context.rs"]
+mod build_sparse_context;
 #[path = "engine_integration/commands_networking.rs"]
 mod commands_networking;
 #[path = "engine_integration/cp_flags.rs"]
@@ -198,6 +200,10 @@ mod run_flags;
 #[cfg(feature = "test-helpers")]
 #[path = "engine_integration/watch.rs"]
 mod watch_tests;
+
+#[cfg(all(unix, feature = "test-helpers"))]
+#[path = "engine_integration/watch_sparse.rs"]
+mod watch_sparse;
 
 #[path = "engine_integration/x_podman_autoupdate.rs"]
 mod x_podman_autoupdate;

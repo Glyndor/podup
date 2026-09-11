@@ -52,6 +52,7 @@ mod staging;
 mod stats;
 pub use staging::is_safe_project_name;
 pub use stats::StatsOptions;
+mod tar_stream;
 mod volume;
 pub use volume::{VolumesDisplayOptions, VolumesOptions};
 mod volume_mounts;
