@@ -1,3 +1,17 @@
+podup (5.9.3) unstable; urgency=medium
+
+  * A build context, a `cp` payload or a watch sync containing a file with
+    holes on disk no longer fails the whole transfer. Podman refuses the GNU
+    sparse tar entries podup was writing, so a build died with `unhandled tar
+    header type 83`, a `cp` with `unrecognized Typeflag S`, and a watch sync
+    logged a warning and silently never delivered the file. Sparse files
+    arrive on their own, as database files, disk images, virtual machine state
+    or anything preallocated with `fallocate`, and `ls` shows nothing unusual,
+    so the failure read as arbitrary. Every release from 0.3.0 onwards had
+    this on Linux, Android and FreeBSD hosts.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Fri, 11 Sep 2026 05:30:00 -0500
+
 podup (5.9.2) unstable; urgency=medium
 
   * SECURITY: a compose file could smuggle arbitrary `podman run` and
