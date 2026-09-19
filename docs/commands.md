@@ -129,7 +129,9 @@ podup up -d --build
 ```
 
 ### `down`
-Stop and remove containers, networks, and (with `-v`) volumes.
+Stop and remove containers, networks, and (with `-v`) volumes. With `-v`,
+podup removes the project's named volumes and the data in them; volumes
+declared `external: true` are left alone (measured on 2026-09-19).
 
 | Flag | Description | Default |
 |---|---|---|
