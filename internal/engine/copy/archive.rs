@@ -11,6 +11,7 @@ use std::path::Path;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 
+use super::destination::destination_refusal;
 use crate::error::{ComposeError, Result};
 
 pub(super) fn pack_path(
@@ -62,14 +63,13 @@ pub(super) fn extract_archive(tar_bytes: &[u8], dst: &Path) -> Result<()> {
 	// Following the symlink here would extract the archive into the wrong
 	// place (the target directory) and, once `flatten_single_wrapper_dir`
 	// runs over the extracted contents, move the target's files out of it
-	// (#1736). Refuse before anything touches the filesystem.
+	// (#1736). Refuse before anything touches the filesystem. The refusal
+	// covers every component of `dst`, not only the last: `symlink_metadata`
+	// follows all the earlier ones (#1764).
+	if let Some(refusal) = destination_refusal(dst) {
+		return Err(refusal);
+	}
 	if let Ok(meta) = std::fs::symlink_metadata(dst) {
-		if meta.file_type().is_symlink() {
-			return Err(ComposeError::Copy(format!(
-				"cp: refusing symlink destination: {}",
-				dst.display()
-			)));
-		}
 		if meta.is_dir() {
 			return extract_tar_guarded(tar_bytes, dst);
 		}
