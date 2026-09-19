@@ -199,23 +199,27 @@ fn the_reusable_checks_out_the_tree_before_running_the_script() {
 fn the_reusable_asks_for_completed_runs_only() {
 	let reusable = read("reusable-branch-health.yml");
 	// The query must be a literal `status=completed` substring on a line
-	// that runs `gh api`. A reader that returned the newest run of any
-	// status would silently turn the guard into a "report in-progress
-	// runs as failures" alarm, which defeats the purpose.
+	// that runs `gh api`, paired with `per_page=30`. `per_page=1` returns
+	// whatever item lands at index 0, which the API does not guarantee
+	// is the newest run, which gave the schedule-freshness gate two
+	// false reds measured in 2026-09-19; the script sorts the page
+	// itself, so the page is a buffer to scan rather than a shortcut.
 	let has_query = reusable.lines().any(|l| {
 		let trimmed = l.trim_start();
 		if trimmed.starts_with('#') {
 			return false;
 		}
-		trimmed.contains("status=completed")
+		trimmed.contains("status=completed") && trimmed.contains("per_page=30")
 	});
 	assert!(
 		has_query,
 		"reusable-branch-health.yml's `gh api` call no longer asks for \
-		 status=completed. Asking for the newest run of any status would \
-		 report an in-progress run as a failure, and the pull request \
-		 repairing the branch would block itself with a verdict nobody \
-		 has finished reaching."
+		 status=completed with per_page=30. Asking for the newest run of \
+		 any status would report an in-progress run as a failure, and the \
+		 pull request repairing the branch would block itself with a \
+		 verdict nobody has finished reaching; per_page=1 would hand back \
+		 whatever item happens to land at index 0, which the API does \
+		 not guarantee is the newest run."
 	);
 
 	// And it must NOT ask for status=success alone, which would miss
@@ -369,4 +373,125 @@ jobs:
 ";
 	assert_eq!(ci_yml_health_workflow(ci_d, "health-main"), "ci.yml");
 	assert_eq!(ci_yml_health_branch(ci_d, "health-main"), "main");
+}
+
+/// Indices of a job's body lines: (start, end). Same scope rule as the
+/// `with:` parsers above.
+fn ci_yml_job_body_range(workflow: &str, job_id: &str) -> (usize, usize) {
+	let lines: Vec<&str> = workflow.lines().collect();
+	let job_idx = lines
+		.iter()
+		.position(|l| l.trim_start_matches(' ').trim_start() == format!("{job_id}:"))
+		.unwrap_or_else(|| panic!("ci.yml has a `{job_id}` job"));
+	let job_indent = lines[job_idx].len() - lines[job_idx].trim_start().len();
+	let job_end = lines[job_idx + 1..]
+		.iter()
+		.position(|l| {
+			let trimmed = l.trim_start();
+			if trimmed.is_empty() || trimmed.starts_with('#') {
+				return false;
+			}
+			let indent = l.len() - trimmed.len();
+			indent <= job_indent
+		})
+		.map(|p| p + job_idx + 1)
+		.unwrap_or(lines.len());
+	(job_idx + 1, job_end)
+}
+
+/// `if:` value, or `None` when the job has none.
+fn ci_yml_health_if_value(workflow: &str, job_id: &str) -> Option<String> {
+	let lines: Vec<&str> = workflow.lines().collect();
+	let (start, end) = ci_yml_job_body_range(workflow, job_id);
+	for line in &lines[start..end] {
+		let trimmed = line.trim_start();
+		if trimmed.is_empty() || trimmed.starts_with('#') {
+			continue;
+		}
+		if let Some(rest) = trimmed.strip_prefix("if:") {
+			return Some(rest.trim().to_string());
+		}
+	}
+	None
+}
+
+/// Whether a job's `if:` is `event_name != 'push' && ref_name !=
+/// <its own branch>`. A copy-paste that leaves `develop` guarding
+/// `main` returns false here.
+fn has_self_branching_if(workflow: &str, job_id: &str) -> bool {
+	let if_value = match ci_yml_health_if_value(workflow, job_id) {
+		Some(v) => v,
+		None => return false,
+	};
+	let branch = ci_yml_health_branch(workflow, job_id);
+	if_value.contains("github.event_name != 'push'")
+		&& if_value.contains(&format!("github.ref_name != '{branch}'"))
+}
+
+// Each health caller must carry a job-level `if:` that takes it out of
+// the push run of the branch it watches. The latching defect measured
+// on 2026-09-19: three pulls merged into `develop` seconds apart, each
+// push cancelling the CI run of the push before it, and `branch health
+// (develop)` was a job in each of those runs. A run that includes the
+// job reads itself, fails on the red run before it, and makes its own
+// run red, which the next push then reads.
+#[test]
+fn each_health_job_carries_an_if_that_excludes_its_own_push_run() {
+	let ci = read("ci.yml");
+	for job_id in HEALTH_JOBS {
+		let if_value = ci_yml_health_if_value(&ci, job_id).unwrap_or_else(|| {
+			panic!(
+				"`{job_id}` in ci.yml has no job-level `if:`. The latching \
+				 fix measured on 2026-09-19 keeps this caller out of the \
+				 push run of the branch it watches; a missing `if:` puts \
+				 it back in, and the next push reads this run as red."
+			)
+		});
+		let branch = ci_yml_health_branch(&ci, job_id);
+		assert!(
+			if_value.contains("github.event_name != 'push'")
+				&& if_value.contains(&format!("github.ref_name != '{branch}'")),
+			"`{job_id}`'s `if:` ({if_value:?}) is not the self-branching \
+			 shape `event_name != 'push' || ref_name != '{branch}'`; the \
+			 branch half has to match the `with.branch` (a copy of the \
+			 other health job without flipping the branch lands here)."
+		);
+	}
+}
+
+// Pin the assertion on input that differs from today's `ci.yml`: a
+// check that always returned true would satisfy the structural
+// assertion above and prove nothing. The positive case is covered by
+// the production test on the real `ci.yml`.
+#[test]
+fn the_self_branching_if_catches_a_missing_or_swapped_line() {
+	// `if:` line removed: the job is back inside the push run it is
+	// supposed to skip, which is the latching shape.
+	let ci_missing = "\
+jobs:
+  health-main:
+    uses: ./.github/workflows/reusable-branch-health.yml
+    with:
+      workflow: ci.yml
+      branch: main
+";
+	assert!(
+		!has_self_branching_if(ci_missing, "health-main"),
+		"a job with no `if:` line was treated as self-branching"
+	);
+
+	// Branches swapped: `with:` says `main`, `if:` says `develop`.
+	let ci_swapped = "\
+jobs:
+  health-main:
+    if: github.event_name != 'push' || github.ref_name != 'develop'
+    uses: ./.github/workflows/reusable-branch-health.yml
+    with:
+      workflow: ci.yml
+      branch: main
+";
+	assert!(
+		!has_self_branching_if(ci_swapped, "health-main"),
+		"a job whose `if:` names the other branch was accepted"
+	);
 }

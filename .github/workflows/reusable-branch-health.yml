@@ -31,12 +31,19 @@ name: Branch health (reusable)
 #    empty case fails with a message that says "no completed run on
 #    record". Make that non-fatal only with a reason; the script does
 #    not.
-# 3. A conclusion of `cancelled` or `skipped`, which are neither success
-#    nor failure. Both are decided as failures: a cancelled run is a
-#    suite that was interrupted, and a skipped one is the workflow's own
-#    gate deciding not to exercise the branch it claims to protect.
-#    Reporting either as success would let a published branch carry a
-#    "we never finished" verdict.
+# 3. A conclusion of `skipped`. The script treats it as a failure: a
+#    skipped run is the workflow's own gate deciding not to exercise
+#    the branch it claims to protect, and reporting it as success would
+#    let a published branch carry a "we never finished" verdict.
+#    A conclusion of `cancelled`, in contrast, is passed over: a
+#    cancelled run is a suite that was interrupted, which on a push run
+#    happens because `cancel-in-progress` superseded it with a newer
+#    push. The newer run answers for the branch; counting the cancelled
+#    one as a failure would fail the guard over a run the superseding
+#    push has already replaced. The script reads several entries
+#    (`per_page=30` below) and skips cancelled runs until it finds one
+#    with a verdict; a page whose every entry is cancelled fails with a
+#    message that says so.
 #
 # Permissions: same as the freshness reusable. A called workflow cannot
 # elevate beyond the permissions of the workflow that calls it, and
@@ -109,8 +116,13 @@ jobs:
           # repairs the branch would block itself with a verdict nobody
           # has finished reaching.
           #
-          # `per_page=1` returns the newest match. The full set is not
-          # needed; the question is "is the most recent run a success".
+          # `per_page=30` (not `per_page=1`) is deliberate. The first item
+          # of a filtered page is not always the newest run, which gave
+          # the schedule-freshness gate two false reds measured in
+          # 2026-09-19. The script sorts the page by `created_at` itself,
+          # so the page is a buffer to sort rather than a single-item
+          # shortcut, and thirty is enough headroom for a branch with a
+          # burst of cancelled push runs to find a verdict underneath.
           gh api \
-            "repos/${REPO}/actions/workflows/${WORKFLOW}/runs?branch=${BRANCH}&status=completed&per_page=1" \
+            "repos/${REPO}/actions/workflows/${WORKFLOW}/runs?branch=${BRANCH}&status=completed&per_page=30" \
             | bash .github/scripts/check-branch-conclusion.sh

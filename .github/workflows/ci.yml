@@ -192,7 +192,20 @@ jobs:
   # check exists to surface. The reason is repeated inside the reusable,
   # where somebody wiring required checks would look first. Do not remove
   # either copy.
+  #
+  # The job-level `if:` below keeps this caller out of the push run of the
+  # branch it watches. The job reads the most recent run of `ci.yml` on
+  # `main` (or `develop`), and that run is itself a push run on that
+  # branch; if this job were part of it, it would read the previous run,
+  # fail on whatever was red there, and make its own run red, which is
+  # what the next push then reads. That is the latching defect measured on
+  # 2026-09-19: three pull requests merged into `develop` seconds apart, each push
+  # cancelling the CI run of the push before it, and `health-develop` was
+  # a job in each of those runs. A skipped job is fine here because this
+  # check is advisory and is not on the ruleset, so a missing run does not
+  # break a pull request.
   health-main:
+    if: github.event_name != 'push' || github.ref_name != 'main'
     name: branch health (main)
     permissions:
       contents: read
@@ -203,6 +216,7 @@ jobs:
       branch: main
 
   health-develop:
+    if: github.event_name != 'push' || github.ref_name != 'develop'
     name: branch health (develop)
     permissions:
       contents: read
