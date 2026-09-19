@@ -14,7 +14,8 @@ jobs:
   watch:
     runs-on: ubuntu-24.04
     # Bound: worst of the last three successful runs on 2026-09-02 was 7s. Ten times that, rounded up, never under ten
-    # minutes; the six-hour default is what a hang would otherwise cost.
+    # minutes; the six-hour default is what a hang would otherwise cost. Three repology attempts of at most 30 s plus
+    # two 20 s pauses add at most 130 s, inside the ten minutes.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,11 +38,36 @@ jobs:
             echo "No newer Podman than the validated baseline ($BASELINE)."; exit 0
           fi
           # Which distros already package LATEST? (testable => packaged somewhere)
+          # From 2026-09-16 every run failed on `Failed to connect` to repology.org, and the log ended in a Python
+          # traceback that did not name repology: curl piped into a parser that read an empty stdin. The request is
+          # retried and fails on its own line, and the body reaches the parser through stdin rather than the
+          # environment, because one environment string is capped at 128 KiB on Linux and repology's answer can grow.
+          REPOLOGY_BODY=
+          REPOLOGY_RC=0
+          for attempt in 1 2 3; do
+            # Reset before each call: `|| REPOLOGY_RC=$?` only fires on
+            # failure, so a successful curl on attempt 2 would leave the
+            # status from attempt 1 in place and the loop would never break.
+            REPOLOGY_RC=0
+            REPOLOGY_BODY=$(curl -fsSL -H 'User-Agent: podup-podman-watch' --max-time 30 \
+              "https://repology.org/api/v1/project/podman") || REPOLOGY_RC=$?
+            if [ "$REPOLOGY_RC" = "0" ]; then
+              break
+            fi
+            if [ "$attempt" != "3" ]; then
+              sleep 20
+            fi
+          done
+          if [ "$REPOLOGY_RC" != "0" ]; then
+            echo "::error::repology.org did not answer after 3 attempts (curl exit $REPOLOGY_RC); cannot tell whether Podman $LATEST is packaged anywhere yet."
+            exit 1
+          fi
           # LATEST reaches python via the environment, never interpolated into the
           # script string, so it cannot inject into the parser.
-          DISTROS=$(curl -fsSL -H 'User-Agent: podup-podman-watch' \
-            "https://repology.org/api/v1/project/podman" \
-            | LATEST="$LATEST" python3 -c "import os,sys,json;d=json.load(sys.stdin);latest=os.environ['LATEST'];print(', '.join(sorted({p['repo'] for p in d if p.get('version')==latest})))")
+          DISTROS=$(printf '%s' "$REPOLOGY_BODY" | LATEST="$LATEST" python3 -c "import os,sys,json;d=json.load(sys.stdin);latest=os.environ['LATEST'];print(', '.join(sorted({p['repo'] for p in d if p.get('version')==latest})))" 2>/dev/null) || {
+            echo "::error::repology.org answered, but not with the JSON package list; cannot tell whether Podman $LATEST is packaged anywhere yet."
+            exit 1
+          }
           if [ -z "$DISTROS" ]; then
             echo "Podman $LATEST is released but not packaged in any distro yet; keep watching."; exit 0
           fi
