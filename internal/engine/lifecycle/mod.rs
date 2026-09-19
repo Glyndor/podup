@@ -65,15 +65,24 @@ pub(crate) struct ExistingContainer {
 /// request and the others read its answer. Twenty-one replicas of one image
 /// used to be twenty-one identical inspects (#1759).
 ///
-/// Lifetime: created after the service's own image acquisition has finished
-/// (so the cell does not span acquisition) and dropped with that service's
-/// replica loop (so it does not span a sibling service's pull or build of the
-/// same tag, nor a later `up` invocation: each call to `up_one_service` makes
-/// a fresh one). It is not shared between services. A pull or a build of the
-/// tag is exactly what moves it, and an answer that outlived the replica loop
-/// would make `up` stop noticing a moved tag. That was tried with the ID the
-/// prefetch stage had fetched, and the two live retag tests
-/// (`recreate_on_image`, `x_podman_autoupdate`) refused it.
+/// Lifetime: created after this service's own image acquisition has finished,
+/// so it does not span this service's pull or build, and dropped with this
+/// service's replica loop, so it does not span another `up` invocation (each
+/// call to `up_one_service` makes a fresh one). It is not shared between
+/// services.
+///
+/// Services within one dependency level start concurrently, so the cell CAN
+/// overlap a sibling service in the same level that pulls or builds the same
+/// tag while this service's replicas are running. When that happens either
+/// all of this service's replicas see the move or none do, and the next `up`
+/// catches it. Before the change a move that landed during the loop was
+/// already missed by every replica that had inspected before it, and that
+/// mixed-answer behaviour is what is being narrowed here (#1759).
+///
+/// A pull or a build of the tag is exactly what moves it, and an answer that
+/// outlived the replica loop would make `up` stop noticing a moved tag. That
+/// was tried with the ID the prefetch stage had fetched, and the two live
+/// retag tests (`recreate_on_image`, `x_podman_autoupdate`) refused it.
 ///
 /// Only an answer is kept. A failed inspect fails the replica that made it, as
 /// it always did, and the next replica asks again.
