@@ -184,8 +184,10 @@ named pipe; the socket must be local (remote `tcp://`/`ssh://` are rejected).
 ```bash
 podup up -d      # start the stack in the current directory
 podup ps         # see what's running
-podup down -v    # tear down and remove volumes
+podup down       # stop and remove containers and networks; volumes are kept
 ```
+
+`podup down -v` also removes the project's named volumes and the data in them; see [`down` in the command reference](docs/commands.md#down).
 
 Full command reference: [docs/commands.md](docs/commands.md).
 
