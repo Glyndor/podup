@@ -126,6 +126,72 @@ async fn engine_cp_to_container_renames_a_single_file() {
 	);
 }
 
+/// I added this test because before #1777 was fixed a directory copy against
+/// Podman 6 was reported as failed even when it landed on disk, which is why
+/// the neighbour below could not assert on `cp`'s return value. I hold `cp`
+/// to both halves here: the bytes arrive, and `cp` says so, on Podman 6 as on
+/// Podman 5.
+#[cfg(all(unix, feature = "test-helpers"))]
+#[tokio::test]
+async fn engine_cp_reports_a_directory_copy_as_landed() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let dir = tempfile::tempdir().unwrap();
+	let payload = dir.path().join("payload");
+	fs::create_dir(&payload).unwrap();
+	fs::write(payload.join("a.txt"), b"first").unwrap();
+	fs::write(payload.join("empty"), b"").unwrap();
+	fs::create_dir(payload.join("nested")).unwrap();
+	fs::write(payload.join("nested").join("b.txt"), b"second").unwrap();
+
+	let proj = proj("cpdirland");
+	let engine = Engine::new(client, proj.clone());
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+	engine.up(&file).await.unwrap();
+
+	let result = engine
+		.cp(&file, payload.to_str().unwrap(), "web:/tmp")
+		.await;
+	let out = engine
+		.test_exec_capture(
+			&format!("{proj}-web-1"),
+			vec![
+				"sh".into(),
+				"-c".into(),
+				"cat /tmp/payload/a.txt /tmp/payload/nested/b.txt && stat -c %s /tmp/payload/empty"
+					.into(),
+			],
+		)
+		.await;
+	engine.down(&file).await.unwrap();
+
+	let out = out.unwrap_or_default();
+	assert!(
+		out.contains("first"),
+		"a.txt must arrive at /tmp/payload/a.txt, got {out:?}; cp returned {result:?}"
+	);
+	assert!(
+		out.contains("second"),
+		"nested/b.txt must arrive at /tmp/payload/nested/b.txt, got {out:?}; \
+		 cp returned {result:?}"
+	);
+	assert!(
+		out.contains("0\n"),
+		"empty file must arrive at /tmp/payload/empty with size 0, got {out:?}; \
+		 cp returned {result:?}"
+	);
+	assert!(
+		result.is_ok(),
+		"a directory copy that landed (the bytes above prove it) must report \
+		 Ok on Podman 6 as on Podman 5; got {result:?}"
+	);
+}
+
 /// A directory carrying one file with holes, copied to a live container.
 ///
 /// The `cp` endpoint refuses a GNU sparse entry with its own wording,
@@ -190,16 +256,11 @@ async fn engine_cp_uploads_a_directory_holding_a_sparse_file() {
 		.await;
 	engine.down(&file).await.unwrap();
 
-	// The bytes in the container are the assertion, not the returned `Ok`.
-	//
-	// Podman 6 answers this endpoint by applying the archive and closing the
-	// connection without a response, and `cp` can only recover from that when
-	// it has something to re-verify. A directory has none: `uploaded_entry_size`
-	// returns `None` for anything that is not a regular file, so a directory
-	// copy against Podman 6 fails closed whatever it did on disk. That is
-	// unrelated to sparse files, it predates this test, and reading the
-	// destination is what tells the two apart. If the copy did not land, the
-	// error is printed below, so a real failure still says what happened.
+	// The bytes in the container are still this test's assertion, because this
+	// test is about sparse files, not about whether `cp` reports a landed
+	// directory copy as success; that lives in
+	// `engine_cp_reports_a_directory_copy_as_landed`. If the copy did not land,
+	// the error is printed below, so a real failure still says what happened.
 	let out = out.unwrap_or_default();
 	assert!(
 		out.contains("beside-the-hole"),
@@ -211,14 +272,20 @@ async fn engine_cp_uploads_a_directory_holding_a_sparse_file() {
 		"the sparse file must arrive at its full length, got {out:?}; \
 		 cp returned {result:?}"
 	);
+	assert!(
+		result.is_ok(),
+		"a directory copy of the payload must report Ok on Podman 6 as on Podman 5; \
+		 got {result:?}"
+	);
 }
 
 /// One file with holes, copied to a live container.
 ///
-/// The directory case above cannot assert on `cp`'s return value, because
-/// Podman 6 makes a directory copy unverifiable. A single file is verifiable,
-/// so this one holds `cp` to reporting success as well as to delivering the
-/// bytes, and keeps the sparse fix covered on the strict path too. #1775.
+/// The directory case above is about the bytes; what `cp` returns for a
+/// directory is held by `engine_cp_reports_a_directory_copy_as_landed`. A
+/// single file is verified by its size, so this one holds `cp` to reporting success as well as to
+/// delivering the bytes, and keeps the sparse fix covered on the strict path
+/// too. #1775.
 #[cfg(all(unix, feature = "test-helpers"))]
 #[tokio::test]
 async fn engine_cp_uploads_a_sparse_file() {
