@@ -1,0 +1,352 @@
+//! What the archive upload reports when the runtime hangs up without answering.
+//!
+//! Podman 6 applies an archive PUT and closes the connection with no response
+//! (#1097), so the upload is confirmed by reading the destination back. These
+//! drive that whole exchange against the fake socket: the PUT is dropped the way
+//! Podman 6 drops it, and the stat `HEAD`s are answered from a table standing in
+//! for the container's filesystem. What is asserted is the caller's view, `Ok`
+//! or which error, for a payload that arrived and for one that did not.
+//!
+//! The stat header is built in the shape Podman 5.7.0 sent on 2026-09-18:
+//! `{"name":"a.txt","size":6,"mode":420,"mtime":"…","isDir":false,"linkTarget":"/tmp/t/a.txt"}`
+//! for a file and `"mode":2147484141` for a directory.
+
+use std::path::Path;
+
+use base64::Engine as _;
+
+use super::{pack_path, uploaded_entry_size};
+use crate::engine::fake_podman::{self, FakePodman, FakeReply};
+use crate::engine::Engine;
+use crate::error::ComposeError;
+use crate::libpod::urlencoded;
+
+const CONTAINER: &str = "proj-web-1";
+
+/// One path in the fake container.
+#[derive(Clone, Copy)]
+enum OnDisk {
+	File(u64),
+	Dir,
+	/// There, but the runtime fails the stat with a 500.
+	Unreadable,
+}
+
+/// How the fake answers the archive PUT.
+#[derive(Clone, Copy)]
+enum Put {
+	/// Accept the body and close without a response: Podman 6.
+	HangsUp,
+	/// A normal response with this status: Podman 5.
+	Answers(u16),
+}
+
+fn stat_header(path: &str, entry: OnDisk) -> String {
+	let name = path.rsplit('/').next().unwrap_or_default();
+	let (size, mode, is_dir) = match entry {
+		OnDisk::File(size) => (size, 420u64, false),
+		OnDisk::Dir => (4096, 2_147_484_141, true),
+		OnDisk::Unreadable => unreachable!("answered with a 500, not a stat"),
+	};
+	let json = format!(
+		r#"{{"name":"{name}","size":{size},"mode":{mode},"mtime":"2026-09-18T19:50:59.194580835-05:00","isDir":{is_dir},"linkTarget":"{path}"}}"#
+	);
+	base64::engine::general_purpose::STANDARD.encode(json)
+}
+
+/// A runtime that treats the PUT as `put` says and whose container holds
+/// exactly `disk`. Nothing the PUT carries changes `disk`: whether the upload
+/// "landed" is decided by the table the test passes in.
+fn runtime(put: Put, disk: &[(&str, OnDisk)]) -> FakePodman {
+	let disk: Vec<(String, OnDisk)> = disk.iter().map(|(p, e)| ((*p).to_string(), *e)).collect();
+	fake_podman::start_replying(move |method, target| match method {
+		"PUT" => match put {
+			Put::HangsUp => FakeReply::ClosedWithoutResponse,
+			Put::Answers(status) => FakeReply::Body(status, r#"{"message":"refused"}"#.into()),
+		},
+		"HEAD" => disk
+			.iter()
+			.find(|(path, _)| target.ends_with(&format!("archive?path={}", urlencoded(path))))
+			.map(|(path, entry)| match entry {
+				OnDisk::Unreadable => FakeReply::Headers(500, Vec::new()),
+				_ => FakeReply::Headers(
+					200,
+					vec![("X-Docker-Container-Path-Stat", stat_header(path, *entry))],
+				),
+			})
+			.unwrap_or(FakeReply::Headers(404, Vec::new())),
+		_ => FakeReply::Body(404, r#"{"message":"not found"}"#.into()),
+	})
+}
+
+fn engine_for(fake: &FakePodman) -> Engine {
+	Engine::with_base_dir(fake.client(), "proj".into(), std::env::temp_dir())
+}
+
+/// `payload/` with a file at the top, a file one level down and an empty
+/// directory, which between them are every kind of entry a tree upload has to
+/// account for.
+fn payload_tree(root: &Path) -> std::path::PathBuf {
+	let payload = root.join("payload");
+	std::fs::create_dir_all(payload.join("sub")).unwrap();
+	std::fs::create_dir(payload.join("empty")).unwrap();
+	std::fs::write(payload.join("plain.txt"), b"beside-the-rest").unwrap();
+	std::fs::write(payload.join("sub/inner.bin"), vec![7u8; 1234]).unwrap();
+	payload
+}
+
+/// The container after `payload_tree` was extracted at `/tmp`.
+const LANDED_TREE: [(&str, OnDisk); 5] = [
+	("/tmp/payload", OnDisk::Dir),
+	("/tmp/payload/plain.txt", OnDisk::File(15)),
+	("/tmp/payload/sub", OnDisk::Dir),
+	("/tmp/payload/sub/inner.bin", OnDisk::File(1234)),
+	("/tmp/payload/empty", OnDisk::Dir),
+];
+
+/// Upload `src` to `/tmp` under `entry`, exactly as `cp` does it.
+async fn upload(
+	fake: &FakePodman,
+	src: &Path,
+	entry: &str,
+	rename: Option<&str>,
+) -> crate::error::Result<()> {
+	let tar = pack_path(src, false, rename).unwrap();
+	engine_for(fake)
+		.put_archive_verified(CONTAINER, "/tmp", entry, tar, uploaded_entry_size(src))
+		.await
+}
+
+fn assert_unconfirmed(result: crate::error::Result<()>, case: &str) {
+	match result {
+		Err(ComposeError::Copy(msg)) => assert!(
+			msg.contains("could not be confirmed"),
+			"{case}: refused, but not as an unconfirmed upload: {msg}"
+		),
+		other => panic!("{case}: must be reported as an unconfirmed upload, got {other:?}"),
+	}
+}
+
+/// #1777. The copy landed, the runtime hung up, and the caller was told it
+/// failed, because a directory gave the confirmation nothing to compare.
+#[tokio::test]
+async fn a_directory_that_landed_is_confirmed_when_the_runtime_hangs_up() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = payload_tree(dir.path());
+	let fake = runtime(Put::HangsUp, &LANDED_TREE);
+
+	let result = upload(&fake, &payload, "payload", None).await;
+
+	assert!(
+		result.is_ok(),
+		"every entry of the tree is at the destination, got {result:?}"
+	);
+}
+
+/// The other half, and the one that matters more: hanging up is not evidence.
+/// Nothing of the payload is in the container, so nothing may be confirmed.
+#[tokio::test]
+async fn a_directory_that_did_not_land_is_still_a_failure() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = payload_tree(dir.path());
+	let fake = runtime(Put::HangsUp, &[("/tmp", OnDisk::Dir)]);
+
+	let result = upload(&fake, &payload, "payload", None).await;
+
+	assert_unconfirmed(result, "empty destination");
+}
+
+/// A stream cut part of the way leaves some of the tree behind. Take each entry
+/// away in turn, with whatever lived under it, and the upload must be refused
+/// every time: confirming on the top directory, or on any one child, would
+/// pass some of these.
+#[tokio::test]
+async fn a_directory_that_landed_in_part_is_a_failure_whichever_part_is_missing() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = payload_tree(dir.path());
+
+	for (missing, _) in LANDED_TREE {
+		let partial: Vec<(&str, OnDisk)> = LANDED_TREE
+			.into_iter()
+			.filter(|(path, _)| *path != missing && !path.starts_with(&format!("{missing}/")))
+			.collect();
+		let fake = runtime(Put::HangsUp, &partial);
+
+		let result = upload(&fake, &payload, "payload", None).await;
+
+		assert_unconfirmed(result, &format!("without {missing}"));
+	}
+}
+
+/// Present is not the same as arrived: an entry left over from before the
+/// upload, at another size or of another kind, is not what was sent.
+#[tokio::test]
+async fn a_directory_whose_entries_do_not_match_what_was_sent_is_a_failure() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = payload_tree(dir.path());
+	let stale: [(&str, OnDisk, &str); 3] = [
+		(
+			"/tmp/payload/plain.txt",
+			OnDisk::File(14),
+			"a file one byte short",
+		),
+		(
+			"/tmp/payload/sub/inner.bin",
+			OnDisk::File(0),
+			"a file that is empty",
+		),
+		(
+			"/tmp/payload/empty",
+			OnDisk::File(0),
+			"a file where a directory was sent",
+		),
+	];
+
+	for (path, instead, case) in stale {
+		let disk: Vec<(&str, OnDisk)> = LANDED_TREE
+			.into_iter()
+			.map(|(p, e)| if p == path { (p, instead) } else { (p, e) })
+			.collect();
+		let fake = runtime(Put::HangsUp, &disk);
+
+		let result = upload(&fake, &payload, "payload", None).await;
+
+		assert_unconfirmed(result, case);
+	}
+}
+
+/// A stat the runtime would not answer is not an answer. Everything else of the
+/// tree is in place, so only the unreadable entry can be what refuses it.
+#[tokio::test]
+async fn a_directory_with_an_entry_that_cannot_be_read_back_is_a_failure() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = payload_tree(dir.path());
+
+	for (unreadable, _) in LANDED_TREE {
+		let disk: Vec<(&str, OnDisk)> = LANDED_TREE
+			.into_iter()
+			.map(|(p, e)| {
+				(
+					p,
+					if p == unreadable {
+						OnDisk::Unreadable
+					} else {
+						e
+					},
+				)
+			})
+			.collect();
+		let fake = runtime(Put::HangsUp, &disk);
+
+		let result = upload(&fake, &payload, "payload", None).await;
+
+		assert_unconfirmed(result, &format!("{unreadable} answers 500"));
+	}
+}
+
+/// A dangling symlink is packed as a link, and a link is nothing the stat
+/// endpoint can be asked about. With nothing to ask, nothing is confirmed:
+/// an upload is never a success for want of a question.
+#[tokio::test]
+async fn an_upload_with_nothing_to_ask_about_stays_unconfirmed() {
+	let dir = tempfile::tempdir().unwrap();
+	let link = dir.path().join("dangling");
+	std::os::unix::fs::symlink("nowhere", &link).unwrap();
+	let fake = runtime(Put::HangsUp, &[("/tmp", OnDisk::Dir)]);
+
+	let result = upload(&fake, &link, "dangling", None).await;
+
+	assert_unconfirmed(result, "a lone symlink");
+}
+
+/// `cp dir svc:/tmp/renamed` packs the tree under the new name, and that name
+/// is where it has to be looked for.
+#[tokio::test]
+async fn a_renamed_directory_is_confirmed_under_its_new_name() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = payload_tree(dir.path());
+	let renamed: Vec<(String, OnDisk)> = LANDED_TREE
+		.into_iter()
+		.map(|(p, e)| (p.replacen("/tmp/payload", "/tmp/renamed", 1), e))
+		.collect();
+	let renamed: Vec<(&str, OnDisk)> = renamed.iter().map(|(p, e)| (p.as_str(), *e)).collect();
+
+	let landed = runtime(Put::HangsUp, &renamed);
+	let result = upload(&landed, &payload, "renamed", Some("renamed")).await;
+	assert!(
+		result.is_ok(),
+		"the tree is there as `renamed`, got {result:?}"
+	);
+
+	// Under the source's own name it is somebody else's tree.
+	let elsewhere = runtime(Put::HangsUp, &LANDED_TREE);
+	let result = upload(&elsewhere, &payload, "renamed", Some("renamed")).await;
+	assert_unconfirmed(result, "only the old name exists");
+}
+
+/// The single-file answers, held where they were: confirmed on its size, and
+/// refused when the entry is absent or is still the old one.
+#[tokio::test]
+async fn a_single_file_is_confirmed_on_its_size_and_on_nothing_less() {
+	let dir = tempfile::tempdir().unwrap();
+	let file = dir.path().join("f.txt");
+	std::fs::write(&file, b"fifteen bytes!!").unwrap();
+
+	let landed = runtime(Put::HangsUp, &[("/tmp/f.txt", OnDisk::File(15))]);
+	let result = upload(&landed, &file, "f.txt", None).await;
+	assert!(
+		result.is_ok(),
+		"the file is there at its size, got {result:?}"
+	);
+
+	let absent = runtime(Put::HangsUp, &[("/tmp", OnDisk::Dir)]);
+	assert_unconfirmed(upload(&absent, &file, "f.txt", None).await, "absent file");
+
+	let old = runtime(Put::HangsUp, &[("/tmp/f.txt", OnDisk::File(14))]);
+	assert_unconfirmed(
+		upload(&old, &file, "f.txt", None).await,
+		"the previous file",
+	);
+
+	let a_directory = runtime(Put::HangsUp, &[("/tmp/f.txt", OnDisk::Dir)]);
+	assert_unconfirmed(
+		upload(&a_directory, &file, "f.txt", None).await,
+		"a directory of that name",
+	);
+}
+
+/// Only the hang-up is recoverable. A runtime that answered with an error said
+/// what happened, and a destination that looks right does not overrule it.
+#[tokio::test]
+async fn an_answered_refusal_is_not_recovered_by_a_matching_destination() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = payload_tree(dir.path());
+	let fake = runtime(Put::Answers(500), &LANDED_TREE);
+
+	let result = upload(&fake, &payload, "payload", None).await;
+
+	assert!(
+		matches!(result, Err(ComposeError::Podman(_))),
+		"the runtime's own error must reach the caller, got {result:?}"
+	);
+}
+
+/// Podman 5 answers the PUT, and that answer is the confirmation: nothing is
+/// read back, so a tree costs it no extra requests.
+#[tokio::test]
+async fn an_answered_upload_is_not_read_back() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = payload_tree(dir.path());
+	let fake = runtime(Put::Answers(200), &[]);
+
+	let result = upload(&fake, &payload, "payload", None).await;
+
+	assert!(result.is_ok(), "a 200 is success, got {result:?}");
+	let requests = fake.requests.lock().unwrap().clone();
+	assert_eq!(
+		requests.len(),
+		1,
+		"one PUT and nothing else, got {requests:?}"
+	);
+	assert!(requests[0].starts_with("PUT "), "got {requests:?}");
+}
