@@ -15,6 +15,7 @@ use crate::libpod::types::container::{
 	LinuxDevice, LinuxDeviceCgroup, LinuxResources, Mount, NamedVolume, Namespace,
 	PerNetworkOptions, PortMapping, Secret, SpecGenerator, Ulimit,
 };
+use crate::libpod::validate::spec_field_error;
 
 /// Every computed input the `SpecGenerator` literal needs, gathered into
 /// one struct so the builder's signature stays readable. The orchestrator
@@ -148,6 +149,23 @@ pub(crate) fn build_spec_generator(
 		image_platform: (image_os, image_arch),
 		storage_opts,
 	} = inputs;
+	let idmappings = namespaces
+		.userns
+		.as_ref()
+		.map(Namespace::id_mappings)
+		.transpose()
+		.map_err(|message| {
+			spec_field_error(
+				labels
+					.get("podup.service")
+					.map(String::as_str)
+					.unwrap_or_default(),
+				"userns_mode",
+				service.userns_mode.as_deref().unwrap_or_default(),
+				message,
+			)
+		})?
+		.flatten();
 
 	Ok(SpecGenerator {
 		name: container_name,
@@ -194,6 +212,7 @@ pub(crate) fn build_spec_generator(
 		volumes_from,
 		secrets: native_secrets,
 		userns: namespaces.userns,
+		idmappings,
 		pidns: namespaces.pidns,
 		ipcns: namespaces.ipcns,
 		utsns: namespaces.utsns,
@@ -223,3 +242,7 @@ pub(crate) fn build_spec_generator(
 		..Default::default()
 	})
 }
+
+#[cfg(test)]
+#[path = "userns_tests.rs"]
+mod userns_tests;

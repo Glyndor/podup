@@ -322,15 +322,15 @@ fn check_no_memory_limit(name: &str, service: &Service, _file: &ComposeFile) -> 
 	}
 }
 
-/// `userns_mode` unset, Podman's `auto` (the default behaviour when the
-/// field is absent) gives each container its own UID range; an explicit
-/// keep-id/host is rare and is what we want the operator to confirm.
+/// I flag an absent user namespace choice: rootless Podman's default maps
+/// container root to the invoking user, without allocating a private range.
+/// I point to docs/docker-migration.md for an explicit `auto` choice.
 fn check_no_userns(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
 	if service.userns_mode.is_none() {
 		vec![finding(
 			name,
 			"no_userns",
-			"userns_mode is not set: with `auto` Podman gives each container its own range of subordinate UIDs; see docs/docker-migration.md",
+			"userns_mode is not set: rootless Podman's default maps container root to your host user; set `auto` explicitly for a private subordinate UID range; see docs/docker-migration.md",
 		)]
 	} else {
 		Vec::new()
