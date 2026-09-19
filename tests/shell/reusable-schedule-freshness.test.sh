@@ -325,13 +325,14 @@ check "F: gh was called exactly 2 times" "2" \
 	"$(grep -acz . "$WORK/gh.log" | tr -d ' ')"
 
 # G: contradiction; windowed empty 3 times, unwindowed sees a recent run.
-printf '%s\n%s\n%s\n%s\n' "" "" "" "$(ago 1)" > "$WORK/contradiction.resp"
+g_seen=$(ago 1)
+printf '%s\n%s\n%s\n%s\n' "" "" "" "$g_seen" > "$WORK/contradiction.resp"
 out="$(run_step "$MAX_AGE_DAYS" "$WORK/contradiction.resp")"; rc=$?
 check "G: windowed-empty then unwindowed-recent fails (exit 1)" "1" "$rc"
 check "G: gh was called exactly 4 times" "4" \
 	"$(grep -acz . "$WORK/gh.log" | tr -d ' ')"
 check "G: output names both the windowed emptiness and the unwindowed timestamp" "1" \
-	"$(printf '%s' "$out" | grep -q 'saw nothing 3 times' && printf '%s' "$out" | grep -q "$(ago 1)" && echo 1 || echo 0)"
+	"$(printf '%s' "$out" | grep -q 'saw nothing 3 times' && printf '%s' "$out" | grep -q "$g_seen" && echo 1 || echo 0)"
 
 echo "$pass passed, $fail failed"
 printf 'DONE %s %d %d\n' "${BASH_SOURCE[0]##*/}" "$pass" "$fail"
