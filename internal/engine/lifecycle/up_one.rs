@@ -140,6 +140,10 @@ impl Engine {
 		super::scale::check_fixed_name_scale(name, service, replicas)?;
 
 		let new_hash = config_hash(service, file)?;
+		// Shared by this service's replicas only, and created here on purpose:
+		// the image acquisition above is over, so nothing this service does
+		// moves its tag while the answer is alive.
+		let resolved = super::ResolvedImage::new();
 
 		// Fan the replicas out with the same bounded concurrency the level
 		// walk uses, instead of creating and starting them one at a time:
@@ -160,6 +164,7 @@ impl Engine {
 					file,
 					existing,
 					&new_hash,
+					&resolved,
 					no_recreate,
 					force_recreate,
 					start,
@@ -188,6 +193,7 @@ impl Engine {
 		file: &ComposeFile,
 		existing: &HashMap<String, super::ExistingContainer>,
 		new_hash: &str,
+		resolved: &super::ResolvedImage,
 		no_recreate: bool,
 		force_recreate: bool,
 		start: bool,
@@ -208,7 +214,7 @@ impl Engine {
 				return Ok(());
 			}
 			if self
-				.unchanged(&container_name, name, service, existing, new_hash)
+				.unchanged(&container_name, name, service, existing, new_hash, resolved)
 				.await?
 			{
 				tracing::debug!("{container_name} is up to date; skipping recreate");
@@ -251,3 +257,7 @@ impl Engine {
 		Ok(())
 	}
 }
+
+#[cfg(all(test, unix))]
+#[path = "up_one_tests.rs"]
+mod tests;
