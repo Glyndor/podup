@@ -55,6 +55,13 @@ pub(super) enum FakeReply {
 	/// band, and until this existed neither discriminator had a test that could
 	/// reach it.
 	ClosedWithoutResponse,
+	/// A status line and the given headers, with no body. What a `HEAD` gets.
+	///
+	/// The container-archive stat lives entirely in a response header
+	/// (`X-Docker-Container-Path-Stat`), which `Body` has no way to send, so the
+	/// re-verification that follows a dropped archive PUT could not be answered
+	/// from here until this existed.
+	Headers(u16, Vec<(&'static str, String)>),
 }
 
 /// A test's routing rule: `(method, target) -> reply`, where `target` is the
@@ -264,6 +271,17 @@ async fn serve_one(
 		}
 		FakeReply::ClosedWithoutResponse => {
 			// Write nothing. The shutdown below is the entire reply.
+		}
+		FakeReply::Headers(status, headers) => {
+			let mut response = format!(
+				"HTTP/1.1 {status} {reason}\r\ncontent-length: 0\r\nconnection: close\r\n",
+				reason = reason_phrase(status),
+			);
+			for (name, value) in headers {
+				response.push_str(&format!("{name}: {value}\r\n"));
+			}
+			response.push_str("\r\n");
+			stream.write_all(response.as_bytes()).await?;
 		}
 	}
 	stream.shutdown().await?;

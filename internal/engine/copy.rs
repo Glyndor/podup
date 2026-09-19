@@ -17,6 +17,7 @@ use super::Engine;
 /// reach `extract_tar_guarded` without widening the published API surface.
 pub(crate) mod archive;
 mod stream;
+mod verify;
 
 use archive::{extract_archive, pack_path};
 
@@ -384,11 +385,14 @@ impl Engine {
 	/// re-copying an *unchanged* file is undetectable at any resolution because
 	/// the extracted file takes the source's own mtime.
 	///
-	/// Fails, rather than guessing, when the entry has no name (`cp . svc:/`),
-	/// when the source size is unknown, or when the post-PUT stat cannot be read.
+	/// A source with no single size to compare, a directory above all, is
+	/// confirmed entry by entry instead (`verify::tree_landed`). Until #1777 it
+	/// was not confirmed at all, and every directory copy against Podman 6 was
+	/// reported as failed whether or not it had landed.
 	///
-	/// Known limit: a *directory* entry has no size to compare, so re-syncing a
-	/// tree is reported as unverifiable (fail-closed, never a false success).
+	/// Fails, rather than guessing, when a post-PUT stat cannot be read or when
+	/// the archive holds nothing that can be asked about.
+	///
 	/// Inert on Podman 5, which returns a normal response.
 	pub(super) async fn put_archive_verified(
 		&self,
@@ -421,19 +425,21 @@ impl Engine {
 		//
 		// The question the confirmation should ask is not "did the entry
 		// change" but "does the entry now match what was uploaded". `None`
-		// means the answer is unknowable (no verifiable entry, or the source
-		// could not be stat'd) and forces a later IncompleteMessage to fail
-		// rather than guess.
+		// means there is no single entry to ask about (a directory, a nameless
+		// entry, or a source that could not be stat'd), and a later
+		// IncompleteMessage asks about every entry of the archive instead.
 		let expected = verify_path
 			.as_ref()
 			.and(uploaded_size)
 			.map(|size| ExpectedEntry { size });
 
 		// `application/gzip` is the honest label for the gzipped tar; Podman
-		// sniffs the magic bytes and forgives either.
+		// sniffs the magic bytes and forgives either. The clone shares the
+		// buffer; the archive is kept because it is the record of what was sent.
+		let tar_bytes = Bytes::from(tar_bytes);
 		let Err(e) = self
 			.client
-			.put_bytes_ok(&path, Bytes::from(tar_bytes), "application/gzip")
+			.put_bytes_ok(&path, tar_bytes.clone(), "application/gzip")
 			.await
 		else {
 			return Ok(());
@@ -453,7 +459,7 @@ impl Engine {
 					false
 				}
 			},
-			_ => false,
+			_ => self.tree_landed(container, dir, tar_bytes).await,
 		};
 		if landed {
 			return Ok(());
@@ -471,11 +477,11 @@ impl Engine {
 /// The size the destination entry must end up with, or `None` when there is
 /// nothing to compare.
 ///
-/// Only a regular file has a size the archive preserves. A directory upload
-/// stays unverifiable and therefore fail-closed, which is what it was before:
-/// a directory entry's own size says nothing about whether its children
-/// arrived. A source that cannot be stat'd is `None` for the same reason:
-/// unknown must not become a guess.
+/// Only a regular file has a size the archive preserves. A directory is
+/// `None` because its own size says nothing about whether its children
+/// arrived; its upload is confirmed entry by entry (`verify::tree_landed`),
+/// never on this. A source that cannot be stat'd is `None` for the same
+/// reason: unknown must not become a guess.
 ///
 /// Extracted so it is reachable from a test. Inside the async upload it was
 /// covered only by running against a real container, and a mutation replacing
@@ -593,3 +599,7 @@ fn parse_endpoint(s: &str) -> Option<(&str, &str)> {
 #[cfg(test)]
 #[path = "copy_tests.rs"]
 mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "copy_upload_tests.rs"]
+mod upload_tests;

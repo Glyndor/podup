@@ -42,6 +42,8 @@ async fn read_stream(reply: FakeReply) -> (Vec<serde_json::Value>, Option<String
 		// at the response head rather than reaching the parser this measures, so
 		// this shape belongs to the lifecycle re-check tests instead.
 		FakeReply::ClosedWithoutResponse => FakeReply::ClosedWithoutResponse,
+		// A complete response with no body, so not a stream either.
+		FakeReply::Headers(s, h) => FakeReply::Headers(*s, h.clone()),
 	});
 	let client = fake.client();
 	let resp = client
