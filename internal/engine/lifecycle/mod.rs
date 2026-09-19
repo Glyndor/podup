@@ -60,6 +60,25 @@ pub(crate) struct ExistingContainer {
 	service: Option<String>,
 }
 
+/// What one service's image tag resolves to, asked at most once for all of that
+/// service's replicas: the replica that gets to the comparison first makes the
+/// request and the others read its answer. Twenty-one replicas of one image
+/// used to be twenty-one identical inspects (#1759).
+///
+/// Lifetime: created after the service's own image acquisition has finished
+/// (so the cell does not span acquisition) and dropped with that service's
+/// replica loop (so it does not span a sibling service's pull or build of the
+/// same tag, nor a later `up` invocation: each call to `up_one_service` makes
+/// a fresh one). It is not shared between services. A pull or a build of the
+/// tag is exactly what moves it, and an answer that outlived the replica loop
+/// would make `up` stop noticing a moved tag. That was tried with the ID the
+/// prefetch stage had fetched, and the two live retag tests
+/// (`recreate_on_image`, `x_podman_autoupdate`) refused it.
+///
+/// Only an answer is kept. A failed inspect fails the replica that made it, as
+/// it always did, and the next replica asks again.
+pub(crate) type ResolvedImage = tokio::sync::OnceCell<Option<String>>;
+
 impl Engine {
 	/// Start all services defined in the compose file, creating containers that do not exist.
 	pub async fn up(&self, file: &ComposeFile) -> Result<()> {
@@ -96,9 +115,9 @@ impl Engine {
 	/// common case (a rebuild moves the tag), but `up --pull always` and a
 	/// `podman tag` move an `image:` service's tag exactly the same way, and
 	/// docker compose recreates on both (measured on v5.3.1). One image inspect
-	/// per unchanged replica is the cost; the alternative was the pre-#1620
-	/// rule of recreating every `build:` service on every `up`, which destroyed
-	/// the writable layer for nothing.
+	/// per service with an unchanged replica is the cost (see [`ResolvedImage`]);
+	/// the alternative was the pre-#1620 rule of recreating every `build:`
+	/// service on every `up`, which destroyed the writable layer for nothing.
 	///
 	/// A tag that resolves to nothing, or a container without a recorded image,
 	/// counts as changed: the fail-closed answer is the recreate, which is what
@@ -110,6 +129,7 @@ impl Engine {
 		service: &Service,
 		existing: &HashMap<String, ExistingContainer>,
 		new_hash: &str,
+		resolved: &ResolvedImage,
 	) -> Result<bool> {
 		let Some(container) = existing.get(container_name) else {
 			return Ok(false);
@@ -120,8 +140,13 @@ impl Engine {
 		if container.image_id.is_empty() {
 			return Ok(false);
 		}
-		let tag = self.service_image_tag(name, service);
-		Ok(self.image_id(&tag).await?.as_deref() == Some(container.image_id.as_str()))
+		let resolved = resolved
+			.get_or_try_init(|| async {
+				let tag = self.service_image_tag(name, service);
+				self.image_id(&tag).await
+			})
+			.await?;
+		Ok(resolved.as_deref() == Some(container.image_id.as_str()))
 	}
 }
 
