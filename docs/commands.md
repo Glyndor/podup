@@ -206,6 +206,15 @@ image goes to stdout only when stdout is not a terminal, so a script
 piping `podup build | awk '{print $1}'` can pluck it; on a terminal the
 row says `Built` and the id is dropped so the row is the record.
 
+Measured on 2026-09-10 inside the `podman-machine-default` WSL distro: every
+`RUN` step failed until Podman's cgroup manager was changed from `systemd` to
+`cgroupfs`, because that distro had no user systemd session. The setting is
+`cgroup_manager = "cgroupfs"` in the distro's
+`~/.config/containers/containers.conf`; the README has the stanza and a way to
+check it under [Optional: Windows](../README.md#optional-windows). podup passes
+the runtime's failure through as it arrives and adds no hint of its own, so a
+build that fails this way does not name the setting.
+
 ## Inspection
 
 ### `ps`
