@@ -70,6 +70,34 @@ scoop install podup
 Scoop clones the bucket with git, so git has to be installed first; Scoop's own
 installer does not bring it.
 
+If podup runs inside the `podman-machine-default` WSL distro instead, as the
+Linux build next to the engine, Podman there needs one setting before a build
+works. Measured on 2026-09-10 in that distro: every `RUN` step of a build
+failed under crun until Podman's cgroup manager was changed from `systemd`,
+its default, to `cgroupfs`. The distro had no user systemd session, so the
+`systemd` manager had nothing to talk to. Neither the runtime's error text nor
+the Podman and WSL versions were recorded, so the symptom to go by is a `RUN`
+step that dies without a stated reason. The setting goes inside the distro, in
+the `containers.conf` of the user that runs Podman:
+
+```toml
+# ~/.config/containers/containers.conf
+[engine]
+cgroup_manager = "cgroupfs"
+```
+
+If that file already has an `[engine]` table, add the key to it rather than
+opening a second one. To check that it took effect, ask the API service podup
+talks to:
+
+```sh
+podman --remote info --format '{{.Host.CgroupManager}}'
+```
+
+It prints `cgroupfs` once the setting is in use. If it still prints `systemd`,
+the service was started before the file changed and has to be restarted. On an
+ordinary Linux host `systemd` is the correct value and none of this applies.
+
 ### Optional: Linux without apt
 
 ```sh
