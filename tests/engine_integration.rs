@@ -196,6 +196,8 @@ mod recreate_on_image;
 mod resources_health;
 #[path = "engine_integration/run_flags.rs"]
 mod run_flags;
+#[path = "engine_integration/secrets.rs"]
+mod secrets;
 
 #[cfg(feature = "test-helpers")]
 #[path = "engine_integration/watch.rs"]

@@ -62,7 +62,10 @@ impl Engine {
 		}
 		labels.insert("podup.project".to_string(), self.project.clone());
 		labels.insert("podup.service".to_string(), service_name.to_string());
-		labels.insert("podup.config-hash".to_string(), config_hash(service, file)?);
+		labels.insert(
+			"podup.config-hash".to_string(),
+			config_hash(service, file, &self.base_dir)?,
+		);
 		// Where this project's compose file lives. `ls` discovers projects purely
 		// by label and keeps no other record, so without this its `ConfigFiles`
 		// column can only ever be blank. Omitted rather than written empty when the

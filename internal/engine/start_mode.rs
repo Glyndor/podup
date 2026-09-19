@@ -46,6 +46,6 @@ impl Engine {
 	/// The config hash `service` renders to right now, which is what a container
 	/// created from the current file would carry.
 	pub fn expected_config_hash(&self, service: &Service, file: &ComposeFile) -> Result<String> {
-		config_hash(service, file)
+		config_hash(service, file, &self.base_dir)
 	}
 }

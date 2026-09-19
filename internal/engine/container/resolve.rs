@@ -1,6 +1,7 @@
 //! Name, path, link, and config-hash resolution for container creation.
 
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::Path;
 
 use crate::compose::types::{ComposeFile, Service};
@@ -172,10 +173,22 @@ pub(super) fn resolve_volumes_from(
 /// the service references are folded in, so rotating an inline value recreates
 /// the container to pick it up. Previously these were live host bind-mounts, so
 /// a re-`up` reflected the change without recreation; now they are point-in-time
-/// Podman-native secrets, so the recreate must be driven by the hash. `file:`
-/// sources stay live bind-mounts and `external:` sources are by-reference, so
-/// neither needs to influence the hash.
-pub(crate) fn config_hash(service: &Service, file: &ComposeFile) -> Result<String> {
+/// Podman-native secrets, so the recreate must be driven by the hash. A `file:`
+/// source is also copied into a Podman-native secret at `up` time (see
+/// `engine::secrets::plan`), so the same recreate rule applies: the file's
+/// contents are digested into this hash using the same kind-and-name labels as
+/// an inline payload, and a `file:` edit therefore forces a recreate the way an
+/// inline rotation does. `external:` sources are by-reference and contribute
+/// nothing.
+///
+/// `base_dir` is the project directory `file:` paths are resolved against:
+/// the same anchor `bind` mounts and the secret creator use, so a path that
+/// the engine can read at `up` is the same path the engine hashes now.
+pub(crate) fn config_hash(
+	service: &Service,
+	file: &ComposeFile,
+	base_dir: &Path,
+) -> Result<String> {
 	use sha2::{Digest, Sha256};
 	let mut hasher = Sha256::new();
 	// Canonicalise through `serde_json::Value` first: `Value::Object` is
@@ -204,6 +217,14 @@ pub(crate) fn config_hash(service: &Service, file: &ComposeFile) -> Result<Strin
 				def.content.as_deref(),
 				def.environment.as_deref(),
 			);
+			if let Some(host_path) = def.file.as_deref() {
+				hash_file_payload(
+					&mut hasher,
+					b"secret",
+					secret_ref.source(),
+					Path::new(&resolve_bind_source(host_path, base_dir)),
+				)?;
+			}
 		}
 	}
 	for config_ref in &service.configs {
@@ -215,6 +236,14 @@ pub(crate) fn config_hash(service: &Service, file: &ComposeFile) -> Result<Strin
 				def.content.as_deref(),
 				def.environment.as_deref(),
 			);
+			if let Some(host_path) = def.file.as_deref() {
+				hash_file_payload(
+					&mut hasher,
+					b"config",
+					config_ref.source(),
+					Path::new(&resolve_bind_source(host_path, base_dir)),
+				)?;
+			}
 		}
 	}
 	Ok(hasher
@@ -227,7 +256,9 @@ pub(crate) fn config_hash(service: &Service, file: &ComposeFile) -> Result<Strin
 /// Fold an inline secret/config's resolved bytes into the config hasher. Inline
 /// `content:` contributes its literal bytes; `environment:` contributes the
 /// current value of the named variable (empty if unset; `up` errors on a
-/// genuinely missing var later). `file:`/`external:` sources contribute nothing.
+/// genuinely missing var later). `file:`/`external:` sources contribute nothing
+/// from this branch (`file:` is handled by [`hash_file_payload`]; `external:`
+/// contributes nothing at all because it is by-reference).
 fn hash_inline_payload(
 	hasher: &mut sha2::Sha256,
 	kind: &[u8],
@@ -257,6 +288,64 @@ fn hash_inline_payload(
 		// round-trip the previous code paid (#1364).
 		hasher.update(payload);
 	}
+}
+
+/// Fold a `file:` secret/config's resolved bytes into the config hasher.
+///
+/// `path` is read here, not at `up` time, so the hash reflects the bytes
+/// the next `up` would copy into the Podman-native secret. A missing or
+/// unreadable file is an error carrying the path; an empty contribution
+/// would make a vanished file look unchanged, so the very thing the issue
+/// measured (a file edit leaving the hash equal) would stay broken whenever
+/// the host edit was preceded by a delete.
+///
+/// The file content is read through `sha2::Sha256` itself rather than
+/// loaded into memory: a multi-megabyte secret was the source of one of
+/// the early hash designs, and `update` streams whatever we feed it, but
+/// feeding it whole-byte slices of a `Vec<u8>` defeats the point. The
+/// inner `Sha256` produces a fixed 32-byte digest regardless of file size,
+/// so the outer config hasher never carries more than that one block for
+/// the file payload; the rest of the framing (`kind`, `name`, and the
+/// digest-vs-inline-bytes asymmetry) is what keeps a `file:` secret
+/// from hashing equal to an inline secret that happens to carry the same
+/// bytes.
+fn hash_file_payload(
+	hasher: &mut sha2::Sha256,
+	kind: &[u8],
+	name: &str,
+	path: &Path,
+) -> Result<()> {
+	use sha2::{Digest, Sha256};
+	// The error text routes through `kind_str` so it reads "secret"/"config"
+	// rather than the `[115, 101, 99, 114, 101, 116]` byte sequence `Debug`
+	// emits for `&[u8]`; the diagnostic is the only thing a user sees when an
+	// `up` fails on this branch, so the difference is worth the line.
+	let kind_str = std::str::from_utf8(kind).unwrap_or("<binary>");
+	let mut file = std::fs::File::open(path).map_err(|e| {
+		ComposeError::Unsupported(format!("{kind_str} {name:?} from {path:?}: {e}"))
+	})?;
+	let mut digest_hasher = Sha256::new();
+	// 8 KiB mirrors what the rest of the project uses for chunked copies
+	// (`internal/engine/watch/mod.rs`); aligned to a page and small enough
+	// to keep stack pressure zero on the unwinding paths.
+	let mut buf = [0u8; 8192];
+	loop {
+		let n = file.read(&mut buf).map_err(|e| {
+			ComposeError::Unsupported(format!("{kind_str} {name:?} from {path:?}: {e}"))
+		})?;
+		if n == 0 {
+			break;
+		}
+		digest_hasher.update(&buf[..n]);
+	}
+	let digest = digest_hasher.finalize();
+	hasher.update(kind);
+	hasher.update(name.as_bytes());
+	// Length-prefixed like the inline payloads, so the two kinds of record
+	// frame the same way.
+	hasher.update((digest.len() as u64).to_le_bytes());
+	hasher.update(digest.as_slice());
+	Ok(())
 }
 
 pub(super) fn build_env(service: &Service, base_dir: &Path) -> Result<Vec<String>> {
