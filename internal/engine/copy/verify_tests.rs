@@ -52,11 +52,12 @@ fn the_expectation_is_every_file_and_directory_the_packer_wrote() {
 	);
 }
 
-/// A link is sent and is not asked about: the stat endpoint answers 404 for a
-/// dangling one that is there, and a landed copy must not fail on that.
+/// A symbolic link is sent and is asked about: the stat endpoint answers 404
+/// for a dangling one with the link's own stat in the header, and the link is
+/// confirmed there.
 #[cfg(unix)]
 #[test]
-fn a_symlink_is_sent_but_not_asked_about() {
+fn a_symlink_is_asked_about_and_confirmed() {
 	let dir = tempfile::tempdir().unwrap();
 	let payload = dir.path().join("payload");
 	std::fs::create_dir(&payload).unwrap();
@@ -69,6 +70,7 @@ fn a_symlink_is_sent_but_not_asked_about() {
 		sorted(sent_entries(&tar).unwrap()),
 		vec![
 			("payload".to_string(), SentKind::Dir),
+			("payload/dangling".to_string(), SentKind::Link),
 			("payload/real.txt".to_string(), SentKind::File(1)),
 		]
 	);
@@ -76,8 +78,9 @@ fn a_symlink_is_sent_but_not_asked_about() {
 
 /// The shape the brief calls out: two files, a nested directory, a symlink
 /// and an empty file, all in one tree. The whole list is asserted, so a
-/// missing or extra entry fails the test. The symlink is filtered, because a
-/// dangling one answers 404 on the stat endpoint.
+/// missing or extra entry fails the test. The symlink is in the list, because
+/// the stat endpoint answers 404 with a link stat in the header and the link is
+/// confirmed there.
 #[cfg(unix)]
 #[test]
 fn two_files_a_directory_a_symlink_and_an_empty_file() {
@@ -95,31 +98,67 @@ fn two_files_a_directory_a_symlink_and_an_empty_file() {
 		sorted(sent_entries(&tar).unwrap()),
 		vec![
 			("payload".to_string(), SentKind::Dir),
+			("payload/link".to_string(), SentKind::Link),
 			("payload/nested".to_string(), SentKind::Dir),
 			("payload/nothing.txt".to_string(), SentKind::File(0)),
 			("payload/plain.txt".to_string(), SentKind::File(2)),
 		],
-		"only the symlink is filtered; the rest is whatever was packed"
+		"the symlink is in the list alongside the rest"
 	);
 }
 
-/// A tar whose only entry is a symlink has nothing the destination can be asked
-/// about: the entry is filtered for the same reason a symlink in a larger tree
-/// is, and an archive that ended up holding just the link yields an empty
-/// expectation.
+/// A tar whose only entry is a symlink yields one `Link` entry: the stat
+/// endpoint answers 404 with a link stat in the header, so the link is
+/// confirmed there.
 #[cfg(unix)]
 #[test]
-fn a_tar_with_only_a_symlink_yields_an_empty_expectation() {
+fn a_tar_with_only_a_symlink_yields_one_link_entry() {
 	let dir = tempfile::tempdir().unwrap();
 	let link = dir.path().join("dangling");
 	std::os::unix::fs::symlink("nowhere", &link).unwrap();
 
 	let tar = pack_path(&link, false, None).unwrap();
 
+	assert_eq!(
+		sent_entries(&tar).unwrap(),
+		vec![SentEntry {
+			path: "dangling".to_string(),
+			kind: SentKind::Link,
+		}],
+		"only the symlink yields exactly one Link entry"
+	);
+}
+
+/// A regular file whose name has byte `0xFF` makes `sent_entries` return an
+/// error. Without this check the path is rewritten to U+FFFD before the stat,
+/// and an existing file literally named with U+FFFD could satisfy the check.
+#[cfg(unix)]
+#[test]
+fn a_path_that_is_not_utf_8_is_an_error() {
+	use std::ffi::OsStr;
+	use std::io::Write;
+	use std::os::unix::ffi::OsStrExt;
+
+	let mut builder = tar::Builder::new(Vec::new());
+	let mut header = tar::Header::new_gnu();
+	header.set_size(0);
+	header.set_mode(0o644);
+	header.set_entry_type(tar::EntryType::Regular);
+	let bad = OsStr::from_bytes(b"bad-\xff-name");
+	header.set_path(bad).unwrap();
+	header.set_cksum();
+	builder.append(&header, std::io::empty()).unwrap();
+	let bytes = builder.into_inner().unwrap();
+
+	let gz = {
+		let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+		enc.write_all(&bytes).unwrap();
+		enc.finish().unwrap()
+	};
+
 	assert!(
-		sent_entries(&tar).unwrap().is_empty(),
-		"a lone symlink is the only kind of entry that produces no expectation; got \
-		 a non-empty list"
+		sent_entries(&gz).is_err(),
+		"a non-UTF-8 path must make sent_entries error, not silently rewrite"
 	);
 }
 
@@ -165,6 +204,14 @@ fn bytes_that_are_not_an_archive_are_an_error() {
 // Modes as Podman 5.7.0 reported them on 2026-09-18: 0644 file, 0755 directory.
 const FILE_MODE: u64 = 420;
 const DIR_MODE: u64 = 2_147_484_141;
+/// 0o644 plus `os.ModeNamedPipe` (1<<25): what a FIFO at the destination looks
+/// like in the stat libpod reports. The regular-file check rejects it, because
+/// an empty file uploaded over an existing FIFO would otherwise be confirmed
+/// by the unchanged pipe (size 0, not a directory).
+const FIFO_MODE: u64 = (1 << 25) | 0o644;
+/// 0o777 plus `os.ModeSymlink` (1<<27): what a symbolic link at the
+/// destination looks like in the stat libpod reports.
+const LINK_MODE: u64 = (1 << 27) | 0o777;
 
 fn stat(size: u64, mode: u64) -> PathStat {
 	PathStat {
@@ -172,6 +219,34 @@ fn stat(size: u64, mode: u64) -> PathStat {
 		mode,
 		..PathStat::default()
 	}
+}
+
+/// Planted-stat matrix for `entry_landed`. The cases the brief names, each in
+/// its own assertion so a failure points at the row that regressed.
+#[test]
+fn entry_landed_with_planted_stats() {
+	// `File(0)` against a FIFO is not a file, so the unchanged pipe cannot
+	// confirm a zero-byte upload. This is the regular-file false positive the
+	// `MODE_TYPE` mask closes.
+	assert!(!entry_landed(SentKind::File(0), Some(&stat(0, FIFO_MODE))));
+
+	// `File(0)` against a regular file at size 0 is the regular-file landed
+	// shape; the assertion is the regression net for the mask.
+	assert!(entry_landed(SentKind::File(0), Some(&stat(0, FILE_MODE))));
+
+	// `File(4096)` against a directory is not a file either: a directory stats
+	// at 4096 on most filesystems, the same size as the file.
+	assert!(!entry_landed(
+		SentKind::File(4096),
+		Some(&stat(4096, DIR_MODE))
+	));
+
+	// `Link` against a symlink is the link-confirmation shape.
+	assert!(entry_landed(SentKind::Link, Some(&stat(7, LINK_MODE))));
+
+	// `Link` against a regular file is not a link: a target the link points
+	// at cannot satisfy the link confirmation, even at the right mode bits.
+	assert!(!entry_landed(SentKind::Link, Some(&stat(7, FILE_MODE))));
 }
 
 #[test]

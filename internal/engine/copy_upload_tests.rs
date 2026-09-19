@@ -28,6 +28,12 @@ const CONTAINER: &str = "proj-web-1";
 enum OnDisk {
 	File(u64),
 	Dir,
+	/// A symbolic link; the stat header carries its size and the
+	/// `os.ModeSymlink` mode bit (1<<27 | 0o777).
+	Link(u64),
+	/// A named pipe; the stat header carries size 0 and the
+	/// `os.ModeNamedPipe` mode bit (1<<25 | 0o644).
+	Fifo,
 	/// There, but the runtime fails the stat with a 500.
 	Unreadable,
 }
@@ -46,6 +52,8 @@ fn stat_header(path: &str, entry: OnDisk) -> String {
 	let (size, mode, is_dir) = match entry {
 		OnDisk::File(size) => (size, 420u64, false),
 		OnDisk::Dir => (4096, 2_147_484_141, true),
+		OnDisk::Link(size) => (size, (1u64 << 27) | 0o777, false),
+		OnDisk::Fifo => (0, (1u64 << 25) | 0o644, false),
 		OnDisk::Unreadable => unreachable!("answered with a 500, not a stat"),
 	};
 	let json = format!(
@@ -57,7 +65,12 @@ fn stat_header(path: &str, entry: OnDisk) -> String {
 /// A runtime that treats the PUT as `put` says and whose container holds
 /// exactly `disk`. Nothing the PUT carries changes `disk`: whether the upload
 /// "landed" is decided by the table the test passes in.
-fn runtime(put: Put, disk: &[(&str, OnDisk)]) -> FakePodman {
+///
+/// `link_stat_on_404` controls how the fake answers a `HEAD` for a `Link`
+/// entry: Podman 5.7.0 returns 404 with the stat header still on it (the
+/// default for `tree_landed`'s link confirmation); a runtime that does not
+/// (older, or a stub) drops the header and the link cannot be confirmed.
+fn runtime_full(put: Put, disk: &[(&str, OnDisk)], link_stat_on_404: bool) -> FakePodman {
 	let disk: Vec<(String, OnDisk)> = disk.iter().map(|(p, e)| ((*p).to_string(), *e)).collect();
 	fake_podman::start_replying(move |method, target| match method {
 		"PUT" => match put {
@@ -69,6 +82,10 @@ fn runtime(put: Put, disk: &[(&str, OnDisk)]) -> FakePodman {
 			.find(|(path, _)| target.ends_with(&format!("archive?path={}", urlencoded(path))))
 			.map(|(path, entry)| match entry {
 				OnDisk::Unreadable => FakeReply::Headers(500, Vec::new()),
+				OnDisk::Link(_) if link_stat_on_404 => FakeReply::Headers(
+					404,
+					vec![("X-Docker-Container-Path-Stat", stat_header(path, *entry))],
+				),
 				_ => FakeReply::Headers(
 					200,
 					vec![("X-Docker-Container-Path-Stat", stat_header(path, *entry))],
@@ -77,6 +94,12 @@ fn runtime(put: Put, disk: &[(&str, OnDisk)]) -> FakePodman {
 			.unwrap_or(FakeReply::Headers(404, Vec::new())),
 		_ => FakeReply::Body(404, r#"{"message":"not found"}"#.into()),
 	})
+}
+
+/// As [`runtime_full`], with the Podman 5.7.0 link-stat-on-404 behaviour
+/// (the default for every pre-existing test, which carries no links).
+fn runtime(put: Put, disk: &[(&str, OnDisk)]) -> FakePodman {
+	runtime_full(put, disk, true)
 }
 
 fn engine_for(fake: &FakePodman) -> Engine {
@@ -349,4 +372,70 @@ async fn an_answered_upload_is_not_read_back() {
 		"one PUT and nothing else, got {requests:?}"
 	);
 	assert!(requests[0].starts_with("PUT "), "got {requests:?}");
+}
+
+/// A directory containing only a symbolic link. On Podman 5.7.0 the link
+/// answers the stat `HEAD` with 404 that still carries the link's stat header;
+/// the runtime reads the link back and the upload is confirmed.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_directory_with_a_link_is_confirmed_when_the_404_carries_the_stat() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = dir.path().join("payload");
+	std::fs::create_dir(&payload).unwrap();
+	std::os::unix::fs::symlink("a.txt", payload.join("link")).unwrap();
+
+	let disk: [(&str, OnDisk); 2] = [
+		("/tmp/payload", OnDisk::Dir),
+		("/tmp/payload/link", OnDisk::Link(4)),
+	];
+	let fake = runtime_full(Put::HangsUp, &disk, true);
+
+	let result = upload(&fake, &payload, "payload", None).await;
+
+	assert!(
+		result.is_ok(),
+		"the directory and its link are both at the destination, got {result:?}"
+	);
+}
+
+/// The same archive, on a runtime whose 404 for the link does NOT carry the
+/// stat header. The link cannot be asked about, the upload is not confirmed,
+/// and the caller is told so. This is the cut-stream shape the link code was
+/// written to refuse.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_directory_with_a_link_is_a_failure_when_the_404_omits_the_stat() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = dir.path().join("payload");
+	std::fs::create_dir(&payload).unwrap();
+	std::os::unix::fs::symlink("a.txt", payload.join("link")).unwrap();
+
+	let disk: [(&str, OnDisk); 1] = [("/tmp/payload", OnDisk::Dir)];
+	let fake = runtime_full(Put::HangsUp, &disk, false);
+
+	let result = upload(&fake, &payload, "payload", None).await;
+
+	assert_unconfirmed(result, "the link's 404 is missing the stat header");
+}
+
+/// An empty file uploaded over an existing named pipe at the destination is
+/// NOT confirmed by the unchanged pipe: the regular-file check rejects any
+/// mode with a `ModeType` bit set, and a FIFO at size 0 would otherwise pass.
+#[tokio::test]
+async fn an_empty_file_uploaded_over_a_fifo_is_a_failure() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = dir.path().join("payload");
+	std::fs::create_dir(&payload).unwrap();
+	std::fs::write(payload.join("plain"), b"").unwrap();
+
+	let disk: [(&str, OnDisk); 2] = [
+		("/tmp/payload", OnDisk::Dir),
+		("/tmp/payload/plain", OnDisk::Fifo),
+	];
+	let fake = runtime_full(Put::HangsUp, &disk, true);
+
+	let result = upload(&fake, &payload, "payload", None).await;
+
+	assert_unconfirmed(result, "a FIFO at the destination is not a regular file");
 }

@@ -131,6 +131,13 @@ async fn engine_cp_to_container_renames_a_single_file() {
 /// the neighbour below could not assert on `cp`'s return value. I hold `cp`
 /// to both halves here: the bytes arrive, and `cp` says so, on Podman 6 as on
 /// Podman 5.
+///
+/// The payload holds a relative symlink (`link -> a.txt`) and a dangling one
+/// (`dangling -> nowhere`), so the live proof that the link confirmation works
+/// on the Podman 6 path is the `readlink` line below. A confirmation that
+/// dropped the link would either fail outright on a Podman 6 that cannot
+/// stat it or land but report `Err`, and `readlink` is the observable that
+/// turns the difference into a measurable byte.
 #[cfg(all(unix, feature = "test-helpers"))]
 #[tokio::test]
 async fn engine_cp_reports_a_directory_copy_as_landed() {
@@ -145,6 +152,8 @@ async fn engine_cp_reports_a_directory_copy_as_landed() {
 	fs::write(payload.join("empty"), b"").unwrap();
 	fs::create_dir(payload.join("nested")).unwrap();
 	fs::write(payload.join("nested").join("b.txt"), b"second").unwrap();
+	std::os::unix::fs::symlink("a.txt", payload.join("link")).unwrap();
+	std::os::unix::fs::symlink("nowhere", payload.join("dangling")).unwrap();
 
 	let proj = proj("cpdirland");
 	let engine = Engine::new(client, proj.clone());
@@ -168,6 +177,16 @@ async fn engine_cp_reports_a_directory_copy_as_landed() {
 			],
 		)
 		.await;
+	let readlink_out = engine
+		.test_exec_capture(
+			&format!("{proj}-web-1"),
+			vec![
+				"sh".into(),
+				"-c".into(),
+				"readlink /tmp/payload/link && readlink /tmp/payload/dangling".into(),
+			],
+		)
+		.await;
 	engine.down(&file).await.unwrap();
 
 	let out = out.unwrap_or_default();
@@ -183,6 +202,17 @@ async fn engine_cp_reports_a_directory_copy_as_landed() {
 	assert!(
 		out.contains("0\n"),
 		"empty file must arrive at /tmp/payload/empty with size 0, got {out:?}; \
+		 cp returned {result:?}"
+	);
+	let readlink_out = readlink_out.unwrap_or_default();
+	assert!(
+		readlink_out.contains("a.txt"),
+		"relative symlink must arrive at /tmp/payload/link pointing at a.txt, got {readlink_out:?}; \
+		 cp returned {result:?}"
+	);
+	assert!(
+		readlink_out.contains("nowhere"),
+		"dangling symlink must arrive at /tmp/payload/dangling pointing at nowhere, got {readlink_out:?}; \
 		 cp returned {result:?}"
 	);
 	assert!(
