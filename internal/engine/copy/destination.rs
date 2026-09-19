@@ -225,7 +225,31 @@ fn trusted_root_link(
 	link_meta: &std::fs::Metadata,
 	trusted: &TrustedRoot<'_>,
 ) -> bool {
-	if link.parent() != Some(trusted.root) {
+	// The parent is compared against the trusted root as a directory, not as
+	// a string, so the check does not depend on how the path is spelled.
+	// `link/..`, `R/sub/../link`, and a relative path with 64 leading `..`s
+	// all name the same link as `R/link`, and all three parents resolve to
+	// the trusted root once canonicalised. An empty parent (e.g. `link/out`
+	// from a working directory of `/`) is treated as `.`, which canonicalise
+	// resolves against the working directory.
+	//
+	// Following links inside canonicalise is acceptable here: every
+	// component before `link` was already walked and seen not to be a
+	// symlink, since the only link the walk lets through is one directly in
+	// the root. A parent that passes through such a link canonicalises to
+	// the link's target, never to the root, so it is still refused.
+	// `Path::new("tmp").parent()` is `Some("")`, not `None`, so both mean `.`.
+	let parent = link
+		.parent()
+		.filter(|p| !p.as_os_str().is_empty())
+		.unwrap_or_else(|| Path::new("."));
+	let Ok(parent_canon) = std::fs::canonicalize(parent) else {
+		return false;
+	};
+	let Ok(root_canon) = std::fs::canonicalize(trusted.root) else {
+		return false;
+	};
+	if parent_canon != root_canon {
 		return false;
 	}
 	link_meta.uid() == trusted.link_uid && root_is_trusted(trusted.root, trusted.root_uid)

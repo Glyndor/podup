@@ -53,8 +53,10 @@ fn tree_with_links() -> (tempfile::TempDir, PathBuf) {
 /// The same location spelled relative to the working directory. `..` is
 /// resolved physically, so more of them than the working directory is deep
 /// always reach the root, and the test never has to change directory.
+/// `pub(super)` so the trusted-root tests in the sibling module can reuse it
+/// instead of re-implementing the same walk.
 #[cfg(unix)]
-fn relative_to_cwd(absolute: &Path) -> PathBuf {
+pub(super) fn relative_to_cwd(absolute: &Path) -> PathBuf {
 	let mut out = PathBuf::new();
 	for _ in 0..64 {
 		out.push("..");

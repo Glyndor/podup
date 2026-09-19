@@ -19,6 +19,8 @@ use std::path::PathBuf;
 use super::destination::{
 	destination_metadata_under, destination_refusal, destination_refusal_under, TrustedRoot,
 };
+#[cfg(unix)]
+use super::destination_tests::relative_to_cwd;
 
 // -- T1..T8: the trusted-root exception is a thin hole, not a tunnel. -----
 //
@@ -71,18 +73,6 @@ fn trusted_for(base: &Path) -> TrustedRoot<'_> {
 		root_uid: meta.uid(),
 		link_uid: meta.uid(),
 	}
-}
-
-/// The same location spelled relative to the working directory. `..` is
-/// resolved physically, so more of them than the working directory is deep
-/// always reach the root, and the test never has to change directory.
-#[cfg(unix)]
-fn relative_to_cwd(absolute: &Path) -> PathBuf {
-	let mut out = PathBuf::new();
-	for _ in 0..64 {
-		out.push("..");
-	}
-	out.join(absolute.strip_prefix("/").expect("absolute"))
 }
 
 /// T1. A symlink at the first component under the trusted root is let
@@ -502,4 +492,98 @@ fn metadata_agrees_with_symlink_metadata_on_a_plain_directory_and_a_plain_file()
 			path.display(),
 		);
 	}
+}
+
+// -- P1..P4: the trusted-root check must not depend on how the path is
+// spelled. --------------------------------------------------------------
+//
+// The buggy form compared the link's parent to the trusted root as a string,
+// so `R/sub/../link/out` (parent is `R/sub/..`), `R/real/../link/out` (parent
+// is `R/real/..`), and a relative path with 64 leading `..`s (parent ends in
+// `link`) were all refused even though they name the same qualifying link.
+// The fix canonicalises the parent before comparing it to the canonicalised
+// trusted root, so all three spellings reach the same trusted link.
+
+/// Tree used by P1..P4. Matches the description in the task: a temp dir `R`
+/// as the trusted root, the process's own uid for both owners, `R/link ->
+/// R/real`, and a real directory `R/sub`. The mode is normalised to `0o755`
+/// because `tempfile::tempdir` honors the process umask and the
+/// trusted-root exception requires `mode & 0o022 == 0`.
+#[cfg(unix)]
+fn tree_for_path_spelling() -> (tempfile::TempDir, PathBuf) {
+	let dir = tempfile::tempdir().expect("tempdir");
+	let base = dir.path().canonicalize().expect("canonicalize");
+	std::fs::set_permissions(&base, PermissionsExt::from_mode(0o755)).expect("chmod 0o755");
+	std::fs::create_dir_all(base.join("real")).expect("mkdir real");
+	std::fs::create_dir_all(base.join("sub")).expect("mkdir sub");
+	std::os::unix::fs::symlink(base.join("real"), base.join("link")).expect("symlink link");
+	(dir, base)
+}
+
+/// P1. `R/sub/../link/out`: the parent is spelled `R/sub/..` but resolves
+/// to `R` physically, so it is the same trusted link as `R/link/out`.
+#[cfg(unix)]
+#[test]
+fn a_trusted_root_link_with_dotdot_at_an_intermediate_parent_is_let_through() {
+	let (_dir, base) = tree_for_path_spelling();
+	let dst = base.join("sub/../link/out");
+	let trusted = trusted_for(&base);
+	assert!(
+		destination_refusal_under(&dst, Some(trusted)).is_none(),
+		"R/sub/../link/out: the parent R/sub/.. resolves to R and the link must be trusted",
+	);
+}
+
+/// P2. A relative path to `R/link/out` built with the existing
+/// `relative_to_cwd` helper: 64 leading `..`s land the walk at `/` no
+/// matter the CWD, so the symlink at the end is reached as a relative
+/// path and its parent canonicalises to the trusted root.
+#[cfg(unix)]
+#[test]
+fn a_relative_path_through_a_trusted_root_link_is_let_through() {
+	let (_dir, base) = tree_for_path_spelling();
+	let dst = relative_to_cwd(&base.join("link/out"));
+	let trusted = trusted_for(&base);
+	assert!(
+		destination_refusal_under(&dst, Some(trusted)).is_none(),
+		"relative path to R/link/out: the parent canonicalises to R and the link must be trusted",
+	);
+}
+
+/// P3. `R/sub/../sub/inner_link/out` where `R/sub/inner_link` is a symlink
+/// one level down: its parent is `R/sub`, not `R`, and the walk refuses it
+/// even though the spelling goes through `..`. The `..` does not bring the
+/// walk back to `R` because the link itself sits one level below.
+#[cfg(unix)]
+#[test]
+fn a_trusted_root_check_via_dotdot_still_refuses_a_link_one_level_down() {
+	let (_dir, base) = tree_for_path_spelling();
+	std::os::unix::fs::symlink(base.join("real/elsewhere"), base.join("sub/inner_link"))
+		.expect("symlink sub/inner_link");
+	let dst = base.join("sub/../sub/inner_link/out");
+	let trusted = trusted_for(&base);
+	let err = destination_refusal_under(&dst, Some(trusted))
+		.expect("R/sub/inner_link is one level below R and must be refused");
+	let named = format!(
+		"{} is a symlink",
+		base.join("sub/../sub/inner_link").display()
+	);
+	assert!(
+		err.to_string().contains(&named),
+		"R/sub/../sub/inner_link/out: refusal must name R/sub/../sub/inner_link, got: {err}",
+	);
+}
+
+/// P4. `R/real/../link/out`: the parent `R/real/..` is `R` physically, so
+/// this is the same trusted link as `R/link/out` and must be let through.
+#[cfg(unix)]
+#[test]
+fn a_trusted_root_link_with_dotdot_at_a_real_parent_is_let_through() {
+	let (_dir, base) = tree_for_path_spelling();
+	let dst = base.join("real/../link/out");
+	let trusted = trusted_for(&base);
+	assert!(
+		destination_refusal_under(&dst, Some(trusted)).is_none(),
+		"R/real/../link/out: the parent R/real/.. resolves to R and the link must be trusted",
+	);
 }
