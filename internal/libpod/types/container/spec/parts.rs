@@ -111,17 +111,26 @@ impl Namespace {
 		}
 	}
 
-	/// Parse a compose-style namespace string.
-	///
-	/// `"container:name"` → `{ nsmode: "container", value: "name" }`.
-	/// Anything else → `{ nsmode: mode, value: None }`.
+	/// I separate namespace targets and user namespace options from their mode.
 	pub fn parse(mode: impl Into<String>) -> Self {
 		let mode = mode.into();
-		if let Some(id) = mode.strip_prefix("container:") {
-			Self::container(id)
-		} else {
-			Self::new(mode)
+		if let Some((name, value)) = mode.split_once(':') {
+			let nsmode = match name {
+				"container" => return Self::container(value),
+				"ns" => "path",
+				"auto" | "keep-id" => name,
+				_ => return Self::new(mode),
+			};
+			return Self {
+				nsmode: nsmode.into(),
+				value: Some(value.into()),
+			};
 		}
+		Self::new(if mode == "nomap" {
+			"no-map".into()
+		} else {
+			mode
+		})
 	}
 }
 

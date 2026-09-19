@@ -130,11 +130,11 @@ access.
 
 ### `userns_mode: auto` gives each container its own UID range
 
-Rootless Podman maps the container's root onto your user, so two containers of
-one project share that mapping: a file one of them writes as UID 0 on a shared
-volume is readable by the other, and a process that escaped either lands in the
-same user. Podman's `--userns=auto` allocates each container a private range of
-subordinate UIDs and GIDs instead. podup forwards the compose key as it is:
+With its default configuration, rootless Podman maps container root onto your
+host user. Leaving `userns_mode` unset uses that default mapping, so containers
+share the same host identity for UID 0. Podman's `--userns=auto` allocates a
+private range of subordinate UIDs and GIDs. Podup requests that allocation when
+you explicitly set the compose key:
 
 ```yaml
 services:
@@ -143,15 +143,19 @@ services:
     userns_mode: auto
 ```
 
-Two consequences to know before switching a service. It needs a range in
-`/etc/subuid` and `/etc/subgid` for your user (`usermod --add-subuids
-100000-165535 --add-subgids 100000-165535 <user>` on a host that has none;
-most installs already have one, 65536 wide). And files a container writes to a
-named volume are owned by an ID from its private range, so a bind mount the
-host user expects to read back needs `:U` (Podman chowns the mount to the
-container's mapping) or a volume shared only between containers. Podman
-estimates the size of the range from the image; a service whose image expects
-more IDs than that declares it, as `userns_mode: auto:size=65536`.
+Rootless automatic allocation needs available subordinate IDs for your user in
+`/etc/subuid` and `/etc/subgid`. Existing containers, including ones using
+`keep-id` or `nomap`, can consume the available range and prevent allocation.
+Podman estimates the required range size from the image; request an explicit
+size with `userns_mode: "auto:size=65536"` when needed. That size must fit in
+the available range.
+
+Files written through a mount use the container's mapped host IDs. Bind mounts
+therefore need permissions that allow those IDs to access them. The `:U` mount
+option recursively changes source ownership to the container's mapped user
+and group; it modifies host files and does not grant your host user access to
+them. Containers with separate automatic ranges also need compatible ownership
+and permissions to share writable volumes.
 
 ### Volume SELinux labels
 

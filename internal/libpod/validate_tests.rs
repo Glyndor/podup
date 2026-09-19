@@ -72,6 +72,44 @@ fn userns_takes_its_own_vocabulary() {
 	assert!(!is_valid_namespace_mode(USERNS_FIELD, "auto:"));
 }
 
+#[test]
+fn userns_options_do_not_admit_unknown_modes_or_options_on_plain_modes() {
+	for mode in [
+		"unknown:size=65536",
+		"host:uid=1000",
+		"private:size=10",
+		"nomap:size=10",
+	] {
+		let service = crate::compose::types::Service {
+			userns_mode: Some(mode.into()),
+			..Default::default()
+		};
+		let error = pre_validate_spec("web", &service, &[]).unwrap_err();
+		let ComposeError::Podman(PodmanError::Field {
+			service,
+			field,
+			message,
+			..
+		}) = error
+		else {
+			panic!("unknown modes must retain the field error");
+		};
+		assert_eq!(service, "web");
+		assert_eq!(field, USERNS_FIELD);
+		assert_eq!(
+			message,
+			format!(
+				"namespace mode {mode:?} is not recognised; must be {}",
+				allowed_namespace_modes(USERNS_FIELD)
+			)
+		);
+	}
+	for field in [PID_FIELD, IPC_FIELD, UTS_FIELD, CGROUP_FIELD] {
+		assert!(!is_valid_namespace_mode(field, "auto:size=65536"));
+		assert!(!is_valid_namespace_mode(field, "keep-id:uid=1000,gid=1000"));
+	}
+}
+
 /// The error text has to name the modes the slot in hand accepts, not a
 /// union that would send the reader after a value their slot rejects.
 #[test]

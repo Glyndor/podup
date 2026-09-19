@@ -1,9 +1,8 @@
 //! Integration tests that exercise the engine against a real Podman daemon.
 //!
-//! All tests skip gracefully when Podman is not reachable, so they are safe to
-//! run on a machine without it. Set `PODUP_REQUIRE_PODMAN=1` where Podman is
-//! guaranteed (the nested-virt lane does) and an unreachable Podman becomes a
-//! hard failure rather than a suite that reports `ok` having run nothing.
+//! I require a reachable Podman for the user namespace assertions. Other groups
+//! skip when Podman is unavailable unless `PODUP_REQUIRE_PODMAN=1` is set.
+//! I use that setting in the nested-virt lane so an unreachable Podman fails.
 //!
 //! The test bodies are split across the `engine_integration/` submodules to
 //! keep each file under the source line limit. Shared helpers live here at the
@@ -253,3 +252,6 @@ mod stats_flags;
 
 #[path = "engine_integration/x_podman_pod.rs"]
 mod x_podman_pod;
+
+#[path = "engine_integration/userns.rs"]
+mod userns;
