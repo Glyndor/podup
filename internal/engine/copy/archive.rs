@@ -11,7 +11,7 @@ use std::path::Path;
 use flate2::write::GzEncoder;
 use flate2::Compression;
 
-use super::destination::destination_refusal;
+use super::destination::{destination_metadata, destination_refusal};
 use crate::error::{ComposeError, Result};
 
 pub(super) fn pack_path(
@@ -69,7 +69,12 @@ pub(super) fn extract_archive(tar_bytes: &[u8], dst: &Path) -> Result<()> {
 	if let Some(refusal) = destination_refusal(dst) {
 		return Err(refusal);
 	}
-	if let Ok(meta) = std::fs::symlink_metadata(dst) {
+	// `destination_metadata` follows a trusted root link whose target IS
+	// the destination, so the same `podup cp svc:/x /tmp` the routing
+	// branch accepts lands here as a directory too. Any other error
+	// (including `NotFound` for a dangling trusted link) falls through to
+	// the "not an existing directory" branch below.
+	if let Ok(meta) = destination_metadata(dst) {
 		if meta.is_dir() {
 			return extract_tar_guarded(tar_bytes, dst);
 		}

@@ -59,11 +59,16 @@ pub(super) enum CpDestinationKind {
 /// `symlink_metadata` alone only answers for the last component, so the
 /// whole path goes through [`destination::destination_refusal`] first
 /// (#1764). That module also records what the check does not close.
+///
+/// After the walk accepted the destination, the metadata is read through
+/// [`destination::destination_metadata`] so a trusted root link whose
+/// target IS the destination is followed (the walk would have let it
+/// through); every other link still reads as a link.
 pub(super) fn cp_destination_kind(dst: &Path) -> CpDestinationKind {
 	if destination::destination_refusal(dst).is_some() {
 		return CpDestinationKind::Symlink;
 	}
-	match std::fs::symlink_metadata(dst) {
+	match destination::destination_metadata(dst) {
 		Ok(meta) if meta.file_type().is_symlink() => CpDestinationKind::Symlink,
 		Ok(meta) if meta.is_dir() => CpDestinationKind::Directory,
 		_ => CpDestinationKind::NotADirectory,
@@ -615,3 +620,7 @@ mod upload_tests;
 #[cfg(test)]
 #[path = "copy/destination_tests.rs"]
 mod destination_tests;
+
+#[cfg(test)]
+#[path = "copy/destination_trusted_tests.rs"]
+mod destination_trusted_tests;
