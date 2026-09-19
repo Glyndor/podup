@@ -29,7 +29,7 @@ residual risks.
 | Podman socket (`PODMAN_SOCKET`/`DOCKER_HOST`) | Trusted, local-only | Whoever can reach it controls the engine; this is the primary boundary. Only `unix://`/`npipe://` are accepted; remote schemes are rejected fail-closed. |
 | Compose file and its referenced files | **Trusted input** | Treated like a Makefile (see below). |
 | Release artifacts (`podup update`, installer) | Untrusted transport | Verified against an embedded Ed25519 key + provenance attestation, fail-closed. |
-| Container filesystem (e.g. `cp` archives) | Untrusted | Tar extraction refuses path-traversal (zip-slip) entries. |
+| Container filesystem (e.g. `cp` archives) | Untrusted | Tar extraction refuses path-traversal (zip-slip) entries; the host-side `cp` destination is also walked component by component and any symlink at any component of the path is refused, except a root-owned symlink directly in a root that has no group or other write bit (so `/tmp` on macOS and `/home` on Fedora Atomic pass), but that guard is a path check, not a pinned directory handle. |
 | Network/TLS to GitHub/crates.io | Untrusted | Integrity comes from signatures, not transport. |
 
 ## Connection: the libpod socket is local-only

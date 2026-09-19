@@ -16,6 +16,7 @@ use super::Engine;
 /// Crate-private so the fuzz harness behind the `test-helpers` feature can
 /// reach `extract_tar_guarded` without widening the published API surface.
 pub(crate) mod archive;
+mod destination;
 mod stream;
 mod verify;
 
@@ -31,12 +32,15 @@ const MAX_CP_ARCHIVE_BYTES: usize = 1024 * 1024 * 1024;
 /// Three cases drive [`Engine::cp_from_container`]:
 /// - `Directory`: an existing real directory; the streaming extractor can
 ///   pipe the archive body straight into it without buffering.
-/// - `Symlink`: a destination that is itself a symlink. `Path::is_dir`
-///   would follow it and report a directory, so the routing used to take
-///   the streaming branch and the bytes landed in the link target rather
-///   than the named destination. The same class of bug #1736 closed
-///   inside `extract_archive`; this is that fix mirrored at the call site
-///   that picks between streaming and buffering.
+/// - `Symlink`: a destination with a symlink at any component of its path,
+///   the last one included, or with a component that could not be inspected
+///   (refused the same way). `Path::is_dir` would follow the link and report
+///   a directory, so the routing used to take the streaming branch and the
+///   bytes landed in the link target rather than the named destination. The
+///   same class of bug #1736 closed inside `extract_archive`; this is that
+///   fix mirrored at the call site that picks between streaming and
+///   buffering. #1736 looked at the last component only, and #1764 extended
+///   it to the whole path.
 /// - `NotADirectory`: a missing path (the buffered `extract_archive`
 ///   branch will create it) or an existing non-directory (the same
 ///   branch will land the single entry there).
@@ -51,8 +55,20 @@ pub(super) enum CpDestinationKind {
 /// as a symlink, not the directory it points at. Without this, the
 /// streaming branch would extract into the link target rather than the
 /// named destination (#1736 + the call-site follow-up).
+///
+/// `symlink_metadata` alone only answers for the last component, so the
+/// whole path goes through [`destination::destination_refusal`] first
+/// (#1764). That module also records what the check does not close.
+///
+/// After the walk accepted the destination, the metadata is read through
+/// [`destination::destination_metadata`] so a trusted root link whose
+/// target IS the destination is followed (the walk would have let it
+/// through); every other link still reads as a link.
 pub(super) fn cp_destination_kind(dst: &Path) -> CpDestinationKind {
-	match std::fs::symlink_metadata(dst) {
+	if destination::destination_refusal(dst).is_some() {
+		return CpDestinationKind::Symlink;
+	}
+	match destination::destination_metadata(dst) {
 		Ok(meta) if meta.file_type().is_symlink() => CpDestinationKind::Symlink,
 		Ok(meta) if meta.is_dir() => CpDestinationKind::Directory,
 		_ => CpDestinationKind::NotADirectory,
@@ -215,10 +231,7 @@ impl Engine {
 		// closed inside `extract_archive`, mirrored here at the routing site.
 		match cp_destination_kind(&dst) {
 			CpDestinationKind::Symlink => {
-				return Err(ComposeError::Copy(format!(
-					"cp: refusing symlink destination: {}",
-					dst.display()
-				)));
+				return Err(destination::refusal_for(&dst));
 			}
 			CpDestinationKind::Directory => {
 				return stream::extract_streamed(resp, dst, MAX_CP_ARCHIVE_BYTES as u64).await;
@@ -603,3 +616,11 @@ mod tests;
 #[cfg(all(test, unix))]
 #[path = "copy_upload_tests.rs"]
 mod upload_tests;
+
+#[cfg(test)]
+#[path = "copy/destination_tests.rs"]
+mod destination_tests;
+
+#[cfg(test)]
+#[path = "copy/destination_trusted_tests.rs"]
+mod destination_trusted_tests;
