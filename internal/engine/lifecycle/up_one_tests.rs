@@ -30,7 +30,7 @@ fn running(file: &ComposeFile, bound_to: impl Fn(&str) -> &'static str) -> Strin
 	let e = engine_with(crate::libpod::Client::new("/nonexistent.sock"));
 	let mut entries = Vec::new();
 	for (name, service) in &file.services {
-		let hash = config_hash(service, file).expect("config hash");
+		let hash = config_hash(service, file, &e.base_dir).expect("config hash");
 		for container in e.replica_names(name, service) {
 			entries.push(serde_json::json!({
 				"Id": container,

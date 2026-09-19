@@ -322,7 +322,10 @@ fn hash_file_payload(
 	// `up` fails on this branch, so the difference is worth the line.
 	let kind_str = std::str::from_utf8(kind).unwrap_or("<binary>");
 	let mut file = std::fs::File::open(path).map_err(|e| {
-		ComposeError::Unsupported(format!("{kind_str} {name:?} from {path:?}: {e}"))
+		ComposeError::Unsupported(format!(
+			"{kind_str} {name:?} from \"{}\": {e}",
+			path.display()
+		))
 	})?;
 	let mut digest_hasher = Sha256::new();
 	// 8 KiB mirrors what the rest of the project uses for chunked copies
@@ -331,7 +334,10 @@ fn hash_file_payload(
 	let mut buf = [0u8; 8192];
 	loop {
 		let n = file.read(&mut buf).map_err(|e| {
-			ComposeError::Unsupported(format!("{kind_str} {name:?} from {path:?}: {e}"))
+			ComposeError::Unsupported(format!(
+				"{kind_str} {name:?} from \"{}\": {e}",
+				path.display()
+			))
 		})?;
 		if n == 0 {
 			break;
