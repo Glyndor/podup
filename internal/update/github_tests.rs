@@ -26,6 +26,27 @@ fn names_a_refused_connection(message: &str) -> bool {
 	message.contains("Connection refused") || message.contains("(os error 10061)")
 }
 
+/// Pick a TCP port the OS just allocated, then give it up so any connect
+/// attempt afterwards is refused. Replaces the `127.0.0.1:1` shortcut that
+/// assumed the host's "discard" service is absent and that nothing else has
+/// claimed port 1.
+fn unused_local_port() -> u16 {
+	let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind ephemeral port");
+	let port = listener
+		.local_addr()
+		.expect("ephemeral listener addr")
+		.port();
+	drop(listener);
+	port
+}
+
+/// `https://127.0.0.1:<port>` pointing at a port nothing is listening on,
+/// chosen by [`unused_local_port`]. `https_only` on the agent still applies;
+/// the scheme guard passes and the connect fails on the socket.
+fn closed_https_base() -> String {
+	format!("https://127.0.0.1:{}", unused_local_port())
+}
+
 #[test]
 fn read_capped_accepts_small() {
 	let data = b"hello world".to_vec();
@@ -81,13 +102,15 @@ fn parse_latest_tag_rejects_missing_field() {
 
 #[test]
 fn latest_version_maps_transport_error() {
-	// https so the request reaches a socket. Port 1 is closed, so the failure
-	// is a connection refusal: offline, deterministic, and genuinely the
-	// transport path this test is named for. An http base would never get
-	// that far: the agent rejects the scheme first, which is what this test
-	// used to measure while claiming to measure the socket.
+	// https so the request reaches a socket. The base points at a port the
+	// test itself picked, so the OS answers with a connection refusal:
+	// offline, deterministic, and genuinely the transport path this test is
+	// named for. An http base would never get that far: the agent rejects
+	// the scheme first, which is what this test used to measure while
+	// claiming to measure the socket.
 	use crate::update::ReleaseSource;
-	let src = GitHubSource::with_bases(REPO, "https://127.0.0.1:1", "https://127.0.0.1:1");
+	let base = closed_https_base();
+	let src = GitHubSource::with_bases_no_proxy(REPO, &base, &base);
 	let err = src.latest_version().unwrap_err();
 	assert!(
 		err.to_string().contains("cannot reach GitHub releases API"),
@@ -102,7 +125,8 @@ fn latest_version_maps_transport_error() {
 #[test]
 fn fetch_maps_transport_error() {
 	use crate::update::ReleaseSource;
-	let src = GitHubSource::with_bases(REPO, "https://127.0.0.1:1", "https://127.0.0.1:1");
+	let base = closed_https_base();
+	let src = GitHubSource::with_bases_no_proxy(REPO, &base, &base);
 	let err = src.fetch("podup-linux-x86_64").unwrap_err();
 	assert!(err.to_string().contains("download failed"), "got: {err}");
 	assert!(
@@ -144,7 +168,8 @@ fn plaintext_base_is_refused_for_being_plaintext() {
 #[test]
 fn https_base_passes_the_scheme_check() {
 	use crate::update::ReleaseSource;
-	let src = GitHubSource::with_bases(REPO, "https://127.0.0.1:1", "https://127.0.0.1:1");
+	let base = closed_https_base();
+	let src = GitHubSource::with_bases_no_proxy(REPO, &base, &base);
 	let err = src.latest_version().unwrap_err();
 	assert!(
 		!err.to_string().contains("configured for https only"),
