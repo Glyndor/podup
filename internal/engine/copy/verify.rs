@@ -1,11 +1,12 @@
 //! Confirming a tree upload that the runtime never answered.
 //!
-//! A single file is confirmed by its size at the destination. A directory has
-//! no size that says anything about its children, so #1777 had every directory
-//! copy against Podman 6 reported as failed, landed or not. The question asked
-//! here is the same one, put to each entry: is every regular file of the
-//! archive that was sent at the destination with its size, every directory
-//! there as a directory, and every symbolic link there as a symlink.
+//! A single file is confirmed by its size and its kind at the destination. A
+//! directory has no size that says anything about its children, so #1777 had
+//! every directory copy against Podman 6 reported as failed, landed or not.
+//! The question asked here is the same one, put to each entry: is every
+//! regular file of the archive that was sent at the destination with its
+//! size, every directory there as a directory, and every symbolic link there
+//! as a symlink.
 //!
 //! The expectation is read back out of the archive that went over the wire,
 //! not from a second walk of the source, so it cannot describe a tree other
@@ -30,9 +31,11 @@
 //!   which `head_path_stat` threw away; `head_path_stat_even_if_missing` reads
 //!   it back so a cut stream cannot be confirmed against the link that was
 //!   already there.
-//! - Hard links, FIFOs, devices, block/char devices and everything else:
-//!   left out of the expectation. `sent_entries` filters them out, and
-//!   `tree_landed` is told nothing about them.
+//! - Hard links, FIFOs, char/block devices and anything else: an entry of a
+//!   kind that cannot be asked about through the archive stat makes the
+//!   archive unverifiable. `sent_entries` returns an error naming the type,
+//!   the same way a non-UTF-8 path already does, so the tree answer is "not
+//!   landed" and the upload fails closed.
 //!
 //! ## Paths
 //!
@@ -63,7 +66,7 @@ const MODE_TYPE: u64 =
 
 /// What an uploaded entry must be at the destination.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum SentKind {
+pub(crate) enum SentKind {
 	/// A regular file of this many bytes.
 	File(u64),
 	Dir,
@@ -88,9 +91,11 @@ pub(super) struct SentEntry {
 /// `X-Docker-Container-Path-Stat` header, and the runtime is asked through
 /// `head_path_stat_even_if_missing` so the stat is read on the 404 too.
 ///
-/// Hard links, FIFOs, devices and anything else are left out, deliberately;
-/// they are not representable here, and an archive that ends up holding only
-/// such entries yields an empty expectation, which fails closed.
+/// Hard links, FIFOs, devices and anything else the archive stat cannot be
+/// asked about make the archive unverifiable: this function returns an error
+/// naming the offending entry type, the same way a non-UTF-8 path already
+/// does, so `tree_landed` answers "not landed" and the copy fails closed
+/// rather than confirming on an entry the destination was never asked about.
 ///
 /// An entry whose path is not valid UTF-8 makes the function return an error.
 /// `tree_landed` reads that as "not landed", so a copy of such a tree against
@@ -103,11 +108,16 @@ pub(super) fn sent_entries(gz_tar: &[u8]) -> Result<Vec<SentEntry>> {
 	let mut sent = Vec::new();
 	for entry in archive.entries().map_err(ComposeError::Io)? {
 		let entry = entry.map_err(ComposeError::Io)?;
-		let kind = match entry.header().entry_type() {
+		let entry_type = entry.header().entry_type();
+		let kind = match entry_type {
 			tar::EntryType::Regular | tar::EntryType::Continuous => SentKind::File(entry.size()),
 			tar::EntryType::Directory => SentKind::Dir,
 			tar::EntryType::Symlink => SentKind::Link,
-			_ => continue,
+			_ => {
+				return Err(ComposeError::Build(format!(
+					"cp: archive entry of unverified type {entry_type:?} cannot be confirmed"
+				)));
+			}
 		};
 		let path = entry.path().map_err(ComposeError::Io)?;
 		let mut names = Vec::new();
@@ -154,9 +164,12 @@ impl Engine {
 	/// Whether every file, directory and symbolic link of `gz_tar` is at `dir`
 	/// in `container`.
 	///
-	/// Hard links, FIFOs, devices and anything else are not asked about (see
-	/// the module doc), and an archive that ends up holding only such entries
-	/// yields an empty expectation, which fails closed.
+	/// An archive that holds a hard link, a FIFO, a device, a block/char
+	/// device or anything else that cannot be asked about through the
+	/// archive stat is unverifiable: `sent_entries` errors on the offending
+	/// entry type and this function answers "not landed", so the upload
+	/// fails closed rather than confirming against an entry the destination
+	/// was never asked about.
 	///
 	/// Entries are asked about last to first. Extraction is sequential, so a
 	/// stream that was cut loses its tail, and this way round a truncated
