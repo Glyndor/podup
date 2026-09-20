@@ -8,9 +8,6 @@
 
 use std::path::Path;
 
-use flate2::write::GzEncoder;
-use flate2::Compression;
-
 use super::destination::{destination_metadata, destination_refusal};
 use crate::error::{ComposeError, Result};
 
@@ -20,8 +17,10 @@ pub(super) fn pack_path(
 	name_override: Option<&str>,
 	contents: bool,
 ) -> Result<Vec<u8>> {
-	let encoder = GzEncoder::new(Vec::new(), Compression::default());
-	let mut tar = crate::engine::tar_stream::builder(encoder);
+	// Plain tar: the archive is handed to a Unix socket on the same host, so
+	// gzipping bytes that never leave the machine only spends CPU. Podman
+	// accepts both.
+	let mut tar = crate::engine::tar_stream::builder(Vec::new());
 	// `-L/--follow-link`: archive the symlink target's contents instead of the
 	// link itself.
 	tar.follow_symlinks(follow_link);
@@ -75,10 +74,7 @@ pub(super) fn pack_path(
 			.map_err(|e| ComposeError::Copy(format!("cp: {e}")))?;
 	}
 
-	let gz = tar
-		.into_inner()
-		.map_err(|e| ComposeError::Copy(format!("cp: {e}")))?;
-	gz.finish()
+	tar.into_inner()
 		.map_err(|e| ComposeError::Copy(format!("cp: {e}")))
 }
 
