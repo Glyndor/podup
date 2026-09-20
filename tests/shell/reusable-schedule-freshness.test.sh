@@ -332,14 +332,20 @@ check "F: gh was called exactly 2 times" "2" \
 	"$(grep -acz . "$WORK/gh.log" | tr -d ' ')"
 
 # G: contradiction; windowed empty 3 times, unwindowed sees a recent run.
+# The gate's question is answered (a run inside the limit exists), so this
+# is a stale-listing warning rather than a failure: the listing index can
+# serve a windowed page missing a recent run for a moment, and the next
+# run of the job reads it correctly once the index catches up.
 g_seen=$(ago 1)
 printf '%s\n%s\n%s\n%s\n' "" "" "" "$g_seen" > "$WORK/contradiction.resp"
 out="$(run_step "$MAX_AGE_DAYS" "$WORK/contradiction.resp")"; rc=$?
-check "G: windowed-empty then unwindowed-recent fails (exit 1)" "1" "$rc"
+check "G: windowed-empty then unwindowed-recent passes with a warning (exit 0)" "0" "$rc"
 check "G: gh was called exactly 4 times" "4" \
 	"$(grep -acz . "$WORK/gh.log" | tr -d ' ')"
-check "G: output names both the windowed emptiness and the unwindowed timestamp" "1" \
-	"$(printf '%s' "$out" | grep -q 'saw nothing 3 times' && printf '%s' "$out" | grep -q "$g_seen" && echo 1 || echo 0)"
+check "G: emits a ::warning:: naming both the windowed emptiness and the unwindowed timestamp" "1" \
+	"$(printf '%s' "$out" | grep -q '::warning::' && printf '%s' "$out" | grep -q 'saw nothing 3 times' && printf '%s' "$out" | grep -q "$g_seen" && echo 1 || echo 0)"
+check "G: does not emit a ::error::" "0" \
+	"$(printf '%s' "$out" | grep -c '^::error::')"
 
 echo "$pass passed, $fail failed"
 printf 'DONE %s %d %d\n' "${BASH_SOURCE[0]##*/}" "$pass" "$fail"
