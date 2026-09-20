@@ -15,6 +15,14 @@ use super::scale::{
 	DEFAULT_MAX_REPLICAS,
 };
 
+/// One test in this file owns `PODUP_MAX_REPLICAS` for its body; without a
+/// lock, `cargo test`'s parallel execution lets the new
+/// `up_one_tests.rs` fixtures (which drive `up()` with three replicas) read
+/// the `set_var(2)` from this test mid-`up()` and fail on
+/// `check_replica_limit`. The lock is shared with `up_one_tests.rs` so the
+/// two files serialise on the env var.
+pub(super) static MAX_REPLICAS_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[cfg(unix)]
 use crate::engine::fake_podman;
 #[cfg(unix)]
@@ -499,7 +507,10 @@ fn state_is_active_only_for_running_and_paused() {
 #[test]
 fn replica_limit_default_and_env_override() {
 	// One test owns the shared `PODUP_MAX_REPLICAS` env var for its whole body
-	// so a sibling test running in parallel can never race it.
+	// so a sibling test running in parallel can never race it. The lock is
+	// shared with `up_one_tests.rs`; taking it here makes the "one test owns"
+	// rule real instead of aspirational.
+	let _guard = MAX_REPLICAS_TEST_LOCK.lock().unwrap();
 	let max = DEFAULT_MAX_REPLICAS as usize;
 
 	// Default ceiling: at-limit allowed, over-limit rejected.

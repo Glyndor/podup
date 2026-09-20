@@ -259,10 +259,17 @@ check "and does not report it as a missing schedule" "0" \
 # run exists inside the limit. Plus one day because the comparison is
 # `age_days -gt MAX_AGE_DAYS` on whole days and the window must not be
 # narrower than what that accepts.
+#
+# `expected` is computed BEFORE `run_step` so a midnight UTC crossing
+# between the two cannot push the assertion one day short of the cutoff
+# the step actually wrote into the URL: the step captures its own
+# `cutoff` from the clock and the assertion reads the clock a second or
+# two later, and if the two straddle 00:00 UTC they differ by a whole
+# day. Captured on the same side as the step, `expected` matches.
 
 printf '\n' > "$WORK/url-window.resp"
-run_step "$MAX_AGE_DAYS" "$WORK/url-window.resp" >/dev/null
 expected=$(date -u -d "$((MAX_AGE_DAYS + 1)) days ago" +%Y-%m-%d)
+run_step "$MAX_AGE_DAYS" "$WORK/url-window.resp" >/dev/null
 check "the first call's URL contains the window cutoff date" "1" \
 	"$(awk -v RS='\0' 'NR==1 {print; exit}' "$WORK/gh.log" | grep -q "created=%3E%3D${expected}T" && echo 1 || echo 0)"
 

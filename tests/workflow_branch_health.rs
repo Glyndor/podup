@@ -415,17 +415,27 @@ fn ci_yml_health_if_value(workflow: &str, job_id: &str) -> Option<String> {
 	None
 }
 
-/// Whether a job's `if:` is `event_name != 'push' && ref_name !=
-/// <its own branch>`. A copy-paste that leaves `develop` guarding
-/// `main` returns false here.
+/// The `if:` line that takes a health caller out of the push run of the
+/// branch it watches, with the branch half taken from that job's own
+/// `with.branch`. Anything stronger (`&& ...`) is fine in principle but
+/// is rejected here so a future refactor that flips the conjunction or
+/// appends `|| true` does not silently disarm the latching fix.
+fn expected_health_if(branch: &str) -> String {
+	format!("github.event_name != 'push' || github.ref_name != '{branch}'")
+}
+
+/// Whether a job's `if:` is exactly the self-branching shape for its
+/// own `with.branch`. Equality, not contains: a copy-paste that leaves
+/// `develop` guarding `main` returns false here, and so does an
+/// expression that has the right substrings plus `|| true` (which
+/// re-arms the latching defect on every push of the watched branch).
 fn has_self_branching_if(workflow: &str, job_id: &str) -> bool {
 	let if_value = match ci_yml_health_if_value(workflow, job_id) {
 		Some(v) => v,
 		None => return false,
 	};
 	let branch = ci_yml_health_branch(workflow, job_id);
-	if_value.contains("github.event_name != 'push'")
-		&& if_value.contains(&format!("github.ref_name != '{branch}'"))
+	if_value == expected_health_if(&branch)
 }
 
 // Each health caller must carry a job-level `if:` that takes it out of
@@ -448,13 +458,14 @@ fn each_health_job_carries_an_if_that_excludes_its_own_push_run() {
 			)
 		});
 		let branch = ci_yml_health_branch(&ci, job_id);
-		assert!(
-			if_value.contains("github.event_name != 'push'")
-				&& if_value.contains(&format!("github.ref_name != '{branch}'")),
-			"`{job_id}`'s `if:` ({if_value:?}) is not the self-branching \
-			 shape `event_name != 'push' || ref_name != '{branch}'`; the \
-			 branch half has to match the `with.branch` (a copy of the \
-			 other health job without flipping the branch lands here)."
+		let expected = expected_health_if(&branch);
+		assert_eq!(
+			if_value, expected,
+			"`{job_id}`'s `if:` ({if_value:?}) is not exactly `{expected}`. \
+			 A weaker `contains` would accept `... || true`, which is true \
+			 on every push of {branch} and puts the caller back into the \
+			 run it is supposed to skip; matching the whole expression \
+			 is what stops that."
 		);
 	}
 }
@@ -493,5 +504,25 @@ jobs:
 	assert!(
 		!has_self_branching_if(ci_swapped, "health-main"),
 		"a job whose `if:` names the other branch was accepted"
+	);
+
+	// The exact shape with `|| true` appended: the conjunction is true
+	// on every push of the watched branch, which is the latching
+	// defect the `if:` exists to prevent. Equality (not `contains`)
+	// is what catches it.
+	let ci_true = "\
+jobs:
+  health-main:
+    if: github.event_name != 'push' || github.ref_name != 'main' || true
+    uses: ./.github/workflows/reusable-branch-health.yml
+    with:
+      workflow: ci.yml
+      branch: main
+";
+	assert!(
+		!has_self_branching_if(ci_true, "health-main"),
+		"an `if:` of the right shape plus `|| true` is true on every \
+		 push of main and would re-arm the latching defect; equality \
+		 is what stops that"
 	);
 }
