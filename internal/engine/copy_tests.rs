@@ -23,12 +23,12 @@ fn entry_landed_asks_whether_the_entry_matches_what_was_uploaded() {
 		..PathStat::default()
 	};
 	// The entry is there and is the size that was sent -> landed.
-	assert!(entry_landed(want, Some(&stat(42))));
+	assert!(entry_landed(&want, Some(&stat(42))));
 	// A failed PUT leaves the old entry, which is a different size.
-	assert!(!entry_landed(want, Some(&stat(41))));
-	assert!(!entry_landed(want, Some(&stat(0))));
+	assert!(!entry_landed(&want, Some(&stat(41))));
+	assert!(!entry_landed(&want, Some(&stat(0))));
 	// The entry vanished, or never appeared.
-	assert!(!entry_landed(want, None));
+	assert!(!entry_landed(&want, None));
 }
 
 /// The case the previous signal could not express, and the reason it
@@ -46,7 +46,7 @@ fn copying_an_unchanged_file_twice_is_confirmed() {
 		size: 42,
 		..PathStat::default()
 	};
-	assert!(entry_landed(want, Some(&already_there)));
+	assert!(entry_landed(&want, Some(&already_there)));
 }
 
 /// The shape that goes into the comparison is the source file's real length,
@@ -83,14 +83,19 @@ fn the_expected_kind_comes_from_the_source() {
 /// A host symlink at the source, copied without `-L/--follow-link`, expects a
 /// symlink at the destination rather than being verified against the link
 /// target's size (which is what the previous size-only comparison asked
-/// about).
+/// about). The target the archive will carry is read out of the source with
+/// `std::fs::read_link`, so the single-entry confirmation asks the same
+/// question `tree_landed` asks for a directory's links.
 #[cfg(unix)]
 #[test]
 fn a_symlink_source_without_follow_expects_a_link() {
 	let dir = tempfile::tempdir().unwrap();
 	let link = dir.path().join("dangling");
 	std::os::unix::fs::symlink("nowhere", &link).unwrap();
-	assert_eq!(uploaded_entry_kind(&link, false), Some(SentKind::Link));
+	assert_eq!(
+		uploaded_entry_kind(&link, false),
+		Some(SentKind::Link("nowhere".into()))
+	);
 
 	// Following links makes the packer store the target's contents instead,
 	// and the expectation becomes the target's shape.
@@ -123,9 +128,9 @@ fn two_copies_in_the_same_second_are_told_apart_by_size() {
 	};
 	assert_eq!(before.mtime, after.mtime, "the fixture must share an mtime");
 	// What was uploaded is the 15-byte version.
-	assert!(entry_landed(SentKind::File(15), Some(&after)));
+	assert!(entry_landed(&SentKind::File(15), Some(&after)));
 	// And the pre-PUT entry would not have satisfied it.
-	assert!(!entry_landed(SentKind::File(15), Some(&before)));
+	assert!(!entry_landed(&SentKind::File(15), Some(&before)));
 }
 
 #[test]

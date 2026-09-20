@@ -177,14 +177,21 @@ async fn engine_cp_reports_a_directory_copy_as_landed() {
 			],
 		)
 		.await;
-	let readlink_out = engine
+	// Two separate readlinks so the captured output is each target trimmed
+	// on its own line. The verification (`SentKind::Link`) requires the
+	// destination link's target to equal the target the archive carried;
+	// this is the live proof that the question is asked and answered the
+	// same way the unit and fake-socket suites check.
+	let link_target = engine
 		.test_exec_capture(
 			&format!("{proj}-web-1"),
-			vec![
-				"sh".into(),
-				"-c".into(),
-				"readlink /tmp/payload/link && readlink /tmp/payload/dangling".into(),
-			],
+			vec!["readlink".into(), "/tmp/payload/link".into()],
+		)
+		.await;
+	let dangling_target = engine
+		.test_exec_capture(
+			&format!("{proj}-web-1"),
+			vec!["readlink".into(), "/tmp/payload/dangling".into()],
 		)
 		.await;
 	engine.down(&file).await.unwrap();
@@ -204,15 +211,18 @@ async fn engine_cp_reports_a_directory_copy_as_landed() {
 		"empty file must arrive at /tmp/payload/empty with size 0, got {out:?}; \
 		 cp returned {result:?}"
 	);
-	let readlink_out = readlink_out.unwrap_or_default();
-	assert!(
-		readlink_out.contains("a.txt"),
-		"relative symlink must arrive at /tmp/payload/link pointing at a.txt, got {readlink_out:?}; \
+	let link_target = link_target.unwrap_or_default();
+	assert_eq!(
+		link_target.trim(),
+		"a.txt",
+		"relative symlink must arrive at /tmp/payload/link pointing at a.txt, got {link_target:?}; \
 		 cp returned {result:?}"
 	);
-	assert!(
-		readlink_out.contains("nowhere"),
-		"dangling symlink must arrive at /tmp/payload/dangling pointing at nowhere, got {readlink_out:?}; \
+	let dangling_target = dangling_target.unwrap_or_default();
+	assert_eq!(
+		dangling_target.trim(),
+		"nowhere",
+		"dangling symlink must arrive at /tmp/payload/dangling pointing at nowhere, got {dangling_target:?}; \
 		 cp returned {result:?}"
 	);
 	assert!(

@@ -8,8 +8,10 @@
 //! or which error, for a payload that arrived and for one that did not.
 //!
 //! The stat header is built in the shape Podman 5.7.0 sent on 2026-09-18:
-//! `{"name":"a.txt","size":6,"mode":420,"mtime":"…","isDir":false,"linkTarget":"/tmp/t/a.txt"}`
-//! for a file and `"mode":2147484141` for a directory.
+//! `{"name":"a.txt","size":6,"mode":420,"mtime":"…","isDir":false}` for a file
+//! and `"mode":2147484141` for a directory. `linkTarget` is appended only for
+//! symbolic links; that is what libpod does and what the verification now
+//! compares against.
 
 use std::path::Path;
 
@@ -28,9 +30,15 @@ const CONTAINER: &str = "proj-web-1";
 enum OnDisk {
 	File(u64),
 	Dir,
-	/// A symbolic link; the stat header carries its size and the
-	/// `os.ModeSymlink` mode bit (1<<27 | 0o777).
-	Link(u64),
+	/// A symbolic link; the stat header carries its size, the
+	/// `os.ModeSymlink` mode bit (1<<27 | 0o777) and the `linkTarget` the
+	/// runtime would report (the target the link points at). The string is
+	/// what libpod reports in the `linkTarget` field, and the verification
+	/// cross-checks it against the target the archive carried.
+	Link {
+		size: u64,
+		target: &'static str,
+	},
 	/// A named pipe; the stat header carries size 0 and the
 	/// `os.ModeNamedPipe` mode bit (1<<25 | 0o644).
 	Fifo,
@@ -49,15 +57,23 @@ enum Put {
 
 fn stat_header(path: &str, entry: OnDisk) -> String {
 	let name = path.rsplit('/').next().unwrap_or_default();
-	let (size, mode, is_dir) = match entry {
-		OnDisk::File(size) => (size, 420u64, false),
-		OnDisk::Dir => (4096, 2_147_484_141, true),
-		OnDisk::Link(size) => (size, (1u64 << 27) | 0o777, false),
-		OnDisk::Fifo => (0, (1u64 << 25) | 0o644, false),
+	let (size, mode, is_dir, link) = match entry {
+		OnDisk::File(size) => (size, 420u64, false, None),
+		OnDisk::Dir => (4096, 2_147_484_141, true, None),
+		OnDisk::Link { size, target } => (size, (1u64 << 27) | 0o777, false, Some(target)),
+		OnDisk::Fifo => (0, (1u64 << 25) | 0o644, false, None),
 		OnDisk::Unreadable => unreachable!("answered with a 500, not a stat"),
 	};
+	// `linkTarget` is appended only for actual link entries, matching what
+	// libpod reports; a non-link entry's stat must carry no `linkTarget`,
+	// because otherwise the verification would compare against the path
+	// string the fake used to put there.
+	let link_field = match link {
+		Some(t) => format!(r#","linkTarget":"{t}""#),
+		None => String::new(),
+	};
 	let json = format!(
-		r#"{{"name":"{name}","size":{size},"mode":{mode},"mtime":"2026-09-18T19:50:59.194580835-05:00","isDir":{is_dir},"linkTarget":"{path}"}}"#
+		r#"{{"name":"{name}","size":{size},"mode":{mode},"mtime":"2026-09-18T19:50:59.194580835-05:00","isDir":{is_dir}{link_field}}}"#
 	);
 	base64::engine::general_purpose::STANDARD.encode(json)
 }
@@ -82,7 +98,7 @@ fn runtime_full(put: Put, disk: &[(&str, OnDisk)], link_stat_on_404: bool) -> Fa
 			.find(|(path, _)| target.ends_with(&format!("archive?path={}", urlencoded(path))))
 			.map(|(path, entry)| match entry {
 				OnDisk::Unreadable => FakeReply::Headers(500, Vec::new()),
-				OnDisk::Link(_) if link_stat_on_404 => FakeReply::Headers(
+				OnDisk::Link { .. } if link_stat_on_404 => FakeReply::Headers(
 					404,
 					vec![("X-Docker-Container-Path-Stat", stat_header(path, *entry))],
 				),
@@ -382,7 +398,9 @@ async fn an_answered_upload_is_not_read_back() {
 
 /// A directory containing only a symbolic link. On Podman 5.7.0 the link
 /// answers the stat `HEAD` with 404 that still carries the link's stat header;
-/// the runtime reads the link back and the upload is confirmed.
+/// the runtime reads the link back and the upload is confirmed. The target
+/// the fake reports (`linkTarget: "a.txt"`) is the target the archive carried,
+/// so the link-target half of the confirmation passes alongside the 404.
 #[cfg(unix)]
 #[tokio::test]
 async fn a_directory_with_a_link_is_confirmed_when_the_404_carries_the_stat() {
@@ -393,7 +411,13 @@ async fn a_directory_with_a_link_is_confirmed_when_the_404_carries_the_stat() {
 
 	let disk: [(&str, OnDisk); 2] = [
 		("/tmp/payload", OnDisk::Dir),
-		("/tmp/payload/link", OnDisk::Link(4)),
+		(
+			"/tmp/payload/link",
+			OnDisk::Link {
+				size: 4,
+				target: "a.txt",
+			},
+		),
 	];
 	let fake = runtime_full(Put::HangsUp, &disk, true);
 
@@ -507,7 +531,13 @@ async fn an_archive_with_only_the_three_verifiable_kinds_is_confirmed() {
 
 	let disk: [(&str, OnDisk); 4] = [
 		("/tmp/payload", OnDisk::Dir),
-		("/tmp/payload/link", OnDisk::Link(9)),
+		(
+			"/tmp/payload/link",
+			OnDisk::Link {
+				size: 9,
+				target: "plain.txt",
+			},
+		),
 		("/tmp/payload/plain.txt", OnDisk::File(2)),
 		("/tmp/payload/sub", OnDisk::Dir),
 	];
@@ -555,7 +585,13 @@ async fn a_symlink_source_is_confirmed_when_the_destination_is_a_symlink() {
 	let link = dir.path().join("dangling");
 	std::os::unix::fs::symlink("nowhere", &link).unwrap();
 
-	let landed: [(&str, OnDisk); 1] = [("/tmp/dangling", OnDisk::Link(7))];
+	let landed: [(&str, OnDisk); 1] = [(
+		"/tmp/dangling",
+		OnDisk::Link {
+			size: 7,
+			target: "nowhere",
+		},
+	)];
 	let fake = runtime_full(Put::HangsUp, &landed, true);
 
 	let result = upload(&fake, &link, "dangling", None).await;
@@ -586,5 +622,73 @@ async fn a_symlink_source_is_a_failure_when_the_destination_is_a_regular_file() 
 	assert_unconfirmed(
 		result,
 		"a regular file at the destination is not the symlink that was uploaded",
+	);
+}
+
+/// The destination is a symlink, but it points at a different target than the
+/// one the archive carried. The previous size-only / bit-only confirmation
+/// would have passed on the symlink bit alone; the target check is the one
+/// that closes it. Without the target comparison, a link the destination
+/// already held pointing somewhere else would satisfy an upload whose link
+/// pointed at `a.txt`, and the cut-stream shape would be reported as landed.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_directory_with_a_link_is_a_failure_when_the_destination_target_differs() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = dir.path().join("payload");
+	std::fs::create_dir(&payload).unwrap();
+	std::os::unix::fs::symlink("a.txt", payload.join("link")).unwrap();
+
+	let disk: [(&str, OnDisk); 2] = [
+		("/tmp/payload", OnDisk::Dir),
+		(
+			"/tmp/payload/link",
+			OnDisk::Link {
+				size: 4,
+				target: "elsewhere",
+			},
+		),
+	];
+	let fake = runtime_full(Put::HangsUp, &disk, true);
+
+	let result = upload(&fake, &payload, "payload", None).await;
+
+	assert_unconfirmed(
+		result,
+		"a symlink at a different target than the one uploaded is not the link that was sent",
+	);
+}
+
+/// The same archive, on a runtime whose `linkTarget` for the link equals the
+/// target the archive carried. The whole tree (directory + link) lands and
+/// the upload is confirmed. This is the regression net for the target
+/// half: the `a_directory_with_a_link_is_a_failure_when_the_destination_target_differs`
+/// test above holds only because the target differs, not because anything
+/// else changed.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_directory_with_a_link_is_confirmed_when_the_destination_target_matches() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = dir.path().join("payload");
+	std::fs::create_dir(&payload).unwrap();
+	std::os::unix::fs::symlink("a.txt", payload.join("link")).unwrap();
+
+	let disk: [(&str, OnDisk); 2] = [
+		("/tmp/payload", OnDisk::Dir),
+		(
+			"/tmp/payload/link",
+			OnDisk::Link {
+				size: 4,
+				target: "a.txt",
+			},
+		),
+	];
+	let fake = runtime_full(Put::HangsUp, &disk, true);
+
+	let result = upload(&fake, &payload, "payload", None).await;
+
+	assert!(
+		result.is_ok(),
+		"the link points at the target the archive carried, got {result:?}"
 	);
 }

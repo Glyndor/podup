@@ -94,13 +94,21 @@ pub struct Client {
 }
 
 /// The decoded `X-Docker-Container-Path-Stat` header: a container path's name,
-/// size, Go file `mode` and `mtime`.
+/// size, Go file `mode`, `mtime` and (for symbolic links) `linkTarget`.
 ///
 /// `mtime` is an RFC3339 string compared only for equality, never parsed into a
 /// time. **Podman 6 reports it to whole seconds**: `2026-08-03T18:36:05Z`, no
 /// fractional part, measured on `podman-6.0.1-1.fc45`, which is why `size` is
 /// carried here too: two writes inside one second are indistinguishable by mtime
 /// alone. The runtime's JSON uses lowercase keys.
+///
+/// `link_target` is the libpod `linkTarget` field, populated for symbolic
+/// links and absent for files and directories (`#[serde(default)]` so a header
+/// that omits it stays deserialisable as `None`). An empty string is not
+/// folded into `None`: `""` deserialises to `Some("")` and is compared like
+/// any other target. The mode cross-check in `entry_landed` means a non-link
+/// entry's stat is never consulted for a target, so the empty case does not
+/// arise in practice.
 #[derive(serde::Deserialize, Default, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct PathStat {
 	#[serde(default)]
@@ -109,6 +117,8 @@ pub(crate) struct PathStat {
 	pub(crate) mode: u64,
 	#[serde(default)]
 	pub(crate) mtime: String,
+	#[serde(default, rename = "linkTarget")]
+	pub(crate) link_target: Option<String>,
 }
 
 /// Attach the socket path and a way forward to a connection failure.

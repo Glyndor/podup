@@ -473,11 +473,11 @@ impl Engine {
 				// does not matter for them; links are the only kind that
 				// benefit.
 				let stat = match want {
-					SentKind::Link => self.client.head_path_stat_even_if_missing(p).await,
+					SentKind::Link(_) => self.client.head_path_stat_even_if_missing(p).await,
 					_ => self.client.head_path_stat(p).await,
 				};
 				match stat {
-					Ok(post) => verify::entry_landed(*want, post.as_ref()),
+					Ok(post) => verify::entry_landed(want, post.as_ref()),
 					Err(stat_err) => {
 						tracing::debug!(
 							"cp: could not re-verify {p} after an incomplete PUT: {stat_err}"
@@ -508,13 +508,15 @@ impl Engine {
 /// file's actual length on disk. The kind is part of the comparison (an empty
 /// file over an unchanged zero-length FIFO would otherwise pass on size
 /// alone). A symlink at the source without `-L/--follow-link` expects
-/// `SentKind::Link`, because the archive stores the link itself, not its
-/// target's contents, and a destination that reports a regular file at the
-/// target's size would still be a failure. A directory source returns `None`
-/// because its own size says nothing about its children; that case is
-/// confirmed entry by entry (`verify::tree_landed`), never on this. Anything
-/// else stays unverifiable and fails closed rather than confirming on the
-/// wrong kind.
+/// `SentKind::Link(target)`, because the archive stores the link itself, not
+/// its target's contents, and a destination that reports a regular file at the
+/// target's size would still be a failure. The target comes from
+/// `std::fs::read_link` so the single-entry confirmation asks the same
+/// question `tree_landed` asks for a directory's links. A directory source
+/// returns `None` because its own size says nothing about its children; that
+/// case is confirmed entry by entry (`verify::tree_landed`), never on this.
+/// Anything else stays unverifiable and fails closed rather than confirming
+/// on the wrong kind.
 ///
 /// Extracted so it is reachable from a test. Inside the async upload it was
 /// covered only by running against a real container, and a mutation
@@ -528,7 +530,9 @@ pub(super) fn uploaded_entry_kind(src: &std::path::Path, follow_link: bool) -> O
 	};
 	let kind = meta.file_type();
 	if kind.is_symlink() && !follow_link {
-		Some(SentKind::Link)
+		let target = std::fs::read_link(src).ok()?;
+		let target = target.to_str()?.to_string();
+		Some(SentKind::Link(target))
 	} else if kind.is_file() {
 		Some(SentKind::File(meta.len()))
 	} else {

@@ -70,7 +70,10 @@ fn a_symlink_is_asked_about_and_confirmed() {
 		sorted(sent_entries(&tar).unwrap()),
 		vec![
 			("payload".to_string(), SentKind::Dir),
-			("payload/dangling".to_string(), SentKind::Link),
+			(
+				"payload/dangling".to_string(),
+				SentKind::Link("nowhere".into())
+			),
 			("payload/real.txt".to_string(), SentKind::File(1)),
 		]
 	);
@@ -98,7 +101,7 @@ fn two_files_a_directory_a_symlink_and_an_empty_file() {
 		sorted(sent_entries(&tar).unwrap()),
 		vec![
 			("payload".to_string(), SentKind::Dir),
-			("payload/link".to_string(), SentKind::Link),
+			("payload/link".to_string(), SentKind::Link("nowhere".into())),
 			("payload/nested".to_string(), SentKind::Dir),
 			("payload/nothing.txt".to_string(), SentKind::File(0)),
 			("payload/plain.txt".to_string(), SentKind::File(2)),
@@ -123,7 +126,7 @@ fn a_tar_with_only_a_symlink_yields_one_link_entry() {
 		sent_entries(&tar).unwrap(),
 		vec![SentEntry {
 			path: "dangling".to_string(),
-			kind: SentKind::Link,
+			kind: SentKind::Link("nowhere".into()),
 		}],
 		"only the symlink yields exactly one Link entry"
 	);
@@ -254,7 +257,7 @@ fn a_tar_with_file_directory_and_symlink_lists_just_those_three() {
 		sorted(sent_entries(&tar).unwrap()),
 		vec![
 			("payload".to_string(), SentKind::Dir),
-			("payload/link".to_string(), SentKind::Link),
+			("payload/link".to_string(), SentKind::Link("nowhere".into())),
 			("payload/plain.txt".to_string(), SentKind::File(2)),
 			("payload/sub".to_string(), SentKind::Dir),
 		],
@@ -321,6 +324,18 @@ fn stat(size: u64, mode: u64) -> PathStat {
 	}
 }
 
+/// A link stat with the given target. `None` for the target leaves
+/// `link_target` unset on the `PathStat`, which is what an older runtime
+/// (or a stat that never carried `linkTarget`) reports.
+fn link_stat(target: Option<&str>) -> PathStat {
+	PathStat {
+		size: 7,
+		mode: LINK_MODE,
+		link_target: target.map(str::to_string),
+		..PathStat::default()
+	}
+}
+
 /// Planted-stat matrix for `entry_landed`. The cases the brief names, each in
 /// its own assertion so a failure points at the row that regressed.
 #[test]
@@ -328,43 +343,92 @@ fn entry_landed_with_planted_stats() {
 	// `File(0)` against a FIFO is not a file, so the unchanged pipe cannot
 	// confirm a zero-byte upload. This is the regular-file false positive the
 	// `MODE_TYPE` mask closes.
-	assert!(!entry_landed(SentKind::File(0), Some(&stat(0, FIFO_MODE))));
+	assert!(!entry_landed(&SentKind::File(0), Some(&stat(0, FIFO_MODE))));
 
 	// `File(0)` against a regular file at size 0 is the regular-file landed
 	// shape; the assertion is the regression net for the mask.
-	assert!(entry_landed(SentKind::File(0), Some(&stat(0, FILE_MODE))));
+	assert!(entry_landed(&SentKind::File(0), Some(&stat(0, FILE_MODE))));
 
 	// `File(4096)` against a directory is not a file either: a directory stats
 	// at 4096 on most filesystems, the same size as the file.
 	assert!(!entry_landed(
-		SentKind::File(4096),
+		&SentKind::File(4096),
 		Some(&stat(4096, DIR_MODE))
 	));
 
-	// `Link` against a symlink is the link-confirmation shape.
-	assert!(entry_landed(SentKind::Link, Some(&stat(7, LINK_MODE))));
+	// `Link("a.txt")` against a symlink whose `linkTarget` is the same string
+	// is the link-confirmation shape: the symlink bit AND the target match.
+	assert!(entry_landed(
+		&SentKind::Link("a.txt".into()),
+		Some(&link_stat(Some("a.txt")))
+	));
 
-	// `Link` against a regular file is not a link: a target the link points
-	// at cannot satisfy the link confirmation, even at the right mode bits.
-	assert!(!entry_landed(SentKind::Link, Some(&stat(7, FILE_MODE))));
+	// `Link("a.txt")` against a regular file is not a link: a regular file
+	// cannot satisfy the link confirmation, even at the right mode bits.
+	assert!(!entry_landed(
+		&SentKind::Link("a.txt".into()),
+		Some(&stat(7, FILE_MODE))
+	));
+}
+
+/// Planted-stat matrix for the link-target half of the confirmation.
+///
+/// Confirming on the symlink bit alone would let any pre-existing link at
+/// the destination satisfy an upload whose target was something else; this
+/// is the false positive the `link_target` field closes. Each row stands
+/// alone so a regression names the case directly.
+#[test]
+fn a_link_is_landed_only_when_its_target_matches_what_was_sent() {
+	let sent = SentKind::Link("a.txt".into());
+
+	// Target matches: this is the link-confirmation shape.
+	assert!(
+		entry_landed(&sent, Some(&link_stat(Some("a.txt")))),
+		"a link whose target equals what was sent must be confirmed"
+	);
+
+	// Target differs: the destination's `linkTarget` says `elsewhere`, the
+	// archive carried `a.txt`. Without the target check, the symlink bit
+	// would pass and the wrong link would be reported as landed.
+	assert!(
+		!entry_landed(&sent, Some(&link_stat(Some("elsewhere")))),
+		"a link pointing at a different target than what was sent must not be confirmed"
+	);
+
+	// Target absent: the stat carries no `linkTarget`, so the destination
+	// cannot answer the question and the entry is unconfirmed. Failing
+	// closed here is what stops a runtime that does not send the field
+	// from being treated as confirming the link.
+	assert!(
+		!entry_landed(&sent, Some(&link_stat(None))),
+		"a stat without linkTarget must not confirm a link"
+	);
+
+	// No stat at all: the destination returned `None`, which is the path
+	// the stat endpoint takes for a real file or directory that is not
+	// present. The link is unconfirmed.
+	assert!(
+		!entry_landed(&sent, None),
+		"an absent stat must not confirm a link"
+	);
 }
 
 #[test]
 fn a_file_landed_when_it_is_a_file_of_the_size_sent() {
 	let sent = SentKind::File(4096);
-	assert!(entry_landed(sent, Some(&stat(4096, FILE_MODE))));
-	assert!(!entry_landed(sent, Some(&stat(4095, FILE_MODE))));
-	assert!(!entry_landed(sent, None));
+	assert!(entry_landed(&sent, Some(&stat(4096, FILE_MODE))));
+	assert!(!entry_landed(&sent, Some(&stat(4095, FILE_MODE))));
+	assert!(!entry_landed(&sent, None));
 	// A directory stats at 4096 too. Same number, not the file.
-	assert!(!entry_landed(sent, Some(&stat(4096, DIR_MODE))));
+	assert!(!entry_landed(&sent, Some(&stat(4096, DIR_MODE))));
 	// An empty file is a size like any other.
-	assert!(entry_landed(SentKind::File(0), Some(&stat(0, FILE_MODE))));
+	assert!(entry_landed(&SentKind::File(0), Some(&stat(0, FILE_MODE))));
 }
 
 #[test]
 fn a_directory_landed_when_a_directory_is_there() {
-	assert!(entry_landed(SentKind::Dir, Some(&stat(4096, DIR_MODE))));
-	assert!(entry_landed(SentKind::Dir, Some(&stat(0, DIR_MODE))));
-	assert!(!entry_landed(SentKind::Dir, Some(&stat(4096, FILE_MODE))));
-	assert!(!entry_landed(SentKind::Dir, None));
+	assert!(entry_landed(&SentKind::Dir, Some(&stat(4096, DIR_MODE))));
+	assert!(entry_landed(&SentKind::Dir, Some(&stat(0, DIR_MODE))));
+	assert!(!entry_landed(&SentKind::Dir, Some(&stat(4096, FILE_MODE))));
+	assert!(!entry_landed(&SentKind::Dir, None));
 }
