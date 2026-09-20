@@ -8,6 +8,8 @@ use crate::compose::types::{ComposeFile, Service};
 use crate::env_file;
 use crate::error::{ComposeError, Result};
 
+use super::super::secrets::scoped_name;
+
 /// Resolve a named-volume reference to the volume name `create_volumes`
 /// produced: a custom `name:`, the raw name for an external volume, or the
 /// `{project}_{name}` form.
@@ -181,13 +183,26 @@ pub(super) fn resolve_volumes_from(
 /// inline rotation does. `external:` sources are by-reference and contribute
 /// nothing.
 ///
+/// `file_digests` is the SHA-256 of every `file:` payload `create_project_secrets`
+/// uploaded during this invocation, keyed by the project-scoped Podman secret
+/// name. When a `file:` ref has an entry there, the recorded digest is folded
+/// in directly instead of re-reading the host file: a re-read could land on
+/// bytes that changed between the upload and the label build (image
+/// acquisition, a `depends_on` wait), which would describe the new bytes in
+/// the label while the container still mounts the old ones. A ref with no
+/// entry falls through to the file read, which is exactly what every call
+/// site that does not go through `create_project_secrets` (`config --hash`,
+/// autostart's start mode) keeps seeing.
+///
 /// `base_dir` is the project directory `file:` paths are resolved against:
 /// the same anchor `bind` mounts and the secret creator use, so a path that
 /// the engine can read at `up` is the same path the engine hashes now.
 pub(crate) fn config_hash(
 	service: &Service,
 	file: &ComposeFile,
+	project: &str,
 	base_dir: &Path,
+	file_digests: &HashMap<String, [u8; 32]>,
 ) -> Result<String> {
 	use sha2::{Digest, Sha256};
 	let mut hasher = Sha256::new();
@@ -218,12 +233,20 @@ pub(crate) fn config_hash(
 				def.environment.as_deref(),
 			);
 			if let Some(host_path) = def.file.as_deref() {
-				hash_file_payload(
-					&mut hasher,
-					b"secret",
-					secret_ref.source(),
-					Path::new(&resolve_bind_source(host_path, base_dir)),
-				)?;
+				let resolved = resolve_bind_source(host_path, base_dir);
+				let resolved = Path::new(&resolved);
+				let key = scoped_name(project, "secret", secret_ref.source());
+				match file_digests.get(&key) {
+					Some(digest) => hash_recorded_file_payload(
+						&mut hasher,
+						b"secret",
+						secret_ref.source(),
+						digest,
+					),
+					None => {
+						hash_file_payload(&mut hasher, b"secret", secret_ref.source(), resolved)?
+					}
+				}
 			}
 		}
 	}
@@ -237,12 +260,20 @@ pub(crate) fn config_hash(
 				def.environment.as_deref(),
 			);
 			if let Some(host_path) = def.file.as_deref() {
-				hash_file_payload(
-					&mut hasher,
-					b"config",
-					config_ref.source(),
-					Path::new(&resolve_bind_source(host_path, base_dir)),
-				)?;
+				let resolved = resolve_bind_source(host_path, base_dir);
+				let resolved = Path::new(&resolved);
+				let key = scoped_name(project, "config", config_ref.source());
+				match file_digests.get(&key) {
+					Some(digest) => hash_recorded_file_payload(
+						&mut hasher,
+						b"config",
+						config_ref.source(),
+						digest,
+					),
+					None => {
+						hash_file_payload(&mut hasher, b"config", config_ref.source(), resolved)?
+					}
+				}
 			}
 		}
 	}
@@ -345,13 +376,25 @@ fn hash_file_payload(
 		digest_hasher.update(&buf[..n]);
 	}
 	let digest = digest_hasher.finalize();
+	hash_recorded_file_payload(hasher, kind, name, digest.as_slice());
+	Ok(())
+}
+
+/// Fold a precomputed SHA-256 of a `file:` secret/config into the config
+/// hasher using the same framing [`hash_file_payload`] applies to a digest
+/// freshly read off disk. The framing is load-bearing: it is what keeps a
+/// `file:` secret from hashing equal to an inline secret that happens to
+/// carry the same bytes, and is what kept the digest-vs-inline-bytes
+/// asymmetry stable for callers that record and replay it. Called by the
+/// `file_digests` branch of [`config_hash`].
+fn hash_recorded_file_payload(hasher: &mut sha2::Sha256, kind: &[u8], name: &str, digest: &[u8]) {
+	use sha2::Digest;
 	hasher.update(kind);
 	hasher.update(name.as_bytes());
 	// Length-prefixed like the inline payloads, so the two kinds of record
 	// frame the same way.
 	hasher.update((digest.len() as u64).to_le_bytes());
-	hasher.update(digest.as_slice());
-	Ok(())
+	hasher.update(digest);
 }
 
 pub(super) fn build_env(service: &Service, base_dir: &Path) -> Result<Vec<String>> {
@@ -467,3 +510,7 @@ fn realtime_signal_number(name: &str) -> Option<i64> {
 #[cfg(test)]
 #[path = "resolve_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "resolve_file_digest_tests.rs"]
+mod file_digest_tests;

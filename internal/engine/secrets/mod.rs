@@ -44,6 +44,12 @@ use crate::error::Result;
 use crate::libpod::types::container::Secret;
 
 use plan::{collect_native_plans, host_file_secret_mode, Payload};
+// Re-exported so `container::config_hash` can build the same scoped name
+// `create_project_secrets` uses as its map key, without re-doing the
+// `format!` and risking the two views drifting. The `pub(crate)` on
+// `scoped_name` itself is the gate; this re-export just lifts it through
+// the (otherwise private) `plan` module.
+pub(crate) use plan::scoped_name;
 
 use super::Engine;
 

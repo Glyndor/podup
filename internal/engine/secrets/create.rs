@@ -14,6 +14,8 @@ use super::plan::{check_secret_size, Payload};
 use super::secret_bytes::SecretBytes;
 use super::{collect_payload_union, Engine};
 
+use sha2::{Digest, Sha256};
+
 impl Engine {
 	/// Create the union of the `content:`/`environment:`/`file:` secrets and
 	/// configs declared across *all* services in the project, once, before the
@@ -29,6 +31,14 @@ impl Engine {
 	/// teardown on `down` still only removes secrets podup owns.
 	pub(in crate::engine) async fn create_project_secrets(&self, file: &ComposeFile) -> Result<()> {
 		let mut work: Vec<(String, SecretBytes)> = Vec::new();
+		// SHA-256 of every `file:` source we upload this pass, keyed by the
+		// project-scoped Podman secret name we will create it under. The
+		// per-container label built later reads this map instead of touching
+		// the host file again: a re-read could land on bytes that changed
+		// between the upload and the label build, and the container would
+		// then carry the label of bytes it never mounted.
+		let mut uploaded_digests: std::collections::HashMap<String, [u8; 32]> =
+			std::collections::HashMap::new();
 		for (name, payload) in collect_payload_union(&self.project, file, &self.base_dir)? {
 			let bytes = match payload {
 				Payload::Inline(bytes) => bytes,
@@ -37,16 +47,32 @@ impl Engine {
 				// same bounded read the compose-adjacent files get; Podman's own
 				// 512 kB secret limit is enforced right after, in `create_secret`.
 				Payload::File(path) => {
-					SecretBytes::new(crate::filesystem::read_capped(&path).map_err(|e| {
+					let raw = crate::filesystem::read_capped(&path).map_err(|e| {
 						ComposeError::Unsupported(format!(
 							"secret/config source {} could not be read: {e}",
 							path.display()
 						))
-					})?)
+					})?;
+					// Hash the bytes we just read (no second read of the same
+					// path, no change to what is uploaded): the label build
+					// runs later, after image acquisition and `depends_on`
+					// waits, and the host file may have moved on by then.
+					let digest: [u8; 32] = Sha256::digest(&raw).into();
+					uploaded_digests.insert(name.clone(), digest);
+					SecretBytes::new(raw)
 				}
 			};
 			work.push((name, bytes));
 		}
+		// Publish what was actually uploaded so `config_hash` (called from the
+		// per-service label build) can read it without re-opening the file.
+		// Overwriting whatever was here is intentional: a fresh `up` is the
+		// only path that produces a fresh upload, so any stale digests from a
+		// prior call would point at bytes we are about to throw away.
+		*self
+			.uploaded_file_digests
+			.lock()
+			.expect("uploaded_file_digests mutex poisoned") = uploaded_digests;
 		// The union is a `HashMap`, so its iteration order is arbitrary and not
 		// stable between runs. Sorting by name is what makes "the first error
 		// wins" mean something: without it, which of several failing secrets got

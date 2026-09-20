@@ -5,6 +5,18 @@ use crate::parse_str;
 use std::io::Write;
 use std::path::Path;
 
+/// Project name used by the file-hash tests below. Mirrors the engine's
+/// `Engine::with_base_dir(..., "proj", ...)` so the scoped-name lookup in
+/// `config_hash` agrees with the test fixtures.
+const PROJECT: &str = "proj";
+
+/// Empty digest map for tests that exercise `config_hash`'s file-read
+/// branch: nothing was uploaded, so every `file:` ref falls through to the
+/// path it always took. The new tests in this file build their own maps.
+fn empty_digests() -> std::collections::HashMap<String, [u8; 32]> {
+	std::collections::HashMap::new()
+}
+
 /// A temp directory used as the project base directory for `config_hash`
 /// calls: relative `file:` paths resolve against it, so each test owns its
 /// own fixture tree and cannot race another test's reads.
@@ -181,9 +193,30 @@ fn config_hash_is_stable_and_sensitive() {
 	let a = parse_str("services:\n  web:\n    image: nginx:1.27\n").unwrap();
 	let b = parse_str("services:\n  web:\n    image: nginx:1.27\n").unwrap();
 	let c = parse_str("services:\n  web:\n    image: nginx:1.28\n").unwrap();
-	let ha = config_hash(&a.services["web"], &a, base.path()).unwrap();
-	let hb = config_hash(&b.services["web"], &b, base.path()).unwrap();
-	let hc = config_hash(&c.services["web"], &c, base.path()).unwrap();
+	let ha = config_hash(
+		&a.services["web"],
+		&a,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
+	let hb = config_hash(
+		&b.services["web"],
+		&b,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
+	let hc = config_hash(
+		&c.services["web"],
+		&c,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
 	assert_eq!(ha, hb, "same config produces the same hash");
 	assert_ne!(ha, hc, "a changed image produces a different hash");
 	assert_eq!(ha.len(), 64, "sha-256 hex is 64 chars");
@@ -203,8 +236,22 @@ fn config_hash_tracks_inline_secret_content() {
 	)
 	.unwrap();
 	assert_ne!(
-		config_hash(&a.services["web"], &a, base.path()).unwrap(),
-		config_hash(&b.services["web"], &b, base.path()).unwrap(),
+		config_hash(
+			&a.services["web"],
+			&a,
+			PROJECT,
+			base.path(),
+			&empty_digests()
+		)
+		.unwrap(),
+		config_hash(
+			&b.services["web"],
+			&b,
+			PROJECT,
+			base.path(),
+			&empty_digests()
+		)
+		.unwrap(),
 		"changed inline secret content must change the hash",
 	);
 }
@@ -225,8 +272,22 @@ fn config_hash_ignores_external_secret_identity() {
 	// The service definition is identical; only the top-level external name
 	// differs, which is resolved at attach time, not baked into the hash.
 	assert_eq!(
-		config_hash(&a.services["web"], &a, base.path()).unwrap(),
-		config_hash(&b.services["web"], &b, base.path()).unwrap(),
+		config_hash(
+			&a.services["web"],
+			&a,
+			PROJECT,
+			base.path(),
+			&empty_digests()
+		)
+		.unwrap(),
+		config_hash(
+			&b.services["web"],
+			&b,
+			PROJECT,
+			base.path(),
+			&empty_digests()
+		)
+		.unwrap(),
 	);
 }
 
@@ -244,8 +305,22 @@ fn config_hash_tracks_inline_config_content() {
 	)
 	.unwrap();
 	assert_ne!(
-		config_hash(&a.services["web"], &a, base.path()).unwrap(),
-		config_hash(&b.services["web"], &b, base.path()).unwrap(),
+		config_hash(
+			&a.services["web"],
+			&a,
+			PROJECT,
+			base.path(),
+			&empty_digests()
+		)
+		.unwrap(),
+		config_hash(
+			&b.services["web"],
+			&b,
+			PROJECT,
+			base.path(),
+			&empty_digests()
+		)
+		.unwrap(),
 		"changed inline config content must change the hash",
 	);
 }
@@ -260,10 +335,24 @@ fn config_hash_tracks_environment_sourced_secret() {
 	)
 	.unwrap();
 	let with_a = temp_env::with_var("PODUP_TEST_SECRET", Some("alpha"), || {
-		config_hash(&file.services["web"], &file, base.path()).unwrap()
+		config_hash(
+			&file.services["web"],
+			&file,
+			PROJECT,
+			base.path(),
+			&empty_digests(),
+		)
+		.unwrap()
 	});
 	let with_b = temp_env::with_var("PODUP_TEST_SECRET", Some("beta"), || {
-		config_hash(&file.services["web"], &file, base.path()).unwrap()
+		config_hash(
+			&file.services["web"],
+			&file,
+			PROJECT,
+			base.path(),
+			&empty_digests(),
+		)
+		.unwrap()
 	});
 	assert_ne!(
 		with_a, with_b,
@@ -285,8 +374,22 @@ fn config_hash_stable_despite_map_field_order() {
 	)
 	.unwrap();
 	assert_eq!(
-		config_hash(&a.services["web"], &a, base.path()).unwrap(),
-		config_hash(&b.services["web"], &b, base.path()).unwrap(),
+		config_hash(
+			&a.services["web"],
+			&a,
+			PROJECT,
+			base.path(),
+			&empty_digests()
+		)
+		.unwrap(),
+		config_hash(
+			&b.services["web"],
+			&b,
+			PROJECT,
+			base.path(),
+			&empty_digests()
+		)
+		.unwrap(),
 		"hash must be independent of storage_opt key order",
 	);
 }
@@ -314,9 +417,23 @@ fn config_hash_tracks_file_secret_bytes() {
 		file_path.display()
 	);
 	let file = parse_str(&yaml).unwrap();
-	let h1 = config_hash(&file.services["web"], &file, base.path()).unwrap();
+	let h1 = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
 	std::fs::write(&file_path, b"v2").unwrap();
-	let h2 = config_hash(&file.services["web"], &file, base.path()).unwrap();
+	let h2 = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
 	assert_ne!(
 		h1, h2,
 		"changing only the file behind a file: secret must change the hash"
@@ -334,9 +451,23 @@ fn config_hash_stable_when_file_bytes_unchanged() {
 		file_path.display()
 	);
 	let file = parse_str(&yaml).unwrap();
-	let h1 = config_hash(&file.services["web"], &file, base.path()).unwrap();
+	let h1 = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
 	std::fs::write(&file_path, b"v1").unwrap();
-	let h2 = config_hash(&file.services["web"], &file, base.path()).unwrap();
+	let h2 = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
 	assert_eq!(
 		h1, h2,
 		"rewriting the same file bytes must leave the hash unchanged"
@@ -354,9 +485,23 @@ fn config_hash_tracks_file_config_bytes() {
 		file_path.display()
 	);
 	let file = parse_str(&yaml).unwrap();
-	let h1 = config_hash(&file.services["web"], &file, base.path()).unwrap();
+	let h1 = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
 	std::fs::write(&file_path, b"b").unwrap();
-	let h2 = config_hash(&file.services["web"], &file, base.path()).unwrap();
+	let h2 = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
 	assert_ne!(
 		h1, h2,
 		"changing only the file behind a file: config must change the hash"
@@ -375,7 +520,14 @@ fn config_hash_missing_file_errors_with_path() {
 		missing.display()
 	);
 	let file = parse_str(&yaml).unwrap();
-	let err = config_hash(&file.services["web"], &file, base.path()).unwrap_err();
+	let err = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap_err();
 	let msg = err.to_string();
 	assert!(
 		msg.contains(&*missing.to_string_lossy()),
@@ -400,8 +552,22 @@ fn config_hash_distinguishes_file_secret_from_inline_with_same_bytes() {
 		"services:\n  web:\n    image: x\n    secrets: [s]\nsecrets:\n  s:\n    content: shared\n";
 	let file = parse_str(&file_yaml).unwrap();
 	let inline = parse_str(inline_yaml).unwrap();
-	let h_file = config_hash(&file.services["web"], &file, base.path()).unwrap();
-	let h_inline = config_hash(&inline.services["web"], &inline, base.path()).unwrap();
+	let h_file = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
+	let h_inline = config_hash(
+		&inline.services["web"],
+		&inline,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
 	assert_ne!(
 		h_file, h_inline,
 		"a file: secret and an inline secret with the same bytes must hash differently"

@@ -243,7 +243,7 @@ fn push_plan(
 
 /// Project-scoped Podman secret name for an inline secret/config, namespaced by
 /// `kind` so a secret and a config sharing a compose name do not collide.
-pub(super) fn scoped_name(project: &str, kind: &str, name: &str) -> String {
+pub(crate) fn scoped_name(project: &str, kind: &str, name: &str) -> String {
 	format!("{project}_{kind}_{name}")
 }
 
