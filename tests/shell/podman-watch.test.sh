@@ -89,6 +89,13 @@ case "$joined" in
 		exit 0
 		;;
 	"issue list"*)
+		# When repology is unreachable, the workflow asks `gh issue list`
+		# whether an outage-watch issue for the version is already open.
+		# Tests inject the open titles here so the duplicate-check branch
+		# can be exercised without a real GitHub; empty when none is open.
+		if [ -n "${GH_ISSUE_LIST_OUTPUT:-}" ]; then
+			printf '%s\n' "$GH_ISSUE_LIST_OUTPUT"
+		fi
 		exit 0
 		;;
 	"issue create"*)
@@ -172,9 +179,9 @@ check "safety: the step called curl zero times before the baseline check" \
 # from the function output. Stdin via the here-string would be ambiguous
 # with the function's own stdin, so the script writes to a file and the
 # caller `cat`s it.
-run_case() { # <baseline> <fake_tag> <responses_file> <gh_log> <curl_log> <sleep_log> <fake_url>
+run_case() { # <baseline> <fake_tag> <responses_file> <gh_log> <curl_log> <sleep_log> <fake_url> <issue_list_output>
 	local baseline="$1" tag="$2" resp="$3"
-	local gh_log="$4" curl_log="$5" sleep_log="$6" fake_url="$7"
+	local gh_log="$4" curl_log="$5" sleep_log="$6" fake_url="$7" issue_list="${8:-}"
 	local repo="$WORK/case"
 	rm -rf "$repo"
 	mkdir -p "$repo/.github"
@@ -184,6 +191,7 @@ run_case() { # <baseline> <fake_tag> <responses_file> <gh_log> <curl_log> <sleep
 		GH_LOG="$gh_log" CURL_LOG="$curl_log" SLEEP_LOG="$sleep_log" \
 		CURL_RESPONSES="$resp" \
 		FAKE_TAG="$tag" GH_FAKE_URL="$fake_url" \
+		GH_ISSUE_LIST_OUTPUT="$issue_list" \
 		GH_TOKEN=dummy \
 		bash "$WORK/step.sh" ) 2>&1
 }
@@ -218,12 +226,16 @@ check "W1: curl was called 0 times" "0" "$(count_calls "$WORK/w1.curl.log")"
 check "W1: gh issue create was never called" "0" \
 	"$(gh_issue_create_calls "$WORK/w1.gh.log")"
 
-# --- W2: curl exits 7 three times => exit 1 with the named error --------
+# --- W2: curl exits 7 three times => ::warning:: and a watcher issue -----
+# An unreachable repology is unknown, not negative: from 2026-09-16 to 2026-09-19
+# a third-party outage turned every pull request red because the step exited
+# 1 and freshness-podman-watch gates ci.yml. Below the loop the step exits 0,
+# prints a `::warning::`, and opens (or reuses) an outage-watch issue.
 printf '7\t\n7\t\n7\t\n' > "$WORK/w2.curl.resp"
 out="$(run_case "6.1.1" "v6.1.2" "$WORK/w2.curl.resp" \
 	"$WORK/w2.gh.log" "$WORK/w2.curl.log" "$WORK/w2.sleep.log" "$FAKE_URL")"
 rc=$?
-check "W2: three curl failures exit 1" "1" "$rc"
+check "W2: three curl failures exit 0 (outage is unknown, not error)" "0" "$rc"
 check "W2: curl was called exactly 3 times" "3" "$(count_calls "$WORK/w2.curl.log")"
 check "W2: sleep was called exactly 2 times" "2" "$(count_calls "$WORK/w2.sleep.log")"
 check "W2: each sleep argument was 20" "20 20" \
@@ -234,7 +246,7 @@ check "W2: output does not include a Python Traceback" "0" \
 	"$(printf '%s' "$out" | grep -c 'Traceback')"
 check "W2: output does not include a JSONDecodeError" "0" \
 	"$(printf '%s' "$out" | grep -c 'JSONDecodeError')"
-check "W2: gh issue create was never called" "0" \
+check "W2: gh issue create was called exactly once (the watcher issue)" "1" \
 	"$(gh_issue_create_calls "$WORK/w2.gh.log")"
 
 # --- W3: one curl failure, then a JSON list => issue opened --------------
@@ -290,6 +302,60 @@ check "W6: the error names the rejected tag" "1" \
 	"$(printf '%s' "$out" | grep -q 'unexpected Podman release tag' && echo 1 || echo 0)"
 check "W6: curl was called 0 times (guard fires first)" "0" \
 	"$(count_calls "$WORK/w6.curl.log")"
+
+# --- W7: repology unreachable, no open issue => ::warning:: + create -----
+TITLE_W7="Cannot reach repology.org to check whether Podman 6.1.2 is packaged"
+printf '7\t\n7\t\n7\t\n' > "$WORK/w7.curl.resp"
+out="$(run_case "6.1.1" "v6.1.2" "$WORK/w7.curl.resp" \
+	"$WORK/w7.gh.log" "$WORK/w7.curl.log" "$WORK/w7.sleep.log" "$FAKE_URL" "")"
+rc=$?
+check "W7: an unreachable repology exits 0" "0" "$rc"
+check "W7: output carries a ::warning:: naming repology" "1" \
+	"$(printf '%s' "$out" | grep -q '::warning::.*repology\.org' && echo 1 || echo 0)"
+check "W7: the warning names curl exit 7" "1" \
+	"$(printf '%s' "$out" | grep -q 'curl exit 7' && echo 1 || echo 0)"
+check "W7: the warning names the version we could not ask about" "1" \
+	"$(printf '%s' "$out" | grep -q 'Podman 6.1.2' && echo 1 || echo 0)"
+check "W7: no ::error:: in the output" "0" \
+	"$(printf '%s' "$out" | grep -c '::error::')"
+check "W7: gh issue create was called exactly once" "1" \
+	"$(gh_issue_create_calls "$WORK/w7.gh.log")"
+check "W7: the issue title names the unreachable version" "1" \
+	"$(gh_issue_create_args_have "$WORK/w7.gh.log" "$TITLE_W7")"
+check "W7: the issue is labelled type:ci" "1" \
+	"$(gh_issue_create_args_have "$WORK/w7.gh.log" "type:ci")"
+check "W7: the issue is labelled prio:P2" "1" \
+	"$(gh_issue_create_args_have "$WORK/w7.gh.log" "prio:P2")"
+check "W7: the issue is labelled status:ready" "1" \
+	"$(gh_issue_create_args_have "$WORK/w7.gh.log" "status:ready")"
+check "W7: the issue is labelled area:ci" "1" \
+	"$(gh_issue_create_args_have "$WORK/w7.gh.log" "area:ci")"
+
+# --- W8: repology unreachable, the matching issue is open => no create ---
+TITLE_W8="Cannot reach repology.org to check whether Podman 6.1.2 is packaged"
+printf '7\t\n7\t\n7\t\n' > "$WORK/w8.curl.resp"
+out="$(run_case "6.1.1" "v6.1.2" "$WORK/w8.curl.resp" \
+	"$WORK/w8.gh.log" "$WORK/w8.curl.log" "$WORK/w8.sleep.log" "$FAKE_URL" "$TITLE_W8")"
+rc=$?
+check "W8: an already-open matching issue still exits 0" "0" "$rc"
+check "W8: the output says an issue is already open" "1" \
+	"$(printf '%s' "$out" | grep -q 'Issue already open' && echo 1 || echo 0)"
+check "W8: gh issue create was never called" "0" \
+	"$(gh_issue_create_calls "$WORK/w8.gh.log")"
+
+# --- W9: repology unreachable, a DIFFERENT issue open => create anyway ---
+# The open issue is for an older Podman, so `grep -qxF` against our new title
+# fails and the watcher creates a fresh one for 6.1.2.
+TITLE_OTHER="Cannot reach repology.org to check whether Podman 6.1.0 is packaged"
+printf '7\t\n7\t\n7\t\n' > "$WORK/w9.curl.resp"
+out="$(run_case "6.1.1" "v6.1.2" "$WORK/w9.curl.resp" \
+	"$WORK/w9.gh.log" "$WORK/w9.curl.log" "$WORK/w9.sleep.log" "$FAKE_URL" "$TITLE_OTHER")"
+rc=$?
+check "W9: an unrelated open issue still exits 0" "0" "$rc"
+check "W9: gh issue create was called exactly once" "1" \
+	"$(gh_issue_create_calls "$WORK/w9.gh.log")"
+check "W9: the new issue title names the unreachable version" "1" \
+	"$(gh_issue_create_args_have "$WORK/w9.gh.log" "$TITLE_W7")"
 
 echo
 echo "$pass passed, $fail failed"
