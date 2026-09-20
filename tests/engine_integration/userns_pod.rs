@@ -7,12 +7,17 @@
 //! would fail nothing there.
 //!
 //! This file puts a single alpine service inside a real pod and asserts
-//! the same three modes the unit file covers. The size field of the
-//! first line of `/proc/self/uid_map` is what separates a working option
-//! path from one that silently drops the option: a path that ignored the
-//! option and fell back to the default would produce the `auto` answer
+//! the same three modes the unit file covers. The size field of
+//! `/proc/self/uid_map` is what separates a working option path from
+//! one that silently drops the option: a path that ignored the option
+//! and fell back to the default would produce the `auto` answer
 //! (`0 1 1024`) too, because the default IS `0 1 1024`. The size field
-//! must therefore be read, not just the presence of a map.
+//! must therefore be read, not just the presence of a map. For the
+//! `auto` family the value is summed across every line, because podman
+//! may split a fragmented allocation across more than one range; for
+//! `keep-id` it is the first line's size because the other lines are
+//! fixed plumbing. See the assertion block for the split the sum
+//! protects against and how each family is checked.
 //!
 //! The test also asserts the container is a member of the project's pod
 //! by comparing the `Pod` field on container inspect against the
@@ -21,8 +26,8 @@
 //! passing while the pod path went unexercised.
 //!
 //! Defaults are the runtime's, read from Podman 5.7.0 on 2026-09-20:
-//! `auto` → size 1024; `auto:size=N` → size N; `keep-id:uid=N,gid=M`
-//! → size N on the first line of the mapping.
+//! `auto` → size 1024; `auto:size=N` → size N total across every range;
+//! `keep-id:uid=N,gid=M` → size N on the first line of the mapping.
 
 use std::fs;
 use std::process::Command;
@@ -181,6 +186,33 @@ fn first_mapping(map: &str) -> [u64; 3] {
 	fields.try_into().expect("uid_map must have three columns")
 }
 
+// Sum the size (third column) across every non-empty line of the map. The
+// `auto` family may split a fragmented allocation across more than one
+// range, and `auto:size=N` promises N usable container IDs, not N in one
+// contiguous range. The split measured on this host on 2026-09-20 for
+// `auto:size=2048` was two ranges of 1024 each:
+//   0 1 1024
+//   1024 2049 1024
+// which totals 2048. Reading the first line alone, as the original
+// assertion did, reported 1024 and missed the second range entirely.
+//
+// This helper is only used by the `auto` family. The `keep-id` case has a
+// different shape (three lines, where the first is the user-specified
+// range and the other two are plumbing) and asserts on the first line
+// instead. See the comment at the size assertion below for the split.
+fn total_size(map: &str) -> u64 {
+	map.lines()
+		.filter(|line| !line.trim().is_empty())
+		.map(|line| {
+			let fields: Vec<u64> = line
+				.split_whitespace()
+				.map(|part| part.parse().expect("uid_map must contain integers"))
+				.collect();
+			fields[2]
+		})
+		.sum()
+}
+
 #[cfg(all(unix, feature = "test-helpers"))]
 #[tokio::test]
 async fn userns_options_reach_a_pod_member() {
@@ -220,10 +252,15 @@ async fn userns_options_reach_a_pod_member() {
 		let pod_for_container = container_pod_id(&container);
 		let pod_for_project = pod_id_for_project(&proj);
 
-		// The size field of the first line is what separates the three modes.
-		// `auto` without options yields `0 1 1024`, so an "is there a map"
-		// check would be satisfied by a path that dropped the option and
-		// fell back to the default.
+		// The size field of the map is what separates a working option path
+		// from one that silently drops the option: a path that ignored the
+		// option and fell back to the default would produce the `auto` answer
+		// (`0 1 1024`) too, because the default IS `0 1 1024`. The size field
+		// must therefore be read, not just the presence of a map. For the
+		// `auto` family the value is the sum across every line because podman
+		// may split a fragmented allocation; for `keep-id` it stays on the
+		// first line because the other lines are fixed plumbing. See the
+		// size assertion below for the exact rule per case.
 		let mapping = first_mapping(&uid_map);
 		// CodeQL `rust/cleartext-logging` fires on the format string of an
 		// `assert_eq!` whose interpolated value has a `uid`-style name; this
@@ -248,8 +285,29 @@ async fn userns_options_reach_a_pod_member() {
 			case.label, uid_map
 		);
 		// codeql[rust/cleartext-logging] see the first site for the reason.
+		// For the `auto` family, the size the option promises is the TOTAL
+		// count of mapped container IDs across every line, because podman
+		// may split a fragmented allocation across several ranges. The split
+		// measured on this host on 2026-09-20 for `auto:size=2048` was two
+		// ranges of 1024 each (`0 1 1024` and `1024 2049 1024`), totalling
+		// 2048. Reading the first line alone reported 1024 and missed the
+		// second range; summing the third column across every line reports
+		// 2048 and matches what the option actually delivered.
+		//
+		// For `keep-id:uid=N,gid=M` the shape is different: podman writes a
+		// three-line map whose first range is the user-specified N and whose
+		// other two ranges are plumbing to keep the rest of the namespace
+		// usable. The sum across all lines for that case is 65537 (321 + 1
+		// + 65215), not 321, so the assertion stays on the first line. The
+		// two families assert what is true for each rather than forcing one
+		// rule over both.
+		let size_value = if case.mode.starts_with("keep-id") {
+			mapping[2]
+		} else {
+			total_size(&uid_map)
+		};
 		assert_eq!(
-			mapping[2],
+			size_value,
 			u64::from(case.expect_size),
 			"{}: uid_map size must be {} for userns_mode {:?}, got {:?}",
 			case.label,
