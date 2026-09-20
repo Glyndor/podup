@@ -139,7 +139,16 @@ impl Engine {
 		// than inventing `name-1`, `name-2`, … (docker compose refuses this too).
 		super::scale::check_fixed_name_scale(name, service, replicas)?;
 
-		let new_hash = config_hash(service, file, &self.base_dir)?;
+		let new_hash = config_hash(
+			service,
+			file,
+			&self.project,
+			&self.base_dir,
+			&self
+				.uploaded_file_digests
+				.lock()
+				.expect("uploaded_file_digests mutex poisoned"),
+		)?;
 		// Shared by this service's replicas only, and created here on purpose:
 		// the image acquisition above is over, so nothing this service does
 		// moves its tag while the answer is alive.

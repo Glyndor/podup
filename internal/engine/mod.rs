@@ -130,6 +130,19 @@ pub struct Engine {
 	/// matters because podup is consumed as a library and a caller may hold more
 	/// than one engine.
 	pub(super) images_seen_present: std::sync::Mutex<std::collections::HashSet<String>>,
+	/// SHA-256 of every `file:` secret/config this engine actually uploaded
+	/// during the current invocation, keyed by the project-scoped Podman
+	/// secret name `create_project_secrets` used to create it. Populated
+	/// before the per-service label build so `config_hash` can fold the
+	/// bytes it shipped into the label instead of reading the host file
+	/// again: a re-read can land on bytes that changed between the upload
+	/// and the label build (image acquisition, a `depends_on` wait), and
+	/// the container would then carry the label of bytes it never
+	/// mounted. Empty when no `file:` source was uploaded yet (e.g.
+	/// `config --hash`, autostart's start mode) — `config_hash` falls back
+	/// to its file-read behaviour in that case, which is exactly what those
+	/// callers always saw.
+	pub(super) uploaded_file_digests: std::sync::Mutex<std::collections::HashMap<String, [u8; 32]>>,
 	/// CLI `--no-warn`: suppress the host-binding / privilege-escalation
 	/// warnings the engine emits during `up`/`create`/`run`/`exec`. The
 	/// operator wrote the compose file deliberately, so the default-warning
@@ -185,6 +198,7 @@ impl Engine {
 			run_no_tty: false,
 			renew_anon_volumes: false,
 			images_seen_present: std::sync::Mutex::new(std::collections::HashSet::new()),
+			uploaded_file_digests: std::sync::Mutex::new(std::collections::HashMap::new()),
 			no_warn: false,
 			project_label: build_project_label_parts(&project),
 		}
@@ -208,6 +222,7 @@ impl Engine {
 			run_no_tty: false,
 			renew_anon_volumes: false,
 			images_seen_present: std::sync::Mutex::new(std::collections::HashSet::new()),
+			uploaded_file_digests: std::sync::Mutex::new(std::collections::HashMap::new()),
 			no_warn: false,
 			project_label: build_project_label_parts(&project),
 		}

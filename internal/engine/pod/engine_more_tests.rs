@@ -27,7 +27,9 @@ services:
 	let hash = crate::engine::container::config_hash(
 		&file.services["web"],
 		&file,
+		"proj",
 		std::env::current_dir().unwrap().as_path(),
+		&std::collections::HashMap::new(),
 	)
 	.unwrap();
 	let listing = format!(
