@@ -162,6 +162,106 @@ fn a_path_that_is_not_utf_8_is_an_error() {
 	);
 }
 
+/// A FIFO entry in the tar makes `sent_entries` return an error naming the
+/// type. The destination cannot be asked about a FIFO through the archive
+/// stat, so an archive that hid a FIFO behind a verifiable directory would
+/// otherwise be confirmed on the directory alone.
+#[cfg(unix)]
+#[test]
+fn a_fifo_entry_is_an_error() {
+	use std::io::Write;
+
+	let mut builder = tar::Builder::new(Vec::new());
+	let mut header = tar::Header::new_gnu();
+	header.set_size(0);
+	header.set_mode(0o644);
+	header.set_entry_type(tar::EntryType::Fifo);
+	header.set_path("pipe").unwrap();
+	header.set_cksum();
+	builder.append(&header, std::io::empty()).unwrap();
+	let bytes = builder.into_inner().unwrap();
+
+	let gz = {
+		let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+		enc.write_all(&bytes).unwrap();
+		enc.finish().unwrap()
+	};
+
+	let err = sent_entries(&gz)
+		.expect_err("a FIFO entry must make sent_entries error, not silently skip");
+	let msg = err.to_string();
+	assert!(
+		msg.contains("Fifo"),
+		"the error must name the entry type, got: {msg}"
+	);
+}
+
+/// A hard-link entry in the tar makes `sent_entries` return an error naming the
+/// type. Hard links survive a tar round-trip but the destination cannot be
+/// asked about one through the archive stat, so an archive that hid a hard
+/// link behind a verifiable directory would otherwise be confirmed on the
+/// directory alone.
+#[cfg(unix)]
+#[test]
+fn a_hard_link_entry_is_an_error() {
+	use std::io::Write;
+
+	let mut builder = tar::Builder::new(Vec::new());
+	let mut header = tar::Header::new_gnu();
+	header.set_size(0);
+	header.set_mode(0o644);
+	header.set_entry_type(tar::EntryType::Link);
+	header.set_path("dup").unwrap();
+	header.set_cksum();
+	builder.append(&header, std::io::empty()).unwrap();
+	let bytes = builder.into_inner().unwrap();
+
+	let gz = {
+		let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+		enc.write_all(&bytes).unwrap();
+		enc.finish().unwrap()
+	};
+
+	let err = sent_entries(&gz)
+		.expect_err("a hard-link entry must make sent_entries error, not silently skip");
+	let msg = err.to_string();
+	assert!(
+		msg.contains("Link"),
+		"the error must name the entry type, got: {msg}"
+	);
+}
+
+/// A tar with only the three kinds the destination can be asked about lists
+/// exactly those three. The shape is what `pack_path` produces from a directory
+/// holding a file, a subdirectory and a symlink, and the regression net for the
+/// filter: any change here means the tree confirmation either misses an entry
+/// or asks about something it cannot reach.
+#[cfg(unix)]
+#[test]
+fn a_tar_with_file_directory_and_symlink_lists_just_those_three() {
+	use super::super::archive::pack_path;
+
+	let dir = tempfile::tempdir().unwrap();
+	let payload = dir.path().join("payload");
+	std::fs::create_dir(&payload).unwrap();
+	std::fs::create_dir(payload.join("sub")).unwrap();
+	std::fs::write(payload.join("plain.txt"), b"hi").unwrap();
+	std::os::unix::fs::symlink("nowhere", payload.join("link")).unwrap();
+
+	let tar = pack_path(&payload, false, None).unwrap();
+
+	assert_eq!(
+		sorted(sent_entries(&tar).unwrap()),
+		vec![
+			("payload".to_string(), SentKind::Dir),
+			("payload/link".to_string(), SentKind::Link),
+			("payload/plain.txt".to_string(), SentKind::File(2)),
+			("payload/sub".to_string(), SentKind::Dir),
+		],
+		"the three verifiable kinds come through, nothing else"
+	);
+}
+
 /// `cp . svc:/dir` packs under `.`, so the names arrive as `./x` and the root
 /// as `.` itself. Joined to the destination as they are, they would stat
 /// `/dir/./x`, and the root would stat the destination a second time.

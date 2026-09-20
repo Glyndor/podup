@@ -7,11 +7,11 @@ use http_body_util::{BodyExt, Limited};
 
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
-use crate::libpod::client::PathStat;
 use crate::libpod::urlencoded;
 use crate::libpod::API_PREFIX;
 
 use super::Engine;
+use verify::SentKind;
 
 /// Crate-private so the fuzz harness behind the `test-helpers` feature can
 /// reach `extract_tar_guarded` without widening the published API surface.
@@ -366,13 +366,13 @@ impl Engine {
 				.map(|n| n.to_string_lossy().into_owned())
 				.unwrap_or_default()
 		});
-		let uploaded_size = uploaded_entry_size(src);
+		let uploaded_kind = uploaded_entry_kind(src, follow);
 		self.put_archive_verified(
 			&container_name,
 			&extract_dir,
 			&entry,
 			tar_bytes,
-			uploaded_size,
+			uploaded_kind,
 		)
 		.await
 	}
@@ -413,7 +413,7 @@ impl Engine {
 		dir: &str,
 		entry: &str,
 		tar_bytes: Vec<u8>,
-		uploaded_size: Option<u64>,
+		uploaded_kind: Option<SentKind>,
 	) -> Result<()> {
 		let path = format!(
 			"{API_PREFIX}/containers/{}/archive?path={}",
@@ -437,14 +437,14 @@ impl Engine {
 		// because the extracted file takes the source's own mtime.
 		//
 		// The question the confirmation should ask is not "did the entry
-		// change" but "does the entry now match what was uploaded". `None`
-		// means there is no single entry to ask about (a directory, a nameless
-		// entry, or a source that could not be stat'd), and a later
-		// IncompleteMessage asks about every entry of the archive instead.
-		let expected = verify_path
-			.as_ref()
-			.and(uploaded_size)
-			.map(|size| ExpectedEntry { size });
+		// change" but "does the entry now match what was uploaded". The shape
+		// of the match is the same `SentKind` that the tree path uses, so a
+		// regular file is checked against a regular file of the same size, a
+		// symlink source is checked against a symlink at the destination, and
+		// anything else (a directory, a FIFO, an unstatable source) leaves the
+		// expectation empty and a later IncompleteMessage asks about every
+		// entry of the archive instead.
+		let expected = verify_path.as_ref().and(uploaded_kind);
 
 		// `application/gzip` is the honest label for the gzipped tar; Podman
 		// sniffs the magic bytes and forgives either. The clone shares the
@@ -463,15 +463,29 @@ impl Engine {
 			return Err(ComposeError::Podman(e));
 		}
 		let landed = match (&verify_path, &expected) {
-			(Some(p), Some(want)) => match self.client.head_path_stat(p).await {
-				Ok(post) => copy_landed(want, post.as_ref()),
-				Err(stat_err) => {
-					tracing::debug!(
-						"cp: could not re-verify {p} after an incomplete PUT: {stat_err}"
-					);
-					false
+			(Some(p), Some(want)) => {
+				// A symbolic link's destination is read through the 404-with-stat
+				// shape, the same dispatch `tree_landed` uses: a dangling link
+				// on Podman 5.7.0 returns 404 with the link stat in the header,
+				// and `head_path_stat` would throw that stat away. A regular
+				// file or directory that answers 404 (the link was cut and the
+				// upload failed) returns `None` either way, so the dispatch
+				// does not matter for them; links are the only kind that
+				// benefit.
+				let stat = match want {
+					SentKind::Link => self.client.head_path_stat_even_if_missing(p).await,
+					_ => self.client.head_path_stat(p).await,
+				};
+				match stat {
+					Ok(post) => verify::entry_landed(*want, post.as_ref()),
+					Err(stat_err) => {
+						tracing::debug!(
+							"cp: could not re-verify {p} after an incomplete PUT: {stat_err}"
+						);
+						false
+					}
 				}
-			},
+			}
 			_ => self.tree_landed(container, dir, tar_bytes).await,
 		};
 		if landed {
@@ -487,57 +501,39 @@ impl Engine {
 	}
 }
 
-/// The size the destination entry must end up with, or `None` when there is
-/// nothing to compare.
+/// What the destination entry must look like for a single-entry upload to have
+/// landed, or `None` when there is nothing comparable.
 ///
-/// Only a regular file has a size the archive preserves. A directory is
-/// `None` because its own size says nothing about whether its children
-/// arrived; its upload is confirmed entry by entry (`verify::tree_landed`),
-/// never on this. A source that cannot be stat'd is `None` for the same
-/// reason: unknown must not become a guess.
+/// A regular file source expects `SentKind::File(size)`, where the size is the
+/// file's actual length on disk. The kind is part of the comparison (an empty
+/// file over an unchanged zero-length FIFO would otherwise pass on size
+/// alone). A symlink at the source without `-L/--follow-link` expects
+/// `SentKind::Link`, because the archive stores the link itself, not its
+/// target's contents, and a destination that reports a regular file at the
+/// target's size would still be a failure. A directory source returns `None`
+/// because its own size says nothing about its children; that case is
+/// confirmed entry by entry (`verify::tree_landed`), never on this. Anything
+/// else stays unverifiable and fails closed rather than confirming on the
+/// wrong kind.
 ///
 /// Extracted so it is reachable from a test. Inside the async upload it was
-/// covered only by running against a real container, and a mutation replacing
-/// the real length with a constant survived the whole unit suite.
-pub(super) fn uploaded_entry_size(src: &std::path::Path) -> Option<u64> {
-	std::fs::metadata(src)
-		.ok()
-		.filter(std::fs::Metadata::is_file)
-		.map(|m| m.len())
-}
-
-/// What the destination entry must look like for the upload to have landed.
-///
-/// Only the size for now. The mtime is deliberately not part of it: the archive
-/// sets it from the source, but Podman reports it to whole seconds while the
-/// source's own mtime carries sub-second precision, so comparing the two would
-/// re-introduce a resolution mismatch, this time as a false *negative* on a
-/// copy that did land.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ExpectedEntry {
-	size: u64,
-}
-
-/// Whether a `cp`/sync whose archive PUT ended in an `IncompleteMessage`
-/// actually landed, by comparing the destination entry against what was
-/// uploaded.
-///
-/// The entry must exist and its size must equal the source's. **Not "did it
-/// change"**, which is what this asked before: Podman 6's mtime has one-second
-/// resolution, so a second copy inside the same second reported an unchanged
-/// mtime and a copy that had landed was called a failure (#1270, measured at
-/// three failures in six). Copying an unchanged file twice was undetectable at
-/// any resolution, since the extracted file takes the source's own mtime.
-///
-/// The residual false positive is a failed upload onto an entry that already
-/// happened to be the same size. It is benign in a way the old false negative
-/// was not: the destination already holds bytes of the length the caller
-/// intended, and the caller is told the copy succeeded rather than being told a
-/// successful copy failed.
-///
-/// Pure so the decision is unit-tested without a container.
-fn copy_landed(expected: &ExpectedEntry, post: Option<&PathStat>) -> bool {
-	post.is_some_and(|entry| entry.size == expected.size)
+/// covered only by running against a real container, and a mutation
+/// replacing the regular-file length with a constant survived the whole
+/// unit suite.
+pub(super) fn uploaded_entry_kind(src: &std::path::Path, follow_link: bool) -> Option<SentKind> {
+	let meta = if follow_link {
+		std::fs::metadata(src).ok()?
+	} else {
+		std::fs::symlink_metadata(src).ok()?
+	};
+	let kind = meta.file_type();
+	if kind.is_symlink() && !follow_link {
+		Some(SentKind::Link)
+	} else if kind.is_file() {
+		Some(SentKind::File(meta.len()))
+	} else {
+		None
+	}
 }
 
 /// Join a container directory and an entry name into one path, without doubling
