@@ -14,6 +14,54 @@ use crate::libpod::types::container::{Mount, NamedVolume};
 mod spec;
 use spec::{access_opts, extend_bind_opts_str, extend_volume_opts_str, parse_volume_string};
 
+/// What `ensure_bind_source` decided at the host-source path.
+///
+/// The defect this guards against printed a warning without changing
+/// the filesystem: `create_dir_all` on an existing file returns `EEXIST`
+/// and the helper only logged it. A test that only inspects the
+/// filesystem afterwards cannot see whether the helper decided
+/// correctly, so the decision itself is the thing a test can read and
+/// assert.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum BindSource {
+	/// Something already exists at the path; nothing was attempted.
+	Present,
+	/// Nothing existed; the directory was created.
+	Created,
+	/// Nothing existed and creating it failed, or the path could not be
+	/// inspected. The message is what the warning prints.
+	Failed(String),
+}
+
+/// Ensure the host source path for a bind mount exists before podman mounts
+/// it. `symlink_metadata` returns `Ok` for any existing entry (file,
+/// directory, symlink, including a dangling symlink), so a pre-existing source
+/// is left alone: only a missing path leads to `create_dir_all`. A real
+/// failure to create the directory returns `Failed` with today's warning
+/// text; a non-`NotFound` stat error (e.g. permission denied on the
+/// parent) returns `Failed` with the same text so the operator still sees
+/// why the mount may fail. `create_dir_all` on a source that already exists
+/// would return `EEXIST` and print `create_host_path: failed to create …
+/// File exists` on every `up`, once per replica, even when the bind works.
+fn ensure_bind_source(abs: &str) -> BindSource {
+	match std::fs::symlink_metadata(abs) {
+		Ok(_) => BindSource::Present,
+		Err(e) => {
+			if e.kind() != std::io::ErrorKind::NotFound {
+				return BindSource::Failed(format!(
+					"create_host_path: failed to create {abs}: {e}"
+				));
+			}
+			match std::fs::create_dir_all(abs) {
+				Ok(()) => BindSource::Created,
+				Err(e) => {
+					BindSource::Failed(format!("create_host_path: failed to create {abs}: {e}"))
+				}
+			}
+		}
+	}
+}
+
 /// Build all OCI mounts and named volume attachments for a container.
 ///
 /// Returns `(mounts, named_volumes)`. Named volumes must go into
@@ -43,8 +91,8 @@ pub(crate) fn build_mounts_all(
 							// project dir, leading `~` expanded).
 							if let Some(src) = m.source.as_deref() {
 								let abs = super::container::resolve_bind_source(src, base_dir);
-								if let Err(e) = std::fs::create_dir_all(&abs) {
-									tracing::warn!("create_host_path: failed to create {abs}: {e}");
+								if let BindSource::Failed(msg) = ensure_bind_source(&abs) {
+									tracing::warn!("{msg}");
 								}
 							}
 							mounts.push(m);
@@ -91,8 +139,8 @@ pub(crate) fn build_mounts_all(
 							// relative path to the project dir) so the directory is created
 							// at the path actually bind-mounted, not a literal `~` dir.
 							let abs = super::container::resolve_bind_source(src, base_dir);
-							if let Err(e) = std::fs::create_dir_all(&abs) {
-								tracing::warn!("create_host_path: failed to create {abs}: {e}");
+							if let BindSource::Failed(msg) = ensure_bind_source(&abs) {
+								tracing::warn!("{msg}");
 							}
 						}
 					}

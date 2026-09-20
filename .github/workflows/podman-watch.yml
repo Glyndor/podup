@@ -14,7 +14,8 @@ jobs:
   watch:
     runs-on: ubuntu-24.04
     # Bound: worst of the last three successful runs on 2026-09-02 was 7s. Ten times that, rounded up, never under ten
-    # minutes; the six-hour default is what a hang would otherwise cost.
+    # minutes; the six-hour default is what a hang would otherwise cost. Three repology attempts of at most 30 s plus
+    # two 20 s pauses add at most 130 s, inside the ten minutes.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,11 +38,60 @@ jobs:
             echo "No newer Podman than the validated baseline ($BASELINE)."; exit 0
           fi
           # Which distros already package LATEST? (testable => packaged somewhere)
+          # From 2026-09-16 every run failed on `Failed to connect` to repology.org, and the log ended in a Python
+          # traceback that did not name repology: curl piped into a parser that read an empty stdin. The request is
+          # retried and fails on its own line, and the body reaches the parser through stdin rather than the
+          # environment, because one environment string is capped at 128 KiB on Linux and repology's answer can grow.
+          # That outage (2026-09-16 to 2026-09-19) was the lesson: an outage is unknown, not negative, and an
+          # `::error::` that fires when the answer is "we don't know" turns every pull request red because
+          # freshness-podman-watch goes red in ci.yml. Below the loop, an outage becomes a `::warning::` and an
+          # idempotent watcher issue; a non-JSON body is still `::error::` because a changed shape means we
+          # cannot ask the question at all.
+          REPOLOGY_BODY=
+          REPOLOGY_RC=0
+          for attempt in 1 2 3; do
+            # Reset before each call: `|| REPOLOGY_RC=$?` only fires on
+            # failure, so a successful curl on attempt 2 would leave the
+            # status from attempt 1 in place and the loop would never break.
+            REPOLOGY_RC=0
+            REPOLOGY_BODY=$(curl -fsSL -H 'User-Agent: podup-podman-watch' --max-time 30 \
+              "https://repology.org/api/v1/project/podman") || REPOLOGY_RC=$?
+            if [ "$REPOLOGY_RC" = "0" ]; then
+              break
+            fi
+            if [ "$attempt" != "3" ]; then
+              sleep 20
+            fi
+          done
+          if [ "$REPOLOGY_RC" != "0" ]; then
+            echo "::warning::repology.org did not answer after 3 attempts (curl exit $REPOLOGY_RC); cannot tell whether Podman $LATEST is packaged anywhere yet."
+            TITLE="Cannot reach repology.org to check whether Podman $LATEST is packaged"
+            # Idempotent: skip if an issue for this version is already open.
+            if gh issue list --state open --search "in:title $TITLE" --json title --jq '.[].title' | grep -qxF "$TITLE"; then
+              echo "Issue already open; nothing to do."; exit 0
+            fi
+            # Label on creation. An unlabelled issue is a process bug, and one filed
+            # by a bot is no exception: #673 and #1016 both landed bare because this
+            # step never passed --label, and both had to be labelled by hand later.
+            gh issue create --title "$TITLE" \
+              --label "type:ci" --label "prio:P2" --label "status:ready" \
+              --label "area:ci" \
+              --body "repology.org did not answer after 3 attempts (curl exit $REPOLOGY_RC) when this watcher tried to check whether Podman **$LATEST** is packaged.anywhere yet. Three calls with 20 s pauses between them.
+
+            The answer is unknown, not negative: an outage of a third-party index does not mean no distro packages Podman **$LATEST**; it means we cannot ask.
+
+            Baseline recorded: **$BASELINE**.
+
+            After validating Podman **$LATEST** on the lane, bump \`.github/podman-baseline\` by hand to **$LATEST** to clear this nag."
+            echo "Opened watcher issue for repology.org outage on Podman $LATEST."
+            exit 0
+          fi
           # LATEST reaches python via the environment, never interpolated into the
           # script string, so it cannot inject into the parser.
-          DISTROS=$(curl -fsSL -H 'User-Agent: podup-podman-watch' \
-            "https://repology.org/api/v1/project/podman" \
-            | LATEST="$LATEST" python3 -c "import os,sys,json;d=json.load(sys.stdin);latest=os.environ['LATEST'];print(', '.join(sorted({p['repo'] for p in d if p.get('version')==latest})))")
+          DISTROS=$(printf '%s' "$REPOLOGY_BODY" | LATEST="$LATEST" python3 -c "import os,sys,json;d=json.load(sys.stdin);latest=os.environ['LATEST'];print(', '.join(sorted({p['repo'] for p in d if p.get('version')==latest})))" 2>/dev/null) || {
+            echo "::error::repology.org answered, but not with the JSON package list; cannot tell whether Podman $LATEST is packaged anywhere yet."
+            exit 1
+          }
           if [ -z "$DISTROS" ]; then
             echo "Podman $LATEST is released but not packaged in any distro yet; keep watching."; exit 0
           fi

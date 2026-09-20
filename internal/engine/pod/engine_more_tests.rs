@@ -24,7 +24,14 @@ services:
 	let file = parse_str(yaml).unwrap();
 	// The listed container carries the hash and image ID `up` will compute, so
 	// with a stale list it reads as unchanged.
-	let hash = crate::engine::container::config_hash(&file.services["web"], &file).unwrap();
+	let hash = crate::engine::container::config_hash(
+		&file.services["web"],
+		&file,
+		"proj",
+		std::env::current_dir().unwrap().as_path(),
+		&std::collections::HashMap::new(),
+	)
+	.unwrap();
 	let listing = format!(
 		r#"[{{"Id":"aaa","Names":["/proj-web-1"],"Image":"nginx","ImageID":"sha256:0000000000000000000000000000000000000000000000000000000000000000","Status":"","State":"running","Ports":[],"Labels":{{"podup.project":"proj","podup.service":"web","podup.config-hash":"{hash}"}}}}]"#
 	);

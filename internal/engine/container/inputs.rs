@@ -62,7 +62,19 @@ impl Engine {
 		}
 		labels.insert("podup.project".to_string(), self.project.clone());
 		labels.insert("podup.service".to_string(), service_name.to_string());
-		labels.insert("podup.config-hash".to_string(), config_hash(service, file)?);
+		// `create_project_secrets` runs before this is reached, so any
+		// `file:` source in the project already has a recorded digest; pass
+		// the snapshot through so the hash describes the bytes that were
+		// actually uploaded, not the bytes on disk at label time.
+		let digests = self
+			.uploaded_file_digests
+			.lock()
+			.expect("uploaded_file_digests mutex poisoned");
+		labels.insert(
+			"podup.config-hash".to_string(),
+			config_hash(service, file, &self.project, &self.base_dir, &digests)?,
+		);
+		drop(digests);
 		// Where this project's compose file lives. `ls` discovers projects purely
 		// by label and keeps no other record, so without this its `ConfigFiles`
 		// column can only ever be blank. Omitted rather than written empty when the

@@ -127,10 +127,15 @@ fn is_valid_namespace_mode(field: &str, mode: &str) -> bool {
 	if NS_MODES.contains(&mode) || extra_modes(field).contains(&mode) {
 		return true;
 	}
+	if let Some((name, options)) = mode.split_once(':') {
+		if field == USERNS_FIELD && matches!(name, "auto" | "keep-id") {
+			return !options.is_empty();
+		}
+	}
 	// Measure the suffix against the prefix that actually matched. The old
 	// code compared every prefix against `"container:".len()`, which would
 	// have rejected a short but legal `ns:/x`.
-	for p in NS_PREFIX_MODES.iter().chain(extra_prefixes(field)) {
+	for p in NS_PREFIX_MODES {
 		if mode.starts_with(p) {
 			return mode.len() > p.len();
 		}

@@ -7,16 +7,18 @@ use http_body_util::{BodyExt, Limited};
 
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
-use crate::libpod::client::PathStat;
 use crate::libpod::urlencoded;
 use crate::libpod::API_PREFIX;
 
 use super::Engine;
+use verify::SentKind;
 
 /// Crate-private so the fuzz harness behind the `test-helpers` feature can
 /// reach `extract_tar_guarded` without widening the published API surface.
 pub(crate) mod archive;
+mod destination;
 mod stream;
+mod verify;
 
 use archive::{extract_archive, pack_path};
 
@@ -30,12 +32,15 @@ const MAX_CP_ARCHIVE_BYTES: usize = 1024 * 1024 * 1024;
 /// Three cases drive [`Engine::cp_from_container`]:
 /// - `Directory`: an existing real directory; the streaming extractor can
 ///   pipe the archive body straight into it without buffering.
-/// - `Symlink`: a destination that is itself a symlink. `Path::is_dir`
-///   would follow it and report a directory, so the routing used to take
-///   the streaming branch and the bytes landed in the link target rather
-///   than the named destination. The same class of bug #1736 closed
-///   inside `extract_archive`; this is that fix mirrored at the call site
-///   that picks between streaming and buffering.
+/// - `Symlink`: a destination with a symlink at any component of its path,
+///   the last one included, or with a component that could not be inspected
+///   (refused the same way). `Path::is_dir` would follow the link and report
+///   a directory, so the routing used to take the streaming branch and the
+///   bytes landed in the link target rather than the named destination. The
+///   same class of bug #1736 closed inside `extract_archive`; this is that
+///   fix mirrored at the call site that picks between streaming and
+///   buffering. #1736 looked at the last component only, and #1764 extended
+///   it to the whole path.
 /// - `NotADirectory`: a missing path (the buffered `extract_archive`
 ///   branch will create it) or an existing non-directory (the same
 ///   branch will land the single entry there).
@@ -50,8 +55,20 @@ pub(super) enum CpDestinationKind {
 /// as a symlink, not the directory it points at. Without this, the
 /// streaming branch would extract into the link target rather than the
 /// named destination (#1736 + the call-site follow-up).
+///
+/// `symlink_metadata` alone only answers for the last component, so the
+/// whole path goes through [`destination::destination_refusal`] first
+/// (#1764). That module also records what the check does not close.
+///
+/// After the walk accepted the destination, the metadata is read through
+/// [`destination::destination_metadata`] so a trusted root link whose
+/// target IS the destination is followed (the walk would have let it
+/// through); every other link still reads as a link.
 pub(super) fn cp_destination_kind(dst: &Path) -> CpDestinationKind {
-	match std::fs::symlink_metadata(dst) {
+	if destination::destination_refusal(dst).is_some() {
+		return CpDestinationKind::Symlink;
+	}
+	match destination::destination_metadata(dst) {
 		Ok(meta) if meta.file_type().is_symlink() => CpDestinationKind::Symlink,
 		Ok(meta) if meta.is_dir() => CpDestinationKind::Directory,
 		_ => CpDestinationKind::NotADirectory,
@@ -214,10 +231,7 @@ impl Engine {
 		// closed inside `extract_archive`, mirrored here at the routing site.
 		match cp_destination_kind(&dst) {
 			CpDestinationKind::Symlink => {
-				return Err(ComposeError::Copy(format!(
-					"cp: refusing symlink destination: {}",
-					dst.display()
-				)));
+				return Err(destination::refusal_for(&dst));
 			}
 			CpDestinationKind::Directory => {
 				return stream::extract_streamed(resp, dst, MAX_CP_ARCHIVE_BYTES as u64).await;
@@ -352,13 +366,13 @@ impl Engine {
 				.map(|n| n.to_string_lossy().into_owned())
 				.unwrap_or_default()
 		});
-		let uploaded_size = uploaded_entry_size(src);
+		let uploaded_kind = uploaded_entry_kind(src, follow);
 		self.put_archive_verified(
 			&container_name,
 			&extract_dir,
 			&entry,
 			tar_bytes,
-			uploaded_size,
+			uploaded_kind,
 		)
 		.await
 	}
@@ -384,11 +398,14 @@ impl Engine {
 	/// re-copying an *unchanged* file is undetectable at any resolution because
 	/// the extracted file takes the source's own mtime.
 	///
-	/// Fails, rather than guessing, when the entry has no name (`cp . svc:/`),
-	/// when the source size is unknown, or when the post-PUT stat cannot be read.
+	/// A source with no single size to compare, a directory above all, is
+	/// confirmed entry by entry instead (`verify::tree_landed`). Until #1777 it
+	/// was not confirmed at all, and every directory copy against Podman 6 was
+	/// reported as failed whether or not it had landed.
 	///
-	/// Known limit: a *directory* entry has no size to compare, so re-syncing a
-	/// tree is reported as unverifiable (fail-closed, never a false success).
+	/// Fails, rather than guessing, when a post-PUT stat cannot be read or when
+	/// the archive holds nothing that can be asked about.
+	///
 	/// Inert on Podman 5, which returns a normal response.
 	pub(super) async fn put_archive_verified(
 		&self,
@@ -396,7 +413,7 @@ impl Engine {
 		dir: &str,
 		entry: &str,
 		tar_bytes: Vec<u8>,
-		uploaded_size: Option<u64>,
+		uploaded_kind: Option<SentKind>,
 	) -> Result<()> {
 		let path = format!(
 			"{API_PREFIX}/containers/{}/archive?path={}",
@@ -420,20 +437,22 @@ impl Engine {
 		// because the extracted file takes the source's own mtime.
 		//
 		// The question the confirmation should ask is not "did the entry
-		// change" but "does the entry now match what was uploaded". `None`
-		// means the answer is unknowable (no verifiable entry, or the source
-		// could not be stat'd) and forces a later IncompleteMessage to fail
-		// rather than guess.
-		let expected = verify_path
-			.as_ref()
-			.and(uploaded_size)
-			.map(|size| ExpectedEntry { size });
+		// change" but "does the entry now match what was uploaded". The shape
+		// of the match is the same `SentKind` that the tree path uses, so a
+		// regular file is checked against a regular file of the same size, a
+		// symlink source is checked against a symlink at the destination, and
+		// anything else (a directory, a FIFO, an unstatable source) leaves the
+		// expectation empty and a later IncompleteMessage asks about every
+		// entry of the archive instead.
+		let expected = verify_path.as_ref().and(uploaded_kind);
 
 		// `application/gzip` is the honest label for the gzipped tar; Podman
-		// sniffs the magic bytes and forgives either.
+		// sniffs the magic bytes and forgives either. The clone shares the
+		// buffer; the archive is kept because it is the record of what was sent.
+		let tar_bytes = Bytes::from(tar_bytes);
 		let Err(e) = self
 			.client
-			.put_bytes_ok(&path, Bytes::from(tar_bytes), "application/gzip")
+			.put_bytes_ok(&path, tar_bytes.clone(), "application/gzip")
 			.await
 		else {
 			return Ok(());
@@ -444,16 +463,30 @@ impl Engine {
 			return Err(ComposeError::Podman(e));
 		}
 		let landed = match (&verify_path, &expected) {
-			(Some(p), Some(want)) => match self.client.head_path_stat(p).await {
-				Ok(post) => copy_landed(want, post.as_ref()),
-				Err(stat_err) => {
-					tracing::debug!(
-						"cp: could not re-verify {p} after an incomplete PUT: {stat_err}"
-					);
-					false
+			(Some(p), Some(want)) => {
+				// A symbolic link's destination is read through the 404-with-stat
+				// shape, the same dispatch `tree_landed` uses: a dangling link
+				// on Podman 5.7.0 returns 404 with the link stat in the header,
+				// and `head_path_stat` would throw that stat away. A regular
+				// file or directory that answers 404 (the link was cut and the
+				// upload failed) returns `None` either way, so the dispatch
+				// does not matter for them; links are the only kind that
+				// benefit.
+				let stat = match want {
+					SentKind::Link => self.client.head_path_stat_even_if_missing(p).await,
+					_ => self.client.head_path_stat(p).await,
+				};
+				match stat {
+					Ok(post) => verify::entry_landed(*want, post.as_ref()),
+					Err(stat_err) => {
+						tracing::debug!(
+							"cp: could not re-verify {p} after an incomplete PUT: {stat_err}"
+						);
+						false
+					}
 				}
-			},
-			_ => false,
+			}
+			_ => self.tree_landed(container, dir, tar_bytes).await,
 		};
 		if landed {
 			return Ok(());
@@ -468,57 +501,39 @@ impl Engine {
 	}
 }
 
-/// The size the destination entry must end up with, or `None` when there is
-/// nothing to compare.
+/// What the destination entry must look like for a single-entry upload to have
+/// landed, or `None` when there is nothing comparable.
 ///
-/// Only a regular file has a size the archive preserves. A directory upload
-/// stays unverifiable and therefore fail-closed, which is what it was before:
-/// a directory entry's own size says nothing about whether its children
-/// arrived. A source that cannot be stat'd is `None` for the same reason:
-/// unknown must not become a guess.
+/// A regular file source expects `SentKind::File(size)`, where the size is the
+/// file's actual length on disk. The kind is part of the comparison (an empty
+/// file over an unchanged zero-length FIFO would otherwise pass on size
+/// alone). A symlink at the source without `-L/--follow-link` expects
+/// `SentKind::Link`, because the archive stores the link itself, not its
+/// target's contents, and a destination that reports a regular file at the
+/// target's size would still be a failure. A directory source returns `None`
+/// because its own size says nothing about its children; that case is
+/// confirmed entry by entry (`verify::tree_landed`), never on this. Anything
+/// else stays unverifiable and fails closed rather than confirming on the
+/// wrong kind.
 ///
 /// Extracted so it is reachable from a test. Inside the async upload it was
-/// covered only by running against a real container, and a mutation replacing
-/// the real length with a constant survived the whole unit suite.
-pub(super) fn uploaded_entry_size(src: &std::path::Path) -> Option<u64> {
-	std::fs::metadata(src)
-		.ok()
-		.filter(std::fs::Metadata::is_file)
-		.map(|m| m.len())
-}
-
-/// What the destination entry must look like for the upload to have landed.
-///
-/// Only the size for now. The mtime is deliberately not part of it: the archive
-/// sets it from the source, but Podman reports it to whole seconds while the
-/// source's own mtime carries sub-second precision, so comparing the two would
-/// re-introduce a resolution mismatch, this time as a false *negative* on a
-/// copy that did land.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ExpectedEntry {
-	size: u64,
-}
-
-/// Whether a `cp`/sync whose archive PUT ended in an `IncompleteMessage`
-/// actually landed, by comparing the destination entry against what was
-/// uploaded.
-///
-/// The entry must exist and its size must equal the source's. **Not "did it
-/// change"**, which is what this asked before: Podman 6's mtime has one-second
-/// resolution, so a second copy inside the same second reported an unchanged
-/// mtime and a copy that had landed was called a failure (#1270, measured at
-/// three failures in six). Copying an unchanged file twice was undetectable at
-/// any resolution, since the extracted file takes the source's own mtime.
-///
-/// The residual false positive is a failed upload onto an entry that already
-/// happened to be the same size. It is benign in a way the old false negative
-/// was not: the destination already holds bytes of the length the caller
-/// intended, and the caller is told the copy succeeded rather than being told a
-/// successful copy failed.
-///
-/// Pure so the decision is unit-tested without a container.
-fn copy_landed(expected: &ExpectedEntry, post: Option<&PathStat>) -> bool {
-	post.is_some_and(|entry| entry.size == expected.size)
+/// covered only by running against a real container, and a mutation
+/// replacing the regular-file length with a constant survived the whole
+/// unit suite.
+pub(super) fn uploaded_entry_kind(src: &std::path::Path, follow_link: bool) -> Option<SentKind> {
+	let meta = if follow_link {
+		std::fs::metadata(src).ok()?
+	} else {
+		std::fs::symlink_metadata(src).ok()?
+	};
+	let kind = meta.file_type();
+	if kind.is_symlink() && !follow_link {
+		Some(SentKind::Link)
+	} else if kind.is_file() {
+		Some(SentKind::File(meta.len()))
+	} else {
+		None
+	}
 }
 
 /// Join a container directory and an entry name into one path, without doubling
@@ -593,3 +608,15 @@ fn parse_endpoint(s: &str) -> Option<(&str, &str)> {
 #[cfg(test)]
 #[path = "copy_tests.rs"]
 mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "copy_upload_tests.rs"]
+mod upload_tests;
+
+#[cfg(test)]
+#[path = "copy/destination_tests.rs"]
+mod destination_tests;
+
+#[cfg(test)]
+#[path = "copy/destination_trusted_tests.rs"]
+mod destination_trusted_tests;

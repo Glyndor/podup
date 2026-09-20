@@ -2,6 +2,27 @@ use super::{
 	config_hash, resolve_links, resolve_stop_signal, resolve_volume_name, resolve_volumes_from,
 };
 use crate::parse_str;
+use std::io::Write;
+use std::path::Path;
+
+/// Project name used by the file-hash tests below. Mirrors the engine's
+/// `Engine::with_base_dir(..., "proj", ...)` so the scoped-name lookup in
+/// `config_hash` agrees with the test fixtures.
+const PROJECT: &str = "proj";
+
+/// Empty digest map for tests that exercise `config_hash`'s file-read
+/// branch: nothing was uploaded, so every `file:` ref falls through to the
+/// path it always took. The new tests in this file build their own maps.
+fn empty_digests() -> std::collections::HashMap<String, [u8; 32]> {
+	std::collections::HashMap::new()
+}
+
+/// A temp directory used as the project base directory for `config_hash`
+/// calls: relative `file:` paths resolve against it, so each test owns its
+/// own fixture tree and cannot race another test's reads.
+fn temp_base() -> tempfile::TempDir {
+	tempfile::tempdir().expect("tempdir")
+}
 
 #[test]
 fn stop_signal_resolves_names_numbers_and_prefixes() {
@@ -168,12 +189,34 @@ fn volume_name_resolution() {
 
 #[test]
 fn config_hash_is_stable_and_sensitive() {
+	let base = temp_base();
 	let a = parse_str("services:\n  web:\n    image: nginx:1.27\n").unwrap();
 	let b = parse_str("services:\n  web:\n    image: nginx:1.27\n").unwrap();
 	let c = parse_str("services:\n  web:\n    image: nginx:1.28\n").unwrap();
-	let ha = config_hash(&a.services["web"], &a).unwrap();
-	let hb = config_hash(&b.services["web"], &b).unwrap();
-	let hc = config_hash(&c.services["web"], &c).unwrap();
+	let ha = config_hash(
+		&a.services["web"],
+		&a,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
+	let hb = config_hash(
+		&b.services["web"],
+		&b,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
+	let hc = config_hash(
+		&c.services["web"],
+		&c,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
 	assert_eq!(ha, hb, "same config produces the same hash");
 	assert_ne!(ha, hc, "a changed image produces a different hash");
 	assert_eq!(ha.len(), 64, "sha-256 hex is 64 chars");
@@ -183,6 +226,7 @@ fn config_hash_is_stable_and_sensitive() {
 fn config_hash_tracks_inline_secret_content() {
 	// Rotating an inline `content:` secret must change the hash so the
 	// container is recreated to pick up the new (point-in-time) native secret.
+	let base = temp_base();
 	let a = parse_str(
 		"services:\n  web:\n    image: x\n    secrets: [tok]\nsecrets:\n  tok:\n    content: v1\n",
 	)
@@ -192,8 +236,22 @@ fn config_hash_tracks_inline_secret_content() {
 	)
 	.unwrap();
 	assert_ne!(
-		config_hash(&a.services["web"], &a).unwrap(),
-		config_hash(&b.services["web"], &b).unwrap(),
+		config_hash(
+			&a.services["web"],
+			&a,
+			PROJECT,
+			base.path(),
+			&empty_digests()
+		)
+		.unwrap(),
+		config_hash(
+			&b.services["web"],
+			&b,
+			PROJECT,
+			base.path(),
+			&empty_digests()
+		)
+		.unwrap(),
 		"changed inline secret content must change the hash",
 	);
 }
@@ -202,6 +260,7 @@ fn config_hash_tracks_inline_secret_content() {
 fn config_hash_ignores_external_secret_identity() {
 	// An `external:` secret is by-reference (no payload), so it does not add
 	// to the hash beyond the service's own secret list.
+	let base = temp_base();
 	let a = parse_str(
 		"services:\n  web:\n    image: x\n    secrets: [tok]\nsecrets:\n  tok:\n    external: true\n",
 	)
@@ -213,8 +272,22 @@ fn config_hash_ignores_external_secret_identity() {
 	// The service definition is identical; only the top-level external name
 	// differs, which is resolved at attach time, not baked into the hash.
 	assert_eq!(
-		config_hash(&a.services["web"], &a).unwrap(),
-		config_hash(&b.services["web"], &b).unwrap(),
+		config_hash(
+			&a.services["web"],
+			&a,
+			PROJECT,
+			base.path(),
+			&empty_digests()
+		)
+		.unwrap(),
+		config_hash(
+			&b.services["web"],
+			&b,
+			PROJECT,
+			base.path(),
+			&empty_digests()
+		)
+		.unwrap(),
 	);
 }
 
@@ -222,6 +295,7 @@ fn config_hash_ignores_external_secret_identity() {
 fn config_hash_tracks_inline_config_content() {
 	// The same recreate-on-rotation contract as inline secrets applies to
 	// inline `configs:` content.
+	let base = temp_base();
 	let a = parse_str(
 		"services:\n  web:\n    image: x\n    configs: [cfg]\nconfigs:\n  cfg:\n    content: a\n",
 	)
@@ -231,8 +305,22 @@ fn config_hash_tracks_inline_config_content() {
 	)
 	.unwrap();
 	assert_ne!(
-		config_hash(&a.services["web"], &a).unwrap(),
-		config_hash(&b.services["web"], &b).unwrap(),
+		config_hash(
+			&a.services["web"],
+			&a,
+			PROJECT,
+			base.path(),
+			&empty_digests()
+		)
+		.unwrap(),
+		config_hash(
+			&b.services["web"],
+			&b,
+			PROJECT,
+			base.path(),
+			&empty_digests()
+		)
+		.unwrap(),
 		"changed inline config content must change the hash",
 	);
 }
@@ -241,15 +329,30 @@ fn config_hash_tracks_inline_config_content() {
 fn config_hash_tracks_environment_sourced_secret() {
 	// An `environment:`-sourced secret folds the *current* value of the named
 	// variable into the hash, so a change to that variable recreates.
+	let base = temp_base();
 	let file = parse_str(
 		"services:\n  web:\n    image: x\n    secrets: [tok]\nsecrets:\n  tok:\n    environment: PODUP_TEST_SECRET\n",
 	)
 	.unwrap();
 	let with_a = temp_env::with_var("PODUP_TEST_SECRET", Some("alpha"), || {
-		config_hash(&file.services["web"], &file).unwrap()
+		config_hash(
+			&file.services["web"],
+			&file,
+			PROJECT,
+			base.path(),
+			&empty_digests(),
+		)
+		.unwrap()
 	});
 	let with_b = temp_env::with_var("PODUP_TEST_SECRET", Some("beta"), || {
-		config_hash(&file.services["web"], &file).unwrap()
+		config_hash(
+			&file.services["web"],
+			&file,
+			PROJECT,
+			base.path(),
+			&empty_digests(),
+		)
+		.unwrap()
 	});
 	assert_ne!(
 		with_a, with_b,
@@ -261,6 +364,7 @@ fn config_hash_tracks_environment_sourced_secret() {
 fn config_hash_stable_despite_map_field_order() {
 	// `storage_opt` is a HashMap; canonical serialisation must sort its keys
 	// so the hash does not flap and trigger a spurious recreate on `up`.
+	let base = temp_base();
 	let a = parse_str(
 		"services:\n  web:\n    image: x\n    storage_opt:\n      size: \"10G\"\n      foo: bar\n      baz: qux\n",
 	)
@@ -270,8 +374,202 @@ fn config_hash_stable_despite_map_field_order() {
 	)
 	.unwrap();
 	assert_eq!(
-		config_hash(&a.services["web"], &a).unwrap(),
-		config_hash(&b.services["web"], &b).unwrap(),
+		config_hash(
+			&a.services["web"],
+			&a,
+			PROJECT,
+			base.path(),
+			&empty_digests()
+		)
+		.unwrap(),
+		config_hash(
+			&b.services["web"],
+			&b,
+			PROJECT,
+			base.path(),
+			&empty_digests()
+		)
+		.unwrap(),
 		"hash must be independent of storage_opt key order",
+	);
+}
+
+/// Helper for the file-hash tests: write `contents` to `name` in `dir` and
+/// return the path. The secret/config source in the compose fixture points at
+/// the same name so the resolver reads what we just wrote.
+fn write_secret_file(dir: &Path, name: &str, contents: &[u8]) -> std::path::PathBuf {
+	let path = dir.join(name);
+	let mut f = std::fs::File::create(&path).expect("create secret fixture");
+	f.write_all(contents).expect("write secret fixture");
+	f.sync_all().ok();
+	path
+}
+
+#[test]
+fn config_hash_tracks_file_secret_bytes() {
+	// Rotating a `file:` secret must change the hash so the container is
+	// recreated to pick up the new (point-in-time) native secret. The
+	// fixture is the same shape as the issue's reproducer.
+	let base = temp_base();
+	let file_path = write_secret_file(base.path(), "s.txt", b"v1");
+	let yaml = format!(
+		"services:\n  web:\n    image: x\n    secrets: [s]\nsecrets:\n  s:\n    file: {}\n",
+		file_path.display()
+	);
+	let file = parse_str(&yaml).unwrap();
+	let h1 = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
+	std::fs::write(&file_path, b"v2").unwrap();
+	let h2 = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
+	assert_ne!(
+		h1, h2,
+		"changing only the file behind a file: secret must change the hash"
+	);
+}
+
+#[test]
+fn config_hash_stable_when_file_bytes_unchanged() {
+	// Rewriting the same bytes (e.g. touch / chmod / atomic rename) must not
+	// flap the hash and trigger a spurious recreate.
+	let base = temp_base();
+	let file_path = write_secret_file(base.path(), "s.txt", b"v1");
+	let yaml = format!(
+		"services:\n  web:\n    image: x\n    secrets: [s]\nsecrets:\n  s:\n    file: {}\n",
+		file_path.display()
+	);
+	let file = parse_str(&yaml).unwrap();
+	let h1 = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
+	std::fs::write(&file_path, b"v1").unwrap();
+	let h2 = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
+	assert_eq!(
+		h1, h2,
+		"rewriting the same file bytes must leave the hash unchanged"
+	);
+}
+
+#[test]
+fn config_hash_tracks_file_config_bytes() {
+	// The same recreate-on-rotation contract as file secrets applies to
+	// file configs.
+	let base = temp_base();
+	let file_path = write_secret_file(base.path(), "c.txt", b"a");
+	let yaml = format!(
+		"services:\n  web:\n    image: x\n    configs: [c]\nconfigs:\n  c:\n    file: {}\n",
+		file_path.display()
+	);
+	let file = parse_str(&yaml).unwrap();
+	let h1 = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
+	std::fs::write(&file_path, b"b").unwrap();
+	let h2 = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
+	assert_ne!(
+		h1, h2,
+		"changing only the file behind a file: config must change the hash"
+	);
+}
+
+#[test]
+fn config_hash_missing_file_errors_with_path() {
+	// A missing or unreadable file must surface as an error carrying the path.
+	// An empty contribution would make a vanished file look unchanged, the same
+	// failure the issue measured whenever the host edit was preceded by a delete.
+	let base = temp_base();
+	let missing = base.path().join("does-not-exist.txt");
+	let yaml = format!(
+		"services:\n  web:\n    image: x\n    secrets: [s]\nsecrets:\n  s:\n    file: {}\n",
+		missing.display()
+	);
+	let file = parse_str(&yaml).unwrap();
+	let err = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap_err();
+	let msg = err.to_string();
+	assert!(
+		msg.contains(&*missing.to_string_lossy()),
+		"error must name the missing file path {missing:?}: {msg}",
+	);
+}
+
+#[test]
+fn config_hash_distinguishes_file_secret_from_inline_with_same_bytes() {
+	// Same `name`, same bytes, different source: an inline `content:` and a
+	// `file:` that resolve to the same string must still hash differently,
+	// because the two sources reach the container through different secrets
+	// management and a future `up` must not silently flatten one into the
+	// other.
+	let base = temp_base();
+	let file_path = write_secret_file(base.path(), "s.txt", b"shared");
+	let file_yaml = format!(
+		"services:\n  web:\n    image: x\n    secrets: [s]\nsecrets:\n  s:\n    file: {}\n",
+		file_path.display()
+	);
+	let inline_yaml =
+		"services:\n  web:\n    image: x\n    secrets: [s]\nsecrets:\n  s:\n    content: shared\n";
+	let file = parse_str(&file_yaml).unwrap();
+	let inline = parse_str(inline_yaml).unwrap();
+	let h_file = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
+	let h_inline = config_hash(
+		&inline.services["web"],
+		&inline,
+		PROJECT,
+		base.path(),
+		&empty_digests(),
+	)
+	.unwrap();
+	assert_ne!(
+		h_file, h_inline,
+		"a file: secret and an inline secret with the same bytes must hash differently"
 	);
 }

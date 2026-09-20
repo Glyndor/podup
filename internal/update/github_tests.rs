@@ -11,6 +11,21 @@ impl Read for Endless {
 	}
 }
 
+/// Whether `message` names a refused TCP connection, in either wording
+/// `ureq` can hand back.
+///
+/// `ureq` 3.4.0 manufactured the literal `Connection refused` itself and
+/// returned it on every platform. From 3.4.2 it forwards the platform's
+/// own connect error instead. Unix still says `Connection refused`, so
+/// the wording there is unchanged. Winsock does not, so its message
+/// carries `(os error 10061)` instead. `10061` is `WSAECONNREFUSED`, a
+/// numeric code that does not move with the system language, and the
+/// scheme-side rejection (`configured for https only`) carries neither
+/// fragment, so the two failure paths stay distinguishable.
+fn names_a_refused_connection(message: &str) -> bool {
+	message.contains("Connection refused") || message.contains("(os error 10061)")
+}
+
 #[test]
 fn read_capped_accepts_small() {
 	let data = b"hello world".to_vec();
@@ -79,7 +94,7 @@ fn latest_version_maps_transport_error() {
 		"got: {err}"
 	);
 	assert!(
-		err.to_string().contains("Connection refused"),
+		names_a_refused_connection(&err.to_string()),
 		"the transport path must be the one that failed, got: {err}"
 	);
 }
@@ -91,7 +106,7 @@ fn fetch_maps_transport_error() {
 	let err = src.fetch("podup-linux-x86_64").unwrap_err();
 	assert!(err.to_string().contains("download failed"), "got: {err}");
 	assert!(
-		err.to_string().contains("Connection refused"),
+		names_a_refused_connection(&err.to_string()),
 		"the transport path must be the one that failed, got: {err}"
 	);
 }
@@ -136,7 +151,25 @@ fn https_base_passes_the_scheme_check() {
 		"https must not be refused on the scheme, got: {err}"
 	);
 	assert!(
-		err.to_string().contains("Connection refused"),
+		names_a_refused_connection(&err.to_string()),
 		"it must fail on the socket instead, got: {err}"
 	);
+}
+
+/// Pins the helper's accept/reject decisions on three planted strings, so
+/// the wording the three tests above depend on cannot drift without this
+/// test going red. The transport-error tests distinguish the socket from
+/// the scheme guard by name; a helper that accepted the scheme rejection
+/// would collapse that distinction and prove nothing.
+#[test]
+fn refused_connection_is_recognised_in_both_wordings() {
+	assert!(names_a_refused_connection(
+		"io: Connection refused (os error 111)"
+	));
+	assert!(names_a_refused_connection(
+		"No connection could be made because the target machine actively refused it. (os error 10061)"
+	));
+	assert!(!names_a_refused_connection(
+		"this agent is configured for https only"
+	));
 }

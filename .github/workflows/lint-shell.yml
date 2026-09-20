@@ -13,6 +13,15 @@ on:
       # without this line a pull request that touches only the reusable
       # merges without ever running it.
       - ".github/workflows/reusable-shell-ci.yml"
+      # A workflow that has shell tests must list its own path here on both
+      # push and pull_request. Without it a pull request that touches only
+      # the workflow merges without ever running the tests that read it,
+      # so the regression the tests exist to catch sits unnoticed until a
+      # release runs them by hand. The matching tests are wired by
+      # `test-command` below; the path filter is the other half.
+      - ".github/workflows/reusable-workflow-lint.yml"
+      - ".github/workflows/reusable-schedule-freshness.yml"
+      - ".github/workflows/podman-watch.yml"
       - ".github/scripts/check-hardening-macos.sh"
       - "tests/shell/check-hardening-macos.test.sh"
       - "tests/shell/check-suite-completeness.test.sh"
@@ -33,7 +42,15 @@ on:
       # without this line a pull request that touches only the reusable
       # merges without ever running it.
       - ".github/workflows/reusable-shell-ci.yml"
+      # A workflow that has shell tests must list its own path here on both
+      # push and pull_request. Without it a pull request that touches only
+      # the workflow merges without ever running the tests that read it,
+      # so the regression the tests exist to catch sits unnoticed until a
+      # release runs them by hand. The matching tests are wired by
+      # `test-command` below; the path filter is the other half.
       - ".github/workflows/reusable-workflow-lint.yml"
+      - ".github/workflows/reusable-schedule-freshness.yml"
+      - ".github/workflows/podman-watch.yml"
       - ".github/scripts/check-hardening-macos.sh"
       - "tests/shell/check-hardening-macos.test.sh"
       - "tests/shell/reusable-workflow-lint-tooling-isolation.test.sh"
@@ -82,7 +99,7 @@ jobs:
       # never produces the sentinel, and this check names the file that
       # did not. Without this check, a truncated test and a passing one
       # look the same to the chain: exit 0, no count line.
-      test-command: bash ./tests/shell/check-suite-completeness.test.sh ./tests/shell/locale-pinned.test.sh ./tests/shell/ci-runs-every-test.test.sh ./tests/shell/check-hardening.test.sh ./tests/shell/check-hardening-macos.test.sh ./tests/shell/branch-health-conclusion.test.sh ./tests/shell/reusable-workflow-lint-tooling-isolation.test.sh ./tests/shell/reusable-workflow-lint-tooling-installers.test.sh ./tests/shell/reusable-workflow-lint-caller-if.test.sh ./tests/shell/reusable-workflow-lint-caller-with.test.sh ./tests/shell/reusable-workflow-lint-pin-length.test.sh ./tests/shell/install-rollback-cleans-staged.test.sh ./tests/shell/install-help.test.sh
+      test-command: bash ./tests/shell/check-suite-completeness.test.sh ./tests/shell/locale-pinned.test.sh ./tests/shell/ci-runs-every-test.test.sh ./tests/shell/check-hardening.test.sh ./tests/shell/check-hardening-macos.test.sh ./tests/shell/branch-health-conclusion.test.sh ./tests/shell/reusable-schedule-freshness.test.sh ./tests/shell/reusable-workflow-lint-tooling-isolation.test.sh ./tests/shell/reusable-workflow-lint-tooling-installers.test.sh ./tests/shell/reusable-workflow-lint-caller-if.test.sh ./tests/shell/reusable-workflow-lint-caller-with.test.sh ./tests/shell/reusable-workflow-lint-pin-length.test.sh ./tests/shell/install-rollback-cleans-staged.test.sh ./tests/shell/install-help.test.sh ./tests/shell/podman-watch.test.sh
       # branch-health-conclusion.test.sh pipes API JSON into the
       # conclusion script and asserts exit codes. jq is the tool that
       # turns the response into shell-readable lines, and it is not in

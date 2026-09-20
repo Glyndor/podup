@@ -6,6 +6,8 @@ use serde::Serialize;
 
 mod parts;
 pub use parts::*;
+mod userns;
+pub use userns::IdMappingOptions;
 
 // ---------------------------------------------------------------------------
 // SpecGenerator: container create request
@@ -189,6 +191,10 @@ pub struct SpecGenerator {
 	/// User namespace mode.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub userns: Option<Namespace>,
+
+	/// I send storage mapping options alongside an automatic user namespace.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub idmappings: Option<IdMappingOptions>,
 
 	/// PID namespace mode.
 	#[serde(skip_serializing_if = "Option::is_none")]

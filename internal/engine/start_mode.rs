@@ -46,6 +46,13 @@ impl Engine {
 	/// The config hash `service` renders to right now, which is what a container
 	/// created from the current file would carry.
 	pub fn expected_config_hash(&self, service: &Service, file: &ComposeFile) -> Result<String> {
-		config_hash(service, file)
+		// Autostart's start mode runs against a fresh file with no secrets
+		// uploaded yet, so the digest map is empty: the hash falls through to
+		// the file read, exactly what this path always did.
+		let digests = self
+			.uploaded_file_digests
+			.lock()
+			.expect("uploaded_file_digests mutex poisoned");
+		config_hash(service, file, &self.project, &self.base_dir, &digests)
 	}
 }
