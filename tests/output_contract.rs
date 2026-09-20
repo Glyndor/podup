@@ -365,3 +365,113 @@ async fn the_stats_header_matches_its_rows() {
 		"header and row must be the same width\nH: {header:?}\nR: {row:?}"
 	);
 }
+
+/// `ps` shows the SERVICE column. The table printed only the container name
+/// before, and fourteen target-taking subcommands (`logs`, `exec`, `top`,
+/// `pause`, `unpause`, `stop`, `start`, `restart`, `kill`, `rm`, `wait`,
+/// `attach`, `commit`, `export`) take the service name and reject the container
+/// name, so the table handed the reader the one identifier none of them accept.
+#[tokio::test]
+async fn ps_table_carries_a_service_column_with_the_row_value() {
+	if !podman_up().await {
+		return;
+	}
+	let p = Project::start("pssvc");
+	let out = p.run(&["ps"]);
+	let mut lines = out.lines().filter(|l| !l.trim().is_empty());
+	let header = lines.next().unwrap_or_default();
+	assert!(
+		header.split_whitespace().any(|c| c == "SERVICE"),
+		"ps header must include a SERVICE column; got: {header:?}"
+	);
+	// The header position tells us where SERVICE sits in the data row, so the
+	// assertion keeps working when the layout shifts around it.
+	let service_col = header
+		.split_whitespace()
+		.position(|c| c == "SERVICE")
+		.expect("just checked");
+	let row = lines
+		.next()
+		.unwrap_or_else(|| panic!("ps printed no data row: {out:?}"));
+	let cells: Vec<&str> = row.split_whitespace().collect();
+	let svc = cells
+		.get(service_col)
+		.unwrap_or_else(|| panic!("data row missing SERVICE cell: {row:?}"));
+	assert!(
+		!svc.is_empty(),
+		"ps printed an empty SERVICE cell for the only project container: {row:?}"
+	);
+}
+
+/// Round-trip: the value printed in the SERVICE column is accepted by `ps` as
+/// a positional filter **and** by `logs` as a target, on the same project.
+///
+/// `ps` previously printed only the container name, so the value it would have
+/// answered from this column would have been a string neither subcommand
+/// accepted (`podup: error: service '...' not found`). The assertion is stated
+/// over the value the table printed rather than a hardcoded name, so the
+/// fixture can change without the contract moving.
+#[tokio::test]
+async fn ps_service_column_value_round_trips_through_ps_and_logs() {
+	if !podman_up().await {
+		return;
+	}
+	let p = Project::start("psrtt");
+	let ps_out = p.run(&["ps"]);
+	let mut lines = ps_out.lines().filter(|l| !l.trim().is_empty());
+	let header = lines.next().unwrap_or_default();
+	let service_col = header
+		.split_whitespace()
+		.position(|c| c == "SERVICE")
+		.expect("ps header must carry SERVICE (asserted in ps_table_carries_a_service_column_with_the_row_value)");
+	// Walk every data row: at least one of them will be the project container,
+	// and the assertion runs over the value the table printed.
+	let data: Vec<&str> = lines.collect();
+	assert!(!data.is_empty(), "ps printed no data row: {ps_out:?}");
+	let mut services: Vec<String> = Vec::new();
+	for row in &data {
+		let cells: Vec<&str> = row.split_whitespace().collect();
+		if let Some(svc) = cells.get(service_col) {
+			if !svc.is_empty() {
+				services.push((*svc).to_string());
+			}
+		}
+	}
+	assert!(
+		!services.is_empty(),
+		"no SERVICE value could be read off the ps table: {ps_out:?}"
+	);
+
+	for svc in &services {
+		// `ps <svc>` is the same column we just read, fed back as a positional
+		// service filter. It must succeed and return the same row.
+		let filtered = Command::new(bin())
+			.args(["-f", &p.compose, "-p", &p.name, "ps", svc])
+			.output()
+			.expect("run podup ps <svc>");
+		assert!(
+			filtered.status.success(),
+			"`ps {svc}` rejected a value printed in its own SERVICE column: {}",
+			String::from_utf8_lossy(&filtered.stderr)
+		);
+		let filtered_text = String::from_utf8_lossy(&filtered.stdout);
+		assert!(
+			filtered_text.contains(&format!("{}-web-1", p.name)),
+			"`ps {svc}` did not return the project container row: {filtered_text:?}"
+		);
+
+		// `logs <svc>` accepts the same service name. We only check the exit
+		// code: an empty container prints nothing, and the relevant assertion
+		// is that the target was accepted (no `service '...' not found`
+		// error). Use `--tail 0` to drain the stream and exit immediately.
+		let logs = Command::new(bin())
+			.args(["-f", &p.compose, "-p", &p.name, "logs", "--tail", "0", svc])
+			.output()
+			.expect("run podup logs <svc>");
+		assert!(
+			logs.status.success(),
+			"`logs {svc}` rejected a value printed in ps's SERVICE column: {}",
+			String::from_utf8_lossy(&logs.stderr)
+		);
+	}
+}

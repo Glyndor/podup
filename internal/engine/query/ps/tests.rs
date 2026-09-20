@@ -365,6 +365,32 @@ fn an_unparseable_created_leaves_the_cell_blank() {
 	}
 }
 
+/// The SERVICE cell carries the row's `podup.service` label verbatim. Fourteen
+/// subcommands (`logs`, `exec`, `top`, `pause`, `unpause`, `stop`, `start`,
+/// `restart`, `kill`, `rm`, `wait`, `attach`, `commit`, `export`) accept the
+/// service name and reject the container name, so the value printed here is
+/// what a reader needs to copy to drive them.
+#[test]
+fn the_service_cell_carries_the_podup_service_label() {
+	let mut labels = HashMap::new();
+	labels.insert("podup.service".to_string(), "web".to_string());
+	let c = ContainerListEntry {
+		image_id: String::new(),
+		labels,
+		..entry("", "running")
+	};
+	assert_eq!(table_service(&c), "web");
+}
+
+/// A container with no `podup.service` label renders an empty cell, the same
+/// way other cells say "unknown" (CREATED with an unparseable timestamp, SIZE
+/// without `-s`). A blank here means podup could not tell; "1" or "?" would be
+/// a guess.
+#[test]
+fn the_service_cell_is_blank_when_the_label_is_missing() {
+	assert_eq!(table_service(&entry("", "running")), "");
+}
+
 /// The request only asks for the size when the column was asked for.
 ///
 /// Tested at this level because the string is built inside an async method that

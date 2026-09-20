@@ -292,6 +292,17 @@ fn table_created(c: &ContainerListEntry, now: i64) -> String {
 	humanize_age(now.saturating_sub(secs).max(0))
 }
 
+/// Table SERVICE cell: the container's service name.
+///
+/// Read from the `podup.service` label libpod carries on every project
+/// container (set at `up`, see `internal/engine/container/inputs.rs`). Empty
+/// when libpod sent no label; the row already says "this is a project
+/// container" by carrying the project label, so a blank service means
+/// "unknown", which is what an empty cell says elsewhere in this table.
+fn table_service(c: &ContainerListEntry) -> String {
+	c.labels.get("podup.service").cloned().unwrap_or_default()
+}
+
 /// Render the span from `then` to `now`, or `None` when there is nothing to
 /// render.
 ///
@@ -618,22 +629,23 @@ impl Engine {
 		// One clock read for the whole table, so two rows created in the same
 		// second cannot render different ages.
 		let now = now_unix();
-		// SIZE is appended rather than inserted, so a reader's existing column
-		// positions do not move when the flag is off, and `docker ps -s` puts
-		// it last too.
-		let mut headers: Vec<&str> = vec!["NAME", "IMAGE", "CREATED", "STATUS", "PORTS"];
+		// `SERVICE` sits after IMAGE and before the timestamps, in the same slot
+		// `docker compose ps` puts it. The status_col/identity_col indices below
+		// assume this layout.
+		let mut headers: Vec<&str> = vec!["NAME", "IMAGE", "SERVICE", "CREATED", "STATUS", "PORTS"];
 		if display.size {
 			headers.push("SIZE");
 		}
 		let mut table = crate::ui::Table::new(&headers)
 			.cap(0, 48)
 			.cap(1, 48)
-			.status_col(3)
+			.status_col(4)
 			.identity_col(0);
 		for c in &containers {
 			let mut row = vec![
 				name_of(c),
 				c.image.clone(),
+				table_service(c),
 				table_created(c, now),
 				table_status(c, now),
 				format_ports(&c.ports),
