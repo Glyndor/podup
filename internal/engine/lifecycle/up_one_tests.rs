@@ -7,7 +7,7 @@
 //! the number is that loop's alone.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, MutexGuard};
 
 use crate::compose::types::ComposeFile;
 use crate::engine::container::config_hash;
@@ -102,6 +102,41 @@ async fn up(fake: &FakePodman, file: &ComposeFile) -> crate::error::Result<()> {
 		.await
 }
 
+/// Lock + `PODUP_MAX_REPLICAS` pin taken by every test in this file.
+///
+/// `up()` calls `check_replica_limit` which reads `PODUP_MAX_REPLICAS`, so
+/// the three-replica fixtures below need it above 3 for the duration of
+/// each test, including the `await`. Without the lock, the body of
+/// `scale_tests::replica_limit_default_and_env_override` can `set_var(2)`
+/// between this test's setup and its `up()` call and the three replicas
+/// fail. The lock is the same one that test takes, so the two files
+/// serialise on the env var and cannot interleave a write mid-call.
+struct MaxReplicasGuard {
+	_lock: MutexGuard<'static, ()>,
+	prev: Option<String>,
+}
+
+impl Drop for MaxReplicasGuard {
+	fn drop(&mut self) {
+		match self.prev.take() {
+			Some(v) => std::env::set_var("PODUP_MAX_REPLICAS", v),
+			None => std::env::remove_var("PODUP_MAX_REPLICAS"),
+		}
+	}
+}
+
+fn pin_max_replicas_for_test() -> MaxReplicasGuard {
+	let lock = crate::engine::lifecycle::scale_tests::MAX_REPLICAS_TEST_LOCK
+		.lock()
+		.unwrap();
+	let prev = std::env::var("PODUP_MAX_REPLICAS").ok();
+	std::env::set_var(
+		"PODUP_MAX_REPLICAS",
+		crate::engine::lifecycle::scale::DEFAULT_MAX_REPLICAS.to_string(),
+	);
+	MaxReplicasGuard { _lock: lock, prev }
+}
+
 const THREE_REPLICAS: &str =
 	"services:\n  web:\n    image: shared\n    pull_policy: never\n    deploy:\n      replicas: 3\n";
 
@@ -111,6 +146,7 @@ const THREE_REPLICAS: &str =
 /// a count of one is not three replicas that never asked.
 #[tokio::test]
 async fn three_replicas_of_one_image_inspect_it_once() {
+	let _replicas_guard = pin_max_replicas_for_test();
 	let file = crate::parse_str(THREE_REPLICAS).unwrap();
 	let fake = warm_host(running(&file, |_| CURRENT), resolves_to(CURRENT));
 
@@ -131,6 +167,7 @@ async fn three_replicas_of_one_image_inspect_it_once() {
 /// used to be four.
 #[tokio::test]
 async fn the_default_policy_adds_only_the_prefetch_presence_check() {
+	let _replicas_guard = pin_max_replicas_for_test();
 	let file =
 		crate::parse_str("services:\n  web:\n    image: shared\n    deploy:\n      replicas: 3\n")
 			.unwrap();
@@ -155,6 +192,7 @@ async fn the_default_policy_adds_only_the_prefetch_presence_check() {
 /// service's own image is in place.
 #[tokio::test]
 async fn two_services_sharing_an_image_inspect_it_once_each() {
+	let _replicas_guard = pin_max_replicas_for_test();
 	let file = crate::parse_str(
 		"services:\n  a:\n    image: shared\n    pull_policy: never\n    deploy:\n      replicas: 3\n  b:\n    image: shared\n    pull_policy: never\n    deploy:\n      replicas: 3\n",
 	)
@@ -175,6 +213,7 @@ async fn two_services_sharing_an_image_inspect_it_once_each() {
 /// Two services on two images: one request per tag, each naming its own.
 #[tokio::test]
 async fn two_images_are_inspected_once_each() {
+	let _replicas_guard = pin_max_replicas_for_test();
 	let file = crate::parse_str(
 		"services:\n  a:\n    image: first\n    pull_policy: never\n    deploy:\n      replicas: 3\n  b:\n    image: second\n    pull_policy: never\n    deploy:\n      replicas: 3\n",
 	)
@@ -198,6 +237,7 @@ async fn two_images_are_inspected_once_each() {
 /// to the image the tag used to name, so every replica is recreated.
 #[tokio::test]
 async fn a_moved_tag_still_recreates_every_replica() {
+	let _replicas_guard = pin_max_replicas_for_test();
 	let file = crate::parse_str(THREE_REPLICAS).unwrap();
 	let fake = warm_host(running(&file, |_| STALE), resolves_to(CURRENT));
 
@@ -217,6 +257,7 @@ async fn a_moved_tag_still_recreates_every_replica() {
 /// the old image is recreated and the two current ones are left alone.
 #[tokio::test]
 async fn only_the_replica_bound_to_a_stale_image_is_recreated() {
+	let _replicas_guard = pin_max_replicas_for_test();
 	let file = crate::parse_str(THREE_REPLICAS).unwrap();
 	let containers = running(&file, |container| {
 		if container == "proj-web-2" {
@@ -244,6 +285,7 @@ async fn only_the_replica_bound_to_a_stale_image_is_recreated() {
 /// made by the first replica that needs it, not ahead of the loop.
 #[tokio::test]
 async fn a_cold_up_inspects_nothing() {
+	let _replicas_guard = pin_max_replicas_for_test();
 	let file = crate::parse_str(THREE_REPLICAS).unwrap();
 	let fake = warm_host("[]".to_string(), resolves_to(CURRENT));
 
@@ -262,6 +304,7 @@ async fn a_cold_up_inspects_nothing() {
 /// replica is kept or replaced on the strength of an answer nobody got.
 #[tokio::test]
 async fn a_failing_inspect_fails_up_with_the_podman_error() {
+	let _replicas_guard = pin_max_replicas_for_test();
 	let file = crate::parse_str(THREE_REPLICAS).unwrap();
 	let fake = warm_host(running(&file, |_| CURRENT), |_| {
 		(500, r#"{"message":"storage is on fire"}"#.to_string())
@@ -285,6 +328,7 @@ async fn a_failing_inspect_fails_up_with_the_podman_error() {
 /// first replica's error.
 #[tokio::test]
 async fn a_failed_inspect_is_not_remembered_for_the_next_replica() {
+	let _replicas_guard = pin_max_replicas_for_test();
 	let file = crate::parse_str(THREE_REPLICAS).unwrap();
 	let fake = warm_host(running(&file, |_| CURRENT), |asked_before| {
 		if asked_before == 0 {

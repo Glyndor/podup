@@ -13,6 +13,15 @@ on:
       # without this line a pull request that touches only the reusable
       # merges without ever running it.
       - ".github/workflows/reusable-shell-ci.yml"
+      # A workflow that has shell tests must list its own path here on both
+      # push and pull_request. Without it a pull request that touches only
+      # the workflow merges without ever running the tests that read it,
+      # so the regression the tests exist to catch sits unnoticed until a
+      # release runs them by hand. The matching tests are wired by
+      # `test-command` below; the path filter is the other half.
+      - ".github/workflows/reusable-workflow-lint.yml"
+      - ".github/workflows/reusable-schedule-freshness.yml"
+      - ".github/workflows/podman-watch.yml"
       - ".github/scripts/check-hardening-macos.sh"
       - "tests/shell/check-hardening-macos.test.sh"
       - "tests/shell/check-suite-completeness.test.sh"
@@ -33,7 +42,15 @@ on:
       # without this line a pull request that touches only the reusable
       # merges without ever running it.
       - ".github/workflows/reusable-shell-ci.yml"
+      # A workflow that has shell tests must list its own path here on both
+      # push and pull_request. Without it a pull request that touches only
+      # the workflow merges without ever running the tests that read it,
+      # so the regression the tests exist to catch sits unnoticed until a
+      # release runs them by hand. The matching tests are wired by
+      # `test-command` below; the path filter is the other half.
       - ".github/workflows/reusable-workflow-lint.yml"
+      - ".github/workflows/reusable-schedule-freshness.yml"
+      - ".github/workflows/podman-watch.yml"
       - ".github/scripts/check-hardening-macos.sh"
       - "tests/shell/check-hardening-macos.test.sh"
       - "tests/shell/reusable-workflow-lint-tooling-isolation.test.sh"
