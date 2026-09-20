@@ -42,6 +42,11 @@ jobs:
           # traceback that did not name repology: curl piped into a parser that read an empty stdin. The request is
           # retried and fails on its own line, and the body reaches the parser through stdin rather than the
           # environment, because one environment string is capped at 128 KiB on Linux and repology's answer can grow.
+          # That outage (2026-09-16 to 2026-09-19) was the lesson: an outage is unknown, not negative, and an
+          # `::error::` that fires when the answer is "we don't know" turns every pull request red because
+          # freshness-podman-watch goes red in ci.yml. Below the loop, an outage becomes a `::warning::` and an
+          # idempotent watcher issue; a non-JSON body is still `::error::` because a changed shape means we
+          # cannot ask the question at all.
           REPOLOGY_BODY=
           REPOLOGY_RC=0
           for attempt in 1 2 3; do
@@ -59,8 +64,27 @@ jobs:
             fi
           done
           if [ "$REPOLOGY_RC" != "0" ]; then
-            echo "::error::repology.org did not answer after 3 attempts (curl exit $REPOLOGY_RC); cannot tell whether Podman $LATEST is packaged anywhere yet."
-            exit 1
+            echo "::warning::repology.org did not answer after 3 attempts (curl exit $REPOLOGY_RC); cannot tell whether Podman $LATEST is packaged anywhere yet."
+            TITLE="Cannot reach repology.org to check whether Podman $LATEST is packaged"
+            # Idempotent: skip if an issue for this version is already open.
+            if gh issue list --state open --search "in:title $TITLE" --json title --jq '.[].title' | grep -qxF "$TITLE"; then
+              echo "Issue already open; nothing to do."; exit 0
+            fi
+            # Label on creation. An unlabelled issue is a process bug, and one filed
+            # by a bot is no exception: #673 and #1016 both landed bare because this
+            # step never passed --label, and both had to be labelled by hand later.
+            gh issue create --title "$TITLE" \
+              --label "type:ci" --label "prio:P2" --label "status:ready" \
+              --label "area:ci" \
+              --body "repology.org did not answer after 3 attempts (curl exit $REPOLOGY_RC) when this watcher tried to check whether Podman **$LATEST** is packaged.anywhere yet. Three calls with 20 s pauses between them.
+
+            The answer is unknown, not negative: an outage of a third-party index does not mean no distro packages Podman **$LATEST**; it means we cannot ask.
+
+            Baseline recorded: **$BASELINE**.
+
+            After validating Podman **$LATEST** on the lane, bump \`.github/podman-baseline\` by hand to **$LATEST** to clear this nag."
+            echo "Opened watcher issue for repology.org outage on Podman $LATEST."
+            exit 0
           fi
           # LATEST reaches python via the environment, never interpolated into the
           # script string, so it cannot inject into the parser.
