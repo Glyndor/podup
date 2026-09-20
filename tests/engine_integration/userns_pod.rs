@@ -225,16 +225,29 @@ async fn userns_options_reach_a_pod_member() {
 		// check would be satisfied by a path that dropped the option and
 		// fell back to the default.
 		let mapping = first_mapping(&uid_map);
+		// CodeQL `rust/cleartext-logging` fires on the format string of an
+		// `assert_eq!` whose interpolated value has a `uid`-style name; this
+		// test creates and tears down an alpine container in the same
+		// function, so the value is the throwaway ID map of that container
+		// (for example `0 1 1024`). The only sink for it is the assertion
+		// message, and the message is the reason this control is worth
+		// having: with the option dropped it reads `... got "0 1 1024"`,
+		// while without the value it would read `left: 1024, right: 2048`.
+		// Dropping the value to silence the alert trades a working control
+		// for a heuristic false positive.
+		// codeql[rust/cleartext-logging]
 		assert_eq!(
 			mapping[0], 0,
 			"{}: container UID must start at 0, got {:?}",
 			case.label, uid_map
 		);
+		// codeql[rust/cleartext-logging] see the first site for the reason.
 		assert_eq!(
 			mapping[1], 1,
 			"{}: host UID must start at 1, got {:?}",
 			case.label, uid_map
 		);
+		// codeql[rust/cleartext-logging] see the first site for the reason.
 		assert_eq!(
 			mapping[2],
 			u64::from(case.expect_size),
@@ -244,6 +257,7 @@ async fn userns_options_reach_a_pod_member() {
 			case.mode,
 			uid_map,
 		);
+		// codeql[rust/cleartext-logging] see the first site for the reason.
 		assert_eq!(
 			id_u, case.expect_uid,
 			"{}: id -u must be {} for userns_mode {:?}, got {:?}",
