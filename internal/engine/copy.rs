@@ -169,8 +169,21 @@ impl Engine {
 					.await
 			}
 			(None, Some((service, container_path))) => {
-				self.cp_to_container(file, service, Path::new(src), container_path, &opts)
-					.await
+				// `cp host/. svc:/X` copies the host directory's *contents*
+				// into the archive, the way `docker cp` / `podman cp` treat a
+				// trailing `/.`. The dot must be detected on the original
+				// string, before `Path::new(src)` drops it; threading that fact
+				// down is what makes the packer behave differently.
+				let contents = has_dot_contents_suffix(src);
+				self.cp_to_container(
+					file,
+					service,
+					Path::new(src),
+					container_path,
+					&opts,
+					contents,
+				)
+				.await
 			}
 			(Some(_), Some(_)) => Err(ComposeError::Unsupported(
 				"cp: both src and dst cannot be SERVICE:PATH".into(),
@@ -294,6 +307,7 @@ impl Engine {
 		src: &Path,
 		container_path: &str,
 		opts: &CpOptions,
+		contents: bool,
 	) -> Result<()> {
 		let service = file
 			.services
@@ -311,6 +325,12 @@ impl Engine {
 		//    the dest's basename and PUT to the dest's parent.
 		// Without this, `cp file svc:/path/newname` created `newname/` as a
 		// directory holding the source instead of a file named `newname`.
+		//
+		// The `contents` branch (trailing `/.` on the host source) short-
+		// circuits the rename: the archive holds no wrapper, and the PUT
+		// destination IS the final location (whether it already exists or not).
+		// That matches `podman cp host/. svc:/path/newname`, which lands the
+		// contents directly at `/path/newname/`.
 		let stat_path = format!(
 			"{API_PREFIX}/containers/{}/archive?path={}",
 			urlencoded(&container_name),
@@ -318,7 +338,11 @@ impl Engine {
 		);
 		let dest_is_dir = self.client.head_path_is_dir(&stat_path).await? == Some(true);
 
-		let (extract_dir, rename) = if dest_is_dir || container_path.ends_with('/') {
+		let (extract_dir, rename) = if contents {
+			// Contents land at the destination itself; libpod creates it if
+			// it does not exist. No rename, no wrapper.
+			(container_path.trim_end_matches('/').to_string(), None)
+		} else if dest_is_dir || container_path.ends_with('/') {
 			(container_path.trim_end_matches('/').to_string(), None)
 		} else {
 			let trimmed = container_path.trim_end_matches('/');
@@ -356,16 +380,25 @@ impl Engine {
 		let follow = opts.follow_link;
 		let rename_for_pack = rename.clone();
 		let tar_bytes = tokio::task::spawn_blocking(move || {
-			pack_path(&src_buf, follow, rename_for_pack.as_deref())
+			pack_path(&src_buf, follow, rename_for_pack.as_deref(), contents)
 		})
 		.await
 		.map_err(|e| ComposeError::Build(e.to_string()))??;
 
-		let entry = rename.clone().unwrap_or_else(|| {
-			src.file_name()
-				.map(|n| n.to_string_lossy().into_owned())
-				.unwrap_or_default()
-		});
+		// Contents-packed archives have no wrapper entry: `tree_landed` walks
+		// the archive and asks about each entry against the destination. The
+		// existing `entry`-based confirmation is only meaningful when the
+		// archive is wrapped under a single name, which `contents=true`
+		// removes.
+		let entry = if contents {
+			String::new()
+		} else {
+			rename.clone().unwrap_or_else(|| {
+				src.file_name()
+					.map(|n| n.to_string_lossy().into_owned())
+					.unwrap_or_default()
+			})
+		};
 		let uploaded_kind = uploaded_entry_kind(src, follow);
 		self.put_archive_verified(
 			&container_name,
@@ -545,6 +578,25 @@ fn join_archive_path(dir: &str, entry: &str) -> String {
 	} else {
 		format!("{dir}/{entry}")
 	}
+}
+
+/// Whether the source string was written as the contents cue: a trailing
+/// `/.` (or just `.`) means "copy the directory's contents, not the directory
+/// itself". Detected on the original string because `Path::new("payload/.")`
+/// has `file_name() == Some("payload")`: by the time the path reaches the
+/// packer the cue is gone. The cue is present when, after stripping any
+/// trailing characters for which `std::path::is_separator` is true, the
+/// source is exactly `.` or ends with a separator followed by `.`. On Unix a
+/// backslash is an ordinary filename character, so the cue only fires on
+/// the forward-slash shape there; on Windows it fires on both the
+/// forward-slash and the backslash shape. `..` and a path whose last
+/// component is `..` are not the cue, and an empty source is not the cue.
+fn has_dot_contents_suffix(src: &str) -> bool {
+	let trimmed = src.trim_end_matches(std::path::is_separator);
+	trimmed == "."
+		|| trimmed
+			.strip_suffix('.')
+			.is_some_and(|rest| rest.ends_with(std::path::is_separator))
 }
 
 // ---------------------------------------------------------------------------

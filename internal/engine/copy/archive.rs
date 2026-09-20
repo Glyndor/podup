@@ -18,6 +18,7 @@ pub(super) fn pack_path(
 	src: &Path,
 	follow_link: bool,
 	name_override: Option<&str>,
+	contents: bool,
 ) -> Result<Vec<u8>> {
 	let encoder = GzEncoder::new(Vec::new(), Compression::default());
 	let mut tar = crate::engine::tar_stream::builder(encoder);
@@ -25,7 +26,42 @@ pub(super) fn pack_path(
 	// link itself.
 	tar.follow_symlinks(follow_link);
 
-	if src.is_dir() {
+	if contents {
+		// `cp host/. svc:/X`: copy the directory's *contents* at the top of the
+		// archive instead of under the directory's name, matching
+		// `docker cp` / `podman cp`. A non-directory source with the `/.`
+		// marker is an error there too, so the packer refuses rather than
+		// falling back to the file branch below.
+		if !src.is_dir() {
+			return Err(ComposeError::Copy(format!(
+				"cp: not a directory: {}",
+				src.display()
+			)));
+		}
+		// Walk every descendant of `src` and append it at its relative path
+		// from `src`, so nothing is wrapped under the directory's name.
+		// `name_override` is ignored here: the `/.` marker removes the wrapper
+		// entirely (the caller routes the PUT so the final location IS the
+		// destination directory).
+		for abs in crate::engine::walk::walk_dir(src).map_err(ComposeError::Io)? {
+			let rel = abs.strip_prefix(src).map_err(|_| {
+				ComposeError::Build(format!(
+					"cp: walk produced path outside source: {}",
+					abs.display()
+				))
+			})?;
+			// Classify without following symlinks so a symlink-to-dir is
+			// stored as a link, not dereferenced. Matches the watch sync.
+			let is_dir = abs.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
+			if is_dir {
+				tar.append_dir(rel, &abs)
+					.map_err(|e| ComposeError::Copy(format!("cp: {e}")))?;
+			} else {
+				tar.append_path_with_name(&abs, rel)
+					.map_err(|e| ComposeError::Copy(format!("cp: {e}")))?;
+			}
+		}
+	} else if src.is_dir() {
 		// `name_override` renames the copied tree (rename-on-copy); otherwise it
 		// keeps the source's own basename and lands inside the destination dir.
 		let default = src.file_name().unwrap_or(std::ffi::OsStr::new("."));
