@@ -77,6 +77,26 @@ impl GitHubSource {
 		s
 	}
 
+	/// Construct with overridden host bases and a transport that ignores the
+	/// process proxy environment. Tests only: refusing a TCP connect must
+	/// come from the socket, not from a transparent proxy at `HTTPS_PROXY`
+	/// that the default `Config::default()` would otherwise honour.
+	#[cfg(test)]
+	fn with_bases_no_proxy(repo: impl Into<String>, api_base: &str, dl_base: &str) -> Self {
+		let mut s = Self::new(repo);
+		s.agent = ureq::Agent::config_builder()
+			.timeout_connect(Some(std::time::Duration::from_secs(CONNECT_TIMEOUT_SECS)))
+			.timeout_global(Some(std::time::Duration::from_secs(TOTAL_TIMEOUT_SECS)))
+			.user_agent(concat!("podup/", env!("CARGO_PKG_VERSION")))
+			.https_only(true)
+			.proxy(None)
+			.build()
+			.into();
+		s.api_base = api_base.to_string();
+		s.dl_base = dl_base.to_string();
+		s
+	}
+
 	/// GET `url`, retrying transient transport failures with exponential
 	/// backoff (up to [`ATTEMPTS`] tries). Deterministic HTTP 4xx responses are
 	/// returned immediately.
