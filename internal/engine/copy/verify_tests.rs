@@ -23,7 +23,7 @@ fn the_expectation_is_every_file_and_directory_the_packer_wrote() {
 	std::fs::write(payload.join("sub/inner.bin"), vec![7u8; 1234]).unwrap();
 	std::fs::write(payload.join("sub/nothing"), b"").unwrap();
 
-	let tar = pack_path(&payload, false, None).unwrap();
+	let tar = pack_path(&payload, false, None, false).unwrap();
 
 	assert_eq!(
 		sorted(sent_entries(&tar).unwrap()),
@@ -38,7 +38,7 @@ fn the_expectation_is_every_file_and_directory_the_packer_wrote() {
 	);
 
 	// Renamed on the way in: the destination is asked for the new name.
-	let renamed = pack_path(&payload, false, Some("other")).unwrap();
+	let renamed = pack_path(&payload, false, Some("other"), false).unwrap();
 	let paths: Vec<String> = sorted(sent_entries(&renamed).unwrap())
 		.into_iter()
 		.map(|(path, _)| path)
@@ -64,7 +64,7 @@ fn a_symlink_is_asked_about_and_confirmed() {
 	std::fs::write(payload.join("real.txt"), b"x").unwrap();
 	std::os::unix::fs::symlink("nowhere", payload.join("dangling")).unwrap();
 
-	let tar = pack_path(&payload, false, None).unwrap();
+	let tar = pack_path(&payload, false, None, false).unwrap();
 
 	assert_eq!(
 		sorted(sent_entries(&tar).unwrap()),
@@ -92,7 +92,7 @@ fn two_files_a_directory_a_symlink_and_an_empty_file() {
 	std::fs::write(payload.join("nothing.txt"), b"").unwrap();
 	std::os::unix::fs::symlink("nowhere", payload.join("link")).unwrap();
 
-	let tar = pack_path(&payload, false, None).unwrap();
+	let tar = pack_path(&payload, false, None, false).unwrap();
 
 	assert_eq!(
 		sorted(sent_entries(&tar).unwrap()),
@@ -117,7 +117,7 @@ fn a_tar_with_only_a_symlink_yields_one_link_entry() {
 	let link = dir.path().join("dangling");
 	std::os::unix::fs::symlink("nowhere", &link).unwrap();
 
-	let tar = pack_path(&link, false, None).unwrap();
+	let tar = pack_path(&link, false, None, false).unwrap();
 
 	assert_eq!(
 		sent_entries(&tar).unwrap(),
@@ -248,7 +248,7 @@ fn a_tar_with_file_directory_and_symlink_lists_just_those_three() {
 	std::fs::write(payload.join("plain.txt"), b"hi").unwrap();
 	std::os::unix::fs::symlink("nowhere", payload.join("link")).unwrap();
 
-	let tar = pack_path(&payload, false, None).unwrap();
+	let tar = pack_path(&payload, false, None, false).unwrap();
 
 	assert_eq!(
 		sorted(sent_entries(&tar).unwrap()),

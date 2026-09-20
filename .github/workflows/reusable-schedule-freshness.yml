@@ -153,9 +153,12 @@ jobs:
           # once without the window only to word the failure: empty means the
           # cron has no record on the API at all, otherwise the run that
           # exists is older than the limit. If the unwindowed answer is
-          # recent, that is the contradiction the next person needs to see:
-          # the run exists but three windowed pages did not include it,
-          # which is exactly what the retries exist for.
+          # recent the gate's question is already answered: the cron is
+          # alive and the next run of this job will see the run once the
+          # listing index catches up. That is a stale-listing quirk the
+          # retries exist for rather than a fault on the cron, so this
+          # branch emits one `::warning::` naming both facts and exits 0
+          # instead of failing the run.
           latest=$(gh api "$base" \
             --jq '[.workflow_runs[].created_at] | max // empty')
           if [ -z "$latest" ]; then
@@ -170,10 +173,8 @@ jobs:
           age_days=$(( age_seconds / 86400 ))
 
           if [ "$age_days" -le "$MAX_AGE_DAYS" ]; then
-            echo "::error::The windowed query saw nothing 3 times, but the unwindowed query returned ${latest}."
-            echo "The gate cannot reconcile this: a recent run exists but three windowed" >&2
-            echo "pages did not include it. Treat as a stale listing index and re-run later." >&2
-            exit 1
+            echo "::warning::The windowed query saw nothing 3 times, but the unwindowed query returned ${latest} (${age_days}d ago); treating the recent run as evidence the cron is alive."
+            exit 0
           fi
 
           echo "::error::${WORKFLOW} last ${verb} ${age_days} days ago, over the ${MAX_AGE_DAYS}-day limit."

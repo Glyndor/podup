@@ -1,3 +1,15 @@
+podup (5.9.5) unstable; urgency=medium
+
+  * `cp` of a source whose last component is `.` now copies the directory's
+    contents rather than the directory itself, the way `docker cp` and
+    `podman cp` treat it. `podup cp payload/. SERVICE:/tmp` put the files in
+    `/tmp/payload/` before; they land in `/tmp` now. The cue is read with the
+    platform's separator, so it covers `payload/.`, `payload/./` and a bare
+    `.`, and a source that is not a directory is refused the way podman
+    refuses it. The container to host direction is unchanged.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sat, 20 Sep 2026 15:00:00 -0500
+
 podup (5.9.4) unstable; urgency=medium
 
   * `cp` of a directory against Podman 6 was reported as failed even when it

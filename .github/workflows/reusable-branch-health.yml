@@ -1,7 +1,6 @@
 name: Branch health (reusable)
 
-# Fails when the newest COMPLETED run of a workflow on a branch is not a
-# success.
+# Fails when the run for a branch's CURRENT head is not a success.
 #
 # The companion guard `reusable-schedule-freshness.yml` watches workflows
 # that fire on `event=schedule`; this one watches a workflow on a branch.
@@ -15,35 +14,30 @@ name: Branch health (reusable)
 # missing from their answer by construction. On 2026-09-06 three
 # distribution channels sat with `main` red for twenty minutes after a
 # pull request merged while its suite was still reporting, and the only
-# reason anybody knew is that somebody went looking. The fix the other
-# three shipped was `scripts/check-suite-on-main.sh`; this file mirrors
-# its shape, not its spelling, because those repos are shell-only and
-# this one runs on GitHub Actions.
+# reason anybody knew is that somebody went looking. The fix the
+# other three shipped was `scripts/check-suite-on-main.sh`; this file
+# mirrors its shape, not its spelling, because those repos are
+# shell-only and this one runs on GitHub Actions.
 #
 # Three states that are NOT failures and must not be reported as one:
 #
-# 1. A run still in progress. `status=completed` in the API query
-#    excludes it, and the comment on the `gh api` line says so. Do NOT
-#    widen the filter to "newest run of any status"; an in-progress run
-#    reported as a failure would defeat the purpose of this check.
-# 2. An empty history. A protected branch whose suite has never
-#    completed is not a branch anybody should be releasing from, so the
-#    empty case fails with a message that says "no completed run on
-#    record". Make that non-fatal only with a reason; the script does
-#    not.
-# 3. A conclusion of `skipped`. The script treats it as a failure: a
-#    skipped run is the workflow's own gate deciding not to exercise
-#    the branch it claims to protect, and reporting it as success would
-#    let a published branch carry a "we never finished" verdict.
-#    A conclusion of `cancelled`, in contrast, is passed over: a
-#    cancelled run is a suite that was interrupted, which on a push run
-#    happens because `cancel-in-progress` superseded it with a newer
-#    push. The newer run answers for the branch; counting the cancelled
-#    one as a failure would fail the guard over a run the superseding
-#    push has already replaced. The script reads several entries
-#    (`per_page=30` below) and skips cancelled runs until it finds one
-#    with a verdict; a page whose every entry is cancelled fails with a
-#    message that says so.
+# 1. A run still in progress. The script polls for up to 32 attempts of
+#    15 seconds (eight minutes, inside the job's ten-minute bound), so a
+#    push run that has not yet reached a verdict waits for one. The
+#    brief on the polling bound lives inside the script.
+# 2. An empty history for the branch's current head. There is no run
+#    for the commit this branch points at. The script reports the head
+#    SHA so the operator can match against the API rather than reading
+#    "no run on record" and looking for a cron that is not the cause.
+# 3. A conclusion of `cancelled` for the branch's head. The script used
+#    to pass over cancelled runs on the theory that a newer push had
+#    superseded them, but the same logic answered for a commit nobody
+#    had tested: measured 2026-09-20, let A pass, push B, cancel B's
+#    run by hand with nothing replacing it, and the script reported A's
+#    success as the branch's health. The pass-over disappeared with
+#    the newest-run logic it belonged to. A `cancelled` run for the
+#    head is now RED; the message names the commit so the right run is
+#    found.
 #
 # Permissions: same as the freshness reusable. A called workflow cannot
 # elevate beyond the permissions of the workflow that calls it, and
@@ -65,7 +59,7 @@ on:
         required: true
       branch:
         description: >-
-          Branch to read the newest completed run for, e.g. "main".
+          Branch whose head's run is the verdict, e.g. "main".
         type: string
         required: true
 
@@ -80,9 +74,13 @@ jobs:
   health:
     name: branch health
     runs-on: ubuntu-latest
-    # Bound: the request itself is small; ten seconds covers the fetch and the
-    # jq pass. Ten times that, rounded up; the six-hour default is what a hang
-    # would otherwise cost.
+    # Bound: the request itself is small; ten seconds covers the fetch
+    # and the poll. The 32 attempts of 15 seconds the script makes add
+    # up to eight minutes, which this ten-minute bound covers with two
+    # minutes of headroom. A run that waits longer than that has
+    # either hung or had the suite fail to start, and the script's
+    # own error message points at the right run rather than this
+    # timeout.
     timeout-minutes: 10
     permissions:
       actions: read # reading this repository's workflow-run history
@@ -102,27 +100,35 @@ jobs:
       # limit, and reads nothing beyond this repository's own run history. No
       # personal credential is ever used here, and the `actions: read` grant
       # above is the whole of what it can reach.
-      - name: Check the newest completed run on the branch
+      #
+      # The script owns every API call: on a push it uses HEAD_SHA as
+      # the head; on schedule or pull_request HEAD_SHA is empty and the
+      # script fetches the branch head itself. Doing both in one place
+      # keeps the polling and the verdict logic in a single file the
+      # shell tests can exercise end to end with a planted `gh`.
+      - name: Check the run for the branch's current head
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           WORKFLOW: ${{ inputs.workflow }}
           BRANCH: ${{ inputs.branch }}
+          # `github.event_name` inside a called workflow is the event
+          # that triggered the caller (push / pull_request / schedule);
+          # the reusable's own event is `workflow_call` but the property
+          # still refers to the source. On push, `github.sha` is the
+          # pushed commit, but the two callers in `ci.yml` run
+          # cross-branch by design: `health-main` runs on every push
+          # that is not to `main`, and `health-develop` on every push
+          # that is not to `develop`. A push to the OTHER branch would
+          # hand the script a commit that no run on the watched branch
+          # ever carries, and the poll loop would exhaust itself asking
+          # the API for a run that does not exist. The branch
+          # comparison below stops that: `HEAD_SHA` carries the pushed
+          # commit only when the push was to the branch being checked,
+          # otherwise the empty string selects the branch-head lookup
+          # path for everything else (push to a different branch,
+          # pull_request, schedule).
+          HEAD_SHA: ${{ (github.event_name == 'push' && github.ref_name == inputs.branch) && github.sha || '' }}
         run: |
           set -euo pipefail
-          # `status=completed` excludes runs that are queued or in progress;
-          # do NOT widen this to all statuses. A run that is still running
-          # would otherwise be reported as a failure, and the job that
-          # repairs the branch would block itself with a verdict nobody
-          # has finished reaching.
-          #
-          # `per_page=30` (not `per_page=1`) is deliberate. The first item
-          # of a filtered page is not always the newest run, which gave
-          # the schedule-freshness gate two false reds measured in
-          # 2026-09-19. The script sorts the page by `created_at` itself,
-          # so the page is a buffer to sort rather than a single-item
-          # shortcut, and thirty is enough headroom for a branch with a
-          # burst of cancelled push runs to find a verdict underneath.
-          gh api \
-            "repos/${REPO}/actions/workflows/${WORKFLOW}/runs?branch=${BRANCH}&status=completed&per_page=30" \
-            | bash .github/scripts/check-branch-conclusion.sh
+          bash .github/scripts/check-branch-conclusion.sh
