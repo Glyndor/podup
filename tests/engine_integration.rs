@@ -464,3 +464,6 @@ mod x_podman_pod;
 
 #[path = "engine_integration/userns.rs"]
 mod userns;
+
+#[path = "engine_integration/userns_pod.rs"]
+mod userns_pod;
