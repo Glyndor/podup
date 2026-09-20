@@ -1,3 +1,44 @@
+podup (5.9.4) unstable; urgency=medium
+
+  * `cp` of a directory against Podman 6 was reported as failed even when it
+    had landed. The destination is now confirmed entry by entry, with links
+    and empty files included, and an entry that is not a regular file no
+    longer passes as one.
+  * `cp SERVICE:PATH HOSTPATH` refused a symlink only when it was the last
+    component of the destination. It refuses a symlink at any component now,
+    with one exception for a root-owned symlink directly in `/`, which is
+    what `/tmp` on macOS and `/home` on Fedora Atomic look like at rest, so
+    those keep working.
+  * `userns_mode: auto` was accepted and did nothing: the container ran with
+    the default mapping. It gets its own ID range now, and the values that
+    take options (`keep-id:uid=...,gid=...` and `auto:size=...`) no longer fail
+    with HTTP 500.
+  * Editing the file behind a `secrets:` or `configs:` entry now recreates
+    the container. It used to keep reading the old bytes from the mounted
+    secret even after the file on disk had changed.
+  * A warm `up` asked Podman for the same image once per replica. It asks
+    once per service now.
+  * A bind mount of a file that already exists no longer prints a
+    `create_host_path` warning on every `up`.
+  * A container's configuration hash now describes the bytes of every secret
+    that was uploaded, so a file changed while `up` was running can no
+    longer leave stale bytes mounted behind a record that says otherwise.
+  * A `cp` of a tree containing a FIFO, a device node or a hard link is
+    reported as unconfirmed rather than as landed, because those entries
+    cannot be asked about after the fact.
+  * An unreachable repology.org no longer makes the version watcher fail. It
+    warns and files an issue naming the version it could not ask about.
+  * The quick start no longer tells people to run `podup down -v`, and the
+    docs note that a `podman-machine` WSL distro needs
+    `cgroup_manager = "cgroupfs"`.
+  * The Podman baseline moves to 6.1.2. The branch-health and
+    schedule-freshness gates no longer report false reds, the updater tests
+    no longer depend on an operating system's wording, and rustls moves to
+    0.23.45 for RUSTSEC-2026-0285 along with clap, clap_complete, indexmap,
+    ureq and ureq-proto.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sat, 19 Sep 2026 14:00:00 -0500
+
 podup (5.9.3) unstable; urgency=medium
 
   * A build context, a `cp` payload or a watch sync containing a file with
@@ -376,7 +417,7 @@ podup (4.0.0) unstable; urgency=medium
     `uts`, `cgroup` and `userns_mode`, which made it wrong for four of them.
     It refused what podman accepts: `ipc: shareable`, and every
     `userns_mode` value podman offers (`keep-id`, `auto`, `nomap`, and the
-    `keep-id:uid=…` and `auto:size=…` forms). It also accepted what podman
+    `keep-id:uid=…` and `auto:size=...` forms). It also accepted what podman
     refuses, `none` on four slots, which then came back as a libpod error
     naming no field. The error text now lists the modes the slot in hand
     accepts. A short but legal `ns:/x` was also rejected for being shorter
