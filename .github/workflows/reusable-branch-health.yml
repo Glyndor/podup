@@ -115,10 +115,20 @@ jobs:
           # `github.event_name` inside a called workflow is the event
           # that triggered the caller (push / pull_request / schedule);
           # the reusable's own event is `workflow_call` but the property
-          # still refers to the source. So `push` selects GITHUB_SHA
-          # and the empty string selects the branch-head lookup path
-          # for everything else.
-          HEAD_SHA: ${{ github.event_name == 'push' && github.sha || '' }}
+          # still refers to the source. On push, `github.sha` is the
+          # pushed commit, but the two callers in `ci.yml` run
+          # cross-branch by design: `health-main` runs on every push
+          # that is not to `main`, and `health-develop` on every push
+          # that is not to `develop`. A push to the OTHER branch would
+          # hand the script a commit that no run on the watched branch
+          # ever carries, and the poll loop would exhaust itself asking
+          # the API for a run that does not exist. The branch
+          # comparison below stops that: `HEAD_SHA` carries the pushed
+          # commit only when the push was to the branch being checked,
+          # otherwise the empty string selects the branch-head lookup
+          # path for everything else (push to a different branch,
+          # pull_request, schedule).
+          HEAD_SHA: ${{ (github.event_name == 'push' && github.ref_name == inputs.branch) && github.sha || '' }}
         run: |
           set -euo pipefail
           bash .github/scripts/check-branch-conclusion.sh
