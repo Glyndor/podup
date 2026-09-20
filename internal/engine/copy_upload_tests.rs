@@ -134,7 +134,7 @@ async fn upload(
 	entry: &str,
 	rename: Option<&str>,
 ) -> crate::error::Result<()> {
-	let tar = pack_path(src, false, rename).unwrap();
+	let tar = pack_path(src, false, rename, false).unwrap();
 	engine_for(fake)
 		.put_archive_verified(
 			CONTAINER,

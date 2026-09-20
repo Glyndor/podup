@@ -283,3 +283,106 @@ fn cp_destination_kind_treats_a_regular_file_as_not_a_directory() {
 		CpDestinationKind::NotADirectory
 	));
 }
+
+/// The contents cue is the trailing `/.` (or bare `.`) docker and podman use
+/// to copy a directory's contents rather than the directory itself. The cue
+/// is detected on the source as written because `Path::new(src).file_name()`
+/// drops it; these tests pin the rule, one shape per assertion, so a
+/// regression points at the exact case that moved.
+#[test]
+fn has_dot_contents_suffix_payload_no_slash_is_not_the_cue() {
+	assert!(!super::has_dot_contents_suffix("payload"));
+}
+
+#[test]
+fn has_dot_contents_suffix_payload_with_trailing_slash_is_not_the_cue() {
+	assert!(!super::has_dot_contents_suffix("payload/"));
+}
+
+#[test]
+fn has_dot_contents_suffix_payload_slash_dot_is_the_cue() {
+	assert!(super::has_dot_contents_suffix("payload/."));
+}
+
+#[test]
+fn has_dot_contents_suffix_payload_slash_dot_slash_is_the_cue() {
+	assert!(super::has_dot_contents_suffix("payload/./"));
+}
+
+#[test]
+fn has_dot_contents_suffix_payload_slash_dot_double_slash_is_the_cue() {
+	assert!(super::has_dot_contents_suffix("payload/.//"));
+}
+
+#[test]
+fn has_dot_contents_suffix_bare_dot_is_the_cue() {
+	assert!(super::has_dot_contents_suffix("."));
+}
+
+#[test]
+fn has_dot_contents_suffix_bare_dot_slash_is_the_cue() {
+	assert!(super::has_dot_contents_suffix("./"));
+}
+
+#[test]
+fn has_dot_contents_suffix_double_dot_is_not_the_cue() {
+	assert!(!super::has_dot_contents_suffix(".."));
+}
+
+#[test]
+fn has_dot_contents_suffix_a_slash_double_dot_is_not_the_cue() {
+	assert!(!super::has_dot_contents_suffix("a/.."));
+}
+
+#[test]
+fn has_dot_contents_suffix_empty_string_is_not_the_cue() {
+	assert!(!super::has_dot_contents_suffix(""));
+}
+
+/// Windows people type the contents cue with a backslash, which
+/// `std::path::is_separator` reports as a separator on that target only.
+#[cfg(windows)]
+#[test]
+fn has_dot_contents_suffix_payload_backslash_dot_is_the_cue() {
+	assert!(super::has_dot_contents_suffix("payload\\."));
+}
+
+#[cfg(windows)]
+#[test]
+fn has_dot_contents_suffix_payload_backslash_dot_backslash_is_the_cue() {
+	assert!(super::has_dot_contents_suffix("payload\\.\\"));
+}
+
+#[cfg(windows)]
+#[test]
+fn has_dot_contents_suffix_payload_backslash_dot_double_backslash_is_the_cue() {
+	assert!(super::has_dot_contents_suffix("payload\\.\\\\"));
+}
+
+#[cfg(windows)]
+#[test]
+fn has_dot_contents_suffix_bare_dot_backslash_is_the_cue() {
+	assert!(super::has_dot_contents_suffix(".\\"));
+}
+
+#[cfg(windows)]
+#[test]
+fn has_dot_contents_suffix_payload_trailing_backslash_is_not_the_cue() {
+	assert!(!super::has_dot_contents_suffix("payload\\"));
+}
+
+#[cfg(windows)]
+#[test]
+fn has_dot_contents_suffix_payload_backslash_double_dot_is_not_the_cue() {
+	assert!(!super::has_dot_contents_suffix("payload\\.."));
+}
+
+/// On Unix a backslash is an ordinary filename character, so the cue must
+/// not fire on `payload\.`: that name really is a directory called
+/// `payload\.`, and copying its contents would silently copy the wrong
+/// thing.
+#[cfg(unix)]
+#[test]
+fn has_dot_contents_suffix_payload_backslash_dot_is_not_the_cue_backslash_is_ordinary_on_unix() {
+	assert!(!super::has_dot_contents_suffix("payload\\."));
+}
