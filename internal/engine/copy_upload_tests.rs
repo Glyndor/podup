@@ -23,11 +23,11 @@ use crate::engine::Engine;
 use crate::error::ComposeError;
 use crate::libpod::urlencoded;
 
-const CONTAINER: &str = "proj-web-1";
+pub(super) const CONTAINER: &str = "proj-web-1";
 
 /// One path in the fake container.
 #[derive(Clone, Copy)]
-enum OnDisk {
+pub(super) enum OnDisk {
 	File(u64),
 	Dir,
 	/// A symbolic link; the stat header carries its size, the
@@ -39,6 +39,26 @@ enum OnDisk {
 		size: u64,
 		target: &'static str,
 	},
+	/// A symbolic link whose stat carries the symlink bit but no
+	/// `linkTarget` field at all. Podman 6 has been seen answering this way;
+	/// the verification has no target to compare against and falls back to
+	/// the symlink bit alone, with a `tracing::warn!` at the call site so a
+	/// CI log names the runtime behaviour. The pre-existing test fixture
+	/// (`Link { .. }`) is for a runtime that does answer the field.
+	LinkNoTarget {
+		size: u64,
+	},
+	/// A symbolic link whose stat carries the symlink bit and a
+	/// `linkTarget` field set to the empty string. A symlink always points
+	/// at something, so an empty string is not a valid symlink target and a
+	/// runtime reporting `""` has not answered the question, exactly as one
+	/// that omits the field has not. The verification falls back to the
+	/// symlink bit alone, with a `tracing::warn!` at the call site. The
+	/// pre-existing `LinkNoTarget` fixture is the omitted-field shape; this
+	/// is the empty-field shape.
+	LinkEmptyTarget {
+		size: u64,
+	},
 	/// A named pipe; the stat header carries size 0 and the
 	/// `os.ModeNamedPipe` mode bit (1<<25 | 0o644).
 	Fifo,
@@ -48,7 +68,7 @@ enum OnDisk {
 
 /// How the fake answers the archive PUT.
 #[derive(Clone, Copy)]
-enum Put {
+pub(super) enum Put {
 	/// Accept the body and close without a response: Podman 6.
 	HangsUp,
 	/// A normal response with this status: Podman 5.
@@ -61,13 +81,19 @@ fn stat_header(path: &str, entry: OnDisk) -> String {
 		OnDisk::File(size) => (size, 420u64, false, None),
 		OnDisk::Dir => (4096, 2_147_484_141, true, None),
 		OnDisk::Link { size, target } => (size, (1u64 << 27) | 0o777, false, Some(target)),
+		OnDisk::LinkNoTarget { size } => (size, (1u64 << 27) | 0o777, false, None),
+		OnDisk::LinkEmptyTarget { size } => (size, (1u64 << 27) | 0o777, false, Some("")),
 		OnDisk::Fifo => (0, (1u64 << 25) | 0o644, false, None),
 		OnDisk::Unreadable => unreachable!("answered with a 500, not a stat"),
 	};
 	// `linkTarget` is appended only for actual link entries, matching what
 	// libpod reports; a non-link entry's stat must carry no `linkTarget`,
 	// because otherwise the verification would compare against the path
-	// string the fake used to put there.
+	// string the fake used to put there. `LinkNoTarget` is the same on the
+	// wire as a regular link stat that omits the field; `LinkEmptyTarget`
+	// is the same on the wire as a regular link stat that sends an empty
+	// string for the field. The destination cannot tell us the target
+	// either way.
 	let link_field = match link {
 		Some(t) => format!(r#","linkTarget":"{t}""#),
 		None => String::new(),
@@ -86,7 +112,11 @@ fn stat_header(path: &str, entry: OnDisk) -> String {
 /// entry: Podman 5.7.0 returns 404 with the stat header still on it (the
 /// default for `tree_landed`'s link confirmation); a runtime that does not
 /// (older, or a stub) drops the header and the link cannot be confirmed.
-fn runtime_full(put: Put, disk: &[(&str, OnDisk)], link_stat_on_404: bool) -> FakePodman {
+pub(super) fn runtime_full(
+	put: Put,
+	disk: &[(&str, OnDisk)],
+	link_stat_on_404: bool,
+) -> FakePodman {
 	let disk: Vec<(String, OnDisk)> = disk.iter().map(|(p, e)| ((*p).to_string(), *e)).collect();
 	fake_podman::start_replying(move |method, target| match method {
 		"PUT" => match put {
@@ -98,10 +128,16 @@ fn runtime_full(put: Put, disk: &[(&str, OnDisk)], link_stat_on_404: bool) -> Fa
 			.find(|(path, _)| target.ends_with(&format!("archive?path={}", urlencoded(path))))
 			.map(|(path, entry)| match entry {
 				OnDisk::Unreadable => FakeReply::Headers(500, Vec::new()),
-				OnDisk::Link { .. } if link_stat_on_404 => FakeReply::Headers(
-					404,
-					vec![("X-Docker-Container-Path-Stat", stat_header(path, *entry))],
-				),
+				OnDisk::Link { .. }
+				| OnDisk::LinkNoTarget { .. }
+				| OnDisk::LinkEmptyTarget { .. }
+					if link_stat_on_404 =>
+				{
+					FakeReply::Headers(
+						404,
+						vec![("X-Docker-Container-Path-Stat", stat_header(path, *entry))],
+					)
+				}
 				_ => FakeReply::Headers(
 					200,
 					vec![("X-Docker-Container-Path-Stat", stat_header(path, *entry))],
@@ -144,7 +180,7 @@ const LANDED_TREE: [(&str, OnDisk); 5] = [
 ];
 
 /// Upload `src` to `/tmp` under `entry`, exactly as `cp` does it.
-async fn upload(
+pub(super) async fn upload(
 	fake: &FakePodman,
 	src: &Path,
 	entry: &str,
@@ -162,7 +198,7 @@ async fn upload(
 		.await
 }
 
-fn assert_unconfirmed(result: crate::error::Result<()>, case: &str) {
+pub(super) fn assert_unconfirmed(result: crate::error::Result<()>, case: &str) {
 	match result {
 		Err(ComposeError::Copy(msg)) => assert!(
 			msg.contains("could not be confirmed"),

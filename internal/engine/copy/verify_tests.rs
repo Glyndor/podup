@@ -2,7 +2,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 
 use super::super::archive::pack_path;
-use super::{entry_landed, sent_entries, SentEntry, SentKind};
+use super::{entry_landed, sent_entries, LinkCheck, SentEntry, SentKind};
 use crate::libpod::client::PathStat;
 
 fn sorted(mut sent: Vec<SentEntry>) -> Vec<(String, SentKind)> {
@@ -340,95 +340,223 @@ fn link_stat(target: Option<&str>) -> PathStat {
 /// its own assertion so a failure points at the row that regressed.
 #[test]
 fn entry_landed_with_planted_stats() {
+	const DIR: &str = "/tmp";
+
 	// `File(0)` against a FIFO is not a file, so the unchanged pipe cannot
 	// confirm a zero-byte upload. This is the regular-file false positive the
 	// `MODE_TYPE` mask closes.
-	assert!(!entry_landed(&SentKind::File(0), Some(&stat(0, FIFO_MODE))));
+	assert_eq!(
+		entry_landed(&SentKind::File(0), Some(&stat(0, FIFO_MODE)), DIR),
+		LinkCheck::Refused,
+	);
 
 	// `File(0)` against a regular file at size 0 is the regular-file landed
 	// shape; the assertion is the regression net for the mask.
-	assert!(entry_landed(&SentKind::File(0), Some(&stat(0, FILE_MODE))));
+	assert_eq!(
+		entry_landed(&SentKind::File(0), Some(&stat(0, FILE_MODE)), DIR),
+		LinkCheck::Confirmed,
+	);
 
 	// `File(4096)` against a directory is not a file either: a directory stats
 	// at 4096 on most filesystems, the same size as the file.
-	assert!(!entry_landed(
-		&SentKind::File(4096),
-		Some(&stat(4096, DIR_MODE))
-	));
+	assert_eq!(
+		entry_landed(&SentKind::File(4096), Some(&stat(4096, DIR_MODE)), DIR,),
+		LinkCheck::Refused,
+	);
 
 	// `Link("a.txt")` against a symlink whose `linkTarget` is the same string
 	// is the link-confirmation shape: the symlink bit AND the target match.
-	assert!(entry_landed(
-		&SentKind::Link("a.txt".into()),
-		Some(&link_stat(Some("a.txt")))
-	));
+	assert_eq!(
+		entry_landed(
+			&SentKind::Link("a.txt".into()),
+			Some(&link_stat(Some("a.txt"))),
+			DIR,
+		),
+		LinkCheck::Confirmed,
+	);
 
 	// `Link("a.txt")` against a regular file is not a link: a regular file
 	// cannot satisfy the link confirmation, even at the right mode bits.
-	assert!(!entry_landed(
-		&SentKind::Link("a.txt".into()),
-		Some(&stat(7, FILE_MODE))
-	));
+	assert_eq!(
+		entry_landed(
+			&SentKind::Link("a.txt".into()),
+			Some(&stat(7, FILE_MODE)),
+			DIR
+		),
+		LinkCheck::Refused,
+	);
 }
 
 /// Planted-stat matrix for the link-target half of the confirmation.
 ///
-/// Confirming on the symlink bit alone would let any pre-existing link at
-/// the destination satisfy an upload whose target was something else; this
-/// is the false positive the `link_target` field closes. Each row stands
-/// alone so a regression names the case directly.
+/// The brief names four cases, each in its own assertion so a failure points
+/// at the row that regressed:
+///
+/// - a matching target confirms (the strong path);
+/// - a DIFFERENT target does not confirm (the strong path rejected the
+///   upload);
+/// - a stat with NO target confirms on the symlink bit alone (the documented
+///   residual on a runtime that does not report link targets);
+/// - a stat whose `link_target` is the empty string also confirms on the
+///   symlink bit alone (a symlink always points at something, so an empty
+///   string is not a valid symlink target);
+/// - a stat with no target AND no symlink bit does not confirm (the entry is
+///   not what was sent).
+///
+/// The previous test asserted that a stat without a target is unconfirmed.
+/// That assertion is what failed on Podman 6: the copy landed, the runtime
+/// answered the symlink stat without `linkTarget`, and the strict equality
+/// treated the entry as unconfirmed. The brief mandates the fallback on the
+/// symlink bit, with a `tracing::warn!` at the call site, and the new
+/// assertion reflects that.
 #[test]
 fn a_link_is_landed_only_when_its_target_matches_what_was_sent() {
+	const DIR: &str = "/tmp";
 	let sent = SentKind::Link("a.txt".into());
 
 	// Target matches: this is the link-confirmation shape.
-	assert!(
-		entry_landed(&sent, Some(&link_stat(Some("a.txt")))),
+	assert_eq!(
+		entry_landed(&sent, Some(&link_stat(Some("a.txt"))), DIR),
+		LinkCheck::Confirmed,
 		"a link whose target equals what was sent must be confirmed"
 	);
 
 	// Target differs: the destination's `linkTarget` says `elsewhere`, the
-	// archive carried `a.txt`. Without the target check, the symlink bit
-	// would pass and the wrong link would be reported as landed.
-	assert!(
-		!entry_landed(&sent, Some(&link_stat(Some("elsewhere")))),
+	// archive carried `a.txt`. The strong path rejects it; the symlink bit
+	// alone is not enough.
+	assert_eq!(
+		entry_landed(&sent, Some(&link_stat(Some("elsewhere"))), DIR),
+		LinkCheck::Refused,
 		"a link pointing at a different target than what was sent must not be confirmed"
 	);
 
-	// Target absent: the stat carries no `linkTarget`, so the destination
-	// cannot answer the question and the entry is unconfirmed. Failing
-	// closed here is what stops a runtime that does not send the field
-	// from being treated as confirming the link.
-	assert!(
-		!entry_landed(&sent, Some(&link_stat(None))),
-		"a stat without linkTarget must not confirm a link"
+	// Target absent, symlink bit set: the stat carries no `linkTarget`, so
+	// the destination cannot answer the question any stronger than the bit.
+	// The fallback confirms here, because refusing a copy that landed would
+	// re-introduce the #1777 shape this module exists to close. The call
+	// site emits a `warn!` so a CI log carries the reason; the residual is
+	// that a pre-existing link pointing elsewhere still passes here. That is
+	// the documented price of not failing a landed copy.
+	assert_eq!(
+		entry_landed(&sent, Some(&link_stat(None)), DIR),
+		LinkCheck::Fallback,
+		"a stat without linkTarget falls back to the symlink bit, with a warn at the call site"
+	);
+
+	// Target is the empty string: a symlink always points at something, so
+	// a runtime that reports `""` for a symlink has not answered the
+	// question, exactly as one that omits the field has not. Same branch
+	// as the absent case above. Treating the empty string as a target to
+	// compare against would have refused the entry, which is the #1777
+	// shape this module was written to close.
+	assert_eq!(
+		entry_landed(&sent, Some(&link_stat(Some(""))), DIR),
+		LinkCheck::Fallback,
+		"an empty link_target falls back to the symlink bit, the same as an absent one"
+	);
+
+	// Target absent AND no symlink bit: the entry is not what was sent.
+	// The fallback cannot apply because there is no symlink bit to fall back
+	// to. The entry is refused.
+	assert_eq!(
+		entry_landed(
+			&sent,
+			Some(&PathStat {
+				size: 7,
+				mode: FILE_MODE,
+				link_target: None,
+				..PathStat::default()
+			}),
+			DIR,
+		),
+		LinkCheck::Refused,
+		"a stat with no target and no symlink bit is not the link that was sent"
 	);
 
 	// No stat at all: the destination returned `None`, which is the path
-	// the stat endpoint takes for a real file or directory that is not
-	// present. The link is unconfirmed.
-	assert!(
-		!entry_landed(&sent, None),
-		"an absent stat must not confirm a link"
+	// the stat endpoint takes for a regular file or directory that is not
+	// present. The link is absent.
+	assert_eq!(
+		entry_landed(&sent, None, DIR),
+		LinkCheck::Absent,
+		"an absent stat does not confirm a link"
+	);
+}
+
+/// An absolute link target the runtime reports is the same link as a relative
+/// archive target when the absolute one, joined to the destination directory,
+/// resolves to the relative one. Podman 6 has been seen to expand relative
+/// linknames against the destination and report the absolute result; the
+/// confirmation here answers that without losing the strict equality for the
+/// case where the two strings disagree.
+#[test]
+fn an_absolute_runtime_target_resolves_to_the_relative_archive_target() {
+	const DIR: &str = "/tmp";
+	let sent = SentKind::Link("a.txt".into());
+
+	assert_eq!(
+		entry_landed(&sent, Some(&link_stat(Some("/tmp/a.txt"))), DIR),
+		LinkCheck::Confirmed,
+		"an absolute target that joins with the destination directory to the relative target confirms",
+	);
+
+	// An absolute target that does not resolve under the destination cannot
+	// be related to the archive's relative target and is refused on the strong
+	// path, same as a plainly different target.
+	assert_eq!(
+		entry_landed(&sent, Some(&link_stat(Some("/elsewhere/a.txt"))), DIR),
+		LinkCheck::Refused,
+		"an absolute target outside the destination directory is not the link that was sent",
+	);
+
+	// An absolute target with multiple segments after the destination
+	// directory (a deeper path) is not the link the archive carried either.
+	assert_eq!(
+		entry_landed(&sent, Some(&link_stat(Some("/tmp/sub/a.txt"))), DIR),
+		LinkCheck::Refused,
+		"an absolute target that descends below a single segment is not the link that was sent",
 	);
 }
 
 #[test]
 fn a_file_landed_when_it_is_a_file_of_the_size_sent() {
+	const DIR: &str = "/tmp";
 	let sent = SentKind::File(4096);
-	assert!(entry_landed(&sent, Some(&stat(4096, FILE_MODE))));
-	assert!(!entry_landed(&sent, Some(&stat(4095, FILE_MODE))));
-	assert!(!entry_landed(&sent, None));
+	assert_eq!(
+		entry_landed(&sent, Some(&stat(4096, FILE_MODE)), DIR),
+		LinkCheck::Confirmed
+	);
+	assert_eq!(
+		entry_landed(&sent, Some(&stat(4095, FILE_MODE)), DIR),
+		LinkCheck::Refused
+	);
+	assert_eq!(entry_landed(&sent, None, DIR), LinkCheck::Absent);
 	// A directory stats at 4096 too. Same number, not the file.
-	assert!(!entry_landed(&sent, Some(&stat(4096, DIR_MODE))));
+	assert_eq!(
+		entry_landed(&sent, Some(&stat(4096, DIR_MODE)), DIR),
+		LinkCheck::Refused
+	);
 	// An empty file is a size like any other.
-	assert!(entry_landed(&SentKind::File(0), Some(&stat(0, FILE_MODE))));
+	assert_eq!(
+		entry_landed(&SentKind::File(0), Some(&stat(0, FILE_MODE)), DIR),
+		LinkCheck::Confirmed
+	);
 }
 
 #[test]
 fn a_directory_landed_when_a_directory_is_there() {
-	assert!(entry_landed(&SentKind::Dir, Some(&stat(4096, DIR_MODE))));
-	assert!(entry_landed(&SentKind::Dir, Some(&stat(0, DIR_MODE))));
-	assert!(!entry_landed(&SentKind::Dir, Some(&stat(4096, FILE_MODE))));
-	assert!(!entry_landed(&SentKind::Dir, None));
+	const DIR: &str = "/tmp";
+	assert_eq!(
+		entry_landed(&SentKind::Dir, Some(&stat(4096, DIR_MODE)), DIR),
+		LinkCheck::Confirmed
+	);
+	assert_eq!(
+		entry_landed(&SentKind::Dir, Some(&stat(0, DIR_MODE)), DIR),
+		LinkCheck::Confirmed
+	);
+	assert_eq!(
+		entry_landed(&SentKind::Dir, Some(&stat(4096, FILE_MODE)), DIR),
+		LinkCheck::Refused
+	);
+	assert_eq!(entry_landed(&SentKind::Dir, None, DIR), LinkCheck::Absent);
 }

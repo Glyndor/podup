@@ -104,11 +104,15 @@ pub struct Client {
 ///
 /// `link_target` is the libpod `linkTarget` field, populated for symbolic
 /// links and absent for files and directories (`#[serde(default)]` so a header
-/// that omits it stays deserialisable as `None`). An empty string is not
-/// folded into `None`: `""` deserialises to `Some("")` and is compared like
-/// any other target. The mode cross-check in `entry_landed` means a non-link
-/// entry's stat is never consulted for a target, so the empty case does not
-/// arise in practice.
+/// that omits it stays deserialisable as `None`). An empty string is NOT
+/// folded into `None`: `""` deserialises to `Some("")`. A symlink always
+/// points at something, so an empty string is not a valid symlink target and
+/// a runtime that reports `""` for a symlink has not answered the question,
+/// exactly as one that omits the field has not. `entry_landed` treats both
+/// shapes the same way (the symlink-bit fallback). The mode cross-check in
+/// `entry_landed` means a non-link entry's stat is never consulted for a
+/// target, so the empty case does not arise in practice for files and
+/// directories.
 #[derive(serde::Deserialize, Default, Clone, PartialEq, Eq, Debug)]
 pub(crate) struct PathStat {
 	#[serde(default)]

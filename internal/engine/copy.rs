@@ -477,7 +477,33 @@ impl Engine {
 					_ => self.client.head_path_stat(p).await,
 				};
 				match stat {
-					Ok(post) => verify::entry_landed(want, post.as_ref()),
+					Ok(post) => match verify::entry_landed(want, post.as_ref(), dir) {
+						verify::LinkCheck::Confirmed => true,
+						verify::LinkCheck::Fallback => {
+							// The runtime answered with a symlink stat but did not
+							// report `linkTarget`. The destination cannot be asked
+							// any stronger than the symlink bit, and refusing a
+							// copy that landed would re-introduce #1777. Warn so a
+							// CI log carries the literal stat and the reason; the
+							// confirmation here is the weaker one. Documented in
+							// the module doc.
+							tracing::warn!(
+								"cp: {p} was confirmed only by the symlink bit; the runtime did \
+							 not report linkTarget: {post:?}",
+							);
+							true
+						}
+						verify::LinkCheck::Refused => {
+							tracing::debug!(
+								"cp: {p} is not what was uploaded ({want:?}): {post:?}",
+							);
+							false
+						}
+						verify::LinkCheck::Absent => {
+							tracing::debug!("cp: {p} has no stat after the PUT: {post:?}");
+							false
+						}
+					},
 					Err(stat_err) => {
 						tracing::debug!(
 							"cp: could not re-verify {p} after an incomplete PUT: {stat_err}"
@@ -616,6 +642,10 @@ mod tests;
 #[cfg(all(test, unix))]
 #[path = "copy_upload_tests.rs"]
 mod upload_tests;
+
+#[cfg(all(test, unix))]
+#[path = "copy_link_target_tests.rs"]
+mod link_target_tests;
 
 #[cfg(test)]
 #[path = "copy/destination_tests.rs"]

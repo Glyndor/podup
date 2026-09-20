@@ -26,16 +26,27 @@
 //!   existing named pipe would otherwise be confirmed by the unchanged pipe.
 //! - Directories (`SentKind::Dir`): must be a directory at the destination.
 //! - Symbolic links (`SentKind::Link(target)`): must be a symlink at the
-//!   destination AND its `linkTarget` must equal the target the archive
-//!   carried. Confirming on the symlink bit alone lets any pre-existing link
-//!   at the destination satisfy an upload whose target was something else;
-//!   the target is read out of `X-Docker-Container-Path-Stat` (`PathStat`'s
-//!   `link_target`, the libpod `linkTarget` field) and compared. If the stat
-//!   carries no target the entry is unconfirmed, which fails closed rather
-//!   than guessing. The stat for a dangling link on Podman 5.7.0 is carried
-//!   on the 404 response in the stat header, which `head_path_stat` threw
-//!   away; `head_path_stat_even_if_missing` reads it back so a cut stream
-//!   cannot be confirmed against the link that was already there.
+//!   destination AND its `link_target` must equal the target the archive
+//!   carried, or its absolute target must equal the archive's relative target
+//!   resolved against the destination directory. Confirming on the symlink bit
+//!   alone lets any pre-existing link at the destination satisfy an upload
+//!   whose target was something else; the target is read out of
+//!   `X-Docker-Container-Path-Stat` (`PathStat`'s `link_target`, the libpod
+//!   `linkTarget` field) and compared. The stat for a dangling link on
+//!   Podman 5.7.0 is carried on the 404 response in the stat header, which
+//!   `head_path_stat` threw away; `head_path_stat_even_if_missing` reads it
+//!   back so a cut stream cannot be confirmed against the link that was
+//!   already there. A stat that carries no target at all (the field is
+//!   absent, or it is the empty string) leaves the entry to be confirmed
+//!   on the symlink bit alone. A symlink always points at something, so an
+//!   empty string is not a valid symlink target and a runtime reporting `""`
+//!   has not answered the question, exactly as one that omits the field has
+//!   not. That is the documented residual on a runtime that does not report
+//!   link targets, and the call sites emit a `tracing::warn!` so a CI log
+//!   carries the reason. A pre-existing link pointing elsewhere still passes
+//!   under that fallback, because the runtime gave the confirmation nothing
+//!   stronger to compare against. **It is the price of not failing a copy
+//!   that landed.**
 //! - Hard links, FIFOs, char/block devices and anything else: an entry of a
 //!   kind that cannot be asked about through the archive stat makes the
 //!   archive unverifiable. `sent_entries` returns an error naming the type,
@@ -182,27 +193,126 @@ pub(super) fn sent_entries(gz_tar: &[u8]) -> Result<Vec<SentEntry>> {
 	Ok(sent)
 }
 
-/// Whether the destination's stat is the entry that was sent.
+/// Whether the destination's stat is the entry that was sent, and if so on
+/// what evidence.
 ///
 /// A regular file must match in size and have no Go `os.ModeType` bit set: a
 /// directory, a symlink, a named pipe, a socket, a device or any other
 /// non-regular kind reports a size that says nothing about what the upload put
 /// there, so the size comparison on its own is not enough. A symbolic link
-/// must be a symlink at the destination AND its `link_target` must equal the
-/// target the archive carried; a stat that carries no target cannot answer
-/// the question and the entry is unconfirmed (the caller treats it as
-/// failure).
-pub(super) fn entry_landed(sent: &SentKind, post: Option<&PathStat>) -> bool {
+/// must be a symlink at the destination. The target is read out of the stat
+/// (`PathStat::link_target`, the libpod `linkTarget` field) and matched
+/// against the target the archive carried. The cases:
+///
+/// - A matching target confirms on the strong path: the destination points at
+///   the same string the archive carried.
+/// - A target the runtime reports as absolute and that, when joined to the
+///   destination directory, equals the absolute form of the archive's
+///   relative target confirms on the strong path: a runtime that resolves a
+///   relative linkname against the destination directory and reports the
+///   absolute result is answered on the same target the archive carried.
+/// - A `link_target` the runtime did not answer (the field is absent on the
+///   stat, or is the empty string) confirms on the symlink bit alone. A
+///   symlink always points at something, so an empty string is not a valid
+///   symlink target and a runtime reporting `""` has not answered the
+///   question, exactly as one that omits the field has not. The destination
+///   cannot answer the question any stronger than the runtime did, and
+///   refusing a copy that landed would re-introduce the #1777 shape this
+///   module was written to close. The call site emits a `tracing::warn!`
+///   carrying the literal stat so a CI log names the runtime behaviour that
+///   forced the fallback. The residual: a pre-existing link pointing
+///   elsewhere still passes here.
+/// - A target the runtime answered but that does not match (and that cannot
+///   be related to the archive target through the destination path) does not
+///   confirm. The destination's link points at something the archive did not
+///   carry, and confirming on the bit alone would call that uploaded.
+///
+/// `dir` is the directory the archive was extracted at; it is the destination
+/// against which the archive's relative linkname is resolved for the
+/// absolute-target normalisation above.
+pub(super) fn entry_landed(sent: &SentKind, post: Option<&PathStat>, dir: &str) -> LinkCheck {
 	let is_dir = |stat: &PathStat| stat.mode & (1 << 31) != 0;
 	let is_regular = |stat: &PathStat| stat.mode & MODE_TYPE == 0;
 	let is_symlink = |stat: &PathStat| stat.mode & (1 << 27) != 0;
 	match sent {
-		SentKind::File(size) => post.is_some_and(|stat| is_regular(stat) && stat.size == *size),
-		SentKind::Dir => post.is_some_and(is_dir),
-		SentKind::Link(target) => post.is_some_and(|stat| {
-			is_symlink(stat) && stat.link_target.as_deref() == Some(target.as_str())
-		}),
+		SentKind::File(size) => match post {
+			Some(stat) if is_regular(stat) && stat.size == *size => LinkCheck::Confirmed,
+			Some(_) => LinkCheck::Refused,
+			None => LinkCheck::Absent,
+		},
+		SentKind::Dir => match post {
+			Some(stat) if is_dir(stat) => LinkCheck::Confirmed,
+			Some(_) => LinkCheck::Refused,
+			None => LinkCheck::Absent,
+		},
+		SentKind::Link(target) => match post {
+			Some(stat) if !is_symlink(stat) => LinkCheck::Refused,
+			Some(stat) => match stat.link_target.as_deref() {
+				// A symlink always points at something, so a runtime that
+				// reports an empty string for a symlink has not answered
+				// the question, exactly as one that omits the field has
+				// not. Same branch as the absent case: the symlink bit
+				// alone, with a `warn!` carrying the literal stat at the
+				// call site. Listed before the equality check so the empty
+				// string is treated as a fallback rather than as a target
+				// to match against.
+				None | Some("") => LinkCheck::Fallback,
+				Some(runtime_target) if runtime_target == target => LinkCheck::Confirmed,
+				Some(runtime_target) => match normalise_relative_target(runtime_target, dir) {
+					Some(normalised) if normalised == target => LinkCheck::Confirmed,
+					_ => LinkCheck::Refused,
+				},
+			},
+			None => LinkCheck::Absent,
+		},
 	}
+}
+
+/// What `entry_landed` decided about the destination's stat.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum LinkCheck {
+	/// The destination's stat is the entry that was sent, on the strong path
+	/// (target equality, with the absolute/relative normalisation applied).
+	Confirmed,
+	/// The destination's stat is not the entry that was sent. The caller
+	/// answers "not landed".
+	Refused,
+	/// The destination's stat was not reachable. The caller answers
+	/// "not landed".
+	Absent,
+	/// The destination is a symlink, but the runtime did not answer
+	/// `link_target` either by omitting the field or by sending the empty
+	/// string. A symlink always points at something, so an empty string is
+	/// not a valid symlink target and a runtime reporting `""` has not
+	/// answered the question, exactly as one that omits the field has not.
+	/// The confirmation is the symlink bit alone: that is the documented
+	/// residual on a runtime that does not report link targets, and the
+	/// call site emits a `tracing::warn!` so a CI log carries the reason.
+	/// A copy that landed under this branch is never reported as failed;
+	/// that is the rule this module exists to enforce.
+	Fallback,
+}
+
+/// If `runtime_target` is an absolute path under `dir`, the relative form
+/// it would have as a linkname against `dir`. Returns `None` when the
+/// target is not a single-segment relative path under `dir`, when the
+/// `dir` is not absolute, or when the runtime target is not absolute.
+/// Used to relate a runtime that reports absolute link targets to the
+/// relative linkname the archive carried.
+fn normalise_relative_target<'a>(runtime_target: &'a str, dir: &str) -> Option<&'a str> {
+	if !runtime_target.starts_with('/') || !dir.starts_with('/') {
+		return None;
+	}
+	let prefix = dir.trim_end_matches('/');
+	if prefix.is_empty() {
+		return None;
+	}
+	let tail = runtime_target.strip_prefix(prefix)?;
+	let tail = tail.strip_prefix('/')?;
+	if tail.is_empty() || tail.contains('/') || tail == "." || tail == ".." {
+		return None;
+	}
+	Some(tail)
 }
 
 impl Engine {
@@ -230,10 +340,11 @@ impl Engine {
 	/// Sequential on purpose. Podman 6 dropped responses under concurrency
 	/// (#1339), and a dropped stat here is a landed copy reported as failed.
 	///
-	/// The residual false positive is the size-only one: libpod's stat has no
-	/// checksum, so a failed upload over files of the same length is still
-	/// reported as landed, and a pre-existing link pointing at the same target
-	/// is reported as landed too. Documented in the module doc.
+	/// The residual false positives are the size-only one (libpod's stat has
+	/// no checksum, so a failed upload over files of the same length is still
+	/// reported as landed) and the link-bit fallback (a runtime that does not
+	/// report `linkTarget` lets a pre-existing link at any target satisfy the
+	/// confirmation). Both are documented in the module doc.
 	pub(super) async fn tree_landed(&self, container: &str, dir: &str, gz_tar: Bytes) -> bool {
 		let read_back = tokio::task::spawn_blocking(move || sent_entries(&gz_tar))
 			.await
@@ -260,15 +371,38 @@ impl Engine {
 				_ => self.client.head_path_stat(&stat_path).await,
 			};
 			match stat {
-				Ok(post) if entry_landed(&entry.kind, post.as_ref()) => {}
-				Ok(post) => {
-					tracing::debug!(
-						"cp: {} in {dir} is not what was uploaded ({:?}): {post:?}",
-						entry.path,
-						entry.kind
-					);
-					return false;
-				}
+				Ok(post) => match entry_landed(&entry.kind, post.as_ref(), dir) {
+					LinkCheck::Confirmed => {}
+					LinkCheck::Fallback => {
+						// The runtime answered with a symlink stat but did not
+						// report `linkTarget`. The destination cannot be asked
+						// any stronger than the symlink bit, and refusing a
+						// copy that landed would re-introduce #1777. Warn so a
+						// CI log carries the literal stat and the reason; the
+						// confirmation here is the weaker one. Documented in
+						// the module doc.
+						tracing::warn!(
+							"cp: {} in {dir} was confirmed only by the symlink bit; the runtime did \
+							 not report linkTarget: {post:?}",
+							entry.path,
+						);
+					}
+					LinkCheck::Refused => {
+						tracing::debug!(
+							"cp: {} in {dir} is not what was uploaded ({:?}): {post:?}",
+							entry.path,
+							entry.kind
+						);
+						return false;
+					}
+					LinkCheck::Absent => {
+						tracing::debug!(
+							"cp: {} in {dir} has no stat after the PUT: {post:?}",
+							entry.path,
+						);
+						return false;
+					}
+				},
 				Err(stat_err) => {
 					tracing::debug!(
 						"cp: could not re-verify {} in {dir} after an incomplete PUT: {stat_err}",

@@ -1,4 +1,4 @@
-use super::verify::entry_landed;
+use super::verify::{entry_landed, LinkCheck};
 use super::{
 	cp_destination_kind, join_archive_path, parse_endpoint, uploaded_entry_kind, CpDestinationKind,
 };
@@ -23,12 +23,21 @@ fn entry_landed_asks_whether_the_entry_matches_what_was_uploaded() {
 		..PathStat::default()
 	};
 	// The entry is there and is the size that was sent -> landed.
-	assert!(entry_landed(&want, Some(&stat(42))));
+	assert_eq!(
+		entry_landed(&want, Some(&stat(42)), "/tmp"),
+		LinkCheck::Confirmed
+	);
 	// A failed PUT leaves the old entry, which is a different size.
-	assert!(!entry_landed(&want, Some(&stat(41))));
-	assert!(!entry_landed(&want, Some(&stat(0))));
+	assert_eq!(
+		entry_landed(&want, Some(&stat(41)), "/tmp"),
+		LinkCheck::Refused
+	);
+	assert_eq!(
+		entry_landed(&want, Some(&stat(0)), "/tmp"),
+		LinkCheck::Refused
+	);
 	// The entry vanished, or never appeared.
-	assert!(!entry_landed(&want, None));
+	assert_eq!(entry_landed(&want, None, "/tmp"), LinkCheck::Absent);
 }
 
 /// The case the previous signal could not express, and the reason it
@@ -46,7 +55,10 @@ fn copying_an_unchanged_file_twice_is_confirmed() {
 		size: 42,
 		..PathStat::default()
 	};
-	assert!(entry_landed(&want, Some(&already_there)));
+	assert_eq!(
+		entry_landed(&want, Some(&already_there), "/tmp"),
+		LinkCheck::Confirmed
+	);
 }
 
 /// The shape that goes into the comparison is the source file's real length,
@@ -128,9 +140,15 @@ fn two_copies_in_the_same_second_are_told_apart_by_size() {
 	};
 	assert_eq!(before.mtime, after.mtime, "the fixture must share an mtime");
 	// What was uploaded is the 15-byte version.
-	assert!(entry_landed(&SentKind::File(15), Some(&after)));
+	assert_eq!(
+		entry_landed(&SentKind::File(15), Some(&after), "/tmp"),
+		LinkCheck::Confirmed
+	);
 	// And the pre-PUT entry would not have satisfied it.
-	assert!(!entry_landed(&SentKind::File(15), Some(&before)));
+	assert_eq!(
+		entry_landed(&SentKind::File(15), Some(&before), "/tmp"),
+		LinkCheck::Refused
+	);
 }
 
 #[test]
