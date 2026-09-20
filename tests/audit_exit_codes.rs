@@ -211,3 +211,138 @@ fn audit_json_lists_every_finding() {
 		}
 	}
 }
+
+// ---------------------------------------------------------------------------
+// secret_in_environment: the verdict must not depend on the caller's shell.
+//
+// A gate that flips on whether the operator exported a variable is not a
+// gate. The same compose file audited with the variable exported and
+// without it must give the same exit code and the same findings.
+// ---------------------------------------------------------------------------
+
+/// Like [`run`] but lets the test pin a single extra environment variable
+/// (`SECRETO`) to a known value. Strips whatever the test runner happens
+/// to have exported under `SECRETO` so the first run really is "unset".
+fn run_with_secret_env(args: &[&str], secret_value: Option<&str>) -> Output {
+	let mut cmd = Command::new(bin());
+	cmd.args(args);
+	for key in [
+		"PODUP_LIBPOD_POOL",
+		// `PODUP_LIBCOD_POOL` is the legacy typo'd spelling; the runtime
+		// still reads it as a fallback so a developer's exported value
+		// would otherwise leak into the spawned binary and silently
+		// override its default pool size.
+		"PODUP_LIBCOD_POOL",
+		"PODMAN_SOCKET",
+		"DOCKER_HOST",
+		"COMPOSE_PROJECT_NAME",
+		"COMPOSE_PROFILES",
+		"COMPOSE_FILE",
+		"NO_COLOR",
+		// The variable under test. The test runner may have it exported
+		// by accident; strip it so the "unset" run is genuinely unset.
+		"SECRETO",
+	] {
+		cmd.env_remove(key);
+	}
+	if let Some(v) = secret_value {
+		cmd.env("SECRETO", v);
+	}
+	cmd.output().expect("run podup audit")
+}
+
+#[test]
+fn audit_secret_in_environment_verdict_is_independent_of_var_export() {
+	// Same compose audited with `SECRETO` exported and without it must
+	// give the same exit code and the same findings. The risk is the
+	// same either way: a secret ends up in the container's environment
+	// whether it was authored as a literal or interpolated from
+	// `${VAR}`. A gate that flips on whether the developer's shell
+	// happened to export the variable is not a gate.
+	let body = "services:\n  web:\n    image: alpine:3.20\n    environment:\n      - DB_PASSWORD=${SECRETO}\n";
+	let path = write_compose(body);
+	let p = path.to_str().unwrap();
+
+	let out_unset = run_with_secret_env(&["-f", p, "audit", "--strict"], None);
+	let out_set = run_with_secret_env(&["-f", p, "audit", "--strict"], Some("valor"));
+
+	assert_eq!(
+		out_unset.status.code(),
+		out_set.status.code(),
+		"exit codes must agree; unset: {:?}, set: {:?}\nstdout unset:\n{}\nstderr unset:\n{}\nstdout set:\n{}\nstderr set:\n{}",
+		out_unset.status.code(),
+		out_set.status.code(),
+		String::from_utf8_lossy(&out_unset.stdout),
+		String::from_utf8_lossy(&out_unset.stderr),
+		String::from_utf8_lossy(&out_set.stdout),
+		String::from_utf8_lossy(&out_set.stderr),
+	);
+	// Both runs flag the secret-bearing key.
+	let stdout_unset = String::from_utf8_lossy(&out_unset.stdout);
+	let stdout_set = String::from_utf8_lossy(&out_set.stdout);
+	assert!(
+		stdout_unset.contains("secret_in_environment"),
+		"unset run must still flag the secret-bearing key:\n{stdout_unset}"
+	);
+	assert!(
+		stdout_set.contains("secret_in_environment"),
+		"set run must still flag the secret-bearing key:\n{stdout_set}"
+	);
+	// Neither run echoes the resolved value back into the message.
+	// Whatever `SECRETO` happens to resolve to, the message names the
+	// key, never the value.
+	assert!(
+		!stdout_unset.contains("valor") && !stdout_set.contains("valor"),
+		"neither run may echo the secret value into the message"
+	);
+	// The message no longer claims the value is hard-coded: that wording
+	// is false for the `${VAR}` shape that survives into the audit (the
+	// resolved value lives in the operator's environment, not in the
+	// compose file itself).
+	assert!(
+		!stdout_unset.contains("hard-coded") && !stdout_set.contains("hard-coded"),
+		"the message must not say `hard-coded`; that wording is false for ${{VAR}}:\nunset: {stdout_unset}\nset: {stdout_set}"
+	);
+}
+
+#[test]
+fn audit_secret_in_environment_flags_literal_secret() {
+	// The original behaviour we keep: a literal value under a
+	// secret-bearing key still fires, and the literal value is never
+	// echoed back.
+	let body = "services:\n  web:\n    image: alpine:3.20\n    environment:\n      - DB_PASSWORD=hunter2\n";
+	let path = write_compose(body);
+	let p = path.to_str().unwrap();
+	let out = run(&["-f", p, "audit", "--strict"]);
+	assert_eq!(
+		out.status.code(),
+		Some(1),
+		"literal DB_PASSWORD=hunter2 must fail --strict; got {:?}\nstderr: {}\nstdout: {}",
+		out.status.code(),
+		String::from_utf8_lossy(&out.stderr),
+		String::from_utf8_lossy(&out.stdout),
+	);
+	let stdout = String::from_utf8_lossy(&out.stdout);
+	assert!(stdout.contains("secret_in_environment"), "stdout: {stdout}");
+	assert!(
+		!stdout.contains("hunter2"),
+		"the literal must not be echoed: {stdout}"
+	);
+}
+
+#[test]
+fn audit_secret_in_environment_does_not_flag_passthrough_or_empty() {
+	// Two unrelated values that stay silent. `PASSTHROUGH` has no
+	// secret-bearing segment (its segments are `[PASSTHROUGH]`), so the
+	// check has nothing to match on; an empty literal under a non-secret
+	// key is unrelated to the check entirely.
+	let body = "services:\n  web:\n    image: alpine:3.20\n    environment:\n      - PASSTHROUGH=true\n      - LOG_LEVEL=\n";
+	let path = write_compose(body);
+	let p = path.to_str().unwrap();
+	let out = run(&["-f", p, "audit", "--format", "json"]);
+	let stdout = String::from_utf8_lossy(&out.stdout);
+	assert!(
+		!stdout.contains("secret_in_environment"),
+		"PASSTHROUGH=true and an empty non-secret key must not fire: {stdout}"
+	);
+}
