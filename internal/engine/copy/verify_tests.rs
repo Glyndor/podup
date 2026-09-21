@@ -1,6 +1,7 @@
 use super::super::archive::pack_path;
 use super::{
-	entry_landed, format_landed_failure, sent_entries, LandedFailure, SentEntry, SentKind,
+	entry_landed, format_landed_failure, sent_entries, LandedFailure, LinkCheck, SentEntry,
+	SentKind,
 };
 use crate::libpod::client::PathStat;
 
@@ -69,7 +70,10 @@ fn a_symlink_is_asked_about_and_confirmed() {
 		sorted(sent_entries(&tar).unwrap()),
 		vec![
 			("payload".to_string(), SentKind::Dir),
-			("payload/dangling".to_string(), SentKind::Link),
+			(
+				"payload/dangling".to_string(),
+				SentKind::Link("nowhere".to_string()),
+			),
 			("payload/real.txt".to_string(), SentKind::File(1)),
 		]
 	);
@@ -97,7 +101,10 @@ fn two_files_a_directory_a_symlink_and_an_empty_file() {
 		sorted(sent_entries(&tar).unwrap()),
 		vec![
 			("payload".to_string(), SentKind::Dir),
-			("payload/link".to_string(), SentKind::Link),
+			(
+				"payload/link".to_string(),
+				SentKind::Link("nowhere".to_string()),
+			),
 			("payload/nested".to_string(), SentKind::Dir),
 			("payload/nothing.txt".to_string(), SentKind::File(0)),
 			("payload/plain.txt".to_string(), SentKind::File(2)),
@@ -108,7 +115,8 @@ fn two_files_a_directory_a_symlink_and_an_empty_file() {
 
 /// A tar whose only entry is a symlink yields one `Link` entry: the stat
 /// endpoint answers 404 with a link stat in the header, so the link is
-/// confirmed there.
+/// confirmed there. The `Link` carries the target the tar header spells,
+/// read out of the GNU `linkname` field.
 #[cfg(unix)]
 #[test]
 fn a_tar_with_only_a_symlink_yields_one_link_entry() {
@@ -122,7 +130,7 @@ fn a_tar_with_only_a_symlink_yields_one_link_entry() {
 		sent_entries(&tar).unwrap(),
 		vec![SentEntry {
 			path: "dangling".to_string(),
-			kind: SentKind::Link,
+			kind: SentKind::Link("nowhere".to_string()),
 		}],
 		"only the symlink yields exactly one Link entry"
 	);
@@ -230,7 +238,10 @@ fn a_tar_with_file_directory_and_symlink_lists_just_those_three() {
 		sorted(sent_entries(&tar).unwrap()),
 		vec![
 			("payload".to_string(), SentKind::Dir),
-			("payload/link".to_string(), SentKind::Link),
+			(
+				"payload/link".to_string(),
+				SentKind::Link("nowhere".to_string()),
+			),
 			("payload/plain.txt".to_string(), SentKind::File(2)),
 			("payload/sub".to_string(), SentKind::Dir),
 		],
@@ -297,51 +308,105 @@ fn stat(size: u64, mode: u64) -> PathStat {
 }
 
 /// Planted-stat matrix for `entry_landed`. The cases the brief names, each in
-/// its own assertion so a failure points at the row that regressed.
+/// its own assertion so a failure points at the row that regressed. The link
+/// rows use a sent target and a `link_target` whose equality is the only thing
+/// that confirms a symlink at the destination; the planted stats here leave
+/// `link_target` empty so the link lands on the `Fallback` path (the
+/// pre-#1808 type check), and the dedicated link tests below cover the
+/// target-driven confirmation.
 #[test]
 fn entry_landed_with_planted_stats() {
 	// `File(0)` against a FIFO is not a file, so the unchanged pipe cannot
 	// confirm a zero-byte upload. This is the regular-file false positive the
 	// `MODE_TYPE` mask closes.
-	assert!(!entry_landed(SentKind::File(0), Some(&stat(0, FIFO_MODE))));
+	assert_eq!(
+		entry_landed(SentKind::File(0), "/tmp/x", Some(&stat(0, FIFO_MODE))),
+		LinkCheck::Refused,
+	);
 
 	// `File(0)` against a regular file at size 0 is the regular-file landed
 	// shape; the assertion is the regression net for the mask.
-	assert!(entry_landed(SentKind::File(0), Some(&stat(0, FILE_MODE))));
+	assert_eq!(
+		entry_landed(SentKind::File(0), "/tmp/x", Some(&stat(0, FILE_MODE))),
+		LinkCheck::Confirmed,
+	);
 
 	// `File(4096)` against a directory is not a file either: a directory stats
 	// at 4096 on most filesystems, the same size as the file.
-	assert!(!entry_landed(
-		SentKind::File(4096),
-		Some(&stat(4096, DIR_MODE))
-	));
+	assert_eq!(
+		entry_landed(SentKind::File(4096), "/tmp/x", Some(&stat(4096, DIR_MODE)),),
+		LinkCheck::Refused,
+	);
 
-	// `Link` against a symlink is the link-confirmation shape.
-	assert!(entry_landed(SentKind::Link, Some(&stat(7, LINK_MODE))));
+	// `Link` against a symlink where the runtime sent no `linkTarget` is
+	// the pre-#1808 type check, and the destination satisfies it.
+	assert_eq!(
+		entry_landed(
+			SentKind::Link("anywhere".to_string()),
+			"/tmp/link",
+			Some(&stat(7, LINK_MODE)),
+		),
+		LinkCheck::Fallback,
+		"link confirmed by type because the runtime did not send linkTarget",
+	);
 
 	// `Link` against a regular file is not a link: a target the link points
 	// at cannot satisfy the link confirmation, even at the right mode bits.
-	assert!(!entry_landed(SentKind::Link, Some(&stat(7, FILE_MODE))));
+	assert_eq!(
+		entry_landed(
+			SentKind::Link("anywhere".to_string()),
+			"/tmp/link",
+			Some(&stat(7, FILE_MODE)),
+		),
+		LinkCheck::Refused,
+	);
 }
 
 #[test]
 fn a_file_landed_when_it_is_a_file_of_the_size_sent() {
 	let sent = SentKind::File(4096);
-	assert!(entry_landed(sent, Some(&stat(4096, FILE_MODE))));
-	assert!(!entry_landed(sent, Some(&stat(4095, FILE_MODE))));
-	assert!(!entry_landed(sent, None));
+	assert_eq!(
+		entry_landed(sent.clone(), "/tmp/x", Some(&stat(4096, FILE_MODE))),
+		LinkCheck::Confirmed,
+	);
+	assert_eq!(
+		entry_landed(sent.clone(), "/tmp/x", Some(&stat(4095, FILE_MODE))),
+		LinkCheck::Refused,
+	);
+	assert_eq!(
+		entry_landed(sent.clone(), "/tmp/x", None),
+		LinkCheck::Absent
+	);
 	// A directory stats at 4096 too. Same number, not the file.
-	assert!(!entry_landed(sent, Some(&stat(4096, DIR_MODE))));
+	assert_eq!(
+		entry_landed(sent.clone(), "/tmp/x", Some(&stat(4096, DIR_MODE))),
+		LinkCheck::Refused,
+	);
 	// An empty file is a size like any other.
-	assert!(entry_landed(SentKind::File(0), Some(&stat(0, FILE_MODE))));
+	assert_eq!(
+		entry_landed(SentKind::File(0), "/tmp/x", Some(&stat(0, FILE_MODE))),
+		LinkCheck::Confirmed,
+	);
 }
 
 #[test]
 fn a_directory_landed_when_a_directory_is_there() {
-	assert!(entry_landed(SentKind::Dir, Some(&stat(4096, DIR_MODE))));
-	assert!(entry_landed(SentKind::Dir, Some(&stat(0, DIR_MODE))));
-	assert!(!entry_landed(SentKind::Dir, Some(&stat(4096, FILE_MODE))));
-	assert!(!entry_landed(SentKind::Dir, None));
+	assert_eq!(
+		entry_landed(SentKind::Dir, "/tmp/x", Some(&stat(4096, DIR_MODE))),
+		LinkCheck::Confirmed,
+	);
+	assert_eq!(
+		entry_landed(SentKind::Dir, "/tmp/x", Some(&stat(0, DIR_MODE))),
+		LinkCheck::Confirmed,
+	);
+	assert_eq!(
+		entry_landed(SentKind::Dir, "/tmp/x", Some(&stat(4096, FILE_MODE))),
+		LinkCheck::Refused,
+	);
+	assert_eq!(
+		entry_landed(SentKind::Dir, "/tmp/x", None),
+		LinkCheck::Absent
+	);
 }
 
 /// The user-facing error for a refused entry names the entry's path. The
@@ -351,7 +416,7 @@ fn a_directory_landed_when_a_directory_is_there() {
 fn the_refusal_names_the_entry_path() {
 	let failure = LandedFailure::Mismatch {
 		path: "payload/link".to_string(),
-		expected: SentKind::Link,
+		expected: SentKind::Link("anywhere".to_string()),
 		stat: Some(stat(0, LINK_MODE)),
 	};
 	let msg = format_landed_failure(&failure, "/tmp");
@@ -373,7 +438,7 @@ fn the_refusal_names_the_entry_path() {
 fn the_refusal_carries_the_stat_that_was_read() {
 	let failure = LandedFailure::Mismatch {
 		path: "payload/link".to_string(),
-		expected: SentKind::Link,
+		expected: SentKind::Link("anywhere".to_string()),
 		stat: Some(stat(0, LINK_MODE)),
 	};
 	let msg = format_landed_failure(&failure, "/tmp");
@@ -404,7 +469,7 @@ fn the_refusal_carries_the_stat_that_was_read() {
 fn the_refusal_for_a_404_without_stat_explains_the_missing_stat() {
 	let failure = LandedFailure::Mismatch {
 		path: "payload/link".to_string(),
-		expected: SentKind::Link,
+		expected: SentKind::Link("anywhere".to_string()),
 		stat: None,
 	};
 	let msg = format_landed_failure(&failure, "/tmp");
@@ -452,5 +517,238 @@ fn the_refusal_for_an_unreadable_archive_carries_the_reason() {
 	assert!(
 		!msg.contains("None"),
 		"no stat is named because no stat was asked for: {msg}"
+	);
+}
+
+// ---------------------------------------------------------------------------
+// Link-target confirmation tests (#1808).
+//
+// The pre-#1808 check satisfied any symlink at the destination on the type
+// bit alone; `entry_landed` now compares the value the tar header spelled
+// against what Podman reports in `linkTarget`, after the lexical
+// normalisation Podman applies to relative targets. The matrix below covers
+// the six cases the brief names, each with its own assertion so a failure
+// points at the row that regressed.
+// ---------------------------------------------------------------------------
+
+/// An absolute target that matches the runtime's `linkTarget` is confirmed
+/// by the target. The `size` is the length of the link text, both halves
+/// must agree.
+#[test]
+fn a_link_with_absolute_target_matching_is_confirmed() {
+	let sent = SentKind::Link("/etc/hostname".to_string());
+	let post = PathStat {
+		size: 13,
+		mode: LINK_MODE,
+		link_target: "/etc/hostname".to_string(),
+		..PathStat::default()
+	};
+	assert_eq!(
+		entry_landed(sent, "/tmp/link-a", Some(&post)),
+		LinkCheck::Confirmed,
+		"matching target and matching size confirm the link by target",
+	);
+}
+
+/// An absolute target that points elsewhere refuses the link. The
+/// destination's `linkTarget` is the truth the runtime answered, not the
+/// target the upload carried.
+#[test]
+fn a_link_with_absolute_target_pointing_elsewhere_is_refused() {
+	let sent = SentKind::Link("/etc/hostname".to_string());
+	let post = PathStat {
+		size: 13,
+		mode: LINK_MODE,
+		link_target: "/etc/hosts".to_string(),
+		..PathStat::default()
+	};
+	assert_eq!(
+		entry_landed(sent, "/tmp/link-a", Some(&post)),
+		LinkCheck::Refused,
+		"the link points somewhere else; the upload did not land",
+	);
+}
+
+/// A relative target sent as `../etc/hosts` from an entry at `/tmp/d/rel`
+/// against `linkTarget: "/tmp/etc/hosts"` confirms. This is the
+/// normalisation case: Podman reports the joined-and-resolved absolute
+/// path; the sent side has to be normalised the same way before the
+/// comparison, otherwise every relative link in a real tree would fail.
+#[test]
+fn a_link_with_relative_target_is_confirmed_after_normalisation() {
+	let sent = SentKind::Link("../etc/hosts".to_string());
+	let post = PathStat {
+		size: 12,
+		mode: LINK_MODE,
+		link_target: "/tmp/etc/hosts".to_string(),
+		..PathStat::default()
+	};
+	assert_eq!(
+		entry_landed(sent, "/tmp/d/rel", Some(&post)),
+		LinkCheck::Confirmed,
+		"the relative target normalises to the same path Podman reports",
+	);
+}
+
+/// A dangling relative target sent as `nothing-here` from an entry at
+/// `/tmp/d/dangling` against `linkTarget: "/tmp/d/nothing-here"` confirms.
+/// Podman resolves `..` lexically (and here there is none), but does not
+/// stat the resolved path; the link is still confirmed because the link text
+/// matches what the runtime put in the header.
+#[test]
+fn a_dangling_link_with_relative_target_is_confirmed_after_normalisation() {
+	let sent = SentKind::Link("nothing-here".to_string());
+	let post = PathStat {
+		size: 12,
+		mode: LINK_MODE,
+		link_target: "/tmp/d/nothing-here".to_string(),
+		..PathStat::default()
+	};
+	assert_eq!(
+		entry_landed(sent, "/tmp/d/dangling", Some(&post)),
+		LinkCheck::Confirmed,
+		"the dangling link's text matches what Podman put in linkTarget",
+	);
+}
+
+/// The normalised target matches but the byte length does not. The size
+/// check is independent evidence: a runtime that misreports one without
+/// the other still trips the comparison. A link that happens to point at
+/// the right path after lex-resolution but carries a different byte length
+/// (a different encoding of the same target, say) is refused.
+#[test]
+fn a_link_with_matching_target_but_wrong_size_is_refused() {
+	let sent = SentKind::Link("../etc/hosts".to_string());
+	let post = PathStat {
+		// The target text is 12 bytes, but the runtime says 14. Either the
+		// link text on disk is different from what the tar carried, or the
+		// runtime is reporting the length of the resolved path. Both are
+		// "the link that landed is not the link that was sent".
+		size: 14,
+		mode: LINK_MODE,
+		link_target: "/tmp/etc/hosts".to_string(),
+		..PathStat::default()
+	};
+	assert_eq!(
+		entry_landed(sent, "/tmp/d/rel", Some(&post)),
+		LinkCheck::Refused,
+		"the size disagrees with the sent target's byte length",
+	);
+}
+
+/// An empty `linkTarget` (an older runtime, or a Podman that stops
+/// sending the field) is not a mismatch; it is the runtime's silence on
+/// the question the confirmation needs answered. Fall back to the type
+/// check that existed before #1808 and say so in the variant, so the log
+/// can distinguish "confirmed by target" from "confirmed by type because
+/// the runtime sent no target".
+#[test]
+fn a_link_with_empty_link_target_falls_back_to_type() {
+	let sent = SentKind::Link("anywhere".to_string());
+	let post = PathStat {
+		size: 8,
+		mode: LINK_MODE,
+		link_target: String::new(),
+		..PathStat::default()
+	};
+	assert_eq!(
+		entry_landed(sent, "/tmp/link", Some(&post)),
+		LinkCheck::Fallback,
+		"empty linkTarget is the runtime's silence, not a wrong answer",
+	);
+}
+
+/// A symlink at the destination that carries a `linkTarget` pointing at
+/// something the upload did not send is refused even when the link text's
+/// byte length matches. The byte length and the normalised path are
+/// checked independently: getting one right without the other does not
+/// pass.
+#[test]
+fn a_link_with_size_match_but_wrong_target_is_refused() {
+	let sent = SentKind::Link("../etc/hosts".to_string());
+	let post = PathStat {
+		// The byte length matches the sent text (12), yet linkTarget
+		// disagrees. The destination is a link, but it points at
+		// something else.
+		size: 12,
+		mode: LINK_MODE,
+		link_target: "/tmp/etc/hostname".to_string(),
+		..PathStat::default()
+	};
+	assert_eq!(
+		entry_landed(sent, "/tmp/d/rel", Some(&post)),
+		LinkCheck::Refused,
+		"the link text's byte length matching does not excuse a wrong target",
+	);
+}
+
+/// The path the stat was taken at is the absolute container path of the
+/// entry, not a relative name. The normalisation uses the parent of that
+/// absolute path; passing a relative path here would yield a parent with no
+/// leading `/`, and the join would put the target on the wrong side.
+#[test]
+fn a_relative_target_against_an_absolute_parent_normalises_correctly() {
+	// Entry lives at `/srv/cfg/link`; sent target is `../etc/hosts`. The
+	// parent is `/srv/cfg`, joined is `/srv/cfg/../etc/hosts`, normalised
+	// is `/srv/etc/hosts`.
+	let sent = SentKind::Link("../etc/hosts".to_string());
+	let post = PathStat {
+		size: 12,
+		mode: LINK_MODE,
+		link_target: "/srv/etc/hosts".to_string(),
+		..PathStat::default()
+	};
+	assert_eq!(
+		entry_landed(sent, "/srv/cfg/link", Some(&post)),
+		LinkCheck::Confirmed,
+		"the absolute container path's parent is the right join base",
+	);
+}
+
+/// A symlink at the destination where the sent target's text matches but
+/// the mode bits do not (e.g. the destination is a regular file at the
+/// right size) is refused. The mode check runs first; the target check
+/// would otherwise confirm against a target that lives at the right name
+/// but is the wrong kind of entry.
+#[test]
+fn a_link_against_a_non_link_at_the_destination_is_refused() {
+	let sent = SentKind::Link("/etc/hostname".to_string());
+	let post = PathStat {
+		size: 13,
+		mode: FILE_MODE,
+		link_target: "/etc/hostname".to_string(),
+		..PathStat::default()
+	};
+	assert_eq!(
+		entry_landed(sent, "/tmp/x", Some(&post)),
+		LinkCheck::Refused,
+		"a regular file at the destination is not a link, even at the right size",
+	);
+}
+
+/// A backslash in a link target is an ordinary character in a container
+/// path, not a separator, and the normalisation must say so on every host.
+///
+/// This is a platform-divergence guard, not a taste one. The first shape of
+/// `lex_normalize` walked `std::path::Path::components`, which splits on
+/// `\` on Windows and not on Unix. A link named `a\b` would then normalise
+/// to one component on the Linux lane and two on the Windows lane, and a
+/// `cp` verification would confirm or refuse depending on which host ran
+/// `podup` rather than on what the runtime answered. `rust / Test
+/// (windows-latest)` is a required check, so the divergence would have been
+/// caught only if a test exercised this byte — and none did.
+#[test]
+fn a_backslash_in_a_target_is_not_a_separator() {
+	let sent = SentKind::Link("a\\b".to_string());
+	let post = PathStat {
+		size: 3,
+		mode: 1 << 27,
+		mtime: String::new(),
+		link_target: "/tmp/d/a\\b".to_string(),
+	};
+	assert_eq!(
+		entry_landed(sent, "/tmp/d/link", Some(&post)),
+		LinkCheck::Confirmed,
+		"`a\\b` is one path component named `a\\b`, joined under /tmp/d"
 	);
 }

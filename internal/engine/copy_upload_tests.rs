@@ -24,13 +24,17 @@ use crate::libpod::urlencoded;
 const CONTAINER: &str = "proj-web-1";
 
 /// One path in the fake container.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum OnDisk {
 	File(u64),
 	Dir,
-	/// A symbolic link; the stat header carries its size and the
-	/// `os.ModeSymlink` mode bit (1<<27 | 0o777).
-	Link(u64),
+	/// A symbolic link with its target as written in the tar; the stat
+	/// header's `linkTarget` is the target normalised against the
+	/// directory the link lives in (the way Podman 5.7.0 reports it).
+	Link {
+		size: u64,
+		target: String,
+	},
 	/// A named pipe; the stat header carries size 0 and the
 	/// `os.ModeNamedPipe` mode bit (1<<25 | 0o644).
 	Fifo,
@@ -47,17 +51,43 @@ enum Put {
 	Answers(u16),
 }
 
-fn stat_header(path: &str, entry: OnDisk) -> String {
+/// Podman 5.7.0 normalises `linkTarget` lexically against the directory
+/// the link lives in: a relative target is joined to the parent of the
+/// link's path and `.` / `..` are collapsed; an absolute target is left
+/// alone. The fake mirrors that so the link confirmation can compare the
+/// sent target against the value the runtime would actually return.
+fn normalize_link_target_for_fake(target: &str, link_path: &str) -> String {
+	if target.starts_with('/') {
+		return target.to_string();
+	}
+	let parent = link_path
+		.rfind('/')
+		.map(|idx| if idx == 0 { "/" } else { &link_path[..idx] })
+		.unwrap_or("/");
+	let joined = if parent == "/" {
+		format!("/{}", target)
+	} else {
+		format!("{}/{}", parent, target)
+	};
+	crate::engine::copy::verify::normalize_for_test(&joined)
+}
+
+fn stat_header(path: &str, entry: &OnDisk) -> String {
 	let name = path.rsplit('/').next().unwrap_or_default();
-	let (size, mode, is_dir) = match entry {
-		OnDisk::File(size) => (size, 420u64, false),
-		OnDisk::Dir => (4096, 2_147_484_141, true),
-		OnDisk::Link(size) => (size, (1u64 << 27) | 0o777, false),
-		OnDisk::Fifo => (0, (1u64 << 25) | 0o644, false),
+	let (size, mode, is_dir, link_target) = match entry {
+		OnDisk::File(size) => (*size, 420u64, false, String::new()),
+		OnDisk::Dir => (4096, 2_147_484_141, true, String::new()),
+		OnDisk::Link { size, target } => (
+			*size,
+			(1u64 << 27) | 0o777,
+			false,
+			normalize_link_target_for_fake(target, path),
+		),
+		OnDisk::Fifo => (0, (1u64 << 25) | 0o644, false, String::new()),
 		OnDisk::Unreadable => unreachable!("answered with a 500, not a stat"),
 	};
 	let json = format!(
-		r#"{{"name":"{name}","size":{size},"mode":{mode},"mtime":"2026-09-18T19:50:59.194580835-05:00","isDir":{is_dir},"linkTarget":"{path}"}}"#
+		r#"{{"name":"{name}","size":{size},"mode":{mode},"mtime":"2026-09-18T19:50:59.194580835-05:00","isDir":{is_dir},"linkTarget":"{link_target}"}}"#
 	);
 	base64::engine::general_purpose::STANDARD.encode(json)
 }
@@ -71,7 +101,10 @@ fn stat_header(path: &str, entry: OnDisk) -> String {
 /// default for `tree_landed`'s link confirmation); a runtime that does not
 /// (older, or a stub) drops the header and the link cannot be confirmed.
 fn runtime_full(put: Put, disk: &[(&str, OnDisk)], link_stat_on_404: bool) -> FakePodman {
-	let disk: Vec<(String, OnDisk)> = disk.iter().map(|(p, e)| ((*p).to_string(), *e)).collect();
+	let disk: Vec<(String, OnDisk)> = disk
+		.iter()
+		.map(|(p, e)| ((*p).to_string(), e.clone()))
+		.collect();
 	fake_podman::start_replying(move |method, target| match method {
 		"PUT" => match put {
 			Put::HangsUp => FakeReply::ClosedWithoutResponse,
@@ -82,13 +115,13 @@ fn runtime_full(put: Put, disk: &[(&str, OnDisk)], link_stat_on_404: bool) -> Fa
 			.find(|(path, _)| target.ends_with(&format!("archive?path={}", urlencoded(path))))
 			.map(|(path, entry)| match entry {
 				OnDisk::Unreadable => FakeReply::Headers(500, Vec::new()),
-				OnDisk::Link(_) if link_stat_on_404 => FakeReply::Headers(
+				OnDisk::Link { .. } if link_stat_on_404 => FakeReply::Headers(
 					404,
-					vec![("X-Docker-Container-Path-Stat", stat_header(path, *entry))],
+					vec![("X-Docker-Container-Path-Stat", stat_header(path, entry))],
 				),
 				_ => FakeReply::Headers(
 					200,
-					vec![("X-Docker-Container-Path-Stat", stat_header(path, *entry))],
+					vec![("X-Docker-Container-Path-Stat", stat_header(path, entry))],
 				),
 			})
 			.unwrap_or(FakeReply::Headers(404, Vec::new())),
@@ -243,8 +276,14 @@ async fn a_directory_whose_entries_do_not_match_what_was_sent_is_a_failure() {
 
 	for (path, instead, case) in stale {
 		let disk: Vec<(&str, OnDisk)> = LANDED_TREE
-			.into_iter()
-			.map(|(p, e)| if p == path { (p, instead) } else { (p, e) })
+			.iter()
+			.map(|(p, e)| {
+				if *p == path {
+					(*p, instead.clone())
+				} else {
+					(*p, e.clone())
+				}
+			})
 			.collect();
 		let fake = runtime(Put::HangsUp, &disk);
 
@@ -369,9 +408,12 @@ async fn a_renamed_directory_is_confirmed_under_its_new_name() {
 	let payload = payload_tree(dir.path());
 	let renamed: Vec<(String, OnDisk)> = LANDED_TREE
 		.into_iter()
-		.map(|(p, e)| (p.replacen("/tmp/payload", "/tmp/renamed", 1), e))
+		.map(|(p, e)| (p.replacen("/tmp/payload", "/tmp/renamed", 1), e.clone()))
 		.collect();
-	let renamed: Vec<(&str, OnDisk)> = renamed.iter().map(|(p, e)| (p.as_str(), *e)).collect();
+	let renamed: Vec<(&str, OnDisk)> = renamed
+		.iter()
+		.map(|(p, e)| (p.as_str(), e.clone()))
+		.collect();
 
 	let landed = runtime(Put::HangsUp, &renamed);
 	let result = upload(&landed, &payload, "renamed", Some("renamed")).await;
@@ -466,7 +508,13 @@ async fn a_directory_with_a_link_is_confirmed_when_the_404_carries_the_stat() {
 
 	let disk: [(&str, OnDisk); 2] = [
 		("/tmp/payload", OnDisk::Dir),
-		("/tmp/payload/link", OnDisk::Link(4)),
+		(
+			"/tmp/payload/link",
+			OnDisk::Link {
+				size: 5,
+				target: "a.txt".to_string(),
+			},
+		),
 	];
 	let fake = runtime_full(Put::HangsUp, &disk, true);
 
@@ -580,7 +628,13 @@ async fn an_archive_with_only_the_three_verifiable_kinds_is_confirmed() {
 
 	let disk: [(&str, OnDisk); 4] = [
 		("/tmp/payload", OnDisk::Dir),
-		("/tmp/payload/link", OnDisk::Link(9)),
+		(
+			"/tmp/payload/link",
+			OnDisk::Link {
+				size: 9,
+				target: "plain.txt".to_string(),
+			},
+		),
 		("/tmp/payload/plain.txt", OnDisk::File(2)),
 		("/tmp/payload/sub", OnDisk::Dir),
 	];
@@ -628,7 +682,13 @@ async fn a_symlink_source_is_confirmed_when_the_destination_is_a_symlink() {
 	let link = dir.path().join("dangling");
 	std::os::unix::fs::symlink("nowhere", &link).unwrap();
 
-	let landed: [(&str, OnDisk); 1] = [("/tmp/dangling", OnDisk::Link(7))];
+	let landed: [(&str, OnDisk); 1] = [(
+		"/tmp/dangling",
+		OnDisk::Link {
+			size: 7,
+			target: "nowhere".to_string(),
+		},
+	)];
 	let fake = runtime_full(Put::HangsUp, &landed, true);
 
 	let result = upload(&fake, &link, "dangling", None).await;
