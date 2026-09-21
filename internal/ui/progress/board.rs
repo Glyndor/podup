@@ -24,6 +24,10 @@ pub enum Kind {
 	Image,
 	/// A container, one per replica rather than one per service.
 	Container,
+	/// A `cp` archive transfer between a service container and the host.
+	/// One row per call, named after the destination side, the place the
+	/// bytes land.
+	Cp,
 }
 
 impl Kind {
@@ -35,6 +39,7 @@ impl Kind {
 			Kind::Secret => "Secret",
 			Kind::Image => "Image",
 			Kind::Container => "Container",
+			Kind::Cp => "Cp",
 		}
 	}
 
@@ -47,6 +52,7 @@ impl Kind {
 			"Secret" => Some(Kind::Secret),
 			"Image" => Some(Kind::Image),
 			"Container" => Some(Kind::Container),
+			"Cp" => Some(Kind::Cp),
 			_ => None,
 		}
 	}

@@ -8,7 +8,7 @@ fn reader_over(chunks: Vec<ChunkItem>, cap: u64) -> ChannelReader {
 			.expect("test channel must accept the fixture");
 	}
 	drop(tx);
-	ChannelReader::new(rx, cap)
+	ChannelReader::new(rx, cap, None)
 }
 
 #[test]
