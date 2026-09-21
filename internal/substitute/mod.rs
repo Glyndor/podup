@@ -6,12 +6,68 @@
 
 mod parse;
 
-use std::collections::HashMap;
+use std::cell::Cell;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use crate::error::{ComposeError, Result};
 
 use parse::{collect_var_name, is_var_start, parse_braced_var, resolve_modifier};
+
+// ---------------------------------------------------------------------------
+// Warning emission
+// ---------------------------------------------------------------------------
+//
+// An unset variable referenced in a compose file is reported once via
+// `tracing::warn!` before it defaults to the empty string, matching docker
+// compose v2 so a config typo does not pass silently. The compose document
+// is interpolated more than once per command (once during the parse into the
+// typed `ComposeFile`, again by the raw nested-key diagnostic, which needs the
+// interpolated shape to detect keys the typed model drops), so the warning
+// must be silenced in the diagnostic pass. The flag below does that: the
+// diagnostic call site holds a [`warnings::Guard`] for the duration of its
+// pass, and [`substitute_depth`] honours the flag before emitting.
+//
+// Within one parse pass, the same variable referenced more than once in the
+// same input is reported once: a missing `FOO` is one piece of information,
+// not three, and the operator only needs to know that `FOO` is unset, not
+// how many scalars referenced it. The dedup is bounded to a single pass
+// (`HashSet<String>` is owned by `interpolate_scalar` and threaded through
+// nested modifier interpolation), so two different passes still each get a
+// chance to warn if both run with the flag enabled.
+
+thread_local! {
+	static WARN_ENABLED: Cell<bool> = const { Cell::new(true) };
+}
+
+pub(crate) mod warnings {
+	use super::WARN_ENABLED;
+
+	/// RAII handle that sets the substitute-warn flag for its scope.
+	///
+	/// Constructed with the desired value (`true` to enable, `false` to
+	/// silence), it stores the previous value and restores it on drop so
+	/// nested guards and panic paths unwind cleanly. Used by the raw
+	/// nested-key diagnostic to suppress unset-variable warnings: that pass
+	/// exists to diff unknown keys in option blocks, not to emit warnings
+	/// the parse pass already emitted.
+	pub(crate) struct Guard {
+		prev: bool,
+	}
+
+	impl Guard {
+		pub(crate) fn new(enabled: bool) -> Self {
+			let prev = WARN_ENABLED.with(|c| c.replace(enabled));
+			Guard { prev }
+		}
+	}
+
+	impl Drop for Guard {
+		fn drop(&mut self) {
+			WARN_ENABLED.with(|c| c.set(self.prev));
+		}
+	}
+}
 
 /// Maximum nesting depth for interpolated default/alternate values
 /// (`${A:-${A:-…}}`). Real compose files nest a handful of levels at most; this
@@ -56,10 +112,29 @@ pub(crate) const MAX_INTERP_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 /// Substitute all `$VAR` / `${VAR}` references in `input` using `vars`.
 ///
 /// `vars` should contain both the process environment and the `.env` file
-/// entries (process environment takes precedence).
+/// entries (process environment takes precedence). Each top-level call gets
+/// its own dedup set, so a single input with `${X}` three times emits one
+/// warning; if a caller wants to share a dedup set across many inputs (so a
+/// `${X}` referenced once in input A and twice in input B yields one
+/// warning, not two), use [`substitute_with_warned`] and pass the same set
+/// to every call.
 pub fn substitute(input: &str, vars: &HashMap<String, String>) -> Result<String> {
 	let mut spent = 0usize;
-	substitute_depth(input, vars, 0, &mut spent)
+	let mut warned = HashSet::new();
+	substitute_depth(input, vars, 0, &mut spent, &mut warned)
+}
+
+/// [`substitute`] with a dedup set supplied by the caller. Used by the
+/// document-level interpolator ([`crate::compose::merge`]) so every scalar
+/// in the same compose document shares one dedup set: three references to
+/// `${X}` across the document warn once.
+pub(crate) fn substitute_with_warned(
+	input: &str,
+	vars: &HashMap<String, String>,
+	warned: &mut HashSet<String>,
+) -> Result<String> {
+	let mut spent = 0usize;
+	substitute_depth(input, vars, 0, &mut spent, warned)
 }
 
 /// [`substitute`] with a budget that outlives the call, so a caller
@@ -68,17 +143,27 @@ pub(crate) fn substitute_budgeted(
 	input: &str,
 	vars: &HashMap<String, String>,
 	spent: &mut usize,
+	warned: &mut HashSet<String>,
 ) -> Result<String> {
-	substitute_depth(input, vars, 0, spent)
+	substitute_depth(input, vars, 0, spent, warned)
 }
 
 /// Inner substitution carrying the current nesting `depth` so recursive
 /// interpolation of modifier defaults/alternates (`${A:-${B}}`) is bounded.
+///
+/// `warned` records every variable name that already triggered an
+/// unset-variable warning on this pass, so three references to the same
+/// missing variable emit one warning rather than three. The set is owned
+/// by the top-level [`substitute`] or [`substitute_budgeted`] call and
+/// threaded through nested interpolation, so a recursive substitute
+/// invoked from a modifier default (`${A:-${B:-default}}`) honours the
+/// outer dedup and a `B` referenced in two modifiers warns at most once.
 pub(super) fn substitute_depth(
 	input: &str,
 	vars: &HashMap<String, String>,
 	depth: usize,
 	spent: &mut usize,
+	warned: &mut HashSet<String>,
 ) -> Result<String> {
 	if depth > MAX_INTERP_DEPTH {
 		return Err(ComposeError::InvalidSubstitution(format!(
@@ -106,7 +191,7 @@ pub(super) fn substitute_depth(
 			Some('{') => {
 				chars.next();
 				let (var, modifier) = parse_braced_var(&mut chars)?;
-				let value = resolve_modifier(var.clone(), modifier, vars, depth, spent)?;
+				let value = resolve_modifier(var.clone(), modifier, vars, depth, spent, warned)?;
 				check_output_cap(&out, &value, &var)?;
 				check_document_budget(spent, &value, &var)?;
 				out.push_str(&value);
@@ -116,10 +201,7 @@ pub(super) fn substitute_depth(
 				let value = match vars.get(&var) {
 					Some(v) => v.clone(),
 					None => {
-						// Match docker compose v2: warn before defaulting to blank.
-						tracing::warn!(
-							"The {var} variable is not set. Defaulting to a blank string."
-						);
+						warn_unset(&var, warned);
 						String::new()
 					}
 				};
@@ -134,6 +216,21 @@ pub(super) fn substitute_depth(
 	}
 
 	Ok(out)
+}
+
+/// Emit one warning per unique unset variable name during this pass, gated by
+/// the global [`WARN_ENABLED`] flag the raw nested-key diagnostic toggles for
+/// its scope. Both emitters (`${VAR}` via [`parse::resolve_modifier`] and
+/// `$VAR` via [`substitute_depth`]) call through here so dedup and the
+/// silencing flag are evaluated in one place.
+fn warn_unset(var: &str, warned: &mut HashSet<String>) {
+	if !WARN_ENABLED.with(|c| c.get()) {
+		return;
+	}
+	if !warned.insert(var.to_string()) {
+		return;
+	}
+	tracing::warn!("The {var} variable is not set. Defaulting to a blank string.");
 }
 
 /// Refuse a variable expansion that would push the cumulative interpolation

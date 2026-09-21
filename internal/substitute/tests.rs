@@ -539,16 +539,18 @@ fn the_document_budget_bounds_repetition_spread_across_scalars() {
 	// Under the budget: still accepted, because a long secret across a
 	// handful of fields is a legitimate document.
 	let mut spent = 0usize;
+	let mut warned = std::collections::HashSet::new();
 	for _ in 0..8 {
-		super::substitute_budgeted("${BIG}", &vars, &mut spent)
+		super::substitute_budgeted("${BIG}", &vars, &mut spent, &mut warned)
 			.expect("eight one-mebibyte substitutions stay under the budget");
 	}
 
 	// Over it: refused, and the message names the variable so a large
 	// legitimate file can be told apart from a hostile one.
 	let mut spent = 0usize;
+	let mut warned = std::collections::HashSet::new();
 	let err = (0..64)
-		.map(|_| super::substitute_budgeted("${BIG}", &vars, &mut spent))
+		.map(|_| super::substitute_budgeted("${BIG}", &vars, &mut spent, &mut warned))
 		.find_map(|r| r.err())
 		.expect("sixty-four must cross the document budget");
 	let msg = format!("{err}");
