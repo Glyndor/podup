@@ -72,6 +72,22 @@ pub use engine::{
 pub fn effective_no_new_privileges(service: &crate::compose::types::Service) -> Option<bool> {
 	crate::engine::container::parse_security_opts(service).no_new_privileges
 }
+/// Ports the parse-time port-exposure warning would flag: every entry
+/// the engine sees as published without an explicit host IP, so the
+/// bind falls on every interface. Each tuple is `(service_name,
+/// host_port_label)`; `host_port_label` is the operator-visible port
+/// (a single number for `8080:80`, a range string for `published:
+/// "8080-8090"`). Surfaced for the audit module so its
+/// `port_published_on_all_interfaces` check is the same notion
+/// `up`/`config` use rather than a divergent second opinion (`#1835`).
+pub fn ports_published_on_all_interfaces(
+	file: &crate::compose::types::ComposeFile,
+) -> Vec<(String, String)> {
+	crate::compose::diagnostics::ports_published_on_all_interfaces(file)
+		.into_iter()
+		.map(|e| (e.service, e.host))
+		.collect()
+}
 /// The crate's error type and `Result` alias, surfaced so callers handle one
 /// error enum across parsing and engine calls.
 pub use error::{ComposeError, Result};

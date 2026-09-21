@@ -35,6 +35,8 @@ services:
     userns_mode: null
     environment:
       - DB_PASSWORD=hunter2
+    ports:
+      - \"5432:5432\"
 ";
 
 #[test]
