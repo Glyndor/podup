@@ -6,7 +6,10 @@
 //! [`podup::compose::types::Service`]. Each check returns the list of
 //! [`Finding`]s it raised; [`audit_file`] walks the file and the
 //! [`render_table`]/[`render_json`] functions translate the result into the
-//! `--format table|json` output the CLI asked for.
+//! `--format table|json` output the CLI asked for. `audit --list-checks` does
+//! not walk a compose file at all: it enumerates the same registry the audit
+//! dispatches against, so an integrator diffing the listing between releases
+//! learns about every check the run path can fire.
 
 use std::io::{self, Write};
 
@@ -183,6 +186,59 @@ pub fn render_json_to<W: Write>(w: &mut W, report: &AuditReport) -> io::Result<(
 	writeln!(w, "{out}")
 }
 
+/// Render every check the audit carries as one `<id>\t<description>` line per
+/// entry. The id is the same `&'static str` a finding would carry; the
+/// description is the prose summary drift detection diffs between releases.
+/// `--list-checks` runs without a compose file, so the listing comes straight
+/// from the registry rather than from any parsed input.
+pub fn render_list_checks_table() {
+	let stdout = io::stdout();
+	let mut out = stdout.lock();
+	let _ = render_list_checks_table_to(&mut out);
+}
+
+/// [`render_list_checks_table`] writing to `w`. The id and description are
+/// both `&'static str` and ASCII (the description is the one-line prose the
+/// registry carries), so no sanitisation runs here; nothing the registry
+/// holds is user-controlled.
+pub fn render_list_checks_table_to<W: Write>(w: &mut W) -> io::Result<()> {
+	for check in checks::CHECK_REGISTRY {
+		writeln!(w, "{}\t{}", check.id, check.description)?;
+	}
+	Ok(())
+}
+
+/// Render every check the audit carries as one JSON object per entry, wrapped
+/// in `{"checks": [...]}`. Same key shape a consumer already learns from
+/// `audit --format json` (`findings` is `[]`, `checks` is the listing), so a
+/// JSON parser treats the two as siblings of the same envelope rather than
+/// two unrelated shapes.
+pub fn render_list_checks_json() {
+	let stdout = io::stdout();
+	let mut out = stdout.lock();
+	render_list_checks_json_to(&mut out).expect("write to stdout");
+}
+
+/// [`render_list_checks_json`] writing to `w`. `serde_json` orders the
+/// per-entry keys alphabetically (`description`, then `id`), giving the
+/// stable shape a diff between releases can rely on.
+pub fn render_list_checks_json_to<W: Write>(w: &mut W) -> io::Result<()> {
+	let entries: Vec<serde_json::Value> = checks::CHECK_REGISTRY
+		.iter()
+		.map(|c| {
+			serde_json::json!({
+				"id": c.id,
+				"description": c.description,
+			})
+		})
+		.collect();
+	let out = serde_json::json!({ "checks": entries });
+	writeln!(w, "{out}")
+}
+
+#[cfg(test)]
+#[path = "list_checks_tests.rs"]
+mod list_checks_tests;
 #[cfg(test)]
 #[path = "audit_tests.rs"]
 mod tests;

@@ -1,0 +1,466 @@
+//! The per-check run functions: one pure function per audit check id, each
+//! returning the findings a service raises under that check. Empty list =
+//! passed. Split out of `checks.rs` so the registry (which enumerates them
+//! for `audit --list-checks`) and the function bodies stay readable on their
+//! own; a new check still adds one entry to the registry plus one function
+//! here. The drift test in `audit_tests.rs` pins the registry id against the
+//! `&'static str` each function passes to `finding`, so a change that updates
+//! one side and not the other cannot land.
+
+use podup::compose::types::{ComposeFile, Service};
+use podup::size;
+// The audit must read the runtime value a `security_opt` entry resolves to,
+// not the raw compose-side text (#1743). `podup::effective_no_new_privileges`
+// calls the engine's own `parse_security_opts` so the two cannot drift again.
+use podup::effective_no_new_privileges;
+
+use super::Finding;
+
+/// Field-name segments the `secret_in_environment` check matches after
+/// splitting: `PASSWORD`, `SECRET`, `TOKEN`, `KEY`. Comparison is segment
+/// equality, case-insensitive (segments are upper-cased before the
+/// lookup). Do not rename this back to a substring list: `contains` here
+/// reported `MONKEY_HABITAT` and `MD_Keywords` as hard-coded secrets
+/// (#1709), and the name is what says which of the two this is.
+const SECRET_NAME_SEGMENTS: &[&str] = &["PASSWORD", "SECRET", "TOKEN", "KEY"];
+
+/// Split an environment key into upper-case segments. Splits on the
+/// separators `_`, `-`, and `.`, and at camelCase (lower-to-upper) and
+/// PascalCase (upper-upper-followed-by-lower) boundaries. The camelCase
+/// split is what kept `apiToken` matching under the new rule; without
+/// it the helper would have treated `apiToken` as a single segment and
+/// the check would have stopped flagging it after the substring match
+/// was removed.
+pub fn segments(name: &str) -> Vec<String> {
+	let mut out = Vec::new();
+	for part in name.split(['_', '-', '.']) {
+		if part.is_empty() {
+			continue;
+		}
+		// Env keys are conventional identifiers and the keyword list is
+		// ASCII; working in bytes keeps the boundary check free of a
+		// UTF-8 decode at every step. A non-ASCII byte is upper-cased
+		// as-is and never splits on either side.
+		let bytes = part.as_bytes();
+		let mut start = 0;
+		let mut i = 1;
+		while i < bytes.len() {
+			let prev = bytes[i - 1];
+			let cur = bytes[i];
+			// Lower-to-upper: `aB`. A non-ASCII lead byte counts as the
+			// lower side: before this, `contains` flagged `NKey` spelled
+			// with a leading n-tilde, and dropping that would have been a
+			// silent false negative rather than the false positive #1709
+			// set out to remove. The split index is always an ASCII byte,
+			// so it is always a char boundary.
+			let lower_upper =
+				(prev.is_ascii_lowercase() || !prev.is_ascii()) && cur.is_ascii_uppercase();
+			// Upper-upper-followed-by-lower: `ABc` (PascalCase).
+			let upper_upper_lower = prev.is_ascii_uppercase()
+				&& cur.is_ascii_uppercase()
+				&& bytes.get(i + 1).is_some_and(|b| b.is_ascii_lowercase());
+			if lower_upper || upper_upper_lower {
+				out.push(part[start..i].to_ascii_uppercase());
+				start = i;
+			}
+			i += 1;
+		}
+		out.push(part[start..].to_ascii_uppercase());
+	}
+	out
+}
+
+/// `privileged: true`, grants extended host privileges that bypass the
+/// default capability set. Under rootless Podman the effect is reduced but
+/// the flag still means "give me more than the baseline"; it's never
+/// incidental.
+pub fn check_privileged(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
+	if service.privileged == Some(true) {
+		vec![finding(
+			name,
+			"privileged",
+			"privileged: true grants extended host privileges",
+		)]
+	} else {
+		Vec::new()
+	}
+}
+
+/// Host-binding namespacing modes: `pid`, `ipc`, `uts`, `cgroup`, `userns_mode`
+/// set to `host` or `container:<id>`, or `network_mode` carrying the same. One
+/// finding per active mode. The `container:<id>` form is the share-another-
+/// container mode the runtime detector in
+/// `internal/engine/container/host_mode.rs` already warns on; the audit
+/// detector must agree, otherwise `podup audit --strict` would pass a file
+/// the engine later refuses to run silently (#1746).
+pub fn check_host_namespace(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
+	let mut out = Vec::new();
+	if let Some(mode) = service.network_mode.as_deref() {
+		if mode == "host" {
+			out.push(finding(
+				name,
+				"host_namespace",
+				"network_mode: host shares the host's network namespace",
+			));
+		} else if let Some(target) = mode.strip_prefix("container:") {
+			out.push(finding(
+				name,
+				"host_namespace",
+				&format!(
+					"network_mode: container:{target} shares another container's network namespace"
+				),
+			));
+		}
+	}
+	for field in ["pid", "ipc", "uts", "cgroup", "userns_mode"] {
+		let value = match field {
+			"pid" => &service.pid,
+			"ipc" => &service.ipc,
+			"uts" => &service.uts,
+			"cgroup" => &service.cgroup,
+			"userns_mode" => &service.userns_mode,
+			_ => unreachable!("checked field list"),
+		};
+		if let Some(mode) = value.as_deref() {
+			if mode == "host" {
+				out.push(finding(
+					name,
+					"host_namespace",
+					&format!("{field}: host shares the host's {field} namespace"),
+				));
+			} else if let Some(target) = mode.strip_prefix("container:") {
+				out.push(finding(
+					name,
+					"host_namespace",
+					&format!(
+						"{field}: container:{target} shares another container's {field} namespace"
+					),
+				));
+			}
+		}
+	}
+	out
+}
+
+/// `cap_add: [SYS_ADMIN]`, `cap_add: [SYS_MODULE]`, or any other capability
+/// in the curated dangerous list. The runtime honours exactly what was
+/// asked for, so reading the resolved value cannot narrow the audit; this
+/// check exists because the spec has no opinion about which capabilities
+/// are dangerous, and the operator who ships `--strict` in CI needs one
+/// (`#1743`).
+pub fn check_dangerous_capability(
+	name: &str,
+	service: &Service,
+	_file: &ComposeFile,
+) -> Vec<Finding> {
+	let mut out = Vec::new();
+	for cap in &service.cap_add {
+		if let Some(reason) = dangerous_capability_reason(&normalized_capability(cap)) {
+			out.push(finding(
+				name,
+				"dangerous_capability",
+				&format!("cap_add: {cap}: {reason}"),
+			));
+		}
+	}
+	out
+}
+
+/// Returns the reason a normalised capability (`CAP_` stripped,
+/// upper-cased) is on the dangerous list, or `None` when it is not. The
+/// list is curated against the CIS Docker Benchmark and the Podman
+/// hardening notes: each entry either grants a path to host-level
+/// compromise (kernel / syscall / audit), breaks the container's file
+/// or device isolation, or subverts networking in a way that lets one
+/// container attack another. `SYS_ADMIN` and `ALL` are the obvious
+/// root-equivalents; the rest are the narrower capabilities an attacker
+/// chains into the same outcome.
+fn dangerous_capability_reason(cap: &str) -> Option<&'static str> {
+	Some(match cap {
+		"ALL" => "every capability, equivalent to root",
+		"SYS_ADMIN" => "broad kernel administration, effectively root",
+		"SYS_MODULE" => "load or unload kernel modules (root-equivalent)",
+		"DAC_READ_SEARCH" => "bypass file read and directory search permission checks",
+		"SYS_RAWIO" => "raw I/O port access, can crash or compromise the host kernel",
+		"SYS_PTRACE" => "ptrace any process, including those in other containers",
+		"NET_ADMIN" => "arbitrary network interface and routing changes",
+		"SYS_BOOT" => "reboot or halt the host from inside the container",
+		"MKNOD" => "create device nodes that mimic host block devices",
+		"SYSLOG" => "read the kernel ring buffer (information disclosure)",
+		"AUDIT_CONTROL" => "configure the kernel audit subsystem",
+		"AUDIT_WRITE" => "tamper with the audit log",
+		"SETFCAP" => "set arbitrary file capabilities on host binaries",
+		_ => return None,
+	})
+}
+
+/// `read_only` not set to `true`, the container's rootfs is writable.
+/// Compose's default is `false`; an absent key and an explicit `false` both
+/// keep the filesystem writable, so the check fires unless the service
+/// opted into read-only.
+pub fn check_writable_root(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
+	if service.read_only != Some(true) {
+		vec![finding(
+			name,
+			"writable_root",
+			"read_only is not true: the container's root filesystem is writable",
+		)]
+	} else {
+		Vec::new()
+	}
+}
+
+/// `cap_drop` without `ALL`, the service can inherit a broader capability
+/// set than it asked to drop. Spec asks for `ALL` (so the service starts
+/// from nothing and opts back in via `cap_add:`).
+pub fn check_no_cap_drop_all(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
+	if !service
+		.cap_drop
+		.iter()
+		.any(|c| normalized_capability(c) == "ALL")
+	{
+		vec![finding(
+			name,
+			"no_cap_drop_all",
+			"cap_drop does not contain ALL: the service keeps the runtime's default capability set",
+		)]
+	} else {
+		Vec::new()
+	}
+}
+
+/// `security_opt` without `no-new-privileges:true`. Podman spells it
+/// `no-new-privileges` (no `:true`); both spellings are accepted. The check
+/// asks the engine's own `parse_security_opts` for the resolved value
+/// (`#1743`): the engine splits on `:` or `=` and last-wins, so an audit
+/// that splits on `:` only disagrees with the runtime on every docker-form
+/// `=true` and on contradictory multi-entry lists like
+/// `[no-new-privileges:true, no-new-privileges:false]`.
+pub fn check_no_new_privileges_off(
+	name: &str,
+	service: &Service,
+	_file: &ComposeFile,
+) -> Vec<Finding> {
+	if effective_no_new_privileges(service) == Some(true) {
+		Vec::new()
+	} else {
+		vec![finding(
+			name,
+			"no_new_privileges_off",
+			"security_opt is missing no-new-privileges:true: setuid binaries may regain privileges",
+		)]
+	}
+}
+
+/// `pids_limit` unset, no ceiling on the number of processes the container
+/// can fork, so a runaway loop can starve the host out of PIDs.
+pub fn check_no_pids_limit(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
+	if service.pids_limit.is_none() {
+		vec![finding(
+			name,
+			"no_pids_limit",
+			"pids_limit is not set: a fork bomb can exhaust the host's process table",
+		)]
+	} else {
+		Vec::new()
+	}
+}
+
+/// Neither `mem_limit` nor `deploy.resources.limits.memory` set, no upper
+/// bound on memory. A misbehaving service can OOM the host.
+///
+/// Reads both fields through the same `parse_memory` the engine uses to
+/// build `LinuxResources` (`#1743`): a value like `mem_limit: not-a-size`
+/// keeps the compose field non-empty, so an `.is_none()` audit reads it
+/// as a limit, but `parse_memory` returns `None` and the runtime applies
+/// no limit at all. The audit must agree with what the engine will build.
+pub fn check_no_memory_limit(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
+	let mem_top = service.mem_limit.as_deref().and_then(size::parse_memory);
+	let deploy_limit = service
+		.deploy
+		.as_ref()
+		.and_then(|d| d.resources.as_ref())
+		.and_then(|r| r.limits.as_ref())
+		.and_then(|l| l.memory.as_deref().and_then(size::parse_memory));
+	if mem_top.is_none() && deploy_limit.is_none() {
+		vec![finding(
+			name,
+			"no_memory_limit",
+			"neither mem_limit nor deploy.resources.limits.memory is parseable: a leak can OOM the host",
+		)]
+	} else {
+		Vec::new()
+	}
+}
+
+/// I flag an absent user namespace choice: rootless Podman's default maps
+/// container root to the invoking user, without allocating a private range.
+/// I point to docs/docker-migration.md for an explicit `auto` choice.
+pub fn check_no_userns(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
+	if service.userns_mode.is_none() {
+		vec![finding(
+			name,
+			"no_userns",
+			"userns_mode is not set: rootless Podman's default maps container root to your host user; set `auto` explicitly for a private subordinate UID range; see docs/docker-migration.md",
+		)]
+	} else {
+		Vec::new()
+	}
+}
+
+/// `environment:` key whose name, split into segments on `_`, `-`, `.`,
+/// and camelCase/PascalCase boundaries, has a segment equal to
+/// `PASSWORD|SECRET|TOKEN|KEY` (case-insensitive) AND carries a value in
+/// compose (literal or interpolated from `${VAR}`). Four exemptions
+/// survive and are asserted: a bare key that inherits from the host, a
+/// key whose name merely contains a secret-looking segment while its
+/// value is not one (`PASSTHROUGH: "true"`, segment filter), a key whose
+/// value resolved to the empty literal (`LOG_LEVEL=` for an unrelated
+/// key, segment filter), and a key whose last segment is `FILE`.
+///
+/// The `_FILE` suffix is the documented convention for keeping a secret
+/// out of the environment: the value is a path to a file the application
+/// reads at runtime. The official Postgres, MariaDB, and MySQL images all
+/// spell this `<NAME>_FILE` and point it at a Docker/Kubernetes secrets
+/// mount, the canonical one being `/run/secrets/<name>`. The path is not
+/// the secret itself, so the key carrying it is not a secret in the
+/// environment. The check trusts the `_FILE` convention rather than
+/// verifying the path: a path outside `/run/secrets/` (a custom mount,
+/// `/etc/passwd`, a relative path) is still a path, not a secret, and
+/// stays silent. Verifying what the path points to (file permissions,
+/// mount provenance) is a different audit concern and is out of scope
+/// here.
+///
+/// The risk is the same in both value shapes: the value ends up in the
+/// container's environment whether it was written literally or injected
+/// from the operator's environment through `${VAR}`. A gate whose verdict
+/// depends on whether the variable happens to be exported in the caller's
+/// shell is not a gate, so both shapes are flagged.
+///
+/// Service-local: the check is a positional grep on the `environment:` map
+/// of this service. These are surfaced so the operator can move them to
+/// `secrets:`; the wider question of whether the project declares
+/// `secrets:` is not in scope.
+pub fn check_secret_in_environment(
+	name: &str,
+	service: &Service,
+	_file: &ComposeFile,
+) -> Vec<Finding> {
+	let mut out = Vec::new();
+	for (key, value) in service.environment.to_map() {
+		let key_segments = segments(&key);
+		if !key_segments
+			.iter()
+			.any(|s| SECRET_NAME_SEGMENTS.contains(&s.as_str()))
+		{
+			continue;
+		}
+		if value.is_none() {
+			// Bare key: inherited from the host. Not a published secret.
+			continue;
+		}
+		// The `_FILE` suffix is the operator's signal that the value is a
+		// path to a file the application reads at runtime, not a secret
+		// in the environment. Tested as "the last segment is FILE" so the
+		// `_`, `-`, `.` and camelCase split the helper already does is
+		// reused: `POSTGRES_PASSWORD_FILE`, `MY_KEY_FILE`,
+		// `KEY-FILE`, `KeyFile` all reach the same conclusion; a name
+		// like `PASSWORD_FILE_BACKUP` does not and still fires.
+		if key_segments.last().is_some_and(|s| s == "FILE") {
+			continue;
+		}
+		// The empty-value branch used to skip here. That branch is what
+		// made the verdict depend on the caller's shell: an unset
+		// `${VAR}` reference resolves to the empty string at parse time,
+		// so `KEY=${VAR}` produced an empty value and was skipped, while
+		// `KEY=${VAR}` with `VAR` exported produced the literal and was
+		// flagged. The risk is the same in both cases: the secret ends up
+		// in the container's environment whether it was authored as a
+		// literal or interpolated from `${VAR}`. Move it to `secrets:`.
+		out.push(finding(
+			name,
+			"secret_in_environment",
+			&format!("environment: {key} is set in compose; move it to secrets:"),
+		));
+	}
+	out
+}
+
+/// `image:` is unpinned: no tag (defaults to `latest`), tag is `latest`,
+/// or `latest` is not pinned by a digest. An `@sha256:` digest counts as
+/// pinned even when a tag is also present.
+///
+/// A `build:` service can still pull when its image is missing locally and
+/// the pull policy asks for one, so a blanket skip on `build:` would hide
+/// a real registry reference. Only skip when the policy itself forbids
+/// the fetch: `pull_policy: build` or `pull_policy: never`. In every
+/// other case where `build:` is present the finding still fires, but
+/// names the operator-actionable fix (set `pull_policy: build`) instead
+/// of asking for a digest that no registry can serve.
+pub fn check_unpinned_image(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
+	let Some(reference) = service.image.as_deref() else {
+		// A `build:` service without an `image:` is built from source and
+		// has no registry reference to pin; out of scope for this check.
+		return Vec::new();
+	};
+	if reference.contains('@') {
+		// Any digest (sha256: or otherwise) anchors the tag, so the service
+		// is pinned regardless of the tag's value.
+		return Vec::new();
+	}
+	let last_colon = reference.rfind(':').unwrap_or(0);
+	let last_slash = reference.rfind('/').unwrap_or(0);
+	// The tag/separator sits after the last colon not preceded by a slash;
+	// an image with no tag stops there.
+	let has_tag = last_colon > last_slash;
+	let needs_finding = !has_tag || &reference[last_colon + 1..] == "latest";
+	if !needs_finding {
+		return Vec::new();
+	}
+	if service.build.is_some()
+		&& matches!(
+			service.pull_policy.as_deref(),
+			Some("build") | Some("never")
+		) {
+		// Skip here: the operator's `pull_policy` already commits to a
+		// local-only run, so the check would duplicate a decision the
+		// policy has locked in and have nothing actionable to add.
+		return Vec::new();
+	}
+	if service.build.is_some() {
+		// Use a different message because a digest can only anchor a tag
+		// that exists in some registry; for a locally built image the
+		// actionable fix is the pull policy, not a pin.
+		return vec![finding(
+			name,
+			"unpinned_image",
+			&format!(
+				"image: {reference} is built here, so a digest cannot pin it; set pull_policy: build to keep it from being pulled"
+			),
+		)];
+	}
+	let msg = if !has_tag {
+		format!("image: {reference} has no tag; defaults to :latest")
+	} else {
+		format!("image: {reference} pins to :latest, which moves under you")
+	};
+	vec![finding(name, "unpinned_image", &msg)]
+}
+
+/// `CAP_SYS_ADMIN`, `sys_admin` and `SYS_ADMIN` name the same capability;
+/// compose files carry all three spellings.
+fn normalized_capability(cap: &str) -> String {
+	let upper = cap.trim().to_ascii_uppercase();
+	upper.strip_prefix("CAP_").unwrap_or(&upper).to_string()
+}
+
+/// Construct one [`Finding`]. Private to this module so callers always go
+/// through `run_checks`, and so the field-name ordering (service, check,
+/// reason) is consistent across all checks.
+fn finding(name: &str, check: &'static str, reason: &str) -> Finding {
+	Finding {
+		service: name.to_string(),
+		check,
+		reason: reason.to_string(),
+	}
+}

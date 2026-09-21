@@ -662,14 +662,23 @@ pub(crate) enum Commands {
 	/// capabilities, memory/PID limits, host-binding modes, secret-shaped env
 	/// vars, unpinned images, …) and print a row per service. No check changes
 	/// what `up` does; this is a view, not a gate. `--strict` exits 1 when any
-	/// finding is present, so it can fail CI.
+	/// finding is present, so it can fail CI. `--list-checks` enumerates the
+	/// checks this build carries without reading a compose file, so an
+	/// integrator can diff the set between releases.
 	Audit {
 		/// Exit 1 when any finding is present.
 		#[arg(long)]
 		strict: bool,
-		/// Output format.
+		/// Output format. Honoured by both the audit run and `--list-checks`,
+		/// so `--format json` returns a `{"checks":[...]}` array of objects.
 		#[arg(long, value_enum, default_value_t = AuditFormat::Table)]
 		format: AuditFormat,
+		/// List every check this build carries (one per line, id then
+		/// description) and exit. Takes no compose file: the registry is the
+		/// source, so `--strict` would have no effect and conflicts at parse
+		/// time.
+		#[arg(long, conflicts_with = "strict")]
+		list_checks: bool,
 	},
 	/// Generate declarative artifacts from the compose file.
 	#[command(
