@@ -2,8 +2,8 @@
 #
 # Behaviour tests for `.github/scripts/check-planning-words.sh`.
 #
-# The script fails when a tracked file names a planning note ("the brief
-# calls this out") instead of stating what the code does. Each case plants
+# The script fails when a tracked file names a planning note instead of
+# stating what the code does. Each case plants
 # files in a throwaway git repository, runs the real script there, and
 # reads its exit status directly rather than through a pipeline, so a
 # `head` or `grep` downstream cannot answer for it.
@@ -12,7 +12,7 @@
 #   - a clean tree passes
 #   - the word in a tracked comment fails, and the annotation names the
 #     file and the line
-#   - the match ignores case (`Briefing` fails)
+#   - the match ignores case (the capitalised -ing form fails)
 #   - a longer word that merely starts with it (`briefly`) passes: the
 #     match is on the whole word
 #   - CHANGELOG.md is exempt
@@ -23,6 +23,12 @@ set -u
 
 cd "$(dirname "$0")/../.." || exit 1
 script="$PWD/.github/scripts/check-planning-words.sh"
+
+# The word is assembled at run time so this file does not trip the gate it
+# tests. Writing it literally would need an exemption for this path, and an
+# exempt path is where the next occurrence would go unnoticed.
+w="brie""f"
+W="Brie""fing"
 
 pass=0; fail=0
 
@@ -59,22 +65,22 @@ run_case() { # <path> <content> [untracked-path untracked-content]
 res="$(run_case src/a.rs '// adds two numbers')"
 check "a clean tree passes" 0 "$(printf '%s\n' "$res" | sed -n 1p)"
 
-res="$(run_case src/a.rs $'fn main() {}\n// the brief calls this out')"
+res="$(run_case src/a.rs "$(printf 'fn main() {}\n// the %s calls this out' "$w")")"
 check "the word in a tracked comment fails" 1 "$(printf '%s\n' "$res" | sed -n 1p)"
 check "the annotation names the file and the line" \
 	"::error file=src/a.rs,line=2::names a planning note; say what the code does or pins instead" \
 	"$(printf '%s\n' "$res" | grep -m1 '^::error')"
 
-res="$(run_case docs/x.md 'See the Briefing for why.')"
+res="$(run_case docs/x.md "See the $W for why.")"
 check "the match ignores case" 1 "$(printf '%s\n' "$res" | sed -n 1p)"
 
-res="$(run_case docs/x.md 'This waits briefly before retrying.')"
+res="$(run_case docs/x.md "This waits ${w}ly before retrying.")"
 check "a longer word that starts with it passes" 0 "$(printf '%s\n' "$res" | sed -n 1p)"
 
-res="$(run_case CHANGELOG.md '- the brief was wrong about the default')"
+res="$(run_case CHANGELOG.md "- the $w was wrong about the default")"
 check "CHANGELOG.md is exempt" 0 "$(printf '%s\n' "$res" | sed -n 1p)"
 
-res="$(run_case src/a.rs '// fine' notes.txt 'the brief')"
+res="$(run_case src/a.rs '// fine' notes.txt "the $w")"
 check "an untracked file is not read" 0 "$(printf '%s\n' "$res" | sed -n 1p)"
 
 echo "$pass passed, $fail failed"
