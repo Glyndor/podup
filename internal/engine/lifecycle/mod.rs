@@ -184,3 +184,6 @@ mod scale_tests;
 mod teardown_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+#[path = "up_validation_tests.rs"]
+mod up_validation_tests;

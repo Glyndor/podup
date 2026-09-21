@@ -126,6 +126,25 @@ impl Engine {
 			super::targets::validate_targets(file, target_services)?;
 			let target_set = super::targets::expand_targets(file, target_services, no_deps);
 
+			// Pre-validate every enabled service's libpod-validated fields up
+			// front, so a rejected value (e.g. `pid: "evil"`, `ipc: "bogus"`)
+			// fails `up` before any network, volume, secret, pod or
+			// container is created (#1867). The validator is the same
+			// `pre_validate_spec` the per-service `create_and_start` calls;
+			// running it here for the whole project means a project-level
+			// resource (the project network created by `create_networks`
+			// below) cannot outlive a failed `up`. A per-service check
+			// interleaved with creation gets the two-service case wrong:
+			// the first service's network would be created and then the
+			// second service would be rejected, leaving the first network
+			// on the host with no project to remove it.
+			for (name, service) in &file.services {
+				if !enabled.contains(name) {
+					continue;
+				}
+				crate::libpod::validate::pre_validate_spec(name, service)?;
+			}
+
 			// Prefetch the project's containers once (instead of one API call per
 			// replica): which names already exist, and for each the two facts
 			// that decide whether it is kept or replaced (see

@@ -22,7 +22,9 @@ use resolve::{build_env, resolve_links, resolve_stop_signal, resolve_volumes_fro
 pub(crate) use resolve::{config_hash, resolve_bind_source};
 pub(crate) use spec::{build_spec_generator, NamespaceInputs, SecurityInputs, SpecInputs};
 
+pub(crate) use fields::device_spec_parts;
 pub(crate) use host_mode::check_host_mode;
+pub(crate) use security::parse_device_cgroup_rule;
 
 use super::container_config::{
 	build_healthcheck, build_log_config, build_resource_limits, build_restart_policy, build_ulimits,
@@ -161,14 +163,12 @@ impl Engine {
 		// (namespace modes, `device_cgroup_rule` access strings), so a rejected
 		// value surfaces as a `PodmanError::Field` carrying the compose-side
 		// field name and offending value instead of libpod's raw validator
-		// text. Podup's `SpecGenerator` is built below; doing this before
-		// assembling it keeps the pre-validator close to the service fields
-		// it inspects (#1357).
-		let device_cgroup_access: Vec<String> = device_cgroup_rule
-			.iter()
-			.filter_map(|r| r.access.clone())
-			.collect();
-		pre_validate_spec(service_name, service, &device_cgroup_access)?;
+		// text. The up-front `run_up` call has already rejected any invalid
+		// value before a single resource was created (#1867); this per-service
+		// call is a belt to that loop's braces, kept here so a future field
+		// added to the validator that only `create_and_start` sees still
+		// surfaces as the same field-shaped error.
+		pre_validate_spec(service_name, service)?;
 
 		// --- Namespace modes, platform, links, volumes_from ---
 		let pidns = service.pid.as_deref().map(Namespace::parse);
