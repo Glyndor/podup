@@ -553,20 +553,45 @@ impl Engine {
 				// does not matter for them; links are the only kind that
 				// benefit.
 				let stat = match want {
-					SentKind::Link => self.client.head_path_stat_even_if_missing(p).await,
+					SentKind::Link(_) => self.client.head_path_stat_even_if_missing(p).await,
 					_ => self.client.head_path_stat(p).await,
 				};
+				let abs_entry_path = join_archive_path(dir, entry);
 				match stat {
-					Ok(post) if verify::entry_landed(*want, post.as_ref()) => Ok(()),
 					Ok(post) => {
-						tracing::debug!(
-							"cp: {entry} in {dir} is not what was uploaded ({want:?}): {post:?}"
-						);
-						Err(LandedFailure::Mismatch {
-							path: entry.to_string(),
-							expected: *want,
-							stat: post,
-						})
+						use verify::LinkCheck;
+						match verify::entry_landed(want.clone(), &abs_entry_path, post.as_ref()) {
+							LinkCheck::Confirmed => Ok(()),
+							LinkCheck::Fallback => {
+								tracing::debug!(
+									"cp: {entry} in {dir} is a symlink at the destination; \
+									 confirmed by type because the runtime sent no linkTarget: \
+									 {post:?}"
+								);
+								Ok(())
+							}
+							LinkCheck::Refused => {
+								tracing::debug!(
+									"cp: {entry} in {dir} is not what was uploaded ({want:?}): \
+									 {post:?}"
+								);
+								Err(LandedFailure::Mismatch {
+									path: entry.to_string(),
+									expected: want.clone(),
+									stat: post,
+								})
+							}
+							LinkCheck::Absent => {
+								tracing::debug!(
+									"cp: {entry} in {dir} could not be read back: no stat in response"
+								);
+								Err(LandedFailure::Mismatch {
+									path: entry.to_string(),
+									expected: want.clone(),
+									stat: None,
+								})
+							}
+						}
 					}
 					Err(stat_err) => {
 						tracing::debug!(
@@ -620,9 +645,11 @@ fn cp_row_name(_src: &str, dst: &str) -> String {
 /// file's actual length on disk. The kind is part of the comparison (an empty
 /// file over an unchanged zero-length FIFO would otherwise pass on size
 /// alone). A symlink at the source without `-L/--follow-link` expects
-/// `SentKind::Link`, because the archive stores the link itself, not its
-/// target's contents, and a destination that reports a regular file at the
-/// target's size would still be a failure. A directory source returns `None`
+/// `SentKind::Link(target)`, where `target` is what the tar will carry as
+/// the link name (read out of the host symlink with `fs::read_link`). The
+/// destination is asked about that target after Podman normalises it the same
+/// way it normalises `linkTarget`, and the byte length of the target is
+/// checked against `stat.size` independently. A directory source returns `None`
 /// because its own size says nothing about its children; that case is
 /// confirmed entry by entry (`verify::tree_landed`), never on this. Anything
 /// else stays unverifiable and fails closed rather than confirming on the
@@ -640,7 +667,15 @@ pub(super) fn uploaded_entry_kind(src: &std::path::Path, follow_link: bool) -> O
 	};
 	let kind = meta.file_type();
 	if kind.is_symlink() && !follow_link {
-		Some(SentKind::Link)
+		// `read_link` returns the link target as the host filesystem stores
+		// it; that is the same bytes `pack_path` will put in the tar's
+		// linkname field, so it is the value the destination's stat will
+		// be asked to match. A path that is not valid UTF-8 makes the
+		// entry unverifiable on the host side (we cannot normalise what
+		// we cannot name), and the archive PUT would refuse it anyway.
+		let target = std::fs::read_link(src).ok()?;
+		let target = target.to_str().map(str::to_string)?;
+		Some(SentKind::Link(target))
 	} else if kind.is_file() {
 		Some(SentKind::File(meta.len()))
 	} else {

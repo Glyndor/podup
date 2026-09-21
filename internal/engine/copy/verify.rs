@@ -6,7 +6,7 @@
 //! The question asked here is the same one, put to each entry: is every
 //! regular file of the archive that was sent at the destination with its
 //! size, every directory there as a directory, and every symbolic link there
-//! as a symlink.
+//! as a symlink with the target the archive carried.
 //!
 //! The expectation is read back out of the archive that went over the wire,
 //! not from a second walk of the source, so it cannot describe a tree other
@@ -25,17 +25,42 @@
 //!   `os.ModeType` bit set, not just `ModeDir`; an empty file uploaded over an
 //!   existing named pipe would otherwise be confirmed by the unchanged pipe.
 //! - Directories (`SentKind::Dir`): must be a directory at the destination.
-//! - Symbolic links (`SentKind::Link`): must be a symlink at the destination,
-//!   whatever the target. The stat for a dangling link on Podman 5.7.0 was
-//!   carried on the 404 response in the `X-Docker-Container-Path-Stat` header,
-//!   which `head_path_stat` threw away; `head_path_stat_even_if_missing` reads
-//!   it back so a cut stream cannot be confirmed against the link that was
-//!   already there.
+//! - Symbolic links (`SentKind::Link(target)`): must be a symlink at the
+//!   destination whose `linkTarget` (Podman 5.7.0 carries it in
+//!   `X-Docker-Container-Path-Stat`, including on a 404 for a dangling link
+//!   that `head_path_stat_even_if_missing` reads) matches the sent target
+//!   after the lexical normalization Podman applies. `size` is also compared
+//!   against the byte length of the target as written: independent evidence,
+//!   and the two together close any one of them being stale. The stat for a
+//!   dangling link on Podman 5.7.0 was carried on the 404 response in the
+//!   same header, which `head_path_stat` threw away;
+//!   `head_path_stat_even_if_missing` reads it back so a cut stream cannot
+//!   be confirmed against the link that was already there.
 //! - Hard links, FIFOs, char/block devices and anything else: an entry of a
 //!   kind that cannot be asked about through the archive stat makes the
 //!   archive unverifiable. `sent_entries` returns an error naming the type,
 //!   the same way a non-UTF-8 path already does, so the tree answer is "not
 //!   landed" and the upload fails closed.
+//!
+//! ## Why link confirmation got harder
+//!
+//! `entry_landed` used to satisfy any link on the type check alone
+//! (`post.is_some_and(is_symlink)`), which meant an existing symlink at the
+//! destination path — whatever it pointed at — confirmed an uploaded symlink.
+//! A `cp` whose upload was cut, or that landed on a tree where a link of the
+//! same name already pointed somewhere else, was reported as landed.
+//!
+//! Podman 5.7.0 already sent the target back in the stat header
+//! (`linkTarget`, normalised against the directory the link lives in). The
+//! sent target was read out of the tar in `sent_entries` and thrown away.
+//! `entry_landed` now compares the two, after applying the same lexical
+//! normalisation to the sent side: the target Podman reports for a relative
+//! link `/tmp/d/rel -> ../etc/hosts` is `/tmp/etc/hosts` (joined to `/tmp/d`,
+//! `..` resolved lexically, with the filesystem not touched — the dangling
+//! case proves Podman does not resolve it either), so a literal
+//! `sent_target == stat.link_target` would refuse every relative link in a
+//! real tree and break every directory copy. Normalising the sent side the
+//! same way Podman does is the only way both agree.
 //!
 //! ## Paths
 //!
@@ -43,7 +68,10 @@
 //! that is not valid UTF-8 makes `sent_entries` return an error, which makes
 //! `tree_landed` answer "not landed". A copy of such a tree against Podman 6
 //! with a dropped response is then reported as failed rather than confirmed
-//! against the lossy-rewritten name. No lossy conversion anywhere in this file.
+//! against the lossy-rewritten name. The link target is read the same way:
+//! an entry whose link name is absent or not valid UTF-8 returns an error
+//! from `sent_entries`, so an entry the destination cannot be asked about
+//! is not silently confirmed.
 //!
 //! ## Why the failure carries the entry and the stat
 //!
@@ -77,13 +105,16 @@ const MODE_TYPE: u64 =
 	(1 << 31) | (1 << 27) | (1 << 26) | (1 << 25) | (1 << 24) | (1 << 21) | (1 << 19);
 
 /// What an uploaded entry must be at the destination.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum SentKind {
 	/// A regular file of this many bytes.
 	File(u64),
 	Dir,
-	/// A symbolic link, the destination need only be a symlink.
-	Link,
+	/// A symbolic link with the target the tar header carries, as written.
+	/// A `linkTarget` Podman reports has been normalised against the
+	/// directory the link lives in; the comparison in `entry_landed`
+	/// applies the same normalisation to this side so the two agree.
+	Link(String),
 }
 
 /// One entry of the uploaded archive that the destination can be asked about.
@@ -113,9 +144,12 @@ pub(super) struct SentEntry {
 /// An entry whose path is not valid UTF-8 makes the function return an error.
 /// `tree_landed` reads that as "not landed", so a copy of such a tree against
 /// Podman 6 with a dropped response is reported as failed rather than
-/// confirmed against a lossy-rewritten name. So is an entry whose path is the
-/// extraction directory itself (`.`), which the caller confirmed before
-/// uploading.
+/// confirmed against a lossy-rewritten name. An entry whose symlink target
+/// (the link name in the tar header) is absent or not valid UTF-8 is the
+/// same shape: the destination cannot be asked about a target the entry did
+/// not name, so the archive is unverifiable and the function returns an
+/// error. So is an entry whose path is the extraction directory itself (`.`),
+/// which the caller confirmed before uploading.
 pub(super) fn sent_entries(gz_tar: &[u8]) -> Result<Vec<SentEntry>> {
 	let mut archive = tar::Archive::new(gz_tar);
 	let mut sent = Vec::new();
@@ -125,7 +159,26 @@ pub(super) fn sent_entries(gz_tar: &[u8]) -> Result<Vec<SentEntry>> {
 		let kind = match entry_type {
 			tar::EntryType::Regular | tar::EntryType::Continuous => SentKind::File(entry.size()),
 			tar::EntryType::Directory => SentKind::Dir,
-			tar::EntryType::Symlink => SentKind::Link,
+			tar::EntryType::Symlink => {
+				// `link_name_bytes` returns `None` when the tar carries no
+				// link name for the entry (a malformed archive). `to_str`
+				// rejects bytes that are not valid UTF-8. Both make the
+				// entry unverifiable: we cannot compare what the entry did
+				// not name against what the destination reports, and
+				// answering a question we did not ask would just be the
+				// pre-#1808 false positive in another shape.
+				let target_bytes = entry.link_name_bytes().ok_or_else(|| {
+					ComposeError::Build("cp: archive symlink entry has no link name".into())
+				})?;
+				let target = std::str::from_utf8(target_bytes.as_ref())
+					.map_err(|_| {
+						ComposeError::Build(
+							"cp: archive symlink entry link name is not UTF-8".into(),
+						)
+					})?
+					.to_string();
+				SentKind::Link(target)
+			}
 			_ => {
 				return Err(ComposeError::Build(format!(
 					"cp: archive entry of unverified type {entry_type:?} cannot be confirmed"
@@ -156,21 +209,183 @@ pub(super) fn sent_entries(gz_tar: &[u8]) -> Result<Vec<SentEntry>> {
 	Ok(sent)
 }
 
+/// What the destination's stat said about the entry that was sent.
+///
+/// The four-way result exists so the link confirmation's log can distinguish
+/// "confirmed because the target matched" from "confirmed because the
+/// runtime did not send a target, so we fell back to the type check we used
+/// to live on". The pre-#1808 check satisfied any link on `is_symlink`; a
+/// runtime that returns `linkTarget: ""` puts us back on that check, and
+/// the operator looking at the log should be able to tell which side of
+/// the line they are on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum LinkCheck {
+	/// The destination matched what was sent exactly (size, kind, and for
+	/// links, the target).
+	Confirmed,
+	/// The destination did not match what was sent. The caller turns this
+	/// into a `LandedFailure::Mismatch`.
+	Refused,
+	/// No answer was available: the runtime did not return a stat for this
+	/// entry at all. For a non-link entry this is the path-was-actually-
+	/// missing shape; for a link it is the runtime that drops the stat
+	/// header even on a 200. The caller turns this into `Mismatch { stat:
+	/// None }` so the user-facing message names the missing stat.
+	Absent,
+	/// The runtime answered a stat, but without a `linkTarget` to compare
+	/// against (an older Podman, or a Podman that stops sending the field
+	/// in a future release). The link is still confirmed, because refusing
+	/// every link on a missing field would turn a runtime change into a
+	/// fleet-wide copy failure. The reason string the caller logs must say
+	/// "fallback", so the operator can tell this confirmation from one
+	/// backed by a real target match.
+	Fallback,
+}
+
 /// Whether the destination's stat is the entry that was sent.
 ///
-/// A regular file must match in size and have no Go `os.ModeType` bit set: a
-/// directory, a symlink, a named pipe, a socket, a device or any other
-/// non-regular kind reports a size that says nothing about what the upload put
-/// there, so the size comparison on its own is not enough.
-pub(super) fn entry_landed(sent: SentKind, post: Option<&PathStat>) -> bool {
+/// `entry_path` is the absolute container path the stat was taken at — the
+/// same string `head_path_stat[_even_if_missing]` was pointed at. It is
+/// used to normalise a relative sent target against the directory the link
+/// lives in, the same way Podman does before reporting `linkTarget`.
+///
+/// A regular file must match in size and have no Go `os.ModeType` bit set:
+/// a directory, a symlink, a named pipe, a socket, a device or any other
+/// non-regular kind reports a size that says nothing about what the upload
+/// put there, so the size comparison on its own is not enough. A link is
+/// confirmed only when its target text matches and its byte length matches,
+/// or the runtime sent no `linkTarget` and the link is at least a link at
+/// the destination.
+pub(super) fn entry_landed(sent: SentKind, entry_path: &str, post: Option<&PathStat>) -> LinkCheck {
 	let is_dir = |stat: &PathStat| stat.mode & (1 << 31) != 0;
 	let is_regular = |stat: &PathStat| stat.mode & MODE_TYPE == 0;
 	let is_symlink = |stat: &PathStat| stat.mode & (1 << 27) != 0;
-	match sent {
-		SentKind::File(size) => post.is_some_and(|stat| is_regular(stat) && stat.size == size),
-		SentKind::Dir => post.is_some_and(is_dir),
-		SentKind::Link => post.is_some_and(is_symlink),
+	match (sent, post) {
+		(SentKind::File(size), Some(stat)) => {
+			if is_regular(stat) && stat.size == size {
+				LinkCheck::Confirmed
+			} else {
+				LinkCheck::Refused
+			}
+		}
+		(SentKind::Dir, Some(stat)) => {
+			if is_dir(stat) {
+				LinkCheck::Confirmed
+			} else {
+				LinkCheck::Refused
+			}
+		}
+		(SentKind::Link(sent_target), Some(stat)) => {
+			if !is_symlink(stat) {
+				return LinkCheck::Refused;
+			}
+			if stat.link_target.is_empty() {
+				// Runtime did not send `linkTarget`; fall back to the
+				// pre-#1808 type check. The caller logs this as a
+				// fallback, not a confirmation by target.
+				return LinkCheck::Fallback;
+			}
+			let normalized = normalize_link_target(&sent_target, entry_path);
+			let target_bytes = sent_target.len();
+			if stat.link_target == normalized && stat.size as usize == target_bytes {
+				LinkCheck::Confirmed
+			} else {
+				LinkCheck::Refused
+			}
+		}
+		(_, None) => LinkCheck::Absent,
 	}
+}
+
+/// Bring a sent link target into the shape Podman reports in `linkTarget`.
+/// Absolute targets are returned unchanged (already what Podman reports).
+/// Relative targets are joined to the directory part of `entry_path` and
+/// resolved `.` / `..` lexically, without touching the filesystem: a
+/// dangling link points somewhere that does not exist, and Podman resolves
+/// the `..` lexically the same way (measured on Podman 5.7.0, 2026-09-20:
+/// `/tmp/d/rel -> ../etc/hosts` reports `/tmp/etc/hosts`, which does not
+/// exist).
+fn normalize_link_target(sent_target: &str, entry_path: &str) -> String {
+	if sent_target.starts_with('/') {
+		return sent_target.to_string();
+	}
+	let entry_dir = parent_dir_absolute(entry_path);
+	let joined = match entry_dir {
+		"" => sent_target.to_string(),
+		"/" => format!("/{}", sent_target),
+		_ => format!("{}/{}", entry_dir, sent_target),
+	};
+	lex_normalize(&joined)
+}
+
+/// Directory portion of an absolute container path. `/` is its own parent;
+/// `/foo` has parent `/`; `/foo/bar` has parent `/foo`. Returns the empty
+/// string only when the input has no leading `/`, which a non-root call
+/// site should not produce.
+fn parent_dir_absolute(path: &str) -> &str {
+	if path == "/" {
+		return "/";
+	}
+	match path.rfind('/') {
+		Some(0) => "/",
+		Some(idx) => &path[..idx],
+		None => "",
+	}
+}
+
+/// Resolve `.` and `..` lexically without touching the filesystem. A
+/// leading `..` past the root is kept as a literal `..`, so a path that
+/// escapes the root stays a `..`-prefixed path.
+///
+/// Splits on `/` and nothing else, deliberately, rather than going through
+/// `std::path::Path::components`. The path being normalised is a container
+/// path that came out of a tar header, and it is POSIX on every host: a
+/// backslash in it is an ordinary character in a file name, not a
+/// separator. `Path::components` would agree on Unix and disagree on
+/// Windows, where it splits on `\\` too, so a link named `a\\b` would
+/// normalise to one component on the Linux lane and two on the Windows
+/// lane and the verification verdict would depend on the host running
+/// `podup`, not on what the runtime reported. Splitting by hand keeps one
+/// answer everywhere.
+fn lex_normalize(path: &str) -> String {
+	let absolute = path.starts_with('/');
+	let mut stack: Vec<&str> = Vec::new();
+	for part in path.split('/') {
+		match part {
+			"" | "." => {}
+			".." => match stack.last() {
+				Some(top) if *top != ".." => {
+					stack.pop();
+				}
+				_ => stack.push(".."),
+			},
+			name => stack.push(name),
+		}
+	}
+	if stack.is_empty() {
+		return if absolute {
+			"/".to_string()
+		} else {
+			".".to_string()
+		};
+	}
+	let joined = stack.join("/");
+	if absolute {
+		format!("/{joined}")
+	} else {
+		joined
+	}
+}
+
+/// Test-only seam: the upload integration tests fake the runtime's stat
+/// header (the only way to exercise the link confirmation without a real
+/// Podman), and they need the same lexical normalisation
+/// `entry_landed` runs on the sent side so the value they plant in the
+/// header is what Podman would have reported. Production code does not
+/// reach for this; it goes through `entry_landed`.
+#[cfg(test)]
+pub(crate) fn normalize_for_test(path: &str) -> String {
+	lex_normalize(path)
 }
 
 /// What the verification saw when it refused the upload. The fields name the
@@ -290,29 +505,50 @@ impl Engine {
 			));
 		}
 		for entry in sent.iter().rev() {
+			let abs_path = join_archive_path(dir, &entry.path);
 			let stat_path = format!(
 				"{API_PREFIX}/containers/{}/archive?path={}",
 				urlencoded(container),
-				urlencoded(&join_archive_path(dir, &entry.path)),
+				urlencoded(&abs_path),
 			);
-			let stat = match entry.kind {
-				SentKind::Link => self.client.head_path_stat_even_if_missing(&stat_path).await,
+			let stat = match &entry.kind {
+				SentKind::Link(_) => self.client.head_path_stat_even_if_missing(&stat_path).await,
 				_ => self.client.head_path_stat(&stat_path).await,
 			};
 			match stat {
-				Ok(post) if entry_landed(entry.kind, post.as_ref()) => {}
-				Ok(post) => {
-					tracing::debug!(
-						"cp: {} in {dir} is not what was uploaded ({:?}): {post:?}",
-						entry.path,
-						entry.kind
-					);
-					return Err(LandedFailure::Mismatch {
-						path: entry.path.clone(),
-						expected: entry.kind,
-						stat: post,
-					});
-				}
+				Ok(post) => match entry_landed(entry.kind.clone(), &abs_path, post.as_ref()) {
+					LinkCheck::Confirmed => {}
+					LinkCheck::Fallback => {
+						tracing::debug!(
+							"cp: {} in {dir} is a symlink at the destination; confirmed by type \
+							 because the runtime sent no linkTarget: {post:?}",
+							entry.path,
+						);
+					}
+					LinkCheck::Refused => {
+						tracing::debug!(
+							"cp: {} in {dir} is not what was uploaded ({:?}): {post:?}",
+							entry.path,
+							entry.kind,
+						);
+						return Err(LandedFailure::Mismatch {
+							path: entry.path.clone(),
+							expected: entry.kind.clone(),
+							stat: post,
+						});
+					}
+					LinkCheck::Absent => {
+						tracing::debug!(
+							"cp: {} in {dir} could not be read back: no stat in response",
+							entry.path,
+						);
+						return Err(LandedFailure::Mismatch {
+							path: entry.path.clone(),
+							expected: entry.kind.clone(),
+							stat: None,
+						});
+					}
+				},
 				Err(stat_err) => {
 					tracing::debug!(
 						"cp: could not re-verify {} in {dir} after an incomplete PUT: {stat_err}",

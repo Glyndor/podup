@@ -1,6 +1,7 @@
 use super::super::archive::pack_path;
 use super::{
-	entry_landed, format_landed_failure, sent_entries, LandedFailure, SentEntry, SentKind,
+	entry_landed, format_landed_failure, sent_entries, LandedFailure, LinkCheck, SentEntry,
+	SentKind,
 };
 use crate::libpod::client::PathStat;
 
@@ -69,13 +70,16 @@ fn a_symlink_is_asked_about_and_confirmed() {
 		sorted(sent_entries(&tar).unwrap()),
 		vec![
 			("payload".to_string(), SentKind::Dir),
-			("payload/dangling".to_string(), SentKind::Link),
+			(
+				"payload/dangling".to_string(),
+				SentKind::Link("nowhere".to_string()),
+			),
 			("payload/real.txt".to_string(), SentKind::File(1)),
 		]
 	);
 }
 
-/// The shape the brief calls out: two files, a nested directory, a symlink
+/// The shape a real tree has: two files, a nested directory, a symlink
 /// and an empty file, all in one tree. The whole list is asserted, so a
 /// missing or extra entry fails the test. The symlink is in the list, because
 /// the stat endpoint answers 404 with a link stat in the header and the link is
@@ -97,7 +101,10 @@ fn two_files_a_directory_a_symlink_and_an_empty_file() {
 		sorted(sent_entries(&tar).unwrap()),
 		vec![
 			("payload".to_string(), SentKind::Dir),
-			("payload/link".to_string(), SentKind::Link),
+			(
+				"payload/link".to_string(),
+				SentKind::Link("nowhere".to_string()),
+			),
 			("payload/nested".to_string(), SentKind::Dir),
 			("payload/nothing.txt".to_string(), SentKind::File(0)),
 			("payload/plain.txt".to_string(), SentKind::File(2)),
@@ -108,7 +115,8 @@ fn two_files_a_directory_a_symlink_and_an_empty_file() {
 
 /// A tar whose only entry is a symlink yields one `Link` entry: the stat
 /// endpoint answers 404 with a link stat in the header, so the link is
-/// confirmed there.
+/// confirmed there. The `Link` carries the target the tar header spells,
+/// read out of the GNU `linkname` field.
 #[cfg(unix)]
 #[test]
 fn a_tar_with_only_a_symlink_yields_one_link_entry() {
@@ -122,7 +130,7 @@ fn a_tar_with_only_a_symlink_yields_one_link_entry() {
 		sent_entries(&tar).unwrap(),
 		vec![SentEntry {
 			path: "dangling".to_string(),
-			kind: SentKind::Link,
+			kind: SentKind::Link("nowhere".to_string()),
 		}],
 		"only the symlink yields exactly one Link entry"
 	);
@@ -230,7 +238,10 @@ fn a_tar_with_file_directory_and_symlink_lists_just_those_three() {
 		sorted(sent_entries(&tar).unwrap()),
 		vec![
 			("payload".to_string(), SentKind::Dir),
-			("payload/link".to_string(), SentKind::Link),
+			(
+				"payload/link".to_string(),
+				SentKind::Link("nowhere".to_string()),
+			),
 			("payload/plain.txt".to_string(), SentKind::File(2)),
 			("payload/sub".to_string(), SentKind::Dir),
 		],
@@ -296,62 +307,116 @@ fn stat(size: u64, mode: u64) -> PathStat {
 	}
 }
 
-/// Planted-stat matrix for `entry_landed`. The cases the brief names, each in
-/// its own assertion so a failure points at the row that regressed.
+/// Planted-stat matrix for `entry_landed`. One case per row, each in
+/// its own assertion so a failure points at the row that regressed. The link
+/// rows use a sent target and a `link_target` whose equality is the only thing
+/// that confirms a symlink at the destination; the planted stats here leave
+/// `link_target` empty so the link lands on the `Fallback` path (the
+/// pre-#1808 type check), and the dedicated link tests below cover the
+/// target-driven confirmation.
 #[test]
 fn entry_landed_with_planted_stats() {
 	// `File(0)` against a FIFO is not a file, so the unchanged pipe cannot
 	// confirm a zero-byte upload. This is the regular-file false positive the
 	// `MODE_TYPE` mask closes.
-	assert!(!entry_landed(SentKind::File(0), Some(&stat(0, FIFO_MODE))));
+	assert_eq!(
+		entry_landed(SentKind::File(0), "/tmp/x", Some(&stat(0, FIFO_MODE))),
+		LinkCheck::Refused,
+	);
 
 	// `File(0)` against a regular file at size 0 is the regular-file landed
 	// shape; the assertion is the regression net for the mask.
-	assert!(entry_landed(SentKind::File(0), Some(&stat(0, FILE_MODE))));
+	assert_eq!(
+		entry_landed(SentKind::File(0), "/tmp/x", Some(&stat(0, FILE_MODE))),
+		LinkCheck::Confirmed,
+	);
 
 	// `File(4096)` against a directory is not a file either: a directory stats
 	// at 4096 on most filesystems, the same size as the file.
-	assert!(!entry_landed(
-		SentKind::File(4096),
-		Some(&stat(4096, DIR_MODE))
-	));
+	assert_eq!(
+		entry_landed(SentKind::File(4096), "/tmp/x", Some(&stat(4096, DIR_MODE)),),
+		LinkCheck::Refused,
+	);
 
-	// `Link` against a symlink is the link-confirmation shape.
-	assert!(entry_landed(SentKind::Link, Some(&stat(7, LINK_MODE))));
+	// `Link` against a symlink where the runtime sent no `linkTarget` is
+	// the pre-#1808 type check, and the destination satisfies it.
+	assert_eq!(
+		entry_landed(
+			SentKind::Link("anywhere".to_string()),
+			"/tmp/link",
+			Some(&stat(7, LINK_MODE)),
+		),
+		LinkCheck::Fallback,
+		"link confirmed by type because the runtime did not send linkTarget",
+	);
 
 	// `Link` against a regular file is not a link: a target the link points
 	// at cannot satisfy the link confirmation, even at the right mode bits.
-	assert!(!entry_landed(SentKind::Link, Some(&stat(7, FILE_MODE))));
+	assert_eq!(
+		entry_landed(
+			SentKind::Link("anywhere".to_string()),
+			"/tmp/link",
+			Some(&stat(7, FILE_MODE)),
+		),
+		LinkCheck::Refused,
+	);
 }
 
 #[test]
 fn a_file_landed_when_it_is_a_file_of_the_size_sent() {
 	let sent = SentKind::File(4096);
-	assert!(entry_landed(sent, Some(&stat(4096, FILE_MODE))));
-	assert!(!entry_landed(sent, Some(&stat(4095, FILE_MODE))));
-	assert!(!entry_landed(sent, None));
+	assert_eq!(
+		entry_landed(sent.clone(), "/tmp/x", Some(&stat(4096, FILE_MODE))),
+		LinkCheck::Confirmed,
+	);
+	assert_eq!(
+		entry_landed(sent.clone(), "/tmp/x", Some(&stat(4095, FILE_MODE))),
+		LinkCheck::Refused,
+	);
+	assert_eq!(
+		entry_landed(sent.clone(), "/tmp/x", None),
+		LinkCheck::Absent
+	);
 	// A directory stats at 4096 too. Same number, not the file.
-	assert!(!entry_landed(sent, Some(&stat(4096, DIR_MODE))));
+	assert_eq!(
+		entry_landed(sent.clone(), "/tmp/x", Some(&stat(4096, DIR_MODE))),
+		LinkCheck::Refused,
+	);
 	// An empty file is a size like any other.
-	assert!(entry_landed(SentKind::File(0), Some(&stat(0, FILE_MODE))));
+	assert_eq!(
+		entry_landed(SentKind::File(0), "/tmp/x", Some(&stat(0, FILE_MODE))),
+		LinkCheck::Confirmed,
+	);
 }
 
 #[test]
 fn a_directory_landed_when_a_directory_is_there() {
-	assert!(entry_landed(SentKind::Dir, Some(&stat(4096, DIR_MODE))));
-	assert!(entry_landed(SentKind::Dir, Some(&stat(0, DIR_MODE))));
-	assert!(!entry_landed(SentKind::Dir, Some(&stat(4096, FILE_MODE))));
-	assert!(!entry_landed(SentKind::Dir, None));
+	assert_eq!(
+		entry_landed(SentKind::Dir, "/tmp/x", Some(&stat(4096, DIR_MODE))),
+		LinkCheck::Confirmed,
+	);
+	assert_eq!(
+		entry_landed(SentKind::Dir, "/tmp/x", Some(&stat(0, DIR_MODE))),
+		LinkCheck::Confirmed,
+	);
+	assert_eq!(
+		entry_landed(SentKind::Dir, "/tmp/x", Some(&stat(4096, FILE_MODE))),
+		LinkCheck::Refused,
+	);
+	assert_eq!(
+		entry_landed(SentKind::Dir, "/tmp/x", None),
+		LinkCheck::Absent
+	);
 }
 
 /// The user-facing error for a refused entry names the entry's path. The
 /// previous bool return forced the caller to invent a message that named
-/// neither the entry nor the stat; this is the assertion the brief calls for.
+/// neither the entry nor the stat; this pins that the message now names it.
 #[test]
 fn the_refusal_names_the_entry_path() {
 	let failure = LandedFailure::Mismatch {
 		path: "payload/link".to_string(),
-		expected: SentKind::Link,
+		expected: SentKind::Link("anywhere".to_string()),
 		stat: Some(stat(0, LINK_MODE)),
 	};
 	let msg = format_landed_failure(&failure, "/tmp");
@@ -373,7 +438,7 @@ fn the_refusal_names_the_entry_path() {
 fn the_refusal_carries_the_stat_that_was_read() {
 	let failure = LandedFailure::Mismatch {
 		path: "payload/link".to_string(),
-		expected: SentKind::Link,
+		expected: SentKind::Link("anywhere".to_string()),
 		stat: Some(stat(0, LINK_MODE)),
 	};
 	let msg = format_landed_failure(&failure, "/tmp");
@@ -404,7 +469,7 @@ fn the_refusal_carries_the_stat_that_was_read() {
 fn the_refusal_for_a_404_without_stat_explains_the_missing_stat() {
 	let failure = LandedFailure::Mismatch {
 		path: "payload/link".to_string(),
-		expected: SentKind::Link,
+		expected: SentKind::Link("anywhere".to_string()),
 		stat: None,
 	};
 	let msg = format_landed_failure(&failure, "/tmp");
@@ -454,3 +519,9 @@ fn the_refusal_for_an_unreadable_archive_carries_the_reason() {
 		"no stat is named because no stat was asked for: {msg}"
 	);
 }
+
+// Link-target confirmation (#1808) in its own file so this one stays under
+// the line limit. A child module, so it reaches `LINK_MODE`, `FILE_MODE` and
+// the imports above through `super::` without widening their visibility.
+#[path = "verify_link_tests.rs"]
+mod link;
