@@ -21,8 +21,9 @@ mod check_fns;
 
 pub(super) use check_fns::{
 	check_dangerous_capability, check_host_namespace, check_no_cap_drop_all, check_no_memory_limit,
-	check_no_new_privileges_off, check_no_pids_limit, check_no_userns, check_privileged,
-	check_secret_in_environment, check_unpinned_image, check_writable_root,
+	check_no_new_privileges_off, check_no_pids_limit, check_no_userns,
+	check_port_published_on_all_interfaces, check_privileged, check_secret_in_environment,
+	check_unpinned_image, check_writable_root,
 };
 
 // `segments` is a helper only consumed from `check_fns` itself during the
@@ -135,6 +136,11 @@ pub(super) const CHECK_REGISTRY: &[CheckDescriptor] = &[
 		run: check_secret_in_environment,
 	},
 	CheckDescriptor {
+		id: "port_published_on_all_interfaces",
+		description: "a port is published without a host IP, so the bind falls on every host interface.",
+		run: check_port_published_on_all_interfaces,
+	},
+	CheckDescriptor {
 		id: "unpinned_image",
 		description: "image has no tag (defaults to :latest), pins to :latest, or is not anchored by a digest.",
 		run: check_unpinned_image,
@@ -144,6 +150,9 @@ pub(super) const CHECK_REGISTRY: &[CheckDescriptor] = &[
 #[cfg(test)]
 #[path = "checks_more_tests.rs"]
 mod more_tests;
+#[cfg(test)]
+#[path = "checks_port_exposure_tests.rs"]
+mod port_exposure_tests;
 #[cfg(test)]
 #[path = "checks_secret_env_tests.rs"]
 mod secret_env_tests;

@@ -4,7 +4,7 @@
 pub mod types;
 
 mod anchor;
-mod diagnostics;
+pub(crate) mod diagnostics;
 mod extends;
 mod include;
 mod merge;

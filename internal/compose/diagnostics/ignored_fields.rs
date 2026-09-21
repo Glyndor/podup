@@ -81,14 +81,55 @@ pub(super) fn ignored_port_fields(file: &ComposeFile, out: &mut Vec<String>) {
 	}
 }
 
-/// Warn when a service publishes a port on every host interface. The
-/// compose-spec short form (`"5432:5432"`) and the long form with no
-/// `host_ip` both bind on all interfaces, which exposes services the
-/// operator thought were local-only (databases, admin UIs) to anything
-/// reachable on the host's network. An explicit `host_ip`, including
-/// `0.0.0.0`, is a decision taken and is not flagged, so flagging it
-/// would only train the reader to ignore the warning.
-pub(super) fn port_published_on_all_interfaces(file: &ComposeFile, out: &mut Vec<String>) {
+/// One port the parse-time port-exposure warning flags. Returned by
+/// [`ports_published_on_all_interfaces`] so the audit module can build
+/// its findings from the same notion of "published on every interface"
+/// instead of inventing a second predicate (#1835). The fields are
+/// exactly what each downstream formatter needs: `service` for both,
+/// `host` for the diagnostic message and the audit reason, and
+/// `cont` (set only for the short form) so the diagnostic can include
+/// the container port in the `127.0.0.1:host:cont` fix-it suggestion.
+pub(crate) struct PortExposure {
+	/// Compose service name.
+	pub service: String,
+	/// Host port label, e.g. `"5432"` or `"8080-8090"`. Used in both
+	/// the diagnostic warning and the audit finding reason.
+	pub host: String,
+	/// Container port, set for the short form so the diagnostic
+	/// suggestion can read `127.0.0.1:{host}:{cont}`. `None` for the
+	/// long form where the fix is `host_ip: "127.0.0.1"`.
+	pub cont: Option<String>,
+}
+
+/// Enumerate every port the diagnostic warning would flag: a
+/// short-form `host:container` with no IP, or a long-form mapping with
+/// `published` but no `host_ip`. The predicate is the single source of
+/// truth for "published on every interface" in this crate; both the
+/// parse-time warning in [`port_published_on_all_interfaces`] and the
+/// audit module's `port_published_on_all_interfaces` check read from
+/// this list, so the two cannot drift on a future compose-shape
+/// addition (#1835).
+///
+/// Threshold:
+/// - Short form with 1 colon (`"5432:5432"`): flagged, no IP, the bind
+///   falls on every interface.
+/// - Short form with 2+ colons (`"0.0.0.0:5432:5432"`): not flagged.
+///   An explicit `host_ip`, including `0.0.0.0`, is a decision taken;
+///   flagging it would only train the reader to ignore the warning,
+///   the same argument the diagnostic comment above
+///   [`port_published_on_all_interfaces`] makes.
+/// - Short form with 0 colons (`"5432"`): not flagged. Container-only
+///   is the short-form mirror of `expose:`, not a publish.
+/// - Short form `[::1]:5432:5432`: not flagged. IPv6 carries its own
+///   host-IP detection; the `[` is the marker.
+/// - Long form with `published` but no `host_ip`: flagged.
+/// - Long form with `host_ip` set (any non-empty value, including
+///   `0.0.0.0` or a private LAN address like `192.168.1.10`): not
+///   flagged. Same argument: an explicit bind is a decision.
+/// - Long form with no `published`: not flagged. The port is exposed,
+///   not published on the host.
+pub(crate) fn ports_published_on_all_interfaces(file: &ComposeFile) -> Vec<PortExposure> {
+	let mut out = Vec::new();
 	for (service, def) in &file.services {
 		for port in &def.ports {
 			match port {
@@ -104,13 +145,18 @@ pub(super) fn port_published_on_all_interfaces(file: &ComposeFile, out: &mut Vec
 					// 1 colon = host:container without IP.
 					if colon_count == 1 {
 						let mut parts = no_proto.split(':');
-						let host = parts.next().unwrap_or("");
-						let cont = parts.next().unwrap_or("");
-						out.push(format!(
-							"service '{service}': port {host} is published on every \
-							 interface; use \"127.0.0.1:{host}:{cont}\" to keep it on \
-							 the host"
-						));
+						let host = parts.next().unwrap_or("").to_string();
+						let cont = parts.next().unwrap_or("").to_string();
+						if host.is_empty() {
+							// Malformed port string; skip rather than emit a
+							// finding with an empty label.
+							continue;
+						}
+						out.push(PortExposure {
+							service: service.clone(),
+							host,
+							cont: Some(cont),
+						});
 					}
 				}
 				PortMapping::Long {
@@ -120,12 +166,11 @@ pub(super) fn port_published_on_all_interfaces(file: &ComposeFile, out: &mut Vec
 				} => {
 					let explicit = host_ip.as_deref().is_some_and(|s| !s.trim().is_empty());
 					if !explicit {
-						let host = p.as_str_val();
-						out.push(format!(
-							"service '{service}': port {host} is published on every \
-							 interface; use host_ip: \"127.0.0.1\" to keep it on the \
-							 host"
-						));
+						out.push(PortExposure {
+							service: service.clone(),
+							host: p.as_str_val(),
+							cont: None,
+						});
 					}
 				}
 				PortMapping::Long {
@@ -135,6 +180,33 @@ pub(super) fn port_published_on_all_interfaces(file: &ComposeFile, out: &mut Vec
 				}
 			}
 		}
+	}
+	out
+}
+
+/// Warn when a service publishes a port on every host interface. The
+/// compose-spec short form (`"5432:5432"`) and the long form with no
+/// `host_ip` both bind on all interfaces, which exposes services the
+/// operator thought were local-only (databases, admin UIs) to anything
+/// reachable on the host's network. An explicit `host_ip`, including
+/// `0.0.0.0`, is a decision taken and is not flagged, so flagging it
+/// would only train the reader to ignore the warning.
+///
+/// The warning text and the audit module's `port_published_on_all_interfaces`
+/// check are both built from [`ports_published_on_all_interfaces`]; the
+/// two surfaces share the same predicate so they cannot drift (#1835).
+pub(super) fn port_published_on_all_interfaces(file: &ComposeFile, out: &mut Vec<String>) {
+	for exposure in ports_published_on_all_interfaces(file) {
+		let fix = match &exposure.cont {
+			Some(cont) => format!("\"127.0.0.1:{host}:{cont}\"", host = exposure.host),
+			None => "host_ip: \"127.0.0.1\"".to_string(),
+		};
+		out.push(format!(
+			"service '{service}': port {host} is published on every \
+			 interface; use {fix} to keep it on the host",
+			service = exposure.service,
+			host = exposure.host,
+		));
 	}
 }
 

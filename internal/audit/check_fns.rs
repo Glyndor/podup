@@ -13,6 +13,9 @@ use podup::size;
 // not the raw compose-side text (#1743). `podup::effective_no_new_privileges`
 // calls the engine's own `parse_security_opts` so the two cannot drift again.
 use podup::effective_no_new_privileges;
+// The audit must use the same notion of "published on every interface" as
+// the parse-time port-exposure warning `up`/`config` already emit (#1835).
+use podup::ports_published_on_all_interfaces;
 
 use super::Finding;
 
@@ -457,6 +460,62 @@ fn normalized_capability(cap: &str) -> String {
 /// Construct one [`Finding`]. Private to this module so callers always go
 /// through `run_checks`, and so the field-name ordering (service, check,
 /// reason) is consistent across all checks.
+/// One [`Finding`] per port the file publishes without a host IP, so
+/// the bind falls on every host interface. The check delegates to
+/// [`podup::ports_published_on_all_interfaces`] so its notion of
+/// "published on every interface" is the exact same predicate the
+/// parse-time warning in `internal/compose/diagnostics/ignored_fields.rs`
+/// already uses; the audit is the same opinion as `up`/`config`, not
+/// a divergent second one (#1835).
+///
+/// Threshold (same as the diagnostic warning):
+/// - Short form with no IP (`"5432:5432"`, `"8080:80/tcp"`): flagged.
+/// - Short form with an explicit IP, including `0.0.0.0` and a private
+///   LAN address like `192.168.1.10`: NOT flagged. An explicit bind is
+///   a decision taken; flagging it would only train the reader to
+///   ignore the check, the same argument the diagnostic's own comment
+///   makes.
+/// - Short form with 0 colons (`"80"`): NOT flagged. Container-only
+///   is the short-form mirror of `expose:`, not a publish.
+/// - Short form `[::1]:5432:5432`: NOT flagged. IPv6 carries its own
+///   host-IP marker.
+/// - Long form with `published` but no `host_ip`: flagged.
+/// - Long form with `host_ip` set (any non-empty value): NOT flagged.
+/// - Long form with no `published`: NOT flagged. The port is exposed,
+///   not published on the host.
+///
+/// Port range (`published: "8080-8090"`): one finding for the mapping,
+/// not one per port in the range. The label carried in the reason is
+/// the range string verbatim, so an operator sees `port 8080-8090`
+/// rather than twenty duplicates. Severity is the same as a
+/// single-port mapping; multiplying findings across a range adds
+/// noise without adding signal.
+pub fn check_port_published_on_all_interfaces(
+	service_name: &str,
+	_service: &Service,
+	file: &ComposeFile,
+) -> Vec<Finding> {
+	let mut out = Vec::new();
+	for (svc, host) in ports_published_on_all_interfaces(file) {
+		// The shared predicate enumerates every flagged port in the
+		// file, but `run_checks` invokes this function once per
+		// service, so filter to the current service. Without this
+		// filter a multi-service file would emit each finding N
+		// times (one per service visit).
+		if svc != service_name {
+			continue;
+		}
+		out.push(finding(
+			&svc,
+			"port_published_on_all_interfaces",
+			&format!(
+				"port {host} is published on every interface; bind to 127.0.0.1 (or another host IP) to keep it off the network"
+			),
+		));
+	}
+	out
+}
+
 fn finding(name: &str, check: &'static str, reason: &str) -> Finding {
 	Finding {
 		service: name.to_string(),
