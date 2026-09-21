@@ -206,6 +206,10 @@ mod watch_tests;
 #[path = "engine_integration/watch_sparse.rs"]
 mod watch_sparse;
 
+#[cfg(all(unix, feature = "test-helpers"))]
+#[path = "engine_integration/watch_delete.rs"]
+mod watch_delete;
+
 #[path = "engine_integration/x_podman_autoupdate.rs"]
 mod x_podman_autoupdate;
 

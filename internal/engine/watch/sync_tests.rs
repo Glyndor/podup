@@ -156,3 +156,39 @@ fn sync_tar_path_with_no_file_name() {
 	let bytes = build_sync_tar(dir.path(), Path::new(".")).unwrap();
 	assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
 }
+
+#[test]
+fn sync_tar_missing_source_is_a_sync_error_not_a_build_error() {
+	// The watch sync promises the user a sync failure reads as a sync
+	// failure. `docs/commands.md` says the warning line is the only signal
+	// a long-running `watch` leaves open, so a category swap to `build`
+	// silently drops the original context. The original bug was this:
+	// `build_sync_tar` mapped the tar packer's io error to `Build`, which
+	// `Display` rendered as `build error: ...`.
+	let missing = Path::new("/nonexistent-watch-source-xyz");
+	let err = build_sync_tar(missing, Path::new("x")).unwrap_err();
+	let msg = err.to_string();
+	assert!(
+		msg.contains("watch error"),
+		"missing-source must be a watch/sync error, got: {msg:?}"
+	);
+	assert!(
+		!msg.contains("build error"),
+		"missing-source must not be a build error: {msg:?}"
+	);
+}
+
+#[test]
+fn sync_tar_missing_directory_source_is_a_sync_error_not_a_build_error() {
+	// Same classification as the single-file case: a missing directory
+	// source for a directory rule must read as a sync failure, never a
+	// build failure.
+	let missing = Path::new("/nonexistent-watch-source-dir-xyz");
+	let err = build_sync_tar(missing, Path::new("x")).unwrap_err();
+	let msg = err.to_string();
+	assert!(msg.contains("watch error"), "wrong category: {msg:?}");
+	assert!(
+		!msg.contains("build error"),
+		"must not be a build error: {msg:?}"
+	);
+}

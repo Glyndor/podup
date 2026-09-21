@@ -3,7 +3,8 @@
 //! [`Engine::watch`] sets up an `inotify`/`kqueue` watcher via `notify`, then
 //! dispatches each change event to the matching [`WatchRule`]. Debouncing
 //! collapses rapid bursts into a single action. Actions:
-//! - `sync`: tar the changed file and upload it into the container
+//! - `sync`: tar the changed file and upload it into the container; for a
+//!   deletion on the host, mirror the removal into the container
 //! - `rebuild`: stop container, rebuild image, restart
 //! - `restart`: stop and start the container without rebuilding
 //! - `sync+restart`: sync first, then restart
@@ -27,8 +28,8 @@ use crate::compose::types::{ComposeFile, WatchAction, WatchRule};
 use crate::error::{ComposeError, Result};
 
 use placement::{
-	is_dispatch_event, mark_dir_ensured, mkdir_p_argv, plan_sync_placement, validate_sync_target,
-	SyncPlacement,
+	is_dispatch_event, is_remove_event, join_container_path, mark_dir_ensured, mkdir_p_argv,
+	plan_remove_placement, plan_sync_placement, validate_sync_target, SyncPlacement,
 };
 use sync::{build_sync_tar, is_ignored, is_included};
 
@@ -72,7 +73,15 @@ impl Engine {
 			if let Some(dev) = &service.develop {
 				for rule in &dev.watch {
 					validate_sync_target(rule)?;
-					let abs = self.base_dir.join(&rule.path);
+					// Canonicalise the joined absolute path so the rule's
+					// literal `./` does not leak into the warn/info text
+					// (`/tmp/d5/./src/f.txt`). The watcher accepts either
+					// shape; the printed string is the only thing that needs
+					// normalising here. Falls back to the join on canonicalize
+					// failure (e.g. a not-yet-existing single-file rule), so
+					// the watcher can still set up.
+					let joined = self.base_dir.join(&rule.path);
+					let abs = std::fs::canonicalize(&joined).unwrap_or(joined);
 					rule_entries.push(RuleEntry {
 						service_name: name.clone(),
 						container_name: self.first_replica_name(name, service),
@@ -165,6 +174,7 @@ impl Engine {
 			}
 
 			let mut paths = event.paths;
+			let event_kind = event.kind;
 			let deadline = tokio::time::Instant::now() + debounce;
 			// Coalesce events within the debounce window, but stop accumulating once
 			// the batch is large so a burst of churn cannot grow `paths` without
@@ -173,6 +183,16 @@ impl Engine {
 				match tokio::time::timeout_at(deadline, rx.recv()).await {
 					Ok(Some(Ok(e))) => {
 						if is_dispatch_event(&e.kind) {
+							// A single notify `Event` carries one `kind` across all
+							// its paths. The first event's kind owns the batch: a
+							// later event of a different kind in the same debounce
+							// window is rare (notify coalesces by file), and treating
+							// it as the dominant kind keeps the dispatch's contract
+							// ("this path was removed / this path was changed") the
+							// same as a single-event loop would. Paths are accumulated
+							// either way: the only thing the dominant kind affects is
+							// whether the dispatch later treats the batch as an upload
+							// or a removal.
 							paths.extend(e.paths);
 						}
 					}
@@ -219,7 +239,10 @@ impl Engine {
 
 					debug!("dispatch {:?} for {}", entry.rule.action, path.display());
 
-					if let Err(e) = self.dispatch_action(file, path, entry, &mut ensured).await {
+					if let Err(e) = self
+						.dispatch_action(file, path, &event_kind, entry, &mut ensured)
+						.await
+					{
 						warn!("watch action failed: {e}");
 					}
 
@@ -235,17 +258,19 @@ impl Engine {
 		&self,
 		file: &ComposeFile,
 		path: &Path,
+		event_kind: &notify::EventKind,
 		entry: &RuleEntry,
 		ensured: &mut HashSet<(String, String)>,
 	) -> Result<()> {
 		match &entry.rule.action {
 			WatchAction::Sync => {
 				if let Some(target) = &entry.rule.target {
-					self.sync_to_container(
+					self.dispatch_sync(
 						&entry.container_name,
 						&entry.abs_path,
 						path,
 						target,
+						event_kind,
 						ensured,
 					)
 					.await?;
@@ -259,11 +284,12 @@ impl Engine {
 			}
 			WatchAction::SyncAndRestart => {
 				if let Some(target) = &entry.rule.target {
-					self.sync_to_container(
+					self.dispatch_sync(
 						&entry.container_name,
 						&entry.abs_path,
 						path,
 						target,
+						event_kind,
 						ensured,
 					)
 					.await?;
@@ -272,11 +298,12 @@ impl Engine {
 			}
 			WatchAction::SyncAndExec => {
 				if let Some(target) = &entry.rule.target {
-					self.sync_to_container(
+					self.dispatch_sync(
 						&entry.container_name,
 						&entry.abs_path,
 						path,
 						target,
+						event_kind,
 						ensured,
 					)
 					.await?;
@@ -288,6 +315,28 @@ impl Engine {
 			}
 		}
 		Ok(())
+	}
+
+	/// Pick the right sync dispatch for the event kind: copy on a change, remove
+	/// on a deletion. A rebuild/restart/exec rule that does not sync does not
+	/// reach this; sync-family actions all funnel through here so the
+	/// removal path is owned in one place.
+	async fn dispatch_sync(
+		&self,
+		container: &str,
+		root: &Path,
+		changed: &Path,
+		target: &str,
+		event_kind: &notify::EventKind,
+		ensured: &mut HashSet<(String, String)>,
+	) -> Result<()> {
+		if is_remove_event(event_kind) {
+			self.remove_from_container(container, root, changed, target)
+				.await
+		} else {
+			self.sync_to_container(container, root, changed, target, ensured)
+				.await
+		}
 	}
 
 	// -----------------------------------------------------------------------
@@ -317,7 +366,7 @@ impl Engine {
 		let tar_bytes =
 			tokio::task::spawn_blocking(move || build_sync_tar(&changed_buf, &entry_name_buf))
 				.await
-				.map_err(|e| ComposeError::Build(format!("watch sync tar: {e}")))??;
+				.map_err(|e| ComposeError::Watch(format!("sync: tar task: {e}")))??;
 
 		// docker compose watch creates the sync target directory when it is
 		// missing; match that so a sync to a not-yet-existing path works instead
@@ -338,6 +387,64 @@ impl Engine {
 			.await?;
 
 		info!("synced {} -> {target}", changed.display());
+		Ok(())
+	}
+
+	/// Mirror a host-side removal into the container.
+	///
+	/// Bounded: the path inside the container is computed from the rule's
+	/// `path` and `target` only (no caller-supplied path), and only entries
+	/// inside the target directory are issued. A removal of the target
+	/// directory itself is refused; that is a different operation (the entire
+	/// mapped area), not an entry delete, and would otherwise `rm -rf` the
+	/// destination.
+	///
+	/// The container-side deletion is a `rm -rf` exec rather than a DELETE
+	/// against the archive endpoint. libpod's archive DELETE was answered
+	/// with `405 Method Not Allowed` on Podman 5.7.0 (the endpoint documents
+	/// only GET/PUT/HEAD), and the engine contract here is "the file is
+	/// gone inside the container" — both paths satisfy it, and the exec
+	/// path works on every libpod version that has the exec endpoint.
+	/// Matching docker compose's own watch handler (#17 in their tar syncer
+	/// upstream), which uses `rm -rf` for the same reason.
+	async fn remove_from_container(
+		&self,
+		container: &str,
+		root: &Path,
+		removed: &Path,
+		target: &str,
+	) -> Result<()> {
+		let placement = plan_remove_placement(root, removed, target);
+		let container_path = join_container_path(&placement);
+		if container_path == "/" || container_path.trim() == placement.dest_dir.trim() {
+			// Refuse to delete the rule's own target directory; see the
+			// function-level note. A single-file rule's `dest_dir` is the
+			// parent of the entry (e.g. `/app`), so this guard fires when
+			// the rule target is a bare directory and the changed path is
+			// the directory itself, which is what the function-level note
+			// describes.
+			return Err(ComposeError::Watch(format!(
+				"sync: refusing to remove the rule target directory {container_path}"
+			)));
+		}
+		// `rm -f` (not `rm -rf`): the path is bounded by the rule's
+		// `path`/`target` so it cannot reach outside the destination, and
+		// refusing to recurse keeps the operation scoped to the single
+		// removed entry. `rm -f` swallows the missing-file case (the file
+		// was already gone inside the container, which is fine).
+		let argv = vec![
+			"rm".to_string(),
+			"-f".to_string(),
+			"--".to_string(),
+			container_path.clone(),
+		];
+		self.watch_exec(container, argv)
+			.await
+			.map_err(|e| ComposeError::Watch(format!("sync: remove {container_path}: {e}")))?;
+		info!(
+			"removed {container_path} from {container} ({})",
+			removed.display()
+		);
 		Ok(())
 	}
 
@@ -436,6 +543,19 @@ impl Engine {
 	) -> Result<()> {
 		let mut ensured = HashSet::new();
 		self.sync_to_container(container, src, src, target, &mut ensured)
+			.await
+	}
+
+	/// Test seam: delete the entry `path` would have written under `target`
+	/// from `container`. Mirrors the live `dispatch_action` path that runs on
+	/// a `Remove` notify event.
+	pub async fn test_remove_from_container(
+		&self,
+		container: &str,
+		src: &Path,
+		target: &str,
+	) -> Result<()> {
+		self.remove_from_container(container, src, src, target)
 			.await
 	}
 

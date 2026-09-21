@@ -32,10 +32,10 @@ pub(super) fn build_sync_tar(src: &Path, entry_name: &Path) -> Result<Vec<u8>> {
 	tar.follow_symlinks(false);
 
 	if src.is_dir() {
-		for abs in walk::walk_dir(src).map_err(ComposeError::Io)? {
+		for abs in walk::walk_dir(src).map_err(watch_io)? {
 			let rel = abs
 				.strip_prefix(src)
-				.map_err(|_| ComposeError::Build("path strip".into()))?;
+				.map_err(|_| watch_err(format!("path strip: {}", abs.display())))?;
 			// Re-root each descendant under `entry_name` so the directory lands at
 			// the rule target with its in-tree layout preserved.
 			let name = entry_name.join(rel);
@@ -43,25 +43,43 @@ pub(super) fn build_sync_tar(src: &Path, entry_name: &Path) -> Result<Vec<u8>> {
 			// a link, not dereferenced.
 			let is_dir = abs.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
 			if is_dir {
-				tar.append_dir(&name, &abs)
-					.map_err(|e| ComposeError::Build(e.to_string()))?;
+				tar.append_dir(&name, &abs).map_err(watch_tar)?;
 			} else {
-				tar.append_path_with_name(&abs, &name)
-					.map_err(|e| ComposeError::Build(e.to_string()))?;
+				tar.append_path_with_name(&abs, &name).map_err(watch_tar)?;
 			}
 		}
 	} else {
 		tar.append_path_with_name(src, entry_name)
-			.map_err(|e| ComposeError::Build(e.to_string()))?;
+			.map_err(watch_tar)?;
 	}
 
-	let gz = tar
-		.into_inner()
-		.map_err(|e| ComposeError::Build(e.to_string()))?;
-	let bytes = gz
-		.finish()
-		.map_err(|e| ComposeError::Build(e.to_string()))?;
+	let gz = tar.into_inner().map_err(watch_tar)?;
+	let bytes = gz.finish().map_err(watch_tar)?;
 	Ok(bytes)
+}
+
+// ---------------------------------------------------------------------------
+// Error mapping
+// ---------------------------------------------------------------------------
+
+/// Classify a host-side IO error as a `watch` error. The watch dispatch
+/// promises the user a `sync` failure will read as a sync failure, not a build
+/// failure: `docs/commands.md` says the only signal a long-running `watch`
+/// leaves open is the warning line, so a category swap from `sync` to `build`
+/// silently drops the original context. `build` is reserved for image build.
+fn watch_io(e: std::io::Error) -> ComposeError {
+	watch_err(e.to_string())
+}
+
+/// Classify a tar-pack error as a `watch` error. Same reasoning as
+/// [`watch_io`]: the failure is in the watch sync path, and the warning line
+/// must keep that category.
+fn watch_tar(e: impl ToString) -> ComposeError {
+	watch_err(e.to_string())
+}
+
+fn watch_err(msg: String) -> ComposeError {
+	ComposeError::Watch(format!("sync: {msg}"))
 }
 
 /// True when `path` matches a watch-rule `ignore` pattern. A pattern ending in
