@@ -189,7 +189,7 @@ fn audit_no_new_privileges_off_flags_an_explicit_false() {
 // Each of the three tests below targets one of the issue's findings and is
 // built from a compose file that `audit --strict` accepted on the unfixed
 // tree but must not afterwards. They are the issue's acceptance criterion,
-// and were failing when the brief was written. Keeping them in a single
+// and failed on the unfixed tree. Keeping them in a single
 // section so the file's `grep "1743"` lands the reviewer on the lot.
 
 /// `mem_limit: not-a-size` keeps the compose field non-empty, so an

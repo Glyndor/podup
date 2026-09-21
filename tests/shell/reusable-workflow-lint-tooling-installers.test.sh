@@ -30,8 +30,7 @@
 # 14 (confirmed against 15 directories in `target/release/build/`,
 # one of which is the podup crate's own build script, the other 14
 # are deps). An acceptance built on 33 would exempt crates the
-# release never builds; 14 is the number that named the property in
-# the brief.
+# release never builds; 14 is the number that states the property.
 #
 # Each step's `run:` body is extracted from the workflow and executed
 # as it ships, in a temporary tree shaped like a repository. Every

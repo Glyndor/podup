@@ -6,8 +6,7 @@
 // `common.yml` twenty times. Each parse holds the YAML value tree
 // (the bytes are capped at 16 MiB but the parsed tree is much larger)
 // while the merge runs, so the concurrent twenty peak at 5.8 GB and
-// the process aborts. The cross-review corrected the brief: the
-// fix is cache + bound, not a parse-count limit, so a test that
+// the process aborts. The fix is cache + bound, not a parse-count limit, so a test that
 // counts the parses is the right shape.
 
 use std::fs;
