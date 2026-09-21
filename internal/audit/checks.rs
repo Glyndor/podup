@@ -339,14 +339,20 @@ fn check_no_userns(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Fi
 
 /// `environment:` key whose name, split into segments on `_`, `-`, `.`,
 /// and camelCase/PascalCase boundaries, has a segment equal to
-/// `PASSWORD|SECRET|TOKEN|KEY` (case-insensitive), with a literal
-/// non-empty value. Bare keys (host inheritance) and unresolved
-/// `${VAR}` placeholders are not secrets.
+/// `PASSWORD|SECRET|TOKEN|KEY` (case-insensitive) AND carries a value in
+/// compose (literal or interpolated from `${VAR}`). Bare keys (host
+/// inheritance) are not secrets.
+///
+/// The risk is the same in both shapes: the value ends up in the
+/// container's environment whether it was written literally or injected
+/// from the operator's environment through `${VAR}`. A gate whose verdict
+/// depends on whether the variable happens to be exported in the caller's
+/// shell is not a gate, so both shapes are flagged.
 ///
 /// Service-local: the check is a positional grep on the `environment:` map
-/// of this service. These are surfaced so the operator can
-/// move them to `secrets:`; the wider question of whether the project
-/// declares `secrets:` is not in scope.
+/// of this service. These are surfaced so the operator can move them to
+/// `secrets:`; the wider question of whether the project declares
+/// `secrets:` is not in scope.
 fn check_secret_in_environment(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
 	let mut out = Vec::new();
 	for (key, value) in service.environment.to_map() {
@@ -357,28 +363,24 @@ fn check_secret_in_environment(name: &str, service: &Service, _file: &ComposeFil
 		{
 			continue;
 		}
-		let Some(value) = value else {
+		if value.is_none() {
 			// Bare key: inherited from the host. Not a published secret.
 			continue;
-		};
-		if value.is_empty() {
-			// Empty literal: probably a placeholder; `docker compose` does
-			// not raise this either.
-			continue;
 		}
-		if value.starts_with("${") && value.ends_with('}') {
-			// Unresolved ${VAR} placeholder: not a published secret either.
-			continue;
-		}
+		// The empty-value branch used to skip here. That branch is what
+		// made the verdict depend on the caller's shell: an unset
+		// `${VAR}` reference resolves to the empty string at parse time,
+		// so `KEY=${VAR}` produced an empty value and was skipped, while
+		// `KEY=${VAR}` with `VAR` exported produced the literal and was
+		// flagged. The risk is the same in both cases: the secret ends up
+		// in the container's environment whether it was authored as a
+		// literal or interpolated from `${VAR}`. Move it to `secrets:`.
 		out.push(finding(
 			name,
 			"secret_in_environment",
-			&format!("environment: {key} carries a hard-coded value; move it to secrets:"),
+			&format!("environment: {key} is set in compose; move it to secrets:"),
 		));
 	}
-	// The `to_map` for the `Empty` enum yields nothing, so the unused
-	// `match arms` below are defensive: future variants of `EnvVars` ought
-	// to keep the same shape.
 	out
 }
 
