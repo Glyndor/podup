@@ -156,6 +156,16 @@ fn assert_unconfirmed(result: crate::error::Result<()>, case: &str) {
 	}
 }
 
+/// Extract the inner detail the caller wraps, for the assertion that the
+/// user-facing error names the entry and the stat. Today the message reaches
+/// the user via `ComposeError::Copy(_)`; this is the seam the tests read.
+fn copy_detail(result: crate::error::Result<()>, case: &str) -> String {
+	match result {
+		Err(ComposeError::Copy(msg)) => msg,
+		other => panic!("{case}: must be reported as an unconfirmed copy, got {other:?}"),
+	}
+}
+
 /// #1777. The copy landed, the runtime hung up, and the caller was told it
 /// failed, because a directory gave the confirmation nothing to compare.
 #[tokio::test]
@@ -242,6 +252,69 @@ async fn a_directory_whose_entries_do_not_match_what_was_sent_is_a_failure() {
 
 		assert_unconfirmed(result, case);
 	}
+}
+
+/// The error message the caller sees names the entry that failed AND the
+/// stat the runtime answered, not just the verdict. This is what makes the
+/// next diagnosis not blind: a log carries the path and the literal
+/// `PathStat`, and an operator can act on it without re-running the upload.
+#[tokio::test]
+async fn a_refused_entry_message_names_the_path_and_the_stat() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = payload_tree(dir.path());
+
+	// One entry is stale: `payload/plain.txt` was meant to be 15 bytes and
+	// arrived at 14. The path is what the user can look at; the stat is the
+	// evidence the runtime said it was 14 bytes.
+	let stale = "/tmp/payload/plain.txt";
+	let disk: Vec<(&str, OnDisk)> = LANDED_TREE
+		.into_iter()
+		.map(|(p, e)| {
+			if p == stale {
+				(p, OnDisk::File(14))
+			} else {
+				(p, e)
+			}
+		})
+		.collect();
+	let fake = runtime(Put::HangsUp, &disk);
+
+	let result = upload(&fake, &payload, "payload", None).await;
+	let msg = copy_detail(result, "stale plain.txt");
+
+	// The path of the entry that failed, relative to the extract dir, is in
+	// the message. An operator looking at the log can see this entry.
+	assert!(
+		msg.contains("payload/plain.txt"),
+		"the entry path must be named in the message: {msg}"
+	);
+
+	// The literal `PathStat` from the runtime is in the message. The Debug
+	// rendering of `PathStat` carries the size and mode the runtime reported,
+	// which is what the next diagnosis needs to compare expected and answered.
+	assert!(
+		msg.contains("size"),
+		"the literal PathStat (whose Debug starts with `size`) must be in the \
+		 message: {msg}"
+	);
+	assert!(
+		msg.contains("14"),
+		"the runtime's reported size (14) must be in the message: {msg}"
+	);
+
+	// The expected kind is also named, so the next diagnosis knows what the
+	// upload was supposed to land.
+	assert!(
+		msg.contains("File(15)"),
+		"the expected kind (a 15-byte file) must be in the message: {msg}"
+	);
+
+	// The actionable hint the existing message carried stays: it is true
+	// (the bytes may have landed) and useful (the operator can look).
+	assert!(
+		msg.contains("may or may not have landed"),
+		"the existing hint must stay: {msg}"
+	);
 }
 
 /// A stat the runtime would not answer is not an answer. Everything else of the
