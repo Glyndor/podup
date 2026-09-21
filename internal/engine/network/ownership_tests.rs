@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::compose::types::NetworkConfig;
+#[cfg(unix)]
 use crate::engine::fake_podman;
 use crate::error::ComposeError;
 use crate::parse_str;
