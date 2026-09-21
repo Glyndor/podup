@@ -243,3 +243,9 @@ fn audit_dangerous_capability_flags_the_curated_list() {
 		"three distinct dangerous_capability findings expected: {report:#?}"
 	);
 }
+
+// The `sensitive_bind_mount` rows live in their own file to keep this one
+// under the line limit. A child module, so `report_for` and the imports
+// above reach it through `super::`.
+#[path = "checks_sensitive_bind_tests.rs"]
+mod sensitive_bind;

@@ -490,3 +490,9 @@ fn audit_strict_verdict_is_independent_of_every_candidate_var() {
 		);
 	}
 }
+
+// The `sensitive_bind_mount` rows, split out to keep this file under the
+// line limit. A child module, so it drives the binary through the helpers
+// above.
+#[path = "audit_exit_codes/sensitive_bind.rs"]
+mod sensitive_bind;
