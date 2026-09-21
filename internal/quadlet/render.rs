@@ -244,8 +244,7 @@ pub(super) fn sanitize_value(value: &str) -> String {
 /// 2. `%` is doubled, because systemd specifiers like `%h` or `%U` would otherwise
 ///    be expanded at unit activation, and a value like `%h/mem` would become
 ///    `<hostname>/mem` inside the podman flag. `Environment=` already does
-///    this; the seven `PodmanArgs=` interpolation sites were not, which is
-///    why the brief calls it out.
+///    this; the seven `PodmanArgs=` interpolation sites were not.
 /// 3. The result is wrapped in double quotes (with `"` and `\` escaped),
 ///    which is the systemd word-splitting syntax for "these characters are
 ///    one token". A hostile value carrying whitespace stays inside the

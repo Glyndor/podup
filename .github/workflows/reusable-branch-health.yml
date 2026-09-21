@@ -24,7 +24,7 @@ name: Branch health (reusable)
 # 1. A run still in progress. The script polls for up to 32 attempts of
 #    15 seconds (eight minutes, inside the job's ten-minute bound), so a
 #    push run that has not yet reached a verdict waits for one. The
-#    brief on the polling bound lives inside the script.
+#    reasoning for the polling bound lives inside the script.
 # 2. An empty history for the branch's current head. There is no run
 #    for the commit this branch points at. The script reports the head
 #    SHA so the operator can match against the API rather than reading

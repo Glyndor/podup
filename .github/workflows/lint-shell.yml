@@ -23,6 +23,8 @@ on:
       - ".github/workflows/reusable-schedule-freshness.yml"
       - ".github/workflows/podman-watch.yml"
       - ".github/scripts/check-hardening-macos.sh"
+      - ".github/scripts/check-planning-words.sh"
+      - "tests/shell/check-planning-words.test.sh"
       - "tests/shell/check-hardening-macos.test.sh"
       - "tests/shell/check-suite-completeness.test.sh"
       - "tests/shell/install-help.test.sh"
@@ -52,6 +54,8 @@ on:
       - ".github/workflows/reusable-schedule-freshness.yml"
       - ".github/workflows/podman-watch.yml"
       - ".github/scripts/check-hardening-macos.sh"
+      - ".github/scripts/check-planning-words.sh"
+      - "tests/shell/check-planning-words.test.sh"
       - "tests/shell/check-hardening-macos.test.sh"
       - "tests/shell/reusable-workflow-lint-tooling-isolation.test.sh"
       - "tests/shell/reusable-workflow-lint-tooling-installers.test.sh"
@@ -99,7 +103,7 @@ jobs:
       # never produces the sentinel, and this check names the file that
       # did not. Without this check, a truncated test and a passing one
       # look the same to the chain: exit 0, no count line.
-      test-command: bash ./tests/shell/check-suite-completeness.test.sh ./tests/shell/locale-pinned.test.sh ./tests/shell/ci-runs-every-test.test.sh ./tests/shell/check-hardening.test.sh ./tests/shell/check-hardening-macos.test.sh ./tests/shell/branch-health-conclusion.test.sh ./tests/shell/reusable-schedule-freshness.test.sh ./tests/shell/reusable-workflow-lint-tooling-isolation.test.sh ./tests/shell/reusable-workflow-lint-tooling-installers.test.sh ./tests/shell/reusable-workflow-lint-caller-if.test.sh ./tests/shell/reusable-workflow-lint-caller-with.test.sh ./tests/shell/reusable-workflow-lint-pin-length.test.sh ./tests/shell/install-rollback-cleans-staged.test.sh ./tests/shell/install-help.test.sh ./tests/shell/podman-watch.test.sh
+      test-command: bash ./tests/shell/check-suite-completeness.test.sh ./tests/shell/locale-pinned.test.sh ./tests/shell/ci-runs-every-test.test.sh ./tests/shell/check-hardening.test.sh ./tests/shell/check-hardening-macos.test.sh ./tests/shell/branch-health-conclusion.test.sh ./tests/shell/reusable-schedule-freshness.test.sh ./tests/shell/reusable-workflow-lint-tooling-isolation.test.sh ./tests/shell/reusable-workflow-lint-tooling-installers.test.sh ./tests/shell/reusable-workflow-lint-caller-if.test.sh ./tests/shell/reusable-workflow-lint-caller-with.test.sh ./tests/shell/reusable-workflow-lint-pin-length.test.sh ./tests/shell/install-rollback-cleans-staged.test.sh ./tests/shell/install-help.test.sh ./tests/shell/podman-watch.test.sh ./tests/shell/check-planning-words.test.sh
       # branch-health-conclusion.test.sh pipes API JSON into the
       # conclusion script and asserts exit codes. jq is the tool that
       # turns the response into shell-readable lines, and it is not in
