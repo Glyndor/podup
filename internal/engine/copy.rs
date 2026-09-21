@@ -17,10 +17,12 @@ use verify::SentKind;
 /// reach `extract_tar_guarded` without widening the published API surface.
 pub(crate) mod archive;
 mod destination;
+mod progress;
 mod stream;
 mod verify;
 
 use archive::{extract_archive, pack_path};
+pub(crate) use progress::ByteCounter as CpByteCounter;
 
 /// Upper bound on a container→host `cp` archive buffered in memory. Without it a
 /// hostile or huge container path would OOM the CLI. Generous (covers ordinary
@@ -163,10 +165,27 @@ impl Engine {
 		// or `SERVICE:`.
 		check_endpoint(src)?;
 		check_endpoint(dst)?;
-		match (parse_endpoint(src), parse_endpoint(dst)) {
+		// The row name on the live board. Always the destination side, since
+		// the destination is the side the operator was thinking about when they
+		// typed the command: the local path for container->host (`svc:/path ->
+		// /host/dst`), the service ref for host->container (`/host/src ->
+		// svc:/path`).
+		let row_name = cp_row_name(src, dst);
+		let counter = CpByteCounter::new();
+		let emitter = progress::spawn_emitter("Cp", row_name.clone(), counter.clone());
+		crate::ui::progress::begin(vec![(crate::ui::progress::Kind::Cp, row_name.clone())]);
+		crate::ui::progress::start("Cp", &row_name, "Copying");
+		let result = match (parse_endpoint(src), parse_endpoint(dst)) {
 			(Some((service, container_path)), None) => {
-				self.cp_from_container(file, service, container_path, Path::new(dst), &opts)
-					.await
+				self.cp_from_container(
+					file,
+					service,
+					container_path,
+					Path::new(dst),
+					&opts,
+					counter.clone(),
+				)
+				.await
 			}
 			(None, Some((service, container_path))) => {
 				// `cp host/. svc:/X` copies the host directory's *contents*
@@ -182,6 +201,7 @@ impl Engine {
 					container_path,
 					&opts,
 					contents,
+					counter.clone(),
 				)
 				.await
 			}
@@ -191,7 +211,17 @@ impl Engine {
 			(None, None) => Err(ComposeError::Unsupported(
 				"cp: one of src or dst must be SERVICE:PATH".into(),
 			)),
-		}
+		};
+		emitter.stop();
+		let bytes = counter.load();
+		let verb = if result.is_ok() {
+			progress::format_copied_verb(bytes)
+		} else {
+			"Failed".to_string()
+		};
+		crate::ui::progress_line("Cp", &row_name, &verb);
+		crate::ui::progress::end();
+		result
 	}
 
 	async fn cp_from_container(
@@ -201,6 +231,7 @@ impl Engine {
 		container_path: &str,
 		dst: &Path,
 		opts: &CpOptions,
+		progress: CpByteCounter,
 	) -> Result<()> {
 		let service = file
 			.services
@@ -247,7 +278,13 @@ impl Engine {
 				return Err(destination::refusal_for(&dst));
 			}
 			CpDestinationKind::Directory => {
-				return stream::extract_streamed(resp, dst, MAX_CP_ARCHIVE_BYTES as u64).await;
+				return stream::extract_streamed(
+					resp,
+					dst,
+					MAX_CP_ARCHIVE_BYTES as u64,
+					Some(progress),
+				)
+				.await;
 			}
 			CpDestinationKind::NotADirectory => {
 				// Fall through: `extract_archive` will either create a fresh
@@ -271,6 +308,7 @@ impl Engine {
 				))
 			})?
 			.to_bytes();
+		progress.add(tar_bytes.len() as u64);
 
 		tokio::task::spawn_blocking(move || extract_archive(&tar_bytes, &dst))
 			.await
@@ -300,6 +338,7 @@ impl Engine {
 	/// a directory, so a foreign `rm -rf` racing in is rejected by the
 	/// second PUT, not silently succeeded. The `extract_stat_path` HEAD
 	/// below is what makes that property hold; do not skip it.
+	#[allow(clippy::too_many_arguments)]
 	async fn cp_to_container(
 		&self,
 		file: &ComposeFile,
@@ -308,6 +347,7 @@ impl Engine {
 		container_path: &str,
 		opts: &CpOptions,
 		contents: bool,
+		progress: CpByteCounter,
 	) -> Result<()> {
 		let service = file
 			.services
@@ -406,6 +446,7 @@ impl Engine {
 			&entry,
 			tar_bytes,
 			uploaded_kind,
+			progress,
 		)
 		.await
 	}
@@ -447,6 +488,7 @@ impl Engine {
 		entry: &str,
 		tar_bytes: Vec<u8>,
 		uploaded_kind: Option<SentKind>,
+		progress: CpByteCounter,
 	) -> Result<()> {
 		let path = format!(
 			"{API_PREFIX}/containers/{}/archive?path={}",
@@ -485,7 +527,12 @@ impl Engine {
 		let tar_bytes = Bytes::from(tar_bytes);
 		let Err(e) = self
 			.client
-			.put_bytes_ok(&path, tar_bytes.clone(), "application/gzip")
+			.put_bytes_ok_counting(
+				&path,
+				tar_bytes.clone(),
+				"application/gzip",
+				progress.inner().clone(),
+			)
 			.await
 		else {
 			return Ok(());
@@ -532,6 +579,18 @@ impl Engine {
 			 or may not have landed; check {dir} in the container."
 		)))
 	}
+}
+
+/// Pick the row name for the live board from the `cp` endpoint pair.
+///
+/// Always the destination side, since the destination is the side the
+/// operator was thinking about when they typed the command: the local
+/// path for container->host (`svc:/path -> /host/dst`), the service ref
+/// for host->container (`/host/src -> svc:/path`). One branch decides,
+/// because the endpoint parser has already rejected `SERVICE:PATH` on
+/// both sides and `-` on either side.
+fn cp_row_name(_src: &str, dst: &str) -> String {
+	dst.to_string()
 }
 
 /// What the destination entry must look like for a single-entry upload to have
@@ -672,3 +731,7 @@ mod destination_tests;
 #[cfg(test)]
 #[path = "copy/destination_trusted_tests.rs"]
 mod destination_trusted_tests;
+
+#[cfg(all(test, unix))]
+#[path = "copy/cp_progress_tests.rs"]
+mod cp_progress_tests;

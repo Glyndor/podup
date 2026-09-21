@@ -334,8 +334,15 @@ impl Engine {
 		// was sent). `watch` used to have its own copy of this PUT, which is how
 		// the two drifted apart and left sync unfixed on Podman 6.
 		let uploaded_kind = crate::engine::copy::uploaded_entry_kind(changed, false);
-		self.put_archive_verified(container, &dest_dir, &entry_name, tar_bytes, uploaded_kind)
-			.await?;
+		self.put_archive_verified(
+			container,
+			&dest_dir,
+			&entry_name,
+			tar_bytes,
+			uploaded_kind,
+			crate::engine::copy::CpByteCounter::new(),
+		)
+		.await?;
 
 		info!("synced {} -> {target}", changed.display());
 		Ok(())

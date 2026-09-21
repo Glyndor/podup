@@ -142,6 +142,7 @@ async fn upload(
 			entry,
 			tar,
 			uploaded_entry_kind(src, false),
+			super::CpByteCounter::new(),
 		)
 		.await
 }
