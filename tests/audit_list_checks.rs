@@ -264,6 +264,8 @@ services:
       - DB_PASSWORD=hunter2
     ports:
       - \"5432:5432\"
+    volumes:
+      - /run/user/1000/podman/podman.sock:/sock
 ";
 	let path = write_compose(body);
 	let p = path.to_str().unwrap();

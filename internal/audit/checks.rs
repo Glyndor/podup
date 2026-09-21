@@ -19,6 +19,11 @@ use super::Finding;
 #[path = "check_fns.rs"]
 mod check_fns;
 
+#[path = "check_sensitive_bind.rs"]
+mod check_sensitive_bind;
+
+pub(super) use check_sensitive_bind::check_sensitive_bind_mount;
+
 pub(super) use check_fns::{
 	check_dangerous_capability, check_host_namespace, check_no_cap_drop_all, check_no_memory_limit,
 	check_no_new_privileges_off, check_no_pids_limit, check_no_userns,
@@ -139,6 +144,11 @@ pub(super) const CHECK_REGISTRY: &[CheckDescriptor] = &[
 		id: "port_published_on_all_interfaces",
 		description: "a port is published without a host IP, so the bind falls on every host interface.",
 		run: check_port_published_on_all_interfaces,
+	},
+	CheckDescriptor {
+		id: "sensitive_bind_mount",
+		description: "a bind mount exposes a sensitive host path: a container runtime socket, or /proc, /sys, /dev, /etc, /boot, /root or a runtime directory holding a socket.",
+		run: check_sensitive_bind_mount,
 	},
 	CheckDescriptor {
 		id: "unpinned_image",

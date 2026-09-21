@@ -516,7 +516,7 @@ pub fn check_port_published_on_all_interfaces(
 	out
 }
 
-fn finding(name: &str, check: &'static str, reason: &str) -> Finding {
+pub(super) fn finding(name: &str, check: &'static str, reason: &str) -> Finding {
 	Finding {
 		service: name.to_string(),
 		check,
