@@ -4,7 +4,7 @@
 //! by scanning the characters inside a `${…}` group and resolving them against
 //! the variable map.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::error::{ComposeError, Result};
 
@@ -155,6 +155,7 @@ pub(super) fn resolve_modifier(
 	vars: &HashMap<String, String>,
 	depth: usize,
 	spent: &mut usize,
+	warned: &mut HashSet<String>,
 ) -> Result<String> {
 	let value = vars.get(&var);
 
@@ -164,7 +165,7 @@ pub(super) fn resolve_modifier(
 			None => {
 				// Match docker compose v2, which warns on stderr before defaulting an
 				// unreferenced variable to the empty string, so config typos surface.
-				tracing::warn!("The {var} variable is not set. Defaulting to a blank string.");
+				super::warn_unset(&var, warned);
 				Ok(String::new())
 			}
 		},
@@ -175,21 +176,23 @@ pub(super) fn resolve_modifier(
 		// than overflowing the stack.
 		Modifier::DefaultIfUnsetOrEmpty(default) => match value {
 			Some(v) if !v.is_empty() => Ok(v.clone()),
-			_ => super::substitute_depth(&default, vars, depth + 1, spent),
+			_ => super::substitute_depth(&default, vars, depth + 1, spent, warned),
 		},
 
 		Modifier::DefaultIfUnset(default) => match value {
 			Some(v) => Ok(v.clone()),
-			None => super::substitute_depth(&default, vars, depth + 1, spent),
+			None => super::substitute_depth(&default, vars, depth + 1, spent, warned),
 		},
 
 		Modifier::AltIfSetAndNonEmpty(alt) => match value {
-			Some(v) if !v.is_empty() => super::substitute_depth(&alt, vars, depth + 1, spent),
+			Some(v) if !v.is_empty() => {
+				super::substitute_depth(&alt, vars, depth + 1, spent, warned)
+			}
 			_ => Ok(String::new()),
 		},
 
 		Modifier::AltIfSet(alt) => match value {
-			Some(_) => super::substitute_depth(&alt, vars, depth + 1, spent),
+			Some(_) => super::substitute_depth(&alt, vars, depth + 1, spent, warned),
 			None => Ok(String::new()),
 		},
 

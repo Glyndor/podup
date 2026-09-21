@@ -256,6 +256,13 @@ fn interpolated_yaml_text_from_content(
 	env_files: &[String],
 	interpolate: bool,
 ) -> Result<String> {
+	// The parse pass already emitted unset-variable warnings for this
+	// document; the diagnostic pass only re-interpolates so the typed model
+	// can be diffed against the raw shape. Silence substitute warnings here
+	// so every reference to the same missing variable in the file emits one
+	// line, not two (#1838), and the audit path that reuses this same code
+	// converges to the same count as config.
+	let _silence = substitute::warnings::Guard::new(false);
 	let value = if interpolate {
 		let vars = if env_files.is_empty() {
 			substitute::build_vars(dir)
