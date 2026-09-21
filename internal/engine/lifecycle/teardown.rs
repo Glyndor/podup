@@ -126,6 +126,28 @@ impl Engine {
 				"{API_PREFIX}/networks/{}",
 				crate::libpod::urlencoded(&network_name),
 			);
+			// Project boundary: never remove a network labelled for another
+			// project. The compose file declares a `name:` (or accepts the
+			// `<project>_<key>` default), and either can coincide with a
+			// network that another podup stack owns. With the owner's
+			// containers stopped, libpod would happily honour the DELETE;
+			// the guard fires before the request lands so it cannot. An
+			// unlabelled network is also refused (the label is the only
+			// ownership evidence; "no one owns it" is not a safe state to
+			// delete from). A 404 below means there was nothing to remove
+			// in the first place, so the guard is moot and the row is
+			// reported `Absent`.
+			if let Some(owner) = self.inspect_network_owner(&network_name).await? {
+				if owner != self.project {
+					crate::ui::progress_line("Network", &network_name, "Failed");
+					return Err(crate::error::ComposeError::Unsupported(format!(
+						"network '{network_name}' is labelled podup.project={owner}; \
+						 refusing to remove it from this project ('{}'). The compose \
+						 file must declare 'networks.{key}.external: true' to share it.",
+						self.project
+					)));
+				}
+			}
 			// `delete_existed`, not `delete_ok`: this loop walks the networks the
 			// compose file *declares*, which is not the same set as the networks
 			// that exist. `delete_ok` throws away the boolean that tells the two

@@ -227,6 +227,8 @@ mod create_ls;
 mod lifecycle_output;
 #[path = "engine_integration/multi_file.rs"]
 mod multi_file;
+#[path = "engine_integration/network_ownership.rs"]
+mod network_ownership;
 /// A free loopback port, chosen by binding zero and releasing it.
 ///
 /// Shared because three tests hard-coded `18081` and a fourth `18080`, so any
