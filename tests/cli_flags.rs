@@ -336,6 +336,50 @@ fn ps_output_flags_conflict_in_every_pair_and_survive_alone() {
 	}
 }
 
+/// Property over the surface: every command that exposes more than one
+/// output-shaping flag treats every pair as **either** a parsed argument
+/// list **or** a clap usage error. No pair is accepted with one flag
+/// silently dropped. `ps` had three flags (`-q`, `--format`, `--services`)
+/// and the documented `-q --format json` pair refused correctly while the
+/// other two dropped one flag; this test extends the same enumeration to
+/// every other command in the same shape (`volumes`, `images`, `events`),
+/// so the next command that grows a second output-shaping flag is checked
+/// the same way from the moment it lands.
+///
+/// "Conflict" here means `clap` itself rejected the pair. Reaching Podman
+/// at runtime and failing there is the success branch: parsing got past
+/// the pair, so neither was dropped.
+#[test]
+fn every_command_with_output_flags_rejects_or_parses_every_pair() {
+	// Each command, its flag pairs, and whether the pair must error.
+	// `ps` has three flags (3 pairs), the rest have two (1 pair).
+	let cases: &[(&str, &[&[&str]])] = &[
+		(
+			"ps",
+			&[
+				&["-q", "--format", "json"],
+				&["--services", "--format", "json"],
+				&["--services", "-q"],
+			],
+		),
+		("volumes", &[&["-q", "--format", "json"]]),
+		("images", &[&["-q", "--format", "json"]]),
+		("events", &[&["--json", "--format", "json"]]),
+	];
+	for (cmd, pairs) in cases {
+		for pair in *pairs {
+			let mut args = vec![*cmd];
+			args.extend_from_slice(pair);
+			let out = run_offline(&args);
+			assert!(
+				is_clap_usage_error(&out),
+				"`{args:?}` should be rejected as conflicting; got:\n{}",
+				String::from_utf8_lossy(&out.stderr)
+			);
+		}
+	}
+}
+
 // --- #863/#862: positional service / dash output reach runtime --------------
 
 #[test]

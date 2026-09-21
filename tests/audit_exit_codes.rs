@@ -435,3 +435,58 @@ fn audit_secret_in_environment_does_not_flag_file_suffix_pointing_outside_secret
 		);
 	}
 }
+
+/// Property over the surface: `audit --strict` on the same file gives the
+/// same verdict whether or not the caller exported each candidate variable.
+/// The example-based test above covers `SECRETO` (the variable the original
+/// #1841 defect keyed on); this one sweeps a basket of variables, so the
+/// next member of the family — a different check that reads the operator's
+/// environment — is caught the same way.
+///
+/// Stated as an equality between the exit codes, with no judgement of which
+/// verdict is right: a gate whose answer is wrong is still a gate, and one
+/// that flips between runs is not a gate at all.
+#[test]
+fn audit_strict_verdict_is_independent_of_every_candidate_var() {
+	let body = "services:\n  web:\n    image: alpine:3.20\n    environment:\n      - DB_PASSWORD=${PODUP_PROP_AUD_A}\n      - API_KEY=${PODUP_PROP_AUD_B}\n      - PASSTHROUGH=true\n";
+	let path = write_compose(body);
+	let p = path.to_str().unwrap();
+
+	let baseline = run(&["-f", p, "audit", "--strict"]);
+	let baseline_code = baseline.status.code();
+
+	for (key, value) in [
+		("PODUP_PROP_AUD_A", "valor-a"),
+		("PODUP_PROP_AUD_B", "valor-b"),
+		("PODUP_PROP_AUD_C", "valor-c"),
+		// A variable the file does not reference at all: exporting it must
+		// still not change the verdict, because the runner is not the file.
+		("PODUP_PROP_AUD_D", "valor-d"),
+	] {
+		let mut cmd = Command::new(bin());
+		cmd.args(["-f", p, "audit", "--strict"]);
+		for remove in [
+			"PODUP_LIBPOD_POOL",
+			"PODUP_LIBCOD_POOL",
+			"PODMAN_SOCKET",
+			"DOCKER_HOST",
+			"COMPOSE_PROJECT_NAME",
+			"COMPOSE_PROFILES",
+			"COMPOSE_FILE",
+			"NO_COLOR",
+			key,
+		] {
+			cmd.env_remove(remove);
+		}
+		cmd.env(key, value);
+		let exported = cmd.output().expect("run podup audit with var exported");
+		assert_eq!(
+			exported.status.code(),
+			baseline_code,
+			"exporting {key}={value} changed the audit verdict from {baseline_code:?} to {:?}\nbaseline stdout:\n{}\nexported stdout:\n{}",
+			exported.status.code(),
+			String::from_utf8_lossy(&baseline.stdout),
+			String::from_utf8_lossy(&exported.stdout),
+		);
+	}
+}

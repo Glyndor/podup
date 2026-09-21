@@ -475,3 +475,61 @@ async fn ps_service_column_value_round_trips_through_ps_and_logs() {
 		);
 	}
 }
+
+/// Property over the surface: every row of `ps` carries at least one
+/// identifier `logs` accepts as a target. Not "the SERVICE column round-trips"
+/// (that is the example) but "no row leaves the reader with no usable
+/// identifier", which holds however the table is laid out.
+///
+/// The example-based test reads only the SERVICE column, so a future layout
+/// shift that drops it would still leave the column-positioned assertion
+/// pointing at the same index, while every row would be unreadable. This test
+/// walks the cells instead, so a regression that loses the only accepted
+/// identifier is caught no matter which column carries it.
+///
+/// Stated over the cells the command actually printed rather than a hardcoded
+/// name: the fixture can rename the service and the contract stays the same.
+#[tokio::test]
+async fn every_ps_row_has_an_identifier_logs_accepts() {
+	if !podman_up().await {
+		return;
+	}
+	let p = Project::start("psprop");
+	let ps_out = p.run(&["ps"]);
+	let data: Vec<&str> = ps_out
+		.lines()
+		.filter(|l| !l.trim().is_empty())
+		.skip(1) // drop the header
+		.collect();
+	assert!(!data.is_empty(), "ps printed no data row: {ps_out:?}");
+
+	for row in &data {
+		let cells: Vec<&str> = row.split_whitespace().collect();
+		// The cells a reader can pick from: every non-empty value, deduped
+		// so two cells carrying the same string only probe it once. STATUS
+		// ('Up') and CREATED ('5 minutes ago') are common false positives
+		// that the reader would never paste back into `logs`.
+		let mut tried: Vec<&str> = Vec::new();
+		for c in &cells {
+			if !c.is_empty() && !tried.contains(c) {
+				tried.push(c);
+			}
+		}
+		let mut accepted: Vec<&str> = Vec::new();
+		for value in &tried {
+			let logs = Command::new(bin())
+				.args([
+					"-f", &p.compose, "-p", &p.name, "logs", "--tail", "0", value,
+				])
+				.output()
+				.expect("run podup logs <cell>");
+			if logs.status.success() {
+				accepted.push(value);
+			}
+		}
+		assert!(
+			!accepted.is_empty(),
+			"ps row carried no identifier accepted by `logs`: {row:?}\nall cells tried: {tried:?}\nfull output:\n{ps_out}"
+		);
+	}
+}
