@@ -116,7 +116,7 @@ pub(crate) const MAX_INTERP_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 /// its own dedup set, so a single input with `${X}` three times emits one
 /// warning; if a caller wants to share a dedup set across many inputs (so a
 /// `${X}` referenced once in input A and twice in input B yields one
-/// warning, not two), use [`substitute_with_warned`] and pass the same set
+/// warning, not two), use `substitute_with_warned` and pass the same set
 /// to every call.
 pub fn substitute(input: &str, vars: &HashMap<String, String>) -> Result<String> {
 	let mut spent = 0usize;
