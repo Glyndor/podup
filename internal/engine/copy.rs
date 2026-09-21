@@ -11,7 +11,7 @@ use crate::libpod::urlencoded;
 use crate::libpod::API_PREFIX;
 
 use super::Engine;
-use verify::SentKind;
+use verify::{LandedFailure, SentKind};
 
 /// Crate-private so the fuzz harness behind the `test-helpers` feature can
 /// reach `extract_tar_guarded` without widening the published API surface.
@@ -495,7 +495,7 @@ impl Engine {
 		if !e.is_incomplete_message() {
 			return Err(ComposeError::Podman(e));
 		}
-		let landed = match (&verify_path, &expected) {
+		let landed: std::result::Result<(), LandedFailure> = match (&verify_path, &expected) {
 			(Some(p), Some(want)) => {
 				// A symbolic link's destination is read through the 404-with-stat
 				// shape, the same dispatch `tree_landed` uses: a dangling link
@@ -510,26 +510,46 @@ impl Engine {
 					_ => self.client.head_path_stat(p).await,
 				};
 				match stat {
-					Ok(post) => verify::entry_landed(*want, post.as_ref()),
+					Ok(post) if verify::entry_landed(*want, post.as_ref()) => Ok(()),
+					Ok(post) => {
+						tracing::debug!(
+							"cp: {entry} in {dir} is not what was uploaded ({want:?}): {post:?}"
+						);
+						Err(LandedFailure::Mismatch {
+							path: entry.to_string(),
+							expected: *want,
+							stat: post,
+						})
+					}
 					Err(stat_err) => {
 						tracing::debug!(
 							"cp: could not re-verify {p} after an incomplete PUT: {stat_err}"
 						);
-						false
+						Err(LandedFailure::StatError {
+							path: entry.to_string(),
+							error: stat_err.to_string(),
+						})
 					}
 				}
 			}
 			_ => self.tree_landed(container, dir, tar_bytes).await,
 		};
-		if landed {
-			return Ok(());
-		}
-		// The upload finished but its result could not be confirmed. Say so, with
-		// an actionable hint, instead of surfacing the raw transport error.
+		let failure = match landed {
+			Ok(()) => return Ok(()),
+			Err(failure) => failure,
+		};
+		// The upload finished but its result could not be confirmed. Say what
+		// was wrong with the destination, with the entry and the stat the
+		// runtime answered, and keep the actionable hint, instead of surfacing
+		// the raw transport error. The hint is true and useful even when the
+		// verification was a clear mismatch: bytes that look like the upload
+		// can sit in the destination for a moment before the runtime
+		// cleans them up.
+		let detail = verify::format_landed_failure(&failure, dir);
 		Err(ComposeError::Copy(format!(
 			"the upload to {dir} could not be confirmed: the container runtime closed the \
-			 connection without a response and the destination did not change. The copy may \
-			 or may not have landed; check {dir} in the container."
+			 connection without a response, and {detail}. The copy may or may not have landed; \
+			 check {dir} in the container."
 		)))
 	}
 }

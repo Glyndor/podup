@@ -44,6 +44,18 @@
 //! `tree_landed` answer "not landed". A copy of such a tree against Podman 6
 //! with a dropped response is then reported as failed rather than confirmed
 //! against the lossy-rewritten name. No lossy conversion anywhere in this file.
+//!
+//! ## Why the failure carries the entry and the stat
+//!
+//! `tree_landed` and the single-entry path in `put_archive_verified` used to
+//! return `bool`, which left the caller no way to tell which entry failed or
+//! what the runtime had said about it. Two rounds of guessing at the Podman 6
+//! link confirmation (#1808) were blind for that reason: the failing entry
+//! went out through `tracing::debug!`, the integration suite's env filter does
+//! not emit debug, and the job log carried no trace of which entry or which
+//! stat. The verification now returns a [`LandedFailure`] that names the entry,
+//! the kind expected, and the literal `PathStat` the runtime answered, so the
+//! next attempt starts from a measurement.
 
 use bytes::Bytes;
 
@@ -161,16 +173,83 @@ pub(super) fn entry_landed(sent: SentKind, post: Option<&PathStat>) -> bool {
 	}
 }
 
+/// What the verification saw when it refused the upload. The fields name the
+/// entry, what was expected, and what the runtime answered (or that it could
+/// not be asked at all, or that the archive itself was unreadable), so the
+/// next diagnosis is not blind: the next attempt's log carries the entry that
+/// failed and the stat that was read for it, not just a verdict.
+///
+/// The previous bool return forced the caller to invent a message; that
+/// message named neither entry nor stat, and the `tracing::debug!` that did
+/// carry them was filtered out of the integration env. This is the type the
+/// bool became, so the message reaches the user.
+#[derive(Debug)]
+pub(crate) enum LandedFailure {
+	/// The runtime answered, but the answer is not what was sent. The most
+	/// common case: an entry left over from before the upload, an entry the
+	/// stream cut before reaching, or an entry the destination cannot host
+	/// (a directory where a file was sent, say).
+	Mismatch {
+		/// Path of the entry that failed, relative to `dir`.
+		path: String,
+		/// What the upload was supposed to land.
+		expected: SentKind,
+		/// What the stat endpoint reported. `None` is the 404-without-stat
+		/// shape reachable for symlinks on runtimes that drop the
+		/// `X-Docker-Container-Path-Stat` header.
+		stat: Option<PathStat>,
+	},
+	/// The runtime could not be asked about this entry at all (a 5xx, a
+	/// socket drop on the stat `HEAD` itself).
+	StatError { path: String, error: String },
+	/// The archive sent could not be read back, or held no verifiable
+	/// entries, so no specific entry was named. Carries the reason only.
+	Unnamed(String),
+}
+
+/// Render `failure` into the inner clause the caller's error wraps. Names
+/// the path, what was expected, and what the runtime answered, so a user (or
+/// the next diagnosis) can act on it. `dir` is the directory the archive was
+/// extracted at, used to qualify the entry path in the message.
+///
+/// The outer "the upload to {dir} could not be confirmed" prefix lives at
+/// the call site; the part this function produces is what was wrong with
+/// the destination, why the verdict is what it is.
+pub(crate) fn format_landed_failure(failure: &LandedFailure, dir: &str) -> String {
+	match failure {
+		LandedFailure::Mismatch {
+			path,
+			expected,
+			stat,
+		} => {
+			let stat_part = match stat {
+				Some(s) => format!("runtime answered {s:?}"),
+				None => "runtime answered no stat (a 404 without the stat header)".to_string(),
+			};
+			format!("{path} in {dir} is not what was uploaded; expected {expected:?}, {stat_part}")
+		}
+		LandedFailure::StatError { path, error } => {
+			format!("{path} in {dir} could not be read back after an incomplete PUT: {error}")
+		}
+		LandedFailure::Unnamed(reason) => {
+			format!("the archive that was sent could not be read back: {reason}")
+		}
+	}
+}
+
 impl Engine {
 	/// Whether every file, directory and symbolic link of `gz_tar` is at `dir`
-	/// in `container`.
+	/// in `container`. On refusal returns a [`LandedFailure`] that names the
+	/// entry, the kind expected, and the stat the runtime answered (or the
+	/// transport error, or that the archive itself was unreadable), so the
+	/// next diagnosis starts from a measurement.
 	///
 	/// An archive that holds a hard link, a FIFO, a device, a block/char
 	/// device or anything else that cannot be asked about through the
 	/// archive stat is unverifiable: `sent_entries` errors on the offending
-	/// entry type and this function answers "not landed", so the upload
-	/// fails closed rather than confirming against an entry the destination
-	/// was never asked about.
+	/// entry type and this function returns
+	/// `LandedFailure::Unnamed`, so the upload fails closed rather than
+	/// confirming against an entry the destination was never asked about.
 	///
 	/// Entries are asked about last to first. Extraction is sequential, so a
 	/// stream that was cut loses its tail, and this way round a truncated
@@ -188,7 +267,12 @@ impl Engine {
 	///
 	/// The residual false positive is the single-file one at tree size: an
 	/// upload that failed over a tree whose entries already had these sizes.
-	pub(super) async fn tree_landed(&self, container: &str, dir: &str, gz_tar: Bytes) -> bool {
+	pub(super) async fn tree_landed(
+		&self,
+		container: &str,
+		dir: &str,
+		gz_tar: Bytes,
+	) -> std::result::Result<(), LandedFailure> {
 		let read_back = tokio::task::spawn_blocking(move || sent_entries(&gz_tar))
 			.await
 			.map_err(|e| ComposeError::Build(e.to_string()))
@@ -197,11 +281,13 @@ impl Engine {
 			Ok(sent) => sent,
 			Err(e) => {
 				tracing::debug!("cp: could not read back the uploaded archive: {e}");
-				return false;
+				return Err(LandedFailure::Unnamed(e.to_string()));
 			}
 		};
 		if sent.is_empty() {
-			return false;
+			return Err(LandedFailure::Unnamed(
+				"the archive held no verifiable entries".into(),
+			));
 		}
 		for entry in sent.iter().rev() {
 			let stat_path = format!(
@@ -221,18 +307,25 @@ impl Engine {
 						entry.path,
 						entry.kind
 					);
-					return false;
+					return Err(LandedFailure::Mismatch {
+						path: entry.path.clone(),
+						expected: entry.kind,
+						stat: post,
+					});
 				}
 				Err(stat_err) => {
 					tracing::debug!(
 						"cp: could not re-verify {} in {dir} after an incomplete PUT: {stat_err}",
 						entry.path
 					);
-					return false;
+					return Err(LandedFailure::StatError {
+						path: entry.path.clone(),
+						error: stat_err.to_string(),
+					});
 				}
 			}
 		}
-		true
+		Ok(())
 	}
 }
 
