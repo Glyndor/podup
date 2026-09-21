@@ -1,6 +1,3 @@
-use flate2::write::GzEncoder;
-use flate2::Compression;
-
 use super::super::archive::pack_path;
 use super::{entry_landed, sent_entries, SentEntry, SentKind};
 use crate::libpod::client::PathStat;
@@ -136,7 +133,6 @@ fn a_tar_with_only_a_symlink_yields_one_link_entry() {
 #[test]
 fn a_path_that_is_not_utf_8_is_an_error() {
 	use std::ffi::OsStr;
-	use std::io::Write;
 	use std::os::unix::ffi::OsStrExt;
 
 	let mut builder = tar::Builder::new(Vec::new());
@@ -150,14 +146,8 @@ fn a_path_that_is_not_utf_8_is_an_error() {
 	builder.append(&header, std::io::empty()).unwrap();
 	let bytes = builder.into_inner().unwrap();
 
-	let gz = {
-		let mut enc = GzEncoder::new(Vec::new(), Compression::default());
-		enc.write_all(&bytes).unwrap();
-		enc.finish().unwrap()
-	};
-
 	assert!(
-		sent_entries(&gz).is_err(),
+		sent_entries(&bytes).is_err(),
 		"a non-UTF-8 path must make sent_entries error, not silently rewrite"
 	);
 }
@@ -169,8 +159,6 @@ fn a_path_that_is_not_utf_8_is_an_error() {
 #[cfg(unix)]
 #[test]
 fn a_fifo_entry_is_an_error() {
-	use std::io::Write;
-
 	let mut builder = tar::Builder::new(Vec::new());
 	let mut header = tar::Header::new_gnu();
 	header.set_size(0);
@@ -181,13 +169,7 @@ fn a_fifo_entry_is_an_error() {
 	builder.append(&header, std::io::empty()).unwrap();
 	let bytes = builder.into_inner().unwrap();
 
-	let gz = {
-		let mut enc = GzEncoder::new(Vec::new(), Compression::default());
-		enc.write_all(&bytes).unwrap();
-		enc.finish().unwrap()
-	};
-
-	let err = sent_entries(&gz)
+	let err = sent_entries(&bytes)
 		.expect_err("a FIFO entry must make sent_entries error, not silently skip");
 	let msg = err.to_string();
 	assert!(
@@ -204,8 +186,6 @@ fn a_fifo_entry_is_an_error() {
 #[cfg(unix)]
 #[test]
 fn a_hard_link_entry_is_an_error() {
-	use std::io::Write;
-
 	let mut builder = tar::Builder::new(Vec::new());
 	let mut header = tar::Header::new_gnu();
 	header.set_size(0);
@@ -216,13 +196,7 @@ fn a_hard_link_entry_is_an_error() {
 	builder.append(&header, std::io::empty()).unwrap();
 	let bytes = builder.into_inner().unwrap();
 
-	let gz = {
-		let mut enc = GzEncoder::new(Vec::new(), Compression::default());
-		enc.write_all(&bytes).unwrap();
-		enc.finish().unwrap()
-	};
-
-	let err = sent_entries(&gz)
+	let err = sent_entries(&bytes)
 		.expect_err("a hard-link entry must make sent_entries error, not silently skip");
 	let msg = err.to_string();
 	assert!(
@@ -267,8 +241,7 @@ fn a_tar_with_file_directory_and_symlink_lists_just_those_three() {
 /// `/dir/./x`, and the root would stat the destination a second time.
 #[test]
 fn a_tree_packed_under_dot_is_asked_about_without_the_dot() {
-	let mut tar =
-		crate::engine::tar_stream::builder(GzEncoder::new(Vec::new(), Compression::default()));
+	let mut tar = crate::engine::tar_stream::builder(Vec::new());
 	let mut dir_header = tar::Header::new_gnu();
 	dir_header.set_entry_type(tar::EntryType::Directory);
 	dir_header.set_size(0);
@@ -283,10 +256,10 @@ fn a_tree_packed_under_dot_is_asked_about_without_the_dot() {
 	file_header.set_mode(0o644);
 	tar.append_data(&mut file_header, "./sub/f.txt", &b"abc"[..])
 		.unwrap();
-	let gz = tar.into_inner().unwrap().finish().unwrap();
+	let bytes = tar.into_inner().unwrap();
 
 	assert_eq!(
-		sorted(sent_entries(&gz).unwrap()),
+		sorted(sent_entries(&bytes).unwrap()),
 		vec![
 			("sub".to_string(), SentKind::Dir),
 			("sub/f.txt".to_string(), SentKind::File(3)),

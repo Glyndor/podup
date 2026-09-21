@@ -83,8 +83,9 @@ pub(super) struct SentEntry {
 	pub(super) kind: SentKind,
 }
 
-/// The regular files, directories and symbolic links in a gzipped tar, in
-/// archive order.
+/// The regular files, directories and symbolic links in an archive `cp`
+/// uploads, in archive order. The archive is plain tar; `cp`'s local-socket
+/// path does not gzip (the bytes never leave the host).
 ///
 /// Symbolic links are kept here even though `head_path_stat` cannot ask about
 /// them: on Podman 5.7.0 the 404 for a dangling link still carried the
@@ -104,7 +105,7 @@ pub(super) struct SentEntry {
 /// extraction directory itself (`.`), which the caller confirmed before
 /// uploading.
 pub(super) fn sent_entries(gz_tar: &[u8]) -> Result<Vec<SentEntry>> {
-	let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(gz_tar));
+	let mut archive = tar::Archive::new(gz_tar);
 	let mut sent = Vec::new();
 	for entry in archive.entries().map_err(ComposeError::Io)? {
 		let entry = entry.map_err(ComposeError::Io)?;

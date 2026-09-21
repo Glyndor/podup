@@ -11,6 +11,44 @@ fn pack_path_single_file() {
 	assert!(!bytes.is_empty());
 }
 
+/// The local socket carries plain tar, not a gzip stream. Read the bytes
+/// themselves rather than trusting the constructor: a gzip stream starts with
+/// the magic header `0x1f 0x8b`, and the tar header is the entry's name as
+/// ASCII.
+#[test]
+fn pack_path_archive_is_not_gzip_compressed() {
+	let dir = tempfile::tempdir().expect("tempdir");
+	let file = dir.path().join("data.txt");
+	std::fs::write(&file, b"hello").expect("write");
+	let bytes = super::pack_path(&file, false, None, false).expect("pack");
+	assert!(
+		bytes.len() >= 2,
+		"archive must have at least two bytes, got {}",
+		bytes.len()
+	);
+	assert_ne!(
+		&bytes[..2],
+		&[0x1f, 0x8b],
+		"archive must not start with the gzip magic header: first bytes are {:02x?}",
+		&bytes[..bytes.len().min(8)]
+	);
+	// And it is a plain tar the destination can extract: one entry, named
+	// after the source file.
+	let mut archive = tar::Archive::new(bytes.as_slice());
+	let names: Vec<String> = archive
+		.entries()
+		.expect("entries")
+		.map(|e| {
+			e.expect("entry")
+				.path()
+				.expect("path")
+				.to_string_lossy()
+				.into_owned()
+		})
+		.collect();
+	assert_eq!(names, vec!["data.txt".to_string()]);
+}
+
 #[test]
 fn pack_path_directory() {
 	let dir = tempfile::tempdir().expect("tempdir");
@@ -36,11 +74,11 @@ fn pack_path_missing_source_is_a_cp_error() {
 	);
 }
 
-/// Read the entry names of a gzipped tar built by `pack_path`, decoded with
-/// the same dial the production code uses. Sorted because the walker goes in
-/// directory order, which is the filesystem's business.
+/// Read the entry names of the tar built by `pack_path`, which is plain tar
+/// since the bytes are handed to a local Unix socket. Sorted because the
+/// walker goes in directory order, which is the filesystem's business.
 fn pack_path_entry_names(bytes: &[u8]) -> Vec<String> {
-	let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(bytes));
+	let mut archive = tar::Archive::new(bytes);
 	let mut names: Vec<String> = Vec::new();
 	for entry in archive.entries().expect("entries") {
 		let entry = entry.expect("entry");
