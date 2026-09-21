@@ -23,11 +23,12 @@
 #   1. Resolve the head SHA. If HEAD_SHA is empty, fetch
 #      repos/${REPO}/branches/${BRANCH} and take .commit.sha.
 #   2. Read repos/${REPO}/actions/workflows/${WORKFLOW}/runs
-#      ?branch=${BRANCH}&per_page=30 (the API does not always put the
-#      newest run at the head of a filtered page, so the page is a
-#      buffer to sort).
-#   3. Pick the newest run whose head_sha matches. Sort by created_at
-#      then id, so two runs sharing a second still order by id.
+#      ?branch=${BRANCH}&event=push&per_page=30 (the API does not
+#      always put the newest run at the head of a filtered page, so the
+#      page is a buffer to sort).
+#   3. Pick the newest run whose head_sha matches AND whose event is
+#      `push`. Sort by created_at then id, so two runs sharing a second
+#      still order by id.
 #   4. If the run is not yet completed, wait 15 seconds and try again,
 #      up to 32 attempts (eight minutes, inside the job's ten-minute
 #      bound). The worst case is the suite's own runtime.
@@ -43,6 +44,24 @@
 # reached. Measured 2026-09-19: let A pass, push B, cancel B's run by
 # hand with nothing replacing it, and the old script reported A's
 # success as the branch's health.
+#
+# Why the runs call also filters by `event=push`: a `pull_request` run
+# on a PR whose source branch is ${BRANCH} carries `head_sha=${branch}
+# head` and shows up under `?branch=${BRANCH}` next to the `push` run
+# for the same commit. The two are sorted by `created_at`, so whichever
+# the API handed back newest wins. A release pull request from
+# `develop` into `main` is a real case: its `pull_request` run is newer
+# than the `push` run on `develop` for the same commit, and the gate
+# used to read that `pull_request` run for `branch health (develop)`.
+# That run is the release PR itself, and on a release that fails any
+# gate inside the suite, its `ci.yml` concluded `failure` inside that
+# very run. The gate then read its own run, made that run red, and
+# every later reader saw a red the gate created (measured on the 5.9.5
+# release push for commit 83315af). The fix is `event=push` in the
+# query and `.event == "push"` in the jq filter: the verdict is the
+# run the branch triggered, which is the `push` run. A `pull_request`
+# run that merely carries the branch as its head is a different
+# question and must not shadow it.
 #
 # Why the script owns the polling: the previous design asked the API
 # for completed runs on the push path and the API filtered out a run
@@ -82,13 +101,19 @@ fi
 
 short="${head_sha:0:7}"
 
-# 2-3. Pick the newest run whose head_sha matches the branch head.
-# The filter sorts by (created_at, id) and takes the first entry, so
-# an older green run for a different commit is NOT the verdict. A
-# match that is not yet completed returns `null` from jq's @tsv and
-# `run` is empty, which is the signal the loop waits on.
-url="repos/${repo}/actions/workflows/${workflow}/runs?branch=${branch}&per_page=30"
-filter='[.workflow_runs[]? | select(.head_sha=="'"$head_sha"'")]
+# 2-3. Pick the newest push run whose head_sha matches the branch
+# head. The URL's `event=push` keeps the page from filling with runs
+# the filter would discard (a `pull_request` run on a PR whose source
+# branch is the watched branch carries the same `head_sha` as the push
+# run on that head); the jq select repeats the filter against the
+# response bytes as defense in depth, so a stubbed API that ignores the
+# query is still asked the same question. The filter sorts by
+# (created_at, id) and takes the first entry, so an older green push
+# run for a different commit is NOT the verdict. A match that is not
+# yet completed returns `null` from jq's @tsv and `run` is empty, which
+# is the signal the loop waits on.
+url="repos/${repo}/actions/workflows/${workflow}/runs?branch=${branch}&event=push&per_page=30"
+filter='[.workflow_runs[]? | select(.head_sha=="'"$head_sha"'" and .event=="push")]
 	| sort_by(.created_at, .id) | reverse | .[0]
 	| [(.status // ""), (.conclusion // ""), (.run_number | tostring),
 	   (.head_sha // ""), (.created_at // ""), (.html_url // "")]

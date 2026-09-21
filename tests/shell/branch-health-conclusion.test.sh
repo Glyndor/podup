@@ -28,11 +28,16 @@
 #   - never appearing fails after the configured attempts, with one
 #     fewer sleeps than attempts
 #   - an older green run for a different commit is NOT the verdict
+#   - a newer pull_request run for the same head does NOT shadow an
+#     older push run for that head (the bug measured 2026-09-20 on the
+#     5.9.5 release push for commit 83315af)
+#   - the inverse: a newer push failure for the head still wins, so
+#     the fix is not "prefer whichever succeeded"
 #   - the branch head is read from the API on a schedule event when
 #     HEAD_SHA is not set in the environment
 #
 # Plus a handful of structural assertions (missing env vars, unknown
-# conclusion) that survive the new design unchanged.
+# conclusion, stream split) that survive the new design unchanged.
 #
 # Requires: bash, jq, python3 for some helpers, the script under test.
 set -uo pipefail
@@ -103,11 +108,15 @@ STUB
 }
 write_stub
 
-# Build a single run record as compact JSON.
-make_run() { # <id> <head_sha> <status> <conclusion> <created_at> <run_number> <html_url>
+# Build a single run record as compact JSON. The script now filters by
+# `event=push` so the verdict must read the run the branch triggered.
+# The default `event` for a fixture is `push`; the cases that need a
+# different event pass it explicitly as the 8th argument.
+make_run() { # <id> <head_sha> <status> <conclusion> <created_at> <run_number> <html_url> [event]
+	local event="${8:-push}"
 	jq -nc --argjson id "$1" --arg head "$2" --arg status "$3" --arg conclusion "$4" \
-		--arg created "$5" --argjson number "$6" --arg url "$7" \
-		'{id:$id, head_sha:$head, status:$status, conclusion:$conclusion, created_at:$created, run_number:$number, html_url:$url}'
+		--arg created "$5" --argjson number "$6" --arg url "$7" --arg event "$event" \
+		'{id:$id, head_sha:$head, status:$status, conclusion:$conclusion, created_at:$created, run_number:$number, html_url:$url, event:$event}'
 }
 
 # Build a page from one or more compact-JSON run records. Each page
@@ -214,7 +223,7 @@ esac
 # and an empty conclusion; the second attempt sees the run completed
 # with success. The script waits once and passes.
 # ===========================================================================
-in_progress_run="$(jq -nc --argjson id 4 '{id:4, head_sha:"HEAD123", status:"in_progress", conclusion:null, created_at:"2026-09-19T11:00:00Z", run_number:4, html_url:"https://x/r/4"}')"
+in_progress_run="$(jq -nc --argjson id 4 '{id:4, head_sha:"HEAD123", status:"in_progress", conclusion:null, created_at:"2026-09-19T11:00:00Z", run_number:4, html_url:"https://x/r/4", event:"push"}')"
 done_run="$(make_run 4 HEAD123 completed success 2026-09-19T11:00:00Z 4 https://x/r/4)"
 make_page "$in_progress_run" > "$WORK/wait1.resp"
 make_page "$done_run" >> "$WORK/wait1.resp"
@@ -287,6 +296,76 @@ esac
 case "$out" in
 	*"run #6"*) check "verdict line does NOT name run #6 (other head)" "no-r6" "$(printf '%s' "$out" | head -1)" ;;
 	*) check "verdict line does NOT name run #6 (other head)" "yes" "yes" ;;
+esac
+
+# ===========================================================================
+# A pull_request run for the same head_sha must not shadow the push run
+# for that head. The defect measured 2026-09-20 on the 5.9.5 release
+# push for commit 83315af: a release pull request from develop into
+# main creates a pull_request run whose head_sha is develop's head
+# and whose branch is develop; under `?branch=develop`, that pull_request
+# run sat next to the push run for the same commit, was the newer of
+# the two, and the gate read the pull_request run for "branch health
+# (develop)". That pull_request run was the release PR itself, and
+# its ci.yml concluded failure inside that very run when the release
+# broke a gate, so the gate read its own failure, made its own run red,
+# and every later reader saw a red the gate created. The fix is that
+# the script reads the run the branch triggered (the push run), not a
+# pull_request run that merely carries the branch as its head.
+#
+# The page below carries BOTH a newer pull_request run that failed
+# AND an older push run that succeeded, for the same head_sha. The
+# push run is the verdict: the script should pass and name the push
+# run, not the pull_request run. Today (without the filter) the script
+# would fail and name the pull_request run instead.
+# ===========================================================================
+push_run_for_head="$(make_run 60 HEAD123 completed success 2026-09-19T11:00:00Z 60 https://x/r/60 push)"
+pr_run_for_head="$(make_run 62 HEAD123 completed failure 2026-09-19T12:00:00Z 62 https://x/r/62 pull_request)"
+make_page "$pr_run_for_head" "$push_run_for_head" > "$WORK/pr_shadow.resp"
+out="$(run_script "$WORK/pr_shadow.resp")"; rc=$?
+check "newer pull_request failure cannot shadow older push success for head (gate must not read a run the branch did not trigger): exit 0" "0" "$rc"
+case "$out" in
+	*"run #60"*) check "verdict line names run #60 (the push run, not the pull_request run #62)" "yes" "yes" ;;
+	*) check "verdict line names run #60 (the push run, not the pull_request run #62)" "run-60-not-62" "$(printf '%s' "$out" | head -1)" ;;
+esac
+case "$out" in
+	*"run #62"*) check "verdict line does NOT name run #62 (the pull_request run)" "no-r62" "$(printf '%s' "$out" | head -1)" ;;
+	*) check "verdict line does NOT name run #62 (the pull_request run)" "yes" "yes" ;;
+esac
+case "$out" in
+	*"https://x/r/62"*) check "pull_request run URL #62 must NOT appear (the gate did not read that run)" "no-r62-url" "$(printf '%s' "$out" | head -1)" ;;
+	*) check "pull_request run URL #62 must NOT appear (the gate did not read that run)" "yes" "yes" ;;
+esac
+# The URL the script must have asked is `event=push`. The stub ignores
+# URL filters, so the assertion is on the URL the script BUILT. Reading
+# gh call #2 (the runs lookup; gh call #1 is the branches/main lookup
+# is not present here because HEAD_SHA is set) and checking it carries
+# `event=push` is the per-call proof.
+case "$(nth_call 1)" in
+	*"event=push"*) check "runs URL carries event=push so the API query itself filters out pull_request runs" "yes" "yes" ;;
+	*) check "runs URL carries event=push so the API query itself filters out pull_request runs" "event-push-in-url" "$(nth_call 1)" ;;
+esac
+
+# ===========================================================================
+# The reverse: a newer push failure plus an older push success for the
+# same head_sha still fails. The fix has to read the newest push run
+# for the head, not "prefer whichever succeeded". The existing
+# "newest-run-by-created_at wins" logic is preserved by the event=push
+# filter; this case is the proof that the filter did not turn into a
+# "skip red runs" pass-over as a side effect.
+# ===========================================================================
+newer_push_failure="$(make_run 70 HEAD123 completed failure 2026-09-19T12:00:00Z 70 https://x/r/70 push)"
+older_push_success="$(make_run 71 HEAD123 completed success 2026-09-19T11:00:00Z 71 https://x/r/71 push)"
+make_page "$newer_push_failure" "$older_push_success" > "$WORK/push_pair.resp"
+out="$(run_script "$WORK/push_pair.resp")"; rc=$?
+check "newer push failure for head still wins over older push success (filter is not 'prefer succeeded'): exit 1" "1" "$rc"
+case "$out" in
+	*"::error::"*"concluded failure"*"https://x/r/70"*) check "verdict line names run #70 (the newer push failure, not #71)" "yes" "yes" ;;
+	*) check "verdict line names run #70 (the newer push failure, not #71)" "run-70-not-71" "$(printf '%s' "$out" | head -1)" ;;
+esac
+case "$out" in
+	*"https://x/r/71"*) check "older push success URL #71 must NOT appear on the verdict line" "no-r71-url" "$(printf '%s' "$out" | head -1)" ;;
+	*) check "older push success URL #71 must NOT appear on the verdict line" "yes" "yes" ;;
 esac
 
 # ===========================================================================
