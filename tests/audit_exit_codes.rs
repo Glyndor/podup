@@ -346,3 +346,92 @@ fn audit_secret_in_environment_does_not_flag_passthrough_or_empty() {
 		"PASSTHROUGH=true and an empty non-secret key must not fire: {stdout}"
 	);
 }
+
+// ---------------------------------------------------------------------------
+// `_FILE` suffix: the documented convention for keeping a secret out of
+// the environment. The value is a path the application reads at runtime;
+// the path is not the secret. The exemption is the suffix alone, so a
+// `_FILE` key pointing outside `/run/secrets/` is still silent.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn audit_secret_in_environment_does_not_flag_file_suffix_pointing_at_secrets_mount() {
+	// The reporter's exact shape: a secret-bearing key with the `_FILE`
+	// convention pointing at `/run/secrets/<name>`. The service is
+	// hardened on every other axis the audit checks so the only
+	// finding the gate could raise is `secret_in_environment`. `--strict`
+	// must stay green, otherwise `podup audit --strict` carves out this
+	// finding class by hand in every consumer that uses the official
+	// Postgres, MariaDB, or MySQL image conventions.
+	let body = r#"services:
+  db:
+    image: postgres:16@sha256:0e7bb5afc7e5e22ee46c4f2cd4a8b3fa63ad3f5d5e5e5e5e5e5e5e5e5e5e5e5e
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 200
+    mem_limit: 512m
+    userns_mode: auto
+    environment:
+      - POSTGRES_PASSWORD_FILE=/run/secrets/pg
+"#;
+	let path = write_compose(body);
+	let p = path.to_str().unwrap();
+	let out = run(&["-f", p, "audit", "--strict"]);
+	assert!(
+		out.status.success(),
+		"POSTGRES_PASSWORD_FILE=/run/secrets/pg must pass --strict; got {:?}\nstderr: {}\nstdout: {}",
+		out.status.code(),
+		String::from_utf8_lossy(&out.stderr),
+		String::from_utf8_lossy(&out.stdout),
+	);
+	let stdout = String::from_utf8_lossy(&out.stdout);
+	assert!(
+		!stdout.contains("secret_in_environment"),
+		"POSTGRES_PASSWORD_FILE must not fire secret_in_environment: {stdout}"
+	);
+}
+
+#[test]
+fn audit_secret_in_environment_does_not_flag_file_suffix_pointing_outside_secrets_mount() {
+	// The exemption is the `_FILE` suffix, not the `/run/secrets/`
+	// prefix. A `_FILE` key pointing at `/etc/passwd` or a relative
+	// path is still a path, not a secret in the environment, so the
+	// check stays silent. Verifying what the path points to (file
+	// permissions, mount provenance) is a different audit concern and
+	// is out of scope here. Same hardened scaffolding as the
+	// `/run/secrets/` row above so `--strict` reads only the verdict
+	// under test.
+	for (key, value) in [
+		("PASSWORD_FILE", "/etc/passwd"),
+		("PASSWORD_FILE", "relative/path"),
+	] {
+		let body = format!(
+			"services:\n  app:\n    \
+			 image: alpine:3.20@sha256:0e7bb5afc7e5e22ee46c4f2cd4a8b3fa63ad3f5d5e5e5e5e5e5e5e5e5e5e5e5e\n    \
+			 read_only: true\n    \
+			 cap_drop: [ALL]\n    \
+			 security_opt: [no-new-privileges:true]\n    \
+			 pids_limit: 200\n    \
+			 mem_limit: 512m\n    \
+			 userns_mode: auto\n    \
+			 environment:\n      \
+			 - {key}={value}\n"
+		);
+		let path = write_compose(&body);
+		let p = path.to_str().unwrap();
+		let out = run(&["-f", p, "audit", "--strict"]);
+		assert!(
+			out.status.success(),
+			"{key}={value} must pass --strict; got {:?}\nstderr: {}\nstdout: {}",
+			out.status.code(),
+			String::from_utf8_lossy(&out.stderr),
+			String::from_utf8_lossy(&out.stdout),
+		);
+		let stdout = String::from_utf8_lossy(&out.stdout);
+		assert!(
+			!stdout.contains("secret_in_environment"),
+			"{key}={value} must not fire secret_in_environment: {stdout}"
+		);
+	}
+}

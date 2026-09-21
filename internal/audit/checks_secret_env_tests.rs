@@ -193,3 +193,82 @@ fn audit_secret_in_environment_segments_split_at_case_and_separator_boundaries()
 		assert_eq!(got_refs, *expected_segments, "wrong segments for {name}");
 	}
 }
+
+// ---------------------------------------------------------------------------
+// `_FILE` suffix: the documented convention for keeping a secret out of the
+// environment. The value is a path the application reads at runtime; the
+// path is not the secret. The exemption is the `_FILE` suffix alone, so
+// every separator the segment helper recognises must reach the same
+// conclusion. The outside-secrets-mount row pins the "value can be any
+// path" half of the decision.
+// ---------------------------------------------------------------------------
+
+/// Each row exercises a different separator that the segment helper
+/// already treats as a boundary. `KeyFile` is camelCase, `KEY-FILE` uses
+/// the `-` separator, `KEY.FILE` uses the `.` separator, `POSTGRES_PASSWORD_FILE`
+/// is the reporter's exact key, and `MY_KEY_FILE` and `_TOKEN_FILE` cover
+/// the multi-segment and leading-underscore shapes. The convention is the
+/// suffix, not the prefix, so every row stays silent.
+#[test]
+fn audit_secret_in_environment_silent_for_keys_with_the_file_suffix() {
+	for (key, value) in [
+		("POSTGRES_PASSWORD_FILE", "/run/secrets/pg"),
+		("MY_KEY_FILE", "/run/secrets/k"),
+		("_TOKEN_FILE", "/run/secrets/t"),
+		("KeyFile", "/run/secrets/camel"),
+		("KEY-FILE", "/run/secrets/dash"),
+		("KEY.FILE", "/run/secrets/dot"),
+	] {
+		let yaml = format!(
+			"services:\n  app:\n    image: alpine:3.20\n    environment:\n      - {key}={value}\n"
+		);
+		let findings = report_for(&yaml);
+		assert!(
+			!findings.iter().any(|f| f.check == "secret_in_environment"),
+			"{key}={value} must NOT fire secret_in_environment; got {findings:#?}"
+		);
+	}
+}
+
+/// The exemption is the `_FILE` suffix, not the `/run/secrets/` prefix.
+/// A `_FILE` key pointing somewhere that is not the secrets mount is
+/// still a path, not a secret in the environment, so the check stays
+/// silent. Verifying what the path points to (file permissions, mount
+/// provenance) is a different audit concern and is out of scope here.
+#[test]
+fn audit_secret_in_environment_silent_for_file_suffix_pointing_outside_secrets_mount() {
+	for (key, value) in [
+		("PASSWORD_FILE", "/etc/passwd"),
+		("PASSWORD_FILE", "relative/path"),
+		("SECRET_FILE", "/tmp/whatever"),
+		("TOKEN_FILE", ""),
+	] {
+		let yaml = format!(
+			"services:\n  app:\n    image: alpine:3.20\n    environment:\n      - {key}={value}\n"
+		);
+		let findings = report_for(&yaml);
+		assert!(
+			!findings.iter().any(|f| f.check == "secret_in_environment"),
+			"{key}={value} must NOT fire secret_in_environment; got {findings:#?}"
+		);
+	}
+}
+
+/// `FILE` in the middle of the key is not the `_FILE` convention. A
+/// segment other than the last being `FILE` leaves the last segment as
+/// the keyword, so the check still fires. `PASSWORD_FILE_BACKUP` (last
+/// segment `BACKUP`) and `FILE_PASSWORD` (last segment `PASSWORD`, and
+/// the bare `FILE` first segment is not a keyword) are both covered.
+#[test]
+fn audit_secret_in_environment_flags_when_file_is_not_the_last_segment() {
+	for key in ["PASSWORD_FILE_BACKUP", "FILE_PASSWORD"] {
+		let yaml = format!(
+			"services:\n  app:\n    image: alpine:3.20\n    environment:\n      - {key}=value\n"
+		);
+		let findings = report_for(&yaml);
+		assert!(
+			findings.iter().any(|f| f.check == "secret_in_environment"),
+			"{key}=value must fire secret_in_environment; got {findings:#?}"
+		);
+	}
+}

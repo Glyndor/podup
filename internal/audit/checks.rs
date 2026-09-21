@@ -340,10 +340,27 @@ fn check_no_userns(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Fi
 /// `environment:` key whose name, split into segments on `_`, `-`, `.`,
 /// and camelCase/PascalCase boundaries, has a segment equal to
 /// `PASSWORD|SECRET|TOKEN|KEY` (case-insensitive) AND carries a value in
-/// compose (literal or interpolated from `${VAR}`). Bare keys (host
-/// inheritance) are not secrets.
+/// compose (literal or interpolated from `${VAR}`). Four exemptions
+/// survive and are asserted: a bare key that inherits from the host, a
+/// key whose name merely contains a secret-looking segment while its
+/// value is not one (`PASSTHROUGH: "true"`, segment filter), a key whose
+/// value resolved to the empty literal (`LOG_LEVEL=` for an unrelated
+/// key, segment filter), and a key whose last segment is `FILE`.
 ///
-/// The risk is the same in both shapes: the value ends up in the
+/// The `_FILE` suffix is the documented convention for keeping a secret
+/// out of the environment: the value is a path to a file the application
+/// reads at runtime. The official Postgres, MariaDB, and MySQL images all
+/// spell this `<NAME>_FILE` and point it at a Docker/Kubernetes secrets
+/// mount, the canonical one being `/run/secrets/<name>`. The path is not
+/// the secret itself, so the key carrying it is not a secret in the
+/// environment. The check trusts the `_FILE` convention rather than
+/// verifying the path: a path outside `/run/secrets/` (a custom mount,
+/// `/etc/passwd`, a relative path) is still a path, not a secret, and
+/// stays silent. Verifying what the path points to (file permissions,
+/// mount provenance) is a different audit concern and is out of scope
+/// here.
+///
+/// The risk is the same in both value shapes: the value ends up in the
 /// container's environment whether it was written literally or injected
 /// from the operator's environment through `${VAR}`. A gate whose verdict
 /// depends on whether the variable happens to be exported in the caller's
@@ -365,6 +382,16 @@ fn check_secret_in_environment(name: &str, service: &Service, _file: &ComposeFil
 		}
 		if value.is_none() {
 			// Bare key: inherited from the host. Not a published secret.
+			continue;
+		}
+		// The `_FILE` suffix is the operator's signal that the value is a
+		// path to a file the application reads at runtime, not a secret
+		// in the environment. Tested as "the last segment is FILE" so the
+		// `_`, `-`, `.` and camelCase split the helper already does is
+		// reused: `POSTGRES_PASSWORD_FILE`, `MY_KEY_FILE`,
+		// `KEY-FILE`, `KeyFile` all reach the same conclusion; a name
+		// like `PASSWORD_FILE_BACKUP` does not and still fires.
+		if key_segments.last().is_some_and(|s| s == "FILE") {
 			continue;
 		}
 		// The empty-value branch used to skip here. That branch is what
