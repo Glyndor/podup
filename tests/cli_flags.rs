@@ -298,6 +298,44 @@ fn events_json_conflicts_with_explicit_format() {
 	])));
 }
 
+// --- ps --services conflicts with --quiet and --format ----------------------
+
+/// `ps` exposes three output-shaping flags: `-q/--quiet` (IDs), `--format`
+/// (table/json), `--services` (service names). They each render a different
+/// thing; combining any two leaves the third's effect undefined. Until the
+/// fix, `--services` accepted `--format json` and `-q` silently and rendered
+/// the same `w` line, which a `--format json | jq` pipeline reads as not-JSON
+/// while the exit code stays 0. `-q --format json` already rejected; the test
+/// enumerates every pair so the fix cannot be "reject everything with
+/// `--services`" (which would break the three single-flag uses below).
+#[test]
+fn ps_output_flags_conflict_in_every_pair_and_survive_alone() {
+	// Each conflicting pair is a clap usage error.
+	for args in [
+		&["ps", "-q", "--format", "json"][..],
+		&["ps", "--services", "--format", "json"][..],
+		&["ps", "--services", "-q"][..],
+	] {
+		assert!(
+			is_clap_usage_error(&run_offline(args)),
+			"`{args:?}` should be rejected as conflicting"
+		);
+	}
+	// Each flag alone still parses (and reaches Podman at runtime, where it
+	// then fails on the nonexistent socket).
+	for args in [
+		&["ps", "--services"][..],
+		&["ps", "--format", "json"][..],
+		&["ps", "-q"][..],
+	] {
+		assert!(
+			!is_clap_usage_error(&run_offline(args)),
+			"`{args:?}` should parse; got:\n{}",
+			String::from_utf8_lossy(&run_offline(args).stderr)
+		);
+	}
+}
+
 // --- #863/#862: positional service / dash output reach runtime --------------
 
 #[test]

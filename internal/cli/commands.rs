@@ -344,11 +344,13 @@ pub(crate) enum Commands {
 		/// Show all containers, including stopped ones.
 		#[arg(short, long)]
 		all: bool,
-		/// Only display container IDs. Mutually exclusive with `--format`.
-		#[arg(short, long, conflicts_with = "format")]
+		/// Only display container IDs. Mutually exclusive with `--format` and
+		/// `--services`.
+		#[arg(short, long, conflicts_with_all = ["format", "services_only"])]
 		quiet: bool,
-		/// Print the service names, one per line, instead of the container table.
-		#[arg(long = "services")]
+		/// Print the service names, one per line, instead of the container
+		/// table. Mutually exclusive with `--quiet` and `--format`.
+		#[arg(long = "services", conflicts_with_all = ["format", "quiet"])]
 		services_only: bool,
 		/// Show each container's on-disk size. Off by default: the server has
 		/// to walk each container's writable layer to answer, which measured
@@ -362,7 +364,8 @@ pub(crate) enum Commands {
 		/// Filter by container status (running, exited, ...); repeatable.
 		#[arg(long)]
 		status: Vec<String>,
-		/// Output format.
+		/// Output format: `table` (aligned columns) or `json` (a JSON array).
+		/// Mutually exclusive with `--quiet` and `--services`.
 		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
 		format: OutputFormat,
 		/// Show only these services.
