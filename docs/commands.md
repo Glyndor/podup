@@ -633,7 +633,7 @@ The `action` of each rule may be:
 
 | Action | Effect on change |
 |---|---|
-| `sync` | Copy the changed files into the running container. |
+| `sync` | Copy the changed files into the running container. A deletion on the host is propagated to the matching path inside the container, scoped to entries under the rule's `target` (the target directory itself is never removed). |
 | `rebuild` | Rebuild the image and recreate the container. |
 | `restart` | Restart the container without rebuilding. |
 | `sync+restart` | Sync the files, then restart the container. |
