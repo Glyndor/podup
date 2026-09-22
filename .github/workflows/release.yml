@@ -304,12 +304,10 @@ jobs:
     #
     # It is meant to be the same image reusable-rust-debian.yml defaults to,
     # so the release that ships to users comes out of the environment the
-    # debian-build lane exercised. Measured 2026-08-28, the two digests are
-    # different and were before #1568 too, so that sentence has never been
-    # true here. pin-watch.yml now reads both and reports the disagreement
-    # every Monday; choosing which one wins changes what gets built and is
-    # not settled in #1582.
-    container: debian:trixie@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1
+    # debian-build lane exercised. tests/workflow_debian_image.rs asserts
+    # the two are the same value on every pull request, and pin-watch.yml
+    # compares them with the digest the registry serves.
+    container: debian:trixie@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c
     permissions:
       contents: read
       id-token: write
