@@ -379,6 +379,17 @@ sys.exit(1)
 
 	$installed = & $target --version
 	Write-LogOk "podup installed: $installed"
+
+	# The Ed25519 signature over SHA256SUMS and the SHA-256 checksum above
+	# prove the bytes came from this repository. Smart App Control reads the
+	# Authenticode signature embedded in the PE instead, which this release
+	# carries none of, and a fresh release asset has no SmartScreen
+	# reputation either. A Windows host with Smart App Control enabled
+	# refuses the binary at launch. What SmartScreen alone does with it has
+	# not been measured, so this line does not claim it. See the README
+	# Windows section for the route that works today. Stated on 2026-09-22;
+	# not a temporary limitation that has a promised end date.
+	Write-LogInfo 'podup.exe carries no Authenticode signature, so a Windows host with Smart App Control enabled refuses to launch it. See the README "Optional: Windows" section for the route that works today.'
 } finally {
 	Remove-Item -Path $TmpDir -Recurse -Force -ErrorAction SilentlyContinue
 }
