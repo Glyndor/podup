@@ -186,10 +186,18 @@ jobs:
             # This is not cosmetic. With logs unavailable the suite's five logs
             # tests passed without fetching a byte: `logs` swallowed the 500 and
             # returned success, so their `unwrap()` succeeded on nothing.
+            #
+            # The events backend reads the same journal through the same binding,
+            # and was left on journald: `niche::engine_events_stream_connects`
+            # failed on the Podman 5 leg with `Api { status: 500, message:
+            # "unable to open a handle to the library" }`, the logs error word for
+            # word. `events_logger = "file"` takes the journal out of that path too.
             - path: /etc/containers/containers.conf
               content: |
                 [containers]
                 log_driver = "k8s-file"
+                [engine]
+                events_logger = "file"
             - path: /usr/local/bin/run-suite.sh
               permissions: '0755'
               content: |
