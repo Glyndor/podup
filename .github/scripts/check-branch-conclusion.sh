@@ -32,8 +32,10 @@
 #   4. If the run is not yet completed, wait 15 seconds and try again,
 #      up to 32 attempts (eight minutes, inside the job's ten-minute
 #      bound). The worst case is the suite's own runtime.
-#   5. Decide on the conclusion. `success` exits 0; `failure`,
-#      `cancelled`, `skipped`, and anything else exits 1, each with a
+#   5. Decide on the conclusion. `success` exits 0. `failure` looks at
+#      the run's own jobs and exits 0 when every failed job is a
+#      branch-health one; otherwise it exits 1 and names the failing
+#      jobs. `cancelled`, `skipped`, and anything else exit 1 with a
 #      message that names the run.
 #
 # Why a `cancelled` run for the head is RED here (and was passed over
@@ -115,8 +117,9 @@ short="${head_sha:0:7}"
 url="repos/${repo}/actions/workflows/${workflow}/runs?branch=${branch}&event=push&per_page=30"
 filter='[.workflow_runs[]? | select(.head_sha=="'"$head_sha"'" and .event=="push")]
 	| sort_by(.created_at, .id) | reverse | .[0]
-	| [(.status // ""), (.conclusion // ""), (.run_number | tostring),
-	   (.head_sha // ""), (.created_at // ""), (.html_url // "")]
+	| [(.id | tostring), (.status // ""), (.conclusion // ""),
+	   (.run_number | tostring), (.head_sha // ""), (.created_at // ""),
+	   (.html_url // "")]
 	| @tsv'
 
 run=""
@@ -138,7 +141,7 @@ for attempt in $(seq 1 "$max_attempts"); do
 		run=""
 	fi
 	if [ -n "$run" ]; then
-		IFS=$'\t' read -r status _ <<<"$run"
+		IFS=$'\t' read -r id status _ <<<"$run"
 		if [ "$status" = "completed" ]; then
 			break
 		fi
@@ -165,7 +168,7 @@ if [ -z "$run" ]; then
 	exit 1
 fi
 
-IFS=$'\t' read -r status conclusion number rsha created rurl <<<"$run"
+IFS=$'\t' read -r id status conclusion number rsha created rurl <<<"$run"
 rshort="${rsha:0:7}"
 
 # 5. Verdict. The shape of the message matches the case the rest of
@@ -178,10 +181,62 @@ case "$conclusion" in
 		exit 0
 		;;
 	failure)
+		# The run is red, but possibly only because of its own
+		# branch-health job. The gate on `main` reads `develop`'s push
+		# run and the gate on `develop` reads `main`'s, so a run that
+		# is red only on its branch-health job is red because the
+		# other branch was red when it ran. Counting that would let
+		# each branch hold the other red indefinitely, since a re-run
+		# of either reads the other's red. Decide on the run's own
+		# work instead: fetch its jobs, drop the ones whose name
+		# starts with `branch health`, and exit green if nothing is
+		# left, red with the failing job names if it is. The fetch
+		# tolerates a transient API failure the same way the polling
+		# loop above does: a 5xx or a rate limit must not abort the
+		# script here any more than it does there.
+		jobs_url="repos/${repo}/actions/runs/${id}/jobs?per_page=100"
+		jobs_filter='[.jobs[]?
+			| select((.conclusion // "") != "success"
+				and (.conclusion // "") != "skipped")]
+			| map(.name) | .[]'
+		jobs=""
+		if jobs="$(gh api "$jobs_url" --jq "$jobs_filter")"; then
+			:
+		else
+			gh_rc=$?
+			echo "::warning::gh api call for jobs failed (exit ${gh_rc}); treating as no answer."
+			jobs=""
+		fi
+		if [ -z "$jobs" ]; then
+			# The run is red but no failed jobs were visible. Either
+			# the jobs call failed or the run's own jobs list was
+			# empty, and either way the verdict on whether
+			# branch-health was the only failure is unknown. An
+			# unknown verdict is not green.
+			echo "::error::${workflow} on ${branch} for commit ${rshort}: run #${number} concluded ${conclusion} (started ${created})."
+			echo "  ${rurl}" >&2
+			echo "  Could not see the run's failed jobs to rule out the branch-health gate," >&2
+			echo "  so the verdict is unknown rather than green." >&2
+			exit 1
+		fi
+		non_bh="$(printf '%s\n' "$jobs" | grep -v '^branch health' || true)"
+		if [ -z "$non_bh" ]; then
+			# Only branch-health jobs failed: the latch, not the
+			# branch. One line, naming the branch-health jobs so an
+			# operator can tell at a glance that the run is red only
+			# because of them. Exit 0 so the gate that called this
+			# script reads the verdict as the branch's own work
+			# having passed, which is what it did.
+			bh_failed="$(printf '%s\n' "$jobs" | awk 'NR > 1 { printf ", " } { printf "%s", $0 }')"
+			echo "${workflow} on ${branch} for commit ${rshort}: run #${number} concluded ${conclusion} only on branch-health job(s) (${bh_failed}); the branch's own code passed."
+			exit 0
+		fi
+		# `paste -sd ', '` would alternate the two characters as
+		# separators ("a,b c"), so join with awk.
+		failed="$(printf '%s\n' "$non_bh" | awk 'NR > 1 { printf ", " } { printf "%s", $0 }')"
 		echo "::error::${workflow} on ${branch} for commit ${rshort}: run #${number} concluded ${conclusion} (started ${created})."
 		echo "  ${rurl}" >&2
-		echo "  Read that run before anything else lands on top of it: a second" >&2
-		echo "  push onto a red commit buries which change was responsible." >&2
+		echo "  Failed jobs: ${failed}" >&2
 		exit 1
 		;;
 	cancelled)
