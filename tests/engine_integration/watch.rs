@@ -202,12 +202,18 @@ async fn watch_initial_sync_runs() {
 		.unwrap();
 	let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
 	let file2 = file.clone();
-	let handle = tokio::spawn(async move { engine2.watch(&file2).await });
+	let mut handle = tokio::spawn(async move { engine2.watch(&file2).await });
 
 	// Poll for the observable effect of initial_sync (the file appearing in the
 	// container) instead of sleeping a fixed duration and assuming it ran.
+	// Routed through `poll_with_watch` so a watch task that died (e.g. an
+	// inotify exhaustion surfacing as `Err(Watch)`) panics with the watch
+	// error instead of waiting out the deadline and blaming the sync.
 	let cname = format!("{proj}-web-1");
-	let synced = poll_synced(&engine, &cname, "/tmp/app.txt", "initial", 60).await;
+	let synced = poll_with_watch(&mut handle, Duration::from_secs(60), || {
+		poll_synced_once(&engine, &cname, "/tmp/app.txt", "initial")
+	})
+	.await;
 
 	handle.abort();
 	engine.down(&file).await.unwrap();
@@ -293,13 +299,18 @@ async fn watch_rebuild_recreates_the_container_from_the_new_image() {
 		.unwrap();
 	let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
 	let file2 = file.clone();
-	let handle = tokio::spawn(async move { engine2.watch(&file2).await });
+	let mut handle = tokio::spawn(async move { engine2.watch(&file2).await });
 
 	// Give the watcher a moment to register before changing the file, then poll
-	// for the effect rather than assuming a fixed rebuild duration.
+	// for the effect rather than assuming a fixed rebuild duration. Routed
+	// through `poll_with_watch` so a watch task that died panics with the
+	// watch error instead of blaming the rebuild.
 	tokio::time::sleep(Duration::from_secs(2)).await;
 	fs::write(dir.path().join("app.txt"), b"v2").unwrap();
-	let rebuilt = poll_synced(&engine, &cname, "/app.txt", "v2", 120).await;
+	let rebuilt = poll_with_watch(&mut handle, Duration::from_secs(120), || {
+		poll_synced_once(&engine, &cname, "/app.txt", "v2")
+	})
+	.await;
 
 	handle.abort();
 	let containers = engine
@@ -350,14 +361,22 @@ async fn watch_sync_and_restart_does_both() {
 		.unwrap();
 	let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
 	let file2 = file.clone();
-	let handle = tokio::spawn(async move { engine2.watch(&file2).await });
+	let mut handle = tokio::spawn(async move { engine2.watch(&file2).await });
 
 	tokio::time::sleep(Duration::from_secs(2)).await;
 	fs::write(dir.path().join("app.txt"), b"changed-value").unwrap();
-	let synced = poll_synced(&engine, &cname, "/tmp/app.txt", "changed-value", 60).await;
+	let synced = poll_with_watch(&mut handle, Duration::from_secs(60), || {
+		poll_synced_once(&engine, &cname, "/tmp/app.txt", "changed-value")
+	})
+	.await;
 
-	// Poll for the second start line rather than sleeping and hoping.
-	let restarted = poll_synced(&engine, &cname, "/starts", "start\nstart", 60).await;
+	// Poll for the second start line rather than sleeping and hoping. Both
+	// polls share the same handle: the helper's per-tick `is_finished()`
+	// check fires on either one if the watcher dies between them.
+	let restarted = poll_with_watch(&mut handle, Duration::from_secs(60), || {
+		poll_synced_once(&engine, &cname, "/starts", "start\nstart")
+	})
+	.await;
 
 	handle.abort();
 	engine.down(&file).await.unwrap();
@@ -373,15 +392,25 @@ async fn watch_sync_and_restart_does_both() {
 async fn poll_synced(engine: &Engine, cname: &str, path: &str, expect: &str, secs: u64) -> bool {
 	let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
 	while tokio::time::Instant::now() < deadline {
-		if let Ok(out) = engine
-			.test_exec_capture(cname, vec!["cat".into(), path.into()])
-			.await
-		{
-			if out.contains(expect) {
-				return true;
-			}
+		if poll_synced_once(engine, cname, path, expect).await {
+			return true;
 		}
 		tokio::time::sleep(Duration::from_millis(100)).await;
 	}
 	false
+}
+
+/// One attempt of the poll loop in [`poll_synced`]. Splits the loop body so a
+/// test that drives the watcher through `poll_with_watch` can pass the
+/// per-tick check in as a closure without re-implementing the inner
+/// `test_exec_capture` call.
+async fn poll_synced_once(engine: &Engine, cname: &str, path: &str, expect: &str) -> bool {
+	if let Ok(out) = engine
+		.test_exec_capture(cname, vec!["cat".into(), path.into()])
+		.await
+	{
+		out.contains(expect)
+	} else {
+		false
+	}
 }

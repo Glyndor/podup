@@ -53,15 +53,16 @@ async fn watch_initial_sync_carries_a_sparse_file() {
 		.unwrap();
 	let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
 	let file2 = file.clone();
-	let handle = tokio::spawn(async move { engine2.watch(&file2).await });
+	let mut handle = tokio::spawn(async move { engine2.watch(&file2).await });
 
 	// The size of the arrived file, not merely its presence: a transfer that
 	// succeeded and truncated the expanded holes would pass a `test -f`.
+	// Routed through `poll_with_watch` so a watch task that died (e.g. an
+	// inotify exhaustion) panics with the watch error instead of blaming the
+	// sparse sync.
 	let cname = format!("{proj}-web-1");
 	let want = (HOLE + 4).to_string();
-	let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
-	let mut arrived = false;
-	while tokio::time::Instant::now() < deadline {
+	let arrived = poll_with_watch(&mut handle, Duration::from_secs(60), || async {
 		if let Ok(out) = engine
 			.test_exec_capture(
 				&cname,
@@ -73,13 +74,12 @@ async fn watch_initial_sync_carries_a_sparse_file() {
 			)
 			.await
 		{
-			if out.contains("beside-the-hole") && out.contains(&want) {
-				arrived = true;
-				break;
-			}
+			out.contains("beside-the-hole") && out.contains(&want)
+		} else {
+			false
 		}
-		tokio::time::sleep(Duration::from_millis(200)).await;
-	}
+	})
+	.await;
 
 	handle.abort();
 	engine.down(&file).await.unwrap();
