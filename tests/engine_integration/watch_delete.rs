@@ -113,7 +113,7 @@ async fn watch_sync_propagates_host_deletions_to_the_container() {
 		.unwrap();
 	let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
 	let file2 = file.clone();
-	let handle = tokio::spawn(async move { engine2.watch(&file2).await });
+	let mut handle = tokio::spawn(async move { engine2.watch(&file2).await });
 
 	let src_file = src.join("f.txt");
 	fs::write(&src_file, b"watched").unwrap();
@@ -121,8 +121,13 @@ async fn watch_sync_propagates_host_deletions_to_the_container() {
 	// Poll for the initial-sync delivery rather than sleeping a fixed duration.
 	// `watched` is the only write we made; a green `initial_sync` is what puts
 	// it inside the container, and a missing delivery here means the deletion
-	// half has no baseline to compare against.
-	let arrived = poll_container_contains(&engine, &cname, "/app/f.txt", "watched", 30).await;
+	// half has no baseline to compare against. Routed through `poll_with_watch`
+	// so a watch task that died (e.g. an inotify exhaustion) panics with the
+	// watch error instead of blaming the sync.
+	let arrived = poll_with_watch(&mut handle, Duration::from_secs(30), || {
+		poll_container_contains_once(&engine, &cname, "/app/f.txt", "watched")
+	})
+	.await;
 
 	// Delete the file on the host. The watcher is the consumer: it receives
 	// the Remove event, plans the placement against `/app`, and runs
@@ -133,20 +138,17 @@ async fn watch_sync_propagates_host_deletions_to_the_container() {
 	// Poll for the absence of the file. Reading `ls`'s exit code rather
 	// than sleeping and hoping gives the test a deterministic observation:
 	// `ls /app/f.txt` answers non-zero (and prints nothing) once the
-	// removal has propagated.
-	let mut gone = false;
-	let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-	while tokio::time::Instant::now() < deadline {
+	// removal has propagated. Same `poll_with_watch` channel as `arrived`:
+	// the helper's per-tick `is_finished()` check catches a watch task
+	// that dies between the initial-sync poll and the deletion poll.
+	let gone = poll_with_watch(&mut handle, Duration::from_secs(30), || async {
 		let out = engine
 			.test_exec_capture(&cname, vec!["ls".into(), "/app/f.txt".into()])
 			.await
 			.unwrap_or_default();
-		if out.trim().is_empty() {
-			gone = true;
-			break;
-		}
-		tokio::time::sleep(Duration::from_millis(100)).await;
-	}
+		out.trim().is_empty()
+	})
+	.await;
 
 	// Scope, half one: deleting the last file under the rule's path must
 	// leave the rule's target directory (`/app`) present. The dispatcher
@@ -176,10 +178,9 @@ async fn watch_sync_propagates_host_deletions_to_the_container() {
 	// Give the watcher a moment to receive the Remove events and run the
 	// refusal, then read the container back. The dispatcher does not block,
 	// so the warn line lands first and the existence check immediately
-	// after is the right shape.
-	let mut app_survived = false;
-	let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-	while tokio::time::Instant::now() < deadline {
+	// after is the right shape. Routed through `poll_with_watch` for the
+	// same reason as the previous two polls.
+	let app_survived = poll_with_watch(&mut handle, Duration::from_secs(10), || async {
 		let out = engine
 			.test_exec_capture(
 				&cname,
@@ -191,12 +192,9 @@ async fn watch_sync_propagates_host_deletions_to_the_container() {
 			)
 			.await
 			.unwrap_or_default();
-		if out.contains("present") {
-			app_survived = true;
-			break;
-		}
-		tokio::time::sleep(Duration::from_millis(100)).await;
-	}
+		out.contains("present")
+	})
+	.await;
 
 	handle.abort();
 	drop(teardown);
@@ -219,28 +217,24 @@ async fn watch_sync_propagates_host_deletions_to_the_container() {
 	);
 }
 
-/// Poll until reading `path` inside `container` yields `expect`, or `secs`
-/// elapse. A local helper to keep this test file self-contained: the same
-/// helper lives next to the other watch tests under a `fn` (not `pub`),
-/// so importing it across module boundaries is not available.
-async fn poll_container_contains(
+/// One attempt of reading `path` inside `container` and checking its
+/// contents. A local helper to keep this test file self-contained: the same
+/// predicate lives next to the other watch tests under a `fn` (not `pub`),
+/// so importing it across module boundaries is not available. Named `_once`
+/// so the caller knows it does no looping: `poll_with_watch` owns the
+/// retry/timeout, so a single attempt is what each tick passes in.
+async fn poll_container_contains_once(
 	engine: &Engine,
 	cname: &str,
 	path: &str,
 	expect: &str,
-	secs: u64,
 ) -> bool {
-	let deadline = tokio::time::Instant::now() + Duration::from_secs(secs);
-	while tokio::time::Instant::now() < deadline {
-		if let Ok(out) = engine
-			.test_exec_capture(cname, vec!["cat".into(), path.into()])
-			.await
-		{
-			if out.contains(expect) {
-				return true;
-			}
-		}
-		tokio::time::sleep(Duration::from_millis(100)).await;
+	if let Ok(out) = engine
+		.test_exec_capture(cname, vec!["cat".into(), path.into()])
+		.await
+	{
+		out.contains(expect)
+	} else {
+		false
 	}
-	false
 }
