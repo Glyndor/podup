@@ -110,7 +110,7 @@ async fn a_piped_build_prefixes_every_stream_line_with_the_service() {
 		"and the closing verb in plain form; got:\n{stderr}"
 	);
 	assert!(
-		stderr.contains("localhost/ux-pipe-build:1 | STEP 1/2:"),
+		stderr.contains("localhost/ux-pipe-build:1 | STEP 1/3:"),
 		"each stream line must carry the <image-tag> | prefix: {stderr}"
 	);
 	assert!(

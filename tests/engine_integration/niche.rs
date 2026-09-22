@@ -146,8 +146,10 @@ async fn engine_events_stream_connects() {
 		engine.stream_events(true),
 	)
 	.await;
-	assert!(
-		res.is_err(),
-		"events stream should stay open until interrupted"
-	);
+	// On failure, say what came back: a stream that ended cleanly and one
+	// that failed to connect are different defects, and the assertion alone
+	// cannot tell them apart.
+	if let Ok(returned) = res {
+		panic!("events stream should stay open until interrupted; it returned {returned:?}");
+	}
 }

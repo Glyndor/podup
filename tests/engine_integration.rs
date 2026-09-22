@@ -283,6 +283,10 @@ async fn poll_container_file(
 mod autostart_quadlet;
 #[path = "engine_integration/build_images.rs"]
 mod build_images;
+// Unix only: it reaches the Podman socket by its `/run/user/<uid>` path.
+#[cfg(unix)]
+#[path = "engine_integration/build_labels.rs"]
+mod build_labels;
 #[path = "engine_integration/build_resources.rs"]
 mod build_resources;
 #[path = "engine_integration/build_sparse_context.rs"]
