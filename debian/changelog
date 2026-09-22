@@ -1,3 +1,24 @@
+podup (5.9.7) unstable; urgency=medium
+
+  * `audit` flags a bind mount of the host root. `/:/host` exposes every
+    path the check already lists, and it was the one bind that passed
+    silently. Only the root itself matches, so paths under it such as
+    `/home` and `/srv` stay silent as before, and `//` and `/.` are read
+    as the root too.
+  * `audit` no longer exempts every `_FILE` key from
+    `secret_in_environment`. The exemption now needs a value shaped like
+    a path (starting with `/`, `./` or `../`), so a secret written
+    straight into `POSTGRES_PASSWORD_FILE` is flagged again, while
+    `POSTGRES_PASSWORD_FILE: /run/secrets/pg` stays silent. An
+    interpolated value is judged on what it resolves to.
+  * `audit --wildcard-binds` turns on a new, opt-in check,
+    `port_published_on_wildcard`, for a port bound to `0.0.0.0` or `::`.
+    It never fires on a specific address, and it is off by default, so
+    `audit --strict` reports the same findings it did in 5.9.6.
+    `audit --list-checks` shows the check with the flag that enables it.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Tue, 22 Sep 2026 09:15:00 -0500
+
 podup (5.9.6) unstable; urgency=medium
 
   * `cp` from the host into a container streams the archive instead of
