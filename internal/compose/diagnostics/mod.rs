@@ -15,6 +15,7 @@ use super::types::ComposeFile;
 mod ignored_fields;
 mod nested_raw;
 pub(crate) use ignored_fields::ports_published_on_all_interfaces;
+pub(crate) use ignored_fields::ports_published_on_wildcard;
 use ignored_fields::{
 	ignored_build_fields, ignored_models, ignored_network_fields, ignored_port_fields,
 	ignored_restart_policy_fields, ignored_secret_config_drivers, ignored_service_fields,

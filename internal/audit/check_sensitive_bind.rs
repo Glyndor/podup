@@ -58,6 +58,21 @@ use super::check_fns::finding;
 /// from `/etc` would let `image: ... -v /etc/ssh:/ssh:ro` slip through
 /// the gate while `-v /etc:/etc:ro` does not.
 ///
+/// - `/`: the host root filesystem. Matched as an exact entry rather
+///   than a prefix because every absolute path starts with `/`, and the
+///   prefix-list match would therefore fire on every bind mount in the
+///   compose file. As an exact entry it fires on the root itself
+///   (`-v /:/host:ro` exposes the whole host filesystem) and stays
+///   silent on every path under it (`/etc`, `/var`, `/home`, ...),
+///   which the prefix list already covers when they apply and which
+///   stay silent on purpose when they do not. The wording uses the
+///   prefix-list shape ("a sensitive host path (...)") rather than the
+///   stronger socket wording because the bind target here is a
+///   directory the container can walk, not a single file that grants
+///   a daemon verb; the capability, not the file, is the attack vector.
+///   The normaliser folds `/`, `//`, and `/.` to a single `/` before
+///   the comparison so every POSIX-equivalent spelling of the root
+///   reaches this entry as one finding.
 /// - `/proc`: kernel and process state. The notable escape is
 ///   `/proc/1/root`, a symlink that resolves to the host's root
 ///   filesystem once the container has the right mount-namespace
@@ -108,7 +123,10 @@ use super::check_fns::finding;
 ///   project directory is conventionally `/srv/app`, `/home/<user>/<repo>`,
 ///   or wherever the operator cloned it. None of `/srv`, `/home`, or
 ///   the home subdirectories are in the list above, so a `./data:/data`
-///   or a `/srv/app/data:/data` stays silent on purpose.
+///   or a `/srv/app/data:/data` stays silent on purpose. The host root
+///   is matched as an exact entry for the same reason: `/`, `/home`,
+///   and `/srv` are different things to expose, and `/` only fires
+///   when the operator really did mean the whole host filesystem.
 pub fn check_sensitive_bind_mount(
 	name: &str,
 	service: &Service,
@@ -119,19 +137,46 @@ pub fn check_sensitive_bind_mount(
 		let Some((source, read_only)) = bind_source(mount) else {
 			continue;
 		};
-		// Match the trailing-slash form (`/etc/`) the same as the bare
-		// directory (`/etc`). Trailing slashes do not change which
-		// directory the mount points at.
-		let normalized = source.trim_end_matches('/');
-		if normalized.is_empty() {
-			continue;
-		}
+		// Normalise: trailing slashes are dropped (`/etc/` and `/etc`
+		// are the same directory) and the host root folds to a single
+		// `/` regardless of how many leading slashes the operator
+		// wrote or whether they spelled the current directory (`/.`).
+		// After this fold the exact-match entry for `/` catches `/`,
+		// `//`, `/.`, and `/./` as the same finding; every other path
+		// passes through unchanged so the prefix loop keeps its
+		// existing behaviour.
+		let normalized = normalize_host_path(source);
 		let mode = if read_only { "read-only " } else { "" };
-		if let Some(reason) = sensitive_bind_reason(normalized, mode) {
+		if let Some(reason) = sensitive_bind_reason(&normalized, mode) {
 			out.push(finding(name, "sensitive_bind_mount", &reason));
 		}
 	}
 	out
+}
+
+/// Fold the spellings of the host root that POSIX treats as equivalent
+/// to a single `/` and drop any trailing slashes from the rest. The
+/// sensitive list's exact-match entry for `/` then catches every
+/// spelling without the prefix loop firing on every absolute path.
+///
+/// POSIX collapses duplicate leading slashes (every distro podup
+/// supports treats `//` and `///` as `/`), and `/.` is the current
+/// directory of the root, which is the root itself. After folding
+/// these the only way an absolute bind path can reach the empty
+/// stripped case is by being the root, so the caller does not need
+/// a separate "skip when empty" branch.
+fn normalize_host_path(source: &str) -> String {
+	// Strip trailing slashes (`/etc/` -> `/etc`).
+	let trimmed = source.trim_end_matches('/');
+	// Collapse duplicate leading slashes (`//foo` -> `/foo`).
+	let stripped = trimmed.trim_start_matches('/');
+	// After both strips the only spellings of the root are:
+	// - empty (`/`, `//`, `///`, `/./`)
+	// - `.` (`/.`, `//.`)
+	if stripped.is_empty() || stripped == "." {
+		return "/".to_string();
+	}
+	format!("/{}", stripped)
 }
 
 /// Container runtime socket paths: the bind target IS the attack vector.
@@ -215,10 +260,26 @@ fn rootless_podman_path(path: &str) -> Option<RootlessPodman> {
 }
 
 /// Build the reason string for a sensitive bind mount. The exact socket
-/// matches fire first because the message is stronger; prefix matches
-/// follow with a capability hint that names what the attacker gains.
+/// matches fire first because the message is stronger; the host root
+/// fires next with the prefix-list wording because the bind target is
+/// a directory the container can walk, not a single file that grants
+/// a daemon verb; prefix matches follow with a capability hint that
+/// names what the attacker gains.
 fn sensitive_bind_reason(normalized_path: &str, mode: &str) -> Option<String> {
 	let rootless = rootless_podman_path(normalized_path);
+	if normalized_path == "/" {
+		// The whole host filesystem is a superset of every path on the
+		// list below. The entry sits beside the prefix list because the
+		// wording matches, and uses an exact comparison rather than a
+		// prefix comparison because every absolute path starts with `/`
+		// and a prefix match would fire on every bind mount in the
+		// file. The normaliser folds `/`, `//`, `/.`, and `/./` to the
+		// canonical `/` before this branch is reached.
+		return Some(format!(
+			"volumes: {normalized_path} is {mode}a sensitive host path \
+			 (the whole host filesystem)"
+		));
+	}
 	if SENSITIVE_BIND_EXACT.contains(&normalized_path) || rootless == Some(RootlessPodman::Socket) {
 		// Exact match: the bind target is the attack vector itself, not
 		// a directory of files. Phrasing distinguishes this entry from

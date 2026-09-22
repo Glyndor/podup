@@ -679,6 +679,13 @@ pub(crate) enum Commands {
 		/// time.
 		#[arg(long, conflicts_with = "strict")]
 		list_checks: bool,
+		/// Enable the `port_published_on_wildcard` opt-in check, which
+		/// fires for a port published with host IP `0.0.0.0` or `::`.
+		/// Off by default so a CI that runs `audit --strict` today sees
+		/// no new finding on upgrade; the check is the same one as the
+		/// `port_published_on_wildcard` row in `audit --list-checks`.
+		#[arg(long, conflicts_with = "list_checks")]
+		wildcard_binds: bool,
 	},
 	/// Generate declarative artifacts from the compose file.
 	#[command(

@@ -69,7 +69,7 @@ services:
 "#;
 	let (name, svc) = single_service(yaml);
 	let file = parse_str(yaml).unwrap();
-	let report = audit::audit_file(&file);
+	let report = audit::audit_file(&file, &[]);
 	let findings_for_web: Vec<&Finding> = report
 		.findings
 		.iter()
@@ -126,7 +126,7 @@ services:
       - API_TOKEN=${TOKEN_FROM_ENV}
 "#;
 	let file = parse_str(yaml).expect("parses");
-	let report = audit::audit_file(&file);
+	let report = audit::audit_file(&file, &[]);
 	assert!(
 		!report.findings.iter().any(|f| f.service == "app"
 			&& f.check == "secret_in_environment"
@@ -155,7 +155,7 @@ services:
       API_TOKEN: ${TOKEN_FROM_ENV}
 "#;
 	let file = parse_str(yaml_map).expect("parses");
-	let report = audit::audit_file(&file);
+	let report = audit::audit_file(&file, &[]);
 	assert!(
 		!report.findings.iter().any(|f| f.service == "app"
 			&& f.check == "secret_in_environment"
@@ -189,7 +189,7 @@ services:
     image: nginx:latest@sha256:0e7bb5afc7e5e22ee46c4f2cd4a8b3fa63ad3f5d5e5e5e5e5e5e5e5e5e5e5e5e
 "#;
 	let file = parse_str(yaml).expect("parses");
-	let report = audit::audit_file(&file);
+	let report = audit::audit_file(&file, &[]);
 	assert!(
 		!has_check(&report, "app", "unpinned_image"),
 		"digest-pinned image must not be flagged: {:#?}",
@@ -202,7 +202,7 @@ services:
   app:
     image: nginx@sha256:0e7bb5afc7e5e22ee46c4f2cd4a8b3fa63ad3f5d5e5e5e5e5e5e5e5e5e5e5e5e
 "#;
-	let report = audit::audit_file(&parse_str(yaml_notag).unwrap());
+	let report = audit::audit_file(&parse_str(yaml_notag).unwrap(), &[]);
 	assert!(
 		!has_check(&report, "app", "unpinned_image"),
 		"digest-only image must not be flagged"
@@ -227,7 +227,7 @@ fn audit_report_by_service_keeps_file_order_and_ownership() {
 		"services:\n  zeta:\n    image: alpine:3.20\n    privileged: true\n  alpha:\n    image: alpine:3.20\n    read_only: true\n    cap_drop: [ALL]\n    security_opt: [no-new-privileges:true]\n    pids_limit: 64\n    mem_limit: 64m\n    userns_mode: auto\n",
 	)
 	.unwrap();
-	let report = audit_file(&file);
+	let report = audit_file(&file, &[]);
 	let services = ordered_services(&file);
 	assert_eq!(
 		services.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
@@ -253,7 +253,7 @@ fn audit_secret_in_environment_flags_a_value_that_only_ends_in_a_brace() {
 }
 
 fn report_for_file(yaml: &str) -> AuditReport {
-	audit_file(&parse_str(yaml).unwrap())
+	audit_file(&parse_str(yaml).unwrap(), &[])
 }
 
 // ---------------------------------------------------------------------------
@@ -367,7 +367,7 @@ fn hostile_compose_does_not_inject_escapes_into_audit_table_detail_lines() {
 	// must be sanitized through `sanitize_cell` before they reach the byte
 	// stream the operator (or a pipe) sees.
 	let file = hostile_compose();
-	let report = audit_file(&file);
+	let report = audit_file(&file, &[]);
 	let services = ordered_services(&file);
 	let mut buf: Vec<u8> = Vec::new();
 	render_table_to(&mut buf, &services, &report).expect("render");

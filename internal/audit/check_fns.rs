@@ -16,6 +16,10 @@ use podup::effective_no_new_privileges;
 // The audit must use the same notion of "published on every interface" as
 // the parse-time port-exposure warning `up`/`config` already emit (#1835).
 use podup::ports_published_on_all_interfaces;
+// Same shared parser as the all-interfaces check: the audit's wildcard
+// finding runs the same parser code-path so the two cannot disagree on
+// what `0.0.0.0` or `[::]` in a `ports:` string actually means (#1881).
+use podup::ports_published_on_wildcard;
 
 use super::Finding;
 
@@ -319,7 +323,8 @@ pub fn check_no_userns(name: &str, service: &Service, _file: &ComposeFile) -> Ve
 /// key whose name merely contains a secret-looking segment while its
 /// value is not one (`PASSTHROUGH: "true"`, segment filter), a key whose
 /// value resolved to the empty literal (`LOG_LEVEL=` for an unrelated
-/// key, segment filter), and a key whose last segment is `FILE`.
+/// key, segment filter), and a `_FILE` key whose value has the shape of
+/// a path.
 ///
 /// The `_FILE` suffix is the documented convention for keeping a secret
 /// out of the environment: the value is a path to a file the application
@@ -327,18 +332,30 @@ pub fn check_no_userns(name: &str, service: &Service, _file: &ComposeFile) -> Ve
 /// spell this `<NAME>_FILE` and point it at a Docker/Kubernetes secrets
 /// mount, the canonical one being `/run/secrets/<name>`. The path is not
 /// the secret itself, so the key carrying it is not a secret in the
-/// environment. The check trusts the `_FILE` convention rather than
-/// verifying the path: a path outside `/run/secrets/` (a custom mount,
-/// `/etc/passwd`, a relative path) is still a path, not a secret, and
-/// stays silent. Verifying what the path points to (file permissions,
-/// mount provenance) is a different audit concern and is out of scope
-/// here.
+/// environment when the value is path-shaped.
+///
+/// The exemption is the suffix AND the value's shape, not either alone:
+/// the suffix names the convention, the shape is what makes it a path
+/// reference. The shape test is the three prefixes an absolute or
+/// relative path can take (`/run/secrets/pg`, `./secrets/pg`, `../pg`);
+/// a literal password written into a `_FILE` key (`POSTGRES_PASSWORD_FILE:
+/// hunter2-real-password`) is still a literal password and the check
+/// flags it. Values that merely contain a slash but do not start with one
+/// of the three prefixes (`relative/path`, `a/b`) read as plain text, not
+/// as a path, and are flagged the same way. Verifying what the path
+/// points to (file permissions, mount provenance) is a different audit
+/// concern and is out of scope here: the check decides on shape, not on
+/// whether the file exists.
 ///
 /// The risk is the same in both value shapes: the value ends up in the
 /// container's environment whether it was written literally or injected
 /// from the operator's environment through `${VAR}`. A gate whose verdict
 /// depends on whether the variable happens to be exported in the caller's
-/// shell is not a gate, so both shapes are flagged.
+/// shell is not a gate, so both shapes are flagged. A `_FILE` key is
+/// judged on the same resolved value: `${VAR}` holding a path stays
+/// silent, `${VAR}` holding anything else is flagged, and an unset
+/// `${VAR}` resolves to the empty string, which is not a path and is
+/// flagged too.
 ///
 /// Service-local: the check is a positional grep on the `environment:` map
 /// of this service. These are surfaced so the operator can move them to
@@ -369,7 +386,18 @@ pub fn check_secret_in_environment(
 		// reused: `POSTGRES_PASSWORD_FILE`, `MY_KEY_FILE`,
 		// `KEY-FILE`, `KeyFile` all reach the same conclusion; a name
 		// like `PASSWORD_FILE_BACKUP` does not and still fires.
-		if key_segments.last().is_some_and(|s| s == "FILE") {
+		//
+		// The suffix alone is not enough: a literal password written
+		// into a `_FILE` key (`POSTGRES_PASSWORD_FILE:
+		// hunter2-real-password`) is still a literal password. The
+		// exemption holds only when the value is path-shaped: it starts
+		// with `/`, `./`, or `../`. Any other value falls through to the
+		// flagging rule like a value under any other secret-bearing key.
+		if key_segments.last().is_some_and(|s| s == "FILE")
+			&& value
+				.as_deref()
+				.is_some_and(|v| v.starts_with('/') || v.starts_with("./") || v.starts_with("../"))
+		{
 			continue;
 		}
 		// The empty-value branch used to skip here. That branch is what
@@ -510,6 +538,60 @@ pub fn check_port_published_on_all_interfaces(
 			"port_published_on_all_interfaces",
 			&format!(
 				"port {host} is published on every interface; bind to 127.0.0.1 (or another host IP) to keep it off the network"
+			),
+		));
+	}
+	out
+}
+
+/// One [`Finding`] per port the file publishes with an explicit
+/// wildcard host IP (`0.0.0.0` or `::`). The check fires only when the
+/// opt-in flag `--wildcard-binds` is set (`#1881`); without it, the
+/// registry entry is still listed by `audit --list-checks` (so an
+/// integrator can see the option exists) and absent from the audit
+/// findings (so `--strict` keeps meaning exactly what it did before).
+///
+/// Threshold (mirror of the all-interfaces predicate in
+/// [`crate::compose::diagnostics::ignored_fields::ports_published_on_all_interfaces`],
+/// filtering the other way: the operator typed `0.0.0.0` or `::`):
+///
+/// - Short form `0.0.0.0:host:container`: flagged.
+/// - Short form `[::]:host:container`: flagged.
+/// - Short form with any other IP (`127.0.0.1`, `192.168.1.10`,
+///   `[::1]`, `fd00::1`): not flagged. The address is a deliberate
+///   decision and a stricter audit agrees.
+/// - Short form with 1 colon (`"5432:5432"`, no IP): not flagged here.
+///   That case is the all-interfaces check's job; if both fired on the
+///   same mapping the audit would double-count the same risk.
+/// - Long form with `host_ip: "0.0.0.0"` or `host_ip: "::"`: flagged.
+/// - Long form with any other `host_ip` value: not flagged.
+/// - Long form with no `published`: not flagged. The port is exposed,
+///   not published on the host.
+///
+/// Port range (`published: "8080-8090"` with `host_ip: "0.0.0.0"`):
+/// one finding for the mapping, not one per port in the range. Same
+/// shape as the all-interfaces check; multiplying findings across a
+/// range adds noise without adding signal.
+pub fn check_port_published_on_wildcard(
+	service_name: &str,
+	_service: &Service,
+	file: &ComposeFile,
+) -> Vec<Finding> {
+	let mut out = Vec::new();
+	for (svc, host) in ports_published_on_wildcard(file) {
+		// Same per-service filter as the all-interfaces check: the shared
+		// predicate enumerates every flagged port in the whole file, but
+		// `run_checks` invokes this function once per service. Without
+		// this filter a multi-service file would emit each finding N
+		// times (one per service visit).
+		if svc != service_name {
+			continue;
+		}
+		out.push(finding(
+			&svc,
+			"port_published_on_wildcard",
+			&format!(
+				"port {host} is bound to a wildcard address; bind to 127.0.0.1 (or another host IP) to keep it off the network"
 			),
 		));
 	}
