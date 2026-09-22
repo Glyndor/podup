@@ -550,7 +550,13 @@ async fn run() -> podup::Result<()> {
 	// `audit` reports what `up` would start. `--list-checks` short-circuits
 	// earlier, before compose-file resolution, so an integrator can run it
 	// without a compose file.
-	if let Commands::Audit { strict, format, .. } = &cli.command {
+	if let Commands::Audit {
+		strict,
+		format,
+		wildcard_binds,
+		..
+	} = &cli.command
+	{
 		let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
 		let project = resolve_project_name(cli.project.clone(), file.name.as_deref(), &base_dir);
 		startup::validate_project_name(&project)?;
@@ -559,7 +565,14 @@ async fn run() -> podup::Result<()> {
 		let mut resolved = file.clone();
 		podup::retain_active_profiles(&mut resolved, &cli.profile);
 		podup::env_file::materialize_env_files(&mut resolved, &base_dir)?;
-		let report = audit::audit_file(&resolved);
+		// `--wildcard-binds` is opt-in; collect the enabled flags into
+		// the slice the registry reads so a future opt-in check only
+		// needs a new `opt_in: Some("--new-flag")` here (#1881).
+		let mut opt_in: Vec<&'static str> = Vec::new();
+		if *wildcard_binds {
+			opt_in.push("--wildcard-binds");
+		}
+		let report = audit::audit_file(&resolved, &opt_in);
 		match format {
 			AuditFormat::Table => audit::render_table(&audit::ordered_services(&resolved), &report),
 			AuditFormat::Json => audit::render_json(&report),

@@ -73,12 +73,20 @@ impl AuditReport {
 /// [`ComposeFile::services`] (insertion order, which the parser preserves from
 /// the YAML). A service with no findings contributes nothing to the report.
 ///
+/// `opt_in` is the slice of opt-in flag names the CLI has enabled on
+/// this run (`#1881`). An entry whose registry `opt_in` is `None`
+/// always runs; an entry whose `opt_in` is `Some(flag)` only runs
+/// when `flag` is in the slice. Passing `&[]` reproduces the legacy
+/// behaviour where every check runs unconditionally; the binary test
+/// `audit_strict_exits_zero_when_clean` and the in-process tests in
+/// `audit_tests.rs` rely on that to keep their findings list stable.
+///
 /// Pure: no I/O, no logging, no global state. The callers wire the result
 /// into whichever renderer matches `--format`.
-pub fn audit_file(file: &ComposeFile) -> AuditReport {
+pub fn audit_file(file: &ComposeFile, opt_in: &[&'static str]) -> AuditReport {
 	let mut report = AuditReport::default();
 	for (name, service) in &file.services {
-		let findings = checks::run_checks(name, service, file);
+		let findings = checks::run_checks(name, service, file, opt_in);
 		report.findings.extend(findings);
 	}
 	report
@@ -200,10 +208,19 @@ pub fn render_list_checks_table() {
 /// [`render_list_checks_table`] writing to `w`. The id and description are
 /// both `&'static str` and ASCII (the description is the one-line prose the
 /// registry carries), so no sanitisation runs here; nothing the registry
-/// holds is user-controlled.
+/// holds is user-controlled. The `opt_in` column carries the flag name
+/// for opt-in checks and `-` for always-on checks, so an integrator
+/// reading the listing sees the toggle next to the id (`#1881`).
 pub fn render_list_checks_table_to<W: Write>(w: &mut W) -> io::Result<()> {
+	// `id<TAB>description` is the shape integrators already parse
+	// (`cut -f2` for the description), so it stays exactly that for every
+	// check. An opt-in check appends its enabling flag as a third column
+	// at the end, where no existing reader looks.
 	for check in checks::CHECK_REGISTRY {
-		writeln!(w, "{}\t{}", check.id, check.description)?;
+		match check.opt_in {
+			Some(flag) => writeln!(w, "{}\t{}\topt-in: {}", check.id, check.description, flag)?,
+			None => writeln!(w, "{}\t{}", check.id, check.description)?,
+		}
 	}
 	Ok(())
 }
@@ -220,8 +237,11 @@ pub fn render_list_checks_json() {
 }
 
 /// [`render_list_checks_json`] writing to `w`. `serde_json` orders the
-/// per-entry keys alphabetically (`description`, then `id`), giving the
-/// stable shape a diff between releases can rely on.
+/// per-entry keys alphabetically (`description`, then `id`, then
+/// `opt_in`), giving the stable shape a diff between releases can rely
+/// on. The `opt_in` field carries the flag name for opt-in checks and
+/// `null` for always-on checks; a consumer can read it without
+/// branching on the absent/present distinction (`#1881`).
 pub fn render_list_checks_json_to<W: Write>(w: &mut W) -> io::Result<()> {
 	let entries: Vec<serde_json::Value> = checks::CHECK_REGISTRY
 		.iter()
@@ -229,6 +249,7 @@ pub fn render_list_checks_json_to<W: Write>(w: &mut W) -> io::Result<()> {
 			serde_json::json!({
 				"id": c.id,
 				"description": c.description,
+				"opt_in": c.opt_in,
 			})
 		})
 		.collect();
