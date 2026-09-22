@@ -172,6 +172,14 @@ impl Engine {
 		if let BuildConfig::Config { labels: l, .. } = build {
 			labels.extend(l.to_map());
 		}
+		// Stamp podup's ownership labels AFTER the user's `build.labels` so a
+		// user label named `podup.project` cannot displace this project's
+		// value. Without this, `build.labels: {podup.project: other}` would
+		// make `podman image prune --filter label=podup.project=<self>`
+		// miss every image this build produced and reach for `other`'s
+		// instead.
+		labels.insert("podup.project".to_string(), self.project.clone());
+		labels.insert("podup.service".to_string(), service_name.to_string());
 
 		// Pre-validate the keys libpod's buildkit-fronted parser rejects
 		// (anything outside `[A-Za-z0-9_.-]`), so a bad `build.args` or
@@ -270,6 +278,18 @@ impl Engine {
 		if let Some(l) = &labels_json {
 			qs.push_str(&format!("&labels={}", urlencoded(l)));
 		}
+		// `layerLabel` is a repeated `key=value` query parameter that labels
+		// every image the build produced, including the intermediate stage
+		// images that `labels=` leaves unlabelled. Only podup's two keys go
+		// here; the user's `build.labels` keep going through `labels=` so
+		// their policy (label, not layer-label) is preserved. A multi-stage
+		// build otherwise leaves every intermediate image unclaimed on
+		// disk, untagged, and indistinguishable from another project's.
+		qs.push_str(&format!(
+			"&layerLabel={}&layerLabel={}",
+			urlencoded(&format!("podup.project={}", self.project)),
+			urlencoded(&format!("podup.service={}", service_name)),
+		));
 		if let Some(u) = &ulimits_json {
 			qs.push_str(&format!("&ulimits={}", urlencoded(u)));
 		}
