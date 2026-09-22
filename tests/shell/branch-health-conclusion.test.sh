@@ -136,6 +136,36 @@ make_page() { # <runs...>
 	printf ']}\n'
 }
 
+# Build a jobs response in the shape `actions/runs/{id}/jobs` returns.
+# Each entry is `<name>:<conclusion>`; conclusions like `failure`,
+# `cancelled`, `timed_out` enter the filter, while `success` and
+# `skipped` do not. The failure-case cases below use this to plant
+# exactly the jobs the run had, so the script's own verdict on those
+# jobs is what the test exercises.
+#
+# The `printf '%s' "$(jq -nc ...)"` pair matters: jq writes a trailing
+# newline after every result, and a newline left inside the JSON
+# (between the last job and the closing `]}`) splits the response
+# across two stub lines so the jobs page reads as truncated JSON on
+# line 2. `printf '%s' "$(...)"` consumes the trailing newline before
+# the comma-or-close is emitted, so the page lands on one stub line.
+make_jobs() { # <name>:<conclusion> [<name>:<conclusion> ...]
+	local first=1
+	printf '{"jobs":['
+	for entry in "$@"; do
+		local name="${entry%%:*}"
+		local conclusion="${entry#*:}"
+		if [ "$first" = 1 ]; then
+			first=0
+		else
+			printf ','
+		fi
+		printf '%s' "$(jq -nc --arg name "$name" --arg conclusion "$conclusion" \
+			'{name:$name, conclusion:$conclusion}')"
+	done
+	printf ']}\n'
+}
+
 # Run the script under test against planted responses. Combine
 # stdout+stderr in `out`, exit code in `rc`. Each call starts from a
 # fresh gh.log and sleep.log so call counts are per-invocation.
@@ -190,12 +220,38 @@ esac
 # Head's run red fails, naming it.
 # ===========================================================================
 red_run="$(make_run 2 HEAD123 completed failure 2026-09-19T11:00:00Z 8 https://x/r/2)"
-make_page "$red_run" > "$WORK/red.resp"
+# The script now fetches the run's jobs and decides on them. Plant one
+# real failed job (not branch-health) so the verdict stays red the way
+# it did before the branch-health rule was added.
+red_jobs="$(make_jobs 'rust / Test (ubuntu-latest):failure')"
+{ make_page "$red_run"; printf '%s' "$red_jobs"; } > "$WORK/red.resp"
 out="$(run_script "$WORK/red.resp")"; rc=$?
 check "red head exits 1" "1" "$rc"
 case "$out" in
 	*"::error::"*"concluded failure"*"https://x/r/2"*) check "red head errors and names the run" "yes" "yes" ;;
 	*) check "red head errors and names the run" "error-concluded-failure-url" "$(printf '%s' "$out" | head -1)" ;;
+esac
+case "$out" in
+	*"Failed jobs:"*"rust / Test (ubuntu-latest)"*) check "red head names the failed job in the error" "yes" "yes" ;;
+	*) check "red head names the failed job in the error" "failed-jobs-named" "$(printf '%s' "$out" | head -3)" ;;
+esac
+case "$(nth_call 2)" in
+	*"actions/runs/2/jobs"*) check "red head: jobs URL carries the run id from the runs lookup" "yes" "yes" ;;
+	*) check "red head: jobs URL carries the run id from the runs lookup" "url-with-id" "$(nth_call 2)" ;;
+esac
+
+# ===========================================================================
+# Three real failed jobs are listed whole, separated by ", ". A join that
+# alternated its separators would print "a,b c" and misname the jobs.
+# ===========================================================================
+three_run="$(make_run 21 HEAD123 completed failure 2026-09-19T11:00:00Z 21 https://x/r/21)"
+three_jobs="$(make_jobs 'fmt:failure' 'clippy:failure' 'test:failure')"
+{ make_page "$three_run"; printf '%s' "$three_jobs"; } > "$WORK/three.resp"
+out="$(run_script "$WORK/three.resp")"; rc=$?
+check "three failed jobs exit 1" "1" "$rc"
+case "$out" in
+	*"Failed jobs: fmt, clippy, test"*) check "three failed jobs are listed with ', '" "yes" "yes" ;;
+	*) check "three failed jobs are listed with ', '" "fmt, clippy, test" "$(printf '%s' "$out" | grep 'Failed jobs')" ;;
 esac
 
 # ===========================================================================
@@ -356,7 +412,10 @@ esac
 # ===========================================================================
 newer_push_failure="$(make_run 70 HEAD123 completed failure 2026-09-19T12:00:00Z 70 https://x/r/70 push)"
 older_push_success="$(make_run 71 HEAD123 completed success 2026-09-19T11:00:00Z 71 https://x/r/71 push)"
-make_page "$newer_push_failure" "$older_push_success" > "$WORK/push_pair.resp"
+# Same shape as the red-head case: plant a real failed job so the
+# verdict stays red after the branch-health rule is applied.
+push_pair_jobs="$(make_jobs 'rust / Test (ubuntu-latest):failure')"
+{ make_page "$newer_push_failure" "$older_push_success"; printf '%s' "$push_pair_jobs"; } > "$WORK/push_pair.resp"
 out="$(run_script "$WORK/push_pair.resp")"; rc=$?
 check "newer push failure for head still wins over older push success (filter is not 'prefer succeeded'): exit 1" "1" "$rc"
 case "$out" in
@@ -473,7 +532,8 @@ esac
 # on the wrong side.
 # ===========================================================================
 streams_run="$(make_run 50 HEAD123 completed failure 2026-09-19T11:00:00Z 50 https://x/r/50)"
-make_page "$streams_run" > "$WORK/streams.resp"
+streams_jobs="$(make_jobs 'rust / Test (ubuntu-latest):failure')"
+{ make_page "$streams_run"; printf '%s' "$streams_jobs"; } > "$WORK/streams.resp"
 rm -f "$WORK/gh.log" "$WORK/sleep.log"
 : >"$WORK/gh.log"
 : >"$WORK/sleep.log"
@@ -564,6 +624,117 @@ case "$out" in
 	*"no ci.yml run for commit HEAD123 on main"*) check "transient gh failure: empty-answer error fires after the bound" "yes" "yes" ;;
 	*) check "transient gh failure: empty-answer error fires after the bound" "empty-answer-error" "$(printf '%s' "$out" | head -1)" ;;
 esac
+
+# ===========================================================================
+# A `failure` run whose only non-success job is `branch health (main) /
+# branch health` is the latch the rule at the top of this file describes:
+# the run is red only because the OTHER branch's health gate decided it
+# was, and the branch's own code passed. The script must exit 0 with a
+# single line that names the branch-health job so an operator can tell at
+# a glance that the run was green for everything except the gate that
+# handed the latch back. Without this case the rule on production would
+# silently keep both long-lived branches red on every push.
+# ===========================================================================
+bh_only_run="$(make_run 80 HEAD123 completed failure 2026-09-19T11:00:00Z 80 https://x/r/80)"
+bh_only_jobs="$(make_jobs 'branch health (main) / branch health:failure')"
+{ make_page "$bh_only_run"; printf '%s' "$bh_only_jobs"; } > "$WORK/bh_only.resp"
+out="$(run_script "$WORK/bh_only.resp")"; rc=$?
+check "branch-health-only failure exits 0 (the latch, not the branch)" "0" "$rc"
+case "$out" in
+	*"concluded failure only on branch-health"*"branch health (main) / branch health"*) check "branch-health-only failure names the branch-health job in one line" "yes" "yes" ;;
+	*) check "branch-health-only failure names the branch-health job in one line" "named-bh-only" "$(printf '%s' "$out" | head -1)" ;;
+esac
+case "$out" in
+	*"::error::"*) check "branch-health-only failure does NOT emit ::error:: (it is green)" "no-error" "error" ;;
+	*) check "branch-health-only failure does NOT emit ::error:: (it is green)" "yes" "yes" ;;
+esac
+case "$(nth_call 2)" in
+	*"actions/runs/80/jobs"*) check "branch-health-only: jobs URL carries the run id 80" "yes" "yes" ;;
+	*) check "branch-health-only: jobs URL carries the run id 80" "url-with-id-80" "$(nth_call 2)" ;;
+esac
+
+# ===========================================================================
+# The inverse: a `failure` run with the branch-health failure AND a real
+# failed job (e.g. `rust / Test (ubuntu-latest)`). The script must stay
+# red and name the real job. The branch-health job, having been the
+# visible face of the latch, must NOT be the job the error names: the
+# operator needs the real failure to be the first thing they see, and
+# mixing the latch into the same line buries it.
+# ===========================================================================
+bh_plus_real_run="$(make_run 81 HEAD123 completed failure 2026-09-19T11:00:00Z 81 https://x/r/81)"
+bh_plus_real_jobs="$(make_jobs 'branch health (main) / branch health:failure' 'rust / Test (ubuntu-latest):failure')"
+{ make_page "$bh_plus_real_run"; printf '%s' "$bh_plus_real_jobs"; } > "$WORK/bh_plus_real.resp"
+out="$(run_script "$WORK/bh_plus_real.resp")"; rc=$?
+check "branch-health + real failure exits 1 (the real failure wins)" "1" "$rc"
+case "$out" in
+	*"::error::"*"concluded failure"*"https://x/r/81"*) check "branch-health + real failure errors and names the run" "yes" "yes" ;;
+	*) check "branch-health + real failure errors and names the run" "error-concluded-failure-url" "$(printf '%s' "$out" | head -1)" ;;
+esac
+case "$out" in
+	*"Failed jobs:"*"rust / Test (ubuntu-latest)"*) check "branch-health + real failure names the real job on the 'Failed jobs:' line" "yes" "yes" ;;
+	*) check "branch-health + real failure names the real job on the 'Failed jobs:' line" "real-named" "$(printf '%s' "$out" | tail -3)" ;;
+esac
+# The 'Failed jobs:' line lists the real job; branch-health must not
+# appear there because the script filters it out before printing the
+# verdict line.
+case "$out" in
+	*"Failed jobs:"*"branch health"*) check "branch-health + real failure does NOT list branch health as a failed job" "no" "yes" ;;
+	*) check "branch-health + real failure does NOT list branch health as a failed job" "yes" "yes" ;;
+esac
+case "$(nth_call 2)" in
+	*"actions/runs/81/jobs"*) check "branch-health + real failure: jobs URL carries the run id 81" "yes" "yes" ;;
+	*) check "branch-health + real failure: jobs URL carries the run id 81" "url-with-id-81" "$(nth_call 2)" ;;
+esac
+
+# ===========================================================================
+# A `failure` run whose jobs call cannot be answered. The polling loop
+# above treats a transient `gh api` failure as "no answer this attempt"
+# and the failure case here must do the same: an unanswered question is
+# not a pass. The verdict stays red with a message that says the jobs
+# could not be seen, so an operator reading the error knows the gate
+# could not rule the latch out.
+#
+# The responses file has only one line (the runs page). The stub hands
+# out line N on call N, so the second call (the jobs lookup) gets an
+# empty answer, which jq parses as an error and the stub reports as a
+# non-zero exit. That is what the script's `if jobs=...` sees.
+# ===========================================================================
+bh_call_fail_run="$(make_run 82 HEAD123 completed failure 2026-09-19T11:00:00Z 82 https://x/r/82)"
+make_page "$bh_call_fail_run" > "$WORK/bh_call_fail.resp"
+out="$(run_script "$WORK/bh_call_fail.resp")"; rc=$?
+check "jobs fetch failure: exits 1 (an unknown verdict is not green)" "1" "$rc"
+case "$out" in
+	*"::error::"*"concluded failure"*"https://x/r/82"*) check "jobs fetch failure: errors and names the run" "yes" "yes" ;;
+	*) check "jobs fetch failure: errors and names the run" "error-concluded-failure-url" "$(printf '%s' "$out" | head -1)" ;;
+esac
+case "$out" in
+	*"Could not"*"jobs"*) check "jobs fetch failure: explains the unknown verdict" "yes" "yes" ;;
+	*) check "jobs fetch failure: explains the unknown verdict" "explains-unknown" "$(printf '%s' "$out" | head -3)" ;;
+esac
+case "$(nth_call 2)" in
+	*"actions/runs/82/jobs"*) check "jobs fetch failure: jobs URL still carries the run id 82 (the call was attempted)" "yes" "yes" ;;
+	*) check "jobs fetch failure: jobs URL still carries the run id 82 (the call was attempted)" "url-with-id-82" "$(nth_call 2)" ;;
+esac
+
+# ===========================================================================
+# A `cancelled` run is the run's own verdict; the latch rule does not
+# apply to it. Even when the only job in the run is a branch-health
+# one, the cancellation is the verdict and the gate must stay red. The
+# existing cancellation tests pin this; this case is the explicit one
+# that names branch health, so a future change that quietly adds a
+# jobs lookup to the cancelled branch surfaces here.
+# ===========================================================================
+cancelled_bh_run="$(make_run 83 HEAD123 completed cancelled 2026-09-19T11:00:00Z 83 https://x/r/83)"
+make_page "$cancelled_bh_run" > "$WORK/cancelled_bh.resp"
+out="$(run_script "$WORK/cancelled_bh.resp")"; rc=$?
+check "cancelled run with only branch health: still exits 1 (cancellation is the verdict)" "1" "$rc"
+case "$out" in
+	*"::error::"*"was cancelled"*"https://x/r/83"*) check "cancelled + branch health: errors and names the run as cancelled" "yes" "yes" ;;
+	*) check "cancelled + branch health: errors and names the run as cancelled" "error-was-cancelled-url" "$(printf '%s' "$out" | head -1)" ;;
+esac
+# No jobs lookup must have happened: cancelled is not a failure and the
+# failure branch is the only one that consults the run's jobs.
+check "cancelled + branch health: only 1 gh call (no jobs lookup)" "1" "$(gh_count)"
 
 # ===========================================================================
 # Missing env vars are fatal: REPO is now required too.
