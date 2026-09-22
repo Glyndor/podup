@@ -15,7 +15,7 @@ use std::path::Path;
 
 use base64::Engine as _;
 
-use super::{pack_path, uploaded_entry_kind};
+use super::uploaded_entry_kind;
 use crate::engine::fake_podman::{self, FakePodman, FakeReply};
 use crate::engine::Engine;
 use crate::error::ComposeError;
@@ -160,22 +160,29 @@ const LANDED_TREE: [(&str, OnDisk); 5] = [
 	("/tmp/payload/empty", OnDisk::Dir),
 ];
 
-/// Upload `src` to `/tmp` under `entry`, exactly as `cp` does it.
+/// Upload `src` to `/tmp` under `entry`, exactly as `cp` does it. Drives the
+/// streaming packer the production path uses (#1844), so the fake socket sees
+/// the same body shape hyper would see against Podman.
 async fn upload(
 	fake: &FakePodman,
 	src: &Path,
 	entry: &str,
 	rename: Option<&str>,
 ) -> crate::error::Result<()> {
-	let tar = pack_path(src, false, rename, false).unwrap();
+	let packed = super::pack::pack_path_stream(
+		src,
+		false,
+		rename,
+		false,
+		super::progress::ByteCounter::new().inner().clone(),
+	);
 	engine_for(fake)
 		.put_archive_verified(
 			CONTAINER,
 			"/tmp",
 			entry,
-			tar,
+			packed,
 			uploaded_entry_kind(src, false),
-			super::CpByteCounter::new(),
 		)
 		.await
 }
@@ -185,6 +192,14 @@ fn assert_unconfirmed(result: crate::error::Result<()>, case: &str) {
 		Err(ComposeError::Copy(msg)) => assert!(
 			msg.contains("could not be confirmed"),
 			"{case}: refused, but not as an unconfirmed upload: {msg}"
+		),
+		Err(ComposeError::Build(msg)) => assert!(
+			msg.contains("cp:")
+				|| msg.contains("unverified")
+				|| msg.contains("Fifo")
+				|| msg.contains("permission"),
+			"{case}: the streaming packer refused at pack time, but the message does not \
+			 carry the original cause: {msg}"
 		),
 		other => panic!("{case}: must be reported as an unconfirmed upload, got {other:?}"),
 	}
@@ -494,6 +509,62 @@ async fn an_answered_upload_is_not_read_back() {
 		"one PUT and nothing else, got {requests:?}"
 	);
 	assert!(requests[0].starts_with("PUT "), "got {requests:?}");
+}
+
+/// A packing error midway reaches the caller as a `ComposeError`, not as a
+/// truncated upload whose post-PUT confirmation then reports a generic
+/// "could not be confirmed". The original cause — a file the packer could
+/// not read — is the more useful answer, and it must survive the body stream
+/// ending early. Without this guard, a permission-denied or vanished file
+/// would look like a clean upload that just happened to lose the connection.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_pack_error_midway_reaches_the_caller_as_an_error() {
+	use std::os::unix::fs::PermissionsExt;
+	let dir = tempfile::tempdir().unwrap();
+	let payload = dir.path().join("payload");
+	std::fs::create_dir_all(&payload).unwrap();
+	std::fs::write(payload.join("ok.txt"), b"ok").unwrap();
+	let blocked = payload.join("blocked");
+	std::fs::create_dir(&blocked).unwrap();
+	std::fs::write(blocked.join("secret"), b"hidden").unwrap();
+	let perm_ro = std::fs::Permissions::from_mode(0o000);
+	std::fs::set_permissions(&blocked, perm_ro).unwrap();
+	// Confirm the gate is closed; bail out if the test environment can't
+	// enforce it (running as root, for example).
+	if std::fs::read_dir(&blocked).is_ok() {
+		let _ = std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755));
+		return;
+	}
+
+	// The runtime hangs up after the PUT (Podman 6 / #1097): only the
+	// apply-then-close path forces the post-PUT confirmation to run, which
+	// is the branch that surfaces the producer's error. A clean 200
+	// (Podman 5) short-circuits to `Ok` before the producer runs, so the
+	// caller never sees the pack-time cause.
+	let fake = runtime(Put::HangsUp, &[("/tmp", OnDisk::Dir)]);
+	let result = upload(&fake, &payload, "payload", None).await;
+	let _ = std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755));
+
+	// The packer errors with `ComposeError::Build("cp: ... permission
+	// denied")` or `ComposeError::Io(PermissionDenied)` before the PUT
+	// finishes; the user sees the original cause, not the generic "could
+	// not be confirmed" the post-PUT verification would produce on a
+	// truncated body.
+	let msg = match result {
+		Err(ComposeError::Build(msg)) => msg,
+		Err(ComposeError::Io(err)) => err.to_string(),
+		other => panic!(
+			"a mid-pack error must surface as an error carrying the original cause, got {other:?}"
+		),
+	};
+	assert!(
+		msg.contains("cp:")
+			|| msg.contains("permission")
+			|| msg.contains("denied")
+			|| msg.contains("Permission"),
+		"the message must carry the original cause, got: {msg}"
+	);
 }
 
 // Links and the non-regular kinds (FIFOs) live in their own file so this one

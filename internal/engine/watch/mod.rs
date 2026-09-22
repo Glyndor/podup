@@ -11,7 +11,7 @@
 //! - `sync+exec`: sync, then run the rule's `exec` command inside the container
 
 mod placement;
-mod sync;
+pub(in crate::engine) mod sync;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -31,7 +31,7 @@ use placement::{
 	is_dispatch_event, is_remove_event, join_container_path, mark_dir_ensured, mkdir_p_argv,
 	plan_remove_placement, plan_sync_placement, validate_sync_target, SyncPlacement,
 };
-use sync::{build_sync_tar, is_ignored, is_included};
+use sync::{is_ignored, is_included};
 
 use super::Engine;
 
@@ -355,18 +355,21 @@ impl Engine {
 			entry_name,
 			dest_dir,
 		} = plan_sync_placement(root, changed, target);
-		// `build_sync_tar` walks the changed directory (possibly many entries)
-		// and runs the result through a synchronous flate2+gzip encoder. On an
-		// async runtime, doing that on the calling task would block the executor
-		// for the duration; a multi-megabyte tree turns a one-line edit into a
-		// freeze that the rest of `watch`'s I/O cannot escape. Hand it to the
-		// blocking pool, like `cp`/`build` already do for their tar packing.
-		let changed_buf = changed.to_path_buf();
-		let entry_name_buf = PathBuf::from(&entry_name);
-		let tar_bytes =
-			tokio::task::spawn_blocking(move || build_sync_tar(&changed_buf, &entry_name_buf))
-				.await
-				.map_err(|e| ComposeError::Watch(format!("sync: tar task: {e}")))??;
+		// `build_sync_tar_stream` walks the changed directory (possibly many
+		// entries) and gzips it inside a `spawn_blocking` task that pipes the
+		// bytes through a bounded channel to the PUT body. On an async
+		// runtime, doing that on the calling task would block the executor
+		// for the duration; a multi-megabyte tree turns a one-line edit into
+		// a freeze that the rest of `watch`'s I/O cannot escape. Same shape
+		// as the `cp` packer; only the wrapper (gzip) and the walk
+		// (`sync_walk`) differ. The recorded entry list rides in
+		// `PackedStream.producer` and is what `put_archive_verified` reads
+		// back to confirm the upload landed.
+		let packed = super::copy::build_sync_tar_stream_for_watch(
+			changed,
+			Path::new(&entry_name),
+			crate::engine::copy::CpByteCounter::new().inner().clone(),
+		);
 
 		// docker compose watch creates the sync target directory when it is
 		// missing; match that so a sync to a not-yet-existing path works instead
@@ -383,15 +386,8 @@ impl Engine {
 		// was sent). `watch` used to have its own copy of this PUT, which is how
 		// the two drifted apart and left sync unfixed on Podman 6.
 		let uploaded_kind = crate::engine::copy::uploaded_entry_kind(changed, false);
-		self.put_archive_verified(
-			container,
-			&dest_dir,
-			&entry_name,
-			tar_bytes,
-			uploaded_kind,
-			crate::engine::copy::CpByteCounter::new(),
-		)
-		.await?;
+		self.put_archive_verified(container, &dest_dir, &entry_name, packed, uploaded_kind)
+			.await?;
 
 		info!("synced {} -> {target}", changed.display());
 		Ok(())

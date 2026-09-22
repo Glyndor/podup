@@ -85,8 +85,7 @@
 //! the kind expected, and the literal `PathStat` the runtime answered, so the
 //! next attempt starts from a measurement.
 
-use bytes::Bytes;
-
+#[cfg(test)]
 use crate::error::{ComposeError, Result};
 use crate::libpod::client::PathStat;
 use crate::libpod::urlencoded;
@@ -119,7 +118,7 @@ pub(crate) enum SentKind {
 
 /// One entry of the uploaded archive that the destination can be asked about.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) struct SentEntry {
+pub(in crate::engine) struct SentEntry {
 	/// Relative to the directory the archive was extracted at, `/`-separated,
 	/// without a leading `./` or a trailing `/`.
 	pub(super) path: String,
@@ -150,6 +149,19 @@ pub(super) struct SentEntry {
 /// not name, so the archive is unverifiable and the function returns an
 /// error. So is an entry whose path is the extraction directory itself (`.`),
 /// which the caller confirmed before uploading.
+///
+/// **Test-only oracle.** Production verification reads the recorder the
+/// packer fills in as it writes the tar; the streamed bytes are gone after
+/// the PUT, so `sent_entries` does not run in production. It is gated to
+/// test builds (`#[cfg(test)]`) for that reason, and exists for the
+/// recorded-equals-written parity test
+/// ([`super::pack_tests::the_recorder_agrees_with_what_sent_entries_reads_back`]):
+/// pack to a `Vec<u8>` with the recorder on, then assert the recorder
+/// equals what `sent_entries` reads back from those same bytes. This pins
+/// that the recorder and the archive agree on every entry; a sabotage that
+/// records one without writing the other (or vice versa) breaks the test
+/// in lock-step.
+#[cfg(test)]
 pub(super) fn sent_entries(gz_tar: &[u8]) -> Result<Vec<SentEntry>> {
 	let mut archive = tar::Archive::new(gz_tar);
 	let mut sent = Vec::new();
@@ -453,18 +465,20 @@ pub(crate) fn format_landed_failure(failure: &LandedFailure, dir: &str) -> Strin
 }
 
 impl Engine {
-	/// Whether every file, directory and symbolic link of `gz_tar` is at `dir`
-	/// in `container`. On refusal returns a [`LandedFailure`] that names the
-	/// entry, the kind expected, and the stat the runtime answered (or the
-	/// transport error, or that the archive itself was unreadable), so the
-	/// next diagnosis starts from a measurement.
+	/// Whether every file, directory and symbolic link the packer recorded
+	/// is at `dir` in `container`. On refusal returns a [`LandedFailure`]
+	/// that names the entry, the kind expected, and the stat the runtime
+	/// answered (or the transport error, or that the archive itself was
+	/// unverifiable), so the next diagnosis starts from a measurement.
 	///
-	/// An archive that holds a hard link, a FIFO, a device, a block/char
-	/// device or anything else that cannot be asked about through the
-	/// archive stat is unverifiable: `sent_entries` errors on the offending
-	/// entry type and this function returns
-	/// `LandedFailure::Unnamed`, so the upload fails closed rather than
-	/// confirming against an entry the destination was never asked about.
+	/// `sent` is the list the packer assembled while writing the tar
+	/// (the bytes are gone after the PUT, so this is the only source of
+	/// "what was uploaded" left). Every entry that `sent_entries` would
+	/// have refused on the read-back side has already been refused here:
+	/// non-UTF-8 paths and link names, hard links, FIFOs, char/block devices.
+	/// The same rules apply through [`crate::engine::copy::pack`]'s recorder,
+	/// so the two cannot disagree about what the destination can be asked
+	/// about.
 	///
 	/// Entries are asked about last to first. Extraction is sequential, so a
 	/// stream that was cut loses its tail, and this way round a truncated
@@ -486,19 +500,8 @@ impl Engine {
 		&self,
 		container: &str,
 		dir: &str,
-		gz_tar: Bytes,
+		sent: Vec<SentEntry>,
 	) -> std::result::Result<(), LandedFailure> {
-		let read_back = tokio::task::spawn_blocking(move || sent_entries(&gz_tar))
-			.await
-			.map_err(|e| ComposeError::Build(e.to_string()))
-			.and_then(|sent| sent);
-		let sent = match read_back {
-			Ok(sent) => sent,
-			Err(e) => {
-				tracing::debug!("cp: could not read back the uploaded archive: {e}");
-				return Err(LandedFailure::Unnamed(e.to_string()));
-			}
-		};
 		if sent.is_empty() {
 			return Err(LandedFailure::Unnamed(
 				"the archive held no verifiable entries".into(),
