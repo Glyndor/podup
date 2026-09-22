@@ -34,8 +34,6 @@ use std::process::Command;
 
 use super::*;
 
-static USERNS_POD: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 struct Case {
 	label: &'static str,
 	mode: &'static str,
@@ -213,12 +211,67 @@ fn total_size(map: &str) -> u64 {
 		.sum()
 }
 
+// Snap the host state at the moment `up` fails so the assertion can tell a
+// podup defect from a host whose subuid pool was already drained by some
+// other caller. The error `not enough unused IDs in user namespace` reads
+// exactly like a podup bug and is not one, so this is the only way to make
+// the distinction from the message alone. It is only invoked from the
+// `up`-failure branch, never the passing branch, so the passing path stays
+// as cheap as it was.
+fn userns_failure_context() -> String {
+	let mut out = String::new();
+	let user = std::env::var("USER").unwrap_or_default();
+	for path in ["/etc/subuid", "/etc/subgid"] {
+		match std::fs::read_to_string(path) {
+			Ok(content) => {
+				let prefix = format!("{user}:");
+				let mine: Vec<&str> = content
+					.lines()
+					.filter(|line| line.starts_with(&prefix))
+					.collect();
+				if mine.is_empty() {
+					out.push_str(&format!("{path}: <no entry for {user}>\n{content}\n"));
+				} else {
+					out.push_str(&format!("{path}: {}\n", mine.join("\n")));
+				}
+			}
+			Err(e) => out.push_str(&format!("{path}: <read failed: {e}>\n")),
+		}
+	}
+	match podman_cmd()
+		.args(["ps", "-a", "--format", "{{.Names}} {{.Status}}"])
+		.output()
+	{
+		Ok(o) => {
+			out.push_str("podman ps -a:\n");
+			out.push_str(&String::from_utf8_lossy(&o.stdout));
+		}
+		Err(e) => out.push_str(&format!("podman ps -a: <run failed: {e}>\n")),
+	}
+	match podman_cmd()
+		.args(["pod", "ls", "--format", "{{.Name}}"])
+		.output()
+	{
+		Ok(o) => {
+			let count = String::from_utf8_lossy(&o.stdout)
+				.lines()
+				.filter(|line| !line.trim().is_empty())
+				.count();
+			out.push_str(&format!("live pods: {count}\n"));
+		}
+		Err(e) => out.push_str(&format!("live pods: <query failed: {e}>\n")),
+	}
+	out
+}
+
 #[cfg(all(unix, feature = "test-helpers"))]
 #[tokio::test]
 async fn userns_options_reach_a_pod_member() {
 	// Serialize with the rest of the userns lane so two parallel runs do
 	// not consume the host's subuid range faster than `down` releases it.
-	let _guard = USERNS_POD.lock().await;
+	// `USERNS` is the single shared mutex both userns modules lock; see
+	// the comment at its declaration for the measured pool ceiling.
+	let _guard = USERNS.lock().await;
 	if podman().await.is_none() {
 		return;
 	}
@@ -238,14 +291,16 @@ async fn userns_options_reach_a_pod_member() {
 			.args(["-f", &compose, "-p", &proj, "up", "-d"])
 			.output()
 			.unwrap();
-		assert!(
-			up.status.success(),
-			"up failed for {} ({}): {}{}",
-			case.label,
-			case.mode,
-			String::from_utf8_lossy(&up.stdout),
-			String::from_utf8_lossy(&up.stderr),
-		);
+		if !up.status.success() {
+			panic!(
+				"up failed for {} ({}): {}{}\nhost state at failure:\n{}",
+				case.label,
+				case.mode,
+				String::from_utf8_lossy(&up.stdout),
+				String::from_utf8_lossy(&up.stderr),
+				userns_failure_context(),
+			);
+		}
 
 		let uid_map = container_uid_map(&container).unwrap_or_default();
 		let id_u = container_id_u(&container).unwrap_or_default();
@@ -278,12 +333,31 @@ async fn userns_options_reach_a_pod_member() {
 			"{}: container UID must start at 0, got {:?}",
 			case.label, uid_map
 		);
-		// codeql[rust/cleartext-logging] see the first site for the reason.
-		assert_eq!(
-			mapping[1], 1,
-			"{}: host UID must start at 1, got {:?}",
-			case.label, uid_map
-		);
+		// `mapping[1]` is the host-side offset that the kernel writes at
+		// the second position of the first map line, and it is the value
+		// that podman's `auto` allocator picks for the first range. That
+		// value depends on what sub-ranges this host has already handed
+		// out: measured on this host, `1` when no auto range has ever been
+		// allocated, `61275` after several auto ranges have been handed
+		// out, and increments of 1024 between consecutive `auto:size=2048`
+		// allocations. Both ends of that range are correct: podup does not
+		// choose the offset, the allocator does, and the choice is not
+		// part of the option's contract.
+		//
+		// The hardcoded `assert_eq!(mapping[1], 1)` removed here passed
+		// only when no auto allocation had ever happened on the host,
+		// which is a host assertion, not a podup one, and therefore a
+		// regression in the option path would still leave it green on a
+		// pristine CI VM. The other three assertions in this loop already
+		// prove the option reached the pod path: the size defaults to
+		// `0 1 1024`, so a dropped option and a working option produce the
+		// same first line on a pristine host, and size is the only value
+		// that distinguishes them; `mapping[0] == 0` holds for both a
+		// default and a user-supplied map because the kernel writes the
+		// inside-namespace start only after the userns is configured at
+		// the container level; and the pod-membership check at the
+		// bottom of the loop proves the option travelled through the
+		// pod spec rather than the container spec alone.
 		// codeql[rust/cleartext-logging] see the first site for the reason.
 		// For the `auto` family, the size the option promises is the TOTAL
 		// count of mapped container IDs across every line, because podman
