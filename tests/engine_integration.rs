@@ -67,6 +67,23 @@ fn proj(tag: &str) -> String {
 	format!("t{}-{}", std::process::id(), tag)
 }
 
+/// One shared mutex for every test that creates a `--userns=auto` allocation:
+/// the three container cases in `tests/engine_integration/userns.rs` and the
+/// pod case in `tests/engine_integration/userns_pod.rs`. Both modules lock it
+/// before they call `up` so two lanes never race on the host's subordinate
+/// UID range.
+///
+/// Measured on Podman 5.7.0 against a 65536-ID subuid range on
+/// 2026-09-22: `--userns=auto` hands out 1024-block ranges from the tail of
+/// the subuid pool, and the tail is only ~4261 IDs. One `--userns=auto`
+/// container takes one of those blocks; `--userns=auto:size=2048` takes two
+/// blocks by itself. Without this lock two lanes could easily drive the live
+/// count past four concurrent allocations and the next allocation would fail
+/// with "not enough unused IDs in user namespace", which reads like a podup
+/// defect and is not one. Locking both lanes through the same mutex caps the
+/// live count at one allocation at a time.
+static USERNS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Path the suite writes its PID to. The CI step reads the same path when
 /// setting `PODUP_LEAK_SCAN_PID`; one constant, two readers, no string to
 /// keep in step.
