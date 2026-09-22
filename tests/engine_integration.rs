@@ -63,7 +63,127 @@ async fn podman() -> Option<Client> {
 
 /// Unique project name per test run + per test to avoid parallel conflicts.
 fn proj(tag: &str) -> String {
+	publish_pid_file();
 	format!("t{}-{}", std::process::id(), tag)
+}
+
+/// Path the suite writes its PID to. The CI step reads the same path when
+/// setting `PODUP_LEAK_SCAN_PID`; one constant, two readers, no string to
+/// keep in step.
+const PID_FILE_PATH: &str = "target/podup-leak-scan-pid";
+
+/// Write this run's PID to [`PID_FILE_PATH`] once, on the first call to
+/// [`proj`]. Only the PID crosses the process boundary: the leak-scan
+/// binary in `tests/integration_leak_scan.rs` rebuilds the three patterns
+/// it matches on from the PID alone.
+///
+/// The write is intentionally eager. The earliest test to create a
+/// resource with the per-run prefix will be the first to call `proj`,
+/// and the file exists before any resource does. A test that creates
+/// resources without going through `proj` cannot carry the per-run
+/// prefix, so the ordering is irrelevant for them.
+fn publish_pid_file() {
+	static ONCE: std::sync::OnceLock<()> = std::sync::OnceLock::new();
+	ONCE.get_or_init(|| {
+		if let Some(parent) = std::path::Path::new(PID_FILE_PATH).parent() {
+			// `target/` exists at this point (cargo creates it before
+			// tests run), but `create_dir_all` is a no-op when it does
+			// and harmless when it doesn't.
+			let _ = std::fs::create_dir_all(parent);
+		}
+		let _ = std::fs::write(PID_FILE_PATH, std::process::id().to_string());
+	});
+}
+
+/// Owns a tag podman knows about and removes it on drop.
+///
+/// The companion to `Engine::down`: the engine tears down containers,
+/// networks, volumes and the pod, but a build that tagged a new image leaves
+/// it behind, and a `commit` does the same. Bind one at the top of a test and
+/// every panic in the body still ends with the image gone, because the guard
+/// fires during unwinding and not from the happy path only.
+struct TestImage {
+	tag: String,
+}
+
+impl TestImage {
+	fn new(tag: impl Into<String>) -> Self {
+		Self { tag: tag.into() }
+	}
+}
+
+impl Drop for TestImage {
+	fn drop(&mut self) {
+		let _ = std::process::Command::new("podman")
+			.args(["rmi", "-f", &self.tag])
+			.output();
+	}
+}
+
+/// Owns one CLI project: the tempdir the compose lives in, the compose
+/// path, and the project name. Drop runs `podup -f <compose> -p <name> down -v`
+/// so the network and any volume the test stood up are reaped even when an
+/// assertion panics in the middle of the body.
+///
+/// Several integration tests call the CLI to create a project and never call
+/// `down`: a panic in the test body, or just a test that ends with an
+/// assertion failure, leaves `<project>_default` on the host. A drop guard is
+/// the bound that fires during stack unwinding, where the trailing happy-path
+/// `down` calls cannot reach. The shape mirrors `TestImage`, which serves
+/// the same role for tagged images left behind by `build`.
+struct DownGuard {
+	_dir: tempfile::TempDir,
+	compose: std::path::PathBuf,
+	name: String,
+}
+
+impl DownGuard {
+	/// Bind a fresh project tagged with `tag`. The prefix `t<PID>-` comes from
+	/// the harness so the network any code path creates carries a name the
+	/// leak-scan binary can recognise.
+	fn new(tag: &str, compose_body: &str) -> Self {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let compose = dir.path().join("docker-compose.yml");
+		std::fs::write(&compose, compose_body).expect("write compose");
+		// Through `proj`, not a second spelling of the prefix: `proj` is also
+		// what records this run's PID for the leak scan.
+		let name = proj(tag);
+		Self {
+			_dir: dir,
+			compose,
+			name,
+		}
+	}
+
+	fn compose_path(&self) -> &str {
+		self.compose.to_str().expect("compose path utf8")
+	}
+
+	fn name(&self) -> &str {
+		&self.name
+	}
+}
+
+impl Drop for DownGuard {
+	fn drop(&mut self) {
+		// A failed teardown cannot fail the test from here, but it must not be
+		// silent either: the leak scan would report the leftover without
+		// saying why. Print the command's own error so the cause is in the
+		// test output next to the scan's finding.
+		match std::process::Command::new(bin())
+			.args(["-f", self.compose_path(), "-p", self.name(), "down", "-v"])
+			.output()
+		{
+			Ok(out) if out.status.success() => {}
+			Ok(out) => eprintln!(
+				"DownGuard: `down -v` for {} exited {}: {}",
+				self.name,
+				out.status,
+				String::from_utf8_lossy(&out.stderr)
+			),
+			Err(e) => eprintln!("DownGuard: could not run `down -v` for {}: {e}", self.name),
+		}
+	}
 }
 
 /// Path to the built `podup` binary, for the CLI tests.
