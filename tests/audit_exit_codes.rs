@@ -651,3 +651,9 @@ fn audit_file_suffix_is_judged_on_the_interpolated_value() {
 		);
 	}
 }
+
+// The `port_published_on_wildcard` rows (`#1881`). Same child-module
+// pattern: the helpers above (`write_compose`, `run`) are reused so
+// the file stays focused on the audit-exit-code contract.
+#[path = "audit_exit_codes/wildcard_bind.rs"]
+mod wildcard_bind;

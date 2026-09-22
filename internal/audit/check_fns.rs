@@ -16,6 +16,10 @@ use podup::effective_no_new_privileges;
 // The audit must use the same notion of "published on every interface" as
 // the parse-time port-exposure warning `up`/`config` already emit (#1835).
 use podup::ports_published_on_all_interfaces;
+// Same shared parser as the all-interfaces check: the audit's wildcard
+// finding runs the same parser code-path so the two cannot disagree on
+// what `0.0.0.0` or `[::]` in a `ports:` string actually means (#1881).
+use podup::ports_published_on_wildcard;
 
 use super::Finding;
 
@@ -534,6 +538,60 @@ pub fn check_port_published_on_all_interfaces(
 			"port_published_on_all_interfaces",
 			&format!(
 				"port {host} is published on every interface; bind to 127.0.0.1 (or another host IP) to keep it off the network"
+			),
+		));
+	}
+	out
+}
+
+/// One [`Finding`] per port the file publishes with an explicit
+/// wildcard host IP (`0.0.0.0` or `::`). The check fires only when the
+/// opt-in flag `--wildcard-binds` is set (`#1881`); without it, the
+/// registry entry is still listed by `audit --list-checks` (so an
+/// integrator can see the option exists) and absent from the audit
+/// findings (so `--strict` keeps meaning exactly what it did before).
+///
+/// Threshold (mirror of the all-interfaces predicate in
+/// [`crate::compose::diagnostics::ignored_fields::ports_published_on_all_interfaces`],
+/// filtering the other way: the operator typed `0.0.0.0` or `::`):
+///
+/// - Short form `0.0.0.0:host:container`: flagged.
+/// - Short form `[::]:host:container`: flagged.
+/// - Short form with any other IP (`127.0.0.1`, `192.168.1.10`,
+///   `[::1]`, `fd00::1`): not flagged. The address is a deliberate
+///   decision and a stricter audit agrees.
+/// - Short form with 1 colon (`"5432:5432"`, no IP): not flagged here.
+///   That case is the all-interfaces check's job; if both fired on the
+///   same mapping the audit would double-count the same risk.
+/// - Long form with `host_ip: "0.0.0.0"` or `host_ip: "::"`: flagged.
+/// - Long form with any other `host_ip` value: not flagged.
+/// - Long form with no `published`: not flagged. The port is exposed,
+///   not published on the host.
+///
+/// Port range (`published: "8080-8090"` with `host_ip: "0.0.0.0"`):
+/// one finding for the mapping, not one per port in the range. Same
+/// shape as the all-interfaces check; multiplying findings across a
+/// range adds noise without adding signal.
+pub fn check_port_published_on_wildcard(
+	service_name: &str,
+	_service: &Service,
+	file: &ComposeFile,
+) -> Vec<Finding> {
+	let mut out = Vec::new();
+	for (svc, host) in ports_published_on_wildcard(file) {
+		// Same per-service filter as the all-interfaces check: the shared
+		// predicate enumerates every flagged port in the whole file, but
+		// `run_checks` invokes this function once per service. Without
+		// this filter a multi-service file would emit each finding N
+		// times (one per service visit).
+		if svc != service_name {
+			continue;
+		}
+		out.push(finding(
+			&svc,
+			"port_published_on_wildcard",
+			&format!(
+				"port {host} is bound to a wildcard address; bind to 127.0.0.1 (or another host IP) to keep it off the network"
 			),
 		));
 	}

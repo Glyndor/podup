@@ -16,7 +16,7 @@ use super::*;
 /// The checks today are all per-service, so callers only need this entry.
 pub(super) fn report_for(yaml: &str) -> Vec<Finding> {
 	let file = parse_str(yaml).expect("compose parses");
-	crate::audit::audit_file(&file).findings
+	crate::audit::audit_file(&file, &[]).findings
 }
 
 // ---------------------------------------------------------------------------

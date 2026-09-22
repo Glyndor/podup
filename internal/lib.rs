@@ -88,6 +88,20 @@ pub fn ports_published_on_all_interfaces(
 		.map(|e| (e.service, e.host))
 		.collect()
 }
+/// Ports published with an explicit wildcard host IP (`0.0.0.0` or
+/// `::`). Same tuple shape as
+/// [`ports_published_on_all_interfaces`] and the same per-mapping
+/// counting, but the inverse predicate: this one fires on the IP-typed
+/// wildcard, not on "no IP given", so a compose file can fire both
+/// checks on different mappings but never on the same one (`#1881`).
+pub fn ports_published_on_wildcard(
+	file: &crate::compose::types::ComposeFile,
+) -> Vec<(String, String)> {
+	crate::compose::diagnostics::ports_published_on_wildcard(file)
+		.into_iter()
+		.map(|e| (e.service, e.host))
+		.collect()
+}
 /// The crate's error type and `Result` alias, surfaced so callers handle one
 /// error enum across parsing and engine calls.
 pub use error::{ComposeError, Result};

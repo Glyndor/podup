@@ -27,8 +27,8 @@ pub(super) use check_sensitive_bind::check_sensitive_bind_mount;
 pub(super) use check_fns::{
 	check_dangerous_capability, check_host_namespace, check_no_cap_drop_all, check_no_memory_limit,
 	check_no_new_privileges_off, check_no_pids_limit, check_no_userns,
-	check_port_published_on_all_interfaces, check_privileged, check_secret_in_environment,
-	check_unpinned_image, check_writable_root,
+	check_port_published_on_all_interfaces, check_port_published_on_wildcard, check_privileged,
+	check_secret_in_environment, check_unpinned_image, check_writable_root,
 };
 
 // `segments` is a helper only consumed from `check_fns` itself during the
@@ -60,6 +60,12 @@ pub(super) struct CheckDescriptor {
 	pub description: &'static str,
 	/// The run function called by `run_checks` for one service.
 	pub run: CheckFn,
+	/// The flag that enables this check, when it is opt-in. `None`
+	/// means the check runs every time `audit` walks a compose file.
+	/// The flag string is what `audit --list-checks` prints in the
+	/// `opt_in` field (`#1881`), so an integrator can see the toggle
+	/// exists without reading the source.
+	pub opt_in: Option<&'static str>,
 }
 
 /// Apply every registered check to one service, returning the union of all
@@ -69,13 +75,25 @@ pub(super) struct CheckDescriptor {
 ///
 /// `service_name` is the compose key; it is folded into each finding so the
 /// renderer can group by service.
+///
+/// `opt_in` is the slice of opt-in flag names the caller has enabled on
+/// this run (e.g. `&["--wildcard-binds"]`). A registry entry whose
+/// `opt_in` is `Some(flag)` only fires when `flag` is in the slice;
+/// `None` always fires. Passing `&[]` runs every always-on check and
+/// skips every opt-in one, which is what `audit` does without flags.
 pub(super) fn run_checks(
 	service_name: &str,
 	service: &Service,
 	file: &ComposeFile,
+	opt_in: &[&'static str],
 ) -> Vec<Finding> {
 	let mut out = Vec::new();
 	for check in CHECK_REGISTRY {
+		if let Some(flag) = check.opt_in {
+			if !opt_in.contains(&flag) {
+				continue;
+			}
+		}
 		out.extend((check.run)(service_name, service, file));
 	}
 	out
@@ -94,66 +112,85 @@ pub(super) const CHECK_REGISTRY: &[CheckDescriptor] = &[
 		id: "privileged",
 		description: "privileged: true grants extended host privileges.",
 		run: check_privileged,
+		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "host_namespace",
 		description: "a host-binding namespace mode shares the host's or another container's namespace.",
 		run: check_host_namespace,
+		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "dangerous_capability",
 		description: "cap_add carries a capability from the dangerous list (kernel admin, audit, networking, device nodes).",
 		run: check_dangerous_capability,
+		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "writable_root",
 		description: "read_only is not true: the container's root filesystem is writable.",
 		run: check_writable_root,
+		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "no_cap_drop_all",
 		description: "cap_drop does not contain ALL: the service keeps the runtime's default capability set.",
 		run: check_no_cap_drop_all,
+		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "no_new_privileges_off",
 		description: "security_opt is missing no-new-privileges:true: setuid binaries may regain privileges.",
 		run: check_no_new_privileges_off,
+		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "no_pids_limit",
 		description: "pids_limit is not set: a fork bomb can exhaust the host's process table.",
 		run: check_no_pids_limit,
+		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "no_memory_limit",
 		description: "neither mem_limit nor deploy.resources.limits.memory is parseable: a leak can OOM the host.",
 		run: check_no_memory_limit,
+		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "no_userns",
 		description: "userns_mode is not set: rootless Podman's default maps container root to your host user; set `auto` explicitly for a private subordinate UID range.",
 		run: check_no_userns,
+		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "secret_in_environment",
 		description: "an environment variable name contains a secret-bearing segment (PASSWORD, SECRET, TOKEN, KEY) and a value is set in compose; move it to secrets:.",
 		run: check_secret_in_environment,
+		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "port_published_on_all_interfaces",
 		description: "a port is published without a host IP, so the bind falls on every host interface.",
 		run: check_port_published_on_all_interfaces,
+		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "sensitive_bind_mount",
 		description: "a bind mount exposes a sensitive host path: a container runtime socket, or /proc, /sys, /dev, /etc, /boot, /root or a runtime directory holding a socket.",
 		run: check_sensitive_bind_mount,
+		opt_in: None,
 	},
 	CheckDescriptor {
 		id: "unpinned_image",
 		description: "image has no tag (defaults to :latest), pins to :latest, or is not anchored by a digest.",
 		run: check_unpinned_image,
+		opt_in: None,
+	},
+	CheckDescriptor {
+		id: "port_published_on_wildcard",
+		description: "a port is published with an explicit wildcard host IP (0.0.0.0 or ::); off by default, enable with --wildcard-binds.",
+		run: check_port_published_on_wildcard,
+		opt_in: Some("--wildcard-binds"),
 	},
 ];
 
@@ -172,3 +209,6 @@ mod tests;
 #[cfg(test)]
 #[path = "checks_unpinned_image_tests.rs"]
 mod unpinned_image_tests;
+#[cfg(test)]
+#[path = "checks_wildcard_bind_tests.rs"]
+mod wildcard_bind_tests;
