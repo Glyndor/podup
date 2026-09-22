@@ -319,7 +319,8 @@ pub fn check_no_userns(name: &str, service: &Service, _file: &ComposeFile) -> Ve
 /// key whose name merely contains a secret-looking segment while its
 /// value is not one (`PASSTHROUGH: "true"`, segment filter), a key whose
 /// value resolved to the empty literal (`LOG_LEVEL=` for an unrelated
-/// key, segment filter), and a key whose last segment is `FILE`.
+/// key, segment filter), and a `_FILE` key whose value has the shape of
+/// a path.
 ///
 /// The `_FILE` suffix is the documented convention for keeping a secret
 /// out of the environment: the value is a path to a file the application
@@ -327,18 +328,30 @@ pub fn check_no_userns(name: &str, service: &Service, _file: &ComposeFile) -> Ve
 /// spell this `<NAME>_FILE` and point it at a Docker/Kubernetes secrets
 /// mount, the canonical one being `/run/secrets/<name>`. The path is not
 /// the secret itself, so the key carrying it is not a secret in the
-/// environment. The check trusts the `_FILE` convention rather than
-/// verifying the path: a path outside `/run/secrets/` (a custom mount,
-/// `/etc/passwd`, a relative path) is still a path, not a secret, and
-/// stays silent. Verifying what the path points to (file permissions,
-/// mount provenance) is a different audit concern and is out of scope
-/// here.
+/// environment when the value is path-shaped.
+///
+/// The exemption is the suffix AND the value's shape, not either alone:
+/// the suffix names the convention, the shape is what makes it a path
+/// reference. The shape test is the three prefixes an absolute or
+/// relative path can take (`/run/secrets/pg`, `./secrets/pg`, `../pg`);
+/// a literal password written into a `_FILE` key (`POSTGRES_PASSWORD_FILE:
+/// hunter2-real-password`) is still a literal password and the check
+/// flags it. Values that merely contain a slash but do not start with one
+/// of the three prefixes (`relative/path`, `a/b`) read as plain text, not
+/// as a path, and are flagged the same way. Verifying what the path
+/// points to (file permissions, mount provenance) is a different audit
+/// concern and is out of scope here: the check decides on shape, not on
+/// whether the file exists.
 ///
 /// The risk is the same in both value shapes: the value ends up in the
 /// container's environment whether it was written literally or injected
 /// from the operator's environment through `${VAR}`. A gate whose verdict
 /// depends on whether the variable happens to be exported in the caller's
-/// shell is not a gate, so both shapes are flagged.
+/// shell is not a gate, so both shapes are flagged. A `_FILE` key is
+/// judged on the same resolved value: `${VAR}` holding a path stays
+/// silent, `${VAR}` holding anything else is flagged, and an unset
+/// `${VAR}` resolves to the empty string, which is not a path and is
+/// flagged too.
 ///
 /// Service-local: the check is a positional grep on the `environment:` map
 /// of this service. These are surfaced so the operator can move them to
@@ -369,7 +382,18 @@ pub fn check_secret_in_environment(
 		// reused: `POSTGRES_PASSWORD_FILE`, `MY_KEY_FILE`,
 		// `KEY-FILE`, `KeyFile` all reach the same conclusion; a name
 		// like `PASSWORD_FILE_BACKUP` does not and still fires.
-		if key_segments.last().is_some_and(|s| s == "FILE") {
+		//
+		// The suffix alone is not enough: a literal password written
+		// into a `_FILE` key (`POSTGRES_PASSWORD_FILE:
+		// hunter2-real-password`) is still a literal password. The
+		// exemption holds only when the value is path-shaped: it starts
+		// with `/`, `./`, or `../`. Any other value falls through to the
+		// flagging rule like a value under any other secret-bearing key.
+		if key_segments.last().is_some_and(|s| s == "FILE")
+			&& value
+				.as_deref()
+				.is_some_and(|v| v.starts_with('/') || v.starts_with("./") || v.starts_with("../"))
+		{
 			continue;
 		}
 		// The empty-value branch used to skip here. That branch is what

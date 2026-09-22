@@ -197,10 +197,12 @@ fn audit_secret_in_environment_segments_split_at_case_and_separator_boundaries()
 // ---------------------------------------------------------------------------
 // `_FILE` suffix: the documented convention for keeping a secret out of the
 // environment. The value is a path the application reads at runtime; the
-// path is not the secret. The exemption is the `_FILE` suffix alone, so
-// every separator the segment helper recognises must reach the same
-// conclusion. The outside-secrets-mount row pins the "value can be any
-// path" half of the decision.
+// path is not the secret. The exemption is the `_FILE` suffix AND a value
+// that reads as a path (starts with `/`, `./`, or `../`). Every separator
+// the segment helper recognises must reach the same conclusion; every
+// path-shaped prefix must reach the same conclusion too. The non-path
+// rows (a literal secret, a slash in the middle, an empty value) fall
+// through to the flagging rule.
 // ---------------------------------------------------------------------------
 
 /// Each row exercises a different separator that the segment helper
@@ -230,18 +232,121 @@ fn audit_secret_in_environment_silent_for_keys_with_the_file_suffix() {
 	}
 }
 
-/// The exemption is the `_FILE` suffix, not the `/run/secrets/` prefix.
-/// A `_FILE` key pointing somewhere that is not the secrets mount is
-/// still a path, not a secret in the environment, so the check stays
-/// silent. Verifying what the path points to (file permissions, mount
-/// provenance) is a different audit concern and is out of scope here.
+/// The path-shape test accepts the two relative-path prefixes the same
+/// way it accepts `/`. `./secrets/pg` and `../pg` are paths an operator
+/// can write under the same `_FILE` convention the absolute-path rows
+/// already pin; the check stays silent on them. The exemption is the
+/// shape, not the prefix the absolute rows happen to share.
+#[test]
+fn audit_secret_in_environment_silent_for_relative_path_shapes() {
+	for (key, value) in [
+		("PASSWORD_FILE", "./secrets/pg"),
+		("SECRET_FILE", "../secrets/s"),
+		("TOKEN_FILE", "./x"),
+		("KEY_FILE", "../k"),
+	] {
+		let yaml = format!(
+			"services:\n  app:\n    image: alpine:3.20\n    environment:\n      - {key}={value}\n"
+		);
+		let findings = report_for(&yaml);
+		assert!(
+			!findings.iter().any(|f| f.check == "secret_in_environment"),
+			"{key}={value} must NOT fire secret_in_environment; got {findings:#?}"
+		);
+	}
+}
+
+/// The exemption is the path-shape test, not the `/run/secrets/` prefix.
+/// A `_FILE` key pointing at any other absolute path is still a path,
+/// not a secret in the environment, so the check stays silent. Verifying
+/// what the path points to (file permissions, mount provenance) is a
+/// different audit concern and is out of scope here.
 #[test]
 fn audit_secret_in_environment_silent_for_file_suffix_pointing_outside_secrets_mount() {
 	for (key, value) in [
 		("PASSWORD_FILE", "/etc/passwd"),
-		("PASSWORD_FILE", "relative/path"),
 		("SECRET_FILE", "/tmp/whatever"),
+	] {
+		let yaml = format!(
+			"services:\n  app:\n    image: alpine:3.20\n    environment:\n      - {key}={value}\n"
+		);
+		let findings = report_for(&yaml);
+		assert!(
+			!findings.iter().any(|f| f.check == "secret_in_environment"),
+			"{key}={value} must NOT fire secret_in_environment; got {findings:#?}"
+		);
+	}
+}
+
+/// The `_FILE` suffix is the operator's signal, not an exemption. A
+/// literal password written into a `_FILE` key (`POSTGRES_PASSWORD_FILE:
+/// hunter2-real-password`) is still a literal password: the suffix
+/// alone cannot tell a path from a value that just looks like one, so
+/// the check flags the row the same way it would flag the same value
+/// under a non-`_FILE` key. The reporter's exact shape
+/// (`POSTGRES_PASSWORD_FILE`) is pinned alongside three sibling keywords
+/// so a regression that misses one is caught by its own test rather than
+/// masked by the others passing.
+#[test]
+fn audit_secret_in_environment_flags_literal_secret_under_file_suffix() {
+	for (key, value) in [
+		("POSTGRES_PASSWORD_FILE", "hunter2-real-password"),
+		("API_TOKEN_FILE", "literal-token"),
+		("SIGNING_KEY_FILE", "literal-key"),
+		("SECRET_FILE", "literal-secret"),
+	] {
+		let yaml = format!(
+			"services:\n  app:\n    image: alpine:3.20\n    environment:\n      - {key}={value}\n"
+		);
+		let findings = report_for(&yaml);
+		assert!(
+			findings.iter().any(|f| f.check == "secret_in_environment"),
+			"{key}={value} must fire secret_in_environment; got {findings:#?}"
+		);
+	}
+}
+
+/// A value that contains a slash but does not start with `/`, `./` or
+/// `../` reads as plain text, not as a path. `relative/path` and `a/b`
+/// fall through to the flagging rule because the slash was incidental,
+/// not a path prefix. The empty-value row pins the `${VAR}` branch too:
+/// an unset variable resolves to the empty string at parse time, and
+/// the exemption does not extend to that shape. `a/b` is the reporter's
+/// "contains a slash but does not start with one of the three prefixes"
+/// example.
+#[test]
+fn audit_secret_in_environment_flags_when_value_contains_slash_but_does_not_start_with_path_prefix()
+{
+	for (key, value) in [
+		("PASSWORD_FILE", "relative/path"),
+		("SECRET_FILE", "a/b"),
 		("TOKEN_FILE", ""),
+	] {
+		let yaml = format!(
+			"services:\n  app:\n    image: alpine:3.20\n    environment:\n      - {key}={value}\n"
+		);
+		let findings = report_for(&yaml);
+		assert!(
+			findings.iter().any(|f| f.check == "secret_in_environment"),
+			"{key}={value} must fire secret_in_environment; got {findings:#?}"
+		);
+	}
+}
+
+/// `_FILE` is the operator's signal for "path", not a token in itself.
+/// The check only reaches the `_FILE` branch when the key's segments
+/// include one of `PASSWORD|SECRET|TOKEN|KEY`. `CONFIG_FILE` segments
+/// into `CONFIG`, `FILE`; neither matches a keyword, so the iteration
+/// continues before the path-shape test runs. The check stays silent on
+/// `CONFIG_FILE: x` regardless of the value's shape, and the same
+/// applies to `PROFILE_FILE` and any other non-secret key that happens
+/// to end in `_FILE`.
+#[test]
+fn audit_secret_in_environment_does_not_flag_non_secret_keys_ending_in_file() {
+	for (key, value) in [
+		("CONFIG_FILE", "x"),
+		("CONFIG_FILE", "/etc/something"),
+		("PROFILE_FILE", "./local"),
 	] {
 		let yaml = format!(
 			"services:\n  app:\n    image: alpine:3.20\n    environment:\n      - {key}={value}\n"

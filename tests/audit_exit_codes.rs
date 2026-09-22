@@ -350,8 +350,11 @@ fn audit_secret_in_environment_does_not_flag_passthrough_or_empty() {
 // ---------------------------------------------------------------------------
 // `_FILE` suffix: the documented convention for keeping a secret out of
 // the environment. The value is a path the application reads at runtime;
-// the path is not the secret. The exemption is the suffix alone, so a
-// `_FILE` key pointing outside `/run/secrets/` is still silent.
+// the path is not the secret. The exemption is the `_FILE` suffix AND a
+// value that reads as a path (starts with `/`, `./`, or `../`). A
+// `_FILE` key whose value does not start with one of those three
+// prefixes falls through to the flagging rule, and `--strict` exits
+// non-zero: the suffix alone is not an exemption.
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -394,21 +397,147 @@ fn audit_secret_in_environment_does_not_flag_file_suffix_pointing_at_secrets_mou
 
 #[test]
 fn audit_secret_in_environment_does_not_flag_file_suffix_pointing_outside_secrets_mount() {
-	// The exemption is the `_FILE` suffix, not the `/run/secrets/`
-	// prefix. A `_FILE` key pointing at `/etc/passwd` or a relative
-	// path is still a path, not a secret in the environment, so the
-	// check stays silent. Verifying what the path points to (file
-	// permissions, mount provenance) is a different audit concern and
-	// is out of scope here. Same hardened scaffolding as the
-	// `/run/secrets/` row above so `--strict` reads only the verdict
-	// under test.
-	for (key, value) in [
-		("PASSWORD_FILE", "/etc/passwd"),
-		("PASSWORD_FILE", "relative/path"),
-	] {
+	// The exemption is the path-shape test, not the `/run/secrets/`
+	// prefix. A `_FILE` key pointing at any absolute path is still a
+	// path, not a secret in the environment, so the check stays
+	// silent. Verifying what the path points to (file permissions,
+	// mount provenance) is a different audit concern and is out of
+	// scope here. Same hardened scaffolding as the `/run/secrets/`
+	// row above so `--strict` reads only the verdict under test.
+	for value in ["/etc/passwd", "/tmp/whatever"] {
+		let key = "PASSWORD_FILE";
 		let body = format!(
 			"services:\n  app:\n    \
 			 image: alpine:3.20@sha256:0e7bb5afc7e5e22ee46c4f2cd4a8b3fa63ad3f5d5e5e5e5e5e5e5e5e5e5e5e5e\n    \
+			 read_only: true\n    \
+			 cap_drop: [ALL]\n    \
+			 security_opt: [no-new-privileges:true]\n    \
+			 pids_limit: 200\n    \
+			 mem_limit: 512m\n    \
+			 userns_mode: auto\n    \
+			 environment:\n      \
+			 - {key}={value}\n"
+		);
+		let path = write_compose(&body);
+		let p = path.to_str().unwrap();
+		let out = run(&["-f", p, "audit", "--strict"]);
+		assert!(
+			out.status.success(),
+			"{key}={value} must pass --strict; got {:?}\nstderr: {}\nstdout: {}",
+			out.status.code(),
+			String::from_utf8_lossy(&out.stderr),
+			String::from_utf8_lossy(&out.stdout),
+		);
+		let stdout = String::from_utf8_lossy(&out.stdout);
+		assert!(
+			!stdout.contains("secret_in_environment"),
+			"{key}={value} must not fire secret_in_environment: {stdout}"
+		);
+	}
+}
+
+#[test]
+fn audit_secret_in_environment_does_not_flag_file_suffix_with_relative_path_prefix() {
+	// The path-shape test accepts the two relative-path prefixes the
+	// same way it accepts `/`. `./secrets/pg` and `../pg` are paths an
+	// operator can write under the same `_FILE` convention the
+	// absolute-path rows pin; `--strict` stays green on each. Same
+	// hardened scaffolding as the rows above so `--strict` reads only
+	// the verdict under test.
+	for value in ["./secrets/pg", "../pg"] {
+		let key = "PASSWORD_FILE";
+		let body = format!(
+			"services:\n  app:\n    \
+			 image: alpine:3.20@sha256:0e7bb5afc7e5e22ee46c4f2cd4a8b3fa63ad3f5d5e5e5e5e5e5e5e5e5e5e5e5e5e\n    \
+			 read_only: true\n    \
+			 cap_drop: [ALL]\n    \
+			 security_opt: [no-new-privileges:true]\n    \
+			 pids_limit: 200\n    \
+			 mem_limit: 512m\n    \
+			 userns_mode: auto\n    \
+			 environment:\n      \
+			 - {key}={value}\n"
+		);
+		let path = write_compose(&body);
+		let p = path.to_str().unwrap();
+		let out = run(&["-f", p, "audit", "--strict"]);
+		assert!(
+			out.status.success(),
+			"{key}={value} must pass --strict; got {:?}\nstderr: {}\nstdout: {}",
+			out.status.code(),
+			String::from_utf8_lossy(&out.stderr),
+			String::from_utf8_lossy(&out.stdout),
+		);
+		let stdout = String::from_utf8_lossy(&out.stdout);
+		assert!(
+			!stdout.contains("secret_in_environment"),
+			"{key}={value} must not fire secret_in_environment: {stdout}"
+		);
+	}
+}
+
+#[test]
+fn audit_secret_in_environment_flags_file_suffix_when_value_is_not_path_shaped() {
+	// The `_FILE` suffix is the operator's signal, not an exemption.
+	// A literal password written into a `_FILE` key, or a value that
+	// merely contains a slash but does not start with one of the three
+	// path prefixes, falls through to the flagging rule. The reporter's
+	// exact shape (`POSTGRES_PASSWORD_FILE: hunter2-real-password`) is
+	// pinned alongside `a/b` (contains a slash, does not start with
+	// one) and `relative/path` so a regression that misses one is
+	// caught by its own row. Same hardened scaffolding as the rows
+	// above so `--strict` reads only the verdict under test.
+	for (key, value) in [
+		("POSTGRES_PASSWORD_FILE", "hunter2-real-password"),
+		("API_TOKEN_FILE", "literal-token"),
+		("PASSWORD_FILE", "a/b"),
+		("SECRET_FILE", "relative/path"),
+	] {
+		let body = format!(
+			"services:\n  app:\n    \
+			 image: alpine:3.20@sha256:0e7bb5afc7e5e22ee46c4f2cd4a8b3fa63ad3f5d5e5e5e5e5e5e5e5e5e5e5e5e5e\n    \
+			 read_only: true\n    \
+			 cap_drop: [ALL]\n    \
+			 security_opt: [no-new-privileges:true]\n    \
+			 pids_limit: 200\n    \
+			 mem_limit: 512m\n    \
+			 userns_mode: auto\n    \
+			 environment:\n      \
+			 - {key}={value}\n"
+		);
+		let path = write_compose(&body);
+		let p = path.to_str().unwrap();
+		let out = run(&["-f", p, "audit", "--strict"]);
+		assert!(
+			!out.status.success(),
+			"{key}={value} must FAIL --strict; got {:?}\nstderr: {}\nstdout: {}",
+			out.status.code(),
+			String::from_utf8_lossy(&out.stderr),
+			String::from_utf8_lossy(&out.stdout),
+		);
+		let stdout = String::from_utf8_lossy(&out.stdout);
+		assert!(
+			stdout.contains("secret_in_environment"),
+			"{key}={value} must fire secret_in_environment: {stdout}"
+		);
+	}
+}
+
+#[test]
+fn audit_secret_in_environment_does_not_flag_non_secret_keys_ending_in_file() {
+	// `_FILE` is the operator's signal for "path", not a token in
+	// itself. The check only reaches the `_FILE` branch when the
+	// key's segments include one of `PASSWORD|SECRET|TOKEN|KEY`.
+	// `CONFIG_FILE` segments into `CONFIG`, `FILE`; neither matches a
+	// keyword, so the iteration continues before the path-shape test
+	// runs and the check stays silent on `CONFIG_FILE: x` regardless
+	// of the value's shape. Same hardened scaffolding as the rows
+	// above so `--strict` reads only the verdict under test.
+	for value in ["x", "/etc/something"] {
+		let key = "CONFIG_FILE";
+		let body = format!(
+			"services:\n  app:\n    \
+			 image: alpine:3.20@sha256:0e7bb5afc7e5e22ee46c4f2cd4a8b3fa63ad3f5d5e5e5e5e5e5e5e5e5e5e5e5e5e\n    \
 			 read_only: true\n    \
 			 cap_drop: [ALL]\n    \
 			 security_opt: [no-new-privileges:true]\n    \
@@ -496,3 +625,29 @@ fn audit_strict_verdict_is_independent_of_every_candidate_var() {
 // above.
 #[path = "audit_exit_codes/sensitive_bind.rs"]
 mod sensitive_bind;
+
+// A `_FILE` key is judged on the value interpolation resolves to, not on
+// the `${VAR}` text: a variable holding a path stays silent, one holding
+// anything else is flagged, and an unset one resolves to the empty
+// string, which is not a path and is flagged too.
+#[test]
+fn audit_file_suffix_is_judged_on_the_interpolated_value() {
+	let body = "services:\n  db:\n    image: postgres:18-alpine\n    environment:\n      - POSTGRES_PASSWORD_FILE=${SECRETO}\n";
+	let path = write_compose(body);
+	let p = path.to_str().unwrap();
+	for (value, flagged) in [
+		(Some("/run/secrets/pg"), false),
+		(Some("./secrets/pg"), false),
+		(Some("hunter2-real-password"), true),
+		(None, true),
+	] {
+		let out = run_with_secret_env(&["-f", p, "audit", "--format", "json"], value);
+		let stdout = String::from_utf8_lossy(&out.stdout);
+		assert_eq!(
+			stdout.contains("secret_in_environment"),
+			flagged,
+			"POSTGRES_PASSWORD_FILE=${{SECRETO}} with SECRETO={value:?} must {} secret_in_environment: {stdout}",
+			if flagged { "raise" } else { "not raise" },
+		);
+	}
+}
