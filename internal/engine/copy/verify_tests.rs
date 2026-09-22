@@ -1,4 +1,4 @@
-use super::super::archive::pack_path;
+use super::super::archive_pack::pack_path;
 use super::{
 	entry_landed, format_landed_failure, sent_entries, LandedFailure, LinkCheck, SentEntry,
 	SentKind,
@@ -8,6 +8,33 @@ use crate::libpod::client::PathStat;
 fn sorted(mut sent: Vec<SentEntry>) -> Vec<(String, SentKind)> {
 	sent.sort_by(|a, b| a.path.cmp(&b.path));
 	sent.into_iter().map(|e| (e.path, e.kind)).collect()
+}
+
+/// Drive `pack_path` into a `Vec<u8>` and return the bytes. The unified
+/// packer takes a writer and a recorder; the helper builds a builder over a
+/// `Vec<u8>` and discards the recorder — the tests here want the archive
+/// bytes to feed `sent_entries` directly.
+fn pack_to_vec(
+	src: &std::path::Path,
+	follow_link: bool,
+	name_override: Option<&str>,
+	contents: bool,
+) -> Vec<u8> {
+	let mut buf = Vec::new();
+	{
+		let mut tar = tar::Builder::new(&mut buf);
+		let mut sent = Vec::new();
+		pack_path(
+			src,
+			follow_link,
+			name_override,
+			contents,
+			&mut tar,
+			&mut sent,
+		)
+		.unwrap();
+	}
+	buf
 }
 
 /// The list comes out of the archive `cp` really builds, with the sizes the
@@ -23,7 +50,7 @@ fn the_expectation_is_every_file_and_directory_the_packer_wrote() {
 	std::fs::write(payload.join("sub/inner.bin"), vec![7u8; 1234]).unwrap();
 	std::fs::write(payload.join("sub/nothing"), b"").unwrap();
 
-	let tar = pack_path(&payload, false, None, false).unwrap();
+	let tar = pack_to_vec(&payload, false, None, false);
 
 	assert_eq!(
 		sorted(sent_entries(&tar).unwrap()),
@@ -38,7 +65,7 @@ fn the_expectation_is_every_file_and_directory_the_packer_wrote() {
 	);
 
 	// Renamed on the way in: the destination is asked for the new name.
-	let renamed = pack_path(&payload, false, Some("other"), false).unwrap();
+	let renamed = pack_to_vec(&payload, false, Some("other"), false);
 	let paths: Vec<String> = sorted(sent_entries(&renamed).unwrap())
 		.into_iter()
 		.map(|(path, _)| path)
@@ -64,7 +91,7 @@ fn a_symlink_is_asked_about_and_confirmed() {
 	std::fs::write(payload.join("real.txt"), b"x").unwrap();
 	std::os::unix::fs::symlink("nowhere", payload.join("dangling")).unwrap();
 
-	let tar = pack_path(&payload, false, None, false).unwrap();
+	let tar = pack_to_vec(&payload, false, None, false);
 
 	assert_eq!(
 		sorted(sent_entries(&tar).unwrap()),
@@ -95,7 +122,7 @@ fn two_files_a_directory_a_symlink_and_an_empty_file() {
 	std::fs::write(payload.join("nothing.txt"), b"").unwrap();
 	std::os::unix::fs::symlink("nowhere", payload.join("link")).unwrap();
 
-	let tar = pack_path(&payload, false, None, false).unwrap();
+	let tar = pack_to_vec(&payload, false, None, false);
 
 	assert_eq!(
 		sorted(sent_entries(&tar).unwrap()),
@@ -124,7 +151,7 @@ fn a_tar_with_only_a_symlink_yields_one_link_entry() {
 	let link = dir.path().join("dangling");
 	std::os::unix::fs::symlink("nowhere", &link).unwrap();
 
-	let tar = pack_path(&link, false, None, false).unwrap();
+	let tar = pack_to_vec(&link, false, None, false);
 
 	assert_eq!(
 		sent_entries(&tar).unwrap(),
@@ -223,8 +250,6 @@ fn a_hard_link_entry_is_an_error() {
 #[cfg(unix)]
 #[test]
 fn a_tar_with_file_directory_and_symlink_lists_just_those_three() {
-	use super::super::archive::pack_path;
-
 	let dir = tempfile::tempdir().unwrap();
 	let payload = dir.path().join("payload");
 	std::fs::create_dir(&payload).unwrap();
@@ -232,7 +257,7 @@ fn a_tar_with_file_directory_and_symlink_lists_just_those_three() {
 	std::fs::write(payload.join("plain.txt"), b"hi").unwrap();
 	std::os::unix::fs::symlink("nowhere", payload.join("link")).unwrap();
 
-	let tar = pack_path(&payload, false, None, false).unwrap();
+	let tar = pack_to_vec(&payload, false, None, false);
 
 	assert_eq!(
 		sorted(sent_entries(&tar).unwrap()),

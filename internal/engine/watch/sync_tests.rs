@@ -1,5 +1,7 @@
 use super::{build_sync_tar, is_ignored, is_included};
 use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use std::fs;
 use std::io::Read;
 use std::path::Path;
@@ -7,6 +9,20 @@ use tempfile::tempdir;
 
 fn pats(v: &[&str]) -> Vec<String> {
 	v.iter().map(|s| s.to_string()).collect()
+}
+
+/// Drive the unified `build_sync_tar` into a `Vec<u8>` and return the bytes.
+/// Mirrors the streaming path: the writer is a gzip encoder over the `Vec`,
+/// exactly the way `build_sync_tar_stream` wraps the channel writer.
+fn sync_to_gz(src: &Path, entry_name: &Path) -> std::io::Result<Vec<u8>> {
+	let buf = Vec::new();
+	let encoder = GzEncoder::new(buf, Compression::default());
+	let mut tar = tar::Builder::new(encoder);
+	let mut sent = Vec::new();
+	build_sync_tar(src, entry_name, &mut tar, &mut sent)
+		.map_err(|e| std::io::Error::other(e.to_string()))?;
+	let encoder = tar.into_inner().map_err(std::io::Error::other)?;
+	encoder.finish().map_err(std::io::Error::other)
 }
 
 /// Decode a gzipped tar and collect its non-directory entry paths.
@@ -106,7 +122,7 @@ fn sync_tar_single_file() {
 	let dir = tempdir().unwrap();
 	let file = dir.path().join("hello.txt");
 	fs::write(&file, b"hello world").unwrap();
-	let bytes = build_sync_tar(&file, Path::new("hello.txt")).unwrap();
+	let bytes = sync_to_gz(&file, Path::new("hello.txt")).unwrap();
 	// gzip magic bytes
 	assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
 	assert_eq!(tar_entry_paths(&bytes), vec!["hello.txt"]);
@@ -119,7 +135,7 @@ fn sync_tar_single_file_renamed_entry() {
 	let dir = tempdir().unwrap();
 	let file = dir.path().join("settings.yml");
 	fs::write(&file, b"k: v").unwrap();
-	let bytes = build_sync_tar(&file, Path::new("config.yml")).unwrap();
+	let bytes = sync_to_gz(&file, Path::new("config.yml")).unwrap();
 	assert_eq!(tar_entry_paths(&bytes), vec!["config.yml"]);
 }
 
@@ -130,7 +146,7 @@ fn sync_tar_subpath_entry_preserved() {
 	let dir = tempdir().unwrap();
 	let file = dir.path().join("b.txt");
 	fs::write(&file, b"file b").unwrap();
-	let bytes = build_sync_tar(&file, Path::new("sub/b.txt")).unwrap();
+	let bytes = sync_to_gz(&file, Path::new("sub/b.txt")).unwrap();
 	assert_eq!(tar_entry_paths(&bytes), vec!["sub/b.txt"]);
 }
 
@@ -140,7 +156,7 @@ fn sync_tar_directory() {
 	fs::write(dir.path().join("a.txt"), b"file a").unwrap();
 	fs::create_dir(dir.path().join("sub")).unwrap();
 	fs::write(dir.path().join("sub/b.txt"), b"file b").unwrap();
-	let bytes = build_sync_tar(dir.path(), Path::new("dst")).unwrap();
+	let bytes = sync_to_gz(dir.path(), Path::new("dst")).unwrap();
 	assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
 	// Every descendant is re-rooted under the supplied entry name, layout kept.
 	let mut names = tar_entry_paths(&bytes);
@@ -153,7 +169,7 @@ fn sync_tar_path_with_no_file_name() {
 	// A path that has no file_name (e.g. root "/"): tar should be empty but valid.
 	let dir = tempdir().unwrap();
 	// Empty directory, so no entries other than root
-	let bytes = build_sync_tar(dir.path(), Path::new(".")).unwrap();
+	let bytes = sync_to_gz(dir.path(), Path::new(".")).unwrap();
 	assert_eq!(&bytes[..2], &[0x1f, 0x8b]);
 }
 
@@ -166,7 +182,7 @@ fn sync_tar_missing_source_is_a_sync_error_not_a_build_error() {
 	// `build_sync_tar` mapped the tar packer's io error to `Build`, which
 	// `Display` rendered as `build error: ...`.
 	let missing = Path::new("/nonexistent-watch-source-xyz");
-	let err = build_sync_tar(missing, Path::new("x")).unwrap_err();
+	let err = sync_to_gz(missing, Path::new("x")).unwrap_err();
 	let msg = err.to_string();
 	assert!(
 		msg.contains("watch error"),
@@ -184,7 +200,7 @@ fn sync_tar_missing_directory_source_is_a_sync_error_not_a_build_error() {
 	// source for a directory rule must read as a sync failure, never a
 	// build failure.
 	let missing = Path::new("/nonexistent-watch-source-dir-xyz");
-	let err = build_sync_tar(missing, Path::new("x")).unwrap_err();
+	let err = sync_to_gz(missing, Path::new("x")).unwrap_err();
 	let msg = err.to_string();
 	assert!(msg.contains("watch error"), "wrong category: {msg:?}");
 	assert!(
