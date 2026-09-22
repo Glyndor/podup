@@ -46,6 +46,27 @@ async fn invalid_pid_names_the_field_and_value() {
 		stderr.contains("evil"),
 		"stderr must include the offending value, got:\n{stderr}"
 	);
+
+	// The failed `up` must leave no project network behind (#1867). Before
+	// the up-front preflight, `create_networks` ran before `create_and_start`
+	// reached the namespace validator, so the project `default` network
+	// (named `<proj>_default`) was created and then nothing removed it.
+	let networks = String::from_utf8_lossy(
+		&Command::new("podman")
+			.args(["network", "ls", "--format", "{{.Name}}"])
+			.output()
+			.expect("podman network ls")
+			.stdout,
+	)
+	.to_string();
+	// Listed before the cleanup below: a `down` first would remove the very
+	// network this asserts on, and the check would pass either way.
+	let _ = run(&["-f", c, "-p", &proj, "down"]);
+	let project_net = format!("{proj}_default");
+	assert!(
+		!networks.lines().any(|n| n == project_net),
+		"a failed up must not leave the project network behind: {project_net:?} still present\n{networks}"
+	);
 }
 
 #[tokio::test]
@@ -249,6 +270,26 @@ async fn namespace_pre_validator_also_covers_ipc() {
 	assert!(
 		stderr.contains("bogus"),
 		"stderr must include the offending value, got:\n{stderr}"
+	);
+
+	// The failed `up` must leave no project network behind (#1867): the
+	// pre-validator runs before `create_networks`, so a rejected `ipc`
+	// never reaches the daemon and no `<proj>_default` is created.
+	let networks = String::from_utf8_lossy(
+		&Command::new("podman")
+			.args(["network", "ls", "--format", "{{.Name}}"])
+			.output()
+			.expect("podman network ls")
+			.stdout,
+	)
+	.to_string();
+	// Listed before the cleanup below: a `down` first would remove the very
+	// network this asserts on, and the check would pass either way.
+	let _ = run(&["-f", c, "-p", &proj, "down"]);
+	let project_net = format!("{proj}_default");
+	assert!(
+		!networks.lines().any(|n| n == project_net),
+		"a failed up must not leave the project network behind: {project_net:?} still present\n{networks}"
 	);
 }
 

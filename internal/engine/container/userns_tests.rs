@@ -9,7 +9,7 @@ fn create_body(mode: Option<&str>) -> serde_json::Value {
 		userns_mode: mode.map(str::to_string),
 		..Default::default()
 	};
-	crate::libpod::validate::pre_validate_spec("web", &service, &[]).unwrap();
+	crate::libpod::validate::pre_validate_spec("web", &service).unwrap();
 	let inputs = SpecInputs {
 		in_pod: false,
 		container_name: "userns-web-1".into(),

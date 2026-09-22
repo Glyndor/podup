@@ -19,6 +19,7 @@
 
 use std::fmt::Write as _;
 
+use crate::engine::container::{device_spec_parts, parse_device_cgroup_rule};
 use crate::error::ComposeError;
 
 use super::error::PodmanError;
@@ -171,6 +172,12 @@ fn allowed_namespace_modes(field: &str) -> String {
 /// `parseLinuxResourcesDeviceAccess`. The OCI runtime-spec allows any
 /// combination of `r`, `w`, `m` (read, write, mknod); a non-empty access
 /// string that is not a subset of those three letters is rejected.
+///
+/// The strings come from the engine's parsers (`parse_device_cgroup_rule`
+/// for `device_cgroup_rules:` and `device_spec_parts` for `devices:`), so
+/// the set passed here is exactly what the live up path would build into a
+/// `LinuxDeviceCgroup`. A malformed rule never reaches this function: the
+/// engine skips it with a warning, and so do we.
 pub(crate) fn first_invalid_device_access<'a, I>(rules: I) -> Option<(String, String)>
 where
 	I: IntoIterator<Item = &'a str>,
@@ -299,10 +306,17 @@ pub(crate) fn spec_field_error(
 /// Pre-validate the `SpecGenerator` fields libpod validates on its own, so a
 /// rejected value surfaces as a `PodmanError::Field` carrying the compose
 /// field name and offending value instead of libpod's raw validator text.
+///
+/// Called from `run_up` before any network, volume, secret, pod or container
+/// is created (#1867) and again from the per-service `create_and_start`
+/// path: the per-service call is a belt to the up-front call's braces,
+/// keeping the field-shaped error if a future change introduces a service
+/// whose own pre-validation grew a field the up-front loop has not been
+/// taught yet. The two callers compute the same allow-list against the same
+/// compose-side value, so the answer always agrees.
 pub(crate) fn pre_validate_spec(
 	service_name: &str,
 	service: &crate::compose::types::Service,
-	device_cgroup_access: &[String],
 ) -> Result<(), ComposeError> {
 	// 1. Namespace modes for the slots whose compose string is forwarded
 	//    verbatim to `ParseNamespace`. `network_mode` is omitted: the engine
@@ -327,10 +341,29 @@ pub(crate) fn pre_validate_spec(
 		)));
 	}
 
-	// 2. device_cgroup_rule access strings.
-	if let Some((field, value)) =
-		first_invalid_device_access(device_cgroup_access.iter().map(String::as_str))
-	{
+	// 2. device_cgroup_rule access strings. The engine's parsers
+	//    (`parse_device_cgroup_rule` for `device_cgroup_rules:`, and
+	//    `device_spec_parts` for `devices:`) are the source of truth for
+	//    what counts as a valid rule: a four-field rule is malformed and
+	//    the engine warns and drops it, so the validator must not surface
+	//    its third token as an "invalid access". Calling the same parsers
+	//    the spec builder calls keeps the two paths in lockstep.
+	let mut access: Vec<String> =
+		Vec::with_capacity(service.device_cgroup_rules.len() + service.devices.len());
+	for raw in &service.device_cgroup_rules {
+		if let Some(rule) = parse_device_cgroup_rule(raw) {
+			if let Some(a) = rule.access.as_deref() {
+				access.push(a.to_string());
+			}
+		}
+	}
+	for raw in &service.devices {
+		let (_host, _cont, a) = device_spec_parts(raw);
+		if let Some(a) = a {
+			access.push(a.to_string());
+		}
+	}
+	if let Some((field, value)) = first_invalid_device_access(access.iter().map(String::as_str)) {
 		let msg =
 			format!("access string {value:?} is not one of `r`, `w`, `m` or a combination thereof");
 		return Err(ComposeError::Podman(spec_field_error(
