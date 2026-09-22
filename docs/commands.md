@@ -213,9 +213,12 @@ Measured on 2026-09-10 inside the `podman-machine-default` WSL distro: every
 `cgroupfs`, because that distro had no user systemd session. The setting is
 `cgroup_manager = "cgroupfs"` in the distro's
 `~/.config/containers/containers.conf`; the README has the stanza and a way to
-check it under [Optional: Windows](../README.md#optional-windows). podup passes
-the runtime's failure through as it arrives and adds no hint of its own, so a
-build that fails this way does not name the setting.
+check it under [Optional: Windows](../README.md#optional-windows). When a
+build fails and the daemon reports `cgroup_manager = "systemd"`, podup appends
+one hint line to the error naming the key, the value, and the file the key
+goes in (#1778). A successful build never reads `host.cgroupManager`, and an
+info call that fails for any reason leaves the original build error
+unchanged.
 
 ## Inspection
 

@@ -420,11 +420,11 @@ impl Engine {
 						capture.push(trimmed);
 					}
 					if let Some(err) = output.error_detail.and_then(|e| e.message) {
-						return Err(self.fail_build(&tag, err, capture, opts.quiet));
+						return Err(self.fail_build(&tag, err, capture, opts.quiet).await);
 					}
 					if let Some(err) = output.error {
 						if !err.is_empty() {
-							return Err(self.fail_build(&tag, err, capture, opts.quiet));
+							return Err(self.fail_build(&tag, err, capture, opts.quiet).await);
 						}
 					}
 				}

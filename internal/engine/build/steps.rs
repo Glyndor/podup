@@ -6,16 +6,36 @@
 //! after `Successfully tagged`, which a script reading `build` from a pipe
 //! wants on stdout; and the failure path, where the stream a terminal folded
 //! away is replayed once so the reason is on screen (#1681).
+//!
+//! On the failure path a single extra call is paid: `GET /libpod/info`, to
+//! read `host.cgroupManager`. When the value is `systemd`, the build error is
+//! extended with one hint line about `cgroup_manager = "cgroupfs"` in
+//! `~/.config/containers/containers.conf` (#1778). The call runs only on a
+//! build failure; a successful build never issues it. If the call itself
+//! fails, the original error message reaches the caller unchanged.
 use std::io::IsTerminal;
+
+use serde::Deserialize;
 
 use crate::engine::Engine;
 use crate::error::ComposeError;
+use crate::libpod::API_PREFIX;
 
 impl Engine {
 	/// Close the row as `Failed`, then on a terminal replay the full stream
 	/// as scrollback so the failure reason is on screen. In a pipe every line
 	/// has already been written by `note_for` and no replay is needed.
-	pub(super) fn fail_build(
+	///
+	/// On the way out, fetch `host.cgroupManager` over the same socket the
+	/// build used. If it is `systemd`, append one hint line naming
+	/// `cgroup_manager = "cgroupfs"` and the file the key goes in, so a
+	/// reader running the Linux build inside a `podman-machine` WSL distro
+	/// sees the setting instead of an opaque build failure (#1778). On any
+	/// other value (or on an info call that fails for any reason), the
+	/// original message reaches the caller unchanged: the hint is a hint,
+	/// not a diagnosis, and a swallowed runtime error would be worse than
+	/// no hint at all.
+	pub(super) async fn fail_build(
 		&self,
 		tag: &str,
 		err: String,
@@ -32,9 +52,58 @@ impl Engine {
 				let _ = writeln!(out, "{tag} | {line}");
 			}
 		}
-		ComposeError::Build(err)
+		let mut msg = err;
+		if let Some(hint) = cgroup_hint(&self.client).await {
+			msg.push('\n');
+			msg.push_str(&hint);
+		}
+		ComposeError::Build(msg)
 	}
 }
+
+/// The slice of `GET /libpod/info` the build-failure hint reads.
+///
+/// Only `host.cgroupManager` is consulted, but the wrapper struct is named
+/// for the endpoint so adding fields (e.g. `host.cgroupVersion`,
+/// `host.ociRuntime.name` if a future hint needs them) stays a one-line
+/// change. Unknown fields are tolerated by `serde`, so a newer libpod
+/// response shape does not break the parse.
+#[derive(Deserialize, Default)]
+struct LibpodInfo {
+	#[serde(default)]
+	host: HostInfo,
+}
+
+#[derive(Deserialize, Default)]
+struct HostInfo {
+	#[serde(rename = "cgroupManager", default)]
+	cgroup_manager: String,
+}
+
+/// On a build failure, ask the libpod API which cgroup manager the daemon
+/// is configured to use. Return a one-line hint only when the daemon is set
+/// to `systemd` on a host that may not have a user systemd session to talk
+/// to it. Any failure of the call itself (connect, transport, parse, the
+/// daemon returning a non-2xx, the field missing) is treated as "no hint":
+/// the build error reaches the caller unchanged.
+async fn cgroup_hint(client: &crate::libpod::Client) -> Option<String> {
+	let path = format!("{API_PREFIX}/info");
+	let info: LibpodInfo = client.get_json(&path).await.ok()?;
+	if info.host.cgroup_manager == "systemd" {
+		Some(WSL_CGROUP_HINT.to_string())
+	} else {
+		None
+	}
+}
+
+/// The exact hint line appended to a build error when the libpod daemon
+/// reports `cgroup_manager = "systemd"`. Phrased as a hint with the
+/// condition named, since the same value is correct on an ordinary Linux
+/// host with a running user systemd session (#1778).
+const WSL_CGROUP_HINT: &str = "hint: if the Podman daemon runs on a host without a user systemd \
+	session (for example inside the `podman-machine` WSL distro), setting \
+	`cgroup_manager = \"cgroupfs\"` in `~/.config/containers/containers.conf` \
+	on that host may unblock the build.";
 
 /// Whether a buildah stream line is the one that carries the new image id.
 ///
