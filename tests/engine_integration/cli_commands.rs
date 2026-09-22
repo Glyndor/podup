@@ -10,34 +10,29 @@ async fn cli_rm_subcommand() {
 	if super::podman().await.is_none() {
 		return;
 	}
-	let dir = tempdir().unwrap();
-	let compose = dir.path().join("docker-compose.yml");
-	let proj = format!("t{}-clrm", std::process::id());
-	fs::write(
-		&compose,
+	// `up` creates the project network, `stop` only halts containers, and `rm`
+	// removes containers. None of them removes `<project>_default`, so without
+	// a guard a passing test or a panicked one leaves the network on the host
+	// to be picked up by the leak scanner on the next run.
+	let _down = super::DownGuard::new(
+		"clrm",
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
-	)
-	.unwrap();
+	);
+	let c = _down.compose_path();
+	let proj = _down.name();
 
 	Command::new(bin())
-		.args([
-			"-f",
-			compose.to_str().unwrap(),
-			"-p",
-			&proj,
-			"up",
-			"--detach",
-		])
+		.args(["-f", c, "-p", proj, "up", "--detach"])
 		.output()
 		.unwrap();
 
 	Command::new(bin())
-		.args(["-f", compose.to_str().unwrap(), "-p", &proj, "stop"])
+		.args(["-f", c, "-p", proj, "stop"])
 		.output()
 		.unwrap();
 
 	let rm = Command::new(bin())
-		.args(["-f", compose.to_str().unwrap(), "-p", &proj, "rm"])
+		.args(["-f", c, "-p", proj, "rm"])
 		.output()
 		.unwrap();
 	assert!(rm.status.success(), "rm failed: {:?}", rm.stderr);
@@ -152,6 +147,9 @@ async fn cli_up_with_build_flag() {
 	}
 	let dir = tempdir().unwrap();
 	let proj = format!("t{}-clbld", std::process::id());
+	// `down` leaves the built image behind; the guard removes it even when an
+	// assertion below panics.
+	let _image = super::TestImage::new(format!("{proj}-web"));
 	fs::write(dir.path().join("Dockerfile"), "FROM alpine:latest\n").unwrap();
 	let compose = dir.path().join("docker-compose.yml");
 	fs::write(
@@ -254,22 +252,16 @@ async fn cli_run_subcommand() {
 	if super::podman().await.is_none() {
 		return;
 	}
-	let dir = tempdir().unwrap();
-	let compose = dir.path().join("docker-compose.yml");
-	let proj = format!("t{}-clrun", std::process::id());
-	fs::write(&compose, "services:\n  job:\n    image: alpine:latest\n").unwrap();
+	// `podup run` builds the project network the same way `docker compose run`
+	// does, then leaves it behind: there is no implicit teardown step. The
+	// guard's `down -v` runs from drop, so a panic in either assertion still
+	// reaps the network.
+	let _down = super::DownGuard::new("clrun", "services:\n  job:\n    image: alpine:latest\n");
+	let c = _down.compose_path();
+	let proj = _down.name();
 
 	let run = Command::new(bin())
-		.args([
-			"-f",
-			compose.to_str().unwrap(),
-			"-p",
-			&proj,
-			"run",
-			"job",
-			"echo",
-			"hello",
-		])
+		.args(["-f", c, "-p", proj, "run", "job", "echo", "hello"])
 		.output()
 		.unwrap();
 	assert!(run.status.success(), "run failed: {:?}", run.stderr);
@@ -282,21 +274,12 @@ async fn cli_run_nonzero_exit_propagates() {
 	if super::podman().await.is_none() {
 		return;
 	}
-	let dir = tempdir().unwrap();
-	let compose = dir.path().join("docker-compose.yml");
-	let proj = format!("t{}-clrxc", std::process::id());
-	fs::write(&compose, "services:\n  job:\n    image: alpine:latest\n").unwrap();
+	let _down = super::DownGuard::new("clrxc", "services:\n  job:\n    image: alpine:latest\n");
+	let c = _down.compose_path();
+	let proj = _down.name();
 
 	let run = Command::new(bin())
-		.args([
-			"-f",
-			compose.to_str().unwrap(),
-			"-p",
-			&proj,
-			"run",
-			"job",
-			"false",
-		])
+		.args(["-f", c, "-p", proj, "run", "job", "false"])
 		.output()
 		.unwrap();
 	assert!(!run.status.success(), "expected non-zero exit from 'false'");

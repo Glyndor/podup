@@ -553,6 +553,7 @@ async fn up_keeps_the_image_a_no_cache_build_produced() {
 	let dir = tempfile::tempdir().unwrap();
 	let proj = proj("upnb");
 	let tag = format!("podup-test-upnb-{}:latest", std::process::id());
+	let _image = TestImage::new(&tag);
 	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 	let yaml = format!(
 		"services:\n  app:\n    build:\n      context: .\n      dockerfile_inline: |\n        FROM alpine:latest\n        RUN echo marker > /marker\n    image: {tag}\n    command: [\"sleep\", \"infinity\"]\n"

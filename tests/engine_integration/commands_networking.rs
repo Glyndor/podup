@@ -501,12 +501,16 @@ async fn up_is_idempotent_over_existing_named_volume() {
 		Some(d) => d,
 		None => return,
 	};
-	let proj = proj("idv");
-	let engine = Engine::new(client, proj.clone());
-	let file = parse_str(
-		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    volumes:\n      - data:/data\nvolumes:\n  data:\n",
-	)
-	.unwrap();
+	let compose_body = "services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    volumes:\n      - data:/data\nvolumes:\n  data:\n";
+	// `engine.down` keeps named volumes by design, which is the right shape
+	// for the engine but leaves `<proj>_data` on the host for this test in
+	// particular — the volume is stood up, asserted against, and never asked
+	// for again. The CLI's `down -v` is the explicit teardown that reaps
+	// both the network and the volume, and the guard makes it fire on drop.
+	let _down = super::DownGuard::new("idv", compose_body);
+	let proj = _down.name();
+	let engine = Engine::new(client, proj.to_owned());
+	let file = parse_str(compose_body).unwrap();
 
 	engine.up(&file).await.unwrap();
 	// A second `up` must succeed even though the named volume already exists.
