@@ -4,7 +4,7 @@
 pub mod types;
 
 mod anchor;
-mod diagnostics;
+pub(crate) mod diagnostics;
 mod extends;
 mod include;
 mod merge;
@@ -18,6 +18,7 @@ use crate::error::{ComposeError, Result};
 use crate::substitute;
 use types::{ComposeFile, ServiceNetworks};
 
+pub use diagnostics::SuppressPortExposureGuard;
 pub use order::{resolve_levels, resolve_order};
 pub use validate::validate_config;
 
@@ -209,7 +210,7 @@ pub fn parse_files_with_env_files_interp(
 		validate::validate(&merged)?;
 	}
 	for warning in diagnostics::collect(&merged) {
-		tracing::warn!("{warning}");
+		diagnostics::emit_diagnostic(&warning);
 	}
 	// Unknown keys nested inside option blocks (bind/volume/tmpfs mounts, long-form
 	// service networks, deploy.resources specs) are dropped by the typed model and
@@ -221,7 +222,7 @@ pub fn parse_files_with_env_files_interp(
 	for warning in
 		diagnostics::collect_raw_nested_warnings(paths, env_files, interpolate, stdin.as_deref())
 	{
-		tracing::warn!("{warning}");
+		diagnostics::emit_diagnostic(&warning);
 	}
 	Ok(merged)
 }
@@ -255,6 +256,13 @@ fn interpolated_yaml_text_from_content(
 	env_files: &[String],
 	interpolate: bool,
 ) -> Result<String> {
+	// The parse pass already emitted unset-variable warnings for this
+	// document; the diagnostic pass only re-interpolates so the typed model
+	// can be diffed against the raw shape. Silence substitute warnings here
+	// so every reference to the same missing variable in the file emits one
+	// line, not two (#1838), and the audit path that reuses this same code
+	// converges to the same count as config.
+	let _silence = substitute::warnings::Guard::new(false);
 	let value = if interpolate {
 		let vars = if env_files.is_empty() {
 			substitute::build_vars(dir)

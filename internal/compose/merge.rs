@@ -4,10 +4,9 @@
 //! are resolved on the raw `Value` first and the merged document is what gets
 //! deserialized; the type never sees a `<<:` key.
 
-use std::collections::HashMap;
-
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
+use std::collections::{HashMap, HashSet};
 
 /// Upper bound on YAML alias references in a document that uses anchors, and on
 /// the size of such a document. serde_yaml_ng already aborts deeply *nested*
@@ -81,7 +80,10 @@ pub(super) fn interpolated_value(
 		// repetition spread across scalars, which is the shape that reached
 		// 5.27 GB with no single substitution over 1 MiB.
 		let mut spent = 0usize;
-		interpolate_value(&mut value, vars, &mut spent)?;
+		// One dedup set for the whole pass: three references to `${X}` in
+		// the same document share one warning, not three.
+		let mut warned = HashSet::new();
+		interpolate_value(&mut value, vars, &mut spent, &mut warned)?;
 	}
 	apply_merge_keys(&mut value);
 	Ok(value)
@@ -96,10 +98,11 @@ fn interpolate_value(
 	value: &mut serde_yaml::Value,
 	vars: &HashMap<String, String>,
 	spent: &mut usize,
+	warned: &mut HashSet<String>,
 ) -> Result<()> {
 	match value {
 		serde_yaml::Value::String(s) if s.contains('$') => {
-			*value = interpolate_scalar(s, vars, spent)?;
+			*value = interpolate_scalar(s, vars, spent, warned)?;
 		}
 		serde_yaml::Value::Sequence(seq) => {
 			// Skip the recursion when no element carries a `$`: a 100-service file
@@ -110,7 +113,7 @@ fn interpolate_value(
 				return Ok(());
 			}
 			for item in seq.iter_mut() {
-				interpolate_value(item, vars, spent)?;
+				interpolate_value(item, vars, spent, warned)?;
 			}
 		}
 		serde_yaml::Value::Mapping(map) => {
@@ -126,8 +129,8 @@ fn interpolate_value(
 			let taken = std::mem::take(map);
 			let mut rebuilt = serde_yaml::Mapping::with_capacity(taken.len());
 			for (key, mut val) in taken {
-				let key = interpolate_key(key, vars)?;
-				interpolate_value(&mut val, vars, spent)?;
+				let key = interpolate_key(key, vars, warned)?;
+				interpolate_value(&mut val, vars, spent, warned)?;
 				rebuilt.insert(key, val);
 			}
 			*map = rebuilt;
@@ -185,8 +188,9 @@ fn interpolate_scalar(
 	s: &str,
 	vars: &HashMap<String, String>,
 	spent: &mut usize,
+	warned: &mut HashSet<String>,
 ) -> Result<serde_yaml::Value> {
-	let resolved = crate::substitute::substitute_budgeted(s, vars, spent)?;
+	let resolved = crate::substitute::substitute_budgeted(s, vars, spent, warned)?;
 	if resolved.is_empty() {
 		return Ok(serde_yaml::Value::String(String::new()));
 	}
@@ -202,10 +206,11 @@ fn interpolate_scalar(
 fn interpolate_key(
 	key: serde_yaml::Value,
 	vars: &HashMap<String, String>,
+	warned: &mut HashSet<String>,
 ) -> Result<serde_yaml::Value> {
 	match key {
 		serde_yaml::Value::String(s) if s.contains('$') => Ok(serde_yaml::Value::String(
-			crate::substitute::substitute(&s, vars)?,
+			crate::substitute::substitute_with_warned(&s, vars, warned)?,
 		)),
 		other => Ok(other),
 	}

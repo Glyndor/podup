@@ -344,11 +344,13 @@ pub(crate) enum Commands {
 		/// Show all containers, including stopped ones.
 		#[arg(short, long)]
 		all: bool,
-		/// Only display container IDs. Mutually exclusive with `--format`.
-		#[arg(short, long, conflicts_with = "format")]
+		/// Only display container IDs. Mutually exclusive with `--format` and
+		/// `--services`.
+		#[arg(short, long, conflicts_with_all = ["format", "services_only"])]
 		quiet: bool,
-		/// Print the service names, one per line, instead of the container table.
-		#[arg(long = "services")]
+		/// Print the service names, one per line, instead of the container
+		/// table. Mutually exclusive with `--quiet` and `--format`.
+		#[arg(long = "services", conflicts_with_all = ["format", "quiet"])]
 		services_only: bool,
 		/// Show each container's on-disk size. Off by default: the server has
 		/// to walk each container's writable layer to answer, which measured
@@ -362,7 +364,8 @@ pub(crate) enum Commands {
 		/// Filter by container status (running, exited, ...); repeatable.
 		#[arg(long)]
 		status: Vec<String>,
-		/// Output format.
+		/// Output format: `table` (aligned columns) or `json` (a JSON array).
+		/// Mutually exclusive with `--quiet` and `--services`.
 		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
 		format: OutputFormat,
 		/// Show only these services.
@@ -659,14 +662,23 @@ pub(crate) enum Commands {
 	/// capabilities, memory/PID limits, host-binding modes, secret-shaped env
 	/// vars, unpinned images, …) and print a row per service. No check changes
 	/// what `up` does; this is a view, not a gate. `--strict` exits 1 when any
-	/// finding is present, so it can fail CI.
+	/// finding is present, so it can fail CI. `--list-checks` enumerates the
+	/// checks this build carries without reading a compose file, so an
+	/// integrator can diff the set between releases.
 	Audit {
 		/// Exit 1 when any finding is present.
 		#[arg(long)]
 		strict: bool,
-		/// Output format.
+		/// Output format. Honoured by both the audit run and `--list-checks`,
+		/// so `--format json` returns a `{"checks":[...]}` array of objects.
 		#[arg(long, value_enum, default_value_t = AuditFormat::Table)]
 		format: AuditFormat,
+		/// List every check this build carries (one per line, id then
+		/// description) and exit. Takes no compose file: the registry is the
+		/// source, so `--strict` would have no effect and conflicts at parse
+		/// time.
+		#[arg(long, conflicts_with = "strict")]
+		list_checks: bool,
 	},
 	/// Generate declarative artifacts from the compose file.
 	#[command(

@@ -189,7 +189,7 @@ fn audit_no_new_privileges_off_flags_an_explicit_false() {
 // Each of the three tests below targets one of the issue's findings and is
 // built from a compose file that `audit --strict` accepted on the unfixed
 // tree but must not afterwards. They are the issue's acceptance criterion,
-// and were failing when the brief was written. Keeping them in a single
+// and failed on the unfixed tree. Keeping them in a single
 // section so the file's `grep "1743"` lands the reviewer on the lot.
 
 /// `mem_limit: not-a-size` keeps the compose field non-empty, so an
@@ -243,3 +243,9 @@ fn audit_dangerous_capability_flags_the_curated_list() {
 		"three distinct dangerous_capability findings expected: {report:#?}"
 	);
 }
+
+// The `sensitive_bind_mount` rows live in their own file to keep this one
+// under the line limit. A child module, so `report_for` and the imports
+// above reach it through `super::`.
+#[path = "checks_sensitive_bind_tests.rs"]
+mod sensitive_bind;

@@ -15,7 +15,7 @@ use std::path::Path;
 
 use base64::Engine as _;
 
-use super::{pack_path, uploaded_entry_kind};
+use super::uploaded_entry_kind;
 use crate::engine::fake_podman::{self, FakePodman, FakeReply};
 use crate::engine::Engine;
 use crate::error::ComposeError;
@@ -24,13 +24,17 @@ use crate::libpod::urlencoded;
 const CONTAINER: &str = "proj-web-1";
 
 /// One path in the fake container.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 enum OnDisk {
 	File(u64),
 	Dir,
-	/// A symbolic link; the stat header carries its size and the
-	/// `os.ModeSymlink` mode bit (1<<27 | 0o777).
-	Link(u64),
+	/// A symbolic link with its target as written in the tar; the stat
+	/// header's `linkTarget` is the target normalised against the
+	/// directory the link lives in (the way Podman 5.7.0 reports it).
+	Link {
+		size: u64,
+		target: String,
+	},
 	/// A named pipe; the stat header carries size 0 and the
 	/// `os.ModeNamedPipe` mode bit (1<<25 | 0o644).
 	Fifo,
@@ -47,17 +51,43 @@ enum Put {
 	Answers(u16),
 }
 
-fn stat_header(path: &str, entry: OnDisk) -> String {
+/// Podman 5.7.0 normalises `linkTarget` lexically against the directory
+/// the link lives in: a relative target is joined to the parent of the
+/// link's path and `.` / `..` are collapsed; an absolute target is left
+/// alone. The fake mirrors that so the link confirmation can compare the
+/// sent target against the value the runtime would actually return.
+fn normalize_link_target_for_fake(target: &str, link_path: &str) -> String {
+	if target.starts_with('/') {
+		return target.to_string();
+	}
+	let parent = link_path
+		.rfind('/')
+		.map(|idx| if idx == 0 { "/" } else { &link_path[..idx] })
+		.unwrap_or("/");
+	let joined = if parent == "/" {
+		format!("/{}", target)
+	} else {
+		format!("{}/{}", parent, target)
+	};
+	crate::engine::copy::verify::normalize_for_test(&joined)
+}
+
+fn stat_header(path: &str, entry: &OnDisk) -> String {
 	let name = path.rsplit('/').next().unwrap_or_default();
-	let (size, mode, is_dir) = match entry {
-		OnDisk::File(size) => (size, 420u64, false),
-		OnDisk::Dir => (4096, 2_147_484_141, true),
-		OnDisk::Link(size) => (size, (1u64 << 27) | 0o777, false),
-		OnDisk::Fifo => (0, (1u64 << 25) | 0o644, false),
+	let (size, mode, is_dir, link_target) = match entry {
+		OnDisk::File(size) => (*size, 420u64, false, String::new()),
+		OnDisk::Dir => (4096, 2_147_484_141, true, String::new()),
+		OnDisk::Link { size, target } => (
+			*size,
+			(1u64 << 27) | 0o777,
+			false,
+			normalize_link_target_for_fake(target, path),
+		),
+		OnDisk::Fifo => (0, (1u64 << 25) | 0o644, false, String::new()),
 		OnDisk::Unreadable => unreachable!("answered with a 500, not a stat"),
 	};
 	let json = format!(
-		r#"{{"name":"{name}","size":{size},"mode":{mode},"mtime":"2026-09-18T19:50:59.194580835-05:00","isDir":{is_dir},"linkTarget":"{path}"}}"#
+		r#"{{"name":"{name}","size":{size},"mode":{mode},"mtime":"2026-09-18T19:50:59.194580835-05:00","isDir":{is_dir},"linkTarget":"{link_target}"}}"#
 	);
 	base64::engine::general_purpose::STANDARD.encode(json)
 }
@@ -71,7 +101,10 @@ fn stat_header(path: &str, entry: OnDisk) -> String {
 /// default for `tree_landed`'s link confirmation); a runtime that does not
 /// (older, or a stub) drops the header and the link cannot be confirmed.
 fn runtime_full(put: Put, disk: &[(&str, OnDisk)], link_stat_on_404: bool) -> FakePodman {
-	let disk: Vec<(String, OnDisk)> = disk.iter().map(|(p, e)| ((*p).to_string(), *e)).collect();
+	let disk: Vec<(String, OnDisk)> = disk
+		.iter()
+		.map(|(p, e)| ((*p).to_string(), e.clone()))
+		.collect();
 	fake_podman::start_replying(move |method, target| match method {
 		"PUT" => match put {
 			Put::HangsUp => FakeReply::ClosedWithoutResponse,
@@ -82,13 +115,13 @@ fn runtime_full(put: Put, disk: &[(&str, OnDisk)], link_stat_on_404: bool) -> Fa
 			.find(|(path, _)| target.ends_with(&format!("archive?path={}", urlencoded(path))))
 			.map(|(path, entry)| match entry {
 				OnDisk::Unreadable => FakeReply::Headers(500, Vec::new()),
-				OnDisk::Link(_) if link_stat_on_404 => FakeReply::Headers(
+				OnDisk::Link { .. } if link_stat_on_404 => FakeReply::Headers(
 					404,
-					vec![("X-Docker-Container-Path-Stat", stat_header(path, *entry))],
+					vec![("X-Docker-Container-Path-Stat", stat_header(path, entry))],
 				),
 				_ => FakeReply::Headers(
 					200,
-					vec![("X-Docker-Container-Path-Stat", stat_header(path, *entry))],
+					vec![("X-Docker-Container-Path-Stat", stat_header(path, entry))],
 				),
 			})
 			.unwrap_or(FakeReply::Headers(404, Vec::new())),
@@ -127,20 +160,28 @@ const LANDED_TREE: [(&str, OnDisk); 5] = [
 	("/tmp/payload/empty", OnDisk::Dir),
 ];
 
-/// Upload `src` to `/tmp` under `entry`, exactly as `cp` does it.
+/// Upload `src` to `/tmp` under `entry`, exactly as `cp` does it. Drives the
+/// streaming packer the production path uses (#1844), so the fake socket sees
+/// the same body shape hyper would see against Podman.
 async fn upload(
 	fake: &FakePodman,
 	src: &Path,
 	entry: &str,
 	rename: Option<&str>,
 ) -> crate::error::Result<()> {
-	let tar = pack_path(src, false, rename, false).unwrap();
+	let packed = super::pack::pack_path_stream(
+		src,
+		false,
+		rename,
+		false,
+		super::progress::ByteCounter::new().inner().clone(),
+	);
 	engine_for(fake)
 		.put_archive_verified(
 			CONTAINER,
 			"/tmp",
 			entry,
-			tar,
+			packed,
 			uploaded_entry_kind(src, false),
 		)
 		.await
@@ -152,7 +193,25 @@ fn assert_unconfirmed(result: crate::error::Result<()>, case: &str) {
 			msg.contains("could not be confirmed"),
 			"{case}: refused, but not as an unconfirmed upload: {msg}"
 		),
+		Err(ComposeError::Build(msg)) => assert!(
+			msg.contains("cp:")
+				|| msg.contains("unverified")
+				|| msg.contains("Fifo")
+				|| msg.contains("permission"),
+			"{case}: the streaming packer refused at pack time, but the message does not \
+			 carry the original cause: {msg}"
+		),
 		other => panic!("{case}: must be reported as an unconfirmed upload, got {other:?}"),
+	}
+}
+
+/// Extract the inner detail the caller wraps, for the assertion that the
+/// user-facing error names the entry and the stat. Today the message reaches
+/// the user via `ComposeError::Copy(_)`; this is the seam the tests read.
+fn copy_detail(result: crate::error::Result<()>, case: &str) -> String {
+	match result {
+		Err(ComposeError::Copy(msg)) => msg,
+		other => panic!("{case}: must be reported as an unconfirmed copy, got {other:?}"),
 	}
 }
 
@@ -233,8 +292,14 @@ async fn a_directory_whose_entries_do_not_match_what_was_sent_is_a_failure() {
 
 	for (path, instead, case) in stale {
 		let disk: Vec<(&str, OnDisk)> = LANDED_TREE
-			.into_iter()
-			.map(|(p, e)| if p == path { (p, instead) } else { (p, e) })
+			.iter()
+			.map(|(p, e)| {
+				if *p == path {
+					(*p, instead.clone())
+				} else {
+					(*p, e.clone())
+				}
+			})
 			.collect();
 		let fake = runtime(Put::HangsUp, &disk);
 
@@ -242,6 +307,69 @@ async fn a_directory_whose_entries_do_not_match_what_was_sent_is_a_failure() {
 
 		assert_unconfirmed(result, case);
 	}
+}
+
+/// The error message the caller sees names the entry that failed AND the
+/// stat the runtime answered, not just the verdict. This is what makes the
+/// next diagnosis not blind: a log carries the path and the literal
+/// `PathStat`, and an operator can act on it without re-running the upload.
+#[tokio::test]
+async fn a_refused_entry_message_names_the_path_and_the_stat() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = payload_tree(dir.path());
+
+	// One entry is stale: `payload/plain.txt` was meant to be 15 bytes and
+	// arrived at 14. The path is what the user can look at; the stat is the
+	// evidence the runtime said it was 14 bytes.
+	let stale = "/tmp/payload/plain.txt";
+	let disk: Vec<(&str, OnDisk)> = LANDED_TREE
+		.into_iter()
+		.map(|(p, e)| {
+			if p == stale {
+				(p, OnDisk::File(14))
+			} else {
+				(p, e)
+			}
+		})
+		.collect();
+	let fake = runtime(Put::HangsUp, &disk);
+
+	let result = upload(&fake, &payload, "payload", None).await;
+	let msg = copy_detail(result, "stale plain.txt");
+
+	// The path of the entry that failed, relative to the extract dir, is in
+	// the message. An operator looking at the log can see this entry.
+	assert!(
+		msg.contains("payload/plain.txt"),
+		"the entry path must be named in the message: {msg}"
+	);
+
+	// The literal `PathStat` from the runtime is in the message. The Debug
+	// rendering of `PathStat` carries the size and mode the runtime reported,
+	// which is what the next diagnosis needs to compare expected and answered.
+	assert!(
+		msg.contains("size"),
+		"the literal PathStat (whose Debug starts with `size`) must be in the \
+		 message: {msg}"
+	);
+	assert!(
+		msg.contains("14"),
+		"the runtime's reported size (14) must be in the message: {msg}"
+	);
+
+	// The expected kind is also named, so the next diagnosis knows what the
+	// upload was supposed to land.
+	assert!(
+		msg.contains("File(15)"),
+		"the expected kind (a 15-byte file) must be in the message: {msg}"
+	);
+
+	// The actionable hint the existing message carried stays: it is true
+	// (the bytes may have landed) and useful (the operator can look).
+	assert!(
+		msg.contains("may or may not have landed"),
+		"the existing hint must stay: {msg}"
+	);
 }
 
 /// A stat the runtime would not answer is not an answer. Everything else of the
@@ -296,9 +424,12 @@ async fn a_renamed_directory_is_confirmed_under_its_new_name() {
 	let payload = payload_tree(dir.path());
 	let renamed: Vec<(String, OnDisk)> = LANDED_TREE
 		.into_iter()
-		.map(|(p, e)| (p.replacen("/tmp/payload", "/tmp/renamed", 1), e))
+		.map(|(p, e)| (p.replacen("/tmp/payload", "/tmp/renamed", 1), e.clone()))
 		.collect();
-	let renamed: Vec<(&str, OnDisk)> = renamed.iter().map(|(p, e)| (p.as_str(), *e)).collect();
+	let renamed: Vec<(&str, OnDisk)> = renamed
+		.iter()
+		.map(|(p, e)| (p.as_str(), e.clone()))
+		.collect();
 
 	let landed = runtime(Put::HangsUp, &renamed);
 	let result = upload(&landed, &payload, "renamed", Some("renamed")).await;
@@ -380,211 +511,64 @@ async fn an_answered_upload_is_not_read_back() {
 	assert!(requests[0].starts_with("PUT "), "got {requests:?}");
 }
 
-/// A directory containing only a symbolic link. On Podman 5.7.0 the link
-/// answers the stat `HEAD` with 404 that still carries the link's stat header;
-/// the runtime reads the link back and the upload is confirmed.
+/// A packing error midway reaches the caller as a `ComposeError`, not as a
+/// truncated upload whose post-PUT confirmation then reports a generic
+/// "could not be confirmed". The original cause — a file the packer could
+/// not read — is the more useful answer, and it must survive the body stream
+/// ending early. Without this guard, a permission-denied or vanished file
+/// would look like a clean upload that just happened to lose the connection.
 #[cfg(unix)]
 #[tokio::test]
-async fn a_directory_with_a_link_is_confirmed_when_the_404_carries_the_stat() {
+async fn a_pack_error_midway_reaches_the_caller_as_an_error() {
+	use std::os::unix::fs::PermissionsExt;
 	let dir = tempfile::tempdir().unwrap();
 	let payload = dir.path().join("payload");
-	std::fs::create_dir(&payload).unwrap();
-	std::os::unix::fs::symlink("a.txt", payload.join("link")).unwrap();
+	std::fs::create_dir_all(&payload).unwrap();
+	std::fs::write(payload.join("ok.txt"), b"ok").unwrap();
+	let blocked = payload.join("blocked");
+	std::fs::create_dir(&blocked).unwrap();
+	std::fs::write(blocked.join("secret"), b"hidden").unwrap();
+	let perm_ro = std::fs::Permissions::from_mode(0o000);
+	std::fs::set_permissions(&blocked, perm_ro).unwrap();
+	// Confirm the gate is closed; bail out if the test environment can't
+	// enforce it (running as root, for example).
+	if std::fs::read_dir(&blocked).is_ok() {
+		let _ = std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755));
+		return;
+	}
 
-	let disk: [(&str, OnDisk); 2] = [
-		("/tmp/payload", OnDisk::Dir),
-		("/tmp/payload/link", OnDisk::Link(4)),
-	];
-	let fake = runtime_full(Put::HangsUp, &disk, true);
-
+	// The runtime hangs up after the PUT (Podman 6 / #1097): only the
+	// apply-then-close path forces the post-PUT confirmation to run, which
+	// is the branch that surfaces the producer's error. A clean 200
+	// (Podman 5) short-circuits to `Ok` before the producer runs, so the
+	// caller never sees the pack-time cause.
+	let fake = runtime(Put::HangsUp, &[("/tmp", OnDisk::Dir)]);
 	let result = upload(&fake, &payload, "payload", None).await;
+	let _ = std::fs::set_permissions(&blocked, std::fs::Permissions::from_mode(0o755));
 
+	// The packer errors with `ComposeError::Build("cp: ... permission
+	// denied")` or `ComposeError::Io(PermissionDenied)` before the PUT
+	// finishes; the user sees the original cause, not the generic "could
+	// not be confirmed" the post-PUT verification would produce on a
+	// truncated body.
+	let msg = match result {
+		Err(ComposeError::Build(msg)) => msg,
+		Err(ComposeError::Io(err)) => err.to_string(),
+		other => panic!(
+			"a mid-pack error must surface as an error carrying the original cause, got {other:?}"
+		),
+	};
 	assert!(
-		result.is_ok(),
-		"the directory and its link are both at the destination, got {result:?}"
+		msg.contains("cp:")
+			|| msg.contains("permission")
+			|| msg.contains("denied")
+			|| msg.contains("Permission"),
+		"the message must carry the original cause, got: {msg}"
 	);
 }
 
-/// The same archive, on a runtime whose 404 for the link does NOT carry the
-/// stat header. The link cannot be asked about, the upload is not confirmed,
-/// and the caller is told so. This is the cut-stream shape the link code was
-/// written to refuse.
-#[cfg(unix)]
-#[tokio::test]
-async fn a_directory_with_a_link_is_a_failure_when_the_404_omits_the_stat() {
-	let dir = tempfile::tempdir().unwrap();
-	let payload = dir.path().join("payload");
-	std::fs::create_dir(&payload).unwrap();
-	std::os::unix::fs::symlink("a.txt", payload.join("link")).unwrap();
-
-	let disk: [(&str, OnDisk); 1] = [("/tmp/payload", OnDisk::Dir)];
-	let fake = runtime_full(Put::HangsUp, &disk, false);
-
-	let result = upload(&fake, &payload, "payload", None).await;
-
-	assert_unconfirmed(result, "the link's 404 is missing the stat header");
-}
-
-/// An empty file uploaded over an existing named pipe at the destination is
-/// NOT confirmed by the unchanged pipe: the regular-file check rejects any
-/// mode with a `ModeType` bit set, and a FIFO at size 0 would otherwise pass.
-#[tokio::test]
-async fn an_empty_file_uploaded_over_a_fifo_is_a_failure() {
-	let dir = tempfile::tempdir().unwrap();
-	let payload = dir.path().join("payload");
-	std::fs::create_dir(&payload).unwrap();
-	std::fs::write(payload.join("plain"), b"").unwrap();
-
-	let disk: [(&str, OnDisk); 2] = [
-		("/tmp/payload", OnDisk::Dir),
-		("/tmp/payload/plain", OnDisk::Fifo),
-	];
-	let fake = runtime_full(Put::HangsUp, &disk, true);
-
-	let result = upload(&fake, &payload, "payload", None).await;
-
-	assert_unconfirmed(result, "a FIFO at the destination is not a regular file");
-}
-
-/// An archive with a directory and a FIFO is unverifiable: the FIFO cannot
-/// be asked about through the archive stat, so even when the runtime answers
-/// the directory's stat with 200 the upload cannot be confirmed against the
-/// directory alone. Without this guard, the FIFO would have been filtered
-/// out by `sent_entries` and the directory alone would have passed.
-#[cfg(unix)]
-#[tokio::test]
-async fn a_directory_with_a_fifo_is_a_failure_even_when_the_dir_lands() {
-	let dir = tempfile::tempdir().unwrap();
-	let payload = dir.path().join("payload");
-	std::fs::create_dir(&payload).unwrap();
-	// Plant the FIFO via `mkfifo`; a plain `std::fs::File::create` would
-	// not yield a FIFO that the packer would emit, which is the case the
-	// regression net has to cover.
-	mkfifo(&payload.join("pipe"));
-
-	let disk: [(&str, OnDisk); 2] = [
-		("/tmp/payload", OnDisk::Dir),
-		("/tmp/payload/pipe", OnDisk::Fifo),
-	];
-	let fake = runtime_full(Put::HangsUp, &disk, true);
-
-	let result = upload(&fake, &payload, "payload", None).await;
-
-	assert_unconfirmed(
-		result,
-		"a FIFO alongside a directory is unverifiable, so the upload must fail closed",
-	);
-}
-
-/// Plant a named pipe at `path`. `std::fs` has no FIFO constructor, and `nix`
-/// is not a dependency, so this one-line `libc::mkfifo` call is the only
-/// way to put a FIFO on disk from a test. The `unsafe` is bounded to this
-/// helper so the rest of the file keeps the crate-wide `deny(unsafe_code)`.
-#[cfg(unix)]
-#[allow(unsafe_code)]
-fn mkfifo(path: &Path) {
-	use std::ffi::CString;
-	use std::os::unix::ffi::OsStrExt;
-	let c_path = CString::new(path.as_os_str().as_bytes()).expect("cstring");
-	let rc = unsafe { libc::mkfifo(c_path.as_ptr(), 0o644) };
-	assert_eq!(rc, 0, "mkfifo failed: {}", std::io::Error::last_os_error());
-}
-
-/// An archive holding only the three kinds the destination can be asked about
-/// (a file, a directory, a symlink) is still confirmed the same way it was
-/// before the FIFO/hard-link filter went in. The regression net for the new
-/// `sent_entries` error path: the filter must not have changed which entries
-/// come back as `File`, `Dir` or `Link`.
-#[cfg(unix)]
-#[tokio::test]
-async fn an_archive_with_only_the_three_verifiable_kinds_is_confirmed() {
-	let dir = tempfile::tempdir().unwrap();
-	let payload = dir.path().join("payload");
-	std::fs::create_dir(&payload).unwrap();
-	std::fs::create_dir(payload.join("sub")).unwrap();
-	std::fs::write(payload.join("plain.txt"), b"hi").unwrap();
-	std::os::unix::fs::symlink("plain.txt", payload.join("link")).unwrap();
-
-	let disk: [(&str, OnDisk); 4] = [
-		("/tmp/payload", OnDisk::Dir),
-		("/tmp/payload/link", OnDisk::Link(9)),
-		("/tmp/payload/plain.txt", OnDisk::File(2)),
-		("/tmp/payload/sub", OnDisk::Dir),
-	];
-	let fake = runtime_full(Put::HangsUp, &disk, true);
-
-	let result = upload(&fake, &payload, "payload", None).await;
-
-	assert!(
-		result.is_ok(),
-		"every entry of the archive is verifiable and lands, got {result:?}"
-	);
-}
-
-/// The single-file path closes the same FIFO false positive. An empty file
-/// uploaded at a destination that the runtime reports as a zero-length FIFO
-/// cannot be confirmed: the previous size-only comparison would have passed
-/// on the unchanged pipe, since both report size 0. The mode check rejects
-/// the FIFO's `ModeNamedPipe` bit and the upload is refused.
-#[tokio::test]
-async fn a_single_empty_file_over_a_zero_length_fifo_is_a_failure() {
-	let dir = tempfile::tempdir().unwrap();
-	let file = dir.path().join("plain");
-	std::fs::write(&file, b"").unwrap();
-
-	let landed: [(&str, OnDisk); 1] = [("/tmp/plain", OnDisk::Fifo)];
-	let fake = runtime_full(Put::HangsUp, &landed, true);
-
-	let result = upload(&fake, &file, "plain", None).await;
-
-	assert_unconfirmed(
-		result,
-		"the destination is a FIFO at size 0, not the empty file that was uploaded",
-	);
-}
-
-/// A symlink source copied without `-L/--follow-link` confirms on the link
-/// itself: the archive stores the link, and the destination must answer the
-/// stat as a symlink. The 404-with-stat-on-Podman-5.7.0 shape the link code
-/// was written for is exercised here, matching how the tree path handles
-/// the dangling-link case.
-#[cfg(unix)]
-#[tokio::test]
-async fn a_symlink_source_is_confirmed_when_the_destination_is_a_symlink() {
-	let dir = tempfile::tempdir().unwrap();
-	let link = dir.path().join("dangling");
-	std::os::unix::fs::symlink("nowhere", &link).unwrap();
-
-	let landed: [(&str, OnDisk); 1] = [("/tmp/dangling", OnDisk::Link(7))];
-	let fake = runtime_full(Put::HangsUp, &landed, true);
-
-	let result = upload(&fake, &link, "dangling", None).await;
-
-	assert!(
-		result.is_ok(),
-		"the source is a symlink, the destination is a symlink, got {result:?}"
-	);
-}
-
-/// The same symlink source, but the destination reports itself as a regular
-/// file of the same size: the destination is not what was uploaded (the
-/// archive stored the link, the destination holds a regular file). The
-/// previous size-only comparison would have passed; the kind check rejects
-/// the file-type bit.
-#[cfg(unix)]
-#[tokio::test]
-async fn a_symlink_source_is_a_failure_when_the_destination_is_a_regular_file() {
-	let dir = tempfile::tempdir().unwrap();
-	let link = dir.path().join("dangling");
-	std::os::unix::fs::symlink("nowhere", &link).unwrap();
-
-	let lied: [(&str, OnDisk); 1] = [("/tmp/dangling", OnDisk::File(7))];
-	let fake = runtime_full(Put::HangsUp, &lied, true);
-
-	let result = upload(&fake, &link, "dangling", None).await;
-
-	assert_unconfirmed(
-		result,
-		"a regular file at the destination is not the symlink that was uploaded",
-	);
-}
+// Links and the non-regular kinds (FIFOs) live in their own file so this one
+// stays under the line limit. A child module, so it reaches the fixtures above
+// through `super::` without widening their visibility.
+#[path = "copy_upload_kinds_tests.rs"]
+mod kinds;

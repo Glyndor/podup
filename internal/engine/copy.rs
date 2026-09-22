@@ -16,11 +16,23 @@ use verify::SentKind;
 /// Crate-private so the fuzz harness behind the `test-helpers` feature can
 /// reach `extract_tar_guarded` without widening the published API surface.
 pub(crate) mod archive;
+mod archive_pack;
 mod destination;
+mod pack;
+pub(in crate::engine) mod pack_common;
+mod progress;
 mod stream;
-mod verify;
+mod upload;
+pub(in crate::engine) mod verify;
 
-use archive::{extract_archive, pack_path};
+/// Re-export the watch-sync packer at the engine level so the watch module
+/// (`internal/engine/watch/mod.rs`) can reach the streaming upload shape
+/// without widening the `pack` module's visibility to anything below
+/// `pub(super)`.
+pub(super) use pack::build_sync_tar_stream as build_sync_tar_stream_for_watch;
+
+use archive::extract_archive;
+pub(crate) use progress::ByteCounter as CpByteCounter;
 
 /// Upper bound on a container→host `cp` archive buffered in memory. Without it a
 /// hostile or huge container path would OOM the CLI. Generous (covers ordinary
@@ -163,10 +175,27 @@ impl Engine {
 		// or `SERVICE:`.
 		check_endpoint(src)?;
 		check_endpoint(dst)?;
-		match (parse_endpoint(src), parse_endpoint(dst)) {
+		// The row name on the live board. Always the destination side, since
+		// the destination is the side the operator was thinking about when they
+		// typed the command: the local path for container->host (`svc:/path ->
+		// /host/dst`), the service ref for host->container (`/host/src ->
+		// svc:/path`).
+		let row_name = cp_row_name(src, dst);
+		let counter = CpByteCounter::new();
+		let emitter = progress::spawn_emitter("Cp", row_name.clone(), counter.clone());
+		crate::ui::progress::begin(vec![(crate::ui::progress::Kind::Cp, row_name.clone())]);
+		crate::ui::progress::start("Cp", &row_name, "Copying");
+		let result = match (parse_endpoint(src), parse_endpoint(dst)) {
 			(Some((service, container_path)), None) => {
-				self.cp_from_container(file, service, container_path, Path::new(dst), &opts)
-					.await
+				self.cp_from_container(
+					file,
+					service,
+					container_path,
+					Path::new(dst),
+					&opts,
+					counter.clone(),
+				)
+				.await
 			}
 			(None, Some((service, container_path))) => {
 				// `cp host/. svc:/X` copies the host directory's *contents*
@@ -182,6 +211,7 @@ impl Engine {
 					container_path,
 					&opts,
 					contents,
+					counter.clone(),
 				)
 				.await
 			}
@@ -191,7 +221,17 @@ impl Engine {
 			(None, None) => Err(ComposeError::Unsupported(
 				"cp: one of src or dst must be SERVICE:PATH".into(),
 			)),
-		}
+		};
+		emitter.stop();
+		let bytes = counter.load();
+		let verb = if result.is_ok() {
+			progress::format_copied_verb(bytes)
+		} else {
+			"Failed".to_string()
+		};
+		crate::ui::progress_line("Cp", &row_name, &verb);
+		crate::ui::progress::end();
+		result
 	}
 
 	async fn cp_from_container(
@@ -201,6 +241,7 @@ impl Engine {
 		container_path: &str,
 		dst: &Path,
 		opts: &CpOptions,
+		progress: CpByteCounter,
 	) -> Result<()> {
 		let service = file
 			.services
@@ -247,7 +288,13 @@ impl Engine {
 				return Err(destination::refusal_for(&dst));
 			}
 			CpDestinationKind::Directory => {
-				return stream::extract_streamed(resp, dst, MAX_CP_ARCHIVE_BYTES as u64).await;
+				return stream::extract_streamed(
+					resp,
+					dst,
+					MAX_CP_ARCHIVE_BYTES as u64,
+					Some(progress),
+				)
+				.await;
 			}
 			CpDestinationKind::NotADirectory => {
 				// Fall through: `extract_archive` will either create a fresh
@@ -271,6 +318,7 @@ impl Engine {
 				))
 			})?
 			.to_bytes();
+		progress.add(tar_bytes.len() as u64);
 
 		tokio::task::spawn_blocking(move || extract_archive(&tar_bytes, &dst))
 			.await
@@ -300,6 +348,7 @@ impl Engine {
 	/// a directory, so a foreign `rm -rf` racing in is rejected by the
 	/// second PUT, not silently succeeded. The `extract_stat_path` HEAD
 	/// below is what makes that property hold; do not skip it.
+	#[allow(clippy::too_many_arguments)]
 	async fn cp_to_container(
 		&self,
 		file: &ComposeFile,
@@ -308,6 +357,7 @@ impl Engine {
 		container_path: &str,
 		opts: &CpOptions,
 		contents: bool,
+		progress: CpByteCounter,
 	) -> Result<()> {
 		let service = file
 			.services
@@ -379,15 +429,21 @@ impl Engine {
 		let src_buf = src.to_path_buf();
 		let follow = opts.follow_link;
 		let rename_for_pack = rename.clone();
-		let tar_bytes = tokio::task::spawn_blocking(move || {
-			pack_path(&src_buf, follow, rename_for_pack.as_deref(), contents)
-		})
-		.await
-		.map_err(|e| ComposeError::Build(e.to_string()))??;
+		// Stream the tar bytes into a bounded channel rather than building
+		// the whole archive into a `Vec<u8>` first (#1844). The recorded
+		// entry list is what the post-PUT confirmation compares against
+		// once the body bytes are gone.
+		let packed = pack::pack_path_stream(
+			&src_buf,
+			follow,
+			rename_for_pack.as_deref(),
+			contents,
+			progress.inner().clone(),
+		);
 
 		// Contents-packed archives have no wrapper entry: `tree_landed` walks
-		// the archive and asks about each entry against the destination. The
-		// existing `entry`-based confirmation is only meaningful when the
+		// the recorded list and asks about each entry against the destination.
+		// The existing `entry`-based confirmation is only meaningful when the
 		// archive is wrapped under a single name, which `contents=true`
 		// removes.
 		let entry = if contents {
@@ -400,138 +456,21 @@ impl Engine {
 			})
 		};
 		let uploaded_kind = uploaded_entry_kind(src, follow);
-		self.put_archive_verified(
-			&container_name,
-			&extract_dir,
-			&entry,
-			tar_bytes,
-			uploaded_kind,
-		)
-		.await
-	}
-
-	/// PUT a gzipped tar to a container's archive endpoint at `dir`, extracting
-	/// it there, and confirm it landed, the upload path shared by `cp` and
-	/// `watch` sync.
-	///
-	/// #1097: on Podman 6 the archive endpoint applies the tar and then closes
-	/// the connection *without* an HTTP response, which hyper reports as
-	/// `IncompleteMessage` even though the copy landed (the content does appear,
-	/// measured on 6.0.1; every raw request to the same endpoint gets a clean
-	/// 200, so the trigger is client-side and could not be stripped out). To tell
-	/// that apply-then-close apart from a *genuine* upload failure (a dropped
-	/// socket, a truncated body), read `dir/entry` after the PUT and treat the
-	/// copy as landed only if it now **matches what was uploaded**, which is what
-	/// `uploaded_size` carries.
-	///
-	/// This used to compare the entry's mtime before and after and require it to
-	/// move. That signal cannot express the question: Podman 6 reports the mtime
-	/// to whole seconds, so two copies inside one second look identical
-	/// (#1270: three failures in six back-to-back copies, measured), and
-	/// re-copying an *unchanged* file is undetectable at any resolution because
-	/// the extracted file takes the source's own mtime.
-	///
-	/// A source with no single size to compare, a directory above all, is
-	/// confirmed entry by entry instead (`verify::tree_landed`). Until #1777 it
-	/// was not confirmed at all, and every directory copy against Podman 6 was
-	/// reported as failed whether or not it had landed.
-	///
-	/// Fails, rather than guessing, when a post-PUT stat cannot be read or when
-	/// the archive holds nothing that can be asked about.
-	///
-	/// Inert on Podman 5, which returns a normal response.
-	pub(super) async fn put_archive_verified(
-		&self,
-		container: &str,
-		dir: &str,
-		entry: &str,
-		tar_bytes: Vec<u8>,
-		uploaded_kind: Option<SentKind>,
-	) -> Result<()> {
-		let path = format!(
-			"{API_PREFIX}/containers/{}/archive?path={}",
-			urlencoded(container),
-			urlencoded(dir),
-		);
-		let verify_path = (!entry.is_empty()).then(|| {
-			format!(
-				"{API_PREFIX}/containers/{}/archive?path={}",
-				urlencoded(container),
-				urlencoded(&join_archive_path(dir, entry)),
-			)
-		});
-		// What the destination entry must look like once the archive is applied.
-		//
-		// This used to read the entry's mtime *before* the PUT and check that it
-		// moved afterwards. That cannot work: Podman 6 reports the mtime to
-		// whole seconds, so two copies inside one second are indistinguishable
-		// (measured at three failures in six back-to-back copies, #1270), and
-		// copying an unchanged file twice is undetectable at any resolution,
-		// because the extracted file takes the source's own mtime.
-		//
-		// The question the confirmation should ask is not "did the entry
-		// change" but "does the entry now match what was uploaded". The shape
-		// of the match is the same `SentKind` that the tree path uses, so a
-		// regular file is checked against a regular file of the same size, a
-		// symlink source is checked against a symlink at the destination, and
-		// anything else (a directory, a FIFO, an unstatable source) leaves the
-		// expectation empty and a later IncompleteMessage asks about every
-		// entry of the archive instead.
-		let expected = verify_path.as_ref().and(uploaded_kind);
-
-		// `application/gzip` is the honest label for the gzipped tar; Podman
-		// sniffs the magic bytes and forgives either. The clone shares the
-		// buffer; the archive is kept because it is the record of what was sent.
-		let tar_bytes = Bytes::from(tar_bytes);
-		let Err(e) = self
-			.client
-			.put_bytes_ok(&path, tar_bytes.clone(), "application/gzip")
+		self.put_archive_verified(&container_name, &extract_dir, &entry, packed, uploaded_kind)
 			.await
-		else {
-			return Ok(());
-		};
-		// Only the Podman-6 apply-then-close is recoverable; any other error is a
-		// genuine failure and propagates unchanged.
-		if !e.is_incomplete_message() {
-			return Err(ComposeError::Podman(e));
-		}
-		let landed = match (&verify_path, &expected) {
-			(Some(p), Some(want)) => {
-				// A symbolic link's destination is read through the 404-with-stat
-				// shape, the same dispatch `tree_landed` uses: a dangling link
-				// on Podman 5.7.0 returns 404 with the link stat in the header,
-				// and `head_path_stat` would throw that stat away. A regular
-				// file or directory that answers 404 (the link was cut and the
-				// upload failed) returns `None` either way, so the dispatch
-				// does not matter for them; links are the only kind that
-				// benefit.
-				let stat = match want {
-					SentKind::Link => self.client.head_path_stat_even_if_missing(p).await,
-					_ => self.client.head_path_stat(p).await,
-				};
-				match stat {
-					Ok(post) => verify::entry_landed(*want, post.as_ref()),
-					Err(stat_err) => {
-						tracing::debug!(
-							"cp: could not re-verify {p} after an incomplete PUT: {stat_err}"
-						);
-						false
-					}
-				}
-			}
-			_ => self.tree_landed(container, dir, tar_bytes).await,
-		};
-		if landed {
-			return Ok(());
-		}
-		// The upload finished but its result could not be confirmed. Say so, with
-		// an actionable hint, instead of surfacing the raw transport error.
-		Err(ComposeError::Copy(format!(
-			"the upload to {dir} could not be confirmed: the container runtime closed the \
-			 connection without a response and the destination did not change. The copy may \
-			 or may not have landed; check {dir} in the container."
-		)))
 	}
+}
+
+/// Pick the row name for the live board from the `cp` endpoint pair.
+///
+/// Always the destination side, since the destination is the side the
+/// operator was thinking about when they typed the command: the local
+/// path for container->host (`svc:/path -> /host/dst`), the service ref
+/// for host->container (`/host/src -> svc:/path`). One branch decides,
+/// because the endpoint parser has already rejected `SERVICE:PATH` on
+/// both sides and `-` on either side.
+fn cp_row_name(_src: &str, dst: &str) -> String {
+	dst.to_string()
 }
 
 /// What the destination entry must look like for a single-entry upload to have
@@ -541,9 +480,11 @@ impl Engine {
 /// file's actual length on disk. The kind is part of the comparison (an empty
 /// file over an unchanged zero-length FIFO would otherwise pass on size
 /// alone). A symlink at the source without `-L/--follow-link` expects
-/// `SentKind::Link`, because the archive stores the link itself, not its
-/// target's contents, and a destination that reports a regular file at the
-/// target's size would still be a failure. A directory source returns `None`
+/// `SentKind::Link(target)`, where `target` is what the tar will carry as
+/// the link name (read out of the host symlink with `fs::read_link`). The
+/// destination is asked about that target after Podman normalises it the same
+/// way it normalises `linkTarget`, and the byte length of the target is
+/// checked against `stat.size` independently. A directory source returns `None`
 /// because its own size says nothing about its children; that case is
 /// confirmed entry by entry (`verify::tree_landed`), never on this. Anything
 /// else stays unverifiable and fails closed rather than confirming on the
@@ -561,7 +502,15 @@ pub(super) fn uploaded_entry_kind(src: &std::path::Path, follow_link: bool) -> O
 	};
 	let kind = meta.file_type();
 	if kind.is_symlink() && !follow_link {
-		Some(SentKind::Link)
+		// `read_link` returns the link target as the host filesystem stores
+		// it; that is the same bytes `pack_path` will put in the tar's
+		// linkname field, so it is the value the destination's stat will
+		// be asked to match. A path that is not valid UTF-8 makes the
+		// entry unverifiable on the host side (we cannot normalise what
+		// we cannot name), and the archive PUT would refuse it anyway.
+		let target = std::fs::read_link(src).ok()?;
+		let target = target.to_str().map(str::to_string)?;
+		Some(SentKind::Link(target))
 	} else if kind.is_file() {
 		Some(SentKind::File(meta.len()))
 	} else {
@@ -672,3 +621,7 @@ mod destination_tests;
 #[cfg(test)]
 #[path = "copy/destination_trusted_tests.rs"]
 mod destination_trusted_tests;
+
+#[cfg(all(test, unix))]
+#[path = "copy/cp_progress_tests.rs"]
+mod cp_progress_tests;

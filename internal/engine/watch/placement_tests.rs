@@ -1,5 +1,6 @@
 use super::{
-	is_dispatch_event, mark_dir_ensured, mkdir_p_argv, plan_sync_placement, validate_sync_target,
+	is_dispatch_event, is_remove_event, join_container_path, mark_dir_ensured, mkdir_p_argv,
+	plan_remove_placement, plan_sync_placement, validate_sync_target,
 };
 use crate::compose::types::{WatchAction, WatchRule};
 use std::collections::HashSet;
@@ -124,4 +125,69 @@ fn placement_single_file_rule_target_at_root() {
 	let p = plan_sync_placement(&src, &src, "/app.txt");
 	assert_eq!(p.entry_name, "app.txt");
 	assert_eq!(p.dest_dir, "/");
+}
+
+#[test]
+fn remove_event_matches_remove_kind_only() {
+	use notify::event::{CreateKind, ModifyKind, RemoveKind};
+	use notify::EventKind;
+	assert!(is_remove_event(&EventKind::Remove(RemoveKind::File)));
+	assert!(is_remove_event(&EventKind::Remove(RemoveKind::Folder)));
+	assert!(is_remove_event(&EventKind::Remove(RemoveKind::Any)));
+	assert!(!is_remove_event(&EventKind::Create(CreateKind::File)));
+	assert!(!is_remove_event(&EventKind::Modify(ModifyKind::Any)));
+	assert!(!is_remove_event(&EventKind::Other));
+	assert!(!is_remove_event(&EventKind::Any));
+}
+
+#[test]
+fn remove_placement_directory_rule_preserves_subpath() {
+	// A removal under a directory rule must keep the same subpath the
+	// corresponding add/modify produced, so the DELETE inside the container
+	// targets exactly what an upload would have written.
+	let dir = tempdir().unwrap();
+	fs::create_dir(dir.path().join("sub")).unwrap();
+	let removed = dir.path().join("sub/b.txt");
+	fs::write(&removed, b"b").unwrap();
+
+	let p = plan_remove_placement(dir.path(), &removed, "/app");
+	assert_eq!(p.entry_name, "sub/b.txt");
+	assert_eq!(p.dest_dir, "/app");
+}
+
+#[test]
+fn remove_placement_single_file_rule_honours_renaming_target() {
+	// A single-file rule's target renames the file: the deletion must
+	// still target the renamed name, not the source basename, so a removal
+	// removes the same on-disk artifact the upload created.
+	let dir = tempdir().unwrap();
+	let src = dir.path().join("settings.yml");
+	fs::write(&src, b"k: v").unwrap();
+
+	let p = plan_remove_placement(&src, &src, "/app/config.yml");
+	assert_eq!(p.entry_name, "config.yml");
+	assert_eq!(p.dest_dir, "/app");
+}
+
+#[test]
+fn join_container_path_combines_dir_and_entry() {
+	// The full container path the DELETE should hit is `dest_dir/entry_name`.
+	// The root dir case must not double the separator (`/app`, not `//app`).
+	let placement = super::SyncPlacement {
+		entry_name: "config.yml".into(),
+		dest_dir: "/app".into(),
+	};
+	assert_eq!(join_container_path(&placement), "/app/config.yml");
+	let root = super::SyncPlacement {
+		entry_name: "config.yml".into(),
+		dest_dir: "/".into(),
+	};
+	assert_eq!(join_container_path(&root), "/config.yml");
+	// An empty entry yields just the directory (the target-dir guard above
+	// is what blocks this; the join itself stays well-defined).
+	let empty = super::SyncPlacement {
+		entry_name: String::new(),
+		dest_dir: "/app".into(),
+	};
+	assert_eq!(join_container_path(&empty), "/app");
 }

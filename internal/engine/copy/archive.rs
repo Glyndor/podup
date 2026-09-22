@@ -1,86 +1,18 @@
-//! Tar packing and extraction for `cp`.
+//! Tar extraction for `cp` and the destination-routing helpers.
 //!
-//! The pure, container-free half of `cp`: it moves bytes between the host
-//! filesystem and a tar stream and carries the security hardening: the
-//! zip-slip guard, the extracted-mode sanitization and the docker/podman
-//! destination semantics. Kept synchronous so the guards can be unit-tested
-//! without a container.
+//! The pure, container-free half of `cp`'s container→host leg: it moves bytes
+//! between a tar stream and the host filesystem and carries the security
+//! hardening (the zip-slip guard, the extracted-mode sanitization, and the
+//! docker/podman destination semantics). Kept synchronous so the guards can
+//! be unit-tested without a container.
+//!
+//! The packing leg lives in [`super::archive_pack`]; this module only owns
+//! the read-back and extraction paths.
 
 use std::path::Path;
 
-use flate2::write::GzEncoder;
-use flate2::Compression;
-
 use super::destination::{destination_metadata, destination_refusal};
 use crate::error::{ComposeError, Result};
-
-pub(super) fn pack_path(
-	src: &Path,
-	follow_link: bool,
-	name_override: Option<&str>,
-	contents: bool,
-) -> Result<Vec<u8>> {
-	let encoder = GzEncoder::new(Vec::new(), Compression::default());
-	let mut tar = crate::engine::tar_stream::builder(encoder);
-	// `-L/--follow-link`: archive the symlink target's contents instead of the
-	// link itself.
-	tar.follow_symlinks(follow_link);
-
-	if contents {
-		// `cp host/. svc:/X`: copy the directory's *contents* at the top of the
-		// archive instead of under the directory's name, matching
-		// `docker cp` / `podman cp`. A non-directory source with the `/.`
-		// marker is an error there too, so the packer refuses rather than
-		// falling back to the file branch below.
-		if !src.is_dir() {
-			return Err(ComposeError::Copy(format!(
-				"cp: not a directory: {}",
-				src.display()
-			)));
-		}
-		// Walk every descendant of `src` and append it at its relative path
-		// from `src`, so nothing is wrapped under the directory's name.
-		// `name_override` is ignored here: the `/.` marker removes the wrapper
-		// entirely (the caller routes the PUT so the final location IS the
-		// destination directory).
-		for abs in crate::engine::walk::walk_dir(src).map_err(ComposeError::Io)? {
-			let rel = abs.strip_prefix(src).map_err(|_| {
-				ComposeError::Build(format!(
-					"cp: walk produced path outside source: {}",
-					abs.display()
-				))
-			})?;
-			// Classify without following symlinks so a symlink-to-dir is
-			// stored as a link, not dereferenced. Matches the watch sync.
-			let is_dir = abs.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
-			if is_dir {
-				tar.append_dir(rel, &abs)
-					.map_err(|e| ComposeError::Copy(format!("cp: {e}")))?;
-			} else {
-				tar.append_path_with_name(&abs, rel)
-					.map_err(|e| ComposeError::Copy(format!("cp: {e}")))?;
-			}
-		}
-	} else if src.is_dir() {
-		// `name_override` renames the copied tree (rename-on-copy); otherwise it
-		// keeps the source's own basename and lands inside the destination dir.
-		let default = src.file_name().unwrap_or(std::ffi::OsStr::new("."));
-		let name: &std::ffi::OsStr = name_override.map(std::ffi::OsStr::new).unwrap_or(default);
-		tar.append_dir_all(name, src)
-			.map_err(|e| ComposeError::Copy(format!("cp: {e}")))?;
-	} else {
-		let default = src.file_name().unwrap_or(std::ffi::OsStr::new("file"));
-		let name: &std::ffi::OsStr = name_override.map(std::ffi::OsStr::new).unwrap_or(default);
-		tar.append_path_with_name(src, name)
-			.map_err(|e| ComposeError::Copy(format!("cp: {e}")))?;
-	}
-
-	let gz = tar
-		.into_inner()
-		.map_err(|e| ComposeError::Copy(format!("cp: {e}")))?;
-	gz.finish()
-		.map_err(|e| ComposeError::Copy(format!("cp: {e}")))
-}
 
 /// Route a container archive to the host destination.
 ///

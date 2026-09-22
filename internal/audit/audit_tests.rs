@@ -101,15 +101,22 @@ services:
 }
 
 // ---------------------------------------------------------------------------
-// secret_in_environment: bare keys and ${VAR} placeholders must NOT fire.
+// secret_in_environment: bare keys stay silent, ${VAR} placeholders fire.
+//
+// A bare key (no `=`) inherits from the host; the operator has not authored
+// a value in compose, so the check stays silent. A `${VAR}` placeholder
+// resolves at parse time to the value of `VAR` in the loader's environment
+// or to an empty string when unset, and either way ends up as the
+// container's environment variable. The risk is identical to a literal
+// secret, so the verdict stops depending on whether the caller happened
+// to export `VAR`.
 // ---------------------------------------------------------------------------
 
 #[test]
-fn audit_secret_in_environment_ignores_bare_keys_and_placeholders() {
-	// Three environment entries that *look* like secrets by name but carry
-	// no value at all. The check deliberately leaves these alone, a bare
-	// key inherits from the host and a ${VAR} placeholder is still
-	// unresolved, neither of which is a published secret.
+fn audit_secret_in_environment_ignores_bare_keys_but_flags_placeholders() {
+	// List form: a bare key stays silent; a `${VAR}` placeholder fires,
+	// because the risk is the secret ending up in the container's
+	// environment, and that happens whether `VAR` is exported or not.
 	let yaml = r#"
 services:
   app:
@@ -121,14 +128,24 @@ services:
 	let file = parse_str(yaml).expect("parses");
 	let report = audit::audit_file(&file);
 	assert!(
-		!has_check(&report, "app", "secret_in_environment"),
-		"bare / placeholder secrets must not fire: {:#?}",
+		!report.findings.iter().any(|f| f.service == "app"
+			&& f.check == "secret_in_environment"
+			&& f.reason.contains("DB_PASSWORD")),
+		"bare key DB_PASSWORD must stay silent: {:#?}",
 		report.findings
 	);
-	// And the same shape via the map form, so a regression in the List arm
-	// doesn't pass this test silently. `null` is what compose / podman read
-	// as "inherit from the host", the parser turns it into a `None` value
-	// in the `to_map()` view.
+	assert!(
+		report.findings.iter().any(|f| f.service == "app"
+			&& f.check == "secret_in_environment"
+			&& f.reason.contains("API_TOKEN")),
+		"placeholder API_TOKEN=${{TOKEN_FROM_ENV}} must fire regardless of VAR being \
+		 exported: {:#?}",
+		report.findings
+	);
+
+	// Map form: `null` is what compose / podman read as "inherit from the
+	// host"; the parser turns it into a `None` value in the `to_map()`
+	// view, so it stays silent. The `${VAR}` form still fires.
 	let yaml_map = r#"
 services:
   app:
@@ -140,8 +157,18 @@ services:
 	let file = parse_str(yaml_map).expect("parses");
 	let report = audit::audit_file(&file);
 	assert!(
-		!has_check(&report, "app", "secret_in_environment"),
-		"map-form bare / placeholder secrets must not fire: {:#?}",
+		!report.findings.iter().any(|f| f.service == "app"
+			&& f.check == "secret_in_environment"
+			&& f.reason.contains("DB_PASSWORD")),
+		"map-form bare key DB_PASSWORD must stay silent: {:#?}",
+		report.findings
+	);
+	assert!(
+		report.findings.iter().any(|f| f.service == "app"
+			&& f.check == "secret_in_environment"
+			&& f.reason.contains("API_TOKEN")),
+		"map-form placeholder API_TOKEN=${{TOKEN_FROM_ENV}} must fire regardless of VAR \
+		 being exported: {:#?}",
 		report.findings
 	);
 }

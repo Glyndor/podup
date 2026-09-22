@@ -21,6 +21,24 @@ pub(super) struct SyncPlacement {
 	pub(super) dest_dir: String,
 }
 
+/// Resolve the container-side path a removed host entry should be deleted
+/// from, mirroring [`plan_sync_placement`] for a `Remove` event.
+///
+/// A `sync` rule's `target` is, in the container, where the changed entries
+/// live. A removal on the host has to be reflected by a `DELETE` against the
+/// matching path inside the container, so the archive `entry_name` and `dir`
+/// computed for the corresponding add/modify are the same values needed here.
+/// The single-file rule re-uses its rename mapping; the directory rule
+/// preserves the relative subpath.
+///
+/// The caller is responsible for refusing removals that target the rule's
+/// container directory itself (rather than an entry inside it): a removal of
+/// the target directory is a different operation, never an entry delete, and
+/// letting it through would `rm -rf` the container's destination.
+pub(super) fn plan_remove_placement(root: &Path, removed: &Path, target: &str) -> SyncPlacement {
+	plan_sync_placement(root, removed, target)
+}
+
 /// Map a changed host path to its container archive placement, matching
 /// docker-compose `watch` semantics.
 ///
@@ -91,6 +109,13 @@ pub(super) fn is_dispatch_event(kind: &notify::EventKind) -> bool {
 	)
 }
 
+/// True when the notify event is a removal. The dispatch loop funnels a `sync`
+/// action to either an upload or a delete based on this; a `rebuild`/`restart`
+/// rule does not consult it.
+pub(super) fn is_remove_event(kind: &notify::EventKind) -> bool {
+	matches!(kind, notify::EventKind::Remove(_))
+}
+
 /// Reject a watch rule whose action needs a `target` but has none. docker
 /// compose treats a sync rule without a target as a configuration error rather
 /// than silently performing no sync.
@@ -115,6 +140,34 @@ pub(super) fn mkdir_p_argv(dest_dir: &str) -> Vec<String> {
 		"--".into(),
 		dest_dir.to_string(),
 	]
+}
+
+/// The full container-side path a `SyncPlacement` resolves to, suitable for
+/// `DELETE` on the libpod archive endpoint.
+///
+/// A single-file sync writes one entry (`entry_name`) into one directory
+/// (`dest_dir`); the on-disk artifact is `dest_dir/entry_name`. The directory
+/// rule's `dest_dir` may already be the final path when `entry_name` is empty
+/// (e.g. a removal of the rule root itself), which is precisely the case the
+/// delete guard upstream refuses; the joined form mirrors the same shape so
+/// the guard and the path agree.
+///
+/// Pure so the join is unit-testable without a container.
+pub(super) fn join_container_path(placement: &SyncPlacement) -> String {
+	join_archive_path(&placement.dest_dir, &placement.entry_name)
+}
+
+fn join_archive_path(dir: &str, entry: &str) -> String {
+	if entry.is_empty() {
+		return dir.to_string();
+	}
+	if dir == "/" {
+		format!("/{entry}")
+	} else if dir.ends_with('/') {
+		format!("{dir}{entry}")
+	} else {
+		format!("{dir}/{entry}")
+	}
 }
 
 /// Record that `(container, dest)` has had its directory ensured, returning

@@ -186,10 +186,18 @@ jobs:
             # This is not cosmetic. With logs unavailable the suite's five logs
             # tests passed without fetching a byte: `logs` swallowed the 500 and
             # returned success, so their `unwrap()` succeeded on nothing.
+            #
+            # The events backend reads the same journal through the same binding,
+            # and was left on journald: `niche::engine_events_stream_connects`
+            # failed on the Podman 5 leg with `Api { status: 500, message:
+            # "unable to open a handle to the library" }`, the logs error word for
+            # word. `events_logger = "file"` takes the journal out of that path too.
             - path: /etc/containers/containers.conf
               content: |
                 [containers]
                 log_driver = "k8s-file"
+                [engine]
+                events_logger = "file"
             - path: /usr/local/bin/run-suite.sh
               permissions: '0755'
               content: |
@@ -269,6 +277,37 @@ jobs:
                   grep -qE "$DROPPED" /tmp/cargo.log || break
                   echo "=== nested-virt transient on attempt $attempt; retrying suite ==="
                 done
+                # Leak scan, run in a separate cargo process after engine_integration
+                # has exited. A second `cargo test --test` invocation cannot overlap
+                # the first, so the scanner genuinely runs after the suite. A red
+                # suite still scans: chaining with && would skip the scan exactly
+                # when we most want to see what was left on the host.
+                #
+                # The PID comes from target/podup-leak-scan-pid, which
+                # engine_integration writes on the first call to proj(). When
+                # the suite retries, the file holds the last attempt's PID, so
+                # only the last attempt is scanned.
+                #
+                # A missing file is reported as `rc=nopid`, not scanned as
+                # nothing: the scan test exits 0 when it is given no PID, and a
+                # suite that died before writing the file would otherwise pass
+                # this gate having scanned nothing at all.
+                #
+                # Same `--features` as the suite above, so cargo reuses the
+                # build instead of recompiling the crate inside the VM.
+                if [ -s target/podup-leak-scan-pid ]; then
+                  PODUP_LEAK_SCAN_PID="$(cat target/podup-leak-scan-pid)" RUST_LOG=podup=warn \
+                    cargo test --features test-helpers --test integration_leak_scan > /tmp/leak-scan.log 2>&1
+                  SCAN_RC=$?
+                  if [ "$SCAN_RC" -ne 0 ]; then
+                    echo "=== leak scan failures ==="
+                    tail -60 /tmp/leak-scan.log
+                    sed -n '/^failures:$/,/^test result:/p' /tmp/leak-scan.log | head -120
+                  fi
+                else
+                  SCAN_RC=nopid
+                fi
+                echo "PODUP_LEAK_SCAN_BEGIN rc=$SCAN_RC PODUP_LEAK_SCAN_END"
                 tail -60 /tmp/cargo.log
                 echo "=== failures section (full) ==="
                 sed -n '/^failures:$/,/^test result:/p' /tmp/cargo.log | head -120
@@ -539,6 +578,21 @@ jobs:
           # evidence and for how thin it is.
           BASELINE="$(cat "$GITHUB_WORKSPACE/.github/podman-baseline-tests")"
           [ "$PASS" -ge "$BASELINE" ] || { echo "::error::core suite degraded on Podman $VER ($PASS passed, baseline >= $BASELINE): a real regression, or fewer tests ran"; exit 1; }
+          # Leak scan, run by the VM in a separate cargo process after
+          # engine_integration exited. The marker is the only signal that the
+          # scan actually ran; a missing marker means the script never reached
+          # the scan invocation, which is a gate failure on its own (cf. the
+          # PODUP_SUMMARY check above).
+          SCAN_RC=$(perl -0777 -ne 'while (/PODUP_LEAK_SCAN_BEGIN\s+rc=(\w+)\s+PODUP_LEAK_SCAN_END/g) { print "$1\n" }' "$L" | tail -1)
+          [ -n "$SCAN_RC" ] || { echo "::error::no PODUP_LEAK_SCAN marker from VM on Podman $VER; the leak scan did not report"; exit 1; }
+          if [ "$SCAN_RC" = "nopid" ]; then
+            echo "::error::Podman $VER: engine_integration never wrote target/podup-leak-scan-pid, so the leak scan had no run to look for and scanned nothing"
+            exit 1
+          fi
+          if [ "$SCAN_RC" != "0" ]; then
+            echo "::error::Podman $VER: the leak scan reported rc=$SCAN_RC; resources carrying the per-run prefix remain on the host. See the leak-scan log section in the run page."
+            exit 1
+          fi
           if [ "$FAIL" -gt "$FLAKY" ]; then
             echo "::warning::Podman $VER: $FAIL failures, $FLAKY match a connection-drop signature; the rest are the known nested-virt-unstable subset (see the failures section). Not gated until that flakiness is reduced."
           fi

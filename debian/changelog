@@ -1,3 +1,38 @@
+podup (5.9.6) unstable; urgency=medium
+
+  * `cp` from the host into a container streams the archive instead of
+    building it in memory. A 220 MB copy used to hold 437 MB of resident
+    memory, and a copy larger than free memory failed; it now stays near
+    10 MB whatever the size. The archive is no longer gzipped on its way
+    to a local socket, and the progress row advances with the bytes sent.
+  * `cp` confirms a copied symlink by its target, not only by being a
+    symlink, and when a copy cannot be confirmed the error names the entry
+    and what the runtime answered. `cp -L` follows links as before.
+  * Every image podup builds carries `podup.project` and `podup.service`,
+    including intermediate stage images, so
+    `podman image prune --filter label=podup.project=<project>` reclaims
+    one project's build output and nothing else. A consequence visible in
+    build output: buildah reports one more step, the LABEL it adds.
+  * `up` rejects a service with an invalid field before creating anything,
+    so a rejected `up` no longer leaves the project network behind.
+  * A project no longer adopts or removes a network another project owns
+    because the two spell the same name.
+  * `audit` gains two checks, `port_published_on_all_interfaces` and
+    `sensitive_bind_mount` (including the rootless Podman socket), and
+    `audit --list-checks` prints every check with the identifier its
+    findings carry. A `_FILE` variable pointing at a secret file is no
+    longer flagged as a secret in the environment, and a secret is flagged
+    whether its value is written in the compose file or interpolated from
+    the shell.
+  * `ps` shows the SERVICE name the other commands accept, and
+    `ps --services` refuses `--format` and `--quiet` instead of ignoring
+    them. `--no-warn` also silences the port warning, and read-only
+    commands no longer print it.
+  * `watch` propagates a file deleted on the host into the container.
+  * An unset variable is warned about once, not once per parse pass.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Tue, 22 Sep 2026 04:00:00 -0500
+
 podup (5.9.5) unstable; urgency=medium
 
   * `cp` of a source whose last component is `.` now copies the directory's

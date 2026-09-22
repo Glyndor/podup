@@ -31,6 +31,25 @@ pub(crate) struct ParsedDevice {
 	pub cgroup_rule: Option<LinuxDeviceCgroup>,
 }
 
+/// Pure split of a compose `devices:` entry (`host[:container[:access]]`) into
+/// its three parts. No filesystem, no allocation: just the input string sliced
+/// on `:`. The first part is the host path and is always present (a string
+/// with no separator has it whole). The second and third are `None` when
+/// absent; a present-but-empty third part (`"host::"`) is also `None`,
+/// matching the engine's "absent permissions" semantics.
+///
+/// [`parse_device`] consumes the host and the access; the validator consumes
+/// the access alone. Both call this function so there is one split, two
+/// callers, and a future change to the field format updates both by editing
+/// one body.
+pub(crate) fn device_spec_parts(s: &str) -> (&str, Option<&str>, Option<&str>) {
+	let mut parts = s.splitn(3, ':');
+	let host = parts.next().unwrap_or("");
+	let cont = parts.next();
+	let access = parts.next().filter(|a| !a.is_empty());
+	(host, cont, access)
+}
+
 /// Parse a compose `devices:` entry (`host:container:permissions`) into a
 /// [`ParsedDevice`]. The container path defaults to the host path when the
 /// `:container` segment is absent; major/minor/type are derived by `stat`ing the
@@ -39,18 +58,9 @@ pub(crate) struct ParsedDevice {
 /// restriction must ride alongside as a cgroup rule for the live up path to
 /// honor it consistently with the quadlet backend and docker-compose.
 pub(crate) fn parse_device(s: &str) -> ParsedDevice {
-	let parts: Vec<&str> = s.splitn(3, ':').collect();
-	let host = parts.first().copied().unwrap_or("").to_string();
-	let cont = parts
-		.get(1)
-		.copied()
-		.map(|c| c.to_string())
-		.unwrap_or_else(|| host.clone());
-	let access = parts
-		.get(2)
-		.copied()
-		.filter(|p| !p.is_empty())
-		.map(str::to_string);
+	let (host, cont, access) = device_spec_parts(s);
+	let host = host.to_string();
+	let cont = cont.map(str::to_string).unwrap_or_else(|| host.clone());
 
 	let (major, minor, device_type) = device_major_minor(&host);
 
@@ -59,7 +69,7 @@ pub(crate) fn parse_device(s: &str) -> ParsedDevice {
 		device_type: Some(device_type.clone()),
 		major: Some(major),
 		minor: Some(minor),
-		access: Some(access),
+		access: Some(access.to_string()),
 	});
 
 	ParsedDevice {

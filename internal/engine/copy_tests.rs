@@ -2,7 +2,7 @@ use super::verify::entry_landed;
 use super::{
 	cp_destination_kind, join_archive_path, parse_endpoint, uploaded_entry_kind, CpDestinationKind,
 };
-use crate::engine::copy::verify::SentKind;
+use crate::engine::copy::verify::{LinkCheck, SentKind};
 use crate::libpod::client::PathStat;
 
 #[test]
@@ -23,12 +23,21 @@ fn entry_landed_asks_whether_the_entry_matches_what_was_uploaded() {
 		..PathStat::default()
 	};
 	// The entry is there and is the size that was sent -> landed.
-	assert!(entry_landed(want, Some(&stat(42))));
+	assert_eq!(
+		entry_landed(want.clone(), "/tmp/f.txt", Some(&stat(42))),
+		LinkCheck::Confirmed,
+	);
 	// A failed PUT leaves the old entry, which is a different size.
-	assert!(!entry_landed(want, Some(&stat(41))));
-	assert!(!entry_landed(want, Some(&stat(0))));
+	assert_eq!(
+		entry_landed(want.clone(), "/tmp/f.txt", Some(&stat(41))),
+		LinkCheck::Refused,
+	);
+	assert_eq!(
+		entry_landed(want.clone(), "/tmp/f.txt", Some(&stat(0))),
+		LinkCheck::Refused,
+	);
 	// The entry vanished, or never appeared.
-	assert!(!entry_landed(want, None));
+	assert_eq!(entry_landed(want, "/tmp/f.txt", None), LinkCheck::Absent,);
 }
 
 /// The case the previous signal could not express, and the reason it
@@ -46,13 +55,17 @@ fn copying_an_unchanged_file_twice_is_confirmed() {
 		size: 42,
 		..PathStat::default()
 	};
-	assert!(entry_landed(want, Some(&already_there)));
+	assert_eq!(
+		entry_landed(want, "/tmp/f.txt", Some(&already_there)),
+		LinkCheck::Confirmed,
+	);
 }
 
 /// The shape that goes into the comparison is the source file's real length,
-/// and a directory has none. The same function returns `SentKind::Link` for
-/// a host symlink source without `-L/--follow-link`, so the destination is
-/// checked as a link rather than against the link target's size.
+/// and a directory has none. The same function returns
+/// `SentKind::Link(target)` for a host symlink source without
+/// `-L/--follow-link`, so the destination is checked as a link rather than
+/// against the link target's size.
 ///
 /// A mutation replacing the regular-file length with a constant survived
 /// every other test here, because they all build the expectation by hand;
@@ -90,7 +103,11 @@ fn a_symlink_source_without_follow_expects_a_link() {
 	let dir = tempfile::tempdir().unwrap();
 	let link = dir.path().join("dangling");
 	std::os::unix::fs::symlink("nowhere", &link).unwrap();
-	assert_eq!(uploaded_entry_kind(&link, false), Some(SentKind::Link));
+	assert_eq!(
+		uploaded_entry_kind(&link, false),
+		Some(SentKind::Link("nowhere".to_string())),
+		"the host symlink target becomes the link target the tar carries",
+	);
 
 	// Following links makes the packer store the target's contents instead,
 	// and the expectation becomes the target's shape.
@@ -123,9 +140,15 @@ fn two_copies_in_the_same_second_are_told_apart_by_size() {
 	};
 	assert_eq!(before.mtime, after.mtime, "the fixture must share an mtime");
 	// What was uploaded is the 15-byte version.
-	assert!(entry_landed(SentKind::File(15), Some(&after)));
+	assert_eq!(
+		entry_landed(SentKind::File(15), "/tmp/f.txt", Some(&after)),
+		LinkCheck::Confirmed,
+	);
 	// And the pre-PUT entry would not have satisfied it.
-	assert!(!entry_landed(SentKind::File(15), Some(&before)));
+	assert_eq!(
+		entry_landed(SentKind::File(15), "/tmp/f.txt", Some(&before)),
+		LinkCheck::Refused,
+	);
 }
 
 #[test]

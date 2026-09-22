@@ -182,11 +182,27 @@ fn parse_unterminated_modifier_is_error() {
 fn resolve_none_uses_value_or_empty() {
 	let v = vars(&[("A", "1")]);
 	assert_eq!(
-		resolve_modifier("A".into(), Modifier::None, &v, 0, &mut 0usize).unwrap(),
+		resolve_modifier(
+			"A".into(),
+			Modifier::None,
+			&v,
+			0,
+			&mut 0usize,
+			&mut HashSet::new()
+		)
+		.unwrap(),
 		"1"
 	);
 	assert_eq!(
-		resolve_modifier("MISSING".into(), Modifier::None, &v, 0, &mut 0usize).unwrap(),
+		resolve_modifier(
+			"MISSING".into(),
+			Modifier::None,
+			&v,
+			0,
+			&mut 0usize,
+			&mut HashSet::new()
+		)
+		.unwrap(),
 		""
 	);
 }
@@ -196,15 +212,23 @@ fn resolve_default_if_unset_or_empty() {
 	let v = vars(&[("EMPTY", ""), ("SET", "x")]);
 	let m = || Modifier::DefaultIfUnsetOrEmpty("def".into());
 	assert_eq!(
-		resolve_modifier("EMPTY".into(), m(), &v, 0, &mut 0usize).unwrap(),
+		resolve_modifier("EMPTY".into(), m(), &v, 0, &mut 0usize, &mut HashSet::new()).unwrap(),
 		"def"
 	);
 	assert_eq!(
-		resolve_modifier("MISSING".into(), m(), &v, 0, &mut 0usize).unwrap(),
+		resolve_modifier(
+			"MISSING".into(),
+			m(),
+			&v,
+			0,
+			&mut 0usize,
+			&mut HashSet::new()
+		)
+		.unwrap(),
 		"def"
 	);
 	assert_eq!(
-		resolve_modifier("SET".into(), m(), &v, 0, &mut 0usize).unwrap(),
+		resolve_modifier("SET".into(), m(), &v, 0, &mut 0usize, &mut HashSet::new()).unwrap(),
 		"x"
 	);
 }
@@ -218,7 +242,8 @@ fn resolve_default_if_unset_keeps_empty_value() {
 			Modifier::DefaultIfUnset("def".into()),
 			&v,
 			0,
-			&mut 0usize
+			&mut 0usize,
+			&mut HashSet::new()
 		)
 		.unwrap(),
 		""
@@ -229,7 +254,8 @@ fn resolve_default_if_unset_keeps_empty_value() {
 			Modifier::DefaultIfUnset("def".into()),
 			&v,
 			0,
-			&mut 0usize
+			&mut 0usize,
+			&mut HashSet::new()
 		)
 		.unwrap(),
 		"def"
@@ -245,7 +271,8 @@ fn resolve_alt_forms() {
 			Modifier::AltIfSetAndNonEmpty("a".into()),
 			&v,
 			0,
-			&mut 0usize
+			&mut 0usize,
+			&mut HashSet::new()
 		)
 		.unwrap(),
 		"a"
@@ -256,7 +283,8 @@ fn resolve_alt_forms() {
 			Modifier::AltIfSetAndNonEmpty("a".into()),
 			&v,
 			0,
-			&mut 0usize
+			&mut 0usize,
+			&mut HashSet::new()
 		)
 		.unwrap(),
 		""
@@ -267,7 +295,8 @@ fn resolve_alt_forms() {
 			Modifier::AltIfSet("a".into()),
 			&v,
 			0,
-			&mut 0usize
+			&mut 0usize,
+			&mut HashSet::new()
 		)
 		.unwrap(),
 		"a"
@@ -278,7 +307,8 @@ fn resolve_alt_forms() {
 			Modifier::AltIfSet("a".into()),
 			&v,
 			0,
-			&mut 0usize
+			&mut 0usize,
+			&mut HashSet::new()
 		)
 		.unwrap(),
 		""
@@ -293,7 +323,8 @@ fn resolve_error_forms() {
 		Modifier::ErrorIfUnsetOrEmpty("e".into()),
 		&v,
 		0,
-		&mut 0usize
+		&mut 0usize,
+		&mut HashSet::new()
 	)
 	.is_err());
 	assert_eq!(
@@ -302,7 +333,8 @@ fn resolve_error_forms() {
 			Modifier::ErrorIfUnsetOrEmpty("e".into()),
 			&v,
 			0,
-			&mut 0usize
+			&mut 0usize,
+			&mut HashSet::new()
 		)
 		.unwrap(),
 		"x"
@@ -312,7 +344,8 @@ fn resolve_error_forms() {
 		Modifier::ErrorIfUnset("e".into()),
 		&v,
 		0,
-		&mut 0usize
+		&mut 0usize,
+		&mut HashSet::new()
 	)
 	.is_err());
 	assert_eq!(
@@ -321,7 +354,8 @@ fn resolve_error_forms() {
 			Modifier::ErrorIfUnset("e".into()),
 			&v,
 			0,
-			&mut 0usize
+			&mut 0usize,
+			&mut HashSet::new()
 		)
 		.unwrap(),
 		""

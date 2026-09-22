@@ -6,15 +6,23 @@ use crate::compose::types::{ComposeFile, IpamConfig, Service, ServiceNetworkConf
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::container::{Namespace, PerNetworkOptions};
 use crate::libpod::types::network::{LeaseRange, NetworkCreateRequest, Subnet};
-use crate::libpod::API_PREFIX;
+use crate::libpod::{urlencoded, API_PREFIX};
 
 use super::Engine;
 
 impl Engine {
 	/// Pre-create every declared (non-external) network before containers start,
 	/// stamping each with the `podup.project` label and applying driver/IPAM/label
-	/// config. External networks are verified to already exist instead. An
-	/// already-exists conflict on re-`up` is treated as success (idempotent).
+	/// config. External networks are verified to already exist instead.
+	///
+	/// An already-exists conflict (libpod returns 409) is treated as success on
+	/// re-`up` *only* when the existing network is labelled for this project.
+	/// An existing network labelled for a different project, or carrying no
+	/// `podup.project` label at all, is refused: a project that wants to share
+	/// a network says so by declaring `external: true`. The project name is the
+	/// isolation boundary; silently joining another project's bridge would let
+	/// this project's containers reach services on the other project through
+	/// DNS, not just by IP.
 	pub(super) async fn create_networks(&self, file: &ComposeFile) -> Result<()> {
 		for (name, config) in &file.networks {
 			let network_name = config
@@ -78,18 +86,71 @@ impl Engine {
 				.await
 			{
 				Ok(_) => crate::ui::progress_line("Network", &network_name, "Created"),
-				// An existing network is not an error on re-`up`; accept any
-				// already-exists conflict (network-create returns 409, but share
-				// the same predicate as volume-create for consistency). The row
-				// still needs to close: without an explicit closing verb the
-				// live board leaves it spinning on `Creating` (#1347).
+				// An already-exists conflict on re-`up` is success only when
+				// the existing network is ours. Anything else is a project-
+				// boundary violation: refuse with the same error shape
+				// regardless of whether the existing network carries a
+				// foreign `podup.project` label or no label at all (the
+				// label is the only ownership evidence; "no one owns it"
+				// and "another stack already claimed it" are
+				// indistinguishable). The row still needs to close on the
+				// accepted path: without an explicit closing verb the live
+				// board leaves it spinning on `Creating` (#1347).
 				Err(ref e) if e.is_already_exists() => {
-					crate::ui::progress_line("Network", &network_name, "Exists");
+					match self.inspect_network_owner(&network_name).await? {
+						Some(owner) if owner == self.project => {
+							crate::ui::progress_line("Network", &network_name, "Exists");
+						}
+						Some(owner) => {
+							crate::ui::progress_line("Network", &network_name, "Failed");
+							return Err(ComposeError::Unsupported(format!(
+								"network '{network_name}' already exists and is labelled \
+								 podup.project={owner}; refusing to attach this project \
+								 ('{}') to it. The compose file must declare \
+								 'networks.{name}.external: true' to share the network.",
+								self.project
+							)));
+						}
+						None => {
+							crate::ui::progress_line("Network", &network_name, "Failed");
+							return Err(ComposeError::Unsupported(format!(
+								"network '{network_name}' already exists and carries no \
+								 podup.project label; refusing to attach this project \
+								 ('{}') to it without ownership evidence. The compose \
+								 file must declare 'networks.{name}.external: true' to \
+								 share an existing unlabelled network.",
+								self.project
+							)));
+						}
+					}
 				}
 				Err(e) => return Err(ComposeError::Podman(e)),
 			}
 		}
 		Ok(())
+	}
+
+	/// Read the `podup.project` label of the network named `name` on the host.
+	/// Returns `Ok(Some(project))` when the network exists and carries the
+	/// label, `Ok(None)` when the network either does not exist (libpod 404) or
+	/// exists but has no `podup.project` label; transport-level failures
+	/// propagate as `ComposeError::Podman`.
+	///
+	/// The label is the only ownership evidence on a podup-created network,
+	/// so this is what both `create_networks` (on a 409) and the file-driven
+	/// `down` path consult before reusing or removing an existing network.
+	/// Both refuse to act on a network whose label names a different project.
+	pub(super) async fn inspect_network_owner(&self, name: &str) -> Result<Option<String>> {
+		let path = format!("{API_PREFIX}/networks/{}/json", urlencoded(name));
+		match self.client.get_json::<serde_json::Value>(&path).await {
+			Ok(value) => Ok(value
+				.get("labels")
+				.and_then(|l| l.get("podup.project"))
+				.and_then(|v| v.as_str())
+				.map(str::to_string)),
+			Err(e) if e.is_status(404) => Ok(None),
+			Err(e) => Err(ComposeError::Podman(e)),
+		}
 	}
 }
 
@@ -375,5 +436,8 @@ fn lease_range_from_cidr(cidr: &str) -> Option<LeaseRange> {
 // Unit tests
 // ---------------------------------------------------------------------------
 
+#[cfg(test)]
+#[path = "ownership_tests.rs"]
+mod ownership_tests;
 #[cfg(test)]
 mod tests;

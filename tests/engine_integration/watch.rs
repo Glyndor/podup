@@ -273,6 +273,9 @@ async fn watch_rebuild_recreates_the_container_from_the_new_image() {
 	.unwrap();
 
 	let proj = proj("wrb");
+	// `down` leaves the rebuilt image behind; the guard removes it even when
+	// an assertion below panics.
+	let _image = TestImage::new(format!("{proj}-web"));
 	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
 	let file = parse_str(
 		"services:\n  web:\n    build: .\n    develop:\n      watch:\n        - path: app.txt\n          action: rebuild\n",

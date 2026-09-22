@@ -195,3 +195,24 @@ fn warns_only_for_ip_less_port_in_mixed_list() {
 		exposure_warnings[0]
 	);
 }
+
+/// Short form whose host side is empty (`":5432"`): no warning. The
+/// previous shape built the message from `parts.next().unwrap_or("")`
+/// and emitted `port  is published on every interface` with the port
+/// label missing, which named nothing the operator could act on. A
+/// malformed mapping is a parse concern, not an exposure one. Pinned
+/// here because nothing else asserts the empty-host branch, and the
+/// symptom of losing it is a warning that reads as a podup defect.
+#[test]
+fn does_not_warn_on_short_port_with_empty_host() {
+	let msgs =
+		diagnostics_for("services:\n  db:\n    image: postgres\n    ports:\n      - \":5432\"\n");
+	assert!(
+		!msgs.iter().any(|m| m.contains("every interface")),
+		"got: {msgs:?}"
+	);
+	assert!(
+		!msgs.iter().any(|m| m.contains("port  is")),
+		"an empty host label must never reach the message; got: {msgs:?}"
+	);
+}

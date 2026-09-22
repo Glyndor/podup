@@ -82,7 +82,7 @@ fn walk_collect(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
 /// every child, so the two cannot disagree about what ends up in the
 /// result. In practice the call site mirrors the existing
 /// `is_ignored` check: if the directory is in a pattern, the contents
-/// are too, with the negation edge case the brief calls out left for
+/// are too, with the negation edge case left for
 /// the call site to handle (the engine currently has no negation
 /// patterns in the wild that would re-include a child of an ignored
 /// directory; if one is added the fix is to return `false` here for

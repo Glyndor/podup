@@ -18,6 +18,7 @@ use bytes::Bytes;
 use tokio::sync::mpsc;
 
 use super::archive::extract_tar_guarded;
+use super::progress::ByteCounter;
 use crate::error::{ComposeError, Result};
 
 /// How many chunks the channel holds. Same reasoning as the build side: enough
@@ -42,15 +43,23 @@ pub(super) struct ChannelReader {
 	/// Bytes served so far, compared against `cap` on every read.
 	served: u64,
 	cap: u64,
+	/// Bytes served so far, kept separately so the cap check is unaffected if
+	/// the caller passes a counter that never gets read.
+	progress: Option<ByteCounter>,
 }
 
 impl ChannelReader {
-	pub(super) fn new(rx: mpsc::Receiver<ChunkItem>, cap: u64) -> Self {
+	pub(super) fn new(
+		rx: mpsc::Receiver<ChunkItem>,
+		cap: u64,
+		progress: Option<ByteCounter>,
+	) -> Self {
 		Self {
 			rx,
 			current: Bytes::new(),
 			served: 0,
 			cap,
+			progress,
 		}
 	}
 }
@@ -81,6 +90,9 @@ impl Read for ChannelReader {
 				self.cap
 			)));
 		}
+		if let Some(counter) = &self.progress {
+			counter.add(n as u64);
+		}
 		buf[..n].copy_from_slice(&self.current[..n]);
 		self.current = self.current.slice(n..);
 		Ok(n)
@@ -99,10 +111,16 @@ impl Read for ChannelReader {
 /// blocks once the bounded channel fills, and only the extractor drains it.
 /// This is the same ordering `build/stream.rs` documents in the other
 /// direction.
+///
+/// `progress` is the byte counter the reader increments as bytes flow.
+/// `None` for a non-progress call site (tests, the `extract_archive`
+/// path); the cost on that path is a single `Option::is_some` per
+/// `read`.
 pub(super) async fn extract_streamed(
 	resp: hyper::Response<hyper::body::Incoming>,
 	dst: std::path::PathBuf,
 	cap: u64,
+	progress: Option<ByteCounter>,
 ) -> Result<()> {
 	let (tx, rx) = tokio::sync::mpsc::channel::<ChunkItem>(CHANNEL_CAP);
 
@@ -128,7 +146,7 @@ pub(super) async fn extract_streamed(
 		}
 	});
 
-	let reader = ChannelReader::new(rx, cap);
+	let reader = ChannelReader::new(rx, cap, progress);
 	let extracted = tokio::task::spawn_blocking(move || extract_tar_guarded(reader, &dst))
 		.await
 		.map_err(|e| ComposeError::Build(e.to_string()))?;

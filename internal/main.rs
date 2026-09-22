@@ -256,6 +256,24 @@ async fn run() -> podup::Result<()> {
 	// resolution); validate it once, at the trust boundary, for every command.
 	validate_project_directory(cli.project_directory.as_deref())?;
 
+	// `audit --list-checks` enumerates the check registry; no compose file or
+	// Podman is needed. Short-circuit after project-directory validation but
+	// before compose-file resolution, so an integrator can run it in any
+	// directory with no `-f`. `--strict` already conflicts with
+	// `--list-checks` at parse time, so this branch only sees a clean call.
+	if let Commands::Audit {
+		format,
+		list_checks: true,
+		..
+	} = &cli.command
+	{
+		match format {
+			AuditFormat::Table => audit::render_list_checks_table(),
+			AuditFormat::Json => audit::render_list_checks_json(),
+		}
+		return Ok(());
+	}
+
 	// `ls` discovers projects across the host by container label; it needs a
 	// Podman connection but no compose file, so handle it before parsing one.
 	if let Commands::Ls {
@@ -308,6 +326,13 @@ async fn run() -> podup::Result<()> {
 		let compose_files = resolve_compose_files(&cli.file);
 		fail_on_named_file_missing(&cli.file, &compose_files)?;
 		let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
+		// `ps` is a read-only command that does not start containers, so the
+		// parse-time "port ... is published on every interface" warning has
+		// nothing to confirm: nothing on the host is being bound right now.
+		// Suppress the warning for this command regardless of `--no-warn` so
+		// operators reading `ps` in a loop are not warned on a port bind they
+		// already accepted.
+		let _suppress_port_warn = podup::compose::SuppressPortExposureGuard::new();
 		// Parse the compose file when it is present and valid so `--services` and a
 		// positional `SERVICE` filter can resolve service names and replicas;
 		// otherwise fall back to an empty model (and the directory basename for the
@@ -429,6 +454,24 @@ async fn run() -> podup::Result<()> {
 	if label_only {
 		fail_on_named_file_missing(&cli.file, &compose_files)?;
 	}
+	// Decide whether the parse step should silence the port-exposure warning
+	// (host-binding warning, so `--no-warn` already promises to cover it on the
+	// live engine paths). Read-only commands (`logs`/`port`/`top`) skip it
+	// unconditionally because there is no live action to confirm; `config`
+	// keeps it because its whole surface is "show me what will happen". Every
+	// other command honours `--no-warn` (mutating commands and `generate
+	// quadlet` reach the engine or the Quadlet path that already reads
+	// `--no-warn`).
+	let suppress_port_warn = match &cli.command {
+		Commands::Config { .. } => false,
+		Commands::Logs { .. } | Commands::Port { .. } | Commands::Top { .. } => true,
+		_ => cli.no_warn,
+	};
+	let _suppress_port_warn_guard = if suppress_port_warn {
+		Some(podup::compose::SuppressPortExposureGuard::new())
+	} else {
+		None
+	};
 	let file = if label_only && !compose_files.iter().any(|p| p.is_file()) {
 		podup::compose::types::ComposeFile::default()
 	} else {
@@ -504,8 +547,10 @@ async fn run() -> podup::Result<()> {
 	// loading path verbatim: same parsed file, same active-profile filter,
 	// same `env_file:` fold. It does not contact Podman. Honor active
 	// profiles so a service left out by `--profile` does not get audited;
-	// `audit` reports what `up` would start.
-	if let Commands::Audit { strict, format } = &cli.command {
+	// `audit` reports what `up` would start. `--list-checks` short-circuits
+	// earlier, before compose-file resolution, so an integrator can run it
+	// without a compose file.
+	if let Commands::Audit { strict, format, .. } = &cli.command {
 		let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
 		let project = resolve_project_name(cli.project.clone(), file.name.as_deref(), &base_dir);
 		startup::validate_project_name(&project)?;

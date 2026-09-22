@@ -245,21 +245,23 @@ async fn cli_rm_volumes_removes_container() {
 	if super::podman().await.is_none() {
 		return;
 	}
-	let dir = tempdir().unwrap();
-	let proj = format!("t{}-rmv", std::process::id());
-	let compose = dir.path().join("docker-compose.yml");
-	fs::write(
-		&compose,
+	// `up` makes the network, `stop` halts the container, `rm -v -f` removes
+	// the container and any anonymous volumes it created. None of those
+	// removes the project network, so the test has always left
+	// `<project>_default` on the host. The guard's drop runs `down -v`,
+	// which is the one CLI invocation that tears the network down too.
+	let _down = super::DownGuard::new(
+		"rmv",
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
-	)
-	.unwrap();
-	let c = compose.to_str().unwrap();
+	);
+	let c = _down.compose_path();
+	let proj = _down.name();
 
-	run_ok(&["-f", c, "-p", &proj, "up", "-d"]);
-	run(&["-f", c, "-p", &proj, "stop"]);
-	let rm = run(&["-f", c, "-p", &proj, "rm", "-v", "-f"]);
+	run_ok(&["-f", c, "-p", proj, "up", "-d"]);
+	run(&["-f", c, "-p", proj, "stop"]);
+	let rm = run(&["-f", c, "-p", proj, "rm", "-v", "-f"]);
 	assert!(rm.status.success(), "rm -v failed: {:?}", rm.stderr);
-	assert_eq!(ps_all_count(c, &proj), 0, "rm must remove the container");
+	assert_eq!(ps_all_count(c, proj), 0, "rm must remove the container");
 }
 
 #[tokio::test]

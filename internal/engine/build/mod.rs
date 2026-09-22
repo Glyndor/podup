@@ -271,3 +271,7 @@ mod walk_tests;
 #[cfg(all(test, unix))]
 #[path = "build_board_tests.rs"]
 mod board_tests;
+
+#[cfg(all(test, unix))]
+#[path = "build_query_tests.rs"]
+mod query_tests;

@@ -128,6 +128,13 @@ jobs:
       - name: clippy
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
+      # In this job rather than one of its own because this job is already a
+      # required check: a new job would report and block nothing until a
+      # ruleset named it. The rule and why it exists live in the script.
+      - name: no planning-note references
+        working-directory: .
+        run: bash .github/scripts/check-planning-words.sh
+
   test:
     name: Test
     runs-on: ubuntu-latest

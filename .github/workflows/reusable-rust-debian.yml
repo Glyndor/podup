@@ -18,7 +18,7 @@ on:
       debian-image:
         description: Container image to build in (a stable suite is reproducible)
         type: string
-        # debian:trixie as the registry served it on 2026-08-29.
+        # debian:trixie as the registry served it on 2026-09-21.
         # Digest-pinned so a retag of the trixie tag can't silently change the
         # build environment; bump this default when a newer trixie snapshot is
         # needed.
@@ -28,11 +28,10 @@ on:
         # must be the same value: this one is what every pull request builds
         # the .deb in, that one is what the published .deb is built in, and a
         # difference means the package that ships was never built in an
-        # environment any pull request exercised. They were different from
-        # before #1568 until #1583, by an image and six weeks. pin-watch.yml
-        # reads both and reports them disagreeing, and
+        # environment any pull request exercised. pin-watch.yml reads both
+        # and reports a disagreement every Monday, and
         # tests/workflow_debian_image.rs asserts it on every pull request.
-        default: "debian:trixie@sha256:f324c7ff54321e8d9c588493a20244965938ce0aa50bbd1022d38010e9ffc4b1"
+        default: "debian:trixie@sha256:9cc080028c43b27d2074d63a5f9caf7166d731494965616c1a6d2827a004585c"
       arch:
         description: Architecture to verify/stage (empty matches any)
         type: string
