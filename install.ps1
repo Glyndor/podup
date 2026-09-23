@@ -138,13 +138,14 @@ try {
 			[string]$ResolvedTag
 		)
 		$expected = if ($ResolvedTag.StartsWith('v')) { $ResolvedTag.Substring(1) } else { $ResolvedTag }
-		# Failure modes here cover both the missing-file case (PowerShell
-		# raises) and the non-zero-exit case (the binary ran but the OS or
-		# Smart App Control refused it). Smart App Control silently blocks
-		# unsigned binaries at launch and the binary exits with no useful
-		# status, so the user has to be told here - the success path below
-		# already proved Smart App Control did not intervene and does not
-		# need to repeat that.
+		# This is the first launch of the new binary, so a host with Smart
+		# App Control enabled refuses it here: the release carries no
+		# Authenticode signature, which is what Smart App Control reads (the
+		# Ed25519 signature over SHA256SUMS proves provenance, not that).
+		# Whether the refusal surfaces as an exception or as a non-zero exit
+		# has not been measured, so both failures carry the pointer. A launch
+		# that succeeds has already shown Smart App Control let it through,
+		# which is why the install no longer prints this on success.
 		$refusalNote = ' - if Windows refused to launch it, podup.exe carries no Authenticode signature and Smart App Control blocks unsigned binaries; see the README "Optional: Windows" section for the route that works today'
 		# Run the staged binary's --version. A non-zero exit (or a missing
 		# file) fails closed.
