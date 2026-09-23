@@ -66,7 +66,7 @@ pub fn install_binary(new_bytes: &[u8], expected_version: &str) -> crate::Result
 			exe.display()
 		))
 	})?;
-	// Snapshot the current binary into `.old` BEFORE the swap so a failed
+	// Hard-link the current binary into `.old` BEFORE the swap so a failed
 	// self-test always has a rollback target on disk. On Unix the target
 	// stays in place (its mode is read by `write_temp`); on Windows the
 	// running `.exe` is renamed aside (`#1898`).
@@ -92,15 +92,15 @@ pub fn install_binary(new_bytes: &[u8], expected_version: &str) -> crate::Result
 	Ok(target)
 }
 
-/// Snapshot the current binary into a `.old` sibling so the swap and the
+/// Hard-link the current binary into a `.old` sibling so the swap and the
 /// self-test can both find a recoverable copy of the previous binary.
 ///
 /// On Windows the running `.exe` is `rename`d aside: a running executable
 /// cannot be overwritten, and the swap moves the staged file over the
 /// resulting empty path. On Unix the target stays in place: the staged
 /// file is `rename`d over its inode atomically in `swap_into_place`, so
-/// moving the target aside would only orphan the path between the
-/// snapshot and the swap. Keeping the target live is also what lets
+/// moving the target aside would only orphan the path between the link
+/// and the swap. Keeping the target live is also what lets
 /// `write_temp` read its permission bits before staging the new file
 /// (`#1898`). The `.old` extension is shared across platforms so one
 /// cleanup pass covers both.
@@ -137,22 +137,22 @@ pub(crate) fn move_target_aside(target: &Path) -> crate::Result<PathBuf> {
 		}
 		#[cfg(not(windows))]
 		{
-			// Copy the bytes (and permission bits) into `.old` and leave the
-			// target path live. A hard link would share the inode with the
-			// target and any in-place write to the target would also rewrite
-			// the backup. `sync_all` on the copy makes the backup durable
-			// before the staged file is renamed over the target.
-			let fail = |e: std::io::Error| {
-				let _ = std::fs::remove_file(&backup);
-				ComposeError::Update(format!(
-					"cannot back up the current binary before the swap ({} -> {}): {e}",
-					target.display(),
-					backup.display()
-				))
-			};
-			std::fs::copy(target, &backup).map_err(fail)?;
-			let f = std::fs::File::open(&backup).map_err(fail)?;
-			f.sync_all().map_err(fail)?;
+			// A hard link keeps the ORIGINAL inode at `.old` (mode, owner, xattrs,
+			// ACLs, capabilities all intact), needs no read permission, and `link(2)`
+			// never follows a symlink at the new path: it fails with EEXIST instead.
+			// Nothing writes the target in place (the staged file is renamed over
+			// it), so the two names only share an inode until that rename.
+			if std::fs::hard_link(target, &backup).is_err() {
+				// A filesystem without hard links: fall back to the rename this
+				// function always did. The target is then briefly absent again.
+				std::fs::rename(target, &backup).map_err(|e| {
+					ComposeError::Update(format!(
+						"cannot move the current binary aside before the swap ({} -> {}): {e}",
+						target.display(),
+						backup.display()
+					))
+				})?;
+			}
 		}
 	}
 	Ok(backup)
@@ -169,6 +169,27 @@ pub(crate) fn restore_from_backup(target: &Path, backup: &Path) -> crate::Result
 		// path that did not exist before). The swap that already ran
 		// stands.
 		return Ok(());
+	}
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::MetadataExt;
+		// Renaming a hard link onto its own inode is a no-op that would leave `.old` behind.
+		let same_file = match (
+			std::fs::symlink_metadata(backup),
+			std::fs::symlink_metadata(target),
+		) {
+			(Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
+			_ => false,
+		};
+		if same_file {
+			std::fs::remove_file(backup).map_err(|e| {
+				ComposeError::Update(format!(
+					"failed to remove the unused backup {}: {e}",
+					backup.display()
+				))
+			})?;
+			return Ok(());
+		}
 	}
 	std::fs::rename(backup, target).map_err(|e| {
 		ComposeError::Update(format!(
