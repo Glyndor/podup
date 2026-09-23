@@ -133,13 +133,13 @@ fn install_at_fails_when_target_dir_is_missing() {
 	assert!(install_at(&target, b"data").is_err());
 	assert!(!missing.exists(), "must not create the missing parent dir");
 }
-/// #1360 (L5): the L5 swap window. The previous in-memory `Vec<u8>` backup
-/// was one-shot: a kill between the swap and the self-test dropped the
-/// in-memory copy and the user was left without a working binary. The
-/// fix is `move_target_aside` before the swap: the `.old` sibling survives
-/// any kill in the window, so the self-test has a recoverable copy on disk.
-/// Simulate the kill by aborting the swap flow between the two renames and
-/// confirm the `.old` is still there for the next run to roll back to.
+/// `move_target_aside` always leaves a recoverable `.old` sibling on disk so
+/// the self-test can roll back if it fails. On Unix the target itself is
+/// also expected to still be in place (the swap renames the staged file over
+/// its inode atomically): moving it aside would orphan the path between the
+/// snapshot and the swap, and `write_temp` reads its permission bits from the
+/// live target (`#1898`). On Windows a running `.exe` cannot be overwritten,
+/// so it has to be moved aside by `move_target_aside` instead.
 #[test]
 fn move_target_aside_leaves_the_old_binary_on_disk_for_rollback() {
 	let dir = tempfile::tempdir().unwrap();
@@ -155,10 +155,60 @@ fn move_target_aside_leaves_the_old_binary_on_disk_for_rollback() {
 		b"the previous binary",
 		"the .old must hold the bytes that were at the target before the swap"
 	);
+	#[cfg(not(windows))]
+	{
+		assert!(
+			target.exists(),
+			"on Unix the target stays in place so write_temp can read its mode (`#1898`)"
+		);
+		assert_eq!(
+			std::fs::read(&target).unwrap(),
+			b"the previous binary",
+			"the target must still hold the pre-swap bytes on Unix"
+		);
+	}
+	#[cfg(windows)]
 	assert!(
 		!target.exists(),
-		"the target must be moved aside, not left in place"
+		"on Windows the running .exe must be moved aside, not left in place"
 	);
+}
+/// `install_at` copies the target's permission bits (with the setuid/setgid/
+/// sticky mask) onto the staged file before the rename. With the L5 path
+/// moving the target aside first, `write_temp` had nothing to read and the
+/// mode silently fell back to `0o755` for every operator who had chosen a
+/// different one (`#1898`). Looping over `0o700` and `0o750` pins the two
+/// restrictive modes a security-conscious operator is most likely to choose.
+#[cfg(unix)]
+#[test]
+fn the_swap_keeps_a_restrictive_target_mode() {
+	use std::os::unix::fs::PermissionsExt;
+	for mode in [0o700, 0o750] {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let target = dir.path().join("podup");
+		std::fs::write(&target, b"old").expect("write target");
+		std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode)).expect("set mode");
+		let backup = move_target_aside(&target).expect("the move-aside must succeed");
+		install_at(&target, b"new").expect("the install must succeed");
+		assert_eq!(
+			std::fs::read(&target).expect("read target"),
+			b"new",
+			"the staged bytes must be in place at the target"
+		);
+		assert_eq!(
+			std::fs::metadata(&target)
+				.expect("metadata target")
+				.permissions()
+				.mode() & 0o7777,
+			mode,
+			"the operator's mode {mode:o} must survive the update"
+		);
+		assert_eq!(
+			std::fs::read(&backup).expect("read backup"),
+			b"old",
+			"the backup must still hold the pre-swap bytes"
+		);
+	}
 }
 /// #1360 (L5): once the self-test passes, the `.old` sibling is no longer
 /// needed and is reaped. `install_binary` does this directly, but the
@@ -173,7 +223,8 @@ fn restore_from_backup_round_trips_the_old_binary() {
 	let backup = move_target_aside(&target).expect("the move-aside must succeed");
 	// Pretend the swap installed a new binary. The rollback path is now
 	// the user's safety net.
-	std::fs::write(&target, b"the new binary (failing self-test)").unwrap();
+	// The swap is a rename in production, never an in-place write.
+	install_at(&target, b"the new binary (failing self-test)").unwrap();
 	restore_from_backup(&target, &backup).expect("the rollback must succeed");
 	assert_eq!(
 		std::fs::read(&target).unwrap(),
@@ -241,7 +292,8 @@ fn install_binary_rolls_back_when_the_target_is_unreadable() {
 	let backup = move_target_aside(&target).expect("the move-aside must succeed");
 	// The "new bytes" landing on disk: a real, fresh, chmod-0000 file the
 	// kernel will refuse to exec, so the self-test cannot pass.
-	std::fs::write(&target, b"the new binary").unwrap();
+	// The swap is a rename in production, never an in-place write.
+	install_at(&target, b"the new binary").unwrap();
 	std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o000)).unwrap();
 
 	// Spawning a chmod-0000 file is a hard PermissionDenied: the self-test
@@ -263,6 +315,127 @@ fn install_binary_rolls_back_when_the_target_is_unreadable() {
 		!backup.exists(),
 		"the .old sibling is consumed by the rollback"
 	);
+}
+/// The Unix backup is a hard link of the original: the inode survives at
+/// `.old` until the swap renames the staged file over `target`. Reading the
+/// previous bytes from `.old` after the swap is what the rollback relies on
+/// in `install_binary`, and it depends on the inode, not a copy of it.
+#[cfg(unix)]
+#[test]
+fn the_backup_is_the_original_inode_until_the_swap() {
+	use std::os::unix::fs::MetadataExt;
+	let dir = tempfile::tempdir().expect("tempdir");
+	let target = dir.path().join("podup");
+	std::fs::write(&target, b"old").expect("write target");
+	let before = std::fs::metadata(&target).expect("metadata target").ino();
+	let backup = move_target_aside(&target).expect("the move-aside must succeed");
+	assert_eq!(
+		std::fs::metadata(&backup).expect("metadata backup").ino(),
+		before,
+		"the backup must hold the original inode on disk"
+	);
+	assert_eq!(
+		std::fs::metadata(&target).expect("metadata target").ino(),
+		before,
+		"the target and the backup are the same inode until the swap"
+	);
+	install_at(&target, b"new").expect("the install must succeed");
+	assert_eq!(
+		std::fs::metadata(&backup).expect("metadata backup").ino(),
+		before,
+		"the original file must still be reachable at .old after the swap"
+	);
+	assert_ne!(
+		std::fs::metadata(&target).expect("metadata target").ino(),
+		before,
+		"the staged file must have replaced the target's inode"
+	);
+	assert_eq!(
+		std::fs::read(&backup).expect("read backup"),
+		b"old",
+		"the rollback must be able to read the original bytes"
+	);
+	assert_eq!(
+		std::fs::read(&target).expect("read target"),
+		b"new",
+		"the swap must put the new bytes at the target"
+	);
+}
+/// A mode-0111 binary (executable, not readable) can still self-update:
+/// `hard_link(2)` only needs execute permission, `rename(2)` only needs
+/// write permission on the directory, and the staged swap renames the new
+/// file into the target's place. `fs::copy` would have failed because it
+/// needs to read the source. Root bypasses the read check, so the test
+/// skips itself there: it would prove nothing on an EUID of 0.
+#[cfg(unix)]
+#[test]
+#[allow(unsafe_code)]
+fn an_execute_only_binary_can_still_be_updated() {
+	use std::os::unix::fs::PermissionsExt;
+	// SAFETY: geteuid takes no arguments and cannot fail.
+	if unsafe { libc::geteuid() } == 0 {
+		eprintln!("skipped: root can read a 0111 file");
+		return;
+	}
+	let dir = tempfile::tempdir().expect("tempdir");
+	let target = dir.path().join("podup");
+	std::fs::write(&target, b"old").expect("write target");
+	std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o111)).expect("set mode");
+	let backup = move_target_aside(&target).expect("the move-aside must succeed on a 0111 binary");
+	install_at(&target, b"new").expect("the install must succeed on a 0111 binary");
+	assert_eq!(
+		std::fs::metadata(&target)
+			.expect("metadata target")
+			.permissions()
+			.mode() & 0o7777,
+		0o111,
+		"the operator's mode must survive the update"
+	);
+	// Restore readable modes so the test can compare bytes; rolling back
+	// the *real* swap would not change them, but a future chmod-safety
+	// test would.
+	std::fs::set_permissions(&backup, std::fs::Permissions::from_mode(0o644)).expect("backup mode");
+	std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o644)).expect("target mode");
+	assert_eq!(
+		std::fs::read(&target).expect("read target"),
+		b"new",
+		"the swap must put the new bytes at the target"
+	);
+	assert_eq!(
+		std::fs::read(&backup).expect("read backup"),
+		b"old",
+		"the .old must still hold the pre-swap bytes"
+	);
+}
+/// If staging fails before `swap_into_place`, `install_binary` calls
+/// `restore_from_backup`. When the swap never happened, target and backup
+/// still point at the same inode (the hard link), so renaming the backup
+/// onto the target would be a no-op and leave `.old` behind. The rollback
+/// path detects that and drops the backup instead, leaving the original
+/// file in place.
+#[cfg(unix)]
+#[test]
+fn a_failure_before_the_swap_leaves_the_original_file_in_place() {
+	use std::os::unix::fs::MetadataExt;
+	let dir = tempfile::tempdir().expect("tempdir");
+	let target = dir.path().join("podup");
+	std::fs::write(&target, b"old").expect("write target");
+	let before = std::fs::metadata(&target).expect("metadata target").ino();
+	let backup = move_target_aside(&target).expect("the move-aside must succeed");
+	// No `install_at` between the link and the rollback - mimics the
+	// `install_binary` failure path when `install_at` errors out.
+	restore_from_backup(&target, &backup).expect("the rollback must succeed");
+	assert_eq!(
+		std::fs::metadata(&target).expect("metadata target").ino(),
+		before,
+		"the original inode must still be at the target"
+	);
+	assert_eq!(
+		std::fs::read(&target).expect("read target"),
+		b"old",
+		"the target must still hold the original bytes"
+	);
+	assert!(!backup.exists(), "the unused backup must be reaped");
 }
 /// Write an executable stub script and return its path.
 #[cfg(unix)]
