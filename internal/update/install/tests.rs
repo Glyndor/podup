@@ -133,13 +133,13 @@ fn install_at_fails_when_target_dir_is_missing() {
 	assert!(install_at(&target, b"data").is_err());
 	assert!(!missing.exists(), "must not create the missing parent dir");
 }
-/// #1360 (L5): the L5 swap window. The previous in-memory `Vec<u8>` backup
-/// was one-shot: a kill between the swap and the self-test dropped the
-/// in-memory copy and the user was left without a working binary. The
-/// fix is `move_target_aside` before the swap: the `.old` sibling survives
-/// any kill in the window, so the self-test has a recoverable copy on disk.
-/// Simulate the kill by aborting the swap flow between the two renames and
-/// confirm the `.old` is still there for the next run to roll back to.
+/// `move_target_aside` always leaves a recoverable `.old` sibling on disk so
+/// the self-test can roll back if it fails. On Unix the target itself is
+/// also expected to still be in place (the swap renames the staged file over
+/// its inode atomically): moving it aside would orphan the path between the
+/// snapshot and the swap, and `write_temp` reads its permission bits from the
+/// live target (`#1898`). On Windows a running `.exe` cannot be overwritten,
+/// so it has to be moved aside by `move_target_aside` instead.
 #[test]
 fn move_target_aside_leaves_the_old_binary_on_disk_for_rollback() {
 	let dir = tempfile::tempdir().unwrap();
@@ -155,9 +155,92 @@ fn move_target_aside_leaves_the_old_binary_on_disk_for_rollback() {
 		b"the previous binary",
 		"the .old must hold the bytes that were at the target before the swap"
 	);
+	#[cfg(not(windows))]
+	{
+		assert!(
+			target.exists(),
+			"on Unix the target stays in place so write_temp can read its mode (`#1898`)"
+		);
+		assert_eq!(
+			std::fs::read(&target).unwrap(),
+			b"the previous binary",
+			"the target must still hold the pre-swap bytes on Unix"
+		);
+	}
+	#[cfg(windows)]
 	assert!(
 		!target.exists(),
-		"the target must be moved aside, not left in place"
+		"on Windows the running .exe must be moved aside, not left in place"
+	);
+}
+/// `install_at` copies the target's permission bits (with the setuid/setgid/
+/// sticky mask) onto the staged file before the rename. With the L5 path
+/// moving the target aside first, `write_temp` had nothing to read and the
+/// mode silently fell back to `0o755` for every operator who had chosen a
+/// different one (`#1898`). Looping over `0o700` and `0o750` pins the two
+/// restrictive modes a security-conscious operator is most likely to choose.
+#[cfg(unix)]
+#[test]
+fn the_swap_keeps_a_restrictive_target_mode() {
+	use std::os::unix::fs::PermissionsExt;
+	for mode in [0o700, 0o750] {
+		let dir = tempfile::tempdir().expect("tempdir");
+		let target = dir.path().join("podup");
+		std::fs::write(&target, b"old").expect("write target");
+		std::fs::set_permissions(&target, std::fs::Permissions::from_mode(mode)).expect("set mode");
+		let backup = move_target_aside(&target).expect("the move-aside must succeed");
+		install_at(&target, b"new").expect("the install must succeed");
+		assert_eq!(
+			std::fs::read(&target).expect("read target"),
+			b"new",
+			"the staged bytes must be in place at the target"
+		);
+		assert_eq!(
+			std::fs::metadata(&target)
+				.expect("metadata target")
+				.permissions()
+				.mode() & 0o7777,
+			mode,
+			"the operator's mode {mode:o} must survive the update"
+		);
+		assert_eq!(
+			std::fs::read(&backup).expect("read backup"),
+			b"old",
+			"the backup must still hold the pre-swap bytes"
+		);
+	}
+}
+/// `move_target_aside` on Unix copies the target into a `.old` sibling; the
+/// copy must NOT share the inode with the target, because any process that
+/// rewrites the target in place (a follow-on updater, a sysadmin's
+/// overwrite, anything) would also rewrite the rollback. A hard link would
+/// do exactly that. The follow-up `std::fs::write` of the target is a
+/// truncate-with-same-inode op on regular filesystems, so seeing the backup
+/// untouched is the observable surface of the inode being different.
+#[cfg(unix)]
+#[test]
+fn the_backup_is_a_separate_file_from_the_target() {
+	use std::os::unix::fs::MetadataExt;
+	let dir = tempfile::tempdir().expect("tempdir");
+	let target = dir.path().join("podup");
+	std::fs::write(&target, b"old").expect("write target");
+	let backup = move_target_aside(&target).expect("the move-aside must succeed");
+	assert!(target.exists(), "the target must still be on disk on Unix");
+	assert_eq!(
+		std::fs::read(&target).expect("read target"),
+		b"old",
+		"the target must still hold the pre-swap bytes"
+	);
+	assert_ne!(
+		std::fs::metadata(&target).expect("metadata target").ino(),
+		std::fs::metadata(&backup).expect("metadata backup").ino(),
+		"the backup must be a separate file from the target (a hard link would share the inode)"
+	);
+	std::fs::write(&target, b"changed in place").expect("rewrite target");
+	assert_eq!(
+		std::fs::read(&backup).expect("read backup"),
+		b"old",
+		"an in-place rewrite of the target must leave the backup untouched"
 	);
 }
 /// #1360 (L5): once the self-test passes, the `.old` sibling is no longer

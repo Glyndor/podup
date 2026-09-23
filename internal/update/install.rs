@@ -66,14 +66,10 @@ pub fn install_binary(new_bytes: &[u8], expected_version: &str) -> crate::Result
 			exe.display()
 		))
 	})?;
-	// Move the current binary aside BEFORE the swap so a failed self-test
-	// always has a rollback target on disk. The previous code read the
-	// bytes into a `Vec<u8>` and re-ran the install on rollback, which is
-	// a one-shot rollback: a kill between the swap and the self-test
-	// drops the in-memory copy and the user is left without a working
-	// binary. The on-disk `.old` sibling survives any kill in the window
-	// and the self-test reads from it (which is the whole point of having
-	// it on disk rather than in memory).
+	// Snapshot the current binary into `.old` BEFORE the swap so a failed
+	// self-test always has a rollback target on disk. On Unix the target
+	// stays in place (its mode is read by `write_temp`); on Windows the
+	// running `.exe` is renamed aside (`#1898`).
 	let backup = move_target_aside(&target)?;
 	if let Err(e) = install_at(&target, new_bytes) {
 		// The swap itself failed: restore the old binary before reporting.
@@ -96,11 +92,18 @@ pub fn install_binary(new_bytes: &[u8], expected_version: &str) -> crate::Result
 	Ok(target)
 }
 
-/// Move the existing target to a sibling `.old` path so the swap and the
-/// self-test can both find a recoverable copy of the previous binary. The
-/// `.old` extension matches the Windows updater's path; the same name is
-/// used on Unix so a human inspecting the install directory sees one
-/// consistent leftover shape, and the same next-run cleanup applies.
+/// Snapshot the current binary into a `.old` sibling so the swap and the
+/// self-test can both find a recoverable copy of the previous binary.
+///
+/// On Windows the running `.exe` is `rename`d aside: a running executable
+/// cannot be overwritten, and the swap moves the staged file over the
+/// resulting empty path. On Unix the target stays in place: the staged
+/// file is `rename`d over its inode atomically in `swap_into_place`, so
+/// moving the target aside would only orphan the path between the
+/// snapshot and the swap. Keeping the target live is also what lets
+/// `write_temp` read its permission bits before staging the new file
+/// (`#1898`). The `.old` extension is shared across platforms so one
+/// cleanup pass covers both.
 pub(crate) fn move_target_aside(target: &Path) -> crate::Result<PathBuf> {
 	let backup = target.with_extension("old");
 	if backup == *target {
@@ -122,13 +125,35 @@ pub(crate) fn move_target_aside(target: &Path) -> crate::Result<PathBuf> {
 		}
 	}
 	if target.exists() {
-		std::fs::rename(target, &backup).map_err(|e| {
-			ComposeError::Update(format!(
-				"cannot move the current binary aside before the swap ({} -> {}): {e}",
-				target.display(),
-				backup.display()
-			))
-		})?;
+		#[cfg(windows)]
+		{
+			std::fs::rename(target, &backup).map_err(|e| {
+				ComposeError::Update(format!(
+					"cannot move the current binary aside before the swap ({} -> {}): {e}",
+					target.display(),
+					backup.display()
+				))
+			})?;
+		}
+		#[cfg(not(windows))]
+		{
+			// Copy the bytes (and permission bits) into `.old` and leave the
+			// target path live. A hard link would share the inode with the
+			// target and any in-place write to the target would also rewrite
+			// the backup. `sync_all` on the copy makes the backup durable
+			// before the staged file is renamed over the target.
+			let fail = |e: std::io::Error| {
+				let _ = std::fs::remove_file(&backup);
+				ComposeError::Update(format!(
+					"cannot back up the current binary before the swap ({} -> {}): {e}",
+					target.display(),
+					backup.display()
+				))
+			};
+			std::fs::copy(target, &backup).map_err(fail)?;
+			let f = std::fs::File::open(&backup).map_err(fail)?;
+			f.sync_all().map_err(fail)?;
+		}
 	}
 	Ok(backup)
 }
