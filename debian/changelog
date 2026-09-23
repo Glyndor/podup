@@ -1,3 +1,23 @@
+podup (5.9.8) unstable; urgency=medium
+
+  * When a build fails and the Podman daemon reports
+    `cgroup_manager = "systemd"`, the error now ends with a hint naming
+    `cgroup_manager = "cgroupfs"` and the `containers.conf` it goes in.
+    Inside the `podman-machine-default` WSL distro there is no user
+    systemd session and every `RUN` step dies under that manager. The
+    hint is worded with its condition, since `systemd` is also the right
+    value on an ordinary Linux host, and it is never added when the
+    daemon's info call fails or the build succeeds.
+  * `install.ps1` points at the missing Authenticode signature and the
+    README's Windows section when the downloaded `podup.exe` cannot be
+    launched for its version self-test, which is where Smart App Control
+    refuses it. A successful install no longer prints that notice.
+  * The README says the Windows binary carries no Authenticode
+    signature, and that inside the Fedora-based `podman-machine-default`
+    distro podup installs with the script, not the apt line.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Tue, 22 Sep 2026 23:30:00 -0500
+
 podup (5.9.7) unstable; urgency=medium
 
   * `audit` flags a bind mount of the host root. `/:/host` exposes every
