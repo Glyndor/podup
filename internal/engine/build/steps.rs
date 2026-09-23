@@ -54,6 +54,11 @@ impl Engine {
 		}
 		let mut msg = err;
 		if let Some(hint) = cgroup_hint(&self.client).await {
+			// buildah's `error` field already terminates with a newline;
+			// pushing another one on top would leave a blank line before
+			// the hint. Trim trailing whitespace first so the separator
+			// newline is the only one between the error and the hint.
+			msg.truncate(msg.trim_end().len());
 			msg.push('\n');
 			msg.push_str(&hint);
 		}

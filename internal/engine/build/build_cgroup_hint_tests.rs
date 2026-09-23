@@ -129,6 +129,14 @@ services:
 			msg.contains("podman-machine"),
 			"the hint names the WSL/podman-machine condition: {msg}"
 		);
+		assert!(
+			!msg.contains("\n\nhint:"),
+			"buildah's error string already terminates with a newline; the separator must not introduce a blank line before the hint: {msg}"
+		);
+		assert!(
+			msg.contains("\nhint:"),
+			"the hint sits on its own line directly after the error: {msg}"
+		);
 	}
 
 	/// Build fails, info says `cgroupfs` → no hint.
