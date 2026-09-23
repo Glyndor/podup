@@ -198,6 +198,10 @@ services:
 			!msg.contains(HINT_MARKER),
 			"the hint must not appear when the info call failed: {msg}"
 		);
+		assert!(
+			!msg.contains("hint:"),
+			"no hint of any kind may be appended when the info call failed: {msg}"
+		);
 	}
 
 	/// Build SUCCEEDS → no `/info` request is issued. Observed via the
