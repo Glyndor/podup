@@ -38,7 +38,7 @@ struct Case {
 	label: &'static str,
 	mode: &'static str,
 	expect_size: u32,
-	expect_uid: &'static str,
+	expect_inside_id: &'static str,
 }
 
 const CASES: &[Case] = &[
@@ -46,19 +46,19 @@ const CASES: &[Case] = &[
 		label: "userns-pod-auto",
 		mode: "auto",
 		expect_size: 1024,
-		expect_uid: "0",
+		expect_inside_id: "0",
 	},
 	Case {
 		label: "userns-pod-auto-size-2048",
 		mode: "auto:size=2048",
 		expect_size: 2048,
-		expect_uid: "0",
+		expect_inside_id: "0",
 	},
 	Case {
 		label: "userns-pod-keep-id-321-654",
 		mode: "keep-id:uid=321,gid=654",
 		expect_size: 321,
-		expect_uid: "321",
+		expect_inside_id: "321",
 	},
 ];
 
@@ -151,7 +151,7 @@ fn container_pod_id(container: &str) -> Option<String> {
 	}
 }
 
-fn container_uid_map(container: &str) -> Option<String> {
+fn container_id_map(container: &str) -> Option<String> {
 	let out = podman_cmd()
 		.args(["exec", container, "cat", "/proc/self/uid_map"])
 		.output()
@@ -162,7 +162,7 @@ fn container_uid_map(container: &str) -> Option<String> {
 	Some(String::from_utf8_lossy(&out.stdout).to_string())
 }
 
-fn container_id_u(container: &str) -> Option<String> {
+fn container_inside_id(container: &str) -> Option<String> {
 	let out = podman_cmd()
 		.args(["exec", container, "id", "-u"])
 		.output()
@@ -177,11 +177,11 @@ fn first_mapping(map: &str) -> [u64; 3] {
 	let fields: Vec<u64> = map
 		.lines()
 		.next()
-		.expect("uid_map must not be empty")
+		.expect("id_map must not be empty")
 		.split_whitespace()
-		.map(|part| part.parse().expect("uid_map must contain integers"))
+		.map(|part| part.parse().expect("id_map must contain integers"))
 		.collect();
-	fields.try_into().expect("uid_map must have three columns")
+	fields.try_into().expect("id_map must have three columns")
 }
 
 // Sum the size (third column) across every non-empty line of the map. The
@@ -204,7 +204,7 @@ fn total_size(map: &str) -> u64 {
 		.map(|line| {
 			let fields: Vec<u64> = line
 				.split_whitespace()
-				.map(|part| part.parse().expect("uid_map must contain integers"))
+				.map(|part| part.parse().expect("id_map must contain integers"))
 				.collect();
 			fields[2]
 		})
@@ -302,8 +302,8 @@ async fn userns_options_reach_a_pod_member() {
 			);
 		}
 
-		let uid_map = container_uid_map(&container).unwrap_or_default();
-		let id_u = container_id_u(&container).unwrap_or_default();
+		let id_map = container_id_map(&container).unwrap_or_default();
+		let inside_id = container_inside_id(&container).unwrap_or_default();
 		let pod_for_container = container_pod_id(&container);
 		let pod_for_project = pod_id_for_project(&proj);
 
@@ -316,22 +316,11 @@ async fn userns_options_reach_a_pod_member() {
 		// may split a fragmented allocation; for `keep-id` it stays on the
 		// first line because the other lines are fixed plumbing. See the
 		// size assertion below for the exact rule per case.
-		let mapping = first_mapping(&uid_map);
-		// CodeQL `rust/cleartext-logging` fires on the format string of an
-		// `assert_eq!` whose interpolated value has a `uid`-style name; this
-		// test creates and tears down an alpine container in the same
-		// function, so the value is the throwaway ID map of that container
-		// (for example `0 1 1024`). The only sink for it is the assertion
-		// message, and the message is the reason this control is worth
-		// having: with the option dropped it reads `... got "0 1 1024"`,
-		// while without the value it would read `left: 1024, right: 2048`.
-		// Dropping the value to silence the alert trades a working control
-		// for a heuristic false positive.
-		// codeql[rust/cleartext-logging]
+		let mapping = first_mapping(&id_map);
 		assert_eq!(
 			mapping[0], 0,
 			"{}: container UID must start at 0, got {:?}",
-			case.label, uid_map
+			case.label, id_map
 		);
 		// `mapping[1]` is the host-side offset that the kernel writes at
 		// the second position of the first map line, and it is the value
@@ -358,7 +347,7 @@ async fn userns_options_reach_a_pod_member() {
 		// the container level; and the pod-membership check at the
 		// bottom of the loop proves the option travelled through the
 		// pod spec rather than the container spec alone.
-		// codeql[rust/cleartext-logging] see the first site for the reason.
+		//
 		// For the `auto` family, the size the option promises is the TOTAL
 		// count of mapped container IDs across every line, because podman
 		// may split a fragmented allocation across several ranges. The split
@@ -378,22 +367,21 @@ async fn userns_options_reach_a_pod_member() {
 		let size_value = if case.mode.starts_with("keep-id") {
 			mapping[2]
 		} else {
-			total_size(&uid_map)
+			total_size(&id_map)
 		};
 		assert_eq!(
 			size_value,
 			u64::from(case.expect_size),
-			"{}: uid_map size must be {} for userns_mode {:?}, got {:?}",
+			"{}: id_map size must be {} for userns_mode {:?}, got {:?}",
 			case.label,
 			case.expect_size,
 			case.mode,
-			uid_map,
+			id_map,
 		);
-		// codeql[rust/cleartext-logging] see the first site for the reason.
 		assert_eq!(
-			id_u, case.expect_uid,
+			inside_id, case.expect_inside_id,
 			"{}: id -u must be {} for userns_mode {:?}, got {:?}",
-			case.label, case.expect_uid, case.mode, id_u
+			case.label, case.expect_inside_id, case.mode, inside_id
 		);
 
 		// Pod membership: this is the assertion that makes the test exercise
