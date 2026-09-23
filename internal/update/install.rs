@@ -144,7 +144,7 @@ pub(crate) fn move_target_aside(target: &Path) -> crate::Result<PathBuf> {
 			// it), so the two names only share an inode until that rename.
 			if std::fs::hard_link(target, &backup).is_err() {
 				// A filesystem without hard links: fall back to the rename this
-				// function always did. The target is then briefly absent again.
+				// function always did. The target is then absent until the swap.
 				std::fs::rename(target, &backup).map_err(|e| {
 					ComposeError::Update(format!(
 						"cannot move the current binary aside before the swap ({} -> {}): {e}",
