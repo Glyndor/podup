@@ -82,8 +82,9 @@ is absent.
 
 The path that works on Windows today is the WSL route below. Run the Linux
 build inside the `podman-machine-default` WSL distro next to the engine
-Podman ships; install it with the Linux line at the top of this README,
-or with the script under [Optional: Linux without apt](#optional-linux-without-apt).
+Podman ships; install it with the script under
+[Optional: Linux without apt](#optional-linux-without-apt). That distro is
+Fedora-based, so the apt line at the top of this README does not apply.
 
 If podup runs inside the `podman-machine-default` WSL distro instead, as the
 Linux build next to the engine, Podman there needs one setting before a build
