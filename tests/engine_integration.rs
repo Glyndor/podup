@@ -67,6 +67,23 @@ fn proj(tag: &str) -> String {
 	format!("t{}-{}", std::process::id(), tag)
 }
 
+/// One shared mutex for every test that creates a `--userns=auto` allocation:
+/// the three container cases in `tests/engine_integration/userns.rs` and the
+/// pod case in `tests/engine_integration/userns_pod.rs`. Both modules lock it
+/// before they call `up` so two lanes never race on the host's subordinate
+/// UID range.
+///
+/// Measured on Podman 5.7.0 against a 65536-ID subuid range on
+/// 2026-09-22: `--userns=auto` hands out 1024-block ranges from the tail of
+/// the subuid pool, and the tail is only ~4261 IDs. One `--userns=auto`
+/// container takes one of those blocks; `--userns=auto:size=2048` takes two
+/// blocks by itself. Without this lock two lanes could easily drive the live
+/// count past four concurrent allocations and the next allocation would fail
+/// with "not enough unused IDs in user namespace", which reads like a podup
+/// defect and is not one. Locking both lanes through the same mutex caps the
+/// live count at one allocation at a time.
+static USERNS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// Path the suite writes its PID to. The CI step reads the same path when
 /// setting `PODUP_LEAK_SCAN_PID`; one constant, two readers, no string to
 /// keep in step.
@@ -275,6 +292,85 @@ async fn poll_container_file(
 	false
 }
 
+/// Poll the test's condition until it holds or `timeout` elapses, while
+/// watching the spawned watch task. On every tick the helper checks
+/// `JoinHandle::is_finished()`; if the task completed, the helper awaits it
+/// and panics with its own result so the failure names the real cause (the
+/// `Watch` error returned from `Engine::watch`, e.g. an inotify exhaustion)
+/// instead of the poll's deadline message, the misleading "never finished"
+/// panic the test would otherwise raise when the watcher died silently.
+///
+/// `make_poll` is called on each tick; return `true` from its future when the
+/// condition holds. Return `false` from the helper when the deadline elapsed
+/// with the watch task still running, so the existing assertion can decide
+/// whether a timeout is a pass or a fail.
+///
+/// The handle is `&mut` so the helper can `await` it without the test
+/// having to take it back, and so a single borrow covers both the
+/// `is_finished` check and the `await`. The closure is called fresh on each
+/// tick (its future is not stored across iterations), so it can borrow from
+/// the test body freely.
+async fn poll_with_watch<F, Fut>(
+	handle: &mut tokio::task::JoinHandle<podup::Result<()>>,
+	timeout: std::time::Duration,
+	mut make_poll: F,
+) -> bool
+where
+	F: FnMut() -> Fut,
+	Fut: std::future::Future<Output = bool>,
+{
+	let deadline = tokio::time::Instant::now() + timeout;
+	loop {
+		if handle.is_finished() {
+			// `is_finished` is the only safe way to detect completion
+			// without `await`ing first (which would consume the handle);
+			// once it returns true, `await` resolves immediately with the
+			// task's result.
+			match handle.await {
+				// `ComposeError::Watch` already prints `watch error:` in its
+				// own `Display`; using the inner text here avoids the
+				// double prefix and keeps the failure readable.
+				Ok(Err(podup::ComposeError::Watch(s))) => {
+					panic!("watch() returned early: {s}")
+				}
+				Ok(Err(e)) => panic!("watch() returned early: {e}"),
+				Ok(Ok(())) => panic!("watch() returned early: Ok(())"),
+				Err(e) => panic!("watch task panicked: {e}"),
+			}
+		}
+		if make_poll().await {
+			return true;
+		}
+		if tokio::time::Instant::now() >= deadline {
+			return false;
+		}
+		tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+	}
+}
+
+/// Self-test for [`poll_with_watch`]: a spawned task that returns an error
+/// immediately must make the helper panic with that error's text, not with
+/// the poll's timeout message. The failure mode this guards is the watch
+/// task dying silently: the test would otherwise wait out the deadline and
+/// panic with "did not copy the file" or similar, blaming the wrong step.
+#[tokio::test]
+#[should_panic(expected = "watch() returned early: simulated watch failure")]
+async fn poll_with_watch_surfaces_a_finished_watch_task_error() {
+	let mut handle =
+		tokio::spawn(async { Err(podup::ComposeError::Watch("simulated watch failure".into())) });
+	// The poll never holds; without the helper's `is_finished` check the
+	// timeout would expire and the helper would return `false` instead of
+	// panicking. The `#[should_panic]` attribute is what binds the test to
+	// the helper's panic contract; sabotaging the helper to skip
+	// `is_finished` makes this test fail.
+	let _ = poll_with_watch(
+		&mut handle,
+		std::time::Duration::from_millis(50),
+		|| async { false },
+	)
+	.await;
+}
+
 // ---------------------------------------------------------------------------
 // Test groups (see engine_integration/*.rs)
 // ---------------------------------------------------------------------------
@@ -385,3 +481,6 @@ mod x_podman_pod;
 
 #[path = "engine_integration/userns.rs"]
 mod userns;
+
+#[path = "engine_integration/userns_pod.rs"]
+mod userns_pod;

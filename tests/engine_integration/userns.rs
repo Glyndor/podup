@@ -2,8 +2,6 @@
 
 use super::*;
 
-static USERNS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
-
 struct Identity {
 	uid_map: String,
 	uid: String,

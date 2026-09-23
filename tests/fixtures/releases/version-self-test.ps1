@@ -109,14 +109,23 @@ try {
 	}
 
 	function Invoke-Fail {
-		param([string] $StubPath, [string] $Tag)
+		param(
+			[string] $StubPath,
+			[string] $Tag,
+			[string] $ExpectedInRefusal = ''
+		)
 		$refused = $false
+		$caught = ''
 		try {
 			Test-StagedVersion -StagedPath $StubPath -ResolvedTag $Tag
 		} catch {
 			$refused = $true
+			$caught = $_.Exception.Message
 		}
 		Assert-True $refused "$StubPath should have been refused but the self-test accepted it"
+		if ($ExpectedInRefusal) {
+			Assert-True ($caught.Contains($ExpectedInRefusal)) "refusal message should have contained '$ExpectedInRefusal' but was: $caught"
+		}
 		Assert-True (-not (Test-Path -LiteralPath $StubPath)) "staged file $StubPath was not removed after the failed self-test"
 		Write-Host "  OK    $StubPath was refused and the staged file was removed"
 	}
@@ -145,10 +154,10 @@ try {
 
 	Write-Host 'Part 6: --version exits non-zero' -ForegroundColor Cyan
 	$stub = New-Stub -Name 'fail_exit' -Body 'echo podup version v3.7.0' -ExitCode '1'
-	Invoke-Fail -StubPath $stub -Tag $Tag
+	Invoke-Fail -StubPath $stub -Tag $Tag -ExpectedInRefusal 'Authenticode'
 
 	Write-Host 'Part 7: staged file does not exist' -ForegroundColor Cyan
-	Invoke-Fail -StubPath (Join-Path $stubsDir "does-not-exist$stubExt") -Tag $Tag
+	Invoke-Fail -StubPath (Join-Path $stubsDir "does-not-exist$stubExt") -Tag $Tag -ExpectedInRefusal 'Authenticode'
 
 	Write-Host ''
 	Write-Host 'All parts passed.' -ForegroundColor Green

@@ -273,5 +273,8 @@ mod walk_tests;
 mod board_tests;
 
 #[cfg(all(test, unix))]
+#[path = "build_cgroup_hint_tests.rs"]
+mod cgroup_hint_tests;
+#[cfg(all(test, unix))]
 #[path = "build_query_tests.rs"]
 mod query_tests;

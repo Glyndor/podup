@@ -138,17 +138,26 @@ try {
 			[string]$ResolvedTag
 		)
 		$expected = if ($ResolvedTag.StartsWith('v')) { $ResolvedTag.Substring(1) } else { $ResolvedTag }
+		# This is the first launch of the new binary, so a host with Smart
+		# App Control enabled refuses it here: the release carries no
+		# Authenticode signature, which is what Smart App Control reads (the
+		# Ed25519 signature over SHA256SUMS proves provenance, not that).
+		# Whether the refusal surfaces as an exception or as a non-zero exit
+		# has not been measured, so both failures carry the pointer. A launch
+		# that succeeds has already shown Smart App Control let it through,
+		# which is why the install no longer prints this on success.
+		$refusalNote = ' - if Windows refused to launch it, podup.exe carries no Authenticode signature and Smart App Control blocks unsigned binaries; see the README "Optional: Windows" section for the route that works today'
 		# Run the staged binary's --version. A non-zero exit (or a missing
 		# file) fails closed.
 		try {
 			$reported = & $StagedPath --version 2>&1
 		} catch {
 			Remove-Item -Path $StagedPath -Force -ErrorAction SilentlyContinue
-			Fail "Could not run $StagedPath --version to self-test the staged binary"
+			Fail "Could not run $StagedPath --version to self-test the staged binary$refusalNote"
 		}
 		if ($LASTEXITCODE -ne 0) {
 			Remove-Item -Path $StagedPath -Force -ErrorAction SilentlyContinue
-			Fail "Could not run $StagedPath --version to self-test the staged binary"
+			Fail "Could not run $StagedPath --version to self-test the staged binary$refusalNote"
 		}
 		$reportedStr = ($reported | Out-String).TrimEnd()
 		$tokens = $reportedStr -split '\s+'
