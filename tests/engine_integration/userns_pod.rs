@@ -211,6 +211,31 @@ fn total_size(map: &str) -> u64 {
 		.sum()
 }
 
+// Deterministic cover for `total_size` and `first_mapping`, neither of which
+// the live pod test can prove: the fragmented-allocation case for `total_size`
+// only happens when the host's subuid range is fragmented, so a single run
+// cannot tell whether the sum logic is right or whether the host happened not
+// to fragment that day. The inputs below are the exact map shapes podman
+// produced on this host on 2026-09-20 for `auto:size=2048`, reproduced as
+// literals so the helpers run without a daemon, without a subuid pool, and
+// on every host.
+//
+// `first_mapping` on the split map returns [0, 1, 1024]: just the first
+// line, which would assert size = 1024 and miss the second range entirely.
+// That is exactly why the live `auto` family asserts on `total_size` and
+// only `keep-id` (whose shape is plumbing lines after the user-specified
+// one) asserts on `first_mapping`; documenting the split here makes the
+// reason testable instead of relying on the comment alone.
+#[test]
+fn total_size_and_first_mapping_handle_contiguous_and_split_maps() {
+	let contiguous = "         0          1       2048\n";
+	assert_eq!(total_size(contiguous), 2048);
+
+	let split = "         0          1       1024\n      1024       2049       1024\n";
+	assert_eq!(total_size(split), 2048);
+	assert_eq!(first_mapping(split), [0, 1, 1024]);
+}
+
 // Snap the host state at the moment `up` fails so the assertion can tell a
 // podup defect from a host whose subuid pool was already drained by some
 // other caller. The error `not enough unused IDs in user namespace` reads
