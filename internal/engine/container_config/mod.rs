@@ -167,12 +167,13 @@ pub(super) fn build_healthcheck(hc: &HealthCheck) -> Option<HealthConfig> {
 			..Default::default()
 		});
 	}
-	// Treat `None`, an empty exec list, and an empty shell string all as "no
-	// test". libpod treats an empty Test as absent and inherits the image's
-	// HEALTHCHECK; sending 30s/30s/3 there would overwrite the image's
-	// values (#1893).
+	// Only `None` and an empty EXEC list count as "no test". An empty shell
+	// string is kept as an explicit `["CMD-SHELL", ""]` probe: compose-go
+	// preserves the shell form and Podman executes it, which matches the
+	// historical behaviour before #1893 turned it into silent image
+	// inheritance (#1893).
 	let test = hc.test.as_ref().and_then(|cmd| match cmd {
-		ComposeCommand::Shell(s) if !s.is_empty() => Some(vec!["CMD-SHELL".to_string(), s.clone()]),
+		ComposeCommand::Shell(s) => Some(vec!["CMD-SHELL".to_string(), s.clone()]),
 		ComposeCommand::Exec(v) if !v.is_empty() => Some(v.clone()),
 		_ => None,
 	});
@@ -193,8 +194,17 @@ pub(super) fn build_healthcheck(hc: &HealthCheck) -> Option<HealthConfig> {
 	// Apply the compose-spec defaults (interval 30s, timeout 30s, retries 3)
 	// only when the user wrote a `test`. With a `test`, libpod would otherwise
 	// leave the timings at 0s and the probe would fail with "exceeded timeout
-	// of 0s". Without a `test` but with at least one user-set timing, we pass
-	// the timing through and let libpod fill the rest from the image.
+	// of 0s".
+	//
+	// A timing-only override (no test, some timing set) is sent as a
+	// `healthconfig` with `test == None` and the user-set timing. On Podman
+	// 5.7+ libpod merges field-by-field and the unset fields are inherited
+	// from the image, so the user override survives. On Podman 5.4.2 a
+	// non-nil `healthconfig` without a `test` REPLACES the image healthcheck
+	// rather than inheriting it, so the user loses the image probe entirely;
+	// the upstream guidance is to either resolve and merge the image probe
+	// before sending or document the divergence. We forward the user's
+	// override as written and leave that choice to the operator (#1893).
 	const DEFAULT_NANOS: i64 = 30 * 1_000_000_000;
 	let (interval, timeout, retries) = if test.is_some() {
 		(
