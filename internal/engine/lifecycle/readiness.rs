@@ -15,6 +15,7 @@ use std::sync::Arc;
 
 use futures_util::future::{FutureExt, Shared};
 
+use crate::compose::dependencies::effective_depends_on;
 use crate::compose::types::{ComposeFile, ServiceCondition};
 use crate::engine::Engine;
 use crate::error::ComposeError;
@@ -58,11 +59,9 @@ impl Engine {
 			if !enabled.contains(sname) {
 				continue;
 			}
-			for dep in service.depends_on.service_names() {
-				if !matches!(
-					service.depends_on.condition_for(&dep),
-					ServiceCondition::ServiceHealthy
-				) {
+			let deps = effective_depends_on(service, &file.services);
+			for dep in deps.service_names() {
+				if !matches!(deps.condition_for(&dep), ServiceCondition::ServiceHealthy) {
 					continue;
 				}
 				if !in_started_set(target_set, &dep) {

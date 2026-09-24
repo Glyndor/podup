@@ -136,17 +136,14 @@ pub(super) fn resolve_volumes_from(
 		.volumes_from
 		.iter()
 		.map(|entry| {
-			// Split off a trailing access mode so it survives the rewrite.
-			let (reference, mode) = match entry.rsplit_once(':') {
-				Some((head, tail @ ("ro" | "rw"))) => (head, Some(tail)),
-				_ => (entry.as_str(), None),
-			};
-			let resolved = if let Some(name) = reference.strip_prefix("container:") {
-				// Already a concrete container outside the project: pass through.
-				name.to_string()
-			} else {
-				let target = reference.strip_prefix("service:").unwrap_or(reference);
-				file.services
+			let (reference, mode) = crate::compose::dependencies::parse_volumes_from_entry(entry);
+			let resolved = match reference {
+				crate::compose::dependencies::VolumesFromRef::Container(name) => {
+					// Already a concrete container outside the project: pass through.
+					name.to_string()
+				}
+				crate::compose::dependencies::VolumesFromRef::Service(target) => file
+					.services
 					.get(target)
 					.map(|svc| {
 						svc.container_name
@@ -156,11 +153,13 @@ pub(super) fn resolve_volumes_from(
 							.unwrap_or_else(|| format!("{project}-{target}-1"))
 					})
 					// Unknown service: leave the reference untouched.
-					.unwrap_or_else(|| target.to_string())
+					.unwrap_or_else(|| target.to_string()),
 			};
 			match mode {
-				Some(mode) => format!("{resolved}:{mode}"),
-				None => resolved,
+				crate::compose::dependencies::VolumesFromMode::Default => resolved,
+				crate::compose::dependencies::VolumesFromMode::Explicit(mode) => {
+					format!("{resolved}:{mode}")
+				}
 			}
 		})
 		.collect()

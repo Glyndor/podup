@@ -4,6 +4,7 @@
 pub mod types;
 
 mod anchor;
+pub(crate) mod dependencies;
 pub(crate) mod diagnostics;
 mod extends;
 mod include;

@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 
+use crate::compose::dependencies::effective_depends_on;
 use crate::compose::types::{ComposeFile, Service};
 
 /// Remove services excluded by the active profile set, in place.
@@ -64,7 +65,8 @@ pub(crate) fn enabled_profile_services(
 	let mut stack: Vec<String> = enabled.iter().cloned().collect();
 	while let Some(name) = stack.pop() {
 		if let Some(svc) = file.services.get(&name) {
-			for dep in svc.depends_on.service_names() {
+			let deps = effective_depends_on(svc, &file.services);
+			for dep in deps.service_names() {
 				if file.services.contains_key(&dep) && enabled.insert(dep.clone()) {
 					stack.push(dep);
 				}

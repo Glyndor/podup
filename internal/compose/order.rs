@@ -9,6 +9,7 @@
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, HashMap};
 
+use crate::compose::dependencies::effective_depends_on;
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 
@@ -23,9 +24,10 @@ pub fn resolve_order(file: &ComposeFile) -> Result<Vec<String>> {
 	let mut graph: HashMap<&str, Vec<&str>> = services.iter().map(|&s| (s, vec![])).collect();
 
 	for (name, service) in &file.services {
-		for dep in service.depends_on.service_names() {
+		let deps = effective_depends_on(service, &file.services);
+		for dep in deps.service_names() {
 			if !file.services.contains_key(&dep) {
-				if !service.depends_on.required_for(&dep) {
+				if !deps.required_for(&dep) {
 					continue;
 				}
 				return Err(ComposeError::ServiceNotFound(dep));
@@ -102,9 +104,10 @@ pub fn resolve_levels(file: &ComposeFile) -> Result<Vec<Vec<String>>> {
 	let mut graph: HashMap<&str, Vec<&str>> = services.iter().map(|&s| (s, vec![])).collect();
 
 	for (name, service) in &file.services {
-		for dep in service.depends_on.service_names() {
+		let deps = effective_depends_on(service, &file.services);
+		for dep in deps.service_names() {
 			if !file.services.contains_key(&dep) {
-				if !service.depends_on.required_for(&dep) {
+				if !deps.required_for(&dep) {
 					continue;
 				}
 				return Err(ComposeError::ServiceNotFound(dep));

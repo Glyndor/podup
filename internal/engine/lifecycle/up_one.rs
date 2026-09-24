@@ -6,6 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::compose::dependencies::effective_depends_on;
 use crate::compose::types::{ComposeFile, ServiceCondition};
 use crate::error::Result;
 
@@ -48,12 +49,8 @@ impl Engine {
 
 		// `create` (start = false) only builds the containers, so there is nothing
 		// to gate on, so skip the `depends_on` readiness waits entirely.
-		for dep in service
-			.depends_on
-			.service_names()
-			.into_iter()
-			.filter(|_| start)
-		{
+		let deps = effective_depends_on(service, &file.services);
+		for dep in deps.service_names().into_iter().filter(|_| start) {
 			// Under `--no-deps` (and partial target lists) a dependency may have
 			// been intentionally excluded from the started set. docker-compose
 			// skips its readiness condition in that case; matching that avoids
@@ -64,10 +61,10 @@ impl Engine {
 				continue;
 			}
 
-			let condition = service.depends_on.condition_for(&dep);
+			let condition = deps.condition_for(&dep);
 			// `required: false` makes the dependency optional: a failed wait
 			// must not abort `up`, matching docker-compose v2.
-			let required = service.depends_on.required_for(&dep);
+			let required = deps.required_for(&dep);
 			let dep_service = match file.services.get(&dep) {
 				Some(s) => s,
 				None => continue,
