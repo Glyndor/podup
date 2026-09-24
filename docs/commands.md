@@ -280,8 +280,10 @@ there is no complete set to size against). `--format json` prints no header.
 
 `--json` is a hidden deprecated alias for `--format json`.
 
-**Bounding a feed needs both flags.** Measured against Podman 5.4.2 on 2026-07-29:
-`--since 2h --until -1h` ends the feed; `--until` alone, `--since` alone, and
+**Bounding a feed needs both flags.** A past window such as `--since 2h --until -1h`
+ends the feed (measured on Podman 5.7.0 on 2026-09-23 with `--since 30s --until -1s`;
+a relative `--since` counts back from now, `--until` forward, so `--until -1h` is an hour
+ago); `--until` alone, `--since` alone, and
 any `--until` in the future all leave it following indefinitely. podup warns
 when `--until` is given without `--since`. This also decides the exit code; see
 [Exit status](#exit-status).
@@ -1131,7 +1133,7 @@ asked for answers it instead:
   invented.
 
 Note that a window needs **both** ends and both must already have elapsed.
-Measured against Podman 5.4.2 on 2026-07-29: `--since 2h --until -1h` closes the feed, while
+A past window such as `--since 2h --until -1h` closes the feed (measured on Podman 5.7.0 on 2026-09-23 with `--since 30s --until -1s`), while
 either flag alone leaves it open, as does any `--until` in the future. So
 `--until 5m` follows indefinitely rather than stopping in five minutes. podup
 warns when `--until` is passed without `--since`.
