@@ -102,22 +102,32 @@ pub fn ports_published_on_wildcard(
 		.map(|e| (e.service, e.host))
 		.collect()
 }
-/// The memory cap the engine will apply, in bytes. Top-level `mem_limit:`
-/// wins; the modern `deploy.resources.limits.memory:` block only fills in
-/// a value the top level left unset. Unparseable and `"-1"` values count
-/// as no limit. Surfaced for the audit module so its `no_memory_limit`
-/// and `swap_unbounded` checks read the same value the engine will build
-/// (`#1894`).
+/// The memory cap the engine will forward into `LinuxMemory.limit`, in
+/// bytes. Top-level `mem_limit:` wins; the modern
+/// `deploy.resources.limits.memory:` block only fills in a value the
+/// top level left unset. An unparseable value is `None`; the literal
+/// `"-1"` is forwarded verbatim as Podman's "no cap" sentinel.
+///
+/// Exists for the podup binary's `audit` command, so its
+/// `no_memory_limit` and `swap_unbounded` checks read the same value
+/// the engine will build. Not part of the library's supported public
+/// surface (`#1894`).
+#[doc(hidden)]
 pub fn effective_memory_limit(service: &crate::compose::types::Service) -> Option<i64> {
 	crate::engine::effective_memory_limit(service)
 }
-/// The CFS CPU quota the engine will apply, in microseconds over
-/// `cpu_period` (default 100_000). `cpu_quota:` wins when positive; a
-/// zero or negative value is treated as not set. Otherwise derived from
-/// `cpus:` (top-level first, then `deploy.resources.limits.cpus:`)
-/// divided by 10_000 to convert nano-CPUs to an OCI quota. Surfaced for
-/// the audit module so its `no_cpu_limit` check agrees with what the
-/// engine forwards into the OCI spec (`#1894`).
+/// The CFS CPU quota the engine will forward into `LinuxCPU.quota`, in
+/// microseconds over `cpu_period` (default 100_000). `cpu_quota:` wins
+/// when present, including `-1` (Docker's "unlimited" sentinel) and
+/// `0`. Otherwise derived from `cpus:` (top-level first, then
+/// `deploy.resources.limits.cpus:`) divided by 10_000 to convert
+/// nano-CPUs to an OCI quota over the default 100ms period.
+///
+/// Exists for the podup binary's `audit` command, so its
+/// `no_cpu_limit` check reads the same value the engine forwards into
+/// the OCI spec. Not part of the library's supported public surface
+/// (`#1894`).
+#[doc(hidden)]
 pub fn effective_cpu_quota(service: &crate::compose::types::Service) -> Option<i64> {
 	crate::engine::effective_cpu_quota(service)
 }

@@ -118,13 +118,16 @@ fn effective_memory_limit_falls_back_to_deploy() {
 }
 
 #[test]
-fn effective_memory_limit_filters_negative_one() {
-	// `parse_memory("-1")` returns `Some(-1)`, the engine's "no cap"
-	// sentinel for `memswap_limit:`. The helper must filter it out so
-	// callers cannot mistake "no cap" for a cap.
+fn effective_memory_limit_forwards_negative_one() {
+	// `parse_memory("-1")` returns `Some(-1)`. The helper forwards the
+	// engine's value verbatim: `build_resource_limits` puts `-1` into
+	// `LinuxMemory.limit` and lets Podman interpret it as "no cap" at
+	// the API layer. Filtering here would change what the engine
+	// sends. The audit applies the "not a limit" filter on top of the
+	// helper (`#1894`).
 	let mut svc = default_service();
 	svc.mem_limit = Some("-1".into());
-	assert_eq!(effective_memory_limit(&svc), None);
+	assert_eq!(effective_memory_limit(&svc), Some(-1));
 }
 
 #[test]
@@ -173,20 +176,26 @@ fn effective_cpu_quota_top_level_cpus_wins_over_deploy() {
 }
 
 #[test]
-fn effective_cpu_quota_filters_negative_one() {
-	// The Docker API treats `cpu_quota: -1` as "unlimited"; the helper
-	// must filter it out so the audit's `no_cpu_limit` and the engine's
-	// `build_resource_limits` agree.
+fn effective_cpu_quota_forwards_negative_one() {
+	// The Docker API treats `cpu_quota: -1` as "unlimited", and the
+	// engine forwards it verbatim into `LinuxCPU.quota`. The helper
+	// must match that so the engine and the audit's `cpu_limit_in_effect`
+	// (which applies the "<= 0 is not a limit" filter) agree on
+	// what the OCI spec carries (`#1894`).
 	let mut svc = default_service();
 	svc.cpu_quota = Some(-1);
-	assert_eq!(effective_cpu_quota(&svc), None);
+	assert_eq!(effective_cpu_quota(&svc), Some(-1));
 }
 
 #[test]
-fn effective_cpu_quota_filters_zero() {
+fn effective_cpu_quota_forwards_zero() {
+	// `cpu_quota: 0` is forwarded verbatim: the engine builds
+	// `LinuxCPU { quota: 0, ... }` and lets libpod reject it if the
+	// operator really meant a zero-time container. The audit treats
+	// `0` as "no limit" via [`cpu_limit_in_effect`] (`#1894`).
 	let mut svc = default_service();
 	svc.cpu_quota = Some(0);
-	assert_eq!(effective_cpu_quota(&svc), None);
+	assert_eq!(effective_cpu_quota(&svc), Some(0));
 }
 
 #[test]
@@ -213,6 +222,48 @@ fn effective_cpu_quota_falls_back_to_deploy() {
 	// 2 CPUs parses to 2e9 nano_cpus; divided by 10_000 the helper
 	// yields a quota of 200_000.
 	assert_eq!(effective_cpu_quota(&svc), Some(200_000));
+}
+
+// --- engine-side pinning (`build_resource_limits` forward contract) ---
+
+/// `cpu_quota: -1` with `cpus: "2"` must forward `quota: -1` into
+/// `LinuxCPU.quota` exactly the way it did before the audit helpers
+/// landed. A regression that re-introduces a filter on `cpu_quota`
+/// would silently flip this to `200000` and disagree with the
+/// pre-branch engine output (`#1894`).
+#[test]
+fn build_resource_limits_forwards_negative_one_cpu_quota_with_cpus() {
+	let mut svc = default_service();
+	svc.cpu_quota = Some(-1);
+	svc.cpus = Some("2".into());
+	let res = build_resource_limits(&svc).unwrap();
+	let cpu = res.cpu.unwrap();
+	assert_eq!(
+		cpu.quota,
+		Some(-1),
+		"`cpu_quota: -1` must win over `cpus: \"2\"` and be forwarded as -1"
+	);
+	// The default 100ms period is added because the quota is in
+	// effect, matching the pre-branch behavior.
+	assert_eq!(cpu.period, Some(100_000));
+}
+
+/// `mem_limit: "-1"` must be forwarded as `Some(-1)` into
+/// `LinuxMemory.limit`, exactly the way the pre-branch code did. A
+/// regression that re-introduces a filter on the helper would
+/// silently drop this to `None` and disagree with the pre-branch
+/// engine output (`#1894`).
+#[test]
+fn build_resource_limits_forwards_negative_one_mem_limit() {
+	let mut svc = default_service();
+	svc.mem_limit = Some("-1".into());
+	let res = build_resource_limits(&svc).unwrap();
+	let mem = res.memory.unwrap();
+	assert_eq!(
+		mem.limit,
+		Some(-1),
+		"`mem_limit: \"-1\"` must be forwarded as -1, not dropped"
+	);
 }
 
 // --- ulimits ---

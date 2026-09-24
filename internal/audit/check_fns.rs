@@ -292,8 +292,14 @@ pub fn check_no_pids_limit(name: &str, service: &Service, _file: &ComposeFile) -
 /// block is ignored once the top level set one). Reading both fields
 /// independently here would silently take the larger one and disagree
 /// with what the engine forwards to libpod (`#1894`).
+///
+/// The shared helper returns what the engine forwards verbatim,
+/// including `Some(-1)` for `mem_limit: "-1"`. Podman interprets `-1`
+/// as "no cap" and the audit agrees: the operator did not set a
+/// memory limit, so this check fires the same way it does for an
+/// absent key (`#1894`).
 pub fn check_no_memory_limit(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
-	if effective_memory_limit(service).is_none() {
+	if effective_memory_limit(service).is_none_or(|v| v < 0) {
 		vec![finding(
 			name,
 			"no_memory_limit",

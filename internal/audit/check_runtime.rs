@@ -1,25 +1,31 @@
 //! The five runtime-hardening checks from #1894:
 //! `no_restart_policy`, `no_init`, `no_health_action`, `swap_unbounded`,
-//! `no_cpu_limit`. Split into their own file because the registry already
-//! counts `check_fns.rs` at 607 code lines, and adding five more would push
-//! it past the 500-line limit the rest of the audit honours. Wired the
-//! way `check_sensitive_bind.rs` is: a private helper per check, a public
-//! `check_*` function the registry points at, and `super::Finding` +
-//! `super::check_fns::finding` reused for the row shape so every entry in
-//! `CHECK_REGISTRY` looks the same to the listing renderer and the audit
-//! dispatch path.
+//! `no_cpu_limit`. Split into their own file to keep `check_fns.rs`
+//! well under the 500-line limit the rest of the audit honours; adding
+//! five more checks there would otherwise push it past the ceiling.
+//! Wired the way `check_sensitive_bind.rs` is: a private helper per
+//! check, a public `check_*` function the registry points at, and
+//! `super::Finding` + `super::check_fns::finding` reused for the row
+//! shape so every entry in `CHECK_REGISTRY` looks the same to the
+//! listing renderer and the audit dispatch path.
 
 use podup::compose::types::{ComposeFile, Service};
 use podup::size;
 
 use super::super::Finding;
 use super::check_fns::finding;
-// Shared with the engine's `build_resource_limits` (#1894): the audit reads
-// the same memory cap the engine forwards into the OCI spec, applying the
-// top-level/deploy precedence `build_resource_limits` does. The CPU
-// helper below does the same for CPU; `cpuset:` is audit-only and lives
-// in [`cpu_limit_in_effect`] because the engine forwards it as a
+// Shared with the engine's `build_resource_limits` (#1894): the audit
+// reads the same value the engine forwards into the OCI spec, applying
+// the top-level/deploy precedence `build_resource_limits` does. The CPU
+// helper below does the same for CPU; `cpuset:` is audit-only and
+// lives in [`cpu_limit_in_effect`] because the engine forwards it as a
 // placement constraint separate from the quota.
+//
+// The engine helpers return what the engine forwards verbatim, including
+// `cpu_quota: -1` and `mem_limit: "-1"`. The audit applies the
+// "zero-or-below is not a limit" / "-1 is not a cap" filters on top,
+// in [`cpu_limit_in_effect`] and [`check_no_memory_limit`] /
+// [`check_swap_unbounded`] below.
 use podup::effective_cpu_quota;
 use podup::effective_memory_limit;
 
@@ -30,10 +36,17 @@ use podup::effective_memory_limit;
 /// "Is there a CPU cap in effect?" for the audit: a positive
 /// `cpu_quota:`, OR a positive `cpus:` (top-level first, then
 /// `deploy.resources.limits.cpus:`), OR a non-empty `cpuset:`. The first
-/// two come from the shared [`podup::effective_cpu_quota`] helper so the
-/// audit and `build_resource_limits` agree on what the OCI spec will
-/// carry; the `cpuset:` clause is audit-only because the engine forwards
-/// `cpuset:` as a placement constraint separate from the quota (`#1894`).
+/// two come from the shared [`podup::effective_cpu_quota`] helper so
+/// the audit and `build_resource_limits` agree on what the OCI spec
+/// will carry; the `cpuset:` clause is audit-only because the engine
+/// forwards `cpuset:` as a placement constraint separate from the
+/// quota (`#1894`).
+///
+/// The shared helper returns `cpu_quota` verbatim, including `-1`
+/// (Docker's "unlimited" sentinel) and `0` (a quota with no CPU time).
+/// Both count as "no limit" for the audit: an operator who wrote
+/// `cpu_quota: -1` did not set a cap, and `0` is not a bound either.
+/// This wrapper applies that filter.
 ///
 /// `cpuset:` pins the container to named cores, which bounds how many
 /// cores it can take even when no quota is in effect; an audit that
@@ -41,7 +54,7 @@ use podup::effective_memory_limit;
 /// honor as a single-core pin. An empty or whitespace-only `cpuset:` is
 /// treated as not set (it carries no placement constraint).
 fn cpu_limit_in_effect(service: &Service) -> bool {
-	if effective_cpu_quota(service).is_some() {
+	if effective_cpu_quota(service).is_some_and(|q| q > 0) {
 		return true;
 	}
 	service
@@ -152,16 +165,23 @@ pub fn check_no_health_action(name: &str, service: &Service, _file: &ComposeFile
 /// sharing, the swap check could compare against a value the engine
 /// already rejected.
 ///
+/// The shared helper forwards the engine's value verbatim, including
+/// `mem_limit: "-1"`. The audit treats `Some(-1)` as "no memory limit"
+/// here so this check and `no_memory_limit` agree that `mem_limit:
+/// "-1"` is a missing cap, not a present one (`#1894`).
+///
 /// No memory limit in effect -> silent: that case is `no_memory_limit`'s
 /// finding, not this one's. Reporting both would double-count the same
 /// risk.
 pub fn check_swap_unbounded(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
-	let Some(limit) = effective_memory_limit(service) else {
+	// `parse_memory("-1")` returns `Some(-1)`; Podman interprets that as
+	// "no cap", and the audit agrees (see the shared helper's doc
+	// comment in `internal/engine/container_config/resources.rs`).
+	let Some(limit) = effective_memory_limit(service).filter(|&v| v >= 0) else {
 		return Vec::new();
 	};
-	// `parse_memory("-1")` returns `Some(-1)`; treat it the same as
-	// "absent" because Podman interprets `-1` as unlimited swap, not as a
-	// bounded swap limit.
+	// Same `-1` filter for the swap side: `memswap_limit: "-1"` is the
+	// "unlimited swap" sentinel, not a bounded swap limit.
 	let swap = service
 		.memswap_limit
 		.as_deref()
@@ -196,7 +216,9 @@ pub fn check_swap_unbounded(name: &str, service: &Service, _file: &ComposeFile) 
 /// A `cpu_quota:` of zero or below is rejected by the audit: the Docker
 /// API treats `-1` as "unlimited" and Podman does the same, so the
 /// operator's intent is not the limit they got. The shared
-/// [`podup::effective_cpu_quota`] helper applies the same filter.
+/// [`podup::effective_cpu_quota`] helper forwards the engine's value
+/// verbatim; [`cpu_limit_in_effect`] applies the `<= 0` filter on top
+/// of it.
 ///
 /// `cpu_shares` is deliberately NOT counted: it is a relative weight
 /// under contention (1024 is the default), not a hard cap. `cpuset:` IS
