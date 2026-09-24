@@ -127,7 +127,7 @@ pub(crate) fn build_log_config(
 /// reads the typed size cap, and that is the case a journald host config
 /// used to silently override (#1895). Without `max-size` and without a
 /// named `driver`, both `driver` and `size` are left unset so the host's
-/// containers.conf default applies — podup no longer injects a default
+/// containers.conf default applies; podup no longer injects a default
 /// driver or default size cap. A named driver without `max-size` stays
 /// uncapped, just as before.
 fn translate_user_logging(
