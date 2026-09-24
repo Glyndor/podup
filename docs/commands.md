@@ -644,6 +644,25 @@ The `action` of each rule may be:
 | `sync+restart` | Sync the files, then restart the container. |
 | `sync+exec` | Sync the files, then run the rule's `exec` command in the container. |
 
+Each rule's `ignore:` and `include:` lists are read against the path
+RELATIVE TO THE RULE'S `path`, using `.dockerignore` syntax (`*`, `?`,
+`**`, `!` re-include, last match wins). For a service with a local
+`build:` context, the patterns in that context's `.dockerignore` (or
+`.containerignore`) are loaded once at watch start and matched against
+the path relative to the BUILD CONTEXT, which is what those files are
+written against. The rule's own patterns then run against the path
+relative to `path`; the two sets combine with last-match-wins.
+
+A pattern written the old way (project-relative, no globs) keeps
+working through a one-shot warning per distinct pattern: when the
+matcher on the rule-relative path says "no pattern matched" the old
+project-relative matcher runs as a fallback and a `podup: warning:`
+is logged once per `(service, pattern)` for the lifetime of the
+watch, naming the rule's path and suggesting the rewritten pattern
+when the legacy pattern started with the rule's path. A `!` negation
+in the rule's `ignore:` list is always authoritative: the fallback
+never overrides a re-include.
+
 ## Maintenance
 
 ### `config`
