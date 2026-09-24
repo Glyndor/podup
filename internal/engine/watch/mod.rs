@@ -133,7 +133,11 @@ impl Engine {
 				// A missing watch path cannot be synced: the existence check
 				// in the watcher-setup loop below will warn about it, so skip
 				// both the `initial sync` log and the (doomed) sync itself.
-				if !entry.abs_path.exists() {
+				// `symlink_metadata` is used (not `exists`) so a path that
+				// exists only as a dangling symlink is still synced: the
+				// packer in `watch/sync.rs` preserves links, and the rule's
+				// intent there is to upload the link itself.
+				if !std::fs::symlink_metadata(&entry.abs_path).is_ok() {
 					continue;
 				}
 				if let Some(target) = &entry.rule.target {

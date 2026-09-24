@@ -201,12 +201,24 @@ pub(super) fn target_is_on_a_mount(target: &str, mounts: &[&str]) -> bool {
 /// a `read_only: true` root filesystem that no volume or tmpfs covers, or
 /// `None` when the service is writable there. Tmpfs entries are cut at their
 /// first `:` (they can carry `:size=...` options).
+///
+/// `volumes_from:` is treated as a third "covered" case even though the
+/// function does not resolve it to concrete mount paths: a sibling service's
+/// volumes are what `volumes_from` mounts into this container, and resolving
+/// them would require walking the compose graph here, which `read_only` checks
+/// do not need to do. Without this short-circuit the warning would routinely
+/// fire for a service that actually does have its target covered by a
+/// `volumes_from` reference, which is a false positive the user would have to
+/// learn to ignore.
 pub(super) fn read_only_target_warning(
 	service_name: &str,
 	service: &Service,
 	target: &str,
 ) -> Option<String> {
 	if service.read_only != Some(true) {
+		return None;
+	}
+	if !service.volumes_from.is_empty() {
 		return None;
 	}
 	let mut mounts: Vec<&str> = service.volumes.iter().map(|v| v.target()).collect();

@@ -240,4 +240,12 @@ fn read_only_target_warning_cases() {
 	// `read_only` omitted: same as `false`, the default, no warning.
 	let svc: Service = serde_yaml::from_str("image: x\n").unwrap();
 	assert_eq!(read_only_target_warning("web", &svc, "/app"), None);
+
+	// `volumes_from:` mounts the sibling service's volumes into this
+	// container, so the target can be writable even though this function does
+	// not resolve the reference. Warn-by-default would be a false positive
+	// (#1897).
+	let svc: Service =
+		serde_yaml::from_str("read_only: true\nimage: x\nvolumes_from:\n  - data\n").unwrap();
+	assert_eq!(read_only_target_warning("web", &svc, "/app"), None);
 }
