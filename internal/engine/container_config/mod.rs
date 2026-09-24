@@ -121,12 +121,24 @@ pub(crate) fn build_log_config(
 /// same memory parser used elsewhere in the engine (`10m`, `1g`, plain
 /// bytes); a malformed value is rejected with the service field name so the
 /// error points at the compose key the user wrote (#1417).
+///
+/// A `logging:` block without `driver` keeps podup's default driver and, if
+/// `max-size` is also absent, the default size cap from
+/// [`default_log_config`]; a named driver without `max-size` stays uncapped.
+/// Without that fallback a `logging: { options: ... }` block would land in
+/// libpod with `driver=None` and the containers.conf driver would win, so a
+/// user opting out of `max-size` by writing `-1` had to repeat the driver to
+/// avoid the surprise (#1895).
 fn translate_user_logging(
 	service_name: &str,
 	l: &LoggingConfig,
 ) -> Result<LogConfig, ComposeError> {
 	let mut options = l.options.clone();
-	let size = match options.remove("max-size") {
+	let user_max_size = options.remove("max-size");
+	let driver_no_default = l.driver.is_none();
+	let default = default_log_config();
+	let driver = l.driver.clone().or(default.driver);
+	let size = match user_max_size {
 		Some(v) => match size::parse_memory(&v) {
 			Some(bytes) => Some(bytes),
 			None => {
@@ -141,16 +153,23 @@ fn translate_user_logging(
 				));
 			}
 		},
-		None => None,
+		None => {
+			if driver_no_default {
+				default.size
+			} else {
+				None
+			}
+		}
 	};
 	if options.remove("max-file").is_some() {
 		tracing::warn!(
-			"logging.options.max-file is ignored by libpod; \
-			 remove it from your compose file or expect unbounded log growth"
+			"{service_name}: logging.options.max-file is ignored; \
+			 Podman keeps a single log file and truncates it at max-size, \
+			 with no rotated history"
 		);
 	}
 	Ok(LogConfig {
-		driver: l.driver.clone(),
+		driver,
 		size,
 		options,
 	})

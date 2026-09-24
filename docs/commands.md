@@ -72,7 +72,7 @@ each with the compose-spec field shown.
 
 | Compose key | Default | Notes |
 |---|---|---|
-| `logging` | `driver: k8s-file` + `max-size: 10m` + `max-file: 5` | Rotation policy on every container podup creates. Without an explicit `logging:` block, libpod logs would grow unbounded and eventually fill the host. To delegate rotation to journald instead: `logging: { driver: journald }`. To opt out of rotation: `logging: { driver: k8s-file, options: { max-file: "0" } }`. The same default is applied by `generate quadlet`, so a generated unit behaves the same as an `up`-managed container. |
+| `logging` | `driver: k8s-file` + `max-size: 10m` | Rotation policy on every container podup creates. Without an explicit `logging:` block, libpod logs would grow unbounded and eventually fill the host. To delegate rotation to journald instead: `logging: { driver: journald }`. To opt out of the size cap: `logging: { driver: k8s-file, options: { max-size: "-1" } }`. `max-file` is not supported by Podman (a single file is kept and truncated at `max-size`). A `logging:` block without `driver` keeps the `k8s-file` default and its 10m cap unless `max-size` is set. The same default is applied by `generate quadlet`, so a generated unit behaves the same as an `up`-managed container. |
 
 ## Lifecycle
 

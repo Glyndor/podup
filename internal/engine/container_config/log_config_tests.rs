@@ -173,3 +173,55 @@ fn log_config_unsupported_options_pass_through() {
 	assert_eq!(v["options"]["path"], "/var/log/app.log");
 	assert_eq!(v["options"]["tag"], "{{.Name}}");
 }
+
+#[test]
+fn log_config_options_without_driver_keep_the_default_driver() {
+	// A `logging:` block that names only options used to land in libpod
+	// with `driver=None`, which let the containers.conf driver shadow the
+	// `k8s-file` default podup applies (#1895). The user-supplied
+	// `max-size` still wins on `size`.
+	let mut opts = std::collections::HashMap::new();
+	opts.insert("max-size".into(), "1m".into());
+	let logging = LoggingConfig {
+		driver: None,
+		options: opts,
+	};
+	let cfg = build_log_config("web", Some(&logging)).unwrap().unwrap();
+	assert_eq!(cfg.driver.as_deref(), Some("k8s-file"));
+	assert_eq!(cfg.size, Some(1_048_576));
+}
+
+#[test]
+fn log_config_options_without_driver_or_size_keep_the_default_cap() {
+	// A driverless `logging:` block with options that are NOT `max-size`
+	// must still inherit the default cap so the user gets the same
+	// rotation policy as if they had omitted `logging:` entirely (#1895).
+	let mut opts = std::collections::HashMap::new();
+	opts.insert("tag".into(), "x".into());
+	let logging = LoggingConfig {
+		driver: None,
+		options: opts,
+	};
+	let cfg = build_log_config("web", Some(&logging)).unwrap().unwrap();
+	assert_eq!(cfg.driver.as_deref(), Some("k8s-file"));
+	assert_eq!(cfg.size, default_log_config().size);
+	let v = serde_json::to_value(&cfg).unwrap();
+	assert_eq!(
+		v["options"]["tag"], "x",
+		"non-rotation options must still pass through to libpod: {v}"
+	);
+}
+
+#[test]
+fn log_config_named_driver_without_size_stays_uncapped() {
+	// The default size only kicks in when the driver is absent; a named
+	// driver without `max-size` still produces `size=None`, matching the
+	// behaviour before #1895.
+	let logging = LoggingConfig {
+		driver: Some("k8s-file".into()),
+		options: Default::default(),
+	};
+	let cfg = build_log_config("web", Some(&logging)).unwrap().unwrap();
+	assert_eq!(cfg.driver.as_deref(), Some("k8s-file"));
+	assert_eq!(cfg.size, None);
+}
