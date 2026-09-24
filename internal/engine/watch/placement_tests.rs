@@ -232,12 +232,12 @@ fn read_only_target_warning_cases() {
 		serde_yaml::from_str("read_only: true\nimage: x\ntmpfs:\n  - /app:size=10m\n").unwrap();
 	assert_eq!(read_only_target_warning("web", &svc, "/app"), None);
 
-	// `read_only: false` (explicit) — the container is writable regardless
+	// `read_only: false` (explicit): the container is writable regardless
 	// of mount coverage, so there is nothing to warn about.
 	let svc: Service = serde_yaml::from_str("read_only: false\nimage: x\n").unwrap();
 	assert_eq!(read_only_target_warning("web", &svc, "/app"), None);
 
-	// `read_only` omitted — same as `false`: default, no warning.
+	// `read_only` omitted: same as `false`, the default, no warning.
 	let svc: Service = serde_yaml::from_str("image: x\n").unwrap();
 	assert_eq!(read_only_target_warning("web", &svc, "/app"), None);
 }
