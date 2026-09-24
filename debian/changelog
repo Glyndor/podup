@@ -1,3 +1,14 @@
+podup (5.9.9) unstable; urgency=medium
+
+  * `podup update` on Unix no longer resets the binary's mode to 0755 and
+    no longer leaves its path empty while the new binary is written. The
+    current binary is hard-linked to `podup.old` instead of renamed, so a
+    binary installed as 0700, 0750 or 0111 keeps its mode, and a failed
+    update rolls back to the original file with its owner and extended
+    attributes intact.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Wed, 23 Sep 2026 19:44:40 -0500
+
 podup (5.9.8) unstable; urgency=medium
 
   * When a build fails and the Podman daemon reports
