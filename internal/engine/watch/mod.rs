@@ -10,8 +10,19 @@
 //! - `sync+restart`: sync first, then restart
 //! - `sync+exec`: sync, then run the rule's `exec` command inside the container
 
+mod ignore_filter;
 mod placement;
 pub(in crate::engine) mod sync;
+#[cfg(feature = "test-helpers")]
+mod test_helpers;
+
+/// Test-only re-exports so unit tests in `watch_tests.rs` can exercise the
+/// legacy fallback helper without going through the full notify loop. Not
+/// part of the public API.
+#[cfg(test)]
+mod mod_test_hooks {
+	pub(super) use super::ignore_filter::legacy_pattern_suggestion;
+}
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -34,7 +45,6 @@ use placement::{
 	plan_remove_placement, plan_sync_placement, read_only_target_warning, validate_sync_target,
 	SyncPlacement,
 };
-use sync::{is_ignored, is_included};
 
 use super::Engine;
 
@@ -53,6 +63,18 @@ struct RuleEntry {
 	container_name: String,
 	rule: WatchRule,
 	abs_path: PathBuf,
+	/// Absolute path of the service's local build context, when one exists.
+	/// `None` for services without a local `build:` (image-based, or a remote
+	/// context like `git://`/`https://`); `Some(...)` is the directory the
+	/// `.dockerignore` is loaded from. The watch event's relative path is
+	/// stripped against this when the build-context ignore file applies.
+	build_context_abs: Option<PathBuf>,
+	/// Patterns read once at watch start from the build context's
+	/// `.dockerignore` / `.containerignore`. Empty when there is no build
+	/// context or when the ignore file is missing. Each pattern is matched
+	/// against the path relative to the build context, not to the rule's
+	/// `path`, because that is what a `.dockerignore` is written against.
+	build_context_patterns: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -85,11 +107,20 @@ impl Engine {
 					// the watcher can still set up.
 					let joined = self.base_dir.join(&rule.path);
 					let abs = std::fs::canonicalize(&joined).unwrap_or(joined);
+					// A service with a local `build:` carries a `.dockerignore`
+					// the rule should pick up as implicit ignore content, per
+					// the Compose Spec. Load it once per rule here so the
+					// per-event evaluation is just a pattern match, not a
+					// file read on every change.
+					let (build_context_abs, build_context_patterns) =
+						ignore_filter::local_build_context_patterns(&self.base_dir, service);
 					rule_entries.push(RuleEntry {
 						service_name: name.clone(),
 						container_name: self.first_replica_name(name, service),
 						rule: rule.clone(),
 						abs_path: abs,
+						build_context_abs,
+						build_context_patterns,
 					});
 				}
 			}
@@ -189,6 +220,12 @@ impl Engine {
 		info!("watching {} rule(s); Ctrl+C to stop", rule_entries.len());
 
 		let debounce = Duration::from_millis(100);
+		// Track which (service, pattern) tuples already triggered a legacy
+		// warning. The warning is informational, not per-event: a pattern
+		// that matches a hundred files across a long session should produce
+		// one warning, not a hundred.
+		let mut legacy_ignored_warned: HashSet<(String, String)> = HashSet::new();
+		let mut legacy_included_warned: HashSet<(String, String)> = HashSet::new();
 
 		loop {
 			let event = tokio::select! {
@@ -246,14 +283,20 @@ impl Engine {
 						continue;
 					}
 
-					let rel = path.strip_prefix(&self.base_dir).unwrap_or(path.as_path());
-					let rel_str = rel.to_string_lossy();
-
-					if is_ignored(&rel_str, &entry.rule.ignore) {
+					let mut ctx = ignore_filter::RuleContext {
+						rule_abs: &entry.abs_path,
+						ctx_abs: entry.build_context_abs.as_deref(),
+						base_dir: &self.base_dir,
+						service_name: &entry.service_name,
+						rule_path: &entry.rule.path,
+						ctx_patterns: &entry.build_context_patterns,
+						warned: &mut legacy_ignored_warned,
+					};
+					if ignore_filter::ignored_with_fallback(path, &entry.rule.ignore, &mut ctx) {
 						continue;
 					}
-					if !entry.rule.include.is_empty() && !is_included(&rel_str, &entry.rule.include)
-					{
+					ctx.warned = &mut legacy_included_warned;
+					if !ignore_filter::included_with_fallback(path, &entry.rule.include, &mut ctx) {
 						continue;
 					}
 
@@ -593,123 +636,7 @@ impl Engine {
 		Ok(())
 	}
 }
-// ---------------------------------------------------------------------------
-// Test helpers (feature-gated so they never appear in release builds)
-// ---------------------------------------------------------------------------
 
-#[cfg(feature = "test-helpers")]
-impl Engine {
-	/// Test seam: copy `src` into `container` at `target` via the watch sync
-	/// path, treating `src` as both the watch-rule root and the changed entry
-	/// (as the initial-sync path does).
-	pub async fn test_sync_to_container(
-		&self,
-		container: &str,
-		src: &Path,
-		target: &str,
-	) -> Result<()> {
-		let mut ensured = HashSet::new();
-		self.sync_to_container(container, src, src, target, &mut ensured)
-			.await
-	}
-
-	/// Test seam: delete the entry `path` would have written under `target`
-	/// from `container`. Mirrors the live `dispatch_action` path that runs on
-	/// a `Remove` notify event.
-	pub async fn test_remove_from_container(
-		&self,
-		container: &str,
-		src: &Path,
-		target: &str,
-	) -> Result<()> {
-		self.remove_from_container(container, src, src, target)
-			.await
-	}
-
-	/// Test seam: run the watch restart action against `container_name`.
-	pub async fn test_watch_restart(&self, container_name: &str) -> Result<()> {
-		self.watch_restart(container_name).await
-	}
-
-	/// Test seam: run the watch exec action (`cmd`) against `container_name`.
-	pub async fn test_watch_exec(&self, container_name: &str, cmd: Vec<String>) -> Result<()> {
-		self.watch_exec(container_name, cmd).await
-	}
-
-	/// All container names carrying this project's label (any state). Lets
-	/// integration tests assert which service containers `run` did or did not
-	/// create (e.g. that `--no-deps` skipped a dependency).
-	pub async fn test_project_container_names(&self) -> Result<Vec<String>> {
-		self.list_project_container_names(None).await
-	}
-
-	/// The network aliases a container answers to, flattened across every
-	/// network it is attached to.
-	///
-	/// The seam that lets a test check **podup's** contribution to service-name
-	/// resolution (registering the compose service name as an alias) without
-	/// depending on the runtime's DNS server being up to answer for it. Those
-	/// are two layers, and a test that only measures the second blames podup for
-	/// the first's failures (#1330).
-	pub async fn test_container_aliases(&self, container: &str) -> Result<Vec<String>> {
-		let path = format!(
-			"{}/containers/{}/json",
-			crate::libpod::API_PREFIX,
-			crate::libpod::urlencoded(container)
-		);
-		let inspect: crate::libpod::types::container::ContainerInspect = self
-			.client
-			.get_json(&path)
-			.await
-			.map_err(crate::error::ComposeError::Podman)?;
-		Ok(inspect
-			.network_settings
-			.map(|n| {
-				n.networks
-					.into_values()
-					.flat_map(|a| a.aliases)
-					.collect::<Vec<_>>()
-			})
-			.unwrap_or_default())
-	}
-
-	/// Run a command in the named container and return its captured stdout.
-	///
-	/// Integration tests use this to observe the effect of a watch action (e.g.
-	/// that a synced file reached the container) and poll for it, instead of
-	/// sleeping a fixed duration and assuming the action completed.
-	pub async fn test_exec_capture(&self, container: &str, cmd: Vec<String>) -> Result<String> {
-		let exec_cfg = ExecCreateConfig {
-			cmd: Some(cmd),
-			attach_stdout: Some(true),
-			attach_stderr: Some(true),
-			..Default::default()
-		};
-		let create_path = format!("{API_PREFIX}/containers/{}/exec", urlencoded(container));
-		let resp: ExecCreateResponse = self
-			.client
-			.post_json(&create_path, &exec_cfg)
-			.await
-			.map_err(ComposeError::Podman)?;
-
-		let start_cfg = ExecStartConfig {
-			detach: false,
-			tty: false,
-		};
-		let start_path = format!("{API_PREFIX}/exec/{}/start", urlencoded(&resp.id));
-		let start_resp = self
-			.client
-			.post_json_stream(&start_path, &start_cfg)
-			.await
-			.map_err(ComposeError::Podman)?;
-		let mut stream = crate::libpod::parse_multiplexed(start_resp.into_body());
-
-		let mut out = String::new();
-		while let Some(msg) = stream.next().await {
-			if let LogOutput::StdOut { message } = msg.map_err(ComposeError::Podman)? {
-				out.push_str(&String::from_utf8_lossy(&message));
-			}
-		}
-		Ok(out)
-	}
-}
+#[cfg(test)]
+#[path = "watch_tests.rs"]
+mod watch_tests;
