@@ -417,8 +417,14 @@ mod lifecycle;
 mod lifecycle_query;
 
 #[cfg(all(unix, feature = "test-helpers"))]
-#[path = "engine_integration/libpod_origin_form_comps.rs"]
-mod libpod_origin_form_comps;
+#[path = "engine_integration/libpod_origin_form_build_comp.rs"]
+mod libpod_origin_form_build_comp;
+#[cfg(all(unix, feature = "test-helpers"))]
+#[path = "engine_integration/libpod_origin_form_io_comps.rs"]
+mod libpod_origin_form_io_comps;
+#[cfg(all(unix, feature = "test-helpers"))]
+#[path = "engine_integration/libpod_origin_form_lifecycle_comps.rs"]
+mod libpod_origin_form_lifecycle_comps;
 #[path = "engine_integration/niche.rs"]
 mod niche;
 #[path = "engine_integration/recreate_on_image.rs"]
@@ -500,3 +506,122 @@ mod userns;
 
 #[path = "engine_integration/userns_pod.rs"]
 mod userns_pod;
+
+// ---------------------------------------------------------------------------
+// Shared helpers for the libpod origin-form compensation tests
+// (engine_integration/libpod_origin_form_*.rs). One helper file per concern
+// would be cleaner, but these helpers are small enough that colocating them
+// with the rest of the crate-root helpers is the simpler split, and the tests
+// that use them (`super::*`) reach the crate root the same way every other
+// test group already does.
+// ---------------------------------------------------------------------------
+
+/// Locate the Podman socket the engine talks to. The CLI's own storage root
+/// is often different from the socket's (a fresh CLI invocation on Linux
+/// resolves to a tmpfs path the socket does not share), so plain
+/// `podman ps` queries the wrong store on most setups. The CLI's `--url`
+/// flag forwards the request to the socket instead, which is what the
+/// live tests inspect.
+///
+/// Returns `None` when no candidate socket exists; the live tests skip on
+/// that path.
+pub(crate) fn podman_socket_url() -> Option<String> {
+	for path in [
+		format!("/run/user/{}/podman/podman.sock", unsafe { libc::getuid() }),
+		"/run/podman/podman.sock".to_string(),
+	] {
+		if std::path::Path::new(&path).exists() {
+			return Some(format!("unix://{path}"));
+		}
+	}
+	None
+}
+
+/// Run `podman --url <socket> <args...>` and return the trimmed stdout.
+/// Panics with stderr on a non-zero exit so a failing assertion carries the
+/// actual Podman response.
+pub(crate) fn podman_cmd(socket: &str, args: &[&str]) -> String {
+	let out = std::process::Command::new("podman")
+		.args(["--url", socket])
+		.args(args)
+		.output()
+		.unwrap_or_else(|e| panic!("podman {args:?}: {e}"));
+	if !out.status.success() {
+		panic!(
+			"`podman --url {socket} {args:?}` exited {}: {}",
+			out.status,
+			String::from_utf8_lossy(&out.stderr)
+		);
+	}
+	String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// Build a project on the live socket and start it. Returns
+/// `(tempdir, project_name, container_name)` so the compose file outlives
+/// the `up` and the test can reach the project's running container. The
+/// composition drives the `podup` binary through `CARGO_BIN_EXE_podup`, the
+/// same binary `cargo test --test engine_integration` resolves at build
+/// time.
+pub(crate) fn up_service(
+	socket: &str,
+	tag: &str,
+	body: &str,
+) -> (tempfile::TempDir, String, String) {
+	let dir = tempfile::tempdir().expect("tempdir");
+	let compose = dir.path().join("compose.yaml");
+	std::fs::write(&compose, body).expect("write compose");
+	let name = format!("t{}-{}", std::process::id(), tag);
+	let bin = bin();
+	let out = std::process::Command::new(bin)
+		.args(["-f"])
+		.arg(&compose)
+		.args(["-p", &name, "up", "-d", "--no-build"])
+		.env("PODMAN_SOCKET", socket)
+		.output()
+		.expect("run podup up");
+	assert!(
+		out.status.success(),
+		"`podup up` failed: {}",
+		String::from_utf8_lossy(&out.stderr)
+	);
+	let container = podman_cmd(
+		socket,
+		&[
+			"ps",
+			"-a",
+			"--format",
+			"{{.Names}}",
+			"--filter",
+			&format!("label=podup.project={name}"),
+		],
+	);
+	let container = container
+		.lines()
+		.next()
+		.unwrap_or_default()
+		.trim_start_matches('/')
+		.to_string();
+	assert!(
+		!container.is_empty(),
+		"no project container was created for {name}"
+	);
+	(dir, name, container)
+}
+
+/// Tear the project down. Best-effort: the `Drop` on `DownGuard` would do
+/// the same, but a single explicit teardown keeps the assertion surface
+/// (and the leftover list) clean.
+pub(crate) fn down(socket: &str, dir: &tempfile::TempDir, name: &str) {
+	let compose = dir.path().join("compose.yaml");
+	let _ = std::process::Command::new(bin())
+		.args(["-f"])
+		.arg(&compose)
+		.args(["-p", name, "down", "-v"])
+		.env("PODMAN_SOCKET", socket)
+		.output();
+}
+
+/// Time the wall-clock between two instants in milliseconds.
+pub(crate) fn elapsed_ms(start: std::time::Instant) -> u128 {
+	start.elapsed().as_millis()
+}
