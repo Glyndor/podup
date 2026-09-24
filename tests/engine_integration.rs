@@ -415,6 +415,10 @@ mod label_file_safety;
 mod lifecycle;
 #[path = "engine_integration/lifecycle_query.rs"]
 mod lifecycle_query;
+
+#[cfg(all(unix, feature = "test-helpers"))]
+#[path = "engine_integration/libpod_origin_form_comps.rs"]
+mod libpod_origin_form_comps;
 #[path = "engine_integration/niche.rs"]
 mod niche;
 #[path = "engine_integration/recreate_on_image.rs"]
