@@ -294,3 +294,11 @@ mod chunked_tests;
 // defect, which is how it survived.
 #[path = "readiness_tests.rs"]
 mod readiness_tests;
+
+// Origin-form request line for #1914. The fixture and tests live in a
+// sibling module so this harness file stays under the soft 300-line warn.
+// The tests bind a Unix listener and read the bytes the client wrote, so
+// what is pinned here is the request line on the wire, not what `hyper::Uri`
+// happens to retain in memory.
+#[path = "origin_form_tests.rs"]
+mod origin_form_tests;

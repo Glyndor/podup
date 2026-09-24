@@ -228,7 +228,7 @@ impl Engine {
 		// (#1686).
 		crate::ui::progress::start("Container", name, "Stopping");
 		let stop_path = format!(
-			"{API_PREFIX}/containers/{}/stop?t={}",
+			"{API_PREFIX}/containers/{}/stop?timeout={}",
 			urlencoded(name),
 			stop_timeout_param(grace),
 		);
@@ -237,7 +237,7 @@ impl Engine {
 			.post_empty_ok_within(&stop_path, stop_deadline(grace))
 			.await;
 		crate::ui::progress::start("Container", name, "Removing");
-		let rm_path = super::container_rm_path(name, remove_volumes);
+		let rm_path = super::container_rm_path(name, remove_volumes, true);
 		match self.client.delete_ok(&rm_path).await {
 			Ok(()) => {
 				crate::ui::progress_line("Container", name, "Removed");

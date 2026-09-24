@@ -283,6 +283,38 @@ mod tests {
 		);
 	}
 
+	/// `layers=true` must be present on the build query. The Docker
+	/// compat handler used to default `layers` to true; the libpod
+	/// handler defaults it to false. podup's user-facing behaviour
+	/// is "the second build of the same Containerfile reuses the
+	/// cache", which requires `layers=true`. Sent once, not twice
+	/// (Podman rejects a duplicate param).
+	#[tokio::test]
+	async fn build_query_carries_layers_true() {
+		let (_dir, _fake, engine, _ctx, requests) = start_capture("proj");
+
+		let file = crate::parse_str(
+			"services:\n  app:\n    image: proj/img:1\n    build:\n      context: .\n",
+		)
+		.unwrap();
+		engine
+			.build_all_with_options(&file, &[], &crate::engine::BuildOptions::default())
+			.await
+			.expect("a build the fake accepts succeeds");
+
+		let requests = requests.lock().unwrap().clone();
+		let target = build_target(&requests);
+		let query = target
+			.split_once('?')
+			.expect("the build target carries a query string");
+
+		let layers_count = exact_param_count(query.1, "layers=true");
+		assert_eq!(
+			layers_count, 1,
+			"the build query must carry `layers=true` exactly once, found {layers_count}: {query:?}"
+		);
+	}
+
 	/// The two labels are url-encoded into `key=value` form, just like every
 	/// other value in this query string. A label value containing characters
 	/// Podman's parser rejects when raw (`:`, `+`, `&`) must reach the

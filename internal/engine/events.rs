@@ -338,6 +338,38 @@ fn build_event_filters(project: &str, user_filters: &[String]) -> Result<Value> 
 	Ok(Value::Object(map))
 }
 
+/// Rewrite a libpod-native event into the docker-compat shape podup has
+/// always exposed: `status` becomes `Action` (and `died` -> `die`,
+/// `remove` -> `delete`); the libpod `Actor.Attributes.containerExitCode`
+/// becomes the docker-compat `Actor.Attributes.exitCode`. The libpod
+/// keys stay alongside the renamed ones so callers that read either
+/// shape still find their value (#1914).
+///
+/// Pure so the rename is unit-tested without a live socket.
+fn rename_event(value: &Value) -> Value {
+	let mut out = value.clone();
+	if let Some(obj) = out.as_object_mut() {
+		// `status` is the libpod-native verb key. Promote it to `Action`
+		// under the docker-compat name and rewrite the verbs that diverged.
+		if let Some(status) = obj.get("status").and_then(Value::as_str) {
+			let action = match status {
+				"died" => "die",
+				"remove" => "delete",
+				other => other,
+			};
+			obj.insert("Action".to_string(), Value::String(action.to_string()));
+		}
+		if let Some(actor) = obj.get_mut("Actor").and_then(Value::as_object_mut) {
+			if let Some(attrs) = actor.get_mut("Attributes").and_then(Value::as_object_mut) {
+				if let Some(code) = attrs.remove("containerExitCode") {
+					attrs.entry("exitCode".to_string()).or_insert(code);
+				}
+			}
+		}
+	}
+	out
+}
+
 /// Render one event. `json` emits the raw object as a compact line; otherwise a
 /// `TYPE ACTION NAME` summary, tolerant of both the docker-compat shape
 /// (`Type`/`Action`/`Actor.Attributes.name`) and the libpod-native one
@@ -349,7 +381,13 @@ fn format_event(value: &Value, json: bool) -> String {
 		// truncating the NDJSON stream. Surface the cause at `debug` (the
 		// operator who runs with `RUST_LOG=debug` sees why one row is
 		// missing), drop the row, and let the stream continue (#1366).
-		return match super::to_query_json("events row", value) {
+		//
+		// The same docker-compat shape is honoured on the JSON path: verbs
+		// are rewritten in a clone of the object so the wire bytes still
+		// carry `Action=die` and `Action=delete` (and the libpod-style
+		// `status=...` is preserved alongside, for callers that keyed on
+		// it). Exit-code renaming is applied below in [`rename_event`].
+		return match super::to_query_json("events row", &rename_event(value)) {
 			Ok(s) => s,
 			Err(e) => {
 				tracing::debug!("events: dropping unserialisable row: {e}");
@@ -358,11 +396,23 @@ fn format_event(value: &Value, json: bool) -> String {
 		};
 	}
 	let typ = value.get("Type").and_then(Value::as_str).unwrap_or("");
-	let action = value
+	let action_raw = value
 		.get("Action")
 		.or_else(|| value.get("status"))
 		.and_then(Value::as_str)
 		.unwrap_or("");
+	// libpod renamed two event verbs between the Docker compat handler and
+	// its own: a container's death is `died` (not `die`), an image removal
+	// is `remove` (not `delete`), and the exit code lives in
+	// `Actor.Attributes.containerExitCode` (not `exitCode`). podup's
+	// user-facing output keeps the docker-compat verb and exit-code key so a
+	// `--filter event=die` and a script that reads `exitCode` still work
+	// (#1914). Unknown verbs pass through unchanged.
+	let action = match action_raw {
+		"died" => "die",
+		"remove" => "delete",
+		other => other,
+	};
 	let name = value
 		.pointer("/Actor/Attributes/name")
 		.or_else(|| value.get("id"))

@@ -167,8 +167,8 @@ impl Engine {
 			);
 		}
 
-		let mut labels: std::collections::HashMap<String, String> =
-			std::collections::HashMap::new();
+		let mut labels: std::collections::BTreeMap<String, String> =
+			std::collections::BTreeMap::new();
 		if let BuildConfig::Config { labels: l, .. } = build {
 			labels.extend(l.to_map());
 		}
@@ -177,7 +177,10 @@ impl Engine {
 		// value. Without this, `build.labels: {podup.project: other}` would
 		// make `podman image prune --filter label=podup.project=<self>`
 		// miss every image this build produced and reach for `other`'s
-		// instead.
+		// instead. A `BTreeMap` (rather than the `HashMap` this used to be)
+		// keeps the label order deterministic across builds, so a second
+		// `podup build` of the same Containerfile hits the buildkit layer
+		// cache instead of producing a different `LABEL` step every time.
 		labels.insert("podup.project".to_string(), self.project.clone());
 		labels.insert("podup.service".to_string(), service_name.to_string());
 
@@ -257,7 +260,7 @@ impl Engine {
 		// every run without `forcerm` (2 of 2) and on none of the runs
 		// with it (0 of 2).
 		let mut qs = format!(
-			"t={}&rm=true&forcerm=true&nocache={}",
+			"t={}&rm=true&forcerm=true&layers=true&nocache={}",
 			urlencoded(&tag),
 			build.no_cache() || opts.no_cache
 		);

@@ -1,5 +1,6 @@
 use super::{
-	build_event_filters, format_event, validate_events_since, Engine, EventsOptions, TIME_WIDTH,
+	build_event_filters, format_event, rename_event, validate_events_since, Engine, EventsOptions,
+	TIME_WIDTH,
 };
 use crate::libpod::Client;
 use serde_json::json;
@@ -74,6 +75,82 @@ fn formats_libpod_native_shape() {
 		&out[TIME_WIDTH..],
 		" container die            abc123",
 		"columns after TIME drifted: {out:?}"
+	);
+}
+
+/// The libpod `/events` endpoint names a container's death `died` (not
+/// `die`) and an image removal `remove` (not `delete`). podup's user-
+/// facing output keeps the docker-compat verbs so a `--filter event=die`
+/// still matches a container death on libpod (#1914).
+#[test]
+fn rename_event_maps_libpod_verbs_to_docker_compat() {
+	for (raw, want) in [
+		("died", "die"),
+		("remove", "delete"),
+		("start", "start"),
+		("die", "die"),
+		("delete", "delete"),
+	] {
+		let v = json!({ "Type": "container", "status": raw });
+		let out = rename_event(&v);
+		assert_eq!(
+			out.get("Action").and_then(|v| v.as_str()),
+			Some(want),
+			"verb {raw:?} did not map to {want:?}: {out:?}"
+		);
+	}
+}
+
+/// `Actor.Attributes.containerExitCode` (libpod) is renamed to
+/// `Actor.Attributes.exitCode` (docker-compat) so a script that reads the
+/// docker-compat key still finds the value (#1914).
+#[test]
+fn rename_event_maps_container_exit_code_to_exit_code() {
+	let v = json!({
+		"Type": "container",
+		"status": "died",
+		"Actor": {
+			"Attributes": {
+				"name": "web-1",
+				"containerExitCode": "3",
+			}
+		}
+	});
+	let out = rename_event(&v);
+	assert_eq!(
+		out.pointer("/Actor/Attributes/exitCode")
+			.and_then(|v| v.as_str()),
+		Some("3"),
+		"containerExitCode was not promoted to exitCode: {out:?}"
+	);
+	assert_eq!(
+		out.pointer("/Actor/Attributes/name")
+			.and_then(|v| v.as_str()),
+		Some("web-1"),
+		"name must remain: {out:?}"
+	);
+}
+
+/// The table form must render `died` as `die` and `remove` as `delete`,
+/// the docker-compat verbs podup has always printed (#1914).
+#[test]
+fn table_form_renders_libpod_verbs_as_docker_compat() {
+	let died = json!({ "Type": "container", "status": "died", "id": "web-1", "time": 0 });
+	let out = format_event(&died, false);
+	assert!(
+		out.contains("die"),
+		"libpod `died` must render as docker-compat `die`: {out:?}"
+	);
+	assert!(
+		!out.contains("died"),
+		"libpod `died` must not appear in the table form: {out:?}"
+	);
+
+	let remove = json!({ "Type": "image", "status": "remove", "id": "img-1", "time": 0 });
+	let out = format_event(&remove, false);
+	assert!(
+		out.contains("delete"),
+		"libpod `remove` must render as docker-compat `delete`: {out:?}"
 	);
 }
 

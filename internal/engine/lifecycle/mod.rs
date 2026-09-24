@@ -165,16 +165,20 @@ impl Engine {
 /// the only way image `VOLUME` directives and short-form anonymous volumes get
 /// removed: podup never names or labels them, so they cannot be enumerated and
 /// deleted the way declared top-level volumes are.
-pub(super) fn container_rm_path(name: &str, remove_volumes: bool) -> String {
-	let with_volumes = if remove_volumes { "&v=true" } else { "" };
+pub(super) fn container_rm_path(name: &str, remove_volumes: bool, force: bool) -> String {
+	let force_str = if force { "true" } else { "false" };
+	let with_volumes = if remove_volumes { "&volumes=true" } else { "" };
 	format!(
-		"{API_PREFIX}/containers/{}?force=true{with_volumes}",
+		"{API_PREFIX}/containers/{}?force={force_str}{with_volumes}",
 		crate::libpod::urlencoded(name),
 	)
 }
 
 #[cfg(test)]
 mod drop_recheck_tests;
+#[cfg(test)]
+#[path = "libpod_endpoint_query_tests.rs"]
+mod libpod_endpoint_query_tests;
 #[cfg(test)]
 #[path = "scale_request_tests.rs"]
 mod scale_request_tests;

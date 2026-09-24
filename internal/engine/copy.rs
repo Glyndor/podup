@@ -22,7 +22,7 @@ mod pack;
 pub(in crate::engine) mod pack_common;
 mod progress;
 mod stream;
-mod upload;
+pub(in crate::engine) mod upload;
 pub(in crate::engine) mod verify;
 
 /// Re-export the watch-sync packer at the engine level so the watch module
