@@ -12,9 +12,8 @@ use std::path::{Path, PathBuf};
 
 use super::ignore_filter::{
 	evaluate_ignore, ignored_with_fallback, included_with_fallback, legacy_ignore_fallback,
-	RuleContext,
+	legacy_pattern_suggestion, RuleContext,
 };
-use super::mod_test_hooks::legacy_pattern_suggestion;
 use super::sync::{legacy_project_relative_ignored, legacy_project_relative_included};
 
 fn pats(v: &[&str]) -> Vec<String> {

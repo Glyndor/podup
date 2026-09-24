@@ -16,14 +16,6 @@ pub(in crate::engine) mod sync;
 #[cfg(feature = "test-helpers")]
 mod test_helpers;
 
-/// Test-only re-exports so unit tests in `watch_tests.rs` can exercise the
-/// legacy fallback helper without going through the full notify loop. Not
-/// part of the public API.
-#[cfg(test)]
-mod mod_test_hooks {
-	pub(super) use super::ignore_filter::legacy_pattern_suggestion;
-}
-
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
