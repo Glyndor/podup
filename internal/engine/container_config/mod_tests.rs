@@ -191,7 +191,7 @@ fn healthcheck_disabled() {
 		disable: Some(true),
 		..Default::default()
 	};
-	let cfg = build_healthcheck(&hc);
+	let cfg = build_healthcheck(&hc).unwrap();
 	assert_eq!(cfg.test.unwrap(), vec!["NONE"]);
 }
 
@@ -206,7 +206,7 @@ fn healthcheck_shell_command() {
 		retries: Some(3),
 		..Default::default()
 	};
-	let cfg = build_healthcheck(&hc);
+	let cfg = build_healthcheck(&hc).unwrap();
 	let test = cfg.test.unwrap();
 	assert_eq!(test[0], "CMD-SHELL");
 	assert!(test[1].contains("curl"));
@@ -223,7 +223,7 @@ fn healthcheck_exec_command() {
 		])),
 		..Default::default()
 	};
-	let cfg = build_healthcheck(&hc);
+	let cfg = build_healthcheck(&hc).unwrap();
 	let test = cfg.test.unwrap();
 	assert_eq!(test[0], "curl");
 }
@@ -237,7 +237,7 @@ fn healthcheck_applies_compose_defaults_when_omitted() {
 		test: Some(ComposeCommand::Exec(vec!["true".into()])),
 		..Default::default()
 	};
-	let cfg = build_healthcheck(&hc);
+	let cfg = build_healthcheck(&hc).unwrap();
 	assert_eq!(cfg.interval, Some(30 * 1_000_000_000));
 	assert_eq!(cfg.timeout, Some(30 * 1_000_000_000));
 	assert_eq!(cfg.retries, Some(3));
@@ -252,8 +252,81 @@ fn healthcheck_honors_explicit_interval_and_timeout() {
 		retries: Some(7),
 		..Default::default()
 	};
-	let cfg = build_healthcheck(&hc);
+	let cfg = build_healthcheck(&hc).unwrap();
 	assert_eq!(cfg.interval, Some(2 * 1_000_000_000));
 	assert_eq!(cfg.timeout, Some(5 * 1_000_000_000));
 	assert_eq!(cfg.retries, Some(7));
+}
+
+#[test]
+fn healthcheck_with_nothing_set_sends_no_config() {
+	// A default `healthcheck:` block has no test and no timings. Podman 5.4.2
+	// (still supported) inherits the image HEALTHCHECK only when the whole
+	// `healthconfig` is absent from the request, while 5.7+ merges
+	// field-by-field and would inherit anyway; sending 30s/30s/3 would
+	// overwrite the image's values on the supported floor (#1893).
+	let hc = HealthCheck::default();
+	assert!(build_healthcheck(&hc).is_none());
+}
+
+#[test]
+fn healthcheck_with_an_empty_exec_test_inherits_like_no_test() {
+	// `test: []` parses as a present-but-empty exec command. libpod treats
+	// an empty Test as absent and inherits the image's HEALTHCHECK; sending
+	// the 30s/30s/3 compose defaults here would overwrite the image's values
+	// (#1893). Because the user set a timing, we still build a config (with
+	// `test == None`) so that override survives. On Podman 5.7+ libpod
+	// merges field-by-field and fills the rest from the image; on Podman
+	// 5.4.2 (still supported) a non-nil `healthconfig` without a `test`
+	// REPLACES the image probe, which is the documented divergence (#1893).
+	let hc = HealthCheck {
+		test: Some(ComposeCommand::Exec(vec![])),
+		interval: Some("5s".into()),
+		..Default::default()
+	};
+	let cfg = build_healthcheck(&hc).unwrap();
+	assert_eq!(cfg.test, None);
+	assert_eq!(cfg.interval, Some(5 * 1_000_000_000));
+	assert_eq!(cfg.timeout, None);
+	assert_eq!(cfg.retries, None);
+}
+
+#[test]
+fn healthcheck_with_an_empty_shell_test_keeps_the_explicit_probe() {
+	// `test: ""` is the shell form, not an empty test. compose-go preserves
+	// it and Podman runs `["CMD-SHELL", ""]`, an explicit no-op that
+	// succeeds on images with `/bin/sh`. Treating it as "no test" silently
+	// switched the service to the image HEALTHCHECK, which regressed
+	// services that relied on the override (#1893). The empty shell string
+	// must round-trip as `["CMD-SHELL", ""]` and pull in the compose-spec
+	// 30s/30s/3 defaults like any other explicit test.
+	let hc = HealthCheck {
+		test: Some(ComposeCommand::Shell(String::new())),
+		..Default::default()
+	};
+	let cfg = build_healthcheck(&hc).unwrap();
+	assert_eq!(cfg.test, Some(vec!["CMD-SHELL".to_string(), String::new()]));
+	assert_eq!(cfg.interval, Some(30 * 1_000_000_000));
+	assert_eq!(cfg.timeout, Some(30 * 1_000_000_000));
+	assert_eq!(cfg.retries, Some(3));
+}
+
+#[test]
+fn healthcheck_without_test_keeps_only_the_timings_the_user_set() {
+	// Without a `test`, fields the user did not set must stay `None`. On
+	// Podman 5.7+ libpod merges field-by-field and inherits the unset fields
+	// from the image; on Podman 5.4.2 a non-nil `healthconfig` without a
+	// `test` REPLACES the image probe rather than inheriting it, which is
+	// the documented divergence. Fields the user did set are passed through,
+	// with retries widened to i64 like the rest of the API (#1893).
+	let hc = HealthCheck {
+		interval: Some("5s".into()),
+		retries: Some(4),
+		..Default::default()
+	};
+	let cfg = build_healthcheck(&hc).unwrap();
+	assert_eq!(cfg.test, None);
+	assert_eq!(cfg.interval, Some(5 * 1_000_000_000));
+	assert_eq!(cfg.timeout, None);
+	assert_eq!(cfg.retries, Some(4));
 }

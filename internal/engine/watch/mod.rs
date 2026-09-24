@@ -17,7 +17,9 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::libpod::types::exec::{ExecCreateConfig, ExecCreateResponse, ExecStartConfig};
+use crate::libpod::types::exec::{
+	ExecCreateConfig, ExecCreateResponse, ExecInspect, ExecStartConfig,
+};
 use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 use futures_util::StreamExt;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -29,7 +31,8 @@ use crate::error::{ComposeError, Result};
 
 use placement::{
 	is_dispatch_event, is_remove_event, join_container_path, mark_dir_ensured, mkdir_p_argv,
-	plan_remove_placement, plan_sync_placement, validate_sync_target, SyncPlacement,
+	plan_remove_placement, plan_sync_placement, read_only_target_warning, validate_sync_target,
+	SyncPlacement,
 };
 use sync::{is_ignored, is_included};
 
@@ -104,8 +107,39 @@ impl Engine {
 		// best-effort `mkdir -p` exec runs once per target rather than per event.
 		let mut ensured: HashSet<(String, String)> = HashSet::new();
 
+		// Warn once per (service, target) when a sync target sits on a
+		// `read_only: true` root filesystem with no volume or tmpfs covering it:
+		// every sync to it returns `read-only file system`, so the user should
+		// learn at startup rather than after the first edit (#1897).
+		let mut read_only_warned: HashSet<(String, String)> = HashSet::new();
+		for entry in &rule_entries {
+			let Some(target) = &entry.rule.target else {
+				continue;
+			};
+			let Some(service) = file.services.get(&entry.service_name) else {
+				continue;
+			};
+			let Some(msg) = read_only_target_warning(&entry.service_name, service, target) else {
+				continue;
+			};
+			if !read_only_warned.insert((entry.service_name.clone(), target.clone())) {
+				continue;
+			}
+			warn!("{msg}");
+		}
+
 		for entry in &rule_entries {
 			if entry.rule.initial_sync {
+				// A missing watch path cannot be synced: the existence check
+				// in the watcher-setup loop below will warn about it, so skip
+				// both the `initial sync` log and the (doomed) sync itself.
+				// `symlink_metadata` is used (not `exists`) so a path that
+				// exists only as a dangling symlink is still synced: the
+				// packer in `watch/sync.rs` preserves links, and the rule's
+				// intent there is to upload the link itself.
+				if std::fs::symlink_metadata(&entry.abs_path).is_err() {
+					continue;
+				}
 				if let Some(target) = &entry.rule.target {
 					info!("initial sync {} -> {target}", entry.abs_path.display());
 					if let Err(e) = self
@@ -486,7 +520,19 @@ impl Engine {
 		Ok(())
 	}
 
+	/// Run `cmd` inside `container_name` via libpod's exec endpoint, streaming its
+	/// output to the current process's stdout/stderr.
+	///
+	/// A non-zero exit code is returned as `Err(ComposeError::Watch(...))` so a
+	/// failed container-side step (e.g. `rm -f` denied) is not silently logged
+	/// as done (#1897). Callers that want best-effort behaviour (the
+	/// per-target `mkdir -p`) can ignore the result; others propagate it and
+	/// the watch event loop logs `watch action failed` without aborting the
+	/// session.
 	async fn watch_exec(&self, container_name: &str, cmd: Vec<String>) -> Result<()> {
+		// Keep the joined argv before `cmd` moves into `ExecCreateConfig`, so a
+		// non-zero exit can quote it in the error message.
+		let cmd_display = cmd.join(" ");
 		let exec_cfg = ExecCreateConfig {
 			cmd: Some(cmd),
 			attach_stdout: Some(true),
@@ -524,6 +570,24 @@ impl Engine {
 					eprint!("{}", String::from_utf8_lossy(&message));
 				}
 				Err(_) => break,
+			}
+		}
+
+		// The stream ending does not imply the process finished cleanly; read
+		// the exit code so a denied `rm -f` (or any non-zero exit) surfaces as
+		// an error rather than a successful no-op (#1897). The inspect request
+		// matches `Engine::exec_hook`'s shape: GET exec/json → ExecInspect.
+		let inspect_path = format!("{API_PREFIX}/exec/{}/json", urlencoded(&resp.id));
+		let inspect: ExecInspect = self
+			.client
+			.get_json(&inspect_path)
+			.await
+			.map_err(ComposeError::Podman)?;
+		if let Some(code) = inspect.exit_code {
+			if code != 0 {
+				return Err(ComposeError::Watch(format!(
+					"`{cmd_display}` exited with status {code}"
+				)));
 			}
 		}
 		Ok(())

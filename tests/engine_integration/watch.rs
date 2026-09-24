@@ -178,6 +178,32 @@ async fn watch_exec_in_container() {
 	);
 }
 
+#[tokio::test]
+async fn watch_exec_surfaces_non_zero_exit() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let proj = proj("wee");
+	let engine = Engine::new(client, proj.clone());
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
+	)
+	.unwrap();
+
+	engine.up(&file).await.unwrap();
+	let cname = format!("{proj}-web-1");
+	let err = engine
+		.test_watch_exec(&cname, vec!["sh".into(), "-c".into(), "exit 3".into()])
+		.await
+		.expect_err("a non-zero exit must surface as Err so the watch loop can log it");
+	engine.down(&file).await.unwrap();
+	assert!(
+		err.to_string().contains("exited with status 3"),
+		"the error must quote the captured exit code; got: {err}"
+	);
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn watch_initial_sync_runs() {
 	let client = match podman().await {

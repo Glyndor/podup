@@ -389,10 +389,12 @@ pub(crate) enum Commands {
 		#[arg(long, value_enum, default_value_t = EventsFormat::Table)]
 		format: EventsFormat,
 		/// Only stream events at or after this timestamp/relative time (e.g.
-		/// -30m, 2026-01-01T00:00:00).
-		///
-		/// `allow_hyphen_values` because a relative time is written with a
-		/// leading `-`; without it clap reads `-30m` as an unknown flag.
+		/// 30m, 2026-01-01T00:00:00). A relative time counts back from now:
+		/// `30m` is thirty minutes ago.
+		// `allow_hyphen_values` so a leading `-` (a time in the future, which
+		// matches nothing, #1896) reaches podup's own error rather than clap's
+		// unknown-flag one. A plain comment, not a doc comment, so it stays out
+		// of `--help`.
 		#[arg(long, allow_hyphen_values = true)]
 		since: Option<String>,
 		/// Only stream events up to this timestamp/relative time. Only an

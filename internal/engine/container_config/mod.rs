@@ -121,12 +121,26 @@ pub(crate) fn build_log_config(
 /// same memory parser used elsewhere in the engine (`10m`, `1g`, plain
 /// bytes); a malformed value is rejected with the service field name so the
 /// error points at the compose key the user wrote (#1417).
+///
+/// A `logging:` block without `driver` falls back to the default driver
+/// (`k8s-file`) ONLY when the block also sets a POSITIVE `max-size`: only
+/// that driver reads the typed size cap, and that is the case a journald
+/// host config used to silently override (#1895). A non-positive size
+/// (`0`, `-1`) opts out of capping, so pinning `k8s-file` here would
+/// silently strip a journald host driver without applying any cap; the
+/// field stays None and the host's containers.conf default applies.
+/// Without `max-size` and without a named `driver`, both `driver` and
+/// `size` are left unset so the host's containers.conf default applies;
+/// podup no longer injects a default driver or default size cap. A named
+/// driver without `max-size` stays uncapped, just as before.
 fn translate_user_logging(
 	service_name: &str,
 	l: &LoggingConfig,
 ) -> Result<LogConfig, ComposeError> {
 	let mut options = l.options.clone();
-	let size = match options.remove("max-size") {
+	let user_max_size = options.remove("max-size");
+	let default = default_log_config();
+	let size = match user_max_size {
 		Some(v) => match size::parse_memory(&v) {
 			Some(bytes) => Some(bytes),
 			None => {
@@ -143,14 +157,26 @@ fn translate_user_logging(
 		},
 		None => None,
 	};
+	// The driver fallback only fires when `max-size` actually constrains
+	// rotation. A non-positive size (`0` or `-1`) opts out of capping, so
+	// pinning `k8s-file` here would silently strip a journald host driver
+	// (#1895 follow-up). An absent `max-size` keeps the host default too.
+	let driver = l.driver.clone().or_else(|| {
+		if size.is_some_and(|b| b > 0) {
+			default.driver
+		} else {
+			None
+		}
+	});
 	if options.remove("max-file").is_some() {
 		tracing::warn!(
-			"logging.options.max-file is ignored by libpod; \
-			 remove it from your compose file or expect unbounded log growth"
+			"{service_name}: logging.options.max-file is ignored; \
+			 Podman keeps a single log file (truncated at max-size when one is set) \
+			 with no rotated history"
 		);
 	}
 	Ok(LogConfig {
-		driver: l.driver.clone(),
+		driver,
 		size,
 		options,
 	})
@@ -160,38 +186,77 @@ fn translate_user_logging(
 // Healthcheck
 // ---------------------------------------------------------------------------
 
-pub(super) fn build_healthcheck(hc: &HealthCheck) -> HealthConfig {
+pub(super) fn build_healthcheck(hc: &HealthCheck) -> Option<HealthConfig> {
 	if hc.is_disabled() {
-		return HealthConfig {
+		return Some(HealthConfig {
 			test: Some(vec!["NONE".to_string()]),
 			..Default::default()
-		};
+		});
 	}
-	let test = hc.test.as_ref().map(|cmd| match cmd {
-		ComposeCommand::Shell(s) => vec!["CMD-SHELL".to_string(), s.clone()],
-		ComposeCommand::Exec(v) => v.clone(),
+	// Only `None` and an empty exec list count as "no test": libpod treats an
+	// empty Test as absent and inherits the image probe. An empty shell string
+	// stays an explicit `["CMD-SHELL", ""]` probe, as it always was, because
+	// Podman runs it (#1893).
+	let test = hc.test.as_ref().and_then(|cmd| match cmd {
+		ComposeCommand::Shell(s) => Some(vec!["CMD-SHELL".to_string(), s.clone()]),
+		ComposeCommand::Exec(v) if !v.is_empty() => Some(v.clone()),
+		_ => None,
 	});
-	// Apply the compose-spec defaults for any field the user omitted. Podman's
-	// API does NOT default these: a missing `Timeout` is taken as 0s, which makes
-	// every probe fail with "exceeded timeout of 0s" so the container is stuck
-	// `starting`; a missing/zero `Interval` disables the periodic check. Match
-	// docker-compose: interval 30s, timeout 30s, retries 3 (start_period 0).
+	let has_timings = hc.interval.is_some()
+		|| hc.timeout.is_some()
+		|| hc.retries.is_some()
+		|| hc.start_period.is_some()
+		|| hc.start_interval.is_some();
+	// Podman 5.4.2 (still supported) inherits the image HEALTHCHECK only when
+	// the whole `healthconfig` is absent from the request, so we must omit the
+	// field entirely, not just leave every value `None`, when there is no
+	// test and the user set no timing. Podman 5.7+ merges field-by-field and
+	// would still inherit with a `None`-filled config, but emitting one anyway
+	// would 30s/30s/3-overwrite older runtimes (#1893).
+	if test.is_none() && !has_timings {
+		return None;
+	}
+	// Apply the compose-spec defaults (interval 30s, timeout 30s, retries 3)
+	// only when the user wrote a `test`. With a `test`, libpod would otherwise
+	// leave the timings at 0s and the probe would fail with "exceeded timeout
+	// of 0s".
+	//
+	// A timing-only override (no test, some timing set) is sent as a
+	// `healthconfig` with `test == None` and the user-set timing. On Podman
+	// 5.7+ libpod merges field-by-field and the unset fields are inherited
+	// from the image, so the user override survives. On Podman 5.4.2 a
+	// non-nil `healthconfig` without a `test` REPLACES the image healthcheck
+	// rather than inheriting it, so the image probe is lost there. That was
+	// already the case before #1893 and is not handled here.
 	const DEFAULT_NANOS: i64 = 30 * 1_000_000_000;
-	HealthConfig {
+	let (interval, timeout, retries) = if test.is_some() {
+		(
+			Some(
+				hc.interval
+					.as_deref()
+					.and_then(size::parse_duration_nanos)
+					.unwrap_or(DEFAULT_NANOS),
+			),
+			Some(
+				hc.timeout
+					.as_deref()
+					.and_then(size::parse_duration_nanos)
+					.unwrap_or(DEFAULT_NANOS),
+			),
+			Some(hc.retries.map(|r| r as i64).unwrap_or(3)),
+		)
+	} else {
+		(
+			hc.interval.as_deref().and_then(size::parse_duration_nanos),
+			hc.timeout.as_deref().and_then(size::parse_duration_nanos),
+			hc.retries.map(|r| r as i64),
+		)
+	};
+	Some(HealthConfig {
 		test,
-		interval: Some(
-			hc.interval
-				.as_deref()
-				.and_then(size::parse_duration_nanos)
-				.unwrap_or(DEFAULT_NANOS),
-		),
-		timeout: Some(
-			hc.timeout
-				.as_deref()
-				.and_then(size::parse_duration_nanos)
-				.unwrap_or(DEFAULT_NANOS),
-		),
-		retries: Some(hc.retries.map(|r| r as i64).unwrap_or(3)),
+		interval,
+		timeout,
+		retries,
 		start_period: hc
 			.start_period
 			.as_deref()
@@ -200,7 +265,7 @@ pub(super) fn build_healthcheck(hc: &HealthCheck) -> HealthConfig {
 			.start_interval
 			.as_deref()
 			.and_then(size::parse_duration_nanos),
-	}
+	})
 }
 
 // ---------------------------------------------------------------------------

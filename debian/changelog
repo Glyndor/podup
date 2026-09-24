@@ -1,3 +1,21 @@
+podup (5.9.10) unstable; urgency=medium
+
+  * A compose `healthcheck:` without a `test` keeps the image HEALTHCHECK
+    timings instead of replacing them with 30s/30s/3, and a block that sets
+    nothing sends no healthcheck so the image probe is inherited whole.
+  * `podup events --since` rejects a negative relative time such as `-30m`
+    (a time in the future, which matched nothing) and its help shows `30m`.
+  * A `logging:` block with a positive `max-size` and no `driver` uses
+    `k8s-file`, the only driver that applies the size, instead of falling
+    to the host default. The `max-file` warning names the service and no
+    longer claims unbounded growth.
+  * `podup watch` reports a container-side step that exits non-zero instead
+    of logging it as done, skips the initial sync of a path that does not
+    exist, and warns once when a sync target is on a read-only root
+    filesystem.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Thu, 24 Sep 2026 00:16:24 -0500
+
 podup (5.9.9) unstable; urgency=medium
 
   * `podup update` on Unix no longer resets the binary's mode to 0755 and

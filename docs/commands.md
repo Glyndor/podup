@@ -72,7 +72,7 @@ each with the compose-spec field shown.
 
 | Compose key | Default | Notes |
 |---|---|---|
-| `logging` | `driver: k8s-file` + `max-size: 10m` + `max-file: 5` | Rotation policy on every container podup creates. Without an explicit `logging:` block, libpod logs would grow unbounded and eventually fill the host. To delegate rotation to journald instead: `logging: { driver: journald }`. To opt out of rotation: `logging: { driver: k8s-file, options: { max-file: "0" } }`. The same default is applied by `generate quadlet`, so a generated unit behaves the same as an `up`-managed container. |
+| `logging` | `driver: k8s-file` + `max-size: 10m` | Rotation policy on every container podup creates. Without an explicit `logging:` block, libpod logs would grow unbounded and eventually fill the host. To delegate rotation to journald instead: `logging: { driver: journald }`. To opt out of the size cap: `logging: { driver: k8s-file, options: { max-size: "-1" } }`; that removes podup's cap, but a positive `log_size_max` in containers.conf still applies. `max-file` is not supported by Podman (a single file is kept and truncated at `max-size` when one is set, with no rotated history). A `logging:` block with a positive `max-size` but no `driver` uses `k8s-file`, since only that driver applies the size; a non-positive `max-size` (`0`, `-1`) or absent `max-size` leaves the host's default driver in place. The same default is applied by `generate quadlet`, so a generated unit behaves the same as an `up`-managed container. |
 
 ## Lifecycle
 
@@ -275,13 +275,15 @@ there is no complete set to size against). `--format json` prints no header.
 |---|---|---|
 | `--format <FMT>` | `table` (a `TYPE ACTION NAME` summary) or `json` (one object per line). | `table` |
 | `--filter <FILTER>` | Keep only events matching a predicate (`KEY=VALUE`, e.g. `event=start`). Repeatable. | none |
-| `--since <TIME>` | Only stream events at or after this timestamp or relative time (e.g. `-30m`). | stream start |
+| `--since <TIME>` | Only stream events at or after this timestamp or relative time (e.g. `30m`; a relative time counts back from now). | stream start |
 | `--until <TIME>` | End of the window. Only closes the feed when paired with `--since` and already elapsed. | no end |
 
 `--json` is a hidden deprecated alias for `--format json`.
 
-**Bounding a feed needs both flags.** Measured against Podman 5.4.2 on 2026-07-29:
-`--since -2h --until -1h` ends the feed; `--until` alone, `--since` alone, and
+**Bounding a feed needs both flags.** A past window such as `--since 2h --until -1h`
+ends the feed (measured on Podman 5.7.0 on 2026-09-23 with `--since 30s --until -1s`;
+a relative `--since` counts back from now, `--until` forward, so `--until -1h` is an hour
+ago); `--until` alone, `--since` alone, and
 any `--until` in the future all leave it following indefinitely. podup warns
 when `--until` is given without `--since`. This also decides the exit code; see
 [Exit status](#exit-status).
@@ -1131,7 +1133,7 @@ asked for answers it instead:
   invented.
 
 Note that a window needs **both** ends and both must already have elapsed.
-Measured against Podman 5.4.2 on 2026-07-29: `--since -2h --until -1h` closes the feed, while
+A past window such as `--since 2h --until -1h` closes the feed (measured on Podman 5.7.0 on 2026-09-23 with `--since 30s --until -1s`), while
 either flag alone leaves it open, as does any `--until` in the future. So
 `--until 5m` follows indefinitely rather than stopping in five minutes. podup
 warns when `--until` is passed without `--since`.

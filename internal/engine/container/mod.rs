@@ -228,7 +228,7 @@ impl Engine {
 		let spec = build_spec_generator(
 			&self.project,
 			service,
-			service.healthcheck.as_ref().map(build_healthcheck),
+			service.healthcheck.as_ref().and_then(build_healthcheck),
 			log_configuration,
 			match service
 				.healthcheck
