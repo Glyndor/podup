@@ -259,10 +259,25 @@ impl Engine {
 		// `/v5.0.0/libpod/build` leaked one buildah working container on
 		// every run without `forcerm` (2 of 2) and on none of the runs
 		// with it (0 of 2).
+		//
+		// `outputformat=application/vnd.docker.distribution.manifest.v2+json`
+		// forces the docker-distribution manifest format. Measured on
+		// 2026-09-24 against Podman 5.7.0 by building the same
+		// Containerfile twice through `/v5.0.0/libpod/build`:
+		// `layers=true` alone prints zero `Using cache` lines on the
+		// second build (the OCI format the endpoint defaults to does not
+		// reuse the layer cache); the same query with
+		// `outputformat=application/vnd.docker.distribution.manifest.v2+json`
+		// appended prints two. The Docker format also keeps
+		// `HEALTHCHECK` in the image config (the OCI format drops it),
+		// which `podup`'s `healthcheck:` field inherits when the user
+		// does not set one explicitly, so the same query preserves the
+		// image shape podup has always produced.
 		let mut qs = format!(
-			"t={}&rm=true&forcerm=true&layers=true&nocache={}",
+			"t={}&rm=true&forcerm=true&layers=true&nocache={}&outputformat={}",
 			urlencoded(&tag),
-			build.no_cache() || opts.no_cache
+			build.no_cache() || opts.no_cache,
+			urlencoded("application/vnd.docker.distribution.manifest.v2+json"),
 		);
 		qs.push_str(&format!("&dockerfile={}", urlencoded(&dockerfile_name)));
 		if build.pull() || opts.pull {
