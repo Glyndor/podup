@@ -1,4 +1,4 @@
-use super::{build_event_filters, format_event, TIME_WIDTH};
+use super::{build_event_filters, format_event, validate_events_since, TIME_WIDTH};
 use serde_json::json;
 
 #[test]
@@ -80,4 +80,32 @@ fn json_mode_emits_raw_object() {
 	let out = format_event(&ev, true);
 	assert!(out.contains("\"Type\":\"container\""));
 	assert!(out.contains("\"Action\":\"start\""));
+}
+
+/// #1896: libpod reads a relative `since` as a time before now, so `-30m` is
+/// thirty minutes in the future and a window starting there matches nothing.
+/// The validator has to reject it before any request hits libpod.
+#[test]
+fn events_since_rejects_a_negative_relative_time() {
+	let err = validate_events_since(Some("-30m"))
+		.expect_err("--since -30m must be rejected, not silently sent to libpod");
+	let msg = format!("{err}");
+	assert!(
+		msg.contains("--since 30m"),
+		"the error must suggest the value without the leading '-'; got {msg}"
+	);
+
+	validate_events_since(Some("-1h30m")).expect_err("--since -1h30m must be rejected");
+
+	for ok in [
+		None,
+		Some("30m"),
+		Some("1h30m"),
+		Some("1700000000"),
+		Some("2026-01-01T00:00:00Z"),
+		Some("2026-01-01T00:00:00-05:00"),
+	] {
+		validate_events_since(ok)
+			.unwrap_or_else(|e| panic!("{ok:?} should be accepted but got {e}"));
+	}
 }

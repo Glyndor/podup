@@ -98,11 +98,12 @@ impl Engine {
 	///
 	/// A window needs **both** ends to close, and both must already have
 	/// elapsed. Measured against Podman 5.4.2: `since` and `until` together
-	/// close the feed, whether absolute or relative (`-2h`..`-1h`); either one
+	/// close the feed, whether absolute or relative (`2h`..`1h`); either one
 	/// alone leaves it open, as does any `until` in the future. So `--until 5m`
 	/// follows indefinitely rather than stopping in five minutes, and `--until
 	/// -5m` alone does too.
 	pub async fn stream_events_with_options(&self, json: bool, opts: &EventsOptions) -> Result<()> {
+		validate_events_since(opts.since.as_deref())?;
 		let filters = build_event_filters(&self.project, &opts.filters)?;
 		let mut path = format!(
 			"{API_PREFIX}/events?stream=true&filters={}",
@@ -137,7 +138,7 @@ impl Engine {
 		// no podup involved, `stream=true`:
 		//
 		//   since + until, both past, absolute   closes
-		//   since + until, relative (-2h..-1h)   closes
+		//   since + until, relative (since=2h, until=1h)   closes
 		//   until alone, past                    stays open
 		//   since alone, past                    stays open
 		//
@@ -187,6 +188,25 @@ impl Engine {
 				.to_string(),
 		))
 	}
+}
+
+/// Reject a `--since` written as a negative relative time.
+///
+/// libpod reads a relative `since` as a time before now, so `30m` is thirty
+/// minutes ago and `-30m` is thirty minutes in the future: a window that
+/// starts there matches nothing and the feed looks empty (#1896).
+fn validate_events_since(since: Option<&str>) -> Result<()> {
+	let Some(v) = since else {
+		return Ok(());
+	};
+	if let Some(rest) = v.strip_prefix('-') {
+		if rest.starts_with(|c: char| c.is_ascii_digit()) {
+			return Err(ComposeError::Unsupported(format!(
+				"invalid --since value {v:?}: a relative time counts back from now, so write it without the leading '-' (e.g. --since {rest})"
+			)));
+		}
+	}
+	Ok(())
 }
 
 /// Build the libpod events `filters` object: always scope to this project's
