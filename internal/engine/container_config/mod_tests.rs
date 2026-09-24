@@ -191,7 +191,7 @@ fn healthcheck_disabled() {
 		disable: Some(true),
 		..Default::default()
 	};
-	let cfg = build_healthcheck(&hc);
+	let cfg = build_healthcheck(&hc).unwrap();
 	assert_eq!(cfg.test.unwrap(), vec!["NONE"]);
 }
 
@@ -206,7 +206,7 @@ fn healthcheck_shell_command() {
 		retries: Some(3),
 		..Default::default()
 	};
-	let cfg = build_healthcheck(&hc);
+	let cfg = build_healthcheck(&hc).unwrap();
 	let test = cfg.test.unwrap();
 	assert_eq!(test[0], "CMD-SHELL");
 	assert!(test[1].contains("curl"));
@@ -223,7 +223,7 @@ fn healthcheck_exec_command() {
 		])),
 		..Default::default()
 	};
-	let cfg = build_healthcheck(&hc);
+	let cfg = build_healthcheck(&hc).unwrap();
 	let test = cfg.test.unwrap();
 	assert_eq!(test[0], "curl");
 }
@@ -237,7 +237,7 @@ fn healthcheck_applies_compose_defaults_when_omitted() {
 		test: Some(ComposeCommand::Exec(vec!["true".into()])),
 		..Default::default()
 	};
-	let cfg = build_healthcheck(&hc);
+	let cfg = build_healthcheck(&hc).unwrap();
 	assert_eq!(cfg.interval, Some(30 * 1_000_000_000));
 	assert_eq!(cfg.timeout, Some(30 * 1_000_000_000));
 	assert_eq!(cfg.retries, Some(3));
@@ -252,22 +252,56 @@ fn healthcheck_honors_explicit_interval_and_timeout() {
 		retries: Some(7),
 		..Default::default()
 	};
-	let cfg = build_healthcheck(&hc);
+	let cfg = build_healthcheck(&hc).unwrap();
 	assert_eq!(cfg.interval, Some(2 * 1_000_000_000));
 	assert_eq!(cfg.timeout, Some(5 * 1_000_000_000));
 	assert_eq!(cfg.retries, Some(7));
 }
 
 #[test]
-fn healthcheck_without_test_leaves_unset_timings_to_the_image() {
-	// A healthcheck block without a `test` inherits the image's HEALTHCHECK.
-	// libpod fills any field we leave out from the image (or with its own
-	// 30s/30s/3 if the image sets none), so we must not send the compose
-	// defaults, because they would overwrite the image's values (#1893).
+fn healthcheck_with_nothing_set_sends_no_config() {
+	// A default `healthcheck:` block has no test and no timings. Podman 5.4.2
+	// (still supported) only inherits the image's HEALTHCHECK when the whole
+	// `healthconfig` is absent from the request (5.7+ merges field-by-field),
+	// so we must drop the field entirely here — sending 30s/30s/3 would
+	// overwrite the image's values (#1893).
 	let hc = HealthCheck::default();
-	let cfg = build_healthcheck(&hc);
+	assert!(build_healthcheck(&hc).is_none());
+}
+
+#[test]
+fn healthcheck_with_an_empty_exec_test_inherits_like_no_test() {
+	// `test: []` parses as a present-but-empty exec command. libpod treats
+	// an empty Test as absent and inherits the image's HEALTHCHECK; sending
+	// the 30s/30s/3 compose defaults here would overwrite the image's values
+	// (#1893). Because the user set a timing, we still build a config (with
+	// `test == None`) so that override survives and libpod merges the rest
+	// from the image.
+	let hc = HealthCheck {
+		test: Some(ComposeCommand::Exec(vec![])),
+		interval: Some("5s".into()),
+		..Default::default()
+	};
+	let cfg = build_healthcheck(&hc).unwrap();
 	assert_eq!(cfg.test, None);
-	assert_eq!(cfg.interval, None);
+	assert_eq!(cfg.interval, Some(5 * 1_000_000_000));
+	assert_eq!(cfg.timeout, None);
+	assert_eq!(cfg.retries, None);
+}
+
+#[test]
+fn healthcheck_with_an_empty_shell_test_inherits_like_no_test() {
+	// Same case as the exec form but for `test: ""`: libpod treats an empty
+	// Test as absent, the empty string must not become a probe command, and
+	// the user-set timing must still flow through (#1893).
+	let hc = HealthCheck {
+		test: Some(ComposeCommand::Shell(String::new())),
+		interval: Some("5s".into()),
+		..Default::default()
+	};
+	let cfg = build_healthcheck(&hc).unwrap();
+	assert_eq!(cfg.test, None);
+	assert_eq!(cfg.interval, Some(5 * 1_000_000_000));
 	assert_eq!(cfg.timeout, None);
 	assert_eq!(cfg.retries, None);
 }
@@ -282,7 +316,7 @@ fn healthcheck_without_test_keeps_only_the_timings_the_user_set() {
 		retries: Some(4),
 		..Default::default()
 	};
-	let cfg = build_healthcheck(&hc);
+	let cfg = build_healthcheck(&hc).unwrap();
 	assert_eq!(cfg.test, None);
 	assert_eq!(cfg.interval, Some(5 * 1_000_000_000));
 	assert_eq!(cfg.timeout, None);

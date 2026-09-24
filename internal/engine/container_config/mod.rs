@@ -160,26 +160,43 @@ fn translate_user_logging(
 // Healthcheck
 // ---------------------------------------------------------------------------
 
-pub(super) fn build_healthcheck(hc: &HealthCheck) -> HealthConfig {
+pub(super) fn build_healthcheck(hc: &HealthCheck) -> Option<HealthConfig> {
 	if hc.is_disabled() {
-		return HealthConfig {
+		return Some(HealthConfig {
 			test: Some(vec!["NONE".to_string()]),
 			..Default::default()
-		};
+		});
 	}
-	let test = hc.test.as_ref().map(|cmd| match cmd {
-		ComposeCommand::Shell(s) => vec!["CMD-SHELL".to_string(), s.clone()],
-		ComposeCommand::Exec(v) => v.clone(),
+	// Treat `None`, an empty exec list, and an empty shell string all as "no
+	// test". libpod treats an empty Test as absent and inherits the image's
+	// HEALTHCHECK; sending 30s/30s/3 there would overwrite the image's
+	// values (#1893).
+	let test = hc.test.as_ref().and_then(|cmd| match cmd {
+		ComposeCommand::Shell(s) if !s.is_empty() => Some(vec!["CMD-SHELL".to_string(), s.clone()]),
+		ComposeCommand::Exec(v) if !v.is_empty() => Some(v.clone()),
+		_ => None,
 	});
+	let has_timings = hc.interval.is_some()
+		|| hc.timeout.is_some()
+		|| hc.retries.is_some()
+		|| hc.start_period.is_some()
+		|| hc.start_interval.is_some();
+	// Podman 5.4.2 (still supported) inherits the image HEALTHCHECK only when
+	// the whole `healthconfig` is absent from the request, so we must omit the
+	// field entirely — not just leave every value `None` — when there is no
+	// test and the user set no timing. Podman 5.7+ merges field-by-field and
+	// would still inherit with a `None`-filled config, but emitting one anyway
+	// would 30s/30s/3-overwrite older runtimes (#1893).
+	if test.is_none() && !has_timings {
+		return None;
+	}
 	// Apply the compose-spec defaults (interval 30s, timeout 30s, retries 3)
 	// only when the user wrote a `test`. With a `test`, libpod would otherwise
 	// leave the timings at 0s and the probe would fail with "exceeded timeout
-	// of 0s". Without a `test`, the image's HEALTHCHECK is inherited and libpod
-	// fills any field the request leaves out from the image (or with its own
-	// 30s/30s/3 when the image sets none), so sending the defaults would
-	// overwrite the image's values (#1893).
+	// of 0s". Without a `test` but with at least one user-set timing, we pass
+	// the timing through and let libpod fill the rest from the image.
 	const DEFAULT_NANOS: i64 = 30 * 1_000_000_000;
-	let (interval, timeout, retries) = if hc.test.is_some() {
+	let (interval, timeout, retries) = if test.is_some() {
 		(
 			Some(
 				hc.interval
@@ -202,7 +219,7 @@ pub(super) fn build_healthcheck(hc: &HealthCheck) -> HealthConfig {
 			hc.retries.map(|r| r as i64),
 		)
 	};
-	HealthConfig {
+	Some(HealthConfig {
 		test,
 		interval,
 		timeout,
@@ -215,7 +232,7 @@ pub(super) fn build_healthcheck(hc: &HealthCheck) -> HealthConfig {
 			.start_interval
 			.as_deref()
 			.and_then(size::parse_duration_nanos),
-	}
+	})
 }
 
 // ---------------------------------------------------------------------------
