@@ -1,7 +1,7 @@
 //! The five runtime-hardening checks from #1894:
 //! `no_restart_policy`, `no_init`, `no_health_action`, `swap_unbounded`,
 //! `no_cpu_limit`. Split into their own file because the registry already
-//! counts `check_fns.rs` at 329 code lines, and adding five more would push
+//! counts `check_fns.rs` at 607 code lines, and adding five more would push
 //! it past the 500-line limit the rest of the audit honours. Wired the
 //! way `check_sensitive_bind.rs` is: a private helper per check, a public
 //! `check_*` function the registry points at, and `super::Finding` +
@@ -14,67 +14,45 @@ use podup::size;
 
 use super::super::Finding;
 use super::check_fns::finding;
+// Shared with the engine's `build_resource_limits` (#1894): the audit reads
+// the same memory cap the engine forwards into the OCI spec, applying the
+// top-level/deploy precedence `build_resource_limits` does. The CPU
+// helper below does the same for CPU; `cpuset:` is audit-only and lives
+// in [`cpu_limit_in_effect`] because the engine forwards it as a
+// placement constraint separate from the quota.
+use podup::effective_cpu_quota;
+use podup::effective_memory_limit;
 
-/// The memory limit the engine will apply, computed the same way
-/// [`super::check_fns::check_no_memory_limit`] computes it: read
-/// `mem_limit` and `deploy.resources.limits.memory` through the engine's
-/// own `size::parse_memory` so an unparseable value counts as no limit
-/// (#1743). Reused by [`check_swap_unbounded`] so the swap check and the
-/// memory check agree on what "the memory limit in effect" is, instead of
-/// drifting on a re-implementation.
+// ---------------------------------------------------------------------------
+// Audit-side wrappers around the engine's effective-limit helpers
+// ---------------------------------------------------------------------------
+
+/// "Is there a CPU cap in effect?" for the audit: a positive
+/// `cpu_quota:`, OR a positive `cpus:` (top-level first, then
+/// `deploy.resources.limits.cpus:`), OR a non-empty `cpuset:`. The first
+/// two come from the shared [`podup::effective_cpu_quota`] helper so the
+/// audit and `build_resource_limits` agree on what the OCI spec will
+/// carry; the `cpuset:` clause is audit-only because the engine forwards
+/// `cpuset:` as a placement constraint separate from the quota (`#1894`).
 ///
-/// Returns `None` when neither field parses to a positive byte count;
-/// `Some(-1)` is the engine's "unlimited" sentinel for `parse_memory`,
-/// which the swap check treats as no memory limit in effect (Podman
-/// refuses to apply a memory cap when the field is `-1`, so the swap
-/// comparison is meaningless).
-fn memory_limit_in_effect(service: &Service) -> Option<i64> {
-	let mem_top = service.mem_limit.as_deref().and_then(size::parse_memory);
-	let deploy_limit = service
-		.deploy
-		.as_ref()
-		.and_then(|d| d.resources.as_ref())
-		.and_then(|r| r.limits.as_ref())
-		.and_then(|l| l.memory.as_deref().and_then(size::parse_memory));
-	match (mem_top, deploy_limit) {
-		(Some(a), Some(b)) => Some(a.max(b)),
-		(Some(a), None) | (None, Some(a)) => Some(a),
-		(None, None) => None,
+/// `cpuset:` pins the container to named cores, which bounds how many
+/// cores it can take even when no quota is in effect; an audit that
+/// ignored it would fire on a `cpuset: "0-1"` declaration Podman will
+/// honor as a single-core pin. An empty or whitespace-only `cpuset:` is
+/// treated as not set (it carries no placement constraint).
+fn cpu_limit_in_effect(service: &Service) -> bool {
+	if effective_cpu_quota(service).is_some() {
+		return true;
 	}
+	service
+		.cpuset
+		.as_deref()
+		.is_some_and(|s| !s.trim().is_empty())
 }
 
-/// Same shape for the CPU limit: read `cpus` (service level) and
-/// `deploy.resources.limits.cpus` through `size::parse_cpus`, and use
-/// `cpu_quota` if set. Returns the resolved CPU limit in nano-CPUs
-/// when `cpus:` parsed, or the sentinel `-1` when `cpu_quota:` is set
-/// without a parsed `cpus:`, otherwise `None`. The engine at
-/// `internal/engine/container_config/resources.rs::build_resource_limits`
-/// treats any of the three as a CPU limit, so the audit must agree.
-///
-/// `cpu_quota` is a CFS hard cap in microseconds over `cpu_period`; the
-/// engine does not convert it to nano-CPUs (it stays as a quota), so the
-/// audit only needs to detect its presence, not its magnitude.
-fn cpu_limit_in_effect(service: &Service) -> Option<i64> {
-	let top = service.cpus.as_deref().and_then(size::parse_cpus);
-	let deploy = service
-		.deploy
-		.as_ref()
-		.and_then(|d| d.resources.as_ref())
-		.and_then(|r| r.limits.as_ref())
-		.and_then(|l| l.cpus.as_deref().and_then(size::parse_cpus));
-	let nanos = match (top, deploy) {
-		(Some(a), Some(b)) => Some(a.max(b)),
-		(Some(a), None) | (None, Some(a)) => Some(a),
-		(None, None) => None,
-	};
-	if nanos.is_some() {
-		return nanos;
-	}
-	if service.cpu_quota.is_some() {
-		return Some(-1);
-	}
-	None
-}
+// ---------------------------------------------------------------------------
+// Checks
+// ---------------------------------------------------------------------------
 
 /// `restart:` and `deploy.restart_policy:` both reach the same engine
 /// knob (`internal/engine/container_config/mod.rs::build_restart_policy`):
@@ -131,7 +109,8 @@ pub fn check_no_init(name: &str, service: &Service, _file: &ComposeFile) -> Vec<
 /// `validate`'s job, not the audit's: an `Err` from `podman_on_failure`
 /// is treated here as "an action is set" (the operator typed something;
 /// a typo will fail validation upstream) rather than "no action", which
-/// would silently let a sick container stay sick.
+/// would silently let a sick container stay sick. `Ok(None)` is the only
+/// case the check fires on.
 pub fn check_no_health_action(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
 	let Some(hc) = &service.healthcheck else {
 		return Vec::new();
@@ -141,8 +120,9 @@ pub fn check_no_health_action(name: &str, service: &Service, _file: &ComposeFile
 	}
 	// `Err` here means a typo or non-string value the engine will reject
 	// at validation; treat it as "the operator typed something" rather
-	// than silently firing.
-	if hc.podman_on_failure().is_ok_and(|opt| opt.is_some()) {
+	// than silently firing. `Ok(Some(_))` is the legitimate "an action is
+	// set" case. Only `Ok(None)` (the key absent) leaves the check firing.
+	if !matches!(hc.podman_on_failure(), Ok(None)) {
 		return Vec::new();
 	}
 	vec![finding(
@@ -162,16 +142,21 @@ pub fn check_no_health_action(name: &str, service: &Service, _file: &ComposeFile
 /// opts into unlimited swap; a value larger than the memory limit raises
 /// the effective ceiling beyond `mem_limit`.
 ///
-/// The audit reuses [`memory_limit_in_effect`] so the swap check and
-/// `no_memory_limit` agree on which value they call "the memory limit";
-/// without that sharing, the swap check could compare against a string
-/// the engine already rejected.
+/// The audit reuses [`podup::effective_memory_limit`] so the swap check
+/// and `no_memory_limit` agree on which value they call "the memory
+/// limit". The helper applies the same top-first / deploy-fill
+/// precedence the engine's `build_resource_limits` applies, so a
+/// top-level `mem_limit: 256m` is treated as the cap even when
+/// `deploy.resources.limits.memory: 512m` carries a larger value (the
+/// deploy block is ignored once the top level set one). Without that
+/// sharing, the swap check could compare against a value the engine
+/// already rejected.
 ///
 /// No memory limit in effect -> silent: that case is `no_memory_limit`'s
 /// finding, not this one's. Reporting both would double-count the same
 /// risk.
 pub fn check_swap_unbounded(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
-	let Some(limit) = memory_limit_in_effect(service) else {
+	let Some(limit) = effective_memory_limit(service) else {
 		return Vec::new();
 	};
 	// `parse_memory("-1")` returns `Some(-1)`; treat it the same as
@@ -200,22 +185,29 @@ pub fn check_swap_unbounded(name: &str, service: &Service, _file: &ComposeFile) 
 }
 
 /// No CPU limit in effect: neither `cpus:`, `deploy.resources.limits.cpus:`,
-/// nor `cpu_quota:` gives the container a hard cap. The engine at
+/// `cpu_quota:`, nor `cpuset:` gives the container a hard cap. The
+/// engine at
 /// `internal/engine/container_config/resources.rs::build_resource_limits`
 /// converts `cpus:` to a CFS quota and forwards `cpu_quota:` verbatim;
 /// either is a limit. An unparseable `cpus:` value the engine silently
 /// drops is reported the same way: the audit cannot tell the engine
 /// dropped it, so it reports the unresolved value as a missing limit.
 ///
-/// `cpu_shares` and `cpuset` are deliberately NOT counted: `cpu_shares`
-/// is a relative weight under contention (1024 is the default), not a
-/// hard cap, and `cpuset` is a placement constraint, not a quota.
+/// A `cpu_quota:` of zero or below is rejected by the audit: the Docker
+/// API treats `-1` as "unlimited" and Podman does the same, so the
+/// operator's intent is not the limit they got. The shared
+/// [`podup::effective_cpu_quota`] helper applies the same filter.
+///
+/// `cpu_shares` is deliberately NOT counted: it is a relative weight
+/// under contention (1024 is the default), not a hard cap. `cpuset:` IS
+/// counted (see [`cpu_limit_in_effect`]): a non-empty `cpuset:` pins the
+/// service to named cores, which bounds how many cores it can take.
 pub fn check_no_cpu_limit(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
-	if cpu_limit_in_effect(service).is_none() {
+	if !cpu_limit_in_effect(service) {
 		return vec![finding(
 			name,
 			"no_cpu_limit",
-			"neither cpus nor deploy.resources.limits.cpus nor cpu_quota gives a limit: one service can take every core of the host",
+			"neither cpus nor deploy.resources.limits.cpus nor cpu_quota nor cpuset gives a limit: one service can take every core of the host",
 		)];
 	}
 	Vec::new()

@@ -102,6 +102,25 @@ pub fn ports_published_on_wildcard(
 		.map(|e| (e.service, e.host))
 		.collect()
 }
+/// The memory cap the engine will apply, in bytes. Top-level `mem_limit:`
+/// wins; the modern `deploy.resources.limits.memory:` block only fills in
+/// a value the top level left unset. Unparseable and `"-1"` values count
+/// as no limit. Surfaced for the audit module so its `no_memory_limit`
+/// and `swap_unbounded` checks read the same value the engine will build
+/// (`#1894`).
+pub fn effective_memory_limit(service: &crate::compose::types::Service) -> Option<i64> {
+	crate::engine::effective_memory_limit(service)
+}
+/// The CFS CPU quota the engine will apply, in microseconds over
+/// `cpu_period` (default 100_000). `cpu_quota:` wins when positive; a
+/// zero or negative value is treated as not set. Otherwise derived from
+/// `cpus:` (top-level first, then `deploy.resources.limits.cpus:`)
+/// divided by 10_000 to convert nano-CPUs to an OCI quota. Surfaced for
+/// the audit module so its `no_cpu_limit` check agrees with what the
+/// engine forwards into the OCI spec (`#1894`).
+pub fn effective_cpu_quota(service: &crate::compose::types::Service) -> Option<i64> {
+	crate::engine::effective_cpu_quota(service)
+}
 /// The crate's error type and `Result` alias, surfaced so callers handle one
 /// error enum across parsing and engine calls.
 pub use error::{ComposeError, Result};

@@ -239,6 +239,15 @@ mod more_tests;
 #[path = "checks_port_exposure_tests.rs"]
 mod port_exposure_tests;
 #[cfg(test)]
+#[path = "check_runtime_cpu_tests.rs"]
+mod runtime_cpu_tests;
+#[cfg(test)]
+#[path = "check_runtime_health_tests.rs"]
+mod runtime_health_tests;
+#[cfg(test)]
+#[path = "check_runtime_swap_tests.rs"]
+mod runtime_swap_tests;
+#[cfg(test)]
 #[path = "check_runtime_tests.rs"]
 mod runtime_tests;
 #[cfg(test)]

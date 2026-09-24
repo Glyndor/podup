@@ -27,6 +27,7 @@ use replicas::resolve_replica_name;
 
 mod container_config;
 pub(crate) use container_config::build_log_config;
+pub(crate) use container_config::resources::{effective_cpu_quota, effective_memory_limit};
 #[cfg(test)]
 mod fake_podman;
 mod health;
