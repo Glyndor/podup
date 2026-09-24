@@ -248,8 +248,16 @@ impl Engine {
 			)?)
 		};
 
+		// `rm=true` removes intermediate containers only after a successful
+		// build; `forcerm=true` removes them after a failure too. Podman's
+		// `podman build` (and `podman --remote build`) default `--force-rm`
+		// to true, and podup shipped without it: measured on 2026-09-24
+		// against Podman 5.7.0, posting the same failing build to
+		// `/v5.0.0/libpod/build` leaked one buildah working container on
+		// every run without `forcerm` (2 of 2) and on none of the runs
+		// with it (0 of 2).
 		let mut qs = format!(
-			"t={}&rm=true&nocache={}",
+			"t={}&rm=true&forcerm=true&nocache={}",
 			urlencoded(&tag),
 			build.no_cache() || opts.no_cache
 		);
