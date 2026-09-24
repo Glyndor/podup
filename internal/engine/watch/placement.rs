@@ -181,6 +181,32 @@ pub(super) fn mark_dir_ensured(
 	ensured.insert((container.to_string(), dest.to_string()))
 }
 
+/// Whether `target` (an absolute container path) sits under one of `mounts`
+/// (container-side mount targets), so a sync there does not hit the root
+/// filesystem. Compares whole path components: `/app` covers `/app` and
+/// `/app/src`, not `/application`. A trailing `/` on either side is ignored;
+/// a mount of `/` covers everything.
+pub(super) fn target_is_on_a_mount(target: &str, mounts: &[&str]) -> bool {
+	let target_parts = path_components(target);
+	for mount in mounts {
+		let mount_parts = path_components(mount);
+		if mount_parts.is_empty() || target_parts.starts_with(&mount_parts) {
+			return true;
+		}
+	}
+	false
+}
+
+/// Split an absolute container path into its non-empty components, with any
+/// trailing slash stripped. `/` and `//` produce an empty vec, which is how
+/// `target_is_on_a_mount` recognises a root mount that covers everything.
+fn path_components(path: &str) -> Vec<&str> {
+	path.trim_end_matches('/')
+		.split('/')
+		.filter(|c| !c.is_empty())
+		.collect()
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------

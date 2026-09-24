@@ -1,6 +1,6 @@
 use super::{
 	is_dispatch_event, is_remove_event, join_container_path, mark_dir_ensured, mkdir_p_argv,
-	plan_remove_placement, plan_sync_placement, validate_sync_target,
+	plan_remove_placement, plan_sync_placement, target_is_on_a_mount, validate_sync_target,
 };
 use crate::compose::types::{WatchAction, WatchRule};
 use std::collections::HashSet;
@@ -190,4 +190,19 @@ fn join_container_path_combines_dir_and_entry() {
 		dest_dir: "/app".into(),
 	};
 	assert_eq!(join_container_path(&empty), "/app");
+}
+
+#[test]
+fn target_is_on_a_mount_matches_whole_components() {
+	// A mount covers its own path and any deeper path component, but not a
+	// sibling with a shared string prefix (`/app` does not cover `/application`).
+	assert!(target_is_on_a_mount("/app/src", &["/app"]));
+	assert!(target_is_on_a_mount("/app", &["/app"]));
+	assert!(target_is_on_a_mount("/app/", &["/app"]));
+	assert!(target_is_on_a_mount("/app/src", &["/app/"]));
+	assert!(!target_is_on_a_mount("/application", &["/app"]));
+	assert!(!target_is_on_a_mount("/app", &["/data"]));
+	assert!(!target_is_on_a_mount("/app", &[]));
+	// A root mount (`/`) covers every absolute path, regardless of depth.
+	assert!(target_is_on_a_mount("/anything", &["/"]));
 }
