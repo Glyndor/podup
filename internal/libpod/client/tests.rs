@@ -209,12 +209,84 @@ fn build_request_sets_content_type_when_given() {
 	);
 }
 
+/// The request target must reach hyper as origin form: no scheme, no authority,
+/// just the path and its query string. Writing `http://localhost<path>` instead
+/// landed the request line on the wire in absolute form
+/// (`POST http://localhost/... HTTP/1.1`), which left one buildah working
+/// container behind every failed build on Podman 5.7.0 (#1910). hyper parses
+/// `scheme`/`authority` straight off the `Uri`, so an empty scheme + empty
+/// authority is what guarantees the request target is sent in origin form.
+#[test]
+fn build_request_writes_origin_form_uri() {
+	use bytes::Bytes;
+	use hyper::Method;
+	let path = "/libpod/build?a=1&b=2";
+	let req = Client::build_request(Method::POST, path, super::full(Bytes::new()), None).unwrap();
+	assert_eq!(
+		req.uri().scheme(),
+		None,
+		"scheme must be absent for origin form"
+	);
+	assert_eq!(
+		req.uri().authority(),
+		None,
+		"authority must be absent for origin form"
+	);
+	assert_eq!(
+		req.uri()
+			.path_and_query()
+			.map(|p| p.as_str().to_string())
+			.as_deref(),
+		Some(path),
+		"path_and_query must be the input path verbatim, with the query string",
+	);
+	assert_eq!(
+		req.headers()
+			.get(hyper::header::HOST)
+			.and_then(|v| v.to_str().ok()),
+		Some("localhost"),
+		"HTTP/1.1 still requires the Host header on an origin-form request",
+	);
+}
+
+/// A path with no leading slash parses to the authority form
+/// (`libpod/_ping` → authority = `libpod/_ping`, path = empty). That shape is
+/// what curl and `podman --remote` never produce, and writing it to the Podman
+/// socket has never been measured safe. Reject it loudly so a caller cannot
+/// silently fall back into it (#1910).
+#[test]
+fn build_request_rejects_path_without_leading_slash() {
+	use bytes::Bytes;
+	use hyper::Method;
+	let err = Client::build_request(Method::GET, "libpod/_ping", super::full(Bytes::new()), None)
+		.unwrap_err();
+	assert!(err.to_string().contains("invalid API path"), "got: {err}");
+}
+
+/// An absolute URI has a scheme and an authority, which puts the request line
+/// on the wire in absolute form. The 2026-09-24 measurement pinned that exact
+/// shape to one buildah working container leaked per failed build; reject it
+/// before the bytes ever leave the client (#1910).
+#[test]
+fn build_request_rejects_absolute_uri() {
+	use bytes::Bytes;
+	use hyper::Method;
+	let err = Client::build_request(
+		Method::GET,
+		"http://localhost/libpod/_ping",
+		super::full(Bytes::new()),
+		None,
+	)
+	.unwrap_err();
+	assert!(err.to_string().contains("invalid API path"), "got: {err}");
+}
+
 #[test]
 fn build_request_rejects_unparseable_path() {
 	use bytes::Bytes;
 	use hyper::Method;
-	// A control character makes `http://localhost<path>` an invalid URI, which
-	// must surface as a structured Api error rather than panicking.
+	// A control character makes the path an invalid `Uri`, which must surface
+	// as a structured Api error rather than panicking.
 	let err = Client::build_request(
 		Method::GET,
 		"/libpod/bad\u{7f}path",

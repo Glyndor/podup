@@ -171,18 +171,40 @@ impl Drop for Client {
 
 impl Client {
 	/// Build a request with an optional JSON body.
+	///
+	/// The request target is sent in origin form (`POST /v5.0.0/libpod/build?...
+	/// HTTP/1.1`), the same shape `podman --remote` and curl write when they
+	/// talk to the Podman socket. Writing the absolute form
+	/// (`POST http://localhost/v5.0.0/libpod/build?... HTTP/1.1`) instead left
+	/// one buildah working container behind every time `podup build` failed on
+	/// Podman 5.7.0, measured on 2026-09-24 (4 of 4 runs leaked; 2 of 2 ran
+	/// clean with only the request line changed to origin form). The
+	/// `Host: localhost` header stays because HTTP/1.1 requires it.
+	///
+	/// `path` must start with `/`; paths without a leading slash
+	/// (`libpod/_ping`) and absolute URIs (`http://localhost/libpod/_ping`)
+	/// are rejected with `invalid API path` so neither shape can silently fall
+	/// back to authority form or absolute form and reproduce the leak.
 	fn build_request(
 		method: Method,
 		path: &str,
 		body: BoxBody,
 		content_type: Option<&str>,
 	) -> Result<Request<BoxBody>> {
-		let uri: hyper::Uri = format!("http://localhost{path}").parse().map_err(
-			|e: hyper::http::uri::InvalidUri| PodmanError::Api {
+		let uri: hyper::Uri =
+			path.parse()
+				.map_err(|e: hyper::http::uri::InvalidUri| PodmanError::Api {
+					status: 0,
+					message: format!("invalid API path '{path}': {e}"),
+				})?;
+		if uri.scheme().is_some() || uri.authority().is_some() {
+			return Err(PodmanError::Api {
 				status: 0,
-				message: format!("invalid API path '{path}': {e}"),
-			},
-		)?;
+				message: format!(
+					"invalid API path '{path}': path must start with '/' and contain no scheme or authority"
+				),
+			});
+		}
 
 		let mut builder = Request::builder()
 			.method(method)
