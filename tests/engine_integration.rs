@@ -385,6 +385,12 @@ mod build_images;
 mod build_labels;
 #[path = "engine_integration/build_resources.rs"]
 mod build_resources;
+// Unix only: the assertion lists external containers via `podman ps -a
+// --external` against a Unix-domain socket, the path the libpod client
+// drives.
+#[cfg(unix)]
+#[path = "engine_integration/build_failure_cleanup.rs"]
+mod build_failure_cleanup;
 #[path = "engine_integration/build_sparse_context.rs"]
 mod build_sparse_context;
 #[path = "engine_integration/commands_networking.rs"]
