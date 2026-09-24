@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::compose::types::WatchRule;
+use crate::compose::types::{Service, WatchRule};
 use crate::error::{ComposeError, Result};
 
 /// Where a changed host path lands inside the container for a `sync` action:
@@ -195,6 +195,34 @@ pub(super) fn target_is_on_a_mount(target: &str, mounts: &[&str]) -> bool {
 		}
 	}
 	false
+}
+
+/// The warning to print when a sync `target` of service `service_name` sits on
+/// a `read_only: true` root filesystem that no volume or tmpfs covers, or
+/// `None` when the service is writable there. Tmpfs entries are cut at their
+/// first `:` (they can carry `:size=...` options).
+pub(super) fn read_only_target_warning(
+	service_name: &str,
+	service: &Service,
+	target: &str,
+) -> Option<String> {
+	if service.read_only != Some(true) {
+		return None;
+	}
+	let mut mounts: Vec<&str> = service.volumes.iter().map(|v| v.target()).collect();
+	let tmpfs_paths: Vec<String> = service
+		.tmpfs
+		.to_list()
+		.into_iter()
+		.map(|s| s.split(':').next().unwrap_or("").to_string())
+		.collect();
+	mounts.extend(tmpfs_paths.iter().map(String::as_str));
+	if target_is_on_a_mount(target, &mounts) {
+		return None;
+	}
+	Some(format!(
+		"{service_name}: sync target {target} is on the read-only root filesystem (read_only: true) and no volume or tmpfs covers it, so every sync to it will fail; mount a volume or tmpfs at {target}"
+	))
 }
 
 /// Split an absolute container path into its non-empty components, with any

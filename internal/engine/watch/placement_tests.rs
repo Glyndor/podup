@@ -1,8 +1,9 @@
 use super::{
 	is_dispatch_event, is_remove_event, join_container_path, mark_dir_ensured, mkdir_p_argv,
-	plan_remove_placement, plan_sync_placement, target_is_on_a_mount, validate_sync_target,
+	plan_remove_placement, plan_sync_placement, read_only_target_warning, target_is_on_a_mount,
+	validate_sync_target,
 };
-use crate::compose::types::{WatchAction, WatchRule};
+use crate::compose::types::{Service, WatchAction, WatchRule};
 use std::collections::HashSet;
 use std::fs;
 use tempfile::tempdir;
@@ -205,4 +206,38 @@ fn target_is_on_a_mount_matches_whole_components() {
 	assert!(!target_is_on_a_mount("/app", &[]));
 	// A root mount (`/`) covers every absolute path, regardless of depth.
 	assert!(target_is_on_a_mount("/anything", &["/"]));
+}
+
+#[test]
+fn read_only_target_warning_cases() {
+	// `read_only: true` with no volumes or tmpfs: the target sits on the
+	// read-only root filesystem, so the warning must fire and mention both
+	// the target and the literal `read_only: true` so the user can match
+	// it against the compose file (#1897).
+	let svc: Service = serde_yaml::from_str("read_only: true\nimage: x\n").unwrap();
+	let msg = read_only_target_warning("web", &svc, "/app");
+	let msg = msg.expect("warning expected for read_only: true with no mount");
+	assert!(msg.contains("/app"));
+	assert!(msg.contains("read_only: true"));
+
+	// A bind mount that covers the target: the warning must be suppressed,
+	// because every sync lands inside the writable mount, not on the root fs.
+	let svc: Service =
+		serde_yaml::from_str("read_only: true\nimage: x\nvolumes:\n  - ./src:/app\n").unwrap();
+	assert_eq!(read_only_target_warning("web", &svc, "/app/src"), None);
+
+	// A tmpfs at the target (with the usual `:size=10m` option, cut at the
+	// first `:`) also makes the destination writable: the warning is suppressed.
+	let svc: Service =
+		serde_yaml::from_str("read_only: true\nimage: x\ntmpfs:\n  - /app:size=10m\n").unwrap();
+	assert_eq!(read_only_target_warning("web", &svc, "/app"), None);
+
+	// `read_only: false` (explicit) — the container is writable regardless
+	// of mount coverage, so there is nothing to warn about.
+	let svc: Service = serde_yaml::from_str("read_only: false\nimage: x\n").unwrap();
+	assert_eq!(read_only_target_warning("web", &svc, "/app"), None);
+
+	// `read_only` omitted — same as `false`: default, no warning.
+	let svc: Service = serde_yaml::from_str("image: x\n").unwrap();
+	assert_eq!(read_only_target_warning("web", &svc, "/app"), None);
 }

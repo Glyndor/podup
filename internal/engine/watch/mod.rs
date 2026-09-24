@@ -31,7 +31,7 @@ use crate::error::{ComposeError, Result};
 
 use placement::{
 	is_dispatch_event, is_remove_event, join_container_path, mark_dir_ensured, mkdir_p_argv,
-	plan_remove_placement, plan_sync_placement, target_is_on_a_mount, validate_sync_target,
+	plan_remove_placement, plan_sync_placement, read_only_target_warning, validate_sync_target,
 	SyncPlacement,
 };
 use sync::{is_ignored, is_included};
@@ -119,26 +119,13 @@ impl Engine {
 			let Some(service) = file.services.get(&entry.service_name) else {
 				continue;
 			};
-			if service.read_only != Some(true) {
+			let Some(msg) = read_only_target_warning(&entry.service_name, service, target) else {
 				continue;
-			}
+			};
 			if !read_only_warned.insert((entry.service_name.clone(), target.clone())) {
 				continue;
 			}
-			let mut mounts: Vec<&str> = service.volumes.iter().map(|v| v.target()).collect();
-			let tmpfs_paths: Vec<String> = service
-				.tmpfs
-				.to_list()
-				.into_iter()
-				.map(|s| s.split(':').next().unwrap_or("").to_string())
-				.collect();
-			mounts.extend(tmpfs_paths.iter().map(String::as_str));
-			if !target_is_on_a_mount(target, &mounts) {
-				warn!(
-					"{}: sync target {} is on the read-only root filesystem (read_only: true) and no volume or tmpfs covers it, so every sync to it will fail; mount a volume or tmpfs at {}",
-					entry.service_name, target, target
-				);
-			}
+			warn!("{msg}");
 		}
 
 		for entry in &rule_entries {
