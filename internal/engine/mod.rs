@@ -27,9 +27,13 @@ use replicas::resolve_replica_name;
 
 mod container_config;
 pub(crate) use container_config::build_log_config;
+pub(crate) use container_config::resources::{effective_cpu_quota, effective_memory_limit};
 #[cfg(test)]
 mod fake_podman;
 mod health;
+/// Shared `.dockerignore` / `.containerignore` matcher, used by both the
+/// build-context tar loop and the watch engine.
+mod ignore_patterns;
 mod lifecycle;
 mod lock;
 mod names;
@@ -704,6 +708,9 @@ mod to_pretty_json_tests;
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+#[path = "ignore_patterns_tests.rs"]
+mod ignore_patterns_tests;
 #[cfg(test)]
 mod stream_end_tests;
 #[cfg(unix)]

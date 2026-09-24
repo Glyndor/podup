@@ -22,6 +22,9 @@ mod check_fns;
 #[path = "check_sensitive_bind.rs"]
 mod check_sensitive_bind;
 
+#[path = "check_runtime.rs"]
+mod check_runtime;
+
 pub(super) use check_sensitive_bind::check_sensitive_bind_mount;
 
 pub(super) use check_fns::{
@@ -29,6 +32,11 @@ pub(super) use check_fns::{
 	check_no_new_privileges_off, check_no_pids_limit, check_no_userns,
 	check_port_published_on_all_interfaces, check_port_published_on_wildcard, check_privileged,
 	check_secret_in_environment, check_unpinned_image, check_writable_root,
+};
+
+pub(super) use check_runtime::{
+	check_no_cpu_limit, check_no_health_action, check_no_init, check_no_restart_policy,
+	check_swap_unbounded,
 };
 
 // `segments` is a helper only consumed from `check_fns` itself during the
@@ -192,6 +200,36 @@ pub(super) const CHECK_REGISTRY: &[CheckDescriptor] = &[
 		run: check_port_published_on_wildcard,
 		opt_in: Some("--wildcard-binds"),
 	},
+	CheckDescriptor {
+		id: "no_restart_policy",
+		description: "neither restart nor deploy.restart_policy is set: a process that exits stays exited until someone redeploys.",
+		run: check_no_restart_policy,
+		opt_in: None,
+	},
+	CheckDescriptor {
+		id: "no_init",
+		description: "init is not true: PID 1 is the app, orphans become zombies and SIGTERM may wait out the whole stop timeout.",
+		run: check_no_init,
+		opt_in: None,
+	},
+	CheckDescriptor {
+		id: "no_health_action",
+		description: "a non-disabled healthcheck has no x-podman-on-failure: an unhealthy container stays unhealthy and nothing acts on it.",
+		run: check_no_health_action,
+		opt_in: None,
+	},
+	CheckDescriptor {
+		id: "swap_unbounded",
+		description: "a memory limit is in effect but memswap_limit is absent, is -1, or differs from the memory limit: the service can page to disk instead of hitting its memory limit.",
+		run: check_swap_unbounded,
+		opt_in: None,
+	},
+	CheckDescriptor {
+		id: "no_cpu_limit",
+		description: "neither cpus nor deploy.resources.limits.cpus nor cpu_quota gives a limit: one service can take every core of the host.",
+		run: check_no_cpu_limit,
+		opt_in: None,
+	},
 ];
 
 #[cfg(test)]
@@ -200,6 +238,18 @@ mod more_tests;
 #[cfg(test)]
 #[path = "checks_port_exposure_tests.rs"]
 mod port_exposure_tests;
+#[cfg(test)]
+#[path = "check_runtime_cpu_tests.rs"]
+mod runtime_cpu_tests;
+#[cfg(test)]
+#[path = "check_runtime_health_tests.rs"]
+mod runtime_health_tests;
+#[cfg(test)]
+#[path = "check_runtime_swap_tests.rs"]
+mod runtime_swap_tests;
+#[cfg(test)]
+#[path = "check_runtime_tests.rs"]
+mod runtime_tests;
 #[cfg(test)]
 #[path = "checks_secret_env_tests.rs"]
 mod secret_env_tests;

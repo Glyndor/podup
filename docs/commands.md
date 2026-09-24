@@ -644,6 +644,25 @@ The `action` of each rule may be:
 | `sync+restart` | Sync the files, then restart the container. |
 | `sync+exec` | Sync the files, then run the rule's `exec` command in the container. |
 
+Each rule's `ignore:` and `include:` lists are read against the path
+RELATIVE TO THE RULE'S `path`, using `.dockerignore` syntax (`*`, `?`,
+`**`, `!` re-include, last match wins). For a service with a local
+`build:` context, the patterns in that context's `.dockerignore` (or
+`.containerignore`) are loaded once at watch start and matched against
+the path relative to the BUILD CONTEXT, which is what those files are
+written against. The rule's own patterns then run against the path
+relative to `path`; the two sets combine with last-match-wins.
+
+A pattern written the old way (project-relative, no globs) keeps
+working through a one-shot warning per distinct pattern: when the
+matcher on the rule-relative path says "no pattern matched" the old
+project-relative matcher runs as a fallback and a `podup: warning:`
+is logged once per `(service, pattern)` for the lifetime of the
+watch, naming the rule's path and suggesting the rewritten pattern
+when the legacy pattern started with the rule's path. A `!` negation
+in the rule's `ignore:` list is always authoritative: the fallback
+never overrides a re-include.
+
 ## Maintenance
 
 ### `config`
@@ -708,7 +727,7 @@ never `null`.
 0), so a CI job can gate on `podup audit --strict` and fail when hardening
 gaps are introduced.
 
-The eleven checks and what they look for:
+The sixteen checks and what they look for:
 
 | Check id | Fires when | Notes |
 |---|---|---|
@@ -723,6 +742,11 @@ The eleven checks and what they look for:
 | `no_userns` | `userns_mode` unset | Without it Podman's `auto` applies; the reason links to `docs/docker-migration.md`. |
 | `secret_in_environment` | `environment:` key matching `PASSWORD`/`SECRET`/`TOKEN`/`KEY` (case-insensitive) with a non-empty literal value | Bare keys (host inheritance) and `${VAR}` placeholders are not flagged. |
 | `unpinned_image` | `image:` with no tag, with tag `latest`, or `latest` without a digest | An `@sha256:` digest counts as pinning regardless of the tag. |
+| `no_restart_policy` | Neither `restart:` nor `deploy.restart_policy:` is set | An explicit `restart: "no"` is a deliberate choice and stays silent. |
+| `no_init` | `init:` is not `true` | PID 1 is the app; orphans become zombies and SIGTERM may wait out the stop timeout. |
+| `no_health_action` | A non-disabled `healthcheck:` has no `x-podman-on-failure` extension | An unhealthy container stays unhealthy and nothing acts on it. |
+| `swap_unbounded` | A memory limit is in effect but `memswap_limit` is absent, `-1`, or differs from the memory limit | The service can page to disk instead of hitting its memory limit. |
+| `no_cpu_limit` | Neither `cpus:`, `deploy.resources.limits.cpus:`, nor `cpu_quota:` gives a limit | One service can take every core of the host. |
 
 | Flag | Description | Default |
 |---|---|---|

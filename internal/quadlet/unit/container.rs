@@ -2,6 +2,7 @@
 
 use indexmap::IndexMap;
 
+use crate::compose::dependencies::effective_depends_on;
 use crate::compose::types::{RestartPolicy, SecretConfig, Service};
 use crate::engine::build_log_config;
 use crate::ports::parse_ports;
@@ -65,13 +66,14 @@ pub(crate) fn container_unit(
 	let in_pod: bool = *pod_mode;
 	let mut unit = Section::new("Unit");
 	unit.add("Description", format!("{name} (podup)"));
-	for dep in service.depends_on.service_names() {
+	let deps = effective_depends_on(service, services);
+	for dep in deps.service_names() {
 		// The dependency's generated unit is named `{unit_stem(project, dep)}.container`,
 		// so its service is `{unit_stem(project, dep)}.service`; reference that, not the
 		// raw compose key, or the ordering would target a non-existent unit.
 		let dep_service = format!("{}.service", unit_stem(project, &dep));
 		unit.add("After", dep_service.clone());
-		if service.depends_on.required_for(&dep) {
+		if deps.required_for(&dep) {
 			unit.add("Requires", dep_service);
 		} else {
 			unit.add("Wants", dep_service);

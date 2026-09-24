@@ -119,3 +119,24 @@ fn restart_service_set_no_deps_excludes_cascade() {
 	assert!(full.contains("db"));
 	assert!(!full.contains("web"));
 }
+
+/// Implicit dependencies participate in the cascade-restart set. A service
+/// that joins another via `network_mode: service:zdb` cascades on a
+/// `zdb` restart (matches `links` semantics); a service that only borrows
+/// `volumes_from: [zdb]` does not.
+#[test]
+fn restart_service_set_includes_implicit_link_but_not_implicit_volumes_from() {
+	let file = crate::parse_str(
+		"services:\n  zdb:\n    image: x\n  web:\n    image: x\n    network_mode: \"service:zdb\"\n  app2:\n    image: x\n    volumes_from: [\"zdb\"]\n",
+	)
+	.unwrap();
+	let (full, _) = restart_service_set(&file, &["zdb".into()], false);
+	assert!(
+		full.contains("web"),
+		"network_mode service:zdb cascades restarts; got: {full:?}"
+	);
+	assert!(
+		!full.contains("app2"),
+		"volumes_from alone does not cascade restarts; got: {full:?}"
+	);
+}

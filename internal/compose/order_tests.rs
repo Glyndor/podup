@@ -145,3 +145,81 @@ fn resolve_levels_optional_missing_dep_is_ignored() {
 	let levels = resolve_levels(&file).unwrap();
 	assert_eq!(levels, vec![vec!["web".to_string()]]);
 }
+
+// Implicit dependencies: docker compose derives these from references that
+// need the referenced container to exist first. The names chosen here are
+// adversarially sorted: the dependent (`web`/`app`) precedes the
+// referent (`zdb`/`zdata`) alphabetically, so a resolver that only reads
+// `depends_on` would either start them in the wrong order or fail to
+// detect a cycle.
+
+#[test]
+fn resolve_levels_orders_network_mode_service_before_dependent() {
+	// `web` (network_mode: service:zdb) must wait for `zdb`; alphabetical
+	// order would have `web` first, so the only way this passes is if
+	// `network_mode: service:X` was treated as an implicit dependency.
+	let yaml = "services:\n  web:\n    image: nginx\n    network_mode: \"service:zdb\"\n  zdb:\n    image: postgres\n";
+	let file = parse_str_raw(yaml).unwrap();
+	let levels = resolve_levels(&file).unwrap();
+	let zdb_pos = levels
+		.iter()
+		.position(|lvl| lvl.iter().any(|s| s == "zdb"))
+		.expect("zdb present");
+	let web_pos = levels
+		.iter()
+		.position(|lvl| lvl.iter().any(|s| s == "web"))
+		.expect("web present");
+	assert!(
+		zdb_pos < web_pos,
+		"zdb must start before web; got zdb at {zdb_pos}, web at {web_pos}"
+	);
+}
+
+#[test]
+fn resolve_order_puts_referenced_service_before_dependent() {
+	// Same adversarial shape, asserted on the linear order.
+	let yaml = "services:\n  web:\n    image: nginx\n    network_mode: \"service:zdb\"\n  zdb:\n    image: postgres\n";
+	let file = parse_str_raw(yaml).unwrap();
+	let order = resolve_order(&file).unwrap();
+	let zdb_pos = order.iter().position(|s| s == "zdb").unwrap();
+	let web_pos = order.iter().position(|s| s == "web").unwrap();
+	assert!(zdb_pos < web_pos, "zdb must start before web");
+}
+
+#[test]
+fn resolve_levels_orders_volumes_from_before_dependent() {
+	let yaml = "services:\n  app:\n    image: nginx\n    volumes_from: [\"zdata\"]\n  zdata:\n    image: postgres\n";
+	let file = parse_str_raw(yaml).unwrap();
+	let levels = resolve_levels(&file).unwrap();
+	let zdata_pos = levels
+		.iter()
+		.position(|lvl| lvl.iter().any(|s| s == "zdata"))
+		.expect("zdata present");
+	let app_pos = levels
+		.iter()
+		.position(|lvl| lvl.iter().any(|s| s == "app"))
+		.expect("app present");
+	assert!(
+		zdata_pos < app_pos,
+		"zdata must start before app; got zdata at {zdata_pos}, app at {app_pos}"
+	);
+}
+
+#[test]
+fn resolve_order_volumes_from_cycle_is_error() {
+	// docker compose errors with "dependency cycle detected" when two
+	// services reference each other through `volumes_from`. The resolver
+	// must catch the cycle and name both services in the message.
+	let yaml = "services:\n  a:\n    image: x\n    volumes_from: [b]\n  b:\n    image: y\n    volumes_from: [a]\n";
+	let file = parse_str_raw(yaml).unwrap();
+	let err = resolve_order(&file).unwrap_err();
+	let msg = err.to_string();
+	assert!(
+		msg.contains("circular dependency among services"),
+		"got {msg:?}"
+	);
+	assert!(
+		msg.contains('a') && msg.contains('b'),
+		"names the cycle: {msg:?}"
+	);
+}

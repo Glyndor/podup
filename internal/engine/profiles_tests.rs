@@ -196,6 +196,24 @@ fn enabled_set_excludes_unrelated_profiled_service() {
 	assert!(!enabled.contains("extra"));
 }
 
+/// Implicit activation reaches through `volumes_from` and the
+/// `service:X` namespace keys, so a profiled service pulled in through
+/// one is enabled even when its profile is inactive.
+#[test]
+fn enabled_set_activates_profiled_volumes_from_target() {
+	let yaml = "services:\n  \
+		data:\n    image: x\n    profiles: [extra]\n  \
+		ro:\n    image: x\n    volumes_from: [data]\n";
+	let file = crate::parse_str(yaml).unwrap();
+	let active: HashSet<String> = HashSet::new();
+	let enabled = enabled_profile_services(&file, &active, &[]);
+	assert!(enabled.contains("data"));
+	assert!(
+		enabled.contains("ro"),
+		"the enabled unprofiled service is also part of the started set"
+	);
+}
+
 #[test]
 fn named_target_keeps_inactive_profile_service() {
 	// Naming a profiled service on the command line activates its profile, so

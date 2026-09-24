@@ -47,8 +47,14 @@ services:
     cap_drop: []
     security_opt: []
     pids_limit: null
-    mem_limit: not-a-size
+    mem_limit: 256m
+    memswap_limit: \"-1\"
+    init: false
+    cpus: not-a-number
     userns_mode: null
+    healthcheck:
+      test: [\"CMD\", \"true\"]
+      interval: 30s
     environment:
       - DB_PASSWORD=hunter2
     ports:
@@ -56,6 +62,8 @@ services:
       - \"0.0.0.0:6379:6379\"
     volumes:
       - /run/user/1000/podman/podman.sock:/sock
+  naked:
+    image: alpine
 ";
 
 #[test]

@@ -7,6 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::compose::dependencies::effective_depends_on;
 use crate::compose::types::ComposeFile;
 use crate::error::Result;
 
@@ -81,7 +82,7 @@ impl Engine {
 			let deps: Vec<tokio::sync::watch::Receiver<bool>> = file
 				.services
 				.get(*name)
-				.map(|s| s.depends_on.service_names())
+				.map(|s| effective_depends_on(s, &file.services).service_names())
 				.unwrap_or_default()
 				.into_iter()
 				.filter_map(|d| done.get(d.as_str()).map(|tx| tx.subscribe()))

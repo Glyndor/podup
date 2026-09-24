@@ -1,3 +1,22 @@
+podup (5.10.0) unstable; urgency=medium
+
+  * `up` orders a service after the services it references through
+    `volumes_from`, `links` or `network_mode`/`ipc`/`pid`/`uts` set to
+    `service:<name>`, as docker compose does, instead of starting both at
+    once and failing with "no such container". An explicit `depends_on`
+    entry for the same service is kept as written.
+  * `develop.watch` reads `ignore` and `include` relative to the rule's
+    `path` with `.dockerignore` syntax, and applies the build context's
+    ignore file. A pattern written relative to the project keeps working
+    and prints a one-time warning with the form to use.
+  * A failed `podup build` no longer leaves a buildah working container
+    behind: the build request sends `forcerm=true`.
+  * `podup audit` adds five checks, on by default: `no_restart_policy`,
+    `no_init`, `no_health_action`, `swap_unbounded` and `no_cpu_limit`.
+    `audit --strict` reports them as new findings.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Thu, 24 Sep 2026 12:17:42 -0500
+
 podup (5.9.10) unstable; urgency=medium
 
   * A compose `healthcheck:` without a `test` keeps the image HEALTHCHECK

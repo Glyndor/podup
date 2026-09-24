@@ -7,7 +7,7 @@
 
 /// A build context is remote when it is a URL or Git reference that Podman
 /// clones server-side, rather than a local directory to tar and upload.
-pub(super) fn is_remote_context(context: &str) -> bool {
+pub(in crate::engine) fn is_remote_context(context: &str) -> bool {
 	context.contains("://") || context.starts_with("git@")
 }
 

@@ -8,11 +8,14 @@
 //! one side and not the other cannot land.
 
 use podup::compose::types::{ComposeFile, Service};
-use podup::size;
 // The audit must read the runtime value a `security_opt` entry resolves to,
 // not the raw compose-side text (#1743). `podup::effective_no_new_privileges`
 // calls the engine's own `parse_security_opts` so the two cannot drift again.
 use podup::effective_no_new_privileges;
+// Shared with the engine's `build_resource_limits` (#1894): the audit reads
+// the same memory cap the engine forwards into the OCI spec, applying the
+// top-level/deploy precedence `build_resource_limits` does.
+use podup::effective_memory_limit;
 // The audit must use the same notion of "published on every interface" as
 // the parse-time port-exposure warning `up`/`config` already emit (#1835).
 use podup::ports_published_on_all_interfaces;
@@ -281,15 +284,22 @@ pub fn check_no_pids_limit(name: &str, service: &Service, _file: &ComposeFile) -
 /// keeps the compose field non-empty, so an `.is_none()` audit reads it
 /// as a limit, but `parse_memory` returns `None` and the runtime applies
 /// no limit at all. The audit must agree with what the engine will build.
+///
+/// The shared [`podup::effective_memory_limit`] helper applies the same
+/// top-first/deploy-fill precedence `build_resource_limits` does, so a
+/// top-level `mem_limit: 256m` is treated as the effective cap even when
+/// `deploy.resources.limits.memory` carries a different value (the deploy
+/// block is ignored once the top level set one). Reading both fields
+/// independently here would silently take the larger one and disagree
+/// with what the engine forwards to libpod (`#1894`).
+///
+/// The shared helper returns what the engine forwards verbatim,
+/// including `Some(-1)` for `mem_limit: "-1"`. Podman interprets `-1`
+/// as "no cap" and the audit agrees: the operator did not set a
+/// memory limit, so this check fires the same way it does for an
+/// absent key (`#1894`).
 pub fn check_no_memory_limit(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
-	let mem_top = service.mem_limit.as_deref().and_then(size::parse_memory);
-	let deploy_limit = service
-		.deploy
-		.as_ref()
-		.and_then(|d| d.resources.as_ref())
-		.and_then(|r| r.limits.as_ref())
-		.and_then(|l| l.memory.as_deref().and_then(size::parse_memory));
-	if mem_top.is_none() && deploy_limit.is_none() {
+	if effective_memory_limit(service).is_none_or(|v| v < 0) {
 		vec![finding(
 			name,
 			"no_memory_limit",

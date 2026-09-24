@@ -6,6 +6,74 @@ use crate::libpod::types::container::{LinuxResources, Ulimit};
 use crate::size;
 
 // ---------------------------------------------------------------------------
+// Effective-limit helpers (shared with the audit, #1894)
+// ---------------------------------------------------------------------------
+
+/// The memory cap the engine will forward into `LinuxMemory.limit`, in
+/// bytes. Top-level `mem_limit:` wins; the modern
+/// `deploy.resources.limits.memory:` block only fills in a value the top
+/// level left unset. An unparseable value is `None` (`parse_memory`
+/// returns `None`, #1743). The literal `"-1"` parses to `Some(-1)` and
+/// is forwarded verbatim; Podman interprets `-1` as "no cap" at the
+/// API layer, and the engine does not second-guess it.
+///
+/// This is the value `build_resource_limits` forwards into the OCI spec,
+/// unfiltered. "Zero or below is not a limit" is an audit
+/// policy, not an engine policy: the audit applies that filter on top
+/// of this helper (`#1894`).
+pub(crate) fn effective_memory_limit(service: &Service) -> Option<i64> {
+	let top = service.mem_limit.as_deref().and_then(size::parse_memory);
+	let deploy = service
+		.deploy
+		.as_ref()
+		.and_then(|d| d.resources.as_ref())
+		.and_then(|r| r.limits.as_ref())
+		.and_then(|l| l.memory.as_deref().and_then(size::parse_memory));
+	top.or(deploy)
+}
+
+/// The CFS CPU quota the engine will forward into `LinuxCPU.quota`, in
+/// microseconds over `cpu_period` (default 100_000). `cpu_quota:` wins
+/// when present, including `-1` (Docker's "unlimited" sentinel) and
+/// `0`. Otherwise derived from `cpus:` (top-level first, then
+/// `deploy.resources.limits.cpus:`) divided by 10_000 to convert
+/// nano-CPUs to an OCI quota over the default 100ms period.
+///
+/// This is the value `build_resource_limits` forwards:
+/// `cpu_quota.or(derived_cpu_quota)`, unfiltered. "Zero or
+/// below is not a limit" is an audit policy, not an engine policy;
+/// the audit applies that filter on top of this helper (`#1894`).
+///
+/// `cpuset:` is deliberately NOT folded into the quota here: `cpuset`
+/// is a placement constraint, not a quota, and the engine forwards it
+/// as a separate field. The audit treats a non-empty `cpuset:` as a
+/// bound on top of this quota.
+pub(crate) fn effective_cpu_quota(service: &Service) -> Option<i64> {
+	if let Some(q) = service.cpu_quota {
+		return Some(q);
+	}
+	effective_cpu_nanos(service).map(|n| n / 10_000)
+}
+
+/// The nano-CPU count the engine will derive a CFS quota from, after
+/// the same top-first/deploy-fill precedence [`effective_memory_limit`]
+/// applies to memory. An unparseable `cpus:` value is `None`
+/// (`parse_cpus` rejects non-finite and out-of-range values,
+/// `#1846`). Split out of [`effective_cpu_quota`] so the resolution
+/// rule (top vs deploy) is visible on its own; the quota helper
+/// composes the result with the `cpu_quota:` override.
+fn effective_cpu_nanos(service: &Service) -> Option<i64> {
+	let top = service.cpus.as_deref().and_then(size::parse_cpus);
+	let deploy = service
+		.deploy
+		.as_ref()
+		.and_then(|d| d.resources.as_ref())
+		.and_then(|r| r.limits.as_ref())
+		.and_then(|l| l.cpus.as_deref().and_then(size::parse_cpus));
+	top.or(deploy)
+}
+
+// ---------------------------------------------------------------------------
 // Resource limits
 // ---------------------------------------------------------------------------
 
@@ -17,7 +85,7 @@ use crate::size;
 pub(crate) fn build_resource_limits(service: &Service) -> Option<LinuxResources> {
 	use crate::libpod::types::container::{LinuxCPU, LinuxMemory, LinuxPids};
 
-	let mut memory = service.mem_limit.as_deref().and_then(size::parse_memory);
+	let memory = effective_memory_limit(service);
 	let mut mem_reservation = service
 		.mem_reservation
 		.as_deref()
@@ -26,20 +94,13 @@ pub(crate) fn build_resource_limits(service: &Service) -> Option<LinuxResources>
 		.memswap_limit
 		.as_deref()
 		.and_then(size::parse_memory);
-	let mut nano_cpus = service.cpus.as_deref().and_then(size::parse_cpus);
-	let cpu_quota = service.cpu_quota;
+	let cpu_quota = effective_cpu_quota(service);
 	let cpu_period = service.cpu_period;
 	let mut pids_limit = service.pids_limit;
 
 	if let Some(deploy) = &service.deploy {
 		if let Some(res) = &deploy.resources {
 			if let Some(limits) = &res.limits {
-				if memory.is_none() {
-					memory = limits.memory.as_deref().and_then(size::parse_memory);
-				}
-				if nano_cpus.is_none() {
-					nano_cpus = limits.cpus.as_deref().and_then(size::parse_cpus);
-				}
 				if pids_limit.is_none() {
 					pids_limit = limits.pids.map(|p| p as i64);
 				}
@@ -54,10 +115,10 @@ pub(crate) fn build_resource_limits(service: &Service) -> Option<LinuxResources>
 		}
 	}
 
-	// nano_cpus (Docker) = cpus * 1e9; convert to OCI quota with 100ms period.
-	let derived_cpu_quota = nano_cpus.map(|n| n / 10_000);
-	let effective_cpu_quota = cpu_quota.or(derived_cpu_quota);
-	let effective_cpu_period = if effective_cpu_quota.is_some() && cpu_period.is_none() {
+	// Default the CFS period to 100ms whenever a quota is in effect and the
+	// user did not set one explicitly: libpod rejects a quota without a
+	// period outright.
+	let effective_cpu_period = if cpu_quota.is_some() && cpu_period.is_none() {
 		Some(100_000u64)
 	} else {
 		cpu_period
@@ -69,7 +130,7 @@ pub(crate) fn build_resource_limits(service: &Service) -> Option<LinuxResources>
 		|| service.mem_swappiness.is_some()
 		|| service.oom_kill_disable.is_some();
 
-	let has_cpu = effective_cpu_quota.is_some()
+	let has_cpu = cpu_quota.is_some()
 		|| effective_cpu_period.is_some()
 		|| service.cpu_shares.is_some()
 		|| service.cpuset.is_some()
@@ -97,7 +158,7 @@ pub(crate) fn build_resource_limits(service: &Service) -> Option<LinuxResources>
 	let cpu = if has_cpu {
 		Some(LinuxCPU {
 			shares: service.cpu_shares,
-			quota: effective_cpu_quota,
+			quota: cpu_quota,
 			period: effective_cpu_period,
 			realtime_period: service.cpu_rt_period.map(|v| v as u64),
 			realtime_runtime: service.cpu_rt_runtime,

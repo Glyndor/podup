@@ -266,6 +266,16 @@ dependant the same profile; then neither starts, everywhere. Note also that
 docker compose's message is misleading: `db` is not undefined, it is defined
 and filtered.
 
+### `volumes_from`, `links`, and `service:` namespace references
+
+`volumes_from: [data]`, `links: [data:alias]`, and `network_mode` /
+`ipc` / `pid` / `uts` set to `service:data` all need the `data` container
+to exist before the dependent starts. podup treats each such reference as
+an implicit `depends_on` on the named service, the way docker compose
+does, so a project that names a sibling in any of these places does not
+need to repeat it in `depends_on`. A `volumes_from: [a]` on `b` and
+`volumes_from: [b]` on `a` is rejected as a dependency cycle.
+
 ## Accepted but has no effect
 
 These fields parse cleanly so existing compose files validate, but podup cannot

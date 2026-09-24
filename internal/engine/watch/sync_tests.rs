@@ -1,4 +1,4 @@
-use super::{build_sync_tar, is_ignored, is_included};
+use super::{build_sync_tar, legacy_project_relative_ignored, legacy_project_relative_included};
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -41,78 +41,114 @@ fn tar_entry_paths(gz: &[u8]) -> Vec<String> {
 	names
 }
 
-// is_ignored -----------------------------------------------------------
+// legacy_project_relative_ignored -----------------------------------------------------------
 
 #[test]
 fn ignored_exact_file() {
-	assert!(is_ignored("Makefile", &pats(&["Makefile"])));
+	assert!(legacy_project_relative_ignored(
+		"Makefile",
+		&pats(&["Makefile"])
+	));
 }
 
 #[test]
 fn ignored_not_prefix_match() {
-	assert!(!is_ignored("Makefile.local", &pats(&["Makefile"])));
+	assert!(!legacy_project_relative_ignored(
+		"Makefile.local",
+		&pats(&["Makefile"])
+	));
 }
 
 #[test]
 fn ignored_dir_prefix() {
-	assert!(is_ignored("node_modules/foo.js", &pats(&["node_modules/"])));
+	assert!(legacy_project_relative_ignored(
+		"node_modules/foo.js",
+		&pats(&["node_modules/"])
+	));
 }
 
 #[test]
 fn ignored_dir_prefix_no_partial() {
-	assert!(!is_ignored("nonode_modules/foo", &pats(&["node_modules/"])));
+	assert!(!legacy_project_relative_ignored(
+		"nonode_modules/foo",
+		&pats(&["node_modules/"])
+	));
 }
 
 #[test]
 fn ignored_path_with_slash() {
-	assert!(is_ignored("vendor/lib.rs", &pats(&["vendor"])));
+	assert!(legacy_project_relative_ignored(
+		"vendor/lib.rs",
+		&pats(&["vendor"])
+	));
 }
 
 #[test]
 fn ignored_empty_patterns() {
-	assert!(!is_ignored("anything.rs", &[]));
+	assert!(!legacy_project_relative_ignored("anything.rs", &[]));
 }
 
 #[test]
 fn ignored_no_match() {
-	assert!(!is_ignored("src/main.rs", &pats(&["target/", "*.log"])));
+	assert!(!legacy_project_relative_ignored(
+		"src/main.rs",
+		&pats(&["target/", "*.log"])
+	));
 }
 
-// is_included ----------------------------------------------------------
+// legacy_project_relative_included ----------------------------------------------------------
 
 #[test]
 fn included_glob_extension() {
-	assert!(is_included("src/main.rs", &pats(&["*.rs"])));
+	assert!(legacy_project_relative_included(
+		"src/main.rs",
+		&pats(&["*.rs"])
+	));
 }
 
 #[test]
 fn included_glob_no_match() {
-	assert!(!is_included("src/main.go", &pats(&["*.rs"])));
+	assert!(!legacy_project_relative_included(
+		"src/main.go",
+		&pats(&["*.rs"])
+	));
 }
 
 #[test]
 fn included_dir_prefix() {
-	assert!(is_included("src/main.rs", &pats(&["src/"])));
+	assert!(legacy_project_relative_included(
+		"src/main.rs",
+		&pats(&["src/"])
+	));
 }
 
 #[test]
 fn included_dir_prefix_no_match() {
-	assert!(!is_included("test/main.rs", &pats(&["src/"])));
+	assert!(!legacy_project_relative_included(
+		"test/main.rs",
+		&pats(&["src/"])
+	));
 }
 
 #[test]
 fn included_exact_match() {
-	assert!(is_included("Makefile", &pats(&["Makefile"])));
+	assert!(legacy_project_relative_included(
+		"Makefile",
+		&pats(&["Makefile"])
+	));
 }
 
 #[test]
 fn included_path_segment_suffix() {
-	assert!(is_included("src/lib.rs", &pats(&["lib.rs"])));
+	assert!(legacy_project_relative_included(
+		"src/lib.rs",
+		&pats(&["lib.rs"])
+	));
 }
 
 #[test]
 fn included_empty_patterns() {
-	assert!(!is_included("anything", &[]));
+	assert!(!legacy_project_relative_included("anything", &[]));
 }
 
 // build_sync_tar -------------------------------------------------------

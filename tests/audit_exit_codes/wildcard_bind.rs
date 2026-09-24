@@ -56,6 +56,13 @@ fn hardened_with_port(port: &str) -> String {
 		 security_opt: [no-new-privileges:true]\n    \
 		 pids_limit: 200\n    \
 		 mem_limit: 512m\n    \
+		 memswap_limit: 512m\n    \
+		 init: true\n    \
+		 restart: unless-stopped\n    \
+		 cpus: \"1\"\n    \
+		 healthcheck:\n      \
+		 test: [\"CMD\", \"true\"]\n      \
+		 x-podman-on-failure: restart\n    \
 		 userns_mode: auto\n    \
 		 ports:\n      \
 		 - {port}\n"
@@ -216,6 +223,13 @@ fn wildcard_fires_on_long_form_wildcard_host_ip() {
 		 security_opt: [no-new-privileges:true]\n    \
 		 pids_limit: 200\n    \
 		 mem_limit: 512m\n    \
+		 memswap_limit: 512m\n    \
+		 init: true\n    \
+		 restart: unless-stopped\n    \
+		 cpus: \"1\"\n    \
+		 healthcheck:\n      \
+		 test: [\"CMD\", \"true\"]\n      \
+		 x-podman-on-failure: restart\n    \
 		 userns_mode: auto\n    \
 		 ports:\n      \
 		 - target: 5432\n        \
@@ -240,6 +254,13 @@ fn wildcard_fires_on_long_form_wildcard_host_ip() {
 		 security_opt: [no-new-privileges:true]\n    \
 		 pids_limit: 200\n    \
 		 mem_limit: 512m\n    \
+		 memswap_limit: 512m\n    \
+		 init: true\n    \
+		 restart: unless-stopped\n    \
+		 cpus: \"1\"\n    \
+		 healthcheck:\n      \
+		 test: [\"CMD\", \"true\"]\n      \
+		 x-podman-on-failure: restart\n    \
 		 userns_mode: auto\n    \
 		 ports:\n      \
 		 - target: 5432\n        \
@@ -272,6 +293,13 @@ fn wildcard_and_all_interfaces_are_disjoint_on_same_file() {
 		 security_opt: [no-new-privileges:true]\n    \
 		 pids_limit: 200\n    \
 		 mem_limit: 512m\n    \
+		 memswap_limit: 512m\n    \
+		 init: true\n    \
+		 restart: unless-stopped\n    \
+		 cpus: \"1\"\n    \
+		 healthcheck:\n      \
+		 test: [\"CMD\", \"true\"]\n      \
+		 x-podman-on-failure: restart\n    \
 		 userns_mode: auto\n    \
 		 ports:\n      \
 		 - \"5432:5432\"\n      \

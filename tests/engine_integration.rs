@@ -385,6 +385,12 @@ mod build_images;
 mod build_labels;
 #[path = "engine_integration/build_resources.rs"]
 mod build_resources;
+// Unix only: the assertion lists external containers via `podman ps -a
+// --external` against a Unix-domain socket, the path the libpod client
+// drives.
+#[cfg(unix)]
+#[path = "engine_integration/build_failure_cleanup.rs"]
+mod build_failure_cleanup;
 #[path = "engine_integration/build_sparse_context.rs"]
 mod build_sparse_context;
 #[path = "engine_integration/commands_networking.rs"]
@@ -399,6 +405,8 @@ mod error_surfacing;
 mod exec_flags;
 #[path = "engine_integration/health_targeting.rs"]
 mod health_targeting;
+#[path = "engine_integration/implicit_dependencies.rs"]
+mod implicit_dependencies;
 #[path = "engine_integration/include_extends.rs"]
 mod include_extends;
 #[path = "engine_integration/label_file_safety.rs"]
@@ -429,6 +437,10 @@ mod watch_sparse;
 #[cfg(all(unix, feature = "test-helpers"))]
 #[path = "engine_integration/watch_delete.rs"]
 mod watch_delete;
+
+#[cfg(all(unix, feature = "test-helpers"))]
+#[path = "engine_integration/watch_ignore_relative.rs"]
+mod watch_ignore_relative;
 
 #[path = "engine_integration/x_podman_autoupdate.rs"]
 mod x_podman_autoupdate;
