@@ -107,6 +107,13 @@ mod tests {
 		None
 	}
 
+	/// How many whole query parameters equal `key`. A plain substring
+	/// search is wrong: `query.1.matches("rm=true")` would also fire on
+	/// `forcerm=true`, which is the very distinction this test pins.
+	fn exact_param_count(query: &str, key: &str) -> usize {
+		query.split('&').filter(|pair| *pair == key).count()
+	}
+
 	fn percent_decode(input: &str) -> String {
 		let bytes = input.as_bytes();
 		let mut out = Vec::with_capacity(bytes.len());
@@ -233,6 +240,46 @@ mod tests {
 				"podup.service=app".to_string(),
 			],
 			"the layerLabel= parameters are unaffected by the user's labels: {layers:?}"
+		);
+	}
+
+	/// `forcerm=true` and `rm=true` must both be present on the build
+	/// query, and each must appear exactly once. `rm=true` removes
+	/// intermediate containers only after a successful build;
+	/// `forcerm=true` removes them after a failure too. Without
+	/// `forcerm`, Podman 5.7.0 keeps a buildah working container for
+	/// every failed build (measured 2026-09-24: 2 of 2 leaked without,
+	/// 0 of 2 with). The exact-once count pins the wire shape so a
+	/// future change cannot accidentally send the parameter twice and
+	/// have Podman reject the request.
+	#[tokio::test]
+	async fn build_query_carries_rm_and_forcerm() {
+		let (_dir, _fake, engine, _ctx, requests) = start_capture("proj");
+
+		let file = crate::parse_str(
+			"services:\n  app:\n    image: proj/img:1\n    build:\n      context: .\n",
+		)
+		.unwrap();
+		engine
+			.build_all_with_options(&file, &[], &crate::engine::BuildOptions::default())
+			.await
+			.expect("a build the fake accepts succeeds");
+
+		let requests = requests.lock().unwrap().clone();
+		let target = build_target(&requests);
+		let query = target
+			.split_once('?')
+			.expect("the build target carries a query string");
+
+		let rm_count = exact_param_count(query.1, "rm=true");
+		assert_eq!(
+			rm_count, 1,
+			"the build query must carry `rm=true` exactly once, found {rm_count}: {query:?}"
+		);
+		let forcerm_count = exact_param_count(query.1, "forcerm=true");
+		assert_eq!(
+			forcerm_count, 1,
+			"the build query must carry `forcerm=true` exactly once, found {forcerm_count}: {query:?}"
 		);
 	}
 
