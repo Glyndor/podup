@@ -1,29 +1,33 @@
 //! #1910: a `podup build` that fails must not leave a buildah working
-//! container behind. The absolute-form request line that the old
-//! `build_request` wrote landed `POST http://localhost/v5.0.0/libpod/build
-//! HTTP/1.1` on the wire, and Podman 5.7.0 did not clean up its buildah
-//! working container on that failure shape. Switching to origin form
-//! closed it (4 of 4 runs leaked before, 0 of 2 after, measured on
-//! 2026-09-24).
+//! container behind. The build query Podman 5.7.0 reads carries
+//! `rm=true` to remove intermediate containers after a successful
+//! build and `forcerm=true` to remove them after a failure; podup
+//! shipped with the first and not the second, so every failed build
+//! kept one buildah working container rooted at an image this build
+//! produced. Measured on 2026-09-24 against Podman 5.7.0 by posting
+//! the same failing build to `/v5.0.0/libpod/build`: `layers=true`
+//! alone leaked 2 of 2 runs (one container each); `layers=true&
+//! forcerm=true` leaked 0 of 2. Adding `forcerm=true` to the query
+//! `internal/engine/build/service.rs` sends closed the leak.
 //!
 //! The test drives the built `podup` binary (via
 //! `env!("CARGO_BIN_EXE_podup")`) rather than the in-process `Engine`,
-//! because the in-process path did not reproduce the leak when measured.
-//! On 2026-09-24, against Podman 5.7.0 with the same Containerfile
-//! shape and the absolute-form request line restored, the CLI binary
+//! because the in-process path did not reproduce the leak when
+//! measured. On 2026-09-24, against Podman 5.7.0, the CLI binary
 //! leaked the buildah working container on 2 of 2 runs while the
-//! in-process `engine.build_all` path leaked on 0 of 3. The test runs
-//! a Containerfile whose `RUN exit 1` makes the build fail, asserts
-//! the exit code is non-zero AND that the daemon's error names the
-//! `RUN exit 1` step (so a future change that turns a build failure
-//! into a silent success cannot green out this test by accident), and
-//! then asserts no external (buildah working) container references any
-//! image this build produced. Identification is by
-//! `podup.project=<project>` and `podup.service=app`, the two keys
-//! `internal/engine/build/service.rs` stamps on every layer of the
-//! build via the build query's `layerLabel=` parameter. Other tests
-//! building on the same socket may also be running, so the harness
-//! scopes the assertion to images this build actually produced.
+//! in-process `engine.build_all` path leaked on 0 of 3. The test
+//! runs a Containerfile whose `RUN exit 1` makes the build fail,
+//! asserts the exit code is non-zero AND that the daemon's error
+//! names the `RUN exit 1` step (so a future change that turns a
+//! build failure into a silent success cannot green out this test
+//! by accident), and then asserts no external (buildah working)
+//! container references any image this build produced. Identification
+//! is by `podup.project=<project>` and `podup.service=app`, the two
+//! keys `internal/engine/build/service.rs` stamps on every layer of
+//! the build via the build query's `layerLabel=` parameter. Other
+//! tests building on the same socket may also be running, so the
+//! harness scopes the assertion to images this build actually
+//! produced.
 use super::*;
 use crate::build_labels::TestImages;
 use std::process::Command;
@@ -147,10 +151,10 @@ fn remove_external_containers(socket: &str, ids: &[String]) {
 ///
 /// The test runs the built `podup` binary, not `Engine::build_all`,
 /// because the in-process path did not reproduce the leak when
-/// measured: on 2026-09-24 the binary leaked 2 of 2 runs with the
-/// absolute-form line restored while `Engine::build_all` leaked 0 of
-/// 3 on the same machine. Driving the binary is what makes the
-/// assertion bind to the property the bug actually has.
+/// measured: on 2026-09-24 the binary leaked 2 of 2 runs without
+/// `forcerm=true` while `Engine::build_all` leaked 0 of 3 on the same
+/// machine. Driving the binary is what makes the assertion bind to
+/// the property the bug actually has.
 #[tokio::test]
 async fn a_failing_build_leaves_no_buildah_working_container() {
 	// `client` is fetched only to honour the same `podman()` reachability
@@ -225,8 +229,8 @@ async fn a_failing_build_leaves_no_buildah_working_container() {
 
 	// Every external (buildah working) container that references one
 	// of this build's images is a leak. Reading `.ImageID` matches what
-	// the buildah working container was rooted at; a leak on the
-	// absolute-form request line showed up there on every run of the
+	// the buildah working container was rooted at; a failed build
+	// without `forcerm=true` showed up there on every run of the
 	// binary, with the leaked container's root image carrying
 	// `podup.project=<project>`.
 	let leaked: Vec<(String, String)> = external_container_image_ids(&socket)
