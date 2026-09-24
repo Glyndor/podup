@@ -92,12 +92,13 @@ fn json_mode_emits_raw_object() {
 /// The earlier check also rejected `-1`/`-1.5` (valid pre-epoch Unix
 /// timestamps) and `-0s` (a zero offset, i.e. "now"), while letting `-.5h`
 /// through; Go parses that as `-30m`, so it reproduced the bug. The rule
-/// is now: reject only when the part after `-` looks like a Go-style
-/// duration (starts with a digit or `.`, contains a unit letter, and has at
-/// least one non-zero digit).
+/// is now: reject only when the part after `-` parses exactly as a Go
+/// duration (one or more `<number><unit>` segments, with at least one
+/// non-zero digit overall). A string like `-1e3` is not a Go duration, so
+/// it is forwarded to libpod, which reads it as a negative Unix timestamp.
 #[test]
 fn events_since_rejects_a_negative_relative_time() {
-	for bad in ["-30m", "-1h30m", "-30s", "-.5h"] {
+	for bad in ["-30m", "-1h30m", "-30s", "-.5h", "-1.5h", "-10ms", "-2us"] {
 		validate_events_since(Some(bad)).expect_err(&format!(
 			"{bad:?} must be rejected, not silently sent to libpod"
 		));
@@ -118,6 +119,9 @@ fn events_since_rejects_a_negative_relative_time() {
 		Some("-1.5"),
 		Some("-0s"),
 		Some("-0m"),
+		Some("-1e3"),
+		Some("-1E3"),
+		Some("-1.5e2"),
 		Some("1700000000"),
 		Some("2026-01-01T00:00:00Z"),
 		Some("2026-01-01T00:00:00-05:00"),
