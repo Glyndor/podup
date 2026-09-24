@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use crate::compose::types::WatchRule;
+use crate::compose::types::{Service, WatchRule};
 use crate::error::{ComposeError, Result};
 
 /// Where a changed host path lands inside the container for a `sync` action:
@@ -179,6 +179,79 @@ pub(super) fn mark_dir_ensured(
 	dest: &str,
 ) -> bool {
 	ensured.insert((container.to_string(), dest.to_string()))
+}
+
+/// Whether `target` (an absolute container path) sits under one of `mounts`
+/// (container-side mount targets), so a sync there does not hit the root
+/// filesystem. Compares whole path components: `/app` covers `/app` and
+/// `/app/src`, not `/application`. A trailing `/` on either side is ignored;
+/// a mount of `/` covers everything.
+pub(super) fn target_is_on_a_mount(target: &str, mounts: &[&str]) -> bool {
+	let target_parts = path_components(target);
+	for mount in mounts {
+		let mount_parts = path_components(mount);
+		if mount_parts.is_empty() || target_parts.starts_with(&mount_parts) {
+			return true;
+		}
+	}
+	false
+}
+
+/// The warning to print when a sync `target` of service `service_name` sits on
+/// a `read_only: true` root filesystem that no volume or tmpfs covers, or
+/// `None` when the service is writable there. Tmpfs entries are cut at their
+/// first `:` (they can carry `:size=...` options).
+///
+/// `volumes_from:` is treated as a third "covered" case even though the
+/// function does not resolve it to concrete mount paths: a sibling service's
+/// volumes are what `volumes_from` mounts into this container, and resolving
+/// them would require walking the compose graph here, which `read_only` checks
+/// do not need to do. Without this short-circuit the warning would routinely
+/// fire for a service that actually does have its target covered by a
+/// `volumes_from` reference, which is a false positive the user would have to
+/// learn to ignore.
+///
+/// The image's own `VOLUME` declarations are not inspected: podup only looks
+/// at what the compose file says, so a `VOLUME` baked into the image that
+/// happens to cover the target will still trigger this warning. Podman mounts
+/// a writable anonymous volume there at runtime, so the warning can be a
+/// false positive in that case; the message names the exception so the user
+/// knows to ignore it (#1897).
+pub(super) fn read_only_target_warning(
+	service_name: &str,
+	service: &Service,
+	target: &str,
+) -> Option<String> {
+	if service.read_only != Some(true) {
+		return None;
+	}
+	if !service.volumes_from.is_empty() {
+		return None;
+	}
+	let mut mounts: Vec<&str> = service.volumes.iter().map(|v| v.target()).collect();
+	let tmpfs_paths: Vec<String> = service
+		.tmpfs
+		.to_list()
+		.into_iter()
+		.map(|s| s.split(':').next().unwrap_or("").to_string())
+		.collect();
+	mounts.extend(tmpfs_paths.iter().map(String::as_str));
+	if target_is_on_a_mount(target, &mounts) {
+		return None;
+	}
+	Some(format!(
+		"{service_name}: sync target {target} is on the read-only root filesystem (read_only: true) and no volume or tmpfs in the compose file covers it, so syncs to it will fail unless the image declares a VOLUME there; mount a volume or tmpfs at {target}"
+	))
+}
+
+/// Split an absolute container path into its non-empty components, with any
+/// trailing slash stripped. `/` and `//` produce an empty vec, which is how
+/// `target_is_on_a_mount` recognises a root mount that covers everything.
+fn path_components(path: &str) -> Vec<&str> {
+	path.trim_end_matches('/')
+		.split('/')
+		.filter(|c| !c.is_empty())
+		.collect()
 }
 
 // ---------------------------------------------------------------------------
