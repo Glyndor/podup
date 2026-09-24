@@ -122,21 +122,28 @@ pub(crate) fn build_log_config(
 /// bytes); a malformed value is rejected with the service field name so the
 /// error points at the compose key the user wrote (#1417).
 ///
-/// A `logging:` block without `driver` keeps podup's default driver and, if
-/// `max-size` is also absent, the default size cap from
-/// [`default_log_config`]; a named driver without `max-size` stays uncapped.
-/// Without that fallback a `logging: { options: ... }` block reached libpod
-/// with no driver, and the containers.conf driver (journald on Podman 5.7.0)
-/// replaced the `k8s-file` default and its size cap (#1895).
+/// A `logging:` block without `driver` falls back to the default driver
+/// (`k8s-file`) ONLY when the block also sets `max-size`: only that driver
+/// reads the typed size cap, and that is the case a journald host config
+/// used to silently override (#1895). Without `max-size` and without a
+/// named `driver`, both `driver` and `size` are left unset so the host's
+/// containers.conf default applies — podup no longer injects a default
+/// driver or default size cap. A named driver without `max-size` stays
+/// uncapped, just as before.
 fn translate_user_logging(
 	service_name: &str,
 	l: &LoggingConfig,
 ) -> Result<LogConfig, ComposeError> {
 	let mut options = l.options.clone();
 	let user_max_size = options.remove("max-size");
-	let driver_missing = l.driver.is_none();
 	let default = default_log_config();
-	let driver = l.driver.clone().or(default.driver);
+	let driver = l.driver.clone().or_else(|| {
+		if user_max_size.is_some() {
+			default.driver
+		} else {
+			None
+		}
+	});
 	let size = match user_max_size {
 		Some(v) => match size::parse_memory(&v) {
 			Some(bytes) => Some(bytes),
@@ -152,13 +159,7 @@ fn translate_user_logging(
 				));
 			}
 		},
-		None => {
-			if driver_missing {
-				default.size
-			} else {
-				None
-			}
-		}
+		None => None,
 	};
 	if options.remove("max-file").is_some() {
 		tracing::warn!(

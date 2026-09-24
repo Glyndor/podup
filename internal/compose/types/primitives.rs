@@ -161,6 +161,10 @@ impl Labels {
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct LoggingConfig {
 	/// Logging driver name; the runtime default is used if absent.
+	/// podup overrides that: when the block also sets `max-size` without a
+	/// driver, podup pins `k8s-file`, because only that driver reads the
+	/// typed size cap; without `max-size` and without a driver, the field
+	/// stays None and the host's containers.conf default applies (#1895).
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub driver: Option<String>,
 	/// Driver-specific options.

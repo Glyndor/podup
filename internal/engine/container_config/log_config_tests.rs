@@ -192,23 +192,25 @@ fn log_config_options_without_driver_keep_the_default_driver() {
 }
 
 #[test]
-fn log_config_options_without_driver_or_size_keep_the_default_cap() {
+fn log_config_options_without_driver_or_size_are_left_to_the_host() {
 	// A driverless `logging:` block with options that are NOT `max-size`
-	// must still inherit the default cap so the user gets the same
-	// rotation policy as if they had omitted `logging:` entirely (#1895).
+	// (here just `tag`) must leave both `driver` and `size` unset so the
+	// host's containers.conf default applies unchanged; podup no longer
+	// injects `k8s-file` and a 10m cap here, which used to shadow a
+	// journald host config (#1895).
 	let mut opts = std::collections::HashMap::new();
-	opts.insert("tag".into(), "x".into());
+	opts.insert("tag".into(), "myapp".into());
 	let logging = LoggingConfig {
 		driver: None,
 		options: opts,
 	};
 	let cfg = build_log_config("web", Some(&logging)).unwrap().unwrap();
-	assert_eq!(cfg.driver.as_deref(), Some("k8s-file"));
-	assert_eq!(cfg.size, default_log_config().size);
-	let v = serde_json::to_value(&cfg).unwrap();
+	assert_eq!(cfg.driver, None);
+	assert_eq!(cfg.size, None);
 	assert_eq!(
-		v["options"]["tag"], "x",
-		"non-rotation options must still pass through to libpod: {v}"
+		cfg.options.get("tag").map(String::as_str),
+		Some("myapp"),
+		"tag must still pass through to libpod: {cfg:?}"
 	);
 }
 
