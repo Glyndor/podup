@@ -67,7 +67,7 @@ fn hardened_with_override(
 	)
 }
 
-/// A clean hardened service — every field present, no override.
+/// A clean hardened service: every field present, no override.
 fn hardened_clean() -> String {
 	hardened_with_override(
 		"unless-stopped",
