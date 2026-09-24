@@ -17,8 +17,8 @@ use crate::size;
 /// is forwarded verbatim; Podman interprets `-1` as "no cap" at the
 /// API layer, and the engine does not second-guess it.
 ///
-/// Returns exactly what `build_resource_limits` forwarded into the OCI
-/// spec before the branch. "Zero or below is not a limit" is an audit
+/// This is the value `build_resource_limits` forwards into the OCI spec,
+/// unfiltered. "Zero or below is not a limit" is an audit
 /// policy, not an engine policy: the audit applies that filter on top
 /// of this helper (`#1894`).
 pub(crate) fn effective_memory_limit(service: &Service) -> Option<i64> {
@@ -39,8 +39,8 @@ pub(crate) fn effective_memory_limit(service: &Service) -> Option<i64> {
 /// `deploy.resources.limits.cpus:`) divided by 10_000 to convert
 /// nano-CPUs to an OCI quota over the default 100ms period.
 ///
-/// Returns exactly what `build_resource_limits` forwarded before the
-/// branch: `cpu_quota.or(derived_cpu_quota)`, unfiltered. "Zero or
+/// This is the value `build_resource_limits` forwards:
+/// `cpu_quota.or(derived_cpu_quota)`, unfiltered. "Zero or
 /// below is not a limit" is an audit policy, not an engine policy;
 /// the audit applies that filter on top of this helper (`#1894`).
 ///
