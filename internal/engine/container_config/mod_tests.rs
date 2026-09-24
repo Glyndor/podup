@@ -263,7 +263,7 @@ fn healthcheck_without_test_leaves_unset_timings_to_the_image() {
 	// A healthcheck block without a `test` inherits the image's HEALTHCHECK.
 	// libpod fills any field we leave out from the image (or with its own
 	// 30s/30s/3 if the image sets none), so we must not send the compose
-	// defaults — they would overwrite the image's values (#1893).
+	// defaults, because they would overwrite the image's values (#1893).
 	let hc = HealthCheck::default();
 	let cfg = build_healthcheck(&hc);
 	assert_eq!(cfg.test, None);
