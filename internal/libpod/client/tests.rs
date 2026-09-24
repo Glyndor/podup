@@ -127,7 +127,7 @@ fn check_status_with_field_promotes_to_field_error() {
 
 #[test]
 fn check_status_with_field_without_context_keeps_api_shape() {
-	// No field context → the existing `Api` shape is preserved, so
+	// No field context: the existing `Api` shape is preserved, so
 	// callers that do not opt in to the new method see the same
 	// error as before. The new method is purely additive (#1357).
 	let body = br#"{"message":"bad request"}"#;
@@ -249,11 +249,11 @@ fn build_request_writes_origin_form_uri() {
 	);
 }
 
-/// A path with no leading slash parses to the authority form
-/// (`libpod/_ping` → authority = `libpod/_ping`, path = empty). That shape is
-/// what curl and `podman --remote` never produce, and writing it to the Podman
-/// socket has never been measured safe. Reject it loudly so a caller cannot
-/// silently fall back into it (#1910).
+/// A path with no leading slash parses to the authority form: `libpod/_ping`
+/// becomes authority `libpod/_ping` with an empty path. That shape is what
+/// curl never produces, and writing it to the Podman socket has never been
+/// measured safe. Reject it loudly so a caller cannot silently fall back
+/// into it (#1910).
 #[test]
 fn build_request_rejects_path_without_leading_slash() {
 	use bytes::Bytes;

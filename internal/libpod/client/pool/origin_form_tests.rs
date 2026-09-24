@@ -147,9 +147,9 @@ async fn a_post_with_a_streamed_body_writes_origin_form() {
 	let server = CapturingServer::start().await;
 	let client = crate::libpod::Client::new(server.sock_str());
 	let path = "/v5.0.0/libpod/build?t=probe";
-	let chunks = stream::iter(vec![Ok::<_, std::io::Error>(Frame::data(Bytes::from_static(
-		b"hello",
-	)))]);
+	let chunks = stream::iter(vec![Ok::<_, std::io::Error>(Frame::data(
+		Bytes::from_static(b"hello"),
+	))]);
 	let _resp = client
 		.post_stream_body(path, chunks, "application/x-tar")
 		.await

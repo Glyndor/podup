@@ -173,8 +173,8 @@ impl Client {
 	/// Build a request with an optional JSON body.
 	///
 	/// The request target is sent in origin form (`POST /v5.0.0/libpod/build?...
-	/// HTTP/1.1`), the same shape `podman --remote` and curl write when they
-	/// talk to the Podman socket. Writing the absolute form
+	/// HTTP/1.1`), the same shape curl writes when it talks to the Podman
+	/// socket. Writing the absolute form
 	/// (`POST http://localhost/v5.0.0/libpod/build?... HTTP/1.1`) instead left
 	/// one buildah working container behind every time `podup build` failed on
 	/// Podman 5.7.0, measured on 2026-09-24 (4 of 4 runs leaked; 2 of 2 ran
