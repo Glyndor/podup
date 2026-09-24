@@ -19,6 +19,10 @@ mod tags;
 pub(in crate::engine) use pull::pull_policy_checked;
 pub use pull::PullOptions;
 pub use push::PushOptions;
+/// Shared with the watch engine: a build context is remote when podman clones
+/// it server-side, which means no local `.dockerignore` to load as implicit
+/// watch `ignore` content (#1897).
+pub(in crate::engine) use tags::is_remote_context;
 /// Shared with the container-create path so an `up`/`create` references the same
 /// image tag the build step produced for a build-only service.
 pub(crate) use tags::primary_build_tag;

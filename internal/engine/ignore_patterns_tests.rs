@@ -1,10 +1,13 @@
-//! Pattern-matching cases split out of `tests.rs`, which reached the
-//! 500-line hard limit. These exercise `is_ignored`, `glob_match` and
-//! `to_ignore_path` against strings only; what stays in `tests.rs` builds
-//! a real context tar and asserts on its entries. The split follows that
-//! seam rather than a line count.
+//! Tests for the shared `.dockerignore` matcher.
+//!
+//! Split out of the matcher file so the matcher stays under the source line
+//! cap. The string-level cases (originally in
+//! `internal/engine/build/context/pattern_tests.rs`) live here verbatim, plus
+//! the spec / legacy / build-context cases that pin the watch semantics.
 
-use super::*;
+use crate::engine::ignore_patterns::*;
+
+// --- string-only cases, moved from build/context/pattern_tests.rs -----------
 
 #[test]
 fn build_ignored_exact() {
@@ -121,12 +124,96 @@ fn ignore_matching_uses_forward_slashes_on_every_platform() {
 	// Windows runner and passing everywhere else.
 	let rel = std::path::Path::new("vendor").join("drop.txt");
 	assert_eq!(
-		super::to_ignore_path(&rel),
+		to_ignore_path(&rel),
 		"vendor/drop.txt",
 		"the ignore path must be slash-separated whatever the platform uses"
 	);
-	assert!(super::is_ignored(
-		&super::to_ignore_path(&rel),
-		&["vendor/".to_string()]
-	));
+	assert!(is_ignored(&to_ignore_path(&rel), &["vendor/".to_string()]));
 }
+
+// --- evaluate() -------------------------------------------------------------
+
+#[test]
+fn evaluate_reports_whether_any_pattern_matched() {
+	let p = vec!["*.log".to_string()];
+	assert_eq!(evaluate("a/b.log", &p), Some(true));
+	assert_eq!(evaluate("a/b.txt", &p), None);
+	let with_neg = vec!["*.log".to_string(), "!keep.log".to_string()];
+	assert_eq!(evaluate("error.log", &with_neg), Some(true));
+	assert_eq!(evaluate("keep.log", &with_neg), Some(false));
+}
+
+#[test]
+fn evaluate_empty_patterns_returns_none() {
+	assert_eq!(evaluate("anything", &[]), None);
+}
+
+// --- spec semantics (path relative to the rule's `path`) -------------------
+
+fn rel_to(rule_path: &str, full: &str) -> String {
+	// Mirrors what watch computes: strip the rule's `path` from the changed
+	// event path. Returns the segment that should be fed to the matcher.
+	let rule = std::path::Path::new(rule_path);
+	let full = std::path::Path::new(full);
+	full.strip_prefix(rule)
+		.unwrap()
+		.to_string_lossy()
+		.replace('\\', "/")
+}
+
+#[test]
+fn spec_ignore_dir_relative_to_rule_path() {
+	let p = vec!["cache/".to_string()];
+	let path = rel_to("./api", "./api/cache/x");
+	assert!(is_ignored(&path, &p));
+}
+
+#[test]
+fn spec_ignore_glob_extension_relative_to_rule_path() {
+	let p = vec!["*.txt".to_string()];
+	let path = rel_to("./api", "./api/a/b.txt");
+	assert!(is_ignored(&path, &p));
+	let path = rel_to("./api", "./api/src/main.rs");
+	assert!(!is_ignored(&path, &p));
+}
+
+#[test]
+fn spec_ignore_double_star_anywhere() {
+	let p = vec!["**/cache/**".to_string()];
+	let path = rel_to("./api", "./api/x/cache/y");
+	assert!(is_ignored(&path, &p));
+}
+
+#[test]
+fn spec_ignore_subtree_under_rule_path() {
+	let p = vec!["cache/**".to_string()];
+	let path = rel_to("./api", "./api/cache/y");
+	assert!(is_ignored(&path, &p));
+}
+
+#[test]
+fn spec_ignore_does_not_match_unrelated_paths() {
+	let p = vec!["cache/".to_string()];
+	let path = rel_to("./api", "./api/src/main.rs");
+	assert!(!is_ignored(&path, &p));
+}
+
+#[test]
+fn spec_negation_keeps_reinclude_authoritative() {
+	// `cache/` then `!cache/keep`: `cache/keep` is re-included and must not
+	// be ignored; `cache/other` is ignored. The "no warning" half of this
+	// is enforced by the spec matcher's `Some(false)` decision, which the
+	// legacy fallback (see watch) honours by skipping the fallback entirely.
+	let p = vec!["cache/".to_string(), "!cache/keep".to_string()];
+	let keep = rel_to("./api", "./api/cache/keep");
+	let other = rel_to("./api", "./api/cache/other");
+	assert_eq!(evaluate(&keep, &p), Some(false));
+	assert_eq!(evaluate(&other, &p), Some(true));
+	assert!(!is_ignored(&keep, &p));
+	assert!(is_ignored(&other, &p));
+}
+
+// --- legacy (project-relative) fallback ------------------------------------
+
+// Legacy cases live with the watch fix that introduces the fallback; here
+// the matcher file only needs to pin its own semantics.

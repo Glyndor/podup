@@ -2,9 +2,8 @@
 //! matching in [`super`] (split out to keep the module under the source
 //! line limit).
 
-use super::{
-	build_context_tar, build_context_tar_with_inline, ignore_file, map_additional_context,
-};
+use super::{build_context_tar, build_context_tar_with_inline, map_additional_context};
+use crate::engine::ignore_patterns::read_patterns;
 use std::fs;
 use std::path::Path;
 use tempfile::tempdir;
@@ -156,9 +155,9 @@ fn dockerfile_is_force_included_despite_dockerignore() {
 	);
 }
 
-// is_ignored (build) ---------------------------------------------------
+// (matcher cases live in engine::ignore_patterns_tests) -----------------
 
-// ignore_file ----------------------------------------------------------
+// read_patterns ----------------------------------------------------------
 
 #[test]
 fn dockerignore_parsed_correctly() {
@@ -168,7 +167,7 @@ fn dockerignore_parsed_correctly() {
 		b"# comment\n\ntarget/\n*.log\n",
 	)
 	.unwrap();
-	let (name, patterns) = ignore_file(dir.path());
+	let (name, patterns) = read_patterns(dir.path());
 	assert_eq!(name, ".dockerignore");
 	assert_eq!(patterns, vec!["target/", "*.log"]);
 }
@@ -177,7 +176,7 @@ fn dockerignore_parsed_correctly() {
 fn containerignore_is_read_when_it_is_the_only_one() {
 	let dir = tempdir().unwrap();
 	fs::write(dir.path().join(".containerignore"), b"secrets/\n*.key\n").unwrap();
-	let (name, patterns) = ignore_file(dir.path());
+	let (name, patterns) = read_patterns(dir.path());
 	assert_eq!(name, ".containerignore");
 	assert_eq!(patterns, vec!["secrets/", "*.key"]);
 }
@@ -190,7 +189,7 @@ fn containerignore_wins_and_dockerignore_is_not_merged() {
 	let dir = tempdir().unwrap();
 	fs::write(dir.path().join(".containerignore"), b"a.txt\n").unwrap();
 	fs::write(dir.path().join(".dockerignore"), b"b.txt\n").unwrap();
-	let (name, patterns) = ignore_file(dir.path());
+	let (name, patterns) = read_patterns(dir.path());
 	assert_eq!(name, ".containerignore");
 	assert_eq!(
 		patterns,
@@ -205,7 +204,7 @@ fn containerignore_wins_and_dockerignore_is_not_merged() {
 #[test]
 fn no_ignore_file_defaults_to_containerignore_with_no_patterns() {
 	let dir = tempdir().unwrap();
-	let (name, patterns) = ignore_file(dir.path());
+	let (name, patterns) = read_patterns(dir.path());
 	assert_eq!(name, ".containerignore");
 	assert!(patterns.is_empty());
 }

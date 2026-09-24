@@ -5,13 +5,17 @@
 //! gzipped tar suitable for the libpod build endpoint.
 //!
 //! Podman reads `.containerignore` or `.dockerignore` and prefers its own when
-//! both exist; exactly one applies, never the union. See [`ignore_file`].
+//! both exist; exactly one applies, never the union. The matcher itself lives
+//! in [`crate::engine::ignore_patterns`] so the watch engine can share it.
 
 use std::path::Path;
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
 
+use crate::engine::ignore_patterns::{
+	is_ignored, negation_could_reach, read_patterns, to_ignore_path,
+};
 use crate::engine::walk;
 use crate::error::{ComposeError, Result};
 
@@ -107,12 +111,6 @@ fn append_context<W: std::io::Write>(
 	Ok(())
 }
 
-/// Append synthesized files (e.g. build secrets) to `tar` at the context root.
-///
-/// Build-secret bytes are placed in the build context as `.podup-build-secret-*`
-/// entries so the libpod build endpoint can expose them through its BuildKit
-/// `secrets=id=NAME,src=ENTRY` mount; they ride inside the context tar by design
-/// of that mount mechanism and are not part of the user's source tree.
 fn append_extra_files<W: std::io::Write>(
 	tar: &mut tar::Builder<W>,
 	extra_files: &[(String, Vec<u8>)],
@@ -143,7 +141,7 @@ pub(super) fn stream_build_context<W: std::io::Write>(
 	dockerfile: &str,
 	extra_files: &[(String, Vec<u8>)],
 ) -> Result<()> {
-	let (ignore_name, ignore_patterns) = ignore_file(context);
+	let (ignore_name, ignore_patterns) = read_patterns(context);
 	let encoder = GzEncoder::new(writer, Compression::default());
 	let mut tar = crate::engine::tar_stream::builder(encoder);
 
@@ -182,7 +180,7 @@ pub(super) fn stream_build_context_with_inline<W: std::io::Write>(
 	inline: &str,
 	extra_files: &[(String, Vec<u8>)],
 ) -> Result<()> {
-	let (ignore_name, ignore_patterns) = ignore_file(context);
+	let (ignore_name, ignore_patterns) = read_patterns(context);
 	let encoder = GzEncoder::new(writer, Compression::default());
 	let mut tar = crate::engine::tar_stream::builder(encoder);
 
@@ -274,7 +272,8 @@ fn append_ignore_file<W: std::io::Write>(
 /// which the ignore file does not filter, so excluded secret entries remain
 /// mountable.
 ///
-/// `name` is the ignore file the server will read (see [`ignore_file`]); the
+/// `name` is the ignore file the server will read (see
+/// [`crate::engine::ignore_patterns::read_patterns`]); the
 /// user rules are carried over from that same file, never from the other one.
 fn synthesized_ignore_file(context: &Path, name: &str, names: &[&str]) -> String {
 	let existing = crate::filesystem::read_to_string_capped(context.join(name)).unwrap_or_default();
@@ -304,165 +303,5 @@ pub(super) fn map_additional_context(base_dir: &Path, value: &str) -> String {
 	}
 }
 
-/// The ignore file podman would read for `context`, and its patterns.
-///
-/// podman-build(1): "If the file `.containerignore` or `.dockerignore` exists in
-/// the context directory, podman build reads its contents. […] if both are in
-/// the context directory, podman build only uses `.containerignore`."
-///
-/// So exactly one file applies, never the union. Applying both client-side
-/// produced an image missing content that `podman build` puts in, because we
-/// filtered by `.dockerignore` (a file podman would have ignored entirely) and
-/// the server then filtered by `.containerignore`.
-///
-/// The returned name is also the name any synthesized ignore file must be
-/// written under, or the server would read the *other* one and our exclusions
-/// would not apply. When neither file exists, `.containerignore` is the name to
-/// synthesize: podman prefers it, so it cannot be shadowed.
-fn ignore_file(context: &Path) -> (&'static str, Vec<String>) {
-	for name in [".containerignore", ".dockerignore"] {
-		let Ok(content) = crate::filesystem::read_to_string_capped(context.join(name)) else {
-			continue;
-		};
-		let patterns = content
-			.lines()
-			.map(|l| l.trim().to_string())
-			.filter(|l| !l.is_empty() && !l.starts_with('#'))
-			.collect();
-		return (name, patterns);
-	}
-	(".containerignore", Vec::new())
-}
-
-/// Decide whether `path` is excluded from the build context.
-///
-/// Patterns are evaluated in order and the **last** match wins, matching Docker
-/// `.dockerignore` semantics: a leading `!` re-includes a path that an earlier
-/// pattern excluded. So `*.log` then `!keep.log` ignores every log except
-/// `keep.log`.
-/// A relative path in the form `.dockerignore` patterns are written in.
-///
-/// Patterns always use `/`, and `Path` on Windows yields `\`, so matching the
-/// raw string meant no pattern below the top level ever matched there:
-/// `vendor/` silently ignored nothing. The tar writer already normalises, so
-/// the entry names and the ignore check disagreed about the same file. Found
-/// by a negation test failing on the Windows runner only.
-fn to_ignore_path(rel: &std::path::Path) -> String {
-	let s = rel.to_string_lossy();
-	if std::path::MAIN_SEPARATOR == '/' {
-		s.into_owned()
-	} else {
-		s.replace(std::path::MAIN_SEPARATOR, "/")
-	}
-}
-
-/// Could any negation pattern re-include something under `dir`?
-///
-/// Conservative on purpose: a `true` costs a descent that the leaf filter
-/// then throws away, while a wrong `false` silently drops a file the user
-/// asked to keep. A negation whose path starts at `dir`, or that begins
-/// with a wildcard and so could match at any depth, counts as reaching it.
-fn negation_could_reach(dir: &str, patterns: &[String]) -> bool {
-	patterns
-		.iter()
-		.filter_map(|p| p.strip_prefix('!'))
-		.any(|p| {
-			let p = p.trim_start_matches("./");
-			p.starts_with('*') || p.starts_with(dir) || dir.is_empty()
-		})
-}
-
-fn is_ignored(path: &str, patterns: &[String]) -> bool {
-	let mut ignored = false;
-	for pattern in patterns {
-		let (negated, pat) = match pattern.strip_prefix('!') {
-			Some(rest) => (true, rest),
-			None => (false, pattern.as_str()),
-		};
-		if pattern_matches(pat, path) {
-			ignored = !negated;
-		}
-	}
-	ignored
-}
-
-/// Match a single (already de-negated) `.dockerignore` pattern against `path`.
-fn pattern_matches(pattern: &str, path: &str) -> bool {
-	if pattern.is_empty() {
-		return false;
-	}
-	// Directory pattern (`foo/`): match the directory and everything beneath it.
-	if let Some(dir) = pattern.strip_suffix('/') {
-		return path == dir || path.starts_with(&format!("{dir}/"));
-	}
-	if pattern.contains('*') || pattern.contains('?') {
-		return glob_match(pattern, path);
-	}
-	// Plain pattern: exact match, or a path segment prefix (`vendor` matches
-	// `vendor/lib.rs`).
-	path == pattern
-		|| (path.starts_with(pattern) && path.as_bytes().get(pattern.len()) == Some(&b'/'))
-}
-
-/// Match path against a glob pattern.
-///
-/// Patterns without `/` are matched against the filename only, so `*.log`
-/// excludes both `error.log` and `logs/error.log`. A single `*` never crosses a
-/// `/` boundary; `**` matches any number of path segments (including `/`), so
-/// `**/*.key` and `a/**/b` work like Docker.
-fn glob_match(pattern: &str, path: &str) -> bool {
-	if !pattern.contains('/') && !pattern.contains("**") {
-		let filename = path.rsplit('/').next().unwrap_or(path);
-		return glob_rec(pattern.as_bytes(), filename.as_bytes());
-	}
-	glob_rec(pattern.as_bytes(), path.as_bytes())
-}
-
-/// Backtracking glob matcher: `?` matches one non-`/` char, `*` matches any run
-/// of non-`/` chars, `**` matches any run including `/`.
-fn glob_rec(pat: &[u8], s: &[u8]) -> bool {
-	if pat.is_empty() {
-		return s.is_empty();
-	}
-	// `**` matches across `/` boundaries.
-	if pat.starts_with(b"**") {
-		let mut rest = &pat[2..];
-		// `**/` may also match zero directories, so `**/foo` matches top-level `foo`.
-		if rest.first() == Some(&b'/') && glob_rec(&rest[1..], s) {
-			return true;
-		}
-		if rest.is_empty() {
-			rest = b"";
-		}
-		// Try consuming any prefix of `s` (including `/`).
-		for i in 0..=s.len() {
-			if glob_rec(rest, &s[i..]) {
-				return true;
-			}
-		}
-		return false;
-	}
-	match pat[0] {
-		b'*' => {
-			// Match any run of non-`/` chars.
-			let mut i = 0;
-			loop {
-				if glob_rec(&pat[1..], &s[i..]) {
-					return true;
-				}
-				if i >= s.len() || s[i] == b'/' {
-					return false;
-				}
-				i += 1;
-			}
-		}
-		b'?' => !s.is_empty() && s[0] != b'/' && glob_rec(&pat[1..], &s[1..]),
-		c => !s.is_empty() && s[0] == c && glob_rec(&pat[1..], &s[1..]),
-	}
-}
-
-#[cfg(test)]
-#[path = "context/pattern_tests.rs"]
-mod pattern_tests;
 #[cfg(test)]
 mod tests;

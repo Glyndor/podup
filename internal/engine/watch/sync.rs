@@ -113,11 +113,18 @@ fn watch_err(msg: String) -> ComposeError {
 	ComposeError::Watch(format!("sync: {msg}"))
 }
 
-/// True when `path` matches a watch-rule `ignore` pattern. A pattern ending in
-/// `/` matches `path` by directory prefix; otherwise it matches an exact path or
-/// a leading path segment (the pattern followed by `/`). Matching is anchored at
+/// Legacy project-relative `ignore` matcher.
+///
+/// Kept for compatibility with rules written before the spec-driven matcher:
+/// when a pattern was not matched by the new rule-relative matcher (no pattern
+/// matched at all) the old behaviour runs as a fallback, and a warning is
+/// logged once per distinct pattern. Patterns are read against the
+/// project-relative path, which is what watch did before the
+/// `.dockerignore`-style semantics were adopted. A pattern ending in `/`
+/// matches `path` by directory prefix; otherwise it matches an exact path or a
+/// leading path segment (the pattern followed by `/`). Matching is anchored at
 /// the start of `path`.
-pub(super) fn is_ignored(path: &str, patterns: &[String]) -> bool {
+pub(in crate::engine) fn legacy_project_relative_ignored(path: &str, patterns: &[String]) -> bool {
 	for pat in patterns {
 		if pat.ends_with('/') {
 			if path.starts_with(pat.as_str()) {
@@ -132,11 +139,14 @@ pub(super) fn is_ignored(path: &str, patterns: &[String]) -> bool {
 	false
 }
 
-/// True when `path` matches a watch-rule `include` pattern. Unlike
-/// [`is_ignored`], a `*.ext` pattern matches by extension suffix, and a bare name
-/// matches not only an exact path or directory prefix but also a trailing path
-/// segment anywhere in `path` (the pattern preceded by `/`).
-pub(super) fn is_included(path: &str, patterns: &[String]) -> bool {
+/// Legacy project-relative `include` matcher.
+///
+/// Kept for compatibility with rules written before the spec-driven matcher:
+/// when a pattern was not matched by the new rule-relative matcher the old
+/// behaviour runs as a fallback. Unlike the ignore case, a `*.ext` pattern
+/// matches by extension suffix, and a bare name matches not only an exact path
+/// or directory prefix but also a trailing path segment anywhere in `path`.
+pub(in crate::engine) fn legacy_project_relative_included(path: &str, patterns: &[String]) -> bool {
 	for pat in patterns {
 		if pat.starts_with("*.") {
 			let ext = &pat[1..];
