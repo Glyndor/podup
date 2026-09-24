@@ -125,17 +125,16 @@ pub(crate) fn build_log_config(
 /// A `logging:` block without `driver` keeps podup's default driver and, if
 /// `max-size` is also absent, the default size cap from
 /// [`default_log_config`]; a named driver without `max-size` stays uncapped.
-/// Without that fallback a `logging: { options: ... }` block would land in
-/// libpod with `driver=None` and the containers.conf driver would win, so a
-/// user opting out of `max-size` by writing `-1` had to repeat the driver to
-/// avoid the surprise (#1895).
+/// Without that fallback a `logging: { options: ... }` block reached libpod
+/// with no driver, and the containers.conf driver (journald on Podman 5.7.0)
+/// replaced the `k8s-file` default and its size cap (#1895).
 fn translate_user_logging(
 	service_name: &str,
 	l: &LoggingConfig,
 ) -> Result<LogConfig, ComposeError> {
 	let mut options = l.options.clone();
 	let user_max_size = options.remove("max-size");
-	let driver_no_default = l.driver.is_none();
+	let driver_missing = l.driver.is_none();
 	let default = default_log_config();
 	let driver = l.driver.clone().or(default.driver);
 	let size = match user_max_size {
@@ -154,7 +153,7 @@ fn translate_user_logging(
 			}
 		},
 		None => {
-			if driver_no_default {
+			if driver_missing {
 				default.size
 			} else {
 				None
