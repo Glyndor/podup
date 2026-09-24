@@ -171,27 +171,42 @@ pub(super) fn build_healthcheck(hc: &HealthCheck) -> HealthConfig {
 		ComposeCommand::Shell(s) => vec!["CMD-SHELL".to_string(), s.clone()],
 		ComposeCommand::Exec(v) => v.clone(),
 	});
-	// Apply the compose-spec defaults for any field the user omitted. Podman's
-	// API does NOT default these: a missing `Timeout` is taken as 0s, which makes
-	// every probe fail with "exceeded timeout of 0s" so the container is stuck
-	// `starting`; a missing/zero `Interval` disables the periodic check. Match
-	// docker-compose: interval 30s, timeout 30s, retries 3 (start_period 0).
+	// Apply the compose-spec defaults (interval 30s, timeout 30s, retries 3)
+	// only when the user wrote a `test`. With a `test`, libpod would otherwise
+	// leave the timings at 0s and the probe would fail with "exceeded timeout
+	// of 0s". Without a `test`, the image's HEALTHCHECK is inherited and libpod
+	// fills any field the request leaves out from the image (or with its own
+	// 30s/30s/3 when the image sets none), so sending the defaults would
+	// overwrite the image's values (#1893).
 	const DEFAULT_NANOS: i64 = 30 * 1_000_000_000;
+	let (interval, timeout, retries) = if hc.test.is_some() {
+		(
+			Some(
+				hc.interval
+					.as_deref()
+					.and_then(size::parse_duration_nanos)
+					.unwrap_or(DEFAULT_NANOS),
+			),
+			Some(
+				hc.timeout
+					.as_deref()
+					.and_then(size::parse_duration_nanos)
+					.unwrap_or(DEFAULT_NANOS),
+			),
+			Some(hc.retries.map(|r| r as i64).unwrap_or(3)),
+		)
+	} else {
+		(
+			hc.interval.as_deref().and_then(size::parse_duration_nanos),
+			hc.timeout.as_deref().and_then(size::parse_duration_nanos),
+			hc.retries.map(|r| r as i64),
+		)
+	};
 	HealthConfig {
 		test,
-		interval: Some(
-			hc.interval
-				.as_deref()
-				.and_then(size::parse_duration_nanos)
-				.unwrap_or(DEFAULT_NANOS),
-		),
-		timeout: Some(
-			hc.timeout
-				.as_deref()
-				.and_then(size::parse_duration_nanos)
-				.unwrap_or(DEFAULT_NANOS),
-		),
-		retries: Some(hc.retries.map(|r| r as i64).unwrap_or(3)),
+		interval,
+		timeout,
+		retries,
 		start_period: hc
 			.start_period
 			.as_deref()

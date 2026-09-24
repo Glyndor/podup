@@ -257,3 +257,34 @@ fn healthcheck_honors_explicit_interval_and_timeout() {
 	assert_eq!(cfg.timeout, Some(5 * 1_000_000_000));
 	assert_eq!(cfg.retries, Some(7));
 }
+
+#[test]
+fn healthcheck_without_test_leaves_unset_timings_to_the_image() {
+	// A healthcheck block without a `test` inherits the image's HEALTHCHECK.
+	// libpod fills any field we leave out from the image (or with its own
+	// 30s/30s/3 if the image sets none), so we must not send the compose
+	// defaults — they would overwrite the image's values (#1893).
+	let hc = HealthCheck::default();
+	let cfg = build_healthcheck(&hc);
+	assert_eq!(cfg.test, None);
+	assert_eq!(cfg.interval, None);
+	assert_eq!(cfg.timeout, None);
+	assert_eq!(cfg.retries, None);
+}
+
+#[test]
+fn healthcheck_without_test_keeps_only_the_timings_the_user_set() {
+	// Without a `test`, fields the user did not set must stay `None` so the
+	// image's HEALTHCHECK is inherited; fields the user did set are passed
+	// through, with retries widened to i64 like the rest of the API.
+	let hc = HealthCheck {
+		interval: Some("5s".into()),
+		retries: Some(4),
+		..Default::default()
+	};
+	let cfg = build_healthcheck(&hc);
+	assert_eq!(cfg.test, None);
+	assert_eq!(cfg.interval, Some(5 * 1_000_000_000));
+	assert_eq!(cfg.timeout, None);
+	assert_eq!(cfg.retries, Some(4));
+}
