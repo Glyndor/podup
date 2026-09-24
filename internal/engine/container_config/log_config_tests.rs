@@ -227,3 +227,80 @@ fn log_config_named_driver_without_size_stays_uncapped() {
 	assert_eq!(cfg.driver.as_deref(), Some("k8s-file"));
 	assert_eq!(cfg.size, None);
 }
+
+#[test]
+fn log_config_driverless_minus_one_size_keeps_host_driver() {
+	// Regression: a driverless `logging:` block whose `max-size` resolves to
+	// `-1` must NOT fall back to `k8s-file`. The fallback forces a file
+	// driver with no cap, but the user wrote `-1` to opt out of capping;
+	// the previous behaviour silently stripped a journald host driver
+	// (#1895 follow-up).
+	//
+	// `size::parse_memory` has a special case for the literal `"-1"` (the
+	// "unlimited" sentinel), returning `Some(-1)`. Lock the parser output
+	// down first, then assert the produced `size` matches it, so a future
+	// change to `parse_memory` cannot silently shift what this regression
+	// covers.
+	let parsed = crate::size::parse_memory("-1");
+	assert_eq!(parsed, Some(-1), "`-1` is the unlimited sentinel");
+
+	let mut opts = std::collections::HashMap::new();
+	opts.insert("max-size".into(), "-1".into());
+	opts.insert("tag".into(), "myapp".into());
+	let logging = LoggingConfig {
+		driver: None,
+		options: opts,
+	};
+	let cfg = build_log_config("web", Some(&logging)).unwrap().unwrap();
+	assert_eq!(
+		cfg.driver, None,
+		"driverless `-1` size must not pin k8s-file: {cfg:?}"
+	);
+	assert_eq!(
+		cfg.size, parsed,
+		"size field must mirror what parse_memory produces for `-1`: {cfg:?}"
+	);
+	assert_eq!(
+		cfg.options.get("tag").map(String::as_str),
+		Some("myapp"),
+		"non-size options must still pass through to libpod: {cfg:?}"
+	);
+}
+
+#[test]
+fn log_config_driverless_zero_size_keeps_host_driver() {
+	// Regression: a driverless `logging:` block whose `max-size` resolves to
+	// `0` must NOT fall back to `k8s-file`. Zero is not a positive size
+	// (no cap to apply) and only `k8s-file` would read the typed field,
+	// so the fallback would strip the host driver for no rotation benefit
+	// (#1895 follow-up).
+	//
+	// `size::parse_memory` accepts a bare `0` and produces `Some(0)`; assert
+	// that the parser result is what gets surfaced on the wire so any future
+	// change to `parse_memory` either keeps this regression valid or breaks
+	// it loudly.
+	let parsed = crate::size::parse_memory("0");
+	assert_eq!(parsed, Some(0), "bare `0` parses to a zero byte count");
+
+	let mut opts = std::collections::HashMap::new();
+	opts.insert("max-size".into(), "0".into());
+	opts.insert("tag".into(), "myapp".into());
+	let logging = LoggingConfig {
+		driver: None,
+		options: opts,
+	};
+	let cfg = build_log_config("web", Some(&logging)).unwrap().unwrap();
+	assert_eq!(
+		cfg.driver, None,
+		"driverless `0` size must not pin k8s-file: {cfg:?}"
+	);
+	assert_eq!(
+		cfg.size, parsed,
+		"size field must mirror what parse_memory produces for `0`: {cfg:?}"
+	);
+	assert_eq!(
+		cfg.options.get("tag").map(String::as_str),
+		Some("myapp"),
+		"non-size options must still pass through to libpod: {cfg:?}"
+	);
+}
