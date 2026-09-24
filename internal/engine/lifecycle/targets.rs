@@ -4,6 +4,7 @@
 use std::collections::HashSet;
 use std::time::Duration;
 
+use crate::compose::dependencies::effective_depends_on;
 use crate::compose::types::{ComposeFile, Service};
 use crate::error::{ComposeError, Result};
 
@@ -132,7 +133,8 @@ pub(super) fn expand_targets(
 		}
 		if !no_deps {
 			if let Some(service) = file.services.get(&name) {
-				for dep in service.depends_on.service_names() {
+				let deps = effective_depends_on(service, &file.services);
+				for dep in deps.service_names() {
 					if !set.contains(&dep) {
 						stack.push(dep);
 					}

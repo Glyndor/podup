@@ -5,6 +5,7 @@ use tracing::{debug, warn};
 
 use std::collections::{HashMap, HashSet};
 
+use crate::compose::dependencies::effective_depends_on;
 use crate::compose::types::{ComposeFile, Service};
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::image::ImagePullProgress;
@@ -470,7 +471,8 @@ fn pull_dep_closure(file: &ComposeFile, services: &[String]) -> HashSet<String> 
 			continue;
 		}
 		if let Some(svc) = file.services.get(&name) {
-			for dep in svc.depends_on.service_names() {
+			let deps = effective_depends_on(svc, &file.services);
+			for dep in deps.service_names() {
 				if !set.contains(&dep) {
 					stack.push(dep);
 				}

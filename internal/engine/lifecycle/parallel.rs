@@ -14,6 +14,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
+use crate::compose::dependencies::effective_depends_on;
 use crate::compose::types::{ComposeFile, LifecycleHook};
 use crate::engine::Engine;
 use crate::error::{ComposeError, Result};
@@ -132,10 +133,8 @@ pub(super) fn restart_service_set(
 		let mut full: HashSet<String> = targets.as_ref().clone();
 		if !no_deps {
 			for (dep_name, dep_service) in &file.services {
-				if targets
-					.iter()
-					.any(|t| dep_service.depends_on.restart_for(t))
-				{
+				let deps = effective_depends_on(dep_service, &file.services);
+				if targets.iter().any(|t| deps.restart_for(t)) {
 					full.insert(dep_name.clone());
 				}
 			}

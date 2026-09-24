@@ -399,6 +399,8 @@ mod error_surfacing;
 mod exec_flags;
 #[path = "engine_integration/health_targeting.rs"]
 mod health_targeting;
+#[path = "engine_integration/implicit_dependencies.rs"]
+mod implicit_dependencies;
 #[path = "engine_integration/include_extends.rs"]
 mod include_extends;
 #[path = "engine_integration/label_file_safety.rs"]

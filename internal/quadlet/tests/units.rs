@@ -274,6 +274,31 @@ fn newline_in_value_cannot_inject_unit_directives() {
 	);
 }
 
+/// Implicit dependencies show up in the Quadlet `[Unit]` section: a service
+/// that joins another through `volumes_from: [data]` must carry
+/// `After=`/`Requires=` for the data unit, so systemd orders creation the
+/// way docker compose does and the volume-from reference never names a
+/// container that does not exist yet.
+#[test]
+fn volumes_from_emits_after_and_requires_in_unit_section() {
+	let yaml = "services:\n  data:\n    image: x\n  ro:\n    image: x\n    volumes_from: [data]\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "proj-ro.container").contents;
+	let unit_section = c
+		.split("\n[Container]")
+		.next()
+		.expect("container unit has [Unit] section");
+	assert!(
+		unit_section.contains("After=proj-data.service"),
+		"ro unit must order itself after the data unit; got:\n{c}"
+	);
+	assert!(
+		unit_section.contains("Requires=proj-data.service"),
+		"ro unit must require the data unit; got:\n{c}"
+	);
+}
+
 #[test]
 fn privileged_maps_to_podman_arg() {
 	let yaml = "services:\n  s:\n    image: x\n    privileged: true\n";
