@@ -77,14 +77,14 @@ pub(crate) fn parse_volumes_from_entry(entry: &str) -> (VolumesFromRef<'_>, Volu
 /// win: an entry the user wrote is never replaced, only augmented.
 ///
 /// The implicit entries this adds:
-/// `volumes_from: [name]` or `[name:ro]` or `[service:name:ro]` →
+/// `volumes_from: [name]` or `[name:ro]` or `[service:name:ro]` becomes
 ///   `name: { condition: service_started, required: true, restart: None }`
 ///   (`container:name` does not produce an entry, it is a container outside
 ///   the project; an unknown name produces no entry either, the engine
 ///   passes it through to Podman as a container name).
-/// `links: [name]` or `[name:alias]` → `name: { restart: true, ... }`
+/// `links: [name]` or `[name:alias]` becomes `name: { restart: true, ... }`
 ///   (the alias is the part after the first `:` and is dropped here).
-/// `network_mode`/`ipc`/`pid`/`uts` = `service:name` →
+/// `network_mode`/`ipc`/`pid`/`uts` = `service:name` becomes
 ///   `name: { restart: true, ... }`.
 pub(crate) fn effective_depends_on(
 	service: &Service,
@@ -114,17 +114,11 @@ pub(crate) fn effective_depends_on(
 		DependsOn::Map(m) => m.clone(),
 	};
 	for (name, restart) in implicit_names {
-		map.entry(name.clone())
-			.and_modify(|existing| {
-				if existing.condition == ServiceCondition::default() && restart {
-					existing.restart = Some(true);
-				}
-			})
-			.or_insert(DependsOnCondition {
-				condition: ServiceCondition::ServiceStarted,
-				restart: if restart { Some(true) } else { None },
-				required: Some(true),
-			});
+		map.entry(name.clone()).or_insert(DependsOnCondition {
+			condition: ServiceCondition::ServiceStarted,
+			restart: if restart { Some(true) } else { None },
+			required: Some(true),
+		});
 	}
 	DependsOn::Map(map)
 }

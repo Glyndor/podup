@@ -183,3 +183,32 @@ fn empty_implicit_returns_explicit_unchanged() {
 	assert!(matches!(d, DependsOn::List(_)));
 	assert_eq!(d.service_names(), vec!["a".to_string()]);
 }
+
+/// An explicit list-form `depends_on: [data]` plus `links: [data]` must
+/// keep `restart` false on the explicit entry. docker compose v5.1.3
+/// leaves the explicit entry untouched when `links` also points at the
+/// same service; the implicit `links` rule does not silently flip the
+/// `restart` flag the user did not set.
+#[test]
+fn explicit_list_plus_links_keeps_restart_false() {
+	let f = file(
+		"services:\n  data:\n    image: x\n  web:\n    image: x\n    depends_on: [data]\n    links: [data]\n",
+	);
+	let d = effective_depends_on(service(&f, "web"), &f.services);
+	assert_eq!(d.condition_for("data"), ServiceCondition::ServiceStarted);
+	assert!(d.required_for("data"));
+	assert!(!d.restart_for("data"));
+}
+
+/// An explicit map-form `depends_on: {data: {condition: service_started}}`
+/// plus `network_mode: "service:data"` must keep `restart` false on the
+/// explicit entry. Same docker compose rule as the list case: the implicit
+/// namespace reference does not promote `restart` on a key the user wrote.
+#[test]
+fn explicit_map_plus_network_mode_service_keeps_restart_false() {
+	let f = file(
+		"services:\n  data:\n    image: x\n  web:\n    image: x\n    depends_on:\n      data:\n        condition: service_started\n    network_mode: \"service:data\"\n",
+	);
+	let d = effective_depends_on(service(&f, "web"), &f.services);
+	assert!(!d.restart_for("data"));
+}
