@@ -137,7 +137,7 @@ impl Engine {
 				// exists only as a dangling symlink is still synced: the
 				// packer in `watch/sync.rs` preserves links, and the rule's
 				// intent there is to upload the link itself.
-				if !std::fs::symlink_metadata(&entry.abs_path).is_ok() {
+				if std::fs::symlink_metadata(&entry.abs_path).is_err() {
 					continue;
 				}
 				if let Some(target) = &entry.rule.target {
