@@ -727,7 +727,7 @@ never `null`.
 0), so a CI job can gate on `podup audit --strict` and fail when hardening
 gaps are introduced.
 
-The eleven checks and what they look for:
+The sixteen checks and what they look for:
 
 | Check id | Fires when | Notes |
 |---|---|---|
@@ -742,6 +742,11 @@ The eleven checks and what they look for:
 | `no_userns` | `userns_mode` unset | Without it Podman's `auto` applies; the reason links to `docs/docker-migration.md`. |
 | `secret_in_environment` | `environment:` key matching `PASSWORD`/`SECRET`/`TOKEN`/`KEY` (case-insensitive) with a non-empty literal value | Bare keys (host inheritance) and `${VAR}` placeholders are not flagged. |
 | `unpinned_image` | `image:` with no tag, with tag `latest`, or `latest` without a digest | An `@sha256:` digest counts as pinning regardless of the tag. |
+| `no_restart_policy` | Neither `restart:` nor `deploy.restart_policy:` is set | An explicit `restart: "no"` is a deliberate choice and stays silent. |
+| `no_init` | `init:` is not `true` | PID 1 is the app; orphans become zombies and SIGTERM may wait out the stop timeout. |
+| `no_health_action` | A non-disabled `healthcheck:` has no `x-podman-on-failure` extension | An unhealthy container stays unhealthy and nothing acts on it. |
+| `swap_unbounded` | A memory limit is in effect but `memswap_limit` is absent, `-1`, or differs from the memory limit | The service can page to disk instead of hitting its memory limit. |
+| `no_cpu_limit` | Neither `cpus:`, `deploy.resources.limits.cpus:`, nor `cpu_quota:` gives a limit | One service can take every core of the host. |
 
 | Flag | Description | Default |
 |---|---|---|

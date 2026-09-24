@@ -56,12 +56,20 @@ fn audit_fully_hardened_service_has_no_findings() {
 	let yaml = r#"
 services:
   web:
-    image: nginx:1.27@sha256:0e7bb5afc7e5e22ee46c4f2cd4a8b3fa63ad3f5d5e5e5e5e5e5e5e5e5e5e5e5e
+    image: nginx:1.27@sha256:0e7bb5afc7e5e22ee46c4f2cd4a8b3fa63ad3f5d5e5e5e5e5e5e5e5e5e5e5e5e5e
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     pids_limit: 200
     mem_limit: 512m
+    memswap_limit: 512m
+    init: true
+    restart: unless-stopped
+    cpus: "1"
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 30s
+      x-podman-on-failure: restart
     userns_mode: auto
     environment:
       - LEVEL=info
@@ -97,6 +105,14 @@ services:
 	);
 	assert!(svc.pids_limit.is_some(), "sanity: pids_limit must be set");
 	assert!(svc.mem_limit.is_some(), "sanity: mem_limit must be set");
+	assert!(
+		svc.memswap_limit.is_some(),
+		"sanity: memswap_limit must be set"
+	);
+	assert!(svc.init == Some(true), "sanity: init must be true");
+	assert!(svc.restart.is_some(), "sanity: restart must be set");
+	assert!(svc.cpus.is_some(), "sanity: cpus must be set");
+	assert!(svc.healthcheck.is_some(), "sanity: healthcheck must be set");
 	assert!(svc.userns_mode.is_some(), "sanity: userns_mode must be set");
 }
 
@@ -213,7 +229,7 @@ services:
 /// a constant and only the binary tests noticed.
 #[test]
 fn audit_report_has_findings_follows_the_list() {
-	let clean = report_for_file("services:\n  web:\n    image: alpine:3.20\n    read_only: true\n    cap_drop: [ALL]\n    security_opt: [no-new-privileges:true]\n    pids_limit: 64\n    mem_limit: 64m\n    userns_mode: auto\n");
+	let clean = report_for_file("services:\n  web:\n    image: alpine:3.20\n    read_only: true\n    cap_drop: [ALL]\n    security_opt: [no-new-privileges:true]\n    pids_limit: 64\n    mem_limit: 64m\n    memswap_limit: 64m\n    init: true\n    restart: unless-stopped\n    cpus: \"1\"\n    healthcheck:\n      test: [\"CMD\", \"true\"]\n      x-podman-on-failure: restart\n    userns_mode: auto\n");
 	assert!(!clean.has_findings());
 	let dirty = report_for_file("services:\n  web:\n    image: alpine\n");
 	assert!(dirty.has_findings());
@@ -224,7 +240,7 @@ fn audit_report_has_findings_follows_the_list() {
 #[test]
 fn audit_report_by_service_keeps_file_order_and_ownership() {
 	let file = parse_str(
-		"services:\n  zeta:\n    image: alpine:3.20\n    privileged: true\n  alpha:\n    image: alpine:3.20\n    read_only: true\n    cap_drop: [ALL]\n    security_opt: [no-new-privileges:true]\n    pids_limit: 64\n    mem_limit: 64m\n    userns_mode: auto\n",
+		"services:\n  zeta:\n    image: alpine:3.20\n    privileged: true\n  alpha:\n    image: alpine:3.20\n    read_only: true\n    cap_drop: [ALL]\n    security_opt: [no-new-privileges:true]\n    pids_limit: 64\n    mem_limit: 64m\n    memswap_limit: 64m\n    init: true\n    restart: unless-stopped\n    cpus: \"1\"\n    healthcheck:\n      test: [\"CMD\", \"true\"]\n      x-podman-on-failure: restart\n    userns_mode: auto\n",
 	)
 	.unwrap();
 	let report = audit_file(&file, &[]);
