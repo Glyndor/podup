@@ -91,7 +91,7 @@ fn json_mode_emits_raw_object() {
 ///
 /// The earlier check also rejected `-1`/`-1.5` (valid pre-epoch Unix
 /// timestamps) and `-0s` (a zero offset, i.e. "now"), while letting `-.5h`
-/// through — Go parses that as `-30m`, so it reproduced the bug. The rule
+/// through; Go parses that as `-30m`, so it reproduced the bug. The rule
 /// is now: reject only when the part after `-` looks like a Go-style
 /// duration (starts with a digit or `.`, contains a unit letter, and has at
 /// least one non-zero digit).
