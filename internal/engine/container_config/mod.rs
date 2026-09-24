@@ -121,12 +121,26 @@ pub(crate) fn build_log_config(
 /// same memory parser used elsewhere in the engine (`10m`, `1g`, plain
 /// bytes); a malformed value is rejected with the service field name so the
 /// error points at the compose key the user wrote (#1417).
+///
+/// A `logging:` block without `driver` falls back to the default driver
+/// (`k8s-file`) ONLY when the block also sets a POSITIVE `max-size`: only
+/// that driver reads the typed size cap, and that is the case a journald
+/// host config used to silently override (#1895). A non-positive size
+/// (`0`, `-1`) opts out of capping, so pinning `k8s-file` here would
+/// silently strip a journald host driver without applying any cap; the
+/// field stays None and the host's containers.conf default applies.
+/// Without `max-size` and without a named `driver`, both `driver` and
+/// `size` are left unset so the host's containers.conf default applies;
+/// podup no longer injects a default driver or default size cap. A named
+/// driver without `max-size` stays uncapped, just as before.
 fn translate_user_logging(
 	service_name: &str,
 	l: &LoggingConfig,
 ) -> Result<LogConfig, ComposeError> {
 	let mut options = l.options.clone();
-	let size = match options.remove("max-size") {
+	let user_max_size = options.remove("max-size");
+	let default = default_log_config();
+	let size = match user_max_size {
 		Some(v) => match size::parse_memory(&v) {
 			Some(bytes) => Some(bytes),
 			None => {
@@ -143,14 +157,26 @@ fn translate_user_logging(
 		},
 		None => None,
 	};
+	// The driver fallback only fires when `max-size` actually constrains
+	// rotation. A non-positive size (`0` or `-1`) opts out of capping, so
+	// pinning `k8s-file` here would silently strip a journald host driver
+	// (#1895 follow-up). An absent `max-size` keeps the host default too.
+	let driver = l.driver.clone().or_else(|| {
+		if size.is_some_and(|b| b > 0) {
+			default.driver
+		} else {
+			None
+		}
+	});
 	if options.remove("max-file").is_some() {
 		tracing::warn!(
-			"logging.options.max-file is ignored by libpod; \
-			 remove it from your compose file or expect unbounded log growth"
+			"{service_name}: logging.options.max-file is ignored; \
+			 Podman keeps a single log file (truncated at max-size when one is set) \
+			 with no rotated history"
 		);
 	}
 	Ok(LogConfig {
-		driver: l.driver.clone(),
+		driver,
 		size,
 		options,
 	})
