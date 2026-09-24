@@ -263,7 +263,7 @@ fn healthcheck_with_nothing_set_sends_no_config() {
 	// A default `healthcheck:` block has no test and no timings. Podman 5.4.2
 	// (still supported) only inherits the image's HEALTHCHECK when the whole
 	// `healthconfig` is absent from the request (5.7+ merges field-by-field),
-	// so we must drop the field entirely here — sending 30s/30s/3 would
+	// so we must drop the field entirely here: sending 30s/30s/3 would
 	// overwrite the image's values (#1893).
 	let hc = HealthCheck::default();
 	assert!(build_healthcheck(&hc).is_none());

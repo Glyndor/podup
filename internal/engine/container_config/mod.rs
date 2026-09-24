@@ -183,7 +183,7 @@ pub(super) fn build_healthcheck(hc: &HealthCheck) -> Option<HealthConfig> {
 		|| hc.start_interval.is_some();
 	// Podman 5.4.2 (still supported) inherits the image HEALTHCHECK only when
 	// the whole `healthconfig` is absent from the request, so we must omit the
-	// field entirely — not just leave every value `None` — when there is no
+	// field entirely, not just leave every value `None`, when there is no
 	// test and the user set no timing. Podman 5.7+ merges field-by-field and
 	// would still inherit with a `None`-filled config, but emitting one anyway
 	// would 30s/30s/3-overwrite older runtimes (#1893).
