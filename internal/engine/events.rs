@@ -191,23 +191,55 @@ impl Engine {
 	}
 }
 
-/// Reject a `--since` written as a negative relative time.
+/// Reject a `--since` written as a negative relative duration.
 ///
 /// libpod reads a relative `since` as a time before now, so `30m` is thirty
 /// minutes ago and `-30m` is thirty minutes in the future: a window that
-/// starts there matches nothing and the feed looks empty (#1896).
+/// starts there matches nothing and the feed looks empty (#1896). A plain
+/// negative number is left alone, though: libpod's `ParseInputTime` parses
+/// numeric values as Unix timestamps before trying them as durations, so a
+/// pre-epoch lower bound like `--since -1` is a valid replay window, and
+/// `-0s`/`-0m` are zero offsets (i.e. "now"). The check matches Go's
+/// duration syntax: the rest starts with an ASCII digit or `.`, contains at
+/// least one ASCII unit letter, and has at least one digit other than `0`.
 fn validate_events_since(since: Option<&str>) -> Result<()> {
 	let Some(v) = since else {
 		return Ok(());
 	};
-	if let Some(rest) = v.strip_prefix('-') {
-		if rest.starts_with(|c: char| c.is_ascii_digit()) {
-			return Err(ComposeError::Unsupported(format!(
-				"invalid --since value {v:?}: a relative time counts back from now, so write it without the leading '-' (e.g. --since {rest})"
-			)));
-		}
+	let Some(rest) = v.strip_prefix('-') else {
+		return Ok(());
+	};
+	if looks_like_go_duration(rest) {
+		return Err(ComposeError::Unsupported(format!(
+			"invalid --since value {v:?}: a relative time counts back from now, so write it without the leading '-' (e.g. --since {rest})"
+		)));
 	}
 	Ok(())
+}
+
+/// Heuristic for "the part after the leading `-` is a Go-style duration":
+/// it starts with an ASCII digit or `.`, has at least one ASCII letter (the
+/// unit, e.g. `s`/`m`/`h`), and has at least one digit other than `0`. Used
+/// only by [`validate_events_since`]; not a full Go parser. A string that
+/// fails any of the three is forwarded unchanged so negative Unix
+/// timestamps and zero offsets still reach libpod.
+fn looks_like_go_duration(rest: &str) -> bool {
+	if rest.is_empty() {
+		return false;
+	}
+	if !rest.starts_with(|c: char| c.is_ascii_digit() || c == '.') {
+		return false;
+	}
+	let mut has_letter = false;
+	let mut has_non_zero_digit = false;
+	for c in rest.chars() {
+		if c.is_ascii_alphabetic() {
+			has_letter = true;
+		} else if c.is_ascii_digit() && c != '0' {
+			has_non_zero_digit = true;
+		}
+	}
+	has_letter && has_non_zero_digit
 }
 
 /// Build the libpod events `filters` object: always scope to this project's

@@ -275,7 +275,7 @@ there is no complete set to size against). `--format json` prints no header.
 |---|---|---|
 | `--format <FMT>` | `table` (a `TYPE ACTION NAME` summary) or `json` (one object per line). | `table` |
 | `--filter <FILTER>` | Keep only events matching a predicate (`KEY=VALUE`, e.g. `event=start`). Repeatable. | none |
-| `--since <TIME>` | Only stream events at or after this timestamp or relative time (e.g. `-30m`). | stream start |
+| `--since <TIME>` | Only stream events at or after this timestamp or relative time (e.g. `30m`; a relative time counts back from now). | stream start |
 | `--until <TIME>` | End of the window. Only closes the feed when paired with `--since` and already elapsed. | no end |
 
 `--json` is a hidden deprecated alias for `--format json`.
