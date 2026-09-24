@@ -208,7 +208,11 @@ fn audit_sensitive_bind_mount_does_not_fire_on_project_directory() {
 	// on an unhardened service.
 	let header = "image: alpine:3.20\n    read_only: true\n    cap_drop: [ALL]\n    \
 	              security_opt: [no-new-privileges:true]\n    pids_limit: 200\n    \
-	              mem_limit: 512m\n    userns_mode: auto\n    volumes:\n      - ";
+	              mem_limit: 512m\n    memswap_limit: 512m\n    init: true\n    \
+	              restart: unless-stopped\n    cpus: \"1\"\n    \
+	              healthcheck:\n      test: [\"CMD\", \"true\"]\n      \
+	              x-podman-on-failure: restart\n    userns_mode: auto\n    \
+	              volumes:\n      - ";
 	for spec in [
 		"/srv/app/data:/data",
 		"/home/user/project:/app",
