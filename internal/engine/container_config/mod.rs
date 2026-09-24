@@ -167,11 +167,10 @@ pub(super) fn build_healthcheck(hc: &HealthCheck) -> Option<HealthConfig> {
 			..Default::default()
 		});
 	}
-	// Only `None` and an empty EXEC list count as "no test". An empty shell
-	// string is kept as an explicit `["CMD-SHELL", ""]` probe: compose-go
-	// preserves the shell form and Podman executes it, which matches the
-	// historical behaviour before #1893 turned it into silent image
-	// inheritance (#1893).
+	// Only `None` and an empty exec list count as "no test": libpod treats an
+	// empty Test as absent and inherits the image probe. An empty shell string
+	// stays an explicit `["CMD-SHELL", ""]` probe, as it always was, because
+	// Podman runs it (#1893).
 	let test = hc.test.as_ref().and_then(|cmd| match cmd {
 		ComposeCommand::Shell(s) => Some(vec!["CMD-SHELL".to_string(), s.clone()]),
 		ComposeCommand::Exec(v) if !v.is_empty() => Some(v.clone()),
@@ -201,10 +200,8 @@ pub(super) fn build_healthcheck(hc: &HealthCheck) -> Option<HealthConfig> {
 	// 5.7+ libpod merges field-by-field and the unset fields are inherited
 	// from the image, so the user override survives. On Podman 5.4.2 a
 	// non-nil `healthconfig` without a `test` REPLACES the image healthcheck
-	// rather than inheriting it, so the user loses the image probe entirely;
-	// the upstream guidance is to either resolve and merge the image probe
-	// before sending or document the divergence. We forward the user's
-	// override as written and leave that choice to the operator (#1893).
+	// rather than inheriting it, so the image probe is lost there. That was
+	// already the case before #1893 and is not handled here.
 	const DEFAULT_NANOS: i64 = 30 * 1_000_000_000;
 	let (interval, timeout, retries) = if test.is_some() {
 		(
