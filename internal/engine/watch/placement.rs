@@ -210,6 +210,13 @@ pub(super) fn target_is_on_a_mount(target: &str, mounts: &[&str]) -> bool {
 /// fire for a service that actually does have its target covered by a
 /// `volumes_from` reference, which is a false positive the user would have to
 /// learn to ignore.
+///
+/// The image's own `VOLUME` declarations are not inspected: podup only looks
+/// at what the compose file says, so a `VOLUME` baked into the image that
+/// happens to cover the target will still trigger this warning. Podman mounts
+/// a writable anonymous volume there at runtime, so the warning can be a
+/// false positive in that case; the message names the exception so the user
+/// knows to ignore it (#1897).
 pub(super) fn read_only_target_warning(
 	service_name: &str,
 	service: &Service,
@@ -233,7 +240,7 @@ pub(super) fn read_only_target_warning(
 		return None;
 	}
 	Some(format!(
-		"{service_name}: sync target {target} is on the read-only root filesystem (read_only: true) and no volume or tmpfs covers it, so every sync to it will fail; mount a volume or tmpfs at {target}"
+		"{service_name}: sync target {target} is on the read-only root filesystem (read_only: true) and no volume or tmpfs in the compose file covers it, so syncs to it will fail unless the image declares a VOLUME there; mount a volume or tmpfs at {target}"
 	))
 }
 
