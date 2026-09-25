@@ -24,6 +24,14 @@
 //! (`into_body()` + `frame().await`, `body.collect()`, the multiplexed
 //! parser), and drops the connection on its own drop so a caller that
 //! abandons the stream still closes the underlying socket.
+//!
+//! A short error response sent with `Connection: close` can complete the
+//! connection future in the same poll that delivers the response head. In
+//! that case the open path sees the connection has finished by the time it
+//! has the head in hand, and hands [`DrivenBody`] no connection (`None`):
+//! re-polling a completed future violates the `Future` contract. The
+//! body still drains; the connection socket was already closed by the
+//! driver finishing (#1900).
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -45,12 +53,14 @@ pub struct DrivenBody {
 }
 
 impl DrivenBody {
-	/// Build a body that drives `conn` in the same task as each
-	/// [`Body::poll_frame`] call.
-	pub fn new(body: Incoming, conn: ConnectionFuture) -> Self {
+	/// Build a body that drives `conn` (if any) in the same task as each
+	/// [`Body::poll_frame`] call. Pass `None` when the connection future has
+	/// already completed by the time the response head arrives; re-polling a
+	/// completed future violates the `Future` contract.
+	pub fn new(body: Incoming, conn: Option<ConnectionFuture>) -> Self {
 		Self {
 			inner: Box::pin(body),
-			conn: Some(conn),
+			conn,
 		}
 	}
 }

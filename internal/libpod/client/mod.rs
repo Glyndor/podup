@@ -8,6 +8,7 @@
 //! drops. See [`Client`] for the full contract.
 
 use std::sync::Arc;
+use std::task::Poll;
 
 use bytes::Bytes;
 use futures_util::Future;
@@ -31,7 +32,8 @@ pub(crate) use encode::{is_valid_object_name, urlencoded};
 pub(crate) use hijack::Hijacked;
 use pool::{ConnPool, PoolGuard};
 use stream::SocketStream;
-pub(crate) use stream_body::DrivenBody;
+use stream_body::ConnectionFuture;
+pub use stream_body::DrivenBody;
 
 /// The request body every call shares. A boxed body so a fully-buffered
 /// `Full<Bytes>` (almost every call) and a lazily-streamed build-context body
@@ -318,35 +320,54 @@ impl Client {
 		// the head arrives, we hand the driver future to the
 		// `DrivenBody` (the inline-driven body wrapper) that backs the response, which polls it in line
 		// with the body frames from there on (#1900).
+		//
+		// A short response (for example an error body sent with
+		// `Connection: close`) can complete the connection future in the
+		// same poll that delivers the response head. Tracking that here
+		// keeps `DrivenBody` from re-polling a completed future, which
+		// violates the `Future` contract.
 		let send_fut = sender.send_request(req);
 		tokio::pin!(send_fut);
-		let mut driver = driver;
+		enum ConnState {
+			Pending(ConnectionFuture),
+			Done(std::result::Result<(), hyper::Error>),
+		}
+		let mut conn_state = ConnState::Pending(driver);
 		let send_result = Self::apply_timeout(
 			response_timeout,
 			"waiting for the Podman socket to respond",
 			futures_util::future::poll_fn(|cx| {
-				// Drive the connection so the dispatcher can pick up the
-				// queued request, write it, and send the response head back
-				// on the oneshot the sender future awaits.
-				let _ = driver.as_mut().poll(cx);
+				if let ConnState::Pending(fut) = &mut conn_state {
+					match fut.as_mut().poll(cx) {
+						Poll::Ready(result) => conn_state = ConnState::Done(result),
+						Poll::Pending => {}
+					}
+				}
 				send_fut.as_mut().poll(cx)
 			}),
 		)
 		.await;
-		match send_result {
-			Ok(Ok(resp)) => {
+		match (send_result, conn_state) {
+			(Ok(Ok(resp)), ConnState::Pending(conn)) => {
 				let (parts, body) = resp.into_parts();
-				Ok(Response::from_parts(parts, DrivenBody::new(body, driver)))
+				Ok(Response::from_parts(
+					parts,
+					DrivenBody::new(body, Some(conn)),
+				))
 			}
-			Ok(Err(e)) => {
-				// Driver is dropped here, closing the socket.
-				drop(driver);
+			(Ok(Ok(resp)), ConnState::Done(Ok(()))) => {
+				// Connection finished before the head was taken; the body
+				// must not re-poll a completed future.
+				let (parts, body) = resp.into_parts();
+				Ok(Response::from_parts(parts, DrivenBody::new(body, None)))
+			}
+			(Ok(Ok(_)), ConnState::Done(Err(e))) => {
+				// Connection failed before the head arrived; surface the
+				// driver error rather than pretending the head is usable.
 				Err(PodmanError::Hyper(e))
 			}
-			Err(e) => {
-				drop(driver);
-				Err(e)
-			}
+			(Ok(Err(e)), _) => Err(PodmanError::Hyper(e)),
+			(Err(e), _) => Err(e),
 		}
 	}
 
@@ -539,3 +560,7 @@ impl BufferedResponse {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "streaming_close_tests.rs"]
+mod streaming_close_tests;
