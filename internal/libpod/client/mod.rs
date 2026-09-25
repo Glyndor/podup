@@ -88,8 +88,9 @@ pub type Result<T> = std::result::Result<T, PodmanError>;
 /// `post_empty_stream`, `post_bytes_stream`, `post_stream_body`,
 /// `post_json_stream_within`) take a dedicated connection for the lifetime of
 /// the stream's response body. The streaming connection lives inside the
-/// response body's [`DrivenBody`]; dropping the body closes the socket, so
-/// the [`Client`] does not track streaming connections itself (#1900).
+/// response body (the inline-driven `DrivenBody`); dropping the
+/// body closes the socket, so the [`Client`] does not track streaming
+/// connections itself (#1900).
 pub struct Client {
 	socket_path: String,
 	pool: Arc<ConnPool>,
@@ -161,8 +162,9 @@ impl Drop for Client {
 	/// Close every held connection. Idle pooled connections are dropped via
 	/// the pool's `close`, which wakes any blocked acquirers with a closed
 	/// error. Streaming connections live inside their response body
-	/// ([`DrivenBody`]) and close their sockets when the body is dropped, so
-	/// the [`Client`] itself does not need to track them (#1900).
+	/// (`DrivenBody`) and close their sockets when
+	/// the body is dropped, so the [`Client`] itself does not need to track
+	/// them (#1900).
 	fn drop(&mut self) {
 		self.pool.close();
 	}
@@ -314,7 +316,7 @@ impl Client {
 		// never arrives. `tokio::join!` polls both each time we are polled
 		// and registers wakers for both while the head is in flight. Once
 		// the head arrives, we hand the driver future to the
-		// [`DrivenBody`] that backs the response, which polls it in line
+		// `DrivenBody` (the inline-driven body wrapper) that backs the response, which polls it in line
 		// with the body frames from there on (#1900).
 		let send_fut = sender.send_request(req);
 		tokio::pin!(send_fut);
@@ -351,7 +353,7 @@ impl Client {
 	/// Read the full response body off a streaming connection. The body is
 	/// generic so the buffered path ([`BufferedResponse::read_body`], body is
 	/// `Incoming`) and the streaming path (`stream_or_err`, body is
-	/// [`DrivenBody`]) share the size cap and the timeout handling. The cap
+	/// `DrivenBody` (the inline-driven body wrapper) share the size cap and the timeout handling. The cap
 	/// prevents a runaway response from holding more than `MAX_RESPONSE_BYTES`
 	/// in memory; it does not bound the duration of a long-lived stream
 	/// (those callers keep the body and poll it themselves).
