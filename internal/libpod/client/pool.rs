@@ -312,9 +312,7 @@ impl ConnPool {
 			}
 		}
 		let (sender, conn) = open_one_streaming(&self.socket_path).await?;
-		Ok(StreamingConn {
-			inner: Some(StreamingInner { sender, conn }),
-		})
+		Ok(StreamingConn { sender, conn })
 	}
 
 	/// Hand a buffered connection back to the pool.
@@ -395,15 +393,11 @@ impl Drop for PoolGuard {
 /// A dedicated connection held by a streaming call. The underlying socket is
 /// closed when this is dropped, regardless of whether the stream ended cleanly.
 pub(super) struct StreamingConn {
-	inner: Option<StreamingInner>,
-}
-
-struct StreamingInner {
 	sender: http1::SendRequest<BoxBody>,
-	/// HTTP/1 connection future, kept here so [`StreamingConn::drop`] can close
-	/// the socket by dropping it. The reading task drives it inline via the
-	/// body returned by `send_streaming`, so there is no spawned driver to
-	/// abort (#1900).
+	/// HTTP/1 connection future, kept here so dropping the connection closes
+	/// the socket by dropping the IO half. The reading task drives it inline
+	/// via the body returned by `send_streaming`, so there is no spawned driver
+	/// to abort (#1900).
 	conn: ConnectionFuture,
 }
 
@@ -413,18 +407,11 @@ impl StreamingConn {
 	/// dropped after the request has been sent; the connection future is moved
 	/// into the [`DrivenBody`](super::stream_body::DrivenBody) that backs the
 	/// response, so dropping the body closes the socket.
-	pub(super) fn into_parts(mut self) -> (http1::SendRequest<BoxBody>, ConnectionFuture) {
-		let inner = self.inner.take().expect("streaming conn already consumed");
-		(inner.sender, inner.conn)
-	}
-}
-
-impl Drop for StreamingConn {
-	fn drop(&mut self) {
+	pub(super) fn into_parts(self) -> (http1::SendRequest<BoxBody>, ConnectionFuture) {
+		// The struct has no `Drop` impl, so the fields move out cleanly.
 		// Dropping the connection future drops the underlying IO, which
-		// hyper reports to Podman as a socket close. The previous design
-		// aborted the driver task to achieve the same end.
-		self.inner.take();
+		// hyper reports to Podman as a socket close.
+		(self.sender, self.conn)
 	}
 }
 
