@@ -79,24 +79,31 @@ fn formats_libpod_native_shape() {
 }
 
 /// The libpod `/events` endpoint names a container's death `died` (not
-/// `die`) and an image removal `remove` (not `delete`). podup's user-
-/// facing output keeps the docker-compat verbs so a `--filter event=die`
-/// still matches a container death on libpod (#1914).
+/// `die`); podup's user-facing output keeps the docker-compat verb so a
+/// `--filter event=die` still matches a container death on libpod
+/// (#1914). Other verbs pass through under the `Action` key. The
+/// full compat rewrite rules (image+remove -> delete, died -> die +
+/// exitCode copy, container remove unchanged) are pinned in
+/// `events_compat_rewrite_tests`.
 #[test]
-fn rename_event_maps_libpod_verbs_to_docker_compat() {
-	for (raw, want) in [
-		("died", "die"),
-		("remove", "delete"),
-		("start", "start"),
-		("die", "die"),
-		("delete", "delete"),
+fn rename_event_promotes_status_to_action_and_rewrites_died() {
+	for (raw, want_action, want_status) in [
+		("died", "die", "die"),
+		("start", "start", "start"),
+		("die", "die", "die"),
+		("delete", "delete", "delete"),
 	] {
 		let v = json!({ "Type": "container", "status": raw });
 		let out = rename_event(&v);
 		assert_eq!(
 			out.get("Action").and_then(|v| v.as_str()),
-			Some(want),
-			"verb {raw:?} did not map to {want:?}: {out:?}"
+			Some(want_action),
+			"verb {raw:?} did not map to Action={want_action:?}: {out:?}"
+		);
+		assert_eq!(
+			out.get("status").and_then(|v| v.as_str()),
+			Some(want_status),
+			"verb {raw:?} did not map to status={want_status:?}: {out:?}"
 		);
 	}
 }
@@ -141,8 +148,11 @@ fn rename_event_copies_container_exit_code_into_exit_code() {
 	);
 }
 
-/// `status` is preserved alongside the promoted `Action` so a caller
-/// keyed on the libpod-native verb key still finds its value (#1914).
+/// The compat handler set both `status` and `Action` when it rewrote a
+/// verb (`status` is the libpod-native verb key, `Action` is the
+/// docker-compat one; both land at `die` for a container death).
+/// Verbs that are not rewritten pass through unchanged under both
+/// keys (#1914).
 #[test]
 fn rename_event_keeps_status_alongside_action() {
 	let v = json!({
@@ -154,12 +164,12 @@ fn rename_event_keeps_status_alongside_action() {
 	assert_eq!(
 		out.get("Action").and_then(Value::as_str),
 		Some("die"),
-		"status=died must promote to Action=die: {out:?}"
+		"status=died must become Action=die: {out:?}"
 	);
 	assert_eq!(
 		out.get("status").and_then(Value::as_str),
-		Some("died"),
-		"the libpod status key must remain: {out:?}"
+		Some("die"),
+		"status=died must become status=die (the compat handler set both keys): {out:?}"
 	);
 }
 
@@ -235,8 +245,8 @@ fn json_mode_emits_both_exit_code_keys() {
 	);
 	assert_eq!(
 		parsed.get("status").and_then(Value::as_str),
-		Some("died"),
-		"the libpod status key must remain on the JSON wire: {parsed:?}"
+		Some("die"),
+		"the compat handler rewrote `status` to `die` too: {parsed:?}"
 	);
 }
 
