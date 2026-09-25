@@ -3,7 +3,7 @@ use super::{
 	TIME_WIDTH,
 };
 use crate::libpod::Client;
-use serde_json::json;
+use serde_json::{json, Value};
 
 #[test]
 fn build_event_filters_scopes_to_project_label() {
@@ -101,11 +101,15 @@ fn rename_event_maps_libpod_verbs_to_docker_compat() {
 	}
 }
 
-/// `Actor.Attributes.containerExitCode` (libpod) is renamed to
-/// `Actor.Attributes.exitCode` (docker-compat) so a script that reads the
-/// docker-compat key still finds the value (#1914).
+/// `Actor.Attributes.containerExitCode` (libpod) is copied into the
+/// docker-compat `Actor.Attributes.exitCode` so a script that reads the
+/// docker-compat key still finds the value, while a script that reads
+/// the libpod key still finds its value (#1914). The compat build
+/// handler did the same: `exitCode` was set from `containerExitCode`
+/// while `containerExitCode` stayed put. Removing the libpod key would
+/// silently break every caller keyed on it.
 #[test]
-fn rename_event_maps_container_exit_code_to_exit_code() {
+fn rename_event_copies_container_exit_code_into_exit_code() {
 	let v = json!({
 		"Type": "container",
 		"status": "died",
@@ -121,13 +125,41 @@ fn rename_event_maps_container_exit_code_to_exit_code() {
 		out.pointer("/Actor/Attributes/exitCode")
 			.and_then(|v| v.as_str()),
 		Some("3"),
-		"containerExitCode was not promoted to exitCode: {out:?}"
+		"containerExitCode was not copied into exitCode: {out:?}"
+	);
+	assert_eq!(
+		out.pointer("/Actor/Attributes/containerExitCode")
+			.and_then(|v| v.as_str()),
+		Some("3"),
+		"containerExitCode must remain alongside the docker-compat exitCode: {out:?}"
 	);
 	assert_eq!(
 		out.pointer("/Actor/Attributes/name")
 			.and_then(|v| v.as_str()),
 		Some("web-1"),
 		"name must remain: {out:?}"
+	);
+}
+
+/// `status` is preserved alongside the promoted `Action` so a caller
+/// keyed on the libpod-native verb key still finds its value (#1914).
+#[test]
+fn rename_event_keeps_status_alongside_action() {
+	let v = json!({
+		"Type": "container",
+		"status": "died",
+		"Actor": { "Attributes": { "name": "web-1" } },
+	});
+	let out = rename_event(&v);
+	assert_eq!(
+		out.get("Action").and_then(Value::as_str),
+		Some("die"),
+		"status=died must promote to Action=die: {out:?}"
+	);
+	assert_eq!(
+		out.get("status").and_then(Value::as_str),
+		Some("died"),
+		"the libpod status key must remain: {out:?}"
 	);
 }
 
@@ -160,6 +192,52 @@ fn json_mode_emits_raw_object() {
 	let out = format_event(&ev, true);
 	assert!(out.contains("\"Type\":\"container\""));
 	assert!(out.contains("\"Action\":\"start\""));
+}
+
+/// The JSON mode routes through `rename_event`, which copies
+/// `containerExitCode` into `exitCode` while leaving the libpod key in
+/// place. A `--format json` consumer keyed on `containerExitCode`
+/// (libpod scripts predating #1914) and one keyed on `exitCode`
+/// (docker-compat scripts) both find the same value (#1914).
+#[test]
+fn json_mode_emits_both_exit_code_keys() {
+	let ev = json!({
+		"Type": "container",
+		"status": "died",
+		"Actor": {
+			"Attributes": {
+				"name": "web-1",
+				"containerExitCode": "137",
+			}
+		}
+	});
+	let out = format_event(&ev, true);
+	let parsed: serde_json::Value =
+		serde_json::from_str(out.trim()).expect("json mode emits one JSON object per line");
+	assert_eq!(
+		parsed
+			.pointer("/Actor/Attributes/containerExitCode")
+			.and_then(|v| v.as_str()),
+		Some("137"),
+		"the libpod containerExitCode key must remain on the JSON wire: {parsed:?}"
+	);
+	assert_eq!(
+		parsed
+			.pointer("/Actor/Attributes/exitCode")
+			.and_then(|v| v.as_str()),
+		Some("137"),
+		"the docker-compat exitCode key must be set on the JSON wire: {parsed:?}"
+	);
+	assert_eq!(
+		parsed.get("Action").and_then(Value::as_str),
+		Some("die"),
+		"libpod `died` must promote to docker-compat `die` on the JSON wire: {parsed:?}"
+	);
+	assert_eq!(
+		parsed.get("status").and_then(Value::as_str),
+		Some("died"),
+		"the libpod status key must remain on the JSON wire: {parsed:?}"
+	);
 }
 
 /// #1896: libpod reads a relative `since` as a time before now, so `-30m` is

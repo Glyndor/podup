@@ -340,17 +340,23 @@ fn build_event_filters(project: &str, user_filters: &[String]) -> Result<Value> 
 
 /// Rewrite a libpod-native event into the docker-compat shape podup has
 /// always exposed: `status` becomes `Action` (and `died` -> `die`,
-/// `remove` -> `delete`); the libpod `Actor.Attributes.containerExitCode`
-/// becomes the docker-compat `Actor.Attributes.exitCode`. The libpod
-/// keys stay alongside the renamed ones so callers that read either
-/// shape still find their value (#1914).
+/// `remove` -> `delete`); the docker-compat `Actor.Attributes.exitCode`
+/// is added alongside the libpod `Actor.Attributes.containerExitCode`,
+/// carrying the same value. The docker-compat build handler did the
+/// same: `exitCode` was set from `containerExitCode` while
+/// `containerExitCode` stayed put, so a caller reading either key still
+/// found its value. A podup upgrade that renamed the libpod key away
+/// would silently break every caller keyed on `containerExitCode`
+/// (#1914).
 ///
-/// Pure so the rename is unit-tested without a live socket.
+/// Pure so the rewrite is unit-tested without a live socket.
 fn rename_event(value: &Value) -> Value {
 	let mut out = value.clone();
 	if let Some(obj) = out.as_object_mut() {
 		// `status` is the libpod-native verb key. Promote it to `Action`
 		// under the docker-compat name and rewrite the verbs that diverged.
+		// The libpod `status` key stays in the object so callers that read
+		// either shape still find their value.
 		if let Some(status) = obj.get("status").and_then(Value::as_str) {
 			let action = match status {
 				"died" => "die",
@@ -361,7 +367,7 @@ fn rename_event(value: &Value) -> Value {
 		}
 		if let Some(actor) = obj.get_mut("Actor").and_then(Value::as_object_mut) {
 			if let Some(attrs) = actor.get_mut("Attributes").and_then(Value::as_object_mut) {
-				if let Some(code) = attrs.remove("containerExitCode") {
+				if let Some(code) = attrs.get("containerExitCode").cloned() {
 					attrs.entry("exitCode".to_string()).or_insert(code);
 				}
 			}
