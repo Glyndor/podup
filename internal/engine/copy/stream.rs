@@ -116,12 +116,15 @@ impl Read for ChannelReader {
 /// `None` for a non-progress call site (tests, the `extract_archive`
 /// path); the cost on that path is a single `Option::is_some` per
 /// `read`.
-pub(super) async fn extract_streamed(
-	resp: hyper::Response<hyper::body::Incoming>,
+pub(super) async fn extract_streamed<B>(
+	resp: hyper::Response<B>,
 	dst: std::path::PathBuf,
 	cap: u64,
 	progress: Option<ByteCounter>,
-) -> Result<()> {
+) -> Result<()>
+where
+	B: hyper::body::Body<Data = bytes::Bytes, Error = hyper::Error> + Send + Unpin + 'static,
+{
 	let (tx, rx) = tokio::sync::mpsc::channel::<ChunkItem>(CHANNEL_CAP);
 
 	let pump = tokio::spawn(async move {

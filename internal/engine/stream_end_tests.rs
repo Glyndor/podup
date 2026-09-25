@@ -50,7 +50,7 @@ async fn read_stream(reply: FakeReply) -> (Vec<serde_json::Value>, Option<String
 		.get_stream(&format!("{}/events", crate::libpod::API_PREFIX))
 		.await
 		.expect("the fake answers 200");
-	let mut stream = crate::libpod::parse_json_lines::<serde_json::Value>(resp.into_body());
+	let mut stream = crate::libpod::parse_json_lines::<serde_json::Value, _>(resp.into_body());
 
 	let mut frames = Vec::new();
 	let mut ended_as = None;

@@ -1,8 +1,8 @@
 use bytes::Bytes;
-use hyper::body::Incoming;
+use hyper::Response;
 use serde::de::DeserializeOwned;
 
-use super::{full, Client, Result, READ_TIMEOUT};
+use super::{full, Client, DrivenBody, Result, READ_TIMEOUT};
 
 impl Client {
 	/// `GET` → deserialize JSON response.
@@ -14,8 +14,8 @@ impl Client {
 		serde_json::from_slice(&body).map_err(super::PodmanError::Json)
 	}
 
-	/// `GET` → return raw `Response<Incoming>` for streaming.
-	pub async fn get_stream(&self, path: &str) -> Result<hyper::Response<Incoming>> {
+	/// `GET` → return raw `Response<DrivenBody>` for streaming.
+	pub async fn get_stream(&self, path: &str) -> Result<Response<DrivenBody>> {
 		let req = Self::build_request(hyper::Method::GET, path, full(Bytes::new()), None)?;
 		Self::stream_or_err(self.send_streaming(req, Some(READ_TIMEOUT)).await?).await
 	}

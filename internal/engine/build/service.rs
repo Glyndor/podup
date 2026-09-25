@@ -332,7 +332,7 @@ impl Engine {
 				}
 			}
 		};
-		let mut stream = crate::libpod::parse_json_lines::<BuildOutput>(resp.into_body());
+		let mut stream = crate::libpod::parse_json_lines::<BuildOutput, _>(resp.into_body());
 
 		// Open the board row for this image before the first `STEP` line, so
 		// the row's `Building` verb is what the reader sees while the stream
