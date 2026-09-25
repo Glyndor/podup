@@ -28,8 +28,8 @@ use std::time::Duration;
 /// host's UID/GID inside the container. The libpod handler defaults
 /// `copyUIDGID` to true, which overwrites with the container's
 /// runtime UID/GID (`0:0`). The Docker compat handler defaulted to
-/// false, which kept the host UID/GID on the destination (the
-/// Step 0 measurement: `1000:1000`).
+/// false, which kept the host UID/GID on the destination (as measured with podup 5.10.0 on
+/// 2026-09-24: `1000:1000`).
 ///
 /// Fails on the branch with `copyUIDGID=false` reverted (i.e. the
 /// libpod default of `true` lands) at

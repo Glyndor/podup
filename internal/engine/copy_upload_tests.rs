@@ -571,7 +571,7 @@ async fn a_pack_error_midway_reaches_the_caller_as_an_error() {
 /// a host file copied into a container take the container's runtime
 /// UID/GID (i.e. `0:0`). The Docker compat handler defaulted it to
 /// false, which preserved the host UID/GID on the destination file
-/// (the Step 0 measurement: `1000:1000`). The compensation pins the
+/// (as measured with podup 5.10.0 on 2026-09-24: `1000:1000`). The compensation pins the
 /// docker-compat default: the PUT query must include
 /// `copyUIDGID=false`, and the docker-side key (`copyUIDGID=true`)
 /// must not appear. The URL helper is pinned separately in

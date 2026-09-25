@@ -247,8 +247,8 @@ async fn top_sends_ps_args_query_param() {
 /// libpod handler defaults `copyUIDGID` to true, which makes a host
 /// file copied into a container take the container's runtime UID/GID
 /// (i.e. `0:0`). The Docker compat handler defaulted it to false,
-/// which preserved the host UID/GID on the destination file (the
-/// Step 0 measurement: `1000:1000`). The compensation pins the
+/// which preserved the host UID/GID on the destination file (as measured with podup 5.10.0 on
+/// 2026-09-24: `1000:1000`). The compensation pins the
 /// docker-compat default.
 ///
 /// The wire-level test for the compensation lives next to the rest of
