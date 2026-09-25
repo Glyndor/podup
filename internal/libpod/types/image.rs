@@ -44,6 +44,14 @@ pub struct ImageInspect {
 	/// Image ID (`sha256:...` content digest of the image config).
 	#[serde(rename = "Id", default)]
 	pub id: String,
+	/// Canonical names the image is tagged with in local storage
+	/// (`docker.io/library/app:latest`, `localhost/app:v1`, ...). Read
+	/// by the build path to keep a tag the user has already attached
+	/// to a local image: when an unqualified `app:latest` resolves to
+	/// a local image tagged as `quay.io/me/app:latest`, the build
+	/// keeps `quay.io/me/app:latest` instead of re-normalising.
+	#[serde(rename = "RepoTags", default)]
+	pub repo_tags: Vec<String>,
 	/// Registry digest references (`repo@sha256:...`) for the image, when it was
 	/// pulled from (or pushed to) a registry. Used by `config
 	/// --resolve-image-digests`. Empty for purely local/built images.

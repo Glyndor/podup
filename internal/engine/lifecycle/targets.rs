@@ -39,9 +39,10 @@ pub fn validate_stop_timeout(timeout: Option<i32>) -> Result<Option<i32>> {
 	}
 }
 
-/// The libpod `?t=` value for a grace period. A non-negative grace passes through;
-/// `-1` ("wait indefinitely") maps to the largest value libpod accepts so podman
-/// does not escalate to `SIGKILL` on its own, matching `docker stop -t -1`. Pure.
+/// The libpod `?timeout=` value for a grace period. A non-negative grace
+/// passes through; `-1` ("wait indefinitely") maps to the largest value
+/// libpod accepts so podman does not escalate to `SIGKILL` on its own,
+/// matching `docker stop -t -1`. Pure.
 pub(super) fn stop_timeout_param(grace: i32) -> i64 {
 	if grace < 0 {
 		i64::from(i32::MAX)

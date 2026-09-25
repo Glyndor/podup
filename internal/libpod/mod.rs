@@ -7,6 +7,7 @@
 
 pub mod client;
 pub mod error;
+pub(crate) mod normalize;
 pub mod types;
 pub(crate) mod validate;
 

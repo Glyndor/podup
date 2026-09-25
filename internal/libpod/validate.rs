@@ -380,9 +380,15 @@ pub(crate) fn pre_validate_spec(
 /// Pre-validate the build-query fields libpod validates. Called from the
 /// build path before the URL is assembled, so a bad key fails before any
 /// POST to the daemon (#1357).
+///
+/// The `labels` map is iterated for key validation only, so it can be
+/// any map type (`HashMap`, `BTreeMap`, ...) the caller wants; the
+/// build path uses a `BTreeMap` to keep label order deterministic
+/// across builds so a second `podup build` of the same Containerfile
+/// hits the buildkit layer cache.
 pub(crate) fn pre_validate_build(
 	build_args: &std::collections::HashMap<String, String>,
-	labels: &std::collections::HashMap<String, String>,
+	labels: &impl LabelKeys,
 ) -> Result<(), ComposeError> {
 	if let Some((field, key, msg)) =
 		first_invalid_kv_key("build.args", build_args.keys().map(String::as_str))
@@ -395,6 +401,38 @@ pub(crate) fn pre_validate_build(
 		return Err(ComposeError::Podman(build_field_error(field, key, msg)));
 	}
 	Ok(())
+}
+
+/// Any map whose `keys()` iterator yields `String`s, with the
+/// pre-validation helper's call shape (`keys().map(String::as_str)`).
+/// Implemented for `HashMap<String, String>` and `BTreeMap<String,
+/// String>` so the build path can pick a deterministic ordering
+/// without copying into the validation helper's preferred type.
+pub(crate) trait LabelKeys {
+	type Iter<'a>: Iterator<Item = &'a String>
+	where
+		Self: 'a;
+	fn keys(&self) -> Self::Iter<'_>;
+}
+
+impl LabelKeys for std::collections::HashMap<String, String> {
+	type Iter<'a>
+		= std::collections::hash_map::Keys<'a, String, String>
+	where
+		Self: 'a;
+	fn keys(&self) -> Self::Iter<'_> {
+		self.keys()
+	}
+}
+
+impl LabelKeys for std::collections::BTreeMap<String, String> {
+	type Iter<'a>
+		= std::collections::btree_map::Keys<'a, String, String>
+	where
+		Self: 'a;
+	fn keys(&self) -> Self::Iter<'_> {
+		self.keys()
+	}
 }
 
 #[cfg(test)]

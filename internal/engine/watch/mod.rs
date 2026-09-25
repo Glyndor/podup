@@ -545,7 +545,7 @@ impl Engine {
 		info!("restarting {container_name}");
 		// Single atomic restart (no visible stopped window) instead of stop+start.
 		let restart_path = format!(
-			"{API_PREFIX}/containers/{}/restart?t=5",
+			"{API_PREFIX}/containers/{}/restart?timeout=5",
 			urlencoded(container_name)
 		);
 		self.client

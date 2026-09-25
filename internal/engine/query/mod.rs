@@ -244,9 +244,13 @@ impl Engine {
 		}
 		let selected: std::collections::HashSet<&str> =
 			target_services.iter().map(String::as_str).collect();
-		// (container_name, is_tty): TTY containers send raw bytes; non-TTY use
-		// multiplexed 8-byte-header framing. Resolved against the containers
-		// Podman actually has, not the static compose replica count: after a
+		// Each entry is the container name to stream `/logs` from. The libpod
+		// `/logs` endpoint always frames its body with 8-byte multiplexed
+		// headers (stdout/stderr channel byte + payload length + payload),
+		// including for TTY containers, so `is_tty` is no longer a parsing
+		// selector here (it used to choose between raw and multiplexed on
+		// the docker compat path). Resolved against the containers Podman
+		// actually has, not the static compose replica count: after a
 		// runtime `scale`/`up --scale` the file's count no longer matches the
 		// live replicas, so `logs` would otherwise miss every replica beyond
 		// the first. Falls back to the static names for a service absent from
@@ -280,20 +284,19 @@ impl Engine {
 			}
 		};
 		let fetch_failed = first_err.is_some();
-		let mut targets: Vec<(String, bool)> = Vec::new();
+		let mut targets: Vec<String> = Vec::new();
 		if !fetch_failed {
 			for (n, s) in file
 				.services
 				.iter()
 				.filter(|(n, _)| selected.is_empty() || selected.contains(n.as_str()))
 			{
-				let is_tty = s.tty.unwrap_or(false);
 				let names = match live_by_service.get(n.as_str()) {
 					Some(names) if !names.is_empty() => names.clone(),
 					_ => self.replica_names(n, s),
 				};
 				for cname in names {
-					targets.push((cname, is_tty));
+					targets.push(cname);
 				}
 			}
 		}
@@ -331,7 +334,7 @@ impl Engine {
 		if follow && targets.len() > 1 {
 			let futs: Vec<_> = targets
 				.into_iter()
-				.map(|(container_name, is_tty)| {
+				.map(|container_name| {
 					let client = &self.client;
 					let query = query.clone();
 					async move {
@@ -346,11 +349,17 @@ impl Engine {
 								return Some(e);
 							}
 						};
-						let mut stream = if is_tty {
-							crate::libpod::parse_raw(resp.into_body())
-						} else {
-							crate::libpod::parse_multiplexed(resp.into_body())
-						};
+						// The libpod `/logs` endpoint always frames its body with
+						// 8-byte multiplexed headers (stdout/stderr channel byte +
+						// payload length + payload), including for TTY containers.
+						// The Docker compat handler used raw bytes for TTY
+						// containers, so an `is_tty` selector was correct on the
+						// compat path; on the libpod path it left the channel byte
+						// (0x01 for stdout) on the first byte of every line and
+						// rendered the stream unreadable. The raw path stays for
+						// the hijacked attach/exec stream in `attach.rs`, which
+						// goes to `/attach_websocket`, not `/logs`.
+						let mut stream = crate::libpod::parse_multiplexed(resp.into_body());
 						// These futures run concurrently under `join_all` on the
 						// same task, so the stdout/stderr lock is taken and
 						// released within each frame rather than held across the
@@ -430,7 +439,7 @@ impl Engine {
 			}
 			streamed_any = failures < target_count;
 		} else {
-			for (container_name, is_tty) in targets {
+			for container_name in targets {
 				let path = format!(
 					"{API_PREFIX}/containers/{}/logs?{query}",
 					urlencoded(&container_name),
@@ -447,11 +456,15 @@ impl Engine {
 						continue;
 					}
 				};
-				let mut stream = if is_tty {
-					crate::libpod::parse_raw(resp.into_body())
-				} else {
-					crate::libpod::parse_multiplexed(resp.into_body())
-				};
+				// Same out-of-band resolution as the concurrent path above: the
+				// libpod `/logs` endpoint always frames its body with 8-byte
+				// multiplexed headers, including for TTY containers. The Docker
+				// compat handler used raw bytes for TTY containers, so an `is_tty`
+				// selector was correct on the compat path; on the libpod path it
+				// stripped the leading channel byte (0x01) off every line. The raw
+				// path stays for the hijacked attach/exec stream in `attach.rs`,
+				// which goes to `/attach_websocket`, not `/logs`.
+				let mut stream = crate::libpod::parse_multiplexed(resp.into_body());
 
 				// Lock stdout once for the whole stream instead of re-acquiring
 				// the lock (and issuing a syscall) per frame; stdout is ours
