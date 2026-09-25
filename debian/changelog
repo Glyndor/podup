@@ -1,3 +1,17 @@
+podup (5.10.1) unstable; urgency=medium
+
+  * podup now talks to Podman as a libpod client. Its request lines were
+    written in absolute form, which made Podman apply the Docker-compatible
+    behaviour to every call; the behaviour podup relied on is now asked for
+    explicitly (stop and restart timeouts, anonymous volume removal, the
+    wait after a kill, `cp` ownership, `top` columns, logs of TTY
+    containers, `events` names, build layer cache, image format and names).
+  * A short image name in a Containerfile `FROM` is resolved through
+    `registries.conf`, as `podman build` does, instead of being forced to
+    Docker Hub.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Fri, 25 Sep 2026 05:36:18 -0500
+
 podup (5.10.0) unstable; urgency=medium
 
   * `up` orders a service after the services it references through
