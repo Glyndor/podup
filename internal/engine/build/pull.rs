@@ -361,7 +361,7 @@ impl Engine {
 			.post_empty_stream(&path)
 			.await
 			.map_err(ComposeError::Podman)?;
-		let mut stream = crate::libpod::parse_json_lines::<ImagePullProgress>(resp.into_body());
+		let mut stream = crate::libpod::parse_json_lines::<ImagePullProgress, _>(resp.into_body());
 
 		// Gate the per-blob `start` calls on the same condition the live region
 		// itself is gated on (#1674). The plain sink writes one line per `start`,

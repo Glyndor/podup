@@ -7,8 +7,9 @@
 //! connection for the lifetime of the stream and release it when the body
 //! drops. See [`Client`] for the full contract.
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
+use futures_util::Future;
 use bytes::Bytes;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Incoming;
@@ -25,10 +26,12 @@ mod pool;
 mod post;
 mod put;
 mod stream;
+mod stream_body;
 pub(crate) use encode::{is_valid_object_name, urlencoded};
 pub(crate) use hijack::Hijacked;
 use pool::{ConnPool, PoolGuard};
 use stream::SocketStream;
+pub(crate) use stream_body::DrivenBody;
 
 /// The request body every call shares. A boxed body so a fully-buffered
 /// `Full<Bytes>` (almost every call) and a lazily-streamed build-context body
@@ -84,13 +87,12 @@ pub type Result<T> = std::result::Result<T, PodmanError>;
 /// returned to the pool. Streaming calls (`get_stream`, `post_json_stream`,
 /// `post_empty_stream`, `post_bytes_stream`, `post_stream_body`,
 /// `post_json_stream_within`) take a dedicated connection for the lifetime of
-/// the stream's response body. Streaming connections do not share with the
-/// buffered pool; they are released when the [`Client`] is dropped, which in
-/// the CLI is the end of the command.
+/// the stream's response body. The streaming connection lives inside the
+/// response body's [`DrivenBody`]; dropping the body closes the socket, so
+/// the [`Client`] does not track streaming connections itself (#1900).
 pub struct Client {
 	socket_path: String,
 	pool: Arc<ConnPool>,
-	streaming: Mutex<Vec<pool::StreamingConn>>,
 }
 
 /// The decoded `X-Docker-Container-Path-Stat` header: a container path's name,
@@ -158,13 +160,10 @@ pub(crate) fn socket_error(path: &str, e: std::io::Error) -> super::PodmanError 
 impl Drop for Client {
 	/// Close every held connection. Idle pooled connections are dropped via
 	/// the pool's `close`, which wakes any blocked acquirers with a closed
-	/// error; streaming connections are dropped directly, aborting their
-	/// driver tasks and tearing down their sockets.
+	/// error. Streaming connections live inside their response body
+	/// ([`DrivenBody`]) and close their sockets when the body is dropped, so
+	/// the [`Client`] itself does not need to track them (#1900).
 	fn drop(&mut self) {
-		// Clear the streaming connections first so the drop of each
-		// `StreamingConn` runs while the pool is still around. The pool's
-		// `close` then drains the idle queue.
-		self.streaming.lock().unwrap().clear();
 		self.pool.close();
 	}
 }
@@ -289,15 +288,17 @@ impl Client {
 	}
 
 	/// Send a request whose response body is a long-lived stream and return
-	/// the raw response. The connection is opened outside the buffered pool
-	/// and held by the [`Client`] until the [`Client`] drops.
+	/// the raw response. The connection is opened outside the buffered pool;
+	/// the response body owns the HTTP/1 driver so the reading task can poll
+	/// it in line with the body and skip the cross-task wake-up per frame
+	/// (#1900).
 	async fn send_streaming(
 		&self,
 		req: Request<BoxBody>,
 		response_timeout: Option<std::time::Duration>,
-	) -> Result<Response<Incoming>> {
+	) -> Result<Response<DrivenBody>> {
 		tracing::debug!("libpod {} {}", req.method(), req.uri().path());
-		let mut conn = tokio::time::timeout(CONNECT_TIMEOUT, self.pool.open_streaming())
+		let conn = tokio::time::timeout(CONNECT_TIMEOUT, self.pool.open_streaming())
 			.await
 			.map_err(|_| PodmanError::Api {
 				status: 0,
@@ -306,38 +307,61 @@ impl Client {
 					CONNECT_TIMEOUT.as_secs()
 				),
 			})??;
-		let request = conn.sender_mut().send_request(req);
+		let (mut sender, driver) = conn.into_parts();
+		// The sender future awaits a response on a oneshot the dispatcher
+		// fills. Nobody else drives the dispatcher, so we have to poll it in
+		// the same task as the sender future; otherwise the response head
+		// never arrives. `tokio::join!` polls both each time we are polled
+		// and registers wakers for both while the head is in flight. Once
+		// the head arrives, we hand the driver future to the
+		// [`DrivenBody`] that backs the response, which polls it in line
+		// with the body frames from there on (#1900).
+		let send_fut = sender.send_request(req);
+		tokio::pin!(send_fut);
+		let mut driver = driver;
 		let send_result = Self::apply_timeout(
 			response_timeout,
 			"waiting for the Podman socket to respond",
-			request,
+			futures_util::future::poll_fn(|cx| {
+				// Drive the connection so the dispatcher can pick up the
+				// queued request, write it, and send the response head back
+				// on the oneshot the sender future awaits.
+				let _ = driver.as_mut().poll(cx);
+				send_fut.as_mut().poll(cx)
+			}),
 		)
 		.await;
 		match send_result {
 			Ok(Ok(resp)) => {
-				self.streaming.lock().unwrap().push(conn);
-				Ok(resp)
+				let (parts, body) = resp.into_parts();
+				Ok(Response::from_parts(parts, DrivenBody::new(body, driver)))
 			}
 			Ok(Err(e)) => {
-				drop(conn);
+				// Driver is dropped here, closing the socket.
+				drop(driver);
 				Err(PodmanError::Hyper(e))
 			}
 			Err(e) => {
-				drop(conn);
+				drop(driver);
 				Err(e)
 			}
 		}
 	}
 
-	/// Read the full response body off a streaming connection. Streaming
-	/// responses are tracked on the [`Client`] until it is dropped, so there
-	/// is no pool guard to coordinate with; [`BufferedResponse::read_body`]
-	/// delegates into this so both paths share the size cap and the timeout
-	/// handling.
-	async fn read_response_body(
-		resp: Response<Incoming>,
+	/// Read the full response body off a streaming connection. The body is
+	/// generic so the buffered path ([`BufferedResponse::read_body`], body is
+	/// `Incoming`) and the streaming path (`stream_or_err`, body is
+	/// [`DrivenBody`]) share the size cap and the timeout handling. The cap
+	/// prevents a runaway response from holding more than `MAX_RESPONSE_BYTES`
+	/// in memory; it does not bound the duration of a long-lived stream
+	/// (those callers keep the body and poll it themselves).
+	async fn read_response_body<B>(
+		resp: Response<B>,
 		read_timeout: Option<std::time::Duration>,
-	) -> Result<(StatusCode, Vec<u8>)> {
+	) -> Result<(StatusCode, Vec<u8>)>
+	where
+		B: hyper::body::Body<Data = Bytes, Error = hyper::Error> + Send + Unpin + 'static,
+	{
 		let status = resp.status();
 		let read = Limited::new(resp.into_body(), MAX_RESPONSE_BYTES).collect();
 		let collected = Self::apply_timeout(
@@ -346,7 +370,7 @@ impl Client {
 			read,
 		)
 		.await?
-		.map_err(|e| PodmanError::Api {
+		.map_err(|e: Box<dyn std::error::Error + Send + Sync>| PodmanError::Api {
 			status: 0,
 			message: format!("reading response body: {e}"),
 		})?;
@@ -439,7 +463,7 @@ impl Client {
 
 	/// For streaming endpoints, return the response on success or parse the
 	/// daemon error body on failure.
-	async fn stream_or_err(resp: Response<Incoming>) -> Result<Response<Incoming>> {
+	async fn stream_or_err(resp: Response<DrivenBody>) -> Result<Response<DrivenBody>> {
 		if resp.status().is_success() {
 			return Ok(resp);
 		}
@@ -505,7 +529,7 @@ impl BufferedResponse {
 		self,
 		read_timeout: Option<std::time::Duration>,
 	) -> Result<(StatusCode, Vec<u8>)> {
-		Client::read_response_body(self.resp, read_timeout).await
+		Client::read_response_body::<Incoming>(self.resp, read_timeout).await
 	}
 }
 

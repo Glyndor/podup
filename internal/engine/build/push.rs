@@ -241,7 +241,7 @@ impl Engine {
 			.post_empty_stream(&path)
 			.await
 			.map_err(ComposeError::Podman)?;
-		let stream = crate::libpod::parse_json_lines::<ImagePullProgress>(resp.into_body());
+		let stream = crate::libpod::parse_json_lines::<ImagePullProgress, _>(resp.into_body());
 		drain_push_stream(stream, image, quiet, PUSH_STALL_TIMEOUT).await
 	}
 }

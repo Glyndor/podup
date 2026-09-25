@@ -1,11 +1,11 @@
 use bytes::Bytes;
 use futures_util::Stream;
 use http_body_util::{BodyExt, StreamBody};
-use hyper::body::{Frame, Incoming};
+use hyper::body::Frame;
 use hyper::{Method, Response};
 use serde::{de::DeserializeOwned, Serialize};
 
-use super::{full, Client, Result, READ_TIMEOUT};
+use super::{full, Client, DrivenBody, Result, READ_TIMEOUT};
 
 impl Client {
 	/// `POST` with JSON body → deserialize JSON response.
@@ -99,12 +99,12 @@ impl Client {
 		Self::check_status_with_field(status, &body, field)
 	}
 
-	/// `POST` with JSON body → return raw `Response<Incoming>` for streaming.
+	/// `POST` with JSON body → return raw `Response<DrivenBody>` for streaming.
 	pub async fn post_json_stream<B: Serialize>(
 		&self,
 		path: &str,
 		body: &B,
-	) -> Result<Response<Incoming>> {
+	) -> Result<Response<DrivenBody>> {
 		let json = serde_json::to_vec(body).map_err(super::PodmanError::Json)?;
 		let req = Self::build_request(
 			Method::POST,
@@ -142,14 +142,14 @@ impl Client {
 		Self::check_status(status, &body)
 	}
 
-	/// `POST` with JSON body → return raw `Response<Incoming>` for streaming,
+	/// `POST` with JSON body → return raw `Response<DrivenBody>` for streaming,
 	/// bounding the wait for the response head by `head_timeout`.
 	pub async fn post_json_stream_within<B: Serialize>(
 		&self,
 		path: &str,
 		body: &B,
 		head_timeout: Option<std::time::Duration>,
-	) -> Result<Response<Incoming>> {
+	) -> Result<Response<DrivenBody>> {
 		let json = serde_json::to_vec(body).map_err(super::PodmanError::Json)?;
 		let req = Self::build_request(
 			Method::POST,
@@ -160,8 +160,8 @@ impl Client {
 		Self::stream_or_err(self.send_streaming(req, head_timeout).await?).await
 	}
 
-	/// `POST` with empty body → return raw `Response<Incoming>` for streaming.
-	pub async fn post_empty_stream(&self, path: &str) -> Result<Response<Incoming>> {
+	/// `POST` with empty body → return raw `Response<DrivenBody>` for streaming.
+	pub async fn post_empty_stream(&self, path: &str) -> Result<Response<DrivenBody>> {
 		let req = Self::build_request(Method::POST, path, full(Bytes::new()), None)?;
 		Self::stream_or_err(self.send_streaming(req, Some(READ_TIMEOUT)).await?).await
 	}
@@ -184,24 +184,24 @@ impl Client {
 		serde_json::from_slice(&body).map_err(super::PodmanError::Json)
 	}
 
-	/// `POST` with raw bytes body → return raw `Response<Incoming>` for streaming.
+	/// `POST` with raw bytes body → return raw `Response<DrivenBody>` for streaming.
 	pub async fn post_bytes_stream(
 		&self,
 		path: &str,
 		bytes: Bytes,
 		content_type: &str,
-	) -> Result<Response<Incoming>> {
+	) -> Result<Response<DrivenBody>> {
 		let req = Self::build_request(Method::POST, path, full(bytes), Some(content_type))?;
 		Self::stream_or_err(self.send_streaming(req, Some(READ_TIMEOUT)).await?).await
 	}
 
-	/// `POST` with a streamed body → return raw `Response<Incoming>` for streaming.
+	/// `POST` with a streamed body → return raw `Response<DrivenBody>` for streaming.
 	pub async fn post_stream_body<S>(
 		&self,
 		path: &str,
 		chunks: S,
 		content_type: &str,
-	) -> Result<Response<Incoming>>
+	) -> Result<Response<DrivenBody>>
 	where
 		S: Stream<Item = std::result::Result<Frame<Bytes>, std::io::Error>> + Send + 'static,
 	{

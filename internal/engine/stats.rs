@@ -437,7 +437,7 @@ impl Engine {
 			))
 			.await
 			.map_err(ComposeError::Podman)?;
-		let mut frames = parse_json_lines::<StatsReport>(resp.into_body());
+		let mut frames = parse_json_lines::<StatsReport, _>(resp.into_body());
 
 		// A live region only where one belongs: stdout a terminal, colour on, the
 		// width readable, the same three conditions the lifecycle board uses,
