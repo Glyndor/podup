@@ -354,10 +354,6 @@ The `podup` CLI prints these warnings automatically. Run with
 events. See the [`RUST_LOG` reference in `commands.md`](commands.md#environment)
 for the full level table.
 
-If you embed podup as a **library**, `parse_file` itself stays quiet; call
-`podup::collect_diagnostics` on the parsed file to obtain the same warnings and
-surface them to your users.
-
 ## File references and path confinement
 
 Compose files are **trusted input**, like a Makefile. Path-valued keys that the
