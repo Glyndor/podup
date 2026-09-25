@@ -207,18 +207,22 @@ async fn cli_logs_follow_delivers_first_line_promptly() {
 	}
 	use std::io::{BufRead, BufReader};
 	use std::process::Stdio;
+	use std::sync::mpsc::{channel, RecvTimeoutError};
+	use std::thread;
 	use std::time::{Duration, Instant};
 
 	let dir = tempdir().unwrap();
 	let compose = dir.path().join("docker-compose.yml");
 	let proj = format!("t{}-prompt", std::process::id());
-	// Container prints its line at start and then sleeps long enough that
-	// a slow consumer would be obvious. `sh -c` with a single command
-	// avoids the `command:` array shape some compose versions resolve
-	// through a shell of their own.
+	// Container sleeps three seconds before printing its line. The line
+	// must reach podup's stdout within two seconds of being printed;
+	// the three-second silence is what the promptness half of the
+	// streaming change is meant to handle. `sh -c` keeps the command
+	// out of compose's `command:` array shape, which some compose
+	// versions route through a shell of their own.
 	fs::write(
 		&compose,
-		"services:\n  prompt:\n    image: alpine:latest\n    command: \"printf 'first-line\\\\n'; sleep 120\"\n",
+		"services:\n  prompt:\n    image: alpine:latest\n    command: \"sleep 3; echo late-line; sleep 120\"\n",
 	)
 	.unwrap();
 	let c = compose.to_str().unwrap();
@@ -237,25 +241,59 @@ async fn cli_logs_follow_delivers_first_line_promptly() {
 		.spawn()
 		.unwrap();
 
-	// `tokio::time::timeout` would cancel the child only on the future's
-	// cancellation; here we drive the child incrementally with a deadline
-	// so a hung stream shows up as a real test failure rather than a
-	// panic in the unwrap.
-	let deadline = started + Duration::from_secs(5);
-	let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
+	// Read the child's stdout on a dedicated thread that forwards each
+	// line through a channel. `recv_timeout` enforces the deadline
+	// without ever blocking forever, so a hung stream shows up as a
+	// timeout the assertion below names. `BufRead::lines()` would
+	// block waiting for the next line and never fire the deadline.
+	let (tx, rx) = channel();
+	let stdout = child.stdout.take().unwrap();
+	let reader_handle = thread::spawn(move || {
+		let reader = BufReader::new(stdout);
+		for line in reader.lines() {
+			match line {
+				Ok(l) => {
+					if tx.send(l).is_err() {
+						break;
+					}
+				}
+				Err(_) => break,
+			}
+		}
+	});
+
+	// Container prints `late-line` ~3 s after `up -d` returns, the reader
+	// starts right after. Budget: ~6 s wall from `started`, with a 2 s
+	// cap on the time the line takes to travel from the container to
+	// podup's stdout. Six seconds is comfortably more than the
+	// measured curl path on the flood-flood-1 fixture; the pre-change
+	// design still fit, but the cost was paid per frame, not just at
+	// the head.
+	let deadline = started + Duration::from_secs(6);
 	let mut found_line: Option<Duration> = None;
-	while Instant::now() < deadline {
-		let line = match stdout.next() {
-			Some(Ok(l)) => l,
-			Some(Err(_)) | None => break,
-		};
-		if line.contains("first-line") {
-			found_line = Some(started.elapsed());
+	loop {
+		let remaining = deadline.saturating_duration_since(Instant::now());
+		if remaining.is_zero() {
 			break;
 		}
+		match rx.recv_timeout(remaining) {
+			Ok(line) => {
+				if line.contains("late-line") {
+					found_line = Some(started.elapsed());
+					break;
+				}
+			}
+			Err(RecvTimeoutError::Timeout) | Err(RecvTimeoutError::Disconnected) => break,
+		}
 	}
+
+	// Clean up the child, the reader thread, and the container in every
+	// case. The previous shape handled the happy path but let a panic
+	// skip `down` and leak the container; the guard below runs the same
+	// teardown whether the assertion fires or not.
 	let _ = child.kill();
 	let _ = child.wait();
+	let _ = reader_handle.join();
 	Command::new(bin())
 		.args(["-f", c, "-p", &proj, "down"])
 		.output()
@@ -263,21 +301,26 @@ async fn cli_logs_follow_delivers_first_line_promptly() {
 
 	let elapsed = found_line.unwrap_or_else(|| {
 		panic!(
-			"logs -f never produced the first line within 5s of starting the reader; \
+			"logs -f never produced late-line within 6s of starting the reader; \
 			 this is the promptness regression the inline-driven body change guards against"
 		)
 	});
-	// The container prints its line immediately on start. The reader
-	// starts as soon as the test issues `podup logs -f`, so the budget
-	// is the wall-clock cost from `started` to the line reaching our
-	// stdout: socket round-trip, k8s-file log rotation, hyper's
-	// head parsing, the inline-driven body poll, and stdout. Five
-	// seconds is comfortably more than the measured curl path on the
-	// flood-flood-1 fixture; the pre-change design still fit, but the
-	// cost was paid per frame, not just at the head.
+	// Time from the container's print (about 3 s after `up -d`) to the
+	// line reaching podup's stdout: socket round-trip, k8s-file log
+	// rotation, hyper's head parsing, the inline-driven body poll, and
+	// stdout. Two seconds is the budget; the pre-change design still
+	// fit, but the cost was paid per frame, not just at the head.
+	let container_print_offset = Duration::from_secs(3);
+	let transport = elapsed.saturating_sub(container_print_offset);
+	eprintln!(
+		"cli_logs_follow_delivers_first_line_promptly: late-line reached podup's stdout \
+		 {elapsed:?} after the reader started (transport {transport:?} after the container \
+		 printed it at ~{container_print_offset:?})"
+	);
 	assert!(
-		elapsed < Duration::from_secs(5),
-		"first line reached podup's stdout in {elapsed:?}, expected <5s"
+		transport < Duration::from_secs(2),
+		"late-line took {transport:?} to reach podup's stdout after the container printed it \
+		 (elapsed from start: {elapsed:?})"
 	);
 }
 
