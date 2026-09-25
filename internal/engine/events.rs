@@ -191,120 +191,14 @@ impl Engine {
 	}
 }
 
-/// Reject a `--since` written as a negative relative duration.
-///
-/// libpod reads a relative `since` as a time before now, so `30m` is thirty
-/// minutes ago and `-30m` is thirty minutes in the future: a window that
-/// starts there matches nothing and the feed looks empty (#1896). A plain
-/// negative number is left alone, though: libpod's `ParseInputTime` parses
-/// numeric values as Unix timestamps before trying them as durations, so a
-/// pre-epoch lower bound like `--since -1` is a valid replay window, and
-/// `-0s`/`-0m` are zero offsets (i.e. "now"). The check matches Go's
-/// duration syntax exactly on the part after `-`: one or more segments,
-/// each a number immediately followed by a unit from `ns`, `us`, `µs`,
-/// `ms`, `s`, `m`, `h`, with at least one non-zero digit overall. Anything
-/// that fails to parse that way is forwarded unchanged so `1e3`, negative
-/// timestamps and zero offsets still reach libpod.
-fn validate_events_since(since: Option<&str>) -> Result<()> {
-	let Some(v) = since else {
-		return Ok(());
-	};
-	let Some(rest) = v.strip_prefix('-') else {
-		return Ok(());
-	};
-	if is_go_duration(rest) {
-		return Err(ComposeError::Unsupported(format!(
-			"invalid --since value {v:?}: a relative time counts back from now, so write it without the leading '-' (e.g. --since {rest})"
-		)));
-	}
-	Ok(())
-}
+/// Reject a `--since` written as a negative relative duration. The
+/// matcher is lifted out to [`super::since_validation`] so this file
+/// stays under the source-line budget; the contract is unchanged
+/// (#1896).
+#[path = "events_since_validation.rs"]
+mod since_validation;
 
-/// Exact Go duration syntax for the part after a leading `-`. Returns
-/// `true` only when `rest` is one or more segments, each a number (`123`,
-/// `1.5`, `.5`, `1.`) immediately followed by a unit from `ns`, `us`,
-/// `µs`, `ms`, `s`, `m`, `h`, with no trailing characters and at least one
-/// non-zero digit overall. Used only by [`validate_events_since`].
-///
-/// Hand-written on purpose: the inputs are short and a regex crate would
-/// be heavier than the parser it would replace. Kept as small as the
-/// surface it has to cover.
-fn is_go_duration(rest: &str) -> bool {
-	let mut chars = rest.chars().peekable();
-	let mut has_non_zero_overall = false;
-
-	loop {
-		let mut saw_digit = false;
-		let mut segment_has_non_zero = false;
-
-		while let Some(&c) = chars.peek() {
-			if c.is_ascii_digit() {
-				chars.next();
-				saw_digit = true;
-				if c != '0' {
-					segment_has_non_zero = true;
-				}
-			} else {
-				break;
-			}
-		}
-
-		if chars.peek() == Some(&'.') {
-			chars.next();
-			let mut frac_has_digit = false;
-			while let Some(&c) = chars.peek() {
-				if c.is_ascii_digit() {
-					chars.next();
-					frac_has_digit = true;
-					if c != '0' {
-						segment_has_non_zero = true;
-					}
-				} else {
-					break;
-				}
-			}
-			// Go's `time.ParseDuration` accepts `.5` and `1.`, but not a bare
-			// `.`. A segment needs at least one digit on one side of the dot.
-			if !saw_digit && !frac_has_digit {
-				return false;
-			}
-			saw_digit = saw_digit || frac_has_digit;
-		}
-
-		if !saw_digit {
-			// No number for the unit to attach to.
-			return false;
-		}
-
-		// A unit must follow the number; a bare `5` without a unit is not a
-		// Go duration.
-		match chars.next() {
-			Some('n') | Some('u') | Some('\u{00B5}') => {
-				if chars.peek() != Some(&'s') {
-					return false;
-				}
-				chars.next();
-			}
-			Some('m') => {
-				if chars.peek() == Some(&'s') {
-					chars.next();
-				}
-			}
-			Some('s') | Some('h') => {}
-			_ => return false,
-		}
-
-		if segment_has_non_zero {
-			has_non_zero_overall = true;
-		}
-
-		if chars.peek().is_none() {
-			break;
-		}
-	}
-
-	has_non_zero_overall
-}
+pub(super) use since_validation::validate_events_since;
 
 /// Build the libpod events `filters` object: always scope to this project's
 /// `podup.project` label, then merge each user `KEY=VALUE` predicate (appending
@@ -338,6 +232,67 @@ fn build_event_filters(project: &str, user_filters: &[String]) -> Result<Value> 
 	Ok(Value::Object(map))
 }
 
+/// Rewrite a libpod-native event into the docker-compat shape podup has
+/// always exposed: `status` becomes `Action`, and the two verbs the
+/// docker-compat handler rewrote (`Type == "image" && Action ==
+/// "remove" -> `delete`; `Action == "died" -> `die`) carry over. The
+/// `died` rewrite also copies `Actor.Attributes.containerExitCode`
+/// into `Actor.Attributes.exitCode` alongside; `containerExitCode`
+/// stays in place so a caller reading either key still finds its
+/// value (#1914).
+///
+/// The compat handler in `pkg/api/handlers/compat/events.go`
+/// (Podman v5.7.0) does exactly this and nothing more; this mirrors
+/// it line for line. A wider rewrite (e.g. promoting `remove -> delete`
+/// for every `Type`, or copying `exitCode` on every event that
+/// carries `containerExitCode`) would diverge from the docker-compat
+/// JSON a script already parses, and would add fields that no
+/// docker-compat event ever published (#1914).
+///
+/// Pure so the rewrite is unit-tested without a live socket.
+fn rename_event(value: &Value) -> Value {
+	let mut out = value.clone();
+	if let Some(obj) = out.as_object_mut() {
+		// The verb lives in `status` on libpod and in `Action` on docker-
+		// compat. Read whichever is there so the compat handler's two rules
+		// (which check `Action`) apply to libpod-shaped input too.
+		let action = obj
+			.get("Action")
+			.or_else(|| obj.get("status"))
+			.and_then(Value::as_str)
+			.map(str::to_owned);
+		let typ = obj.get("Type").and_then(Value::as_str).unwrap_or("");
+		if let Some(action) = action {
+			if typ == "image" && action == "remove" {
+				// Compat rule 1: image removal is `delete`, on both keys.
+				obj.insert("Action".to_string(), Value::String("delete".to_string()));
+				obj.insert("status".to_string(), Value::String("delete".to_string()));
+			} else if action == "died" {
+				// Compat rule 2: a container death is `die`, on both keys,
+				// and the libpod `containerExitCode` is copied into the
+				// docker-compat `exitCode` alongside.
+				obj.insert("Action".to_string(), Value::String("die".to_string()));
+				obj.insert("status".to_string(), Value::String("die".to_string()));
+				if let Some(actor) = obj.get_mut("Actor").and_then(Value::as_object_mut) {
+					if let Some(attrs) = actor.get_mut("Attributes").and_then(Value::as_object_mut)
+					{
+						if let Some(code) = attrs.get("containerExitCode").cloned() {
+							attrs.entry("exitCode".to_string()).or_insert(code);
+						}
+					}
+				}
+			} else {
+				// No compat rule applies. The verb still lands under `Action`
+				// so a `--format json` consumer that parses `Action` finds
+				// it; the libpod `status` key stays too, so a script keyed
+				// on either shape still reads its value.
+				obj.insert("Action".to_string(), Value::String(action));
+			}
+		}
+	}
+	out
+}
+
 /// Render one event. `json` emits the raw object as a compact line; otherwise a
 /// `TYPE ACTION NAME` summary, tolerant of both the docker-compat shape
 /// (`Type`/`Action`/`Actor.Attributes.name`) and the libpod-native one
@@ -349,7 +304,13 @@ fn format_event(value: &Value, json: bool) -> String {
 		// truncating the NDJSON stream. Surface the cause at `debug` (the
 		// operator who runs with `RUST_LOG=debug` sees why one row is
 		// missing), drop the row, and let the stream continue (#1366).
-		return match super::to_query_json("events row", value) {
+		//
+		// The same docker-compat shape is honoured on the JSON path: verbs
+		// are rewritten in a clone of the object so the wire bytes still
+		// carry `Action=die` and `Action=delete` (and the libpod-style
+		// `status=...` is preserved alongside, for callers that keyed on
+		// it). Exit-code renaming is applied below in [`rename_event`].
+		return match super::to_query_json("events row", &rename_event(value)) {
 			Ok(s) => s,
 			Err(e) => {
 				tracing::debug!("events: dropping unserialisable row: {e}");
@@ -358,11 +319,25 @@ fn format_event(value: &Value, json: bool) -> String {
 		};
 	}
 	let typ = value.get("Type").and_then(Value::as_str).unwrap_or("");
-	let action = value
+	let action_raw = value
 		.get("Action")
 		.or_else(|| value.get("status"))
 		.and_then(Value::as_str)
 		.unwrap_or("");
+	// Mirror the docker-compat events handler: `Type == "image" &&
+	// Action == "remove" -> delete` (a container removal stays
+	// `remove`); `Action == "died" -> die`; anything else passes
+	// through. The exit-code copy lives in [`rename_event`] and is
+	// irrelevant on the table path (the table does not render
+	// `Actor.Attributes`) (#1914).
+	let action = if typ == "image" && action_raw == "remove" {
+		"delete"
+	} else {
+		match action_raw {
+			"died" => "die",
+			other => other,
+		}
+	};
 	let name = value
 		.pointer("/Actor/Attributes/name")
 		.or_else(|| value.get("id"))
@@ -467,6 +442,10 @@ fn format_event_line(
 #[cfg(test)]
 #[path = "events_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "events_compat_rewrite_tests.rs"]
+mod compat_rewrite_tests;
 
 #[cfg(test)]
 #[path = "events_event_colour_tests.rs"]

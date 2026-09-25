@@ -1,4 +1,4 @@
-use super::validate_signal;
+use super::{must_wait_after_kill, validate_signal};
 use crate::error::ComposeError;
 
 #[test]
@@ -66,4 +66,27 @@ fn rejects_unknown_signal_names() {
 		validate_signal("not-a-signal").unwrap_err(),
 		ComposeError::InvalidSignal(_)
 	));
+}
+
+#[test]
+fn must_wait_after_kill_only_for_kill_or_zero() {
+	// SIGKILL/9/KILL/cased and 0 trigger the follow-up wait; every other
+	// signal the user is likely to send does not, and the helper pins the
+	// boundary so a future "always wait" simplification does not silently
+	// turn `kill -s SIGTERM <id>` into a per-container blocking call.
+	assert!(must_wait_after_kill("SIGKILL"));
+	assert!(must_wait_after_kill("KILL"));
+	assert!(must_wait_after_kill("kill"));
+	assert!(must_wait_after_kill("9"));
+	assert!(must_wait_after_kill("0"));
+	for s in [
+		"SIGTERM", "TERM", "SIGHUP", "HUP", "SIGINT", "INT", "1", "15", "64",
+	] {
+		assert!(!must_wait_after_kill(s), "{s} must not trigger a wait");
+	}
+	// An empty or whitespace-only signal: the validation upstream rejects
+	// those with an error before this runs, but the helper still has to
+	// return false rather than panic.
+	assert!(!must_wait_after_kill(""));
+	assert!(!must_wait_after_kill("   "));
 }

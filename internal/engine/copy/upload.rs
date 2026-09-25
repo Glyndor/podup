@@ -54,11 +54,7 @@ impl Engine {
 		packed: PackedStream,
 		uploaded_kind: Option<SentKind>,
 	) -> Result<()> {
-		let path = format!(
-			"{API_PREFIX}/containers/{}/archive?path={}",
-			urlencoded(container),
-			urlencoded(dir),
-		);
+		let path = archive_put_path(container, dir);
 		let verify_path = (!entry.is_empty()).then(|| {
 			format!(
 				"{API_PREFIX}/containers/{}/archive?path={}",
@@ -217,6 +213,24 @@ impl Engine {
 			 check {dir} in the container."
 		)))
 	}
+}
+
+/// Build the libpod archive-PUT path. `copyUIDGID=false` overrides the
+/// libpod default of `true`, which would otherwise overwrite the host
+/// UID/GID on the destination file with the container's runtime
+/// UID/GID. The Docker compat handler defaulted `copyUIDGID` to
+/// false, so this is the line that keeps podup's user-visible
+/// behaviour stable across the switch (#1914).
+///
+/// Public to `crate::engine` so the wire-shape unit tests in
+/// `engine::lifecycle::libpod_endpoint_query_tests` can pin the
+/// query string without standing up the streaming packer.
+pub(in crate::engine) fn archive_put_path(container: &str, dir: &str) -> String {
+	format!(
+		"{API_PREFIX}/containers/{}/archive?path={}&copyUIDGID=false",
+		urlencoded(container),
+		urlencoded(dir),
+	)
 }
 
 /// Wait for the pack task and return the recorded entry list. A pack error

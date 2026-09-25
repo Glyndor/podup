@@ -211,7 +211,7 @@ impl Engine {
 			// Single atomic restart (no visible stopped window) instead of a
 			// stop+start round-trip.
 			let restart_path = format!(
-				"{API_PREFIX}/containers/{}/restart?t={}",
+				"{API_PREFIX}/containers/{}/restart?timeout={}",
 				urlencoded(&container_name),
 				stop_timeout_param(grace),
 			);
@@ -237,6 +237,14 @@ impl Engine {
 		acted: &std::sync::atomic::AtomicBool,
 	) -> Result<()> {
 		let mut first_err: Option<ComposeError> = None;
+		// The Docker compat `/kill` handler blocks on the container when the
+		// signal is SIGKILL/KILL/9 (or 0), and returns once the container has
+		// exited or stopped; the libpod handler replies immediately. The
+		// compensation is a follow-up `wait?condition=stopped` for those
+		// signals only; SIGTERM etc. are answered promptly either way, and
+		// skipping the wait is what keeps `kill -s SIGTERM <id>` from pinning
+		// the caller behind every container the user happens to target.
+		let wait_for_exit = super::signal::must_wait_after_kill(signal);
 		for container_name in container_names {
 			let path = format!(
 				"{API_PREFIX}/containers/{}/kill?signal={}",
@@ -247,7 +255,12 @@ impl Engine {
 				.run_lifecycle_op(&path, &container_name, "Killed", LifecycleGoal::NotRunning)
 				.await
 			{
-				Ok(true) => acted.store(true, std::sync::atomic::Ordering::Relaxed),
+				Ok(true) => {
+					acted.store(true, std::sync::atomic::Ordering::Relaxed);
+					if wait_for_exit {
+						self.wait_after_kill(&container_name).await;
+					}
+				}
 				Ok(false) => {}
 				Err(e) => {
 					first_err.get_or_insert(e);
@@ -255,6 +268,27 @@ impl Engine {
 			}
 		}
 		first_err.map_or(Ok(()), Err)
+	}
+
+	/// Block until `container` is exited or stopped, the way the Docker
+	/// compat `/kill` handler did for SIGKILL/0. Capped by [`READ_TIMEOUT`]
+	/// so a stuck wait cannot pin the CLI forever; the kill itself
+	/// already succeeded, so a timeout here is logged at warn and not
+	/// promoted to an error.
+	async fn wait_after_kill(&self, container: &str) {
+		let path = format!(
+			"{API_PREFIX}/containers/{}/wait?condition=stopped",
+			urlencoded(container),
+		);
+		match self.client.post_empty_json_unbounded::<i64>(&path).await {
+			Ok(_code) => {}
+			Err(e) => {
+				tracing::warn!(
+					"kill {container}: wait for exited/stopped did not complete [{e}]; \
+					 the container is left to settle on its own"
+				);
+			}
+		}
 	}
 
 	/// Remove a single service's containers. See [`Engine::rm_with_options`].
@@ -267,11 +301,7 @@ impl Engine {
 	) -> Result<()> {
 		let mut first_err: Option<ComposeError> = None;
 		for container_name in container_names {
-			let force_str = if force { "true" } else { "false" };
-			let path = format!(
-				"{API_PREFIX}/containers/{}?force={force_str}&v={remove_volumes}",
-				urlencoded(&container_name),
-			);
+			let path = super::container_rm_path(&container_name, remove_volumes, force);
 			// The row opens with its working verb so it carries a start time and
 			// `Removed` comes with the elapsed time, the way `down` reports the
 			// same removal (#1686). Every arm closes the row: one left at
@@ -365,7 +395,7 @@ impl Engine {
 		// does not pin recreation for the full client READ_TIMEOUT; the
 		// force-remove below SIGKILLs it regardless.
 		let stop_path = format!(
-			"{API_PREFIX}/containers/{}/stop?t={}",
+			"{API_PREFIX}/containers/{}/stop?timeout={}",
 			urlencoded(container_name),
 			stop_timeout_param(grace),
 		);
@@ -385,7 +415,7 @@ impl Engine {
 			}
 		}
 
-		let rm_path = super::container_rm_path(container_name, remove_volumes);
+		let rm_path = super::container_rm_path(container_name, remove_volumes, true);
 		match self.client.delete_ok(&rm_path).await {
 			Ok(()) => {
 				crate::ui::progress_line("Container", container_name, "Removed");

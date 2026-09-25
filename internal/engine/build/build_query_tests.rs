@@ -283,6 +283,82 @@ mod tests {
 		);
 	}
 
+	/// `layers=true` must be present on the build query. The Docker
+	/// compat handler used to default `layers` to true; the libpod
+	/// handler defaults it to false. podup's user-facing behaviour
+	/// is "the second build of the same Containerfile reuses the
+	/// cache", which requires `layers=true`. Sent once, not twice
+	/// (Podman rejects a duplicate param).
+	#[tokio::test]
+	async fn build_query_carries_layers_true() {
+		let (_dir, _fake, engine, _ctx, requests) = start_capture("proj");
+
+		let file = crate::parse_str(
+			"services:\n  app:\n    image: proj/img:1\n    build:\n      context: .\n",
+		)
+		.unwrap();
+		engine
+			.build_all_with_options(&file, &[], &crate::engine::BuildOptions::default())
+			.await
+			.expect("a build the fake accepts succeeds");
+
+		let requests = requests.lock().unwrap().clone();
+		let target = build_target(&requests);
+		let query = target
+			.split_once('?')
+			.expect("the build target carries a query string");
+
+		let layers_count = exact_param_count(query.1, "layers=true");
+		assert_eq!(
+			layers_count, 1,
+			"the build query must carry `layers=true` exactly once, found {layers_count}: {query:?}"
+		);
+	}
+
+	/// `outputformat=application/vnd.docker.distribution.manifest.v2+json`
+	/// must be present on the build query. The libpod handler defaults
+	/// the manifest format to OCI, which does not reuse the layer cache
+	/// on a subsequent build of the same Containerfile and drops
+	/// `HEALTHCHECK` from the image config. Measured on 2026-09-24
+	/// against Podman 5.7.0 by building the same Containerfile twice
+	/// through `/v5.0.0/libpod/build`: `layers=true` alone prints zero
+	/// `Using cache` lines on the second build; the same query with
+	/// `outputformat=application/vnd.docker.distribution.manifest.v2+json`
+	/// appended prints two. Sent once, not twice (Podman rejects a
+	/// duplicate param).
+	#[tokio::test]
+	async fn build_query_carries_docker_distribution_outputformat() {
+		let (_dir, _fake, engine, _ctx, requests) = start_capture("proj");
+
+		let file = crate::parse_str(
+			"services:\n  app:\n    image: proj/img:1\n    build:\n      context: .\n",
+		)
+		.unwrap();
+		engine
+			.build_all_with_options(&file, &[], &crate::engine::BuildOptions::default())
+			.await
+			.expect("a build the fake accepts succeeds");
+
+		let requests = requests.lock().unwrap().clone();
+		let target = build_target(&requests);
+		let query = target
+			.split_once('?')
+			.expect("the build target carries a query string");
+
+		// The exact-once count pins the wire shape so a future change
+		// cannot accidentally send the parameter twice and have Podman
+		// reject the request.
+		let outputformat_count = exact_param_count(
+			query.1,
+			"outputformat=application%2Fvnd.docker.distribution.manifest.v2%2Bjson",
+		);
+		assert_eq!(
+			outputformat_count, 1,
+			"the build query must carry the docker-distribution outputformat exactly once, \
+			 found {outputformat_count}: {query:?}"
+		);
+	}
+
 	/// The two labels are url-encoded into `key=value` form, just like every
 	/// other value in this query string. A label value containing characters
 	/// Podman's parser rejects when raw (`:`, `+`, `&`) must reach the

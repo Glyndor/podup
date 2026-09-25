@@ -69,7 +69,10 @@ impl Engine {
 			// 0 (#1250).
 			let containers: &[String] = live_by_service.get(name).map(Vec::as_slice).unwrap_or(&[]);
 			for container_name in containers {
-				let path = format!("{API_PREFIX}/containers/{}/top", urlencoded(container_name),);
+				let path = format!(
+					"{API_PREFIX}/containers/{}/top?ps_args=-ef",
+					urlencoded(container_name),
+				);
 				match self
 					.client
 					.get_json::<crate::libpod::types::container::TopResponse>(&path)
@@ -236,12 +239,11 @@ impl Engine {
 		service_name: &str,
 		index: Option<u32>,
 	) -> Result<()> {
-		let service = file
-			.services
-			.get(service_name)
-			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
+		if !file.services.contains_key(service_name) {
+			return Err(ComposeError::ServiceNotFound(service_name.into()));
+		}
 		// Resolve against the containers Podman actually has so a service scaled at
-		// runtime (`up --scale=3` → `…-1`/`…-2`/`…-3`) attaches to a real replica
+		// runtime (`up --scale=3` => `…-1`/`…-2`/`…-3`) attaches to a real replica
 		// instead of the unsuffixed base name, which would 404. `--index`
 		// (1-based) selects a specific live replica; `None` picks the
 		// lowest-numbered live container for a stable choice.
@@ -264,7 +266,6 @@ impl Engine {
 				))
 			})?,
 		};
-		let is_tty = service.tty.unwrap_or(false);
 
 		// `docker compose attach` errors when the target is not running. Without
 		// this check the libpod logs endpoint replays the *entire* history of a
@@ -304,11 +305,16 @@ impl Engine {
 			}
 			Err(e) => return Err(ComposeError::Podman(e)),
 		};
-		let mut stream = if is_tty {
-			crate::libpod::parse_raw(resp.into_body())
-		} else {
-			crate::libpod::parse_multiplexed(resp.into_body())
-		};
+		// The libpod `/logs` endpoint always frames the body with 8-byte
+		// multiplexed headers (stdout/stderr channel byte + payload length +
+		// payload), including for containers that were started with a TTY.
+		// The Docker compat handler used raw bytes for TTY containers, so
+		// parsing by `is_tty` here is the docker-compat shape; on libpod it
+		// strips a leading `\x01` (the channel byte for stdout) from every
+		// line and renders the stream unreadable. The raw path is still used
+		// for the hijacked attach/exec stream in
+		// `attach.rs`, which goes to `/attach_websocket`, not `/logs`.
+		let mut stream = crate::libpod::parse_multiplexed(resp.into_body());
 		while let Some(msg) = stream.next().await {
 			match msg {
 				Ok(LogOutput::StdOut { message }) => {

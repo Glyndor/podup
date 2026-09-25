@@ -5,7 +5,10 @@
 //! Podman libpod API, and applies any extra tags. Multi-stage targets are
 //! passed as the `target=` query parameter; the full Dockerfile is always sent.
 
+mod body_plan;
 mod context;
+mod extra_tags;
+mod normalize;
 mod pull;
 mod push;
 mod secrets;

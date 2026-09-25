@@ -178,7 +178,7 @@ impl Engine {
 	/// from the response (#1363).
 	pub(super) async fn stop_container(&self, container: &str, grace: i32) -> Result<bool> {
 		let path = format!(
-			"{API_PREFIX}/containers/{}/stop?t={}",
+			"{API_PREFIX}/containers/{}/stop?timeout={}",
 			crate::libpod::urlencoded(container),
 			stop_timeout_param(grace),
 		);

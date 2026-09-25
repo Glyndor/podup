@@ -48,6 +48,31 @@ pub(crate) fn validate_signal(signal: &str) -> Result<()> {
 	}
 }
 
+/// Whether a `kill` whose target signal is `signal` must be followed by a
+/// `wait?condition=stopped` to match the Docker compat handler's behaviour.
+///
+/// The compat handler blocks until the container has exited or stopped on
+/// signals the kernel delivers unconditionally: SIGKILL (`9`, `KILL`,
+/// `SIGKILL`) and signal `0` (the existence probe). libpod's
+/// `/containers/{id}/kill` answers immediately for every signal, so a caller
+/// that relied on the compat handler's wait would observe a still-running
+/// container when `kill` returned. SIGTERM and the other "graceful" signals
+/// stay fast on the libpod side; adding a wait there would pin every `kill
+/// -s SIGTERM` behind every targeted container even when nothing required
+/// it. Pure so the rule is unit-tested without a socket.
+pub(crate) fn must_wait_after_kill(signal: &str) -> bool {
+	let trimmed = signal.trim();
+	if trimmed.is_empty() {
+		return false;
+	}
+	if trimmed.chars().all(|c| c.is_ascii_digit()) {
+		return matches!(trimmed.parse::<u32>(), Ok(0) | Ok(9));
+	}
+	let upper = trimmed.to_ascii_uppercase();
+	let name = upper.strip_prefix("SIG").unwrap_or(&upper);
+	name == "KILL"
+}
+
 #[cfg(test)]
 #[path = "signal_tests.rs"]
 mod tests;

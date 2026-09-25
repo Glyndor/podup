@@ -221,24 +221,29 @@ impl Engine {
 		let abort_on_container_exit =
 			options.abort_on_container_exit || options.exit_code_from.is_some();
 
-		// Carry (service, display_name, container_name, is_tty) so the log parser
-		// matches the container's framing mode (TTY containers emit raw bytes;
-		// non-TTY containers emit multiplexed 8-byte-header frames) and so the
-		// abort path can map a stream end back to the compose service that owns
-		// it without re-deriving the project prefix.
-		let attached: Vec<(String, String, String, bool)> = file
+		// Carry (service, display_name, container_name) so the abort path can map
+		// a stream end back to the compose service that owns it without
+		// re-deriving the project prefix. The libpod `/logs` endpoint always
+		// frames its body with 8-byte multiplexed headers (stdout/stderr
+		// channel byte + payload length + payload), including for containers
+		// that were started with a TTY; the Docker compat handler used raw
+		// bytes for TTY containers, so per-service `is_tty` here is the
+		// docker-compat shape and would strip the leading channel byte off
+		// every line. The raw path is reserved for hijacked attach/exec
+		// streams (`/attach_websocket`, `/exec/{id}/start`), not the logs
+		// endpoint.
+		let attached: Vec<(String, String, String)> = file
 			.services
 			.iter()
 			.filter(|(_, s)| s.attach.unwrap_or(true))
 			.flat_map(|(name, s)| {
 				let proj_prefix = format!("{}-", self.project);
-				let is_tty = s.tty.unwrap_or(false);
 				self.replica_names(name, s).into_iter().map(move |cname| {
 					let display = cname
 						.strip_prefix(proj_prefix.as_str())
 						.map(|s| s.to_string())
 						.unwrap_or_else(|| cname.clone());
-					(name.clone(), display, cname, is_tty)
+					(name.clone(), display, cname)
 				})
 			})
 			.collect();
@@ -254,14 +259,13 @@ impl Engine {
 
 		let streams: FuturesUnordered<_> = attached
 			.iter()
-			.map(|(svc, display, cname, is_tty)| {
+			.map(|(svc, display, cname)| {
 				let prefix = display.clone();
 				let path = format!(
 					"{API_PREFIX}/containers/{}/logs?stdout=true&stderr=true&follow=true&timestamps={timestamps}",
 					urlencoded(cname),
 				);
 				let client = &self.client;
-				let is_tty = *is_tty;
 				let cname = cname.clone();
 				let svc = svc.clone();
 				async move {
@@ -272,13 +276,7 @@ impl Engine {
 							return (svc, cname, StreamEnd::Broke);
 						}
 					};
-					// TTY containers produce raw bytes (stdout/stderr merged).
-					// Non-TTY containers produce multiplexed frames with 8-byte headers.
-					let mut stream = if is_tty {
-						crate::libpod::parse_raw(resp.into_body())
-					} else {
-						crate::libpod::parse_multiplexed(resp.into_body())
-					};
+					let mut stream = crate::libpod::parse_multiplexed(resp.into_body());
 					while let Some(msg) = stream.next().await {
 						match msg {
 							Ok(LogOutput::StdOut { message }) => {
