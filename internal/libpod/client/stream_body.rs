@@ -17,7 +17,7 @@
 //! task, frames the connection just pushed are visible to the body poll
 //! without a context switch, and the parser drains them in one trip.
 //!
-//! The body is `Send + Unpin + 'static` (the inner `Incoming` is wrapped in
+//! The body is `Send + Unpin + 'static` (the inner body is wrapped in
 //! `Pin<Box<_>>` so the wrapper stays `Unpin` and can be polled without
 //! `pin-project`), implements `Body<Data = Bytes, Error = hyper::Error>` so
 //! every caller of the streaming methods keeps working unchanged
@@ -45,19 +45,28 @@ use hyper::body::{Body, Frame, Incoming, SizeHint};
 pub type ConnectionFuture =
 	Pin<Box<dyn std::future::Future<Output = Result<(), hyper::Error>> + Send>>;
 
-/// A body that polls the connection in line with `Incoming`. Drop closes
-/// the connection.
-pub struct DrivenBody {
-	inner: Pin<Box<Incoming>>,
+/// A body that polls the connection in line with the inner body. Drop
+/// closes the connection.
+///
+/// Generic over the inner body so unit tests can stand in a synthetic body
+/// without going through hyper's [`Incoming`] (which has no public
+/// constructor). Production callers use the [`Incoming`] default; the type
+/// alias `DrivenBody` therefore still names `DrivenBody<Incoming>` for
+/// every existing caller.
+pub struct DrivenBody<B = Incoming> {
+	inner: Pin<Box<B>>,
 	conn: Option<ConnectionFuture>,
 }
 
-impl DrivenBody {
+impl<B> DrivenBody<B>
+where
+	B: Body<Data = Bytes, Error = hyper::Error> + Send + Unpin + 'static,
+{
 	/// Build a body that drives `conn` (if any) in the same task as each
 	/// [`Body::poll_frame`] call. Pass `None` when the connection future has
 	/// already completed by the time the response head arrives; re-polling a
 	/// completed future violates the `Future` contract.
-	pub fn new(body: Incoming, conn: Option<ConnectionFuture>) -> Self {
+	pub fn new(body: B, conn: Option<ConnectionFuture>) -> Self {
 		Self {
 			inner: Box::pin(body),
 			conn,
@@ -65,7 +74,10 @@ impl DrivenBody {
 	}
 }
 
-impl Body for DrivenBody {
+impl<B> Body for DrivenBody<B>
+where
+	B: Body<Data = Bytes, Error = hyper::Error> + Send + Unpin,
+{
 	type Data = Bytes;
 	type Error = hyper::Error;
 
@@ -103,7 +115,7 @@ impl Body for DrivenBody {
 	}
 }
 
-impl Drop for DrivenBody {
+impl<B> Drop for DrivenBody<B> {
 	fn drop(&mut self) {
 		// Dropping the connection future drops the underlying IO, which
 		// hyper reports to Podman as a socket close. A caller that bails out

@@ -8,7 +8,6 @@
 //! drops. See [`Client`] for the full contract.
 
 use std::sync::Arc;
-use std::task::Poll;
 
 use bytes::Bytes;
 use futures_util::Future;
@@ -18,6 +17,7 @@ use hyper::{Method, Request, Response, StatusCode};
 
 use super::error::PodmanError;
 
+mod conn_state;
 mod delete;
 mod encode;
 mod get;
@@ -28,11 +28,11 @@ mod post;
 mod put;
 mod stream;
 mod stream_body;
+use conn_state::ConnState;
 pub(crate) use encode::{is_valid_object_name, urlencoded};
 pub(crate) use hijack::Hijacked;
 use pool::{ConnPool, PoolGuard};
 use stream::SocketStream;
-use stream_body::ConnectionFuture;
 pub use stream_body::DrivenBody;
 
 /// The request body every call shares. A boxed body so a fully-buffered
@@ -328,40 +328,18 @@ impl Client {
 		// violates the `Future` contract.
 		let send_fut = sender.send_request(req);
 		tokio::pin!(send_fut);
-		enum ConnState {
-			Pending(ConnectionFuture),
-			Done(std::result::Result<(), hyper::Error>),
-		}
-		let mut conn_state = ConnState::Pending(driver);
+		let mut conn_state = ConnState::new(driver);
 		let send_result = Self::apply_timeout(
 			response_timeout,
 			"waiting for the Podman socket to respond",
 			futures_util::future::poll_fn(|cx| {
-				if let ConnState::Pending(fut) = &mut conn_state {
-					match fut.as_mut().poll(cx) {
-						Poll::Ready(result) => conn_state = ConnState::Done(result),
-						Poll::Pending => {}
-					}
-				}
+				conn_state.poll(cx);
 				send_fut.as_mut().poll(cx)
 			}),
 		)
 		.await;
-		match (send_result, conn_state) {
-			(Ok(Ok(resp)), ConnState::Pending(conn)) => {
-				let (parts, body) = resp.into_parts();
-				Ok(Response::from_parts(
-					parts,
-					DrivenBody::new(body, Some(conn)),
-				))
-			}
-			(Ok(Ok(resp)), ConnState::Done(Ok(()))) => {
-				// Connection finished before the head was taken; the body
-				// must not re-poll a completed future.
-				let (parts, body) = resp.into_parts();
-				Ok(Response::from_parts(parts, DrivenBody::new(body, None)))
-			}
-			(Ok(Ok(resp)), ConnState::Done(Err(e))) => {
+		match (send_result, conn_state.result()) {
+			(Ok(Ok(resp)), Some(Err(e))) => {
 				// The head arrived and the connection then failed in the same
 				// poll. When the connection ran on its own task, the caller got
 				// the response regardless and the body reported an error only
@@ -372,6 +350,13 @@ impl Client {
 				);
 				let (parts, body) = resp.into_parts();
 				Ok(Response::from_parts(parts, DrivenBody::new(body, None)))
+			}
+			(Ok(Ok(resp)), _) => {
+				let (parts, body) = resp.into_parts();
+				Ok(Response::from_parts(
+					parts,
+					DrivenBody::new(body, conn_state.take_pending()),
+				))
 			}
 			(Ok(Err(e)), _) => Err(PodmanError::Hyper(e)),
 			(Err(e), _) => Err(e),

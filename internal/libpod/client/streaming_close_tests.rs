@@ -1,12 +1,12 @@
 //! Streaming path regression for the `Connection: close` short-body case.
 //!
-//! A short response the server terminates with `Connection: close` can
-//! complete the HTTP/1 connection future in the same poll that delivers the
-//! response head. `send_streaming` has to notice that and stop handing the
-//! connection to `DrivenBody`: re-polling a completed future violates the
-//! `Future` contract. The fix is a `ConnState` tracker next to the sender
-//! poll; this test pins the end-to-end behaviour against a real socket
-//! (#1900).
+//! The end-to-end wire contract for a short response the server
+//! terminates with `Connection: close`: the head and the whole body come
+//! back through the streaming path on a single socket. The
+//! `Future`-contract side (the connection future is not re-polled after
+//! the driver finishes in the same poll as the head) is pinned by the
+//! `conn_state_*` unit tests in `conn_state_tests.rs`; this test pins
+//! the end-to-end behaviour against a real socket (#1900).
 
 #![cfg(unix)]
 
@@ -101,18 +101,17 @@ impl Drop for CloseServer {
 	}
 }
 
-/// A response sent with `Content-Length` and `Connection: close` arrives
-/// with the head and a body that fits in one socket write. The hyper driver
-/// finishes in the same poll as the head; `send_streaming` has to notice
-/// that and hand `DrivenBody` no connection. Re-polling a completed future
-/// would violate the `Future` contract.
+/// A short response sent with `Content-Length` and `Connection: close`
+/// comes back whole through the streaming path (`get_stream`), over a
+/// single socket. The whole body fits in one server-side write, so a
+/// single `accept` covers head and body; the test asserts the bytes the
+/// daemon promised are exactly the bytes the caller sees, and that no
+/// second socket had to be opened to deliver them (#1900).
 ///
-/// Reading the body through the streaming path must return the full body
-/// and no error. The pre-fix shape was `let _ = driver.as_mut().poll(cx);`
-/// followed by `DrivenBody::new(body, driver)`: the connection future was
-/// handed to the body wrapper after it had already resolved. The tracking
-/// in `ConnState` keeps `DrivenBody::new` from re-polling a settled future
-/// when the body is later polled for frames (#1900).
+/// The `Future`-contract side of the streaming path (the connection
+/// future is not re-polled after the driver finishes) is pinned by the
+/// `conn_state_*` unit tests in `conn_state_tests.rs`; this test stays
+/// focused on the end-to-end wire behaviour.
 #[tokio::test]
 async fn streaming_path_serves_connection_close_short_body_cleanly() {
 	let body = b"the quick brown fox jumps over the lazy dog".repeat(8);
