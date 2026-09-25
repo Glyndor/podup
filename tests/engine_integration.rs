@@ -514,6 +514,16 @@ mod userns_pod;
 // with the rest of the crate-root helpers is the simpler split, and the tests
 // that use them (`super::*`) reach the crate root the same way every other
 // test group already does.
+//
+// The whole block is gated `cfg(all(unix, feature = "test-helpers"))` to
+// match the three `libpod_origin_form_*` modules it serves, which carry the
+// same gate at the `mod` declarations above. `podman_socket_url` reaches
+// `libc::getuid()` to build the `/run/user/<uid>/podman/podman.sock` path;
+// `libc` is a `[target.'cfg(unix)'.dependencies]` line in `Cargo.toml`, so on
+// Windows the crate is not in scope and the test target fails to compile
+// with `error[E0433]: cannot find module or crate libc`. Every caller of
+// every helper here is inside one of the three libpod modules, so the gate
+// is exact and no other test group loses anything.
 // ---------------------------------------------------------------------------
 
 /// Locate the Podman socket the engine talks to. The CLI's own storage root
@@ -525,6 +535,7 @@ mod userns_pod;
 ///
 /// Returns `None` when no candidate socket exists; the live tests skip on
 /// that path.
+#[cfg(all(unix, feature = "test-helpers"))]
 pub(crate) fn podman_socket_url() -> Option<String> {
 	for path in [
 		format!("/run/user/{}/podman/podman.sock", unsafe { libc::getuid() }),
@@ -540,6 +551,7 @@ pub(crate) fn podman_socket_url() -> Option<String> {
 /// Run `podman --url <socket> <args...>` and return the trimmed stdout.
 /// Panics with stderr on a non-zero exit so a failing assertion carries the
 /// actual Podman response.
+#[cfg(all(unix, feature = "test-helpers"))]
 pub(crate) fn podman_cmd(socket: &str, args: &[&str]) -> String {
 	let out = std::process::Command::new("podman")
 		.args(["--url", socket])
@@ -562,6 +574,7 @@ pub(crate) fn podman_cmd(socket: &str, args: &[&str]) -> String {
 /// composition drives the `podup` binary through `CARGO_BIN_EXE_podup`, the
 /// same binary `cargo test --test engine_integration` resolves at build
 /// time.
+#[cfg(all(unix, feature = "test-helpers"))]
 pub(crate) fn up_service(
 	socket: &str,
 	tag: &str,
@@ -611,6 +624,7 @@ pub(crate) fn up_service(
 /// Tear the project down. Best-effort: the `Drop` on `DownGuard` would do
 /// the same, but a single explicit teardown keeps the assertion surface
 /// (and the leftover list) clean.
+#[cfg(all(unix, feature = "test-helpers"))]
 pub(crate) fn down(socket: &str, dir: &tempfile::TempDir, name: &str) {
 	let compose = dir.path().join("compose.yaml");
 	let _ = std::process::Command::new(bin())
@@ -622,6 +636,7 @@ pub(crate) fn down(socket: &str, dir: &tempfile::TempDir, name: &str) {
 }
 
 /// Time the wall-clock between two instants in milliseconds.
+#[cfg(all(unix, feature = "test-helpers"))]
 pub(crate) fn elapsed_ms(start: std::time::Instant) -> u128 {
 	start.elapsed().as_millis()
 }

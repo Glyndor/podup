@@ -329,68 +329,86 @@ async fn events_renames_died_to_die_and_container_exit_code_to_exit_code() {
 		"`podup up` failed: {}",
 		String::from_utf8_lossy(&up.stderr)
 	);
-	// Give the events a moment to land in the daemon's journal so the
-	// `--until -1s` window already contains them. Without this sleep
-	// the test can race the journal write.
-	tokio::time::sleep(Duration::from_millis(1500)).await;
-	// The container exited 3 synchronously inside `up`; the events
-	// stream is bounded by `--since 30s --until -1s` and yields past
-	// events. The `since`/`until` window has to close before the
-	// stream ends; a future `--until` does not bound the feed (the
-	// event-stream contract has been measured and re-measured for
-	// that, see `stream_events_with_options`).
-	let out = Command::new(bin())
-		.args(["-f"])
-		.arg(&compose)
-		.args([
-			"-p", &name, "events", "--format", "json", "--since", "30s", "--until", "-1s",
-		])
-		.env("PODMAN_SOCKET", &socket)
-		.output()
-		.expect("run podup events");
-	down(&socket, &dir, &name);
-	assert!(
-		out.status.success(),
-		"`podup events` failed: {}",
-		String::from_utf8_lossy(&out.stderr)
-	);
-	let stdout = String::from_utf8_lossy(&out.stdout);
-	// Find the die event. JSON events are emitted one per line; we
-	// only care about the one for this project's container, so the
-	// first die with our project label wins.
+	// Poll the event feed until the project's `die` event appears or
+	// we run out of attempts. The CI lane (a nested-virt runner with
+	// the journald event backend) sometimes takes several seconds for
+	// the first event to land; the original 1.5 s sleep was measured
+	// on the local 5.7.0 socket and races the journal write. The
+	// container exits 3 synchronously inside `up`, so the `die` event
+	// exists by the time `up` returns; the poll only papers over the
+	// journal-to-HTTP event bridge on the libpod handler.
+	//
+	// `--since 60s` covers the settle window and any later attempt's
+	// start; `--until 0s` bounds the stream (a future `--until` does
+	// not, and an unbounded poll would never return the first die
+	// event before the next attempt fired; the event-stream contract
+	// is pinned at `stream_events_with_options`).
+	const ATTEMPTS: usize = 20;
+	const INTERVAL: Duration = Duration::from_secs(1);
+	let mut last_stdout = String::new();
 	let mut die_action = None;
 	let mut exit_code = None;
-	for line in stdout.lines() {
-		let v: serde_json::Value = match serde_json::from_str(line) {
-			Ok(v) => v,
-			Err(_) => continue,
-		};
-		let project = v
-			.pointer("/Actor/Attributes/podup.project")
-			.and_then(serde_json::Value::as_str)
-			.unwrap_or_default();
-		if project != name {
-			continue;
-		}
-		if v.get("Action").and_then(serde_json::Value::as_str) == Some("die") {
-			die_action = Some("die".to_string());
-			exit_code = v
-				.pointer("/Actor/Attributes/exitCode")
+	for attempt in 0..ATTEMPTS {
+		let out = Command::new(bin())
+			.args(["-f"])
+			.arg(&compose)
+			.args([
+				"-p", &name, "events", "--format", "json", "--since", "60s", "--until", "0s",
+			])
+			.env("PODMAN_SOCKET", &socket)
+			.output()
+			.expect("run podup events");
+		assert!(
+			out.status.success(),
+			"`podup events` failed on attempt {attempt}: {}",
+			String::from_utf8_lossy(&out.stderr)
+		);
+		let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+		// JSON events are emitted one per line; we only care about
+		// the one for this project's container, so the first die
+		// with our project label wins.
+		for line in stdout.lines() {
+			let v: serde_json::Value = match serde_json::from_str(line) {
+				Ok(v) => v,
+				Err(_) => continue,
+			};
+			let project = v
+				.pointer("/Actor/Attributes/podup.project")
 				.and_then(serde_json::Value::as_str)
-				.map(str::to_string);
+				.unwrap_or_default();
+			if project != name {
+				continue;
+			}
+			if v.get("Action").and_then(serde_json::Value::as_str) == Some("die") {
+				die_action = Some("die".to_string());
+				exit_code = v
+					.pointer("/Actor/Attributes/exitCode")
+					.and_then(serde_json::Value::as_str)
+					.map(str::to_string);
+				break;
+			}
+		}
+		last_stdout = stdout;
+		if die_action.is_some() {
 			break;
 		}
+		if attempt + 1 < ATTEMPTS {
+			tokio::time::sleep(INTERVAL).await;
+		}
 	}
+	down(&socket, &dir, &name);
 	assert_eq!(
 		die_action.as_deref(),
 		Some("die"),
 		"`podup events --format json` must surface Action=`die` for the container death \
-		 (libpod rename `died` -> `die`): {stdout:?}"
+		 (libpod rename `died` -> `die`, polled {ATTEMPTS} times at {INTERVAL:?} intervals): \
+		 {last_stdout:?}"
 	);
 	assert_eq!(
 		exit_code.as_deref(),
 		Some("3"),
 		"`podup events --format json` must carry Actor.Attributes.exitCode=3 \
-		 (libpod rename `containerExitCode` -> `exitCode`): {stdout:?}"
+		 (libpod rename `containerExitCode` -> `exitCode`, polled {ATTEMPTS} times at \
+		 {INTERVAL:?} intervals): {last_stdout:?}"
 	);
 }

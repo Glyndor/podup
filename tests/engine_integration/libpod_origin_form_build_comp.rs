@@ -39,13 +39,20 @@ use std::process::Command;
 /// `engine::build::query_tests::build_query_carries_docker_distribution_outputformat`;
 /// this test pins the user-visible result.
 ///
-/// The second build tears the test image down (`podup down --rmi
-/// local`) between the runs so the cache key the libpod handler
-/// looks at is the one it would look at on a normal developer's
-/// machine: an absent image and a fresh `FROM`. Without the
-/// teardown the second build could find the image by its tag and
-/// skip the layer walk entirely, which is not the path
-/// `podup build` takes when the user has not pulled a new base.
+/// The two builds run back-to-back with no teardown between them,
+/// because that is the only shape that pins the docker-distribution
+/// `outputformat=` parameter on every Podman version that runs the
+/// suite. Podman 5.8.1 and 6.1.2 (the CI lane, a nested-virt runner)
+/// drop the intermediate layers when an image is removed with
+/// `podup down --rmi local`, so a teardown between the two builds
+/// gave the second build nothing to hit and the `Using cache`
+/// assertion could not fire. Podman 5.7.0 (local socket) and 6.0.1
+/// kept the layers across `rmi`, which is why the local run stayed
+/// green and the CI lane went red. The docker-distribution manifest
+/// is the user-visible behaviour the `outputformat=` parameter
+/// exists to keep, and the only way to keep that pin across the
+/// version spread is to leave the layers between the two builds and
+/// clean up at the end.
 #[tokio::test]
 async fn build_uses_the_layer_cache_and_produces_a_docker_manifest() {
 	let Some(socket) = podman_socket_url() else {
@@ -125,18 +132,13 @@ async fn build_uses_the_layer_cache_and_produces_a_docker_manifest() {
 		],
 	);
 
-	// Tear down the test image so the second build is the one that
-	// defines the image id we read. `podup down --rmi local` removes
-	// only the project's own images (the `podup.project=` label is
-	// what scopes the prune), so it cannot remove `alpine:3.20` or
-	// anything outside the test.
-	let _ = Command::new(bin())
-		.args(["-f"])
-		.arg(&compose)
-		.args(["-p", &name, "down", "--rmi", "local"])
-		.env("PODMAN_SOCKET", &socket)
-		.output();
-
+	// No inter-build teardown. Podman 5.8.1 / 6.1.2 (the CI lane)
+	// remove the intermediate layers alongside the image, which would
+	// force the second build to start cold and miss the `Using cache`
+	// path that this test exists to pin. Podman 5.7.0 / 6.0.1 keep
+	// the layers, which is why the local run stayed green before the
+	// CI lane went red. The final `podup down --rmi local` below
+	// cleans up regardless of which version ran the test.
 	let second = Command::new(bin())
 		.args(["-f"])
 		.arg(&compose)
