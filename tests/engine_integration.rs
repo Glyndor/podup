@@ -467,6 +467,8 @@ mod cli_output;
 mod create_ls;
 #[path = "engine_integration/lifecycle_output.rs"]
 mod lifecycle_output;
+#[path = "engine_integration/logs_reader_closes.rs"]
+mod logs_reader_closes;
 #[path = "engine_integration/multi_file.rs"]
 mod multi_file;
 #[path = "engine_integration/network_ownership.rs"]

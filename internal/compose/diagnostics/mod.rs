@@ -32,9 +32,9 @@ thread_local! {
 	/// deliberately does not install the guard so its surface keeps the
 	/// warning. The flag is read once per emitted warning by
 	/// [`emit_diagnostic`] inside this module; the parse path does not have a
-	/// parameter for it because the warning surface is also reached from
-	/// library consumers (`parse_files_with_env_files`) that have no
-	/// command-level context to pass.
+	/// parameter for it because the warning surface is also reached from parse
+	/// functions called without command-level context
+	/// (`parse_files_with_env_files`).
 	static SUPPRESS_PORT_EXPOSURE_WARNING: Cell<bool> = const { Cell::new(false) };
 }
 

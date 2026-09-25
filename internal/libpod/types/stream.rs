@@ -7,7 +7,6 @@
 use bytes::{Bytes, BytesMut};
 use futures_util::stream::Stream;
 use http_body_util::BodyExt;
-use hyper::body::Incoming;
 use std::pin::Pin;
 
 use crate::libpod::error::PodmanError;
@@ -111,11 +110,16 @@ pub fn take_json_line(buf: &mut BytesMut) -> Option<Bytes> {
 // Async stream parsers
 // ---------------------------------------------------------------------------
 
-/// Parse a multiplexed stream from a hyper `Incoming` response body.
+/// Parse a multiplexed stream from a hyper response body.
 ///
 /// Emits [`LogOutput`] items as frames arrive. The returned stream ends when
-/// the response body is fully consumed.
-pub fn parse_multiplexed(body: Incoming) -> BoxStream<LogOutput> {
+/// the response body is fully consumed. Generic over the body type so the
+/// streaming libpod client can pass its inline-driven body directly; the
+/// in-memory test seam drives it with a synthetic body (#1900).
+pub fn parse_multiplexed<B>(body: B) -> BoxStream<LogOutput>
+where
+	B: hyper::body::Body<Data = Bytes, Error = hyper::Error> + Send + Unpin + 'static,
+{
 	parse_multiplexed_body(body)
 }
 
@@ -180,11 +184,16 @@ where
 	))
 }
 
-/// Parse a raw (non-multiplexed) stream from a hyper `Incoming` response body.
+/// Parse a raw (non-multiplexed) stream from a hyper response body.
 ///
 /// Used for TTY containers where Podman sends raw bytes without 8-byte frame
 /// headers. All bytes are treated as stdout since TTY merges the streams.
-pub fn parse_raw(body: Incoming) -> BoxStream<LogOutput> {
+/// Generic over the body type so the streaming libpod client can pass its
+/// inline-driven body (#1900).
+pub fn parse_raw<B>(body: B) -> BoxStream<LogOutput>
+where
+	B: hyper::body::Body<Data = Bytes, Error = hyper::Error> + Send + Unpin + 'static,
+{
 	Box::pin(futures_util::stream::try_unfold(
 		body,
 		|mut body| async move {
@@ -208,10 +217,13 @@ pub fn parse_raw(body: Incoming) -> BoxStream<LogOutput> {
 /// Parse a newline-delimited JSON stream (used for image pull and build output).
 ///
 /// Each line in the stream is expected to be a complete JSON object. Blank
-/// lines between objects are silently skipped.
-pub fn parse_json_lines<T: serde::de::DeserializeOwned + Send + 'static>(
-	body: Incoming,
-) -> BoxStream<T> {
+/// lines between objects are silently skipped. Generic over the body type so
+/// the streaming libpod client can pass its inline-driven body (#1900).
+pub fn parse_json_lines<T, B>(body: B) -> BoxStream<T>
+where
+	T: serde::de::DeserializeOwned + Send + 'static,
+	B: hyper::body::Body<Data = Bytes, Error = hyper::Error> + Send + Unpin + 'static,
+{
 	Box::pin(futures_util::stream::try_unfold(
 		(body, BytesMut::new(), 0u64),
 		|(mut body, mut buf, mut total_received)| async move {

@@ -30,6 +30,7 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use super::stream::SocketStream;
+use super::stream_body::ConnectionFuture;
 use super::{BoxBody, PodmanError, Result};
 
 /// Default cap on the number of live (idle + in-use) buffered connections held
@@ -310,10 +311,8 @@ impl ConnPool {
 				});
 			}
 		}
-		let (sender, driver) = open_one(&self.socket_path).await?;
-		Ok(StreamingConn {
-			inner: Some(StreamingInner { sender, driver }),
-		})
+		let (sender, conn) = open_one_streaming(&self.socket_path).await?;
+		Ok(StreamingConn { sender, conn })
 	}
 
 	/// Hand a buffered connection back to the pool.
@@ -394,30 +393,25 @@ impl Drop for PoolGuard {
 /// A dedicated connection held by a streaming call. The underlying socket is
 /// closed when this is dropped, regardless of whether the stream ended cleanly.
 pub(super) struct StreamingConn {
-	inner: Option<StreamingInner>,
-}
-
-struct StreamingInner {
 	sender: http1::SendRequest<BoxBody>,
-	driver: JoinHandle<()>,
+	/// HTTP/1 connection future, kept here so dropping the connection closes
+	/// the socket by dropping the IO half. The reading task drives it inline
+	/// via the body returned by `send_streaming`, so there is no spawned driver
+	/// to abort (#1900).
+	conn: ConnectionFuture,
 }
 
 impl StreamingConn {
-	/// Borrow the hyper sender to issue one request on this dedicated
-	/// connection.
-	pub(super) fn sender_mut(&mut self) -> &mut http1::SendRequest<BoxBody> {
-		&mut self.inner.as_mut().unwrap().sender
-	}
-}
-
-impl Drop for StreamingConn {
-	fn drop(&mut self) {
-		// Aborting the driver task closes the socket via the IO half hyper
-		// holds; the sender is left alone because dropping it does not, on
-		// its own, surface an EOF to the background task in a timely way.
-		if let Some(inner) = self.inner.take() {
-			inner.driver.abort();
-		}
+	/// Take the sender and the inline-driven connection future apart so the
+	/// caller can issue the request and wrap the response body. The sender is
+	/// dropped after the request has been sent; the connection future is moved
+	/// into the [`DrivenBody`](super::stream_body::DrivenBody) that backs the
+	/// response, so dropping the body closes the socket.
+	pub(super) fn into_parts(self) -> (http1::SendRequest<BoxBody>, ConnectionFuture) {
+		// The struct has no `Drop` impl, so the fields move out cleanly.
+		// Dropping the connection future drops the underlying IO, which
+		// hyper reports to Podman as a socket close.
+		(self.sender, self.conn)
 	}
 }
 
@@ -431,6 +425,18 @@ async fn open_one(socket_path: &str) -> Result<(http1::SendRequest<BoxBody>, Joi
 		let _ = conn.await;
 	});
 	Ok((sender, driver))
+}
+
+/// Open a fresh HTTP/1.1 connection to `socket_path` and return the driver
+/// future without spawning it, so the reading task can poll the connection in
+/// line with the body and skip the cross-task wake-up per frame (#1900).
+async fn open_one_streaming(
+	socket_path: &str,
+) -> Result<(http1::SendRequest<BoxBody>, ConnectionFuture)> {
+	let stream = SocketStream::connect(socket_path).await?;
+	let io = TokioIo::new(stream);
+	let (sender, conn) = http1::handshake(io).await.map_err(PodmanError::Hyper)?;
+	Ok((sender, Box::pin(conn) as ConnectionFuture))
 }
 
 // ---------------------------------------------------------------------------
@@ -471,11 +477,7 @@ impl Client {
 	pub fn with_pool_size(socket_path: impl Into<String>, pool_size: usize) -> Self {
 		let socket_path = socket_path.into();
 		let pool = ConnPool::new(socket_path.clone(), pool_size);
-		Self {
-			socket_path,
-			pool,
-			streaming: Mutex::new(Vec::new()),
-		}
+		Self { socket_path, pool }
 	}
 
 	/// The configured maximum number of live (idle + in-use) buffered

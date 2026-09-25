@@ -121,7 +121,7 @@ impl Engine {
 			.get_stream(&path)
 			.await
 			.map_err(ComposeError::Podman)?;
-		let mut stream = crate::libpod::parse_json_lines::<Value>(resp.into_body());
+		let mut stream = crate::libpod::parse_json_lines::<Value, _>(resp.into_body());
 		// Whether a clean end was expected is decided by what was asked for, not
 		// by the shape of the end.
 		//

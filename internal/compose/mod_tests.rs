@@ -23,8 +23,8 @@ fn parse_str_raw_minimal_service() {
 
 #[test]
 fn collect_diagnostics_surfaces_unknown_keys() {
-	// The public helper lets library consumers see the same warnings the CLI
-	// prints; parse_file itself stays quiet.
+	// The helper returns the same warnings the CLI prints; parse_file itself
+	// stays quiet.
 	let file = parse_str_raw("services:\n  web:\n    image: nginx\n    enviroment:\n      - A=1\n")
 		.unwrap();
 	let diags = collect_diagnostics(&file);

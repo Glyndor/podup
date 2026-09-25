@@ -1,17 +1,22 @@
-//! `podup` is the docker-compose → Podman translator library.
+//! The library target behind the `podup` command: compose parsing, variable
+//! substitution, topological ordering, and the async engine that drives
+//! container lifecycle through Podman's native libpod REST API over a Unix
+//! socket or Windows named pipe.
 //!
-//! Provides parsing, variable substitution, topological ordering, and an
-//! async engine that drives container lifecycle via Podman's native libpod
-//! REST API over a Unix socket or Windows named pipe.
+//! It is internal code, not a product. podup is consumed as a program: other
+//! products install it and run the `podup` binary, and nothing outside this
+//! repository links this crate. Its items can change in any release; the
+//! supported interface is the command line (commands, flags, exit codes and
+//! `--format json` output).
 
 // `unsafe` is denied crate-wide; the few modules that need libc FFI opt back in
 // locally with `#![allow(unsafe_code)]` and a soundness comment per block, so a
 // new `unsafe` block elsewhere fails the build.
 #![deny(unsafe_code)]
-// Documentation is part of the public surface for a crate two other products
-// consume as a library, so a missing doc comment fails the build rather than
-// being noticed a year later. Turned on at 35 outstanding items; it is cheap to
-// adopt at that size and expensive at three hundred.
+// Every public item carries a doc comment (the organisation's style standard),
+// and denying missing docs keeps that true without anyone having to notice it
+// a year later. Turned on at 35 outstanding items; it is cheap to adopt at that
+// size and expensive at three hundred.
 #![deny(missing_docs)]
 
 /// `podup autostart`: render and manage a rootless `systemctl --user` unit that
@@ -136,6 +141,18 @@ pub fn effective_cpu_quota(service: &crate::compose::types::Service) -> Option<i
 pub use error::{ComposeError, Result};
 /// The libpod `Client`, surfaced for callers that talk to Podman directly.
 pub use libpod::Client;
+/// The body type the streaming libpod methods return.
+///
+/// The streaming `get_stream`, `post_json_stream`, `post_empty_stream`,
+/// `post_bytes_stream`, `post_stream_body`, and `post_json_stream_within`
+/// methods hand back a `Response<DrivenBody>`. The wrapper drives the
+/// underlying HTTP/1 connection in line with `Body::poll_frame`, so frames
+/// the connection has just decoded become visible to the body poll
+/// without a cross-task wake-up. Dropping the body closes the connection:
+/// the streaming socket lives inside the body, not the [`Client`], so a
+/// caller that abandons the stream still frees the daemon-side resource
+/// (#1900).
+pub use libpod::DrivenBody;
 /// The libpod error type carried inside [`ComposeError::Podman`], with the
 /// predicates the engine's own retry paths use.
 ///
