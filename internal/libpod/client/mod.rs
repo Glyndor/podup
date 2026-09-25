@@ -9,8 +9,8 @@
 
 use std::sync::Arc;
 
-use futures_util::Future;
 use bytes::Bytes;
+use futures_util::Future;
 use http_body_util::{BodyExt, Full, Limited};
 use hyper::body::Incoming;
 use hyper::{Method, Request, Response, StatusCode};
@@ -370,10 +370,12 @@ impl Client {
 			read,
 		)
 		.await?
-		.map_err(|e: Box<dyn std::error::Error + Send + Sync>| PodmanError::Api {
-			status: 0,
-			message: format!("reading response body: {e}"),
-		})?;
+		.map_err(
+			|e: Box<dyn std::error::Error + Send + Sync>| PodmanError::Api {
+				status: 0,
+				message: format!("reading response body: {e}"),
+			},
+		)?;
 		Ok((status, collected.to_bytes().to_vec()))
 	}
 

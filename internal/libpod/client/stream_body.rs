@@ -29,7 +29,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 use bytes::Bytes;
-use hyper::body::{Body, Frame, SizeHint, Incoming};
+use hyper::body::{Body, Frame, Incoming, SizeHint};
 
 /// HTTP/1 connection future whose driver task this body replaces. Same type
 /// the streaming pool open path used to hand to `tokio::spawn`, kept by value
