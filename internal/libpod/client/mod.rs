@@ -361,10 +361,17 @@ impl Client {
 				let (parts, body) = resp.into_parts();
 				Ok(Response::from_parts(parts, DrivenBody::new(body, None)))
 			}
-			(Ok(Ok(_)), ConnState::Done(Err(e))) => {
-				// Connection failed before the head arrived; surface the
-				// driver error rather than pretending the head is usable.
-				Err(PodmanError::Hyper(e))
+			(Ok(Ok(resp)), ConnState::Done(Err(e))) => {
+				// The head arrived and the connection then failed in the same
+				// poll. When the connection ran on its own task, the caller got
+				// the response regardless and the body reported an error only
+				// if bytes were actually missing; keep that, so a response the
+				// daemon finished writing before the socket failed stays usable.
+				tracing::debug!(
+					"libpod connection closed with an error after the response head: {e}"
+				);
+				let (parts, body) = resp.into_parts();
+				Ok(Response::from_parts(parts, DrivenBody::new(body, None)))
 			}
 			(Ok(Err(e)), _) => Err(PodmanError::Hyper(e)),
 			(Err(e), _) => Err(e),
