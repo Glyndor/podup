@@ -105,6 +105,26 @@ async fn build_uses_the_layer_cache_and_produces_a_docker_manifest() {
 		],
 	);
 
+	// The docker compat build handler passed every `t=` and `/images/{}/tag`
+	// argument through `NormalizeToDockerHub`, so `proj/c1914:1` (an
+	// org-scoped short name) used to land as `docker.io/proj/c1914:1`.
+	// On the libpod path `NormalizeToDockerHub` short-circuits, so the
+	// image lands as `localhost/proj/c1914:1` instead. The wire-level
+	// pin lives in `internal::libpod::normalize_tests`; this assertion
+	// reads the user-visible result so a regression there is caught at
+	// the boundary the user sees (`podman image ls`, `ps IMAGE`,
+	// `events image=...`).
+	let first_repo_tags = podman_cmd(
+		&socket,
+		&[
+			"image",
+			"inspect",
+			"proj/c1914:1",
+			"--format",
+			"{{.RepoTags}}",
+		],
+	);
+
 	// Tear down the test image so the second build is the one that
 	// defines the image id we read. `podup down --rmi local` removes
 	// only the project's own images (the `podup.project=` label is
@@ -153,6 +173,16 @@ async fn build_uses_the_layer_cache_and_produces_a_docker_manifest() {
 			"{{.ManifestType}}",
 		],
 	);
+	let second_repo_tags = podman_cmd(
+		&socket,
+		&[
+			"image",
+			"inspect",
+			"proj/c1914:1",
+			"--format",
+			"{{.RepoTags}}",
+		],
+	);
 
 	// Final teardown: remove the test image so the host stays clean.
 	let _ = Command::new(bin())
@@ -172,5 +202,24 @@ async fn build_uses_the_layer_cache_and_produces_a_docker_manifest() {
 		second_manifest, docker_manifest,
 		"`podup build` (2) must produce a docker-distribution manifest, \
 		 not the libpod OCI default: got {second_manifest:?}"
+	);
+	// `podman image inspect --format '{{.RepoTags}}'` renders the slice
+	// as Go does, with each tag in square brackets and quotes. A
+	// substring match for the canonical entry is enough to pin the
+	// normalisation: `docker.io/proj/c1914:1` is what `NormalizeToDockerHub`
+	// produced on the compat path, and what `normalize_image_reference`
+	// reproduces here.
+	let canonical_tag = "docker.io/proj/c1914:1";
+	assert!(
+		first_repo_tags.contains(canonical_tag),
+		"`podup build` (1) must land the image under the docker.io canonical name \
+		 (`NormalizeToDockerHub` on the compat path applied this), not the libpod \
+		 `localhost/...` default: got {first_repo_tags:?}"
+	);
+	assert!(
+		second_repo_tags.contains(canonical_tag),
+		"`podup build` (2) must land the image under the docker.io canonical name \
+		 (`NormalizeToDockerHub` on the compat path applied this), not the libpod \
+		 `localhost/...` default: got {second_repo_tags:?}"
 	);
 }

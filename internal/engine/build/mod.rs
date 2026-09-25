@@ -6,6 +6,8 @@
 //! passed as the `target=` query parameter; the full Dockerfile is always sent.
 
 mod context;
+mod extra_tags;
+mod normalize;
 mod pull;
 mod push;
 mod secrets;

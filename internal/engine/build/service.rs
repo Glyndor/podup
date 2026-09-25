@@ -48,7 +48,17 @@ impl Engine {
 
 		let context_str = build.context().to_string();
 		let remote_context = is_remote_context(&context_str);
-		let tag = super::primary_build_tag(
+		// The compat build handler ran `NormalizeToDockerHub` on every tag
+		// it forwarded to `/libpod/build` and `/images/{}/tag`; the libpod
+		// path skips it because `IsLibpodRequest` short-circuits the helper,
+		// so `podup build` would land unqualified names as
+		// `localhost/<project>-<service>:latest` instead of
+		// `docker.io/library/<project>-<service>:latest`, leaving a second
+		// copy of every image behind. The mutable `tag` is normalised to the
+		// docker.io canonical form just before the query string is built, so
+		// a malformed `--build-arg =value` or `build.shm_size: "64mb!"`
+		// still surfaces as a `Build` error before any socket I/O.
+		let mut tag = super::primary_build_tag(
 			&self.project,
 			service_name,
 			service.image.as_deref(),
@@ -273,6 +283,12 @@ impl Engine {
 		// which `podup`'s `healthcheck:` field inherits when the user
 		// does not set one explicitly, so the same query preserves the
 		// image shape podup has always produced.
+		//
+		// `t=` then carries the docker.io canonical form (see the
+		// `primary_build_tag` call above): the local-image lookup
+		// preserves a name the user already tagged; the pure rule
+		// expands everything else.
+		tag = self.normalize_image_reference(&tag).await?;
 		let mut qs = format!(
 			"t={}&rm=true&forcerm=true&layers=true&nocache={}&outputformat={}",
 			urlencoded(&tag),
@@ -480,36 +496,6 @@ impl Engine {
 		}
 
 		self.apply_extra_tags(build, &tag).await?;
-		Ok(())
-	}
-
-	/// Apply any `build.tags` aliases to the freshly built image.
-	///
-	/// The primary `tag` is skipped: when no `image:` is set it is already
-	/// `tags[0]`, which the build itself produced, so re-tagging it onto itself
-	/// would be a no-op API call.
-	async fn apply_extra_tags(&self, build: &BuildConfig, tag: &str) -> Result<()> {
-		for extra_tag in build.tags() {
-			if extra_tag == tag {
-				continue;
-			}
-			let (repo, tag_str) = extra_tag
-				.rsplit_once(':')
-				.map(|(r, t)| (r.to_string(), t.to_string()))
-				.unwrap_or_else(|| (extra_tag.clone(), "latest".to_string()));
-			let encoded_tag = urlencoded(tag);
-			let tag_path = format!(
-				"{API_PREFIX}/images/{encoded_tag}/tag?repo={}&tag={}",
-				urlencoded(&repo),
-				urlencoded(&tag_str),
-			);
-			// Returning () here meant `build` could not report a failed tag at
-			// all: it exited 0 with the requested tags missing.
-			self.client
-				.post_empty_ok(&tag_path)
-				.await
-				.map_err(ComposeError::Podman)?;
-		}
 		Ok(())
 	}
 }
