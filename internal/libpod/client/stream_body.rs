@@ -32,6 +32,11 @@
 //! re-polling a completed future violates the `Future` contract. The
 //! body still drains; the connection socket was already closed by the
 //! driver finishing (#1900).
+//!
+//! A connection that fails is not reported through this body either. hyper
+//! queues its own error into the body channel behind the frames it already
+//! decoded, so the caller reads every delivered frame and then the failure,
+//! in the order the old spawned driver produced.
 
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -97,8 +102,13 @@ where
 					self.conn = None;
 				}
 				Poll::Ready(Err(e)) => {
+					// Not surfaced here: hyper queues its own error into the
+					// body channel behind the frames it already decoded, so
+					// `inner` still yields those frames and then the failure.
+					// Returning `e` first would drop them. The spawned driver
+					// this body replaces discarded the connection result too.
+					tracing::debug!("libpod streaming connection ended with an error: {e}");
 					self.conn = None;
-					return Poll::Ready(Some(Err(e)));
 				}
 				Poll::Pending => {}
 			}
@@ -125,3 +135,7 @@ impl<B> Drop for DrivenBody<B> {
 		self.conn = None;
 	}
 }
+
+#[cfg(test)]
+#[path = "stream_body_tests.rs"]
+mod tests;
