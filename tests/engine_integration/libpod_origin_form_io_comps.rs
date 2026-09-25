@@ -195,20 +195,28 @@ async fn top_uses_the_docker_compat_column_set() {
 // Compensation 7: `GET /containers/{}/logs` is multiplexed, TTY or not
 // ---------------------------------------------------------------------------
 
-/// `podup logs` of a service with `tty: true` that prints `hello`
-/// must surface `hello` and never emit a line that starts with a
-/// byte below 0x09 (the libpod channel byte for stdout is 0x01; the
-/// docker-compat raw-bytes path would leave it on the first byte of
-/// every line and the test would catch it). The libpod handler
-/// always frames the body with 8-byte multiplexed headers, including
-/// for TTY containers; the Docker compat handler used raw bytes for
-/// TTY containers, so parsing by `is_tty` strips the leading channel
-/// byte off every line.
+/// `podup logs` of a service with `tty: true` that prints `tty-hello`
+/// must surface `tty-hello` and never emit a byte below 0x09 in the
+/// output (the libpod channel byte for stdout is 0x01; the docker-compat
+/// raw-bytes path would leave it on the first byte of every line and
+/// the test catches it on the first byte of the line, on every byte of
+/// the whole output, and on the exact payload of the TTY service).
+/// The libpod handler always frames the body with 8-byte multiplexed
+/// headers, including for TTY containers; the Docker compat handler
+/// used raw bytes for TTY containers, so parsing by `is_tty` strips
+/// the leading channel byte off every line.
 ///
-/// Fails on the branch with the `is_tty` parsing selector restored
-/// at `internal/engine/query/inspect.rs::logs_with_options` and
-/// `internal/engine/query/attach.rs::attach_logs_with_options` (the
-/// asserted `lines.first() >= 0x09` line).
+/// The compose carries one non-TTY service (`web`) alongside the TTY
+/// service (`term`). The non-TTY service has always been parsed as
+/// multiplexed; the regression only affected the TTY branch. Running
+/// both services in the same invocation pins both branches through
+/// one CLI call, the way a real `podup logs` would.
+///
+/// Fails on the branch with the `is_tty` parsing selector restored at
+/// `internal/engine/query/mod.rs::logs_with_options` (the two arms
+/// around lines 349 and 450) at the asserted "the term service's line
+/// must be exactly `<prefix>tty-hello` (a trailing `\\r` is allowed)"
+/// line and at the byte-below-0x09 panic.
 #[tokio::test]
 async fn logs_of_a_tty_service_does_not_leak_channel_bytes() {
 	let Some(socket) = podman_socket_url() else {
@@ -217,17 +225,18 @@ async fn logs_of_a_tty_service_does_not_leak_channel_bytes() {
 	let (_dir, name, _container) = up_service(
 		&socket,
 		"c1914logs",
-		"services:\n  app:\n    image: alpine:3.20\n    tty: true\n    command: [\"sh\",\"-c\",\"echo hello; sleep 3600\"]\n",
+		"services:\n  web:\n    image: alpine:3.20\n    command: [\"sh\",\"-c\",\"echo web-hello; sleep 3600\"]\n  term:\n    image: alpine:3.20\n    tty: true\n    command: [\"sh\",\"-c\",\"echo tty-hello; sleep 3600\"]\n",
 	);
-	// Give the entrypoint a moment to print `hello`. The container
-	// has to be running and stdout drained for the multiplexed frame
-	// to land; a 500ms settle is the worst-case observed.
+	// Give the entrypoints a moment to print their lines. The
+	// containers have to be running and stdout drained for the
+	// multiplexed frame to land; a 500ms settle is the worst-case
+	// observed.
 	tokio::time::sleep(Duration::from_millis(500)).await;
 	let compose = _dir.path().join("compose.yaml");
 	let out = Command::new(bin())
 		.args(["-f"])
 		.arg(&compose)
-		.args(["-p", &name, "logs", "app"])
+		.args(["-p", &name, "logs", "web", "term"])
 		.env("PODMAN_SOCKET", &socket)
 		.output()
 		.expect("run podup logs");
@@ -238,16 +247,44 @@ async fn logs_of_a_tty_service_does_not_leak_channel_bytes() {
 	);
 	let stdout = String::from_utf8_lossy(&out.stdout);
 	down(&socket, &_dir, &name);
+	// Find the term service's line. `podup logs` prefixes every line
+	// with `{service}-{replica} | `, so `term-1 | ` is the prefix for
+	// the term container's output. The libpod `/logs` endpoint wraps
+	// the TTY payload in an 8-byte multiplexed header; parsing by
+	// `is_tty` leaves the channel byte (0x01, the libpod stdout tag)
+	// as the first byte of the line. The assertion below catches
+	// the byte both by exact-prefix match (the line starts with the
+	// prefix and nothing else) and by a byte-by-byte scan (no byte
+	// below 0x09 except the newline and carriage return the
+	// container's `echo` emitted).
+	let term_line = stdout
+		.lines()
+		.find(|line| line.starts_with("term-1 | "))
+		.unwrap_or_else(|| {
+			panic!("`podup logs` must print the term service's line; output was:\n{stdout:?}")
+		});
+	let term_payload = &term_line["term-1 | ".len()..];
 	assert!(
-		stdout.contains("hello"),
-		"`podup logs` must surface the container's stdout (`hello`): {stdout:?}"
+		term_payload == "tty-hello",
+		"the TTY service's line must be exactly `term-1 | tty-hello` \
+		 (the trailing `\\r\\n` from the container's `echo` is stripped by `lines()`, \
+		 which the assertion ignores); \
+		 got {term_line:?}"
 	);
-	for line in stdout.lines() {
-		if let Some(first) = line.bytes().next() {
-			assert!(
-				first >= 0x09,
-				"`podup logs` must not emit a leading channel byte (libpod multiplexed): \
-				 first byte of line was 0x{first:02x} in {stdout:?}"
+	// A second, byte-by-byte check that catches a regression on the
+	// non-TTY branch or anywhere else in the output. The libpod
+	// channel bytes for stdout and stderr are 0x01 and 0x02; both
+	// are below the printable range. The only bytes below 0x09 the
+	// output is allowed to carry are the newline (`\n`) that ends
+	// every line and the carriage return (`\r`) the container's
+	// `echo` emitted.
+	for byte in stdout.bytes() {
+		if byte < 0x09 && byte != b'\n' && byte != b'\r' {
+			panic!(
+				"`podup logs` output contains byte 0x{byte:02x} (below 0x09) \
+				 outside `\\n`/`\\r`; the libpod `/logs` response is always \
+				 multiplexed, so the parser must strip the channel byte. \
+				 Output:\n{stdout:?}"
 			);
 		}
 	}
