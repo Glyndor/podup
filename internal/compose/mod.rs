@@ -144,9 +144,9 @@ pub(crate) fn parse_file_with_env_files_interp_with_stdin(
 
 /// Collect parse-time diagnostics for an already-parsed compose file: warnings
 /// about recognized-but-unsupported keys and fields that are accepted but carry
-/// no effect on Podman. The CLI prints these automatically; library consumers
-/// (e.g. panel-agent) can call this to surface the same warnings, since
-/// [`parse_file`] does not emit them itself.
+/// no effect on Podman. The CLI prints these as it parses; this returns them for
+/// a caller that parses without printing, since [`parse_file`] does not emit
+/// them itself.
 pub fn collect_diagnostics(file: &ComposeFile) -> Vec<String> {
 	diagnostics::collect(file)
 }

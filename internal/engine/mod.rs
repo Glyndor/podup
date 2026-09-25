@@ -131,8 +131,8 @@ pub struct Engine {
 	/// persisted and not shared between engines. Two engines against different
 	/// sockets must not pool observations: a process-wide cache would let one
 	/// skip a pull for an image that only exists on the other's host, which
-	/// matters because podup is consumed as a library and a caller may hold more
-	/// than one engine.
+	/// matters wherever one process holds more than one engine (the
+	/// integration suite does).
 	pub(super) images_seen_present: std::sync::Mutex<std::collections::HashSet<String>>,
 	/// SHA-256 of every `file:` secret/config this engine actually uploaded
 	/// during the current invocation, keyed by the project-scoped Podman

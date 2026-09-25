@@ -1,4 +1,4 @@
-//! Error types for the podup library.
+//! Error types shared by the podup engine and the command line.
 //!
 //! All fallible operations return [`Result<T>`], which is an alias for
 //! `std::result::Result<T, ComposeError>`.
