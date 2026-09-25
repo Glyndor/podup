@@ -194,6 +194,93 @@ async fn cli_logs_demuxes_eight_byte_frames_from_a_real_daemon() {
 		"a stderr frame landed somewhere other than podup's stderr: {err:?}"
 	);
 }
+/// `logs -f` on a container that prints one line at start and then
+/// stays quiet: the line must reach podup's stdout promptly. This is
+/// the promptness half of the streaming change. The pre-change design
+/// paid an extra per-frame wake-up across the connection driver task
+/// and the reader task; on a slow container the first frame is the
+/// one the user notices hanging (#1900).
+#[tokio::test]
+async fn cli_logs_follow_delivers_first_line_promptly() {
+	if super::podman().await.is_none() {
+		return;
+	}
+	use std::io::{BufRead, BufReader};
+	use std::process::Stdio;
+	use std::time::{Duration, Instant};
+
+	let dir = tempdir().unwrap();
+	let compose = dir.path().join("docker-compose.yml");
+	let proj = format!("t{}-prompt", std::process::id());
+	// Container prints its line at start and then sleeps long enough that
+	// a slow consumer would be obvious. `sh -c` with a single command
+	// avoids the `command:` array shape some compose versions resolve
+	// through a shell of their own.
+	fs::write(
+		&compose,
+		"services:\n  prompt:\n    image: alpine:latest\n    command: \"printf 'first-line\\\\n'; sleep 120\"\n",
+	)
+	.unwrap();
+	let c = compose.to_str().unwrap();
+
+	Command::new(bin())
+		.args(["-f", c, "-p", &proj, "up", "--detach"])
+		.output()
+		.unwrap();
+
+	let started = Instant::now();
+	let mut child = Command::new(bin())
+		.args(["-f", c, "-p", &proj, "logs", "--no-color", "-f"])
+		.env("LC_ALL", "C")
+		.stdout(Stdio::piped())
+		.stderr(Stdio::piped())
+		.spawn()
+		.unwrap();
+
+	// `tokio::time::timeout` would cancel the child only on the future's
+	// cancellation; here we drive the child incrementally with a deadline
+	// so a hung stream shows up as a real test failure rather than a
+	// panic in the unwrap.
+	let deadline = started + Duration::from_secs(5);
+	let mut stdout = BufReader::new(child.stdout.take().unwrap()).lines();
+	let mut found_line: Option<Duration> = None;
+	while Instant::now() < deadline {
+		let line = match stdout.next() {
+			Some(Ok(l)) => l,
+			Some(Err(_)) | None => break,
+		};
+		if line.contains("first-line") {
+			found_line = Some(started.elapsed());
+			break;
+		}
+	}
+	let _ = child.kill();
+	let _ = child.wait();
+	Command::new(bin())
+		.args(["-f", c, "-p", &proj, "down"])
+		.output()
+		.unwrap();
+
+	let elapsed = found_line.unwrap_or_else(|| {
+		panic!(
+			"logs -f never produced the first line within 5s of starting the reader; \
+			 this is the promptness regression the inline-driven body change guards against"
+		)
+	});
+	// The container prints its line immediately on start. The reader
+	// starts as soon as the test issues `podup logs -f`, so the budget
+	// is the wall-clock cost from `started` to the line reaching our
+	// stdout: socket round-trip, k8s-file log rotation, hyper's
+	// head parsing, the inline-driven body poll, and stdout. Five
+	// seconds is comfortably more than the measured curl path on the
+	// flood-flood-1 fixture; the pre-change design still fit, but the
+	// cost was paid per frame, not just at the head.
+	assert!(
+		elapsed < Duration::from_secs(5),
+		"first line reached podup's stdout in {elapsed:?}, expected <5s"
+	);
+}
+
 /// An attached `up` (no `--detach`) is where that content is reachable.
 #[tokio::test]
 async fn cli_attached_up_carries_the_container_output() {
