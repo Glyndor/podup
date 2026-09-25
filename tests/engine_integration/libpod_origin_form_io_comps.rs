@@ -346,6 +346,7 @@ async fn events_renames_died_to_die_and_container_exit_code_to_exit_code() {
 	const ATTEMPTS: usize = 20;
 	const INTERVAL: Duration = Duration::from_secs(1);
 	let mut last_stdout = String::new();
+	let mut last_stderr = String::new();
 	let mut die_action = None;
 	let mut exit_code = None;
 	for attempt in 0..ATTEMPTS {
@@ -389,6 +390,7 @@ async fn events_renames_died_to_die_and_container_exit_code_to_exit_code() {
 			}
 		}
 		last_stdout = stdout;
+		last_stderr = String::from_utf8_lossy(&out.stderr).into_owned();
 		if die_action.is_some() {
 			break;
 		}
@@ -396,13 +398,50 @@ async fn events_renames_died_to_die_and_container_exit_code_to_exit_code() {
 			tokio::time::sleep(INTERVAL).await;
 		}
 	}
+	// When the event never shows up, say what podman itself saw, so a failure on a
+	// runner nobody can log into tells podup's filtering apart from an empty journal.
+	let diagnosis = if die_action.is_none() {
+		let label = format!("label=podup.project={name}");
+		let ps = podman_cmd(
+			&socket,
+			&[
+				"ps",
+				"-a",
+				"--filter",
+				&label,
+				"--format",
+				"{{.Names}} {{.Status}}",
+			],
+		);
+		let raw = podman_cmd(
+			&socket,
+			&[
+				"events",
+				"--since",
+				"120s",
+				"--until",
+				"0s",
+				"--filter",
+				&label,
+				"--format",
+				"{{.Status}}",
+			],
+		);
+		format!(
+			"up stdout={:?} up stderr={:?} last events stderr={last_stderr:?} podman ps={ps:?} podman events={raw:?}",
+			String::from_utf8_lossy(&up.stdout),
+			String::from_utf8_lossy(&up.stderr),
+		)
+	} else {
+		String::new()
+	};
 	down(&socket, &dir, &name);
 	assert_eq!(
 		die_action.as_deref(),
 		Some("die"),
 		"`podup events --format json` must surface Action=`die` for the container death \
 		 (libpod rename `died` -> `die`, polled {ATTEMPTS} times at {INTERVAL:?} intervals): \
-		 {last_stdout:?}"
+		 {last_stdout:?} {diagnosis}"
 	);
 	assert_eq!(
 		exit_code.as_deref(),
