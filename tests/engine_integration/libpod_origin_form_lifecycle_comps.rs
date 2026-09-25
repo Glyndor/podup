@@ -24,20 +24,26 @@ use std::time::Instant;
 // ---------------------------------------------------------------------------
 
 /// A service whose process ignores SIGTERM with a `stop_grace_period`
-/// of 2 seconds must come back from `podup stop` in under 6 seconds
-/// total. The Docker compat `/stop?t=N` honoured `t`; the libpod
-/// `/stop` ignores `t` and reads `timeout=`, so an unchanged `t=2`
-/// query lands on libpod and libpod stops ignoring the grace period,
-/// which means it falls back to the container's own stop timeout (or
-/// to the daemon default of 10 seconds when the container has none
-/// configured). The 6-second upper bound catches the libpod
-/// regression: a 2-second grace under compensation returns in
-/// roughly 2 seconds, and the docker-compat fallback (10 seconds)
-/// blows past 6 by a wide margin.
+/// of 20 seconds must come back from `podup stop --timeout 1` in
+/// under 8 seconds total. The CLI override is what makes the assertion
+/// reachable: podup forwards the override as `?timeout=` to libpod,
+/// which honours it (1-second SIGTERM, then SIGKILL). The Docker
+/// compat `/stop?t=N` honoured `t`; the libpod handler ignores `t`
+/// and reads `timeout=`, so a sabotaged `?t=1` lands on libpod and
+/// libpod falls back to the container's own stop timeout (the 20-second
+/// `stop_grace_period`), which blows past 8 seconds by a wide margin.
+///
+/// Note: the previous shape of this test exercised only the
+/// compose-file `stop_grace_period` (no CLI override) and stayed green
+/// with `t=` because podup creates the container with
+/// `stop_grace_period` as its own stop timeout, so when Podman ignored
+/// `t=` it fell back to the same value. Pinning the CLI-override path
+/// makes the difference visible: the user's `--timeout` differs from
+/// the compose value by a factor of 20.
 ///
 /// Fails on the branch with the `timeout=` parameter reverted to
 /// `t=` at `internal/engine/lifecycle/commands.rs::stop_container`
-/// (the asserted `elapsed < 6s` line), and at the parallel path
+/// (the asserted `elapsed < 8s` line), and at the parallel path
 /// `internal/engine/lifecycle/parallel.rs::teardown_one_container`.
 #[tokio::test]
 async fn stop_returns_within_the_grace_window() {
@@ -47,14 +53,14 @@ async fn stop_returns_within_the_grace_window() {
 	let (_dir, name, container) = up_service(
 		&socket,
 		"c1914stop",
-		"services:\n  app:\n    image: alpine:3.20\n    command: [\"sh\",\"-c\",\"trap '' TERM; sleep 3600\"]\n    stop_grace_period: 2s\n",
+		"services:\n  app:\n    image: alpine:3.20\n    command: [\"sh\",\"-c\",\"trap '' TERM; sleep 3600\"]\n    stop_grace_period: 20s\n",
 	);
 	let compose = _dir.path().join("compose.yaml");
 	let started = Instant::now();
 	let out = Command::new(bin())
 		.args(["-f"])
 		.arg(&compose)
-		.args(["-p", &name, "stop"])
+		.args(["-p", &name, "stop", "--timeout", "1"])
 		.env("PODMAN_SOCKET", &socket)
 		.output()
 		.expect("run podup stop");
@@ -66,8 +72,9 @@ async fn stop_returns_within_the_grace_window() {
 	);
 	down(&socket, &_dir, &name);
 	assert!(
-		ms < 6_000,
-		"`podup stop` must honour the 2s grace window (libpod `timeout=`): took {ms}ms for {container}"
+		ms < 8_000,
+		"`podup stop --timeout 1` must be honoured against a 20s `stop_grace_period` \
+		 (libpod `timeout=`): took {ms}ms for {container}"
 	);
 }
 
@@ -116,6 +123,54 @@ async fn restart_honours_the_grace_window() {
 	assert!(
 		ms >= 2_500,
 		"`podup restart` must honour the 3s grace window (libpod `timeout=`): took {ms}ms for {container}, expected >= 2500ms"
+	);
+}
+
+/// `podup restart --timeout 1` on a service whose process ignores
+/// SIGTERM with a `stop_grace_period` of 20 seconds must come back in
+/// under 8 seconds. The companion of `stop_returns_within_the_grace_window`
+/// against the `restart` endpoint: libpod reads `?timeout=`; the Docker
+/// compat handler read `?t=`, which libpod ignores, falling back to the
+/// container's own 20-second stop_timeout. Same reasoning: the no-CLI
+/// shape (`restart_honours_the_grace_window`, above) stays green under
+/// `?t=` because podup creates the container with `stop_grace_period` as
+/// its own stop timeout, so the fallback matches; only the CLI override
+/// makes the difference visible.
+///
+/// Fails on the branch with `?timeout=` reverted to `?t=` at
+/// `internal/engine/lifecycle/parallel.rs::restart_one_service` and
+/// `internal/engine/watch/mod.rs::watch_restart` (the asserted
+/// `elapsed < 8s` line).
+#[tokio::test]
+async fn restart_honours_the_cli_override() {
+	let Some(socket) = podman_socket_url() else {
+		return;
+	};
+	let (_dir, name, container) = up_service(
+		&socket,
+		"c1914restcli",
+		"services:\n  app:\n    image: alpine:3.20\n    command: [\"sh\",\"-c\",\"trap '' TERM; sleep 3600\"]\n    stop_grace_period: 20s\n",
+	);
+	let compose = _dir.path().join("compose.yaml");
+	let started = Instant::now();
+	let out = Command::new(bin())
+		.args(["-f"])
+		.arg(&compose)
+		.args(["-p", &name, "restart", "--timeout", "1"])
+		.env("PODMAN_SOCKET", &socket)
+		.output()
+		.expect("run podup restart");
+	let ms = elapsed_ms(started);
+	assert!(
+		out.status.success(),
+		"`podup restart` failed: {}",
+		String::from_utf8_lossy(&out.stderr)
+	);
+	down(&socket, &_dir, &name);
+	assert!(
+		ms < 8_000,
+		"`podup restart --timeout 1` must be honoured against a 20s `stop_grace_period` \
+		 (libpod `timeout=`): took {ms}ms for {container}"
 	);
 }
 
@@ -192,6 +247,17 @@ async fn down_v_removes_anonymous_volumes() {
 /// state would see `running` for a few hundred ms, which is what
 /// every caller that relied on the compat handler's semantics
 /// observed before the compensation.
+///
+/// **Construction limit**: on a fast host SIGKILL lands in
+/// milliseconds and the follow-up `/wait?condition=stopped` returns
+/// within the same wall clock window, so removing the wait does not
+/// reliably make this live test fail (the race is too short for a
+/// `podman inspect` round-trip). The wire-shape unit test
+/// `kill_with_sigkill_sends_follow_up_wait` in
+/// `internal/engine/lifecycle/libpod_endpoint_query_tests.rs:282`
+/// is what pins the actual compensation (follow-up
+/// `/wait?condition=stopped`); this live test pins the user-visible
+/// behaviour the wire shape exists to keep.
 ///
 /// Fails on the branch with the follow-up `wait_after_kill` removed
 /// from `internal/engine/lifecycle/parallel.rs::kill_one_service`
