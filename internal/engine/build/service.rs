@@ -1,23 +1,17 @@
 //! Per-service build: build one `build:` block end-to-end.
 //!
-//! Split out of `mod.rs` so the dispatching loop in `mod.rs` stays a thin
-//! orchestrator and this file owns the 400-ish lines of URL/stream glue a
-//! single build needs. The split is the one suggested by the engine style:
-//! the entry point (`build_service`) and the small follow-up
-//! (`apply_extra_tags`) sit here, alongside each other, since the row's
-//! final state (`Built` / `Failed` / tagged aliases) is what closes the
-//! build out and `build_service` calls into `apply_extra_tags` directly.
-//!
-//! Visibility is `pub(crate)` everywhere needed across this split: the
-//! stream-helper types in `steps.rs`, the body-stream helpers in
-//! `stream.rs`, and the context helpers in `tags.rs` and `context.rs` are
-//! all called from here.
+//! The dispatching loop in `mod.rs` calls into [`Engine::build_service`],
+//! which is the URL/stream glue for one image: pick a body plan,
+//! assemble the build query, drive the chunked response, paint the
+//! board row. Each step is small enough that the whole thing lives
+//! here. The body-plan decision lives in [`super::body_plan`]; the
+//! `apply_extra_tags` follow-up lives in [`super::extra_tags`].
 
 use std::io::IsTerminal;
 
 use bytes::Bytes;
 use futures_util::StreamExt;
-use tracing::{info, warn};
+use tracing::warn;
 
 use crate::compose::types::{BuildConfig, Service};
 use crate::error::{ComposeError, Result};
@@ -27,11 +21,12 @@ use crate::libpod::validate::pre_validate_build;
 use crate::libpod::API_PREFIX;
 use crate::size;
 
+use super::body_plan::plan_build;
 use super::steps::{parse_image_id_line, BuildStreamProgress};
-use super::stream::{context_body, ContextSource};
-use super::tags::{is_remote_context, looks_like_secret};
+use super::stream::context_body;
+use super::tags::looks_like_secret;
 use super::{context::map_additional_context, Engine};
-use super::{context::INLINE_DOCKERFILE_NAME, BodyPlan, BuildOptions};
+use super::{BodyPlan, BuildOptions};
 
 impl Engine {
 	pub(in crate::engine) async fn build_service(
@@ -47,93 +42,25 @@ impl Engine {
 		};
 
 		let context_str = build.context().to_string();
-		let remote_context = is_remote_context(&context_str);
-		// The compat build handler ran `NormalizeToDockerHub` on every tag
-		// it forwarded to `/libpod/build` and `/images/{}/tag`; the libpod
-		// path skips it because `IsLibpodRequest` short-circuits the helper,
-		// so `podup build` would land unqualified names as
-		// `localhost/<project>-<service>:latest` instead of
-		// `docker.io/library/<project>-<service>:latest`, leaving a second
-		// copy of every image behind. The mutable `tag` is normalised to the
-		// docker.io canonical form just before the query string is built, so
-		// a malformed `--build-arg =value` or `build.shm_size: "64mb!"`
-		// still surfaces as a `Build` error before any socket I/O.
-		let mut tag = super::primary_build_tag(
+		// `tag` is the un-normalised form the user (or `primary_build_tag`'s
+		// `<project>-<service>:latest` default) supplied. It is what every
+		// print path carries - the board row `up` and `build` seed, the
+		// `Building`/`Built` verbs, the `STEP n/m:` line prefix, the
+		// `fail_build` error message, and the `apply_extra_tags` comparison.
+		// Only the wire query (`t=` and `/images/{}/tag`) carries the
+		// docker.io canonical form, computed just before the query string is
+		// assembled below.
+		let tag = super::primary_build_tag(
 			&self.project,
 			service_name,
 			service.image.as_deref(),
 			build.tags(),
 		);
 
-		// A Git/URL context is cloned server-side by Podman via the `remote`
-		// query parameter; there is no local directory to tar. Tar-only features
-		// (inline Dockerfile, in-tar build secrets) do not apply.
-		let (body_plan, dockerfile_name, secret_specs) = if remote_context {
-			info!("building {tag} from remote context {context_str}");
-			if build.dockerfile_inline().is_some() {
-				warn!("build.dockerfile_inline is ignored for a remote build context");
-			}
-			if !build.secrets().is_empty() {
-				warn!("build.secrets are ignored for a remote build context");
-			}
-			let df = build.dockerfile().unwrap_or("Dockerfile").to_string();
-			(BodyPlan::Empty, df, Vec::new())
-		} else {
-			let context_path = self.base_dir.join(&context_str);
-			// Fail fast with the service name and the resolved context path if the
-			// directory is missing/unreadable, instead of a bare "io error: No such
-			// file or directory" once the context walk hits it.
-			if let Err(e) = std::fs::metadata(&context_path) {
-				return Err(ComposeError::BuildContext {
-					service: service_name.to_string(),
-					path: context_path.display().to_string(),
-					source: e,
-				});
-			}
-			info!("building {tag} from {}", context_path.display());
-
-			// Resolve `build.secrets` to in-tar files before building the context:
-			// each secret value is shipped inside the build-context tar and
-			// referenced by a relative `src=` path, which is the form the libpod
-			// build endpoint expects (`env=`/host-path forms don't work reliably
-			// over the socket).
-			let (secret_files, secret_specs) = self.resolve_build_secrets(build, file)?;
-
-			// The context tar is streamed to the socket (see the POST below), never
-			// buffered, so a multi-gigabyte context doesn't inflate RSS. Decide the
-			// source and the dockerfile name here; the blocking tar walk happens
-			// while the request body is being sent.
-			let (source, dockerfile_name) = match build.dockerfile_inline() {
-				Some(inline) => (
-					ContextSource::Inline(inline.to_string()),
-					INLINE_DOCKERFILE_NAME.to_string(),
-				),
-				None => {
-					// Honour an explicit dockerfile; otherwise prefer Dockerfile
-					// but fall back to Podman's native Containerfile when only the
-					// latter is present.
-					let df = match build.dockerfile() {
-						Some(name) => name.to_string(),
-						None if !context_path.join("Dockerfile").is_file()
-							&& context_path.join("Containerfile").is_file() =>
-						{
-							"Containerfile".to_string()
-						}
-						None => "Dockerfile".to_string(),
-					};
-					(ContextSource::Dockerfile(df.clone()), df)
-				}
-			};
-			(
-				BodyPlan::Stream {
-					context: context_path,
-					source,
-					secrets: secret_files,
-				},
-				dockerfile_name,
-				secret_specs,
-			)
-		};
+		let plan = plan_build(self, service_name, service, file, build, &context_str)?;
+		let body_plan = plan.body;
+		let dockerfile_name = plan.dockerfile;
+		let secret_specs = plan.secrets;
 
 		let arg_map = build.args().to_map();
 		let mut build_args: std::collections::HashMap<String, String> =
@@ -284,14 +211,21 @@ impl Engine {
 		// does not set one explicitly, so the same query preserves the
 		// image shape podup has always produced.
 		//
-		// `t=` then carries the docker.io canonical form (see the
-		// `primary_build_tag` call above): the local-image lookup
-		// preserves a name the user already tagged; the pure rule
-		// expands everything else.
-		tag = self.normalize_image_reference(&tag).await?;
+		// `t=` carries the docker.io canonical form (the compat build
+		// handler applied `NormalizeToDockerHub`; the libpod path skips
+		// it via `IsLibpodRequest`, so `podup build` would otherwise
+		// land unqualified names as `localhost/<project>-<service>:latest`
+		// instead of `docker.io/library/<project>-<service>:latest`).
+		// The normalisation runs against a separate `wire_tag` rather
+		// than mutating `tag`: every print path (`Building`/`Built`,
+		// the board row `up` seeded, the `STEP n/m:` line prefix, the
+		// `apply_extra_tags` comparison) keeps the un-normalised form,
+		// which is what `podup ps`/`podup images` show and what the
+		// user used to see (#1914).
+		let wire_tag = self.normalize_image_reference(&tag).await?;
 		let mut qs = format!(
 			"t={}&rm=true&forcerm=true&layers=true&nocache={}&outputformat={}",
-			urlencoded(&tag),
+			urlencoded(&wire_tag),
 			build.no_cache() || opts.no_cache,
 			urlencoded("application/vnd.docker.distribution.manifest.v2+json"),
 		);
@@ -360,7 +294,7 @@ impl Engine {
 			);
 		}
 
-		if remote_context {
+		if matches!(body_plan, BodyPlan::Empty) {
 			qs.push_str(&format!("&remote={}", urlencoded(&context_str)));
 		}
 
@@ -495,7 +429,7 @@ impl Engine {
 			}
 		}
 
-		self.apply_extra_tags(build, &tag).await?;
+		self.apply_extra_tags(build, &tag, &wire_tag).await?;
 		Ok(())
 	}
 }

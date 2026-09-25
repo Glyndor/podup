@@ -9,6 +9,8 @@
 
 #[cfg(unix)]
 mod tests {
+	use std::sync::{Arc, Mutex};
+
 	use crate::engine::fake_podman::{self, FakeReply};
 	use crate::engine::Engine;
 	use crate::ui::progress::capture::Capture;
@@ -233,6 +235,113 @@ services:
 				"{other:?} is not the image id line"
 			);
 		}
+	}
+
+	/// A build with no `image:` field falls back to `<project>-<service>:latest`
+	/// as its primary tag. The print paths (the `Image` board row, the
+	/// `Building`/`Built` verbs, the `STEP n/m:` line prefix, the
+	/// `apply_extra_tags` skip) keep using that un-normalised form; only
+	/// the `t=` parameter on `/libpod/build` (and the source-side path of
+	/// `POST /libpod/images/{}/tag`) carries the docker.io canonical
+	/// form. Without the split, every board would get a second
+	/// `Image docker.io/library/proj-app:latest` row inserted on top of
+	/// the seeded `Image proj-app:latest` row (#1914).
+	#[tokio::test]
+	async fn build_row_keeps_unnormalised_tag_while_query_carries_the_canonical_form() {
+		// No `image:` so `primary_build_tag` falls back to
+		// `<project>-<service>:latest`. The fake returns a one-chunk
+		// success stream so `build_service` reaches the success path.
+		let dir = tempfile::tempdir().expect("tempdir");
+		let ctx_path = dir.path().to_path_buf();
+		std::fs::write(
+			ctx_path.join("Dockerfile"),
+			b"FROM docker.io/library/alpine:3.20\nRUN echo hi\nCMD [\"echo\",\"hi\"]\n",
+		)
+		.expect("write Dockerfile");
+		let requests: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+		let closure_requests = requests.clone();
+		let fake = fake_podman::start_replying(move |method, target| {
+			closure_requests
+				.lock()
+				.unwrap()
+				.push(format!("{method} {target}"));
+			if method == "POST" && target.contains("/build?") {
+				FakeReply::ChunkedEnd(vec![
+					"{\"stream\":\"--> sha256:1111111111111111111111111111111111111111111111111111111111111111\\n\"}\n".to_string(),
+					"{\"stream\":\"Successfully tagged proj-app:latest\\n\"}\n".to_string(),
+				])
+			} else if method == "POST" && target.contains("/images/") && target.contains("/tag") {
+				FakeReply::Body(200, String::new())
+			} else {
+				FakeReply::Body(404, r#"{"message":"not found"}"#.to_string())
+			}
+		});
+		let engine = Engine::with_base_dir(fake.client(), "proj".into(), ctx_path);
+
+		let file = crate::parse_str("services:\n  app:\n    build:\n      context: .\n")
+			.expect("the fixture parses");
+
+		let capture = Capture::start();
+		engine
+			.build_all_with_options(&file, &[], &crate::engine::BuildOptions::default())
+			.await
+			.expect("a build the fake accepts succeeds");
+
+		// Print path: the seeded and worked rows carry the
+		// un-normalised `<project>-<service>:latest` name. The bug would
+		// insert a second `Image docker.io/library/proj-app:latest` row
+		// on top of the seeded one and report both.
+		let names = capture.names();
+		assert_eq!(
+			names,
+			vec!["proj-app:latest"],
+			"the printed row name must be the un-normalised <project>-<service>:latest \
+			 and never a second row under the docker.io canonical name: {names:?}"
+		);
+		assert!(
+			!names.iter().any(|n| n.contains("docker.io")),
+			"no print path may show the docker.io canonical form: {names:?}"
+		);
+		assert!(
+			!names.iter().any(|n| n.contains("localhost")),
+			"no print path may show the libpod `localhost/...` form: {names:?}"
+		);
+
+		// Verb path: every transition the board sees carries the same
+		// un-normalised name. A `Building` on `docker.io/library/...`
+		// would mean a second row opened under the wire name.
+		let verbs: Vec<(Kind, String, String)> = capture
+			.verbs()
+			.into_iter()
+			.filter(|(_, name, _)| name.contains("app") || name.contains("library"))
+			.collect();
+		for (kind, name, _verb) in &verbs {
+			assert_eq!(
+				name, "proj-app:latest",
+				"verb path used the wire tag instead of the un-normalised form: {kind:?} {name:?}"
+			);
+		}
+
+		// Wire path: the `t=` parameter on `/libpod/build` carries the
+		// docker.io canonical form. The compat build handler did this
+		// through `NormalizeToDockerHub`; the libpod path has to do it
+		// itself.
+		let requests = requests.lock().unwrap().clone();
+		let build_target = requests
+			.iter()
+			.find(|r| r.starts_with("POST ") && r.contains("/build?"))
+			.expect("a /build request was issued");
+		assert!(
+			build_target.contains("t=docker.io%2Flibrary%2Fproj-app%3Alatest"),
+			"the build query must carry the canonical docker.io name in t=: {build_target}"
+		);
+		// And never the un-normalised form on the wire - that is the
+		// exact regression this commit undoes.
+		assert!(
+			!build_target.contains("t=proj-app%3Alatest")
+				&& !build_target.contains("t=proj-app:latest"),
+			"the build query must not carry the un-normalised form in t=: {build_target}"
+		);
 	}
 }
 

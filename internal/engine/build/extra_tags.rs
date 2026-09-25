@@ -16,13 +16,23 @@ use super::Engine;
 impl Engine {
 	/// Apply any `build.tags` aliases to the freshly built image.
 	///
-	/// The primary `tag` is skipped: when no `image:` is set it is already
-	/// `tags[0]`, which the build itself produced, so re-tagging it onto itself
-	/// would be a no-op API call.
+	/// `tag` is the un-normalised primary (what the print paths and the
+	/// `up` board row carry); the comparison against each `build.tags`
+	/// entry skips the alias that is the same un-normalised name.
+	/// `wire_tag` is the docker.io canonical form the build produced
+	/// (and the one `/libpod/images/{}/tag` actually has on disk), so
+	/// it is what the source-side path of the POST carries.
+	///
+	/// Without the two-argument split the loop would either skip the
+	/// wrong alias (comparing the normalised wire_tag against the
+	/// un-normalised `build.tags` entry) or POST against an image the
+	/// daemon does not have (the un-normalised primary as the source
+	/// while the build landed under the normalised name).
 	pub(in crate::engine) async fn apply_extra_tags(
 		&self,
 		build: &BuildConfig,
 		tag: &str,
+		wire_tag: &str,
 	) -> Result<()> {
 		for extra_tag in build.tags() {
 			if extra_tag == tag {
@@ -40,9 +50,9 @@ impl Engine {
 				.rsplit_once(':')
 				.map(|(r, t)| (r.to_string(), t.to_string()))
 				.unwrap_or_else(|| (normalized.clone(), "latest".to_string()));
-			let encoded_tag = urlencoded(tag);
+			let encoded_source = urlencoded(wire_tag);
 			let tag_path = format!(
-				"{API_PREFIX}/images/{encoded_tag}/tag?repo={}&tag={}",
+				"{API_PREFIX}/images/{encoded_source}/tag?repo={}&tag={}",
 				urlencoded(&repo),
 				urlencoded(&tag_str),
 			);
