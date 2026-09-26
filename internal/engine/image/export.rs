@@ -17,9 +17,8 @@ use super::super::Engine;
 ///
 /// `#[non_exhaustive]` since 4.0.0, so a new field can be added in a minor
 /// release without breaking every external caller that built the struct with
-/// a literal. Construct it via [`CommitOptions::new`] or the `with_*` builders
-/// below; a struct literal is refused outside this crate, which is what buys
-/// the room to grow.
+/// a literal. Construct it via [`CommitOptions::new`]; a struct literal is refused
+/// outside this crate, which is what buys the room to grow.
 #[derive(Debug, Clone, Default)]
 #[non_exhaustive]
 pub struct CommitOptions {
