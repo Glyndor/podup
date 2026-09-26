@@ -304,17 +304,6 @@ pub fn build_vars(dir: &Path) -> HashMap<String, String> {
 /// the **last** one wins. With no explicit files this is just [`build_vars`]
 /// (process env + `.env`). Process env always takes precedence over file values.
 ///
-/// A missing, unreadable, or malformed `--env-file` is silently skipped here
-/// (legacy lenient behaviour). This signature is part of the published library
-/// API and is kept for backward compatibility; the CLI drives
-/// [`build_vars_with_env_files_strict`], which fails loudly on a bad file.
-pub fn build_vars_with_env_files(dir: &Path, extra: &[String]) -> HashMap<String, String> {
-	// `strict = false` can never produce an error.
-	build_vars_with_env_files_inner(dir, extra, false).unwrap_or_default()
-}
-
-/// Like [`build_vars_with_env_files`] but rejects a bad `--env-file`.
-///
 /// An explicitly-passed `--env-file` that is missing, unreadable, or malformed
 /// is a hard error (matching docker compose, which fails on a not-found env
 /// file) rather than being silently skipped: a typo'd path must not fall back

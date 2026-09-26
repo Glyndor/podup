@@ -315,24 +315,16 @@ impl Engine {
 	}
 
 	/// Block until each targeted service's containers stop, printing each exit
-	/// code (`docker compose wait`). Returns `RunExited` with the last non-zero
-	/// code so the process exit status reflects it, mirroring docker compose.
-	pub async fn wait_services(
-		&self,
-		file: &ComposeFile,
-		target_services: &[String],
-	) -> Result<()> {
-		self.wait_services_with_options(file, target_services, false)
-			.await
-	}
-
-	/// [`Engine::wait_services`] with `--format json`, which emits one NDJSON
-	/// object per container instead of the table.
+	/// code (`docker compose wait`). `json` emits one NDJSON object per
+	/// container instead of the table.
 	///
-	/// NDJSON rather than a trailing array because `wait` blocks: a script that
-	/// only learns anything once every container has exited has been handed the
-	/// answer at the one moment it is least useful. It is also the rule `stats`
-	/// already follows for its streaming output.
+	/// Returns `RunExited` with the last non-zero code so the process exit
+	/// status reflects it, mirroring docker compose.
+	///
+	/// NDJSON rather than a trailing array because `wait` blocks: a script
+	/// that only learns anything once every container has exited has been
+	/// handed the answer at the one moment it is least useful. It is also the
+	/// rule `stats` already follows for its streaming output.
 	pub async fn wait_services_with_options(
 		&self,
 		file: &ComposeFile,

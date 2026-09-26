@@ -167,21 +167,6 @@ fn restarting_a_working_row_keeps_the_original_start() {
 	);
 }
 
-#[test]
-fn completion_is_every_row_finished() {
-	let mut b = seeded();
-	let now = t0();
-	assert!(!b.is_complete());
-	for (kind, name) in [
-		(Kind::Network, "proj_default"),
-		(Kind::Container, "proj-web-1"),
-		(Kind::Container, "proj-db-1"),
-	] {
-		b.finish(kind, name, "Created", now);
-	}
-	assert!(b.is_complete());
-}
-
 /// The noun round-trips, because `progress_line`'s callers pass a `&str` and the
 /// board has to map it back without those 21 sites changing shape.
 #[test]

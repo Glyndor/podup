@@ -82,7 +82,7 @@ fn x_podman_autoupdate_skips_the_unknown_key_diagnostic() {
 	// reads it, but no "unknown key" warning is emitted for it.
 	let yaml = format!("services:\n  web:\n    image: x\n    {X_PODMAN_AUTOUPDATE}: registry\n");
 	let svc = parse_service(&yaml);
-	let diagnostics = crate::compose::collect_diagnostics(&crate::compose::types::ComposeFile {
+	let diagnostics = crate::compose::diagnostics::collect(&crate::compose::types::ComposeFile {
 		services: std::iter::once(("web".to_string(), svc)).collect(),
 		..crate::compose::types::ComposeFile::default()
 	});

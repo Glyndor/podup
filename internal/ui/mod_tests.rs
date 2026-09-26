@@ -137,14 +137,6 @@ fn progress_toggle_is_observable() {
 	set_progress(prev);
 }
 
-#[test]
-fn status_cell_pads_and_keeps_status() {
-	let cell = status_cell("ok", 6);
-	assert!(cell.contains("ok"));
-	// At least the requested width (colour codes, if any, only add length).
-	assert!(cell.len() >= 6);
-}
-
 /// The whole point of the shared key: `ps` prints `proj-web-1`, `logs`
 /// prefixes `web-1`, and the progress lines print `proj-web-1`; all three
 /// must resolve to one colour, or the palette is not stable at all.
@@ -157,16 +149,6 @@ fn every_spelling_of_one_container_gets_one_colour() {
 		from_ps.render().to_string(),
 		from_logs.render().to_string(),
 		"the same container must be the same colour in ps and logs"
-	);
-}
-
-/// A label that does not carry the project prefix is left alone.
-#[test]
-fn an_unprefixed_label_is_keyed_on_itself() {
-	set_project("proj");
-	assert_eq!(
-		identity_style("web").render().to_string(),
-		service_style("web").render().to_string()
 	);
 }
 
@@ -187,43 +169,42 @@ fn registry_guard() -> std::sync::MutexGuard<'static, ()> {
 	COLOUR_REGISTRY.lock().unwrap_or_else(|e| e.into_inner())
 }
 
-/// `set_services` is what makes `service_style` disagree with the plain hash:
-/// once a project's names are registered, sequential assignment guarantees
-/// they spread across the palette, rather than each colliding independently
-/// under the hash the way `palette_index` used to.
+/// `set_services` is what makes registered names spread across the palette:
+/// sequential assignment guarantees distinct slots, rather than each name
+/// colliding independently under the plain hash. Compared on the slot, which
+/// never wraps, so a narrow terminal cannot hide a collision.
 #[test]
 fn set_services_makes_registered_names_distinct() {
 	let _guard = registry_guard();
 	// `set_services` is project-keyed; without a project name to register
-	// under, every name falls back to the hash and the test's `assert_ne!`
-	// chain no longer holds (#1517).
+	// under, every name falls back to the hash (#1517).
 	set_project("colourreg-distinct");
 	set_services(&[
 		"colourreg-alpha".to_string(),
 		"colourreg-beta".to_string(),
 		"colourreg-gamma".to_string(),
 	]);
-	let a = service_style("colourreg-alpha").render().to_string();
-	let b = service_style("colourreg-beta").render().to_string();
-	let g = service_style("colourreg-gamma").render().to_string();
+	let a = service_slot("colourreg-alpha");
+	let b = service_slot("colourreg-beta");
+	let g = service_slot("colourreg-gamma");
 	assert_ne!(a, b, "registered names must not share a colour");
 	assert_ne!(b, g, "registered names must not share a colour");
 	assert_ne!(a, g, "registered names must not share a colour");
 }
 
-/// The guard `palette_index("web") < SERVICE_PALETTE.len()` used to provide
-/// before it was deleted: `service_style`'s narrow-terminal fallback receives
-/// whatever slot `palette::assign` produced (0 through `WIDE_PALETTE.len() -
-/// 1`, since `assign` itself wraps at the wide palette's size), and must wrap
-/// that again to index the six-entry `SERVICE_PALETTE` safely.
+/// The narrow-terminal palette is a six-entry array, and `slot_to_style`'s
+/// narrow branch indexes it with the slot `palette::assign` produced (0
+/// through `WIDE_PALETTE.len() - 1`, since `assign` itself wraps at the wide
+/// palette's size). It must wrap that again to index the six-entry
+/// `SERVICE_PALETTE` safely; without the modulo, a slot of 6 would index out
+/// of bounds. Calling `slot_to_style` directly pins that branch
+/// without depending on `palette_index`, which used to assert the
+/// same condition and is gone.
 ///
-/// Calls `slot_to_style` itself (the real narrow-branch code, not a
-/// reimplementation of its modulo) for every slot the assignment can
-/// produce, on both the wide and narrow branches. Confirmed this fails: with
-/// the `% SERVICE_PALETTE.len()` removed from `slot_to_style`'s narrow arm,
-/// this test panics with an index-out-of-bounds on slot 6 (`index out of
-/// bounds: the len is 6 but the index is 6`), then passes again once the
-/// modulo is restored.
+/// Confirmed this fails: with the `% SERVICE_PALETTE.len()` removed from
+/// `slot_to_style`'s narrow arm, this test panics with an
+/// index-out-of-bounds on slot 6 (`index out of bounds: the len is 6 but
+/// the index is 6`), then passes again once the modulo is restored.
 #[test]
 fn every_wide_palette_slot_indexes_the_narrow_palette_safely() {
 	for slot in 0..palette::WIDE_PALETTE.len() {

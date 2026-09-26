@@ -54,52 +54,6 @@ impl RunOptions {
 			service_ports,
 		}
 	}
-
-	/// Override the default service command. Builder-style.
-	#[must_use]
-	pub fn with_cmd(mut self, cmd: Vec<String>) -> Self {
-		self.cmd = cmd;
-		self
-	}
-
-	/// Remove the container after it exits, `--rm`. Builder-style.
-	#[must_use]
-	pub fn with_rm(mut self, rm: bool) -> Self {
-		self.rm = rm;
-		self
-	}
-
-	/// Start the container in the background without streaming logs, `-d/--detach`.
-	/// Builder-style.
-	#[must_use]
-	pub fn with_detach(mut self, detach: bool) -> Self {
-		self.detach = detach;
-		self
-	}
-
-	/// Additional environment variables (`KEY=VAL` strings, override service env).
-	/// Builder-style.
-	#[must_use]
-	pub fn with_env_overrides(mut self, env_overrides: Vec<String>) -> Self {
-		self.env_overrides = env_overrides;
-		self
-	}
-
-	/// Override the generated container name. Builder-style.
-	#[must_use]
-	pub fn with_name_override(mut self, name_override: Option<String>) -> Self {
-		self.name_override = name_override;
-		self
-	}
-
-	/// Publish the service's declared `ports:` (compose `run --service-ports`).
-	/// When false, `run` leaves ports unpublished to avoid host-port collisions.
-	/// Builder-style.
-	#[must_use]
-	pub fn with_service_ports(mut self, service_ports: bool) -> Self {
-		self.service_ports = service_ports;
-		self
-	}
 }
 
 /// Extra `docker compose run` flag overrides threaded through the engine
@@ -167,41 +121,11 @@ impl RunOverrides {
 		self
 	}
 
-	/// Override the image entrypoint (`--entrypoint`). Builder-style.
-	#[must_use]
-	pub fn with_entrypoint(mut self, entrypoint: Option<String>) -> Self {
-		self.entrypoint = entrypoint;
-		self
-	}
-
 	/// Extra ad-hoc volume mounts in compose short form (`-v/--volume`).
 	/// Builder-style.
 	#[must_use]
 	pub fn with_volumes(mut self, volumes: Vec<String>) -> Self {
 		self.volumes = volumes;
-		self
-	}
-
-	/// Extra published ports in compose short form (`-p/--publish`).
-	/// Builder-style.
-	#[must_use]
-	pub fn with_publish(mut self, publish: Vec<String>) -> Self {
-		self.publish = publish;
-		self
-	}
-
-	/// Keep STDIN open on the container (`-i/--interactive`). Builder-style.
-	#[must_use]
-	pub fn with_interactive(mut self, interactive: bool) -> Self {
-		self.interactive = interactive;
-		self
-	}
-
-	/// Do not start `depends_on` services before the run (`--no-deps`).
-	/// Builder-style.
-	#[must_use]
-	pub fn with_no_deps(mut self, no_deps: bool) -> Self {
-		self.no_deps = no_deps;
 		self
 	}
 }

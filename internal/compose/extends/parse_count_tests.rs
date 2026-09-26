@@ -13,7 +13,7 @@ use std::fs;
 
 use tempfile::tempdir;
 
-use super::super::parse_file;
+use super::super::parse_files_with_env_files;
 use super::{parse_file_inner_call_count, reset_parse_file_inner_counter};
 
 /// Twenty services in the parent, every one extending the same base
@@ -58,7 +58,7 @@ fn extends_file_is_parsed_at_most_once_per_shared_external_file() {
 	// the parse of `common.yml` that happened when the test resolved
 	// its own absolute path during canonicalize.
 	reset_parse_file_inner_counter();
-	let parsed = parse_file(&parent_path).expect("parse parent");
+	let parsed = parse_files_with_env_files(&[parent_path], &[]).expect("parse parent");
 	let count = parse_file_inner_call_count();
 
 	// One parse of the parent plus one parse of `common.yml` (cached
@@ -100,7 +100,7 @@ fn extends_file_caches_per_path() {
 	fs::write(&parent_path, parent).expect("write parent");
 
 	reset_parse_file_inner_counter();
-	let parsed = parse_file(&parent_path).expect("parse parent");
+	let parsed = parse_files_with_env_files(&[parent_path], &[]).expect("parse parent");
 	let count = parse_file_inner_call_count();
 
 	// One parse per distinct external file, regardless of how many
@@ -136,7 +136,8 @@ fn an_unrelated_broken_service_does_not_fail_the_reference() {
 		"services:\n  app:\n    extends:\n      service: base\n      file: base.yml\n",
 	)
 	.expect("write good.yml");
-	parse_file(&good).expect("referencing a valid service must not fail over an unrelated one");
+	parse_files_with_env_files(&[good], &[])
+		.expect("referencing a valid service must not fail over an unrelated one");
 
 	// And the broken service is still an error when it is the one asked for,
 	// so this does not simply stop reporting the failure.
@@ -147,7 +148,7 @@ fn an_unrelated_broken_service_does_not_fail_the_reference() {
 	)
 	.expect("write bad.yml");
 	assert!(
-		parse_file(&bad).is_err(),
+		parse_files_with_env_files(&[bad], &[]).is_err(),
 		"asking for the broken service must still fail"
 	);
 }

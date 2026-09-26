@@ -9,8 +9,8 @@ use crate::libpod::{urlencoded, API_PREFIX};
 
 use super::Engine;
 
-/// Options for [`Engine::stream_events`], mirroring `docker compose events`
-/// (`--since`, `--until`, `--filter`).
+/// Options for [`Engine::stream_events_with_options`], mirroring `docker
+/// compose events` (`--since`, `--until`, `--filter`).
 ///
 /// `#[non_exhaustive]` since 4.0.0, so a new flag can be added in a minor
 /// release without breaking every external caller that built the struct with
@@ -66,18 +66,10 @@ impl EventsOptions {
 }
 
 impl Engine {
-	/// Stream events for this project's containers. With `json`, each event is
-	/// printed as a compact JSON line; otherwise as `TYPE ACTION NAME`.
-	///
-	/// The feed is unbounded, so it normally ends only when the caller stops it.
-	/// Returning at all therefore means the stream was lost, and this returns
-	/// `Err`; see [`Engine::stream_events_with_options`] for the bounded case.
-	pub async fn stream_events(&self, json: bool) -> Result<()> {
-		self.stream_events_with_options(json, &EventsOptions::default())
-			.await
-	}
-
-	/// [`Engine::stream_events`] with `docker compose events`-style `--since`,
+	/// Stream events for this project's containers, with `docker compose
+	/// events`-style `--since`, `--until`, and `--filter` options. With `json`,
+	/// each event is printed as a compact JSON line; otherwise as
+	/// `TYPE ACTION NAME`.
 	/// `--until`, and `--filter` options.
 	///
 	/// # Errors

@@ -490,8 +490,8 @@ const SERVICE_PALETTE: [AnsiColor; 6] = [
 	AnsiColor::BrightBlue,
 ];
 
-/// The palette slot backing [`service_style`], before it is rendered into a
-/// [`Style`] for whichever palette the terminal supports.
+/// The palette slot backing a service's identity colour, before it is
+/// rendered into a [`Style`] for whichever palette the terminal supports.
 ///
 /// Looks up `name` in every project's services registered in [`SERVICES`],
 /// first match wins. Two `Engine` values alive in one process own separate
@@ -518,16 +518,7 @@ pub(crate) fn service_slot(name: &str) -> usize {
 	palette::colour_for(name, &std::collections::HashMap::new())
 }
 
-/// The stable colour for a service's aggregated-log prefix.
-pub fn service_style(name: &str) -> Style {
-	slot_to_style(service_slot(name), palette::wide_palette_available())
-}
-
 /// The style for a palette slot, from whichever palette the terminal supports.
-///
-/// Split out of [`service_style`] so both branches are testable: the real
-/// decision reads a process-cached environment probe, and a test that flipped
-/// it would pass or fail on test scheduling.
 ///
 /// The narrow branch takes a slot assigned against the WIDE palette's size, so
 /// it must wrap again: indexing a six-element array with a slot up to 19 is
@@ -543,9 +534,9 @@ fn slot_to_style(slot: usize, wide: bool) -> Style {
 /// Render a palette slot (from [`identity_slot`]/[`service_slot`]) into a
 /// [`Style`] for whichever palette the terminal supports right now.
 ///
-/// The `pub(crate)` counterpart to [`identity_style`]/[`service_style`] for a
-/// caller that needs to resolve its *own* slot (e.g. the log-prefix module,
-/// which must never let its routing collapse into a raw per-label hash; see
+/// The `pub(crate)` counterpart to [`identity_style`] for a caller that needs
+/// to resolve its *own* slot (e.g. the log-prefix module, which must never
+/// let its routing collapse into a raw per-label hash; see
 /// `engine::query::log_prefix::prefix_slot`) rather than one of the two
 /// label-keyed lookups here.
 pub(crate) fn style_for_slot(slot: usize) -> Style {
@@ -661,17 +652,6 @@ pub(crate) fn paint_status_cell(padded: &str) -> String {
 		.collect::<Vec<_>>()
 		.join(", ");
 	format!("{body}{pad}")
-}
-
-/// Render a container `status` left-padded to `width`, colourised by its meaning
-/// when stdout is a colour sink. The padding is applied first so the colour codes
-/// (zero display width) never disturb column alignment.
-pub fn status_cell(status: &str, width: usize) -> String {
-	let padded = format!("{status:<width$}");
-	match status_style(status) {
-		Some(style) => paint(style, &padded, stdout_colored()),
-		None => padded,
-	}
 }
 
 #[cfg(test)]

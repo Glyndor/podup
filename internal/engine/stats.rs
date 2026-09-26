@@ -48,14 +48,6 @@ impl StatsOptions {
 		}
 	}
 
-	/// Disable streaming; print a single snapshot and exit, `--no-stream`.
-	/// Builder-style.
-	#[must_use]
-	pub fn with_no_stream(mut self, no_stream: bool) -> Self {
-		self.no_stream = no_stream;
-		self
-	}
-
 	/// Include non-running containers as zeroed rows, `-a/--all`. Builder-style.
 	#[must_use]
 	pub fn with_all(mut self, all: bool) -> Self {
@@ -67,14 +59,6 @@ impl StatsOptions {
 	#[must_use]
 	pub fn with_json(mut self, json: bool) -> Self {
 		self.json = json;
-		self
-	}
-
-	/// Disable container-name truncation in the table, `--no-trunc`.
-	/// Builder-style.
-	#[must_use]
-	pub fn with_no_trunc(mut self, no_trunc: bool) -> Self {
-		self.no_trunc = no_trunc;
 		self
 	}
 }

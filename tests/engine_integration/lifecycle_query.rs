@@ -165,10 +165,15 @@ async fn exec_with_options_user_workdir_env() {
 				"-c".to_string(),
 				"{ pwd; echo $FOO; id -un; } > /opts".to_string(),
 			],
-			podup::ExecOptions::default()
-				.with_user(Some("root".to_string()))
-				.with_workdir(Some("/tmp".to_string()))
-				.with_env(vec!["FOO=bar".to_string()]),
+			podup::ExecOptions::new(
+				vec!["FOO=bar".to_string()],
+				Some("root".to_string()),
+				Some("/tmp".to_string()),
+				false,
+				false,
+				None,
+				false,
+			),
 		)
 		.await
 		.unwrap();

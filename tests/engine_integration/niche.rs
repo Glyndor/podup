@@ -143,7 +143,7 @@ async fn engine_events_stream_connects() {
 	// timeout (not an error) means the event stream connected and stayed open.
 	let res = tokio::time::timeout(
 		std::time::Duration::from_millis(800),
-		engine.stream_events(true),
+		engine.stream_events_with_options(true, &podup::EventsOptions::default()),
 	)
 	.await;
 	// On failure, say what came back: a stream that ended cleanly and one

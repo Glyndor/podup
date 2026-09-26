@@ -28,14 +28,9 @@ fn is_stdin(path: &Path) -> bool {
 	path == Path::new("-")
 }
 
-/// Parse a compose file from disk, applying variable substitution and
-/// resolving `extends:` / `include:` directives.
-pub fn parse_file(path: &Path) -> Result<ComposeFile> {
-	parse_file_with_env_files(path, &[])
-}
-
-/// Like [`parse_file`], additionally loading `env_files` (the global
-/// `--env-file` flag) into the variable map used for interpolation. These take
+/// Parse one compose file from disk, applying variable substitution and
+/// resolving `extends:` / `include:` directives, with `env_files` (the global
+/// `--env-file` flag) loaded into the variable map used for interpolation. These take
 /// effect for the top-level file and any included files.
 ///
 /// They **replace** a project `.env` rather than adding to it: when `env_files`
@@ -140,15 +135,6 @@ pub(crate) fn parse_file_with_env_files_interp_with_stdin(
 
 	extends::resolve_all_extends(&mut file, &dir)?;
 	Ok(file)
-}
-
-/// Collect parse-time diagnostics for an already-parsed compose file: warnings
-/// about recognized-but-unsupported keys and fields that are accepted but carry
-/// no effect on Podman. The CLI prints these as it parses; this returns them for
-/// a caller that parses without printing, since [`parse_file`] does not emit
-/// them itself.
-pub fn collect_diagnostics(file: &ComposeFile) -> Vec<String> {
-	diagnostics::collect(file)
 }
 
 /// Parse and merge multiple compose files (the `-f`/`COMPOSE_FILE` list).
@@ -335,7 +321,7 @@ fn merge_override(target: &mut ComposeFile, other: ComposeFile, directives: &tag
 ///
 /// Variable substitution is applied using only the process environment.
 /// `extends: { file: ... }` and `include:` directives are not resolved;
-/// use [`parse_file`] for that.
+/// use [`parse_file_with_env_files`] for that.
 pub fn parse_str(content: &str) -> Result<ComposeFile> {
 	let vars = substitute::build_vars(Path::new("."));
 	let mut file = merge::deserialize_with_merge_interp(content, Some(&vars))?;

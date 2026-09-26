@@ -391,7 +391,7 @@ async fn top_skips_a_stopped_service_and_reports_the_rest() {
 	// prove nothing. `wait` blocks until it stops, which is deterministic where
 	// a sleep is not.
 	engine
-		.wait_services(&file, &["migrate".to_string()])
+		.wait_services_with_options(&file, &["migrate".to_string()], false)
 		.await
 		.unwrap();
 
