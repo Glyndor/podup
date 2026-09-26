@@ -19,6 +19,21 @@ fn a_seeded_board_knows_its_total_before_anything_happens() {
 	assert_eq!(seeded().tally(), (0, 3));
 }
 
+/// Finishing every seeded row is what the progress line reports as done.
+#[test]
+fn a_board_with_every_row_finished_tallies_all_of_them() {
+	let mut b = seeded();
+	let now = t0();
+	for (kind, name) in [
+		(Kind::Network, "proj_default"),
+		(Kind::Container, "proj-web-1"),
+		(Kind::Container, "proj-db-1"),
+	] {
+		b.finish(kind, name, "Created", now);
+	}
+	assert_eq!(b.tally(), (3, 3));
+}
+
 /// The counter tracks finished rows, not started ones. A row being worked on is
 /// not progress the user can rely on.
 #[test]

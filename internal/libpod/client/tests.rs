@@ -45,6 +45,10 @@ fn check_status_falls_back_to_raw_body_on_non_json() {
 		Client::check_status(StatusCode::INTERNAL_SERVER_ERROR, b"plain text error").unwrap_err();
 	assert!(err.is_status(500));
 	assert!(err.to_string().contains("plain text error"));
+	assert!(
+		matches!(&err, super::super::PodmanError::Api { message, .. } if message == "plain text error"),
+		"a non-JSON body must be kept verbatim: {err:?}"
+	);
 }
 
 // ---------------------------------------------------------------------------
