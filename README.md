@@ -159,7 +159,9 @@ release's Ed25519 signature and SHA-256 checksum, failing closed otherwise. See
 podup tracks the **latest stable Podman** and supports its **last two majors,
 Podman 5.x and 6.x**. It talks to Podman's native libpod API, requesting the
 `/v5.0.0/libpod` path that Podman 6 still serves; the gate is the major version
-the engine reports, so it needs **Podman ≥ 5.0**. When a new major ships, it is
+the engine reports, so it needs **Podman ≥ 5.0**. Every command checks that
+version with its first request and stops, saying so, when the engine is older.
+When a new major ships, it is
 added and the oldest is dropped, but only once the **newest LTS of each
 distribution family carries the new one or better**, so nobody on a current
 release is stranded. Both supported majors run the

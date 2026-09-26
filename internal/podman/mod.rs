@@ -24,15 +24,47 @@ const DEFAULT_PIPE: &str = "//./pipe/podman-machine-default";
 ///    `podman machine`, on Windows the `podman machine` named pipe.
 /// 3. The conventional path for this platform, so a failed connection
 ///    reports the location podup expected.
+///
+/// Nothing is sent: the socket is opened by the first request. The command
+/// line goes through [`connect_checked`], which also confirms the API version.
 pub fn connect(socket_path: Option<&str>) -> Result<Client> {
 	connect_with_pool_size(socket_path, Client::DEFAULT_POOL_SIZE)
+}
+
+/// [`connect`] followed by one `GET /libpod/_ping`, so a Podman below the
+/// floor podup supports is refused with [`PodmanError::IncompatibleApiVersion`]
+/// before the command sends anything else.
+///
+/// Every command that talks to Podman connects through here, once, so the
+/// check costs one request per command. Until 5.10.2 the check existed
+/// (`Client::ping`) and nothing called it: on a host with Podman 4.9 the
+/// command failed on its first real request with whatever that request
+/// returned, and the message written for the unsupported case never
+/// appeared (#1924).
+///
+/// `pool_size` is the HTTP/1.1 connection-pool cap, floored at 1 by
+/// [`Client::with_pool_size`]. The pool is keyed by socket path, so the cap
+/// controls the number of concurrent connections a single [`Client`] keeps
+/// open to the socket.
+///
+/// [`PodmanError::IncompatibleApiVersion`]: crate::libpod::PodmanError::IncompatibleApiVersion
+pub async fn connect_checked(socket_path: Option<&str>, pool_size: usize) -> Result<Client> {
+	let client = connect_with_pool_size(socket_path, pool_size)?;
+	client.ping().await?;
+	Ok(client)
 }
 
 /// As [`connect`], with a caller-chosen HTTP/1.1 connection-pool size. The
 /// pool is keyed by socket path, so the cap controls the number of
 /// concurrent connections a single [`Client`] will keep open to the socket.
 /// `pool_size` is floored at 1 by [`Client::with_pool_size`].
-pub fn connect_with_pool_size(socket_path: Option<&str>, pool_size: usize) -> Result<Client> {
+///
+/// Crate-private so the command line cannot pick a pool size without the
+/// version check that [`connect_checked`] adds.
+pub(crate) fn connect_with_pool_size(
+	socket_path: Option<&str>,
+	pool_size: usize,
+) -> Result<Client> {
 	let default_path = default_socket_path();
 	let raw = socket_path.unwrap_or(&default_path);
 	if let Some(scheme) = remote_scheme(raw) {
@@ -65,7 +97,7 @@ pub fn connect_from_env() -> Result<Client> {
 }
 
 /// As [`connect_from_env`], with a caller-chosen HTTP/1.1 connection-pool
-/// size (see [`connect_with_pool_size`]).
+/// size (see [`connect_checked`] for what the cap controls).
 pub fn connect_from_env_with_pool_size(pool_size: usize) -> Result<Client> {
 	let socket = std::env::var("PODMAN_SOCKET")
 		.or_else(|_| std::env::var("DOCKER_HOST"))
