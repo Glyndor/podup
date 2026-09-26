@@ -119,14 +119,6 @@ impl CpOptions {
 			archive,
 		}
 	}
-
-	/// 1-based replica index for a scaled service, `--index` (default: first).
-	/// Builder-style.
-	#[must_use]
-	pub fn with_index(mut self, index: Option<u32>) -> Self {
-		self.index = index;
-		self
-	}
 }
 
 impl Engine {
