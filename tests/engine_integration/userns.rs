@@ -52,6 +52,19 @@ async fn compare_with_default(client: Client, tag: &str, mode: &str) -> (Identit
 	})
 }
 
+/// Every line of a `uid_map` as `[inside, outside, length]`.
+fn mappings(map: &str) -> Vec<[u64; 3]> {
+	map.lines()
+		.map(|line| {
+			let fields: Vec<u64> = line
+				.split_whitespace()
+				.map(|part| part.parse().expect("uid_map must contain integers"))
+				.collect();
+			fields.try_into().expect("uid_map must have three columns")
+		})
+		.collect()
+}
+
 fn first_mapping(map: &str) -> [u64; 3] {
 	let fields: Vec<u64> = map
 		.lines()
@@ -86,15 +99,27 @@ async fn auto_size_controls_the_allocated_range() {
 		None => return,
 	};
 	let (control, mapped) = compare_with_default(client, "size", "auto:size=2048").await;
-	let mapping = first_mapping(&mapped.uid_map);
+	let lines = mappings(&mapped.uid_map);
 	assert_ne!(
-		mapping,
+		lines[0],
 		first_mapping(&control.uid_map),
 		"auto:size must allocate a private subordinate ID range"
 	);
-	assert_eq!(mapping[0], 0);
-	assert_eq!(mapping[2], 2048);
-	assert_eq!(mapped.uid_map.lines().count(), 1);
+	// Podman takes the range from the free holes of the subordinate pool,
+	// first fit, and splits it when no single hole is large enough: next to a
+	// 1024-ID hole left by other containers, `auto:size=2048` comes back as two
+	// lines of 1024 (measured on Podman 5.7.0). What the size controls is the
+	// total, starting at 0 inside the container with no gap, not how many
+	// lines the host side takes.
+	let mut inside = 0;
+	for [start, _, length] in &lines {
+		assert_eq!(
+			*start, inside,
+			"the container side must be one run from 0: {lines:?}"
+		);
+		inside += length;
+	}
+	assert_eq!(inside, 2048, "auto:size=2048 must map 2048 IDs: {lines:?}");
 	assert_eq!(control.uid.trim(), "0");
 	assert_eq!(mapped.uid.trim(), "0");
 }
