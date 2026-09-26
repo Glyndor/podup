@@ -74,7 +74,7 @@ fn paint_gates_on_enabled() {
 #[test]
 fn colour_choice_resolution() {
 	// Pure resolution: never touches the process-global choice, so it can't
-	// race the production code (LinePrefixer/status_cell) that reads it.
+	// race the production code (LinePrefixer, the table renderer) that reads it.
 	temp_env::with_var_unset("NO_COLOR", || {
 		assert!(!colored_with(ColorChoice::Never, true));
 		assert!(colored_with(ColorChoice::Always, false));
@@ -190,6 +190,32 @@ fn set_services_makes_registered_names_distinct() {
 	assert_ne!(a, b, "registered names must not share a colour");
 	assert_ne!(b, g, "registered names must not share a colour");
 	assert_ne!(a, g, "registered names must not share a colour");
+	// Distinct slots are only worth it if they render as distinct colours.
+	let style = |slot| slot_to_style(slot, true).render().to_string();
+	assert_ne!(
+		style(a),
+		style(b),
+		"distinct slots must render distinct colours"
+	);
+	assert_ne!(
+		style(b),
+		style(g),
+		"distinct slots must render distinct colours"
+	);
+	assert_ne!(
+		style(a),
+		style(g),
+		"distinct slots must render distinct colours"
+	);
+}
+
+/// A label that does not carry the project prefix is left alone: it gets the
+/// colour of the service of that name.
+#[test]
+fn an_unprefixed_label_is_keyed_on_itself() {
+	let _guard = registry_guard();
+	set_project("proj");
+	assert_eq!(identity_slot("web"), service_slot("web"));
 }
 
 /// The narrow-terminal palette is a six-entry array, and `slot_to_style`'s
