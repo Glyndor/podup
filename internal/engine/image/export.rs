@@ -51,37 +51,6 @@ impl CommitOptions {
 			changes,
 		}
 	}
-
-	/// Commit message recorded on the new image (`-m/--message`).
-	/// Builder-style.
-	#[must_use]
-	pub fn with_message(mut self, message: Option<String>) -> Self {
-		self.message = message;
-		self
-	}
-
-	/// Author recorded on the new image (`-a/--author`). Builder-style.
-	#[must_use]
-	pub fn with_author(mut self, author: Option<String>) -> Self {
-		self.author = author;
-		self
-	}
-
-	/// Pause the container during the commit (`-p/--pause`); `None` leaves
-	/// Podman's default (pause on). Builder-style.
-	#[must_use]
-	pub fn with_pause(mut self, pause: Option<bool>) -> Self {
-		self.pause = pause;
-		self
-	}
-
-	/// Dockerfile instructions to apply to the committed image
-	/// (`-c/--change`). Builder-style.
-	#[must_use]
-	pub fn with_changes(mut self, changes: Vec<String>) -> Self {
-		self.changes = changes;
-		self
-	}
 }
 
 /// Split a `commit` image reference into `(repo, tag)`, defaulting the tag to

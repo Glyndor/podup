@@ -127,25 +127,6 @@ impl CpOptions {
 		self.index = index;
 		self
 	}
-
-	/// Follow symlinks in the host source before packing, `-L/--follow-link`.
-	/// Builder-style.
-	#[must_use]
-	pub fn with_follow_link(mut self, follow_link: bool) -> Self {
-		self.follow_link = follow_link;
-		self
-	}
-
-	/// Archive mode, `-a/--archive`. Accepted for command-line compatibility:
-	/// under rootless Podman the original uid/gid cannot be restored, and
-	/// container→host extraction always applies podup's security-hardened mode
-	/// sanitization, so this flag has no effect on the copied bytes.
-	/// Builder-style.
-	#[must_use]
-	pub fn with_archive(mut self, archive: bool) -> Self {
-		self.archive = archive;
-		self
-	}
 }
 
 impl Engine {

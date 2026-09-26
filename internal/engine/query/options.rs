@@ -95,21 +95,6 @@ impl LogsOptions {
 		}
 	}
 
-	/// Follow log output, `-f/--follow`. Builder-style.
-	#[must_use]
-	pub fn with_follow(mut self, follow: bool) -> Self {
-		self.follow = follow;
-		self
-	}
-
-	/// Number of lines to show from the end, `-n/--tail` (`None` = all).
-	/// Builder-style.
-	#[must_use]
-	pub fn with_tail(mut self, tail: Option<String>) -> Self {
-		self.tail = tail;
-		self
-	}
-
 	/// Show logs since a timestamp/relative time, `--since`. Builder-style.
 	#[must_use]
 	pub fn with_since(mut self, since: Option<String>) -> Self {
@@ -156,21 +141,5 @@ impl LogsDisplay {
 			no_color,
 			no_log_prefix,
 		}
-	}
-
-	/// Produce monochrome output (no colour in the prefix), `--no-color`.
-	/// Builder-style.
-	#[must_use]
-	pub fn with_no_color(mut self, no_color: bool) -> Self {
-		self.no_color = no_color;
-		self
-	}
-
-	/// Do not print the `{service} | ` prefix, `--no-log-prefix`.
-	/// Builder-style.
-	#[must_use]
-	pub fn with_no_log_prefix(mut self, no_log_prefix: bool) -> Self {
-		self.no_log_prefix = no_log_prefix;
-		self
 	}
 }

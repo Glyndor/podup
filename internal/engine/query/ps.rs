@@ -139,30 +139,6 @@ impl PsFilterOptions {
 		}
 	}
 
-	/// Print the service names instead of the container table, `--services`.
-	/// Builder-style.
-	#[must_use]
-	pub fn with_services_only(mut self, services_only: bool) -> Self {
-		self.services_only = services_only;
-		self
-	}
-
-	/// Restrict to these services' containers (positional `SERVICE` filter).
-	/// Builder-style.
-	#[must_use]
-	pub fn with_services(mut self, services: Vec<String>) -> Self {
-		self.services = services;
-		self
-	}
-
-	/// Status filters, `--status` (e.g. running, exited); OR-combined.
-	/// Builder-style.
-	#[must_use]
-	pub fn with_status(mut self, status: Vec<String>) -> Self {
-		self.status = status;
-		self
-	}
-
 	/// Generic `KEY=VALUE` predicates, `--filter` (supports status= and name=).
 	/// Builder-style.
 	#[must_use]
