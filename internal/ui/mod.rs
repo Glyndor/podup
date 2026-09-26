@@ -490,9 +490,8 @@ const SERVICE_PALETTE: [AnsiColor; 6] = [
 	AnsiColor::BrightBlue,
 ];
 
-/// The palette slot backing the service identity colour. The crate-private
-/// counterpart to the removed public helper, kept because two callers still
-/// need the slot rather than the rendered `Style`.
+/// The palette slot backing a service's identity colour, before it is
+/// rendered into a [`Style`] for whichever palette the terminal supports.
 ///
 /// Looks up `name` in every project's services registered in [`SERVICES`],
 /// first match wins. Two `Engine` values alive in one process own separate

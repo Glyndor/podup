@@ -28,17 +28,17 @@ fn is_stdin(path: &Path) -> bool {
 	path == Path::new("-")
 }
 
-/// Like [`parse_files_with_env_files`] for a single compose file. Loads
-/// `env_files` (the global `--env-file` flag) into the variable map used for
-/// interpolation. These take effect for the top-level file and any included
-/// files.
+/// Parse one compose file from disk, applying variable substitution and
+/// resolving `extends:` / `include:` directives, with `env_files` (the global
+/// `--env-file` flag) loaded into the variable map used for interpolation. These take
+/// effect for the top-level file and any included files.
 ///
 /// They **replace** a project `.env` rather than adding to it: when `env_files`
 /// is non-empty, `.env` is not read. That is docker-correct, and the opposite
 /// of what this comment used to claim, which also reached docs.rs readers. The
 /// process environment still takes precedence over both.
 pub fn parse_file_with_env_files(path: &Path, env_files: &[String]) -> Result<ComposeFile> {
-	parse_files_with_env_files(&[path.to_path_buf()], env_files)
+	parse_file_with_env_files_interp(path, env_files, true)
 }
 
 /// Like [`parse_file_with_env_files`] but with explicit control over variable
@@ -50,7 +50,18 @@ pub fn parse_file_with_env_files_interp(
 	env_files: &[String],
 	interpolate: bool,
 ) -> Result<ComposeFile> {
-	parse_files_with_env_files_interp(&[path.to_path_buf()], env_files, interpolate)
+	// `-f -` reads the compose document from stdin (like `docker compose`);
+	// there is no file to canonicalize, so relative paths and `.env` resolve
+	// against the working directory. The stdin bytes are read once here so
+	// the parse and the raw nested-key diagnostic can both see them; before
+	// this was done in two places, the second of which silently skipped
+	// stdin and let a `cat typo.yaml | podup config -f -` lose its warning.
+	let stdin = if is_stdin(path) {
+		Some(crate::filesystem::read_stdin_to_string_capped().map_err(ComposeError::Io)?)
+	} else {
+		None
+	};
+	parse_file_with_env_files_interp_with_stdin(path, env_files, interpolate, stdin.as_deref())
 }
 
 /// [`parse_file_with_env_files_interp`] with the stdin content pre-read.

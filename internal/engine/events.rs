@@ -66,12 +66,35 @@ impl EventsOptions {
 }
 
 impl Engine {
-	/// Stream events for this project's containers. With `json`, each event is
-	/// printed as a compact JSON line; otherwise as `TYPE ACTION NAME`.
+	/// Stream events for this project's containers, with `docker compose
+	/// events`-style `--since`, `--until`, and `--filter` options. With `json`,
+	/// each event is printed as a compact JSON line; otherwise as
+	/// `TYPE ACTION NAME`.
+	/// `--until`, and `--filter` options.
 	///
-	/// The feed is unbounded, so it normally ends only when the caller stops it.
-	/// Returning at all therefore means the stream was lost, and this returns
-	/// `Err`; see [`Engine::stream_events_with_options`] for the bounded case.
+	/// # Errors
+	///
+	/// A transport failure always returns the underlying error, whatever was
+	/// asked for. Beyond that, whether a *clean* ending is an error depends on
+	/// what the caller asked for:
+	///
+	/// - **`since` and `until` both set, both already elapsed**: the window
+	///   closes on its own, so a clean ending is what was asked for. Returns
+	///   `Ok(())`.
+	/// - **anything else**: the feed is unbounded and libpod never ends it, so
+	///   any ending means the stream was lost. Returns
+	///   [`ComposeError::StreamTruncated`](crate::ComposeError::StreamTruncated).
+	///
+	/// Also returns `Err` if a `--filter` is malformed or the stream cannot be
+	/// opened.
+	///
+	/// A window needs **both** ends to close, and both must already have
+	/// elapsed. Measured against Podman 5.4.2: `since` and `until` together
+	/// close the feed, whether absolute or relative (a past relative window is
+	/// `--since 2h --until -1h`; re-measured on 5.7.0 with `since=30s&until=-1s`); either one
+	/// alone leaves it open, as does any `until` in the future. So `--until 5m`
+	/// follows indefinitely rather than stopping in five minutes, and `--until
+	/// -5m` alone does too.
 	pub async fn stream_events_with_options(&self, json: bool, opts: &EventsOptions) -> Result<()> {
 		validate_events_since(opts.since.as_deref())?;
 		let filters = build_event_filters(&self.project, &opts.filters)?;

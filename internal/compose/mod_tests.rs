@@ -22,6 +22,18 @@ fn parse_str_raw_minimal_service() {
 }
 
 #[test]
+fn an_unknown_key_produces_a_diagnostic() {
+	// The warnings the CLI prints as it parses come from this pass.
+	let file = parse_str_raw("services:\n  web:\n    image: nginx\n    enviroment:\n      - A=1\n")
+		.unwrap();
+	let diags = diagnostics::collect(&file);
+	assert!(
+		diags.iter().any(|d| d.contains("enviroment")),
+		"expected an unknown-key diagnostic, got {diags:?}"
+	);
+}
+
+#[test]
 fn parse_str_raw_invalid_yaml_is_error() {
 	assert!(parse_str_raw(": : :").is_err());
 }

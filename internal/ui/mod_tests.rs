@@ -169,6 +169,29 @@ fn registry_guard() -> std::sync::MutexGuard<'static, ()> {
 	COLOUR_REGISTRY.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// `set_services` is what makes registered names spread across the palette:
+/// sequential assignment guarantees distinct slots, rather than each name
+/// colliding independently under the plain hash. Compared on the slot, which
+/// never wraps, so a narrow terminal cannot hide a collision.
+#[test]
+fn set_services_makes_registered_names_distinct() {
+	let _guard = registry_guard();
+	// `set_services` is project-keyed; without a project name to register
+	// under, every name falls back to the hash (#1517).
+	set_project("colourreg-distinct");
+	set_services(&[
+		"colourreg-alpha".to_string(),
+		"colourreg-beta".to_string(),
+		"colourreg-gamma".to_string(),
+	]);
+	let a = service_slot("colourreg-alpha");
+	let b = service_slot("colourreg-beta");
+	let g = service_slot("colourreg-gamma");
+	assert_ne!(a, b, "registered names must not share a colour");
+	assert_ne!(b, g, "registered names must not share a colour");
+	assert_ne!(a, g, "registered names must not share a colour");
+}
+
 /// The narrow-terminal palette is a six-entry array, and `slot_to_style`'s
 /// narrow branch indexes it with the slot `palette::assign` produced (0
 /// through `WIDE_PALETTE.len() - 1`, since `assign` itself wraps at the wide
