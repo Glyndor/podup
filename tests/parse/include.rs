@@ -1,5 +1,10 @@
-use podup::{parse_file, ComposeError};
+use podup::compose::types::ComposeFile;
+use podup::{parse_files_with_env_files, ComposeError, Result};
 use std::io::Write;
+
+fn parse_one(path: &std::path::Path) -> Result<ComposeFile> {
+	parse_files_with_env_files(&[path.to_path_buf()], &[])
+}
 
 #[test]
 fn include_string_form_merges_services() {
@@ -30,7 +35,7 @@ services:
 	)
 	.unwrap();
 
-	let file = parse_file(&main).unwrap();
+	let file = parse_one(&main).unwrap();
 	assert!(file.services.contains_key("app"));
 	assert!(file.services.contains_key("helper"));
 }
@@ -69,7 +74,7 @@ services:
 	)
 	.unwrap();
 
-	let file = parse_file(&main).unwrap();
+	let file = parse_one(&main).unwrap();
 	assert!(file.services.contains_key("app"));
 	assert!(file.services.contains_key("shared_svc"));
 }
@@ -107,7 +112,7 @@ services:
 	)
 	.unwrap();
 
-	let file = parse_file(&main).unwrap();
+	let file = parse_one(&main).unwrap();
 	assert!(file.services.contains_key("app"));
 	assert!(file.services.contains_key("shared_svc"));
 }
@@ -141,7 +146,7 @@ services:
 	)
 	.unwrap();
 
-	let file = parse_file(&main).unwrap();
+	let file = parse_one(&main).unwrap();
 	assert!(file.services.contains_key("inc_svc"));
 	assert!(file.services.contains_key("main_svc"));
 }
@@ -175,7 +180,7 @@ services:
 	)
 	.unwrap();
 
-	let file = parse_file(&main).unwrap();
+	let file = parse_one(&main).unwrap();
 	// Parent file definition wins.
 	assert_eq!(
 		file.services["shared"].image.as_deref(),
@@ -247,7 +252,7 @@ fn include_missing_path_surfaces_as_include_variant() {
 		"include:\n  - ./not-here.yml\nservices:\n  app:\n    image: alpine\n"
 	)
 	.unwrap();
-	let err = parse_file(&main).expect_err("missing include must error");
+	let err = parse_one(&main).expect_err("missing include must error");
 	assert!(
 		matches!(err, ComposeError::Include(_)),
 		"expected Include, got {err:?}"
@@ -266,7 +271,7 @@ fn include_missing_path_surfaces_as_include_variant() {
 		"include:\n  - ./present.yml\nservices:\n  app:\n    image: alpine\n"
 	)
 	.unwrap();
-	let ok = parse_file(&main_ok).expect("present include must succeed");
+	let ok = parse_one(&main_ok).expect("present include must succeed");
 	assert!(ok.services.contains_key("helper"));
 }
 
@@ -286,7 +291,7 @@ fn include_invalid_yaml_surfaces_as_include_variant() {
 		"include:\n  - ./bad.yml\nservices:\n  app:\n    image: alpine\n"
 	)
 	.unwrap();
-	let err = parse_file(&main).expect_err("malformed include must error");
+	let err = parse_one(&main).expect_err("malformed include must error");
 	assert!(
 		matches!(err, ComposeError::Include(_)),
 		"expected Include, got {err:?}"
@@ -305,5 +310,5 @@ fn include_invalid_yaml_surfaces_as_include_variant() {
 		"include:\n  - ./good.yml\nservices:\n  app:\n    image: alpine\n"
 	)
 	.unwrap();
-	assert!(parse_file(&main_ok).is_ok());
+	assert!(parse_one(&main_ok).is_ok());
 }

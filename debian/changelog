@@ -1,3 +1,12 @@
+podup (5.10.3) unstable; urgency=medium
+
+  * Every command that talks to Podman now checks the engine's version
+    with its first request, and stops with a message saying how to fix it
+    when the engine is older than Podman 5.0. Before, a command against
+    Podman 4 failed on whatever its first real request returned.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sat, 26 Sep 2026 07:46:58 -0500
+
 podup (5.10.2) unstable; urgency=medium
 
   * `podup logs` takes about 40% less time on a long log. Podman sends

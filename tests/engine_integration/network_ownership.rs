@@ -300,8 +300,8 @@ async fn unlabelled_existing_network_is_refused_without_external_true() {
 		"driver": "bridge",
 		"dns_enabled": true,
 	});
-	client
-		.post_json_ok("/v5.0.0/libpod/networks/create", &body)
+	let _: serde_json::Value = client
+		.post_json("/v5.0.0/libpod/networks/create", &body)
 		.await
 		.expect("create unlabelled network");
 

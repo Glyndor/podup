@@ -1,4 +1,4 @@
-use podup::parse_file;
+use podup::parse_files_with_env_files;
 use podup::parse_str;
 use std::io::Write;
 
@@ -98,7 +98,7 @@ fn include_missing_path_errors() {
 		"include:\n  - /nonexistent/podup-does-not-exist.yml\nservices:\n  app:\n    image: alpine"
 	)
 	.unwrap();
-	assert!(parse_file(&main).is_err());
+	assert!(parse_files_with_env_files(&[main], &[]).is_err());
 }
 
 #[test]
@@ -110,7 +110,7 @@ fn extends_file_absolute_path_rejected() {
 		"services:\n  app:\n    extends:\n      service: base\n      file: /etc/shadow"
 	)
 	.unwrap();
-	assert!(parse_file(&main).is_err());
+	assert!(parse_files_with_env_files(&[main], &[]).is_err());
 }
 
 #[test]
@@ -122,5 +122,5 @@ fn extends_file_parent_traversal_rejected() {
 		"services:\n  app:\n    extends:\n      service: base\n      file: ../../other.yml"
 	)
 	.unwrap();
-	assert!(parse_file(&main).is_err());
+	assert!(parse_files_with_env_files(&[main], &[]).is_err());
 }

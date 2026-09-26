@@ -22,12 +22,11 @@ fn parse_str_raw_minimal_service() {
 }
 
 #[test]
-fn collect_diagnostics_surfaces_unknown_keys() {
-	// The helper returns the same warnings the CLI prints; parse_file itself
-	// stays quiet.
+fn an_unknown_key_produces_a_diagnostic() {
+	// The warnings the CLI prints as it parses come from this pass.
 	let file = parse_str_raw("services:\n  web:\n    image: nginx\n    enviroment:\n      - A=1\n")
 		.unwrap();
-	let diags = collect_diagnostics(&file);
+	let diags = diagnostics::collect(&file);
 	assert!(
 		diags.iter().any(|d| d.contains("enviroment")),
 		"expected an unknown-key diagnostic, got {diags:?}"

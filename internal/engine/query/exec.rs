@@ -86,12 +86,6 @@ impl ExecOptions {
 		self
 	}
 
-	/// Extra environment variables (`KEY=VAL`), `-e/--env`. Builder-style.
-	pub fn with_env(mut self, env: Vec<String>) -> Self {
-		self.env = env;
-		self
-	}
-
 	/// Every `docker compose exec` flag, in CLI order. A constructor rather than
 	/// a struct literal because the type is `#[non_exhaustive]`, so the next flag
 	/// to land is not a breaking change for anyone building one.

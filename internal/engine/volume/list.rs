@@ -57,7 +57,8 @@ impl VolumesDisplayOptions {
 	}
 }
 
-/// Options for [`Engine::list_volumes`], mirroring `docker compose volumes`.
+/// Options for [`Engine::list_volumes_with_display`], mirroring
+/// `docker compose volumes`.
 ///
 /// `#[non_exhaustive]` since 4.0.0, so a new flag can be added in a minor
 /// release without breaking every external caller that built the struct with
@@ -98,20 +99,9 @@ impl VolumesOptions {
 
 impl Engine {
 	/// List the project's named volumes (`docker compose volumes`). When
-	/// `services` is non-empty, only volumes mounted by those services are shown.
-	pub async fn list_volumes(
-		&self,
-		file: &ComposeFile,
-		services: &[String],
-		opts: VolumesOptions,
-	) -> Result<()> {
-		self.list_volumes_with_display(file, services, opts, VolumesDisplayOptions::default())
-			.await
-	}
-
-	/// Like [`Engine::list_volumes`], plus the options added after the API froze
-	/// ([`VolumesDisplayOptions`]). A separate entry point rather than a fourth
-	/// parameter on the old one, so existing callers keep compiling.
+	/// `services` is non-empty, only volumes mounted by those services are
+	/// shown. `display` enables the size columns added after the API froze
+	/// (`-s/--size`).
 	pub async fn list_volumes_with_display(
 		&self,
 		file: &ComposeFile,

@@ -50,14 +50,6 @@ impl PullOptions {
 		self.ignore_failures = ignore_failures;
 		self
 	}
-
-	/// Also pull each named service's transitive `depends_on`, `--include-deps`.
-	/// Builder-style.
-	#[must_use]
-	pub fn with_include_deps(mut self, include_deps: bool) -> Self {
-		self.include_deps = include_deps;
-		self
-	}
 }
 
 /// Upper bound on how many distinct images a standalone `pull` fetches

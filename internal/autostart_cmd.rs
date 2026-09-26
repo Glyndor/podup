@@ -135,11 +135,12 @@ pub(crate) async fn dispatch(
 			// Skipped under --dry-run, which exists to show the unit without
 			// touching anything, including the socket.
 			if !*dry_run {
-				let client = podup::podman::connect_with_pool_size(
+				let client = podup::podman::connect_checked(
 					env.socket.as_deref(),
 					env.connection_pool_size
 						.unwrap_or(podup::Client::DEFAULT_POOL_SIZE),
-				)?;
+				)
+				.await?;
 				let engine =
 					podup::Engine::with_base_dir(client, project.clone(), base_dir.clone());
 				precheck_start_mode(&engine, file, &opts.container).await?;
@@ -172,11 +173,12 @@ pub(crate) async fn dispatch(
 			if *purge {
 				// `--purge` is the only autostart branch that touches Podman: tear the
 				// stack down and remove its named volumes via the normal `down -v` path.
-				let client = podup::podman::connect_with_pool_size(
+				let client = podup::podman::connect_checked(
 					env.socket.as_deref(),
 					env.connection_pool_size
 						.unwrap_or(podup::Client::DEFAULT_POOL_SIZE),
-				)?;
+				)
+				.await?;
 				let engine = podup::Engine::with_base_dir(client, project, base_dir);
 				let _lock = engine.lock_project()?;
 				engine.down_with_options(file, true).await?;

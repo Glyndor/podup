@@ -90,28 +90,6 @@ impl BuildOptions {
 		}
 	}
 
-	/// Force a cache-less build (`--no-cache`). Builder-style.
-	#[must_use]
-	pub fn with_no_cache(mut self, no_cache: bool) -> Self {
-		self.no_cache = no_cache;
-		self
-	}
-
-	/// Always attempt to pull a newer base image (`--pull`). Builder-style.
-	#[must_use]
-	pub fn with_pull(mut self, pull: bool) -> Self {
-		self.pull = pull;
-		self
-	}
-
-	/// Extra build args (`KEY=VAL`); override the compose `build.args` on
-	/// conflict. Builder-style.
-	#[must_use]
-	pub fn with_build_args(mut self, build_args: Vec<String>) -> Self {
-		self.build_args = build_args;
-		self
-	}
-
 	/// Suppress build output (`-q/--quiet`). Builder-style.
 	#[must_use]
 	pub fn with_quiet(mut self, quiet: bool) -> Self {

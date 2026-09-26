@@ -136,7 +136,7 @@ fn write_file(path: &Path, body: &str) {
 }
 
 fn parse_main(main: &Path) -> crate::error::Result<ComposeFile> {
-	crate::compose::parse_file(main)
+	crate::compose::parse_files_with_env_files(&[main.to_path_buf()], &[])
 }
 
 #[test]

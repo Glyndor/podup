@@ -106,15 +106,6 @@ impl PushOptions {
 		self.ignore_failures = ignore_failures;
 		self
 	}
-
-	/// Override TLS verification of the registry, `--tls-verify` /
-	/// `--tls-verify=false`. `None` leaves Podman's default (verify on).
-	/// Builder-style.
-	#[must_use]
-	pub fn with_tls_verify(mut self, tls_verify: Option<bool>) -> Self {
-		self.tls_verify = tls_verify;
-		self
-	}
 }
 
 impl Engine {

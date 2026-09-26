@@ -68,7 +68,7 @@ fn an_unread_counter_still_holds_the_final_total() {
 /// `inner()` is the escape hatch the libpod client's PUT helper
 /// needs, so the byte counter can be created outside the cp module
 /// (`watch` sync, tests) and still hand its `Arc<AtomicU64>` to the
-/// shared `put_bytes_ok_counting` path.
+/// shared PUT path.
 #[test]
 fn inner_exposes_the_shared_counter() {
 	use std::sync::atomic::AtomicU64;
