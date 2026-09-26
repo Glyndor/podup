@@ -28,22 +28,17 @@ fn is_stdin(path: &Path) -> bool {
 	path == Path::new("-")
 }
 
-/// Parse a compose file from disk, applying variable substitution and
-/// resolving `extends:` / `include:` directives.
-pub fn parse_file(path: &Path) -> Result<ComposeFile> {
-	parse_file_with_env_files(path, &[])
-}
-
-/// Like [`parse_file`], additionally loading `env_files` (the global
-/// `--env-file` flag) into the variable map used for interpolation. These take
-/// effect for the top-level file and any included files.
+/// Like [`parse_files_with_env_files`] for a single compose file. Loads
+/// `env_files` (the global `--env-file` flag) into the variable map used for
+/// interpolation. These take effect for the top-level file and any included
+/// files.
 ///
 /// They **replace** a project `.env` rather than adding to it: when `env_files`
 /// is non-empty, `.env` is not read. That is docker-correct, and the opposite
 /// of what this comment used to claim, which also reached docs.rs readers. The
 /// process environment still takes precedence over both.
 pub fn parse_file_with_env_files(path: &Path, env_files: &[String]) -> Result<ComposeFile> {
-	parse_file_with_env_files_interp(path, env_files, true)
+	parse_files_with_env_files(&[path.to_path_buf()], env_files)
 }
 
 /// Like [`parse_file_with_env_files`] but with explicit control over variable
@@ -55,18 +50,7 @@ pub fn parse_file_with_env_files_interp(
 	env_files: &[String],
 	interpolate: bool,
 ) -> Result<ComposeFile> {
-	// `-f -` reads the compose document from stdin (like `docker compose`);
-	// there is no file to canonicalize, so relative paths and `.env` resolve
-	// against the working directory. The stdin bytes are read once here so
-	// the parse and the raw nested-key diagnostic can both see them; before
-	// this was done in two places, the second of which silently skipped
-	// stdin and let a `cat typo.yaml | podup config -f -` lose its warning.
-	let stdin = if is_stdin(path) {
-		Some(crate::filesystem::read_stdin_to_string_capped().map_err(ComposeError::Io)?)
-	} else {
-		None
-	};
-	parse_file_with_env_files_interp_with_stdin(path, env_files, interpolate, stdin.as_deref())
+	parse_files_with_env_files_interp(&[path.to_path_buf()], env_files, interpolate)
 }
 
 /// [`parse_file_with_env_files_interp`] with the stdin content pre-read.
@@ -140,15 +124,6 @@ pub(crate) fn parse_file_with_env_files_interp_with_stdin(
 
 	extends::resolve_all_extends(&mut file, &dir)?;
 	Ok(file)
-}
-
-/// Collect parse-time diagnostics for an already-parsed compose file: warnings
-/// about recognized-but-unsupported keys and fields that are accepted but carry
-/// no effect on Podman. The CLI prints these as it parses; this returns them for
-/// a caller that parses without printing, since [`parse_file`] does not emit
-/// them itself.
-pub fn collect_diagnostics(file: &ComposeFile) -> Vec<String> {
-	diagnostics::collect(file)
 }
 
 /// Parse and merge multiple compose files (the `-f`/`COMPOSE_FILE` list).
@@ -335,7 +310,7 @@ fn merge_override(target: &mut ComposeFile, other: ComposeFile, directives: &tag
 ///
 /// Variable substitution is applied using only the process environment.
 /// `extends: { file: ... }` and `include:` directives are not resolved;
-/// use [`parse_file`] for that.
+/// use [`parse_file_with_env_files`] for that.
 pub fn parse_str(content: &str) -> Result<ComposeFile> {
 	let vars = substitute::build_vars(Path::new("."));
 	let mut file = merge::deserialize_with_merge_interp(content, Some(&vars))?;

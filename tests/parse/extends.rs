@@ -1,4 +1,4 @@
-use podup::{parse_file, parse_str};
+use podup::{parse_files_with_env_files, parse_str};
 use std::io::Write;
 
 fn make_chain_yaml(depth: usize) -> String {
@@ -167,7 +167,7 @@ services:
 	)
 	.unwrap();
 
-	let file = parse_file(&main_path).unwrap();
+	let file = parse_files_with_env_files(&[main_path], &[]).unwrap();
 	assert_eq!(file.services["app"].image.as_deref(), Some("alpine"));
 	let env = file.services["app"].environment.to_map();
 	assert!(env.contains_key("FROM_BASE"));
@@ -208,7 +208,7 @@ services:
 	)
 	.unwrap();
 
-	let file = parse_file(&main_path).unwrap();
+	let file = parse_files_with_env_files(&[main_path], &[]).unwrap();
 	assert_eq!(file.services["app"].image.as_deref(), Some("alpine"));
 }
 
@@ -228,7 +228,7 @@ fn extends_external_file_missing_service_errors() {
 	)
 	.unwrap();
 
-	let err = parse_file(&main_path).unwrap_err();
+	let err = parse_files_with_env_files(&[main_path], &[]).unwrap_err();
 	assert!(err.to_string().contains("base"));
 }
 
@@ -253,7 +253,7 @@ fn extends_external_file_circular_across_files_errors() {
 	)
 	.unwrap();
 
-	assert!(parse_file(&main_path).is_err());
+	assert!(parse_files_with_env_files(&[main_path], &[]).is_err());
 }
 
 #[test]
@@ -281,7 +281,7 @@ fn extends_external_chain_exceeds_max_depth_errors() {
 	)
 	.unwrap();
 
-	assert!(parse_file(&main_path).is_err());
+	assert!(parse_files_with_env_files(&[main_path], &[]).is_err());
 }
 
 #[test]
@@ -320,7 +320,7 @@ services:
 	)
 	.unwrap();
 
-	let file = parse_file(&main_path).unwrap();
+	let file = parse_files_with_env_files(&[main_path], &[]).unwrap();
 	let app = &file.services["app"];
 
 	// The base service's relative env_file/volume paths must be anchored to the
@@ -380,7 +380,7 @@ fn parse_file_yaml(
 	let dir = tempfile::tempdir().unwrap();
 	let path = dir.path().join("docker-compose.yml");
 	std::fs::write(&path, yaml).unwrap();
-	let res = parse_file(&path);
+	let res = parse_files_with_env_files(&[path], &[]);
 	(dir, res)
 }
 

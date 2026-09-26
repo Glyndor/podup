@@ -72,14 +72,6 @@ impl Command {
 			Command::Exec(v) => v.clone(),
 		}
 	}
-
-	/// Returns the raw arguments without wrapping a shell string in `sh -c`.
-	pub fn to_argv(&self) -> Vec<String> {
-		match self {
-			Command::Shell(s) => vec![s.clone()],
-			Command::Exec(v) => v.clone(),
-		}
-	}
 }
 
 /// A field that accepts either a single string or a list of strings.

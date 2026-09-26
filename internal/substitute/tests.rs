@@ -332,7 +332,7 @@ fn load_dotenv_missing_file_returns_empty() {
 	assert!(map.is_empty());
 }
 
-// build_vars_with_env_files
+// build_vars_with_env_files_strict
 
 #[test]
 fn env_file_replaces_dotenv() {
@@ -421,15 +421,6 @@ fn strict_build_vars_errors_on_unterminated_quote() {
 	std::fs::write(dir.path().join("bad.env"), "A=\"oops\nB=keep\n").unwrap();
 	let err = build_vars_with_env_files_strict(dir.path(), &["bad.env".to_string()]).unwrap_err();
 	assert!(matches!(err, crate::error::ComposeError::EnvFile(_)));
-}
-
-#[test]
-fn lenient_build_vars_skips_missing_extra_file() {
-	let dir = tempfile::tempdir().unwrap();
-	// The backward-compatible shim never errors: a missing extra file is
-	// silently skipped rather than failing.
-	let vars = build_vars_with_env_files(dir.path(), &["absent.env".to_string()]);
-	assert!(!vars.contains_key("FROM_EXTRA"));
 }
 
 #[test]

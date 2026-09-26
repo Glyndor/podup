@@ -15,18 +15,6 @@ fn command_exec_to_exec_passthrough() {
 	assert_eq!(cmd.to_exec(), vec!["ls", "-la"]);
 }
 
-#[test]
-fn command_shell_to_argv_returns_shell_string() {
-	let cmd = Command::Shell("echo hi".into());
-	assert_eq!(cmd.to_argv(), vec!["echo hi"]);
-}
-
-#[test]
-fn command_exec_to_argv_passthrough() {
-	let cmd = Command::Exec(vec!["ls".into()]);
-	assert_eq!(cmd.to_argv(), vec!["ls"]);
-}
-
 // string-or-number (cpus)
 
 #[derive(Deserialize)]

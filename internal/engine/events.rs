@@ -9,8 +9,8 @@ use crate::libpod::{urlencoded, API_PREFIX};
 
 use super::Engine;
 
-/// Options for [`Engine::stream_events`], mirroring `docker compose events`
-/// (`--since`, `--until`, `--filter`).
+/// Options for [`Engine::stream_events_with_options`], mirroring `docker
+/// compose events` (`--since`, `--until`, `--filter`).
 ///
 /// `#[non_exhaustive]` since 4.0.0, so a new flag can be added in a minor
 /// release without breaking every external caller that built the struct with
@@ -72,37 +72,6 @@ impl Engine {
 	/// The feed is unbounded, so it normally ends only when the caller stops it.
 	/// Returning at all therefore means the stream was lost, and this returns
 	/// `Err`; see [`Engine::stream_events_with_options`] for the bounded case.
-	pub async fn stream_events(&self, json: bool) -> Result<()> {
-		self.stream_events_with_options(json, &EventsOptions::default())
-			.await
-	}
-
-	/// [`Engine::stream_events`] with `docker compose events`-style `--since`,
-	/// `--until`, and `--filter` options.
-	///
-	/// # Errors
-	///
-	/// A transport failure always returns the underlying error, whatever was
-	/// asked for. Beyond that, whether a *clean* ending is an error depends on
-	/// what the caller asked for:
-	///
-	/// - **`since` and `until` both set, both already elapsed**: the window
-	///   closes on its own, so a clean ending is what was asked for. Returns
-	///   `Ok(())`.
-	/// - **anything else**: the feed is unbounded and libpod never ends it, so
-	///   any ending means the stream was lost. Returns
-	///   [`ComposeError::StreamTruncated`](crate::ComposeError::StreamTruncated).
-	///
-	/// Also returns `Err` if a `--filter` is malformed or the stream cannot be
-	/// opened.
-	///
-	/// A window needs **both** ends to close, and both must already have
-	/// elapsed. Measured against Podman 5.4.2: `since` and `until` together
-	/// close the feed, whether absolute or relative (a past relative window is
-	/// `--since 2h --until -1h`; re-measured on 5.7.0 with `since=30s&until=-1s`); either one
-	/// alone leaves it open, as does any `until` in the future. So `--until 5m`
-	/// follows indefinitely rather than stopping in five minutes, and `--until
-	/// -5m` alone does too.
 	pub async fn stream_events_with_options(&self, json: bool, opts: &EventsOptions) -> Result<()> {
 		validate_events_since(opts.since.as_deref())?;
 		let filters = build_event_filters(&self.project, &opts.filters)?;

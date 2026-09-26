@@ -74,28 +74,6 @@ fn x_podman_autoupdate_is_absent_by_default() {
 	assert_eq!(svc.podman_autoupdate().unwrap(), None);
 }
 
-#[test]
-fn x_podman_autoupdate_skips_the_unknown_key_diagnostic() {
-	// The diagnostics pass skips any captured key starting with `x-`, so the
-	// extension is invisible to it. The key still lands in `unknown` because
-	// the typed Service struct has no field for it, that is how the accessor
-	// reads it, but no "unknown key" warning is emitted for it.
-	let yaml = format!("services:\n  web:\n    image: x\n    {X_PODMAN_AUTOUPDATE}: registry\n");
-	let svc = parse_service(&yaml);
-	let diagnostics = crate::compose::collect_diagnostics(&crate::compose::types::ComposeFile {
-		services: std::iter::once(("web".to_string(), svc)).collect(),
-		..crate::compose::types::ComposeFile::default()
-	});
-	let unknown_warnings: Vec<&String> = diagnostics
-		.iter()
-		.filter(|w| w.contains(X_PODMAN_AUTOUPDATE))
-		.collect();
-	assert!(
-		unknown_warnings.is_empty(),
-		"x- extensions must not trigger the unknown-key diagnostic: {unknown_warnings:?}"
-	);
-}
-
 /// The key round-trips through `config`: it lands in `unknown` only because
 /// there is no typed field, but re-serializing the service keeps it. A dropped
 /// extension would make `config` output that no longer does what the input
