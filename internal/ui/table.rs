@@ -165,19 +165,6 @@ impl Table {
 		self.keys.push(None);
 	}
 
-	/// Append a row whose identity colour is keyed on `key` rather than on the
-	/// displayed cell.
-	///
-	/// The two differ where the column shows something longer than the identity:
-	/// `ps` prints the full container name `proj-web-1` while `logs` prefixes the
-	/// project-stripped `web-1`. Keying both on `web-1` is what makes one
-	/// container the same colour in both commands, which is the entire point of
-	/// a stable palette.
-	pub fn push_keyed(&mut self, cells: Vec<String>, key: String) {
-		self.rows.push(cells);
-		self.keys.push(Some(key));
-	}
-
 	/// Whether any column marker is set, i.e. whether rendering with colour could
 	/// differ from rendering without it.
 	///
