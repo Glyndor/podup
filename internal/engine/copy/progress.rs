@@ -31,7 +31,7 @@ use crate::units::{format_bytes, SizeFormat};
 const EMIT_INTERVAL: Duration = Duration::from_millis(100);
 
 /// A shared, monotonically-rising byte counter. Producers (the reader
-/// in `extract_streamed`, the body wrapper in `put_bytes_ok_counting`)
+/// in `extract_streamed`, the body wrapper in `put_archive_verified`)
 /// `fetch_add` as bytes flow; the emitter task reads and rewrites the
 /// row verb.
 #[derive(Clone, Debug)]

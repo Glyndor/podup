@@ -39,7 +39,6 @@ pub(super) const CHANNEL_CAP: usize = 8;
 
 /// Coalesce the tar writer's many small writes into ~64 KiB frames, so the
 /// body is a handful of sizeable chunks rather than thousands of tiny ones.
-/// Same value `put_bytes_ok_counting` uses.
 pub(super) const CHUNK_BYTES: usize = 64 * 1024;
 
 /// A [`Write`] sink that forwards the tar bytes to an async channel as `Bytes`
@@ -110,9 +109,8 @@ pub(in crate::engine) struct PackedStream {
 pub(super) type PackOutcome = (Vec<SentEntry>, Result<(), ComposeError>);
 
 /// Wrap `rx` into a stream that increments `counter` by the size of each
-/// yielded frame. Mirrors `put_bytes_ok_counting`'s poll-side counter so the
-/// progress row keeps advancing as bytes leave the body, not as the producer
-/// queues them.
+/// yielded frame, so the progress row keeps advancing as bytes leave the
+/// body, not as the producer queues them.
 fn receiver_body_with_counter(
 	rx: mpsc::Receiver<BodyItem>,
 	counter: Arc<AtomicU64>,
@@ -144,8 +142,7 @@ fn receiver_body_with_counter(
 ///
 /// `src`, `follow_link`, `name_override` and `contents` carry the same meaning
 /// they do for [`super::archive_pack::pack_path`]. `counter` is the shared
-/// byte counter the body stream advances as it yields frames, matching
-/// `put_bytes_ok_counting`'s poll-side counter behaviour so the `cp`
+/// byte counter the body stream advances as it yields frames, so the `cp`
 /// progress row keeps ticking.
 ///
 /// The body stream closes when the producer finishes (or aborts); hyper sees
