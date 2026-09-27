@@ -1,6 +1,6 @@
 use super::{
 	classify, defines_pasta, find_pasta_profile, has_rule, hint_for, hint_in, render_hint,
-	sed_command, PastaProfile, ANCHOR,
+	PastaProfile,
 };
 use std::fs;
 use std::path::Path;
@@ -160,6 +160,8 @@ fn hint_for_returns_none_for_unrelated_error() {
 #[test]
 #[cfg(target_os = "linux")]
 fn sed_one_liner_actually_adds_the_rule() {
+	use super::{sed_command, ANCHOR};
+
 	let dir = tempfile::tempdir().expect("tempdir");
 	let profile_path = write(dir.path(), "usr.bin.pasta", UBUNTU_PROFILE);
 	let sed = sed_command(&profile_path).expect("sed command");
@@ -188,7 +190,11 @@ fn sed_one_liner_actually_adds_the_rule() {
 const LIVE_ERROR: &str = "podman error: podman API error (HTTP 500): 1 error occurred:\n\
 	\t* rootless netns: kill network process: permission denied\n\n";
 
+// Linux only: a temporary directory elsewhere (`C:\Users\RUNNER~1\...` on
+// Windows) has characters the one-liner will not print unquoted, so the hint
+// correctly falls back to the manual text there.
 #[test]
+#[cfg(target_os = "linux")]
 fn hint_in_names_the_profile_for_the_live_error() {
 	let dir = tempfile::tempdir().expect("tempdir");
 	let profile_path = write(dir.path(), "usr.bin.pasta", UBUNTU_PROFILE);
