@@ -394,6 +394,15 @@ jobs:
           runcmd:
             - bash -c 'F=$(findmnt -no FSTYPE /); case $F in btrfs) btrfs filesystem resize max / ;; xfs) xfs_growfs / ;; ext4) resize2fs $(findmnt -no SOURCE /) ;; esac >/dev/console 2>&1; echo "DISK_BEGIN value=$(df -h / | tail -1) DISK_END" >/dev/console'
             - bash -c 'dnf install -y podman rust cargo gcc git llvm >/dev/console 2>&1'
+            # The Fedora cloud image ships Podman preinstalled, so `dnf install`
+            # above leaves it at whatever the image was cut with. The Podman 5 leg
+            # sat on 5.8.1 (Fedora 44 GA) for months while updates carried 5.8.7,
+            # and 5.8.1 vendors buildah 1.43.0, whose layer-cache lookup aborts a
+            # build with "getting top layer info: layer not known" whenever any
+            # other image is deleted mid-lookup. buildah 1.43.1 (Podman 5.8.2)
+            # skips that image instead. With two test threads and tests that
+            # remove their images, that was #1922. Test what an updated host runs.
+            - bash -c 'dnf upgrade -y podman >/dev/console 2>&1'
             # Prove the driver took, so a silently-ignored config cannot put the
             # logs tests back to passing without reading anything.
             - bash -c 'echo "LOGDRIVER_BEGIN value=$(podman info --format {{.Host.LogDriver}} 2>/dev/null) LOGDRIVER_END" >/dev/console'
