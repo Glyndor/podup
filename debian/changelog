@@ -1,3 +1,13 @@
+podup (5.10.5) unstable; urgency=medium
+
+  * When stopping a container fails because the host's AppArmor `pasta`
+    profile refuses Podman's signal ("rootless netns: kill network
+    process: permission denied", seen on Ubuntu 26.04 and Debian), podup
+    now prints a hint under the error with the two commands that add the
+    missing rule to that host's profile. podup never runs them itself.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sun, 27 Sep 2026 12:31:50 -0500
+
 podup (5.10.4) unstable; urgency=medium
 
   * No change in behaviour. This release removes library items the command
