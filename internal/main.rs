@@ -8,6 +8,7 @@ use std::process;
 #[cfg(feature = "completions")]
 use clap::CommandFactory;
 
+mod apparmor_hint;
 mod audit;
 mod autostart_cmd;
 mod cli;
