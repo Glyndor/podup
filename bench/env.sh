@@ -61,7 +61,8 @@ write_env() { # FILE
 			printf 'podman: absent\n'
 		fi
 		if command -v podman-compose >/dev/null 2>&1; then
-			printf 'podman_compose: %s\n' "$(podman-compose --version 2>&1 | head -1)"
+			# It prints its own version and then Podman's, in either order.
+			printf 'podman_compose: %s\n' "$(podman-compose --version 2>&1 | grep -m1 '^podman-compose')"
 		else
 			printf 'podman_compose: absent\n'
 		fi

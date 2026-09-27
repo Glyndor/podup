@@ -434,6 +434,12 @@ def main():
 		if "— [2 failed of 2]" not in output_text:
 			print("self-test FAILED: rendered text missing `— [2 failed of 2]`", file=sys.stderr)
 			return 1
+		# Every table renders the all-failed cell, so the check above passes as
+		# long as one of them does. No table may fall back to printing the
+		# empty statistics instead.
+		if "nan" in output_text:
+			print("self-test FAILED: a cell rendered `nan`", file=sys.stderr)
+			return 1
 		if check_failure_gate(SELF_TEST_ROWS) != 1:
 			print("self-test FAILED: failure gate did not flag a row with rc != 0", file=sys.stderr)
 			return 1

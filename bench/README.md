@@ -116,7 +116,7 @@ than what users run.
 # look for a release literally tagged `latest`, which does not exist.
 mkdir -p dist
 gh release download \
-    --repo "$GITHUB_REPOSITORY" \
+    --repo Glyndor/podup \
     -p podup-linux-x86_64 -p SHA256SUMS -D dist
 cd dist && sha256sum -c --ignore-missing SHA256SUMS
 chmod +x podup-linux-x86_64
@@ -133,9 +133,7 @@ engine (CI no longer uses it; it static-checks the harness instead, see above).
 ### Flags
 
 - `--iters N` / `--warmup W` (default `12` / `2`): how many iterations per cell,
-  and how many of those to discard before statistics. Warm-up runs exercise the
-  per-process state (TLS, page-cache) that an OS reuses on the second call;
-  including them would over-state median and under-state stdev.
+  and how many of those to discard before statistics.
 - `--cores CPUSET`: taskset-pins the tool process to the given CPUs. Reduces
   variance from neighbour noise on shared hosts. Empty means no pinning.
 - `--engines LIST`: comma list of `podman`, `docker`. Default both. Use
@@ -164,9 +162,8 @@ details alongside them, and a short summary in the repository `README.md`.
 The report opens with a fenced code block under `### Environment` containing
 the contents of `env.txt`: kernel, CPU model and count, governor, the pinned
 core set, every tool version and engine counters (containers, networks,
-volumes, images, dangling images), and `running_vms` (the count of running
-libvirt guests (non-zero means another VM is sharing the cores the benchmark
-is pinned to). The reader can tell exactly which podup, which Podman, which
+volumes, images, dangling images), and `running_vms` (running libvirt guests; non-zero
+means another VM shares the cores the benchmark is pinned to). The reader can tell exactly which podup, which Podman, which
 kernel and which governor produced the numbers below.
 
 Two report tables, by intent:
