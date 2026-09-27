@@ -1,3 +1,11 @@
+podup (5.10.4) unstable; urgency=medium
+
+  * No change in behaviour. This release removes library items the command
+    does not use, cleans up their documentation, and updates the Podman the
+    test lane runs.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sun, 27 Sep 2026 09:14:35 -0500
+
 podup (5.10.3) unstable; urgency=medium
 
   * Every command that talks to Podman now checks the engine's version
