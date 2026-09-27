@@ -15,6 +15,10 @@ A podup loss is published exactly like a podup win.
   engine difference and become an end-to-end *stack* comparison; the harness
   detects which engine it drove and labels the report accordingly, so a reader
   is never left guessing. It is never estimated when absent.
+  The engine is whatever answers at `DOCKER_HOST`, or at the default Docker
+  socket when `DOCKER_HOST` is unset, so on a host with both installed you pick
+  the comparison by setting or unsetting it. A Docker run needs the `docker` CLI
+  too, to pre-pull the pinned images into Docker's own store.
 
 ## Fairness rules (non-negotiable)
 
