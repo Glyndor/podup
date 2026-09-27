@@ -9,16 +9,23 @@ A podup loss is published exactly like a podup win.
 - **podup** and **podman-compose** both drive **Podman**, so comparing them is a
   pure *tool* comparison: same engine, only the orchestrator differs. This is the
   apples-to-apples result.
-- **docker-compose** is pointed at the **Podman socket** through `DOCKER_HOST`,
-  which is what makes it comparable: same engine, so the only difference left is
-  the orchestrator. Run against a Docker daemon instead, its numbers fold in the
-  engine difference and become an end-to-end *stack* comparison; the harness
-  detects which engine it drove and labels the report accordingly, so a reader
-  is never left guessing. It is never estimated when absent.
-  The engine is whatever answers at `DOCKER_HOST`, or at the default Docker
-  socket when `DOCKER_HOST` is unset, so on a host with both installed you pick
-  the comparison by setting or unsetting it. A Docker run needs the `docker` CLI
-  too, to pre-pull the pinned images into Docker's own store.
+- **docker-compose** is run twice in a single invocation, each as its own row
+  in `raw.csv`:
+  - **docker-compose-podman** (`DOCKER_HOST=unix://$PODMAN_SOCK`,
+    where `PODMAN_SOCK="${PODMAN_SOCKET:-$XDG_RUNTIME_DIR/podman/podman.sock}"`).
+    Pure tool comparison: same engine, so the only difference left is the
+    orchestrator. Run when `compose_engine` answers `podman` at that URL.
+  - **docker-compose-docker** (`DOCKER_HOST=unix://$DOCKER_DEFAULT_SOCKET`).
+    Whole-stack comparison: the engine is dockerd, not the Podman socket.
+    Run when `compose_engine` answers `docker` at the default socket AND the
+    `docker` CLI is installed (needed to pre-pull the pinned images into
+    Docker's own image store).
+
+  Each variant is its own tool name in `raw.csv` (`docker-compose-podman` and
+  `docker-compose-docker`), so one run can hold both comparisons and the
+  aggregator routes each to the right table. The harness ignores the caller's
+  `DOCKER_HOST` entirely: every variant sets its own, so the result no longer
+  depends on the shell it was started from.
 
 ## Fairness rules (non-negotiable)
 
@@ -26,6 +33,10 @@ A podup loss is published exactly like a podup win.
   are **pinned by digest and pre-pulled**, so image download is never timed.
 - **Statistics, not single runs.** N iterations per cell, warm-up discarded,
   reported as **median + p95 + stdev**. A single number is never published.
+- **Refuse to publish silent failures.** A cell with even one failed iteration
+  is annotated `[F failed of N]` and the aggregator exits 1 unless
+  `--allow-failures` is passed. The report and `summary.json` are still written
+  so the evidence is kept.
 - **Controlled environment.** The real run happens on a dedicated/self-hosted
   runner or the maintainer's machine, with the CPU governor pinned and the tool
   process taskset-pinned to reduce variance. **Shared CI runners are too noisy for
@@ -93,27 +104,77 @@ against 0.50 ms here.
 
 ## Running it
 
+The published numbers must come from the asset users install, never from a local
+`cargo build --release` on the runner: a glibc build links dynamically and
+reports about twice the memory of the static release asset, which the memory
+budget gate would then reject and the comparison would measure something other
+than what users run.
+
 ```sh
-# Measure the binary people install: the published musl asset, or a build of
-# the same target. A plain `cargo build --release` on a glibc host links
-# dynamically and reports about twice the memory of the static binary.
-cargo build --release --locked --target x86_64-unknown-linux-musl
-PODUP_BIN=target/x86_64-unknown-linux-musl/release/podup \
-  bash bench/run.sh --iters 12 --warmup 2 --cores 2-9
+# Download the release asset and verify it against SHA256SUMS. `latest` is the
+# default selection when no tag is passed; passing it as an argument makes gh
+# look for a release literally tagged `latest`, which does not exist.
+mkdir -p dist
+gh release download \
+    --repo Glyndor/podup \
+    -p podup-linux-x86_64 -p SHA256SUMS -D dist
+cd dist && sha256sum -c --ignore-missing SHA256SUMS
+chmod +x podup-linux-x86_64
+cd ..
+
+PODUP_BIN=dist/podup-linux-x86_64 bash bench/run.sh --iters 12 --warmup 2 --cores 2-9
 python3 bench/aggregate.py
 # -> bench/results/report.md and bench/results/summary.json
 ```
 
-`--smoke` runs a single scenario once, for a quick local check against a real engine (CI no longer uses it; it static-checks the harness instead, see above).
+`--smoke` runs a single scenario once, for a quick local check against a real
+engine (CI no longer uses it; it static-checks the harness instead, see above).
+
+### Flags
+
+- `--iters N` / `--warmup W` (default `12` / `2`): how many iterations per cell,
+  and how many of those to discard before statistics.
+- `--cores CPUSET`: taskset-pins the tool process to the given CPUs. Reduces
+  variance from neighbour noise on shared hosts. Empty means no pinning.
+- `--engines LIST`: comma list of `podman`, `docker`. Default both. Use
+  `--engines podman` to skip the Docker variant on a host that has dockerd
+  running for other workloads, or `--engines docker` to skip the podman variant
+  on a host without a reachable Podman socket.
+- `--allow-dynamic`: do not fail the run when the measured `podup` binary is
+  dynamically linked. Default refuses: the published numbers measure the
+  static release asset, and a dynamically linked build reports about twice the
+  RSS, which the memory budget gate then rejects anyway. Pass this flag for a
+  local sanity check that is not meant to be published.
+- `--allow-failures` (aggregate.py): do not exit 1 when a cell had any failed
+  measured iteration. Default refuses; the report and summary are still
+  written, with `[F failed of N]` on the failing cells, so the evidence is
+  kept.
 
 ## Output
 
-`run.sh` writes one raw row per timed run to `results/raw.csv`; `aggregate.py`
-discards warm-up and failed runs and computes the statistics into
-`results/report.md` + `results/summary.json`. Raw, host-specific results are not
-committed; the published numbers live in `docs/benchmarks.md`, with the
-methodology and host details alongside them, and a short summary in the
-repository `README.md`.
+`run.sh` writes one raw row per timed run to `results/raw.csv`, plus the
+environment it ran in to `results/env.txt`; `aggregate.py` discards warm-up
+and failed runs and computes the statistics into `results/report.md` +
+`results/summary.json`. Raw, host-specific results are not committed; the
+published numbers live in `docs/benchmarks.md`, with the methodology and host
+details alongside them, and a short summary in the repository `README.md`.
+
+The report opens with a fenced code block under `### Environment` containing
+the contents of `env.txt`: kernel, CPU model and count, governor, the pinned
+core set, every tool version and engine counters (containers, networks,
+volumes, images, dangling images), and `running_vms` (running libvirt guests; non-zero
+means another VM shares the cores the benchmark is pinned to). The reader can tell exactly which podup, which Podman, which
+kernel and which governor produced the numbers below.
+
+Two report tables, by intent:
+
+- **Wall-clock / Memory + CPU, pure tool comparison (all drive Podman)**:
+  same-engine comparison; only meaningful when every column drives Podman.
+- **Wall-clock / Memory + CPU, each tool on its own engine**: cross-engine
+  comparison; podup and podman-compose run against rootless Podman,
+  docker-compose against the Docker daemon (rootful). This is what a user of
+  each stack sees, and the engines differ, so it is not a pure tool
+  comparison. Only rendered when `docker-compose-docker` has rows.
 
 The harness is reviewed by `podup-benchmark-fairness-auditor` (the harness is
 equitable) and `podup-benchmark-results-reviewer` (the published claims are
