@@ -97,6 +97,8 @@ jobs:
                 echo "PODUP_COVERAGE_BRANCH=develop"
           runcmd:
             - bash -c 'dnf install -y podman rust cargo gcc git llvm >/dev/console 2>&1'
+            # Same as the per-pull-request lane: upgrade the preinstalled Podman (#1922).
+            - bash -c 'dnf upgrade -y podman >/dev/console 2>&1'
             - bash -c 'mkdir -p /mnt/repo && mount -t 9p -o trans=virtio,version=9p2000.L repo /mnt/repo && cp -a /mnt/repo /home/tester/podup && chown -R tester:tester /home/tester/podup'
             - bash -c 'sudo -iu tester /usr/local/bin/run-suite.sh >/dev/console 2>&1'
             - bash -c 'echo PROBE_DONE >/dev/console; sleep 2; poweroff'
