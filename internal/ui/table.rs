@@ -84,9 +84,6 @@ pub struct Table {
 	/// lands on. See [`Table::dim_cols`].
 	dim_cols: Vec<usize>,
 	rows: Vec<Vec<String>>,
-	/// Per-row identity key, parallel to `rows`. `None` falls back to the
-	/// identity cell's own text.
-	keys: Vec<Option<String>>,
 }
 
 impl Table {
@@ -101,7 +98,6 @@ impl Table {
 			caution_col: None,
 			dim_cols: Vec::new(),
 			rows: Vec::new(),
-			keys: Vec::new(),
 		}
 	}
 
@@ -162,7 +158,6 @@ impl Table {
 	/// cells render blank and extra cells are ignored.
 	pub fn push(&mut self, cells: Vec<String>) {
 		self.rows.push(cells);
-		self.keys.push(None);
 	}
 
 	/// Whether any column marker is set, i.e. whether rendering with colour could
@@ -206,17 +201,6 @@ impl Table {
 	/// meaning (the padding is applied first so the zero-width ANSI codes never
 	/// disturb alignment).
 	fn format_row(&self, cells: &[String], widths: &[usize], colour: bool) -> String {
-		self.format_row_keyed(cells, widths, colour, None)
-	}
-
-	/// [`Table::format_row`] with the row's identity key, when it has one.
-	fn format_row_keyed(
-		&self,
-		cells: &[String],
-		widths: &[usize],
-		colour: bool,
-		key: Option<&str>,
-	) -> String {
 		let last = self.headers.len().saturating_sub(1);
 		(0..self.headers.len())
 			.map(|i| {
@@ -230,7 +214,7 @@ impl Table {
 					// The padding is inside the paint so the colour does not stop
 					// at the name and leave the gap bare; the codes are zero-width
 					// either way, so alignment is untouched.
-					return super::paint(super::identity_style(key.unwrap_or(cell)), &padded, true);
+					return super::paint(super::identity_style(cell), &padded, true);
 				}
 				if colour && Some(i) == self.caution_col {
 					return super::paint(caution_style(cell), &padded, true);
@@ -280,9 +264,8 @@ impl Table {
 		// without being listed, and it went unnoticed because its first caller,
 		// `volumes`, also sets `identity_col`, so the gate happened to be open.
 		let colour = self.colours_any_column() && super::stdout_colored();
-		for (i, row) in self.rows.iter().enumerate() {
-			let key = self.keys.get(i).and_then(Option::as_deref);
-			writeln!(w, "{}", self.format_row_keyed(row, &widths, colour, key))?;
+		for row in &self.rows {
+			writeln!(w, "{}", self.format_row(row, &widths, colour))?;
 		}
 		Ok(())
 	}

@@ -312,7 +312,7 @@ pub fn build_vars_with_env_files_strict(
 	dir: &Path,
 	extra: &[String],
 ) -> Result<HashMap<String, String>> {
-	build_vars_with_env_files_inner(dir, extra, true)
+	build_vars_with_env_files_inner(dir, extra)
 }
 
 /// The first control character in `value` that is never legitimate in an
@@ -330,7 +330,6 @@ fn first_disallowed_control_char(value: &str) -> Option<char> {
 fn build_vars_with_env_files_inner(
 	dir: &Path,
 	extra: &[String],
-	strict: bool,
 ) -> Result<HashMap<String, String>> {
 	if extra.is_empty() {
 		return Ok(build_vars(dir));
@@ -344,23 +343,13 @@ fn build_vars_with_env_files_inner(
 		} else {
 			dir.join(path)
 		};
-		let content = match crate::filesystem::read_to_string_capped(&abs) {
-			Ok(content) => content,
-			Err(e) => {
-				if strict {
-					return Err(crate::error::ComposeError::EnvFile(format!(
-						"env file not found: {} ({e})",
-						abs.display()
-					)));
-				}
-				continue;
-			}
-		};
-		let pairs = if strict {
-			crate::dotenv::parse_strict(&content)?
-		} else {
-			crate::dotenv::parse(&content)
-		};
+		let content = crate::filesystem::read_to_string_capped(&abs).map_err(|e| {
+			crate::error::ComposeError::EnvFile(format!(
+				"env file not found: {} ({e})",
+				abs.display()
+			))
+		})?;
+		let pairs = crate::dotenv::parse_strict(&content)?;
 		for (key, value) in pairs {
 			// A disallowed control character (e.g. NUL) in a value would be
 			// interpolated verbatim into a compose scalar, where it is meaningless
@@ -368,17 +357,15 @@ fn build_vars_with_env_files_inner(
 			// at load time, with an error that names the originating env file and
 			// key, instead of letting it surface later as a compose-file parse
 			// error at a meaningless post-substitution offset. Only the explicit
-			// (strict) `--env-file`/`env_file:` path errors; the lenient `.env`
-			// fallback keeps its historical pass-through behaviour.
-			if strict {
-				if let Some(bad) = first_disallowed_control_char(&value) {
-					return Err(crate::error::ComposeError::EnvFile(format!(
-						"env file {}: value of '{key}' contains a disallowed control \
-						 character ({}); remove it before use",
-						abs.display(),
-						bad.escape_default(),
-					)));
-				}
+			// `--env-file`/`env_file:` path errors; the `.env` fallback
+			// (`build_vars`) keeps its historical pass-through behaviour.
+			if let Some(bad) = first_disallowed_control_char(&value) {
+				return Err(crate::error::ComposeError::EnvFile(format!(
+					"env file {}: value of '{key}' contains a disallowed control \
+					 character ({}); remove it before use",
+					abs.display(),
+					bad.escape_default(),
+				)));
 			}
 			file_vars.insert(key, value);
 		}

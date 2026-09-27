@@ -44,7 +44,7 @@ services:
 
 #[test]
 fn extends_with_file_field_parses() {
-	// Just verify that extends with file is parsed (resolution requires parse_file).
+	// Just verify that extends with file is parsed (resolution needs a file on disk).
 	let yaml = r#"
 services:
   app:

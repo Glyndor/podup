@@ -520,6 +520,10 @@ pub(crate) fn service_slot(name: &str) -> usize {
 
 /// The style for a palette slot, from whichever palette the terminal supports.
 ///
+/// The palette choice is a parameter so both branches are testable: the real
+/// decision reads a process-cached environment probe, and a test that flipped
+/// it would pass or fail on test scheduling.
+///
 /// The narrow branch takes a slot assigned against the WIDE palette's size, so
 /// it must wrap again: indexing a six-element array with a slot up to 19 is
 /// the out-of-bounds bug the old hash's `assert!` used to guard.

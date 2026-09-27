@@ -31,7 +31,7 @@ use crate::units::{format_bytes, SizeFormat};
 const EMIT_INTERVAL: Duration = Duration::from_millis(100);
 
 /// A shared, monotonically-rising byte counter. Producers (the reader
-/// in `extract_streamed`, the body wrapper in `put_archive_verified`)
+/// in `extract_streamed`, the body wrapper in `receiver_body_with_counter`)
 /// `fetch_add` as bytes flow; the emitter task reads and rewrites the
 /// row verb.
 #[derive(Clone, Debug)]
@@ -54,10 +54,9 @@ impl ByteCounter {
 		self.0.load(Ordering::Relaxed)
 	}
 
-	/// The raw shared counter, for callers that need to hand it to a
-	/// type outside the module (the libpod client's PUT helper takes
-	/// `Arc<AtomicU64>` directly to keep the byte-counting dep out of
-	/// the client API).
+	/// The raw shared counter, for a producer outside this module that
+	/// advances it itself (the upload body built in `pack.rs` takes the
+	/// `Arc<AtomicU64>` and adds each frame as it leaves).
 	pub(crate) fn inner(&self) -> &Arc<AtomicU64> {
 		&self.0
 	}

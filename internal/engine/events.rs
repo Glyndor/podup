@@ -70,7 +70,6 @@ impl Engine {
 	/// events`-style `--since`, `--until`, and `--filter` options. With `json`,
 	/// each event is printed as a compact JSON line; otherwise as
 	/// `TYPE ACTION NAME`.
-	/// `--until`, and `--filter` options.
 	///
 	/// # Errors
 	///
