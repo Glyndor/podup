@@ -111,9 +111,11 @@ budget gate would then reject and the comparison would measure something other
 than what users run.
 
 ```sh
-# Download the release asset and verify it against SHA256SUMS.
+# Download the release asset and verify it against SHA256SUMS. `latest` is the
+# default selection when no tag is passed; passing it as an argument makes gh
+# look for a release literally tagged `latest`, which does not exist.
 mkdir -p dist
-gh release download latest \
+gh release download \
     --repo "$GITHUB_REPOSITORY" \
     -p podup-linux-x86_64 -p SHA256SUMS -D dist
 cd dist && sha256sum -c --ignore-missing SHA256SUMS
@@ -163,7 +165,7 @@ The report opens with a fenced code block under `### Environment` containing
 the contents of `env.txt`: kernel, CPU model and count, governor, the pinned
 core set, every tool version and engine counters (containers, networks,
 volumes, images, dangling images), and `running_vms` (the count of running
-libvirt guests — non-zero means another VM is sharing the cores the benchmark
+libvirt guests (non-zero means another VM is sharing the cores the benchmark
 is pinned to). The reader can tell exactly which podup, which Podman, which
 kernel and which governor produced the numbers below.
 

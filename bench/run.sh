@@ -91,7 +91,7 @@ done
 if [ "$SMOKE" -eq 1 ]; then SCENARIOS=(single running-ops); fi
 
 # Same-engine tools (podup, podman-compose) always run. docker-compose is split
-# into two variants — one per engine — each gated on the engine answering at
+# into two variants (one per engine), each gated on the engine answering at
 # its own DOCKER_HOST and (for the Docker one) the docker CLI being installed
 # to pre-pull the images. The caller's DOCKER_HOST is irrelevant: every variant
 # sets its own, so the run no longer depends on the shell it was launched from.
@@ -222,7 +222,7 @@ PODMAN_DANGLING="$(awk -F': ' '/^podman_dangling_images: /{print $2; exit}' "$OU
 RUNNING_VMS="$(awk -F': ' '/^running_vms: /{print $2; exit}' "$OUT_DIR/env.txt")"
 GOVERNOR="$(awk -F': ' '/^governor: /{print $2; exit}' "$OUT_DIR/env.txt")"
 if [ "${PODMAN_DANGLING:-0}" -gt 0 ] 2>/dev/null; then
-	echo "warning: $PODMAN_DANGLING dangling podman image(s); they consume space but are not on the timed path." >&2
+	echo "warning: $PODMAN_DANGLING dangling podman image(s); leftover images/networks slow podman listing calls, which podman-compose makes on every command; clean them before a published run." >&2
 fi
 if [ "${RUNNING_VMS:-0}" -gt 0 ] 2>/dev/null; then
 	echo "warning: $RUNNING_VMS running VM(s) sharing the same cores; numbers will be noisier." >&2

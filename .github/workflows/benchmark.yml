@@ -102,8 +102,11 @@ jobs:
           VERSION: ${{ inputs.version || 'latest' }}
         run: |
           mkdir -p dist
+          # `latest` is the default selection in `gh release download` when no
+          # tag is passed; passing it as an argument makes gh look for a
+          # release literally tagged `latest`, which does not exist.
           if [ "$VERSION" = "latest" ]; then
-            gh release download latest --repo "$GITHUB_REPOSITORY" \
+            gh release download --repo "$GITHUB_REPOSITORY" \
               -p podup-linux-x86_64 -p SHA256SUMS -D dist
           else
             gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" \
