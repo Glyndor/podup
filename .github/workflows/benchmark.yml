@@ -18,7 +18,8 @@ name: benchmark
 
 # Three triggers, three questions:
 # pull_request (with paths): did this PR break the harness code itself?
-# workflow_dispatch: starts the engine job on the self-hosted runner.
+# workflow_dispatch: starts the engine job on the self-hosted runner; the
+#                    `version` input picks which GitHub release asset to download.
 # monthly schedule: keeps the engine job ticking so a missed dispatch is visible.
 on:
   # The harness checks only guard anything if they run when the harness changes.
@@ -30,6 +31,12 @@ on:
       - "bench/**"
       - ".github/workflows/benchmark.yml"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "podup release tag to download (e.g. v5.10.3), or 'latest'"
+        required: false
+        default: "latest"
+        type: string
   schedule:
     - cron: "0 4 1 * *" # monthly
 
@@ -83,15 +90,32 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Build podup
-        run: cargo build --release --all-features --locked
-      - name: Pre-pull pinned images
+      - name: Download the published podup release asset
+        # The published numbers must come from the binary users install, not
+        # from `cargo build --release` on the runner: on a glibc host the local
+        # build links dynamically and reports about twice the RSS of the
+        # static release asset. Downloading the asset, verifying it against
+        # SHA256SUMS and chmod-ing it gives the same bytes the published
+        # numbers describe.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version || 'latest' }}
         run: |
-          grep -rhoE 'docker\.io/[^ ]+@sha256:[a-f0-9]+' bench/scenarios | sort -u | while read -r img; do
-            podman pull -q "$img"
-          done
+          mkdir -p dist
+          # `latest` is the default selection in `gh release download` when no
+          # tag is passed; passing it as an argument makes gh look for a
+          # release literally tagged `latest`, which does not exist.
+          if [ "$VERSION" = "latest" ]; then
+            gh release download --repo "$GITHUB_REPOSITORY" \
+              -p podup-linux-x86_64 -p SHA256SUMS -D dist
+          else
+            gh release download "$VERSION" --repo "$GITHUB_REPOSITORY" \
+              -p podup-linux-x86_64 -p SHA256SUMS -D dist
+          fi
+          cd dist && sha256sum -c --ignore-missing SHA256SUMS
+          chmod +x podup-linux-x86_64
       - name: Run the full suite
-        run: PODUP_BIN=target/release/podup bash bench/run.sh --iters 12 --warmup 2 --cores 2-9
+        run: PODUP_BIN=dist/podup-linux-x86_64 bash bench/run.sh --iters 12 --warmup 2 --cores 2-9
       - name: Aggregate
         run: python3 bench/aggregate.py
       - name: Upload report

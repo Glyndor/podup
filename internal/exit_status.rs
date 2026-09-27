@@ -46,6 +46,9 @@ pub(crate) fn print_error(e: &podup::ComposeError) {
 		style.render(),
 		style.render_reset()
 	);
+	if let Some(hint) = crate::apparmor_hint::hint_for(&e.to_string()) {
+		let _ = writeln!(err, "{hint}");
+	}
 }
 
 #[cfg(test)]
