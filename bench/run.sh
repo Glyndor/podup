@@ -104,24 +104,30 @@ TOOLS=(podup podman-compose)
 # travels with raw.csv, which is the only thing that can still be read afterwards.
 ENGINE_FILE="$OUT_DIR/engine"
 rm -f "$ENGINE_FILE"
-if command -v docker-compose >/dev/null 2>&1; then
-	if docker info >/dev/null 2>&1; then
-		TOOLS+=(docker-compose)
-		export BENCH_DOCKER_ENGINE=docker
-		echo docker > "$ENGINE_FILE"
-		echo "note: Docker Engine present; docker-compose measured as a CROSS-ENGINE (whole-stack) run."
-	elif [ -n "${DOCKER_HOST:-}" ] && docker-compose ls >/dev/null 2>&1; then
-		TOOLS+=(docker-compose)
-		# Recorded so the report puts these rows under the right heading; the
-		# tool's name does not say which engine it drove.
-		export BENCH_DOCKER_ENGINE=podman
-		echo podman > "$ENGINE_FILE"
-		echo "note: docker-compose driving Podman via DOCKER_HOST; measured as a SAME-ENGINE (pure tool) run."
-	else
-		echo "note: docker-compose found but no reachable engine; NOT measured. Set DOCKER_HOST to the Podman socket to include it."
-	fi
-else
+# shellcheck source=bench/engine.sh
+. "$HERE/engine.sh"
+DC_ENGINE=""
+if ! command -v docker-compose >/dev/null 2>&1; then
 	echo "note: docker-compose not installed; NOT measured."
+elif ! DC_ENGINE="$(compose_engine)"; then
+	echo "note: docker-compose found but $DC_ENGINE; NOT measured. Set DOCKER_HOST to the Podman socket (same engine) or unset it to use Docker."
+	DC_ENGINE=""
+elif [ "$DC_ENGINE" = docker ] && ! command -v docker >/dev/null 2>&1; then
+	# The pinned images are pre-pulled into the engine being measured. Without
+	# the docker CLI they would be downloaded inside the timed `up`.
+	echo "note: docker-compose drives Docker but the docker CLI is missing, so its images cannot be pre-pulled; NOT measured."
+	DC_ENGINE=""
+else
+	TOOLS+=(docker-compose)
+	# Recorded so the report puts these rows under the right heading; the
+	# tool's name does not say which engine it drove.
+	export BENCH_DOCKER_ENGINE="$DC_ENGINE"
+	echo "$DC_ENGINE" > "$ENGINE_FILE"
+	if [ "$DC_ENGINE" = podman ]; then
+		echo "note: docker-compose driving Podman (${DOCKER_HOST:-default socket}); measured as a SAME-ENGINE (pure tool) run."
+	else
+		echo "note: docker-compose driving Docker (${DOCKER_HOST:-$DOCKER_DEFAULT_SOCKET}); measured as a CROSS-ENGINE (whole-stack) run."
+	fi
 fi
 
 run() { # tool, compose-file, project, op-args...
@@ -164,6 +170,11 @@ teardown() { run "$1" "$2" "$3" down -v >/dev/null 2>&1; }
 echo ">>> pre-pulling pinned images"
 grep -rhoE 'docker\.io/[^ "]+@sha256:[a-f0-9]+' "$SCEN_DIR" | LC_ALL=C sort -u | while read -r img; do
 	podman pull -q "$img" >/dev/null 2>&1 || echo "  warning: could not pre-pull $img" >&2
+	# Docker keeps its own image store, so a Docker run needs its own copy or
+	# the first timed `up` measures the download.
+	if [ "$DC_ENGINE" = docker ]; then
+		docker pull -q "$img" >/dev/null 2>&1 || echo "  warning: could not pre-pull $img into Docker" >&2
+	fi
 done
 
 echo "tool,scenario,op,iter,phase,seconds,max_rss_kb,cpu_s,rc" > "$RAW"
@@ -215,7 +226,11 @@ for tool in "${TOOLS[@]}"; do
 					;;
 				build)
 					row build "$(timed "$tool" "$file" "$proj" build --no-cache)"
-					podman rmi -f "podup-bench-build:latest" >/dev/null 2>&1
+					if [ "$tool" = docker-compose ] && [ "$DC_ENGINE" = docker ]; then
+						docker rmi -f "podup-bench-build:latest" >/dev/null 2>&1
+					else
+						podman rmi -f "podup-bench-build:latest" >/dev/null 2>&1
+					fi
 					;;
 			esac
 		done
