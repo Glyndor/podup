@@ -24,7 +24,13 @@ ROWS = [
     ("up · 12 services", "many-services", "up", "seconds"),
     ("config · parse only", "config-heavy", "config", "seconds"),
 ]
-TOOLS = [("podup", "#3fb950"), ("docker-compose", "#58a6ff"), ("podman-compose", "#f778ba")]
+# (key in summary.json, label, colour). The chart shows the same-engine
+# comparison, so docker-compose is the variant pointed at the Podman socket.
+TOOLS = [
+    ("podup", "podup", "#3fb950"),
+    ("docker-compose-podman", "docker-compose", "#58a6ff"),
+    ("podman-compose", "podman-compose", "#f778ba"),
+]
 
 
 def value(summary, tool, scen, op, key):
@@ -43,7 +49,7 @@ def main() -> int:
 
     groups = []
     for label, scen, op, key in ROWS:
-        vals = [(t, value(summary, t, scen, op, key), c) for t, c in TOOLS]
+        vals = [(name, value(summary, t, scen, op, key), c) for t, name, c in TOOLS]
         if any(v is None for _, v, _ in vals):
             print(f"missing data for {scen}/{op}; skipping", file=sys.stderr)
             continue
@@ -60,8 +66,9 @@ def main() -> int:
 
     out = [
         f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}" '
-        f'width="{width}" role="img" aria-label="podup benchmark chart: podup leads every '
-        f'measured scenario in both memory and latency">',
+        f'width="{width}" role="img" aria-label="podup benchmark chart: memory per command '
+        f'and three latency rows, podup against docker-compose and podman-compose on the '
+        f'same rootless Podman">',
         "  <style>",
         "    .card { fill:#0d1117; stroke:#30363d; }",
         "    .t { fill:#e6edf3; font:600 13px ui-sans-serif,system-ui,sans-serif; }",

@@ -240,20 +240,23 @@ sequenceDiagram
 
 Peak memory and per-operation latency against docker-compose and podman-compose,
 **all three driving the same rootless Podman**, same digest-pinned images,
-median of 10 measured runs (12 iterations, 2 warm-up discarded), on podup 5.7.1.
-podup is fastest in all 29 measured rows, though three teardown rows
-(`deep-chain`, `many-services` and `multi-healthcheck`) win by less than their
-own standard deviation and should be read as ties; the widest gaps are the ones
-with many services.
+median of 10 measured runs (12 iterations, 2 warm-up discarded), on podup 5.10.5.
+podup is fastest in 25 of 29 rows. Of the other four, two are ties with
+docker-compose, docker-compose leads `secrets up` by 17 ms, and podman-compose
+tears down five replicas faster (`scale down`, 0.42 s against 0.69 s). The widest gaps are the ones with many services.
 
 | | podup | docker-compose | podman-compose |
 |---|---|---|---|
-| memory per command | **5.7 MiB** | 29.0 MiB | 45.9 MiB |
-| `up`, 42 services | **1.11 s** | 1.58 s | 6.65 s |
-| `up`, 12 services | **0.37 s** | 0.47 s | 1.89 s |
-| `config` (parse only) | **13.0 ms** | 38.3 ms | 112.7 ms |
+| memory per command | **7.2 MiB** | 29.7 MiB | 51.5 MiB |
+| `up`, 42 services | **2.83 s** | 4.72 s | 8.51 s |
+| `up`, 12 services | **0.96 s** | 1.36 s | 2.56 s |
+| `config` (parse only) | **12.0 ms** | 33.8 ms | 538.3 ms |
 
-<img src="docs/assets/bench.svg" alt="Bar chart: podup uses about 6 MiB per command against 29 MiB for docker-compose and 46 MiB for podman-compose, and is faster in every measured scenario" width="760">
+On its own Docker engine, docker-compose wins the teardown of many containers and
+`exec`; that comparison, and why these latencies are not comparable with older
+releases' tables, is in the full page.
+
+<img src="docs/assets/bench.svg" alt="Bar chart: podup uses about 7 MiB per command against 30 MiB for docker-compose and 52 MiB for podman-compose, and is the fastest of the three on the three latency rows shown" width="760">
 
 Full tables and methodology: [docs/benchmarks.md](docs/benchmarks.md).
 
