@@ -1,3 +1,20 @@
+podup (5.10.6) unstable; urgency=medium
+
+  * The service-mode autostart unit no longer builds or pulls at boot: it
+    runs `podup up -d --no-build --pull never`, so a boot only starts what
+    the last deploy left on disk and a missing image fails the unit where
+    `systemctl --user status` shows it. Units written by earlier releases
+    keep the old line until `podup autostart install` is run again.
+  * `userns_mode: keep-id` replicas no longer get stuck in `created`.
+    Podman's API service sometimes gives one of several concurrent
+    `keep-id` creates a mapping of the calling user alone, which crun
+    cannot start; podup now creates `keep-id` containers one at a time.
+  * `x-podman-autoupdate: registry` now makes `up` check the registry even
+    when the image is already on disk, so the service-mode `--auto-update`
+    timer refreshes it as documented.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Mon, 28 Sep 2026 08:49:03 -0500
+
 podup (5.10.5) unstable; urgency=medium
 
   * When stopping a container fails because the host's AppArmor `pasta`
