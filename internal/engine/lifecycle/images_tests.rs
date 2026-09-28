@@ -256,3 +256,114 @@ async fn up_with_a_missing_image_builds_on_the_same_board() {
 		"the board closes on the way out, even with a build"
 	);
 }
+
+/// `x-podman-autoupdate: registry` must make `up` reach the registry even when
+/// the image is already on disk (#1953).
+///
+/// The fake reports the image present, so a pull only happens if the
+/// extension reaches the pull decision. The count is not pinned: like
+/// `pull_policy: always`, the prefetch and the per-service site may both ask.
+/// The next three tests are the controls.
+#[tokio::test]
+async fn autoupdate_registry_pulls_even_when_the_image_is_present() {
+	let fake = fake_podman::start(present_image_engine);
+	let e = engine_with(fake.client(), "proj");
+
+	let file = crate::parse_str(
+		"services:\n  web:\n    image: shared\n    x-podman-autoupdate: registry\n",
+	)
+	.unwrap();
+
+	e.up_with_options(&file, false, &[], &[], false, false, false, false)
+		.await
+		.expect("an up with x-podman-autoupdate: registry must succeed");
+
+	let seen = fake.requests.lock().unwrap();
+	let pulls: Vec<&String> = seen.iter().filter(|r| r.contains("/images/pull")).collect();
+	assert!(
+		!pulls.is_empty(),
+		"the registry extension must pull even when the image is already present: {seen:?}"
+	);
+	assert!(
+		pulls.iter().all(|r| r.contains("policy=newer")),
+		"every pull must carry policy=newer so Podman checks the registry: {pulls:?}"
+	);
+}
+
+/// The control for the previous test. Same image, same fake reporting it
+/// present, no extension: `up` issues zero pull requests.
+///
+/// If this test sends a pull, the fake is no longer reporting the image as
+/// present and the previous test's assertion is meaningless: it would pass
+/// for the wrong reason, exactly the way a sibling test in this file used to
+/// pass under `always` until a mutation run showed it surviving the removal of
+/// the very guard it was named for.
+#[tokio::test]
+async fn up_without_the_extension_does_not_pull_a_present_image() {
+	let fake = fake_podman::start(present_image_engine);
+	let e = engine_with(fake.client(), "proj");
+
+	let file = crate::parse_str("services:\n  web:\n    image: shared\n").unwrap();
+
+	e.up_with_options(&file, false, &[], &[], false, false, false, false)
+		.await
+		.expect("a warm up on a present image must succeed");
+
+	let seen = fake.requests.lock().unwrap();
+	assert!(
+		!seen.iter().any(|r| r.contains("/images/pull")),
+		"the default policy with no extension must not pull a present image, otherwise the registry test proves nothing: {seen:?}"
+	);
+}
+
+/// The CLI `--pull missing` override wins over `x-podman-autoupdate: registry`
+/// because `--pull` is exactly what the override is for. With the override in
+/// place and the image present, `up` issues no pull request at all.
+#[tokio::test]
+async fn autoupdate_registry_yields_to_a_pull_missing_override() {
+	let fake = fake_podman::start(present_image_engine);
+	let mut e = engine_with(fake.client(), "proj");
+	e.pull_policy_override = Some("missing".to_string());
+
+	let file = crate::parse_str(
+		"services:\n  web:\n    image: shared\n    x-podman-autoupdate: registry\n",
+	)
+	.unwrap();
+
+	e.up_with_options(&file, false, &[], &[], false, false, false, false)
+		.await
+		.expect("an up overridden to missing must succeed");
+
+	let seen = fake.requests.lock().unwrap();
+	assert!(
+		!seen.iter().any(|r| r.contains("/images/pull")),
+		"`--pull missing` must override the extension and skip the registry visit: {seen:?}"
+	);
+}
+
+/// `x-podman-autoupdate: local` does NOT change the pull decision: it only
+/// stamps `io.containers.autoupdate=local` on the container so Podman's
+/// auto-update timer can match the local image, which is what a `podman
+/// build` that moved the tag looks like. The container-level recreate on a
+/// moved tag still comes from the config-hash + image-ID comparison `up`
+/// already does, not from a pulled image. With the image already present and
+/// no `--pull` override, `up` issues no pull request.
+#[tokio::test]
+async fn autoupdate_local_does_not_pull_a_present_image() {
+	let fake = fake_podman::start(present_image_engine);
+	let e = engine_with(fake.client(), "proj");
+
+	let file =
+		crate::parse_str("services:\n  web:\n    image: shared\n    x-podman-autoupdate: local\n")
+			.unwrap();
+
+	e.up_with_options(&file, false, &[], &[], false, false, false, false)
+		.await
+		.expect("an up with x-podman-autoupdate: local must succeed");
+
+	let seen = fake.requests.lock().unwrap();
+	assert!(
+		!seen.iter().any(|r| r.contains("/images/pull")),
+		"the local extension must not pull a present image; that is the registry extension's job: {seen:?}"
+	);
+}

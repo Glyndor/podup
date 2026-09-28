@@ -109,7 +109,7 @@ executor runs where is the part that matters:
 | Mode | Executor | How it is installed |
 |---|---|---|
 | `quadlet` | `podman-auto-update.timer` (ships with Podman) | nothing to do: Quadlet sets `AutoUpdate=<value>` on each `.container` and the bundled timer fires it. |
-| `service` | a per-project `<unit>-update.timer` (`hourly`/`daily`/`weekly`) | `podup autostart install --mode service --auto-update <hourly\|daily\|weekly>`. Adds `<unit>-update.service` (oneshot that runs plain `podup up -d`, which builds and pulls missing images) and the timer that fires it; uninstall removes both. |
+| `service` | a per-project `<unit>-update.timer` (`hourly`/`daily`/`weekly`) | `podup autostart install --mode service --auto-update <hourly\|daily\|weekly>`. Adds `<unit>-update.service` (oneshot that runs plain `podup up -d`, which builds and pulls missing images and re-checks the registry for `x-podman-autoupdate: registry` services that have no `build:`) and the timer that fires it; uninstall removes both. |
 | `start` | none | the boot path runs `podman start`, not `podup up`. `--auto-update` is rejected with `--mode start`. |
 
 For stacks that are not under autostart at all (no `podup autostart
