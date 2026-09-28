@@ -7,6 +7,7 @@
 //! the system systemd. External-command calls go through the `SystemCtl` seam so
 //! the install/uninstall/status logic is unit-testable without a live systemd.
 
+mod conflict;
 mod quadlet;
 mod service;
 mod start;
@@ -14,6 +15,10 @@ mod start;
 #[cfg(test)]
 #[path = "start_tests.rs"]
 mod start_tests;
+
+#[cfg(test)]
+#[path = "conflict_tests.rs"]
+mod conflict_tests;
 
 pub use quadlet::{install_quadlet, rebuild_quadlet, uninstall_quadlet};
 pub use service::{
@@ -164,28 +169,6 @@ fn current_user() -> Option<String> {
 		.filter(|s| !s.is_empty())
 }
 
-/// Quadlet autostart units for this project, if any exist on disk. Service mode
-/// and Quadlet mode would both try to start the same stack at boot, so an
-/// existing Quadlet install is a conflict to surface, not to silently overwrite.
-/// Looks for `<project>-*.container` under
-/// `${XDG_CONFIG_HOME:-~/.config}/containers/systemd/`.
-fn quadlet_units_present(project: &str) -> Vec<PathBuf> {
-	let dir = config_home().join("containers").join("systemd");
-	let prefix = format!("{project}-");
-	let mut found = Vec::new();
-	if let Ok(entries) = std::fs::read_dir(&dir) {
-		for entry in entries.flatten() {
-			let name = entry.file_name();
-			let name = name.to_string_lossy();
-			if name.starts_with(&prefix) && name.ends_with(".container") {
-				found.push(entry.path());
-			}
-		}
-	}
-	found.sort();
-	found
-}
-
 /// Whether linger is enabled for `user` (so the user manager, and the stack,
 /// survives logout and starts at boot). Parses `loginctl show-user <user>
 /// --value --property=Linger`, treating any error/unexpected output as "off".
@@ -253,21 +236,6 @@ fn checked(res: io::Result<Output>, what: &str) -> crate::Result<()> {
 	)))
 }
 
-/// Refuse to stack a single-unit mode on top of an existing Quadlet autostart
-/// install for the same project: both would start the stack at boot.
-fn refuse_if_quadlet_present(project: &str) -> crate::Result<()> {
-	let quadlet = quadlet_units_present(project);
-	if quadlet.is_empty() {
-		return Ok(());
-	}
-	let names: Vec<String> = quadlet.iter().map(|p| p.display().to_string()).collect();
-	Err(ComposeError::Autostart(format!(
-		"quadlet autostart units for project '{project}' already exist:\n    {}\n\
-		 remove them before installing another mode (quadlet autostart is tracked by #993).",
-		names.join("\n    ")
-	)))
-}
-
 /// Install (and, unless `no_start`, enable + start) the service-mode autostart
 /// unit. Writes only under `${XDG_CONFIG_HOME:-~/.config}/systemd/user/`.
 ///
@@ -277,7 +245,8 @@ fn refuse_if_quadlet_present(project: &str) -> crate::Result<()> {
 /// three down together, see [`uninstall`].
 pub fn install<S: SystemCtl>(sc: &S, opts: &InstallOptions) -> crate::Result<()> {
 	let project = &opts.unit.project;
-	refuse_if_quadlet_present(project)?;
+	conflict::refuse_if_quadlet_present(project)?;
+	conflict::refuse_if_other_single_unit_mode(project, conflict::SingleUnitMode::Service)?;
 
 	// Fail closed on values a unit line cannot represent (control characters
 	// would inject directives via the literal `WorkingDirectory=` line).
@@ -315,7 +284,8 @@ pub fn install_start<S: SystemCtl>(
 	no_start: bool,
 ) -> crate::Result<()> {
 	let project = &opts.project;
-	refuse_if_quadlet_present(project)?;
+	conflict::refuse_if_quadlet_present(project)?;
+	conflict::refuse_if_other_single_unit_mode(project, conflict::SingleUnitMode::Start)?;
 	validate_start_unit_opts(opts).map_err(ComposeError::Autostart)?;
 	let unit_text = render_start_unit(opts);
 	place_unit(sc, project, &unit_text, dry_run, no_start)
@@ -522,8 +492,10 @@ pub fn uninstall<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
 	Ok(())
 }
 
-/// Which autostart mode, if any, is installed for a project. Service and quadlet
-/// mode cannot coexist (each install refuses the other) so at most one is present.
+/// Which autostart mode, if any, is installed for a project. The modes cannot
+/// coexist (each install refuses the others), so at most one is present. Start
+/// mode writes the same unit file as service mode and uninstalls the same way, so
+/// it reports as `Service`.
 /// `uninstall` uses this to remove whichever is there without the caller naming a
 /// mode (and mistakenly no-op'ing against the wrong one).
 pub enum InstalledMode {
@@ -539,7 +511,7 @@ pub enum InstalledMode {
 pub fn installed_mode(project: &str) -> InstalledMode {
 	if unit_path(project).exists() {
 		InstalledMode::Service
-	} else if !quadlet_units_present(project).is_empty() {
+	} else if !conflict::quadlet_units_present(project).is_empty() {
 		InstalledMode::Quadlet
 	} else {
 		InstalledMode::None

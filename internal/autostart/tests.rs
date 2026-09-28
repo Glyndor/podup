@@ -10,7 +10,7 @@ use std::process::ExitStatus;
 
 /// Recording fake: captures every `systemctl`/`loginctl` arg vector and returns
 /// canned output keyed off the first argument.
-struct FakeCtl {
+pub(super) struct FakeCtl {
 	systemctl_calls: RefCell<Vec<Vec<String>>>,
 	loginctl_calls: RefCell<Vec<Vec<String>>>,
 	linger: String,
@@ -29,7 +29,7 @@ struct FakeCtl {
 }
 
 impl FakeCtl {
-	fn new() -> Self {
+	pub(super) fn new() -> Self {
 		FakeCtl {
 			systemctl_calls: RefCell::new(Vec::new()),
 			loginctl_calls: RefCell::new(Vec::new()),
@@ -42,7 +42,7 @@ impl FakeCtl {
 		}
 	}
 
-	fn systemctl_log(&self) -> Vec<Vec<String>> {
+	pub(super) fn systemctl_log(&self) -> Vec<Vec<String>> {
 		self.systemctl_calls.borrow().clone()
 	}
 }
@@ -90,7 +90,7 @@ impl SystemCtl for FakeCtl {
 	}
 }
 
-fn opts(dir: &Path, project: &str, dry_run: bool, no_start: bool) -> InstallOptions {
+pub(super) fn opts(dir: &Path, project: &str, dry_run: bool, no_start: bool) -> InstallOptions {
 	InstallOptions {
 		unit: ServiceUnitOpts {
 			exe: PathBuf::from("/usr/local/bin/podup"),
@@ -107,7 +107,7 @@ fn opts(dir: &Path, project: &str, dry_run: bool, no_start: bool) -> InstallOpti
 	}
 }
 
-fn opts_with_interval(
+pub(super) fn opts_with_interval(
 	dir: &Path,
 	project: &str,
 	dry_run: bool,
@@ -121,7 +121,7 @@ fn opts_with_interval(
 
 /// Run `f` with a fresh temp `XDG_CONFIG_HOME`, `USER`, and `XDG_RUNTIME_DIR`
 /// set, so the install/status paths resolve under the temp dir.
-fn with_env<R>(f: impl FnOnce(&Path) -> R) -> R {
+pub(super) fn with_env<R>(f: impl FnOnce(&Path) -> R) -> R {
 	let tmp = tempfile::tempdir().unwrap();
 	let root = tmp.path().to_path_buf();
 	temp_env::with_vars(

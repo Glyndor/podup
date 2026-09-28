@@ -81,7 +81,11 @@ file after installing leaves the unit starting the old container silently. Run
 `podup up -d` after any change to the file, exactly as you would to deploy it.
 
 The three cannot coexist for one project: each install refuses if another is
-present, since they would all bring the same stack up at boot.
+present, since they would all bring the same stack up at boot. Re-installing
+the same mode rewrites the unit in place (that is the documented upgrade
+path); switching modes requires `podup autostart uninstall` first, the same
+command that removes the update-timer pair left behind by a service-mode
+install with `--auto-update`.
 
 ## Commands
 
