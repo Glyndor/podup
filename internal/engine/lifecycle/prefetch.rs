@@ -22,7 +22,6 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::compose::types::{ComposeFile, Service};
-use crate::engine::build::pull_policy_checked;
 use crate::error::Result;
 
 use super::parallel::join_bounded;
@@ -72,11 +71,9 @@ impl Engine {
 			let Some(image) = service.image.as_deref() else {
 				continue;
 			};
-			let raw_policy = self
-				.pull_policy_override
-				.as_deref()
-				.or(service.pull_policy.as_deref());
-			if pull_policy_checked(raw_policy, name)? == "never" {
+			// The same resolver as the pull itself, so `x-podman-autoupdate:
+			// registry` counts as `newer` here too (#1953).
+			if self.resolved_pull_policy(name, service)? == "never" {
 				continue;
 			}
 			by_image.entry(image).or_insert((name.as_str(), service));
@@ -84,11 +81,7 @@ impl Engine {
 
 		let futs = by_image.into_values().map(|(name, service)| async move {
 			let image = service.image.as_deref().unwrap_or_default();
-			let raw_policy = self
-				.pull_policy_override
-				.as_deref()
-				.or(service.pull_policy.as_deref());
-			let policy = match pull_policy_checked(raw_policy, name) {
+			let policy = match self.resolved_pull_policy(name, service) {
 				Ok(p) => p,
 				// Propagate the validation error out of the prefetch join via a
 				// shared poison cell. The prefetch stage itself is best-effort
@@ -98,9 +91,10 @@ impl Engine {
 				Err(e) => return Err(e),
 			};
 			// `missing` (and its aliases, already normalized by
-			// `pull_policy_checked`) only pulls when the image is absent, so
+			// `resolved_pull_policy`) only pulls when the image is absent, so
 			// checking first turns a warm cache into a cheap presence check
-			// instead of a redundant pull request. `always`/`newer` mean to
+			// instead of a redundant pull request. `always`/`newer` (and
+			// `x-podman-autoupdate: registry`, which resolves to `newer`) mean to
 			// hit the registry regardless, so skip the check and prefetch
 			// unconditionally: that request is a pure win, since
 			// `up_one_service` would have made it anyway, just later.

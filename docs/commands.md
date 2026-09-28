@@ -793,7 +793,7 @@ this one, and the previous binary is restored. The shell installers
 Manage a boot-time autostart unit for this compose project: rootless,
 user-scope `systemctl --user` (enable lingering with
 `loginctl enable-linger` so the unit starts without a login session). See
-[Rootless autostart](autostart.md) for the full setup, the two backends, and
+[Rootless autostart](autostart.md) for the full setup, the three modes, and
 running it under an isolated service account.
 
 | Subcommand | Description |
@@ -805,7 +805,7 @@ running it under an isolated service account.
 
 | Flag (`install`) | Description | Default |
 |---|---|---|
-| `--mode <MODE>` | Autostart backend: `service` (one `Type=oneshot` unit running `podup up -d` at boot, `podup stop` on shutdown) or `quadlet` (one native Podman Quadlet unit per service, owned by systemd directly). | `service` |
+| `--mode <MODE>` | Autostart backend: `service` (one `Type=oneshot` unit running `podup up -d --no-build --pull never` at boot, `podup stop` on shutdown), `quadlet` (one native Podman Quadlet unit per service, owned by systemd directly) or `start` (one unit running `podman start`, single-service projects only). | `service` |
 | `--no-start` | Install the unit(s) but do not start them. | off |
 | `--dry-run` | Print what would be written and run; change nothing. | off |
 
@@ -939,7 +939,7 @@ auto-update, and a Quadlet exported by `podup generate quadlet` carries
 
 | Value | What it does |
 |---|---|
-| `registry` | The container carries `io.containers.autoupdate=registry`, and `podup up` pulls the image with policy `newer` so a moved tag recreates the container. `--pull <policy>` on the command line wins over the extension. |
+| `registry` | The container carries `io.containers.autoupdate=registry`, and `podup up` pulls the image with policy `newer` so a moved tag recreates the container. For a service without `build:`, it does so even when the image is already on disk, so every `up` re-checks the registry; a service with `build:` builds its image instead of pulling it. `--pull <policy>` on the command line wins over the extension. |
 | `local` | The container carries `io.containers.autoupdate=local`: Podman's auto-update compares the container's image with the local image of the same name and restarts the unit when they differ, which is what a `podman build` that moved the tag looks like. `podup up` keeps the existing pull behaviour, and the same rebuilt image recreates the container through the config-hash and image-ID comparison it already does. |
 
 On `generate quadlet`, the value lands in the `[Container]` section as

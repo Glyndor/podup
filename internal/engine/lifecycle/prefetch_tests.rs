@@ -169,3 +169,22 @@ async fn prefetch_rejects_an_invalid_pull_override() {
 		"override must surface as a Field error naming the field and value, got {err:?}"
 	);
 }
+
+/// #1443 still holds when `x-podman-autoupdate: registry` sits beside the typo:
+/// the extension decides the policy, but the bad `pull_policy:` is reported.
+#[tokio::test]
+#[cfg(unix)]
+async fn prefetch_rejects_an_unknown_pull_policy_beside_the_registry_extension() {
+	let fake = fake_podman::start(|_, _| (404, r#"{"message":"not found"}"#.to_string()));
+	let e = engine_with(fake.client(), "proj");
+	let file = crate::parse_str(
+		"services:\n  web:\n    image: nginx:1.27\n    pull_policy: alaways\n    x-podman-autoupdate: registry\n",
+	)
+	.unwrap();
+	let enabled: HashSet<String> = file.services.keys().cloned().collect();
+	let err = e
+		.prefetch_images(&file, &enabled, &None)
+		.await
+		.expect_err("a typo'd pull_policy must not hide behind the extension");
+	assert!(err.to_string().contains("alaways"), "got {err}");
+}

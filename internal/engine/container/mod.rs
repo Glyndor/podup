@@ -183,6 +183,10 @@ impl Engine {
 		} else {
 			service.userns_mode.as_deref().map(Namespace::parse)
 		};
+		// Read before `userns` moves into the spec. Both `keep-id` and
+		// `keep-id:<opts>` parse to the `keep-id` mode; a pod member has no
+		// user namespace of its own and never takes the lock.
+		let keep_id_create = userns.as_ref().is_some_and(|ns| ns.mode() == "keep-id");
 		let (image_os, image_arch) = service
 			.platform
 			.as_deref()
@@ -313,10 +317,18 @@ impl Engine {
 			tracing::debug!("pre-create delete {container_name}: {e}");
 		}
 
+		// Only the create is serialised (`Engine::keep_id_create`); the guard
+		// drops before the start, so starts stay concurrent.
+		let keep_id_guard = if keep_id_create {
+			Some(self.keep_id_create.lock().await)
+		} else {
+			None
+		};
 		self.client
 			.post_json::<_, serde_json::Value>(&format!("{API_PREFIX}/containers/create"), &spec)
 			.await
 			.map_err(ComposeError::Podman)?;
+		drop(keep_id_guard);
 
 		// `create` (docker compose create) creates the container but leaves it
 		// stopped; `up`/`run`/`watch` start it.
