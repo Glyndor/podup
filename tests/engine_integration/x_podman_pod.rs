@@ -235,6 +235,14 @@ async fn down_removes_the_pod() {
 /// runs in that user namespace without carrying the key itself.
 #[tokio::test]
 async fn a_pod_takes_the_services_user_namespace() {
+	// Serialize with the rest of the userns lane so two parallel runs do
+	// not consume the host's subuid range faster than `down` releases it.
+	// `USERNS` is the single shared mutex every test that creates a
+	// `--userns=auto` container or pod locks; see the comment at its
+	// declaration for the measured pool ceiling. Held before the podman
+	// availability check, the same way `userns_pod.rs` does it, so a
+	// skipped run cannot race an allocation it never started.
+	let _guard = USERNS.lock().await;
 	if podman().await.is_none() {
 		return;
 	}
