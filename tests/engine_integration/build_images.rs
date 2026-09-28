@@ -10,6 +10,7 @@ use super::*;
 
 #[tokio::test]
 async fn build_with_target_stage() {
+	let _build_lock = BUILD_IMAGES.lock().await;
 	let client = match podman().await {
 		Some(d) => d,
 		None => return,
@@ -56,6 +57,7 @@ async fn build_with_target_stage() {
 
 #[tokio::test]
 async fn build_with_args_and_extra_tags() {
+	let _build_lock = BUILD_IMAGES.lock().await;
 	let client = match podman().await {
 		Some(d) => d,
 		None => return,
@@ -109,6 +111,7 @@ async fn build_with_args_and_extra_tags() {
 
 #[tokio::test]
 async fn build_with_cli_no_cache_and_build_arg() {
+	let _build_lock = BUILD_IMAGES.lock().await;
 	let client = match podman().await {
 		Some(d) => d,
 		None => return,
@@ -155,6 +158,7 @@ async fn build_with_cli_no_cache_and_build_arg() {
 
 #[tokio::test]
 async fn build_inline_dockerfile() {
+	let _build_lock = BUILD_IMAGES.lock().await;
 	let client = match podman().await {
 		Some(d) => d,
 		None => return,
@@ -192,6 +196,7 @@ async fn build_inline_dockerfile() {
 
 #[tokio::test]
 async fn build_from_dockerfile_in_context() {
+	let _build_lock = BUILD_IMAGES.lock().await;
 	let client = match podman().await {
 		Some(d) => d,
 		None => return,
@@ -546,6 +551,7 @@ fn image_id(tag: &str) -> String {
 /// appear at all.
 #[tokio::test]
 async fn up_keeps_the_image_a_no_cache_build_produced() {
+	let _build_lock = BUILD_IMAGES.lock().await;
 	let client = match podman().await {
 		Some(d) => d,
 		None => return,

@@ -68,10 +68,9 @@ fn proj(tag: &str) -> String {
 }
 
 /// One shared mutex for every test that creates a `--userns=auto` allocation:
-/// the three container cases in `tests/engine_integration/userns.rs` and the
-/// pod case in `tests/engine_integration/userns_pod.rs`. Both modules lock it
-/// before they call `up` so two lanes never race on the host's subordinate
-/// UID range.
+/// any test that brings up a container or pod with `userns_mode: auto` takes
+/// this lock before it calls `up` and holds it through teardown, so two lanes
+/// never race on the host's subordinate UID range.
 ///
 /// Measured on Podman 5.7.0 against a 65536-ID subuid range on
 /// 2026-09-22: `--userns=auto` hands out 1024-block ranges from the tail of
@@ -83,6 +82,32 @@ fn proj(tag: &str) -> String {
 /// defect and is not one. Locking both lanes through the same mutex caps the
 /// live count at one allocation at a time.
 static USERNS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+/// One shared mutex for every test in `tests/engine_integration/build_images.rs`
+/// that builds an image. The test takes this lock at the start of its body and
+/// holds it through its image cleanup (`podman rmi -f` of the tag it just
+/// produced), so no two build tests overlap. Tests in that file that do not
+/// build an image do not take it, and builders in other test files do not
+/// take it.
+///
+/// Measured on the real store (Podman 5.7.0, eight test threads,
+/// 2026-09-28):
+///
+/// - `build_images` only, five runs: 13/13 each.
+/// - Lock disabled: two of three runs failed four tests with
+///   `Build("checking if cached image exists from a previous build:
+///   getting top layer info: layer not known ...")` (the #1960 defect).
+/// - Full `engine_integration` at eight threads, two runs: 242 passed and
+///   one failed both times (`x_podman_pod::a_pod_takes_the_services_user_namespace`,
+///   which competes for `--userns=auto` slots; that test takes `USERNS`).
+///
+/// The cause has not been isolated with the lock removed, but the most
+/// likely one is a build's cache lookup racing another test's
+/// `podman rmi -f` of an image it shares layers with: the lookup returns
+/// `layer not known` and the build aborts. Locking the build tests through
+/// one mutex keeps a `rmi -f` from running while another build is doing that
+/// lookup.
+static BUILD_IMAGES: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 /// Path the suite writes its PID to. The CI step reads the same path when
 /// setting `PODUP_LEAK_SCAN_PID`; one constant, two readers, no string to
