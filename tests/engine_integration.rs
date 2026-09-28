@@ -377,6 +377,11 @@ async fn poll_with_watch_surfaces_a_finished_watch_task_error() {
 
 #[path = "engine_integration/autostart_quadlet.rs"]
 mod autostart_quadlet;
+// Unix only: autostart is systemd, and the image checks reach the Podman
+// socket by its `/run/user/<uid>` path.
+#[cfg(unix)]
+#[path = "engine_integration/autostart_service_boot.rs"]
+mod autostart_service_boot;
 #[path = "engine_integration/build_images.rs"]
 mod build_images;
 // Unix only: it reaches the Podman socket by its `/run/user/<uid>` path.

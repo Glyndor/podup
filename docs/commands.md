@@ -793,7 +793,7 @@ this one, and the previous binary is restored. The shell installers
 Manage a boot-time autostart unit for this compose project: rootless,
 user-scope `systemctl --user` (enable lingering with
 `loginctl enable-linger` so the unit starts without a login session). See
-[Rootless autostart](autostart.md) for the full setup, the two backends, and
+[Rootless autostart](autostart.md) for the full setup, the three modes, and
 running it under an isolated service account.
 
 | Subcommand | Description |
@@ -805,7 +805,7 @@ running it under an isolated service account.
 
 | Flag (`install`) | Description | Default |
 |---|---|---|
-| `--mode <MODE>` | Autostart backend: `service` (one `Type=oneshot` unit running `podup up -d` at boot, `podup stop` on shutdown) or `quadlet` (one native Podman Quadlet unit per service, owned by systemd directly). | `service` |
+| `--mode <MODE>` | Autostart backend: `service` (one `Type=oneshot` unit running `podup up -d --no-build --pull never` at boot, `podup stop` on shutdown), `quadlet` (one native Podman Quadlet unit per service, owned by systemd directly) or `start` (one unit running `podman start`, single-service projects only). | `service` |
 | `--no-start` | Install the unit(s) but do not start them. | off |
 | `--dry-run` | Print what would be written and run; change nothing. | off |
 
