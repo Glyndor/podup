@@ -134,6 +134,20 @@ pub struct Engine {
 	/// matters wherever one process holds more than one engine (the
 	/// integration suite does).
 	pub(super) images_seen_present: std::sync::Mutex<std::collections::HashSet<String>>,
+	/// Held across the `containers/create` request of every container whose
+	/// user namespace is `keep-id` (bare or with options), so this engine
+	/// issues those creates one at a time (#1955).
+	///
+	/// Podman's API service computes the `keep-id` mapping racily when several
+	/// such creates arrive at once: measured on 5.7.0, one container now and
+	/// then comes back mapped as `1000:0:1` alone, and crun then cannot write
+	/// the default `net.ipv4.ping_group_range=0 0` sysctl because container
+	/// GID 0 is unmapped, so the container is left in `created`. Creating in
+	/// series never failed; starting in series did not help, so the start
+	/// stays outside the lock. Reported upstream as
+	/// podman-container-tools/podman#29848. Two podup processes creating
+	/// `keep-id` containers at the same moment can still race.
+	pub(super) keep_id_create: tokio::sync::Mutex<()>,
 	/// SHA-256 of every `file:` secret/config this engine actually uploaded
 	/// during the current invocation, keyed by the project-scoped Podman
 	/// secret name `create_project_secrets` used to create it. Populated
@@ -203,6 +217,7 @@ impl Engine {
 			renew_anon_volumes: false,
 			images_seen_present: std::sync::Mutex::new(std::collections::HashSet::new()),
 			uploaded_file_digests: std::sync::Mutex::new(std::collections::HashMap::new()),
+			keep_id_create: tokio::sync::Mutex::new(()),
 			no_warn: false,
 			project_label: build_project_label_parts(&project),
 		}
@@ -227,6 +242,7 @@ impl Engine {
 			renew_anon_volumes: false,
 			images_seen_present: std::sync::Mutex::new(std::collections::HashSet::new()),
 			uploaded_file_digests: std::sync::Mutex::new(std::collections::HashMap::new()),
+			keep_id_create: tokio::sync::Mutex::new(()),
 			no_warn: false,
 			project_label: build_project_label_parts(&project),
 		}

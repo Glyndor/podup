@@ -150,6 +150,13 @@ Podman estimates the required range size from the image; request an explicit
 size with `userns_mode: "auto:size=65536"` when needed. That size must fit in
 the available range.
 
+Within one podup command, `keep-id` containers are created one at a time,
+replicas included; two podup commands running at once can still overlap. Measured
+2026-09-27 on Podman 5.7.0: when several `keep-id` creates reach the API service
+at once, one container now and then gets a mapping of the calling user alone
+and fails to start with `crun: write to /proc/sys/net/ipv4/ping_group_range
+(are all the IDs mapped in the user namespace?)`. Starts still run in parallel.
+
 Files written through a mount use the container's mapped host IDs. Bind mounts
 therefore need permissions that allow those IDs to access them. The `:U` mount
 option recursively changes source ownership to the container's mapped user

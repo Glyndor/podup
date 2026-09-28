@@ -177,6 +177,9 @@ pub(super) fn container_rm_path(name: &str, remove_volumes: bool, force: bool) -
 #[cfg(test)]
 mod drop_recheck_tests;
 #[cfg(test)]
+#[path = "keep_id_create_tests.rs"]
+mod keep_id_create_tests;
+#[cfg(test)]
 #[path = "libpod_endpoint_query_tests.rs"]
 mod libpod_endpoint_query_tests;
 #[cfg(test)]
