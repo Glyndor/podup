@@ -212,6 +212,7 @@ async fn up_with_autoupdate_registry_recreates_after_the_tag_moved_without_pull_
 /// Combine the stdout and stderr of a `podup` invocation, the way a real
 /// shell would when piping both to the same sink. The progress layer that
 /// emits `Pulling` writes to stderr, so a check on stdout alone misses it.
+#[cfg(unix)]
 fn combined(out: &std::process::Output) -> String {
 	format!(
 		"{}{}",
@@ -223,6 +224,7 @@ fn combined(out: &std::process::Output) -> String {
 /// Pull `alpine:latest` quietly through the live socket so the fixture can
 /// retag it. Best-effort, like the other tests: an image already present
 /// needs no network.
+#[cfg(unix)]
 fn ensure_alpine(socket: &str) {
 	let _ = std::process::Command::new("podman")
 		.args(["--url", socket, "pull", "-q", "alpine:latest"])
@@ -242,6 +244,8 @@ fn ensure_alpine(socket: &str) {
 /// asserted on `Pulling`, not on exit code or `Pulled`: Podman's `newer`
 /// against an unreachable `localhost:1` reports `Pulled` and exits 0
 /// (measured on 5.7.0), so the exit code is the wrong thing to assert on.
+// Unix only: it reaches the Podman socket by its `/run/user/<uid>` path.
+#[cfg(unix)]
 #[tokio::test]
 async fn up_with_autoupdate_registry_pulls_even_when_the_image_is_present() {
 	let Some(socket) = podman_socket_url() else {
