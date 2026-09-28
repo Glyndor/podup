@@ -34,18 +34,10 @@ impl Engine {
 		service: &Service,
 		file: &ComposeFile,
 	) -> Result<()> {
-		// `up --pull <policy>` overrides the per-service `pull_policy`; `--no-build`
-		// suppresses building even for services with a `build:` section (they fall
-		// back to pulling/using an existing image). Validated through
-		// [`crate::engine::build::pull_policy_checked`] so a typo'd
-		// `pull_policy:` cannot be silently treated as `missing` here: the
-		// skip-only-when-missing arm below would otherwise hide the bad value
-		// from `up` entirely (#1443).
-		let raw_policy = self
-			.pull_policy_override
-			.as_deref()
-			.or(service.pull_policy.as_deref());
-		let policy = crate::engine::build::pull_policy_checked(raw_policy, name)?;
+		// The same resolver as the pull itself: `--pull` first, then
+		// `x-podman-autoupdate: registry` as `newer`, then `pull_policy:`, and a
+		// typo'd value is rejected rather than read as `missing` (#1443, #1953).
+		let policy = self.resolved_pull_policy(name, service)?;
 		// Build on `up` only when the service's image is not already there, which
 		// is what docker compose does: `up` converges on the declared state and
 		// `--build` is the flag that forces a rebuild.
@@ -107,11 +99,9 @@ impl Engine {
 		if service.platform.is_some() {
 			return Ok(false);
 		}
-		let raw_policy = self
-			.pull_policy_override
-			.as_deref()
-			.or(service.pull_policy.as_deref());
-		if crate::engine::build::pull_policy_checked(raw_policy, service_name)? != "missing" {
+		// Resolved like the pull itself, so a presence record never stands in
+		// for the registry check `x-podman-autoupdate: registry` asks for (#1953).
+		if self.resolved_pull_policy(service_name, service)? != "missing" {
 			return Ok(false);
 		}
 		let Some(image) = service.image.as_deref() else {

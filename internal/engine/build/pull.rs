@@ -302,15 +302,32 @@ impl Engine {
 	/// `newer` when no `--pull` override is in effect, the extension's
 	/// whole point is to check the registry on every `up`. The CLI
 	/// override wins, because that is what `--pull` is for.
-	fn resolved_pull_policy(&self, service_name: &str, service: &Service) -> Result<&'static str> {
-		let requested = self.pull_policy_override.as_deref().or_else(|| {
+	///
+	/// Every pull decision on `up` goes through here too. When the prefetch
+	/// and the per-service decision read `--pull` and `pull_policy:` on their
+	/// own, the extension never reached them and a warm cache skipped the
+	/// registry (#1953).
+	pub(in crate::engine) fn resolved_pull_policy(
+		&self,
+		service_name: &str,
+		service: &Service,
+	) -> Result<&'static str> {
+		if self.pull_policy_override.is_none() {
 			if let Ok(Some(crate::compose::types::AutoUpdate::Registry)) =
 				service.podman_autoupdate()
 			{
-				return Some("newer");
+				// The extension wins over `pull_policy:`, but a typo there must
+				// still be reported rather than hidden behind it (#1443).
+				if service.pull_policy.is_some() {
+					pull_policy_checked(service.pull_policy.as_deref(), service_name)?;
+				}
+				return pull_policy_checked(Some("newer"), service_name);
 			}
-			service.pull_policy.as_deref()
-		});
+		}
+		let requested = self
+			.pull_policy_override
+			.as_deref()
+			.or(service.pull_policy.as_deref());
 		pull_policy_checked(requested, service_name)
 	}
 
