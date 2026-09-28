@@ -1,3 +1,13 @@
+podup (5.10.7) unstable; urgency=medium
+
+  * `podup autostart install` and `podup autostart install --mode start` no
+    longer overwrite each other: installing one mode over the other, or over
+    a unit podup cannot identify, now fails and points to
+    `podup autostart uninstall`. Re-installing the same mode still rewrites
+    the unit in place.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Mon, 28 Sep 2026 16:48:55 -0500
+
 podup (5.10.6) unstable; urgency=medium
 
   * The service-mode autostart unit no longer builds or pulls at boot: it
