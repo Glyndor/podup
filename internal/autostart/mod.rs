@@ -16,7 +16,8 @@ mod start;
 #[path = "start_tests.rs"]
 mod start_tests;
 
-#[cfg(test)]
+// Unix only: it reuses the fixtures in `tests.rs`, which is Unix-only.
+#[cfg(all(test, unix))]
 #[path = "conflict_tests.rs"]
 mod conflict_tests;
 
