@@ -111,6 +111,12 @@ impl Namespace {
 		}
 	}
 
+	/// The mode without any `:value` that `parse` split off, e.g. `keep-id`
+	/// for both `keep-id` and `keep-id:uid=1000`.
+	pub fn mode(&self) -> &str {
+		&self.nsmode
+	}
+
 	/// I separate namespace targets and user namespace options from their mode.
 	pub fn parse(mode: impl Into<String>) -> Self {
 		let mode = mode.into();

@@ -514,6 +514,11 @@ mod userns;
 #[path = "engine_integration/userns_pod.rs"]
 mod userns_pod;
 
+// Unix only: it inspects the replicas through the `/run/user/<uid>` socket.
+#[cfg(unix)]
+#[path = "engine_integration/keep_id_replicas.rs"]
+mod keep_id_replicas;
+
 // ---------------------------------------------------------------------------
 // Shared helpers for the libpod origin-form compensation tests
 // (engine_integration/libpod_origin_form_*.rs). One helper file per concern
