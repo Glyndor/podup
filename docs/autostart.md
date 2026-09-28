@@ -29,7 +29,7 @@ in who owns the containers, and in whether the boot path reconciles.
 
 | Mode | What it installs | Choose it when |
 |---|---|---|
-| `service` (default) | One `Type=oneshot` unit that runs `podup up -d` at boot and `podup stop` on shutdown. | You want the whole stack managed as a unit, the simplest option: one thing to enable, one to remove. |
+| `service` (default) | One `Type=oneshot` unit that runs `podup up -d --no-build --pull never` at boot and `podup stop` on shutdown. | You want the whole stack managed as a unit, the simplest option: one thing to enable, one to remove. |
 | `quadlet` | One native Podman Quadlet unit per service (`.container`/`.build`/`.volume`/`.network`), which systemd owns directly. | You want per-container supervision: systemd restarts, ordering and status for each service independently. |
 | `start` | One `Type=oneshot` unit whose `ExecStart` is `podman start`. Single-service projects only. | You want the boot to resume the container that already exists, with nothing else on the path. |
 
@@ -40,10 +40,15 @@ because two of the three sit on the same side of it.
 
 `service` and `quadlet` both make the world match the file at boot. Service mode
 keeps the compose front-end (`.env`, interpolation, profiles) on the runtime path:
-systemd starts `podup`, and `podup` reads the compose file. Quadlet mode renders
-the stack to systemd units once, at install time, and hands them over, after which
-systemd runs the containers with no `podup` process in the loop, though Podman
-still reconciles each `.container` against its unit.
+systemd starts `podup`, and `podup` reads the compose file. It still recreates a
+container whose compose definition changed (its `podup.config-hash` label no
+longer matches), but only from images already on disk: the unit never builds or
+pulls a service image, so a missing one fails it where `systemctl --user status` and the
+journal show it, instead of being repaired silently on an unattended machine.
+Quadlet mode renders the stack to
+systemd units once, at install time, and hands them over, after which systemd
+runs the containers with no `podup` process in the loop, though Podman still
+reconciles each `.container` against its unit.
 
 `start` does neither. Podman is daemonless and its store survives a reboot, so
 every setting was baked into the container definition when it was created.
@@ -52,8 +57,10 @@ no build on the path.
 
 The failure semantics are the reason to choose it rather than a side effect. A
 container missing at boot means a deploy went wrong, and booting cannot fix a
-broken deploy: `start` fails loudly in the journal, where `up -d` would rebuild it
-silently. Deploy reconciles; boot restores.
+broken deploy: `start` fails loudly in the journal, and so does `service` mode
+when the image is gone. What `service` mode still does at boot, and `start` does
+not, is recreate a container whose compose definition changed. Deploy reconciles;
+boot restores.
 
 ### What `start` costs
 
@@ -102,7 +109,7 @@ executor runs where is the part that matters:
 | Mode | Executor | How it is installed |
 |---|---|---|
 | `quadlet` | `podman-auto-update.timer` (ships with Podman) | nothing to do: Quadlet sets `AutoUpdate=<value>` on each `.container` and the bundled timer fires it. |
-| `service` | a per-project `<unit>-update.timer` (`hourly`/`daily`/`weekly`) | `podup autostart install --mode service --auto-update <hourly\|daily\|weekly>`. Adds `<unit>-update.service` (oneshot that runs `podup up -d`) and the timer that fires it; uninstall removes both. |
+| `service` | a per-project `<unit>-update.timer` (`hourly`/`daily`/`weekly`) | `podup autostart install --mode service --auto-update <hourly\|daily\|weekly>`. Adds `<unit>-update.service` (oneshot that runs plain `podup up -d`, which builds and pulls missing images) and the timer that fires it; uninstall removes both. |
 | `start` | none | the boot path runs `podman start`, not `podup up`. `--auto-update` is rejected with `--mode start`. |
 
 For stacks that are not under autostart at all (no `podup autostart
@@ -122,6 +129,15 @@ the feature existed. The timer pair only appears when the flag is given, and
 `Type=oneshot`, so an image only rebuilds when its build service is restarted, and
 the container is then restarted to pick it up. Service mode has no `rebuild`; it
 builds at deploy time, whenever you run `podup up`.
+
+### Upgrading an existing service-mode install
+
+A unit keeps the `ExecStart` it was written with. Units written by 5.10.5 or earlier
+run `podup up -d` at boot, which builds or pulls a missing image. After upgrading
+`podup`, run `podup autostart install` again with the flags you used the first
+time: it overwrites the unit in place and leaves it enabled, so the unit picks up
+`up -d --no-build --pull never`. `podup autostart install --dry-run` prints the
+unit it would write.
 
 ## Why `--user` and `default.target`
 
@@ -148,9 +164,8 @@ After=podman-user-wait-network-online.service
 ```
 
 The wait earns its place in service mode more than it does under Quadlet, not
-less. Quadlet's `ExecStart` starts a container; this one is `podup up -d`, which
-may pull an image, and under rootless Podman pasta builds the container network
-at start time.
+less. Quadlet's `ExecStart` starts a container; this one runs `podup up`, and
+under rootless Podman pasta builds the container network at start time.
 
 Measured 2026-08-30: the shim first ships in Podman 5.3.0, while `podup`'s floor
 is 5.0. On 5.0 through 5.2 systemd finds no such unit, drops the `Wants=` and

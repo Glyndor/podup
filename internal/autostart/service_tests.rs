@@ -22,7 +22,9 @@ fn renders_single_file_unit() {
 	assert!(s.contains("WorkingDirectory=/srv/app"));
 	assert!(s.contains("WantedBy=default.target"));
 	assert!(
-		s.contains("ExecStart=/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app up -d")
+		s.contains(
+			"ExecStart=/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app up -d --no-build --pull never"
+		)
 	);
 	assert!(s.contains("ExecStop=/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app stop"));
 }
@@ -36,7 +38,7 @@ fn renders_multiple_files_in_order() {
 	];
 	let s = render_service_unit(&o);
 	assert!(s.contains(
-		"ExecStart=/usr/local/bin/podup -f /srv/app/base.yml -f /srv/app/override.yml -p app up -d"
+		"ExecStart=/usr/local/bin/podup -f /srv/app/base.yml -f /srv/app/override.yml -p app up -d --no-build --pull never"
 	));
 	assert!(s.contains(
 		"ExecStop=/usr/local/bin/podup -f /srv/app/base.yml -f /srv/app/override.yml -p app stop"
@@ -49,7 +51,9 @@ fn includes_profiles_and_env_files() {
 	o.profiles = vec!["prod".to_string(), "web".to_string()];
 	o.env_files = vec!["/srv/app/.env.prod".to_string()];
 	let s = render_service_unit(&o);
-	assert!(s.contains("-p app --profile prod --profile web --env-file /srv/app/.env.prod up -d"));
+	assert!(s.contains(
+		"-p app --profile prod --profile web --env-file /srv/app/.env.prod up -d --no-build --pull never"
+	));
 	assert!(s.contains("-p app --profile prod --profile web --env-file /srv/app/.env.prod stop"));
 }
 
@@ -57,18 +61,38 @@ fn includes_profiles_and_env_files() {
 fn boot_neither_builds_nor_destroys() {
 	// The contract, pinned. `--build` on ExecStart puts an image build on the
 	// boot path of an unattended machine: it needs the network and a briefly
-	// unreachable registry leaves the stack down. `down` on ExecStop removes
-	// the containers, so a clean shutdown would delete the stack and every
-	// boot would recreate it. Both shipped in 1.9.0; neither may come back
-	// without this test being deleted on purpose.
+	// unreachable registry leaves the stack down. A pull at boot has the same
+	// failure, and `--no-build` / `--pull never` are what keep either off the
+	// boot path (#1951). `down` on ExecStop removes the containers, so a clean
+	// shutdown would delete the stack and every boot would recreate it. None
+	// of these may come back without this test being deleted on purpose.
 	let s = render_service_unit(&opts_single());
 	assert!(
 		!s.contains("--build"),
 		"a boot must not depend on a build:\n{s}"
 	);
 	assert!(
+		s.contains("--pull never"),
+		"a boot must not pull an image:\n{s}"
+	);
+	assert!(
 		!s.contains(" down"),
 		"ExecStop must stop, not remove the containers:\n{s}"
+	);
+}
+
+/// The whole line, not a substring: `contains("--no-build")` would still pass
+/// with the flag on ExecStop.
+#[test]
+fn boot_exec_start_is_exactly_pinned() {
+	let s = render_service_unit(&opts_single());
+	let exec_start_line = s
+		.lines()
+		.find(|l| l.starts_with("ExecStart="))
+		.expect("ExecStart line is present");
+	assert_eq!(
+		exec_start_line,
+		"ExecStart=/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app up -d --no-build --pull never"
 	);
 }
 
@@ -323,6 +347,22 @@ fn autostart_update_service_uses_same_leading_args_then_up_minus_d() {
 	// The timer is what gets enabled; a oneshot with its own [Install] could be
 	// enabled on its own and fire at every login instead of on the schedule.
 	assert!(!s.contains("[Install]"), "{s}");
+}
+
+/// The auto-update service is the one that refreshes images, so it must not
+/// inherit the boot unit's `--no-build --pull never`.
+#[test]
+fn autostart_update_service_exec_start_is_pure_up_minus_d() {
+	let opts = opts_single_for_timer();
+	let s = super::render_update_service_unit(&opts);
+	let exec_start_line = s
+		.lines()
+		.find(|l| l.starts_with("ExecStart="))
+		.expect("ExecStart line is present");
+	assert_eq!(
+		exec_start_line,
+		"ExecStart=/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app up -d"
+	);
 }
 
 /// The timer carries `OnCalendar=<word>`, `Persistent=true` (missed fires

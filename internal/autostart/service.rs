@@ -235,6 +235,9 @@ pub fn update_timer_file_name(project: &str) -> String {
 /// unit (so `-f`/`-p`/`--profile`/`--env-file` travel together), then
 /// `up -d`. The timer fires it; systemd runs it `Type=oneshot` so each fire
 /// is its own `podup up -d` invocation, not a long-running process.
+///
+/// Unlike the boot unit, it carries neither `--no-build` nor `--pull never`:
+/// refreshing images is what the timer is for.
 pub fn render_update_service_unit(opts: &ServiceUnitOpts) -> String {
 	let start = exec_line(opts, &["up", "-d"]);
 	let workdir = opts.working_dir.display().to_string().replace('%', "%%");
@@ -286,11 +289,16 @@ pub fn render_update_timer_unit(project: &str, interval: &str) -> String {
 
 /// Render the full `.service` unit file content for service-mode autostart.
 pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
-	// `up -d`, not `up -d --build`: a boot must not depend on a build. A build
-	// needs the network, takes minutes, and a registry that is briefly
-	// unreachable would leave the stack down on an unattended machine. Build at
-	// deploy time, where someone is watching.
-	let start = exec_line(opts, &["up", "-d"]);
+	// `up -d --no-build --pull never`: a boot only starts what the last deploy
+	// left on disk. Leaving out `--build` is not enough, because `up` still
+	// builds a `build:` service whose image is missing and still pulls a
+	// missing `image:` (every time, under `pull_policy: always`/`newer`). A
+	// build or a pull needs the network, and a registry that is briefly
+	// unreachable would leave the stack down on an unattended machine. With
+	// both flags a missing image fails the unit, where `systemctl --user
+	// status` and the journal show it, instead of being repaired silently.
+	// Images are acquired at deploy time, where someone is watching.
+	let start = exec_line(opts, &["up", "-d", "--no-build", "--pull", "never"]);
 	// `stop`, not `down`: `down` REMOVES the containers, so a clean shutdown
 	// would delete the stack and every boot would recreate it from scratch,
 	// losing container identity and logs, and dragging the whole compose
@@ -313,8 +321,8 @@ pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
 	// `autostart/quadlet.rs` emits pick it up at boot. Service mode writes the
 	// final unit itself and inherits nothing, and the reason applies here with
 	// more force rather than less: Quadlet's `ExecStart` starts a container,
-	// ours is `podup up -d`, which may pull an image, and rootless pasta builds
-	// the container network at start time.
+	// ours runs `podup up`, and rootless pasta builds the container network at
+	// start time.
 	//
 	// Measured 2026-08-30: the shim first ships in Podman 5.3.0, and podup's
 	// floor is 5.0. On 5.0 through 5.2 systemd finds no such unit, drops the
