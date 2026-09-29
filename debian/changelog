@@ -1,3 +1,13 @@
+podup (5.10.8) unstable; urgency=medium
+
+  * No change to how podup behaves. The benchmark harness now fails a
+    `down` row when the tool exited 0 but left containers, pods or networks
+    of its project behind, and removes them before the next row. The
+    published `scale down` comparison had podman-compose 1.6.0 leaving four
+    of five replicas running.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Tue, 29 Sep 2026 06:44:52 -0500
+
 podup (5.10.7) unstable; urgency=medium
 
   * `podup autostart install` and `podup autostart install --mode start` no
