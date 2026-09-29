@@ -240,23 +240,29 @@ sequenceDiagram
 
 Peak memory and per-operation latency against docker-compose and podman-compose,
 **all three driving the same rootless Podman**, same digest-pinned images,
-median of 10 measured runs (12 iterations, 2 warm-up discarded), on podup 5.10.5.
-podup is fastest in 25 of 29 rows. Of the other four, two are ties with
-docker-compose, docker-compose leads `secrets up` by 17 ms, and podman-compose
-tears down five replicas faster (`scale down`, 0.42 s against 0.69 s). The widest gaps are the ones with many services.
+median of 10 measured runs (12 iterations, 2 warm-up discarded), on podup 5.10.8.
+podup is fastest in **28 of 29 rows**. The one row it does not take is
+`many-services down`, where docker-compose beats it by 10 ms against podup's
+own standard deviation of 72 ms (about 0.14 sd), well inside podup's spread.
+On a second row, podman-compose `scale down`, the harness refused the cell
+after podman-compose 1.6.0 left four replicas, the pod and the network of its
+compose project behind on all 10 iterations (rc=97, exit 0 from `down -v`
+after `up -d --scale app=5`, #1947); podup's own number on that row stands on
+its own. The widest gaps are the ones with many services.
 
 | | podup | docker-compose | podman-compose |
 |---|---|---|---|
-| memory per command | **7.2 MiB** | 29.7 MiB | 51.5 MiB |
-| `up`, 42 services | **2.83 s** | 4.72 s | 8.51 s |
-| `up`, 12 services | **0.96 s** | 1.36 s | 2.56 s |
-| `config` (parse only) | **12.0 ms** | 33.8 ms | 538.3 ms |
+| memory per command | **6.0 MiB** | 29.9 MiB | 52.1 MiB |
+| `up`, 42 services | **1.13 s** | 2.94 s | 7.26 s |
+| `up`, 12 services | **0.40 s** | 0.88 s | 2.22 s |
+| `config` (parse only) | **12.3 ms** | 37.8 ms | 542.3 ms |
 
 On its own Docker engine, docker-compose wins the teardown of many containers and
-`exec`; that comparison, and why these latencies are not comparable with older
-releases' tables, is in the full page.
+`exec`; that comparison is from the 5.10.5 run and was not re-measured for
+5.10.8 because the Docker daemon was not running on the benchmark host, and the
+warning not to read numbers across runs is in the full page.
 
-<img src="docs/assets/bench.svg" alt="Bar chart: podup uses about 7 MiB per command against 30 MiB for docker-compose and 52 MiB for podman-compose, and is the fastest of the three on the three latency rows shown" width="760">
+<img src="docs/assets/bench.svg" alt="Bar chart: podup uses about 6 MiB per command against 30 MiB for docker-compose and 52 MiB for podman-compose, and is the fastest of the three on the three latency rows shown" width="760">
 
 Full tables and methodology: [docs/benchmarks.md](docs/benchmarks.md).
 
