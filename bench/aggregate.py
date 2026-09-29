@@ -159,6 +159,11 @@ SELF_TEST_ROWS = [
 	# instead of silently dropped.
 	{"tool": "podman-compose", "scenario": "single", "op": "logs", "iter": "1", "phase": "measured", "seconds": "0.001", "max_rss_kb": "1", "cpu_s": "0.001", "rc": "1"},
 	{"tool": "podman-compose", "scenario": "single", "op": "logs", "iter": "2", "phase": "measured", "seconds": "0.001", "max_rss_kb": "1", "cpu_s": "0.001", "rc": "1"},
+	# A `down` row rewritten to rc=97 because the tool exited 0 but left
+	# containers / pods / networks of its project behind. The legend line
+	# under the tables explains the code so a reader does not have to guess.
+	{"tool": "podman-compose", "scenario": "scale", "op": "down", "iter": "1", "phase": "measured", "seconds": "0.380", "max_rss_kb": "56000", "cpu_s": "0.460", "rc": "97"},
+	{"tool": "podman-compose", "scenario": "scale", "op": "down", "iter": "2", "phase": "measured", "seconds": "0.420", "max_rss_kb": "57000", "cpu_s": "0.480", "rc": "97"},
 	# Sub-10 ms rows, the ones /usr/bin/time could not see. They exercise the
 	# millisecond branch of row_unit, which no whole-second fixture reaches.
 	{"tool": "podup", "scenario": "running-ops", "op": "ps", "iter": "1", "phase": "measured", "seconds": "0.008521", "max_rss_kb": "9100", "cpu_s": "0.003812", "rc": "0"},
@@ -172,6 +177,20 @@ SELF_TEST_ROWS = [
 	{"tool": "podman-compose", "scenario": "wide-level", "op": "up", "iter": "1", "phase": "measured", "seconds": "41.220", "max_rss_kb": "61000", "cpu_s": "18.400", "rc": "0"},
 	{"tool": "podman-compose", "scenario": "wide-level", "op": "up", "iter": "2", "phase": "measured", "seconds": "42.007", "max_rss_kb": "61200", "cpu_s": "18.910", "rc": "0"},
 ]
+
+# rc code the harness records for a `down` row whose tool exited 0 but left
+# containers, pods or networks of its compose project behind. Picked because
+# no tool returns it on its own merits (podup 0/1/2, podman-compose 0/1/125/130,
+# docker-compose 0/1/2), so a reader who sees 97 in raw.csv knows it is the
+# harness flag, not a tool error. The legend line under each table names the
+# meaning so the reader does not have to chase bench/leftovers.sh to decode it.
+BENCH_RC_LEFTOVERS = 97
+BENCH_RC_LEFTOVERS_NOTE = (
+	"Rows with rc=97 exited cleanly but left containers, pods or networks "
+	"of their compose project behind; the harness rewrote them to 97 "
+	"so a clean teardown is not compared against one that did a fraction "
+	"of it. See bench/leftovers.sh for the detection and force-purge."
+)
 
 
 def pct(values, p):
@@ -296,7 +315,22 @@ def main():
 				}
 				summary.setdefault(tool, {}).setdefault(scen, {})[op] = cell
 
+	# Track the rows the harness rewrote to rc=97 ("tool exited 0 but left
+	# resources behind"). When any exist, the report gets a legend line and
+	# summary.json gets a `_notes` entry explaining the code, so a reader who
+	# sees `[2 failed of 2]` next to a row in the table knows the failure was
+	# the harness flag and not a tool error. Without the legend, the reader
+	# would have to chase bench/leftovers.sh to decode 97.
+	rc97_rows = [r for r in measured_rows if int(r["rc"]) == BENCH_RC_LEFTOVERS]
+
 	if not self_test:
+		if rc97_rows:
+			# Top-level note: summary.json already records per-cell failure
+			# counts; this is the prose explanation keyed to rc=97.
+			summary["_notes"] = {
+				"rc_97": BENCH_RC_LEFTOVERS_NOTE,
+				"count": len(rc97_rows),
+			}
 		with open(JSON, "w") as f:
 			json.dump(summary, f, indent="\t", sort_keys=True)
 
@@ -394,6 +428,13 @@ def main():
 		lines.append("> docker-compose-docker was not measured on this host, so the "
 					 "cross-engine comparison is left blank rather than estimated.\n")
 
+	# One legend line when any measured row carries rc=97 (the harness flag
+	# for "tool exited 0 but left resources behind"). Kept short: a sentence
+	# each for the meaning, the count, and where to read the implementation.
+	if rc97_rows:
+		lines.append(f"> **rc=97** ({len(rc97_rows)} row{'s' if len(rc97_rows) != 1 else ''}): "
+					 f"{BENCH_RC_LEFTOVERS_NOTE}\n")
+
 	if self_test:
 		# The self-test runs on fixture rows. Writing them out would replace a
 		# real report and summary, the output of a benchmark that takes the better
@@ -433,6 +474,13 @@ def main():
 		# version.
 		if "— [2 failed of 2]" not in output_text:
 			print("self-test FAILED: rendered text missing `— [2 failed of 2]`", file=sys.stderr)
+			return 1
+		# rc=97 legend: the fixture set carries two rc=97 rows in the `scale
+		# down` cell, so the report must carry the explanatory line. Without
+		# this assertion a regression that silently dropped the legend would
+		# still produce a structurally valid report.
+		if "rc=97" not in output_text:
+			print("self-test FAILED: rendered text missing the rc=97 legend line", file=sys.stderr)
 			return 1
 		# Every table renders the all-failed cell, so the check above passes as
 		# long as one of them does. No table may fall back to printing the

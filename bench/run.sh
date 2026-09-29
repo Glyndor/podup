@@ -109,6 +109,8 @@ PODMAN_SOCK="${PODMAN_SOCKET:-$XDG_RUNTIME_DIR/podman/podman.sock}"
 . "$HERE/engine.sh"
 # shellcheck source=bench/env.sh
 . "$HERE/env.sh"
+# shellcheck source=bench/leftovers.sh
+. "$HERE/leftovers.sh"
 MEASURE_DC_PODMAN=0
 MEASURE_DC_DOCKER=0
 
@@ -171,7 +173,84 @@ timed() { # tool, compose-file, project, op-args...
 	LC_ALL=C "$TIMEIT" "${cmd[@]}"
 }
 
-teardown() { run "$1" "$2" "$3" down -v >/dev/null 2>&1; }
+teardown() {
+	# `down -v` is run with stderr captured so a tool that prints progress
+	# noise does not pollute the harness output, but the rc is preserved and
+	# surfaced on stderr if it failed: a teardown that the tool itself could
+	# not complete must be visible. Leftovers after a clean rc are warned
+	# and force-removed (podman-compose 1.6.0 leaves replicas + pod + network
+	# even on a fresh down). Leftovers after a non-zero rc get the same
+	# warning + purge so the next scenario still starts from a clean host;
+	# the rc is not consumed because teardown is not a timed row.
+	local rc
+	run "$1" "$2" "$3" down -v >/dev/null 2>&1
+	rc=$?
+	if [ "$rc" -ne 0 ]; then
+		printf 'warning: %s %s down -v failed (rc=%d); proceeding to purge\n' \
+			"$1" "$3" "$rc" >&2
+	fi
+	bench_check_leftovers "$1" "$3" || true
+}
+
+# Records one timed `down` row, after first asking the engine whether the
+# tool actually left a clean host behind. Two pieces of truth combine into
+# the recorded rc:
+#
+#   - the tool's own rc from `timeit`: kept verbatim when it is non-zero,
+#     since a tool that already failed (rc=125, rc=1, ...) is a real
+#     failure and the harness must not mask it by rewriting to 97;
+#
+#   - the leftovers found by the engine: when the tool exited 0 but left
+#     containers, pods or networks behind, the row is rewritten to 97
+#     (BENCH_RC_LEFTOVERS) so the aggregator routes it to the failure
+#     column. Comparing a clean teardown against one that did a fifth of
+#     it (the `scale` row for podman-compose) is worse than refusing to
+#     publish, and the leftovers would otherwise stay on the host and
+#     slow every later row.
+#
+# Engine query failures (bench_leftovers returned non-zero) are surfaced
+# on stderr and recorded with rc=125 if the tool's own rc was 0, so the
+# aggregator excludes them from the stats. When the tool itself already
+# failed, the engine error does not worsen the row.
+#
+# Uses $tool / $file / $proj / $i / $phase / $scen / $RAW from the
+# surrounding loop; $BENCH_RC_LEFTOVERS from leftovers.sh.
+record_down() {
+	local out tool_rc leftovers recorded_rc
+	out=$(timed "$tool" "$file" "$proj" down -v)
+	tool_rc=$(printf '%s\n' "$out" | awk '{print $NF}')
+
+	if ! leftovers=$(bench_leftovers "$tool" "$proj"); then
+		printf 'bench: %s %s engine query failed during record_down\n' \
+			"$tool" "$proj" >&2
+		if [ "$tool_rc" = "0" ]; then
+			row down "$(bench_override_rc "$out" 125)"
+		else
+			row down "$out"
+		fi
+		return
+	fi
+
+	if [ -n "$leftovers" ]; then
+		# Collapse the newline-separated leftover list to space-separated so
+		# each warning in a long run log is one grep-able line instead of one
+		# line per resource (containers + pod for podman-compose + networks).
+		local leftovers_one_line="${leftovers//$'\n'/ }"
+		printf 'warning: %s %s left behind after down: %s\n' \
+			"$tool" "$proj" "$leftovers_one_line" >&2
+		if ! bench_leftovers_purge "$tool" "$proj"; then
+			printf 'error: %s %s purge failed (see stderr above)\n' \
+				"$tool" "$proj" >&2
+		fi
+	fi
+
+	recorded_rc=$(bench_record_rc "$tool_rc" "$leftovers")
+	if [ "$recorded_rc" = "$tool_rc" ]; then
+		row down "$out"
+	else
+		row down "$(bench_override_rc "$out" "$recorded_rc")"
+	fi
+}
 
 # Pre-pull the digest-pinned bases so image download is never on the timed path.
 #
@@ -251,12 +330,12 @@ for tool in "${TOOLS[@]}"; do
 			row() { echo "$tool,$scen,$1,$i,$phase,${2// /,}" >> "$RAW"; }
 			case "$op" in
 				updown)
-					row up   "$(timed "$tool" "$file" "$proj" up -d)"
-					row down "$(timed "$tool" "$file" "$proj" down -v)"
+					row up "$(timed "$tool" "$file" "$proj" up -d)"
+					record_down
 					;;
 				scale)
-					row up   "$(timed "$tool" "$file" "$proj" up -d --scale app=5)"
-					row down "$(timed "$tool" "$file" "$proj" down -v)"
+					row up "$(timed "$tool" "$file" "$proj" up -d --scale app=5)"
+					record_down
 					;;
 				reup)
 					run "$tool" "$file" "$proj" up -d >/dev/null 2>&1
