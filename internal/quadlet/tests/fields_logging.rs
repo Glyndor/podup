@@ -20,6 +20,10 @@ use crate::quadlet::generate_at;
 /// on Podman 5.7.0. `max-file` is deliberately absent: it was measured to be
 /// dropped by both the API and the CLI, so emitting it promised a rotation
 /// nothing performed.
+///
+/// Both the default rotation and the user options are routed through
+/// `PodmanArgs=--log-opt=` rather than `LogOpt=`, because the latter is a
+/// Podman 5.2.0 addition and the supported floor is 5.0.
 #[test]
 fn logging_default_is_emitted_when_logging_block_is_absent() {
 	let yaml = r#"
@@ -35,8 +39,8 @@ services:
 		"missing default LogDriver in:\n{c}"
 	);
 	assert!(
-		c.contains("LogOpt=max-size=10485760"),
-		"missing max-size LogOpt in:\n{c}"
+		c.contains("PodmanArgs=--log-opt=\"max-size=10485760\""),
+		"missing default max-size PodmanArgs in:\n{c}"
 	);
 	assert!(
 		!c.contains("max-file"),
@@ -66,9 +70,12 @@ services:
 		"user override not applied:\n{c}"
 	);
 	assert!(
-		c.contains("LogOpt=tag=mytag"),
+		c.contains("PodmanArgs=--log-opt=\"tag=mytag\""),
 		"user options not applied:\n{c}"
 	);
+	// The default `max-size` rotation travels through the same
+	// `--log-opt=` flag; the user override replaces the whole `options:`
+	// set, so no `max-size` PodmanArgs survives.
 	assert!(
 		!c.contains("max-size"),
 		"default leaked through override:\n{c}"

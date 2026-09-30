@@ -122,7 +122,15 @@ services:
 		.find(|u| u.filename == "proj-app.container")
 		.unwrap();
 	assert!(container.contents.contains("Image=proj-app.build"));
-	assert!(!out.warnings.iter().any(|w| w.contains("build")));
+	// The 5.2-floor warning fires whenever a `.build` unit is written
+	// (the floor for the unit type is 5.0); what must NOT fire here is
+	// the inline-Dockerfile warning, which would mean we failed to emit
+	// the unit.
+	assert!(
+		!out.warnings.iter().any(|w| w.contains("dockerfile_inline")),
+		"inline-Dockerfile warning must not fire when the build is expressible; got: {:?}",
+		out.warnings
+	);
 }
 
 #[test]

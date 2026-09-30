@@ -255,18 +255,21 @@ fn network_mode_container_maps_to_join_form() {
 
 #[test]
 fn duplicate_network_aliases_are_emitted_once() {
-	// A repeated alias must not produce duplicate `NetworkAlias=` lines, which
-	// podman may reject at container create.
+	// A repeated alias must not produce duplicate `--network-alias=`
+	// flags on the same argv, which podman may reject at container create.
+	// The flag is emitted through `PodmanArgs=` because `NetworkAlias=` on
+	// `[Container]` is a Podman 5.2.0 addition and the supported floor is
+	// 5.0.
 	let yaml = "services:\n  s:\n    image: x\n    networks:\n      front:\n        aliases: [dup, dup, uniq]\nnetworks:\n  front:\n";
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert_eq!(
-		c.matches("NetworkAlias=dup").count(),
+		c.matches("--network-alias=\"dup\"").count(),
 		1,
 		"duplicate alias must be emitted once; got:\n{c}"
 	);
-	assert_eq!(c.matches("NetworkAlias=uniq").count(), 1, "in:\n{c}");
+	assert_eq!(c.matches("--network-alias=\"uniq\"").count(), 1, "in:\n{c}");
 }
 
 #[test]

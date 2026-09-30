@@ -266,7 +266,23 @@ pub(crate) fn container_unit(
 		container.add("AddDevice", dev.clone());
 	}
 	for host in &service.extra_hosts {
-		container.add("AddHost", host.clone());
+		// An empty entry (`- ""`) would render as `--add-host=`, which
+		// podman rejects with `error parsing additional short
+		// argument`. The native `AddHost=` key omits empty values, so the
+		// podman-args route has to skip them too.
+		if host.is_empty() {
+			continue;
+		}
+		// `AddHost=` was added to Quadlet in Podman 5.3.0. The supported
+		// floor is 5.0, so route each entry through `PodmanArgs=` as
+		// `--add-host`, like the memory/CPU limits: Quadlet sees no key
+		// above the floor, podman sees the same flag. Quoted per #1734 for
+		// the same reason as `mem_limit`: a value carrying whitespace
+		// must not become two argv elements.
+		container.add(
+			"PodmanArgs",
+			format!("--add-host={}", quote_podman_arg_value(host)),
+		);
 	}
 	for d in service.dns.to_list() {
 		container.add("DNS", d);
@@ -339,7 +355,27 @@ pub(crate) fn container_unit(
 		container.add("UserNS", userns.clone());
 	}
 	if let Some(signal) = &service.stop_signal {
-		container.add("StopSignal", signal.clone());
+		// An empty signal (`stop_signal: ""`) would render as
+		// `--stop-signal=`, which podman rejects. The native
+		// `StopSignal=` key omits empty values, so the podman-args
+		// route has to skip them too.
+		if signal.is_empty() {
+			// Skip without warning: an empty `stop_signal:` is a no-op
+			// the user almost certainly did not intend, but the same
+			// input was already a no-op via the native key, and the
+			// podman-args route is the new code path; matching the
+			// old behaviour silently is the smallest change.
+		} else {
+			// `StopSignal=` was added to Quadlet in Podman 5.2.0. The
+			// supported floor is 5.0, so route the signal through
+			// `PodmanArgs=` as `--stop-signal`, like the other
+			// escape-hatch flags. Quoted per #1734: a hostile value
+			// carrying whitespace must not become two argv elements.
+			container.add(
+				"PodmanArgs",
+				format!("--stop-signal={}", quote_podman_arg_value(signal)),
+			);
+		}
 	}
 	if let Some(grace) = &service.stop_grace_period {
 		if let Some(secs) = parse_duration_secs(grace) {
@@ -393,7 +429,20 @@ pub(crate) fn container_unit(
 		None => {}
 	}
 	for group in &service.group_add {
-		container.add("GroupAdd", group.clone());
+		// An empty entry (`- ""`) would render as `--group-add=`, which
+		// podman rejects. The native `GroupAdd=` key omits empty values,
+		// so the podman-args route has to skip them too.
+		if group.is_empty() {
+			continue;
+		}
+		// `GroupAdd=` was added to Quadlet in Podman 5.1.0. The supported
+		// floor is 5.0, so route each entry through `PodmanArgs=` as
+		// `--group-add`, like the memory/CPU limits. Quoted per #1734 for
+		// the same reason as `mem_limit`.
+		container.add(
+			"PodmanArgs",
+			format!("--group-add={}", quote_podman_arg_value(group)),
+		);
 	}
 	for port in &service.expose {
 		container.add("ExposeHostPort", port.clone());
@@ -404,15 +453,29 @@ pub(crate) fn container_unit(
 	let mut static_ip: Option<&str> = None;
 	let mut static_ip6: Option<&str> = None;
 	// Emit each alias at most once: a repeated alias (within a network or across
-	// networks) would produce duplicate `NetworkAlias=` lines, which podman may
-	// reject at container create.
+	// networks) would produce duplicate `--network-alias=` flags on the same
+	// argv, which podman rejects at container create.
 	let mut seen_aliases = std::collections::HashSet::new();
 	for net in service.networks.names() {
 		if let Some(cfg) = service.networks.config_for(&net) {
 			if let Some(aliases) = &cfg.aliases {
 				for alias in aliases {
+					// An empty alias would render as `--network-alias=`,
+					// which podman rejects. The native `NetworkAlias=`
+					// key omits empty values, so the podman-args route
+					// has to skip them too.
+					if alias.is_empty() {
+						continue;
+					}
 					if seen_aliases.insert(alias.clone()) {
-						container.add("NetworkAlias", alias.clone());
+						// `NetworkAlias=` was added to Quadlet in Podman 5.2.0.
+						// The supported floor is 5.0, so route each alias
+						// through `PodmanArgs=` as `--network-alias`, like
+						// the other escape-hatch flags. Quoted per #1734.
+						container.add(
+							"PodmanArgs",
+							format!("--network-alias={}", quote_podman_arg_value(alias)),
+						);
 					}
 				}
 			}
@@ -435,9 +498,11 @@ pub(crate) fn container_unit(
 	}
 	// `build_log_config` substitutes the rotation default when `service.logging`
 	// is None, so an absent `logging:` block in compose still produces a
-	// `LogDriver=` / `LogOpt=` set on the generated unit (#1354). The render
-	// path is the same as the live engine's, so `up` and `generate quadlet`
-	// produce equivalent rotation policy.
+	// `LogDriver=` set and `--log-opt` rotation policy on the generated
+	// unit (#1354). The render path is the same as the live engine's, so
+	// `up` and `generate quadlet` produce equivalent rotation. The
+	// options are emitted through `PodmanArgs=` because `LogOpt=` is a
+	// Podman 5.2.0 key and the floor is 5.0; see `emit_log_config`.
 	match build_log_config(name, service.logging.as_ref()) {
 		Ok(Some(logging)) => emit_log_config(&mut container, logging),
 		Ok(None) => {}
@@ -553,14 +618,42 @@ pub(crate) fn container_unit(
 /// The byte count is emitted verbatim; `podman run --log-opt
 /// max-size=10485760` was measured to produce the same `10.49MB` cap as
 /// `max-size=10m` on Podman 5.7.0, so no suffix has to be reconstructed.
+///
+/// Each entry is emitted through `PodmanArgs=` (`--log-opt=`) rather than
+/// as the native `LogOpt=` Quadlet key, because `LogOpt=` is a Podman 5.2.0
+/// addition; the supported floor is 5.0.
 fn emit_log_config(container: &mut Section, logging: crate::libpod::types::container::LogConfig) {
 	if let Some(driver) = &logging.driver {
 		container.add("LogDriver", driver.clone());
 	}
+	// `LogOpt=` was added to Quadlet in Podman 5.2.0. The supported floor
+	// is 5.0, so route the rotation cap and each user option through
+	// `PodmanArgs=` as `--log-opt`, like the other escape-hatch flags. Both
+	// the key and the value are quoted (#1734): a hostile value carrying
+	// whitespace must not become two argv elements, and the key half has
+	// the same hole on the other side of the `=`.
 	if let Some(size) = logging.size {
-		container.add("LogOpt", format!("max-size={size}"));
+		container.add(
+			"PodmanArgs",
+			format!(
+				"--log-opt={}",
+				quote_podman_arg_value(&format!("max-size={size}"))
+			),
+		);
 	}
 	for (key, val) in sorted_label_pairs(logging.options) {
-		container.add("LogOpt", format!("{key}={val}"));
+		// An empty value (`options: { tag: "" }`) would render as
+		// `--log-opt=tag=`, which podman rejects. The native `LogOpt=`
+		// key omits empty values, so the podman-args route has to skip
+		// them too. An empty key would render as `--log-opt==value`,
+		// equally malformed; skip it for the same reason.
+		if key.is_empty() || val.is_empty() {
+			continue;
+		}
+		let line = format!("{key}={val}");
+		container.add(
+			"PodmanArgs",
+			format!("--log-opt={}", quote_podman_arg_value(&line)),
+		);
 	}
 }
