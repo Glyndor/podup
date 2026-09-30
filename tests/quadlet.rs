@@ -62,7 +62,7 @@ Network=proj-frontend.network
 Label=podup.project=proj
 Label=podup.service=web
 LogDriver=k8s-file
-LogOpt=max-size=10485760
+PodmanArgs=--log-opt=\"max-size=10485760\"
 
 [Service]
 Restart=always
