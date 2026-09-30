@@ -14,10 +14,12 @@ fn unit_named<'a>(out: &'a crate::quadlet::QuadletOutput, filename: &str) -> &'a
 /// `generate quadlet` emits a single `<project>.pod` unit alongside the
 /// per-service `.container` units when the extension is set, with the
 /// project name as `PodName=`, one `Network=` per declared network, the
-/// union of every service's `ports:` as `PublishPort=`, one `AddHost=`
-/// per service, and the `Podup.project` ownership label. The
-/// `.container` units reference it via `Pod=<stem>.pod` and drop their
-/// own `PublishPort=` and `Network=` lines.
+/// union of every service's `ports:` as `PublishPort=`, one
+/// `--add-host=` flag per service, and the project ownership label
+/// (carried through `PodmanArgs=` because the native `AddHost=`/`Label=`
+/// keys on `[Pod]` post-date the 5.0 floor). The `.container` units
+/// reference it via `Pod=<stem>.pod` and drop their own `PublishPort=` and
+/// `Network=` lines.
 #[test]
 fn quadlet_emits_a_pod_unit_and_moves_ports_to_it() {
 	let yaml = r#"
@@ -71,20 +73,26 @@ networks:
 		"pod must carry the declared network: {}",
 		pod.contents
 	);
-	// One host entry per service.
+	// One host entry per service, routed through `PodmanArgs=` because
+	// `AddHost=` on `[Pod]` is a Podman 5.3.0 addition and the supported
+	// floor is 5.0.
 	assert!(
-		pod.contents.contains("AddHost=web:127.0.0.1"),
+		pod.contents
+			.contains("PodmanArgs=--add-host=\"web:127.0.0.1\""),
 		"pod must carry the web host entry: {}",
 		pod.contents
 	);
 	assert!(
-		pod.contents.contains("AddHost=db:127.0.0.1"),
+		pod.contents
+			.contains("PodmanArgs=--add-host=\"db:127.0.0.1\""),
 		"pod must carry the db host entry: {}",
 		pod.contents
 	);
-	// Ownership label.
+	// Ownership label, also routed through `PodmanArgs=` because
+	// `Label=` on `[Pod]` is a Podman 5.6.0 addition.
 	assert!(
-		pod.contents.contains("Label=podup.project=demo"),
+		pod.contents
+			.contains("PodmanArgs=--label=\"podup.project=demo\""),
 		"pod must carry the ownership label: {}",
 		pod.contents
 	);

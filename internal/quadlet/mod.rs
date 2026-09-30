@@ -11,6 +11,8 @@
 //! every field that is set but has no Quadlet equivalent yet, so generated
 //! units never quietly drop configuration.
 
+#[cfg(test)]
+mod min_podman;
 mod render;
 mod unit;
 mod warnings;
@@ -308,14 +310,30 @@ pub fn generate_at(file: &ComposeFile, project: &str, base_dir: &std::path::Path
 		// generate that already passed validation never lands here.
 		pod_mode: file.podman_pod().unwrap_or(false),
 	};
+	let mut build_units_emitted = 0u32;
 	for (name, service) in &file.services {
 		// Emit a `.build` unit first so the systemd generator builds the image
 		// before the container that references it via `Image=<stem>.build`.
 		if let Some(unit) = build_unit(name, project, service, base_dir, &mut out.warnings) {
 			out.units.push(unit);
+			build_units_emitted += 1;
 		}
 		out.units
 			.push(container_unit(name, service, &ctx, &mut out.warnings));
+	}
+
+	// The `.build` unit type appeared in Podman 5.2.0; the floor podup
+	// supports is 5.0, and a 5.0/5.1 host will drop the whole unit at
+	// daemon-reload. There is no key above 5.2.0 to route this through,
+	// so warn the operator once per project when at least one `.build`
+	// unit was actually written. The warning goes through the same
+	// `out.warnings` channel every other field-mismatch warning uses,
+	// which `generate.rs` re-emits to stderr.
+	if build_units_emitted > 0 {
+		out.warnings.push(format!(
+			"{build_units_emitted} .build unit(s) were written; Quadlet build units need \
+			 Podman 5.2.0 or newer and the supported floor is 5.0"
+		));
 	}
 
 	out

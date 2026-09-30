@@ -617,6 +617,15 @@ as it starts and finishes, leaving stdout a clean pipe.
 Translate the compose file into Podman Quadlet unit files: one `.container` per
 service plus `.network` and `.volume` units. `gen` is an alias for `generate`.
 
+The output is valid on Podman 5.0 and newer. Settings whose Quadlet key
+only arrived after 5.0 (`GroupAdd=`, `AddHost=`, `LogOpt=`, `StopSignal=`,
+`NetworkAlias=` on `.container`; `AddHost=` and `Label=` on `.pod`) are
+always written as the equivalent `PodmanArgs=` flag instead, whatever
+Podman is installed, so the same file works on a 5.0 host. Quadlet build units (a `build:` service) post-date 5.0 and
+need Podman 5.2 or newer: when the project contains a `.build` unit, the
+generator prints a `podup: warning:` to stderr once per project noting
+the floor.
+
 | Flag | Description | Default |
 |---|---|---|
 | `-o, --output <DIR>` | Directory to write the unit files into. Omit to print to stdout. | stdout |

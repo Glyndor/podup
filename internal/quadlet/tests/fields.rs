@@ -222,11 +222,11 @@ services:
 		"ShmSize=64m",
 		"PidsLimit=100",
 		"UserNS=keep-id",
-		"StopSignal=SIGTERM",
+		"PodmanArgs=--stop-signal=\"SIGTERM\"",
 		"StopTimeout=30",
 		"AddDevice=/dev/fuse",
 		"DNS=1.1.1.1",
-		"AddHost=db:10.0.0.2",
+		"PodmanArgs=--add-host=\"db:10.0.0.2\"",
 		"Annotation=run.oci.keep=1",
 		"Network=host",
 		"PodmanArgs=--memory=\"512m\"",
@@ -325,15 +325,15 @@ networks:
 	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
 	let c = &unit_named(&out, "p-s.container").contents;
 	for needle in [
-		"GroupAdd=audio",
+		"PodmanArgs=--group-add=\"audio\"",
 		"ExposeHostPort=8080",
 		"NoNewPrivileges=true",
 		"SeccompProfile=/etc/seccomp.json",
 		"SecurityLabelType=container_t",
 		"Pull=always",
 		"LogDriver=journald",
-		"LogOpt=tag=mytag",
-		"NetworkAlias=web-alias",
+		"PodmanArgs=--log-opt=\"tag=mytag\"",
+		"PodmanArgs=--network-alias=\"web-alias\"",
 		"PodmanArgs=--memory=\"256m\"",
 	] {
 		assert!(c.contains(needle), "missing `{needle}` in:\n{c}");
