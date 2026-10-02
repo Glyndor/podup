@@ -141,28 +141,27 @@ jobs:
       - name: Fetch Fedora cloud image (Podman 6 = rawhide, 5 = Fedora 44)
         if: needs.decide.outputs.engine == 'true'
         run: |
-          SEL="${{ matrix.podman }}"
-          echo "PODMAN_MAJOR=$SEL"
-          if [ "$SEL" = "5" ]; then
-            base="https://dl.fedoraproject.org/pub/fedora/linux/releases/44/Cloud/x86_64/images/"
-            img=$(curl -fsSL "$base" | grep -oE 'Fedora-Cloud-Base-Generic-44-[0-9.]+\.x86_64\.qcow2' | sort -u | tail -1)
-          else
-            base="https://dl.fedoraproject.org/pub/fedora/linux/development/rawhide/Cloud/x86_64/images/"
-            img=$(curl -fsSL "$base" | grep -oE 'Fedora-Cloud-Base-Generic-Rawhide-[0-9]+\.n\.[0-9]+\.x86_64\.qcow2' | sort -u | tail -1)
-          fi
-          [ -n "$img" ] || { echo "::error::could not resolve a Fedora image name for Podman $SEL at $base"; exit 1; }
+          # The script lives in .github/scripts/ so it ships with the repo;
+          # its logic lives in the script (#1978, after dl.fedoraproject.org
+          # answered 404 in streaks longer than the 25 s that
+          # `--retry 5 --retry-delay 5` covered). It retries 8 times with a
+          # 15 s backoff, falls back to download.fedoraproject.org (Fedora's
+          # mirror redirector) on each attempt for the index and the image,
+          # downloads the CHECKSUM from dl.fedoraproject.org only, and
+          # verifies the SHA-256 of the image against the value the CHECKSUM
+          # publishes before letting the step continue. Stdout is the image
+          # name; the script writes the image itself to the path passed as
+          # $2.
+          img=$(bash "$GITHUB_WORKSPACE/.github/scripts/fetch-fedora-image.sh" \
+              "${{ matrix.podman }}" "$RUNNER_TEMP/vm.qcow2")
           echo "image: $img"
           # Carry it to the gate step. The name resolves to whatever compose is
           # newest at this moment, so the Podman 6 leg boots a DIFFERENT operating
-          # system most days, and until now that fact lived only in the middle of
-          # this step's log. Two runs of this leg are not the same environment, and
+          # system most days, and that fact lived only in the middle of this
+          # step's log. Two runs of this leg are not the same environment, and
           # anyone comparing a failure against the run before it has to know which
           # one they got (#1222).
           echo "VM_IMAGE=$img" >> "$GITHUB_ENV"
-          # The rawhide qcow2 is ~500 MB and the mirror occasionally drops the
-          # connection mid-transfer (curl exit 18). Resume + retry so a transient
-          # network blip doesn't fail the lane.
-          curl -fSL --retry 5 --retry-delay 5 --retry-all-errors -C - -o "$RUNNER_TEMP/vm.qcow2" "${base}${img}"
           qemu-img resize "$RUNNER_TEMP/vm.qcow2" 40G
       - name: Build cloud-init seed (script-file for clean RC)
         if: needs.decide.outputs.engine == 'true'
