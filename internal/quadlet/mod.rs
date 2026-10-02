@@ -261,7 +261,7 @@ pub fn generate_at(file: &ComposeFile, project: &str, base_dir: &std::path::Path
 }
 
 /// As [`generate_at`], but renders `.container` units in the
-/// [`ContainerUnitMode::Prebuilt`] shape quadlet-mode autostart needs. Used
+/// `ContainerUnitMode::Prebuilt` shape quadlet-mode autostart needs. Used
 /// only by [`crate::autostart::install_quadlet`]: the standard
 /// `podup generate quadlet` output keeps its `Image=<stem>.build` form, so a
 /// plain `generate -o <dir>` is still valid for users who wire their own
