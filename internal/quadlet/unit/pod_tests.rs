@@ -15,11 +15,14 @@ fn unit_named<'a>(out: &'a crate::quadlet::QuadletOutput, filename: &str) -> &'a
 /// per-service `.container` units when the extension is set, with the
 /// project name as `PodName=`, one `Network=` per declared network, the
 /// union of every service's `ports:` as `PublishPort=`, one
-/// `--add-host=` flag per service, and the project ownership label
+/// `--add-host=` flag per service, the project ownership label
 /// (carried through `PodmanArgs=` because the native `AddHost=`/`Label=`
-/// keys on `[Pod]` post-date the 5.0 floor). The `.container` units
-/// reference it via `Pod=<stem>.pod` and drop their own `PublishPort=` and
-/// `Network=` lines.
+/// keys on `[Pod]` post-date the 5.0 floor), and `--exit-policy=continue`
+/// (Quadlet hard-codes `--exit-policy stop` on the command line it builds;
+/// the appended flag wins, and the pod keeps running when its last
+/// service container exits, on every Quadlet-rendered unit). The
+/// `.container` units reference it via `Pod=<stem>.pod` and drop their
+/// own `PublishPort=` and `Network=` lines.
 #[test]
 fn quadlet_emits_a_pod_unit_and_moves_ports_to_it() {
 	let yaml = r#"
@@ -94,6 +97,24 @@ networks:
 		pod.contents
 			.contains("PodmanArgs=--label=\"podup.project=demo\""),
 		"pod must carry the ownership label: {}",
+		pod.contents
+	);
+	// Exit policy: pinned to `continue` so the Quadlet-rendered pod agrees
+	// with what the live engine stamps on the pod it creates. Quadlet
+	// hard-codes `--exit-policy stop` in its `podman pod create` command
+	// line; the appended flag wins, and the pod keeps running when its
+	// last service container exits. Exactly one occurrence: a second
+	// `--exit-policy=` would shadow the first and risk flip-flopping the
+	// value on a Quadlet that processes the trailing flag differently.
+	assert_eq!(
+		pod.contents.matches("--exit-policy=continue").count(),
+		1,
+		"pod must carry exactly one `PodmanArgs=--exit-policy=continue`: {}",
+		pod.contents
+	);
+	assert!(
+		pod.contents.contains("PodmanArgs=--exit-policy=continue"),
+		"pod must carry the exit-policy flag: {}",
 		pod.contents
 	);
 

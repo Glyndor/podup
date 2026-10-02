@@ -999,6 +999,12 @@ What changes inside the pod:
 - `generate quadlet` writes one `<project>.pod` unit with the ports, the
   networks and the host entries, and each `.container` unit references it
   with `Pod=` and drops its own `PublishPort=` and `Network=` lines.
+- The pod keeps running when its last service container exits, on `up` and
+  in units from `generate quadlet` / `autostart --mode quadlet` alike: the
+  infra container stays up across the gap. podup sets this explicitly
+  instead of taking Podman's or Quadlet's default, because the API path
+  would otherwise inherit a `containers.conf` `pod_exit_policy` the Quadlet
+  path cannot see, and the two paths would disagree on the same project.
 
 What is refused, before anything is created, with the service and the key in
 the message:
