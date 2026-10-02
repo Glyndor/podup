@@ -593,7 +593,7 @@ pub(in crate::engine) fn libpod_pull_policy(policy: Option<&str>) -> Option<&'st
 /// as `service.<name>: pull_policy: unknown pull policy "alaways" (value:
 /// alaways)`: the actionable bit is which service and which value, not the
 /// abstract policy name.
-pub(in crate::engine) fn pull_policy_checked(
+pub(crate) fn pull_policy_checked(
 	policy: Option<&str>,
 	service_name: &str,
 ) -> crate::error::Result<&'static str> {

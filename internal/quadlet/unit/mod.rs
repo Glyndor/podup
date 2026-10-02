@@ -9,7 +9,7 @@ mod security;
 mod volume;
 
 pub(super) use build::build_unit;
-pub(super) use container::{container_unit, UnitContext};
+pub(super) use container::{container_unit_with_mode, ContainerUnitMode, UnitContext};
 pub(super) use network::network_unit;
 pub(super) use pod::pod_unit;
 pub(super) use volume::volume_unit;

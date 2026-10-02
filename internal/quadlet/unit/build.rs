@@ -35,6 +35,43 @@ pub(crate) fn build_unit_filename(project: &str, name: &str) -> String {
 	format!("{}.build", unit_stem(project, name))
 }
 
+/// The image tag a `.build` unit will register once it runs, and that a
+/// prebuilt-mode container unit then names as its `Image=`: the service's own
+/// `image:` when set, else `<project>-<service>`. Both the standard and the
+/// prebuilt `.container` paths need the same tag, so the resolution lives
+/// here and both call it.
+pub(crate) fn build_image_tag(service: &Service, project: &str, name: &str) -> String {
+	service
+		.image
+		.clone()
+		.unwrap_or_else(|| format!("{project}-{name}"))
+}
+
+/// Make a build tag safe to be the `Image=` of a prebuilt container unit:
+/// prefix `localhost/` when the tag has no registry part, leave a fully
+/// qualified one untouched.
+///
+/// The build step stores what `podman build -t <tag>` ran against. A bare
+/// tag like `alpine` lands as `localhost/alpine:latest` in the local
+/// store, but `podman run --pull never <tag>` resolves short names against
+/// the configured registry search list first, so with
+/// `docker.io/library/alpine:latest` also in the store it runs that image
+/// instead of the one just built. Pinning `localhost/` names the built
+/// image exactly. The split is on the FIRST `/`: the
+/// part before it is the registry only when it contains `.` (a hostname)
+/// or `:` (a port) or is exactly `localhost`. Everything else is a
+/// user/repo path on Docker Hub and must be re-prefixed to keep it local.
+pub(crate) fn qualify_local_image_tag(tag: &str) -> String {
+	match tag.split_once('/') {
+		Some((registry, _))
+			if registry == "localhost" || registry.contains('.') || registry.contains(':') =>
+		{
+			tag.to_string()
+		}
+		_ => format!("localhost/{tag}"),
+	}
+}
+
 /// Whether `service` yields a `.build` unit: it declares `build:` and that
 /// build is expressible as Quadlet (an inline Dockerfile is not). Used by the
 /// container unit to decide whether `Image=` should reference the `.build`.
@@ -65,10 +102,7 @@ pub(crate) fn build_unit(
 
 	let mut section = Section::new("Build");
 
-	let image_tag = service
-		.image
-		.clone()
-		.unwrap_or_else(|| format!("{project}-{name}"));
+	let image_tag = super::build::build_image_tag(service, project, name);
 	section.add("ImageTag", image_tag);
 
 	match build {

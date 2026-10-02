@@ -98,10 +98,10 @@ fn with_env<R>(f: impl FnOnce(&Path) -> R) -> R {
 	)
 }
 
-const IMG: &str = "services:\n  web:\n    image: nginx\n";
+pub(super) const IMG: &str = "services:\n  web:\n    image: nginx\n";
+pub(super) const BUILD: &str = "services:\n  web:\n    build: .\n";
 const IMG_MULTI: &str =
 	"services:\n  web:\n    image: nginx\n  api:\n    image: nginx\n  worker:\n    image: nginx\n";
-const BUILD: &str = "services:\n  web:\n    build: .\n";
 const BASE: &str = "/srv/app";
 
 #[test]
@@ -554,3 +554,8 @@ fn rebuild_unknown_service_errors_and_lists_valid_ones() {
 		assert!(msg.contains("web"), "{msg}");
 	});
 }
+
+// #1970: prebuilt-shape install + rebuild behaviour. Split into its own
+// module so the per-file code-line cap stays under 500.
+#[cfg(all(test, unix))]
+mod build;

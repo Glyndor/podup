@@ -42,17 +42,39 @@ pub(crate) struct UnitContext<'a> {
 	pub pod_mode: bool,
 }
 
+/// Which `.container` shape to render. The default (`Standard`) is what
+/// `podup generate quadlet` always emits: a buildable service points its
+/// `Image=` at the sibling `.build` unit so Quadlet runs the build every
+/// time the container starts. `Prebuilt` is for quadlet-mode autostart only:
+/// the image is built once at install, the container unit references the
+/// concrete tag (the `.build` unit's `ImageTag=`) instead of the `.build`
+/// filename, and `Pull=never` stops Quadlet from racing the local build
+/// against a registry pull. Services without a buildable `build:` render
+/// identically under both modes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ContainerUnitMode {
+	/// `generate quadlet` output: `Image=<stem>.build` for a buildable service,
+	/// which makes Quadlet add `Requires=`/`After=` on the build service.
+	Standard,
+	/// Autostart prebuilt output: `Image=<tag>` (no `.build` reference) and
+	/// `Pull=never`; Quadlet then adds no dependency on the build service.
+	Prebuilt,
+}
+
 /// Build the `.container` unit for one compose `service`.
 ///
 /// The project name is stamped onto the unit as the `podup.project` ownership
 /// label (and the service key as `podup.service`), matching the labels the live
 /// engine applies, so generated containers are traceable back to their project
-/// the same way running ones are.
-pub(crate) fn container_unit(
+/// the same way running ones are. The [`ContainerUnitMode`] selects between
+/// the `Image=<stem>.build` shape `podup generate quadlet` always emits, and
+/// the `Image=<tag>` + `Pull=never` shape quadlet-mode autostart needs.
+pub(crate) fn container_unit_with_mode(
 	name: &str,
 	service: &Service,
 	ctx: &UnitContext<'_>,
 	warnings: &mut Vec<String>,
+	mode: ContainerUnitMode,
 ) -> QuadletUnit {
 	let UnitContext {
 		project,
@@ -101,10 +123,35 @@ pub(crate) fn container_unit(
 	}
 	// A service with a buildable `build:` references its `.build` unit, so Quadlet
 	// builds the image before running; otherwise the explicit `image:` is used.
-	if super::build::emits_build_unit(service) {
-		container.add("Image", super::build::build_unit_filename(project, name));
-	} else if let Some(image) = &service.image {
-		container.add("Image", image.clone());
+	// In prebuilt mode the build runs once at install, so the container must
+	// point at the tag the `.build` unit registers (the same value it stamps
+	// as `ImageTag=`, resolved by `build_image_tag`), and Quadlet must NOT see
+	// a reference to the `.build` filename, or it adds the `Requires=`/`After=`
+	// dependency on the build service that re-runs it at every start and boot.
+	match mode {
+		ContainerUnitMode::Standard => {
+			if super::build::emits_build_unit(service) {
+				container.add("Image", super::build::build_unit_filename(project, name));
+			} else if let Some(image) = &service.image {
+				container.add("Image", image.clone());
+			}
+		}
+		ContainerUnitMode::Prebuilt => {
+			if super::build::emits_build_unit(service) {
+				// The build step stored `localhost/<tag>` for a short tag and
+				// `<registry>/<tag>` for a fully qualified one; pin the
+				// container at that exact reference (`Pull=never` is what
+				// stops a registry race). See qualify_local_image_tag.
+				container.add(
+					"Image",
+					super::build::qualify_local_image_tag(&super::build::build_image_tag(
+						service, project, name,
+					)),
+				);
+			} else if let Some(image) = &service.image {
+				container.add("Image", image.clone());
+			}
+		}
 	}
 	if let Some(hostname) = &service.hostname {
 		container.add("HostName", hostname.clone());
@@ -518,7 +565,20 @@ pub(crate) fn container_unit(
 		}
 	}
 	if let Some(pull) = &service.pull_policy {
-		container.add("Pull", pull.clone());
+		// In prebuilt mode a buildable service already gets `Pull=never` below;
+		// emitting the service's own `pull_policy:` would produce a second
+		// `Pull=` line, leaving which one wins up to Quadlet. The whole
+		// point of prebuilt is to use the locally built image only, so the
+		// user's pull request is intentionally overridden.
+		if !(mode == ContainerUnitMode::Prebuilt && super::build::emits_build_unit(service)) {
+			container.add("Pull", pull.clone());
+		}
+	}
+	// In prebuilt mode, pin the container to the locally built image: the
+	// sibling `.build` unit writes that tag at install, and `Pull=never`
+	// stops Quadlet from racing the registry against it on every start.
+	if mode == ContainerUnitMode::Prebuilt && super::build::emits_build_unit(service) {
+		container.add("Pull", "never".to_string());
 	}
 	// `deploy.resources.limits.memory` is the modern equivalent of `mem_limit`.
 	if service.mem_limit.is_none() {

@@ -6,7 +6,7 @@
 //! (`Network=`) and the project ownership label; each `.container` unit
 //! references this pod by `Pod=<stem>.pod` and drops its own `PublishPort=`
 //! and `Network=` lines. The `.container` side of that contract is in
-//! `super::container::container_unit`.
+//! `super::container::container_unit_with_mode`.
 //!
 //! Both `AddHost=` and `Label=` are routed through `PodmanArgs=` here: the
 //! first appeared in 5.3.0 and the second in 5.6.0, but the supported floor
@@ -25,7 +25,7 @@ use super::{
 /// `[Pod]` section with `PodName=`, one `Network=` per declared network,
 /// one `PublishPort=` per port (the union of every service's `ports:`),
 /// and one `--add-host` flag per service. Each `.container` unit references
-/// this pod by `Pod=<stem>.pod`; see [`super::container::container_unit`].
+/// this pod by `Pod=<stem>.pod`; see [`super::container::container_unit_with_mode`].
 ///
 /// Returns `None` when the project has no pod-mode extension, so callers
 /// can splice the unit into the output list without a conditional.

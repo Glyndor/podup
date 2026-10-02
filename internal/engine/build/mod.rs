@@ -16,6 +16,7 @@ mod service;
 mod steps;
 mod stream;
 mod tags;
+pub(crate) use pull::pull_policy_checked;
 pub use pull::PullOptions;
 pub use push::PushOptions;
 /// Shared with the watch engine: a build context is remote when podman clones
