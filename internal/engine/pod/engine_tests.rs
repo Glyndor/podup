@@ -176,6 +176,14 @@ networks:
 		.collect();
 	assert!(hosts.contains(&"web:127.0.0.1".to_string()));
 	assert!(hosts.contains(&"db:127.0.0.1".to_string()));
+	// Exit policy: the spec sets it explicitly so the API path does not
+	// inherit a `containers.conf` `pod_exit_policy`. The Quadlet path
+	// emits the same value as a `PodmanArgs=` flag, so both paths agree
+	// on the same project.
+	assert_eq!(
+		pod_body["exit_policy"], "continue",
+		"the pod create body must carry exit_policy=continue: {pod_body}"
+	);
 }
 
 /// Containers created in pod mode carry `pod` set to the project name and

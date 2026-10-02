@@ -1,3 +1,23 @@
+podup (5.10.9) unstable; urgency=medium
+
+  * autostart --mode quadlet no longer rebuilds images at every container
+    start and every boot. The container now runs the image built at install
+    (Image=localhost/<tag>, Pull=never) instead of depending on the build
+    service, which Podman 5.3 and newer re-run each time. Images are built at
+    install and on `autostart rebuild`. Re-run
+    `podup autostart install --mode quadlet` to pick this up on an existing
+    install.
+  * generate quadlet output works on Podman 5.0, the supported floor: keys
+    that Quadlet only learned later (AddHost, GroupAdd, LogOpt, StopSignal,
+    NetworkAlias, the pod Label) are written as PodmanArgs= flags, and a
+    warning says that build units need Podman 5.2.
+  * x-podman-pod: the pod keeps running when its last service exits, the
+    same on `up` and in Quadlet units. podup now sets the exit policy
+    explicitly instead of taking containers.conf's or Quadlet's default,
+    which disagreed.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Fri, 02 Oct 2026 02:52:34 -0500
+
 podup (5.10.8) unstable; urgency=medium
 
   * No change to how podup behaves. The benchmark harness now fails a

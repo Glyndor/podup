@@ -617,6 +617,21 @@ as it starts and finishes, leaving stdout a clean pipe.
 Translate the compose file into Podman Quadlet unit files: one `.container` per
 service plus `.network` and `.volume` units. `gen` is an alias for `generate`.
 
+The output keeps the standard `Image=<name>.build` form for a buildable
+service: the container references its sibling `.build` unit, and Quadlet
+adds the dependency on the build service. That is what the Quadlet
+documentation describes, and what `podup autostart install --mode quadlet`
+used to install before the prebuilt shape (see the `autostart` section for
+the boot-and-restart consequence). The output is valid on Podman 5.0 and
+newer. Settings whose Quadlet key only arrived after 5.0 (`GroupAdd=`,
+`AddHost=`, `LogOpt=`, `StopSignal=`, `NetworkAlias=` on `.container`;
+`AddHost=` and `Label=` on `.pod`) are always written as the equivalent
+`PodmanArgs=` flag instead, whatever Podman is installed, so the same file
+works on a 5.0 host. Quadlet build units (a `build:` service) post-date 5.0
+and need Podman 5.2 or newer: when the project contains a `.build` unit,
+the generator prints a `podup: warning:` to stderr once per project noting
+the floor.
+
 | Flag | Description | Default |
 |---|---|---|
 | `-o, --output <DIR>` | Directory to write the unit files into. Omit to print to stdout. | stdout |
@@ -805,7 +820,7 @@ running it under an isolated service account.
 
 | Flag (`install`) | Description | Default |
 |---|---|---|
-| `--mode <MODE>` | Autostart backend: `service` (one `Type=oneshot` unit running `podup up -d --no-build --pull never` at boot, `podup stop` on shutdown), `quadlet` (one native Podman Quadlet unit per service, owned by systemd directly) or `start` (one unit running `podman start`, single-service projects only). | `service` |
+| `--mode <MODE>` | Autostart backend: `service` (one `Type=oneshot` unit running `podup up -d --no-build --pull never` at boot, `podup stop` on shutdown), `quadlet` (one native Podman Quadlet unit per service, owned by systemd directly; builds images at install and on `autostart rebuild`, never at boot or on container restart) or `start` (one unit running `podman start`, single-service projects only). | `service` |
 | `--no-start` | Install the unit(s) but do not start them. | off |
 | `--dry-run` | Print what would be written and run; change nothing. | off |
 
@@ -990,6 +1005,12 @@ What changes inside the pod:
 - `generate quadlet` writes one `<project>.pod` unit with the ports, the
   networks and the host entries, and each `.container` unit references it
   with `Pod=` and drops its own `PublishPort=` and `Network=` lines.
+- The pod keeps running when its last service container exits, on `up` and
+  in units from `generate quadlet` / `autostart --mode quadlet` alike: the
+  infra container stays up across the gap. podup sets this explicitly
+  instead of taking Podman's or Quadlet's default, because the API path
+  would otherwise inherit a `containers.conf` `pod_exit_policy` the Quadlet
+  path cannot see, and the two paths would disagree on the same project.
 
 What is refused, before anything is created, with the service and the key in
 the message:

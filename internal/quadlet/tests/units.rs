@@ -122,7 +122,15 @@ services:
 		.find(|u| u.filename == "proj-app.container")
 		.unwrap();
 	assert!(container.contents.contains("Image=proj-app.build"));
-	assert!(!out.warnings.iter().any(|w| w.contains("build")));
+	// The 5.2-floor warning fires whenever a `.build` unit is written
+	// (the floor for the unit type is 5.0); what must NOT fire here is
+	// the inline-Dockerfile warning, which would mean we failed to emit
+	// the unit.
+	assert!(
+		!out.warnings.iter().any(|w| w.contains("dockerfile_inline")),
+		"inline-Dockerfile warning must not fire when the build is expressible; got: {:?}",
+		out.warnings
+	);
 }
 
 #[test]
@@ -132,6 +140,31 @@ fn inline_dockerfile_build_warns_and_emits_no_build_unit() {
 	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	assert!(!out.units.iter().any(|u| u.filename == "proj-app.build"));
 	assert!(out.warnings.iter().any(|w| w.contains("dockerfile_inline")));
+}
+
+/// #1970: `podup generate quadlet` (and `generate_at`) keep their standard
+/// shape: a buildable service's `.container` references `<stem>.build` and
+/// Quadlet adds the build dependency. The prebuilt shape that autostart needs
+/// is a separate entry point (`generate_for_autostart`); the standard path
+/// must not drift.
+#[test]
+fn generate_at_still_references_the_build_unit_for_a_buildable_service() {
+	let yaml = "services:\n  web:\n    build: .\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
+	let container = unit_named(&out, "proj-web.container");
+	assert!(
+		container.contents.contains("Image=proj-web.build\n"),
+		"standard path must point at the build unit; got:\n{}",
+		container.contents
+	);
+	// The standard path must NOT have a `Pull=` either, since build: doesn't
+	// imply any pull at all. Only the prebuilt path adds `Pull=never`.
+	assert!(
+		!container.contents.lines().any(|l| l.starts_with("Pull=")),
+		"standard path must not emit a Pull= line; got:\n{}",
+		container.contents
+	);
 }
 
 #[test]

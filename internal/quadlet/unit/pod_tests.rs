@@ -14,8 +14,13 @@ fn unit_named<'a>(out: &'a crate::quadlet::QuadletOutput, filename: &str) -> &'a
 /// `generate quadlet` emits a single `<project>.pod` unit alongside the
 /// per-service `.container` units when the extension is set, with the
 /// project name as `PodName=`, one `Network=` per declared network, the
-/// union of every service's `ports:` as `PublishPort=`, one `AddHost=`
-/// per service, and the `Podup.project` ownership label. The
+/// union of every service's `ports:` as `PublishPort=`, one
+/// `--add-host=` flag per service, the project ownership label
+/// (carried through `PodmanArgs=` because the native `AddHost=`/`Label=`
+/// keys on `[Pod]` post-date the 5.0 floor), and `--exit-policy=continue`
+/// (Quadlet hard-codes `--exit-policy stop` on the command line it builds;
+/// the appended flag wins, and the pod keeps running when its last
+/// service container exits, on every Quadlet-rendered unit). The
 /// `.container` units reference it via `Pod=<stem>.pod` and drop their
 /// own `PublishPort=` and `Network=` lines.
 #[test]
@@ -71,21 +76,45 @@ networks:
 		"pod must carry the declared network: {}",
 		pod.contents
 	);
-	// One host entry per service.
+	// One host entry per service, routed through `PodmanArgs=` because
+	// `AddHost=` on `[Pod]` is a Podman 5.3.0 addition and the supported
+	// floor is 5.0.
 	assert!(
-		pod.contents.contains("AddHost=web:127.0.0.1"),
+		pod.contents
+			.contains("PodmanArgs=--add-host=\"web:127.0.0.1\""),
 		"pod must carry the web host entry: {}",
 		pod.contents
 	);
 	assert!(
-		pod.contents.contains("AddHost=db:127.0.0.1"),
+		pod.contents
+			.contains("PodmanArgs=--add-host=\"db:127.0.0.1\""),
 		"pod must carry the db host entry: {}",
 		pod.contents
 	);
-	// Ownership label.
+	// Ownership label, also routed through `PodmanArgs=` because
+	// `Label=` on `[Pod]` is a Podman 5.6.0 addition.
 	assert!(
-		pod.contents.contains("Label=podup.project=demo"),
+		pod.contents
+			.contains("PodmanArgs=--label=\"podup.project=demo\""),
 		"pod must carry the ownership label: {}",
+		pod.contents
+	);
+	// Exit policy: pinned to `continue` so the Quadlet-rendered pod agrees
+	// with what the live engine stamps on the pod it creates. Quadlet
+	// hard-codes `--exit-policy stop` in its `podman pod create` command
+	// line; the appended flag wins, and the pod keeps running when its
+	// last service container exits. Exactly one occurrence: a second
+	// `--exit-policy=` would shadow the first and risk flip-flopping the
+	// value on a Quadlet that processes the trailing flag differently.
+	assert_eq!(
+		pod.contents.matches("--exit-policy=continue").count(),
+		1,
+		"pod must carry exactly one `PodmanArgs=--exit-policy=continue`: {}",
+		pod.contents
+	);
+	assert!(
+		pod.contents.contains("PodmanArgs=--exit-policy=continue"),
+		"pod must carry the exit-policy flag: {}",
 		pod.contents
 	);
 

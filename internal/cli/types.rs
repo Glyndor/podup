@@ -106,7 +106,9 @@ pub(crate) enum AutostartCommands {
 		/// (resume the existing container; single-service projects only).
 		#[arg(long, value_enum, default_value_t)]
 		mode: AutostartMode,
-		/// Install the unit but do not enable or start it immediately.
+		/// Install the unit but do not enable or start it immediately. In
+		/// `--mode quadlet` the build step still runs (so the local image
+		/// exists at boot), only the containers are not started.
 		#[arg(long)]
 		no_start: bool,
 		/// Print the unit and the actions that would run, but change nothing.

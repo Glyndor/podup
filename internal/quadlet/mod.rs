@@ -11,6 +11,8 @@
 //! every field that is set but has no Quadlet equivalent yet, so generated
 //! units never quietly drop configuration.
 
+#[cfg(test)]
+mod min_podman;
 mod render;
 mod unit;
 mod warnings;
@@ -20,7 +22,9 @@ use std::cell::Cell;
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::ports::parse_ports;
-use unit::{build_unit, container_unit, network_unit, volume_unit, UnitContext};
+use unit::{
+	build_unit, container_unit_with_mode, network_unit, volume_unit, ContainerUnitMode, UnitContext,
+};
 
 /// Validate compose data before writing Quadlet units.
 pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
@@ -39,6 +43,18 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 				)));
 			}
 		}
+		// Reject a typo'd `pull_policy:` up front rather than letting it
+		// become a `Pull=alaways` line Quadlet would either silently drop or
+		// fail at daemon-reload. The prebuilt-mode autostart path overrides
+		// the service's pull policy to `never` and never emits the user's
+		// value, so without this check a typo'd `pull_policy: alaways`
+		// installs cleanly as `Pull=never` even though the user clearly
+		// asked for something specific. `generate quadlet` does emit the
+		// user's value verbatim, so an invalid one would also write a
+		// broken `Pull=` line: same root cause, same fix.
+		if let Some(policy) = svc.pull_policy.as_deref() {
+			crate::engine::build::pull_policy_checked(Some(policy), name)?;
+		}
 	}
 	Ok(())
 }
@@ -46,9 +62,9 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 thread_local! {
 	/// CLI `--no-warn` flag honoured by the Quadlet path's host-binding /
 	/// privilege-escalation warnings. Set by `write_quadlet` when the CLI
-	/// parsed `--no-warn` and consulted by `container_unit` before each
-	/// `tracing::warn!` so the operator can silence the per-generate noise
-	/// the same way they do on `up`/`create`/`run`/`exec`.
+	/// parsed `--no-warn` and consulted by `container_unit_with_mode` before
+	/// each `tracing::warn!` so the operator can silence the per-generate
+	/// noise the same way they do on `up`/`create`/`run`/`exec`.
 	///
 	/// The live engine path carries the flag on `Engine::no_warn`; the Quadlet
 	/// path goes through a free function and has no such struct, so a
@@ -60,7 +76,8 @@ thread_local! {
 
 /// Set the Quadlet-path `--no-warn` flag for the current thread; restores the
 /// previous value on drop. The CLI driver wraps its call to `write_quadlet`
-/// in this scope so `container_unit` can read it via `is_no_warn_set`.
+/// in this scope so `container_unit_with_mode` can read it via
+/// `is_no_warn_set`.
 pub struct NoWarnGuard {
 	prev: bool,
 }
@@ -89,7 +106,7 @@ impl Drop for NoWarnGuard {
 }
 
 /// Whether `--no-warn` is active on the current thread. Read by
-/// `container_unit` before each host-binding `tracing::warn!`.
+/// `container_unit_with_mode` before each host-binding `tracing::warn!`.
 pub(super) fn is_no_warn_set() -> bool {
 	NO_WARN.with(|c| c.get())
 }
@@ -240,6 +257,37 @@ pub fn generate(file: &ComposeFile, project: &str) -> QuadletOutput {
 /// builds, and other fields without a Quadlet mapping are reported as warnings
 /// rather than silently dropped.
 pub fn generate_at(file: &ComposeFile, project: &str, base_dir: &std::path::Path) -> QuadletOutput {
+	generate_with_mode(file, project, base_dir, ContainerUnitMode::Standard)
+}
+
+/// As [`generate_at`], but renders `.container` units in the
+/// `ContainerUnitMode::Prebuilt` shape quadlet-mode autostart needs. Used
+/// only by [`crate::autostart::install_quadlet`]: the standard
+/// `podup generate quadlet` output keeps its `Image=<stem>.build` form, so a
+/// plain `generate -o <dir>` is still valid for users who wire their own
+/// dependency between boot and the build service. In prebuilt mode, a
+/// buildable container unit gets `Image=<tag>` and `Pull=never` so Quadlet adds
+/// no `Requires=`/`After=` on the sibling build service, and the `.build`
+/// unit is still written so `podup autostart rebuild` can restart it on
+/// demand. Services without a buildable `build:` render identically under
+/// both modes.
+pub fn generate_for_autostart(
+	file: &ComposeFile,
+	project: &str,
+	base_dir: &std::path::Path,
+) -> QuadletOutput {
+	generate_with_mode(file, project, base_dir, ContainerUnitMode::Prebuilt)
+}
+
+/// Shared body behind [`generate_at`] and [`generate_for_autostart`]. Both
+/// shapes agree on networks, volumes, pod units and `.build` units; they
+/// differ in the container mode.
+fn generate_with_mode(
+	file: &ComposeFile,
+	project: &str,
+	base_dir: &std::path::Path,
+	mode: ContainerUnitMode,
+) -> QuadletOutput {
 	let mut out = QuadletOutput::default();
 
 	// External networks/volumes are assumed to pre-exist. Emitting a unit would
@@ -308,14 +356,35 @@ pub fn generate_at(file: &ComposeFile, project: &str, base_dir: &std::path::Path
 		// generate that already passed validation never lands here.
 		pod_mode: file.podman_pod().unwrap_or(false),
 	};
+	let mut build_units_emitted = 0u32;
 	for (name, service) in &file.services {
 		// Emit a `.build` unit first so the systemd generator builds the image
 		// before the container that references it via `Image=<stem>.build`.
 		if let Some(unit) = build_unit(name, project, service, base_dir, &mut out.warnings) {
 			out.units.push(unit);
+			build_units_emitted += 1;
 		}
-		out.units
-			.push(container_unit(name, service, &ctx, &mut out.warnings));
+		out.units.push(container_unit_with_mode(
+			name,
+			service,
+			&ctx,
+			&mut out.warnings,
+			mode,
+		));
+	}
+
+	// The `.build` unit type appeared in Podman 5.2.0; the floor podup
+	// supports is 5.0, and a 5.0/5.1 host will drop the whole unit at
+	// daemon-reload. There is no key above 5.2.0 to route this through,
+	// so warn the operator once per project when at least one `.build`
+	// unit was actually written. The warning goes through the same
+	// `out.warnings` channel every other field-mismatch warning uses,
+	// which `generate.rs` re-emits to stderr.
+	if build_units_emitted > 0 {
+		out.warnings.push(format!(
+			"{build_units_emitted} .build unit(s) were written; Quadlet build units need \
+			 Podman 5.2.0 or newer and the supported floor is 5.0"
+		));
 	}
 
 	out
