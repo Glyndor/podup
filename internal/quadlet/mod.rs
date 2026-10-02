@@ -22,7 +22,9 @@ use std::cell::Cell;
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::ports::parse_ports;
-use unit::{build_unit, container_unit, network_unit, volume_unit, UnitContext};
+use unit::{
+	build_unit, container_unit_with_mode, network_unit, volume_unit, ContainerUnitMode, UnitContext,
+};
 
 /// Validate compose data before writing Quadlet units.
 pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
@@ -48,9 +50,9 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 thread_local! {
 	/// CLI `--no-warn` flag honoured by the Quadlet path's host-binding /
 	/// privilege-escalation warnings. Set by `write_quadlet` when the CLI
-	/// parsed `--no-warn` and consulted by `container_unit` before each
-	/// `tracing::warn!` so the operator can silence the per-generate noise
-	/// the same way they do on `up`/`create`/`run`/`exec`.
+	/// parsed `--no-warn` and consulted by `container_unit_with_mode` before
+	/// each `tracing::warn!` so the operator can silence the per-generate
+	/// noise the same way they do on `up`/`create`/`run`/`exec`.
 	///
 	/// The live engine path carries the flag on `Engine::no_warn`; the Quadlet
 	/// path goes through a free function and has no such struct, so a
@@ -62,7 +64,8 @@ thread_local! {
 
 /// Set the Quadlet-path `--no-warn` flag for the current thread; restores the
 /// previous value on drop. The CLI driver wraps its call to `write_quadlet`
-/// in this scope so `container_unit` can read it via `is_no_warn_set`.
+/// in this scope so `container_unit_with_mode` can read it via
+/// `is_no_warn_set`.
 pub struct NoWarnGuard {
 	prev: bool,
 }
@@ -91,7 +94,7 @@ impl Drop for NoWarnGuard {
 }
 
 /// Whether `--no-warn` is active on the current thread. Read by
-/// `container_unit` before each host-binding `tracing::warn!`.
+/// `container_unit_with_mode` before each host-binding `tracing::warn!`.
 pub(super) fn is_no_warn_set() -> bool {
 	NO_WARN.with(|c| c.get())
 }
@@ -242,6 +245,37 @@ pub fn generate(file: &ComposeFile, project: &str) -> QuadletOutput {
 /// builds, and other fields without a Quadlet mapping are reported as warnings
 /// rather than silently dropped.
 pub fn generate_at(file: &ComposeFile, project: &str, base_dir: &std::path::Path) -> QuadletOutput {
+	generate_with_mode(file, project, base_dir, ContainerUnitMode::Standard)
+}
+
+/// As [`generate_at`], but renders `.container` units in the
+/// [`ContainerUnitMode::Prebuilt`] shape quadlet-mode autostart needs. Used
+/// only by [`crate::autostart::install_quadlet`]: the standard
+/// `podup generate quadlet` output keeps its `Image=<stem>.build` form, so a
+/// plain `generate -o <dir>` is still valid for users who wire their own
+/// dependency between boot and the build service. In prebuilt mode, a
+/// buildable container unit gets `Image=<tag>` and `Pull=never` so Quadlet adds
+/// no `Requires=`/`After=` on the sibling build service, and the `.build`
+/// unit is still written so `podup autostart rebuild` can restart it on
+/// demand. Services without a buildable `build:` render identically under
+/// both modes.
+pub fn generate_for_autostart(
+	file: &ComposeFile,
+	project: &str,
+	base_dir: &std::path::Path,
+) -> QuadletOutput {
+	generate_with_mode(file, project, base_dir, ContainerUnitMode::Prebuilt)
+}
+
+/// Shared body behind [`generate_at`] and [`generate_for_autostart`]. Both
+/// shapes agree on networks, volumes, pod units and `.build` units; they
+/// differ in the container mode.
+fn generate_with_mode(
+	file: &ComposeFile,
+	project: &str,
+	base_dir: &std::path::Path,
+	mode: ContainerUnitMode,
+) -> QuadletOutput {
 	let mut out = QuadletOutput::default();
 
 	// External networks/volumes are assumed to pre-exist. Emitting a unit would
@@ -318,8 +352,13 @@ pub fn generate_at(file: &ComposeFile, project: &str, base_dir: &std::path::Path
 			out.units.push(unit);
 			build_units_emitted += 1;
 		}
-		out.units
-			.push(container_unit(name, service, &ctx, &mut out.warnings));
+		out.units.push(container_unit_with_mode(
+			name,
+			service,
+			&ctx,
+			&mut out.warnings,
+			mode,
+		));
 	}
 
 	// The `.build` unit type appeared in Podman 5.2.0; the floor podup

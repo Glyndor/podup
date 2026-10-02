@@ -30,7 +30,7 @@ in who owns the containers, and in whether the boot path reconciles.
 | Mode | What it installs | Choose it when |
 |---|---|---|
 | `service` (default) | One `Type=oneshot` unit that runs `podup up -d --no-build --pull never` at boot and `podup stop` on shutdown. | You want the whole stack managed as a unit, the simplest option: one thing to enable, one to remove. |
-| `quadlet` | One native Podman Quadlet unit per service (`.container`/`.build`/`.volume`/`.network`), which systemd owns directly. | You want per-container supervision: systemd restarts, ordering and status for each service independently. |
+| `quadlet` | One native Podman Quadlet unit per service (`.container`/`.build`/`.volume`/`.network`), which systemd owns directly. Images are built at install (and on `autostart rebuild`), not at boot. | You want per-container supervision: systemd restarts, ordering and status for each service independently. |
 | `start` | One `Type=oneshot` unit whose `ExecStart` is `podman start`. Single-service projects only. | You want the boot to resume the container that already exists, with nothing else on the path. |
 
 ### Reconcile or restore
@@ -133,6 +133,15 @@ the feature existed. The timer pair only appears when the flag is given, and
 `Type=oneshot`, so an image only rebuilds when its build service is restarted, and
 the container is then restarted to pick it up. Service mode has no `rebuild`; it
 builds at deploy time, whenever you run `podup up`.
+
+Quadlet mode builds at install, never at boot or on container restart. The
+`.container` unit points its `Image=` at the build's tag with `Pull=never`, so
+Quadlet adds no dependency on the build service: an unattended reboot starts
+the cached image, the same way service mode does. A stack installed by an
+older `podup` (which still pointed the container at `<stem>.build` and let
+Quadlet re-run the build every start) keeps that behaviour until
+`podup autostart install --mode quadlet` is run again; `rebuild` is the
+explicit way to build a fresh image in between.
 
 ### Upgrading an existing service-mode install
 

@@ -28,7 +28,7 @@
 
 use super::unit_named;
 use crate::parse_str;
-use crate::quadlet::{generate_at, QuadletUnit};
+use crate::quadlet::{generate_at, generate_for_autostart, QuadletUnit};
 
 /// Run `generate` on a fixture that exercises every key we want the floor
 /// test to see. New emitters must extend this list; the floor test only
@@ -187,6 +187,18 @@ fn render_no_pod() -> Vec<QuadletUnit> {
 	generate_at(&file, "np", std::path::Path::new("/srv/app")).units
 }
 
+/// #1970: render the prebuilt shape `generate_for_autostart` produces for
+/// the same input `fixture_full` drives through the standard path. The
+/// container unit shifts from `<stem>.build` to the build's `ImageTag=` and
+/// picks up `Pull=never`; everything else renders the same. The floor
+/// tests below cover both shapes so a key that the prebuilt shape needs
+/// (and the standard path does not) cannot slip past unrecorded.
+fn render_full_prebuilt() -> Vec<QuadletUnit> {
+	let yaml = fixture_full();
+	let file = parse_str(yaml).unwrap();
+	generate_for_autostart(&file, "p", std::path::Path::new("/srv/app")).units
+}
+
 /// Every `Key=` line in every rendered unit must be either at the floor
 /// (in the 5.0 reference for `[Container]`/`[Pod]`/`[Network]`/`[Volume]`,
 /// in the 5.2 reference for `[Build]`) or registered in `min_podman.rs`
@@ -201,6 +213,11 @@ fn every_emitted_key_is_in_the_5_0_set() {
 
 	let mut units = render_full();
 	units.extend(render_no_pod());
+	// #1970: the prebuilt shape used by `podup autostart install --mode
+	// quadlet` renders container units with the build's `ImageTag=` and
+	// adds `Pull=never`; it must stay floor-compliant the same way the
+	// standard shape does.
+	units.extend(render_full_prebuilt());
 	assert!(!units.is_empty(), "fixture must render at least one unit");
 	for unit in &units {
 		let unit_type = unit_type_from_filename(&unit.filename);
@@ -235,6 +252,8 @@ fn every_emitted_key_is_registered() {
 
 	let mut units = render_full();
 	units.extend(render_no_pod());
+	// #1970: cover the prebuilt shape too, see every_emitted_key_is_in_the_5_0_set.
+	units.extend(render_full_prebuilt());
 	for unit in &units {
 		let unit_type = unit_type_from_filename(&unit.filename);
 		for key in crate::quadlet::min_podman::keys_in_unit(&unit.contents) {

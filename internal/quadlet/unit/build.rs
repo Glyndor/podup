@@ -35,6 +35,18 @@ pub(crate) fn build_unit_filename(project: &str, name: &str) -> String {
 	format!("{}.build", unit_stem(project, name))
 }
 
+/// The image tag a `.build` unit will register once it runs, and that a
+/// prebuilt-mode container unit then names as its `Image=`: the service's own
+/// `image:` when set, else `<project>-<service>`. Both the standard and the
+/// prebuilt `.container` paths need the same tag, so the resolution lives
+/// here and both call it.
+pub(crate) fn build_image_tag(service: &Service, project: &str, name: &str) -> String {
+	service
+		.image
+		.clone()
+		.unwrap_or_else(|| format!("{project}-{name}"))
+}
+
 /// Whether `service` yields a `.build` unit: it declares `build:` and that
 /// build is expressible as Quadlet (an inline Dockerfile is not). Used by the
 /// container unit to decide whether `Image=` should reference the `.build`.
@@ -65,10 +77,7 @@ pub(crate) fn build_unit(
 
 	let mut section = Section::new("Build");
 
-	let image_tag = service
-		.image
-		.clone()
-		.unwrap_or_else(|| format!("{project}-{name}"));
+	let image_tag = super::build::build_image_tag(service, project, name);
 	section.add("ImageTag", image_tag);
 
 	match build {
