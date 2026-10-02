@@ -30,7 +30,7 @@ in who owns the containers, and in whether the boot path reconciles.
 | Mode | What it installs | Choose it when |
 |---|---|---|
 | `service` (default) | One `Type=oneshot` unit that runs `podup up -d --no-build --pull never` at boot and `podup stop` on shutdown. | You want the whole stack managed as a unit, the simplest option: one thing to enable, one to remove. |
-| `quadlet` | One native Podman Quadlet unit per service (`.container`/`.build`/`.volume`/`.network`), which systemd owns directly. Images are built at install (and on `autostart rebuild`), not at boot. | You want per-container supervision: systemd restarts, ordering and status for each service independently. |
+| `quadlet` | One native Podman Quadlet unit per service (`.container`/`.build`/`.volume`/`.network`), which systemd owns directly. Images are built at install (and on `autostart rebuild`), not at boot; a service whose build is `build.dockerfile_inline` gets no `.build` unit (Quadlet has no inline-Dockerfile equivalent) and must bring its own image pre-built under `image:`. | You want per-container supervision: systemd restarts, ordering and status for each service independently. |
 | `start` | One `Type=oneshot` unit whose `ExecStart` is `podman start`. Single-service projects only. | You want the boot to resume the container that already exists, with nothing else on the path. |
 
 ### Reconcile or restore
@@ -92,7 +92,7 @@ install with `--auto-update`.
 ```bash
 podup autostart install                  # service mode (default)
 podup autostart install --mode quadlet   # quadlet mode
-podup autostart install --no-start       # write the unit(s) but don't start yet
+podup autostart install --no-start       # write the unit(s) but don't start yet (--mode quadlet still builds)
 podup autostart install --dry-run        # print what would be written/run, change nothing
 podup autostart install --mode service --auto-update daily   # service mode + a sibling timer
 

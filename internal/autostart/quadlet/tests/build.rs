@@ -19,8 +19,8 @@ use std::path::Path;
 const BASE: &str = "/srv/app";
 
 /// #1970: a `build:` service installs the prebuilt shape. The `.container`
-/// references the concrete image tag (`proj-web`), `Pull=never`, and never
-/// the `.build` filename; the systemctl log is the build call followed by
+/// references the concrete image tag (`localhost/proj-web`), `Pull=never`, and
+/// never the `.build` filename; the systemctl log is the build call followed by
 /// the container call, in that order, with one `daemon-reload` ahead of
 /// both.
 #[test]
@@ -39,13 +39,16 @@ fn install_build_writes_prebuilt_container_and_starts_build_then_container() {
 		let container_unit = root.join("containers/systemd/proj-web.container");
 		let contents = std::fs::read_to_string(&container_unit).unwrap();
 		// The container points at the concrete tag the `.build` unit writes
-		// (`ImageTag=proj-web`), not the `.build` filename. The string match
-		// for the filename is exact: a unit that names `proj-web.build`
-		// anywhere makes Quadlet add a `Requires=`/`After=` on the build
-		// service, which is what the prebuilt shape exists to avoid.
+		// (`ImageTag=proj-web`), with the `localhost/` prefix that pins a
+		// short tag to the local image the build stored (see
+		// qualify_local_image_tag). The string match for the bare filename
+		// is exact: a unit that names `proj-web.build` anywhere makes
+		// Quadlet add a `Requires=`/`After=` on the build service, which is
+		// what the prebuilt shape exists to avoid.
 		assert!(
-			contents.contains("Image=proj-web\n"),
-			"prebuilt container must reference the build's ImageTag, not the .build filename; got:\n{contents}"
+			contents.contains("Image=localhost/proj-web\n"),
+			"prebuilt container must reference the build's ImageTag with the \
+			 localhost/ prefix, not the .build filename; got:\n{contents}"
 		);
 		assert!(
 			!contents.lines().any(|l| l.contains(".build")),
@@ -68,10 +71,10 @@ fn install_build_writes_prebuilt_container_and_starts_build_then_container() {
 			calls,
 			vec![
 				vec!["daemon-reload".to_string()],
-				vec!["start".to_string(), "proj-web-build.service".to_string()],
+				vec!["restart".to_string(), "proj-web-build.service".to_string()],
 				vec!["start".to_string(), "proj-web.service".to_string()],
 			],
-			"daemon-reload then start build, then start container: {calls:?}"
+			"daemon-reload then restart build, then start container: {calls:?}"
 		);
 	});
 }
@@ -98,7 +101,7 @@ fn install_build_no_start_reloads_starts_build_only() {
 			calls,
 			vec![
 				vec!["daemon-reload".to_string()],
-				vec!["start".to_string(), "proj-web-build.service".to_string()],
+				vec!["restart".to_string(), "proj-web-build.service".to_string()],
 			],
 			"the build still runs under --no-start; the container does not: {calls:?}"
 		);
@@ -113,7 +116,7 @@ fn install_build_failure_returns_error_and_skips_container_start() {
 	super::with_env(|_root| {
 		let sc = ScriptedCtl::new(|args| {
 			i32::from(
-				args.first() == Some(&"start") && args.get(1) == Some(&"proj-web-build.service"),
+				args.first() == Some(&"restart") && args.get(1) == Some(&"proj-web-build.service"),
 			)
 		});
 		let err = install_quadlet(
@@ -134,7 +137,7 @@ fn install_build_failure_returns_error_and_skips_container_start() {
 			calls,
 			vec![
 				vec!["daemon-reload".to_string()],
-				vec!["start".to_string(), "proj-web-build.service".to_string()],
+				vec!["restart".to_string(), "proj-web-build.service".to_string()],
 			],
 			"the build call ran and failed; the container start did not run: {calls:?}"
 		);
@@ -246,9 +249,9 @@ fn install_no_build_units_byte_identical_to_generate_at() {
 	});
 }
 
-/// #1970: `--dry-run` lists the build start in its plan and runs no
+/// #1970: `--dry-run` lists the build restart in its plan and runs no
 /// systemctl at all. The operator reading the plan must be able to tell
-/// that an install will rebuild the images.
+/// that an install will rebuild the images, and that no shell-out happens.
 #[test]
 fn install_build_dry_run_prints_build_line_and_runs_no_systemctl() {
 	super::with_env(|root| {
@@ -267,5 +270,82 @@ fn install_build_dry_run_prints_build_line_and_runs_no_systemctl() {
 			"dry-run must not write units"
 		);
 		assert!(sc.log().is_empty(), "dry-run must not call systemctl");
+		// Re-derive the plan from the same inputs the call had and assert
+		// the exact wording. The install path produces the lines itself; the
+		// test exercises the helper directly so a wording drift is caught
+		// without a stdout grab.
+		let units = crate::quadlet::generate_for_autostart(
+			&parse_str(BUILD).unwrap(),
+			"proj",
+			Path::new(BASE),
+		)
+		.units;
+		let services: Vec<String> = units
+			.iter()
+			.filter_map(|u| u.filename.strip_suffix(".container"))
+			.map(|stem| format!("{stem}.service"))
+			.collect();
+		let build_services: Vec<String> = units
+			.iter()
+			.filter(|u| u.filename.ends_with(".build"))
+			.map(|u| format!("{}-build.service", u.filename.trim_end_matches(".build")))
+			.collect();
+		let plan = super::super::dry_run_plan(
+			&units,
+			&root.join("containers/systemd"),
+			&services,
+			&build_services,
+			false,
+		);
+		assert!(
+			plan.iter()
+				.any(|l| l == "# would run: systemctl --user restart proj-web-build.service"),
+			"dry-run plan must name the build restart exactly; got: {plan:?}"
+		);
+	});
+}
+
+/// #1970: when there is no `build:` the dry-run plan emits no build line,
+/// only the container starts. Regression fence for the install path skipping
+/// the build call entirely on a project with no `.build` units.
+#[test]
+fn install_dry_run_skips_build_line_when_there_is_no_build_unit() {
+	super::with_env(|_root| {
+		let sc = FakeCtl::new();
+		install_quadlet(
+			&sc,
+			&parse_str(IMG).unwrap(),
+			"proj",
+			Path::new(BASE),
+			false,
+			true,
+		)
+		.unwrap();
+		assert!(sc.log().is_empty(), "dry-run must not call systemctl");
+		// Re-derive the plan and assert there is no build line anywhere.
+		let units = crate::quadlet::generate_for_autostart(
+			&parse_str(IMG).unwrap(),
+			"proj",
+			Path::new(BASE),
+		)
+		.units;
+		let services: Vec<String> = units
+			.iter()
+			.filter_map(|u| u.filename.strip_suffix(".container"))
+			.map(|stem| format!("{stem}.service"))
+			.collect();
+		let plan = super::super::dry_run_plan(
+			&units,
+			std::path::Path::new("/srv/app/containers/systemd"),
+			&services,
+			&[],
+			false,
+		);
+		assert!(
+			!plan
+				.iter()
+				.any(|l| l.starts_with("# would run: systemctl --user restart")),
+			"no build unit means no build restart; got: {plan:?}"
+		);
 	});
 }

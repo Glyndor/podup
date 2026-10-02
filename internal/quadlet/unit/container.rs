@@ -138,9 +138,15 @@ pub(crate) fn container_unit_with_mode(
 		}
 		ContainerUnitMode::Prebuilt => {
 			if super::build::emits_build_unit(service) {
+				// The build step stored `localhost/<tag>` for a short tag and
+				// `<registry>/<tag>` for a fully qualified one; pin the
+				// container at that exact reference (`Pull=never` is what
+				// stops a registry race). See qualify_local_image_tag.
 				container.add(
 					"Image",
-					super::build::build_image_tag(service, project, name),
+					super::build::qualify_local_image_tag(&super::build::build_image_tag(
+						service, project, name,
+					)),
 				);
 			} else if let Some(image) = &service.image {
 				container.add("Image", image.clone());

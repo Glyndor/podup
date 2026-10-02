@@ -43,6 +43,18 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 				)));
 			}
 		}
+		// Reject a typo'd `pull_policy:` up front rather than letting it
+		// become a `Pull=alaways` line Quadlet would either silently drop or
+		// fail at daemon-reload. The prebuilt-mode autostart path overrides
+		// the service's pull policy to `never` and never emits the user's
+		// value, so without this check a typo'd `pull_policy: alaways`
+		// installs cleanly as `Pull=never` even though the user clearly
+		// asked for something specific. `generate quadlet` does emit the
+		// user's value verbatim, so an invalid one would also write a
+		// broken `Pull=` line: same root cause, same fix.
+		if let Some(policy) = svc.pull_policy.as_deref() {
+			crate::engine::build::pull_policy_checked(Some(policy), name)?;
+		}
 	}
 	Ok(())
 }
