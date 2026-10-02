@@ -71,6 +71,15 @@ pub struct PodSpecGenerator {
 	/// pod's, so a project's common `userns_mode` lands here.
 	#[serde(skip_serializing_if = "Option::is_none", default)]
 	pub userns: Option<Namespace>,
+
+	/// What the pod does when its last service container exits. The engine
+	/// sets it to `continue` on every pod it creates, so the infra container
+	/// keeps running across the gap between services: the API path is
+	/// otherwise free to inherit a `containers.conf` `pod_exit_policy`
+	/// that the Quadlet path would not see, and the two paths would diverge
+	/// on the same project. `None` lets libpod apply its own default.
+	#[serde(skip_serializing_if = "Option::is_none", default)]
+	pub exit_policy: Option<String>,
 }
 
 /// Response from `GET /libpod/pods/{name}/json`. Only the fields the engine

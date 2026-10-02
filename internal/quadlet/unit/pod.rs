@@ -116,6 +116,19 @@ pub(crate) fn pod_unit(project: &str, file: &ComposeFile) -> Option<QuadletUnit>
 		),
 	);
 
+	// Pin the pod's exit policy to `continue` so the unit Quadlet
+	// generates agrees with what the live engine stamps on the pod it
+	// creates. Quadlet hard-codes `--exit-policy stop` in the command line
+	// it builds for `podman pod create`, and the native `ExitPolicy=` key
+	// needs Podman 5.6 while the floor is 5.0. `PodmanArgs=` flags are
+	// appended after it on that line, so this flag wins, and the generated
+	// pod keeps running when its last service container exits. The live
+	// engine sets the same value explicitly: the API path defaults to
+	// `continue`, but that default comes from `containers.conf`
+	// (`pod_exit_policy`), so an explicit field is what keeps the two
+	// paths from drifting on the same project.
+	pod.add("PodmanArgs", "--exit-policy=continue".to_string());
+
 	let mut contents = owner_marker(project);
 	contents.push_str(&pod.render());
 	Some(QuadletUnit {

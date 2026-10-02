@@ -211,3 +211,25 @@ services:
 		"the user namespace is part of the pod hash"
 	);
 }
+
+/// The pod spec the builder hands to `POST /pods/create` pins the exit
+/// policy to `continue`, not whatever `containers.conf` has set as the
+/// default. The Quadlet path emits the same value (as `PodmanArgs=`) on
+/// the rendered unit; both paths have to agree on the same project.
+#[test]
+fn build_pod_spec_with_hash_pins_exit_policy_to_continue() {
+	let yaml = r#"
+x-podman-pod: true
+services:
+  web:
+    image: nginx
+"#;
+	let file = parse_str(yaml).unwrap();
+	let ports = vec![crate::ports::parse_ports(&file.services["web"].ports).unwrap()];
+	let spec = super::build_pod_spec_with_hash("demo", &file, &ports, "hash-abc");
+	assert_eq!(
+		spec.exit_policy.as_deref(),
+		Some("continue"),
+		"the builder must pin exit_policy to `continue` on every spec"
+	);
+}

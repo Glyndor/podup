@@ -139,5 +139,12 @@ pub(super) fn build_pod_spec_with_hash(
 		networks,
 		hostadd: hostadd_for_services(file.services.keys()),
 		userns: pod_userns(file).map(crate::libpod::types::container::Namespace::parse),
+		// Podman's CLI defaults to `continue`, but that default comes from
+		// `containers.conf` (`pod_exit_policy`). The Quadlet path does not
+		// read `containers.conf` for this key, so a user who flipped the
+		// default for the API path would see the two paths disagree on the
+		// same project. Set it explicitly: the pod keeps running when the
+		// last service container exits, on every path.
+		exit_policy: Some("continue".to_string()),
 	}
 }
