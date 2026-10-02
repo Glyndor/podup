@@ -288,8 +288,10 @@ async fn a_pod_takes_the_services_user_namespace() {
 /// infra container stays up across the gap, and `podman pod inspect`
 /// reports `ExitPolicy=continue`. With `restart: "no"` on the only
 /// service and `command: [true]`, the service exits successfully and
-/// stays exited; the pod survives because the engine set the policy
-/// explicitly instead of letting libpod inherit `containers.conf`.
+/// stays exited, and the pod survives. This pins the promised behaviour;
+/// it does not prove the explicit field matters, since the stock
+/// `containers.conf` default is `continue` too. The unit tests on the pod
+/// create body are what fail without the field.
 #[tokio::test]
 async fn a_pod_keeps_running_after_its_last_service_exits() {
 	if podman().await.is_none() {
