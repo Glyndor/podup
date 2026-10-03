@@ -357,7 +357,10 @@ async fn up_refuses_an_invalid_volume_name_before_creating_anything() {
 		"refused by podup's own preflight, not by libpod; got:\n{stderr}"
 	);
 	assert!(
-		!stderr.contains("500") && !stderr.contains("Internal Server Error"),
+		!stderr.contains("Internal Server Error"),
 		"the refusal must happen before any libpod call; got:\n{stderr}"
 	);
+	// A libpod error line, not a bare "500": the project name carries the
+	// pid, which can contain "500" (#1977).
+	assert_no_libpod_http_error(&stderr);
 }

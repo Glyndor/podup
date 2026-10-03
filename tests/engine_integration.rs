@@ -396,6 +396,35 @@ async fn poll_with_watch_surfaces_a_finished_watch_task_error() {
 	.await;
 }
 
+/// Fail when `stderr` carries a libpod HTTP error, which podup prints as
+/// `podman API error (HTTP <status>): <message>` (`internal/libpod/error.rs`).
+///
+/// Checking for a bare status number such as "404" is wrong here: every
+/// project name carries the test process id (`t<pid>-<tag>`), so a run whose
+/// pid contains "404" (`t40415-dnvr` on the lane) prints a clean no-op line
+/// that matches it (#1977).
+#[track_caller]
+fn assert_no_libpod_http_error(stderr: &str) {
+	assert!(
+		!stderr.contains("podman API error (HTTP"),
+		"stderr leaked a libpod HTTP error: {stderr}"
+	);
+}
+
+/// The lane line that tripped the bare "404" check must pass, and a real
+/// libpod error line must still fail. Swapping the helper's check back to
+/// `contains("404")` turns the first call red.
+#[test]
+fn assert_no_libpod_http_error_ignores_the_pid_but_catches_a_real_error() {
+	assert_no_libpod_http_error("Network t40415-dnvr_default  Absent\n");
+	let real = "podup: error: podman API error (HTTP 404): no such container\n";
+	let res = std::panic::catch_unwind(|| assert_no_libpod_http_error(real));
+	assert!(
+		res.is_err(),
+		"the helper must panic on a real `podman API error (HTTP ...)` line; got {real:?}"
+	);
+}
+
 // ---------------------------------------------------------------------------
 // Test groups (see engine_integration/*.rs)
 // ---------------------------------------------------------------------------
