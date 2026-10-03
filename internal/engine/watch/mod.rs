@@ -151,13 +151,36 @@ impl Engine {
 			warn!("{msg}");
 		}
 
-		// Register the watcher before reading directories: a file written on the
-		// host after the initial sync reads the directory but before the inotify
-		// watcher subscribes is lost (neither the initial sync nor any event sees
-		// it). Registering first means events queue while the initial sync runs
-		// and the event loop drains them afterwards; a duplicate upload of the
-		// same file is harmless (#1977).
-		//
+		for entry in &rule_entries {
+			if entry.rule.initial_sync {
+				// A missing watch path cannot be synced: the existence check
+				// in the watcher-setup loop below will warn about it, so skip
+				// both the `initial sync` log and the (doomed) sync itself.
+				// `symlink_metadata` is used (not `exists`) so a path that
+				// exists only as a dangling symlink is still synced: the
+				// packer in `watch/sync.rs` preserves links, and the rule's
+				// intent there is to upload the link itself.
+				if std::fs::symlink_metadata(&entry.abs_path).is_err() {
+					continue;
+				}
+				if let Some(target) = &entry.rule.target {
+					info!("initial sync {} -> {target}", entry.abs_path.display());
+					if let Err(e) = self
+						.sync_to_container(
+							&entry.container_name,
+							&entry.abs_path,
+							&entry.abs_path,
+							target,
+							&mut ensured,
+						)
+						.await
+					{
+						warn!("initial sync failed: {e}");
+					}
+				}
+			}
+		}
+
 		// Bounded channel: under heavy filesystem churn an unbounded queue (and the
 		// per-batch path accumulation below) can grow without limit. Drop events
 		// when the buffer is full: a later event re-triggers the sync, so no state
@@ -183,36 +206,6 @@ impl Engine {
 					.map_err(|e| ComposeError::Watch(e.to_string()))?;
 			} else {
 				warn!("watch path not found: {}", entry.abs_path.display());
-			}
-		}
-
-		for entry in &rule_entries {
-			if entry.rule.initial_sync {
-				// A missing watch path cannot be synced: the existence check
-				// in the watcher-setup loop above will warn about it, so skip
-				// both the `initial sync` log and the (doomed) sync itself.
-				// `symlink_metadata` is used (not `exists`) so a path that
-				// exists only as a dangling symlink is still synced: the
-				// packer in `watch/sync.rs` preserves links, and the rule's
-				// intent there is to upload the link itself.
-				if std::fs::symlink_metadata(&entry.abs_path).is_err() {
-					continue;
-				}
-				if let Some(target) = &entry.rule.target {
-					info!("initial sync {} -> {target}", entry.abs_path.display());
-					if let Err(e) = self
-						.sync_to_container(
-							&entry.container_name,
-							&entry.abs_path,
-							&entry.abs_path,
-							target,
-							&mut ensured,
-						)
-						.await
-					{
-						warn!("initial sync failed: {e}");
-					}
-				}
 			}
 		}
 
