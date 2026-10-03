@@ -112,20 +112,50 @@ async fn watch_sync_propagates_host_deletions_to_the_container() {
 		.or_else(|_| podup::podman::connect(None))
 		.unwrap();
 	let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
-	let file2 = file.clone();
-	let mut handle = tokio::spawn(async move { engine2.watch(&file2).await });
-
+	// Write the file before `watch` starts. `watch` runs the initial sync
+	// before it registers its inotify watcher, so a file written after the
+	// spawn could land between the two and reach the container by neither
+	// path (#1977).
 	let src_file = src.join("f.txt");
 	fs::write(&src_file, b"watched").unwrap();
 
+	let file2 = file.clone();
+	let mut handle = tokio::spawn(async move { engine2.watch(&file2).await });
+
 	// Poll for the initial-sync delivery rather than sleeping a fixed duration.
-	// `watched` is the only write we made; a green `initial_sync` is what puts
-	// it inside the container, and a missing delivery here means the deletion
-	// half has no baseline to compare against. Routed through `poll_with_watch`
-	// so a watch task that died (e.g. an inotify exhaustion) panics with the
-	// watch error instead of blaming the sync.
+	// A green `initial_sync` is what puts `watched` inside the container, and
+	// a missing delivery here means the deletion half has no baseline to
+	// compare against. Routed through `poll_with_watch` so a watch task that
+	// died (e.g. an inotify exhaustion) panics with the watch error instead of
+	// blaming the sync.
 	let arrived = poll_with_watch(&mut handle, Duration::from_secs(30), || {
 		poll_container_contains_once(&engine, &cname, "/app/f.txt", "watched")
+	})
+	.await;
+
+	// The delivery above only proves the initial sync ran; the watcher may
+	// not be registered yet, and a deletion made before it is would be lost.
+	// Rewrite a probe file on every tick until a copy reaches the container:
+	// after the initial sync, only an inotify event can deliver it.
+	let probe = src.join("probe.txt");
+	let watcher_live = poll_with_watch(&mut handle, Duration::from_secs(30), || {
+		fs::write(&probe, b"live").unwrap();
+		poll_container_contains_once(&engine, &cname, "/app/probe.txt", "live")
+	})
+	.await;
+	// Take the probe back out so `f.txt` is again the last file under the
+	// rule's path, which the scope checks below depend on. Wait out the
+	// watcher's 100 ms debounce first: the last probe write is still pending,
+	// and a batch takes the kind of its first event, so a removal coalesced
+	// with that write would be applied as an upload and the probe would stay.
+	tokio::time::sleep(Duration::from_secs(1)).await;
+	fs::remove_file(&probe).unwrap();
+	let probe_gone = poll_with_watch(&mut handle, Duration::from_secs(30), || async {
+		let out = engine
+			.test_exec_capture(&cname, vec!["ls".into(), "/app/probe.txt".into()])
+			.await
+			.unwrap_or_default();
+		out.trim().is_empty()
 	})
 	.await;
 
@@ -202,6 +232,14 @@ async fn watch_sync_propagates_host_deletions_to_the_container() {
 	assert!(
 		arrived,
 		"the initial sync did not place the file inside the container; cannot claim deletion was propagated"
+	);
+	assert!(
+		watcher_live,
+		"no host change reached the container after the initial sync; the watcher never started delivering events"
+	);
+	assert!(
+		probe_gone,
+		"the probe file was not removed from the container; the last-file scope check below would not hold"
 	);
 	assert!(
 		gone,
