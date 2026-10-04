@@ -27,15 +27,17 @@ impl crate::engine::Engine {
 
 	/// Test seam: delete the entry `path` would have written under `target`
 	/// from `container`. Mirrors the live `dispatch_action` path that runs on
-	/// a `Remove` notify event.
+	/// a `Remove` notify event. Computes the placement with the same
+	/// helper the dispatch loop uses, so the test seam and the live path
+	/// agree on which container path is being deleted.
 	pub async fn test_remove_from_container(
 		&self,
 		container: &str,
 		src: &std::path::Path,
 		target: &str,
 	) -> crate::error::Result<()> {
-		self.remove_from_container(container, src, src, target)
-			.await
+		let placement = super::placement::plan_remove_placement(src, src, target);
+		self.remove_from_container(container, placement, src).await
 	}
 
 	/// Test seam: run the watch restart action against `container_name`.

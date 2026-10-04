@@ -11,7 +11,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use futures_util::StreamExt;
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
@@ -23,9 +23,10 @@ use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 use crate::engine::copy;
 
 use super::placement::{
-	container_rel, join_container_path, mark_dir_ensured, mkdir_p_argv, plan_remove_placement,
-	plan_sync_placement, SyncPlacement,
+	container_rel, join_container_path, mark_dir_ensured, mkdir_p_argv, plan_sync_placement,
+	SyncPlacement,
 };
+use super::sync::has_permitted_entry;
 use super::writeback::{writes_back, EffectiveMount};
 use super::Engine;
 
@@ -66,6 +67,22 @@ impl Engine {
 				writes_back(&mounts, &container_path, &watched_root).is_some()
 			})
 		};
+		// When the per-entry filter rejects every archive entry, the upload
+		// would be a tar with no body, the verification step would fail,
+		// and the failure would stop the restart or exec of a
+		// `sync+restart` / `sync+exec` action. The `mkdir` below would
+		// also fire and create a directory through the bind. Probe the
+		// filter with the same rules `build_sync_tar` uses: if nothing
+		// survives, log at `debug!` and return success so the surrounding
+		// `sync+restart` / `sync+exec` still runs its other half.
+		if !has_permitted_entry(changed, Path::new(&entry_name), &*skip)? {
+			debug!(
+				"nothing to copy for {changed}: every entry maps back into the watched path",
+				changed = changed.display()
+			);
+			return Ok(());
+		}
+
 		// `build_sync_tar_stream` walks the changed directory (possibly many
 		// entries) and gzips it inside a `spawn_blocking` task that pipes the
 		// bytes through a bounded channel to the PUT body. On an async
@@ -114,6 +131,12 @@ impl Engine {
 	/// mapped area), not an entry delete, and would otherwise `rm -rf` the
 	/// destination.
 	///
+	/// `placement` is the resolved container placement the dispatch loop
+	/// already computed: passing it in keeps the guard upstream (which
+	/// short-circuits a removal whose container path maps back into the
+	/// watched tree) and the `rm` here on the same container path, so the
+	/// check and the operation cannot disagree.
+	///
 	/// The container-side deletion is a `rm -rf` exec rather than a DELETE
 	/// against the archive endpoint. libpod's archive DELETE was answered
 	/// with `405 Method Not Allowed` on Podman 5.7.0 (the endpoint documents
@@ -124,11 +147,9 @@ impl Engine {
 	pub(in crate::engine::watch) async fn remove_from_container(
 		&self,
 		container: &str,
-		root: &Path,
+		placement: SyncPlacement,
 		removed: &Path,
-		target: &str,
 	) -> Result<()> {
-		let placement = plan_remove_placement(root, removed, target);
 		let container_path = join_container_path(&placement);
 		if container_path == "/" || container_path.trim() == placement.dest_dir.trim() {
 			// Refuse to delete the rule's own target directory; see the

@@ -21,6 +21,7 @@ use crate::error::{ComposeError, Result};
 
 use crate::engine::copy::pack_common::{record_one, walk, KindDispatch};
 use crate::engine::copy::verify::SentEntry;
+use crate::engine::walk::walk_dir;
 
 /// Pack `src` into a gzipped tar, storing its top-level entry under
 /// `entry_name`.
@@ -129,6 +130,53 @@ pub(in crate::engine) fn build_sync_tar<W: Write>(
 	Ok(())
 }
 
+/// True when the upload for `src` under `entry_name` would record at least
+/// one entry that the per-entry `skip` filter does not drop. Used by the
+/// watch sync to short-circuit an upload whose every entry maps back into
+/// the watched tree: a tar that the filter stripped of every record would
+/// still trigger the `mkdir -p` on the destination (creating a directory
+/// through the bind) and would fail its verification step, the failure
+/// would stop the restart or exec of a `sync+restart` / `sync+exec`
+/// action, and `sync_all` would report the rule as failed.
+///
+/// The rules mirror [`build_sync_tar`]:
+/// - `src` is a directory: the root entry is permitted when
+///   `entry_name` is not empty and the filter accepts it, plus every
+///   walked descendant re-rooted under `entry_name` whose joined name the
+///   filter accepts. A directory the filter drops is still walked, so a
+///   safe deeper mount below a loop-causing directory is still recorded.
+/// - `src` is a single file: the file is permitted when the filter
+///   accepts `entry_name`.
+///
+/// `src_is_dir` is read with `symlink_metadata` for the same reason
+/// `build_sync_tar` uses it: a symlink that points at a directory
+/// outside the rule must be uploaded as a link, not as the contents of
+/// its target (#1985).
+pub(in crate::engine) fn has_permitted_entry(
+	src: &Path,
+	entry_name: &Path,
+	skip: &dyn Fn(&Path) -> bool,
+) -> std::io::Result<bool> {
+	let src_is_dir = src.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
+	if src_is_dir {
+		if !entry_name.as_os_str().is_empty() && !skip(entry_name) {
+			return Ok(true);
+		}
+		for abs in walk_dir(src)? {
+			let rel = abs.strip_prefix(src).map_err(|e| {
+				std::io::Error::other(format!("path strip: {}: {e}", abs.display()))
+			})?;
+			let name = entry_name.join(rel);
+			if !skip(&name) {
+				return Ok(true);
+			}
+		}
+	} else if !skip(entry_name) {
+		return Ok(true);
+	}
+	Ok(false)
+}
+
 // ---------------------------------------------------------------------------
 // Error mapping
 // ---------------------------------------------------------------------------
@@ -215,3 +263,7 @@ pub(in crate::engine) fn legacy_project_relative_included(path: &str, patterns: 
 #[cfg(test)]
 #[path = "sync_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "sync_filter_tests.rs"]
+mod filter_tests;

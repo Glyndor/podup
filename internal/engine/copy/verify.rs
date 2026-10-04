@@ -125,6 +125,15 @@ pub(in crate::engine) struct SentEntry {
 	pub(super) kind: SentKind,
 }
 
+impl SentEntry {
+	/// The entry's archive path. Exposed for tests that want to assert
+	/// the recorded list and the tar contents agree.
+	#[cfg(test)]
+	pub(crate) fn path(&self) -> &str {
+		&self.path
+	}
+}
+
 /// The regular files, directories and symbolic links in an archive `cp`
 /// uploads, in archive order. The archive is plain tar; `cp`'s local-socket
 /// path does not gzip (the bytes never leave the host).

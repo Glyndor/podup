@@ -540,6 +540,10 @@ mod watch_tests;
 mod watch_batch;
 
 #[cfg(all(unix, feature = "test-helpers"))]
+#[path = "engine_integration/watch_bind.rs"]
+mod watch_bind;
+
+#[cfg(all(unix, feature = "test-helpers"))]
 #[path = "engine_integration/watch_sparse.rs"]
 mod watch_sparse;
 

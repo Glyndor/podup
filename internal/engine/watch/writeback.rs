@@ -52,10 +52,7 @@ use crate::engine::volume_mounts::{bind_mounts, mount_targets};
 use crate::error::{ComposeError, Result};
 
 use super::events;
-use super::placement::{
-	container_rel, join_container_path, normalise_container_path, plan_sync_placement,
-	SyncPlacement,
-};
+use super::placement::{join_container_path, normalise_container_path, plan_remove_placement};
 use super::Engine;
 
 /// One effective mount the watch loop considers when answering
@@ -210,23 +207,12 @@ impl Engine {
 		let Some(target) = &entry.rule.target else {
 			return Ok(());
 		};
-		// Uploads filter every archive entry, but a removal runs `rm` on one
-		// container path; when that path maps back into the watched tree it
-		// is another host file, so leave it alone.
-		if matches!(events::sync_op_for(path), Ok(events::SyncOp::Remove)) {
-			let placement = plan_sync_placement(&entry.abs_path, path, target);
-			let container_path = join_container_path(&SyncPlacement {
-				entry_name: container_rel(Path::new(&placement.entry_name)),
-				dest_dir: placement.dest_dir,
-			});
-			if let Some(host) = writes_back(&entry.mounts, &container_path, &entry.abs_path) {
-				debug!(
-					"skip removal of {container_path}: it is bind-mounted back to {}",
-					host.display()
-				);
-				return Ok(());
-			}
-		}
+		// Decide upload/remove once, here, and hand the result to the
+		// dispatch. A second `sync_op_for` call inside the dispatch would
+		// race the host filesystem: the first call sees the file as present
+		// and chooses Upload, the second sees it gone and chooses Remove,
+		// and the `rm` then runs on a container path that maps back to a
+		// different host file.
 		self.dispatch_sync(
 			&entry.container_name,
 			&entry.abs_path,
@@ -235,17 +221,18 @@ impl Engine {
 			ensured,
 			&entry.mounts,
 			&entry.abs_path,
+			events::sync_op_for(path),
 		)
 		.await
 	}
 
 	/// Pick the right sync dispatch for the changed path: copy on a change,
 	/// remove on a deletion. The decision is taken from the host filesystem
-	/// rather than the event kind so a debounce batch that contains a write
-	/// and a remove of the same file inside 100 ms dispatches each path
-	/// correctly: the file the host still has gets uploaded, the file the
-	/// host has dropped gets removed. Sync-family actions all funnel
-	/// through here so the removal path is owned in one place.
+	/// by the caller (a debounce batch that contains a write and a remove
+	/// of the same file inside 100 ms dispatches each path correctly: the
+	/// file the host still has gets uploaded, the file the host has dropped
+	/// gets removed) and passed in here as `op`, so this function never
+	/// re-stats the path.
 	///
 	/// `mounts` and `watched_root` are passed down to the per-entry filter
 	/// that drops descendants whose container path lands in a deeper bind
@@ -254,7 +241,10 @@ impl Engine {
 	/// per-entry check: the root is also evaluated, and a directory that
 	/// matches the loop pattern only on a non-root descendant still
 	/// produces a sync that drops the loop-causing entry while keeping
-	/// every safe entry.
+	/// every safe entry. The same filter, in the `Remove` branch, refuses
+	/// a removal whose container path maps back to a different host file
+	/// (the rule `target: /app` plus `"./src:/app"` would `rm /app/b.txt`
+	/// and erase the unrelated host file `src/b.txt`).
 	#[allow(clippy::too_many_arguments)]
 	pub(in crate::engine::watch) async fn dispatch_sync(
 		&self,
@@ -265,8 +255,9 @@ impl Engine {
 		ensured: &mut HashSet<(String, String)>,
 		mounts: &[EffectiveMount],
 		watched_root: &Path,
+		op: std::result::Result<events::SyncOp, std::io::Error>,
 	) -> Result<()> {
-		match events::sync_op_for(changed) {
+		match op {
 			Ok(events::SyncOp::Upload) => {
 				self.sync_to_container(
 					container,
@@ -280,7 +271,22 @@ impl Engine {
 				.await
 			}
 			Ok(events::SyncOp::Remove) => {
-				self.remove_from_container(container, root, changed, target)
+				// Compute the placement with the same function the `rm`
+				// below uses, so the guard and the operation always look at
+				// the same container path. Computing the guard from
+				// `plan_sync_placement` and the `rm` from
+				// `plan_remove_placement` would let a future divergence
+				// between the two slip an unsafe `rm` through.
+				let placement = plan_remove_placement(root, changed, target);
+				let container_path = join_container_path(&placement);
+				if let Some(host) = writes_back(mounts, &container_path, watched_root) {
+					debug!(
+						"skip removal of {container_path}: it is bind-mounted back to {}",
+						host.display()
+					);
+					return Ok(());
+				}
+				self.remove_from_container(container, placement, changed)
 					.await
 			}
 			Err(e) => Err(ComposeError::Watch(format!(

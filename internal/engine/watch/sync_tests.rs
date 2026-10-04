@@ -41,7 +41,6 @@ fn sync_to_gz_with(
 	let encoder = tar.into_inner().map_err(std::io::Error::other)?;
 	encoder.finish().map_err(std::io::Error::other)
 }
-
 /// Decode a gzipped tar and collect its non-directory entry paths.
 fn tar_entry_paths(gz: &[u8]) -> Vec<String> {
 	let mut decoder = GzDecoder::new(gz);

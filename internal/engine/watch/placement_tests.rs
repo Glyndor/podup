@@ -263,6 +263,19 @@ fn container_rel_single_component_is_itself() {
 	assert_eq!(container_rel(Path::new("hello")), "hello");
 }
 
+/// A non-UTF-8 component used to be silently dropped, which collapsed
+/// `/p/<0xff>/keep.txt` to `keep.txt` and could overwrite an unrelated
+/// container file. The lossy form replaces the non-UTF-8 byte with
+/// `U+FFFD` so every component still occupies a slot in the path.
+#[cfg(unix)]
+#[test]
+fn container_rel_keeps_non_utf8_components_as_replacement_chars() {
+	use std::ffi::OsStr;
+	use std::os::unix::ffi::OsStrExt;
+	let p = Path::new(OsStr::from_bytes(b"\xff")).join("keep.txt");
+	assert_eq!(container_rel(&p), "\u{FFFD}/keep.txt");
+}
+
 // --- normalise_container_path -------------------------------------------
 
 /// `..` removes the previous component, never climbing above the root.

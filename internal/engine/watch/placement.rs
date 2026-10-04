@@ -262,18 +262,22 @@ fn path_components(path: &str) -> Vec<&str> {
 /// is structurally impossible; the conservative resolution still saves a
 /// future Windows-port bug from being a loop in production).
 ///
-/// Non-UTF-8 components render as empty strings and are skipped, matching
-/// `push_entry` in the packer: a non-UTF-8 component would already fail the
-/// archive write, so dropping it here is the same shape.
+/// Each component is rendered with `to_string_lossy()`. A non-UTF-8
+/// component would otherwise be dropped, leaving the path short of where
+/// it was on the host: `/p/<0xff>/keep.txt` would land at `keep.txt` and
+/// collide with an unrelated container file. The lossy form substitutes
+/// the Unicode replacement character (`U+FFFD`) for the non-UTF-8 bytes,
+/// so the container path keeps the same number of components and the
+/// upload lands in the same directory, just with a different name. The
+/// same lossy form the `tar` crate accepts on archive writes.
 pub(super) fn container_rel(rel: &Path) -> String {
 	let mut parts: Vec<String> = Vec::new();
 	for c in rel.components() {
 		match c {
 			std::path::Component::Normal(part) => {
-				if let Some(s) = part.to_str() {
-					if !s.is_empty() {
-						parts.push(s.to_string());
-					}
+				let s = part.to_string_lossy();
+				if !s.is_empty() {
+					parts.push(s.into_owned());
 				}
 			}
 			_ => continue,
