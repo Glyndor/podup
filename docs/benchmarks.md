@@ -13,40 +13,37 @@
 | Platforms | Linux · macOS · Windows (single binary) | Linux · macOS · Windows | wherever Python runs |
 | Compose-spec depth | `extends`, profiles, `develop.watch`, inline secrets/configs | full | partial |
 
+One host, one run (2026-09-29). Tables and the chart use the same data; compare tools within this run, not across runs.
+
+## What was measured
+
+- podup 5.10.8 (published `podup-linux-x86_64` asset, static musl, verified against `SHA256SUMS`).
+- docker-compose 5.5.1 (Go binary) on its own Docker daemon (rootful).
+- podman-compose 1.6.0 (Python) on rootless Podman.
+
+Reported medians are over 10 measured iterations: 12 runs, first 2 discarded as warm-up. p95 and standard deviation are in parentheses.
+
 ## Methodology
 
 Two comparisons, measured in one run on one machine:
 
-- **Same engine.** podup, podman-compose and docker-compose all drive **the same
-  rootless Podman**; docker-compose is pointed at the Podman socket through
-  `DOCKER_HOST`. The only difference left is the compose tool, so this is the
-  tool-against-tool result.
-- **Each tool on its own engine.** podup and podman-compose on rootless Podman,
-  docker-compose on the Docker daemon (rootful). This is what a user of each
-  stack sees; the engines differ, so it cannot be read as tool against tool.
+- **Same engine.** podup, podman-compose and docker-compose all drive **the same rootless Podman**; docker-compose is pointed at the Podman socket through `DOCKER_HOST`. The only difference left is the compose tool.
+- **Each tool on its own engine.** podup and podman-compose on rootless Podman, docker-compose on the Docker daemon (rootful). The engines differ, so this is what a user of each stack sees; it cannot be read as tool against tool.
 
-Identical digest-pinned images, pre-pulled into both engines so no download is
-timed; the same compose file per scenario; the same op flags for every tool.
-Each number is the median over **10 measured iterations**: 12 runs with the first
-2 discarded as warm-up; p95 and standard deviation are in parentheses. A row with
-a failed iteration is refused rather than published over the survivors, and this
-run had one: `scale down` for podman-compose failed all 10 measured iterations
-(the tool exited 0 but left four replicas, the pod and the network behind every
-time, so the harness rewrote it to rc=97; see `bench/leftovers.sh` and #1947).
-1392 timed runs, 10 with rc=97.
+Identical digest-pinned images, pre-pulled before timing. Each number is the median over **10 measured iterations**: 12 runs with the first 2 discarded as warm-up; p95 and standard deviation are in parentheses.
 
-Reproduce with `bash bench/run.sh`, then `python3 bench/aggregate.py`; the harness
-measures both docker-compose variants when both engines answer, and writes the
-host description below into `bench/results/env.txt`. Timing comes from
-`bench/timeit` (fork, clock across the command, peak RSS and CPU from `wait4`'s
-rusage).
+Failed iterations are counted; wholly failed cells have no median. Aggregation fails unless `--allow-failures` is passed. This run had one: `scale down` for podman-compose failed all 10 measured iterations (the tool exited 0 but left four replicas, the pod and the network behind every time, so the harness rewrote it to rc=97; see `bench/leftovers.sh` and #1947). 1392 timed runs, 10 with rc=97.
 
-Each row carries **one unit**, picked from the largest value in that row and
-applied to every tool in it. `bench/results/raw.csv` and `summary.json` keep every
-figure in seconds.
+Reproduce on a host with CPUs 2-9, taskset, both engines and successful pre-pulls:
 
-Measured on podup **5.10.8**, the published `podup-linux-x86_64` asset (static
-musl, the binary the installers fetch, checked against `SHA256SUMS`):
+```
+PODUP_BIN=/path/to/verified/podup-linux-x86_64 bash bench/run.sh --iters 12 --warmup 2 --cores 2-9
+python3 bench/aggregate.py --allow-failures
+```
+
+Review every failed cell. Current HEAD is not the historical asset; raw run artifacts are not committed here (the harness writes them under `bench/results/`).
+
+Rows use one display unit. raw.csv stores wall/CPU seconds and RSS KiB; summary.json stores time statistics in seconds and RSS statistics in MiB.
 
 ```
 date: 2026-09-29T14:33:45Z
@@ -70,19 +67,6 @@ docker_containers: 0
 docker_images: 5
 running_vms: 0
 ```
-
-**Do not compare these numbers across runs.** The engine on this host was
-two to three times slower on the multi-container rows in the 5.10.5 run the
-page used to carry than in the 5.10.8 run it replaced, and that did not bear
-on the within-run comparison; the 5.10.8 numbers here are themselves a fresh
-re-run of the same published 5.10.8 asset with the Docker daemon started and
-both engines measured, and the cause of either move is not identified.
-Comparing the 5.10.8 multi-container rows against the 5.10.5 numbers the page
-used to carry, `wide-level up` for podup went from 2.83 s in 5.10.5 to 1.13 s
-here (about 2.5 times faster), `wide-level down` from 5.16 s to 1.76 s (about
-2.9 times faster), and the podman-compose `wide-level up` from 8.51 s to 7.32 s.
-The cause of either move is not identified; the warning not to read numbers
-across runs stands, and every figure below describes this 5.10.8 run on its own.
 
 ## Wall-clock, same engine (lower is better)
 
@@ -122,9 +106,7 @@ across runs stands, and every figure below describes this 5.10.8 run on its own.
 
 ## Memory + CPU per command, same engine (peak RSS / CPU time, median)
 
-Client-side cost of invoking the tool: the tool process and what it spawns and
-waits on. podup is a static binary talking to the Podman service; podman-compose
-is Python shelling out to `podman` per call and is charged for that work.
+Client-side cost of invoking the tool: the tool process and what it spawns and waits on. podup is a static binary talking to the Podman service; podman-compose is Python shelling out to `podman` per call and is charged for that work.
 
 | scenario | op | podup | podman-compose | docker-compose (Podman) |
 |---|---|---|---|---|
@@ -160,11 +142,7 @@ is Python shelling out to `podman` per call and is charged for that work.
 
 ## Wall-clock, each tool on its own engine
 
-podup and podman-compose drive rootless Podman; docker-compose drives
-the Docker daemon (rootful). This is what a user of each stack sees, and the
-engines differ, so it is not a pure tool comparison: docker-compose runs
-against dockerd, not the Podman socket, and engine differences are folded into
-its column.
+podup and podman-compose drive rootless Podman; docker-compose drives the Docker daemon (rootful). This is what a user of each stack sees, and the engines differ, so it is not a pure tool comparison: docker-compose runs against dockerd, not the Podman socket, and engine differences are folded into its column.
 
 | scenario | op | podup | podman-compose | docker-compose (Docker) |
 |---|---|---|---|---|
@@ -179,7 +157,7 @@ its column.
 | scale | up | 0.197 s (p95 0.228, sd 0.015) | 1.085 s (p95 1.107, sd 0.023) | 0.611 s (p95 0.634, sd 0.013) |
 | scale | down | 269.1 ms (p95 307.3, sd 16.8) | [10 failed of 10] | 440.1 ms (p95 489.3, sd 22.6) |
 | network-ipam | up | 110.4 ms (p95 133.0, sd 9.0) | 595.3 ms (p95 690.9, sd 33.4) | 296.4 ms (p95 321.5, sd 10.2) |
-| network-ipam | down | 175.9 ms (p95 202.2, sd 13.1) | 509.2 ms (p95 550.5, sd 21.5) | 271.5 ms (p95 299.5, sd 12.4) |
+| network-ipam | down | 175.9 ms (p95 202.2, sd 13.1) | 509.2 ms (p95 550.5, sd 21.5) | 271.5 ms (p95 299.9, sd 12.4) |
 | volume-heavy | up | 105.0 ms (p95 122.8, sd 7.5) | 920.9 ms (p95 944.0, sd 15.0) | 199.1 ms (p95 210.6, sd 8.2) |
 | volume-heavy | down | 156.3 ms (p95 165.4, sd 6.0) | 583.3 ms (p95 635.5, sd 21.1) | 249.2 ms (p95 269.4, sd 13.5) |
 | secrets | up | 107.3 ms (p95 122.5, sd 5.8) | 471.8 ms (p95 489.3, sd 11.5) | 197.9 ms (p95 208.6, sd 7.2) |
@@ -200,9 +178,7 @@ its column.
 
 ## Memory + CPU per command, each tool on its own engine
 
-Same caveat as the wall-clock table: podup and podman-compose run rootless,
-docker-compose on Docker runs rootful. Memory is the orchestrator process;
-engine-side work is not charged to any of them.
+Same caveat as the wall-clock table: podup and podman-compose run rootless, docker-compose on Docker runs rootful. Memory is the orchestrator process; engine-side work is not charged to any of them.
 
 | scenario | op | podup | podman-compose | docker-compose (Docker) |
 |---|---|---|---|---|
@@ -238,43 +214,16 @@ engine-side work is not charged to any of them.
 
 ## Reading these numbers honestly
 
-On the same engine podup is fastest in **29 of 29 rows**. Six of those wins
-clear the bar by less than two of podup's standard deviations and are better
-read as "about the same": `deep-chain down` (0.03 sd against podup's sd of
-17.4 ms, gap 0.5 ms), `many-services down` (1.62 sd against sd 44.2 ms, gap
-71.5 ms), `multi-healthcheck down` (1.17 sd against sd 111.6 ms, gap 130.8 ms),
-`network-ipam down` (1.39 sd against sd 13.1 ms, gap 18.1 ms), `single down`
-(1.64 sd against sd 8.1 ms, gap 13.4 ms) and `wide-level down` (1.72 sd
-against sd 148.7 ms, gap 255.8 ms). The other 23 wins clear two standard
-deviations cleanly.
+Some median gaps are small relative to reported variability. One tool's standard deviation does not establish significance or equivalence between tools.
 
-On a second row, `scale down` for podman-compose, the harness refused the cell
-after podman-compose 1.6.0 exited 0 from `down -v` but left `app_2` through
-`app_5`, the pod and the network of its compose project behind, on all 10
-measured iterations (#1947); podup's own number on that row stands on its own.
+`scale down` for podman-compose failed all 10 measured iterations (podman-compose 1.6.0 exited 0 from `down -v` but left `app_2` through `app_5`, the pod and the network of its compose project behind, #1947); the harness recorded the cell as rc=97. podup's own number on that row stands on its own.
 
-Against docker-compose on its own Docker engine, podup is fastest in 28 of 29 rows. The one row it
-does not take is `wide-running-ops exec`, where docker-compose on Docker beats
-podup 50.9 ms to 68.8 ms (gap 17.9 ms against podup's own standard deviation
-of 3.8 ms, about 4.7 sd, narrow in absolute terms because the row is small).
-On every other row dockerd is slower: `wide-level up` 4.52 s against podup's
-1.13 s, `multi-healthcheck up` 1.36 s against 0.40 s, `deep-chain up` 2.57 s
-against 0.36 s, `many-services up` 1.37 s against 0.39 s. The earlier read
-that dockerd wins the teardown of many containers (`wide-level down`,
-`many-services down`) does not hold here: podup is 1.76 s against 2.32 s on
-`wide-level down` and 0.50 s against 0.83 s on `many-services down`. The
-engine wins where the row is small and Podman's per-call overhead shows,
-and loses where many containers have to be brought up or down.
+The Docker-engine comparison (docker-compose on dockerd) is not a tool comparison, since the docker-compose column also folds in the engine difference. Two-variable comparisons do not attribute the difference to the engine; the engine and the tool change together in that column.
 
-**Memory.** podup's peak per command is a median of 6.0 MiB across the 29 rows
-(worst 6.9, `wide-level up`). It is under the 9.0 MiB budget in
-`bench/memory-budget-mib`. #1946 did not reproduce when measured again:
-`podup --version` peaks at 3.3 to 3.7 MB on 5.7.1, 5.10.5 and 5.10.7 alike.
+**Memory.** Median peak RSS across the 29 podup operations is 6.0 MiB; the largest is 6.9 MiB (wide-level up), below `bench/memory-budget-mib`'s 9.0 MiB budget.
 
-podman-compose `config-heavy config` is 554.7 ms here with 1.6.0, on a row that
-does not touch the engine at all, against 113 ms with 1.5.0 in the previous
-run; the regression persists.
+`multi-healthcheck up` still measures healthcheck interval granularity more than tool speed, since the row waits for the healthcheck to flip.
 
-`multi-healthcheck up` still measures healthcheck interval granularity more than
-tool speed, and the `secrets` rows still carry the three API calls per secret at
-`up` and two at `down` that native Podman secrets cost since 3.1.0.
+## Asset chart
+
+<img src="assets/bench.svg" alt="Client peak RSS and command latency for the three tools on the same rootless Podman, from the tables above" width="760">

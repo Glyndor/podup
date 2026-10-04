@@ -92,14 +92,15 @@ Architecture: any
 # KEYRING_URL and GLYNDOR_APT_FPR) must declare `Provides: glyndor-archive-keyring`
 # on its own keyring package, or this relationship cannot be satisfied by it.
 Depends: ${shlibs:Depends}, ${misc:Depends}, podman (>= 5.0), unattended-upgrades, glyndor-archive-keyring
-Description: docker-compose translator and runner for rootless Podman
- podup parses docker-compose.yml files and drives rootless Podman to
- create the equivalent containers, networks and volumes. It provides
- the full Compose workflow (lifecycle, build/push, exec/run, inspection
- and Quadlet generation) as a single static binary with no daemon and
- no Python runtime. Run `podup --help` for the complete command list.
+Description: run Compose projects on rootless Podman
+ podup reads Compose files and drives rootless Podman through its native
+ libpod API to create the containers, networks, volumes and secrets they
+ describe. It covers the Compose lifecycle (up, down, build, push, exec,
+ run, logs and inspection) and exports projects as systemd Quadlet units,
+ as a single binary with no daemon and no Python runtime. Run
+ `podup --help` for the command list.
  .
- It supports compose-spec parsing including YAML anchors, extends,
- include, profiles, env_file and variable substitution, with
- dependency-aware startup ordering, healthcheck conditions, secrets and
- configs, replica scaling, and file-watch mode.
+ It supports YAML anchors, extends, include, profiles, env_file and
+ variable substitution, with dependency-aware startup ordering,
+ healthcheck conditions, secrets and configs, replica scaling and
+ file-watch mode.
