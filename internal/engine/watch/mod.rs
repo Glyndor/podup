@@ -9,23 +9,26 @@
 //! - `restart`: stop and start the container without rebuilding
 //! - `sync+restart`: sync first, then restart
 //! - `sync+exec`: sync, then run the rule's `exec` command inside the container
+//!
+//! The per-rule I/O lives in [`actions`]; placement decisions live in
+//! [`placement`]; the write-back loop lives in [`writeback`]. The dispatch
+//! loop below only owns the watcher plumbing and the per-path decision.
 
+mod actions;
 mod events;
 mod ignore_filter;
 mod placement;
 pub(in crate::engine) mod sync;
 #[cfg(feature = "test-helpers")]
 mod test_helpers;
+mod writeback;
 
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
-use crate::libpod::types::exec::{
-	ExecCreateConfig, ExecCreateResponse, ExecInspect, ExecStartConfig,
-};
-use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
-use futures_util::StreamExt;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
 use tokio::sync::Notify;
@@ -35,9 +38,11 @@ use crate::compose::types::{ComposeFile, WatchAction, WatchRule};
 use crate::error::{ComposeError, Result};
 
 use placement::{
-	is_dispatch_event, join_container_path, mark_dir_ensured, mkdir_p_argv, plan_remove_placement,
-	plan_sync_placement, read_only_target_warning, validate_sync_target, SyncPlacement,
+	is_dispatch_event, join_container_path, plan_sync_placement, read_only_target_warning,
+	validate_sync_target,
 };
+
+use writeback::{effective_mounts, writes_back, EffectiveMount};
 
 use super::Engine;
 
@@ -68,10 +73,10 @@ struct RuleEntry {
 	/// against the path relative to the build context, not to the rule's
 	/// `path`, because that is what a `.dockerignore` is written against.
 	build_context_patterns: Vec<String>,
-	/// The rule's target is already shared through a bind mount, so the
-	/// sync step is provably a no-op; only the restart or exec of a
-	/// `sync+restart` / `sync+exec` action still runs.
-	sync_redundant: bool,
+	/// The service's effective mounts (bind sources + targets + read-only
+	/// flags), shared across every rule of the same service. The per-path
+	/// write-back check runs against this vector.
+	mounts: Arc<Vec<EffectiveMount>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -89,12 +94,17 @@ impl Engine {
 	/// exit. See the exit-status section of `docs/commands.md`.
 	pub async fn watch(&self, file: &ComposeFile) -> Result<()> {
 		let mut rule_entries: Vec<RuleEntry> = Vec::new();
-		// Number of sync-family rules that were rejected because the watched
-		// path is the source of a bind mount the rule also targets. When every
-		// rule was rejected this way, the generic "no develop.watch rules
-		// configured" message is misleading; a separate error names the cause
-		// and points the user at the per-rule warnings above.
-		let mut bind_feedback_rejected = 0usize;
+
+		// Pre-compute the effective mounts per service. One `EffectiveMount`
+		// vector is enough for every rule of the service; sharing it via `Arc`
+		// keeps the per-rule memory down and avoids re-canonicalising the same
+		// bind sources per rule.
+		let mut service_mounts: HashMap<String, Arc<Vec<EffectiveMount>>> = HashMap::new();
+		for (name, service) in &file.services {
+			service_mounts
+				.entry(name.clone())
+				.or_insert_with(|| Arc::new(effective_mounts(service, &self.base_dir)));
+		}
 
 		for (name, service) in &file.services {
 			if let Some(dev) = &service.develop {
@@ -109,30 +119,7 @@ impl Engine {
 					// the watcher can still set up.
 					let joined = self.base_dir.join(&rule.path);
 					let abs = std::fs::canonicalize(&joined).unwrap_or(joined);
-					// A sync rule whose target sits inside a bind-mounted directory would
-					// re-upload every change straight back into the watched
-					// tree. Drop the rule (a plain `sync`) or keep it with
-					// `sync_redundant = true` (a `sync+restart` /
-					// `sync+exec`) so the restart or exec still fires
-					// (#1984). Rebuild / restart rules have no target.
-					let mut sync_redundant = false;
-					if let Some(target) = &rule.target {
-						if let Some(msg) = placement::bind_mount_feedback(
-							name,
-							service,
-							&self.base_dir,
-							&abs,
-							target,
-							rule.action.clone(),
-						) {
-							warn!("{msg}");
-							if matches!(rule.action, WatchAction::Sync) {
-								bind_feedback_rejected += 1;
-								continue;
-							}
-							sync_redundant = true;
-						}
-					}
+
 					// A service with a local `build:` carries a `.dockerignore`
 					// the rule should pick up as implicit ignore content, per
 					// the Compose Spec. Load it once per rule here so the
@@ -140,6 +127,10 @@ impl Engine {
 					// file read on every change.
 					let (build_context_abs, build_context_patterns) =
 						ignore_filter::local_build_context_patterns(&self.base_dir, service);
+					let mounts = service_mounts
+						.get(name)
+						.cloned()
+						.unwrap_or_else(|| Arc::new(Vec::new()));
 					rule_entries.push(RuleEntry {
 						service_name: name.clone(),
 						container_name: self.first_replica_name(name, service),
@@ -147,27 +138,46 @@ impl Engine {
 						abs_path: abs,
 						build_context_abs,
 						build_context_patterns,
-						sync_redundant,
+						mounts,
 					});
 				}
 			}
 		}
 
 		if rule_entries.is_empty() {
-			// Two distinct ways to end up with no rules: the compose file
-			// has no `develop.watch` entries at all (the docker-compose
-			// behaviour), or every entry was a self-feeding sync rule
-			// that this code rejected with a warning. The first case
-			// keeps the original message; the second points the user at
-			// the per-rule warnings already printed above.
-			if bind_feedback_rejected > 0 {
-				return Err(ComposeError::Watch(
-					"every develop.watch rule was skipped; see the warnings above".into(),
-				));
-			}
 			return Err(ComposeError::Watch(
 				"no develop.watch rules configured".into(),
 			));
+		}
+
+		// Startup warning: a sync rule whose root would write back through one
+		// of the service's bind mounts. The copy itself is dropped per-path by
+		// `writes_back` (the file is already shared), but the operator should
+		// know up front so a missing copy on a fresh start is not mysterious.
+		// The warning is once per rule, not per event.
+		for entry in &rule_entries {
+			let Some(target) = &entry.rule.target else {
+				continue;
+			};
+			let container_path = join_container_path(&plan_sync_placement(
+				&entry.abs_path,
+				&entry.abs_path,
+				target,
+			));
+			if let Some(host) = writes_back(&entry.mounts, &container_path, &entry.abs_path) {
+				let ending = match entry.rule.action {
+					WatchAction::SyncAndRestart => "; the restart still runs",
+					WatchAction::SyncAndExec => "; the exec still runs",
+					_ => "",
+				};
+				warn!(
+					"{service}: sync target {target} maps back into the watched path ({host}) through a bind mount; \
+					 copies that would land there are skipped so they cannot trigger themselves, \
+					 and paths under a more specific mount still sync{ending}",
+					service = entry.service_name,
+					host = host.display(),
+				);
+			}
 		}
 
 		// Track which (container, dest) directories have been ensured so the
@@ -393,282 +403,6 @@ impl Engine {
 					self.watch_exec(&entry.container_name, exec.command.clone())
 						.await?;
 				}
-			}
-		}
-		Ok(())
-	}
-
-	/// Run the sync step for a rule unless the target is shared through a
-	/// bind mount the rule also targets (a `sync_redundant` rule), or the
-	/// rule has no target at all (only `rebuild`/`restart` reach this path
-	/// when the rule carries no `target`, and those never call in here).
-	async fn maybe_sync(
-		&self,
-		entry: &RuleEntry,
-		path: &Path,
-		ensured: &mut HashSet<(String, String)>,
-	) -> Result<()> {
-		if entry.sync_redundant {
-			return Ok(());
-		}
-		let Some(target) = &entry.rule.target else {
-			return Ok(());
-		};
-		self.dispatch_sync(
-			&entry.container_name,
-			&entry.abs_path,
-			path,
-			target,
-			ensured,
-		)
-		.await
-	}
-
-	/// Pick the right sync dispatch for the changed path: copy on a change,
-	/// remove on a deletion. The decision is taken from the host filesystem
-	/// rather than the event kind so a debounce batch that contains a write
-	/// and a remove of the same file inside 100 ms dispatches each path
-	/// correctly: the file the host still has gets uploaded, the file the
-	/// host has dropped gets removed. Sync-family actions all funnel
-	/// through here so the removal path is owned in one place.
-	async fn dispatch_sync(
-		&self,
-		container: &str,
-		root: &Path,
-		changed: &Path,
-		target: &str,
-		ensured: &mut HashSet<(String, String)>,
-	) -> Result<()> {
-		match events::sync_op_for(changed) {
-			Ok(events::SyncOp::Upload) => {
-				self.sync_to_container(container, root, changed, target, ensured)
-					.await
-			}
-			Ok(events::SyncOp::Remove) => {
-				self.remove_from_container(container, root, changed, target)
-					.await
-			}
-			Err(e) => Err(ComposeError::Watch(format!(
-				"cannot read {}: {e}; leaving the container copy as it is",
-				changed.display()
-			))),
-		}
-	}
-
-	// -----------------------------------------------------------------------
-	// Action helpers
-	// -----------------------------------------------------------------------
-
-	async fn sync_to_container(
-		&self,
-		container: &str,
-		root: &Path,
-		changed: &Path,
-		target: &str,
-		ensured: &mut HashSet<(String, String)>,
-	) -> Result<()> {
-		let SyncPlacement {
-			entry_name,
-			dest_dir,
-		} = plan_sync_placement(root, changed, target);
-		// `build_sync_tar_stream` walks the changed directory (possibly many
-		// entries) and gzips it inside a `spawn_blocking` task that pipes the
-		// bytes through a bounded channel to the PUT body. On an async
-		// runtime, doing that on the calling task would block the executor
-		// for the duration; a multi-megabyte tree turns a one-line edit into
-		// a freeze that the rest of `watch`'s I/O cannot escape. Same shape
-		// as the `cp` packer; only the wrapper (gzip) and the walk
-		// (`sync_walk`) differ. The recorded entry list rides in
-		// `PackedStream.producer` and is what `put_archive_verified` reads
-		// back to confirm the upload landed.
-		let packed = super::copy::build_sync_tar_stream_for_watch(
-			changed,
-			Path::new(&entry_name),
-			crate::engine::copy::CpByteCounter::new().inner().clone(),
-		);
-
-		// docker compose watch creates the sync target directory when it is
-		// missing; match that so a sync to a not-yet-existing path works instead
-		// of failing the archive PUT. Best-effort: if mkdir is unavailable the
-		// PUT below still surfaces the real error. Run it once per (container,
-		// dest) so repeated syncs to the same target skip the redundant exec.
-		if mark_dir_ensured(ensured, container, &dest_dir) {
-			let _ = self.watch_exec(container, mkdir_p_argv(&dest_dir)).await;
-		}
-
-		// Shared with `cp`: the same archive upload, and the same #1097 Podman-6
-		// apply-then-close handling (the endpoint applies the tar then closes
-		// without a response; the upload is confirmed by the entry matching what
-		// was sent). `watch` used to have its own copy of this PUT, which is how
-		// the two drifted apart and left sync unfixed on Podman 6.
-		let uploaded_kind = crate::engine::copy::uploaded_entry_kind(changed, false);
-		self.put_archive_verified(container, &dest_dir, &entry_name, packed, uploaded_kind)
-			.await?;
-
-		info!("synced {} -> {target}", changed.display());
-		Ok(())
-	}
-
-	/// Mirror a host-side removal into the container.
-	///
-	/// Bounded: the path inside the container is computed from the rule's
-	/// `path` and `target` only (no caller-supplied path), and only entries
-	/// inside the target directory are issued. A removal of the target
-	/// directory itself is refused; that is a different operation (the entire
-	/// mapped area), not an entry delete, and would otherwise `rm -rf` the
-	/// destination.
-	///
-	/// The container-side deletion is a `rm -rf` exec rather than a DELETE
-	/// against the archive endpoint. libpod's archive DELETE was answered
-	/// with `405 Method Not Allowed` on Podman 5.7.0 (the endpoint documents
-	/// only GET/PUT/HEAD), and the engine contract here is "the file is
-	/// gone inside the container"; both paths satisfy it. Matching docker
-	/// compose's own watch handler (#17 in their tar syncer upstream), which
-	/// uses `rm -rf` for the same reason.
-	async fn remove_from_container(
-		&self,
-		container: &str,
-		root: &Path,
-		removed: &Path,
-		target: &str,
-	) -> Result<()> {
-		let placement = plan_remove_placement(root, removed, target);
-		let container_path = join_container_path(&placement);
-		if container_path == "/" || container_path.trim() == placement.dest_dir.trim() {
-			// Refuse to delete the rule's own target directory; see the
-			// function-level note. A single-file rule's `dest_dir` is the
-			// parent of the entry (e.g. `/app`), so this guard fires when
-			// the rule target is a bare directory and the changed path is
-			// the directory itself, which is what the function-level note
-			// describes.
-			return Err(ComposeError::Watch(format!(
-				"sync: refusing to remove the rule target directory {container_path}"
-			)));
-		}
-		// `rm -f` (not `rm -rf`): the path is bounded by the rule's
-		// `path`/`target` so it cannot reach outside the destination, and
-		// refusing to recurse keeps the operation scoped to the single
-		// removed entry. `rm -f` swallows the missing-file case (the file
-		// was already gone inside the container, which is fine).
-		let argv = vec![
-			"rm".to_string(),
-			"-f".to_string(),
-			"--".to_string(),
-			container_path.clone(),
-		];
-		self.watch_exec(container, argv)
-			.await
-			.map_err(|e| ComposeError::Watch(format!("sync: remove {container_path}: {e}")))?;
-		info!(
-			"removed {container_path} from {container} ({})",
-			removed.display()
-		);
-		Ok(())
-	}
-
-	async fn watch_rebuild(&self, file: &ComposeFile, service_name: &str) -> Result<()> {
-		let service = match file.services.get(service_name) {
-			Some(s) => s,
-			None => return Ok(()),
-		};
-		info!("rebuilding {service_name}");
-		self.build_service(
-			service_name,
-			service,
-			file,
-			&crate::engine::BuildOptions::default(),
-		)
-		.await?;
-		// Inline secrets/configs are materialised up front rather than in the
-		// per-container path; ensure they exist before recreating the container.
-		self.create_project_secrets(file).await?;
-		let container_name = self.first_replica_name(service_name, service);
-		self.create_and_start(&container_name, service_name, service, file, true)
-			.await
-	}
-
-	async fn watch_restart(&self, container_name: &str) -> Result<()> {
-		info!("restarting {container_name}");
-		// Single atomic restart (no visible stopped window) instead of stop+start.
-		let restart_path = format!(
-			"{API_PREFIX}/containers/{}/restart?timeout=5",
-			urlencoded(container_name)
-		);
-		self.client
-			.post_empty_ok(&restart_path)
-			.await
-			.map_err(ComposeError::Podman)?;
-		Ok(())
-	}
-
-	/// Run `cmd` inside `container_name` via libpod's exec endpoint, streaming its
-	/// output to the current process's stdout/stderr.
-	///
-	/// A non-zero exit code is returned as `Err(ComposeError::Watch(...))` so a
-	/// failed container-side step (e.g. `rm -f` denied) is not silently logged
-	/// as done (#1897). Callers that want best-effort behaviour (the
-	/// per-target `mkdir -p`) can ignore the result; others propagate it and
-	/// the watch event loop logs `watch action failed` without aborting the
-	/// session.
-	async fn watch_exec(&self, container_name: &str, cmd: Vec<String>) -> Result<()> {
-		// Keep the joined argv before `cmd` moves into `ExecCreateConfig`, so a
-		// non-zero exit can quote it in the error message.
-		let cmd_display = cmd.join(" ");
-		let exec_cfg = ExecCreateConfig {
-			cmd: Some(cmd),
-			attach_stdout: Some(true),
-			attach_stderr: Some(true),
-			..Default::default()
-		};
-		let create_path = format!(
-			"{API_PREFIX}/containers/{}/exec",
-			urlencoded(container_name)
-		);
-		let resp: ExecCreateResponse = self
-			.client
-			.post_json(&create_path, &exec_cfg)
-			.await
-			.map_err(ComposeError::Podman)?;
-
-		let start_cfg = ExecStartConfig {
-			detach: false,
-			tty: false,
-		};
-		let start_path = format!("{API_PREFIX}/exec/{}/start", urlencoded(&resp.id));
-		let start_resp = self
-			.client
-			.post_json_stream(&start_path, &start_cfg)
-			.await
-			.map_err(ComposeError::Podman)?;
-		let mut stream = crate::libpod::parse_multiplexed(start_resp.into_body());
-
-		while let Some(msg) = stream.next().await {
-			match msg {
-				Ok(LogOutput::StdOut { message }) => {
-					print!("{}", String::from_utf8_lossy(&message));
-				}
-				Ok(LogOutput::StdErr { message }) => {
-					eprint!("{}", String::from_utf8_lossy(&message));
-				}
-				Err(_) => break,
-			}
-		}
-
-		// The stream ending does not imply the process finished cleanly; read
-		// the exit code so a denied `rm -f` (or any non-zero exit) surfaces as
-		// an error rather than a successful no-op (#1897). The inspect request
-		// matches `Engine::exec_hook`'s shape: GET exec/json → ExecInspect.
-		let inspect_path = format!("{API_PREFIX}/exec/{}/json", urlencoded(&resp.id));
-		let inspect: ExecInspect = self
-			.client
-			.get_json(&inspect_path)
-			.await
-			.map_err(ComposeError::Podman)?;
-		if let Some(code) = inspect.exit_code {
-			if code != 0 {
-				return Err(ComposeError::Watch(format!(
-					"`{cmd_display}` exited with status {code}"
-				)));
 			}
 		}
 		Ok(())

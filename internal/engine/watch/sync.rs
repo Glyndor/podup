@@ -21,6 +21,7 @@ use crate::error::{ComposeError, Result};
 
 use crate::engine::copy::pack_common::{record_one, walk, KindDispatch};
 use crate::engine::copy::verify::SentEntry;
+use crate::engine::walk::walk_dir;
 
 /// Pack `src` into a gzipped tar, storing its top-level entry under
 /// `entry_name`.
@@ -37,6 +38,14 @@ use crate::engine::copy::verify::SentEntry;
 /// `sent` is the recorder, parallel to the cp packer's recorder; the
 /// post-PUT confirmation reads it back once the bytes are gone.
 ///
+/// `skip` is consulted for every entry that would otherwise be recorded
+/// (the root entry and each descendant of a directory), with the entry
+/// name the packer would record it under. When `skip` returns `true` the
+/// entry is dropped: a directory that is skipped is still walked, so a
+/// safe deeper mount that sits below a skipped directory still receives
+/// its subtree. The archive tests and any caller that wants today's
+/// behaviour pass `&|_| false`.
+///
 /// Watch sync stores symlinks as links: a symlink inside the watched tree
 /// would otherwise copy the contents of its (possibly out-of-tree) target
 /// into the container. The tar builder is told via
@@ -48,8 +57,33 @@ pub(in crate::engine) fn build_sync_tar<W: Write>(
 	entry_name: &Path,
 	tar: &mut tar::Builder<W>,
 	sent: &mut Vec<SentEntry>,
+	skip: &dyn Fn(&Path) -> bool,
 ) -> Result<()> {
-	if src.is_dir() {
+	// `symlink_metadata` does not follow symlinks: a watched path that was
+	// replaced by a symlink to a directory outside the rule keeps its link
+	// shape and is stored as a link, not dereferenced into the link's target.
+	// `is_dir` would follow the link and read the target's directory layout,
+	// turning the upload into the contents of an out-of-tree directory
+	// (#1985).
+	let src_is_dir = src.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
+	if src_is_dir {
+		// Directory rule: when `entry_name` is not empty, the archive carries
+		// the directory itself (so a file replaced by an empty directory is
+		// reflected as a directory in the container, #1985) followed by every
+		// descendant re-rooted under `entry_name`. An empty `entry_name` means
+		// "the rule's own root"; the initial sync puts the descendants at the
+		// target without a wrapper entry.
+		if !entry_name.as_os_str().is_empty() && !skip(entry_name) {
+			record_one(
+				tar,
+				sent,
+				entry_name,
+				src,
+				KindDispatch::Dir,
+				false,
+				watch_tar,
+			)?;
+		}
 		for abs in walk::walk_dir(src).map_err(watch_io)? {
 			let rel = abs
 				.strip_prefix(src)
@@ -57,6 +91,13 @@ pub(in crate::engine) fn build_sync_tar<W: Write>(
 			// Re-root each descendant under `entry_name` so the directory lands at
 			// the rule target with its in-tree layout preserved.
 			let name = entry_name.join(rel);
+			// The filter is the gate the watch loop uses to refuse entries that
+			// would land in a deeper writable bind that maps back into the
+			// watched tree. A directory the filter drops is still walked: a
+			// safe deeper mount may sit below it.
+			if skip(&name) {
+				continue;
+			}
 			// Classify without following symlinks so a symlink-to-dir is stored as
 			// a link, not dereferenced.
 			let is_dir = abs.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
@@ -74,7 +115,7 @@ pub(in crate::engine) fn build_sync_tar<W: Write>(
 				)?;
 			}
 		}
-	} else {
+	} else if !skip(entry_name) {
 		record_one(
 			tar,
 			sent,
@@ -87,6 +128,54 @@ pub(in crate::engine) fn build_sync_tar<W: Write>(
 	}
 
 	Ok(())
+}
+
+/// True when the upload for `src` under `entry_name` would record at least
+/// one entry that the per-entry `skip` filter does not drop. Used by the
+/// watch sync to short-circuit an upload whose every entry maps back into
+/// the watched tree: a tar that the filter stripped of every record would
+/// still trigger the `mkdir -p` on the destination (creating a directory
+/// through the bind) and would fail its verification step, the failure
+/// would stop the restart or exec of a `sync+restart` / `sync+exec`
+/// action, and `sync_all` would report the rule as failed.
+///
+/// The rules mirror [`build_sync_tar`]:
+/// - `src` is a directory: the root entry is permitted when the filter
+///   accepts `entry_name` (an empty `entry_name` checks the destination
+///   directory itself), plus every walked descendant re-rooted under
+///   `entry_name` whose joined name the filter accepts. A directory the
+///   filter drops is still walked, so a safe deeper mount below a
+///   loop-causing directory is still recorded.
+/// - `src` is a single file: the file is permitted when the filter
+///   accepts `entry_name`.
+///
+/// `src_is_dir` is read with `symlink_metadata` for the same reason
+/// `build_sync_tar` uses it: a symlink that points at a directory
+/// outside the rule must be uploaded as a link, not as the contents of
+/// its target (#1985).
+pub(in crate::engine) fn has_permitted_entry(
+	src: &Path,
+	entry_name: &Path,
+	skip: &dyn Fn(&Path) -> bool,
+) -> std::io::Result<bool> {
+	let src_is_dir = src.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
+	if src_is_dir {
+		if !skip(entry_name) {
+			return Ok(true);
+		}
+		for abs in walk_dir(src)? {
+			let rel = abs.strip_prefix(src).map_err(|e| {
+				std::io::Error::other(format!("path strip: {}: {e}", abs.display()))
+			})?;
+			let name = entry_name.join(rel);
+			if !skip(&name) {
+				return Ok(true);
+			}
+		}
+	} else if !skip(entry_name) {
+		return Ok(true);
+	}
+	Ok(false)
 }
 
 // ---------------------------------------------------------------------------
@@ -175,3 +264,7 @@ pub(in crate::engine) fn legacy_project_relative_included(path: &str, patterns: 
 #[cfg(test)]
 #[path = "sync_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "sync_filter_tests.rs"]
+mod filter_tests;

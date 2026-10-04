@@ -10,7 +10,9 @@
 impl crate::engine::Engine {
 	/// Test seam: copy `src` into `container` at `target` via the watch sync
 	/// path, treating `src` as both the watch-rule root and the changed entry
-	/// (as the initial-sync path does).
+	/// (as the initial-sync path does). No mounts / watched root are wired, so
+	/// the per-entry filter is a no-op: the test seam only exercises the
+	/// upload mechanics, not the write-back gate.
 	pub async fn test_sync_to_container(
 		&self,
 		container: &str,
@@ -18,21 +20,24 @@ impl crate::engine::Engine {
 		target: &str,
 	) -> crate::error::Result<()> {
 		let mut ensured = std::collections::HashSet::new();
-		self.sync_to_container(container, src, src, target, &mut ensured)
+		let empty_mounts: &[super::writeback::EffectiveMount] = &[];
+		self.sync_to_container(container, src, src, target, &mut ensured, empty_mounts, src)
 			.await
 	}
 
 	/// Test seam: delete the entry `path` would have written under `target`
 	/// from `container`. Mirrors the live `dispatch_action` path that runs on
-	/// a `Remove` notify event.
+	/// a `Remove` notify event. Computes the placement with the same
+	/// helper the dispatch loop uses, so the test seam and the live path
+	/// agree on which container path is being deleted.
 	pub async fn test_remove_from_container(
 		&self,
 		container: &str,
 		src: &std::path::Path,
 		target: &str,
 	) -> crate::error::Result<()> {
-		self.remove_from_container(container, src, src, target)
-			.await
+		let placement = super::placement::plan_remove_placement(src, src, target);
+		self.remove_from_container(container, placement, src).await
 	}
 
 	/// Test seam: run the watch restart action against `container_name`.

@@ -231,7 +231,7 @@ fn make_entry(service: &str, path: &str, action: WatchAction, initial_sync: bool
 		abs_path: std::path::PathBuf::from(path),
 		build_context_abs: None,
 		build_context_patterns: Vec::new(),
-		sync_redundant: false,
+		mounts: std::sync::Arc::new(Vec::new()),
 	}
 }
 
@@ -260,23 +260,6 @@ fn rules_not_recovered_lists_only_what_recovery_did_not_run() {
 	);
 	// And the recovered rule is not there.
 	assert!(!got.iter().any(|s| s == "web:src"));
-}
-
-/// A `sync+exec` rule with `initial_sync: true` whose `sync_redundant`
-/// flag is set never has its sync step run inside `sync_all`: the rule is
-/// dropped before any upload is attempted. From the recovery summary's
-/// perspective it is still not a "plain sync + initial_sync" rule, so it
-/// is named in the list the way any other non-recovered rule is. A plain
-/// sync rule with the same flags cannot exist: the watch loop drops the
-/// rule entirely on a self-feeding bind, it does not carry it forward as a
-/// `sync_redundant` entry, so this assertion uses `sync+exec` as the
-/// stand-in.
-#[test]
-fn rules_not_recovered_includes_sync_redundant_sync_plus_exec() {
-	let mut entry = make_entry("web", "exec_rule", WatchAction::SyncAndExec, true);
-	entry.sync_redundant = true;
-	let got = super::super::Engine::rules_not_recovered(&[entry], &[]);
-	assert_eq!(got, vec!["web:exec_rule".to_string()]);
 }
 
 #[test]

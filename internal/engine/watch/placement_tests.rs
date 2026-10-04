@@ -1,11 +1,12 @@
 use super::{
-	bind_mount_feedback, is_dispatch_event, join_container_path, mark_dir_ensured, mkdir_p_argv,
-	plan_remove_placement, plan_sync_placement, read_only_target_warning, target_is_on_a_mount,
-	validate_sync_target,
+	container_rel, is_dispatch_event, join_container_path, mark_dir_ensured, mkdir_p_argv,
+	normalise_container_path, plan_remove_placement, plan_sync_placement, read_only_target_warning,
+	target_is_on_a_mount, validate_sync_target,
 };
 use crate::compose::types::{Service, WatchAction, WatchRule};
 use std::collections::HashSet;
 use std::fs;
+use std::path::Path;
 use tempfile::tempdir;
 
 fn rule(action: WatchAction, target: Option<&str>) -> WatchRule {
@@ -237,178 +238,60 @@ fn read_only_target_warning_cases() {
 	assert_eq!(read_only_target_warning("web", &svc, "/app"), None);
 }
 
-// --- bind_mount_feedback --------------------------------------------------
+// --- container_rel ------------------------------------------------------
 
-fn bind_feedback_for(svc_yaml: &str) -> (tempfile::TempDir, std::path::PathBuf, Service) {
-	let dir = tempfile::tempdir().unwrap();
-	fs::create_dir(dir.path().join("src")).unwrap();
-	fs::create_dir(dir.path().join("src/sub")).unwrap();
-	fs::create_dir(dir.path().join("other")).unwrap();
-	let base = dir.path().to_path_buf();
-	let svc: Service = serde_yaml::from_str(svc_yaml).unwrap();
-	(dir, base, svc)
-}
-
-fn bind_feedback_call(
-	svc: &Service,
-	base: &std::path::Path,
-	rule_abs: &std::path::Path,
-	target: &str,
-) -> Option<String> {
-	bind_mount_feedback("web", svc, base, rule_abs, target, WatchAction::Sync)
-}
-
+/// `Path::join` joins with the platform separator; `container_rel` must
+/// always produce POSIX-style `/`. The chain `a/b/c` built from joining on
+/// a Linux host is `a/b/c`; the same chain on Windows would otherwise be
+/// `a\b\c`. The test pins the joined form.
 #[test]
-fn bind_mount_feedback_flags_short_form_feedback_loop() {
-	// `volumes: ["./src:/app"]` bind-mounts the rule's path into the
-	// container at the rule's target. Any change would write back into
-	// the watched tree; the function must flag it.
-	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - ./src:/app\n");
-	let rule_abs = base.join("src");
-	let msg = bind_feedback_call(&svc, &base, &rule_abs, "/app")
-		.expect("feedback expected for a self-feeding sync rule");
-	assert!(
-		msg.contains("/app"),
-		"message must name the target; got {msg:?}"
-	);
-	assert!(
-		msg.contains("bind-mounted"),
-		"message must name the cause; got {msg:?}"
-	);
-	assert!(
-		msg.contains("so this rule is skipped"),
-		"message must carry the ending passed by the caller; got {msg:?}"
-	);
-	drop(dir);
+fn container_rel_joins_components_with_posix_separator() {
+	let p = Path::new("a").join("b").join("c");
+	assert_eq!(container_rel(&p), "a/b/c");
 }
 
+/// An empty `Path` produces an empty string: the per-entry upload is the
+/// one that has nothing to extract, not a sentinel value.
 #[test]
-fn bind_mount_feedback_flags_subpath_under_feedback_source() {
-	// The rule is a descendant of the bind source: `./src` is bind-mounted
-	// to `/app`, and the rule watches `./src/sub` and syncs to `/app/sub`.
-	// The same write-back loop applies.
-	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - ./src:/app\n");
-	let rule_abs = base.join("src/sub");
-	let msg = bind_feedback_call(&svc, &base, &rule_abs, "/app/sub")
-		.expect("feedback expected for a subpath of a self-feeding sync rule");
-	assert!(msg.contains("/app/sub"));
-	drop(dir);
+fn container_rel_empty_path_is_empty_string() {
+	assert_eq!(container_rel(Path::new("")), "".to_string());
 }
 
+/// A single component name is itself, no separators added.
 #[test]
-fn bind_mount_feedback_allows_unrelated_target() {
-	// Same bind mount, but the rule syncs to a path the bind does not
-	// cover. The function must not warn.
-	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - ./src:/app\n");
-	let rule_abs = base.join("src");
-	assert_eq!(bind_feedback_call(&svc, &base, &rule_abs, "/srv"), None);
-	drop(dir);
+fn container_rel_single_component_is_itself() {
+	assert_eq!(container_rel(Path::new("hello")), "hello");
 }
 
+/// A non-UTF-8 component used to be silently dropped, which collapsed
+/// `/p/<0xff>/keep.txt` to `keep.txt` and could overwrite an unrelated
+/// container file. The lossy form replaces the non-UTF-8 byte with
+/// `U+FFFD` so every component still occupies a slot in the path.
+#[cfg(unix)]
 #[test]
-fn bind_mount_feedback_allows_unrelated_source() {
-	// A bind mount over a different host directory must not trip the
-	// check on a `./src` rule, even when the target matches.
-	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - ./other:/app\n");
-	let rule_abs = base.join("src");
-	assert_eq!(bind_feedback_call(&svc, &base, &rule_abs, "/app"), None);
-	drop(dir);
+fn container_rel_keeps_non_utf8_components_as_replacement_chars() {
+	use std::ffi::OsStr;
+	use std::os::unix::ffi::OsStrExt;
+	let p = Path::new(OsStr::from_bytes(b"\xff")).join("keep.txt");
+	assert_eq!(container_rel(&p), "\u{FFFD}/keep.txt");
 }
 
+// --- normalise_container_path -------------------------------------------
+
+/// `..` removes the previous component, never climbing above the root.
 #[test]
-fn bind_mount_feedback_allows_named_volume() {
-	// A named volume mounts the volume manager's data, not the host
-	// path; the rule's source is therefore not shared, and the function
-	// must not warn. The named volume happens to be called `src` here,
-	// not `data`: the previous fixture of `data:/app` passed even when
-	// named volumes were misclassified as binds, because `data` looked
-	// like a name, not a path. Naming the volume `src` makes the test
-	// bite that bug.
-	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - src:/app\n");
-	let rule_abs = base.join("src");
-	assert_eq!(bind_feedback_call(&svc, &base, &rule_abs, "/app"), None);
-	drop(dir);
+fn normalise_container_path_dotdot_drops_the_previous_component() {
+	assert_eq!(normalise_container_path("/", "a/../b"), "/b");
 }
 
+/// A path that resolves to the root is `/`.
 #[test]
-fn bind_mount_feedback_flags_long_form_bind() {
-	// The long form `type: bind, source: ./src, target: /app` is a
-	// direct equivalent of the short form and must trip the same check.
-	let (dir, base, svc) = bind_feedback_for(
-		"image: x\nvolumes:\n  - type: bind\n    source: ./src\n    target: /app\n",
-	);
-	let rule_abs = base.join("src");
-	let msg = bind_feedback_call(&svc, &base, &rule_abs, "/app")
-		.expect("long-form bind source must trip the feedback check");
-	assert!(msg.contains("bind-mounted"));
-	drop(dir);
+fn normalise_container_path_full_climb_returns_root() {
+	assert_eq!(normalise_container_path("/", "a/../.."), "/");
 }
 
-/// A read-only bind cannot write back: the sync fails with a
-/// read-only error, not with a fresh write that re-fires the watcher.
-/// The function must NOT flag the rule in that case, because there is
-/// no loop to break.
+/// `.` components are dropped, leaving the rest unchanged.
 #[test]
-fn bind_mount_feedback_allows_short_form_ro_bind() {
-	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - ./src:/app:ro\n");
-	let rule_abs = base.join("src");
-	assert_eq!(bind_feedback_call(&svc, &base, &rule_abs, "/app"), None);
-	drop(dir);
-}
-
-#[test]
-fn bind_mount_feedback_allows_long_form_read_only_bind() {
-	let (dir, base, svc) = bind_feedback_for(
-		"image: x\nvolumes:\n  - type: bind\n    source: ./src\n    target: /app\n    read_only: true\n",
-	);
-	let rule_abs = base.join("src");
-	assert_eq!(bind_feedback_call(&svc, &base, &rule_abs, "/app"), None);
-	drop(dir);
-}
-
-/// A sibling mount covers the rule's target more specifically than the
-/// loop-matching bind: `./src:/app` matches the rule `<base>/src` ->
-/// `/app`, but `cache:/app/cache` is more specific, and the rule
-/// `<base>/src/cache` -> `/app/cache` lands in the sibling. Without the
-/// more-specific check the operator sees a warning they have to
-/// dismiss even though the rule is safe.
-#[test]
-fn bind_mount_feedback_more_specific_sibling_suppresses_warning() {
-	let dir = tempfile::tempdir().unwrap();
-	let base = dir.path().to_path_buf();
-	fs::create_dir(base.join("src")).unwrap();
-	fs::create_dir(base.join("src/cache")).unwrap();
-	let svc: Service =
-		serde_yaml::from_str("image: x\nvolumes:\n  - ./src:/app\n  - cache:/app/cache\n").unwrap();
-	// The cache rule: lands in `cache:/app/cache`, not the bind.
-	assert_eq!(
-		bind_feedback_call(&svc, &base, &base.join("src/cache"), "/app/cache"),
-		None
-	);
-	// The root rule still loops against the bind.
-	assert!(bind_feedback_call(&svc, &base, &base.join("src"), "/app").is_some());
-	drop(dir);
-}
-
-/// A tmpfs at the same specific path plays the same role as a more
-/// specific named volume: the rule's upload lands in the tmpfs, not in
-/// the bind, so the loop check must not warn. Without tmpfs in the
-/// sibling set the operator sees a false-positive warning here.
-#[test]
-fn bind_mount_feedback_more_specific_tmpfs_sibling_suppresses_warning() {
-	let dir = tempfile::tempdir().unwrap();
-	let base = dir.path().to_path_buf();
-	fs::create_dir(base.join("src")).unwrap();
-	fs::create_dir(base.join("src/cache")).unwrap();
-	let svc: Service =
-		serde_yaml::from_str("image: x\nvolumes:\n  - ./src:/app\ntmpfs:\n  - /app/cache\n")
-			.unwrap();
-	// The cache rule: lands in the tmpfs, not the bind.
-	assert_eq!(
-		bind_feedback_call(&svc, &base, &base.join("src/cache"), "/app/cache"),
-		None
-	);
-	// The root rule still loops against the bind.
-	assert!(bind_feedback_call(&svc, &base, &base.join("src"), "/app").is_some());
-	drop(dir);
+fn normalise_container_path_drops_dot_components() {
+	assert_eq!(normalise_container_path("/", "a/./b"), "/a/b");
 }
