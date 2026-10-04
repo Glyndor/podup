@@ -317,6 +317,42 @@ async fn poll_container_file(
 	false
 }
 
+/// Whether `path` exists inside `container` (as a file, directory, or
+/// dangling symlink). `Some(true)` means present, `Some(false)` means
+/// absent, `None` means the exec failed or the script produced
+/// something other than the expected `present` / `absent` line.
+///
+/// The previous shape ran `ls <path>` and treated any non-zero exit as
+/// "absent", which a transient exec failure (the exec endpoint
+/// returning an error, the container being briefly unreachable, the
+/// path carrying characters busybox `ls` rejects) reads as a deletion.
+/// The script below uses `[ -e "$1" ] || [ -L "$1" ]` for the
+/// existence check (covers regular files, directories, and dangling
+/// symlinks alike), and the helper treats anything other than an exact
+/// `present` / `absent` line as "unknown" rather than silently picking
+/// one of the two.
+async fn container_path_present(engine: &Engine, cname: &str, path: &str) -> Option<bool> {
+	let script = "if [ -e \"$1\" ] || [ -L \"$1\" ]; then echo present; else echo absent; fi";
+	let out = engine
+		.test_exec_capture(
+			cname,
+			vec![
+				"sh".into(),
+				"-c".into(),
+				script.into(),
+				"sh".into(),
+				path.into(),
+			],
+		)
+		.await
+		.ok()?;
+	match out.trim() {
+		"present" => Some(true),
+		"absent" => Some(false),
+		_ => None,
+	}
+}
+
 /// Poll the test's condition until it holds or `timeout` elapses, while
 /// watching the spawned watch task. On every tick the helper checks
 /// `JoinHandle::is_finished()`; if the task completed, the helper awaits it
@@ -498,6 +534,10 @@ mod secrets;
 #[cfg(feature = "test-helpers")]
 #[path = "engine_integration/watch.rs"]
 mod watch_tests;
+
+#[cfg(all(unix, feature = "test-helpers"))]
+#[path = "engine_integration/watch_batch.rs"]
+mod watch_batch;
 
 #[cfg(all(unix, feature = "test-helpers"))]
 #[path = "engine_integration/watch_sparse.rs"]

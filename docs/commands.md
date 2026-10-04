@@ -678,6 +678,26 @@ when the legacy pattern started with the rule's path. A `!` negation
 in the rule's `ignore:` list is always authoritative: the fallback
 never overrides a re-include.
 
+A change is synced according to what the host has when it is handled: a path
+that exists is copied, a path that no longer exists is removed in the
+container. A file written and deleted within the same moment therefore ends
+up absent in the container. The watcher starts listening before the initial
+sync runs, so a file saved while `watch` is starting is not missed.
+
+A sync rule whose `target` is bind-mounted from the rule's own `path` (for
+example `volumes: ["./src:/app"]` with a rule from `./src` to `/app`) is
+skipped with a warning: the files are already shared, and every copy would
+write back into the watched directory and trigger another copy. For
+`sync+restart` and `sync+exec` only the copy is skipped; the restart or exec
+still runs. A read-only bind, or a more specific mount under the bind that
+receives the copy, is not treated this way.
+
+If changes arrive faster than they can be handled and the event queue
+overflows, `watch` copies again every rule with `initial_sync: true` and logs a
+warning naming any rule it could not bring up to date (no `initial_sync`, a
+restart, rebuild or exec that was not re-run, or a copy that failed). Saving
+those files again applies them.
+
 ## Maintenance
 
 ### `config`
