@@ -1,3 +1,21 @@
+podup (5.10.10) unstable; urgency=medium
+
+  * watch no longer misses a file saved while it is starting: the watcher now
+    listens before the initial sync runs.
+  * watch decides each changed path from what the host has when it handles
+    it: an existing path is copied, a missing one is removed in the
+    container. A file written and deleted in quick succession no longer stays
+    in the container, and a read error on the host never deletes the
+    container copy.
+  * watch recovers from an event queue overflow, including the kernel's own,
+    by copying the initial_sync rules again, and warns naming any rule it
+    could not bring up to date.
+  * A watch sync rule whose target is bind-mounted from its own path is
+    skipped with a warning instead of copying into itself forever; for
+    sync+restart and sync+exec only the copy is skipped.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sun, 04 Oct 2026 00:15:16 -0500
+
 podup (5.10.9) unstable; urgency=medium
 
   * autostart --mode quadlet no longer rebuilds images at every container
