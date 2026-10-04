@@ -106,16 +106,17 @@ async fn watch_sync_propagates_host_deletions_to_the_container() {
 	// Remove event the host-side deletion fires. This is the same shape as
 	// `watch_initial_sync_runs` and `watch_sync_and_restart_does_both`;
 	// calling the leaf (`test_remove_from_container`) instead would skip
-	// is_remove_event, the event plumbing, and the path mapping, and a test
-	// that does that passes whether the dispatch is wired or not.
+	// the dispatcher's per-path upload/remove decision, the event plumbing,
+	// and the path mapping, and a test that does that passes whether the
+	// dispatch is wired or not.
 	let client2 = podup::podman::connect_from_env()
 		.or_else(|_| podup::podman::connect(None))
 		.unwrap();
 	let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
-	// Write the file before `watch` starts. `watch` runs the initial sync
-	// before it registers its inotify watcher, so a file written after the
-	// spawn could land between the two and reach the container by neither
-	// path (#1977).
+	// Write the file before `watch` starts. The watcher registers its
+	// inotify watches before the initial sync runs, so a file written
+	// before the spawn is delivered through the initial sync and never
+	// has to land in the gap between the two.
 	let src_file = src.join("f.txt");
 	fs::write(&src_file, b"watched").unwrap();
 
@@ -133,10 +134,10 @@ async fn watch_sync_propagates_host_deletions_to_the_container() {
 	})
 	.await;
 
-	// The delivery above only proves the initial sync ran; the watcher may
-	// not be registered yet, and a deletion made before it is would be lost.
-	// Rewrite a probe file on every tick until a copy reaches the container:
-	// after the initial sync, only an inotify event can deliver it.
+	// The delivery above only proves the initial sync ran. Rewrite a probe
+	// file on every tick until a copy reaches the container: after the
+	// initial sync only an inotify event can deliver it, so this proves the
+	// event path works before the deletion half relies on it.
 	let probe = src.join("probe.txt");
 	let watcher_live = poll_with_watch(&mut handle, Duration::from_secs(30), || {
 		fs::write(&probe, b"live").unwrap();
@@ -144,11 +145,7 @@ async fn watch_sync_propagates_host_deletions_to_the_container() {
 	})
 	.await;
 	// Take the probe back out so `f.txt` is again the last file under the
-	// rule's path, which the scope checks below depend on. Wait out the
-	// watcher's 100 ms debounce first: the last probe write is still pending,
-	// and a batch takes the kind of its first event, so a removal coalesced
-	// with that write would be applied as an upload and the probe would stay.
-	tokio::time::sleep(Duration::from_secs(1)).await;
+	// rule's path, which the scope checks below depend on.
 	fs::remove_file(&probe).unwrap();
 	let probe_gone = poll_with_watch(&mut handle, Duration::from_secs(30), || async {
 		let out = engine

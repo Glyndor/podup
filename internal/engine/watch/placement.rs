@@ -7,9 +7,11 @@
 //! dispatch loop in [`super`] stay focused on I/O.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::compose::types::{Service, WatchRule};
+use crate::engine::container::resolve_bind_source;
+use crate::engine::volume_mounts::bind_mounts;
 use crate::error::{ComposeError, Result};
 
 /// Where a changed host path lands inside the container for a `sync` action:
@@ -100,20 +102,15 @@ pub(super) fn plan_sync_placement(root: &Path, changed: &Path, target: &str) -> 
 /// fire a sync, and the sync's own read of the source re-opens the path,
 /// generating fresh `Access` events that feed back into another sync. Filtering
 /// to create/modify/remove (rename is a `Modify(Name(..))`) matches compose
-/// semantics and breaks that feedback loop.
+/// semantics and breaks that feedback loop. The same filter is applied at the
+/// notify callback boundary in [`super::events::enqueue`]; this check stays
+/// for defence in depth.
 pub(super) fn is_dispatch_event(kind: &notify::EventKind) -> bool {
 	use notify::EventKind;
 	matches!(
 		kind,
 		EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
 	)
-}
-
-/// True when the notify event is a removal. The dispatch loop funnels a `sync`
-/// action to either an upload or a delete based on this; a `rebuild`/`restart`
-/// rule does not consult it.
-pub(super) fn is_remove_event(kind: &notify::EventKind) -> bool {
-	matches!(kind, notify::EventKind::Remove(_))
 }
 
 /// Reject a watch rule whose action needs a `target` but has none. docker
@@ -252,6 +249,78 @@ fn path_components(path: &str) -> Vec<&str> {
 		.split('/')
 		.filter(|c| !c.is_empty())
 		.collect()
+}
+
+/// A message when a sync rule would write back into the tree it watches
+/// through one of the service's bind mounts, `None` otherwise (#1984).
+///
+/// Two shapes loop: the rule watches the bind source (or a directory under it)
+/// and syncs into the matching place in the bind target, or the rule watches a
+/// parent of the bind source and syncs that source onto the bind target. Either
+/// way every upload modifies the watched tree, which fires another upload.
+pub(super) fn bind_mount_feedback(
+	service_name: &str,
+	service: &Service,
+	base_dir: &Path,
+	rule_abs: &Path,
+	target: &str,
+) -> Option<String> {
+	// Compare canonical paths; fall back to the resolved path when one does
+	// not exist yet.
+	let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+
+	for (raw_src, container_target) in bind_mounts(service) {
+		let resolved = PathBuf::from(resolve_bind_source(&raw_src, base_dir));
+		let canon_source = canon(&resolved);
+		let canon_rule = canon(rule_abs);
+
+		// Rule at or under the bind source: where does the rule's root land in
+		// the bind target? (`Path::starts_with` compares whole components.)
+		let subpath: String = if canon_rule == canon_source {
+			String::new()
+		} else if let Ok(rel) = canon_rule.strip_prefix(&canon_source) {
+			rel.to_string_lossy().into_owned()
+		} else if let Ok(rel) = canon_source.strip_prefix(&canon_rule) {
+			// Rule above the bind source: the source subtree is synced to
+			// `target/rel`, which loops when that is the bind target.
+			let synced = join_container_path(&SyncPlacement {
+				dest_dir: target.trim_end_matches('/').to_string(),
+				entry_name: rel.to_string_lossy().into_owned(),
+			});
+			if synced.trim_end_matches('/') == container_target.trim_end_matches('/') {
+				return Some(feedback_message(service_name, target, &canon_rule));
+			}
+			continue;
+		} else {
+			continue;
+		};
+
+		let dest_dir_trimmed = container_target.trim_end_matches('/');
+		let dest_dir_owned = if dest_dir_trimmed.is_empty() {
+			"/".to_string()
+		} else {
+			dest_dir_trimmed.to_string()
+		};
+		let expected = join_container_path(&SyncPlacement {
+			dest_dir: dest_dir_owned,
+			entry_name: subpath,
+		});
+
+		let target_trim = target.trim_end_matches('/');
+		let expected_trim = expected.trim_end_matches('/');
+
+		if target_trim == expected_trim || target_trim.starts_with(&format!("{expected_trim}/")) {
+			return Some(feedback_message(service_name, target, &canon_rule));
+		}
+	}
+	None
+}
+
+fn feedback_message(service_name: &str, target: &str, rule_abs: &Path) -> String {
+	format!(
+		"{service_name}: sync target {target} is bind-mounted from {}; the files are already shared, and syncing would write back into the watched path on every change, so this rule is skipped",
+		rule_abs.display()
+	)
 }
 
 // ---------------------------------------------------------------------------

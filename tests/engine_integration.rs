@@ -500,6 +500,10 @@ mod secrets;
 mod watch_tests;
 
 #[cfg(all(unix, feature = "test-helpers"))]
+#[path = "engine_integration/watch_batch.rs"]
+mod watch_batch;
+
+#[cfg(all(unix, feature = "test-helpers"))]
 #[path = "engine_integration/watch_sparse.rs"]
 mod watch_sparse;
 

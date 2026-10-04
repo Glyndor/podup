@@ -192,6 +192,43 @@ pub(crate) fn build_mounts_all(
 	(mounts, named)
 }
 
+/// The bind mounts declared on `service`, as `(raw_source, container_target)`.
+/// The source is returned as written; callers resolve it with
+/// `container::resolve_bind_source`, as `build_mounts_all` does.
+///
+/// Unlike `build_mounts_all`, this has no side effects: it never creates a
+/// missing host directory, because `watch` calls it on every start.
+pub(crate) fn bind_mounts(service: &Service) -> Vec<(String, String)> {
+	let mut out = Vec::new();
+	for v in &service.volumes {
+		match v {
+			VolumeMount::Short(s) => {
+				if let Some((Some(mount), None)) = parse_volume_string(s) {
+					if let Some(src) = mount.source.as_deref() {
+						if !src.is_empty() {
+							out.push((src.to_string(), mount.destination));
+						}
+					}
+				}
+			}
+			VolumeMount::Long {
+				volume_type: VolumeType::Bind,
+				source,
+				target,
+				..
+			} => {
+				if let Some(src) = source.as_deref() {
+					if !src.is_empty() {
+						out.push((src.to_string(), target.clone()));
+					}
+				}
+			}
+			_ => {}
+		}
+	}
+	out
+}
+
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------

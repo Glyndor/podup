@@ -1,5 +1,5 @@
 use super::{
-	is_dispatch_event, is_remove_event, join_container_path, mark_dir_ensured, mkdir_p_argv,
+	bind_mount_feedback, is_dispatch_event, join_container_path, mark_dir_ensured, mkdir_p_argv,
 	plan_remove_placement, plan_sync_placement, read_only_target_warning, target_is_on_a_mount,
 	validate_sync_target,
 };
@@ -129,19 +129,6 @@ fn placement_single_file_rule_target_at_root() {
 }
 
 #[test]
-fn remove_event_matches_remove_kind_only() {
-	use notify::event::{CreateKind, ModifyKind, RemoveKind};
-	use notify::EventKind;
-	assert!(is_remove_event(&EventKind::Remove(RemoveKind::File)));
-	assert!(is_remove_event(&EventKind::Remove(RemoveKind::Folder)));
-	assert!(is_remove_event(&EventKind::Remove(RemoveKind::Any)));
-	assert!(!is_remove_event(&EventKind::Create(CreateKind::File)));
-	assert!(!is_remove_event(&EventKind::Modify(ModifyKind::Any)));
-	assert!(!is_remove_event(&EventKind::Other));
-	assert!(!is_remove_event(&EventKind::Any));
-}
-
-#[test]
 fn remove_placement_directory_rule_preserves_subpath() {
 	// A removal under a directory rule must keep the same subpath the
 	// corresponding add/modify produced, so the DELETE inside the container
@@ -248,4 +235,115 @@ fn read_only_target_warning_cases() {
 	let svc: Service =
 		serde_yaml::from_str("read_only: true\nimage: x\nvolumes_from:\n  - data\n").unwrap();
 	assert_eq!(read_only_target_warning("web", &svc, "/app"), None);
+}
+
+// --- bind_mount_feedback --------------------------------------------------
+
+fn bind_feedback_for(svc_yaml: &str) -> (tempfile::TempDir, std::path::PathBuf, Service) {
+	let dir = tempfile::tempdir().unwrap();
+	fs::create_dir(dir.path().join("src")).unwrap();
+	fs::create_dir(dir.path().join("src/sub")).unwrap();
+	fs::create_dir(dir.path().join("other")).unwrap();
+	let base = dir.path().to_path_buf();
+	let svc: Service = serde_yaml::from_str(svc_yaml).unwrap();
+	(dir, base, svc)
+}
+
+#[test]
+fn bind_mount_feedback_flags_short_form_feedback_loop() {
+	// `volumes: ["./src:/app"]` bind-mounts the rule's path into the
+	// container at the rule's target. Any change would write back into
+	// the watched tree; the function must flag it.
+	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - ./src:/app\n");
+	let rule_abs = base.join("src");
+	let msg = bind_mount_feedback("web", &svc, &base, &rule_abs, "/app")
+		.expect("feedback expected for a self-feeding sync rule");
+	assert!(
+		msg.contains("/app"),
+		"message must name the target; got {msg:?}"
+	);
+	assert!(
+		msg.contains("bind-mounted"),
+		"message must name the cause; got {msg:?}"
+	);
+	drop(dir);
+}
+
+#[test]
+fn bind_mount_feedback_flags_subpath_under_feedback_source() {
+	// The rule is a descendant of the bind source: `./src` is bind-mounted
+	// to `/app`, and the rule watches `./src/sub` and syncs to `/app/sub`.
+	// The same write-back loop applies.
+	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - ./src:/app\n");
+	let rule_abs = base.join("src/sub");
+	let msg = bind_mount_feedback("web", &svc, &base, &rule_abs, "/app/sub")
+		.expect("feedback expected for a subpath of a self-feeding sync rule");
+	assert!(msg.contains("/app/sub"));
+	drop(dir);
+}
+
+#[test]
+fn bind_mount_feedback_allows_unrelated_target() {
+	// Same bind mount, but the rule syncs to a path the bind does not
+	// cover. The function must not warn.
+	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - ./src:/app\n");
+	let rule_abs = base.join("src");
+	assert_eq!(
+		bind_mount_feedback("web", &svc, &base, &rule_abs, "/srv"),
+		None
+	);
+	drop(dir);
+}
+
+#[test]
+fn bind_mount_feedback_allows_unrelated_source() {
+	// A bind mount over a different host directory must not trip the
+	// check on a `./src` rule, even when the target matches.
+	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - ./other:/app\n");
+	let rule_abs = base.join("src");
+	assert_eq!(
+		bind_mount_feedback("web", &svc, &base, &rule_abs, "/app"),
+		None
+	);
+	drop(dir);
+}
+
+#[test]
+fn bind_mount_feedback_allows_named_volume() {
+	// A named volume mounts the volume manager's data, not the host
+	// path; the rule's source is therefore not shared, and the function
+	// must not warn.
+	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - data:/app\n");
+	let rule_abs = base.join("src");
+	assert_eq!(
+		bind_mount_feedback("web", &svc, &base, &rule_abs, "/app"),
+		None
+	);
+	drop(dir);
+}
+
+#[test]
+fn bind_mount_feedback_flags_long_form_bind() {
+	// The long form `type: bind, source: ./src, target: /app` is a
+	// direct equivalent of the short form and must trip the same check.
+	let (dir, base, svc) = bind_feedback_for(
+		"image: x\nvolumes:\n  - type: bind\n    source: ./src\n    target: /app\n",
+	);
+	let rule_abs = base.join("src");
+	let msg = bind_mount_feedback("web", &svc, &base, &rule_abs, "/app")
+		.expect("long-form bind source must trip the feedback check");
+	assert!(msg.contains("bind-mounted"));
+	drop(dir);
+}
+
+#[test]
+fn bind_mount_feedback_flags_rule_above_the_bind_source() {
+	// The rule watches the project root and syncs it to `/`, so `./src` is
+	// synced onto `/src`, which is the bind target of `./src`: every upload
+	// writes back into the watched tree.
+	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - ./src:/src\n");
+	assert!(bind_mount_feedback("web", &svc, &base, &base, "/").is_some());
+	// Syncing the root to `/srv` puts `./src` at `/srv/src`, outside the bind.
+	assert_eq!(bind_mount_feedback("web", &svc, &base, &base, "/srv"), None);
+	drop(dir);
 }
