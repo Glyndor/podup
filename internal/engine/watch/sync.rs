@@ -140,11 +140,12 @@ pub(in crate::engine) fn build_sync_tar<W: Write>(
 /// action, and `sync_all` would report the rule as failed.
 ///
 /// The rules mirror [`build_sync_tar`]:
-/// - `src` is a directory: the root entry is permitted when
-///   `entry_name` is not empty and the filter accepts it, plus every
-///   walked descendant re-rooted under `entry_name` whose joined name the
-///   filter accepts. A directory the filter drops is still walked, so a
-///   safe deeper mount below a loop-causing directory is still recorded.
+/// - `src` is a directory: the root entry is permitted when the filter
+///   accepts `entry_name` (an empty `entry_name` checks the destination
+///   directory itself), plus every walked descendant re-rooted under
+///   `entry_name` whose joined name the filter accepts. A directory the
+///   filter drops is still walked, so a safe deeper mount below a
+///   loop-causing directory is still recorded.
 /// - `src` is a single file: the file is permitted when the filter
 ///   accepts `entry_name`.
 ///
@@ -159,7 +160,7 @@ pub(in crate::engine) fn has_permitted_entry(
 ) -> std::io::Result<bool> {
 	let src_is_dir = src.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
 	if src_is_dir {
-		if !entry_name.as_os_str().is_empty() && !skip(entry_name) {
+		if !skip(entry_name) {
 			return Ok(true);
 		}
 		for abs in walk_dir(src)? {

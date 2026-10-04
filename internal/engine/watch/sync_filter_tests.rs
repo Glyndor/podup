@@ -1,4 +1,5 @@
 use super::{build_sync_tar, has_permitted_entry};
+use crate::engine::watch::actions::entry_is_unsyncable;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -137,19 +138,40 @@ fn has_permitted_entry_empty_directory_root_accepted() {
 	);
 }
 
-/// An empty directory with an empty entry name and no descendants has
-/// nothing to upload: there is no root entry (the empty `entry_name`
-/// skips it) and no descendants (the directory is empty). The caller
-/// short-circuits the same way as the single-file skip case.
+/// An empty directory with an empty entry name and a filter that
+/// accepts the empty name is permitted: the empty `entry_name`
+/// represents the destination directory itself, and the caller
+/// `sync_to_container` still has to run its `mkdir -p` for the
+/// initial sync to leave the container in a useful state. A
+/// caller that already decided the directory should not be
+/// skipped is free to walk the destination instead.
 #[test]
-fn has_permitted_entry_empty_directory_empty_entry_name_returns_false() {
+fn has_permitted_entry_empty_directory_empty_entry_name_filter_accepts_returns_true() {
 	let dir = tempdir().unwrap();
 	let empty = dir.path().join("d");
 	fs::create_dir(&empty).unwrap();
 	let skip = |_name: &Path| false;
 	assert!(
+		has_permitted_entry(&empty, Path::new(""), &skip).unwrap(),
+		"an empty directory with an empty entry name the filter accepts has a permitted entry (the destination itself)"
+	);
+}
+
+/// An empty directory with an empty entry name and a filter that
+/// rejects the empty name has nothing to upload: the empty
+/// `entry_name` represents the destination directory and the
+/// filter says it is unsyncable, and the directory is empty so
+/// there are no descendants to escape through. The caller
+/// short-circuits the same way as the single-file skip case.
+#[test]
+fn has_permitted_entry_empty_directory_empty_entry_name_filter_rejects_returns_false() {
+	let dir = tempdir().unwrap();
+	let empty = dir.path().join("d");
+	fs::create_dir(&empty).unwrap();
+	let skip = |name: &Path| name.as_os_str().is_empty();
+	assert!(
 		!has_permitted_entry(&empty, Path::new(""), &skip).unwrap(),
-		"an empty directory with an empty entry name has no permitted entry"
+		"an empty directory whose filter rejects the empty entry name has no permitted entry"
 	);
 }
 
@@ -228,5 +250,38 @@ fn sync_tar_filter_drops_a_single_file() {
 	assert!(
 		sent.is_empty(),
 		"the only entry the filter dropped must not be recorded, got {sent:?}"
+	);
+}
+
+// --- entry_is_unsyncable ------------------------------------------------
+
+/// An entry whose component is a non-UTF-8 byte (`<0xff>`) is
+/// unsyncable: the lossy form of `container_rel` substitutes the
+/// replacement character, so this name would collide with the
+/// other bytes that map to the same character. The write-back
+/// filter inside `sync_to_container` drops the entry, and the gate
+/// in `maybe_sync` short-circuits the whole sync for a non-UTF-8
+/// top-level path so the lossy mapping never runs.
+#[cfg(unix)]
+#[test]
+fn entry_is_unsyncable_true_for_non_utf8_component() {
+	use std::ffi::OsStr;
+	use std::os::unix::ffi::OsStrExt;
+	let p = Path::new(OsStr::from_bytes(b"\xff")).join("keep.txt");
+	assert!(
+		entry_is_unsyncable(&p),
+		"a path whose component is non-UTF-8 must be reported unsyncable"
+	);
+}
+
+/// A plain ASCII path is syncable: the filter inside
+/// `sync_to_container` runs the write-back check, not the UTF-8
+/// check, and the gate in `maybe_sync` lets the dispatch reach it.
+#[test]
+fn entry_is_unsyncable_false_for_utf8_path() {
+	let p = Path::new("ok").join("keep.txt");
+	assert!(
+		!entry_is_unsyncable(&p),
+		"a UTF-8 path must not be reported unsyncable"
 	);
 }

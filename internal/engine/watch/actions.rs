@@ -30,6 +30,27 @@ use super::sync::has_permitted_entry;
 use super::writeback::{writes_back, EffectiveMount};
 use super::Engine;
 
+/// True when any component of `name` is not valid UTF-8. The watch sync
+/// renders paths through `container_rel`, which substitutes the Unicode
+/// replacement character for non-UTF-8 bytes, so two distinct host paths
+/// (`<0xff>/keep.txt`, `<0xfe>/keep.txt`, `\u{FFFD}/keep.txt`) would all
+/// map to the same container path and one would overwrite or delete
+/// another's copy. The gate in `maybe_sync` short-circuits the whole
+/// sync for such a path so the lossy mapping never runs; the per-entry
+/// filter inside `sync_to_container` also drops the entry to keep an
+/// upload whose sibling is unsyncable from sending a partial tar.
+pub(in crate::engine::watch) fn entry_is_unsyncable(name: &Path) -> bool {
+	for c in name.components() {
+		let std::path::Component::Normal(part) = c else {
+			continue;
+		};
+		if part.to_str().is_none() {
+			return true;
+		}
+	}
+	false
+}
+
 impl Engine {
 	#[allow(clippy::too_many_arguments)]
 	pub(in crate::engine::watch) async fn sync_to_container(
@@ -59,6 +80,16 @@ impl Engine {
 			let mounts = Arc::clone(&mounts_owned);
 			let watched_root = watched_root_owned.clone();
 			Arc::new(move |name: &Path| {
+				// Non-UTF-8 names would all map to the same lossy container
+				// path (the replacement character), so an entry with one
+				// would overwrite or delete another's copy. The caller
+				// (`maybe_sync`) already returned an error for the changed
+				// path itself, but a directory upload may still walk
+				// descendants whose own components are non-UTF-8; drop those
+				// here so a partial tar does not go out.
+				if entry_is_unsyncable(name) {
+					return true;
+				}
 				let entry = container_rel(name);
 				let container_path = join_container_path(&SyncPlacement {
 					dest_dir: dest_dir.clone(),

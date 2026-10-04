@@ -311,6 +311,84 @@ async fn watch_does_not_copy_into_a_bind_that_maps_back() {
 	);
 }
 
+/// A `sync+exec` action whose sync half would write back through the
+/// only bind it has must skip the copy and still run the exec. The
+/// service mounts `./:/app` (the project dir into the container at
+/// `/app`); the rule watches `.` with target `/app/generated`, so
+/// every change in the project dir maps to `/app/generated/<x>` in
+/// the container and to `<project>/generated/<x>` on the host, both
+/// inside the watched tree. The per-entry filter drops the upload
+/// in `sync_to_container`, but the exec half (`touch /tmp/exec-ran`)
+/// must still run, otherwise a `sync+exec` action would silently
+/// turn into a no-op the moment the rule maps back (#1985).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn watch_skipped_copy_still_runs_the_exec() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let dir = tempfile::tempdir().unwrap();
+
+	let proj = proj("wsce");
+	let compose_body = "services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    volumes:\n      - \".:/app\"\n    develop:\n      watch:\n        - path: .\n          action: sync+exec\n          target: /app/generated\n          initial_sync: true\n          exec:\n            command: [\"touch\", \"/tmp/exec-ran\"]\n";
+	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
+	let file = parse_str(compose_body).unwrap();
+	engine.up(&file).await.unwrap();
+	let cname = format!("{proj}-web-1");
+
+	let client2 = podup::podman::connect_from_env()
+		.or_else(|_| podup::podman::connect(None))
+		.unwrap();
+	let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
+	let file2 = file.clone();
+	let mut handle = tokio::spawn(async move { engine2.watch(&file2).await });
+
+	// Give the watch task a moment to register the inotify watches and
+	// enter its event loop before generating the first event. A
+	// `poll_with_watch` returning `false` on every tick panics if the
+	// watch task finished, so a dead watcher is not mistaken for a
+	// quiet loop.
+	poll_with_watch(&mut handle, Duration::from_secs(3), || async { false }).await;
+
+	// Write a file in the project dir. The rule watches `.`, so the
+	// dispatch picks the change up; the bind `./:/app` means the
+	// container path the change would land on is `/app/generated/a.txt`,
+	// which the host binds back to `<project>/generated/a.txt`. The
+	// per-entry filter must drop the upload and the exec must still
+	// run.
+	fs::write(dir.path().join("a.txt"), b"x").unwrap();
+
+	// The exec leaves a marker file the container owns. The helper
+	// returns `Some(true)` only when the file is present, `Some(false)`
+	// when the script reports absent, and `None` when the exec itself
+	// errors; a None is treated as "not yet" so a transient failure
+	// during teardown does not turn the test red.
+	let exec_ran = poll_with_watch(&mut handle, Duration::from_secs(30), || async {
+		container_path_present(&engine, &cname, "/tmp/exec-ran").await == Some(true)
+	})
+	.await;
+
+	handle.abort();
+	engine.down(&file).await.unwrap();
+
+	// The copy must not have produced a host-side artifact. The `mkdir
+	// -p` the upload would have run on `/app/generated` would have
+	// created `<project>/generated/` on the host through the bind, so
+	// the absence of the directory is what proves the gate in
+	// `sync_to_container` short-circuited the upload before the mkdir
+	// ran. Without the gate, removing the early return in
+	// `sync_to_container` makes the mkdir fire and the assertion
+	// fails.
+	assert!(
+		exec_ran,
+		"the sync+exec action did not run touch /tmp/exec-ran; the copy was supposed to be skipped, but the exec half must still run"
+	);
+	assert!(
+		!dir.path().join("generated").exists(),
+		"a copy landed at host path <project>/generated through the bind mount; the upload was supposed to be skipped before the mkdir ran"
+	);
+}
+
 /// One attempt of reading `path` inside `container` and checking its
 /// contents. The same predicate the batch tests use: a local copy so
 /// `pub(super)` helpers in the parent module stay private. Named `_once`

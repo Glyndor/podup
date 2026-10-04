@@ -51,6 +51,7 @@ use crate::engine::container::resolve_bind_source;
 use crate::engine::volume_mounts::{bind_mounts, mount_targets};
 use crate::error::{ComposeError, Result};
 
+use super::actions::entry_is_unsyncable;
 use super::events;
 use super::placement::{join_container_path, normalise_container_path, plan_remove_placement};
 use super::Engine;
@@ -207,6 +208,22 @@ impl Engine {
 		let Some(target) = &entry.rule.target else {
 			return Ok(());
 		};
+		// Refuse paths whose components are not valid UTF-8: `container_rel`
+		// renders each component lossily, so two distinct host paths
+		// (`<0xff>/keep.txt`, `<0xfe>/keep.txt`, `\u{FFFD}/keep.txt`) would
+		// all map to the same container path and one would overwrite or
+		// delete another's copy. The check runs against the path relative
+		// to the rule root, which is what the upload would key under: a
+		// single-file rule that watched a non-UTF-8 name would otherwise
+		// skip the `entry_name` (it is the rule root itself) and the
+		// descendant walk would do the same.
+		let rel = path.strip_prefix(&entry.abs_path).unwrap_or(path);
+		if entry_is_unsyncable(rel) {
+			return Err(ComposeError::Watch(format!(
+				"{} is not valid UTF-8; it is not synced",
+				path.display()
+			)));
+		}
 		// Decide upload/remove once, here, and hand the result to the
 		// dispatch. A second `sync_op_for` call inside the dispatch would
 		// race the host filesystem: the first call sees the file as present
