@@ -424,3 +424,12 @@ fn sync_op_for_permission_error_is_not_remove() {
 		"a non-NotFound stat error must propagate, not become Ok(Remove); got {outcome:?}"
 	);
 }
+
+/// A compound rule whose resync upload failed is reported by `sync_all` and
+/// is also uncovered by action; it must still be named only once.
+#[test]
+fn rules_not_recovered_names_a_failed_compound_rule_once() {
+	let entry = make_entry("web", "src", WatchAction::SyncAndRestart, true);
+	let got = super::super::Engine::rules_not_recovered(&[entry], &["web:src".to_string()]);
+	assert_eq!(got, vec!["web:src".to_string()]);
+}

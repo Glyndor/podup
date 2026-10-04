@@ -198,8 +198,7 @@ impl Engine {
 	/// in `failed` is appended. Anything else (a sync rule without
 	/// `initial_sync`, any `sync+restart` / `sync+exec` rule whose
 	/// restart or exec was not re-run, any `rebuild` / `restart` rule)
-	/// is named in the warning the operator reads to decide whether to
-	/// restart `podup watch`.
+	/// is named once in the warning.
 	pub(super) fn rules_not_recovered(
 		rule_entries: &[RuleEntry],
 		failed: &[String],
@@ -209,7 +208,10 @@ impl Engine {
 			if entry.rule.initial_sync && matches!(entry.rule.action, WatchAction::Sync) {
 				continue;
 			}
-			out.push(format!("{}:{}", entry.service_name, entry.rule.path));
+			let id = format!("{}:{}", entry.service_name, entry.rule.path);
+			if !out.contains(&id) {
+				out.push(id);
+			}
 		}
 		out
 	}
@@ -237,7 +239,7 @@ impl Engine {
 			warn!("watch event queue overflowed; resynced every rule");
 		} else {
 			warn!(
-				"watch event queue overflowed; resynced the rules with initial_sync, but changes for {list} may not have been applied; save those files again, or restart the affected services, to apply them",
+				"watch event queue overflowed; resynced the rules with initial_sync, but changes for {list} may not have been applied; save those files again to apply them",
 				list = unrecovered.join(", ")
 			);
 		}
