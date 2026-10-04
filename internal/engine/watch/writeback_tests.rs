@@ -175,7 +175,10 @@ fn effective_mounts_from_a_real_service() {
 	assert_eq!(mounts.len(), 3, "expected three mounts, got {mounts:?}");
 	// Declaration order is volumes first, then tmpfs.
 	assert_eq!(mounts[0].target, "/app");
-	assert_eq!(mounts[0].bind_source.as_deref(), Some(src_dir.as_path()));
+	// The bind source is canonicalized: on macOS the tempdir lives under
+	// /private/var, and on Windows the canonical form is a verbatim path.
+	let src_canon = std::fs::canonicalize(&src_dir).unwrap();
+	assert_eq!(mounts[0].bind_source.as_deref(), Some(src_canon.as_path()));
 	assert!(!mounts[0].read_only);
 	assert_eq!(mounts[1].target, "/app/cache");
 	assert!(
