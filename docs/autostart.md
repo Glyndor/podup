@@ -103,7 +103,7 @@ The shim ships from Podman 5.3.0; on 5.0-5.2 the dependency is absent, so there 
 
 ## Running `systemctl --user` for a login-less account
 
-For a login-less account with lingering enabled, set `XDG_RUNTIME_DIR` when invoking podup or systemctl. The example assumes `/srv/app/compose.yaml`, its build contexts, and `podup` on the PATH of `appuser` (a privileged install in `/usr/local/bin` or `/usr/bin` is not on that user's PATH):
+For a login-less account with lingering enabled, set `XDG_RUNTIME_DIR` when invoking podup or systemctl. The example assumes `/srv/app/compose.yaml`, its build contexts, and `podup` on the PATH of `appuser`:
 
 ```bash
 uid=$(id -u appuser)

@@ -8,7 +8,13 @@ The internal Rust library supports tests; it is unpublished and has no stable AP
 
 ## Building from source
 
-A C compiler and archiver are needed for ring. The default build enables watch, completions and update; the result is `target/release/podup`. The Debian package excludes update.
+From a checkout, with Rust 1.85 or newer and a C compiler and archiver (needed by `ring`):
+
+```sh
+cargo build --release
+```
+
+The binary is `target/release/podup`. The default build enables watch, completions and update; the Debian package leaves update out.
 
 ## Branch flow
 
@@ -20,7 +26,7 @@ Mention the issue in the PR and mark its status done. It closes when the release
 
 ## Before you open a pull request
 
-- Open an issue and apply `type`, `priority`, `effort`, `status` and `area` labels.
+- Open an issue and apply its `type:`, `prio:`, `effort:`, `status:` and `area:` labels.
 - Sign commits and add DCO sign-off with `git commit -s`.
 - Use a Conventional Commit PR title.
 

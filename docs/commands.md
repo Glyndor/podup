@@ -174,11 +174,11 @@ View container output for the named services (or all).
 | `--no-log-prefix` | Drop the `{service} \| ` tag entirely. | off |
 
 ### `events`
-Stream Podman events for this project's containers. The default output is one `TIME TYPE ACTION NAME` line per event; the timestamp is the engine event's time in the local zone (UTC marked `Z` if no zone is available; missing times are blank). `--format json` emits one object per line (NDJSON) with `Action` (renamed from `status`), normalized image-remove/death verbs, and `exitCode` copied only for `died` events. `--json` is a hidden deprecated alias for `--format json`.
+Stream Podman events for this project's containers. The default output is one `TIME TYPE ACTION NAME` line per event; the timestamp is the engine event's time in the local zone (UTC marked `Z` if no zone is available; missing times are blank). `--format json` emits one object per line (NDJSON) with an added `Action` field (the original `status` stays), normalized image-remove/death verbs, and `exitCode` copied only for `died` events. `--json` is a hidden deprecated alias for `--format json`.
 
 | Flag | Description | Default |
 |---|---|---|
-| `--format <FMT>` | `table` (a plain `TYPE ACTION NAME` summary) or `json`. | `table` |
+| `--format <FMT>` | `table` (a plain `TIME TYPE ACTION NAME` summary) or `json`. | `table` |
 | `--filter <FILTER>` | Keep only events matching a predicate (`KEY=VALUE`). Repeatable. Forwarded to libpod; an unknown key is rejected by the engine. | none |
 | `--since <TIME>` | Only stream events at or after this timestamp or relative time. | stream start |
 | `--until <TIME>` | End of the window. Only closes the feed when paired with `--since` and already elapsed. | no end |
@@ -362,7 +362,7 @@ Pull images for the named services, or all services if none are given.
 | `--policy <POLICY>` | Pull policy, overriding per-service `pull_policy`: `always`, `missing`, `never`, `newer`, `build`. | per service |
 
 ### `push [SERVICE...]`
-Push each service's `image:` to its registry.
+Push each service's `image:` to its registry. Credentials come from Podman's auth file (`podman login`).
 
 | Flag | Description | Default |
 |---|---|---|
@@ -418,7 +418,7 @@ Print the resolved compose file (after substitution, extends, include, and `env_
 | `--no-interpolate` | Leave `${VAR}` placeholders literal. | off |
 | `--resolve-image-digests` | Rewrite each service `image:` to its registry digest. | off |
 
-`audit --resolve-image-digests` and `autostart uninstall --purge` also contact Podman.
+`config --resolve-image-digests` and `autostart uninstall --purge` also contact Podman.
 
 ### `audit`
 Print one row per service listing every hardening gap the compose file leaves open. Read-only; never contacts Podman or changes runtime behavior.
@@ -519,11 +519,11 @@ Print version information. `podup --version` prints the same.
 
 ### Aliases
 
-`remove` (`rm`), `volume` (`volumes`), `image` (`images`), `log` (`logs`), `resume` (`unpause`), `convert` (`config`), `gen` (`generate quadlet`) and `boot` (`autostart`) are accepted as aliases of the canonical names above.
+`remove` (`rm`), `volume` (`volumes`), `image` (`images`), `log` (`logs`), `resume` (`unpause`), `convert` (`config`), `gen` (`generate`, so `podup gen quadlet`) and `boot` (`autostart`) are accepted as aliases of the canonical names above.
 
 ### Override discovery
 
-When no explicit `-f/--file` list is given, podup walks the compose-spec precedence list for an override file (`.env`-style merging against the resolved project) without raising on a missing file. Override handling is described under `config`.
+When neither `-f/--file` nor `COMPOSE_FILE` is set, podup also loads the first override file it finds next to the compose file: `compose.override.yaml`, `compose.override.yml`, `docker-compose.override.yaml` or `docker-compose.override.yml`.
 
 ## Progress output
 
@@ -557,8 +557,8 @@ Warnings/errors go to stderr with a `podup:` prefix. Unsupported-field warnings 
 | `XDG_RUNTIME_DIR` | Linux socket discovery tries `XDG_RUNTIME_DIR`, then `/run/user/<uid>`. Unix locks use `XDG_RUNTIME_DIR/podup` when the absolute runtime directory passes ownership/permission checks; unset or relative values use `temp_dir()/podup-<euid>`, and unsafe absolute values abort. Windows uses `%TEMP%/podup` without OS locking. |
 | `XDG_CONFIG_HOME` | Base for the `~/.config` path used by `autostart install` when writing user units. Defaults to `$HOME/.config` when unset. |
 | `HOME` | Resolves the macOS `podman machine` socket candidates and the default `XDG_CONFIG_HOME`. |
-| `USER`, `LOGNAME` | Used to label the autostart unit and for session/linger queries. |
-| `PATH` | Searched for the binary `autostart install` invokes on the boot path; locates podman for start mode. |
+| `USER`, `LOGNAME` | The login user for `loginctl` session and linger queries. |
+| `PATH` | Searched for `podman` when `autostart install --mode start` writes its unit. |
 | `SCOOP` | On Windows, the Scoop root the `podup update` package-manager detection consults first. |
 
 ## Podman extensions
@@ -585,9 +585,10 @@ Warnings/errors go to stderr with a `podup:` prefix. Unsupported-field warnings 
 
 The infra container stays running when the last service exits, in both API and Quadlet deployments. What changes inside the pod:
 
-- Services reach each other on `localhost`. `up` adds one `<service>:127.0.0.1` host entry per service.
+- Services reach each other on `localhost`. `up` adds one `<service>:127.0.0.1` host entry per service. They share one port space, so two services cannot listen on the same container port.
 - `ports:` are published by the pod.
 - Only the network namespace is shared. UTS and IPC stay per container.
+- `up` records a hash of the pod's ports, networks and host entries. When it changes, `up` recreates the pod and every member container, which discards their writable layers.
 
 What is refused, before anything is created:
 
@@ -624,7 +625,7 @@ These flags parse and are validated, so a script written against docker compose 
 | `126` | `run`/`exec`: the command exists but is not executable. |
 | `127` | `run`/`exec`: the command was not found. |
 | `130` | An attached `up` was ended by SIGINT or SIGTERM. |
-| other | `run` propagates the container's own exit code verbatim. `up --abort-on-container-exit` does the same with the first container to exit; `up --exit-code-from SERVICE` does the same with the named service. |
+| other | `run` and attached `exec` propagate the command's own exit code verbatim; `wait` returns the last non-zero code it saw. `up --abort-on-container-exit` does the same with the first container to exit; `up --exit-code-from SERVICE` does the same with the named service. |
 
 Attached `up` returns 1 if logs end while a container still runs. Abort/exit-code-from stops other containers and leaves them available for later up/down. SIGINT and SIGTERM both return 130 after stopping the project.
 

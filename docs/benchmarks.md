@@ -5,7 +5,7 @@
 |  | podup | docker-compose | podman-compose (Python) |
 |---|---|---|---|
 | Engine | rootless Podman | Docker daemon | Podman |
-| Runtime | single static binary | Go binary + Docker daemon | Python + pip packages |
+| Runtime | standalone binary | Go binary + Docker daemon | Python + pip packages |
 | Root required | no | typically yes (daemon) | no |
 | Implementation | Rust | Go | Python |
 | Podman API | native libpod REST | n/a | Podman CLI shell-out |

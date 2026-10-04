@@ -59,7 +59,7 @@ secrets:
     external: true
 ```
 
-If the named Podman secret does not exist, `podup up` fails fast rather than starting a container without it. Use a top-level `name:` when the Podman secret is named differently from the compose reference.
+Secrets appear under `/run/secrets/<name>`; configs default to `/<name>`, and a long-form `target:` overrides either. If the named Podman secret does not exist, `podup up` fails fast rather than starting a container without it. Use a top-level `name:` when the Podman secret is named differently from the compose reference.
 
 ## Behaves differently under rootless Podman
 
@@ -118,7 +118,7 @@ services:
 
 ### UID/GID mapping
 
-Containers run as your host user's UID inside a user namespace. If a container image writes files with UID 0 (root inside the container), those files appear owned by your user on the host. Bind-mount permissions reflect your host user's access.
+By default, root inside the container maps to your host user; a process runs as the image's or service's `user`. Files written as root in the container appear owned by your user on the host. Bind-mount permissions reflect your host user's access.
 
 ### `userns_mode: auto` gives each container its own UID range
 
@@ -138,8 +138,11 @@ services:
 On SELinux-enforcing systems, bind mounts require relabeling. Append `:z` (shared) or `:Z` (private) to the volume spec:
 
 ```yaml
-volumes:
-  - ./data:/app/data:Z
+services:
+  app:
+    image: docker.io/library/alpine:3.20
+    volumes:
+      - ./data:/app/data:Z
 ```
 
 ### Per-mount hardening options (`noexec`, `nosuid`, `nodev`)
@@ -176,14 +179,18 @@ Supported. The container gets a loopback interface only.
 
 The Compose spec deprecated the top-level `mac_address` field in favour of per-network configuration. podup still honours it (for backward compatibility) and applies it to the primary network, but logs a deprecation warning. Move it under `networks:` to silence the warning:
 
+Before:
+
 ```yaml
-# before
 services:
   web:
     image: nginx:alpine
     mac_address: "02:42:ac:11:00:02"
+```
 
-# after
+After:
+
+```yaml
 networks:
   default: {}
 services:
