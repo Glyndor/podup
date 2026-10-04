@@ -31,15 +31,19 @@ pub(super) fn collect_warnings(
 	if !service.volumes_from.is_empty() {
 		warn("volumes_from", "has no Quadlet equivalent and is skipped");
 	}
-	// `host`/`none` map to `Network=`, and `service:X`/`container:X` map to
-	// `Network=X.container`; only the remaining modes (bridge:, custom, …) have
-	// no key.
+	// `host`/`none`/`pasta`/`slirp4netns` map to `Network=`, and
+	// `service:X`/`container:X` map to `Network=X.container`; only the remaining
+	// modes (bridge:, custom, …) have no key.
 	if service.network_mode.as_deref().is_some_and(|m| {
-		m != "host" && m != "none" && !m.starts_with("service:") && !m.starts_with("container:")
+		m != "host"
+			&& m != "none"
+			&& !super::unit::is_rootless_user_mode(m)
+			&& !m.starts_with("service:")
+			&& !m.starts_with("container:")
 	}) {
 		warn(
 			"network_mode",
-			"is not mapped (only `host`/`none`/`service:`/`container:` are supported); use networks instead",
+			"is not mapped (only `host`/`none`/`pasta`/`slirp4netns`/`service:`/`container:` are supported); use networks instead",
 		);
 	}
 	if !service.profiles.is_empty() {

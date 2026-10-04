@@ -203,6 +203,12 @@ pub(crate) fn build_spec_generator(
 		portmappings,
 		networks,
 		netns,
+		// The in-pod path carries no netns of its own, so no mode options either.
+		network_options: if in_pod {
+			HashMap::new()
+		} else {
+			super::super::network::network_mode_options(service)
+		},
 		extra_hosts: service.extra_hosts.clone(),
 		dns_server: service.dns.to_list(),
 		dns_search: service.dns_search.to_list(),

@@ -434,8 +434,10 @@ pub(crate) fn container_unit_with_mode(
 	// `Network={X}.container` (the `.container` unit dependency). `container:X`
 	// reuses an *existing* container's netns by id/name and maps to podman's
 	// `Network=container:X` join form, not a `.container` unit, which would name
-	// a non-existent dependency and fail to start. Other modes (bridge:, custom,
-	// …) have no key and are reported by collect_warnings.
+	// a non-existent dependency and fail to start. `pasta` and `slirp4netns`,
+	// with or without `:options`, pass through as written: `Network=` takes the
+	// same value as `podman run --network` (#1994). Other modes (bridge:,
+	// custom, …) have no key and are reported by collect_warnings.
 	match service.network_mode.as_deref() {
 		Some("host") => {
 			container.add("Network", "host".to_string());
@@ -458,6 +460,8 @@ pub(crate) fn container_unit_with_mode(
 					"Network",
 					format!("{}.container", unit_stem(project, target)),
 				);
+			} else if is_rootless_user_mode(m) {
+				container.add("Network", m.to_string());
 			} else if let Some(target) = m.strip_prefix("container:") {
 				container.add("Network", format!("container:{target}"));
 				// Sharing another container's netns collides with the same
@@ -716,4 +720,12 @@ fn emit_log_config(container: &mut Section, logging: crate::libpod::types::conta
 			format!("--log-opt={}", quote_podman_arg_value(&line)),
 		);
 	}
+}
+
+/// `pasta` or `slirp4netns`, bare or with `:options`: the user-mode network
+/// modes `Network=` accepts verbatim.
+pub(crate) fn is_rootless_user_mode(mode: &str) -> bool {
+	["pasta", "slirp4netns"]
+		.iter()
+		.any(|m| mode == *m || mode.strip_prefix(m).is_some_and(|r| r.starts_with(':')))
 }

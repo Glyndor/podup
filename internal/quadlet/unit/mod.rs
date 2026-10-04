@@ -2,6 +2,7 @@
 
 mod build;
 mod container;
+pub(crate) use container::is_rootless_user_mode;
 mod health;
 mod network;
 mod pod;

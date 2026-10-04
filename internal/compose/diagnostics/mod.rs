@@ -12,6 +12,7 @@ use std::cell::Cell;
 
 use super::types::ComposeFile;
 
+mod client_address;
 mod ignored_fields;
 mod nested_raw;
 pub(crate) use ignored_fields::ports_published_on_all_interfaces;
@@ -80,13 +81,13 @@ fn port_exposure_suppressed() -> bool {
 	SUPPRESS_PORT_EXPOSURE_WARNING.with(|c| c.get())
 }
 
-/// Identify the parse-time port-exposure warning. The text is matched on a
-/// stable substring (`"is published on every interface"`) so the gate stays
-/// correct if the warning is reworded to use a different service-name
-/// prefix or a different port-binding suggestion, and so other warnings
-/// are never accidentally silenced.
+/// Identify the parse-time port warnings: "published on every interface" and
+/// the client-address warning (#1994). Each is matched on a stable substring so
+/// the gate stays correct if the wording around it changes, and so other
+/// warnings are never accidentally silenced.
 fn is_port_exposure_warning(msg: &str) -> bool {
 	msg.contains("is published on every interface")
+		|| msg.contains(client_address::CLIENT_ADDRESS_NEEDLE)
 }
 
 /// Emit one diagnostic warning, honouring the parse-time gate for the
@@ -109,6 +110,7 @@ pub(super) fn collect(file: &ComposeFile) -> Vec<String> {
 	ignored_service_fields(file, &mut out);
 	ignored_port_fields(file, &mut out);
 	port_published_on_all_interfaces(file, &mut out);
+	client_address::ports_hide_client_address(file, &mut out);
 	ignored_volume_mount_fields(file, &mut out);
 	ignored_build_fields(file, &mut out);
 	ignored_network_fields(file, &mut out);
