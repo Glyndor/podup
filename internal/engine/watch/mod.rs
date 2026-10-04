@@ -171,10 +171,11 @@ impl Engine {
 					_ => "",
 				};
 				warn!(
-					"{}: sync target {target} is bind-mounted back into the watched path ({}); \
-					 changes under it are not copied, the files are already shared through the mount{ending}",
-					entry.service_name,
-					host.display()
+					"{service}: sync target {target} maps back into the watched path ({host}) through a bind mount; \
+					 copies that would land there are skipped so they cannot trigger themselves, \
+					 and paths under a more specific mount still sync{ending}",
+					service = entry.service_name,
+					host = host.display(),
 				);
 			}
 		}

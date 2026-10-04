@@ -262,19 +262,6 @@ fn rules_not_recovered_lists_only_what_recovery_did_not_run() {
 	assert!(!got.iter().any(|s| s == "web:src"));
 }
 
-/// A `sync+exec` rule with `initial_sync: true` whose root writes back
-/// never has its sync step run inside `sync_all`: the rule is pushed
-/// into `failed` before any upload is attempted. From the recovery
-/// summary's perspective it is still not a "plain sync + initial_sync"
-/// rule, so it is named in the list the way any other non-recovered
-/// rule is.
-#[test]
-fn rules_not_recovered_lists_a_writes_back_rule_via_failed() {
-	let entry = make_entry("web", "exec_rule", WatchAction::SyncAndExec, true);
-	let got = super::super::Engine::rules_not_recovered(&[entry], &["web:exec_rule".into()]);
-	assert_eq!(got, vec!["web:exec_rule".to_string()]);
-}
-
 #[test]
 fn enqueue_filtered_event_does_not_touch_a_full_channel() {
 	// The flag is fresh, the channel is fresh and already holds one

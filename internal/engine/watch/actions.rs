@@ -8,6 +8,7 @@
 
 use std::collections::HashSet;
 use std::path::Path;
+use std::sync::Arc;
 
 use futures_util::StreamExt;
 use tracing::info;
@@ -22,12 +23,14 @@ use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 use crate::engine::copy;
 
 use super::placement::{
-	join_container_path, mark_dir_ensured, mkdir_p_argv, plan_remove_placement,
+	container_rel, join_container_path, mark_dir_ensured, mkdir_p_argv, plan_remove_placement,
 	plan_sync_placement, SyncPlacement,
 };
+use super::writeback::{writes_back, EffectiveMount};
 use super::Engine;
 
 impl Engine {
+	#[allow(clippy::too_many_arguments)]
 	pub(in crate::engine::watch) async fn sync_to_container(
 		&self,
 		container: &str,
@@ -35,11 +38,34 @@ impl Engine {
 		changed: &Path,
 		target: &str,
 		ensured: &mut HashSet<(String, String)>,
+		mounts: &[EffectiveMount],
+		watched_root: &Path,
 	) -> Result<()> {
 		let SyncPlacement {
 			entry_name,
 			dest_dir,
 		} = plan_sync_placement(root, changed, target);
+		// Per-entry filter: any descendant of this upload whose container
+		// path lands in a deeper writable bind that maps back into the
+		// watched tree is dropped, otherwise the copy would re-fire the
+		// watcher. The packer still walks through skipped directories so a
+		// safe deeper mount below a skipped one is still copied.
+		let dest_dir_owned = dest_dir.clone();
+		let mounts_owned: Arc<Vec<EffectiveMount>> = Arc::new(mounts.to_vec());
+		let watched_root_owned = watched_root.to_path_buf();
+		let skip: Arc<dyn Fn(&Path) -> bool + Send + Sync> = {
+			let dest_dir = dest_dir_owned.clone();
+			let mounts = Arc::clone(&mounts_owned);
+			let watched_root = watched_root_owned.clone();
+			Arc::new(move |name: &Path| {
+				let entry = container_rel(name);
+				let container_path = join_container_path(&SyncPlacement {
+					dest_dir: dest_dir.clone(),
+					entry_name: entry,
+				});
+				writes_back(&mounts, &container_path, &watched_root).is_some()
+			})
+		};
 		// `build_sync_tar_stream` walks the changed directory (possibly many
 		// entries) and gzips it inside a `spawn_blocking` task that pipes the
 		// bytes through a bounded channel to the PUT body. On an async
@@ -54,6 +80,7 @@ impl Engine {
 			changed,
 			Path::new(&entry_name),
 			crate::engine::copy::CpByteCounter::new().inner().clone(),
+			Arc::clone(&skip),
 		);
 
 		// docker compose watch creates the sync target directory when it is

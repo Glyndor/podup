@@ -370,8 +370,12 @@ async fn sync_recording_includes_a_symlink() {
 	std::fs::write(src.join("a.txt"), b"hi").unwrap();
 	std::os::unix::fs::symlink("nowhere", src.join("dangling")).unwrap();
 
-	let packed =
-		crate::engine::copy::build_sync_tar_stream_for_watch(&src, Path::new("changed"), counter());
+	let packed = crate::engine::copy::build_sync_tar_stream_for_watch(
+		&src,
+		Path::new("changed"),
+		counter(),
+		std::sync::Arc::new(|_| false),
+	);
 	let (_recorded, result) = run(packed).await;
 	result.expect("sync packer should not error on a tree with a link");
 	// The exact list shape is covered by the read-back test; here we only

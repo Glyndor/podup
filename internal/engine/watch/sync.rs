@@ -37,6 +37,14 @@ use crate::engine::copy::verify::SentEntry;
 /// `sent` is the recorder, parallel to the cp packer's recorder; the
 /// post-PUT confirmation reads it back once the bytes are gone.
 ///
+/// `skip` is consulted for every entry that would otherwise be recorded
+/// (the root entry and each descendant of a directory), with the entry
+/// name the packer would record it under. When `skip` returns `true` the
+/// entry is dropped: a directory that is skipped is still walked, so a
+/// safe deeper mount that sits below a skipped directory still receives
+/// its subtree. The archive tests and any caller that wants today's
+/// behaviour pass `&|_| false`.
+///
 /// Watch sync stores symlinks as links: a symlink inside the watched tree
 /// would otherwise copy the contents of its (possibly out-of-tree) target
 /// into the container. The tar builder is told via
@@ -48,6 +56,7 @@ pub(in crate::engine) fn build_sync_tar<W: Write>(
 	entry_name: &Path,
 	tar: &mut tar::Builder<W>,
 	sent: &mut Vec<SentEntry>,
+	skip: &dyn Fn(&Path) -> bool,
 ) -> Result<()> {
 	// `symlink_metadata` does not follow symlinks: a watched path that was
 	// replaced by a symlink to a directory outside the rule keeps its link
@@ -63,7 +72,7 @@ pub(in crate::engine) fn build_sync_tar<W: Write>(
 		// descendant re-rooted under `entry_name`. An empty `entry_name` means
 		// "the rule's own root"; the initial sync puts the descendants at the
 		// target without a wrapper entry.
-		if !entry_name.as_os_str().is_empty() {
+		if !entry_name.as_os_str().is_empty() && !skip(entry_name) {
 			record_one(
 				tar,
 				sent,
@@ -81,6 +90,13 @@ pub(in crate::engine) fn build_sync_tar<W: Write>(
 			// Re-root each descendant under `entry_name` so the directory lands at
 			// the rule target with its in-tree layout preserved.
 			let name = entry_name.join(rel);
+			// The filter is the gate the watch loop uses to refuse entries that
+			// would land in a deeper writable bind that maps back into the
+			// watched tree. A directory the filter drops is still walked: a
+			// safe deeper mount may sit below it.
+			if skip(&name) {
+				continue;
+			}
 			// Classify without following symlinks so a symlink-to-dir is stored as
 			// a link, not dereferenced.
 			let is_dir = abs.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
@@ -98,7 +114,7 @@ pub(in crate::engine) fn build_sync_tar<W: Write>(
 				)?;
 			}
 		}
-	} else {
+	} else if !skip(entry_name) {
 		record_one(
 			tar,
 			sent,

@@ -212,3 +212,32 @@ fn a_bind_at_the_container_root_covers_every_path() {
 	);
 	assert_eq!(writes_back(&mounts, "/other/f", Path::new("/p/src")), None);
 }
+
+// Normalisation: `.` and `..` in the container path collapse before the
+// longest-prefix walk runs. A bind at `/app` with a `/app/cache` volume
+// carve-out must recognise `/app/./cache/f` as inside the carve-out, not
+// under the bind. A path that climbs one component must still land on
+// the right host file.
+
+#[test]
+fn writes_back_drops_dot_components() {
+	let mounts = vec![mount("/app", "/p/src", false), non_bind("/app/cache")];
+	assert_none(&mounts, "/app/./cache/f", "/p/src");
+}
+
+#[test]
+fn writes_back_resolves_dotdot_against_the_container_path() {
+	let mounts = vec![mount("/app", "/p/src", false)];
+	// /app/x/../f collapses to /app/f, which is under the bind.
+	assert_some_host(&mounts, "/app/x/../f", "/p/src", "/p/src/f");
+}
+
+#[test]
+fn writes_back_treats_trailing_slash_mount_target_as_no_slash() {
+	let mounts = vec![EffectiveMount {
+		target: "/app/".to_string(),
+		bind_source: Some(PathBuf::from("/p/src")),
+		read_only: false,
+	}];
+	assert_some_host(&mounts, "/app/f", "/p/src", "/p/src/f");
+}

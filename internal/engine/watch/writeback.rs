@@ -52,7 +52,10 @@ use crate::engine::volume_mounts::{bind_mounts, mount_targets};
 use crate::error::{ComposeError, Result};
 
 use super::events;
-use super::placement::{join_container_path, plan_sync_placement};
+use super::placement::{
+	container_rel, join_container_path, normalise_container_path, plan_sync_placement,
+	SyncPlacement,
+};
 use super::Engine;
 
 /// One effective mount the watch loop considers when answering
@@ -114,12 +117,14 @@ pub(super) fn writes_back(
 	container_path: &str,
 	watched_root: &Path,
 ) -> Option<PathBuf> {
-	let container_parts = path_components(container_path);
+	let normalised = normalise_container_path("/", container_path);
+	let container_parts = path_components(&normalised);
 	// Longest component-wise prefix wins; a mount at `/` has length 0 and
 	// covers every path.
 	let mut best: Option<(usize, &EffectiveMount)> = None;
 	for m in mounts {
-		let mount_parts = path_components(&m.target);
+		let mount_target = normalise_container_path("/", &m.target);
+		let mount_parts = path_components(&mount_target);
 		if mount_parts.len() > container_parts.len() {
 			continue;
 		}
@@ -149,7 +154,7 @@ pub(super) fn writes_back(
 
 /// True when `host_path` equals `watched_root` or sits under it,
 /// component-wise (lexical, the canonicalised form is the caller's
-/// responsibility — the loop canonicalises `watched_root` on entry and
+/// responsibility: the loop canonicalises `watched_root` on entry and
 /// `effective_mounts` canonicalises bind sources).
 fn host_under_watched(host_path: &Path, watched_root: &Path) -> bool {
 	let host_parts = path_components_host(host_path);
@@ -205,15 +210,22 @@ impl Engine {
 		let Some(target) = &entry.rule.target else {
 			return Ok(());
 		};
-		let container_path =
-			join_container_path(&plan_sync_placement(&entry.abs_path, path, target));
-		if let Some(host) = writes_back(&entry.mounts, &container_path, &entry.abs_path) {
-			debug!(
-				"skip sync of {}: {container_path} is bind-mounted back to {}",
-				path.display(),
-				host.display()
-			);
-			return Ok(());
+		// Uploads filter every archive entry, but a removal runs `rm` on one
+		// container path; when that path maps back into the watched tree it
+		// is another host file, so leave it alone.
+		if matches!(events::sync_op_for(path), Ok(events::SyncOp::Remove)) {
+			let placement = plan_sync_placement(&entry.abs_path, path, target);
+			let container_path = join_container_path(&SyncPlacement {
+				entry_name: container_rel(Path::new(&placement.entry_name)),
+				dest_dir: placement.dest_dir,
+			});
+			if let Some(host) = writes_back(&entry.mounts, &container_path, &entry.abs_path) {
+				debug!(
+					"skip removal of {container_path}: it is bind-mounted back to {}",
+					host.display()
+				);
+				return Ok(());
+			}
 		}
 		self.dispatch_sync(
 			&entry.container_name,
@@ -221,6 +233,8 @@ impl Engine {
 			path,
 			target,
 			ensured,
+			&entry.mounts,
+			&entry.abs_path,
 		)
 		.await
 	}
@@ -232,6 +246,16 @@ impl Engine {
 	/// correctly: the file the host still has gets uploaded, the file the
 	/// host has dropped gets removed. Sync-family actions all funnel
 	/// through here so the removal path is owned in one place.
+	///
+	/// `mounts` and `watched_root` are passed down to the per-entry filter
+	/// that drops descendants whose container path lands in a deeper bind
+	/// that maps back into the watched tree. The earlier rule-wide check
+	/// (`writes_back` on the changed path alone) is a special case of the
+	/// per-entry check: the root is also evaluated, and a directory that
+	/// matches the loop pattern only on a non-root descendant still
+	/// produces a sync that drops the loop-causing entry while keeping
+	/// every safe entry.
+	#[allow(clippy::too_many_arguments)]
 	pub(in crate::engine::watch) async fn dispatch_sync(
 		&self,
 		container: &str,
@@ -239,11 +263,21 @@ impl Engine {
 		changed: &Path,
 		target: &str,
 		ensured: &mut HashSet<(String, String)>,
+		mounts: &[EffectiveMount],
+		watched_root: &Path,
 	) -> Result<()> {
 		match events::sync_op_for(changed) {
 			Ok(events::SyncOp::Upload) => {
-				self.sync_to_container(container, root, changed, target, ensured)
-					.await
+				self.sync_to_container(
+					container,
+					root,
+					changed,
+					target,
+					ensured,
+					mounts,
+					watched_root,
+				)
+				.await
 			}
 			Ok(events::SyncOp::Remove) => {
 				self.remove_from_container(container, root, changed, target)

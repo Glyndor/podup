@@ -1,10 +1,12 @@
 use super::{
-	is_dispatch_event, join_container_path, mark_dir_ensured, mkdir_p_argv, plan_remove_placement,
-	plan_sync_placement, read_only_target_warning, target_is_on_a_mount, validate_sync_target,
+	container_rel, is_dispatch_event, join_container_path, mark_dir_ensured, mkdir_p_argv,
+	normalise_container_path, plan_remove_placement, plan_sync_placement, read_only_target_warning,
+	target_is_on_a_mount, validate_sync_target,
 };
 use crate::compose::types::{Service, WatchAction, WatchRule};
 use std::collections::HashSet;
 use std::fs;
+use std::path::Path;
 use tempfile::tempdir;
 
 fn rule(action: WatchAction, target: Option<&str>) -> WatchRule {
@@ -234,4 +236,49 @@ fn read_only_target_warning_cases() {
 	let svc: Service =
 		serde_yaml::from_str("read_only: true\nimage: x\nvolumes_from:\n  - data\n").unwrap();
 	assert_eq!(read_only_target_warning("web", &svc, "/app"), None);
+}
+
+// --- container_rel ------------------------------------------------------
+
+/// `Path::join` joins with the platform separator; `container_rel` must
+/// always produce POSIX-style `/`. The chain `a/b/c` built from joining on
+/// a Linux host is `a/b/c`; the same chain on Windows would otherwise be
+/// `a\b\c`. The test pins the joined form.
+#[test]
+fn container_rel_joins_components_with_posix_separator() {
+	let p = Path::new("a").join("b").join("c");
+	assert_eq!(container_rel(&p), "a/b/c");
+}
+
+/// An empty `Path` produces an empty string: the per-entry upload is the
+/// one that has nothing to extract, not a sentinel value.
+#[test]
+fn container_rel_empty_path_is_empty_string() {
+	assert_eq!(container_rel(Path::new("")), "".to_string());
+}
+
+/// A single component name is itself, no separators added.
+#[test]
+fn container_rel_single_component_is_itself() {
+	assert_eq!(container_rel(Path::new("hello")), "hello");
+}
+
+// --- normalise_container_path -------------------------------------------
+
+/// `..` removes the previous component, never climbing above the root.
+#[test]
+fn normalise_container_path_dotdot_drops_the_previous_component() {
+	assert_eq!(normalise_container_path("/", "a/../b"), "/b");
+}
+
+/// A path that resolves to the root is `/`.
+#[test]
+fn normalise_container_path_full_climb_returns_root() {
+	assert_eq!(normalise_container_path("/", "a/../.."), "/");
+}
+
+/// `.` components are dropped, leaving the rest unchanged.
+#[test]
+fn normalise_container_path_drops_dot_components() {
+	assert_eq!(normalise_container_path("/", "a/./b"), "/a/b");
 }

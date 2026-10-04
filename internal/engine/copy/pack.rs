@@ -204,10 +204,17 @@ pub(super) fn pack_path_stream(
 /// gzipped), the entry list is recorded by the same [`super::pack_common`]
 /// helpers the `cp` packer uses, and the error mapping keeps the `watch`
 /// category instead of `cp`.
+///
+/// `skip` is consulted for every entry that would otherwise be recorded: the
+/// root entry and each descendant of a directory. The watch caller uses it
+/// to drop entries that would land in a deeper bind that maps back into the
+/// watched tree, the only place the packer can detect the loop because the
+/// rule-wide check looks at the rule root, not at every descendant.
 pub(in crate::engine) fn build_sync_tar_stream(
 	src: &Path,
 	entry_name: &Path,
 	counter: Arc<AtomicU64>,
+	skip: Arc<dyn Fn(&Path) -> bool + Send + Sync>,
 ) -> PackedStream {
 	use flate2::write::GzEncoder;
 	use flate2::Compression;
@@ -229,8 +236,13 @@ pub(in crate::engine) fn build_sync_tar_stream(
 		tar.follow_symlinks(false);
 		let mut sent: Vec<SentEntry> = Vec::new();
 
-		let result =
-			crate::engine::watch::sync::build_sync_tar(&src, &entry_name, &mut tar, &mut sent);
+		let result = crate::engine::watch::sync::build_sync_tar(
+			&src,
+			&entry_name,
+			&mut tar,
+			&mut sent,
+			&*skip,
+		);
 
 		// `into_inner` runs the gzip footer; an abort along the way surfaces
 		// as a watch error so the caller's sync warning line keeps its

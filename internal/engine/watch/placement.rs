@@ -54,9 +54,11 @@ pub(super) fn plan_remove_placement(root: &Path, removed: &Path, target: &str) -
 pub(super) fn plan_sync_placement(root: &Path, changed: &Path, target: &str) -> SyncPlacement {
 	if root.is_dir() {
 		// Directory rule: preserve the changed file's subpath under `target`,
-		// which is treated as a directory.
+		// which is treated as a directory. The host path is re-rooted to
+		// POSIX before becoming the entry name so the container side parses
+		// it with `/` even when the host built the path with `\` (Windows).
 		let rel = changed.strip_prefix(root).unwrap_or(changed);
-		let entry_name = rel.to_string_lossy().into_owned();
+		let entry_name = container_rel(rel);
 		let dest_dir = target.trim_end_matches('/').to_string();
 		let dest_dir = if dest_dir.is_empty() {
 			"/".to_string()
@@ -247,6 +249,67 @@ fn path_components(path: &str) -> Vec<&str> {
 		.split('/')
 		.filter(|c| !c.is_empty())
 		.collect()
+}
+
+/// Build a POSIX container-style relative path from a host relative path.
+///
+/// On Windows the `Path` API joins components with `\`, but every container
+/// in the libpod archive is keyed with `/`. Joining the host's normal
+/// components with `/` produces a path the container side can parse. Only
+/// `Normal` components are kept: `..` and `.` are resolved into the normal
+/// chain by `Path::components` itself, which is the right behaviour here
+/// (a path the rule ever produces came from a real file, so a `.` or `..`
+/// is structurally impossible; the conservative resolution still saves a
+/// future Windows-port bug from being a loop in production).
+///
+/// Non-UTF-8 components render as empty strings and are skipped, matching
+/// `push_entry` in the packer: a non-UTF-8 component would already fail the
+/// archive write, so dropping it here is the same shape.
+pub(super) fn container_rel(rel: &Path) -> String {
+	let mut parts: Vec<String> = Vec::new();
+	for c in rel.components() {
+		match c {
+			std::path::Component::Normal(part) => {
+				if let Some(s) = part.to_str() {
+					if !s.is_empty() {
+						parts.push(s.to_string());
+					}
+				}
+			}
+			_ => continue,
+		}
+	}
+	parts.join("/")
+}
+
+/// Join `dest_dir` and an entry-name produced by [`container_rel`] into the
+/// full container path the entry occupies, dropping `.` components and letting
+/// `..` remove the previous component. The result is always absolute: an
+/// empty `dest_dir` becomes `/`, a relative `dest_dir` is treated as
+/// root-relative (it already starts with `/`), and an entry-name of `..` or
+/// `.` does not climb above the root.
+///
+/// The normaliser is the same shape `Path::components` would give for a host
+/// path; it is applied to the joined string because the entry-name was
+/// already POSIX and the dest dir is canonical.
+pub(super) fn normalise_container_path(dest_dir: &str, entry_name: &str) -> String {
+	let joined = format!("{dest_dir}/{entry_name}");
+	let mut parts: Vec<&str> = Vec::new();
+	for raw in joined.split('/') {
+		if raw.is_empty() || raw == "." {
+			continue;
+		}
+		if raw == ".." {
+			parts.pop();
+			continue;
+		}
+		parts.push(raw);
+	}
+	if parts.is_empty() {
+		"/".to_string()
+	} else {
+		format!("/{}", parts.join("/"))
+	}
 }
 
 // ---------------------------------------------------------------------------

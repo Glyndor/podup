@@ -16,8 +16,7 @@ use tokio::sync::mpsc;
 use tokio::sync::Notify;
 use tracing::debug;
 
-use super::placement::{is_dispatch_event, join_container_path, plan_sync_placement};
-use super::writeback::writes_back;
+use super::placement::is_dispatch_event;
 use super::RuleEntry;
 use crate::compose::types::WatchAction;
 use crate::engine::Engine;
@@ -173,20 +172,6 @@ impl Engine {
 			let Some(target) = &entry.rule.target else {
 				continue;
 			};
-			// Skip a rule whose root writes back through a bind mount
-			// the rule also targets: copying the tree would land back
-			// in the watched path. The rule is added to `failed` so the
-			// recovery summary still names it; later per-path dispatch
-			// covers carve-out subtrees that do not write back.
-			let container_path = join_container_path(&plan_sync_placement(
-				&entry.abs_path,
-				&entry.abs_path,
-				target,
-			));
-			if writes_back(&entry.mounts, &container_path, &entry.abs_path).is_some() {
-				failed.push(format!("{}:{}", entry.service_name, entry.rule.path));
-				continue;
-			}
 			info!("{label} {} -> {target}", entry.abs_path.display());
 			if let Err(e) = self
 				.sync_to_container(
@@ -195,6 +180,8 @@ impl Engine {
 					&entry.abs_path,
 					target,
 					ensured,
+					&entry.mounts,
+					&entry.abs_path,
 				)
 				.await
 			{
