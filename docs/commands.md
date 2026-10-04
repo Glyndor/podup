@@ -686,11 +686,15 @@ sync runs, so a file saved while `watch` is starting is not missed.
 
 A sync rule whose `target` is bind-mounted from the rule's own `path` (for
 example `volumes: ["./src:/app"]` with a rule from `./src` to `/app`) is
-skipped with a warning: the files are already shared, and every copy would
-write back into the watched directory and trigger another copy. For
-`sync+restart` and `sync+exec` only the copy is skipped; the restart or exec
-still runs. A read-only bind, or a more specific mount under the bind that
-receives the copy, is not treated this way.
+not copied into the container for paths the bind covers: a change whose
+copy would land in that writable bind would land back in the watched
+directory and re-trigger another copy, so the copy is skipped and a warning
+is printed once per rule at startup. Other paths of the same rule (those
+under a more specific mount (a named volume, a tmpfs, or a read-only bind)
+that sits on top of the wider bind) are still copied; the restart, rebuild
+or exec part of a `sync+restart` / `sync+exec` action still runs. A
+symlink in the watched tree is copied as a link, and a file replaced by a
+directory becomes a directory in the container.
 
 If changes arrive faster than they can be handled and the event queue
 overflows, `watch` copies again every rule with `initial_sync: true` and logs a

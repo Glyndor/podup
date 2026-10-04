@@ -7,11 +7,9 @@
 //! dispatch loop in [`super`] stay focused on I/O.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use crate::compose::types::{Service, WatchAction, WatchRule};
-use crate::engine::container::resolve_bind_source;
-use crate::engine::volume_mounts::{bind_mounts, mount_targets};
+use crate::compose::types::{Service, WatchRule};
 use crate::error::{ComposeError, Result};
 
 /// Where a changed host path lands inside the container for a `sync` action:
@@ -56,9 +54,11 @@ pub(super) fn plan_remove_placement(root: &Path, removed: &Path, target: &str) -
 pub(super) fn plan_sync_placement(root: &Path, changed: &Path, target: &str) -> SyncPlacement {
 	if root.is_dir() {
 		// Directory rule: preserve the changed file's subpath under `target`,
-		// which is treated as a directory.
+		// which is treated as a directory. The host path is re-rooted to
+		// POSIX before becoming the entry name so the container side parses
+		// it with `/` even when the host built the path with `\` (Windows).
 		let rel = changed.strip_prefix(root).unwrap_or(changed);
-		let entry_name = rel.to_string_lossy().into_owned();
+		let entry_name = container_rel(rel);
 		let dest_dir = target.trim_end_matches('/').to_string();
 		let dest_dir = if dest_dir.is_empty() {
 			"/".to_string()
@@ -251,141 +251,69 @@ fn path_components(path: &str) -> Vec<&str> {
 		.collect()
 }
 
-/// A message when a sync rule would write back into the tree it watches
-/// through one of the service's bind mounts, `None` otherwise (#1984).
+/// Build a POSIX container-style relative path from a host relative path.
 ///
-/// Two shapes loop:
+/// On Windows the `Path` API joins components with `\`, but every container
+/// in the libpod archive is keyed with `/`. Joining the host's normal
+/// components with `/` produces a path the container side can parse. Only
+/// `Normal` components are kept: `..` and `.` are resolved into the normal
+/// chain by `Path::components` itself, which is the right behaviour here
+/// (a path the rule ever produces came from a real file, so a `.` or `..`
+/// is structurally impossible; the conservative resolution still saves a
+/// future Windows-port bug from being a loop in production).
 ///
-/// - the rule watches the bind source (or a directory under it) and syncs
-///   into the matching place in the bind target. The shape this function
-///   handles.
-/// - the rule watches a parent of the bind source and syncs that source
-///   onto the bind target. Skipping that rule would also stop every other
-///   file under the parent from syncing, so it is not detected here (#1985).
-///
-/// A read-only bind cannot write back: a sync into it fails with a
-/// read-only error, not with a fresh write that re-fires the watcher.
-/// Bailing out early on those keeps the operator-facing warning focused
-/// on the cases that actually loop.
-///
-/// If a sibling entry in the same service points at a strictly deeper
-/// container target (`cache:/app/cache` while the bind is `./src:/app`),
-/// and the rule's target lands at or under that other target, the more
-/// specific entry receives the upload, not the bind, so that bind is not a
-/// loop for this rule.
-///
-/// The trailing clause of the warning depends on the rule's action: a
-/// plain `sync` says "so this rule is skipped"; a `sync+restart` /
-/// `sync+exec` says "so the sync step is skipped; the {restart|exec}
-/// still runs". The action is enough to pick it; `feedback_message`
-/// takes the resolved ending as a parameter so the format stays in one
-/// place.
-pub(super) fn bind_mount_feedback(
-	service_name: &str,
-	service: &Service,
-	base_dir: &Path,
-	rule_abs: &Path,
-	target: &str,
-	action: WatchAction,
-) -> Option<String> {
-	let ending = match action {
-		WatchAction::Sync => "so this rule is skipped",
-		WatchAction::SyncAndRestart => "so the sync step is skipped; the restart still runs",
-		WatchAction::SyncAndExec => "so the sync step is skipped; the exec still runs",
-		_ => "so this rule is skipped",
-	};
-	let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
-
-	for bind in bind_mounts(service) {
-		if bind.read_only {
-			continue;
-		}
-		let resolved = PathBuf::from(resolve_bind_source(&bind.source, base_dir));
-		let canon_source = canon(&resolved);
-		let canon_rule = canon(rule_abs);
-
-		let subpath: String = if canon_rule == canon_source {
-			String::new()
-		} else if let Ok(rel) = canon_rule.strip_prefix(&canon_source) {
-			rel.to_string_lossy().into_owned()
-		} else {
-			continue;
-		};
-
-		let dest_dir_trimmed = bind.target.trim_end_matches('/');
-		let dest_dir_owned = if dest_dir_trimmed.is_empty() {
-			"/".to_string()
-		} else {
-			dest_dir_trimmed.to_string()
-		};
-		let expected = join_container_path(&SyncPlacement {
-			dest_dir: dest_dir_owned,
-			entry_name: subpath,
-		});
-
-		let target_trim = target.trim_end_matches('/');
-		let expected_trim = expected.trim_end_matches('/');
-
-		if !(target_trim == expected_trim || target_trim.starts_with(&format!("{expected_trim}/")))
-		{
-			continue;
-		}
-
-		// A sibling mount covers the rule's target more specifically: the
-		// upload lands in that other mount, not in this bind. Examples:
-		// the bind is `./src:/app`, the sibling is `cache:/app/cache`,
-		// and the rule syncs `./src/cache` to `/app/cache`; the cache
-		// entry is the target, not the bind.
-		if more_specific_sibling_covers_target(service, &bind.target, target) {
-			continue;
-		}
-
-		return Some(feedback_message(service_name, target, &canon_rule, ending));
-	}
-	None
-}
-
-/// True when some other entry on the service (a volume or a tmpfs) has a
-/// container target strictly under `bind_target` (the bind we're
-/// checking) and the rule's target is at or under that other target. The
-/// "strictly under" shape is what makes the sibling "more specific" than
-/// the bind, so a write into the rule's target lands in the sibling, not
-/// in the bind.
-///
-/// The full mount list (volumes + tmpfs) is walked via
-/// [`mount_targets`], which uses the same parsed `target`/`destination`
-/// as `bind_mounts` does. The iteration order matches the declaration
-/// order in the compose file.
-fn more_specific_sibling_covers_target(
-	service: &Service,
-	bind_target: &str,
-	rule_target: &str,
-) -> bool {
-	let bind_parts = path_components(bind_target);
-	let rule_parts = path_components(rule_target);
-	for other_target in mount_targets(service) {
-		if other_target == bind_target {
-			continue;
-		}
-		let other_parts = path_components(&other_target);
-		if other_parts.len() <= bind_parts.len() {
-			continue;
-		}
-		if !other_parts.starts_with(&bind_parts) {
-			continue;
-		}
-		if rule_parts.starts_with(&other_parts) {
-			return true;
+/// Each component is rendered with `to_string_lossy()`. A non-UTF-8
+/// component would otherwise be dropped, leaving the path short of where
+/// it was on the host: `/p/<0xff>/keep.txt` would land at `keep.txt` and
+/// collide with an unrelated container file. The lossy form substitutes
+/// the Unicode replacement character (`U+FFFD`) for the non-UTF-8 bytes,
+/// so the container path keeps the same number of components and the
+/// upload lands in the same directory, just with a different name. The
+/// same lossy form the `tar` crate accepts on archive writes.
+pub(super) fn container_rel(rel: &Path) -> String {
+	let mut parts: Vec<String> = Vec::new();
+	for c in rel.components() {
+		match c {
+			std::path::Component::Normal(part) => {
+				let s = part.to_string_lossy();
+				if !s.is_empty() {
+					parts.push(s.into_owned());
+				}
+			}
+			_ => continue,
 		}
 	}
-	false
+	parts.join("/")
 }
 
-fn feedback_message(service_name: &str, target: &str, rule_abs: &Path, ending: &str) -> String {
-	format!(
-		"{service_name}: sync target {target} is bind-mounted from {}; the files are already shared, and syncing would write back into the watched path on every change, {ending}",
-		rule_abs.display()
-	)
+/// Join `dest_dir` and an entry-name produced by [`container_rel`] into the
+/// full container path the entry occupies, dropping `.` components and letting
+/// `..` remove the previous component. The result is always absolute: an
+/// empty `dest_dir` becomes `/`, a relative `dest_dir` is treated as
+/// root-relative (it already starts with `/`), and an entry-name of `..` or
+/// `.` does not climb above the root.
+///
+/// The normaliser is the same shape `Path::components` would give for a host
+/// path; it is applied to the joined string because the entry-name was
+/// already POSIX and the dest dir is canonical.
+pub(super) fn normalise_container_path(dest_dir: &str, entry_name: &str) -> String {
+	let joined = format!("{dest_dir}/{entry_name}");
+	let mut parts: Vec<&str> = Vec::new();
+	for raw in joined.split('/') {
+		if raw.is_empty() || raw == "." {
+			continue;
+		}
+		if raw == ".." {
+			parts.pop();
+			continue;
+		}
+		parts.push(raw);
+	}
+	if parts.is_empty() {
+		"/".to_string()
+	} else {
+		format!("/{}", parts.join("/"))
+	}
 }
 
 // ---------------------------------------------------------------------------

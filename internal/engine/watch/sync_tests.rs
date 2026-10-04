@@ -19,12 +19,28 @@ fn sync_to_gz(src: &Path, entry_name: &Path) -> std::io::Result<Vec<u8>> {
 	let encoder = GzEncoder::new(buf, Compression::default());
 	let mut tar = tar::Builder::new(encoder);
 	let mut sent = Vec::new();
-	build_sync_tar(src, entry_name, &mut tar, &mut sent)
+	build_sync_tar(src, entry_name, &mut tar, &mut sent, &|_| false)
 		.map_err(|e| std::io::Error::other(e.to_string()))?;
 	let encoder = tar.into_inner().map_err(std::io::Error::other)?;
 	encoder.finish().map_err(std::io::Error::other)
 }
 
+/// Same shape as `sync_to_gz`, but with a filter closure. Used by the
+/// `build_sync_tar` tests that exercise the per-entry skip.
+fn sync_to_gz_with(
+	src: &Path,
+	entry_name: &Path,
+	skip: &dyn Fn(&Path) -> bool,
+) -> std::io::Result<Vec<u8>> {
+	let buf = Vec::new();
+	let encoder = GzEncoder::new(buf, Compression::default());
+	let mut tar = tar::Builder::new(encoder);
+	let mut sent = Vec::new();
+	build_sync_tar(src, entry_name, &mut tar, &mut sent, skip)
+		.map_err(|e| std::io::Error::other(e.to_string()))?;
+	let encoder = tar.into_inner().map_err(std::io::Error::other)?;
+	encoder.finish().map_err(std::io::Error::other)
+}
 /// Decode a gzipped tar and collect its non-directory entry paths.
 fn tar_entry_paths(gz: &[u8]) -> Vec<String> {
 	let mut decoder = GzDecoder::new(gz);
@@ -39,6 +55,66 @@ fn tar_entry_paths(gz: &[u8]) -> Vec<String> {
 		}
 	}
 	names
+}
+
+/// Decode a gzipped tar and return `(path, kind)` for every entry that has
+/// one (`Kind` is "file", "dir", or "link"). Ordering is the archive order,
+/// which is the order the packer appended the entries.
+fn tar_entries(gz: &[u8]) -> Vec<(String, &'static str)> {
+	let mut decoder = GzDecoder::new(gz);
+	let mut raw = Vec::new();
+	decoder.read_to_end(&mut raw).unwrap();
+	let mut archive = tar::Archive::new(&raw[..]);
+	let mut out = Vec::new();
+	for entry in archive.entries().unwrap() {
+		let entry = entry.unwrap();
+		let path = entry
+			.path()
+			.unwrap()
+			.to_string_lossy()
+			.replace('\\', "/")
+			.to_string();
+		let kind = if entry.header().entry_type().is_dir() {
+			"dir"
+		} else if entry.header().entry_type().is_symlink() {
+			"link"
+		} else if entry.header().entry_type().is_file() {
+			"file"
+		} else {
+			continue;
+		};
+		out.push((path, kind));
+	}
+	out
+}
+
+/// Read the link target of a single entry of a gzipped tar. Returns `None`
+/// when the entry is not a symlink.
+fn tar_link_target(gz: &[u8], entry_name: &str) -> Option<String> {
+	let mut decoder = GzDecoder::new(gz);
+	let mut raw = Vec::new();
+	decoder.read_to_end(&mut raw).unwrap();
+	let mut archive = tar::Archive::new(&raw[..]);
+	for entry in archive.entries().unwrap() {
+		let entry = entry.unwrap();
+		let path = entry
+			.path()
+			.unwrap()
+			.to_string_lossy()
+			.replace('\\', "/")
+			.to_string();
+		if path != entry_name {
+			continue;
+		}
+		if !entry.header().entry_type().is_symlink() {
+			return None;
+		}
+		return entry
+			.link_name()
+			.unwrap()
+			.map(|p| p.to_string_lossy().replace('\\', "/").to_string());
+	}
+	None
 }
 
 // legacy_project_relative_ignored -----------------------------------------------------------
@@ -242,5 +318,179 @@ fn sync_tar_missing_directory_source_is_a_sync_error_not_a_build_error() {
 	assert!(
 		!msg.contains("build error"),
 		"must not be a build error: {msg:?}"
+	);
+}
+
+// --- directory entries --------------------------------------------------
+
+/// An empty directory with a non-empty `entry_name` packs exactly one entry:
+/// the directory itself. A file replaced by an empty directory must become a
+/// directory in the container, not silently disappear (#1985).
+#[test]
+fn sync_tar_empty_directory_emits_one_directory_entry() {
+	let dir = tempdir().unwrap();
+	let empty = dir.path().join("d");
+	fs::create_dir(&empty).unwrap();
+	let bytes = sync_to_gz(&empty, Path::new("d")).unwrap();
+	let entries = tar_entries(&bytes);
+	assert_eq!(
+		entries,
+		vec![("d".into(), "dir")],
+		"expected exactly one directory entry named `d`, got {entries:?}"
+	);
+}
+
+/// A directory with one file packs the directory first, then its descendants,
+/// in that order. An empty subpath the watcher reported must not turn the
+/// archive into just the file with no parent directory.
+#[test]
+fn sync_tar_directory_emits_root_entry_then_descendants() {
+	let dir = tempdir().unwrap();
+	let d = dir.path().join("d");
+	fs::create_dir(&d).unwrap();
+	fs::write(d.join("a.txt"), b"a").unwrap();
+	let bytes = sync_to_gz(&d, Path::new("d")).unwrap();
+	let entries = tar_entries(&bytes);
+	assert_eq!(
+		entries,
+		vec![("d".into(), "dir"), ("d/a.txt".into(), "file")],
+		"expected dir then file, got {entries:?}"
+	);
+}
+
+/// An empty `entry_name` (the initial sync of a rule root into its target)
+/// does not add a root wrapper, matching the pre-#1985 behaviour for the
+/// initial sync call: only the descendants are recorded.
+#[test]
+fn sync_tar_directory_with_empty_entry_name_emits_no_root_entry() {
+	let dir = tempdir().unwrap();
+	fs::write(dir.path().join("a.txt"), b"a").unwrap();
+	fs::create_dir(dir.path().join("sub")).unwrap();
+	fs::write(dir.path().join("sub/b.txt"), b"b").unwrap();
+	let bytes = sync_to_gz(dir.path(), Path::new("")).unwrap();
+	let mut names = tar_entry_paths(&bytes);
+	names.sort();
+	assert_eq!(
+		names,
+		vec!["a.txt", "sub/b.txt"],
+		"empty entry_name must not add a root entry"
+	);
+	// And there must be no root directory entry either.
+	let kinds = tar_entries(&bytes);
+	for (path, kind) in &kinds {
+		if path.is_empty() {
+			panic!("empty entry_name produced an entry with empty path: {kinds:?}");
+		}
+		if path == "." && *kind == "dir" {
+			panic!("empty entry_name produced a `.` directory entry: {kinds:?}");
+		}
+	}
+}
+
+// --- symlink-to-directory at the top level -------------------------------
+
+/// A symlink that points at a directory outside the watched rule must be
+/// stored as a link, not as the contents of its target. `is_dir` followed
+/// the link and walked the target directory; the fix uses `symlink_metadata`
+/// so the link shape is what reaches the container (#1985).
+#[cfg(unix)]
+#[test]
+fn sync_tar_symlink_to_directory_outside_rule_packs_the_link_only() {
+	let dir = tempdir().unwrap();
+	let outside = dir.path().join("outside");
+	fs::create_dir(&outside).unwrap();
+	fs::write(outside.join("secret.txt"), b"do not leak this").unwrap();
+
+	let rule = dir.path().join("rule");
+	fs::create_dir(&rule).unwrap();
+	let link = rule.join("link");
+	std::os::unix::fs::symlink("../outside", &link).unwrap();
+
+	let bytes = sync_to_gz(&link, Path::new("link")).unwrap();
+	let entries = tar_entries(&bytes);
+	assert_eq!(
+		entries,
+		vec![("link".into(), "link")],
+		"expected exactly one link entry named `link`, got {entries:?}"
+	);
+	assert_eq!(
+		tar_link_target(&bytes, "link").as_deref(),
+		Some("../outside"),
+		"link target must be preserved verbatim"
+	);
+	// Defence in depth: no file named `link/secret.txt` slipped through.
+	let names = tar_entry_paths(&bytes);
+	assert!(
+		!names.iter().any(|n| n.starts_with("link/")),
+		"the link must not be unpacked into its target, got {names:?}"
+	);
+}
+
+// --- per-entry skip filter ----------------------------------------------
+
+/// A filter that drops both `outer/nested` (the directory) and `outer/nested/f`
+/// (the file) must keep the root directory `outer` and the sibling file
+/// `outer/ok.txt`, but record nothing under `outer/nested` because the
+/// directory itself is dropped (#1985). The walker still descends into the
+/// dropped directory so the filter can decide on each entry independently.
+#[test]
+fn sync_tar_filter_drops_a_directory_and_its_contents() {
+	let dir = tempdir().unwrap();
+	let outer = dir.path().join("outer");
+	let nested = outer.join("nested");
+	fs::create_dir_all(&nested).unwrap();
+	fs::write(nested.join("f"), b"nested content").unwrap();
+	fs::write(outer.join("ok.txt"), b"ok").unwrap();
+
+	let skip = |name: &Path| {
+		let s = name.to_string_lossy().replace('\\', "/");
+		s == "outer/nested" || s == "outer/nested/f"
+	};
+	let bytes = sync_to_gz_with(&outer, Path::new("outer"), &skip).unwrap();
+	let entries = tar_entries(&bytes);
+	assert_eq!(
+		entries,
+		vec![("outer".into(), "dir"), ("outer/ok.txt".into(), "file")],
+		"expected root dir + sibling file only, got {entries:?}"
+	);
+}
+
+/// A filter that drops the `outer/nested` directory but not `outer/nested/f`
+/// keeps `outer`, drops the directory header, and records `outer/nested/f` as
+/// a file at the deeper path. The walker must descend into a directory the
+/// filter dropped so a safe deeper mount below a loop-causing directory is
+/// still copied.
+#[test]
+fn sync_tar_filter_drops_the_directory_but_keeps_descendants() {
+	let dir = tempdir().unwrap();
+	let outer = dir.path().join("outer");
+	let nested = outer.join("nested");
+	fs::create_dir_all(&nested).unwrap();
+	fs::write(nested.join("f"), b"nested content").unwrap();
+	fs::write(outer.join("ok.txt"), b"ok").unwrap();
+
+	let skip = |name: &Path| {
+		let s = name.to_string_lossy().replace('\\', "/");
+		s == "outer/nested"
+	};
+	let bytes = sync_to_gz_with(&outer, Path::new("outer"), &skip).unwrap();
+	let entries = tar_entries(&bytes);
+	// The directory header is dropped; the descendant file is still recorded.
+	let names: Vec<&str> = entries.iter().map(|(n, _)| n.as_str()).collect();
+	assert!(
+		names.contains(&"outer/nested/f"),
+		"nested file must still be recorded, got {entries:?}"
+	);
+	assert!(
+		!names.contains(&"outer/nested"),
+		"nested directory header must be dropped, got {entries:?}"
+	);
+	assert!(
+		names.contains(&"outer"),
+		"outer root must still be recorded, got {entries:?}"
+	);
+	assert!(
+		names.contains(&"outer/ok.txt"),
+		"sibling file must still be recorded, got {entries:?}"
 	);
 }

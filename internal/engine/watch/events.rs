@@ -132,20 +132,21 @@ impl Engine {
 	/// `initial_sync` filters what it accepts through its `ignore` /
 	/// `include` lists; a recovery-driven full upload would ignore those
 	/// filters and could write a file the rule was configured to
-	/// exclude. Rules whose sync step is `sync_redundant` (target is
-	/// already shared through a bind mount the rule also targets) are
-	/// skipped here as well: the restart / exec part of the action
-	/// still runs, but the sync is by definition a no-op. `label` is
-	/// what the `info!` / `warn!` lines print (`"initial sync"` at
-	/// startup, `"resync"` from the overflow recovery).
+	/// exclude. A rule whose root would write back through a bind mount
+	/// (so the upload would copy the tree onto itself) is skipped here
+	/// as well and added to the failed list, so the recovery summary can
+	/// still name it; the per-path dispatch handles later changes for
+	/// carve-out subtrees that do not write back. `label` is what the
+	/// `info!` / `warn!` lines print (`"initial sync"` at startup,
+	/// `"resync"` from the overflow recovery).
 	///
 	/// Returns the `service:path` of every rule that the sync step
-	/// tried to cover but could not (root missing or unreadable, or the
-	/// upload itself returned an error). The startup path ignores the
-	/// return value: its behaviour is unchanged. The overflow-recovery
-	/// path appends these to its not-recovered list so the summary can
-	/// tell the operator which rules were skipped silently by the
-	/// earlier implementation.
+	/// tried to cover but could not (root missing or unreadable, the
+	/// root writes back, or the upload itself returned an error). The
+	/// startup path ignores the return value: its behaviour is
+	/// unchanged. The overflow-recovery path appends these to its
+	/// not-recovered list so the summary can tell the operator which
+	/// rules were skipped silently by the earlier implementation.
 	pub(super) async fn sync_all(
 		&self,
 		rule_entries: &[RuleEntry],
@@ -155,9 +156,6 @@ impl Engine {
 		let mut failed: Vec<String> = Vec::new();
 		for entry in rule_entries {
 			if !entry.rule.initial_sync {
-				continue;
-			}
-			if entry.sync_redundant {
 				continue;
 			}
 			// A missing watch path cannot be synced: the watcher-setup
@@ -182,6 +180,8 @@ impl Engine {
 					&entry.abs_path,
 					target,
 					ensured,
+					&entry.mounts,
+					&entry.abs_path,
 				)
 				.await
 			{

@@ -262,3 +262,118 @@ async fn poll_container_contains_once(
 		false
 	}
 }
+
+/// Replacing a watched file with an empty directory on the host must turn
+/// the same path inside the container into a directory, not keep the old
+/// file around. The packer used to ship only the directory's descendants
+/// (none for an empty directory), so the tar overwrote nothing and the
+/// previous file survived the change (#1985).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn watch_file_replaced_by_empty_directory_becomes_a_directory() {
+	let client = match podman().await {
+		Some(d) => d,
+		None => return,
+	};
+	let dir = tempfile::tempdir().unwrap();
+	let src = dir.path().join("src");
+	fs::create_dir(&src).unwrap();
+	let src_file = src.join("f");
+	fs::write(&src_file, b"one").unwrap();
+
+	let proj = proj("wbef");
+	let engine = Engine::with_base_dir(client, proj.clone(), dir.path().to_path_buf());
+	let file = parse_str(
+		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n    develop:\n      watch:\n        - path: ./src\n          action: sync\n          target: /app\n          initial_sync: true\n",
+	)
+	.unwrap();
+	engine.up(&file).await.unwrap();
+
+	struct Teardown {
+		engine: Engine,
+		file: podup::compose::types::ComposeFile,
+	}
+	impl Drop for Teardown {
+		fn drop(&mut self) {
+			let engine = std::mem::replace(
+				&mut self.engine,
+				Engine::new(
+					podup::podman::connect(None).expect("teardown connect"),
+					String::new(),
+				),
+			);
+			let file = self.file.clone();
+			let res = std::thread::Builder::new()
+				.name("watch_batch_wbef_teardown".into())
+				.spawn(move || {
+					let rt = tokio::runtime::Builder::new_current_thread()
+						.enable_all()
+						.build()
+						.expect("teardown runtime");
+					rt.block_on(async move { engine.down(&file).await })
+				})
+				.expect("teardown thread")
+				.join()
+				.expect("teardown thread result");
+			if let Err(e) = res {
+				eprintln!("watch_batch wbef teardown: down failed: {e}");
+			}
+		}
+	}
+	let teardown = Teardown {
+		engine: Engine::with_base_dir(
+			podup::podman::connect(None).expect("teardown engine connect"),
+			proj.clone(),
+			dir.path().to_path_buf(),
+		),
+		file: file.clone(),
+	};
+
+	let cname = format!("{proj}-web-1");
+
+	let client2 = podup::podman::connect_from_env()
+		.or_else(|_| podup::podman::connect(None))
+		.unwrap();
+	let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
+	let file2 = file.clone();
+	let mut handle = tokio::spawn(async move { engine2.watch(&file2).await });
+
+	// Wait for the initial sync to land /app/f with content "one".
+	let arrived = poll_with_watch(&mut handle, Duration::from_secs(30), || {
+		poll_container_contains_once(&engine, &cname, "/app/f", "one")
+	})
+	.await;
+
+	// Replace the file with an empty directory, no sleep in between so the
+	// watcher sees the two events as one debounce batch.
+	fs::remove_file(&src_file).unwrap();
+	fs::create_dir(&src_file).unwrap();
+
+	// Poll for /app/f being a directory inside the container.
+	let became_dir = poll_with_watch(&mut handle, Duration::from_secs(30), || async {
+		let out = engine
+			.test_exec_capture(
+				&cname,
+				vec![
+					"sh".into(),
+					"-c".into(),
+					"if [ -d /app/f ]; then echo dir; else echo other; fi".into(),
+				],
+			)
+			.await
+			.unwrap_or_default();
+		out.contains("dir")
+	})
+	.await;
+
+	handle.abort();
+	drop(teardown);
+
+	assert!(
+		arrived,
+		"the initial sync did not place the file inside the container; cannot claim the directory-replace half was tested"
+	);
+	assert!(
+		became_dir,
+		"replacing the file with an empty directory did not turn /app/f into a directory in the container"
+	);
+}
