@@ -461,7 +461,16 @@ pub(crate) fn container_unit_with_mode(
 					format!("{}.container", unit_stem(project, target)),
 				);
 			} else if is_rootless_user_mode(m) {
-				container.add("Network", m.to_string());
+				if !in_pod {
+					container.add("Network", m.to_string());
+				} else if !is_no_warn_set() {
+					// A pod member joins the pod's namespace, and Podman refuses
+					// a second network there, so the mode is not written for it.
+					tracing::warn!(
+						"service \"{name}\": network_mode {m:?} is ignored inside the \
+						 x-podman-pod pod; members use the pod's network namespace"
+					);
+				}
 			} else if let Some(target) = m.strip_prefix("container:") {
 				container.add("Network", format!("container:{target}"));
 				// Sharing another container's netns collides with the same

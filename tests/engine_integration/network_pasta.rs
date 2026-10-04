@@ -2,7 +2,9 @@
 //!
 //! The mode and its options must reach libpod apart, as `podman run --network
 //! pasta:...` sends them. Sent as one string, Podman refused the create with
-//! `invalid network "pasta:-4"`.
+//! `invalid network "pasta:-m,1400"`. The option is checked by its effect: pasta
+//! sets the container interface's MTU to 1400 instead of its default 65520, so
+//! a mode that arrived without its options fails the MTU assertion.
 use std::fs;
 use std::process::Command;
 
@@ -17,7 +19,7 @@ async fn up_accepts_pasta_with_options() {
 	let compose = dir.path().join("compose.yaml");
 	fs::write(
 		&compose,
-		"services:\n  web:\n    image: docker.io/library/alpine:3.20\n    command: [\"sleep\", \"300\"]\n    network_mode: \"pasta:-4\"\n",
+		"services:\n  web:\n    image: docker.io/library/alpine:3.20\n    command: [\"sleep\", \"300\"]\n    network_mode: \"pasta:-m,1400\"\n",
 	)
 	.expect("write compose");
 	let project = proj("pasta");
@@ -41,21 +43,23 @@ async fn up_accepts_pasta_with_options() {
 	let up = run(&["up", "-d"]);
 	assert!(
 		up.status.success(),
-		"up with network_mode pasta:-4 failed: {}",
+		"up with network_mode pasta:-m,1400 failed: {}",
 		String::from_utf8_lossy(&up.stderr)
 	);
-	let inspect = Command::new("podman")
+	let mtus = Command::new("podman")
 		.args([
-			"inspect",
+			"exec",
 			&format!("{project}-web-1"),
-			"--format",
-			"{{.State.Running}} {{.HostConfig.NetworkMode}}",
+			"sh",
+			"-c",
+			"for i in /sys/class/net/*; do [ \"${i##*/}\" = lo ] || cat \"$i/mtu\"; done",
 		])
 		.output()
-		.expect("run podman inspect");
-	let state = String::from_utf8_lossy(&inspect.stdout);
-	assert!(
-		state.trim().starts_with("true pasta"),
-		"container should run on pasta: {state:?}"
+		.expect("run podman exec");
+	let mtus = String::from_utf8_lossy(&mtus.stdout);
+	assert_eq!(
+		mtus.trim(),
+		"1400",
+		"pasta's -m 1400 should set the container interface MTU; got {mtus:?}"
 	);
 }
