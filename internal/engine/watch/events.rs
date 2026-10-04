@@ -16,7 +16,8 @@ use tokio::sync::mpsc;
 use tokio::sync::Notify;
 use tracing::debug;
 
-use super::placement::is_dispatch_event;
+use super::placement::{is_dispatch_event, join_container_path, plan_sync_placement};
+use super::writeback::writes_back;
 use super::RuleEntry;
 use crate::compose::types::WatchAction;
 use crate::engine::Engine;
@@ -132,20 +133,21 @@ impl Engine {
 	/// `initial_sync` filters what it accepts through its `ignore` /
 	/// `include` lists; a recovery-driven full upload would ignore those
 	/// filters and could write a file the rule was configured to
-	/// exclude. Rules whose sync step is `sync_redundant` (target is
-	/// already shared through a bind mount the rule also targets) are
-	/// skipped here as well: the restart / exec part of the action
-	/// still runs, but the sync is by definition a no-op. `label` is
-	/// what the `info!` / `warn!` lines print (`"initial sync"` at
-	/// startup, `"resync"` from the overflow recovery).
+	/// exclude. A rule whose root would write back through a bind mount
+	/// (so the upload would copy the tree onto itself) is skipped here
+	/// as well and added to the failed list, so the recovery summary can
+	/// still name it; the per-path dispatch handles later changes for
+	/// carve-out subtrees that do not write back. `label` is what the
+	/// `info!` / `warn!` lines print (`"initial sync"` at startup,
+	/// `"resync"` from the overflow recovery).
 	///
 	/// Returns the `service:path` of every rule that the sync step
-	/// tried to cover but could not (root missing or unreadable, or the
-	/// upload itself returned an error). The startup path ignores the
-	/// return value: its behaviour is unchanged. The overflow-recovery
-	/// path appends these to its not-recovered list so the summary can
-	/// tell the operator which rules were skipped silently by the
-	/// earlier implementation.
+	/// tried to cover but could not (root missing or unreadable, the
+	/// root writes back, or the upload itself returned an error). The
+	/// startup path ignores the return value: its behaviour is
+	/// unchanged. The overflow-recovery path appends these to its
+	/// not-recovered list so the summary can tell the operator which
+	/// rules were skipped silently by the earlier implementation.
 	pub(super) async fn sync_all(
 		&self,
 		rule_entries: &[RuleEntry],
@@ -155,9 +157,6 @@ impl Engine {
 		let mut failed: Vec<String> = Vec::new();
 		for entry in rule_entries {
 			if !entry.rule.initial_sync {
-				continue;
-			}
-			if entry.sync_redundant {
 				continue;
 			}
 			// A missing watch path cannot be synced: the watcher-setup
@@ -174,6 +173,20 @@ impl Engine {
 			let Some(target) = &entry.rule.target else {
 				continue;
 			};
+			// Skip a rule whose root writes back through a bind mount
+			// the rule also targets: copying the tree would land back
+			// in the watched path. The rule is added to `failed` so the
+			// recovery summary still names it; later per-path dispatch
+			// covers carve-out subtrees that do not write back.
+			let container_path = join_container_path(&plan_sync_placement(
+				&entry.abs_path,
+				&entry.abs_path,
+				target,
+			));
+			if writes_back(&entry.mounts, &container_path, &entry.abs_path).is_some() {
+				failed.push(format!("{}:{}", entry.service_name, entry.rule.path));
+				continue;
+			}
 			info!("{label} {} -> {target}", entry.abs_path.display());
 			if let Err(e) = self
 				.sync_to_container(

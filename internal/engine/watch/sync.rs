@@ -49,7 +49,31 @@ pub(in crate::engine) fn build_sync_tar<W: Write>(
 	tar: &mut tar::Builder<W>,
 	sent: &mut Vec<SentEntry>,
 ) -> Result<()> {
-	if src.is_dir() {
+	// `symlink_metadata` does not follow symlinks: a watched path that was
+	// replaced by a symlink to a directory outside the rule keeps its link
+	// shape and is stored as a link, not dereferenced into the link's target.
+	// `is_dir` would follow the link and read the target's directory layout,
+	// turning the upload into the contents of an out-of-tree directory
+	// (#1985).
+	let src_is_dir = src.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
+	if src_is_dir {
+		// Directory rule: when `entry_name` is not empty, the archive carries
+		// the directory itself (so a file replaced by an empty directory is
+		// reflected as a directory in the container, #1985) followed by every
+		// descendant re-rooted under `entry_name`. An empty `entry_name` means
+		// "the rule's own root"; the initial sync puts the descendants at the
+		// target without a wrapper entry.
+		if !entry_name.as_os_str().is_empty() {
+			record_one(
+				tar,
+				sent,
+				entry_name,
+				src,
+				KindDispatch::Dir,
+				false,
+				watch_tar,
+			)?;
+		}
 		for abs in walk::walk_dir(src).map_err(watch_io)? {
 			let rel = abs
 				.strip_prefix(src)
