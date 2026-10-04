@@ -12,7 +12,7 @@ Install on Debian/Ubuntu with the [README](../README.md) bootstrap. Packages and
 
 A fork's keyring must declare `Provides: glyndor-archive-keyring` to satisfy the dependency.
 
-Installed `unattended-upgrades` does not guarantee automatic updates. Neither podup's maintainer scripts nor the current archive bootstrap enable scheduling. Check periodic scheduling, allowed origins and package blacklist; a running service alone is insufficient.
+Installed `unattended-upgrades` does not guarantee automatic updates. The schedule is the `APT::Periodic` setting in `/etc/apt/apt.conf.d/20auto-upgrades`, machine-wide policy that neither the package nor the archive bootstrap writes. Without it, podup is upgraded only when you run `apt upgrade`.
 
 ## Build a .deb locally
 
