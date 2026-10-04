@@ -441,9 +441,12 @@ async fn cli_down_on_never_created_is_quiet_noop() {
 		String::from_utf8_lossy(&down.stderr)
 	);
 	let stderr = String::from_utf8_lossy(&down.stderr);
+	// A libpod error line, not a bare "404": the project name carries the
+	// pid, which can contain "404" (#1977).
+	assert_no_libpod_http_error(&stderr);
 	assert!(
-		!stderr.contains("404") && !stderr.contains("no such container"),
-		"down leaked a 404 for a never-created project: {stderr}"
+		!stderr.contains("no such container"),
+		"down leaked a libpod `no such container` for a never-created project: {stderr}"
 	);
 	assert!(
 		!stderr.contains("could not stop"),
@@ -477,10 +480,8 @@ async fn cli_wait_on_never_created_is_quiet_noop() {
 		String::from_utf8_lossy(&wait.stderr)
 	);
 	let stderr = String::from_utf8_lossy(&wait.stderr);
-	assert!(
-		!stderr.contains("404"),
-		"wait leaked a 404 for a never-created service: {stderr}"
-	);
+	// Same check as `cli_down_on_never_created_is_quiet_noop` (#1977).
+	assert_no_libpod_http_error(&stderr);
 }
 
 /// #876: `stop` on a Created (never-started) container must not claim it was

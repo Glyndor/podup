@@ -106,26 +106,49 @@ async fn watch_sync_propagates_host_deletions_to_the_container() {
 	// Remove event the host-side deletion fires. This is the same shape as
 	// `watch_initial_sync_runs` and `watch_sync_and_restart_does_both`;
 	// calling the leaf (`test_remove_from_container`) instead would skip
-	// is_remove_event, the event plumbing, and the path mapping, and a test
-	// that does that passes whether the dispatch is wired or not.
+	// the dispatcher's per-path upload/remove decision, the event plumbing,
+	// and the path mapping, and a test that does that passes whether the
+	// dispatch is wired or not.
 	let client2 = podup::podman::connect_from_env()
 		.or_else(|_| podup::podman::connect(None))
 		.unwrap();
 	let engine2 = Engine::with_base_dir(client2, proj.clone(), dir.path().to_path_buf());
-	let file2 = file.clone();
-	let mut handle = tokio::spawn(async move { engine2.watch(&file2).await });
-
+	// Write the file before `watch` starts. The watcher registers its
+	// inotify watches before the initial sync runs, so a file written
+	// before the spawn is delivered through the initial sync and never
+	// has to land in the gap between the two.
 	let src_file = src.join("f.txt");
 	fs::write(&src_file, b"watched").unwrap();
 
+	let file2 = file.clone();
+	let mut handle = tokio::spawn(async move { engine2.watch(&file2).await });
+
 	// Poll for the initial-sync delivery rather than sleeping a fixed duration.
-	// `watched` is the only write we made; a green `initial_sync` is what puts
-	// it inside the container, and a missing delivery here means the deletion
-	// half has no baseline to compare against. Routed through `poll_with_watch`
-	// so a watch task that died (e.g. an inotify exhaustion) panics with the
-	// watch error instead of blaming the sync.
+	// A green `initial_sync` is what puts `watched` inside the container, and
+	// a missing delivery here means the deletion half has no baseline to
+	// compare against. Routed through `poll_with_watch` so a watch task that
+	// died (e.g. an inotify exhaustion) panics with the watch error instead of
+	// blaming the sync.
 	let arrived = poll_with_watch(&mut handle, Duration::from_secs(30), || {
 		poll_container_contains_once(&engine, &cname, "/app/f.txt", "watched")
+	})
+	.await;
+
+	// The delivery above only proves the initial sync ran. Rewrite a probe
+	// file on every tick until a copy reaches the container: after the
+	// initial sync only an inotify event can deliver it, so this proves the
+	// event path works before the deletion half relies on it.
+	let probe = src.join("probe.txt");
+	let watcher_live = poll_with_watch(&mut handle, Duration::from_secs(30), || {
+		fs::write(&probe, b"live").unwrap();
+		poll_container_contains_once(&engine, &cname, "/app/probe.txt", "live")
+	})
+	.await;
+	// Take the probe back out so `f.txt` is again the last file under the
+	// rule's path, which the scope checks below depend on.
+	fs::remove_file(&probe).unwrap();
+	let probe_gone = poll_with_watch(&mut handle, Duration::from_secs(30), || async {
+		container_path_present(&engine, &cname, "/app/probe.txt").await == Some(false)
 	})
 	.await;
 
@@ -142,11 +165,7 @@ async fn watch_sync_propagates_host_deletions_to_the_container() {
 	// the helper's per-tick `is_finished()` check catches a watch task
 	// that dies between the initial-sync poll and the deletion poll.
 	let gone = poll_with_watch(&mut handle, Duration::from_secs(30), || async {
-		let out = engine
-			.test_exec_capture(&cname, vec!["ls".into(), "/app/f.txt".into()])
-			.await
-			.unwrap_or_default();
-		out.trim().is_empty()
+		container_path_present(&engine, &cname, "/app/f.txt").await == Some(false)
 	})
 	.await;
 
@@ -202,6 +221,14 @@ async fn watch_sync_propagates_host_deletions_to_the_container() {
 	assert!(
 		arrived,
 		"the initial sync did not place the file inside the container; cannot claim deletion was propagated"
+	);
+	assert!(
+		watcher_live,
+		"no host change reached the container after the initial sync; the watcher never started delivering events"
+	);
+	assert!(
+		probe_gone,
+		"the probe file was not removed from the container; the last-file scope check below would not hold"
 	);
 	assert!(
 		gone,

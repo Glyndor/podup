@@ -65,6 +65,13 @@ fn cleanup(container: &str, image: &str) {
 	let _ = Command::new("podman").args(["rmi", "-f", image]).output();
 }
 
+/// True when a `podup build` failure is Podman failing to remove its own
+/// intermediate build container after the build ran (#1977), and not a
+/// failure of the build itself.
+fn is_podman_build_cleanup_race(stderr: &str) -> bool {
+	stderr.contains("deleting build container") && stderr.contains("identifier is not a container")
+}
+
 #[tokio::test]
 async fn cli_push_reaches_a_real_registry() {
 	if super::podman().await.is_none() {
@@ -236,8 +243,25 @@ async fn cli_push_uploads_every_build_tags_alias() {
 		.output()
 		.unwrap();
 	if !build.status.success() {
-		cleanup(&container, &image);
-		panic!("build failed: {}", String::from_utf8_lossy(&build.stderr));
+		let build_stderr = String::from_utf8_lossy(&build.stderr).to_string();
+		if is_podman_build_cleanup_race(&build_stderr) {
+			// Podman 5 sometimes fails to remove its own intermediate build
+			// container after the build steps ran. That failure is in Podman's
+			// cleanup, not in anything this test asserts, so run the same
+			// command once more; a second failure of any kind panics (#1977).
+			eprintln!("build failed with the Podman build-container cleanup race; retrying once");
+			let build = Command::new(bin())
+				.args(["-f", compose.to_str().unwrap(), "-p", &proj, "build"])
+				.output()
+				.unwrap();
+			if !build.status.success() {
+				cleanup(&container, &image);
+				panic!("build failed: {}", String::from_utf8_lossy(&build.stderr));
+			}
+		} else {
+			cleanup(&container, &image);
+			panic!("build failed: {build_stderr}");
+		}
 	}
 
 	let push = Command::new(bin())
@@ -270,4 +294,33 @@ async fn cli_push_uploads_every_build_tags_alias() {
 			 push stderr: {push_err}"
 		);
 	}
+}
+
+/// Unit-level guard for the Podman build cleanup race detector
+/// (`is_podman_build_cleanup_race`): only the exact build-error + Podman
+/// intermediate-container mismatch must trigger the retry. Anything else
+/// (an unrelated build failure, the same mismatch but without the build
+/// error context, a different cleanup error, an empty stderr) must not.
+#[test]
+fn is_podman_build_cleanup_race_matches_only_the_cleanup_error() {
+	// True: the exact lane shape podup prints when buildah fails to remove
+	// its own intermediate container after a successful build.
+	assert!(is_podman_build_cleanup_race(
+		"podup: error: build error: deleting build container \"27d43e81b2b8\": identifier is not a container\n"
+	));
+	// False: a regular build failure (no Podman cleanup wording).
+	assert!(!is_podman_build_cleanup_race(
+		"podup: error: build error: RUN exit 1\n"
+	));
+	// False: the mismatch wording without the build-error context; this is
+	// not the race, the helper requires both substrings.
+	assert!(!is_podman_build_cleanup_race(
+		"podup: error: identifier is not a container\n"
+	));
+	// False: the same cleanup path but a different error body.
+	assert!(!is_podman_build_cleanup_race(
+		"podup: error: build error: deleting build container \"abc\": permission denied\n"
+	));
+	// False: no stderr at all.
+	assert!(!is_podman_build_cleanup_race(""));
 }

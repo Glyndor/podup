@@ -317,6 +317,42 @@ async fn poll_container_file(
 	false
 }
 
+/// Whether `path` exists inside `container` (as a file, directory, or
+/// dangling symlink). `Some(true)` means present, `Some(false)` means
+/// absent, `None` means the exec failed or the script produced
+/// something other than the expected `present` / `absent` line.
+///
+/// The previous shape ran `ls <path>` and treated any non-zero exit as
+/// "absent", which a transient exec failure (the exec endpoint
+/// returning an error, the container being briefly unreachable, the
+/// path carrying characters busybox `ls` rejects) reads as a deletion.
+/// The script below uses `[ -e "$1" ] || [ -L "$1" ]` for the
+/// existence check (covers regular files, directories, and dangling
+/// symlinks alike), and the helper treats anything other than an exact
+/// `present` / `absent` line as "unknown" rather than silently picking
+/// one of the two.
+async fn container_path_present(engine: &Engine, cname: &str, path: &str) -> Option<bool> {
+	let script = "if [ -e \"$1\" ] || [ -L \"$1\" ]; then echo present; else echo absent; fi";
+	let out = engine
+		.test_exec_capture(
+			cname,
+			vec![
+				"sh".into(),
+				"-c".into(),
+				script.into(),
+				"sh".into(),
+				path.into(),
+			],
+		)
+		.await
+		.ok()?;
+	match out.trim() {
+		"present" => Some(true),
+		"absent" => Some(false),
+		_ => None,
+	}
+}
+
 /// Poll the test's condition until it holds or `timeout` elapses, while
 /// watching the spawned watch task. On every tick the helper checks
 /// `JoinHandle::is_finished()`; if the task completed, the helper awaits it
@@ -396,6 +432,35 @@ async fn poll_with_watch_surfaces_a_finished_watch_task_error() {
 	.await;
 }
 
+/// Fail when `stderr` carries a libpod HTTP error, which podup prints as
+/// `podman API error (HTTP <status>): <message>` (`internal/libpod/error.rs`).
+///
+/// Checking for a bare status number such as "404" is wrong here: every
+/// project name carries the test process id (`t<pid>-<tag>`), so a run whose
+/// pid contains "404" (`t40415-dnvr` on the lane) prints a clean no-op line
+/// that matches it (#1977).
+#[track_caller]
+fn assert_no_libpod_http_error(stderr: &str) {
+	assert!(
+		!stderr.contains("podman API error (HTTP"),
+		"stderr leaked a libpod HTTP error: {stderr}"
+	);
+}
+
+/// The lane line that tripped the bare "404" check must pass, and a real
+/// libpod error line must still fail. Swapping the helper's check back to
+/// `contains("404")` turns the first call red.
+#[test]
+fn assert_no_libpod_http_error_ignores_the_pid_but_catches_a_real_error() {
+	assert_no_libpod_http_error("Network t40415-dnvr_default  Absent\n");
+	let real = "podup: error: podman API error (HTTP 404): no such container\n";
+	let res = std::panic::catch_unwind(|| assert_no_libpod_http_error(real));
+	assert!(
+		res.is_err(),
+		"the helper must panic on a real `podman API error (HTTP ...)` line; got {real:?}"
+	);
+}
+
 // ---------------------------------------------------------------------------
 // Test groups (see engine_integration/*.rs)
 // ---------------------------------------------------------------------------
@@ -469,6 +534,10 @@ mod secrets;
 #[cfg(feature = "test-helpers")]
 #[path = "engine_integration/watch.rs"]
 mod watch_tests;
+
+#[cfg(all(unix, feature = "test-helpers"))]
+#[path = "engine_integration/watch_batch.rs"]
+mod watch_batch;
 
 #[cfg(all(unix, feature = "test-helpers"))]
 #[path = "engine_integration/watch_sparse.rs"]
