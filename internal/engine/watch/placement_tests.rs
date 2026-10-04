@@ -389,3 +389,26 @@ fn bind_mount_feedback_more_specific_sibling_suppresses_warning() {
 	assert!(bind_feedback_call(&svc, &base, &base.join("src"), "/app").is_some());
 	drop(dir);
 }
+
+/// A tmpfs at the same specific path plays the same role as a more
+/// specific named volume: the rule's upload lands in the tmpfs, not in
+/// the bind, so the loop check must not warn. Without tmpfs in the
+/// sibling set the operator sees a false-positive warning here.
+#[test]
+fn bind_mount_feedback_more_specific_tmpfs_sibling_suppresses_warning() {
+	let dir = tempfile::tempdir().unwrap();
+	let base = dir.path().to_path_buf();
+	fs::create_dir(base.join("src")).unwrap();
+	fs::create_dir(base.join("src/cache")).unwrap();
+	let svc: Service =
+		serde_yaml::from_str("image: x\nvolumes:\n  - ./src:/app\ntmpfs:\n  - /app/cache\n")
+			.unwrap();
+	// The cache rule: lands in the tmpfs, not the bind.
+	assert_eq!(
+		bind_feedback_call(&svc, &base, &base.join("src/cache"), "/app/cache"),
+		None
+	);
+	// The root rule still loops against the bind.
+	assert!(bind_feedback_call(&svc, &base, &base.join("src"), "/app").is_some());
+	drop(dir);
+}

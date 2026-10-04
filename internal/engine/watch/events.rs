@@ -13,6 +13,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use tokio::sync::mpsc;
+use tokio::sync::Notify;
 use tracing::debug;
 
 use super::placement::is_dispatch_event;
@@ -56,9 +57,17 @@ pub(super) fn should_enqueue(res: &WatchEvent) -> bool {
 /// on its next iteration, and the existing `debug!` line keeps the drop
 /// observable to operators. `Closed` is the normal "the consumer went
 /// away" path and gets only the same `debug!` line.
+///
+/// Every time the flag is set (the `Rescan` case and the `Full` case)
+/// `overflow_wake.notify_one()` is called as well. `notify_one` retains a
+/// permit when nobody is waiting at the moment of the call, so the wakeup
+/// cannot be lost to the race where the consumer drains the channel and
+/// blocks in `recv` between the channel rejecting the event and the
+/// callback storing the flag.
 pub(super) fn enqueue(
 	tx: &mpsc::Sender<WatchEvent>,
 	overflow: &std::sync::atomic::AtomicBool,
+	overflow_wake: &Notify,
 	res: WatchEvent,
 ) {
 	let needs_rescan = match &res {
@@ -70,11 +79,13 @@ pub(super) fn enqueue(
 	}
 	if needs_rescan {
 		overflow.store(true, std::sync::atomic::Ordering::SeqCst);
+		overflow_wake.notify_one();
 	}
 	match tx.try_send(res) {
 		Ok(()) => {}
 		Err(mpsc::error::TrySendError::Full(res)) => {
 			overflow.store(true, std::sync::atomic::Ordering::SeqCst);
+			overflow_wake.notify_one();
 			debug!("watch event dropped (channel full): {res:?}");
 		}
 		Err(mpsc::error::TrySendError::Closed(res)) => {
@@ -127,12 +138,21 @@ impl Engine {
 	/// still runs, but the sync is by definition a no-op. `label` is
 	/// what the `info!` / `warn!` lines print (`"initial sync"` at
 	/// startup, `"resync"` from the overflow recovery).
+	///
+	/// Returns the `service:path` of every rule that the sync step
+	/// tried to cover but could not (root missing or unreadable, or the
+	/// upload itself returned an error). The startup path ignores the
+	/// return value: its behaviour is unchanged. The overflow-recovery
+	/// path appends these to its not-recovered list so the summary can
+	/// tell the operator which rules were skipped silently by the
+	/// earlier implementation.
 	pub(super) async fn sync_all(
 		&self,
 		rule_entries: &[RuleEntry],
 		ensured: &mut HashSet<(String, String)>,
 		label: &str,
-	) {
+	) -> Vec<String> {
+		let mut failed: Vec<String> = Vec::new();
 		for entry in rule_entries {
 			if !entry.rule.initial_sync {
 				continue;
@@ -148,6 +168,7 @@ impl Engine {
 			// packer in `watch/sync.rs` preserves links, and the rule's
 			// intent there is to upload the link itself.
 			if std::fs::symlink_metadata(&entry.abs_path).is_err() {
+				failed.push(format!("{}:{}", entry.service_name, entry.rule.path));
 				continue;
 			}
 			let Some(target) = &entry.rule.target else {
@@ -165,43 +186,30 @@ impl Engine {
 				.await
 			{
 				warn!("{label} failed: {e}");
+				failed.push(format!("{}:{}", entry.service_name, entry.rule.path));
 			}
 		}
+		failed
 	}
 
 	/// The rules the overflow path could not cover. A plain `sync` rule
-	/// with `initial_sync` IS covered (the resync uploads it whole).
-	/// Anything else (a sync rule without `initial_sync`, any
-	/// `sync+restart` / `sync+exec` rule whose restart or exec was not
-	/// re-run, any `rebuild` / `restart` rule) is named in the warning
-	/// the operator reads to decide whether to restart `podup watch`.
-	pub(super) fn rules_not_recovered(rule_entries: &[RuleEntry]) -> Vec<String> {
-		let tuples: Vec<(String, String, WatchAction, bool)> = rule_entries
-			.iter()
-			.map(|e| {
-				(
-					e.service_name.clone(),
-					e.rule.path.clone(),
-					e.rule.action.clone(),
-					e.rule.initial_sync,
-				)
-			})
-			.collect();
-		Self::rules_not_recovered_tuples(&tuples)
-	}
-
-	/// Tuple form of [`Self::rules_not_recovered`] for unit tests; the
-	/// real entry struct's fields live in the parent module and are not
-	/// reachable from `events_tests.rs` directly.
-	pub(super) fn rules_not_recovered_tuples(
-		rules: &[(String, String, WatchAction, bool)],
+	/// with `initial_sync` IS covered (the resync uploads it whole),
+	/// unless the upload itself failed, in which case the entry passed
+	/// in `failed` is appended. Anything else (a sync rule without
+	/// `initial_sync`, any `sync+restart` / `sync+exec` rule whose
+	/// restart or exec was not re-run, any `rebuild` / `restart` rule)
+	/// is named in the warning the operator reads to decide whether to
+	/// restart `podup watch`.
+	pub(super) fn rules_not_recovered(
+		rule_entries: &[RuleEntry],
+		failed: &[String],
 	) -> Vec<String> {
-		let mut out = Vec::new();
-		for (service, path, action, initial_sync) in rules {
-			if *initial_sync && matches!(action, WatchAction::Sync) {
+		let mut out: Vec<String> = failed.to_vec();
+		for entry in rule_entries {
+			if entry.rule.initial_sync && matches!(entry.rule.action, WatchAction::Sync) {
 				continue;
 			}
-			out.push(format!("{service}:{path}"));
+			out.push(format!("{}:{}", entry.service_name, entry.rule.path));
 		}
 		out
 	}
@@ -223,13 +231,13 @@ impl Engine {
 		if !overflow.swap(false, std::sync::atomic::Ordering::SeqCst) {
 			return;
 		}
-		self.sync_all(rule_entries, ensured, "resync").await;
-		let unrecovered = Self::rules_not_recovered(rule_entries);
+		let failed = self.sync_all(rule_entries, ensured, "resync").await;
+		let unrecovered = Self::rules_not_recovered(rule_entries, &failed);
 		if unrecovered.is_empty() {
 			warn!("watch event queue overflowed; resynced every rule");
 		} else {
 			warn!(
-				"watch event queue overflowed; resynced the rules with initial_sync, but changes for {list} may not have been applied; restart podup watch to apply them",
+				"watch event queue overflowed; resynced the rules with initial_sync, but changes for {list} may not have been applied; save those files again, or restart the affected services, to apply them",
 				list = unrecovered.join(", ")
 			);
 		}

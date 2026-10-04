@@ -28,6 +28,7 @@ use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 use futures_util::StreamExt;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use tokio::sync::mpsc;
+use tokio::sync::Notify;
 use tracing::{debug, info, warn};
 
 use crate::compose::types::{ComposeFile, WatchAction, WatchRule};
@@ -85,8 +86,7 @@ impl Engine {
 	/// continues, so this returns `Ok(())` unless the watchers cannot be set up
 	/// at all. That is deliberate and matches `docker compose watch`: a
 	/// long-running developer loop should survive one failed rebuild rather than
-	/// exit. Unlike every other command here, it means a caller cannot gate on
-	/// the status; see the exit-status section of `docs/commands.md`.
+	/// exit. See the exit-status section of `docs/commands.md`.
 	pub async fn watch(&self, file: &ComposeFile) -> Result<()> {
 		let mut rule_entries: Vec<RuleEntry> = Vec::new();
 		// Number of sync-family rules that were rejected because the watched
@@ -207,9 +207,15 @@ impl Engine {
 		// watch loop the other; `SeqCst` keeps the "did a drop happen" decision
 		// and the loop's `swap(false)` to clear it in a single happens-before.
 		let overflow = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-		let overflow_cb = overflow.clone();
+		// Wakeup sidekick for the flag. Without it, the loop can drain the
+		// channel, pass both recovery checks, and block in `recv` between an
+		// `enqueue` that saw `Full` and the same call's flag store; the flag
+		// would then sit set with nothing to wake the loop. `notify_one` keeps
+		// a permit when nobody is waiting, so the wakeup cannot be lost.
+		let overflow_wake = std::sync::Arc::new(Notify::new());
+		let (overflow_cb, overflow_wake_cb) = (overflow.clone(), overflow_wake.clone());
 		let mut watcher = RecommendedWatcher::new(
-			move |res| events::enqueue(&tx, &overflow_cb, res),
+			move |res| events::enqueue(&tx, &overflow_cb, &overflow_wake_cb, res),
 			notify::Config::default(),
 		)
 		.map_err(|e| ComposeError::Watch(e.to_string()))?;
@@ -257,6 +263,7 @@ impl Engine {
 					Some(Err(e)) => { warn!("notify error: {e}"); continue; }
 					None => break,
 				},
+				_ = overflow_wake.notified() => continue,
 				_ = tokio::signal::ctrl_c() => break,
 			};
 
@@ -368,18 +375,7 @@ impl Engine {
 	) -> Result<()> {
 		match &entry.rule.action {
 			WatchAction::Sync => {
-				if let Some(target) = &entry.rule.target {
-					if !entry.sync_redundant {
-						self.dispatch_sync(
-							&entry.container_name,
-							&entry.abs_path,
-							path,
-							target,
-							ensured,
-						)
-						.await?;
-					}
-				}
+				self.maybe_sync(entry, path, ensured).await?;
 			}
 			WatchAction::Rebuild => {
 				self.watch_rebuild(file, &entry.service_name).await?;
@@ -388,33 +384,11 @@ impl Engine {
 				self.watch_restart(&entry.container_name).await?;
 			}
 			WatchAction::SyncAndRestart => {
-				if let Some(target) = &entry.rule.target {
-					if !entry.sync_redundant {
-						self.dispatch_sync(
-							&entry.container_name,
-							&entry.abs_path,
-							path,
-							target,
-							ensured,
-						)
-						.await?;
-					}
-				}
+				self.maybe_sync(entry, path, ensured).await?;
 				self.watch_restart(&entry.container_name).await?;
 			}
 			WatchAction::SyncAndExec => {
-				if let Some(target) = &entry.rule.target {
-					if !entry.sync_redundant {
-						self.dispatch_sync(
-							&entry.container_name,
-							&entry.abs_path,
-							path,
-							target,
-							ensured,
-						)
-						.await?;
-					}
-				}
+				self.maybe_sync(entry, path, ensured).await?;
 				if let Some(exec) = &entry.rule.exec {
 					self.watch_exec(&entry.container_name, exec.command.clone())
 						.await?;
@@ -424,13 +398,38 @@ impl Engine {
 		Ok(())
 	}
 
+	/// Run the sync step for a rule unless the target is shared through a
+	/// bind mount the rule also targets (a `sync_redundant` rule), or the
+	/// rule has no target at all (only `rebuild`/`restart` reach this path
+	/// when the rule carries no `target`, and those never call in here).
+	async fn maybe_sync(
+		&self,
+		entry: &RuleEntry,
+		path: &Path,
+		ensured: &mut HashSet<(String, String)>,
+	) -> Result<()> {
+		if entry.sync_redundant {
+			return Ok(());
+		}
+		let Some(target) = &entry.rule.target else {
+			return Ok(());
+		};
+		self.dispatch_sync(
+			&entry.container_name,
+			&entry.abs_path,
+			path,
+			target,
+			ensured,
+		)
+		.await
+	}
+
 	/// Pick the right sync dispatch for the changed path: copy on a change,
 	/// remove on a deletion. The decision is taken from the host filesystem
 	/// rather than the event kind so a debounce batch that contains a write
 	/// and a remove of the same file inside 100 ms dispatches each path
 	/// correctly: the file the host still has gets uploaded, the file the
-	/// host has dropped gets removed. A `rebuild`/`restart`/`exec` rule that
-	/// does not sync does not reach this; sync-family actions all funnel
+	/// host has dropped gets removed. Sync-family actions all funnel
 	/// through here so the removal path is owned in one place.
 	async fn dispatch_sync(
 		&self,
@@ -523,10 +522,9 @@ impl Engine {
 	/// against the archive endpoint. libpod's archive DELETE was answered
 	/// with `405 Method Not Allowed` on Podman 5.7.0 (the endpoint documents
 	/// only GET/PUT/HEAD), and the engine contract here is "the file is
-	/// gone inside the container" — both paths satisfy it, and the exec
-	/// path works on every libpod version that has the exec endpoint.
-	/// Matching docker compose's own watch handler (#17 in their tar syncer
-	/// upstream), which uses `rm -rf` for the same reason.
+	/// gone inside the container"; both paths satisfy it. Matching docker
+	/// compose's own watch handler (#17 in their tar syncer upstream), which
+	/// uses `rm -rf` for the same reason.
 	async fn remove_from_container(
 		&self,
 		container: &str,

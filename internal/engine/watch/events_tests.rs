@@ -11,10 +11,11 @@ use notify::event::{
 };
 use notify::EventKind;
 use tokio::sync::mpsc;
+use tokio::sync::Notify;
 
-use crate::compose::types::WatchAction;
+use crate::compose::types::{WatchAction, WatchRule};
 
-use super::{enqueue, should_enqueue, sync_op_for, SyncOp};
+use super::{enqueue, should_enqueue, sync_op_for, RuleEntry, SyncOp};
 
 fn ok_event(kind: EventKind) -> notify::Result<notify::Event> {
 	Ok(notify::Event::new(kind))
@@ -88,12 +89,23 @@ fn enqueue_second_real_event_sets_overflow() {
 	// can resync on its next iteration.
 	let (tx, _rx) = mpsc::channel::<super::WatchEvent>(1);
 	let flag = AtomicBool::new(false);
-	enqueue(&tx, &flag, ok_event(EventKind::Create(CreateKind::File)));
+	let wake = Notify::new();
+	enqueue(
+		&tx,
+		&flag,
+		&wake,
+		ok_event(EventKind::Create(CreateKind::File)),
+	);
 	assert!(
 		!flag.load(std::sync::atomic::Ordering::SeqCst),
 		"the first Create into an empty channel must not set the overflow flag"
 	);
-	enqueue(&tx, &flag, ok_event(EventKind::Create(CreateKind::File)));
+	enqueue(
+		&tx,
+		&flag,
+		&wake,
+		ok_event(EventKind::Create(CreateKind::File)),
+	);
 	assert!(
 		flag.load(std::sync::atomic::Ordering::SeqCst),
 		"the second Create into a full channel must set the overflow flag"
@@ -118,8 +130,9 @@ fn should_enqueue_keeps_rescan() {
 async fn enqueue_rescan_sets_overflow_and_lands_on_the_channel() {
 	let (tx, mut rx) = mpsc::channel::<super::WatchEvent>(4);
 	let flag = AtomicBool::new(false);
+	let wake = Notify::new();
 	let rescan = Ok(notify::Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan));
-	enqueue(&tx, &flag, rescan);
+	enqueue(&tx, &flag, &wake, rescan);
 	assert!(
 		flag.load(std::sync::atomic::Ordering::SeqCst),
 		"a Rescan event must set the overflow flag before any try_send"
@@ -135,7 +148,92 @@ async fn enqueue_rescan_sets_overflow_and_lands_on_the_channel() {
 	);
 }
 
+/// After the second of two Creates goes into a full channel, the
+/// overflow wake must carry a permit that fires a fresh `notified()`
+/// future, even when no task is waiting on it at the moment of the
+/// store. Without the permit the wakeup would be lost to the
+/// drain-then-block race.
+#[test]
+fn enqueue_overflow_wake_retains_permit() {
+	let rt = tokio::runtime::Builder::new_current_thread()
+		.enable_all()
+		.build()
+		.expect("test runtime");
+	rt.block_on(async {
+		let (tx, _rx) = mpsc::channel::<super::WatchEvent>(1);
+		let flag = AtomicBool::new(false);
+		let wake = Notify::new();
+		enqueue(
+			&tx,
+			&flag,
+			&wake,
+			ok_event(EventKind::Create(CreateKind::File)),
+		);
+		enqueue(
+			&tx,
+			&flag,
+			&wake,
+			ok_event(EventKind::Create(CreateKind::File)),
+		);
+		assert!(
+			tokio::time::timeout(std::time::Duration::from_millis(50), wake.notified())
+				.await
+				.is_ok(),
+			"the second enqueue into a full channel must leave a wake permit"
+		);
+	});
+}
+
+/// A successful enqueue into an empty channel must not leave a wake
+/// permit behind; the flag and the wake both stay quiet on the happy
+/// path so a routine event does not wake the loop unnecessarily.
+#[test]
+fn enqueue_successful_does_not_leave_wake_permit() {
+	let rt = tokio::runtime::Builder::new_current_thread()
+		.enable_all()
+		.build()
+		.expect("test runtime");
+	rt.block_on(async {
+		let (tx, _rx) = mpsc::channel::<super::WatchEvent>(1);
+		let flag = AtomicBool::new(false);
+		let wake = Notify::new();
+		enqueue(
+			&tx,
+			&flag,
+			&wake,
+			ok_event(EventKind::Create(CreateKind::File)),
+		);
+		assert!(
+			tokio::time::timeout(std::time::Duration::from_millis(50), wake.notified())
+				.await
+				.is_err(),
+			"a successful enqueue into an empty channel must not leave a wake permit"
+		);
+	});
+}
+
 // --- rules_not_recovered ------------------------------------------------
+
+/// Build a `RuleEntry` with the fields the tests care about (`service_name`,
+/// `rule.path`, `rule.action`, `rule.initial_sync`, `sync_redundant`) and
+/// the rest set to plain defaults. `WatchRule` itself is constructed via
+/// `serde_yaml` so the test does not have to spell every field out.
+fn make_entry(service: &str, path: &str, action: WatchAction, initial_sync: bool) -> RuleEntry {
+	let yaml = format!(
+		"path: {path}\naction: {}\ninitial_sync: {initial_sync}\n",
+		action.as_token(),
+	);
+	let rule: WatchRule = serde_yaml::from_str(&yaml).expect("WatchRule parses");
+	RuleEntry {
+		service_name: service.to_string(),
+		container_name: format!("{service}-1"),
+		rule,
+		abs_path: std::path::PathBuf::from(path),
+		build_context_abs: None,
+		build_context_patterns: Vec::new(),
+		sync_redundant: false,
+	}
+}
 
 /// Plain sync + `initial_sync` is the one case the resync covers: not in
 /// the unrecovered list. Plain sync without `initial_sync` is not
@@ -145,22 +243,12 @@ async fn enqueue_rescan_sets_overflow_and_lands_on_the_channel() {
 #[test]
 fn rules_not_recovered_lists_only_what_recovery_did_not_run() {
 	let rules = vec![
-		("web".into(), "src".into(), WatchAction::Sync, true),
-		("web".into(), "lazy".into(), WatchAction::Sync, false),
-		(
-			"web".into(),
-			"with_restart".into(),
-			WatchAction::SyncAndRestart,
-			true,
-		),
-		(
-			"worker".into(),
-			"Dockerfile".into(),
-			WatchAction::Rebuild,
-			true,
-		),
+		make_entry("web", "src", WatchAction::Sync, true),
+		make_entry("web", "lazy", WatchAction::Sync, false),
+		make_entry("web", "with_restart", WatchAction::SyncAndRestart, true),
+		make_entry("worker", "Dockerfile", WatchAction::Rebuild, true),
 	];
-	let mut got = super::super::Engine::rules_not_recovered_tuples(&rules);
+	let mut got = super::super::Engine::rules_not_recovered(&rules, &[]);
 	got.sort();
 	assert_eq!(
 		got,
@@ -174,6 +262,23 @@ fn rules_not_recovered_lists_only_what_recovery_did_not_run() {
 	assert!(!got.iter().any(|s| s == "web:src"));
 }
 
+/// A `sync+exec` rule with `initial_sync: true` whose `sync_redundant`
+/// flag is set never has its sync step run inside `sync_all`: the rule is
+/// dropped before any upload is attempted. From the recovery summary's
+/// perspective it is still not a "plain sync + initial_sync" rule, so it
+/// is named in the list the way any other non-recovered rule is. A plain
+/// sync rule with the same flags cannot exist: the watch loop drops the
+/// rule entirely on a self-feeding bind, it does not carry it forward as a
+/// `sync_redundant` entry, so this assertion uses `sync+exec` as the
+/// stand-in.
+#[test]
+fn rules_not_recovered_includes_sync_redundant_sync_plus_exec() {
+	let mut entry = make_entry("web", "exec_rule", WatchAction::SyncAndExec, true);
+	entry.sync_redundant = true;
+	let got = super::super::Engine::rules_not_recovered(&[entry], &[]);
+	assert_eq!(got, vec!["web:exec_rule".to_string()]);
+}
+
 #[test]
 fn enqueue_filtered_event_does_not_touch_a_full_channel() {
 	// The flag is fresh, the channel is fresh and already holds one
@@ -185,9 +290,11 @@ fn enqueue_filtered_event_does_not_touch_a_full_channel() {
 	tx.try_send(pre)
 		.expect("first Create lands in a 1-slot channel");
 	let flag = AtomicBool::new(false);
+	let wake = Notify::new();
 	enqueue(
 		&tx,
 		&flag,
+		&wake,
 		ok_event(EventKind::Access(AccessKind::Open(AccessMode::Any))),
 	);
 	assert!(

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 
 use crate::compose::types::{Service, WatchAction, WatchRule};
 use crate::engine::container::resolve_bind_source;
-use crate::engine::volume_mounts::bind_mounts;
+use crate::engine::volume_mounts::{bind_mounts, mount_targets};
 use crate::error::{ComposeError, Result};
 
 /// Where a changed host path lands inside the container for a `sync` action:
@@ -345,11 +345,17 @@ pub(super) fn bind_mount_feedback(
 	None
 }
 
-/// True when some other entry in `service.volumes` has a container
-/// target strictly under `bind_target` (the bind we're checking) and the
-/// rule's target is at or under that other target. The "strictly under"
-/// shape is what makes the sibling "more specific" than the bind, so a
-/// write into the rule's target lands in the sibling, not in the bind.
+/// True when some other entry on the service (a volume or a tmpfs) has a
+/// container target strictly under `bind_target` (the bind we're
+/// checking) and the rule's target is at or under that other target. The
+/// "strictly under" shape is what makes the sibling "more specific" than
+/// the bind, so a write into the rule's target lands in the sibling, not
+/// in the bind.
+///
+/// The full mount list (volumes + tmpfs) is walked via
+/// [`mount_targets`], which uses the same parsed `target`/`destination`
+/// as `bind_mounts` does. The iteration order matches the declaration
+/// order in the compose file.
 fn more_specific_sibling_covers_target(
 	service: &Service,
 	bind_target: &str,
@@ -357,12 +363,11 @@ fn more_specific_sibling_covers_target(
 ) -> bool {
 	let bind_parts = path_components(bind_target);
 	let rule_parts = path_components(rule_target);
-	for v in &service.volumes {
-		let other_target = v.target();
+	for other_target in mount_targets(service) {
 		if other_target == bind_target {
 			continue;
 		}
-		let other_parts = path_components(other_target);
+		let other_parts = path_components(&other_target);
 		if other_parts.len() <= bind_parts.len() {
 			continue;
 		}

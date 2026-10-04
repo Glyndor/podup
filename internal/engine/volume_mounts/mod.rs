@@ -225,7 +225,9 @@ pub(crate) fn bind_mounts(service: &Service) -> Vec<BindMountRef> {
 							out.push(BindMountRef {
 								source: src.to_string(),
 								target: mount.destination,
-								read_only: short_form_is_read_only(s),
+								read_only: short_form_is_read_only(
+									mount.options.iter().map(String::as_str),
+								),
 							});
 						}
 					}
@@ -254,24 +256,45 @@ pub(crate) fn bind_mounts(service: &Service) -> Vec<BindMountRef> {
 	out
 }
 
-/// True when a short-form `source:target:opts` volume string carries an
-/// `ro` option as a whole comma-separated item. A substring match against
-/// `,ro,` would miss a leading or trailing entry, so the check splits on
-/// `,` and looks at the trimmed tokens one by one.
-fn short_form_is_read_only(s: &str) -> bool {
-	let (_src, _dst, opts) = split_short_form_options(s);
-	opts.split(',').any(|o| o.trim() == "ro")
+/// True when the parsed options vector carries an `ro` token as a whole
+/// item. The check looks at each token by exact match; `ro,noexec`
+/// (with no `,`) does not pass.
+fn short_form_is_read_only<'a, I: IntoIterator<Item = &'a str>>(opts: I) -> bool {
+	opts.into_iter().any(|o| o == "ro")
 }
 
-/// Return the options field of a short-form volume string. Splits on
-/// the third colon (after `source` and `target`); an entry with fewer
-/// than three colons carries no options.
-fn split_short_form_options(s: &str) -> (&str, &str, &str) {
-	let mut iter = s.splitn(3, ':');
-	let src = iter.next().unwrap_or("");
-	let dst = iter.next().unwrap_or("");
-	let opts = iter.next().unwrap_or("");
-	(src, dst, opts)
+/// The container-side target of every entry in `service.volumes` (the
+/// destination `parse_volume_string` already returns for short form, and
+/// `target` for long form), plus every entry of `service.tmpfs` (the
+/// part before the first `:`, the same shape
+/// `read_only_target_warning` uses). Returned in declaration order;
+/// the volume entries first, then the tmpfs entries. Used by the
+/// watcher to walk every container destination without re-parsing each
+/// string a second time.
+pub(crate) fn mount_targets(service: &Service) -> Vec<String> {
+	let mut out: Vec<String> = Vec::new();
+	for v in &service.volumes {
+		let target = match v {
+			VolumeMount::Short(s) => match parse_volume_string(s) {
+				Some((Some(mount), _)) => Some(mount.destination),
+				Some((None, Some(named))) => Some(named.dest),
+				_ => None,
+			},
+			VolumeMount::Long { target, .. } => Some(target.clone()),
+		};
+		if let Some(t) = target {
+			if !t.is_empty() {
+				out.push(t);
+			}
+		}
+	}
+	for entry in service.tmpfs.to_list() {
+		let dst = entry.split(':').next().unwrap_or("");
+		if !dst.is_empty() {
+			out.push(dst.to_string());
+		}
+	}
+	out
 }
 
 // ---------------------------------------------------------------------------
