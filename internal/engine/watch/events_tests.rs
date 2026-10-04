@@ -6,9 +6,13 @@
 
 use std::sync::atomic::AtomicBool;
 
-use notify::event::{AccessKind, AccessMode, CreateKind, DataChange, ModifyKind, RemoveKind};
+use notify::event::{
+	AccessKind, AccessMode, CreateKind, DataChange, ModifyKind, RemoveKind, RenameMode,
+};
 use notify::EventKind;
 use tokio::sync::mpsc;
+
+use crate::compose::types::WatchAction;
 
 use super::{enqueue, should_enqueue, sync_op_for, SyncOp};
 
@@ -44,6 +48,39 @@ fn should_enqueue_drops_access_events() {
 	))));
 }
 
+/// Pin the filter so a refactor that loses the rename family does not
+/// silently turn a rename into a no-op. `Modify(Name(..))` covers the
+/// three rename shapes the inotify backend actually emits; missing one
+/// would let a moved file go undispatched and the container would
+/// silently drift from the host.
+#[test]
+fn should_enqueue_keeps_rename_events() {
+	assert!(should_enqueue(&ok_event(EventKind::Modify(
+		ModifyKind::Name(RenameMode::Both)
+	))));
+	assert!(should_enqueue(&ok_event(EventKind::Modify(
+		ModifyKind::Name(RenameMode::From)
+	))));
+	assert!(should_enqueue(&ok_event(EventKind::Modify(
+		ModifyKind::Name(RenameMode::To)
+	))));
+}
+
+/// Pin the access filter against the read-shape. The existing
+/// `should_enqueue_drops_access_events` covers `Open(Any)` and
+/// `Close(Read)`; this one adds `Access(Read)` and `Open(Read)` so
+/// dropping a read never becomes a `should_enqueue == true` after a
+/// future refactor that returns the AccessKind variant.
+#[test]
+fn should_enqueue_drops_read_shapes() {
+	assert!(!should_enqueue(&ok_event(EventKind::Access(
+		AccessKind::Read
+	))));
+	assert!(!should_enqueue(&ok_event(EventKind::Access(
+		AccessKind::Open(AccessMode::Read)
+	))));
+}
+
 #[test]
 fn enqueue_second_real_event_sets_overflow() {
 	// Two Create events into a one-slot channel: the first lands, the
@@ -52,11 +89,89 @@ fn enqueue_second_real_event_sets_overflow() {
 	let (tx, _rx) = mpsc::channel::<super::WatchEvent>(1);
 	let flag = AtomicBool::new(false);
 	enqueue(&tx, &flag, ok_event(EventKind::Create(CreateKind::File)));
+	assert!(
+		!flag.load(std::sync::atomic::Ordering::SeqCst),
+		"the first Create into an empty channel must not set the overflow flag"
+	);
 	enqueue(&tx, &flag, ok_event(EventKind::Create(CreateKind::File)));
 	assert!(
 		flag.load(std::sync::atomic::Ordering::SeqCst),
 		"the second Create into a full channel must set the overflow flag"
 	);
+}
+
+/// A `Rescan` event is the kernel's own inotify queue overflow signal:
+/// the loop's `is_dispatch_event` filter would otherwise drop it
+/// silently and the recovery path would never know there was a drop.
+/// `should_enqueue` must keep it.
+#[test]
+fn should_enqueue_keeps_rescan() {
+	let rescan = Ok(notify::Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan));
+	assert!(should_enqueue(&rescan));
+}
+
+/// The `Rescan` event must (a) set the overflow flag so the loop runs
+/// the recovery path, and (b) land in the channel so the loop wakes
+/// up. The first is the bug; the second is the "the loop never noticed"
+/// follow-up that a fix that only sets the flag would introduce.
+#[tokio::test]
+async fn enqueue_rescan_sets_overflow_and_lands_on_the_channel() {
+	let (tx, mut rx) = mpsc::channel::<super::WatchEvent>(4);
+	let flag = AtomicBool::new(false);
+	let rescan = Ok(notify::Event::new(EventKind::Other).set_flag(notify::event::Flag::Rescan));
+	enqueue(&tx, &flag, rescan);
+	assert!(
+		flag.load(std::sync::atomic::Ordering::SeqCst),
+		"a Rescan event must set the overflow flag before any try_send"
+	);
+	let landed = tokio::time::timeout(std::time::Duration::from_millis(50), rx.recv())
+		.await
+		.expect("Rescan event must reach the receiver within the timeout");
+	let landed = landed.expect("the channel must still be open");
+	let event = landed.expect("the enqueued item must be Ok");
+	assert!(
+		event.need_rescan(),
+		"the received event must still carry the Rescan flag"
+	);
+}
+
+// --- rules_not_recovered ------------------------------------------------
+
+/// Plain sync + `initial_sync` is the one case the resync covers: not in
+/// the unrecovered list. Plain sync without `initial_sync` is not
+/// covered: in the list. `sync+restart` with `initial_sync` is not
+/// covered (the restart was not re-run): in the list. A rebuild rule
+/// is not covered at all: in the list.
+#[test]
+fn rules_not_recovered_lists_only_what_recovery_did_not_run() {
+	let rules = vec![
+		("web".into(), "src".into(), WatchAction::Sync, true),
+		("web".into(), "lazy".into(), WatchAction::Sync, false),
+		(
+			"web".into(),
+			"with_restart".into(),
+			WatchAction::SyncAndRestart,
+			true,
+		),
+		(
+			"worker".into(),
+			"Dockerfile".into(),
+			WatchAction::Rebuild,
+			true,
+		),
+	];
+	let mut got = super::super::Engine::rules_not_recovered_tuples(&rules);
+	got.sort();
+	assert_eq!(
+		got,
+		vec![
+			"web:lazy".to_string(),
+			"web:with_restart".to_string(),
+			"worker:Dockerfile".to_string(),
+		]
+	);
+	// And the recovered rule is not there.
+	assert!(!got.iter().any(|s| s == "web:src"));
 }
 
 #[test]
@@ -109,7 +224,7 @@ fn sync_op_for_existing_file_is_upload() {
 	let dir = tempfile::tempdir().unwrap();
 	let path = dir.path().join("present.txt");
 	std::fs::write(&path, b"present").unwrap();
-	assert_eq!(sync_op_for(&path), SyncOp::Upload);
+	assert_eq!(sync_op_for(&path).unwrap(), SyncOp::Upload);
 }
 
 #[test]
@@ -117,7 +232,7 @@ fn sync_op_for_existing_directory_is_upload() {
 	let dir = tempfile::tempdir().unwrap();
 	let sub = dir.path().join("subdir");
 	std::fs::create_dir(&sub).unwrap();
-	assert_eq!(sync_op_for(&sub), SyncOp::Upload);
+	assert_eq!(sync_op_for(&sub).unwrap(), SyncOp::Upload);
 }
 
 #[test]
@@ -125,7 +240,7 @@ fn sync_op_for_missing_path_is_remove() {
 	let dir = tempfile::tempdir().unwrap();
 	let path = dir.path().join("absent.txt");
 	assert!(!path.exists());
-	assert_eq!(sync_op_for(&path), SyncOp::Remove);
+	assert_eq!(sync_op_for(&path).unwrap(), SyncOp::Remove);
 }
 
 #[cfg(unix)]
@@ -138,5 +253,67 @@ fn sync_op_for_dangling_symlink_is_upload() {
 	let dir = tempfile::tempdir().unwrap();
 	let link = dir.path().join("link");
 	std::os::unix::fs::symlink("/nonexistent/target", &link).unwrap();
-	assert_eq!(sync_op_for(&link), SyncOp::Upload);
+	assert_eq!(sync_op_for(&link).unwrap(), SyncOp::Upload);
+}
+
+/// A path under a regular file does not exist: the parent is not a directory,
+/// so the kernel returns `ENOTDIR` rather than `ENOENT`. The decision has
+/// to land on `Ok(Remove)` for that case so a stale notification (a write to
+/// the rule's file that has since moved) does not try to upload a path the
+/// filesystem never had.
+#[cfg(unix)]
+#[test]
+fn sync_op_for_path_under_a_file_is_remove() {
+	let dir = tempfile::tempdir().unwrap();
+	let file = dir.path().join("f.txt");
+	std::fs::write(&file, b"x").unwrap();
+	let child = file.join("child");
+	assert_eq!(sync_op_for(&child).unwrap(), SyncOp::Remove);
+}
+
+/// Permission denied on the parent directory: the file is still on disk,
+/// but a non-`NotFound` error must propagate, not be turned into a
+/// `Remove`. A test that returns `Ok(Remove)` here would happily `rm -f`
+/// the container copy on every EACCES.
+#[cfg(unix)]
+#[test]
+fn sync_op_for_permission_error_is_not_remove() {
+	use std::os::unix::fs::PermissionsExt;
+
+	let dir = tempfile::tempdir().unwrap();
+	let sub = dir.path().join("sub");
+	std::fs::create_dir(&sub).unwrap();
+	let file = sub.join("f.txt");
+	std::fs::write(&file, b"keep").unwrap();
+
+	// Lock the parent so `metadata` on the file fails with `EACCES`.
+	let original = std::fs::metadata(&sub).unwrap().permissions();
+	std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o000)).unwrap();
+
+	// Root bypasses the directory mode entirely (DAC override), so the
+	// permission check never fires for it; the test then cannot tell the
+	// two implementations apart. Detect that shape and bail out with a
+	// note rather than falsely reporting a failure that the process is
+	// structurally incapable of producing.
+	let still_visible = std::fs::metadata(&file).is_ok();
+	let outcome = sync_op_for(&file);
+
+	// Restore before any assertion so a panic in the body does not leave
+	// the directory unwritable on the way out (Drop would still try to
+	// clean it up, and 0o000 makes that fail).
+	std::fs::set_permissions(&sub, std::fs::Permissions::from_mode(0o755)).unwrap();
+	let _ = original;
+
+	if still_visible {
+		// Root (or any process with `CAP_DAC_READ_SEARCH` / `CAP_DAC_OVERRIDE`).
+		// The behaviour we wanted to verify cannot be observed here, so
+		// return early instead of declaring a false pass.
+		eprintln!("sync_op_for_permission_error_is_not_remove: skipped (process bypasses the directory mode)");
+		return;
+	}
+
+	assert!(
+		outcome.is_err(),
+		"a non-NotFound stat error must propagate, not become Ok(Remove); got {outcome:?}"
+	);
 }

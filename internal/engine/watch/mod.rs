@@ -67,6 +67,10 @@ struct RuleEntry {
 	/// against the path relative to the build context, not to the rule's
 	/// `path`, because that is what a `.dockerignore` is written against.
 	build_context_patterns: Vec<String>,
+	/// The rule's target is already shared through a bind mount, so the
+	/// sync step is provably a no-op; only the restart or exec of a
+	/// `sync+restart` / `sync+exec` action still runs.
+	sync_redundant: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -105,13 +109,13 @@ impl Engine {
 					// the watcher can still set up.
 					let joined = self.base_dir.join(&rule.path);
 					let abs = std::fs::canonicalize(&joined).unwrap_or(joined);
-					// A sync rule whose target sits inside a directory the
-					// service bind-mounts from the watched path would
+					// A sync rule whose target sits inside a bind-mounted directory would
 					// re-upload every change straight back into the watched
-					// tree. Detect that here and skip the rule with a
-					// warning rather than letting the user chase an
-					// infinite upload loop (#1984). Rebuild / restart rules
-					// have no target and are not at risk.
+					// tree. Drop the rule (a plain `sync`) or keep it with
+					// `sync_redundant = true` (a `sync+restart` /
+					// `sync+exec`) so the restart or exec still fires
+					// (#1984). Rebuild / restart rules have no target.
+					let mut sync_redundant = false;
 					if let Some(target) = &rule.target {
 						if let Some(msg) = placement::bind_mount_feedback(
 							name,
@@ -119,10 +123,14 @@ impl Engine {
 							&self.base_dir,
 							&abs,
 							target,
+							rule.action.clone(),
 						) {
 							warn!("{msg}");
-							bind_feedback_rejected += 1;
-							continue;
+							if matches!(rule.action, WatchAction::Sync) {
+								bind_feedback_rejected += 1;
+								continue;
+							}
+							sync_redundant = true;
 						}
 					}
 					// A service with a local `build:` carries a `.dockerignore`
@@ -139,6 +147,7 @@ impl Engine {
 						abs_path: abs,
 						build_context_abs,
 						build_context_patterns,
+						sync_redundant,
 					});
 				}
 			}
@@ -222,7 +231,8 @@ impl Engine {
 			}
 		}
 
-		self.sync_all(&rule_entries, &mut ensured, true).await;
+		self.sync_all(&rule_entries, &mut ensured, "initial sync")
+			.await;
 
 		info!("watching {} rule(s); Ctrl+C to stop", rule_entries.len());
 
@@ -235,6 +245,12 @@ impl Engine {
 		let mut legacy_included_warned: HashSet<(String, String)> = HashSet::new();
 
 		loop {
+			// Overflow check has to run before the `recv` so a flag set by an
+			// `enqueue` racing this iteration does not sit until the next
+			// event; it runs again after dispatch for the same reason.
+			self.recover_from_overflow(&overflow, &rule_entries, &mut ensured)
+				.await;
+
 			let event = tokio::select! {
 				ev = rx.recv() => match ev {
 					Some(Ok(e)) => e,
@@ -243,19 +259,6 @@ impl Engine {
 				},
 				_ = tokio::signal::ctrl_c() => break,
 			};
-
-			// `events::enqueue` sets the overflow flag on the first
-			// `TrySendError::Full`. A dropped event is almost always a
-			// real change the user made while the watch loop was busy,
-			// and the dropped event's effect on the container is the
-			// thing the loop is meant to keep in sync. Resyncing every
-			// rule is the safe answer: it costs an initial-sync worth of
-			// PUTs, which is bounded, and means a deletion that landed
-			// in the dropped event is not silently lost (#1984).
-			if overflow.swap(false, std::sync::atomic::Ordering::SeqCst) {
-				warn!("watch event queue overflowed; resyncing every sync rule (a deletion made meanwhile may not reach the container)");
-				self.sync_all(&rule_entries, &mut ensured, false).await;
-			}
 
 			// The channel is filtered upstream by `events::enqueue`, so only
 			// Create/Modify/Remove events land here. The check below is kept
@@ -344,6 +347,13 @@ impl Engine {
 					continue 'outer;
 				}
 			}
+
+			// The recovery check ran before this batch started; an overflow
+			// signal that came in while the batch was being dispatched
+			// would otherwise wait out the next `recv`. The helper is a
+			// no-op when the flag is false.
+			self.recover_from_overflow(&overflow, &rule_entries, &mut ensured)
+				.await;
 		}
 
 		Ok(())
@@ -359,14 +369,16 @@ impl Engine {
 		match &entry.rule.action {
 			WatchAction::Sync => {
 				if let Some(target) = &entry.rule.target {
-					self.dispatch_sync(
-						&entry.container_name,
-						&entry.abs_path,
-						path,
-						target,
-						ensured,
-					)
-					.await?;
+					if !entry.sync_redundant {
+						self.dispatch_sync(
+							&entry.container_name,
+							&entry.abs_path,
+							path,
+							target,
+							ensured,
+						)
+						.await?;
+					}
 				}
 			}
 			WatchAction::Rebuild => {
@@ -377,27 +389,31 @@ impl Engine {
 			}
 			WatchAction::SyncAndRestart => {
 				if let Some(target) = &entry.rule.target {
-					self.dispatch_sync(
-						&entry.container_name,
-						&entry.abs_path,
-						path,
-						target,
-						ensured,
-					)
-					.await?;
+					if !entry.sync_redundant {
+						self.dispatch_sync(
+							&entry.container_name,
+							&entry.abs_path,
+							path,
+							target,
+							ensured,
+						)
+						.await?;
+					}
 				}
 				self.watch_restart(&entry.container_name).await?;
 			}
 			WatchAction::SyncAndExec => {
 				if let Some(target) = &entry.rule.target {
-					self.dispatch_sync(
-						&entry.container_name,
-						&entry.abs_path,
-						path,
-						target,
-						ensured,
-					)
-					.await?;
+					if !entry.sync_redundant {
+						self.dispatch_sync(
+							&entry.container_name,
+							&entry.abs_path,
+							path,
+							target,
+							ensured,
+						)
+						.await?;
+					}
 				}
 				if let Some(exec) = &entry.rule.exec {
 					self.watch_exec(&entry.container_name, exec.command.clone())
@@ -425,14 +441,18 @@ impl Engine {
 		ensured: &mut HashSet<(String, String)>,
 	) -> Result<()> {
 		match events::sync_op_for(changed) {
-			events::SyncOp::Upload => {
+			Ok(events::SyncOp::Upload) => {
 				self.sync_to_container(container, root, changed, target, ensured)
 					.await
 			}
-			events::SyncOp::Remove => {
+			Ok(events::SyncOp::Remove) => {
 				self.remove_from_container(container, root, changed, target)
 					.await
 			}
+			Err(e) => Err(ComposeError::Watch(format!(
+				"cannot read {}: {e}; leaving the container copy as it is",
+				changed.display()
+			))),
 		}
 	}
 

@@ -249,6 +249,15 @@ fn bind_feedback_for(svc_yaml: &str) -> (tempfile::TempDir, std::path::PathBuf, 
 	(dir, base, svc)
 }
 
+fn bind_feedback_call(
+	svc: &Service,
+	base: &std::path::Path,
+	rule_abs: &std::path::Path,
+	target: &str,
+) -> Option<String> {
+	bind_mount_feedback("web", svc, base, rule_abs, target, WatchAction::Sync)
+}
+
 #[test]
 fn bind_mount_feedback_flags_short_form_feedback_loop() {
 	// `volumes: ["./src:/app"]` bind-mounts the rule's path into the
@@ -256,7 +265,7 @@ fn bind_mount_feedback_flags_short_form_feedback_loop() {
 	// the watched tree; the function must flag it.
 	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - ./src:/app\n");
 	let rule_abs = base.join("src");
-	let msg = bind_mount_feedback("web", &svc, &base, &rule_abs, "/app")
+	let msg = bind_feedback_call(&svc, &base, &rule_abs, "/app")
 		.expect("feedback expected for a self-feeding sync rule");
 	assert!(
 		msg.contains("/app"),
@@ -265,6 +274,10 @@ fn bind_mount_feedback_flags_short_form_feedback_loop() {
 	assert!(
 		msg.contains("bind-mounted"),
 		"message must name the cause; got {msg:?}"
+	);
+	assert!(
+		msg.contains("so this rule is skipped"),
+		"message must carry the ending passed by the caller; got {msg:?}"
 	);
 	drop(dir);
 }
@@ -276,7 +289,7 @@ fn bind_mount_feedback_flags_subpath_under_feedback_source() {
 	// The same write-back loop applies.
 	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - ./src:/app\n");
 	let rule_abs = base.join("src/sub");
-	let msg = bind_mount_feedback("web", &svc, &base, &rule_abs, "/app/sub")
+	let msg = bind_feedback_call(&svc, &base, &rule_abs, "/app/sub")
 		.expect("feedback expected for a subpath of a self-feeding sync rule");
 	assert!(msg.contains("/app/sub"));
 	drop(dir);
@@ -288,10 +301,7 @@ fn bind_mount_feedback_allows_unrelated_target() {
 	// cover. The function must not warn.
 	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - ./src:/app\n");
 	let rule_abs = base.join("src");
-	assert_eq!(
-		bind_mount_feedback("web", &svc, &base, &rule_abs, "/srv"),
-		None
-	);
+	assert_eq!(bind_feedback_call(&svc, &base, &rule_abs, "/srv"), None);
 	drop(dir);
 }
 
@@ -301,10 +311,7 @@ fn bind_mount_feedback_allows_unrelated_source() {
 	// check on a `./src` rule, even when the target matches.
 	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - ./other:/app\n");
 	let rule_abs = base.join("src");
-	assert_eq!(
-		bind_mount_feedback("web", &svc, &base, &rule_abs, "/app"),
-		None
-	);
+	assert_eq!(bind_feedback_call(&svc, &base, &rule_abs, "/app"), None);
 	drop(dir);
 }
 
@@ -312,13 +319,14 @@ fn bind_mount_feedback_allows_unrelated_source() {
 fn bind_mount_feedback_allows_named_volume() {
 	// A named volume mounts the volume manager's data, not the host
 	// path; the rule's source is therefore not shared, and the function
-	// must not warn.
-	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - data:/app\n");
+	// must not warn. The named volume happens to be called `src` here,
+	// not `data`: the previous fixture of `data:/app` passed even when
+	// named volumes were misclassified as binds, because `data` looked
+	// like a name, not a path. Naming the volume `src` makes the test
+	// bite that bug.
+	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - src:/app\n");
 	let rule_abs = base.join("src");
-	assert_eq!(
-		bind_mount_feedback("web", &svc, &base, &rule_abs, "/app"),
-		None
-	);
+	assert_eq!(bind_feedback_call(&svc, &base, &rule_abs, "/app"), None);
 	drop(dir);
 }
 
@@ -330,20 +338,54 @@ fn bind_mount_feedback_flags_long_form_bind() {
 		"image: x\nvolumes:\n  - type: bind\n    source: ./src\n    target: /app\n",
 	);
 	let rule_abs = base.join("src");
-	let msg = bind_mount_feedback("web", &svc, &base, &rule_abs, "/app")
+	let msg = bind_feedback_call(&svc, &base, &rule_abs, "/app")
 		.expect("long-form bind source must trip the feedback check");
 	assert!(msg.contains("bind-mounted"));
 	drop(dir);
 }
 
+/// A read-only bind cannot write back: the sync fails with a
+/// read-only error, not with a fresh write that re-fires the watcher.
+/// The function must NOT flag the rule in that case, because there is
+/// no loop to break.
 #[test]
-fn bind_mount_feedback_flags_rule_above_the_bind_source() {
-	// The rule watches the project root and syncs it to `/`, so `./src` is
-	// synced onto `/src`, which is the bind target of `./src`: every upload
-	// writes back into the watched tree.
-	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - ./src:/src\n");
-	assert!(bind_mount_feedback("web", &svc, &base, &base, "/").is_some());
-	// Syncing the root to `/srv` puts `./src` at `/srv/src`, outside the bind.
-	assert_eq!(bind_mount_feedback("web", &svc, &base, &base, "/srv"), None);
+fn bind_mount_feedback_allows_short_form_ro_bind() {
+	let (dir, base, svc) = bind_feedback_for("image: x\nvolumes:\n  - ./src:/app:ro\n");
+	let rule_abs = base.join("src");
+	assert_eq!(bind_feedback_call(&svc, &base, &rule_abs, "/app"), None);
+	drop(dir);
+}
+
+#[test]
+fn bind_mount_feedback_allows_long_form_read_only_bind() {
+	let (dir, base, svc) = bind_feedback_for(
+		"image: x\nvolumes:\n  - type: bind\n    source: ./src\n    target: /app\n    read_only: true\n",
+	);
+	let rule_abs = base.join("src");
+	assert_eq!(bind_feedback_call(&svc, &base, &rule_abs, "/app"), None);
+	drop(dir);
+}
+
+/// A sibling mount covers the rule's target more specifically than the
+/// loop-matching bind: `./src:/app` matches the rule `<base>/src` ->
+/// `/app`, but `cache:/app/cache` is more specific, and the rule
+/// `<base>/src/cache` -> `/app/cache` lands in the sibling. Without the
+/// more-specific check the operator sees a warning they have to
+/// dismiss even though the rule is safe.
+#[test]
+fn bind_mount_feedback_more_specific_sibling_suppresses_warning() {
+	let dir = tempfile::tempdir().unwrap();
+	let base = dir.path().to_path_buf();
+	fs::create_dir(base.join("src")).unwrap();
+	fs::create_dir(base.join("src/cache")).unwrap();
+	let svc: Service =
+		serde_yaml::from_str("image: x\nvolumes:\n  - ./src:/app\n  - cache:/app/cache\n").unwrap();
+	// The cache rule: lands in `cache:/app/cache`, not the bind.
+	assert_eq!(
+		bind_feedback_call(&svc, &base, &base.join("src/cache"), "/app/cache"),
+		None
+	);
+	// The root rule still loops against the bind.
+	assert!(bind_feedback_call(&svc, &base, &base.join("src"), "/app").is_some());
 	drop(dir);
 }

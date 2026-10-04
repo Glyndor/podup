@@ -9,7 +9,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use crate::compose::types::{Service, WatchRule};
+use crate::compose::types::{Service, WatchAction, WatchRule};
 use crate::engine::container::resolve_bind_source;
 use crate::engine::volume_mounts::bind_mounts;
 use crate::error::{ComposeError, Result};
@@ -254,48 +254,65 @@ fn path_components(path: &str) -> Vec<&str> {
 /// A message when a sync rule would write back into the tree it watches
 /// through one of the service's bind mounts, `None` otherwise (#1984).
 ///
-/// Two shapes loop: the rule watches the bind source (or a directory under it)
-/// and syncs into the matching place in the bind target, or the rule watches a
-/// parent of the bind source and syncs that source onto the bind target. Either
-/// way every upload modifies the watched tree, which fires another upload.
+/// Two shapes loop:
+///
+/// - the rule watches the bind source (or a directory under it) and syncs
+///   into the matching place in the bind target. The shape this function
+///   handles.
+/// - the rule watches a parent of the bind source and syncs that source
+///   onto the bind target. Skipping that rule would also stop every other
+///   file under the parent from syncing, so it is not detected here (#1985).
+///
+/// A read-only bind cannot write back: a sync into it fails with a
+/// read-only error, not with a fresh write that re-fires the watcher.
+/// Bailing out early on those keeps the operator-facing warning focused
+/// on the cases that actually loop.
+///
+/// If a sibling entry in the same service points at a strictly deeper
+/// container target (`cache:/app/cache` while the bind is `./src:/app`),
+/// and the rule's target lands at or under that other target, the more
+/// specific entry receives the upload, not the bind, so that bind is not a
+/// loop for this rule.
+///
+/// The trailing clause of the warning depends on the rule's action: a
+/// plain `sync` says "so this rule is skipped"; a `sync+restart` /
+/// `sync+exec` says "so the sync step is skipped; the {restart|exec}
+/// still runs". The action is enough to pick it; `feedback_message`
+/// takes the resolved ending as a parameter so the format stays in one
+/// place.
 pub(super) fn bind_mount_feedback(
 	service_name: &str,
 	service: &Service,
 	base_dir: &Path,
 	rule_abs: &Path,
 	target: &str,
+	action: WatchAction,
 ) -> Option<String> {
-	// Compare canonical paths; fall back to the resolved path when one does
-	// not exist yet.
+	let ending = match action {
+		WatchAction::Sync => "so this rule is skipped",
+		WatchAction::SyncAndRestart => "so the sync step is skipped; the restart still runs",
+		WatchAction::SyncAndExec => "so the sync step is skipped; the exec still runs",
+		_ => "so this rule is skipped",
+	};
 	let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
 
-	for (raw_src, container_target) in bind_mounts(service) {
-		let resolved = PathBuf::from(resolve_bind_source(&raw_src, base_dir));
+	for bind in bind_mounts(service) {
+		if bind.read_only {
+			continue;
+		}
+		let resolved = PathBuf::from(resolve_bind_source(&bind.source, base_dir));
 		let canon_source = canon(&resolved);
 		let canon_rule = canon(rule_abs);
 
-		// Rule at or under the bind source: where does the rule's root land in
-		// the bind target? (`Path::starts_with` compares whole components.)
 		let subpath: String = if canon_rule == canon_source {
 			String::new()
 		} else if let Ok(rel) = canon_rule.strip_prefix(&canon_source) {
 			rel.to_string_lossy().into_owned()
-		} else if let Ok(rel) = canon_source.strip_prefix(&canon_rule) {
-			// Rule above the bind source: the source subtree is synced to
-			// `target/rel`, which loops when that is the bind target.
-			let synced = join_container_path(&SyncPlacement {
-				dest_dir: target.trim_end_matches('/').to_string(),
-				entry_name: rel.to_string_lossy().into_owned(),
-			});
-			if synced.trim_end_matches('/') == container_target.trim_end_matches('/') {
-				return Some(feedback_message(service_name, target, &canon_rule));
-			}
-			continue;
 		} else {
 			continue;
 		};
 
-		let dest_dir_trimmed = container_target.trim_end_matches('/');
+		let dest_dir_trimmed = bind.target.trim_end_matches('/');
 		let dest_dir_owned = if dest_dir_trimmed.is_empty() {
 			"/".to_string()
 		} else {
@@ -309,16 +326,59 @@ pub(super) fn bind_mount_feedback(
 		let target_trim = target.trim_end_matches('/');
 		let expected_trim = expected.trim_end_matches('/');
 
-		if target_trim == expected_trim || target_trim.starts_with(&format!("{expected_trim}/")) {
-			return Some(feedback_message(service_name, target, &canon_rule));
+		if !(target_trim == expected_trim || target_trim.starts_with(&format!("{expected_trim}/")))
+		{
+			continue;
 		}
+
+		// A sibling mount covers the rule's target more specifically: the
+		// upload lands in that other mount, not in this bind. Examples:
+		// the bind is `./src:/app`, the sibling is `cache:/app/cache`,
+		// and the rule syncs `./src/cache` to `/app/cache`; the cache
+		// entry is the target, not the bind.
+		if more_specific_sibling_covers_target(service, &bind.target, target) {
+			continue;
+		}
+
+		return Some(feedback_message(service_name, target, &canon_rule, ending));
 	}
 	None
 }
 
-fn feedback_message(service_name: &str, target: &str, rule_abs: &Path) -> String {
+/// True when some other entry in `service.volumes` has a container
+/// target strictly under `bind_target` (the bind we're checking) and the
+/// rule's target is at or under that other target. The "strictly under"
+/// shape is what makes the sibling "more specific" than the bind, so a
+/// write into the rule's target lands in the sibling, not in the bind.
+fn more_specific_sibling_covers_target(
+	service: &Service,
+	bind_target: &str,
+	rule_target: &str,
+) -> bool {
+	let bind_parts = path_components(bind_target);
+	let rule_parts = path_components(rule_target);
+	for v in &service.volumes {
+		let other_target = v.target();
+		if other_target == bind_target {
+			continue;
+		}
+		let other_parts = path_components(other_target);
+		if other_parts.len() <= bind_parts.len() {
+			continue;
+		}
+		if !other_parts.starts_with(&bind_parts) {
+			continue;
+		}
+		if rule_parts.starts_with(&other_parts) {
+			return true;
+		}
+	}
+	false
+}
+
+fn feedback_message(service_name: &str, target: &str, rule_abs: &Path, ending: &str) -> String {
 	format!(
-		"{service_name}: sync target {target} is bind-mounted from {}; the files are already shared, and syncing would write back into the watched path on every change, so this rule is skipped",
+		"{service_name}: sync target {target} is bind-mounted from {}; the files are already shared, and syncing would write back into the watched path on every change, {ending}",
 		rule_abs.display()
 	)
 }

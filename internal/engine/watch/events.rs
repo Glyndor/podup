@@ -17,6 +17,7 @@ use tracing::debug;
 
 use super::placement::is_dispatch_event;
 use super::RuleEntry;
+use crate::compose::types::WatchAction;
 use crate::engine::Engine;
 use tracing::{info, warn};
 
@@ -29,30 +30,46 @@ pub(super) type WatchEvent = notify::Result<notify::Event>;
 ///
 /// Errors must reach the loop so it can `warn!` on them; the rest of the
 /// keep set is exactly what `is_dispatch_event` would let through
-/// downstream, so the loop's own filter (kept for defence in depth) is a
-/// no-op when this gate is in place.
+/// downstream, plus a `Rescan` event (the inotify queue overflow signal):
+/// that one has no path the host cares about and the loop's
+/// `is_dispatch_event` check would otherwise discard it before the loop
+/// wakes up, so the recovery path would never know the kernel itself
+/// declared an overflow. The flag and the channel both carry it; the
+/// loop's filter still drops it after the recovery runs.
 pub(super) fn should_enqueue(res: &WatchEvent) -> bool {
 	match res {
 		Err(_) => true,
-		Ok(e) => is_dispatch_event(&e.kind),
+		Ok(e) => e.need_rescan() || is_dispatch_event(&e.kind),
 	}
 }
 
 /// Push `res` into the watch channel, or record an overflow.
 ///
-/// The non-keep cases are dropped here so the bounded channel can hold
-/// only meaningful events; on `TrySendError::Full` the overflow flag is
-/// set so the loop resyncs on its next iteration, and the existing
-/// `debug!` line keeps the drop observable to operators. `Closed` is the
-/// normal "the consumer went away" path and gets only the same `debug!`
-/// line.
+/// A `Rescan` event (the inotify queue overflow signal) sets the flag
+/// before any `try_send`: that path has nothing to deliver to the loop's
+/// dispatch logic, but the loop still has to see the kernel's "you missed
+/// something" so the recovery path runs. Sending it on is best-effort:
+/// the loop's `is_dispatch_event` filter drops it again after the
+/// recovery has had a chance to look at the flag.
+///
+/// On `TrySendError::Full` the overflow flag is set so the loop resyncs
+/// on its next iteration, and the existing `debug!` line keeps the drop
+/// observable to operators. `Closed` is the normal "the consumer went
+/// away" path and gets only the same `debug!` line.
 pub(super) fn enqueue(
 	tx: &mpsc::Sender<WatchEvent>,
 	overflow: &std::sync::atomic::AtomicBool,
 	res: WatchEvent,
 ) {
+	let needs_rescan = match &res {
+		Ok(e) => e.need_rescan(),
+		Err(_) => false,
+	};
 	if !should_enqueue(&res) {
 		return;
+	}
+	if needs_rescan {
+		overflow.store(true, std::sync::atomic::Ordering::SeqCst);
 	}
 	match tx.try_send(res) {
 		Ok(()) => {}
@@ -79,40 +96,48 @@ pub(super) enum SyncOp {
 ///
 /// `symlink_metadata` does not follow links, so a dangling symlink counts as
 /// present and is uploaded as a link, the same rule the initial sync applies.
-pub(super) fn sync_op_for(path: &Path) -> SyncOp {
+/// A `NotFound` or `NotADirectory` error means the host path is absent (the
+/// file was deleted, or the rule's root is a file and the changed entry is
+/// under it), so a `Remove` is the right call. Any other error (a permission
+/// error, an EIO on a network mount, a stale handle) is propagated to the
+/// caller: the path on disk is unknown, and removing the container copy
+/// because the host was briefly unreadable is exactly the bug this function
+/// exists to prevent.
+pub(super) fn sync_op_for(path: &Path) -> std::io::Result<SyncOp> {
 	match std::fs::symlink_metadata(path) {
-		Ok(_) => SyncOp::Upload,
-		Err(_) => SyncOp::Remove,
+		Ok(_) => Ok(SyncOp::Upload),
+		Err(e) => match e.kind() {
+			std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory => Ok(SyncOp::Remove),
+			_ => Err(e),
+		},
 	}
 }
 
 impl Engine {
-	/// Run the per-rule sync loop. Used both at startup (`only_initial =
-	/// true` honours the rule's `initial_sync` flag) and on an
-	/// overflow-driven resync (`only_initial = false`, every sync rule
-	/// is refreshed to recover state the dropped event may have carried).
-	///
-	/// The startup path keeps the behaviour the original inline loop
-	/// had: no action check (any rule with `initial_sync` and a target
-	/// is synced). The resync path adds the action check because
-	/// `rebuild` / `restart` rules do not sync anything, and only the
-	/// sync family would have been affected by a dropped event.
+	/// Run the per-rule sync loop. Used both at startup and on an
+	/// overflow-driven resync; both paths run only the rules with
+	/// `initial_sync: true`, because that flag is the user's contract
+	/// for "this rule accepts a full upload". A rule without
+	/// `initial_sync` filters what it accepts through its `ignore` /
+	/// `include` lists; a recovery-driven full upload would ignore those
+	/// filters and could write a file the rule was configured to
+	/// exclude. Rules whose sync step is `sync_redundant` (target is
+	/// already shared through a bind mount the rule also targets) are
+	/// skipped here as well: the restart / exec part of the action
+	/// still runs, but the sync is by definition a no-op. `label` is
+	/// what the `info!` / `warn!` lines print (`"initial sync"` at
+	/// startup, `"resync"` from the overflow recovery).
 	pub(super) async fn sync_all(
 		&self,
 		rule_entries: &[RuleEntry],
 		ensured: &mut HashSet<(String, String)>,
-		only_initial: bool,
+		label: &str,
 	) {
 		for entry in rule_entries {
-			if only_initial {
-				// Startup: keep the original behaviour. The pre-existing
-				// loop did not filter by action, so do not add an action
-				// check here; the only change is extracting the body.
-				if !entry.rule.initial_sync {
-					continue;
-				}
-			} else if !entry.rule.action.requires_target() {
-				// Resync: skip `rebuild` and `restart`, which never sync.
+			if !entry.rule.initial_sync {
+				continue;
+			}
+			if entry.sync_redundant {
 				continue;
 			}
 			// A missing watch path cannot be synced: the watcher-setup
@@ -128,11 +153,7 @@ impl Engine {
 			let Some(target) = &entry.rule.target else {
 				continue;
 			};
-			if only_initial {
-				info!("initial sync {} -> {target}", entry.abs_path.display());
-			} else {
-				info!("resync {} -> {target}", entry.abs_path.display());
-			}
+			info!("{label} {} -> {target}", entry.abs_path.display());
 			if let Err(e) = self
 				.sync_to_container(
 					&entry.container_name,
@@ -143,15 +164,74 @@ impl Engine {
 				)
 				.await
 			{
-				warn!(
-					"{} failed: {e}",
-					if only_initial {
-						"initial sync"
-					} else {
-						"resync"
-					}
-				);
+				warn!("{label} failed: {e}");
 			}
+		}
+	}
+
+	/// The rules the overflow path could not cover. A plain `sync` rule
+	/// with `initial_sync` IS covered (the resync uploads it whole).
+	/// Anything else (a sync rule without `initial_sync`, any
+	/// `sync+restart` / `sync+exec` rule whose restart or exec was not
+	/// re-run, any `rebuild` / `restart` rule) is named in the warning
+	/// the operator reads to decide whether to restart `podup watch`.
+	pub(super) fn rules_not_recovered(rule_entries: &[RuleEntry]) -> Vec<String> {
+		let tuples: Vec<(String, String, WatchAction, bool)> = rule_entries
+			.iter()
+			.map(|e| {
+				(
+					e.service_name.clone(),
+					e.rule.path.clone(),
+					e.rule.action.clone(),
+					e.rule.initial_sync,
+				)
+			})
+			.collect();
+		Self::rules_not_recovered_tuples(&tuples)
+	}
+
+	/// Tuple form of [`Self::rules_not_recovered`] for unit tests; the
+	/// real entry struct's fields live in the parent module and are not
+	/// reachable from `events_tests.rs` directly.
+	pub(super) fn rules_not_recovered_tuples(
+		rules: &[(String, String, WatchAction, bool)],
+	) -> Vec<String> {
+		let mut out = Vec::new();
+		for (service, path, action, initial_sync) in rules {
+			if *initial_sync && matches!(action, WatchAction::Sync) {
+				continue;
+			}
+			out.push(format!("{service}:{path}"));
+		}
+		out
+	}
+
+	/// When the watch channel has signalled an overflow (either the
+	/// bounded queue dropped an event or notify itself reported
+	/// `IN_Q_OVERFLOW` as a `Rescan` event), re-run the same sync the
+	/// initial startup ran, name the rules that the recovery could not
+	/// cover, and clear the flag. Called from the loop at the top of the
+	/// iteration and again after a batch has been dispatched, so a
+	/// queue overflow that surfaced while a batch was being processed
+	/// still gets the recovery before the next batch.
+	pub(super) async fn recover_from_overflow(
+		&self,
+		overflow: &std::sync::atomic::AtomicBool,
+		rule_entries: &[RuleEntry],
+		ensured: &mut HashSet<(String, String)>,
+	) {
+		if !overflow.swap(false, std::sync::atomic::Ordering::SeqCst) {
+			return;
+		}
+		self.sync_all(rule_entries, ensured, "resync").await;
+		let unrecovered = Self::rules_not_recovered(rule_entries);
+		if unrecovered.is_empty() {
+			warn!("watch event queue overflowed; resynced every rule");
+		} else {
+			warn!(
+				"watch event queue overflowed; resynced the rules with initial_sync, but changes for {list} may not have been applied; restart podup watch to apply them",
+				list = unrecovered.join(", ")
+			);
 		}
 	}
 }

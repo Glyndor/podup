@@ -106,11 +106,7 @@ async fn watch_removal_right_after_a_write_reaches_the_container() {
 	fs::remove_file(&src_file).unwrap();
 
 	let gone = poll_with_watch(&mut handle, Duration::from_secs(30), || async {
-		let out = engine
-			.test_exec_capture(&cname, vec!["ls".into(), "/app/f.txt".into()])
-			.await
-			.unwrap_or_default();
-		out.trim().is_empty()
+		container_path_present(&engine, &cname, "/app/f.txt").await == Some(false)
 	})
 	.await;
 
@@ -219,11 +215,7 @@ async fn watch_mixed_batch_removes_one_file_and_updates_another() {
 	fs::write(&src_b, b"b2").unwrap();
 
 	let a_gone = poll_with_watch(&mut handle, Duration::from_secs(30), || async {
-		let out = engine
-			.test_exec_capture(&cname, vec!["ls".into(), "/app/a.txt".into()])
-			.await
-			.unwrap_or_default();
-		out.trim().is_empty()
+		container_path_present(&engine, &cname, "/app/a.txt").await == Some(false)
 	})
 	.await;
 	let b_updated = poll_with_watch(&mut handle, Duration::from_secs(30), || {

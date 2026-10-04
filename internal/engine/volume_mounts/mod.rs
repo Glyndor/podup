@@ -192,13 +192,29 @@ pub(crate) fn build_mounts_all(
 	(mounts, named)
 }
 
-/// The bind mounts declared on `service`, as `(raw_source, container_target)`.
-/// The source is returned as written; callers resolve it with
-/// `container::resolve_bind_source`, as `build_mounts_all` does.
+/// A bind mount referenced from the watcher's bind-mount feedback check.
+///
+/// `source` is the host path as written (relative paths still need to be
+/// resolved against the project base directory, which the caller does with
+/// `container::resolve_bind_source`); `target` is the in-container path.
+/// `read_only` is the parsed result of the volume spec, so callers can
+/// short-circuit the feedback loop on read-only mounts without parsing
+/// the same string again: a sync into a read-only bind cannot write back
+/// into the watched tree, so it never produces the cycle this check is
+/// trying to prevent.
+pub(crate) struct BindMountRef {
+	pub source: String,
+	pub target: String,
+	pub read_only: bool,
+}
+
+/// The bind mounts declared on `service`, as `(source, target)` pairs with
+/// the read-only flag. The source is returned as written; callers resolve
+/// it with `container::resolve_bind_source`, as `build_mounts_all` does.
 ///
 /// Unlike `build_mounts_all`, this has no side effects: it never creates a
 /// missing host directory, because `watch` calls it on every start.
-pub(crate) fn bind_mounts(service: &Service) -> Vec<(String, String)> {
+pub(crate) fn bind_mounts(service: &Service) -> Vec<BindMountRef> {
 	let mut out = Vec::new();
 	for v in &service.volumes {
 		match v {
@@ -206,7 +222,11 @@ pub(crate) fn bind_mounts(service: &Service) -> Vec<(String, String)> {
 				if let Some((Some(mount), None)) = parse_volume_string(s) {
 					if let Some(src) = mount.source.as_deref() {
 						if !src.is_empty() {
-							out.push((src.to_string(), mount.destination));
+							out.push(BindMountRef {
+								source: src.to_string(),
+								target: mount.destination,
+								read_only: short_form_is_read_only(s),
+							});
 						}
 					}
 				}
@@ -215,11 +235,16 @@ pub(crate) fn bind_mounts(service: &Service) -> Vec<(String, String)> {
 				volume_type: VolumeType::Bind,
 				source,
 				target,
+				read_only,
 				..
 			} => {
 				if let Some(src) = source.as_deref() {
 					if !src.is_empty() {
-						out.push((src.to_string(), target.clone()));
+						out.push(BindMountRef {
+							source: src.to_string(),
+							target: target.clone(),
+							read_only: read_only.unwrap_or(false),
+						});
 					}
 				}
 			}
@@ -227,6 +252,26 @@ pub(crate) fn bind_mounts(service: &Service) -> Vec<(String, String)> {
 		}
 	}
 	out
+}
+
+/// True when a short-form `source:target:opts` volume string carries an
+/// `ro` option as a whole comma-separated item. A substring match against
+/// `,ro,` would miss a leading or trailing entry, so the check splits on
+/// `,` and looks at the trimmed tokens one by one.
+fn short_form_is_read_only(s: &str) -> bool {
+	let (_src, _dst, opts) = split_short_form_options(s);
+	opts.split(',').any(|o| o.trim() == "ro")
+}
+
+/// Return the options field of a short-form volume string. Splits on
+/// the third colon (after `source` and `target`); an entry with fewer
+/// than three colons carries no options.
+fn split_short_form_options(s: &str) -> (&str, &str, &str) {
+	let mut iter = s.splitn(3, ':');
+	let src = iter.next().unwrap_or("");
+	let dst = iter.next().unwrap_or("");
+	let opts = iter.next().unwrap_or("");
+	(src, dst, opts)
 }
 
 // ---------------------------------------------------------------------------

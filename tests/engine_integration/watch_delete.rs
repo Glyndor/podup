@@ -148,11 +148,7 @@ async fn watch_sync_propagates_host_deletions_to_the_container() {
 	// rule's path, which the scope checks below depend on.
 	fs::remove_file(&probe).unwrap();
 	let probe_gone = poll_with_watch(&mut handle, Duration::from_secs(30), || async {
-		let out = engine
-			.test_exec_capture(&cname, vec!["ls".into(), "/app/probe.txt".into()])
-			.await
-			.unwrap_or_default();
-		out.trim().is_empty()
+		container_path_present(&engine, &cname, "/app/probe.txt").await == Some(false)
 	})
 	.await;
 
@@ -169,11 +165,7 @@ async fn watch_sync_propagates_host_deletions_to_the_container() {
 	// the helper's per-tick `is_finished()` check catches a watch task
 	// that dies between the initial-sync poll and the deletion poll.
 	let gone = poll_with_watch(&mut handle, Duration::from_secs(30), || async {
-		let out = engine
-			.test_exec_capture(&cname, vec!["ls".into(), "/app/f.txt".into()])
-			.await
-			.unwrap_or_default();
-		out.trim().is_empty()
+		container_path_present(&engine, &cname, "/app/f.txt").await == Some(false)
 	})
 	.await;
 
