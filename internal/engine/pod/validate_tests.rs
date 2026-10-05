@@ -14,24 +14,6 @@ fn check(yaml: &str) -> Result<(), String> {
 	validate_pod_or_refuse(&file)
 }
 
-/// A service declaring `network_mode: host` is incompatible with the pod's
-/// shared namespace and is refused with a message naming the service and
-/// the offending key.
-#[test]
-fn pod_refuses_network_mode() {
-	let yaml = r#"
-services:
-  web:
-    image: nginx
-    network_mode: host
-"#;
-	let err = check(yaml).expect_err("network_mode must be refused");
-	assert!(
-		err.contains("web") && err.contains("network_mode"),
-		"expected service name and key in the message: {err}"
-	);
-}
-
 /// Two services with different `networks:` sets must agree or one of them
 /// is refused. The check is order-sensitive on the first non-empty set
 /// declared, so a leading service with a single network wins.
@@ -192,4 +174,148 @@ services:
     userns_mode: auto
 "#;
 	check(yaml).expect("the same userns_mode on every service must be accepted");
+}
+
+/// A `network_mode` that is not pasta or slirp4netns is refused, naming
+/// the service that declared it. The pod's shared namespace can only be
+/// built on the two rootless user-mode networks.
+#[test]
+fn pod_refuses_a_network_mode_other_than_pasta_or_slirp4netns() {
+	let yaml = r#"
+services:
+  web:
+    image: nginx
+    network_mode: host
+  db:
+    image: postgres
+    network_mode: host
+"#;
+	let err = check(yaml).expect_err("a non pasta/slirp4netns mode must be refused");
+	assert!(
+		err.contains("network_mode") && err.contains("host") && err.contains("web"),
+		"{err}"
+	);
+}
+
+/// Services that declare different `network_mode` strings are refused,
+/// with a message that names both services and both modes.
+#[test]
+fn pod_refuses_services_that_disagree_on_network_mode() {
+	let yaml = r#"
+services:
+  web:
+    image: nginx
+    network_mode: pasta
+  db:
+    image: postgres
+    network_mode: "pasta:-m,1400"
+"#;
+	let err = check(yaml).expect_err("disagreeing network_modes must be refused");
+	assert!(
+		err.contains("web") && err.contains("db") && err.contains("pasta"),
+		"{err}"
+	);
+}
+
+/// A `network_mode` on one service and none on the other is a partial
+/// declaration, which the validator reads as a disagreement.
+#[test]
+fn pod_refuses_a_partial_network_mode_declaration() {
+	let yaml = r#"
+services:
+  web:
+    image: nginx
+    network_mode: pasta
+  db:
+    image: postgres
+"#;
+	let err = check(yaml).expect_err("a partial network_mode must be refused");
+	assert!(err.contains("web") && err.contains("db"), "{err}");
+}
+
+/// Every service agreeing on `pasta` (bare) is accepted, the pod runs on
+/// pasta and every member joins.
+#[test]
+fn pod_accepts_pasta_agreed_on_every_service() {
+	let yaml = r#"
+services:
+  web:
+    image: nginx
+    network_mode: pasta
+  db:
+    image: postgres
+    network_mode: pasta
+"#;
+	check(yaml).expect("pasta on every service must be accepted");
+}
+
+/// Every service agreeing on `pasta` with options is accepted, the options
+/// pass through to libpod as `network_options`.
+#[test]
+fn pod_accepts_pasta_with_options_agreed_on_every_service() {
+	let yaml = r#"
+services:
+  web:
+    image: nginx
+    network_mode: "pasta:-m,1400"
+  db:
+    image: postgres
+    network_mode: "pasta:-m,1400"
+"#;
+	check(yaml).expect("pasta:-m,1400 on every service must be accepted");
+}
+
+/// Every service agreeing on `slirp4netns` (bare) is accepted.
+#[test]
+fn pod_accepts_slirp4netns_agreed_on_every_service() {
+	let yaml = r#"
+services:
+  web:
+    image: nginx
+    network_mode: slirp4netns
+  db:
+    image: postgres
+    network_mode: slirp4netns
+"#;
+	check(yaml).expect("slirp4netns on every service must be accepted");
+}
+
+/// A pasta agreement plus a `networks:` entry on any service is refused:
+/// libpod does not allow the combination on a pod.
+#[test]
+fn pod_refuses_networks_combined_with_an_agreed_pasta_mode() {
+	let yaml = r#"
+services:
+  web:
+    image: nginx
+    network_mode: pasta
+    networks: [frontend]
+  db:
+    image: postgres
+    network_mode: pasta
+networks:
+  frontend:
+"#;
+	let err = check(yaml).expect_err("networks with pasta must be refused");
+	assert!(
+		err.contains("networks") && err.contains("pasta") && err.contains("web"),
+		"{err}"
+	);
+}
+
+/// The same partial declaration with the unset service first. Order must
+/// not decide whether a disagreement is caught.
+#[test]
+fn pod_refuses_a_partial_network_mode_declaration_in_either_order() {
+	let yaml = r#"
+services:
+  db:
+    image: postgres
+  web:
+    image: nginx
+    network_mode: pasta
+"#;
+	let err = check(yaml).expect_err("a partial network_mode must be refused");
+	assert!(err.contains("db") && err.contains("(unset)"), "{err}");
+	assert!(!err.contains("\\\""), "no doubled quoting in: {err}");
 }

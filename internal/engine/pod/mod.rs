@@ -91,6 +91,17 @@ pub(super) fn pod_userns(file: &crate::compose::types::ComposeFile) -> Option<&s
 		.find_map(|s| s.userns_mode.as_deref())
 }
 
+/// The `network_mode` every service agrees on, applied to the pod when
+/// every service declared the same pasta or slirp4netns mode. Validation
+/// refused the project before this runs when the services disagree or
+/// the agreed mode is not pasta/slirp4netns, so the first service's
+/// value is the project's.
+pub(crate) fn pod_network_mode(file: &crate::compose::types::ComposeFile) -> Option<&str> {
+	file.services
+		.values()
+		.find_map(|s| s.network_mode.as_deref())
+}
+
 pub(super) fn pod_networks(
 	file: &crate::compose::types::ComposeFile,
 	project: &str,
@@ -126,17 +137,36 @@ pub(super) fn build_pod_spec_with_hash(
 	labels.insert(POD_PROJECT_LABEL.to_string(), project.to_string());
 	labels.insert(POD_HASH_LABEL.to_string(), hash.to_string());
 	let networks = pod_networks(file, project);
+	// When every service agreed on a pasta/slirp4netns mode, the pod
+	// runs on that mode and its members join. The bare mode and the
+	// options are split the way the container spec does it, so libpod
+	// sees the same shape it does for `podman run --network pasta:...`.
+	let network_mode = pod_network_mode(file);
+	let (netns, network_options) = match network_mode {
+		Some(mode) => {
+			let (bare, opts) = crate::engine::network::split_network_mode_options(mode);
+			(
+				Some(crate::libpod::types::container::Namespace::new(bare)),
+				opts.map(|(bare, opts)| std::iter::once((bare.to_string(), opts)).collect())
+					.unwrap_or_default(),
+			)
+		}
+		None => (None, std::collections::HashMap::new()),
+	};
 	PodSpecGenerator {
 		name: project.to_string(),
 		labels,
 		shared_namespaces: vec!["net".to_string()],
 		portmappings: portmappings_for_services(parsed_ports.iter().cloned()),
-		netns: if networks.is_empty() {
+		netns: if network_mode.is_some() {
+			netns
+		} else if networks.is_empty() {
 			None
 		} else {
 			Some(crate::libpod::types::container::Namespace::new("bridge"))
 		},
 		networks,
+		network_options,
 		hostadd: hostadd_for_services(file.services.keys()),
 		userns: pod_userns(file).map(crate::libpod::types::container::Namespace::parse),
 		// Podman's CLI defaults to `continue`, but that default comes from

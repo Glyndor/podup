@@ -22,6 +22,7 @@ use std::cell::Cell;
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::ports::parse_ports;
+pub(crate) use unit::is_rootless_user_mode;
 use unit::{
 	build_unit, container_unit_with_mode, network_unit, volume_unit, ContainerUnitMode, UnitContext,
 };
@@ -355,6 +356,12 @@ fn generate_with_mode(
 		// whole generate; the live engine rejects it earlier, so a
 		// generate that already passed validation never lands here.
 		pod_mode: file.podman_pod().unwrap_or(false),
+		// Pass the agreed pod-level network mode (when there is one) so
+		// each `.container` unit can decide whether its own `network_mode`
+		// is the one the pod carries (silent) or something else (warn).
+		// Computed the same way the live engine does, so the Quadlet path
+		// and `up` agree on what the pod is on.
+		pod_network_mode: crate::engine::pod_network_mode(file),
 	};
 	let mut build_units_emitted = 0u32;
 	for (name, service) in &file.services {

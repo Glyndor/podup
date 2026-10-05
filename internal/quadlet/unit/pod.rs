@@ -45,19 +45,28 @@ pub(crate) fn pod_unit(project: &str, file: &ComposeFile) -> Option<QuadletUnit>
 
 	// Every non-external network the file declares, plus the external ones by
 	// their own name. Mirrors the live engine's `pod_networks` builder.
-	for (key, config) in &file.networks {
-		let external = config.as_ref().and_then(|c| c.external).unwrap_or(false);
-		if external {
-			let external_name = config
-				.as_ref()
-				.and_then(|c| c.name.clone())
-				.unwrap_or_else(|| key.clone());
-			pod.add("Network", external_name);
-			continue;
+	// When every service agreed on a pasta/slirp4netns mode the pod runs on
+	// that mode instead, so no project networks are attached (libpod refuses
+	// the combination). The mode is written as-is so the Podman CLI sees
+	// `pasta:...` and splits it the way it does for `podman pod create
+	// --network pasta:...`; Quadlet also passes the value through unchanged.
+	if let Some(mode) = crate::engine::pod_network_mode(file) {
+		pod.add("Network", mode.to_string());
+	} else {
+		for (key, config) in &file.networks {
+			let external = config.as_ref().and_then(|c| c.external).unwrap_or(false);
+			if external {
+				let external_name = config
+					.as_ref()
+					.and_then(|c| c.name.clone())
+					.unwrap_or_else(|| key.clone());
+				pod.add("Network", external_name);
+				continue;
+			}
+			// A declared network is backed by a generated `.network` unit, the same
+			// reference a `.container` unit makes outside pod mode.
+			pod.add("Network", format!("{}.network", unit_stem(project, key)));
 		}
-		// A declared network is backed by a generated `.network` unit, the same
-		// reference a `.container` unit makes outside pod mode.
-		pod.add("Network", format!("{}.network", unit_stem(project, key)));
 	}
 
 	// Union of every service's `ports:`. The live engine hands the same

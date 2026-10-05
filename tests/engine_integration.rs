@@ -608,6 +608,9 @@ mod stats_flags;
 #[path = "engine_integration/x_podman_pod.rs"]
 mod x_podman_pod;
 
+#[path = "engine_integration/pod_on_pasta.rs"]
+mod pod_on_pasta;
+
 #[path = "engine_integration/userns.rs"]
 mod userns;
 

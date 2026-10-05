@@ -581,7 +581,7 @@ Warnings/errors go to stderr with a `podup:` prefix. Unsupported-field warnings 
 
 ### Pods
 
-`x-podman-pod: true` at the top level puts every service of the project into one Podman pod, named after the project, with a shared network namespace.
+`x-podman-pod: true` at the top level puts every service of the project into one Podman pod, named after the project, with a shared network namespace. The pod uses the project networks, or pasta/slirp4netns when every service declares the same such `network_mode`.
 
 The infra container stays running when the last service exits, in both API and Quadlet deployments. What changes inside the pod:
 

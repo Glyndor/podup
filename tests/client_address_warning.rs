@@ -54,18 +54,36 @@ fn ps_does_not_repeat_the_warning() {
 }
 
 #[test]
-fn quadlet_says_pasta_is_ignored_for_a_pod_member() {
-	let compose =
-		"x-podman-pod: true\nservices:\n  web:\n    image: nginx\n    network_mode: \"pasta:-4\"\n";
-	let warned = podup(compose, &["generate", "quadlet"]);
+fn quadlet_says_pasta_is_ignored_for_a_pod_member_whose_mode_differs() {
+	// Two services agree on `pasta:-4` is the only case where a per-service
+	// `network_mode` is not "ignored": the pod carries that mode and the
+	// member is just stating it. The warning fires when services disagree,
+	// which `up` would refuse, but Quadlet still has to render each unit
+	// and surfaces the same warning `up` would.
+	let compose_disagree = "x-podman-pod: true\nservices:\n  web:\n    image: nginx\n    network_mode: \"pasta:-4\"\n  db:\n    image: postgres\n    network_mode: \"pasta:-6\"\n";
+	let warned = podup(compose_disagree, &["generate", "quadlet"]);
 	assert!(
 		warned.contains("is ignored inside the x-podman-pod pod"),
 		"{warned}"
 	);
-	let quiet = podup(compose, &["--no-warn", "generate", "quadlet"]);
+	let quiet = podup(compose_disagree, &["--no-warn", "generate", "quadlet"]);
 	assert!(
 		!quiet.contains("is ignored inside the x-podman-pod pod"),
 		"{quiet}"
+	);
+}
+
+#[test]
+fn quadlet_does_not_warn_when_pod_carries_the_member_mode() {
+	// When every service agrees on the same pasta mode, the pod carries
+	// it and the per-service declaration is just restating the pod's own
+	// choice. The warning stays silent.
+	let compose =
+		"x-podman-pod: true\nservices:\n  web:\n    image: nginx\n    network_mode: \"pasta:-4\"\n  db:\n    image: postgres\n    network_mode: \"pasta:-4\"\n";
+	let stderr = podup(compose, &["generate", "quadlet"]);
+	assert!(
+		!stderr.contains("is ignored inside the x-podman-pod pod"),
+		"an agreeing pasta mode must not produce the ignored-mode warning: {stderr}"
 	);
 }
 

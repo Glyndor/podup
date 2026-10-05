@@ -233,3 +233,73 @@ services:
 		"the builder must pin exit_policy to `continue` on every spec"
 	);
 }
+
+/// When every service agrees on `network_mode: pasta` the pod is created
+/// on pasta: `netns` carries the bare mode and `network_options` carries
+/// the options map, the same shape the container spec uses.
+#[test]
+fn build_pod_spec_sets_pod_netns_and_options_when_services_agree_on_pasta() {
+	let yaml = r#"
+x-podman-pod: true
+services:
+  web:
+    image: nginx
+    network_mode: "pasta:-m,1400"
+  db:
+    image: postgres
+    network_mode: "pasta:-m,1400"
+"#;
+	let file = parse_str(yaml).unwrap();
+	let ports = vec![
+		crate::ports::parse_ports(&file.services["web"].ports).unwrap(),
+		crate::ports::parse_ports(&file.services["db"].ports).unwrap(),
+	];
+	let spec = super::build_pod_spec_with_hash("demo", &file, &ports, "hash-abc");
+	assert_eq!(
+		spec.netns.as_ref().map(|n| n.nsmode.as_str()),
+		Some("pasta"),
+		"a pod on pasta must carry netns=pasta, got netns={:?}",
+		spec.netns.as_ref().map(|n| &n.nsmode),
+	);
+	assert_eq!(
+		spec.network_options.get("pasta"),
+		Some(&vec!["-m".to_string(), "1400".to_string()]),
+		"a pod on pasta:-m,1400 must carry the options split, got {:?}",
+		spec.network_options,
+	);
+}
+
+/// Two files that agree on a different network mode hash to different
+/// values, so flipping a project from unset to pasta, or from pasta to
+/// slirp4netns, recreates the pod instead of leaving it on the old mode.
+#[test]
+fn pod_hash_changes_with_the_agreed_network_mode() {
+	let yaml_pasta = r#"
+x-podman-pod: true
+services:
+  web:
+    image: nginx
+    network_mode: "pasta:-m,1400"
+  db:
+    image: postgres
+    network_mode: "pasta:-m,1400"
+"#;
+	let yaml_slirp = r#"
+x-podman-pod: true
+services:
+  web:
+    image: nginx
+    network_mode: "slirp4netns:port_handler=slirp4netns"
+  db:
+    image: postgres
+    network_mode: "slirp4netns:port_handler=slirp4netns"
+"#;
+	let file_pasta = parse_str(yaml_pasta).unwrap();
+	let file_slirp = parse_str(yaml_slirp).unwrap();
+	let ports = vec![Vec::new(), Vec::new()];
+	assert_ne!(
+		crate::engine::pod::pod_config_hash(&ports, &file_pasta),
+		crate::engine::pod::pod_config_hash(&ports, &file_slirp),
+		"the agreed network mode must change the pod hash"
+	);
+}
