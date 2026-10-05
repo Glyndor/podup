@@ -94,6 +94,7 @@ fn inside_a_pod_with_agreed_slirp4netns_advises_port_handler() {
 	let w = warnings_for(yaml);
 	assert_eq!(w.len(), 1, "got: {w:?}");
 	assert!(w[0].contains("port_handler=slirp4netns"), "got: {w:?}");
+	assert!(w[0].contains("on every service"), "got: {w:?}");
 }
 
 #[test]

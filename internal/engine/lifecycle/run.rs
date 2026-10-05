@@ -198,6 +198,11 @@ impl Engine {
 			// `x-podman-pod`: ensure the pod exists with the current hash. A run
 			// container joins the same pod as the project's `up` would.
 			if file.podman_pod().map_err(ComposeError::Unsupported)? {
+				// Same pre-flight as `up`: `run --no-deps` reaches the pod
+				// without it, and would otherwise build the pod from a file
+				// whose services disagree on its network mode.
+				crate::engine::pod::validate_pod_or_refuse(file)
+					.map_err(ComposeError::Unsupported)?;
 				let pod_ports: Vec<Vec<crate::ports::ParsedPort>> = file
 					.services
 					.values()

@@ -132,3 +132,40 @@ async fn up_creates_a_pod_on_pasta_with_agreed_options() {
 		host_reached.err(),
 	);
 }
+
+/// `run --no-deps` reaches the pod without going through `up`, so it must run
+/// the same pre-flight: services that disagree on the network mode are
+/// refused before any pod or container is created.
+#[tokio::test]
+async fn run_refuses_a_pod_whose_services_disagree_on_the_network_mode() {
+	if podman().await.is_none() {
+		return;
+	}
+	let dir = tempfile::tempdir().expect("tempdir");
+	let compose = dir.path().join("compose.yaml");
+	fs::write(
+		&compose,
+		"x-podman-pod: true\nservices:\n  web:\n    image: docker.io/library/alpine:3.20\n    network_mode: \"pasta:-4\"\n  db:\n    image: docker.io/library/alpine:3.20\n    network_mode: \"pasta:-6\"\n",
+	)
+	.expect("write compose");
+	let project = proj("pod-pasta-run");
+	let out = Command::new(bin())
+		.args(["-f", compose.to_str().unwrap(), "-p", &project])
+		.args(["run", "--rm", "--no-deps", "db", "true"])
+		.output()
+		.expect("run podup");
+	let stderr = String::from_utf8_lossy(&out.stderr);
+	let _ = Command::new(bin())
+		.args([
+			"-f",
+			compose.to_str().unwrap(),
+			"-p",
+			&project,
+			"down",
+			"-t",
+			"0",
+		])
+		.output();
+	assert!(!out.status.success(), "run must be refused: {stderr}");
+	assert!(stderr.contains("differs from service"), "{stderr}");
+}

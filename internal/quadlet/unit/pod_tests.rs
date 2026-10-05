@@ -199,6 +199,8 @@ networks:
 fn quadlet_pod_unit_carries_agreed_pasta_mode_with_options() {
 	let yaml = r#"
 x-podman-pod: true
+networks:
+  spare: {}
 services:
   web:
     image: nginx
@@ -231,5 +233,20 @@ services:
 		!web.contents.contains("Network="),
 		"container inside a pod on pasta must not carry its own Network=: {}",
 		web.contents
+	);
+}
+
+/// A partial pasta declaration is refused by `up`; generation must not turn
+/// it into a pod on pasta either.
+#[test]
+fn quadlet_pod_unit_ignores_a_partial_pasta_declaration() {
+	let yaml = "x-podman-pod: true\nservices:\n  web:\n    image: nginx\n    network_mode: pasta\n  db:\n    image: postgres\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "demo", std::path::Path::new("/srv/app"));
+	let pod = unit_named(&out, "demo.pod");
+	assert!(
+		!pod.contents.contains("Network=pasta"),
+		"a partial declaration must not produce a pasta pod: {}",
+		pod.contents
 	);
 }

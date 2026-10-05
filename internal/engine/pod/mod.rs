@@ -91,15 +91,21 @@ pub(super) fn pod_userns(file: &crate::compose::types::ComposeFile) -> Option<&s
 		.find_map(|s| s.userns_mode.as_deref())
 }
 
-/// The `network_mode` every service agrees on, applied to the pod when
-/// every service declared the same pasta or slirp4netns mode. Validation
-/// refused the project before this runs when the services disagree or
-/// the agreed mode is not pasta/slirp4netns, so the first service's
-/// value is the project's.
+/// The pasta or slirp4netns `network_mode` the pod runs on, or `None` when the
+/// pod uses the project networks.
 pub(crate) fn pod_network_mode(file: &crate::compose::types::ComposeFile) -> Option<&str> {
-	file.services
+	// Only a mode the pod can run on: every service declares the same one, it
+	// is pasta or slirp4netns, and no service declares `networks:`. Anything
+	// else is refused by `validate_pod_or_refuse` on `up`, and must not reach
+	// a Quadlet `.pod` unit either, which is generated without that check.
+	let mut modes = file.services.values().map(|s| s.network_mode.as_deref());
+	let mode = modes.next()??;
+	let agreed = modes.all(|m| m == Some(mode));
+	let no_networks = file
+		.services
 		.values()
-		.find_map(|s| s.network_mode.as_deref())
+		.all(|s| s.networks.names().is_empty());
+	(agreed && no_networks && crate::quadlet::is_rootless_user_mode(mode)).then_some(mode)
 }
 
 pub(super) fn pod_networks(
@@ -136,7 +142,14 @@ pub(super) fn build_pod_spec_with_hash(
 	let mut labels = std::collections::HashMap::new();
 	labels.insert(POD_PROJECT_LABEL.to_string(), project.to_string());
 	labels.insert(POD_HASH_LABEL.to_string(), hash.to_string());
-	let networks = pod_networks(file, project);
+	// A pod on pasta or slirp4netns attaches to no network: libpod refuses
+	// `networks` next to a non-bridge `netns`, even for a declared network that
+	// no service uses.
+	let networks = if pod_network_mode(file).is_some() {
+		std::collections::HashMap::new()
+	} else {
+		pod_networks(file, project)
+	};
 	// When every service agreed on a pasta/slirp4netns mode, the pod
 	// runs on that mode and its members join. The bare mode and the
 	// options are split the way the container spec does it, so libpod

@@ -241,6 +241,8 @@ services:
 fn build_pod_spec_sets_pod_netns_and_options_when_services_agree_on_pasta() {
 	let yaml = r#"
 x-podman-pod: true
+networks:
+  spare: {}
 services:
   web:
     image: nginx
@@ -267,6 +269,28 @@ services:
 		"a pod on pasta:-m,1400 must carry the options split, got {:?}",
 		spec.network_options,
 	);
+	// libpod refuses `networks` next to a non-bridge netns, even for a
+	// declared network that no service uses.
+	assert!(
+		spec.networks.is_empty(),
+		"a pod on pasta must attach to no network, got {:?}",
+		spec.networks.keys().collect::<Vec<_>>(),
+	);
+}
+
+/// A partial declaration (one service on pasta, one without) is not a pod
+/// network mode: `up` refuses it, and nothing else may build a pasta pod
+/// from it.
+#[test]
+fn a_partial_declaration_is_not_a_pod_network_mode() {
+	for yaml in [
+		"x-podman-pod: true\nservices:\n  web:\n    image: nginx\n    network_mode: pasta\n  db:\n    image: postgres\n",
+		"x-podman-pod: true\nservices:\n  db:\n    image: postgres\n  web:\n    image: nginx\n    network_mode: pasta\n",
+		"x-podman-pod: true\nservices:\n  web:\n    image: nginx\n    network_mode: host\n  db:\n    image: postgres\n    network_mode: host\n",
+	] {
+		let file = parse_str(yaml).unwrap();
+		assert_eq!(super::pod_network_mode(&file), None, "{yaml}");
+	}
 }
 
 /// Two files that agree on a different network mode hash to different
