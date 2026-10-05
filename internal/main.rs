@@ -476,6 +476,17 @@ async fn run() -> podup::Result<()> {
 	} else {
 		None
 	};
+	// The client-address warning (#1994) fires on almost any project with
+	// published ports, so it is shown only where it can change a decision: the
+	// commands that create containers, and `config`, which ignores `--no-warn`
+	// as it does for the port-exposure warning.
+	let show_client_address = match &cli.command {
+		Commands::Config { .. } => true,
+		Commands::Up { .. } | Commands::Create { .. } | Commands::Run { .. } => !cli.no_warn,
+		_ => false,
+	};
+	let _client_address_guard =
+		show_client_address.then(podup::compose::ShowClientAddressWarningGuard::new);
 	let file = if label_only && !compose_files.iter().any(|p| p.is_file()) {
 		podup::compose::types::ComposeFile::default()
 	} else {

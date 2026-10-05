@@ -1,6 +1,6 @@
 [package]
 name = "podup"
-version = "5.10.11"
+version = "5.10.12"
 edition = "2021"
 rust-version = "1.85"
 # podup is a binary that happens to build a library, not a library that ships a
@@ -16,7 +16,7 @@ rust-version = "1.85"
 #
 # 5.4.0 stays published, which is not a loose end: it keeps the name reserved.
 publish = false
-description = "Translate and run docker-compose files on rootless Podman"
+description = "Run Compose projects on rootless Podman through its native libpod API"
 license = "MIT"
 repository = "https://github.com/Glyndor/podup"
 homepage = "https://glyndor.net/projects/podup"

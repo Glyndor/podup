@@ -476,3 +476,39 @@ services:
 		);
 	}
 }
+
+#[test]
+fn network_mode_pasta_with_options_passes_through_to_network() {
+	// `Network=` takes the same value as `podman run --network`, so a pasta
+	// mode with options is written as is instead of being warned and dropped
+	// (#1994).
+	let yaml = "services:\n  s:\n    image: x\n    network_mode: \"pasta:-T,15432\"\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-s.container").contents;
+	assert!(
+		c.contains("Network=pasta:-T,15432"),
+		"missing Network= in:\n{c}"
+	);
+	assert!(
+		!out.warnings.iter().any(|w| w.contains("network_mode")),
+		"a pasta network_mode must not warn; got: {:?}",
+		out.warnings
+	);
+}
+
+#[test]
+fn network_mode_pasta_is_not_written_for_a_pod_member() {
+	// A pod member uses the pod's namespace, and Podman refuses a second
+	// network for it, so `Network=` must not appear next to `Pod=`.
+	let yaml =
+		"x-podman-pod: true\nservices:\n  s:\n    image: x\n    network_mode: \"pasta:-4\"\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-s.container").contents;
+	assert!(c.contains("Pod="), "expected a pod member in:\n{c}");
+	assert!(
+		!c.contains("Network=pasta"),
+		"pod member got Network= in:\n{c}"
+	);
+}

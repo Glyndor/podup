@@ -1,286 +1,126 @@
 # podup
 
-docker-compose translator and runner for rootless Podman. Reads a
-docker-compose file, translates it to the native libpod REST API, and manages
-the container lifecycle (`up`/`down`/`logs`/`exec`/…). A single static Rust
-binary, with no daemon and no Python runtime.
+Run Compose projects on rootless Podman. podup reads your `compose.yaml` and
+drives Podman through its native libpod API: one standalone binary, no daemon
+of its own, no Python.
 
 [![CI](https://github.com/Glyndor/podup/actions/workflows/ci.yml/badge.svg)](https://github.com/Glyndor/podup/actions/workflows/ci.yml)
 
-MSRV 1.85 · License: MIT
+<img src="docs/assets/podup-demo.gif" alt="podup up, ps and down on a two-service Compose project" width="760">
 
-<img src="docs/assets/podup-demo.gif" alt="podup running a compose stack on rootless Podman" width="760">
+## Features
+
+- 🔁 **The Compose commands you know**, with `depends_on` ordering and healthcheck conditions.
+- 🧩 **`extends`, profiles, `include` and `develop.watch`** file sync.
+- 🔐 **Podman-native secrets and configs**, including inline `content:`.
+- ⚙️ **systemd integration**: export a project as Quadlet units, or start it at boot with `podup autostart`.
+- 🛡️ **`podup audit`** flags risky settings in a Compose file before you run it.
 
 ## Install
 
-On Debian 12 or Ubuntu 24.04, read [Podman version](#podman-version) first:
-both ship Podman 4.x, below the floor podup needs, and the line below refuses
-to install there rather than leaving a podup that cannot reach an engine.
+podup needs **Podman 5.0 or newer**, reached through a local socket, and runs
+on Linux, macOS and Windows (x86_64 and arm64). Debian 12 and Ubuntu 24.04 ship
+an older Podman; see [Platforms](docs/docker-migration.md#platforms).
 
 ```sh
 curl -fsSL https://apt.glyndor.net/install/podup | sudo sh
 ```
 
-That is the whole install on Debian and Ubuntu. It registers the signed Glyndor
-apt repository, verifies the archive key's fingerprint before trusting it, and
-installs podup with apt, so upgrades and signing-key renewals arrive through
-`apt upgrade` like any other package. Root is needed because it installs
-packages. It leaves nothing of its own behind: the download is removed, and so
-is anything it had to install just to check the key.
+On Debian and Ubuntu this adds the signed Glyndor apt repository and installs
+podup as a package, so `apt upgrade` keeps it current.
 
-podup needs **Podman ≥ 5.0** (rootless). The package depends on it, so apt
-installs it alongside podup, and refuses the install on a distribution whose
-Podman is older than that. It also depends on `unattended-upgrades`, because an
-apt-installed podup updates through apt and nothing else: `podup update` refuses
-to replace a dpkg-owned binary, and only the latest release is supported. And on
-`glyndor-archive-keyring`, which is what points that engine at Glyndor rather
-than only at Debian's own security suite: it ships the `.sources` file and the
-`Allowed-Origins` entry, and the entry is appended to whatever the machine
-already allows rather than replacing it.
+<details>
+<summary><b>Optional: macOS, Windows and other Linux distributions</b></summary>
 
-That dependency guarantees `unattended-upgrades` is installed, not that it is
-running. What switches it on is `/etc/apt/apt.conf.d/20auto-upgrades`, which is
-system-wide policy for every package on the machine rather than podup's to set,
-so no podup maintainer script writes it. The one-line installer above writes it
-when it is absent, and Ubuntu normally has it already. If you registered the
-archive yourself and then ran `apt install podup` on Debian, podup and the
-allowlist are both installed but nothing upgrades it until you run `apt upgrade`. `systemctl status unattended-upgrades` says which of the two you
-have.
-
-Podman is daemonless, but podup speaks the libpod API, so the
-socket still has to be listening:
-
-```sh
-systemctl --user enable --now podman.socket
-```
-
-### Optional: macOS
+**macOS** (with a running `podman machine`):
 
 ```sh
 brew install glyndor/tap/podup
 ```
 
-### Optional: Windows
+**Windows** (with a running `podman machine`; Scoop needs git):
 
 ```powershell
 scoop bucket add glyndor https://github.com/Glyndor/scoop-bucket
 scoop install podup
 ```
 
-Scoop clones the bucket with git, so git has to be installed first; Scoop's own
-installer does not bring it.
+The Windows binary is not Authenticode-signed yet; with Smart App Control
+enabled it was reported blocked on 2026-09-22
+([#1774](https://github.com/Glyndor/podup/issues/1774)). The Platforms section
+above describes the WSL route.
 
-`podup-windows-$ARCH.exe` ships without an Authenticode signature, and a
-fresh release asset has no SmartScreen reputation either. A Windows host with
-Smart App Control enabled refuses to launch the binary; that is the report in
-[#1774](https://github.com/Glyndor/podup/issues/1774). What SmartScreen alone
-does with the binary has not been measured. The Ed25519 signature over
-`SHA256SUMS` and the SHA-256 checksum that `install.ps1` verifies are
-unrelated to either: those prove the bytes came from this repository, while
-Smart App Control reads the Authenticode signature embedded in the PE, which
-is absent.
-
-The path that works on Windows today is the WSL route below. Run the Linux
-build inside the `podman-machine-default` WSL distro next to the engine
-Podman ships; install it with the script under
-[Optional: Linux without apt](#optional-linux-without-apt). That distro is
-Fedora-based, so the apt line at the top of this README does not apply.
-
-If podup runs inside the `podman-machine-default` WSL distro instead, as the
-Linux build next to the engine, Podman there needs one setting before a build
-works. Measured on 2026-09-10 in that distro: every `RUN` step of a build
-failed under crun until Podman's cgroup manager was changed from `systemd`,
-its default, to `cgroupfs`. The distro had no user systemd session, so the
-`systemd` manager had nothing to talk to. Neither the runtime's error text nor
-the Podman and WSL versions were recorded, so the symptom to go by is a `RUN`
-step that dies without a stated reason. See [#1778](https://github.com/Glyndor/podup/issues/1778)
-for the original report. The setting goes inside the distro, in the
-`containers.conf` of the user that runs Podman:
-
-```toml
-# ~/.config/containers/containers.conf
-[engine]
-cgroup_manager = "cgroupfs"
-```
-
-If that file already has an `[engine]` table, add the key to it rather than
-opening a second one. To check that it took effect, ask the API service podup
-talks to:
-
-```sh
-podman --remote info --format '{{.Host.CgroupManager}}'
-```
-
-It prints `cgroupfs` once the setting is in use. If it still prints `systemd`,
-the service was started before the file changed and has to be restarted. On an
-ordinary Linux host `systemd` is the correct value and none of this applies.
-
-Smart App Control offers no per-binary override, so there is nothing to tick
-that lets this `.exe` through while it stays on. The route above is the one
-that works. This is the state on 2026-09-22 and it holds until a signature
-ships; it carries no promised date.
-
-### Optional: Linux without apt
+**Other Linux distributions** (needs `curl`, `sha256sum`, Python 3 with
+`cryptography` to verify the download, and write access or `sudo` for
+`/usr/local/bin`):
 
 ```sh
 curl -fsSL https://glyndor.net/podup/install/unix | bash
 ```
 
-Installs the release binary rather than a package. Use it on a distribution apt
-does not serve; on Debian and Ubuntu the line at the top is better, because apt
-keeps podup current and this does not.
-
-<details>
-<summary><b>Build from source · self-update · Podman versions · platforms</b></summary>
-
-### Build from source
-
-```sh
-cargo build --release
-```
-
-### Self-update
-
-Only for installs that did not come from a package manager. The apt build omits
-the subcommand entirely, and an apt, Homebrew or Scoop install is refused before
-anything is downloaded and pointed at that manager's own upgrade command.
-
-```sh
-podup update            # download and install the latest signed release
-podup update --check    # report whether a newer release exists, install nothing
-```
-
-`podup update` replaces the running binary in place only after verifying the
-release's Ed25519 signature and SHA-256 checksum, failing closed otherwise. See
-[docs/self-update.md](docs/self-update.md) for the trust model.
-
-### Podman version
-
-podup tracks the **latest stable Podman** and supports its **last two majors,
-Podman 5.x and 6.x**. It talks to Podman's native libpod API, requesting the
-`/v5.0.0/libpod` path that Podman 6 still serves; the gate is the major version
-the engine reports, so it needs **Podman ≥ 5.0**. Every command checks that
-version with its first request and stops, saying so, when the engine is older.
-When a new major ships, it is
-added and the oldest is dropped, but only once the **newest LTS of each
-distribution family carries the new one or better**, so nobody on a current
-release is stranded. Both supported majors run the
-integration suite in CI on every engine change (Fedora 44 for the latest 5.x,
-rawhide for 6.x). Many distributions still ship 4.x, so `podman --version` is
-worth checking before installing, and a distribution never changes its Podman
-major version mid-release, so an LTS that shipped below the floor stays below
-it for its whole supported life.
-
-Podman versions as each distribution's package index listed them on 2026-08-24,
-the Ubuntu rows re-read on 2026-09-05; a point release can move them.
-
-| distribution                  | Podman | podup runs |
-|-------------------------------|--------|------------|
-| Debian 12 bookworm            | 4.3.1  | no         |
-| Debian 13 trixie              | 5.4.2  | yes        |
-| Ubuntu 22.04 LTS              | 3.4.4  | no         |
-| Ubuntu 24.04 LTS              | 4.9.3  | no         |
-| Ubuntu 26.04 LTS              | 5.7.0  | yes        |
-| Fedora 42 and newer           | 5.x+   | yes        |
-
-Ubuntu 24.04 LTS is not supported: it ships Podman 4.9.3 and will keep shipping
-that for its whole supported life. On any row marked "no", `apt install podup`
-refuses rather than installing a podup that cannot reach an engine, and the
-engine has to come from somewhere other than the distribution:
-<https://podman.io/docs/installation>.
-
-Driving a **remote** Podman, or a `podman machine`, is the case apt cannot
-express: a package relationship only sees the local machine. Use the release
-binary there. `install.sh` warns instead of refusing when no local Podman is
-present, and takes `--skip-podman-check` when a local one is present but is not
-the engine podup will use.
-
-### Platforms
-
-Linux, macOS and Windows (x86_64 and arm64). On macOS and Windows podup talks to
-the `podman machine` VM through its host-side `unix://` socket or `npipe://`
-named pipe; the socket must be local (remote `tcp://`/`ssh://` are rejected).
+This installs the release binary to `/usr/local/bin`; `podup update` keeps it
+current.
 
 </details>
 
 ## Quick start
 
-```bash
-podup up -d      # start the stack in the current directory
-podup ps         # see what's running
-podup down       # stop and remove containers and networks; volumes are kept
+On Linux with a systemd user session, enable the rootless Podman API socket once:
+
+```sh
+systemctl --user enable --now podman.socket
 ```
 
-`podup down -v` also removes the project's named volumes and the data in them; see [`down` in the command reference](docs/commands.md#down).
+Then, in a directory with a Compose file:
 
-Full command reference: [docs/commands.md](docs/commands.md).
+```sh
+podup up -d      # start the stack
+podup ps         # list its containers
+podup down       # remove containers and networks; volumes are kept
+```
 
-## Design
+`podup down -v` also removes the project's named volumes and their data.
 
-Rootless-native libpod API, real compose-spec support (`extends`, profiles,
-`develop.watch`, inline secrets), and systemd Quadlet export. There is a library
-target, and the integration tests are built against it, but podup is distributed
-as a binary: it is not published to crates.io and carries no semver promise about
-its Rust API.
+## What `podup up` does
 
 ```mermaid
 sequenceDiagram
-    autonumber
-    participant Y as docker-compose.yml
+    participant U as You
     participant P as podup
-    participant L as Podman · libpod REST
-    Y->>P: parse · substitute · resolve depends_on
-    P->>L: create networks · volumes · secrets
-    P->>L: start containers in order
-    L-->>P: health / status
-    P-->>Y: stack up
+    participant L as Podman libpod API
+    U->>P: compose.yaml + up
+    P->>P: parse, interpolate, order by depends_on
+    P->>L: create networks, volumes and secrets
+    P->>L: start containers in dependency order
+    L-->>P: health and status
+    P-->>U: result
 ```
 
-## Benchmarks
+Compose files are trusted input: review their host mounts and commands before
+running them.
 
-Peak memory and per-operation latency against docker-compose and podman-compose,
-**all three driving the same rootless Podman**, same digest-pinned images,
-median of 10 measured runs (12 iterations, 2 warm-up discarded), on podup 5.10.8.
-podup is fastest in **29 of 29 rows**. Six of those wins clear the bar by less
-than two of podup's standard deviations and are better read as "about the same":
-`deep-chain down` (0.03 sd), `many-services down` (1.62 sd), `multi-healthcheck
-down` (1.17 sd), `network-ipam down` (1.39 sd), `single down` (1.64 sd) and
-`wide-level down` (1.72 sd). On a second row, podman-compose `scale down`, the
-harness refused the cell after podman-compose 1.6.0 left four replicas, the pod
-and the network of its compose project behind on all 10 measured iterations
-(rc=97, exit 0 from `down -v` after `up -d --scale app=5`, #1947); podup's own
-number on that row stands on its own. The widest gaps are the ones with many
-services.
+## Performance
 
-| | podup | docker-compose | podman-compose |
-|---|---|---|---|
-| memory per command | **6.0 MiB** | 29.7 MiB | 52.5 MiB |
-| `up`, 42 services | **1.13 s** | 2.97 s | 7.32 s |
-| `up`, 12 services | **0.40 s** | 0.90 s | 2.26 s |
-| `config` (parse only) | **13.3 ms** | 115.3 ms | 554.7 ms |
+Client memory and latency against docker-compose and podman-compose on the
+same rootless Podman (podup 5.10.8, median of 10 measured runs):
 
-On its own Docker engine, docker-compose takes only `wide-running-ops exec`
-(50.9 ms against podup's 68.8 ms, gap 17.9 ms) on this run; on every other row
-podup is faster, including the teardown of many containers where dockerd used to
-win (`wide-level down` 2.32 s against podup's 1.76 s, `many-services down`
-0.83 s against 0.50 s). The full page covers both engines on the same machine
-and the warning not to read numbers across runs.
+<img src="docs/assets/bench.svg" alt="Bar chart of memory per command and latency for up with 42 and 12 services and for config, for podup, docker-compose and podman-compose on the same rootless Podman" width="760">
 
-<img src="docs/assets/bench.svg" alt="Bar chart: podup uses about 6 MiB per command against 30 MiB for docker-compose and 52 MiB for podman-compose on the same rootless Podman, and is the fastest of the three on the three latency rows shown" width="760">
-
-Full tables and methodology: [docs/benchmarks.md](docs/benchmarks.md).
+[Benchmarks](docs/benchmarks.md) has the method, all results and limitations.
 
 ## Documentation
 
-- [Commands](docs/commands.md)
-- [Migrating from Compose](docs/docker-migration.md)
-- [Autostart at boot](docs/autostart.md)
-- [Benchmarks](docs/benchmarks.md)
-- [Self-update](docs/self-update.md)
-- [Security model](docs/security-model.md)
-- [Threat model](docs/threat-model.md)
-- [Debian packaging](docs/debian-packaging.md)
+| Guide | What it covers |
+|---|---|
+| [Commands](docs/commands.md) | Commands, options and environment settings |
+| [Migrating from Compose](docs/docker-migration.md) | Supported fields, differences, platforms |
+| [Autostart](docs/autostart.md) | Starting a project at boot, Quadlet export |
+| [Security model](docs/security-model.md) and [threat model](docs/threat-model.md) | What podup protects and what it assumes |
+| [Self-update](docs/self-update.md) | How `podup update` verifies a release |
+| [Debian packaging](docs/debian-packaging.md) | The apt package and its update policy |
+| [Contributing](CONTRIBUTING.md) | Building from source and the contribution flow |
 
 ## License
 
-[MIT](LICENSE). Report vulnerabilities privately via the **Security** tab, never in a public issue.
+[MIT](LICENSE). Report vulnerabilities privately through the **Security** tab,
+never in a public issue.

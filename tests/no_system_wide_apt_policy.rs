@@ -9,7 +9,7 @@
 //! row (a Debian where somebody registered the archive by hand and ran
 //! `apt install podup`) rather than close it from a `postinst`.
 //!
-//! The consequence is that the README owes the reader a sentence, because the
+//! The consequence is that the packaging guide owes the reader a sentence, because the
 //! dependency looks like it delivers the outcome and does not. Both halves of
 //! that live in prose, and prose stops being true without anything failing.
 //! These are the gate.
@@ -105,28 +105,28 @@ fn adding_a_maintainer_script_asks_you_to_re_read_the_decision() {
 /// this test before they were flattened away. The Windows checkout is CRLF, so a
 /// needle spanning a line break cannot match there at all; and reflowing the
 /// paragraph moves where the breaks fall, which would fail the test while the
-/// README still said exactly the right thing. Collapsing every run of whitespace
+/// guide still said exactly the right thing. Collapsing every run of whitespace
 /// to a single space leaves only the words, which are what is being asserted.
 fn flattened(text: &str) -> String {
 	text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The dependency reads like a promise that podup keeps itself up to date. On
-/// one install path it does not, so the README has to say so; a user who never
-/// runs `apt upgrade` is otherwise running whatever they installed months ago
-/// while believing the opposite.
+/// The dependency reads like a promise that podup keeps itself up to date. It
+/// does not switch the schedule on, so the packaging guide has to say so; a
+/// user who never runs `apt upgrade` is otherwise running whatever they
+/// installed months ago while believing the opposite.
 #[test]
-fn the_readme_says_what_the_dependency_does_not_guarantee() {
-	let readme = flattened(&read("README.md"));
+fn the_packaging_guide_says_what_the_dependency_does_not_guarantee() {
+	let guide = flattened(&read("docs/debian-packaging.md"));
 	for needle in [
-		"is installed, not that it is running",
+		"does not guarantee automatic updates",
 		"20auto-upgrades",
-		"apt install podup",
+		"apt upgrade",
 	] {
 		assert!(
-			readme.contains(needle),
-			"README.md no longer tells the reader that depending on \
-			 unattended-upgrades does not switch it on. Missing: {needle:?}"
+			guide.contains(needle),
+			"docs/debian-packaging.md no longer tells the reader that depending \
+			 on unattended-upgrades does not switch it on. Missing: {needle:?}"
 		);
 	}
 }

@@ -151,6 +151,13 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub netns: Option<Namespace>,
 
+	/// Options for the network mode, keyed by mode (`pasta`, `slirp4netns`):
+	/// `network_mode: "pasta:-T,15432"` becomes `netns` `pasta` plus
+	/// `{"pasta": ["-T", "15432"]}` here, the split the Podman CLI does for
+	/// `--network pasta:...`.
+	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
+	pub network_options: HashMap<String, Vec<String>>,
+
 	/// Extra `/etc/hosts` entries (`"host:ip"`). Podman's SpecGenerator names this
 	/// field `hostadd` (there is no `extra_hosts` key); without the rename every
 	/// extra_hosts entry is silently dropped.

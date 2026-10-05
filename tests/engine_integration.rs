@@ -576,6 +576,8 @@ mod logs_reader_closes;
 mod multi_file;
 #[path = "engine_integration/network_ownership.rs"]
 mod network_ownership;
+#[path = "engine_integration/network_pasta.rs"]
+mod network_pasta;
 /// A free loopback port, chosen by binding zero and releasing it.
 ///
 /// Shared because three tests hard-coded `18081` and a fourth `18080`, so any

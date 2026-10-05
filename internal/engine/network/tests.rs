@@ -399,3 +399,42 @@ fn other_driver_opts_are_left_alone() {
 	assert_eq!(opts.get("mtu").map(String::as_str), Some("9000"));
 	assert_eq!(opts.get("isolate").map(String::as_str), Some("true"));
 }
+
+#[test]
+fn split_network_mode_options_separates_pasta_and_slirp4netns_options() {
+	assert_eq!(
+		split_network_mode_options("pasta:-T,15432"),
+		(
+			"pasta",
+			Some(("pasta", vec!["-T".to_string(), "15432".to_string()]))
+		)
+	);
+	assert_eq!(
+		split_network_mode_options("slirp4netns:allow_host_loopback=true"),
+		(
+			"slirp4netns",
+			Some(("slirp4netns", vec!["allow_host_loopback=true".to_string()]))
+		)
+	);
+	assert_eq!(split_network_mode_options("pasta"), ("pasta", None));
+	assert_eq!(split_network_mode_options("pasta:"), ("pasta", None));
+	assert_eq!(split_network_mode_options("host"), ("host", None));
+	// Only the exact mode name takes options; a longer name is left alone.
+	assert_eq!(split_network_mode_options("pastaX:-4"), ("pastaX:-4", None));
+}
+
+#[test]
+fn resolve_network_mode_sends_the_bare_pasta_mode() {
+	let svc = Service {
+		network_mode: Some("pasta:-4".to_string()),
+		..Default::default()
+	};
+	let (ns, nets) = resolve_network_mode("web", &svc, &empty_file(), "proj");
+	assert_eq!(ns.unwrap().nsmode, "pasta");
+	assert!(nets.is_empty());
+	assert_eq!(
+		network_mode_options(&svc),
+		HashMap::from([("pasta".to_string(), vec!["-4".to_string()])])
+	);
+	assert!(network_mode_options(&Service::default()).is_empty());
+}
