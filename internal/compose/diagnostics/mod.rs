@@ -12,6 +12,7 @@ use std::cell::Cell;
 
 use super::types::ComposeFile;
 
+mod client_address;
 mod ignored_fields;
 mod nested_raw;
 pub(crate) use ignored_fields::ports_published_on_all_interfaces;
@@ -36,6 +37,38 @@ thread_local! {
 	/// functions called without command-level context
 	/// (`parse_files_with_env_files`).
 	static SUPPRESS_PORT_EXPOSURE_WARNING: Cell<bool> = const { Cell::new(false) };
+	/// CLI gate that shows the client-address warning (#1994) while set; off by
+	/// default, see `ShowClientAddressWarningGuard`.
+	static SHOW_CLIENT_ADDRESS_WARNING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Turns the client-address warning (#1994) on while held. It is off by
+/// default: almost every project publishes ports on a bridge network, so the
+/// warning only belongs on the commands that create containers and on
+/// `config`, not on every `exec`, `stop` or `down` that parses the same file.
+pub struct ShowClientAddressWarningGuard {
+	prev: bool,
+}
+
+impl ShowClientAddressWarningGuard {
+	/// Show the warning until the returned guard is dropped.
+	pub fn new() -> Self {
+		let prev = SHOW_CLIENT_ADDRESS_WARNING.with(|c| c.get());
+		SHOW_CLIENT_ADDRESS_WARNING.with(|c| c.set(true));
+		Self { prev }
+	}
+}
+
+impl Default for ShowClientAddressWarningGuard {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
+impl Drop for ShowClientAddressWarningGuard {
+	fn drop(&mut self) {
+		SHOW_CLIENT_ADDRESS_WARNING.with(|c| c.set(self.prev));
+	}
 }
 
 /// RAII guard that turns the parse-time port-exposure warning off for the
@@ -82,11 +115,15 @@ fn port_exposure_suppressed() -> bool {
 
 /// Identify the parse-time port-exposure warning. The text is matched on a
 /// stable substring (`"is published on every interface"`) so the gate stays
-/// correct if the warning is reworded to use a different service-name
-/// prefix or a different port-binding suggestion, and so other warnings
-/// are never accidentally silenced.
+/// correct if the warning is reworded, and so other warnings are never
+/// accidentally silenced.
 fn is_port_exposure_warning(msg: &str) -> bool {
 	msg.contains("is published on every interface")
+}
+
+/// Identify the client-address warning (#1994) by its stable fragment.
+fn is_client_address_warning(msg: &str) -> bool {
+	msg.contains(client_address::CLIENT_ADDRESS_NEEDLE)
 }
 
 /// Emit one diagnostic warning, honouring the parse-time gate for the
@@ -94,6 +131,9 @@ fn is_port_exposure_warning(msg: &str) -> bool {
 /// to keep the existing behaviour for every other category.
 pub(super) fn emit_diagnostic(msg: &str) {
 	if is_port_exposure_warning(msg) && port_exposure_suppressed() {
+		return;
+	}
+	if is_client_address_warning(msg) && !SHOW_CLIENT_ADDRESS_WARNING.with(|c| c.get()) {
 		return;
 	}
 	tracing::warn!("{msg}");
@@ -109,6 +149,7 @@ pub(super) fn collect(file: &ComposeFile) -> Vec<String> {
 	ignored_service_fields(file, &mut out);
 	ignored_port_fields(file, &mut out);
 	port_published_on_all_interfaces(file, &mut out);
+	client_address::ports_hide_client_address(file, &mut out);
 	ignored_volume_mount_fields(file, &mut out);
 	ignored_build_fields(file, &mut out);
 	ignored_network_fields(file, &mut out);

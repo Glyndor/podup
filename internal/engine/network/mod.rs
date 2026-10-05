@@ -262,6 +262,39 @@ fn apply_default_isolation(driver: &str, opts: &mut HashMap<String, String>) {
 		.or_insert_with(|| "true".to_string());
 }
 
+/// Network modes whose options the Podman CLI accepts after a colon
+/// (`pasta:-T,15432`). libpod takes the mode and its options separately, so
+/// the whole string must not reach it as a mode name (#1994).
+const MODES_WITH_OPTIONS: [&str; 2] = ["pasta", "slirp4netns"];
+
+/// Split `pasta:<opts>` or `slirp4netns:<opts>` into the bare mode and its
+/// comma-separated options; any other mode is returned unchanged with no
+/// options. Empty pieces are dropped, so `pasta:` yields no options.
+pub(super) fn split_network_mode_options(mode: &str) -> (&str, Option<(&str, Vec<String>)>) {
+	for bare in MODES_WITH_OPTIONS {
+		if let Some(rest) = mode.strip_prefix(bare).and_then(|r| r.strip_prefix(':')) {
+			let opts: Vec<String> = rest
+				.split(',')
+				.filter(|o| !o.is_empty())
+				.map(str::to_string)
+				.collect();
+			return (bare, (!opts.is_empty()).then_some((bare, opts)));
+		}
+	}
+	(mode, None)
+}
+
+/// The `network_options` map for a service's `network_mode`, empty unless the
+/// mode carries options (see [`split_network_mode_options`]).
+pub(super) fn network_mode_options(service: &Service) -> HashMap<String, Vec<String>> {
+	service
+		.network_mode
+		.as_deref()
+		.and_then(|mode| split_network_mode_options(mode).1)
+		.map(|(bare, opts)| HashMap::from([(bare.to_string(), opts)]))
+		.unwrap_or_default()
+}
+
 /// Resolve a service's networking into a netns `Namespace` and per-network
 /// options. An explicit `network_mode` wins and yields a namespace with no
 /// per-network options (`container:`/`service:` reuse another container's netns,
@@ -297,7 +330,7 @@ pub(super) fn resolve_network_mode(
 					 project siblings are unreachable; declare a shared `networks:` entry instead"
 				);
 			}
-			Namespace::new(mode)
+			Namespace::new(split_network_mode_options(mode).0)
 		};
 		return (Some(ns), HashMap::new());
 	}

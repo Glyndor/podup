@@ -19,7 +19,7 @@ use crate::error::{ComposeError, Result};
 use crate::substitute;
 use types::{ComposeFile, ServiceNetworks};
 
-pub use diagnostics::SuppressPortExposureGuard;
+pub use diagnostics::{ShowClientAddressWarningGuard, SuppressPortExposureGuard};
 pub use order::{resolve_levels, resolve_order};
 pub use validate::validate_config;
 
