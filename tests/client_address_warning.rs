@@ -52,3 +52,19 @@ fn ps_does_not_repeat_the_warning() {
 	let stderr = podup(ON_BRIDGE, &["ps"]);
 	assert!(!stderr.contains(NEEDLE), "{stderr}");
 }
+
+#[test]
+fn quadlet_says_pasta_is_ignored_for_a_pod_member() {
+	let compose =
+		"x-podman-pod: true\nservices:\n  web:\n    image: nginx\n    network_mode: \"pasta:-4\"\n";
+	let warned = podup(compose, &["generate", "quadlet"]);
+	assert!(
+		warned.contains("is ignored inside the x-podman-pod pod"),
+		"{warned}"
+	);
+	let quiet = podup(compose, &["--no-warn", "generate", "quadlet"]);
+	assert!(
+		!quiet.contains("is ignored inside the x-podman-pod pod"),
+		"{quiet}"
+	);
+}

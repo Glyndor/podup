@@ -67,9 +67,13 @@ fn proxy_for(service: &Service) -> Option<Proxy> {
 		None => Some(Proxy::Rootlessport),
 		Some(mode) if mode == "bridge" || mode.starts_with("bridge:") => Some(Proxy::Rootlessport),
 		Some(mode) if mode == "slirp4netns" || mode.starts_with("slirp4netns:") => {
-			let keeps_source = mode
-				.split_once(':')
-				.is_some_and(|(_, opts)| opts.split(',').any(|o| o == "port_handler=slirp4netns"));
+			// Podman applies the options in order, so the last handler wins.
+			let keeps_source = mode.split_once(':').is_some_and(|(_, opts)| {
+				opts.split(',')
+					.rev()
+					.find_map(|o| o.strip_prefix("port_handler="))
+					== Some("slirp4netns")
+			});
 			(!keeps_source).then_some(Proxy::Rootlesskit)
 		}
 		// pasta keeps the source; host, none, container: and service: either

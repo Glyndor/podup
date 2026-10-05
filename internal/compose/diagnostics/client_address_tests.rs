@@ -76,6 +76,14 @@ fn slirp4netns_warns_unless_its_port_handler_keeps_the_source() {
 		assert!(w[0].contains("port_handler=slirp4netns"), "got: {w:?}");
 	}
 	assert!(with_mode("\"slirp4netns:port_handler=slirp4netns\"").is_empty());
+	// Podman keeps the last handler given, so the order decides.
+	assert_eq!(
+		with_mode("\"slirp4netns:port_handler=slirp4netns,port_handler=rootlesskit\"").len(),
+		1
+	);
+	assert!(
+		with_mode("\"slirp4netns:port_handler=rootlesskit,port_handler=slirp4netns\"").is_empty()
+	);
 }
 
 #[test]

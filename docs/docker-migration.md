@@ -102,7 +102,7 @@ services:
 
 ### Published ports and the client address
 
-On a bridge network (the project network, `bridge`, or `x-podman-pod`), `rootlessport` forwards published ports, so the container sees every client as one internal address. `network_mode: pasta` keeps the client's address; options go after a colon, as in `network_mode: "pasta:-T,15432"`. podup warns on `up` and `config` when a service publishes ports through such a proxy.
+On a bridge network (the project network, `bridge`, or `x-podman-pod`), `rootlessport` forwards published ports, so the container sees every client as one internal address. `network_mode: pasta` keeps the client's address; options go after a colon, as in `network_mode: "pasta:-T,15432"`. A pod member cannot set `network_mode`, so a service that needs the client's address has to run outside the pod. podup warns on `up` and `config` when a service publishes ports through such a proxy.
 
 ### Privileged ports (< 1024)
 
