@@ -68,3 +68,30 @@ fn quadlet_says_pasta_is_ignored_for_a_pod_member() {
 		"{quiet}"
 	);
 }
+
+#[test]
+fn commands_that_do_not_create_containers_stay_quiet() {
+	for args in [
+		&["down"][..],
+		&["exec", "web", "true"],
+		&["stop"],
+		&["build"],
+	] {
+		let stderr = podup(ON_BRIDGE, args);
+		assert!(!stderr.contains(NEEDLE), "{args:?}: {stderr}");
+	}
+}
+
+#[test]
+fn config_shows_the_warning_even_with_no_warn() {
+	let stderr = podup(ON_BRIDGE, &["--no-warn", "config", "-q"]);
+	assert!(stderr.contains(NEEDLE), "{stderr}");
+}
+
+#[test]
+fn up_shows_the_warning_and_no_warn_silences_it() {
+	// The socket does not exist, so `up` stops after parsing; the warning is
+	// emitted at parse time, before the engine is contacted.
+	assert!(podup(ON_BRIDGE, &["up", "-d"]).contains(NEEDLE));
+	assert!(!podup(ON_BRIDGE, &["--no-warn", "up", "-d"]).contains(NEEDLE));
+}

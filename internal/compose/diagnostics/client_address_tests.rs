@@ -102,7 +102,8 @@ fn warns_once_per_service_with_several_ports() {
 }
 
 #[test]
-fn the_suppression_gate_covers_this_warning() {
+fn the_gate_identifies_this_warning_and_not_the_port_exposure_one() {
 	let w = warnings_for(&service("    ports:\n      - \"8080:80\"\n"));
-	assert!(super::super::is_port_exposure_warning(&w[0]));
+	assert!(super::super::is_client_address_warning(&w[0]));
+	assert!(!super::super::is_port_exposure_warning(&w[0]));
 }

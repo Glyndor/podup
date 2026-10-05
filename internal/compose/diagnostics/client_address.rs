@@ -13,9 +13,8 @@
 
 use super::super::types::{ComposeFile, Service};
 
-/// Stable fragment of the warning, shared with the suppression gate in
-/// `mod.rs` so `ps`, `logs`, `port`, `top` and `--no-warn` silence it the same
-/// way as the "published on every interface" warning.
+/// Stable fragment of the warning, matched by the gate in `mod.rs` that shows
+/// it only while `ShowClientAddressWarningGuard` is held.
 pub(super) const CLIENT_ADDRESS_NEEDLE: &str =
 	"so the container sees every client as one internal address";
 
