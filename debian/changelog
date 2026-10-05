@@ -1,3 +1,18 @@
+podup (5.10.12) unstable; urgency=medium
+
+  * up, create, run and config warn when a service's published ports are
+    forwarded by a proxy that hides the client's address under rootless
+    Podman (a bridge network, x-podman-pod, or slirp4netns's default port
+    handler), and say how to keep it: network_mode: pasta, or
+    port_handler=slirp4netns.
+  * network_mode: "pasta:<options>" and slirp4netns options now reach Podman
+    as the mode plus its options instead of failing as an invalid network.
+  * generate quadlet and autostart --mode quadlet keep network_mode: pasta
+    (with its options) as Network=, except for pod members.
+  * The README and the guides are shorter and corrected against the code.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sun, 04 Oct 2026 20:43:44 -0500
+
 podup (5.10.11) unstable; urgency=medium
 
   * watch stores a changed symlink as a link instead of copying the files of
