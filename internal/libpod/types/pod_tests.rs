@@ -20,6 +20,7 @@ fn pod_spec_serialises_with_known_field_names() {
 		shared_namespaces: vec!["net".to_string()],
 		portmappings: vec![],
 		networks: HashMap::new(),
+		network_options: HashMap::new(),
 		hostadd: vec![],
 	};
 	let json = serde_json::to_value(&spec).unwrap();
@@ -44,6 +45,7 @@ fn pod_spec_serialises_exit_policy_when_set() {
 		shared_namespaces: vec![],
 		portmappings: vec![],
 		networks: HashMap::new(),
+		network_options: HashMap::new(),
 		hostadd: vec![],
 	};
 	let json = serde_json::to_value(&spec).unwrap();
@@ -63,12 +65,46 @@ fn pod_spec_omits_exit_policy_when_none() {
 		shared_namespaces: vec![],
 		portmappings: vec![],
 		networks: HashMap::new(),
+		network_options: HashMap::new(),
 		hostadd: vec![],
 	};
 	let json = serde_json::to_value(&spec).unwrap();
 	assert!(
 		json.get("exit_policy").is_none(),
 		"exit_policy must be skipped when None, got: {json}"
+	);
+}
+
+/// A pod created on a user-mode network carries `netns` set to the bare
+/// mode and `network_options` keyed by that mode, the split the Podman
+/// CLI does for `podman pod create --network pasta:...`. The networks
+/// map stays empty: libpod rejects networks on a non-bridge mode.
+#[test]
+fn pod_spec_serialises_network_mode_and_options() {
+	let mut network_options = HashMap::new();
+	network_options.insert(
+		"pasta".to_string(),
+		vec!["-m".to_string(), "1400".to_string()],
+	);
+	let spec = PodSpecGenerator {
+		netns: Some(crate::libpod::types::container::Namespace::new("pasta")),
+		userns: None,
+		exit_policy: None,
+		name: "demo".to_string(),
+		labels: HashMap::new(),
+		shared_namespaces: vec!["net".to_string()],
+		portmappings: vec![],
+		networks: HashMap::new(),
+		network_options,
+		hostadd: vec![],
+	};
+	let json = serde_json::to_value(&spec).unwrap();
+	assert_eq!(json["netns"], serde_json::json!({"nsmode": "pasta"}));
+	assert_eq!(json["network_options"]["pasta"][0], "-m");
+	assert_eq!(json["network_options"]["pasta"][1], "1400");
+	assert!(
+		json.get("networks").is_none() || json["networks"].is_null(),
+		"a pod on a non-bridge mode must not carry networks; got: {json}"
 	);
 }
 

@@ -59,6 +59,14 @@ pub struct PodSpecGenerator {
 	#[serde(skip_serializing_if = "Option::is_none", default)]
 	pub netns: Option<Namespace>,
 
+	/// Options for the pod's network mode, keyed by mode (`pasta`,
+	/// `slirp4netns`). A project that agrees on `network_mode:
+	/// "pasta:-m,1400"` sends the pod `netns` `pasta` plus
+	/// `{"pasta": ["-m", "1400"]}` here, the same shape the container
+	/// spec's `network_options` field uses.
+	#[serde(skip_serializing_if = "HashMap::is_empty", default)]
+	pub network_options: HashMap<String, Vec<String>>,
+
 	/// `/etc/hosts` entries the infra container carries, so each service name
 	/// resolves to the shared network namespace the way it resolves on a
 	/// compose project network. Format is the same `host:ip` shape the

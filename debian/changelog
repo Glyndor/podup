@@ -1,3 +1,13 @@
+podup (5.10.13) unstable; urgency=medium
+
+  * x-podman-pod runs the pod on pasta or slirp4netns when every service
+    declares the same such network_mode (options allowed), so the members
+    share localhost and published ports keep the client's address. up and
+    run refuse a pod whose services disagree on the mode or combine it with
+    networks:, and generate quadlet writes Network= on the .pod unit.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sun, 04 Oct 2026 23:41:27 -0500
+
 podup (5.10.12) unstable; urgency=medium
 
   * up, create, run and config warn when a service's published ports are

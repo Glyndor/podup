@@ -187,3 +187,66 @@ networks:
 		web.contents
 	);
 }
+
+/// When every service agrees on `network_mode: "pasta:-m,1400"` the pod
+/// unit writes `Network=pasta:-m,1400` as-is, no `.network` reference
+/// lands on it, and the per-service `.container` units drop `Network=`
+/// entirely (they join the pod's namespace, the way the live engine
+/// does). The mode-with-options is preserved on the pod so Podman's CLI
+/// sees the same string it would for `podman pod create --network
+/// pasta:-m,1400` and splits it into `netns` and `network_options`.
+#[test]
+fn quadlet_pod_unit_carries_agreed_pasta_mode_with_options() {
+	let yaml = r#"
+x-podman-pod: true
+networks:
+  spare: {}
+services:
+  web:
+    image: nginx
+    network_mode: "pasta:-m,1400"
+  db:
+    image: postgres
+    network_mode: "pasta:-m,1400"
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "demo", std::path::Path::new("/srv/app"));
+
+	let pod = unit_named(&out, "demo.pod");
+	assert!(
+		pod.contents.contains("Network=pasta:-m,1400"),
+		"pod must carry the agreed pasta mode verbatim: {}",
+		pod.contents
+	);
+	assert!(
+		!pod.contents.contains(".network"),
+		"pod on pasta must not reference a generated network unit: {}",
+		pod.contents
+	);
+	let web = unit_named(&out, "demo-web.container");
+	assert!(
+		web.contents.contains("Pod=demo.pod"),
+		"container must reference the pod: {}",
+		web.contents
+	);
+	assert!(
+		!web.contents.contains("Network="),
+		"container inside a pod on pasta must not carry its own Network=: {}",
+		web.contents
+	);
+}
+
+/// A partial pasta declaration is refused by `up`; generation must not turn
+/// it into a pod on pasta either.
+#[test]
+fn quadlet_pod_unit_ignores_a_partial_pasta_declaration() {
+	let yaml = "x-podman-pod: true\nservices:\n  web:\n    image: nginx\n    network_mode: pasta\n  db:\n    image: postgres\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "demo", std::path::Path::new("/srv/app"));
+	let pod = unit_named(&out, "demo.pod");
+	assert!(
+		!pod.contents.contains("Network=pasta"),
+		"a partial declaration must not produce a pasta pod: {}",
+		pod.contents
+	);
+}

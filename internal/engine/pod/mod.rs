@@ -91,6 +91,23 @@ pub(super) fn pod_userns(file: &crate::compose::types::ComposeFile) -> Option<&s
 		.find_map(|s| s.userns_mode.as_deref())
 }
 
+/// The pasta or slirp4netns `network_mode` the pod runs on, or `None` when the
+/// pod uses the project networks.
+pub(crate) fn pod_network_mode(file: &crate::compose::types::ComposeFile) -> Option<&str> {
+	// Only a mode the pod can run on: every service declares the same one, it
+	// is pasta or slirp4netns, and no service declares `networks:`. Anything
+	// else is refused by `validate_pod_or_refuse` on `up`, and must not reach
+	// a Quadlet `.pod` unit either, which is generated without that check.
+	let mut modes = file.services.values().map(|s| s.network_mode.as_deref());
+	let mode = modes.next()??;
+	let agreed = modes.all(|m| m == Some(mode));
+	let no_networks = file
+		.services
+		.values()
+		.all(|s| s.networks.names().is_empty());
+	(agreed && no_networks && crate::quadlet::is_rootless_user_mode(mode)).then_some(mode)
+}
+
 pub(super) fn pod_networks(
 	file: &crate::compose::types::ComposeFile,
 	project: &str,
@@ -125,18 +142,44 @@ pub(super) fn build_pod_spec_with_hash(
 	let mut labels = std::collections::HashMap::new();
 	labels.insert(POD_PROJECT_LABEL.to_string(), project.to_string());
 	labels.insert(POD_HASH_LABEL.to_string(), hash.to_string());
-	let networks = pod_networks(file, project);
+	// A pod on pasta or slirp4netns attaches to no network: libpod refuses
+	// `networks` next to a non-bridge `netns`, even for a declared network that
+	// no service uses.
+	let networks = if pod_network_mode(file).is_some() {
+		std::collections::HashMap::new()
+	} else {
+		pod_networks(file, project)
+	};
+	// When every service agreed on a pasta/slirp4netns mode, the pod
+	// runs on that mode and its members join. The bare mode and the
+	// options are split the way the container spec does it, so libpod
+	// sees the same shape it does for `podman run --network pasta:...`.
+	let network_mode = pod_network_mode(file);
+	let (netns, network_options) = match network_mode {
+		Some(mode) => {
+			let (bare, opts) = crate::engine::network::split_network_mode_options(mode);
+			(
+				Some(crate::libpod::types::container::Namespace::new(bare)),
+				opts.map(|(bare, opts)| std::iter::once((bare.to_string(), opts)).collect())
+					.unwrap_or_default(),
+			)
+		}
+		None => (None, std::collections::HashMap::new()),
+	};
 	PodSpecGenerator {
 		name: project.to_string(),
 		labels,
 		shared_namespaces: vec!["net".to_string()],
 		portmappings: portmappings_for_services(parsed_ports.iter().cloned()),
-		netns: if networks.is_empty() {
+		netns: if network_mode.is_some() {
+			netns
+		} else if networks.is_empty() {
 			None
 		} else {
 			Some(crate::libpod::types::container::Namespace::new("bridge"))
 		},
 		networks,
+		network_options,
 		hostadd: hostadd_for_services(file.services.keys()),
 		userns: pod_userns(file).map(crate::libpod::types::container::Namespace::parse),
 		// Podman's CLI defaults to `continue`, but that default comes from

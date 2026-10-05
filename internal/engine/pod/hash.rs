@@ -75,6 +75,14 @@ pub(crate) fn pod_config_hash(parsed_ports: &[Vec<ParsedPort>], file: &ComposeFi
 	let userns_value = serde_json::to_value(super::pod_userns(file)).expect("userns serialises");
 	hasher.update(b"userns");
 	hash_canon(&mut hasher, &userns_value);
+	// The pod's network mode is fixed at create time too. A project that
+	// flips its agreed `network_mode` from unset to pasta (or from pasta to
+	// slirp4netns, or adds `:options`) must recreate the pod so the new
+	// namespace mode takes effect.
+	let network_mode_value =
+		serde_json::to_value(super::pod_network_mode(file)).expect("network_mode serialises");
+	hasher.update(b"network_mode");
+	hash_canon(&mut hasher, &network_mode_value);
 
 	hasher
 		.finalize()
