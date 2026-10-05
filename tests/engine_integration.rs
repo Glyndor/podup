@@ -608,6 +608,11 @@ mod stats_flags;
 #[path = "engine_integration/x_podman_pod.rs"]
 mod x_podman_pod;
 
+// pasta pods are a Linux feature, and the helpers it uses are Unix-only.
+#[cfg(unix)]
+#[path = "engine_integration/pod_on_pasta.rs"]
+mod pod_on_pasta;
+
 #[path = "engine_integration/userns.rs"]
 mod userns;
 

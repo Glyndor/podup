@@ -42,6 +42,7 @@ mod network;
 /// same function `up` uses, instead of duplicating the resolution rule.
 pub use network::resolve_network_name;
 mod pod;
+pub(crate) use pod::pod_network_mode;
 mod profiles;
 pub use profiles::{retain_active_profiles, retain_active_profiles_with_targets};
 mod projects;

@@ -40,6 +40,14 @@ pub(crate) struct UnitContext<'a> {
 	/// container unit then references the project pod by `Pod=<stem>.pod`
 	/// and drops its own `PublishPort=` and `Network=` lines.
 	pub pod_mode: bool,
+	/// The `network_mode` the pod carries, when `pod_mode` is true and
+	/// every service agreed on a pasta/slirp4netns mode. `None` when the
+	/// project did not agree on one (the pod runs on the project
+	/// networks, or has no `Network=` line at all). Read by the per-service
+	/// `Network=` rule to decide whether a per-service mode is the one the
+	/// pod carries (no warning) or something else (warning, the same one
+	/// the live `up` path emits when the project would be refused).
+	pub pod_network_mode: Option<&'a str>,
 }
 
 /// Which `.container` shape to render. The default (`Standard`) is what
@@ -84,6 +92,7 @@ pub(crate) fn container_unit_with_mode(
 		base_dir,
 		services,
 		pod_mode,
+		pod_network_mode,
 	} = ctx;
 	let in_pod: bool = *pod_mode;
 	let mut unit = Section::new("Unit");
@@ -463,9 +472,12 @@ pub(crate) fn container_unit_with_mode(
 			} else if is_rootless_user_mode(m) {
 				if !in_pod {
 					container.add("Network", m.to_string());
-				} else if !is_no_warn_set() {
+				} else if Some(m) != *pod_network_mode && !is_no_warn_set() {
 					// A pod member joins the pod's namespace, and Podman refuses
 					// a second network there, so the mode is not written for it.
+					// When the pod itself carries this mode, the per-service
+					// declaration is just stating what the pod is already on,
+					// and nothing is lost; stay quiet.
 					tracing::warn!(
 						"service \"{name}\": network_mode {m:?} is ignored inside the \
 						 x-podman-pod pod; members use the pod's network namespace"

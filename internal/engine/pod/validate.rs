@@ -7,9 +7,17 @@
 //!
 //! Refusals:
 //!
-//! - `network_mode` on any service: a pod already pins every container to
-//!   one shared namespace, and `network_mode` would override that. Refuse
-//!   rather than silently drop the field.
+//! - `network_mode` declared on some services but not all, or on no
+//!   service, or on every service but in different forms: a pod already
+//!   pins every container to one shared namespace, and a per-service
+//!   `network_mode` would override that. The exception is a project where
+//!   every service agrees on the same `network_mode`, and that mode is
+//!   `pasta` or `slirp4netns` (bare or with `:options`): podup creates
+//!   the pod on that mode and lets every member join, so each container
+//!   keeps the client's address. Any other case is refused with a message
+//!   that names the offending service and the disagreement.
+//! - `network_mode` agreed on across services, and at least one service
+//!   also declares `networks:`. libpod refuses the mix on a pod.
 //! - Two services with divergent `networks:` sets: every service has to be
 //!   on the same set (or declare none and get the project default). The
 //!   pod's `networks` map is built from every declared network, and two
@@ -26,6 +34,7 @@
 use indexmap::IndexSet;
 
 use crate::compose::types::{ComposeFile, Service};
+use crate::quadlet::is_rootless_user_mode;
 
 /// Pre-flight check: refuse any compose-file shape the pod cannot honour.
 /// `Err` messages name the service and the offending key, so the user can
@@ -34,20 +43,63 @@ pub(crate) fn validate_pod_or_refuse(file: &ComposeFile) -> Result<(), String> {
 	let services: Vec<(&str, &Service)> =
 		file.services.iter().map(|(k, v)| (k.as_str(), v)).collect();
 
-	// 1. `network_mode` on any service: rejected.
-	for (name, service) in &services {
-		if let Some(mode) = &service.network_mode {
+	// 1. `network_mode` must agree on every service. The one agreed mode
+	//    may be unset (no service declares one), or it may be `pasta` or
+	//    `slirp4netns` (bare or with `:options`). Any other case is
+	//    refused: a different per-service mode would override the pod's
+	//    shared namespace, a partial declaration is a disagreement, and
+	//    the engine's spec builder only handles the pasta/slirp4netns case.
+	// Either no service declares `network_mode`, or every service declares the
+	// same one. Order must not matter: a service without it is a disagreement
+	// whether it comes before or after one that has it.
+	let declared = services
+		.iter()
+		.find_map(|(n, s)| s.network_mode.as_deref().map(|m| (*n, m)));
+	let agreed_mode: Option<String> = match declared {
+		None => None,
+		Some((first, agreed)) => {
+			if let Some((name, other)) = services
+				.iter()
+				.map(|(n, s)| (*n, s.network_mode.as_deref()))
+				.find(|(_, m)| *m != Some(agreed))
+			{
+				let shown = other.map_or_else(|| "(unset)".to_string(), |m| format!("{m:?}"));
+				return Err(format!(
+					"service \"{name}\": network_mode {shown} differs from service \"{first}\" \
+					 ({agreed:?}); in x-podman-pod every service must declare the same \
+					 network_mode, or none"
+				));
+			}
+			Some(agreed.to_string())
+		}
+	};
+	let first_with_mode = declared.map(|(n, _)| n);
+	if let Some(agreed) = &agreed_mode {
+		if !is_rootless_user_mode(agreed) {
+			let first = first_with_mode.unwrap_or("?");
 			return Err(format!(
-				"service \"{name}\": network_mode {mode:?} is incompatible with x-podman-pod; \
-				 the pod pins every container to its shared namespace, so a per-service \
-				 network_mode cannot be honoured"
+				"service \"{first}\": network_mode {agreed:?} is incompatible with \
+				 x-podman-pod; a pod can only run on pasta or slirp4netns, declared alike \
+				 on every service"
 			));
+		}
+		// When every service agrees on pasta/slirp4netns, no service may
+		// also declare `networks:`; libpod refuses the combination on a pod.
+		for (name, service) in &services {
+			if !service.networks.names().is_empty() {
+				return Err(format!(
+					"service \"{name}\": networks cannot be combined with network_mode \
+					 {agreed:?} in x-podman-pod"
+				));
+			}
 		}
 	}
 
 	// 2. Divergent networks: the first service that declares any network
 	//    defines the canonical set, every other service with a non-empty
-	//    `networks:` must equal it.
+	//    `networks:` must equal it. (Skipped when the project agreed on a
+	//    pasta/slirp4netns mode, because every service already raised an
+	//    error above if any declared a network.)
 	let mut canonical: Option<IndexSet<String>> = None;
 	for (name, service) in &services {
 		let names: IndexSet<String> = service.networks.names().into_iter().collect();
