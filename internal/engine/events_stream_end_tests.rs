@@ -101,3 +101,45 @@ async fn a_bounded_feed_cut_mid_body_is_a_failure() {
 		"the transport error must survive so the operator sees the cause, got {err:?}"
 	);
 }
+
+/// `#2014`: an unknown service name has to fail with
+/// `ComposeError::ServiceNotFound` BEFORE the events stream is opened.
+/// `docker compose events nope` errors the same way; failing later would
+/// mean a script that passed `--filter` past the typo silently watched the
+/// full feed. The fake's request log is the only witness for "no HTTP
+/// went out": a missing name has to be caught before any other request.
+#[tokio::test]
+async fn an_unknown_service_fails_before_any_request() {
+	use crate::compose::types::{ComposeFile, Service};
+
+	let fake = fake(|| {
+		// The body is irrelevant; the call must reject before the
+		// engine ever asks for it. The matching FakeReply keeps the test
+		// honest if the validation gate ever moves below the request: a
+		// body that asks for a 200 here means a successful request would
+		// not have raised.
+		FakeReply::ChunkedEnd(one_event())
+	});
+
+	let mut file = ComposeFile::default();
+	file.services.insert("web".to_string(), Service::default());
+
+	let opts = EventsOptions::new(None, None, vec![]).with_services(vec!["nope".to_string()]);
+	let err = engine(&fake)
+		.stream_service_events(&file, false, &opts)
+		.await
+		.expect_err(
+			"`events nope` on a project that has only `web` must fail with ServiceNotFound",
+		);
+
+	let msg = format!("{err}");
+	assert_eq!(
+		msg, "service 'nope' not found",
+		"the wording is fixed by `ServiceNotFound`'s Display impl and shared with every other command (#2014); got {msg}"
+	);
+	assert!(
+		fake.requests.lock().unwrap().is_empty(),
+		"validation must run before any HTTP goes out: requests={:?}",
+		fake.requests.lock().unwrap()
+	);
+}
