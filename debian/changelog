@@ -1,3 +1,11 @@
+podup (5.10.15) unstable; urgency=medium
+
+  * podup's own code and dependencies are unchanged. The fuzz harness moves
+    to rustls 0.23.45 for RUSTSEC-2026-0285, and two integration tests stop
+    printing the result they assert on.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sat, 10 Oct 2026 11:05:09 -0500
+
 podup (5.10.14) unstable; urgency=medium
 
   * Built with Rust 1.99 and tokio 1.53.2, which fixes an mpsc index

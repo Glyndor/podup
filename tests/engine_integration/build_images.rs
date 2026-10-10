@@ -398,10 +398,15 @@ async fn external_volume_missing_errors_on_up() {
 	)
 	.unwrap();
 
-	let result = engine.up(&file).await;
+	// Not printed on failure: CodeQL's `rust/cleartext-logging` flagged the
+	// formatted `Result` here, the same shape #1611 split in the other suites.
+	let err = engine
+		.up(&file)
+		.await
+		.expect_err("expected ExternalNotFound, got Ok");
 	assert!(
-		matches!(result, Err(podup::ComposeError::ExternalNotFound(_))),
-		"expected ExternalNotFound, got {result:?}"
+		matches!(err, podup::ComposeError::ExternalNotFound(_)),
+		"expected ExternalNotFound, got a different ComposeError variant"
 	);
 }
 
@@ -424,10 +429,15 @@ async fn external_secret_missing_errors_on_up() {
 	)
 	.unwrap();
 
-	let result = engine.up(&file).await;
+	// Not printed on failure: CodeQL's `rust/cleartext-logging` flagged the
+	// formatted `Result` here, the same shape #1611 split in the other suites.
+	let err = engine
+		.up(&file)
+		.await
+		.expect_err("expected ExternalNotFound, got Ok");
 	assert!(
-		matches!(result, Err(podup::ComposeError::ExternalNotFound(_))),
-		"expected ExternalNotFound, got {result:?}"
+		matches!(err, podup::ComposeError::ExternalNotFound(_)),
+		"expected ExternalNotFound, got a different ComposeError variant"
 	);
 }
 
