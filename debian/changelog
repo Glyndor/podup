@@ -1,3 +1,11 @@
+podup (5.10.14) unstable; urgency=medium
+
+  * Built with Rust 1.99 and tokio 1.53.2, which fixes an mpsc index
+    wraparound and unregisters the Windows child wait before closing its
+    handle. podup's own code is unchanged.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Fri, 09 Oct 2026 22:54:50 -0500
+
 podup (5.10.13) unstable; urgency=medium
 
   * x-podman-pod runs the pod on pasta or slirp4netns when every service
