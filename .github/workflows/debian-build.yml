@@ -80,5 +80,5 @@ jobs:
       # Debian's toolchain ships no musl standard library. Keep this in step
       # with rust-ci.yml's default: the whole point is that the packaged binary
       # comes from the compiler CI validates with.
-      rust-toolchain: "1.98"
+      rust-toolchain: "1.99"
       rust-target: x86_64-unknown-linux-musl

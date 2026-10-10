@@ -24,7 +24,7 @@ on:
       toolchain:
         description: Rust toolchain to pin the SBOM and license job to
         type: string
-        default: "1.98"
+        default: "1.99"
       about-template:
         description: cargo-about handlebars template
         type: string
