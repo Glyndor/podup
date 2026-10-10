@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "podup"
-version = "5.10.13"
+version = "5.10.14"
 dependencies = [
  "anstream",
  "anstyle",
