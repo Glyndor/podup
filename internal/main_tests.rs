@@ -8,11 +8,52 @@ fn an_interrupt_maps_onto_the_shell_convention() {
 }
 use super::*;
 use clap::CommandFactory;
+use clap::Parser;
 
 fn matches_for(args: &[&str]) -> clap::ArgMatches {
 	Cli::command()
 		.try_get_matches_from(args)
 		.expect("args parse")
+}
+
+/// `#2014`: `podup events` takes an optional `[SERVICE...]` positional,
+/// matching `docker compose events`. clap's plain positional lets `--format`,
+/// `--since`, `--until`, and `--filter` parse in any order; this test pins
+/// the parsed struct rather than just the absence of a clap usage error, so a
+/// future change that drops the field or renames it shows up here.
+#[test]
+fn events_parses_an_optional_service_positional() {
+	let cli = Cli::try_parse_from(["podup", "events", "web", "db", "--format", "json"])
+		.expect("events web db --format json must parse");
+	let services = match &cli.command {
+		Commands::Events { services, .. } => services.clone(),
+		_ => panic!("expected the events subcommand"),
+	};
+	assert_eq!(
+		services,
+		vec!["web".to_string(), "db".to_string()],
+		"the service positional must carry every name in order"
+	);
+	let format = match &cli.command {
+		Commands::Events { format, .. } => *format,
+		_ => panic!("expected the events subcommand"),
+	};
+	assert!(
+		matches!(format, EventsFormat::Json),
+		"--format json must select Json"
+	);
+
+	// No positional, no service names; the whole-project feed.
+	let cli =
+		Cli::try_parse_from(["podup", "events"]).expect("events must parse with no positional");
+	let services = match &cli.command {
+		Commands::Events { services, .. } => services.clone(),
+		_ => panic!("expected the events subcommand"),
+	};
+	assert!(
+		services.is_empty(),
+		"`events` with no positional must leave services empty, got {services:?}"
+	);
 }
 
 #[test]

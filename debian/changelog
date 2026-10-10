@@ -1,3 +1,13 @@
+podup (5.10.16) unstable; urgency=medium
+
+  * `podup events` takes service names like `docker compose events`: with
+    one or more it streams only those services' events, and an unknown name
+    fails before the stream opens.
+  * A command given a container name instead of a service name still fails,
+    but now prints which service that container belongs to.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sat, 10 Oct 2026 16:09:14 -0500
+
 podup (5.10.15) unstable; urgency=medium
 
   * podup's own code and dependencies are unchanged. The fuzz harness moves

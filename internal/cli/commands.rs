@@ -409,6 +409,14 @@ pub(crate) enum Commands {
 		/// Cannot be combined with an explicit `--format`.
 		#[arg(long, hide = true, conflicts_with = "format")]
 		json: bool,
+		/// Only stream events for these services (all when none are given).
+		// A plain positional (no `trailing_var_arg`), like `top`, so `--format`,
+		// `--since`, `--until`, and `--filter` parse in any position
+		// (`events web db --format json` as well as `events --format json
+		// web db`); service names are never hyphen-prefixed, so nothing is
+		// lost. An unknown service fails with
+		// `service 'X' not found` before the event stream is opened (#2014).
+		services: Vec<String>,
 	},
 	/// Attach to a service container's output (stdout/stderr).
 	Attach {

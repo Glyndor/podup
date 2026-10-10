@@ -38,6 +38,9 @@ pub mod podman;
 pub mod ports;
 /// Quadlet export: translate a parsed compose file into Podman systemd units.
 pub mod quadlet;
+/// CLI diagnostics for container names passed where a service name is required.
+#[doc(hidden)]
+pub mod service_hint;
 /// Memory and CPU value parsers shared by the engine and tests.
 pub mod size;
 /// Docker Compose `${VAR}`/`$VAR` substitution over raw YAML before parsing.

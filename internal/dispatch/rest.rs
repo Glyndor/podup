@@ -102,12 +102,18 @@ pub(super) async fn dispatch_rest(
 			until,
 			filter,
 			json,
+			services,
 		} => {
 			// `--json` is the deprecated alias for `--format json` (and conflicts
 			// with an explicit `--format`); either selects JSON-line output.
 			let json = json || format == EventsFormat::Json;
+			let file = &profile_filtered(file, profile, &services);
 			engine
-				.stream_events_with_options(json, &podup::EventsOptions::new(since, until, filter))
+				.stream_service_events(
+					file,
+					json,
+					&podup::EventsOptions::new(since, until, filter).with_services(services),
+				)
 				.await?
 		}
 		Commands::Attach {

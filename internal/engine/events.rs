@@ -1,16 +1,20 @@
 //! `events` streams Podman events scoped to the project (`docker compose
-//! events`). Filters the libpod event stream by the `podup.project` label.
+//! events`). Filters the libpod event stream by the `podup.project` label;
+//! when a list of services is supplied the feed is narrowed client-side
+//! (libpod ANDs its label filters, so this is the only way to OR them).
 
 use futures_util::StreamExt;
 use serde_json::Value;
 
+use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
 use super::Engine;
 
 /// Options for [`Engine::stream_events_with_options`], mirroring `docker
-/// compose events` (`--since`, `--until`, `--filter`).
+/// compose events`: `--since`, `--until`, `--filter`, and the `SERVICE...`
+/// positional.
 ///
 /// `#[non_exhaustive]` since 4.0.0, so a new flag can be added in a minor
 /// release without breaking every external caller that built the struct with
@@ -26,17 +30,27 @@ pub struct EventsOptions {
 	pub until: Option<String>,
 	/// Extra `KEY=VALUE` event filters (`--filter`, e.g. `event=start`).
 	pub filters: Vec<String>,
+	/// Restrict the stream to these services' containers. Empty means "every
+	/// container in the project", matching `docker compose events` without
+	/// a positional. Filtering runs client-side on the parsed event (see
+	/// [`Engine::stream_events_with_options`]) because libpod ANDs its
+	/// `label=` filters, so two services would match nothing.
+	pub services: Vec<String>,
 }
 
 impl EventsOptions {
 	/// Every `docker compose events` flag, in CLI order. A constructor rather
 	/// than a struct literal because the type is `#[non_exhaustive]`, so the
 	/// next flag to land is not a breaking change for anyone building one.
+	/// `services` defaults to "every service": the positional landed after
+	/// this signature was published, and a caller that has not opted into it
+	/// keeps watching the whole project.
 	pub fn new(since: Option<String>, until: Option<String>, filters: Vec<String>) -> Self {
 		Self {
 			since,
 			until,
 			filters,
+			services: Vec::new(),
 		}
 	}
 
@@ -61,6 +75,14 @@ impl EventsOptions {
 	#[must_use]
 	pub fn with_filters(mut self, filters: Vec<String>) -> Self {
 		self.filters = filters;
+		self
+	}
+
+	/// Restrict the stream to these services' containers. Builder-style.
+	/// Empty clears the filter (the whole project feed).
+	#[must_use]
+	pub fn with_services(mut self, services: Vec<String>) -> Self {
+		self.services = services;
 		self
 	}
 }
@@ -152,7 +174,11 @@ impl Engine {
 		let mut broke: Option<crate::libpod::PodmanError> = None;
 		while let Some(event) = stream.next().await {
 			match event {
-				Ok(value) => println!("{}", format_event(&value, json)),
+				Ok(value) => {
+					if event_in_services(&value, &opts.services) {
+						println!("{}", format_event(&value, json));
+					}
+				}
 				Err(e) => {
 					tracing::warn!("events: stream ended early [{}]: {e}", e.stream_end_kind());
 					broke = Some(e);
@@ -180,6 +206,34 @@ impl Engine {
 				.to_string(),
 		))
 	}
+
+	/// Like [`Engine::stream_events_with_options`], but rejects an unknown
+	/// `SERVICE` name with `service 'X' not found` before any request goes
+	/// out. The CLI's `events [SERVICE...]` calls this entry point; library
+	/// callers that already validated their own names can keep using
+	/// [`Engine::stream_events_with_options`].
+	///
+	/// # Errors
+	///
+	/// In addition to the errors documented on
+	/// [`Engine::stream_events_with_options`], returns
+	/// [`ComposeError::ServiceNotFound`](crate::ComposeError::ServiceNotFound)
+	/// when a name in `opts.services` is not a service of `file`. The check
+	/// runs before the libpod request so a typo cannot open a feed that
+	/// streams forever with no output (#2014).
+	pub async fn stream_service_events(
+		&self,
+		file: &ComposeFile,
+		json: bool,
+		opts: &EventsOptions,
+	) -> Result<()> {
+		for svc in &opts.services {
+			if !file.services.contains_key(svc) {
+				return Err(ComposeError::ServiceNotFound(svc.clone()));
+			}
+		}
+		self.stream_events_with_options(json, opts).await
+	}
 }
 
 /// Reject a `--since` written as a negative relative duration. The
@@ -190,6 +244,15 @@ impl Engine {
 mod since_validation;
 
 pub(super) use since_validation::validate_events_since;
+
+/// Per-event service filter (`docker compose events SERVICE...`). Lives
+/// in its own module for the same reason [`since_validation`] does:
+/// keeping `events.rs` under the 500-line source budget. The filter is a
+/// pure function so it is unit-tested without a fake socket (#2014).
+#[path = "events_service_filter.rs"]
+mod service_filter;
+
+pub(super) use service_filter::event_in_services;
 
 /// Build the libpod events `filters` object: always scope to this project's
 /// `podup.project` label, then merge each user `KEY=VALUE` predicate (appending

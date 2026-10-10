@@ -70,7 +70,8 @@ fn run_to_exit() {
 		.enable_all()
 		.build()
 		.expect("build Tokio runtime");
-	let outcome = runtime.block_on(run());
+	let mut error_context = exit_status::ErrorContext::default();
+	let outcome = runtime.block_on(run(&mut error_context));
 	// Shut the runtime down without waiting for its blocking pool. An
 	// interactive exec/run always leaves one stdin read in flight there
 	// (tokio's stdin reads on a blocking thread), and a plain drop waits for
@@ -89,11 +90,11 @@ fn run_to_exit() {
 		Err(podup::ComposeError::Interrupted) => process::exit(interrupt_exit_code()),
 		#[cfg(feature = "update")]
 		Err(e @ podup::ComposeError::Update(_)) => {
-			print_error(&e);
+			print_error(&e, &error_context);
 			process::exit(podup::update::exit_code(&e));
 		}
 		Err(e) => {
-			print_error(&e);
+			print_error(&e, &error_context);
 			// A `run`/`exec` whose command cannot be launched arrives as a Podman
 			// (OCI/crun) error; map it onto docker's conventional codes (127 not
 			// found, 126 not executable) instead of the generic exit 1. Peel a
@@ -171,7 +172,7 @@ fn down_by_label_path(command: &Commands, project: Option<&str>, compose_present
 /// file(s), settle the project name and base directory (validating the name at
 /// the trust boundary), acquire the per-project lock, and dispatch the
 /// remaining commands.
-async fn run() -> podup::Result<()> {
+async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()> {
 	let cli = parse_cli();
 	// Resolve the colour choice before any output (including tracing setup below)
 	// so `--ansi`/`NO_COLOR`/TTY detection apply consistently everywhere.
@@ -365,6 +366,7 @@ async fn run() -> podup::Result<()> {
 		let file = parsed.unwrap_or_default();
 		let project = resolve_project_name(cli.project.clone(), compose_name.as_deref(), &base_dir);
 		startup::validate_project_name(&project)?;
+		error_context.set_compose(&file, &project);
 		// Identity colours key on the project-stripped label, so every command
 		// tints the same container the same way.
 		podup::ui::set_project(&project);
@@ -512,6 +514,7 @@ async fn run() -> podup::Result<()> {
 		let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
 		let project = resolve_project_name(cli.project.clone(), file.name.as_deref(), &base_dir);
 		startup::validate_project_name(&project)?;
+		error_context.set_compose(&file, &project);
 		// Identity colours key on the project-stripped label, so every command
 		// tints the same container the same way.
 		podup::ui::set_project(&project);
@@ -571,6 +574,7 @@ async fn run() -> podup::Result<()> {
 		let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
 		let project = resolve_project_name(cli.project.clone(), file.name.as_deref(), &base_dir);
 		startup::validate_project_name(&project)?;
+		error_context.set_compose(&file, &project);
 		podup::ui::set_project(&project);
 		podup::ui::set_services(&file.services.keys().cloned().collect::<Vec<_>>());
 		let mut resolved = file.clone();
@@ -603,6 +607,7 @@ async fn run() -> podup::Result<()> {
 	// compose `name:` field are otherwise taken verbatim; rejecting an unsafe
 	// name here fails closed regardless of which command runs next.
 	startup::validate_project_name(&project)?;
+	error_context.set_compose(&file, &project);
 	// Identity colours key on the project-stripped label, so ps, logs, stats and
 	// the progress lines all tint the same container the same way. This is the
 	// path every lifecycle command takes.
