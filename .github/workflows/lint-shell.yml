@@ -141,7 +141,7 @@ jobs:
       - name: Install the pinned toolchain
         env:
           # Keep in step with the release workflow and reusable-rust-ci.
-          RUST_TOOLCHAIN: "1.98"
+          RUST_TOOLCHAIN: "1.99"
         run: |
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
           rustup default "$RUST_TOOLCHAIN"

@@ -66,7 +66,7 @@ jobs:
           # Keep in step with release.yml's build job and its `toolchain`
           # default. pin-watch.yml reads the nine sites that write this number
           # and reports them disagreeing.
-          RUST_TOOLCHAIN: "1.98"
+          RUST_TOOLCHAIN: "1.99"
         run: |
           set -euo pipefail
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
