@@ -208,7 +208,7 @@ impl ComposeError {
 /// service/container name cannot emit raw escape sequences. Printable characters
 /// (including non-ASCII) pass through unchanged; only borrows when nothing needs
 /// escaping.
-fn sanitize_name(s: &str) -> std::borrow::Cow<'_, str> {
+pub(crate) fn sanitize_name(s: &str) -> std::borrow::Cow<'_, str> {
 	if s.chars().any(char::is_control) {
 		s.chars()
 			.flat_map(|c| {
