@@ -173,8 +173,8 @@ View container output for the named services (or all).
 | `--no-color` | Monochrome prefix even on a colour-capable stdout. | off |
 | `--no-log-prefix` | Drop the `{service} \| ` tag entirely. | off |
 
-### `events`
-Stream Podman events for this project's containers. The default output is one `TIME TYPE ACTION NAME` line per event; the timestamp is the engine event's time in the local zone (UTC marked `Z` if no zone is available; missing times are blank). `--format json` emits one object per line (NDJSON) with an added `Action` field (the original `status` stays), normalized image-remove/death verbs, and `exitCode` copied only for `died` events. `--json` is a hidden deprecated alias for `--format json`.
+### `events [SERVICE...]`
+Stream Podman events for this project's containers. The default output is one `TIME TYPE ACTION NAME` line per event; the timestamp is the engine event's time in the local zone (UTC marked `Z` if no zone is available; missing times are blank). `--format json` emits one object per line (NDJSON) with an added `Action` field (the original `status` stays), normalized image-remove/death verbs, and `exitCode` copied only for `died` events. `--json` is a hidden deprecated alias for `--format json`. With one or more service names the feed is narrowed client-side to events for those services; an unknown name fails with `service 'NAME' not found` before the stream is opened.
 
 | Flag | Description | Default |
 |---|---|---|

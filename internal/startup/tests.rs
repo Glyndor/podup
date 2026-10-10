@@ -162,6 +162,7 @@ mod startup_tests {
 			until: None,
 			filter: vec![],
 			json: false,
+			services: vec![],
 		}));
 		// A command that reads service definitions is not label-only.
 		assert!(!is_label_only(&Commands::Top {
@@ -375,6 +376,7 @@ mod startup_tests {
 					until: None,
 					filter: vec![],
 					json: false,
+					services: vec![],
 				},
 				true,
 			),

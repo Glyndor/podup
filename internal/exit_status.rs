@@ -4,6 +4,19 @@
 //! of its own to hold (docker's 126/127 for a command that cannot be launched,
 //! 130 for an interrupt) and because `main` had reached the source line limit.
 
+/// Compose input retained until the top-level error is printed.
+#[derive(Default)]
+pub(crate) struct ErrorContext {
+	compose: Option<(podup::compose::types::ComposeFile, String)>,
+}
+
+impl ErrorContext {
+	/// Preserve the invocation's names before dispatch can filter the model.
+	pub(crate) fn set_compose(&mut self, file: &podup::compose::types::ComposeFile, project: &str) {
+		self.compose = Some((file.clone(), project.to_string()));
+	}
+}
+
 /// Map a failed launch onto docker's conventional exit codes by inspecting the
 /// OCI/crun error text: a "command not found" failure → 127, a
 /// "not executable"/"permission denied"/"exec format error" failure → 126,
@@ -33,7 +46,7 @@ pub(crate) fn command_failure_exit_code(msg: &str) -> i32 {
 
 /// Print a top-level error to stderr with a colour-aware bold-red `error:` label.
 /// anstream strips the styling when stderr is not a terminal or colour is off.
-pub(crate) fn print_error(e: &podup::ComposeError) {
+pub(crate) fn print_error(e: &podup::ComposeError, context: &ErrorContext) {
 	// A command that failed mid-way may hold a transitional progress line;
 	// it belongs above the error, not nowhere.
 	podup::ui::progress::flush();
@@ -46,6 +59,13 @@ pub(crate) fn print_error(e: &podup::ComposeError) {
 		style.render(),
 		style.render_reset()
 	);
+	if let Some(hint) = context
+		.compose
+		.as_ref()
+		.and_then(|(file, project)| podup::service_hint::hint_for(e, file, project))
+	{
+		let _ = writeln!(err, "{hint}");
+	}
 	if let Some(hint) = crate::apparmor_hint::hint_for(&e.to_string()) {
 		let _ = writeln!(err, "{hint}");
 	}
