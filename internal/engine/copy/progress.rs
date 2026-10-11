@@ -12,12 +12,10 @@
 //! adds bytes to it as they flow. The consumer side is a small tokio
 //! task that reads the counter on a 100 ms cadence and rewrites the
 //! row verb through the same `progress::start` path `up`, `pull` and
-//! `build` already use. On a redirected stderr the start call goes
-//! to the plain sink, which buffers the latest transitional verb and
-//! prints it once at `progress::end`, so a piped `cp` does not see a
-//! frame per update.
+//! `build` already use. On a redirected stderr the plain sink prints
+//! each transitional verb as a separate line.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -26,8 +24,8 @@ use tokio::task::JoinHandle;
 use crate::units::{format_bytes, SizeFormat};
 
 /// How often the emitter task reads the counter and rewrites the verb.
-/// Matches the live region's repaint cadence so a copy that lasts less
-/// than one tick still shows the final byte count before it lands.
+/// Matches the live region's repaint cadence. [`Emitter::stop`] writes
+/// `Copying <bytes>` only if the task has not written a verb.
 const EMIT_INTERVAL: Duration = Duration::from_millis(100);
 
 /// A shared, monotonically-rising byte counter. Producers (the reader
@@ -49,7 +47,7 @@ impl ByteCounter {
 		self.0.fetch_add(bytes, Ordering::Relaxed);
 	}
 
-	/// The current byte count. Called from the emitter task.
+	/// The current byte count. Read by the emitter task and on stop.
 	pub(crate) fn load(&self) -> u64 {
 		self.0.load(Ordering::Relaxed)
 	}
@@ -62,18 +60,29 @@ impl ByteCounter {
 	}
 }
 
-/// The handle to a running progress emitter. Drop it (or call
-/// [`Emitter::stop`]) to abort the task; the spawn point owns it
-/// alongside the operation it is reporting on.
+/// A running progress emitter and whether its task has written a verb.
+/// The operation's owner calls [`Emitter::stop`] before closing the row
+/// to record `Copying <bytes>` only if the task has not written a verb,
+/// covering copies that finish before the task is ever polled.
+/// Dropping the handle does not write a final update.
 pub(super) struct Emitter {
 	handle: JoinHandle<()>,
+	kind: &'static str,
+	name: String,
+	counter: ByteCounter,
+	has_emitted: Arc<AtomicBool>,
 }
 
 impl Emitter {
-	/// Abort the emitter. The producer may finish on its own and call
-	/// this anyway; aborting an already-finished task is a no-op.
+	/// Abort the task, then write `Copying <bytes>` synchronously only if
+	/// the task has not written a verb. Call after the producer finishes
+	/// and before closing the row to cover a task that was never polled.
 	pub(super) fn stop(self) {
 		self.handle.abort();
+		if !self.has_emitted.load(Ordering::Relaxed) {
+			let verb = format_copying_verb(self.counter.load());
+			crate::ui::progress::start(self.kind, &self.name, &verb);
+		}
 	}
 }
 
@@ -84,23 +93,36 @@ impl Emitter {
 ///
 /// `kind` and `name` identify the row on the live board. The emitter
 /// routes through `progress::start`, so a stderr that is not a tty
-/// sees only the most recent transitional verb when the row closes
-/// (the plain sink's buffering rule), and a stderr that is a tty sees
-/// the verb repainted in place at every tick. A stderr that is not
+/// sees each transitional verb on its own line, and a stderr that is
+/// a tty sees the verb repainted in place at every tick. A stderr that is not
 /// even progress-enabled is the same path the rest of the board
 /// takes: a no-op, the counter still advances but no verb fires.
 pub(super) fn spawn_emitter(kind: &'static str, name: String, counter: ByteCounter) -> Emitter {
+	let has_emitted = Arc::new(AtomicBool::new(false));
+	let task_name = name.clone();
+	let task_counter = counter.clone();
+	let task_has_emitted = Arc::clone(&has_emitted);
 	let handle = tokio::spawn(async move {
-		let fmt = SizeFormat::binary().with_decimals(1);
 		let mut ticker = tokio::time::interval(EMIT_INTERVAL);
 		loop {
 			ticker.tick().await;
-			let bytes = counter.load();
-			let verb = format!("Copying {}", format_bytes(bytes, &fmt));
-			crate::ui::progress::start(kind, &name, &verb);
+			let verb = format_copying_verb(task_counter.load());
+			crate::ui::progress::start(kind, &task_name, &verb);
+			task_has_emitted.store(true, Ordering::Relaxed);
 		}
 	});
-	Emitter { handle }
+	Emitter {
+		handle,
+		kind,
+		name,
+		counter,
+		has_emitted,
+	}
+}
+
+fn format_copying_verb(bytes: u64) -> String {
+	let fmt = SizeFormat::binary().with_decimals(1);
+	format!("Copying {}", format_bytes(bytes, &fmt))
 }
 
 /// Render a static final-verb string carrying the byte count. Used by

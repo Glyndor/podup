@@ -10,7 +10,7 @@
 
 use std::time::Duration;
 
-use super::{ByteCounter, Emitter};
+use super::ByteCounter;
 
 #[test]
 fn a_counter_starts_at_zero() {
@@ -55,12 +55,11 @@ fn an_unread_counter_still_holds_the_final_total() {
 		counter.add(chunk);
 	}
 	let total = counter.load();
-	let dropped = Emitter {
-		handle: tokio::runtime::Builder::new_current_thread()
-			.build()
-			.unwrap()
-			.spawn(async move {}),
-	};
+	let dropped = tokio::runtime::Builder::new_current_thread()
+		.enable_time()
+		.build()
+		.unwrap()
+		.block_on(async { super::spawn_emitter("Cp", "dst".to_string(), counter.clone()) });
 	drop(dropped);
 	assert_eq!(total, 24576);
 }
@@ -128,6 +127,65 @@ async fn the_emitter_verb_carries_the_byte_count() {
 		"the emitter renders `Copying 2.00KiB` with the byte figure; \
 		 a bare `Copying` means the byte count was dropped from the \
 		 verb: {verbs:?}"
+	);
+}
+
+/// Stopping before the runtime polls the emitter still records the byte
+/// count. With no await between spawn and stop on a current_thread runtime,
+/// this catches copies that finish before the first tick (#2024).
+#[tokio::test]
+async fn stopping_an_unpolled_emitter_records_the_byte_count() {
+	use crate::ui::progress::capture::Capture;
+	use crate::ui::progress::Kind;
+
+	let counter = ByteCounter::new();
+	counter.add(4096);
+	let capture = Capture::start();
+	let emitter = super::spawn_emitter("Cp", "dst".to_string(), counter);
+	emitter.stop();
+
+	let verbs: Vec<String> = capture
+		.verbs()
+		.into_iter()
+		.filter(|(k, _, _)| *k == Kind::Cp)
+		.map(|(_, _, verb)| verb)
+		.collect();
+	assert!(
+		verbs
+			.iter()
+			.any(|v| v.starts_with("Copying ") && v.contains("4.0KiB")),
+		"stopping before the first tick must record `Copying 4.0KiB`: {verbs:?}"
+	);
+}
+
+/// Stopping after the task has emitted a verb must not add another
+/// transitional line to piped stderr (#2024).
+#[tokio::test]
+async fn stopping_a_polled_emitter_does_not_add_a_verb() {
+	use crate::ui::progress::capture::Capture;
+	use crate::ui::progress::Kind;
+
+	let counter = ByteCounter::new();
+	counter.add(4096);
+	let capture = Capture::start();
+	let emitter = super::spawn_emitter("Cp", "dst".to_string(), counter);
+	tokio::time::sleep(Duration::from_millis(150)).await;
+
+	let before_stop = capture
+		.verbs()
+		.into_iter()
+		.filter(|(k, _, _)| *k == Kind::Cp)
+		.count();
+	assert!(before_stop > 0, "the emitter must have ticked before stop");
+	emitter.stop();
+	let after_stop = capture
+		.verbs()
+		.into_iter()
+		.filter(|(k, _, _)| *k == Kind::Cp)
+		.count();
+	assert_eq!(
+		after_stop, before_stop,
+		"stopping after the task has ticked must not add a verb"
 	);
 }
 
