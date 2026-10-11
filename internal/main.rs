@@ -460,24 +460,20 @@ async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()>
 	if label_only {
 		fail_on_named_file_missing(&cli.file, &compose_files)?;
 	}
-	// Decide whether the parse step should silence the port-exposure warning
-	// (host-binding warning, so `--no-warn` already promises to cover it on the
-	// live engine paths). Read-only commands (`logs`/`port`/`top`) skip it
-	// unconditionally because there is no live action to confirm; `config`
-	// keeps it because its whole surface is "show me what will happen". Every
-	// other command honours `--no-warn` (mutating commands and `generate
-	// quadlet` reach the engine or the Quadlet path that already reads
-	// `--no-warn`).
+	// Show the port-exposure warning on `config` regardless of `--no-warn`,
+	// and on `up`/`create`/`run`/`scale`/`watch`/`generate quadlet`/`autostart`
+	// unless `--no-warn` is set. It can change a decision only where a container
+	// is created or installed with the port. Suppress it on every other command:
+	// those reuse containers whose configuration was already shown.
 	let suppress_port_warn = match &cli.command {
 		Commands::Config { .. } => false,
-		Commands::Logs { .. } | Commands::Port { .. } | Commands::Top { .. } => true,
-		_ => cli.no_warn,
+		Commands::Up { .. } | Commands::Create { .. } | Commands::Run { .. } => cli.no_warn,
+		Commands::Scale { .. } | Commands::Watch => cli.no_warn,
+		Commands::Generate { .. } | Commands::Autostart { .. } => cli.no_warn,
+		_ => true,
 	};
-	let _suppress_port_warn_guard = if suppress_port_warn {
-		Some(podup::compose::SuppressPortExposureGuard::new())
-	} else {
-		None
-	};
+	let _suppress_port_warn_guard =
+		suppress_port_warn.then(podup::compose::SuppressPortExposureGuard::new);
 	// The client-address warning (#1994) fires on almost any project with
 	// published ports, so it is shown only where it can change a decision: the
 	// commands that create containers, and `config`, which ignores `--no-warn`
