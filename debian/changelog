@@ -1,3 +1,12 @@
+podup (5.10.17) unstable; urgency=medium
+
+  * The "published on every interface" warning now shows only on commands
+    that create or install containers (up, create, run, scale, watch,
+    generate quadlet, autostart) and on config. restart, stop, start, exec,
+    down and the other commands no longer repeat it on every run.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sun, 11 Oct 2026 11:09:51 -0500
+
 podup (5.10.16) unstable; urgency=medium
 
   * `podup events` takes service names like `docker compose events`: with
