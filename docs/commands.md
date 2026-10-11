@@ -20,7 +20,7 @@ podup [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS] [SERVICE...]
 | `--project-directory <PATH>` | | Base directory for relative paths (env_file, build context, bind mounts, config/secret sources). Defaults to the compose file's directory. |
 | `--ansi <WHEN>` | | Colour output: `auto`, `always` or `never`. `--ansi always` forces colour even into a pipe or file and overrides `NO_COLOR`; `--ansi auto` honours `NO_COLOR` and TTY detection. |
 | `--env-file <PATH>` | | Env file(s) for interpolation. Repeatable; later files win. Replaces `.env` rather than adding to it. Process environment takes precedence. |
-| `--no-warn` | | Suppress host-binding / privilege-escalation warnings during `up`/`create`/`run`/`exec`. `config` still surfaces the active modes at the default log level. |
+| `--no-warn` | | Suppress host-binding / privilege-escalation warnings during `up`/`create`/`run`/`exec`. The port-exposure warning is shown only by `up`/`create`/`run`/`scale`/`watch`/`generate quadlet`/`autostart` unless `--no-warn` is set, and by `config` regardless of `--no-warn`. `config` still surfaces the active modes at the default log level. |
 | `-h, --help` | | Per-command help. The `help [COMMAND]` subcommand renders the same text. |
 | `-V, --version` | | Print `podup version vX.Y.Z`. Same as `podup version`. |
 
@@ -109,6 +109,7 @@ Stop running containers without removing them. Accepts a trailing service list.
 
 ### `restart`
 Restart service containers (default: all, or the named ones).
+Restart reuses the existing containers and does not apply compose changes (ports, environment, image); use `up -d` for that.
 
 | Flag | Description | Default |
 |---|---|---|
