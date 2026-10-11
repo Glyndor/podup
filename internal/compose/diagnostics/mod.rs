@@ -26,12 +26,12 @@ pub(super) use nested_raw::collect_raw_nested_warnings;
 
 thread_local! {
 	/// CLI gate that suppresses the parse-time "port ... is published on every
-	/// interface" warning while set. The warning is host-binding (publishing on
-	/// 0.0.0.0 is), so `--no-warn` already promises to cover it on the live
-	/// engine paths; read-only commands (`ps`/`logs`/`port`/`top`) skip it
-	/// unconditionally because there is no live action to confirm. `config`
-	/// deliberately does not install the guard so its surface keeps the
-	/// warning. The flag is read once per emitted warning by
+	/// interface" warning while set. `up`/`create`/`run`/`scale`/`watch`/
+	/// `generate quadlet`/`autostart` show it unless `--no-warn` is set, because
+	/// they create or install containers with the port. `config` always shows
+	/// it regardless of `--no-warn`; every other command suppresses it because
+	/// it reuses containers whose configuration was already shown.
+	/// The flag is read once per emitted warning by
 	/// [`emit_diagnostic`] inside this module; the parse path does not have a
 	/// parameter for it because the warning surface is also reached from parse
 	/// functions called without command-level context
