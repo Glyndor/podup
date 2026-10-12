@@ -34,10 +34,10 @@ on:
     - cron: "0 6 * * *"  # Daily at 06:00 UTC
   workflow_dispatch:
     inputs:
-      from-schedule:
-        description: Set by the scheduled run on main when it starts the develop audit; that run reports for both branches
-        type: boolean
-        default: false
+      parent-run:
+        description: Set by the scheduled run on main to its own run id when it starts the develop audit; empty for a manual dispatch
+        type: string
+        default: ""
   pull_request:
     branches:
       - main
@@ -52,6 +52,12 @@ on:
 
 permissions:
   contents: read
+
+# On a schedule or pull_request event `inputs.parent-run` is empty and
+# the run is named after the workflow. On a workflow_dispatch started by
+# the schedule the input carries the parent's run id and the run is
+# named so the parent can find its own child by displayTitle.
+run-name: ${{ inputs.parent-run && format('Security audit of develop for run {0}', inputs.parent-run) || github.workflow }}
 
 jobs:
   # Kept as audit so its check names stay the same.
@@ -84,11 +90,10 @@ jobs:
       - name: Dispatch audit.yml on develop and wait for it
         run: |
           set -euo pipefail
-          SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-          gh workflow run audit.yml --ref develop -f from-schedule=true
+          gh workflow run audit.yml --ref develop -f parent-run="$GITHUB_RUN_ID"
           ID=
           for _ in $(seq 1 10); do
-            ID=$(gh run list --workflow audit.yml --branch develop --event workflow_dispatch --limit 5 --json databaseId,createdAt --jq "map(select(.createdAt >= \"$SINCE\")) | sort_by(.createdAt) | .[0].databaseId // empty")
+            ID=$(gh run list --workflow audit.yml --branch develop --event workflow_dispatch --limit 20 --json databaseId,displayTitle --jq "map(select(.displayTitle == \"Security audit of develop for run $GITHUB_RUN_ID\")) | .[0].databaseId // empty")
             if [ -n "$ID" ]; then
               break
             fi
@@ -107,20 +112,21 @@ jobs:
   # Runs when this run's audit did not succeed (failure, cancellation or
   # timeout). On the schedule it reports both branches, because the job
   # above fails when develop's run fails or never appears. A develop run
-  # started by the schedule passes from-schedule and does not report
-  # itself; a manual dispatch reports its own branch. issues: write is
-  # granted to this job alone; nothing here checks out code or installs
-  # tools, and every value reaches the script through env.
+  # started by the schedule passes parent-run and does not report itself;
+  # a manual dispatch reports its own branch. issues: write is granted
+  # to this job alone; nothing here checks out code or installs tools,
+  # and every value reaches the script through env.
+  #
+  # Two reporters running at once can open two issues; that only happens
+  # when a manual dispatch fails at the same moment as the schedule, and
+  # a duplicate issue is cheaper than a lost report, which is what a
+  # concurrency group would risk (GitHub keeps one pending job and
+  # cancels the rest).
   report:
     name: open an issue when the scheduled audit fails
     runs-on: ubuntu-latest
     needs: [audit, audit-develop]
-    # One reporter at a time across runs, so two of them cannot both
-    # find no open issue and both create one.
-    concurrency:
-      group: audit-report
-      cancel-in-progress: false
-    if: always() && ((github.event_name == 'schedule' && (needs.audit.result != 'success' || needs.audit-develop.result != 'success')) || (github.event_name == 'workflow_dispatch' && !inputs.from-schedule && needs.audit.result != 'success'))
+    if: always() && ((github.event_name == 'schedule' && (needs.audit.result != 'success' || needs.audit-develop.result != 'success')) || (github.event_name == 'workflow_dispatch' && !inputs.parent-run && needs.audit.result != 'success'))
     permissions:
       issues: write
     # Bound: no runs measured yet, so the ten-minute floor every job
