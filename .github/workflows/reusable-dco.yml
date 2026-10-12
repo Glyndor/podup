@@ -29,19 +29,34 @@ jobs:
 
       - name: Verify Signed-off-by trailers
         env:
-          # BASE_SHA/HEAD_SHA are the PR's real base and head commits from the
-          # event payload, not refs/pull/N/merge (the synthetic merge commit
-          # actions/checkout builds when it checks out a PR ref). That
-          # synthetic commit is never in this BASE_SHA..HEAD_SHA range to
-          # begin with (it isn't an ancestor of HEAD_SHA), so `--no-merges`
-          # below has nothing to do with excluding it; it skips real merge
-          # commits that may exist on the PR branch itself. Those are covered
-          # separately by "Detect evil merges" below, which checks
-          # merge-commit tree integrity rather than sign-off trailers.
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # BASE_SHA/HEAD_SHA are the range that the event that fired
+          # this run carries. On pull_request that is the PR's real base
+          # and head commits (not refs/pull/N/merge, the synthetic merge
+          # commit actions/checkout builds when it checks out a PR ref).
+          # On merge_group that is the squash commit(s) GitHub built for
+          # this group, i.e. the commit(s) that will land on develop, so
+          # the trailer is checked on the artefact itself rather than on
+          # the PR's history. That closes the "DCO gate is blind to the
+          # commit it produces" gap for develop. The `||` form picks the
+          # range off whichever event fired; an empty value (workflow_call,
+          # schedule, or any event this workflow is not wired to) makes
+          # the fail-closed block below exit 1 rather than silently
+          # passing on a `git rev-list ..` that lists nothing.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
+          # Fail closed on an empty range: an empty BASE_SHA or HEAD_SHA
+          # makes `git rev-list ..` list nothing, the for-loop never runs,
+          # and the check reports green without looking. This workflow
+          # only knows pull_request and merge_group ranges, and those
+          # events both populate the fields above; if either is empty
+          # here, the trigger wiring is wrong and the gate must go red
+          # rather than pass by accident.
+          if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
+            echo "::error::dco check needs a pull_request or merge_group range; got BASE_SHA='$BASE_SHA' HEAD_SHA='$HEAD_SHA'. Check the workflow_call or event wiring that fired this run."
+            exit 1
+          fi
           missing=0
           for sha in $(git rev-list --no-merges "${BASE_SHA}..${HEAD_SHA}"); do
             author="$(git show -s --format='%an <%ae>' "$sha")"
@@ -84,10 +99,21 @@ jobs:
         #     failing closed here acceptable friction rather than a
         #     false-positive machine.
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Same `||` form as the trailer step above: pull_request carries
+          # the PR's base/head, merge_group carries the squash commit(s)
+          # GitHub built for this group, anything else leaves both empty
+          # and the fail-closed block below makes the check red.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
+          # Same empty-range guard as the trailer step: an empty BASE_SHA
+          # or HEAD_SHA here would let `git rev-list --merges` list
+          # nothing and the for-loop never see a merge commit to test.
+          if [ -z "$BASE_SHA" ] || [ -z "$HEAD_SHA" ]; then
+            echo "::error::evil-merge check needs a pull_request or merge_group range; got BASE_SHA='$BASE_SHA' HEAD_SHA='$HEAD_SHA'. Check the event wiring that fired this run."
+            exit 1
+          fi
           bad=0
           stderr_file="$(mktemp)"
           merges="$(git rev-list --merges "${BASE_SHA}..${HEAD_SHA}")" || {

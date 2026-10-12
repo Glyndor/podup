@@ -5,6 +5,13 @@ on:
     branches:
       - main
       - develop
+  # Required check on develop (ruleset 17287557). The reusable reads the
+  # range off the event that fired; merge_group carries the squash
+  # commit(s) GitHub built for this group, so the trailer is checked on
+  # the artefact that will land on develop rather than on the PR's
+  # history. `paths:` and `branches:` filters do not apply to merge_group.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read

@@ -28,6 +28,12 @@ on:
   # gates the merge. The internal suite distinguishes nested-virt flakes from real
   # failures and retries a transient once.
   pull_request:
+  # Required check on develop (ruleset 17287557): `Supported Podman majors`
+  # is matched by name, and the queue fires `merge_group` on a temporary
+  # branch. The job must run there too or the queue never merges. `paths:`
+  # and `branches:` filters do not apply to merge_group.
+  merge_group:
+    types: [checks_requested]
 permissions:
   contents: read
 
@@ -36,6 +42,12 @@ permissions:
 # this workflow for one pull request, four VM legs, one pair answering a
 # question about a commit that no longer existed. Cancelling applies to pull
 # requests only; the nightly and a manual dispatch are never superseded.
+#
+# The `github.ref` below is unique per merge group (the temporary branch is
+# `gh-readonly-queue/develop/pr-<N>-<sha>`), so two queue groups never share
+# a key and one group's run never cancels another's. The `cancel-in-progress`
+# line stays `pull_request` only: a stale queue group should not be cancelled
+# while the queue may still promote it.
 concurrency:
   group: podman-lane-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -72,15 +84,23 @@ jobs:
         id: files
         env:
           EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # Range the diff runs against. The pull_request event carries the
+          # PR's base and head; merge_group carries the squash commit(s)
+          # GitHub built for this group (the range that will land on
+          # develop). Other events (schedule, workflow_dispatch) leave both
+          # empty, which the engine=true short-circuit below handles.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
         run: |
           set -euo pipefail
-          if [ "$EVENT" != "pull_request" ]; then
-            echo "engine=true" >> "$GITHUB_OUTPUT"
-            echo "not a pull request: the VM always boots on $EVENT"
-            exit 0
-          fi
+          case "$EVENT" in
+            pull_request|merge_group) ;;
+            *)
+              echo "engine=true" >> "$GITHUB_OUTPUT"
+              echo "not a pull request or merge group: the VM always boots on $EVENT"
+              exit 0
+              ;;
+          esac
           # Fail closed: a diff that cannot be read boots the VM.
           if ! changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"; then
             echo "engine=true" >> "$GITHUB_OUTPUT"
@@ -101,7 +121,7 @@ jobs:
           done <<< "$changed"
           echo "engine=$engine" >> "$GITHUB_OUTPUT"
           if [ "$engine" = false ]; then
-            echo "nothing in this pull request can reach the VM ($(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s), all prose or templates); the legs below run and boot nothing"
+            echo "nothing in this range can reach the VM ($(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s), all prose or templates); the legs below run and boot nothing"
           fi
 
   podman-vm:
