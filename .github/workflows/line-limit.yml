@@ -1,14 +1,5 @@
 name: Line limit
 
-# Pull request only, and this one is worth saying because it looks like dco's
-# twin and is not. dco reads the commit range off the pull request event, so a
-# push is not a range it can walk. line-limit reads no base ref at all: the
-# reusable ends `done < <(git ls-files -z)` and counts code lines in tracked
-# files, so it is a property of the tree and would evaluate identically on a
-# push. What makes pull_request sufficient here is not its shape, it is that
-# both rulesets require a pull request, so no content reaches develop or main
-# without one. If a direct-push path is ever opened, this scoping stops covering
-# the tree and a push trigger becomes the correct one.
 # On pushes as well as pull requests, and the reason is what this check reads.
 #
 # It diffs nothing. The reusable ends `done < <(git ls-files -z)` and counts
@@ -31,6 +22,12 @@ on:
     branches:
       - main
       - develop
+  # Required check on develop (ruleset 17287557). In the merge queue GitHub
+  # fires `merge_group` on a temporary branch; the check has to report there
+  # too or the queue never merges. `paths:` and `branches:` filters do not
+  # apply to merge_group, so the trigger sits at the top level.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read

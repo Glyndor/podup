@@ -906,3 +906,12 @@ jobs:
       - name: A caller of a required check must carry `with:` equal to the reusable's declared default
         run: |
           python3 .github/scripts/check-caller-with-defaults.py
+
+      # A workflow that emits a develop-required check must trigger on
+      # merge_group (with checks_requested in types:), and no other
+      # workflow may carry the trigger. Logic lives in
+      # .github/scripts/check-merge-group-triggers.py because this file
+      # is near the 500-code-line hard limit already.
+      - name: A workflow that emits a check required on develop must trigger on merge_group
+        run: |
+          python3 .github/scripts/check-merge-group-triggers.py

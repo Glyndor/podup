@@ -5,6 +5,12 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  # Required check on develop (ruleset 17287557). The merge queue fires
+  # `merge_group` on a temporary branch; without this trigger the check
+  # would not report there and the queue would never merge. `paths:` and
+  # `branches:` filters do not apply to merge_group.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
