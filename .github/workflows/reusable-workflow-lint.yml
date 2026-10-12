@@ -31,7 +31,7 @@ name: Workflow lint (reusable)
 # writing, and the rationale is what follows.
 #
 # The rule that says "do not promote a check that has never failed for the
-# right reason" is in `~/.claude/CLAUDE.md`:
+# right reason" is the organisation's CI standard:
 #
 #   A gate that never has failed is not tested. Before marking a check as
 #   required, provoke the failure on purpose and confirm it goes red for
