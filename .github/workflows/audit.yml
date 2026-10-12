@@ -62,14 +62,16 @@ jobs:
     with:
       ref: develop
 
-  # Runs only when a scheduled audit failed. issues: write is granted
+  # Runs when a scheduled audit did not succeed: a failure, and also a
+  # cancelled or timed-out run, which would otherwise pass in silence.
+  # issues: write is granted
   # to this job alone; nothing here checks out code or installs tools,
   # and every value reaches the script through env.
   report:
     name: open an issue when the scheduled audit fails
     runs-on: ubuntu-latest
     needs: [audit, audit-develop]
-    if: always() && github.event_name == 'schedule' && (needs.audit.result == 'failure' || needs.audit-develop.result == 'failure')
+    if: always() && github.event_name == 'schedule' && (needs.audit.result != 'success' || needs.audit-develop.result != 'success')
     permissions:
       issues: write
     # Bound: no runs measured yet, so the ten-minute floor every job
@@ -90,11 +92,11 @@ jobs:
             --jq 'map(select(.title == env.ISSUE_TITLE)) | .[0].number // empty')
           DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           BRANCHES=""
-          if [ "$AUDIT_RESULT" = "failure" ]; then
-            BRANCHES="${BRANCHES}main, "
+          if [ "$AUDIT_RESULT" != "success" ]; then
+            BRANCHES="${BRANCHES}main (${AUDIT_RESULT}), "
           fi
-          if [ "$AUDIT_DEVELOP_RESULT" = "failure" ]; then
-            BRANCHES="${BRANCHES}develop, "
+          if [ "$AUDIT_DEVELOP_RESULT" != "success" ]; then
+            BRANCHES="${BRANCHES}develop (${AUDIT_DEVELOP_RESULT}), "
           fi
           BRANCHES="${BRANCHES%, }"
           if [ -n "$NUMBER" ]; then
