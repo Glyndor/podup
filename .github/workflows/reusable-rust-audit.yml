@@ -70,7 +70,14 @@ jobs:
           rustup toolchain install "$TOOLCHAIN" --profile minimal
           rustup default "$TOOLCHAIN"
 
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # No cache when the caller picks another ref. The schedule runs in
+      # main's cache scope, which every branch reads, and cargo here runs
+      # over the other ref's tree (cargo deny calls cargo metadata, which
+      # honours that tree's .cargo/config.toml). Installing from scratch
+      # costs minutes once a day; a cache written from that tree would be
+      # read by every later run. CodeQL flagged it on #2036.
+      - if: inputs.ref == ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/bin
@@ -118,7 +125,9 @@ jobs:
           rustup toolchain install "$TOOLCHAIN" --profile minimal
           rustup default "$TOOLCHAIN"
 
-      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      # Same no-cache rule as the cargo-audit job above.
+      - if: inputs.ref == ''
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/bin

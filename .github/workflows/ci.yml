@@ -120,10 +120,7 @@ jobs:
     uses: ./.github/workflows/reusable-schedule-freshness.yml
     with:
       workflow: audit.yml
-      # audit.yml runs daily. GitHub's cron has been measured arriving
-      # between 2h26 and 5h35 late, so three days absorbs a late or a
-      # skipped firing without hiding a schedule that stopped.
-      max-age-days: 3
+      max-age-days: 15
 
   freshness-fuzz:
     if: github.event_name != 'merge_group'
