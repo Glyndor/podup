@@ -6,12 +6,12 @@
 # `checks_requested` in its `types:` where `types:` is set), and no
 # other workflow may carry the trigger.
 #
-# The `protect-develop` ruleset will get a merge queue. In the queue
+# The `protect-develop` ruleset runs a merge queue. In the queue
 # GitHub fires `merge_group` on a temporary branch; required checks
 # must report on that event or the queue never merges. `paths:` and
 # `branches:` filters do not apply, so the trigger has to sit at the
 # top level, and a workflow that emits a required check name without
-# the trigger fails the gate by its own absence.
+# the trigger leaves the queue waiting for a check that never comes.
 #
 # The companion rule is the other direction: a workflow that carries
 # `merge_group` for any other reason would run inside the queue

@@ -110,9 +110,9 @@ jobs:
   # file is what somebody wiring a ruleset has open.
   freshness-audit:
     # Not a required check, and the freshness watchers report on OTHER
-    # workflows' runs. The merge group is a different beast: it answers
-    # to the queue's `checks_requested` event on a temporary branch, and
-    # a watcher firing there would just rerun work the PR already ran.
+    # workflows' runs and other branches, not about the merge group. They
+    # already run on the pull request, so in the queue they would only
+    # spend runners. The same `if:` sits on every watcher below.
     if: github.event_name != 'merge_group'
     permissions:
       contents: read

@@ -2,13 +2,14 @@
 """Refuse a workflow that emits a develop-required check without triggering on
 `merge_group`, and refuse any OTHER workflow that carries `merge_group`.
 
-The `protect-develop` ruleset will get a merge queue (squash). In a merge
+The `protect-develop` ruleset runs a merge queue (squash). In a merge
 queue GitHub fires the `merge_group` event with `types: [checks_requested]`
 on a temporary branch `gh-readonly-queue/develop/pr-<N>-<sha>`, and required
 checks must be reported on that event or the queue never merges. `paths:`
 and `branches:` filters do not apply to merge_group, so a workflow that
 emits a develop-required check name and only lists `pull_request` will
-report nothing in the queue and the gate goes red on its own absence.
+report nothing in the queue: the entry waits for a check that never
+comes and is dropped at the queue's timeout without merging.
 
 The fix is to require every workflow that emits a develop-required check
 to also carry `merge_group` in its `on:`. If `merge_group` has a `types:`
@@ -167,12 +168,6 @@ def main():
     # emits a required check is "an emitter"; it must have
     # `merge_group` in its `on:`. A workflow (reusable or not) that
     # carries `merge_group` for any other reason is refused.
-    # Reusables themselves are checked for being emitters so a
-    # workflow that has the wrong caller shape (someone uses a
-    # reusable from a non-reusable file) still gets caught: the
-    # caller scan below would not see the reusable's emission, but
-    # the requirement is that SOMETHING in the tree triggers the
-    # check, and the reusable's own `workflow_call` does not.
     emitter_paths = []
     merge_group_paths = []
     parsed = {}
