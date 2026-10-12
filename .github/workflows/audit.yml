@@ -33,6 +33,11 @@ on:
   schedule:
     - cron: "0 6 * * *"  # Daily at 06:00 UTC
   workflow_dispatch:
+    inputs:
+      from-schedule:
+        description: Set by the scheduled run on main when it starts the develop audit; that run reports for both branches
+        type: boolean
+        default: false
   pull_request:
     branches:
       - main
@@ -57,32 +62,65 @@ jobs:
   # inside this run would execute develop's tree in main's context,
   # where any step can write the cache every branch reads (CodeQL,
   # #2036). So the schedule starts a separate run of this workflow on
-  # develop, which audits develop in develop's own context.
+  # develop, waits for it, and fails when that run does not succeed or
+  # never appears at all: a "queued forever" dispatch and a dispatch
+  # that returned a run id but exited non-zero both leave this job
+  # non-success, and the report job below then opens an issue for the
+  # develop branch instead of declaring it green by omission.
   audit-develop:
     name: start the develop audit
     if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
       actions: write
-    # Bound: no runs measured yet, so the ten-minute floor every job here uses.
-    timeout-minutes: 10
+    # Bound: the dispatched audit installs its tools and runs both
+    # checks; forty minutes covers that plus a queue, and no run has
+    # been measured yet.
+    timeout-minutes: 40
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - name: Dispatch audit.yml on develop
-        run: gh workflow run audit.yml --ref develop
+      - name: Dispatch audit.yml on develop and wait for it
+        run: |
+          set -euo pipefail
+          SINCE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          gh workflow run audit.yml --ref develop -f from-schedule=true
+          ID=
+          for _ in $(seq 1 10); do
+            ID=$(gh run list --workflow audit.yml --branch develop --event workflow_dispatch --limit 5 --json databaseId,createdAt --jq "map(select(.createdAt >= \"$SINCE\")) | sort_by(.createdAt) | .[0].databaseId // empty")
+            if [ -n "$ID" ]; then
+              break
+            fi
+            sleep 15
+          done
+          if [ -z "$ID" ]; then
+            echo "::error::the develop audit was dispatched but its run never appeared"
+            exit 1
+          fi
+          if ! gh run watch "$ID" --exit-status --interval 30; then
+            echo "::error::the develop audit run $ID did not succeed; see $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$ID"
+            exit 1
+          fi
+          echo "Develop audit run: $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$ID"
 
-  # Runs when this run's own audit did not succeed (a failure, a
-  # cancellation or a timeout), on either a schedule or a dispatch, and
-  # also when the schedule could not start the develop audit. issues:
-  # write is granted to this job alone; nothing here checks out code or
-  # installs tools, and every value reaches the script through env.
+  # Runs when this run's audit did not succeed (failure, cancellation or
+  # timeout). On the schedule it reports both branches, because the job
+  # above fails when develop's run fails or never appears. A develop run
+  # started by the schedule passes from-schedule and does not report
+  # itself; a manual dispatch reports its own branch. issues: write is
+  # granted to this job alone; nothing here checks out code or installs
+  # tools, and every value reaches the script through env.
   report:
     name: open an issue when the scheduled audit fails
     runs-on: ubuntu-latest
     needs: [audit, audit-develop]
-    if: always() && ((github.event_name == 'schedule' && (needs.audit.result != 'success' || needs.audit-develop.result != 'success')) || (github.event_name == 'workflow_dispatch' && needs.audit.result != 'success'))
+    # One reporter at a time across runs, so two of them cannot both
+    # find no open issue and both create one.
+    concurrency:
+      group: audit-report
+      cancel-in-progress: false
+    if: always() && ((github.event_name == 'schedule' && (needs.audit.result != 'success' || needs.audit-develop.result != 'success')) || (github.event_name == 'workflow_dispatch' && !inputs.from-schedule && needs.audit.result != 'success'))
     permissions:
       issues: write
     # Bound: no runs measured yet, so the ten-minute floor every job
@@ -108,7 +146,7 @@ jobs:
             BRANCHES="${BRANCHES}${REF_NAME} (${AUDIT_RESULT}), "
           fi
           if [ "$DISPATCH_RESULT" != "success" ] && [ "$DISPATCH_RESULT" != "skipped" ]; then
-            BRANCHES="${BRANCHES}develop (could not start its audit: ${DISPATCH_RESULT}), "
+            BRANCHES="${BRANCHES}develop (${DISPATCH_RESULT}; see the start the develop audit job for the develop run), "
           fi
           BRANCHES="${BRANCHES%, }"
           if [ -n "$NUMBER" ]; then

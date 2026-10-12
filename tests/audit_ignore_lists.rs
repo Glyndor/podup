@@ -1,20 +1,23 @@
 //! `cargo audit` and `cargo deny` agree on which RUSTSEC ids are ignored.
 //!
 //! `deny.toml` carries the cargo-deny ignore list and `.cargo/audit.toml`
-//! carries the cargo-audit one. cargo-deny reads `deny.toml` and cargo-audit
-//! reads `.cargo/audit.toml`, relative to the directory it runs in. The
-//! release job (release.yml) runs `cargo audit --deny warnings` from the
-//! repository root, so an ignore that lives only in deny.toml does not help
-//! the release gate: the next release would fail on the same advisory that
-//! turned the scheduled audit red on 2026-10-12 (#2034). The two lists must
-//! be equal.
+//! carries the cargo-audit one. `cargo-deny` reads `deny.toml`;
+//! `cargo-audit` reads `.cargo/audit.toml`, relative to its working
+//! directory. The release job (release.yml) runs `cargo audit --deny
+//! warnings` from the repository root, so an ignore that lives only in
+//! deny.toml does not help the release gate: the next release would fail
+//! on the same advisory that turned the scheduled audit red on
+//! 2026-10-12 (#2034). The two lists must be equal.
 //!
-//! No new crate dependency is taken on for this. `toml` is not in the
-//! workspace's lock today, and pulling it just to compare two short string
-//! lists is more weight than the assertion needs. The parser is a hand-rolled
-//! scan for `id = "..."` (deny.toml's table form) and `ignore = [ "..." ]`
-//! (cargo-audit's list form); both shapes are stable per the input files
-//! they target.
+//! One parser reads both files. It strips `#`-style comments (only
+//! outside double-quoted strings, so `reason = "see #2035"` survives),
+//! walks until the `[advisories]` table header, takes everything between
+//! its `ignore = [` and the matching `]`, and collects every
+//! double-quoted string whose WHOLE value matches
+//! `^RUSTSEC-[0-9]{4}-[0-9]{4}$`. The two shapes cargo-deny accepts,
+//! `{ id = "X", reason = "..." }` and the plain string `"X"`, resolve to
+//! the same set; an id that only appears inside a longer string is not
+//! collected.
 
 use std::fs;
 use std::path::Path;
@@ -24,170 +27,221 @@ fn read_repo(rel: &str) -> String {
 	fs::read_to_string(&path).unwrap_or_else(|e| panic!("{rel} is readable: {e}"))
 }
 
-/// Extract the set of advisory ids in `body` whose shape is a deny.toml
-/// table entry: `id = "RUSTSEC-..."`. The line may be a full inline
-/// table (`{ id = "X", reason = "..." }`) or just the field (`id = "X"`),
-/// so the parser scans for `id = "..."` anywhere on the line. Comment
-/// lines and lines without the field are skipped; a future refactor
-/// that introduces an unrelated `id = "..."` field on a different key
-/// would also be rejected only when its value starts with `RUSTSEC-`,
-/// which is the convention the file's own entries follow.
-fn deny_toml_ids(body: &str) -> Vec<String> {
-	let mut out = Vec::new();
-	for line in body.lines() {
-		let trimmed = line.trim_start();
-		// Comment and blank lines: skip. Comment lines mention ids in
-		// prose and an inline comment that just happens to mention
-		// one would otherwise be picked up. Same shape as the parsers
-		// in `tests/workflow_audit_strictness.rs`.
-		if trimmed.is_empty() || trimmed.starts_with('#') {
+/// Strip `#`-prefixed comments from a TOML-like file, leaving any `#`
+/// that lives inside a `"..."` string alone. Each returned line still
+/// contains its indentation and any trailing content, so the parser that
+/// consumes this output does not lose column positions.
+fn strip_comments(body: &str) -> String {
+	let mut out = String::with_capacity(body.len());
+	let bytes = body.as_bytes();
+	let mut i = 0;
+	let mut at_line_start = true;
+	while i < bytes.len() {
+		let c = bytes[i];
+		if c == b'"' {
+			out.push('"');
+			i += 1;
+			while i < bytes.len() && bytes[i] != b'"' {
+				out.push(bytes[i] as char);
+				i += 1;
+			}
+			if i < bytes.len() {
+				out.push('"');
+				i += 1;
+			}
+			at_line_start = false;
 			continue;
 		}
-		// Find every `id = "RUSTSEC-..."` token on the line. The line
-		// may also be the inline-table form `{ id = "X", ... }`, in
-		// which case the scan still starts at `id` and reads forward
-		// past the `=` to the quoted string.
-		let bytes = trimmed.as_bytes();
-		let mut i = 0;
-		while i < bytes.len() {
-			if bytes[i] != b'i' {
+		if at_line_start && c == b'#' {
+			while i < bytes.len() && bytes[i] != b'\n' {
 				i += 1;
-				continue;
 			}
-			if !trimmed[i..].starts_with("id") {
-				i += 1;
+			at_line_start = true;
+			continue;
+		}
+		if c == b'\n' {
+			at_line_start = true;
+		} else {
+			at_line_start = false;
+		}
+		out.push(c as char);
+		i += 1;
+	}
+	out
+}
+
+/// Slice the body to the bytes that live inside the `[advisories]`
+/// table, i.e. from the line that starts with `[advisories]` up to the
+/// next line that begins with `[` (a new table header). Returns the
+/// raw bytes so the caller can keep the same byte offsets throughout.
+/// An empty slice means the section was not found.
+fn advisories_section(body: &str) -> &[u8] {
+	let bytes = body.as_bytes();
+	let header = b"[advisories]";
+	let header_len = header.len();
+	let mut start: Option<usize> = None;
+	let mut end: Option<usize> = None;
+	let mut i = 0;
+	let mut at_line_start = true;
+	while i < bytes.len() {
+		let c = bytes[i];
+		if at_line_start
+			&& c == b'['
+			&& i + header_len <= bytes.len()
+			&& &bytes[i..i + header_len] == header
+		{
+			if start.is_none() {
+				start = Some(i);
+				i += header_len;
+				at_line_start = false;
 				continue;
+			} else {
+				end = Some(i);
+				break;
 			}
-			let after_id_idx = i + 2;
-			if after_id_idx < bytes.len() && !matches!(bytes[after_id_idx], b' ' | b'=') {
-				i += 1;
-				continue;
-			}
-			let mut j = after_id_idx;
-			while j < bytes.len() && bytes[j] == b' ' {
+		}
+		if c == b'\n' {
+			at_line_start = true;
+		} else if c != b' ' && c != b'\t' && c != b'\r' {
+			at_line_start = false;
+		}
+		i += 1;
+	}
+	let start = match start {
+		Some(s) => s,
+		None => return &[],
+	};
+	let end = end.unwrap_or(bytes.len());
+	&bytes[start..end]
+}
+
+/// Find the `ignore = [ ... ]` array inside the `[advisories]` section
+/// and return the bytes inside the brackets. Returns an empty slice if
+/// the `ignore = [` opener is never seen. Nested `{ ... }` tables inside
+/// the array are opened and closed correctly; quoted strings are opaque
+/// to the bracket counter, so a `[` or `{` inside a string is not
+/// counted. The closing `]` of `ignore = [...]` is the first one that
+/// brings the bracket depth back to zero after the opener.
+fn ignore_array(body: &[u8]) -> Vec<u8> {
+	let mut open_at: Option<usize> = None;
+	let mut i = 0;
+	while i + 11 < body.len() {
+		// Look for `ignore = [` at any column. Anything after a
+		// `\n` is fair game; the section has been narrowed to the
+		// [advisories] table already, so we won't pick up a stray
+		// `ignore` somewhere else.
+		if &body[i..i + 6] == b"ignore" {
+			let mut j = i + 6;
+			while j < body.len() && (body[j] == b' ' || body[j] == b'\t') {
 				j += 1;
 			}
-			if j >= bytes.len() || bytes[j] != b'=' {
-				i += 1;
-				continue;
+			if j + 2 < body.len() && body[j] == b'=' && body[j + 1] == b' ' && body[j + 2] == b'[' {
+				open_at = Some(j + 3);
+				break;
 			}
-			j += 1;
-			while j < bytes.len() && bytes[j] == b' ' {
+		}
+		i += 1;
+	}
+	let open_at = match open_at {
+		Some(o) => o,
+		None => return Vec::new(),
+	};
+	let mut depth: i32 = 0;
+	let mut k = open_at;
+	while k < body.len() {
+		let c = body[k];
+		if c == b'"' {
+			k += 1;
+			while k < body.len() && body[k] != b'"' {
+				k += 1;
+			}
+			if k < body.len() {
+				k += 1;
+			}
+			continue;
+		}
+		if c == b'[' || c == b'{' {
+			depth += 1;
+			k += 1;
+			continue;
+		}
+		if c == b']' {
+			if depth == 0 {
+				return body[open_at..k].to_vec();
+			}
+			depth -= 1;
+			k += 1;
+			continue;
+		}
+		if c == b'}' {
+			if depth > 0 {
+				depth -= 1;
+			}
+			k += 1;
+			continue;
+		}
+		k += 1;
+	}
+	Vec::new()
+}
+
+/// Collect every `"X"` inside `bytes` whose whole value matches
+/// `^RUSTSEC-[0-9]{4}-[0-9]{4}$`. The whole-value test is what stops an
+/// id embedded in a longer string (e.g. `reason = "see RUSTSEC-..."`)
+/// from being read as if it were a list entry.
+fn extract_ids(bytes: &[u8]) -> Vec<String> {
+	let mut out = Vec::new();
+	let mut i = 0;
+	while i < bytes.len() {
+		let c = bytes[i];
+		if c == b'"' {
+			let start = i + 1;
+			let mut j = start;
+			while j < bytes.len() && bytes[j] != b'"' {
 				j += 1;
 			}
 			if j >= bytes.len() {
-				break;
+				return out;
 			}
-			let quote = bytes[j];
-			if quote != b'"' && quote != b'\'' {
-				i += 1;
-				continue;
-			}
-			j += 1;
-			let start = j;
-			while j < bytes.len() && bytes[j] != quote {
-				j += 1;
-			}
-			if j >= bytes.len() {
-				break;
-			}
-			let token = &trimmed[start..j];
-			if token.starts_with("RUSTSEC-") {
-				out.push(token.to_string());
+			let token = &bytes[start..j];
+			if is_rustsec_id(token) {
+				out.push(std::str::from_utf8(token).unwrap_or("").to_string());
 			}
 			i = j + 1;
+			continue;
 		}
+		i += 1;
 	}
 	out
 }
 
-/// Extract the set of advisory ids in `body` whose shape is the
-/// cargo-audit list form: `ignore = [ "RUSTSEC-...", "..." ]`. Strings
-/// inside `[]` are matched one at a time; commas and trailing whitespace
-/// are tolerated because that is the form `.cargo/audit.toml` already
-/// uses. Lines outside the `ignore = [...]` declaration are not parsed
-/// here either: the file is small and a stray RUSTSEC id elsewhere would
-/// still belong in `ignore`, so the question "is X in the ignore list?"
-/// either way points at the same place.
-///
-/// The inline single-line form (`ignore = ["X", "Y"]`) is read in one
-/// pass: the `]` may appear on the same line that holds the entries,
-/// so the parser cannot rely on a line-by-line open/close. It tracks
-/// bracket nesting instead: an `[` that is not inside a string opens
-/// the list, a matching `]` closes it, and quoted strings inside the
-/// brackets are not counted as brackets. Multi-line lists behave the
-/// same way, with the `[` on one line and the matching `]` later.
-fn audit_toml_ids(body: &str) -> Vec<String> {
-	let mut out = Vec::new();
-	let mut depth: i32 = 0;
-	for line in body.lines() {
-		// Walk the line character by character. Outside the list
-		// (`depth == 0`) we skip everything except a `[` that opens
-		// the ignore list; inside it (depth > 0) we collect every
-		// quoted `RUSTSEC-...` token.
-		let bytes = line.as_bytes();
-		let mut i = 0;
-		while i < bytes.len() {
-			let c = bytes[i];
-			// A quoted token. Single or double quotes; the inside of
-			// a quoted string is opaque, so brackets inside a string
-			// do not count as brackets, and `=` inside a string does
-			// not count as the assignment.
-			if c == b'"' || c == b'\'' {
-				let quote = c;
-				let start = i + 1;
-				let mut j = start;
-				while j < bytes.len() && bytes[j] != quote {
-					j += 1;
-				}
-				if j < bytes.len() {
-					if depth > 0 {
-						let token = &line[start..j];
-						if token.starts_with("RUSTSEC-") {
-							out.push(token.to_string());
-						}
-					}
-					i = j + 1;
-					continue;
-				}
-			}
-			// A `[` inside or outside the list changes the bracket
-			// nesting: outside, an opening `[` enters the list only
-			// when the line was `ignore = [ ... ]` (i.e. depth was
-			// zero and we are tracking `ignore`-list entries). To
-			// keep the parser robust against the multiline form
-			// (`ignore = [\n  "X",\n  "Y",\n]`) the scan tracks
-			// `depth` rather than a boolean: a `[` already inside an
-			// `ignore = [...]` increments the depth, and a `]`
-			// decrements it back to zero.
-			if c == b'[' {
-				depth += 1;
-				i += 1;
-				continue;
-			}
-			if c == b']' {
-				if depth > 0 {
-					depth -= 1;
-				}
-				i += 1;
-				continue;
-			}
-			i += 1;
-		}
+fn is_rustsec_id(token: &[u8]) -> bool {
+	let prefix = b"RUSTSEC-";
+	if token.len() != 17 || !token.starts_with(prefix) {
+		return false;
 	}
-	out
+	let bytes = &token[8..];
+	if bytes[4] != b'-' {
+		return false;
+	}
+	bytes[..4].iter().all(|b| b.is_ascii_digit()) && bytes[5..].iter().all(|b| b.is_ascii_digit())
 }
 
-/// `audit_toml_ids` once used a `first_id_token` helper for the
-/// single-line form. The rewritten parser above is bracket-depth aware
-/// and reads every quoted id on a line in one pass, so the helper is
-/// gone: keep this comment so a future reader who lands on a `git
-/// log -p` and wonders why a private helper existed finds the answer.
+/// One parser for both deny.toml and `.cargo/audit.toml`. Strips
+/// comments, narrows to the `[advisories]` section, finds the
+/// `ignore = [...]` array, and collects every quoted RUSTSEC id whose
+/// value is exactly `RUSTSEC-YYYY-NNNN`.
+fn ignored_ids(body: &str) -> Vec<String> {
+	let stripped = strip_comments(body);
+	let section = advisories_section(&stripped);
+	let array = ignore_array(section);
+	extract_ids(&array)
+}
 
 #[test]
 fn the_two_ignore_lists_agree_on_advisory_ids() {
-	let deny_ids: Vec<String> = deny_toml_ids(&read_repo("deny.toml"));
-	let audit_ids: Vec<String> = audit_toml_ids(&read_repo(".cargo/audit.toml"));
+	let deny_ids: Vec<String> = ignored_ids(&read_repo("deny.toml"));
+	let audit_ids: Vec<String> = ignored_ids(&read_repo(".cargo/audit.toml"));
 	// Order does not matter: the contract is the SET of ids each tool
 	// accepts. `BTreeSet` also makes the failure message stable.
 	let deny_set: std::collections::BTreeSet<_> = deny_ids.iter().collect();
@@ -202,94 +256,81 @@ fn the_two_ignore_lists_agree_on_advisory_ids() {
 	);
 }
 
-/// Pin the parser on input it must accept. Today the file format is
-/// `{ id = "X", reason = "..." }` for deny.toml and `ignore = ["X", "Y"]`
-/// for .cargo/audit.toml; the parser is what every other test in this
-/// file trusts, and a parser that always returned one canonical id would
-/// satisfy the assertions above against a tree where the lists had
-/// drifted.
 #[test]
 fn the_parser_reads_what_it_claims() {
-	// deny.toml table form: one id, exactly one entry, no comments.
+	// (a) Table form and plain-string form of the same id give the
+	// same set, in either file. cargo-deny accepts both forms in the
+	// same `[advisories].ignore` array.
 	let deny_body = "\
 [advisories]
 ignore = [
     { id = \"RUSTSEC-0000-0000\", reason = \"x\" },
 ]
 ";
-	let deny_ids = deny_toml_ids(deny_body);
+	let plain_body = "\
+[advisories]
+ignore = [\"RUSTSEC-0000-0000\"]
+";
+	let deny_set: std::collections::BTreeSet<_> = ignored_ids(deny_body).into_iter().collect();
+	let plain_set: std::collections::BTreeSet<_> = ignored_ids(plain_body).into_iter().collect();
 	assert_eq!(
-		deny_ids,
-		vec!["RUSTSEC-0000-0000".to_string()],
-		"deny.toml table form: exactly one id, got {deny_ids:?}"
+		deny_set, plain_set,
+		"table form and plain-string form of the same id must agree"
+	);
+	assert_eq!(
+		deny_set,
+		["RUSTSEC-0000-0000".to_string()].into_iter().collect()
 	);
 
-	// A comment above the entry that mentions the id must not be counted.
-	let deny_with_comment = "\
+	// (b) A commented-out ignore line does not contribute to the set.
+	let commented = "\
 [advisories]
 # ignore = [{ id = \"RUSTSEC-9999-9999\", reason = \"comment only\" }]
 ignore = [{ id = \"RUSTSEC-0000-0000\", reason = \"real\" }]
 ";
-	let ids = deny_toml_ids(deny_with_comment);
+	let ids: std::collections::BTreeSet<_> = ignored_ids(commented).into_iter().collect();
 	assert_eq!(
 		ids,
-		vec!["RUSTSEC-0000-0000".to_string()],
-		"deny.toml parser picked up an id from a comment line, got {ids:?}"
+		["RUSTSEC-0000-0000".to_string()].into_iter().collect(),
+		"commented-out ignore line must not contribute to the set, got {ids:?}"
 	);
 
-	// cargo-audit list form: a multi-line array with more than one id.
-	let audit_body = "\
+	// (c) A `reason = "..."` string that mentions another RUSTSEC id
+	// does not add it: the whole-value test rejects it.
+	let reason_mentions = "\
 [advisories]
 ignore = [
-    \"RUSTSEC-0000-0000\",
-    \"RUSTSEC-1111-2222\",
+    { id = \"RUSTSEC-0000-0000\", reason = \"see RUSTSEC-1111-2222\" },
 ]
 ";
-	let audit_ids = audit_toml_ids(audit_body);
+	let ids: std::collections::BTreeSet<_> = ignored_ids(reason_mentions).into_iter().collect();
 	assert_eq!(
-		audit_ids,
-		vec![
-			"RUSTSEC-0000-0000".to_string(),
-			"RUSTSEC-1111-2222".to_string()
-		],
-		"cargo-audit multi-line list form: both ids parsed, got {audit_ids:?}"
+		ids,
+		["RUSTSEC-0000-0000".to_string()].into_iter().collect(),
+		"a reason string mentioning another RUSTSEC id must not add that \
+		 id to the set, got {ids:?}"
 	);
 
-	// cargo-audit single-line list form: both ids on the same line.
-	let audit_one_line = "\
-[advisories]
-ignore = [\"RUSTSEC-0000-0000\", \"RUSTSEC-1111-2222\"]
-";
-	let ids_inline = audit_toml_ids(audit_one_line);
-	assert_eq!(
-		ids_inline,
-		vec![
-			"RUSTSEC-0000-0000".to_string(),
-			"RUSTSEC-1111-2222".to_string()
-		],
-		"cargo-audit single-line form: both ids parsed, got {ids_inline:?}"
-	);
-
-	// The negative control: a deny.toml fixture where the two parsers
-	// disagree. The parser pair, not the input set, is what the
-	// agreement test depends on: a parser that hardcoded the
-	// canonical set would pass every assertion above against any
-	// well-formed file, including a drifted one.
-	let deny_differs = "\
+	// (d) Negative fixture: a deliberate mismatch between two
+	// fixtures makes the parser pair disagree. A parser that
+	// hardcoded the canonical set would still pass every assertion
+	// above against any well-formed input; this fixture proves the
+	// parsers actually read the bytes.
+	let a = "\
 [advisories]
 ignore = [{ id = \"RUSTSEC-9999-9999\", reason = \"x\" }]
 ";
-	let audit_differs = "\
+	let b = "\
 [advisories]
 ignore = [\"RUSTSEC-0000-0000\"]
 ";
-	let d: std::collections::BTreeSet<_> = deny_toml_ids(deny_differs).into_iter().collect();
-	let a: std::collections::BTreeSet<_> = audit_toml_ids(audit_differs).into_iter().collect();
+	let sa: std::collections::BTreeSet<_> = ignored_ids(a).into_iter().collect();
+	let sb: std::collections::BTreeSet<_> = ignored_ids(b).into_iter().collect();
 	assert_ne!(
-		d, a,
-		"the negative fixture did not disagree between parsers; the \
-		 agreement test would have passed against drifted lists, which \
-		 is the failure mode the inline case is here to prove the \
-		 parsers can catch. deny: {d:?}, audit: {a:?}"
+		sa, sb,
+		"the negative fixture did not disagree between parses; the \
+		 agreement test would have passed against drifted lists, \
+		 which is the failure mode this case is here to prove the \
+		 parser can catch. deny: {sa:?}, audit: {sb:?}"
 	);
 }
