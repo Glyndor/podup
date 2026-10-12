@@ -25,23 +25,12 @@ on:
         description: Exact version of cargo-deny to install; bumped by editing this file
         type: string
         default: "0.20.2"
-      # Empty means actions/checkout's default, the event's ref.
-      # audit.yml passes develop so the daily schedule, which always
-      # runs on main, audits develop as well.
-      ref:
-        description: Branch or tag to check out; empty means actions/checkout's own default (the event's ref).
-        type: string
-        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  # inputs.ref is part of the key: a schedule carries refs/heads/main
-  # as github.ref whichever branch a caller audits, so without it the
-  # main and develop audits of one run would share a group and cancel
-  # each other.
-  group: rust-audit-${{ github.workflow }}-${{ github.ref }}-${{ inputs.ref }}-${{ inputs.working-directory }}
+  group: rust-audit-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working-directory }}
   cancel-in-progress: true
 
 jobs:
@@ -60,8 +49,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # See the ref input.
-          ref: ${{ inputs.ref }}
 
       - name: Install toolchain
         env:
@@ -70,14 +57,7 @@ jobs:
           rustup toolchain install "$TOOLCHAIN" --profile minimal
           rustup default "$TOOLCHAIN"
 
-      # No cache when the caller picks another ref. The schedule runs in
-      # main's cache scope, which every branch reads, and cargo here runs
-      # over the other ref's tree (cargo deny calls cargo metadata, which
-      # honours that tree's .cargo/config.toml). Installing from scratch
-      # costs minutes once a day; a cache written from that tree would be
-      # read by every later run. CodeQL flagged it on #2036.
-      - if: inputs.ref == ''
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/bin
@@ -115,8 +95,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # See the ref input.
-          ref: ${{ inputs.ref }}
 
       - name: Install toolchain
         env:
@@ -125,9 +103,7 @@ jobs:
           rustup toolchain install "$TOOLCHAIN" --profile minimal
           rustup default "$TOOLCHAIN"
 
-      # Same no-cache rule as the cargo-audit job above.
-      - if: inputs.ref == ''
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/bin
