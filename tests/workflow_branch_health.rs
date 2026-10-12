@@ -469,11 +469,16 @@ fn ci_yml_health_if_value(workflow: &str, job_id: &str) -> Option<String> {
 
 /// The `if:` line that takes a health caller out of the push run of the
 /// branch it watches, with the branch half taken from that job's own
-/// `with.branch`. Anything stronger (`&& ...`) is fine in principle but
-/// is rejected here so a future refactor that flips the conjunction or
-/// appends `|| true` does not silently disarm the latching fix.
+/// `with.branch`, behind the merge-queue exclusion: the watchers do not
+/// run in a merge group, which answers a question about the queue and
+/// not about the branch they watch. Anything else is rejected so a
+/// future refactor that flips the conjunction or appends `|| true` does
+/// not silently disarm the latching fix.
 fn expected_health_if(branch: &str) -> String {
-	format!("github.event_name != 'push' || github.ref_name != '{branch}'")
+	format!(
+		"github.event_name != 'merge_group' && \
+		 (github.event_name != 'push' || github.ref_name != '{branch}')"
+	)
 }
 
 /// Whether a job's `if:` is exactly the self-branching shape for its
@@ -547,7 +552,7 @@ jobs:
 	let ci_swapped = "\
 jobs:
   health-main:
-    if: github.event_name != 'push' || github.ref_name != 'develop'
+    if: github.event_name != 'merge_group' && (github.event_name != 'push' || github.ref_name != 'develop')
     uses: ./.github/workflows/reusable-branch-health.yml
     with:
       workflow: ci.yml
@@ -565,7 +570,7 @@ jobs:
 	let ci_true = "\
 jobs:
   health-main:
-    if: github.event_name != 'push' || github.ref_name != 'main' || true
+    if: github.event_name != 'merge_group' && (github.event_name != 'push' || github.ref_name != 'main') || true
     uses: ./.github/workflows/reusable-branch-health.yml
     with:
       workflow: ci.yml
