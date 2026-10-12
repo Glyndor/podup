@@ -25,12 +25,23 @@ on:
         description: Exact version of cargo-deny to install; bumped by editing this file
         type: string
         default: "0.20.2"
+      # Empty means actions/checkout's default, the event's ref.
+      # audit.yml passes develop so the daily schedule, which always
+      # runs on main, audits develop as well.
+      ref:
+        description: Branch or tag to check out; empty means actions/checkout's own default (the event's ref).
+        type: string
+        default: ""
 
 permissions:
   contents: read
 
 concurrency:
-  group: rust-audit-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working-directory }}
+  # inputs.ref is part of the key: a schedule carries refs/heads/main
+  # as github.ref whichever branch a caller audits, so without it the
+  # main and develop audits of one run would share a group and cancel
+  # each other.
+  group: rust-audit-${{ github.workflow }}-${{ github.ref }}-${{ inputs.ref }}-${{ inputs.working-directory }}
   cancel-in-progress: true
 
 jobs:
@@ -49,6 +60,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # See the ref input.
+          ref: ${{ inputs.ref }}
 
       - name: Install toolchain
         env:
@@ -95,6 +108,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # See the ref input.
+          ref: ${{ inputs.ref }}
 
       - name: Install toolchain
         env:

@@ -1,0 +1,7 @@
+# cargo-audit's ignore list. cargo-deny reads deny.toml; cargo-audit reads
+# this file, relative to the directory it runs in, and release.yml runs it
+# from the repository root with --deny warnings. The reason for each entry
+# is written in deny.toml. tests/audit_ignore_lists.rs keeps the two equal.
+
+[advisories]
+ignore = ["RUSTSEC-2024-0449"]
