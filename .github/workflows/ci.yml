@@ -5,6 +5,13 @@ on:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+  # The `rust` job is required on develop and the ruleset matches the check
+  # name GitHub reports. In a merge queue the event is `merge_group` on a
+  # temporary branch; the job must run there too or the queue never merges.
+  # `paths:` and `branches:` filters do not apply to merge_group, so this
+  # is a top-level trigger rather than a per-event condition.
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -102,6 +109,11 @@ jobs:
   # lives in the organisation standard, and it is repeated here because this
   # file is what somebody wiring a ruleset has open.
   freshness-audit:
+    # Not a required check, and the freshness watchers report on OTHER
+    # workflows' runs and other branches, not about the merge group. They
+    # already run on the pull request, so in the queue they would only
+    # spend runners. The same `if:` sits on every watcher below.
+    if: github.event_name != 'merge_group'
     permissions:
       contents: read
       actions: read
@@ -111,6 +123,7 @@ jobs:
       max-age-days: 15
 
   freshness-fuzz:
+    if: github.event_name != 'merge_group'
     permissions:
       contents: read
       actions: read
@@ -120,6 +133,7 @@ jobs:
       max-age-days: 15
 
   freshness-podman-lane:
+    if: github.event_name != 'merge_group'
     permissions:
       contents: read
       actions: read
@@ -129,6 +143,7 @@ jobs:
       max-age-days: 3
 
   freshness-podman-watch:
+    if: github.event_name != 'merge_group'
     permissions:
       contents: read
       actions: read
@@ -167,6 +182,7 @@ jobs:
   # Monthly (`0 4 1 * *`), so seventeen days without a run is normal and a
   # weekly threshold here would fail on ordinary work for most of the month.
   freshness-benchmark:
+    if: github.event_name != 'merge_group'
     permissions:
       contents: read
       actions: read
@@ -205,7 +221,7 @@ jobs:
   # check is advisory and is not on the ruleset, so a missing run does not
   # break a pull request.
   health-main:
-    if: github.event_name != 'push' || github.ref_name != 'main'
+    if: github.event_name != 'merge_group' && (github.event_name != 'push' || github.ref_name != 'main')
     name: branch health (main)
     permissions:
       contents: read
@@ -216,7 +232,7 @@ jobs:
       branch: main
 
   health-develop:
-    if: github.event_name != 'push' || github.ref_name != 'develop'
+    if: github.event_name != 'merge_group' && (github.event_name != 'push' || github.ref_name != 'develop')
     name: branch health (develop)
     permissions:
       contents: read
@@ -235,6 +251,7 @@ jobs:
   # running: run 32435521566 reported "no Dependabot pull request on record"
   # while ten sat open. v1.16.1 pages the window.
   dependabot-freshness:
+    if: github.event_name != 'merge_group'
     uses: ./.github/workflows/reusable-dependabot-freshness.yml
     with:
       max-age-days: 15

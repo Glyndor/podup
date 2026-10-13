@@ -10,7 +10,15 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
-ignore = []
+# RUSTSEC-2024-0449: unsafe-libyaml 0.2.11 is unmaintained. It is not a
+# known vulnerability. It comes in through serde_yaml_ng 0.10.0, the latest
+# release, so no bump clears it. What it parses is the compose file of the
+# person running podup. Moving off it is #2035, and that pull request
+# removes this entry and the one in .cargo/audit.toml.
+# tests/audit_ignore_lists.rs keeps the two lists equal.
+ignore = [
+    { id = "RUSTSEC-2024-0449", reason = "unmaintained, not a known vulnerability; pulled by serde_yaml_ng 0.10.0, the latest release; see #2035" },
+]
 
 [licenses]
 version = 2
