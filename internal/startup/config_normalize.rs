@@ -122,10 +122,11 @@ pub(super) fn quote_yaml11_booleans(yaml: &str) -> String {
 	joined
 }
 
-/// If `line` opens a block scalar (`key: |`, `- key: >-`, `- |`), the column its
-/// content is indented past: the key's column for a mapping entry, the last
-/// dash's for a sequence item. The block ends at the first non-blank line that
-/// is not indented past it.
+/// If `line` opens a block scalar (`key: |`, `- key: >-`, `- |`, `? |`, with an
+/// optional tag before the indicator), the column its content is indented
+/// past: the key's column for a mapping entry, the last `-` or `?` indicator's
+/// for a sequence item or an explicit key. The block ends at the first
+/// non-blank line that is not indented past it.
 fn block_scalar_parent(line: &str) -> Option<usize> {
 	let (head, header) = line.rsplit_once(' ')?;
 	let mut indicator = header.chars();
@@ -134,14 +135,20 @@ fn block_scalar_parent(line: &str) -> Option<usize> {
 	{
 		return None;
 	}
+	let head = match head.rsplit_once(' ') {
+		Some((before, tag)) if tag.starts_with('!') => before,
+		_ => head,
+	};
 	if head.ends_with(':') {
+		// The key may follow sequence dashes and explicit-key markers
+		// (`- key: |`, `? key: |`); its own column is what the content passes.
 		let mut key = head.trim_start_matches(' ');
-		while let Some(rest) = key.strip_prefix("- ") {
+		while let Some(rest) = key.strip_prefix("- ").or_else(|| key.strip_prefix("? ")) {
 			key = rest.trim_start_matches(' ');
 		}
 		return Some(head.len() - key.len());
 	}
-	if !head.trim().is_empty() && head.split_whitespace().all(|t| t == "-") {
+	if !head.trim().is_empty() && head.split_whitespace().all(|t| t == "-" || t == "?") {
 		return Some(head.len() - 1);
 	}
 	None

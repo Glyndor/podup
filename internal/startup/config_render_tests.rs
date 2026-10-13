@@ -329,7 +329,7 @@ fn yaml_output_reads_back_as_the_json_output() {
 	// must not reach inside them, or `enabled: yes` becomes `enabled: 'yes'`
 	// in the value itself and the YAML output disagrees with the JSON output.
 	let file = podup::parse_str(
-		"services:\n  s:\n    image: alpine\n    labels:\n      note: \"enabled: yes\\nmode: off\\n\"\n      flag: \"on\"\n    environment:\n      CONF: \"a: no\\nb: y\"\n    command: [\"sh\", \"-c\", \"echo on\\necho off\"]\n",
+		"services:\n  s:\n    image: alpine\n    labels:\n      note: \"enabled: yes\\nmode: off\\n\"\n      flag: \"on\"\n    environment:\n      CONF: \"a: no\\nb: y\"\n    command: [\"sh\", \"-c\", \"- yes\\n- off\"]\n",
 	)
 	.unwrap();
 	let render = |format| {
@@ -345,7 +345,10 @@ fn yaml_output_reads_back_as_the_json_output() {
 		.unwrap();
 		String::from_utf8(buf).unwrap()
 	};
-	let yaml: serde_yaml::Value = serde_yaml::from_str(&render(ConfigFormat::Yaml)).unwrap();
+	let yaml_text = render(ConfigFormat::Yaml);
+	// Single-line booleans outside a block are still quoted for YAML 1.1 readers.
+	assert!(yaml_text.contains("flag: 'on'"), "got:\n{yaml_text}");
+	let yaml: serde_yaml::Value = serde_yaml::from_str(&yaml_text).unwrap();
 	let json: serde_json::Value = serde_json::from_str(&render(ConfigFormat::Json)).unwrap();
 	assert_eq!(serde_json::to_value(&yaml).unwrap(), json);
 	assert_eq!(

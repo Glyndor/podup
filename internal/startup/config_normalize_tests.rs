@@ -79,12 +79,41 @@ x:
 }
 
 #[test]
+fn quote_yaml11_booleans_keeps_every_string_the_serializer_wrote() {
+	// Real serializer output for blocks under an explicit key (`? note: |`),
+	// a multiline key written as `? |`, and a tagged block (`!reset |`).
+	// Reading the quoted text back must give the same value, and the
+	// single-line `no` after each block must still be quoted.
+	for doc in [
+		"? {note: \"enabled: yes\\n\", flag: \"no\"}\n: \"off\"\n",
+		"? [{note: \"enabled: yes\\n\", flag: \"no\"}]\n: \"off\"\n",
+		"\"enabled: yes\\nmode: off\\n\": value\nflag: \"no\"\n",
+		"note: !reset \"enabled: yes\\nmode: off\\n\"\nflag: \"no\"\n",
+	] {
+		let value: serde_yaml::Value = serde_yaml::from_str(doc).unwrap();
+		let emitted = serde_yaml::to_string(&value).unwrap();
+		let quoted = quote_yaml11_booleans(&emitted);
+		let back: serde_yaml::Value = serde_yaml::from_str(&quoted).unwrap();
+		assert_eq!(back, value, "emitted:\n{emitted}quoted:\n{quoted}");
+		assert!(
+			quoted.contains("flag: 'no'"),
+			"emitted:\n{emitted}quoted:\n{quoted}"
+		);
+	}
+}
+
+#[test]
 fn block_scalar_parent_reads_the_header_column() {
 	assert_eq!(block_scalar_parent("  a: |"), Some(2));
 	assert_eq!(block_scalar_parent("- note: >-"), Some(2));
 	assert_eq!(block_scalar_parent("  - - key: |2+"), Some(6));
 	assert_eq!(block_scalar_parent("- |"), Some(0));
 	assert_eq!(block_scalar_parent("  - - |"), Some(4));
+	assert_eq!(block_scalar_parent("? note: |"), Some(2));
+	assert_eq!(block_scalar_parent("? - note: |"), Some(4));
+	assert_eq!(block_scalar_parent("? |"), Some(0));
+	assert_eq!(block_scalar_parent("note: !reset |"), Some(0));
+	assert_eq!(block_scalar_parent("- !reset |-"), Some(0));
 	// Not a header: a plain value ending in `|`, an indicator followed by
 	// something else, and a bare `|` with nothing before it.
 	assert_eq!(block_scalar_parent("a: b |"), None);
