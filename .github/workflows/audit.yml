@@ -90,10 +90,10 @@ jobs:
       - name: Dispatch audit.yml on develop and wait for it
         run: |
           set -euo pipefail
-          gh workflow run audit.yml --ref develop -f parent-run="$GITHUB_RUN_ID"
+          gh workflow run audit.yml --ref develop -f parent-run="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           ID=
           for _ in $(seq 1 10); do
-            ID=$(gh run list --workflow audit.yml --branch develop --event workflow_dispatch --limit 20 --json databaseId,displayTitle --jq "map(select(.displayTitle == \"Security audit of develop for run $GITHUB_RUN_ID\")) | .[0].databaseId // empty")
+            ID=$(gh run list --workflow audit.yml --branch develop --event workflow_dispatch --limit 20 --json databaseId,displayTitle --jq "map(select(.displayTitle == \"Security audit of develop for run $GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\")) | .[0].databaseId // empty")
             if [ -n "$ID" ]; then
               break
             fi

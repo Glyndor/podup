@@ -35,7 +35,7 @@ fn parse_entry(file: &str, l: &str) -> Option<String> {
 			.strip_prefix("reason = ")?
 			.strip_prefix('"')?
 			.strip_suffix('"')?;
-		(!rv.contains('"')).then_some(())?;
+		(!rv.contains('"') && !rv.contains('\\')).then_some(())?;
 		is_rustsec(id).map(String::from)
 	}
 }
@@ -52,7 +52,7 @@ fn ignored(file: &str, body: &str, shape: &str) -> Vec<String> {
 		if !in_adv {
 			continue;
 		}
-		let ig = l.starts_with("ignore =") || l.starts_with("ignore=");
+		let ig = l.split_once('=').is_some_and(|(k, _)| k.trim() == "ignore");
 		match (in_arr, ig, l) {
 			(false, _, l) if l.is_empty() || l.starts_with('#') => continue,
 			(false, _, l) if l.starts_with('[') && l.ends_with(']') && l != "[advisories]" => break,
@@ -63,13 +63,13 @@ fn ignored(file: &str, body: &str, shape: &str) -> Vec<String> {
 				}
 				seen = true;
 				match l {
-					"ignore = []" => return Vec::new(),
+					"ignore = []" => {}
 					"ignore = [" => in_arr = true,
 					_ => bad!(l),
 				}
 			}
 			(true, true, _) => dup(),
-			(true, false, "]") => return out,
+			(true, false, "]") => in_arr = false,
 			(true, false, l) => match parse_entry(file, l) {
 				Some(id) => out.push(id),
 				None => bad!(l),
@@ -79,7 +79,10 @@ fn ignored(file: &str, body: &str, shape: &str) -> Vec<String> {
 	if !seen {
 		dup();
 	}
-	panic!("{file}: missing closing `]` for ignore array");
+	if in_arr {
+		panic!("{file}: missing closing `]` for ignore array");
+	}
+	out
 }
 fn cargo_ids(body: &str) -> Vec<String> {
 	ignored(".cargo/audit.toml", body, "`\"RUSTSEC-YYYY-NNNN\",`")
@@ -136,5 +139,22 @@ fn deny_entry_with_reason_mentioning_id_yields_only_id() {
 	assert_eq!(
 		deny_ids("[advisories]\nignore = [\n    { id = \"RUSTSEC-2024-0001\", reason = \"see RUSTSEC-9999-9999\" },\n]\n"),
 		vec!["RUSTSEC-2024-0001".to_string()]
+	);
+}
+#[test]
+#[should_panic(expected = "expected exactly one ignore key")]
+fn second_ignore_key_after_the_array_panics() {
+	let _ = cargo_ids("[advisories]\nignore = []\nignore = []\n");
+}
+#[test]
+#[should_panic(expected = "write the ignore list in the canonical form")]
+fn ignore_key_with_other_spacing_panics() {
+	let _ = cargo_ids("[advisories]\nignore  = [\n]\n");
+}
+#[test]
+#[should_panic(expected = "write the ignore list in the canonical form")]
+fn deny_reason_with_a_backslash_panics() {
+	let _ = deny_ids(
+		"[advisories]\nignore = [\n    { id = \"RUSTSEC-2024-0001\", reason = \"C:\\work\" },\n]\n",
 	);
 }
