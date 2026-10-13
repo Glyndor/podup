@@ -1,32 +1,43 @@
 name: Security audit
 
-# Two triggers answering two different questions, and the split is the whole
-# point rather than a convenience.
+# Three triggers, three questions, and the split is the whole point.
 #
-# The weekly cron audits the WHOLE tree against an advisory database that moves
-# on somebody else's schedule. A finding there belongs to a third party: RustSec
-# published something today about a crate nobody here touched. That must not be
-# able to block a pull request, which is why this workflow was cron-only, and
-# `standards/testing` says so in as many words: "a finding that belongs to a
-# third party must NOT fail the run, or someone else's disclosure timing blocks
-# every pull request in the organisation".
+# The daily schedule audits the WHOLE tree on both branches against an
+# advisory database that moves on somebody else's schedule. A finding
+# there belongs to a third party: RustSec published something today
+# about a crate nobody here touched. That must not be able to block a
+# pull request, which is why this workflow kept pull requests off the
+# third-party-timing lane, and `standards/testing` says so in as many
+# words: "a finding that belongs to a third party must NOT fail the run,
+# or someone else's disclosure timing blocks every pull request in the
+# organisation".
 #
-# The pull-request trigger asks the other question: does THIS change introduce a
-# dependency with a known advisory? That finding belongs to the pull request, and
-# blocking is the right answer. Scoping it to the manifest and the lockfile is
-# what keeps the two apart: a pull request that touches neither cannot introduce
-# a dependency, so upstream's timing reaches it through the cron and not through
-# a red check it did not cause.
+# The pull-request trigger asks the other question: does THIS change
+# introduce a dependency with a known advisory? That finding belongs to
+# the pull request, and blocking is the right answer. Scoping it to the
+# manifest, the lockfile and the two ignore lists is what keeps the two
+# apart: a pull request that touches none of them cannot introduce a
+# dependency, so upstream's timing reaches it through the cron and not
+# through a red check it did not cause.
 #
-# The residue, stated rather than discovered: a pull request that does change the
-# lockfile on the day an unrelated advisory lands is blocked by that advisory.
-# That is the narrow case where the two questions overlap, and it lands on the
-# pull request that is changing dependencies, which is where someone is already
-# looking at them.
+# The residue, stated rather than discovered: a pull request that does
+# change the lockfile on the day an unrelated advisory lands is blocked
+# by that advisory. That is the narrow case where the two questions
+# overlap, and it lands on the pull request that is changing
+# dependencies, which is where someone is already looking at them.
+#
+# The schedule audits main and starts a run of this workflow on develop;
+# the report job below opens an issue when either does not succeed
+# (#2034).
 on:
   schedule:
-    - cron: "0 6 * * 1"  # Every Monday at 06:00 UTC
+    - cron: "0 6 * * *"  # Daily at 06:00 UTC
   workflow_dispatch:
+    inputs:
+      parent-run:
+        description: Set by the scheduled run on main to its own run id when it starts the develop audit; empty for a manual dispatch
+        type: string
+        default: ""
   pull_request:
     branches:
       - main
@@ -35,12 +46,126 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "deny.toml"
+      - ".cargo/audit.toml"
       - ".github/workflows/audit.yml"
       - ".github/workflows/reusable-rust-audit.yml"
 
 permissions:
   contents: read
 
+# On a schedule or pull_request event `inputs.parent-run` is empty and
+# the run is named after the workflow. On a workflow_dispatch started by
+# the schedule the input carries the parent's run id and the run is
+# named so the parent can find its own child by displayTitle.
+run-name: ${{ inputs.parent-run && format('Security audit of develop for run {0}', inputs.parent-run) || github.workflow }}
+
 jobs:
+  # Kept as audit so its check names stay the same.
   audit:
     uses: ./.github/workflows/reusable-rust-audit.yml
+
+  # A schedule only runs on the default branch. Checking develop out
+  # inside this run would execute develop's tree in main's context,
+  # where any step can write the cache every branch reads (CodeQL,
+  # #2036). So the schedule starts a separate run of this workflow on
+  # develop, waits for it, and fails when that run does not succeed or
+  # never appears at all: a "queued forever" dispatch and a dispatch
+  # that returned a run id but exited non-zero both leave this job
+  # non-success, and the report job below then opens an issue for the
+  # develop branch instead of declaring it green by omission.
+  audit-develop:
+    name: start the develop audit
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    # Bound: the dispatched audit installs its tools and runs both
+    # checks; forty minutes covers that plus a queue, and no run has
+    # been measured yet.
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Dispatch audit.yml on develop and wait for it
+        run: |
+          set -euo pipefail
+          gh workflow run audit.yml --ref develop -f parent-run="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          ID=
+          for _ in $(seq 1 10); do
+            ID=$(gh run list --workflow audit.yml --branch develop --event workflow_dispatch --limit 20 --json databaseId,displayTitle --jq "map(select(.displayTitle == \"Security audit of develop for run $GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT\")) | .[0].databaseId // empty")
+            if [ -n "$ID" ]; then
+              break
+            fi
+            sleep 15
+          done
+          if [ -z "$ID" ]; then
+            echo "::error::the develop audit was dispatched but its run never appeared"
+            exit 1
+          fi
+          if ! gh run watch "$ID" --exit-status --interval 30; then
+            echo "::error::the develop audit run $ID did not succeed; see $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$ID"
+            exit 1
+          fi
+          echo "Develop audit run: $GITHUB_SERVER_URL/$GH_REPO/actions/runs/$ID"
+
+  # Runs when this run's audit did not succeed (failure, cancellation or
+  # timeout). On the schedule it reports both branches, because the job
+  # above fails when develop's run fails or never appears. A develop run
+  # started by the schedule passes parent-run and does not report itself;
+  # a manual dispatch reports its own branch. issues: write is granted
+  # to this job alone; nothing here checks out code or installs tools,
+  # and every value reaches the script through env.
+  #
+  # Two reporters running at once can open two issues; that only happens
+  # when a manual dispatch fails at the same moment as the schedule, and
+  # a duplicate issue is cheaper than a lost report, which is what a
+  # concurrency group would risk (GitHub keeps one pending job and
+  # cancels the rest).
+  report:
+    name: open an issue when the scheduled audit fails
+    runs-on: ubuntu-latest
+    needs: [audit, audit-develop]
+    if: always() && ((github.event_name == 'schedule' && (needs.audit.result != 'success' || needs.audit-develop.result != 'success')) || (github.event_name == 'workflow_dispatch' && !inputs.parent-run && needs.audit.result != 'success'))
+    permissions:
+      issues: write
+    # Bound: no runs measured yet, so the ten-minute floor every job
+    # here uses.
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      REF_NAME: ${{ github.ref_name }}
+      AUDIT_RESULT: ${{ needs.audit.result }}
+      DISPATCH_RESULT: ${{ needs.audit-develop.result }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      ISSUE_TITLE: Scheduled dependency audit failed
+    steps:
+      - name: Open a single tracking issue and update it on each failure
+        run: |
+          set -euo pipefail
+          NUMBER=$(gh issue list --state open --search "in:title \"$ISSUE_TITLE\"" --json number,title \
+            --jq 'map(select(.title == env.ISSUE_TITLE)) | .[0].number // empty')
+          DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          BRANCHES=""
+          if [ "$AUDIT_RESULT" != "success" ]; then
+            BRANCHES="${BRANCHES}${REF_NAME} (${AUDIT_RESULT}), "
+          fi
+          if [ "$DISPATCH_RESULT" != "success" ] && [ "$DISPATCH_RESULT" != "skipped" ]; then
+            BRANCHES="${BRANCHES}develop (${DISPATCH_RESULT}; see the start the develop audit job for the develop run), "
+          fi
+          BRANCHES="${BRANCHES%, }"
+          if [ -n "$NUMBER" ]; then
+            gh issue comment "$NUMBER" --body "Failed again on ${DATE} on: ${BRANCHES}. Run: ${RUN_URL}"
+            echo "Commented on #${NUMBER}."
+            exit 0
+          fi
+          gh issue create \
+            --title "$ISSUE_TITLE" \
+            --label "type:security" --label "prio:P1" --label "area:ci" --label "status:triage" \
+            --body "The scheduled dependency audit failed on ${DATE} on: ${BRANCHES}.
+
+          Run: ${RUN_URL}
+
+          Close this once the scheduled audit is green on both branches. While this stays open, each new failure adds a comment here instead of opening another issue."
+          echo "Opened new issue."
