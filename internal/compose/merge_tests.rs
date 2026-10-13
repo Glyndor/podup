@@ -88,7 +88,7 @@ fn guard_allows_normal_anchored_file() {
 
 #[test]
 fn guard_rejects_linear_alias_amplification() {
-	// Many references to one anchor: the OOM vector serde_yaml_ng does not bound.
+	// Many references to one anchor: the OOM vector yaml_serde does not bound.
 	let mut yaml = String::from("anchor: &a [x, y, z]\nlist:\n");
 	for _ in 0..(MAX_ALIAS_REFS + 50) {
 		yaml.push_str("  - *a\n");

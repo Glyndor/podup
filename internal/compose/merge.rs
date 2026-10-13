@@ -9,7 +9,7 @@ use crate::error::{ComposeError, Result};
 use std::collections::{HashMap, HashSet};
 
 /// Upper bound on YAML alias references in a document that uses anchors, and on
-/// the size of such a document. serde_yaml_ng already aborts deeply *nested*
+/// the size of such a document. yaml_serde already aborts deeply *nested*
 /// alias expansion (its repetition limit), but a flat document with many alias
 /// references to a non-trivial anchor expands *linearly* while the `Value` tree
 /// is built and can exhaust memory: a ~46 KB file can allocate gigabytes. Real
@@ -25,7 +25,7 @@ const MAX_ALIAS_DOC_BYTES: usize = 512 * 1024;
 /// leaving real compose files untouched.
 const MAX_ALIAS_EXPANSION_BYTES: usize = 4 * 1024 * 1024;
 
-/// Upper bound on flow-style nesting depth (`[`/`{`). serde_yaml_ng's own
+/// Upper bound on flow-style nesting depth (`[`/`{`). yaml_serde's own
 /// recursion cap eventually rejects pathological nesting, but its tokenizer is
 /// O(n^2) in the depth it scans, so a small file of deeply nested flow
 /// collections (`[[[[…]]]]`) can burn quadratic CPU time before that cap fires.
@@ -281,8 +281,8 @@ fn guard_flow_depth(content: &str) -> Result<()> {
 
 /// Count YAML alias references (`*anchor`) outside quoted scalars and comments.
 ///
-/// `serde_yaml_ng`'s event stream is not part of its public API
-/// (`Event::Alias` is `pub(crate)` in `serde_yaml_ng::de`), so we hand-roll a
+/// `yaml_serde`'s event stream is not part of its public API
+/// (`Event::Alias` is `pub(crate)` in `yaml_serde::de`), so we hand-roll a
 /// state machine that mirrors the YAML 1.2 lexer just closely enough to know
 /// where a `*name` could legally be an alias. The previous scanner toggled
 /// `in_single` on every `'` regardless of position inside a plain scalar,
@@ -366,7 +366,7 @@ fn count_alias_refs(content: &str) -> usize {
 
 /// Recursively resolve YAML merge keys (`<<: *anchor`) in a `Value` tree.
 ///
-/// serde_yaml_ng does not expose `apply_merge()`, so this replaces it.
+/// This resolves them itself rather than through the parser's `apply_merge()`.
 /// Merge semantics: keys from the anchor fill in only where the child has no value.
 fn apply_merge_keys(value: &mut serde_yaml::Value) {
 	match value {

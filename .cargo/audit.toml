@@ -4,6 +4,4 @@
 # is written in deny.toml. tests/audit_ignore_lists.rs keeps the two equal.
 
 [advisories]
-ignore = [
-    "RUSTSEC-2024-0449",
-]
+ignore = []
