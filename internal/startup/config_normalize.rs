@@ -92,7 +92,7 @@ fn normalize_lexically(path: &Path) -> String {
 /// Quote any plain (unquoted) YAML scalar value that a strict YAML 1.1 reader
 /// would misparse as a boolean (`yes`/`no`/`on`/`off`/`y`/`n`/`true`/`false`),
 /// leaving already-quoted scalars, keys, and everything else untouched. Works on
-/// serde_yaml_ng's block output, where each scalar value sits after a `: `
+/// yaml_serde's block output, where each scalar value sits after a `: `
 /// mapping separator or a `- ` sequence marker on its own line.
 pub(super) fn quote_yaml11_booleans(yaml: &str) -> String {
 	let lines: Vec<String> = yaml.lines().map(requote_bool_line).collect();
