@@ -30,6 +30,69 @@ fn quote_yaml11_booleans_quotes_only_plain_bool_scalars() {
 	assert!(out.ends_with('\n'));
 }
 
+#[test]
+fn quote_yaml11_booleans_leaves_block_scalar_content_alone() {
+	// Lines inside `|`, `|-` and `>` blocks are string content. The entry
+	// after each block, and the sibling key after a block that opens a
+	// sequence item (`- note: |`), are entries again and still get quoted.
+	let input = "\
+labels:
+  a: |
+    enabled: yes
+
+    mode: off
+  b: yes
+command:
+- |-
+  on
+- off
+volumes:
+- note: >
+    y: n
+  flag: no
+x:
+  - - |
+      - yes
+  - true
+";
+	let expected = "\
+labels:
+  a: |
+    enabled: yes
+
+    mode: off
+  b: 'yes'
+command:
+- |-
+  on
+- 'off'
+volumes:
+- note: >
+    y: n
+  flag: 'no'
+x:
+  - - |
+      - yes
+  - 'true'
+";
+	assert_eq!(quote_yaml11_booleans(input), expected);
+}
+
+#[test]
+fn block_scalar_parent_reads_the_header_column() {
+	assert_eq!(block_scalar_parent("  a: |"), Some(2));
+	assert_eq!(block_scalar_parent("- note: >-"), Some(2));
+	assert_eq!(block_scalar_parent("  - - key: |2+"), Some(6));
+	assert_eq!(block_scalar_parent("- |"), Some(0));
+	assert_eq!(block_scalar_parent("  - - |"), Some(4));
+	// Not a header: a plain value ending in `|`, an indicator followed by
+	// something else, and a bare `|` with nothing before it.
+	assert_eq!(block_scalar_parent("a: b |"), None);
+	assert_eq!(block_scalar_parent("a: b- |"), None);
+	assert_eq!(block_scalar_parent("a: |x"), None);
+	assert_eq!(block_scalar_parent("   |"), None);
+}
+
 #[cfg(unix)]
 #[test]
 fn short_bind_source_resolves_relative_only() {
