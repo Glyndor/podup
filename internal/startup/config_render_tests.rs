@@ -322,3 +322,37 @@ fn inject_resolved_network_names_leaves_external_networks_alone() {
 		"external networks must not get a project-prefixed name: {cfg:?}"
 	);
 }
+
+#[test]
+fn yaml_output_reads_back_as_the_json_output() {
+	// Multiline strings come out as block scalars. The YAML 1.1 quoting pass
+	// must not reach inside them, or `enabled: yes` becomes `enabled: 'yes'`
+	// in the value itself and the YAML output disagrees with the JSON output.
+	let file = podup::parse_str(
+		"services:\n  s:\n    image: alpine\n    labels:\n      note: \"enabled: yes\\nmode: off\\n\"\n      flag: \"on\"\n    environment:\n      CONF: \"a: no\\nb: y\"\n    command: [\"sh\", \"-c\", \"- yes\\n- off\"]\n",
+	)
+	.unwrap();
+	let render = |format| {
+		let mut buf = Vec::new();
+		render_config_to(
+			&mut buf,
+			&file,
+			&format,
+			&ConfigOutput::default(),
+			"proj",
+			Path::new("/proj"),
+		)
+		.unwrap();
+		String::from_utf8(buf).unwrap()
+	};
+	let yaml_text = render(ConfigFormat::Yaml);
+	// Single-line booleans outside a block are still quoted for YAML 1.1 readers.
+	assert!(yaml_text.contains("flag: 'on'"), "got:\n{yaml_text}");
+	let yaml: serde_yaml::Value = serde_yaml::from_str(&yaml_text).unwrap();
+	let json: serde_json::Value = serde_json::from_str(&render(ConfigFormat::Json)).unwrap();
+	assert_eq!(serde_json::to_value(&yaml).unwrap(), json);
+	assert_eq!(
+		json["services"]["s"]["labels"]["note"],
+		"enabled: yes\nmode: off\n"
+	);
+}
