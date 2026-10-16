@@ -1,3 +1,14 @@
+podup (5.10.20) unstable; urgency=medium
+
+  * rustls 0.23.46, which fixes RUSTSEC-2026-0346 to 0349 in the TLS stack
+    behind the self-update download.
+  * `podup config` no longer quotes yes/no/on/off inside multiline strings.
+  * The compose parser moves from serde_yaml_ng to yaml_serde, off the
+    unmaintained serde_yaml_ng line (RUSTSEC-2024-0449).
+  * Podman 6.1.4 is the validated baseline.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Fri, 16 Oct 2026 12:09:33 -0500
+
 podup (5.10.19) unstable; urgency=medium
 
   * hyper 1.12.0, the HTTP client podup uses to talk to Podman.

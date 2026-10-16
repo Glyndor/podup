@@ -92,16 +92,66 @@ fn normalize_lexically(path: &Path) -> String {
 /// Quote any plain (unquoted) YAML scalar value that a strict YAML 1.1 reader
 /// would misparse as a boolean (`yes`/`no`/`on`/`off`/`y`/`n`/`true`/`false`),
 /// leaving already-quoted scalars, keys, and everything else untouched. Works on
-/// serde_yaml_ng's block output, where each scalar value sits after a `: `
+/// yaml_serde's block output, where each scalar value sits after a `: `
 /// mapping separator or a `- ` sequence marker on its own line.
+///
+/// A multiline string is the exception: it is written as a block scalar (`|`,
+/// `>-`), whose lines are the string's content, so they pass through untouched.
 pub(super) fn quote_yaml11_booleans(yaml: &str) -> String {
-	let lines: Vec<String> = yaml.lines().map(requote_bool_line).collect();
+	// Set while inside a block scalar: the column its content is indented past.
+	let mut block_parent: Option<usize> = None;
+	let lines: Vec<String> = yaml
+		.lines()
+		.map(|line| {
+			if let Some(parent) = block_parent {
+				let indent = line.len() - line.trim_start_matches(' ').len();
+				if line.trim().is_empty() || indent > parent {
+					return line.to_string();
+				}
+				block_parent = None;
+			}
+			block_parent = block_scalar_parent(line);
+			requote_bool_line(line)
+		})
+		.collect();
 	let mut joined = lines.join("\n");
 	// `lines()` drops the trailing newline serde_yaml emits; restore it.
 	if yaml.ends_with('\n') {
 		joined.push('\n');
 	}
 	joined
+}
+
+/// If `line` opens a block scalar (`key: |`, `- key: >-`, `- |`, `? |`, with an
+/// optional tag before the indicator), the column its content is indented
+/// past: the key's column for a mapping entry, the last `-` or `?` indicator's
+/// for a sequence item or an explicit key. The block ends at the first
+/// non-blank line that is not indented past it.
+fn block_scalar_parent(line: &str) -> Option<usize> {
+	let (head, header) = line.rsplit_once(' ')?;
+	let mut indicator = header.chars();
+	if !matches!(indicator.next(), Some('|' | '>'))
+		|| !indicator.all(|c| c.is_ascii_digit() || c == '+' || c == '-')
+	{
+		return None;
+	}
+	let head = match head.rsplit_once(' ') {
+		Some((before, tag)) if tag.starts_with('!') => before,
+		_ => head,
+	};
+	if head.ends_with(':') {
+		// The key may follow sequence dashes and explicit-key markers
+		// (`- key: |`, `? key: |`); its own column is what the content passes.
+		let mut key = head.trim_start_matches(' ');
+		while let Some(rest) = key.strip_prefix("- ").or_else(|| key.strip_prefix("? ")) {
+			key = rest.trim_start_matches(' ');
+		}
+		return Some(head.len() - key.len());
+	}
+	if !head.trim().is_empty() && head.split_whitespace().all(|t| t == "-" || t == "?") {
+		return Some(head.len() - 1);
+	}
+	None
 }
 
 /// Quote the scalar value on a single block-YAML line if it is an unquoted YAML

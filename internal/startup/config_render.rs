@@ -150,7 +150,7 @@ pub(crate) fn render_config_to<W: Write>(
 				serde_yaml::to_value(&redacted).map_err(podup::ComposeError::Parse)?;
 			prune_yaml_nulls(&mut v);
 			let yaml = serde_yaml::to_string(&v).map_err(podup::ComposeError::Parse)?;
-			// serde_yaml_ng emits YAML 1.2, where `yes`/`no`/`on`/`off` are plain
+			// yaml_serde emits YAML 1.2, where `yes`/`no`/`on`/`off` are plain
 			// strings and stay unquoted. A strict YAML 1.1 reader (docker compose's
 			// emitter among them) would misread those as booleans, so quote any
 			// string scalar that looks like a YAML 1.1 boolean to match.
