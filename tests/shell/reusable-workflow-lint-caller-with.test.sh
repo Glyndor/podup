@@ -8,10 +8,10 @@
 # different lever: the ruleset requires the check NAME, but the
 # underlying job runs differently when the input value is not the
 # one the ruleset was configured against. A pull request to
-# ci.yml:coverage-threshold: 76 -> 0, ci.yml:msrv: 1.85 -> '',
+# ci.yml:coverage-threshold: 76 -> 0, ci.yml:msrv: 1.88 -> '',
 # ci.yml:extra-test-os: '["macos-latest", ...]' -> '[]', or
 # ci.yml:doc-warnings: true -> false would all keep `rust / Coverage`,
-# `rust / MSRV`, `rust / MSRV (1.85)`, `rust / Extra platforms`,
+# `rust / MSRV`, `rust / MSRV (1.88)`, `rust / Extra platforms`,
 # `rust / Doc warnings` as the names the ruleset matches and silently
 # lower or remove the gate. The lint catches each.
 #
@@ -184,11 +184,11 @@ check "and the message points at the reusable's declared default" "1" \
 check "and the step did not silently pass it" "0" \
 	"$(said "$out" 'caller-with-defaults: every caller')"
 
-# --- msrv 1.85 -> '' disables the MSRV job ---------------------------
+# --- msrv 1.88 -> '' disables the MSRV job ---------------------------
 d="$(new)"
 caller_with "$d" "      msrv: ''" "reusable-rust-ci.yml"
 out="$(run_in "$d" "$WORK/caller-with.sh")"; rc=$?
-check "with: msrv: '' (default 1.85) is refused" "1" "$rc"
+check "with: msrv: '' (default 1.88) is refused" "1" "$rc"
 check "and the message names the input key" "1" \
 	"$(said "$out" 'msrv')"
 
@@ -229,7 +229,7 @@ check "a caller with no with: block is allowed" "0" "$rc"
 # --- a caller whose with: values equal the declared defaults --------
 d="$(new)"
 caller_with "$d" "      coverage-threshold: 76
-      msrv: '1.85'
+      msrv: '1.88'
       extra-test-os: '[\"macos-latest\", \"windows-latest\"]'
       doc-warnings: true
       working-directory: '.'
