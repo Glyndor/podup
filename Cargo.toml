@@ -2,7 +2,7 @@
 name = "podup"
 version = "5.10.20"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.88"
 # podup is a binary that happens to build a library, not a library that ships a
 # binary. The `[lib]` target stays -- the integration tests in `tests/` are
 # built against it -- but it is no longer published.

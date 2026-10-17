@@ -61,7 +61,7 @@ on:
         # so callers omit `with:`; a PR that wants a different MSRV
         # moves this default on the reusable's diff, where the gate
         # name stays stable by definition.
-        default: "1.85"
+        default: "1.88"
       package-check:
         description: Run cargo publish --dry-run on PRs to catch packaging breakage before tagging
         type: boolean
@@ -346,7 +346,7 @@ jobs:
 
   msrv-gate:
     name: MSRV
-    # Same reason as extra-platforms-gate: `MSRV (1.85)` moves the day the MSRV
+    # Same reason as extra-platforms-gate: `MSRV (1.88)` moves the day the MSRV
     # moves, and takes the gate with it. MSRV is the worse of the two because it is
     # not a matrix - a single job interpolating an input into its own name. The
     # number stays visible in the job log and in the `MSRV (x.y)` job itself.

@@ -229,7 +229,7 @@ jobs:
           persist-credentials: false
       - name: Install Rust toolchain
         env:
-          RUST_TOOLCHAIN: "1.85"
+          RUST_TOOLCHAIN: "1.88"
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
       - name: Run the install self-test
         run: cargo test --locked -p podup install::tests::self_test
