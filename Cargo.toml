@@ -96,8 +96,8 @@ notify = { version = "8", optional = true }
 # ureq (rustls + webpki roots) keeps static musl builds self-contained; the
 # Ed25519 signature pinned to an embedded key is the real trust anchor, not TLS.
 ureq = { version = "3", default-features = false, features = ["rustls"], optional = true }
-ed25519-dalek = { version = "2", default-features = false, features = ["std"], optional = true }
-sha2 = "0.10"
+ed25519-dalek = { version = "3", default-features = false, optional = true }
+sha2 = "0.11"
 base64 = "0.23"
 
 [target.'cfg(unix)'.dependencies]
