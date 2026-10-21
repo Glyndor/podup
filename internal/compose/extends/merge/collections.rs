@@ -1,0 +1,89 @@
+use crate::compose::types::{ServiceNetworks, Sysctls};
+
+/// Merge `volumes:` by **container-side target**, with the override winning.
+///
+/// `merge_vec` dedups by serialized form, so a base mounting `./a:/data` and an
+/// override remapping it to `./b:/data` produced both entries, and
+/// `podman create` refused the container with `duplicate mount destination`.
+/// docker compose replaces the mount at a target it already has, which is what
+/// remapping a path in an override is *for*.
+///
+/// Base order is preserved so an unchanged mount stays where it was; an override
+/// introducing a new target appends.
+pub(super) fn merge_volumes(
+	base: Vec<crate::compose::types::VolumeMount>,
+	over: Vec<crate::compose::types::VolumeMount>,
+) -> Vec<crate::compose::types::VolumeMount> {
+	let mut out = base;
+	for item in over {
+		match out.iter().position(|m| m.target() == item.target()) {
+			Some(i) => out[i] = item,
+			None => out.push(item),
+		}
+	}
+	out
+}
+
+/// Union two `networks:` declarations, keeping the base's attachments and adding
+/// the override's. For a network both declare, the override's per-network config
+/// wins; a bare-list entry contributes no config, so it never erases one.
+///
+/// The short (list) and long (map) forms mix freely across `-f` and `extends`,
+/// so both collapse to the map form whenever either side carries config.
+pub(super) fn merge_networks(base: ServiceNetworks, over: ServiceNetworks) -> ServiceNetworks {
+	if matches!(over, ServiceNetworks::Empty) {
+		return base;
+	}
+	if matches!(base, ServiceNetworks::Empty) {
+		return over;
+	}
+	// Preserve declaration order: the base's networks first, then any the
+	// override introduces.
+	let mut out: indexmap::IndexMap<String, Option<crate::compose::types::ServiceNetworkConfig>> =
+		indexmap::IndexMap::new();
+	for name in base.names() {
+		let cfg = base.config_for(&name).cloned();
+		out.insert(name, cfg);
+	}
+	for name in over.names() {
+		let cfg = over.config_for(&name).cloned();
+		match out.entry(name) {
+			indexmap::map::Entry::Occupied(mut e) => {
+				// A bare name in the override must not wipe config the base set.
+				if cfg.is_some() {
+					e.insert(cfg);
+				}
+			}
+			indexmap::map::Entry::Vacant(e) => {
+				e.insert(cfg);
+			}
+		}
+	}
+	// Stay in the short form when nothing carries per-network config. That is the
+	// form the user wrote and the one docker keeps, and a map of all-`None`
+	// values is pruned as empty by the `config` renderer's null-stripping, which
+	// would drop the networks from the rendered file entirely.
+	if out.values().all(Option::is_none) {
+		return ServiceNetworks::List(out.into_keys().collect());
+	}
+	ServiceNetworks::Map(out)
+}
+
+/// Merge `sysctls:` per key, the way `environment` and `labels` already merge:
+/// the override wins for a key both set, and the base keeps the rest.
+pub(super) fn merge_sysctls(base: Sysctls, over: Sysctls) -> Sysctls {
+	if matches!(over, Sysctls::Empty) {
+		return base;
+	}
+	if matches!(base, Sysctls::Empty) {
+		return over;
+	}
+	let mut out: indexmap::IndexMap<String, serde_yaml::Value> = indexmap::IndexMap::new();
+	for (k, v) in base.to_map() {
+		out.insert(k, serde_yaml::Value::String(v));
+	}
+	for (k, v) in over.to_map() {
+		out.insert(k, serde_yaml::Value::String(v));
+	}
+	Sysctls::Map(out)
+}

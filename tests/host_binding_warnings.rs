@@ -377,7 +377,7 @@ fn run_podup_isolated(args: &[&str]) -> std::process::Output {
 
 /// Substring that uniquely identifies the parse-time port-exposure warning
 /// (the `is published on every interface` fragment is fixed text emitted by
-/// `port_published_on_all_interfaces` in `internal/compose/diagnostics/ignored_fields.rs`).
+/// `port_published_on_all_interfaces` in `internal/compose/diagnostics/port_exposure.rs`).
 const PORT_EXPOSURE_NEEDLE: &str = "is published on every interface";
 
 #[test]

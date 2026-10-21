@@ -412,10 +412,6 @@ fn warns_on_typo_inside_provider_and_models() {
 	);
 }
 
-#[cfg(test)]
-#[path = "port_exposure_tests.rs"]
-mod port_exposure;
-
 /// Suppress-port-exposure guard: the RAII handle the CLI installs around the
 /// parse step of read-only commands and `--no-warn` live commands, plus the
 /// `emit_diagnostic` predicate that consumes it. Tests live here alongside the

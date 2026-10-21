@@ -7,7 +7,7 @@ use crate::parse_str;
 
 fn diagnostics_for(yaml: &str) -> Vec<String> {
 	let file = parse_str(yaml).unwrap();
-	super::super::collect(&file)
+	super::collect(&file)
 }
 
 /// `5432:5432` is the canonical accidental case: the operator writes it
