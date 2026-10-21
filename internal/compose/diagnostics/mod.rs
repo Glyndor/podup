@@ -15,14 +15,16 @@ use super::types::ComposeFile;
 mod client_address;
 mod ignored_fields;
 mod nested_raw;
-pub(crate) use ignored_fields::ports_published_on_all_interfaces;
-pub(crate) use ignored_fields::ports_published_on_wildcard;
+mod port_exposure;
 use ignored_fields::{
 	ignored_build_fields, ignored_models, ignored_network_fields, ignored_port_fields,
 	ignored_restart_policy_fields, ignored_secret_config_drivers, ignored_service_fields,
-	ignored_service_network_fields, ignored_volume_mount_fields, port_published_on_all_interfaces,
+	ignored_service_network_fields, ignored_volume_mount_fields,
 };
 pub(super) use nested_raw::collect_raw_nested_warnings;
+use port_exposure::port_published_on_all_interfaces;
+pub(crate) use port_exposure::ports_published_on_all_interfaces;
+pub(crate) use port_exposure::ports_published_on_wildcard;
 
 thread_local! {
 	/// CLI gate that suppresses the parse-time "port ... is published on every
@@ -267,3 +269,6 @@ fn unknown_service_keys(file: &ComposeFile, out: &mut Vec<String>) {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod port_exposure_tests;
