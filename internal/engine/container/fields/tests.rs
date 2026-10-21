@@ -1,4 +1,4 @@
-//! Tests for `internal/engine/container/fields.rs`.
+//! Tests for `internal/engine/container/fields/mod.rs`.
 //!
 //! Split out of `fields.rs` to keep that file within the source line limit.
 
