@@ -14,7 +14,9 @@ use std::path::{Path, PathBuf};
 use crate::compose::types::ComposeFile;
 use crate::{quadlet, ComposeError};
 
-use super::{checked, config_home, emit_guards, unit_path, SystemCtl};
+use super::guards::emit_guards;
+use super::paths::{config_home, unit_path};
+use super::systemctl::{checked, SystemCtl};
 
 /// `${XDG_CONFIG_HOME:-~/.config}/containers/systemd/`, where Quadlet reads a
 /// user's units from. The same directory `generate quadlet` documents.
