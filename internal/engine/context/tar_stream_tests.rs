@@ -101,7 +101,7 @@ fn our_builder_never_writes_a_gnu_sparse_entry() {
 	let types = entry_types(builder, &path, "holey.bin");
 	assert!(
 		!types.contains(&tar::EntryType::GNUSparse),
-		"a sparse file ({sparse}) packed through engine::tar_stream::builder \
+		"a sparse file ({sparse}) packed through engine::context::tar_stream::builder \
 		 produced {types:?}; Podman answers a GNU sparse entry with \
 		 `unhandled tar header type 83` on the build endpoint and \
 		 `unrecognized Typeflag S` on the archive endpoint, and fails the whole \

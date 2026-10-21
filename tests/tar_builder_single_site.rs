@@ -12,7 +12,7 @@
 //! wrong the same way because each was written on its own. Turning the flag off
 //! four times would leave the fifth site free to be written the same way again,
 //! and nothing would say so until somebody with a sparse file reported it. So
-//! the constructor moved to `engine::tar_stream::builder` and this is the gate
+//! the constructor moved to `engine::context::tar_stream::builder` and this is the gate
 //! that keeps it the only one.
 //!
 //! Test code is exempt: a test that feeds an archive to the unpacking side has
@@ -22,7 +22,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// The single file allowed to name the crate's constructor.
-const HOME: &str = "internal/engine/tar_stream.rs";
+const HOME: &str = "internal/engine/context/tar_stream.rs";
 
 fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
 	for entry in fs::read_dir(dir).unwrap_or_else(|e| panic!("{} is readable: {e}", dir.display()))
@@ -63,7 +63,7 @@ fn only_tar_stream_constructs_a_tar_builder() {
 			continue;
 		}
 		let text = fs::read_to_string(path).unwrap_or_else(|e| panic!("{rel} is readable: {e}"));
-		// Comments are stripped: `tar_stream.rs` explains the defect by naming
+		// Comments are stripped: `context/tar_stream.rs` explains the defect by naming
 		// the call, and the docs of a rule must not read as a breach of it.
 		let code: String = text
 			.lines()
@@ -108,7 +108,7 @@ fn only_tar_stream_constructs_a_tar_builder() {
 	assert!(
 		offenders.is_empty(),
 		"these files construct a tar::Builder directly instead of calling \
-		 engine::tar_stream::builder, so the sparse default is back on and a \
+		 engine::context::tar_stream::builder, so the sparse default is back on and a \
 		 sparse file will fail the transfer, with `unhandled tar header type 83` \
 		 or `unrecognized Typeflag S` depending on the endpoint: {offenders:?}"
 	);

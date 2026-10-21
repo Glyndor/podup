@@ -138,7 +138,7 @@ impl Engine {
 	/// guards close the cases that matter in practice:
 	///
 	/// 1. The **cross-invocation** case is closed by the per-project lock
-	///    ([`crate::engine::lock`]) held for the duration of `up`. Two
+	///    ([`crate::engine::project::lock`]) held for the duration of `up`. Two
 	///    `podup` processes touching the same project serialise through it,
 	///    so the inspect is never stale across processes.
 	/// 2. The **within-invocation** case is closed by the project-scoped

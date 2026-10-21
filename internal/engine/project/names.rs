@@ -12,8 +12,8 @@ use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::is_valid_object_name;
 
-use super::network::resolve_network_name;
-use super::Engine;
+use crate::engine::network::resolve_network_name;
+use crate::engine::Engine;
 
 impl Engine {
 	/// Reject any volume, network, or container name that Podman's object-name
@@ -22,7 +22,7 @@ impl Engine {
 	/// project-prefixed default or the explicit `name:`/`container_name:`
 	/// override. External resources are looked up, not created, so a bad
 	/// external name surfaces as the clearer "does not exist" error instead.
-	pub(super) fn validate_object_names(&self, file: &ComposeFile) -> Result<()> {
+	pub(in crate::engine) fn validate_object_names(&self, file: &ComposeFile) -> Result<()> {
 		validate_object_names(file, &self.project)
 	}
 }
@@ -67,7 +67,7 @@ fn validate_object_names(file: &ComposeFile, project: &str) -> Result<()> {
 /// valid Podman object name. `kind` is the resource word ("volume", "network",
 /// "container"); `key` is the compose key it derives from, mentioned only when
 /// it differs from the resolved name so the user can locate the declaration.
-pub(super) fn ensure_valid_object_name(kind: &str, key: &str, name: &str) -> Result<()> {
+pub(in crate::engine) fn ensure_valid_object_name(kind: &str, key: &str, name: &str) -> Result<()> {
 	if is_valid_object_name(name) {
 		return Ok(());
 	}

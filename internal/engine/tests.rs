@@ -128,7 +128,7 @@ fn names(list: &[&str]) -> Vec<String> {
 fn order_replicas_sorts_by_replica_number() {
 	let live = names(&["proj-web-10", "proj-web-2", "proj-web-1"]);
 	assert_eq!(
-		super::replicas::order_replicas("proj-web", &live),
+		super::project::replicas::order_replicas("proj-web", &live),
 		names(&["proj-web-1", "proj-web-2", "proj-web-10"])
 	);
 }

@@ -78,7 +78,7 @@ pub(crate) fn enabled_profile_services(
 }
 
 /// Build the active-profile set, falling back to `COMPOSE_PROFILES` env var.
-pub(super) fn active_profiles_set(active: &[String]) -> HashSet<String> {
+pub(in crate::engine) fn active_profiles_set(active: &[String]) -> HashSet<String> {
 	if !active.is_empty() {
 		return active.iter().cloned().collect();
 	}
@@ -98,7 +98,7 @@ pub(super) fn active_profiles_set(active: &[String]) -> HashSet<String> {
 /// Services with no profiles always start. A literal `*` in the active set is a
 /// wildcard that enables every profiled service (docker compose's
 /// "enable all profiles").
-pub(super) fn service_in_profiles(service: &Service, active: &HashSet<String>) -> bool {
+pub(in crate::engine) fn service_in_profiles(service: &Service, active: &HashSet<String>) -> bool {
 	if service.profiles.is_empty() {
 		return true;
 	}

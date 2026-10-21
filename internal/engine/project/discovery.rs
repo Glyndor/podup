@@ -199,7 +199,7 @@ pub async fn list_projects_filtered(
 			.iter()
 			.map(|(name, t)| project_row(name, t, &t.config_files))
 			.collect();
-		println!("{}", super::to_pretty_json("ls.row", &arr)?);
+		println!("{}", crate::engine::to_pretty_json("ls.row", &arr)?);
 		return Ok(());
 	}
 
@@ -268,5 +268,5 @@ fn project_row(name: &str, t: &Tally, config_files: &str) -> serde_json::Value {
 }
 
 #[cfg(test)]
-#[path = "projects_tests.rs"]
+#[path = "discovery_tests.rs"]
 mod tests;

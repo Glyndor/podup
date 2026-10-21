@@ -35,7 +35,7 @@
 /// every caller wraps the writer in a `GzEncoder`, where a run of zeroes
 /// compresses to almost nothing, and the build path streams to the socket
 /// instead of buffering the archive.
-pub(super) fn builder<W: std::io::Write>(writer: W) -> tar::Builder<W> {
+pub(in crate::engine) fn builder<W: std::io::Write>(writer: W) -> tar::Builder<W> {
 	let mut tar = tar::Builder::new(writer);
 	tar.sparse(false);
 	tar

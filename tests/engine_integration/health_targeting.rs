@@ -333,7 +333,7 @@ async fn dep_on_profile_filtered_service() {
 	let engine = Engine::new(client, proj.clone());
 	// podup ACTIVATES a profile-filtered service when a service that is running
 	// depends on it, transitively, so a retained service never points at a dropped
-	// one. The rationale is in internal/engine/profiles.rs. This comment used to
+	// one. The rationale is in internal/engine/project/profiles.rs. This comment used to
 	// say the opposite (that db is skipped and its dep wait skipped with it)
 	// which is what a deliberate design looks like when nothing pins it: the next
 	// reader believes the comment over the code.

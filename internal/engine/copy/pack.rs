@@ -166,7 +166,7 @@ pub(super) fn pack_path_stream(
 			tx,
 			buf: BytesMut::with_capacity(CHUNK_BYTES),
 		};
-		let mut tar = crate::engine::tar_stream::builder(&mut writer);
+		let mut tar = crate::engine::context::tar_stream::builder(&mut writer);
 		tar.follow_symlinks(follow_link);
 		let mut sent: Vec<SentEntry> = Vec::new();
 
@@ -229,7 +229,7 @@ pub(in crate::engine) fn build_sync_tar_stream(
 			buf: BytesMut::with_capacity(CHUNK_BYTES),
 		};
 		let encoder = GzEncoder::new(&mut channel_writer, Compression::default());
-		let mut tar = crate::engine::tar_stream::builder(encoder);
+		let mut tar = crate::engine::context::tar_stream::builder(encoder);
 		// Watch sync stores symlinks as links: a symlink inside the watched
 		// tree would otherwise copy the contents of its (possibly out-of-tree)
 		// target into the container.

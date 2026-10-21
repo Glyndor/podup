@@ -6,17 +6,17 @@
 //!
 //! Podman reads `.containerignore` or `.dockerignore` and prefers its own when
 //! both exist; exactly one applies, never the union. The matcher itself lives
-//! in [`crate::engine::ignore_patterns`] so the watch engine can share it.
+//! in [`crate::engine::context::ignore_patterns`] so the watch engine can share it.
 
 use std::path::Path;
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
 
-use crate::engine::ignore_patterns::{
+use crate::engine::context::ignore_patterns::{
 	is_ignored, negation_could_reach, read_patterns, to_ignore_path,
 };
-use crate::engine::walk;
+use crate::engine::context::walk;
 use crate::error::{ComposeError, Result};
 
 /// Append the build context to `tar`, honoring `.dockerignore`.
@@ -143,7 +143,7 @@ pub(super) fn stream_build_context<W: std::io::Write>(
 ) -> Result<()> {
 	let (ignore_name, ignore_patterns) = read_patterns(context);
 	let encoder = GzEncoder::new(writer, Compression::default());
-	let mut tar = crate::engine::tar_stream::builder(encoder);
+	let mut tar = crate::engine::context::tar_stream::builder(encoder);
 
 	// Force-include the active Dockerfile so an ignore file that matches it
 	// cannot drop it from the context the builder receives (Docker parity).
@@ -182,7 +182,7 @@ pub(super) fn stream_build_context_with_inline<W: std::io::Write>(
 ) -> Result<()> {
 	let (ignore_name, ignore_patterns) = read_patterns(context);
 	let encoder = GzEncoder::new(writer, Compression::default());
-	let mut tar = crate::engine::tar_stream::builder(encoder);
+	let mut tar = crate::engine::context::tar_stream::builder(encoder);
 
 	let mut header = tar::Header::new_gnu();
 	header.set_size(inline.len() as u64);
@@ -273,7 +273,7 @@ fn append_ignore_file<W: std::io::Write>(
 /// mountable.
 ///
 /// `name` is the ignore file the server will read (see
-/// [`crate::engine::ignore_patterns::read_patterns`]); the
+/// [`crate::engine::context::ignore_patterns::read_patterns`]); the
 /// user rules are carried over from that same file, never from the other one.
 fn synthesized_ignore_file(context: &Path, name: &str, names: &[&str]) -> String {
 	let existing = crate::filesystem::read_to_string_capped(context.join(name)).unwrap_or_default();

@@ -98,7 +98,7 @@ pub(super) fn staging_base() -> Result<PathBuf> {
 /// This does **not** reject group/world-read bits: a Podman-native secret is
 /// materialised inside the container's own mount namespace and `0o444` is the
 /// Podman/compose default, so a readable mode is legitimate for that path.
-pub(super) fn reject_dangerous_secret_mode(mode: u32, ctx: &str) -> Result<()> {
+pub(in crate::engine) fn reject_dangerous_secret_mode(mode: u32, ctx: &str) -> Result<()> {
 	if mode & 0o111 != 0 {
 		return Err(ComposeError::Unsupported(format!(
 			"mode {mode:#o} for {ctx} sets an execute bit on a secret/config; \
@@ -161,7 +161,7 @@ fn verify_private_dir(dir: &Path, euid: u32) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[path = "staging_name_tests.rs"]
+#[path = "name_tests.rs"]
 mod name_tests;
 
 #[cfg(all(test, unix))]
@@ -169,17 +169,17 @@ mod name_tests;
 mod staging_tests;
 
 #[cfg(all(test, unix))]
-#[path = "staging_base_tests.rs"]
+#[path = "base_tests.rs"]
 mod base_tests;
 
 #[cfg(all(test, unix))]
-#[path = "staging_ensure_dir_tests.rs"]
+#[path = "ensure_dir_tests.rs"]
 mod ensure_dir_tests;
 
 #[cfg(test)]
-#[path = "staging_reject_mode_tests.rs"]
+#[path = "reject_mode_tests.rs"]
 mod reject_mode_tests;
 
 #[cfg(all(test, windows))]
-#[path = "staging_windows_staging_tests.rs"]
+#[path = "windows_staging_tests.rs"]
 mod windows_staging_tests;

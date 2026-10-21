@@ -10,7 +10,7 @@
 //!
 //! Each test fails with its compensation removed (the unit tests in
 //! `engine::lifecycle::libpod_endpoint_query_tests` and
-//! `engine::events_tests` pin the wire shape; these tests pin the
+//! `engine::events::tests` pin the wire shape; these tests pin the
 //! user-visible behaviour the wire shape exists to keep). The expected
 //! failing line, when the compensation is reverted, is the one the
 //! comment on the test names.
@@ -301,7 +301,7 @@ async fn logs_of_a_tty_service_does_not_leak_channel_bytes() {
 /// the JSON output would silently miss the action or the code.
 ///
 /// Fails on the branch with `rename_event` reverted at
-/// `internal/engine/events.rs::format_event` (the asserted
+/// `internal/engine/events/mod.rs::format_event` (the asserted
 /// `Action == "die"` line).
 #[tokio::test]
 async fn events_renames_died_to_die_and_container_exit_code_to_exit_code() {
@@ -440,7 +440,7 @@ async fn events_renames_died_to_die_and_container_exit_code_to_exit_code() {
 	// container that had exited 3 (Podman 5.8.1 and 6.1.2, journald backend), so
 	// there was no event for podup to rewrite. That host cannot exercise this test:
 	// say so in the output rather than fail or pass silently. The rewrite itself is
-	// pinned by the unit tests in `internal/engine/events_tests.rs`.
+	// pinned by the unit tests in `internal/engine/events/tests.rs`.
 	if die_action.is_none() && diagnosis.contains("podman events=\"\"") {
 		eprintln!(
 			"SKIP events_renames_died_to_die_and_container_exit_code_to_exit_code: \

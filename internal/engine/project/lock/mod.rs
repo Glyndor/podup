@@ -10,9 +10,12 @@
 // libc FFI (flock) is needed here; each block carries a soundness comment.
 #![allow(unsafe_code)]
 
+pub(in crate::engine) mod staging;
+pub use staging::is_safe_project_name;
+
 use crate::error::{ComposeError, Result};
 
-use super::Engine;
+use crate::engine::Engine;
 
 /// Guard holding a held project lock. Dropping it releases the lock (the OS
 /// drops the `flock` when the underlying file descriptor is closed).
@@ -30,13 +33,13 @@ impl Engine {
 	/// create/delete. On non-unix platforms this is a best-effort no-op
 	/// (the lock file is created but not `flock`ed).
 	pub fn lock_project(&self) -> Result<ProjectLock> {
-		if !super::staging::is_safe_project_name(&self.project) {
+		if !staging::is_safe_project_name(&self.project) {
 			return Err(ComposeError::Unsupported(format!(
 				"unsafe project name '{}'; refusing to create a lock file",
 				self.project
 			)));
 		}
-		let base = super::staging::staging_base()?;
+		let base = staging::staging_base()?;
 		let path = base.join(format!("{}.lock", self.project));
 		let file = open_lock_file(&path)?;
 		acquire(&file)?;

@@ -11,7 +11,7 @@ use crate::error::Result;
 use crate::libpod::API_PREFIX;
 use crate::ui::progress::Kind;
 
-use super::super::profiles::{active_profiles_set, enabled_profile_services};
+use super::super::project::profiles::{active_profiles_set, enabled_profile_services};
 use super::super::Engine;
 
 impl Engine {

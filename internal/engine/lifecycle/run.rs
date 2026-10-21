@@ -59,7 +59,7 @@ impl Engine {
 		// Same rule as `exec`: a TTY on both ends by default, `-T` to opt out,
 		// and only when stdin is actually a terminal, so a script or a pipeline
 		// keeps the streaming path it has always had, unchanged.
-		let want_tty = crate::engine::wants_interactive_run(no_tty, detach);
+		let want_tty = crate::engine::terminal::wants_interactive_run(no_tty, detach);
 		// `--env-file` and `-l/--label` are carried on the engine (not
 		// `RunOverrides`) to keep the public struct frozen.
 		let env_files = self.run_env_files.clone();

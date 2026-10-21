@@ -1,11 +1,11 @@
 //! `events --since` validator.
 //!
-//! Lifted from `events.rs` so the orchestration in that file stays
+//! Lifted from `events/mod.rs` so the orchestration in that file stays
 //! under the 500-line source budget; the validator is a pure function
 //! with its own concerns (a hand-written Go duration matcher that
 //! rejects only negative relative times and forwards everything else
 //! to libpod unchanged). The tests live next to the orchestration
-//! file (`events_tests.rs`) and reach the validator through
+//! file (`tests.rs`) and reach the validator through
 //! `super::since_validation`.
 
 use crate::error::{ComposeError, Result};

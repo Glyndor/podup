@@ -308,7 +308,7 @@ impl Engine {
 	/// between them, so a concurrent mutation in the window could land a
 	/// successful-but-wrong-state PUT. The two callers in the codebase are
 	/// the CLI `cp` subcommand and the `watch` sync path, both of which are
-	/// called only while the per-project lock ([`crate::engine::lock`]) is
+	/// called only while the per-project lock ([`crate::engine::project::lock`]) is
 	/// held by the mutating stage: `lock_project` serialises a single
 	/// `podup` process against any other `podup` process working on the same
 	/// project, closing the **cross-invocation** case.

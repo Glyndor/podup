@@ -148,10 +148,10 @@ fn include_spec_matches_against_rule_relative_path() {
 	let ctx: Option<&Path> = None;
 	let (rule_rel, _ctx_rel) = rel_paths(&PathBuf::from("/proj/api/src/main.rs"), rule, ctx);
 	let patterns = pats(&["*.rs"]);
-	let d = crate::engine::ignore_patterns::evaluate(&rule_rel, &patterns);
+	let d = crate::engine::context::ignore_patterns::evaluate(&rule_rel, &patterns);
 	assert_eq!(d, Some(true));
 	let (rule_rel, _ctx_rel) = rel_paths(&PathBuf::from("/proj/api/README.md"), rule, ctx);
-	let d = crate::engine::ignore_patterns::evaluate(&rule_rel, &patterns);
+	let d = crate::engine::context::ignore_patterns::evaluate(&rule_rel, &patterns);
 	assert_eq!(d, None);
 }
 

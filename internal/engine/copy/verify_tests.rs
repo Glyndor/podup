@@ -279,7 +279,7 @@ fn a_tar_with_file_directory_and_symlink_lists_just_those_three() {
 /// `/dir/./x`, and the root would stat the destination a second time.
 #[test]
 fn a_tree_packed_under_dot_is_asked_about_without_the_dot() {
-	let mut tar = crate::engine::tar_stream::builder(Vec::new());
+	let mut tar = crate::engine::context::tar_stream::builder(Vec::new());
 	let mut dir_header = tar::Header::new_gnu();
 	dir_header.set_entry_type(tar::EntryType::Directory);
 	dir_header.set_size(0);
