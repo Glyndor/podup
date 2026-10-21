@@ -10,10 +10,6 @@
 //!
 //! `set_color_choice` also constructs the auto streams once so anstream enables
 //! virtual-terminal processing on Windows for the rest of the process.
-//!
-//! Each submodule owns one concern and re-exported items keep the paths they
-//! have always had, so a caller names `ui::identity_style` and never the module
-//! that happens to hold it.
 
 pub use anstyle::{AnsiColor, Style};
 
