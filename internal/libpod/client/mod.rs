@@ -6,14 +6,22 @@
 //! request, and release it on completion; streaming calls take a dedicated
 //! connection for the lifetime of the stream and release it when the body
 //! drops. See [`Client`] for the full contract.
+//!
+//! This file owns the [`Client`] struct, the [`MIN_LIBPOD_API_MAJOR`] floor
+//! (read off the source by `tests/podman_floor.rs`), the crate-internal
+//! [`Result`] alias, and the `mod` declarations that wire the rest of the
+//! client together. The supporting code lives one concern per file:
+//!
+//! - [`transport`](self::transport): boxed body, timeouts, connection-close
+//!   detection, the generic `apply_timeout` wrapper.
+//! - [`socket`](self::socket): `socket_error` (unix-only operator hints).
+//! - [`path_stat`](self::path_stat): the `X-Docker-Container-Path-Stat` type.
+//! - [`request`](self::request): `Client::build_request`.
+//! - [`send`](self::send): buffered send, `BufferedResponse`.
+//! - [`streaming`](self::streaming): streaming send, body read, error path.
+//! - [`status`](self::status): JSON error decoding and version gate.
 
 use std::sync::Arc;
-
-use bytes::Bytes;
-use futures_util::Future;
-use http_body_util::{BodyExt, Full, Limited};
-use hyper::body::Incoming;
-use hyper::{Method, Request, Response, StatusCode};
 
 use super::error::PodmanError;
 
@@ -23,60 +31,32 @@ mod encode;
 mod get;
 mod hijack;
 mod misc;
+mod path_stat;
 mod pool;
 mod post;
 mod put;
+mod request;
+mod send;
+mod socket;
+mod status;
 mod stream;
 mod stream_body;
-use conn_state::ConnState;
+mod streaming;
+mod transport;
+
 pub(crate) use encode::{is_valid_object_name, urlencoded};
 pub(crate) use hijack::Hijacked;
-use pool::{ConnPool, PoolGuard};
+use pool::ConnPool;
 use stream::SocketStream;
 pub use stream_body::DrivenBody;
-
-/// The request body every call shares. A boxed body so a fully-buffered
-/// `Full<Bytes>` (almost every call) and a lazily-streamed build-context body
-/// (the `build` endpoint) travel the same client path. `Unsync` because hyper's
-/// `send_request` only requires the body to be `Send`, and the streamed body is
-/// not `Sync`.
-type BoxBody = http_body_util::combinators::UnsyncBoxBody<Bytes, std::io::Error>;
-
-/// Box a fully-buffered byte payload into [`BoxBody`]. `Full`'s error is
-/// `Infallible`, mapped to the unified `io::Error` (which it never produces).
-fn full(bytes: Bytes) -> BoxBody {
-	Full::new(bytes)
-		.map_err(|never| match never {})
-		.boxed_unsync()
-}
-
-/// Upper bound on a buffered (non-streaming) response body. Caps memory use
-/// when the daemon returns an oversized or runaway response.
-const MAX_RESPONSE_BYTES: usize = 64 * 1024 * 1024;
-
-/// Ceiling on establishing the socket connection and HTTP handshake. Bounds the
-/// wait when the Podman socket is absent, busy, or unresponsive. This times the
-/// connect only; it does not limit the duration of a streaming response body.
-const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
-
-/// Ceiling on reading a *buffered* (non-streaming) response body. Without it a
-/// daemon that accepts the request, sends headers, then stalls would hang the
-/// CLI forever. Streaming helpers (logs, attach, archive) are deliberately not
-/// bounded by this; they are long-lived by design.
-const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
-
-/// Whether a response carried `Connection: close`. When set, the socket is
-/// unusable for any further request and the pool must discard it instead of
-/// handing it back to the next acquirer. HTTP/1.1 keep-alive is the default
-/// in podup's real wire path; a `close` value is the server telling us this
-/// socket is single-use.
-fn has_connection_close(resp: &Response<Incoming>) -> bool {
-	resp.headers()
-		.get(hyper::header::CONNECTION)
-		.and_then(|v| v.to_str().ok())
-		.map(|v| v.split(',').any(|t| t.trim().eq_ignore_ascii_case("close")))
-		.unwrap_or(false)
-}
+// Re-exports for `super::X` from siblings and tests. Kept here so the
+// `super::full`, `super::READ_TIMEOUT`, `super::meets_minimum`, etc.
+// paths continue to resolve at the parent without touching the verb files.
+pub(crate) use path_stat::PathStat;
+#[cfg(unix)]
+pub(crate) use socket::socket_error;
+use status::meets_minimum;
+use transport::{full, BoxBody, READ_TIMEOUT};
 
 /// Result alias for libpod client calls, fixing the error to [`PodmanError`].
 pub type Result<T> = std::result::Result<T, PodmanError>;
@@ -98,67 +78,14 @@ pub struct Client {
 	pool: Arc<ConnPool>,
 }
 
-/// The decoded `X-Docker-Container-Path-Stat` header: a container path's name,
-/// size, Go file `mode`, `mtime` and `linkTarget`.
+/// Lowest libpod API major version podup supports. Podman 5.x reports `5.x.y`;
+/// anything below `5.0` lacks SpecGenerator fields podup relies on.
 ///
-/// `mtime` is an RFC3339 string compared only for equality, never parsed into a
-/// time. **Podman 6 reports it to whole seconds**: `2026-08-03T18:36:05Z`, no
-/// fractional part, measured on `podman-6.0.1-1.fc45`, which is why `size` is
-/// carried here too: two writes inside one second are indistinguishable by mtime
-/// alone. The runtime's JSON uses lowercase keys.
-///
-/// `linkTarget` is the link's target normalized against the directory the link
-/// lives in (absolute paths stay absolute; relative paths are joined to the
-/// directory lexically and the `.` / `..` resolved without touching the
-/// filesystem — a dangling relative link reports a target that may not exist).
-/// The field is empty for non-symlink entries and on runtimes that do not send
-/// it; `#[serde(default)]` keeps those answers valid `PathStat`s. The runtime's
-/// JSON key is `linkTarget`, hence the rename.
-#[derive(serde::Deserialize, Default, Clone, PartialEq, Eq, Debug)]
-pub(crate) struct PathStat {
-	#[serde(default)]
-	pub(crate) size: u64,
-	#[serde(default)]
-	pub(crate) mode: u64,
-	#[serde(default)]
-	pub(crate) mtime: String,
-	#[serde(default, rename = "linkTarget")]
-	pub(crate) link_target: String,
-}
-
-/// Attach the socket path and a way forward to a connection failure.
-///
-/// The operator saw `podman socket connection error: No such file or directory
-/// (os error 2)`: no path, no distinction between "it is not there" and "I
-/// cannot open it", and nothing to do about it. Everything needed was already
-/// in hand one call earlier (#1146).
-///
-/// The path is folded into the `io::Error`'s message rather than into a new
-/// error variant so `PodmanError` keeps its shape: it is public API, frozen
-/// since 2.0.0. `kind()` survives, which is what tells the two cases apart.
-///
-/// Unix only because the hints are: `systemctl --user` means nothing to a
-/// `podman machine` install, and the named-pipe connect path reports its
-/// errors raw.
-#[cfg(unix)]
-pub(crate) fn socket_error(path: &str, e: std::io::Error) -> super::PodmanError {
-	let hint = match e.kind() {
-		std::io::ErrorKind::NotFound => {
-			": the Podman API socket is not listening. podman itself is daemonless \
-			 and needs no socket, but podup speaks the libpod API and does. Enable it \
-			 with `systemctl --user enable --now podman.socket`, or for an account \
-			 with no login shell: `sudo -u <user> env XDG_RUNTIME_DIR=/run/user/$(id \
-			 -u <user>) systemctl --user enable --now podman.socket`"
-		}
-		std::io::ErrorKind::PermissionDenied => {
-			": the socket exists but cannot be opened. Check that it is owned by \
-			 the user running podup; a socket created by another account is not \
-			 shared"
-		}
-		_ => "",
-	};
-	super::PodmanError::Connect(std::io::Error::new(e.kind(), format!("{path}: {e}{hint}")))
-}
+/// `tests/podman_floor.rs` reads this declaration out of `mod.rs` as text and
+/// asserts the value stays in lockstep with `install.sh` and
+/// `debian/control`, so the constant stays in this file even though most of
+/// the rest of the module split out.
+const MIN_LIBPOD_API_MAJOR: u64 = 5;
 
 impl Drop for Client {
 	/// Close every held connection. Idle pooled connections are dropped via
@@ -169,352 +96,6 @@ impl Drop for Client {
 	/// them (#1900).
 	fn drop(&mut self) {
 		self.pool.close();
-	}
-}
-
-impl Client {
-	/// Build a request with an optional JSON body.
-	///
-	/// The request target is sent in origin form (`POST /v5.0.0/libpod/build?...
-	/// HTTP/1.1`), the same shape `podman --remote` and curl write when they
-	/// talk to the Podman socket. Podman decides "is this a libpod request"
-	/// by splitting `r.URL.String()` on `/` and reading `split[2]`; an
-	/// absolute-form target (`http://localhost/...`) puts `localhost` in
-	/// `split[2]` instead of `libpod`, so every shared handler treats the
-	/// client as Docker and podup loses the libpod semantics every
-	/// compensation in this patch exists to keep stable. Origin form avoids
-	/// that because the URL string is just the path. The `Host: localhost`
-	/// header stays because HTTP/1.1 requires it.
-	///
-	/// `path` must start with `/`; paths without a leading slash
-	/// (`libpod/_ping`) parse to authority form and absolute URIs
-	/// (`http://localhost/libpod/_ping`) put a scheme + authority on the URL
-	/// string, both of which put `localhost` in `split[2]` and quietly lose
-	/// the same semantics. Reject them with `invalid API path` so neither
-	/// shape can slip through.
-	fn build_request(
-		method: Method,
-		path: &str,
-		body: BoxBody,
-		content_type: Option<&str>,
-	) -> Result<Request<BoxBody>> {
-		let uri: hyper::Uri =
-			path.parse()
-				.map_err(|e: hyper::http::uri::InvalidUri| PodmanError::Api {
-					status: 0,
-					message: format!("invalid API path '{path}': {e}"),
-				})?;
-		if uri.scheme().is_some() || uri.authority().is_some() {
-			return Err(PodmanError::Api {
-				status: 0,
-				message: format!(
-					"invalid API path '{path}': path must start with '/' and contain no scheme or authority"
-				),
-			});
-		}
-
-		let mut builder = Request::builder()
-			.method(method)
-			.uri(uri)
-			.header(hyper::header::HOST, "localhost");
-
-		if let Some(ct) = content_type {
-			builder = builder.header(hyper::header::CONTENT_TYPE, ct);
-		}
-
-		builder.body(body).map_err(|e| PodmanError::Api {
-			status: 0,
-			message: e.to_string(),
-		})
-	}
-
-	/// Send a request and return the buffered response.
-	///
-	/// `response_timeout` bounds how long we wait for the server to return the
-	/// response head. Pass `Some` (the default [`READ_TIMEOUT`]) for ordinary and
-	/// streaming calls, where the head arrives promptly; this stops a socket that
-	/// accepts the connection but never replies from hanging the CLI indefinitely.
-	/// Pass `None` only for endpoints that legitimately block server-side before
-	/// the head (e.g. `wait?condition=stopped`), whose callers impose an outer
-	/// budget.
-	///
-	/// Returns a [`BufferedResponse`] rather than a bare `Response<Incoming>`
-	/// so the pool guard that holds the HTTP/1.1 connection checked out is
-	/// kept alive across the body read. Releasing the guard before the body
-	/// is drained lets the next acquirer write a new request to the same
-	/// socket while the previous body is still arriving; with chunked
-	/// transfer encoding (or any framing where the body length is not known
-	/// up front in the headers) that interleaves the two requests on the
-	/// wire and the parser sees garbage (#1740). The guard is private to
-	/// [`BufferedResponse`], so callers cannot release it without first
-	/// reading the body.
-	async fn send(
-		&self,
-		req: Request<BoxBody>,
-		response_timeout: Option<std::time::Duration>,
-	) -> Result<BufferedResponse> {
-		tracing::debug!("libpod {} {}", req.method(), req.uri().path());
-		let mut guard = tokio::time::timeout(CONNECT_TIMEOUT, self.pool.acquire())
-			.await
-			.map_err(|_| PodmanError::Api {
-				status: 0,
-				message: format!(
-					"timed out after {}s connecting to the Podman socket",
-					CONNECT_TIMEOUT.as_secs()
-				),
-			})??;
-		let request = guard.sender_mut().send_request(req);
-		let send_result = Self::apply_timeout(
-			response_timeout,
-			"waiting for the Podman socket to respond",
-			request,
-		)
-		.await;
-		match send_result {
-			Ok(Ok(resp)) => {
-				if has_connection_close(&resp) {
-					guard.poison();
-				}
-				Ok(BufferedResponse {
-					_guard: guard,
-					resp,
-				})
-			}
-			Ok(Err(e)) => {
-				guard.poison();
-				Err(PodmanError::Hyper(e))
-			}
-			Err(e) => {
-				guard.poison();
-				Err(e)
-			}
-		}
-	}
-
-	/// Send a request whose response body is a long-lived stream and return
-	/// the raw response. The connection is opened outside the buffered pool;
-	/// the response body owns the HTTP/1 driver so the reading task can poll
-	/// it in line with the body and skip the cross-task wake-up per frame
-	/// (#1900).
-	async fn send_streaming(
-		&self,
-		req: Request<BoxBody>,
-		response_timeout: Option<std::time::Duration>,
-	) -> Result<Response<DrivenBody>> {
-		tracing::debug!("libpod {} {}", req.method(), req.uri().path());
-		let conn = tokio::time::timeout(CONNECT_TIMEOUT, self.pool.open_streaming())
-			.await
-			.map_err(|_| PodmanError::Api {
-				status: 0,
-				message: format!(
-					"timed out after {}s connecting to the Podman socket",
-					CONNECT_TIMEOUT.as_secs()
-				),
-			})??;
-		let (mut sender, driver) = conn.into_parts();
-		// The sender future awaits a response on a oneshot the dispatcher
-		// fills. Nobody else drives the dispatcher, so we have to poll it in
-		// the same task as the sender future; otherwise the response head
-		// never arrives. `tokio::join!` polls both each time we are polled
-		// and registers wakers for both while the head is in flight. Once
-		// the head arrives, we hand the driver future to the
-		// `DrivenBody` (the inline-driven body wrapper) that backs the response, which polls it in line
-		// with the body frames from there on (#1900).
-		//
-		// A short response (for example an error body sent with
-		// `Connection: close`) can complete the connection future in the
-		// same poll that delivers the response head. Tracking that here
-		// keeps `DrivenBody` from re-polling a completed future, which
-		// violates the `Future` contract.
-		let send_fut = sender.send_request(req);
-		tokio::pin!(send_fut);
-		let mut conn_state = ConnState::new(driver);
-		let send_result = Self::apply_timeout(
-			response_timeout,
-			"waiting for the Podman socket to respond",
-			futures_util::future::poll_fn(|cx| {
-				conn_state.poll(cx);
-				send_fut.as_mut().poll(cx)
-			}),
-		)
-		.await;
-		match (send_result, conn_state.result()) {
-			(Ok(Ok(resp)), Some(Err(e))) => {
-				// The head arrived and the connection then failed in the same
-				// poll. When the connection ran on its own task, the caller got
-				// the response regardless and the body reported an error only
-				// if bytes were actually missing; keep that, so a response the
-				// daemon finished writing before the socket failed stays usable.
-				tracing::debug!(
-					"libpod connection closed with an error after the response head: {e}"
-				);
-				let (parts, body) = resp.into_parts();
-				Ok(Response::from_parts(parts, DrivenBody::new(body, None)))
-			}
-			(Ok(Ok(resp)), _) => {
-				let (parts, body) = resp.into_parts();
-				Ok(Response::from_parts(
-					parts,
-					DrivenBody::new(body, conn_state.take_pending()),
-				))
-			}
-			(Ok(Err(e)), _) => Err(PodmanError::Hyper(e)),
-			(Err(e), _) => Err(e),
-		}
-	}
-
-	/// Read the full response body off a streaming connection. The body is
-	/// generic so the buffered path ([`BufferedResponse::read_body`], body is
-	/// `Incoming`) and the streaming path (`stream_or_err`, body is
-	/// `DrivenBody` (the inline-driven body wrapper) share the size cap and the timeout handling. The cap
-	/// prevents a runaway response from holding more than `MAX_RESPONSE_BYTES`
-	/// in memory; it does not bound the duration of a long-lived stream
-	/// (those callers keep the body and poll it themselves).
-	async fn read_response_body<B>(
-		resp: Response<B>,
-		read_timeout: Option<std::time::Duration>,
-	) -> Result<(StatusCode, Vec<u8>)>
-	where
-		B: hyper::body::Body<Data = Bytes, Error = hyper::Error> + Send + Unpin + 'static,
-	{
-		let status = resp.status();
-		let read = Limited::new(resp.into_body(), MAX_RESPONSE_BYTES).collect();
-		let collected = Self::apply_timeout(
-			read_timeout,
-			"reading the response body from the Podman socket",
-			read,
-		)
-		.await?
-		.map_err(
-			|e: Box<dyn std::error::Error + Send + Sync>| PodmanError::Api {
-				status: 0,
-				message: format!("reading response body: {e}"),
-			},
-		)?;
-		Ok((status, collected.to_bytes().to_vec()))
-	}
-
-	/// Await `fut`, optionally bounded by `timeout`.
-	async fn apply_timeout<F, T>(
-		timeout: Option<std::time::Duration>,
-		phase: &str,
-		fut: F,
-	) -> Result<T>
-	where
-		F: std::future::Future<Output = T>,
-	{
-		match timeout {
-			Some(limit) => tokio::time::timeout(limit, fut)
-				.await
-				.map_err(|_| PodmanError::Api {
-					status: 0,
-					message: format!("timed out after {}s {phase}", limit.as_secs()),
-				}),
-			None => Ok(fut.await),
-		}
-	}
-
-	/// Extract the human-readable message from a libpod error body. The body is
-	/// JSON shaped like `{"message": "...", "cause": "..."}`; prefer `message`,
-	/// fall back to `cause`, and to the raw body when the JSON is malformed (a
-	/// proxy or a 502 from a fronting process can return plain text). Pure, so
-	/// `check_status` shares it without duplication.
-	pub(crate) fn parse_error_message(body: &[u8]) -> String {
-		#[derive(serde::Deserialize)]
-		struct ApiError {
-			cause: Option<String>,
-			message: Option<String>,
-		}
-
-		if let Ok(e) = serde_json::from_slice::<ApiError>(body) {
-			e.message
-				.or(e.cause)
-				.unwrap_or_else(|| String::from_utf8_lossy(body).into_owned())
-		} else {
-			String::from_utf8_lossy(body).into_owned()
-		}
-	}
-
-	/// Check status code; on error parse the Podman error message.
-	fn check_status(status: StatusCode, body: &[u8]) -> Result<()> {
-		if status.is_success() {
-			return Ok(());
-		}
-		Err(PodmanError::Api {
-			status: status.as_u16(),
-			message: Self::parse_error_message(body),
-		})
-	}
-
-	/// For streaming endpoints, return the response on success or parse the
-	/// daemon error body on failure.
-	async fn stream_or_err(resp: Response<DrivenBody>) -> Result<Response<DrivenBody>> {
-		if resp.status().is_success() {
-			return Ok(resp);
-		}
-		let (status, body) = Self::read_response_body(resp, Some(READ_TIMEOUT)).await?;
-		Self::check_status(status, &body)?;
-		unreachable!("check_status returns Err for a non-success status")
-	}
-}
-
-/// Lowest libpod API major version podup supports. Podman 5.x reports `5.x.y`;
-/// anything below `5.0` lacks SpecGenerator fields podup relies on.
-const MIN_LIBPOD_API_MAJOR: u64 = 5;
-
-/// Whether a `Libpod-API-Version` string (e.g. `"5.0.0"`, `"4.9.3"`) meets the
-/// [`MIN_LIBPOD_API_MAJOR`].0 floor.
-fn meets_minimum(version: &str) -> bool {
-	version
-		.trim()
-		.trim_start_matches('v')
-		.split('.')
-		.next()
-		.and_then(|major| major.parse::<u64>().ok())
-		.is_some_and(|major| major >= MIN_LIBPOD_API_MAJOR)
-}
-
-/// A buffered HTTP response paired with the pool guard that keeps the
-/// underlying HTTP/1.1 connection checked out until the body is fully
-/// drained. The guard is private, so the only way to release it is to call
-/// [`Client::read_body`], which consumes the response and the guard
-/// together. Returning the response bare (without the guard) was the
-/// original bug: between `send` and `read_body` the guard dropped, the
-/// connection landed back in the idle queue, and the next acquirer could
-/// write a new request to the same socket while the previous body was
-/// still arriving. With `Transfer-Encoding: chunked` (or any framing where
-/// the body length is not declared up front in the headers) that
-/// interleaves the two requests on the wire and the parser sees garbage
-/// (#1740).
-pub(crate) struct BufferedResponse {
-	// Held by name only; never read. Its drop runs at the end of
-	// `read_body`'s scope, AFTER the body has been drained. Drop order in
-	// Rust is reverse declaration order, so the body is dropped first and
-	// the guard last.
-	_guard: PoolGuard,
-	resp: Response<Incoming>,
-}
-
-impl BufferedResponse {
-	/// The response headers, borrowed without releasing the guard. Callers
-	/// that branch on status or read a response-specific header must still
-	/// call [`BufferedResponse::read_body`] on the returned value to release
-	/// the connection cleanly.
-	fn headers(&self) -> &hyper::HeaderMap {
-		self.resp.headers()
-	}
-
-	/// Read the full response body off the buffered connection. Consumes
-	/// `self` so the underlying pool guard (and thus the HTTP/1.1
-	/// connection) is released only after the body is drained. A caller
-	/// that drops the [`BufferedResponse`] without calling `read_body` is
-	/// a bug: the body may still be arriving, the connection is not safe
-	/// to reuse, and the next caller will see interleaved bytes (#1740).
-	async fn read_body(
-		self,
-		read_timeout: Option<std::time::Duration>,
-	) -> Result<(StatusCode, Vec<u8>)> {
-		Client::read_response_body::<Incoming>(self.resp, read_timeout).await
 	}
 }
 
