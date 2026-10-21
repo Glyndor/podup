@@ -3,10 +3,21 @@
 //! Split out of `mod.rs` to keep that file within the source line limit, the
 //! same way the quadlet-mode tests live in `quadlet/tests.rs`.
 
-use super::*;
+use super::guards::{linger_warning, runtime_dir_warning};
+use super::install::{install, uninstall};
+use super::options::InstallOptions;
+use super::paths::max_stop_grace_secs;
+use super::service::{render_service_unit, render_update_timer_unit, ServiceUnitOpts};
+use super::start::{render_start_unit, StartUnitOpts};
+use super::status::{collect_status, NetworkWait, NETWORK_SHIM};
+use super::systemctl::SystemCtl;
+use crate::ComposeError;
 use std::cell::RefCell;
+use std::io;
 use std::os::unix::process::ExitStatusExt;
-use std::process::ExitStatus;
+use std::path::Path;
+use std::path::PathBuf;
+use std::process::{ExitStatus, Output};
 
 /// Recording fake: captures every `systemctl`/`loginctl` arg vector and returns
 /// canned output keyed off the first argument.
@@ -360,7 +371,7 @@ fn max_stop_grace_picks_the_longest() {
 		"services:\n  a:\n    image: x\n    stop_grace_period: 10s\n  b:\n    image: x\n    stop_grace_period: 2m\n",
 	)
 	.unwrap();
-	assert_eq!(super::max_stop_grace_secs(&file), Some(120));
+	assert_eq!(max_stop_grace_secs(&file), Some(120));
 }
 
 /// No service setting one yields `None`, so the unit omits the key and systemd
@@ -368,7 +379,7 @@ fn max_stop_grace_picks_the_longest() {
 #[test]
 fn max_stop_grace_is_none_when_unset() {
 	let file = crate::parse_str("services:\n  a:\n    image: x\n").unwrap();
-	assert_eq!(super::max_stop_grace_secs(&file), None);
+	assert_eq!(max_stop_grace_secs(&file), None);
 }
 
 /// An unparseable duration is skipped rather than defaulted: the value is
@@ -380,7 +391,7 @@ fn max_stop_grace_skips_an_unparseable_value() {
 		"services:\n  a:\n    image: x\n    stop_grace_period: \"nonsense\"\n  b:\n    image: x\n    stop_grace_period: 30s\n",
 	)
 	.unwrap();
-	assert_eq!(super::max_stop_grace_secs(&file), Some(30));
+	assert_eq!(max_stop_grace_secs(&file), Some(30));
 }
 
 // --- the network shim (#1616's ordering is only real if the unit loads) ---
@@ -449,14 +460,14 @@ fn the_status_asks_about_the_unit_the_units_actually_name() {
 	// first. Checking only service mode would leave start mode free to name a
 	// different unit than the status reports on, which is the same silent
 	// mismatch this whole check exists to surface.
-	let service = super::render_service_unit(&super::ServiceUnitOpts::new(
-		std::path::PathBuf::from("/usr/bin/podup"),
-		vec![std::path::PathBuf::from("/srv/app/compose.yml")],
+	let service = render_service_unit(&ServiceUnitOpts::new(
+		PathBuf::from("/usr/bin/podup"),
+		vec![PathBuf::from("/srv/app/compose.yml")],
 		"app".to_string(),
-		std::path::PathBuf::from("/srv/app"),
+		PathBuf::from("/srv/app"),
 	));
-	let start = super::render_start_unit(&super::StartUnitOpts::new(
-		std::path::PathBuf::from("/usr/bin/podman"),
+	let start = render_start_unit(&StartUnitOpts::new(
+		PathBuf::from("/usr/bin/podman"),
 		"app".to_string(),
 		"app-web-1".to_string(),
 	));
@@ -582,13 +593,13 @@ fn autostart_auto_update_uninstall_removes_both_new_units() {
 #[test]
 fn autostart_auto_update_renderer_rejects_an_unknown_interval() {
 	let opts = ServiceUnitOpts::new(
-		std::path::PathBuf::from("/usr/local/bin/podup"),
-		vec![std::path::PathBuf::from("/srv/app/docker-compose.yml")],
+		PathBuf::from("/usr/local/bin/podup"),
+		vec![PathBuf::from("/srv/app/docker-compose.yml")],
 		"app".to_string(),
-		std::path::PathBuf::from("/srv/app"),
+		PathBuf::from("/srv/app"),
 	);
 	let result = std::panic::catch_unwind(|| {
-		let _ = super::render_update_timer_unit("app", "biweekly");
+		let _ = render_update_timer_unit("app", "biweekly");
 	});
 	assert!(
 		result.is_err(),

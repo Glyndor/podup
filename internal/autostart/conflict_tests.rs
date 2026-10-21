@@ -13,6 +13,7 @@ use super::conflict::{classify_exec_start, DetectedSingleUnitMode};
 use super::start::StartUnitOpts;
 use super::tests::{opts, opts_with_interval, with_env, FakeCtl};
 use super::*;
+use crate::ComposeError;
 
 fn start_opts(project: &str, container: &str) -> StartUnitOpts {
 	StartUnitOpts::new(
