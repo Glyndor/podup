@@ -1,141 +1,9 @@
-//! Unit tests for the `ui` styling surface, split out to keep the module
-//! within the source line limit, the same `tests.rs` split `autostart`, the
-//! libpod client and `stats` already use.
+//! Unit tests for the identity palette and the registry that assigns it, split
+//! out to keep the module within the source line limit, the same
+//! `tests.rs` split `autostart`, the libpod client and `stats` already use.
 
 use super::*;
 use std::collections::HashMap;
-
-/// The bug this exists to stop: `ls` reports `running(1), exited(1)`, and
-/// styling it as one string let the first matching substring win: `exit`
-/// came first, so a project with a service up rendered entirely red,
-/// indistinguishable from one that is completely dead.
-#[test]
-fn a_mixed_project_is_not_painted_as_one_state() {
-	let out = paint_status_cell("running(1), exited(1)");
-	let (running, exited) = out.split_once(", ").expect("both segments survive");
-	assert_ne!(
-		running.replace("running(1)", ""),
-		exited.replace("exited(1)", ""),
-		"each state must carry its own colour: {out:?}"
-	);
-}
-
-/// A container that ran to completion is not a failure. One-shot services
-/// (migrations, seeds, a `command` that simply ends) live in this state.
-#[test]
-fn a_clean_exit_is_not_red() {
-	let red = Style::new().fg_color(Some(AnsiColor::Red.into()));
-	let clean = paint_status_cell("Exited (0)");
-	assert!(
-		!clean.contains(&red.render().to_string()),
-		"a zero exit must not be red: {clean:?}"
-	);
-	let failed = paint_status_cell("Exited (7)");
-	assert!(
-		failed.contains(&red.render().to_string()),
-		"a non-zero exit must stay red: {failed:?}"
-	);
-}
-
-/// Digits after the first must not be mistaken for a clean exit.
-#[test]
-fn only_a_bare_zero_counts_as_clean() {
-	assert!(is_clean_exit("exited (0)"));
-	assert!(is_clean_exit("exited(0)"));
-	assert!(!is_clean_exit("exited (10)"));
-	assert!(!is_clean_exit("exited (07)"));
-}
-
-/// Padding is what keeps columns aligned, so colourising must not eat it.
-#[test]
-fn trailing_padding_survives_colourising() {
-	let out = paint_status_cell("running   ");
-	assert!(out.ends_with("   "), "{out:?}");
-}
-
-/// systemd's vocabulary reaches this through `autostart status`.
-#[test]
-fn systemd_states_are_coloured() {
-	for word in ["active", "inactive", "failed", "not-found", "enabled"] {
-		assert!(status_style(word).is_some(), "{word} should carry a colour");
-	}
-}
-
-#[test]
-fn paint_gates_on_enabled() {
-	let plain = paint(bold(), "hi", false);
-	assert_eq!(plain, "hi");
-	let coloured = paint(bold(), "hi", true);
-	assert!(coloured.contains("hi"));
-	assert!(coloured.len() > "hi".len(), "enabled paint adds ANSI codes");
-	assert!(coloured.starts_with('\u{1b}'), "starts with an ESC");
-}
-
-#[test]
-fn colour_choice_resolution() {
-	// Pure resolution: never touches the process-global choice, so it can't
-	// race the production code (LinePrefixer, the table renderer) that reads it.
-	temp_env::with_var_unset("NO_COLOR", || {
-		assert!(!colored_with(ColorChoice::Never, true));
-		assert!(colored_with(ColorChoice::Always, false));
-		assert!(colored_with(ColorChoice::Auto, true));
-		assert!(!colored_with(ColorChoice::Auto, false));
-	});
-	// NO_COLOR forces plain in Auto, regardless of the TTY.
-	temp_env::with_var("NO_COLOR", Some("1"), || {
-		assert!(!colored_with(ColorChoice::Auto, true));
-		// ...but an explicit `always` still overrides NO_COLOR.
-		assert!(colored_with(ColorChoice::Always, true));
-	});
-}
-
-#[test]
-fn status_style_is_semantic() {
-	assert_ne!(status_style("running"), status_style("exited (1)"));
-	assert_ne!(status_style("unhealthy"), status_style("healthy"));
-	assert!(status_style("Up 2 minutes").is_some());
-	assert!(status_style("paused").is_some());
-	assert!(status_style("created").is_some());
-	assert!(status_style("weird-state").is_none());
-}
-
-/// The verb bands are what colour a progress line as it closes. A row that
-/// closes with `Failed` previously fell through to the default green, the same
-/// default that paints `Created`, so a failed row read as a successful one
-/// except for the word. The fix is one prefix on the existing red arm (#1347).
-#[test]
-fn a_failed_progress_verb_is_red() {
-	let red = Style::new().fg_color(Some(AnsiColor::Red.into()));
-	let failed = action_style("Failed");
-	let failed_lower = action_style("failed");
-	assert_eq!(
-		failed.render().to_string(),
-		red.render().to_string(),
-		"Failed must share the red band"
-	);
-	assert_eq!(
-		failed_lower.render().to_string(),
-		red.render().to_string(),
-		"failed (lower) must share the red band"
-	);
-	// The verbs that were already red stay red; the change is additive.
-	assert_eq!(
-		action_style("Removed").render().to_string(),
-		red.render().to_string()
-	);
-}
-
-#[test]
-fn progress_toggle_is_observable() {
-	// Off by default-or-restored; toggling flips the observable state. Restore
-	// afterwards so the process-global flag does not leak into other tests.
-	let prev = progress_enabled();
-	set_progress(false);
-	assert!(!progress_enabled());
-	set_progress(true);
-	assert!(progress_enabled());
-	set_progress(prev);
-}
 
 /// The whole point of the shared key: `ps` prints `proj-web-1`, `logs`
 /// prefixes `web-1`, and the progress lines print `proj-web-1`; all three
@@ -254,8 +122,8 @@ fn every_wide_palette_slot_indexes_the_narrow_palette_safely() {
 ///
 /// The two name sets are chosen so the registered slot and the hash fallback
 /// disagree; the second assertion guards that the fixture can actually
-/// discriminate: without it the first assertion would hold whether or not
-/// the fix were in place, the vacuous shape this file already carries a
+/// discriminate: without it the first assertion would hold whether or not the
+/// fix were in place, the vacuous shape this file already carries a
 /// warning about elsewhere.
 #[test]
 fn a_second_project_leaves_the_first_projects_colours_alone() {

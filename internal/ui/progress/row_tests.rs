@@ -217,3 +217,34 @@ fn a_name_cannot_drive_the_terminal() {
 fn the_summary_counts_done_over_total() {
 	assert_eq!(summary(3, 6, 0), "[+] Running 3/6");
 }
+
+/// Stripped styling does not strip the spinner: `row::render` on a Working row
+/// still emits the braille marker, with the marker style omitted when the
+/// colour choice says so. NO_COLOR=1 keeps the mark and the verb, drops the
+/// escape sequences the colour would have added (#1672).
+#[test]
+fn no_color_keeps_the_spinner_and_drops_the_styling() {
+	temp_env::with_var("NO_COLOR", Some("1"), || {
+		// Force the resolved colour choice to Never for this test (the CLI
+		// sets it via `set_color_choice`; the renderer reads the
+		// process-global, so this test pin the renderer behaviour for that
+		// choice independently of how it was set).
+		let prev = anstream::ColorChoice::global();
+		anstream::ColorChoice::Never.write_global();
+		let r = Row {
+			kind: Kind::Container,
+			name: "ux-web-1".to_string(),
+			state: State::Working("Starting".into()),
+			started: None,
+			elapsed: None,
+		};
+		let line = render(&r, 20, 0, std::time::Instant::now(), 120);
+		assert!(line.contains(SPINNER[0]), "the spinner stays: {line:?}");
+		assert!(
+			!line.contains('\u{1b}'),
+			"NO_COLOR strips the styling: {line:?}"
+		);
+		assert!(line.contains("Starting"), "the verb stays: {line:?}");
+		prev.write_global();
+	});
+}
