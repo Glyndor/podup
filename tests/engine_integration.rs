@@ -433,7 +433,7 @@ async fn poll_with_watch_surfaces_a_finished_watch_task_error() {
 }
 
 /// Fail when `stderr` carries a libpod HTTP error, which podup prints as
-/// `podman API error (HTTP <status>): <message>` (`internal/libpod/error.rs`).
+/// `podman API error (HTTP <status>): <message>` (`internal/libpod/error/mod.rs`).
 ///
 /// Checking for a bare status number such as "404" is wrong here: every
 /// project name carries the test process id (`t<pid>-<tag>`), so a run whose

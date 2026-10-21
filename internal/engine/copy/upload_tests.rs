@@ -617,5 +617,5 @@ async fn upload_carries_copy_uid_gid_false() {
 // Links and the non-regular kinds (FIFOs) live in their own file so this one
 // stays under the line limit. A child module, so it reaches the fixtures above
 // through `super::` without widening their visibility.
-#[path = "copy_upload_kinds_tests.rs"]
+#[path = "upload_kinds_tests.rs"]
 mod kinds;

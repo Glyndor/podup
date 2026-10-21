@@ -318,7 +318,7 @@ pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
 	// Quadlet mode gets this for free. `man podman-systemd.unit`, under *Implicit
 	// network dependencies*, says the generator adds `Wants=`/`After=` on the
 	// same shim to every `.container` unit it converts, so the files
-	// `autostart/quadlet.rs` emits pick it up at boot. Service mode writes the
+	// `autostart/quadlet/mod.rs` emits pick it up at boot. Service mode writes the
 	// final unit itself and inherits nothing, and the reason applies here with
 	// more force rather than less: Quadlet's `ExecStart` starts a container,
 	// ours runs `podup up`, and rootless pasta builds the container network at

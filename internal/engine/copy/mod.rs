@@ -580,21 +580,16 @@ fn parse_endpoint(s: &str) -> Option<(&str, &str)> {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[path = "copy_tests.rs"]
 mod tests;
 
 #[cfg(all(test, unix))]
-#[path = "copy_upload_tests.rs"]
 mod upload_tests;
 
 #[cfg(test)]
-#[path = "copy/destination_tests.rs"]
 mod destination_tests;
 
 #[cfg(test)]
-#[path = "copy/destination_trusted_tests.rs"]
 mod destination_trusted_tests;
 
 #[cfg(all(test, unix))]
-#[path = "copy/cp_progress_tests.rs"]
 mod cp_progress_tests;

@@ -16,7 +16,7 @@
 - [ ] `./tests/shell/*.test.sh` pass locally (every tracked test, including `ci-runs-every-test.test.sh`)
 - [ ] shellcheck is clean on every tracked `*.sh` and every extensionless script with a shell shebang
 - [ ] Podman lane ran (live Podman 5 and Podman 6, in the PR's own check run) for changes to `internal/`, the engine integration, or the libpod REST adapter
-- [ ] Asset-contract fixtures ran for changes to `install.sh`, `install.ps1`, `internal/update/install.rs`, the signing scripts or the release fixtures
+- [ ] Asset-contract fixtures ran for changes to `install.sh`, `install.ps1`, `internal/update/install/mod.rs`, the signing scripts or the release fixtures
 
 <!--
 A test that was not watched fail is not a test. If this PR adds or changes
