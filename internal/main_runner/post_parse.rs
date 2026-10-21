@@ -5,7 +5,7 @@
 
 use std::path::PathBuf;
 
-use crate::cli::{AuditFormat, AutostartCommands, Cli, Commands};
+use crate::cli::{AuditFormat, AutostartCommands, Cli, Commands, ConfigArgs, UpArgs};
 use crate::resolve::{absolute, resolve_base_dir, resolve_project_name};
 use crate::startup::validate_project_name;
 
@@ -21,7 +21,7 @@ pub(crate) async fn run_config(
 	file: podup::compose::types::ComposeFile,
 	error_context: &mut crate::exit_status::ErrorContext,
 ) -> podup::Result<()> {
-	let Commands::Config {
+	let Commands::Config(ConfigArgs {
 		format,
 		services,
 		volumes,
@@ -31,7 +31,7 @@ pub(crate) async fn run_config(
 		quiet,
 		resolve_image_digests,
 		..
-	} = &cli.command
+	}) = &cli.command
 	else {
 		return Ok(());
 	};
@@ -182,7 +182,7 @@ pub(crate) async fn run_engine_command(
 	// The `-t/--timeout` shutdown-grace override applies to every command that
 	// stops containers (up recreate, down, stop, restart).
 	let stop_timeout = match &cli.command {
-		Commands::Up { timeout, .. }
+		Commands::Up(UpArgs { timeout, .. })
 		| Commands::Down { timeout, .. }
 		| Commands::Stop { timeout, .. }
 		| Commands::Restart { timeout, .. } => *timeout,
@@ -194,18 +194,18 @@ pub(crate) async fn run_engine_command(
 	// `--scale SERVICE=N` (on `up`) and the `scale` subcommand both feed the
 	// engine's replica overrides so `resolve_replicas` reports the target count.
 	let scale_overrides: std::collections::HashMap<String, u32> = match &cli.command {
-		Commands::Up { scale, .. } => scale.iter().cloned().collect(),
+		Commands::Up(UpArgs { scale, .. }) => scale.iter().cloned().collect(),
 		Commands::Scale { pairs } => pairs.iter().cloned().collect(),
 		_ => std::collections::HashMap::new(),
 	};
 	// `up` image-acquisition overrides: `--pull`, `--no-build`, `--quiet-pull`.
 	let (pull_override, no_build, quiet_pull) = match &cli.command {
-		Commands::Up {
+		Commands::Up(UpArgs {
 			pull,
 			no_build,
 			quiet_pull,
 			..
-		} => (pull.clone(), *no_build, *quiet_pull),
+		}) => (pull.clone(), *no_build, *quiet_pull),
 		Commands::Pull { quiet, policy, .. } => (policy.clone(), false, *quiet),
 		Commands::Create { pull, .. } => (pull.clone(), false, false),
 		_ => (None, false, false),
@@ -214,10 +214,10 @@ pub(crate) async fn run_engine_command(
 	// recreation instead of leaving the old ones orphaned.
 	let renew_anon_volumes = matches!(
 		&cli.command,
-		Commands::Up {
+		Commands::Up(UpArgs {
 			renew_anon_volumes: true,
 			..
-		}
+		})
 	);
 	let engine = podup::Engine::with_base_dir(client, project, base_dir)
 		.with_compose_files(compose_files.iter().map(|f| absolute(f)).collect())

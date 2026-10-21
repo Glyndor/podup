@@ -33,7 +33,7 @@ pub(crate) async fn dispatch(
 	profile: &[String],
 ) -> podup::Result<()> {
 	match command {
-		Commands::Up {
+		Commands::Up(UpArgs {
 			detach,
 			build,
 			watch,
@@ -54,7 +54,7 @@ pub(crate) async fn dispatch(
 			abort_on_container_exit,
 			exit_code_from,
 			services,
-		} => {
+		}) => {
 			if remove_orphans {
 				engine.remove_orphans(file).await?;
 			} else {

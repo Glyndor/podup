@@ -196,7 +196,7 @@ async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()>
 	// it before the compose file is parsed: read the compose `name:` for project
 	// precedence when the file parses, but fall back to the directory basename
 	// rather than failing, unlike the commands that depend on the file's contents.
-	if let Commands::Ps { .. } = &cli.command {
+	if let Commands::Ps(_) = &cli.command {
 		return main_runner::short_circuits::run_ps(&cli, error_context).await;
 	}
 
@@ -223,10 +223,10 @@ async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()>
 	// file is parsed only once, with interpolation disabled.
 	let no_interpolate = matches!(
 		&cli.command,
-		Commands::Config {
+		Commands::Config(ConfigArgs {
 			no_interpolate: true,
 			..
-		}
+		})
 	);
 	// `events` and `ps` are scoped purely by the `podup.project` label and never
 	// read service definitions, so, like `docker compose -p NAME events`/`ps`,
@@ -244,8 +244,8 @@ async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()>
 	// is created or installed with the port. Suppress it on every other command:
 	// those reuse containers whose configuration was already shown.
 	let suppress_port_warn = match &cli.command {
-		Commands::Config { .. } => false,
-		Commands::Up { .. } | Commands::Create { .. } | Commands::Run { .. } => cli.no_warn,
+		Commands::Config(_) => false,
+		Commands::Up(_) | Commands::Create { .. } | Commands::Run(_) => cli.no_warn,
 		Commands::Scale { .. } | Commands::Watch => cli.no_warn,
 		Commands::Generate { .. } | Commands::Autostart { .. } => cli.no_warn,
 		_ => true,
@@ -257,8 +257,8 @@ async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()>
 	// commands that create containers, and `config`, which ignores `--no-warn`
 	// as it does for the port-exposure warning.
 	let show_client_address = match &cli.command {
-		Commands::Config { .. } => true,
-		Commands::Up { .. } | Commands::Create { .. } | Commands::Run { .. } => !cli.no_warn,
+		Commands::Config(_) => true,
+		Commands::Up(_) | Commands::Create { .. } | Commands::Run(_) => !cli.no_warn,
 		_ => false,
 	};
 	let _client_address_guard =
@@ -269,7 +269,7 @@ async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()>
 		podup::parse_files_with_env_files_interp(&compose_files, &cli.env_file, !no_interpolate)?
 	};
 
-	if let Commands::Config { .. } = &cli.command {
+	if let Commands::Config(_) = &cli.command {
 		return main_runner::post_parse::run_config(&cli, &compose_files, file, error_context)
 			.await;
 	}
