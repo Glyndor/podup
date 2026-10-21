@@ -8,86 +8,32 @@ use clap::Subcommand;
 use clap_complete::Shell;
 
 use super::parse::{parse_progress, parse_pull_policy, parse_scale_pair, parse_timeout};
-use super::types::{
-	AuditFormat, AutostartCommands, ConfigFormat, EventsFormat, GenerateCommands, OutputFormat,
-	RmiScope,
-};
+use super::types::{AuditFormat, AutostartCommands, GenerateCommands, OutputFormat, RmiScope};
+
+mod attach;
+mod commit;
+mod config;
+mod events;
+mod exec;
+mod logs;
+mod ps;
+mod run;
+mod up;
+pub(crate) use attach::AttachArgs;
+pub(crate) use commit::CommitArgs;
+pub(crate) use config::ConfigArgs;
+pub(crate) use events::EventsArgs;
+pub(crate) use exec::ExecArgs;
+pub(crate) use logs::LogsArgs;
+pub(crate) use ps::PsArgs;
+pub(crate) use run::RunArgs;
+pub(crate) use up::UpArgs;
 
 #[derive(Subcommand)]
 #[non_exhaustive]
 pub(crate) enum Commands {
 	/// Create and start all services.
-	Up {
-		/// Run containers in the background.
-		#[arg(short, long)]
-		detach: bool,
-		/// Build images before starting containers.
-		#[arg(long, conflicts_with = "no_build")]
-		build: bool,
-		/// Watch and sync/rebuild/restart per develop.watch rules.
-		#[arg(short, long)]
-		watch: bool,
-		/// Remove containers for services not defined in the compose file.
-		#[arg(long)]
-		remove_orphans: bool,
-		/// Do not recreate containers that are already running.
-		#[arg(long, conflicts_with = "force_recreate")]
-		no_recreate: bool,
-		/// Recreate containers even if their configuration is unchanged.
-		#[arg(long)]
-		force_recreate: bool,
-		/// Do not start linked services (depends_on) of the named services.
-		#[arg(long)]
-		no_deps: bool,
-		/// Seconds to wait for a container to stop when recreating.
-		#[arg(short = 't', long, allow_hyphen_values = true, value_parser = parse_timeout)]
-		timeout: Option<i32>,
-		/// Override the replica count for a service: SERVICE=N (repeatable).
-		#[arg(long, value_parser = parse_scale_pair)]
-		scale: Vec<(String, u32)>,
-		/// Pull policy before starting: always, missing, never, newer, build.
-		#[arg(long, value_parser = parse_pull_policy)]
-		pull: Option<String>,
-		/// Do not build images, even for services with a build section.
-		#[arg(long)]
-		no_build: bool,
-		/// Suppress image-pull progress output.
-		#[arg(long)]
-		quiet_pull: bool,
-		/// Wait until services are running/healthy before returning.
-		#[arg(long)]
-		wait: bool,
-		/// Maximum seconds to wait with --wait before giving up.
-		#[arg(long, requires = "wait")]
-		wait_timeout: Option<u64>,
-		/// Create containers but do not start them.
-		#[arg(long)]
-		no_start: bool,
-		/// Prefix attached log lines with a timestamp (ignored with -d).
-		#[arg(long)]
-		timestamps: bool,
-		/// Recreate anonymous volumes instead of keeping the previous ones.
-		#[arg(short = 'V', long)]
-		renew_anon_volumes: bool,
-		/// Stop every container as soon as any container exits. Cannot be combined
-		/// with `-d/--detach`, `--wait` or `--watch`: they all change what
-		/// "attaching" means, and a foreground abort is the only one the flag
-		/// applies to.
-		#[arg(long, conflicts_with_all = ["detach", "wait", "watch"])]
-		abort_on_container_exit: bool,
-		/// Return the exit code of the named service's container as podup's own
-		/// exit status. Implies `--abort-on-container-exit`, and is rejected
-		/// with the same combination rule as that flag.
-		#[arg(
-			long,
-			value_name = "SERVICE",
-			conflicts_with_all = ["detach", "wait", "watch"]
-		)]
-		exit_code_from: Option<String>,
-		/// Bring up only these services (and their depends_on); default: all.
-		#[arg(trailing_var_arg = true)]
-		services: Vec<String>,
-	},
+	Up(UpArgs),
 	/// Stop and remove containers.
 	Down {
 		/// Also remove named volumes declared in the compose file.
@@ -263,65 +209,7 @@ pub(crate) enum Commands {
 		services: Vec<String>,
 	},
 	/// Run a one-off command in a new service container.
-	Run {
-		/// Service to run the command against.
-		service: String,
-		/// Remove the container after it exits (the default).
-		#[arg(long, overrides_with = "no_rm")]
-		rm: bool,
-		/// Keep the one-off container after it exits instead of removing it.
-		#[arg(long, overrides_with = "rm")]
-		no_rm: bool,
-		/// Run container in the background.
-		#[arg(short, long)]
-		detach: bool,
-		/// Set environment variables (KEY=VAL).
-		#[arg(short, long = "env")]
-		env_overrides: Vec<String>,
-		/// Override the container name.
-		#[arg(long)]
-		name: Option<String>,
-		/// Publish the service's declared ports (off by default).
-		#[arg(short = 'P', long)]
-		service_ports: bool,
-		/// Run the command as this user (`name or UID[:GID]`).
-		#[arg(short, long)]
-		user: Option<String>,
-		/// Working directory inside the container.
-		#[arg(short, long)]
-		workdir: Option<String>,
-		/// Override the image entrypoint.
-		#[arg(long)]
-		entrypoint: Option<String>,
-		/// Bind-mount an extra volume (HOST:CONTAINER[:OPTS] or NAME:CONTAINER); repeatable.
-		#[arg(short = 'v', long = "volume")]
-		volume: Vec<String>,
-		/// Publish an extra port (HOST:CONTAINER[/PROTO]); repeatable.
-		#[arg(short = 'p', long = "publish")]
-		publish: Vec<String>,
-		/// Keep the container's STDIN open (sets `stdin_open`). Whether a live
-		/// terminal is attached is decided by stdin and stdout both being
-		/// terminals, and by `-T`, not by this flag.
-		#[arg(short, long)]
-		interactive: bool,
-		/// Disable pseudo-TTY allocation. `run` allocates one when stdin and
-		/// stdout are both terminals; this opts out, so a script keeps plain
-		/// streaming.
-		// Both spellings are accepted on purpose: `docker compose run` spells the
-		// long form `--no-TTY` while `docker compose exec` spells it `--no-tty`.
-		// A script copied from either one has to work, so each command takes both.
-		#[arg(short = 'T', long = "no-TTY", visible_alias = "no-tty")]
-		no_tty: bool,
-		/// Do not start linked services (depends_on) before running.
-		#[arg(long)]
-		no_deps: bool,
-		/// Add a label to the one-off container (KEY=VAL); may be repeated.
-		#[arg(short = 'l', long = "label")]
-		label: Vec<String>,
-		/// Command (and arguments) to run.
-		#[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-		cmd: Vec<String>,
-	},
+	Run(RunArgs),
 	/// Copy files between a service container and the host (SERVICE:PATH for the
 	/// container side, e.g. `web:/app/data ./local`).
 	Cp {
@@ -340,37 +228,7 @@ pub(crate) enum Commands {
 		archive: bool,
 	},
 	/// List containers.
-	Ps {
-		/// Show all containers, including stopped ones.
-		#[arg(short, long)]
-		all: bool,
-		/// Only display container IDs. Mutually exclusive with `--format` and
-		/// `--services`.
-		#[arg(short, long, conflicts_with_all = ["format", "services_only"])]
-		quiet: bool,
-		/// Print the service names, one per line, instead of the container
-		/// table. Mutually exclusive with `--quiet` and `--format`.
-		#[arg(long = "services", conflicts_with_all = ["format", "quiet"])]
-		services_only: bool,
-		/// Show each container's on-disk size. Off by default: the server has
-		/// to walk each container's writable layer to answer, which measured
-		/// 21ms to 109ms over 59 containers.
-		#[arg(short = 's', long)]
-		size: bool,
-		/// Filter containers by predicate: status=<running|exited> or
-		/// name=<NAME> (repeatable).
-		#[arg(long)]
-		filter: Vec<String>,
-		/// Filter by container status (running, exited, ...); repeatable.
-		#[arg(long)]
-		status: Vec<String>,
-		/// Output format: `table` (aligned columns) or `json` (a JSON array).
-		/// Mutually exclusive with `--quiet` and `--services`.
-		#[arg(long, value_enum, default_value_t = OutputFormat::Table)]
-		format: OutputFormat,
-		/// Show only these services.
-		services: Vec<String>,
-	},
+	Ps(PsArgs),
 	/// Display the running processes of service containers.
 	Top {
 		/// Output format.
@@ -383,70 +241,9 @@ pub(crate) enum Commands {
 		services: Vec<String>,
 	},
 	/// Stream Podman events for this project's containers.
-	Events {
-		/// Output format: a `TYPE ACTION NAME` summary (table) or one JSON
-		/// object per line (NDJSON, not a JSON array).
-		#[arg(long, value_enum, default_value_t = EventsFormat::Table)]
-		format: EventsFormat,
-		/// Only stream events at or after this timestamp/relative time (e.g.
-		/// 30m, 2026-01-01T00:00:00). A relative time counts back from now:
-		/// `30m` is thirty minutes ago.
-		// `allow_hyphen_values` so a leading `-` (a time in the future, which
-		// matches nothing, #1896) reaches podup's own error rather than clap's
-		// unknown-flag one. A plain comment, not a doc comment, so it stays out
-		// of `--help`.
-		#[arg(long, allow_hyphen_values = true)]
-		since: Option<String>,
-		/// Only stream events up to this timestamp/relative time. Only an
-		/// already-elapsed window ends the feed: libpod keeps a stream open past
-		/// a future time, so `--until -5m` bounds it and `--until 5m` does not.
-		#[arg(long, allow_hyphen_values = true)]
-		until: Option<String>,
-		/// Filter events by predicate (KEY=VALUE, e.g. event=start); repeatable.
-		#[arg(long)]
-		filter: Vec<String>,
-		/// Deprecated alias for `--format json`; kept for backward compatibility.
-		/// Cannot be combined with an explicit `--format`.
-		#[arg(long, hide = true, conflicts_with = "format")]
-		json: bool,
-		/// Only stream events for these services (all when none are given).
-		// A plain positional (no `trailing_var_arg`), like `top`, so `--format`,
-		// `--since`, `--until`, and `--filter` parse in any position
-		// (`events web db --format json` as well as `events --format json
-		// web db`); service names are never hyphen-prefixed, so nothing is
-		// lost. An unknown service fails with
-		// `service 'X' not found` before the event stream is opened (#2014).
-		services: Vec<String>,
-	},
+	Events(EventsArgs),
 	/// Attach to a service container's output (stdout/stderr).
-	Attach {
-		/// Service whose container to attach to.
-		service: String,
-		/// Index of the container when the service has multiple replicas (1-based).
-		#[arg(long)]
-		index: Option<u32>,
-		/// Do not attach STDIN (accepted for compatibility; podup
-		/// attaches output only).
-		#[arg(long)]
-		no_stdin: bool,
-		/// Proxy received signals to the process (accepted for compatibility).
-		///
-		/// Takes an optional value so both spellings parse. Other Compose tools
-		/// declare it as a bare flag, and demanding a value turned a script
-		/// copied from one of them into a usage error, inside the very set of
-		/// flags whose purpose is that such a script runs unchanged.
-		#[arg(
-			long,
-			default_value_t = false,
-			action = clap::ArgAction::Set,
-			num_args = 0..=1,
-			default_missing_value = "true",
-		)]
-		sig_proxy: bool,
-		/// Override the detach key sequence (accepted for compatibility).
-		#[arg(long)]
-		detach_keys: Option<String>,
-	},
+	Attach(AttachArgs),
 	/// Block until service containers stop, printing each exit code.
 	Wait {
 		/// Output format. `json` emits one NDJSON object per container as it
@@ -457,36 +254,7 @@ pub(crate) enum Commands {
 		services: Vec<String>,
 	},
 	/// Commit a service container to a new image.
-	Commit {
-		/// Service whose container to commit.
-		service: String,
-		/// Target image reference (repo[:tag]).
-		image: String,
-		/// Commit message for the new image.
-		#[arg(short, long)]
-		message: Option<String>,
-		/// Author of the new image (e.g. "Name <email>").
-		#[arg(short, long)]
-		author: Option<String>,
-		/// Apply a Containerfile instruction to the committed image, e.g.
-		/// `CMD=/bin/sh` or `ENV=KEY=value` (repeatable).
-		#[arg(short = 'c', long = "change")]
-		change: Vec<String>,
-		/// Replica index (1-based) of a scaled service.
-		#[arg(long)]
-		index: Option<u32>,
-		/// Pause the container during commit for a consistent snapshot
-		/// (default on; `--pause=false` to snapshot a live container).
-		#[arg(
-			short,
-			long,
-			default_value_t = true,
-			action = clap::ArgAction::Set,
-			num_args = 0..=1,
-			default_missing_value = "true",
-		)]
-		pause: bool,
-	},
+	Commit(CommitArgs),
 	/// Export a service container's filesystem as a tar archive.
 	Export {
 		/// Service whose container to export.
@@ -542,67 +310,9 @@ pub(crate) enum Commands {
 	},
 	/// View output from containers.
 	#[command(alias = "log")]
-	Logs {
-		/// Follow log output.
-		#[arg(short, long)]
-		follow: bool,
-		/// Number of lines to show from the end of the logs (default: 100; `all` for the full stream).
-		#[arg(short = 'n', long)]
-		tail: Option<String>,
-		/// Show logs since a timestamp or relative time (e.g.
-		/// 2024-01-01T00:00:00, -10m).
-		#[arg(long, allow_hyphen_values = true)]
-		since: Option<String>,
-		/// Show logs before a timestamp or relative time (e.g. -5m).
-		#[arg(long, allow_hyphen_values = true)]
-		until: Option<String>,
-		/// Prefix each line with an RFC3339 timestamp.
-		#[arg(short = 't', long)]
-		timestamps: bool,
-		/// Produce monochrome output (no colour in the service-name prefix).
-		#[arg(long)]
-		no_color: bool,
-		/// Do not print the service-name prefix on each line.
-		#[arg(long)]
-		no_log_prefix: bool,
-		/// Show logs for these services (default: all).
-		#[arg(trailing_var_arg = true)]
-		services: Vec<String>,
-	},
+	Logs(LogsArgs),
 	/// Execute a command in a running service container.
-	Exec {
-		/// Set environment variables (KEY=VAL); may be repeated.
-		#[arg(short, long = "env")]
-		env: Vec<String>,
-		/// Run the command as this user (`name or UID[:GID]`).
-		#[arg(short, long)]
-		user: Option<String>,
-		/// Working directory inside the container.
-		#[arg(short, long)]
-		workdir: Option<String>,
-		/// Give extended privileges to the command.
-		#[arg(long)]
-		privileged: bool,
-		/// Detach: run the command in the background.
-		#[arg(short, long)]
-		detach: bool,
-		/// Disable pseudo-TTY allocation. `exec` allocates one when stdin and
-		/// stdout are both terminals; this opts out, so a script keeps plain
-		/// streaming.
-		// `docker compose exec` spells the long form `--no-tty`, so that is the
-		// primary here; `--no-TTY` stays accepted so the spelling `run` uses also
-		// works on `exec`. See the note on `run`'s field.
-		#[arg(short = 'T', long = "no-tty", visible_alias = "no-TTY")]
-		no_tty: bool,
-		/// Index of the container when the service has multiple replicas (1-based).
-		#[arg(long)]
-		index: Option<u32>,
-		/// Service name.
-		service: String,
-		/// Command (and arguments) to execute.
-		#[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-		cmd: Vec<String>,
-	},
+	Exec(ExecArgs),
 	/// Pull images for the named services, or all services if none are given.
 	Pull {
 		/// Suppress image-pull progress output.
@@ -634,40 +344,7 @@ pub(crate) enum Commands {
 	},
 	/// Print the resolved compose file (substitution/extends/include applied).
 	#[command(alias = "convert")]
-	Config {
-		/// Output format.
-		#[arg(long, value_enum, default_value_t = ConfigFormat::Yaml)]
-		format: ConfigFormat,
-		/// Print only the service names, one per line.
-		#[arg(long)]
-		services: bool,
-		/// Print only the named volumes, one per line.
-		#[arg(long)]
-		volumes: bool,
-		/// Print only the service image references, one per line.
-		#[arg(long)]
-		images: bool,
-		/// Print only the profile names, one per line.
-		#[arg(long)]
-		profiles: bool,
-		/// Print the config hash of all services, or of the given comma-separated
-		/// services ("*" for all).
-		#[arg(long)]
-		hash: Option<String>,
-		/// Only validate the configuration; print nothing.
-		#[arg(short, long)]
-		quiet: bool,
-		/// Leave ${VAR} placeholders literal instead of interpolating them.
-		#[arg(long)]
-		no_interpolate: bool,
-		/// Accepted for compatibility; podup output is already
-		/// normalized.
-		#[arg(long)]
-		no_normalize: bool,
-		/// Rewrite each service image to its registry digest (repo@sha256:...).
-		#[arg(long)]
-		resolve_image_digests: bool,
-	},
+	Config(ConfigArgs),
 	/// Audit the compose file for hardening gaps (read-only rootfs, dropped
 	/// capabilities, memory/PID limits, host-binding modes, secret-shaped env
 	/// vars, unpinned images, …) and print a row per service. No check changes

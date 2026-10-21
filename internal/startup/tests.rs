@@ -5,6 +5,7 @@
 //! implementation belongs.
 
 use super::*;
+use crate::cli::{ConfigArgs, EventsArgs, PsArgs, UpArgs};
 
 mod help_for_tests {
 	use super::help_for;
@@ -146,7 +147,7 @@ mod startup_tests {
 		use crate::cli::{EventsFormat, OutputFormat};
 		// `ps` and `events` are scoped purely by the project label, so they are
 		// label-only and may run without a compose file.
-		assert!(is_label_only(&Commands::Ps {
+		assert!(is_label_only(&Commands::Ps(PsArgs {
 			all: false,
 			quiet: false,
 			services_only: false,
@@ -155,15 +156,15 @@ mod startup_tests {
 			status: vec![],
 			format: OutputFormat::Table,
 			services: vec![],
-		}));
-		assert!(is_label_only(&Commands::Events {
+		})));
+		assert!(is_label_only(&Commands::Events(EventsArgs {
 			format: EventsFormat::Table,
 			since: None,
 			until: None,
 			filter: vec![],
 			json: false,
 			services: vec![],
-		}));
+		})));
 		// A command that reads service definitions is not label-only.
 		assert!(!is_label_only(&Commands::Top {
 			format: OutputFormat::Table,
@@ -330,7 +331,7 @@ mod startup_tests {
 		let cases: Vec<(&'static str, Commands, bool)> = vec![
 			(
 				"Up",
-				Commands::Up {
+				Commands::Up(UpArgs {
 					detach: false,
 					build: false,
 					watch: false,
@@ -351,12 +352,12 @@ mod startup_tests {
 					abort_on_container_exit: false,
 					exit_code_from: None,
 					services: vec![],
-				},
+				}),
 				false,
 			),
 			(
 				"Ps",
-				Commands::Ps {
+				Commands::Ps(PsArgs {
 					all: false,
 					quiet: false,
 					services_only: false,
@@ -365,24 +366,24 @@ mod startup_tests {
 					status: vec![],
 					format: OutputFormat::Table,
 					services: vec![],
-				},
+				}),
 				true,
 			),
 			(
 				"Events",
-				Commands::Events {
+				Commands::Events(EventsArgs {
 					format: EventsFormat::Table,
 					since: None,
 					until: None,
 					filter: vec![],
 					json: false,
 					services: vec![],
-				},
+				}),
 				true,
 			),
 			(
 				"Config",
-				Commands::Config {
+				Commands::Config(ConfigArgs {
 					format: ConfigFormat::Yaml,
 					services: false,
 					volumes: false,
@@ -393,7 +394,7 @@ mod startup_tests {
 					no_interpolate: false,
 					no_normalize: false,
 					resolve_image_digests: false,
-				},
+				}),
 				false,
 			),
 			(

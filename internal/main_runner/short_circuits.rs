@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use crate::cli::{AuditFormat, Cli, Commands};
+use crate::cli::{AuditFormat, Cli, Commands, PsArgs};
 use crate::resolve::{resolve_base_dir, resolve_compose_files, resolve_project_name};
 use crate::startup::validate_project_name;
 
@@ -181,7 +181,7 @@ pub(crate) async fn run_ps(
 	// container listing it fetches immediately before tearing down.
 	podup::ui::set_services(&file.services.keys().cloned().collect::<Vec<_>>());
 
-	let Commands::Ps {
+	let Commands::Ps(PsArgs {
 		all,
 		quiet,
 		services_only,
@@ -190,7 +190,7 @@ pub(crate) async fn run_ps(
 		status,
 		format,
 		services,
-	} = &cli.command
+	}) = &cli.command
 	else {
 		// The caller (top-level `run`) only routes here when the variant matches.
 		return Ok(());

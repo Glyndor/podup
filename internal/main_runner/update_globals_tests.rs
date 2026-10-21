@@ -7,7 +7,7 @@ fn an_interrupt_maps_onto_the_shell_convention() {
 	assert_eq!(crate::exit_status::interrupt_exit_code(), 130);
 }
 use super::*;
-use crate::cli::{Cli, Commands, EventsFormat};
+use crate::cli::{Cli, Commands, EventsArgs, EventsFormat};
 use clap::CommandFactory;
 use clap::Parser;
 
@@ -27,7 +27,7 @@ fn events_parses_an_optional_service_positional() {
 	let cli = Cli::try_parse_from(["podup", "events", "web", "db", "--format", "json"])
 		.expect("events web db --format json must parse");
 	let services = match &cli.command {
-		Commands::Events { services, .. } => services.clone(),
+		Commands::Events(EventsArgs { services, .. }) => services.clone(),
 		_ => panic!("expected the events subcommand"),
 	};
 	assert_eq!(
@@ -36,7 +36,7 @@ fn events_parses_an_optional_service_positional() {
 		"the service positional must carry every name in order"
 	);
 	let format = match &cli.command {
-		Commands::Events { format, .. } => *format,
+		Commands::Events(EventsArgs { format, .. }) => *format,
 		_ => panic!("expected the events subcommand"),
 	};
 	assert!(
@@ -48,7 +48,7 @@ fn events_parses_an_optional_service_positional() {
 	let cli =
 		Cli::try_parse_from(["podup", "events"]).expect("events must parse with no positional");
 	let services = match &cli.command {
-		Commands::Events { services, .. } => services.clone(),
+		Commands::Events(EventsArgs { services, .. }) => services.clone(),
 		_ => panic!("expected the events subcommand"),
 	};
 	assert!(

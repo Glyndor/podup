@@ -36,7 +36,7 @@ pub(super) async fn dispatch_rest(
 	profile: &[String],
 ) -> podup::Result<()> {
 	match command {
-		Commands::Run {
+		Commands::Run(RunArgs {
 			service,
 			rm: _,
 			no_rm,
@@ -56,7 +56,7 @@ pub(super) async fn dispatch_rest(
 			no_deps: _,
 			label: _,
 			cmd,
-		} => {
+		}) => {
 			engine
 				.run(
 					file,
@@ -90,20 +90,20 @@ pub(super) async fn dispatch_rest(
 				)
 				.await?
 		}
-		Commands::Ps { .. } => unreachable!("handled before compose parsing"),
+		Commands::Ps(_) => unreachable!("handled before compose parsing"),
 		Commands::Top { format, services } => {
 			engine
 				.top_with_options(file, &services, format == OutputFormat::Json)
 				.await?
 		}
-		Commands::Events {
+		Commands::Events(EventsArgs {
 			format,
 			since,
 			until,
 			filter,
 			json,
 			services,
-		} => {
+		}) => {
 			// `--json` is the deprecated alias for `--format json` (and conflicts
 			// with an explicit `--format`); either selects JSON-line output.
 			let json = json || format == EventsFormat::Json;
@@ -116,20 +116,20 @@ pub(super) async fn dispatch_rest(
 				)
 				.await?
 		}
-		Commands::Attach {
+		Commands::Attach(AttachArgs {
 			service,
 			index,
 			no_stdin: _,
 			sig_proxy: _,
 			detach_keys: _,
-		} => engine.attach_with_index(file, &service, index).await?,
+		}) => engine.attach_with_index(file, &service, index).await?,
 		Commands::Wait { format, services } => {
 			let file = &profile_filtered(file, profile, &services);
 			engine
 				.wait_services_with_options(file, &services, matches!(format, OutputFormat::Json))
 				.await?
 		}
-		Commands::Commit {
+		Commands::Commit(CommitArgs {
 			service,
 			image,
 			message,
@@ -137,7 +137,7 @@ pub(super) async fn dispatch_rest(
 			pause,
 			change,
 			index,
-		} => {
+		}) => {
 			engine
 				.commit_with_options(
 					file,
@@ -218,7 +218,7 @@ pub(super) async fn dispatch_rest(
 				)
 				.await?
 		}
-		Commands::Logs {
+		Commands::Logs(LogsArgs {
 			follow,
 			tail,
 			since,
@@ -227,7 +227,7 @@ pub(super) async fn dispatch_rest(
 			no_color,
 			no_log_prefix,
 			services,
-		} => {
+		}) => {
 			engine
 				.logs_with_display(
 					file,
@@ -243,7 +243,7 @@ pub(super) async fn dispatch_rest(
 				)
 				.await?
 		}
-		Commands::Exec {
+		Commands::Exec(ExecArgs {
 			env,
 			user,
 			workdir,
@@ -253,7 +253,7 @@ pub(super) async fn dispatch_rest(
 			index,
 			service,
 			cmd,
-		} => {
+		}) => {
 			engine
 				.exec_with_options(
 					file,
@@ -295,7 +295,7 @@ pub(super) async fn dispatch_rest(
 		// or the catch-all `other` binding stopped catching. Move the handler
 		// back to `dispatch.rs`; this second match exists for the long tail,
 		// not to replace any of these.
-		Commands::Up { .. } => unreachable!("handled in dispatch"),
+		Commands::Up(_) => unreachable!("handled in dispatch"),
 		Commands::Down { .. } => unreachable!("handled in dispatch"),
 		Commands::Start { .. } => unreachable!("handled in dispatch"),
 		Commands::Stop { .. } => unreachable!("handled in dispatch"),
@@ -306,7 +306,7 @@ pub(super) async fn dispatch_rest(
 		Commands::Kill { .. } => unreachable!("handled in dispatch"),
 		Commands::Pause { .. } => unreachable!("handled in dispatch"),
 		Commands::Unpause { .. } => unreachable!("handled in dispatch"),
-		Commands::Config { .. } => unreachable!("handled above"),
+		Commands::Config(_) => unreachable!("handled above"),
 		Commands::Audit { .. } => unreachable!("handled above"),
 		Commands::Generate { .. } => unreachable!("handled above"),
 		Commands::Autostart { .. } => unreachable!("handled above"),

@@ -7,7 +7,10 @@ use clap::Parser;
 mod commands;
 mod parse;
 mod types;
-pub(crate) use commands::Commands;
+pub(crate) use commands::{
+	AttachArgs, Commands, CommitArgs, ConfigArgs, EventsArgs, ExecArgs, LogsArgs, PsArgs, RunArgs,
+	UpArgs,
+};
 pub(crate) use types::{
 	AnsiMode, AuditFormat, AutostartCommands, AutostartMode, ConfigFormat, EventsFormat,
 	GenerateCommands, OutputFormat, RmiScope,
