@@ -4,9 +4,10 @@
 /// cancelled CI job reported success.
 #[test]
 fn an_interrupt_maps_onto_the_shell_convention() {
-	assert_eq!(interrupt_exit_code(), 130);
+	assert_eq!(crate::exit_status::interrupt_exit_code(), 130);
 }
 use super::*;
+use crate::cli::{Cli, Commands, EventsFormat};
 use clap::CommandFactory;
 use clap::Parser;
 

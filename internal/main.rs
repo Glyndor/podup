@@ -5,9 +5,6 @@
 
 use std::process;
 
-#[cfg(feature = "completions")]
-use clap::CommandFactory;
-
 mod apparmor_hint;
 mod audit;
 mod autostart_cmd;
@@ -15,14 +12,16 @@ mod cli;
 mod dispatch;
 mod exit_status;
 mod generate;
+mod main_runner;
 mod resolve;
 mod startup;
 
 use cli::*;
 use exit_status::{command_failure_exit_code, interrupt_exit_code, print_error};
-use generate::write_quadlet;
-use resolve::*;
-use startup::{init_tracing, internal_error_notice, is_label_only, is_mutating, parse_cli};
+use resolve::{
+	resolve_base_dir, resolve_compose_files, resolve_project_name, validate_project_directory,
+};
+use startup::{internal_error_notice, is_label_only, parse_cli, validate_project_name};
 
 fn main() {
 	// Replace the default panic output (a raw Rust backtrace) with a `podup:`
@@ -109,133 +108,37 @@ fn run_to_exit() {
 	}
 }
 
-/// Resolve the Podman socket: an explicit `--socket` / `PODMAN_SOCKET` value
-/// wins (clap already folds the env var into `cli.socket`); otherwise fall back
-/// to `DOCKER_HOST` for Docker compatibility. A remote scheme on either is
-/// rejected by [`podup::podman::connect`], so `DOCKER_HOST=tcp://…` fails closed
-/// rather than being silently ignored.
-fn resolve_socket(cli_socket: Option<&str>) -> Option<String> {
-	cli_socket
-		.map(str::to_string)
-		.or_else(|| std::env::var("DOCKER_HOST").ok().filter(|s| !s.is_empty()))
-}
-
-/// Connect to the Podman `socket` names (or the resolved default), with the
-/// pool size asked for, and confirm the engine meets the supported floor
-/// before the command sends anything else. Every command that talks to
-/// Podman gets its client here.
-async fn connect_podman(
-	socket: Option<&str>,
-	pool_size: Option<usize>,
-) -> podup::Result<podup::Client> {
-	podup::podman::connect_checked(
-		resolve_socket(socket).as_deref(),
-		pool_size.unwrap_or(podup::Client::DEFAULT_POOL_SIZE),
-	)
-	.await
-}
-
-/// Render help for `help [COMMAND]`, framed and colour-aware to match clap's own
-/// `--help`. Help-flag tokens (`-h`/`--help`) and a leading `--` are tolerated;
-/// the first remaining token selects the subcommand (an unknown one falls back
-/// to the top-level help).
-fn print_command_help(commands: &[String]) -> podup::Result<()> {
-	use clap::CommandFactory;
-	let mut cmd = Cli::command();
-	let target = commands
-		.iter()
-		.find(|t| !matches!(t.as_str(), "-h" | "--help" | "--"));
-	let rendered = match target.and_then(|name| cmd.find_subcommand_mut(name)) {
-		Some(sub) => sub.render_long_help(),
-		None => cmd.render_long_help(),
-	};
-	if podup::ui::stdout_colored() {
-		print!("\n{}\n", rendered.ansi());
-	} else {
-		print!("\n{rendered}\n");
-	}
-	Ok(())
-}
-
-/// Whether a `down` invocation should tear the project down purely by its
-/// `podup.project` label: the command is `down`, an explicit project name was
-/// given (`-p` / `COMPOSE_PROJECT_NAME`), and no compose file resolves on disk.
-/// Matches `docker compose -p NAME down` against a running project whose compose
-/// file is absent. Pure so it is unit-testable without a Podman daemon.
-fn down_by_label_path(command: &Commands, project: Option<&str>, compose_present: bool) -> bool {
-	matches!(command, Commands::Down { .. }) && project.is_some() && !compose_present
-}
-
 /// Orchestrate one CLI invocation: parse args, then short-circuit the commands
-/// that need neither a compose file nor (for some) Podman: `completions`,
-/// `update`, `ls`, `ps`, and `config`. Otherwise resolve and parse the compose
-/// file(s), settle the project name and base directory (validating the name at
-/// the trust boundary), acquire the per-project lock, and dispatch the
-/// remaining commands.
+/// that need neither a compose file nor (for some) Podman. Otherwise resolve
+/// and parse the compose file, settle the project name and base directory
+/// (validating the name at the trust boundary), acquire the per-project lock,
+/// and dispatch the remaining commands.
+///
+/// The per-command bodies live in [`main_runner::short_circuits`] and
+/// [`main_runner::post_parse`]; the prelude below stays here because it runs in
+/// strict order between commands and cannot be split.
 async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()> {
 	let cli = parse_cli();
-	// Resolve the colour choice before any output (including tracing setup below)
-	// so `--ansi`/`NO_COLOR`/TTY detection apply consistently everywhere.
-	podup::ui::set_color_choice(cli.ansi.into());
-	// Enable user-facing lifecycle progress for the CLI: per-container
-	// Started/Stopped/Removed lines on stderr (and the `run -d` id on stdout),
-	// matching docker compose. The library leaves this off so embedders stay
-	// silent. Only the lifecycle commands emit it, so enabling it globally here
-	// is inert for read-only/machine-output commands.
-	podup::ui::set_progress(true);
-	// `watch` is an interactive, long-running command; surface its per-action
-	// progress (synced/rebuilt/restarted) by defaulting to INFO instead of the
-	// quiet WARN floor. `RUST_LOG` always overrides.
-	let log_floor = if matches!(cli.command, Commands::Watch) {
-		"info"
-	} else {
-		"warn"
-	};
-	init_tracing(log_floor);
+	main_runner::short_circuits::setup_output(&cli);
 
 	// `help [COMMAND]` is served from the static CLI definition. Unlike clap's
 	// built-in help subcommand it tolerates extra tokens, `-h`/`--help`, and a
 	// leading `--`, and never errors with "unrecognized subcommand".
 	if let Commands::Help { commands } = &cli.command {
-		return print_command_help(commands);
+		return main_runner::short_circuits::run_help(commands);
 	}
 
 	// `version` mirrors `docker compose version` (scripts probe it); it needs
 	// neither a compose file nor Podman.
 	if let Commands::Version { short, ref format } = cli.command {
-		use std::io::Write;
-		let version = env!("CARGO_PKG_VERSION");
-		let line = if short {
-			version.to_string()
-		} else if format == "json" {
-			format!("{{\"version\":\"v{version}\"}}")
-		} else {
-			format!("podup version v{version}")
-		};
-		match writeln!(std::io::stdout(), "{line}") {
-			Err(e) if e.kind() != std::io::ErrorKind::BrokenPipe => return Err(e.into()),
-			_ => return Ok(()),
-		}
+		return main_runner::short_circuits::run_version(short, format);
 	}
 
 	// `completions` derives entirely from the static CLI definition; it neither
 	// parses a compose file nor contacts Podman. Print to stdout for piping.
 	#[cfg(feature = "completions")]
 	if let Commands::Completions { shell } = cli.command {
-		let mut cmd = Cli::command();
-		let name = cmd.get_name().to_string();
-		// Render into a buffer first: clap_complete panics if the writer errors,
-		// which aborts (SIGABRT) when stdout is a closed pipe such as
-		// `podup completions bash | head`. A `Vec` write never fails; then send
-		// it to stdout and treat a broken pipe as a clean exit, like a normal
-		// Unix tool.
-		let mut buf = Vec::new();
-		clap_complete::generate(shell, &mut cmd, name, &mut buf);
-		match std::io::Write::write_all(&mut std::io::stdout(), &buf) {
-			Ok(()) => return Ok(()),
-			Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => return Ok(()),
-			Err(e) => return Err(e.into()),
-		}
+		return main_runner::short_circuits::run_completions(shell);
 	}
 
 	// `update` operates on the binary itself, not a compose project, so it runs
@@ -243,29 +146,7 @@ async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()>
 	// filesystem work is blocking; keep it off the async path entirely.
 	#[cfg(feature = "update")]
 	if let Commands::Update { check, force } = cli.command {
-		// The compose-only global value-flags (--socket/--profile/--env-file/
-		// --project-directory) never reach the binary-only self-update, so accepting
-		// them silently is a misleading no-op. Reject any that were passed on the
-		// command line (env-sourced values are left alone; they are not a misuse).
-		if let Some(flag) = misused_update_global() {
-			use clap::CommandFactory;
-			Cli::command()
-				.error(
-					clap::error::ErrorKind::ArgumentConflict,
-					format!(
-						"`{flag}` has no effect on `update`, which replaces the podup \
-						 binary itself rather than acting on a compose project"
-					),
-				)
-				.exit();
-		}
-		let opts = podup::update::UpdateOptions {
-			check_only: check,
-			force,
-		};
-		return tokio::task::spawn_blocking(move || podup::update::run(opts))
-			.await
-			.map_err(|e| podup::ComposeError::Update(format!("update task failed: {e}")))?;
+		return main_runner::short_circuits::run_update(check, force).await;
 	}
 
 	// An explicit `--project-directory` must exist and be a directory before any
@@ -284,10 +165,7 @@ async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()>
 		..
 	} = &cli.command
 	{
-		match format {
-			AuditFormat::Table => audit::render_list_checks_table(),
-			AuditFormat::Json => audit::render_list_checks_json(),
-		}
+		main_runner::short_circuits::render_audit_list_checks(*format);
 		return Ok(());
 	}
 
@@ -300,21 +178,14 @@ async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()>
 		format,
 	} = &cli.command
 	{
-		// `ls` is project-agnostic and short-circuits before compose parsing, so
-		// validate the global `--env-file` paths it would otherwise silently
-		// ignore (the other paths validate them while parsing).
-		for ef in &cli.env_file {
-			if !std::path::Path::new(ef).is_file() {
-				return Err(podup::ComposeError::Unsupported(format!(
-					"--env-file {ef} does not exist or is not a file"
-				)));
-			}
-		}
-		let client = connect_podman(cli.socket.as_deref(), cli.connection_pool_size).await?;
-		return podup::list_projects_filtered(
-			&client,
-			podup::LsOptions::new(*all, *quiet, *format == OutputFormat::Json),
+		return main_runner::short_circuits::run_ls(
+			*all,
+			*quiet,
 			filter,
+			*format,
+			&cli.env_file,
+			cli.socket.as_deref(),
+			cli.connection_pool_size,
 		)
 		.await;
 	}
@@ -325,72 +196,8 @@ async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()>
 	// it before the compose file is parsed: read the compose `name:` for project
 	// precedence when the file parses, but fall back to the directory basename
 	// rather than failing, unlike the commands that depend on the file's contents.
-	if let Commands::Ps {
-		all,
-		quiet,
-		services_only,
-		size,
-		filter,
-		status,
-		format,
-		services,
-	} = &cli.command
-	{
-		let compose_files = resolve_compose_files(&cli.file);
-		fail_on_named_file_missing(&cli.file, &compose_files)?;
-		let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
-		// `ps` is a read-only command that does not start containers, so the
-		// parse-time "port ... is published on every interface" warning has
-		// nothing to confirm: nothing on the host is being bound right now.
-		// Suppress the warning for this command regardless of `--no-warn` so
-		// operators reading `ps` in a loop are not warned on a port bind they
-		// already accepted.
-		let _suppress_port_warn = podup::compose::SuppressPortExposureGuard::new();
-		// Parse the compose file when it is present and valid so `--services` and a
-		// positional `SERVICE` filter can resolve service names and replicas;
-		// otherwise fall back to an empty model (and the directory basename for the
-		// project name) rather than failing.
-		//
-		// A file that is PRESENT but does not parse is a different case and is
-		// propagated: the old `.ok()` swallowed it, so `podup ps` printed a bare
-		// header and exited 0 on a broken compose file, which a health check or a
-		// deploy gate reads as "nothing running, no error". `docker compose ps`
-		// exits non-zero there, and so does every other podup command on the same
-		// file.
-		let parsed = match podup::parse_files_with_env_files(&compose_files, &cli.env_file) {
-			Ok(f) => Some(f),
-			Err(e) if compose_files.iter().any(|p| p.exists()) => return Err(e),
-			Err(_) => None,
-		};
-		let compose_name = parsed.as_ref().and_then(|f| f.name.clone());
-		let file = parsed.unwrap_or_default();
-		let project = resolve_project_name(cli.project.clone(), compose_name.as_deref(), &base_dir);
-		startup::validate_project_name(&project)?;
-		error_context.set_compose(&file, &project);
-		// Identity colours key on the project-stripped label, so every command
-		// tints the same container the same way.
-		podup::ui::set_project(&project);
-		// Register the service names so each gets its own identity colour. The
-		// hash this replaces could not know how many services existed, so two
-		// could share one. The `down`-by-label path has no compose file to read
-		// service names from up front; it registers them itself, from the live
-		// container listing it fetches immediately before tearing down.
-		podup::ui::set_services(&file.services.keys().cloned().collect::<Vec<_>>());
-		let client = connect_podman(cli.socket.as_deref(), cli.connection_pool_size).await?;
-		let engine = podup::Engine::with_base_dir(client, project, base_dir);
-		return engine
-			.ps_filtered_with_display(
-				&file,
-				podup::PsOptions::new(*all, *quiet, *format == OutputFormat::Json),
-				podup::PsFilterOptions::new(
-					*services_only,
-					services.clone(),
-					status.clone(),
-					filter.clone(),
-				),
-				podup::PsDisplayOptions::default().with_size(*size),
-			)
-			.await;
+	if let Commands::Ps { .. } = &cli.command {
+		return main_runner::short_circuits::run_ps(&cli, error_context).await;
 	}
 
 	let compose_files = resolve_compose_files(&cli.file);
@@ -402,41 +209,12 @@ async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()>
 	// missing file. Handle it here, before that parse, but only when an explicit
 	// project name was given and no file resolves, so a stray `down` in an empty
 	// directory still errors rather than guessing a project from the basename.
-	if down_by_label_path(
+	if main_runner::down_by_label::down_by_label_path(
 		&cli.command,
 		cli.project.as_deref(),
 		compose_files.iter().any(|p| p.is_file()),
 	) {
-		if let Commands::Down {
-			volumes,
-			rmi,
-			timeout,
-			..
-		} = &cli.command
-		{
-			let project = cli.project.clone().expect("checked by down_by_label_path");
-			startup::validate_project_name(&project)?;
-			// Identity colours key on the project-stripped label, so every command
-			// tints the same container the same way.
-			podup::ui::set_project(&project);
-			// `--rmi` removes the images of the file's services, which cannot be
-			// resolved without a file; warn rather than silently dropping it.
-			if rmi.is_some() {
-				tracing::warn!(
-					"--rmi has no effect without a compose file; containers, networks and \
-					 volumes are still removed by project label"
-				);
-			}
-			let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
-			let stop_timeout = podup::validate_stop_timeout(*timeout)?;
-			let client = connect_podman(cli.socket.as_deref(), cli.connection_pool_size).await?;
-			let engine = podup::Engine::with_base_dir(client, project, base_dir)
-				.with_stop_timeout(stop_timeout);
-			// `down` is mutating, so serialize it against concurrent runs as the
-			// normal teardown path does.
-			let _lock = engine.lock_project()?;
-			return engine.down_by_label(*volumes).await;
-		}
+		return main_runner::short_circuits::run_down_by_label(&cli, &compose_files).await;
 	}
 
 	// `config --no-interpolate` must skip interpolation *entirely*: parsing with
@@ -458,7 +236,7 @@ async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()>
 	// that *does* exist, a missing env file) still surfaces.
 	let label_only = is_label_only(&cli.command);
 	if label_only {
-		fail_on_named_file_missing(&cli.file, &compose_files)?;
+		main_runner::label_only::fail_on_named_file_missing(&cli.file, &compose_files)?;
 	}
 	// Show the port-exposure warning on `config` regardless of `--no-warn`,
 	// and on `up`/`create`/`run`/`scale`/`watch`/`generate quadlet`/`autostart`
@@ -491,66 +269,9 @@ async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()>
 		podup::parse_files_with_env_files_interp(&compose_files, &cli.env_file, !no_interpolate)?
 	};
 
-	if let Commands::Config {
-		format,
-		services,
-		volumes,
-		images,
-		profiles,
-		hash,
-		quiet,
-		resolve_image_digests,
-		..
-	} = &cli.command
-	{
-		// Validate the resolved project name in the config path too, at the same
-		// trust boundary the mutating commands use, so `config -p 'bad name!'`
-		// reports the same invalid-name error instead of succeeding. The config
-		// path returns early below, so without this it would never be checked.
-		let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
-		let project = resolve_project_name(cli.project.clone(), file.name.as_deref(), &base_dir);
-		startup::validate_project_name(&project)?;
-		error_context.set_compose(&file, &project);
-		// Identity colours key on the project-stripped label, so every command
-		// tints the same container the same way.
-		podup::ui::set_project(&project);
-		podup::ui::set_services(&file.services.keys().cloned().collect::<Vec<_>>());
-		// `file` is already parsed with the correct interpolation setting above.
-		let parsed = file;
-		// `--resolve-image-digests` pins each image to its registry digest, which
-		// needs a Podman connection to inspect images.
-		let mut resolved = if *resolve_image_digests {
-			let client = connect_podman(cli.socket.as_deref(), cli.connection_pool_size).await?;
-			podup::resolve_image_digests(&client, &parsed).await?
-		} else {
-			parsed
-		};
-		// Honor active profiles so `config` prints the same services `up` starts.
-		podup::retain_active_profiles(&mut resolved, &cli.profile);
-		// Fold `env_file:` into `environment:` the way docker compose does, so a
-		// service whose whole environment comes from a file does not render with no
-		// environment at all (#1184). `config` is the command you reach for to ask
-		// what will actually run; leaving the key unresolved pointed away from the
-		// answer rather than merely omitting it.
-		podup::env_file::materialize_env_files(&mut resolved, &base_dir)?;
-		// Render the resolved project name (already settled above from -p /
-		// COMPOSE_PROJECT_NAME, the top-level `name:`, then the directory
-		// basename), like `docker compose config`, rather than echoing the file's
-		// literal `name:`.
-		return startup::render_config(
-			&resolved,
-			format,
-			&startup::ConfigOutput {
-				services: *services,
-				volumes: *volumes,
-				images: *images,
-				profiles: *profiles,
-				hash: hash.clone(),
-				quiet: *quiet,
-			},
-			&project,
-			&base_dir,
-		);
+	if let Commands::Config { .. } = &cli.command {
+		return main_runner::post_parse::run_config(&cli, &compose_files, file, error_context)
+			.await;
 	}
 
 	// `audit` is the read-only hardening view. It reuses the `config`
@@ -560,49 +281,19 @@ async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()>
 	// `audit` reports what `up` would start. `--list-checks` short-circuits
 	// earlier, before compose-file resolution, so an integrator can run it
 	// without a compose file.
-	if let Commands::Audit {
-		strict,
-		format,
-		wildcard_binds,
-		..
-	} = &cli.command
-	{
-		let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
-		let project = resolve_project_name(cli.project.clone(), file.name.as_deref(), &base_dir);
-		startup::validate_project_name(&project)?;
-		error_context.set_compose(&file, &project);
-		podup::ui::set_project(&project);
-		podup::ui::set_services(&file.services.keys().cloned().collect::<Vec<_>>());
-		let mut resolved = file.clone();
-		podup::retain_active_profiles(&mut resolved, &cli.profile);
-		podup::env_file::materialize_env_files(&mut resolved, &base_dir)?;
-		// `--wildcard-binds` is opt-in; collect the enabled flags into
-		// the slice the registry reads so a future opt-in check only
-		// needs a new `opt_in: Some("--new-flag")` here (#1881).
-		let mut opt_in: Vec<&'static str> = Vec::new();
-		if *wildcard_binds {
-			opt_in.push("--wildcard-binds");
-		}
-		let report = audit::audit_file(&resolved, &opt_in);
-		match format {
-			AuditFormat::Table => audit::render_table(&audit::ordered_services(&resolved), &report),
-			AuditFormat::Json => audit::render_json(&report),
-		}
-		if *strict && report.has_findings() {
-			process::exit(1);
-		}
-		return Ok(());
+	if let Commands::Audit { .. } = &cli.command {
+		return main_runner::post_parse::render_audit(&cli, &compose_files, &file, error_context);
 	}
 
 	let base_dir = resolve_base_dir(cli.project_directory.as_deref(), &compose_files[0]);
-	let project = resolve_project_name(cli.project, file.name.as_deref(), &base_dir);
+	let project = resolve_project_name(cli.project.clone(), file.name.as_deref(), &base_dir);
 
 	// Validate the resolved project name at the trust boundary, before it reaches
 	// any code path that builds a filesystem path from it (staging, lock files,
 	// quadlet generation). Explicit `-p`/`COMPOSE_PROJECT_NAME` values and the
 	// compose `name:` field are otherwise taken verbatim; rejecting an unsafe
 	// name here fails closed regardless of which command runs next.
-	startup::validate_project_name(&project)?;
+	validate_project_name(&project)?;
 	error_context.set_compose(&file, &project);
 	// Identity colours key on the project-stripped label, so ps, logs, stats and
 	// the progress lines all tint the same container the same way. This is the
@@ -613,23 +304,15 @@ async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()>
 	// `generate` produces declarative artifacts from the compose file alone; it
 	// neither contacts Podman nor mutates project state.
 	if let Commands::Generate {
-		kind: GenerateCommands::Quadlet { output },
+		kind: GenerateCommands::Quadlet { ref output },
 	} = &cli.command
 	{
-		// Honor active profiles so `generate quadlet` emits the same services
-		// `up` would start, instead of also emitting units for inactive-profile
-		// services (which would make `--profile` a no-op on this subcommand).
-		let mut filtered = file.clone();
-		podup::retain_active_profiles(&mut filtered, &cli.profile);
-		// Absolute base dir so a `.build` unit's context resolves under the compose
-		// file, not the unit directory the systemd generator would otherwise use.
-		let base_dir = std::fs::canonicalize(&base_dir).unwrap_or(base_dir);
-		return write_quadlet(
-			&filtered,
+		return main_runner::post_parse::run_generate(
+			&cli,
 			&project,
 			&base_dir,
+			&file,
 			output.as_deref(),
-			cli.no_warn,
 		);
 	}
 
@@ -638,142 +321,16 @@ async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()>
 	// contacts Podman, except `uninstall --purge`, which tears the stack's volumes
 	// down and so connects only in that branch.
 	if let Commands::Autostart { kind } = &cli.command {
-		let env = autostart_cmd::AutostartEnv {
-			profile: &cli.profile,
-			env_files: &cli.env_file,
-			socket: resolve_socket(cli.socket.as_deref()),
-			connection_pool_size: cli.connection_pool_size,
-		};
-		return autostart_cmd::dispatch(&env, &compose_files, project, base_dir, &file, kind).await;
+		return main_runner::post_parse::run_autostart(
+			&cli,
+			&compose_files,
+			project,
+			base_dir,
+			&file,
+			kind,
+		)
+		.await;
 	}
 
-	let client = connect_podman(cli.socket.as_deref(), cli.connection_pool_size).await?;
-	// The `-t/--timeout` shutdown-grace override applies to every command that
-	// stops containers (up recreate, down, stop, restart).
-	let stop_timeout = match &cli.command {
-		Commands::Up { timeout, .. }
-		| Commands::Down { timeout, .. }
-		| Commands::Stop { timeout, .. }
-		| Commands::Restart { timeout, .. } => *timeout,
-		_ => None,
-	};
-	// Reject a `-t/--timeout` below -1 here, at the trust boundary, with a clear
-	// message instead of forwarding it to libpod as a raw `?t=<negative>` 400.
-	let stop_timeout = podup::validate_stop_timeout(stop_timeout)?;
-	// `--scale SERVICE=N` (on `up`) and the `scale` subcommand both feed the
-	// engine's replica overrides so `resolve_replicas` reports the target count.
-	let scale_overrides: std::collections::HashMap<String, u32> = match &cli.command {
-		Commands::Up { scale, .. } => scale.iter().cloned().collect(),
-		Commands::Scale { pairs } => pairs.iter().cloned().collect(),
-		_ => std::collections::HashMap::new(),
-	};
-	// `up` image-acquisition overrides: `--pull`, `--no-build`, `--quiet-pull`.
-	let (pull_override, no_build, quiet_pull) = match &cli.command {
-		Commands::Up {
-			pull,
-			no_build,
-			quiet_pull,
-			..
-		} => (pull.clone(), *no_build, *quiet_pull),
-		Commands::Pull { quiet, policy, .. } => (policy.clone(), false, *quiet),
-		Commands::Create { pull, .. } => (pull.clone(), false, false),
-		_ => (None, false, false),
-	};
-	// `up -V/--renew-anon-volumes`: recreate anonymous volumes on container
-	// recreation instead of leaving the old ones orphaned.
-	let renew_anon_volumes = matches!(
-		&cli.command,
-		Commands::Up {
-			renew_anon_volumes: true,
-			..
-		}
-	);
-	let engine = podup::Engine::with_base_dir(client, project, base_dir)
-		.with_compose_files(compose_files.iter().map(|f| resolve::absolute(f)).collect())
-		.with_stop_timeout(stop_timeout)
-		.with_scale_overrides(scale_overrides)
-		.with_up_overrides(pull_override, no_build, quiet_pull)
-		.with_run_overrides(startup::run_overrides_for(&cli.command))
-		.with_run_env_files(cli.env_file.clone())
-		.with_run_labels(startup::run_labels_for(&cli.command))
-		.with_run_no_tty(startup::run_no_tty_for(&cli.command))
-		.with_renew_anon_volumes(renew_anon_volumes)
-		.with_no_warn(cli.no_warn);
-
-	// Serialize mutating lifecycle commands against concurrent `podup` runs on
-	// the same project. Read-only / follow commands (ps, logs, top, port,
-	// images, exec, pull, cp, config, watch) take no lock so they don't block
-	// or get blocked. The guard is held until `run` returns.
-	let _lock = if is_mutating(&cli.command) {
-		Some(engine.lock_project()?)
-	} else {
-		None
-	};
-
-	dispatch::dispatch(&engine, &file, cli.command, &cli.profile).await
-}
-
-#[cfg(test)]
-#[path = "main_down_by_label_tests.rs"]
-mod down_by_label_tests;
-
-/// Compose-only global value-flags that `update` parses (they are declared
-/// `global` on [`Cli`]) but cannot act on, since self-update rewrites the binary
-/// itself rather than a compose project. Each entry is `(arg-id, user-facing
-/// spelling)`.
-#[cfg(feature = "update")]
-const UPDATE_IRRELEVANT_GLOBALS: &[(&str, &str)] = &[
-	("socket", "--socket"),
-	("profile", "--profile"),
-	("project_directory", "--project-directory"),
-	("env_file", "--env-file"),
-];
-
-/// Return the first compose-only global flag that was supplied on the command
-/// line for an `update` invocation, or `None` if none were. Re-parses the
-/// already-validated argv to inspect value sources; env-sourced and default
-/// values are deliberately ignored, so an exported `PODMAN_SOCKET` does not
-/// break `podup update`.
-#[cfg(feature = "update")]
-fn misused_update_global() -> Option<&'static str> {
-	use clap::CommandFactory;
-	// Parsing already succeeded once in `parse_cli`, so this re-parse cannot fail.
-	let matches = Cli::command().try_get_matches().ok()?;
-	first_misused_global(&matches)
-}
-
-/// Core of [`misused_update_global`], split out so it can be tested against
-/// matches built from a fixed argv. A global flag can surface on the root
-/// matches or on the `update` subcommand matches depending on its position
-/// relative to the subcommand, so both are checked.
-#[cfg(feature = "update")]
-fn first_misused_global(matches: &clap::ArgMatches) -> Option<&'static str> {
-	use clap::parser::ValueSource;
-	let update = matches.subcommand_matches("update");
-	UPDATE_IRRELEVANT_GLOBALS.iter().find_map(|(id, flag)| {
-		let from_cli = |m: &clap::ArgMatches| m.value_source(id) == Some(ValueSource::CommandLine);
-		(from_cli(matches) || update.is_some_and(from_cli)).then_some(*flag)
-	})
-}
-
-#[cfg(all(test, feature = "update"))]
-#[path = "main_tests.rs"]
-mod tests;
-
-/// The label-only commands (`ps`, `events`) run without a compose file so a
-/// directory that has none still answers by project label. A file the
-/// operator named and that is not there is a different case: answering as if
-/// none were given turns a typo into an empty listing and exit 0 (#1687).
-fn fail_on_named_file_missing(
-	explicit: &[std::path::PathBuf],
-	compose_files: &[std::path::PathBuf],
-) -> Result<(), podup::ComposeError> {
-	if compose_files_were_named(explicit) && !compose_files.iter().any(|p| p.is_file()) {
-		let named = compose_files
-			.first()
-			.map(|p| p.display().to_string())
-			.unwrap_or_default();
-		return Err(podup::ComposeError::FileNotFound(named));
-	}
-	Ok(())
+	main_runner::post_parse::run_engine_command(cli, &compose_files, &file, project, base_dir).await
 }
