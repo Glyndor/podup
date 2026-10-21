@@ -1,8 +1,10 @@
 //! Teardown: `down`, and the image removal that `down --rmi` performs.
 //!
-//! Split from `mod.rs`, which keeps the startup half. The two directions do
+//! Split from `lifecycle/mod.rs`, which keeps the startup half. The two directions do
 //! not share code beyond the level resolution they each invert, and holding
 //! them apart keeps either one readable on its own.
+
+mod label;
 
 use crate::compose::types::ComposeFile;
 use crate::engine::network::resolve_network_name;
@@ -10,7 +12,7 @@ use crate::engine::Engine;
 use crate::error::Result;
 use crate::libpod::API_PREFIX;
 
-use super::parallel;
+use crate::engine::lifecycle::parallel;
 
 impl Engine {
 	/// Stop and remove all containers for the project. Does not remove volumes unless `remove_volumes` is set.
@@ -276,3 +278,9 @@ impl Engine {
 		first_err.map_or(Ok(()), Err)
 	}
 }
+
+#[cfg(test)]
+mod teardown_tests;
+
+#[cfg(test)]
+mod label_tests;

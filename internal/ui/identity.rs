@@ -70,7 +70,7 @@ pub fn set_project(name: &str) {
 ///
 /// Call once per project per invocation, after the compose file is parsed
 /// (or, for the label-only teardown in
-/// `engine::lifecycle::down_label::Engine::down_by_label`, after the live
+/// `engine::lifecycle::down::label::Engine::down_by_label`, after the live
 /// container listing is fetched). Without a prior [`set_project`] for the
 /// same project this is a no-op: registration has no project key to live
 /// under. Every CLI command and the engine call site already calls

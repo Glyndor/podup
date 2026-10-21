@@ -1,6 +1,6 @@
 //! Per-service start scheduling for `up`/`create`.
 //!
-//! Split from `mod.rs` to keep that file within the source line limit. The
+//! Split from `lifecycle/mod.rs` to keep that file within the source line limit. The
 //! scheduler is a subject of its own: it is where the difference between
 //! "levels" and "a dependency graph" lives, and the two deadlock hazards it
 //! avoids are documented inline rather than being folded into `run_up`.
@@ -11,15 +11,15 @@ use crate::compose::dependencies::effective_depends_on;
 use crate::compose::types::ComposeFile;
 use crate::error::Result;
 
-use super::readiness::SharedReady;
-use super::{Engine, ExistingContainer};
+use crate::engine::lifecycle::up::readiness::SharedReady;
+use crate::engine::lifecycle::{Engine, ExistingContainer};
 
 impl Engine {
 	/// Start every scheduled service, each as soon as its own dependencies are
 	/// up. `levels` is used only for its membership and validation, not as a
 	/// barrier.
 	#[allow(clippy::too_many_arguments)]
-	pub(super) async fn start_services_by_dependency(
+	pub(in crate::engine::lifecycle) async fn start_services_by_dependency(
 		&self,
 		levels: &[Vec<String>],
 		file: &ComposeFile,
@@ -60,7 +60,7 @@ impl Engine {
 		// now never come up is dropped rather than hanging.
 		let scheduled: Vec<&str> = levels.iter().flatten().map(String::as_str).collect();
 		let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(
-			super::parallel::MAX_LIFECYCLE_CONCURRENCY,
+			crate::engine::lifecycle::parallel::MAX_LIFECYCLE_CONCURRENCY,
 		));
 		let done: std::collections::HashMap<&str, tokio::sync::watch::Sender<bool>> = scheduled
 			.iter()

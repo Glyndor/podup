@@ -182,7 +182,10 @@ fn every_final_verb_has_a_working_verb() {
 		("Unpaused", "Unpausing"),
 		("Removed", "Removing"),
 	] {
-		assert_eq!(super::working_verb(done), doing);
+		assert_eq!(
+			crate::engine::lifecycle::commands::working_verb(done),
+			doing
+		);
 	}
 }
 

@@ -1,6 +1,9 @@
 //! One-off `run` command: start a throwaway container for a service, stream its
 //! output, and remove it when done.
 
+mod attached;
+pub(super) mod options;
+
 use std::collections::HashMap;
 use std::io::Write;
 
@@ -9,7 +12,7 @@ use futures_util::StreamExt;
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 
-use super::RunOptions;
+use crate::engine::lifecycle::RunOptions;
 use crate::engine::Engine;
 use crate::libpod::API_PREFIX;
 
@@ -46,7 +49,7 @@ impl Engine {
 		} = opts;
 		// CLI-only run flags arrive via the engine builder (see `RunOverrides`),
 		// keeping the public `RunOptions` API frozen at 1.0.
-		let super::RunOverrides {
+		let crate::engine::lifecycle::RunOverrides {
 			user,
 			workdir,
 			entrypoint,
@@ -77,10 +80,13 @@ impl Engine {
 		// waits on their conditions), unless `--no-deps` is given. The service
 		// itself is excluded; only its transitive dependencies are started.
 		if !no_deps {
-			let deps: Vec<String> =
-				super::targets::expand_targets(file, &[service_name.to_string()], false)
-					.map(|set| set.into_iter().filter(|n| n != service_name).collect())
-					.unwrap_or_default();
+			let deps: Vec<String> = crate::engine::lifecycle::targets::expand_targets(
+				file,
+				&[service_name.to_string()],
+				false,
+			)
+			.map(|set| set.into_iter().filter(|n| n != service_name).collect())
+			.unwrap_or_default();
 			if !deps.is_empty() {
 				self.up_with_options(file, true, &[], &deps, false, false, false, false)
 					.await?;
@@ -326,7 +332,7 @@ impl Engine {
 				// stream failed. Stopped means the command finished and only the
 				// terminator went missing, so fall through to `wait`, which
 				// reports the exit code the run actually produced.
-				if super::super::query::stream_broke_mid_output(
+				if crate::engine::query::stream_broke_mid_output(
 					self.container_still_running(&run_name).await,
 				) {
 					return Err(ComposeError::Podman(e));
@@ -395,7 +401,6 @@ fn merge_run_environment(
 }
 
 #[cfg(test)]
-#[path = "run_tests.rs"]
 mod tests;
 
 /// What a non-interactive `run` does when its log stream dies under it.
@@ -406,11 +411,25 @@ mod tests;
 /// out-of-band answer, and `wait` then reports the real exit code.
 #[cfg(test)]
 #[cfg(unix)]
-#[path = "run_stream_end_tests.rs"]
 mod stream_end_tests;
 
 /// The board `run` opens over the networks and image it reports before the
 /// container's own output takes over (#1671).
 #[cfg(all(test, unix))]
-#[path = "run_board_tests.rs"]
 mod board_tests;
+
+impl Engine {
+	/// True when a container with this exact name exists (any project). Used to
+	/// refuse clobbering a pre-existing container on `run --name`.
+	pub(in crate::engine::lifecycle) async fn container_exists(&self, name: &str) -> Result<bool> {
+		let path = format!(
+			"{API_PREFIX}/containers/{}/json",
+			crate::libpod::urlencoded(name),
+		);
+		match self.client.get_json::<serde_json::Value>(&path).await {
+			Ok(_) => Ok(true),
+			Err(e) if e.is_status(404) => Ok(false),
+			Err(e) => Err(ComposeError::Podman(e)),
+		}
+	}
+}

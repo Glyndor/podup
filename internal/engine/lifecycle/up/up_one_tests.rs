@@ -131,7 +131,7 @@ impl Drop for MaxReplicasGuard {
 }
 
 fn pin_max_replicas_for_test() -> MaxReplicasGuard {
-	let lock = crate::engine::lifecycle::scale_tests::MAX_REPLICAS_TEST_LOCK
+	let lock = crate::engine::lifecycle::scale::scale_tests::MAX_REPLICAS_TEST_LOCK
 		.lock()
 		.unwrap();
 	let prev = std::env::var("PODUP_MAX_REPLICAS").ok();

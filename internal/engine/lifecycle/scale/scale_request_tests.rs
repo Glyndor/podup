@@ -5,7 +5,7 @@
 //! socket. The split follows that seam rather than a line count.
 
 #[cfg(unix)]
-use super::*;
+use crate::engine::lifecycle::*;
 
 // Every case in this file stands up a fake libpod socket, and the fixture
 // binds a `UnixListener`, so the whole file is Unix-only. The imports and
@@ -82,12 +82,14 @@ async fn stop_and_remove_opens_the_row_before_the_stop_and_closes_it_removed() {
 	// Pre-build the snapshot the production `run_up` hands the function
 	// (no `/containers/json` here either; the fix takes the bulk snapshot
 	// rather than refetching per-service, see `#1747`).
-	let mut existing: std::collections::HashMap<String, super::ExistingContainer> =
-		std::collections::HashMap::new();
+	let mut existing: std::collections::HashMap<
+		String,
+		crate::engine::lifecycle::ExistingContainer,
+	> = std::collections::HashMap::new();
 	for raw in ["proj-web-1", "proj-web-2"] {
 		existing.insert(
 			raw.to_string(),
-			super::ExistingContainer {
+			crate::engine::lifecycle::ExistingContainer {
 				config_hash: None,
 				image_id: String::new(),
 				service: Some("web".to_string()),

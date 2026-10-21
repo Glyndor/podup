@@ -1,14 +1,14 @@
 //! `pause` and `unpause`, and the resume `rm --stop` runs first.
 //!
-//! Split out of `commands.rs` when it passed the line limit. `unpause_paused`
+//! Split out of the command index when it passed the line limit. `unpause_paused`
 //! (#1688) resumes only the paused containers, from one project listing, and
 //! draws nothing when there are none; `pause` and `unpause` keep the board
 //! over every container they were asked about.
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 
-use super::commands::note_if_idle;
-use super::parallel::{filter_levels, first_error, join_bounded};
+use crate::engine::lifecycle::commands::note_if_idle;
+use crate::engine::lifecycle::parallel::{filter_levels, first_error, join_bounded};
 use crate::engine::Engine;
 use crate::libpod::API_PREFIX;
 
@@ -29,7 +29,7 @@ impl Engine {
 		// level are paused concurrently (#757).
 		let acted = std::sync::atomic::AtomicBool::new(false);
 		// The board over the containers this pause will reach.
-		crate::ui::progress::begin(super::seed::level_container_resources(
+		crate::ui::progress::begin(crate::engine::lifecycle::seed::level_container_resources(
 			&levels,
 			&live_by_service,
 		));
@@ -134,7 +134,7 @@ impl Engine {
 		// Services in a level are unpaused concurrently (#757).
 		let acted = std::sync::atomic::AtomicBool::new(false);
 		// The board over the containers this unpause will reach.
-		crate::ui::progress::begin(super::seed::level_container_resources(
+		crate::ui::progress::begin(crate::engine::lifecycle::seed::level_container_resources(
 			&levels,
 			&live_by_service,
 		));

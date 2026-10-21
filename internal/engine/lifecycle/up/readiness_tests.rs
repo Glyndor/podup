@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use super::unshare_readiness_error;
+use crate::engine::lifecycle::up::readiness::unshare_readiness_error;
 use crate::engine::Engine;
 use crate::error::ComposeError;
 use crate::libpod::Client;

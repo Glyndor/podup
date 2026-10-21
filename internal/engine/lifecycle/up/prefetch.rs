@@ -24,8 +24,8 @@ use std::collections::{HashMap, HashSet};
 use crate::compose::types::{ComposeFile, Service};
 use crate::error::Result;
 
-use super::parallel::join_bounded;
-use super::Engine;
+use crate::engine::lifecycle::parallel::join_bounded;
+use crate::engine::lifecycle::Engine;
 
 impl Engine {
 	/// Warm the local image cache for every service the upcoming `up`/`create`
@@ -42,7 +42,7 @@ impl Engine {
 	/// (`pull_policy: alaways`) is reported instead of being treated as
 	/// `missing` (#1443); prefetch I/O errors stay debug-level and never
 	/// propagate.
-	pub(super) async fn prefetch_images(
+	pub(in crate::engine::lifecycle) async fn prefetch_images(
 		&self,
 		file: &ComposeFile,
 		enabled: &HashSet<String>,
@@ -127,13 +127,9 @@ impl Engine {
 			Ok(())
 		});
 
-		match super::parallel::first_error(join_bounded(futs).await) {
+		match crate::engine::lifecycle::parallel::first_error(join_bounded(futs).await) {
 			Some(err) => Err(err),
 			None => Ok(()),
 		}
 	}
 }
-
-#[cfg(test)]
-#[path = "prefetch_tests.rs"]
-mod tests;

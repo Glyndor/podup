@@ -1,4 +1,4 @@
-use super::{must_wait_after_kill, validate_signal};
+use crate::engine::lifecycle::commands::kill_signal::{must_wait_after_kill, validate_signal};
 use crate::error::ComposeError;
 
 #[test]

@@ -1,5 +1,5 @@
 //! Per-service `up` orchestration: wait on `depends_on`, build/pull the
-//! image, create/start each replica. Split out of [`super::up`] so the
+//! image, create/start each replica. Split out of [`crate::engine::lifecycle::up`] so the
 //! dependency-level walker stays a short sequence and the per-service
 //! helpers stay close to their dependencies (the readiness map, the
 //! scale guards, the level parallel runner).
@@ -10,16 +10,16 @@ use crate::compose::dependencies::effective_depends_on;
 use crate::compose::types::{ComposeFile, ServiceCondition};
 use crate::error::Result;
 
-use super::readiness::SharedReady;
+use crate::engine::lifecycle::up::readiness::SharedReady;
 
-use super::super::container::config_hash;
-use super::super::Engine;
+use crate::engine::container::config_hash;
+use crate::engine::Engine;
 
 impl Engine {
 	/// Bring up a single service: honor profile/target filters, wait on its
 	/// `depends_on` conditions, build or pull the image, and create/start each
 	/// replica (skipping containers that are unchanged unless `force_recreate`).
-	/// Used by [`super::run_up`]; safe to run concurrently for services in
+	/// Used by [`Engine::run_up`]; safe to run concurrently for services in
 	/// the same dependency level (the `Engine` holds no per-call mutable
 	/// state; the libpod client is connection-per-request).
 	#[allow(clippy::too_many_arguments)]
@@ -29,7 +29,7 @@ impl Engine {
 		file: &ComposeFile,
 		enabled: &HashSet<String>,
 		target_set: &Option<HashSet<String>>,
-		existing: &HashMap<String, super::ExistingContainer>,
+		existing: &HashMap<String, crate::engine::lifecycle::ExistingContainer>,
 		no_recreate: bool,
 		force_recreate: bool,
 		start: bool,
@@ -56,7 +56,7 @@ impl Engine {
 			// skips its readiness condition in that case; matching that avoids
 			// waiting on (and 404-ing against) a container that was never
 			// created.
-			if !super::targets::in_started_set(target_set, &dep) {
+			if !crate::engine::lifecycle::targets::in_started_set(target_set, &dep) {
 				tracing::debug!("{dep} not in started target set; skipping {name} readiness wait");
 				continue;
 			}
@@ -113,8 +113,7 @@ impl Engine {
 			match wait {
 				Ok(()) => {}
 				Err(e) if !required => {
-					tracing::debug!(
-						"optional dependency {dep} (required: false) did not satisfy its condition: {e}"
+					tracing::debug!("optional dependency {dep} (required: false) did not satisfy its condition: {e}"
 					);
 				}
 				Err(e) => return Err(e),
@@ -126,15 +125,15 @@ impl Engine {
 		let replicas = self.resolve_replicas(name, service);
 		// Bound the replica count (covers an untrusted compose `deploy.replicas`/
 		// `scale:` as well as `--scale`) before creating any container.
-		super::scale::check_replica_limit(name, replicas)?;
+		crate::engine::lifecycle::scale::check_replica_limit(name, replicas)?;
 		// A scaled service that publishes a fixed host port cannot start: only
 		// one container can bind it. Fail fast with guidance instead of letting
 		// replicas 2..N die mid-up with `address already in use`.
-		super::scale::check_scale_port_conflict(name, service, replicas)?;
+		crate::engine::lifecycle::scale::check_scale_port_conflict(name, service, replicas)?;
 		// A service pinning an explicit container_name cannot be scaled past one
 		// replica without violating its fixed-name contract; reject it rather
 		// than inventing `name-1`, `name-2`, … (docker compose refuses this too).
-		super::scale::check_fixed_name_scale(name, service, replicas)?;
+		crate::engine::lifecycle::scale::check_fixed_name_scale(name, service, replicas)?;
 
 		let new_hash = config_hash(
 			service,
@@ -149,7 +148,7 @@ impl Engine {
 		// Shared by this service's replicas only, and created here on purpose:
 		// the image acquisition above is over, so nothing this service does
 		// moves its tag while the answer is alive.
-		let resolved = super::ResolvedImage::new();
+		let resolved = crate::engine::lifecycle::ResolvedImage::new();
 
 		// Fan the replicas out with the same bounded concurrency the level
 		// walk uses, instead of creating and starting them one at a time:
@@ -176,7 +175,9 @@ impl Engine {
 					start,
 				)
 			});
-		if let Some(e) = super::parallel::first_error(super::parallel::join_bounded(futs).await) {
+		if let Some(e) = crate::engine::lifecycle::parallel::first_error(
+			crate::engine::lifecycle::parallel::join_bounded(futs).await,
+		) {
 			return Err(e);
 		}
 
@@ -189,7 +190,7 @@ impl Engine {
 	/// run concurrently with the service's other replicas, since replicas of
 	/// one service share no per-replica mutable state: a fixed host port
 	/// that would make concurrent starts race is already rejected up front by
-	/// `super::scale::check_scale_port_conflict`.
+	/// `crate::engine::lifecycle::scale::check_scale_port_conflict`.
 	#[allow(clippy::too_many_arguments)]
 	pub(crate) async fn up_one_replica(
 		&self,
@@ -197,9 +198,9 @@ impl Engine {
 		name: &str,
 		service: &crate::compose::types::Service,
 		file: &ComposeFile,
-		existing: &HashMap<String, super::ExistingContainer>,
+		existing: &HashMap<String, crate::engine::lifecycle::ExistingContainer>,
 		new_hash: &str,
-		resolved: &super::ResolvedImage,
+		resolved: &crate::engine::lifecycle::ResolvedImage,
 		no_recreate: bool,
 		force_recreate: bool,
 		start: bool,
@@ -263,7 +264,3 @@ impl Engine {
 		Ok(())
 	}
 }
-
-#[cfg(all(test, unix))]
-#[path = "up_one_tests.rs"]
-mod tests;

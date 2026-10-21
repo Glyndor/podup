@@ -1,7 +1,13 @@
 //! `up` orchestration: validate, build the resource set, walk the dependency
-//! levels. Split out of [`super::mod`] so the orchestrator stays under the
+//! levels. Split out of [`crate::engine::lifecycle`] so the orchestrator stays under the
 //! 400-line ceiling while the lifecycle's other commands (`down`, `run`,
 //! `start`, …) stay close to their dedicated helpers.
+
+mod images;
+mod prefetch;
+mod readiness;
+mod schedule;
+mod up_one;
 
 use std::collections::HashMap;
 
@@ -11,8 +17,8 @@ use crate::error::Result;
 use crate::libpod::API_PREFIX;
 use crate::ui::progress::Kind;
 
-use super::super::project::profiles::{active_profiles_set, enabled_profile_services};
-use super::super::Engine;
+use crate::engine::project::profiles::{active_profiles_set, enabled_profile_services};
+use crate::engine::Engine;
 
 impl Engine {
 	/// Start services with explicit options. When `no_recreate` is true, running containers are left untouched. On partial failure, staging directories are cleaned up.
@@ -123,8 +129,9 @@ impl Engine {
 
 			// Reject unknown service names before doing any work, so `up`/`create`
 			// of a bogus service errors instead of exiting 0 as a silent no-op.
-			super::targets::validate_targets(file, target_services)?;
-			let target_set = super::targets::expand_targets(file, target_services, no_deps);
+			crate::engine::lifecycle::targets::validate_targets(file, target_services)?;
+			let target_set =
+				crate::engine::lifecycle::targets::expand_targets(file, target_services, no_deps);
 
 			// Pre-validate every enabled service's libpod-validated fields up
 			// front, so a rejected value (e.g. `pid: "evil"`, `ipc: "bogus"`)
@@ -148,13 +155,14 @@ impl Engine {
 			// Prefetch the project's containers once (instead of one API call per
 			// replica): which names already exist, and for each the two facts
 			// that decide whether it is kept or replaced (see
-			// [`super::ExistingContainer`]).
+			// [`crate::engine::lifecycle::ExistingContainer`]).
 			//
 			// Fetched on the `--force-recreate` path too. Neither fact is
 			// consulted there, but membership is what tells the progress stream
 			// that a container was replaced rather than created (#1619), and a
 			// forced recreate is exactly the case where that word matters.
-			let mut existing: HashMap<String, super::ExistingContainer> = HashMap::new();
+			let mut existing: HashMap<String, crate::engine::lifecycle::ExistingContainer> =
+				HashMap::new();
 			{
 				let path = format!(
 					"{API_PREFIX}/containers/json?all=true&filters={}",
@@ -171,7 +179,7 @@ impl Engine {
 					for raw in entry.names {
 						existing.insert(
 							raw.trim_start_matches('/').to_string(),
-							super::ExistingContainer {
+							crate::engine::lifecycle::ExistingContainer {
 								config_hash: config_hash.clone(),
 								image_id: entry.image_id.clone(),
 								service: service.clone(),
@@ -364,5 +372,32 @@ fn up_build_targets(
 }
 
 #[cfg(all(test, unix))]
-#[path = "up_build_board_tests.rs"]
 mod up_build_board_tests;
+
+#[cfg(test)]
+mod keep_id_create_tests;
+
+#[cfg(test)]
+mod up_validation_tests;
+
+#[cfg(test)]
+mod tests;
+
+/// Tests for the pull decision in `images.rs`.
+///
+/// They drive a whole `up`, so they would sit as naturally in the lifecycle
+/// suite, but that file was already at 487 of its 500 code lines, and adding
+/// them there put it over. They belong next to the decision they pin anyway,
+/// the same way `prefetch.rs` keeps its own.
+#[cfg(test)]
+#[cfg(unix)]
+mod images_tests;
+
+#[cfg(test)]
+mod prefetch_tests;
+
+#[cfg(all(test, unix))]
+mod readiness_tests;
+
+#[cfg(all(test, unix))]
+mod up_one_tests;

@@ -9,9 +9,9 @@
 //! concurrency at all.
 
 #[cfg(unix)]
-use super::*;
-#[cfg(unix)]
 use crate::engine::fake_podman;
+#[cfg(unix)]
+use crate::engine::lifecycle::*;
 #[cfg(unix)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 #[cfg(unix)]

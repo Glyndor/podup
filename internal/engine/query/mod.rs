@@ -29,7 +29,7 @@ pub use options::{ImagesOptions, LogsDisplay, LogsOptions, DEFAULT_LOG_TAIL};
 
 pub use attach::{AttachOptions, AttachOutcome, AttachSummary};
 
-// Re-exported so callers in `engine::*` (`lifecycle/run.rs`,
+// Re-exported so callers in `engine::*` (`lifecycle/run/mod.rs`,
 // `query/attach.rs`) reach it via the same path they used when the helper
 // lived in `query/mod.rs`. The item is `pub(in crate::engine)` in
 // `logs_stream.rs`; the re-export documents the reach and keeps `mod.rs` as
