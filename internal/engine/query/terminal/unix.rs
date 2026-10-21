@@ -3,7 +3,7 @@
 
 // termios and the winsize ioctl are libc FFI. The crate denies `unsafe` and
 // modules that need it opt back in locally, with a soundness comment per block;
-// see `engine::lock` and `engine::staging` for the same pattern.
+// see `engine::project::lock` and `engine::project::lock::staging` for the same pattern.
 #![allow(unsafe_code)]
 
 use std::os::fd::AsRawFd;

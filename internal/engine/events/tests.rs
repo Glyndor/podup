@@ -84,7 +84,7 @@ fn formats_libpod_native_shape() {
 /// (#1914). Other verbs pass through under the `Action` key. The
 /// full compat rewrite rules (image+remove -> delete, died -> die +
 /// exitCode copy, container remove unchanged) are pinned in
-/// `events_compat_rewrite_tests`.
+/// `compat_rewrite_tests`.
 #[test]
 fn rename_event_promotes_status_to_action_and_rewrites_died() {
 	for (raw, want_action, want_status) in [

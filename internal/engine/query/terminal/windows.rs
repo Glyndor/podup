@@ -11,7 +11,7 @@
 
 // The console mode and screen-buffer calls are Win32 FFI. The crate denies
 // `unsafe` and modules that need it opt back in locally, with a soundness
-// comment per block; see `engine::lock` and `engine::staging` for the same
+// comment per block; see `engine::project::lock` and `engine::project::lock::staging` for the same
 // pattern.
 #![allow(unsafe_code)]
 

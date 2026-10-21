@@ -15,8 +15,8 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::client::Hijacked;
 use crate::libpod::API_PREFIX;
 
-use super::query::terminal::{drain_stdin, window_size, RawMode, ResizeWatcher};
-use super::Engine;
+use crate::engine::query::terminal::{drain_stdin, window_size, RawMode, ResizeWatcher};
+use crate::engine::Engine;
 
 impl Engine {
 	/// Pump the caller's terminal against a hijacked stream until it ends.

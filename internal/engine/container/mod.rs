@@ -52,7 +52,7 @@ impl Engine {
 		// answer with an opaque HTTP 500 from its name-regex check). Covers the
 		// ad-hoc `run --name` path too, which never passes through the up-time
 		// preflight in `validate_object_names`.
-		super::names::ensure_valid_object_name("container", service_name, container_name)?;
+		super::project::names::ensure_valid_object_name("container", service_name, container_name)?;
 
 		let derived_image;
 		let image: &str = if let Some(img) = service.image.as_deref() {

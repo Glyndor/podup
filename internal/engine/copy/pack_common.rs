@@ -22,7 +22,7 @@ use super::verify::{SentEntry, SentKind};
 /// Re-export the directory walker the two walks use, so the call sites read
 /// `walk::walk_dir(src)` without reaching across modules.
 pub(in crate::engine) mod walk {
-	pub(in crate::engine) use crate::engine::walk::walk_dir;
+	pub(in crate::engine) use crate::engine::context::walk::walk_dir;
 }
 
 /// What kind of entry the caller wants us to append. `Dir` writes a directory

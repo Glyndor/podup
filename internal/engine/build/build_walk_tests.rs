@@ -9,7 +9,7 @@
 // minimum amount of work for an ignored subtree.
 
 use super::context::build_context_tar;
-use crate::engine::walk::{reset_walk_counter, walk_count};
+use crate::engine::context::walk::{reset_walk_counter, walk_count};
 
 #[test]
 fn build_context_walk_does_not_enumerate_ignored_subtrees() {

@@ -5,7 +5,7 @@
 //! `internal/engine/build/context/pattern_tests.rs`) live here verbatim, plus
 //! the spec / legacy / build-context cases that pin the watch semantics.
 
-use crate::engine::ignore_patterns::*;
+use crate::engine::context::ignore_patterns::*;
 
 // --- string-only cases, moved from build/context/pattern_tests.rs -----------
 

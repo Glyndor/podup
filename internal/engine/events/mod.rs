@@ -237,19 +237,19 @@ impl Engine {
 }
 
 /// Reject a `--since` written as a negative relative duration. The
-/// matcher is lifted out to [`super::since_validation`] so this file
+/// matcher is lifted out to [`since_validation`] so this file
 /// stays under the source-line budget; the contract is unchanged
 /// (#1896).
-#[path = "events_since_validation.rs"]
+#[path = "since_validation.rs"]
 mod since_validation;
 
 pub(super) use since_validation::validate_events_since;
 
 /// Per-event service filter (`docker compose events SERVICE...`). Lives
 /// in its own module for the same reason [`since_validation`] does:
-/// keeping `events.rs` under the 500-line source budget. The filter is a
+/// keeping this file under the 500-line source budget. The filter is a
 /// pure function so it is unit-tested without a fake socket (#2014).
-#[path = "events_service_filter.rs"]
+#[path = "service_filter.rs"]
 mod service_filter;
 
 pub(super) use service_filter::event_in_services;
@@ -494,19 +494,19 @@ fn format_event_line(
 }
 
 #[cfg(test)]
-#[path = "events_tests.rs"]
+#[path = "tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "events_compat_rewrite_tests.rs"]
+#[path = "compat_rewrite_tests.rs"]
 mod compat_rewrite_tests;
 
 #[cfg(test)]
-#[path = "events_event_colour_tests.rs"]
+#[path = "event_colour_tests.rs"]
 mod event_colour_tests;
 
 #[cfg(test)]
-#[path = "events_event_json_tests.rs"]
+#[path = "event_json_tests.rs"]
 mod event_json_tests;
 
 /// Whether an events feed that ended did so because it was asked to.
@@ -516,5 +516,5 @@ mod event_json_tests;
 /// knows without an API call.
 #[cfg(test)]
 #[cfg(unix)]
-#[path = "events_stream_end_tests.rs"]
+#[path = "stream_end_tests.rs"]
 mod stream_end_tests;

@@ -3,7 +3,7 @@
 //! line limit).
 
 use super::{build_context_tar, build_context_tar_with_inline, map_additional_context};
-use crate::engine::ignore_patterns::read_patterns;
+use crate::engine::context::ignore_patterns::read_patterns;
 use std::fs;
 use std::path::Path;
 use tempfile::tempdir;
@@ -155,7 +155,7 @@ fn dockerfile_is_force_included_despite_dockerignore() {
 	);
 }
 
-// (matcher cases live in engine::ignore_patterns_tests) -----------------
+// (matcher cases live in engine::context::ignore_patterns_tests) -----------------
 
 // read_patterns ----------------------------------------------------------
 

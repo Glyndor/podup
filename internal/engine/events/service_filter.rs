@@ -6,8 +6,9 @@
 //! libpod puts under `Actor.Attributes["podup.service"]`. An event
 //! without that label (a `network`/`volume` event that still carries
 //! the project label) is dropped when services are given, because it is
-//! not a container this project started. Lives in its own module so
-//! `events.rs` stays under the 500-line source budget (#2014).
+//! not a container this project started. Lives in its own module so the
+//! orchestration in `events/mod.rs` stays under the 500-line source budget
+//! (#2014).
 
 use serde_json::Value;
 
