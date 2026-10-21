@@ -3,7 +3,8 @@
 //! The rendered-fixture tests in `floor_compat.rs` only see keys reachable
 //! from those fixtures. A post-floor key in an uncovered branch would
 //! slip through. This is the source-level companion: read every emitter
-//! file with `include_str!`, collect every `Key=` literal passed to the
+//! file (the `.container` folder is walked at run time, the other units are
+//! included by path), collect every `Key=` literal passed to the
 //! unit builder, and assert each is floor-compliant. A new emitter that
 //! writes a key the fixtures never reach still fails here.
 //!
@@ -15,10 +16,53 @@ use std::collections::HashMap;
 
 use crate::quadlet::min_podman::{is_at_floor, UnitType};
 
+/// Every source file the `.container` unit is written from, read as the one
+/// blob the parser sees. They are concatenated rather than read one at a time
+/// because the `Section::new(...)` bindings live in the orchestrator: read on
+/// their own, an emitter file's `svc.add(...)` would resolve no section and be
+/// judged against the `.container` key table instead of being recognised as
+/// systemd's `[Service]`.
+///
+/// The folder is walked at run time, subfolders included, not named file by
+/// file through `include_str!`: an emitter added later is picked up without
+/// anyone remembering to list it here, so it cannot escape the floor check by
+/// being new.
+fn container_sources() -> String {
+	fn collect(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+		for entry in
+			std::fs::read_dir(dir).unwrap_or_else(|e| panic!("cannot list {}: {e}", dir.display()))
+		{
+			let path = entry.expect("directory entry").path();
+			if path.is_dir() {
+				collect(&path, out);
+			} else if path.extension().is_some_and(|ext| ext == "rs") {
+				out.push(path);
+			}
+		}
+	}
+	let dir =
+		std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("internal/quadlet/unit/container");
+	let mut paths = Vec::new();
+	collect(&dir, &mut paths);
+	paths.sort();
+	assert!(
+		paths.iter().any(|path| path == &dir.join("mod.rs")),
+		"the orchestrator mod.rs is missing from {}",
+		dir.display()
+	);
+	// A newline between files, so the end of one can never run into the start
+	// of the next and fuse two tokens the parser reads.
+	paths
+		.iter()
+		.map(|path| std::fs::read_to_string(path).expect("emitter source is readable"))
+		.collect::<Vec<_>>()
+		.join("\n")
+}
+
 /// The rendered-fixture tests only see keys reachable from the
 /// fixtures. A post-floor key in an uncovered branch would slip through.
-/// This is the source-level companion: read every emitter file with
-/// `include_str!`, collect every `Key=` literal passed to the unit
+/// This is the source-level companion: read every emitter file,
+/// collect every `Key=` literal passed to the unit
 /// builder, and assert each is at the floor (in 5.0 for the non-build
 /// unit types, in 5.2 for `[Build]`) or is a floor-exempt passthrough
 /// (`PodmanArgs`/`GlobalArgs`).
@@ -38,7 +82,7 @@ fn source_inventory_lists_every_emitted_key() {
 	// when the parser cannot resolve a variable.
 	let files: &[(&str, UnitType)] = &[
 		("build.rs", UnitType::Build),
-		("container.rs", UnitType::Container),
+		("container", UnitType::Container),
 		("health.rs", UnitType::Container),
 		("network.rs", UnitType::Network),
 		("pod.rs", UnitType::Pod),
@@ -47,14 +91,14 @@ fn source_inventory_lists_every_emitted_key() {
 	];
 
 	for (filename, unit_type) in files {
-		let source: &str = match *filename {
-			"build.rs" => include_str!("../unit/build.rs"),
-			"container.rs" => include_str!("../unit/container.rs"),
-			"health.rs" => include_str!("../unit/health.rs"),
-			"network.rs" => include_str!("../unit/network.rs"),
-			"pod.rs" => include_str!("../unit/pod.rs"),
-			"security.rs" => include_str!("../unit/security.rs"),
-			"volume.rs" => include_str!("../unit/volume.rs"),
+		let source: String = match *filename {
+			"build.rs" => include_str!("../unit/build.rs").to_string(),
+			"container" => container_sources(),
+			"health.rs" => include_str!("../unit/health.rs").to_string(),
+			"network.rs" => include_str!("../unit/network.rs").to_string(),
+			"pod.rs" => include_str!("../unit/pod.rs").to_string(),
+			"security.rs" => include_str!("../unit/security.rs").to_string(),
+			"volume.rs" => include_str!("../unit/volume.rs").to_string(),
 			_ => panic!("missing include_str! branch for {filename}"),
 		};
 
@@ -65,11 +109,11 @@ fn source_inventory_lists_every_emitted_key() {
 		// a local binding is to take it as a parameter; and the only
 		// callers do so explicitly.
 		let mut var_to_section: HashMap<String, String> = HashMap::new();
-		for (var, section) in extract_section_bindings(source) {
+		for (var, section) in extract_section_bindings(&source) {
 			var_to_section.insert(var, section);
 		}
 
-		for (var, key) in extract_add_keys(source) {
+		for (var, key) in extract_add_keys(&source) {
 			let section = var_to_section.get(&var).map(String::as_str);
 			// `[Unit]`, `[Install]` and `[Service]` are systemd sections,
 			// not Quadlet sections: keys there go straight to systemd and
