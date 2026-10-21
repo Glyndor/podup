@@ -2,7 +2,7 @@
 //! to keep that file under the repository line limit. The check has two shapes
 //! to verify: the verdict (flag/passthrough) and the segment split helper.
 
-use super::tests::report_for;
+use super::super::tests::report_for;
 
 // ---------------------------------------------------------------------------
 // secret_in_environment
@@ -188,7 +188,7 @@ fn audit_secret_in_environment_segments_split_at_case_and_separator_boundaries()
 		("my.secret.value", &["MY", "SECRET", "VALUE"]),
 	];
 	for (name, expected_segments) in cases {
-		let got = super::segments(name);
+		let got = super::super::segments(name);
 		let got_refs: Vec<&str> = got.iter().map(String::as_str).collect();
 		assert_eq!(got_refs, *expected_segments, "wrong segments for {name}");
 	}

@@ -2,7 +2,7 @@
 //! to keep that file under the repository line limit. Two shapes to verify:
 //! the basic tag verdict and the build/pull_policy matrix.
 
-use super::tests::report_for;
+use super::super::tests::report_for;
 
 // ---------------------------------------------------------------------------
 // unpinned_image

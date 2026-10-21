@@ -83,7 +83,7 @@ name: Workflow lint (reusable)
 #     powershell-version-self-test, on windows-latest.
 #
 #   asset-contract.yml:rust-self-test-reference
-#     `cargo test --locked -p podup install::tests::self_test` at the
+#     `cargo test --locked -p podup install::self_test_tests::self_test` at the
 #     configured MSRV, mirroring the shell installer path. To be
 #     promoted: disable a branch of `self_test`, run the job, confirm
 #     the rust test goes red. The job's name is the cargo test's

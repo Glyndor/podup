@@ -10,42 +10,24 @@
 //! updater run (`cleanup_stale_backup`, called from [`crate::update::run`]),
 //! not merely "the next run" of the binary in general.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::ComposeError;
 
-/// The release asset name for the platform this binary was built for. Mirrors
-/// the `release.yml` build matrix exactly.
-pub fn platform_asset() -> Option<&'static str> {
-	asset_for(std::env::consts::OS, std::env::consts::ARCH)
-}
+mod backup;
+mod platform;
+mod self_test;
+mod swap;
 
-/// Map an OS/ARCH pair to its release asset name. Split out from
-/// [`platform_asset`] so the full matrix is testable without the host's values.
-pub(crate) fn asset_for(os: &str, arch: &str) -> Option<&'static str> {
-	match (os, arch) {
-		("linux", "x86_64") => Some("podup-linux-x86_64"),
-		("linux", "aarch64") => Some("podup-linux-arm64"),
-		("macos", "aarch64") => Some("podup-darwin-arm64"),
-		("macos", "x86_64") => Some("podup-darwin-x86_64"),
-		("windows", "x86_64") => Some("podup-windows-x86_64.exe"),
-		("windows", "aarch64") => Some("podup-windows-arm64.exe"),
-		_ => None,
-	}
-}
-
-/// Resolve the asset for the current platform or fail with a clear message.
-pub fn require_platform_asset() -> crate::Result<&'static str> {
-	platform_asset().ok_or_else(|| {
-		ComposeError::Update(format!(
-			"self-update is not supported on {}/{}; reinstall manually from \
-			 https://github.com/Glyndor/podup/releases",
-			std::env::consts::OS,
-			std::env::consts::ARCH
-		))
-	})
-}
+#[cfg(windows)]
+pub(crate) use backup::cleanup_stale_backup;
+pub(crate) use backup::{move_target_aside, restore_from_backup};
+pub(crate) use platform::asset_for;
+pub use platform::{platform_asset, require_platform_asset};
+#[cfg(unix)]
+pub(crate) use self_test::is_text_file_busy;
+pub(crate) use self_test::{self_test, spawn_version_probe};
+pub(crate) use swap::{rename_error, swap_into_place, write_temp};
 
 /// Replace the currently running executable with `new_bytes`. Returns the path
 /// that was updated. The caller MUST have verified `new_bytes` first.
@@ -92,227 +74,6 @@ pub fn install_binary(new_bytes: &[u8], expected_version: &str) -> crate::Result
 	Ok(target)
 }
 
-/// Hard-link the current binary into a `.old` sibling so the swap and the
-/// self-test can both find a recoverable copy of the previous binary.
-///
-/// On Windows the running `.exe` is `rename`d aside: a running executable
-/// cannot be overwritten, and the swap moves the staged file over the
-/// resulting empty path. On Unix the target stays in place: the staged
-/// file is `rename`d over its inode atomically in `swap_into_place`, so
-/// moving the target aside would only orphan the path between the link
-/// and the swap. Keeping the target live is also what lets
-/// `write_temp` read its permission bits before staging the new file
-/// (`#1898`). The `.old` extension is shared across platforms so one
-/// cleanup pass covers both.
-pub(crate) fn move_target_aside(target: &Path) -> crate::Result<PathBuf> {
-	let backup = target.with_extension("old");
-	if backup == *target {
-		return Err(ComposeError::Update(format!(
-			"refusing to clobber the target with a sibling of the same path: {}",
-			backup.display()
-		)));
-	}
-	// Drop any stale leftover from a prior interrupted install. The
-	// updater's next-run cleanup covers this too, but doing it here keeps
-	// the rename atomic from the caller's perspective.
-	if let Err(e) = std::fs::remove_file(&backup) {
-		// ENOENT is fine; anything else is worth surfacing.
-		if e.kind() != std::io::ErrorKind::NotFound {
-			return Err(ComposeError::Update(format!(
-				"cannot remove stale backup {}: {e}",
-				backup.display()
-			)));
-		}
-	}
-	if target.exists() {
-		#[cfg(windows)]
-		{
-			std::fs::rename(target, &backup).map_err(|e| {
-				ComposeError::Update(format!(
-					"cannot move the current binary aside before the swap ({} -> {}): {e}",
-					target.display(),
-					backup.display()
-				))
-			})?;
-		}
-		#[cfg(not(windows))]
-		{
-			// A hard link keeps the ORIGINAL inode at `.old` (mode, owner, xattrs,
-			// ACLs, capabilities all intact), needs no read permission, and `link(2)`
-			// never follows a symlink at the new path: it fails with EEXIST instead.
-			// Nothing writes the target in place (the staged file is renamed over
-			// it), so the two names only share an inode until that rename.
-			if std::fs::hard_link(target, &backup).is_err() {
-				// A filesystem without hard links: fall back to the rename this
-				// function always did. The target is then absent until the swap.
-				std::fs::rename(target, &backup).map_err(|e| {
-					ComposeError::Update(format!(
-						"cannot move the current binary aside before the swap ({} -> {}): {e}",
-						target.display(),
-						backup.display()
-					))
-				})?;
-			}
-		}
-	}
-	Ok(backup)
-}
-
-/// Restore the `.old` sibling back onto `target`. Best-effort: the rollback
-/// path reports the original error to the user regardless, but a failure
-/// here is logged at debug so the next-run cleanup can pick up where this
-/// left off (the `.old` is still on disk and the self-test has already
-/// failed).
-pub(crate) fn restore_from_backup(target: &Path, backup: &Path) -> crate::Result<()> {
-	if !backup.exists() {
-		// Nothing to restore from (the install was a fresh deploy onto a
-		// path that did not exist before). The swap that already ran
-		// stands.
-		return Ok(());
-	}
-	#[cfg(unix)]
-	{
-		use std::os::unix::fs::MetadataExt;
-		// Renaming a hard link onto its own inode is a no-op that would leave `.old` behind.
-		let same_file = match (
-			std::fs::symlink_metadata(backup),
-			std::fs::symlink_metadata(target),
-		) {
-			(Ok(a), Ok(b)) => a.dev() == b.dev() && a.ino() == b.ino(),
-			_ => false,
-		};
-		if same_file {
-			std::fs::remove_file(backup).map_err(|e| {
-				ComposeError::Update(format!(
-					"failed to remove the unused backup {}: {e}",
-					backup.display()
-				))
-			})?;
-			return Ok(());
-		}
-	}
-	std::fs::rename(backup, target).map_err(|e| {
-		ComposeError::Update(format!(
-			"failed to roll back to the previous binary from {}: {e}",
-			backup.display()
-		))
-	})
-}
-
-/// How long to keep retrying a spawn that reports ETXTBSY.
-///
-/// The window is short by nature (it lasts only as long as some other process
-/// holds a write descriptor to the file across its own exec) so a second is
-/// generous. Bounded on purpose: a binary that is genuinely unrunnable must
-/// reach the rollback, not wedge the updater retrying forever.
-#[cfg(unix)]
-const TEXT_FILE_BUSY_BUDGET: std::time::Duration = std::time::Duration::from_secs(1);
-
-/// Spawn `target --version`, retrying while the kernel says the file is still
-/// open for writing somewhere.
-///
-/// ETXTBSY is not a property of the binary: it means another process holds a
-/// write descriptor to it across its own `exec`, and `O_CLOEXEC` does not close
-/// that window. Treating it as a failed self-test rolls back a signed, verified,
-/// perfectly good update over a race that resolves in milliseconds, and tells
-/// the user their new version is broken.
-pub(crate) fn spawn_version_probe(target: &Path) -> std::io::Result<std::process::Child> {
-	use std::process::{Command, Stdio};
-
-	let probe = || {
-		Command::new(target)
-			.arg("--version")
-			.stdin(Stdio::null())
-			.stdout(Stdio::piped())
-			.stderr(Stdio::null())
-			.spawn()
-	};
-
-	#[cfg(unix)]
-	{
-		let deadline = std::time::Instant::now() + TEXT_FILE_BUSY_BUDGET;
-		loop {
-			match probe() {
-				Err(e) if is_text_file_busy(&e) && std::time::Instant::now() < deadline => {
-					std::thread::sleep(std::time::Duration::from_millis(10));
-				}
-				other => return other,
-			}
-		}
-	}
-	#[cfg(not(unix))]
-	{
-		probe()
-	}
-}
-
-/// Whether a spawn error is ETXTBSY, asked of the `io::Error` itself.
-///
-/// This has to happen before the error is formatted into a message: once it is
-/// a `String` the errno is gone, and matching on the text would break under any
-/// locale or libc that words it differently.
-#[cfg(unix)]
-pub(crate) fn is_text_file_busy(e: &std::io::Error) -> bool {
-	// `ExecutableFileBusy` is the named form; the raw errno is compared too so
-	// this holds on a toolchain where the mapping differs.
-	e.kind() == std::io::ErrorKind::ExecutableFileBusy || e.raw_os_error() == Some(libc::ETXTBSY)
-}
-
-/// Confirm a freshly-installed binary runs and reports `expected_version` by
-/// invoking `--version`, bounded by a timeout so a hung binary can't wedge the
-/// updater. The version check closes the rollback window: a replayed older
-/// (signed) release fails here and is rolled back.
-pub(crate) fn self_test(target: &Path, expected_version: &str) -> crate::Result<()> {
-	use std::io::Read;
-	use std::time::{Duration, Instant};
-
-	let mut child = spawn_version_probe(target)
-		.map_err(|e| ComposeError::Update(format!("could not run the updated binary: {e}")))?;
-
-	let deadline = Instant::now() + Duration::from_secs(10);
-	let status = loop {
-		match child.try_wait() {
-			Ok(Some(status)) => break status,
-			Ok(None) => {
-				if Instant::now() >= deadline {
-					let _ = child.kill();
-					return Err(ComposeError::Update(
-						"updated binary did not respond to --version within 10s".to_string(),
-					));
-				}
-				std::thread::sleep(Duration::from_millis(50));
-			}
-			Err(e) => {
-				return Err(ComposeError::Update(format!(
-					"waiting on the updated binary failed: {e}"
-				)))
-			}
-		}
-	};
-	if !status.success() {
-		return Err(ComposeError::Update(format!(
-			"updated binary exited with {status} on --version"
-		)));
-	}
-	// `--version` output is a single short line; reading after exit is safe
-	// (it fits the pipe buffer, so the child never blocks on a full pipe).
-	let mut out = String::new();
-	if let Some(mut stdout) = child.stdout.take() {
-		let _ = stdout.read_to_string(&mut out);
-	}
-	let reported_matches = out
-		.split_whitespace()
-		.any(|t| t == expected_version || t.trim_start_matches('v') == expected_version);
-	if !reported_matches {
-		return Err(ComposeError::Update(format!(
-			"updated binary reports {:?} instead of the resolved release version \
-			 {expected_version}; possible release-metadata tampering (rollback)",
-			out.trim()
-		)));
-	}
-	Ok(())
-}
-
 /// Write `new_bytes` to a sibling temp file and atomically move it onto
 /// `target`, preserving the target's permissions. Factored out of
 /// [`install_binary`] so the swap is testable against an arbitrary path.
@@ -341,175 +102,17 @@ pub fn install_at(target: &Path, new_bytes: &[u8]) -> crate::Result<()> {
 	Ok(())
 }
 
-/// Write the new bytes to `tmp`, copy `target`'s permission bits (default 0755
-/// on Unix when the target does not yet exist), and flush to disk.
-pub(crate) fn write_temp(tmp: &Path, new_bytes: &[u8], target: &Path) -> crate::Result<()> {
-	// Create the temp file private (0600) on Unix so the new binary's bytes are
-	// never world-readable in a shared directory (e.g. /usr/local/bin) during the
-	// window before the target's mode is applied. `File::create` honours the
-	// process umask and could otherwise leave a 0644 file readable by other users.
-	#[cfg(unix)]
-	let mut f = {
-		use std::os::unix::fs::OpenOptionsExt;
-		// Remove any stale temp (e.g. from a crashed run); unlinking a symlink
-		// removes the link itself and does not follow it.
-		let _ = std::fs::remove_file(tmp);
-		// `create_new` (O_EXCL) + O_NOFOLLOW: never follow or clobber a pre-planted
-		// symlink in a shared/attacker-writable install directory, so the verified
-		// bytes can only land in our own freshly created file.
-		//
-		// **Neither flag is reachable from a test, and that is a property of what
-		// they guard rather than a gap.** The `remove_file` above already unlinks
-		// any symlink planted beforehand (measured: after it, the link is gone
-		// and its victim is untouched) so what is left for these flags is the
-		// window *between* that unlink and this open. Closing a race is exactly
-		// the thing an in-process test cannot enter. Mutations removing either
-		// one survive the suite; the third property of this call, the 0600 mode,
-		// is reachable and is pinned by
-		// `write_temp_creates_the_file_private_to_this_user`.
-		std::fs::OpenOptions::new()
-			.write(true)
-			.create_new(true)
-			.custom_flags(libc::O_NOFOLLOW)
-			.mode(0o600)
-			.open(tmp)
-			.map_err(|e| {
-				ComposeError::Update(format!("cannot write update to {}: {e}", tmp.display()))
-			})?
-	};
-	#[cfg(windows)]
-	let mut f = {
-		use std::os::windows::fs::OpenOptionsExt;
-		// Mirror the Unix branch's invariants on Windows. `create_new(true)`
-		// is the Windows analogue of `O_CREAT|O_EXCL`: after the unlink
-		// below, the open fails if anything reappeared at `tmp` rather
-		// than truncating it, so a
-		// planted junction cannot redirect the verified bytes into a host
-		// path the operator did not name. `custom_flags(0x0020_0000)` is
-		// `FILE_FLAG_OPEN_REPARSE_POINT`: the open is given a handle to
-		// the reparse point itself rather than the target it points at,
-		// failing the call rather than silently traversing the link.
-		// Together with the `remove_file` above (which unlinks a planted
-		// symlink rather than following it) the verified bytes can only
-		// land in a freshly created file at `tmp`. The constants are
-		// intentionally inlined rather than imported from `windows-sys`
-		// to keep this branch buildable on hosts that only have the
-		// `Console` features wired up.
-		let _ = std::fs::remove_file(tmp);
-		std::fs::OpenOptions::new()
-			.write(true)
-			.create_new(true)
-			.custom_flags(0x0020_0000)
-			.open(tmp)
-			.map_err(|e| {
-				ComposeError::Update(format!("cannot write update to {}: {e}", tmp.display()))
-			})?
-	};
-	#[cfg(not(any(unix, windows)))]
-	let mut f = std::fs::File::create(tmp).map_err(|e| {
-		ComposeError::Update(format!("cannot write update to {}: {e}", tmp.display()))
-	})?;
-	f.write_all(new_bytes).map_err(ComposeError::Io)?;
-	f.flush().map_err(ComposeError::Io)?;
-
-	#[cfg(unix)]
-	{
-		use std::os::unix::fs::PermissionsExt;
-		// Copy the target's permission bits, but mask off setuid/setgid/sticky
-		// (`& 0o777`): podup is an ordinary binary, and propagating a special bit
-		// from a tampered target onto the freshly installed binary would be a
-		// privilege-escalation footgun.
-		let mode = std::fs::metadata(target)
-			.map(|m| m.permissions().mode() & 0o777)
-			.unwrap_or(0o755);
-		std::fs::set_permissions(tmp, std::fs::Permissions::from_mode(mode))
-			.map_err(ComposeError::Io)?;
-	}
-	#[cfg(not(unix))]
-	{
-		let _ = target; // permissions are inherited on non-Unix.
-	}
-
-	f.sync_all().map_err(ComposeError::Io)?;
-	Ok(())
-}
-
-/// Atomically move `tmp` onto `target`. Unix replaces the inode directly;
-/// Windows renames the in-use file aside first.
-#[cfg(not(windows))]
-pub(crate) fn swap_into_place(tmp: &Path, target: &Path) -> crate::Result<()> {
-	std::fs::rename(tmp, target).map_err(|e| rename_error(e, target))
-}
-
-#[cfg(windows)]
-pub(crate) fn swap_into_place(tmp: &Path, target: &Path) -> crate::Result<()> {
-	// A running .exe cannot be overwritten, but it can be renamed. Move it aside,
-	// put the new binary in place, then best-effort delete the old one (it may
-	// still be locked while running - if so, it is removed at the start of the
-	// next updater run by `cleanup_stale_backup`).
-	//
-	// The L5 swap path
-	// (`install_binary` → `move_target_aside` → `install_at`) means the target
-	// may already be absent when this function is called: the caller has moved
-	// it to `.old` so the self-test has a recoverable copy on disk. Track
-	// whether *this* call created the backup so the cleanup at the end only
-	// touches the file we created, and the rename error path only tries to
-	// restore from a backup we own.
-	let backup = target.with_extension("old");
-	let target_existed = target.exists();
-	if target_existed {
-		// Drop any stale leftover before re-creating it. Only meaningful when
-		// we are about to be the one to create a fresh `.old`.
-		let _ = std::fs::remove_file(&backup);
-		std::fs::rename(target, &backup).map_err(|e| rename_error(e, target))?;
-	}
-	if let Err(e) = std::fs::rename(tmp, target) {
-		// Roll back so the user is not left without a binary, but only when
-		// we created the backup in this call. A pre-existing `.old` (the L5
-		// swap path) is the caller's responsibility to restore.
-		if target_existed {
-			let _ = std::fs::rename(&backup, target);
-		}
-		return Err(rename_error(e, target));
-	}
-	// Only clean up the backup if we created it in this call. A pre-existing
-	// `.old` belongs to the caller, who decides when (and whether) to drop it.
-	if target_existed {
-		let _ = std::fs::remove_file(&backup);
-	}
-	Ok(())
-}
-
-/// Best-effort removal of a `.old` backup [`swap_into_place`] could not delete
-/// immediately because the old process still held the file open. Call once at
-/// the start of every updater run ([`crate::update::run`]): by then the
-/// process that produced the backup has exited, so the file is no longer
-/// locked and the leftover clears on this run rather than lingering until the
-/// user happens to run another update. Silently does nothing if there is no
-/// leftover, or if removal still fails for some other reason.
-#[cfg(windows)]
-pub(crate) fn cleanup_stale_backup() {
-	if let Ok(exe) = std::env::current_exe() {
-		let _ = std::fs::remove_file(exe.with_extension("old"));
-	}
-}
-
-/// Turn a rename failure into an actionable error, calling out the common
-/// permission case (system install dirs need elevation).
-pub(crate) fn rename_error(e: std::io::Error, target: &Path) -> ComposeError {
-	if e.kind() == std::io::ErrorKind::PermissionDenied {
-		ComposeError::Update(format!(
-			"permission denied writing {}; re-run with elevated privileges \
-			 (e.g. sudo) or set a writable install location",
-			target.display()
-		))
-	} else {
-		ComposeError::Update(format!(
-			"failed to install update to {}: {e}",
-			target.display()
-		))
-	}
-}
-
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod platform_tests;
+
+#[cfg(test)]
+mod backup_tests;
+
+#[cfg(test)]
+mod self_test_tests;
+
+#[cfg(test)]
+mod swap_tests;
