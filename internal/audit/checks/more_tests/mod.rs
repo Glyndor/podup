@@ -9,5 +9,4 @@ use super::tests::report_for;
 // The `sensitive_bind_mount` rows live in their own file to keep this one
 // under the line limit. A child module, so `report_for` and the imports
 // above reach it through `super::`.
-#[path = "checks_sensitive_bind_tests.rs"]
 mod sensitive_bind;

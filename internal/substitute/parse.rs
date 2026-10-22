@@ -213,5 +213,4 @@ pub(super) fn resolve_modifier(
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[path = "parse_tests.rs"]
 mod tests;
