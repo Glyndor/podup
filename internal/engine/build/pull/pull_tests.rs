@@ -2,10 +2,11 @@
 //! expansion, `pull_policy` resolution, and the de-duplication that collapses
 //! a shared image into a single request.
 //!
-//! Split out of `build/pull.rs` so the production code stays under the
+//! Split out of `build/pull/mod.rs` so the production code stays under the
 //! source-line limit, the same way `pull_typo_tests.rs` already is.
 
-use super::{libpod_pull_policy, pull_dep_closure};
+use super::policy::libpod_pull_policy;
+use super::pull_dep_closure;
 
 #[test]
 fn dep_closure_includes_transitive_dependencies() {

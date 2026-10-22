@@ -13,44 +13,14 @@ use crate::libpod::{urlencoded, API_PREFIX};
 
 use super::super::Engine;
 
-/// Options for [`Engine::pull_services_with_options`], mirroring `docker
-/// compose pull` flags. The `--policy` override is carried on the engine (see
-/// [`Engine::with_up_overrides`]), not here.
-///
-/// `#[non_exhaustive]` since 4.0.0, so a new flag can be added in a minor
-/// release without breaking every external caller that built the struct with
-/// a literal. Construct it via [`PullOptions::new`] or the `with_*` builders
-/// below; a struct literal is refused outside this crate, which is what buys
-/// the room to grow.
-#[derive(Default)]
-#[non_exhaustive]
-pub struct PullOptions {
-	/// Warn and continue instead of aborting on the first failure,
-	/// `--ignore-pull-failures`.
-	pub ignore_failures: bool,
-	/// Also pull each named service's transitive `depends_on`, `--include-deps`.
-	pub include_deps: bool,
-}
+mod images;
+mod options;
+mod policy;
+mod progress;
 
-impl PullOptions {
-	/// Every `docker compose pull` flag, in CLI order. A constructor rather
-	/// than a struct literal because the type is `#[non_exhaustive]`, so the
-	/// next flag to land is not a breaking change for anyone building one.
-	pub fn new(ignore_failures: bool, include_deps: bool) -> Self {
-		Self {
-			ignore_failures,
-			include_deps,
-		}
-	}
-
-	/// Warn and continue instead of aborting on the first failure,
-	/// `--ignore-pull-failures`. Builder-style.
-	#[must_use]
-	pub fn with_ignore_failures(mut self, ignore_failures: bool) -> Self {
-		self.ignore_failures = ignore_failures;
-		self
-	}
-}
+pub use options::PullOptions;
+pub(crate) use policy::pull_policy_checked;
+use progress::{stderr_supports_live, PullStreamProgress};
 
 /// Upper bound on how many distinct images a standalone `pull` fetches
 /// concurrently. Mirrors the lifecycle level fan-out's own concurrency cap: a
@@ -432,42 +402,6 @@ impl Engine {
 			}
 		}
 	}
-
-	/// Whether an image reference is present in local storage. Used by the
-	/// `pull` command to verify each pull actually landed (the streaming pull
-	/// endpoint reports failures as in-band progress lines, not an HTTP error),
-	/// and by the `up` image-prefetch stage to skip a redundant pull request
-	/// for an image a `missing`-policy service already has cached.
-	pub(in crate::engine) async fn image_present(&self, image: &str) -> bool {
-		let path = format!("{API_PREFIX}/images/{}/json", urlencoded(image));
-		self.client
-			.get_json::<crate::libpod::types::image::ImageInspect>(&path)
-			.await
-			.is_ok()
-	}
-
-	/// The 64-hex ID the image reference resolves to in local storage right
-	/// now, or `None` when no such image is present.
-	///
-	/// A name is a pointer and this is what it points at. `up` uses it to tell
-	/// whether an existing container is still bound to the image its service
-	/// resolves to, which the config hash cannot say: a rebuild, a pull or a
-	/// `podman tag` moves the name and leaves the hash alone (#1620). A
-	/// transport error is returned rather than folded into `None`, because the
-	/// caller's fallback for "unknown" is to recreate, and a flaky socket must
-	/// not silently turn every skip into a rebuild.
-	pub(in crate::engine) async fn image_id(&self, image: &str) -> Result<Option<String>> {
-		let path = format!("{API_PREFIX}/images/{}/json", urlencoded(image));
-		match self
-			.client
-			.get_json::<crate::libpod::types::image::ImageInspect>(&path)
-			.await
-		{
-			Ok(inspect) => Ok(Some(inspect.id)),
-			Err(e) if e.is_status(404) => Ok(None),
-			Err(e) => Err(ComposeError::Podman(e)),
-		}
-	}
 }
 
 /// The transitive `depends_on` closure of `services` (including the services
@@ -491,133 +425,11 @@ fn pull_dep_closure(file: &ComposeFile, services: &[String]) -> HashSet<String> 
 	set
 }
 
-/// Whether the per-blob `start` calls should fire for this process. Mirrors the
-/// gate `internal::ui::progress::live_terminal_colored` uses to decide whether
-/// to open a live region: stderr must be a tty, and the colour choice must not
-/// be `Never`.
-///
-/// Centralised here so the production predicate and the gate that protects the
-/// plain sink stay in lockstep. A `start` call that goes through when the
-/// live region is off would write one line per blob to a CI log, which is
-/// exactly what `a_piped_pull_prints_only_pulling_and_pulled` says must not
-/// happen.
-fn stderr_supports_live() -> bool {
-	use std::io::IsTerminal;
-	std::io::stderr().is_terminal() && crate::ui::stderr_colored()
-}
-
-/// Parse one libpod pull stream line into the row verb it implies, if any.
-///
-/// On Podman 5.7.0 the `/libpod/images/pull` stream carries no byte counts:
-/// one `{"stream":"Copying blob sha256:<digest>"}` per layer, plus a
-/// `Copying config <digest>` once the manifest has been read. A blob already in
-/// storage is skipped by libpod without a `Copying blob` line, and a blob that
-/// fails mid-transfer is reported again under the same digest on retry, so the
-/// count is of layers that are actually copied.
-///
-/// Kept as a standalone struct so a unit test can feed it three lines and read
-/// the verbs back out, which is the only way to assert what the row actually
-/// said without an end-to-end harness.
-#[derive(Default)]
-struct PullStreamProgress {
-	/// Distinct blob digests seen on `Copying blob` lines, including retries.
-	blobs: HashSet<String>,
-	/// Number of `Copying blob` lines observed (raw count, so retries move this
-	/// while `blobs.len()` stays put).
-	blob_lines: usize,
-	/// Whether the `Copying config` line has arrived, switching the verb from
-	/// the `Pulling N layers` form to `Pulling done/total`.
-	manifest_seen: bool,
-}
-
-impl PullStreamProgress {
-	fn new() -> Self {
-		Self::default()
-	}
-
-	/// Observe one `stream` line. Returns the verb to render on the row, or
-	/// `None` for lines that carry no transition (status text, the
-	/// `Copying config` line carries a transition of its own).
-	fn observe(&mut self, line: &str) -> Option<String> {
-		const BLOB_PREFIX: &str = "Copying blob ";
-		const CONFIG_PREFIX: &str = "Copying config ";
-		let line = line.trim_end();
-		if let Some(rest) = line.strip_prefix(BLOB_PREFIX) {
-			let digest = rest.split_whitespace().next().unwrap_or("");
-			self.blobs.insert(digest.to_string());
-			self.blob_lines += 1;
-			Some(self.format_verb())
-		} else if line.starts_with(CONFIG_PREFIX) {
-			self.manifest_seen = true;
-			Some(self.format_verb())
-		} else {
-			None
-		}
-	}
-
-	fn format_verb(&self) -> String {
-		if self.manifest_seen {
-			format!("Pulling {}/{}", self.blob_lines, self.blobs.len())
-		} else {
-			match self.blobs.len() {
-				1 => "Pulling 1 layer".to_string(),
-				n => format!("Pulling {n} layers"),
-			}
-		}
-	}
-}
-
-/// Map a compose `pull_policy:` value to the libpod images/pull `policy`
-/// parameter. `if_not_present` is the spec alias for `missing`; `build` falls
-/// back to `missing` here (its build behavior is handled by the caller). Returns
-/// `None` for an unrecognized value so the caller can warn and default.
-pub(in crate::engine) fn libpod_pull_policy(policy: Option<&str>) -> Option<&'static str> {
-	match policy {
-		Some("always") => Some("always"),
-		Some("newer") => Some("newer"),
-		Some("never") => Some("never"),
-		None | Some("missing") | Some("if_not_present") | Some("build") => Some("missing"),
-		Some(_) => None,
-	}
-}
-
-/// Map a compose `pull_policy:` value to the libpod images/pull `policy`
-/// parameter, rejecting an unrecognized value with a structured
-/// [`PodmanError::Field`] that names both the compose service and the
-/// offending value (#1443).
-///
-/// `service_name` is the compose service the policy was read from (e.g.
-/// `"web"`); pass the empty string when the value came from the engine-wide
-/// `--pull` override (no service context). The rejected value lands in the
-/// error so a typo'd `pull_policy: alaways` on a specific service is reported
-/// as `service.<name>: pull_policy: unknown pull policy "alaways" (value:
-/// alaways)`: the actionable bit is which service and which value, not the
-/// abstract policy name.
-pub(crate) fn pull_policy_checked(
-	policy: Option<&str>,
-	service_name: &str,
-) -> crate::error::Result<&'static str> {
-	if let Some(p) = libpod_pull_policy(policy) {
-		return Ok(p);
-	}
-	let value = policy.unwrap_or_default();
-	let message = format!(
-		"unknown pull policy {value:?}: accepted values are always, missing, newer, never \
-		 (case-insensitive); if_not_present and build are accepted as aliases for missing"
-	);
-	Err(crate::error::ComposeError::Podman(
-		crate::libpod::validate::spec_field_error(service_name, "pull_policy", value, message),
-	))
-}
+#[cfg(test)]
+mod pull_tests;
 
 #[cfg(test)]
-#[path = "pull_tests.rs"]
-mod tests;
-
-#[cfg(test)]
-#[path = "pull_typo_tests.rs"]
-mod typo_tests;
+mod pull_typo_tests;
 
 #[cfg(all(test, unix))]
-#[path = "pull_board_tests.rs"]
-mod board_tests;
+mod pull_board_tests;
