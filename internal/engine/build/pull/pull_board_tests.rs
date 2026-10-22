@@ -207,7 +207,7 @@ fn a_retried_blob_is_counted_once() {
 /// the row.
 ///
 /// Driving this through the fake Podman (and not by mocking the parser) is
-/// what pins the gate in pull.rs and not somewhere inside
+/// what pins the gate in pull/mod.rs and not somewhere inside
 /// `internal/ui/progress/`, which is where the contract belongs.
 #[tokio::test]
 async fn a_piped_pull_prints_only_pulling_and_pulled() {
