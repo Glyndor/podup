@@ -19,7 +19,7 @@ name: Installer contract (reusable)
 # way to satisfy it was to declare a matrix entry that produced nothing, the
 # exact defect it existed to catch. It had never run green in any repository.
 # Existence is answered where it can be answered honestly, against the staged
-# files at release time, by `scripts/verify-release-assets.py`.
+# files at release time, by `.github/scripts/verify-release-assets.py`.
 
 on:
   workflow_call:
@@ -103,7 +103,7 @@ jobs:
                   f"declared: {sorted(published)}\n"
                   "This gate reads the workflow's asset declarations only. It "
                   "does not check that the release produces them; "
-                  "scripts/verify-release-assets.py does that against the "
+                  ".github/scripts/verify-release-assets.py does that against the "
                   "staging directory at release time."
               )
           print(f"OK: all {len(requestable)} installer-requestable assets are published.")
