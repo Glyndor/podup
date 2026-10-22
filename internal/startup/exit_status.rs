@@ -66,11 +66,7 @@ pub(crate) fn print_error(e: &podup::ComposeError, context: &ErrorContext) {
 	{
 		let _ = writeln!(err, "{hint}");
 	}
-	if let Some(hint) = crate::apparmor_hint::hint_for(&e.to_string()) {
+	if let Some(hint) = crate::startup::apparmor_hint::hint_for(&e.to_string()) {
 		let _ = writeln!(err, "{hint}");
 	}
 }
-
-#[cfg(test)]
-#[path = "exit_status_exit_code_tests.rs"]
-mod exit_code_tests;

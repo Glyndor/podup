@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 
 use crate::cli::{AuditFormat, AutostartCommands, Cli, Commands, ConfigArgs, UpArgs};
-use crate::resolve::{absolute, resolve_base_dir, resolve_project_name};
+use crate::startup::resolve::{absolute, resolve_base_dir, resolve_project_name};
 use crate::startup::validate_project_name;
 
 use crate::audit;
@@ -19,7 +19,7 @@ pub(crate) async fn run_config(
 	cli: &Cli,
 	compose_files: &[PathBuf],
 	file: podup::compose::types::ComposeFile,
-	error_context: &mut crate::exit_status::ErrorContext,
+	error_context: &mut crate::startup::exit_status::ErrorContext,
 ) -> podup::Result<()> {
 	let Commands::Config(ConfigArgs {
 		format,
@@ -90,7 +90,7 @@ pub(crate) fn render_audit(
 	cli: &Cli,
 	compose_files: &[PathBuf],
 	file: &podup::compose::types::ComposeFile,
-	error_context: &mut crate::exit_status::ErrorContext,
+	error_context: &mut crate::startup::exit_status::ErrorContext,
 ) -> podup::Result<()> {
 	let Commands::Audit {
 		strict,
@@ -145,7 +145,13 @@ pub(crate) fn run_generate(
 	// file, not the unit directory the systemd generator would otherwise use.
 	let canonical_base_dir =
 		std::fs::canonicalize(base_dir).unwrap_or_else(|_| base_dir.to_path_buf());
-	crate::generate::write_quadlet(&filtered, project, &canonical_base_dir, output, cli.no_warn)
+	crate::main_runner::generate::write_quadlet(
+		&filtered,
+		project,
+		&canonical_base_dir,
+		output,
+		cli.no_warn,
+	)
 }
 
 /// Handle `autostart`. `install` and `status` work from the compose file alone
@@ -159,13 +165,14 @@ pub(crate) async fn run_autostart(
 	file: &podup::compose::types::ComposeFile,
 	kind: &AutostartCommands,
 ) -> podup::Result<()> {
-	let env = crate::autostart_cmd::AutostartEnv {
+	let env = crate::main_runner::autostart::AutostartEnv {
 		profile: &cli.profile,
 		env_files: &cli.env_file,
 		socket: resolve_socket(cli.socket.as_deref()),
 		connection_pool_size: cli.connection_pool_size,
 	};
-	crate::autostart_cmd::dispatch(&env, compose_files, project, base_dir, file, kind).await
+	crate::main_runner::autostart::dispatch(&env, compose_files, project, base_dir, file, kind)
+		.await
 }
 
 /// Build the engine, project-name guards, and project lock for the lifecycle

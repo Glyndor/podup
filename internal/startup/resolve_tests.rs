@@ -1,4 +1,4 @@
-use super::{
+use super::resolve::{
 	override_for, resolve_base_dir, resolve_compose_files, resolve_project_name,
 	sanitize_project_name, validate_project_directory,
 };

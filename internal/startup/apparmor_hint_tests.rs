@@ -1,4 +1,4 @@
-use super::{
+use super::apparmor_hint::{
 	classify, defines_pasta, find_pasta_profile, has_rule, hint_for, hint_in, render_hint,
 	PastaProfile,
 };
@@ -160,7 +160,7 @@ fn hint_for_returns_none_for_unrelated_error() {
 #[test]
 #[cfg(target_os = "linux")]
 fn sed_one_liner_actually_adds_the_rule() {
-	use super::{sed_command, ANCHOR};
+	use super::apparmor_hint::{sed_command, ANCHOR};
 
 	let dir = tempfile::tempdir().expect("tempdir");
 	let profile_path = write(dir.path(), "usr.bin.pasta", UBUNTU_PROFILE);

@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use crate::resolve::compose_files_were_named;
+use crate::startup::resolve::compose_files_were_named;
 
 /// The label-only commands (`ps`, `events`) run without a compose file so a
 /// directory that has none still answers by project label. A file the

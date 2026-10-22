@@ -426,3 +426,13 @@ fn format_clap_error(err: &clap::error::Error) -> String {
 mod bridge_tests;
 #[cfg(test)]
 mod tests;
+
+pub(crate) mod apparmor_hint;
+#[cfg(test)]
+mod apparmor_hint_tests;
+pub(crate) mod exit_status;
+#[cfg(test)]
+mod exit_status_exit_code_tests;
+pub(crate) mod resolve;
+#[cfg(test)]
+mod resolve_tests;

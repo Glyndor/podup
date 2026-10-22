@@ -10,7 +10,7 @@ pub(crate) const PASTA_RULE: &str = "signal (receive) peer=podman,";
 
 /// The line after which the one-liner inserts the rule. Must match the sed
 /// pattern in `sed_command` exactly (two leading spaces).
-const ANCHOR: &str = "  include <abstractions/pasta>";
+pub(super) const ANCHOR: &str = "  include <abstractions/pasta>";
 
 /// Outcome of inspecting `/etc/apparmor.d` for a profile named `pasta` that
 /// does or does not allow the signal Podman needs.
@@ -183,7 +183,3 @@ pub(crate) fn hint_in(error_text: &str, dir: Option<&std::path::Path>) -> Option
 	}
 	render_hint(&dir.map_or(PastaProfile::NotFound, find_pasta_profile))
 }
-
-#[cfg(test)]
-#[path = "apparmor_hint_tests.rs"]
-mod tests;

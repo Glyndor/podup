@@ -1,4 +1,4 @@
-use super::{quadlet_platform_advisory, write_quadlet};
+use super::generate::{quadlet_platform_advisory, write_quadlet};
 use podup::parse_str;
 use podup::quadlet::validate_for_quadlet;
 

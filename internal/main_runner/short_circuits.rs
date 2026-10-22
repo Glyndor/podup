@@ -8,7 +8,7 @@
 use std::path::PathBuf;
 
 use crate::cli::{AuditFormat, Cli, Commands, PsArgs};
-use crate::resolve::{resolve_base_dir, resolve_compose_files, resolve_project_name};
+use crate::startup::resolve::{resolve_base_dir, resolve_compose_files, resolve_project_name};
 use crate::startup::validate_project_name;
 
 use crate::audit;
@@ -138,7 +138,7 @@ pub(crate) async fn run_ls(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_ps(
 	cli: &Cli,
-	error_context: &mut crate::exit_status::ErrorContext,
+	error_context: &mut crate::startup::exit_status::ErrorContext,
 ) -> podup::Result<()> {
 	let compose_files = resolve_compose_files(&cli.file);
 	fail_on_named_file_missing(&cli.file, &compose_files)?;
