@@ -578,5 +578,4 @@ impl Engine {
 }
 
 #[cfg(test)]
-#[path = "verify_tests.rs"]
 mod tests;
