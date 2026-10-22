@@ -4,6 +4,10 @@
 //! per-command flags. These exercise the built binary's argument parsing and
 //! exit codes; none of them contact Podman (they either stop at `--help`, fail
 //! parsing, or reach runtime against a nonexistent socket).
+//!
+//! This crate root holds the helpers every scenario file inherits through
+//! `use super::*`, plus one `mod` line per scenario. The rows themselves live
+//! in the files declared below.
 
 use std::fs;
 use std::process::{Command, Output};
@@ -12,7 +16,7 @@ fn bin() -> &'static str {
 	env!("CARGO_BIN_EXE_podup")
 }
 
-/// True when clap rejected the arguments itself (exit 2 with the `error:`/
+/// True when clap rejected the arguments themselves (exit 2 with the `error:`/
 /// `Usage:` banner) rather than parsing and failing later at runtime.
 fn is_clap_usage_error(out: &Output) -> bool {
 	let stderr = String::from_utf8_lossy(&out.stderr);
@@ -47,563 +51,52 @@ fn help_of(cmd: &str) -> String {
 }
 
 // --- #717: flags after a service positional are no longer swallowed ----------
+// and #863/#862: the positionals other commands take.
 
-#[test]
-fn flags_after_service_positional_parse() {
-	// Each of these used to capture the trailing flag as a phantom service.
-	for args in [
-		&["pull", "web", "--ignore-pull-failures"][..],
-		&["push", "web", "--ignore-push-failures"][..],
-		&["kill", "web", "-s", "SIGTERM"][..],
-		&["wait", "web", "--help"][..],
-		&["volumes", "web", "--quiet"][..],
-	] {
-		let out = run_offline(args);
-		assert!(
-			!is_clap_usage_error(&out),
-			"`{args:?}` should parse interspersed flags; got:\n{}",
-			String::from_utf8_lossy(&out.stderr)
-		);
-	}
-}
+#[path = "cli_flags/positionals.rs"]
+mod positionals;
 
 // --- #747: invalid pull policy rejected at parse time ------------------------
+// #842: negative --timeout rejected in both spellings
+// --sig-proxy must accept docker's bare spelling.
 
-#[test]
-fn invalid_pull_policy_is_rejected() {
-	for args in [
-		&["pull", "--policy", "bogus"][..],
-		&["up", "--pull", "nope"][..],
-	] {
-		let out = run_offline(args);
-		assert!(
-			is_clap_value_error(&out),
-			"`{args:?}` should be a parse error; got:\n{}",
-			String::from_utf8_lossy(&out.stderr)
-		);
-	}
-	// A valid value parses.
-	assert!(!is_clap_value_error(&run_offline(&[
-		"pull", "--policy", "always", "web"
-	])));
-}
+#[path = "cli_flags/value_validation.rs"]
+mod value_validation;
 
 // --- #840/#843: up --wait-timeout, and it requires --wait -------------------
+// #841: conflicting recreate/build flags are rejected
+// #861: deprecated --json conflicts with an explicit --format
+// ps --services conflicts with --quiet and --format
 
-#[test]
-fn up_has_wait_timeout_that_requires_wait() {
-	assert!(help_of("up").contains("--wait-timeout"));
-	// Without --wait it is a usage error (clap `requires`).
-	assert!(is_clap_usage_error(&run_offline(&[
-		"start",
-		"--wait-timeout",
-		"30"
-	])));
-	assert!(is_clap_usage_error(&run_offline(&[
-		"up",
-		"--wait-timeout",
-		"30"
-	])));
-	// With --wait it parses.
-	assert!(!is_clap_usage_error(&run_offline(&[
-		"up",
-		"--wait",
-		"--wait-timeout",
-		"30"
-	])));
-}
-
-// --- #841: conflicting recreate/build flags are rejected ---------------------
-
-#[test]
-fn conflicting_recreate_and_build_flags_are_rejected() {
-	for args in [
-		&["up", "--no-recreate", "--force-recreate"][..],
-		&["up", "--build", "--no-build"][..],
-		&["create", "--no-recreate", "--force-recreate"][..],
-	] {
-		assert!(
-			is_clap_usage_error(&run_offline(args)),
-			"`{args:?}` should be rejected as conflicting"
-		);
-	}
-}
-
-// --- #842: negative --timeout rejected in both spellings --------------------
-
-#[test]
-fn negative_timeout_is_rejected_consistently() {
-	for args in [
-		&["down", "--timeout=-5"][..],
-		&["down", "-t", "-5"][..],
-		&["stop", "-t", "-1"][..],
-	] {
-		assert!(
-			is_clap_value_error(&run_offline(args)),
-			"`{args:?}` should be a clear range error"
-		);
-	}
-	// Zero and positive are fine.
-	assert!(!is_clap_value_error(&run_offline(&["down", "--timeout=0"])));
-}
+#[path = "cli_flags/conflicting_flags.rs"]
+mod conflicting_flags;
 
 // --- #844: create --pull / --no-deps ----------------------------------------
+// #845/#847/#848/#849/#850/#851/#854: new per-command flags in help
+// #855: --ansi help mentions the NO_COLOR override
 
-#[test]
-fn create_exposes_pull_and_no_deps() {
-	let h = help_of("create");
-	assert!(h.contains("--no-deps"), "create missing --no-deps:\n{h}");
-	assert!(h.contains("--pull"), "create missing --pull:\n{h}");
-}
-
-// --- #845/#847/#848/#849/#850/#851/#854: new per-command flags in help ------
-
-#[test]
-fn new_command_flags_appear_in_help() {
-	assert!(help_of("ls").contains("--filter"));
-	let push = help_of("push");
-	assert!(push.contains("--quiet"));
-	let build = help_of("build");
-	assert!(build.contains("--push") && build.contains("--progress"));
-	assert!(help_of("run").contains("--label"));
-	let events = help_of("events");
-	assert!(
-		events.contains("--since") && events.contains("--until") && events.contains("--filter")
-	);
-	assert!(help_of("attach").contains("--index"));
-	let logs = help_of("logs");
-	assert!(logs.contains("--no-color") && logs.contains("--no-log-prefix"));
-	let config = help_of("config");
-	for flag in [
-		"--volumes",
-		"--images",
-		"--profiles",
-		"--hash",
-		"--no-normalize",
-	] {
-		assert!(config.contains(flag), "config missing {flag}:\n{config}");
-	}
-}
-
-// --- #855: --ansi help mentions the NO_COLOR override -----------------------
-
-#[test]
-fn ansi_help_text_clarifies_no_color_override() {
-	let out = Command::new(bin()).arg("--help").output().unwrap();
-	let stdout = String::from_utf8_lossy(&out.stdout);
-	assert!(
-		stdout.contains("overrides"),
-		"--ansi help should clarify that `always` overrides NO_COLOR:\n{stdout}"
-	);
-}
+#[path = "cli_flags/help_text.rs"]
+mod help_text;
 
 // --- #857: help tolerates extra args, -h/--help, and -- ---------------------
+// #858/#859: missing subcommand exits non-zero
 
-#[test]
-fn help_subcommand_is_tolerant() {
-	for args in [
-		&["help", "up", "down"][..],
-		&["help", "-h"][..],
-		&["help", "--help"][..],
-		&["help", "--", "up"][..],
-		&["help"][..],
-	] {
-		let out = Command::new(bin())
-			.args(args)
-			.output()
-			.expect("run help variant");
-		assert!(
-			out.status.success(),
-			"`{args:?}` should exit 0; got {:?}\n{}",
-			out.status.code(),
-			String::from_utf8_lossy(&out.stderr)
-		);
-	}
-	// `help up down` shows up's help.
-	let out = Command::new(bin())
-		.args(["help", "up", "down"])
-		.output()
-		.unwrap();
-	assert!(String::from_utf8_lossy(&out.stdout).contains("Create and start"));
-}
-
-// --- #858/#859: missing subcommand exits non-zero ---------------------------
-
-#[test]
-fn missing_subcommand_exits_non_zero() {
-	let none = Command::new(bin())
-		.output()
-		.expect("run podup with no args");
-	assert!(!none.status.success(), "no args must exit non-zero");
-	// Exiting non-zero with nothing on stderr would satisfy the check above and
-	// leave the user with no idea what to type. clap prints usage; assert it.
-	let none_err = String::from_utf8_lossy(&none.stderr);
-	assert!(
-		none_err.contains("Usage: podup"),
-		"running with no arguments printed no usage: {none_err:?}"
-	);
-	let gen = Command::new(bin())
-		.arg("generate")
-		.output()
-		.expect("run generate");
-	assert!(
-		!gen.status.success(),
-		"generate with no subcommand must exit non-zero"
-	);
-	// The group's own usage, not the root's. Until #1293 this printed
-	// `Usage: podup [OPTIONS] <COMMAND>` and listed every top-level command,
-	// withholding the one thing the user needed, what `generate` accepts,
-	// which its own `--help` had been answering correctly all along.
-	let gen_err = String::from_utf8_lossy(&gen.stderr);
-	assert!(
-		gen_err.contains("Usage: podup generate"),
-		"generate with no subcommand did not print generate's own usage: {gen_err:?}"
-	);
-	assert!(
-		gen_err.contains("quadlet"),
-		"generate's usage did not list the subcommand it accepts: {gen_err:?}"
-	);
-}
+#[path = "cli_flags/help_handler.rs"]
+mod help_handler;
 
 // --- #860: --project-directory must exist -----------------------------------
+// #750: DOCKER_HOST with a remote scheme is rejected (not ignored)
+// #1687: a named compose file that is missing fails the command
 
-#[test]
-fn missing_project_directory_is_rejected() {
-	let out = Command::new(bin())
-		.args(["--project-directory", "/no/such/podup/dir", "config"])
-		.output()
-		.expect("run with bad project-directory");
-	assert!(
-		!out.status.success(),
-		"missing project directory must error"
-	);
-	assert!(
-		String::from_utf8_lossy(&out.stderr).contains("project-directory"),
-		"error should name --project-directory:\n{}",
-		String::from_utf8_lossy(&out.stderr)
-	);
-}
-
-// --- #861: deprecated --json conflicts with an explicit --format ------------
-
-#[test]
-fn events_json_conflicts_with_explicit_format() {
-	assert!(is_clap_usage_error(&run_offline(&[
-		"events", "--json", "--format", "json"
-	])));
-	// Each spelling alone still parses.
-	assert!(!is_clap_usage_error(&run_offline(&["events", "--json"])));
-	assert!(!is_clap_usage_error(&run_offline(&[
-		"events", "--format", "json"
-	])));
-}
-
-// --- ps --services conflicts with --quiet and --format ----------------------
-
-/// `ps` exposes three output-shaping flags: `-q/--quiet` (IDs), `--format`
-/// (table/json), `--services` (service names). They each render a different
-/// thing; combining any two leaves the third's effect undefined. Until the
-/// fix, `--services` accepted `--format json` and `-q` silently and rendered
-/// the same `w` line, which a `--format json | jq` pipeline reads as not-JSON
-/// while the exit code stays 0. `-q --format json` already rejected; the test
-/// enumerates every pair so the fix cannot be "reject everything with
-/// `--services`" (which would break the three single-flag uses below).
-#[test]
-fn ps_output_flags_conflict_in_every_pair_and_survive_alone() {
-	// Each conflicting pair is a clap usage error.
-	for args in [
-		&["ps", "-q", "--format", "json"][..],
-		&["ps", "--services", "--format", "json"][..],
-		&["ps", "--services", "-q"][..],
-	] {
-		assert!(
-			is_clap_usage_error(&run_offline(args)),
-			"`{args:?}` should be rejected as conflicting"
-		);
-	}
-	// Each flag alone still parses (and reaches Podman at runtime, where it
-	// then fails on the nonexistent socket).
-	for args in [
-		&["ps", "--services"][..],
-		&["ps", "--format", "json"][..],
-		&["ps", "-q"][..],
-	] {
-		assert!(
-			!is_clap_usage_error(&run_offline(args)),
-			"`{args:?}` should parse; got:\n{}",
-			String::from_utf8_lossy(&run_offline(args).stderr)
-		);
-	}
-}
-
-/// Property over the surface: every command that exposes more than one
-/// output-shaping flag treats every pair as **either** a parsed argument
-/// list **or** a clap usage error. No pair is accepted with one flag
-/// silently dropped. `ps` had three flags (`-q`, `--format`, `--services`)
-/// and the documented `-q --format json` pair refused correctly while the
-/// other two dropped one flag; this test extends the same enumeration to
-/// every other command in the same shape (`volumes`, `images`, `events`),
-/// so the next command that grows a second output-shaping flag is checked
-/// the same way from the moment it lands.
-///
-/// "Conflict" here means `clap` itself rejected the pair. Reaching Podman
-/// at runtime and failing there is the success branch: parsing got past
-/// the pair, so neither was dropped.
-#[test]
-fn every_command_with_output_flags_rejects_or_parses_every_pair() {
-	// Each command, its flag pairs, and whether the pair must error.
-	// `ps` has three flags (3 pairs), the rest have two (1 pair).
-	let cases: &[(&str, &[&[&str]])] = &[
-		(
-			"ps",
-			&[
-				&["-q", "--format", "json"],
-				&["--services", "--format", "json"],
-				&["--services", "-q"],
-			],
-		),
-		("volumes", &[&["-q", "--format", "json"]]),
-		("images", &[&["-q", "--format", "json"]]),
-		("events", &[&["--json", "--format", "json"]]),
-	];
-	for (cmd, pairs) in cases {
-		for pair in *pairs {
-			let mut args = vec![*cmd];
-			args.extend_from_slice(pair);
-			let out = run_offline(&args);
-			assert!(
-				is_clap_usage_error(&out),
-				"`{args:?}` should be rejected as conflicting; got:\n{}",
-				String::from_utf8_lossy(&out.stderr)
-			);
-		}
-	}
-}
-
-// --- #863/#862: positional service / dash output reach runtime --------------
-
-#[test]
-fn images_and_export_positionals_parse() {
-	assert!(!is_clap_usage_error(&run_offline(&["images", "web"])));
-	assert!(!is_clap_usage_error(&run_offline(&[
-		"export", "web", "-o", "-"
-	])));
-}
-
-// --- #750: DOCKER_HOST with a remote scheme is rejected (not ignored) -------
-
-#[test]
-fn docker_host_remote_scheme_is_rejected() {
-	let out = Command::new(bin())
-		.arg("ls")
-		.env_remove("PODMAN_SOCKET")
-		.env("DOCKER_HOST", "tcp://127.0.0.1:2375")
-		.output()
-		.expect("run ls with DOCKER_HOST");
-	assert!(!out.status.success(), "remote DOCKER_HOST must error");
-	assert!(
-		String::from_utf8_lossy(&out.stderr).contains("remote Podman"),
-		"DOCKER_HOST=tcp:// should be rejected as remote:\n{}",
-		String::from_utf8_lossy(&out.stderr)
-	);
-}
+#[path = "cli_flags/global_configuration.rs"]
+mod global_configuration;
 
 // --- #856: config list projections render the expected lines ----------------
 
-#[test]
-fn config_projections_render_lists() {
-	let dir = std::env::temp_dir().join(format!("podup-cflags-{}", std::process::id()));
-	fs::create_dir_all(&dir).unwrap();
-	let compose = dir.join("compose.yaml");
-	// `web` is always active; `admin` lives behind the `frontend` profile so the
-	// profile-aware projections are exercised when that profile is activated.
-	fs::write(
-		&compose,
-		"services:\n  web:\n    image: nginx:1.27\n  admin:\n    image: busybox:1.36\n    profiles: [frontend]\nvolumes:\n  data: {}\n",
-	)
-	.unwrap();
-	let c = compose.to_str().unwrap();
-
-	let volumes = Command::new(bin())
-		.args(["-f", c, "config", "--volumes"])
-		.output()
-		.unwrap();
-	assert!(volumes.status.success());
-	assert!(String::from_utf8_lossy(&volumes.stdout)
-		.lines()
-		.any(|l| l == "data"));
-
-	let images = Command::new(bin())
-		.args(["-f", c, "config", "--images"])
-		.output()
-		.unwrap();
-	assert!(String::from_utf8_lossy(&images.stdout).contains("nginx:1.27"));
-
-	// `--profiles` lists the declared profiles of the active services; activate
-	// `frontend` so `admin` (and its profile) survive profile resolution.
-	let profiles = Command::new(bin())
-		.args(["-f", c, "--profile", "frontend", "config", "--profiles"])
-		.output()
-		.unwrap();
-	assert!(String::from_utf8_lossy(&profiles.stdout)
-		.lines()
-		.any(|l| l == "frontend"));
-
-	let hash = Command::new(bin())
-		.args(["-f", c, "config", "--hash", "*"])
-		.output()
-		.unwrap();
-	assert!(hash.status.success());
-	assert!(String::from_utf8_lossy(&hash.stdout).contains("web "));
-
-	let _ = fs::remove_dir_all(&dir);
-}
-
-/// `--sig-proxy` must accept docker's bare spelling.
-///
-/// It lives in the "accepted for compatibility" set, whose entire promise is
-/// that a script written against docker compose runs unchanged. Docker declares
-/// it as a bare boolean; podup declared it as one that demands a value, so
-/// `docker compose attach --sig-proxy web` came back as a usage error and exit
-/// 2, a no-op flag rejecting the command it was supposed to tolerate.
-///
-/// Asserted as "not a clap error": these never reach Podman, so the run fails
-/// later on the missing compose file, which is exactly the point: parsing got
-/// past the flag.
-#[test]
-fn sig_proxy_accepts_dockers_bare_form_and_an_explicit_value() {
-	for args in [
-		vec!["attach", "web", "--sig-proxy"],
-		vec!["attach", "web", "--sig-proxy=true"],
-		vec!["attach", "web", "--sig-proxy=false"],
-	] {
-		let out = run_offline(&args);
-		assert!(
-			!is_clap_usage_error(&out) && !is_clap_value_error(&out),
-			"{args:?} must parse; got {}",
-			String::from_utf8_lossy(&out.stderr)
-		);
-	}
-}
-
-/// Bare `podup` is the first screen anyone sees after installing, and it was
-/// the one help path that rendered without colour, while every other screen had it,
-/// so podup looked like a tool that does not colourise at all.
-///
-/// This checks the piped side, which is what a test harness can observe: the
-/// help must reach **stderr** (it is a usage error, not output), carry no
-/// escape codes when stderr is not a terminal, and stay on exit 2. The coloured
-/// side is verified by running it under a pty, which no `Command::output()`
-/// test can do: 50 escapes against 0 before.
-#[test]
-fn bare_podup_prints_help_to_stderr_and_stays_plain_when_piped() {
-	let out = Command::new(bin())
-		.output()
-		.expect("run podup with no args");
-	let stderr = String::from_utf8_lossy(&out.stderr);
-	let stdout = String::from_utf8_lossy(&out.stdout);
-
-	assert_eq!(out.status.code(), Some(2), "no args is a usage error");
-	assert!(
-		stderr.contains("Usage:") && stderr.contains("Commands:"),
-		"the help belongs on stderr: {stderr:?}"
-	);
-	assert!(
-		stdout.is_empty(),
-		"stdout must stay clean for scripts: {stdout:?}"
-	);
-	assert!(
-		!stderr.contains('\u{1b}'),
-		"a pipe must receive no escape codes: {stderr:?}"
-	);
-}
-
-/// The same screen, whether or not the caller's environment happens to set one
-/// of podup's env-backed globals.
-///
-/// `arg_required_else_help` only fires when there are NO arguments at all, and
-/// an env-sourced one counts, so with `COMPOSE_PROJECT_NAME` or
-/// `PODMAN_SOCKET` exported, which is the normal state of a real deployment,
-/// bare `podup` printed a wall of forty-five subcommand names instead of its
-/// help. This is how CI found it: the runner had one of them set and my first
-/// version of the test above failed there while passing here.
-#[test]
-fn bare_podup_prints_the_same_help_with_env_globals_set() {
-	for (key, value) in [
-		("COMPOSE_PROJECT_NAME", "someproject"),
-		("PODMAN_SOCKET", "/tmp/nonexistent.sock"),
-		("COMPOSE_PROFILES", "dev"),
-	] {
-		let out = Command::new(bin())
-			.env(key, value)
-			.output()
-			.unwrap_or_else(|e| panic!("run podup with {key} set: {e}"));
-		let stderr = String::from_utf8_lossy(&out.stderr);
-		assert_eq!(out.status.code(), Some(2), "with {key} set");
-		assert!(
-			stderr.contains("Commands:"),
-			"{key} set must not replace the help with a subcommand list: {stderr:?}"
-		);
-	}
-}
+#[path = "cli_flags/config_projections.rs"]
+mod config_projections;
 
 // --- Machine output never carries colour, even when forced ------------------
 
-/// Machine-readable output must never carry colour, even when colour is
-/// forced. A script parsing `--format json` or `-q` reads stdout, so any
-/// escape landing there is data corruption, not decoration.
-///
-/// Forced with `--ansi always` on purpose: the auto-detection would suppress
-/// colour in the test harness anyway, so a weaker version of this test would
-/// pass without proving anything. Only stdout is checked: a connection
-/// failure prints its `error:` banner to stderr, which is a human diagnostic
-/// and is allowed to be coloured like any other podup error; the guarantee
-/// under test is about the machine-parseable stream, not every byte podup
-/// writes.
-#[test]
-fn machine_output_carries_no_escapes_even_with_colour_forced() {
-	let dir = std::env::temp_dir().join(format!("podup-cflags-machine-{}", std::process::id()));
-	fs::create_dir_all(&dir).unwrap();
-	let compose = dir.join("compose.yaml");
-	fs::write(&compose, "services:\n  web:\n    image: nginx:1.27\n").unwrap();
-	let c = compose.to_str().unwrap();
-
-	for args in [
-		vec!["-f", c, "--ansi", "always", "config"],
-		vec!["-f", c, "--ansi", "always", "ps", "--format", "json"],
-		vec!["-f", c, "--ansi", "always", "ps", "-q"],
-	] {
-		let out = Command::new(bin())
-			.args(&args)
-			.output()
-			.unwrap_or_else(|e| panic!("run podup {args:?}: {e}"));
-		let stdout = String::from_utf8_lossy(&out.stdout);
-		assert!(
-			!stdout.contains('\u{1b}'),
-			"{args:?} emitted an escape into machine output: {stdout:?}"
-		);
-	}
-
-	let _ = fs::remove_dir_all(&dir);
-}
-
-/// `ps` and `events` run without a compose file so a directory with none
-/// still answers by label, but a file named with `-f` that is not there is
-/// a typo, not an absence: it fails the way every other command fails
-/// (#1687). Measured before the fix: `ps` printed `no containers` and exited 0.
-#[test]
-fn a_named_compose_file_that_is_missing_fails_ps_and_events() {
-	for cmd in ["ps", "events"] {
-		let out = run_offline(&["-f", "/nonexistent-podup-compose.yml", cmd]);
-		let stderr = String::from_utf8_lossy(&out.stderr);
-		assert!(
-			!out.status.success(),
-			"`-f <missing> {cmd}` must fail; stdout: {}",
-			String::from_utf8_lossy(&out.stdout)
-		);
-		assert!(
-			stderr.contains("compose file not found"),
-			"`-f <missing> {cmd}` names the missing file; got: {stderr}"
-		);
-	}
-}
+#[path = "cli_flags/machine_output.rs"]
+mod machine_output;
