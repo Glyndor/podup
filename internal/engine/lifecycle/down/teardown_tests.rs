@@ -206,7 +206,7 @@ async fn down_tears_down_dependent_levels_before_their_dependencies() {
 /// groups them into a single level and `down_with_options` dispatches both
 /// containers' teardown through the same `join_bounded` (`buffer_unordered`)
 /// mechanism proven order-independent by
-/// `parallel::tests::join_bounded_preserves_input_order`, instead of one
+/// `parallel::tests::dispatch::join_bounded_preserves_input_order`, instead of one
 /// await-per-container in strict sequence. Asserting real wall-clock overlap
 /// against a synchronous test responder would require a multi-thread runtime
 /// and a blocking rendezvous inside the fake, a source of exactly the

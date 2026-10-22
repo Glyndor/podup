@@ -410,5 +410,4 @@ impl Engine {
 }
 
 #[cfg(test)]
-#[path = "watch_tests.rs"]
 mod watch_tests;

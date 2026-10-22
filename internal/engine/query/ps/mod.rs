@@ -255,5 +255,4 @@ pub(crate) async fn ps_rows_for_test(
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
 mod tests;

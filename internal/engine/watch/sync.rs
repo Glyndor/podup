@@ -262,7 +262,6 @@ pub(in crate::engine) fn legacy_project_relative_included(path: &str, patterns: 
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[path = "sync_tests.rs"]
 mod tests;
 
 #[cfg(test)]
