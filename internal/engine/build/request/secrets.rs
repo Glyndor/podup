@@ -6,7 +6,7 @@
 //! cannot be forwarded over the API and are warned about and skipped.
 use tracing::warn;
 
-use super::ResolvedBuildSecrets;
+use super::super::ResolvedBuildSecrets;
 use crate::compose::types::BuildConfig;
 use crate::engine::Engine;
 use crate::error::{ComposeError, Result};
@@ -18,7 +18,7 @@ impl Engine {
 	/// or `environment:`) and returned as a `(tar-entry-name, bytes)` pair plus a
 	/// matching `id=NAME,src=ENTRY` spec for the build endpoint's `secrets` param.
 	/// `external` secrets cannot be forwarded over the API and are warned + skipped.
-	pub(super) fn resolve_build_secrets(
+	pub(in crate::engine::build) fn resolve_build_secrets(
 		&self,
 		build: &BuildConfig,
 		file: &crate::compose::types::ComposeFile,

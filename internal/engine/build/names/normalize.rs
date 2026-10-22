@@ -22,7 +22,7 @@
 //!    candidate resolved by the daemon, which carries the same
 //!    shape).
 //! 2. Otherwise apply the pure normalisation rule
-//!    ([`super::super::super::libpod::normalize::normalize_docker_reference`]).
+//!    ([`crate::libpod::normalize::normalize_docker_reference`]).
 //!
 //! A pure helper sits next to the wire shape so the unit test can
 //! pin the rule without a live socket. The wire-shape lookup is
@@ -32,7 +32,7 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::types::image::ImageInspect;
 use crate::libpod::{normalize::normalize_docker_reference, urlencoded, API_PREFIX};
 
-use super::Engine;
+use super::super::Engine;
 
 impl Engine {
 	/// Resolve `name` to the docker.io canonical form, falling back to the

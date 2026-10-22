@@ -5,33 +5,28 @@
 //! Podman libpod API, and applies any extra tags. Multi-stage targets are
 //! passed as the `target=` query parameter; the full Dockerfile is always sent.
 
-mod body_plan;
 mod context;
-mod extra_tags;
-mod normalize;
+mod names;
 mod pull;
 mod push;
-mod secrets;
+mod request;
 mod service;
-mod steps;
-mod stream;
-mod tags;
-pub(crate) use pull::pull_policy_checked;
-pub use pull::PullOptions;
-pub use push::PushOptions;
 /// Shared with the watch engine: a build context is remote when podman clones
 /// it server-side, which means no local `.dockerignore` to load as implicit
 /// watch `ignore` content (#1897).
-pub(in crate::engine) use tags::is_remote_context;
+pub(in crate::engine) use names::is_remote_context;
 /// Shared with the container-create path so an `up`/`create` references the same
 /// image tag the build step produced for a build-only service.
-pub(crate) use tags::primary_build_tag;
+pub(crate) use names::primary_build_tag;
+pub(crate) use pull::pull_policy_checked;
+pub use pull::PullOptions;
+pub use push::PushOptions;
 
 use crate::compose::types::BuildConfig;
 use crate::engine::container_config::resources::is_known_ulimit;
 use crate::error::Result;
 
-use stream::ContextSource;
+use request::ContextSource;
 
 use super::Engine;
 
@@ -244,19 +239,6 @@ impl Engine {
 }
 
 #[cfg(test)]
-#[path = "build_tests.rs"]
 mod tests;
 #[cfg(test)]
-#[path = "build_walk_tests.rs"]
 mod walk_tests;
-
-#[cfg(all(test, unix))]
-#[path = "build_board_tests.rs"]
-mod board_tests;
-
-#[cfg(all(test, unix))]
-#[path = "build_cgroup_hint_tests.rs"]
-mod cgroup_hint_tests;
-#[cfg(all(test, unix))]
-#[path = "build_query_tests.rs"]
-mod query_tests;

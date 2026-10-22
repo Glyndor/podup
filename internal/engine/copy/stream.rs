@@ -1,7 +1,7 @@
 //! Bridge the container→host `cp` response body into a blocking tar reader
 //! without buffering the whole archive.
 //!
-//! The mirror of `build/stream.rs`, which runs a blocking tar *writer* on a
+//! The mirror of `build/request/stream.rs`, which runs a blocking tar *writer* on a
 //! `spawn_blocking` thread feeding a bounded channel that an async body drains.
 //! Here the flow reverses: an async task drains the response body into the same
 //! kind of bounded channel, and a blocking [`Read`] implementation pulls from
@@ -109,7 +109,7 @@ impl Read for ChannelReader {
 /// The pump is spawned before the extractor is awaited, and the extractor
 /// is what the caller waits on. Awaiting the pump first would deadlock: it
 /// blocks once the bounded channel fills, and only the extractor drains it.
-/// This is the same ordering `build/stream.rs` documents in the other
+/// This is the same ordering `build/request/stream.rs` documents in the other
 /// direction.
 ///
 /// `progress` is the byte counter the reader increments as bytes flow.

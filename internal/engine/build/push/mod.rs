@@ -238,9 +238,7 @@ impl Engine {
 }
 
 #[cfg(test)]
-#[path = "push_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "push_exit_tests.rs"]
 mod exit_tests;

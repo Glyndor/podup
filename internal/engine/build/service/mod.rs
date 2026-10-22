@@ -4,8 +4,10 @@
 //! which is the URL/stream glue for one image: pick a body plan,
 //! assemble the build query, drive the chunked response, paint the
 //! board row. Each step is small enough that the whole thing lives
-//! here. The body-plan decision lives in [`super::body_plan`]; the
-//! `apply_extra_tags` follow-up lives in [`super::extra_tags`].
+//! here. The body-plan decision lives in [`super::request::body_plan`]; the
+//! `apply_extra_tags` follow-up lives in [`super::names::extra_tags`].
+
+mod steps;
 
 use std::io::IsTerminal;
 
@@ -16,17 +18,14 @@ use tracing::warn;
 use crate::compose::types::{BuildConfig, Service};
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::image::BuildOutput;
-use crate::libpod::urlencoded;
 use crate::libpod::validate::pre_validate_build;
-use crate::libpod::API_PREFIX;
+use crate::libpod::{urlencoded, API_PREFIX};
 use crate::size;
 
-use super::body_plan::plan_build;
-use super::steps::{parse_image_id_line, BuildStreamProgress};
-use super::stream::context_body;
-use super::tags::looks_like_secret;
-use super::{context::map_additional_context, Engine};
-use super::{BodyPlan, BuildOptions};
+use self::steps::{parse_image_id_line, BuildStreamProgress};
+use super::names::looks_like_secret;
+use super::request::{context_body, plan_build};
+use super::{context::map_additional_context, BodyPlan, BuildOptions, Engine};
 
 impl Engine {
 	pub(in crate::engine) async fn build_service(
@@ -433,3 +432,8 @@ impl Engine {
 		Ok(())
 	}
 }
+
+#[cfg(all(test, unix))]
+mod board_tests;
+#[cfg(all(test, unix))]
+mod cgroup_hint_tests;
