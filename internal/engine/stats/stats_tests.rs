@@ -2,7 +2,14 @@
 //! limit, following the same `tests.rs` split used by `autostart` and the libpod
 //! client.
 
-use super::*;
+use std::collections::{HashMap, HashSet};
+
+use super::frame::{frame_rows, wants_region};
+use super::model::{ContainerStat, NetStat, StatsReport};
+use super::render::{
+	format_bytes, format_row_with, header, load_style, stat_json_row, truncate_name, NAME_WIDTH,
+};
+use super::{containers_query, first_unknown_service, stats_stream_broke_mid_sample};
 
 /// A representative row: values wide enough that a column mis-sized by a couple
 /// of characters shows up, rather than a zeroed struct where every cell happens
