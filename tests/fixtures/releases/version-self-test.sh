@@ -6,7 +6,7 @@
 # binary and matching SHA256SUMS - both still verify. The version
 # self-test pins the staged binary's reported --version to the resolved
 # tag, refusing installs a Rust reference already refuses
-# (internal/update/install/mod.rs:152-205).
+# (internal/update/install/self_test.rs).
 #
 # Cases:
 #   1. Reports the resolved tag with v prefix -> self-test passes.

@@ -1,6 +1,6 @@
 //! The five runtime-hardening checks from #1894:
 //! `no_restart_policy`, `no_init`, `no_health_action`, `swap_unbounded`,
-//! `no_cpu_limit`. Split into their own file to keep `check_fns.rs`
+//! `no_cpu_limit`. Split into their own file to keep `check_fns/`
 //! well under the 500-line limit the rest of the audit honours; adding
 //! five more checks there would otherwise push it past the ceiling.
 //! Wired the way `check_sensitive_bind.rs` is: a private helper per

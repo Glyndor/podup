@@ -2,7 +2,7 @@
 //! [`run_checks`] dispatch that walks it. `CHECK_REGISTRY` is the single source
 //! of truth: `audit --list-checks` iterates it to print ids and descriptions,
 //! and `audit_file` iterates the same to invoke each `run` function. A check
-//! function in `check_fns.rs` constructs its findings with a hand-written
+//! function in `check_fns` constructs its findings with a hand-written
 //! `&'static str` for `id`; a unit test in `audit_tests.rs` pins the
 //! equivalence, so the listing and the run cannot drift: an id the listing
 //! promises is one a finding can emit, and an id a finding emits is one the
@@ -10,13 +10,13 @@
 //!
 //! Every check id is a stable snake_case string. Renaming one is a breaking
 //! change for consumers; add new ids instead. Adding a check is one entry in
-//! the registry plus one function in `check_fns.rs`.
+//! the registry plus one function in `check_fns`.
 
 use podup::compose::types::{ComposeFile, Service};
 
 use super::Finding;
 
-#[path = "check_fns.rs"]
+#[path = "check_fns/mod.rs"]
 mod check_fns;
 
 #[path = "check_sensitive_bind.rs"]
@@ -40,7 +40,7 @@ pub(super) use check_runtime::{
 };
 
 // `segments` is a helper only consumed from `check_fns` itself during the
-// build and from `checks_secret_env_tests.rs` via `super::segments` under
+// build and from `check_fns/secrets_tests.rs` via `super::super::segments` under
 // `cfg(test)`. Re-export it under the same gate so the non-test build stays
 // warning-clean: any drift in the helper still hits the test path that has
 // always read it through this module.
@@ -236,9 +236,6 @@ pub(super) const CHECK_REGISTRY: &[CheckDescriptor] = &[
 #[path = "checks_more_tests.rs"]
 mod more_tests;
 #[cfg(test)]
-#[path = "checks_port_exposure_tests.rs"]
-mod port_exposure_tests;
-#[cfg(test)]
 #[path = "check_runtime_cpu_tests.rs"]
 mod runtime_cpu_tests;
 #[cfg(test)]
@@ -251,14 +248,5 @@ mod runtime_swap_tests;
 #[path = "check_runtime_tests.rs"]
 mod runtime_tests;
 #[cfg(test)]
-#[path = "checks_secret_env_tests.rs"]
-mod secret_env_tests;
-#[cfg(test)]
 #[path = "checks_tests.rs"]
 mod tests;
-#[cfg(test)]
-#[path = "checks_unpinned_image_tests.rs"]
-mod unpinned_image_tests;
-#[cfg(test)]
-#[path = "checks_wildcard_bind_tests.rs"]
-mod wildcard_bind_tests;

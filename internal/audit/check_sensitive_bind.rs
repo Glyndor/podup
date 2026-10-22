@@ -1,6 +1,6 @@
 //! The `sensitive_bind_mount` check, in its own file because it carries
 //! two path tables, a matcher for the rootless runtime directory and a
-//! short-form volume parser, which together would push `check_fns.rs` past
+//! short-form volume parser, which together would push `check_fns` past
 //! the line limit.
 
 use podup::compose::types::{ComposeFile, Service, VolumeMount, VolumeType};
