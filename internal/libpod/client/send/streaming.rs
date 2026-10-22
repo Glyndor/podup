@@ -1,8 +1,9 @@
 //! The streaming request path: open a dedicated connection, send one request,
-//! and hand the response back with a [`DrivenBody`](super::DrivenBody) that
+//! and hand the response back with a
+//! [`DrivenBody`](crate::libpod::client::stream::stream_body::DrivenBody) that
 //! drives the HTTP/1 connection inline with the body poll. Also holds the
 //! shared body-read helper ([`Client::read_response_body`]) used by
-//! [`BufferedResponse::read_body`](super::send::BufferedResponse::read_body)
+//! [`BufferedResponse::read_body`](super::buffered::BufferedResponse::read_body)
 //! and the streaming error path ([`Client::stream_or_err`]).
 //!
 //! Split from `mod.rs` so the long-lived connection shape and the
@@ -13,9 +14,7 @@ use futures_util::Future;
 use http_body_util::{BodyExt, Limited};
 use hyper::{Request, Response, StatusCode};
 
-use super::conn_state::ConnState;
-use super::stream_body::DrivenBody;
-use super::transport::{BoxBody, MAX_RESPONSE_BYTES, READ_TIMEOUT};
+use super::{BoxBody, ConnState, DrivenBody, CONNECT_TIMEOUT, MAX_RESPONSE_BYTES, READ_TIMEOUT};
 use super::{Client, PodmanError, Result};
 
 impl Client {
@@ -24,24 +23,21 @@ impl Client {
 	/// the response body owns the HTTP/1 driver so the reading task can poll
 	/// it in line with the body and skip the cross-task wake-up per frame
 	/// (#1900).
-	pub(super) async fn send_streaming(
+	pub(in crate::libpod::client) async fn send_streaming(
 		&self,
 		req: Request<BoxBody>,
 		response_timeout: Option<std::time::Duration>,
 	) -> Result<Response<DrivenBody>> {
 		tracing::debug!("libpod {} {}", req.method(), req.uri().path());
-		let conn = tokio::time::timeout(
-			super::transport::CONNECT_TIMEOUT,
-			self.pool.open_streaming(),
-		)
-		.await
-		.map_err(|_| PodmanError::Api {
-			status: 0,
-			message: format!(
-				"timed out after {}s connecting to the Podman socket",
-				super::transport::CONNECT_TIMEOUT.as_secs()
-			),
-		})??;
+		let conn = tokio::time::timeout(CONNECT_TIMEOUT, self.pool.open_streaming())
+			.await
+			.map_err(|_| PodmanError::Api {
+				status: 0,
+				message: format!(
+					"timed out after {}s connecting to the Podman socket",
+					CONNECT_TIMEOUT.as_secs()
+				),
+			})??;
 		let (mut sender, driver) = conn.into_parts();
 		// The sender future awaits a response on a oneshot the dispatcher
 		// fills. Nobody else drives the dispatcher, so we have to poll it in
@@ -95,13 +91,15 @@ impl Client {
 	}
 
 	/// Read the full response body off a streaming connection. The body is
-	/// generic so the buffered path ([`BufferedResponse::read_body`](super::send::BufferedResponse::read_body), body is
-	/// `Incoming`) and the streaming path (`stream_or_err`, body is
-	/// `DrivenBody` (the inline-driven body wrapper) share the size cap and the timeout handling. The cap
+	/// generic so the buffered path
+	/// ([`BufferedResponse::read_body`](super::buffered::BufferedResponse::read_body),
+	/// body is `Incoming`) and the streaming path (`stream_or_err`, body is
+	/// `DrivenBody` (the inline-driven body wrapper) share the size cap and the
+	/// timeout handling. The cap
 	/// prevents a runaway response from holding more than `MAX_RESPONSE_BYTES`
 	/// in memory; it does not bound the duration of a long-lived stream
 	/// (those callers keep the body and poll it themselves).
-	pub(super) async fn read_response_body<B>(
+	pub(in crate::libpod::client) async fn read_response_body<B>(
 		resp: Response<B>,
 		read_timeout: Option<std::time::Duration>,
 	) -> Result<(StatusCode, Vec<u8>)>
@@ -127,7 +125,9 @@ impl Client {
 
 	/// For streaming endpoints, return the response on success or parse the
 	/// daemon error body on failure.
-	pub(super) async fn stream_or_err(resp: Response<DrivenBody>) -> Result<Response<DrivenBody>> {
+	pub(in crate::libpod::client) async fn stream_or_err(
+		resp: Response<DrivenBody>,
+	) -> Result<Response<DrivenBody>> {
 		if resp.status().is_success() {
 			return Ok(resp);
 		}

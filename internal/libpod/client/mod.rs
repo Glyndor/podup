@@ -10,53 +10,44 @@
 //! This file owns the [`Client`] struct, the [`MIN_LIBPOD_API_MAJOR`] floor
 //! (read off the source by `tests/podman_floor.rs`), the crate-internal
 //! [`Result`] alias, and the `mod` declarations that wire the rest of the
-//! client together. The supporting code lives one concern per file:
+//! client together. The supporting code is grouped one concern per folder:
 //!
-//! - [`transport`](self::transport): boxed body, timeouts, connection-close
-//!   detection, the generic `apply_timeout` wrapper.
-//! - [`socket`](self::socket): `socket_error` (unix-only operator hints).
-//! - [`path_stat`](self::path_stat): the `X-Docker-Container-Path-Stat` type.
-//! - [`request`](self::request): `Client::build_request`.
-//! - [`send`](self::send): buffered send, `BufferedResponse`.
-//! - [`streaming`](self::streaming): streaming send, body read, error path.
-//! - [`status`](self::status): JSON error decoding and version gate.
+//! - [`verbs`](self::verbs): the HTTP verbs, the `HEAD` path-stat calls and
+//!   `ping`.
+//! - [`request`](self::request): request building, percent-encoding, and the
+//!   transport-level helpers every request shares.
+//! - [`send`](self::send): the buffered send path, the streaming send path and
+//!   the raw hijack.
+//! - [`stream`](self::stream): the streaming response body and the state of
+//!   the connection driving it.
+//! - [`transport`](self::transport): the platform byte stream and the
+//!   socket-error mapping.
+//! - [`response`](self::response): status and version decoding, plus the
+//!   path-stat header type.
+//! - [`pool`](self::pool): the per-socket connection pool.
 
 use std::sync::Arc;
 
 use super::error::PodmanError;
 
-mod conn_state;
-mod delete;
-mod encode;
-mod get;
-mod hijack;
-mod misc;
-mod path_stat;
 mod pool;
-mod post;
-mod put;
 mod request;
+mod response;
 mod send;
-mod socket;
-mod status;
 mod stream;
-mod stream_body;
-mod streaming;
 mod transport;
+mod verbs;
 
-pub(crate) use encode::{is_valid_object_name, urlencoded};
-pub(crate) use hijack::Hijacked;
 use pool::ConnPool;
-use stream::SocketStream;
-pub use stream_body::DrivenBody;
-// Re-exports for `super::X` from siblings and tests. Kept here so the
+pub(crate) use request::encode::{is_valid_object_name, urlencoded};
+pub(crate) use response::path_stat::PathStat;
+pub(crate) use send::hijack::Hijacked;
+// Re-exports for `super::X` from the folders below. Kept here so the
 // `super::full`, `super::READ_TIMEOUT`, `super::meets_minimum`, etc.
 // paths continue to resolve at the parent without touching the verb files.
-pub(crate) use path_stat::PathStat;
-#[cfg(unix)]
-pub(crate) use socket::socket_error;
-use status::meets_minimum;
-use transport::{full, BoxBody, READ_TIMEOUT};
+use request::transport::{full, BoxBody, READ_TIMEOUT};
+use response::status::meets_minimum;
+pub use stream::stream_body::DrivenBody;
 
 /// Result alias for libpod client calls, fixing the error to [`PodmanError`].
 pub type Result<T> = std::result::Result<T, PodmanError>;
@@ -101,7 +92,3 @@ impl Drop for Client {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-#[path = "streaming_close_tests.rs"]
-mod streaming_close_tests;

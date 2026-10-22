@@ -29,8 +29,8 @@ use hyper_util::rt::TokioIo;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use super::stream::SocketStream;
-use super::stream_body::ConnectionFuture;
+use super::stream::stream_body::ConnectionFuture;
+use super::transport::stream::SocketStream;
 use super::{BoxBody, PodmanError, Result};
 
 /// Default cap on the number of live (idle + in-use) buffered connections held
@@ -405,8 +405,8 @@ impl StreamingConn {
 	/// Take the sender and the inline-driven connection future apart so the
 	/// caller can issue the request and wrap the response body. The sender is
 	/// dropped after the request has been sent; the connection future is moved
-	/// into the [`DrivenBody`](super::stream_body::DrivenBody) that backs the
-	/// response, so dropping the body closes the socket.
+	/// into the [`DrivenBody`](super::stream::stream_body::DrivenBody) that
+	/// backs the response, so dropping the body closes the socket.
 	pub(super) fn into_parts(self) -> (http1::SendRequest<BoxBody>, ConnectionFuture) {
 		// The struct has no `Drop` impl, so the fields move out cleanly.
 		// Dropping the connection future drops the underlying IO, which

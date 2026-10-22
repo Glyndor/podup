@@ -8,8 +8,7 @@
 use hyper::body::Incoming;
 use hyper::{Request, Response, StatusCode};
 
-use super::pool::PoolGuard;
-use super::transport::{has_connection_close, BoxBody, CONNECT_TIMEOUT};
+use super::{has_connection_close, BoxBody, PoolGuard, CONNECT_TIMEOUT};
 use super::{Client, Result};
 
 /// A buffered HTTP response paired with the pool guard that keeps the
@@ -38,7 +37,7 @@ impl BufferedResponse {
 	/// that branch on status or read a response-specific header must still
 	/// call [`BufferedResponse::read_body`] on the returned value to release
 	/// the connection cleanly.
-	pub(super) fn headers(&self) -> &hyper::HeaderMap {
+	pub(in crate::libpod::client) fn headers(&self) -> &hyper::HeaderMap {
 		self.resp.headers()
 	}
 
@@ -48,7 +47,7 @@ impl BufferedResponse {
 	/// that drops the [`BufferedResponse`] without calling `read_body` is
 	/// a bug: the body may still be arriving, the connection is not safe
 	/// to reuse, and the next caller will see interleaved bytes (#1740).
-	pub(super) async fn read_body(
+	pub(in crate::libpod::client) async fn read_body(
 		self,
 		read_timeout: Option<std::time::Duration>,
 	) -> Result<(StatusCode, Vec<u8>)> {
@@ -60,9 +59,11 @@ impl Client {
 	/// Send a request and return the buffered response.
 	///
 	/// `response_timeout` bounds how long we wait for the server to return the
-	/// response head. Pass `Some` (the default [`READ_TIMEOUT`](super::transport::READ_TIMEOUT)) for ordinary and
-	/// streaming calls, where the head arrives promptly; this stops a socket that
-	/// accepts the connection but never replies from hanging the CLI indefinitely.
+	/// response head. Pass `Some` (the default
+	/// [`READ_TIMEOUT`](crate::libpod::client::request::transport::READ_TIMEOUT))
+	/// for ordinary and streaming calls, where the head arrives promptly; this
+	/// stops a socket that accepts the connection but never replies from hanging
+	/// the CLI indefinitely.
 	/// Pass `None` only for endpoints that legitimately block server-side before
 	/// the head (e.g. `wait?condition=stopped`), whose callers impose an outer
 	/// budget.
@@ -77,7 +78,7 @@ impl Client {
 	/// wire and the parser sees garbage (#1740). The guard is private to
 	/// [`BufferedResponse`], so callers cannot release it without first
 	/// reading the body.
-	pub(super) async fn send(
+	pub(in crate::libpod::client) async fn send(
 		&self,
 		req: Request<BoxBody>,
 		response_timeout: Option<std::time::Duration>,
