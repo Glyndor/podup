@@ -1,6 +1,6 @@
-use super::unit_named;
 use crate::parse_str;
 use crate::quadlet::generate_at;
+use crate::quadlet::tests::unit_named;
 
 /// #1656: the `x-podman-autoupdate` extension reaches the Quadlet unit as
 /// `AutoUpdate=<value>`, so `generate quadlet` and `autostart --mode quadlet`

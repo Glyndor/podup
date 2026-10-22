@@ -1,22 +1,12 @@
 use crate::quadlet::{QuadletOutput, QuadletUnit};
 
-mod fields_container;
-mod fields_lifecycle;
-mod fields_logging;
-mod fields_mounts;
-mod fields_networks;
-mod fields_resources;
+mod fields;
 mod floor_compat;
-mod floor_compat_empty;
-mod floor_compat_source;
 mod health;
 mod network_volume;
 mod podman_argv;
 mod pull_policy;
-mod units_build;
-mod units_container;
-mod units_identity;
-mod units_warnings;
+mod units;
 
 pub(super) use podman_argv::assert_argv_has_no_token;
 
