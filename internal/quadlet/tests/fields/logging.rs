@@ -5,9 +5,9 @@
 //! `fields.rs` was already near the per-file line cap and these two tests
 //! alone were enough to push it over (#1354).
 
-use super::unit_named;
 use crate::parse_str;
 use crate::quadlet::generate_at;
+use crate::quadlet::tests::unit_named;
 
 /// A service with no `logging:` block gets the rotation default so the
 /// generated quadlet units ship the same rotation policy that `up` would

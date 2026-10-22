@@ -1,6 +1,6 @@
-use super::unit_named;
 use crate::parse_str;
 use crate::quadlet::generate_at;
+use crate::quadlet::tests::unit_named;
 
 #[test]
 fn service_secret_maps_to_secret_key() {

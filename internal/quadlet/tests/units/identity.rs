@@ -1,5 +1,5 @@
-use super::unit_named;
 use crate::parse_str;
+use crate::quadlet::tests::unit_named;
 use crate::quadlet::{generate_at, QuadletOutput, QuadletUnit};
 
 #[test]

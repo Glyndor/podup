@@ -1,6 +1,6 @@
-use super::unit_named;
 use crate::parse_str;
 use crate::quadlet::generate_at;
+use crate::quadlet::tests::unit_named;
 
 #[test]
 fn generates_container_network_and_volume_units() {

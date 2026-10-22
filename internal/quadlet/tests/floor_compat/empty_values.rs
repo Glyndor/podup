@@ -7,15 +7,15 @@
 //! podman-args route has to skip them too, since `podman run --flag=`
 //! fails with `error parsing additional short argument`.
 //!
-//! Split out into its own file to keep `floor_compat.rs` under the
+//! Split out into its own file to keep `emitted_keys.rs` under the
 //! per-file code-line cap. Each site that emits a `PodmanArgs=` flag
 //! from a list or optional field has its own test here so a regression
 //! that re-introduces empty handling on one but not another shows up
 //! individually.
 
-use super::unit_named;
 use crate::parse_str;
 use crate::quadlet::generate_at;
+use crate::quadlet::tests::unit_named;
 
 /// An empty `stop_signal:` (`""`) renders to a `--stop-signal=` flag, which
 /// podman rejects with `error parsing additional short argument`. The native

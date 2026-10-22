@@ -1,6 +1,6 @@
-use super::unit_named;
 use crate::parse_str;
 use crate::quadlet::generate_at;
+use crate::quadlet::tests::unit_named;
 
 #[test]
 fn maps_the_full_container_field_set() {

@@ -1,7 +1,7 @@
 //! Resource-limit and `deploy:` rendering tests for the Quadlet export.
 //!
 //! `internal/quadlet/tests/fields.rs` carries the rest of the field-mapping
-//! coverage. These are pulled out for the same reason `fields_logging.rs` was
+//! coverage. These are pulled out for the same reason `logging.rs` was
 //! (#1354): the file was 481 code lines against a 500-line hard limit, which
 //! means the pull request that broke it would have been whichever one next
 //! added a test here, not the one that made the file long.
@@ -10,10 +10,10 @@
 //! or a `deploy:` key into a Podman argument or a systemd directive, which is
 //! one question; the rest of `fields.rs` maps compose fields to Quadlet keys.
 
-use super::assert_argv_has_no_token;
-use super::unit_named;
 use crate::parse_str;
 use crate::quadlet::generate_at;
+use crate::quadlet::tests::assert_argv_has_no_token;
+use crate::quadlet::tests::unit_named;
 
 #[test]
 fn memory_and_apparmor_render_as_podman_args() {

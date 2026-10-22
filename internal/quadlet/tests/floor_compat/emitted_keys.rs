@@ -18,7 +18,7 @@
 //!   gets when any `.build` unit is written.
 //!
 //! The companion tests for the source-level inventory and empty-value
-//! handling live in `floor_compat_source.rs` and `floor_compat_empty.rs`
+//! handling live in `source_inventory.rs` and `empty_values.rs`
 //! to keep this file under the per-file code-line cap. The fixture
 //! composition is one integration point, the source files are the other:
 //! anything the renderer ever emits must be reachable through either the
@@ -26,8 +26,8 @@
 //! silently miss it. Add a service here when a new key shows up; add a
 //! row in the inventory map when a new file maps to a new unit type.
 
-use super::unit_named;
 use crate::parse_str;
+use crate::quadlet::tests::unit_named;
 use crate::quadlet::{generate_at, generate_for_autostart, QuadletUnit};
 
 /// Run `generate` on a fixture that exercises every key we want the floor

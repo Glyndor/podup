@@ -1,6 +1,6 @@
-//! Source-level companion to `floor_compat.rs`.
+//! Source-level companion to `emitted_keys.rs`.
 //!
-//! The rendered-fixture tests in `floor_compat.rs` only see keys reachable
+//! The rendered-fixture tests in `emitted_keys.rs` only see keys reachable
 //! from those fixtures. A post-floor key in an uncovered branch would
 //! slip through. This is the source-level companion: read every emitter
 //! file (the `.container` folder is walked at run time, the other units are
@@ -9,7 +9,7 @@
 //! writes a key the fixtures never reach still fails here.
 //!
 //! Split out into its own file so the small parser can sit alongside the
-//! test it serves without pushing `floor_compat.rs` past the per-file
+//! test it serves without pushing `emitted_keys.rs` past the per-file
 //! code-line cap.
 
 use std::collections::HashMap;
@@ -92,13 +92,13 @@ fn source_inventory_lists_every_emitted_key() {
 
 	for (filename, unit_type) in files {
 		let source: String = match *filename {
-			"build.rs" => include_str!("../unit/build.rs").to_string(),
+			"build.rs" => include_str!("../../unit/build.rs").to_string(),
 			"container" => container_sources(),
-			"health.rs" => include_str!("../unit/health.rs").to_string(),
-			"network.rs" => include_str!("../unit/network.rs").to_string(),
-			"pod.rs" => include_str!("../unit/pod.rs").to_string(),
-			"security.rs" => include_str!("../unit/security.rs").to_string(),
-			"volume.rs" => include_str!("../unit/volume.rs").to_string(),
+			"health.rs" => include_str!("../../unit/health.rs").to_string(),
+			"network.rs" => include_str!("../../unit/network.rs").to_string(),
+			"pod.rs" => include_str!("../../unit/pod.rs").to_string(),
+			"security.rs" => include_str!("../../unit/security.rs").to_string(),
+			"volume.rs" => include_str!("../../unit/volume.rs").to_string(),
 			_ => panic!("missing include_str! branch for {filename}"),
 		};
 
