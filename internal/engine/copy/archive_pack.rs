@@ -183,5 +183,4 @@ fn cp_err(msg: &str) -> ComposeError {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[path = "archive_pack_tests.rs"]
 mod tests;
