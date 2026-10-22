@@ -1,24 +1,14 @@
 //! Service lifecycle commands: up, down, start, stop, restart, kill, rm, pause, unpause, run.
 
 mod commands;
-mod down_label;
+mod down;
 mod drop_recheck;
-mod images;
-mod options;
 pub(in crate::engine) mod parallel;
-mod pause;
-mod prefetch;
-mod readiness;
 mod run;
-mod run_attached;
 mod scale;
-mod schedule;
 mod seed;
-mod signal;
 mod targets;
-mod teardown;
 mod up;
-mod up_one;
 
 use std::collections::HashMap;
 
@@ -26,10 +16,10 @@ use crate::compose::types::{ComposeFile, Service};
 use crate::error::Result;
 use crate::libpod::API_PREFIX;
 
-pub use options::{RunOptions, RunOverrides};
+pub use run::options::{RunOptions, RunOverrides};
 pub use targets::validate_stop_timeout;
 
-use super::Engine;
+use crate::engine::Engine;
 
 /// What `up` knows about a container the project already has, read once from
 /// the container list before any work starts.
@@ -177,20 +167,4 @@ pub(super) fn container_rm_path(name: &str, remove_volumes: bool, force: bool) -
 #[cfg(test)]
 mod drop_recheck_tests;
 #[cfg(test)]
-#[path = "keep_id_create_tests.rs"]
-mod keep_id_create_tests;
-#[cfg(test)]
-#[path = "libpod_endpoint_query_tests.rs"]
 mod libpod_endpoint_query_tests;
-#[cfg(test)]
-#[path = "scale_request_tests.rs"]
-mod scale_request_tests;
-#[cfg(test)]
-mod scale_tests;
-#[cfg(test)]
-mod teardown_tests;
-#[cfg(test)]
-mod tests;
-#[cfg(test)]
-#[path = "up_validation_tests.rs"]
-mod up_validation_tests;

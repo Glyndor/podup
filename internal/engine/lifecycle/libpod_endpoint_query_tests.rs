@@ -30,7 +30,7 @@ fn engine_with(client: crate::libpod::Client, project: &str) -> Engine {
 /// `t=`, so an unchanged `t=` query key leaves the libpod handler
 /// ignoring the grace period entirely (defaulting to the container's
 /// own stop timeout, or to the daemon default when there is none).
-/// This is the unit test for the compensation in `commands.rs::stop_container`.
+/// This is the unit test for the compensation in `commands/stop.rs::stop_container`.
 #[tokio::test]
 async fn stop_sends_timeout_query_param() {
 	let requests: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));

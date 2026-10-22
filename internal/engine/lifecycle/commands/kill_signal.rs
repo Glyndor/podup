@@ -72,7 +72,3 @@ pub(crate) fn must_wait_after_kill(signal: &str) -> bool {
 	let name = upper.strip_prefix("SIG").unwrap_or(&upper);
 	name == "KILL"
 }
-
-#[cfg(test)]
-#[path = "signal_tests.rs"]
-mod tests;

@@ -1,11 +1,11 @@
 //! Deciding which image a service runs, and getting it there.
 //!
-//! Split out of `mod.rs` to keep that file within the source line limit.
+//! Split out of `lifecycle/mod.rs` to keep that file within the source line limit.
 
 use crate::compose::types::{ComposeFile, Service};
 use crate::error::Result;
 
-use super::Engine;
+use crate::engine::lifecycle::Engine;
 
 impl Engine {
 	/// The image tag a service resolves to: its explicit `image:` when set,
@@ -14,7 +14,11 @@ impl Engine {
 	///
 	/// This is the name `up` checks for presence and the name `down --rmi local`
 	/// removes, so both must agree on it; they used to compute it separately.
-	pub(super) fn service_image_tag(&self, name: &str, service: &Service) -> String {
+	pub(in crate::engine::lifecycle) fn service_image_tag(
+		&self,
+		name: &str,
+		service: &Service,
+	) -> String {
 		match &service.image {
 			Some(image) => image.clone(),
 			None => crate::engine::build::primary_build_tag(
@@ -28,7 +32,7 @@ impl Engine {
 
 	/// Make the service's image available before its containers are created:
 	/// build it, pull it, or leave the local one alone.
-	pub(super) async fn acquire_service_image(
+	pub(in crate::engine::lifecycle) async fn acquire_service_image(
 		&self,
 		name: &str,
 		service: &Service,
@@ -95,7 +99,11 @@ impl Engine {
 	///
 	/// Returns `Err` for an unrecognized `pull_policy:` so the bad value is
 	/// reported rather than silently treated as `missing` (#1443).
-	fn image_already_seen_present(&self, service_name: &str, service: &Service) -> Result<bool> {
+	pub(super) fn image_already_seen_present(
+		&self,
+		service_name: &str,
+		service: &Service,
+	) -> Result<bool> {
 		if service.platform.is_some() {
 			return Ok(false);
 		}
@@ -114,14 +122,3 @@ impl Engine {
 			.unwrap_or(false))
 	}
 }
-
-/// Tests for the pull decision above.
-///
-/// They drive a whole `up`, so they would sit as naturally in the lifecycle
-/// suite, but that file was already at 487 of its 500 code lines, and adding
-/// them there put it over. They belong next to the decision they pin anyway,
-/// the same way `prefetch.rs` keeps its own.
-#[cfg(test)]
-#[cfg(unix)]
-#[path = "images_tests.rs"]
-mod tests;

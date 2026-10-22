@@ -1,27 +1,27 @@
 //! Tear-down half of the lifecycle suite: `down` across levels, the
 //! `container_rm_path` query-string shape, and image removal.
 //!
-//! Split out of `tests.rs` for the reason `scale_tests.rs` and
-//! `drop_recheck_tests.rs` were: that file had reached 487 code lines against a
+//! Split out of `up/tests.rs` for the reason `scale/scale_tests.rs` and
+//! `lifecycle/drop_recheck_tests.rs` were: that file had reached 487 code lines against a
 //! 500-line hard limit, so the pull request that broke the build would have
 //! been whichever one next added a lifecycle test, not the one that made the
 //! file long.
 //!
-//! The cut is by subject, not by size. What stays in `tests.rs` brings a
+//! The cut is by subject, not by size. What stays in `up/tests.rs` brings a
 //! project up; what moves here takes one down.
 //!
 //! Same fixture pattern as the rest of the lifecycle suite, including the local
-//! `engine_with`, which `scale_tests.rs` also carries rather than sharing: three
+//! `engine_with`, which `scale/scale_tests.rs` also carries rather than sharing: three
 //! lines duplicated read better here than a helper exported out of a test module.
 
-use super::container_rm_path;
+use crate::engine::lifecycle::container_rm_path;
 
-#[cfg(unix)]
-use super::Engine;
 #[cfg(unix)]
 use crate::compose::types::{ComposeFile, Service};
 #[cfg(unix)]
 use crate::engine::fake_podman;
+#[cfg(unix)]
+use crate::engine::lifecycle::Engine;
 #[cfg(unix)]
 use crate::error::ComposeError;
 

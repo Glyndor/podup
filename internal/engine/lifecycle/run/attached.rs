@@ -26,10 +26,13 @@ use crate::libpod::{urlencoded, API_PREFIX};
 /// pin the CLI indefinitely.
 const START_FAILURE_DRAIN_BUDGET: Duration = Duration::from_secs(2);
 
-impl super::super::Engine {
+impl crate::engine::Engine {
 	/// Attach to a created-but-not-started container, start it, and hand the
 	/// terminal over until the command exits. Returns its exit code.
-	pub(super) async fn run_attached(&self, container_name: &str) -> Result<i64> {
+	pub(in crate::engine::lifecycle) async fn run_attached(
+		&self,
+		container_name: &str,
+	) -> Result<i64> {
 		// stdin=1 so keystrokes reach the command; stream=1 keeps the connection
 		// open both ways. With a TTY the stream is raw, with no 8-byte frame headers,
 		// because the pty merges stdout and stderr, which is also why an
@@ -111,11 +114,11 @@ async fn drain_hijacked(hijacked: crate::libpod::client::Hijacked) {
 	let _ = tokio::time::timeout(START_FAILURE_DRAIN_BUDGET, drain).await;
 }
 
-impl super::super::Engine {
+impl crate::engine::Engine {
 	/// Attach, start, hand over the terminal, then clean up per `--rm` and map
 	/// the exit code. Split from `run` so the interactive tail reads as one
 	/// piece.
-	pub(super) async fn finish_interactive_run(
+	pub(in crate::engine::lifecycle) async fn finish_interactive_run(
 		&self,
 		run_name: &str,
 		rm: bool,

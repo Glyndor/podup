@@ -20,14 +20,14 @@ use crate::compose::types::{ComposeFile, ServiceCondition};
 use crate::engine::Engine;
 use crate::error::ComposeError;
 
-use super::targets::in_started_set;
+use crate::engine::lifecycle::targets::in_started_set;
 
 /// A `wait_healthy` future shared across every dependent of one container, so a
 /// service that N others wait on has its healthcheck polled by a single poller
 /// rather than ~N× per interval. Lazy: the poll begins when the first dependent
 /// awaits it. The error is `Arc`-wrapped because [`Shared`] needs a `Clone`
 /// output and [`ComposeError`] is not `Clone`.
-pub(super) type SharedReady<'a> =
+pub(in crate::engine::lifecycle) type SharedReady<'a> =
 	Shared<Pin<Box<dyn Future<Output = std::result::Result<(), Arc<ComposeError>>> + Send + 'a>>>;
 
 impl Engine {
@@ -37,7 +37,7 @@ impl Engine {
 	/// The predicate mirrors the wait guard in `up_one_service`; a container it
 	/// misses simply falls back to a direct wait there, so a mismatch degrades to
 	/// the old per-dependent behaviour rather than a panic.
-	pub(super) fn build_readiness_map<'a>(
+	pub(in crate::engine::lifecycle) fn build_readiness_map<'a>(
 		&'a self,
 		file: &'a ComposeFile,
 		enabled: &HashSet<String>,
@@ -113,7 +113,9 @@ impl Engine {
 /// was shared. A [`ComposeError::Podman`] transport error holds a non-`Clone`
 /// payload and cannot be rebuilt, so it keeps the transparent wrapper, which is
 /// what [`ComposeError::innermost`] exists to peel.
-pub(super) fn unshare_readiness_error(shared: &Arc<ComposeError>) -> ComposeError {
+pub(in crate::engine::lifecycle) fn unshare_readiness_error(
+	shared: &Arc<ComposeError>,
+) -> ComposeError {
 	match &**shared {
 		ComposeError::HealthCheckTimeout(container) => {
 			ComposeError::HealthCheckTimeout(container.clone())
@@ -125,7 +127,3 @@ pub(super) fn unshare_readiness_error(shared: &Arc<ComposeError>) -> ComposeErro
 		_ => ComposeError::DependencyNotReady(Arc::clone(shared)),
 	}
 }
-
-#[cfg(all(test, unix))]
-#[path = "readiness_tests.rs"]
-mod tests;

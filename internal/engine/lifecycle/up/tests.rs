@@ -1,7 +1,7 @@
 #[cfg(unix)]
-use super::Engine;
-#[cfg(unix)]
 use crate::engine::fake_podman;
+#[cfg(unix)]
+use crate::engine::lifecycle::Engine;
 #[cfg(unix)]
 use crate::error::ComposeError;
 

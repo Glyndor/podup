@@ -1,4 +1,4 @@
-use super::{wait_header, wait_row, WAIT_NAME_WIDTH};
+use crate::engine::lifecycle::commands::wait::{wait_header, wait_row, WAIT_NAME_WIDTH};
 
 /// The exit code sits in one column, header included, whatever the container
 /// name's length. `wait` prints as each container exits, so it cannot size

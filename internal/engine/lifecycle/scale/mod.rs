@@ -8,8 +8,8 @@ use crate::engine::Engine;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
-use super::parallel::first_error;
-use super::targets::{stop_deadline, stop_timeout_param};
+use crate::engine::lifecycle::parallel::first_error;
+use crate::engine::lifecycle::targets::{stop_deadline, stop_timeout_param};
 
 /// Whether a container in this state is currently active, i.e. `stop` would
 /// actually transition it. A `running` or `paused` container is stopped; a
@@ -173,7 +173,7 @@ impl Engine {
 		service_name: &str,
 		service: &Service,
 		target: u32,
-		existing: &std::collections::HashMap<String, super::ExistingContainer>,
+		existing: &std::collections::HashMap<String, crate::engine::lifecycle::ExistingContainer>,
 	) -> Result<()> {
 		// The desired set is the index-suffixed name at every count (`svc-1`
 		// even for a single replica), so a scale N→1 keeps the running `svc-1`
@@ -237,7 +237,7 @@ impl Engine {
 			.post_empty_ok_within(&stop_path, stop_deadline(grace))
 			.await;
 		crate::ui::progress::start("Container", name, "Removing");
-		let rm_path = super::container_rm_path(name, remove_volumes, true);
+		let rm_path = crate::engine::lifecycle::container_rm_path(name, remove_volumes, true);
 		match self.client.delete_ok(&rm_path).await {
 			Ok(()) => {
 				crate::ui::progress_line("Container", name, "Removed");
@@ -407,3 +407,8 @@ impl Engine {
 		Ok(by_service)
 	}
 }
+
+#[cfg(test)]
+mod scale_request_tests;
+#[cfg(test)]
+pub(super) mod scale_tests;

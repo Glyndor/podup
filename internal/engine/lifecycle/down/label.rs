@@ -11,7 +11,7 @@ use crate::compose::types::ComposeFile;
 use crate::error::Result;
 use crate::libpod::{urlencoded, API_PREFIX};
 
-use super::Engine;
+use crate::engine::lifecycle::Engine;
 
 /// Shutdown grace (seconds) for the label-only teardown, used when the CLI
 /// `-t/--timeout` override is unset. There is no service definition to read a
@@ -70,7 +70,9 @@ impl Engine {
 		let futs = containers.iter().map(|container_name| {
 			self.teardown_one_container(container_name, grace, &[], remove_volumes)
 		});
-		if let Some(e) = super::parallel::first_error(super::parallel::join_bounded(futs).await) {
+		if let Some(e) = crate::engine::lifecycle::parallel::first_error(
+			crate::engine::lifecycle::parallel::join_bounded(futs).await,
+		) {
 			first_err.get_or_insert(e);
 		}
 
@@ -113,7 +115,7 @@ impl Engine {
 	/// class of failure (#598).
 	///
 	/// Shared by [`Engine::down_with_options`] and [`Engine::down_by_label`].
-	pub(super) async fn remove_project_networks_by_label(
+	pub(in crate::engine::lifecycle) async fn remove_project_networks_by_label(
 		&self,
 	) -> Option<crate::error::ComposeError> {
 		let list_path = format!(
@@ -155,7 +157,7 @@ impl Engine {
 	/// and one volume's removal failure never blocks the rest, but the first
 	/// genuine removal failure is returned to the caller (a 404 stays an
 	/// idempotent no-op), matching [`Engine::remove_project_networks_by_label`].
-	pub(super) async fn remove_project_volumes_by_label(
+	pub(in crate::engine::lifecycle) async fn remove_project_volumes_by_label(
 		&self,
 	) -> Option<crate::error::ComposeError> {
 		let path = format!("{API_PREFIX}/volumes/json");
@@ -189,13 +191,9 @@ impl Engine {
 /// Whether a `/volumes/json` entry carries the `podup.project=<project>` label,
 /// i.e. it is a volume podup created for this project. Pure so the ownership
 /// check is unit-tested without a live Podman socket.
-fn volume_owned_by(vol: &serde_json::Value, project: &str) -> bool {
+pub(super) fn volume_owned_by(vol: &serde_json::Value, project: &str) -> bool {
 	vol.get("Labels")
 		.and_then(|l| l.get("podup.project"))
 		.and_then(|v| v.as_str())
 		== Some(project)
 }
-
-#[cfg(test)]
-#[path = "down_label_tests.rs"]
-mod tests;

@@ -244,7 +244,7 @@ impl Engine {
 		// signals only; SIGTERM etc. are answered promptly either way, and
 		// skipping the wait is what keeps `kill -s SIGTERM <id>` from pinning
 		// the caller behind every container the user happens to target.
-		let wait_for_exit = super::signal::must_wait_after_kill(signal);
+		let wait_for_exit = super::commands::kill_signal::must_wait_after_kill(signal);
 		for container_name in container_names {
 			let path = format!(
 				"{API_PREFIX}/containers/{}/kill?signal={}",
