@@ -233,7 +233,6 @@ pub(super) const CHECK_REGISTRY: &[CheckDescriptor] = &[
 ];
 
 #[cfg(test)]
-#[path = "checks_more_tests.rs"]
 mod more_tests;
 #[cfg(test)]
 #[path = "check_runtime_cpu_tests.rs"]
