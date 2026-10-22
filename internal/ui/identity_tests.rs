@@ -10,6 +10,7 @@ use std::collections::HashMap;
 /// must resolve to one colour, or the palette is not stable at all.
 #[test]
 fn every_spelling_of_one_container_gets_one_colour() {
+	let _guard = registry_guard();
 	set_project("proj");
 	let from_ps = identity_style("proj-web-1");
 	let from_logs = identity_style("web-1");
