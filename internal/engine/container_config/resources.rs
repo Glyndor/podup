@@ -352,5 +352,4 @@ fn push_gpu_count(count: Option<i64>, out: &mut Vec<String>) {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[path = "resources_tests.rs"]
 mod tests;

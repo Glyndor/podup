@@ -494,7 +494,6 @@ fn format_event_line(
 }
 
 #[cfg(test)]
-#[path = "tests.rs"]
 mod tests;
 
 #[cfg(test)]

@@ -58,8 +58,14 @@ fn only_tar_stream_constructs_a_tar_builder() {
 			.replace('\\', "/");
 		let name = path.file_name().unwrap().to_string_lossy().into_owned();
 		// A sibling `*_tests.rs` is test code even though it lives beside the
-		// module it tests, which is the convention this crate uses.
-		if name.ends_with("_tests.rs") {
+		// module it tests, which is the convention this crate uses. So is
+		// everything inside a `tests/` or `*_tests/` folder, where a test file
+		// that grew past the line limit is split by scenario.
+		let in_test_folder = rel
+			.rsplit('/')
+			.skip(1)
+			.any(|dir| dir == "tests" || dir.ends_with("_tests"));
+		if name.ends_with("_tests.rs") || in_test_folder {
 			continue;
 		}
 		let text = fs::read_to_string(path).unwrap_or_else(|e| panic!("{rel} is readable: {e}"));

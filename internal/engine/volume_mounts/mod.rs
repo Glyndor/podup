@@ -302,5 +302,4 @@ pub(crate) fn mount_targets(service: &Service) -> Vec<String> {
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[path = "mod_tests.rs"]
 mod tests;
