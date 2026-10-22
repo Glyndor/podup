@@ -24,11 +24,12 @@ use super::stream_body::ConnectionFuture;
 /// Whether the HTTP/1 connection future behind a streaming response has
 /// already finished, and what it finished with.
 ///
-/// Owned by [`send_streaming`](super::Client::send_streaming) while it waits
-/// for the response head. Poll the driver with [`Self::poll`] from inside
-/// the head-wait `poll_fn`; once the head arrives, take the still-pending
-/// driver with [`Self::take_pending`] (or learn the recorded outcome with
-/// [`Self::result`]).
+/// Owned by
+/// [`send_streaming`](crate::libpod::client::Client::send_streaming)
+/// while it waits for the response head. Poll the driver with [`Self::poll`]
+/// from inside the head-wait `poll_fn`; once the head arrives, take the
+/// still-pending driver with [`Self::take_pending`] (or learn the recorded
+/// outcome with [`Self::result`]).
 pub enum ConnState {
 	/// The driver has not yet completed. Hand this future to
 	/// [`DrivenBody::new`] via [`Self::take_pending`] when the response
@@ -46,7 +47,8 @@ pub enum ConnState {
 impl ConnState {
 	/// Wrap a freshly-built connection future as a pending state. The
 	/// streaming open path calls this once per request, immediately
-	/// after [`ConnPool::open_streaming`](super::pool::ConnPool::open_streaming)
+	/// after
+	/// [`ConnPool::open_streaming`](crate::libpod::client::pool::ConnPool::open_streaming)
 	/// hands back its driver.
 	pub fn new(conn: ConnectionFuture) -> Self {
 		Self::Pending(conn)

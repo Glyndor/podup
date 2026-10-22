@@ -1,6 +1,6 @@
 //! Status-code and version-string helpers: [`parse_error_message`](Client::parse_error_message),
 //! [`check_status`](Client::check_status), and the [`meets_minimum`] predicate
-//! that gates [`super::MIN_LIBPOD_API_MAJOR`].
+//! that gates [`MIN_LIBPOD_API_MAJOR`](crate::libpod::client::MIN_LIBPOD_API_MAJOR).
 //!
 //! Split from `mod.rs` so the status-decoding pair lives next to its JSON
 //! shape description and the version-string test surface it backs.
@@ -10,7 +10,8 @@ use hyper::StatusCode;
 use super::{Client, PodmanError, Result};
 
 /// Whether a `Libpod-API-Version` string (e.g. `"5.0.0"`, `"4.9.3"`) meets the
-/// [`super::MIN_LIBPOD_API_MAJOR`].0 floor.
+/// [`MIN_LIBPOD_API_MAJOR`](crate::libpod::client::MIN_LIBPOD_API_MAJOR).0
+/// floor.
 pub(crate) fn meets_minimum(version: &str) -> bool {
 	version
 		.trim()
@@ -18,7 +19,7 @@ pub(crate) fn meets_minimum(version: &str) -> bool {
 		.split('.')
 		.next()
 		.and_then(|major| major.parse::<u64>().ok())
-		.is_some_and(|major| major >= super::MIN_LIBPOD_API_MAJOR)
+		.is_some_and(|major| major >= crate::libpod::client::MIN_LIBPOD_API_MAJOR)
 }
 
 impl Client {
@@ -44,7 +45,7 @@ impl Client {
 	}
 
 	/// Check status code; on error parse the Podman error message.
-	pub(super) fn check_status(status: StatusCode, body: &[u8]) -> Result<()> {
+	pub(in crate::libpod::client) fn check_status(status: StatusCode, body: &[u8]) -> Result<()> {
 		if status.is_success() {
 			return Ok(());
 		}

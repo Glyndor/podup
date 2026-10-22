@@ -5,8 +5,8 @@
 //! back through the streaming path on a single socket. The
 //! `Future`-contract side (the connection future is not re-polled after
 //! the driver finishes in the same poll as the head) is pinned by the
-//! `conn_state_*` unit tests in `conn_state_tests.rs`; this test pins
-//! the end-to-end behaviour against a real socket (#1900).
+//! `conn_state_*` unit tests in `stream/conn_state_tests.rs`; this test
+//! pins the end-to-end behaviour against a real socket (#1900).
 
 #![cfg(unix)]
 
@@ -110,8 +110,8 @@ impl Drop for CloseServer {
 ///
 /// The `Future`-contract side of the streaming path (the connection
 /// future is not re-polled after the driver finishes) is pinned by the
-/// `conn_state_*` unit tests in `conn_state_tests.rs`; this test stays
-/// focused on the end-to-end wire behaviour.
+/// `conn_state_*` unit tests in `stream/conn_state_tests.rs`; this test
+/// stays focused on the end-to-end wire behaviour.
 #[tokio::test]
 async fn streaming_path_serves_connection_close_short_body_cleanly() {
 	let body = b"the quick brown fox jumps over the lazy dog".repeat(8);

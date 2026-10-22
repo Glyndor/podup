@@ -1,7 +1,7 @@
 //! Transport-level helpers the client uses on every request: the boxed body
 //! type, the buffered-body constructor, the timeouts that bound waiting on the
 //! Podman socket, the close-detection helper, and the generic
-//! [`apply_timeout`](super::Client::apply_timeout) wrapper.
+//! [`apply_timeout`](crate::libpod::client::Client::apply_timeout) wrapper.
 //!
 //! Split from `mod.rs` so the per-file code-line cap is respected while the
 //! items this file owns (shared by every request path) stay in one place.
@@ -59,7 +59,7 @@ pub(crate) fn has_connection_close(resp: &Response<Incoming>) -> bool {
 
 impl Client {
 	/// Await `fut`, optionally bounded by `timeout`.
-	pub(super) async fn apply_timeout<F, T>(
+	pub(in crate::libpod::client) async fn apply_timeout<F, T>(
 		timeout: Option<std::time::Duration>,
 		phase: &str,
 		fut: F,

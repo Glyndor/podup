@@ -24,14 +24,16 @@ use super::{Client, PodmanError, Result, SocketStream};
 const MAX_HEAD_BYTES: usize = 16 * 1024;
 
 /// Connect budget for the raw hijack. Mirrors the hyper path's
-/// [`super::CONNECT_TIMEOUT`] so a stuck or absent peer surfaces the same
-/// 30-second ceiling here as on every other libpod call.
+/// [`CONNECT_TIMEOUT`](crate::libpod::client::request::transport::CONNECT_TIMEOUT)
+/// so a stuck or absent peer surfaces the same 30-second ceiling here as on
+/// every other libpod call.
 const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Read budget for the response head. Mirrors the hyper path's
-/// [`super::READ_TIMEOUT`]. The full 120s is excessive for a status line;
-/// a 30s ceiling matches what `connect` does on the same path and bounds a
-/// peer that opens the TCP/HTTP/1.1 handshake but never answers.
+/// [`READ_TIMEOUT`](crate::libpod::client::request::transport::READ_TIMEOUT).
+/// The full 120s is excessive for a status line; a 30s ceiling matches what
+/// `connect` does on the same path and bounds a peer that opens the
+/// TCP/HTTP/1.1 handshake but never answers.
 const HEAD_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// A hijacked connection: the socket, after the response head has been read.
