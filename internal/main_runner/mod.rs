@@ -5,3 +5,8 @@ pub(super) mod post_parse;
 pub(super) mod short_circuits;
 pub(super) mod socket;
 pub(super) mod update_globals;
+
+pub(crate) mod autostart;
+pub(crate) mod generate;
+#[cfg(test)]
+mod generate_tests;

@@ -1,4 +1,4 @@
-use super::command_failure_exit_code;
+use super::exit_status::command_failure_exit_code;
 
 #[test]
 fn not_found_maps_to_127() {

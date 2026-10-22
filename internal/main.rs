@@ -5,20 +5,15 @@
 
 use std::process;
 
-mod apparmor_hint;
 mod audit;
-mod autostart_cmd;
 mod cli;
 mod dispatch;
-mod exit_status;
-mod generate;
 mod main_runner;
-mod resolve;
 mod startup;
 
 use cli::*;
-use exit_status::{command_failure_exit_code, interrupt_exit_code, print_error};
-use resolve::{
+use startup::exit_status::{command_failure_exit_code, interrupt_exit_code, print_error};
+use startup::resolve::{
 	resolve_base_dir, resolve_compose_files, resolve_project_name, validate_project_directory,
 };
 use startup::{internal_error_notice, is_label_only, parse_cli, validate_project_name};
@@ -69,7 +64,7 @@ fn run_to_exit() {
 		.enable_all()
 		.build()
 		.expect("build Tokio runtime");
-	let mut error_context = exit_status::ErrorContext::default();
+	let mut error_context = startup::exit_status::ErrorContext::default();
 	let outcome = runtime.block_on(run(&mut error_context));
 	// Shut the runtime down without waiting for its blocking pool. An
 	// interactive exec/run always leaves one stdin read in flight there
@@ -117,7 +112,7 @@ fn run_to_exit() {
 /// The per-command bodies live in [`main_runner::short_circuits`] and
 /// [`main_runner::post_parse`]; the prelude below stays here because it runs in
 /// strict order between commands and cannot be split.
-async fn run(error_context: &mut exit_status::ErrorContext) -> podup::Result<()> {
+async fn run(error_context: &mut startup::exit_status::ErrorContext) -> podup::Result<()> {
 	let cli = parse_cli();
 	main_runner::short_circuits::setup_output(&cli);
 

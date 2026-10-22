@@ -10,7 +10,7 @@ use std::path::Path;
 /// this returns an advisory string rather than blocking. `os` is
 /// [`std::env::consts::OS`]; the function is pure so every platform's branch is
 /// testable in a single run.
-fn quadlet_platform_advisory(os: &str) -> Option<String> {
+pub(super) fn quadlet_platform_advisory(os: &str) -> Option<String> {
 	(os != "linux").then(|| {
 		"quadlet units require systemd (Linux); generated files will not run on this host"
 			.to_string()
@@ -66,10 +66,10 @@ pub(crate) fn write_quadlet(
 		.into());
 	}
 	if let Some(advisory) = quadlet_platform_advisory(std::env::consts::OS) {
-		tracing::warn!("{advisory}");
+		tracing::warn!(target: "podup::generate", "{advisory}");
 	}
 	for warning in &result.warnings {
-		tracing::warn!("{warning}");
+		tracing::warn!(target: "podup::generate", "{warning}");
 	}
 	match output {
 		Some(dir) => {
@@ -91,7 +91,3 @@ pub(crate) fn write_quadlet(
 	}
 	Ok(())
 }
-
-#[cfg(test)]
-#[path = "generate_tests.rs"]
-mod tests;

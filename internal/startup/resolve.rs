@@ -83,7 +83,7 @@ const OVERRIDE_FILE_CANDIDATES: [&str; 4] = [
 /// `-f` means the caller is choosing the file set themselves, and `COMPOSE_FILE`
 /// is that same choice by another name; docker compose skips the override in
 /// both cases too.
-fn override_for(base: &Path) -> Option<PathBuf> {
+pub(super) fn override_for(base: &Path) -> Option<PathBuf> {
 	let dir = base.parent().unwrap_or(Path::new(""));
 	OVERRIDE_FILE_CANDIDATES
 		.iter()
@@ -167,7 +167,3 @@ pub(crate) fn sanitize_project_name(raw: &str) -> String {
 		trimmed.to_string()
 	}
 }
-
-#[cfg(test)]
-#[path = "resolve_tests.rs"]
-mod tests;
