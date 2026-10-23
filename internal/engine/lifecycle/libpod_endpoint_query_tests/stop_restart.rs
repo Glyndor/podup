@@ -60,7 +60,7 @@ async fn stop_sends_timeout_query_param() {
 /// libpod handler ignores `t=` and defaults `timeout=` to 0 when absent,
 /// which would make every restart an immediate SIGKILL (a single-replica
 /// `restart` on libpod would never give the container a chance to
-/// drain). This is the unit test for `parallel.rs::restart_one_service`
+/// drain). This is the unit test for `parallel/mod.rs::restart_one_service`
 /// and the watch restart at `watch/mod.rs::watch_restart`.
 #[tokio::test]
 async fn restart_sends_timeout_query_param() {

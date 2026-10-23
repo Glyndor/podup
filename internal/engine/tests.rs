@@ -1,4 +1,6 @@
 use super::*;
+use crate::compose::types::Service;
+use crate::error::ComposeError;
 use crate::libpod::Client;
 
 fn engine(project: &str) -> Engine {
