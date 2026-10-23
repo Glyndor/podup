@@ -168,3 +168,6 @@ pub(super) fn container_rm_path(name: &str, remove_volumes: bool, force: bool) -
 mod drop_recheck_tests;
 #[cfg(test)]
 mod libpod_endpoint_query_tests;
+
+#[cfg(test)]
+mod umask_tests;

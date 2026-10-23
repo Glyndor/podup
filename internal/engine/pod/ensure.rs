@@ -19,6 +19,11 @@ impl Engine {
 		file: &ComposeFile,
 		parsed_ports: &[Vec<crate::ports::ParsedPort>],
 	) -> Result<bool> {
+		for (name, service) in &file.services {
+			if let Some(text) = service.umask.as_deref() {
+				crate::compose::types::service::service_umask::validate_runtime(name, text)?;
+			}
+		}
 		let desired_hash = super::pod_config_hash(parsed_ports, file);
 		let inspect_path = format!(
 			"{API_PREFIX}/pods/{}/json",
@@ -143,3 +148,7 @@ impl Engine {
 		}
 	}
 }
+
+#[cfg(test)]
+#[path = "ensure_umask_tests.rs"]
+mod ensure_umask_tests;

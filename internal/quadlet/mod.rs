@@ -34,6 +34,9 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 		return Err(e);
 	}
 	for (name, svc) in &file.services {
+		if let Some(text) = svc.umask.as_deref() {
+			crate::compose::types::service::service_umask::validate_runtime(name, text)?;
+		}
 		if svc.image.is_none() && svc.build.is_none() {
 			return Err(ComposeError::NoImageOrBuild(name.clone()));
 		}

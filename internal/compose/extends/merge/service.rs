@@ -5,7 +5,13 @@ use crate::compose::types::{
 
 use super::collections::{merge_networks, merge_sysctls, merge_volumes};
 
-pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) -> Service {
+pub(in crate::compose) fn merge_service(mut base: Service, mut override_svc: Service) -> Service {
+	if let Some(tag) = override_svc.umask_merge_tag {
+		base.umask = None;
+		if matches!(tag, crate::compose::tags::MergeTag::Reset) {
+			override_svc.umask = None;
+		}
+	}
 	fn opt<T>(o: Option<T>, b: Option<T>) -> Option<T> {
 		o.or(b)
 	}
@@ -180,6 +186,8 @@ pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) ->
 		annotations: merge_labels(base.annotations, override_svc.annotations),
 		container_name: override_svc.container_name.or(base.container_name),
 		user: override_svc.user.or(base.user),
+		umask: override_svc.umask.or(base.umask),
+		umask_merge_tag: None,
 		working_dir: override_svc.working_dir.or(base.working_dir),
 		group_add: merge_vec(base.group_add, override_svc.group_add),
 		platform: override_svc.platform.or(base.platform),

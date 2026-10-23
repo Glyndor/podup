@@ -152,6 +152,7 @@ pub(crate) fn floor_required(unit_type: UnitType, key: &str) -> Option<PodmanVer
 	// Exemptions: keys that exist on every unit type in 5.0, so they do
 	// not gate the floor. They are listed here rather than in the table
 	// to keep the table readable as a list of post-5.0 additions.
+	// Initial process umask uses PodmanArgs=--umask, covered by this exemption.
 	if matches!(key, "PodmanArgs" | "GlobalArgs") {
 		return None;
 	}
