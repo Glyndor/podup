@@ -7,7 +7,8 @@
 /// docker-compat default.
 ///
 /// The wire-level test for the compensation lives next to the rest of
-/// the `cp` upload tests in `engine::copy::upload_tests::upload_carries_copy_uid_gid_false`,
+/// the `cp` upload tests in
+/// `engine::copy::upload::tests::put_responses::upload_carries_copy_uid_gid_false`,
 /// which drives the same fake podman through the streaming packer
 /// `cp_to_container` uses (the packer is private to the `copy`
 /// module). What is pinned here is the URL helper the production path

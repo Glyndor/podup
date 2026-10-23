@@ -12,8 +12,8 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
 use super::super::Engine;
-use super::pack;
-use super::verify::SentKind;
+use super::pack::transport;
+use super::upload::verify::SentKind;
 use super::CpByteCounter;
 use super::CpOptions;
 
@@ -30,9 +30,9 @@ use super::CpOptions;
 /// way it normalises `linkTarget`, and the byte length of the target is
 /// checked against `stat.size` independently. A directory source returns `None`
 /// because its own size says nothing about its children; that case is
-/// confirmed entry by entry (`verify::tree_landed`), never on this. Anything
-/// else stays unverifiable and fails closed rather than confirming on the
-/// wrong kind.
+/// confirmed entry by entry (`upload::verify::tree_landed`), never on this.
+/// Anything else stays unverifiable and fails closed rather than confirming
+/// on the wrong kind.
 ///
 /// Extracted so it is reachable from a test. Inside the async upload it was
 /// covered only by running against a real container, and a mutation
@@ -180,7 +180,7 @@ impl Engine {
 		// the whole archive into a `Vec<u8>` first (#1844). The recorded
 		// entry list is what the post-PUT confirmation compares against
 		// once the body bytes are gone.
-		let packed = pack::pack_path_stream(
+		let packed = transport::pack_path_stream(
 			&src_buf,
 			follow,
 			rename_for_pack.as_deref(),

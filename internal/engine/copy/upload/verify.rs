@@ -91,8 +91,8 @@ use crate::libpod::client::PathStat;
 use crate::libpod::urlencoded;
 use crate::libpod::API_PREFIX;
 
-use super::super::Engine;
-use super::join_archive_path;
+use super::super::super::Engine;
+use super::super::join_archive_path;
 
 /// Every `os.ModeType` bit Go reports on the stat endpoint.
 ///
@@ -121,8 +121,8 @@ pub(crate) enum SentKind {
 pub(in crate::engine) struct SentEntry {
 	/// Relative to the directory the archive was extracted at, `/`-separated,
 	/// without a leading `./` or a trailing `/`.
-	pub(super) path: String,
-	pub(super) kind: SentKind,
+	pub(in crate::engine::copy) path: String,
+	pub(in crate::engine::copy) kind: SentKind,
 }
 
 impl SentEntry {
@@ -164,14 +164,14 @@ impl SentEntry {
 /// the PUT, so `sent_entries` does not run in production. It is gated to
 /// test builds (`#[cfg(test)]`) for that reason, and exists for the
 /// recorded-equals-written parity test
-/// ([`super::pack_tests::the_recorder_agrees_with_what_sent_entries_reads_back`]):
+/// ([`super::super::pack::transport::tests::the_recorder_agrees_with_what_sent_entries_reads_back`]):
 /// pack to a `Vec<u8>` with the recorder on, then assert the recorder
 /// equals what `sent_entries` reads back from those same bytes. This pins
 /// that the recorder and the archive agree on every entry; a sabotage that
 /// records one without writing the other (or vice versa) breaks the test
 /// in lock-step.
 #[cfg(test)]
-pub(super) fn sent_entries(gz_tar: &[u8]) -> Result<Vec<SentEntry>> {
+pub(in crate::engine::copy) fn sent_entries(gz_tar: &[u8]) -> Result<Vec<SentEntry>> {
 	let mut archive = tar::Archive::new(gz_tar);
 	let mut sent = Vec::new();
 	for entry in archive.entries().map_err(ComposeError::Io)? {
@@ -277,7 +277,11 @@ pub(crate) enum LinkCheck {
 /// confirmed only when its target text matches and its byte length matches,
 /// or the runtime sent no `linkTarget` and the link is at least a link at
 /// the destination.
-pub(super) fn entry_landed(sent: SentKind, entry_path: &str, post: Option<&PathStat>) -> LinkCheck {
+pub(in crate::engine::copy) fn entry_landed(
+	sent: SentKind,
+	entry_path: &str,
+	post: Option<&PathStat>,
+) -> LinkCheck {
 	let is_dir = |stat: &PathStat| stat.mode & (1 << 31) != 0;
 	let is_regular = |stat: &PathStat| stat.mode & MODE_TYPE == 0;
 	let is_symlink = |stat: &PathStat| stat.mode & (1 << 27) != 0;
@@ -485,7 +489,7 @@ impl Engine {
 	/// "what was uploaded" left). Every entry that `sent_entries` would
 	/// have refused on the read-back side has already been refused here:
 	/// non-UTF-8 paths and link names, hard links, FIFOs, char/block devices.
-	/// The same rules apply through [`crate::engine::copy::pack`]'s recorder,
+	/// The same rules apply through [`crate::engine::copy::pack::common`]'s recorder,
 	/// so the two cannot disagree about what the destination can be asked
 	/// about.
 	///
@@ -505,7 +509,7 @@ impl Engine {
 	///
 	/// The residual false positive is the single-file one at tree size: an
 	/// upload that failed over a tree whose entries already had these sizes.
-	pub(super) async fn tree_landed(
+	pub(in crate::engine::copy) async fn tree_landed(
 		&self,
 		container: &str,
 		dir: &str,

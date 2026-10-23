@@ -20,7 +20,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 use super::{pack_path_stream, PackedStream};
-use crate::engine::copy::archive_pack::pack_path;
+use crate::engine::copy::pack::archive::pack_path;
 use crate::engine::copy::verify::{sent_entries, SentEntry, SentKind};
 
 /// A fresh counter for the streaming packer. The number never matters — the

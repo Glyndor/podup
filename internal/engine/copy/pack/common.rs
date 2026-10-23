@@ -1,4 +1,4 @@
-//! Shared walk-and-record helpers used by both `cp`'s [`super::archive_pack::pack_path`]
+//! Shared walk-and-record helpers used by both `cp`'s [`super::archive::pack_path`]
 //! and watch sync's [`crate::engine::watch::sync::build_sync_tar`].
 //!
 //! The two packers share the entry-recording shape (the `SentKind` the
@@ -17,7 +17,7 @@ use std::path::Path;
 
 use crate::error::{ComposeError, Result};
 
-use super::verify::{SentEntry, SentKind};
+use super::super::upload::verify::{SentEntry, SentKind};
 
 /// Re-export the directory walker the two walks use, so the call sites read
 /// `walk::walk_dir(src)` without reaching across modules.

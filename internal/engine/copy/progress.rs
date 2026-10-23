@@ -53,7 +53,7 @@ impl ByteCounter {
 	}
 
 	/// The raw shared counter, for a producer outside this module that
-	/// advances it itself (the upload body built in `pack.rs` takes the
+	/// advances it itself (the upload body built in `pack/transport.rs` takes the
 	/// `Arc<AtomicU64>` and adds each frame as it leaves).
 	pub(crate) fn inner(&self) -> &Arc<AtomicU64> {
 		&self.0

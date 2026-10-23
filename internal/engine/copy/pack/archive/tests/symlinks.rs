@@ -32,7 +32,7 @@ fn pack_path_follow_link_on_a_symlink_to_a_file_writes_the_targets_bytes() {
 	);
 	assert_eq!(
 		recorded[0].kind,
-		super::super::super::verify::SentKind::File(payload.len() as u64),
+		crate::engine::copy::verify::SentKind::File(payload.len() as u64),
 		"follow_link=true must record the target as a regular file of the target's size"
 	);
 
@@ -82,7 +82,7 @@ fn pack_path_no_follow_link_on_a_symlink_writes_a_link_entry() {
 	let expected_target = target.to_str().expect("utf-8 target path").to_string();
 	assert_eq!(
 		recorded[0].kind,
-		super::super::super::verify::SentKind::Link(expected_target.clone()),
+		crate::engine::copy::verify::SentKind::Link(expected_target.clone()),
 		"follow_link=false records the link itself"
 	);
 
@@ -124,7 +124,7 @@ fn pack_path_follow_link_in_a_tree_writes_link_targets_as_files() {
 
 	// The recorder must show the link replaced by a regular file of the
 	// target's size, sitting inside the wrapper as `payload/link.txt`.
-	let mut by_path: std::collections::HashMap<String, super::super::super::verify::SentKind> =
+	let mut by_path: std::collections::HashMap<String, crate::engine::copy::verify::SentKind> =
 		recorded
 			.iter()
 			.map(|e| (e.path.clone(), e.kind.clone()))
@@ -145,7 +145,7 @@ fn pack_path_follow_link_in_a_tree_writes_link_targets_as_files() {
 		.clone();
 	assert_eq!(
 		link_kind,
-		super::super::super::verify::SentKind::File(payload_bytes.len() as u64),
+		crate::engine::copy::verify::SentKind::File(payload_bytes.len() as u64),
 		"the link inside the tree must be recorded as a regular file of the target's size"
 	);
 
@@ -212,7 +212,7 @@ fn pack_path_no_follow_link_in_a_tree_keeps_links_as_links() {
 		.expect("link entry");
 	assert!(matches!(
 		link_entry.kind,
-		super::super::super::verify::SentKind::Link(_)
+		crate::engine::copy::verify::SentKind::Link(_)
 	));
 
 	// Archive: a symlink entry at `payload/link.txt`. Reading inside the

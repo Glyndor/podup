@@ -3,8 +3,9 @@
 //! One direction, and the routing decision that makes it cheap: an existing
 //! directory streams the archive body straight into the guarded extractor,
 //! anything else buffers first. The classification of the destination and the
-//! guard it consults are the same two questions [`destination`] answers, so the
-//! caller and the extractor agree on what "a directory here" means.
+//! guard it consults are the same two questions [`destination`]
+//! answers, so the caller and the extractor agree on what "a directory here"
+//! means.
 
 use std::path::Path;
 
@@ -16,9 +17,9 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
 use super::super::Engine;
-use super::archive::extract_archive;
-use super::destination;
-use super::stream;
+use super::extract::archive::extract_archive;
+use super::extract::destination;
+use super::extract::stream;
 use super::CpByteCounter;
 use super::CpOptions;
 
@@ -57,8 +58,9 @@ pub(in crate::engine) enum CpDestinationKind {
 /// named destination (#1736 + the call-site follow-up).
 ///
 /// `symlink_metadata` alone only answers for the last component, so the
-/// whole path goes through [`destination::destination_refusal`] first
-/// (#1764). That module also records what the check does not close.
+/// whole path goes through
+/// [`destination::destination_refusal`] first (#1764). That module
+/// also records what the check does not close.
 ///
 /// After the walk accepted the destination, the metadata is read through
 /// [`destination::destination_metadata`] so a trusted root link whose

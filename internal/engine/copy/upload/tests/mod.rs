@@ -15,7 +15,7 @@ use std::path::Path;
 
 use base64::Engine as _;
 
-use super::uploaded_entry_kind;
+use super::super::uploaded_entry_kind;
 use crate::engine::fake_podman::{self, FakePodman, FakeReply};
 use crate::engine::Engine;
 use crate::error::ComposeError;
@@ -173,12 +173,12 @@ pub(super) async fn upload(
 	entry: &str,
 	rename: Option<&str>,
 ) -> crate::error::Result<()> {
-	let packed = super::pack::pack_path_stream(
+	let packed = super::super::pack::transport::pack_path_stream(
 		src,
 		false,
 		rename,
 		false,
-		super::progress::ByteCounter::new().inner().clone(),
+		super::super::progress::ByteCounter::new().inner().clone(),
 	);
 	engine_for(fake)
 		.put_archive_verified(

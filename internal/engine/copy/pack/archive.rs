@@ -3,9 +3,9 @@
 //! [`pack_path`] is the only `cp` packer: it walks the source and appends
 //! every entry to a caller-supplied [`tar::Builder`], pushing each entry into
 //! a caller-supplied `Vec<SentEntry>` at the same time. The streaming upload
-//! path ([`super::pack::pack_path_stream`]) drives it with a writer that
+//! path ([`super::transport::pack_path_stream`]) drives it with a writer that
 //! hands bytes to a bounded channel; the archive tests drive it with a
-//! `Vec<u8>` and feed the result to [`super::verify::sent_entries`] to pin
+//! `Vec<u8>` and feed the result to [`super::super::upload::verify::sent_entries`] to pin
 //! the read-back contract. One function, one walk, no parallel packers that
 //! can drift apart while the tests stay green (#1844).
 //!
@@ -14,7 +14,7 @@
 //! bytes are gone. Keeping the recorder next to the writer means the two
 //! cannot disagree about what an entry is or what path it lives at: every
 //! entry the tar gets is one the recorder sees, in the same order, with the
-//! same kind. The parity test in [`super::pack_tests`] pins this by packing
+//! same kind. The parity test in [`super::transport::tests`] pins this by packing
 //! to a `Vec<u8>` with the recorder on, then asserting the recorder equals
 //! what `sent_entries` reads back from the same bytes.
 
@@ -24,8 +24,8 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{ComposeError, Result};
 
-use super::pack_common::{record_one, walk, KindDispatch};
-use super::verify::SentEntry;
+use super::super::upload::verify::SentEntry;
+use super::common::{record_one, walk, KindDispatch};
 
 /// Pack a host file or directory into a `tar::Builder`, recording every entry
 /// appended.
@@ -36,7 +36,7 @@ use super::verify::SentEntry;
 /// - `src`: the file or directory to copy.
 /// - `follow_link`: `-L`/`--follow-link`. Archive the symlink target's
 ///   contents instead of the link itself. Propagated into
-///   [`super::pack_common::record_one`], which classifies with `metadata()`
+///   [`super::common::record_one`], which classifies with `metadata()`
 ///   when set and writes the target as a regular file or directory (with its
 ///   own descendants walked when the target is a directory).
 /// - `name_override`: rename the top-level wrapper entry in non-`contents`
@@ -47,16 +47,16 @@ use super::verify::SentEntry;
 ///   source.
 ///
 /// `tar` is the writer side: the streaming path passes a builder over a
-/// [`super::pack::ChannelWriter`]; tests pass a builder over a `Vec<u8>`.
+/// [`super::transport::ChannelWriter`]; tests pass a builder over a `Vec<u8>`.
 /// `sent` is the recorder: every entry appended is pushed here so the
 /// post-PUT confirmation can compare the destination against what was
 /// uploaded once the bytes are gone.
 ///
-/// The recorded list matches what [`super::verify::sent_entries`] would
+/// The recorded list matches what [`super::super::upload::verify::sent_entries`] would
 /// read back from the same archive: same path, same kind, same order. The
-/// parity test in [`super::pack_tests`] asserts this on every shape the
+/// parity test in [`super::transport::tests`] asserts this on every shape the
 /// existing tests cover.
-pub(super) fn pack_path<W: Write>(
+pub(in crate::engine::copy) fn pack_path<W: Write>(
 	src: &Path,
 	follow_link: bool,
 	name_override: Option<&str>,
@@ -173,7 +173,7 @@ fn pack_contents<W: Write>(
 }
 
 /// Map an internal error to a `cp`-category `ComposeError`. Used by the
-/// shared [`super::pack_common::record_one`] helper.
+/// shared [`super::common::record_one`] helper.
 fn cp_err(msg: &str) -> ComposeError {
 	ComposeError::Copy(format!("cp: {msg}"))
 }

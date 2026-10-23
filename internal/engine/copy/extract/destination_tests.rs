@@ -16,9 +16,9 @@
 use std::path::Path;
 use std::path::PathBuf;
 
+use super::super::{cp_destination_kind, CpDestinationKind};
 #[cfg(unix)]
 use super::archive::extract_archive;
-use super::{cp_destination_kind, CpDestinationKind};
 
 /// A tree with no symlink in it, under a base that has none either. The base
 /// is canonicalised because the platform's temp directory may itself sit

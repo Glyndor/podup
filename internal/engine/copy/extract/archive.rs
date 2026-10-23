@@ -6,8 +6,8 @@
 //! docker/podman destination semantics). Kept synchronous so the guards can
 //! be unit-tested without a container.
 //!
-//! The packing leg lives in [`super::archive_pack`]; this module only owns
-//! the read-back and extraction paths.
+//! The packing leg lives in [`super::super::pack::archive`]; this module only
+//! owns the read-back and extraction paths.
 
 use std::path::Path;
 
@@ -25,7 +25,7 @@ use crate::error::{ComposeError, Result};
 ///   `.bashrc`/`authorized_keys` into the destination directory).
 /// - `dst` does not exist and the source is a directory: `dst` is created and the
 ///   source's *contents* are copied into it (matching `docker cp`).
-pub(super) fn extract_archive(tar_bytes: &[u8], dst: &Path) -> Result<()> {
+pub(in crate::engine::copy) fn extract_archive(tar_bytes: &[u8], dst: &Path) -> Result<()> {
 	// `symlink_metadata` rather than `is_dir` so a destination that is a
 	// symlink is recognised as a symlink, not the directory it points at.
 	// Following the symlink here would extract the archive into the wrong

@@ -3,7 +3,7 @@
 //! These tests drive the production function directly: the unified packer
 //! takes a `tar::Builder<W: Write>` and a recorder, so the tests build a
 //! builder over a `Vec<u8>` and read the archive back through the same API
-//! the streaming path uses. The parity tests in `pack_tests.rs` compare the
+//! the streaming path uses. The parity tests in `transport_tests.rs` compare the
 //! recorder against `sent_entries` of these bytes; the tests here check the
 //! archive shape (`pack_path_entry_names`) and the error categories.
 
@@ -15,7 +15,7 @@ use std::path::Path;
 /// `tar::Builder<W: Write>` and a recorder; the helper builds a builder over
 /// a `Vec<u8>` so the test can read the archive back and assert on its
 /// shape. The recorder is dropped — the parity check on it lives in
-/// `pack_tests.rs`.
+/// `transport_tests.rs`.
 pub(super) fn pack_to_vec(
 	src: &Path,
 	follow_link: bool,
@@ -40,7 +40,7 @@ pub(super) fn pack_to_vec(
 }
 
 /// Drive `pack_path` and return both the bytes and the recorded entry list.
-/// Drives the parity test in `pack_tests.rs` (`recorded == sent_entries` of
+/// Drives the parity test in `transport_tests.rs` (`recorded == sent_entries` of
 /// the same bytes), so every test that uses it pins that the recorder and
 /// the archive agree.
 pub(super) fn pack_with_recorder(
@@ -48,7 +48,7 @@ pub(super) fn pack_with_recorder(
 	follow_link: bool,
 	name_override: Option<&str>,
 	contents: bool,
-) -> (Vec<u8>, Vec<super::super::verify::SentEntry>) {
+) -> (Vec<u8>, Vec<crate::engine::copy::verify::SentEntry>) {
 	let mut buf = Vec::new();
 	let mut sent = Vec::new();
 	{
