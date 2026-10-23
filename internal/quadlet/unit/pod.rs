@@ -3,19 +3,19 @@
 //! Emitted alongside the `.container` units when the compose file declares
 //! `x-podman-pod: true`. The unit carries every port the pod publishes
 //! (the union of every service's `ports:`), every declared network
-//! (`Network=`) and the project ownership label; each `.container` unit
-//! references this pod by `Pod=<stem>.pod` and drops its own `PublishPort=`
-//! and `Network=` lines. The `.container` side of that contract is in
-//! `super::container::container_unit_with_mode`.
+//! (`Network=`), the fields every service agrees to share and the project
+//! ownership label; each `.container` unit references this pod by
+//! `Pod=<stem>.pod` and drops its own shared fields. The `.container` side
+//! of that contract is in `super::container::container_unit_with_mode`.
 //!
-//! Both `AddHost=` and `Label=` are routed through `PodmanArgs=` here: the
-//! first appeared in 5.3.0 and the second in 5.6.0, but the supported floor
-//! is 5.0. The same flags on the container side go the same way; see the
-//! `emit_log_config` comment in `super::container` for the same reasoning.
+//! Every promoted pod key arrived after Podman 5.0, so
+//! those values travel through `PodmanArgs=` and keep the unit loadable on
+//! the supported floor.
 
 use crate::compose::types::ComposeFile;
 use crate::ports;
 
+use super::pod_fields::PodFields;
 use super::{
 	owner_marker, quote_podman_arg_value, render_publish_port, safe_unit_stem, unit_stem,
 	QuadletUnit, Section,
@@ -24,12 +24,17 @@ use super::{
 /// Build the `.pod` unit for one project. The contents are a single
 /// `[Pod]` section with `PodName=`, one `Network=` per declared network,
 /// one `PublishPort=` per port (the union of every service's `ports:`),
-/// and one `--add-host` flag per service. Each `.container` unit references
-/// this pod by `Pod=<stem>.pod`; see [`super::container::container_unit_with_mode`].
+/// every shared field agreed by the services and one `--add-host` flag per
+/// service. Each `.container` unit references this pod by `Pod=<stem>.pod`;
+/// see [`super::container::container_unit_with_mode`].
 ///
 /// Returns `None` when the project has no pod-mode extension, so callers
 /// can splice the unit into the output list without a conditional.
-pub(crate) fn pod_unit(project: &str, file: &ComposeFile) -> Option<QuadletUnit> {
+pub(crate) fn pod_unit(
+	project: &str,
+	file: &ComposeFile,
+	pod_fields: &PodFields,
+) -> Option<QuadletUnit> {
 	if !file.podman_pod().unwrap_or(false) {
 		return None;
 	}
@@ -92,6 +97,8 @@ pub(crate) fn pod_unit(project: &str, file: &ComposeFile) -> Option<QuadletUnit>
 		pod.add("PublishPort", render_publish_port(p));
 	}
 
+	pod_fields.emit(&mut pod);
+
 	// One `<service>:127.0.0.1` per service, so a compose `db:5432` reference
 	// resolves to the shared namespace the way it resolves on a project
 	// network. The live engine builds the same map. `AddHost=` was added to
@@ -130,7 +137,7 @@ pub(crate) fn pod_unit(project: &str, file: &ComposeFile) -> Option<QuadletUnit>
 	// creates. Quadlet hard-codes `--exit-policy stop` in the command line
 	// it builds for `podman pod create`, and the native `ExitPolicy=` key
 	// needs Podman 5.6 while the floor is 5.0. `PodmanArgs=` flags are
-	// appended after it on that line, so this flag wins, and the generated
+	// appended after it on that line, so this flag wins, and the exported
 	// pod keeps running when its last service container exits. The live
 	// engine sets the same value explicitly: the API path defaults to
 	// `continue`, but that default comes from `containers.conf`

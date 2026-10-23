@@ -11,6 +11,7 @@ use super::security::{is_inline_secret, map_security_opt, render_secret};
 // the parent `QuadletUnit` type, imported here so the emitters take them from
 // `super::` rather than reaching past this module, as the sibling `unit`
 // submodules already do.
+use super::pod_fields::PodFields;
 use super::{
 	abs_against, collect_warnings, owner_marker, quote_podman_arg_value, render_command,
 	render_publish_port, render_restart, render_tmpfs_mount, render_volume, safe_unit_stem,
@@ -82,6 +83,9 @@ pub(crate) struct UnitContext<'a> {
 	/// pod carries (no warning) or something else (warning, the same one
 	/// the live `up` path emits when the project would be refused).
 	pub pod_network_mode: Option<&'a str>,
+	/// Fields agreed by every service for the project pod. A container drops a
+	/// shared value only when the pod carries it.
+	pub pod_fields: &'a PodFields,
 }
 
 /// Which `.container` shape to render. The default (`Standard`) is what
@@ -130,6 +134,7 @@ pub(crate) fn container_unit_with_mode(
 		services,
 		pod_mode,
 		pod_network_mode,
+		pod_fields,
 	} = ctx;
 	let in_pod: bool = *pod_mode;
 	let mut unit = Section::new("Unit");
@@ -151,7 +156,7 @@ pub(crate) fn container_unit_with_mode(
 	let mut container = Section::new("Container");
 	emit_identity(project, name, service, in_pod, &mut container);
 	emit_image(project, name, service, mode, &mut container);
-	emit_runtime(name, service, &mut container);
+	emit_runtime(name, service, in_pod, pod_fields, &mut container);
 	emit_ports(service, in_pod, &mut container);
 	emit_environment(service, &mut container);
 	emit_volumes(service, project, declared_volumes, &mut container);
@@ -164,9 +169,9 @@ pub(crate) fn container_unit_with_mode(
 	emit_tmpfs(service, &mut container);
 	emit_sysctls(service, &mut container);
 	emit_ulimits(service, &mut container);
-	emit_host_config(service, &mut container);
-	emit_limits(service, &mut container);
-	emit_userns(service, &mut container);
+	emit_host_config(service, in_pod, pod_fields, &mut container);
+	emit_limits(service, in_pod, pod_fields, &mut container);
+	emit_userns(service, in_pod, pod_fields, &mut container);
 	emit_stop(service, &mut container);
 	emit_network_mode(
 		name,
@@ -178,7 +183,7 @@ pub(crate) fn container_unit_with_mode(
 	);
 	emit_group_add(service, &mut container);
 	emit_expose(service, &mut container);
-	emit_network_extras(service, &mut container);
+	emit_network_extras(service, in_pod, pod_fields, &mut container);
 	emit_security_opts(service, name, &mut container, warnings);
 	emit_logging(name, service, &mut container, warnings);
 	emit_pull(service, mode, &mut container);

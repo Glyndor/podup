@@ -5,6 +5,8 @@
 use crate::compose::types::Service;
 use crate::quadlet::is_no_warn_set;
 
+use super::super::pod_fields::{PodField, PodFields};
+use super::super::shared_values::network_values;
 use super::{quote_podman_arg_value, unit_stem, Section};
 
 /// Emit a `Network=` line per declared network the service attaches to, unless
@@ -111,52 +113,44 @@ pub(super) fn emit_network_mode(
 
 /// Emit a `--network-alias` podman arg per network alias, and the first static
 /// address declared across the service's networks as `IP=`/`IP6=`.
-pub(super) fn emit_network_extras(service: &Service, container: &mut Section) {
+pub(super) fn emit_network_extras(
+	service: &Service,
+	in_pod: bool,
+	pod_fields: &PodFields,
+	container: &mut Section,
+) {
 	// `IP=`/`IP6=` are single-valued per container, so the first static address
 	// declared across the service's networks wins (Quadlet has no per-network IP
 	// scoping); a second one is reported by collect_warnings.
-	let mut static_ip: Option<&str> = None;
-	let mut static_ip6: Option<&str> = None;
-	// Emit each alias at most once: a repeated alias (within a network or across
-	// networks) would produce duplicate `--network-alias=` flags on the same
-	// argv, which podman rejects at container create.
-	let mut seen_aliases = std::collections::HashSet::new();
-	for net in service.networks.names() {
-		if let Some(cfg) = service.networks.config_for(&net) {
-			if let Some(aliases) = &cfg.aliases {
-				for alias in aliases {
-					// An empty alias would render as `--network-alias=`,
-					// which podman rejects. The native `NetworkAlias=`
-					// key omits empty values, so the podman-args route
-					// has to skip them too.
-					if alias.is_empty() {
-						continue;
-					}
-					if seen_aliases.insert(alias.clone()) {
-						// `NetworkAlias=` was added to Quadlet in Podman 5.2.0.
-						// The supported floor is 5.0, so route each alias
-						// through `PodmanArgs=` as `--network-alias`, like
-						// the other escape-hatch flags. Quoted per #1734.
-						container.add(
-							"PodmanArgs",
-							format!("--network-alias={}", quote_podman_arg_value(alias)),
-						);
-					}
-				}
+	let values = network_values(service);
+	if !(in_pod && pod_fields.owns(PodField::NetworkAlias)) {
+		for alias in &values.aliases {
+			// An empty alias would render as `--network-alias=`,
+			// which podman rejects. The native `NetworkAlias=`
+			// key omits empty values, so the podman-args route
+			// has to skip them too.
+			if alias.is_empty() {
+				continue;
 			}
-			if static_ip.is_none() {
-				static_ip = cfg.ipv4_address.as_deref();
-			}
-			if static_ip6.is_none() {
-				static_ip6 = cfg.ipv6_address.as_deref();
-			}
+			// `NetworkAlias=` was added to Quadlet in Podman 5.2.0.
+			// The supported floor is 5.0, so route each alias
+			// through `PodmanArgs=` as `--network-alias`, like
+			// the other escape-hatch flags. Quoted per #1734.
+			container.add(
+				"PodmanArgs",
+				format!("--network-alias={}", quote_podman_arg_value(alias)),
+			);
 		}
 	}
-	if let Some(ip) = static_ip {
-		container.add("IP", ip.to_string());
+	if !(in_pod && pod_fields.owns(PodField::Ip)) {
+		if let Some(ip) = values.ipv4 {
+			container.add("IP", ip);
+		}
 	}
-	if let Some(ip6) = static_ip6 {
-		container.add("IP6", ip6.to_string());
+	if !(in_pod && pod_fields.owns(PodField::Ip6)) {
+		if let Some(ip6) = values.ipv6 {
+			container.add("IP6", ip6);
+		}
 	}
 }
 

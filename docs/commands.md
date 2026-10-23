@@ -378,6 +378,8 @@ Translate the compose file into Podman Quadlet unit files: one `.container` per 
 
 Generated build services use sibling `.build` units and require Podman 5.2+. Other units support Podman 5.0; later Quadlet settings use equivalent `PodmanArgs=` flags. Generation warns when the project needs a newer version.
 
+In pod mode, shared-field warnings use `x-podman-pod: <field>: <reason>; the value stays on each container`. Reasons include service disagreement, empty or blank DNS entries, and static pod addresses without exactly one declared network. See the [pod field mapping](docker-migration.md#pod-mode-x-podman-pod-true).
+
 | Flag | Description | Default |
 |---|---|---|
 | `-o, --output <DIR>` | Directory to write the unit files into. Omit to print to stdout. | stdout |

@@ -4,14 +4,24 @@
 use crate::compose::types::Service;
 use crate::quadlet::is_no_warn_set;
 
+use super::super::pod_fields::{PodField, PodFields};
+use super::super::shared_values::hostname;
 use super::Section;
 
 /// Emit the process-level settings of the container: `HostName=`, `User=`/
 /// `Group=`, `WorkingDir=`, `ReadOnly=`, `RunInit=`, and the `privileged: true`
 /// escape hatch.
-pub(super) fn emit_runtime(name: &str, service: &Service, container: &mut Section) {
-	if let Some(hostname) = &service.hostname {
-		container.add("HostName", hostname.clone());
+pub(super) fn emit_runtime(
+	name: &str,
+	service: &Service,
+	in_pod: bool,
+	pod_fields: &PodFields,
+	container: &mut Section,
+) {
+	if !(in_pod && pod_fields.owns(PodField::HostName)) {
+		if let Some(hostname) = hostname(service) {
+			container.add("HostName", hostname.to_string());
+		}
 	}
 	if let Some(user) = &service.user {
 		// Quadlet `User=` takes a UID/username only; a `uid:gid` compose value

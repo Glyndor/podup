@@ -43,8 +43,6 @@ fn each_registered_key_resolves_to_its_release() {
 		(UnitType::Container, "StopSignal", 5, 2),
 		(UnitType::Container, "NetworkAlias", 5, 2),
 		(UnitType::Container, "AddHost", 5, 3),
-		(UnitType::Pod, "AddHost", 5, 3),
-		(UnitType::Pod, "Label", 5, 6),
 		(UnitType::Build, "Retry", 5, 5),
 		(UnitType::Build, "RetryDelay", 5, 5),
 		(UnitType::Build, "BuildArg", 5, 7),
@@ -55,6 +53,35 @@ fn each_registered_key_resolves_to_its_release() {
 			.unwrap_or_else(|| panic!("table must cover {key} on {unit_type:?}"));
 		assert_eq!(
 			(v.major, v.minor),
+			(*major, *minor),
+			"{key} on {unit_type:?} must be {major}.{minor}"
+		);
+	}
+}
+
+/// Every post-5.0 `[Pod]` key resolves to the release that introduced it.
+#[test]
+fn pod_keys_resolve_to_release() {
+	let cases: &[(UnitType, &str, u16, u16)] = &[
+		(UnitType::Pod, "NetworkAlias", 5, 2),
+		(UnitType::Pod, "AddHost", 5, 3),
+		(UnitType::Pod, "DNS", 5, 3),
+		(UnitType::Pod, "DNSOption", 5, 3),
+		(UnitType::Pod, "DNSSearch", 5, 3),
+		(UnitType::Pod, "IP", 5, 3),
+		(UnitType::Pod, "IP6", 5, 3),
+		(UnitType::Pod, "UserNS", 5, 3),
+		(UnitType::Pod, "ShmSize", 5, 4),
+		(UnitType::Pod, "HostName", 5, 5),
+		(UnitType::Pod, "Label", 5, 6),
+		(UnitType::Pod, "ExitPolicy", 5, 6),
+		(UnitType::Pod, "StopTimeout", 5, 7),
+	];
+	for (unit_type, key, major, minor) in cases {
+		let version = floor_required(*unit_type, key)
+			.unwrap_or_else(|| panic!("table must cover {key} on {unit_type:?}"));
+		assert_eq!(
+			(version.major, version.minor),
 			(*major, *minor),
 			"{key} on {unit_type:?} must be {major}.{minor}"
 		);

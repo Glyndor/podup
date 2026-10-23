@@ -16,7 +16,7 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 | Images / build | `image`, `build` (context, dockerfile, args, target, cache_from, cache_to, secrets, labels, network) |
 | Execution | `command`, `entrypoint`, `working_dir`, `user`, `platform`, `tty`, `stdin_open` |
 | Environment | `environment`, `env_file` (dotenv format), variable substitution (`${VAR:-default}`) |
-| Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `domainname`, `dns`, `dns_search`, `extra_hosts` |
+| Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `domainname`, `dns`, `dns_opt`, `dns_search`, `extra_hosts` |
 | Volumes | `volumes` (bind, named, tmpfs, npipe), `tmpfs`, `volumes_from` |
 | Secrets / configs | `secrets`, `configs` (file, inline content, environment source, and `external: true` Podman-native secrets) |
 | Dependencies | `depends_on` (with `condition:` set to `service_started`, `service_healthy` or `service_completed_successfully`) |
@@ -32,6 +32,31 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 | Metadata | `labels`, `annotations`, `container_name`, `profiles` |
 | Logging | `logging` (driver + options) |
 | Compose features | `extends`, `include`, YAML anchors, x-extensions, `develop.watch` |
+
+### Pod mode (`x-podman-pod: true`)
+
+Pod mode writes one `.pod` unit for the project. Fields that every service declares with the same value move from each `.container` unit to that shared pod unit:
+
+| Compose field | Pod unit value |
+|---|---|
+| `hostname` | `--hostname` |
+| `dns` | `--dns` |
+| `dns_opt` | `--dns-option` |
+| `dns_search` | `--dns-search` |
+| `extra_hosts` | `--add-host` |
+| `userns_mode` | `--userns` |
+| `shm_size` | `--shm-size` |
+| `networks.*.ipv4_address` | `--ip` |
+| `networks.*.ipv6_address` | `--ip6` |
+| `networks.*.aliases` | `--network-alias` |
+
+Service labels stay on every container and never become pod labels. All volumes stay on their containers, including named, bind, anonymous and long-form tmpfs mounts. The `tmpfs` field also stays container-level. Mounting a named volume on the infra container could change which image initializes its contents.
+
+If services disagree, or only some services declare the field, podup emits a warning and keeps the value on each container. It never chooses one service's value for the whole pod. DNS lists move only when every entry is nonempty and nonblank after control characters are stripped; otherwise they remain on the containers with a warning, preserving native list-reset behavior. Static IPv4 and IPv6 addresses move only when the pod attaches to exactly one declared network. With multiple networks, including unused top-level declarations, addresses remain on the containers with a warning. The native Quadlet keys added after 5.0 travel through `PodmanArgs=`, so the unit still loads on Podman 5.0.
+
+Promoted native container values, including hostname and DNS, discard boundary whitespace after control characters are stripped. Extra hosts and network aliases keep the same quoted argument values as their container emitters, including boundary spaces.
+
+The pod keeps `PodmanArgs=--exit-policy=continue`, so its infra container stays running when the last service exits. Pod-level stop timeout has no Compose source and stays unset. A service's `stop_grace_period` remains a container-level timeout.
 
 ### GPU reservations are host-dependent
 
@@ -279,6 +304,7 @@ These modeled fields parse but have no effect. The examples are not exhaustive; 
 |---|---|
 | `env_file.format` other than `dotenv` | Any explicit `env_file.format` (including dotenv) emits a warning; the file is still read as dotenv |
 | `provider:` / model-runner services (`provider`, top-level `models`) | Modeled and parsed, but not honored; a not-honored warning is emitted |
+| Configurable pod exit policy and stop timeout | The pod exit policy stays fixed at `continue`; no pod-level Compose source maps to stop timeout |
 | Real-hardware smoke tests on macOS | Pending; the code paths exist but are untested on physical Apple hardware. Windows was validated end-to-end on real hardware (Windows 11, Podman 5.8.3), including the interactive `exec`/`run` path added in 3.0.0. |
 
 Unknown keys warn rather than abort, including in modeled nested objects. Modeled unsupported fields also warn. `extra_hosts` accepts list and mapping forms.
