@@ -30,6 +30,7 @@ use crate::ports::parse_ports;
 /// the top level; and the `depends_on` graph is acyclic with no dangling
 /// required dependency. Returns the first violation found.
 pub fn validate_config(file: &ComposeFile) -> Result<()> {
+	crate::engine::build::validate_pull_fields(file)?;
 	// An empty file, a missing `services:` key, or `services: {}` is not a valid
 	// project; `docker compose config` errors with "no service selected".
 	if file.services.is_empty() {
@@ -39,6 +40,13 @@ pub fn validate_config(file: &ComposeFile) -> Result<()> {
 	}
 
 	for (name, svc) in &file.services {
+		if let Some(policy) = svc
+			.pull_policy
+			.as_deref()
+			.filter(|p| crate::engine::build::is_time_based_pull_policy(p))
+		{
+			tracing::warn!(service = %name, "{}", crate::engine::build::pull_policy_warning(policy));
+		}
 		validate_service_name(name)?;
 		if svc.image.is_none() && svc.build.is_none() {
 			return Err(ComposeError::NoImageOrBuild(name.clone()));

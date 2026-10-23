@@ -18,8 +18,10 @@ pub(in crate::engine) use names::is_remote_context;
 /// Shared with the container-create path so an `up`/`create` references the same
 /// image tag the build step produced for a build-only service.
 pub(crate) use names::primary_build_tag;
-pub(crate) use pull::pull_policy_checked;
 pub use pull::PullOptions;
+pub(crate) use pull::{
+	is_time_based_pull_policy, pull_policy_warning, validate_pull_fields, PullPolicy,
+};
 pub use push::PushOptions;
 
 use crate::compose::types::BuildConfig;
@@ -194,6 +196,7 @@ impl Engine {
 		target_services: &[String],
 		opts: &BuildOptions,
 	) -> Result<()> {
+		self.pull_preflight(file)?;
 		let names = build_target_names(file, target_services)?;
 		let images = build_image_tags(self, file, &names);
 

@@ -129,6 +129,27 @@ pub(crate) fn collect_from_file(path: &std::path::Path) -> Directives {
 	}
 }
 
+/// Preserve explicit null and reset intent for the refresh extension through typing.
+pub(crate) fn refresh_clears(raw: &Value) -> Vec<String> {
+	let Some(services) = raw.get("services").and_then(Value::as_mapping) else {
+		return Vec::new();
+	};
+	services
+		.iter()
+		.filter_map(|(name, service)| {
+			let value = service.get("pull_refresh_after")?;
+			let clear = match value {
+				Value::Null => true,
+				Value::Tagged(t) => {
+					t.tag == "!reset" || (t.tag == "!override" && t.value.is_null())
+				}
+				_ => false,
+			};
+			clear.then(|| name.as_str().map(str::to_owned)).flatten()
+		})
+		.collect()
+}
+
 #[cfg(test)]
 #[path = "tags_tests.rs"]
 mod tests;

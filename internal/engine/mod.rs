@@ -13,6 +13,7 @@ pub(crate) mod context;
 pub(crate) mod copy;
 pub(crate) mod events;
 pub(crate) mod project;
+mod pull_preflight;
 pub(crate) mod terminal;
 pub use events::EventsOptions;
 mod image;
@@ -157,6 +158,8 @@ pub struct Engine {
 	/// surface-mode listing is unaffected; `config` is the "show me what will
 	/// happen" command, where the warnings stay visible there.
 	pub(super) no_warn: bool,
+	/// Services already warned about missing last-pull tracking on this engine.
+	pull_policy_warned: std::sync::Mutex<std::collections::HashSet<String>>,
 	/// The pre-URL-encoded libpod `filters` JSON object that scopes a
 	/// container-list call to this project's `podup.project={name}` label,
 	/// plus the raw `podup.project={name}` label string. Built once per

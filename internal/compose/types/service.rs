@@ -389,9 +389,19 @@ pub struct Service {
 	pub attach: Option<bool>,
 
 	/// `pull_policy:` decides when to pull the image: `always`, `never`, `missing` (the
-	/// default; alias `if_not_present`), `build`, or `newer`.
+	/// default; alias `if_not_present`), `build`, `newer`, or one of the time-based
+	/// policies `refresh`, `daily`, `weekly` and `every_<n>[wdhms]`.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub pull_policy: Option<String>,
+
+	/// `pull_refresh_after:` is a podup extension validated as whole number/unit
+	/// pairs (`24h`, `1h30m`), at most u32::MAX seconds. It is otherwise unused
+	/// because libpod does not report when an image was last pulled.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub pull_refresh_after: Option<String>,
+	/// Raw clear intent must survive typing until all inheritance is resolved.
+	#[serde(skip)]
+	pub(crate) pull_refresh_after_reset: bool,
 
 	/// `deploy:` is the deployment config (replicas, resource limits/reservations,
 	/// restart policy); a fallback for top-level `scale`/`cpus`/`mem_limit`/
