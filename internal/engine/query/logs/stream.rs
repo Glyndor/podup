@@ -6,13 +6,13 @@
 
 use crate::libpod::{urlencoded, API_PREFIX};
 
-use super::options::LogsOptions;
-use super::Engine;
+use super::super::options::LogsOptions;
+use super::super::Engine;
 
 /// The label `logs` tags a container's lines with: the container name minus the
 /// project prefix, so `myproj-web-1` reads as `web-1`.
 ///
-/// Attached `up` already strips it this way (`inspect.rs`), so before this the
+/// Attached `up` already strips it this way (`attach.rs`), so before this the
 /// same container was tagged `myproj-web-1  | ` by one command and `web-1 | ` by
 /// the other: two shapes for one thing, in one binary. docker compose prints
 /// the short form.
@@ -121,5 +121,5 @@ impl Engine {
 }
 
 #[cfg(test)]
-#[path = "logs_stream_tests.rs"]
+#[path = "stream_tests.rs"]
 mod tests;

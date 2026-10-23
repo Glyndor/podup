@@ -1,5 +1,7 @@
 //! `exec` command: run a command inside a service container.
 
+mod interactive;
+
 use std::io::Write;
 
 use futures_util::StreamExt;
@@ -438,11 +440,9 @@ pub(crate) fn stdin_is_terminal() -> bool {
 }
 
 #[cfg(test)]
-#[path = "exec_interactive_decision_tests.rs"]
 mod interactive_decision_tests;
 
 #[cfg(test)]
-#[path = "exec_tests.rs"]
 mod tests;
 
 /// The exec create is the endpoint the #1339 drops land on most, and a lost
@@ -451,5 +451,4 @@ mod tests;
 /// measured on Podman 5.7.0, five unstarted execs leave the container running on
 /// the same pid with no extra process inside.
 #[cfg(all(test, unix))]
-#[path = "exec_create_retry_tests.rs"]
-mod exec_create_retry_tests;
+mod create_retry_tests;

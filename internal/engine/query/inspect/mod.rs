@@ -7,16 +7,24 @@
 //! in `attach.rs`; this file keeps the smaller surface that doesn't share
 //! those types.
 
+mod helpers;
+
 use futures_util::StreamExt;
 
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 
-use super::inspect_util::{
+use super::Engine;
+use helpers::{
 	dedup_preserving_order, is_running_status, parse_port_proto, process_table, select_replica,
 };
-use super::Engine;
+
+// The two pure helpers `images` and `ps` reach for: the age renderer for
+// their CREATED cells and the image-reference splitter for the `images`
+// table. Both live outside this folder, so the folder edge re-exports them
+// and a caller never has to name `helpers` to get one.
+pub(in crate::engine::query) use helpers::{humanize_age, split_repo_tag};
 
 impl Engine {
 	/// Display running processes in each service container (`docker compose top`).
@@ -338,5 +346,5 @@ fn attach_log_query() -> &'static str {
 }
 
 #[cfg(test)]
-#[path = "inspect_tests.rs"]
+#[path = "tests.rs"]
 mod tests;

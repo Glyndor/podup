@@ -10,7 +10,7 @@
 use crate::libpod::types::container::ContainerListEntry;
 use crate::units::{format_bytes, format_duration, DurationFormat, SizeFormat};
 
-use super::super::inspect_util::humanize_age;
+use super::super::inspect::humanize_age;
 
 /// Human-readable status for `ps`. Podman's libpod list endpoint leaves
 /// `Status` empty and reports the machine state in `State`, so fall back to it

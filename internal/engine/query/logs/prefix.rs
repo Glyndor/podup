@@ -129,5 +129,5 @@ impl LinePrefixer {
 }
 
 #[cfg(test)]
-#[path = "log_prefix_tests.rs"]
+#[path = "prefix_tests.rs"]
 mod tests;

@@ -241,7 +241,7 @@ fn slot_to_style(slot: usize, wide: bool) -> Style {
 /// The `pub(crate)` counterpart to [`identity_style`] for a caller that needs
 /// to resolve its *own* slot (e.g. the log-prefix module, which must never
 /// let its routing collapse into a raw per-label hash; see
-/// `engine::query::log_prefix::prefix_slot`) rather than one of the two
+/// `engine::query::logs::prefix::prefix_slot`) rather than one of the two
 /// label-keyed lookups here.
 pub(crate) fn style_for_slot(slot: usize) -> Style {
 	slot_to_style(slot, palette::wide_palette_available())

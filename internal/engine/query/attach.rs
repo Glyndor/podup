@@ -1,12 +1,12 @@
 //! Log-attach subsystem for `up`: the `attach_logs*` family and the abort path.
 //!
 //! The single-service `attach` / `attach_with_index` commands and the
-//! `attach_log_query` helper that backs them stay in `inspect.rs`; this file
-//! holds everything that follows the multi-service streams: the public
+//! `attach_log_query` helper that backs them stay in `inspect/mod.rs`; this
+//! file holds everything that follows the multi-service streams: the public
 //! `AttachOutcome` / `AttachOptions` / `AttachSummary` types, the abort
 //! plumbing (`Phase`, `StreamEnd`, `wait_for_phase`, `container_exit_code`)
 //! and the `Engine::attach_logs*` methods that produce them. Split out of
-//! `inspect.rs` so each file fits under the 500-line hard limit.
+//! `inspect/mod.rs` so each file fits under the 500-line hard limit.
 
 use futures_util::stream::FuturesUnordered;
 use futures_util::StreamExt;

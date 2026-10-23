@@ -5,7 +5,7 @@
 
 use crate::error::{ComposeError, Result};
 
-use super::options::LogsOptions;
+use super::super::options::LogsOptions;
 
 /// Validate the `--tail`/`--since`/`--until` values client-side so a typo is
 /// rejected with a clear local message instead of a raw podman HTTP 400. `tail`
@@ -88,5 +88,5 @@ pub(super) fn is_go_duration(v: &str) -> bool {
 }
 
 #[cfg(test)]
-#[path = "logs_filters_tests.rs"]
+#[path = "filters_tests.rs"]
 mod tests;
