@@ -164,7 +164,7 @@ fn the_recorder_agrees_with_what_sent_entries_reads_back() {
 	std::os::unix::fs::symlink("nowhere", payload.join("dangling")).unwrap();
 
 	let (bytes, recorded) = pack_with_recorder(&payload, false, None, false);
-	let from_archive = super::super::super::verify::sent_entries(&bytes).expect("sent_entries");
+	let from_archive = crate::engine::copy::verify::sent_entries(&bytes).expect("sent_entries");
 
 	let mut a: Vec<(String, String)> = recorded
 		.iter()

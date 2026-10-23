@@ -1,7 +1,7 @@
 //! Streaming transport for the `cp` and watch-sync packers.
 //!
 //! The packers themselves live next to where they are called from:
-//! [`super::archive_pack::pack_path`] for `cp`, and
+//! [`super::archive::pack_path`] for `cp`, and
 //! [`crate::engine::watch::sync::build_sync_tar`] for the watch sync. Both
 //! take a writer and a recorder; this module is the writer and the join of
 //! the producer task that drives the writer from a bounded channel.
@@ -24,22 +24,22 @@ use tokio::task::JoinHandle;
 
 use crate::error::ComposeError;
 
-use super::archive_pack::pack_path;
-use super::verify::SentEntry;
+use super::super::upload::verify::SentEntry;
+use super::archive::pack_path;
 
 /// Frames handed to the body stream: a tar chunk, or the terminal error that
 /// aborts the upload. The same shape the build-context stream uses so a single
 /// client helper accepts both.
-pub(super) type BodyItem = io::Result<Frame<Bytes>>;
+pub(in crate::engine::copy) type BodyItem = io::Result<Frame<Bytes>>;
 
 /// How many pending chunks the channel buffers. Bounds peak memory to about
 /// `CHUNK_BYTES * CHANNEL_CAP` regardless of source size, while still letting
 /// the blocking tar writer and the async socket writer run concurrently.
-pub(super) const CHANNEL_CAP: usize = 8;
+pub(in crate::engine::copy) const CHANNEL_CAP: usize = 8;
 
 /// Coalesce the tar writer's many small writes into ~64 KiB frames, so the
 /// body is a handful of sizeable chunks rather than thousands of tiny ones.
-pub(super) const CHUNK_BYTES: usize = 64 * 1024;
+pub(in crate::engine::copy) const CHUNK_BYTES: usize = 64 * 1024;
 
 /// A [`Write`] sink that forwards the tar bytes to an async channel as `Bytes`
 /// frames, coalescing small writes to `CHUNK_BYTES`. Blocks (backpressure)
@@ -93,12 +93,12 @@ pub(in crate::engine) struct PackedStream {
 	/// write error rather than truncating the archive silently. The stream
 	/// advances `counter` as it yields, so the `cp` progress row keeps
 	/// ticking even though the bytes are no longer buffered in `podup`.
-	pub(super) body: Pin<Box<dyn Stream<Item = BodyItem> + Send + 'static>>,
+	pub(in crate::engine::copy) body: Pin<Box<dyn Stream<Item = BodyItem> + Send + 'static>>,
 	/// The blocking pack task. Its output is `(Vec<SentEntry>, Result<()>)`:
 	/// the entries the packer recorded, and the error that should reach the
 	/// caller if packing fails (a file vanished, a permission denied), not
 	/// the generic "could not be confirmed".
-	pub(super) producer: JoinHandle<PackOutcome>,
+	pub(in crate::engine::copy) producer: JoinHandle<PackOutcome>,
 }
 
 /// What the blocking pack task yields. The `Vec<SentEntry>` is the list the
@@ -106,7 +106,7 @@ pub(in crate::engine) struct PackedStream {
 /// surface if packing fails before the PUT body finishes. `JoinHandle`
 /// errors (the task was aborted or panicked) are mapped to `ComposeError`
 /// at the call site, keeping this type the pure outcome of the work.
-pub(super) type PackOutcome = (Vec<SentEntry>, Result<(), ComposeError>);
+pub(in crate::engine::copy) type PackOutcome = (Vec<SentEntry>, Result<(), ComposeError>);
 
 /// Wrap `rx` into a stream that increments `counter` by the size of each
 /// yielded frame, so the progress row keeps advancing as bytes leave the
@@ -136,19 +136,19 @@ fn receiver_body_with_counter(
 /// assembly, and the per-entry recording on a `spawn_blocking` thread.
 ///
 /// The actual packing (walking the source, classifying entries, recording
-/// each one) lives in [`super::archive_pack::pack_path`]. This function is
+/// each one) lives in [`super::archive::pack_path`]. This function is
 /// just the transport: a [`ChannelWriter`] behind a [`tar::Builder`], a
 /// bounded channel, and the producer task that ties them together.
 ///
 /// `src`, `follow_link`, `name_override` and `contents` carry the same meaning
-/// they do for [`super::archive_pack::pack_path`]. `counter` is the shared
+/// they do for [`super::archive::pack_path`]. `counter` is the shared
 /// byte counter the body stream advances as it yields frames, so the `cp`
 /// progress row keeps ticking.
 ///
 /// The body stream closes when the producer finishes (or aborts); hyper sees
 /// a clean body end and reports `Ok` if the runtime accepted the partial
 /// archive, which the verification step then either confirms or refuses.
-pub(super) fn pack_path_stream(
+pub(in crate::engine::copy) fn pack_path_stream(
 	src: &Path,
 	follow_link: bool,
 	name_override: Option<&str>,
@@ -201,7 +201,7 @@ pub(super) fn pack_path_stream(
 
 /// As [`pack_path_stream`], but for the watch sync: the body is gzip-wrapped
 /// (libpod's archive endpoint accepts either, but the existing sync code
-/// gzipped), the entry list is recorded by the same [`super::pack_common`]
+/// gzipped), the entry list is recorded by the same [`super::common`]
 /// helpers the `cp` packer uses, and the error mapping keeps the `watch`
 /// category instead of `cp`.
 ///
@@ -275,5 +275,5 @@ fn watch_err(msg: String) -> ComposeError {
 }
 
 #[cfg(test)]
-#[path = "pack_tests.rs"]
+#[path = "transport_tests.rs"]
 mod tests;

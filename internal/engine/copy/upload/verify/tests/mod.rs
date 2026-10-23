@@ -1,8 +1,8 @@
-use super::super::archive_pack::pack_path;
 use super::{
 	entry_landed, format_landed_failure, sent_entries, LandedFailure, LinkCheck, SentEntry,
 	SentKind,
 };
+use crate::engine::copy::pack::archive::pack_path;
 use crate::libpod::client::PathStat;
 
 pub(super) fn sorted(mut sent: Vec<SentEntry>) -> Vec<(String, SentKind)> {

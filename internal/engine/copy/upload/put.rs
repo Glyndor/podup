@@ -32,19 +32,19 @@ use std::pin::Pin;
 
 use futures_util::Stream;
 
+use super::super::pack::transport::{BodyItem, PackedStream};
 use super::super::Engine;
-use super::pack::{BodyItem, PackedStream};
 use super::verify::{LandedFailure, SentKind};
-use super::{join_archive_path, verify};
+use super::{super::join_archive_path, verify};
 use crate::error::{ComposeError, Result};
 use crate::libpod::urlencoded;
 use crate::libpod::API_PREFIX;
 
 impl Engine {
-	// The two callers (`cp_to_container` in `copy.rs` and the watch sync at
-	// `internal/engine/watch/mod.rs`) live in sibling modules of `copy`, so
-	// the visibility has to reach `crate::engine` rather than the
-	// `copy::super` only.
+	// The two callers (`cp_to_container` in `to_container.rs` and the watch sync
+	// at `internal/engine/watch/mod.rs`) live in sibling modules of `copy`, so
+	// the visibility has to reach `crate::engine` rather than the `copy::super`
+	// only.
 	#[allow(clippy::too_many_arguments)]
 	pub(in crate::engine) async fn put_archive_verified(
 		&self,
@@ -239,7 +239,7 @@ pub(in crate::engine) fn archive_put_path(container: &str, dir: &str) -> String 
 /// denied / file vanished" message rather than the generic "did not land"
 /// message a truncated upload would otherwise produce.
 async fn pack_outcome(
-	producer: tokio::task::JoinHandle<super::pack::PackOutcome>,
+	producer: tokio::task::JoinHandle<super::super::pack::transport::PackOutcome>,
 ) -> Result<Vec<verify::SentEntry>> {
 	let outcome = producer
 		.await

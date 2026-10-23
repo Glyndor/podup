@@ -7,26 +7,32 @@ use crate::error::{ComposeError, Result};
 
 use super::Engine;
 
-/// Crate-private so the fuzz harness behind the `test-helpers` feature can
-/// reach `extract_tar_guarded` without widening the published API surface.
-pub(crate) mod archive;
-mod archive_pack;
-mod destination;
 mod endpoint;
+mod extract;
 mod from_container;
 mod pack;
-pub(in crate::engine) mod pack_common;
 mod progress;
-mod stream;
 mod to_container;
 pub(in crate::engine) mod upload;
-pub(in crate::engine) mod verify;
+
+/// Crate-private so the fuzz harness behind the `test-helpers` feature can
+/// reach `extract_tar_guarded` without widening the published API surface.
+#[cfg(feature = "test-helpers")]
+pub(crate) use extract::archive;
 
 /// Re-export the watch-sync packer at the engine level so the watch module
 /// (`internal/engine/watch/mod.rs`) can reach the streaming upload shape
-/// without widening the `pack` module's visibility to anything below
-/// `pub(super)`.
-pub(super) use pack::build_sync_tar_stream as build_sync_tar_stream_for_watch;
+/// without widening the transport module's visibility to anything below
+/// `pub(in crate::engine::copy)`.
+pub(super) use pack::transport::build_sync_tar_stream as build_sync_tar_stream_for_watch;
+
+/// The shared walk-and-record helpers, under the name the watch-sync packer
+/// (`internal/engine/watch/sync.rs`) imports them by.
+pub(in crate::engine) use pack::common as pack_common;
+
+/// The confirmation side of the upload, under the name the watch-sync packer
+/// imports the recorder by.
+pub(in crate::engine) use upload::verify;
 
 pub(crate) use progress::ByteCounter as CpByteCounter;
 
@@ -169,15 +175,6 @@ impl Engine {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(all(test, unix))]
-mod upload_tests;
-
-#[cfg(test)]
-mod destination_tests;
-
-#[cfg(test)]
-mod destination_trusted_tests;
 
 #[cfg(all(test, unix))]
 mod cp_progress_tests;
