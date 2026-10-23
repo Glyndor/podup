@@ -15,7 +15,7 @@ use hyper::body::Frame;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
-use super::context::{stream_build_context, stream_build_context_with_inline};
+use super::super::context::{stream_build_context, stream_build_context_with_inline};
 use crate::error::Result;
 
 /// Items handed to the request body: a data frame, or a terminal error that
@@ -33,7 +33,7 @@ const CHUNK_BYTES: usize = 64 * 1024;
 
 /// Which Dockerfile the context ships: one synthesized from an inline string, or
 /// a named file already inside the context directory.
-pub(super) enum ContextSource {
+pub(in crate::engine::build) enum ContextSource {
 	/// `build.dockerfile_inline` content.
 	Inline(String),
 	/// The resolved Dockerfile/Containerfile name within the context.
@@ -84,7 +84,7 @@ impl Write for ChannelWriter {
 /// the client sends as the request body. Await the body request first, then the
 /// producer; awaiting the producer before draining the body would deadlock on
 /// the bounded channel.
-pub(super) fn context_body(
+pub(in crate::engine::build) fn context_body(
 	context: PathBuf,
 	source: ContextSource,
 	secret_files: Vec<(String, Vec<u8>)>,

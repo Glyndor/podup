@@ -2,7 +2,7 @@ use super::*;
 
 /// Spot-check the constants and the request path used by the build
 /// endpoint. The build endpoint itself is covered by
-/// `engine::build::query_tests::build_query_carries_layers_true`;
+/// `engine::build::request::query_tests::tests::build_query_carries_layers_true`;
 /// what is pinned here is that the URL the build request is built
 /// against still points at the libpod `/build` path (a regression
 /// here would mean the compensation went to the wrong place).

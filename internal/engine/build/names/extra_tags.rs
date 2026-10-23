@@ -1,8 +1,8 @@
 //! Apply `build.tags` aliases to a freshly built image.
 //!
-//! Split out of `service.rs` so the dispatching loop there stays under
+//! Split out of `service/mod.rs` so the dispatching loop there stays under
 //! the source-line limit. The companion to
-//! [`super::Engine::build_service`]: called once a build has produced
+//! [`super::super::Engine::build_service`]: called once a build has produced
 //! its primary tag and needs every other `build.tags` entry attached
 //! to the same image.
 
@@ -11,7 +11,7 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::urlencoded;
 use crate::libpod::API_PREFIX;
 
-use super::Engine;
+use super::super::Engine;
 
 impl Engine {
 	/// Apply any `build.tags` aliases to the freshly built image.

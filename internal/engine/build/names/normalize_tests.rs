@@ -9,7 +9,7 @@
 //! function is the one decision a unit test can drive without a
 //! live socket.
 
-use crate::engine::build::normalize::match_repo_tag;
+use crate::engine::build::names::normalize::match_repo_tag;
 
 #[test]
 fn matches_when_input_tag_suffix_is_present() {

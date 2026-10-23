@@ -1,9 +1,9 @@
 //! Pure helpers for build image tagging and context classification.
 //!
-//! These free functions back [`super::Engine::build_service`]: deciding whether
-//! a build context is remote, choosing the primary image tag, and flagging
-//! build-arg names that look like secrets. They hold no engine state, so they
-//! live here apart from the build orchestration.
+//! These free functions back [`super::super::Engine::build_service`]:
+//! deciding whether a build context is remote, choosing the primary image
+//! tag, and flagging build-arg names that look like secrets. They hold no
+//! engine state, so they live here apart from the build orchestration.
 
 /// A build context is remote when it is a URL or Git reference that Podman
 /// clones server-side, rather than a local directory to tar and upload.
@@ -18,7 +18,7 @@ pub(in crate::engine) fn is_remote_context(context: &str) -> bool {
 /// image is named `{project}-{service}:latest` (project-scoped, like docker
 /// compose) so two projects sharing a service name don't overwrite each other's
 /// image. Any remaining `build.tags` are applied as extra tags by
-/// [`super::Engine::apply_extra_tags`].
+/// [`super::super::Engine::apply_extra_tags`].
 pub(crate) fn primary_build_tag(
 	project: &str,
 	service_name: &str,
@@ -38,7 +38,7 @@ pub(crate) fn primary_build_tag(
 /// warn that build args persist in the image history. Case-insensitive substring
 /// match on common secret tokens, kept conservative to avoid false positives
 /// (e.g. a bare `KEY` is not flagged; `API_KEY`/`PRIVATE_KEY` are).
-pub(super) fn looks_like_secret(name: &str) -> bool {
+pub(in crate::engine::build) fn looks_like_secret(name: &str) -> bool {
 	const MARKERS: [&str; 7] = [
 		"SECRET",
 		"PASSWORD",

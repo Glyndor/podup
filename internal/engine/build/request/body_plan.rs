@@ -1,9 +1,9 @@
 //! Decide how the build context reaches libpod: a remote `remote=` URL
 //! (no body), or a streamed context tar.
 //!
-//! Split out of `service.rs` so the dispatching loop there stays under
+//! Split out of `service/mod.rs` so the dispatching loop there stays under
 //! the source-line limit. The companion to
-//! [`super::Engine::build_service`]: the body plan, the resolved
+//! [`super::super::Engine::build_service`]: the body plan, the resolved
 //! Dockerfile name and the in-tar build secret specs come back from
 //! one call and feed straight into the `POST /libpod/build?` below.
 
@@ -12,10 +12,10 @@ use std::path::PathBuf;
 use crate::compose::types::{BuildConfig, ComposeFile, Service};
 use crate::error::{ComposeError, Result};
 
-use super::context::INLINE_DOCKERFILE_NAME;
+use super::super::context::INLINE_DOCKERFILE_NAME;
+use super::super::is_remote_context;
+use super::super::{BodyPlan, Engine};
 use super::stream::ContextSource;
-use super::tags::is_remote_context;
-use super::{BodyPlan, Engine};
 
 /// What the request body carries, plus the companion values needed
 /// to build it: the resolved Dockerfile name and the in-tar build
