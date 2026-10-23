@@ -7,14 +7,9 @@ use super::Engine;
 
 mod attach;
 mod exec;
-mod exec_interactive;
 mod images;
 mod inspect;
-mod inspect_util;
-mod log_prefix;
-mod logs_filters;
-mod logs_stream;
-mod logs_with_display;
+mod logs;
 mod options;
 mod orphans;
 mod ps;
@@ -32,9 +27,9 @@ pub use attach::{AttachOptions, AttachOutcome, AttachSummary};
 // Re-exported so callers in `engine::*` (`lifecycle/run/mod.rs`,
 // `query/attach.rs`) reach it via the same path they used when the helper
 // lived in `query/mod.rs`. The item is `pub(in crate::engine)` in
-// `logs_stream.rs`; the re-export documents the reach and keeps `mod.rs` as
+// `logs/stream.rs`; the re-export documents the reach and keeps `mod.rs` as
 // the canonical place to look for engine query commands.
-pub(super) use logs_stream::stream_broke_mid_output;
+pub(super) use logs::stream_broke_mid_output;
 
 impl Engine {
 	/// Stream logs. When `service_name` is `None`, streams from all services. When `follow` is true, tails indefinitely.

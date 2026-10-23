@@ -16,11 +16,11 @@ use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 
-use super::log_prefix::LinePrefixer;
-use super::logs_filters::validate_log_filters;
-use super::logs_stream::{display_label, log_query, stop_on_write_error, stream_broke_mid_output};
-use super::options::{LogsDisplay, LogsOptions};
-use super::Engine;
+use super::super::options::{LogsDisplay, LogsOptions};
+use super::super::Engine;
+use super::filters::validate_log_filters;
+use super::prefix::LinePrefixer;
+use super::stream::{display_label, log_query, stop_on_write_error, stream_broke_mid_output};
 
 /// Outcome of streaming one container on the sequential path.
 enum StreamOneOutcome {
@@ -430,5 +430,5 @@ impl Engine {
 }
 
 #[cfg(test)]
-#[path = "logs_with_display_tests.rs"]
+#[path = "with_display_tests.rs"]
 mod tests;

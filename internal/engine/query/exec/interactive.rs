@@ -11,7 +11,7 @@
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
-use super::Engine;
+use super::super::Engine;
 
 impl Engine {
 	/// Run an exec session with a pty and a live stdin.

@@ -11,8 +11,8 @@ use super::*;
 
 /// A `logs -f` reader that closes its pipe after one line ends podup
 /// cleanly: the next write fails with `BrokenPipe`, the follow loop stops
-/// (`stop_on_write_error` in `engine/query/mod.rs`, #1102), the streaming
-/// body is dropped with its connection, and the process exits 0.
+/// (`stop_on_write_error` in `engine/query/logs/stream.rs`, #1102), the
+/// streaming body is dropped with its connection, and the process exits 0.
 ///
 /// The container prints a line every 100 ms and never stops, so the next
 /// write after the close comes within a tick. A follow loop that ignored
