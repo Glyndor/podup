@@ -26,7 +26,7 @@ impl Engine {
 		// Teardown inverts startup: a dependent must stop before the service it
 		// depends on, so the dependency levels `up` would walk front-to-back are
 		// walked back-to-front here (the same inversion the other lifecycle
-		// commands' level walk uses, see `parallel.rs`).
+		// commands' level walk uses, see `parallel/mod.rs`).
 		levels.reverse();
 
 		// Prefetch every project container once and group by service, instead of

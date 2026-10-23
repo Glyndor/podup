@@ -55,8 +55,10 @@ mod watch;
 
 use std::path::PathBuf;
 
-use crate::compose::types::Service;
-use crate::error::{ComposeError, Result};
+/// The no-watch `Engine::watch` stub below is the only reader; the import is
+/// gated with it so a `watch` build does not carry an unused one.
+#[cfg(not(feature = "watch"))]
+use crate::error::Result;
 use crate::libpod::Client;
 
 use crate::engine::project::label::ProjectLabelParts;
@@ -174,125 +176,23 @@ impl Engine {
 }
 
 // ---------------------------------------------------------------------------
-// JSON serialisation helpers
+// Free-function helpers, one module per concern
 // ---------------------------------------------------------------------------
 
-/// Serialise `v` to a compact JSON string for embedding into a libpod query
-/// parameter or NDJSON row.
-///
-/// Six sites flow through this: five in [`build`](super::build) (`cachefrom`,
-/// `buildargs`, `labels`, `secrets`, `cacheto`) and one in
-/// [`events`](super::events) (the `--format json` event row). Each of them
-/// used to call `serde_json::to_string(...).unwrap_or_default()`, which
-/// silently emitted `""` on a serialisation failure; the empty string was
-/// then placed verbatim into the query parameter, where libpod treats it as
-/// "no value provided", so the user's args were ignored and the build ran
-/// with image defaults. The events side dropped the row and corrupted the
-/// NDJSON stream a parser was reading line-by-line (#1366).
-///
-/// `what` names the offending field in the error so the operator sees which
-/// value was rejected.
-pub(super) fn to_query_json<T: serde::Serialize>(what: &str, v: &T) -> Result<String> {
-	serde_json::to_string(v).map_err(|e| ComposeError::Build(format!("invalid {what}: {e}")))
-}
-
-/// Serialise `v` to a pretty-printed JSON string for emitting as the final
-/// `--format json` output of a list command.
-///
-/// Five sites flow through this: `ls` ([`projects::list_projects_filtered`]),
-/// `images` ([`Engine::images_with_services`]), `top`
-/// ([`Engine::top_with_options`]), `ps` ([`Engine::ps_filtered_with_display`]),
-/// and `volumes` ([`Engine::list_volumes_with_display`]). Each used to call
-/// `serde_json::to_string_pretty(...).unwrap_or_default()`, which silently
-/// emitted an empty string on a serialisation failure; the command then
-/// printed the empty string and exited 0, so a script consuming
-/// `podup <cmd> --format json` received an empty document indistinguishable
-/// from "no results" (#1444). Unlike the NDJSON path in
-/// [`to_query_json`](self)/[`events`](super::events), where one row can be
-/// dropped and the stream continue, `--format json` is the *whole* output,
-/// so a failure must propagate as an error and exit non-zero.
-///
-/// `what` names the offending field in the error so the operator sees which
-/// row or document type was rejected.
-pub(super) fn to_pretty_json<T: serde::Serialize>(what: &str, v: &T) -> Result<String> {
-	serde_json::to_string_pretty(v).map_err(|e| ComposeError::Build(format!("invalid {what}: {e}")))
-}
-
-/// Write one log frame without creating a lossy `Cow` for valid UTF-8.
-///
-/// `String::from_utf8_lossy` allocates a `Cow<String>` even on the happy path;
-/// `std::str::from_utf8` returns `&str` directly with no allocation. The
-/// lossy path is the rare one (an arbitrary byte stream from `run`/`exec`/
-/// hook output), so a single shared helper keeps the two call sites
-/// (`Engine::run` and `run_lifecycle_hook`) honest and matches the previous
-/// observable output (#1369).
-pub(crate) fn write_frame<W: std::io::Write>(out: &mut W, bytes: &[u8]) -> std::io::Result<()> {
-	match std::str::from_utf8(bytes) {
-		Ok(text) => out.write_all(text.as_bytes()),
-		Err(_) => out.write_all(String::from_utf8_lossy(bytes).as_bytes()),
-	}
-}
-
-/// Emit one `tracing::warn!` per active host-binding / privilege-escalation mode
-/// across every service in `file`.
-///
-/// The `config` command uses this to surface the active modes at the default
-/// log level (CI logs see them even when the operator never runs `up`). It is
-/// deliberately not gated on `--no-warn`; `config` is the "show me what will
-/// happen" command, where the warning is the whole point. The live
-/// `up`/`create`/`run`/`exec` paths emit the same warnings per-call but honour
-/// `--no-warn`.
-pub fn surface_host_modes(file: &crate::compose::types::ComposeFile) {
-	for (name, service) in &file.services {
-		for w in self::container::check_host_mode(name, service) {
-			tracing::warn!("{}", w.message);
-		}
-	}
-}
-
-// ---------------------------------------------------------------------------
-// Replica resolution helpers (see `project/replicas.rs`)
-// ---------------------------------------------------------------------------
-
-/// How many replicas a service declares in the file, before any `--scale` on
-/// the current invocation. Split out of [`Engine::resolve_replicas`] so a
-/// caller with no `Engine` (autostart's start mode) reads the same rule rather
-/// than restating it.
-pub(crate) fn declared_replicas(service: &Service) -> usize {
-	service
-		.scale
-		.or(service.deploy.as_ref().and_then(|d| d.replicas))
-		.unwrap_or(1) as usize
-}
-
-/// The container name a service resolves to at exactly one replica.
-///
-/// This is [`Engine::replica_names_for`] at `count == 1`, extracted so
-/// autostart's start mode names the container the engine actually created
-/// instead of spelling the rule out a second time. The two are pinned together
-/// by `naming_agrees_with_the_engine_at_one_replica`; without that test this
-/// would be a copy that drifts silently, and the unit would name a container
-/// that does not exist.
-pub(crate) fn sole_replica_name(project: &str, service_name: &str, service: &Service) -> String {
-	match &service.container_name {
-		Some(explicit) => explicit.clone(),
-		None => format!("{project}-{service_name}-1"),
-	}
-}
+mod host_modes;
+mod json;
+mod log_frame;
+mod replicas;
+pub use host_modes::surface_host_modes;
+pub(super) use json::{to_pretty_json, to_query_json};
+pub(crate) use log_frame::write_frame;
+pub(crate) use replicas::{declared_replicas, sole_replica_name};
 
 mod start_mode;
 
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
-
-#[cfg(test)]
-#[path = "to_query_json_tests.rs"]
-mod to_query_json_tests;
-
-#[cfg(test)]
-#[path = "to_pretty_json_tests.rs"]
-mod to_pretty_json_tests;
 
 #[cfg(test)]
 mod tests;

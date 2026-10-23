@@ -26,7 +26,7 @@ use crate::libpod::{urlencoded, Client, PodmanError, API_PREFIX};
 /// evidence behind it.
 ///
 /// Shared so the remaining engine-side fan-out loops (#1519, the thirteen
-/// teardown loops in `lifecycle/parallel.rs` and friends) can adopt the same
+/// teardown loops in `lifecycle/parallel/mod.rs` and friends) can adopt the same
 /// value rather than each inventing its own. The visibility is `pub(crate)`
 /// for that reason; nothing outside the crate needs to know.
 pub(crate) const MAX_RESOLVE_CONCURRENCY: usize = 8;
