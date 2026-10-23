@@ -1,3 +1,19 @@
+podup (5.11.0) unstable; urgency=medium
+
+  * rustls-webpki 0.103.16 and webpki-roots 1.0.10, which fix
+    RUSTSEC-2026-0382 and the distrusted emSign intermediates in the TLS stack
+    behind the self-update download.
+  * sha2 0.11 and ed25519-dalek 3, the signature verification stack.
+  * Building from source needs Rust 1.88 or newer (it was 1.85).
+  * The source tree is reorganised into folders by responsibility, with no
+    change to any command, option or output. Debug log targets follow the new
+    module paths: a filter such as RUST_LOG=podup::engine::copy::archive=debug
+    is now podup::engine::copy::extract::archive=debug, and the same holds for
+    the build, query, libpod client and engine::host_modes targets.
+  * libc, serde_json and tokio patch updates.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Fri, 23 Oct 2026 09:31:39 -0500
+
 podup (5.10.20) unstable; urgency=medium
 
   * rustls 0.23.46, which fixes RUSTSEC-2026-0346 to 0349 in the TLS stack
