@@ -11,7 +11,7 @@
 //! docker compose turns each such reference into an implicit `depends_on`
 //! entry when it loads the file. We do not. We compute it on demand.
 //! The reason is the `config_hash` in
-//! `internal/engine/container/resolve.rs`: it serializes the whole
+//! `internal/engine/container/resolve/hash.rs`: it serializes the whole
 //! `Service`, `depends_on` included, into the hash that drives the
 //! recreate-on-change decision. Mutating `Service::depends_on` at load
 //! time would change the hash of every existing service that uses one of

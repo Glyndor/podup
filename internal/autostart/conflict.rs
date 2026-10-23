@@ -10,7 +10,7 @@ use std::path::PathBuf;
 
 use crate::ComposeError;
 
-use super::{config_home, unit_dir, unit_file_name};
+use super::paths::{config_home, unit_dir, unit_file_name};
 
 /// Quadlet autostart units for this project, if any exist on disk. Service mode
 /// and Quadlet mode would both try to start the same stack at boot, so an

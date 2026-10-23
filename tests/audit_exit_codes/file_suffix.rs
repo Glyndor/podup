@@ -7,8 +7,8 @@
 //! non-zero: the suffix alone is not an exemption.
 //!
 //! Split out from `tests/audit_exit_codes.rs` so the parent file stays
-//! under the repository line limit; the helpers (`run`, `write_compose`)
-//! are inherited via `use super::*`.
+//! under the repository line limit; the helpers (`run`, `run_with_secret_env`,
+//! `write_compose`) are inherited via `use super::*`.
 
 use super::*;
 
@@ -251,6 +251,32 @@ fn audit_secret_in_environment_does_not_flag_non_secret_keys_ending_in_file() {
 		assert!(
 			!stdout.contains("secret_in_environment"),
 			"{key}={value} must not fire secret_in_environment: {stdout}"
+		);
+	}
+}
+
+// A `_FILE` key is judged on the value interpolation resolves to, not on
+// the `${VAR}` text: a variable holding a path stays silent, one holding
+// anything else is flagged, and an unset one resolves to the empty
+// string, which is not a path and is flagged too.
+#[test]
+fn audit_file_suffix_is_judged_on_the_interpolated_value() {
+	let body = "services:\n  db:\n    image: postgres:18-alpine\n    environment:\n      - POSTGRES_PASSWORD_FILE=${SECRETO}\n";
+	let path = write_compose(body);
+	let p = path.to_str().unwrap();
+	for (value, flagged) in [
+		(Some("/run/secrets/pg"), false),
+		(Some("./secrets/pg"), false),
+		(Some("hunter2-real-password"), true),
+		(None, true),
+	] {
+		let out = run_with_secret_env(&["-f", p, "audit", "--format", "json"], value);
+		let stdout = String::from_utf8_lossy(&out.stdout);
+		assert_eq!(
+			stdout.contains("secret_in_environment"),
+			flagged,
+			"POSTGRES_PASSWORD_FILE=${{SECRETO}} with SECRETO={value:?} must {} secret_in_environment: {stdout}",
+			if flagged { "raise" } else { "not raise" },
 		);
 	}
 }

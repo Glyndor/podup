@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use tracing::warn;
 
 use crate::engine::build::is_remote_context;
-use crate::engine::ignore_patterns::{evaluate, read_patterns};
+use crate::engine::context::ignore_patterns::{evaluate, read_patterns};
 
 use super::sync::{legacy_project_relative_ignored, legacy_project_relative_included};
 

@@ -81,12 +81,12 @@ jobs:
       # the integer under the job's. Same rule as above: raise when real
       # coverage rises, never lower to make a red build green. #1696.
       coverage-threshold: 76
-      # This number is inside the check name `rust / MSRV (1.85)`. Bumping it
+      # This number is inside the check name `rust / MSRV (1.88)`. Bumping it
       # emits `rust / MSRV (<new>)` while the ruleset still requires the old
       # string, so the PR carrying the bump blocks itself. A ruleset should
       # require the stable gate `rust / MSRV` instead, which carries no
       # version. See #1552.
-      msrv: "1.85"
+      msrv: "1.88"
       # `cargo publish --dry-run`, and podup is no longer published (#1606).
       package-check: false
       # A semver promise needs somebody to make it to. There is nobody.

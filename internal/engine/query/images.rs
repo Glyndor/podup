@@ -6,7 +6,7 @@ use crate::libpod::types::image::ImageInspect;
 use crate::libpod::{urlencoded, API_PREFIX};
 use crate::units::{format_bytes, SizeFormat};
 
-use super::inspect_util::{humanize_age, split_repo_tag};
+use super::inspect::{humanize_age, split_repo_tag};
 use super::Engine;
 
 /// How `images` renders a size: decimal units at three significant digits.

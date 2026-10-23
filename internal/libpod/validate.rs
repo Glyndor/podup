@@ -436,5 +436,4 @@ impl LabelKeys for std::collections::BTreeMap<String, String> {
 }
 
 #[cfg(test)]
-#[path = "validate_tests.rs"]
 mod tests;

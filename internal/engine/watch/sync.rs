@@ -19,9 +19,9 @@ use std::path::Path;
 
 use crate::error::{ComposeError, Result};
 
+use crate::engine::context::walk::walk_dir;
 use crate::engine::copy::pack_common::{record_one, walk, KindDispatch};
 use crate::engine::copy::verify::SentEntry;
-use crate::engine::walk::walk_dir;
 
 /// Pack `src` into a gzipped tar, storing its top-level entry under
 /// `entry_name`.
@@ -262,7 +262,6 @@ pub(in crate::engine) fn legacy_project_relative_included(path: &str, patterns: 
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[path = "sync_tests.rs"]
 mod tests;
 
 #[cfg(test)]

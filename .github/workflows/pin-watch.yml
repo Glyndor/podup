@@ -215,7 +215,7 @@ jobs:
               (".github/workflows/reusable-rust-fuzz.yml", "inputs.toolchain.default"):
                   ("nightly", "cargo-fuzz requires a nightly toolchain"),
               (".github/workflows/asset-contract.yml", "env.RUST_TOOLCHAIN"):
-                  ("msrv", "mirrors the self_test in internal/update/install.rs"),
+                  ("msrv", "mirrors the self_test in internal/update/install/self_test.rs"),
           }
 
 

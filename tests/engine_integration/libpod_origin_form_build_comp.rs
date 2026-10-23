@@ -17,7 +17,7 @@
 //!   `podman image inspect --format '{{.ManifestType}}'`.
 //!
 //! The wire-level assertion that pins the parameter itself lives in
-//! `engine::build::query_tests::build_query_carries_docker_distribution_outputformat`.
+//! `engine::build::request::query_tests::tests::build_query_carries_docker_distribution_outputformat`.
 //! Removing the `outputformat=` parameter from the build query fails
 //! the unit test (0 occurrences of the parameter where 1 is
 //! expected); it also flips this integration test from
@@ -36,7 +36,7 @@ use std::process::Command;
 /// `Using cache` on the second run, and the image's manifest type
 /// must be the docker-distribution format. The wire-level pin
 /// (the parameter itself) lives in
-/// `engine::build::query_tests::build_query_carries_docker_distribution_outputformat`;
+/// `engine::build::request::query_tests::tests::build_query_carries_docker_distribution_outputformat`;
 /// this test pins the user-visible result.
 ///
 /// The two builds run back-to-back with no teardown between them,

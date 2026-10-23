@@ -8,7 +8,7 @@ The internal Rust library supports tests; it is unpublished and has no stable AP
 
 ## Building from source
 
-From a checkout, with Rust 1.85 or newer and a C compiler and archiver (needed by `ring`):
+From a checkout, with Rust 1.88 or newer and a C compiler and archiver (needed by `ring`):
 
 ```sh
 cargo build --release

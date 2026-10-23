@@ -42,9 +42,9 @@ use std::time::Instant;
 /// the compose value by a factor of 20.
 ///
 /// Fails on the branch with the `timeout=` parameter reverted to
-/// `t=` at `internal/engine/lifecycle/commands.rs::stop_container`
+/// `t=` at `internal/engine/lifecycle/commands/stop.rs::stop_container`
 /// (the asserted `elapsed < 8s` line), and at the parallel path
-/// `internal/engine/lifecycle/parallel.rs::teardown_one_container`.
+/// `internal/engine/lifecycle/parallel/mod.rs::teardown_one_container`.
 #[tokio::test]
 async fn stop_returns_within_the_grace_window() {
 	let Some(socket) = podman_socket_url() else {
@@ -91,7 +91,7 @@ async fn stop_returns_within_the_grace_window() {
 /// second. The 2.5-second lower bound catches the libpod regression.
 ///
 /// Fails on the branch with the `timeout=` parameter reverted to
-/// `t=` at `internal/engine/lifecycle/parallel.rs::restart_one_service`
+/// `t=` at `internal/engine/lifecycle/parallel/mod.rs::restart_one_service`
 /// and `internal/engine/watch/mod.rs::watch_restart` (the asserted
 /// `elapsed >= 2.5s` line).
 #[tokio::test]
@@ -138,7 +138,7 @@ async fn restart_honours_the_grace_window() {
 /// makes the difference visible.
 ///
 /// Fails on the branch with `?timeout=` reverted to `?t=` at
-/// `internal/engine/lifecycle/parallel.rs::restart_one_service` and
+/// `internal/engine/lifecycle/parallel/mod.rs::restart_one_service` and
 /// `internal/engine/watch/mod.rs::watch_restart` (the asserted
 /// `elapsed < 8s` line).
 #[tokio::test]
@@ -260,7 +260,7 @@ async fn down_v_removes_anonymous_volumes() {
 /// behaviour the wire shape exists to keep.
 ///
 /// Fails on the branch with the follow-up `wait_after_kill` removed
-/// from `internal/engine/lifecycle/parallel.rs::kill_one_service`
+/// from `internal/engine/lifecycle/parallel/mod.rs::kill_one_service`
 /// (the asserted `state == exited` line).
 #[tokio::test]
 async fn kill_returns_only_after_the_container_is_exited() {

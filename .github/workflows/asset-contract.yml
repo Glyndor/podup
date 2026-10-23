@@ -17,7 +17,7 @@ on:
       - ".github/workflows/reusable-installer-contract.yml"
       - ".github/scripts/verify-signing-key.py"
       - ".github/scripts/sign.py"
-      - "internal/update/install.rs"
+      - "internal/update/install/**"
       - "tests/fixtures/releases/**"
   pull_request:
     branches:
@@ -36,7 +36,7 @@ on:
       - ".github/workflows/reusable-installer-contract.yml"
       - ".github/scripts/verify-signing-key.py"
       - ".github/scripts/sign.py"
-      - "internal/update/install.rs"
+      - "internal/update/install/**"
       - "tests/fixtures/releases/**"
 
 permissions:
@@ -151,7 +151,7 @@ jobs:
           pwsh -NoProfile -File tests/fixtures/releases/test.ps1
   # Version self-test in the shell installer (issue #1356). The Rust
   # `podup update` already pins the staged binary's --version to the
-  # resolved tag (internal/update/install.rs:152-205) and refuses a
+  # resolved tag (internal/update/install/self_test.rs) and refuses a
   # rollback. The shell installer path was missing the equivalent gate
   # - a CDN or transparent proxy could replay an older, *legitimately*
   # signed binary and matching SHA256SUMS and the install would accept
@@ -212,7 +212,7 @@ jobs:
       - name: Run the version-self-test PowerShell fixture
         shell: pwsh
         run: pwsh -NoProfile -File tests/fixtures/releases/version-self-test.ps1
-  # Rust reference test for the self_test in internal/update/install.rs.
+  # Rust reference test for the self_test in internal/update/install/self_test.rs.
   # Gates against the shell-side regression by pinning the canonical
   # behaviour: the shell installer mirrors this test token-for-token.
   # Installs rustup directly (dtolnay/rust-toolchain is not on the
@@ -229,7 +229,7 @@ jobs:
           persist-credentials: false
       - name: Install Rust toolchain
         env:
-          RUST_TOOLCHAIN: "1.85"
+          RUST_TOOLCHAIN: "1.88"
         run: rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
       - name: Run the install self-test
-        run: cargo test --locked -p podup install::tests::self_test
+        run: cargo test --locked -p podup install::self_test_tests::self_test

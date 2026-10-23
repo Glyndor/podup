@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::compose::types::{ComposeFile, Service, ServiceConfigRef, ServiceSecretRef};
 use crate::error::{ComposeError, Result};
 
-use super::super::staging;
+use super::super::project::lock::staging;
 use super::secret_bytes::SecretBytes;
 
 /// Podman's hard limit on secret payload size (from `containers/common`): the

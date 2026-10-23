@@ -1,0 +1,507 @@
+//! Per-socket HTTP/1.1 connection pool for the libpod client.
+//!
+//! [`Client`](super::Client) opens and reuses hyper HTTP/1.1 connections to the
+//! Podman socket (or named pipe on Windows) instead of a fresh connection per
+//! request. A 100-service `up` would otherwise pay the per-request connect +
+//! handshake cost ~600 times; the pool collapses that to one handshake per
+//! concurrent caller.
+//!
+//! The pool is keyed by socket path, so a [`Client`](super::Client) holds one
+//! pool and one pool is never shared across sockets. Two flavours of connection
+//! are kept side by side:
+//!
+//! - **Buffered connections** are pooled. Every buffered call acquires one,
+//!   uses it, and releases it on completion. A connection that observed an
+//!   error is *poisoned* and dropped instead of returned to the idle queue, so
+//!   the next acquire opens a fresh one.
+//! - **Streaming connections** are dedicated to a single stream and held for
+//!   the lifetime of that stream's body. They do not enter the buffered pool:
+//!   a stream may be long-lived (`logs -f`, an interactive `exec`), and
+//!   surrendering its socket to a buffered caller mid-stream would corrupt the
+//!   wire. The [`Client`](super::Client) tracks its in-flight streaming
+//!   connections and closes them when it is dropped.
+
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+
+use hyper::client::conn::http1;
+use hyper_util::rt::TokioIo;
+use tokio::sync::Notify;
+use tokio::task::JoinHandle;
+
+use super::stream::stream_body::ConnectionFuture;
+use super::transport::stream::SocketStream;
+use super::{BoxBody, PodmanError, Result};
+
+/// Default cap on the number of live (idle + in-use) buffered connections held
+/// to a single libpod socket. **The pool is opt-in**: a cap of `0` (the
+/// default) means "no pool", and every acquire opens a fresh connection.
+///
+/// It stays opt-in on purpose. The pool is a behaviour change that needs to
+/// be turned on deliberately, not something every fresh install silently
+/// picks up. The previous attempts to flip the default on failed because
+/// hyper advertises readiness from its WRITE side after the READ side has
+/// published body completion (`proto/h1/dispatch.rs:173-175`); on a
+/// multi-threaded runtime a caller that just finished reading the body can
+/// release the guard, reacquire it, and `send_request` before the driver
+/// has polled the WRITE side and announced readiness, which surfaces as
+/// `Canceled, "connection was not ready"` (#1758). `acquire` now awaits
+/// `SendRequest::ready()` before handing the connection out, so the call
+/// sees the same view the driver does; the four lifecycle cases that
+/// refused the pool on a real Podman socket
+/// (`up_scale_creates_replicas_and_down_removes_them`,
+/// `restart_scaled_service_all_replicas`,
+/// `depends_on_scaled_service_completed`,
+/// `top_skips_a_stopped_service_and_reports_the_rest`) close in the test
+/// harness. The default still does not move: opt in explicitly with
+/// `--connection-pool-size` or `PODUP_LIBPOD_POOL`. Tunable via
+/// [`Client::with_pool_size`](super::Client::with_pool_size).
+pub(super) const DEFAULT_POOL_SIZE: usize = 0;
+
+/// One pooled HTTP/1.1 connection.
+///
+/// `sender` is the hyper half the caller writes requests through; `driver` is
+/// the background task that pumps the underlying socket. `poisoned` is set when
+/// the caller observes an error against this connection (a failed
+/// `send_request`, a body-read error) so the next release drops it instead of
+/// handing a broken socket to the next acquirer.
+struct PooledConn {
+	// The fields are accessed through `PoolGuard` once the connection is
+	// moved out of the idle queue, which the borrow checker does not track
+	// across the `Option<PooledConn>` boundary.
+	#[allow(dead_code)]
+	sender: http1::SendRequest<BoxBody>,
+	#[allow(dead_code)]
+	driver: JoinHandle<()>,
+	#[allow(dead_code)]
+	poisoned: bool,
+}
+
+/// State shared across every clone of a [`ConnPool`].
+struct PoolInner {
+	idle: VecDeque<PooledConn>,
+	live_count: usize,
+	closed: bool,
+}
+
+/// What to do next, after [`ConnPool::acquire`] examined the pool under
+/// the lock. Three branches; each one runs outside the lock so the
+/// pool is not blocked on the I/O it has to do.
+enum AcquireStep {
+	/// Pop an idle connection and await `SendRequest::ready()` on it
+	/// before handing it out. The pool's contract used to be "guard
+	/// returned is hyper ready and reusable"; it is now "guard
+	/// returned is hyper ready and reusable, after `ready()` returns
+	/// without error" (#1758).
+	AwaitReady(PooledConn),
+	/// Open a fresh tracked connection. A slot in `live_count` was
+	/// already reserved under the lock, so the open runs outside the
+	/// lock and any failure gives the slot back.
+	Open(String),
+	/// The pool is at its cap. Open a transient connection that is
+	/// not tracked in `live_count` and not returned to the idle
+	/// queue; the cap is a hint for reuse, not a cap on concurrency.
+	OpenTransient,
+}
+
+/// Per-socket HTTP/1.1 connection pool. Cheap to clone; the state is behind
+/// `Arc`s internally.
+pub(crate) struct ConnPool {
+	socket_path: String,
+	cap: usize,
+	inner: Mutex<PoolInner>,
+	notify: Notify,
+}
+
+impl ConnPool {
+	/// Build a fresh pool bound to `socket_path` that may hold up to `cap`
+	/// concurrent buffered connections. A cap of `0` means "no pool": every
+	/// acquire opens a fresh connection and drops it on release. The cap is
+	/// a hint for reuse, not a cap on concurrency: a parallel caller that
+	/// exceeds it is not throttled.
+	pub(super) fn new(socket_path: String, cap: usize) -> Arc<Self> {
+		Arc::new(Self {
+			socket_path,
+			cap,
+			inner: Mutex::new(PoolInner {
+				idle: VecDeque::with_capacity(cap.max(1)),
+				live_count: 0,
+				closed: false,
+			}),
+			notify: Notify::new(),
+		})
+	}
+
+	/// The cap configured at construction time. The cap is immutable for the
+	/// life of the pool, so a relaxed read is sufficient.
+	pub(super) fn cap(&self) -> usize {
+		self.cap
+	}
+
+	/// Acquire a buffered connection. Three paths:
+	///
+	/// - `cap == 0` (the default, "no pool"): open a fresh connection and
+	///   return a transient guard that drops on release. This is the
+	///   pre-pool behaviour: every request opens a connection, every
+	///   release drops it.
+	/// - `cap > 0` and an idle connection is available: hand it out,
+	///   but only after awaiting `SendRequest::ready()` so the caller
+	///   is never asked to write to a connection hyper's WRITE side
+	///   has not yet announced as ready (#1758).
+	/// - `cap > 0` and no idle connection: open a fresh one and track it
+	///   in the pool. If the pool is at its cap, open a transient
+	///   connection (not tracked) instead: the cap is a hint for idle
+	///   reuse, not a cap on concurrency.
+	pub(super) async fn acquire(self: &Arc<Self>) -> Result<PoolGuard> {
+		// No-pool short-circuit. The pool is opt-in (a cap of 0 means
+		// disabled). Every acquire opens a fresh connection that is dropped
+		// on release, the previous, proven behaviour.
+		if self.cap == 0 {
+			let (sender, driver) = open_one(&self.socket_path).await?;
+			return Ok(PoolGuard {
+				conn: Some(PooledConn {
+					sender,
+					driver,
+					poisoned: false,
+				}),
+				pool: self.clone(),
+				transient: true,
+			});
+		}
+
+		loop {
+			// Register interest BEFORE checking state so a release that fires
+			// while we hold the lock cannot miss us: `Notify::notified` returns
+			// a future that latches on the first `notify_one` after it was
+			// created.
+			let waiter = self.notify.notified();
+			tokio::pin!(waiter);
+
+			// Phase 1: try to satisfy the acquire from the pool's current
+			// state, without holding the lock across an `await`. The three
+			// outcomes are encoded as `AcquireStep`: pop an idle connection
+			// and await readiness on it (the fix for #1758), open a tracked
+			// fresh connection (within cap), or open a transient one
+			// (beyond cap).
+			let step = {
+				let mut inner = self.inner.lock().unwrap();
+				if inner.closed {
+					return Err(PodmanError::Api {
+						status: 0,
+						message: "libpod connection pool is closed".into(),
+					});
+				}
+				// Discard any idle-but-poisoned connections first; they will
+				// be replaced by the next acquire that opens fresh. Doing this
+				// here, before the at-cap check, keeps the live_count honest
+				// A poisoned idle slot no longer counts against `cap`.
+				while matches!(inner.idle.front(), Some(c) if c.poisoned) {
+					inner.idle.pop_front();
+					inner.live_count -= 1;
+				}
+				if let Some(conn) = inner.idle.pop_front() {
+					AcquireStep::AwaitReady(conn)
+				} else if inner.live_count < self.cap {
+					inner.live_count += 1;
+					AcquireStep::Open(self.socket_path.clone())
+				} else {
+					AcquireStep::OpenTransient
+				}
+			};
+
+			match step {
+				AcquireStep::AwaitReady(mut conn) => {
+					// The idle connection was popped under the lock, but
+					// its readiness has to be awaited outside the lock or
+					// the pool would block every other acquirer while we
+					// wait. hyper announces readiness by polling the WRITE
+					// side after publishing body completion on the READ
+					// side (`proto/h1/dispatch.rs:173-175`); on a multi-
+					// threaded runtime the user task that just dropped the
+					// previous guard can call `send_request` before that
+					// announcement, and `can_send` returns false on the
+					// `Idle` state. Awaiting `ready()` parks us on the
+					// `Give` state until the driver calls `taker.want()`
+					// (#1758).
+					//
+					// `is_closed` is a fast path: a connection the server
+					// closed or that the driver tore down never becomes
+					// ready. Handing it out would fail the very next send;
+					// better to drop it here and let the next acquire open
+					// fresh.
+					if conn.sender.is_closed() {
+						let mut inner = self.inner.lock().unwrap();
+						inner.live_count -= 1;
+						drop(inner);
+						self.notify.notify_one();
+						continue;
+					}
+					if conn.sender.ready().await.is_err() {
+						let mut inner = self.inner.lock().unwrap();
+						inner.live_count -= 1;
+						drop(inner);
+						self.notify.notify_one();
+						continue;
+					}
+					return Ok(PoolGuard {
+						conn: Some(conn),
+						pool: self.clone(),
+						transient: false,
+					});
+				}
+				AcquireStep::Open(path) => match open_one(&path).await {
+					Ok((sender, driver)) => {
+						return Ok(PoolGuard {
+							conn: Some(PooledConn {
+								sender,
+								driver,
+								poisoned: false,
+							}),
+							pool: self.clone(),
+							transient: false,
+						});
+					}
+					Err(e) => {
+						// The open failed; give the slot back so the next
+						// acquire can try again.
+						let mut inner = self.inner.lock().unwrap();
+						inner.live_count -= 1;
+						drop(inner);
+						self.notify.notify_one();
+						return Err(e);
+					}
+				},
+				AcquireStep::OpenTransient => match open_one(&self.socket_path).await {
+					Ok((sender, driver)) => {
+						return Ok(PoolGuard {
+							conn: Some(PooledConn {
+								sender,
+								driver,
+								poisoned: false,
+							}),
+							pool: self.clone(),
+							transient: true,
+						});
+					}
+					Err(e) => {
+						// Transient open failed too. Fall through to the
+						// wait path below; a release on the pool side may
+						// free a slot before we re-check.
+						let _ = e;
+					}
+				},
+			}
+
+			// Both pool and transient paths exhausted: wait for the next
+			// release to wake us and try again.
+			waiter.as_mut().await;
+		}
+	}
+
+	/// Open a dedicated connection for a streaming call. The connection is
+	/// tracked on the pool only so the buffered half sees the pressure;
+	/// streaming callers receive their own [`StreamingConn`] regardless.
+	pub(super) async fn open_streaming(self: &Arc<Self>) -> Result<StreamingConn> {
+		{
+			let inner = self.inner.lock().unwrap();
+			if inner.closed {
+				return Err(PodmanError::Api {
+					status: 0,
+					message: "libpod connection pool is closed".into(),
+				});
+			}
+		}
+		let (sender, conn) = open_one_streaming(&self.socket_path).await?;
+		Ok(StreamingConn { sender, conn })
+	}
+
+	/// Hand a buffered connection back to the pool.
+	fn release(&self, conn: PooledConn) {
+		let mut inner = self.inner.lock().unwrap();
+		if conn.poisoned {
+			inner.live_count -= 1;
+		} else {
+			inner.idle.push_back(conn);
+		}
+		drop(inner);
+		self.notify.notify_one();
+	}
+
+	/// Reject every future acquire and clear the idle queue. In-flight
+	/// connections are released normally as their callers finish; the pool
+	/// itself drops its notification handle.
+	pub(super) fn close(&self) {
+		let mut inner = self.inner.lock().unwrap();
+		inner.closed = true;
+		inner.idle.clear();
+		drop(inner);
+		// Wake every waiter so they observe `closed` and return the error
+		// instead of sleeping forever.
+		self.notify.notify_waiters();
+	}
+}
+
+/// A buffered connection handed out to a caller. On drop the connection is
+/// either returned to the pool (healthy, not transient) or discarded
+/// (poisoned or transient).
+///
+/// `transient` is `true` when the pool was at its cap and the acquire fell
+/// through to a fresh connection that is NOT tracked in the pool's idle
+/// queue. A transient guard is dropped directly: there is no release to
+/// the pool, no count decrement, no wake-up. The cap is a hint for reuse,
+/// not a cap on concurrency: a parallel caller that exceeds it is not
+/// throttled, it just does not get to reuse an idle socket.
+pub(super) struct PoolGuard {
+	conn: Option<PooledConn>,
+	pool: Arc<ConnPool>,
+	transient: bool,
+}
+
+impl PoolGuard {
+	/// Borrow the hyper sender to issue one request.
+	pub(super) fn sender_mut(&mut self) -> &mut http1::SendRequest<BoxBody> {
+		&mut self.conn.as_mut().unwrap().sender
+	}
+
+	/// Mark this connection as broken; the next release will discard it
+	/// instead of returning it to the idle queue. Call when the
+	/// `send_request` future or the body read returned an error.
+	pub(super) fn poison(&mut self) {
+		if let Some(c) = self.conn.as_mut() {
+			c.poisoned = true;
+		}
+	}
+}
+
+impl Drop for PoolGuard {
+	fn drop(&mut self) {
+		if let Some(conn) = self.conn.take() {
+			// A transient connection was opened because the pool was at cap;
+			// it was never tracked in `live_count` and there is no slot to
+			// release into. Drop it directly. Dropping the `JoinHandle`
+			// detaches the driver task rather than aborting it; the task
+			// runs to completion once the dropped `SendRequest` signals
+			// the hyper connection to close its IO half.
+			if self.transient {
+				return;
+			}
+			self.pool.release(conn);
+		}
+	}
+}
+
+/// A dedicated connection held by a streaming call. The underlying socket is
+/// closed when this is dropped, regardless of whether the stream ended cleanly.
+pub(super) struct StreamingConn {
+	sender: http1::SendRequest<BoxBody>,
+	/// HTTP/1 connection future, kept here so dropping the connection closes
+	/// the socket by dropping the IO half. The reading task drives it inline
+	/// via the body returned by `send_streaming`, so there is no spawned driver
+	/// to abort (#1900).
+	conn: ConnectionFuture,
+}
+
+impl StreamingConn {
+	/// Take the sender and the inline-driven connection future apart so the
+	/// caller can issue the request and wrap the response body. The sender is
+	/// dropped after the request has been sent; the connection future is moved
+	/// into the [`DrivenBody`](super::stream::stream_body::DrivenBody) that
+	/// backs the response, so dropping the body closes the socket.
+	pub(super) fn into_parts(self) -> (http1::SendRequest<BoxBody>, ConnectionFuture) {
+		// The struct has no `Drop` impl, so the fields move out cleanly.
+		// Dropping the connection future drops the underlying IO, which
+		// hyper reports to Podman as a socket close.
+		(self.sender, self.conn)
+	}
+}
+
+/// Open a fresh HTTP/1.1 connection to `socket_path` and spawn the
+/// read/write driver task that pumps it.
+async fn open_one(socket_path: &str) -> Result<(http1::SendRequest<BoxBody>, JoinHandle<()>)> {
+	let stream = SocketStream::connect(socket_path).await?;
+	let io = TokioIo::new(stream);
+	let (sender, conn) = http1::handshake(io).await.map_err(PodmanError::Hyper)?;
+	let driver = tokio::spawn(async move {
+		let _ = conn.await;
+	});
+	Ok((sender, driver))
+}
+
+/// Open a fresh HTTP/1.1 connection to `socket_path` and return the driver
+/// future without spawning it, so the reading task can poll the connection in
+/// line with the body and skip the cross-task wake-up per frame (#1900).
+async fn open_one_streaming(
+	socket_path: &str,
+) -> Result<(http1::SendRequest<BoxBody>, ConnectionFuture)> {
+	let stream = SocketStream::connect(socket_path).await?;
+	let io = TokioIo::new(stream);
+	let (sender, conn) = http1::handshake(io).await.map_err(PodmanError::Hyper)?;
+	Ok((sender, Box::pin(conn) as ConnectionFuture))
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests;
+
+// ---------------------------------------------------------------------------
+// Client construction / introspection
+// ---------------------------------------------------------------------------
+//
+// These methods live here (not in `mod.rs`) so the `Client` impl block in
+// the parent module stays within the 500-line file cap. They are part of the
+// public libpod API; re-exporting them on `Client` is intentional.
+
+use super::Client;
+
+impl Client {
+	/// Default per-socket pool size used by [`Client::new`](Self::new). See
+	/// [`Client::with_pool_size`](Self::with_pool_size) to tune.
+	pub const DEFAULT_POOL_SIZE: usize = DEFAULT_POOL_SIZE;
+
+	/// Create a client bound to the given Podman socket path (or named pipe),
+	/// using the default connection pool size
+	/// ([`Client::DEFAULT_POOL_SIZE`](Self::DEFAULT_POOL_SIZE)).
+	pub fn new(socket_path: impl Into<String>) -> Self {
+		Self::with_pool_size(socket_path, Self::DEFAULT_POOL_SIZE)
+	}
+
+	/// Create a client bound to the given Podman socket path, holding up to
+	/// `pool_size` concurrent HTTP/1.1 connections for reuse. Streaming
+	/// endpoints always take a dedicated connection outside this cap.
+	///
+	/// `pool_size` is floored at 1; a zero value would deadlock the first
+	/// acquire rather than fail loud.
+	pub fn with_pool_size(socket_path: impl Into<String>, pool_size: usize) -> Self {
+		let socket_path = socket_path.into();
+		let pool = ConnPool::new(socket_path.clone(), pool_size);
+		Self { socket_path, pool }
+	}
+
+	/// The configured maximum number of live (idle + in-use) buffered
+	/// connections kept to the socket. Streaming connections are tracked on
+	/// the same socket but do not count against this cap.
+	pub fn pool_size(&self) -> usize {
+		// Exposed via the public `ConnPool` so the field stays `pub(crate)`;
+		// callers asking for the cap should not need internal access.
+		self.pool_cap()
+	}
+
+	/// Internal accessor for the pool cap. Kept separate so the public
+	/// `pool_size` does not have to expose the pool type.
+	fn pool_cap(&self) -> usize {
+		// `ConnPool::cap` is set at construction and never mutated, so a
+		// relaxed read of the field through `Arc` is sufficient.
+		self.pool.cap()
+	}
+
+	/// Test-only access to the underlying [`ConnPool`]. Lets the pool's tests
+	/// exercise `acquire` / `poison` directly without routing a real request.
+	#[cfg(any(test, feature = "test-helpers"))]
+	#[allow(dead_code)]
+	pub(crate) fn pool_for_tests(&self) -> &Arc<ConnPool> {
+		&self.pool
+	}
+}

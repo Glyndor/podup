@@ -19,7 +19,7 @@ fn table_covers_every_post_5_0_key_we_emit() {
 	// A smoke-check on the `is_floor_compliant` shape: every unit type
 	// should at least accept its own exemption (PodmanArgs) and the
 	// `.build` exemption. The real coverage check is in the floor /
-	// coverage integration tests in `floor_compat.rs`.
+	// coverage integration tests in `quadlet/tests/floor_compat/emitted_keys.rs`.
 	for unit_type in [
 		UnitType::Container,
 		UnitType::Pod,

@@ -1,6 +1,6 @@
 //! A build context holding a file with holes, uploaded to a live Podman.
 //!
-//! `internal/engine/tar_stream.rs` keeps GNU sparse entries out of the archive
+//! `internal/engine/context/tar_stream.rs` keeps GNU sparse entries out of the archive
 //! and `tests/tar_builder_single_site.rs` keeps the constructor single, but
 //! both read bytes we wrote ourselves. Neither asks Podman. This one does: it
 //! is the only test that would have caught #1775 as the user met it, an

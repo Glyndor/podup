@@ -42,7 +42,7 @@ const NOT_STABLE: &[(&str, &str, &str)] = &[
 	(
 		"asset-contract.yml",
 		"RUST_TOOLCHAIN",
-		"msrv", // mirrors the self_test in internal/update/install.rs
+		"msrv", // mirrors the self_test in internal/update/install/self_test.rs
 	),
 ];
 
@@ -224,7 +224,7 @@ fn every_msrv_copy_agrees_with_the_declared_msrv() {
 			site.value, declared,
 			"{} {} carries {:?} as a second copy of the MSRV while ci.yml \
 			 declares {declared:?}. The copy exists to mirror the self_test in \
-			 internal/update/install.rs, and nothing moves it when the floor \
+			 internal/update/install/self_test.rs, and nothing moves it when the floor \
 			 moves.",
 			site.file, site.key, site.value
 		);

@@ -10,7 +10,7 @@ use tracing_subscriber::fmt::{FmtContext, FormatEvent, FormatFields};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::EnvFilter;
 
-use crate::cli::{Cli, Commands};
+use crate::cli::{Cli, Commands, RunArgs};
 
 mod config_normalize;
 mod config_render;
@@ -23,7 +23,7 @@ pub(crate) use config_render::{render_config, ConfigOutput};
 pub(crate) fn is_mutating(command: &Commands) -> bool {
 	matches!(
 		command,
-		Commands::Up { .. }
+		Commands::Up(_)
 			| Commands::Down { .. }
 			| Commands::Start { .. }
 			| Commands::Stop { .. }
@@ -32,7 +32,7 @@ pub(crate) fn is_mutating(command: &Commands) -> bool {
 			| Commands::Kill { .. }
 			| Commands::Pause { .. }
 			| Commands::Unpause { .. }
-			| Commands::Run { .. }
+			| Commands::Run(_)
 			| Commands::Restart { .. }
 			| Commands::Scale { .. }
 			| Commands::Create { .. }
@@ -61,7 +61,7 @@ pub(crate) fn validate_project_name(project: &str) -> podup::Result<()> {
 /// file present, matching `docker compose -p NAME events`/`ps`. These commands
 /// tolerate a missing compose file at startup instead of erroring `FileNotFound`.
 pub(crate) fn is_label_only(command: &Commands) -> bool {
-	matches!(command, Commands::Events { .. } | Commands::Ps { .. })
+	matches!(command, Commands::Events(_) | Commands::Ps(_))
 }
 
 /// Canonical project URL, reused for the bug-report hint on internal errors.
@@ -172,7 +172,7 @@ pub(crate) fn init_tracing(default_level: &str) {
 /// builder instead (`Engine::with_run_overrides`).
 pub(crate) fn run_overrides_for(command: &Commands) -> podup::RunOverrides {
 	match command {
-		Commands::Run {
+		Commands::Run(RunArgs {
 			user,
 			workdir,
 			entrypoint,
@@ -181,7 +181,7 @@ pub(crate) fn run_overrides_for(command: &Commands) -> podup::RunOverrides {
 			interactive,
 			no_deps,
 			..
-		} => podup::RunOverrides::new(
+		}) => podup::RunOverrides::new(
 			user.clone(),
 			workdir.clone(),
 			entrypoint.clone(),
@@ -200,7 +200,7 @@ pub(crate) fn run_overrides_for(command: &Commands) -> podup::RunOverrides {
 /// `#[non_exhaustive]`, where a new field is a breaking change, which is what
 /// cargo-semver-checks reported when the field was tried there.
 pub(crate) fn run_no_tty_for(command: &Commands) -> bool {
-	matches!(command, Commands::Run { no_tty, .. } if *no_tty)
+	matches!(command, Commands::Run(RunArgs { no_tty, .. }) if *no_tty)
 }
 
 /// Extract the `docker compose run -l/--label KEY=VAL` ad-hoc labels for the
@@ -209,7 +209,7 @@ pub(crate) fn run_no_tty_for(command: &Commands) -> bool {
 /// stays stable across minors, mirroring `run_overrides_for`.
 pub(crate) fn run_labels_for(command: &Commands) -> Vec<String> {
 	match command {
-		Commands::Run { label, .. } => label.clone(),
+		Commands::Run(RunArgs { label, .. }) => label.clone(),
 		_ => Vec::new(),
 	}
 }
@@ -426,3 +426,13 @@ fn format_clap_error(err: &clap::error::Error) -> String {
 mod bridge_tests;
 #[cfg(test)]
 mod tests;
+
+pub(crate) mod apparmor_hint;
+#[cfg(test)]
+mod apparmor_hint_tests;
+pub(crate) mod exit_status;
+#[cfg(test)]
+mod exit_status_exit_code_tests;
+pub(crate) mod resolve;
+#[cfg(test)]
+mod resolve_tests;

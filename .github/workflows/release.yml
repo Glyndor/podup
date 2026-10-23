@@ -647,7 +647,7 @@ jobs:
           # from install.sh's own ${BASE_URL} fetches, so it covers
           # SHA256SUMS.sig too: install.sh aborts without it, and nothing
           # upstream of here ever checked it was produced.
-          python3 scripts/verify-release-assets.py \
+          python3 .github/scripts/verify-release-assets.py \
             --workdir . \
             --install-script install.sh \
             --install-ps1 install.ps1

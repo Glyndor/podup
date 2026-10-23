@@ -175,6 +175,29 @@ fn an_engine_at_the_floor_is_checked_first_and_then_used() {
 	);
 }
 
+/// Every `.rs` file under `dir`, subfolders included, as one text. The command
+/// line's entry point is a file and a folder, so the guard below reads both.
+fn rust_sources(dir: &Path) -> String {
+	let mut paths = Vec::new();
+	let mut pending = vec![dir.to_path_buf()];
+	while let Some(next) = pending.pop() {
+		for entry in fs::read_dir(&next).unwrap_or_else(|e| panic!("{}: {e}", next.display())) {
+			let path = entry.expect("directory entry").path();
+			if path.is_dir() {
+				pending.push(path);
+			} else if path.extension().is_some_and(|ext| ext == "rs") {
+				paths.push(path);
+			}
+		}
+	}
+	paths.sort();
+	paths
+		.iter()
+		.map(|path| fs::read_to_string(path).unwrap_or_else(|e| panic!("{}: {e}", path.display())))
+		.collect::<Vec<_>>()
+		.join("\n")
+}
+
 /// Every client the command line builds goes through the checked constructor.
 ///
 /// The check is one call in one function, so a new command path that connects
@@ -182,11 +205,28 @@ fn an_engine_at_the_floor_is_checked_first_and_then_used() {
 /// because the integration tests use them) would skip it and nothing else
 /// would say so. Comments are not counted: a doc comment naming the
 /// unchecked constructor is not a call.
+///
+/// The entry point is `internal/main.rs` plus everything under
+/// `internal/main_runner/`, where the command bodies live.
 #[test]
 fn every_client_the_command_line_builds_is_checked() {
 	let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-	for rel in ["internal/main.rs", "internal/autostart_cmd.rs"] {
-		let src = fs::read_to_string(root.join(rel)).unwrap_or_else(|e| panic!("{rel}: {e}"));
+	let groups = [
+		(
+			"internal/main.rs and internal/main_runner/",
+			format!(
+				"{}\n{}",
+				fs::read_to_string(root.join("internal/main.rs")).expect("internal/main.rs"),
+				rust_sources(&root.join("internal/main_runner"))
+			),
+		),
+		(
+			"internal/main_runner/autostart.rs",
+			fs::read_to_string(root.join("internal/main_runner/autostart.rs"))
+				.expect("autostart.rs"),
+		),
+	];
+	for (rel, src) in groups {
 		let code = src
 			.lines()
 			.filter(|l| !l.trim_start().starts_with("//"))

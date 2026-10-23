@@ -168,7 +168,7 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 /// `(year, month, day)`.
 ///
 /// The exact inverse of [`days_from_civil`]. This used to live in
-/// `engine::events` as half of its timestamp formatter; the two halves are one
+/// `engine::events/mod.rs` as half of its timestamp formatter; the two halves are one
 /// thing and belong next to each other, and the round-trip test between them is
 /// only honest while neither can be edited without the other in view.
 fn civil_from_days(days: i64) -> (i64, i64, i64) {

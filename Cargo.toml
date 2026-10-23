@@ -1,8 +1,8 @@
 [package]
 name = "podup"
-version = "5.10.20"
+version = "5.11.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.88"
 # podup is a binary that happens to build a library, not a library that ships a
 # binary. The `[lib]` target stays -- the integration tests in `tests/` are
 # built against it -- but it is no longer published.
@@ -42,7 +42,6 @@ exclude = [
 	"/docs",
 	"/install.ps1",
 	"/install.sh",
-	"/scripts",
 	"/tests",
 ]
 
@@ -96,8 +95,8 @@ notify = { version = "8", optional = true }
 # ureq (rustls + webpki roots) keeps static musl builds self-contained; the
 # Ed25519 signature pinned to an embedded key is the real trust anchor, not TLS.
 ureq = { version = "3", default-features = false, features = ["rustls"], optional = true }
-ed25519-dalek = { version = "2", default-features = false, features = ["std"], optional = true }
-sha2 = "0.10"
+ed25519-dalek = { version = "3", default-features = false, optional = true }
+sha2 = "0.11"
 base64 = "0.23"
 
 [target.'cfg(unix)'.dependencies]

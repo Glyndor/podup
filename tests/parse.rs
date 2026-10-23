@@ -1,10 +1,10 @@
 #[path = "parse/anchors.rs"]
 mod anchors;
-#[path = "parse/basic.rs"]
+#[path = "parse/basic/mod.rs"]
 mod basic;
 #[path = "parse/coverage.rs"]
 mod coverage;
-#[path = "parse/extends.rs"]
+#[path = "parse/extends/mod.rs"]
 mod extends;
 #[path = "parse/fields.rs"]
 mod fields;
