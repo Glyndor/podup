@@ -37,6 +37,10 @@ Translate the compose file into Podman Quadlet unit files: one `.container` per 
 
 Exported build services use sibling `.build` units and require Podman 5.2+. Other units support Podman 5.0; later Quadlet settings use equivalent `PodmanArgs=` flags. Generation warns when the project needs a newer version.
 
+The `.build` unit carries the compose `build:` fields. `context` and `dockerfile` become `SetWorkingDirectory=` and `File=`, `target` becomes `Target=`, `network` becomes `Network=`, `labels` become `Label=`, `args` become `PodmanArgs=--build-arg`, `pull` becomes `Pull=`, `platforms` become `Arch=` and `Variant=` (the section carries one pair, so only the first platform is exported), and `secrets` become `Secret=` (a top-level secret with a `file:` source, which is what `podman build --secret` reads). The fields with no `[Build]` key of their own travel as `PodmanArgs=` flags: `cache_from` and `cache_to` (with `--layers`, which buildah requires before it honours them), `no_cache`, `shm_size`, `extra_hosts`, `tags`, `additional_contexts`, `ssh`, `ulimits` and `isolation`. The remaining ones (`privileged`, `entitlements`, `provenance`, `sbom`) have no `podman build` equivalent and are reported, like every other field the export cannot carry.
+
+A value the flag cannot take is reported instead of being passed through: an `additional_contexts` entry that names a service (`service:other`) instead of pointing at a path or a URL, a `ulimits` name outside the Linux rlimit set, an `isolation` that is not one of the buildah isolation types (`oci`, `rootless`, `chroot`), and a `secrets` entry whose id or path holds a comma (the `Secret=` value is a comma-separated option list).
+
 In pod mode, shared-field warnings use `x-podman-pod: <field>: <reason>; the value stays on each container`. Reasons include service disagreement, empty or blank DNS entries, and static pod addresses without exactly one declared network. See the [pod field mapping](docker-migration.md#pod-mode-x-podman-pod-true).
 
 | Flag | Description | Default |
