@@ -259,8 +259,15 @@ pub(super) fn quote_podman_arg_value(value: &str) -> String {
 /// list): an unquoted space would split a single value into a truncated value
 /// plus bogus extra entries, so such values are quoted when they contain
 /// whitespace.
+///
+/// `Secret` belongs to the set because Quadlet reads it the same way: it takes
+/// the value apart with an exec-like split, so a secret whose path holds a
+/// space would reach `podman` as two `--secret` flags, each one broken.
 fn key_is_word_split(key: &str) -> bool {
-	matches!(key, "Environment" | "Label" | "Annotation" | "Sysctl")
+	matches!(
+		key,
+		"Environment" | "Label" | "Annotation" | "Sysctl" | "Secret"
+	)
 }
 
 /// Keys whose value is an argument line we render (and quote) ourselves

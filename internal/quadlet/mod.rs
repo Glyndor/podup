@@ -374,7 +374,14 @@ fn generate_with_mode(
 	for (name, service) in &file.services {
 		// Emit a `.build` unit first so the systemd generator builds the image
 		// before the container that references it via `Image=<stem>.build`.
-		if let Some(unit) = build_unit(name, project, service, base_dir, &mut out.warnings) {
+		if let Some(unit) = build_unit(
+			name,
+			project,
+			service,
+			base_dir,
+			&file.secrets,
+			&mut out.warnings,
+		) {
 			out.units.push(unit);
 			build_units_emitted += 1;
 		}

@@ -82,6 +82,7 @@ fn source_inventory_lists_every_emitted_key() {
 	// when the parser cannot resolve a variable.
 	let files: &[(&str, UnitType)] = &[
 		("build.rs", UnitType::Build),
+		("build_fields.rs", UnitType::Build),
 		("container", UnitType::Container),
 		("health.rs", UnitType::Container),
 		("network.rs", UnitType::Network),
@@ -94,6 +95,7 @@ fn source_inventory_lists_every_emitted_key() {
 	for (filename, unit_type) in files {
 		let source: String = match *filename {
 			"build.rs" => include_str!("../../unit/build.rs").to_string(),
+			"build_fields.rs" => include_str!("../../unit/build_fields.rs").to_string(),
 			"container" => container_sources(),
 			"health.rs" => include_str!("../../unit/health.rs").to_string(),
 			"network.rs" => include_str!("../../unit/network.rs").to_string(),
