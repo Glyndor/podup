@@ -4,3 +4,5 @@
 mod emitted_keys;
 mod empty_values;
 mod source_inventory;
+
+mod umask_tests;

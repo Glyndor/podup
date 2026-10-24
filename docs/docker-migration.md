@@ -14,7 +14,7 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 | Category | Keys |
 |---|---|
 | Images / build | `image`, `build` (context, dockerfile, args, target, cache_from, cache_to, secrets, labels, network) |
-| Execution | `command`, `entrypoint`, `working_dir`, `user`, `platform`, `tty`, `stdin_open` |
+| Execution | `command`, `entrypoint`, `working_dir`, `user`, `umask`, `platform`, `tty`, `stdin_open` |
 | Environment | `environment`, `env_file` (dotenv format), variable substitution (`${VAR:-default}`) |
 | Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `domainname`, `dns`, `dns_opt`, `dns_search`, `extra_hosts` |
 | Volumes | `volumes` (bind, named, tmpfs, npipe), `tmpfs`, `volumes_from` |
@@ -32,6 +32,8 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 | Metadata | `labels`, `annotations`, `container_name`, `profiles` |
 | Logging | `logging` (driver + options) |
 | Compose features | `extends`, `include`, YAML anchors, x-extensions, `develop.watch` |
+
+`umask` sets the initial process permission mask. Use a string of one to four octal digits, such as `"0022"`, `"022"` or `"22"` (range `0000` to `7777`). Only integer `0` is accepted; quote every other numeric value to avoid YAML radix ambiguity. Validation follows normal interpolation and refuses leftover variables with the service name and a quote hint before container or pod replacement. Normal interpolation can turn numeric text into a YAML integer, so use a leading-zero value such as `0022`. With `config --no-interpolate`, a placeholder in `umask` is refused because the typed field still requires a valid mask. Valid output is padded to four digits. Omitted or null leaves the runtime default; explicit zero sends `"0000"` and masks no permission bits. The quadlet export uses `PodmanArgs=--umask=<value>`, compatible with Podman 5.0. Scalar inheritance, `!reset` and `!override` apply. Explicit `umask: null` changes the configuration hash once on upgrade because the previously unknown null key is now omitted. Tagged placeholders and external extends flag propagation have existing interpolation limitations; unresolved masks fail validation.
 
 ### Pod mode (`x-podman-pod: true`)
 

@@ -56,8 +56,17 @@ pub(super) fn deserialize_with_merge_interp(
 	// the field's Rust type, so leaving them in makes `!reset` fail the file on
 	// `dns` and do nothing on `ports`. What each tag means is decided by the
 	// merge (see `compose::tags`), not by which type happens to be behind a key.
+	let directives = super::tags::collect(&value);
 	super::tags::strip(&mut value);
-	let file: ComposeFile = serde_yaml::from_value(value)?;
+	super::types::service::service_umask::apply_resets(&mut value, &directives);
+	super::types::service::service_umask::validate(&value)?;
+	let mut file: ComposeFile = serde_yaml::from_value(value)?;
+	for (name, service) in &mut file.services {
+		service.umask_merge_tag = directives
+			.get(name)
+			.and_then(|keys| keys.get("umask"))
+			.copied();
+	}
 	Ok(file)
 }
 
@@ -74,7 +83,9 @@ pub(super) fn interpolated_value(
 ) -> Result<serde_yaml::Value> {
 	guard_flow_depth(content)?;
 	guard_alias_expansion(content)?;
-	let mut value: serde_yaml::Value = serde_yaml::from_str(content)?;
+	let mut value: serde_yaml::Value = serde_yaml::from_str(content).map_err(|error| {
+		super::types::service::service_umask::number_error(content).unwrap_or(error.into())
+	})?;
 	if let Some(vars) = vars {
 		// One budget for the whole document. The per-scalar cap cannot see
 		// repetition spread across scalars, which is the shape that reached

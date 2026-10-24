@@ -92,3 +92,6 @@ impl Drop for Client {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod preflight;

@@ -181,6 +181,10 @@ pub(crate) fn build_spec_generator(
 		terminal: service.tty,
 		stdin: service.stdin_open,
 		user: service.user.clone(),
+		umask: service
+			.umask
+			.as_deref()
+			.map(crate::compose::types::service::service_umask::normalized),
 		work_dir: service.working_dir.clone(),
 		stop_signal,
 		stop_timeout,
@@ -252,3 +256,7 @@ pub(crate) fn build_spec_generator(
 #[cfg(test)]
 #[path = "userns_tests.rs"]
 mod userns_tests;
+
+#[cfg(test)]
+#[path = "spec_umask_tests.rs"]
+mod spec_umask_tests;

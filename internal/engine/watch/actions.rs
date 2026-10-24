@@ -223,6 +223,9 @@ impl Engine {
 			Some(s) => s,
 			None => return Ok(()),
 		};
+		if let Some(text) = service.umask.as_deref() {
+			crate::compose::types::service::service_umask::validate_runtime(service_name, text)?;
+		}
 		info!("rebuilding {service_name}");
 		self.build_service(
 			service_name,
@@ -330,3 +333,7 @@ impl Engine {
 		Ok(())
 	}
 }
+
+#[cfg(test)]
+#[path = "actions_umask_tests.rs"]
+mod actions_umask_tests;
