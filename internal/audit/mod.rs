@@ -23,14 +23,25 @@ mod checks;
 /// is stable across releases).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
-	/// Service name (the compose key, not the container name). Stable
-	/// across reloads; the audit table sorts by this.
+	/// The name of the container the finding is about: the compose key for a
+	/// service, `<service>/pre_start[i]` for an init step. Stable across
+	/// reloads; the audit table sorts by this.
 	pub service: String,
 	/// Stable snake_case check id (`privileged`, `host_namespace`, …).
 	pub check: &'static str,
 	/// One-line human-readable explanation. Printed after the table row and
 	/// emitted as the `reason` field in `--format json`.
 	pub reason: String,
+}
+
+/// One container the audit walked: a service, or one of its init steps.
+#[derive(Debug, Clone)]
+pub struct AuditedContainer {
+	/// The name the container is reported under: the compose key for a
+	/// service, `<service>/pre_start[i]` for an init step.
+	pub name: String,
+	/// The container specification the checks ran against.
+	pub service: Service,
 }
 
 /// What the audit walked: the file's services sorted by service name, and
@@ -47,31 +58,32 @@ impl AuditReport {
 		!self.findings.is_empty()
 	}
 
-	/// Group every finding by service name, preserving the service order
+	/// Group every finding by container name, preserving the container order
 	/// ([`audit_file`] visits the services in YAML order). The findings
 	/// inside each group stay as refs into `self` so the renderer can pull
 	/// the check id and reason without cloning.
 	fn by_service<'a, 'b>(
 		&'a self,
-		services: &'b [(&str, &Service)],
+		containers: &'b [AuditedContainer],
 	) -> Vec<(&'b str, Vec<&'a Finding>)> {
-		let mut out = Vec::with_capacity(services.len());
-		for (name, _) in services {
+		let mut out = Vec::with_capacity(containers.len());
+		for container in containers {
 			let mine: Vec<&'a Finding> = self
 				.findings
 				.iter()
-				.filter(|f| f.service == *name)
+				.filter(|f| f.service == container.name)
 				.collect();
-			out.push((*name, mine));
+			out.push((container.name.as_str(), mine));
 		}
 		out
 	}
 }
 
-/// Run every check against every service in `file`, returning the
-/// accumulated findings. Services are visited in the order they appear in
+/// Run every check against every container in `file`, returning the
+/// accumulated findings. Containers are visited in the order they appear in
 /// [`ComposeFile::services`] (insertion order, which the parser preserves from
-/// the YAML). A service with no findings contributes nothing to the report.
+/// the YAML), and each service is followed by its init steps. A container
+/// with no findings contributes nothing to the report.
 ///
 /// `opt_in` is the slice of opt-in flag names the CLI has enabled on
 /// this run (`#1881`). An entry whose registry `opt_in` is `None`
@@ -85,23 +97,39 @@ impl AuditReport {
 /// into whichever renderer matches `--format`.
 pub fn audit_file(file: &ComposeFile, opt_in: &[&'static str]) -> AuditReport {
 	let mut report = AuditReport::default();
-	for (name, service) in &file.services {
-		let findings = checks::run_checks(name, service, file, opt_in);
+	for container in audited_containers(file) {
+		let findings = checks::run_checks(&container.name, &container.service, file, opt_in);
 		report.findings.extend(findings);
 	}
 	report
 }
 
-/// Snapshot of `file.services` as an ordered slice of `(name, &service)`
-/// pairs in YAML order. Used by the table renderer so every row is in the
-/// same order the YAML declared (insertion order in the underlying
-/// `IndexMap`); `IndexMap::iter` already gives that, the slice form just
-/// keeps the borrow checker happy at the call site.
-pub fn ordered_services(file: &ComposeFile) -> Vec<(&str, &Service)> {
-	file.services.iter().map(|(k, v)| (k.as_str(), v)).collect()
+/// Every container a compose file brings up, in declaration order: each
+/// service, then the init steps of that service.
+///
+/// An init step is a container of its own and the audit reports on
+/// containers: a step that asks for `privileged: true` or mounts a host
+/// path is a finding about that step, not about the service it belongs to.
+/// The step is the effective one, the service's fields completed by the
+/// step's, because that is the container that runs.
+pub fn audited_containers(file: &ComposeFile) -> Vec<AuditedContainer> {
+	let mut out = Vec::new();
+	for (name, service) in &file.services {
+		out.push(AuditedContainer {
+			name: name.clone(),
+			service: service.clone(),
+		});
+		for (step_name, step) in podup::compose::pre_start::effective_steps(name, service) {
+			out.push(AuditedContainer {
+				name: step_name,
+				service: step,
+			});
+		}
+	}
+	out
 }
 
-/// Render `report` for `services` in `table` form to stdout.
+/// Render `report` for `containers` in `table` form to stdout.
 ///
 /// Layout: header `SERVICE FINDINGS`, one row per service with the check ids
 /// joined by single spaces (or `-` when there are none), then one line per
@@ -115,10 +143,10 @@ pub fn ordered_services(file: &ComposeFile) -> Vec<(&str, &Service)> {
 /// a malicious compose file injects raw ESC bytes into the operator's
 /// terminal, and the bytes survive a pipe because `println!` is just a
 /// byte stream.
-pub fn render_table(services: &[(&str, &Service)], report: &AuditReport) {
+pub fn render_table(containers: &[AuditedContainer], report: &AuditReport) {
 	let stdout = io::stdout();
 	let mut out = stdout.lock();
-	let _ = render_table_to(&mut out, services, report);
+	let _ = render_table_to(&mut out, containers, report);
 }
 
 /// [`render_table`] writing to `w`, factored out so tests can capture the
@@ -127,11 +155,11 @@ pub fn render_table(services: &[(&str, &Service)], report: &AuditReport) {
 /// of audit output goes through the same gate.
 pub fn render_table_to<W: Write>(
 	w: &mut W,
-	services: &[(&str, &Service)],
+	containers: &[AuditedContainer],
 	report: &AuditReport,
 ) -> io::Result<()> {
 	let mut table = podup::ui::Table::new(&["SERVICE", "FINDINGS"]);
-	for (name, mine) in report.by_service(services) {
+	for (name, mine) in report.by_service(containers) {
 		let findings = if mine.is_empty() {
 			"-".to_string()
 		} else {
@@ -260,6 +288,9 @@ pub fn render_list_checks_json_to<W: Write>(w: &mut W) -> io::Result<()> {
 #[cfg(test)]
 #[path = "list_checks_tests.rs"]
 mod list_checks_tests;
+#[cfg(test)]
+#[path = "pre_start_tests.rs"]
+mod pre_start_tests;
 #[cfg(test)]
 #[path = "audit_tests.rs"]
 mod tests;

@@ -36,6 +36,12 @@ podup [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS] [SERVICE...]
 
 ## Lifecycle
 
+`pre_start` runs one ephemeral init container per step, in list order, before the service container is created by `up`, `run` or `create`. Unset fields inherit from the service; collections are completed and explicit scalars replace inherited values. Each step must exit zero before the next step or the service proceeds. Failure names the service and step number (for example, `service 'web': pre_start step 1: exited with code 7`), blocks dependents and removes the init container. Init containers are removed after success too, regardless of `run --no-rm`. Restart policies and service lifecycle lists do not repeat init work. Steps inherit neither ports/expose nor static IP/MAC addresses; explicit step values are kept. Steps without their own image or build reuse the service image. A step that declares its own image does not inherit the service's build, and a step that declares its own build does not inherit the service's image: the step is pulled or built on its own. The one-off settings of a `run` (its command, `--entrypoint`, terminal, ad-hoc mounts and ad-hoc labels) describe the throwaway container and never reach the init steps; the user, working directory and environment do. A failed init leaves the previous service running. An already-running service is left alone; `up` runs init steps before starting an existing stopped service.
+
+`create` runs init steps to completion but leaves the service container stopped. Quadlet export warns that `pre_start` is not exported: `ExecStartPre=` cannot represent a separate container per step.
+
+`podup audit` walks the init steps too: each step is a container of its own and is reported under `<service>/pre_start[i]`, so a step that asks for `privileged: true` or mounts a host path is a finding about that step.
+
 ### `up`
 Create and start all services (or only the named ones, plus their transitive `depends_on`). Accepts a trailing service list.
 
@@ -352,297 +358,40 @@ Export a service container's filesystem as a tar archive.
 
 ## Images
 
-### `pull [SERVICE...]`
-Pull images for the named services, or all services if none are given.
-
-| Flag | Description | Default |
-|---|---|---|
-| `-q, --quiet` | Suppress image-pull progress output. | off |
-| `--ignore-pull-failures` | Continue pulling the remaining services after a failure. | off |
-| `--include-deps` | Also pull images for the named services' `depends_on` services. | off |
-| `--policy <POLICY>` | Pull policy, overriding per-service `pull_policy`: `always`, `missing`, `never`, `newer`, `build`. | per service |
-
-Service `pull_policy` values `daily`, `weekly`, `every_<n>[wdhms]` and the podup extension `refresh` map to `newer`, including Quadlet `Pull=newer`. Podup checks the registry and keeps the local image when current, potentially using more network than the interval implies. It emits one warning per service: `pull_policy "<value>" is treated as "newer": podup does not track when an image was last pulled`.
-
-Warnings name the effective policy after an engine override. Fixed overrides and registry autoupdate suppress the time-policy warning. Build services use or build their local image; Quadlet prebuilt services use `Pull=never` and emit no time-policy warning.
-
-The podup extension `pull_refresh_after` is an optional string, validated and otherwise unused, with no extra warning for `refresh` and no warning under fixed policies. The accepted grammar is `([0-9]+[wdhms])+`, or `every_([0-9]+[wdhms])+` for a policy, using ASCII digits and lowercase units with a checked total of at most 4294967295 seconds. Empty numbers, malformed values, fractions, subsecond units, signs, whitespace and overflow are refused with the service, value and accepted values. `up`, `run`, `create`, `pull`, `build`, standalone `watch`, watch rebuilds and pod recreation validate before mutation; `config` and the Quadlet export gate validate too. `config --no-interpolate` also validates these two fields strictly and refuses unresolved variables. CLI policy options retain the fixed choices in the table above.
-
-
-### `push [SERVICE...]`
-Push each service's `image:` to its registry. Credentials come from Podman's auth file (`podman login`).
-
-| Flag | Description | Default |
-|---|---|---|
-| `-q, --quiet` | Suppress the push progress output. | off |
-| `--ignore-push-failures` | Continue after a failure. | off |
-| `--tls-verify <BOOL>` | Verify the registry TLS cert; `false` allows an insecure/HTTP registry. | Podman default |
+<a id="pull-service"></a><a id="push-service"></a>[Open this section](commands-reference.md#images).
 
 ## Generate
 
-### `generate quadlet`
-Translate the compose file into Podman Quadlet unit files: one `.container` per service plus `.network` and `.volume` units. `gen` is an alias.
-
-Generated build services use sibling `.build` units and require Podman 5.2+. Other units support Podman 5.0; later Quadlet settings use equivalent `PodmanArgs=` flags. Generation warns when the project needs a newer version.
-
-In pod mode, shared-field warnings use `x-podman-pod: <field>: <reason>; the value stays on each container`. Reasons include service disagreement, empty or blank DNS entries, and static pod addresses without exactly one declared network. See the [pod field mapping](docker-migration.md#pod-mode-x-podman-pod-true).
-
-| Flag | Description | Default |
-|---|---|---|
-| `-o, --output <DIR>` | Directory to write the unit files into. Omit to print to stdout. | stdout |
-
-```bash
-podup generate quadlet -o ~/.config/containers/systemd
-```
-
-Quadlet units are consumed by systemd, so they only run on Linux.
+<a id="generate-quadlet"></a>[Open this section](commands-reference.md#generate).
 
 ## Watch
 
-### `watch`
-Watch for file changes and react per each service's `develop.watch` rules. (`up --watch` does the same after starting the stack.) Actions: `sync`, `rebuild`, `restart`, `sync+restart`, `sync+exec`.
-
-Patterns use `.dockerignore` syntax. Context ignore files match paths relative to the build context; rule include/ignore patterns match relative to the rule's path, with last match winning. Legacy project-relative patterns may apply when no rule pattern matches, with a warning; fallback never overrides a re-include.
-
-Sync copies paths that exist and removes deleted ones; watching starts before initial sync. Copies into a writable bind of the watched path are skipped with a warning, while more-specific mounts and restart/exec actions still apply. Symlinks remain links; file-to-directory replacements remain directories.
-
-On queue overflow, watch resyncs `initial_sync` rules and warns about work it could not replay. Save those files again to retry.
+<a id="watch"></a>[Open this section](commands-reference.md#watch).
 
 ## Maintenance
 
-### `config`
-Print the resolved compose file (after substitution, extends, include, and `env_file`). `convert` is an alias.
-
-`config` folds `env_file` into `environment`. Later files win; `environment` overrides them. Bare keys remain valueless for host inheritance.
-
-| Flag | Description | Default |
-|---|---|---|
-| `--format <FMT>` | `yaml` or `json`. | `yaml` |
-| `--services` | List service names, one per line. | off |
-| `--volumes` | List named volumes, one per line. | off |
-| `--images` | List the images services use, one per line. | off |
-| `--profiles` | List the profiles the file declares, one per line. | off |
-| `--hash <SERVICES>` | Print a stable per-service config hash for the given comma-separated services, or `'*'` for all. | none |
-| `--no-normalize` | Accepted for compatibility; `config` always emits the normalized form. | off |
-| `-q, --quiet` | Only validate; print nothing. | off |
-| `--no-interpolate` | Leave `${VAR}` placeholders literal; pull policy fields still require valid resolved values. | off |
-| `--resolve-image-digests` | Rewrite each service `image:` to its registry digest. | off |
-
-`config --resolve-image-digests` and `autostart uninstall --purge` also contact Podman.
-
-### `audit`
-Print one row per service listing every hardening gap the compose file leaves open. Read-only; never contacts Podman or changes runtime behavior.
-
-Default output is a table. Services without findings show `-`; a project with no findings prints `no findings`. `--format json` emits a findings array (empty as `[]`). `--strict` exits 1 when findings are present, 0 otherwise.
-
-```sh
-podup audit --list-checks --format json | jq -r '.checks[].id'
-```
-
-`--list-checks` lists this build's checks without loading Compose. It conflicts with `--strict`/`--wildcard-binds`. `port_published_on_wildcard` is opt-in.
-
-| Check id | Fires when | Notes |
-|---|---|---|
-| `privileged` | `privileged: true` | Grants extended host privileges; under rootless Podman reduced but never incidental. |
-| `host_namespace` | `network_mode: host`, or `pid`/`ipc`/`uts`/`cgroup`/`userns_mode: host` | One finding per active mode. |
-| `dangerous_capability` | `cap_add` carries a capability from the dangerous list | The list includes `SYS_ADMIN`, `ALL`, `SYS_MODULE`, `DAC_READ_SEARCH`, `SYS_RAWIO`, `SYS_PTRACE`, `NET_ADMIN`, `SYS_BOOT`, `MKNOD`, `SYSLOG`, `AUDIT_CONTROL`, `AUDIT_WRITE`, `SETFCAP`; names are matched case-insensitively with a `CAP_` prefix stripped. |
-| `writable_root` | `read_only` is not `true` | Compose's default is writable. |
-| `no_cap_drop_all` | `cap_drop` does not contain `ALL` | Without it the runtime's default capability set stays. |
-| `no_new_privileges_off` | `security_opt` lacks `no-new-privileges:true` | Both spellings (`no-new-privileges:true` and `no-new-privileges` alone, the Podman form) are accepted. |
-| `no_pids_limit` | `pids_limit` unset | A fork bomb can exhaust the host's process table. |
-| `no_memory_limit` | The effective memory limit is missing, unparseable, or negative | A top-level `mem_limit` takes precedence over `deploy.resources.limits.memory`. |
-| `no_userns` | `userns_mode` unset | Set `auto` explicitly for a private subordinate UID range; see the migration guide. |
-| `secret_in_environment` | `environment:` key whose name contains a secret-bearing segment (`PASSWORD`, `SECRET`, `TOKEN`, `KEY`, case-insensitive) and a value is set | Every set value is flagged, including resolved `${VAR}` interpolations and empty strings. Bare inherited keys (no value) are not. A name ending in `FILE` is exempt only when its value starts with `/`, `./`, or `../`. |
-| `port_published_on_all_interfaces` | A port is published without a host IP | The bind falls on every host interface. |
-| `sensitive_bind_mount` | A bind mount exposes a sensitive host path: a container runtime socket, or `/proc`, `/sys`, `/dev`, `/etc`, `/boot`, `/root`, or a runtime directory holding a socket | |
-| `unpinned_image` | `image:` with no tag, with tag `latest`, or `latest` without a digest | An `@sha256:` digest counts as pinning regardless of the tag. |
-| `port_published_on_wildcard` | A port is published with an explicit wildcard host IP (`0.0.0.0` or `::`) | Off by default; enable with `--wildcard-binds`. |
-| `no_restart_policy` | Neither `restart:` nor `deploy.restart_policy:` is set | An explicit `restart: "no"` is a deliberate choice and stays silent. |
-| `no_init` | `init:` is not `true` | PID 1 is the app; orphans become zombies. |
-| `no_health_action` | A non-disabled `healthcheck:` has no `x-podman-on-failure` extension | An unhealthy container stays unhealthy. |
-| `swap_unbounded` | A memory limit is in effect but `memswap_limit` is absent, `-1`, or differs from the memory limit | The service can page to disk. |
-| `no_cpu_limit` | Neither `cpus:`, `deploy.resources.limits.cpus:`, nor `cpu_quota:` gives a limit | One service can take every core of the host. |
-
-| Flag | Description | Default |
-|---|---|---|
-| `--format <FMT>` | `table` or `json`. | `table` |
-| `--strict` | Exit 1 when any finding is present, 0 otherwise. Conflicts with `--list-checks` at parse time. | off |
-| `--list-checks` | Enumerate the checks this build carries and exit. Takes no compose file. | off |
-| `--wildcard-binds` | Enable the `port_published_on_wildcard` check. Conflicts with `--list-checks` at parse time. | off |
-
-### `completions <SHELL>`
-Print a shell completion script to stdout for `bash`, `zsh`, `fish`, `powershell`, or `elvish`. The Debian package installs the bash/zsh/fish files automatically.
-
-```bash
-# bash: create the per-user completions directory on first use
-mkdir -p ~/.local/share/bash-completion/completions
-podup completions bash > ~/.local/share/bash-completion/completions/podup
-
-# fish: fish looks under ~/.config/fish/completions by default
-mkdir -p ~/.config/fish/completions
-podup completions fish > ~/.config/fish/completions/podup.fish
-```
-
-Zsh example (note that this shell has a different convention):
-
-```zsh
-mkdir -p ~/.local/share/zsh/site-functions
-podup completions zsh > ~/.local/share/zsh/site-functions/_podup
-# add to .zshrc before compinit:
-#   fpath=(~/.local/share/zsh/site-functions $fpath)
-```
-
-### `update`
-Replace the running binary with the latest signed release. Available on direct-binary installs only: the subcommand is feature-gated and the Debian package is built without it, so `podup update` on an apt install is missing outright.
-
-| Flag | Description | Default |
-|---|---|---|
-| `--check` | Report whether a newer release exists; install nothing. Queries GitHub release metadata but downloads no release assets. | off |
-| `--force` | Reinstall even if the latest release is not newer. | off |
-
-The signed manifest and selected digest are verified before replacement. The post-install version test attempts rollback on mismatch. See [self-update.md](self-update.md) for freshness limits and verification.
-
-### `autostart` (alias `boot`)
-Manage a boot-time autostart unit for this compose project: rootless, user-scope `systemctl --user` (enable lingering with `loginctl enable-linger`). The subcommand is `install`, `uninstall`, `status`, or `rebuild`; `--mode` and `--auto-update` belong to `install`. See the autostart guide for setup details.
-
-| Subcommand | Description |
-|---|---|
-| `install` | Install (and, by default, enable + start) the autostart unit(s) for this project. Writes only under `${XDG_CONFIG_HOME:-~/.config}`. |
-| `uninstall` | Remove whichever mode is installed (auto-detected). Legacy Quadlets without ownership markers are skipped. `--purge` also tears the stack down and drops its volumes. |
-| `status` | Report this project's unit and session state. |
-| `rebuild [service]` | Quadlet mode only: rebuild the built image(s) and restart the container(s). Omit the argument to rebuild every built service. |
-
-| Flag (`install`) | Description | Default |
-|---|---|---|
-| `--mode <MODE>` | Backend: `service`, `quadlet` or `start`; see the autostart guide for prerequisites. | `service` |
-| `--no-start` | Service/start: do not enable or start. Quadlet: still build and write boot wiring, but do not start containers. | off |
-| `--auto-update <FREQ>` | Service-only timer running `podup up -d` hourly, daily or weekly. | none |
-| `--dry-run` | Print what would be written and run; change nothing. | off |
-
-### `version`
-Print version information. `podup --version` prints the same.
-
-| Flag | Description | Default |
-|---|---|---|
-| `--short` | Print only the version number. | off |
-| `--format <FMT>` | `pretty` or `json`. | `pretty` |
-
-### Aliases
-
-`remove` (`rm`), `volume` (`volumes`), `image` (`images`), `log` (`logs`), `resume` (`unpause`), `convert` (`config`), `gen` (`generate`, so `podup gen quadlet`) and `boot` (`autostart`) are accepted as aliases of the canonical names above.
-
-### Override discovery
-
-When neither `-f/--file` nor `COMPOSE_FILE` is set, podup also loads the first override file it finds next to the compose file: `compose.override.yaml`, `compose.override.yml`, `docker-compose.override.yaml` or `docker-compose.override.yml`.
+<a id="config"></a><a id="audit"></a><a id="completions-shell"></a><a id="update"></a><a id="autostart-alias-boot"></a><a id="version"></a><a id="aliases"></a><a id="override-discovery"></a>[Open this section](commands-reference.md#maintenance).
 
 ## Progress output
 
-Progress is on stderr. A stderr terminal gets an animated board; other sinks get append-only lines. `--ansi`/`NO_COLOR` affect color, not animation. Reused resources report `Exists`; replacements report `Recreating`/`Recreated`. No-op transitions are suppressed; unfinished work is retained at command end. Empty operations say why no action occurred.
+[Open this section](commands-reference.md#progress-output).
 
 ## Diagnostics
 
-Warnings/errors go to stderr with a `podup:` prefix. Unsupported-field warnings are on by default; `RUST_LOG=debug` enables tracing. Internal errors request a bug report with secrets redacted. Invalid `umask` values name the service and advise quoting an octal string. Values containing `$` also report that the variable did not resolve. `config --no-interpolate` refuses an unresolved `umask` placeholder. `build.no_cache_filter` produces one warning per service: podup cannot filter the build cache per stage through the libpod build API, so the setting is ignored.
-
-A compose file that declares a top-level `jobs:` section is refused, in every command that reads the file, with an error naming the first job. podup runs no job runner, so a job that never runs must not look like a job that succeeded: the refusal happens while the file is read, before Podman is contacted and before anything is created. An empty or null `jobs:` declares nothing and is accepted.
+[Open this section](commands-reference.md#diagnostics).
 
 ## Environment
 
-### Compose and connection
-
-| Variable | Description |
-|---|---|
-| `COMPOSE_FILE` | Path-separator-delimited list of compose files (`--file`). |
-| `COMPOSE_PROJECT_NAME` | Default project name (`--project`). |
-| `COMPOSE_PROFILES` | Default active profiles (`--profile`). |
-| `PODMAN_SOCKET` | Podman socket path (`--socket`). |
-| `DOCKER_HOST` | Docker-compatible fallback for the Podman socket, used only when `PODMAN_SOCKET` is unset. Must be a local `unix://` socket (or `npipe://` on Windows). |
-| `PODUP_LIBPOD_POOL` | HTTP/1.1 connection-pool size for the libpod client (`--connection-pool-size`). Connection-pool size; see `--connection-pool-size`. `PODUP_LIBCOD_POOL` is read as a fallback when the new name is unset. |
-| `PODUP_MAX_REPLICAS` | Per-service replica cap (default 256). A positive integer overrides it; zero or invalid values use the default. |
-
-### Runtime, colour, config
-
-| Variable | Description |
-|---|---|
-| `RUST_LOG` | Log verbosity filter. Unset: warnings and errors, except `watch` which uses `info`. `RUST_LOG=podup=off` disables podup tracing. |
-| `NO_COLOR` | Disables colour output under `--ansi auto`. `--ansi always` overrides it. |
-| `TERM`, `COLORTERM` | Used to detect a colour-capable terminal; selects the wide palette on truecolor/256color terminals and Windows. |
-| `XDG_RUNTIME_DIR` | Linux socket discovery tries `XDG_RUNTIME_DIR`, then `/run/user/<uid>`. Unix locks use `XDG_RUNTIME_DIR/podup` when the absolute runtime directory passes ownership/permission checks; unset or relative values use `temp_dir()/podup-<euid>`, and unsafe absolute values abort. Windows uses `%TEMP%/podup` without OS locking. |
-| `XDG_CONFIG_HOME` | Base for the `~/.config` path used by `autostart install` when writing user units. Defaults to `$HOME/.config` when unset. |
-| `HOME` | Resolves the macOS `podman machine` socket candidates and the default `XDG_CONFIG_HOME`. |
-| `USER`, `LOGNAME` | The login user for `loginctl` session and linger queries. |
-| `PATH` | Searched for `podman` when `autostart install --mode start` writes its unit. |
-| `SCOOP` | On Windows, the Scoop root the `podup update` package-manager detection consults first. |
+<a id="compose-and-connection"></a><a id="runtime-colour-config"></a>[Open this section](commands-reference.md#environment).
 
 ## Podman extensions
 
-| Key | Where | What it does | Portable |
-|---|---|---|---|
-| `x-podman-on-failure` | under a service's `healthcheck:` | `none`, `kill`, `restart` or `stop`. Default `none`. | yes |
-| `x-podman-pod` | top level | `true` puts every service of the project into one Podman pod named after the project. | yes |
-| `x-podman-autoupdate` | under a service | `registry` or `local`; see [Auto-update](#auto-update). | yes |
-| `noexec`, `nosuid`, `nodev` | under a long-form volume's `volume:` | mount-hardening flags; see [Per-mount hardening options](docker-migration.md#per-mount-hardening-options-noexec-nosuid-nodev). | no |
-
-### Auto-update
-
-`x-podman-autoupdate` sets `io.containers.autoupdate`; Quadlet exports `AutoUpdate`. Registry pulls and local image changes follow the table below. Autostart scheduling is described in the [autostart guide](autostart.md#auto-update).
-
-| Value | What it does |
-|---|---|
-| `registry` | The container carries `io.containers.autoupdate=registry`, and `podup up` pulls the image with policy `newer` so a moved tag recreates the container. For a service without `build:`, it does so even when the image is already on disk; a service with `build:` builds its image instead of pulling it. `--pull <policy>` wins over the extension. |
-| `local` | The container carries `io.containers.autoupdate=local`: Podman's auto-update compares the container's image with the local image of the same name and restarts the unit when they differ. |
-
-### Pods
-
-`x-podman-pod: true` at the top level puts every service of the project into one Podman pod, named after the project, with a shared network namespace. The pod uses the project networks, or pasta/slirp4netns when every service declares the same such `network_mode`.
-
-The infra container stays running when the last service exits, in both API and Quadlet deployments. What changes inside the pod:
-
-- Services reach each other on `localhost`. `up` adds one `<service>:127.0.0.1` host entry per service. They share one port space, so two services cannot listen on the same container port.
-- `ports:` are published by the pod.
-- Only the network namespace is shared. UTS and IPC stay per container.
-- `up` records a hash of the pod's ports, networks and host entries. When it changes, `up` recreates the pod and every member container, which discards their writable layers.
-
-What is refused, before anything is created:
-
-- `network_mode` on any service;
-- a service whose `networks:` set differs from another service's;
-- two services publishing the same host port;
-- services that disagree on `userns_mode`.
-
-### Healthcheck timing on a `service_healthy` gate
-
-When `up` waits on `depends_on: {condition: service_healthy}`, podup runs healthchecks itself so hosts without systemd timers can progress. It runs at the parsed interval (minimum 100ms, otherwise 2s), reads status every 150ms, and waits `interval × retries + start_period`. `--wait-timeout` does not extend this dependency budget.
-
-For an unhealthy container that should recover, use `x-podman-on-failure: restart`. The reported Podman kill/unless-stopped combination leaves it exited; service-mode autostart does not supervise container exits. Invalid values error in `up`/`create`; Quadlet generation warns and omits them.
+<a id="auto-update"></a><a id="pods"></a><a id="healthcheck-timing-on-a-service_healthy-gate"></a>[Open this section](commands-reference.md#podman-extensions).
 
 ## Accepted for compatibility
 
-These flags parse and are validated, so a script written against docker compose runs unchanged, but podup does not act on them.
-
-| Flag | Why it does nothing |
-|---|---|
-| `build --progress <STYLE>` | podup renders build output one way. The value is still validated, so a typo is rejected rather than silently ignored. |
-| `config --no-normalize` | `config` always emits the normalized form. |
-| `cp -a, --archive` | Ownership/permission preservation is not meaningful for a rootless copy. |
-| `attach --no-stdin`, `--sig-proxy`, `--detach-keys` | `attach` streams output only; stdin is never attached. Use `exec`/`run` for an interactive session. |
+[Open this section](commands-reference.md#accepted-for-compatibility).
 
 ## Exit status
 
-| Code | Meaning |
-|---|---|
-| `0` | Success. |
-| `1` | A command failed (Podman error, runtime failure). |
-| `2` | Command-line usage error (unknown flag, bad argument). |
-| `3` | `update` failed to verify or install a release. |
-| `126` | `run`/`exec`: the command exists but is not executable. |
-| `127` | `run`/`exec`: the command was not found. |
-| `130` | An attached `up` was ended by SIGINT or SIGTERM. |
-| other | `run` and attached `exec` propagate the command's own exit code verbatim; `wait` returns the last non-zero code it saw. `up --abort-on-container-exit` does the same with the first container to exit; `up --exit-code-from SERVICE` does the same with the named service. |
-
-Attached `up` returns 1 if logs end while a container still runs. Abort/exit-code-from stops other containers and leaves them available for later up/down. SIGINT and SIGTERM both return 130 after stopping the project.
-
-`stats --format json` differs from docker on purpose. JSON uses numeric CPU fields and separate I/O counters; Docker-formatted string consumers need adapting.
-
-A streaming command that loses its connection fails. `logs`, `stats`, an attached `up`, `run`, and `events` exit `1` if output ends while the container is still running, or status cannot be checked. `run` reports a transport failure when no exit result is available. Clean container completion and logs reader closure succeed. `events` returns 0 only at the clean end of a past window with both `--since`/`--until`; other feed endings or transport failures return 1.
-
-`watch` warns and continues after action failures; it exits 0 unless startup fails. Its exit status does not certify every action succeeded.
+[Open this section](commands-reference.md#exit-status).

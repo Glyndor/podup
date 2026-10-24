@@ -211,7 +211,8 @@ impl Engine {
 				tracing::debug!("{container_name} already exists; skipping recreate");
 				// `create` leaves an existing container as-is; `up` ensures it runs.
 				if start {
-					self.ensure_started(&container_name).await?;
+					self.ensure_initialized_started(&container_name, name, service, file)
+						.await?;
 				}
 				crate::ui::progress_line(
 					"Container",
@@ -226,7 +227,8 @@ impl Engine {
 			{
 				tracing::debug!("{container_name} is up to date; skipping recreate");
 				if start {
-					self.ensure_started(&container_name).await?;
+					self.ensure_initialized_started(&container_name, name, service, file)
+						.await?;
 				}
 				crate::ui::progress_line(
 					"Container",
@@ -250,6 +252,8 @@ impl Engine {
 			(false, false) => ("Creating", "Created"),
 		};
 		crate::ui::progress::start("Container", &container_name, doing);
+		self.run_pre_start(&container_name, name, service, file)
+			.await?;
 		self.create_and_start(&container_name, name, service, file, start)
 			.await?;
 		crate::ui::progress_line("Container", &container_name, done);

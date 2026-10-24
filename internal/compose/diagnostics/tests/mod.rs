@@ -10,6 +10,7 @@ fn diagnostics_for(yaml: &str) -> Vec<String> {
 
 mod build_fields;
 mod network_ports;
+mod pre_start;
 mod secrets_configs;
 mod service_fields;
 mod unknown_keys;

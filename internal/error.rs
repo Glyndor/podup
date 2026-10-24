@@ -63,6 +63,8 @@ pub enum ComposeError {
 	/// A `run` container exited; carries its non-zero exit code so the CLI can
 	/// propagate it as its own process exit status.
 	RunExited(i64),
+	/// An init step failed; carries service and step context for direct display.
+	PreStart(String),
 	/// An attached `up` was ended by SIGINT or SIGTERM rather than by its
 	/// streams finishing. Carried as an error only so it reaches the exit-status
 	/// mapping; it is not printed, because the operator who pressed Ctrl-C does
@@ -276,6 +278,7 @@ impl fmt::Display for ComposeError {
 			Self::Watch(s) => write!(f, "watch error: {s}"),
 			Self::Unsupported(s) => write!(f, "unsupported feature: {s}"),
 			Self::RunExited(code) => write!(f, "run container exited with code {code}"),
+			Self::PreStart(message) => write!(f, "{message}"),
 			Self::Interrupted => write!(f, "interrupted"),
 			Self::StreamTruncated(what) => write!(f, "{what}"),
 			Self::PortNotPublished(what) => write!(f, "{what}"),

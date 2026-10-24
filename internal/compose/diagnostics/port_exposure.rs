@@ -1,4 +1,4 @@
-use crate::compose::types::{ComposeFile, PortMapping};
+use crate::compose::types::{ComposeFile, PortMapping, Service};
 
 /// One port the parse-time port-exposure warning flags. Returned by
 /// [`ports_published_on_all_interfaces`] so the audit module can build
@@ -50,53 +50,68 @@ pub(crate) struct PortExposure {
 pub(crate) fn ports_published_on_all_interfaces(file: &ComposeFile) -> Vec<PortExposure> {
 	let mut out = Vec::new();
 	for (service, def) in &file.services {
-		for port in &def.ports {
-			match port {
-				PortMapping::Short(s) => {
-					let no_proto = s.split('/').next().unwrap_or(s);
-					// IPv6 form (`[::1]:host:container`) always carries an IP.
-					if no_proto.starts_with('[') {
+		out.extend(ports_published_on_all_interfaces_in(service, def));
+	}
+	out
+}
+
+/// The same predicate, scoped to one container.
+///
+/// The file-wide form above walks the services of a compose file; this one
+/// answers for a single container, which is what the audit needs when it
+/// walks a container that is not a service of the file: an init step, whose
+/// ports belong to the step and to no service entry.
+pub(crate) fn ports_published_on_all_interfaces_in(
+	service: &str,
+	def: &Service,
+) -> Vec<PortExposure> {
+	let mut out = Vec::new();
+	for port in &def.ports {
+		match port {
+			PortMapping::Short(s) => {
+				let no_proto = s.split('/').next().unwrap_or(s);
+				// IPv6 form (`[::1]:host:container`) always carries an IP.
+				if no_proto.starts_with('[') {
+					continue;
+				}
+				let colon_count = no_proto.chars().filter(|&c| c == ':').count();
+				// 0 colons = container-only (expose, not publish).
+				// 2+ colons = ip:host:container (has IP).
+				// 1 colon = host:container without IP.
+				if colon_count == 1 {
+					let mut parts = no_proto.split(':');
+					let host = parts.next().unwrap_or("").to_string();
+					let cont = parts.next().unwrap_or("").to_string();
+					if host.is_empty() {
+						// Malformed port string; skip rather than emit a
+						// finding with an empty label.
 						continue;
 					}
-					let colon_count = no_proto.chars().filter(|&c| c == ':').count();
-					// 0 colons = container-only (expose, not publish).
-					// 2+ colons = ip:host:container (has IP).
-					// 1 colon = host:container without IP.
-					if colon_count == 1 {
-						let mut parts = no_proto.split(':');
-						let host = parts.next().unwrap_or("").to_string();
-						let cont = parts.next().unwrap_or("").to_string();
-						if host.is_empty() {
-							// Malformed port string; skip rather than emit a
-							// finding with an empty label.
-							continue;
-						}
-						out.push(PortExposure {
-							service: service.clone(),
-							host,
-							cont: Some(cont),
-						});
-					}
+					out.push(PortExposure {
+						service: service.to_string(),
+						host,
+						cont: Some(cont),
+					});
 				}
-				PortMapping::Long {
-					published: Some(p),
-					host_ip,
-					..
-				} => {
-					let explicit = host_ip.as_deref().is_some_and(|s| !s.trim().is_empty());
-					if !explicit {
-						out.push(PortExposure {
-							service: service.clone(),
-							host: p.as_str_val(),
-							cont: None,
-						});
-					}
+			}
+			PortMapping::Long {
+				published: Some(p),
+				host_ip,
+				..
+			} => {
+				let explicit = host_ip.as_deref().is_some_and(|s| !s.trim().is_empty());
+				if !explicit {
+					out.push(PortExposure {
+						service: service.to_string(),
+						host: p.as_str_val(),
+						cont: None,
+					});
 				}
-				PortMapping::Long {
-					published: None, ..
-				} => {
-					// No `published` = port is exposed, not published on host.
-				}
+			}
+			PortMapping::Long {
+				published: None, ..
+			} => {
+				// No `published` = port is exposed, not published on host.
 			}
 		}
 	}
@@ -133,43 +148,52 @@ pub(crate) fn ports_published_on_all_interfaces(file: &ComposeFile) -> Vec<PortE
 pub(crate) fn ports_published_on_wildcard(file: &ComposeFile) -> Vec<PortExposure> {
 	let mut out = Vec::new();
 	for (service, def) in &file.services {
-		for port in &def.ports {
-			match port {
-				PortMapping::Short(s) => {
-					let no_proto = s.split('/').next().unwrap_or(s);
-					let Some((host, cont)) = wildcard_short_port(no_proto) else {
-						continue;
-					};
-					if host.is_empty() {
-						// Malformed port string; skip rather than emit a
-						// finding with an empty label.
-						continue;
-					}
+		out.extend(ports_published_on_wildcard_in(service, def));
+	}
+	out
+}
+
+/// The same predicate, scoped to one container. Companion of
+/// [`ports_published_on_all_interfaces_in`]: the audit walks containers that
+/// are not services of the file, and a step's ports are the step's own.
+pub(crate) fn ports_published_on_wildcard_in(service: &str, def: &Service) -> Vec<PortExposure> {
+	let mut out = Vec::new();
+	for port in &def.ports {
+		match port {
+			PortMapping::Short(s) => {
+				let no_proto = s.split('/').next().unwrap_or(s);
+				let Some((host, cont)) = wildcard_short_port(no_proto) else {
+					continue;
+				};
+				if host.is_empty() {
+					// Malformed port string; skip rather than emit a
+					// finding with an empty label.
+					continue;
+				}
+				out.push(PortExposure {
+					service: service.to_string(),
+					host,
+					cont: Some(cont),
+				});
+			}
+			PortMapping::Long {
+				published: Some(p),
+				host_ip: Some(ip),
+				..
+			} => {
+				if is_wildcard_long(ip) {
 					out.push(PortExposure {
-						service: service.clone(),
-						host,
-						cont: Some(cont),
+						service: service.to_string(),
+						host: p.as_str_val(),
+						cont: None,
 					});
 				}
-				PortMapping::Long {
-					published: Some(p),
-					host_ip: Some(ip),
-					..
-				} => {
-					if is_wildcard_long(ip) {
-						out.push(PortExposure {
-							service: service.clone(),
-							host: p.as_str_val(),
-							cont: None,
-						});
-					}
-				}
-				PortMapping::Long { .. } => {
-					// No `host_ip` set, or no `published`: not a wildcard.
-					// `host_ip: ""` is empty and the long-form check treats
-					// it as "no IP", which is the all-interfaces predicate's
-					// case.
-				}
+			}
+			PortMapping::Long { .. } => {
+				// No `host_ip` set, or no `published`: not a wildcard.
+				// `host_ip: ""` is empty and the long-form check treats
+				// it as "no IP", which is the all-interfaces predicate's
+				// case.
 			}
 		}
 	}
@@ -238,17 +262,22 @@ fn is_wildcard_long(ip: &str) -> bool {
 /// The warning text and the audit module's `port_published_on_all_interfaces`
 /// check are both built from [`ports_published_on_all_interfaces`]; the
 /// two surfaces share the same predicate so they cannot drift (#1835).
-pub(super) fn port_published_on_all_interfaces(file: &ComposeFile, out: &mut Vec<String>) {
-	for exposure in ports_published_on_all_interfaces(file) {
-		let fix = match &exposure.cont {
-			Some(cont) => format!("\"127.0.0.1:{host}:{cont}\"", host = exposure.host),
-			None => "host_ip: \"127.0.0.1\"".to_string(),
-		};
-		out.push(format!(
-			"service '{service}': port {host} is published on every \
-			 interface; use {fix} to keep it on the host",
-			service = exposure.service,
-			host = exposure.host,
-		));
+pub(super) fn port_published_on_all_interfaces(
+	units: &super::ContainerUnits<'_>,
+	out: &mut Vec<String>,
+) {
+	for (name, service) in units {
+		for exposure in ports_published_on_all_interfaces_in(name, service) {
+			let fix = match &exposure.cont {
+				Some(cont) => format!("\"127.0.0.1:{host}:{cont}\"", host = exposure.host),
+				None => "host_ip: \"127.0.0.1\"".to_string(),
+			};
+			out.push(format!(
+				"service '{service}': port {host} is published on every \
+				 interface; use {fix} to keep it on the host",
+				service = exposure.service,
+				host = exposure.host,
+			));
+		}
 	}
 }

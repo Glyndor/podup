@@ -119,7 +119,7 @@ pub(crate) fn render_audit(
 	}
 	let report = audit::audit_file(&resolved, &opt_in);
 	match format {
-		AuditFormat::Table => audit::render_table(&audit::ordered_services(&resolved), &report),
+		AuditFormat::Table => audit::render_table(&audit::audited_containers(&resolved), &report),
 		AuditFormat::Json => audit::render_json(&report),
 	}
 	if *strict && report.has_findings() {

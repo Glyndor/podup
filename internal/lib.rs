@@ -109,6 +109,31 @@ pub fn ports_published_on_wildcard(
 		.map(|e| (e.service, e.host))
 		.collect()
 }
+/// The same predicate as [`ports_published_on_all_interfaces`], scoped to one
+/// container instead of to the whole file. The audit walks containers that
+/// are not services of the file: an init step publishes ports of its own,
+/// and its name is the one the audit reports it under.
+pub fn ports_published_on_all_interfaces_in(
+	service_name: &str,
+	service: &crate::compose::types::Service,
+) -> Vec<(String, String)> {
+	crate::compose::diagnostics::ports_published_on_all_interfaces_in(service_name, service)
+		.into_iter()
+		.map(|e| (e.service, e.host))
+		.collect()
+}
+/// The same predicate as [`ports_published_on_wildcard`], scoped to one
+/// container instead of to the whole file. Companion of
+/// [`ports_published_on_all_interfaces_in`].
+pub fn ports_published_on_wildcard_in(
+	service_name: &str,
+	service: &crate::compose::types::Service,
+) -> Vec<(String, String)> {
+	crate::compose::diagnostics::ports_published_on_wildcard_in(service_name, service)
+		.into_iter()
+		.map(|e| (e.service, e.host))
+		.collect()
+}
 /// The memory cap the engine will forward into `LinuxMemory.limit`, in
 /// bytes. Top-level `mem_limit:` wins; the modern
 /// `deploy.resources.limits.memory:` block only fills in a value the

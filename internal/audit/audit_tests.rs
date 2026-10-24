@@ -14,7 +14,7 @@ use crate::startup::{render_config_to, ConfigOutput};
 // straight assertions rather than naming the path every time.
 #[allow(unused_imports)]
 use super::{
-	audit_file, ordered_services, render_json, render_json_to, render_table, render_table_to,
+	audit_file, audited_containers, render_json, render_json_to, render_table, render_table_to,
 	AuditReport, Finding as _, Finding,
 };
 
@@ -76,8 +76,7 @@ services:
       - HOSTNAME
 "#;
 	let (name, svc) = single_service(yaml);
-	let file = parse_str(yaml).unwrap();
-	let report = audit::audit_file(&file, &[]);
+	let report = audit::audit_file(&parse_str(yaml).unwrap(), &[]);
 	let findings_for_web: Vec<&Finding> = report
 		.findings
 		.iter()
@@ -244,9 +243,9 @@ fn audit_report_by_service_keeps_file_order_and_ownership() {
 	)
 	.unwrap();
 	let report = audit_file(&file, &[]);
-	let services = ordered_services(&file);
+	let services = audited_containers(&file);
 	assert_eq!(
-		services.iter().map(|(n, _)| *n).collect::<Vec<_>>(),
+		services.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
 		vec!["zeta", "alpha"]
 	);
 	let grouped = report.by_service(&services);
@@ -384,7 +383,7 @@ fn hostile_compose_does_not_inject_escapes_into_audit_table_detail_lines() {
 	// stream the operator (or a pipe) sees.
 	let file = hostile_compose();
 	let report = audit_file(&file, &[]);
-	let services = ordered_services(&file);
+	let services = audited_containers(&file);
 	let mut buf: Vec<u8> = Vec::new();
 	render_table_to(&mut buf, &services, &report).expect("render");
 	assert_no_hostile("audit detail lines", &buf);
