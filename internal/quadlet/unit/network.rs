@@ -49,12 +49,23 @@ pub(crate) fn network_unit(
 				}
 			}
 		}
-		// Each driver option becomes its own Options= line: Quadlet maps one
-		// Options= to one `podman network create --opt key=value`, so a
-		// comma-joined value would be passed as a single malformed option.
-		for (key, val) in sorted_label_pairs(cfg.driver_opts.clone()) {
-			net.add("Options", format!("{key}={val}"));
-		}
+	}
+	// Driver options, with the same default the live engine applies to a bridge
+	// network: isolate it from the other bridge networks unless the file said
+	// otherwise. Without it a network exported to Quadlet would let a container
+	// reach the unpublished ports of a neighbouring network, which `podup up`
+	// does not. Each option is its own Options= line: Quadlet maps one Options=
+	// to one `podman network create --opt key=value`, so a comma-joined value
+	// would be passed as a single malformed option.
+	let driver = config
+		.and_then(|c| c.driver.clone())
+		.unwrap_or_else(|| "bridge".to_string());
+	let mut opts = config.map(|c| c.driver_opts.clone()).unwrap_or_default();
+	crate::engine::apply_default_isolation(&driver, &mut opts);
+	for (key, val) in sorted_label_pairs(opts) {
+		net.add("Options", format!("{key}={val}"));
+	}
+	if let Some(cfg) = config {
 		for (key, val) in sorted_label_pairs(cfg.labels.to_map()) {
 			net.add("Label", format!("{key}={val}"));
 		}

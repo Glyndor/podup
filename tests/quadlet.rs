@@ -93,7 +93,7 @@ networks:
 	);
 	assert_eq!(
 		unit(&out, "myproj-backend.network"),
-		"# podup-owner: myproj\n[Network]\nNetworkName=myproj_backend\nLabel=podup.project=myproj\n"
+		"# podup-owner: myproj\n[Network]\nNetworkName=myproj_backend\nOptions=isolate=true\nLabel=podup.project=myproj\n"
 	);
 }
 
