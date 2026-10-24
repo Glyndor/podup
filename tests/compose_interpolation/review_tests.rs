@@ -106,7 +106,8 @@ fn included_external_parse_error_names_the_failing_base() {
 	fs::write(dir.path().join("bases/bad.yml"), "services: [\n").unwrap();
 	let error = parse_file_with_env_files_interp(&dir.path().join("compose.yml"), &[], true)
 		.unwrap_err()
-		.to_string();
+		.to_string()
+		.replace('\\', "/");
 	assert!(error.contains("bases/bad.yml"), "{error}");
 	assert!(!error.contains("included.yml"), "{error}");
 }

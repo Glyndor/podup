@@ -46,8 +46,11 @@ fn config_override_resolves_tagged_scalar() {
 fn ordinary_config_output_matches_original_bytes() {
 	let dir = tempdir().unwrap();
 	fs::write(dir.path().join("compose.yml"), "services:\n  web:\n    image: alpine:3.20\n    user: '${PODUP_CONFIG_USER_2117:-runner}'\n    command: ['echo', '$$HOME']\n    environment:\n      GREETING: '${PODUP_CONFIG_GREETING_2117:-hello}'\n").unwrap();
+	// A Windows checkout may turn the fixture's line endings into CRLF.
+	let expected =
+		include_str!("../fixtures/interpolation/ordinary-config.yml").replace("\r\n", "\n");
 	assert_eq!(
 		config_output(dir.path(), &["compose.yml"]),
-		include_bytes!("../fixtures/interpolation/ordinary-config.yml")
+		expected.as_bytes()
 	);
 }
