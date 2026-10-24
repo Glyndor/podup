@@ -14,6 +14,7 @@ use super::build_support::{build_unit, build_unit_at, build_unit_for, warnings};
 /// each one broken. The value is quoted, and the quotes are what keep it one
 /// value.
 #[test]
+#[cfg(unix)]
 fn a_secret_whose_path_holds_a_space_stays_one_value() {
 	let yaml = "services:\n  app:\n    build:\n      context: .\n      secrets:\n        - tok\n\
 		secrets:\n  tok:\n    file: token.txt\n";

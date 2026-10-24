@@ -18,6 +18,7 @@ fn build_pull_writes_the_pull_policy() {
 }
 
 #[test]
+#[cfg(unix)]
 fn build_secrets_write_a_secret_key_per_top_level_secret() {
 	let yaml = "services:\n  app:\n    build:\n      context: .\n      secrets:\n        - tok\n\
 		secrets:\n  tok:\n    file: token.txt\n";
@@ -94,6 +95,7 @@ fn build_tags_write_a_tag_flag() {
 }
 
 #[test]
+#[cfg(unix)]
 fn build_additional_contexts_write_a_build_context_flag() {
 	let unit = build_unit_for("additional_contexts:\n  deps: ./deps");
 	// The path is absolute: the build resolves a relative one against the
