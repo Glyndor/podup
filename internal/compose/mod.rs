@@ -8,12 +8,15 @@ pub(crate) mod dependencies;
 pub(crate) mod diagnostics;
 mod extends;
 mod include;
+mod jobs;
 mod merge;
 mod order;
 mod tags;
 mod validate;
 
 use std::path::{Path, PathBuf};
+
+use indexmap::IndexMap;
 
 use crate::error::{ComposeError, Result};
 use crate::substitute;
@@ -134,6 +137,11 @@ pub(crate) fn parse_file_with_env_files_interp_with_stdin(
 	}
 
 	extends::resolve_all_extends(&mut file, &dir)?;
+	// A top-level `jobs:` section is refused here, in the one loader every
+	// command goes through, so no entry point can start a project whose jobs
+	// would never run. The check sits after the includes are merged and the
+	// extends are resolved, because a job can arrive from either.
+	jobs::reject_jobs(&file)?;
 	Ok(file)
 }
 
@@ -315,6 +323,16 @@ fn merge_override(target: &mut ComposeFile, other: ComposeFile, directives: &tag
 	for (k, v) in other.models {
 		target.models.insert(k, v);
 	}
+	// `jobs:` merges like every other top-level map. Each input file is
+	// refused on its own before it reaches this point, so the map carries
+	// nothing; the merge is kept complete so the two merge paths cannot
+	// disagree about a top-level key.
+	if let Some(other_jobs) = other.jobs {
+		let jobs = target.jobs.get_or_insert_with(IndexMap::new);
+		for (k, v) in other_jobs {
+			jobs.insert(k, v);
+		}
+	}
 }
 
 /// Parse a compose YAML string (no file I/O).
@@ -326,6 +344,7 @@ pub fn parse_str(content: &str) -> Result<ComposeFile> {
 	let vars = substitute::build_vars(Path::new("."));
 	let mut file = merge::deserialize_with_merge_interp(content, Some(&vars))?;
 	extends::resolve_extends_same_file(&mut file)?;
+	jobs::reject_jobs(&file)?;
 	Ok(file)
 }
 
