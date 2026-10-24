@@ -30,6 +30,7 @@ use unit::{
 
 /// Validate compose data before writing Quadlet units.
 pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
+	crate::engine::build::validate_pull_fields(file)?;
 	if let Err(e @ ComposeError::CircularDependency(_)) = crate::compose::resolve_order(file) {
 		return Err(e);
 	}
@@ -57,9 +58,6 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 		// asked for something specific. `generate quadlet` does emit the
 		// user's value verbatim, so an invalid one would also write a
 		// broken `Pull=` line: same root cause, same fix.
-		if let Some(policy) = svc.pull_policy.as_deref() {
-			crate::engine::build::pull_policy_checked(Some(policy), name)?;
-		}
 	}
 	Ok(())
 }

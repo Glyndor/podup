@@ -42,6 +42,10 @@ pub(in crate::compose) fn merge_service_tagged(
 fn clear_service_key(svc: &mut Service, key: &str) {
 	match key {
 		"umask" => svc.umask = None,
+		"pull_refresh_after" => {
+			svc.pull_refresh_after = None;
+			svc.pull_refresh_after_reset = true;
+		}
 		"ports" => svc.ports = Vec::new(),
 		"expose" => svc.expose = Vec::new(),
 		"volumes" => svc.volumes = Vec::new(),

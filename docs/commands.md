@@ -362,6 +362,13 @@ Pull images for the named services, or all services if none are given.
 | `--include-deps` | Also pull images for the named services' `depends_on` services. | off |
 | `--policy <POLICY>` | Pull policy, overriding per-service `pull_policy`: `always`, `missing`, `never`, `newer`, `build`. | per service |
 
+Service `pull_policy` values `daily`, `weekly`, `every_<n>[wdhms]` and the podup extension `refresh` map to `newer`, including Quadlet `Pull=newer`. Podup checks the registry and keeps the local image when current, potentially using more network than the interval implies. It emits one warning per service: `pull_policy "<value>" is treated as "newer": podup does not track when an image was last pulled`.
+
+Warnings name the effective policy after an engine override. Fixed overrides and registry autoupdate suppress the time-policy warning. Build services use or build their local image; Quadlet prebuilt services use `Pull=never` and emit no time-policy warning.
+
+The podup extension `pull_refresh_after` is an optional string, validated and otherwise unused, with no extra warning for `refresh` and no warning under fixed policies. The accepted grammar is `([0-9]+[wdhms])+`, or `every_([0-9]+[wdhms])+` for a policy, using ASCII digits and lowercase units with a checked total of at most 4294967295 seconds. Empty numbers, malformed values, fractions, subsecond units, signs, whitespace and overflow are refused with the service, value and accepted values. `up`, `run`, `create`, `pull`, `build`, standalone `watch`, watch rebuilds and pod recreation validate before mutation; `config` and the Quadlet export gate validate too. `config --no-interpolate` also validates these two fields strictly and refuses unresolved variables. CLI policy options retain the fixed choices in the table above.
+
+
 ### `push [SERVICE...]`
 Push each service's `image:` to its registry. Credentials come from Podman's auth file (`podman login`).
 
@@ -418,7 +425,7 @@ Print the resolved compose file (after substitution, extends, include, and `env_
 | `--hash <SERVICES>` | Print a stable per-service config hash for the given comma-separated services, or `'*'` for all. | none |
 | `--no-normalize` | Accepted for compatibility; `config` always emits the normalized form. | off |
 | `-q, --quiet` | Only validate; print nothing. | off |
-| `--no-interpolate` | Leave `${VAR}` placeholders literal. | off |
+| `--no-interpolate` | Leave `${VAR}` placeholders literal; pull policy fields still require valid resolved values. | off |
 | `--resolve-image-digests` | Rewrite each service `image:` to its registry digest. | off |
 
 `config --resolve-image-digests` and `autostart uninstall --purge` also contact Podman.

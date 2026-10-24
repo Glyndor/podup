@@ -9,7 +9,9 @@
 //! root cause, same fix, both paths.
 
 use crate::parse_str;
-use crate::quadlet::validate_for_quadlet;
+use crate::quadlet::{generate_at, validate_for_quadlet};
+
+use super::unit_named;
 
 /// A known-typo is the case the review measured; pin it first.
 #[test]
@@ -43,10 +45,31 @@ fn validate_accepts_every_documented_pull_policy() {
 		"newer",
 		"never",
 		"build",
+		"refresh",
+		"daily",
+		"weekly",
+		"every_2d",
 	] {
 		let yaml = format!("services:\n  web:\n    image: nginx\n    pull_policy: {value}\n");
 		validate_for_quadlet(&parse_str(&yaml).unwrap())
 			.unwrap_or_else(|e| panic!("{value} must validate, got: {e}"));
+	}
+}
+
+/// Time policies use registry comparison on the exporter too.
+#[test]
+fn a_time_based_pull_policy_emits_newer() {
+	for value in ["refresh", "daily", "weekly", "every_2d"] {
+		let file = parse_str(&format!(
+			"services:\n  web: {{image: nginx, pull_policy: {value}}}\n"
+		))
+		.unwrap();
+		let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+		assert!(unit_named(&out, "p-web.container")
+			.contents
+			.contains("Pull=newer\n"));
+		let expected = format!("web: pull_policy {value:?} is treated as \"newer\": podup does not track when an image was last pulled");
+		assert_eq!(out.warnings.iter().filter(|w| **w == expected).count(), 1);
 	}
 }
 
@@ -63,4 +86,19 @@ fn validate_rejects_unknown_pull_policy_on_a_buildable_service() {
 		.expect_err("a typo'd pull_policy on a buildable service must fail validation");
 	let msg = err.to_string();
 	assert!(msg.contains("alaways"), "got: {msg}");
+}
+
+#[test]
+fn prebuilt_policy_override_suppresses_time_warning() {
+	let file =
+		parse_str("services:\n  web: {image: local/web, build: ., pull_policy: daily}\n").unwrap();
+	let out = crate::quadlet::generate_for_autostart(&file, "p", std::path::Path::new("/srv/app"));
+	assert!(unit_named(&out, "p-web.container")
+		.contents
+		.contains("Pull=never\n"));
+	assert!(
+		!out.warnings.iter().any(|w| w.contains("does not track")),
+		"{:?}",
+		out.warnings
+	);
 }

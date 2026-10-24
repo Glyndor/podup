@@ -73,7 +73,10 @@ impl Engine {
 			};
 			// The same resolver as the pull itself, so `x-podman-autoupdate:
 			// registry` counts as `newer` here too (#1953).
-			if self.resolved_pull_policy(name, service)? == "never" {
+			if matches!(
+				self.resolved_pull_policy(name, service)?,
+				crate::engine::build::PullPolicy::Fixed("never")
+			) {
 				continue;
 			}
 			by_image.entry(image).or_insert((name.as_str(), service));
@@ -97,8 +100,12 @@ impl Engine {
 			// `x-podman-autoupdate: registry`, which resolves to `newer`) mean to
 			// hit the registry regardless, so skip the check and prefetch
 			// unconditionally: that request is a pure win, since
-			// `up_one_service` would have made it anyway, just later.
-			if policy == "missing" && self.image_present(image).await {
+			// `up_one_service` would have made it anyway, just later. Time
+			// policies also resolve to `newer`, without comparing the age
+			// of the local image because it does not record the last pull.
+			if matches!(policy, crate::engine::build::PullPolicy::Fixed("missing"))
+				&& self.image_present(image).await
+			{
 				// Record what this check just observed, so the per-service pull
 				// site does not repeat it: without this the stage returns having
 				// learned the image is here, and `acquire_service_image` pulls it

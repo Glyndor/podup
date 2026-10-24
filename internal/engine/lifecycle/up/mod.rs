@@ -92,6 +92,7 @@ impl Engine {
 		start: bool,
 		build: bool,
 	) -> Result<()> {
+		self.pull_preflight(file)?;
 		let result = async {
 			// Reject any volume/network/container name Podman's regex would refuse
 			// before issuing a single create, so a bad name surfaces as a clear

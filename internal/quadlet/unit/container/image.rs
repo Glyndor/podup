@@ -52,13 +52,21 @@ pub(super) fn emit_image(
 /// prebuilt mode.
 pub(super) fn emit_pull(service: &Service, mode: ContainerUnitMode, container: &mut Section) {
 	if let Some(pull) = &service.pull_policy {
+		// Time policies use registry comparison, just like the live runner.
 		// In prebuilt mode a buildable service already gets `Pull=never` below;
 		// emitting the service's own `pull_policy:` would produce a second
 		// `Pull=` line, leaving which one wins up to Quadlet. The whole
 		// point of prebuilt is to use the locally built image only, so the
 		// user's pull request is intentionally overridden.
 		if !(mode == ContainerUnitMode::Prebuilt && emits_build_unit(service)) {
-			container.add("Pull", pull.clone());
+			container.add(
+				"Pull",
+				if crate::engine::build::is_time_based_pull_policy(pull) {
+					"newer".to_string()
+				} else {
+					pull.clone()
+				},
+			);
 		}
 	}
 	// In prebuilt mode, pin the container to the locally built image: the

@@ -39,6 +39,7 @@ impl Engine {
 		service_name: &str,
 		opts: RunOptions,
 	) -> Result<()> {
+		self.pull_preflight(file)?;
 		let RunOptions {
 			cmd,
 			rm,
@@ -197,6 +198,8 @@ impl Engine {
 		};
 		crate::ui::progress::begin(self.run_resources(file, &run_service, image_missing));
 		let prepared = async {
+			self.acquire_service_image(service_name, &run_service, file)
+				.await?;
 			// Ensure the project networks exist (compose `run` brings them up like
 			// `up` does); the service may reference the synthesized `default`
 			// network, which is created here as `{project}_default`.

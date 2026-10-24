@@ -194,7 +194,13 @@ pub(crate) fn container_unit_with_mode(
 	let mut svc = Section::new("Service");
 	emit_restart(service, &mut svc);
 
-	collect_warnings(name, service, services, warnings);
+	collect_warnings(
+		name,
+		service,
+		services,
+		warnings,
+		mode == ContainerUnitMode::Prebuilt && super::build::emits_build_unit(service),
+	);
 
 	// The unforgeable ownership marker comes first, as its own comment line;
 	// see `owner_marker` for why it must stay separate from the `Label=` line.

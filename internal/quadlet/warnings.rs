@@ -12,6 +12,7 @@ pub(super) fn collect_warnings(
 	service: &Service,
 	services: &IndexMap<String, Service>,
 	warnings: &mut Vec<String>,
+	prebuilt: bool,
 ) {
 	let mut warn = |field: &str, detail: &str| {
 		warnings.push(format!("{name}: {field} {detail}"));
@@ -105,6 +106,19 @@ pub(super) fn collect_warnings(
 		warn(
 			"env_file",
 			"`required: false` cannot be expressed in Quadlet; the file will be required at run time and the container will not start without it",
+		);
+	}
+
+	// The runner and export expose the same last-pull tracking limitation.
+	if let Some(policy) = service
+		.pull_policy
+		.as_deref()
+		.filter(|p| crate::engine::build::is_time_based_pull_policy(p))
+		.filter(|_| !prebuilt)
+	{
+		warn(
+			"pull_policy",
+			&crate::engine::build::pull_policy_warning(policy)["pull_policy ".len()..],
 		);
 	}
 

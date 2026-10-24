@@ -13,7 +13,7 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 
 | Category | Keys |
 |---|---|
-| Images / build | `image`, `build` (context, dockerfile, args, target, cache_from, cache_to, secrets, labels, network) |
+| Images / build | `image`, `build` (context, dockerfile, args, target, cache_from, cache_to, secrets, labels, network), `pull_policy` (time policies map to `newer`), `pull_refresh_after` (strict syntax only) |
 | Execution | `command`, `entrypoint`, `working_dir`, `user`, `umask`, `platform`, `tty`, `stdin_open` |
 | Environment | `environment`, `env_file` (dotenv format), variable substitution (`${VAR:-default}`) |
 | Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `domainname`, `dns`, `dns_opt`, `dns_search`, `extra_hosts` |
@@ -59,6 +59,30 @@ If services disagree, or only some services declare the field, podup emits a war
 Promoted native container values, including hostname and DNS, discard boundary whitespace after control characters are stripped. Extra hosts and network aliases keep the same quoted argument values as their container emitters, including boundary spaces.
 
 The pod keeps `PodmanArgs=--exit-policy=continue`, so its infra container stays running when the last service exits. Pod-level stop timeout has no Compose source and stays unset. A service's `stop_grace_period` remains a container-level timeout.
+
+### Time-based pull policies
+
+`pull_policy:` accepts `always`, `never`, `missing` (alias `if_not_present`), `build`, Podman's `newer`, `daily`, `weekly`, `every_<n>[wdhms]`, and the podup extension `refresh`.
+
+`daily`, `weekly`, `every_<n>[wdhms]` and `refresh` map to libpod policy `newer`, including Quadlet `Pull=newer`. The registry is checked for a newer image and the local image is used when current. This may use more network than the declared interval. Podman reports image build time, not last-pull time, so podup does not compare image ages. Each service using a time policy emits one warning:
+
+```text
+pull_policy "<value>" is treated as "newer": podup does not track when an image was last pulled
+```
+
+Warnings name the effective policy after an engine override. Fixed overrides and registry autoupdate suppress the time-policy warning. Build services use or build their local image; Quadlet prebuilt services use `Pull=never` and emit no time-policy warning.
+
+The podup extension `pull_refresh_after` is an optional string, validated for syntax and otherwise unused with every policy. Setting it with `refresh` adds no further effect or warning; with a fixed policy it produces no warning. Its grammar is `([0-9]+[wdhms])+`, and the `every_` policy grammar is `every_([0-9]+[wdhms])+`: ASCII digits, lowercase units, one or more pairs, at most 4294967295 total seconds. Zero, repeated units and any unit order are accepted. Empty counts, unknown units, fractions, subsecond units, signs, whitespace and overflow are refused with the service, original value and accepted values. Validation runs before mutation for `up`, `create`, `run`, `pull`, `build`, standalone `watch`, watch rebuilds and pod recreation, and also covers `config` and the Quadlet export gate. `config --no-interpolate` also validates these two fields strictly: unresolved variables are refused instead of rendered. This limitation avoids accepting malformed values in ordinary `config`.
+
+```yaml
+services:
+  web:
+    image: nginx:1.27
+    pull_policy: refresh
+    pull_refresh_after: 24h
+```
+
+`!reset`, `!override null` and plain null clear an inherited `pull_refresh_after` through `extends` and multiple `-f` files. Services omitting the field retain their serialized configuration. An explicit `pull_refresh_after: null` may change the configuration hash once on upgrade.
 
 ### GPU reservations are host-dependent
 
@@ -291,6 +315,7 @@ These modeled fields parse but have no effect. The examples are not exhaustive; 
 
 | Field | Why it has no effect |
 |---|---|
+| `pull_refresh_after` | strictly validated after interpolation, syntax only; no last-pull clock is available, so it has no runtime effect |
 | `attach` | podup follows its own attach/detach logic for `up` log streaming |
 | `use_api_socket` | no podup equivalent |
 | `provider:` / top-level `models:` | podup runs no model runner; the service/model is not honored |

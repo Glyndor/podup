@@ -396,3 +396,6 @@ pub(crate) fn parse_file_inner_with_stdin(
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod pull_refresh_tests;

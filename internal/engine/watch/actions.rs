@@ -219,6 +219,7 @@ impl Engine {
 		file: &ComposeFile,
 		service_name: &str,
 	) -> Result<()> {
+		self.pull_preflight(file)?;
 		let service = match file.services.get(service_name) {
 			Some(s) => s,
 			None => return Ok(()),

@@ -201,3 +201,34 @@ services:
 		"an unrelated base mount must survive: {mounts:?}"
 	);
 }
+
+/// `pull_refresh_after:` is inherited from the base service and overridden by
+/// the service that extends it, like every other scalar field. Retaining the
+/// declared interval lets validation catch malformed inherited values even
+/// though the runner otherwise ignores valid intervals.
+#[test]
+fn pull_refresh_after_is_inherited_and_overridden() {
+	let yaml = r#"
+services:
+  base:
+    image: alpine
+    pull_policy: refresh
+    pull_refresh_after: 24h
+  app:
+    extends: base
+  other:
+    extends: base
+    pull_refresh_after: 1h
+"#;
+	let file = parse_str(yaml).unwrap();
+	assert_eq!(
+		file.services["app"].pull_refresh_after.as_deref(),
+		Some("24h"),
+		"the base's window must be inherited"
+	);
+	assert_eq!(
+		file.services["other"].pull_refresh_after.as_deref(),
+		Some("1h"),
+		"the extending service's window must win"
+	);
+}

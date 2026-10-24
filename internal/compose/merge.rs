@@ -52,6 +52,7 @@ pub(super) fn deserialize_with_merge_interp(
 	vars: Option<&HashMap<String, String>>,
 ) -> Result<ComposeFile> {
 	let mut value = interpolated_value(content, vars)?;
+	let refresh_clears = super::tags::refresh_clears(&value);
 	// Drop the merge tags before typing: whether serde tolerates one depends on
 	// the field's Rust type, so leaving them in makes `!reset` fail the file on
 	// `dns` and do nothing on `ports`. What each tag means is decided by the
@@ -66,6 +67,12 @@ pub(super) fn deserialize_with_merge_interp(
 			.get(name)
 			.and_then(|keys| keys.get("umask"))
 			.copied();
+	}
+	for name in refresh_clears {
+		if let Some(service) = file.services.get_mut(&name) {
+			service.pull_refresh_after = None;
+			service.pull_refresh_after_reset = true;
+		}
 	}
 	Ok(file)
 }
