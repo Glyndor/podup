@@ -1,0 +1,16 @@
+name: interpolation
+services:
+  web:
+    image: alpine:3.20
+    command:
+    - echo
+    - $HOME
+    environment:
+      GREETING: hello
+    networks:
+    - default
+    user: runner
+networks:
+  default:
+    name: interpolation_default
+

@@ -74,7 +74,7 @@ fn config_rejects_escaped_refresh_variable() {
 fn config_rejects_unresolved_tagged_values() {
 	for field in ["pull_policy", "pull_refresh_after"] {
 		let file = crate::parse_str(&format!(
-			"services:\n  web:\n    image: shared\n    {field}: !override '${{UNRESOLVED:-1h}}'\n"
+			"services:\n  web:\n    image: shared\n    {field}: !override '$${{UNRESOLVED:-1h}}'\n"
 		))
 		.unwrap();
 		let error = crate::validate_config(&file).unwrap_err().to_string();
