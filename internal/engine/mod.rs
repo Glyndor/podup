@@ -26,7 +26,9 @@ mod lifecycle_hooks;
 
 mod container_config;
 pub(crate) use container_config::build_log_config;
-pub(crate) use container_config::resources::{effective_cpu_quota, effective_memory_limit};
+pub(crate) use container_config::resources::{
+	effective_cpu_quota, effective_memory_limit, is_known_ulimit,
+};
 #[cfg(test)]
 mod fake_podman;
 mod health;

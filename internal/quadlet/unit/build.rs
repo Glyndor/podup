@@ -6,10 +6,13 @@
 
 use std::path::Path;
 
-use crate::compose::types::{BuildConfig, Service};
+use indexmap::IndexMap;
+
+use crate::compose::types::{BuildConfig, SecretConfig, Service};
 
 use super::{
-	owner_marker, quote_podman_arg_value, sorted_label_pairs, unit_stem, QuadletUnit, Section,
+	collect_build_warnings, owner_marker, quote_podman_arg_value, sorted_label_pairs, unit_stem,
+	QuadletUnit, Section,
 };
 
 /// Resolve a compose build `context` to an absolute `SetWorkingDirectory` value.
@@ -91,11 +94,16 @@ pub(crate) fn emits_build_unit(service: &Service) -> bool {
 ///
 /// `ImageTag=` is the service's `image:` when set, else `<project>-<service>`,
 /// so the generated container's `Image=<stem>.build` resolves to a concrete tag.
+///
+/// `secrets` is the compose file's top-level `secrets:` section, needed to
+/// resolve a `build.secrets` entry to the file `podman build --secret`
+/// reads it from.
 pub(crate) fn build_unit(
 	name: &str,
 	project: &str,
 	service: &Service,
 	base_dir: &Path,
+	secrets: &IndexMap<String, SecretConfig>,
 	warnings: &mut Vec<String>,
 ) -> Option<QuadletUnit> {
 	let build = service.build.as_ref()?;
@@ -167,6 +175,12 @@ pub(crate) fn build_unit(
 			}
 		}
 	}
+
+	// The compose `build:` fields the match above did not write: the ones
+	// with a `[Build]` key of their own, and the ones that go through
+	// `PodmanArgs=` as the `podman build` flag they stand for.
+	super::build_fields::emit_build_fields(name, build, base_dir, secrets, &mut section, warnings);
+	collect_build_warnings(name, build, warnings);
 
 	// Ownership label, mirroring every other generated unit.
 	section.add("Label", format!("podup.project={project}"));

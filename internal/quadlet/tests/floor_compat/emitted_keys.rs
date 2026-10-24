@@ -120,11 +120,19 @@ services:
       target: runtime
       args:
         VERSION: "1.0"
+      pull: true
+      platforms:
+        - linux/arm64/v8
+      secrets:
+        - tok
     image: app:latest
 networks:
   front:
 volumes:
   data:
+secrets:
+  tok:
+    file: token.txt
 "#
 }
 

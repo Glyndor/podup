@@ -60,6 +60,31 @@ fn inline_dockerfile_build_warns_and_emits_no_build_unit() {
 	assert!(out.warnings.iter().any(|w| w.contains("dockerfile_inline")));
 }
 
+/// A service that sets none of the build fields the `.build` unit gained
+/// renders the unit it rendered before: every new key is conditional, so a
+/// build block naming only a context still produces the same three lines.
+#[test]
+fn a_build_without_the_new_fields_renders_the_same_unit_as_before() {
+	let yaml = "services:\n  app:\n    build: .\n";
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
+	let build = out
+		.units
+		.iter()
+		.find(|u| u.filename == "proj-app.build")
+		.expect("a build service emits a .build unit");
+	assert_eq!(
+		build.contents,
+		concat!(
+			"# podup-owner: proj\n",
+			"[Build]\n",
+			"ImageTag=proj-app\n",
+			"SetWorkingDirectory=/srv/app\n",
+			"Label=podup.project=proj\n",
+		)
+	);
+}
+
 /// #1970: `podup generate quadlet` (and `generate_at`) keep their standard
 /// shape: a buildable service's `.container` references `<stem>.build` and
 /// Quadlet adds the build dependency. The prebuilt shape that autostart needs
