@@ -543,6 +543,8 @@ Progress is on stderr. A stderr terminal gets an animated board; other sinks get
 
 Warnings/errors go to stderr with a `podup:` prefix. Unsupported-field warnings are on by default; `RUST_LOG=debug` enables tracing. Internal errors request a bug report with secrets redacted. Invalid `umask` values name the service and advise quoting an octal string. Values containing `$` also report that the variable did not resolve. `config --no-interpolate` refuses an unresolved `umask` placeholder.
 
+A compose file that declares a top-level `jobs:` section is refused, in every command that reads the file, with an error naming the first job. podup runs no job runner, so a job that never runs must not look like a job that succeeded: the refusal happens while the file is read, before Podman is contacted and before anything is created. An empty or null `jobs:` declares nothing and is accepted.
+
 ## Environment
 
 ### Compose and connection
