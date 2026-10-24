@@ -64,6 +64,7 @@ fn build_config_long_form_context() {
 		platforms: vec![],
 		additional_contexts: Default::default(),
 		no_cache: Some(true),
+		no_cache_filter: StringOrList::Empty,
 		pull: None,
 		extra_hosts: vec![],
 		tags: vec![],
@@ -153,5 +154,54 @@ additional_contexts:
 	assert_eq!(
 		extra[0],
 		("base".to_string(), "docker-image://alpine:3".to_string())
+	);
+}
+
+#[test]
+fn build_no_cache_filter_accepts_a_string() {
+	let build: BuildConfig =
+		serde_yaml::from_str("context: .\nno_cache_filter: builder\n").unwrap();
+	let value = serde_json::to_value(build).unwrap();
+	assert_eq!(value["no_cache_filter"].as_str(), Some("builder"));
+}
+
+#[test]
+fn build_no_cache_filter_preserves_an_empty_string() {
+	let build: BuildConfig = serde_yaml::from_str("context: .\nno_cache_filter: ''\n").unwrap();
+	let value = serde_json::to_value(build).unwrap();
+	assert_eq!(value["no_cache_filter"].as_str(), Some(""));
+}
+
+#[test]
+fn build_no_cache_filter_accepts_a_list() {
+	let build: BuildConfig =
+		serde_yaml::from_str("context: .\nno_cache_filter: [builder, test]\n").unwrap();
+	let value = serde_json::to_value(build).unwrap();
+	assert_eq!(
+		value["no_cache_filter"],
+		serde_json::json!(["builder", "test"])
+	);
+}
+
+#[test]
+fn service_without_no_cache_filter_keeps_its_json_and_hash() {
+	use sha2::{Digest, Sha256};
+
+	let file = crate::parse_str("services:\n  web:\n    build:\n      context: .\n").unwrap();
+	let service = &file.services["web"];
+	let value = serde_json::to_value(service).unwrap();
+	assert!(
+		value["build"].get("no_cache_filter").is_none(),
+		"an absent no_cache_filter must not add a JSON key: {value}"
+	);
+
+	let digest = Sha256::digest(serde_json::to_vec(service).unwrap());
+	let hash = digest
+		.iter()
+		.map(|byte| format!("{byte:02x}"))
+		.collect::<String>();
+	assert_eq!(
+		hash,
+		"acfc414e035978e46aa89f307c8f23f9216d457085c708af435e9a128db3d6b0"
 	);
 }

@@ -541,7 +541,7 @@ Progress is on stderr. A stderr terminal gets an animated board; other sinks get
 
 ## Diagnostics
 
-Warnings/errors go to stderr with a `podup:` prefix. Unsupported-field warnings are on by default; `RUST_LOG=debug` enables tracing. Internal errors request a bug report with secrets redacted. Invalid `umask` values name the service and advise quoting an octal string. Values containing `$` also report that the variable did not resolve. `config --no-interpolate` refuses an unresolved `umask` placeholder.
+Warnings/errors go to stderr with a `podup:` prefix. Unsupported-field warnings are on by default; `RUST_LOG=debug` enables tracing. Internal errors request a bug report with secrets redacted. Invalid `umask` values name the service and advise quoting an octal string. Values containing `$` also report that the variable did not resolve. `config --no-interpolate` refuses an unresolved `umask` placeholder. `build.no_cache_filter` produces one warning per service: podup cannot filter the build cache per stage through the libpod build API, so the setting is ignored.
 
 ## Environment
 
