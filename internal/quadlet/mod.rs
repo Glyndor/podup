@@ -24,7 +24,8 @@ use crate::error::{ComposeError, Result};
 use crate::ports::parse_ports;
 pub(crate) use unit::is_rootless_user_mode;
 use unit::{
-	build_unit, container_unit_with_mode, network_unit, volume_unit, ContainerUnitMode, UnitContext,
+	build_unit, container_unit_with_mode, network_unit, volume_unit, ContainerUnitMode, PodFields,
+	UnitContext,
 };
 
 /// Validate compose data before writing Quadlet units.
@@ -321,21 +322,25 @@ fn generate_with_mode(
 		out.units.push(volume_unit(name, project, cfg.as_ref()));
 	}
 
-	// `x-podman-pod: true` opts the project into one-pod-per-project
-	// semantics: emit one `.pod` unit that carries the union of every
-	// service's ports/networks/host entries, and let the `.container`
-	// units reference it via `Pod=<stem>.pod`. No-op when the extension
-	// is not set.
-	if let Some(pod) = crate::quadlet::unit::pod_unit(project, file) {
-		out.units.push(pod);
-	}
-
 	let declared_volumes: Vec<&str> = file
 		.volumes
 		.iter()
 		.filter(|(_, cfg)| cfg.as_ref().is_none_or(|c| c.external != Some(true)))
 		.map(|(name, _)| name.as_str())
 		.collect();
+	let pod_fields = PodFields::new(file);
+
+	// `x-podman-pod: true` opts the project into one-pod-per-project
+	// semantics: emit one `.pod` unit that carries the union of every
+	// service's ports/networks/host entries, and let the `.container`
+	// units reference it via `Pod=<stem>.pod`. No-op when the extension
+	// is not set.
+	if file.podman_pod().unwrap_or(false) {
+		out.warnings.extend(pod_fields.warnings());
+	}
+	if let Some(pod) = crate::quadlet::unit::pod_unit(project, file, &pod_fields) {
+		out.units.push(pod);
+	}
 	let declared_networks: Vec<&str> = file
 		.networks
 		.iter()
@@ -362,6 +367,7 @@ fn generate_with_mode(
 		// Computed the same way the live engine does, so the Quadlet path
 		// and `up` agree on what the pod is on.
 		pod_network_mode: crate::engine::pod_network_mode(file),
+		pod_fields: &pod_fields,
 	};
 	let mut build_units_emitted = 0u32;
 	for (name, service) in &file.services {

@@ -4,6 +4,8 @@
 
 use crate::compose::types::Service;
 
+use super::super::pod_fields::{PodField, PodFields};
+use super::super::shared_values::userns;
 use super::{map_security_opt, quote_podman_arg_value, Section};
 
 /// Emit one `AddCapability=`/`DropCapability=` line per `cap_add:`/`cap_drop:`
@@ -18,9 +20,16 @@ pub(super) fn emit_capabilities(service: &Service, container: &mut Section) {
 }
 
 /// Emit the `UserNS=` line for a `userns_mode:`.
-pub(super) fn emit_userns(service: &Service, container: &mut Section) {
-	if let Some(userns) = &service.userns_mode {
-		container.add("UserNS", userns.clone());
+pub(super) fn emit_userns(
+	service: &Service,
+	in_pod: bool,
+	pod_fields: &PodFields,
+	container: &mut Section,
+) {
+	if !(in_pod && pod_fields.owns(PodField::UserNs)) {
+		if let Some(userns) = userns(service) {
+			container.add("UserNS", userns.to_string());
+		}
 	}
 }
 

@@ -2,6 +2,8 @@
 
 use crate::compose::types::Service;
 
+use super::super::pod_fields::{PodField, PodFields};
+use super::super::shared_values::shm_size;
 use super::{quote_podman_arg_value, Section};
 
 /// Emit one `Ulimit=` line per `ulimits:` entry.
@@ -19,9 +21,16 @@ pub(super) fn emit_ulimits(service: &Service, container: &mut Section) {
 }
 
 /// Emit `ShmSize=` plus the memory, CPU and pids limits of the service.
-pub(super) fn emit_limits(service: &Service, container: &mut Section) {
-	if let Some(shm) = &service.shm_size {
-		container.add("ShmSize", shm.clone());
+pub(super) fn emit_limits(
+	service: &Service,
+	in_pod: bool,
+	pod_fields: &PodFields,
+	container: &mut Section,
+) {
+	if !(in_pod && pod_fields.owns(PodField::ShmSize)) {
+		if let Some(shm) = shm_size(service) {
+			container.add("ShmSize", shm.to_string());
+		}
 	}
 	if let Some(mem) = &service.mem_limit {
 		// `Memory=` is not a recognised [Container] Quadlet key (Quadlet would drop

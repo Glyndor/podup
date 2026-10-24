@@ -84,6 +84,7 @@ impl PodmanVersion {
 			(5, 4) => "5.4",
 			(5, 5) => "5.5",
 			(5, 6) => "5.6",
+			(5, 7) => "5.7",
 			_ => "?",
 		}
 	}
@@ -114,9 +115,21 @@ fn min_podman_table() -> BTreeMap<(UnitType, &'static str), PodmanVersion> {
 	);
 	t.insert((UnitType::Container, "AddHost"), PodmanVersion::new(5, 3));
 
-	// `[Pod]` keys added after 5.0.
+	// `[Pod]` keys added after 5.0. The 5.2 release notes introduced
+	// `NetworkAlias`; 5.3 introduced `AddHost`, `DNS`, `DNSOption`,
+	// `DNSSearch`, `IP`, `IP6` and `UserNS`; 5.4 introduced `ShmSize`;
+	// 5.5 introduced `HostName`; 5.6 introduced `Label` and `ExitPolicy`;
+	// 5.7 introduced `StopTimeout`.
+	t.insert((UnitType::Pod, "NetworkAlias"), PodmanVersion::new(5, 2));
 	t.insert((UnitType::Pod, "AddHost"), PodmanVersion::new(5, 3));
+	for key in ["DNS", "DNSOption", "DNSSearch", "IP", "IP6", "UserNS"] {
+		t.insert((UnitType::Pod, key), PodmanVersion::new(5, 3));
+	}
+	t.insert((UnitType::Pod, "ShmSize"), PodmanVersion::new(5, 4));
+	t.insert((UnitType::Pod, "HostName"), PodmanVersion::new(5, 5));
 	t.insert((UnitType::Pod, "Label"), PodmanVersion::new(5, 6));
+	t.insert((UnitType::Pod, "ExitPolicy"), PodmanVersion::new(5, 6));
+	t.insert((UnitType::Pod, "StopTimeout"), PodmanVersion::new(5, 7));
 
 	// `[Build]` unit type itself appeared in 5.2.0 ("Quadlet now has support
 	// for `.build` files"). The keys that landed with the unit type are

@@ -86,6 +86,7 @@ fn source_inventory_lists_every_emitted_key() {
 		("health.rs", UnitType::Container),
 		("network.rs", UnitType::Network),
 		("pod.rs", UnitType::Pod),
+		("pod_fields.rs", UnitType::Pod),
 		("security.rs", UnitType::Container),
 		("volume.rs", UnitType::Volume),
 	];
@@ -97,6 +98,7 @@ fn source_inventory_lists_every_emitted_key() {
 			"health.rs" => include_str!("../../unit/health.rs").to_string(),
 			"network.rs" => include_str!("../../unit/network.rs").to_string(),
 			"pod.rs" => include_str!("../../unit/pod.rs").to_string(),
+			"pod_fields.rs" => include_str!("../../unit/pod_fields.rs").to_string(),
 			"security.rs" => include_str!("../../unit/security.rs").to_string(),
 			"volume.rs" => include_str!("../../unit/volume.rs").to_string(),
 			_ => panic!("missing include_str! branch for {filename}"),
