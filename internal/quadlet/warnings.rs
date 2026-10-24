@@ -50,6 +50,12 @@ pub(super) fn collect_warnings(
 	if !service.profiles.is_empty() {
 		warn("profiles", "have no Quadlet equivalent and are ignored");
 	}
+	if !service.pre_start.is_empty() {
+		warn(
+			"pre_start",
+			"is not exported; each init step requires its own container",
+		);
+	}
 	if !service.post_start.is_empty() {
 		warn(
 			"post_start",

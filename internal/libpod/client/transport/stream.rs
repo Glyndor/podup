@@ -22,6 +22,9 @@ use super::Result;
 /// Windows.
 #[derive(Debug)]
 pub(crate) enum SocketStream {
+	#[cfg(all(test, unix))]
+	/// A socket-free peer for init lifecycle tests.
+	Memory(tokio::io::DuplexStream),
 	#[cfg(unix)]
 	Unix(tokio::net::UnixStream),
 	#[cfg(windows)]
@@ -32,6 +35,10 @@ impl SocketStream {
 	/// Open a new connection to the given socket path (or pipe name).
 	#[cfg(unix)]
 	pub(crate) async fn connect(socket_path: &str) -> Result<Self> {
+		#[cfg(test)]
+		if let Some(stream) = super::super::pre_start_memory::connect(socket_path) {
+			return Ok(Self::Memory(stream));
+		}
 		let stream = tokio::net::UnixStream::connect(socket_path)
 			.await
 			.map_err(|e| super::socket_error(socket_path, e))?;
@@ -80,6 +87,8 @@ impl AsyncRead for SocketStream {
 		match self.get_mut() {
 			#[cfg(unix)]
 			Self::Unix(s) => Pin::new(s).poll_read(cx, buf),
+			#[cfg(all(test, unix))]
+			Self::Memory(s) => Pin::new(s).poll_read(cx, buf),
 			#[cfg(windows)]
 			Self::NamedPipe(s) => Pin::new(s).poll_read(cx, buf),
 		}
@@ -95,6 +104,8 @@ impl AsyncWrite for SocketStream {
 		match self.get_mut() {
 			#[cfg(unix)]
 			Self::Unix(s) => Pin::new(s).poll_write(cx, buf),
+			#[cfg(all(test, unix))]
+			Self::Memory(s) => Pin::new(s).poll_write(cx, buf),
 			#[cfg(windows)]
 			Self::NamedPipe(s) => Pin::new(s).poll_write(cx, buf),
 		}
@@ -104,6 +115,8 @@ impl AsyncWrite for SocketStream {
 		match self.get_mut() {
 			#[cfg(unix)]
 			Self::Unix(s) => Pin::new(s).poll_flush(cx),
+			#[cfg(all(test, unix))]
+			Self::Memory(s) => Pin::new(s).poll_flush(cx),
 			#[cfg(windows)]
 			Self::NamedPipe(s) => Pin::new(s).poll_flush(cx),
 		}
@@ -113,6 +126,8 @@ impl AsyncWrite for SocketStream {
 		match self.get_mut() {
 			#[cfg(unix)]
 			Self::Unix(s) => Pin::new(s).poll_shutdown(cx),
+			#[cfg(all(test, unix))]
+			Self::Memory(s) => Pin::new(s).poll_shutdown(cx),
 			#[cfg(windows)]
 			Self::NamedPipe(s) => Pin::new(s).poll_shutdown(cx),
 		}

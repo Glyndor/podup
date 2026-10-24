@@ -4,6 +4,7 @@ mod commands;
 mod down;
 mod drop_recheck;
 pub(in crate::engine) mod parallel;
+mod pre_start;
 mod run;
 mod scale;
 mod seed;
@@ -171,3 +172,12 @@ mod libpod_endpoint_query_tests;
 
 #[cfg(test)]
 mod umask_tests;
+
+#[cfg(all(test, unix))]
+mod pre_start_image_tests;
+#[cfg(all(test, unix))]
+mod pre_start_run_tests;
+#[cfg(all(test, unix))]
+mod pre_start_test_support;
+#[cfg(all(test, unix))]
+mod pre_start_up_tests;

@@ -9,6 +9,12 @@ podup up
 
 ## Works out of the box
 
+`pre_start` accepts a list of full container specifications. During `up`, `run` and `create`, each step inherits unset fields from the service, completes its collections and replaces explicit scalar values. Steps run in order, each in a separate ephemeral container, before the service container is created. A non-zero exit names the service and step number (for example, `service 'web': pre_start step 1: exited with code 7`) and blocks the service and its dependents. Init containers are removed on success or failure. An interrupt (Ctrl-C) can leave the current init container until `down`; restart policies and service hooks do not repeat init work. `create` leaves the service stopped after completing init work. Steps inherit neither ports/expose nor static IP/MAC addresses; a step can declare its own. Steps without their own image or build reuse the service image, including build-only services. A step that declares its own image does not inherit the service's build, and a step that declares its own build does not inherit the service's image, so the step is pulled or built on its own. The one-off settings of a `run` (its command, `--entrypoint`, terminal, ad-hoc mounts and ad-hoc labels) describe the throwaway container and never reach the init steps; the user, working directory and environment do. A failed init leaves the previous service running. An existing running service needs no new init run; `up` completes init work before starting an existing stopped container.
+
+`podup audit` walks the init steps as well: each step is a container of its own and is reported under `<service>/pre_start[i]`, so a step that asks for `privileged: true` or mounts a host path is a finding about that step and not about the service it belongs to.
+
+Quadlet export reports `pre_start is not exported; each init step requires its own container`. No `ExecStartPre=` substitute is emitted, since it cannot preserve the per-step container specifications.
+
 The following Compose fields are translated onto Podman's libpod API. Fields outside this list still parse (an unknown key never errors, per the Compose spec's forward-compatibility rule) and podup reports any it cannot honor during `up`; see the accepted-but-has-no-effect section.
 
 | Category | Keys |
@@ -21,7 +27,7 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 | Secrets / configs | `secrets`, `configs` (file, inline content, environment source, and `external: true` Podman-native secrets) |
 | Dependencies | `depends_on` (with `condition:` set to `service_started`, `service_healthy` or `service_completed_successfully`) |
 | Health checks | `healthcheck` (test, interval, timeout, retries, start_period, disable) |
-| Lifecycle hooks | `post_start`, `pre_stop` |
+| Lifecycle hooks | `pre_start` (ephemeral init containers), `post_start`, `pre_stop` |
 | Restart policies | `restart`, `deploy.restart_policy` (`condition`, `max_attempts`) |
 | Replicas / scale | `deploy.replicas`, `scale:` |
 | Resource limits | `deploy.resources`, `mem_limit`, `cpus`, `cpu_shares`, `cpu_quota`, `pids_limit`, `ulimits`, `blkio_config` |

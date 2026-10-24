@@ -11,6 +11,7 @@ mod include;
 mod jobs;
 mod merge;
 mod order;
+pub mod pre_start;
 mod tags;
 mod validate;
 
@@ -418,3 +419,6 @@ mod tests;
 
 #[cfg(test)]
 mod pull_refresh_tests;
+
+#[cfg(test)]
+mod pre_start_tests;

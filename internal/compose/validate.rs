@@ -54,6 +54,14 @@ pub fn validate_config(file: &ComposeFile) -> Result<()> {
 		validate_ports(name, &svc.ports)?;
 		validate_network_refs(name, file, svc)?;
 		validate_volume_refs(name, file, svc)?;
+		// An init step is a container of its own: the ports it publishes,
+		// the networks it joins and the volumes it mounts are the step's
+		// own, so the file has to be checked for them too.
+		for (step_name, step) in crate::compose::pre_start::declared_steps(name, svc) {
+			validate_ports(&step_name, &step.ports)?;
+			validate_network_refs(&step_name, file, step)?;
+			validate_volume_refs(&step_name, file, step)?;
+		}
 	}
 
 	// Reject `depends_on` cycles and dangling required dependencies, matching the
@@ -184,39 +192,55 @@ pub(super) fn validate(file: &ComposeFile) -> Result<()> {
 /// `ports:` entries parse and are in range.
 fn validate_services(file: &ComposeFile) -> Result<()> {
 	for (name, service) in &file.services {
-		let attached = service.networks.names();
-		if service.network_mode.is_some() {
-			// docker-compose: "network_mode" and "networks" cannot be combined.
-			// The live engine silently honours network_mode and drops the declared
-			// networks; Quadlet emits both, producing a contradictory unit.
-			if !attached.is_empty() {
+		validate_service_consistency(name, file, service)?;
+		// An init step is a container of its own, so the same consistency
+		// rules apply to the step the operator wrote.
+		for (step_name, step) in crate::compose::pre_start::declared_steps(name, service) {
+			validate_service_consistency(&step_name, file, step)?;
+		}
+	}
+	Ok(())
+}
+
+/// The per-service rules, for one container: the service itself or one of
+/// its init steps.
+fn validate_service_consistency(
+	name: &str,
+	file: &ComposeFile,
+	service: &crate::compose::types::Service,
+) -> Result<()> {
+	let attached = service.networks.names();
+	if service.network_mode.is_some() {
+		// docker-compose: "network_mode" and "networks" cannot be combined.
+		// The live engine silently honours network_mode and drops the declared
+		// networks; Quadlet emits both, producing a contradictory unit.
+		if !attached.is_empty() {
+			return Err(ComposeError::Unsupported(format!(
+				"service '{name}' sets both 'network_mode' and 'networks', which are \
+				 mutually exclusive; keep one"
+			)));
+		}
+	} else {
+		// Every referenced network must be declared at the top level (or be the
+		// synthesized `default`). An undefined reference is a config error in
+		// docker-compose; podup otherwise prefixes it on the engine path while
+		// the Quadlet exporter emits the raw name, a cross-project attach risk.
+		for net in &attached {
+			// `default` is the implicit project network docker-compose always
+			// provides, so an explicit reference to it is valid even without a
+			// top-level entry; everything else must be declared.
+			if net != "default" && !file.networks.contains_key(net) {
 				return Err(ComposeError::Unsupported(format!(
-					"service '{name}' sets both 'network_mode' and 'networks', which are \
-					 mutually exclusive; keep one"
+					"service '{name}' refers to undefined network '{net}'; declare it \
+					 under the top-level 'networks:' or mark it external"
 				)));
 			}
-		} else {
-			// Every referenced network must be declared at the top level (or be the
-			// synthesized `default`). An undefined reference is a config error in
-			// docker-compose; podup otherwise prefixes it on the engine path while
-			// the Quadlet exporter emits the raw name, a cross-project attach risk.
-			for net in &attached {
-				// `default` is the implicit project network docker-compose always
-				// provides, so an explicit reference to it is valid even without a
-				// top-level entry; everything else must be declared.
-				if net != "default" && !file.networks.contains_key(net) {
-					return Err(ComposeError::Unsupported(format!(
-						"service '{name}' refers to undefined network '{net}'; declare it \
-						 under the top-level 'networks:' or mark it external"
-					)));
-				}
-			}
 		}
-
-		// Surface a malformed/out-of-range port at config time rather than letting
-		// it slip through to a podman create error at run time.
-		parse_ports(&service.ports)?;
 	}
+
+	// Surface a malformed/out-of-range port at config time rather than letting
+	// it slip through to a podman create error at run time.
+	parse_ports(&service.ports)?;
 	Ok(())
 }
 

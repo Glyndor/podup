@@ -30,6 +30,7 @@ use std::sync::Arc;
 
 use super::error::PodmanError;
 
+mod init_cleanup;
 mod pool;
 mod request;
 mod response;
@@ -95,3 +96,6 @@ mod tests;
 
 #[cfg(test)]
 mod preflight;
+
+#[cfg(all(test, unix))]
+pub(crate) mod pre_start_memory;

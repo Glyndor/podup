@@ -11,11 +11,11 @@ use std::collections::HashMap;
 use super::build::{BuildConfig, ExtendsConfig};
 use super::deploy::DeployConfig;
 use super::develop::DevelopConfig;
-use super::network::ServiceNetworks;
 use super::volume::{ServiceConfigRef, ServiceSecretRef, VolumeMount};
 use super::{
 	BlkioConfig, Command, DependsOn, EnvFile, EnvVars, GpuSpec, HealthCheck, Labels, LifecycleHook,
-	LoggingConfig, PortMapping, RestartPolicy, StringOrList, Sysctls, UlimitConfig,
+	LoggingConfig, PortMapping, RestartPolicy, ServiceNetworks, StringOrList, Sysctls,
+	UlimitConfig,
 };
 
 #[path = "service_umask.rs"]
@@ -163,6 +163,9 @@ pub struct Service {
 	/// after it starts (Compose v2.30+).
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub post_start: Vec<LifecycleHook>,
+	/// Init containers completed in order before creating the service container.
+	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	pub pre_start: Vec<Service>,
 	/// `pre_stop:` holds lifecycle hook commands run inside the container just before
 	/// it is stopped (Compose v2.30+).
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]

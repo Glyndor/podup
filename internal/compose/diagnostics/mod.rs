@@ -10,7 +10,7 @@
 
 use std::cell::Cell;
 
-use super::types::ComposeFile;
+use super::types::{ComposeFile, Service};
 
 mod client_address;
 mod ignored_fields;
@@ -24,7 +24,31 @@ use ignored_fields::{
 pub(super) use nested_raw::collect_raw_nested_warnings;
 use port_exposure::port_published_on_all_interfaces;
 pub(crate) use port_exposure::ports_published_on_all_interfaces;
+pub(crate) use port_exposure::ports_published_on_all_interfaces_in;
 pub(crate) use port_exposure::ports_published_on_wildcard;
+pub(crate) use port_exposure::ports_published_on_wildcard_in;
+
+/// The containers a compose file brings up, each with the name the
+/// diagnostics report it under: the service itself, then its init steps.
+///
+/// The step is the declared one. These diagnostics describe what the
+/// operator wrote, so a warning about an unsupported key belongs to the
+/// place they wrote it, and the service's own keys are not repeated under
+/// the step's name.
+pub(super) type ContainerUnits<'a> = [(String, &'a Service)];
+
+/// Build the container list every per-service diagnostic walks: each
+/// service, then the init steps that service declares.
+fn container_units(file: &ComposeFile) -> Vec<(String, &Service)> {
+	let mut out = Vec::new();
+	for (name, service) in &file.services {
+		out.push((name.clone(), service));
+		for (step_name, step) in crate::compose::pre_start::declared_steps(name, service) {
+			out.push((step_name, step));
+		}
+	}
+	out
+}
 
 thread_local! {
 	/// CLI gate that suppresses the parse-time "port ... is published on every
@@ -145,20 +169,21 @@ pub(super) fn emit_diagnostic(msg: &str) {
 /// Pure (no logging) so it can be unit-tested; the caller emits the messages.
 pub(super) fn collect(file: &ComposeFile) -> Vec<String> {
 	let mut out = Vec::new();
+	let units = container_units(file);
 	unknown_top_level_keys(file, &mut out);
-	unknown_service_keys(file, &mut out);
-	nested_unknown_keys(file, &mut out);
-	ignored_service_fields(file, &mut out);
-	ignored_port_fields(file, &mut out);
-	port_published_on_all_interfaces(file, &mut out);
+	unknown_service_keys(&units, &mut out);
+	nested_unknown_keys(file, &units, &mut out);
+	ignored_service_fields(&units, &mut out);
+	ignored_port_fields(&units, &mut out);
+	port_published_on_all_interfaces(&units, &mut out);
 	client_address::ports_hide_client_address(file, &mut out);
-	ignored_volume_mount_fields(file, &mut out);
-	ignored_build_fields(file, &mut out);
+	ignored_volume_mount_fields(&units, &mut out);
+	ignored_build_fields(&units, &mut out);
 	ignored_network_fields(file, &mut out);
-	ignored_service_network_fields(file, &mut out);
+	ignored_service_network_fields(&units, &mut out);
 	ignored_secret_config_drivers(file, &mut out);
 	ignored_models(file, &mut out);
-	ignored_restart_policy_fields(file, &mut out);
+	ignored_restart_policy_fields(&units, &mut out);
 	out
 }
 
@@ -183,8 +208,8 @@ fn push_unknown(
 /// volume definitions. Together with the service- and top-level passes this
 /// means a typo or an unmapped future field at ANY modeled level is surfaced
 /// rather than silently dropped.
-fn nested_unknown_keys(file: &ComposeFile, out: &mut Vec<String>) {
-	for (service, def) in &file.services {
+fn nested_unknown_keys(file: &ComposeFile, units: &ContainerUnits<'_>, out: &mut Vec<String>) {
+	for (service, def) in units {
 		if let Some(hc) = &def.healthcheck {
 			push_unknown(
 				&format!("service '{service}' healthcheck"),
@@ -253,8 +278,8 @@ fn unknown_top_level_keys(file: &ComposeFile, out: &mut Vec<String>) {
 
 /// Service keys that matched no known field. A likely typo, e.g.
 /// `enviroment:`, is easy to miss when it just vanishes, so surface it.
-fn unknown_service_keys(file: &ComposeFile, out: &mut Vec<String>) {
-	for (service, def) in &file.services {
+fn unknown_service_keys(units: &ContainerUnits<'_>, out: &mut Vec<String>) {
+	for (service, def) in units {
 		for key in def.unknown.keys() {
 			if key.starts_with("x-") {
 				continue;
