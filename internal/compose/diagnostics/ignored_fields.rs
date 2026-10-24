@@ -1,7 +1,9 @@
 //! Warnings for service/network/secret fields that podup parses but cannot
 //! translate. Split out of the diagnostics root so each collector stays small.
 
-use crate::compose::types::{BuildConfig, ComposeFile, EnvFileEntry, PortMapping, VolumeMount};
+use crate::compose::types::{
+	BuildConfig, ComposeFile, EnvFileEntry, PortMapping, StringOrList, VolumeMount,
+};
 
 /// Service fields that podup models but cannot honor on rootless Podman.
 pub(super) fn ignored_service_fields(file: &ComposeFile, out: &mut Vec<String>) {
@@ -112,35 +114,41 @@ pub(super) fn ignored_build_fields(file: &ComposeFile, out: &mut Vec<String>) {
 			provenance,
 			sbom,
 			ssh,
+			no_cache_filter,
 			..
 		}) = &def.build
 		else {
 			continue;
 		};
-		let mut unmapped: Vec<&str> = Vec::new();
+		const NO_EQUIVALENT: &str = "has no libpod build-API equivalent and is ignored";
+		let mut unmapped: Vec<(&str, &str)> = Vec::new();
 		if privileged.is_some() {
-			unmapped.push("privileged");
+			unmapped.push(("privileged", NO_EQUIVALENT));
 		}
 		if !ssh.is_empty() {
-			unmapped.push("ssh");
+			unmapped.push(("ssh", NO_EQUIVALENT));
 		}
 		if isolation.is_some() {
-			unmapped.push("isolation");
+			unmapped.push(("isolation", NO_EQUIVALENT));
 		}
 		if !entitlements.is_empty() {
-			unmapped.push("entitlements");
+			unmapped.push(("entitlements", NO_EQUIVALENT));
 		}
 		if provenance.is_some() {
-			unmapped.push("provenance");
+			unmapped.push(("provenance", NO_EQUIVALENT));
 		}
 		if sbom.is_some() {
-			unmapped.push("sbom");
+			unmapped.push(("sbom", NO_EQUIVALENT));
 		}
-		for field in unmapped {
-			out.push(format!(
-				"service '{service}': build.{field} has no libpod build-API equivalent \
-				 and is ignored"
+		if !matches!(no_cache_filter, StringOrList::Empty) {
+			unmapped.push((
+				"no_cache_filter",
+				"has no libpod build-API equivalent, so podup cannot filter the cache per stage, \
+				 and it is ignored",
 			));
+		}
+		for (field, reason) in unmapped {
+			out.push(format!("service '{service}': build.{field} {reason}"));
 		}
 	}
 }

@@ -309,7 +309,7 @@ These modeled fields parse but have no effect. The examples are not exhaustive; 
 
 ### BuildKit / buildx-only build options
 
-`build.privileged`, `build.ssh`, `build.ulimits`, `build.isolation`, `build.entitlements`, `build.provenance`, `build.sbom`: these have no libpod build-API equivalent and are ignored.
+`build.privileged`, `build.ssh`, `build.ulimits`, `build.isolation`, `build.entitlements`, `build.provenance`, `build.sbom`, `build.no_cache_filter`: these have no libpod build-API equivalent and are ignored. In particular, `build.no_cache_filter` cannot filter the cache per stage because libpod exposes only the all-or-nothing `nocache` parameter.
 
 ### Windows / Hyper-V-only
 
