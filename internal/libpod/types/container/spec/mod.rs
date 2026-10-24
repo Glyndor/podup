@@ -53,6 +53,10 @@ pub struct SpecGenerator {
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub user: Option<String>,
 
+	/// Initial process permission mask in octal; omitted to retain the runtime default.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub umask: Option<String>,
+
 	/// Working directory inside the container.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub work_dir: Option<String>,

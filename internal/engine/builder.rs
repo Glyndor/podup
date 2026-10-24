@@ -54,6 +54,7 @@ impl Engine {
 			uploaded_file_digests: std::sync::Mutex::new(std::collections::HashMap::new()),
 			keep_id_create: tokio::sync::Mutex::new(()),
 			no_warn: false,
+			pull_policy_warned: Default::default(),
 			project_label: build_project_label_parts(&project),
 		}
 	}
@@ -79,6 +80,7 @@ impl Engine {
 			uploaded_file_digests: std::sync::Mutex::new(std::collections::HashMap::new()),
 			keep_id_create: tokio::sync::Mutex::new(()),
 			no_warn: false,
+			pull_policy_warned: Default::default(),
 			project_label: build_project_label_parts(&project),
 		}
 	}

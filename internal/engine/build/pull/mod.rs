@@ -14,12 +14,16 @@ use crate::libpod::{urlencoded, API_PREFIX};
 use super::super::Engine;
 
 mod images;
+mod interval;
 mod options;
 mod policy;
 mod progress;
 
 pub use options::PullOptions;
-pub(crate) use policy::pull_policy_checked;
+pub(crate) use policy::{
+	is_time_based_pull_policy, pull_policy_checked, pull_policy_warning, validate_pull_fields,
+	PullPolicy,
+};
 use progress::{stderr_supports_live, PullStreamProgress};
 
 /// Upper bound on how many distinct images a standalone `pull` fetches
@@ -45,7 +49,7 @@ where
 /// What determines one actual pull request: the image reference, the resolved
 /// pull policy (the `--pull` override applied ahead of the service's own
 /// `pull_policy:`), and the platform. The dedup key of a standalone pull.
-type PullKey<'a> = (&'a str, &'static str, Option<&'a str>);
+type PullKey<'a> = (&'a str, PullPolicy, Option<&'a str>);
 
 impl Engine {
 	/// Pull images for all services that declare an `image:` key, concurrently.
@@ -82,6 +86,7 @@ impl Engine {
 		services: &[String],
 		opts: PullOptions,
 	) -> Result<()> {
+		self.pull_preflight(file)?;
 		// Reject unknown service names up front, matching `docker compose pull`
 		// (and `logs`), rather than silently doing nothing.
 		for name in services {
@@ -281,7 +286,12 @@ impl Engine {
 		&self,
 		service_name: &str,
 		service: &Service,
-	) -> Result<&'static str> {
+	) -> Result<PullPolicy> {
+		pull_policy_checked(
+			service.pull_policy.as_deref(),
+			service_name,
+			service.pull_refresh_after.as_deref(),
+		)?;
 		if self.pull_policy_override.is_none() {
 			if let Ok(Some(crate::compose::types::AutoUpdate::Registry)) =
 				service.podman_autoupdate()
@@ -289,16 +299,21 @@ impl Engine {
 				// The extension wins over `pull_policy:`, but a typo there must
 				// still be reported rather than hidden behind it (#1443).
 				if service.pull_policy.is_some() {
-					pull_policy_checked(service.pull_policy.as_deref(), service_name)?;
+					pull_policy_checked(service.pull_policy.as_deref(), service_name, None)?;
 				}
-				return pull_policy_checked(Some("newer"), service_name);
+				return Ok(PullPolicy::Fixed("newer"));
 			}
 		}
 		let requested = self
 			.pull_policy_override
 			.as_deref()
 			.or(service.pull_policy.as_deref());
-		pull_policy_checked(requested, service_name)
+		// Validate the service interval above even when the override replaces its policy.
+		let refresh_after = match self.pull_policy_override {
+			None => service.pull_refresh_after.as_deref(),
+			Some(_) => None,
+		};
+		pull_policy_checked(requested, service_name, refresh_after)
 	}
 
 	/// Issue the actual pull request for `service` against an
@@ -310,7 +325,7 @@ impl Engine {
 	async fn pull_image_with_policy(
 		&self,
 		service: &Service,
-		pull_policy: &str,
+		pull_policy: PullPolicy,
 		quiet: bool,
 	) -> Result<()> {
 		let image = match &service.image {
@@ -329,7 +344,11 @@ impl Engine {
 			crate::ui::progress::start("Image", &image, "Pulling");
 		}
 
-		let mut query = format!("reference={}&policy={}", urlencoded(&image), pull_policy);
+		let mut query = format!(
+			"reference={}&policy={}",
+			urlencoded(&image),
+			pull_policy.libpod()
+		);
 		if let Some(platform) = &service.platform {
 			query.push_str(&format!("&platform={}", urlencoded(platform)));
 		}

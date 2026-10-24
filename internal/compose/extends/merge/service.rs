@@ -5,7 +5,13 @@ use crate::compose::types::{
 
 use super::collections::{merge_networks, merge_sysctls, merge_volumes};
 
-pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) -> Service {
+pub(in crate::compose) fn merge_service(mut base: Service, mut override_svc: Service) -> Service {
+	if let Some(tag) = override_svc.umask_merge_tag {
+		base.umask = None;
+		if matches!(tag, crate::compose::tags::MergeTag::Reset) {
+			override_svc.umask = None;
+		}
+	}
 	fn opt<T>(o: Option<T>, b: Option<T>) -> Option<T> {
 		o.or(b)
 	}
@@ -137,6 +143,8 @@ pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) ->
 		DependsOn::Map(merged)
 	}
 
+	let pull_refresh_after_reset = override_svc.pull_refresh_after_reset
+		|| (override_svc.pull_refresh_after.is_none() && base.pull_refresh_after_reset);
 	Service {
 		image: opt(override_svc.image, base.image),
 		build: override_svc.build.or(base.build),
@@ -180,6 +188,8 @@ pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) ->
 		annotations: merge_labels(base.annotations, override_svc.annotations),
 		container_name: override_svc.container_name.or(base.container_name),
 		user: override_svc.user.or(base.user),
+		umask: override_svc.umask.or(base.umask),
+		umask_merge_tag: None,
 		working_dir: override_svc.working_dir.or(base.working_dir),
 		group_add: merge_vec(base.group_add, override_svc.group_add),
 		platform: override_svc.platform.or(base.platform),
@@ -239,6 +249,12 @@ pub(in crate::compose) fn merge_service(base: Service, override_svc: Service) ->
 		label_file: merge_sol(base.label_file, override_svc.label_file),
 		attach: override_svc.attach.or(base.attach),
 		pull_policy: override_svc.pull_policy.or(base.pull_policy),
+		pull_refresh_after: if override_svc.pull_refresh_after_reset {
+			None
+		} else {
+			override_svc.pull_refresh_after.or(base.pull_refresh_after)
+		},
+		pull_refresh_after_reset,
 		deploy: override_svc.deploy.or(base.deploy),
 		develop: override_svc.develop.or(base.develop),
 		gpus: override_svc.gpus.or(base.gpus),

@@ -3,6 +3,7 @@
 
 use crate::compose::types::Service;
 
+use super::super::shared_values::label_values;
 use super::{sorted_label_pairs, Section};
 
 /// Emit the service's own `Label=` lines, the two ownership labels, and the
@@ -14,7 +15,7 @@ pub(super) fn emit_labels(
 	container: &mut Section,
 	warnings: &mut Vec<String>,
 ) {
-	for (key, val) in sorted_label_pairs(service.labels.to_map()) {
+	for (key, val) in label_values(service) {
 		container.add("Label", format!("{key}={val}"));
 	}
 	// Ownership labels, mirroring the live engine: tag every generated container

@@ -88,11 +88,12 @@ impl Engine {
 	///
 	/// **The session's exit status does not reflect the actions it ran.** A sync,
 	/// rebuild, restart or exec that fails is warned about and the loop
-	/// continues, so this returns `Ok(())` unless the watchers cannot be set up
-	/// at all. That is deliberate and matches `docker compose watch`: a
+	/// continues, so this returns `Ok(())` unless pull intent is invalid or the
+	/// watchers cannot be set up at all. That matches `docker compose watch`: a
 	/// long-running developer loop should survive one failed rebuild rather than
 	/// exit. See the exit-status section of `docs/commands.md`.
 	pub async fn watch(&self, file: &ComposeFile) -> Result<()> {
+		self.pull_preflight(file)?;
 		let mut rule_entries: Vec<RuleEntry> = Vec::new();
 
 		// Pre-compute the effective mounts per service. One `EffectiveMount`
@@ -411,3 +412,6 @@ impl Engine {
 
 #[cfg(test)]
 mod watch_tests;
+
+#[cfg(test)]
+mod pull_policy_tests;

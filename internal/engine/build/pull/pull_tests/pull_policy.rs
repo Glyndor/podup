@@ -1,17 +1,38 @@
 use super::*;
 
 #[test]
-fn pull_policy_maps_every_spec_value() {
-	assert_eq!(libpod_pull_policy(Some("always")), Some("always"));
-	assert_eq!(libpod_pull_policy(Some("newer")), Some("newer"));
-	assert_eq!(libpod_pull_policy(Some("never")), Some("never"));
-	assert_eq!(libpod_pull_policy(Some("missing")), Some("missing"));
+fn pull_policy_maps_every_fixed_spec_value() {
+	assert_eq!(
+		pull_policy_checked(Some("always"), "web", None).unwrap(),
+		PullPolicy::Fixed("always")
+	);
+	assert_eq!(
+		pull_policy_checked(Some("newer"), "web", None).unwrap(),
+		PullPolicy::Fixed("newer")
+	);
+	assert_eq!(
+		pull_policy_checked(Some("never"), "web", None).unwrap(),
+		PullPolicy::Fixed("never")
+	);
+	assert_eq!(
+		pull_policy_checked(Some("missing"), "web", None).unwrap(),
+		PullPolicy::Fixed("missing")
+	);
 	// `if_not_present` is the spec alias for `missing`.
-	assert_eq!(libpod_pull_policy(Some("if_not_present")), Some("missing"));
-	assert_eq!(libpod_pull_policy(Some("build")), Some("missing"));
-	assert_eq!(libpod_pull_policy(None), Some("missing"));
-	// Unknown values are reported (None) so the caller fails loud (#1369).
-	assert_eq!(libpod_pull_policy(Some("bogus")), None);
+	assert_eq!(
+		pull_policy_checked(Some("if_not_present"), "web", None).unwrap(),
+		PullPolicy::Fixed("missing")
+	);
+	assert_eq!(
+		pull_policy_checked(Some("build"), "web", None).unwrap(),
+		PullPolicy::Fixed("missing")
+	);
+	assert_eq!(
+		pull_policy_checked(None, "web", None).unwrap(),
+		PullPolicy::Fixed("missing")
+	);
+	// Unknown values are reported so the caller fails loud (#1369).
+	assert!(pull_policy_checked(Some("bogus"), "web", None).is_err());
 }
 
 /// A typo'd `pull_policy:` must surface as a hard error (#1369): the
@@ -65,7 +86,7 @@ fn x_podman_autoupdate_registry_pulls_newer_on_up() {
 	.unwrap();
 	assert_eq!(
 		e.resolved_pull_policy("web", &svc).unwrap(),
-		"newer",
+		PullPolicy::Fixed("newer"),
 		"x-podman-autoupdate: registry must force newer when no --pull override is in play"
 	);
 }
@@ -89,7 +110,7 @@ fn x_podman_autoupdate_yields_to_an_explicit_pull_flag() {
 	.unwrap();
 	assert_eq!(
 		e.resolved_pull_policy("web", &svc).unwrap(),
-		"missing",
+		PullPolicy::Fixed("missing"),
 		"--pull must override the x-podman-autoupdate extension"
 	);
 
@@ -100,7 +121,7 @@ fn x_podman_autoupdate_yields_to_an_explicit_pull_flag() {
 	.with_up_overrides(Some("always".to_string()), false, false);
 	assert_eq!(
 		e.resolved_pull_policy("web", &svc).unwrap(),
-		"always",
+		PullPolicy::Fixed("always"),
 		"--pull always must still win"
 	);
 }
@@ -122,7 +143,7 @@ fn x_podman_autoupdate_local_leaves_the_pull_policy_alone() {
 	.unwrap();
 	assert_eq!(
 		e.resolved_pull_policy("web", &svc).unwrap(),
-		"missing",
+		PullPolicy::Fixed("missing"),
 		"local: no extension override, default pull_policy (missing) stays"
 	);
 
@@ -135,7 +156,7 @@ fn x_podman_autoupdate_local_leaves_the_pull_policy_alone() {
 	.unwrap();
 	assert_eq!(
 		e.resolved_pull_policy("web", &svc).unwrap(),
-		"always",
+		PullPolicy::Fixed("always"),
 		"local: an explicit pull_policy: must survive untouched"
 	);
 }

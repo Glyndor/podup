@@ -18,6 +18,9 @@ use super::{
 	LoggingConfig, PortMapping, RestartPolicy, StringOrList, Sysctls, UlimitConfig,
 };
 
+#[path = "service_umask.rs"]
+pub(crate) mod service_umask;
+
 /// A single service definition.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[non_exhaustive]
@@ -181,6 +184,20 @@ pub struct Service {
 	/// numeric `UID[:GID]`; overrides the image `USER`.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub user: Option<String>,
+	/// Initial permission mask as written text; absence preserves the runtime default.
+	/// Strings contain one to four octal digits; only integer zero is accepted.
+	/// Interpolation text is preserved until it can be validated before use.
+	/// Parsing now requires that interpolation has fully resolved.
+	#[serde(
+		default,
+		deserialize_with = "service_umask::deserialize",
+		serialize_with = "service_umask::serialize",
+		skip_serializing_if = "Option::is_none"
+	)]
+	pub umask: Option<String>,
+	/// Retain the scalar directive until extends has combined the two services.
+	#[serde(skip)]
+	pub(crate) umask_merge_tag: Option<crate::compose::tags::MergeTag>,
 	/// `working_dir:` is the working directory for the process; overrides the image
 	/// `WORKDIR`.
 	#[serde(skip_serializing_if = "Option::is_none")]
@@ -372,9 +389,19 @@ pub struct Service {
 	pub attach: Option<bool>,
 
 	/// `pull_policy:` decides when to pull the image: `always`, `never`, `missing` (the
-	/// default; alias `if_not_present`), `build`, or `newer`.
+	/// default; alias `if_not_present`), `build`, `newer`, or one of the time-based
+	/// policies `refresh`, `daily`, `weekly` and `every_<n>[wdhms]`.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub pull_policy: Option<String>,
+
+	/// `pull_refresh_after:` is a podup extension validated as whole number/unit
+	/// pairs (`24h`, `1h30m`), at most u32::MAX seconds. It is otherwise unused
+	/// because libpod does not report when an image was last pulled.
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub pull_refresh_after: Option<String>,
+	/// Raw clear intent must survive typing until all inheritance is resolved.
+	#[serde(skip)]
+	pub(crate) pull_refresh_after_reset: bool,
 
 	/// `deploy:` is the deployment config (replicas, resource limits/reservations,
 	/// restart policy); a fallback for top-level `scale`/`cpus`/`mem_limit`/
@@ -534,3 +561,19 @@ pub struct ProviderConfig {
 #[cfg(test)]
 #[path = "service_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "service_umask_tests.rs"]
+mod service_umask_tests;
+
+#[cfg(test)]
+#[path = "service_umask_runtime_tests.rs"]
+mod service_umask_runtime_tests;
+
+#[cfg(test)]
+#[path = "service_umask_directive_tests.rs"]
+mod service_umask_directive_tests;
+
+#[cfg(test)]
+#[path = "service_umask_regression_tests.rs"]
+mod service_umask_regression_tests;

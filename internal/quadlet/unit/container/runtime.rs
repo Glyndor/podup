@@ -4,14 +4,24 @@
 use crate::compose::types::Service;
 use crate::quadlet::is_no_warn_set;
 
+use super::super::pod_fields::{PodField, PodFields};
+use super::super::shared_values::hostname;
 use super::Section;
 
 /// Emit the process-level settings of the container: `HostName=`, `User=`/
 /// `Group=`, `WorkingDir=`, `ReadOnly=`, `RunInit=`, and the `privileged: true`
 /// escape hatch.
-pub(super) fn emit_runtime(name: &str, service: &Service, container: &mut Section) {
-	if let Some(hostname) = &service.hostname {
-		container.add("HostName", hostname.clone());
+pub(super) fn emit_runtime(
+	name: &str,
+	service: &Service,
+	in_pod: bool,
+	pod_fields: &PodFields,
+	container: &mut Section,
+) {
+	if !(in_pod && pod_fields.owns(PodField::HostName)) {
+		if let Some(hostname) = hostname(service) {
+			container.add("HostName", hostname.to_string());
+		}
 	}
 	if let Some(user) = &service.user {
 		// Quadlet `User=` takes a UID/username only; a `uid:gid` compose value
@@ -24,6 +34,13 @@ pub(super) fn emit_runtime(name: &str, service: &Service, container: &mut Sectio
 			}
 			None => container.add("User", user.clone()),
 		}
+	}
+	if let Some(text) = service.umask.as_deref().filter(|text| {
+		crate::compose::types::service::service_umask::validate_runtime(name, text).is_ok()
+	}) {
+		let mask = crate::compose::types::service::service_umask::normalized(text);
+		// A CLI flag keeps the unit readable by Quadlet at the Podman 5.0 floor.
+		container.add("PodmanArgs", format!("--umask={mask}"));
 	}
 	if let Some(wd) = &service.working_dir {
 		container.add("WorkingDir", wd.clone());

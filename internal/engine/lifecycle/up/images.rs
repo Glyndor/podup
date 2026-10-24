@@ -73,7 +73,7 @@ impl Engine {
 			// A service with a `build:` whose image is already present needs no
 			// pull either; the local tag is the declared state.
 			(false, _) if service.build.is_some() => {}
-			(false, "never") => {}
+			(false, crate::engine::build::PullPolicy::Fixed("never")) => {}
 			// Under `missing`, an image the prefetch stage already saw on this
 			// host needs no request at all. Skipping only what was observed in
 			// this invocation keeps the decision as fresh as the one the pull
@@ -109,7 +109,10 @@ impl Engine {
 		}
 		// Resolved like the pull itself, so a presence record never stands in
 		// for the registry check `x-podman-autoupdate: registry` asks for (#1953).
-		if self.resolved_pull_policy(service_name, service)? != "missing" {
+		if !matches!(
+			self.resolved_pull_policy(service_name, service)?,
+			crate::engine::build::PullPolicy::Fixed("missing")
+		) {
 			return Ok(false);
 		}
 		let Some(image) = service.image.as_deref() else {

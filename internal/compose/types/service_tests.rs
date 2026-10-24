@@ -1,4 +1,5 @@
-//! Unit tests for the service-level `x-podman-autoupdate` extension.
+//! Unit tests for the service-level `x-podman-autoupdate` extension and for
+//! the pull-policy fields a service declares.
 
 use super::{AutoUpdate, Service, X_PODMAN_AUTOUPDATE};
 use indexmap::IndexMap;
@@ -131,4 +132,38 @@ fn x_podman_autoupdate_reads_from_a_hand_built_unknown_map() {
 fn auto_update_as_str_matches_podman_spelling() {
 	assert_eq!(AutoUpdate::Registry.as_str(), "registry");
 	assert_eq!(AutoUpdate::Local.as_str(), "local");
+}
+
+/// The policy and extension interval retain their YAML strings so the
+/// resolver can validate their syntax before mapping time policies to newer.
+#[test]
+fn pull_policy_and_pull_refresh_after_are_read_from_the_yaml() {
+	let svc = parse_service(
+		"services:\n  web:\n    image: x\n    pull_policy: refresh\n    pull_refresh_after: 24h\n",
+	);
+	assert_eq!(svc.pull_policy.as_deref(), Some("refresh"));
+	assert_eq!(svc.pull_refresh_after.as_deref(), Some("24h"));
+}
+
+/// A service that declares no `pull_refresh_after:` has none, and the field
+/// round-trips through `config` when it does: a dropped field would make the
+/// `config` output no longer do what the input did.
+#[test]
+fn pull_refresh_after_is_absent_by_default_and_round_trips() {
+	let svc: Service = serde_yaml::from_str("{image: x}").unwrap();
+	assert_eq!(svc.pull_refresh_after, None);
+
+	let svc = parse_service("services:\n  web:\n    image: x\n    pull_refresh_after: 1h30m\n");
+	assert_eq!(svc.pull_refresh_after.as_deref(), Some("1h30m"));
+	// The key is a modelled field, not a captured unknown one: a key that
+	// fell through to `unknown` would round-trip just as well, and the
+	// diagnostics pass would warn about a field podup understands.
+	assert!(
+		!svc.unknown.contains_key("pull_refresh_after"),
+		"the key must be read as a field, not captured as unknown: {:?}",
+		svc.unknown
+	);
+	let out = serde_yaml::to_string(&svc).unwrap();
+	assert!(out.contains("pull_refresh_after:"), "{out}");
+	assert!(out.contains("1h30m"), "{out}");
 }

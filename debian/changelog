@@ -1,3 +1,21 @@
+podup (5.12.0) unstable; urgency=medium
+
+  * `pull_policy` accepts daily, weekly, every_<n>[wdhms] and refresh, with
+    the service key pull_refresh_after. podup does not track when an image
+    was last pulled, so these pull as newer and say so once per service. They
+    were refused before.
+  * The compose key `umask` is honored: an octal string of one to four
+    digits, or the integer 0, quoted when it is any other number.
+  * A pod unit in the quadlet export carries the hostname, the DNS settings,
+    the extra hosts, the shared memory size, the user namespace mode, the
+    network aliases and, with a single network, the static addresses that
+    every service of the pod agrees on. A value the services disagree on
+    stays on the containers with a warning. Labels, mounts and the exit
+    policy do not move, and a project outside pod mode renders the same
+    units.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sat, 24 Oct 2026 01:52:12 -0500
+
 podup (5.11.0) unstable; urgency=medium
 
   * rustls-webpki 0.103.16 and webpki-roots 1.0.10, which fix
