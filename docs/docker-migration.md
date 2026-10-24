@@ -33,7 +33,7 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 | Logging | `logging` (driver + options) |
 | Compose features | `extends`, `include`, YAML anchors, x-extensions, `develop.watch` |
 
-`umask` sets the initial process permission mask. Use a string of one to four octal digits, such as `"0022"`, `"022"` or `"22"` (range `0000` to `7777`). Only integer `0` is accepted; quote every other numeric value to avoid YAML radix ambiguity. Validation follows normal interpolation and refuses leftover variables with the service name and a quote hint before container or pod replacement. Normal interpolation can turn numeric text into a YAML integer, so use a leading-zero value such as `0022`. With `config --no-interpolate`, a placeholder in `umask` is refused because the typed field still requires a valid mask. Valid output is padded to four digits. Omitted or null leaves the runtime default; explicit zero sends `"0000"` and masks no permission bits. The quadlet export uses `PodmanArgs=--umask=<value>`, compatible with Podman 5.0. Scalar inheritance, `!reset` and `!override` apply. Explicit `umask: null` changes the configuration hash once on upgrade because the previously unknown null key is now omitted. Tagged placeholders and external extends flag propagation have existing interpolation limitations; unresolved masks fail validation.
+`umask` sets the initial process permission mask. Use a string of one to four octal digits, such as `"0022"`, `"022"` or `"22"` (range `0000` to `7777`). Only integer `0` is accepted; quote every other numeric value to avoid YAML radix ambiguity. Validation follows normal interpolation and refuses leftover variables with the service name and a quote hint before container or pod replacement. Normal interpolation can turn numeric text into a YAML integer, so use a leading-zero value such as `0022`. With `config --no-interpolate`, a placeholder in `umask` is refused because the typed field still requires a valid mask. Valid output is padded to four digits. Omitted or null leaves the runtime default; explicit zero sends `"0000"` and masks no permission bits. The quadlet export uses `PodmanArgs=--umask=<value>`, compatible with Podman 5.0. Scalar inheritance, `!reset` and `!override` apply. Explicit `umask: null` changes the configuration hash once on upgrade because the previously unknown null key is now omitted. Tagged payloads use normal interpolation before merge tags are stripped; unresolved masks still fail validation.
 
 ### Pod mode (`x-podman-pod: true`)
 
@@ -87,6 +87,10 @@ services:
 ### GPU reservations are host-dependent
 
 `deploy.resources.reservations.devices` and the `gpus:` shorthand are honored, but only for **NVIDIA** GPUs, and only when the host exposes them through CDI (the NVIDIA Container Toolkit must be installed and the CDI spec generated). Reservations for other drivers or capabilities are warned about and skipped.
+
+### Interpolation across compose files
+
+`!override` and `!reset` payloads are interpolated before their merge directives are applied, including nested mappings and lists. External `extends.file` chains receive the referring compose file's interpolation mode and resolved explicit env paths, without rebasing those paths at each external directory. The root file anchors env paths to its compose directory. `config --no-interpolate` preserves placeholders in external bases too, subject to typed-field validation such as `umask` and pull policies. Included files retain their original interpolation context, including local env files, when resolving external bases. Includes are merged with parent definitions winning before same-file inheritance is resolved.
 
 ### External secrets and configs
 

@@ -47,6 +47,14 @@ pub(super) fn parse_included_file(
 	})
 }
 
+/// Anchor interpolation inputs before a different compose directory can reinterpret them.
+pub(super) fn absolute_env_files(dir: &Path, env_files: &[String]) -> Vec<String> {
+	env_files
+		.iter()
+		.map(|path| dir.join(path).to_string_lossy().into_owned())
+		.collect()
+}
+
 /// Merge `other` into `target`.
 ///
 /// Services / volumes / networks / secrets / configs / models / jobs from

@@ -98,8 +98,16 @@ fn section_for(docs: &str, cmd: &str) -> Option<String> {
 
 #[test]
 fn every_cli_flag_is_documented() {
-	let docs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/commands.md"))
-		.expect("read docs/commands.md");
+	let docs = format!(
+		"{}\n{}",
+		std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/commands.md"))
+			.expect("read docs/commands.md"),
+		std::fs::read_to_string(concat!(
+			env!("CARGO_MANIFEST_DIR"),
+			"/docs/commands-maintenance.md"
+		))
+		.expect("read docs/commands-maintenance.md"),
+	);
 
 	// clap marks the compose-wide options `global`, so every command's `--help`
 	// reprints them, but they are documented once, in the global table, not in
