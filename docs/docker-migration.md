@@ -60,6 +60,10 @@ Promoted native container values, including hostname and DNS, discard boundary w
 
 The pod keeps `PodmanArgs=--exit-policy=continue`, so its infra container stays running when the last service exits. Pod-level stop timeout has no Compose source and stays unset. A service's `stop_grace_period` remains a container-level timeout.
 
+### Bridge network isolation
+
+podup creates every bridge network with the netavark option `isolate=true`, so two bridge networks do not reach each other's unpublished ports, as in Docker. The Quadlet export writes the same default on the `.network` unit as `Options=isolate=true`, so a project started from the exported units is isolated like one started with `podup up`. A compose file that sets `isolate` in the network's `driver_opts` wins, including `"false"` for a project that deliberately spans networks. Networks with another driver are left alone. A network that already exists on the host keeps the options it was created with: after updating the units, remove the old network (`podman network rm <project>_<name>`) so the unit creates it again with `isolate=true`.
+
 ### Time-based pull policies
 
 `pull_policy:` accepts `always`, `never`, `missing` (alias `if_not_present`), `build`, Podman's `newer`, `daily`, `weekly`, `every_<n>[wdhms]`, and the podup extension `refresh`.

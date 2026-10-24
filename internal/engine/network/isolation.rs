@@ -39,7 +39,7 @@ const ISOLATE_OPT: &str = "isolate";
 /// A compose file that sets `isolate` in `driver_opts` wins, including setting
 /// it to `false`, which is the escape hatch for a project that deliberately
 /// spans networks.
-pub(super) fn apply_default_isolation(driver: &str, opts: &mut HashMap<String, String>) {
+pub(crate) fn apply_default_isolation(driver: &str, opts: &mut HashMap<String, String>) {
 	if driver != "bridge" {
 		return;
 	}

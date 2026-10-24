@@ -32,6 +32,7 @@ mod fake_podman;
 mod health;
 mod lifecycle;
 mod network;
+pub(crate) use network::apply_default_isolation;
 /// Re-exported so `startup::config_render` (in the binary crate) can call the
 /// same function `up` uses, instead of duplicating the resolution rule.
 pub use network::resolve_network_name;
