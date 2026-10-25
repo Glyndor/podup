@@ -78,6 +78,11 @@ fn a_socket_another_account_owns_is_reported_not_retried() {
 	// open, the way a socket owned by another user looks from here.
 	let fake = server::start(|s, _| server::ping_ok(s));
 	std::fs::set_permissions(&fake.sock, std::fs::Permissions::from_mode(0o000)).unwrap();
+	// Root ignores the mode (the Debian build runs as root), so there is no
+	// socket it may not open and nothing to report.
+	if std::os::unix::net::UnixStream::connect(&fake.sock).is_ok() {
+		return;
+	}
 	let home = tempfile::tempdir().unwrap();
 	let socket = format!("unix://{}", fake.sock.display());
 	let o = podup_raw(Some(&socket), &[], &home, &["ps"], BUDGET);

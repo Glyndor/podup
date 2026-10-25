@@ -9,6 +9,10 @@
 //! The fuzz targets `stream_frame` and `stream_ndjson` cover the parsers with
 //! random bytes; this covers the whole command with chosen ones.
 
+// Unix sockets, `ulimit` and `/proc` are the whole harness; the client's
+// Windows transport is a named pipe and has no counterpart here.
+#![cfg(unix)]
+
 #[path = "hostile_podman/endpoints.rs"]
 mod endpoints;
 #[path = "hostile_podman/run.rs"]
