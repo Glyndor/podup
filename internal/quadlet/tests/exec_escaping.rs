@@ -64,6 +64,9 @@ fn a_lone_semicolon_argument_is_refused() {
 		"command: [find, /, -exec, ls, \"{}\", \";\"]",
 		"entrypoint: [\";\"]",
 		"command: find . -exec ls {} ;",
+		// A quote that never closes is read differently by different Quadlet versions.
+		"command: \"echo 'x\"",
+		"command: 'a \"b ; c'",
 		"command: \"find . -exec ls {} ';'\"",
 		"command: \"ls \\\";\\\"\"",
 	] {

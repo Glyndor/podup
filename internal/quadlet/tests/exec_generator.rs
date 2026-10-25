@@ -50,8 +50,8 @@ fn quadlet_hands_systemd_a_command_line_with_no_specifier_or_variable() {
 		"{line}"
 	);
 	let rest = line.replace("%%", "").replace("$$", "");
-	// `%N` and `%n` are the specifiers Quadlet itself writes into the line.
-	let rest = rest.replace("%N", "").replace("%n", "");
+	// `%t`, `%N` and `%n` are the specifiers Quadlet itself writes into the line.
+	let rest = rest.replace("%t", "").replace("%N", "").replace("%n", "");
 	assert!(!rest.contains('%') && !rest.contains('$'), "{line}");
 }
 
@@ -76,8 +76,6 @@ const KEPT: &[&str] = &[
 	r#"\073"#,
 	r#"x; y"#,
 	r#"a ';'x"#,
-	r#""a;b"#,
-	r#"a "b ; c"#,
 ];
 
 /// Shell-form commands in which Quadlet hands systemd a bare `;` word.

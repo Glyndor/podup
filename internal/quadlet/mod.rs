@@ -45,7 +45,7 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 		for (field, cmd) in [("command", &svc.command), ("entrypoint", &svc.entrypoint)] {
 			if cmd.as_ref().is_some_and(render::has_lone_semicolon_word) {
 				return Err(ComposeError::Unsupported(format!(
-					"service '{name}': a lone `;` argument in {field} cannot be written in a Quadlet unit"
+					"service '{name}': a lone `;` argument or an unterminated quote in {field} cannot be written in a Quadlet unit"
 				)));
 			}
 		}

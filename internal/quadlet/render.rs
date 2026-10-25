@@ -178,7 +178,12 @@ fn escape_exec_control(s: &str) -> String {
 	out
 }
 
-/// Whether any word of the command is exactly `;`.
+/// Whether the command has a word that is exactly `;`, or a quote that never
+/// closes.
+///
+/// An unterminated quote is refused too: Quadlet versions differ on it (some
+/// drop the command, some pass the rest through as separate words), so no reading
+/// of it can be relied on.
 ///
 /// Quadlet unquotes `Exec=` words and writes them to `ExecStart=` without
 /// requoting a `;`, and it rejects the `\;` spelling, so such a word reaches
@@ -188,17 +193,16 @@ fn escape_exec_control(s: &str) -> String {
 /// rules Quadlet applies to it, so the shell form and the exec form share one
 /// reading and the check cannot disagree with the parser that matters.
 pub(crate) fn has_lone_semicolon_word(command: &Command) -> bool {
-	exec_words(&render_command(command))
-		.iter()
-		.any(|w| w == ";")
+	let (words, closed) = exec_words(&render_command(command));
+	!closed || words.iter().any(|w| w == ";")
 }
 
 /// Split an `Exec=` value into words the way Quadlet and systemd do: white
 /// space separates words outside quotes, `'` and `"` open a quoted run anywhere
 /// in a word, and a backslash starts a C-style escape both inside and outside
 /// quotes (`\n`, `\xHH`, `\NNN`, `\uXXXX`, `\s`, or the escaped character
-/// itself). An unterminated quote runs to the end of the value.
-fn exec_words(value: &str) -> Vec<String> {
+/// itself). The flag is `false` when a quote never closes.
+fn exec_words(value: &str) -> (Vec<String>, bool) {
 	let mut words = Vec::new();
 	let mut word = String::new();
 	let mut started = false;
@@ -230,7 +234,7 @@ fn exec_words(value: &str) -> Vec<String> {
 	if started {
 		words.push(word);
 	}
-	words
+	(words, quote.is_none())
 }
 
 /// Decode the escape that follows a backslash.
