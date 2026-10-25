@@ -122,3 +122,6 @@ mod swap_hostile_tests;
 
 #[cfg(all(test, unix))]
 mod hostile_tests;
+
+#[cfg(all(test, unix))]
+mod self_test_pipe_tests;

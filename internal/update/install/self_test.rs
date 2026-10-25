@@ -66,19 +66,20 @@ pub(crate) fn is_text_file_busy(e: &std::io::Error) -> bool {
 /// updater. The version check closes the rollback window: a replayed older
 /// (signed) release fails here and is rolled back.
 pub(crate) fn self_test(target: &Path, expected_version: &str) -> crate::Result<()> {
-	use std::io::Read;
 	use std::time::{Duration, Instant};
 
 	let mut child = super::spawn_version_probe(target)
 		.map_err(|e| ComposeError::Update(format!("could not run the updated binary: {e}")))?;
 
 	let deadline = Instant::now() + Duration::from_secs(10);
+	let answer = read_first_line(child.stdout.take());
 	let status = loop {
 		match child.try_wait() {
 			Ok(Some(status)) => break status,
 			Ok(None) => {
 				if Instant::now() >= deadline {
 					let _ = child.kill();
+					let _ = child.wait();
 					return Err(ComposeError::Update(
 						"updated binary did not respond to --version within 10s".to_string(),
 					));
@@ -97,12 +98,14 @@ pub(crate) fn self_test(target: &Path, expected_version: &str) -> crate::Result<
 			"updated binary exited with {status} on --version"
 		)));
 	}
-	// `--version` output is a single short line; reading after exit is safe
-	// (it fits the pipe buffer, so the child never blocks on a full pipe).
-	let mut out = String::new();
-	if let Some(mut stdout) = child.stdout.take() {
-		let _ = stdout.read_to_string(&mut out);
-	}
+	// The line is read by a thread of its own, so a descendant that outlived
+	// the binary and still holds the pipe open cannot keep the updater waiting
+	// past the deadline: the answer is the first line, not the end of the pipe.
+	let out = answer
+		.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+		.map_err(|_| {
+			ComposeError::Update("updated binary did not report its version within 10s".to_string())
+		})?;
 	let reported_matches = out
 		.split_whitespace()
 		.any(|t| t == expected_version || t.trim_start_matches('v') == expected_version);
@@ -114,4 +117,30 @@ pub(crate) fn self_test(target: &Path, expected_version: &str) -> crate::Result<
 		)));
 	}
 	Ok(())
+}
+
+/// The most `--version` output the self-test will read.
+const VERSION_OUTPUT_CAP: u64 = 4096;
+
+/// Read the first line of the probe's stdout (at most [`VERSION_OUTPUT_CAP`]
+/// bytes) on a helper thread and hand it back over a channel.
+///
+/// The thread ends when it has a line, at end of file, or at the cap. If the
+/// binary writes nothing and a descendant keeps the pipe open the thread stays
+/// blocked on the read, but only until that descendant exits; the caller has
+/// long since given up by then and the process does not wait for it.
+fn read_first_line(stdout: Option<std::process::ChildStdout>) -> std::sync::mpsc::Receiver<String> {
+	use std::io::{BufRead, BufReader, Read};
+
+	let (tx, rx) = std::sync::mpsc::channel();
+	std::thread::spawn(move || {
+		let mut line = String::new();
+		if let Some(stdout) = stdout {
+			let mut bytes = Vec::new();
+			let _ = BufReader::new(stdout.take(VERSION_OUTPUT_CAP)).read_until(b'\n', &mut bytes);
+			line = String::from_utf8_lossy(&bytes).into_owned();
+		}
+		let _ = tx.send(line);
+	});
+	rx
 }

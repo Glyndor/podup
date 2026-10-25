@@ -192,11 +192,10 @@ fn an_install_dir_the_user_cannot_write_leaves_the_binary_alone() {
 }
 
 /// A payload that exits at once but leaves a background process holding its
-/// stdout keeps `self_test` waiting on the pipe until that process ends: the
-/// 10 s bound covers a binary that does not exit, not one that does and leaves
-/// a descendant behind. See the report.
+/// stdout must not keep `self_test` waiting on the pipe until that process
+/// ends: the 10 s bound covers a binary that exits and leaves a descendant
+/// behind as well as one that does not exit.
 #[test]
-#[ignore = "known defect, see report"]
 fn a_payload_that_leaves_a_background_process_does_not_stall_the_updater() {
 	let mode = "orphan_holds_stdout";
 	let scratch = Scratch::new(mode);
