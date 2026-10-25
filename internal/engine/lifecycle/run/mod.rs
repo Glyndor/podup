@@ -109,8 +109,7 @@ impl Engine {
 				// `up` waited on the conditions between the dependencies. The
 				// ones the target states about its own are waited on here,
 				// before its container exists.
-				self.wait_target_dependencies(file, service_name, &deps)
-					.await?;
+				self.wait_target_dependencies(file, service_name).await?;
 			}
 		}
 

@@ -13,26 +13,21 @@ use crate::engine::Engine;
 use crate::error::Result;
 
 impl Engine {
-	/// Wait for every condition `target` states about a dependency that was
-	/// started for it (`started`), before the one-off container is created.
-	///
-	/// A dependency left out of `started` (under `--no-deps`) is not waited
-	/// for, as in `up`. One declared `required: false` that fails its
-	/// condition is logged and does not stop the run.
+	/// Wait for every condition `target` states about its dependencies, before
+	/// the one-off container is created. Called only once those dependencies
+	/// have been started, so under `--no-deps` there is nothing to wait for.
+	/// One declared `required: false` that fails its condition is logged and
+	/// does not stop the run.
 	pub(super) async fn wait_target_dependencies(
 		&self,
 		file: &ComposeFile,
 		target: &str,
-		started: &[String],
 	) -> Result<()> {
 		let Some(service) = file.services.get(target) else {
 			return Ok(());
 		};
 		let deps = effective_depends_on(service, &file.services);
 		for dep in deps.service_names() {
-			if !started.contains(&dep) {
-				continue;
-			}
 			let Some(dep_service) = file.services.get(&dep) else {
 				continue;
 			};
