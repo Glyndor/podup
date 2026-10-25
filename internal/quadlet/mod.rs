@@ -15,6 +15,7 @@
 mod min_podman;
 mod render;
 mod unit;
+mod unit_file;
 mod warnings;
 
 use std::cell::Cell;
@@ -139,8 +140,13 @@ fn guard_existing_owner(
 	filename: &str,
 	contents: &str,
 ) -> std::io::Result<()> {
-	let Ok(existing) = std::fs::read_to_string(path) else {
-		return Ok(());
+	let existing = match unit_file::inspect_existing(path)? {
+		unit_file::Existing::Absent => return Ok(()),
+		unit_file::Existing::Link => {
+			tracing::warn!("replacing {filename}, which is a symbolic link");
+			return Ok(());
+		}
+		unit_file::Existing::File(text) => text.unwrap_or_default(),
 	};
 	match (marker_owner(&existing), marker_owner(contents)) {
 		(Some(existing_owner), Some(new_owner)) if existing_owner != new_owner => {
@@ -164,17 +170,11 @@ fn guard_existing_owner(
 /// Units render each `environment:` entry as an `Environment=KEY=VALUE` line,
 /// so a compose file's database password ends up in this file verbatim. The
 /// default umask would leave it world-readable; systemd reads user units as the
-/// owning user, so 0600 costs nothing. Permissions are reset explicitly as well
-/// as at creation, so re-installing over a unit written by an older podup
-/// tightens it rather than leaving it as it was.
+/// owning user, so 0600 costs nothing. The file is written to a new private file
+/// and renamed into place, so a link or a file with looser permissions at the
+/// name is replaced rather than written through or kept.
 fn write_unit_file(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
-	std::fs::write(path, contents)?;
-	#[cfg(unix)]
-	{
-		use std::os::unix::fs::PermissionsExt;
-		std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-	}
-	Ok(())
+	unit_file::write_private(path, contents)
 }
 
 /// A single generated unit file: its name and full contents.
@@ -426,3 +426,7 @@ mod write_guard_tests;
 #[cfg(test)]
 #[path = "write_names_tests.rs"]
 mod write_names_tests;
+
+#[cfg(all(test, unix))]
+#[path = "unit_file_tests.rs"]
+mod unit_file_tests;
