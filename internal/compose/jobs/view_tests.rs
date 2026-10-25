@@ -81,12 +81,28 @@ fn a_job_with_manual_false_cannot_be_run() {
 }
 
 #[test]
-fn a_job_with_manual_false_still_runs_as_a_dependency() {
-	// `manual` governs launching the job by hand; a job that is run depends on
-	// it and starts it, like any dependency.
+fn a_job_with_manual_false_cannot_be_started_as_a_dependency_either() {
+	// Failing closed: the closed job is not launched through another job.
 	let file = parse_str(FILE).unwrap();
-	let view = run_view(&file, "needs-closed").unwrap();
-	assert_eq!(view.jobs, ["needs-closed", "scheduled-only"]);
+	let err = run_view(&file, "needs-closed")
+		.err()
+		.expect("needs-closed depends on a closed job");
+	assert!(matches!(err, ComposeError::Job(_)), "{err:?}");
+	let message = err.to_string();
+	assert!(
+		message.contains(
+			"job 'needs-closed' depends on job 'scheduled-only', which sets `triggers.manual` to false"
+		),
+		"{message}"
+	);
+}
+
+#[test]
+fn a_closed_job_deeper_in_the_chain_is_found() {
+	let yaml = "jobs:\n  a:\n    image: x\n    depends_on: [b]\n    triggers: {manual: true}\n  b:\n    image: x\n    depends_on: [c]\n    triggers: {manual: true}\n  c:\n    image: x\n    triggers: {manual: false}\n";
+	let file = parse_str(yaml).unwrap();
+	let message = run_view(&file, "a").err().expect("c is closed").to_string();
+	assert!(message.contains("job 'b' depends on job 'c'"), "{message}");
 }
 
 #[test]

@@ -73,9 +73,9 @@ pub(crate) struct RunView {
 
 /// Build the view for running the job `target`.
 ///
-/// Refuses a job whose `triggers.manual` is `false`. Only the jobs `target`
-/// reaches through `depends_on` are included, so a job nobody asked for is
-/// neither validated nor pulled.
+/// Refuses a job whose `triggers.manual` is `false`, whether it is asked for or
+/// reached through `depends_on`. Only the jobs `target` reaches are included,
+/// so a job nobody asked for is neither validated nor pulled.
 pub(crate) fn run_view(file: &ComposeFile, target: &str) -> Result<RunView> {
 	let job = file
 		.jobs
@@ -97,7 +97,22 @@ pub(crate) fn run_view(file: &ComposeFile, target: &str) -> Result<RunView> {
 			continue;
 		};
 		for dep in effective_depends_on(service, &view.services).service_names() {
-			if file.jobs.contains_key(&dep) && seen.insert(dep.clone()) {
+			let Some(needed) = file.jobs.get(&dep) else {
+				continue;
+			};
+			// `manual: false` forbids launching the job by `run`, and starting
+			// it because another job depends on it is launching it. Refused the
+			// same way as asking for it, naming both jobs, so the closed job
+			// is never started through the back door.
+			if !needed.triggers.allows_manual() {
+				return Err(job_error(format!(
+					"job '{}' depends on job '{}', which sets `triggers.manual` to false, so \
+					 `podup run` cannot start it",
+					sanitize_name(&name),
+					sanitize_name(&dep)
+				)));
+			}
+			if seen.insert(dep.clone()) {
 				reached.push(dep);
 			}
 		}

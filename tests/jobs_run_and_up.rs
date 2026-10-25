@@ -106,6 +106,10 @@ jobs:
     image: closed-image
     triggers:
       manual: false
+  chain:
+    image: chain-image
+    depends_on: [closed]
+    triggers: {manual: true}
 ";
 
 	fn accepts(_: &str, _: &str) -> Option<Reply> {
@@ -177,6 +181,27 @@ jobs:
 			!engine.sent().contains("containers/create"),
 			"{}",
 			engine.sent()
+		);
+	}
+
+	#[test]
+	fn run_refuses_a_job_that_would_start_a_closed_one() {
+		let engine = engine();
+		let output = engine.run(None, &[], &["-f", "compose.yaml", "run", "-d", "chain"]);
+		assert!(
+			output.contains(
+				"job 'chain' depends on job 'closed', which sets `triggers.manual` to false"
+			),
+			"{output}"
+		);
+		let sent = engine.sent();
+		assert!(
+			!sent.contains("chain-image") && !sent.contains("closed-image"),
+			"{sent}"
+		);
+		assert!(
+			!sent.lines().any(|l| l.starts_with("POST ")),
+			"no container was created: {sent}"
 		);
 	}
 
