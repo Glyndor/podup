@@ -34,6 +34,7 @@ mod resources;
 mod runtime;
 mod secrets;
 
+pub(crate) use identity::container_name;
 pub(crate) use networks::is_rootless_user_mode;
 
 use command::emit_command;

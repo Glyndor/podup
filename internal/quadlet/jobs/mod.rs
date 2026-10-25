@@ -23,12 +23,14 @@ mod timer;
 
 pub use self::stale::stale_timers;
 
+use std::collections::{HashMap, HashSet};
+
 use indexmap::IndexMap;
 
 use self::schedule::{plan, Plan};
 use self::timer::{is_fixed_offset_zone, is_safe_unit_name, job_stem, timer_unit, TimerSpec};
-use super::unit::{build_unit, emits_build_unit, job_container_unit, UnitContext};
-use super::{QuadletOutput, QuadletUnit};
+use super::unit::{build_unit, container_name, emits_build_unit, job_container_unit, UnitContext};
+use super::QuadletOutput;
 use crate::compose::types::{ComposeFile, DependsOn, Job, Service};
 use crate::error::sanitize_name;
 
@@ -72,6 +74,8 @@ pub(super) fn append_job_units(file: &ComposeFile, ctx: &UnitContext<'_>, out: &
 	out.warnings
 		.extend(super::warnings::manual_only_jobs(&manual_only));
 
+	block_unsatisfied_dependents(file, &mut exported, out);
+
 	let mut services: IndexMap<String, Service> = ctx.services.clone();
 	for entry in &exported {
 		services.insert(entry.name.to_string(), entry.job.service.clone());
@@ -80,13 +84,66 @@ pub(super) fn append_job_units(file: &ComposeFile, ctx: &UnitContext<'_>, out: &
 		services: &services,
 		..*ctx
 	};
+	// Effective container name -> the unit file that uses it, seeded with the
+	// services and extended as each job is accepted, so a clash is one lookup.
+	let mut taken: HashMap<String, String> = HashMap::new();
+	for (name, service) in ctx.services {
+		taken
+			.entry(container_name(ctx.project, name, service))
+			.or_insert_with(|| format!("{}.container", job_stem(ctx.project, name)));
+	}
 	let mut timer_count = 0;
 	for entry in &exported {
-		timer_count += export_job(entry, ctx, &job_ctx, out);
+		timer_count += export_job(entry, ctx, &job_ctx, &mut taken, out);
 	}
 	if timer_count > 0 {
 		out.warnings
 			.push(super::warnings::timers_need_systemd_dir(timer_count));
+	}
+}
+
+/// Drop from `exported` every job that `depends_on` a job, with `required` true
+/// (the default), that has no unit. Without that unit systemd would start the
+/// dependent alone, on its timer, although the file says it must not run before
+/// the dependency has. Only `required: false` entries may be left out. The
+/// check repeats until nothing changes, because blocking a job can leave its own
+/// dependents without a unit.
+fn block_unsatisfied_dependents(
+	file: &ComposeFile,
+	exported: &mut Vec<Exported<'_>>,
+	out: &mut QuadletOutput,
+) {
+	loop {
+		let present: HashSet<&str> = exported.iter().map(|e| e.name).collect();
+		let mut blocked: Vec<(usize, String)> = Vec::new();
+		for (index, entry) in exported.iter().enumerate() {
+			let needs = &entry.job.service.depends_on;
+			let missing = needs.service_names().into_iter().find(|dep| {
+				file.jobs.contains_key(dep)
+					&& !present.contains(dep.as_str())
+					&& needs.required_for(dep)
+			});
+			if let Some(dep) = missing {
+				blocked.push((index, dep));
+			}
+		}
+		if blocked.is_empty() {
+			return;
+		}
+		for (index, dep) in blocked.into_iter().rev() {
+			let entry = exported.remove(index);
+			for (position, _) in &entry.timers {
+				out.warnings.push(format!(
+					"job '{}': schedule entry {position} was not exported: it requires job '{}', \
+					 which has no exported schedule and so no unit, and the timer could run it \
+					 without that job having run; set `required: false` on the dependency or give \
+					 '{}' an exportable schedule",
+					sanitize_name(entry.name),
+					sanitize_name(&dep),
+					sanitize_name(&dep)
+				));
+			}
+		}
 	}
 }
 
@@ -121,6 +178,7 @@ fn export_job(
 	entry: &Exported<'_>,
 	ctx: &UnitContext<'_>,
 	job_ctx: &UnitContext<'_>,
+	taken: &mut HashMap<String, String>,
 	out: &mut QuadletOutput,
 ) -> usize {
 	let name = entry.name;
@@ -155,17 +213,19 @@ fn export_job(
 	let container = job_container_unit(name, &service, job_ctx, &mut out.warnings);
 	// The timer starts the job with `--replace`, so a container name that
 	// another generated unit uses would have that unit's container removed.
-	if let Some(clash) = clashing_container_name(&container, &out.units) {
+	let container_name = container_name(ctx.project, name, &service);
+	if let Some(holder) = taken.get(&container_name) {
 		for (position, _) in &entry.timers {
 			out.warnings.push(format!(
 				"job '{label}': schedule entry {position} was not exported: its container name \
-				 '{}' is also used by {}, and the timer would replace that container; give one \
-				 of them a different `container_name`",
-				clash.0, clash.1
+				 '{}' is also used by {holder}, and the timer would replace that container; give \
+				 one of them a different `container_name`",
+				sanitize_name(&container_name)
 			));
 		}
 		return 0;
 	}
+	taken.insert(container_name, container.filename.clone());
 	let timers: Vec<_> = entry
 		.timers
 		.iter()
@@ -212,26 +272,6 @@ fn export_job(
 		));
 	}
 	written
-}
-
-/// The container name of `unit` and the file of an earlier `.container` unit
-/// that uses the same one, if there is one.
-fn clashing_container_name(
-	unit: &QuadletUnit,
-	earlier: &[QuadletUnit],
-) -> Option<(String, String)> {
-	let name = container_name(&unit.contents)?;
-	earlier
-		.iter()
-		.filter(|other| other.filename.ends_with(".container"))
-		.find(|other| container_name(&other.contents) == Some(name))
-		.map(|other| (name.to_string(), other.filename.clone()))
-}
-
-fn container_name(contents: &str) -> Option<&str> {
-	contents
-		.lines()
-		.find_map(|line| line.strip_prefix("ContainerName="))
 }
 
 /// Remove the `depends_on` entries that name a job without an exported unit,

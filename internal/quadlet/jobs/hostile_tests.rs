@@ -9,6 +9,32 @@ use crate::parse_str;
 use crate::quadlet::generate_at;
 
 #[test]
+fn twenty_thousand_jobs_export_in_linear_time_and_still_catch_a_name_clash() {
+	const JOBS: usize = 20_000;
+	let mut yaml = String::from("jobs:\n");
+	for n in 0..JOBS {
+		yaml.push_str(&format!(
+			"  j{n}:\n    image: alpine\n    triggers:\n      schedule: ['0 3 * * *']\n"
+		));
+	}
+	// The last job reuses the effective name of the first.
+	yaml.push_str(
+		"  last:\n    image: alpine\n    container_name: proj-j0\n    triggers:\n      schedule: ['0 4 * * *']\n",
+	);
+	let file = parse_str(&yaml).unwrap();
+	let started = std::time::Instant::now();
+	let out = generate_at(&file, "proj", Path::new("/srv/app"));
+	let elapsed = started.elapsed();
+	assert!(
+		elapsed < std::time::Duration::from_secs(2),
+		"exporting {JOBS} jobs took {elapsed:?}"
+	);
+	assert!(has_unit(&out, "proj-j19999.container"));
+	assert!(!has_unit(&out, "proj-last.container"));
+	assert!(warned(&out, "also used by proj-j0.container"));
+}
+
+#[test]
 fn sixty_four_schedules_make_sixty_four_distinct_timers() {
 	let mut yaml = String::from("jobs:\n  j:\n    image: alpine\n    triggers:\n      schedule:\n");
 	for minute in 0..64 {

@@ -14,7 +14,7 @@ mod volume;
 
 pub(super) use build::{build_unit, emits_build_unit};
 pub(super) use container::{
-	container_unit_with_mode, job_container_unit, ContainerUnitMode, UnitContext,
+	container_name, container_unit_with_mode, job_container_unit, ContainerUnitMode, UnitContext,
 };
 pub(super) use network::network_unit;
 pub(super) use pod::pod_unit;

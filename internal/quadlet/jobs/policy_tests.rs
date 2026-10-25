@@ -40,7 +40,9 @@ jobs:
     triggers: {manual: true}
   main:
     image: alpine
-    depends_on: [prepare, manual_only]
+    depends_on:
+      prepare: {condition: service_started}
+      manual_only: {condition: service_started, required: false}
     triggers:
       schedule: ['0 3 * * *']
 ";
@@ -110,6 +112,88 @@ jobs:
 	let out = export(yaml);
 	assert!(has_unit(&out, "proj-j.build"));
 	assert!(unit(&out, "proj-j.container").contains("Image=proj-j.build\n"));
+}
+
+const PREPARE_THEN_PUBLISH: &str = "\
+jobs:
+  prepare:
+    image: alpine
+    triggers: {manual: true}
+  publish:
+    image: alpine
+    depends_on:
+      prepare:
+        condition: service_completed_successfully
+        required: REQUIRED
+    triggers:
+      schedule: ['0 3 * * *', '0 4 * * *']
+";
+
+#[test]
+fn a_required_dependency_on_a_job_without_a_unit_blocks_the_dependent() {
+	let yaml = PREPARE_THEN_PUBLISH.replace("REQUIRED", "true");
+	let out = export(&yaml);
+	assert!(!has_unit(&out, "proj-publish.container"));
+	assert!(!has_unit(&out, "proj-publish-1.timer"));
+	assert!(!has_unit(&out, "proj-publish-2.timer"));
+	assert!(warned(
+		&out,
+		"job 'publish': schedule entry 2 was not exported: it requires job 'prepare'"
+	));
+}
+
+#[test]
+fn a_dependency_is_required_unless_it_says_otherwise() {
+	let short = "\
+jobs:
+  prepare:
+    image: alpine
+    triggers: {manual: true}
+  publish:
+    image: alpine
+    depends_on: [prepare]
+    triggers:
+      schedule: ['0 3 * * *']
+";
+	assert!(!has_unit(&export(short), "proj-publish.container"));
+	let implicit = PREPARE_THEN_PUBLISH.replace("        required: REQUIRED\n", "");
+	assert!(!has_unit(&export(&implicit), "proj-publish.container"));
+}
+
+#[test]
+fn an_optional_dependency_on_a_job_without_a_unit_is_dropped_with_a_warning() {
+	let yaml = PREPARE_THEN_PUBLISH.replace("REQUIRED", "false");
+	let out = export(&yaml);
+	let container = unit(&out, "proj-publish.container");
+	assert!(!container.contains("prepare"), "{container}");
+	assert!(warned(&out, "`depends_on` job 'prepare' is not ordered"));
+}
+
+#[test]
+fn a_block_travels_up_a_chain_of_required_dependencies() {
+	let yaml = "\
+jobs:
+  c:
+    image: alpine
+    triggers: {manual: true}
+  b:
+    image: alpine
+    depends_on: [c]
+    triggers:
+      schedule: ['0 2 * * *']
+  a:
+    image: alpine
+    depends_on: [b]
+    triggers:
+      schedule: ['0 3 * * *']
+";
+	let out = export(yaml);
+	assert!(!has_unit(&out, "proj-a.container"));
+	assert!(!has_unit(&out, "proj-b.container"));
+	assert!(warned(
+		&out,
+		"job 'a': schedule entry 1 was not exported: it requires job 'b'"
+	));
 }
 
 fn dst_warnings(out: &super::super::QuadletOutput) -> usize {
