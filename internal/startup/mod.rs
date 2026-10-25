@@ -14,6 +14,10 @@ use crate::cli::{Cli, Commands, RunArgs};
 
 mod config_normalize;
 mod config_render;
+mod control_escape;
+#[cfg(test)]
+#[path = "control_escape_tests.rs"]
+mod control_escape_tests;
 #[cfg(test)]
 pub(crate) use config_render::render_config_to;
 pub(crate) use config_render::{render_config, ConfigOutput};
@@ -91,7 +95,13 @@ where
 			podup::ui::stderr_colored(),
 		);
 		write!(writer, "podup: {label}: ")?;
-		ctx.field_format().format_fields(writer.by_ref(), event)?;
+		// Format the fields apart so the text can be escaped as a whole: the
+		// message interpolates names that are not ours, and one carrying a
+		// carriage return or a C1 control would otherwise rewrite the line.
+		let mut message = String::new();
+		ctx.field_format()
+			.format_fields(Writer::new(&mut message), event)?;
+		write!(writer, "{}", control_escape::escape_log_controls(&message))?;
 		writeln!(writer)
 	}
 }
@@ -418,6 +428,8 @@ fn format_clap_error(err: &clap::error::Error) -> String {
 	// the binary. The usage block below is left unchanged.
 	let body = err.to_string();
 	let body = body.strip_prefix("error: ").unwrap_or(&body);
+	// clap echoes the offending argument as typed; escape it like any other name.
+	let body = control_escape::escape_log_controls(body);
 	format!("{prefix}{body}")
 }
 
