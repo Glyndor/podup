@@ -82,7 +82,9 @@ pub(crate) fn write_quadlet(
 			}
 			let mut progress = String::new();
 			for path in podup::quadlet::write_units(dir, &result.units)? {
-				progress.push_str(&format!("wrote {}\n", path.display()));
+				// The directory is whatever the user typed; escape it like any name.
+				let shown = podup::ui::sanitize_cell(&path.display().to_string());
+				progress.push_str(&format!("wrote {shown}\n"));
 			}
 			write_stdout(&progress)?;
 		}

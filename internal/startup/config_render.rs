@@ -148,9 +148,10 @@ pub(crate) fn render_config_to<W: Write>(
 				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
 			})?;
 			prune_json_nulls(&mut v);
-			serde_json::to_string_pretty(&v).map_err(|e| {
+			let json = serde_json::to_string_pretty(&v).map_err(|e| {
 				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
-			})?
+			})?;
+			super::control_escape::escape_json_controls(&json).into_owned()
 		}
 		ConfigFormat::Yaml => {
 			let mut v: serde_yaml::Value =

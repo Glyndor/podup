@@ -226,3 +226,13 @@ fn from_impls_convert_correctly() {
 	let e: ComposeError = podman_err.into();
 	assert!(matches!(e, ComposeError::Podman(_)));
 }
+
+#[test]
+fn sanitize_name_escapes_cr_nul_del_and_c1_controls() {
+	let out = super::sanitize_name("a\rb\u{0}c\u{7f}d\u{9b}e\u{85}f\u{1b}g");
+	assert_eq!(out, "a\\rb\\u{0}c\\u{7f}d\\u{9b}e\\u{85}f\\u{1b}g");
+	assert!(matches!(
+		super::sanitize_name("plain é"),
+		std::borrow::Cow::Borrowed(_)
+	));
+}
