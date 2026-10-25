@@ -68,9 +68,14 @@ impl Engine {
 			.await
 			.map_err(ComposeError::Podman)?;
 
+		// A job's container is the project's too: a job that depends on another
+		// job starts it as a container named for it, and `--remove-orphans`
+		// must not reap that as a service the file no longer defines.
+		let jobs = file.jobs.iter().map(|(n, job)| (n, &job.service));
 		let known: std::collections::HashSet<String> = file
 			.services
 			.iter()
+			.chain(jobs)
 			.flat_map(|(n, s)| self.replica_names(n, s))
 			.collect();
 

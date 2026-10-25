@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use crate::compose::dependencies::effective_depends_on;
 use crate::compose::types::{ComposeFile, Service};
 
-/// Remove services excluded by the active profile set, in place.
+/// Remove services and jobs excluded by the active profile set, in place.
 ///
 /// `active` is the CLI `--profile` list, falling back to `COMPOSE_PROFILES`.
 /// A profiled service that is a transitive `depends_on` target of a retained
@@ -25,7 +25,12 @@ pub fn retain_active_profiles_with_targets(
 	targets: &[String],
 ) {
 	let set = active_profiles_set(active);
-	let enabled = enabled_profile_services(file, &set, targets);
+	let mut enabled = enabled_profile_services(file, &set, targets);
+	// Jobs follow the same profile rules. What a kept job depends on is kept
+	// with it, which can add services to `enabled`.
+	if !file.jobs.is_empty() {
+		super::profiles_jobs::retain_jobs(file, &set, targets, &mut enabled);
+	}
 	file.services.retain(|name, _| enabled.contains(name));
 }
 

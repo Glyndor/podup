@@ -140,3 +140,16 @@ fn wrapped_service_not_found_has_the_same_hint() {
 		Some("hint: 'mi-contenedor' is the container of service 'named'; pass the service name instead".into())
 	);
 }
+
+#[test]
+fn a_job_name_points_to_run() {
+	let file: ComposeFile = serde_yaml::from_str(
+		"services:\n  web: {image: x}\njobs:\n  nightly: {image: x, triggers: {manual: true}}\n",
+	)
+	.unwrap();
+	let err = ComposeError::ServiceNotFound("nightly".into());
+	assert_eq!(
+		hint_for(&err, &file, "p").as_deref(),
+		Some("hint: 'nightly' is a job, not a service; start it with `podup run nightly`")
+	);
+}
