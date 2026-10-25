@@ -66,8 +66,206 @@ path = "internal/lib.rs"
 # does not have, and the lane that gates merges always passes the feature.
 [[test]]
 name = "engine_integration"
-path = "tests/engine_integration.rs"
+path = "tests/engine/engine_integration.rs"
 required-features = ["test-helpers"]
+
+# Test crates that live in a folder. Cargo discovers only `tests/*.rs` and
+# `tests/*/main.rs`, so a crate under `tests/<concern>/` is named here, and
+# keeping the same `name` keeps `cargo test --test <name>`, the CI lanes and
+# every test's reported identity as they were. The crates still at the top
+# level are found by discovery and need no entry. `every_source_file_is_compiled`
+# reads these paths, so a crate listed here cannot go unbuilt silently.
+[[test]]
+name = "build_contract"
+path = "tests/cli/output/build_contract.rs"
+
+[[test]]
+name = "cli_aliases"
+path = "tests/cli/surface/cli_aliases.rs"
+
+[[test]]
+name = "cli_diagnostics"
+path = "tests/cli/surface/cli_diagnostics.rs"
+
+[[test]]
+name = "cli_flags"
+path = "tests/cli/surface/cli_flags.rs"
+
+[[test]]
+name = "cli_service_hint"
+path = "tests/cli/surface/cli_service_hint.rs"
+
+[[test]]
+name = "client_address_warning"
+path = "tests/cli/warnings/client_address_warning.rs"
+
+[[test]]
+name = "config_contract"
+path = "tests/cli/output/config_contract.rs"
+
+[[test]]
+name = "host_binding_warnings"
+path = "tests/cli/warnings/host_binding_warnings.rs"
+
+[[test]]
+name = "output_contract"
+path = "tests/cli/output/output_contract.rs"
+
+[[test]]
+name = "port_warning_scope"
+path = "tests/cli/warnings/port_warning_scope.rs"
+
+[[test]]
+name = "project_name_safety"
+path = "tests/cli/surface/project_name_safety.rs"
+
+[[test]]
+name = "recreate_vocabulary"
+path = "tests/cli/output/recreate_vocabulary.rs"
+
+[[test]]
+name = "reporting_contract"
+path = "tests/cli/output/reporting_contract.rs"
+
+[[test]]
+name = "compose_interpolation"
+path = "tests/compose/parsing/compose_interpolation.rs"
+
+[[test]]
+name = "env_file"
+path = "tests/compose/parsing/env_file.rs"
+
+[[test]]
+name = "parse"
+path = "tests/compose/parsing/parse.rs"
+
+[[test]]
+name = "ports"
+path = "tests/compose/parsing/ports.rs"
+
+[[test]]
+name = "quadlet"
+path = "tests/quadlet/quadlet.rs"
+
+[[test]]
+name = "size"
+path = "tests/compose/parsing/size.rs"
+
+[[test]]
+name = "substitute"
+path = "tests/compose/parsing/substitute.rs"
+
+[[test]]
+name = "audit_exit_codes"
+path = "tests/audit/audit_exit_codes.rs"
+
+[[test]]
+name = "audit_ignore_lists"
+path = "tests/supply_chain/audit_ignore_lists.rs"
+
+[[test]]
+name = "audit_list_checks"
+path = "tests/audit/audit_list_checks.rs"
+
+[[test]]
+name = "dependabot_covers_every_lockfile"
+path = "tests/supply_chain/dependabot_covers_every_lockfile.rs"
+
+[[test]]
+name = "docs_flags"
+path = "tests/docs/docs_flags.rs"
+
+[[test]]
+name = "hostile_compose"
+path = "tests/hostile/input/hostile_compose.rs"
+
+[[test]]
+name = "hostile_filesystem_paths"
+path = "tests/hostile/input/hostile_filesystem_paths.rs"
+
+[[test]]
+name = "hostile_podman"
+path = "tests/hostile/podman/hostile_podman.rs"
+
+[[test]]
+name = "hostile_quadlet_units"
+path = "tests/hostile/input/hostile_quadlet_units.rs"
+
+[[test]]
+name = "hostile_secret_engine"
+path = "tests/hostile/output/hostile_secret_engine.rs"
+
+[[test]]
+name = "hostile_secret_output"
+path = "tests/hostile/output/hostile_secret_output.rs"
+
+[[test]]
+name = "hostile_terminal_output"
+path = "tests/hostile/output/hostile_terminal_output.rs"
+
+[[test]]
+name = "every_source_file_is_compiled"
+path = "tests/repo_rules/every_source_file_is_compiled.rs"
+
+[[test]]
+name = "keyring_bootstrap_order"
+path = "tests/packaging/keyring_bootstrap_order.rs"
+
+[[test]]
+name = "no_inline_test_modules"
+path = "tests/repo_rules/no_inline_test_modules.rs"
+
+[[test]]
+name = "no_system_wide_apt_policy"
+path = "tests/packaging/no_system_wide_apt_policy.rs"
+
+[[test]]
+name = "package_excludes"
+path = "tests/packaging/package_excludes.rs"
+
+[[test]]
+name = "podman_floor"
+path = "tests/packaging/podman_floor.rs"
+
+[[test]]
+name = "podman_floor_at_runtime"
+path = "tests/packaging/podman_floor_at_runtime.rs"
+
+[[test]]
+name = "podup_is_not_published"
+path = "tests/packaging/podup_is_not_published.rs"
+
+[[test]]
+name = "secret_safety"
+path = "tests/repo_rules/secret_safety.rs"
+
+[[test]]
+name = "tar_builder_single_site"
+path = "tests/repo_rules/tar_builder_single_site.rs"
+
+[[test]]
+name = "workflow_audit_strictness"
+path = "tests/workflows/workflow_audit_strictness.rs"
+
+[[test]]
+name = "workflow_branch_health"
+path = "tests/workflows/workflow_branch_health.rs"
+
+[[test]]
+name = "workflow_debian_image"
+path = "tests/workflows/workflow_debian_image.rs"
+
+[[test]]
+name = "workflow_required_checks"
+path = "tests/workflows/workflow_required_checks.rs"
+
+[[test]]
+name = "workflow_toolchain_pin"
+path = "tests/workflows/workflow_toolchain_pin.rs"
+
+[[test]]
+name = "integration_leak_scan"
+path = "tests/engine/integration_leak_scan.rs"
 
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time", "net", "io-util", "io-std"] }
