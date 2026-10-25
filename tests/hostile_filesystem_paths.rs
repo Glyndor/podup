@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! Paths named by a compose file, and paths podup writes, seen from the
 //! command line with `HOME` and every `XDG_*` variable pointed at a temp dir.
 //!

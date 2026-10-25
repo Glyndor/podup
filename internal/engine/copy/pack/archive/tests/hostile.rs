@@ -114,6 +114,10 @@ fn a_file_name_that_is_not_utf8_is_refused() {
 	let dir = tempfile::tempdir().expect("tempdir");
 	let tree = dir.path().join("tree");
 	std::fs::create_dir(&tree).expect("mkdir");
-	std::fs::write(tree.join(std::ffi::OsStr::from_bytes(b"bad\xff")), b"x").expect("write");
+	// APFS refuses such a name outright; with no such file there is nothing
+	// to pack, so the precondition decides, not the platform name.
+	if std::fs::write(tree.join(std::ffi::OsStr::from_bytes(b"bad\xff")), b"x").is_err() {
+		return;
+	}
 	assert!(pack_within_budget(&tree, false, false).is_err());
 }
