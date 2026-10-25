@@ -14,6 +14,9 @@
 //! them ran), and the engine can refuse the secret request, which is the path
 //! where an error message could echo what it was given.
 
+// The fake engine is a Unix domain socket server.
+#![cfg(unix)]
+
 use std::fs;
 
 #[path = "hostile_support/fake_engine.rs"]

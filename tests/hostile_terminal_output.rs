@@ -9,6 +9,9 @@
 //! stdout or stderr. Colour is off (`NO_COLOR`) and podup's own `ESC [ ... m`
 //! styling is removed before the scan, so it cannot be mistaken for the payload.
 
+// The fake engine is a Unix domain socket server.
+#![cfg(unix)]
+
 use std::fs;
 
 #[path = "hostile_support/fake_engine.rs"]
