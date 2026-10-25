@@ -25,11 +25,11 @@ pub fn retain_active_profiles_with_targets(
 	targets: &[String],
 ) {
 	let set = active_profiles_set(active);
-	let mut enabled = enabled_profile_services(file, &set, targets);
-	// Jobs follow the same profile rules. What a kept job depends on is kept
-	// with it, which can add services to `enabled`.
+	let enabled = enabled_profile_services(file, &set, targets);
+	// Jobs follow the same profile rules but never enlarge `enabled`: a job
+	// does not activate a service.
 	if !file.jobs.is_empty() {
-		super::profiles_jobs::retain_jobs(file, &set, targets, &mut enabled);
+		super::profiles_jobs::retain_jobs(file, &set, targets, &enabled);
 	}
 	file.services.retain(|name, _| enabled.contains(name));
 }

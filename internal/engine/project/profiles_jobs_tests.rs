@@ -51,30 +51,44 @@ fn a_profiled_job_is_ignored_without_its_profile() {
 }
 
 #[test]
-fn an_active_profile_keeps_the_job_and_the_service_it_needs() {
+fn an_active_profile_keeps_the_job_but_never_activates_its_service() {
+	// ops-job needs db, which sits behind `data`. Only `ops` is active, so db
+	// stays out and the job, which could not be satisfied, is ignored with it.
 	let (services, jobs) = kept(&["ops"], &[]);
-	assert_eq!(jobs, ["plain", "ops-job"]);
-	assert!(
-		services.contains(&"db".to_string()),
-		"the dependency of a kept job stays: {services:?}"
+	assert_eq!(jobs, ["plain"]);
+	assert_eq!(
+		services,
+		["web"],
+		"a job must not pull db into config or audit"
 	);
 }
 
 #[test]
-fn a_kept_job_brings_the_profiled_job_it_depends_on() {
-	let (_, jobs) = kept(&["chain"], &[]);
-	assert!(jobs.contains(&"ops-job".to_string()), "{jobs:?}");
+fn a_job_is_kept_when_the_profile_of_its_service_is_active_too() {
+	let (services, jobs) = kept(&["ops", "data"], &[]);
+	assert_eq!(jobs, ["plain", "ops-job"]);
+	assert!(services.contains(&"db".to_string()));
+}
+
+#[test]
+fn a_job_ignored_for_its_dependency_takes_the_jobs_that_need_it() {
+	// chain needs ops-job, which was ignored for needing db.
+	let (_, jobs) = kept(&["ops", "chain"], &[]);
+	assert_eq!(jobs, ["plain"]);
+	let (_, jobs) = kept(&["ops", "chain", "data"], &[]);
+	assert_eq!(jobs, ["plain", "ops-job", "chained"]);
 }
 
 #[test]
 fn the_wildcard_keeps_every_job() {
-	let (_, jobs) = kept(&["*"], &[]);
+	let (services, jobs) = kept(&["*"], &[]);
 	assert_eq!(jobs.len(), 3);
+	assert!(services.contains(&"db".to_string()));
 }
 
 #[test]
 fn naming_a_job_activates_its_profile() {
-	let (_, jobs) = kept(&["x"], &["ops-job"]);
+	let (_, jobs) = kept(&["x", "data"], &["ops-job"]);
 	assert!(jobs.contains(&"ops-job".to_string()), "{jobs:?}");
 }
 
