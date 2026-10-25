@@ -303,7 +303,7 @@ Short and long `depends_on` behave alike. For portability, give both services th
 
 ### Jobs and schedules
 
-podup never fires a `schedule` itself; it is not a daemon. `generate quadlet` turns a schedule into a systemd timer, and systemd fires it. An entry is exported only when the timer fires at the same times as the cron line and under the same policy. Anything else is reported with the job, the entry number and the reason, and nothing is written for it.
+podup never fires a `schedule` itself; it is not a daemon. `generate quadlet` turns a schedule into a systemd timer, and systemd fires it. An entry is exported only when the timer fires on the same calendar as the cron line and under the same policy, with the daylight saving exception below. Anything else is reported with the job, the entry number and the reason, and nothing is written for it.
 
 Exported: five fields (minute, hour, day of month, month, day of week) made of `*`, numbers, lists, ranges, steps (`*/5`, `10-30/10`) and three-letter month and day names, plus `@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly` and `@annually`. Sunday is `0` or `7`. A bare `?` is read as `*` in the two day fields. Each field is expanded to the set of values it matches and the `OnCalendar=` text is written from those sets.
 
@@ -318,7 +318,7 @@ Not exported, and why:
 | A value out of range, an empty list element | invalid |
 | A `timezone` that is not an IANA name | the name goes into the unit text, so only letters, digits and `_ + - /` are accepted |
 
-The daylight saving behaviour around a skipped or repeated hour is systemd's. systemd rejects a timezone name it does not know when it loads the timer, so check the name on the host that runs it. The timers are plain systemd units and must be installed where systemd reads them, not in the Quadlet directory; see [Jobs in `generate quadlet`](commands-reference.md#jobs-in-generate-quadlet).
+Daylight saving time is where systemd and cron differ and the timer cannot fix it. In a zone with summer time (and with no `timezone`, which is the host zone), a run set for the hour skipped in spring, such as `30 2 * * *` in `Europe/Madrid` on the last Sunday of March, does not happen that day, and a run set for the hour repeated in autumn can be missed; `Persistent=true` does not make it up. Use `timezone: UTC` or an `Etc/` zone for exact times. `generate quadlet` warns once per job whose exported timers use the host zone or a zone other than `UTC`, `GMT` and `Etc/*`. A `timezone` must be `UTC`, `GMT` or the `Area/Location` form; systemd still rejects a name it does not know when it loads the timer, so check it on the host that runs it. A step wider than the field (`*/60` in minutes, `*/12` in months, `*/31` in days) is not exported even though cron accepts it: podup stays on the safe side. A schedule that is valid but can never fire (`0 0 30 2 *`) is exported with a warning. The timers are plain systemd units and must be installed where systemd reads them, not in the Quadlet directory; see [Jobs in `generate quadlet`](commands-reference.md#jobs-in-generate-quadlet).
 
 ## Accepted but has no effect
 

@@ -62,9 +62,13 @@ Quadlet only turns its own unit types into services and ignores `.timer` files. 
 | Schedule key | Becomes |
 |---|---|
 | `cron` | `OnCalendar=`, for the subset in [Jobs and schedules](docker-migration.md#jobs-and-schedules) |
-| `timezone` | a suffix of `OnCalendar=` when it is an IANA name (letters, digits and `_ + - /`, at most 64 bytes, no `..`); absent means the host's zone |
+| `timezone` | a suffix of `OnCalendar=` when it is `UTC`, `GMT` or an `Area/Location` name (letters, digits and `_ + - /`, at most 64 bytes, no `..`); absent means the host zone |
 | `missed_fires` | `Persistent=true` for `one` (the default), `Persistent=false` for `skip` |
 | `concurrency` | `forbid` is how a systemd timer behaves; `queue` has no timer form and the entry is not exported |
+
+Every timer sets `AccuracySec=1s`, because systemd otherwise spreads a timer by up to a minute. A job whose `container_name` is also used by another generated unit is not exported: the timer starts it with `--replace` and would remove that container. Around daylight saving changes systemd does not behave like cron (a run set for the skipped spring hour does not happen that day), so each job exported with the host zone or a zone with summer time gets one warning; see [Jobs and schedules](docker-migration.md#jobs-and-schedules).
+
+Removing a `schedule` entry and generating again does not delete the old `<project>-<job>-<n>.timer`. If it was installed it keeps firing. With `-o`, `generate quadlet` warns about each timer in the directory that carries this project's marker and is not generated now; disable it with `systemctl --user disable --now <name>.timer` and delete the file.
 
 Each entry that is not exported gets a warning that names the job, the position and the reason, and no unit. With `x-podman-pod: true` no job is exported, because a job is not part of the pod.
 
