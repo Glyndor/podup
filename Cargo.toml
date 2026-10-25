@@ -175,6 +175,38 @@ path = "tests/supply_chain/dependabot_covers_every_lockfile.rs"
 name = "docs_flags"
 path = "tests/docs/docs_flags.rs"
 
+[[test]]
+name = "hostile_autostart_units"
+path = "tests/hostile/input/hostile_autostart_units.rs"
+
+[[test]]
+name = "hostile_compose"
+path = "tests/hostile/input/hostile_compose.rs"
+
+[[test]]
+name = "hostile_filesystem_paths"
+path = "tests/hostile/input/hostile_filesystem_paths.rs"
+
+[[test]]
+name = "hostile_podman"
+path = "tests/hostile/podman/hostile_podman.rs"
+
+[[test]]
+name = "hostile_quadlet_units"
+path = "tests/hostile/input/hostile_quadlet_units.rs"
+
+[[test]]
+name = "hostile_secret_engine"
+path = "tests/hostile/output/hostile_secret_engine.rs"
+
+[[test]]
+name = "hostile_secret_output"
+path = "tests/hostile/output/hostile_secret_output.rs"
+
+[[test]]
+name = "hostile_terminal_output"
+path = "tests/hostile/output/hostile_terminal_output.rs"
+
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time", "net", "io-util", "io-std"] }
 serde = { version = "1", features = ["derive"] }

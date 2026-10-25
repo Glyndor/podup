@@ -15,7 +15,23 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
+
+/// `path` with its `.` and `..` components folded away, without touching the
+/// disk, so a `#[path = "../shared/x.rs"]` compares equal to the file it names.
+fn normalize(path: PathBuf) -> PathBuf {
+	let mut out = PathBuf::new();
+	for component in path.components() {
+		match component {
+			Component::ParentDir => {
+				out.pop();
+			}
+			Component::CurDir => {}
+			other => out.push(other),
+		}
+	}
+	out
+}
 
 /// The files a `mod name;` declaration in `file` can load, in rustc's order.
 ///
@@ -25,7 +41,7 @@ use std::path::{Path, PathBuf};
 fn declared_files(file: &Path, is_root: bool, name: &str, path_attr: Option<&str>) -> Vec<PathBuf> {
 	let dir = file.parent().expect("a source file has a directory");
 	if let Some(rel) = path_attr {
-		return vec![dir.join(rel)];
+		return vec![normalize(dir.join(rel))];
 	}
 	let stem = file.file_stem().unwrap().to_string_lossy();
 	let base = if is_root || stem == "mod" {
