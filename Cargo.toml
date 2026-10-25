@@ -127,6 +127,34 @@ path = "tests/cli/output/recreate_vocabulary.rs"
 name = "reporting_contract"
 path = "tests/cli/output/reporting_contract.rs"
 
+[[test]]
+name = "compose_interpolation"
+path = "tests/compose/parsing/compose_interpolation.rs"
+
+[[test]]
+name = "env_file"
+path = "tests/compose/parsing/env_file.rs"
+
+[[test]]
+name = "parse"
+path = "tests/compose/parsing/parse.rs"
+
+[[test]]
+name = "ports"
+path = "tests/compose/parsing/ports.rs"
+
+[[test]]
+name = "quadlet"
+path = "tests/quadlet/quadlet.rs"
+
+[[test]]
+name = "size"
+path = "tests/compose/parsing/size.rs"
+
+[[test]]
+name = "substitute"
+path = "tests/compose/parsing/substitute.rs"
+
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time", "net", "io-util", "io-std"] }
 serde = { version = "1", features = ["derive"] }
