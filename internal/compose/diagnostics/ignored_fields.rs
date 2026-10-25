@@ -1,11 +1,15 @@
 //! Warnings for service/network/secret fields that podup parses but cannot
 //! translate. Split out of the diagnostics root so each collector stays small.
 
-use crate::compose::types::{BuildConfig, ComposeFile, EnvFileEntry, PortMapping, VolumeMount};
+use crate::compose::types::{
+	BuildConfig, ComposeFile, EnvFileEntry, PortMapping, StringOrList, VolumeMount,
+};
+
+use super::ContainerUnits;
 
 /// Service fields that podup models but cannot honor on rootless Podman.
-pub(super) fn ignored_service_fields(file: &ComposeFile, out: &mut Vec<String>) {
-	for (service, def) in &file.services {
+pub(super) fn ignored_service_fields(units: &ContainerUnits<'_>, out: &mut Vec<String>) {
+	for (service, def) in units {
 		if def.cpu_count.is_some() {
 			out.push(format!(
 				"service '{service}': cpu_count is a Windows/Hyper-V control with no \
@@ -68,8 +72,8 @@ pub(super) fn ignored_models(file: &ComposeFile, out: &mut Vec<String>) {
 }
 
 /// Long-form port fields podup parses but does not forward to Podman.
-pub(super) fn ignored_port_fields(file: &ComposeFile, out: &mut Vec<String>) {
-	for (service, def) in &file.services {
+pub(super) fn ignored_port_fields(units: &ContainerUnits<'_>, out: &mut Vec<String>) {
+	for (service, def) in units {
 		for port in &def.ports {
 			if let PortMapping::Long { mode: Some(m), .. } = port {
 				out.push(format!(
@@ -82,8 +86,8 @@ pub(super) fn ignored_port_fields(file: &ComposeFile, out: &mut Vec<String>) {
 }
 
 /// Per-mount long-form volume options podup parses but does not forward.
-pub(super) fn ignored_volume_mount_fields(file: &ComposeFile, out: &mut Vec<String>) {
-	for (service, def) in &file.services {
+pub(super) fn ignored_volume_mount_fields(units: &ContainerUnits<'_>, out: &mut Vec<String>) {
+	for (service, def) in units {
 		for mount in &def.volumes {
 			if let VolumeMount::Long {
 				volume: Some(opts), ..
@@ -103,8 +107,8 @@ pub(super) fn ignored_volume_mount_fields(file: &ComposeFile, out: &mut Vec<Stri
 
 /// Build options that exist only in BuildKit/buildx and have no libpod
 /// build-API mapping. Honored fields are left untouched.
-pub(super) fn ignored_build_fields(file: &ComposeFile, out: &mut Vec<String>) {
-	for (service, def) in &file.services {
+pub(super) fn ignored_build_fields(units: &ContainerUnits<'_>, out: &mut Vec<String>) {
+	for (service, def) in units {
 		let Some(BuildConfig::Config {
 			privileged,
 			isolation,
@@ -112,35 +116,41 @@ pub(super) fn ignored_build_fields(file: &ComposeFile, out: &mut Vec<String>) {
 			provenance,
 			sbom,
 			ssh,
+			no_cache_filter,
 			..
 		}) = &def.build
 		else {
 			continue;
 		};
-		let mut unmapped: Vec<&str> = Vec::new();
+		const NO_EQUIVALENT: &str = "has no libpod build-API equivalent and is ignored";
+		let mut unmapped: Vec<(&str, &str)> = Vec::new();
 		if privileged.is_some() {
-			unmapped.push("privileged");
+			unmapped.push(("privileged", NO_EQUIVALENT));
 		}
 		if !ssh.is_empty() {
-			unmapped.push("ssh");
+			unmapped.push(("ssh", NO_EQUIVALENT));
 		}
 		if isolation.is_some() {
-			unmapped.push("isolation");
+			unmapped.push(("isolation", NO_EQUIVALENT));
 		}
 		if !entitlements.is_empty() {
-			unmapped.push("entitlements");
+			unmapped.push(("entitlements", NO_EQUIVALENT));
 		}
 		if provenance.is_some() {
-			unmapped.push("provenance");
+			unmapped.push(("provenance", NO_EQUIVALENT));
 		}
 		if sbom.is_some() {
-			unmapped.push("sbom");
+			unmapped.push(("sbom", NO_EQUIVALENT));
 		}
-		for field in unmapped {
-			out.push(format!(
-				"service '{service}': build.{field} has no libpod build-API equivalent \
-				 and is ignored"
+		if !matches!(no_cache_filter, StringOrList::Empty) {
+			unmapped.push((
+				"no_cache_filter",
+				"has no libpod build-API equivalent, so podup cannot filter the cache per stage, \
+				 and it is ignored",
 			));
+		}
+		for (field, reason) in unmapped {
+			out.push(format!("service '{service}': build.{field} {reason}"));
 		}
 	}
 }
@@ -174,8 +184,8 @@ pub(super) fn ignored_network_fields(file: &ComposeFile, out: &mut Vec<String>) 
 /// `deploy.restart_policy` sub-fields with no Podman restart-policy equivalent.
 /// Only `condition` and `max_attempts` are honored (see container_config); Podman
 /// has no first-class restart delay or attempt-counting window.
-pub(super) fn ignored_restart_policy_fields(file: &ComposeFile, out: &mut Vec<String>) {
-	for (service, def) in &file.services {
+pub(super) fn ignored_restart_policy_fields(units: &ContainerUnits<'_>, out: &mut Vec<String>) {
+	for (service, def) in units {
 		let Some(drp) = def.deploy.as_ref().and_then(|d| d.restart_policy.as_ref()) else {
 			continue;
 		};
@@ -196,8 +206,8 @@ pub(super) fn ignored_restart_policy_fields(file: &ComposeFile, out: &mut Vec<St
 
 /// Per-service network attachment fields podup parses but cannot forward.
 /// `gw_priority` has no Podman equivalent, so the engine drops it silently.
-pub(super) fn ignored_service_network_fields(file: &ComposeFile, out: &mut Vec<String>) {
-	for (service, def) in &file.services {
+pub(super) fn ignored_service_network_fields(units: &ContainerUnits<'_>, out: &mut Vec<String>) {
+	for (service, def) in units {
 		for name in def.networks.names() {
 			if let Some(c) = def.networks.config_for(&name) {
 				if c.gw_priority.is_some() {

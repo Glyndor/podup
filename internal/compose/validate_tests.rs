@@ -95,6 +95,50 @@ fn declared_network_passes() {
 	.unwrap();
 }
 
+// The init steps of a service, which are containers of their own.
+
+// An init step is a container of its own: the ports it publishes, the
+// networks it joins and the volumes it mounts are checked like the
+// service's own, and the error names the step.
+#[test]
+fn init_step_with_an_undefined_volume_is_rejected() {
+	let err = validate_config(&file(
+		"services:\n  web:\n    image: nginx\n    pre_start:\n      - volumes: ['missing:/x']\n",
+	))
+	.unwrap_err();
+	assert!(format!("{err}").contains("undefined volume 'missing'"));
+	assert!(format!("{err}").contains("web/pre_start[1]"));
+}
+
+#[test]
+fn init_step_with_an_undefined_network_is_rejected() {
+	let err = validate_config(&file(
+		"services:\n  web:\n    image: nginx\n    pre_start:\n      - networks: [backend]\n",
+	))
+	.unwrap_err();
+	assert!(format!("{err}").contains("undefined network 'backend'"));
+	assert!(format!("{err}").contains("web/pre_start[1]"));
+}
+
+#[test]
+fn init_step_with_an_out_of_range_port_is_rejected() {
+	// The service declares no port at all, so the rejection can only come
+	// from the step.
+	let err = validate_config(&file(
+		"services:\n  web:\n    image: nginx\n    pre_start:\n      - ports: ['99999:80']\n",
+	))
+	.unwrap_err();
+	assert!(matches!(err, ComposeError::InvalidPort(_)));
+}
+
+#[test]
+fn init_step_with_declared_references_passes() {
+	validate_config(&file(
+		"services:\n  web:\n    image: nginx\n    pre_start:\n      - volumes: ['data:/x']\n        networks: [backend]\nvolumes:\n  data:\nnetworks:\n  backend:\n",
+	))
+	.unwrap();
+}
+
 #[test]
 fn invalid_service_name_is_rejected() {
 	let err = validate_config(&file("services:\n  'bad name':\n    image: nginx\n")).unwrap_err();

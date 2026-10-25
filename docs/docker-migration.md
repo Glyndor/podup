@@ -9,6 +9,12 @@ podup up
 
 ## Works out of the box
 
+`pre_start` accepts a list of full container specifications. During `up`, `run` and `create`, each step inherits unset fields from the service, completes its collections and replaces explicit scalar values. Steps run in order, each in a separate ephemeral container, before the service container is created. A non-zero exit names the service and step number (for example, `service 'web': pre_start step 1: exited with code 7`) and blocks the service and its dependents. Init containers are removed on success or failure. An interrupt (Ctrl-C) can leave the current init container until `down`; restart policies and service hooks do not repeat init work. `create` leaves the service stopped after completing init work. Steps inherit neither ports/expose nor static IP/MAC addresses; a step can declare its own. Steps without their own image or build reuse the service image, including build-only services. A step that declares its own image does not inherit the service's build, and a step that declares its own build does not inherit the service's image, so the step is pulled or built on its own. The one-off settings of a `run` (its command, `--entrypoint`, terminal, ad-hoc mounts and ad-hoc labels) describe the throwaway container and never reach the init steps; the user, working directory and environment do. A failed init leaves the previous service running. An existing running service needs no new init run; `up` completes init work before starting an existing stopped container.
+
+`podup audit` walks the init steps as well: each step is a container of its own and is reported under `<service>/pre_start[i]`, so a step that asks for `privileged: true` or mounts a host path is a finding about that step and not about the service it belongs to.
+
+Quadlet export reports `pre_start is not exported; each init step requires its own container`. No `ExecStartPre=` substitute is emitted, since it cannot preserve the per-step container specifications.
+
 The following Compose fields are translated onto Podman's libpod API. Fields outside this list still parse (an unknown key never errors, per the Compose spec's forward-compatibility rule) and podup reports any it cannot honor during `up`; see the accepted-but-has-no-effect section.
 
 | Category | Keys |
@@ -21,7 +27,7 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 | Secrets / configs | `secrets`, `configs` (file, inline content, environment source, and `external: true` Podman-native secrets) |
 | Dependencies | `depends_on` (with `condition:` set to `service_started`, `service_healthy` or `service_completed_successfully`) |
 | Health checks | `healthcheck` (test, interval, timeout, retries, start_period, disable) |
-| Lifecycle hooks | `post_start`, `pre_stop` |
+| Lifecycle hooks | `pre_start` (ephemeral init containers), `post_start`, `pre_stop` |
 | Restart policies | `restart`, `deploy.restart_policy` (`condition`, `max_attempts`) |
 | Replicas / scale | `deploy.replicas`, `scale:` |
 | Resource limits | `deploy.resources`, `mem_limit`, `cpus`, `cpu_shares`, `cpu_quota`, `pids_limit`, `ulimits`, `blkio_config` |
@@ -33,7 +39,7 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 | Logging | `logging` (driver + options) |
 | Compose features | `extends`, `include`, YAML anchors, x-extensions, `develop.watch` |
 
-`umask` sets the initial process permission mask. Use a string of one to four octal digits, such as `"0022"`, `"022"` or `"22"` (range `0000` to `7777`). Only integer `0` is accepted; quote every other numeric value to avoid YAML radix ambiguity. Validation follows normal interpolation and refuses leftover variables with the service name and a quote hint before container or pod replacement. Normal interpolation can turn numeric text into a YAML integer, so use a leading-zero value such as `0022`. With `config --no-interpolate`, a placeholder in `umask` is refused because the typed field still requires a valid mask. Valid output is padded to four digits. Omitted or null leaves the runtime default; explicit zero sends `"0000"` and masks no permission bits. The quadlet export uses `PodmanArgs=--umask=<value>`, compatible with Podman 5.0. Scalar inheritance, `!reset` and `!override` apply. Explicit `umask: null` changes the configuration hash once on upgrade because the previously unknown null key is now omitted. Tagged placeholders and external extends flag propagation have existing interpolation limitations; unresolved masks fail validation.
+`umask` sets the initial process permission mask. Use a string of one to four octal digits, such as `"0022"`, `"022"` or `"22"` (range `0000` to `7777`). Only integer `0` is accepted; quote every other numeric value to avoid YAML radix ambiguity. Validation follows normal interpolation and refuses leftover variables with the service name and a quote hint before container or pod replacement. Normal interpolation can turn numeric text into a YAML integer, so use a leading-zero value such as `0022`. With `config --no-interpolate`, a placeholder in `umask` is refused because the typed field still requires a valid mask. Valid output is padded to four digits. Omitted or null leaves the runtime default; explicit zero sends `"0000"` and masks no permission bits. The quadlet export uses `PodmanArgs=--umask=<value>`, compatible with Podman 5.0. Scalar inheritance, `!reset` and `!override` apply. Explicit `umask: null` changes the configuration hash once on upgrade because the previously unknown null key is now omitted. Tagged payloads use normal interpolation before merge tags are stripped; unresolved masks still fail validation.
 
 ### Pod mode (`x-podman-pod: true`)
 
@@ -59,6 +65,10 @@ If services disagree, or only some services declare the field, podup emits a war
 Promoted native container values, including hostname and DNS, discard boundary whitespace after control characters are stripped. Extra hosts and network aliases keep the same quoted argument values as their container emitters, including boundary spaces.
 
 The pod keeps `PodmanArgs=--exit-policy=continue`, so its infra container stays running when the last service exits. Pod-level stop timeout has no Compose source and stays unset. A service's `stop_grace_period` remains a container-level timeout.
+
+### Bridge network isolation
+
+podup creates every bridge network with the netavark option `isolate=true`, so two bridge networks do not reach each other's unpublished ports, as in Docker. The Quadlet export writes the same default on the `.network` unit as `Options=isolate=true`, so a project started from the exported units is isolated like one started with `podup up`. A compose file that sets `isolate` in the network's `driver_opts` wins, including `"false"` for a project that deliberately spans networks. Networks with another driver are left alone. A network that already exists on the host keeps the options it was created with: after updating the units, remove the old network (`podman network rm <project>_<name>`) so the unit creates it again with `isolate=true`.
 
 ### Time-based pull policies
 
@@ -87,6 +97,10 @@ services:
 ### GPU reservations are host-dependent
 
 `deploy.resources.reservations.devices` and the `gpus:` shorthand are honored, but only for **NVIDIA** GPUs, and only when the host exposes them through CDI (the NVIDIA Container Toolkit must be installed and the CDI spec generated). Reservations for other drivers or capabilities are warned about and skipped.
+
+### Interpolation across compose files
+
+`!override` and `!reset` payloads are interpolated before their merge directives are applied, including nested mappings and lists. External `extends.file` chains receive the referring compose file's interpolation mode and resolved explicit env paths, without rebasing those paths at each external directory. The root file anchors env paths to its compose directory. `config --no-interpolate` preserves placeholders in external bases too, subject to typed-field validation such as `umask` and pull policies. Included files retain their original interpolation context, including local env files, when resolving external bases. Includes are merged with parent definitions winning before same-file inheritance is resolved.
 
 ### External secrets and configs
 
@@ -305,7 +319,13 @@ These modeled fields parse but have no effect. The examples are not exhaustive; 
 
 ### BuildKit / buildx-only build options
 
-`build.privileged`, `build.ssh`, `build.ulimits`, `build.isolation`, `build.entitlements`, `build.provenance`, `build.sbom`: these have no libpod build-API equivalent and are ignored.
+`build.privileged`, `build.entitlements`, `build.provenance` and `build.sbom` have no `podman build` equivalent: the live build ignores them and the Quadlet export reports them. `build.no_cache_filter` is ignored too. It cannot filter the cache per stage because libpod exposes only the all-or-nothing `nocache` parameter.
+
+`build.ssh` is honored by the Quadlet export, which runs `podman build` directly (`PodmanArgs=--ssh`); the live build cannot forward it over the libpod build API and ignores it. `build.ulimits` is honored by both.
+
+`build.isolation` names a container isolation technology (`default`, `process`, `hyperv`), which `podman build` refuses, so the Quadlet export writes `PodmanArgs=--isolation` only for the buildah isolation types (`oci`, `rootless`, `chroot`) and reports any other value; the live build ignores the field.
+
+The `[Build]` keys `Annotation=`, `Volume=` and `DNS=` have no compose `build:` field to feed them (compose `build:` has no `annotations`, `volumes` or `dns` key), so nothing writes them.
 
 ### Windows / Hyper-V-only
 
@@ -331,6 +351,7 @@ These modeled fields parse but have no effect. The examples are not exhaustive; 
 |---|---|
 | `env_file.format` other than `dotenv` | Any explicit `env_file.format` (including dotenv) emits a warning; the file is still read as dotenv |
 | `provider:` / model-runner services (`provider`, top-level `models`) | Modeled and parsed, but not honored; a not-honored warning is emitted |
+| Top-level `jobs:` section | Refused: podup runs no job runner, so a file that declares a job is rejected at parse time, before Podman is contacted, with an error naming the first job. An empty or null `jobs:` declares nothing and is accepted |
 | Configurable pod exit policy and stop timeout | The pod exit policy stays fixed at `continue`; no pod-level Compose source maps to stop timeout |
 | Real-hardware smoke tests on macOS | Pending; the code paths exist but are untested on physical Apple hardware. Windows was validated end-to-end on real hardware (Windows 11, Podman 5.8.3), including the interactive `exec`/`run` path added in 3.0.0. |
 

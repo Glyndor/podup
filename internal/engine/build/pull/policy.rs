@@ -60,14 +60,24 @@ pub(crate) fn pull_policy_checked(
 	Ok(PullPolicy::Fixed(mapped))
 }
 
-/// Keep accepted policy names and interval limits together in every refusal.
+/// Keep accepted policy names and interval limits together in every refusal,
+/// with a reason that matches what is actually wrong with the value.
 fn field_error(service: &str, field: &str, value: &str) -> crate::error::ComposeError {
+	let reason = if value.contains('$') {
+		"the value still contains a placeholder, so a variable did not resolve"
+	} else if field == "pull_policy" && value.starts_with("every_") {
+		"the interval after every_ must be one or more number and unit pairs (w, d, h, m, s)"
+	} else if field == "pull_refresh_after" {
+		"the interval must be one or more number and unit pairs (w, d, h, m, s)"
+	} else {
+		"it is not a pull policy podup knows"
+	};
 	crate::error::ComposeError::Podman(crate::libpod::validate::spec_field_error(
 		service,
 		field,
 		value,
 		format!(
-			"invalid {field} {value:?}: any remaining variable did not resolve; accepted pull_policy values are always, missing, newer, \
+			"invalid {field} {value:?}: {reason}; accepted pull_policy values are always, missing, newer, \
 			 never, if_not_present, build, daily, weekly, refresh and every_([0-9]+[wdhms])+; \
 			 pull_refresh_after accepts ([0-9]+[wdhms])+; intervals must total at most {} seconds",
 			u32::MAX

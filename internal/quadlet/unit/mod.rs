@@ -1,6 +1,7 @@
 //! Build the individual `.network`, `.volume` and `.container` units.
 
 mod build;
+mod build_fields;
 mod container;
 pub(crate) use container::is_rootless_user_mode;
 mod health;
@@ -25,7 +26,7 @@ use super::render::{
 	render_command, render_publish_port, render_restart, render_tmpfs_mount, render_volume,
 	safe_unit_stem, sorted_label_pairs, sorted_pairs, unit_stem, Section,
 };
-use super::warnings::collect_warnings;
+use super::warnings::{collect_build_warnings, collect_warnings};
 use super::QuadletUnit;
 
 /// The ownership marker every generated unit carries as its literal first

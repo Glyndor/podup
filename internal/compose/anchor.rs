@@ -34,6 +34,9 @@ pub(super) fn anchor_compose_file(file: &mut ComposeFile, dir: &Path) {
 
 /// Anchor the path-bearing fields of a single service to `dir`.
 pub(super) fn anchor_service(svc: &mut Service, dir: &Path) {
+	for step in &mut svc.pre_start {
+		anchor_service(step, dir);
+	}
 	if let Some(build) = svc.build.as_mut() {
 		match build {
 			BuildConfig::Context(c) => {

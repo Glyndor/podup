@@ -2,6 +2,7 @@
 //! output, and remove it when done.
 
 mod attached;
+mod init_service;
 pub(super) mod options;
 
 use std::collections::HashMap;
@@ -15,6 +16,8 @@ use crate::error::{ComposeError, Result};
 use crate::engine::lifecycle::RunOptions;
 use crate::engine::Engine;
 use crate::libpod::API_PREFIX;
+
+use init_service::init_service;
 
 impl Engine {
 	/// Run a one-off command in a new container for a service.
@@ -243,6 +246,14 @@ impl Engine {
 		// below leaves no hidden cursor either.
 		crate::ui::progress::end();
 		prepared?;
+
+		self.run_pre_start(
+			&run_name,
+			service_name,
+			&init_service(service, &run_service),
+			file,
+		)
+		.await?;
 
 		let rm_path = format!(
 			"{API_PREFIX}/containers/{}?force=true",

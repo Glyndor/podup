@@ -163,3 +163,26 @@ fn a_pod_with_a_partial_pasta_declaration_still_warns() {
 		assert!(w[0].contains("every service of the pod"), "{w:?}");
 	}
 }
+
+#[test]
+fn an_init_step_runs_under_the_network_mode_of_its_service() {
+	// The step publishes ports of its own and runs under the network mode
+	// of the service it belongs to, so a service on pasta keeps the
+	// client's address for its step too.
+	let yaml = "services:\n  web:\n    image: nginx\n    network_mode: pasta\n    ports:\n      - \"8080:80\"\n    pre_start:\n      - ports:\n          - \"9090:90\"\n";
+	assert!(
+		warnings_for(yaml).is_empty(),
+		"got: {:?}",
+		warnings_for(yaml)
+	);
+}
+
+#[test]
+fn an_init_step_publishing_a_port_is_warned_about() {
+	// A step that publishes a port on the project network reaches the
+	// container through the same proxy the service does.
+	let yaml = "services:\n  web:\n    image: nginx\n    pre_start:\n      - ports:\n          - \"9090:90\"\n";
+	let w = warnings_for(yaml);
+	assert_eq!(w.len(), 1, "got: {w:?}");
+	assert!(w[0].contains("web/pre_start[1]"), "got: {w:?}");
+}

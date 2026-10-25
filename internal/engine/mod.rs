@@ -26,12 +26,15 @@ mod lifecycle_hooks;
 
 mod container_config;
 pub(crate) use container_config::build_log_config;
-pub(crate) use container_config::resources::{effective_cpu_quota, effective_memory_limit};
+pub(crate) use container_config::resources::{
+	effective_cpu_quota, effective_memory_limit, is_known_ulimit,
+};
 #[cfg(test)]
 mod fake_podman;
 mod health;
 mod lifecycle;
 mod network;
+pub(crate) use network::apply_default_isolation;
 /// Re-exported so `startup::config_render` (in the binary crate) can call the
 /// same function `up` uses, instead of duplicating the resolution rule.
 pub use network::resolve_network_name;

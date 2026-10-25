@@ -49,7 +49,7 @@ fn umask_nested_keys_preserve_previous_bytes_and_hash() {
 #[test]
 fn umask_tagged_placeholder_fails_loudly() {
 	let error = deserialize_with_merge_interp(
-		"services:\n  worker:\n    umask: !override '${MASK:-0022}'\n",
+		"services:\n  worker:\n    umask: !override '$${MASK:-0022}'\n",
 		Some(&std::collections::HashMap::new()),
 	)
 	.unwrap_err()

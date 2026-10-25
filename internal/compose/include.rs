@@ -6,6 +6,8 @@
 
 use std::path::Path;
 
+use indexmap::IndexMap;
+
 use super::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 
@@ -45,11 +47,19 @@ pub(super) fn parse_included_file(
 	})
 }
 
+/// Anchor interpolation inputs before a different compose directory can reinterpret them.
+pub(super) fn absolute_env_files(dir: &Path, env_files: &[String]) -> Vec<String> {
+	env_files
+		.iter()
+		.map(|path| dir.join(path).to_string_lossy().into_owned())
+		.collect()
+}
+
 /// Merge `other` into `target`.
 ///
-/// Services / volumes / networks / secrets / configs / models from `other` are
-/// added; existing entries in `target` win on conflict (parent file overrides
-/// included content).
+/// Services / volumes / networks / secrets / configs / models / jobs from
+/// `other` are added; existing entries in `target` win on conflict (parent
+/// file overrides included content).
 pub(super) fn merge_compose_file(target: &mut ComposeFile, other: ComposeFile) {
 	for (k, v) in other.services {
 		target.services.entry(k).or_insert(v);
@@ -68,6 +78,15 @@ pub(super) fn merge_compose_file(target: &mut ComposeFile, other: ComposeFile) {
 	}
 	for (k, v) in other.models {
 		target.models.entry(k).or_insert(v);
+	}
+	// Jobs travel with the rest: an included file that declares one must reach
+	// the parent, or the parent would look job-free and the refusal would miss
+	// it.
+	if let Some(other_jobs) = other.jobs {
+		let jobs = target.jobs.get_or_insert_with(IndexMap::new);
+		for (k, v) in other_jobs {
+			jobs.entry(k).or_insert(v);
+		}
 	}
 }
 

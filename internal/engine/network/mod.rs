@@ -14,6 +14,7 @@ mod mode;
 mod names;
 mod per_network_options;
 
+pub(crate) use isolation::apply_default_isolation;
 pub(in crate::engine) use mode::{
 	network_mode_options, resolve_network_mode, split_network_mode_options,
 };

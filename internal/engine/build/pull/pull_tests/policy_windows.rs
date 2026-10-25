@@ -171,3 +171,49 @@ fn service_resolution_uses_newer() {
 		"newer"
 	);
 }
+
+fn refusal_text(field: &str, value: &str) -> String {
+	let result = if field == "pull_policy" {
+		pull_policy_checked(Some(value), "web", None)
+	} else {
+		pull_policy_checked(Some("missing"), "web", Some(value))
+	};
+	result.unwrap_err().to_string()
+}
+
+#[test]
+fn a_value_without_a_variable_does_not_blame_a_variable() {
+	for (field, value) in [
+		("pull_policy", "every_5q"),
+		("pull_policy", "alaways"),
+		("pull_refresh_after", "5q"),
+	] {
+		let text = refusal_text(field, value);
+		assert!(
+			!text.contains("variable did not resolve"),
+			"{field}={value} blamed a variable: {text}"
+		);
+	}
+}
+
+#[test]
+fn a_leftover_placeholder_is_named_as_such() {
+	for (field, value) in [
+		("pull_policy", "${POLICY}"),
+		("pull_policy", "every_${N}h"),
+		("pull_refresh_after", "${AFTER}"),
+	] {
+		let text = refusal_text(field, value);
+		assert!(
+			text.contains("variable did not resolve"),
+			"{field}={value} lost the placeholder hint: {text}"
+		);
+	}
+}
+
+#[test]
+fn each_refusal_says_what_is_wrong_with_the_value() {
+	assert!(refusal_text("pull_policy", "every_5q").contains("number and unit pairs"));
+	assert!(refusal_text("pull_policy", "alaways").contains("not a pull policy podup knows"));
+	assert!(refusal_text("pull_refresh_after", "5q").contains("number and unit pairs"));
+}

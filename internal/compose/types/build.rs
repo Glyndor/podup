@@ -10,6 +10,11 @@ use std::collections::HashMap;
 
 use super::{EnvVars, Labels, StringOrList, UlimitConfig};
 
+/// Distinguishes an absent field from an explicitly empty string or list.
+fn is_absent_no_cache_filter(value: &StringOrList) -> bool {
+	matches!(value, StringOrList::Empty)
+}
+
 /// Compose `include:` directive: either a bare file path or a long-form block.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
@@ -121,6 +126,9 @@ pub enum BuildConfig {
 		/// Whether to build without using any cache.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		no_cache: Option<bool>,
+		/// Build stages that must not use the build cache.
+		#[serde(default, skip_serializing_if = "is_absent_no_cache_filter")]
+		no_cache_filter: StringOrList,
 		/// Whether to always attempt to pull newer versions of base images.
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		pull: Option<bool>,

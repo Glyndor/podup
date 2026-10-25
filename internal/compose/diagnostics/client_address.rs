@@ -18,7 +18,7 @@ use super::super::types::{ComposeFile, Service};
 pub(super) const CLIENT_ADDRESS_NEEDLE: &str =
 	"so the container sees every client as one internal address";
 
-/// One warning per service whose published ports reach it through a proxy
+/// One warning per container whose published ports reach it through a proxy
 /// that replaces the client's address.
 pub(super) fn ports_hide_client_address(file: &ComposeFile, out: &mut Vec<String>) {
 	// An invalid `x-podman-pod` value is reported elsewhere; treat it as off
@@ -31,31 +31,58 @@ pub(super) fn ports_hide_client_address(file: &ComposeFile, out: &mut Vec<String
 	// declaring the same `network_mode: pasta` on every service.
 	let pod_advice = in_pod.then(|| pod_advice_for(file)).flatten();
 	for (name, service) in &file.services {
-		// Every `ports:` entry publishes: one without a host port is bound to a
-		// random host port, not merely exposed.
-		if service.ports.is_empty() {
-			continue;
+		warn_for(
+			name,
+			service,
+			service.network_mode.as_deref(),
+			pod_advice,
+			out,
+		);
+		// An init step publishes ports of its own and runs under the network
+		// mode of its service unless it declares one of its own.
+		for (step_name, step) in crate::compose::pre_start::declared_steps(name, service) {
+			let mode = step
+				.network_mode
+				.as_deref()
+				.or(service.network_mode.as_deref());
+			warn_for(&step_name, step, mode, pod_advice, out);
 		}
-		let advice = if let Some(advice) = pod_advice {
-			advice.to_string()
-		} else {
-			match proxy_for(service) {
-				Some(Proxy::Rootlessport) => {
-					"use network_mode: pasta if it needs the client's address".to_string()
-				}
-				Some(Proxy::Rootlesskit) => {
-					"add port_handler=slirp4netns to the slirp4netns options, or use \
-					 network_mode: pasta, if it needs the client's address"
-						.to_string()
-				}
-				None => continue,
-			}
-		};
-		out.push(format!(
-			"service '{name}': under rootless Podman its published ports are forwarded \
-			 by a proxy, {CLIENT_ADDRESS_NEEDLE}; {advice}"
-		));
 	}
+}
+
+/// The warning for one container: its published ports, and the network mode
+/// it runs under.
+fn warn_for(
+	name: &str,
+	service: &Service,
+	network_mode: Option<&str>,
+	pod_advice: Option<&'static str>,
+	out: &mut Vec<String>,
+) {
+	// Every `ports:` entry publishes: one without a host port is bound to a
+	// random host port, not merely exposed.
+	if service.ports.is_empty() {
+		return;
+	}
+	let advice = if let Some(advice) = pod_advice {
+		advice.to_string()
+	} else {
+		match proxy_for(network_mode) {
+			Some(Proxy::Rootlessport) => {
+				"use network_mode: pasta if it needs the client's address".to_string()
+			}
+			Some(Proxy::Rootlesskit) => {
+				"add port_handler=slirp4netns to the slirp4netns options, or use \
+				 network_mode: pasta, if it needs the client's address"
+					.to_string()
+			}
+			None => return,
+		}
+	};
+	out.push(format!(
+		"service '{name}': under rootless Podman its published ports are forwarded \
+		 by a proxy, {CLIENT_ADDRESS_NEEDLE}; {advice}"
+	));
 }
 
 /// What the project-wide advice says when `x-podman-pod: true` is set.
@@ -125,7 +152,7 @@ fn slirp4netns_keeps_source(mode: &str) -> bool {
 	})
 }
 
-/// The proxy that forwards a service's published ports, when it is one that
+/// The proxy that forwards a container's published ports, when it is one that
 /// replaces the client's address.
 enum Proxy {
 	/// `rootlessport`, for a bridge network.
@@ -134,8 +161,8 @@ enum Proxy {
 	Rootlesskit,
 }
 
-fn proxy_for(service: &Service) -> Option<Proxy> {
-	match service.network_mode.as_deref() {
+fn proxy_for(network_mode: Option<&str>) -> Option<Proxy> {
+	match network_mode {
 		None => Some(Proxy::Rootlessport),
 		Some(mode) if mode == "bridge" || mode.starts_with("bridge:") => Some(Proxy::Rootlessport),
 		Some(mode) if is_slirp4netns(mode) => {

@@ -183,6 +183,11 @@ pub(in crate::compose) fn merge_service(mut base: Service, mut override_svc: Ser
 		stop_grace_period: override_svc.stop_grace_period.or(base.stop_grace_period),
 		profiles: merge_vec(base.profiles, override_svc.profiles),
 		post_start: merge_vec(base.post_start, override_svc.post_start),
+		pre_start: base
+			.pre_start
+			.into_iter()
+			.chain(override_svc.pre_start)
+			.collect(),
 		pre_stop: merge_vec(base.pre_stop, override_svc.pre_stop),
 		labels: merge_labels(base.labels, override_svc.labels),
 		annotations: merge_labels(base.annotations, override_svc.annotations),

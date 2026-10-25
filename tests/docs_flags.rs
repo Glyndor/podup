@@ -98,8 +98,11 @@ fn section_for(docs: &str, cmd: &str) -> Option<String> {
 
 #[test]
 fn every_cli_flag_is_documented() {
-	let docs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/commands.md"))
-		.expect("read docs/commands.md");
+	let docs = [
+		include_str!("../docs/commands.md"),
+		include_str!("../docs/commands-reference.md"),
+	]
+	.join("\n");
 
 	// clap marks the compose-wide options `global`, so every command's `--help`
 	// reprints them, but they are documented once, in the global table, not in
@@ -142,8 +145,11 @@ fn every_cli_flag_is_documented() {
 /// it drifts separately too.
 #[test]
 fn every_global_flag_is_documented() {
-	let docs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/commands.md"))
-		.expect("read docs/commands.md");
+	let docs = [
+		include_str!("../docs/commands.md"),
+		include_str!("../docs/commands-reference.md"),
+	]
+	.join("\n");
 	let out = Command::new(bin())
 		.arg("--help")
 		.output()

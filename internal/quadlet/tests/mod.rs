@@ -3,6 +3,7 @@ use crate::quadlet::{QuadletOutput, QuadletUnit};
 mod fields;
 mod floor_compat;
 mod health;
+mod network_isolation;
 mod network_volume;
 mod podman_argv;
 mod pull_policy;

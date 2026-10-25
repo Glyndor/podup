@@ -1,3 +1,31 @@
+podup (5.13.0) unstable; urgency=medium
+
+  * A service `pre_start` list now runs: each step is an ephemeral container
+    started before the service container, in order, in up, run and create. A
+    step that exits non-zero stops the service and its dependents and the
+    error names the service, the step and the exit code. A step inherits what
+    it does not set from the service, except what belongs to the service
+    alone. The running container is no longer stopped before the init runs.
+    The quadlet export reports pre_start as not exported.
+  * `build.no_cache_filter` is a modelled field. libpod cannot honor it, so
+    podup warns once per service that it is ignored.
+  * A top-level `jobs` section is refused when the file is parsed, because
+    podup has no job runner and the jobs used to be dropped without a word.
+  * A value under !override, !reset or !replace is interpolated like any
+    other, and an external `extends: { file: ... }` follows --no-interpolate
+    and --env-file.
+  * The `.build` unit of the quadlet export writes the build fields that have
+    a key (pull, secrets, args, labels, extra_hosts, network, platforms,
+    cache_from, no_cache, isolation) and reports the ones that have none. A
+    Secret= value is quoted, so a project directory with a space stays one
+    value.
+  * The `.network` unit of the quadlet export isolates bridge networks the way
+    podup up does.
+  * The error for an invalid `pull_policy` says what is wrong instead of
+    blaming a variable that is not there.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sat, 24 Oct 2026 22:20:34 -0500
+
 podup (5.12.0) unstable; urgency=medium
 
   * `pull_policy` accepts daily, weekly, every_<n>[wdhms] and refresh, with

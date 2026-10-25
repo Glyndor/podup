@@ -4,19 +4,21 @@ use super::{finding, Finding};
 
 // The audit must use the same notion of "published on every interface" as
 // the parse-time port-exposure warning `up`/`config` already emit (#1835).
-use podup::ports_published_on_all_interfaces;
+use podup::ports_published_on_all_interfaces_in;
 // Same shared parser as the all-interfaces check: the audit's wildcard
 // finding runs the same parser code-path so the two cannot disagree on
 // what `0.0.0.0` or `[::]` in a `ports:` string actually means (#1881).
-use podup::ports_published_on_wildcard;
+use podup::ports_published_on_wildcard_in;
 
-/// One [`Finding`] per port the file publishes without a host IP, so
+/// One [`Finding`] per port the container publishes without a host IP, so
 /// the bind falls on every host interface. The check delegates to
-/// [`podup::ports_published_on_all_interfaces`] so its notion of
+/// [`podup::ports_published_on_all_interfaces_in`] so its notion of
 /// "published on every interface" is the exact same predicate the
 /// parse-time warning in `internal/compose/diagnostics/port_exposure.rs`
 /// already uses; the audit is the same opinion as `up`/`config`, not
-/// a divergent second one (#1835).
+/// a divergent second one (#1835). The predicate is scoped to the
+/// container the check runs against, so an init step's own ports are
+/// judged like any other container's.
 ///
 /// Threshold (same as the diagnostic warning):
 /// - Short form with no IP (`"5432:5432"`, `"8080:80/tcp"`): flagged.
@@ -42,21 +44,13 @@ use podup::ports_published_on_wildcard;
 /// noise without adding signal.
 pub fn check_port_published_on_all_interfaces(
 	service_name: &str,
-	_service: &Service,
-	file: &ComposeFile,
+	service: &Service,
+	_file: &ComposeFile,
 ) -> Vec<Finding> {
 	let mut out = Vec::new();
-	for (svc, host) in ports_published_on_all_interfaces(file) {
-		// The shared predicate enumerates every flagged port in the
-		// file, but `run_checks` invokes this function once per
-		// service, so filter to the current service. Without this
-		// filter a multi-service file would emit each finding N
-		// times (one per service visit).
-		if svc != service_name {
-			continue;
-		}
+	for (_, host) in ports_published_on_all_interfaces_in(service_name, service) {
 		out.push(finding(
-			&svc,
+			service_name,
 			"port_published_on_all_interfaces",
 			&format!(
 				"port {host} is published on every interface; bind to 127.0.0.1 (or another host IP) to keep it off the network"
@@ -66,12 +60,14 @@ pub fn check_port_published_on_all_interfaces(
 	out
 }
 
-/// One [`Finding`] per port the file publishes with an explicit
+/// One [`Finding`] per port the container publishes with an explicit
 /// wildcard host IP (`0.0.0.0` or `::`). The check fires only when the
 /// opt-in flag `--wildcard-binds` is set (`#1881`); without it, the
 /// registry entry is still listed by `audit --list-checks` (so an
 /// integrator can see the option exists) and absent from the audit
 /// findings (so `--strict` keeps meaning exactly what it did before).
+/// The predicate is scoped to the container the check runs against, so an
+/// init step's own ports are judged like any other container's.
 ///
 /// Threshold (mirror of the all-interfaces predicate in
 /// [`crate::compose::diagnostics::port_exposure::ports_published_on_all_interfaces`],
@@ -96,21 +92,13 @@ pub fn check_port_published_on_all_interfaces(
 /// range adds noise without adding signal.
 pub fn check_port_published_on_wildcard(
 	service_name: &str,
-	_service: &Service,
-	file: &ComposeFile,
+	service: &Service,
+	_file: &ComposeFile,
 ) -> Vec<Finding> {
 	let mut out = Vec::new();
-	for (svc, host) in ports_published_on_wildcard(file) {
-		// Same per-service filter as the all-interfaces check: the shared
-		// predicate enumerates every flagged port in the whole file, but
-		// `run_checks` invokes this function once per service. Without
-		// this filter a multi-service file would emit each finding N
-		// times (one per service visit).
-		if svc != service_name {
-			continue;
-		}
+	for (_, host) in ports_published_on_wildcard_in(service_name, service) {
 		out.push(finding(
-			&svc,
+			service_name,
 			"port_published_on_wildcard",
 			&format!(
 				"port {host} is bound to a wildcard address; bind to 127.0.0.1 (or another host IP) to keep it off the network"
