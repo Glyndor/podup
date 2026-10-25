@@ -119,3 +119,6 @@ mod swap_tests;
 
 #[cfg(all(test, unix))]
 mod swap_hostile_tests;
+
+#[cfg(all(test, unix))]
+mod hostile_tests;

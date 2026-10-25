@@ -33,6 +33,13 @@ fn parse_version_rejects_garbage() {
 }
 
 #[test]
+fn parse_version_rejects_a_sign_that_u64_would_take() {
+	for bad in ["v+9.+9.+9", "+1.2.3", "1.2.+3"] {
+		assert!(parse_version(bad).is_err(), "should reject {bad}");
+	}
+}
+
+#[test]
 fn embedded_key_is_configured_and_rejects_garbage() {
 	// A real key is baked in; it must load and reject a bogus signature.
 	assert_ne!(RELEASE_PUBKEYS[0], [0u8; 32]);

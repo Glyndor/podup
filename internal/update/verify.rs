@@ -66,8 +66,12 @@ pub fn parse_version(s: &str) -> crate::Result<Version> {
 	let core = trimmed.strip_prefix('v').unwrap_or(trimmed);
 	let mut parts = core.split('.');
 	let mut next = |what: &str| -> crate::Result<u64> {
+		// `u64::from_str` takes a leading `+`, which is not part of a version
+		// and would let `v+9.+9.+9` pass for 9.9.9 here while the installed
+		// binary can never report that string back to the self-test.
 		parts
 			.next()
+			.filter(|p| !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()))
 			.and_then(|p| p.parse::<u64>().ok())
 			.ok_or_else(|| ComposeError::Update(format!("invalid version '{s}': bad {what}")))
 	};
@@ -225,6 +229,10 @@ pub fn verify_digest(data: &[u8], expected_hex: &str) -> crate::Result<()> {
 #[cfg(test)]
 #[path = "verify_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "verify_hostile_tests.rs"]
+mod hostile_tests;
 
 /// The release key is embedded in four places in this repository, and it has
 /// to be: a consumer that downloaded the key it verifies with would be

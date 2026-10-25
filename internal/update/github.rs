@@ -191,3 +191,7 @@ impl ReleaseSource for GitHubSource {
 #[cfg(test)]
 #[path = "github_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "github_hostile_tests.rs"]
+mod hostile_tests;
