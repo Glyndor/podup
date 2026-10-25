@@ -9,8 +9,9 @@
 //! (#1926). Two new test files in #1900 were never declared at all.
 //!
 //! This walks the module tree the way rustc resolves it, from `lib.rs` and
-//! `main.rs` and from each `tests/*.rs`, and fails on any file under
-//! `internal/` or `tests/` it does not reach.
+//! `main.rs` and from each test crate (a `tests/*.rs` or a `[[test]]` path in
+//! `Cargo.toml`), and fails on any file under `internal/` or `tests/` it does
+//! not reach.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -137,19 +138,55 @@ fn every_file_under_internal_is_reached_from_a_crate_root() {
 	);
 }
 
+/// The `path` of every `[[test]]` table in `manifest`. A test crate that lives
+/// in a subfolder is not found by Cargo's own discovery, which reads only
+/// `tests/*.rs` and `tests/*/main.rs`, so the manifest names it.
+fn declared_test_paths(manifest: &str) -> Vec<String> {
+	let mut out = Vec::new();
+	let mut in_test_table = false;
+	for line in manifest.lines() {
+		let t = line.trim();
+		if t.starts_with('[') {
+			in_test_table = t == "[[test]]";
+			continue;
+		}
+		if !in_test_table {
+			continue;
+		}
+		if let Some(rest) = t.strip_prefix("path = \"") {
+			if let Some(path) = rest.split('"').next() {
+				out.push(path.to_string());
+			}
+		}
+	}
+	out
+}
+
 /// The same for `tests/`. Cargo builds every `tests/*.rs` as its own crate,
-/// so those are the roots; a file in a subdirectory runs only when one of
-/// them declares it, which is how `tests/engine_integration/*.rs` are wired.
+/// and so every `[[test]]` the manifest declares by path; those are the roots.
+/// A file in a subdirectory runs only when one of them declares it, which is
+/// how `tests/engine/engine_integration/**/*.rs` are wired.
 #[test]
 fn every_file_under_tests_is_reached_from_a_test_crate() {
-	let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+	let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+	let tests = manifest_dir.join("tests");
 	let mut sources = BTreeSet::new();
 	all_sources(&tests, &mut sources);
-	let roots: Vec<PathBuf> = sources
+	let manifest = fs::read_to_string(manifest_dir.join("Cargo.toml")).expect("read Cargo.toml");
+	let mut roots: BTreeSet<PathBuf> = sources
 		.iter()
 		.filter(|p| p.parent() == Some(tests.as_path()))
 		.cloned()
 		.collect();
+	for declared in declared_test_paths(&manifest) {
+		let path = manifest_dir.join(&declared);
+		assert!(
+			path.is_file(),
+			"Cargo.toml declares the test crate `{declared}` and no such file exists"
+		);
+		roots.insert(path);
+	}
+	let roots: Vec<PathBuf> = roots.into_iter().collect();
 	assert!(
 		roots.len() > 20,
 		"found {} test crates; the scan of tests/ is broken",
