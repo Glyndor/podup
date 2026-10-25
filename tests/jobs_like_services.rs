@@ -11,8 +11,13 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 
+/// A socket that cannot be connected to. Every command these tests run
+/// names it, so none of them can reach a real Podman.
+const NO_ENGINE: &str = "unix:///nonexistent/x.sock";
+
 fn podup(dir: &Path, file: &str, args: &[&str]) -> Output {
 	Command::new(env!("CARGO_BIN_EXE_podup"))
+		.args(["--socket", NO_ENGINE])
 		.current_dir(dir)
 		.args(["-f", file])
 		.args(args)

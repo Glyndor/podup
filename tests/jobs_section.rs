@@ -11,6 +11,10 @@ use std::process::{Command, Output};
 
 use tempfile::TempDir;
 
+/// A socket that cannot be connected to. Every command these tests run
+/// names it, so none of them can reach a real Podman.
+const NO_ENGINE: &str = "unix:///nonexistent/x.sock";
+
 const WITH_JOBS: &str = "\
 services:
   web:
@@ -50,6 +54,7 @@ fn compose(contents: &str) -> (TempDir, PathBuf) {
 
 fn podup(file: &Path, args: &[&str]) -> Output {
 	Command::new(bin())
+		.args(["--socket", NO_ENGINE])
 		.args(["-f", file.to_str().unwrap()])
 		.args(args)
 		.env("NO_COLOR", "1")
@@ -118,6 +123,20 @@ fn config_warns_once_per_job_with_a_schedule() {
 }
 
 #[test]
+fn config_output_reads_back_as_the_same_jobs() {
+	// The YAML renderer prints a boolean as quoted text; reading it back has to
+	// give the same file, or `config` could not be used as input.
+	let (dir, file) = compose(WITH_JOBS);
+	let first = podup(&file, &["config"]);
+	assert!(first.status.success(), "{}", stderr(&first));
+	let again = dir.path().join("again.yaml");
+	fs::write(&again, stdout(&first)).unwrap();
+	let second = podup(&again, &["config"]);
+	assert!(second.status.success(), "{}", stderr(&second));
+	assert_eq!(stdout(&first), stdout(&second));
+}
+
+#[test]
 fn config_quiet_still_warns() {
 	let (_dir, file) = compose(WITH_JOBS);
 	let out = podup(&file, &["config", "--quiet"]);
@@ -147,6 +166,7 @@ fn variables_are_interpolated_inside_a_job() {
 	let yaml = "jobs:\n  j:\n    image: ${JOB_IMAGE}\n    triggers: {manual: true}\n";
 	let (_dir, file) = compose(yaml);
 	let out = Command::new(bin())
+		.args(["--socket", NO_ENGINE])
 		.args(["-f", file.to_str().unwrap(), "config"])
 		.env("JOB_IMAGE", "registry.example/job:7")
 		.output()
@@ -194,6 +214,7 @@ fn jobs_of_several_files_are_merged_and_an_include_brings_its_jobs() {
 	)
 	.unwrap();
 	let out = Command::new(bin())
+		.args(["--socket", NO_ENGINE])
 		.args([
 			"-f",
 			base.to_str().unwrap(),
@@ -271,7 +292,7 @@ const REFUSALS: &[(&str, &str)] = &[
 	),
 	(
 		"jobs:\n  j:\n    image: alpine\n    triggers:\n      schedule: [\"0 1 * * *\\nExecStart=/bin/sh\"]\n",
-		"contains a control character",
+		"has a character outside",
 	),
 	(
 		"services:\n  x:\n    image: a\njobs:\n  x:\n    image: a\n    triggers: {manual: true}\n",

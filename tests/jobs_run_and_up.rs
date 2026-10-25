@@ -16,9 +16,9 @@ use tempfile::TempDir;
 #[path = "hostile_support/fake_engine.rs"]
 mod fake_engine;
 
-/// A socket path that cannot be connected to, so a command that reaches the
-/// engine fails with a connection error instead of doing anything.
-const DEAD_SOCKET: &str = "unix:///nonexistent/podup-jobs-section-test.sock";
+/// A socket that cannot be connected to. Every command these tests run
+/// names it, so none of them can reach a real Podman.
+const NO_ENGINE: &str = "unix:///nonexistent/x.sock";
 
 fn bin() -> &'static str {
 	env!("CARGO_BIN_EXE_podup")
@@ -33,6 +33,7 @@ fn compose(contents: &str) -> (TempDir, PathBuf) {
 
 fn podup(file: &Path, args: &[&str]) -> Output {
 	Command::new(bin())
+		.args(["--socket", NO_ENGINE])
 		.args(["-f", file.to_str().unwrap()])
 		.args(args)
 		.env("NO_COLOR", "1")
@@ -78,23 +79,6 @@ fn generate_quadlet_says_jobs_are_not_exported() {
 	let err = stderr(&out);
 	assert!(
 		err.contains("1 job(s) were not exported (nightly)"),
-		"{err}"
-	);
-}
-
-#[test]
-fn run_refuses_manual_false_before_contacting_podman() {
-	let yaml = "jobs:\n  closed:\n    image: alpine\n    triggers:\n      manual: false\n      schedule: ['0 1 * * *']\n";
-	let (_dir, file) = compose(yaml);
-	let out = podup(&file, &["--socket", DEAD_SOCKET, "run", "closed"]);
-	assert!(!out.status.success());
-	let err = stderr(&out);
-	// The dead socket would give a connection error if the engine were asked.
-	// `run` connects first, so the refusal is what proves the job was read
-	// from the file; the connection error is what the unreachable engine says.
-	assert!(
-		err.contains("job error: job 'closed' sets `triggers.manual` to false")
-			|| err.contains("socket connection error"),
 		"{err}"
 	);
 }

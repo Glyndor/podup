@@ -29,7 +29,12 @@ pub(super) fn parse(label: &str, raw: &Value) -> Result<Triggers> {
 	let mut triggers = Triggers::default();
 	for (key, value) in map {
 		match key.as_str() {
+			// An empty `manual:` is an absent one, which is also what the value of
+			// a `!reset` tag is.
+			Some("manual") if value.is_null() => {}
 			Some("manual") => triggers.manual = Some(parse_manual(label, value)?),
+			// An empty `schedule:` is an absent one.
+			Some("schedule") if value.is_null() => {}
 			Some("schedule") => triggers.schedule = parse_schedule(label, value)?,
 			_ => {
 				return Err(job_error(format!(
@@ -39,21 +44,24 @@ pub(super) fn parse(label: &str, raw: &Value) -> Result<Triggers> {
 			}
 		}
 	}
-	if triggers.manual.is_none() && triggers.schedule.is_empty() {
-		return Err(job_error(format!(
-			"job '{label}' declares no trigger; `triggers` needs `manual: true` or at least \
-			 one `schedule` entry"
-		)));
-	}
+	// Whether anything is declared is checked once every `-f` file has been
+	// merged (`validate::check_triggers_declared`): an override file may state
+	// only the part of the triggers it changes.
 	Ok(triggers)
 }
 
+/// `manual` is a boolean. The text `true` or `false` is accepted too, because
+/// `podup config` prints a boolean as quoted text and its output has to read
+/// back as the same file.
 fn parse_manual(label: &str, value: &Value) -> Result<bool> {
-	value.as_bool().ok_or_else(|| {
-		job_error(format!(
+	match value {
+		Value::Bool(flag) => Ok(*flag),
+		Value::String(text) if text == "true" => Ok(true),
+		Value::String(text) if text == "false" => Ok(false),
+		_ => Err(job_error(format!(
 			"`triggers.manual` of job '{label}' must be true or false"
-		))
-	})
+		))),
+	}
 }
 
 fn parse_schedule(label: &str, value: &Value) -> Result<Vec<Schedule>> {
@@ -171,13 +179,21 @@ fn check_cron(label: &str, position: usize, cron: &str) -> Result<String> {
 			 {MAX_CRON_BYTES} bytes"
 		)));
 	}
-	if trimmed.chars().any(char::is_control) {
+	// A whitelist, not a ban on control characters: other invisible or
+	// direction-changing characters (U+2028, U+202E) are as unwelcome in a
+	// unit file or a terminal, and a crontab expression needs none of them.
+	if !trimmed.chars().all(is_cron_char) {
 		return Err(job_error(format!(
-			"the cron expression in schedule entry {position} of job '{label}' contains a \
-			 control character"
+			"the cron expression in schedule entry {position} of job '{label}' has a character \
+			 outside 0-9, A-Z, a-z, * / , - ? # @ and space"
 		)));
 	}
 	Ok(trimmed.to_string())
+}
+
+/// The characters of a crontab expression, `@daily`-style macros included.
+fn is_cron_char(c: char) -> bool {
+	c.is_ascii_alphanumeric() || matches!(c, '*' | '/' | ',' | '-' | '?' | '#' | '@' | ' ')
 }
 
 /// A time zone name: the characters IANA names use, bounded.

@@ -43,7 +43,16 @@ pub fn parse_file_with_env_files_interp(
 	} else {
 		None
 	};
-	parse_file_with_env_files_interp_with_stdin(path, env_files, interpolate, stdin.as_deref())
+	let file = parse_file_with_env_files_interp_with_stdin(
+		path,
+		env_files,
+		interpolate,
+		stdin.as_deref(),
+	)?;
+	// A single file stands alone, so its jobs have to declare their triggers.
+	// With several `-f` files the check waits for the merge.
+	jobs::check_triggers_declared(&file)?;
+	Ok(file)
 }
 
 /// [`parse_file_with_env_files_interp`] with the stdin content pre-read.
@@ -189,6 +198,7 @@ pub fn parse_files_with_env_files_interp(
 	// same name in another only meet here.
 	jobs::check_structure(&merged)?;
 	jobs::check_relations(&merged)?;
+	jobs::check_triggers_declared(&merged)?;
 	normalize_default_network(&mut merged);
 	// Semantic validation runs only on the interpolated file: `--no-interpolate`
 	// leaves literal `${VAR}` placeholders that cannot be reference- or
@@ -347,6 +357,7 @@ pub fn parse_str(content: &str) -> Result<ComposeFile> {
 	jobs::check_structure(&file)?;
 	extends::resolve_extends_same_file(&mut file)?;
 	jobs::check_relations(&file)?;
+	jobs::check_triggers_declared(&file)?;
 	Ok(file)
 }
 

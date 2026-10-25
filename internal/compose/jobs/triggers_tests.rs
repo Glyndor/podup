@@ -41,7 +41,7 @@ fn manual_false_alone_is_a_declared_trigger() {
 
 #[test]
 fn manual_must_be_a_boolean() {
-	for value in ["'false'", "0", "[]", "null", "{}"] {
+	for value in ["'yes'", "'False'", "'1'", "0", "[]", "{}"] {
 		let message = refusal(&format!("manual: {value}"));
 		assert!(
 			message.contains("`triggers.manual` of job 'backup' must be true or false"),
@@ -52,7 +52,7 @@ fn manual_must_be_a_boolean() {
 
 #[test]
 fn schedule_must_be_a_list() {
-	for value in ["'0 3 * * *'", "7", "null", "{cron: '* * * * *'}", "true"] {
+	for value in ["'0 3 * * *'", "7", "{cron: '* * * * *'}", "true"] {
 		let message = refusal(&format!("schedule: {value}"));
 		assert!(
 			message.contains("`triggers.schedule` of job 'backup' must be a list"),
@@ -193,10 +193,16 @@ fn a_cron_with_a_control_character_is_refused_and_not_echoed() {
 		"0 3 * * *\\u001b[31m",
 		"0\\t3 * * *",
 		"0 3 * * *\\u007f",
+		"0 3 * * *\\u2028ExecStart=/bin/sh",
+		"0 3 * * *\\u202e",
+		"0\\u00a03 * * *",
+		"0 3 * * *; reboot",
+		"$(id) * * * *",
+		"0 3 * * * `id`",
 	] {
 		let message = refusal(&format!("schedule:\n  - \"{cron}\""));
 		assert!(
-			message.contains("contains a control character"),
+			message.contains("has a character outside"),
 			"{cron}: {message}"
 		);
 		assert!(!message.contains("ExecStart"), "{message}");
@@ -288,4 +294,48 @@ fn a_schedule_error_names_the_entry_by_position() {
 fn manual_and_an_empty_schedule_together_are_valid() {
 	let file = parse_str(&job("manual: true\nschedule: []")).unwrap();
 	assert_eq!(file.jobs["backup"].triggers.manual, Some(true));
+}
+
+#[test]
+fn manual_accepts_the_text_true_and_false() {
+	// `podup config` prints a boolean as quoted text; its output must read back.
+	for (value, expected) in [
+		("'true'", true),
+		("'false'", false),
+		("true", true),
+		("false", false),
+	] {
+		let file = parse_str(&job(&format!("manual: {value}"))).unwrap();
+		assert_eq!(
+			file.jobs["backup"].triggers.manual,
+			Some(expected),
+			"{value}"
+		);
+	}
+}
+
+#[test]
+fn a_crontab_expression_and_its_macros_pass_the_whitelist() {
+	for cron in [
+		"0 3 * * *",
+		"*/5 0-6,22 1-15 jan,feb mon-fri",
+		"@daily",
+		"@every 5m",
+		"0 0 ? * 5#2",
+		"0 0 L * *",
+	] {
+		assert_eq!(
+			schedule_of(&format!("schedule: ['{cron}']")).len(),
+			1,
+			"{cron}"
+		);
+	}
+}
+
+#[test]
+fn a_null_schedule_is_an_absent_one() {
+	let file = parse_str(&job("manual: true\nschedule:")).unwrap();
+	assert!(file.jobs["backup"].triggers.schedule.is_empty());
+	let message = refusal("schedule:");
+	assert!(message.contains("declares no triggers"), "{message}");
 }

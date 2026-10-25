@@ -58,6 +58,20 @@ fn local_extends(extends: Option<&crate::compose::types::ExtendsConfig>) -> Opti
 		.map(|extends| extends.service())
 }
 
+/// Every job declares at least one trigger, once all the `-f` files are merged.
+pub(in crate::compose) fn check_triggers_declared(file: &ComposeFile) -> Result<()> {
+	for (name, job) in &file.jobs {
+		if job.triggers.manual.is_none() && job.triggers.schedule.is_empty() {
+			return Err(job_error(format!(
+				"job '{}' declares no triggers; add `triggers:` with `manual: true` or a \
+				 `schedule:` list",
+				sanitize_name(name)
+			)));
+		}
+	}
+	Ok(())
+}
+
 /// A service must not depend on a job, whether it says so in `depends_on` or
 /// reaches the job through `volumes_from`, `links` or `service:` namespaces.
 pub(in crate::compose) fn check_relations(file: &ComposeFile) -> Result<()> {

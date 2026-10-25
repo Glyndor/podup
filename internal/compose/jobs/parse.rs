@@ -6,7 +6,7 @@ use serde::{Deserialize, Deserializer};
 use serde_yaml::Value;
 
 use super::triggers;
-use crate::compose::types::{Job, Service};
+use crate::compose::types::{Job, Service, Triggers};
 use crate::error::{sanitize_name, ComposeError, Result};
 
 /// Build a job error. The text is composed from escaped names and fixed
@@ -27,13 +27,11 @@ pub(crate) fn parse_job(name: &str, raw: Value) -> Result<Job> {
 			"job '{label}' must be a mapping of keys, like a service"
 		)));
 	};
+	// A missing `triggers` is allowed here: a file merged over another may leave
+	// the triggers to the first one. `check_triggers_declared` requires them of
+	// the merged file.
 	let triggers = match map.remove("triggers") {
-		None | Some(Value::Null) => {
-			return Err(job_error(format!(
-				"job '{label}' declares no triggers; add `triggers:` with `manual: true` or a \
-				 `schedule:` list"
-			)))
-		}
+		None | Some(Value::Null) => Triggers::default(),
 		Some(raw) => triggers::parse(&label, &raw)?,
 	};
 	let service: Service = serde_yaml::from_value(Value::Mapping(map)).map_err(|_| {

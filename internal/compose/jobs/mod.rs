@@ -30,7 +30,7 @@ mod warn;
 pub(crate) use merge::merge_job;
 pub(crate) use parse::deserialize_jobs;
 pub(super) use parse::extract_jobs;
-pub(super) use validate::{check_relations, check_structure};
+pub(super) use validate::{check_relations, check_structure, check_triggers_declared};
 pub(crate) use view::{
 	job_file_for_run, job_services_view, store_job_services, with_jobs_as_services,
 };

@@ -78,7 +78,41 @@ pub(crate) fn collect(raw: &Value) -> Directives {
 			out.insert(name.to_string(), tagged);
 		}
 	}
+	collect_trigger_tags(raw, &mut out);
 	out
+}
+
+/// Tags inside a job's `triggers:`, recorded as `triggers.manual` and
+/// `triggers.schedule` beside the job's own keys. `triggers` itself is
+/// collected with the other keys of the job.
+fn collect_trigger_tags(raw: &Value, out: &mut Directives) {
+	let Some(jobs) = raw.get("jobs").and_then(Value::as_mapping) else {
+		return;
+	};
+	for (name, job) in jobs {
+		let Some(name) = name.as_str() else { continue };
+		let triggers = match job.get("triggers") {
+			Some(Value::Tagged(t)) => &t.value,
+			Some(other) => other,
+			None => continue,
+		};
+		let Some(fields) = triggers.as_mapping() else {
+			continue;
+		};
+		for (key, value) in fields {
+			let (Some(key), Value::Tagged(t)) = (key.as_str(), value) else {
+				continue;
+			};
+			let tag = match t.tag.to_string().as_str() {
+				"!override" => MergeTag::Override,
+				"!reset" => MergeTag::Reset,
+				_ => continue,
+			};
+			out.entry(name.to_string())
+				.or_default()
+				.insert(format!("triggers.{key}"), tag);
+		}
+	}
 }
 
 /// Remove every `!override`/`!reset` tag from a document, keeping the value it
