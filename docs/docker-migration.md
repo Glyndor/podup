@@ -351,7 +351,7 @@ The `[Build]` keys `Annotation=`, `Volume=` and `DNS=` have no compose `build:` 
 |---|---|
 | `env_file.format` other than `dotenv` | Any explicit `env_file.format` (including dotenv) emits a warning; the file is still read as dotenv |
 | `provider:` / model-runner services (`provider`, top-level `models`) | Modeled and parsed, but not honored; a not-honored warning is emitted |
-| Top-level `jobs:` `schedule` trigger | The structure is validated and each job with a schedule is reported once, but podup does not fire schedules and `generate quadlet` does not export jobs yet. `podup run` starts a job by hand, `podup up` never does; see [Jobs](commands-reference.md#jobs) |
+| Top-level `jobs:` `schedule` trigger | The structure is validated and each job with a schedule is reported once, but podup does not fire schedules and `generate quadlet` does not export jobs yet. `podup run` starts a job by hand (a `manual: false` job is refused, also as a dependency), `podup up` never does. `!reset`/`!override` work on triggers, a job never activates a service behind an inactive profile, and `down` removes job containers; see [Jobs](commands-reference.md#jobs) |
 | Configurable pod exit policy and stop timeout | The pod exit policy stays fixed at `continue`; no pod-level Compose source maps to stop timeout |
 | Real-hardware smoke tests on macOS | Pending; the code paths exist but are untested on physical Apple hardware. Windows was validated end-to-end on real hardware (Windows 11, Podman 5.8.3), including the interactive `exec`/`run` path added in 3.0.0. |
 
