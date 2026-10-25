@@ -265,3 +265,26 @@ fn an_empty_jobs_section_is_not_rendered() {
 fn the_default_file_declares_no_job() {
 	assert!(ComposeFile::default().jobs.is_empty());
 }
+
+#[test]
+fn a_bad_umask_on_a_job_names_the_job_and_does_not_repeat_the_value() {
+	// The raw check of the whole document has to reach `jobs:` as it reaches
+	// `services:`, or the error is the generic one about the job definition.
+	let message = refusal(
+		"jobs:\n  backup:\n    image: alpine\n    umask: '9z9-MARKER'\n    triggers: {manual: true}\n",
+	);
+	assert!(
+		message.contains("job 'backup' has an invalid `umask`"),
+		"{message}"
+	);
+	assert!(!message.contains("9z9-MARKER"), "{message}");
+	assert!(!message.contains("service"), "{message}");
+}
+
+#[test]
+fn a_valid_umask_on_a_job_is_kept() {
+	let yaml =
+		"jobs:\n  backup:\n    image: alpine\n    umask: '0077'\n    triggers: {manual: true}\n";
+	let file = parse_str(yaml).unwrap();
+	assert_eq!(file.jobs["backup"].service.umask.as_deref(), Some("0077"));
+}

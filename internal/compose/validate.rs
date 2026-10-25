@@ -51,6 +51,36 @@ pub fn validate_config(file: &ComposeFile) -> Result<()> {
 	}
 
 	for (name, svc) in &everything.services {
+		validate_container(name, svc, file).map_err(|error| {
+			if file.jobs.contains_key(name) {
+				crate::compose::jobs::relabel_error(name, error)
+			} else {
+				error
+			}
+		})?;
+	}
+
+	// A job's own dependencies are named in the job's words; a service's go
+	// through `resolve_order` below.
+	crate::compose::jobs::check_job_dependencies(file)?;
+
+	// Reject `depends_on` cycles and dangling required dependencies, matching the
+	// mutating commands (which run `resolve_order` before they start anything).
+	// Over `everything`, so a cycle that passes through a job is reported like
+	// any other.
+	resolve_order(everything)?;
+	Ok(())
+}
+
+/// The checks of one container of the file, a service or a job: its pull
+/// policy, name, image, ports, networks and volumes, and those of its init
+/// steps.
+fn validate_container(
+	name: &str,
+	svc: &crate::compose::types::Service,
+	file: &ComposeFile,
+) -> Result<()> {
+	{
 		if let Some(policy) = svc
 			.pull_policy
 			.as_deref()
@@ -60,7 +90,7 @@ pub fn validate_config(file: &ComposeFile) -> Result<()> {
 		}
 		validate_service_name(name)?;
 		if svc.image.is_none() && svc.build.is_none() {
-			return Err(ComposeError::NoImageOrBuild(name.clone()));
+			return Err(ComposeError::NoImageOrBuild(name.to_string()));
 		}
 		validate_ports(name, &svc.ports)?;
 		validate_network_refs(name, file, svc)?;
@@ -74,12 +104,6 @@ pub fn validate_config(file: &ComposeFile) -> Result<()> {
 			validate_volume_refs(&step_name, file, step)?;
 		}
 	}
-
-	// Reject `depends_on` cycles and dangling required dependencies, matching the
-	// mutating commands (which run `resolve_order` before they start anything).
-	// Over `everything`, so a cycle that passes through a job, or a job that
-	// depends on something undefined, is reported like any other.
-	resolve_order(everything)?;
 	Ok(())
 }
 

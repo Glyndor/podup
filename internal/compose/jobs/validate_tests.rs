@@ -218,7 +218,7 @@ fn a_job_cycle_through_depends_on_is_refused_by_validation() {
 fn a_job_depending_on_something_undefined_is_refused_by_validation() {
 	let file = parse_str(&format!("jobs:\n{}", job("a", "    depends_on: [ghost]\n"))).unwrap();
 	let err = validate_config(&file).expect_err("ghost is not defined");
-	assert!(matches!(err, ComposeError::ServiceNotFound(_)), "{err:?}");
+	assert!(matches!(err, ComposeError::Job(_)), "{err:?}");
 }
 
 #[test]
@@ -237,7 +237,7 @@ fn a_file_with_neither_services_nor_jobs_is_still_refused() {
 fn a_job_without_image_or_build_is_refused_by_validation() {
 	let file = parse_str("jobs:\n  a:\n    triggers: {manual: true}\n").unwrap();
 	let err = validate_config(&file).expect_err("a job needs something to run");
-	assert!(matches!(err, ComposeError::NoImageOrBuild(_)), "{err:?}");
+	assert!(matches!(err, ComposeError::Job(_)), "{err:?}");
 }
 
 #[test]

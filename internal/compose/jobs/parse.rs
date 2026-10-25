@@ -15,6 +15,15 @@ pub(super) fn job_error(message: String) -> ComposeError {
 	ComposeError::Job(message)
 }
 
+/// A job depends on a name that is neither a service nor a job.
+pub(super) fn dependency_error(job: &str, dependency: &str) -> ComposeError {
+	job_error(format!(
+		"job '{}' depends on '{}', which is not defined as a service or a job",
+		sanitize_name(job),
+		sanitize_name(dependency)
+	))
+}
+
 /// Type one job from its raw YAML.
 ///
 /// `triggers` is taken out first and checked by [`triggers::parse`]; what is

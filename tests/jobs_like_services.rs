@@ -118,7 +118,7 @@ fn a_host_mode_on_a_job_is_surfaced_by_config() {
 	.unwrap();
 	let out = podup(dir.path(), "compose.yaml", &["config", "--quiet"]);
 	assert!(
-		text(&out.stderr).contains("risky") && text(&out.stderr).contains("privileged"),
+		text(&out.stderr).contains("job \"risky\"") && text(&out.stderr).contains("privileged"),
 		"{}",
 		text(&out.stderr)
 	);

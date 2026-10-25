@@ -20,6 +20,7 @@
 //! `podup up` starts services only. A job runs when `podup run` names it, or
 //! when a job that is being run depends on it.
 
+mod label;
 mod merge;
 mod parse;
 mod triggers;
@@ -27,6 +28,7 @@ mod validate;
 mod view;
 mod warn;
 
+pub(crate) use label::{check_job_dependencies, relabel, relabel_error};
 pub(crate) use merge::merge_job;
 pub(crate) use parse::deserialize_jobs;
 pub(super) use parse::extract_jobs;

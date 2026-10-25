@@ -137,6 +137,32 @@ fn config_output_reads_back_as_the_same_jobs() {
 }
 
 #[test]
+fn a_job_never_pulls_in_a_service_behind_an_inactive_profile() {
+	let yaml = "services:\n  web:\n    image: nginx\n  db:\n    image: postgres-marker\n    profiles: [data]\njobs:\n  migrate:\n    image: alpine\n    depends_on: [db]\n    triggers: {manual: true}\n";
+	let (_dir, file) = compose(yaml);
+	for args in [
+		&["config"][..],
+		&["audit", "--format", "json"][..],
+		&["generate", "quadlet"][..],
+	] {
+		let out = podup(&file, args);
+		assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+		assert!(
+			!stdout(&out).contains("postgres-marker") && !stdout(&out).contains("db.container"),
+			"{args:?} must not activate db for a job:\n{}",
+			stdout(&out)
+		);
+		assert!(
+			stderr(&out).contains("job 'migrate' is ignored"),
+			"{args:?} says why the job is left out: {}",
+			stderr(&out)
+		);
+	}
+	let both = podup(&file, &["--profile", "data", "config"]);
+	assert!(stdout(&both).contains("postgres-marker") && stdout(&both).contains("migrate:"));
+}
+
+#[test]
 fn config_quiet_still_warns() {
 	let (_dir, file) = compose(WITH_JOBS);
 	let out = podup(&file, &["config", "--quiet"]);

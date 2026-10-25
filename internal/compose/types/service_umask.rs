@@ -71,6 +71,18 @@ pub(crate) fn validate(value: &Value) -> Result<()> {
 		};
 		for (name, service) in entries {
 			if let Some(raw) = service.get("umask") {
+				if section == "jobs" {
+					// A job's error names the job and does not repeat the value
+					// the file gave.
+					if deserialize(raw.clone()).is_err() {
+						return Err(crate::error::ComposeError::Job(format!(
+							"job '{}' has an invalid `umask`; it must be a quoted octal string \
+							 of one to four digits (0 to 7)",
+							crate::error::sanitize_name(name.as_str().unwrap_or_default())
+						)));
+					}
+					continue;
+				}
 				deserialize(raw.clone()).map_err(|error| {
 					spec_field_error(
 						name.as_str().unwrap_or_default(),

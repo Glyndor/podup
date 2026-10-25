@@ -185,7 +185,14 @@ pub(super) fn collect(file: &ComposeFile) -> Vec<String> {
 	ignored_secret_config_drivers(file, &mut out);
 	ignored_models(file, &mut out);
 	ignored_restart_policy_fields(&units, &mut out);
-	out
+	// The passes above name every container `service 'x'`; a job is said to be
+	// a job.
+	if file.jobs.is_empty() {
+		return out;
+	}
+	out.into_iter()
+		.map(|message| crate::compose::jobs::relabel(file, message))
+		.collect()
 }
 
 /// Push a warning for each non-`x-` key captured at a nested level.

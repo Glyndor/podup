@@ -60,3 +60,11 @@ fn the_job_name_is_escaped() {
 fn a_file_without_jobs_has_nothing_to_report() {
 	assert!(messages("services:\n  web:\n    image: x\n").is_empty());
 }
+
+#[test]
+fn one_entry_is_not_called_entries() {
+	let yaml = "jobs:\n  a:\n    image: x\n    triggers: {schedule: ['* * * * *']}\n";
+	let got = messages(yaml);
+	assert!(got[0].contains("(1 entry)"), "{}", got[0]);
+	assert!(!got[0].contains("1 entries"), "{}", got[0]);
+}
