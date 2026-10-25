@@ -23,6 +23,10 @@ mod systemctl;
 #[path = "start_tests.rs"]
 mod start_tests;
 
+#[cfg(test)]
+#[path = "unit_quoting_tests.rs"]
+mod unit_quoting_tests;
+
 // Unix only: it reuses the fixtures in `tests.rs`, which is Unix-only.
 #[cfg(all(test, unix))]
 #[path = "conflict_tests.rs"]
