@@ -18,6 +18,7 @@ mod control_escape;
 #[cfg(test)]
 #[path = "control_escape_tests.rs"]
 mod control_escape_tests;
+pub(crate) use config_normalize::resolve_bind_sources;
 #[cfg(test)]
 pub(crate) use config_render::render_config_to;
 pub(crate) use config_render::{render_config, ConfigOutput};
