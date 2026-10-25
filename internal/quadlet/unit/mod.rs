@@ -12,8 +12,10 @@ mod security;
 mod shared_values;
 mod volume;
 
-pub(super) use build::build_unit;
-pub(super) use container::{container_unit_with_mode, ContainerUnitMode, UnitContext};
+pub(super) use build::{build_unit, emits_build_unit};
+pub(super) use container::{
+	container_unit_with_mode, job_container_unit, ContainerUnitMode, UnitContext,
+};
 pub(super) use network::network_unit;
 pub(super) use pod::pod_unit;
 pub(crate) use pod_fields::PodFields;
@@ -43,7 +45,7 @@ use super::QuadletUnit;
 /// compose labels only ever become `Label=key=value` entries, never a
 /// comment, so this marker is the line ownership checks (`unit_owner` in
 /// `crate::autostart::quadlet`) must read instead.
-fn owner_marker(project: &str) -> String {
+pub(super) fn owner_marker(project: &str) -> String {
 	format!("# podup-owner: {project}\n")
 }
 
