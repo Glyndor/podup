@@ -65,22 +65,26 @@ fn audit_checks_a_job_like_a_service() {
 }
 
 #[test]
-fn generate_quadlet_says_jobs_are_not_exported() {
-	let yaml = "services:\n  web:\n    image: nginx\njobs:\n  nightly:\n    image: alpine\n    triggers:\n      schedule: ['0 1 * * *']\n";
+fn generate_quadlet_exports_a_scheduled_job_and_says_what_it_does_not() {
+	let yaml = "services:\n  web:\n    image: nginx\njobs:\n  nightly:\n    image: alpine\n    triggers:\n      schedule: ['0 1 * * *']\n  manual_only:\n    image: alpine\n    triggers: {manual: true}\n";
 	let (_dir, file) = compose(yaml);
 	let out = podup(&file, &["generate", "quadlet"]);
 	assert!(out.status.success(), "{}", stderr(&out));
-	assert!(stdout(&out).contains("web.container"), "{}", stdout(&out));
+	let text = stdout(&out);
+	assert!(text.contains("web.container"), "{text}");
+	assert!(text.contains("-nightly.container"), "{text}");
+	assert!(text.contains("-nightly-1.timer"), "{text}");
+	assert!(text.contains("OnCalendar=*-*-* 01:00:00"), "{text}");
 	assert!(
-		!stdout(&out).contains("nightly"),
-		"no unit for the job: {}",
-		stdout(&out)
+		!text.contains("manual_only"),
+		"no unit for a manual job: {text}"
 	);
 	let err = stderr(&out);
 	assert!(
-		err.contains("1 job(s) were not exported (nightly)"),
+		err.contains("1 job(s) have no schedule and were not exported (manual_only)"),
 		"{err}"
 	);
+	assert!(err.contains("1 .timer unit(s) were written"), "{err}");
 }
 
 #[cfg(unix)]

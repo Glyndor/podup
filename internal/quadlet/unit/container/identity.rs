@@ -4,6 +4,16 @@ use crate::compose::types::Service;
 
 use super::{safe_unit_stem, Section};
 
+/// The name the container of `service` runs under: its `container_name:`, else
+/// `{project}-{name}`. One definition, shared by the unit writer and by the
+/// export of jobs, which has to know which names are taken.
+pub(crate) fn container_name(project: &str, name: &str, service: &Service) -> String {
+	service
+		.container_name
+		.clone()
+		.unwrap_or_else(|| format!("{project}-{name}"))
+}
+
 /// Emit `ContainerName=` and, in pod mode, the `Pod=` reference the container
 /// is launched under.
 pub(super) fn emit_identity(
@@ -18,13 +28,7 @@ pub(super) fn emit_identity(
 	// container called just `web`, colliding with any other project's `web`
 	// service and diverging from the running-stack name. An explicit
 	// `container_name:` still wins.
-	container.add(
-		"ContainerName",
-		service
-			.container_name
-			.clone()
-			.unwrap_or_else(|| format!("{project}-{name}")),
-	);
+	container.add("ContainerName", container_name(project, name, service));
 	// In pod mode every container joins the project pod; reference it by the
 	// `.pod` unit's stem (which is the project name). Without this the
 	// container would launch outside the pod.

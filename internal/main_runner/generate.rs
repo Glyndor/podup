@@ -73,6 +73,13 @@ pub(crate) fn write_quadlet(
 	}
 	match output {
 		Some(dir) => {
+			for stale in podup::quadlet::stale_timers(dir, project, &result.units) {
+				tracing::warn!(
+					target: "podup::generate",
+					"{stale} in the output directory was written by an earlier run and is not \
+					 generated now; if it is installed it still fires, so disable and remove it"
+				);
+			}
 			let mut progress = String::new();
 			for path in podup::quadlet::write_units(dir, &result.units)? {
 				progress.push_str(&format!("wrote {}\n", path.display()));

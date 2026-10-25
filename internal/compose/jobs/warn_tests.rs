@@ -16,7 +16,11 @@ fn a_job_with_three_schedule_entries_is_reported_once() {
 	assert!(got[0].contains("job 'nightly'"), "{}", got[0]);
 	assert!(got[0].contains("3 entries"), "{}", got[0]);
 	assert!(got[0].contains("podup run nightly"), "{}", got[0]);
-	assert!(got[0].contains("does not export jobs yet"), "{}", got[0]);
+	assert!(
+		got[0].contains("exports it as a systemd timer"),
+		"{}",
+		got[0]
+	);
 }
 
 #[test]

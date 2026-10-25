@@ -34,6 +34,7 @@ mod resources;
 mod runtime;
 mod secrets;
 
+pub(crate) use identity::container_name;
 pub(crate) use networks::is_rootless_user_mode;
 
 use command::emit_command;
@@ -125,6 +126,50 @@ pub(crate) fn container_unit_with_mode(
 	warnings: &mut Vec<String>,
 	mode: ContainerUnitMode,
 ) -> QuadletUnit {
+	render_container_unit(name, service, ctx, warnings, mode, UnitRole::Service)
+}
+
+/// Build the `.container` unit for a scheduled job.
+///
+/// It goes through the same emitters as a service, so a job's `command`,
+/// `environment`, volumes and limits are written by the code that writes them
+/// for a service. Only the lifecycle differs: the unit is `Type=oneshot`, has
+/// no restart policy, and has no `[Install]` section, because a systemd timer
+/// starts it and nothing enables it.
+pub(crate) fn job_container_unit(
+	name: &str,
+	service: &Service,
+	ctx: &UnitContext<'_>,
+	warnings: &mut Vec<String>,
+) -> QuadletUnit {
+	render_container_unit(
+		name,
+		service,
+		ctx,
+		warnings,
+		ContainerUnitMode::Standard,
+		UnitRole::Job,
+	)
+}
+
+/// What the `.container` unit stands for, which decides its `[Service]` and
+/// `[Install]` sections.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UnitRole {
+	/// A compose service: restart policy, enabled at boot.
+	Service,
+	/// A scheduled job: one run per start, started by a timer.
+	Job,
+}
+
+fn render_container_unit(
+	name: &str,
+	service: &Service,
+	ctx: &UnitContext<'_>,
+	warnings: &mut Vec<String>,
+	mode: ContainerUnitMode,
+	role: UnitRole,
+) -> QuadletUnit {
 	let UnitContext {
 		project,
 		declared_volumes,
@@ -138,7 +183,12 @@ pub(crate) fn container_unit_with_mode(
 	} = ctx;
 	let in_pod: bool = *pod_mode;
 	let mut unit = Section::new("Unit");
-	unit.add("Description", format!("{name} (podup)"));
+	let kind = if role == UnitRole::Job {
+		"podup job"
+	} else {
+		"podup"
+	};
+	unit.add("Description", format!("{name} ({kind})"));
 	let deps = effective_depends_on(service, services);
 	for dep in deps.service_names() {
 		// The dependency's generated unit is named `{unit_stem(project, dep)}.container`,
@@ -192,7 +242,12 @@ pub(crate) fn container_unit_with_mode(
 	render_healthcheck(name, service, &mut container, warnings);
 
 	let mut svc = Section::new("Service");
-	emit_restart(service, &mut svc);
+	match role {
+		UnitRole::Service => emit_restart(service, &mut svc),
+		// One run per start. A scheduled run is not retried, and `Restart=`
+		// is only valid next to `oneshot` as `no` or `on-failure`.
+		UnitRole::Job => svc.add("Type", "oneshot".to_string()),
+	}
 
 	collect_warnings(
 		name,
@@ -212,7 +267,9 @@ pub(crate) fn container_unit_with_mode(
 		contents.push('\n');
 		contents.push_str(&svc.render());
 	}
-	contents.push_str("\n[Install]\nWantedBy=default.target\n");
+	if role == UnitRole::Service {
+		contents.push_str("\n[Install]\nWantedBy=default.target\n");
+	}
 
 	QuadletUnit {
 		filename: format!("{}.container", unit_stem(project, name)),

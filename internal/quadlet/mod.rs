@@ -11,6 +11,8 @@
 //! every field that is set but has no Quadlet equivalent yet, so generated
 //! units never quietly drop configuration.
 
+mod jobs;
+pub use jobs::stale_timers;
 #[cfg(test)]
 mod min_podman;
 mod render;
@@ -30,6 +32,15 @@ use unit::{
 
 /// Validate compose data before writing Quadlet units.
 pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
+	// A job is written by the same code as a service, so it must pass the same
+	// checks: its `command`, ports and limits reach a unit file.
+	let with_jobs;
+	let file = if file.jobs.is_empty() {
+		file
+	} else {
+		with_jobs = crate::compose::jobs::with_jobs_as_services(file);
+		&with_jobs
+	};
 	crate::engine::build::validate_pull_fields(file)?;
 	if let Err(e @ ComposeError::CircularDependency(_)) = crate::compose::resolve_order(file) {
 		return Err(e);
@@ -401,7 +412,22 @@ fn generate_with_mode(
 	// unit was actually written. The warning goes through the same
 	// `out.warnings` channel every other field-mismatch warning uses,
 	// which `generate.rs` re-emits to stderr.
-	out.warnings.extend(warnings::jobs_not_exported(&file.jobs));
+	// Jobs go after the services so their `.build` units are counted below, and
+	// only in the standard shape: `autostart` enables the units it installs,
+	// and nothing may enable a timer on a project's behalf there.
+	match mode {
+		ContainerUnitMode::Standard => {
+			let before = out.units.len();
+			jobs::append_job_units(file, &ctx, &mut out);
+			build_units_emitted += out.units[before..]
+				.iter()
+				.filter(|unit| unit.filename.ends_with(".build"))
+				.count() as u32;
+		}
+		ContainerUnitMode::Prebuilt => {
+			out.warnings.extend(warnings::jobs_not_exported(&file.jobs));
+		}
+	}
 	if build_units_emitted > 0 {
 		out.warnings.push(format!(
 			"{build_units_emitted} .build unit(s) were written; Quadlet build units need \

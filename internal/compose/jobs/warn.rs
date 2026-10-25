@@ -36,13 +36,13 @@ fn message_for(name: &str, job: &Job) -> Option<String> {
 		)),
 		(_, true) => Some(format!(
 			"job '{name}' has a schedule trigger ({count}) that podup does not fire by \
-			 itself, and `podup generate quadlet` does not export jobs yet; the job runs only \
-			 when you start it with `podup run {name}`"
+			 itself; `podup generate quadlet` exports it as a systemd timer, and otherwise the \
+			 job runs only when you start it with `podup run {name}`"
 		)),
 		(_, false) => Some(format!(
 			"job '{name}' has a schedule trigger ({count}) and `manual: false`; podup \
-			 does not fire schedules by itself and `podup generate quadlet` does not export \
-			 jobs yet, so nothing starts this job"
+			 does not fire schedules by itself, so nothing starts this job unless \
+			 `podup generate quadlet` exports it as a systemd timer"
 		)),
 	}
 }
