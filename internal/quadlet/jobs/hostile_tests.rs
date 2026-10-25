@@ -25,8 +25,11 @@ fn twenty_thousand_jobs_export_in_linear_time_and_still_catch_a_name_clash() {
 	let started = std::time::Instant::now();
 	let out = generate_at(&file, "proj", Path::new("/srv/app"));
 	let elapsed = started.elapsed();
+	// The quadratic scan took over two minutes here; the linear one takes about
+	// a second locally and about two on a slow shared runner, so 30 s separates
+	// them with room on both sides.
 	assert!(
-		elapsed < std::time::Duration::from_secs(2),
+		elapsed < std::time::Duration::from_secs(30),
 		"exporting {JOBS} jobs took {elapsed:?}"
 	);
 	assert!(has_unit(&out, "proj-j19999.container"));
