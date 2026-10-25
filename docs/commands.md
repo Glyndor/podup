@@ -43,7 +43,7 @@ podup [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS] [SERVICE...]
 `podup audit` walks the init steps too: each step is a container of its own and is reported under `<service>/pre_start[i]`, so a step that asks for `privileged: true` or mounts a host path is a finding about that step.
 
 ### `up`
-Create and start all services (or only the named ones, plus their transitive `depends_on`). Accepts a trailing service list.
+Create and start all services (or only the named ones, plus their transitive `depends_on`). Accepts a trailing service list. Jobs are never started by `up`.
 
 A container that already exists is left in place when two facts both hold: its recorded config hash equals what the compose file renders now, and the image it is bound to is still the image its service resolves to. Either changing replaces it. `--no-recreate` keeps an existing container regardless; `--force-recreate` replaces it regardless.
 
@@ -239,7 +239,7 @@ List the project's named volumes. `EXTERNAL` is highlighted when it reads `yes`:
 ## Container operations
 
 ### `run <SERVICE> [COMMAND...]`
-Run a one-off command in a new container for the service.
+Run a one-off command in a new container for the service, or for a job of the same name (see [Jobs](commands-reference.md#jobs)).
 
 | Flag | Description | Default |
 |---|---|---|
