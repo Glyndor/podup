@@ -28,9 +28,7 @@ fn engine() -> (fake_podman::FakePodman, Engine) {
 	let fake = fake_podman::start(move |method, target| {
 		if method == "GET" && target.contains("/containers/json") {
 			(200, containers.to_string())
-		} else if method == "POST" && target.contains("/stop") {
-			(200, String::new())
-		} else if method == "DELETE" {
+		} else if (method == "POST" && target.contains("/stop")) || method == "DELETE" {
 			(200, String::new())
 		} else {
 			(404, r#"{"message":"not found"}"#.to_string())

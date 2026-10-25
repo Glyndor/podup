@@ -109,8 +109,7 @@ fn merge_error(files: &[&str]) -> String {
 		})
 		.collect();
 	parse_files_with_env_files(&paths, &[])
-		.err()
-		.expect("this merge must be refused")
+		.expect_err("this merge must be refused")
 		.to_string()
 }
 
