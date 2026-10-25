@@ -122,6 +122,9 @@ fn interpolate_value(
 		serde_yaml::Value::String(s) if s.contains('$') => {
 			*value = interpolate_scalar(s, vars, spent, warned)?;
 		}
+		serde_yaml::Value::Tagged(tagged) => {
+			interpolate_value(&mut tagged.value, vars, spent, warned)?;
+		}
 		serde_yaml::Value::Sequence(seq) => {
 			// Skip the recursion when no element carries a `$`: a 100-service file
 			// with no `${VAR}` references pays zero per-sequence iteration cost
@@ -183,6 +186,7 @@ fn value_needs_interp(value: &serde_yaml::Value) -> bool {
 		serde_yaml::Value::String(s) => s.contains('$'),
 		serde_yaml::Value::Sequence(seq) => seq.iter().any(value_needs_interp),
 		serde_yaml::Value::Mapping(map) => mapping_needs_interp(map),
+		serde_yaml::Value::Tagged(tagged) => value_needs_interp(&tagged.value),
 		_ => false,
 	}
 }
