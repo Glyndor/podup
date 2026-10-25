@@ -1,6 +1,6 @@
 //! `--format json`: every finding listed, stable schema, no escapes.
 //!
-//! Split out from `tests/audit_exit_codes.rs` so the parent file stays under
+//! Split out from `tests/audit/audit_exit_codes.rs` so the parent file stays under
 //! the repository line limit; the helpers (`run`, `write_compose`) are
 //! inherited via `use super::*`.
 

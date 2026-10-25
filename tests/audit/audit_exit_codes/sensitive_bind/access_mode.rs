@@ -1,6 +1,6 @@
 //! The access mode never clears a finding: `:ro` discloses as much as `:rw`.
 //!
-//! Split out of `tests/audit_exit_codes/sensitive_bind/mod.rs`; the helpers
+//! Split out of `tests/audit/audit_exit_codes/sensitive_bind/mod.rs`; the helpers
 //! are inherited via `use super::*`.
 
 use super::*;

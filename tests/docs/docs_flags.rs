@@ -99,8 +99,8 @@ fn section_for(docs: &str, cmd: &str) -> Option<String> {
 #[test]
 fn every_cli_flag_is_documented() {
 	let docs = [
-		include_str!("../docs/commands.md"),
-		include_str!("../docs/commands-reference.md"),
+		include_str!("../../docs/commands.md"),
+		include_str!("../../docs/commands-reference.md"),
 	]
 	.join("\n");
 
@@ -146,8 +146,8 @@ fn every_cli_flag_is_documented() {
 #[test]
 fn every_global_flag_is_documented() {
 	let docs = [
-		include_str!("../docs/commands.md"),
-		include_str!("../docs/commands-reference.md"),
+		include_str!("../../docs/commands.md"),
+		include_str!("../../docs/commands-reference.md"),
 	]
 	.join("\n");
 	let out = Command::new(bin())

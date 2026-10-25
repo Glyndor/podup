@@ -4,7 +4,7 @@
 //! gate. The same compose file audited with a variable exported and without it
 //! must give the same exit code and the same findings.
 //!
-//! Split out from `tests/audit_exit_codes.rs` so the parent file stays under
+//! Split out from `tests/audit/audit_exit_codes.rs` so the parent file stays under
 //! the repository line limit; the helpers (`run`, `run_with_secret_env`,
 //! `write_compose`, `bin`) are inherited via `use super::*`.
 

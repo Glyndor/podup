@@ -2,7 +2,7 @@
 //! describe different risks, and a merge regression would let one drop the
 //! other's finding.
 //!
-//! Split out of `tests/audit_exit_codes/wildcard_bind/mod.rs`; the helpers
+//! Split out of `tests/audit/audit_exit_codes/wildcard_bind/mod.rs`; the helpers
 //! are inherited via `use super::*`.
 
 use super::*;

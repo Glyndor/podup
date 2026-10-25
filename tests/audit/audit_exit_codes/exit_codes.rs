@@ -1,7 +1,7 @@
 //! The exit code the `audit` subcommand returns: what `--strict` changes and
 //! when the gate is allowed to stay green.
 //!
-//! Split out from `tests/audit_exit_codes.rs` so the parent file stays under
+//! Split out from `tests/audit/audit_exit_codes.rs` so the parent file stays under
 //! the repository line limit; the helpers (`run`, `write_compose`) are
 //! inherited via `use super::*`.
 

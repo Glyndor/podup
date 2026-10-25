@@ -155,6 +155,26 @@ path = "tests/compose/parsing/size.rs"
 name = "substitute"
 path = "tests/compose/parsing/substitute.rs"
 
+[[test]]
+name = "audit_exit_codes"
+path = "tests/audit/audit_exit_codes.rs"
+
+[[test]]
+name = "audit_ignore_lists"
+path = "tests/supply_chain/audit_ignore_lists.rs"
+
+[[test]]
+name = "audit_list_checks"
+path = "tests/audit/audit_list_checks.rs"
+
+[[test]]
+name = "dependabot_covers_every_lockfile"
+path = "tests/supply_chain/dependabot_covers_every_lockfile.rs"
+
+[[test]]
+name = "docs_flags"
+path = "tests/docs/docs_flags.rs"
+
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time", "net", "io-util", "io-std"] }
 serde = { version = "1", features = ["derive"] }

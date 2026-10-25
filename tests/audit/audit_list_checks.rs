@@ -19,7 +19,7 @@ fn bin() -> &'static str {
 /// Run `podup` with `args` after `cd`-ing into `dir`. The working directory
 /// has no compose file, so the listing is the only command in this file
 /// that can succeed here. Same env-var scrub list as
-/// `tests/audit_exit_codes.rs` so an inherited `PODUP_*` or `COMPOSE_*`
+/// `tests/audit/audit_exit_codes.rs` so an inherited `PODUP_*` or `COMPOSE_*`
 /// cannot masquerade as a named file path the binary would otherwise
 /// resolve.
 fn run_in(dir: &Path, args: &[&str]) -> Output {

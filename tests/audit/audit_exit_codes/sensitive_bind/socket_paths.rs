@@ -2,7 +2,7 @@
 //! than the directory-prefix matches, so the tests pin that wording rather
 //! than just the check id.
 //!
-//! Split out of `tests/audit_exit_codes/sensitive_bind/mod.rs`; the helpers
+//! Split out of `tests/audit/audit_exit_codes/sensitive_bind/mod.rs`; the helpers
 //! are inherited via `use super::*`.
 
 use super::*;

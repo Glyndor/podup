@@ -1,7 +1,7 @@
 //! Mounts the check must leave alone on purpose: the project directory an
 //! operator chose, and the volume forms that are not host binds at all.
 //!
-//! Split out of `tests/audit_exit_codes/sensitive_bind/mod.rs`; the helpers
+//! Split out of `tests/audit/audit_exit_codes/sensitive_bind/mod.rs`; the helpers
 //! are inherited via `use super::*`.
 
 use super::*;

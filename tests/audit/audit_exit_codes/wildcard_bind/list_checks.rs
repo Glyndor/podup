@@ -1,7 +1,7 @@
 //! The opt-in flag is discoverable: `--list-checks --format json` names
 //! both the check id and the flag that enables it.
 //!
-//! Split out of `tests/audit_exit_codes/wildcard_bind/mod.rs`; the helpers
+//! Split out of `tests/audit/audit_exit_codes/wildcard_bind/mod.rs`; the helpers
 //! are inherited via `use super::*`.
 
 use std::process::Output;
@@ -10,7 +10,7 @@ use super::*;
 
 /// `--list-checks` lists the wildcard check id and the opt-in flag
 /// in the JSON listing. The table shape is owned by
-/// `tests/audit_list_checks.rs`; the redundant assertion here is on
+/// `tests/audit/audit_list_checks.rs`; the redundant assertion here is on
 /// the JSON shape a CI consumer pipes (`#1881`).
 #[test]
 fn wildcard_listed_in_list_checks_json_with_opt_in_flag() {
