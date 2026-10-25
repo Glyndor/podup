@@ -1,24 +1,24 @@
 use std::path::Path;
 
-use crate::compose::types::{ComposeFile, Schedule, ScheduleSpec};
+use crate::compose::types::{ComposeFile, Schedule};
 use crate::parse_str;
 use crate::quadlet::{generate_at, generate_for_autostart, QuadletOutput};
 
 /// A file with one job `j` whose only schedule entry is `schedule`, set
 /// directly so that text the parser would refuse still reaches the exporter.
-fn file_with(schedule: Schedule) -> ComposeFile {
+pub(super) fn file_with(schedule: Schedule) -> ComposeFile {
 	let mut file =
 		parse_str("jobs:\n  j:\n    image: alpine\n    triggers: {manual: true}\n").unwrap();
 	file.jobs.get_mut("j").unwrap().triggers.schedule = vec![schedule];
 	file
 }
 
-fn export(yaml: &str) -> QuadletOutput {
+pub(super) fn export(yaml: &str) -> QuadletOutput {
 	let file = parse_str(yaml).unwrap();
 	generate_at(&file, "proj", Path::new("/srv/app"))
 }
 
-fn unit<'a>(out: &'a QuadletOutput, name: &str) -> &'a str {
+pub(super) fn unit<'a>(out: &'a QuadletOutput, name: &str) -> &'a str {
 	out.units
 		.iter()
 		.find(|u| u.filename == name)
@@ -30,11 +30,11 @@ fn unit<'a>(out: &'a QuadletOutput, name: &str) -> &'a str {
 		.as_str()
 }
 
-fn has_unit(out: &QuadletOutput, name: &str) -> bool {
+pub(super) fn has_unit(out: &QuadletOutput, name: &str) -> bool {
 	out.units.iter().any(|u| u.filename == name)
 }
 
-fn warned(out: &QuadletOutput, needle: &str) -> bool {
+pub(super) fn warned(out: &QuadletOutput, needle: &str) -> bool {
 	out.warnings.iter().any(|w| w.contains(needle))
 }
 
@@ -270,248 +270,35 @@ jobs:
 }
 
 #[test]
-fn depends_on_a_service_orders_the_job_after_it() {
-	let yaml = "\
-services:
-  db:
-    image: postgres
-jobs:
-  migrate:
-    image: alpine
-    depends_on:
-      db:
-        condition: service_started
-    triggers:
-      schedule: ['0 3 * * *']
-";
-	let out = export(yaml);
-	let container = unit(&out, "proj-migrate.container");
-	assert!(container.contains("After=proj-db.service\n"), "{container}");
-	assert!(
-		container.contains("Requires=proj-db.service\n"),
-		"{container}"
-	);
-}
-
-#[test]
-fn depends_on_a_job_is_ordered_only_when_that_job_has_a_unit() {
-	let yaml = "\
-jobs:
-  prepare:
-    image: alpine
-    triggers:
-      schedule: ['0 2 * * *']
-  manual_only:
-    image: alpine
-    triggers: {manual: true}
-  main:
-    image: alpine
-    depends_on: [prepare, manual_only]
-    triggers:
-      schedule: ['0 3 * * *']
-";
-	let out = export(yaml);
-	let container = unit(&out, "proj-main.container");
-	assert!(
-		container.contains("After=proj-prepare.service\n"),
-		"{container}"
-	);
-	assert!(!container.contains("manual_only"), "{container}");
-	assert!(warned(
-		&out,
-		"job 'main': `depends_on` job 'manual_only' is not ordered"
-	));
-}
-
-#[test]
-fn a_job_inside_a_pod_project_is_not_exported() {
-	let yaml = "\
-x-podman-pod: true
-services:
-  web:
-    image: nginx
-jobs:
-  j:
-    image: alpine
-    triggers:
-      schedule: ['0 3 * * *']
-";
-	let out = export(yaml);
-	assert!(!has_unit(&out, "proj-j.container"));
-	assert!(!has_unit(&out, "proj-j-1.timer"));
-	assert!(warned(
-		&out,
-		"job 'j': schedule entry 1 was not exported: with `x-podman-pod: true`"
-	));
-}
-
-#[test]
-fn a_job_without_an_image_to_run_is_not_exported() {
-	let yaml = "\
-jobs:
-  j:
-    build:
-      context: .
-      dockerfile_inline: 'FROM alpine'
-    triggers:
-      schedule: ['0 3 * * *']
-";
-	let out = export(yaml);
-	assert!(!has_unit(&out, "proj-j.container"));
-	assert!(warned(
-		&out,
-		"job 'j': schedule entry 1 was not exported: the job has no image"
-	));
-}
-
-#[test]
-fn a_job_with_a_build_gets_a_build_unit_that_the_container_uses() {
-	let yaml = "\
-jobs:
-  j:
-    build: ./job
-    triggers:
-      schedule: ['0 3 * * *']
-";
-	let out = export(yaml);
-	assert!(has_unit(&out, "proj-j.build"));
-	assert!(unit(&out, "proj-j.container").contains("Image=proj-j.build\n"));
-}
-
-#[test]
-fn sixty_four_schedules_make_sixty_four_distinct_timers() {
-	let mut yaml = String::from("jobs:\n  j:\n    image: alpine\n    triggers:\n      schedule:\n");
-	for minute in 0..64 {
-		yaml.push_str(&format!("        - '{} 3 * * *'\n", minute % 60));
-	}
-	let out = export(&yaml);
-	let timers: Vec<_> = out
-		.units
-		.iter()
-		.filter(|u| u.filename.ends_with(".timer"))
-		.collect();
-	assert_eq!(timers.len(), 64);
-	assert!(out.duplicate_filename().is_none());
-}
-
-#[test]
-fn names_that_sanitize_to_the_same_file_are_reported_as_a_collision() {
-	// A service `a_b` and a job `a:b` both become `proj-a_b.container`.
-	let yaml = "\
-services:
-  a_b:
-    image: nginx
-jobs:
-  'a:b':
-    image: alpine
-    triggers:
-      schedule: ['0 3 * * *']
-";
-	let out = export(yaml);
-	assert_eq!(out.duplicate_filename(), Some("proj-a_b.container"));
-}
-
-#[test]
-fn a_job_named_like_a_timer_of_another_does_not_collide() {
-	// `x` entry 1 is `proj-x-1.timer`; job `x-1` entry 1 is `proj-x-1-1.timer`.
-	let yaml = "\
-jobs:
-  x:
-    image: alpine
-    triggers:
-      schedule: ['0 3 * * *']
-  x-1:
-    image: alpine
-    triggers:
-      schedule: ['0 4 * * *']
-";
-	let out = export(yaml);
-	assert!(out.duplicate_filename().is_none());
-	assert!(has_unit(&out, "proj-x-1.timer"));
-	assert!(has_unit(&out, "proj-x-1-1.timer"));
-}
-
-#[test]
-fn hostile_job_names_only_ever_become_plain_file_names() {
-	for name in ["a/b", "../x", "a\\\\b", "a b", "a%h", "a$X", "ñ"] {
-		let yaml = format!(
-			"jobs:\n  \"{name}\":\n    image: alpine\n    triggers:\n      schedule: ['0 3 * * *']\n"
-		);
-		let Ok(file) = parse_str(&yaml) else { continue };
-		let out = generate_at(&file, "proj", Path::new("/srv/app"));
-		for unit in &out.units {
-			assert!(
-				Path::new(&unit.filename).file_name() == Some(std::ffi::OsStr::new(&unit.filename)),
-				"{name:?} gave {:?}",
-				unit.filename
-			);
-			assert!(!unit.filename.contains(".."), "{:?}", unit.filename);
-			assert!(
-				unit.filename
-					.chars()
-					.all(|c| c.is_ascii_alphanumeric() || "_.-".contains(c)),
-				"{:?}",
-				unit.filename
-			);
-		}
-	}
-}
-
-#[test]
-fn an_injected_cron_never_reaches_a_unit_file() {
-	for cron in [
-		"* * * * *\n[Service]\nExecStart=/bin/true",
-		"* * * * *\r\nExecStartPre=/bin/true",
-		"0 0 * * %h",
-		"0 0 * * $HOME",
-	] {
-		// The parser refuses these; build the file by hand to reach the exporter.
-		let file = file_with(Schedule::Cron(cron.to_string()));
-		let out = generate_at(&file, "proj", Path::new("/srv/app"));
-		for unit in &out.units {
-			assert!(!unit.contents.contains("ExecStart"), "{}", unit.contents);
-			assert!(
-				!unit.contents.contains("[Service]\nExecStart"),
-				"{}",
-				unit.contents
-			);
-		}
-		assert!(!has_unit(&out, "proj-j-1.timer"), "{cron:?}");
-		assert!(
-			warned(&out, "schedule entry 1 was not exported"),
-			"{cron:?}"
-		);
-	}
-}
-
-#[test]
-fn a_hostile_timezone_never_reaches_a_unit_file() {
-	for zone in [
-		"../../etc/localtime",
-		"UTC\nExecStart=/bin/true",
-		"a b",
-		"UTC%h",
-		"UTC$X",
-	] {
-		let file = file_with(Schedule::Detailed(ScheduleSpec {
-			cron: "0 3 * * *".into(),
-			timezone: Some(zone.to_string()),
-			concurrency: None,
-			missed_fires: None,
-		}));
-		let out = generate_at(&file, "proj", Path::new("/srv/app"));
-		assert!(!has_unit(&out, "proj-j-1.timer"), "{zone:?}");
-		for unit in &out.units {
-			assert!(!unit.contents.contains("ExecStart"), "{}", unit.contents);
-		}
-	}
-}
-
-#[test]
 fn autostart_does_not_write_job_units() {
 	let file = parse_str(NIGHTLY).unwrap();
 	let out = generate_for_autostart(&file, "proj", Path::new("/srv/app"));
 	assert!(!has_unit(&out, "proj-nightly.container"));
 	assert!(!out.units.iter().any(|u| u.filename.ends_with(".timer")));
 	assert!(warned(&out, "1 job(s) were not exported (nightly)"));
+}
+
+#[test]
+fn a_job_is_validated_like_a_service_before_anything_is_written() {
+	let file = parse_str(
+		"jobs:\n  j:\n    image: alpine\n    mem_limit: nonsense\n    triggers: {manual: true}\n",
+	)
+	.unwrap();
+	let err = crate::quadlet::validate_for_quadlet(&file).unwrap_err();
+	assert!(err.to_string().contains("mem_limit"), "{err}");
+}
+
+#[test]
+fn missed_fires_skip_reaches_the_timer_as_persistent_false() {
+	let yaml = "\
+jobs:
+  j:
+    image: alpine
+    triggers:
+      schedule:
+        - cron: '0 3 * * *'
+          missed_fires: skip
+";
+	let out = export(yaml);
+	assert!(unit(&out, "proj-j-1.timer").contains("Persistent=false\n"));
 }

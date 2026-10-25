@@ -207,5 +207,13 @@ fn drop_unexported_dependencies(
 mod tests;
 
 #[cfg(test)]
+#[path = "hostile_tests.rs"]
+mod hostile_tests;
+
+#[cfg(test)]
+#[path = "policy_tests.rs"]
+mod policy_tests;
+
+#[cfg(test)]
 #[path = "systemd_tests.rs"]
 mod systemd_tests;
