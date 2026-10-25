@@ -66,9 +66,11 @@ pub async fn resolve_image_digests(client: &Client, file: &ComposeFile) -> Resul
 	// mutation pass both walk `inputs` in order, so the first failing service
 	// in the file is the one reported and the final state of `out.services`
 	// matches the serial loop's behaviour.
+	// A job's image is pinned like a service's: `config` shows both.
 	let inputs: Vec<(String, String)> = out
 		.services
 		.iter()
+		.chain(out.jobs.iter().map(|(name, job)| (name, &job.service)))
 		.filter_map(|(name, svc)| svc.image.clone().map(|image| (name.clone(), image)))
 		.collect();
 
@@ -124,6 +126,8 @@ pub async fn resolve_image_digests(client: &Client, file: &ComposeFile) -> Resul
 		if let ResolveOutcome::Pinned(digest) = outcome {
 			if let Some(svc) = out.services.get_mut(&name) {
 				svc.image = Some(digest);
+			} else if let Some(job) = out.jobs.get_mut(&name) {
+				job.service.image = Some(digest);
 			}
 		}
 	}

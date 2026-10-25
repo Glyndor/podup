@@ -1,8 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use indexmap::IndexMap;
-
-use super::{anchor, diagnostics, extends, include, merge, tags, types, validate};
+use super::{anchor, diagnostics, extends, include, jobs, merge, tags, types, validate};
 use crate::error::{ComposeError, Result};
 use crate::substitute;
 use types::{ComposeFile, ServiceNetworks};
@@ -113,8 +111,8 @@ pub(crate) fn parse_file_with_env_files_interp_with_stdin(
 				&combined_env_files,
 				interpolate,
 			)?;
-			for name in included.services.keys() {
-				if !file.services.contains_key(name) {
+			for name in included.services.keys().chain(included.jobs.keys()) {
+				if !file.services.contains_key(name) && !file.jobs.contains_key(name) {
 					included_env_files.insert(
 						name.clone(),
 						include::absolute_env_files(&inc_dir, &combined_env_files),
@@ -127,12 +125,12 @@ pub(crate) fn parse_file_with_env_files_interp_with_stdin(
 	}
 
 	let env_files = include::absolute_env_files(&dir, env_files);
+	// Jobs and services share a namespace and keep their `extends` to their
+	// own kind. Both checks wait until the includes are merged, because a job
+	// can arrive from an included file.
+	jobs::check_structure(&file)?;
 	extends::resolve_all_extends(&mut file, &dir, &env_files, included_env_files, interpolate)?;
-	// A top-level `jobs:` section is refused here, in the one loader every
-	// command goes through, so no entry point can start a project whose jobs
-	// would never run. The check sits after the includes are merged and the
-	// extends are resolved, because a job can arrive from either.
-	super::jobs::reject_jobs(&file)?;
+	jobs::check_relations(&file)?;
 	Ok(file)
 }
 
@@ -187,6 +185,10 @@ pub fn parse_files_with_env_files_interp(
 		let directives = tags::collect_from_file(path);
 		merge_override(&mut merged, other, &directives);
 	}
+	// Each file passed on its own; a service in one `-f` file and a job of the
+	// same name in another only meet here.
+	jobs::check_structure(&merged)?;
+	jobs::check_relations(&merged)?;
 	normalize_default_network(&mut merged);
 	// Semantic validation runs only on the interpolated file: `--no-interpolate`
 	// leaves literal `${VAR}` placeholders that cannot be reference- or
@@ -279,12 +281,13 @@ pub(crate) fn normalize_default_network(file: &mut ComposeFile) {
 	let needs_default = file
 		.services
 		.values()
+		.chain(file.jobs.values().map(|job| &job.service))
 		.any(|svc| svc.network_mode.is_none() && matches!(svc.networks, ServiceNetworks::Empty));
 	if !needs_default {
 		return;
 	}
 	file.networks.entry("default".to_string()).or_insert(None);
-	for svc in file.services.values_mut() {
+	for svc in file.services_and_jobs_mut() {
 		if svc.network_mode.is_none() && matches!(svc.networks, ServiceNetworks::Empty) {
 			svc.networks = ServiceNetworks::List(vec!["default".to_string()]);
 		}
@@ -322,14 +325,13 @@ pub(super) fn merge_override(
 	for (k, v) in other.models {
 		target.models.insert(k, v);
 	}
-	// `jobs:` merges like every other top-level map. Each input file is
-	// refused on its own before it reaches this point, so the map carries
-	// nothing; the merge is kept complete so the two merge paths cannot
-	// disagree about a top-level key.
-	if let Some(other_jobs) = other.jobs {
-		let jobs = target.jobs.get_or_insert_with(IndexMap::new);
-		for (k, v) in other_jobs {
-			jobs.insert(k, v);
+	// Jobs merge field by field like services, so an override file can change
+	// one key of a job without restating the rest.
+	for (name, job) in other.jobs {
+		if let Some(base) = target.jobs.get_mut(&name) {
+			*base = jobs::merge_job(std::mem::take(base), job, directives.get(&name));
+		} else {
+			target.jobs.insert(name, job);
 		}
 	}
 }
@@ -342,8 +344,9 @@ pub(super) fn merge_override(
 pub fn parse_str(content: &str) -> Result<ComposeFile> {
 	let vars = substitute::build_vars(Path::new("."));
 	let mut file = merge::deserialize_with_merge_interp(content, Some(&vars))?;
+	jobs::check_structure(&file)?;
 	extends::resolve_extends_same_file(&mut file)?;
-	super::jobs::reject_jobs(&file)?;
+	jobs::check_relations(&file)?;
 	Ok(file)
 }
 
