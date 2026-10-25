@@ -77,6 +77,8 @@ fn a_semicolon_inside_a_word_is_kept() {
 	for command in [
 		"command: [sh, -c, \"a;b\"]",
 		"command: [echo, \"x;\", \";y\"]",
+		// Quotes and backslashes around a `;` are text, not a quoted word.
+		"command: ['\";\"', '\\;', \"';'\", 'a\" ; \"b']",
 		"command: \"sh -c 'a ; b'\"",
 	] {
 		let yaml = format!("services:\n  web:\n    image: nginx\n    {command}\n");

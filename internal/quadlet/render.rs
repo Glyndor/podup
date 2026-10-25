@@ -183,41 +183,88 @@ fn escape_exec_control(s: &str) -> String {
 /// Quadlet unquotes `Exec=` words and writes them to `ExecStart=` without
 /// requoting a `;`, and it rejects the `\;` spelling, so such a word reaches
 /// systemd as a bare `;` that ends the command. There is no way to write it.
+///
+/// The check reads the exact text [`render_command`] emits, with the word
+/// rules Quadlet applies to it, so the shell form and the exec form share one
+/// reading and the check cannot disagree with the parser that matters.
 pub(crate) fn has_lone_semicolon_word(command: &Command) -> bool {
-	match command {
-		Command::Exec(parts) => parts.iter().any(|p| p == ";"),
-		Command::Shell(s) => {
-			let mut words = Vec::new();
-			let (mut word, mut open, mut started) = (String::new(), None, false);
-			let mut chars = s.chars();
-			while let Some(c) = chars.next() {
-				match (c, open) {
-					('\\', _) => {
-						started = true;
-						word.extend(chars.next());
-					}
-					('"' | '\'', None) => {
-						open = Some(c);
-						started = true;
-					}
-					(q, Some(o)) if q == o => open = None,
-					(c, None) if c.is_whitespace() => {
-						if started {
-							words.push(std::mem::take(&mut word));
-							started = false;
-						}
-					}
-					(c, _) => {
-						started = true;
-						word.push(c);
-					}
+	exec_words(&render_command(command))
+		.iter()
+		.any(|w| w == ";")
+}
+
+/// Split an `Exec=` value into words the way Quadlet and systemd do: white
+/// space separates words outside quotes, `'` and `"` open a quoted run anywhere
+/// in a word, and a backslash starts a C-style escape both inside and outside
+/// quotes (`\n`, `\xHH`, `\NNN`, `\uXXXX`, `\s`, or the escaped character
+/// itself). An unterminated quote runs to the end of the value.
+fn exec_words(value: &str) -> Vec<String> {
+	let mut words = Vec::new();
+	let mut word = String::new();
+	let mut started = false;
+	let mut quote: Option<char> = None;
+	let mut chars = value.chars().peekable();
+	while let Some(c) = chars.next() {
+		match c {
+			'\\' => {
+				started = true;
+				word.push(unescape(&mut chars));
+			}
+			'"' | '\'' if quote.is_none() => {
+				quote = Some(c);
+				started = true;
+			}
+			c if Some(c) == quote => quote = None,
+			c if c.is_whitespace() && quote.is_none() => {
+				if started {
+					words.push(std::mem::take(&mut word));
+					started = false;
 				}
 			}
-			if started {
-				words.push(word);
+			c => {
+				started = true;
+				word.push(c);
 			}
-			words.iter().any(|w| w == ";")
 		}
+	}
+	if started {
+		words.push(word);
+	}
+	words
+}
+
+/// Decode the escape that follows a backslash.
+fn unescape(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> char {
+	let Some(c) = chars.next() else {
+		return '\\';
+	};
+	let mut number = |radix: u32, max: usize, first: Option<char>| {
+		let mut digits: String = first.into_iter().collect();
+		while digits.len() < max {
+			match chars.peek() {
+				Some(d) if d.is_digit(radix) => digits.push(chars.next().unwrap_or_default()),
+				_ => break,
+			}
+		}
+		u32::from_str_radix(&digits, radix)
+			.ok()
+			.and_then(char::from_u32)
+			.unwrap_or(char::REPLACEMENT_CHARACTER)
+	};
+	match c {
+		'a' => '\u{7}',
+		'b' => '\u{8}',
+		'f' => '\u{c}',
+		'n' => '\n',
+		'r' => '\r',
+		't' => '\t',
+		'v' => '\u{b}',
+		's' => ' ',
+		'x' => number(16, 2, None),
+		'u' => number(16, 4, None),
+		'U' => number(16, 8, None),
+		'0'..='7' => number(8, 3, Some(c)),
+		other => other,
 	}
 }
 
