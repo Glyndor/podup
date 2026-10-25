@@ -167,6 +167,8 @@ fn escape_exec_control(s: &str) -> String {
 	for c in s.chars() {
 		match c {
 			'\\' => out.push_str("\\\\"),
+			// systemd expands specifiers in `Exec` lines; `%%` keeps a literal `%`.
+			'%' => out.push_str("%%"),
 			'\n' => out.push_str("\\n"),
 			'\r' => out.push_str("\\r"),
 			'\t' => out.push_str("\\t"),
@@ -174,6 +176,49 @@ fn escape_exec_control(s: &str) -> String {
 		}
 	}
 	out
+}
+
+/// Whether any word of the command is exactly `;`.
+///
+/// Quadlet unquotes `Exec=` words and writes them to `ExecStart=` without
+/// requoting a `;`, and it rejects the `\;` spelling, so such a word reaches
+/// systemd as a bare `;` that ends the command. There is no way to write it.
+pub(crate) fn has_lone_semicolon_word(command: &Command) -> bool {
+	match command {
+		Command::Exec(parts) => parts.iter().any(|p| p == ";"),
+		Command::Shell(s) => {
+			let mut words = Vec::new();
+			let (mut word, mut open, mut started) = (String::new(), None, false);
+			let mut chars = s.chars();
+			while let Some(c) = chars.next() {
+				match (c, open) {
+					('\\', _) => {
+						started = true;
+						word.extend(chars.next());
+					}
+					('"' | '\'', None) => {
+						open = Some(c);
+						started = true;
+					}
+					(q, Some(o)) if q == o => open = None,
+					(c, None) if c.is_whitespace() => {
+						if started {
+							words.push(std::mem::take(&mut word));
+							started = false;
+						}
+					}
+					(c, _) => {
+						started = true;
+						word.push(c);
+					}
+				}
+			}
+			if started {
+				words.push(word);
+			}
+			words.iter().any(|w| w == ";")
+		}
+	}
 }
 
 /// Quote a single `Exec=` argument: wrap it in double quotes (escaping `"` and
@@ -363,8 +408,14 @@ impl Section {
 	/// awkward compose field cannot inject extra directives, split a value, or
 	/// swallow the following line. See [`escape_unit_value`].
 	pub(super) fn add(&mut self, key: &str, value: String) {
-		self.lines
-			.push(format!("{key}={}", escape_unit_value(key, &value)));
+		let mut value = escape_unit_value(key, &value);
+		// Quadlet copies these values into `ExecStart=`, where systemd would
+		// substitute `$NAME`; `$$` keeps the dollar literal. `[Unit]` and
+		// `[Service]` values are not command lines.
+		if !matches!(self.name, "Unit" | "Service") {
+			value = value.replace('$', "$$");
+		}
+		self.lines.push(format!("{key}={value}"));
 	}
 
 	/// True when no lines have been added; lets the caller skip emitting an empty

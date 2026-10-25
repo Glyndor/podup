@@ -42,6 +42,13 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 			return Err(ComposeError::NoImageOrBuild(name.clone()));
 		}
 		parse_ports(&svc.ports)?;
+		for (field, cmd) in [("command", &svc.command), ("entrypoint", &svc.entrypoint)] {
+			if cmd.as_ref().is_some_and(render::has_lone_semicolon_word) {
+				return Err(ComposeError::Unsupported(format!(
+					"service '{name}': a lone `;` argument in {field} cannot be written in a Quadlet unit"
+				)));
+			}
+		}
 		if let Some(mem) = &svc.mem_limit {
 			if crate::size::parse_memory(mem).is_none() {
 				return Err(ComposeError::Unsupported(format!(
