@@ -135,45 +135,62 @@ pub(in crate::engine) fn glob_match(pattern: &str, path: &str) -> bool {
 	glob_rec(pattern.as_bytes(), path.as_bytes())
 }
 
-/// Backtracking glob matcher: `?` matches one non-`/` char, `*` matches any run
-/// of non-`/` chars, `**` matches any run including `/`.
+/// Glob matcher: `?` matches one non-`/` char, `*` matches any run of non-`/`
+/// chars, `**` matches any run including `/`, and `**/` may also match zero
+/// directories.
+///
+/// The pattern is run as a set of positions advanced one byte of `s` at a time,
+/// so the cost is `pat.len() * s.len()` however many wildcards are stacked. The
+/// earlier recursive matcher retried every split of every wildcard and took
+/// exponential time on inputs such as `*a*a*a*a*a*a*b` against a run of `a`.
 pub(in crate::engine) fn glob_rec(pat: &[u8], s: &[u8]) -> bool {
-	if pat.is_empty() {
-		return s.is_empty();
-	}
-	// `**` matches across `/` boundaries.
-	if pat.starts_with(b"**") {
-		let mut rest = &pat[2..];
-		// `**/` may also match zero directories, so `**/foo` matches top-level `foo`.
-		if rest.first() == Some(&b'/') && glob_rec(&rest[1..], s) {
-			return true;
-		}
-		if rest.is_empty() {
-			rest = b"";
-		}
-		// Try consuming any prefix of `s` (including `/`).
-		for i in 0..=s.len() {
-			if glob_rec(rest, &s[i..]) {
-				return true;
+	let n = pat.len();
+	let mut cur = vec![false; n + 1];
+	let mut stay = vec![false; n + 1];
+	cur[0] = true;
+	close(pat, &mut cur, &stay);
+	for &c in s {
+		let mut next = vec![false; n + 1];
+		stay.iter_mut().for_each(|b| *b = false);
+		for i in 0..n {
+			if !cur[i] {
+				continue;
+			}
+			if pat[i..].starts_with(b"**") {
+				stay[i] = true;
+			} else {
+				match pat[i] {
+					b'*' => stay[i] = c != b'/',
+					b'?' => next[i + 1] |= c != b'/',
+					lit => next[i + 1] |= lit == c,
+				}
 			}
 		}
-		return false;
+		close(pat, &mut next, &stay);
+		cur = next;
 	}
-	match pat[0] {
-		b'*' => {
-			// Match any run of non-`/` chars.
-			let mut i = 0;
-			loop {
-				if glob_rec(&pat[1..], &s[i..]) {
-					return true;
-				}
-				if i >= s.len() || s[i] == b'/' {
-					return false;
-				}
-				i += 1;
-			}
+	cur[n]
+}
+
+/// Add the positions reachable without consuming input. `set` holds the
+/// positions just entered and `stay` the wildcards that consumed this byte and
+/// remain active. A `*` or `**` may match nothing; `**/` may match zero
+/// directories, but only when entered, not on every byte it goes on to consume.
+/// Every such move goes forward, so one pass in index order is enough.
+fn close(pat: &[u8], set: &mut [bool], stay: &[bool]) {
+	for i in 0..pat.len() {
+		let entered = set[i];
+		if !entered && !stay[i] {
+			continue;
 		}
-		b'?' => !s.is_empty() && s[0] != b'/' && glob_rec(&pat[1..], &s[1..]),
-		c => !s.is_empty() && s[0] == c && glob_rec(&pat[1..], &s[1..]),
+		set[i] = true;
+		if pat[i..].starts_with(b"**") {
+			set[i + 2] = true;
+			if entered && pat.get(i + 2) == Some(&b'/') {
+				set[i + 3] = true;
+			}
+		} else if pat[i] == b'*' {
+			set[i + 1] = true;
+		}
 	}
 }
