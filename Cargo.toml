@@ -207,6 +207,66 @@ path = "tests/hostile/output/hostile_secret_output.rs"
 name = "hostile_terminal_output"
 path = "tests/hostile/output/hostile_terminal_output.rs"
 
+[[test]]
+name = "every_source_file_is_compiled"
+path = "tests/repo_rules/every_source_file_is_compiled.rs"
+
+[[test]]
+name = "keyring_bootstrap_order"
+path = "tests/packaging/keyring_bootstrap_order.rs"
+
+[[test]]
+name = "no_inline_test_modules"
+path = "tests/repo_rules/no_inline_test_modules.rs"
+
+[[test]]
+name = "no_system_wide_apt_policy"
+path = "tests/packaging/no_system_wide_apt_policy.rs"
+
+[[test]]
+name = "package_excludes"
+path = "tests/packaging/package_excludes.rs"
+
+[[test]]
+name = "podman_floor"
+path = "tests/packaging/podman_floor.rs"
+
+[[test]]
+name = "podman_floor_at_runtime"
+path = "tests/packaging/podman_floor_at_runtime.rs"
+
+[[test]]
+name = "podup_is_not_published"
+path = "tests/packaging/podup_is_not_published.rs"
+
+[[test]]
+name = "secret_safety"
+path = "tests/repo_rules/secret_safety.rs"
+
+[[test]]
+name = "tar_builder_single_site"
+path = "tests/repo_rules/tar_builder_single_site.rs"
+
+[[test]]
+name = "workflow_audit_strictness"
+path = "tests/workflows/workflow_audit_strictness.rs"
+
+[[test]]
+name = "workflow_branch_health"
+path = "tests/workflows/workflow_branch_health.rs"
+
+[[test]]
+name = "workflow_debian_image"
+path = "tests/workflows/workflow_debian_image.rs"
+
+[[test]]
+name = "workflow_required_checks"
+path = "tests/workflows/workflow_required_checks.rs"
+
+[[test]]
+name = "workflow_toolchain_pin"
+path = "tests/workflows/workflow_toolchain_pin.rs"
+
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time", "net", "io-util", "io-std"] }
 serde = { version = "1", features = ["derive"] }

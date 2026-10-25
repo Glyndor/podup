@@ -47,7 +47,7 @@ Run the suite before pushing. A failure must surface as a non-zero exit, so wrap
 )
 ```
 
-CI toolchain and MSRV pins live in `reusable-rust-ci.yml` and `ci.yml`. `tests/workflow_toolchain_pin` checks agreement; `pin-watch` checks stable updates weekly.
+CI toolchain and MSRV pins live in `reusable-rust-ci.yml` and `ci.yml`. `tests/workflows/workflow_toolchain_pin` checks agreement; `pin-watch` checks stable updates weekly.
 
 The local `shellcheck` command scans `.sh`/`.bash` files; CI also includes extensionless scripts with shell shebangs.
 

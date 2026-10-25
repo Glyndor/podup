@@ -55,7 +55,7 @@ fn read(name: &str) -> String {
 /// `ci.yml`. Scoped to the named job so a future drift between the two
 /// `health-*` jobs is not papered over.
 ///
-/// Same shape as `tests/workflow_toolchain_pin/deb_pair.rs`'s scoped
+/// Same shape as `tests/workflows/workflow_toolchain_pin/deb_pair.rs`'s scoped
 /// parsers: the scan starts at the `with:` block under the named job
 /// (jobs live at the same indent in `ci.yml`) and stops when a sibling
 /// key at the same or lower indent appears.

@@ -2,7 +2,7 @@
 //! run of the branch it watches, with a planted negative control for the shape
 //! that decides it.
 //!
-//! Split out from `tests/workflow_branch_health.rs`; the reader, the
+//! Split out from `tests/workflows/workflow_branch_health.rs`; the reader, the
 //! `with.branch` parser and the job-id list are inherited via `use super::*`.
 
 use super::*;

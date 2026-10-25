@@ -1,7 +1,7 @@
 //! Property 2: the API query the conclusion script makes, and the reader that
 //! reads it.
 //!
-//! Split out from `tests/workflow_branch_health.rs`; the script reader is
+//! Split out from `tests/workflows/workflow_branch_health.rs`; the script reader is
 //! local, only this file needs it.
 
 use std::fs;

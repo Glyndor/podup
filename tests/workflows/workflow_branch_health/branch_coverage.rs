@@ -2,7 +2,7 @@
 //! the same signal, with a planted negative control for the parser that reads
 //! their `with:` blocks.
 //!
-//! Split out from `tests/workflow_branch_health.rs`; the readers and
+//! Split out from `tests/workflows/workflow_branch_health.rs`; the readers and
 //! parsers are inherited via `use super::*`.
 
 use super::*;
