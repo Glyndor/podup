@@ -4,6 +4,32 @@ use indexmap::IndexMap;
 
 use crate::compose::types::{BuildConfig, DependsOn, HealthCheck, Service, ServiceCondition};
 
+/// The one warning a project with jobs gets: they are not exported. Without it
+/// `generate quadlet` would write the services, exit 0 and say nothing about
+/// the job, which reads as a job that is now managed by systemd.
+pub(super) fn jobs_not_exported(
+	jobs: &IndexMap<String, crate::compose::types::Job>,
+) -> Option<String> {
+	if jobs.is_empty() {
+		return None;
+	}
+	const SHOWN: usize = 5;
+	let mut names: Vec<String> = jobs
+		.keys()
+		.take(SHOWN)
+		.map(|name| crate::error::sanitize_name(name).into_owned())
+		.collect();
+	if jobs.len() > SHOWN {
+		names.push(format!("and {} more", jobs.len() - SHOWN));
+	}
+	Some(format!(
+		"{} job(s) were not exported ({}): Quadlet export of jobs and of their schedule \
+		 triggers is not available yet; run them with `podup run`",
+		jobs.len(),
+		names.join(", ")
+	))
+}
+
 /// Warn for fields that are set but have no Quadlet mapping, so the operator
 /// knows the generated unit is incomplete rather than discovering it at run
 /// time.

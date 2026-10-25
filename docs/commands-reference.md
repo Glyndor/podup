@@ -201,7 +201,27 @@ Progress is on stderr. A stderr terminal gets an animated board; other sinks get
 
 Warnings/errors go to stderr with a `podup:` prefix. Unsupported-field warnings are on by default; `RUST_LOG=debug` enables tracing. Internal errors request a bug report with secrets redacted. Invalid `umask` values name the service and advise quoting an octal string. Values containing `$` also report that the variable did not resolve. `config --no-interpolate` refuses an unresolved `umask` placeholder. `build.no_cache_filter` produces one warning per service: podup cannot filter the build cache per stage through the libpod build API, so the setting is ignored.
 
-A compose file that declares a top-level `jobs:` section is refused, in every command that reads the file, with an error naming the first job. podup runs no job runner, so a job that never runs must not look like a job that succeeded: the refusal happens while the file is read, before Podman is contacted and before anything is created. An empty or null `jobs:` declares nothing and is accepted.
+## Jobs
+
+The top-level `jobs:` map declares containers that run to completion. A job takes every key a service takes, plus a required `triggers:` block. A `jobs:` that is empty or null declares nothing, the same as no key.
+
+| Trigger | Meaning |
+|---|---|
+| `manual` | Boolean, `true` by default (the text `true` and `false` is read too, since `config` prints a boolean that way). `manual: false` makes `podup run` refuse the job, also when another job being run depends on it. |
+| `schedule` | List of crontab strings, or objects with `cron` (required), `timezone`, `concurrency` (`forbid` by default, or `queue`) and `missed_fires` (`one` by default, or `skip`). |
+
+`triggers` must declare at least one trigger once all `-f` files are merged, so an override file may leave it out. A missing or empty `triggers`, a trigger of the wrong type, an unknown key, a cron expression that is blank, longer than 256 bytes or has a character outside `0-9 A-Z a-z * / , - ? # @` and space, and an invalid `concurrency` or `missed_fires` are errors that name the job.
+
+podup validates a schedule and does not fire it. `run`, `up` and `config` print one warning per job that has a schedule, whatever its number of entries, and `--no-warn` does not silence it. `generate quadlet` does not export jobs yet and says so. Until then a job with a schedule runs when you start it with `podup run`, or from a scheduler you provide.
+
+- `podup up` starts services only and never starts a job.
+- `podup run NAME` looks for a service first and then a job. A job runs as a one-off container, with the flags of `run`, after the services and jobs it lists in `depends_on`. A dependency that is a job with `manual: false` is an error naming both jobs.
+- A job may depend on services and on other jobs. A service cannot depend on a job.
+- Services and jobs share one namespace: the same name in both is an error.
+- `extends` of a job points at another job, and `extends` of a service points at another service.
+- `profiles` work as they do for services: the job is ignored unless one of its profiles is active. A job never activates a service: one that depends on a service behind an inactive profile is ignored with a warning, in `config`, `audit`, `generate quadlet` and `up` alike, and `podup run` starts that service with the job. `config` prints the jobs that remain, with their triggers, and `audit` checks them with the same checks as services.
+- `down` removes the containers a job left (a `run` of it, or one started for a job that depends on it), and `down --rmi` removes the images of jobs.
+- Variable interpolation, `include`, several `-f` files and `!override`/`!reset` treat a job like a service. Across `-f` files a later non-empty `schedule` replaces the earlier list; `schedule: !reset []` empties it, `schedule: !override [...]` and `triggers: !override {...}` replace the list or the whole block, and `triggers: !reset` clears it. A job left with no trigger is an error.
 
 ## Environment
 

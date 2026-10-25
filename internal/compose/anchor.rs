@@ -17,7 +17,7 @@ use super::types::{
 
 /// Anchor every path-bearing field of an imported compose file to `dir`.
 pub(super) fn anchor_compose_file(file: &mut ComposeFile, dir: &Path) {
-	for svc in file.services.values_mut() {
+	for svc in file.services_and_jobs_mut() {
 		anchor_service(svc, dir);
 	}
 	for secret in file.secrets.values_mut() {

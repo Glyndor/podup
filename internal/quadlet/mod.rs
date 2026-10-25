@@ -401,6 +401,7 @@ fn generate_with_mode(
 	// unit was actually written. The warning goes through the same
 	// `out.warnings` channel every other field-mismatch warning uses,
 	// which `generate.rs` re-emits to stderr.
+	out.warnings.extend(warnings::jobs_not_exported(&file.jobs));
 	if build_units_emitted > 0 {
 		out.warnings.push(format!(
 			"{build_units_emitted} .build unit(s) were written; Quadlet build units need \

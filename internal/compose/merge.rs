@@ -61,9 +61,19 @@ pub(super) fn deserialize_with_merge_interp(
 	super::tags::strip(&mut value);
 	super::types::service::service_umask::apply_resets(&mut value, &directives);
 	super::types::service::service_umask::validate(&value)?;
+	// Jobs are typed first and on their own, so a bad job is reported by name
+	// instead of as a file that failed to parse.
+	let jobs = super::jobs::extract_jobs(&mut value)?;
 	let mut file: ComposeFile = serde_yaml::from_value(value)?;
+	file.jobs = jobs;
 	for (name, service) in &mut file.services {
 		service.umask_merge_tag = directives
+			.get(name)
+			.and_then(|keys| keys.get("umask"))
+			.copied();
+	}
+	for (name, job) in &mut file.jobs {
+		job.service.umask_merge_tag = directives
 			.get(name)
 			.and_then(|keys| keys.get("umask"))
 			.copied();
@@ -72,6 +82,9 @@ pub(super) fn deserialize_with_merge_interp(
 		if let Some(service) = file.services.get_mut(&name) {
 			service.pull_refresh_after = None;
 			service.pull_refresh_after_reset = true;
+		} else if let Some(job) = file.jobs.get_mut(&name) {
+			job.service.pull_refresh_after = None;
+			job.service.pull_refresh_after_reset = true;
 		}
 	}
 	Ok(file)

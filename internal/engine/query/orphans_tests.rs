@@ -97,3 +97,34 @@ fn filter_orphans_empty_when_all_known() {
 	let known: HashSet<String> = ["web".to_string()].into();
 	assert!(filter_orphans(vec!["web".to_string()], &known).is_empty());
 }
+
+/// A container the project started for a job is not an orphan: the job is
+/// declared in the file, only under `jobs:` instead of `services:`.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_job_container_is_not_an_orphan() {
+	let containers = r#"[
+		{"Names":["/proj-web-1"]},
+		{"Names":["/proj-nightly-1"]},
+		{"Names":["/proj-ghost-1"]}
+	]"#;
+	let fake = fake_podman::start(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			(200, containers.to_string())
+		} else {
+			(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+	let file = crate::parse_str(
+		"services:\n  web:\n    image: x\njobs:\n  nightly:\n    image: x\n    triggers: {manual: true}\n",
+	)
+	.unwrap();
+
+	let orphans = e.orphan_container_names(&file).await.unwrap();
+	assert_eq!(
+		orphans,
+		["proj-ghost-1"],
+		"only the undeclared one is an orphan"
+	);
+}

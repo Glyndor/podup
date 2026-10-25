@@ -3,13 +3,22 @@
 use crate::compose::types::ComposeFile;
 use crate::error::{sanitize_name, ComposeError};
 
-/// Explain a missing service name that matches an explicit container name or
-/// a project-scoped replica name. Explicit names take precedence; ties follow
-/// compose-file order. All interpolated names are escaped for terminal output.
+/// Explain a missing service name that matches an explicit container name,
+/// a project-scoped replica name, or a job (which `run` starts and the
+/// service commands cannot address). Explicit names take precedence; ties
+/// follow compose-file order. All interpolated names are escaped for
+/// terminal output.
 pub fn hint_for(err: &ComposeError, file: &ComposeFile, project: &str) -> Option<String> {
 	let ComposeError::ServiceNotFound(name) = err.innermost() else {
 		return None;
 	};
+	// A job is started with `run`, not with the commands that take services.
+	if file.jobs.contains_key(name) {
+		return Some(format!(
+			"hint: '{0}' is a job, not a service; start it with `podup run {0}`",
+			sanitize_name(name)
+		));
+	}
 	let service = file
 		.services
 		.iter()

@@ -20,10 +20,12 @@ use crate::libpod::API_PREFIX;
 use init_service::init_service;
 
 impl Engine {
-	/// Run a one-off command in a new container for a service.
+	/// Run a one-off command in a new container for a service or a job.
 	///
 	/// The container is started, its output streamed, and it is removed when done
-	/// (unless `opts.rm` is false).
+	/// (unless `opts.rm` is false). A name that is both absent from `services`
+	/// and present in `jobs` runs that job, after the services and jobs it
+	/// depends on; a job whose `triggers.manual` is `false` is refused.
 	///
 	/// # Errors
 	///
@@ -42,6 +44,11 @@ impl Engine {
 		service_name: &str,
 		opts: RunOptions,
 	) -> Result<()> {
+		// A name that is not a service but is a job runs the job: the one-off
+		// machinery below works on a file in which the job (and the jobs it
+		// depends on) sit under `services`.
+		let job_view = crate::compose::jobs::job_file_for_run(file, service_name)?;
+		let file = job_view.as_ref().unwrap_or(file);
 		self.pull_preflight(file)?;
 		let RunOptions {
 			cmd,
@@ -451,3 +458,7 @@ impl Engine {
 		}
 	}
 }
+
+/// `run` with the name of a job.
+#[cfg(all(test, unix))]
+mod job_tests;

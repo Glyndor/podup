@@ -58,6 +58,7 @@ pub mod update;
 pub use compose::{
 	parse_file_with_env_files, parse_files_with_env_files, parse_files_with_env_files_interp,
 	parse_str, parse_str_raw, resolve_levels, resolve_order, validate_config,
+	warn_unscheduled_jobs,
 };
 /// The lifecycle `Engine` and its per-command option/override types, plus the
 /// project-name/listing helpers: the surface a CLI drives compose operations

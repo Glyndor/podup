@@ -35,8 +35,18 @@ pub(crate) enum MergeTag {
 	Reset,
 }
 
-/// Tagged keys per service name: `services.<name>.<key>` → tag.
+/// Tagged keys per service or job name: `services.<name>.<key>` or
+/// `jobs.<name>.<key>` → tag. The two sections share one namespace, so the
+/// name alone identifies the entry.
 pub(crate) type Directives = HashMap<String, HashMap<String, MergeTag>>;
+
+/// The entries of the `services:` and `jobs:` sections of a raw document.
+fn definitions(raw: &Value) -> impl Iterator<Item = (&Value, &Value)> {
+	["services", "jobs"]
+		.into_iter()
+		.filter_map(|section| raw.get(section).and_then(Value::as_mapping))
+		.flat_map(|section| section.iter())
+}
 
 /// Collect the merge tags in a raw compose document.
 ///
@@ -48,10 +58,7 @@ pub(crate) type Directives = HashMap<String, HashMap<String, MergeTag>>;
 /// files that are valid elsewhere.
 pub(crate) fn collect(raw: &Value) -> Directives {
 	let mut out: Directives = HashMap::new();
-	let Some(services) = raw.get("services").and_then(Value::as_mapping) else {
-		return out;
-	};
-	for (name, service) in services {
+	for (name, service) in definitions(raw) {
 		let (Some(name), Some(fields)) = (name.as_str(), service.as_mapping()) else {
 			continue;
 		};
@@ -71,7 +78,41 @@ pub(crate) fn collect(raw: &Value) -> Directives {
 			out.insert(name.to_string(), tagged);
 		}
 	}
+	collect_trigger_tags(raw, &mut out);
 	out
+}
+
+/// Tags inside a job's `triggers:`, recorded as `triggers.manual` and
+/// `triggers.schedule` beside the job's own keys. `triggers` itself is
+/// collected with the other keys of the job.
+fn collect_trigger_tags(raw: &Value, out: &mut Directives) {
+	let Some(jobs) = raw.get("jobs").and_then(Value::as_mapping) else {
+		return;
+	};
+	for (name, job) in jobs {
+		let Some(name) = name.as_str() else { continue };
+		let triggers = match job.get("triggers") {
+			Some(Value::Tagged(t)) => &t.value,
+			Some(other) => other,
+			None => continue,
+		};
+		let Some(fields) = triggers.as_mapping() else {
+			continue;
+		};
+		for (key, value) in fields {
+			let (Some(key), Value::Tagged(t)) = (key.as_str(), value) else {
+				continue;
+			};
+			let tag = match t.tag.to_string().as_str() {
+				"!override" => MergeTag::Override,
+				"!reset" => MergeTag::Reset,
+				_ => continue,
+			};
+			out.entry(name.to_string())
+				.or_default()
+				.insert(format!("triggers.{key}"), tag);
+		}
+	}
 }
 
 /// Remove every `!override`/`!reset` tag from a document, keeping the value it
@@ -131,11 +172,7 @@ pub(crate) fn collect_from_file(path: &std::path::Path) -> Directives {
 
 /// Preserve explicit null and reset intent for the refresh extension through typing.
 pub(crate) fn refresh_clears(raw: &Value) -> Vec<String> {
-	let Some(services) = raw.get("services").and_then(Value::as_mapping) else {
-		return Vec::new();
-	};
-	services
-		.iter()
+	definitions(raw)
 		.filter_map(|(name, service)| {
 			let value = service.get("pull_refresh_after")?;
 			let clear = match value {

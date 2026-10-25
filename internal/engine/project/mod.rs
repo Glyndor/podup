@@ -9,5 +9,6 @@ pub(in crate::engine) mod lock;
 pub use lock::{is_safe_project_name, ProjectLock};
 pub(in crate::engine) mod names;
 pub(in crate::engine) mod profiles;
+mod profiles_jobs;
 pub use profiles::{retain_active_profiles, retain_active_profiles_with_targets};
 pub(in crate::engine) mod replicas;

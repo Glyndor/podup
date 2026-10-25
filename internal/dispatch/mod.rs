@@ -55,6 +55,9 @@ pub(crate) async fn dispatch(
 			exit_code_from,
 			services,
 		}) => {
+			// `up` starts services and never a job. A job with a schedule is
+			// reported here so it is not taken for one that runs on time.
+			podup::warn_unscheduled_jobs(&profile_filtered(file, profile, &[]));
 			if remove_orphans {
 				engine.remove_orphans(file).await?;
 			} else {
