@@ -4,6 +4,7 @@ use super::*;
 use crate::audit::Finding;
 
 mod access_modes;
+mod dot_segments;
 mod host_paths;
 mod host_root;
 mod runtime_paths;
