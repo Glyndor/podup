@@ -18,14 +18,17 @@ mod cron;
 mod field;
 mod on_calendar;
 mod schedule;
+mod stale;
 mod timer;
+
+pub use self::stale::stale_timers;
 
 use indexmap::IndexMap;
 
 use self::schedule::{plan, Plan};
-use self::timer::{is_safe_unit_name, job_stem, timer_unit, TimerSpec};
+use self::timer::{is_fixed_offset_zone, is_safe_unit_name, job_stem, timer_unit, TimerSpec};
 use super::unit::{build_unit, emits_build_unit, job_container_unit, UnitContext};
-use super::QuadletOutput;
+use super::{QuadletOutput, QuadletUnit};
 use crate::compose::types::{ComposeFile, DependsOn, Job, Service};
 use crate::error::sanitize_name;
 
@@ -141,43 +144,94 @@ fn export_job(
 			sanitize_name(&dropped)
 		));
 	}
-	if let Some(unit) = build_unit(
+	let build = build_unit(
 		name,
 		ctx.project,
 		&service,
 		ctx.base_dir,
 		ctx.secrets,
 		&mut out.warnings,
-	) {
-		out.units.push(unit);
+	);
+	let container = job_container_unit(name, &service, job_ctx, &mut out.warnings);
+	// The timer starts the job with `--replace`, so a container name that
+	// another generated unit uses would have that unit's container removed.
+	if let Some(clash) = clashing_container_name(&container, &out.units) {
+		for (position, _) in &entry.timers {
+			out.warnings.push(format!(
+				"job '{label}': schedule entry {position} was not exported: its container name \
+				 '{}' is also used by {}, and the timer would replace that container; give one \
+				 of them a different `container_name`",
+				clash.0, clash.1
+			));
+		}
+		return 0;
 	}
-	out.units.push(job_container_unit(
-		name,
-		&service,
-		job_ctx,
-		&mut out.warnings,
-	));
+	let timers: Vec<_> = entry
+		.timers
+		.iter()
+		.map(|(position, plan)| {
+			let spec = TimerSpec {
+				project: ctx.project,
+				job: name,
+				index: *position,
+				calendar: &plan.calendar,
+				timezone: plan.timezone.as_deref(),
+				persistent: plan.persistent,
+			};
+			(*position, plan, timer_unit(&spec))
+		})
+		.collect();
+	out.units.extend(build);
+	out.units.push(container);
 	let mut written = 0;
-	for (position, plan) in &entry.timers {
-		let spec = TimerSpec {
-			project: ctx.project,
-			job: name,
-			index: *position,
-			calendar: &plan.calendar,
-			timezone: plan.timezone.as_deref(),
-			persistent: plan.persistent,
-		};
-		match timer_unit(&spec) {
+	let mut follows_dst = false;
+	for (position, plan, result) in timers {
+		match result {
 			Ok(unit) => {
 				out.units.push(unit);
 				written += 1;
+				follows_dst |= !plan.timezone.as_deref().is_some_and(is_fixed_offset_zone);
+				if plan.never_fires {
+					out.warnings.push(format!(
+						"job '{label}': schedule entry {position} is exported but never fires: \
+						 no chosen day of the month exists in any chosen month"
+					));
+				}
 			}
 			Err(reason) => out.warnings.push(format!(
 				"job '{label}': schedule entry {position} was not exported: {reason}"
 			)),
 		}
 	}
+	if follows_dst {
+		out.warnings.push(format!(
+			"job '{label}': systemd does not treat daylight saving time changes as cron does. In \
+			 a zone with summer time a run set for the skipped spring hour does not happen that \
+			 day, and a run set for the repeated autumn hour can be missed; `Persistent=` does \
+			 not make it up. Use `timezone: UTC` (or an `Etc/` zone) for exact times"
+		));
+	}
 	written
+}
+
+/// The container name of `unit` and the file of an earlier `.container` unit
+/// that uses the same one, if there is one.
+fn clashing_container_name(
+	unit: &QuadletUnit,
+	earlier: &[QuadletUnit],
+) -> Option<(String, String)> {
+	let name = container_name(&unit.contents)?;
+	earlier
+		.iter()
+		.filter(|other| other.filename.ends_with(".container"))
+		.find(|other| container_name(&other.contents) == Some(name))
+		.map(|other| (name.to_string(), other.filename.clone()))
+}
+
+fn container_name(contents: &str) -> Option<&str> {
+	contents
+		.lines()
+		.find_map(|line| line.strip_prefix("ContainerName="))
 }
 
 /// Remove the `depends_on` entries that name a job without an exported unit,

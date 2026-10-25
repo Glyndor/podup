@@ -14,6 +14,8 @@ pub(super) struct Plan {
 	pub timezone: Option<String>,
 	/// `Persistent=`: catch up once after downtime (`missed_fires: one`).
 	pub persistent: bool,
+	/// The calendar has no day that exists in any chosen month.
+	pub never_fires: bool,
 }
 
 /// The timer for `schedule`, or the reason it cannot be exported.
@@ -40,11 +42,13 @@ pub(super) fn plan(schedule: &Schedule) -> Result<Plan, String> {
 			timezone = Some(zone.clone());
 		}
 	}
-	let calendar = on_calendar::render(&parse_cron(schedule.cron())?);
+	let parsed = parse_cron(schedule.cron())?;
+	let calendar = on_calendar::render(&parsed);
 	Ok(Plan {
 		calendar,
 		timezone,
 		persistent,
+		never_fires: parsed.never_fires(),
 	})
 }
 

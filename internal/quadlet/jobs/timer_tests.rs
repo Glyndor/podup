@@ -24,6 +24,7 @@ fn a_timer_has_the_calendar_the_zone_the_target_and_the_install_section() {
 		 [Timer]\n\
 		 OnCalendar=*-*-* 03:00:00 Europe/Madrid\n\
 		 Persistent=true\n\
+		 AccuracySec=1s\n\
 		 Unit=proj-nightly.service\n\
 		 \n\
 		 [Install]\n\
@@ -45,6 +46,11 @@ fn a_timezone_outside_the_whitelist_is_refused() {
 	for zone in [
 		"",
 		"..",
+		"Mon",
+		"10",
+		"utc",
+		"Europe/10",
+		"1Europe/Madrid",
 		"../etc/passwd",
 		"Europe/../Madrid",
 		"/etc/localtime",
@@ -134,6 +140,11 @@ fn hostile_job_names_become_plain_file_names() {
 		"nul\0byte",
 		"ñandú",
 		"..",
+		"Mon",
+		"10",
+		"utc",
+		"Europe/10",
+		"1Europe/Madrid",
 		".",
 		"-rf",
 	] {
@@ -164,6 +175,27 @@ fn a_control_character_in_the_project_is_refused() {
 	let mut bad = spec("j", "*-*-* 03:00:00", None);
 	bad.project = "p\n[Service]";
 	assert!(timer_unit(&bad).is_err());
+}
+
+#[test]
+fn the_timer_asks_for_one_second_accuracy() {
+	let unit = timer_unit(&spec("j", "*-*-* 03:00:00", None)).unwrap();
+	assert!(unit.contents.contains("[Timer]\n"), "{}", unit.contents);
+	assert!(
+		unit.contents.contains("AccuracySec=1s\n"),
+		"{}",
+		unit.contents
+	);
+}
+
+#[test]
+fn only_utc_gmt_and_etc_zones_count_as_fixed_offsets() {
+	for zone in ["UTC", "GMT", "Etc/GMT+5", "Etc/UTC"] {
+		assert!(is_fixed_offset_zone(zone), "{zone}");
+	}
+	for zone in ["Europe/Madrid", "America/Bogota", "EtcX/Y"] {
+		assert!(!is_fixed_offset_zone(zone), "{zone}");
+	}
 }
 
 #[test]

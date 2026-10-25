@@ -210,6 +210,44 @@ fn a_hostile_job_name_stays_inside_the_output_directory() {
 }
 
 #[test]
+fn a_timer_left_by_an_earlier_run_is_named_and_not_deleted() {
+	let two = "jobs:\n  j:\n    image: alpine\n    triggers:\n      schedule: ['0 1 * * *', '0 2 * * *']\n";
+	let one = "jobs:\n  j:\n    image: alpine\n    triggers:\n      schedule: ['0 1 * * *']\n";
+	let out = tempfile::tempdir().unwrap();
+	let (_a, first) = compose(two);
+	assert!(generate(&first, out.path()).status.success());
+	let (_b, second) = compose(one);
+	let run = generate(&second, out.path());
+	assert!(run.status.success());
+	let err = String::from_utf8_lossy(&run.stderr);
+	assert!(
+		err.contains("proj-j-2.timer in the output directory"),
+		"{err}"
+	);
+	assert!(
+		!err.contains("proj-j-1.timer in the output directory"),
+		"{err}"
+	);
+	assert!(
+		out.path().join("proj-j-2.timer").exists(),
+		"nothing is deleted"
+	);
+}
+
+#[test]
+fn a_zone_with_summer_time_is_warned_about_on_the_command_line() {
+	let (_dir, file) = compose(
+		"jobs:\n  j:\n    image: alpine\n    triggers:\n      schedule:\n        - {cron: '30 2 * * *', timezone: Europe/Madrid}\n",
+	);
+	let out = tempfile::tempdir().unwrap();
+	let run = generate(&file, out.path());
+	let err = String::from_utf8_lossy(&run.stderr);
+	assert!(err.contains("daylight saving"), "{err}");
+	let timer = fs::read_to_string(out.path().join("proj-j-1.timer")).unwrap();
+	assert!(timer.contains("AccuracySec=1s\n"), "{timer}");
+}
+
+#[test]
 fn the_stdout_form_lists_the_timers_too() {
 	let (_dir, file) = compose(BACKUP);
 	let run = Command::new(env!("CARGO_BIN_EXE_podup"))

@@ -24,8 +24,25 @@ fn the_short_form_uses_the_specification_defaults() {
 			calendar: "*-*-* 03:00:00".into(),
 			timezone: None,
 			persistent: true,
+			never_fires: false,
 		}
 	);
+}
+
+#[test]
+fn a_calendar_with_no_possible_day_is_marked_as_never_firing() {
+	for (cron, never) in [
+		("0 0 30 2 *", true),
+		("0 0 31 4,6,9,11 *", true),
+		("0 0 30-31 2 *", true),
+		("0 0 29 2 *", false),
+		("0 0 31 1,4 *", false),
+		("0 0 * * *", false),
+		("0 0 30 2,3 *", false),
+	] {
+		let planned = plan(&Schedule::Cron(cron.into())).unwrap();
+		assert_eq!(planned.never_fires, never, "{cron}");
+	}
 }
 
 #[test]

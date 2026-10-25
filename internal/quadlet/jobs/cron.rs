@@ -22,6 +22,21 @@ pub(super) struct Calendar {
 	pub weekdays: BTreeSet<u8>,
 }
 
+/// Days in each month, February counted with its leap day.
+const MAX_DAYS: [u8; 12] = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+impl Calendar {
+	/// Whether no chosen day exists in any chosen month (`0 0 30 2 *`), so the
+	/// schedule is valid and never fires. The day of week only narrows further,
+	/// so it cannot make a firing calendar silent here.
+	pub(super) fn never_fires(&self) -> bool {
+		!self.months.iter().any(|month| {
+			let longest = MAX_DAYS[usize::from(*month) - 1];
+			self.days.iter().any(|day| *day <= longest)
+		})
+	}
+}
+
 /// Read `expression`, or say why it cannot be exported.
 pub(super) fn parse_cron(expression: &str) -> Result<Calendar, String> {
 	// The same whitelist the parser applies, repeated here because this is the

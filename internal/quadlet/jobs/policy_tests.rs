@@ -111,3 +111,125 @@ jobs:
 	assert!(has_unit(&out, "proj-j.build"));
 	assert!(unit(&out, "proj-j.container").contains("Image=proj-j.build\n"));
 }
+
+fn dst_warnings(out: &super::super::QuadletOutput) -> usize {
+	out.warnings
+		.iter()
+		.filter(|w| w.contains("daylight saving"))
+		.count()
+}
+
+#[test]
+fn a_zone_with_summer_time_or_the_local_zone_gets_one_warning_per_job() {
+	let yaml = "\
+jobs:
+  local:
+    image: alpine
+    triggers:
+      schedule: ['0 3 * * *', '0 4 * * *']
+  madrid:
+    image: alpine
+    triggers:
+      schedule:
+        - {cron: '30 2 * * *', timezone: Europe/Madrid}
+        - {cron: '30 3 * * *', timezone: America/Bogota}
+";
+	let out = export(yaml);
+	assert_eq!(dst_warnings(&out), 2, "{:?}", out.warnings);
+	assert!(warned(
+		&out,
+		"job 'local': systemd does not treat daylight saving"
+	));
+	assert!(warned(
+		&out,
+		"job 'madrid': systemd does not treat daylight saving"
+	));
+}
+
+#[test]
+fn utc_and_fixed_offset_zones_get_no_daylight_saving_warning() {
+	let yaml = "\
+jobs:
+  utc:
+    image: alpine
+    triggers:
+      schedule:
+        - {cron: '0 3 * * *', timezone: UTC}
+        - {cron: '0 4 * * *', timezone: GMT}
+        - {cron: '0 5 * * *', timezone: Etc/GMT+5}
+";
+	let out = export(yaml);
+	assert_eq!(dst_warnings(&out), 0, "{:?}", out.warnings);
+}
+
+#[test]
+fn a_container_name_shared_with_a_service_blocks_the_job() {
+	let yaml = "\
+services:
+  web:
+    image: nginx
+    container_name: shared
+jobs:
+  bk:
+    image: alpine
+    container_name: shared
+    triggers:
+      schedule: ['0 3 * * *', '0 4 * * *']
+";
+	let out = export(yaml);
+	assert!(!has_unit(&out, "proj-bk.container"));
+	assert!(!has_unit(&out, "proj-bk-1.timer"));
+	assert!(warned(
+		&out,
+		"job 'bk': schedule entry 2 was not exported: its container name 'shared' is also used by proj-web.container"
+	));
+}
+
+#[test]
+fn two_jobs_with_the_same_container_name_do_not_both_export() {
+	let yaml = "\
+jobs:
+  a:
+    image: alpine
+    container_name: same
+    triggers:
+      schedule: ['0 3 * * *']
+  b:
+    image: alpine
+    container_name: same
+    triggers:
+      schedule: ['0 4 * * *']
+";
+	let out = export(yaml);
+	assert!(has_unit(&out, "proj-a.container"));
+	assert!(!has_unit(&out, "proj-b.container"));
+	assert!(warned(&out, "also used by proj-a.container"));
+}
+
+#[test]
+fn a_schedule_that_can_never_fire_is_exported_with_a_warning() {
+	let yaml = "\
+jobs:
+  j:
+    image: alpine
+    triggers:
+      schedule: ['0 0 30 2 *', '0 0 29 2 *']
+";
+	let out = export(yaml);
+	assert!(has_unit(&out, "proj-j-1.timer"));
+	assert!(warned(
+		&out,
+		"job 'j': schedule entry 1 is exported but never fires"
+	));
+	assert!(!warned(
+		&out,
+		"schedule entry 2 is exported but never fires"
+	));
+}
+
+#[test]
+fn every_timer_asks_for_one_second_accuracy() {
+	let yaml = "jobs:\n  j:\n    image: alpine\n    triggers:\n      schedule: ['0 3 * * *']\n";
+	let out = export(yaml);
+	assert!(unit(&out, "proj-j-1.timer").contains("AccuracySec=1s\n"));
+}

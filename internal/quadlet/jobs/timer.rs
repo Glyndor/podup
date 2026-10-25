@@ -51,9 +51,29 @@ pub(super) fn is_safe_unit_name(name: &str) -> bool {
 			.all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'))
 }
 
-/// Whether `zone` is an IANA-style name: ASCII letters, digits and `_ + - /`,
-/// no `..`, no empty segment, not starting with `-`, bounded.
+/// Whether `zone` is an IANA-style name: exactly `UTC` or `GMT`, or the form
+/// `Area/Location` (at least one `/`, every segment starting with a letter) made
+/// of ASCII letters, digits and `_ + - /`, no `..`, no empty segment, bounded.
+/// A bare word or number (`Mon`, `10`) is not a zone name and would make the
+/// timer fail to load.
 pub(super) fn is_safe_timezone(zone: &str) -> bool {
+	if zone == "UTC" || zone == "GMT" {
+		return true;
+	}
+	zone.contains('/')
+		&& zone
+			.split('/')
+			.all(|part| part.starts_with(|c: char| c.is_ascii_alphabetic()))
+		&& is_plain_zone_text(zone)
+}
+
+/// Whether the zone is one without daylight saving time that systemd and cron
+/// agree on: `UTC`, `GMT` and the fixed `Etc/*` zones.
+pub(super) fn is_fixed_offset_zone(zone: &str) -> bool {
+	zone == "UTC" || zone == "GMT" || zone.starts_with("Etc/")
+}
+
+fn is_plain_zone_text(zone: &str) -> bool {
 	!zone.is_empty()
 		&& zone.len() <= MAX_TIMEZONE_BYTES
 		&& !zone.starts_with(['/', '-'])
@@ -102,6 +122,8 @@ pub(super) fn timer_unit(spec: &TimerSpec<'_>) -> Result<QuadletUnit, String> {
 	};
 	timer.add("OnCalendar", on_calendar);
 	timer.add("Persistent", spec.persistent.to_string());
+	// systemd spreads a timer by up to a minute by default; cron fires on the minute.
+	timer.add("AccuracySec", "1s".to_string());
 	timer.add("Unit", service);
 	let mut install = Section::new("Install");
 	install.add("WantedBy", "timers.target".to_string());

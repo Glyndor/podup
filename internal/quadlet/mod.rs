@@ -12,6 +12,7 @@
 //! units never quietly drop configuration.
 
 mod jobs;
+pub use jobs::stale_timers;
 #[cfg(test)]
 mod min_podman;
 mod render;
