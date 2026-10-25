@@ -14,7 +14,7 @@ use podup::compose::types::{ComposeFile, VolumeMount, VolumeType};
 /// volumes, and Windows drive paths are left untouched, mirroring how the engine
 /// classifies a short-form source. Mount semantics are unchanged; this only
 /// affects the rendered output's source field.
-pub(super) fn resolve_bind_sources(file: &mut ComposeFile, base_dir: &Path) {
+pub(crate) fn resolve_bind_sources(file: &mut ComposeFile, base_dir: &Path) {
 	for svc in file.services_and_jobs_mut() {
 		for mount in &mut svc.volumes {
 			match mount {

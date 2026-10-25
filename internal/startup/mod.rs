@@ -14,6 +14,7 @@ use crate::cli::{Cli, Commands, RunArgs};
 
 mod config_normalize;
 mod config_render;
+pub(crate) use config_normalize::resolve_bind_sources;
 #[cfg(test)]
 pub(crate) use config_render::render_config_to;
 pub(crate) use config_render::{render_config, ConfigOutput};

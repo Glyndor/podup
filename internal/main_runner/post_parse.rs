@@ -110,6 +110,9 @@ pub(crate) fn render_audit(
 	let mut resolved = file.clone();
 	podup::retain_active_profiles(&mut resolved, &cli.profile);
 	podup::env_file::materialize_env_files(&mut resolved, &base_dir)?;
+	// Judge a relative bind source by where it lands, the way `config` shows it
+	// and the engine mounts it, not by the text that was written.
+	crate::startup::resolve_bind_sources(&mut resolved, &base_dir);
 	// `--wildcard-binds` is opt-in; collect the enabled flags into the slice
 	// the registry reads so a future opt-in check only needs a new
 	// `opt_in: Some("--new-flag")` here (#1881).
