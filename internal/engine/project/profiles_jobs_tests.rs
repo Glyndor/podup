@@ -110,3 +110,41 @@ fn a_file_without_jobs_is_filtered_as_before() {
 	retain_active_profiles_with_targets(&mut file, &[], &[]);
 	assert_eq!(file.services.len(), 1);
 }
+
+#[test]
+fn a_chain_of_twenty_thousand_jobs_is_resolved_in_one_pass() {
+	// The first job needs a service behind an inactive profile, so the loss
+	// travels down the whole chain. Looking for the next job to drop from the
+	// start each time made this quadratic in the length of the chain.
+	let mut yaml = String::from("services:\n  db:\n    image: x\n    profiles: [data]\njobs:\n");
+	yaml.push_str("  j0:\n    image: x\n    depends_on: [db]\n    triggers: {manual: true}\n");
+	for index in 1..20_000 {
+		yaml.push_str(&format!(
+			"  j{index}:\n    image: x\n    depends_on: [j{}]\n    triggers: {{manual: true}}\n",
+			index - 1
+		));
+	}
+	let mut file: ComposeFile = parse_str(&yaml).unwrap();
+	let started = std::time::Instant::now();
+	retain_active_profiles_with_targets(&mut file, &[], &[]);
+	let elapsed = started.elapsed();
+	assert!(file.jobs.is_empty(), "every job in the chain needs db");
+	assert!(
+		elapsed < std::time::Duration::from_secs(2),
+		"took {elapsed:?}"
+	);
+}
+
+#[test]
+fn a_chain_that_does_not_reach_an_inactive_service_is_kept_whole() {
+	let mut yaml = String::from("jobs:\n  j0:\n    image: x\n    triggers: {manual: true}\n");
+	for index in 1..2_000 {
+		yaml.push_str(&format!(
+			"  j{index}:\n    image: x\n    depends_on: [j{}]\n    triggers: {{manual: true}}\n",
+			index - 1
+		));
+	}
+	let mut file: ComposeFile = parse_str(&yaml).unwrap();
+	retain_active_profiles_with_targets(&mut file, &[], &[]);
+	assert_eq!(file.jobs.len(), 2_000);
+}
