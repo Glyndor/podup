@@ -45,7 +45,7 @@ use std::process::Command;
 /// Documented here as a contract marker rather than read at runtime: this
 /// binary gets the PID through `PODUP_LEAK_SCAN_PID`, not from the file, so
 /// the constant has no caller inside this crate. The same path lives in
-/// `tests/engine_integration.rs` as `PID_FILE_PATH` and is used by
+/// `tests/engine/engine_integration.rs` as `PID_FILE_PATH` and is used by
 /// `publish_pid_file`, and in `.github/workflows/podman-lane.yml` as the
 /// heredoc arg to `cat` — one literal, three readers.
 #[allow(dead_code)]

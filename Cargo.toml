@@ -66,7 +66,7 @@ path = "internal/lib.rs"
 # does not have, and the lane that gates merges always passes the feature.
 [[test]]
 name = "engine_integration"
-path = "tests/engine_integration.rs"
+path = "tests/engine/engine_integration.rs"
 required-features = ["test-helpers"]
 
 # Test crates that live in a folder. Cargo discovers only `tests/*.rs` and
@@ -262,6 +262,10 @@ path = "tests/workflows/workflow_required_checks.rs"
 [[test]]
 name = "workflow_toolchain_pin"
 path = "tests/workflows/workflow_toolchain_pin.rs"
+
+[[test]]
+name = "integration_leak_scan"
+path = "tests/engine/integration_leak_scan.rs"
 
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time", "net", "io-util", "io-std"] }

@@ -103,7 +103,7 @@ const PID_FILE_PATH: &str = "target/podup-leak-scan-pid";
 
 /// Write this run's PID to [`PID_FILE_PATH`] once, on the first call to
 /// [`proj`]. Only the PID crosses the process boundary: the leak-scan
-/// binary in `tests/integration_leak_scan.rs` rebuilds the three patterns
+/// binary in `tests/engine/integration_leak_scan.rs` rebuilds the three patterns
 /// it matches on from the PID alone.
 ///
 /// The write is intentionally eager. The earliest test to create a
