@@ -106,14 +106,18 @@ fn diagnostic(text: &str) -> &'static str {
 }
 
 /// Reset is effective even when a service never participates in a merge.
-pub(crate) fn apply_resets(value: &mut Value, directives: &crate::compose::tags::Directives) {
-	for (name, keys) in directives {
-		if keys.get("umask") == Some(&crate::compose::tags::MergeTag::Reset) {
-			for section in ["services", "jobs"] {
-				if let Some(service) = value.get_mut(section).and_then(|s| s.get_mut(name)) {
-					service["umask"] = Value::Null;
-				}
-			}
+///
+/// `resets` names the entries by section and name, from
+/// [`crate::compose::tags::umask_resets`], read before the tags were stripped.
+/// An entry that is not a mapping is left as it is: its own parse reports it,
+/// and indexing into it here would abort the process.
+pub(crate) fn apply_resets(value: &mut Value, resets: &[(&'static str, String)]) {
+	for (section, name) in resets {
+		let entry = value
+			.get_mut(*section)
+			.and_then(|entries| entries.get_mut(name.as_str()));
+		if let Some(map) = entry.and_then(Value::as_mapping_mut) {
+			map.insert(Value::from("umask"), Value::Null);
 		}
 	}
 }
