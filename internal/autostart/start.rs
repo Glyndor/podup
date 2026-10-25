@@ -152,6 +152,9 @@ pub fn render_start_unit(opts: &StartUnitOpts) -> String {
 	// Podman's store, which survives a reboot, so nothing here needs the file,
 	// the environment, a registry or a build.
 	//
+	// `--` ends option parsing, so a container named like a flag (`--all`) stays
+	// a name instead of widening the command to every container of the user.
+	//
 	// `stop`, not `rm`: the container must still be there for the next boot's
 	// ExecStart to find, exactly as service mode uses `stop` rather than `down`.
 	//
@@ -181,8 +184,8 @@ pub fn render_start_unit(opts: &StartUnitOpts) -> String {
 		 [Service]\n\
 		 Type=oneshot\n\
 		 RemainAfterExit=yes\n\
-		 ExecStart={podman} start {container}\n\
-		 ExecStop={podman} stop {container}\n\
+		 ExecStart={podman} start -- {container}\n\
+		 ExecStop={podman} stop -- {container}\n\
 		 {stop_timeout}\
 		 \n\
 		 [Install]\n\

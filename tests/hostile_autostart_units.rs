@@ -241,6 +241,7 @@ fn start_unit_exec_lines_give_back_the_container_name() {
 			let want = vec![
 				format!("/opt/{awkward}/podman"),
 				verb.to_string(),
+				"--".to_string(),
 				awkward.to_string(),
 			];
 			let got = parse_exec(&only(&unit, key));

@@ -141,7 +141,9 @@ pub(super) fn classify_exec_start(line: &str) -> DetectedSingleUnitMode {
 	// with `start` in the middle. A path or container named `start` cannot
 	// satisfy this shape (it would have to be the second token, and the line
 	// would have to be three tokens long).
-	if n == 3 && tokens[1] == "start" {
+	// Older releases wrote `start <container>`; current ones write
+	// `start -- <container>`. Both are start mode.
+	if (n == 3 && tokens[1] == "start") || (n == 4 && tokens[1] == "start" && tokens[2] == "--") {
 		return DetectedSingleUnitMode::Start;
 	}
 	// Service mode renders `<podup>`, then `-f`, `-p`, `--profile` and
