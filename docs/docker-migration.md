@@ -319,7 +319,13 @@ These modeled fields parse but have no effect. The examples are not exhaustive; 
 
 ### BuildKit / buildx-only build options
 
-`build.privileged`, `build.ssh`, `build.ulimits`, `build.isolation`, `build.entitlements`, `build.provenance`, `build.sbom`, `build.no_cache_filter`: these have no libpod build-API equivalent and are ignored. In particular, `build.no_cache_filter` cannot filter the cache per stage because libpod exposes only the all-or-nothing `nocache` parameter.
+`build.privileged`, `build.entitlements`, `build.provenance` and `build.sbom` have no `podman build` equivalent: the live build ignores them and the Quadlet export reports them. `build.no_cache_filter` is ignored too. It cannot filter the cache per stage because libpod exposes only the all-or-nothing `nocache` parameter.
+
+`build.ssh` is honored by the Quadlet export, which runs `podman build` directly (`PodmanArgs=--ssh`); the live build cannot forward it over the libpod build API and ignores it. `build.ulimits` is honored by both.
+
+`build.isolation` names a container isolation technology (`default`, `process`, `hyperv`), which `podman build` refuses, so the Quadlet export writes `PodmanArgs=--isolation` only for the buildah isolation types (`oci`, `rootless`, `chroot`) and reports any other value; the live build ignores the field.
+
+The `[Build]` keys `Annotation=`, `Volume=` and `DNS=` have no compose `build:` field to feed them (compose `build:` has no `annotations`, `volumes` or `dns` key), so nothing writes them.
 
 ### Windows / Hyper-V-only
 
