@@ -67,6 +67,17 @@ jobs:
   # every workflow file and everything under .github/scripts, keeps the lane
   # on. Widening it to tests/** is how a broken develop went unnoticed for
   # twenty pull requests once (#1295); do not.
+  #
+  # One case is not an allowlist of names: a pure version bump. It changes
+  # Cargo.toml, Cargo.lock and debian/changelog, and a bump used to boot both
+  # VMs twice, once on the pull request and once in the merge queue. Those
+  # names stay off the list, because a file called Cargo.toml can also carry a
+  # dependency change. Instead `.github/scripts/is-version-bump.sh` reads the
+  # content of the range and says yes only when the sole change is the podup
+  # version line (plain X.Y.Z) in Cargo.toml and in Cargo.lock, plus whole
+  # lines put in front of debian/changelog, with nothing else touched. Any
+  # other change, any file it cannot read and any error answers no, and no
+  # means the allowlist below decides as before.
   decide:
     name: Decide whether the VM has anything to look at
     runs-on: ubuntu-latest
@@ -110,6 +121,14 @@ jobs:
           if [ -z "$changed" ]; then
             echo "engine=true" >> "$GITHUB_OUTPUT"
             echo "empty diff; booting the VM rather than guessing"
+            exit 0
+          fi
+          # A pure version bump touches Cargo.toml, Cargo.lock and
+          # debian/changelog, none of which the allowlist below admits. The
+          # script reads the content of the change, not the names.
+          if bash .github/scripts/is-version-bump.sh "$BASE_SHA" "$HEAD_SHA"; then
+            echo "engine=false" >> "$GITHUB_OUTPUT"
+            echo "a pure version bump: nothing in this range can reach the VM"
             exit 0
           fi
           engine=false
