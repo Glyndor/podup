@@ -31,6 +31,13 @@ fn text(bytes: &[u8]) -> String {
 	String::from_utf8_lossy(bytes).into_owned()
 }
 
+/// The host path of a short-form `source:/data` bind mount of these tests.
+/// Split on the container side rather than on the first colon, because a
+/// Windows source starts with a drive letter.
+fn bind_source(volume: &str) -> &Path {
+	Path::new(volume.strip_suffix(":/data").expect("a source:/data mount"))
+}
+
 fn config_json(dir: &Path, file: &str) -> serde_json::Value {
 	let out = podup(dir, file, &["config", "--format", "json"]);
 	assert!(out.status.success(), "{}", text(&out.stderr));
@@ -66,11 +73,15 @@ fn a_relative_bind_source_of_a_job_is_made_absolute() {
 		.as_str()
 		.unwrap()
 		.to_string();
+	// The path is the host's own: `/tmp/x/data` on Unix, `C:\\...\\data` on
+	// Windows. Read it as a path instead of comparing its text.
+	let source = bind_source(&volume);
+	assert!(source.is_absolute(), "{volume}");
+	assert_eq!(source.file_name().unwrap(), "data", "{volume}");
 	assert!(
-		volume.starts_with('/') && volume.ends_with("/data:/data"),
+		!volume.contains("/./") && !volume.contains("\\.\\"),
 		"{volume}"
 	);
-	assert!(!volume.contains("/./"), "{volume}");
 }
 
 #[test]
@@ -92,7 +103,14 @@ fn paths_of_an_included_job_are_anchored_to_the_file_that_wrote_them() {
 		.as_str()
 		.unwrap()
 		.to_string();
-	assert!(volume.contains("/sub/"), "anchored to sub/: {volume}");
+	let source = bind_source(&volume);
+	assert!(source.is_absolute(), "{volume}");
+	assert_eq!(source.file_name().unwrap(), "data", "{volume}");
+	assert_eq!(
+		source.parent().and_then(Path::file_name).unwrap(),
+		"sub",
+		"anchored to the directory of the included file: {volume}"
+	);
 }
 
 #[test]
