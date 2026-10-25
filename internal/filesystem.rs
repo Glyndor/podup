@@ -133,3 +133,7 @@ fn reject_non_regular(_path: &Path) -> io::Result<()> {
 #[cfg(test)]
 #[path = "filesystem_tests.rs"]
 mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "filesystem_special_tests.rs"]
+mod special_tests;

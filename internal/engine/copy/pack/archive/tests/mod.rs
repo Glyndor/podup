@@ -88,4 +88,5 @@ pub(super) fn pack_path_entry_names(bytes: &[u8]) -> Vec<String> {
 }
 
 mod archive_shape;
+mod hostile;
 mod symlinks;
