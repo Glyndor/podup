@@ -135,7 +135,12 @@ fn an_unknown_key_in_a_job_is_warned_about_and_not_echoed_back() {
 	let out = podup(dir.path(), "compose.yaml", &["config"]);
 	assert!(out.status.success(), "{}", text(&out.stderr));
 	assert!(
-		text(&out.stderr).contains("restar"),
+		text(&out.stderr).contains("job 'j': unknown key 'restar'"),
+		"{}",
+		text(&out.stderr)
+	);
+	assert!(
+		!text(&out.stderr).contains("service 'j'"),
 		"{}",
 		text(&out.stderr)
 	);

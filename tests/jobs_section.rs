@@ -126,7 +126,10 @@ fn config_warns_once_per_job_with_a_schedule() {
 fn config_output_reads_back_as_the_same_jobs() {
 	// The YAML renderer prints a boolean as quoted text; reading it back has to
 	// give the same file, or `config` could not be used as input.
-	let (dir, file) = compose(WITH_JOBS);
+	let yaml = format!(
+		"{WITH_JOBS}  closed:\n    image: alpine\n    triggers:\n      manual: false\n      schedule: ['0 5 * * *']\n"
+	);
+	let (dir, file) = compose(&yaml);
 	let first = podup(&file, &["config"]);
 	assert!(first.status.success(), "{}", stderr(&first));
 	let again = dir.path().join("again.yaml");
@@ -134,6 +137,10 @@ fn config_output_reads_back_as_the_same_jobs() {
 	let second = podup(&again, &["config"]);
 	assert!(second.status.success(), "{}", stderr(&second));
 	assert_eq!(stdout(&first), stdout(&second));
+	let json = podup(&again, &["config", "--format", "json"]);
+	let value: serde_json::Value = serde_json::from_str(&stdout(&json)).expect("config json");
+	assert_eq!(value["jobs"]["closed"]["triggers"]["manual"], false);
+	assert_eq!(value["jobs"]["nightly"]["triggers"]["manual"], true);
 }
 
 #[test]
