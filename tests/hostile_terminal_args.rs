@@ -81,13 +81,16 @@ fn config_json_escapes_del_and_c1_controls() {
 }
 
 #[test]
-fn a_generate_quadlet_output_path_is_escaped_in_its_error() {
+fn a_generate_quadlet_output_path_is_escaped_when_the_units_are_written() {
+	// Under the temp dir, so the write succeeds for any user, root included.
 	let dir = project();
-	let target = format!("/nonexistent-dir/{PAYLOAD}/out");
+	let target = format!("{}/{PAYLOAD}/out", dir.path().display());
 	let text = run(
 		dir.path(),
 		&["-f", "compose.yaml", "generate", "quadlet", "-o", &target],
 	);
+	assert!(text.contains("wrote "), "{text:?}");
+	assert!(text.contains("\\r\\u{9b}"), "{text:?}");
 	assert_eq!(raw_control(&text), None, "{text:?}");
 }
 
