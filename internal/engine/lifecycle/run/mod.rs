@@ -2,6 +2,7 @@
 //! output, and remove it when done.
 
 mod attached;
+mod deps_wait;
 mod init_service;
 pub(super) mod options;
 
@@ -104,6 +105,11 @@ impl Engine {
 			.unwrap_or_default();
 			if !deps.is_empty() {
 				self.up_with_options(file, true, &[], &deps, false, false, false, false)
+					.await?;
+				// `up` waited on the conditions between the dependencies. The
+				// ones the target states about its own are waited on here,
+				// before its container exists.
+				self.wait_target_dependencies(file, service_name, &deps)
 					.await?;
 			}
 		}
