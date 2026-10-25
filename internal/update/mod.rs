@@ -129,3 +129,7 @@ pub fn exit_code(_err: &ComposeError) -> i32 {
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "mod_hostile_tests.rs"]
+mod hostile_tests;

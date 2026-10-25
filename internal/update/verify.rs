@@ -230,6 +230,10 @@ pub fn verify_digest(data: &[u8], expected_hex: &str) -> crate::Result<()> {
 #[path = "verify_tests.rs"]
 mod tests;
 
+#[cfg(test)]
+#[path = "verify_hostile_tests.rs"]
+mod hostile_tests;
+
 /// The release key is embedded in four places in this repository, and it has
 /// to be: a consumer that downloaded the key it verifies with would be
 /// handing the decision to whoever controls the download. Duplication is the
