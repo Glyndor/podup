@@ -65,19 +65,21 @@ pub(crate) fn validate_runtime(service: &str, text: &str) -> Result<()> {
 
 /// Validate before typing the document so errors retain the owning service name.
 pub(crate) fn validate(value: &Value) -> Result<()> {
-	let Some(services) = value.get("services").and_then(Value::as_mapping) else {
-		return Ok(());
-	};
-	for (name, service) in services {
-		if let Some(raw) = service.get("umask") {
-			deserialize(raw.clone()).map_err(|error| {
-				spec_field_error(
-					name.as_str().unwrap_or_default(),
-					"umask",
-					format!("{raw:?}"),
-					error.to_string(),
-				)
-			})?;
+	for section in ["services", "jobs"] {
+		let Some(entries) = value.get(section).and_then(Value::as_mapping) else {
+			continue;
+		};
+		for (name, service) in entries {
+			if let Some(raw) = service.get("umask") {
+				deserialize(raw.clone()).map_err(|error| {
+					spec_field_error(
+						name.as_str().unwrap_or_default(),
+						"umask",
+						format!("{raw:?}"),
+						error.to_string(),
+					)
+				})?;
+			}
 		}
 	}
 	Ok(())
@@ -95,8 +97,10 @@ fn diagnostic(text: &str) -> &'static str {
 pub(crate) fn apply_resets(value: &mut Value, directives: &crate::compose::tags::Directives) {
 	for (name, keys) in directives {
 		if keys.get("umask") == Some(&crate::compose::tags::MergeTag::Reset) {
-			if let Some(service) = value.get_mut("services").and_then(|s| s.get_mut(name)) {
-				service["umask"] = Value::Null;
+			for section in ["services", "jobs"] {
+				if let Some(service) = value.get_mut(section).and_then(|s| s.get_mut(name)) {
+					service["umask"] = Value::Null;
+				}
 			}
 		}
 	}

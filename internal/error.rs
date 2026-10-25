@@ -60,6 +60,9 @@ pub enum ComposeError {
 	Watch(String),
 	/// A compose feature is recognized but unsupported on Podman/podup.
 	Unsupported(String),
+	/// A top-level `jobs:` entry is malformed, collides with a service, or
+	/// cannot be launched the way it was asked for. The text names the job.
+	Job(String),
 	/// A `run` container exited; carries its non-zero exit code so the CLI can
 	/// propagate it as its own process exit status.
 	RunExited(i64),
@@ -277,6 +280,7 @@ impl fmt::Display for ComposeError {
 			Self::Include(s) => write!(f, "include error: {s}"),
 			Self::Watch(s) => write!(f, "watch error: {s}"),
 			Self::Unsupported(s) => write!(f, "unsupported feature: {s}"),
+			Self::Job(s) => write!(f, "job error: {s}"),
 			Self::RunExited(code) => write!(f, "run container exited with code {code}"),
 			Self::PreStart(message) => write!(f, "{message}"),
 			Self::Interrupted => write!(f, "interrupted"),
