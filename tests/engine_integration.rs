@@ -6,16 +6,21 @@
 //!
 //! The test bodies are split across the `engine_integration/` submodules to
 //! keep each file under the source line limit, one behaviour per module. The
-//! helpers they all share live in `engine_integration/harness.rs` and
-//! `engine_integration/pollers.rs`, re-exported here so every submodule
+//! helpers they all share live in `engine_integration/support/harness.rs` and
+//! `engine_integration/support/pollers.rs`, re-exported here so every submodule
 //! reaches them the same way it always has, through `use super::*;`.
+//!
+//! The files sit in one folder per concern (`build/`, `copy/`, `pod/`,
+//! `watch/` and so on, `cli/` split again by command family), but every module
+//! is still declared here with a `#[path]`, so each test keeps the name
+//! `engine_integration::<module>::<test>` whichever folder holds its file.
 use std::fs;
 
 use podup::{parse_files_with_env_files, parse_str, Client, Engine};
 
-#[path = "engine_integration/harness.rs"]
+#[path = "engine_integration/support/harness.rs"]
 mod harness;
-#[path = "engine_integration/pollers.rs"]
+#[path = "engine_integration/support/pollers.rs"]
 mod pollers;
 pub(crate) use harness::*;
 pub(crate) use pollers::*;
@@ -24,271 +29,271 @@ pub(crate) use pollers::*;
 // Test groups (see engine_integration/*.rs)
 // ---------------------------------------------------------------------------
 
-#[path = "engine_integration/autostart_quadlet.rs"]
+#[path = "engine_integration/autostart/autostart_quadlet.rs"]
 mod autostart_quadlet;
 // Unix only: autostart is systemd, and the image checks reach the Podman
 // socket by its `/run/user/<uid>` path.
 #[cfg(unix)]
-#[path = "engine_integration/autostart_service_boot.rs"]
+#[path = "engine_integration/autostart/autostart_service_boot.rs"]
 mod autostart_service_boot;
-#[path = "engine_integration/build_cache_invalidation.rs"]
+#[path = "engine_integration/build/build_cache_invalidation.rs"]
 mod build_cache_invalidation;
-#[path = "engine_integration/build_images.rs"]
+#[path = "engine_integration/build/build_images.rs"]
 mod build_images;
 // Unix only: it reaches the Podman socket by its `/run/user/<uid>` path.
 #[cfg(unix)]
-#[path = "engine_integration/build_labels.rs"]
+#[path = "engine_integration/build/build_labels.rs"]
 mod build_labels;
-#[path = "engine_integration/build_resources.rs"]
+#[path = "engine_integration/build/build_resources.rs"]
 mod build_resources;
 // Unix only: the assertion lists external containers via `podman ps -a
 // --external` against a Unix-domain socket, the path the libpod client
 // drives.
-#[path = "engine_integration/attach_logs_timestamps.rs"]
+#[path = "engine_integration/logs/attach_logs_timestamps.rs"]
 mod attach_logs_timestamps;
 #[cfg(unix)]
-#[path = "engine_integration/build_failure_cleanup.rs"]
+#[path = "engine_integration/build/build_failure_cleanup.rs"]
 mod build_failure_cleanup;
-#[path = "engine_integration/build_sparse_context.rs"]
+#[path = "engine_integration/build/build_sparse_context.rs"]
 mod build_sparse_context;
-#[path = "engine_integration/cp_flags.rs"]
+#[path = "engine_integration/copy/cp_flags.rs"]
 mod cp_flags;
-#[path = "engine_integration/cp_transfer.rs"]
+#[path = "engine_integration/copy/cp_transfer.rs"]
 mod cp_transfer;
-#[path = "engine_integration/explicit_network.rs"]
+#[path = "engine_integration/network/explicit_network.rs"]
 mod explicit_network;
-#[path = "engine_integration/external_resources.rs"]
+#[path = "engine_integration/resources/external_resources.rs"]
 mod external_resources;
-#[path = "engine_integration/long_form_refs.rs"]
+#[path = "engine_integration/resources/long_form_refs.rs"]
 mod long_form_refs;
-#[path = "engine_integration/orphan_sweep.rs"]
+#[path = "engine_integration/recreate/orphan_sweep.rs"]
 mod orphan_sweep;
-#[path = "engine_integration/pause_resume.rs"]
+#[path = "engine_integration/lifecycle/pause_resume.rs"]
 mod pause_resume;
-#[path = "engine_integration/port_query.rs"]
+#[path = "engine_integration/inspect/port_query.rs"]
 mod port_query;
-#[path = "engine_integration/remove_orphans.rs"]
+#[path = "engine_integration/recreate/remove_orphans.rs"]
 mod remove_orphans;
-#[path = "engine_integration/run_oneshot.rs"]
+#[path = "engine_integration/run/run_oneshot.rs"]
 mod run_oneshot;
-#[path = "engine_integration/scaled_replicas.rs"]
+#[path = "engine_integration/scaling/scaled_replicas.rs"]
 mod scaled_replicas;
-#[path = "engine_integration/top_images.rs"]
+#[path = "engine_integration/inspect/top_images.rs"]
 mod top_images;
-#[path = "engine_integration/up_recreate.rs"]
+#[path = "engine_integration/recreate/up_recreate.rs"]
 mod up_recreate;
 
 #[cfg(all(unix, feature = "test-helpers"))]
-#[path = "engine_integration/cp_sparse.rs"]
+#[path = "engine_integration/copy/cp_sparse.rs"]
 mod cp_sparse;
 
 #[cfg(all(unix, feature = "test-helpers"))]
-#[path = "engine_integration/cp_directory.rs"]
+#[path = "engine_integration/copy/cp_directory.rs"]
 mod cp_directory;
 
-#[path = "engine_integration/dns_resolution.rs"]
+#[path = "engine_integration/network/dns_resolution.rs"]
 mod dns_resolution;
-#[path = "engine_integration/error_surfacing.rs"]
+#[path = "engine_integration/compose_files/error_surfacing.rs"]
 mod error_surfacing;
-#[path = "engine_integration/exec_flags.rs"]
+#[path = "engine_integration/exec/exec_flags.rs"]
 mod exec_flags;
-#[path = "engine_integration/health_waits.rs"]
+#[path = "engine_integration/dependencies/health_waits.rs"]
 mod health_waits;
-#[path = "engine_integration/profiles.rs"]
+#[path = "engine_integration/compose_files/profiles.rs"]
 mod profiles;
 
 #[cfg(feature = "test-helpers")]
-#[path = "engine_integration/external_config.rs"]
+#[path = "engine_integration/resources/external_config.rs"]
 mod external_config;
 
-#[path = "engine_integration/build_env_arg.rs"]
+#[path = "engine_integration/build/build_env_arg.rs"]
 mod build_env_arg;
-#[path = "engine_integration/container_options.rs"]
+#[path = "engine_integration/compose_files/container_options.rs"]
 mod container_options;
-#[path = "engine_integration/depends_on_health.rs"]
+#[path = "engine_integration/dependencies/depends_on_health.rs"]
 mod depends_on_health;
-#[path = "engine_integration/exec_query.rs"]
+#[path = "engine_integration/exec/exec_query.rs"]
 mod exec_query;
-#[path = "engine_integration/implicit_dependencies.rs"]
+#[path = "engine_integration/dependencies/implicit_dependencies.rs"]
 mod implicit_dependencies;
-#[path = "engine_integration/include_extends.rs"]
+#[path = "engine_integration/compose_files/include_extends.rs"]
 mod include_extends;
-#[path = "engine_integration/label_file_safety.rs"]
+#[path = "engine_integration/compose_files/label_file_safety.rs"]
 mod label_file_safety;
-#[path = "engine_integration/lifecycle.rs"]
+#[path = "engine_integration/lifecycle/lifecycle.rs"]
 mod lifecycle;
-#[path = "engine_integration/lifecycle_hooks.rs"]
+#[path = "engine_integration/lifecycle/lifecycle_hooks.rs"]
 mod lifecycle_hooks;
-#[path = "engine_integration/logs_attach.rs"]
+#[path = "engine_integration/logs/logs_attach.rs"]
 mod logs_attach;
-#[path = "engine_integration/ps_and_logs.rs"]
+#[path = "engine_integration/logs/ps_and_logs.rs"]
 mod ps_and_logs;
-#[path = "engine_integration/ps_query.rs"]
+#[path = "engine_integration/inspect/ps_query.rs"]
 mod ps_query;
-#[path = "engine_integration/pull_query.rs"]
+#[path = "engine_integration/images/pull_query.rs"]
 mod pull_query;
-#[path = "engine_integration/secrets_and_configs.rs"]
+#[path = "engine_integration/resources/secrets_and_configs.rs"]
 mod secrets_and_configs;
-#[path = "engine_integration/service_selection.rs"]
+#[path = "engine_integration/scaling/service_selection.rs"]
 mod service_selection;
-#[path = "engine_integration/target_services.rs"]
+#[path = "engine_integration/scaling/target_services.rs"]
 mod target_services;
-#[path = "engine_integration/up_recreate_policy.rs"]
+#[path = "engine_integration/recreate/up_recreate_policy.rs"]
 mod up_recreate_policy;
 
 #[cfg(all(unix, feature = "test-helpers"))]
-#[path = "engine_integration/libpod_origin_form_helpers.rs"]
+#[path = "engine_integration/libpod_origin/libpod_origin_form_helpers.rs"]
 mod libpod_origin_form_helpers;
 #[cfg(all(unix, feature = "test-helpers"))]
 pub(crate) use libpod_origin_form_helpers::*;
 #[cfg(all(unix, feature = "test-helpers"))]
-#[path = "engine_integration/libpod_origin_form_build_comp.rs"]
+#[path = "engine_integration/libpod_origin/libpod_origin_form_build_comp.rs"]
 mod libpod_origin_form_build_comp;
 #[cfg(all(unix, feature = "test-helpers"))]
-#[path = "engine_integration/libpod_origin_form_io_comps.rs"]
+#[path = "engine_integration/libpod_origin/libpod_origin_form_io_comps.rs"]
 mod libpod_origin_form_io_comps;
 
 #[cfg(all(unix, feature = "test-helpers"))]
-#[path = "engine_integration/libpod_origin_form_events.rs"]
+#[path = "engine_integration/libpod_origin/libpod_origin_form_events.rs"]
 mod libpod_origin_form_events;
 
 #[cfg(all(unix, feature = "test-helpers"))]
-#[path = "engine_integration/libpod_origin_form_lifecycle_comps.rs"]
+#[path = "engine_integration/libpod_origin/libpod_origin_form_lifecycle_comps.rs"]
 mod libpod_origin_form_lifecycle_comps;
-#[path = "engine_integration/niche.rs"]
+#[path = "engine_integration/lifecycle/niche.rs"]
 mod niche;
-#[path = "engine_integration/recreate_on_image.rs"]
+#[path = "engine_integration/recreate/recreate_on_image.rs"]
 mod recreate_on_image;
-#[path = "engine_integration/run_flags.rs"]
+#[path = "engine_integration/run/run_flags.rs"]
 mod run_flags;
-#[path = "engine_integration/secrets.rs"]
+#[path = "engine_integration/resources/secrets.rs"]
 mod secrets;
 
 #[cfg(feature = "test-helpers")]
-#[path = "engine_integration/watch.rs"]
+#[path = "engine_integration/watch/watch.rs"]
 mod watch_tests;
 
 #[cfg(feature = "test-helpers")]
-#[path = "engine_integration/watch_actions.rs"]
+#[path = "engine_integration/watch/watch_actions.rs"]
 mod watch_actions;
 
 #[cfg(feature = "test-helpers")]
-#[path = "engine_integration/watch_sync.rs"]
+#[path = "engine_integration/watch/watch_sync.rs"]
 mod watch_sync;
 
 #[cfg(all(unix, feature = "test-helpers"))]
-#[path = "engine_integration/watch_batch.rs"]
+#[path = "engine_integration/watch/watch_batch.rs"]
 mod watch_batch;
 
 #[cfg(all(unix, feature = "test-helpers"))]
-#[path = "engine_integration/watch_bind.rs"]
+#[path = "engine_integration/watch/watch_bind.rs"]
 mod watch_bind;
 
 #[cfg(all(unix, feature = "test-helpers"))]
-#[path = "engine_integration/watch_sparse.rs"]
+#[path = "engine_integration/watch/watch_sparse.rs"]
 mod watch_sparse;
 
 #[cfg(all(unix, feature = "test-helpers"))]
-#[path = "engine_integration/watch_delete.rs"]
+#[path = "engine_integration/watch/watch_delete.rs"]
 mod watch_delete;
 
 #[cfg(all(unix, feature = "test-helpers"))]
-#[path = "engine_integration/watch_ignore_relative.rs"]
+#[path = "engine_integration/watch/watch_ignore_relative.rs"]
 mod watch_ignore_relative;
 
-#[path = "engine_integration/x_podman_autoupdate.rs"]
+#[path = "engine_integration/autoupdate/x_podman_autoupdate.rs"]
 mod x_podman_autoupdate;
 
-#[path = "engine_integration/cli_absent_project.rs"]
+#[path = "engine_integration/cli/inspect/cli_absent_project.rs"]
 mod cli_absent_project;
-#[path = "engine_integration/cli_build_push.rs"]
+#[path = "engine_integration/cli/images_files/cli_build_push.rs"]
 mod cli_build_push;
-#[path = "engine_integration/cli_commands.rs"]
+#[path = "engine_integration/cli/lifecycle/cli_commands.rs"]
 mod cli_commands;
-#[path = "engine_integration/cli_cp.rs"]
+#[path = "engine_integration/cli/images_files/cli_cp.rs"]
 mod cli_cp;
-#[path = "engine_integration/cli_down_orphans_rmi.rs"]
+#[path = "engine_integration/cli/lifecycle/cli_down_orphans_rmi.rs"]
 mod cli_down_orphans_rmi;
-#[path = "engine_integration/cli_exec.rs"]
+#[path = "engine_integration/cli/logs_exec/cli_exec.rs"]
 mod cli_exec;
-#[path = "engine_integration/cli_logs.rs"]
+#[path = "engine_integration/cli/logs_exec/cli_logs.rs"]
 mod cli_logs;
-#[path = "engine_integration/cli_logs_tail.rs"]
+#[path = "engine_integration/cli/logs_exec/cli_logs_tail.rs"]
 mod cli_logs_tail;
-#[path = "engine_integration/cli_output.rs"]
+#[path = "engine_integration/cli/inspect/cli_output.rs"]
 mod cli_output;
-#[path = "engine_integration/cli_port.rs"]
+#[path = "engine_integration/cli/inspect/cli_port.rs"]
 mod cli_port;
-#[path = "engine_integration/cli_ps.rs"]
+#[path = "engine_integration/cli/inspect/cli_ps.rs"]
 mod cli_ps;
-#[path = "engine_integration/cli_pull.rs"]
+#[path = "engine_integration/cli/images_files/cli_pull.rs"]
 mod cli_pull;
-#[path = "engine_integration/cli_pull_flags.rs"]
+#[path = "engine_integration/cli/lifecycle/cli_pull_flags.rs"]
 mod cli_pull_flags;
-#[path = "engine_integration/cli_restart_stop_kill.rs"]
+#[path = "engine_integration/cli/lifecycle/cli_restart_stop_kill.rs"]
 mod cli_restart_stop_kill;
-#[path = "engine_integration/cli_run.rs"]
+#[path = "engine_integration/cli/lifecycle/cli_run.rs"]
 mod cli_run;
-#[path = "engine_integration/cli_service_ops.rs"]
+#[path = "engine_integration/cli/lifecycle/cli_service_ops.rs"]
 mod cli_service_ops;
-#[path = "engine_integration/cli_stats.rs"]
+#[path = "engine_integration/cli/inspect/cli_stats.rs"]
 mod cli_stats;
-#[path = "engine_integration/cli_top_images.rs"]
+#[path = "engine_integration/cli/inspect/cli_top_images.rs"]
 mod cli_top_images;
-#[path = "engine_integration/cli_up_down.rs"]
+#[path = "engine_integration/cli/lifecycle/cli_up_down.rs"]
 mod cli_up_down;
-#[path = "engine_integration/cli_up_flags.rs"]
+#[path = "engine_integration/cli/lifecycle/cli_up_flags.rs"]
 mod cli_up_flags;
-#[path = "engine_integration/cli_volumes_config.rs"]
+#[path = "engine_integration/cli/inspect/cli_volumes_config.rs"]
 mod cli_volumes_config;
-#[path = "engine_integration/cli_wait_flags.rs"]
+#[path = "engine_integration/cli/lifecycle/cli_wait_flags.rs"]
 mod cli_wait_flags;
-#[path = "engine_integration/create_ls.rs"]
+#[path = "engine_integration/lifecycle/create_ls.rs"]
 mod create_ls;
-#[path = "engine_integration/lifecycle_output.rs"]
+#[path = "engine_integration/lifecycle/lifecycle_output.rs"]
 mod lifecycle_output;
-#[path = "engine_integration/logs_reader_closes.rs"]
+#[path = "engine_integration/logs/logs_reader_closes.rs"]
 mod logs_reader_closes;
-#[path = "engine_integration/multi_file.rs"]
+#[path = "engine_integration/compose_files/multi_file.rs"]
 mod multi_file;
-#[path = "engine_integration/network_ownership.rs"]
+#[path = "engine_integration/network/network_ownership.rs"]
 mod network_ownership;
-#[path = "engine_integration/network_pasta.rs"]
+#[path = "engine_integration/network/network_pasta.rs"]
 mod network_pasta;
-#[path = "engine_integration/pod_create.rs"]
+#[path = "engine_integration/pod/pod_create.rs"]
 mod pod_create;
-#[path = "engine_integration/pod_dns.rs"]
+#[path = "engine_integration/pod/pod_dns.rs"]
 mod pod_dns;
-#[path = "engine_integration/pod_exit_policy.rs"]
+#[path = "engine_integration/pod/pod_exit_policy.rs"]
 mod pod_exit_policy;
-#[path = "engine_integration/pod_fixtures.rs"]
+#[path = "engine_integration/pod/pod_fixtures.rs"]
 mod pod_fixtures;
 // pasta pods are a Linux feature, and the helpers it uses are Unix-only.
 #[cfg(unix)]
-#[path = "engine_integration/pod_on_pasta.rs"]
+#[path = "engine_integration/pod/pod_on_pasta.rs"]
 mod pod_on_pasta;
-#[path = "engine_integration/pod_recreate.rs"]
+#[path = "engine_integration/pod/pod_recreate.rs"]
 mod pod_recreate;
-#[path = "engine_integration/pod_teardown.rs"]
+#[path = "engine_integration/pod/pod_teardown.rs"]
 mod pod_teardown;
-#[path = "engine_integration/pod_userns_mode.rs"]
+#[path = "engine_integration/pod/pod_userns_mode.rs"]
 mod pod_userns_mode;
-#[path = "engine_integration/push_registry.rs"]
+#[path = "engine_integration/images/push_registry.rs"]
 mod push_registry;
-#[path = "engine_integration/scale.rs"]
+#[path = "engine_integration/scaling/scale.rs"]
 mod scale;
-#[path = "engine_integration/start_restores_config.rs"]
+#[path = "engine_integration/autostart/start_restores_config.rs"]
 mod start_restores_config;
-#[path = "engine_integration/stats_flags.rs"]
+#[path = "engine_integration/cli/inspect/stats_flags.rs"]
 mod stats_flags;
 
-#[path = "engine_integration/userns.rs"]
+#[path = "engine_integration/userns/userns.rs"]
 mod userns;
 
-#[path = "engine_integration/userns_pod.rs"]
+#[path = "engine_integration/userns/userns_pod.rs"]
 mod userns_pod;
 
 // Unix only: it inspects the replicas through the `/run/user/<uid>` socket.
 #[cfg(unix)]
-#[path = "engine_integration/keep_id_replicas.rs"]
+#[path = "engine_integration/userns/keep_id_replicas.rs"]
 mod keep_id_replicas;
