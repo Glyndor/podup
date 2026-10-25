@@ -11,5 +11,7 @@ use tempfile::tempdir;
 mod additional_context;
 mod build_secrets;
 mod context_tar;
+#[cfg(unix)]
+mod hostile;
 mod inline_tar;
 mod read_patterns;

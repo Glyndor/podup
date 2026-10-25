@@ -421,3 +421,7 @@ mod no_warn_tests;
 #[cfg(all(test, unix))]
 #[path = "write_guard_tests.rs"]
 mod write_guard_tests;
+
+#[cfg(test)]
+#[path = "write_names_tests.rs"]
+mod write_names_tests;
