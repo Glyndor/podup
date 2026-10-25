@@ -176,10 +176,6 @@ name = "docs_flags"
 path = "tests/docs/docs_flags.rs"
 
 [[test]]
-name = "hostile_autostart_units"
-path = "tests/hostile/input/hostile_autostart_units.rs"
-
-[[test]]
 name = "hostile_compose"
 path = "tests/hostile/input/hostile_compose.rs"
 

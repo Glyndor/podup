@@ -19,7 +19,7 @@
 
 use std::fs;
 
-#[path = "../hostile_support/fake_engine.rs"]
+#[path = "../../hostile_support/fake_engine.rs"]
 mod fake_engine;
 
 use fake_engine::{FakeEngine, Reply};

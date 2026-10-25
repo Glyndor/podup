@@ -7,7 +7,7 @@
 //! (head and body) is recorded so a test can check what was sent.
 //!
 //! Every integration test file is its own crate, so a test declares this with
-//! `#[path = "../hostile_support/fake_engine.rs"] mod fake_engine;`.
+//! `#[path = "hostile_support/fake_engine.rs"] mod fake_engine;`.
 
 #![allow(dead_code)]
 
