@@ -118,8 +118,15 @@ use super::check_fns::finding;
 ///   `/`, so they do not match either. Operators on Windows have a
 ///   different surface and a different audit story; this rule does not
 ///   pretend to cover them.
-/// - **`.` and `..` are folded first.** `/tmp/../etc` is `/etc`; the
-///   comparison is lexical and never follows a symlink.
+/// - **`.` and `..` are read two ways.** A bind fires when the path as
+///   written matches, or when it matches once `.` and `..` are folded
+///   lexically (`/tmp/../etc` is `/etc`). The kernel resolves `..` after
+///   following links, so with `/var/run` a link to `/run`,
+///   `/var/run/../x` is `/x` and the folded form `/var/x` would be wrong;
+///   the written form is therefore never dropped. A path with a `..` that
+///   matches neither way gets its own softer finding, because the audit
+///   reads the compose file and never the host's filesystem, so it cannot
+///   tell where the path resolves.
 /// - **A path under the project directory does not fire.** Operators
 ///   legitimately mount the project tree into a build container; the
 ///   project directory is conventionally `/srv/app`, `/home/<user>/<repo>`,
@@ -139,16 +146,45 @@ pub fn check_sensitive_bind_mount(
 		let Some((source, read_only)) = bind_source(mount) else {
 			continue;
 		};
-		// Normalise: duplicate and trailing slashes, `.` and `..` are
-		// folded, so every spelling of a location reaches the lists as
-		// one string and the host root is a single `/`.
-		let normalized = normalize_host_path(source);
 		let mode = if read_only { "read-only " } else { "" };
-		if let Some(reason) = sensitive_bind_reason(&normalized, mode) {
+		// The path as written (slashes folded) first, then the lexically
+		// folded one: folding can only add findings, never remove one.
+		let written = normalize_slashes(source);
+		let folded = normalize_host_path(source);
+		if let Some(reason) =
+			sensitive_bind_reason(&written, mode).or_else(|| sensitive_bind_reason(&folded, mode))
+		{
 			out.push(finding(name, "sensitive_bind_mount", &reason));
+		} else if has_parent_component(source) {
+			out.push(finding(
+				name,
+				"sensitive_bind_mount",
+				&format!(
+					"volumes: {source} contains '..'; audit cannot tell where it resolves \
+					 (a symbolic link in the path changes the result)"
+				),
+			));
 		}
 	}
 	out
+}
+
+/// Fold the spellings of the host root that POSIX treats as equivalent to a
+/// single `/` and drop trailing slashes from the rest, leaving every other
+/// component as written. The sensitive list's exact entry for `/` then catches
+/// each spelling of the root without the prefix loop firing on every absolute
+/// path.
+fn normalize_slashes(source: &str) -> String {
+	let stripped = source.trim_end_matches('/').trim_start_matches('/');
+	if stripped.is_empty() || stripped == "." {
+		return "/".to_string();
+	}
+	format!("/{stripped}")
+}
+
+/// Whether any component of `source` is `..`.
+fn has_parent_component(source: &str) -> bool {
+	source.split('/').any(|part| part == "..")
 }
 
 /// Lexically clean an absolute host path so every spelling of the same
