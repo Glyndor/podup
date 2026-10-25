@@ -2,6 +2,7 @@
 //! output, and remove it when done.
 
 mod attached;
+mod deps_wait;
 mod init_service;
 pub(super) mod options;
 
@@ -105,6 +106,10 @@ impl Engine {
 			if !deps.is_empty() {
 				self.up_with_options(file, true, &[], &deps, false, false, false, false)
 					.await?;
+				// `up` waited on the conditions between the dependencies. The
+				// ones the target states about its own are waited on here,
+				// before its container exists.
+				self.wait_target_dependencies(file, service_name).await?;
 			}
 		}
 
@@ -150,7 +155,11 @@ impl Engine {
 		}
 		// `-l/--label` adds ad-hoc labels to the one-off container, merged over the
 		// service's own labels in compose `KEY=VALUE` list form.
-		if !labels.is_empty() {
+		// Every one-off container says so, which is what keeps `--remove-orphans`
+		// from taking it for a service the file no longer defines.
+		let mut labels = labels;
+		labels.push("podup.oneoff=true".to_string());
+		{
 			let mut list: Vec<String> = run_service
 				.labels
 				.to_map()

@@ -37,3 +37,6 @@ pub(crate) use view::{
 	job_file_for_run, job_services_view, store_job_services, with_jobs_as_services,
 };
 pub use warn::warn_unscheduled_jobs;
+
+#[cfg(test)]
+mod hostile_tests;

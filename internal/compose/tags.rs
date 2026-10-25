@@ -48,6 +48,29 @@ fn definitions(raw: &Value) -> impl Iterator<Item = (&Value, &Value)> {
 		.flat_map(|section| section.iter())
 }
 
+/// The `(section, name)` of every service and job whose `umask` carries
+/// `!reset`. The section is part of the identity: a service and a job may be
+/// written with one name in a malformed file, and a reset asked for in one must
+/// not be applied to the other.
+pub(crate) fn umask_resets(raw: &Value) -> Vec<(&'static str, String)> {
+	let mut found = Vec::new();
+	for section in ["services", "jobs"] {
+		let Some(entries) = raw.get(section).and_then(Value::as_mapping) else {
+			continue;
+		};
+		for (name, entry) in entries {
+			let tagged = matches!(
+				entry.get("umask"),
+				Some(Value::Tagged(t)) if t.tag == "!reset"
+			);
+			if let (true, Some(name)) = (tagged, name.as_str()) {
+				found.push((section, name.to_string()));
+			}
+		}
+	}
+	found
+}
+
 /// Collect the merge tags in a raw compose document.
 ///
 /// Reads the document only for its structure, so interpolation is irrelevant:

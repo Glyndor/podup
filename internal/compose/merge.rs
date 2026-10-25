@@ -58,8 +58,9 @@ pub(super) fn deserialize_with_merge_interp(
 	// `dns` and do nothing on `ports`. What each tag means is decided by the
 	// merge (see `compose::tags`), not by which type happens to be behind a key.
 	let directives = super::tags::collect(&value);
+	let umask_resets = super::tags::umask_resets(&value);
 	super::tags::strip(&mut value);
-	super::types::service::service_umask::apply_resets(&mut value, &directives);
+	super::types::service::service_umask::apply_resets(&mut value, &umask_resets);
 	super::types::service::service_umask::validate(&value)?;
 	// Jobs are typed first and on their own, so a bad job is reported by name
 	// instead of as a file that failed to parse.
