@@ -223,6 +223,48 @@ seed_empty_changelog=1 run_case "an empty changelog in the base is refused" 1 "i
 seed_dep_first=1 run_case "a dependency version before [package] is refused" 1 "no usable version line" dep_version_only
 seed_dep_first=1 run_case "a bump with a dependency version before [package] is refused" 1 "no usable version line" bump_all
 
+# The workflow does not run the checked-out script: it pipes the copy that
+# lives in the base commit, so a pull request cannot edit its own judge. These
+# cases run that exact invocation. <description> <expected> <base has script:
+# 1|0> <change>
+run_via_base() {
+	local d rc=0
+	d="$(mktemp -d "$WORK/repo.XXXXXX")"
+	(
+		cd "$d" || exit 1
+		git init -q . && git config commit.gpgsign false || exit 1
+		seed
+		mkdir -p .github/scripts
+		[ "$3" = 1 ] && cp "$script" .github/scripts/is-version-bump.sh
+		git add -A && git commit -q -m base && git tag base || exit 1
+		"$4"
+		git add -A && git commit -q --allow-empty -m head && git tag head || exit 1
+	) >"$d/setup.log" 2>&1 || { echo "FAIL  $1 (could not build the repository)"; cat "$d/setup.log"; fail=$((fail + 1)); return; }
+	(
+		cd "$d" || exit 1
+		set -o pipefail
+		git show base:.github/scripts/is-version-bump.sh | bash -s -- base head
+	) >"$d/out" 2>&1 || rc=$?
+	# Any non-zero status (a failed `git show` is 128) means: not a bump.
+	[ "$rc" -eq 0 ] || rc=1
+	check "$1" "$2" "$rc"
+}
+# A pull request that rewrites the script to say yes to everything, and
+# touches source too.
+rigged_script() {
+	printf '#!/usr/bin/env bash\nexit 0\n' >.github/scripts/is-version-bump.sh
+	echo '// touched' >>src/main.rs
+	bump_all
+}
+run_via_base "a pure bump judged by the base copy of the script passes" 0 1 bump_all
+run_via_base "a script absent in the base is not a bump" 1 0 bump_all
+run_via_base "a pull request that rigs the script is still judged by the base copy" 1 1 rigged_script
+# shellcheck disable=SC2016  # the pattern is literal text from the workflow
+check "the workflow reads the script from the base commit" "1" \
+	"$(grep -cF 'git show "$BASE_SHA:.github/scripts/is-version-bump.sh"' "$HERE/.github/workflows/podman-lane.yml")"
+check "the workflow does not run the checked-out copy" "0" \
+	"$(grep -cE '^[[:space:]]*if bash \.github/scripts/is-version-bump\.sh' "$HERE/.github/workflows/podman-lane.yml")"
+
 # Called with the wrong number of arguments, it refuses before touching git.
 out="$(bash "$script" 2>&1 </dev/null)"
 check "no arguments is refused" "1" "$?"

@@ -77,7 +77,11 @@ jobs:
   # version line (plain X.Y.Z) in Cargo.toml and in Cargo.lock, plus whole
   # lines put in front of debian/changelog, with nothing else touched. Any
   # other change, any file it cannot read and any error answers no, and no
-  # means the allowlist below decides as before.
+  # means the allowlist below decides as before. The script is taken from the
+  # base commit, which is already reviewed and merged, so a pull request
+  # cannot rewrite the judge of its own diff; where the base does not have it
+  # yet, the answer is no. In the merge queue the base is the group's
+  # base_sha, which is develop once the script has landed.
   decide:
     name: Decide whether the VM has anything to look at
     runs-on: ubuntu-latest
@@ -125,8 +129,14 @@ jobs:
           fi
           # A pure version bump touches Cargo.toml, Cargo.lock and
           # debian/changelog, none of which the allowlist below admits. The
-          # script reads the content of the change, not the names.
-          if bash .github/scripts/is-version-bump.sh "$BASE_SHA" "$HEAD_SHA"; then
+          # script reads the content of the change, not the names. It is read
+          # from the base commit, not from this checkout: the checkout is the
+          # pull request's own tree, so a pull request that edited the script
+          # would be judged by its own edit. If the base has no such script
+          # (the pull request that introduces it) `git show` fails, the pipe
+          # fails under pipefail, and the allowlist below decides.
+          if git show "$BASE_SHA:.github/scripts/is-version-bump.sh" \
+              | bash -s -- "$BASE_SHA" "$HEAD_SHA"; then
             echo "engine=false" >> "$GITHUB_OUTPUT"
             echo "a pure version bump: nothing in this range can reach the VM"
             exit 0
