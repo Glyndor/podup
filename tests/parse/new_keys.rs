@@ -3,7 +3,7 @@
 //! `use_api_socket` (service-level) and the top-level `models` element. Each
 //! must deserialize into its dedicated field and no longer trip the generic
 //! "unknown key" diagnostic; the not-honored diagnostic is asserted in
-//! `tests/cli_diagnostics.rs` and the diagnostics unit tests.
+//! `tests/cli/surface/cli_diagnostics.rs` and the diagnostics unit tests.
 use podup::parse_str;
 
 #[test]

@@ -69,6 +69,64 @@ name = "engine_integration"
 path = "tests/engine_integration.rs"
 required-features = ["test-helpers"]
 
+# Test crates that live in a folder. Cargo discovers only `tests/*.rs` and
+# `tests/*/main.rs`, so a crate under `tests/<concern>/` is named here, and
+# keeping the same `name` keeps `cargo test --test <name>`, the CI lanes and
+# every test's reported identity as they were. The crates still at the top
+# level are found by discovery and need no entry. `every_source_file_is_compiled`
+# reads these paths, so a crate listed here cannot go unbuilt silently.
+[[test]]
+name = "build_contract"
+path = "tests/cli/output/build_contract.rs"
+
+[[test]]
+name = "cli_aliases"
+path = "tests/cli/surface/cli_aliases.rs"
+
+[[test]]
+name = "cli_diagnostics"
+path = "tests/cli/surface/cli_diagnostics.rs"
+
+[[test]]
+name = "cli_flags"
+path = "tests/cli/surface/cli_flags.rs"
+
+[[test]]
+name = "cli_service_hint"
+path = "tests/cli/surface/cli_service_hint.rs"
+
+[[test]]
+name = "client_address_warning"
+path = "tests/cli/warnings/client_address_warning.rs"
+
+[[test]]
+name = "config_contract"
+path = "tests/cli/output/config_contract.rs"
+
+[[test]]
+name = "host_binding_warnings"
+path = "tests/cli/warnings/host_binding_warnings.rs"
+
+[[test]]
+name = "output_contract"
+path = "tests/cli/output/output_contract.rs"
+
+[[test]]
+name = "port_warning_scope"
+path = "tests/cli/warnings/port_warning_scope.rs"
+
+[[test]]
+name = "project_name_safety"
+path = "tests/cli/surface/project_name_safety.rs"
+
+[[test]]
+name = "recreate_vocabulary"
+path = "tests/cli/output/recreate_vocabulary.rs"
+
+[[test]]
+name = "reporting_contract"
+path = "tests/cli/output/reporting_contract.rs"
+
 [dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time", "net", "io-util", "io-std"] }
 serde = { version = "1", features = ["derive"] }
