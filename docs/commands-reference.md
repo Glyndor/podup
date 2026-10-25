@@ -215,7 +215,7 @@ The top-level `jobs:` map declares containers that run to completion. A job take
 podup validates a schedule and does not fire it. `run`, `up` and `config` print one warning per job that has a schedule, whatever its number of entries, and `--no-warn` does not silence it. `generate quadlet` does not export jobs yet and says so. Until then a job with a schedule runs when you start it with `podup run`, or from a scheduler you provide.
 
 - `podup up` starts services only and never starts a job.
-- `podup run NAME` looks for a service first and then a job. A job runs as a one-off container, with the flags of `run`, after the services and jobs it lists in `depends_on`. A dependency that is a job with `manual: false` is an error naming both jobs.
+- `podup run NAME` looks for a service first and then a job. A job runs as a one-off container, with the flags of `run`, after the services and jobs it lists in `depends_on`. `run` waits for the `depends_on` conditions of the job before creating its container. A dependency that is a job with `manual: false` is an error naming both jobs.
 - A job may depend on services and on other jobs. A service cannot depend on a job.
 - Services and jobs share one namespace: the same name in both is an error.
 - `extends` of a job points at another job, and `extends` of a service points at another service.

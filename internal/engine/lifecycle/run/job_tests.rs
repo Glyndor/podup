@@ -101,3 +101,19 @@ async fn a_name_that_is_neither_service_nor_job_is_not_found() {
 		.expect_err("no such service or job");
 	assert!(matches!(err, ComposeError::ServiceNotFound(_)), "{err:?}");
 }
+
+#[tokio::test]
+async fn a_one_off_container_is_labelled_as_one() {
+	let (fake, engine) = engine();
+	let file = crate::parse_str(FILE).unwrap();
+
+	engine.run(&file, "nightly", options()).await.unwrap();
+
+	let bodies = fake.bodies.lock().unwrap();
+	let created = bodies
+		.iter()
+		.map(|b| String::from_utf8_lossy(b).into_owned())
+		.find(|b| b.contains("job-image"))
+		.expect("the job container was created");
+	assert!(created.contains("podup.oneoff"), "{created}");
+}

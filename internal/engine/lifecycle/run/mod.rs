@@ -156,7 +156,11 @@ impl Engine {
 		}
 		// `-l/--label` adds ad-hoc labels to the one-off container, merged over the
 		// service's own labels in compose `KEY=VALUE` list form.
-		if !labels.is_empty() {
+		// Every one-off container says so, which is what keeps `--remove-orphans`
+		// from taking it for a service the file no longer defines.
+		let mut labels = labels;
+		labels.push("podup.oneoff=true".to_string());
+		{
 			let mut list: Vec<String> = run_service
 				.labels
 				.to_map()

@@ -81,13 +81,53 @@ impl Engine {
 
 		// A pod's infra container carries the project label and belongs to no
 		// service; it lives and dies with the pod, never as an orphan.
+		// A one-off `run` of a declared service or job is the declared thing's
+		// own container, not one the file forgot: it is told apart by the
+		// project's identity labels, not by guessing its name.
+		let declared: std::collections::HashSet<&str> = file
+			.services
+			.keys()
+			.chain(file.jobs.keys())
+			.map(String::as_str)
+			.collect();
 		let names: Vec<String> = running
 			.iter()
 			.filter(|c| !c.is_infra)
+			.filter(|c| !self.is_one_off_of(c, &declared))
 			.flat_map(|c| c.names.iter())
 			.map(|raw| raw.trim_start_matches('/').to_string())
 			.collect();
 		Ok(filter_orphans(names, &known))
+	}
+}
+
+impl Engine {
+	/// Whether `container` is a one-off `run` of a service or job in `declared`.
+	///
+	/// A `run` container carries `podup.service` (whose it is) and
+	/// `podup.oneoff=true`. Ones created before that label existed are named
+	/// `<project>-<service>-run-<number>`, which is also accepted, but only
+	/// together with a `podup.service` that is declared.
+	fn is_one_off_of(
+		&self,
+		container: &crate::libpod::types::container::ContainerListEntry,
+		declared: &std::collections::HashSet<&str>,
+	) -> bool {
+		let Some(service) = container.labels.get("podup.service") else {
+			return false;
+		};
+		if !declared.contains(service.as_str()) {
+			return false;
+		}
+		if container.labels.get("podup.oneoff").map(String::as_str) == Some("true") {
+			return true;
+		}
+		let prefix = format!("{}-{service}-run-", self.project);
+		container.names.iter().any(|name| {
+			name.trim_start_matches('/')
+				.strip_prefix(&prefix)
+				.is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
+		})
 	}
 }
 
