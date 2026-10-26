@@ -40,7 +40,7 @@ pub(super) use check_runtime::{
 };
 
 // `segments` is a helper only consumed from `check_fns` itself during the
-// build and from `check_fns/secrets_tests.rs` via `super::super::segments` under
+// build and from `check_fns/secrets_tests.rs` via `crate::segments` under
 // `cfg(test)`. Re-export it under the same gate so the non-test build stays
 // warning-clean: any drift in the helper still hits the test path that has
 // always read it through this module.

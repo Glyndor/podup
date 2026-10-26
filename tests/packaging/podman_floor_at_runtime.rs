@@ -207,23 +207,25 @@ fn rust_sources(dir: &Path) -> String {
 /// unchecked constructor is not a call.
 ///
 /// The entry point is `internal/main.rs` plus everything under
-/// `internal/main_runner/`, where the command bodies live.
+/// `internal/command_line/main_runner/`, where the command bodies live.
 #[test]
 fn every_client_the_command_line_builds_is_checked() {
 	let root = Path::new(env!("CARGO_MANIFEST_DIR"));
 	let groups = [
 		(
-			"internal/main.rs and internal/main_runner/",
+			"internal/main.rs and internal/command_line/main_runner/",
 			format!(
 				"{}\n{}",
 				fs::read_to_string(root.join("internal/main.rs")).expect("internal/main.rs"),
-				rust_sources(&root.join("internal/main_runner"))
+				rust_sources(&root.join("internal/command_line/main_runner"))
 			),
 		),
 		(
-			"internal/main_runner/commands/autostart.rs",
-			fs::read_to_string(root.join("internal/main_runner/commands/autostart.rs"))
-				.expect("autostart.rs"),
+			"internal/command_line/main_runner/commands/autostart.rs",
+			fs::read_to_string(
+				root.join("internal/command_line/main_runner/commands/autostart.rs"),
+			)
+			.expect("autostart.rs"),
 		),
 	];
 	for (rel, src) in groups {

@@ -4,7 +4,7 @@
 //! same strings a finding can emit (the audit registry is the single
 //! source), and the listing answers without a compose file. Reading the
 //! listing ids from the JSON output rather than from a hardcoded list
-//! keeps the test in lockstep with `internal/audit/checks::CHECK_REGISTRY`
+//! keeps the test in lockstep with `internal/command_line/audit/checks::CHECK_REGISTRY`
 //! without duplicating either vocabulary here.
 
 use std::fs;
@@ -295,7 +295,7 @@ fn audit_list_checks_ids_match_the_ids_a_finding_can_emit() {
 
 	// 2. Findings side: one compose file that simultaneously fails every
 	// check the registry carries. The same shape the in-process drift guard
-	// in `internal/audit/audit_tests.rs` uses; the duplication is intentional
+	// in `internal/command_line/audit/audit_tests.rs` uses; the duplication is intentional
 	// because this test runs against the compiled binary and asserts the
 	// contract end-to-end rather than against `CHECK_REGISTRY` directly.
 	//

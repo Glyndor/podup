@@ -3,7 +3,7 @@
 
 pub(crate) mod autostart;
 pub(crate) mod generate;
-pub(in super::super) mod help;
+pub(crate) mod help;
 
 #[cfg(test)]
 mod generate_tests;

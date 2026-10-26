@@ -5,11 +5,12 @@
 
 use std::process;
 
-mod audit;
-mod cli;
-mod dispatch;
-mod main_runner;
-mod startup;
+mod command_line;
+use command_line::audit;
+use command_line::cli;
+use command_line::dispatch;
+use command_line::main_runner;
+use command_line::startup;
 
 use cli::*;
 use startup::exit_status::{command_failure_exit_code, interrupt_exit_code, print_error};
