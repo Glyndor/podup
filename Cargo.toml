@@ -128,11 +128,11 @@ path = "tests/cli/output/reporting_contract.rs"
 
 [[test]]
 name = "compose_interpolation"
-path = "tests/compose/parsing/compose_interpolation.rs"
+path = "tests/compose/parsing/variables/compose_interpolation.rs"
 
 [[test]]
 name = "env_file"
-path = "tests/compose/parsing/env_file.rs"
+path = "tests/compose/parsing/variables/env_file.rs"
 
 [[test]]
 name = "parse"
@@ -140,7 +140,7 @@ path = "tests/compose/parsing/parse.rs"
 
 [[test]]
 name = "ports"
-path = "tests/compose/parsing/ports.rs"
+path = "tests/compose/parsing/values/ports.rs"
 
 [[test]]
 name = "quadlet"
@@ -148,11 +148,11 @@ path = "tests/quadlet/quadlet.rs"
 
 [[test]]
 name = "size"
-path = "tests/compose/parsing/size.rs"
+path = "tests/compose/parsing/values/size.rs"
 
 [[test]]
 name = "substitute"
-path = "tests/compose/parsing/substitute.rs"
+path = "tests/compose/parsing/variables/substitute.rs"
 
 [[test]]
 name = "audit_exit_codes"
