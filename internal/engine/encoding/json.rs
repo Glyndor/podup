@@ -5,9 +5,9 @@ use crate::error::{ComposeError, Result};
 /// Serialise `v` to a compact JSON string for embedding into a libpod query
 /// parameter or NDJSON row.
 ///
-/// Six sites flow through this: five in [`build`](super::build) (`cachefrom`,
+/// Six sites flow through this: five in [`build`](super::super::build) (`cachefrom`,
 /// `buildargs`, `labels`, `secrets`, `cacheto`) and one in
-/// [`events`](super::events) (the `--format json` event row). Each of them
+/// [`events`](super::super::events) (the `--format json` event row). Each of them
 /// used to call `serde_json::to_string(...).unwrap_or_default()`, which
 /// silently emitted `""` on a serialisation failure; the empty string was
 /// then placed verbatim into the query parameter, where libpod treats it as
@@ -38,7 +38,7 @@ pub(crate) fn to_query_json<T: serde::Serialize>(what: &str, v: &T) -> Result<St
 /// command then printed the empty string and exited 0, so a script consuming
 /// `podup <cmd> --format json` received an empty document indistinguishable
 /// from "no results" (#1444). Unlike the NDJSON path in
-/// [`to_query_json`](self)/[`events`](super::events), where one row can be
+/// [`to_query_json`](self)/[`events`](super::super::events), where one row can be
 /// dropped and the stream continue, `--format json` is the *whole* output,
 /// so a failure must propagate as an error and exit non-zero.
 ///

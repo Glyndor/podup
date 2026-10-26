@@ -12,7 +12,7 @@
 pub fn surface_host_modes(file: &crate::compose::types::ComposeFile) {
 	let jobs = file.jobs.iter().map(|(name, job)| (name, &job.service));
 	for (name, service) in file.services.iter().chain(jobs) {
-		for w in super::container::check_host_mode(name, service) {
+		for w in super::super::container::check_host_mode(name, service) {
 			tracing::warn!("{}", crate::compose::jobs::relabel(file, w.message));
 		}
 	}

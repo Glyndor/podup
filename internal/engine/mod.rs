@@ -13,7 +13,6 @@ pub(crate) mod context;
 pub(crate) mod copy;
 pub(crate) mod events;
 pub(crate) mod project;
-mod pull_preflight;
 pub(crate) mod terminal;
 pub use events::EventsOptions;
 mod image;
@@ -22,7 +21,6 @@ pub use copy::CpOptions;
 pub use image::{resolve_image_digests, CommitOptions};
 pub use lifecycle::{validate_stop_timeout, RunOptions, RunOverrides};
 pub use project::ProjectLock;
-mod lifecycle_hooks;
 
 mod container_config;
 pub(crate) use container_config::build_log_config;
@@ -31,9 +29,9 @@ pub(crate) use container_config::resources::{
 };
 #[cfg(test)]
 mod fake_podman;
-mod health;
 mod lifecycle;
 mod network;
+mod readiness;
 pub(crate) use network::apply_default_isolation;
 /// Re-exported so `startup::config_render` (in the binary crate) can call the
 /// same function `up` uses, instead of duplicating the resolution rule.
@@ -185,16 +183,12 @@ impl Engine {
 // Free-function helpers, one module per concern
 // ---------------------------------------------------------------------------
 
-mod host_modes;
-mod json;
-mod log_frame;
-mod replicas;
-pub use host_modes::surface_host_modes;
-pub(super) use json::{to_pretty_json, to_query_json};
-pub(crate) use log_frame::write_frame;
-pub(crate) use replicas::{declared_replicas, sole_replica_name};
-
-mod start_mode;
+mod declared;
+mod encoding;
+pub use declared::host_modes::surface_host_modes;
+pub(crate) use declared::replicas::{declared_replicas, sole_replica_name};
+pub(super) use encoding::json::{to_pretty_json, to_query_json};
+pub(crate) use encoding::log_frame::write_frame;
 
 // ---------------------------------------------------------------------------
 // Unit tests

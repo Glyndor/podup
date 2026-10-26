@@ -19,7 +19,7 @@ use crate::libpod::types::exec::{ExecCreateConfig, ExecStartConfig};
 use crate::libpod::{LogOutput, API_PREFIX};
 
 impl Engine {
-	pub(super) async fn run_lifecycle_hook(
+	pub(in super::super) async fn run_lifecycle_hook(
 		&self,
 		container_name: &str,
 		hook: &LifecycleHook,
