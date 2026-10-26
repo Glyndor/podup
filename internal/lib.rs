@@ -25,33 +25,30 @@ pub mod autostart;
 /// Compose-file parsing, `extends:`/`include:` resolution, and topological
 /// service ordering.
 pub mod compose;
-pub(crate) mod dotenv;
 pub(crate) mod engine;
-/// `env_file:` loading: KEY=VALUE pairs from a service's declared files.
-pub mod env_file;
-pub(crate) mod error;
-pub(crate) mod filesystem;
+mod errors;
+mod input;
 pub(crate) mod libpod;
 /// Podman socket connection helpers.
 pub mod podman;
-/// Port-mapping parser for the docker-compose `ports:` format variants.
-pub mod ports;
 /// Quadlet export: translate a parsed compose file into Podman systemd units.
 pub mod quadlet;
-/// CLI diagnostics for container names passed where a service name is required.
-#[doc(hidden)]
-pub mod service_hint;
-/// Memory and CPU value parsers shared by the engine and tests.
-pub mod size;
 /// Docker Compose `${VAR}`/`$VAR` substitution over raw YAML before parsing.
 pub mod substitute;
-pub(crate) mod timestamp;
 /// Terminal colour/styling, honouring `--ansi`, `NO_COLOR`, and TTY detection.
 pub mod ui;
-pub(crate) mod units;
 /// Secure self-update for the `podup` binary (signature-verified release fetch).
 #[cfg(feature = "update")]
 pub mod update;
+mod values;
+
+pub(crate) use errors::error;
+#[doc(hidden)]
+pub use errors::service_hint;
+pub use input::env_file;
+pub(crate) use input::{dotenv, filesystem};
+pub use values::{ports, size};
+pub(crate) use values::{timestamp, units};
 
 /// Compose entry points: the parser variants and service-ordering helpers,
 /// re-exported at the crate root for callers.

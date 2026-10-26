@@ -1,17 +1,16 @@
 //! Docker Compose file type definitions.
 
-pub mod build;
-pub mod deploy;
-pub mod develop;
-pub mod env;
-pub mod job;
-pub mod lifecycle;
-pub mod network;
-pub mod ports;
+pub mod inputs;
+pub mod limits;
+pub mod networking;
 pub mod primitives;
-pub mod resources;
+pub mod runtime;
 pub mod service;
-pub mod volume;
+
+pub use inputs::{build, env, volume};
+pub use limits::{deploy, resources};
+pub use networking::{network, ports};
+pub use runtime::{develop, job, lifecycle};
 
 pub use build::*;
 pub use deploy::*;

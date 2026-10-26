@@ -81,26 +81,26 @@ fn source_inventory_lists_every_emitted_key() {
 	// Section` parameter) fall through to the file's intended unit type
 	// when the parser cannot resolve a variable.
 	let files: &[(&str, UnitType)] = &[
-		("build.rs", UnitType::Build),
-		("build_fields.rs", UnitType::Build),
+		("build/mod.rs", UnitType::Build),
+		("build/fields.rs", UnitType::Build),
 		("container", UnitType::Container),
 		("health.rs", UnitType::Container),
 		("network.rs", UnitType::Network),
-		("pod.rs", UnitType::Pod),
-		("pod_fields.rs", UnitType::Pod),
+		("pod/mod.rs", UnitType::Pod),
+		("pod/fields.rs", UnitType::Pod),
 		("security.rs", UnitType::Container),
 		("volume.rs", UnitType::Volume),
 	];
 
 	for (filename, unit_type) in files {
 		let source: String = match *filename {
-			"build.rs" => include_str!("../../unit/build.rs").to_string(),
-			"build_fields.rs" => include_str!("../../unit/build_fields.rs").to_string(),
+			"build/mod.rs" => include_str!("../../unit/build/mod.rs").to_string(),
+			"build/fields.rs" => include_str!("../../unit/build/fields.rs").to_string(),
 			"container" => container_sources(),
 			"health.rs" => include_str!("../../unit/health.rs").to_string(),
 			"network.rs" => include_str!("../../unit/network.rs").to_string(),
-			"pod.rs" => include_str!("../../unit/pod.rs").to_string(),
-			"pod_fields.rs" => include_str!("../../unit/pod_fields.rs").to_string(),
+			"pod/mod.rs" => include_str!("../../unit/pod/mod.rs").to_string(),
+			"pod/fields.rs" => include_str!("../../unit/pod/fields.rs").to_string(),
 			"security.rs" => include_str!("../../unit/security.rs").to_string(),
 			"volume.rs" => include_str!("../../unit/volume.rs").to_string(),
 			_ => panic!("missing include_str! branch for {filename}"),

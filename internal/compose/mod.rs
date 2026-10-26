@@ -3,17 +3,15 @@
 
 pub mod types;
 
-mod anchor;
-pub(crate) mod dependencies;
 pub(crate) mod diagnostics;
-mod extends;
-mod include;
 pub(crate) mod jobs;
-mod merge;
-mod order;
-pub mod pre_start;
-mod tags;
-mod validate;
+mod merging;
+mod resolve;
+
+use merging::{anchor, extends, include, merge, tags};
+pub(crate) use resolve::dependencies;
+pub use resolve::pre_start;
+use resolve::{order, validate};
 
 mod parsing;
 

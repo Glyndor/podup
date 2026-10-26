@@ -4,7 +4,7 @@
 
 use crate::compose::parse_str;
 use crate::compose::tags;
-use crate::compose::types::service::service_umask;
+use crate::compose::types::service::umask;
 
 /// A service named `same` that asks for `umask` to be reset, beside a `same`
 /// job of the given (wrong) shape.
@@ -93,12 +93,12 @@ fn applying_resets_to_a_document_of_the_wrong_shape_changes_nothing() {
 		let mut value: serde_yaml::Value =
 			serde_yaml::from_str(&format!("services:\n  a: {text}\njobs:\n  a: {text}\n")).unwrap();
 		let before = value.clone();
-		service_umask::apply_resets(
+		umask::apply_resets(
 			&mut value,
 			&[("services", "a".to_string()), ("jobs", "a".to_string())],
 		);
 		assert_eq!(value, before, "{text}");
 		let mut scalar: serde_yaml::Value = serde_yaml::from_str(text).unwrap();
-		service_umask::apply_resets(&mut scalar, &[("jobs", "a".to_string())]);
+		umask::apply_resets(&mut scalar, &[("jobs", "a".to_string())]);
 	}
 }

@@ -42,7 +42,7 @@ use std::time::Instant;
 /// the compose value by a factor of 20.
 ///
 /// Fails on the branch with the `timeout=` parameter reverted to
-/// `t=` at `internal/engine/lifecycle/commands/stop.rs::stop_container`
+/// `t=` at `internal/engine/lifecycle/commands/running/stop.rs::stop_container`
 /// (the asserted `elapsed < 8s` line), and at the parallel path
 /// `internal/engine/lifecycle/parallel/mod.rs::teardown_one_container`.
 #[tokio::test]

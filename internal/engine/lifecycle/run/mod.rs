@@ -85,7 +85,7 @@ impl Engine {
 			.ok_or_else(|| ComposeError::ServiceNotFound(service_name.into()))?;
 
 		if let Some(text) = service.umask.as_deref() {
-			crate::compose::types::service::service_umask::validate_runtime(service_name, text)?;
+			crate::compose::types::service::umask::validate_runtime(service_name, text)?;
 		}
 
 		// Reject any bad volume/network/container name before creating anything

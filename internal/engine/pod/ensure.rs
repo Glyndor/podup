@@ -21,7 +21,7 @@ impl Engine {
 	) -> Result<bool> {
 		for (name, service) in &file.services {
 			if let Some(text) = service.umask.as_deref() {
-				crate::compose::types::service::service_umask::validate_runtime(name, text)?;
+				crate::compose::types::service::umask::validate_runtime(name, text)?;
 			}
 		}
 		let desired_hash = super::pod_config_hash(parsed_ports, file);
