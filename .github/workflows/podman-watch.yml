@@ -2,7 +2,7 @@ name: podman-version-watch
 # Notifies (opens an issue) when Podman ships a release newer than the version
 # podup was last validated against AND at least one distro has packaged it, the
 # signal to run the validation lane. The last-validated version lives in
-# .github/podman-baseline; bump it after a successful validation.
+# .github/podman_lane/baseline; bump it after a successful validation.
 on:
   schedule:
     - cron: '0 8 * * *'
@@ -26,7 +26,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          BASELINE=$(tr -d '[:space:]' < .github/podman-baseline)
+          BASELINE=$(tr -d '[:space:]' < .github/podman_lane/baseline)
           LATEST=$(gh api repos/containers/podman/releases/latest --jq '.tag_name' | sed 's/^v//')
           # LATEST is a third-party-controlled release tag. Reject anything but a
           # plain SemVer before it is used anywhere else in this script.
@@ -82,7 +82,7 @@ jobs:
 
             Baseline recorded: **$BASELINE**.
 
-            After validating Podman **$LATEST** on the lane, bump \`.github/podman-baseline\` by hand to **$LATEST** to clear this nag."
+            After validating Podman **$LATEST** on the lane, bump \`.github/podman_lane/baseline\` by hand to **$LATEST** to clear this nag."
             echo "Opened watcher issue for repology.org outage on Podman $LATEST."
             exit 0
           fi
@@ -123,7 +123,7 @@ jobs:
           - [ ] Run the nested-virt Podman-$LATEST lane (Fedora rawhide / a distro that ships it): command-by-command + the integration suite
           - [ ] If a new MAJOR: re-probe wire fields (healthcheck / secrets / quadlet) and check the upstream breaking-changes notes
           - [ ] File issues for any regressions
-          - [ ] If green: bump \`.github/podman-baseline\` to **$LATEST** and refresh the README badge + ai-context
+          - [ ] If green: bump \`.github/podman_lane/baseline\` to **$LATEST** and refresh the README badge + ai-context
           - [ ] Close this issue
 
           _Auto-filed by \`podman-version-watch\`. To stop nagging for this version without validating, bump the baseline._"

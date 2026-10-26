@@ -5,11 +5,14 @@
 
 use std::process;
 
-mod audit;
-mod cli;
-mod dispatch;
-mod main_runner;
-mod startup;
+// The binary's modules live in one folder; they are imported here under their
+// own names so no path inside them depends on that folder.
+mod command_line;
+use command_line::audit;
+use command_line::cli;
+use command_line::dispatch;
+use command_line::main_runner;
+use command_line::startup;
 
 use cli::*;
 use startup::exit_status::{command_failure_exit_code, interrupt_exit_code, print_error};

@@ -1,0 +1,307 @@
+//! Parse-time diagnostics.
+//!
+//! podup accepts the full compose-spec surface and, per the spec's
+//! forward-compatibility rule, never treats an unknown key as a hard error.
+//! The cost of that leniency is silent drops: a typo or an unmapped compose
+//! feature would just vanish. This pass closes that gap by reporting every key
+//! or field podup parses but cannot translate, so nothing is ignored without
+//! the operator hearing about it, the same guarantee that lets podup absorb
+//! future Docker/Podman compose additions gracefully.
+
+use std::cell::Cell;
+
+use super::types::{ComposeFile, Service};
+
+mod client_address;
+mod ignored_fields;
+mod nested_raw;
+mod port_exposure;
+use ignored_fields::{
+	ignored_build_fields, ignored_models, ignored_network_fields, ignored_port_fields,
+	ignored_restart_policy_fields, ignored_secret_config_drivers, ignored_service_fields,
+	ignored_service_network_fields, ignored_volume_mount_fields,
+};
+pub(super) use nested_raw::collect_raw_nested_warnings;
+use port_exposure::port_published_on_all_interfaces;
+pub(crate) use port_exposure::ports_published_on_all_interfaces;
+pub(crate) use port_exposure::ports_published_on_all_interfaces_in;
+pub(crate) use port_exposure::ports_published_on_wildcard;
+pub(crate) use port_exposure::ports_published_on_wildcard_in;
+
+/// The containers a compose file brings up, each with the name the
+/// diagnostics report it under: the service itself, then its init steps.
+///
+/// The step is the declared one. These diagnostics describe what the
+/// operator wrote, so a warning about an unsupported key belongs to the
+/// place they wrote it, and the service's own keys are not repeated under
+/// the step's name.
+pub(super) type ContainerUnits<'a> = [(String, &'a Service)];
+
+/// Build the container list every per-service diagnostic walks: each
+/// service, then the init steps that service declares.
+fn container_units(file: &ComposeFile) -> Vec<(String, &Service)> {
+	let mut out = Vec::new();
+	let jobs = file.jobs.iter().map(|(name, job)| (name, &job.service));
+	for (name, service) in file.services.iter().chain(jobs) {
+		out.push((name.clone(), service));
+		for (step_name, step) in crate::parsing::compose::pre_start::declared_steps(name, service) {
+			out.push((step_name, step));
+		}
+	}
+	out
+}
+
+thread_local! {
+	/// CLI gate that suppresses the parse-time "port ... is published on every
+	/// interface" warning while set. `up`/`create`/`run`/`scale`/`watch`/
+	/// `generate quadlet`/`autostart` show it unless `--no-warn` is set, because
+	/// they create or install containers with the port. `config` always shows
+	/// it regardless of `--no-warn`; every other command suppresses it because
+	/// it reuses containers whose configuration was already shown.
+	/// The flag is read once per emitted warning by
+	/// [`emit_diagnostic`] inside this module; the parse path does not have a
+	/// parameter for it because the warning surface is also reached from parse
+	/// functions called without command-level context
+	/// (`parse_files_with_env_files`).
+	static SUPPRESS_PORT_EXPOSURE_WARNING: Cell<bool> = const { Cell::new(false) };
+	/// CLI gate that shows the client-address warning (#1994) while set; off by
+	/// default, see `ShowClientAddressWarningGuard`.
+	static SHOW_CLIENT_ADDRESS_WARNING: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Turns the client-address warning (#1994) on while held. It is off by
+/// default: almost every project publishes ports on a bridge network, so the
+/// warning only belongs on the commands that create containers and on
+/// `config`, not on every `exec`, `stop` or `down` that parses the same file.
+pub struct ShowClientAddressWarningGuard {
+	prev: bool,
+}
+
+impl ShowClientAddressWarningGuard {
+	/// Show the warning until the returned guard is dropped.
+	pub fn new() -> Self {
+		let prev = SHOW_CLIENT_ADDRESS_WARNING.with(|c| c.get());
+		SHOW_CLIENT_ADDRESS_WARNING.with(|c| c.set(true));
+		Self { prev }
+	}
+}
+
+impl Default for ShowClientAddressWarningGuard {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
+impl Drop for ShowClientAddressWarningGuard {
+	fn drop(&mut self) {
+		SHOW_CLIENT_ADDRESS_WARNING.with(|c| c.set(self.prev));
+	}
+}
+
+/// RAII guard that turns the parse-time port-exposure warning off for the
+/// current thread, restoring the previous value on drop. The CLI driver
+/// installs this around the parse step of the commands that opt out of the
+/// warning; nested guards compose (each one restores its predecessor's
+/// value), the same way the Quadlet path's [`crate::quadlet::NoWarnGuard`]
+/// does, so a future parse nested inside a live one keeps the inner
+/// setting instead of leaking the outer one.
+pub struct SuppressPortExposureGuard {
+	prev: bool,
+}
+
+impl SuppressPortExposureGuard {
+	/// Activate the suppression for the current thread until the guard is
+	/// dropped. Mirrors [`crate::quadlet::NoWarnGuard::new`]; embedders that
+	/// drive the parse path directly (helmly-agent does for Quadlet) can use
+	/// the same guard for the same effect.
+	pub fn new() -> Self {
+		let prev = SUPPRESS_PORT_EXPOSURE_WARNING.with(|c| c.get());
+		SUPPRESS_PORT_EXPOSURE_WARNING.with(|c| c.set(true));
+		Self { prev }
+	}
+}
+
+impl Default for SuppressPortExposureGuard {
+	fn default() -> Self {
+		Self::new()
+	}
+}
+
+impl Drop for SuppressPortExposureGuard {
+	fn drop(&mut self) {
+		SUPPRESS_PORT_EXPOSURE_WARNING.with(|c| c.set(self.prev));
+	}
+}
+
+/// Whether the parse-time port-exposure warning is currently suppressed on
+/// this thread. Read by [`emit_diagnostic`] before forwarding a warning to
+/// `tracing::warn!`. Pure on the thread-local state.
+fn port_exposure_suppressed() -> bool {
+	SUPPRESS_PORT_EXPOSURE_WARNING.with(|c| c.get())
+}
+
+/// Identify the parse-time port-exposure warning. The text is matched on a
+/// stable substring (`"is published on every interface"`) so the gate stays
+/// correct if the warning is reworded, and so other warnings are never
+/// accidentally silenced.
+fn is_port_exposure_warning(msg: &str) -> bool {
+	msg.contains("is published on every interface")
+}
+
+/// Identify the client-address warning (#1994) by its stable fragment.
+fn is_client_address_warning(msg: &str) -> bool {
+	msg.contains(client_address::CLIENT_ADDRESS_NEEDLE)
+}
+
+/// Emit one diagnostic warning, honouring the parse-time gate for the
+/// port-exposure message. All other warnings are emitted unconditionally
+/// to keep the existing behaviour for every other category.
+pub(super) fn emit_diagnostic(msg: &str) {
+	if is_port_exposure_warning(msg) && port_exposure_suppressed() {
+		return;
+	}
+	if is_client_address_warning(msg) && !SHOW_CLIENT_ADDRESS_WARNING.with(|c| c.get()) {
+		return;
+	}
+	tracing::warn!("{msg}");
+}
+
+/// Collect a warning for every parsed-but-unsupported key or field in `file`.
+/// Pure (no logging) so it can be unit-tested; the caller emits the messages.
+pub(super) fn collect(file: &ComposeFile) -> Vec<String> {
+	let mut out = Vec::new();
+	let units = container_units(file);
+	unknown_top_level_keys(file, &mut out);
+	unknown_service_keys(&units, &mut out);
+	nested_unknown_keys(file, &units, &mut out);
+	ignored_service_fields(&units, &mut out);
+	ignored_port_fields(&units, &mut out);
+	port_published_on_all_interfaces(&units, &mut out);
+	client_address::ports_hide_client_address(file, &mut out);
+	ignored_volume_mount_fields(&units, &mut out);
+	ignored_build_fields(&units, &mut out);
+	ignored_network_fields(file, &mut out);
+	ignored_service_network_fields(&units, &mut out);
+	ignored_secret_config_drivers(file, &mut out);
+	ignored_models(file, &mut out);
+	ignored_restart_policy_fields(&units, &mut out);
+	// The passes above name every container `service 'x'`; a job is said to be
+	// a job.
+	if file.jobs.is_empty() {
+		return out;
+	}
+	out.into_iter()
+		.map(|message| crate::compose::jobs::relabel(file, message))
+		.collect()
+}
+
+/// Push a warning for each non-`x-` key captured at a nested level.
+fn push_unknown(
+	context: &str,
+	unknown: &indexmap::IndexMap<String, serde_yaml::Value>,
+	out: &mut Vec<String>,
+) {
+	for key in unknown.keys() {
+		if key.starts_with("x-") {
+			continue;
+		}
+		out.push(format!(
+			"{context}: unknown key '{key}' is ignored \
+			 (check for a typo or an unsupported compose feature)"
+		));
+	}
+}
+
+/// Unknown keys captured inside service sub-objects and top-level network /
+/// volume definitions. Together with the service- and top-level passes this
+/// means a typo or an unmapped future field at ANY modeled level is surfaced
+/// rather than silently dropped.
+fn nested_unknown_keys(file: &ComposeFile, units: &ContainerUnits<'_>, out: &mut Vec<String>) {
+	for (service, def) in units {
+		if let Some(hc) = &def.healthcheck {
+			push_unknown(
+				&format!("service '{service}' healthcheck"),
+				&hc.unknown,
+				out,
+			);
+		}
+		if let Some(deploy) = &def.deploy {
+			push_unknown(&format!("service '{service}' deploy"), &deploy.unknown, out);
+		}
+		if let Some(develop) = &def.develop {
+			for (i, rule) in develop.watch.iter().enumerate() {
+				push_unknown(
+					&format!("service '{service}' develop.watch[{i}]"),
+					&rule.unknown,
+					out,
+				);
+			}
+		}
+		if let Some(cred) = &def.credential_spec {
+			push_unknown(
+				&format!("service '{service}' credential_spec"),
+				&cred.unknown,
+				out,
+			);
+		}
+		if let Some(provider) = &def.provider {
+			push_unknown(
+				&format!("service '{service}' provider"),
+				&provider.unknown,
+				out,
+			);
+		}
+	}
+	for (name, model) in &file.models {
+		push_unknown(&format!("model '{name}'"), &model.unknown, out);
+	}
+	for (name, cfg) in &file.networks {
+		if let Some(c) = cfg {
+			push_unknown(&format!("network '{name}'"), &c.unknown, out);
+			if let Some(ipam) = &c.ipam {
+				push_unknown(&format!("network '{name}' ipam"), &ipam.unknown, out);
+			}
+		}
+	}
+	for (name, cfg) in &file.volumes {
+		if let Some(c) = cfg {
+			push_unknown(&format!("volume '{name}'"), &c.unknown, out);
+		}
+	}
+}
+
+/// Top-level keys that matched no known field (captured in `extensions`).
+/// `x-*` extension keys are allowed by the spec and skipped.
+fn unknown_top_level_keys(file: &ComposeFile, out: &mut Vec<String>) {
+	for key in file.extensions.keys() {
+		if key.starts_with("x-") {
+			continue;
+		}
+		out.push(format!(
+			"unknown top-level key '{key}' is ignored \
+			 (check for a typo or an unsupported compose feature)"
+		));
+	}
+}
+
+/// Service keys that matched no known field. A likely typo, e.g.
+/// `enviroment:`, is easy to miss when it just vanishes, so surface it.
+fn unknown_service_keys(units: &ContainerUnits<'_>, out: &mut Vec<String>) {
+	for (service, def) in units {
+		for key in def.unknown.keys() {
+			if key.starts_with("x-") {
+				continue;
+			}
+			out.push(format!(
+				"service '{service}': unknown key '{key}' is ignored \
+				 (check for a typo or an unsupported compose feature)"
+			));
+		}
+	}
+}
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+mod port_exposure_tests;

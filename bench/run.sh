@@ -105,12 +105,12 @@ case ",$ENGINES," in
 esac
 PODMAN_SOCK="${PODMAN_SOCKET:-$XDG_RUNTIME_DIR/podman/podman.sock}"
 
-# shellcheck source=bench/engine.sh
-. "$HERE/engine.sh"
-# shellcheck source=bench/env.sh
-. "$HERE/env.sh"
-# shellcheck source=bench/leftovers.sh
-. "$HERE/leftovers.sh"
+# shellcheck source=bench/lib/engine.sh
+. "$HERE/lib/engine.sh"
+# shellcheck source=bench/lib/env.sh
+. "$HERE/lib/env.sh"
+# shellcheck source=bench/lib/leftovers.sh
+. "$HERE/lib/leftovers.sh"
 MEASURE_DC_PODMAN=0
 MEASURE_DC_DOCKER=0
 

@@ -1,16 +1,16 @@
-#[path = "parse/anchors.rs"]
+#[path = "parse/reuse/anchors.rs"]
 mod anchors;
-#[path = "parse/basic/mod.rs"]
+#[path = "parse/schema/basic/mod.rs"]
 mod basic;
-#[path = "parse/coverage.rs"]
+#[path = "parse/schema/coverage.rs"]
 mod coverage;
-#[path = "parse/extends/mod.rs"]
+#[path = "parse/reuse/extends/mod.rs"]
 mod extends;
-#[path = "parse/fields.rs"]
+#[path = "parse/schema/fields.rs"]
 mod fields;
-#[path = "parse/include.rs"]
+#[path = "parse/reuse/include.rs"]
 mod include;
-#[path = "parse/new_keys.rs"]
+#[path = "parse/schema/new_keys.rs"]
 mod new_keys;
 #[path = "parse/order.rs"]
 mod order;

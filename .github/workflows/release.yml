@@ -231,11 +231,11 @@ jobs:
       - name: Verify Windows hardening (DllCharacteristics)
         if: matrix.target == 'x86_64-pc-windows-msvc' || matrix.target == 'aarch64-pc-windows-msvc'
         shell: pwsh
-        run: pwsh -NoProfile -File .github/scripts/check-hardening.ps1 "${{ matrix.asset }}"
+        run: pwsh -NoProfile -File .github/scripts/hardening/check-hardening.ps1 "${{ matrix.asset }}"
 
       - name: Verify macOS hardening (MH_PIE + stripped symbol table)
         if: matrix.target == 'aarch64-apple-darwin' || matrix.target == 'x86_64-apple-darwin'
-        run: bash .github/scripts/check-hardening-macos.sh "${{ matrix.asset }}"
+        run: bash .github/scripts/hardening/check-hardening-macos.sh "${{ matrix.asset }}"
 
       - name: Use an x64 Python on the arm64 Windows runner (no arm64 wheel for cryptography)
         if: matrix.target == 'aarch64-pc-windows-msvc'
@@ -268,10 +268,10 @@ jobs:
           "$py" -m venv "$RUNNER_TEMP/signvenv"
           venv_py="$RUNNER_TEMP/signvenv/bin/python"
           [ -x "$venv_py" ] || venv_py="$RUNNER_TEMP/signvenv/Scripts/python.exe"
-          "$venv_py" -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
+          "$venv_py" -m pip install --quiet --require-hashes -r .github/scripts/release/sign-requirements.txt
           # Keys are passed via the environment, not argv, so they never appear
           # in the process argument list.
-          "$venv_py" .github/scripts/sign.py "${{ matrix.asset }}"
+          "$venv_py" .github/scripts/release/sign.py "${{ matrix.asset }}"
 
       - name: Attest build provenance
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -304,7 +304,7 @@ jobs:
     #
     # It is meant to be the same image reusable-rust-debian.yml defaults to,
     # so the release that ships to users comes out of the environment the
-    # debian-build lane exercised. tests/workflows/workflow_debian_image.rs asserts
+    # debian-build lane exercised. tests/repository/workflows/workflow_debian_image.rs asserts
     # the two are the same value on every pull request, and pin-watch.yml
     # compares them with the digest the registry serves.
     container: debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5
@@ -401,8 +401,8 @@ jobs:
   # advisories), and `build.rs` has full filesystem access on the runner that
   # runs it. The release job holds GLYNDOR_RELEASE_ED25519_KEY on its signing
   # step; if SBOM generation lived in the same job, a malicious build script
-  # could persist in the workspace and rewrite `.github/scripts/sign.py` or
-  # `.github/scripts/sign-requirements.txt` before the signing step ran them
+  # could persist in the workspace and rewrite `.github/scripts/release/sign.py` or
+  # `.github/scripts/release/sign-requirements.txt` before the signing step ran them
   # with the key in its environment. This job holds `contents: read` and no
   # secrets, so persistence here has nothing to land on. See Glyndor/apt#121.
   sbom:
@@ -549,7 +549,7 @@ jobs:
           for arch in amd64 arm64; do
             dpkg-deb -x podup_*_"${arch}".deb "$RUNNER_TEMP/deb-${arch}"
           done
-          bash .github/scripts/check-hardening.sh \
+          bash .github/scripts/hardening/check-hardening.sh \
             podup-linux-x86_64 \
             podup-linux-arm64 \
             "$RUNNER_TEMP/deb-amd64/usr/bin/podup" \
@@ -596,22 +596,22 @@ jobs:
           "$py" -m venv "$RUNNER_TEMP/signvenv"
           venv_py="$RUNNER_TEMP/signvenv/bin/python"
           [ -x "$venv_py" ] || venv_py="$RUNNER_TEMP/signvenv/Scripts/python.exe"
-          "$venv_py" -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
+          "$venv_py" -m pip install --quiet --require-hashes -r .github/scripts/release/sign-requirements.txt
           # The key is read from GLYNDOR_RELEASE_ED25519_KEY in the environment, not argv.
-          "$venv_py" .github/scripts/sign.py SHA256SUMS
+          "$venv_py" .github/scripts/release/sign.py SHA256SUMS
           for deb in podup_*_amd64.deb podup_*_arm64.deb; do
-            "$venv_py" .github/scripts/sign.py "$deb"
+            "$venv_py" .github/scripts/release/sign.py "$deb"
           done
           # Sign the supply-chain artifacts so consumers can verify them offline.
           # Every per-target SBOM (the only *.cdx.json files in the workspace).
           for sbom in *.cdx.json; do
-            "$venv_py" .github/scripts/sign.py "$sbom"
+            "$venv_py" .github/scripts/release/sign.py "$sbom"
           done
-          "$venv_py" .github/scripts/sign.py NOTICES.html
+          "$venv_py" .github/scripts/release/sign.py NOTICES.html
           # Sign the installers so a user pinning PODUP_VERSION can verify the
           # script they pipe to a shell, not just the binaries it fetches.
-          "$venv_py" .github/scripts/sign.py install.sh
-          "$venv_py" .github/scripts/sign.py install.ps1
+          "$venv_py" .github/scripts/release/sign.py install.sh
+          "$venv_py" .github/scripts/release/sign.py install.ps1
 
       - name: Verify every signature against the keys consumers embed
         run: |
@@ -628,11 +628,11 @@ jobs:
           # A mismatch on any one fails the release instead of shipping it.
           venv_py="$RUNNER_TEMP/signvenv/bin/python"
           [ -x "$venv_py" ] || venv_py="$RUNNER_TEMP/signvenv/Scripts/python.exe"
-          "$venv_py" .github/scripts/verify-signing-key.py SHA256SUMS
+          "$venv_py" .github/scripts/release/verify-signing-key.py SHA256SUMS
           shopt -s nullglob
           for sig in *.sig; do
             base="${sig%.sig}"
-            "$venv_py" .github/scripts/verify-signing-key.py "$base" "$sig"
+            "$venv_py" .github/scripts/release/verify-signing-key.py "$base" "$sig"
           done
 
       - name: Verify every file the installers fetch is staged
@@ -647,7 +647,7 @@ jobs:
           # from install.sh's own ${BASE_URL} fetches, so it covers
           # SHA256SUMS.sig too: install.sh aborts without it, and nothing
           # upstream of here ever checked it was produced.
-          python3 .github/scripts/verify-release-assets.py \
+          python3 .github/scripts/release/verify-release-assets.py \
             --workdir . \
             --install-script install.sh \
             --install-ps1 install.ps1

@@ -10,7 +10,7 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
-# tests/supply_chain/audit_ignore_lists.rs keeps this list and .cargo/audit.toml equal.
+# tests/repository/supply_chain/audit_ignore_lists.rs keeps this list and .cargo/audit.toml equal.
 ignore = []
 
 [licenses]

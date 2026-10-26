@@ -32,13 +32,13 @@ Two comparisons, measured in one run on one machine:
 
 Identical digest-pinned images, pre-pulled before timing. Each number is the median over **10 measured iterations**: 12 runs with the first 2 discarded as warm-up; p95 and standard deviation are in parentheses.
 
-Failed iterations are counted; wholly failed cells have no median. Aggregation fails unless `--allow-failures` is passed. This run had one: `scale down` for podman-compose failed all 10 measured iterations (the tool exited 0 but left four replicas, the pod and the network behind every time, so the harness rewrote it to rc=97; see `bench/leftovers.sh` and #1947). 1392 timed runs, 10 with rc=97.
+Failed iterations are counted; wholly failed cells have no median. Aggregation fails unless `--allow-failures` is passed. This run had one: `scale down` for podman-compose failed all 10 measured iterations (the tool exited 0 but left four replicas, the pod and the network behind every time, so the harness rewrote it to rc=97; see `bench/lib/leftovers.sh` and #1947). 1392 timed runs, 10 with rc=97.
 
 Reproduce on a host with CPUs 2-9, taskset, both engines and successful pre-pulls:
 
 ```
 PODUP_BIN=/path/to/verified/podup-linux-x86_64 bash bench/run.sh --iters 12 --warmup 2 --cores 2-9
-python3 bench/aggregate.py --allow-failures
+python3 bench/report/aggregate.py --allow-failures
 ```
 
 Review every failed cell. Current HEAD is not the historical asset; raw run artifacts are not committed here (the harness writes them under `bench/results/`).
@@ -102,7 +102,7 @@ running_vms: 0
 | config-heavy | config | 13.3 ms (p95 14.6, sd 0.9) | 554.7 ms (p95 564.2, sd 5.2) | 115.3 ms (p95 131.6, sd 11.3) |
 | build | build | 0.285 s (p95 0.306, sd 0.008) | 0.368 s (p95 0.415, sd 0.015) | 1.469 s (p95 2.139, sd 0.270) |
 
-> **rc=97** (10 rows): Rows with rc=97 exited cleanly but left containers, pods or networks of their compose project behind; the harness rewrote them to 97 so a clean teardown is not compared against one that did a fraction of it. See bench/leftovers.sh for the detection and force-purge.
+> **rc=97** (10 rows): Rows with rc=97 exited cleanly but left containers, pods or networks of their compose project behind; the harness rewrote them to 97 so a clean teardown is not compared against one that did a fraction of it. See bench/lib/leftovers.sh for the detection and force-purge.
 
 ## Memory + CPU per command, same engine (peak RSS / CPU time, median)
 
@@ -220,7 +220,7 @@ Some median gaps are small relative to reported variability. One tool's standard
 
 The Docker-engine comparison (docker-compose on dockerd) is not a tool comparison, since the docker-compose column also folds in the engine difference. Two-variable comparisons do not attribute the difference to the engine; the engine and the tool change together in that column.
 
-**Memory.** Median peak RSS across the 29 podup operations is 6.0 MiB; the largest is 6.9 MiB (wide-level up), below `bench/memory-budget-mib`'s 9.0 MiB budget.
+**Memory.** Median peak RSS across the 29 podup operations is 6.0 MiB; the largest is 6.9 MiB (wide-level up), below `bench/budgets/memory-budget-mib`'s 9.0 MiB budget.
 
 `multi-healthcheck up` still measures healthcheck interval granularity more than tool speed, since the row waits for the healthcheck to flip.
 

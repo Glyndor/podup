@@ -19,28 +19,28 @@
 // size and expensive at three hundred.
 #![deny(missing_docs)]
 
-/// `podup autostart`: render and manage a rootless `systemctl --user` unit that
-/// brings a compose stack up at boot (service mode).
-pub mod autostart;
-/// Compose-file parsing, `extends:`/`include:` resolution, and topological
-/// service ordering.
-pub mod compose;
-pub(crate) mod engine;
+// One folder per concern. Each module the rest of the crate (or a consumer of
+// the library) reaches by name is re-exported from here under that name, so
+// moving a module between folders never changes a path.
+mod backends;
+mod connection;
 mod errors;
-mod input;
-pub(crate) mod libpod;
-/// Podman socket connection helpers.
-pub mod podman;
-/// Quadlet export: translate a parsed compose file into Podman systemd units.
-pub mod quadlet;
-/// Docker Compose `${VAR}`/`$VAR` substitution over raw YAML before parsing.
-pub mod substitute;
+mod parsing;
 /// Terminal colour/styling, honouring `--ansi`, `NO_COLOR`, and TTY detection.
 pub mod ui;
 /// Secure self-update for the `podup` binary (signature-verified release fetch).
 #[cfg(feature = "update")]
 pub mod update;
-mod values;
+
+pub use backends::autostart;
+pub(crate) use backends::engine;
+pub use backends::quadlet;
+pub(crate) use connection::libpod;
+pub use connection::podman;
+pub use parsing::compose;
+use parsing::input;
+pub use parsing::substitute;
+use parsing::values;
 
 pub(crate) use errors::error;
 #[doc(hidden)]

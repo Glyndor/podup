@@ -131,4 +131,4 @@ jobs:
           HEAD_SHA: ${{ (github.event_name == 'push' && github.ref_name == inputs.branch) && github.sha || '' }}
         run: |
           set -euo pipefail
-          bash .github/scripts/check-branch-conclusion.sh
+          bash .github/scripts/checks/check-branch-conclusion.sh
