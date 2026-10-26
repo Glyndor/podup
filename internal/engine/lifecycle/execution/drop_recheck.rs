@@ -21,7 +21,7 @@ use crate::libpod::API_PREFIX;
 /// failed or completed and lost only its reply; the two are indistinguishable
 /// at HTTP (#1104). This names the observable that answers it out of band.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum LifecycleGoal {
+pub(in crate::engine::lifecycle) enum LifecycleGoal {
 	/// `start`, `restart`: the container should be running afterwards.
 	Running,
 	/// `kill`, `stop`: the container should not be running afterwards.
@@ -42,7 +42,7 @@ impl LifecycleGoal {
 	/// `"unknown"|"created"|...|"stopping"`) but the test is case-insensitive so
 	/// a future libpod returning `Running` or `RUNNING` does not produce a
 	/// false negative (#1369).
-	pub(super) fn reached(self, state: Option<&str>) -> bool {
+	pub(in crate::engine::lifecycle) fn reached(self, state: Option<&str>) -> bool {
 		let running = state.is_some_and(|s| s.eq_ignore_ascii_case("running"));
 		match self {
 			Self::Running => running,
@@ -63,7 +63,7 @@ impl Engine {
 	/// fail closed: a container that did not reach it, and a re-check that could
 	/// not be read. Neither is confirmation, and reporting success without one is
 	/// the failure this exists to prevent.
-	pub(super) async fn confirm_lost_response(
+	pub(in crate::engine::lifecycle) async fn confirm_lost_response(
 		&self,
 		container: &str,
 		done: &str,
@@ -105,7 +105,10 @@ impl Engine {
 	/// inspect response is several times the size for the one field wanted here
 	/// (#1298). libpod's `name` filter matches on substring, so the exact name is
 	/// picked out of the results rather than trusted from the query.
-	pub(super) async fn container_state(&self, container: &str) -> Result<Option<String>> {
+	pub(in crate::engine::lifecycle) async fn container_state(
+		&self,
+		container: &str,
+	) -> Result<Option<String>> {
 		let filters = serde_json::json!({ "name": [container] });
 		let path = format!(
 			"{API_PREFIX}/containers/json?all=true&filters={}",

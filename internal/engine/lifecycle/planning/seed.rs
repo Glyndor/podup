@@ -19,8 +19,8 @@ use std::collections::{HashMap, HashSet};
 use crate::compose::types::{ComposeFile, Service};
 use crate::ui::progress::Kind;
 
-use super::super::network::resolve_network_name;
-use super::super::Engine;
+use super::super::super::network::resolve_network_name;
+use super::super::super::Engine;
 
 /// Every container a level-walking lifecycle command will act on, in the order
 /// it will act on them: the levels as that command walks them (already
@@ -32,7 +32,7 @@ use super::super::Engine;
 /// because a row that never moves reads as something hung. Shared by `stop`,
 /// `start`, `restart`, `kill`, `pause`, `unpause` and `rm`, which all walk
 /// levels over the same prefetched listing.
-pub(super) fn level_container_resources(
+pub(in crate::engine::lifecycle) fn level_container_resources(
 	levels: &[Vec<String>],
 	live_by_service: &HashMap<String, Vec<String>>,
 ) -> Vec<(Kind, String)> {
@@ -88,7 +88,7 @@ impl Engine {
 	/// The order matters as much as the contents: the board's completed rows
 	/// scroll away in this order, and that scrollback is the record the command
 	/// leaves behind.
-	pub(super) fn up_resources(
+	pub(in crate::engine::lifecycle) fn up_resources(
 		&self,
 		file: &ComposeFile,
 		enabled: &HashSet<String>,
@@ -133,7 +133,7 @@ impl Engine {
 	/// Containers come from what Podman actually has, not from the compose file:
 	/// `down` removes what exists, and a file listing a service that was never
 	/// created would put a row on the board that never moves.
-	pub(super) fn down_resources(
+	pub(in crate::engine::lifecycle) fn down_resources(
 		&self,
 		file: &ComposeFile,
 		live: &[String],
@@ -161,7 +161,7 @@ impl Engine {
 	/// cannot tell. An image already in storage produces no verb on this path,
 	/// so seeding a row for it would leave a line reading `Pending` after the
 	/// board closed.
-	pub(super) fn run_resources(
+	pub(in crate::engine::lifecycle) fn run_resources(
 		&self,
 		file: &ComposeFile,
 		service: &Service,

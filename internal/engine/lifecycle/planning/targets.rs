@@ -17,7 +17,7 @@ use crate::error::{ComposeError, Result};
 const STOP_GRACE_BUFFER_SECS: u64 = 30;
 
 /// The per-service shutdown grace from `stop_grace_period` (default 10s).
-pub(super) fn service_grace_period_secs(service: &Service) -> i32 {
+pub(in crate::engine::lifecycle) fn service_grace_period_secs(service: &Service) -> i32 {
 	service
 		.stop_grace_period
 		.as_deref()
@@ -43,7 +43,7 @@ pub fn validate_stop_timeout(timeout: Option<i32>) -> Result<Option<i32>> {
 /// passes through; `-1` ("wait indefinitely") maps to the largest value
 /// libpod accepts so podman does not escalate to `SIGKILL` on its own,
 /// matching `docker stop -t -1`. Pure.
-pub(super) fn stop_timeout_param(grace: i32) -> i64 {
+pub(in crate::engine::lifecycle) fn stop_timeout_param(grace: i32) -> i64 {
 	if grace < 0 {
 		i64::from(i32::MAX)
 	} else {
@@ -54,7 +54,7 @@ pub(super) fn stop_timeout_param(grace: i32) -> i64 {
 /// Client-side deadline for a `stop` call: the grace window plus
 /// [`STOP_GRACE_BUFFER_SECS`]. `-1` ("wait indefinitely") yields `None`, leaving
 /// the call uncapped like `docker stop -t -1`. Pure so the policy is unit-tested.
-pub(super) fn stop_deadline(grace: i32) -> Option<Duration> {
+pub(in crate::engine::lifecycle) fn stop_deadline(grace: i32) -> Option<Duration> {
 	if grace < 0 {
 		None
 	} else {
@@ -65,7 +65,7 @@ pub(super) fn stop_deadline(grace: i32) -> Option<Duration> {
 impl crate::engine::Engine {
 	/// Shutdown grace (seconds) for a service: the CLI `-t/--timeout` override
 	/// when set, otherwise the service's `stop_grace_period`.
-	pub(super) fn grace_period_secs(&self, service: &Service) -> i32 {
+	pub(in crate::engine::lifecycle) fn grace_period_secs(&self, service: &Service) -> i32 {
 		self.stop_timeout
 			.unwrap_or_else(|| service_grace_period_secs(service))
 	}
@@ -74,7 +74,7 @@ impl crate::engine::Engine {
 /// Return the ordered service names filtered to `target_services`.
 ///
 /// Returns an error if any name in `target_services` is not in the file.
-pub(super) fn filter_services(
+pub(in crate::engine::lifecycle) fn filter_services(
 	file: &ComposeFile,
 	order: Vec<String>,
 	target_services: &[String],
@@ -100,7 +100,10 @@ pub(super) fn filter_services(
 /// a bogus name would silently match nothing and exit 0. This validates the list
 /// up front, matching docker-compose and the stop/start/kill commands, which
 /// already reject unknown services via [`filter_services`].
-pub(super) fn validate_targets(file: &ComposeFile, target_services: &[String]) -> Result<()> {
+pub(in crate::engine::lifecycle) fn validate_targets(
+	file: &ComposeFile,
+	target_services: &[String],
+) -> Result<()> {
 	for name in target_services {
 		if !file.services.contains_key(name) {
 			return Err(ComposeError::ServiceNotFound(name.clone()));
@@ -118,7 +121,7 @@ pub(super) fn validate_targets(file: &ComposeFile, target_services: &[String]) -
 /// [`validate_targets`] so a typo'd/unknown name fails loudly instead of being
 /// silently skipped, mirroring [`filter_services`] (and docker compose's "no
 /// such service").
-pub(super) fn expand_targets(
+pub(in crate::engine::lifecycle) fn expand_targets(
 	file: &ComposeFile,
 	target_services: &[String],
 	no_deps: bool,
@@ -154,7 +157,10 @@ pub(super) fn expand_targets(
 /// [`expand_targets`] omits the targets' dependencies, so this returns `false`
 /// for an intentionally-excluded dependency, letting the caller skip its
 /// `depends_on` readiness wait, matching docker-compose.
-pub(super) fn in_started_set(target_set: &Option<HashSet<String>>, name: &str) -> bool {
+pub(in crate::engine::lifecycle) fn in_started_set(
+	target_set: &Option<HashSet<String>>,
+	name: &str,
+) -> bool {
 	match target_set {
 		None => true,
 		Some(set) => set.contains(name),

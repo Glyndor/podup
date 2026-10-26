@@ -40,7 +40,9 @@ pub(in crate::engine) const MAX_LIFECYCLE_CONCURRENCY: usize = 16;
 /// is why the secret pre-creation stage (#1219) chunks `join_all` against
 /// [`MAX_LIFECYCLE_CONCURRENCY`] instead of calling this. The cap is shared; the
 /// dispatcher is not.
-pub(super) async fn join_bounded<F, T>(futs: impl IntoIterator<Item = F>) -> Vec<T>
+pub(in crate::engine::lifecycle) async fn join_bounded<F, T>(
+	futs: impl IntoIterator<Item = F>,
+) -> Vec<T>
 where
 	F: std::future::Future<Output = T>,
 	T: Send,
@@ -67,9 +69,9 @@ pub(in crate::engine) fn first_error(results: Vec<Result<()>>) -> Option<Compose
 
 /// Filter each dependency level down to `target_services`, dropping levels that
 /// end up empty. An empty target list keeps every level. Returns an error if any
-/// requested name is not in the file, matching [`super::targets::filter_services`]
+/// requested name is not in the file, matching [`crate::engine::lifecycle::targets::filter_services`]
 /// (and docker compose's "no such service").
-pub(super) fn filter_levels(
+pub(in crate::engine::lifecycle) fn filter_levels(
 	file: &ComposeFile,
 	levels: Vec<Vec<String>>,
 	target_services: &[String],
@@ -87,7 +89,7 @@ pub(super) fn filter_levels(
 }
 
 /// Keep only the level entries matching `keep`, dropping levels left empty.
-pub(super) fn retain_levels(
+pub(in crate::engine::lifecycle) fn retain_levels(
 	levels: Vec<Vec<String>>,
 	keep: impl Fn(&str) -> bool,
 ) -> Vec<Vec<String>> {
@@ -110,7 +112,7 @@ pub(super) fn retain_levels(
 /// targets plus, unless `no_deps`, every service whose `depends_on` carries a
 /// `restart: true` condition pointing at one of the targets (one hop, matching
 /// the previous serial implementation).
-pub(super) fn restart_service_set(
+pub(in crate::engine::lifecycle) fn restart_service_set(
 	file: &ComposeFile,
 	target_services: &[String],
 	no_deps: bool,

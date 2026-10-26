@@ -42,7 +42,11 @@ where
 
 impl Engine {
 	/// Resolve inherited images once, using the same tag as the owning service.
-	pub(super) fn pre_start_steps(&self, service_name: &str, service: &Service) -> Vec<Service> {
+	pub(in crate::engine::lifecycle) fn pre_start_steps(
+		&self,
+		service_name: &str,
+		service: &Service,
+	) -> Vec<Service> {
 		let mut steps = build_steps(service);
 		for (step, declared) in steps.iter_mut().zip(&service.pre_start) {
 			if declared.image.is_none() && declared.build.is_none() {
