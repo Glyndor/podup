@@ -15,13 +15,15 @@
 //! loop below only owns the watcher plumbing and the per-path decision.
 
 mod actions;
-mod events;
-mod ignore_filter;
+mod filtering;
 mod placement;
 pub(in crate::backends::engine) mod sync;
 #[cfg(feature = "test-helpers")]
 mod test_helpers;
-mod writeback;
+
+use filtering::events;
+use filtering::ignore_filter;
+use filtering::writeback;
 
 use std::collections::HashMap;
 use std::collections::HashSet;

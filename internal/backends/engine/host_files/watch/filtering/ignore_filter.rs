@@ -16,7 +16,9 @@ use tracing::warn;
 use crate::engine::build::is_remote_context;
 use crate::engine::context::ignore_patterns::{evaluate, read_patterns};
 
-use super::sync::{legacy_project_relative_ignored, legacy_project_relative_included};
+use crate::backends::engine::host_files::watch::sync::{
+	legacy_project_relative_ignored, legacy_project_relative_included,
+};
 
 /// Resolve the local build context's ignore file (if any) for `service`.
 ///
@@ -26,7 +28,7 @@ use super::sync::{legacy_project_relative_ignored, legacy_project_relative_inclu
 /// `build:` (image-only or remote context) or when the ignore file is missing.
 /// A remote context (URL/git) never has a local `.dockerignore`, so this also
 /// returns empty patterns.
-pub(super) fn local_build_context_patterns(
+pub(in crate::backends::engine::host_files::watch) fn local_build_context_patterns(
 	base_dir: &Path,
 	service: &crate::compose::types::Service,
 ) -> (Option<PathBuf>, Vec<String>) {

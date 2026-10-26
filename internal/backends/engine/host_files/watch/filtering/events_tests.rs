@@ -248,7 +248,8 @@ fn rules_not_recovered_lists_only_what_recovery_did_not_run() {
 		make_entry("web", "with_restart", WatchAction::SyncAndRestart, true),
 		make_entry("worker", "Dockerfile", WatchAction::Rebuild, true),
 	];
-	let mut got = super::super::Engine::rules_not_recovered(&rules, &[]);
+	let mut got =
+		crate::backends::engine::host_files::watch::Engine::rules_not_recovered(&rules, &[]);
 	got.sort();
 	assert_eq!(
 		got,
@@ -413,6 +414,9 @@ fn sync_op_for_permission_error_is_not_remove() {
 #[test]
 fn rules_not_recovered_names_a_failed_compound_rule_once() {
 	let entry = make_entry("web", "src", WatchAction::SyncAndRestart, true);
-	let got = super::super::Engine::rules_not_recovered(&[entry], &["web:src".to_string()]);
+	let got = crate::backends::engine::host_files::watch::Engine::rules_not_recovered(
+		&[entry],
+		&["web:src".to_string()],
+	);
 	assert_eq!(got, vec!["web:src".to_string()]);
 }

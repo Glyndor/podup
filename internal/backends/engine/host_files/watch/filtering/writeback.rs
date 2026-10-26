@@ -51,24 +51,26 @@ use crate::engine::container::resolve_bind_source;
 use crate::engine::volume_mounts::{bind_mounts, mount_targets};
 use crate::error::{ComposeError, Result};
 
-use super::actions::entry_is_unsyncable;
-use super::events;
-use super::placement::{join_container_path, normalise_container_path, plan_remove_placement};
-use super::Engine;
+use crate::backends::engine::host_files::watch::actions::entry_is_unsyncable;
+use crate::backends::engine::host_files::watch::events;
+use crate::backends::engine::host_files::watch::placement::{
+	join_container_path, normalise_container_path, plan_remove_placement,
+};
+use crate::backends::engine::host_files::watch::Engine;
 
 /// One effective mount the watch loop considers when answering
 /// `writes_back`. The vector is computed once per service at watch start
 /// and shared by every rule of that service.
 #[derive(Debug, Clone)]
-pub(super) struct EffectiveMount {
+pub(in crate::backends::engine::host_files::watch) struct EffectiveMount {
 	/// Container-side path of the mount. Compared component-wise against
 	/// the in-container path of the change.
-	pub(super) target: String,
+	pub(in crate::backends::engine::host_files::watch) target: String,
 	/// Canonicalised host path for bind mounts, `None` for named volumes
 	/// and tmpfs entries (a copy into them never touches the host).
-	pub(super) bind_source: Option<PathBuf>,
+	pub(in crate::backends::engine::host_files::watch) bind_source: Option<PathBuf>,
 	/// Parsed read-only flag from the bind. `false` for non-bind entries.
-	pub(super) read_only: bool,
+	pub(in crate::backends::engine::host_files::watch) read_only: bool,
 }
 
 /// Build one `EffectiveMount` per `mount_targets(service)` entry, filling
@@ -76,7 +78,10 @@ pub(super) struct EffectiveMount {
 /// target is a bind. The walk goes through `mount_targets` so a tmpfs
 /// without a corresponding bind entry shows up as `bind_source: None`,
 /// the same way a named volume does; both are skipped by `writes_back`.
-pub(super) fn effective_mounts(service: &Service, base_dir: &Path) -> Vec<EffectiveMount> {
+pub(in crate::backends::engine::host_files::watch) fn effective_mounts(
+	service: &Service,
+	base_dir: &Path,
+) -> Vec<EffectiveMount> {
 	let binds = bind_mounts(service);
 	let mut out: Vec<EffectiveMount> = Vec::with_capacity(mount_targets(service).len());
 	for target in mount_targets(service) {
@@ -110,7 +115,7 @@ pub(super) fn effective_mounts(service: &Service, base_dir: &Path) -> Vec<Effect
 /// tmpfs under the bind) does not write back, even when the wider bind
 /// does; the longest matching `target` wins. A read-only bind cannot
 /// write back, so it also returns `None`.
-pub(super) fn writes_back(
+pub(in crate::backends::engine::host_files::watch) fn writes_back(
 	mounts: &[EffectiveMount],
 	container_path: &str,
 	watched_root: &Path,
@@ -201,7 +206,7 @@ impl Engine {
 	/// action still runs; this only gates the sync upload/remove.
 	pub(in crate::backends::engine::host_files::watch) async fn maybe_sync(
 		&self,
-		entry: &super::RuleEntry,
+		entry: &crate::backends::engine::host_files::watch::RuleEntry,
 		path: &Path,
 		ensured: &mut HashSet<(String, String)>,
 	) -> Result<()> {

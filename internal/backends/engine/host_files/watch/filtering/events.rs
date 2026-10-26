@@ -16,8 +16,8 @@ use tokio::sync::mpsc;
 use tokio::sync::Notify;
 use tracing::debug;
 
-use super::placement::is_dispatch_event;
-use super::RuleEntry;
+use crate::backends::engine::host_files::watch::placement::is_dispatch_event;
+use crate::backends::engine::host_files::watch::RuleEntry;
 use crate::compose::types::WatchAction;
 use crate::engine::Engine;
 use tracing::{info, warn};
@@ -25,7 +25,7 @@ use tracing::{info, warn};
 /// The mpsc item produced by the notify callback, after the
 /// [`should_enqueue`] filter has run. Matches the notify crate's own
 /// [`notify::Result`]; the watch loop just unwraps the same shape.
-pub(super) type WatchEvent = notify::Result<notify::Event>;
+pub(in crate::backends::engine::host_files::watch) type WatchEvent = notify::Result<notify::Event>;
 
 /// True when `res` should occupy a slot in the watch channel.
 ///
@@ -37,7 +37,7 @@ pub(super) type WatchEvent = notify::Result<notify::Event>;
 /// wakes up, so the recovery path would never know the kernel itself
 /// declared an overflow. The flag and the channel both carry it; the
 /// loop's filter still drops it after the recovery runs.
-pub(super) fn should_enqueue(res: &WatchEvent) -> bool {
+pub(in crate::backends::engine::host_files::watch) fn should_enqueue(res: &WatchEvent) -> bool {
 	match res {
 		Err(_) => true,
 		Ok(e) => e.need_rescan() || is_dispatch_event(&e.kind),
@@ -64,7 +64,7 @@ pub(super) fn should_enqueue(res: &WatchEvent) -> bool {
 /// cannot be lost to the race where the consumer drains the channel and
 /// blocks in `recv` between the channel rejecting the event and the
 /// callback storing the flag.
-pub(super) fn enqueue(
+pub(in crate::backends::engine::host_files::watch) fn enqueue(
 	tx: &mpsc::Sender<WatchEvent>,
 	overflow: &std::sync::atomic::AtomicBool,
 	overflow_wake: &Notify,
@@ -96,7 +96,7 @@ pub(super) fn enqueue(
 
 /// What to do with a single host path in a dispatch batch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum SyncOp {
+pub(in crate::backends::engine::host_files::watch) enum SyncOp {
 	/// The path is present on the host: tar it and PUT it into the container.
 	Upload,
 	/// The path is gone on the host: mirror the deletion into the container.
@@ -114,7 +114,9 @@ pub(super) enum SyncOp {
 /// caller: the path on disk is unknown, and removing the container copy
 /// because the host was briefly unreadable is exactly the bug this function
 /// exists to prevent.
-pub(super) fn sync_op_for(path: &Path) -> std::io::Result<SyncOp> {
+pub(in crate::backends::engine::host_files::watch) fn sync_op_for(
+	path: &Path,
+) -> std::io::Result<SyncOp> {
 	match std::fs::symlink_metadata(path) {
 		Ok(_) => Ok(SyncOp::Upload),
 		Err(e) => match e.kind() {
@@ -147,7 +149,7 @@ impl Engine {
 	/// unchanged. The overflow-recovery path appends these to its
 	/// not-recovered list so the summary can tell the operator which
 	/// rules were skipped silently by the earlier implementation.
-	pub(super) async fn sync_all(
+	pub(in crate::backends::engine::host_files::watch) async fn sync_all(
 		&self,
 		rule_entries: &[RuleEntry],
 		ensured: &mut HashSet<(String, String)>,
@@ -199,7 +201,7 @@ impl Engine {
 	/// `initial_sync`, any `sync+restart` / `sync+exec` rule whose
 	/// restart or exec was not re-run, any `rebuild` / `restart` rule)
 	/// is named once in the warning.
-	pub(super) fn rules_not_recovered(
+	pub(in crate::backends::engine::host_files::watch) fn rules_not_recovered(
 		rule_entries: &[RuleEntry],
 		failed: &[String],
 	) -> Vec<String> {
@@ -224,7 +226,7 @@ impl Engine {
 	/// iteration and again after a batch has been dispatched, so a
 	/// queue overflow that surfaced while a batch was being processed
 	/// still gets the recovery before the next batch.
-	pub(super) async fn recover_from_overflow(
+	pub(in crate::backends::engine::host_files::watch) async fn recover_from_overflow(
 		&self,
 		overflow: &std::sync::atomic::AtomicBool,
 		rule_entries: &[RuleEntry],
