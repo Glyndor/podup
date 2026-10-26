@@ -74,7 +74,7 @@ fn the_head_sha_shape_catches_a_missing_branch_comparison() {
           WORKFLOW: ${{ inputs.workflow }}
           BRANCH: ${{ inputs.branch }}
           HEAD_SHA: ${{ github.event_name == 'push' && github.sha || '' }}
-        run: bash .github/scripts/check-branch-conclusion.sh
+        run: bash .github/scripts/checks/check-branch-conclusion.sh
 ";
 	let expr_orig = head_sha_expression(reusable_orig);
 	assert_ne!(
@@ -91,7 +91,7 @@ fn the_head_sha_shape_catches_a_missing_branch_comparison() {
         env:
           WORKFLOW: ${{ inputs.workflow }}
           HEAD_SHA: ${{ (github.event_name == 'push' && github.ref_name == inputs.branch) && github.sha || '' }}
-        run: bash .github/scripts/check-branch-conclusion.sh
+        run: bash .github/scripts/checks/check-branch-conclusion.sh
 ";
 	assert_eq!(
 		head_sha_expression(reusable_ok),

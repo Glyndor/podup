@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Behaviour tests for `.github/scripts/check-planning-words.sh`.
+# Behaviour tests for `.github/scripts/checks/check-planning-words.sh`.
 #
 # The script fails when a tracked file names a planning note instead of
 # stating what the code does. Each case plants
@@ -22,7 +22,7 @@
 set -u
 
 cd "$(dirname "$0")/../.." || exit 1
-script="$PWD/.github/scripts/check-planning-words.sh"
+script="$PWD/.github/scripts/checks/check-planning-words.sh"
 
 # The word is assembled at run time so this file does not trip the gate it
 # tests. Writing it literally would need an exemption for this path, and an

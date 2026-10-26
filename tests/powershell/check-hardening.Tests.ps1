@@ -1,6 +1,6 @@
 #Requires -Version 5.1
 <#
-Drive .github/scripts/check-hardening.ps1 over the four properties, with one
+Drive .github/scripts/hardening/check-hardening.ps1 over the four properties, with one
 control binary per property. Each control is a copy of the good binary with
 exactly one bit cleared in DllCharacteristics, so a check that stopped
 looking at one property would show as that control passing.
@@ -46,7 +46,7 @@ function Assert-Eq {
 }
 
 # PE32+ byte sequence the parser will accept. Offsets below match
-# .github/scripts/check-hardening.ps1's reads.
+# .github/scripts/hardening/check-hardening.ps1's reads.
 #
 #   0..63     DOS header, e_lfanew at 0x3C = 64
 #   64..67    PE signature ("PE\0\0")

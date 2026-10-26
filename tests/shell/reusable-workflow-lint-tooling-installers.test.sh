@@ -12,7 +12,7 @@
 # the property it was supposed to gate still fires. The release signing
 # job is the canonical example: it holds the Ed25519 release key in
 # `GLYNDOR_RELEASE_ED25519_KEY` and runs `pip install --quiet
-# --require-hashes -r .github/scripts/sign-requirements.txt`, which
+# --require-hashes -r .github/scripts/release/sign-requirements.txt`, which
 # executes the cryptography package's native build script. Hashed,
 # so it is exempt; the cryptography build script runs either way.
 #

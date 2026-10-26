@@ -32,7 +32,7 @@
 //!    nothing.
 //!
 //! The conclusion logic itself lives in
-//! `.github/scripts/check-branch-conclusion.sh` and is exercised against
+//! `.github/scripts/checks/check-branch-conclusion.sh` and is exercised against
 //! planted API answers in `tests/shell/branch-health-conclusion.test.sh`,
 //! which is the only assertion of behavior this repository can make
 //! without `gh`.

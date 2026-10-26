@@ -22,7 +22,7 @@ set -euo pipefail
 # on the repo root regardless of where the script is invoked from.
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 FIXTURE_DIR="$REPO_ROOT/tests/fixtures/releases"
-VERIFIER="$REPO_ROOT/.github/scripts/verify-signing-key.py"
+VERIFIER="$REPO_ROOT/.github/scripts/release/verify-signing-key.py"
 INSTALL_SH="$REPO_ROOT/install.sh"
 
 PYTHON_PRESENT=0

@@ -13,7 +13,7 @@ on:
       # without this line a pull request that touches only the reusable
       # merges without ever running it.
       - ".github/workflows/reusable-powershell-ci.yml"
-      - ".github/scripts/check-hardening.ps1"
+      - ".github/scripts/hardening/check-hardening.ps1"
       - "tests/powershell/check-hardening.Tests.ps1"
       # The rustflags that give the Windows binary Control Flow Guard live
       # here; a change to them is what this workflow builds and reads.
@@ -32,7 +32,7 @@ on:
       # without this line a pull request that touches only the reusable
       # merges without ever running it.
       - ".github/workflows/reusable-powershell-ci.yml"
-      - ".github/scripts/check-hardening.ps1"
+      - ".github/scripts/hardening/check-hardening.ps1"
       - "tests/powershell/check-hardening.Tests.ps1"
       # The rustflags that give the Windows binary Control Flow Guard live
       # here; a change to them is what this workflow builds and reads.
@@ -102,4 +102,4 @@ jobs:
         run: cargo build --release --locked
       - name: Read the hardening off the built binary
         shell: pwsh
-        run: pwsh -NoProfile -File .github/scripts/check-hardening.ps1 target/release/podup.exe
+        run: pwsh -NoProfile -File .github/scripts/hardening/check-hardening.ps1 target/release/podup.exe

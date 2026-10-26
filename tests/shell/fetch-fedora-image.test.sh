@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Behaviour tests for `.github/scripts/fetch-fedora-image.sh`.
+# Behaviour tests for `.github/scripts/fedora_image/fetch-fedora-image.sh`.
 #
 # The lane pulls ~500 MB off dl.fedoraproject.org, which 404s about
 # half the time in streaks longer than `--retry 5 --retry-delay 5`

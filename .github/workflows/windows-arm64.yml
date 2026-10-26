@@ -94,5 +94,5 @@ jobs:
         run: |
           set -euo pipefail
           python -m venv "$RUNNER_TEMP/signvenv"
-          "$RUNNER_TEMP/signvenv/Scripts/python.exe" -m pip install --quiet --require-hashes -r .github/scripts/sign-requirements.txt
+          "$RUNNER_TEMP/signvenv/Scripts/python.exe" -m pip install --quiet --require-hashes -r .github/scripts/release/sign-requirements.txt
           "$RUNNER_TEMP/signvenv/Scripts/python.exe" -c "import cryptography, platform; print(cryptography.__version__, platform.machine())"

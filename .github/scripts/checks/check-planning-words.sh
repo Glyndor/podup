@@ -12,7 +12,7 @@
 # because it records history in its own register.
 set -euo pipefail
 
-hits="$(git grep -n -I -i -w -E 'brief|briefs|briefing' -- ':!CHANGELOG.md' ':!.github/scripts/check-planning-words.sh' || true)"
+hits="$(git grep -n -I -i -w -E 'brief|briefs|briefing' -- ':!CHANGELOG.md' ':!.github/scripts/checks/check-planning-words.sh' || true)"
 if [ -n "$hits" ]; then
 	echo "$hits" | while IFS= read -r line; do
 		file="${line%%:*}"

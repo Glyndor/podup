@@ -1,7 +1,7 @@
 name: Linux release binaries are hardened
 
 # The release verifies the Linux binaries are static PIE, full RELRO, NX
-# stack and stripped before it signs them (.github/scripts/check-hardening.sh).
+# stack and stripped before it signs them (.github/scripts/hardening/check-hardening.sh).
 # That gate fires at tag time, when a failure costs a release run. This job
 # builds the two Linux release targets the way release.yml does, on the same
 # runners, runs the binary once and reads the same properties off it, so the
@@ -16,7 +16,7 @@ on:
     paths:
       - ".cargo/**"
       - "Cargo.toml"
-      - ".github/scripts/check-hardening.sh"
+      - ".github/scripts/hardening/check-hardening.sh"
       - ".github/workflows/linux-hardening.yml"
       - ".github/workflows/release.yml"
   pull_request:
@@ -26,7 +26,7 @@ on:
     paths:
       - ".cargo/**"
       - "Cargo.toml"
-      - ".github/scripts/check-hardening.sh"
+      - ".github/scripts/hardening/check-hardening.sh"
       - ".github/workflows/linux-hardening.yml"
       - ".github/workflows/release.yml"
   workflow_dispatch:
@@ -83,4 +83,4 @@ jobs:
           set -euo pipefail
           bin="target/$TARGET/release/podup"
           "$bin" --version
-          bash .github/scripts/check-hardening.sh "$bin"
+          bash .github/scripts/hardening/check-hardening.sh "$bin"

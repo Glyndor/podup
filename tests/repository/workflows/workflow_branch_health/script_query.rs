@@ -7,12 +7,12 @@
 use std::fs;
 use std::path::Path;
 
-/// Read a file from `.github/scripts/`. The API shape assertions moved
+/// Read a file from `.github/scripts/checks/`. The API shape assertions moved
 /// here from the reusable when the `gh api` call moved into the
 /// script the reusable calls.
 fn read_script(name: &str) -> String {
 	let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-		.join(".github/scripts")
+		.join(".github/scripts/checks")
 		.join(name);
 	fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name} is readable: {e}"))
 }

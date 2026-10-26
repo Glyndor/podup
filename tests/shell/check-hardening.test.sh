@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# .github/scripts/check-hardening.sh must pass a binary that carries every
+# .github/scripts/hardening/check-hardening.sh must pass a binary that carries every
 # property and fail one that lacks exactly one, naming the property. The
 # controls are built here with gcc, one flag away from the good one each, so a
 # check that stopped looking at a property would show as its control passing.
@@ -9,7 +9,7 @@
 set -u
 
 cd "$(dirname "$0")/../.." || exit 1
-script=.github/scripts/check-hardening.sh
+script=.github/scripts/hardening/check-hardening.sh
 pass=0; fail=0
 
 check() { # <description> <expected> <actual>

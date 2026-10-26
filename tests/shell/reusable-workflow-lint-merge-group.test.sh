@@ -96,7 +96,7 @@ check "the merge-group step was extracted from the workflow" "1" \
 	"$(grep -c check-merge-group-triggers.py "$WORK/merge-group.sh" | awk '{print ($1>0)}')"
 
 check "the merge-group trigger script lives next to the other GitHub scripts" "1" \
-	"$(test -f "$HERE/.github/scripts/check-merge-group-triggers.py" && echo 1 || echo 0)"
+	"$(test -f "$HERE/.github/scripts/checks/check-merge-group-triggers.py" && echo 1 || echo 0)"
 
 # ---------------------------------------------------------------------------
 # Fixture helpers
@@ -109,7 +109,7 @@ check "the merge-group trigger script lives next to the other GitHub scripts" "1
 # so the real reusables travel with the tree.
 new() {
 	rm -rf "$WORK/t"
-	mkdir -p "$WORK/t/.github/workflows" "$WORK/t/.github/scripts"
+	mkdir -p "$WORK/t/.github/workflows" "$WORK/t/.github/scripts/checks"
 	for r in \
 		reusable-rust-ci.yml \
 		reusable-dco.yml \
@@ -118,8 +118,8 @@ new() {
 		reusable-workflow-lint.yml; do
 		cp "$HERE/.github/workflows/$r" "$WORK/t/.github/workflows/"
 	done
-	cp "$HERE/.github/scripts/check-merge-group-triggers.py" \
-		"$WORK/t/.github/scripts/"
+	cp "$HERE/.github/scripts/checks/check-merge-group-triggers.py" \
+		"$WORK/t/.github/scripts/checks/"
 	printf '%s' "$WORK/t"
 }
 run_in() { ( cd "$1" && bash "$2" 2>&1 ); }

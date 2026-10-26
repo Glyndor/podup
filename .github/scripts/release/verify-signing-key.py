@@ -34,7 +34,7 @@ from pathlib import Path
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-DEFAULT_INSTALLER = Path(__file__).resolve().parents[2] / "install.sh"
+DEFAULT_INSTALLER = Path(__file__).resolve().parents[3] / "install.sh"
 
 # Matches every installer slot (`PODUP_RELEASE_PUBKEY_B64`,
 # `PODUP_RELEASE_PUBKEY2_B64`, `PODUP_RELEASE_PUBKEY3_B64`, ...). The `[0-9]?`

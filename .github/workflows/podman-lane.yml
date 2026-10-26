@@ -72,7 +72,7 @@ jobs:
   # Cargo.toml, Cargo.lock and debian/changelog, and a bump used to boot both
   # VMs twice, once on the pull request and once in the merge queue. Those
   # names stay off the list, because a file called Cargo.toml can also carry a
-  # dependency change. Instead `.github/scripts/is-version-bump.sh` reads the
+  # dependency change. Instead `.github/scripts/checks/is-version-bump.sh` reads the
   # content of the range and says yes only when the sole change is the podup
   # version line (plain X.Y.Z) in Cargo.toml and in Cargo.lock, plus whole
   # lines put in front of debian/changelog, with nothing else touched. Any
@@ -135,7 +135,7 @@ jobs:
           # would be judged by its own edit. If the base has no such script
           # (the pull request that introduces it) `git show` fails, the pipe
           # fails under pipefail, and the allowlist below decides.
-          if git show "$BASE_SHA:.github/scripts/is-version-bump.sh" \
+          if git show "$BASE_SHA:.github/scripts/checks/is-version-bump.sh" \
               | bash -s -- "$BASE_SHA" "$HEAD_SHA"; then
             echo "engine=false" >> "$GITHUB_OUTPUT"
             echo "a pure version bump: nothing in this range can reach the VM"
@@ -190,7 +190,7 @@ jobs:
       - name: Fetch Fedora cloud image (Podman 6 = rawhide, 5 = Fedora 44)
         if: needs.decide.outputs.engine == 'true'
         run: |
-          # The script lives in .github/scripts/ so it ships with the repo;
+          # The script lives in .github/scripts/fedora_image/ so it ships with the repo;
           # its logic lives in the script (#1978, after dl.fedoraproject.org
           # answered 404 in streaks longer than the 25 s that
           # `--retry 5 --retry-delay 5` covered). It retries 8 times with a
@@ -201,7 +201,7 @@ jobs:
           # publishes before letting the step continue. Stdout is the image
           # name; the script writes the image itself to the path passed as
           # $2.
-          img=$(bash "$GITHUB_WORKSPACE/.github/scripts/fetch-fedora-image.sh" \
+          img=$(bash "$GITHUB_WORKSPACE/.github/scripts/fedora_image/fetch-fedora-image.sh" \
               "${{ matrix.podman }}" "$RUNNER_TEMP/vm.qcow2")
           echo "image: $img"
           # Carry it to the gate step. The name resolves to whatever compose is

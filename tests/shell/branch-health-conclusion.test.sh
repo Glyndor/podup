@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Behaviour tests for `.github/scripts/check-branch-conclusion.sh`.
+# Behaviour tests for `.github/scripts/checks/check-branch-conclusion.sh`.
 #
 # The script decides whether the run for a branch's CURRENT head was a
 # pass. It used to read the newest completed run on the branch, with
@@ -43,7 +43,7 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-script="$HERE/.github/scripts/check-branch-conclusion.sh"
+script="$HERE/.github/scripts/checks/check-branch-conclusion.sh"
 [ -x "$script" ] || { echo "FAIL  $script is not executable in git"; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo "FAIL  jq is required to run this test"; exit 1; }
 

@@ -89,7 +89,7 @@ check "the caller-with assertion was extracted from the workflow" "1" \
 	"$(grep -c check-caller-with-defaults.py "$WORK/caller-with.sh" | awk '{print ($1>0)}')"
 
 check "the caller-with-defaults script lives next to the other GitHub scripts" "1" \
-	"$(test -f "$HERE/.github/scripts/check-caller-with-defaults.py" && echo 1 || echo 0)"
+	"$(test -f "$HERE/.github/scripts/checks/check-caller-with-defaults.py" && echo 1 || echo 0)"
 
 # ---------------------------------------------------------------------------
 # Fixture helpers
@@ -102,7 +102,7 @@ check "the caller-with-defaults script lives next to the other GitHub scripts" "
 # that does not include them cannot be checked.
 new() {
 	rm -rf "$WORK/t"
-	mkdir -p "$WORK/t/.github/workflows" "$WORK/t/.github/scripts"
+	mkdir -p "$WORK/t/.github/workflows" "$WORK/t/.github/scripts/checks"
 	for r in \
 		reusable-rust-ci.yml \
 		reusable-dco.yml \
@@ -111,8 +111,8 @@ new() {
 		reusable-workflow-lint.yml; do
 		cp "$HERE/.github/workflows/$r" "$WORK/t/.github/workflows/"
 	done
-	cp "$HERE/.github/scripts/check-caller-with-defaults.py" \
-		"$WORK/t/.github/scripts/"
+	cp "$HERE/.github/scripts/checks/check-caller-with-defaults.py" \
+		"$WORK/t/.github/scripts/checks/"
 	printf '%s' "$WORK/t"
 }
 run_in() { ( cd "$1" && bash "$2" 2>&1 ); }

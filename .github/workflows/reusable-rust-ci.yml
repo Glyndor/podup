@@ -133,7 +133,7 @@ jobs:
       # ruleset named it. The rule and why it exists live in the script.
       - name: no planning-note references
         working-directory: .
-        run: bash .github/scripts/check-planning-words.sh
+        run: bash .github/scripts/checks/check-planning-words.sh
 
   test:
     name: Test

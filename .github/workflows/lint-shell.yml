@@ -22,11 +22,11 @@ on:
       - ".github/workflows/reusable-workflow-lint.yml"
       - ".github/workflows/reusable-schedule-freshness.yml"
       - ".github/workflows/podman-watch.yml"
-      - ".github/scripts/check-hardening-macos.sh"
-      - ".github/scripts/check-planning-words.sh"
-      - ".github/scripts/fetch-fedora-image.sh"
-      - ".github/scripts/is-version-bump.sh"
-      - ".github/scripts/check-merge-group-triggers.py"
+      - ".github/scripts/hardening/check-hardening-macos.sh"
+      - ".github/scripts/checks/check-planning-words.sh"
+      - ".github/scripts/fedora_image/fetch-fedora-image.sh"
+      - ".github/scripts/checks/is-version-bump.sh"
+      - ".github/scripts/checks/check-merge-group-triggers.py"
       - "tests/shell/check-planning-words.test.sh"
       - "tests/shell/check-hardening-macos.test.sh"
       - "tests/shell/check-suite-completeness.test.sh"
@@ -60,11 +60,11 @@ on:
       - ".github/workflows/reusable-workflow-lint.yml"
       - ".github/workflows/reusable-schedule-freshness.yml"
       - ".github/workflows/podman-watch.yml"
-      - ".github/scripts/check-hardening-macos.sh"
-      - ".github/scripts/check-planning-words.sh"
-      - ".github/scripts/fetch-fedora-image.sh"
-      - ".github/scripts/is-version-bump.sh"
-      - ".github/scripts/check-merge-group-triggers.py"
+      - ".github/scripts/hardening/check-hardening-macos.sh"
+      - ".github/scripts/checks/check-planning-words.sh"
+      - ".github/scripts/fedora_image/fetch-fedora-image.sh"
+      - ".github/scripts/checks/is-version-bump.sh"
+      - ".github/scripts/checks/check-merge-group-triggers.py"
       - "tests/shell/check-planning-words.test.sh"
       - "tests/shell/check-hardening-macos.test.sh"
       - "tests/shell/reusable-workflow-lint-tooling-isolation.test.sh"
@@ -161,4 +161,4 @@ jobs:
       - name: Build the release binary the way the release does
         run: cargo build --release --locked
       - name: Read the hardening off the built binary
-        run: bash .github/scripts/check-hardening-macos.sh target/release/podup
+        run: bash .github/scripts/hardening/check-hardening-macos.sh target/release/podup

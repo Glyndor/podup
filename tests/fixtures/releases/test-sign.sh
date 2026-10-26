@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Regression test for .github/scripts/sign.py: five fail-closed controls.
+# Regression test for .github/scripts/release/sign.py: five fail-closed controls.
 #
 # sign.py signs release artifacts with the org Ed25519 key. It refuses to
 # produce a signature in five places; this fixture walks every one of them
@@ -17,7 +17,7 @@ REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 # SIGN_PY_OVERRIDE lets a sabotage run point the test at a copy of
 # sign.py in a tmpdir (see findings/02-red-runs.md). Production runs and
 # CI never set it; the test defaults to the in-tree script.
-SIGN_PY="${SIGN_PY_OVERRIDE:-$REPO_ROOT/.github/scripts/sign.py}"
+SIGN_PY="${SIGN_PY_OVERRIDE:-$REPO_ROOT/.github/scripts/release/sign.py}"
 
 PYTHON_PRESENT=0
 if command -v python3 >/dev/null 2>&1 \

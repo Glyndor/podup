@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# .github/scripts/check-hardening-macos.sh must pass a Mach-O binary that
+# .github/scripts/hardening/check-hardening-macos.sh must pass a Mach-O binary that
 # is PIE and stripped and fail one that lacks exactly one of those
 # properties, naming the property. The controls are built here with
 # clang, one flag away from the good one each, so a check that stopped
@@ -14,7 +14,7 @@
 set -u
 
 cd "$(dirname "$0")/../.." || exit 1
-script=.github/scripts/check-hardening-macos.sh
+script=.github/scripts/hardening/check-hardening-macos.sh
 
 if ! command -v clang >/dev/null 2>&1 || ! command -v otool >/dev/null 2>&1 || ! command -v nm >/dev/null 2>&1; then
 	echo "SKIP: clang/otool/nm are not all on PATH; this test runs on the macOS CI runner only."

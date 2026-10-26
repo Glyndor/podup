@@ -15,8 +15,8 @@ on:
       # without this line a pull request that touches only the reusable
       # merges without ever running it.
       - ".github/workflows/reusable-installer-contract.yml"
-      - ".github/scripts/verify-signing-key.py"
-      - ".github/scripts/sign.py"
+      - ".github/scripts/release/verify-signing-key.py"
+      - ".github/scripts/release/sign.py"
       - "internal/update/install/**"
       - "tests/fixtures/releases/**"
   pull_request:
@@ -34,8 +34,8 @@ on:
       # without this line a pull request that touches only the reusable
       # merges without ever running it.
       - ".github/workflows/reusable-installer-contract.yml"
-      - ".github/scripts/verify-signing-key.py"
-      - ".github/scripts/sign.py"
+      - ".github/scripts/release/verify-signing-key.py"
+      - ".github/scripts/release/sign.py"
       - "internal/update/install/**"
       - "tests/fixtures/releases/**"
 
@@ -92,7 +92,7 @@ jobs:
         run: |
           set -euo pipefail
           if awk 'prev ~ /\\$/ && /^[A-Za-z]/ { print FILENAME ":" NR ": " $0; found=1 } { prev=$0 } END { exit !found }' \
-            .github/scripts/sign-requirements.txt; then
+            .github/scripts/release/sign-requirements.txt; then
             echo "::error::a package name is being swallowed as a line continuation; drop the trailing backslash from the hash line above each one"
             exit 1
           fi
@@ -121,7 +121,7 @@ jobs:
       # verifies did not.
       #
       # It belongs in this workflow rather than the shell lane because
-      # `.github/scripts/sign.py` is already in this workflow's paths filter,
+      # `.github/scripts/release/sign.py` is already in this workflow's paths filter,
       # so the pull request that changes the script is the one that runs the
       # test. The shell lane triggers on `**.sh` and would not see a Python
       # change at all.

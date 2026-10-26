@@ -247,7 +247,7 @@ jobs:
           # `python -m pip install`, `python3 -m pip install`, `pipx
           # install`, and `dotnet tool install`). The release signing
           # job holds `GLYNDOR_RELEASE_ED25519_KEY` and runs `pip install
-          # --quiet --require-hashes -r .github/scripts/sign-requirements
+          # --quiet --require-hashes -r .github/scripts/release/sign-requirements
           # .txt`, which executes the cryptography package's native build
           # script; hashed, so it is exempt, and the build script runs.
           # The release target's own build-script count is 14 (cargo
@@ -896,7 +896,7 @@ jobs:
       # emits the same `name:` either way), so the change has to be
       # deliberate and visible.
       #
-      # Lives in .github/scripts/check-caller-with-defaults.py because
+      # Lives in .github/scripts/checks/check-caller-with-defaults.py because
       # the inline heredoc would push this file over the line-limit
       # gate's 500-line hard limit, and the same shape as caller-if
       # above (static map, direct-emitter list, `reusable-*` filter)
@@ -905,13 +905,13 @@ jobs:
       # itself ignores it, and the ruleset does not gate on it.
       - name: A caller of a required check must carry `with:` equal to the reusable's declared default
         run: |
-          python3 .github/scripts/check-caller-with-defaults.py
+          python3 .github/scripts/checks/check-caller-with-defaults.py
 
       # A workflow that emits a develop-required check must trigger on
       # merge_group (with checks_requested in types:), and no other
       # workflow may carry the trigger. Logic lives in
-      # .github/scripts/check-merge-group-triggers.py because this file
+      # .github/scripts/checks/check-merge-group-triggers.py because this file
       # is near the 500-code-line hard limit already.
       - name: A workflow that emits a check required on develop must trigger on merge_group
         run: |
-          python3 .github/scripts/check-merge-group-triggers.py
+          python3 .github/scripts/checks/check-merge-group-triggers.py

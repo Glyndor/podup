@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Behaviour tests for `.github/scripts/is-version-bump.sh`.
+# Behaviour tests for `.github/scripts/checks/is-version-bump.sh`.
 #
 # The script decides whether a pull request is nothing but a podup version
 # bump, which is the one case where the Podman lane may skip its VMs
@@ -20,7 +20,7 @@
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-script="$HERE/.github/scripts/is-version-bump.sh"
+script="$HERE/.github/scripts/checks/is-version-bump.sh"
 [ -f "$script" ] || { echo "FAIL  $script does not exist"; exit 1; }
 
 WORK="$(mktemp -d)"
@@ -234,8 +234,8 @@ run_via_base() {
 		cd "$d" || exit 1
 		git init -q . && git config commit.gpgsign false || exit 1
 		seed
-		mkdir -p .github/scripts
-		[ "$3" = 1 ] && cp "$script" .github/scripts/is-version-bump.sh
+		mkdir -p .github/scripts/checks
+		[ "$3" = 1 ] && cp "$script" .github/scripts/checks/is-version-bump.sh
 		git add -A && git commit -q -m base && git tag base || exit 1
 		"$4"
 		git add -A && git commit -q --allow-empty -m head && git tag head || exit 1
@@ -243,7 +243,7 @@ run_via_base() {
 	(
 		cd "$d" || exit 1
 		set -o pipefail
-		git show base:.github/scripts/is-version-bump.sh | bash -s -- base head
+		git show base:.github/scripts/checks/is-version-bump.sh | bash -s -- base head
 	) >"$d/out" 2>&1 || rc=$?
 	# Any non-zero status (a failed `git show` is 128) means: not a bump.
 	[ "$rc" -eq 0 ] || rc=1
@@ -252,7 +252,7 @@ run_via_base() {
 # A pull request that rewrites the script to say yes to everything, and
 # touches source too.
 rigged_script() {
-	printf '#!/usr/bin/env bash\nexit 0\n' >.github/scripts/is-version-bump.sh
+	printf '#!/usr/bin/env bash\nexit 0\n' >.github/scripts/checks/is-version-bump.sh
 	echo '// touched' >>src/main.rs
 	bump_all
 }
@@ -261,9 +261,9 @@ run_via_base "a script absent in the base is not a bump" 1 0 bump_all
 run_via_base "a pull request that rigs the script is still judged by the base copy" 1 1 rigged_script
 # shellcheck disable=SC2016  # the pattern is literal text from the workflow
 check "the workflow reads the script from the base commit" "1" \
-	"$(grep -cF 'git show "$BASE_SHA:.github/scripts/is-version-bump.sh"' "$HERE/.github/workflows/podman-lane.yml")"
+	"$(grep -cF 'git show "$BASE_SHA:.github/scripts/checks/is-version-bump.sh"' "$HERE/.github/workflows/podman-lane.yml")"
 check "the workflow does not run the checked-out copy" "0" \
-	"$(grep -cE '^[[:space:]]*if bash \.github/scripts/is-version-bump\.sh' "$HERE/.github/workflows/podman-lane.yml")"
+	"$(grep -cE '^[[:space:]]*if bash \.github/scripts/checks/is-version-bump\.sh' "$HERE/.github/workflows/podman-lane.yml")"
 
 # Called with the wrong number of arguments, it refuses before touching git.
 out="$(bash "$script" 2>&1 </dev/null)"
