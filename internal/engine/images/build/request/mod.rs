@@ -11,8 +11,8 @@ mod body_plan;
 mod secrets;
 mod stream;
 
-pub(in crate::engine::build) use body_plan::plan_build;
-pub(in crate::engine::build) use stream::{context_body, ContextSource};
+pub(in crate::engine::images::build) use body_plan::plan_build;
+pub(in crate::engine::images::build) use stream::{context_body, ContextSource};
 
 #[cfg(all(test, unix))]
 mod query_tests;

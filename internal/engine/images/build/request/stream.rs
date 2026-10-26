@@ -33,7 +33,7 @@ const CHUNK_BYTES: usize = 64 * 1024;
 
 /// Which Dockerfile the context ships: one synthesized from an inline string, or
 /// a named file already inside the context directory.
-pub(in crate::engine::build) enum ContextSource {
+pub(in crate::engine::images::build) enum ContextSource {
 	/// `build.dockerfile_inline` content.
 	Inline(String),
 	/// The resolved Dockerfile/Containerfile name within the context.
@@ -84,7 +84,7 @@ impl Write for ChannelWriter {
 /// the client sends as the request body. Await the body request first, then the
 /// producer; awaiting the producer before draining the body would deadlock on
 /// the bounded channel.
-pub(in crate::engine::build) fn context_body(
+pub(in crate::engine::images::build) fn context_body(
 	context: PathBuf,
 	source: ContextSource,
 	secret_files: Vec<(String, Vec<u8>)>,

@@ -30,7 +30,7 @@ use crate::error::Result;
 
 use request::ContextSource;
 
-use super::Engine;
+use crate::engine::Engine;
 
 /// Files to ship inside the build-context tar plus their matching `secrets=`
 /// specs (`id=NAME,src=ENTRY`) for the libpod build endpoint.

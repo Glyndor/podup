@@ -18,7 +18,7 @@ impl Engine {
 	/// or `environment:`) and returned as a `(tar-entry-name, bytes)` pair plus a
 	/// matching `id=NAME,src=ENTRY` spec for the build endpoint's `secrets` param.
 	/// `external` secrets cannot be forwarded over the API and are warned + skipped.
-	pub(in crate::engine::build) fn resolve_build_secrets(
+	pub(in crate::engine::images::build) fn resolve_build_secrets(
 		&self,
 		build: &BuildConfig,
 		file: &crate::compose::types::ComposeFile,

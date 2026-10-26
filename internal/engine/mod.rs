@@ -2,14 +2,16 @@
 //!
 //! Translates a parsed [`ComposeFile`](crate::compose::types::ComposeFile) into Podman API calls via the libpod REST API.
 
-pub(crate) mod build;
+mod images;
+pub(crate) use images::build;
+pub(crate) use images::context;
+use images::image;
 mod builder;
 mod workload;
 pub(crate) use workload::container;
 use workload::container_config;
 use workload::declared;
 use workload::pod;
-pub(crate) mod context;
 /// `pub(crate)` so the fuzz harness behind the `test-helpers` feature can
 /// reach `archive::extract_tar_guarded` without widening the published API:
 /// the chain stays `engine → copy → archive` all `pub(crate)` (or stricter),
@@ -18,10 +20,9 @@ pub(crate) mod copy;
 pub(crate) mod events;
 pub(crate) mod project;
 pub(crate) mod terminal;
-pub use events::EventsOptions;
-mod image;
 pub use build::{BuildOptions, PullOptions, PushOptions};
 pub use copy::CpOptions;
+pub use events::EventsOptions;
 pub use image::{resolve_image_digests, CommitOptions};
 pub use lifecycle::{validate_stop_timeout, RunOptions, RunOverrides};
 pub use project::ProjectLock;

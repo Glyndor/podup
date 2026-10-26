@@ -10,7 +10,7 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::types::image::ImagePullProgress;
 use crate::libpod::{urlencoded, PodmanError, API_PREFIX};
 
-use super::super::Engine;
+use crate::engine::Engine;
 
 /// Maximum time to wait for the next progress line from a push body stream
 /// before treating the registry as unresponsive.

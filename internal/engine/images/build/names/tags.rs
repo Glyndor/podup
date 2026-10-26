@@ -38,7 +38,7 @@ pub(crate) fn primary_build_tag(
 /// warn that build args persist in the image history. Case-insensitive substring
 /// match on common secret tokens, kept conservative to avoid false positives
 /// (e.g. a bare `KEY` is not flagged; `API_KEY`/`PRIVATE_KEY` are).
-pub(in crate::engine::build) fn looks_like_secret(name: &str) -> bool {
+pub(in crate::engine::images::build) fn looks_like_secret(name: &str) -> bool {
 	const MARKERS: [&str; 7] = [
 		"SECRET",
 		"PASSWORD",

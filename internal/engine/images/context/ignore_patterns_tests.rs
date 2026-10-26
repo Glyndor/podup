@@ -2,7 +2,7 @@
 //!
 //! Split out of the matcher file so the matcher stays under the source line
 //! cap. The string-level cases (originally in
-//! `internal/engine/build/context/pattern_tests.rs`) live here verbatim, plus
+//! `internal/engine/images/build/context/pattern_tests.rs`) live here verbatim, plus
 //! the spec / legacy / build-context cases that pin the watch semantics.
 
 use crate::engine::context::ignore_patterns::*;

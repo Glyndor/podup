@@ -162,7 +162,7 @@ impl Engine {
 		let cachefrom = if build.cache_from().is_empty() {
 			None
 		} else {
-			Some(super::super::to_query_json(
+			Some(crate::engine::to_query_json(
 				"build.cache_from",
 				&build.cache_from(),
 			)?)
@@ -170,18 +170,18 @@ impl Engine {
 		let buildargs_json = if build_args.is_empty() {
 			None
 		} else {
-			Some(super::super::to_query_json("build.args", &build_args)?)
+			Some(crate::engine::to_query_json("build.args", &build_args)?)
 		};
 		let labels_json = if labels.is_empty() {
 			None
 		} else {
-			Some(super::super::to_query_json("build.labels", &labels)?)
+			Some(crate::engine::to_query_json("build.labels", &labels)?)
 		};
 		let build_ulimits = super::render_build_ulimits(build);
 		let ulimits_json = if build_ulimits.is_empty() {
 			None
 		} else {
-			Some(super::super::to_query_json(
+			Some(crate::engine::to_query_json(
 				"build.ulimits",
 				&build_ulimits,
 			)?)
@@ -272,11 +272,11 @@ impl Engine {
 			qs.push_str(&format!("&target={}", urlencoded(target)));
 		}
 		if !secret_specs.is_empty() {
-			let json = super::super::to_query_json("build.secrets", &secret_specs)?;
+			let json = crate::engine::to_query_json("build.secrets", &secret_specs)?;
 			qs.push_str(&format!("&secrets={}", urlencoded(&json)));
 		}
 		if !build.cache_to().is_empty() {
-			let json = super::super::to_query_json("build.cache_to", &build.cache_to())?;
+			let json = crate::engine::to_query_json("build.cache_to", &build.cache_to())?;
 			qs.push_str(&format!("&cacheto={}", urlencoded(&json)));
 		}
 		for (name, value) in build.additional_contexts() {

@@ -10,5 +10,5 @@ mod normalize;
 mod tags;
 
 pub(in crate::engine) use tags::is_remote_context;
-pub(in crate::engine::build) use tags::looks_like_secret;
+pub(in crate::engine::images::build) use tags::looks_like_secret;
 pub(crate) use tags::primary_build_tag;

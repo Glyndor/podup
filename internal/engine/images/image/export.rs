@@ -10,7 +10,7 @@ use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
-use super::super::Engine;
+use crate::engine::Engine;
 
 /// Options for [`Engine::commit_with_options`], mirroring `docker compose commit`
 /// (`-m/--message`, `-a/--author`, `-p/--pause`, `-c/--change`).
