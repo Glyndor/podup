@@ -184,7 +184,7 @@ pub(crate) fn build_spec_generator(
 		umask: service
 			.umask
 			.as_deref()
-			.map(crate::compose::types::service::service_umask::normalized),
+			.map(crate::compose::types::service::umask::normalized),
 		work_dir: service.working_dir.clone(),
 		stop_signal,
 		stop_timeout,

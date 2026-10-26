@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use super::Labels;
+use super::super::Labels;
 
 /// `networks:` value at service level: absent, a bare list of network names, or a detailed map.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]

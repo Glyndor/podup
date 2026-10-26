@@ -122,6 +122,6 @@ pub(crate) fn apply_resets(value: &mut Value, resets: &[(&'static str, String)])
 	}
 }
 
-#[path = "service_umask_number.rs"]
+#[path = "umask_number.rs"]
 mod number;
 pub(crate) use number::number_error;

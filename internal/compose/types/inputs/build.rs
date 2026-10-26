@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use super::{EnvVars, Labels, StringOrList, UlimitConfig};
+use super::super::{EnvVars, Labels, StringOrList, UlimitConfig};
 
 /// Distinguishes an absent field from an explicitly empty string or list.
 fn is_absent_no_cache_filter(value: &StringOrList) -> bool {
@@ -135,7 +135,7 @@ pub enum BuildConfig {
 		/// Extra `host:ip` mappings added to the build container's `/etc/hosts`.
 		#[serde(
 			default,
-			deserialize_with = "super::primitives::deserialize_extra_hosts",
+			deserialize_with = "super::super::primitives::deserialize_extra_hosts",
 			skip_serializing_if = "Vec::is_empty"
 		)]
 		extra_hosts: Vec<String>,

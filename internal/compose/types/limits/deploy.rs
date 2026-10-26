@@ -9,7 +9,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::Labels;
+use super::super::Labels;
 
 /// `deploy:` service key: resource limits, replica count, restart policies, and labels.
 ///
@@ -70,7 +70,7 @@ pub struct ResourceSpec {
 	/// unquoted-number and quoted-string spec forms.
 	#[serde(
 		default,
-		deserialize_with = "super::primitives::deserialize_opt_string_or_number",
+		deserialize_with = "super::super::primitives::deserialize_opt_string_or_number",
 		skip_serializing_if = "Option::is_none"
 	)]
 	pub cpus: Option<String>,

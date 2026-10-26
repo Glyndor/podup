@@ -18,8 +18,7 @@ use super::{
 	UlimitConfig,
 };
 
-#[path = "service_umask.rs"]
-pub(crate) mod service_umask;
+pub(crate) mod umask;
 
 /// A single service definition.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -193,8 +192,8 @@ pub struct Service {
 	/// Parsing now requires that interpolation has fully resolved.
 	#[serde(
 		default,
-		deserialize_with = "service_umask::deserialize",
-		serialize_with = "service_umask::serialize",
+		deserialize_with = "umask::deserialize",
+		serialize_with = "umask::serialize",
 		skip_serializing_if = "Option::is_none"
 	)]
 	pub umask: Option<String>,
@@ -562,21 +561,17 @@ pub struct ProviderConfig {
 }
 
 #[cfg(test)]
-#[path = "service_tests.rs"]
+#[path = "mod_tests.rs"]
 mod tests;
 
 #[cfg(test)]
-#[path = "service_umask_tests.rs"]
-mod service_umask_tests;
+mod umask_tests;
 
 #[cfg(test)]
-#[path = "service_umask_runtime_tests.rs"]
-mod service_umask_runtime_tests;
+mod umask_runtime_tests;
 
 #[cfg(test)]
-#[path = "service_umask_directive_tests.rs"]
-mod service_umask_directive_tests;
+mod umask_directive_tests;
 
 #[cfg(test)]
-#[path = "service_umask_regression_tests.rs"]
-mod service_umask_regression_tests;
+mod umask_regression_tests;

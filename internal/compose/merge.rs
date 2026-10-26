@@ -60,8 +60,8 @@ pub(super) fn deserialize_with_merge_interp(
 	let directives = super::tags::collect(&value);
 	let umask_resets = super::tags::umask_resets(&value);
 	super::tags::strip(&mut value);
-	super::types::service::service_umask::apply_resets(&mut value, &umask_resets);
-	super::types::service::service_umask::validate(&value)?;
+	super::types::service::umask::apply_resets(&mut value, &umask_resets);
+	super::types::service::umask::validate(&value)?;
 	// Jobs are typed first and on their own, so a bad job is reported by name
 	// instead of as a file that failed to parse.
 	let jobs = super::jobs::extract_jobs(&mut value)?;
@@ -105,7 +105,7 @@ pub(super) fn interpolated_value(
 	guard_flow_depth(content)?;
 	guard_alias_expansion(content)?;
 	let mut value: serde_yaml::Value = serde_yaml::from_str(content).map_err(|error| {
-		super::types::service::service_umask::number_error(content).unwrap_or(error.into())
+		super::types::service::umask::number_error(content).unwrap_or(error.into())
 	})?;
 	if let Some(vars) = vars {
 		// One budget for the whole document. The per-scalar cap cannot see

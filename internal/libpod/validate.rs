@@ -319,7 +319,7 @@ pub(crate) fn pre_validate_spec(
 	service: &crate::compose::types::Service,
 ) -> Result<(), ComposeError> {
 	if let Some(text) = service.umask.as_deref() {
-		crate::compose::types::service::service_umask::validate_runtime(service_name, text)?;
+		crate::compose::types::service::umask::validate_runtime(service_name, text)?;
 	}
 	// 1. Namespace modes for the slots whose compose string is forwarded
 	//    verbatim to `ParseNamespace`. `network_mode` is omitted: the engine

@@ -11,7 +11,7 @@
 
 use serde::Serialize;
 
-use super::Service;
+use super::super::Service;
 
 /// One entry of the top-level `jobs:` map.
 #[derive(Debug, Clone, Serialize, Default)]

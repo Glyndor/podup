@@ -11,7 +11,7 @@ fn include_config_path_returns_single() {
 #[test]
 fn include_config_long_returns_list() {
 	let c = IncludeConfig::Long {
-		path: super::super::StringOrList::List(vec!["a.yml".into(), "b.yml".into()]),
+		path: super::super::super::StringOrList::List(vec!["a.yml".into(), "b.yml".into()]),
 		env_file: None,
 		project_directory: None,
 	};

@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use super::Labels;
+use super::super::Labels;
 
 /// Volume mount type: `volume`, `bind`, `tmpfs`, `npipe`, or `cluster`.
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]

@@ -35,10 +35,12 @@ pub(in super::super) fn emit_runtime(
 			None => container.add("User", user.clone()),
 		}
 	}
-	if let Some(text) = service.umask.as_deref().filter(|text| {
-		crate::compose::types::service::service_umask::validate_runtime(name, text).is_ok()
-	}) {
-		let mask = crate::compose::types::service::service_umask::normalized(text);
+	if let Some(text) = service
+		.umask
+		.as_deref()
+		.filter(|text| crate::compose::types::service::umask::validate_runtime(name, text).is_ok())
+	{
+		let mask = crate::compose::types::service::umask::normalized(text);
 		// A CLI flag keeps the unit readable by Quadlet at the Podman 5.0 floor.
 		container.add("PodmanArgs", format!("--umask={mask}"));
 	}

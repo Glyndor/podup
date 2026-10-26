@@ -9,8 +9,8 @@
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
-use super::env::EnvVars;
-use super::primitives::Command;
+use super::super::env::EnvVars;
+use super::super::primitives::Command;
 
 /// `depends_on:` value: absent, a bare list of service names, or a map of service name to condition.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
