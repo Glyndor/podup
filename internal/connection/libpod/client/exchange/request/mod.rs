@@ -8,7 +8,7 @@
 //! path segment, and [`transport`] holds the items that are shared by every
 //! request path so a new one does not have to re-derive them.
 
-use super::{BoxBody, Client, PodmanError, Result};
+use crate::connection::libpod::client::{BoxBody, Client, PodmanError, Result};
 
 mod build;
 pub(in crate::connection::libpod::client) mod encode;

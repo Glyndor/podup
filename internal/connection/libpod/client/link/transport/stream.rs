@@ -36,7 +36,9 @@ impl SocketStream {
 	#[cfg(unix)]
 	pub(crate) async fn connect(socket_path: &str) -> Result<Self> {
 		#[cfg(test)]
-		if let Some(stream) = super::super::pre_start_memory::connect(socket_path) {
+		if let Some(stream) =
+			crate::connection::libpod::client::pre_start_memory::connect(socket_path)
+		{
 			return Ok(Self::Memory(stream));
 		}
 		let stream = tokio::net::UnixStream::connect(socket_path)

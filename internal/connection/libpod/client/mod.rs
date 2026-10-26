@@ -30,14 +30,19 @@ use std::sync::Arc;
 
 use super::error::PodmanError;
 
+mod exchange;
 mod init_cleanup;
-mod pool;
-mod request;
-mod response;
-mod send;
-mod stream;
-mod transport;
+mod link;
+#[cfg(test)]
+mod test_peers;
 mod verbs;
+
+use exchange::request;
+use exchange::response;
+use exchange::send;
+use link::pool;
+use link::stream;
+use link::transport;
 
 use pool::ConnPool;
 pub(crate) use request::encode::{is_valid_object_name, urlencoded};
@@ -94,8 +99,5 @@ impl Drop for Client {
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
-mod preflight;
-
 #[cfg(all(test, unix))]
-pub(crate) mod pre_start_memory;
+pub(crate) use test_peers::pre_start_memory;

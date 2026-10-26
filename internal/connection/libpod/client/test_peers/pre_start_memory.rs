@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt, DuplexStream};
 
-use super::Client;
+use crate::connection::libpod::client::Client;
 
 type Reply = dyn Fn(&str, &str, &serde_json::Value) -> (u16, String) + Send + Sync;
 

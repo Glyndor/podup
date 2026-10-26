@@ -1,12 +1,12 @@
 //! Per-socket HTTP/1.1 connection pool for the libpod client.
 //!
-//! [`Client`](super::Client) opens and reuses hyper HTTP/1.1 connections to the
+//! [`Client`](crate::connection::libpod::client::Client) opens and reuses hyper HTTP/1.1 connections to the
 //! Podman socket (or named pipe on Windows) instead of a fresh connection per
 //! request. A 100-service `up` would otherwise pay the per-request connect +
 //! handshake cost ~600 times; the pool collapses that to one handshake per
 //! concurrent caller.
 //!
-//! The pool is keyed by socket path, so a [`Client`](super::Client) holds one
+//! The pool is keyed by socket path, so a [`Client`](crate::connection::libpod::client::Client) holds one
 //! pool and one pool is never shared across sockets. Two flavours of connection
 //! are kept side by side:
 //!
@@ -18,7 +18,7 @@
 //!   the lifetime of that stream's body. They do not enter the buffered pool:
 //!   a stream may be long-lived (`logs -f`, an interactive `exec`), and
 //!   surrendering its socket to a buffered caller mid-stream would corrupt the
-//!   wire. The [`Client`](super::Client) tracks its in-flight streaming
+//!   wire. The [`Client`](crate::connection::libpod::client::Client) tracks its in-flight streaming
 //!   connections and closes them when it is dropped.
 
 use std::collections::VecDeque;
@@ -29,9 +29,9 @@ use hyper_util::rt::TokioIo;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
-use super::stream::stream_body::ConnectionFuture;
-use super::transport::stream::SocketStream;
-use super::{BoxBody, PodmanError, Result};
+use crate::connection::libpod::client::stream::stream_body::ConnectionFuture;
+use crate::connection::libpod::client::transport::stream::SocketStream;
+use crate::connection::libpod::client::{BoxBody, PodmanError, Result};
 
 /// Default cap on the number of live (idle + in-use) buffered connections held
 /// to a single libpod socket. **The pool is opt-in**: a cap of `0` (the
@@ -55,8 +55,8 @@ use super::{BoxBody, PodmanError, Result};
 /// `top_skips_a_stopped_service_and_reports_the_rest`) close in the test
 /// harness. The default still does not move: opt in explicitly with
 /// `--connection-pool-size` or `PODUP_LIBPOD_POOL`. Tunable via
-/// [`Client::with_pool_size`](super::Client::with_pool_size).
-pub(super) const DEFAULT_POOL_SIZE: usize = 0;
+/// [`Client::with_pool_size`](crate::connection::libpod::client::Client::with_pool_size).
+pub(in crate::connection::libpod::client) const DEFAULT_POOL_SIZE: usize = 0;
 
 /// One pooled HTTP/1.1 connection.
 ///
@@ -119,7 +119,7 @@ impl ConnPool {
 	/// acquire opens a fresh connection and drops it on release. The cap is
 	/// a hint for reuse, not a cap on concurrency: a parallel caller that
 	/// exceeds it is not throttled.
-	pub(super) fn new(socket_path: String, cap: usize) -> Arc<Self> {
+	pub(in crate::connection::libpod::client) fn new(socket_path: String, cap: usize) -> Arc<Self> {
 		Arc::new(Self {
 			socket_path,
 			cap,
@@ -134,7 +134,7 @@ impl ConnPool {
 
 	/// The cap configured at construction time. The cap is immutable for the
 	/// life of the pool, so a relaxed read is sufficient.
-	pub(super) fn cap(&self) -> usize {
+	pub(in crate::connection::libpod::client) fn cap(&self) -> usize {
 		self.cap
 	}
 
@@ -152,7 +152,9 @@ impl ConnPool {
 	///   in the pool. If the pool is at its cap, open a transient
 	///   connection (not tracked) instead: the cap is a hint for idle
 	///   reuse, not a cap on concurrency.
-	pub(super) async fn acquire(self: &Arc<Self>) -> Result<PoolGuard> {
+	pub(in crate::connection::libpod::client) async fn acquire(
+		self: &Arc<Self>,
+	) -> Result<PoolGuard> {
 		// No-pool short-circuit. The pool is opt-in (a cap of 0 means
 		// disabled). Every acquire opens a fresh connection that is dropped
 		// on release, the previous, proven behaviour.
@@ -301,7 +303,9 @@ impl ConnPool {
 	/// Open a dedicated connection for a streaming call. The connection is
 	/// tracked on the pool only so the buffered half sees the pressure;
 	/// streaming callers receive their own [`StreamingConn`] regardless.
-	pub(super) async fn open_streaming(self: &Arc<Self>) -> Result<StreamingConn> {
+	pub(in crate::connection::libpod::client) async fn open_streaming(
+		self: &Arc<Self>,
+	) -> Result<StreamingConn> {
 		{
 			let inner = self.inner.lock().unwrap();
 			if inner.closed {
@@ -330,7 +334,7 @@ impl ConnPool {
 	/// Reject every future acquire and clear the idle queue. In-flight
 	/// connections are released normally as their callers finish; the pool
 	/// itself drops its notification handle.
-	pub(super) fn close(&self) {
+	pub(in crate::connection::libpod::client) fn close(&self) {
 		let mut inner = self.inner.lock().unwrap();
 		inner.closed = true;
 		inner.idle.clear();
@@ -351,7 +355,7 @@ impl ConnPool {
 /// the pool, no count decrement, no wake-up. The cap is a hint for reuse,
 /// not a cap on concurrency: a parallel caller that exceeds it is not
 /// throttled, it just does not get to reuse an idle socket.
-pub(super) struct PoolGuard {
+pub(in crate::connection::libpod::client) struct PoolGuard {
 	conn: Option<PooledConn>,
 	pool: Arc<ConnPool>,
 	transient: bool,
@@ -359,14 +363,16 @@ pub(super) struct PoolGuard {
 
 impl PoolGuard {
 	/// Borrow the hyper sender to issue one request.
-	pub(super) fn sender_mut(&mut self) -> &mut http1::SendRequest<BoxBody> {
+	pub(in crate::connection::libpod::client) fn sender_mut(
+		&mut self,
+	) -> &mut http1::SendRequest<BoxBody> {
 		&mut self.conn.as_mut().unwrap().sender
 	}
 
 	/// Mark this connection as broken; the next release will discard it
 	/// instead of returning it to the idle queue. Call when the
 	/// `send_request` future or the body read returned an error.
-	pub(super) fn poison(&mut self) {
+	pub(in crate::connection::libpod::client) fn poison(&mut self) {
 		if let Some(c) = self.conn.as_mut() {
 			c.poisoned = true;
 		}
@@ -392,7 +398,7 @@ impl Drop for PoolGuard {
 
 /// A dedicated connection held by a streaming call. The underlying socket is
 /// closed when this is dropped, regardless of whether the stream ended cleanly.
-pub(super) struct StreamingConn {
+pub(in crate::connection::libpod::client) struct StreamingConn {
 	sender: http1::SendRequest<BoxBody>,
 	/// HTTP/1 connection future, kept here so dropping the connection closes
 	/// the socket by dropping the IO half. The reading task drives it inline
@@ -405,9 +411,11 @@ impl StreamingConn {
 	/// Take the sender and the inline-driven connection future apart so the
 	/// caller can issue the request and wrap the response body. The sender is
 	/// dropped after the request has been sent; the connection future is moved
-	/// into the [`DrivenBody`](super::stream::stream_body::DrivenBody) that
+	/// into the [`DrivenBody`](crate::connection::libpod::client::stream::stream_body::DrivenBody) that
 	/// backs the response, so dropping the body closes the socket.
-	pub(super) fn into_parts(self) -> (http1::SendRequest<BoxBody>, ConnectionFuture) {
+	pub(in crate::connection::libpod::client) fn into_parts(
+		self,
+	) -> (http1::SendRequest<BoxBody>, ConnectionFuture) {
 		// The struct has no `Drop` impl, so the fields move out cleanly.
 		// Dropping the connection future drops the underlying IO, which
 		// hyper reports to Podman as a socket close.
@@ -454,7 +462,7 @@ mod tests;
 // the parent module stays within the 500-line file cap. They are part of the
 // public libpod API; re-exporting them on `Client` is intentional.
 
-use super::Client;
+use crate::connection::libpod::client::Client;
 
 impl Client {
 	/// Default per-socket pool size used by [`Client::new`](Self::new). See

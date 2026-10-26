@@ -8,14 +8,14 @@
 //! request is written by hand and the socket is given back raw, because there
 //! is no response to return.
 
-use super::pool::PoolGuard;
-use super::request::transport::{
+use crate::connection::libpod::client::pool::PoolGuard;
+use crate::connection::libpod::client::request::transport::{
 	has_connection_close, BoxBody, CONNECT_TIMEOUT, MAX_RESPONSE_BYTES, READ_TIMEOUT,
 };
-use super::stream::conn_state::ConnState;
-use super::stream::stream_body::DrivenBody;
-use super::transport::stream::SocketStream;
-use super::{Client, PodmanError, Result};
+use crate::connection::libpod::client::stream::conn_state::ConnState;
+use crate::connection::libpod::client::stream::stream_body::DrivenBody;
+use crate::connection::libpod::client::transport::stream::SocketStream;
+use crate::connection::libpod::client::{Client, PodmanError, Result};
 
 mod buffered;
 pub(in crate::connection::libpod::client) mod hijack;

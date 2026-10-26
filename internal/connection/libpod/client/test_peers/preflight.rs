@@ -1,6 +1,6 @@
 //! A closed transport for checking validation before any socket operation.
 
-use super::Client;
+use crate::connection::libpod::client::Client;
 
 impl Client {
 	/// Refuse buffered requests in memory so preflight tests cannot open a socket.

@@ -6,7 +6,7 @@
 //! floor. [`path_stat`] is the wire shape of
 //! `X-Docker-Container-Path-Stat`, which the `HEAD` path-stat calls decode.
 
-use super::{Client, PodmanError, Result};
+use crate::connection::libpod::client::{Client, PodmanError, Result};
 
 pub(in crate::connection::libpod::client) mod path_stat;
 pub(in crate::connection::libpod::client) mod status;

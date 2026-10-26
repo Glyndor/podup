@@ -8,7 +8,7 @@
 //! connect returns into a `PodmanError::Connect` that names the path and the
 //! fix (#1146).
 
-use super::{PodmanError, Result};
+use crate::connection::libpod::client::{PodmanError, Result};
 
 mod socket;
 pub(in crate::connection::libpod::client) mod stream;

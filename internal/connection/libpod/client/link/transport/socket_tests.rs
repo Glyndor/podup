@@ -47,6 +47,6 @@ fn a_denied_socket_says_so_rather_than_suggesting_enabling_it() {
 fn the_error_kind_is_preserved() {
 	let e = socket_error("/x", std::io::Error::from(std::io::ErrorKind::NotFound));
 	assert!(
-		matches!(&e, super::super::PodmanError::Connect(io) if io.kind() == std::io::ErrorKind::NotFound)
+		matches!(&e, crate::connection::libpod::client::PodmanError::Connect(io) if io.kind() == std::io::ErrorKind::NotFound)
 	);
 }
