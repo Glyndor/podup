@@ -12,6 +12,9 @@
 //! units never quietly drop configuration.
 
 mod jobs;
+/// Entry point for the fuzz harness, compiled only under `test-helpers`.
+#[cfg(feature = "test-helpers")]
+pub(crate) use jobs::fuzz_hook;
 pub use jobs::stale_timers;
 #[cfg(test)]
 mod min_podman;

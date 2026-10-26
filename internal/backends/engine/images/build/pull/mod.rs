@@ -26,6 +26,11 @@ pub(crate) use policy::{
 };
 use progress::{stderr_supports_live, PullStreamProgress};
 
+/// Lets the fuzz harness behind `test-helpers` reach the interval parser, which
+/// is private to this module otherwise.
+#[cfg(feature = "test-helpers")]
+pub(crate) use interval::parse_duration as fuzz_parse_interval;
+
 /// Upper bound on how many distinct images a standalone `pull` fetches
 /// concurrently. Mirrors the lifecycle level fan-out's own concurrency cap: a
 /// compose file with many distinct images must not open an unbounded number

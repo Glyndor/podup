@@ -11,6 +11,7 @@ mod pull;
 mod push;
 mod request;
 mod service;
+
 /// Shared with the watch engine: a build context is remote when podman clones
 /// it server-side, which means no local `.dockerignore` to load as implicit
 /// watch `ignore` content (#1897).
@@ -18,6 +19,10 @@ pub(in crate::backends::engine) use names::is_remote_context;
 /// Shared with the container-create path so an `up`/`create` references the same
 /// image tag the build step produced for a build-only service.
 pub(crate) use names::primary_build_tag;
+/// Same reason as the re-export in `pull`: the fuzz harness needs the interval
+/// parser and nothing else of this module.
+#[cfg(feature = "test-helpers")]
+pub(crate) use pull::fuzz_parse_interval;
 pub use pull::PullOptions;
 pub(crate) use pull::{
 	is_time_based_pull_policy, pull_policy_warning, validate_pull_fields, PullPolicy,

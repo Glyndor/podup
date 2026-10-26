@@ -7,6 +7,10 @@ pub(in crate::backends::engine) mod ignore_patterns;
 pub(in crate::backends::engine) mod tar_stream;
 pub(in crate::backends::engine) mod walk;
 
+/// Entry points for the fuzz harness, compiled only under `test-helpers`.
+#[cfg(feature = "test-helpers")]
+pub(crate) mod fuzz_hooks;
+
 #[cfg(test)]
 #[path = "ignore_patterns_tests.rs"]
 mod ignore_patterns_tests;

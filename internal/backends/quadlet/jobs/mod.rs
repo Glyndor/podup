@@ -16,6 +16,9 @@
 
 mod cron;
 mod field;
+/// Entry point for the fuzz harness, compiled only under `test-helpers`.
+#[cfg(feature = "test-helpers")]
+pub(crate) mod fuzz_hook;
 mod on_calendar;
 mod schedule;
 mod stale;
