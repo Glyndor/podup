@@ -1,13 +1,11 @@
 //! Lifecycle sub-commands: restart, stop, start, kill, rm, pause, unpause, wait.
 
-mod kill;
-pub(super) mod kill_signal;
-mod pause;
-mod restart;
 mod rm;
-mod start;
-mod stop;
+mod running;
+mod signals;
 mod wait;
+
+pub(super) use signals::kill_signal;
 
 use crate::engine::lifecycle::drop_recheck::LifecycleGoal;
 use crate::engine::Engine;
@@ -129,9 +127,6 @@ impl Engine {
 
 #[cfg(all(test, unix))]
 mod board_tests;
-
-#[cfg(test)]
-mod kill_signal_tests;
 
 #[cfg(test)]
 mod wait_output_tests;

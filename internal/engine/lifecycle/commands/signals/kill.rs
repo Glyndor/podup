@@ -1,4 +1,4 @@
-use super::note_if_idle;
+use super::super::note_if_idle;
 use crate::compose::types::ComposeFile;
 use crate::engine::lifecycle::parallel::{filter_levels, first_error, join_bounded};
 use crate::engine::Engine;
