@@ -10,24 +10,12 @@ use clap_complete::Shell;
 use super::parse::{parse_progress, parse_pull_policy, parse_scale_pair, parse_timeout};
 use super::types::{AuditFormat, AutostartCommands, GenerateCommands, OutputFormat, RmiScope};
 
-mod attach;
-mod commit;
-mod config;
-mod events;
-mod exec;
-mod logs;
-mod ps;
-mod run;
-mod up;
-pub(crate) use attach::AttachArgs;
-pub(crate) use commit::CommitArgs;
-pub(crate) use config::ConfigArgs;
-pub(crate) use events::EventsArgs;
-pub(crate) use exec::ExecArgs;
-pub(crate) use logs::LogsArgs;
-pub(crate) use ps::PsArgs;
-pub(crate) use run::RunArgs;
-pub(crate) use up::UpArgs;
+mod create;
+mod inspect;
+mod interact;
+pub(crate) use create::{RunArgs, UpArgs};
+pub(crate) use inspect::{ConfigArgs, EventsArgs, LogsArgs, PsArgs};
+pub(crate) use interact::{AttachArgs, CommitArgs, ExecArgs};
 
 #[derive(Subcommand)]
 #[non_exhaustive]
