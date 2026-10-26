@@ -4,10 +4,10 @@
 use crate::compose::types::Service;
 use crate::engine::build_log_config;
 
-use super::{quote_podman_arg_value, sorted_label_pairs, Section};
+use super::super::{quote_podman_arg_value, sorted_label_pairs, Section};
 
 /// Emit the `LogDriver=` line and the rotation/driver options for the service.
-pub(super) fn emit_logging(
+pub(in super::super) fn emit_logging(
 	name: &str,
 	service: &Service,
 	container: &mut Section,
@@ -53,7 +53,7 @@ pub(super) fn emit_logging(
 /// Each entry is emitted through `PodmanArgs=` (`--log-opt=`) rather than
 /// as the native `LogOpt=` Quadlet key, because `LogOpt=` is a Podman 5.2.0
 /// addition; the supported floor is 5.0.
-pub(super) fn emit_log_config(
+pub(in super::super) fn emit_log_config(
 	container: &mut Section,
 	logging: crate::libpod::types::container::LogConfig,
 ) {

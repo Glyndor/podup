@@ -2,14 +2,14 @@
 
 use crate::compose::types::Service;
 
-use super::super::build::{
+use super::super::super::build::{
 	build_image_tag, build_unit_filename, emits_build_unit, qualify_local_image_tag,
 };
-use super::{ContainerUnitMode, Section};
+use super::super::{ContainerUnitMode, Section};
 
 /// Emit the `Image=` line for the service: the sibling `.build` unit's filename,
 /// the tag that build unit registers, or the service's own `image:`.
-pub(super) fn emit_image(
+pub(in super::super) fn emit_image(
 	project: &str,
 	name: &str,
 	service: &Service,
@@ -50,7 +50,11 @@ pub(super) fn emit_image(
 
 /// Emit the `Pull=` line, and pin the container to the locally built image in
 /// prebuilt mode.
-pub(super) fn emit_pull(service: &Service, mode: ContainerUnitMode, container: &mut Section) {
+pub(in super::super) fn emit_pull(
+	service: &Service,
+	mode: ContainerUnitMode,
+	container: &mut Section,
+) {
 	if let Some(pull) = &service.pull_policy {
 		// Time policies use registry comparison, just like the live runner.
 		// In prebuilt mode a buildable service already gets `Pull=never` below;

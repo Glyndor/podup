@@ -4,13 +4,13 @@
 
 use crate::compose::types::Service;
 
-use super::super::pod_fields::{PodField, PodFields};
-use super::super::shared_values::userns;
-use super::{map_security_opt, quote_podman_arg_value, Section};
+use super::super::super::pod_fields::{PodField, PodFields};
+use super::super::super::shared_values::userns;
+use super::super::{map_security_opt, quote_podman_arg_value, Section};
 
 /// Emit one `AddCapability=`/`DropCapability=` line per `cap_add:`/`cap_drop:`
 /// entry.
-pub(super) fn emit_capabilities(service: &Service, container: &mut Section) {
+pub(in super::super) fn emit_capabilities(service: &Service, container: &mut Section) {
 	for cap in &service.cap_add {
 		container.add("AddCapability", cap.clone());
 	}
@@ -20,7 +20,7 @@ pub(super) fn emit_capabilities(service: &Service, container: &mut Section) {
 }
 
 /// Emit the `UserNS=` line for a `userns_mode:`.
-pub(super) fn emit_userns(
+pub(in super::super) fn emit_userns(
 	service: &Service,
 	in_pod: bool,
 	pod_fields: &PodFields,
@@ -34,7 +34,7 @@ pub(super) fn emit_userns(
 }
 
 /// Emit a `--group-add` podman arg per `group_add:` entry.
-pub(super) fn emit_group_add(service: &Service, container: &mut Section) {
+pub(in super::super) fn emit_group_add(service: &Service, container: &mut Section) {
 	for group in &service.group_add {
 		// An empty entry (`- ""`) would render as `--group-add=`, which
 		// podman rejects. The native `GroupAdd=` key omits empty values,
@@ -54,7 +54,7 @@ pub(super) fn emit_group_add(service: &Service, container: &mut Section) {
 }
 
 /// Map each `security_opt:` entry onto its Quadlet key or podman arg.
-pub(super) fn emit_security_opts(
+pub(in super::super) fn emit_security_opts(
 	service: &Service,
 	name: &str,
 	container: &mut Section,

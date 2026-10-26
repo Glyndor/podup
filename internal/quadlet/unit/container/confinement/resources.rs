@@ -2,12 +2,12 @@
 
 use crate::compose::types::Service;
 
-use super::super::pod_fields::{PodField, PodFields};
-use super::super::shared_values::shm_size;
-use super::{quote_podman_arg_value, Section};
+use super::super::super::pod_fields::{PodField, PodFields};
+use super::super::super::shared_values::shm_size;
+use super::super::{quote_podman_arg_value, Section};
 
 /// Emit one `Ulimit=` line per `ulimits:` entry.
-pub(super) fn emit_ulimits(service: &Service, container: &mut Section) {
+pub(in super::super) fn emit_ulimits(service: &Service, container: &mut Section) {
 	for (name, limit) in &service.ulimits {
 		let soft = limit.soft();
 		let hard = limit.hard();
@@ -21,7 +21,7 @@ pub(super) fn emit_ulimits(service: &Service, container: &mut Section) {
 }
 
 /// Emit `ShmSize=` plus the memory, CPU and pids limits of the service.
-pub(super) fn emit_limits(
+pub(in super::super) fn emit_limits(
 	service: &Service,
 	in_pod: bool,
 	pod_fields: &PodFields,
@@ -91,7 +91,7 @@ pub(super) fn emit_limits(
 
 /// Emit the memory limit declared under `deploy.resources.limits.memory`, for a
 /// service that declares no `mem_limit:` of its own.
-pub(super) fn emit_deploy_limits(service: &Service, container: &mut Section) {
+pub(in super::super) fn emit_deploy_limits(service: &Service, container: &mut Section) {
 	// `deploy.resources.limits.memory` is the modern equivalent of `mem_limit`.
 	if service.mem_limit.is_none() {
 		if let Some(mem) = service

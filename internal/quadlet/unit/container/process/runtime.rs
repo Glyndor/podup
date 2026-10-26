@@ -4,14 +4,14 @@
 use crate::compose::types::Service;
 use crate::quadlet::is_no_warn_set;
 
-use super::super::pod_fields::{PodField, PodFields};
-use super::super::shared_values::hostname;
-use super::Section;
+use super::super::super::pod_fields::{PodField, PodFields};
+use super::super::super::shared_values::hostname;
+use super::super::Section;
 
 /// Emit the process-level settings of the container: `HostName=`, `User=`/
 /// `Group=`, `WorkingDir=`, `ReadOnly=`, `RunInit=`, and the `privileged: true`
 /// escape hatch.
-pub(super) fn emit_runtime(
+pub(in super::super) fn emit_runtime(
 	name: &str,
 	service: &Service,
 	in_pod: bool,

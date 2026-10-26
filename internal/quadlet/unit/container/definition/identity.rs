@@ -2,7 +2,7 @@
 
 use crate::compose::types::Service;
 
-use super::{safe_unit_stem, Section};
+use super::super::{safe_unit_stem, Section};
 
 /// The name the container of `service` runs under: its `container_name:`, else
 /// `{project}-{name}`. One definition, shared by the unit writer and by the
@@ -16,7 +16,7 @@ pub(crate) fn container_name(project: &str, name: &str, service: &Service) -> St
 
 /// Emit `ContainerName=` and, in pod mode, the `Pod=` reference the container
 /// is launched under.
-pub(super) fn emit_identity(
+pub(in super::super) fn emit_identity(
 	project: &str,
 	name: &str,
 	service: &Service,

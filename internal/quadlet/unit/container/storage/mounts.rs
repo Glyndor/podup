@@ -2,11 +2,11 @@
 
 use crate::compose::types::Service;
 
-use super::{render_tmpfs_mount, render_volume, Section};
+use super::super::{render_tmpfs_mount, render_volume, Section};
 
 /// Emit a `Volume=` line per `volumes:` entry, or `Tmpfs=` for a long-form
 /// `type: tmpfs` mount.
-pub(super) fn emit_volumes(
+pub(in super::super) fn emit_volumes(
 	service: &Service,
 	project: &str,
 	declared_volumes: &[&str],
@@ -24,7 +24,7 @@ pub(super) fn emit_volumes(
 }
 
 /// Emit a `Tmpfs=` line per `tmpfs:` entry.
-pub(super) fn emit_tmpfs(service: &Service, container: &mut Section) {
+pub(in super::super) fn emit_tmpfs(service: &Service, container: &mut Section) {
 	for t in service.tmpfs.to_list() {
 		container.add("Tmpfs", t);
 	}

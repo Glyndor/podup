@@ -3,12 +3,12 @@
 
 use crate::compose::types::Service;
 
-use super::super::shared_values::label_values;
-use super::{sorted_label_pairs, Section};
+use super::super::super::shared_values::label_values;
+use super::super::{sorted_label_pairs, Section};
 
 /// Emit the service's own `Label=` lines, the two ownership labels, and the
 /// `AutoUpdate=` line the `x-podman-autoupdate` extension maps to.
-pub(super) fn emit_labels(
+pub(in super::super) fn emit_labels(
 	name: &str,
 	project: &str,
 	service: &Service,
@@ -39,14 +39,14 @@ pub(super) fn emit_labels(
 }
 
 /// Emit one `Annotation=` line per entry in `annotations:`.
-pub(super) fn emit_annotations(service: &Service, container: &mut Section) {
+pub(in super::super) fn emit_annotations(service: &Service, container: &mut Section) {
 	for ann in sorted_label_pairs(service.annotations.to_map()) {
 		container.add("Annotation", format!("{}={}", ann.0, ann.1));
 	}
 }
 
 /// Emit one `Sysctl=` line per entry in `sysctls:`.
-pub(super) fn emit_sysctls(service: &Service, container: &mut Section) {
+pub(in super::super) fn emit_sysctls(service: &Service, container: &mut Section) {
 	for (key, val) in sorted_label_pairs(service.sysctls.to_map()) {
 		container.add("Sysctl", format!("{key}={val}"));
 	}

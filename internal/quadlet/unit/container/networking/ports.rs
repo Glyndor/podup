@@ -3,11 +3,11 @@
 use crate::compose::types::Service;
 use crate::ports::parse_ports;
 
-use super::{render_publish_port, Section};
+use super::super::{render_publish_port, Section};
 
 /// Emit one `PublishPort=` line per mapped port, unless the pod owns the
 /// published ports.
-pub(super) fn emit_ports(service: &Service, in_pod: bool, container: &mut Section) {
+pub(in super::super) fn emit_ports(service: &Service, in_pod: bool, container: &mut Section) {
 	// Ports are validated (range, format) before generation, so parsing succeeds
 	// here. A malformed/out-of-range mapping is rejected at the command boundary
 	// rather than re-emitted verbatim as an invalid `PublishPort=`; emitting the
@@ -27,7 +27,7 @@ pub(super) fn emit_ports(service: &Service, in_pod: bool, container: &mut Sectio
 }
 
 /// Emit one `ExposeHostPort=` line per `expose:` entry.
-pub(super) fn emit_expose(service: &Service, container: &mut Section) {
+pub(in super::super) fn emit_expose(service: &Service, container: &mut Section) {
 	for port in &service.expose {
 		container.add("ExposeHostPort", port.clone());
 	}

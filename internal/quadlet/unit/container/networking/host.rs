@@ -3,13 +3,13 @@
 
 use crate::compose::types::Service;
 
-use super::super::pod_fields::{PodField, PodFields};
-use super::super::shared_values::host_values;
-use super::{quote_podman_arg_value, Section};
+use super::super::super::pod_fields::{PodField, PodFields};
+use super::super::super::shared_values::host_values;
+use super::super::{quote_podman_arg_value, Section};
 
 /// Emit one `AddDevice=` line per `devices:` entry, one `--add-host` podman arg
 /// per `extra_hosts:` entry, and the DNS settings.
-pub(super) fn emit_host_config(
+pub(in super::super) fn emit_host_config(
 	service: &Service,
 	in_pod: bool,
 	pod_fields: &PodFields,

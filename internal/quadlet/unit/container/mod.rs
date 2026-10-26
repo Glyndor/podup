@@ -18,40 +18,31 @@ use super::{
 	sorted_label_pairs, sorted_pairs, unit_stem, QuadletUnit, Section,
 };
 
-mod command;
-mod env;
-mod host;
-mod identity;
-mod image;
-mod lifecycle;
-mod logging;
-mod metadata;
-mod mounts;
-mod networks;
-mod ports;
-mod privileges;
-mod resources;
-mod runtime;
-mod secrets;
+mod confinement;
+mod definition;
+mod networking;
+mod process;
+mod storage;
 
-pub(crate) use identity::container_name;
-pub(crate) use networks::is_rootless_user_mode;
+pub(crate) use definition::container_name;
+pub(crate) use networking::is_rootless_user_mode;
 
-use command::emit_command;
-use env::{emit_env_files, emit_environment};
-use host::emit_host_config;
-use identity::emit_identity;
-use image::{emit_image, emit_pull};
-use lifecycle::{emit_restart, emit_stop};
-use logging::emit_logging;
-use metadata::{emit_annotations, emit_labels, emit_sysctls};
-use mounts::{emit_tmpfs, emit_volumes};
-use networks::{emit_network_extras, emit_network_mode, emit_networks};
-use ports::{emit_expose, emit_ports};
-use privileges::{emit_capabilities, emit_group_add, emit_security_opts, emit_userns};
-use resources::{emit_deploy_limits, emit_limits, emit_ulimits};
-use runtime::emit_runtime;
-use secrets::emit_secrets;
+use confinement::{
+	emit_capabilities, emit_deploy_limits, emit_group_add, emit_limits, emit_security_opts,
+	emit_ulimits, emit_userns,
+};
+use definition::{
+	emit_annotations, emit_identity, emit_image, emit_labels, emit_pull, emit_sysctls,
+};
+use networking::{
+	emit_expose, emit_host_config, emit_network_extras, emit_network_mode, emit_networks,
+	emit_ports,
+};
+use process::{
+	emit_command, emit_env_files, emit_environment, emit_logging, emit_restart, emit_runtime,
+	emit_stop,
+};
+use storage::{emit_secrets, emit_tmpfs, emit_volumes};
 
 /// Project-wide inputs every generated unit needs, as opposed to the per-service
 /// ones (`name`, `service`). Grouped rather than passed loose because the set

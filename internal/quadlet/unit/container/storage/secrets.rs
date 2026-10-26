@@ -4,11 +4,11 @@ use indexmap::IndexMap;
 
 use crate::compose::types::{SecretConfig, Service};
 
-use super::{is_inline_secret, render_secret, Section};
+use super::super::{is_inline_secret, render_secret, Section};
 
 /// Emit one `Secret=` line per `secrets:` entry, warning about an inline secret
 /// Quadlet does not create.
-pub(super) fn emit_secrets(
+pub(in super::super) fn emit_secrets(
 	name: &str,
 	project: &str,
 	service: &Service,

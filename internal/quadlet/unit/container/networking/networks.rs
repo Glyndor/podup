@@ -5,13 +5,13 @@
 use crate::compose::types::Service;
 use crate::quadlet::is_no_warn_set;
 
-use super::super::pod_fields::{PodField, PodFields};
-use super::super::shared_values::network_values;
-use super::{quote_podman_arg_value, unit_stem, Section};
+use super::super::super::pod_fields::{PodField, PodFields};
+use super::super::super::shared_values::network_values;
+use super::super::{quote_podman_arg_value, unit_stem, Section};
 
 /// Emit a `Network=` line per declared network the service attaches to, unless
 /// the pod carries the attachment instead.
-pub(super) fn emit_networks(
+pub(in super::super) fn emit_networks(
 	service: &Service,
 	project: &str,
 	declared_networks: &[&str],
@@ -39,7 +39,7 @@ pub(super) fn emit_networks(
 
 /// Emit the `Network=` line for a namespace `network_mode:`, warning on the
 /// modes that hand the container another namespace.
-pub(super) fn emit_network_mode(
+pub(in super::super) fn emit_network_mode(
 	name: &str,
 	project: &str,
 	service: &Service,
@@ -113,7 +113,7 @@ pub(super) fn emit_network_mode(
 
 /// Emit a `--network-alias` podman arg per network alias, and the first static
 /// address declared across the service's networks as `IP=`/`IP6=`.
-pub(super) fn emit_network_extras(
+pub(in super::super) fn emit_network_extras(
 	service: &Service,
 	in_pod: bool,
 	pod_fields: &PodFields,
