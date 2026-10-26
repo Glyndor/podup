@@ -16,12 +16,12 @@ use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
-use super::super::Engine;
 use super::extract::archive::extract_archive;
 use super::extract::destination;
 use super::extract::stream;
 use super::CpByteCounter;
 use super::CpOptions;
+use crate::engine::Engine;
 
 /// Upper bound on a container→host `cp` archive buffered in memory. Without it a
 /// hostile or huge container path would OOM the CLI. Generous (covers ordinary

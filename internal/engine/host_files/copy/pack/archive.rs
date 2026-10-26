@@ -56,7 +56,7 @@ use super::common::{record_one, walk, KindDispatch};
 /// read back from the same archive: same path, same kind, same order. The
 /// parity test in [`super::transport::tests`] asserts this on every shape the
 /// existing tests cover.
-pub(in crate::engine::copy) fn pack_path<W: Write>(
+pub(in crate::engine::host_files::copy) fn pack_path<W: Write>(
 	src: &Path,
 	follow_link: bool,
 	name_override: Option<&str>,

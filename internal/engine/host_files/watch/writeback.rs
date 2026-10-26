@@ -199,7 +199,7 @@ impl Engine {
 	/// the watched tree through one of the service's bind mounts. The
 	/// restart, rebuild or exec part of a `sync+restart` / `sync+exec`
 	/// action still runs; this only gates the sync upload/remove.
-	pub(in crate::engine::watch) async fn maybe_sync(
+	pub(in crate::engine::host_files::watch) async fn maybe_sync(
 		&self,
 		entry: &super::RuleEntry,
 		path: &Path,
@@ -263,7 +263,7 @@ impl Engine {
 	/// (the rule `target: /app` plus `"./src:/app"` would `rm /app/b.txt`
 	/// and erase the unrelated host file `src/b.txt`).
 	#[allow(clippy::too_many_arguments)]
-	pub(in crate::engine::watch) async fn dispatch_sync(
+	pub(in crate::engine::host_files::watch) async fn dispatch_sync(
 		&self,
 		container: &str,
 		root: &Path,

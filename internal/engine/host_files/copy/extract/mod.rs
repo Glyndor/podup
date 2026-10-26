@@ -6,8 +6,8 @@
 //! [`super::pack`].
 
 pub(crate) mod archive;
-pub(in crate::engine::copy) mod destination;
-pub(in crate::engine::copy) mod stream;
+pub(in crate::engine::host_files::copy) mod destination;
+pub(in crate::engine::host_files::copy) mod stream;
 
 #[cfg(test)]
 mod destination_tests;

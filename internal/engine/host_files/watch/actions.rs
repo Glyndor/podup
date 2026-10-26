@@ -39,7 +39,7 @@ use super::Engine;
 /// sync for such a path so the lossy mapping never runs; the per-entry
 /// filter inside `sync_to_container` also drops the entry to keep an
 /// upload whose sibling is unsyncable from sending a partial tar.
-pub(in crate::engine::watch) fn entry_is_unsyncable(name: &Path) -> bool {
+pub(in crate::engine::host_files::watch) fn entry_is_unsyncable(name: &Path) -> bool {
 	for c in name.components() {
 		let std::path::Component::Normal(part) = c else {
 			continue;
@@ -53,7 +53,7 @@ pub(in crate::engine::watch) fn entry_is_unsyncable(name: &Path) -> bool {
 
 impl Engine {
 	#[allow(clippy::too_many_arguments)]
-	pub(in crate::engine::watch) async fn sync_to_container(
+	pub(in crate::engine::host_files::watch) async fn sync_to_container(
 		&self,
 		container: &str,
 		root: &Path,
@@ -175,7 +175,7 @@ impl Engine {
 	/// gone inside the container"; both paths satisfy it. Matching docker
 	/// compose's own watch handler (#17 in their tar syncer upstream), which
 	/// uses `rm -rf` for the same reason.
-	pub(in crate::engine::watch) async fn remove_from_container(
+	pub(in crate::engine::host_files::watch) async fn remove_from_container(
 		&self,
 		container: &str,
 		placement: SyncPlacement,
@@ -214,7 +214,7 @@ impl Engine {
 		Ok(())
 	}
 
-	pub(in crate::engine::watch) async fn watch_rebuild(
+	pub(in crate::engine::host_files::watch) async fn watch_rebuild(
 		&self,
 		file: &ComposeFile,
 		service_name: &str,
@@ -243,7 +243,10 @@ impl Engine {
 			.await
 	}
 
-	pub(in crate::engine::watch) async fn watch_restart(&self, container_name: &str) -> Result<()> {
+	pub(in crate::engine::host_files::watch) async fn watch_restart(
+		&self,
+		container_name: &str,
+	) -> Result<()> {
 		info!("restarting {container_name}");
 		// Single atomic restart (no visible stopped window) instead of stop+start.
 		let restart_path = format!(
@@ -266,7 +269,7 @@ impl Engine {
 	/// per-target `mkdir -p`) can ignore the result; others propagate it and
 	/// the watch event loop logs `watch action failed` without aborting the
 	/// session.
-	pub(in crate::engine::watch) async fn watch_exec(
+	pub(in crate::engine::host_files::watch) async fn watch_exec(
 		&self,
 		container_name: &str,
 		cmd: Vec<String>,

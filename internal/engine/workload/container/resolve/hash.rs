@@ -202,7 +202,7 @@ fn hash_file_payload(
 	})?;
 	let mut digest_hasher = Sha256::new();
 	// 8 KiB mirrors what the rest of the project uses for chunked copies
-	// (`internal/engine/watch/mod.rs`); aligned to a page and small enough
+	// (`internal/engine/host_files/watch/mod.rs`); aligned to a page and small enough
 	// to keep stack pressure zero on the unwinding paths.
 	let mut buf = [0u8; 8192];
 	loop {

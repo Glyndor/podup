@@ -91,8 +91,8 @@ use crate::libpod::client::PathStat;
 use crate::libpod::urlencoded;
 use crate::libpod::API_PREFIX;
 
-use super::super::super::Engine;
 use super::super::join_archive_path;
+use crate::engine::Engine;
 
 /// Every `os.ModeType` bit Go reports on the stat endpoint.
 ///
@@ -121,8 +121,8 @@ pub(crate) enum SentKind {
 pub(in crate::engine) struct SentEntry {
 	/// Relative to the directory the archive was extracted at, `/`-separated,
 	/// without a leading `./` or a trailing `/`.
-	pub(in crate::engine::copy) path: String,
-	pub(in crate::engine::copy) kind: SentKind,
+	pub(in crate::engine::host_files::copy) path: String,
+	pub(in crate::engine::host_files::copy) kind: SentKind,
 }
 
 impl SentEntry {
@@ -171,7 +171,7 @@ impl SentEntry {
 /// records one without writing the other (or vice versa) breaks the test
 /// in lock-step.
 #[cfg(test)]
-pub(in crate::engine::copy) fn sent_entries(gz_tar: &[u8]) -> Result<Vec<SentEntry>> {
+pub(in crate::engine::host_files::copy) fn sent_entries(gz_tar: &[u8]) -> Result<Vec<SentEntry>> {
 	let mut archive = tar::Archive::new(gz_tar);
 	let mut sent = Vec::new();
 	for entry in archive.entries().map_err(ComposeError::Io)? {
@@ -277,7 +277,7 @@ pub(crate) enum LinkCheck {
 /// confirmed only when its target text matches and its byte length matches,
 /// or the runtime sent no `linkTarget` and the link is at least a link at
 /// the destination.
-pub(in crate::engine::copy) fn entry_landed(
+pub(in crate::engine::host_files::copy) fn entry_landed(
 	sent: SentKind,
 	entry_path: &str,
 	post: Option<&PathStat>,
@@ -509,7 +509,7 @@ impl Engine {
 	///
 	/// The residual false positive is the single-file one at tree size: an
 	/// upload that failed over a tree whose entries already had these sizes.
-	pub(in crate::engine::copy) async fn tree_landed(
+	pub(in crate::engine::host_files::copy) async fn tree_landed(
 		&self,
 		container: &str,
 		dir: &str,

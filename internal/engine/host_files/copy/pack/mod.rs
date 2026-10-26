@@ -5,6 +5,6 @@
 //! The reading half, what extracts an archive that came out, lives in
 //! [`super::extract`].
 
-pub(in crate::engine::copy) mod archive;
+pub(in crate::engine::host_files::copy) mod archive;
 pub(in crate::engine) mod common;
 pub(in crate::engine) mod transport;

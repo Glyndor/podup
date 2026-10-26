@@ -30,16 +30,16 @@ use super::archive::pack_path;
 /// Frames handed to the body stream: a tar chunk, or the terminal error that
 /// aborts the upload. The same shape the build-context stream uses so a single
 /// client helper accepts both.
-pub(in crate::engine::copy) type BodyItem = io::Result<Frame<Bytes>>;
+pub(in crate::engine::host_files::copy) type BodyItem = io::Result<Frame<Bytes>>;
 
 /// How many pending chunks the channel buffers. Bounds peak memory to about
 /// `CHUNK_BYTES * CHANNEL_CAP` regardless of source size, while still letting
 /// the blocking tar writer and the async socket writer run concurrently.
-pub(in crate::engine::copy) const CHANNEL_CAP: usize = 8;
+pub(in crate::engine::host_files::copy) const CHANNEL_CAP: usize = 8;
 
 /// Coalesce the tar writer's many small writes into ~64 KiB frames, so the
 /// body is a handful of sizeable chunks rather than thousands of tiny ones.
-pub(in crate::engine::copy) const CHUNK_BYTES: usize = 64 * 1024;
+pub(in crate::engine::host_files::copy) const CHUNK_BYTES: usize = 64 * 1024;
 
 /// A [`Write`] sink that forwards the tar bytes to an async channel as `Bytes`
 /// frames, coalescing small writes to `CHUNK_BYTES`. Blocks (backpressure)
@@ -93,12 +93,13 @@ pub(in crate::engine) struct PackedStream {
 	/// write error rather than truncating the archive silently. The stream
 	/// advances `counter` as it yields, so the `cp` progress row keeps
 	/// ticking even though the bytes are no longer buffered in `podup`.
-	pub(in crate::engine::copy) body: Pin<Box<dyn Stream<Item = BodyItem> + Send + 'static>>,
+	pub(in crate::engine::host_files::copy) body:
+		Pin<Box<dyn Stream<Item = BodyItem> + Send + 'static>>,
 	/// The blocking pack task. Its output is `(Vec<SentEntry>, Result<()>)`:
 	/// the entries the packer recorded, and the error that should reach the
 	/// caller if packing fails (a file vanished, a permission denied), not
 	/// the generic "could not be confirmed".
-	pub(in crate::engine::copy) producer: JoinHandle<PackOutcome>,
+	pub(in crate::engine::host_files::copy) producer: JoinHandle<PackOutcome>,
 }
 
 /// What the blocking pack task yields. The `Vec<SentEntry>` is the list the
@@ -106,7 +107,8 @@ pub(in crate::engine) struct PackedStream {
 /// surface if packing fails before the PUT body finishes. `JoinHandle`
 /// errors (the task was aborted or panicked) are mapped to `ComposeError`
 /// at the call site, keeping this type the pure outcome of the work.
-pub(in crate::engine::copy) type PackOutcome = (Vec<SentEntry>, Result<(), ComposeError>);
+pub(in crate::engine::host_files::copy) type PackOutcome =
+	(Vec<SentEntry>, Result<(), ComposeError>);
 
 /// Wrap `rx` into a stream that increments `counter` by the size of each
 /// yielded frame, so the progress row keeps advancing as bytes leave the
@@ -148,7 +150,7 @@ fn receiver_body_with_counter(
 /// The body stream closes when the producer finishes (or aborts); hyper sees
 /// a clean body end and reports `Ok` if the runtime accepted the partial
 /// archive, which the verification step then either confirms or refuses.
-pub(in crate::engine::copy) fn pack_path_stream(
+pub(in crate::engine::host_files::copy) fn pack_path_stream(
 	src: &Path,
 	follow_link: bool,
 	name_override: Option<&str>,

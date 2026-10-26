@@ -5,7 +5,7 @@ use std::path::Path;
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 
-use super::Engine;
+use crate::engine::Engine;
 
 mod endpoint;
 mod extract;
@@ -21,13 +21,13 @@ pub(in crate::engine) mod upload;
 pub(crate) use extract::archive;
 
 /// Re-export the watch-sync packer at the engine level so the watch module
-/// (`internal/engine/watch/mod.rs`) can reach the streaming upload shape
+/// (`internal/engine/host_files/watch/mod.rs`) can reach the streaming upload shape
 /// without widening the transport module's visibility to anything below
-/// `pub(in crate::engine::copy)`.
-pub(super) use pack::transport::build_sync_tar_stream as build_sync_tar_stream_for_watch;
+/// `pub(in crate::engine::host_files::copy)`.
+pub(in crate::engine) use pack::transport::build_sync_tar_stream as build_sync_tar_stream_for_watch;
 
 /// The shared walk-and-record helpers, under the name the watch-sync packer
-/// (`internal/engine/watch/sync.rs`) imports them by.
+/// (`internal/engine/host_files/watch/sync.rs`) imports them by.
 pub(in crate::engine) use pack::common as pack_common;
 
 /// The confirmation side of the upload, under the name the watch-sync packer

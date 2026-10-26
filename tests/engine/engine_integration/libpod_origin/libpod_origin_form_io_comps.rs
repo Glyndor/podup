@@ -33,7 +33,7 @@ use std::time::Duration;
 ///
 /// Fails on the branch with `copyUIDGID=false` reverted (i.e. the
 /// libpod default of `true` lands) at
-/// `internal/engine/copy/upload/put.rs::archive_put_path` (the asserted
+/// `internal/engine/host_files/copy/upload/put.rs::archive_put_path` (the asserted
 /// `uid:gid == 1000:1000` line).
 #[tokio::test]
 async fn cp_preserves_the_host_uid_gid() {

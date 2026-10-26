@@ -107,12 +107,12 @@ use crate::error::ComposeError;
 /// cannot `chown`, so with one uid in the policy the two owner checks can
 /// never be told apart.
 #[cfg_attr(not(unix), allow(dead_code))]
-pub(in crate::engine::copy) struct TrustedRoot<'a> {
-	pub(in crate::engine::copy) root: &'a Path,
+pub(in crate::engine::host_files::copy) struct TrustedRoot<'a> {
+	pub(in crate::engine::host_files::copy) root: &'a Path,
 	/// Who must own the root directory.
-	pub(in crate::engine::copy) root_uid: u32,
+	pub(in crate::engine::host_files::copy) root_uid: u32,
 	/// Who must own a link for it to be let through.
-	pub(in crate::engine::copy) link_uid: u32,
+	pub(in crate::engine::host_files::copy) link_uid: u32,
 }
 
 /// Why `dst` must not be used as a `cp` destination, or `None` when every
@@ -149,7 +149,7 @@ pub(in crate::engine::copy) struct TrustedRoot<'a> {
 /// this builds for, and on Windows `is_symlink` covers junctions as well as
 /// symbolic links. The trusted-root check is Unix-only and sits on its own
 /// helper.
-pub(in crate::engine::copy) fn destination_refusal(dst: &Path) -> Option<ComposeError> {
+pub(in crate::engine::host_files::copy) fn destination_refusal(dst: &Path) -> Option<ComposeError> {
 	destination_refusal_under(dst, unix_trusted_root())
 }
 
@@ -171,7 +171,7 @@ fn unix_trusted_root() -> Option<TrustedRoot<'static>> {
 
 /// The walk, with the trusted-root policy passed as data so the inner
 /// function is exercisable without being root.
-pub(in crate::engine::copy) fn destination_refusal_under(
+pub(in crate::engine::host_files::copy) fn destination_refusal_under(
 	dst: &Path,
 	trusted: Option<TrustedRoot<'_>>,
 ) -> Option<ComposeError> {
@@ -289,7 +289,7 @@ fn root_is_trusted(root: &Path, root_uid: u32) -> bool {
 /// follow; both callers (`cp_destination_kind` and `extract_archive`) treat
 /// any error here as "not an existing directory", which is what the
 /// caller wants for that case.
-pub(in crate::engine::copy) fn destination_metadata(
+pub(in crate::engine::host_files::copy) fn destination_metadata(
 	dst: &Path,
 ) -> std::io::Result<std::fs::Metadata> {
 	destination_metadata_under(dst, unix_trusted_root())
@@ -297,7 +297,7 @@ pub(in crate::engine::copy) fn destination_metadata(
 
 /// The metadata helper, with the trusted-root policy passed as data so the
 /// inner function is exercisable without being root.
-pub(in crate::engine::copy) fn destination_metadata_under(
+pub(in crate::engine::host_files::copy) fn destination_metadata_under(
 	dst: &Path,
 	trusted: Option<TrustedRoot<'_>>,
 ) -> std::io::Result<std::fs::Metadata> {
@@ -323,7 +323,7 @@ pub(in crate::engine::copy) fn destination_metadata_under(
 /// Walks again to name the component. If the path changed in between and the
 /// walk now comes back clean, the destination is still refused: the
 /// classification that brought the caller here is not revisited.
-pub(in crate::engine::copy) fn refusal_for(dst: &Path) -> ComposeError {
+pub(in crate::engine::host_files::copy) fn refusal_for(dst: &Path) -> ComposeError {
 	destination_refusal(dst).unwrap_or_else(|| symlink_refusal(dst, dst))
 }
 

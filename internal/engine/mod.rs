@@ -12,11 +12,10 @@ pub(crate) use workload::container;
 use workload::container_config;
 use workload::declared;
 use workload::pod;
-/// `pub(crate)` so the fuzz harness behind the `test-helpers` feature can
-/// reach `archive::extract_tar_guarded` without widening the published API:
-/// the chain stays `engine → copy → archive` all `pub(crate)` (or stricter),
-/// which a third-party crate cannot see.
-pub(crate) mod copy;
+mod host_files;
+pub(crate) use host_files::copy;
+#[cfg(feature = "watch")]
+use host_files::watch;
 mod observe;
 pub(crate) use observe::events;
 pub(crate) use observe::query;
@@ -56,8 +55,6 @@ pub use query::{
 };
 pub use stats::StatsOptions;
 pub use volume::{VolumesDisplayOptions, VolumesOptions};
-#[cfg(feature = "watch")]
-mod watch;
 
 use std::path::PathBuf;
 

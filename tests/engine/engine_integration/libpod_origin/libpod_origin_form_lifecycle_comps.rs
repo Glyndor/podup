@@ -92,7 +92,7 @@ async fn stop_returns_within_the_grace_window() {
 ///
 /// Fails on the branch with the `timeout=` parameter reverted to
 /// `t=` at `internal/engine/lifecycle/parallel/mod.rs::restart_one_service`
-/// and `internal/engine/watch/mod.rs::watch_restart` (the asserted
+/// and `internal/engine/host_files/watch/mod.rs::watch_restart` (the asserted
 /// `elapsed >= 2.5s` line).
 #[tokio::test]
 async fn restart_honours_the_grace_window() {
@@ -139,7 +139,7 @@ async fn restart_honours_the_grace_window() {
 ///
 /// Fails on the branch with `?timeout=` reverted to `?t=` at
 /// `internal/engine/lifecycle/parallel/mod.rs::restart_one_service` and
-/// `internal/engine/watch/mod.rs::watch_restart` (the asserted
+/// `internal/engine/host_files/watch/mod.rs::watch_restart` (the asserted
 /// `elapsed < 8s` line).
 #[tokio::test]
 async fn restart_honours_the_cli_override() {

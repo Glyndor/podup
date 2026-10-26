@@ -42,7 +42,7 @@ use crate::libpod::API_PREFIX;
 
 impl Engine {
 	// The two callers (`cp_to_container` in `to_container.rs` and the watch sync
-	// at `internal/engine/watch/mod.rs`) live in sibling modules of `copy`, so
+	// at `internal/engine/host_files/watch/mod.rs`) live in sibling modules of `copy`, so
 	// the visibility has to reach `crate::engine` rather than the `copy::super`
 	// only.
 	#[allow(clippy::too_many_arguments)]

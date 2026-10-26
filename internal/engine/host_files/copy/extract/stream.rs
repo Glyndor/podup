@@ -24,10 +24,10 @@ use crate::error::{ComposeError, Result};
 /// How many chunks the channel holds. Same reasoning as the build side: enough
 /// to keep the socket and the extractor both busy, small enough that the bound
 /// is the point.
-pub(in crate::engine::copy) const CHANNEL_CAP: usize = 8;
+pub(in crate::engine::host_files::copy) const CHANNEL_CAP: usize = 8;
 
 /// A chunk of archive bytes, or the transport failure that ended the stream.
-pub(in crate::engine::copy) type ChunkItem = io::Result<Bytes>;
+pub(in crate::engine::host_files::copy) type ChunkItem = io::Result<Bytes>;
 
 /// Serves the bytes an async producer sends over a bounded channel to a
 /// blocking consumer, refusing to serve more than `cap` in total.
@@ -36,7 +36,7 @@ pub(in crate::engine::copy) type ChunkItem = io::Result<Bytes>;
 /// meaningful: a compromised container can stream without end, and the bytes
 /// land on the host's disk as they arrive. What it protects changed from RAM to
 /// disk, so it is not redundant.
-pub(in crate::engine::copy) struct ChannelReader {
+pub(in crate::engine::host_files::copy) struct ChannelReader {
 	rx: mpsc::Receiver<ChunkItem>,
 	/// The chunk currently being handed out, consumed from the front.
 	current: Bytes,
@@ -49,7 +49,7 @@ pub(in crate::engine::copy) struct ChannelReader {
 }
 
 impl ChannelReader {
-	pub(in crate::engine::copy) fn new(
+	pub(in crate::engine::host_files::copy) fn new(
 		rx: mpsc::Receiver<ChunkItem>,
 		cap: u64,
 		progress: Option<ByteCounter>,
@@ -116,7 +116,7 @@ impl Read for ChannelReader {
 /// `None` for a non-progress call site (tests, the `extract_archive`
 /// path); the cost on that path is a single `Option::is_some` per
 /// `read`.
-pub(in crate::engine::copy) async fn extract_streamed<B>(
+pub(in crate::engine::host_files::copy) async fn extract_streamed<B>(
 	resp: hyper::Response<B>,
 	dst: std::path::PathBuf,
 	cap: u64,

@@ -11,11 +11,11 @@ use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
-use super::super::Engine;
 use super::pack::transport;
 use super::upload::verify::SentKind;
 use super::CpByteCounter;
 use super::CpOptions;
+use crate::engine::Engine;
 
 /// What the destination entry must look like for a single-entry upload to have
 /// landed, or `None` when there is nothing comparable.

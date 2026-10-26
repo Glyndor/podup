@@ -44,7 +44,7 @@ use placement::{
 
 use writeback::{effective_mounts, writes_back, EffectiveMount};
 
-use super::Engine;
+use crate::engine::Engine;
 
 /// Bound on the in-flight watch-event queue (events are dropped when full; a
 /// later event re-triggers the sync) and on the paths coalesced into one batch.
