@@ -14,7 +14,7 @@ mod resolution;
 pub(in crate::compose) use merge::{merge_service, merge_service_tagged};
 #[cfg(test)]
 use resolution::{parse_file_inner_call_count, reset_parse_file_inner_counter};
-pub(super) use resolution::{resolve_all_extends, resolve_extends_same_file};
+pub(in super::super) use resolution::{resolve_all_extends, resolve_extends_same_file};
 
 // ---------------------------------------------------------------------------
 // Unit tests

@@ -33,7 +33,7 @@ const MAX_ALIAS_EXPANSION_BYTES: usize = 4 * 1024 * 1024;
 /// pass bounds the parser's worst-case work without affecting any valid input.
 const MAX_FLOW_DEPTH: usize = 100;
 
-pub(super) fn deserialize_with_merge(content: &str) -> Result<ComposeFile> {
+pub(in super::super) fn deserialize_with_merge(content: &str) -> Result<ComposeFile> {
 	deserialize_with_merge_interp(content, None)
 }
 
@@ -47,24 +47,24 @@ pub(super) fn deserialize_with_merge(content: &str) -> Result<ComposeFile> {
 /// unset/empty variable always yields an in-place empty string (it cannot drop a
 /// key or trigger a "mapping values are not allowed" parse error), and multiline
 /// or backslash-bearing values are not re-interpreted by the YAML parser.
-pub(super) fn deserialize_with_merge_interp(
+pub(in super::super) fn deserialize_with_merge_interp(
 	content: &str,
 	vars: Option<&HashMap<String, String>>,
 ) -> Result<ComposeFile> {
 	let mut value = interpolated_value(content, vars)?;
-	let refresh_clears = super::tags::refresh_clears(&value);
+	let refresh_clears = super::super::tags::refresh_clears(&value);
 	// Drop the merge tags before typing: whether serde tolerates one depends on
 	// the field's Rust type, so leaving them in makes `!reset` fail the file on
 	// `dns` and do nothing on `ports`. What each tag means is decided by the
 	// merge (see `compose::tags`), not by which type happens to be behind a key.
-	let directives = super::tags::collect(&value);
-	let umask_resets = super::tags::umask_resets(&value);
-	super::tags::strip(&mut value);
-	super::types::service::umask::apply_resets(&mut value, &umask_resets);
-	super::types::service::umask::validate(&value)?;
+	let directives = super::super::tags::collect(&value);
+	let umask_resets = super::super::tags::umask_resets(&value);
+	super::super::tags::strip(&mut value);
+	super::super::types::service::umask::apply_resets(&mut value, &umask_resets);
+	super::super::types::service::umask::validate(&value)?;
 	// Jobs are typed first and on their own, so a bad job is reported by name
 	// instead of as a file that failed to parse.
-	let jobs = super::jobs::extract_jobs(&mut value)?;
+	let jobs = super::super::jobs::extract_jobs(&mut value)?;
 	let mut file: ComposeFile = serde_yaml::from_value(value)?;
 	file.jobs = jobs;
 	for (name, service) in &mut file.services {
@@ -98,14 +98,14 @@ pub(super) fn deserialize_with_merge_interp(
 /// The raw nested-key diagnostic needs this post-interpolation document shape:
 /// the typed `ComposeFile` has already dropped unknown keys nested inside option
 /// blocks, so the diagnostic must diff against the raw document the parser saw.
-pub(super) fn interpolated_value(
+pub(in super::super) fn interpolated_value(
 	content: &str,
 	vars: Option<&HashMap<String, String>>,
 ) -> Result<serde_yaml::Value> {
 	guard_flow_depth(content)?;
 	guard_alias_expansion(content)?;
 	let mut value: serde_yaml::Value = serde_yaml::from_str(content).map_err(|error| {
-		super::types::service::umask::number_error(content).unwrap_or(error.into())
+		super::super::types::service::umask::number_error(content).unwrap_or(error.into())
 	})?;
 	if let Some(vars) = vars {
 		// One budget for the whole document. The per-scalar cap cannot see

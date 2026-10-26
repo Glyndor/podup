@@ -1,6 +1,6 @@
 //! Complete each init specification independently from its owning service.
 
-use super::types::Service;
+use super::super::types::Service;
 
 /// Preserve declaration order and prevent lifecycle lists from recursing into init work.
 pub(crate) fn build_steps(service: &Service) -> Vec<Service> {
@@ -14,14 +14,14 @@ pub(crate) fn build_steps(service: &Service) -> Vec<Service> {
 			base.ports.clear();
 			base.expose.clear();
 			base.mac_address = None;
-			if let super::types::ServiceNetworks::Map(networks) = &mut base.networks {
+			if let super::super::types::ServiceNetworks::Map(networks) = &mut base.networks {
 				for network in networks.values_mut().flatten() {
 					network.ipv4_address = None;
 					network.ipv6_address = None;
 					network.mac_address = None;
 				}
 			}
-			let mut merged = super::extends::merge_service(base, step.clone());
+			let mut merged = super::super::extends::merge_service(base, step.clone());
 			// An image and a build are two ways of saying where the
 			// container's filesystem comes from, and a step that names one
 			// must not inherit the other. A step with its own `image` under
@@ -43,14 +43,14 @@ pub(crate) fn build_steps(service: &Service) -> Vec<Service> {
 			if !step.networks.names().is_empty() && step.network_mode.is_none() {
 				merged.network_mode = None;
 			} else if step.network_mode.is_some() && step.networks.names().is_empty() {
-				merged.networks = super::types::ServiceNetworks::Empty;
+				merged.networks = super::super::types::ServiceNetworks::Empty;
 			}
 			merged.pre_start.clear();
 			merged.post_start.clear();
 			merged.pre_stop.clear();
 			merged.container_name = None;
 			// An init process must finish once, even if the service restarts forever.
-			merged.restart = Some(super::types::RestartPolicy::No);
+			merged.restart = Some(super::super::types::RestartPolicy::No);
 			if let Some(deploy) = merged.deploy.as_mut() {
 				deploy.restart_policy = None;
 			}

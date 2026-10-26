@@ -218,7 +218,7 @@ fn is_windows_drive(src: &str) -> bool {
 /// Run only on the interpolated file: with `--no-interpolate` the values may
 /// still contain literal `${VAR}` placeholders, which cannot be meaningfully
 /// range- or reference-checked.
-pub(super) fn validate(file: &ComposeFile) -> Result<()> {
+pub(in super::super) fn validate(file: &ComposeFile) -> Result<()> {
 	validate_services(file)?;
 	validate_networks(file)?;
 	Ok(())

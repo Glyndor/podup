@@ -1,4 +1,4 @@
-use super::super::types::Service;
+use super::super::super::types::Service;
 use super::*;
 use std::path::Path;
 
@@ -58,7 +58,7 @@ fn merge_adds_network_from_other() {
 
 #[test]
 fn merge_adds_and_parent_wins_on_secret_conflict() {
-	use super::super::types::SecretConfig;
+	use super::super::super::types::SecretConfig;
 	let secret = |f: &str| SecretConfig {
 		file: Some(f.to_string()),
 		..Default::default()
@@ -78,7 +78,7 @@ fn merge_adds_and_parent_wins_on_secret_conflict() {
 
 #[test]
 fn merge_adds_and_parent_wins_on_model_conflict() {
-	use super::super::types::ModelConfig;
+	use super::super::super::types::ModelConfig;
 	let model = |m: &str| ModelConfig {
 		model: Some(m.to_string()),
 		..Default::default()
@@ -96,7 +96,7 @@ fn merge_adds_and_parent_wins_on_model_conflict() {
 
 #[test]
 fn merge_adds_and_parent_wins_on_config_conflict() {
-	use super::super::types::ConfigConfig;
+	use super::super::super::types::ConfigConfig;
 	let config = |f: &str| ConfigConfig {
 		file: Some(f.to_string()),
 		..Default::default()

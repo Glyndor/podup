@@ -6,7 +6,7 @@
 
 use std::path::Path;
 
-use super::types::ComposeFile;
+use super::super::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 
 /// Read and parse a file referenced by `include:`, wrapping every failure in
@@ -16,37 +16,39 @@ use crate::error::{ComposeError, Result};
 /// an invalid-YAML included file is not the same as a malformed main file:
 /// the variant lets a handler branch on the difference, and the message names
 /// the included path so the operator can find it.
-pub(super) fn parse_included_file(
+pub(in super::super) fn parse_included_file(
 	path: &Path,
 	dir: &Path,
 	env_files: &[String],
 	interpolate: bool,
 ) -> Result<ComposeFile> {
 	let display = path.display().to_string();
-	super::parse_file_inner_with_env(path, dir, env_files, interpolate).map_err(|e| match e {
-		ComposeError::FileNotFound(p) => {
-			ComposeError::Include(format!("included compose file not found: {p}"))
-		}
-		ComposeError::Parse(yaml_err) => {
-			let msg = match yaml_err.location() {
-				Some(loc) => format!(
-					"failed to parse included compose file '{display}' at line {}, column {}",
-					loc.line(),
-					loc.column()
-				),
-				None => format!("failed to parse included compose file '{display}'"),
-			};
-			ComposeError::Include(msg)
-		}
-		ComposeError::Io(io_err) => ComposeError::Include(format!(
-			"io error reading included compose file '{display}': {io_err}"
-		)),
-		other => ComposeError::Include(format!("included compose file '{display}': {other}")),
-	})
+	super::super::parse_file_inner_with_env(path, dir, env_files, interpolate).map_err(
+		|e| match e {
+			ComposeError::FileNotFound(p) => {
+				ComposeError::Include(format!("included compose file not found: {p}"))
+			}
+			ComposeError::Parse(yaml_err) => {
+				let msg = match yaml_err.location() {
+					Some(loc) => format!(
+						"failed to parse included compose file '{display}' at line {}, column {}",
+						loc.line(),
+						loc.column()
+					),
+					None => format!("failed to parse included compose file '{display}'"),
+				};
+				ComposeError::Include(msg)
+			}
+			ComposeError::Io(io_err) => ComposeError::Include(format!(
+				"io error reading included compose file '{display}': {io_err}"
+			)),
+			other => ComposeError::Include(format!("included compose file '{display}': {other}")),
+		},
+	)
 }
 
 /// Anchor interpolation inputs before a different compose directory can reinterpret them.
-pub(super) fn absolute_env_files(dir: &Path, env_files: &[String]) -> Vec<String> {
+pub(in super::super) fn absolute_env_files(dir: &Path, env_files: &[String]) -> Vec<String> {
 	env_files
 		.iter()
 		.map(|path| dir.join(path).to_string_lossy().into_owned())
@@ -58,7 +60,7 @@ pub(super) fn absolute_env_files(dir: &Path, env_files: &[String]) -> Vec<String
 /// Services / volumes / networks / secrets / configs / models / jobs from
 /// `other` are added; existing entries in `target` win on conflict (parent
 /// file overrides included content).
-pub(super) fn merge_compose_file(target: &mut ComposeFile, other: ComposeFile) {
+pub(in super::super) fn merge_compose_file(target: &mut ComposeFile, other: ComposeFile) {
 	for (k, v) in other.services {
 		target.services.entry(k).or_insert(v);
 	}

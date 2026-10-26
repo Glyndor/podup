@@ -13,7 +13,7 @@ use std::fs;
 
 use tempfile::tempdir;
 
-use super::super::parse_files_with_env_files;
+use super::super::super::parse_files_with_env_files;
 use super::{parse_file_inner_call_count, reset_parse_file_inner_counter};
 
 /// Twenty services in the parent, every one extending the same base

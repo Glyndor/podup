@@ -1,8 +1,8 @@
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use super::super::parse_file_inner_with_env;
-use super::super::types::ComposeFile;
+use super::super::super::parse_file_inner_with_env;
+use super::super::super::types::ComposeFile;
 use super::merge_service;
 use crate::error::{sanitize_name, ComposeError, Result};
 
@@ -157,7 +157,7 @@ impl ExtendsCache {
 
 /// Resolve `extends:` only within the same file (no `file:` references).
 ///
-/// Used by [`super::super::parse_str`] where there is no on-disk path.
+/// Used by [`super::super::super::parse_str`] where there is no on-disk path.
 pub(in crate::compose) fn resolve_extends_same_file(file: &mut ComposeFile) -> Result<()> {
 	resolve_same_file_in(file, Kind::Service)?;
 	if file.jobs.is_empty() {
@@ -352,7 +352,7 @@ fn resolve_one_extends(
 		})?;
 		// The base service's relative paths are relative to the external file's
 		// directory; anchor them before merging into the current file's service.
-		super::super::anchor::anchor_service(&mut base, ext_dir);
+		super::super::super::anchor::anchor_service(&mut base, ext_dir);
 		base
 	} else {
 		if base_name == name {
