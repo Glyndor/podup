@@ -19,21 +19,19 @@
 // size and expensive at three hundred.
 #![deny(missing_docs)]
 
-/// `podup autostart`: render and manage a rootless `systemctl --user` unit that
-/// brings a compose stack up at boot (service mode).
-pub mod autostart;
+mod backends;
+pub use backends::autostart;
+pub(crate) use backends::engine;
+pub use backends::quadlet;
 mod parsing;
 pub use parsing::compose;
 use parsing::input;
 pub use parsing::substitute;
 use parsing::values;
 mod connection;
-pub(crate) mod engine;
 mod errors;
 pub(crate) use connection::libpod;
 pub use connection::podman;
-/// Quadlet export: translate a parsed compose file into Podman systemd units.
-pub mod quadlet;
 /// Terminal colour/styling, honouring `--ansi`, `NO_COLOR`, and TTY detection.
 pub mod ui;
 /// Secure self-update for the `podup` binary (signature-verified release fetch).

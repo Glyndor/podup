@@ -22,7 +22,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// The single file allowed to name the crate's constructor.
-const HOME: &str = "internal/engine/images/context/tar_stream.rs";
+const HOME: &str = "internal/backends/engine/images/context/tar_stream.rs";
 
 fn rust_sources(dir: &Path, out: &mut Vec<PathBuf>) {
 	for entry in fs::read_dir(dir).unwrap_or_else(|e| panic!("{} is readable: {e}", dir.display()))

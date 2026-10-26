@@ -68,7 +68,7 @@ fn cpu_limit_in_effect(service: &Service) -> bool {
 // ---------------------------------------------------------------------------
 
 /// `restart:` and `deploy.restart_policy:` both reach the same engine
-/// knob (`internal/engine/workload/container_config/mod.rs::build_restart_policy`):
+/// knob (`internal/backends/engine/workload/container_config/mod.rs::build_restart_policy`):
 /// top-level `restart:` wins, otherwise `deploy.restart_policy.condition`
 /// applies with the engine's `any` -> `always` mapping. The audit must
 /// agree: a deliberate `restart: "no"` is a choice (the operator decided
@@ -148,7 +148,7 @@ pub fn check_no_health_action(name: &str, service: &Service, _file: &ComposeFile
 /// A memory limit is in effect and `memswap_limit:` is either absent, is
 /// `-1` (Podman's "unlimited swap"), or differs from the memory limit.
 /// The engine at
-/// `internal/engine/workload/container_config/resources.rs::build_resource_limits`
+/// `internal/backends/engine/workload/container_config/resources.rs::build_resource_limits`
 /// forwards `memswap_limit` verbatim into `LinuxMemory.swap`, so an
 /// absent value resolves to whatever Podman's default is (twice the
 /// memory limit at the time of #1894's measurement); a `-1` explicitly
@@ -176,7 +176,7 @@ pub fn check_no_health_action(name: &str, service: &Service, _file: &ComposeFile
 pub fn check_swap_unbounded(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
 	// `parse_memory("-1")` returns `Some(-1)`; Podman interprets that as
 	// "no cap", and the audit agrees (see the shared helper's doc
-	// comment in `internal/engine/workload/container_config/resources.rs`).
+	// comment in `internal/backends/engine/workload/container_config/resources.rs`).
 	let Some(limit) = effective_memory_limit(service).filter(|&v| v >= 0) else {
 		return Vec::new();
 	};
@@ -207,7 +207,7 @@ pub fn check_swap_unbounded(name: &str, service: &Service, _file: &ComposeFile) 
 /// No CPU limit in effect: neither `cpus:`, `deploy.resources.limits.cpus:`,
 /// `cpu_quota:`, nor `cpuset:` gives the container a hard cap. The
 /// engine at
-/// `internal/engine/workload/container_config/resources.rs::build_resource_limits`
+/// `internal/backends/engine/workload/container_config/resources.rs::build_resource_limits`
 /// converts `cpus:` to a CFS quota and forwards `cpu_quota:` verbatim;
 /// either is a limit. An unparseable `cpus:` value the engine silently
 /// drops is reported the same way: the audit cannot tell the engine

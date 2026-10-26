@@ -42,9 +42,9 @@ use std::time::Instant;
 /// the compose value by a factor of 20.
 ///
 /// Fails on the branch with the `timeout=` parameter reverted to
-/// `t=` at `internal/engine/lifecycle/commands/running/stop.rs::stop_container`
+/// `t=` at `internal/backends/engine/lifecycle/commands/running/stop.rs::stop_container`
 /// (the asserted `elapsed < 8s` line), and at the parallel path
-/// `internal/engine/lifecycle/execution/parallel/mod.rs::teardown_one_container`.
+/// `internal/backends/engine/lifecycle/execution/parallel/mod.rs::teardown_one_container`.
 #[tokio::test]
 async fn stop_returns_within_the_grace_window() {
 	let Some(socket) = podman_socket_url() else {
@@ -91,8 +91,8 @@ async fn stop_returns_within_the_grace_window() {
 /// second. The 2.5-second lower bound catches the libpod regression.
 ///
 /// Fails on the branch with the `timeout=` parameter reverted to
-/// `t=` at `internal/engine/lifecycle/execution/parallel/mod.rs::restart_one_service`
-/// and `internal/engine/host_files/watch/mod.rs::watch_restart` (the asserted
+/// `t=` at `internal/backends/engine/lifecycle/execution/parallel/mod.rs::restart_one_service`
+/// and `internal/backends/engine/host_files/watch/mod.rs::watch_restart` (the asserted
 /// `elapsed >= 2.5s` line).
 #[tokio::test]
 async fn restart_honours_the_grace_window() {
@@ -138,8 +138,8 @@ async fn restart_honours_the_grace_window() {
 /// makes the difference visible.
 ///
 /// Fails on the branch with `?timeout=` reverted to `?t=` at
-/// `internal/engine/lifecycle/execution/parallel/mod.rs::restart_one_service` and
-/// `internal/engine/host_files/watch/mod.rs::watch_restart` (the asserted
+/// `internal/backends/engine/lifecycle/execution/parallel/mod.rs::restart_one_service` and
+/// `internal/backends/engine/host_files/watch/mod.rs::watch_restart` (the asserted
 /// `elapsed < 8s` line).
 #[tokio::test]
 async fn restart_honours_the_cli_override() {
@@ -186,7 +186,7 @@ async fn restart_honours_the_cli_override() {
 /// when the volume id remains queryable.
 ///
 /// Fails on the branch with `v=true` left in `container_rm_path`
-/// at `internal/engine/lifecycle/mod.rs` (the asserted
+/// at `internal/backends/engine/lifecycle/mod.rs` (the asserted
 /// `volumes.count == 0` line).
 #[tokio::test]
 async fn down_v_removes_anonymous_volumes() {
@@ -254,13 +254,13 @@ async fn down_v_removes_anonymous_volumes() {
 /// reliably make this live test fail (the race is too short for a
 /// `podman inspect` round-trip). The wire-shape unit test
 /// `kill_with_sigkill_sends_follow_up_wait` in
-/// `internal/engine/lifecycle/libpod_endpoint_query_tests.rs:282`
+/// `internal/backends/engine/lifecycle/libpod_endpoint_query_tests.rs:282`
 /// is what pins the actual compensation (follow-up
 /// `/wait?condition=stopped`); this live test pins the user-visible
 /// behaviour the wire shape exists to keep.
 ///
 /// Fails on the branch with the follow-up `wait_after_kill` removed
-/// from `internal/engine/lifecycle/execution/parallel/mod.rs::kill_one_service`
+/// from `internal/backends/engine/lifecycle/execution/parallel/mod.rs::kill_one_service`
 /// (the asserted `state == exited` line).
 #[tokio::test]
 async fn kill_returns_only_after_the_container_is_exited() {

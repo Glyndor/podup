@@ -2,7 +2,7 @@
 //! secrets. The unit tests pin the hash; this pins the end-to-end behaviour
 //! on a real Podman: a service started against `s.txt = v1` must see `v2`
 //! after the file is rewritten and `up -d` runs again. Before the fix in
-//! `internal/engine/workload/container/resolve.rs` the second `up` left the original
+//! `internal/backends/engine/workload/container/resolve.rs` the second `up` left the original
 //! container running and the new bytes invisible to the container. The
 //! fix folds the file content into the config hash so the second `up`
 //! recreates the container. The third assertion pins the inverse: when the

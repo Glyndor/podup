@@ -234,7 +234,7 @@ fn ensure_alpine(socket: &str) {
 /// `x-podman-autoupdate: registry` makes `up` reach the registry even when
 /// the image is already on disk (#1953). The live complement to
 /// `autoupdate_registry_pulls_even_when_the_image_is_present` in
-/// `internal/engine/lifecycle/up/images_tests.rs`: same intent, but driven
+/// `internal/backends/engine/lifecycle/up/images_tests.rs`: same intent, but driven
 /// through the real `podup` binary against the real Podman socket so the
 /// path that emits `Pulling` is exercised end to end.
 ///

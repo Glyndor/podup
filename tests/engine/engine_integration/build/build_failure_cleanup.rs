@@ -8,7 +8,7 @@
 //! the same failing build to `/v5.0.0/libpod/build`: `layers=true`
 //! alone leaked 2 of 2 runs (one container each); `layers=true&
 //! forcerm=true` leaked 0 of 2. Adding `forcerm=true` to the query
-//! `internal/engine/images/build/service/mod.rs` sends closed the leak.
+//! `internal/backends/engine/images/build/service/mod.rs` sends closed the leak.
 //!
 //! The test drives the built `podup` binary (via
 //! `env!("CARGO_BIN_EXE_podup")`) rather than the in-process `Engine`,
@@ -23,7 +23,7 @@
 //! by accident), and then asserts no external (buildah working)
 //! container references any image this build produced. Identification
 //! is by `podup.project=<project>` and `podup.service=app`, the two
-//! keys `internal/engine/images/build/service/mod.rs` stamps on every layer of
+//! keys `internal/backends/engine/images/build/service/mod.rs` stamps on every layer of
 //! the build via the build query's `layerLabel=` parameter. Other
 //! tests building on the same socket may also be running, so the
 //! harness scopes the assertion to images this build actually
@@ -145,7 +145,7 @@ fn remove_external_containers(socket: &str, ids: &[String]) {
 /// A failing `podup build` against Podman 5.7.0 must not leave a
 /// buildah working container behind. The build's intermediate images
 /// are tagged with `podup.project=<project>` via the `layerLabel=`
-/// parameter (`internal/engine/images/build/service/mod.rs`), so identification
+/// parameter (`internal/backends/engine/images/build/service/mod.rs`), so identification
 /// does not depend on global image counts: parallel tests can be
 /// building on the same socket without making this one false-pass.
 ///

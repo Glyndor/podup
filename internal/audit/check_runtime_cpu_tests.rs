@@ -32,7 +32,7 @@ services:
 }
 
 /// `cpus: "0.5"` -> silent. The engine at
-/// `internal/engine/workload/container_config/resources.rs::build_resource_limits`
+/// `internal/backends/engine/workload/container_config/resources.rs::build_resource_limits`
 /// parses this to a CFS quota; an audit that ignores the parse fires
 /// spuriously on the same input the engine applies a limit to.
 #[test]
