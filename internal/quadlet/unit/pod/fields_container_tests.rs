@@ -1,6 +1,6 @@
 //! Container-unit tests for fields moved to the project pod.
 
-use super::pod_fields_test_support::{
+use super::fields_test_support::{
 	container_contents, pod_contents, two_services, two_services_on_front,
 };
 
@@ -121,7 +121,7 @@ fn pod_container_keeps_service_labels() {
 		two_services(field),
 		format!("x-podman-pod: true\nservices:\n  web:\n    image: nginx\n{field}"),
 	] {
-		let out = super::pod_fields_test_support::render(&yaml);
+		let out = super::fields_test_support::render(&yaml);
 		for container in out
 			.units
 			.iter()

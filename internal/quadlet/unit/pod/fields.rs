@@ -5,14 +5,14 @@
 
 use crate::compose::types::ComposeFile;
 
-use super::super::render::sanitize_value;
+use super::super::super::render::sanitize_value;
 
-use super::shared_values::{host_values, hostname, network_values, shm_size, userns};
-use super::{quote_podman_arg_value, Section};
+use super::super::shared_values::{host_values, hostname, network_values, shm_size, userns};
+use super::super::{quote_podman_arg_value, Section};
 
 /// A compose field that can move from a container unit to its pod unit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum PodField {
+pub(in super::super) enum PodField {
 	/// `hostname`.
 	HostName,
 	/// `dns`.
@@ -183,7 +183,7 @@ impl PodFields {
 	}
 
 	/// Whether one field can be emitted on the pod instead of its containers.
-	pub(super) fn owns(&self, field: PodField) -> bool {
+	pub(in super::super) fn owns(&self, field: PodField) -> bool {
 		match field {
 			PodField::HostName => matches!(&self.hostname, Agreement::Agreed(_)),
 			PodField::Dns => matches!(&self.dns, Agreement::Agreed(_)),

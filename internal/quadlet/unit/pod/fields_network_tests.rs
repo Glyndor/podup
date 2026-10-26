@@ -1,6 +1,6 @@
 //! Static pod addresses require exactly one network attachment.
 
-use super::pod_fields_test_support::{render, unit};
+use super::fields_test_support::{render, unit};
 
 fn assert_multiple_networks(field: &str, key: &str, flag: &str, address: &str) {
 	for attachment in ["      back: {}\n", ""] {

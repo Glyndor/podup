@@ -4,7 +4,7 @@
 
 use crate::compose::types::Service;
 
-use super::super::super::pod_fields::{PodField, PodFields};
+use super::super::super::pod::{PodField, PodFields};
 use super::super::super::shared_values::userns;
 use super::super::{map_security_opt, quote_podman_arg_value, Section};
 

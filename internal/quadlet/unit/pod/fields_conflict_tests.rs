@@ -1,6 +1,6 @@
 //! Conflict and source-absence tests for pod-shared fields.
 
-use super::pod_fields_test_support::{pod_contents, render, unit};
+use super::fields_test_support::{pod_contents, render, unit};
 
 #[test]
 fn conflicting_service_value_stays_on_containers_with_warning() {

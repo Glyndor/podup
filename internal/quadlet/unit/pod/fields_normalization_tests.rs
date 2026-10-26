@@ -1,6 +1,6 @@
 //! Promotion preserves native value parsing and quoted argument values.
 
-use super::pod_fields_test_support::{render, two_services, two_services_on_front, unit};
+use super::fields_test_support::{render, two_services, two_services_on_front, unit};
 
 fn assert_control_dns_fallback(field: &str, key: &str, flag: &str, value: &str) {
 	for blank in [r"\t\0\x01\x7f", r" \t\0\x01 "] {

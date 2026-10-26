@@ -11,7 +11,7 @@ use super::security::{is_inline_secret, map_security_opt, render_secret};
 // the parent `QuadletUnit` type, imported here so the emitters take them from
 // `super::` rather than reaching past this module, as the sibling `unit`
 // submodules already do.
-use super::pod_fields::PodFields;
+use super::pod::PodFields;
 use super::{
 	abs_against, collect_warnings, owner_marker, quote_podman_arg_value, render_command,
 	render_publish_port, render_restart, render_tmpfs_mount, render_volume, safe_unit_stem,

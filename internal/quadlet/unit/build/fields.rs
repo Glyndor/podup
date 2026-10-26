@@ -18,7 +18,7 @@ use indexmap::IndexMap;
 
 use crate::compose::types::{BuildConfig, SecretConfig, UlimitConfig};
 
-use super::{abs_against, quote_podman_arg_value, Section};
+use super::super::{abs_against, quote_podman_arg_value, Section};
 
 /// Emit every compose `build:` field that has a `.build` key or a Podman
 /// flag, in the order the `[Build]` section lists them.

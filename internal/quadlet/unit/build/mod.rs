@@ -15,6 +15,8 @@ use super::{
 	QuadletUnit, Section,
 };
 
+mod fields;
+
 /// Resolve a compose build `context` to an absolute `SetWorkingDirectory` value.
 ///
 /// The systemd generator runs a `.build` unit with no working directory of its
@@ -179,7 +181,7 @@ pub(crate) fn build_unit(
 	// The compose `build:` fields the match above did not write: the ones
 	// with a `[Build]` key of their own, and the ones that go through
 	// `PodmanArgs=` as the `podman build` flag they stand for.
-	super::build_fields::emit_build_fields(name, build, base_dir, secrets, &mut section, warnings);
+	fields::emit_build_fields(name, build, base_dir, secrets, &mut section, warnings);
 	collect_build_warnings(name, build, warnings);
 
 	// Ownership label, mirroring every other generated unit.
@@ -200,5 +202,5 @@ pub(crate) fn build_unit(
 // values differ on Windows. `abs_context` itself is cross-platform; only the
 // literal expectations are Unix-specific.
 #[cfg(all(test, unix))]
-#[path = "build_tests.rs"]
+#[path = "mod_tests.rs"]
 mod tests;

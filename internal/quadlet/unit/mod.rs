@@ -1,13 +1,11 @@
 //! Build the individual `.network`, `.volume` and `.container` units.
 
 mod build;
-mod build_fields;
 mod container;
 pub(crate) use container::is_rootless_user_mode;
 mod health;
 mod network;
 mod pod;
-mod pod_fields;
 mod security;
 mod shared_values;
 mod volume;
@@ -18,7 +16,7 @@ pub(super) use container::{
 };
 pub(super) use network::network_unit;
 pub(super) use pod::pod_unit;
-pub(crate) use pod_fields::PodFields;
+pub(crate) use pod::PodFields;
 pub(super) use volume::volume_unit;
 
 // Shared helpers from the sibling `render`/`warnings` modules and the parent
@@ -71,26 +69,3 @@ fn abs_against(base_dir: &std::path::Path, path: &str) -> String {
 	let rel = path.strip_prefix("./").unwrap_or(path);
 	base_dir.join(rel).display().to_string()
 }
-
-#[cfg(test)]
-#[path = "pod_fields_conflict_tests.rs"]
-mod pod_fields_conflict_tests;
-#[cfg(test)]
-#[path = "pod_fields_container_tests.rs"]
-mod pod_fields_container_tests;
-#[cfg(test)]
-mod pod_fields_dns_tests;
-#[cfg(test)]
-mod pod_fields_golden_tests;
-#[cfg(test)]
-mod pod_fields_mount_tests;
-#[cfg(test)]
-mod pod_fields_network_tests;
-#[cfg(test)]
-mod pod_fields_normalization_tests;
-#[cfg(test)]
-#[path = "pod_fields_test_support.rs"]
-mod pod_fields_test_support;
-#[cfg(test)]
-#[path = "pod_fields_write_tests.rs"]
-mod pod_fields_write_tests;

@@ -1,6 +1,6 @@
 //! DNS list resets must retain their container-level meaning.
 
-use super::pod_fields_test_support::{render, two_services, unit};
+use super::fields_test_support::{render, two_services, unit};
 
 fn assert_dns_fallback(field: &str, key: &str, flag: &str, value: &str) {
 	for (blank, rendered) in [("", ""), (" ", " "), ("\t", "")] {

@@ -5,7 +5,7 @@
 use crate::compose::types::Service;
 use crate::quadlet::is_no_warn_set;
 
-use super::super::super::pod_fields::{PodField, PodFields};
+use super::super::super::pod::{PodField, PodFields};
 use super::super::super::shared_values::network_values;
 use super::super::{quote_podman_arg_value, unit_stem, Section};
 

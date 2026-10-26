@@ -1,6 +1,6 @@
 //! Mounts remain private to containers, including common pod-service mounts.
 
-use super::pod_fields_test_support::{render, two_services, unit};
+use super::fields_test_support::{render, two_services, unit};
 
 #[test]
 fn all_mount_types_stay_on_each_pod_container() {

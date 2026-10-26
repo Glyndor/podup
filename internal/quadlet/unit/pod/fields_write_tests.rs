@@ -1,6 +1,6 @@
 //! Pod-unit rendering tests for fields shared by every member container.
 
-use super::pod_fields_test_support::{pod_contents, two_services, two_services_on_front};
+use super::fields_test_support::{pod_contents, two_services, two_services_on_front};
 
 #[test]
 fn pod_writes_hostname() {

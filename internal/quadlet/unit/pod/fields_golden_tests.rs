@@ -1,6 +1,6 @@
 //! Whole-unit output retained from the parent of the pod-field change.
 
-use super::pod_fields_test_support::{pod_contents, render, unit};
+use super::fields_test_support::{pod_contents, render, unit};
 
 #[test]
 fn old_pod_inputs_match_parent_output() {

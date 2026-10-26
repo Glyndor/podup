@@ -15,7 +15,11 @@
 use crate::compose::types::ComposeFile;
 use crate::ports;
 
-use super::pod_fields::PodFields;
+mod fields;
+
+pub(super) use fields::PodField;
+pub(crate) use fields::PodFields;
+
 use super::{
 	owner_marker, quote_podman_arg_value, render_publish_port, safe_unit_stem, unit_stem,
 	QuadletUnit, Section,
@@ -154,5 +158,24 @@ pub(crate) fn pod_unit(
 }
 
 #[cfg(test)]
-#[path = "pod_tests.rs"]
+#[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod fields_conflict_tests;
+#[cfg(test)]
+mod fields_container_tests;
+#[cfg(test)]
+mod fields_dns_tests;
+#[cfg(test)]
+mod fields_golden_tests;
+#[cfg(test)]
+mod fields_mount_tests;
+#[cfg(test)]
+mod fields_network_tests;
+#[cfg(test)]
+mod fields_normalization_tests;
+#[cfg(test)]
+mod fields_test_support;
+#[cfg(test)]
+mod fields_write_tests;

@@ -3,7 +3,7 @@
 
 use crate::compose::types::Service;
 
-use super::super::super::pod_fields::{PodField, PodFields};
+use super::super::super::pod::{PodField, PodFields};
 use super::super::super::shared_values::host_values;
 use super::super::{quote_podman_arg_value, Section};
 
