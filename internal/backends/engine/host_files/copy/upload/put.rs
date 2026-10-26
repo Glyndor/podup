@@ -45,7 +45,6 @@ impl Engine {
 	// at `internal/backends/engine/host_files/watch/mod.rs`) live in sibling modules of `copy`, so
 	// the visibility has to reach `crate::engine` rather than the `copy::super`
 	// only.
-	#[allow(clippy::too_many_arguments)]
 	pub(in crate::backends::engine) async fn put_archive_verified(
 		&self,
 		container: &str,

@@ -52,6 +52,7 @@ pub(in crate::backends::engine::host_files::watch) fn entry_is_unsyncable(name: 
 }
 
 impl Engine {
+	// Each argument is a separate input of one sync step; a struct would only rename the list.
 	#[allow(clippy::too_many_arguments)]
 	pub(in crate::backends::engine::host_files::watch) async fn sync_to_container(
 		&self,

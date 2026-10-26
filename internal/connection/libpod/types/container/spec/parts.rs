@@ -388,10 +388,8 @@ pub struct HealthConfig {
 /// discriminants below pin each variant to Podman's constant value; `Invalid`
 /// (1) is Podman's error sentinel and is never emitted by a valid spec.
 ///
-/// The variants are the complete Podman action set so the API surface is correct;
-/// no compose key maps to them yet, hence `allow(dead_code)` until the
-/// `--health-on-failure` plumbing lands.
-#[allow(dead_code)]
+/// The variants are the complete Podman action set, so the API surface is
+/// correct whether or not a compose key reaches each of them.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 #[repr(u8)]
 pub enum HealthCheckOnFailureAction {

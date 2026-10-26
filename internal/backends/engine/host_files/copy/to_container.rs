@@ -98,6 +98,7 @@ impl Engine {
 	/// a directory, so a foreign `rm -rf` racing in is rejected by the
 	/// second PUT, not silently succeeded. The `extract_stat_path` HEAD
 	/// below is what makes that property hold; do not skip it.
+	// Each argument is a separate input of the copy, passed straight from its one caller; a parameter struct would only rename the list.
 	#[allow(clippy::too_many_arguments)]
 	pub(super) async fn cp_to_container(
 		&self,

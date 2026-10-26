@@ -135,7 +135,6 @@ pub(crate) async fn run_ls(
 
 /// Handle `ps`. Reads the compose file when present and parseable, otherwise
 /// falls back to an empty model so a project whose file is gone still answers.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_ps(
 	cli: &Cli,
 	error_context: &mut crate::startup::exit_status::ErrorContext,

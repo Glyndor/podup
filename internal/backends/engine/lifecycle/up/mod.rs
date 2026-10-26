@@ -28,6 +28,7 @@ impl Engine {
 	/// inside the same `up` board (`#1700`). The image rows are seeded at the
 	/// top so the build verb appears above the container rows that depend on
 	/// it.
+	// Mirrors the flags of `up`, which the CLI and the tests pass positionally.
 	#[allow(clippy::too_many_arguments)]
 	pub async fn up_with_options(
 		&self,
@@ -57,7 +58,6 @@ impl Engine {
 	/// `create`). Shares the `up` path with `start = false`: images are built/
 	/// pulled and containers created, but never started, and no `depends_on`
 	/// waits or `post_start` hooks run (nothing is running to gate on).
-	#[allow(clippy::too_many_arguments)]
 	pub async fn create_with_options(
 		&self,
 		file: &ComposeFile,
@@ -80,6 +80,7 @@ impl Engine {
 		.await
 	}
 
+	// The shared body of `up` and `create`; the booleans are those commands' flags.
 	#[allow(clippy::too_many_arguments)]
 	pub(crate) async fn run_up(
 		&self,

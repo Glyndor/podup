@@ -21,6 +21,7 @@ use crate::engine::Engine;
 /// drops the `flock` when the underlying file descriptor is closed).
 #[must_use = "the project lock is released as soon as this guard is dropped"]
 pub struct ProjectLock {
+	// Never read: the descriptor is held so the `flock` lasts until the guard is dropped.
 	#[allow(dead_code)]
 	file: std::fs::File,
 }

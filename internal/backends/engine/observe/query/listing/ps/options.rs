@@ -118,7 +118,6 @@ impl PsFilterOptions {
 	/// Every `ps` filter flag, in CLI order. A constructor rather than a struct
 	/// literal because the type is `#[non_exhaustive]`, so the next flag to
 	/// land is not a breaking change for anyone building one.
-	#[allow(clippy::too_many_arguments)]
 	pub fn new(
 		services_only: bool,
 		services: Vec<String>,

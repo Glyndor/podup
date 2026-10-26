@@ -175,6 +175,7 @@ fn int_mode_bits(n: u32) -> u32 {
 /// A volume mount entry: either a short-form string or a long-form typed block.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
+// The long form is far larger than the short string. Boxing it would change a public type and every match on it, for one value per mount.
 #[allow(clippy::large_enum_variant)]
 pub enum VolumeMount {
 	/// Short form: a `source:target[:options]` string.

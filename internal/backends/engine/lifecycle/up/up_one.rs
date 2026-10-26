@@ -22,6 +22,7 @@ impl Engine {
 	/// Used by [`Engine::run_up`]; safe to run concurrently for services in
 	/// the same dependency level (the `Engine` holds no per-call mutable
 	/// state; the libpod client is connection-per-request).
+	// The per-run state is passed as separate values; a struct would only rename the list.
 	#[allow(clippy::too_many_arguments)]
 	pub(crate) async fn up_one_service(
 		&self,
@@ -191,6 +192,7 @@ impl Engine {
 	/// one service share no per-replica mutable state: a fixed host port
 	/// that would make concurrent starts race is already rejected up front by
 	/// `crate::engine::lifecycle::scale::check_scale_port_conflict`.
+	// The per-run state is passed as separate values; a struct would only rename the list.
 	#[allow(clippy::too_many_arguments)]
 	pub(crate) async fn up_one_replica(
 		&self,
