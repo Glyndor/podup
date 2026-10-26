@@ -214,6 +214,54 @@ fn at_cap_buffer_is_accepted() {
 // parse_multiplexed accounting (issue #1739)
 // ---------------------------------------------------------------------------
 
+/// Drive `parse_multiplexed_body` with `chunks` and return every item.
+async fn demux(chunks: Vec<Vec<u8>>) -> Vec<Result<LogOutput, PodmanError>> {
+	use futures_util::{stream, StreamExt};
+	use http_body_util::StreamBody;
+	use hyper::body::Frame;
+
+	let frames: Vec<Result<Frame<Bytes>, hyper::Error>> = chunks
+		.into_iter()
+		.map(|c| Ok(Frame::data(Bytes::from(c))))
+		.collect();
+	super::parse_multiplexed_body(StreamBody::new(stream::iter(frames)))
+		.collect()
+		.await
+}
+
+/// A body that ends in the middle of a frame is an early end, not a clean one:
+/// the payload bytes that did arrive would otherwise vanish and the command
+/// would exit 0.
+#[tokio::test]
+async fn parse_multiplexed_reports_a_body_that_ends_inside_a_frame() {
+	let mut cut_payload = vec![0x01, 0, 0, 0, 0, 0, 0x03, 0xe8];
+	cut_payload.extend_from_slice(b"only a few bytes");
+	for tail in [cut_payload, vec![0x01, 0, 0]] {
+		let whole = {
+			let mut f = vec![0x01, 0, 0, 0, 0, 0, 0, 0x02];
+			f.extend_from_slice(b"ok");
+			f
+		};
+		let items = demux(vec![whole, tail]).await;
+		assert!(matches!(items[0], Ok(LogOutput::StdOut { .. })));
+		assert!(
+			matches!(items.last(), Some(Err(PodmanError::StreamEndedEarly))),
+			"a cut frame must surface as StreamEndedEarly, got {items:?}"
+		);
+	}
+}
+
+/// The other side of the cut: a body that ends exactly on a frame boundary is
+/// a clean end.
+#[tokio::test]
+async fn parse_multiplexed_ends_cleanly_on_a_frame_boundary() {
+	let mut f = vec![0x01, 0, 0, 0, 0, 0, 0, 0x02];
+	f.extend_from_slice(b"ok");
+	let items = demux(vec![f]).await;
+	assert_eq!(items.len(), 1);
+	assert!(matches!(items[0], Ok(LogOutput::StdOut { .. })));
+}
+
 /// Operator-facing regression for #1739: `podup logs` used to truncate
 /// silently around 1 MiB and exit 0. The cap is a safety net against an
 /// unbounded reassembly buffer, not against a cumulative byte count, so a

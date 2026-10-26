@@ -274,16 +274,19 @@ fn write_single_entry_to(tar_bytes: &[u8], dst: &Path) -> Result<()> {
 	Ok(())
 }
 
-/// Strip group/other-write and setuid/setgid/sticky bits from a file extracted
-/// from an untrusted container, keeping the owner and read/execute bits. No-op
-/// on non-files (e.g. symlinks) and on non-unix platforms.
+/// Strip group/other-write and setuid/setgid/sticky bits from a file or
+/// directory extracted from an untrusted container, keeping the owner and
+/// read/execute bits. No-op on anything else (e.g. symlinks) and on non-unix
+/// platforms.
 #[cfg(unix)]
 fn sanitize_extracted_mode(path: &Path, mode: u32) {
 	use std::os::unix::fs::PermissionsExt;
 	let Ok(meta) = std::fs::symlink_metadata(path) else {
 		return;
 	};
-	if !meta.is_file() {
+	// Directories too: the extractor keeps the low nine bits of the stored
+	// mode, so a `0777` directory entry would otherwise land world-writable.
+	if !meta.is_file() && !meta.is_dir() {
 		return;
 	}
 	let masked = mode & 0o7777 & !0o022 & !0o7000;

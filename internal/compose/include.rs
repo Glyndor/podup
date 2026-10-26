@@ -6,8 +6,6 @@
 
 use std::path::Path;
 
-use indexmap::IndexMap;
-
 use super::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 
@@ -79,14 +77,8 @@ pub(super) fn merge_compose_file(target: &mut ComposeFile, other: ComposeFile) {
 	for (k, v) in other.models {
 		target.models.entry(k).or_insert(v);
 	}
-	// Jobs travel with the rest: an included file that declares one must reach
-	// the parent, or the parent would look job-free and the refusal would miss
-	// it.
-	if let Some(other_jobs) = other.jobs {
-		let jobs = target.jobs.get_or_insert_with(IndexMap::new);
-		for (k, v) in other_jobs {
-			jobs.entry(k).or_insert(v);
-		}
+	for (k, v) in other.jobs {
+		target.jobs.entry(k).or_insert(v);
 	}
 }
 

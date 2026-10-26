@@ -4,6 +4,7 @@ pub mod build;
 pub mod deploy;
 pub mod develop;
 pub mod env;
+pub mod job;
 pub mod lifecycle;
 pub mod network;
 pub mod ports;
@@ -16,6 +17,7 @@ pub use build::*;
 pub use deploy::*;
 pub use develop::*;
 pub use env::*;
+pub use job::*;
 pub use lifecycle::*;
 pub use network::*;
 pub use ports::*;
@@ -155,15 +157,15 @@ pub struct ComposeFile {
 	#[serde(default)]
 	pub models: IndexMap<String, ModelConfig>,
 	/// Top-level `jobs:` element (Compose v2.38): containers that run to
-	/// completion, each with its own `triggers`. podup runs no job runner, so a
-	/// file that declares a job is refused at parse time instead of starting
-	/// the project and leaving the job silently unrun. An empty or null
-	/// `jobs:` declares nothing and is accepted and ignored.
-	///
-	/// The job body is kept as raw YAML: only the map's keys are read, to name
-	/// the first job in the refusal.
-	#[serde(default, skip_serializing_if = "jobs_is_empty")]
-	pub jobs: Option<IndexMap<String, serde_yaml::Value>>,
+	/// completion, each with the `triggers` that launch it. `podup run` runs a
+	/// job; `podup up` never starts one. An empty or null `jobs:` declares
+	/// nothing and is the same as no key.
+	#[serde(
+		default,
+		skip_serializing_if = "IndexMap::is_empty",
+		deserialize_with = "crate::compose::jobs::deserialize_jobs"
+	)]
+	pub jobs: IndexMap<String, Job>,
 	/// Top-level `x-*` extension fields, preserved and round-tripped via `config` subcommand.
 	#[serde(flatten, default, skip_serializing_if = "IndexMap::is_empty")]
 	pub extensions: IndexMap<String, serde_yaml::Value>,
@@ -220,7 +222,7 @@ impl ComposeFile {
 		for vol in self.volumes.values_mut().flatten() {
 			retain_extension_keys(&mut vol.unknown);
 		}
-		for svc in self.services.values_mut() {
+		for svc in self.services_and_jobs_mut() {
 			retain_extension_keys(&mut svc.unknown);
 			if let Some(hc) = svc.healthcheck.as_mut() {
 				retain_extension_keys(&mut hc.unknown);
@@ -265,13 +267,6 @@ impl ComposeFile {
 /// discarding the keys the diagnostics pass warns are ignored.
 fn retain_extension_keys(map: &mut IndexMap<String, serde_yaml::Value>) {
 	map.retain(|k, _| k.starts_with("x-"));
-}
-
-/// Whether a `jobs:` map declares no job at all. An absent section, an empty
-/// map and an explicit null all declare nothing, so none of them is written
-/// back into a rendered file.
-fn jobs_is_empty(jobs: &Option<IndexMap<String, serde_yaml::Value>>) -> bool {
-	jobs.as_ref().is_none_or(|map| map.is_empty())
 }
 
 #[cfg(test)]

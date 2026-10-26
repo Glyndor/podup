@@ -75,6 +75,8 @@ pub(crate) fn render_config_to<W: Write>(
 	// surface is unaffected by `--no-warn` (which exists to silence the
 	// per-run copy on `up`/`create`/`run`/`exec`, not this one).
 	surface_host_modes(file);
+	// A job with a schedule runs only when started by hand; say so once.
+	podup::warn_unscheduled_jobs(file);
 	if out.quiet {
 		return Ok(());
 	}
@@ -91,7 +93,8 @@ pub(crate) fn render_config_to<W: Write>(
 		return Ok(());
 	}
 	if out.images {
-		for (name, svc) in &file.services {
+		let jobs = file.jobs.iter().map(|(name, job)| (name, &job.service));
+		for (name, svc) in file.services.iter().chain(jobs) {
 			let image = svc
 				.image
 				.clone()
@@ -102,7 +105,11 @@ pub(crate) fn render_config_to<W: Write>(
 	}
 	if out.profiles {
 		let mut profiles: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
-		for svc in file.services.values() {
+		for svc in file
+			.services
+			.values()
+			.chain(file.jobs.values().map(|job| &job.service))
+		{
 			for p in &svc.profiles {
 				profiles.insert(p.as_str());
 			}
@@ -141,9 +148,10 @@ pub(crate) fn render_config_to<W: Write>(
 				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
 			})?;
 			prune_json_nulls(&mut v);
-			serde_json::to_string_pretty(&v).map_err(|e| {
+			let json = serde_json::to_string_pretty(&v).map_err(|e| {
 				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
-			})?
+			})?;
+			super::control_escape::escape_json_controls(&json).into_owned()
 		}
 		ConfigFormat::Yaml => {
 			let mut v: serde_yaml::Value =

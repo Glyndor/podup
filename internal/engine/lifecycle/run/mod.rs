@@ -2,6 +2,7 @@
 //! output, and remove it when done.
 
 mod attached;
+mod deps_wait;
 mod init_service;
 pub(super) mod options;
 
@@ -20,10 +21,12 @@ use crate::libpod::API_PREFIX;
 use init_service::init_service;
 
 impl Engine {
-	/// Run a one-off command in a new container for a service.
+	/// Run a one-off command in a new container for a service or a job.
 	///
 	/// The container is started, its output streamed, and it is removed when done
-	/// (unless `opts.rm` is false).
+	/// (unless `opts.rm` is false). A name that is both absent from `services`
+	/// and present in `jobs` runs that job, after the services and jobs it
+	/// depends on; a job whose `triggers.manual` is `false` is refused.
 	///
 	/// # Errors
 	///
@@ -42,6 +45,11 @@ impl Engine {
 		service_name: &str,
 		opts: RunOptions,
 	) -> Result<()> {
+		// A name that is not a service but is a job runs the job: the one-off
+		// machinery below works on a file in which the job (and the jobs it
+		// depends on) sit under `services`.
+		let job_view = crate::compose::jobs::job_file_for_run(file, service_name)?;
+		let file = job_view.as_ref().unwrap_or(file);
 		self.pull_preflight(file)?;
 		let RunOptions {
 			cmd,
@@ -98,6 +106,10 @@ impl Engine {
 			if !deps.is_empty() {
 				self.up_with_options(file, true, &[], &deps, false, false, false, false)
 					.await?;
+				// `up` waited on the conditions between the dependencies. The
+				// ones the target states about its own are waited on here,
+				// before its container exists.
+				self.wait_target_dependencies(file, service_name).await?;
 			}
 		}
 
@@ -143,7 +155,11 @@ impl Engine {
 		}
 		// `-l/--label` adds ad-hoc labels to the one-off container, merged over the
 		// service's own labels in compose `KEY=VALUE` list form.
-		if !labels.is_empty() {
+		// Every one-off container says so, which is what keeps `--remove-orphans`
+		// from taking it for a service the file no longer defines.
+		let mut labels = labels;
+		labels.push("podup.oneoff=true".to_string());
+		{
 			let mut list: Vec<String> = run_service
 				.labels
 				.to_map()
@@ -451,3 +467,7 @@ impl Engine {
 		}
 	}
 }
+
+/// `run` with the name of a job.
+#[cfg(all(test, unix))]
+mod job_tests;

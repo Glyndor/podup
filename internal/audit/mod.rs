@@ -104,8 +104,8 @@ pub fn audit_file(file: &ComposeFile, opt_in: &[&'static str]) -> AuditReport {
 	report
 }
 
-/// Every container a compose file brings up, in declaration order: each
-/// service, then the init steps of that service.
+/// Every container a compose file declares, in declaration order: each
+/// service, then the init steps of that service, then the same for each job.
 ///
 /// An init step is a container of its own and the audit reports on
 /// containers: a step that asks for `privileged: true` or mounts a host
@@ -114,7 +114,10 @@ pub fn audit_file(file: &ComposeFile, opt_in: &[&'static str]) -> AuditReport {
 /// step's, because that is the container that runs.
 pub fn audited_containers(file: &ComposeFile) -> Vec<AuditedContainer> {
 	let mut out = Vec::new();
-	for (name, service) in &file.services {
+	// A job is a container with the same exposure as a service: a `privileged`
+	// job is as much a finding as a `privileged` service.
+	let jobs = file.jobs.iter().map(|(name, job)| (name, &job.service));
+	for (name, service) in file.services.iter().chain(jobs) {
 		out.push(AuditedContainer {
 			name: name.clone(),
 			service: service.clone(),

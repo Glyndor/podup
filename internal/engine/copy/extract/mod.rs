@@ -12,5 +12,14 @@ pub(in crate::engine::copy) mod stream;
 #[cfg(test)]
 mod destination_tests;
 
+#[cfg(all(test, unix))]
+mod hostile_support;
+
+#[cfg(all(test, unix))]
+mod hostile_tests;
+
+#[cfg(all(test, unix))]
+mod hostile_header_tests;
+
 #[cfg(test)]
 mod destination_trusted_tests;

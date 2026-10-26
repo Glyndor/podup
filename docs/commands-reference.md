@@ -53,6 +53,25 @@ podup generate quadlet -o ~/.config/containers/systemd
 
 Quadlet units are consumed by systemd, so they only run on Linux.
 
+#### Jobs in `generate quadlet`
+
+A job with at least one exportable `schedule` entry gets `<project>-<job>.container` and one `<project>-<job>-<n>.timer` per entry (`n` counts from 1, in the order of the list). The container is written by the code that writes a service's unit, so `command`, `environment`, volumes and limits come out the same. It is `Type=oneshot`, has no `Restart=` (a set restart policy is reported) and no `[Install]` section: the timer starts it. A job with only `manual` writes nothing and is reported once. A `depends_on` towards a service or towards a job that is exported becomes `After=` and `Requires=`/`Wants=`; towards a job without a unit it is dropped with a warning only when the entry has `required: false`. A required dependency (the default) on a job that has no unit blocks the dependent: it is not exported and each of its entries is reported, because the timer could run it without the dependency having run. The block repeats up a chain of dependencies. `autostart` installs services only.
+
+Quadlet only turns its own unit types into services and ignores `.timer` files. Copy the timers to the systemd unit directory (`~/.config/systemd/user`), run `systemctl --user daemon-reload` and `systemctl --user enable --now <name>.timer`. The `.container` stays with the other Quadlet units.
+
+| Schedule key | Becomes |
+|---|---|
+| `cron` | `OnCalendar=`, for the subset in [Jobs and schedules](docker-migration.md#jobs-and-schedules) |
+| `timezone` | a suffix of `OnCalendar=` when it is `UTC`, `GMT` or an `Area/Location` name (letters, digits and `_ + - /`, at most 64 bytes, no `..`); absent means the host zone |
+| `missed_fires` | `Persistent=true` for `one` (the default), `Persistent=false` for `skip` |
+| `concurrency` | `forbid` is how a systemd timer behaves; `queue` has no timer form and the entry is not exported |
+
+Every timer sets `AccuracySec=1s`, because systemd otherwise spreads a timer by up to a minute. A job whose `container_name` is also used by another generated unit is not exported: the timer starts it with `--replace` and would remove that container. Around daylight saving changes systemd does not behave like cron (a run set for the skipped spring hour does not happen that day), so each job exported with the host zone or a zone with summer time gets one warning; see [Jobs and schedules](docker-migration.md#jobs-and-schedules).
+
+Removing a `schedule` entry and generating again does not delete the old `<project>-<job>-<n>.timer`. If it was installed it keeps firing. With `-o`, `generate quadlet` warns about each timer in the directory that carries this project's marker and is not generated now; disable it with `systemctl --user disable --now <name>.timer` and delete the file.
+
+Each entry that is not exported gets a warning that names the job, the position and the reason, and no unit. With `x-podman-pod: true` no job is exported, because a job is not part of the pod.
+
 ## Watch
 
 ### `watch`
@@ -201,7 +220,27 @@ Progress is on stderr. A stderr terminal gets an animated board; other sinks get
 
 Warnings/errors go to stderr with a `podup:` prefix. Unsupported-field warnings are on by default; `RUST_LOG=debug` enables tracing. Internal errors request a bug report with secrets redacted. Invalid `umask` values name the service and advise quoting an octal string. Values containing `$` also report that the variable did not resolve. `config --no-interpolate` refuses an unresolved `umask` placeholder. `build.no_cache_filter` produces one warning per service: podup cannot filter the build cache per stage through the libpod build API, so the setting is ignored.
 
-A compose file that declares a top-level `jobs:` section is refused, in every command that reads the file, with an error naming the first job. podup runs no job runner, so a job that never runs must not look like a job that succeeded: the refusal happens while the file is read, before Podman is contacted and before anything is created. An empty or null `jobs:` declares nothing and is accepted.
+## Jobs
+
+The top-level `jobs:` map declares containers that run to completion. A job takes every key a service takes, plus a required `triggers:` block. A `jobs:` that is empty or null declares nothing, the same as no key.
+
+| Trigger | Meaning |
+|---|---|
+| `manual` | Boolean, `true` by default (the text `true` and `false` is read too, since `config` prints a boolean that way). `manual: false` makes `podup run` refuse the job, also when another job being run depends on it. |
+| `schedule` | List of crontab strings, or objects with `cron` (required), `timezone`, `concurrency` (`forbid` by default, or `queue`) and `missed_fires` (`one` by default, or `skip`). |
+
+`triggers` must declare at least one trigger once all `-f` files are merged, so an override file may leave it out. A missing or empty `triggers`, a trigger of the wrong type, an unknown key, a cron expression that is blank, longer than 256 bytes or has a character outside `0-9 A-Z a-z * / , - ? # @` and space, and an invalid `concurrency` or `missed_fires` are errors that name the job.
+
+podup validates a schedule and does not fire it. `run`, `up` and `config` print one warning per job that has a schedule, whatever its number of entries, and `--no-warn` does not silence it. `generate quadlet` exports the schedules it can as systemd timers (see [Jobs in `generate quadlet`](#jobs-in-generate-quadlet)); the others run when you start the job with `podup run`, or from a scheduler you provide.
+
+- `podup up` starts services only and never starts a job.
+- `podup run NAME` looks for a service first and then a job. A job runs as a one-off container, with the flags of `run`, after the services and jobs it lists in `depends_on`. `run` waits for the `depends_on` conditions of the job before creating its container. A dependency that is a job with `manual: false` is an error naming both jobs.
+- A job may depend on services and on other jobs. A service cannot depend on a job.
+- Services and jobs share one namespace: the same name in both is an error.
+- `extends` of a job points at another job, and `extends` of a service points at another service.
+- `profiles` work as they do for services: the job is ignored unless one of its profiles is active. A job never activates a service: one that depends on a service behind an inactive profile is ignored with a warning, in `config`, `audit`, `generate quadlet` and `up` alike, and `podup run` starts that service with the job. `config` prints the jobs that remain, with their triggers, and `audit` checks them with the same checks as services.
+- `down` removes the containers a job left (a `run` of it, or one started for a job that depends on it), and `down --rmi` removes the images of jobs.
+- Variable interpolation, `include`, several `-f` files and `!override`/`!reset` treat a job like a service. Across `-f` files a later non-empty `schedule` replaces the earlier list; `schedule: !reset []` empties it, `schedule: !override [...]` and `triggers: !override {...}` replace the list or the whole block, and `triggers: !reset` clears it. A job left with no trigger is an error.
 
 ## Environment
 

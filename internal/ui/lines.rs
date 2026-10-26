@@ -66,6 +66,10 @@ pub(crate) fn write_progress_line(kind: &str, name: &str, action: &str) {
 	use std::io::Write;
 	let verb = action_style(action);
 	let ident = identity_style(name);
+	// The name is the engine's or the compose file's, not ours: a carriage
+	// return or a C1 control in it would rewrite the line it sits on.
+	let name = crate::error::sanitize_name(name);
+	let action = crate::error::sanitize_name(action);
 	// anstream::stderr strips the ANSI codes itself when colour is off.
 	let _ = writeln!(
 		anstream::stderr(),

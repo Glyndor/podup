@@ -41,7 +41,8 @@ pub(super) type ContainerUnits<'a> = [(String, &'a Service)];
 /// service, then the init steps that service declares.
 fn container_units(file: &ComposeFile) -> Vec<(String, &Service)> {
 	let mut out = Vec::new();
-	for (name, service) in &file.services {
+	let jobs = file.jobs.iter().map(|(name, job)| (name, &job.service));
+	for (name, service) in file.services.iter().chain(jobs) {
 		out.push((name.clone(), service));
 		for (step_name, step) in crate::compose::pre_start::declared_steps(name, service) {
 			out.push((step_name, step));
@@ -184,7 +185,14 @@ pub(super) fn collect(file: &ComposeFile) -> Vec<String> {
 	ignored_secret_config_drivers(file, &mut out);
 	ignored_models(file, &mut out);
 	ignored_restart_policy_fields(&units, &mut out);
-	out
+	// The passes above name every container `service 'x'`; a job is said to be
+	// a job.
+	if file.jobs.is_empty() {
+		return out;
+	}
+	out.into_iter()
+		.map(|message| crate::compose::jobs::relabel(file, message))
+		.collect()
 }
 
 /// Push a warning for each non-`x-` key captured at a nested level.

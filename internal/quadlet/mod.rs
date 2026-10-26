@@ -11,10 +11,13 @@
 //! every field that is set but has no Quadlet equivalent yet, so generated
 //! units never quietly drop configuration.
 
+mod jobs;
+pub use jobs::stale_timers;
 #[cfg(test)]
 mod min_podman;
 mod render;
 mod unit;
+mod unit_file;
 mod warnings;
 
 use std::cell::Cell;
@@ -30,6 +33,15 @@ use unit::{
 
 /// Validate compose data before writing Quadlet units.
 pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
+	// A job is written by the same code as a service, so it must pass the same
+	// checks: its `command`, ports and limits reach a unit file.
+	let with_jobs;
+	let file = if file.jobs.is_empty() {
+		file
+	} else {
+		with_jobs = crate::compose::jobs::with_jobs_as_services(file);
+		&with_jobs
+	};
 	crate::engine::build::validate_pull_fields(file)?;
 	if let Err(e @ ComposeError::CircularDependency(_)) = crate::compose::resolve_order(file) {
 		return Err(e);
@@ -42,6 +54,13 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 			return Err(ComposeError::NoImageOrBuild(name.clone()));
 		}
 		parse_ports(&svc.ports)?;
+		for (field, cmd) in [("command", &svc.command), ("entrypoint", &svc.entrypoint)] {
+			if cmd.as_ref().is_some_and(render::has_lone_semicolon_word) {
+				return Err(ComposeError::Unsupported(format!(
+					"service '{name}': a lone `;` argument or an unterminated quote in {field} cannot be written in a Quadlet unit"
+				)));
+			}
+		}
 		if let Some(mem) = &svc.mem_limit {
 			if crate::size::parse_memory(mem).is_none() {
 				return Err(ComposeError::Unsupported(format!(
@@ -139,8 +158,13 @@ fn guard_existing_owner(
 	filename: &str,
 	contents: &str,
 ) -> std::io::Result<()> {
-	let Ok(existing) = std::fs::read_to_string(path) else {
-		return Ok(());
+	let existing = match unit_file::inspect_existing(path)? {
+		unit_file::Existing::Absent => return Ok(()),
+		unit_file::Existing::Link => {
+			tracing::warn!("replacing {filename}, which is a symbolic link");
+			return Ok(());
+		}
+		unit_file::Existing::File(text) => text.unwrap_or_default(),
 	};
 	match (marker_owner(&existing), marker_owner(contents)) {
 		(Some(existing_owner), Some(new_owner)) if existing_owner != new_owner => {
@@ -164,17 +188,11 @@ fn guard_existing_owner(
 /// Units render each `environment:` entry as an `Environment=KEY=VALUE` line,
 /// so a compose file's database password ends up in this file verbatim. The
 /// default umask would leave it world-readable; systemd reads user units as the
-/// owning user, so 0600 costs nothing. Permissions are reset explicitly as well
-/// as at creation, so re-installing over a unit written by an older podup
-/// tightens it rather than leaving it as it was.
+/// owning user, so 0600 costs nothing. The file is written to a new private file
+/// and renamed into place, so a link or a file with looser permissions at the
+/// name is replaced rather than written through or kept.
 fn write_unit_file(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
-	std::fs::write(path, contents)?;
-	#[cfg(unix)]
-	{
-		use std::os::unix::fs::PermissionsExt;
-		std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-	}
-	Ok(())
+	unit_file::write_private(path, contents)
 }
 
 /// A single generated unit file: its name and full contents.
@@ -401,6 +419,22 @@ fn generate_with_mode(
 	// unit was actually written. The warning goes through the same
 	// `out.warnings` channel every other field-mismatch warning uses,
 	// which `generate.rs` re-emits to stderr.
+	// Jobs go after the services so their `.build` units are counted below, and
+	// only in the standard shape: `autostart` enables the units it installs,
+	// and nothing may enable a timer on a project's behalf there.
+	match mode {
+		ContainerUnitMode::Standard => {
+			let before = out.units.len();
+			jobs::append_job_units(file, &ctx, &mut out);
+			build_units_emitted += out.units[before..]
+				.iter()
+				.filter(|unit| unit.filename.ends_with(".build"))
+				.count() as u32;
+		}
+		ContainerUnitMode::Prebuilt => {
+			out.warnings.extend(warnings::jobs_not_exported(&file.jobs));
+		}
+	}
 	if build_units_emitted > 0 {
 		out.warnings.push(format!(
 			"{build_units_emitted} .build unit(s) were written; Quadlet build units need \
@@ -421,3 +455,11 @@ mod no_warn_tests;
 #[cfg(all(test, unix))]
 #[path = "write_guard_tests.rs"]
 mod write_guard_tests;
+
+#[cfg(test)]
+#[path = "write_names_tests.rs"]
+mod write_names_tests;
+
+#[cfg(all(test, unix))]
+#[path = "unit_file_tests.rs"]
+mod unit_file_tests;

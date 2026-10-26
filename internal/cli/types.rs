@@ -171,6 +171,9 @@ pub(crate) enum GenerateCommands {
 	/// Translate the compose file into Podman Quadlet unit files.
 	///
 	/// Emits one `.container` per service plus `.network` and `.volume` units.
+	/// A job with an exportable `schedule` also gets a oneshot `.container` and
+	/// one systemd `.timer` per schedule entry; Quadlet does not read the
+	/// `.timer` files, so install them in the systemd unit directory.
 	/// Without --output the units are printed to stdout; warnings about fields
 	/// with no Quadlet mapping go to stderr.
 	Quadlet {

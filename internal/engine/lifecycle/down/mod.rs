@@ -22,6 +22,17 @@ impl Engine {
 
 	/// Stop and remove services in reverse dependency order. Optionally removes named volumes and orphaned containers.
 	pub async fn down_with_options(&self, file: &ComposeFile, remove_volumes: bool) -> Result<()> {
+		// The containers of a job (a `run` of it, or one started for a job that
+		// depends on it) carry the project label and the job's name as their
+		// service, so they are swept like a service's: the teardown works on the
+		// file with its jobs listed as services.
+		let with_jobs;
+		let file = if file.jobs.is_empty() {
+			file
+		} else {
+			with_jobs = crate::compose::jobs::with_jobs_as_services(file);
+			&with_jobs
+		};
 		let mut levels = crate::compose::resolve_levels(file)?;
 		// Teardown inverts startup: a dependent must stop before the service it
 		// depends on, so the dependency levels `up` would walk front-to-back are
@@ -243,6 +254,14 @@ impl Engine {
 	/// `local_only`, only images of services that build locally (a `build:`
 	/// section) are removed, matching `docker compose down --rmi local`.
 	pub async fn remove_service_images(&self, file: &ComposeFile, local_only: bool) -> Result<()> {
+		// `--rmi` covers the images of jobs as well as of services.
+		let with_jobs;
+		let file = if file.jobs.is_empty() {
+			file
+		} else {
+			with_jobs = crate::compose::jobs::with_jobs_as_services(file);
+			&with_jobs
+		};
 		// Aggregate like every sibling loop in this teardown: complete the sweep,
 		// then report the first real failure. Warning and returning Ok meant
 		// `down --rmi` exited 0 having left images behind.
@@ -284,3 +303,6 @@ mod teardown_tests;
 
 #[cfg(test)]
 mod label_tests;
+
+#[cfg(all(test, unix))]
+mod job_tests;

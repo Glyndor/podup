@@ -301,6 +301,25 @@ Short and long `depends_on` behave alike. For portability, give both services th
 
 `volumes_from: [data]`, `links: [data:alias]`, and `network_mode` / `ipc` / `pid` / `uts` set to `service:data` add implicit dependencies on the named service. Dependency cycles are rejected.
 
+### Jobs and schedules
+
+podup never fires a `schedule` itself; it is not a daemon. `generate quadlet` turns a schedule into a systemd timer, and systemd fires it. An entry is exported only when the timer fires on the same calendar as the cron line and under the same policy, with the daylight saving exception below. Anything else is reported with the job, the entry number and the reason, and nothing is written for it.
+
+Exported: five fields (minute, hour, day of month, month, day of week) made of `*`, numbers, lists, ranges, steps (`*/5`, `10-30/10`) and three-letter month and day names, plus `@hourly`, `@daily`, `@weekly`, `@monthly`, `@yearly` and `@annually`. Sunday is `0` or `7`. A bare `?` is read as `*` in the two day fields. Each field is expanded to the set of values it matches and the `OnCalendar=` text is written from those sets.
+
+Not exported, and why:
+
+| Entry | Reason |
+|---|---|
+| Day of month and day of week both restricted (`0 0 1 * mon`) | cron fires when either matches, systemd only when both do; no spelling of one gives the other. Restrict one and leave the other `*` |
+| `concurrency: queue` | a timer drops a fire while the previous run is active and never queues it |
+| `@reboot`, `@midnight`, `L`, `W`, `#`, 6 or 7 fields (seconds, year) | no calendar time, or not the same meaning in systemd |
+| A step on a single value (`5/15`), a backwards range (`5-1`, `mon-sun`) | crons read these differently |
+| A value out of range, an empty list element | invalid |
+| A `timezone` that is not an IANA name | the name goes into the unit text, so only letters, digits and `_ + - /` are accepted |
+
+Daylight saving time is where systemd and cron differ and the timer cannot fix it. In a zone with summer time (and with no `timezone`, which is the host zone), a run set for the hour skipped in spring, such as `30 2 * * *` in `Europe/Madrid` on the last Sunday of March, does not happen that day, and a run set for the hour repeated in autumn can be missed; `Persistent=true` does not make it up. Use `timezone: UTC` or an `Etc/` zone for exact times. `generate quadlet` warns once per job whose exported timers use the host zone or a zone other than `UTC`, `GMT` and `Etc/*`. A `timezone` must be `UTC`, `GMT` or the `Area/Location` form; systemd still rejects a name it does not know when it loads the timer, so check it on the host that runs it. A step wider than the field (`*/60` in minutes, `*/12` in months, `*/31` in days) is not exported even though cron accepts it: podup stays on the safe side. A schedule that is valid but can never fire (`0 0 30 2 *`) is exported with a warning. The timers are plain systemd units and must be installed where systemd reads them, not in the Quadlet directory; see [Jobs in `generate quadlet`](commands-reference.md#jobs-in-generate-quadlet).
+
 ## Accepted but has no effect
 
 These modeled fields parse but have no effect. The examples are not exhaustive; podup warns about ignored settings.
@@ -351,7 +370,7 @@ The `[Build]` keys `Annotation=`, `Volume=` and `DNS=` have no compose `build:` 
 |---|---|
 | `env_file.format` other than `dotenv` | Any explicit `env_file.format` (including dotenv) emits a warning; the file is still read as dotenv |
 | `provider:` / model-runner services (`provider`, top-level `models`) | Modeled and parsed, but not honored; a not-honored warning is emitted |
-| Top-level `jobs:` section | Refused: podup runs no job runner, so a file that declares a job is rejected at parse time, before Podman is contacted, with an error naming the first job. An empty or null `jobs:` declares nothing and is accepted |
+| Top-level `jobs:` `schedule` trigger | The structure is validated and each job with a schedule is reported once. podup does not fire schedules; `generate quadlet` exports them as systemd timers where it can, see [Jobs and schedules](#jobs-and-schedules). `podup run` starts a job by hand (a `manual: false` job is refused, also as a dependency), `podup up` never does. `!reset`/`!override` work on triggers, a job never activates a service behind an inactive profile, and `down` removes job containers; see [Jobs](commands-reference.md#jobs) |
 | Configurable pod exit policy and stop timeout | The pod exit policy stays fixed at `continue`; no pod-level Compose source maps to stop timeout |
 | Real-hardware smoke tests on macOS | Pending; the code paths exist but are untested on physical Apple hardware. Windows was validated end-to-end on real hardware (Windows 11, Podman 5.8.3), including the interactive `exec`/`run` path added in 3.0.0. |
 

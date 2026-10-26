@@ -97,3 +97,82 @@ fn filter_orphans_empty_when_all_known() {
 	let known: HashSet<String> = ["web".to_string()].into();
 	assert!(filter_orphans(vec!["web".to_string()], &known).is_empty());
 }
+
+/// A container the project started for a job is not an orphan: the job is
+/// declared in the file, only under `jobs:` instead of `services:`.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_job_container_is_not_an_orphan() {
+	let containers = r#"[
+		{"Names":["/proj-web-1"]},
+		{"Names":["/proj-nightly-1"]},
+		{"Names":["/proj-ghost-1"]}
+	]"#;
+	let fake = fake_podman::start(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			(200, containers.to_string())
+		} else {
+			(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+	let file = crate::parse_str(
+		"services:\n  web:\n    image: x\njobs:\n  nightly:\n    image: x\n    triggers: {manual: true}\n",
+	)
+	.unwrap();
+
+	let orphans = e.orphan_container_names(&file).await.unwrap();
+	assert_eq!(
+		orphans,
+		["proj-ghost-1"],
+		"only the undeclared one is an orphan"
+	);
+}
+
+/// The containers the project has: a service, two one-off runs of a job (one
+/// with the name `run` gives it and no label, as older versions made it; one
+/// with the label and a name of the user's choice), the one-off run of a job the
+/// file no longer declares, a replica beyond the declared count, and a
+/// container with a run-like name but no identity labels.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_one_off_runs_of_a_declared_job_are_not_orphans() {
+	let containers = r#"[
+		{"Names":["/proj-web-1"],"Labels":{"podup.service":"web"}},
+		{"Names":["/proj-nightly-run-1234"],"Labels":{"podup.service":"nightly"}},
+		{"Names":["/my-own-name"],"Labels":{"podup.service":"nightly","podup.oneoff":"true"}},
+		{"Names":["/proj-removed-run-77"],"Labels":{"podup.service":"removed","podup.oneoff":"true"}},
+		{"Names":["/proj-web-3"],"Labels":{"podup.service":"web"}},
+		{"Names":["/proj-nightly-run-5"]}
+	]"#;
+	let fake = fake_podman::start(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			(200, containers.to_string())
+		} else {
+			(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+	let file = crate::parse_str(
+		"services:\n  web:\n    image: x\njobs:\n  nightly:\n    image: x\n    triggers: {manual: true}\n",
+	)
+	.unwrap();
+
+	let mut orphans = e.orphan_container_names(&file).await.unwrap();
+	orphans.sort();
+	assert_eq!(
+		orphans,
+		["proj-nightly-run-5", "proj-removed-run-77", "proj-web-3"],
+		"a one-off of something declared is its own; everything else is as before"
+	);
+}
+
+/// What `run` names its container is what the orphan check recognises.
+#[cfg(unix)]
+#[test]
+fn the_name_run_gives_a_container_matches_the_legacy_pattern() {
+	let name = format!("{}-{}-run-{}", "proj", "nightly", std::process::id());
+	let prefix = "proj-nightly-run-";
+	let rest = name.strip_prefix(prefix).unwrap();
+	assert!(rest.bytes().all(|b| b.is_ascii_digit()));
+}

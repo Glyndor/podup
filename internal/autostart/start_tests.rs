@@ -20,10 +20,13 @@ fn the_boot_path_carries_no_compose_file() {
 	// absences, so a unit that rendered nothing at all cannot pass.
 	let s = render_start_unit(&opts());
 	assert!(
-		s.contains("ExecStart=/usr/bin/podman start app-web-1"),
+		s.contains("ExecStart=/usr/bin/podman start -- app-web-1"),
 		"{s}"
 	);
-	assert!(s.contains("ExecStop=/usr/bin/podman stop app-web-1"), "{s}");
+	assert!(
+		s.contains("ExecStop=/usr/bin/podman stop -- app-web-1"),
+		"{s}"
+	);
 	// Scoped to the exec lines: `Description=podup <project>` legitimately
 	// names podup, and asserting over the whole unit would fail on the label
 	// rather than on the boot path, which is the thing under test.
@@ -47,7 +50,7 @@ fn execstop_stops_rather_than_removes() {
 	// find, turning every reboot into a broken start. Same contract service
 	// mode pins with `down`.
 	let s = render_start_unit(&opts());
-	assert!(s.contains(" stop app-web-1"), "{s}");
+	assert!(s.contains(" stop -- app-web-1"), "{s}");
 	assert!(!s.contains(" rm "), "ExecStop must not remove:\n{s}");
 }
 

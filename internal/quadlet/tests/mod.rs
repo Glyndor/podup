@@ -1,5 +1,7 @@
 use crate::quadlet::{QuadletOutput, QuadletUnit};
 
+mod exec_escaping;
+mod exec_generator;
 mod fields;
 mod floor_compat;
 mod health;

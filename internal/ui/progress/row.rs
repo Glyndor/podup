@@ -186,9 +186,11 @@ fn colourise(plain: &str, row: &Row, mark: &str, mark_style: Style, colour: bool
 		let styled = paint(mark_style, mark, true);
 		out.replace_range(pos..pos + mark.len(), &styled);
 	}
-	if let Some(pos) = out.find(&row.name) {
-		let styled = paint(identity_style(&row.name), &row.name, true);
-		out.replace_range(pos..pos + row.name.len(), &styled);
+	// The line carries the escaped name (`fit_cell`), so look for that one.
+	let name = crate::ui::sanitize_cell(&row.name);
+	if let Some(pos) = out.find(&name) {
+		let styled = paint(identity_style(&row.name), &name, true);
+		out.replace_range(pos..pos + name.len(), &styled);
 	}
 	out
 }

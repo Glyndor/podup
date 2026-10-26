@@ -1,3 +1,39 @@
+podup (5.14.0) unstable; urgency=medium
+
+  * The top-level `jobs:` section of the compose specification works. A job is
+    a container that runs to completion: `podup run NAME` runs it, `podup up`
+    never starts one, and a job with `manual: false` cannot be run by hand,
+    also when another job depends on it. A job and a service share one name
+    space, a service cannot depend on a job, and `extends` stays within its
+    own kind. `config`, `audit` and `down` cover jobs like services. A file
+    that declares one was refused before.
+  * `podup generate quadlet` exports the `schedule` triggers of a job as
+    systemd timers: a one-shot `.container` unit for the job and one `.timer`
+    unit per schedule. Quadlet itself ignores `.timer` files, so they have to
+    be copied to the systemd user directory and enabled by hand, and the
+    command says so. Only the cron forms that mean the same in systemd are
+    exported; the others are reported and left out, and a timer follows the
+    daylight saving rules of systemd, not those of cron.
+  * `podup run` waits for the `depends_on` conditions of the service or job it
+    runs. `up --remove-orphans` no longer removes the container of a `run -d`
+    of something that is still declared.
+  * `generate quadlet` writes a literal `%` and `$` in a command so that
+    systemd keeps them, refuses a command with a bare `;` or an unclosed
+    quote, and replaces a unit file instead of writing through a symlink at
+    its name. A unit that was a symlink becomes a regular file.
+  * The units of `autostart` quote `$`, end the options before the container
+    name and keep a trailing backslash off the end of a line.
+  * `.dockerignore` patterns are matched in time proportional to the size of
+    the pattern and the path.
+  * `audit` folds `.` and `..` in a bind source and resolves a relative one
+    the way `config` does, and says when a `..` leaves it unable to tell where
+    the path goes.
+  * The version probe of `podup update` is bounded by time and size.
+  * A carriage return, a C1 control or a NUL in a name is escaped where podup
+    prints it, and `config --format json` writes DEL and C1 as escapes.
+
+ -- Jaro-c <75870284+Jaro-c@users.noreply.github.com>  Sun, 25 Oct 2026 16:49:10 -0500
+
 podup (5.13.0) unstable; urgency=medium
 
   * A service `pre_start` list now runs: each step is an ephemeral container

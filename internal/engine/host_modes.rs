@@ -10,9 +10,10 @@
 /// `up`/`create`/`run`/`exec` paths emit the same warnings per-call but honour
 /// `--no-warn`.
 pub fn surface_host_modes(file: &crate::compose::types::ComposeFile) {
-	for (name, service) in &file.services {
+	let jobs = file.jobs.iter().map(|(name, job)| (name, &job.service));
+	for (name, service) in file.services.iter().chain(jobs) {
 		for w in super::container::check_host_mode(name, service) {
-			tracing::warn!("{}", w.message);
+			tracing::warn!("{}", crate::compose::jobs::relabel(file, w.message));
 		}
 	}
 }

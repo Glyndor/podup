@@ -10,3 +10,11 @@ pub(in crate::engine) mod walk;
 #[cfg(test)]
 #[path = "ignore_patterns_tests.rs"]
 mod ignore_patterns_tests;
+
+#[cfg(test)]
+#[path = "ignore_patterns_time_tests.rs"]
+mod ignore_patterns_time_tests;
+
+#[cfg(test)]
+#[path = "ignore_patterns_equivalence_tests.rs"]
+mod ignore_patterns_equivalence_tests;

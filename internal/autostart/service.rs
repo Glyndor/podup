@@ -112,7 +112,9 @@ pub(super) fn quote_arg_for_exec(token: &str) -> String {
 }
 
 fn quote_arg(token: &str) -> String {
-	let token = token.replace('%', "%%");
+	// `$$` is systemd's escape for a literal `$`; a lone `$NAME` or `${NAME}` in
+	// an exec line is replaced from the manager's environment, quoted or not.
+	let token = token.replace('%', "%%").replace('$', "$$");
 	if is_bare_safe(&token) {
 		return token;
 	}
@@ -130,6 +132,21 @@ fn quote_arg(token: &str) -> String {
 	}
 	out.push('"');
 	out
+}
+
+/// The `WorkingDirectory=` value for a path: `%` doubled, and a trailing `/`
+/// added when the path ends in a backslash.
+///
+/// The directive reads the rest of the line literally (quotes and escapes are
+/// not honoured), and a line ending in a backslash is joined to the next one,
+/// which would fold the `ExecStart=` line into the path. A trailing `/` names the
+/// same directory and keeps the backslash from ending the line.
+fn workdir_value(dir: &std::path::Path) -> String {
+	let mut value = dir.display().to_string().replace('%', "%%");
+	if value.ends_with('\\') {
+		value.push('/');
+	}
+	value
 }
 
 /// Reject any unit-embedded value containing ASCII control characters.
@@ -240,7 +257,7 @@ pub fn update_timer_file_name(project: &str) -> String {
 /// refreshing images is what the timer is for.
 pub fn render_update_service_unit(opts: &ServiceUnitOpts) -> String {
 	let start = exec_line(opts, &["up", "-d"]);
-	let workdir = opts.working_dir.display().to_string().replace('%', "%%");
+	let workdir = workdir_value(&opts.working_dir);
 	let project = opts.project.replace('%', "%%");
 	format!(
 		"[Unit]\n\
@@ -339,7 +356,7 @@ pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
 	// meant to be split into words or taken whole, so doubling a literal `%`
 	// here collapses back to one literal `%` exactly as it does on an exec
 	// line, and reaches the filesystem unexpanded by any specifier.
-	let workdir = opts.working_dir.display().to_string().replace('%', "%%");
+	let workdir = workdir_value(&opts.working_dir);
 	// `Description=` takes its value literally, exactly like `WorkingDirectory=`
 	// above: systemd's specifier expansion runs over every unit-file value, not
 	// only the ones this module treats specially. `opts.project` is gated

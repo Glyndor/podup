@@ -8,7 +8,7 @@ pub(crate) mod dependencies;
 pub(crate) mod diagnostics;
 mod extends;
 mod include;
-mod jobs;
+pub(crate) mod jobs;
 mod merge;
 mod order;
 pub mod pre_start;
@@ -18,6 +18,7 @@ mod validate;
 mod parsing;
 
 pub use diagnostics::{ShowClientAddressWarningGuard, SuppressPortExposureGuard};
+pub use jobs::warn_unscheduled_jobs;
 pub use order::{resolve_levels, resolve_order};
 #[cfg(test)]
 use parsing::merge_override;

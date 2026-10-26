@@ -30,16 +30,57 @@ use crate::ports::parse_ports;
 /// the top level; and the `depends_on` graph is acyclic with no dangling
 /// required dependency. Returns the first violation found.
 pub fn validate_config(file: &ComposeFile) -> Result<()> {
-	crate::engine::build::validate_pull_fields(file)?;
+	// A job is a container like a service, so every per-container check below
+	// runs over both; `everything` is the file with the jobs listed as
+	// services, and is `file` itself when there are none.
+	let with_jobs;
+	let everything = if file.jobs.is_empty() {
+		file
+	} else {
+		with_jobs = crate::compose::jobs::with_jobs_as_services(file);
+		&with_jobs
+	};
+	crate::engine::build::validate_pull_fields(everything)?;
 	// An empty file, a missing `services:` key, or `services: {}` is not a valid
-	// project; `docker compose config` errors with "no service selected".
-	if file.services.is_empty() {
+	// project; `docker compose config` errors with "no service selected". A file
+	// that declares only jobs has something to run, so it passes.
+	if everything.services.is_empty() {
 		return Err(ComposeError::Unsupported(
 			"no services defined in compose file".to_string(),
 		));
 	}
 
-	for (name, svc) in &file.services {
+	for (name, svc) in &everything.services {
+		validate_container(name, svc, file).map_err(|error| {
+			if file.jobs.contains_key(name) {
+				crate::compose::jobs::relabel_error(name, error)
+			} else {
+				error
+			}
+		})?;
+	}
+
+	// A job's own dependencies are named in the job's words; a service's go
+	// through `resolve_order` below.
+	crate::compose::jobs::check_job_dependencies(file)?;
+
+	// Reject `depends_on` cycles and dangling required dependencies, matching the
+	// mutating commands (which run `resolve_order` before they start anything).
+	// Over `everything`, so a cycle that passes through a job is reported like
+	// any other.
+	resolve_order(everything)?;
+	Ok(())
+}
+
+/// The checks of one container of the file, a service or a job: its pull
+/// policy, name, image, ports, networks and volumes, and those of its init
+/// steps.
+fn validate_container(
+	name: &str,
+	svc: &crate::compose::types::Service,
+	file: &ComposeFile,
+) -> Result<()> {
+	{
 		if let Some(policy) = svc
 			.pull_policy
 			.as_deref()
@@ -49,7 +90,7 @@ pub fn validate_config(file: &ComposeFile) -> Result<()> {
 		}
 		validate_service_name(name)?;
 		if svc.image.is_none() && svc.build.is_none() {
-			return Err(ComposeError::NoImageOrBuild(name.clone()));
+			return Err(ComposeError::NoImageOrBuild(name.to_string()));
 		}
 		validate_ports(name, &svc.ports)?;
 		validate_network_refs(name, file, svc)?;
@@ -63,10 +104,6 @@ pub fn validate_config(file: &ComposeFile) -> Result<()> {
 			validate_volume_refs(&step_name, file, step)?;
 		}
 	}
-
-	// Reject `depends_on` cycles and dangling required dependencies, matching the
-	// mutating commands (which run `resolve_order` before they start anything).
-	resolve_order(file)?;
 	Ok(())
 }
 
@@ -191,7 +228,8 @@ pub(super) fn validate(file: &ComposeFile) -> Result<()> {
 /// network reference resolving to a declared (or external) network, and that the
 /// `ports:` entries parse and are in range.
 fn validate_services(file: &ComposeFile) -> Result<()> {
-	for (name, service) in &file.services {
+	let jobs = file.jobs.iter().map(|(name, job)| (name, &job.service));
+	for (name, service) in file.services.iter().chain(jobs) {
 		validate_service_consistency(name, file, service)?;
 		// An init step is a container of its own, so the same consistency
 		// rules apply to the step the operator wrote.

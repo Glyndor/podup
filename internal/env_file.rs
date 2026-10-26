@@ -114,7 +114,7 @@ pub fn materialize_env_files(
 	file: &mut crate::compose::types::ComposeFile,
 	base_dir: &Path,
 ) -> Result<()> {
-	for service in file.services.values_mut() {
+	for service in file.services_and_jobs_mut() {
 		let entries = service.env_file.to_entries();
 		if entries.is_empty() {
 			continue;

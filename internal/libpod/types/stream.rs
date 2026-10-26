@@ -177,7 +177,12 @@ where
 						}
 					}
 					Some(Err(e)) => return Err(PodmanError::from(e)),
-					None => return Ok(None),
+					None if buf.is_empty() => return Ok(None),
+					// The body ended with part of a frame still buffered: a
+					// header with no full payload, or fewer than eight bytes.
+					// Ending cleanly here dropped those bytes and exited 0;
+					// `parse_json_lines` reports the same cut as an early end.
+					None => return Err(PodmanError::StreamEndedEarly),
 				}
 			}
 		},

@@ -110,14 +110,23 @@ use super::check_fns::finding;
 ///   sshd config, and the user list; that is a real leak. The check
 ///   does not silently pass on `ro`, the message just names the access
 ///   mode so the operator can tell which kind of exposure they have.
-/// - **Relative paths (`./`, `../`, `~/`) do not fire.** The audit
-///   cannot tell whether a relative path resolves under the project
-///   directory or under a sensitive location; the false-positive cost
-///   of flagging every `./data:/data` is higher than the false-negative
-///   cost of missing the rare `~/.ssh`. The check stays Linux-specific:
-///   Windows paths (`C:\...`) do not start with `/`, so they do not
-///   match either. Operators on Windows have a different surface and a
-///   different audit story; this rule does not pretend to cover them.
+/// - **Relative paths are judged where they land.** `audit` resolves a
+///   `./` or `../` source against the project directory, the same way
+///   `config` renders it, so `../..` from a directory two levels below
+///   `/` is the host root. `~/` is not expanded here, and the check
+///   stays Linux-specific: Windows paths (`C:\...`) do not start with
+///   `/`, so they do not match either. Operators on Windows have a
+///   different surface and a different audit story; this rule does not
+///   pretend to cover them.
+/// - **`.` and `..` are read two ways.** A bind fires when the path as
+///   written matches, or when it matches once `.` and `..` are folded
+///   lexically (`/tmp/../etc` is `/etc`). The kernel resolves `..` after
+///   following links, so with `/var/run` a link to `/run`,
+///   `/var/run/../x` is `/x` and the folded form `/var/x` would be wrong;
+///   the written form is therefore never dropped. A path with a `..` that
+///   matches neither way gets its own softer finding, because the audit
+///   reads the compose file and never the host's filesystem, so it cannot
+///   tell where the path resolves.
 /// - **A path under the project directory does not fire.** Operators
 ///   legitimately mount the project tree into a build container; the
 ///   project directory is conventionally `/srv/app`, `/home/<user>/<repo>`,
@@ -137,46 +146,69 @@ pub fn check_sensitive_bind_mount(
 		let Some((source, read_only)) = bind_source(mount) else {
 			continue;
 		};
-		// Normalise: trailing slashes are dropped (`/etc/` and `/etc`
-		// are the same directory) and the host root folds to a single
-		// `/` regardless of how many leading slashes the operator
-		// wrote or whether they spelled the current directory (`/.`).
-		// After this fold the exact-match entry for `/` catches `/`,
-		// `//`, `/.`, and `/./` as the same finding; every other path
-		// passes through unchanged so the prefix loop keeps its
-		// existing behaviour.
-		let normalized = normalize_host_path(source);
 		let mode = if read_only { "read-only " } else { "" };
-		if let Some(reason) = sensitive_bind_reason(&normalized, mode) {
+		// The path as written (slashes folded) first, then the lexically
+		// folded one: folding can only add findings, never remove one.
+		let written = normalize_slashes(source);
+		let folded = normalize_host_path(source);
+		if let Some(reason) =
+			sensitive_bind_reason(&written, mode).or_else(|| sensitive_bind_reason(&folded, mode))
+		{
 			out.push(finding(name, "sensitive_bind_mount", &reason));
+		} else if has_parent_component(source) {
+			out.push(finding(
+				name,
+				"sensitive_bind_mount",
+				&format!(
+					"volumes: {source} contains '..'; audit cannot tell where it resolves \
+					 (a symbolic link in the path changes the result)"
+				),
+			));
 		}
 	}
 	out
 }
 
-/// Fold the spellings of the host root that POSIX treats as equivalent
-/// to a single `/` and drop any trailing slashes from the rest. The
-/// sensitive list's exact-match entry for `/` then catches every
-/// spelling without the prefix loop firing on every absolute path.
-///
-/// POSIX collapses duplicate leading slashes (every distro podup
-/// supports treats `//` and `///` as `/`), and `/.` is the current
-/// directory of the root, which is the root itself. After folding
-/// these the only way an absolute bind path can reach the empty
-/// stripped case is by being the root, so the caller does not need
-/// a separate "skip when empty" branch.
-fn normalize_host_path(source: &str) -> String {
-	// Strip trailing slashes (`/etc/` -> `/etc`).
-	let trimmed = source.trim_end_matches('/');
-	// Collapse duplicate leading slashes (`//foo` -> `/foo`).
-	let stripped = trimmed.trim_start_matches('/');
-	// After both strips the only spellings of the root are:
-	// - empty (`/`, `//`, `///`, `/./`)
-	// - `.` (`/.`, `//.`)
+/// Fold the spellings of the host root that POSIX treats as equivalent to a
+/// single `/` and drop trailing slashes from the rest, leaving every other
+/// component as written. The sensitive list's exact entry for `/` then catches
+/// each spelling of the root without the prefix loop firing on every absolute
+/// path.
+fn normalize_slashes(source: &str) -> String {
+	let stripped = source.trim_end_matches('/').trim_start_matches('/');
 	if stripped.is_empty() || stripped == "." {
 		return "/".to_string();
 	}
-	format!("/{}", stripped)
+	format!("/{stripped}")
+}
+
+/// Whether any component of `source` is `..`.
+fn has_parent_component(source: &str) -> bool {
+	source.split('/').any(|part| part == "..")
+}
+
+/// Lexically clean an absolute host path so every spelling of the same
+/// location reaches the sensitive list as one string: duplicate and trailing
+/// slashes go, `.` components go, and `..` removes the component before it
+/// (at the root it stays at the root, as the kernel resolves it). The
+/// filesystem is never consulted, so a symlink is not followed; the audit
+/// judges what the operator wrote, once it is spelled in its shortest form.
+///
+/// Every spelling of the host root folds to a single `/`, which the exact
+/// entry for `/` then catches without the prefix loop firing on every
+/// absolute path.
+fn normalize_host_path(source: &str) -> String {
+	let mut parts: Vec<&str> = Vec::new();
+	for part in source.split('/') {
+		match part {
+			"" | "." => {}
+			".." => {
+				parts.pop();
+			}
+			other => parts.push(other),
+		}
+	}
+	format!("/{}", parts.join("/"))
 }
 
 /// Container runtime socket paths: the bind target IS the attack vector.

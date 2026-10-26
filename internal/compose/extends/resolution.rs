@@ -4,7 +4,27 @@ use std::path::{Path, PathBuf};
 use super::super::parse_file_inner_with_env;
 use super::super::types::ComposeFile;
 use super::merge_service;
-use crate::error::{ComposeError, Result};
+use crate::error::{sanitize_name, ComposeError, Result};
+
+/// Which namespace an `extends:` pass resolves in. A service extends a
+/// service and a job extends a job; the two passes run the same code over
+/// different views of the file, and the kind only changes the wording of the
+/// errors.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub(super) enum Kind {
+	#[default]
+	Service,
+	Job,
+}
+
+impl Kind {
+	fn word(self) -> &'static str {
+		match self {
+			Kind::Service => "service",
+			Kind::Job => "job",
+		}
+	}
+}
 
 const MAX_EXTENDS_DEPTH: usize = 16;
 
@@ -70,6 +90,8 @@ struct ExtendsCache {
 	/// file's own chains resolve, so it cannot answer "is this path on the
 	/// current path" and a cycle across files would recurse forever.
 	in_progress: HashSet<PathBuf>,
+	/// The namespace being resolved: services first, then jobs.
+	kind: Kind,
 }
 
 impl ExtendsCache {
@@ -137,10 +159,21 @@ impl ExtendsCache {
 ///
 /// Used by [`super::super::parse_str`] where there is no on-disk path.
 pub(in crate::compose) fn resolve_extends_same_file(file: &mut ComposeFile) -> Result<()> {
+	resolve_same_file_in(file, Kind::Service)?;
+	if file.jobs.is_empty() {
+		return Ok(());
+	}
+	let mut view = crate::compose::jobs::job_services_view(file);
+	resolve_same_file_in(&mut view, Kind::Job)?;
+	crate::compose::jobs::store_job_services(file, view);
+	Ok(())
+}
+
+fn resolve_same_file_in(file: &mut ComposeFile, kind: Kind) -> Result<()> {
 	let names: Vec<String> = file.services.keys().cloned().collect();
 	for name in names {
 		let mut visited: HashSet<String> = HashSet::new();
-		resolve_one_extends_in_memory(file, &name, &mut visited, 0)?;
+		resolve_one_extends_in_memory(file, &name, &mut visited, 0, kind)?;
 	}
 	Ok(())
 }
@@ -162,7 +195,17 @@ pub(in crate::compose) fn resolve_all_extends(
 		interpolate,
 		..Default::default()
 	};
-	resolve_all_extends_with_cache(file, base_dir, &mut cache, 0)
+	resolve_all_extends_with_cache(file, base_dir, &mut cache, 0)?;
+	if file.jobs.is_empty() {
+		return Ok(());
+	}
+	// Jobs extend jobs: run the same pass over a file whose services are the
+	// jobs, sharing the cache so an external file is parsed once for both.
+	cache.kind = Kind::Job;
+	let mut view = crate::compose::jobs::job_services_view(file);
+	resolve_all_extends_with_cache(&mut view, base_dir, &mut cache, 0)?;
+	crate::compose::jobs::store_job_services(file, view);
+	Ok(())
 }
 
 fn resolve_all_extends_with_cache(
@@ -184,14 +227,18 @@ fn resolve_one_extends_in_memory(
 	name: &str,
 	visited: &mut HashSet<String>,
 	depth: usize,
+	kind: Kind,
 ) -> Result<()> {
+	let (word, label) = (kind.word(), sanitize_name(name));
 	if depth >= MAX_EXTENDS_DEPTH {
 		return Err(ComposeError::Extends(format!(
-			"extends chain exceeds maximum depth ({MAX_EXTENDS_DEPTH}) at service '{name}'"
+			"extends chain exceeds maximum depth ({MAX_EXTENDS_DEPTH}) at {word} '{label}'"
 		)));
 	}
 	if !visited.insert(name.to_string()) {
-		return Err(ComposeError::Extends(format!("circular extends at {name}")));
+		return Err(ComposeError::Extends(format!(
+			"circular extends at {label}"
+		)));
 	}
 
 	let extends = match file.services.get(name).and_then(|s| s.extends.clone()) {
@@ -201,23 +248,24 @@ fn resolve_one_extends_in_memory(
 
 	if extends.file().is_some() {
 		return Err(ComposeError::Extends(format!(
-			"service '{name}' uses 'extends.file' but parser was given a string, not a path"
+			"{word} '{label}' uses 'extends.file' but parser was given a string, not a path"
 		)));
 	}
 
 	let base_name = extends.service().to_string();
 	if base_name == name {
 		return Err(ComposeError::Extends(format!(
-			"service '{name}' extends itself"
+			"{word} '{label}' extends itself"
 		)));
 	}
 
 	if file.services.get(&base_name).is_none() {
 		return Err(ComposeError::Extends(format!(
-			"service '{name}' extends unknown service '{base_name}'"
+			"{word} '{label}' extends unknown {word} '{}'",
+			sanitize_name(&base_name)
 		)));
 	}
-	resolve_one_extends_in_memory(file, &base_name, visited, depth + 1)?;
+	resolve_one_extends_in_memory(file, &base_name, visited, depth + 1, kind)?;
 
 	let base = file
 		.services
@@ -242,13 +290,16 @@ fn resolve_one_extends(
 	depth: usize,
 	cache: &mut ExtendsCache,
 ) -> Result<()> {
+	let (word, label) = (cache.kind.word(), sanitize_name(name));
 	if depth >= MAX_EXTENDS_DEPTH {
 		return Err(ComposeError::Extends(format!(
-			"extends chain exceeds maximum depth ({MAX_EXTENDS_DEPTH}) at service '{name}'"
+			"extends chain exceeds maximum depth ({MAX_EXTENDS_DEPTH}) at {word} '{label}'"
 		)));
 	}
 	if !visited.insert(name.to_string()) {
-		return Err(ComposeError::Extends(format!("circular extends at {name}")));
+		return Err(ComposeError::Extends(format!(
+			"circular extends at {label}"
+		)));
 	}
 
 	let extends = match file.services.get(name).and_then(|s| s.extends.clone()) {
@@ -276,6 +327,10 @@ fn resolve_one_extends(
 			cache.env_files = files.clone();
 		}
 		let mut other = cache.get_or_load(&abs, base_dir, depth + 1)?;
+		if cache.kind == Kind::Job {
+			// The base of a job is a job of the external file.
+			other = crate::compose::jobs::job_services_view(&other);
+		}
 		let ext_dir = abs.parent().unwrap_or(base_dir);
 		let mut nested_visited: HashSet<String> = HashSet::new();
 		resolve_one_extends(
@@ -290,7 +345,8 @@ fn resolve_one_extends(
 		cache.local_env_files = local_env_files;
 		let mut base = other.services.swap_remove(&base_name).ok_or_else(|| {
 			ComposeError::Extends(format!(
-				"service '{base_name}' not found in {}",
+				"{word} '{}' not found in {}",
+				sanitize_name(&base_name),
 				abs.display()
 			))
 		})?;
@@ -301,12 +357,13 @@ fn resolve_one_extends(
 	} else {
 		if base_name == name {
 			return Err(ComposeError::Extends(format!(
-				"service '{name}' extends itself"
+				"{word} '{label}' extends itself"
 			)));
 		}
 		if !file.services.contains_key(&base_name) {
 			return Err(ComposeError::Extends(format!(
-				"service '{name}' extends unknown service '{base_name}'"
+				"{word} '{label}' extends unknown {word} '{}'",
+				sanitize_name(&base_name)
 			)));
 		}
 		resolve_one_extends(file, &base_name, base_dir, visited, depth + 1, cache)?;

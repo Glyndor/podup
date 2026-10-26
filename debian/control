@@ -30,7 +30,7 @@ Architecture: any
 #
 # The floor is the same one MIN_LIBPOD_API_MAJOR enforces at run time and
 # PODMAN_MIN_MAJOR checks in install.sh. Three copies of one number, tied by
-# tests/podman_floor.rs, because as a Depends this one decides whether the
+# tests/packaging/podman_floor.rs, because as a Depends this one decides whether the
 # package installs at all rather than merely what apt suggests alongside it.
 #
 # The consequence, stated rather than discovered: on a distribution whose

@@ -2,7 +2,7 @@
 GAP_ANALYSIS.md
 
 # Coverage & profiling (root-level artifacts only; anchored so they don't
-# swallow source dirs such as tests/parse/coverage/)
+# swallow source dirs such as tests/compose/parsing/parse/coverage/)
 *.profraw
 *.profdata
 /tarpaulin-report.html
