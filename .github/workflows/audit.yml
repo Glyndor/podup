@@ -59,6 +59,11 @@ permissions:
 # named so the parent can find its own child by displayTitle.
 run-name: ${{ inputs.parent-run && format('Security audit of develop for run {0}', inputs.parent-run) || github.workflow }}
 
+# Cancels superseded pull_request runs only; see asset-contract.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   # Kept as audit so its check names stay the same.
   audit:

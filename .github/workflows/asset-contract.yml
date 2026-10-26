@@ -42,6 +42,18 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request used to leave the superseded run going on a
+# commit that no longer exists. Only `pull_request` runs share a group (per
+# ref) and cancel each other. Every other event (push, merge_group, schedule,
+# workflow_dispatch) gets a group of its own through `github.run_id`, so it is
+# never cancelled and never collapsed: with a shared group GitHub keeps at most
+# one pending run and drops the older ones, and `branch health (develop)` waits
+# for the run of a specific develop commit. Enforced by
+# tests/workflows/workflow_concurrency.rs.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   check:
     uses: ./.github/workflows/reusable-installer-contract.yml

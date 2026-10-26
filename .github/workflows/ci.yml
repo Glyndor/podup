@@ -16,6 +16,11 @@ on:
 permissions:
   contents: read
 
+# Cancels superseded pull_request runs only; see asset-contract.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   rust:
     uses: ./.github/workflows/reusable-rust-ci.yml
