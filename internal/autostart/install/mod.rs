@@ -7,13 +7,16 @@
 //! [`place_update_units`] and installs/cleans up together with the main unit.
 //!
 //! Refusals (quadlet present, another single-unit mode present, the timer
-//! install shadows the main one) live in [`super::conflict`]; this module only
+//! install shadows the main one) live in [`conflict`]; this module only
 //! calls them and proceeds.
 
 use crate::ComposeError;
 
+pub(super) mod conflict;
+pub(super) mod detect;
+pub(super) mod options;
+
 use super::guards::emit_guards;
-use super::options::InstallOptions;
 use super::paths::{unit_dir, unit_file_name, unit_path};
 use super::service::{
 	render_service_unit, render_update_service_unit, render_update_timer_unit,
@@ -21,6 +24,7 @@ use super::service::{
 };
 use super::start::{render_start_unit, validate_start_unit_opts, StartUnitOpts};
 use super::systemctl::{checked, SystemCtl};
+use options::InstallOptions;
 
 /// Install (and, unless `no_start`, enable + start) the service-mode autostart
 /// unit. Writes only under `${XDG_CONFIG_HOME:-~/.config}/systemd/user/`.
@@ -31,11 +35,8 @@ use super::systemctl::{checked, SystemCtl};
 /// three down together, see [`uninstall`].
 pub fn install<S: SystemCtl>(sc: &S, opts: &InstallOptions) -> crate::Result<()> {
 	let project = &opts.unit.project;
-	super::conflict::refuse_if_quadlet_present(project)?;
-	super::conflict::refuse_if_other_single_unit_mode(
-		project,
-		super::conflict::SingleUnitMode::Service,
-	)?;
+	conflict::refuse_if_quadlet_present(project)?;
+	conflict::refuse_if_other_single_unit_mode(project, conflict::SingleUnitMode::Service)?;
 
 	// Fail closed on values a unit line cannot represent (control characters
 	// would inject directives via the literal `WorkingDirectory=` line).
@@ -73,11 +74,8 @@ pub fn install_start<S: SystemCtl>(
 	no_start: bool,
 ) -> crate::Result<()> {
 	let project = &opts.project;
-	super::conflict::refuse_if_quadlet_present(project)?;
-	super::conflict::refuse_if_other_single_unit_mode(
-		project,
-		super::conflict::SingleUnitMode::Start,
-	)?;
+	conflict::refuse_if_quadlet_present(project)?;
+	conflict::refuse_if_other_single_unit_mode(project, conflict::SingleUnitMode::Start)?;
 	validate_start_unit_opts(opts).map_err(ComposeError::Autostart)?;
 	let unit_text = render_start_unit(opts);
 	place_unit(sc, project, &unit_text, dry_run, no_start)

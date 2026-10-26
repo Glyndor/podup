@@ -7,21 +7,14 @@
 //! the system systemd. External-command calls go through the `SystemCtl` seam so
 //! the install/uninstall/status logic is unit-testable without a live systemd.
 
-mod conflict;
-mod detect;
-mod guards;
 mod install;
-mod options;
-mod paths;
 mod quadlet;
-mod service;
-mod start;
-mod status;
-mod systemctl;
+mod systemd;
+mod unit_files;
 
-#[cfg(test)]
-#[path = "start_tests.rs"]
-mod start_tests;
+use install::{conflict, detect, options};
+use systemd::{guards, status, systemctl};
+use unit_files::{paths, service, start};
 
 #[cfg(test)]
 #[path = "unit_quoting_tests.rs"]

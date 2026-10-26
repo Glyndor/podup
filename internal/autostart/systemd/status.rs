@@ -4,8 +4,8 @@
 
 use std::path::PathBuf;
 
-use super::guards::{current_user, linger_enabled};
-use super::paths::{file_mode, unit_file_name, unit_path};
+use super::super::guards::{current_user, linger_enabled};
+use super::super::paths::{file_mode, unit_file_name, unit_path};
 
 /// Whether the network-ordering the generated units declare is real.
 ///
@@ -52,7 +52,7 @@ pub(crate) const NETWORK_SHIM: &str = "podman-user-wait-network-online.service";
 /// Run a `systemctl --user` query that reports state through its stdout (e.g.
 /// `is-active`, `is-enabled`); these exit non-zero for the negative answer, so
 /// the trimmed stdout is the report regardless of exit status.
-fn query<S: super::systemctl::SystemCtl>(sc: &S, arg: &str, unit_name: &str) -> String {
+fn query<S: super::super::systemctl::SystemCtl>(sc: &S, arg: &str, unit_name: &str) -> String {
 	match sc.systemctl(&[arg, unit_name]) {
 		Ok(out) => {
 			let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -79,7 +79,7 @@ fn query<S: super::systemctl::SystemCtl>(sc: &S, arg: &str, unit_name: &str) -> 
 /// That differs from the two verbs the rest of this status uses: `is-active`
 /// and `is-enabled` both exit **4** for an unknown unit. Two conventions, one
 /// module, so the difference is stated here rather than left to be rediscovered.
-fn network_wait_state<S: super::systemctl::SystemCtl>(sc: &S) -> NetworkWait {
+fn network_wait_state<S: super::super::systemctl::SystemCtl>(sc: &S) -> NetworkWait {
 	let out = match sc.systemctl(&["show", NETWORK_SHIM, "-p", "LoadState"]) {
 		Ok(out) => out,
 		Err(e) => return NetworkWait::Unknown(format!("systemctl show failed: {e}")),
@@ -100,7 +100,10 @@ fn network_wait_state<S: super::systemctl::SystemCtl>(sc: &S) -> NetworkWait {
 
 /// Gather the autostart status for a project, going through the [`SystemCtl`](crate::autostart::SystemCtl) seam
 /// so it is testable without a live systemd.
-pub fn collect_status<S: super::systemctl::SystemCtl>(sc: &S, project: &str) -> StatusReport {
+pub fn collect_status<S: super::super::systemctl::SystemCtl>(
+	sc: &S,
+	project: &str,
+) -> StatusReport {
 	let unit_name = unit_file_name(project);
 	let path = unit_path(project);
 	let unit_exists = path.exists();
@@ -117,7 +120,7 @@ pub fn collect_status<S: super::systemctl::SystemCtl>(sc: &S, project: &str) -> 
 }
 
 /// Print the autostart status for a project.
-pub fn status<S: super::systemctl::SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
+pub fn status<S: super::super::systemctl::SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
 	let r = collect_status(sc, project);
 	// Every line here is a yes/no an operator is scanning for, and the whole
 	// screen was one colour, so "is it actually running?" meant reading six

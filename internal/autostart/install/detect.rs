@@ -2,7 +2,7 @@
 //! that finds out. The three modes cannot coexist for one project, so at most
 //! one is present.
 
-use super::paths::unit_path;
+use super::super::paths::unit_path;
 use crate::autostart::conflict;
 
 /// Which autostart mode, if any, is installed for a project. The modes cannot

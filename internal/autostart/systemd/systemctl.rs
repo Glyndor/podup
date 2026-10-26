@@ -38,7 +38,7 @@ impl SystemCtl for RealSystemCtl {
 
 /// Turn a `systemctl` invocation result into a `Result`, mapping a launch failure
 /// or a non-zero exit into a clear autostart error naming the action.
-pub(super) fn checked(res: io::Result<Output>, what: &str) -> crate::Result<()> {
+pub(in super::super) fn checked(res: io::Result<Output>, what: &str) -> crate::Result<()> {
 	let out = res.map_err(|e| {
 		ComposeError::Autostart(format!("failed to run `systemctl --user {what}`: {e}"))
 	})?;

@@ -10,14 +10,14 @@ use std::path::PathBuf;
 
 use crate::ComposeError;
 
-use super::paths::{config_home, unit_dir, unit_file_name};
+use super::super::paths::{config_home, unit_dir, unit_file_name};
 
 /// Quadlet autostart units for this project, if any exist on disk. Service mode
 /// and Quadlet mode would both try to start the same stack at boot, so an
 /// existing Quadlet install is a conflict to surface, not to silently overwrite.
 /// Looks for `<project>-*.container` under
 /// `${XDG_CONFIG_HOME:-~/.config}/containers/systemd/`.
-pub(super) fn quadlet_units_present(project: &str) -> Vec<PathBuf> {
+pub(in super::super) fn quadlet_units_present(project: &str) -> Vec<PathBuf> {
 	let dir = config_home().join("containers").join("systemd");
 	let prefix = format!("{project}-");
 	let mut found = Vec::new();
@@ -36,7 +36,7 @@ pub(super) fn quadlet_units_present(project: &str) -> Vec<PathBuf> {
 
 /// Refuse to stack a single-unit mode on top of an existing Quadlet autostart
 /// install for the same project: both would start the stack at boot.
-pub(super) fn refuse_if_quadlet_present(project: &str) -> crate::Result<()> {
+pub(in super::super) fn refuse_if_quadlet_present(project: &str) -> crate::Result<()> {
 	let quadlet = quadlet_units_present(project);
 	if quadlet.is_empty() {
 		return Ok(());
@@ -53,7 +53,7 @@ pub(super) fn refuse_if_quadlet_present(project: &str) -> crate::Result<()> {
 /// for. `Unknown` means the file exists but its `ExecStart=` line matches
 /// neither shape, and overwriting it would be silent corruption.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum DetectedSingleUnitMode {
+pub(in super::super) enum DetectedSingleUnitMode {
 	/// Service mode: `ExecStart=... up -d ...` (with or without
 	/// `--no-build --pull never`, the latter being the current shape and the
 	/// former what older releases wrote).
@@ -67,7 +67,7 @@ pub(super) enum DetectedSingleUnitMode {
 /// Which single-unit mode an installer is about to write. The refusal compares
 /// this against what is on disk for the same project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum SingleUnitMode {
+pub(in super::super) enum SingleUnitMode {
 	Service,
 	Start,
 }
@@ -134,7 +134,7 @@ fn tokenize_exec(line: &str) -> Vec<String> {
 /// Classify the mode that produced a `podup-<project>.service` from its
 /// `ExecStart=` line. Strict on tokens, not on substrings, so a project or
 /// container whose name happens to be `start` or `up` cannot be misread.
-pub(super) fn classify_exec_start(line: &str) -> DetectedSingleUnitMode {
+pub(in super::super) fn classify_exec_start(line: &str) -> DetectedSingleUnitMode {
 	let tokens = tokenize_exec(line);
 	let n = tokens.len();
 	// Start mode renders exactly `<podman> start <container>`: three tokens
@@ -164,7 +164,9 @@ pub(super) fn classify_exec_start(line: &str) -> DetectedSingleUnitMode {
 /// Detect the installed single-unit mode for `project` from the unit file on
 /// disk. `None` only when no file exists: one that cannot be read, or has no
 /// `ExecStart=`, is `Unknown`, so it is refused rather than overwritten.
-pub(super) fn installed_single_unit_mode(project: &str) -> Option<DetectedSingleUnitMode> {
+pub(in super::super) fn installed_single_unit_mode(
+	project: &str,
+) -> Option<DetectedSingleUnitMode> {
 	let path = unit_dir().join(unit_file_name(project));
 	if !path.exists() {
 		return None;
@@ -184,7 +186,7 @@ pub(super) fn installed_single_unit_mode(project: &str) -> Option<DetectedSingle
 /// installed for the same project. Re-installing the SAME mode is allowed:
 /// that is the documented upgrade path, and `place_unit` rewrites the file in
 /// place either way.
-pub(super) fn refuse_if_other_single_unit_mode(
+pub(in super::super) fn refuse_if_other_single_unit_mode(
 	project: &str,
 	incoming: SingleUnitMode,
 ) -> crate::Result<()> {

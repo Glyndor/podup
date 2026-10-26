@@ -194,8 +194,8 @@ pub fn render_start_unit(opts: &StartUnitOpts) -> String {
 }
 
 /// Quote one exec-line token, doubling a literal `%` first. Same rules as
-/// [`super::service`]; kept as its own copy of the call rather than sharing the
+/// [`super::super::service`]; kept as its own copy of the call rather than sharing the
 /// private helper, since only these two tokens need it here.
 fn quote_arg(token: &str) -> String {
-	super::service::quote_arg_for_exec(token)
+	super::super::service::quote_arg_for_exec(token)
 }

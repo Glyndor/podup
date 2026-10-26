@@ -12,7 +12,7 @@ use crate::compose::types::ComposeFile;
 
 /// `${XDG_CONFIG_HOME:-~/.config}`. Falls back to `$HOME/.config`, then `.config`
 /// in the working directory if even `HOME` is unset (so a path is always formed).
-pub(super) fn config_home() -> PathBuf {
+pub(in super::super) fn config_home() -> PathBuf {
 	if let Some(x) = std::env::var_os("XDG_CONFIG_HOME").filter(|s| !s.is_empty()) {
 		return PathBuf::from(x);
 	}
@@ -23,18 +23,18 @@ pub(super) fn config_home() -> PathBuf {
 }
 
 /// Directory that holds `systemctl --user` unit files.
-pub(super) fn unit_dir() -> PathBuf {
+pub(in super::super) fn unit_dir() -> PathBuf {
 	config_home().join("systemd").join("user")
 }
 
 /// The unit's file name: `podup-<project>.service`. The project name is validated
 /// as a safe path component before reaching here, so it cannot escape `unit_dir`.
-pub(super) fn unit_file_name(project: &str) -> String {
+pub(in super::super) fn unit_file_name(project: &str) -> String {
 	format!("podup-{project}.service")
 }
 
 /// Full path to the unit file for a project.
-pub(super) fn unit_path(project: &str) -> PathBuf {
+pub(in super::super) fn unit_path(project: &str) -> PathBuf {
 	unit_dir().join(unit_file_name(project))
 }
 
@@ -62,12 +62,12 @@ pub fn max_stop_grace_secs(file: &ComposeFile) -> Option<u64> {
 /// Read the unit file's permission bits, on Unix. Other platforms have no POSIX
 /// mode, so this is always `None` there.
 #[cfg(unix)]
-pub(super) fn file_mode(path: &Path) -> Option<u32> {
+pub(in super::super) fn file_mode(path: &Path) -> Option<u32> {
 	use std::os::unix::fs::PermissionsExt;
 	std::fs::metadata(path).ok().map(|m| m.permissions().mode())
 }
 
 #[cfg(not(unix))]
-pub(super) fn file_mode(_path: &Path) -> Option<u32> {
+pub(in super::super) fn file_mode(_path: &Path) -> Option<u32> {
 	None
 }

@@ -10,7 +10,7 @@
 #[derive(Default)]
 pub struct InstallOptions {
 	/// The unit to render and install.
-	pub unit: super::service::ServiceUnitOpts,
+	pub unit: super::super::service::ServiceUnitOpts,
 	/// Install the unit but do not `enable --now` it (no immediate start).
 	pub no_start: bool,
 	/// Print the unit and the actions that would run, but change nothing.
@@ -23,7 +23,7 @@ pub struct InstallOptions {
 
 impl InstallOptions {
 	/// Install `unit` with the default flags (start it, really write it).
-	pub fn new(unit: super::service::ServiceUnitOpts) -> Self {
+	pub fn new(unit: super::super::service::ServiceUnitOpts) -> Self {
 		Self {
 			unit,
 			no_start: false,
