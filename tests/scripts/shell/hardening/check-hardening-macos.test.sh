@@ -13,7 +13,7 @@
 # Requires: clang, otool, nm.
 set -u
 
-cd "$(dirname "$0")/../.." || exit 1
+cd "$(dirname "$0")/../../../.." || exit 1
 script=.github/scripts/hardening/check-hardening-macos.sh
 
 if ! command -v clang >/dev/null 2>&1 || ! command -v otool >/dev/null 2>&1 || ! command -v nm >/dev/null 2>&1; then

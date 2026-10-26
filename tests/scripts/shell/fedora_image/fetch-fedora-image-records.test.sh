@@ -16,7 +16,7 @@
 # Requires: bash, coreutils, sha256sum, the script under test.
 set -u
 
-# shellcheck source=tests/shell/fetch-fedora-image.stub.sh
+# shellcheck source=tests/scripts/shell/fedora_image/fetch-fedora-image.stub.sh
 . "$(dirname "$0")/fetch-fedora-image.stub.sh"
 
 # Stable path used by every case. The CHECKSUM path is the file name

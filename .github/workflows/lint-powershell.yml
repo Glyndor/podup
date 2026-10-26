@@ -14,7 +14,7 @@ on:
       # merges without ever running it.
       - ".github/workflows/reusable-powershell-ci.yml"
       - ".github/scripts/hardening/check-hardening.ps1"
-      - "tests/powershell/check-hardening.Tests.ps1"
+      - "tests/scripts/powershell/check-hardening.Tests.ps1"
       # The rustflags that give the Windows binary Control Flow Guard live
       # here; a change to them is what this workflow builds and reads.
       - ".cargo/**"
@@ -33,7 +33,7 @@ on:
       # merges without ever running it.
       - ".github/workflows/reusable-powershell-ci.yml"
       - ".github/scripts/hardening/check-hardening.ps1"
-      - "tests/powershell/check-hardening.Tests.ps1"
+      - "tests/scripts/powershell/check-hardening.Tests.ps1"
       # The rustflags that give the Windows binary Control Flow Guard live
       # here; a change to them is what this workflow builds and reads.
       - ".cargo/**"
@@ -84,7 +84,7 @@ jobs:
           persist-credentials: false
       - name: Run the PE hardening fixture
         shell: pwsh
-        run: pwsh -NoProfile -File tests/powershell/check-hardening.Tests.ps1
+        run: pwsh -NoProfile -File tests/scripts/powershell/check-hardening.Tests.ps1
       # The fixture proves the script; this proves the binary. The release
       # runs the same script over the same target before signing, and the
       # Control Flow Guard bit rests on a rustflag in .cargo/config.toml,

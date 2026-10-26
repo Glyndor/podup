@@ -19,7 +19,7 @@
 # visible.
 set -u
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 INSTALL_SH="$HERE/install.sh"
 
 WORK="$(mktemp -d)"

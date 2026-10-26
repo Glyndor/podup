@@ -15,7 +15,7 @@
 # Requires: bash, sed, the script under test, nothing else.
 set -u
 
-cd "$(dirname "$0")/../.." || exit 1
+cd "$(dirname "$0")/../../../.." || exit 1
 script=install.sh
 [ -f "$script" ] || { echo "FAIL  $script is missing"; exit 1; }
 

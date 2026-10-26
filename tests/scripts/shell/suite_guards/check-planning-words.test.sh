@@ -21,7 +21,7 @@
 # Requires: git, bash.
 set -u
 
-cd "$(dirname "$0")/../.." || exit 1
+cd "$(dirname "$0")/../../../.." || exit 1
 script="$PWD/.github/scripts/checks/check-planning-words.sh"
 
 # The word is assembled at run time so this file does not trip the gate it

@@ -42,7 +42,7 @@
 # Requires: bash, jq, python3 for some helpers, the script under test.
 set -uo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 script="$HERE/.github/scripts/checks/check-branch-conclusion.sh"
 [ -x "$script" ] || { echo "FAIL  $script is not executable in git"; exit 1; }
 command -v jq >/dev/null 2>&1 || { echo "FAIL  jq is required to run this test"; exit 1; }

@@ -13,7 +13,7 @@
 - [ ] `cargo fmt --all --check` is clean
 - [ ] `cargo clippy --locked --all-targets --all-features -- -D warnings` is clean
 - [ ] `cargo test --locked --all-features --workspace` passes locally
-- [ ] `./tests/shell/*.test.sh` pass locally (every tracked test, including `ci-runs-every-test.test.sh`)
+- [ ] `./tests/scripts/shell/*/*.test.sh` pass locally (every tracked test, including `ci-runs-every-test.test.sh`)
 - [ ] shellcheck is clean on every tracked `*.sh` and every extensionless script with a shell shebang
 - [ ] Podman lane ran (live Podman 5 and Podman 6, in the PR's own check run) for changes to `internal/`, the engine integration, or the libpod REST adapter
 - [ ] Asset-contract fixtures ran for changes to `install.sh`, `install.ps1`, `internal/update/install/**`, the signing scripts or the release fixtures
@@ -32,7 +32,7 @@ reported. See standards/testing, "Three ways a sabotage lies to you".
 - [ ] Commits are signed off (DCO, `git commit -s`)
 - [ ] Commits are signed (`required_signatures` is enforced on `develop` and `main`)
 - [ ] Labels applied (`type:`, `prio:`, `effort:`, `area:` where applicable)
-- [ ] Every new file in `tests/shell/` is named in some workflow's `test-command` (`ci-runs-every-test.test.sh` enforces this on every pull request)
+- [ ] Every new file in `tests/scripts/shell/` is named in some workflow's `test-command` (`ci-runs-every-test.test.sh` enforces this on every pull request)
 - [ ] No secrets, keys or credentials in code, logs or fixtures
 - [ ] Docs updated if behaviour changed (`docs/commands.md`, `docs/security-model.md`, `docs/self-update.md` as relevant)
 - [ ] `Cargo.toml` and `debian/changelog` are at the same version (the release gate compares them, but a mismatched pair during development is a hidden cost)

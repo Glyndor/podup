@@ -8,7 +8,7 @@
 # Requires: gcc with static-pie support (glibc 2.27 or later), readelf.
 set -u
 
-cd "$(dirname "$0")/../.." || exit 1
+cd "$(dirname "$0")/../../../.." || exit 1
 script=.github/scripts/hardening/check-hardening.sh
 pass=0; fail=0
 

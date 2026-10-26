@@ -19,7 +19,7 @@
 # Requires: bash, git, awk, the script under test.
 set -uo pipefail
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 script="$HERE/.github/scripts/checks/is-version-bump.sh"
 [ -f "$script" ] || { echo "FAIL  $script does not exist"; exit 1; }
 

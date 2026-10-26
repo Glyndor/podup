@@ -22,7 +22,7 @@
 # Requires: nothing beyond coreutils and grep.
 set -u
 
-cd "$(dirname "$0")/../.." || exit 1
+cd "$(dirname "$0")/../../../.." || exit 1
 pass=0; fail=0
 
 check() { # <description> <expected> <actual>
@@ -41,7 +41,7 @@ check() { # <description> <expected> <actual>
 # than when someone remembers to add it here. Comments do not count: a `sort`
 # inside one is not executed, and matching them would make the check unfixable
 # by explaining the rule next to the code that follows it.
-scripts="$(git ls-files '*.sh' | grep -v '^tests/shell/')"
+scripts="$(git ls-files '*.sh' | grep -v '^tests/scripts/shell/')"
 check "there are shell scripts to check" "1" \
 	"$([ -n "$scripts" ] && echo 1 || echo 0)"
 

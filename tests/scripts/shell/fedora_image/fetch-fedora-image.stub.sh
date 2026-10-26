@@ -16,7 +16,7 @@
 
 set -u
 
-cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
+cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." || exit 1
 script="$PWD/.github/scripts/fedora_image/fetch-fedora-image.sh"
 
 if [ ! -x "$script" ]; then

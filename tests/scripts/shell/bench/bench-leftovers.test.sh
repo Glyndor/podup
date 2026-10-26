@@ -35,7 +35,7 @@
 # Requires: bash, awk, sed, the sourced file, nothing else.
 set -u
 
-cd "$(dirname "$0")/../.." || exit 1
+cd "$(dirname "$0")/../../../.." || exit 1
 HERE="$PWD"
 
 pass=0

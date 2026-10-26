@@ -768,7 +768,7 @@ jobs:
       # assertion, and deliberately so: nothing else in this repository
       # refuses one, and no workflow here uses the form, so measuring it
       # closes the gap rather than deferring it to a check that does not
-      # exist. `tests/shell/reusable-workflow-lint-pin-length.test.sh`
+      # exist. `tests/scripts/shell/workflow_lint/reusable-workflow-lint-pin-length.test.sh`
       # covers every branch of this step, including that one.
       - name: Every `uses:` pin must be 40 hex characters
         run: |

@@ -10,7 +10,7 @@
 # that, and it was right at the time, because this repository had no shell tests
 # at all.
 #
-# Then tests/shell/locale-pinned.test.sh was added, and with it the one file
+# Then tests/scripts/shell/suite_guards/locale-pinned.test.sh was added, and with it the one file
 # type that only runs when a workflow names it. The conclusion did not survive
 # the change that followed it. A second shell test added tomorrow would sit
 # here, pass when anyone ran it by hand, and never execute in CI.
@@ -25,7 +25,7 @@
 # Requires: nothing beyond coreutils, grep and git.
 set -u
 
-cd "$(dirname "$0")/../.." || exit 1
+cd "$(dirname "$0")/../../../.." || exit 1
 pass=0; fail=0
 
 check() { # <description> <expected> <actual>
@@ -56,7 +56,7 @@ invoked() {
 # What exists, from git rather than the working tree, so an untracked scratch
 # file does not fail the run for someone mid-edit.
 # Three naming conventions live here and all of them are shell tests.
-# `tests/shell/` uses `*.test.sh`. `tests/fixtures/releases/` uses `test.sh`,
+# `tests/scripts/shell/<concern>/` uses `*.test.sh`. `tests/fixtures/releases/` uses `test.sh`,
 # `test-sign.sh` and `version-self-test.sh`, because they are fixtures a
 # workflow drives rather than suites cargo could ever find.
 #

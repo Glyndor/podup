@@ -21,7 +21,7 @@ with `shell: pwsh`, where pwsh is on PATH.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $Script   = Join-Path $RepoRoot '.github\scripts\check-hardening.ps1'
 
 if (-not (Test-Path -LiteralPath $Script)) {

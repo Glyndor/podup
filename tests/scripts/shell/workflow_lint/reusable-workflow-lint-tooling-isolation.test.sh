@@ -39,7 +39,7 @@
 # shellcheck disable=SC2016
 set -u
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -59,7 +59,7 @@ check() { # <description> <expected> <actual>
 }
 
 # Pull one step's `run:` body out of a workflow, dedented, so it can be run.
-# Same helper shape as tests/shell/ci-runs-every-test.test.sh: the point
+# Same helper shape as tests/scripts/shell/suite_guards/ci-runs-every-test.test.sh: the point
 # is to exercise the script as it ships rather than a copy of it that can
 # drift.
 step_script() { # $1=workflow path  $2=step name substring

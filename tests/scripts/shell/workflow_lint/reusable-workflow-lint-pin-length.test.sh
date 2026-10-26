@@ -37,7 +37,7 @@
 # shellcheck disable=SC2016
 set -u
 
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -188,7 +188,7 @@ jobs:
   shellcheck:
     uses: ./.github/workflows/reusable-shell-ci.yml
     with:
-      test-command: bash ./tests/shell/locale-pinned.test.sh
+      test-command: bash ./tests/scripts/shell/suite_guards/locale-pinned.test.sh
 EOF
 rc=0; run_in "$d" "$WORK/pin-length.sh" >/dev/null || rc=$?
 check 'a local reusable call is not in scope' "0" "$rc"

@@ -36,7 +36,7 @@
 # else.
 set -u
 
-# shellcheck source=tests/shell/fetch-fedora-image.stub.sh
+# shellcheck source=tests/scripts/shell/fedora_image/fetch-fedora-image.stub.sh
 . "$(dirname "$0")/fetch-fedora-image.stub.sh"
 
 # Per-test planters. The stable and rawhide releases plant a matching

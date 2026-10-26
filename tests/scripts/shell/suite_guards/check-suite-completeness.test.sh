@@ -24,7 +24,7 @@
 # of files is right there in the workflow, but a runner that parses YAML
 # to find its own input couples itself to the workflow's shape. The
 # workflow lists the tests as this file's arguments, and
-# `tests/shell/ci-runs-every-test.test.sh` already keeps that list
+# `tests/scripts/shell/suite_guards/ci-runs-every-test.test.sh` already keeps that list
 # honest (every file invoked must exist, every file must be invoked).
 #
 # The macOS fixture skips cleanly where clang/otool/nm are absent; the
@@ -35,7 +35,7 @@
 
 set -u
 
-cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit 1
+cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." || exit 1
 
 pass=0
 fail=0

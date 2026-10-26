@@ -40,7 +40,7 @@ Run the suite before pushing. A failure must surface as a non-zero exit, so wrap
   cargo fmt --all --check || fail=1
   cargo clippy --locked --all-targets --all-features -- -D warnings || fail=1
   cargo test --locked --all-features --workspace || fail=1
-  for t in tests/shell/*.test.sh; do bash "$t" || { echo "FAILED: $t"; fail=1; }; done
+  for t in tests/scripts/shell/*/*.test.sh; do bash "$t" || { echo "FAILED: $t"; fail=1; }; done
   find . -type f \( -name '*.sh' -o -name '*.bash' \) -not -path './.git/*' \
     -print0 | xargs -0 -r shellcheck --severity=style || fail=1
   exit "$fail"
@@ -51,7 +51,7 @@ CI toolchain and MSRV pins live in `reusable-rust-ci.yml` and `ci.yml`. `tests/r
 
 The local `shellcheck` command scans `.sh`/`.bash` files; CI also includes extensionless scripts with shell shebangs.
 
-A shell test no workflow runs is indistinguishable from one that passes. `tests/shell/ci-runs-every-test.test.sh` checks both missing and nonexistent test paths. Rust tests are discovered by Cargo. Verify a test fails when its control is removed, and assert the expected diagnostic as well as the exit status.
+A shell test no workflow runs is indistinguishable from one that passes. `tests/scripts/shell/suite_guards/ci-runs-every-test.test.sh` checks both missing and nonexistent test paths. Rust tests are discovered by Cargo. Verify a test fails when its control is removed, and assert the expected diagnostic as well as the exit status.
 
 ## Workflows
 
