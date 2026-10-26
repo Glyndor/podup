@@ -15,7 +15,7 @@ use super::merge_service;
 /// nothing to combine with and the overriding value survives whole. One rule
 /// each, and the field-by-field merge below stays the single place that knows
 /// how any given key combines.
-pub(in crate::compose) fn merge_service_tagged(
+pub(in crate::parsing::compose) fn merge_service_tagged(
 	base: Service,
 	override_svc: Service,
 	tagged: Option<&std::collections::HashMap<String, crate::compose::tags::MergeTag>>,

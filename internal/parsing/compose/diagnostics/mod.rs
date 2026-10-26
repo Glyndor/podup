@@ -44,7 +44,7 @@ fn container_units(file: &ComposeFile) -> Vec<(String, &Service)> {
 	let jobs = file.jobs.iter().map(|(name, job)| (name, &job.service));
 	for (name, service) in file.services.iter().chain(jobs) {
 		out.push((name.clone(), service));
-		for (step_name, step) in crate::compose::pre_start::declared_steps(name, service) {
+		for (step_name, step) in crate::parsing::compose::pre_start::declared_steps(name, service) {
 			out.push((step_name, step));
 		}
 	}

@@ -158,7 +158,7 @@ pub(crate) fn substitute_budgeted(
 /// threaded through nested interpolation, so a recursive substitute
 /// invoked from a modifier default (`${A:-${B:-default}}`) honours the
 /// outer dedup and a `B` referenced in two modifiers warns at most once.
-pub(super) fn substitute_depth(
+pub(crate) fn substitute_depth(
 	input: &str,
 	vars: &HashMap<String, String>,
 	depth: usize,

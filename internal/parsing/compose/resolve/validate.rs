@@ -98,7 +98,7 @@ fn validate_container(
 		// An init step is a container of its own: the ports it publishes,
 		// the networks it joins and the volumes it mounts are the step's
 		// own, so the file has to be checked for them too.
-		for (step_name, step) in crate::compose::pre_start::declared_steps(name, svc) {
+		for (step_name, step) in crate::parsing::compose::pre_start::declared_steps(name, svc) {
 			validate_ports(&step_name, &step.ports)?;
 			validate_network_refs(&step_name, file, step)?;
 			validate_volume_refs(&step_name, file, step)?;
@@ -233,7 +233,7 @@ fn validate_services(file: &ComposeFile) -> Result<()> {
 		validate_service_consistency(name, file, service)?;
 		// An init step is a container of its own, so the same consistency
 		// rules apply to the step the operator wrote.
-		for (step_name, step) in crate::compose::pre_start::declared_steps(name, service) {
+		for (step_name, step) in crate::parsing::compose::pre_start::declared_steps(name, service) {
 			validate_service_consistency(&step_name, file, step)?;
 		}
 	}

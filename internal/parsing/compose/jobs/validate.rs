@@ -13,7 +13,7 @@ use crate::compose::types::ComposeFile;
 use crate::error::{sanitize_name, Result};
 
 /// Names and `extends` targets, before `extends` is resolved.
-pub(in crate::compose) fn check_structure(file: &ComposeFile) -> Result<()> {
+pub(in crate::parsing::compose) fn check_structure(file: &ComposeFile) -> Result<()> {
 	for name in file.jobs.keys() {
 		if file.services.contains_key(name) {
 			return Err(job_error(format!(
@@ -59,7 +59,7 @@ fn local_extends(extends: Option<&crate::compose::types::ExtendsConfig>) -> Opti
 }
 
 /// Every job declares at least one trigger, once all the `-f` files are merged.
-pub(in crate::compose) fn check_triggers_declared(file: &ComposeFile) -> Result<()> {
+pub(in crate::parsing::compose) fn check_triggers_declared(file: &ComposeFile) -> Result<()> {
 	for (name, job) in &file.jobs {
 		if job.triggers.manual.is_none() && job.triggers.schedule.is_empty() {
 			return Err(job_error(format!(
@@ -74,7 +74,7 @@ pub(in crate::compose) fn check_triggers_declared(file: &ComposeFile) -> Result<
 
 /// A service must not depend on a job, whether it says so in `depends_on` or
 /// reaches the job through `volumes_from`, `links` or `service:` namespaces.
-pub(in crate::compose) fn check_relations(file: &ComposeFile) -> Result<()> {
+pub(in crate::parsing::compose) fn check_relations(file: &ComposeFile) -> Result<()> {
 	if file.jobs.is_empty() {
 		return Ok(());
 	}

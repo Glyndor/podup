@@ -10,8 +10,8 @@ mod collections;
 mod service;
 mod tagged;
 
-pub(in crate::compose) use service::merge_service;
-pub(in crate::compose) use tagged::merge_service_tagged;
+pub(in crate::parsing::compose) use service::merge_service;
+pub(in crate::parsing::compose) use tagged::merge_service_tagged;
 
 #[cfg(test)]
 mod tests;

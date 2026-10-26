@@ -45,7 +45,7 @@ pub(in crate::engine) fn build_per_network_options(
 		}
 		// `gw_priority` has no Podman equivalent and is dropped. The user-facing
 		// notice is emitted once, at parse time, by the compose diagnostics (see
-		// internal/compose/diagnostics/ignored_fields.rs); re-emitting it here on
+		// internal/parsing/compose/diagnostics/ignored_fields.rs); re-emitting it here on
 		// every engine build would double-warn, so no engine-time log is needed.
 	} else if let Some(mac) = fallback_mac {
 		opts.static_mac = Some(mac.to_string());

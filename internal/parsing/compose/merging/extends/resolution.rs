@@ -158,7 +158,7 @@ impl ExtendsCache {
 /// Resolve `extends:` only within the same file (no `file:` references).
 ///
 /// Used by [`super::super::super::parse_str`] where there is no on-disk path.
-pub(in crate::compose) fn resolve_extends_same_file(file: &mut ComposeFile) -> Result<()> {
+pub(in crate::parsing::compose) fn resolve_extends_same_file(file: &mut ComposeFile) -> Result<()> {
 	resolve_same_file_in(file, Kind::Service)?;
 	if file.jobs.is_empty() {
 		return Ok(());
@@ -182,7 +182,7 @@ fn resolve_same_file_in(file: &mut ComposeFile, kind: Kind) -> Result<()> {
 /// other compose files referenced by `extends.file`. External files are
 /// parsed at most once each, even when many services reference the same
 /// path; see [`ExtendsCache`].
-pub(in crate::compose) fn resolve_all_extends(
+pub(in crate::parsing::compose) fn resolve_all_extends(
 	file: &mut ComposeFile,
 	base_dir: &Path,
 	env_files: &[String],

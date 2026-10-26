@@ -40,7 +40,7 @@ pub(super) fn ports_hide_client_address(file: &ComposeFile, out: &mut Vec<String
 		);
 		// An init step publishes ports of its own and runs under the network
 		// mode of its service unless it declares one of its own.
-		for (step_name, step) in crate::compose::pre_start::declared_steps(name, service) {
+		for (step_name, step) in crate::parsing::compose::pre_start::declared_steps(name, service) {
 			let mode = step
 				.network_mode
 				.as_deref()

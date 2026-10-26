@@ -5,7 +5,10 @@ use crate::compose::types::{
 
 use super::collections::{merge_networks, merge_sysctls, merge_volumes};
 
-pub(in crate::compose) fn merge_service(mut base: Service, mut override_svc: Service) -> Service {
+pub(in crate::parsing::compose) fn merge_service(
+	mut base: Service,
+	mut override_svc: Service,
+) -> Service {
 	if let Some(tag) = override_svc.umask_merge_tag {
 		base.umask = None;
 		if matches!(tag, crate::compose::tags::MergeTag::Reset) {

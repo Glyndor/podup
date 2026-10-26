@@ -2,7 +2,7 @@
 //!
 //! Mirrors the structure of `ports_tests.rs`: every shape
 //! that the `ports_published_on_wildcard` predicate in
-//! `internal/compose/diagnostics/port_exposure.rs` accepts or rejects
+//! `internal/parsing/compose/diagnostics/port_exposure.rs` accepts or rejects
 //! has a test here. The opt-in gate is exercised by `list_checks_tests
 //! ::opt_in_check_does_not_fire_when_its_flag_is_absent` and the binary
 //! test `tests/audit_exit_codes.rs`; this file owns the per-shape

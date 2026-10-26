@@ -78,7 +78,9 @@ where
 /// Done before the document reaches `ComposeFile`'s own deserializer so a
 /// failure names the job and says what is wrong, where the generic path can
 /// only report that the file did not parse.
-pub(in crate::compose) fn extract_jobs(document: &mut Value) -> Result<IndexMap<String, Job>> {
+pub(in crate::parsing::compose) fn extract_jobs(
+	document: &mut Value,
+) -> Result<IndexMap<String, Job>> {
 	let Some(root) = document.as_mapping_mut() else {
 		return Ok(IndexMap::new());
 	};

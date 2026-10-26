@@ -14,7 +14,7 @@ use podup::ports_published_on_wildcard_in;
 /// the bind falls on every host interface. The check delegates to
 /// [`podup::ports_published_on_all_interfaces_in`] so its notion of
 /// "published on every interface" is the exact same predicate the
-/// parse-time warning in `internal/compose/diagnostics/port_exposure.rs`
+/// parse-time warning in `internal/parsing/compose/diagnostics/port_exposure.rs`
 /// already uses; the audit is the same opinion as `up`/`config`, not
 /// a divergent second one (#1835). The predicate is scoped to the
 /// container the check runs against, so an init step's own ports are

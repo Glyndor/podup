@@ -93,7 +93,7 @@ fn same_unset_variable_three_times_warns_once_on_config_and_audit() {
 }
 
 /// Bare `$X` references (no braces) go through the second emitter at
-/// `internal/substitute/mod.rs`, distinct from `${X}` in `parse.rs`. Both
+/// `internal/parsing/substitute/mod.rs`, distinct from `${X}` in `parse.rs`. Both
 /// emitters feed through the same dedup + silence gate, so a bare
 /// reference behaves identically: one warning per unique variable per
 /// call, on both `config` and `audit`.
