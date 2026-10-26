@@ -49,7 +49,7 @@ permissions:
 # never cancelled and never collapsed: with a shared group GitHub keeps at most
 # one pending run and drops the older ones, and `branch health (develop)` waits
 # for the run of a specific develop commit. Enforced by
-# tests/workflows/workflow_concurrency.rs.
+# tests/repository/workflows/workflow_concurrency.rs.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}

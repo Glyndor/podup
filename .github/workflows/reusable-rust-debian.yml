@@ -30,7 +30,7 @@ on:
         # difference means the package that ships was never built in an
         # environment any pull request exercised. pin-watch.yml reads both
         # and reports a disagreement every Monday, and
-        # tests/workflows/workflow_debian_image.rs asserts it on every pull request.
+        # tests/repository/workflows/workflow_debian_image.rs asserts it on every pull request.
         default: "debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5"
       arch:
         description: Architecture to verify/stage (empty matches any)

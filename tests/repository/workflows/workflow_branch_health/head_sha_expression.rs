@@ -1,7 +1,7 @@
 //! The `HEAD_SHA:` line of the reusable gates the commit to the branch under
 //! test, with a planted negative control for the shape that decides it.
 //!
-//! Split out from `tests/workflows/workflow_branch_health.rs`; the reader is
+//! Split out from `tests/repository/workflows/workflow_branch_health.rs`; the reader is
 //! inherited via `use super::*`.
 
 use super::*;

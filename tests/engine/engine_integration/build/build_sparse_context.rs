@@ -1,7 +1,7 @@
 //! A build context holding a file with holes, uploaded to a live Podman.
 //!
 //! `internal/backends/engine/images/context/tar_stream.rs` keeps GNU sparse entries out of the archive
-//! and `tests/repo_rules/tar_builder_single_site.rs` keeps the constructor single, but
+//! and `tests/repository/repo_rules/tar_builder_single_site.rs` keeps the constructor single, but
 //! both read bytes we wrote ourselves. Neither asks Podman. This one does: it
 //! is the only test that would have caught #1775 as the user met it, an
 //! `unhandled tar header type 83` from the far end of the socket.

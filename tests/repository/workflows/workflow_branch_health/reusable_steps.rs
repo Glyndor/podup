@@ -1,6 +1,6 @@
 //! The reusable checks out the tree before running the script it ships.
 //!
-//! Split out from `tests/workflows/workflow_branch_health.rs`; the reader is
+//! Split out from `tests/repository/workflows/workflow_branch_health.rs`; the reader is
 //! inherited via `use super::*`.
 
 use super::*;

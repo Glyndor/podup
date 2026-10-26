@@ -1,7 +1,7 @@
 //! Property 3: the check is advisory, both files say so, and both job ids
 //! keep their name.
 //!
-//! Split out from `tests/workflows/workflow_branch_health.rs`; the reader and the
+//! Split out from `tests/repository/workflows/workflow_branch_health.rs`; the reader and the
 //! job-id list are inherited via `use super::*`.
 
 use super::*;
