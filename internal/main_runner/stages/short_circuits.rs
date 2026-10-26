@@ -13,10 +13,10 @@ use crate::startup::validate_project_name;
 
 use crate::audit;
 
-use super::label_only::fail_on_named_file_missing;
-use super::socket::connect_podman;
+use super::super::label_only::fail_on_named_file_missing;
+use super::super::socket::connect_podman;
 #[cfg(feature = "update")]
-use super::update_globals::misused_update_global;
+use super::super::update_globals::misused_update_global;
 
 /// Pure early-return arms: `help`, `version`, `completions`, `update`.
 ///
@@ -24,7 +24,7 @@ use super::update_globals::misused_update_global;
 /// `-h`/`--help` / `--`). Other commands in the file follow the same
 /// "render-and-return" pattern.
 pub(crate) fn run_help(commands: &[String]) -> podup::Result<()> {
-	super::help::print_command_help(commands)
+	super::super::help::print_command_help(commands)
 }
 
 /// Handle `version [--short] [--format json]`.

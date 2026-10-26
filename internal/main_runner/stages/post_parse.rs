@@ -11,7 +11,7 @@ use crate::startup::validate_project_name;
 
 use crate::audit;
 
-use super::socket::{connect_podman, resolve_socket};
+use super::super::socket::{connect_podman, resolve_socket};
 
 /// Handle `config`. Returns the rendered project information without ever
 /// contacting Podman unless `--resolve-image-digests` was set.

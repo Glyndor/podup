@@ -1,12 +1,11 @@
-pub(super) mod down_by_label;
-pub(super) mod help;
-pub(super) mod label_only;
-pub(super) mod post_parse;
-pub(super) mod short_circuits;
+mod commands;
+mod guards;
 pub(super) mod socket;
-pub(super) mod update_globals;
+mod stages;
 
-pub(crate) mod autostart;
-pub(crate) mod generate;
-#[cfg(test)]
-mod generate_tests;
+pub(super) use commands::help;
+pub(crate) use commands::{autostart, generate};
+#[cfg(feature = "update")]
+pub(super) use guards::update_globals;
+pub(super) use guards::{down_by_label, label_only};
+pub(super) use stages::{post_parse, short_circuits};
