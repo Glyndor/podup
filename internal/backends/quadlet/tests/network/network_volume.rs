@@ -1,4 +1,4 @@
-use super::unit_named;
+use crate::backends::quadlet::tests::unit_named;
 use crate::parse_str;
 use crate::quadlet::generate_at;
 
@@ -160,7 +160,7 @@ volumes:
 	// The assertion is on the argv rather than the unit text for that
 	// reason: the unit text is what looked correct while the bug was live.
 	assert_eq!(
-		crate::quadlet::tests::podman_argv::podman_argv_from_unit(vol),
+		crate::quadlet::tests::exec::podman_argv::podman_argv_from_unit(vol),
 		vec!["--opt", "custom=extra"],
 		"in:\n{vol}"
 	);

@@ -1,7 +1,7 @@
 //! The default that keeps two bridge networks from seeing each other, exported
 //! the way the live engine creates the network.
 
-use super::unit_named;
+use crate::backends::quadlet::tests::unit_named;
 use crate::parse_str;
 use crate::quadlet::generate_at;
 
