@@ -3,7 +3,7 @@
 use crate::compose::types::ComposeFile;
 use crate::error::Result;
 
-use super::Engine;
+use crate::engine::Engine;
 
 mod attach;
 mod exec;
@@ -29,7 +29,7 @@ pub use attach::{AttachOptions, AttachOutcome, AttachSummary};
 // lived in `query/mod.rs`. The item is `pub(in crate::engine)` in
 // `logs/stream.rs`; the re-export documents the reach and keeps `mod.rs` as
 // the canonical place to look for engine query commands.
-pub(super) use logs::stream_broke_mid_output;
+pub(in crate::engine) use logs::stream_broke_mid_output;
 
 impl Engine {
 	/// Stream logs. When `service_name` is `None`, streams from all services. When `follow` is true, tails indefinitely.

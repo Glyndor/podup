@@ -97,7 +97,7 @@ async fn images_inspects_each_unique_image_reference_once() {
 	};
 	file.services.insert("d".into(), other);
 
-	e.images_with_services(&file, &[], super::super::super::ImagesOptions::default())
+	e.images_with_services(&file, &[], crate::engine::ImagesOptions::default())
 		.await
 		.expect("images listing over present tags must succeed");
 

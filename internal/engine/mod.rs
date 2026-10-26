@@ -17,9 +17,12 @@ use workload::pod;
 /// the chain stays `engine → copy → archive` all `pub(crate)` (or stricter),
 /// which a third-party crate cannot see.
 pub(crate) mod copy;
-pub(crate) mod events;
+mod observe;
+pub(crate) use observe::events;
+pub(crate) use observe::query;
+use observe::stats;
+pub(crate) use observe::terminal;
 pub(crate) mod project;
-pub(crate) mod terminal;
 pub use build::{BuildOptions, PullOptions, PushOptions};
 pub use copy::CpOptions;
 pub use events::EventsOptions;
@@ -44,15 +47,13 @@ use objects::secrets;
 use objects::volume;
 use objects::volume_mounts;
 pub(crate) use pod::pod_network_mode;
+pub use project::is_safe_project_name;
 pub use project::{list_projects, list_projects_filtered, LsOptions};
 pub use project::{retain_active_profiles, retain_active_profiles_with_targets};
-pub(crate) mod query;
 pub use query::{
 	AttachOptions, AttachOutcome, AttachSummary, ExecOptions, ImagesOptions, LogsDisplay,
 	LogsOptions, PsDisplayOptions, PsFilterOptions, PsOptions, DEFAULT_LOG_TAIL,
 };
-mod stats;
-pub use project::is_safe_project_name;
 pub use stats::StatsOptions;
 pub use volume::{VolumesDisplayOptions, VolumesOptions};
 #[cfg(feature = "watch")]

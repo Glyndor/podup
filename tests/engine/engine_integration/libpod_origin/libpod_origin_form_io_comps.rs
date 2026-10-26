@@ -129,7 +129,7 @@ async fn cp_preserves_the_host_uid_gid() {
 /// on the asserted header.
 ///
 /// Fails on the branch with `ps_args=-ef` reverted at
-/// `internal/engine/query/inspect/mod.rs::top_with_options` (the asserted
+/// `internal/engine/observe/query/inspect/mod.rs::top_with_options` (the asserted
 /// header line).
 #[tokio::test]
 async fn top_uses_the_docker_compat_column_set() {
@@ -213,7 +213,7 @@ async fn top_uses_the_docker_compat_column_set() {
 /// one CLI call, the way a real `podup logs` would.
 ///
 /// Fails on the branch with the `is_tty` parsing selector restored at
-/// `internal/engine/query/mod.rs::logs_with_options` (the two arms
+/// `internal/engine/observe/query/mod.rs::logs_with_options` (the two arms
 /// around lines 349 and 450) at the asserted "the term service's line
 /// must be exactly `<prefix>tty-hello` (a trailing `\\r` is allowed)"
 /// line and at the byte-below-0x09 panic.

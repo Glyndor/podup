@@ -157,7 +157,7 @@ impl Engine {
 
 		if opts.json {
 			let rows: Vec<_> = containers.iter().map(ps_json_row).collect();
-			println!("{}", super::super::to_pretty_json("ps.row", &rows)?);
+			println!("{}", crate::engine::to_pretty_json("ps.row", &rows)?);
 			return Ok(());
 		}
 

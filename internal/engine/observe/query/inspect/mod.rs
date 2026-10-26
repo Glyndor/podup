@@ -24,7 +24,7 @@ use helpers::{
 // their CREATED cells and the image-reference splitter for the `images`
 // table. Both live outside this folder, so the folder edge re-exports them
 // and a caller never has to name `helpers` to get one.
-pub(in crate::engine::query) use helpers::{humanize_age, split_repo_tag};
+pub(in crate::engine::observe::query) use helpers::{humanize_age, split_repo_tag};
 
 impl Engine {
 	/// Display running processes in each service container (`docker compose top`).
@@ -113,7 +113,7 @@ impl Engine {
 			}
 		}
 		if json {
-			println!("{}", super::super::to_pretty_json("top.row", &json_rows)?);
+			println!("{}", crate::engine::to_pretty_json("top.row", &json_rows)?);
 		}
 		Ok(())
 	}

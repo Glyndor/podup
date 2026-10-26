@@ -18,7 +18,7 @@ use crate::error::{ComposeError, Result};
 /// this process and libpod is not a future age). Pure so the boundaries
 /// (`0 s`, `1 s`, `59 s`, `60 s`, `59 min`, `60 min`, `23 h`, `24 h`) are
 /// pinned without a live socket.
-pub(in crate::engine::query) fn humanize_age(seconds: i64) -> String {
+pub(in crate::engine::observe::query) fn humanize_age(seconds: i64) -> String {
 	if seconds < 1 {
 		return "Less than a second ago".to_string();
 	}
@@ -167,7 +167,7 @@ pub(super) fn is_running_status(status: &str) -> bool {
 /// `registry:port/name` host is not mis-split), mirroring the guard in
 /// `export.rs`. A `name@sha256:...` digest reference has no tag, shown as
 /// `<none>` like docker, and the long digest never bloats the TAG column.
-pub(in crate::engine::query) fn split_repo_tag(image_ref: &str) -> (String, String) {
+pub(in crate::engine::observe::query) fn split_repo_tag(image_ref: &str) -> (String, String) {
 	if let Some((repo, _digest)) = image_ref.split_once('@') {
 		return (repo.to_string(), "<none>".to_string());
 	}

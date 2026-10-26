@@ -91,7 +91,7 @@ impl Engine {
 				// A build-only service's image is the tag the build step produced
 				// (project-scoped `{project}-{service}:latest`, or `build.tags[0]`).
 				(None, Some(build)) => {
-					super::super::build::primary_build_tag(&self.project, name, None, build.tags())
+					crate::engine::build::primary_build_tag(&self.project, name, None, build.tags())
 				}
 				(None, None) => continue,
 			};
@@ -173,7 +173,7 @@ impl Engine {
 					})
 				})
 				.collect();
-			println!("{}", super::super::to_pretty_json("images.row", &json)?);
+			println!("{}", crate::engine::to_pretty_json("images.row", &json)?);
 			return Ok(());
 		}
 

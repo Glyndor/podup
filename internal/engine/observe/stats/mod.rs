@@ -9,7 +9,7 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::types::container::ContainerListEntry;
 use crate::libpod::{parse_json_lines, urlencoded, API_PREFIX};
 
-use super::Engine;
+use crate::engine::Engine;
 
 mod frame;
 mod model;

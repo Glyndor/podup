@@ -10,7 +10,7 @@ use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
-use super::Engine;
+use crate::engine::Engine;
 
 /// Options for [`Engine::stream_events_with_options`], mirroring `docker
 /// compose events`: `--since`, `--until`, `--filter`, and the `SERVICE...`
@@ -243,7 +243,7 @@ impl Engine {
 #[path = "since_validation.rs"]
 mod since_validation;
 
-pub(super) use since_validation::validate_events_since;
+pub(in crate::engine) use since_validation::validate_events_since;
 
 /// Per-event service filter (`docker compose events SERVICE...`). Lives
 /// in its own module for the same reason [`since_validation`] does:
@@ -252,7 +252,7 @@ pub(super) use since_validation::validate_events_since;
 #[path = "service_filter.rs"]
 mod service_filter;
 
-pub(super) use service_filter::event_in_services;
+pub(in crate::engine) use service_filter::event_in_services;
 
 /// Build the libpod events `filters` object: always scope to this project's
 /// `podup.project` label, then merge each user `KEY=VALUE` predicate (appending
@@ -364,7 +364,7 @@ fn format_event(value: &Value, json: bool) -> String {
 		// carry `Action=die` and `Action=delete` (and the libpod-style
 		// `status=...` is preserved alongside, for callers that keyed on
 		// it). Exit-code renaming is applied below in [`rename_event`].
-		return match super::to_query_json("events row", &rename_event(value)) {
+		return match crate::engine::to_query_json("events row", &rename_event(value)) {
 			Ok(s) => s,
 			Err(e) => {
 				tracing::debug!("events: dropping unserialisable row: {e}");
