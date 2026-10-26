@@ -35,9 +35,9 @@ import os
 import statistics
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW = os.path.join(HERE, "results", "raw.csv")
-BUDGET = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory-budget-mib")
+BUDGET = os.path.join(HERE, "budgets", "memory-budget-mib")
 MD = os.path.join(HERE, "results", "report.md")
 JSON = os.path.join(HERE, "results", "summary.json")
 ENGINE = os.path.join(HERE, "results", "engine")
@@ -183,13 +183,13 @@ SELF_TEST_ROWS = [
 # no tool returns it on its own merits (podup 0/1/2, podman-compose 0/1/125/130,
 # docker-compose 0/1/2), so a reader who sees 97 in raw.csv knows it is the
 # harness flag, not a tool error. The legend line under each table names the
-# meaning so the reader does not have to chase bench/leftovers.sh to decode it.
+# meaning so the reader does not have to chase bench/lib/leftovers.sh to decode it.
 BENCH_RC_LEFTOVERS = 97
 BENCH_RC_LEFTOVERS_NOTE = (
 	"Rows with rc=97 exited cleanly but left containers, pods or networks "
 	"of their compose project behind; the harness rewrote them to 97 "
 	"so a clean teardown is not compared against one that did a fraction "
-	"of it. See bench/leftovers.sh for the detection and force-purge."
+	"of it. See bench/lib/leftovers.sh for the detection and force-purge."
 )
 
 
@@ -320,7 +320,7 @@ def main():
 	# summary.json gets a `_notes` entry explaining the code, so a reader who
 	# sees `[2 failed of 2]` next to a row in the table knows the failure was
 	# the harness flag and not a tool error. Without the legend, the reader
-	# would have to chase bench/leftovers.sh to decode 97.
+	# would have to chase bench/lib/leftovers.sh to decode 97.
 	rc97_rows = [r for r in measured_rows if int(r["rc"]) == BENCH_RC_LEFTOVERS]
 
 	if not self_test:
@@ -515,7 +515,7 @@ def main():
 
 
 def check_memory_budget(summary):
-	"""Fail when podup's peak median RSS exceeds the budget in bench/memory-budget-mib.
+	"""Fail when podup's peak median RSS exceeds the budget in bench/budgets/memory-budget-mib.
 
 	The releases standard asks for a size budget per artifact and treats an
 	unexplained growth as a regression to investigate rather than ship. There was
@@ -547,7 +547,7 @@ def check_memory_budget(summary):
 	if worst > budget:
 		print(
 			f"::error::podup peak median RSS {worst:.2f} MiB exceeds the "
-			f"{budget:.2f} MiB budget in bench/memory-budget-mib "
+			f"{budget:.2f} MiB budget in bench/budgets/memory-budget-mib "
 			f"(worst: {scen} {op}). Attribute the growth, or raise the budget "
 			f"deliberately in its own commit.",
 			file=sys.stderr,

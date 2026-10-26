@@ -54,7 +54,7 @@ pub(crate) enum DurationFormat {
 	/// rather than skim one.
 	///
 	/// No caller yet: the benchmark aggregation is where it lands, and that is
-	/// Python today (`bench/aggregate.py`). Exercised by this module's tests
+	/// Python today (`bench/report/aggregate.py`). Exercised by this module's tests
 	/// meanwhile; the allow is on this variant alone so anything else going dead
 	/// here still warns.
 	#[allow(dead_code)]

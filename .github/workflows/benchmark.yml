@@ -62,9 +62,9 @@ jobs:
       - name: Check the harness shell syntax
         run: bash -n bench/run.sh
       - name: Check the harness Python syntax
-        run: python3 -m py_compile bench/aggregate.py
+        run: python3 -m py_compile bench/report/aggregate.py
       - name: Exercise the aggregation stats path on inline sample rows
-        run: python3 bench/aggregate.py --self-test
+        run: python3 bench/report/aggregate.py --self-test
       - name: Build the timer
         run: cargo build --release --manifest-path bench/timeit/Cargo.toml
       - name: Check the timer resolves below 10 ms
@@ -122,7 +122,7 @@ jobs:
       - name: Run the full suite
         run: PODUP_BIN=dist/podup-linux-x86_64 bash bench/run.sh --iters 12 --warmup 2 --cores 2-9
       - name: Aggregate
-        run: python3 bench/aggregate.py
+        run: python3 bench/report/aggregate.py
       - name: Upload report
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

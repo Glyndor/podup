@@ -330,8 +330,8 @@ PODMAN_SOCK="/tmp/test-podman.sock"
 DOCKER_DEFAULT_SOCKET="/tmp/test-docker.sock"
 export PATH PODMAN_SOCK DOCKER_DEFAULT_SOCKET
 export BENCH_STUB_LOG="$STUBLOG" BENCH_STUB_STATE_DIR="$STUBDIR"
-# shellcheck source=bench/leftovers.sh
-. "$HERE/bench/leftovers.sh"
+# shellcheck source=bench/lib/leftovers.sh
+. "$HERE/bench/lib/leftovers.sh"
 
 # bench_leftovers emits names one per line. The function's order is
 # engine-sorted across containers, pods, networks; for assertions we sort
@@ -542,15 +542,15 @@ check "bench_record_rc: tool rc 0 + no leftovers -> 0" \
 # next normal test would still pass. Each sabotage targets exactly one
 # named case from the list above.
 
-# Sabotage 1: revert the pod/network .Name fix in bench/leftovers.sh
+# Sabotage 1: revert the pod/network .Name fix in bench/lib/leftovers.sh
 # (put .Names back). With .Names, the engine returns an rc=125 error
 # (the stub rejects `{{.Names}}` to mimic the real CLI), and
 # bench_leftovers fails instead of returning a list. The podman-compose
 # leftovers case must then fail. Restored after, verified with diff -q.
-cp "$HERE/bench/leftovers.sh" "$STUBDIR/leftovers.sh.bak"
-sed -i "s|{{\.Name}}|{{.Names}}|g" "$HERE/bench/leftovers.sh"
-# shellcheck source=bench/leftovers.sh
-. "$HERE/bench/leftovers.sh"
+cp "$HERE/bench/lib/leftovers.sh" "$STUBDIR/leftovers.sh.bak"
+sed -i "s|{{\.Name}}|{{.Names}}|g" "$HERE/bench/lib/leftovers.sh"
+# shellcheck source=bench/lib/leftovers.sh
+. "$HERE/bench/lib/leftovers.sh"
 clear_state
 load_table CONTAINERS io.podman.compose.project \
 	s1947lb_podman_compose_scale s1947lb_podman_compose_scale_app_2 cid2
@@ -560,11 +560,11 @@ load_pods 'pod_s1947lb_podman_compose_scale'
 got=$(bench_leftovers podman-compose s1947lb_podman_compose_scale 2>/dev/null)
 rc=$?
 # Restore byte-for-byte from the backup.
-cp "$STUBDIR/leftovers.sh.bak" "$HERE/bench/leftovers.sh"
-# shellcheck source=bench/leftovers.sh
-. "$HERE/bench/leftovers.sh"
+cp "$STUBDIR/leftovers.sh.bak" "$HERE/bench/lib/leftovers.sh"
+# shellcheck source=bench/lib/leftovers.sh
+. "$HERE/bench/lib/leftovers.sh"
 # diff -q is silent when the two files are identical: that is the check.
-diff -q "$STUBDIR/leftovers.sh.bak" "$HERE/bench/leftovers.sh"
+diff -q "$STUBDIR/leftovers.sh.bak" "$HERE/bench/lib/leftovers.sh"
 restore_rc=$?
 rm -f "$STUBDIR/leftovers.sh.bak"
 if [ "$rc" = "125" ] && [ -z "$got" ]; then
@@ -620,8 +620,8 @@ load_table NETWORKS alercom.project \
 load_pods
 got=$(bench_leftovers podup s1947lb_podup_scale 2>/dev/null | sorted_lines)
 # Restore: re-source the file.
-# shellcheck source=bench/leftovers.sh
-. "$HERE/bench/leftovers.sh"
+# shellcheck source=bench/lib/leftovers.sh
+. "$HERE/bench/lib/leftovers.sh"
 # Foreign resources have alercom.project label, not podup.project; with
 # the filter dropped, they leak in.
 if [ -n "$got" ]; then
@@ -648,8 +648,8 @@ bench_record_rc() { printf '%s\n' "$BENCH_RC_LEFTOVERS"; }
 check "sabotage rc-preserve: bench_record_rc now always returns 97 (case fails)" \
 	"$BENCH_RC_LEFTOVERS" "$(bench_record_rc 125 'some-leftover')"
 # Restore: re-source.
-# shellcheck source=bench/leftovers.sh
-. "$HERE/bench/leftovers.sh"
+# shellcheck source=bench/lib/leftovers.sh
+. "$HERE/bench/lib/leftovers.sh"
 check "sabotage 3 restore: bench_record_rc keeps tool rc 125" "125" "$(bench_record_rc 125 'some-leftover')"
 
 echo

@@ -7,13 +7,13 @@ nothing checked it, so it aged in silence while the numbers under it moved.
 Generating it from `summary.json` means the picture cannot disagree with the
 table beside it.
 
-Usage: python3 bench/aggregate.py && python3 bench/chart.py
+Usage: python3 bench/report/aggregate.py && python3 bench/report/chart.py
 """
 import json
 import os
 import sys
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SUMMARY = os.path.join(HERE, "results", "summary.json")
 OUT = os.path.join(os.path.dirname(HERE), "docs", "assets", "bench.svg")
 
@@ -43,7 +43,7 @@ def value(summary, tool, scen, op, key):
 
 def main() -> int:
     if not os.path.exists(SUMMARY):
-        print(f"no {SUMMARY}; run bench/aggregate.py first", file=sys.stderr)
+        print(f"no {SUMMARY}; run bench/report/aggregate.py first", file=sys.stderr)
         return 2
     summary = json.load(open(SUMMARY))
 

@@ -19,7 +19,7 @@ on:
       - "internal/**"
       - "Cargo.toml"
       - "Cargo.lock"
-      - "bench/binary-budget-mib"
+      - "bench/budgets/binary-budget-mib"
       - ".github/workflows/binary-budget.yml"
   pull_request:
     branches:
@@ -29,7 +29,7 @@ on:
       - "internal/**"
       - "Cargo.toml"
       - "Cargo.lock"
-      - "bench/binary-budget-mib"
+      - "bench/budgets/binary-budget-mib"
       - ".github/workflows/binary-budget.yml"
 
 permissions:
@@ -65,12 +65,12 @@ jobs:
           # reads 7,007 MiB on one machine and 7.007 on another is a message
           # nobody trusts.
           export LC_ALL=C
-          BUDGET_MIB="$(tr -d '[:space:]' < bench/binary-budget-mib)"
+          BUDGET_MIB="$(tr -d '[:space:]' < bench/budgets/binary-budget-mib)"
           BUDGET_BYTES="$(awk -v m="$BUDGET_MIB" 'BEGIN { printf "%d", m * 1048576 }')"
           ACTUAL="$(stat -c%s target/release/podup)"
           ACTUAL_MIB="$(awk -v b="$ACTUAL" 'BEGIN { printf "%.3f", b / 1048576 }')"
           echo "podup is ${ACTUAL} bytes (${ACTUAL_MIB} MiB); budget is ${BUDGET_MIB} MiB (${BUDGET_BYTES} bytes)."
           if [ "$ACTUAL" -gt "$BUDGET_BYTES" ]; then
-            echo "::error::the release binary is over its budget. Either the growth is explained and bench/binary-budget-mib should move with a reason in the commit message, or it is a regression to investigate."
+            echo "::error::the release binary is over its budget. Either the growth is explained and bench/budgets/binary-budget-mib should move with a reason in the commit message, or it is a regression to investigate."
             exit 1
           fi

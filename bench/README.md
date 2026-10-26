@@ -123,7 +123,7 @@ chmod +x podup-linux-x86_64
 cd ..
 
 PODUP_BIN=dist/podup-linux-x86_64 bash bench/run.sh --iters 12 --warmup 2 --cores 2-9
-python3 bench/aggregate.py
+python3 bench/report/aggregate.py
 # -> bench/results/report.md and bench/results/summary.json
 ```
 
@@ -186,8 +186,8 @@ Two ceilings live here, both read by a gate rather than by a reader:
 
 | file | what it bounds | enforced by |
 |---|---|---|
-| `memory-budget-mib` | peak RSS of a benchmarked command | `aggregate.py`, which fails the run above it |
-| `binary-budget-mib` | the release binary on disk | `.github/workflows/binary-budget.yml`, on every pull request |
+| `budgets/memory-budget-mib` | peak RSS of a benchmarked command | `report/aggregate.py`, which fails the run above it |
+| `budgets/binary-budget-mib` | the release binary on disk | `.github/workflows/binary-budget.yml`, on every pull request |
 
 Both exist because the releases standard asks for a size budget per artifact and
 treats unexplained growth as a regression to investigate rather than ship. Before

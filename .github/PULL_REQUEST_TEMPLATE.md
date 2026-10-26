@@ -36,7 +36,7 @@ reported. See standards/testing, "Three ways a sabotage lies to you".
 - [ ] No secrets, keys or credentials in code, logs or fixtures
 - [ ] Docs updated if behaviour changed (`docs/commands.md`, `docs/security-model.md`, `docs/self-update.md` as relevant)
 - [ ] `Cargo.toml` and `debian/changelog` are at the same version (the release gate compares them, but a mismatched pair during development is a hidden cost)
-- [ ] `cargo build --release --locked --bin podup` fits `bench/binary-budget-mib` for changes that can move the binary size
+- [ ] `cargo build --release --locked --bin podup` fits `bench/budgets/binary-budget-mib` for changes that can move the binary size
 
 ## Related issues
 
