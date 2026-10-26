@@ -174,7 +174,7 @@ async fn named_volume_with_driver_opts() {
 	// on an SELinux-enforcing host the container is denied the write without it,
 	// which is what reddened the Podman 5 leg of pull request #1278 while passing
 	// on my machine, where SELinux is not enabled. The same trap is recorded in
-	// .github/podman-known-failures-5 for run_flags::engine_run_applies_volume_
+	// .github/podman_lane/known-failures-5 for run_flags::engine_run_applies_volume_
 	// publish_and_interactive.
 	//
 	// The driver_opts bind the volume to this temp directory, so a file written

@@ -570,10 +570,10 @@ jobs:
           # so nothing went red and it shipped. WHICH tests fail does tell you.
           # Derive the major from the Podman the VM actually booted (the matrix
           # guard above already proved they agree), so dropping in a
-          # podman-known-failures-<major> file is all it takes to gate a new
+          # known-failures-<major> file is all it takes to gate a new
           # major, no edit here.
           major="${VER%%.*}"
-          known="$GITHUB_WORKSPACE/.github/podman-known-failures-$major"
+          known="$GITHUB_WORKSPACE/.github/podman_lane/known-failures-$major"
           if [ -f "$known" ]; then
             # `comm` compares bytes while `sort` orders by locale, so pin both to
             # C. Defensive rather than observed: the first-run false red was the
@@ -598,7 +598,7 @@ jobs:
             fi
             echo "Podman $VER: every failure is on the classified list ($(wc -l < "$RUNNER_TEMP/known.txt") entries)."
           fi
-          # Gate: the core must pass the baseline in .github/podman-baseline-tests.
+          # Gate: the core must pass the baseline in .github/podman_lane/baseline-tests.
           # A real regression breaks previously-passing tests and knocks PASS
           # below the floor; the baseline is versioned so it is bumped
           # deliberately as the suite grows rather than sitting as a magic number
@@ -633,7 +633,7 @@ jobs:
           # serialising the leg removed it, and its list is now empty, so any
           # failure there is a regression. See the file's own header for the
           # evidence and for how thin it is.
-          BASELINE="$(cat "$GITHUB_WORKSPACE/.github/podman-baseline-tests")"
+          BASELINE="$(cat "$GITHUB_WORKSPACE/.github/podman_lane/baseline-tests")"
           [ "$PASS" -ge "$BASELINE" ] || { echo "::error::core suite degraded on Podman $VER ($PASS passed, baseline >= $BASELINE): a real regression, or fewer tests ran"; exit 1; }
           # Leak scan, run by the VM in a separate cargo process after
           # engine_integration exited. The marker is the only signal that the

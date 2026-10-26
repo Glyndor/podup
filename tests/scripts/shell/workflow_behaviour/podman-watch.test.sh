@@ -141,7 +141,7 @@ WORKFLOW="$HERE/.github/workflows/podman-watch.yml"
 step_script "$WORKFLOW" "Detect newer packaged Podman" > "$WORK/step.sh"
 
 # Build the per-case environment. Each case gets its own baseline file in
-# $WORK/repo/.github/podman-baseline and its own log directory so logs from
+# $WORK/repo/.github/podman_lane/baseline and its own log directory so logs from
 # a previous case never bleed into the next.
 write_stubs
 
@@ -153,8 +153,8 @@ write_stubs
 # consent to. Run the step once with the baseline equal to the fake tag
 # so the "No newer Podman" early-exit fires before any external call, then
 # assert that the only `gh` it could have found is our stub.
-mkdir -p "$WORK/safety/.github"
-printf '%s\n' "6.1.2" > "$WORK/safety/.github/podman-baseline"
+mkdir -p "$WORK/safety/.github/podman_lane"
+printf '%s\n' "6.1.2" > "$WORK/safety/.github/podman_lane/baseline"
 out="$(cd "$WORK/safety" && PATH="$WORK/bin:$PATH" \
 	GH_LOG="$WORK/safety/gh.log" \
 	CURL_LOG="$WORK/safety/curl.log" \
@@ -184,8 +184,8 @@ run_case() { # <baseline> <fake_tag> <responses_file> <gh_log> <curl_log> <sleep
 	local gh_log="$4" curl_log="$5" sleep_log="$6" fake_url="$7" issue_list="${8:-}"
 	local repo="$WORK/case"
 	rm -rf "$repo"
-	mkdir -p "$repo/.github"
-	printf '%s\n' "$baseline" > "$repo/.github/podman-baseline"
+	mkdir -p "$repo/.github/podman_lane"
+	printf '%s\n' "$baseline" > "$repo/.github/podman_lane/baseline"
 	: > "$gh_log"; : > "$curl_log"; : > "$sleep_log"
 	( cd "$repo" && PATH="$WORK/bin:$PATH" \
 		GH_LOG="$gh_log" CURL_LOG="$curl_log" SLEEP_LOG="$sleep_log" \

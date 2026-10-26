@@ -524,7 +524,7 @@ def check_memory_budget(summary):
 	run on the day it landed.
 
 	The budget is a file, not a literal here, for the same reason
-	.github/podman-baseline-tests is: raising it is a reviewable commit that says
+	.github/podman_lane/baseline-tests is: raising it is a reviewable commit that says
 	someone decided to, not a number that drifts inside a script.
 	"""
 	if not os.path.exists(BUDGET):
