@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 /// #598: a `scale`/`up --scale` down-sizing that can't remove a surplus
 /// replica (e.g. an active exec session) must not exit 0 with it left

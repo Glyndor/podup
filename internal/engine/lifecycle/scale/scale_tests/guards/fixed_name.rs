@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 #[test]
 fn fixed_container_name_single_replica_is_allowed() {

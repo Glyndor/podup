@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 #[test]
 fn single_replica_never_conflicts() {

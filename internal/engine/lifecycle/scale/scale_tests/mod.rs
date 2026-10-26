@@ -36,14 +36,9 @@ fn engine_with(client: crate::libpod::Client, project: &str) -> Engine {
 	Engine::with_base_dir(client, project.into(), std::env::temp_dir())
 }
 
-mod bulk_listing;
-mod fixed_name;
-mod live_replicas;
-mod port_conflict;
-mod replica_limit;
-mod running_replicas;
+mod guards;
+mod replicas;
 mod state;
-mod surplus;
 
 fn service(yaml: &str) -> crate::compose::types::Service {
 	let file = crate::parse_str(yaml).unwrap();
