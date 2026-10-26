@@ -382,7 +382,7 @@ fn bind_source(mount: &VolumeMount) -> Option<(&str, bool)> {
 
 /// Split a short-form volume spec `src:dst[:opts]` into its three
 /// fields, with the same Windows-drive-letter carve-out as the engine
-/// (`internal/engine/volume_mounts/spec.rs::split_volume_spec`) so the
+/// (`internal/engine/objects/volume_mounts/spec.rs::split_volume_spec`) so the
 /// two agree on which colon is the separator. Duplicated here to keep
 /// the audit free of a dependency on the engine module.
 fn split_short_volume_spec(s: &str) -> (&str, &str, &str) {
@@ -407,7 +407,7 @@ fn split_short_volume_spec(s: &str) -> (&str, &str, &str) {
 /// Whether a short-form spec's source is a host bind (vs a named volume).
 /// A leading `/`, `.`, `~`, or Windows drive prefix marks a bind; a
 /// bare identifier is a named volume. Mirrors
-/// `internal/engine/volume_mounts/spec.rs::is_bind_source`.
+/// `internal/engine/objects/volume_mounts/spec.rs::is_bind_source`.
 fn is_short_bind_source(src: &str) -> bool {
 	src.starts_with('/')
 		|| src.starts_with('.')
@@ -418,7 +418,7 @@ fn is_short_bind_source(src: &str) -> bool {
 /// Whether `s` begins with a Windows drive-letter prefix (`C:`), so the
 /// colon that follows is part of the path rather than a `src:dst`
 /// separator. Mirrors
-/// `internal/engine/volume_mounts/spec.rs::has_windows_drive_prefix`.
+/// `internal/engine/objects/volume_mounts/spec.rs::has_windows_drive_prefix`.
 fn has_windows_drive_prefix(s: &str) -> bool {
 	let b = s.as_bytes();
 	b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':'

@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 use crate::compose::types::{ComposeFile, Service, ServiceConfigRef, ServiceSecretRef};
 use crate::error::{ComposeError, Result};
 
-use super::super::project::lock::staging;
 use super::secret_bytes::SecretBytes;
+use crate::engine::project::lock::staging;
 
 /// Podman's hard limit on secret payload size (from `containers/common`): the
 /// payload must be larger than 0 and strictly smaller than this many bytes.
@@ -187,7 +187,7 @@ fn resolve_source(
 		// handling `volumes:` gets, and the same this had when it was a bind.
 		return Ok(Some(Source::File(
 			scoped_name(project, kind, name),
-			PathBuf::from(super::super::container::resolve_bind_source(
+			PathBuf::from(crate::engine::container::resolve_bind_source(
 				host_path, base_dir,
 			)),
 		)));

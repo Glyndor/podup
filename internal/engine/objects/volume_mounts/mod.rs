@@ -23,7 +23,7 @@ use spec::{access_opts, extend_bind_opts_str, extend_volume_opts_str, parse_volu
 /// correctly, so the decision itself is the thing a test can read and
 /// assert.
 #[derive(Debug, PartialEq, Eq)]
-pub(super) enum BindSource {
+pub(in crate::engine) enum BindSource {
 	/// Something already exists at the path; nothing was attempted.
 	Present,
 	/// Nothing existed; the directory was created.
@@ -90,7 +90,8 @@ pub(crate) fn build_mounts_all(
 							// path actually bind-mounted (relative anchored to the
 							// project dir, leading `~` expanded).
 							if let Some(src) = m.source.as_deref() {
-								let abs = super::container::resolve_bind_source(src, base_dir);
+								let abs =
+									crate::engine::container::resolve_bind_source(src, base_dir);
 								if let BindSource::Failed(msg) = ensure_bind_source(&abs) {
 									tracing::warn!("{msg}");
 								}
@@ -138,7 +139,7 @@ pub(crate) fn build_mounts_all(
 							// Resolve exactly like the mount source (expand `~`, anchor a
 							// relative path to the project dir) so the directory is created
 							// at the path actually bind-mounted, not a literal `~` dir.
-							let abs = super::container::resolve_bind_source(src, base_dir);
+							let abs = crate::engine::container::resolve_bind_source(src, base_dir);
 							if let BindSource::Failed(msg) = ensure_bind_source(&abs) {
 								tracing::warn!("{msg}");
 							}

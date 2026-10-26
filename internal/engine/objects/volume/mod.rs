@@ -2,8 +2,8 @@
 //!
 //! [`Engine::create_volumes`] pre-creates named volumes before containers start
 //! and [`Engine::ensure_external_exists`] verifies declared external resources.
-//! Secret/config materialisation lives in [`super::secrets`]; bind-string and
-//! Mount-API helpers in [`super::volume_mounts`].
+//! Secret/config materialisation lives in [`crate::engine::secrets`]; bind-string and
+//! Mount-API helpers in [`crate::engine::volume_mounts`].
 
 use std::collections::HashMap;
 
@@ -12,7 +12,7 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::types::volume::VolumeCreateOptions;
 use crate::libpod::{urlencoded, API_PREFIX};
 
-use super::Engine;
+use crate::engine::Engine;
 
 mod list;
 pub use list::{VolumesDisplayOptions, VolumesOptions};
@@ -23,7 +23,7 @@ impl Engine {
 	/// driver/driver-opts/label config. External volumes are verified to already
 	/// exist instead. An already-exists conflict on re-`up` is treated as success
 	/// (libpod returns 500, not 409, for an existing volume name).
-	pub(super) async fn create_volumes(&self, file: &ComposeFile) -> Result<()> {
+	pub(in crate::engine) async fn create_volumes(&self, file: &ComposeFile) -> Result<()> {
 		for (name, config) in &file.volumes {
 			let external = config.as_ref().and_then(|c| c.external).unwrap_or(false);
 			if external {
@@ -95,7 +95,7 @@ impl Engine {
 	/// The compose spec requires podup to error when an external resource is
 	/// declared but absent, rather than silently skipping it and letting
 	/// containers fail later with an opaque mount/attach error.
-	pub(super) async fn ensure_external_exists(
+	pub(in crate::engine) async fn ensure_external_exists(
 		&self,
 		kind: &str,
 		api_segment: &str,

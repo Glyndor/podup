@@ -34,11 +34,15 @@ pub(crate) use container_config::resources::{
 #[cfg(test)]
 mod fake_podman;
 mod lifecycle;
-mod network;
+mod objects;
 pub(crate) use network::apply_default_isolation;
 /// Re-exported so `startup::config_render` (in the binary crate) can call the
 /// same function `up` uses, instead of duplicating the resolution rule.
 pub use network::resolve_network_name;
+use objects::network;
+use objects::secrets;
+use objects::volume;
+use objects::volume_mounts;
 pub(crate) use pod::pod_network_mode;
 pub use project::{list_projects, list_projects_filtered, LsOptions};
 pub use project::{retain_active_profiles, retain_active_profiles_with_targets};
@@ -47,13 +51,10 @@ pub use query::{
 	AttachOptions, AttachOutcome, AttachSummary, ExecOptions, ImagesOptions, LogsDisplay,
 	LogsOptions, PsDisplayOptions, PsFilterOptions, PsOptions, DEFAULT_LOG_TAIL,
 };
-mod secrets;
 mod stats;
 pub use project::is_safe_project_name;
 pub use stats::StatsOptions;
-mod volume;
 pub use volume::{VolumesDisplayOptions, VolumesOptions};
-mod volume_mounts;
 #[cfg(feature = "watch")]
 mod watch;
 

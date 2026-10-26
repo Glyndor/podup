@@ -51,7 +51,7 @@ use plan::{collect_native_plans, host_file_secret_mode, Payload};
 // the (otherwise private) `plan` module.
 pub(crate) use plan::scoped_name;
 
-use super::Engine;
+use crate::engine::Engine;
 
 impl Engine {
 	/// Build the Podman-native secret references for a service. Every source podup
@@ -66,7 +66,7 @@ impl Engine {
 	/// delete-then-create on a shared secret name would race (one create could
 	/// clobber a secret another service's container is about to use). The up-front
 	/// pass creates each secret exactly once instead.
-	pub(super) async fn build_native_secrets(
+	pub(in crate::engine) async fn build_native_secrets(
 		&self,
 		service: &Service,
 		file: &ComposeFile,
@@ -133,7 +133,7 @@ pub(super) mod tests_support {
 	/// A compose file with `n` `content:` secrets named `s1..sn`, all on one
 	/// service, the shape the union deduplicates and then fans out over.
 	#[cfg(unix)]
-	pub(in crate::engine::secrets) fn file_with_content_secrets(n: usize) -> ComposeFile {
+	pub(in crate::engine::objects::secrets) fn file_with_content_secrets(n: usize) -> ComposeFile {
 		let refs: String = (1..=n).map(|i| format!("      - s{i}\n")).collect();
 		let defs: String = (1..=n)
 			.map(|i| format!("  s{i}: {{content: \"v{i}\"}}\n"))
@@ -145,7 +145,7 @@ pub(super) mod tests_support {
 	}
 
 	#[cfg(unix)]
-	pub(in crate::engine::secrets) fn engine_on(fake: &fake_podman::FakePodman) -> Engine {
+	pub(in crate::engine::objects::secrets) fn engine_on(fake: &fake_podman::FakePodman) -> Engine {
 		Engine::with_base_dir(fake.client(), "proj".to_string(), std::env::temp_dir())
 	}
 }
