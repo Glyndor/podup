@@ -38,6 +38,12 @@ pub(crate) fn parse_rfc3339(input: &str) -> Option<i64> {
 	if bytes.len() < 20 {
 		return None;
 	}
+	// The fields are cut out by byte offset below, which panics when an offset
+	// lands inside a multi-byte character. A valid timestamp is ASCII, and the
+	// string comes off the daemon (or a `--since` argument), so check it here.
+	if !input.is_ascii() {
+		return None;
+	}
 
 	let year: i64 = digits(&input[0..4])?;
 	if bytes[4] != b'-' {
