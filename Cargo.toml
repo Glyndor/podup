@@ -252,6 +252,10 @@ name = "workflow_branch_health"
 path = "tests/workflows/workflow_branch_health.rs"
 
 [[test]]
+name = "workflow_concurrency"
+path = "tests/workflows/workflow_concurrency.rs"
+
+[[test]]
 name = "workflow_debian_image"
 path = "tests/workflows/workflow_debian_image.rs"
 
