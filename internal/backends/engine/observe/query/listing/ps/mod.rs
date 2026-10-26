@@ -7,7 +7,7 @@ use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::container::ContainerListEntry;
 
-use super::Engine;
+use crate::backends::engine::observe::query::Engine;
 
 mod filters;
 mod format;

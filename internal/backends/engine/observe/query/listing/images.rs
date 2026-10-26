@@ -6,8 +6,8 @@ use crate::libpod::types::image::ImageInspect;
 use crate::libpod::{urlencoded, API_PREFIX};
 use crate::units::{format_bytes, SizeFormat};
 
-use super::inspect::{humanize_age, split_repo_tag};
-use super::Engine;
+use crate::backends::engine::observe::query::inspect::{humanize_age, split_repo_tag};
+use crate::backends::engine::observe::query::Engine;
 
 /// How `images` renders a size: decimal units at three significant digits.
 ///
@@ -42,8 +42,11 @@ struct ImageRow {
 impl Engine {
 	/// List images used by each service as a table (default options).
 	pub async fn images(&self, file: &ComposeFile) -> Result<()> {
-		self.images_with_options(file, super::ImagesOptions::default())
-			.await
+		self.images_with_options(
+			file,
+			crate::backends::engine::observe::query::ImagesOptions::default(),
+		)
+		.await
 	}
 
 	/// List service images with `docker compose images`-style options:
@@ -52,7 +55,7 @@ impl Engine {
 	pub async fn images_with_options(
 		&self,
 		file: &ComposeFile,
-		opts: super::ImagesOptions,
+		opts: crate::backends::engine::observe::query::ImagesOptions,
 	) -> Result<()> {
 		self.images_with_services(file, &[], opts).await
 	}
@@ -64,7 +67,7 @@ impl Engine {
 		&self,
 		file: &ComposeFile,
 		target_services: &[String],
-		opts: super::ImagesOptions,
+		opts: crate::backends::engine::observe::query::ImagesOptions,
 	) -> Result<()> {
 		for name in target_services {
 			if !file.services.contains_key(name) {
@@ -179,7 +182,7 @@ impl Engine {
 
 		// One clock read for the whole table, so two rows built in the same
 		// second cannot render different ages.
-		let now = super::ps::now_unix();
+		let now = crate::backends::engine::observe::query::ps::now_unix();
 		let mut table = crate::ui::Table::new(&[
 			"SERVICE",
 			"REPOSITORY",

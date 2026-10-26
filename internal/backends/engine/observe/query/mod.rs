@@ -6,14 +6,15 @@ use crate::error::Result;
 use crate::engine::Engine;
 
 mod attach;
-mod exec;
-mod images;
-mod inspect;
+mod listing;
 mod logs;
 mod options;
-mod orphans;
-mod ps;
-pub(crate) mod terminal;
+mod session;
+
+use listing::inspect;
+use listing::ps;
+use session::exec;
+pub(crate) use session::terminal;
 
 #[cfg(test)]
 pub(crate) use ps::ps_rows_for_test;

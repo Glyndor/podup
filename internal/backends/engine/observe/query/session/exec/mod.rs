@@ -13,7 +13,7 @@ use crate::libpod::types::exec::{
 };
 use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 
-use super::Engine;
+use crate::backends::engine::observe::query::Engine;
 
 /// Ceiling on how long to wait for the libpod exec-start *response head*. A
 /// healthy engine returns it almost instantly: either the hijacked stream or a

@@ -7,7 +7,7 @@ use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
-use super::Engine;
+use crate::backends::engine::observe::query::Engine;
 
 impl Engine {
 	/// Remove containers labelled for this project that are not defined in the current compose file.

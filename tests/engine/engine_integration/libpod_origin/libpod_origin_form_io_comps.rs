@@ -129,7 +129,7 @@ async fn cp_preserves_the_host_uid_gid() {
 /// on the asserted header.
 ///
 /// Fails on the branch with `ps_args=-ef` reverted at
-/// `internal/backends/engine/observe/query/inspect/mod.rs::top_with_options` (the asserted
+/// `internal/backends/engine/observe/query/listing/inspect/mod.rs::top_with_options` (the asserted
 /// header line).
 #[tokio::test]
 async fn top_uses_the_docker_compat_column_set() {

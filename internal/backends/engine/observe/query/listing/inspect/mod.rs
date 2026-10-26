@@ -15,7 +15,7 @@ use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 
-use super::Engine;
+use crate::backends::engine::observe::query::Engine;
 use helpers::{
 	dedup_preserving_order, is_running_status, parse_port_proto, process_table, select_replica,
 };
