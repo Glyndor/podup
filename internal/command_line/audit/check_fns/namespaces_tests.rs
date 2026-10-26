@@ -40,7 +40,7 @@ fn audit_host_namespace_flags_pid_ipc_uts_cgroup_userns_host() {
 }
 
 /// `container:<id>` is the share-another-container mode the runtime
-/// detector in `internal/backends/engine/workload/container/host_mode.rs` already warns
+/// detector in `internal/backends/engine/workload/container/warnings/host_mode.rs` already warns
 /// on; the audit detector must agree, otherwise `podup audit --strict`
 /// would pass a file the engine later refuses silently (#1746 entry 4).
 /// The two lists are now one: every mode the runtime flags, the audit

@@ -8,7 +8,10 @@ use crate::compose::types::Service;
 /// Podman on cgroups v2. Returns advisory messages; pure so it can be
 /// unit-tested. The wording mirrors podman-run(1) so operators are not misled
 /// into assuming a no-op limit took effect.
-pub(super) fn rootless_caveat_warnings(name: &str, service: &Service) -> Vec<String> {
+pub(in crate::backends::engine::workload::container) fn rootless_caveat_warnings(
+	name: &str,
+	service: &Service,
+) -> Vec<String> {
 	let mut out = Vec::new();
 	if service.privileged == Some(true) {
 		out.push(format!(

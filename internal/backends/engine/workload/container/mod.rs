@@ -12,15 +12,17 @@ use crate::libpod::API_PREFIX;
 use crate::size;
 
 mod fields;
-mod host_mode;
 mod inputs;
 mod resolve;
-mod rootless;
 mod security;
 mod spec;
+mod warnings;
+
 use resolve::{build_env, resolve_links, resolve_stop_signal, resolve_volumes_from};
 pub(crate) use resolve::{config_hash, resolve_bind_source};
 pub(crate) use spec::{build_spec_generator, NamespaceInputs, SecurityInputs, SpecInputs};
+use warnings::host_mode;
+use warnings::rootless;
 
 pub(crate) use fields::device_spec_parts;
 pub(crate) use host_mode::check_host_mode;
