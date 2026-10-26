@@ -5,7 +5,7 @@ use crate::compose::types::Service;
 use crate::env_file;
 use crate::error::Result;
 
-pub(in crate::engine::container) fn build_env(
+pub(in crate::engine::workload::container) fn build_env(
 	service: &Service,
 	base_dir: &Path,
 ) -> Result<Vec<String>> {

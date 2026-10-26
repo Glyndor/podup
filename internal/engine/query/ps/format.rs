@@ -136,7 +136,7 @@ pub(super) fn table_created(c: &ContainerListEntry, now: i64) -> String {
 /// Table SERVICE cell: the container's service name.
 ///
 /// Read from the `podup.service` label libpod carries on every project
-/// container (set at `up`, see `internal/engine/container/inputs.rs`). Empty
+/// container (set at `up`, see `internal/engine/workload/container/inputs.rs`). Empty
 /// when libpod sent no label; the row already says "this is a project
 /// container" by carrying the project label, so a blank service means
 /// "unknown", which is what an empty cell says elsewhere in this table.

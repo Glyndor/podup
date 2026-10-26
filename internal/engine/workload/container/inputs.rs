@@ -9,13 +9,13 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::types::container::{LinuxDevice, LinuxDeviceCgroup, PortMapping};
 use crate::ports;
 
-use super::super::Engine;
 use super::fields::{build_label_file_labels, encode_path_for_label, resolve_container_labels};
 use super::resolve::{config_hash, resolve_volume_name};
 use super::security::parse_device_cgroup_rule;
 use crate::engine::container::fields::parse_device;
 use crate::engine::container::security::cdi_device;
 use crate::engine::container_config::cdi_devices;
+use crate::engine::Engine;
 
 impl Engine {
 	/// Resolve a service's named-volume reference to the actual volume name

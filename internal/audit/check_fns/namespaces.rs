@@ -6,7 +6,7 @@ use super::{finding, Finding};
 /// set to `host` or `container:<id>`, or `network_mode` carrying the same. One
 /// finding per active mode. The `container:<id>` form is the share-another-
 /// container mode the runtime detector in
-/// `internal/engine/container/host_mode.rs` already warns on; the audit
+/// `internal/engine/workload/container/host_mode.rs` already warns on; the audit
 /// detector must agree, otherwise `podup audit --strict` would pass a file
 /// the engine later refuses to run silently (#1746).
 pub fn check_host_namespace(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {

@@ -26,12 +26,12 @@ pub(crate) use fields::device_spec_parts;
 pub(crate) use host_mode::check_host_mode;
 pub(crate) use security::parse_device_cgroup_rule;
 
-use super::container_config::{
+use crate::engine::container_config::{
 	build_healthcheck, build_log_config, build_resource_limits, build_restart_policy, build_ulimits,
 };
-use super::network::resolve_network_mode;
-use super::volume_mounts::build_mounts_all;
-use super::Engine;
+use crate::engine::network::resolve_network_mode;
+use crate::engine::volume_mounts::build_mounts_all;
+use crate::engine::Engine;
 use fields::{build_blkio_config, warn_swarm_only_deploy};
 // Re-exported at the container root so `crate::engine::container::*` is a
 // valid path inside the crate (lib.rs's `effective_no_new_privileges`
@@ -40,7 +40,7 @@ use fields::{build_blkio_config, warn_swarm_only_deploy};
 pub(crate) use security::parse_security_opts;
 
 impl Engine {
-	pub(super) async fn create_and_start(
+	pub(in crate::engine) async fn create_and_start(
 		&self,
 		container_name: &str,
 		service_name: &str,
@@ -52,7 +52,11 @@ impl Engine {
 		// answer with an opaque HTTP 500 from its name-regex check). Covers the
 		// ad-hoc `run --name` path too, which never passes through the up-time
 		// preflight in `validate_object_names`.
-		super::project::names::ensure_valid_object_name("container", service_name, container_name)?;
+		crate::engine::project::names::ensure_valid_object_name(
+			"container",
+			service_name,
+			container_name,
+		)?;
 
 		let derived_image;
 		let image: &str = if let Some(img) = service.image.as_deref() {
@@ -63,8 +67,12 @@ impl Engine {
 			// the first `build.tags` entry). Must stay in lockstep with
 			// `primary_build_tag`, or `up --build` creates the container against a
 			// name no built image carries (HTTP 404: no such image).
-			derived_image =
-				super::build::primary_build_tag(&self.project, service_name, None, build.tags());
+			derived_image = crate::engine::build::primary_build_tag(
+				&self.project,
+				service_name,
+				None,
+				build.tags(),
+			);
 			&derived_image
 		} else {
 			return Err(ComposeError::NoImageOrBuild(service_name.into()));

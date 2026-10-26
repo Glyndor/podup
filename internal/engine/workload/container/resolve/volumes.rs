@@ -13,7 +13,7 @@ use crate::error::{ComposeError, Result};
 /// the top-level `volumes:` map is rejected, matching the compose-spec: leaving
 /// it unprefixed would make Podman auto-create a bare, unlabelled global volume
 /// that escapes project namespacing and is never reclaimed by `down -v`.
-pub(in crate::engine::container) fn resolve_volume_name(
+pub(in crate::engine::workload::container) fn resolve_volume_name(
 	reference: &str,
 	project: &str,
 	file: &ComposeFile,

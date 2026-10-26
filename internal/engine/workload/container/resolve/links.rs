@@ -7,7 +7,7 @@ use crate::compose::types::{ComposeFile, Service};
 /// (`{container}:{alias}`), so the linked container is reachable by the compose
 /// service name. `external_links` reference containers outside the project and
 /// are passed through verbatim.
-pub(in crate::engine::container) fn resolve_links(
+pub(in crate::engine::workload::container) fn resolve_links(
 	service: &Service,
 	file: &ComposeFile,
 	project: &str,
@@ -47,7 +47,7 @@ pub(in crate::engine::container) fn resolve_links(
 /// the access mode. The `container:` form already names a container outside the
 /// project and is passed through verbatim, as is any service name that is not
 /// declared in this compose file.
-pub(in crate::engine::container) fn resolve_volumes_from(
+pub(in crate::engine::workload::container) fn resolve_volumes_from(
 	service: &Service,
 	file: &ComposeFile,
 	project: &str,

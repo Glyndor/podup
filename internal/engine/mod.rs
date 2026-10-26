@@ -4,7 +4,11 @@
 
 pub(crate) mod build;
 mod builder;
-pub(crate) mod container;
+mod workload;
+pub(crate) use workload::container;
+use workload::container_config;
+use workload::declared;
+use workload::pod;
 pub(crate) mod context;
 /// `pub(crate)` so the fuzz harness behind the `test-helpers` feature can
 /// reach `archive::extract_tar_guarded` without widening the published API:
@@ -22,7 +26,6 @@ pub use image::{resolve_image_digests, CommitOptions};
 pub use lifecycle::{validate_stop_timeout, RunOptions, RunOverrides};
 pub use project::ProjectLock;
 
-mod container_config;
 pub(crate) use container_config::build_log_config;
 pub(crate) use container_config::resources::{
 	effective_cpu_quota, effective_memory_limit, is_known_ulimit,
@@ -31,12 +34,10 @@ pub(crate) use container_config::resources::{
 mod fake_podman;
 mod lifecycle;
 mod network;
-mod readiness;
 pub(crate) use network::apply_default_isolation;
 /// Re-exported so `startup::config_render` (in the binary crate) can call the
 /// same function `up` uses, instead of duplicating the resolution rule.
 pub use network::resolve_network_name;
-mod pod;
 pub(crate) use pod::pod_network_mode;
 pub use project::{list_projects, list_projects_filtered, LsOptions};
 pub use project::{retain_active_profiles, retain_active_profiles_with_targets};
@@ -183,7 +184,6 @@ impl Engine {
 // Free-function helpers, one module per concern
 // ---------------------------------------------------------------------------
 
-mod declared;
 mod encoding;
 pub use declared::host_modes::surface_host_modes;
 pub(crate) use declared::replicas::{declared_replicas, sole_replica_name};

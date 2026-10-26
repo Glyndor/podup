@@ -5,9 +5,9 @@
 //! The policy lives in `autostart`; this file only answers. Keeping the two
 //! apart means the engine has no opinion about what a mismatch should cost.
 
-use super::super::container::config_hash;
-use super::super::Engine;
 use crate::compose::types::{ComposeFile, Service};
+use crate::engine::container::config_hash;
+use crate::engine::Engine;
 use crate::error::ComposeError;
 use crate::libpod::types::container::ContainerListEntry;
 use crate::Result;

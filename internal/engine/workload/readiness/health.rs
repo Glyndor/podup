@@ -14,7 +14,7 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::types::container::ContainerInspect;
 use crate::libpod::API_PREFIX;
 
-use super::super::Engine;
+use crate::engine::Engine;
 
 /// Response from `GET {API_PREFIX}/containers/{name}/healthcheck`, which *runs*
 /// the container's healthcheck on demand and reports the resulting status.
@@ -193,7 +193,7 @@ impl Engine {
 	/// those declared in compose. If the container has no effective healthcheck at
 	/// all (none in the image or compose), it can never report `healthy`, so the
 	/// wait short-circuits as satisfied rather than blocking until timeout.
-	pub(in super::super) async fn wait_healthy(
+	pub(in crate::engine) async fn wait_healthy(
 		&self,
 		container_name: &str,
 		service: &Service,
@@ -310,7 +310,7 @@ impl Engine {
 	/// Blocks server-side on `wait?condition=stopped` (which returns the exit
 	/// code) instead of polling inspect, bounded by a 600 s client-side timeout.
 	/// Errors if the container exits non-zero or the deadline is exceeded.
-	pub(in super::super) async fn wait_completed(&self, container_name: &str) -> Result<()> {
+	pub(in crate::engine) async fn wait_completed(&self, container_name: &str) -> Result<()> {
 		let path = format!(
 			"{API_PREFIX}/containers/{}/wait?condition=stopped",
 			crate::libpod::urlencoded(container_name),

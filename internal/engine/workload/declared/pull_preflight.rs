@@ -7,7 +7,7 @@ use crate::error::Result;
 impl Engine {
 	/// Validate the entire batch before emitting warnings or contacting libpod.
 	pub(crate) fn pull_preflight(&self, file: &ComposeFile) -> Result<()> {
-		super::super::build::validate_pull_fields(file)?;
+		crate::engine::build::validate_pull_fields(file)?;
 		for (name, service) in &file.services {
 			self.resolved_pull_policy(name, service)?;
 		}
@@ -16,7 +16,7 @@ impl Engine {
 				.pull_policy_override
 				.as_deref()
 				.or(service.pull_policy.as_deref())
-				.filter(|p| super::super::build::is_time_based_pull_policy(p))
+				.filter(|p| crate::engine::build::is_time_based_pull_policy(p))
 				.filter(|_| {
 					self.pull_policy_override.is_some()
 						|| !matches!(
@@ -30,7 +30,7 @@ impl Engine {
 					.unwrap_or_else(|e| e.into_inner())
 					.insert(name.clone());
 				if first {
-					tracing::warn!(service = %name, "{}", super::super::build::pull_policy_warning(policy));
+					tracing::warn!(service = %name, "{}", crate::engine::build::pull_policy_warning(policy));
 				}
 			}
 		}

@@ -2,7 +2,7 @@
 //! binding modes, pull policy, replica counts, and the autostart start-mode
 //! readings.
 
-pub(super) mod host_modes;
+pub(in crate::engine) mod host_modes;
 mod pull_preflight;
-pub(super) mod replicas;
+pub(in crate::engine) mod replicas;
 mod start_mode;

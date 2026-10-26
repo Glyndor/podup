@@ -7,7 +7,7 @@ use crate::error::{ComposeError, Result};
 /// with or without the `SIG` prefix (`"SIGTERM"`, `"term"`), case-insensitively.
 /// An unrecognized name returns a clear [`ComposeError::Unsupported`] rather than
 /// silently dropping the value.
-pub(in crate::engine::container) fn resolve_stop_signal(signal: &str) -> Result<i64> {
+pub(in crate::engine::workload::container) fn resolve_stop_signal(signal: &str) -> Result<i64> {
 	let trimmed = signal.trim();
 	if let Ok(num) = trimmed.parse::<i64>() {
 		return Ok(num);

@@ -1,6 +1,6 @@
 //! I assert the user-namespace options reach the pod path, not just the
 //! container path. The container-level test in
-//! `internal/engine/container/userns_tests.rs` builds a container through
+//! `internal/engine/workload/container/userns_tests.rs` builds a container through
 //! `create_and_start` directly and never exercises the pod, so every
 //! assertion in that file passes whatever the pod path does. A regression
 //! that stopped forwarding the ID-mapping options into the pod spec

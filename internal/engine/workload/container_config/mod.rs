@@ -1,7 +1,7 @@
 //! Pure configuration builders for container creation: restart policy, logging,
 //! healthcheck, resource limits, and ulimits.
 //!
-//! Device, blkio, tmpfs, and label-file helpers live in `super::container::fields`.
+//! Device, blkio, tmpfs, and label-file helpers live in `crate::engine::container::fields`.
 
 use std::collections::HashMap;
 
@@ -13,14 +13,14 @@ use crate::libpod::types::container::{HealthConfig, LogConfig};
 use crate::size;
 
 pub(crate) mod resources;
-pub(super) use resources::{build_resource_limits, build_ulimits, cdi_devices};
+pub(in crate::engine) use resources::{build_resource_limits, build_ulimits, cdi_devices};
 
 // ---------------------------------------------------------------------------
 // Restart policy
 // ---------------------------------------------------------------------------
 
 /// Returns `(policy_name, max_retry_tries)` for SpecGenerator.
-pub(super) fn build_restart_policy(service: &Service) -> (Option<String>, Option<u64>) {
+pub(in crate::engine) fn build_restart_policy(service: &Service) -> (Option<String>, Option<u64>) {
 	if let Some(r) = &service.restart {
 		let (name, tries) = match r {
 			ComposeRestart::No => ("no", None),
@@ -186,7 +186,7 @@ fn translate_user_logging(
 // Healthcheck
 // ---------------------------------------------------------------------------
 
-pub(super) fn build_healthcheck(hc: &HealthCheck) -> Option<HealthConfig> {
+pub(in crate::engine) fn build_healthcheck(hc: &HealthCheck) -> Option<HealthConfig> {
 	if hc.is_disabled() {
 		return Some(HealthConfig {
 			test: Some(vec!["NONE".to_string()]),

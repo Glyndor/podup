@@ -239,7 +239,7 @@ impl Engine {
 		// they are about to run executes inside that container. `--no-warn`
 		// still opts out.
 		if !self.no_warn {
-			for w in crate::engine::container::check_host_mode(service_name, service) {
+			for w in crate::engine::workload::container::check_host_mode(service_name, service) {
 				tracing::warn!("{}", w.message);
 			}
 		}

@@ -211,7 +211,7 @@ pub(crate) fn build_spec_generator(
 		network_options: if in_pod {
 			HashMap::new()
 		} else {
-			super::super::network::network_mode_options(service)
+			crate::engine::network::network_mode_options(service)
 		},
 		extra_hosts: service.extra_hosts.clone(),
 		dns_server: service.dns.to_list(),

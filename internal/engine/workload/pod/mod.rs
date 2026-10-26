@@ -31,17 +31,17 @@ use crate::ports::ParsedPort;
 
 /// The label the engine stamps on every pod it owns, used by `down` and
 /// `down --remove-orphans` to find the pod.
-pub(super) const POD_PROJECT_LABEL: &str = "podup.project";
+pub(in crate::engine) const POD_PROJECT_LABEL: &str = "podup.project";
 
 /// The label that records the hash of the pod's port set, network set and
 /// host entries. A change in any of these three means the pod has to be
 /// recreated.
-pub(super) const POD_HASH_LABEL: &str = "podup.pod-config-hash";
+pub(in crate::engine) const POD_HASH_LABEL: &str = "podup.pod-config-hash";
 
 /// Build the `hostadd` list: one `<service>:127.0.0.1` entry per service, so
 /// `db:5432` written in a compose file resolves to the shared namespace the
 /// way it resolves on a compose project network.
-pub(super) fn hostadd_for_services<I, S>(services: I) -> Vec<String>
+pub(in crate::engine) fn hostadd_for_services<I, S>(services: I) -> Vec<String>
 where
 	I: IntoIterator<Item = S>,
 	S: AsRef<str>,
@@ -57,7 +57,7 @@ where
 /// Build the `portmappings` list: every service's parsed ports, in sorted
 /// order so the wire bytes are deterministic across runs. Sorted by
 /// `(host_ip, host_port, container_port, protocol)`.
-pub(super) fn portmappings_for_services<I>(
+pub(in crate::engine) fn portmappings_for_services<I>(
 	services_ports: I,
 ) -> Vec<crate::libpod::types::container::PortMapping>
 where
@@ -84,7 +84,7 @@ where
 /// The `userns_mode` every service agrees on, applied to the pod. Validation
 /// refused the project before this runs when the services disagree, so the
 /// first service's value is the project's.
-pub(super) fn pod_userns(file: &crate::compose::types::ComposeFile) -> Option<&str> {
+pub(in crate::engine) fn pod_userns(file: &crate::compose::types::ComposeFile) -> Option<&str> {
 	file.services
 		.values()
 		.find_map(|s| s.userns_mode.as_deref())
@@ -107,7 +107,7 @@ pub(crate) fn pod_network_mode(file: &crate::compose::types::ComposeFile) -> Opt
 	(agreed && no_networks && crate::quadlet::is_rootless_user_mode(mode)).then_some(mode)
 }
 
-pub(super) fn pod_networks(
+pub(in crate::engine) fn pod_networks(
 	file: &crate::compose::types::ComposeFile,
 	project: &str,
 ) -> std::collections::HashMap<String, crate::libpod::types::container::PerNetworkOptions> {
@@ -132,7 +132,7 @@ pub(super) fn pod_networks(
 
 /// Builds the pod request with a pre-computed hash so the recreate
 /// path can keep the hash it just decided to set.
-pub(super) fn build_pod_spec_with_hash(
+pub(in crate::engine) fn build_pod_spec_with_hash(
 	project: &str,
 	file: &crate::compose::types::ComposeFile,
 	parsed_ports: &[Vec<ParsedPort>],
