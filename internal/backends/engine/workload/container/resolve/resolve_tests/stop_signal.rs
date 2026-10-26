@@ -42,3 +42,28 @@ fn stop_signal_unknown_name_errors() {
 	let err = resolve_stop_signal("SIGNOPE").unwrap_err();
 	assert!(err.to_string().contains("SIGNOPE"), "got: {err}");
 }
+
+/// `stop_signal` comes from the compose file. The byte after `RTMIN`/`RTMAX`
+/// was split off with `split_at(1)`, which aborts the process when that byte
+/// starts a multi-byte character, and the offset was added unchecked.
+#[test]
+fn stop_signal_with_a_multibyte_character_after_rtmin_is_an_error_not_a_panic() {
+	for hostile in ["RTMIN€", "SIGRTMAX\u{e9}1", "rtmin\u{1f4a5}"] {
+		let err = resolve_stop_signal(hostile).unwrap_err();
+		assert!(
+			err.to_string().contains("unknown stop_signal"),
+			"{hostile:?}: {err}"
+		);
+	}
+}
+
+#[test]
+fn stop_signal_offset_that_overflows_is_an_error() {
+	for hostile in [
+		"RTMIN+9223372036854775807",
+		"RTMAX-9223372036854775807",
+		"RTMAX--9223372036854775808",
+	] {
+		assert!(resolve_stop_signal(hostile).is_err(), "{hostile}");
+	}
+}
