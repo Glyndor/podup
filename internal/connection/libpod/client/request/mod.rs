@@ -11,8 +11,8 @@
 use super::{BoxBody, Client, PodmanError, Result};
 
 mod build;
-pub(in crate::libpod::client) mod encode;
-pub(in crate::libpod::client) mod transport;
+pub(in crate::connection::libpod::client) mod encode;
+pub(in crate::connection::libpod::client) mod transport;
 
 #[cfg(test)]
 #[path = "build_tests.rs"]

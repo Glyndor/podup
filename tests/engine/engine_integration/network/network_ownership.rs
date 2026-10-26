@@ -390,7 +390,7 @@ async fn network_owner(name: &str) -> std::result::Result<Option<String>, String
 
 /// Percent-encode the bits a network name can contain that the libpod
 /// socket refuses raw: `/` and anything non-printable. Mirrors what
-/// `internal/libpod::urlencoded` does but stays in the test crate so the
+/// `internal/connection/libpod::urlencoded` does but stays in the test crate so the
 /// test does not reach into a private module.
 fn netname_encode(s: &str) -> String {
 	let mut out = String::with_capacity(s.len());

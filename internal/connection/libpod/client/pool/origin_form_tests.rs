@@ -1,6 +1,6 @@
 // The pool's connection-reuse semantics ride on `UnixListener`, which is
 // only available on Unix. The pool itself is cross-platform (Windows uses
-// a named pipe; see `internal/libpod/client/stream.rs`); the wire
+// a named pipe; see `internal/connection/libpod/client/stream.rs`); the wire
 // assertion that pins the request target to origin form is Unix-only by
 // necessity because it binds a Unix socket. The `#[cfg(unix)]` here skips
 // the test on Windows CI; the pool's other unit tests (which do not bind

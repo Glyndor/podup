@@ -29,7 +29,7 @@ impl Client {
 	/// string, both of which put `localhost` in `split[2]` and quietly lose
 	/// the same semantics. Reject them with `invalid API path` so neither
 	/// shape can slip through.
-	pub(in crate::libpod::client) fn build_request(
+	pub(in crate::connection::libpod::client) fn build_request(
 		method: Method,
 		path: &str,
 		body: BoxBody,

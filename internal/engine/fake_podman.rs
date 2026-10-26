@@ -3,7 +3,7 @@
 //! A minimal libpod HTTP responder bound to a Unix domain socket, so
 //! lifecycle/scale/query tests can assert exit-code semantics against canned
 //! API responses without a real Podman daemon. [`Client`] opens a fresh
-//! connection per request (see `internal/libpod/client/mod.rs`), so this only
+//! connection per request (see `internal/connection/libpod/client/mod.rs`), so this only
 //! ever needs to answer one HTTP/1.1 request per accepted connection, with no
 //! keep-alive.
 //!
@@ -88,7 +88,7 @@ pub(super) struct FakePodman {
 
 impl FakePodman {
 	/// A fresh [`Client`] pointed at this fake socket. [`Client`] is a thin,
-	/// stateless per-request handle (see `internal/libpod/client/mod.rs`), so a
+	/// stateless per-request handle (see `internal/connection/libpod/client/mod.rs`), so a
 	/// new one is created on every call rather than shared/cloned.
 	pub(super) fn client(&self) -> Client {
 		Client::new(self.sock_path.to_string_lossy().into_owned())

@@ -18,7 +18,7 @@ use super::transport::stream::SocketStream;
 use super::{Client, PodmanError, Result};
 
 mod buffered;
-pub(in crate::libpod::client) mod hijack;
+pub(in crate::connection::libpod::client) mod hijack;
 mod streaming;
 
 #[cfg(test)]

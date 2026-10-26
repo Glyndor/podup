@@ -8,5 +8,5 @@
 //! re-polling (#1900). The two are one concern: the body is what makes the
 //! state worth tracking.
 
-pub(in crate::libpod::client) mod conn_state;
-pub(in crate::libpod::client) mod stream_body;
+pub(in crate::connection::libpod::client) mod conn_state;
+pub(in crate::connection::libpod::client) mod stream_body;

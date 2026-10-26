@@ -8,8 +8,8 @@
 
 use super::{Client, PodmanError, Result};
 
-pub(in crate::libpod::client) mod path_stat;
-pub(in crate::libpod::client) mod status;
+pub(in crate::connection::libpod::client) mod path_stat;
+pub(in crate::connection::libpod::client) mod status;
 
 #[cfg(test)]
 #[path = "status_tests.rs"]

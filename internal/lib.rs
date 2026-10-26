@@ -27,11 +27,11 @@ pub use parsing::compose;
 use parsing::input;
 pub use parsing::substitute;
 use parsing::values;
+mod connection;
 pub(crate) mod engine;
 mod errors;
-pub(crate) mod libpod;
-/// Podman socket connection helpers.
-pub mod podman;
+pub(crate) use connection::libpod;
+pub use connection::podman;
 /// Quadlet export: translate a parsed compose file into Podman systemd units.
 pub mod quadlet;
 /// Terminal colour/styling, honouring `--ansi`, `NO_COLOR`, and TTY detection.

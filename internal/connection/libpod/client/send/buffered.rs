@@ -37,7 +37,7 @@ impl BufferedResponse {
 	/// that branch on status or read a response-specific header must still
 	/// call [`BufferedResponse::read_body`] on the returned value to release
 	/// the connection cleanly.
-	pub(in crate::libpod::client) fn headers(&self) -> &hyper::HeaderMap {
+	pub(in crate::connection::libpod::client) fn headers(&self) -> &hyper::HeaderMap {
 		self.resp.headers()
 	}
 
@@ -47,7 +47,7 @@ impl BufferedResponse {
 	/// that drops the [`BufferedResponse`] without calling `read_body` is
 	/// a bug: the body may still be arriving, the connection is not safe
 	/// to reuse, and the next caller will see interleaved bytes (#1740).
-	pub(in crate::libpod::client) async fn read_body(
+	pub(in crate::connection::libpod::client) async fn read_body(
 		self,
 		read_timeout: Option<std::time::Duration>,
 	) -> Result<(StatusCode, Vec<u8>)> {
@@ -78,7 +78,7 @@ impl Client {
 	/// wire and the parser sees garbage (#1740). The guard is private to
 	/// [`BufferedResponse`], so callers cannot release it without first
 	/// reading the body.
-	pub(in crate::libpod::client) async fn send(
+	pub(in crate::connection::libpod::client) async fn send(
 		&self,
 		req: Request<BoxBody>,
 		response_timeout: Option<std::time::Duration>,

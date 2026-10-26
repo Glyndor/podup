@@ -14,7 +14,7 @@
 //! The Podman floor is written in three places and nothing derives one from
 //! another.
 //!
-//! - `internal/libpod/client/mod.rs`: `MIN_LIBPOD_API_MAJOR`, the gate the
+//! - `internal/connection/libpod/client/mod.rs`: `MIN_LIBPOD_API_MAJOR`, the gate the
 //!   running binary applies to the major the engine reports.
 //! - `install.sh`: `PODMAN_MIN_MAJOR`, the precheck that refuses to install
 //!   over a local engine below the floor.
@@ -194,7 +194,7 @@ fn the_package_requires_the_archive_keyring() {
 
 #[test]
 fn every_podman_floor_agrees() {
-	let source = floor_from_source(&read("internal/libpod/client/mod.rs"));
+	let source = floor_from_source(&read("internal/connection/libpod/client/mod.rs"));
 	let installer = floor_from_installer(&read("install.sh"));
 	let control = floor_from_control(&read("debian/control"));
 
@@ -241,7 +241,7 @@ Depends: ${shlibs:Depends}, ${misc:Depends}, podman (>= 7.0)
 	for (name, got) in [
 		(
 			"MIN_LIBPOD_API_MAJOR",
-			floor_from_source(&read("internal/libpod/client/mod.rs")),
+			floor_from_source(&read("internal/connection/libpod/client/mod.rs")),
 		),
 		(
 			"PODMAN_MIN_MAJOR",
@@ -285,8 +285,8 @@ fn the_parsers_do_not_care_about_line_endings() {
 	let lf = |rel: &str| read(rel).replace("\r\n", "\n");
 
 	assert_eq!(
-		floor_from_source(&crlf("internal/libpod/client/mod.rs")),
-		floor_from_source(&lf("internal/libpod/client/mod.rs")),
+		floor_from_source(&crlf("internal/connection/libpod/client/mod.rs")),
+		floor_from_source(&lf("internal/connection/libpod/client/mod.rs")),
 		"MIN_LIBPOD_API_MAJOR reads differently under CRLF"
 	);
 	assert_eq!(

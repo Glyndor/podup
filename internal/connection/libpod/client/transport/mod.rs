@@ -11,7 +11,7 @@
 use super::{PodmanError, Result};
 
 mod socket;
-pub(in crate::libpod::client) mod stream;
+pub(in crate::connection::libpod::client) mod stream;
 
 #[cfg(all(test, unix))]
 #[path = "socket_tests.rs"]

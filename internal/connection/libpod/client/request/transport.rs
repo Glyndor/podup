@@ -59,7 +59,7 @@ pub(crate) fn has_connection_close(resp: &Response<Incoming>) -> bool {
 
 impl Client {
 	/// Await `fut`, optionally bounded by `timeout`.
-	pub(in crate::libpod::client) async fn apply_timeout<F, T>(
+	pub(in crate::connection::libpod::client) async fn apply_timeout<F, T>(
 		timeout: Option<std::time::Duration>,
 		phase: &str,
 		fut: F,

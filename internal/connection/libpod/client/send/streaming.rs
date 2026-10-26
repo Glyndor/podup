@@ -23,7 +23,7 @@ impl Client {
 	/// the response body owns the HTTP/1 driver so the reading task can poll
 	/// it in line with the body and skip the cross-task wake-up per frame
 	/// (#1900).
-	pub(in crate::libpod::client) async fn send_streaming(
+	pub(in crate::connection::libpod::client) async fn send_streaming(
 		&self,
 		req: Request<BoxBody>,
 		response_timeout: Option<std::time::Duration>,
@@ -99,7 +99,7 @@ impl Client {
 	/// prevents a runaway response from holding more than `MAX_RESPONSE_BYTES`
 	/// in memory; it does not bound the duration of a long-lived stream
 	/// (those callers keep the body and poll it themselves).
-	pub(in crate::libpod::client) async fn read_response_body<B>(
+	pub(in crate::connection::libpod::client) async fn read_response_body<B>(
 		resp: Response<B>,
 		read_timeout: Option<std::time::Duration>,
 	) -> Result<(StatusCode, Vec<u8>)>
@@ -125,7 +125,7 @@ impl Client {
 
 	/// For streaming endpoints, return the response on success or parse the
 	/// daemon error body on failure.
-	pub(in crate::libpod::client) async fn stream_or_err(
+	pub(in crate::connection::libpod::client) async fn stream_or_err(
 		resp: Response<DrivenBody>,
 	) -> Result<Response<DrivenBody>> {
 		if resp.status().is_success() {

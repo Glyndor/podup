@@ -45,7 +45,10 @@ impl Client {
 	}
 
 	/// Check status code; on error parse the Podman error message.
-	pub(in crate::libpod::client) fn check_status(status: StatusCode, body: &[u8]) -> Result<()> {
+	pub(in crate::connection::libpod::client) fn check_status(
+		status: StatusCode,
+		body: &[u8],
+	) -> Result<()> {
 		if status.is_success() {
 			return Ok(());
 		}
