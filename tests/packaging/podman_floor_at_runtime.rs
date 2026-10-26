@@ -221,8 +221,8 @@ fn every_client_the_command_line_builds_is_checked() {
 			),
 		),
 		(
-			"internal/main_runner/autostart.rs",
-			fs::read_to_string(root.join("internal/main_runner/autostart.rs"))
+			"internal/main_runner/commands/autostart.rs",
+			fs::read_to_string(root.join("internal/main_runner/commands/autostart.rs"))
 				.expect("autostart.rs"),
 		),
 	];
