@@ -5,6 +5,8 @@
 
 use std::process;
 
+// The binary's modules live in one folder; they are imported here under their
+// own names so no path inside them depends on that folder.
 mod command_line;
 use command_line::audit;
 use command_line::cli;

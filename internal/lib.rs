@@ -19,24 +19,28 @@
 // size and expensive at three hundred.
 #![deny(missing_docs)]
 
+// One folder per concern. Each module the rest of the crate (or a consumer of
+// the library) reaches by name is re-exported from here under that name, so
+// moving a module between folders never changes a path.
 mod backends;
-pub use backends::autostart;
-pub(crate) use backends::engine;
-pub use backends::quadlet;
-mod parsing;
-pub use parsing::compose;
-use parsing::input;
-pub use parsing::substitute;
-use parsing::values;
 mod connection;
 mod errors;
-pub(crate) use connection::libpod;
-pub use connection::podman;
+mod parsing;
 /// Terminal colour/styling, honouring `--ansi`, `NO_COLOR`, and TTY detection.
 pub mod ui;
 /// Secure self-update for the `podup` binary (signature-verified release fetch).
 #[cfg(feature = "update")]
 pub mod update;
+
+pub use backends::autostart;
+pub(crate) use backends::engine;
+pub use backends::quadlet;
+pub(crate) use connection::libpod;
+pub use connection::podman;
+pub use parsing::compose;
+use parsing::input;
+pub use parsing::substitute;
+use parsing::values;
 
 pub(crate) use errors::error;
 #[doc(hidden)]
