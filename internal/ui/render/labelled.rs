@@ -5,9 +5,9 @@
 //! word: `autostart status` answers yes/no questions, sometimes in prose, and
 //! each answer has to land next to the question it answers.
 
-use super::identity_style;
-use super::status::status_style;
-use super::{paint, AnsiColor, Style};
+use super::super::identity_style;
+use super::super::status::status_style;
+use super::super::{paint, AnsiColor, Style};
 
 /// Print a `label: value` line where the label is scaffolding and the value
 /// carries the meaning.

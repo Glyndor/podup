@@ -11,9 +11,9 @@
 //! alive in one process (helmly-agent's fleet shape) do not evict each other's
 //! colours (#1517).
 
-use super::palette;
-use super::AnsiColor;
-use super::Style;
+use super::super::palette;
+use super::super::AnsiColor;
+use super::super::Style;
 
 /// The project name, so an identity colour can be keyed on the same label
 /// everywhere.

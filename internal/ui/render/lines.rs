@@ -5,8 +5,8 @@
 //! because it gates this writing, not the board: a command with no board open
 //! still emits the same lines through here.
 
-use super::identity_style;
-use super::{progress, AnsiColor, Style};
+use super::super::identity_style;
+use super::super::{progress, AnsiColor, Style};
 
 /// Process-wide switch for user-facing lifecycle progress output. Off by default
 /// so the library (consumed by other crates) stays silent unless asked; the CLI

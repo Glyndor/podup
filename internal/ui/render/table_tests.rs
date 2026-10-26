@@ -29,7 +29,7 @@ fn caution_style_distinguishes_yes_from_no() {
 /// arbitrary colour, matching how `status_style` treats an unknown word.
 #[test]
 fn caution_style_leaves_an_unknown_value_alone() {
-	assert_eq!(caution_style("maybe"), super::super::Style::new());
+	assert_eq!(caution_style("maybe"), super::super::super::Style::new());
 }
 
 /// The caution column reaches the rendered row. `render` is the uncoloured

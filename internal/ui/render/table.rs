@@ -56,11 +56,11 @@ pub fn sanitize_cell(s: &str) -> String {
 ///
 /// Pure and taking the cell text, so the mapping is unit-testable without
 /// rendering a table or reading the process-global colour choice.
-fn caution_style(cell: &str) -> super::Style {
+fn caution_style(cell: &str) -> super::super::Style {
 	match cell.trim() {
-		"yes" => super::Style::new().fg_color(Some(super::AnsiColor::Yellow.into())),
-		"no" => super::Style::new().dimmed(),
-		_ => super::Style::new(),
+		"yes" => super::super::Style::new().fg_color(Some(super::super::AnsiColor::Yellow.into())),
+		"no" => super::super::Style::new().dimmed(),
+		_ => super::super::Style::new(),
 	}
 }
 
@@ -208,19 +208,19 @@ impl Table {
 				let w = if i == last { 0 } else { widths[i] };
 				let padded = fit_cell(cell, w);
 				if colour && Some(i) == self.status_col {
-					return super::paint_status_cell(&padded);
+					return super::super::paint_status_cell(&padded);
 				}
 				if colour && Some(i) == self.identity_col && !cell.trim().is_empty() {
 					// The padding is inside the paint so the colour does not stop
 					// at the name and leave the gap bare; the codes are zero-width
 					// either way, so alignment is untouched.
-					return super::paint(super::identity_style(cell), &padded, true);
+					return super::super::paint(super::super::identity_style(cell), &padded, true);
 				}
 				if colour && Some(i) == self.caution_col {
-					return super::paint(caution_style(cell), &padded, true);
+					return super::super::paint(caution_style(cell), &padded, true);
 				}
 				if colour && self.dim_cols.contains(&i) {
-					return super::paint(super::Style::new().dimmed(), &padded, true);
+					return super::super::paint(super::super::Style::new().dimmed(), &padded, true);
 				}
 				padded
 			})
@@ -263,7 +263,7 @@ impl Table {
 		// that uses only that marker renders plain. `caution_col` was added
 		// without being listed, and it went unnoticed because its first caller,
 		// `volumes`, also sets `identity_col`, so the gate happened to be open.
-		let colour = self.colours_any_column() && super::stdout_colored();
+		let colour = self.colours_any_column() && super::super::stdout_colored();
 		for row in &self.rows {
 			writeln!(w, "{}", self.format_row(row, &widths, colour))?;
 		}

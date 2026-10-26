@@ -6,9 +6,9 @@
 //! A word with no status meaning is left alone rather than given an arbitrary
 //! colour, because a colour here claims a meaning it does not have.
 
-use super::paint;
-use super::AnsiColor;
-use super::Style;
+use super::super::paint;
+use super::super::AnsiColor;
+use super::super::Style;
 
 /// Whether an `Exited (N)` / `exited(N)` label reports a clean finish.
 ///
@@ -36,7 +36,7 @@ fn is_clean_exit(lower: &str) -> bool {
 /// substrings so it handles the bare state (`running`), Podman's verbose
 /// `Status` (`Up 2 minutes`, `Exited (1)`), and systemd's vocabulary, which
 /// `autostart status` reports.
-pub(super) fn status_style(status: &str) -> Option<Style> {
+pub(in super::super) fn status_style(status: &str) -> Option<Style> {
 	let s = status.to_ascii_lowercase();
 	// Checked before the red arm: `Exited (0)` contains "exit" and would
 	// otherwise be indistinguishable from `Exited (7)`.

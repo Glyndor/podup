@@ -3,11 +3,11 @@
 //!
 //! Deliberately the lowest layer in this module, below the surfaces that decide
 //! what a thing means. Nothing here reads the colour choice: an anstream sink
-//! strips what it is given, and a raw sink asks [`stdout_colored`](super::stdout_colored)
+//! strips what it is given, and a raw sink asks [`stdout_colored`](super::super::stdout_colored)
 //! first and passes the answer in as `enabled`.
 
-use super::AnsiColor;
-use super::Style;
+use super::super::AnsiColor;
+use super::super::Style;
 
 /// Bold, for table headers and emphasis.
 pub fn bold() -> Style {
