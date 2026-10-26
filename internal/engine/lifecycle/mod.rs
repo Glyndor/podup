@@ -3,14 +3,15 @@
 mod commands;
 mod down;
 mod execution;
-use execution::drop_recheck;
-pub(in crate::engine) use execution::parallel;
 mod planning;
 mod run;
 mod scale;
+mod up;
+
+use execution::drop_recheck;
+pub(in crate::engine) use execution::parallel;
 use planning::seed;
 use planning::targets;
-mod up;
 
 use std::collections::HashMap;
 

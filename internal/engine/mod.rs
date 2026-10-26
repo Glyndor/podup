@@ -2,26 +2,39 @@
 //!
 //! Translates a parsed [`ComposeFile`](crate::compose::types::ComposeFile) into Podman API calls via the libpod REST API.
 
-mod images;
-pub(crate) use images::build;
-pub(crate) use images::context;
-use images::image;
+// One folder per concern. Everything the rest of the crate reaches as
+// `crate::engine::<module>` is re-exported from here, so moving a module
+// between folders never changes a path outside the engine.
 mod builder;
-mod workload;
-pub(crate) use workload::container;
-use workload::container_config;
-use workload::declared;
-use workload::pod;
+#[cfg(test)]
+mod fake_podman;
 mod host_files;
+mod images;
+mod lifecycle;
+mod objects;
+mod observe;
+pub(crate) mod project;
+mod workload;
+
 pub(crate) use host_files::copy;
 #[cfg(feature = "watch")]
 use host_files::watch;
-mod observe;
+pub(crate) use images::build;
+pub(crate) use images::context;
+use images::image;
+use objects::network;
+use objects::secrets;
+use objects::volume;
+use objects::volume_mounts;
 pub(crate) use observe::events;
 pub(crate) use observe::query;
 use observe::stats;
 pub(crate) use observe::terminal;
-pub(crate) mod project;
+pub(crate) use workload::container;
+use workload::container_config;
+use workload::declared;
+use workload::pod;
+
 pub use build::{BuildOptions, PullOptions, PushOptions};
 pub use copy::CpOptions;
 pub use events::EventsOptions;
@@ -33,18 +46,10 @@ pub(crate) use container_config::build_log_config;
 pub(crate) use container_config::resources::{
 	effective_cpu_quota, effective_memory_limit, is_known_ulimit,
 };
-#[cfg(test)]
-mod fake_podman;
-mod lifecycle;
-mod objects;
 pub(crate) use network::apply_default_isolation;
 /// Re-exported so `startup::config_render` (in the binary crate) can call the
 /// same function `up` uses, instead of duplicating the resolution rule.
 pub use network::resolve_network_name;
-use objects::network;
-use objects::secrets;
-use objects::volume;
-use objects::volume_mounts;
 pub(crate) use pod::pod_network_mode;
 pub use project::is_safe_project_name;
 pub use project::{list_projects, list_projects_filtered, LsOptions};

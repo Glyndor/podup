@@ -2,7 +2,7 @@
 
 /// `pub(crate)` so the fuzz harness behind the `test-helpers` feature can
 /// reach `archive::extract_tar_guarded` without widening the published API:
-/// the chain stays `engine → copy → archive` all `pub(crate)` (or stricter),
+/// the chain stays `engine → host_files → copy → archive` all `pub(crate)` (or stricter),
 /// which a third-party crate cannot see.
 pub(crate) mod copy;
 #[cfg(feature = "watch")]
