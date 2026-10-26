@@ -181,3 +181,40 @@ fn duration_nanos_micros_and_hours() {
 fn duration_nanos_unknown_suffix_is_none() {
 	assert_eq!(parse_duration_nanos("5days"), None);
 }
+
+// --- the first out-of-range value is rejected, not saturated -------------
+//
+// `i64::MAX as f64` and `u64::MAX as f64` both round up to a power of two that
+// the integer type cannot hold, so a `>` bound let exactly that value through
+// and the `as` cast saturated it: the caller got `i64::MAX` or `u64::MAX` for
+// an input that said something else. Found by the `duration` fuzz target.
+
+#[test]
+fn memory_of_exactly_two_to_the_63_is_none() {
+	// 8589934592 * 2^30 = 2^63.
+	assert_eq!(parse_memory("8589934592g"), None);
+	assert_eq!(parse_memory("9223372036854775808"), None);
+}
+
+#[test]
+fn memory_just_under_the_limit_still_parses() {
+	assert_eq!(parse_memory("8589934591g"), Some(8_589_934_591_i64 << 30));
+}
+
+#[test]
+fn duration_nanos_of_exactly_two_to_the_63_is_none() {
+	assert_eq!(parse_duration_nanos("9223372036854775808ns"), None);
+	assert_eq!(
+		parse_duration_nanos("9223372036854774784ns"),
+		Some(9_223_372_036_854_774_784)
+	);
+}
+
+#[test]
+fn duration_secs_of_exactly_two_to_the_64_is_none() {
+	assert_eq!(parse_duration_secs("18446744073709551616s"), None);
+	assert_eq!(
+		parse_duration_secs("18446744073709549568s"),
+		Some(18_446_744_073_709_549_568)
+	);
+}
