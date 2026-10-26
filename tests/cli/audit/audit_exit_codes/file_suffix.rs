@@ -6,7 +6,7 @@
 //! prefixes falls through to the flagging rule, and `--strict` exits
 //! non-zero: the suffix alone is not an exemption.
 //!
-//! Split out from `tests/audit/audit_exit_codes.rs` so the parent file stays
+//! Split out from `tests/cli/audit/audit_exit_codes.rs` so the parent file stays
 //! under the repository line limit; the helpers (`run`, `run_with_secret_env`,
 //! `write_compose`) are inherited via `use super::*`.
 

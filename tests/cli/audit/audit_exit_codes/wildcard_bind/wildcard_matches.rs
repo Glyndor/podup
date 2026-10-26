@@ -2,7 +2,7 @@
 //! `--wildcard-binds` is set, in short form and long form, and which
 //! specific bindings it must leave alone.
 //!
-//! Split out of `tests/audit/audit_exit_codes/wildcard_bind/mod.rs`; the helpers
+//! Split out of `tests/cli/audit/audit_exit_codes/wildcard_bind/mod.rs`; the helpers
 //! are inherited via `use super::*`.
 
 use super::*;

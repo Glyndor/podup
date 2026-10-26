@@ -1,7 +1,7 @@
 //! The host root entry: a superset of every other row on the list, matched
 //! exactly rather than by prefix, in every spelling the normaliser folds.
 //!
-//! Split out of `tests/audit/audit_exit_codes/sensitive_bind/mod.rs`; the helpers
+//! Split out of `tests/cli/audit/audit_exit_codes/sensitive_bind/mod.rs`; the helpers
 //! are inherited via `use super::*`.
 
 use super::*;

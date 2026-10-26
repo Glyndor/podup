@@ -112,7 +112,7 @@ mod secret_environment;
 #[path = "audit_exit_codes/env_independence.rs"]
 mod env_independence;
 
-// The `_FILE` suffix tests live in `tests/audit/audit_exit_codes/file_suffix.rs`.
+// The `_FILE` suffix tests live in `tests/cli/audit/audit_exit_codes/file_suffix.rs`.
 // Same child-module pattern as the rows above: the helpers above
 // (`write_compose`, `run`, `run_with_secret_env`) are inherited via
 // `use super::*;`.

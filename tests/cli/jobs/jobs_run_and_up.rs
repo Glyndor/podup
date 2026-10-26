@@ -13,7 +13,7 @@ use tempfile::TempDir;
 
 // The fake engine is a Unix domain socket server.
 #[cfg(unix)]
-#[path = "hostile_support/fake_engine.rs"]
+#[path = "../../hostile/support/fake_engine.rs"]
 mod fake_engine;
 
 /// A socket that cannot be connected to. Every command these tests run

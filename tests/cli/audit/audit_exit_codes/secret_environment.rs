@@ -1,7 +1,7 @@
 //! `secret_in_environment`: which keys fire the finding and which stay
 //! silent.
 //!
-//! Split out from `tests/audit/audit_exit_codes.rs` so the parent file stays under
+//! Split out from `tests/cli/audit/audit_exit_codes.rs` so the parent file stays under
 //! the repository line limit; the helpers (`run`, `write_compose`) are
 //! inherited via `use super::*`.
 

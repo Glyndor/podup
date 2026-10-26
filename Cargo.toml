@@ -72,8 +72,7 @@ required-features = ["test-helpers"]
 # Test crates that live in a folder. Cargo discovers only `tests/*.rs` and
 # `tests/*/main.rs`, so a crate under `tests/<concern>/` is named here, and
 # keeping the same `name` keeps `cargo test --test <name>`, the CI lanes and
-# every test's reported identity as they were. The crates still at the top
-# level are found by discovery and need no entry. `every_source_file_is_compiled`
+# every test's reported identity as they were. `every_source_file_is_compiled`
 # reads these paths, so a crate listed here cannot go unbuilt silently.
 [[test]]
 name = "build_contract"
@@ -157,7 +156,7 @@ path = "tests/compose/parsing/substitute.rs"
 
 [[test]]
 name = "audit_exit_codes"
-path = "tests/audit/audit_exit_codes.rs"
+path = "tests/cli/audit/audit_exit_codes.rs"
 
 [[test]]
 name = "audit_ignore_lists"
@@ -165,7 +164,7 @@ path = "tests/supply_chain/audit_ignore_lists.rs"
 
 [[test]]
 name = "audit_list_checks"
-path = "tests/audit/audit_list_checks.rs"
+path = "tests/cli/audit/audit_list_checks.rs"
 
 [[test]]
 name = "dependabot_covers_every_lockfile"
@@ -266,6 +265,42 @@ path = "tests/workflows/workflow_required_checks.rs"
 [[test]]
 name = "workflow_toolchain_pin"
 path = "tests/workflows/workflow_toolchain_pin.rs"
+
+[[test]]
+name = "audit_sensitive_bind_jobs"
+path = "tests/cli/audit/sensitive_bind/audit_sensitive_bind_jobs.rs"
+
+[[test]]
+name = "audit_sensitive_bind_paths"
+path = "tests/cli/audit/sensitive_bind/audit_sensitive_bind_paths.rs"
+
+[[test]]
+name = "hostile_autostart_units"
+path = "tests/hostile/input/hostile_autostart_units.rs"
+
+[[test]]
+name = "hostile_terminal_args"
+path = "tests/hostile/output/hostile_terminal_args.rs"
+
+[[test]]
+name = "hostile_terminal_controls"
+path = "tests/hostile/output/hostile_terminal_controls.rs"
+
+[[test]]
+name = "jobs_like_services"
+path = "tests/cli/jobs/jobs_like_services.rs"
+
+[[test]]
+name = "jobs_run_and_up"
+path = "tests/cli/jobs/jobs_run_and_up.rs"
+
+[[test]]
+name = "jobs_section"
+path = "tests/cli/jobs/jobs_section.rs"
+
+[[test]]
+name = "quadlet_jobs"
+path = "tests/quadlet/quadlet_jobs.rs"
 
 [[test]]
 name = "integration_leak_scan"

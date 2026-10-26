@@ -7,7 +7,7 @@
 //! non-sensitive mount does not fire, `:ro` still fires, and a path the
 //! operator chose on purpose (the project directory) does not fire.
 //!
-//! Split out of `tests/audit/audit_exit_codes/sensitive_bind.rs` so each file stays
+//! Split out of `tests/cli/audit/audit_exit_codes/sensitive_bind.rs` so each file stays
 //! under the repository line limit; this file holds the helpers and the `mod`
 //! lines, and the scenario files inherit them with `use super::*`.
 

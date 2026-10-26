@@ -1,7 +1,7 @@
 //! The compose fields the hostile Quadlet test attacks, one case per field.
 //!
 //! Declared by `hostile_quadlet_units.rs` with
-//! `#[path = "hostile_support/quadlet_cases.rs"] mod quadlet_cases;`.
+//! `#[path = "../support/quadlet_cases.rs"] mod quadlet_cases;`.
 
 /// One compose field to attack. `yaml` receives the YAML-quoted payload.
 pub struct Case {
