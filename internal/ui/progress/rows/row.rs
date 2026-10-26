@@ -1,4 +1,4 @@
-//! Turning one [`Row`](super::Row) into one line of text.
+//! Turning one [`Row`](super::super::Row) into one line of text.
 //!
 //! Pure, and separate from the terminal driver on purpose: the arithmetic that
 //! decides how wide a line is, is the same arithmetic the cursor-up repaint
@@ -9,7 +9,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::{Row, State};
+use super::super::{Row, State};
 use crate::ui::{fit_cell, identity_style, paint, stderr_colored, AnsiColor, Style};
 
 /// Frames of the working marker. Ten braille cells, so no dependency and no font

@@ -10,7 +10,7 @@
 /// lock is still a lock, so a failed test does not take the rest with it.
 static SESSION_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-pub(super) fn hold_session() -> std::sync::MutexGuard<'static, ()> {
+pub(in super::super) fn hold_session() -> std::sync::MutexGuard<'static, ()> {
 	SESSION_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
@@ -18,6 +18,6 @@ pub(super) fn hold_session() -> std::sync::MutexGuard<'static, ()> {
 /// from a known state. The buffer is process-global; tests that exercise the
 /// transitional/final interaction must call this before and after, otherwise
 /// the order in which `cargo test` runs them leaks state.
-pub(super) fn reset_plain_buffer() {
+pub(in super::super) fn reset_plain_buffer() {
 	crate::ui::progress::buffer_drain_for_tests();
 }

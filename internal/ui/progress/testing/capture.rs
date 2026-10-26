@@ -14,26 +14,26 @@
 
 use std::cell::{Cell, RefCell};
 
-use super::Kind;
+use super::super::Kind;
 
 /// One recorded call.
 #[derive(Debug, Clone)]
 pub(crate) enum Event {
-	/// A [`super::begin`], with the rows it seeded and whether a live region
+	/// A [`super::super::begin`], with the rows it seeded and whether a live region
 	/// would be opened for them. `live` is false under `cargo test`, where
 	/// stderr is redirected, which is the same condition a pipe puts podup in.
 	Begin {
 		rows: Vec<(Kind, String)>,
 		live: bool,
 	},
-	/// An [`super::start`]. The verb is the same string the live row would
+	/// An [`super::super::start`]. The verb is the same string the live row would
 	/// repaint with, so a test can assert what the row actually said.
 	Start {
 		kind: Kind,
 		name: String,
 		verb: String,
 	},
-	/// A [`super::finish`], the closing verb that turns `Pulling` into
+	/// A [`super::super::finish`], the closing verb that turns `Pulling` into
 	/// `Pulled`. Recorded alongside `start` so a test can assert the full
 	/// row lifecycle in one place.
 	Finish {
@@ -41,7 +41,7 @@ pub(crate) enum Event {
 		name: String,
 		verb: String,
 	},
-	/// An [`super::end`].
+	/// An [`super::super::end`].
 	End,
 }
 
@@ -52,7 +52,7 @@ thread_local! {
 	static EVENTS: RefCell<Vec<Event>> = const { RefCell::new(Vec::new()) };
 }
 
-pub(super) fn record_begin(rows: &[(Kind, String)], live: bool) {
+pub(in super::super) fn record_begin(rows: &[(Kind, String)], live: bool) {
 	if !RECORDING.get() {
 		return;
 	}
@@ -68,7 +68,7 @@ pub(super) fn record_begin(rows: &[(Kind, String)], live: bool) {
 /// captured so a test can assert what the row actually said. `None` for the
 /// `Kind` means `from_noun` failed upstream, which `start` already short-circuits
 /// on, so callers only invoke this when `kind` is `Some`.
-pub(super) fn record_start(kind: Kind, name: &str, verb: &str) {
+pub(in super::super) fn record_start(kind: Kind, name: &str, verb: &str) {
 	if !RECORDING.get() {
 		return;
 	}
@@ -99,7 +99,7 @@ pub(crate) fn record_finish(kind: Kind, name: &str, verb: &str) {
 	});
 }
 
-pub(super) fn record_end() {
+pub(in super::super) fn record_end() {
 	if !RECORDING.get() {
 		return;
 	}

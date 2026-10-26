@@ -15,9 +15,9 @@
 /// renderer being skipped.
 ///
 /// `crate::ui::stderr_colored()` is consulted separately, inside
-/// [`row::render`](super::row::render), so a single board colour can be on or off
+/// [`row::render`](super::super::row::render), so a single board colour can be on or off
 /// without the region being on or off.
-pub(super) fn live_terminal() -> bool {
+pub(in super::super) fn live_terminal() -> bool {
 	use std::io::IsTerminal;
 	std::io::stderr().is_terminal()
 }
@@ -25,7 +25,7 @@ pub(super) fn live_terminal() -> bool {
 /// The current terminal width from a `window_size()` answer, or `None` when
 /// the runtime cannot tell. Per-repaint so a resize mid-command is reflected
 /// on the next frame (#1364).
-pub(super) fn live_width() -> Option<usize> {
+pub(in super::super) fn live_width() -> Option<usize> {
 	width_from(crate::engine::query::terminal::window_size())
 }
 

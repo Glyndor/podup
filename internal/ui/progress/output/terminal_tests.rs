@@ -24,7 +24,7 @@ fn live_sink_depends_on_the_terminal_not_on_colour() {
 	// own colour gate fails the body-of-`row::render` check (and the
 	// `no_color_keeps_the_spinner_and_drops_the_styling` test below).
 	let terminal_src = include_str!("terminal.rs");
-	let row_src = include_str!("row.rs");
+	let row_src = include_str!("../rows/row.rs");
 	let live_body = fn_body(terminal_src, "fn live_terminal");
 	let render_body = fn_body(row_src, "fn render");
 	assert!(

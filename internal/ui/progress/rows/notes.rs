@@ -3,16 +3,16 @@
 //!
 //! On a terminal these are dimmed lines painted under the row; in a pipe the
 //! same lines are written through the plain sink as they arrive. One entry per
-//! line is the invariant [`Region`](super::live::Region) rests on: it counts one
+//! line is the invariant [`Region`](super::super::live::Region) rests on: it counts one
 //! terminal row per entry, and an entry holding an embedded newline breaks the
 //! arithmetic for every repaint after it (#1733).
 
 use std::collections::HashMap;
 use std::collections::VecDeque;
 
-use super::session::{repaint, SESSION};
-use super::sink::Sink;
-use super::Kind;
+use super::super::session::{repaint, SESSION};
+use super::super::sink::Sink;
+use super::super::Kind;
 
 /// How many stream lines a row keeps under itself when it is being built.
 /// Tuned by reading a real buildah stream: the last few lines are the layer
@@ -141,7 +141,7 @@ pub(crate) const MAX_NOTES_PER_ROW_FOR_TESTS: usize = MAX_NOTES_PER_ROW;
 /// 12 or over 40 cells; a name past 40 is cut with an ellipsis by the row
 /// renderer. Applied at `begin` over the seeded rows and again for every row
 /// `start` adds later.
-pub(super) fn name_column_width(current: usize, name: &str) -> usize {
+pub(in super::super) fn name_column_width(current: usize, name: &str) -> usize {
 	current.max(name.chars().count()).clamp(12, 40)
 }
 

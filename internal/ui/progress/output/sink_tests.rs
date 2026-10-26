@@ -1,4 +1,4 @@
-use super::super::test_support::{hold_session, reset_plain_buffer};
+use super::super::super::test_support::{hold_session, reset_plain_buffer};
 use crate::ui::progress::{buffered_count_for_tests, is_noop_final_for_tests};
 
 /// The plain sink emits only the final verb when a transitional one was

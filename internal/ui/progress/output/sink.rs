@@ -7,8 +7,8 @@
 
 use std::sync::Mutex;
 
-use super::session::repaint;
-use super::Kind;
+use super::super::session::repaint;
+use super::super::Kind;
 
 /// The plain-sink buffer for transitional verbs that have not yet been
 /// replaced by a final one.
@@ -56,7 +56,7 @@ fn is_transitional(verb: &str) -> bool {
 }
 
 /// Which renderer a just-recorded event belongs to.
-pub(super) enum Sink {
+pub(in super::super) enum Sink {
 	/// A region is open; the event shows up on the next repaint.
 	Live,
 	/// A board is open but not on a terminal, so the event is a line.
@@ -80,7 +80,7 @@ pub(super) enum Sink {
 /// buffered one (drops it) and writes itself. `progress::end` flushes any
 /// still-buffered entries so a crash mid-way still leaves `Creating` in the
 /// log (#1673).
-pub(super) fn emit(sink: Sink, kind: Kind, name: &str, verb: &str) {
+pub(in super::super) fn emit(sink: Sink, kind: Kind, name: &str, verb: &str) {
 	match sink {
 		Sink::Live => repaint(),
 		// Both `Plain` (board open but no region) and `None` (no board at all)
@@ -139,7 +139,7 @@ fn buffer_push(kind: Kind, name: &str, verb: &str) {
 
 /// Drain the buffer in insertion order, emitting one line per entry. Used at
 /// `progress::end` to flush transitional verbs that never received a final.
-pub(super) fn buffer_drain() {
+pub(in super::super) fn buffer_drain() {
 	let drained: Vec<(Kind, String, String)> = if let Ok(mut buf) = PLAIN_BUFFER.lock() {
 		std::mem::take(&mut *buf)
 	} else {
