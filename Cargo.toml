@@ -260,7 +260,7 @@ path = "tests/repository/workflows/workflow_debian_image.rs"
 
 [[test]]
 name = "workflow_fuzz_targets"
-path = "tests/workflows/workflow_fuzz_targets.rs"
+path = "tests/repository/workflows/workflow_fuzz_targets.rs"
 
 [[test]]
 name = "workflow_required_checks"

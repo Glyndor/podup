@@ -22,7 +22,7 @@ Coverage-guided fuzz targets for podup's untrusted-input surfaces, built on
 | `sanitize` | Terminal escaping of names and table cells: no control character survives, safe text unchanged |
 | `libpod_json` | Every daemon response type decoded from arbitrary JSON, deep nesting and huge numbers included |
 
-`audit_bind_path` compiles `internal/audit/check_sensitive_bind.rs` into the fuzz crate
+`audit_bind_path` compiles `internal/command_line/audit/check_sensitive_bind.rs` into the fuzz crate
 (`fuzz/support/audit`), because the audit lives in the `podup` binary and a fuzz crate cannot link a binary.
 
 The `dotenv` and `stream_frame` targets reach crate-private parsers through the

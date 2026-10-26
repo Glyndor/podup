@@ -9,7 +9,7 @@ use libfuzzer_sys::fuzz_target;
 use podup::compose::types::{PortMapping, StringOrU16};
 use podup::ports::{parse_ports, to_libpod, ParsedPort};
 
-/// `MAX_PORT_RANGE` in `internal/values/ports.rs`, which is crate-private.
+/// `MAX_PORT_RANGE` in `internal/parsing/values/ports.rs`, which is crate-private.
 const MAX_PORT_RANGE: usize = 1024;
 
 /// The short form that names exactly `port`.

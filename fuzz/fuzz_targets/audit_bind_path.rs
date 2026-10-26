@@ -8,7 +8,7 @@
 //! must be reported.
 //!
 //! The audit lives in the `podup` binary, which this crate cannot link, so the
-//! real `internal/audit/check_sensitive_bind.rs` is compiled in here with the
+//! real `internal/command_line/audit/check_sensitive_bind.rs` is compiled in here with the
 //! two items it borrows from its parent supplied by `support/audit`.
 
 use libfuzzer_sys::fuzz_target;
