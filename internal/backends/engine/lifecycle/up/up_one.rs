@@ -136,6 +136,11 @@ impl Engine {
 		// than inventing `name-1`, `name-2`, … (docker compose refuses this too).
 		crate::engine::lifecycle::scale::check_fixed_name_scale(name, service, replicas)?;
 
+		// The environment this service's containers will run with, resolved
+		// once and then shared by the hash below and the create payload, so
+		// the label a container carries and the environment it is created with
+		// describe the same snapshot.
+		let env = self.effective_env(service)?;
 		let new_hash = config_hash(
 			service,
 			file,
@@ -145,6 +150,7 @@ impl Engine {
 				.uploaded_file_digests
 				.lock()
 				.expect("uploaded_file_digests mutex poisoned"),
+			&env,
 		)?;
 		// Shared by this service's replicas only, and created here on purpose:
 		// the image acquisition above is over, so nothing this service does
@@ -174,6 +180,7 @@ impl Engine {
 					no_recreate,
 					force_recreate,
 					start,
+					&env,
 				)
 			});
 		if let Some(e) = crate::engine::lifecycle::parallel::first_error(
@@ -206,6 +213,7 @@ impl Engine {
 		no_recreate: bool,
 		force_recreate: bool,
 		start: bool,
+		env: &std::collections::BTreeMap<String, String>,
 	) -> Result<()> {
 		let present = existing.contains_key(&container_name);
 		if !force_recreate {
@@ -254,7 +262,7 @@ impl Engine {
 			(false, false) => ("Creating", "Created"),
 		};
 		crate::ui::progress::start("Container", &container_name, doing);
-		self.recreate_service(&container_name, name, service, file, start)
+		self.recreate_service(&container_name, name, service, file, start, env)
 			.await?;
 		crate::ui::progress_line("Container", &container_name, done);
 

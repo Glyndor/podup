@@ -9,6 +9,7 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::types::container::{LinuxDevice, LinuxDeviceCgroup, PortMapping};
 use crate::ports;
 
+use super::effective_env;
 use super::fields::{build_label_file_labels, encode_path_for_label, resolve_container_labels};
 use super::resolve::{config_hash, resolve_volume_name};
 use super::security::parse_device_cgroup_rule;
@@ -18,6 +19,20 @@ use crate::engine::container_config::cdi_devices;
 use crate::engine::Engine;
 
 impl Engine {
+	/// The environment a service's container will run with: its own
+	/// `environment:` entries, the values its `env_file:` files carry, and the
+	/// host's value for every bare passthrough key.
+	///
+	/// Resolved once per service and then shared by the create payload and the
+	/// config hash, so the two cannot describe different snapshots of the same
+	/// environment.
+	pub(in crate::backends::engine) fn effective_env(
+		&self,
+		service: &Service,
+	) -> Result<std::collections::BTreeMap<String, String>> {
+		effective_env(service, &self.base_dir)
+	}
+
 	/// Resolve a service's named-volume reference to the actual volume name
 	/// that `create_volumes` produced: a custom `name:`, the raw name for an
 	/// external volume, or the `{project}_{name}` form. An empty reference is an
@@ -34,11 +49,17 @@ impl Engine {
 	/// Compute the final `labels:` map for a container, merging the
 	/// compose-file labels, the `x-podman-autoupdate` extension, the
 	/// `podup.*` ownership labels, and the `podup.config-files` path list.
+	///
+	/// `env` is the environment the container is created with; it is folded
+	/// into the config hash so a changed `env_file:` (or a changed host value
+	/// of a passthrough variable) replaces the container instead of leaving it
+	/// running with the environment it had before.
 	pub(super) fn compute_container_labels(
 		&self,
 		service: &Service,
 		file: &ComposeFile,
 		service_name: &str,
+		env: &std::collections::BTreeMap<String, String>,
 	) -> Result<HashMap<String, String>> {
 		let label_file_labels = build_label_file_labels(service, &self.base_dir)?;
 		// Per the Compose Specification, deploy.labels are set on the service
@@ -72,7 +93,7 @@ impl Engine {
 			.expect("uploaded_file_digests mutex poisoned");
 		labels.insert(
 			"podup.config-hash".to_string(),
-			config_hash(service, file, &self.project, &self.base_dir, &digests)?,
+			config_hash(service, file, &self.project, &self.base_dir, &digests, env)?,
 		);
 		drop(digests);
 		// Where this project's compose file lives. `ls` discovers projects purely

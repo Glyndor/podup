@@ -31,8 +31,10 @@ async fn create_sends_every_compose_field_in_the_spec_generator() {
 		.expect("the fixture must declare a `web` service")
 		.clone();
 
+	let env = crate::engine::container::effective_env(&service, &std::env::temp_dir())
+		.expect("the environment resolves");
 	engine
-		.create_and_start("proj-web-1", "web", &service, &file, true)
+		.create_and_start("proj-web-1", "web", &service, &file, true, &env)
 		.await
 		.expect("create_and_start must succeed against the fake socket");
 

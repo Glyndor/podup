@@ -19,6 +19,11 @@ fn empty_digests() -> std::collections::HashMap<String, [u8; 32]> {
 	std::collections::HashMap::new()
 }
 
+/// An empty environment for the tests that are not about the environment.
+fn empty_env() -> std::collections::BTreeMap<String, String> {
+	std::collections::BTreeMap::new()
+}
+
 /// Temp directory used as the project base for `config_hash`: relative
 /// `file:` paths resolve against it, so each test owns its own fixture
 /// tree and cannot race another test's reads.
@@ -63,11 +68,25 @@ fn config_hash_prefers_recorded_file_digest_over_disk_for_secret() {
 		format!("{PROJECT}_secret_s"),
 		<[u8; 32]>::from(Sha256::digest(b"v1")),
 	);
-	let h_with_recorded =
-		config_hash(&file.services["web"], &file, PROJECT, base.path(), &digests).unwrap();
+	let h_with_recorded = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&digests,
+		&empty_env(),
+	)
+	.unwrap();
 	std::fs::write(&file_path, b"v2").unwrap();
-	let h_after_disk_change =
-		config_hash(&file.services["web"], &file, PROJECT, base.path(), &digests).unwrap();
+	let h_after_disk_change = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&digests,
+		&empty_env(),
+	)
+	.unwrap();
 	assert_eq!(
 		h_with_recorded, h_after_disk_change,
 		"a recorded digest must keep the hash stable even when the on-disk file changes"
@@ -82,6 +101,7 @@ fn config_hash_prefers_recorded_file_digest_over_disk_for_secret() {
 		PROJECT,
 		base.path(),
 		&empty_digests(),
+		&empty_env(),
 	)
 	.unwrap();
 	std::fs::write(&file_path, b"v2").unwrap();
@@ -91,6 +111,7 @@ fn config_hash_prefers_recorded_file_digest_over_disk_for_secret() {
 		PROJECT,
 		base.path(),
 		&empty_digests(),
+		&empty_env(),
 	)
 	.unwrap();
 	assert_ne!(
@@ -126,11 +147,25 @@ fn config_hash_prefers_recorded_file_digest_over_disk_for_config() {
 		format!("{PROJECT}_config_c"),
 		<[u8; 32]>::from(Sha256::digest(b"v1")),
 	);
-	let h_with_recorded =
-		config_hash(&file.services["web"], &file, PROJECT, base.path(), &digests).unwrap();
+	let h_with_recorded = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&digests,
+		&empty_env(),
+	)
+	.unwrap();
 	std::fs::write(&file_path, b"v2").unwrap();
-	let h_after_disk_change =
-		config_hash(&file.services["web"], &file, PROJECT, base.path(), &digests).unwrap();
+	let h_after_disk_change = config_hash(
+		&file.services["web"],
+		&file,
+		PROJECT,
+		base.path(),
+		&digests,
+		&empty_env(),
+	)
+	.unwrap();
 	assert_eq!(
 		h_with_recorded, h_after_disk_change,
 		"a recorded digest must keep the config hash stable even when the on-disk file changes"
@@ -143,6 +178,7 @@ fn config_hash_prefers_recorded_file_digest_over_disk_for_config() {
 		PROJECT,
 		base.path(),
 		&empty_digests(),
+		&empty_env(),
 	)
 	.unwrap();
 	std::fs::write(&file_path, b"v2").unwrap();
@@ -152,6 +188,7 @@ fn config_hash_prefers_recorded_file_digest_over_disk_for_config() {
 		PROJECT,
 		base.path(),
 		&empty_digests(),
+		&empty_env(),
 	)
 	.unwrap();
 	assert_ne!(
@@ -186,9 +223,24 @@ fn two_services_sharing_a_file_secret_get_the_same_hash_from_one_snapshot() {
 		<[u8; 32]>::from(Sha256::digest(b"v1")),
 	);
 
-	let h_app = config_hash(&file.services["app"], &file, PROJECT, base.path(), &snap).unwrap();
-	let h_worker =
-		config_hash(&file.services["worker"], &file, PROJECT, base.path(), &snap).unwrap();
+	let h_app = config_hash(
+		&file.services["app"],
+		&file,
+		PROJECT,
+		base.path(),
+		&snap,
+		&empty_env(),
+	)
+	.unwrap();
+	let h_worker = config_hash(
+		&file.services["worker"],
+		&file,
+		PROJECT,
+		base.path(),
+		&snap,
+		&empty_env(),
+	)
+	.unwrap();
 	assert_eq!(
 		h_app, h_worker,
 		"two services referencing the same file: secret must hash equal from one snapshot"
@@ -197,10 +249,24 @@ fn two_services_sharing_a_file_secret_get_the_same_hash_from_one_snapshot() {
 	// And changing the file on disk after the snapshot does not move
 	// either hash, since both services consult the snapshot, not the disk.
 	std::fs::write(&file_path, b"v2").unwrap();
-	let h_app_after =
-		config_hash(&file.services["app"], &file, PROJECT, base.path(), &snap).unwrap();
-	let h_worker_after =
-		config_hash(&file.services["worker"], &file, PROJECT, base.path(), &snap).unwrap();
+	let h_app_after = config_hash(
+		&file.services["app"],
+		&file,
+		PROJECT,
+		base.path(),
+		&snap,
+		&empty_env(),
+	)
+	.unwrap();
+	let h_worker_after = config_hash(
+		&file.services["worker"],
+		&file,
+		PROJECT,
+		base.path(),
+		&snap,
+		&empty_env(),
+	)
+	.unwrap();
 	assert_eq!(h_app, h_app_after);
 	assert_eq!(h_worker, h_worker_after);
 }

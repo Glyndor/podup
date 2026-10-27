@@ -32,6 +32,7 @@ fn config_hash_tracks_file_secret_bytes() {
 		PROJECT,
 		base.path(),
 		&empty_digests(),
+		&empty_env(),
 	)
 	.unwrap();
 	std::fs::write(&file_path, b"v2").unwrap();
@@ -41,6 +42,7 @@ fn config_hash_tracks_file_secret_bytes() {
 		PROJECT,
 		base.path(),
 		&empty_digests(),
+		&empty_env(),
 	)
 	.unwrap();
 	assert_ne!(
@@ -66,6 +68,7 @@ fn config_hash_stable_when_file_bytes_unchanged() {
 		PROJECT,
 		base.path(),
 		&empty_digests(),
+		&empty_env(),
 	)
 	.unwrap();
 	std::fs::write(&file_path, b"v1").unwrap();
@@ -75,6 +78,7 @@ fn config_hash_stable_when_file_bytes_unchanged() {
 		PROJECT,
 		base.path(),
 		&empty_digests(),
+		&empty_env(),
 	)
 	.unwrap();
 	assert_eq!(
@@ -100,6 +104,7 @@ fn config_hash_tracks_file_config_bytes() {
 		PROJECT,
 		base.path(),
 		&empty_digests(),
+		&empty_env(),
 	)
 	.unwrap();
 	std::fs::write(&file_path, b"b").unwrap();
@@ -109,6 +114,7 @@ fn config_hash_tracks_file_config_bytes() {
 		PROJECT,
 		base.path(),
 		&empty_digests(),
+		&empty_env(),
 	)
 	.unwrap();
 	assert_ne!(
@@ -135,6 +141,7 @@ fn config_hash_missing_file_errors_with_path() {
 		PROJECT,
 		base.path(),
 		&empty_digests(),
+		&empty_env(),
 	)
 	.unwrap_err();
 	let msg = err.to_string();
@@ -167,6 +174,7 @@ fn config_hash_distinguishes_file_secret_from_inline_with_same_bytes() {
 		PROJECT,
 		base.path(),
 		&empty_digests(),
+		&empty_env(),
 	)
 	.unwrap();
 	let h_inline = config_hash(
@@ -175,6 +183,7 @@ fn config_hash_distinguishes_file_secret_from_inline_with_same_bytes() {
 		PROJECT,
 		base.path(),
 		&empty_digests(),
+		&empty_env(),
 	)
 	.unwrap();
 	assert_ne!(

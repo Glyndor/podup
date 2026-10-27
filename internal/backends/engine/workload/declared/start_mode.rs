@@ -53,6 +53,11 @@ impl Engine {
 			.uploaded_file_digests
 			.lock()
 			.expect("uploaded_file_digests mutex poisoned");
-		config_hash(service, file, &self.project, &self.base_dir, &digests)
+		// The environment the container would run with, resolved the same way
+		// the create path resolves it: a container created from a changed
+		// `env_file:` no longer matches the file, and this is the comparison
+		// that says so.
+		let env = self.effective_env(service)?;
+		config_hash(service, file, &self.project, &self.base_dir, &digests, &env)
 	}
 }

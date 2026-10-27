@@ -15,7 +15,14 @@ async fn pasta_options_are_sent_apart_from_the_mode() {
 	.expect("compose must parse");
 	let service = file.services.get("web").unwrap().clone();
 	engine
-		.create_and_start("proj-web-1", "web", &service, &file, true)
+		.create_and_start(
+			"proj-web-1",
+			"web",
+			&service,
+			&file,
+			true,
+			&std::collections::BTreeMap::new(),
+		)
 		.await
 		.expect("create_and_start must succeed against the fake socket");
 	let body = decode_create_body(&fake.bodies.lock().unwrap().clone());

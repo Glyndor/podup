@@ -274,7 +274,8 @@ impl Engine {
 		// The rebuild recreates the container, so it runs the same
 		// initialization `up` runs: the `pre_start` steps before the
 		// container exists, the `post_start` hooks inside it once it is up.
-		self.recreate_service(&container_name, service_name, service, file, true)
+		let env = self.effective_env(service)?;
+		self.recreate_service(&container_name, service_name, service, file, true, &env)
 			.await?;
 		self.run_post_start_hooks(&container_name, service).await
 	}

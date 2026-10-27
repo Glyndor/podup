@@ -6,7 +6,7 @@ mod links;
 mod signals;
 mod volumes;
 
-pub(super) use environment::build_env;
+pub(crate) use environment::effective_env;
 pub(crate) use hash::config_hash;
 pub(super) use links::{resolve_links, resolve_volumes_from};
 pub(super) use signals::resolve_stop_signal;

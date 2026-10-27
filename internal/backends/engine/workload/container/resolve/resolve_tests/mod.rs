@@ -32,3 +32,19 @@ fn empty_digests() -> std::collections::HashMap<String, [u8; 32]> {
 fn temp_base() -> tempfile::TempDir {
 	tempfile::tempdir().expect("tempdir")
 }
+
+/// An empty environment for the hash tests that are not about the
+/// environment. The hash covers the environment, so a test that is not about
+/// it says so explicitly instead of resolving a fixture it does not have.
+fn empty_env() -> std::collections::BTreeMap<String, String> {
+	std::collections::BTreeMap::new()
+}
+
+/// The environment a service resolves to right now, the same way the engine
+/// resolves it before it hashes the service or creates the container.
+fn resolved_env(
+	service: &crate::compose::types::Service,
+	base: &std::path::Path,
+) -> std::collections::BTreeMap<String, String> {
+	super::effective_env(service, base).expect("the environment resolves")
+}

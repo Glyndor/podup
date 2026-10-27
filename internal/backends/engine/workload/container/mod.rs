@@ -18,8 +18,8 @@ mod security;
 mod spec;
 mod warnings;
 
-use resolve::{build_env, resolve_links, resolve_stop_signal, resolve_volumes_from};
-pub(crate) use resolve::{config_hash, resolve_bind_source};
+pub(crate) use resolve::{config_hash, effective_env, resolve_bind_source};
+use resolve::{resolve_links, resolve_stop_signal, resolve_volumes_from};
 pub(crate) use spec::{build_spec_generator, NamespaceInputs, SecurityInputs, SpecInputs};
 use warnings::host_mode;
 use warnings::rootless;
@@ -49,6 +49,7 @@ impl Engine {
 		service: &Service,
 		file: &ComposeFile,
 		start: bool,
+		env: &std::collections::BTreeMap<String, String>,
 	) -> Result<()> {
 		// Reject an invalid container name client-side (podman would otherwise
 		// answer with an opaque HTTP 500 from its name-regex check). Covers the
@@ -83,15 +84,11 @@ impl Engine {
 		warn_swarm_only_deploy(service_name, service);
 
 		// --- Environment ---
-		// A bare `KEY` (no `=`) is a passthrough: its value comes from podup's
-		// own environment, matching docker-compose. Drop it only when unset.
-		let env: HashMap<String, String> = build_env(service, &self.base_dir)?
-			.into_iter()
-			.filter_map(|s| match s.find('=') {
-				Some(idx) => Some((s[..idx].to_string(), s[idx + 1..].to_string())),
-				None => std::env::var(&s).ok().map(|v| (s, v)),
-			})
-			.collect();
+		// The environment the container runs with, resolved by the caller: the
+		// same map the config hash is built from, so the label this container
+		// carries and the environment it is created with describe one snapshot.
+		let spec_env: HashMap<String, String> =
+			env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
 
 		// Every secret/config source (inline, `file:` and `external: true`) is
 		// injected as a Podman-native secret, never a bind mount. The ones podup
@@ -144,7 +141,7 @@ impl Engine {
 		};
 
 		// --- Labels ---
-		let labels = self.compute_container_labels(service, file, service_name)?;
+		let labels = self.compute_container_labels(service, file, service_name, env)?;
 
 		// annotations
 		let annotations: HashMap<String, String> = service.annotations.to_map();
@@ -308,7 +305,7 @@ impl Engine {
 				stop_signal_timeout: (stop_signal, stop_timeout),
 				command: service.command.as_ref().map(|c| c.to_exec()),
 				entrypoint: service.entrypoint.as_ref().map(|c| c.to_exec()),
-				env,
+				env: spec_env,
 				links,
 				image_platform: (image_os, image_arch),
 				storage_opts: service.storage_opt.clone(),

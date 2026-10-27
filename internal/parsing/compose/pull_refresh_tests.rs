@@ -72,13 +72,15 @@ fn omitted_refresh_preserves_serialization_and_hashes() {
 			.collect::<String>(),
 		"009d2c010816915935af2cb1e2533597d2caff9262da99a74bc827f49e529b3f"
 	);
+	let env = crate::engine::container::effective_env(service, std::path::Path::new(".")).unwrap();
 	assert_eq!(
 		crate::engine::container::config_hash(
 			service,
 			&file,
 			"p",
 			std::path::Path::new("."),
-			&Default::default()
+			&Default::default(),
+			&env
 		)
 		.unwrap(),
 		"d25f1c34ed0e37da52f270fdd642cd25701cfbdb98e5f789d5c14e121b9dc792"

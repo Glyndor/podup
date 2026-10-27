@@ -289,8 +289,12 @@ impl Engine {
 		// between: a container started before anything is listening loses
 		// whatever it printed in that gap, and for `run`, a one-shot command,
 		// that gap is often the entire output.
+		// The environment the one-off container runs with, resolved once and
+		// handed to the create so the label it carries and the environment it
+		// is created with describe the same snapshot.
+		let env = self.effective_env(&run_service)?;
 		if let Err(e) = self
-			.create_and_start(&run_name, service_name, &run_service, file, !want_tty)
+			.create_and_start(&run_name, service_name, &run_service, file, !want_tty, &env)
 			.await
 		{
 			if rm {
