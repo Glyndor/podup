@@ -83,6 +83,10 @@ name = "cli_aliases"
 path = "tests/cli/surface/cli_aliases.rs"
 
 [[test]]
+name = "autostart_contract"
+path = "tests/cli/surface/autostart_contract.rs"
+
+[[test]]
 name = "cli_diagnostics"
 path = "tests/cli/surface/cli_diagnostics.rs"
 

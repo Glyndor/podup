@@ -60,9 +60,13 @@ pub(crate) async fn dispatch(
 			// `.build` unit's context is resolved by the systemd generator with no
 			// cwd, so a relative context would look under the unit directory.
 			let base_dir = std::fs::canonicalize(&base_dir).unwrap_or(base_dir);
+			// Only the services the active profiles select are part of the
+			// project: a unit for a service behind an inactive profile would
+			// start a container the operator's own run never starts.
+			let selected = selected_services(file, env.profile);
 			podup::autostart::install_quadlet(
 				&podup::autostart::RealSystemCtl,
-				file,
+				&selected,
 				&project,
 				&base_dir,
 				*no_start,
@@ -99,13 +103,17 @@ pub(crate) async fn dispatch(
 			// file, so the container name has to be resolved here, once, and
 			// baked into the unit. `sole_container` is also the refusal: it is
 			// what rejects a multi-service or scaled project and names the mode
-			// to use instead.
-			let container = podup::autostart::sole_container(file, &project)
+			// to use instead. Only the services the active profiles select
+			// count: a service behind an inactive profile is not part of the
+			// project, and it must not make the mode refuse a project that
+			// has one active service.
+			let selected = selected_services(file, env.profile);
+			let container = podup::autostart::sole_container(&selected, &project)
 				.map_err(|why| ComposeError::Autostart(why.to_string()))?;
 			// systemd resolves an exec line with no PATH of its own, so the unit
 			// needs podman by absolute path rather than by name.
 			let podman = resolve_podman()?;
-			let opts = start_unit_opts(env, &project, &container, podman, file);
+			let opts = start_unit_opts(env, &project, &container, podman, &selected);
 
 			// The one check that needs a live Podman. Start mode restores what
 			// the store holds and deliberately does not reconcile, so a
@@ -125,7 +133,7 @@ pub(crate) async fn dispatch(
 				.await?;
 				let engine =
 					podup::Engine::with_base_dir(client, project.clone(), base_dir.clone());
-				precheck_start_mode(&engine, file, &opts.container).await?;
+				precheck_start_mode(&engine, &selected, &opts.container).await?;
 			}
 
 			podup::autostart::install_start(
@@ -176,6 +184,18 @@ pub(crate) async fn dispatch(
 			service.as_deref(),
 		),
 	}
+}
+
+/// The compose file as the operator's active profiles select it.
+///
+/// Quadlet mode writes one unit per service and start mode resolves the
+/// single container the project has, so both need the file the profiles
+/// select: a service behind an inactive profile is not part of the project
+/// the operator asked for.
+fn selected_services(file: &ComposeFile, profiles: &[String]) -> ComposeFile {
+	let mut selected = file.clone();
+	podup::retain_active_profiles(&mut selected, profiles);
+	selected
 }
 
 /// The service-mode unit options for what the CLI resolved: the executable,
@@ -420,5 +440,45 @@ mod tests {
 			.expect("the options build");
 		let unit = podup::autostart::render_service_unit(&opts);
 		assert!(!unit.contains("--project-directory"), "{unit}");
+	}
+
+	/// A compose file with a service behind an inactive profile.
+	fn profiled_file() -> ComposeFile {
+		podup::parse_str(
+			"services:\n  web:\n    image: nginx\n  debug:\n    image: nginx\n    profiles: [debug]\n",
+		)
+		.expect("the file parses")
+	}
+
+	/// Quadlet mode writes one unit per service, so a service behind an
+	/// inactive profile would get a unit of its own and start at every boot.
+	#[test]
+	fn the_active_profiles_select_the_services_the_quadlet_units_are_built_from() {
+		let selected = selected_services(&profiled_file(), &[]);
+		let units = podup::quadlet::generate_for_autostart(
+			&selected,
+			"proj",
+			std::path::Path::new("/srv/app"),
+		);
+		let names: Vec<&str> = units.units.iter().map(|u| u.filename.as_str()).collect();
+		assert!(
+			names.contains(&"proj-web.container"),
+			"the service without a profile must have its unit: {names:?}"
+		);
+		assert!(
+			!names.contains(&"proj-debug.container"),
+			"the service behind an inactive profile must not have a unit: {names:?}"
+		);
+	}
+
+	/// Start mode resolves the one container the project has. A project whose
+	/// other service sits behind an inactive profile still has exactly one
+	/// active service, and must not be refused for having two.
+	#[test]
+	fn the_active_profiles_select_the_container_the_start_unit_names() {
+		let selected = selected_services(&profiled_file(), &[]);
+		let container = podup::autostart::sole_container(&selected, "proj")
+			.expect("the project has one active service");
+		assert_eq!(container, "proj-web-1");
 	}
 }
