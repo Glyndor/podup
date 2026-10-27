@@ -16,6 +16,7 @@ use tokio::sync::mpsc;
 use tokio::sync::Notify;
 use tracing::debug;
 
+use crate::backends::engine::host_files::watch::filtering::ignore_filter::RuleFilter;
 use crate::backends::engine::host_files::watch::placement::is_dispatch_event;
 use crate::backends::engine::host_files::watch::RuleEntry;
 use crate::compose::types::WatchAction;
@@ -184,6 +185,7 @@ impl Engine {
 					ensured,
 					&entry.mounts,
 					&entry.abs_path,
+					Some(&RuleFilter::for_rule(entry, &self.base_dir)),
 				)
 				.await
 			{

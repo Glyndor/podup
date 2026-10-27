@@ -444,3 +444,6 @@ mod watch_tests;
 
 #[cfg(test)]
 mod pull_policy_tests;
+
+#[cfg(all(test, unix))]
+mod filter_sync_tests;

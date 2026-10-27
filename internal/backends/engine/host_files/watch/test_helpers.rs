@@ -21,8 +21,17 @@ impl crate::engine::Engine {
 	) -> crate::error::Result<()> {
 		let mut ensured = std::collections::HashSet::new();
 		let empty_mounts: &[super::writeback::EffectiveMount] = &[];
-		self.sync_to_container(container, src, src, target, &mut ensured, empty_mounts, src)
-			.await
+		self.sync_to_container(
+			container,
+			src,
+			src,
+			target,
+			&mut ensured,
+			empty_mounts,
+			src,
+			None,
+		)
+		.await
 	}
 
 	/// Test seam: delete the entry `path` would have written under `target`

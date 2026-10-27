@@ -7,7 +7,7 @@
 //! `super::placement`; the write-back loop belongs in `super::writeback`.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use futures_util::StreamExt;
@@ -22,6 +22,7 @@ use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 
 use crate::engine::copy;
 
+use super::filtering::ignore_filter::RuleFilter;
 use super::placement::{
 	container_rel, join_container_path, mark_dir_ensured, mkdir_p_argv, plan_sync_placement,
 	RuleShape, SyncPlacement,
@@ -63,6 +64,7 @@ impl Engine {
 		ensured: &mut HashSet<(String, String)>,
 		mounts: &[EffectiveMount],
 		watched_root: &Path,
+		filter: Option<&RuleFilter>,
 	) -> Result<()> {
 		let SyncPlacement {
 			entry_name,
@@ -77,11 +79,29 @@ impl Engine {
 		let dest_dir_owned = dest_dir.clone();
 		let mounts_owned: Arc<Vec<EffectiveMount>> = Arc::new(mounts.to_vec());
 		let watched_root_owned = watched_root.to_path_buf();
+		let filter_owned = filter.cloned();
+		let changed_owned = changed.to_path_buf();
+		let entry_root = PathBuf::from(&entry_name);
 		let skip: Arc<dyn Fn(&Path) -> bool + Send + Sync> = {
 			let dest_dir = dest_dir_owned.clone();
 			let mounts = Arc::clone(&mounts_owned);
 			let watched_root = watched_root_owned.clone();
 			Arc::new(move |name: &Path| {
+				// The rule's own ignore and include lists, applied to every file
+				// of the upload and not only to the path that raised the event:
+				// a directory upload walks its whole subtree.
+				if let Some(filter) = &filter_owned {
+					if let Ok(rel) = name.strip_prefix(&entry_root) {
+						let host = if rel.as_os_str().is_empty() {
+							changed_owned.clone()
+						} else {
+							changed_owned.join(rel)
+						};
+						if filter.excludes(&host) {
+							return true;
+						}
+					}
+				}
 				// Non-UTF-8 names would all map to the same lossy container
 				// path (the replacement character), so an entry with one
 				// would overwrite or delete another's copy. The caller

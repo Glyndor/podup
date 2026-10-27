@@ -71,6 +71,7 @@ async fn removing_a_directory_entry_issues_a_recursive_delete() {
 			&src,
 			RuleShape::Directory,
 			Ok(SyncOp::Remove),
+			None,
 		)
 		.await
 		.unwrap();
@@ -110,6 +111,7 @@ async fn removing_the_rule_target_directory_is_refused() {
 			&src,
 			RuleShape::Directory,
 			Ok(SyncOp::Remove),
+			None,
 		)
 		.await
 		.unwrap_err()
