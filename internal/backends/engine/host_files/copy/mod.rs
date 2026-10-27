@@ -24,6 +24,7 @@ pub(crate) use extract::archive;
 /// (`internal/backends/engine/host_files/watch/mod.rs`) can reach the streaming upload shape
 /// without widening the transport module's visibility to anything below
 /// `pub(in crate::backends::engine::host_files::copy)`.
+#[cfg(feature = "watch")]
 pub(in crate::backends::engine) use pack::transport::build_sync_tar_stream as build_sync_tar_stream_for_watch;
 
 /// The shared walk-and-record helpers, under the name the watch-sync packer
