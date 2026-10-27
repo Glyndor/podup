@@ -150,16 +150,10 @@ impl Engine {
 			// delete from). A 404 below means there was nothing to remove
 			// in the first place, so the guard is moot and the row is
 			// reported `Absent`.
-			if let Some(owner) = self.inspect_network_owner(&network_name).await? {
-				if owner != self.project {
-					crate::ui::progress_line("Network", &network_name, "Failed");
-					return Err(crate::error::ComposeError::Unsupported(format!(
-						"network '{network_name}' is labelled podup.project={owner}; \
-						 refusing to remove it from this project ('{}'). The compose \
-						 file must declare 'networks.{key}.external: true' to share it.",
-						self.project
-					)));
-				}
+			let owner = self.inspect_network_owner(&network_name).await?;
+			if let Err(e) = self.require_owned("network", &network_name, &owner) {
+				crate::ui::progress_line("Network", &network_name, "Failed");
+				return Err(e);
 			}
 			// `delete_existed`, not `delete_ok`: this loop walks the networks the
 			// compose file *declares*, which is not the same set as the networks
@@ -192,11 +186,12 @@ impl Engine {
 		// network whose compose key changed, mirroring the container sweep so
 		// teardown is complete regardless of how the file was parsed. Only
 		// podup-labelled networks match, so external networks are never touched.
-		// This is a supplementary catch-all on top of the file-driven network
-		// loop above (which already aggregates its own failures into
-		// `first_err`), so a failure here is intentionally swallowed rather than
-		// folded in again.
-		let _ = self.remove_project_networks_by_label().await;
+		// This is a catch-all on top of the file-driven network loop above, and
+		// nothing else walks these networks: a listing or removal failure here
+		// is a real teardown failure, so it joins `first_err` too.
+		if let Some(e) = self.remove_project_networks_by_label().await {
+			first_err.get_or_insert(e);
+		}
 
 		if remove_volumes {
 			for (key, config) in &file.volumes {
@@ -217,6 +212,16 @@ impl Engine {
 				// may be reported, and a volume is the object where a false
 				// "Removed" is worst: it names data the operator believes is
 				// gone.
+				// Project boundary, as for networks: a volume this project did not
+				// label is not removed, even when its name matches a declared one.
+				let owner = self
+					.object_owner("volumes", &volume_name, &["/Labels", "/labels"])
+					.await?;
+				if let Err(refused) = self.require_owned("volume", &volume_name, &owner) {
+					crate::ui::progress_line("Volume", &volume_name, "Failed");
+					first_err.get_or_insert(refused);
+					continue;
+				}
 				crate::ui::progress::start("Volume", &volume_name, "Removing");
 				match self.client.delete_existed(&vol_path).await {
 					Ok(true) => crate::ui::progress_line("Volume", &volume_name, "Removed"),

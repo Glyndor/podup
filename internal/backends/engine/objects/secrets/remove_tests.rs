@@ -136,9 +136,11 @@ async fn a_failed_list_falls_back_to_per_secret_inspection_not_to_deleting_nothi
 	});
 	let e = engine_on(&fake);
 
-	e.remove_internal_secrets(&file_with_content_secrets(2))
+	let err = e
+		.remove_internal_secrets(&file_with_content_secrets(2))
 		.await
-		.expect("teardown should still succeed");
+		.expect_err("the failed list must still be reported");
+	assert!(err.to_string().contains("boom"), "{err}");
 
 	let seen = fake.requests.lock().unwrap().clone();
 	assert_eq!(

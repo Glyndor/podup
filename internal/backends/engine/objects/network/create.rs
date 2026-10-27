@@ -6,8 +6,9 @@ use crate::compose::types::ComposeFile;
 use crate::engine::Engine;
 use crate::error::{ComposeError, Result};
 use crate::libpod::types::network::NetworkCreateRequest;
-use crate::libpod::{urlencoded, API_PREFIX};
+use crate::libpod::API_PREFIX;
 
+use super::super::ownership::Owner;
 use super::ipam::{build_ipam_options, build_subnets};
 use super::isolation::apply_default_isolation;
 
@@ -102,10 +103,10 @@ impl Engine {
 				// board leaves it spinning on `Creating` (#1347).
 				Err(ref e) if e.is_already_exists() => {
 					match self.inspect_network_owner(&network_name).await? {
-						Some(owner) if owner == self.project => {
+						Owner::Project(owner) if owner == self.project => {
 							crate::ui::progress_line("Network", &network_name, "Exists");
 						}
-						Some(owner) => {
+						Owner::Project(owner) => {
 							crate::ui::progress_line("Network", &network_name, "Failed");
 							return Err(ComposeError::Unsupported(format!(
 								"network '{network_name}' already exists and is labelled \
@@ -115,7 +116,7 @@ impl Engine {
 								self.project
 							)));
 						}
-						None => {
+						Owner::Unlabelled | Owner::Absent => {
 							crate::ui::progress_line("Network", &network_name, "Failed");
 							return Err(ComposeError::Unsupported(format!(
 								"network '{network_name}' already exists and carries no \
@@ -134,30 +135,19 @@ impl Engine {
 		Ok(())
 	}
 
-	/// Read the `podup.project` label of the network named `name` on the host.
-	/// Returns `Ok(Some(project))` when the network exists and carries the
-	/// label, `Ok(None)` when the network either does not exist (libpod 404) or
-	/// exists but has no `podup.project` label; transport-level failures
+	/// Who owns the network named `name` on the host: absent, present without
+	/// a `podup.project` label, or labelled for a project. Transport failures
 	/// propagate as `ComposeError::Podman`.
 	///
 	/// The label is the only ownership evidence on a podup-created network,
 	/// so this is what both `create_networks` (on a 409) and the file-driven
 	/// `down` path consult before reusing or removing an existing network.
-	/// Both refuse to act on a network whose label names a different project.
 	pub(in crate::backends::engine) async fn inspect_network_owner(
 		&self,
 		name: &str,
-	) -> Result<Option<String>> {
-		let path = format!("{API_PREFIX}/networks/{}/json", urlencoded(name));
-		match self.client.get_json::<serde_json::Value>(&path).await {
-			Ok(value) => Ok(value
-				.get("labels")
-				.and_then(|l| l.get("podup.project"))
-				.and_then(|v| v.as_str())
-				.map(str::to_string)),
-			Err(e) if e.is_status(404) => Ok(None),
-			Err(e) => Err(ComposeError::Podman(e)),
-		}
+	) -> Result<Owner> {
+		self.object_owner("networks", name, &["/labels", "/Labels"])
+			.await
 	}
 }
 

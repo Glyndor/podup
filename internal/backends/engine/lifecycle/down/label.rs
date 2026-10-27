@@ -76,17 +76,19 @@ impl Engine {
 			first_err.get_or_insert(e);
 		}
 
+		// Pods first: a pod's infra container stays attached to the project's
+		// networks, so a network cannot be removed while the pod is still up.
+		// The sweep is by label, so it covers the project's own pod as well as
+		// any left behind by a crashed `up`.
+		if let Some(e) = self.remove_project_pods_by_label().await {
+			first_err.get_or_insert(e);
+		}
 		// Networks and named volumes are reaped by label; each sweep is
 		// best-effort internally and reports its own first removal failure back
 		// here instead of swallowing it.
 		if let Some(e) = self.remove_project_networks_by_label().await {
 			first_err.get_or_insert(e);
 		}
-		// `x-podman-pod`: reap any pod carrying the project's label, a
-		// pod left behind by a crashed `up`, or any other pod the project
-		// owns. The current project's own pod is removed by name in
-		// `down_with_options`; this sweep covers the rest.
-		self.remove_project_pods_by_label().await;
 		if remove_volumes {
 			if let Some(e) = self.remove_project_volumes_by_label().await {
 				first_err.get_or_insert(e);
@@ -107,8 +109,8 @@ impl Engine {
 	/// implicit `<project>_default`, a network whose compose key changed, or any
 	/// project network when no file is present. Only podup-labelled networks
 	/// match, so a user's external network is never touched. Best-effort across
-	/// every network: a list failure leaves networks in place rather than
-	/// aborting teardown, and one network's removal failure never blocks the
+	/// every network: a list failure leaves networks in place and is returned
+	/// rather than aborting teardown, and one network's removal failure never blocks the
 	/// rest, but the first genuine removal failure is returned to the caller
 	/// (a 404 stays an idempotent no-op) so it can decide whether to aggregate
 	/// it, matching [`Engine::down_by_label`]'s exit-code contract for the same
@@ -122,12 +124,18 @@ impl Engine {
 			"{API_PREFIX}/networks/json?filters={}",
 			self.project_network_filter_encoded(),
 		);
-		let Ok(nets) = self
+		// A failed listing is a failed sweep, not an empty one: reporting it
+		// as "nothing to remove" would let `down` exit 0 with networks left.
+		let nets = match self
 			.client
 			.get_json::<Vec<serde_json::Value>>(&list_path)
 			.await
-		else {
-			return None;
+		{
+			Ok(nets) => nets,
+			// A daemon with nothing to list may answer 404; that is empty,
+			// not a failure.
+			Err(e) if e.is_status(404) => return None,
+			Err(e) => return Some(crate::error::ComposeError::Podman(e)),
 		};
 		let mut first_err = None;
 		for net in nets {
@@ -161,8 +169,12 @@ impl Engine {
 		&self,
 	) -> Option<crate::error::ComposeError> {
 		let path = format!("{API_PREFIX}/volumes/json");
-		let Ok(vols) = self.client.get_json::<Vec<serde_json::Value>>(&path).await else {
-			return None;
+		let vols = match self.client.get_json::<Vec<serde_json::Value>>(&path).await {
+			Ok(vols) => vols,
+			// A daemon with nothing to list may answer 404; that is empty,
+			// not a failure.
+			Err(e) if e.is_status(404) => return None,
+			Err(e) => return Some(crate::error::ComposeError::Podman(e)),
 		};
 		let mut first_err = None;
 		for vol in vols {

@@ -83,7 +83,19 @@ impl Engine {
 				// re-`up` over an existing named volume stays idempotent. The
 				// row still needs to close: without an explicit closing verb
 				// the live board leaves it spinning on `Creating` (#1347).
+				//
+				// "Already exists" is success only for a volume this project owns.
+				// A volume carrying another project's label, or none, is refused:
+				// reusing it would let a later `down -v` delete data this project
+				// never created.
 				Err(ref e) if e.is_already_exists() => {
+					let owner = self
+						.object_owner("volumes", &volume_name, &["/Labels", "/labels"])
+						.await?;
+					if let Err(refused) = self.require_owned("volume", &volume_name, &owner) {
+						crate::ui::progress_line("Volume", &volume_name, "Failed");
+						return Err(refused);
+					}
 					crate::ui::progress_line("Volume", &volume_name, "Exists");
 				}
 				Err(e) => return Err(ComposeError::Podman(e)),

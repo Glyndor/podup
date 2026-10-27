@@ -126,11 +126,12 @@ async fn a_failing_pod_inspect_is_an_error_not_an_absence() {
 	);
 }
 
-/// `down --remove-orphans` sweeps pods under the project's label that are
-/// not the project's own pod, and leaves that one to `remove_pod`.
+/// The label sweep removes every pod carrying the project's label, the
+/// project's own pod included: `down` without a compose file has no other
+/// path that reaches it.
 #[tokio::test]
 #[cfg(unix)]
-async fn the_label_sweep_removes_stale_pods_and_keeps_the_projects_own() {
+async fn the_label_sweep_removes_every_pod_under_the_projects_label() {
 	let fake = fake_podman::start(|method, target| {
 		if method == "GET" && target.contains("/pods/json") {
 			return (200, r#"[{"Name":"proj"},{"Name":"proj-old"}]"#.to_string());
@@ -141,20 +142,16 @@ async fn the_label_sweep_removes_stale_pods_and_keeps_the_projects_own() {
 		route(method, target, None)
 	});
 	let engine = engine_for(&fake, "proj");
-	engine.remove_project_pods_by_label().await;
+	assert!(engine.remove_project_pods_by_label().await.is_none());
 	let requests = fake.requests.lock().unwrap().clone();
-	assert!(
-		requests
-			.iter()
-			.any(|r| r.starts_with("DELETE") && r.contains("/pods/proj-old")),
-		"the stale pod under the label must be removed; requests: {requests:?}"
-	);
-	assert!(
-		!requests
-			.iter()
-			.any(|r| r.starts_with("DELETE") && r.contains("/pods/proj?")),
-		"the project's own pod is not the sweep's to remove; requests: {requests:?}"
-	);
+	for pod in ["proj?", "proj-old"] {
+		assert!(
+			requests
+				.iter()
+				.any(|r| r.starts_with("DELETE") && r.contains(&format!("/pods/{pod}"))),
+			"the pod {pod} under the label must be removed; requests: {requests:?}"
+		);
+	}
 }
 
 /// A common `userns_mode` lands on the pod, not on the members, and it is
