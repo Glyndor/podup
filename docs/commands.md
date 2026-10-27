@@ -282,8 +282,11 @@ Execute a command in a running service container.
 
 `podup exec db psql` is interactive when stdin and stdout are terminals. `-T` disables TTY allocation; there are no `-i`/`-t` flags. Pipes and redirects use ordinary streams.
 
+Standard input is a separate matter from the pseudo-terminal: a pipe or a redirected file is sent to the command, which then sees the end of that input when the file is exhausted. A terminal is not sent on a non-interactive session, so a command started that way reads an empty input rather than waiting for the operator.
+
 ```bash
 podup exec -u root web sh
+podup exec -T db psql < dump.sql
 ```
 
 ### `cp <SRC> <DST>`

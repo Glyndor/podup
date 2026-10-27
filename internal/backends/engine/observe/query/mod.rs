@@ -21,6 +21,7 @@ pub(crate) use ps::ps_rows_for_test;
 pub use ps::{PsDisplayOptions, PsFilterOptions, PsOptions};
 
 pub use exec::ExecOptions;
+pub(crate) use exec::InputSource;
 pub use options::{ImagesOptions, LogsDisplay, LogsOptions, DEFAULT_LOG_TAIL};
 
 pub use attach::{AttachOptions, AttachOutcome, AttachSummary};

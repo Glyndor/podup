@@ -44,6 +44,9 @@ async fn read_stream(reply: FakeReply) -> (Vec<serde_json::Value>, Option<String
 		FakeReply::ClosedWithoutResponse => FakeReply::ClosedWithoutResponse,
 		// A complete response with no body, so not a stream either.
 		FakeReply::Headers(s, h) => FakeReply::Headers(*s, h.clone()),
+		// A hijacked connection is not a response body at all: it is a
+		// session the client talks to, which this helper does not measure.
+		FakeReply::Hijacked { .. } => FakeReply::Body(200, String::new()),
 	});
 	let client = fake.client();
 	let resp = client
