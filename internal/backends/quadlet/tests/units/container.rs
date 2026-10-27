@@ -59,7 +59,7 @@ networks:
 }
 
 #[test]
-fn bind_path_volume_is_passed_through() {
+fn bind_path_volume_is_resolved_against_the_compose_directory() {
 	let yaml = r#"
 services:
   web:
@@ -70,9 +70,80 @@ services:
 	let file = parse_str(yaml).unwrap();
 	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
 	let web = unit_named(&out, "proj-web.container");
-	assert!(web
-		.contents
-		.contains("Volume=./html:/usr/share/nginx/html:ro"));
+	// systemd resolves a relative `Volume=` against the unit file's own
+	// directory, not the compose file's, so the source has to be absolute
+	// before it reaches the unit. The path is the one `up` mounts.
+	assert!(
+		web.contents
+			.contains("Volume=/srv/app/./html:/usr/share/nginx/html:ro"),
+		"in:\n{}",
+		web.contents
+	);
+}
+
+#[test]
+fn long_form_bind_source_is_resolved_against_the_compose_directory() {
+	let yaml = r#"
+services:
+  web:
+    image: nginx
+    volumes:
+      - type: bind
+        source: ./data
+        target: /data
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
+	let web = unit_named(&out, "proj-web.container");
+	assert!(
+		web.contents.contains("Volume=/srv/app/./data:/data"),
+		"in:\n{}",
+		web.contents
+	);
+}
+
+#[cfg(unix)]
+#[test]
+fn home_relative_volume_source_is_expanded() {
+	// A `~` in a source is a path, not a volume name, and Quadlet does not
+	// expand it: the unit has to carry the expanded path.
+	temp_env::with_var("HOME", Some("/home/tester"), || {
+		let yaml = r#"
+services:
+  web:
+    image: nginx
+    volumes:
+      - ~/html:/usr/share/nginx/html
+"#;
+		let file = parse_str(yaml).unwrap();
+		let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
+		let web = unit_named(&out, "proj-web.container");
+		assert!(
+			web.contents
+				.contains("Volume=/home/tester/html:/usr/share/nginx/html"),
+			"in:\n{}",
+			web.contents
+		);
+	});
+}
+
+#[test]
+fn an_absolute_volume_source_is_left_alone() {
+	let yaml = r#"
+services:
+  web:
+    image: nginx
+    volumes:
+      - /srv/data:/data
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
+	let web = unit_named(&out, "proj-web.container");
+	assert!(
+		web.contents.contains("Volume=/srv/data:/data"),
+		"in:\n{}",
+		web.contents
+	);
 }
 
 #[test]

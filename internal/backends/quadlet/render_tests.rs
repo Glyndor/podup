@@ -105,19 +105,42 @@ fn render_publish_port_full_and_partial_forms() {
 
 // --- render_volume ---
 
+/// The compose base directory the renderer resolves a relative source against.
+fn base() -> std::path::PathBuf {
+	std::path::PathBuf::from("/srv/app")
+}
+
 #[test]
 fn render_volume_short_declared_uses_dot_volume_with_options() {
 	let out = render_volume(
 		&VolumeMount::Short("data:/app:ro".into()),
 		"proj",
 		&["data"],
+		&base(),
 	);
 	// A declared named volume becomes `<project>-<name>.volume:<target>:<opts>`.
 	assert_eq!(out, "proj-data.volume:/app:ro");
-	// An undeclared source is passed through verbatim.
+	// An undeclared source is a host path, and is made absolute against the
+	// compose base directory: systemd would resolve it against the unit
+	// file's own directory instead.
 	assert_eq!(
-		render_volume(&VolumeMount::Short("./host:/app".into()), "proj", &["data"]),
-		"./host:/app"
+		render_volume(
+			&VolumeMount::Short("./host:/app".into()),
+			"proj",
+			&["data"],
+			&base()
+		),
+		"/srv/app/./host:/app"
+	);
+}
+
+#[test]
+fn render_volume_short_colonless_entry_is_an_anonymous_volume() {
+	// A colon-less entry names an in-container path, not a host source, so
+	// there is nothing to resolve against the base directory.
+	assert_eq!(
+		render_volume(&VolumeMount::Short("/data".into()), "proj", &[], &base()),
+		"/data"
 	);
 }
 
@@ -140,7 +163,7 @@ fn render_volume_long_collects_options_and_handles_empty_source() {
 	// Declared → project-prefixed `.volume` suffix; ro + nocopy folded into
 	// the options field.
 	assert_eq!(
-		render_volume(&nocopy, "proj", &["vol"]),
+		render_volume(&nocopy, "proj", &["vol"], &base()),
 		"proj-vol.volume:/data:ro,nocopy"
 	);
 
@@ -162,7 +185,7 @@ fn render_volume_long_collects_options_and_handles_empty_source() {
 		consistency: None,
 	};
 	assert_eq!(
-		render_volume(&hardened, "proj", &["vol"]),
+		render_volume(&hardened, "proj", &["vol"], &base()),
 		"proj-vol.volume:/data:noexec,nosuid,nodev"
 	);
 
@@ -177,7 +200,7 @@ fn render_volume_long_collects_options_and_handles_empty_source() {
 		tmpfs: None,
 		consistency: None,
 	};
-	assert_eq!(render_volume(&anon, "proj", &[]), "/scratch");
+	assert_eq!(render_volume(&anon, "proj", &[], &base()), "/scratch");
 }
 
 // --- render_tmpfs_mount ---

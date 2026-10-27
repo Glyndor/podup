@@ -33,22 +33,28 @@ pub(super) fn render_publish_port(p: &ParsedPort) -> String {
 /// Render a volume mount into a Quadlet `Volume=` value. A source naming a
 /// declared volume gets a project-prefixed `.volume` suffix (so Quadlet wires it
 /// to the generated unit, whose file name is also project-prefixed); an
-/// undeclared source passes through verbatim. An empty source renders as just the
-/// target. Long-form `read_only`, SELinux relabel (`z`/`Z`), bind propagation,
-/// and `nocopy` opts are folded into the trailing `:opt,opt` field.
-pub(super) fn render_volume(vol: &VolumeMount, project: &str, declared_volumes: &[&str]) -> String {
+/// undeclared source that names a host path is made absolute against the
+/// compose base directory; any other source passes through verbatim. An empty
+/// source renders as just the target. Long-form `read_only`, SELinux relabel
+/// (`z`/`Z`), bind propagation, and `nocopy` opts are folded into the trailing
+/// `:opt,opt` field.
+pub(super) fn render_volume(
+	vol: &VolumeMount,
+	project: &str,
+	declared_volumes: &[&str],
+	base_dir: &std::path::Path,
+) -> String {
 	match vol {
 		VolumeMount::Short(s) => {
-			let parts: Vec<&str> = s.splitn(3, ':').collect();
-			if parts.len() >= 2 && declared_volumes.contains(&parts[0]) {
-				let mut out = format!("{}.volume:{}", unit_stem(project, parts[0]), parts[1]);
-				if let Some(opts) = parts.get(2) {
-					out.push(':');
-					out.push_str(opts);
-				}
-				out
+			// A colon-less entry is a single in-container path (an anonymous
+			// volume), not a `src:dst` pair, so there is no source to resolve.
+			let Some((src, rest)) = s.split_once(':') else {
+				return s.clone();
+			};
+			if declared_volumes.contains(&src) {
+				format!("{}.volume:{}", unit_stem(project, src), rest)
 			} else {
-				s.clone()
+				format!("{}:{}", resolve_source_path(src, base_dir), rest)
 			}
 		}
 		VolumeMount::Long {
@@ -63,7 +69,7 @@ pub(super) fn render_volume(vol: &VolumeMount, project: &str, declared_volumes: 
 			let src = if declared_volumes.contains(&src.as_str()) {
 				format!("{}.volume", unit_stem(project, &src))
 			} else {
-				src
+				resolve_source_path(&src, base_dir)
 			};
 			// Collect mount options into the trailing `:opt,opt` field so nothing
 			// is dropped: SELinux relabel (`z`/`Z`) and bind propagation are
@@ -109,6 +115,26 @@ pub(super) fn render_volume(vol: &VolumeMount, project: &str, declared_volumes: 
 			out
 		}
 	}
+}
+
+/// Resolve a volume source that names a host path into the absolute path the
+/// unit has to carry.
+///
+/// systemd resolves a relative `Volume=` against the unit file's own
+/// directory, which is not the compose file's, so a relative source would
+/// mount a directory that does not exist once the unit is installed under
+/// `~/.config/containers/systemd`. A `~` is not expanded by Quadlet either.
+/// Both are resolved here, against the compose base directory, with the same
+/// rule the live engine applies to a bind source, so the unit mounts the
+/// directory `up` would mount.
+///
+/// An absolute source, and a bare name (a volume reference, not a path), are
+/// returned unchanged.
+fn resolve_source_path(src: &str, base_dir: &std::path::Path) -> String {
+	if !(src.starts_with('.') || src.starts_with('~')) {
+		return src.to_string();
+	}
+	crate::engine::container::resolve_bind_source(src, base_dir)
 }
 
 /// If `vol` is a long-form `type: tmpfs` mount, render it as a Quadlet `Tmpfs=`

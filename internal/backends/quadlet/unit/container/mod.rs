@@ -200,7 +200,7 @@ fn render_container_unit(
 	emit_runtime(name, service, in_pod, pod_fields, &mut container);
 	emit_ports(service, in_pod, &mut container);
 	emit_environment(service, &mut container);
-	emit_volumes(service, project, declared_volumes, &mut container);
+	emit_volumes(service, project, declared_volumes, base_dir, &mut container);
 	emit_networks(service, project, declared_networks, in_pod, &mut container);
 	emit_labels(name, project, service, &mut container, warnings);
 	emit_capabilities(service, &mut container);
