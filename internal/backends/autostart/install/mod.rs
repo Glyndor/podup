@@ -14,6 +14,7 @@ use crate::ComposeError;
 
 pub(super) mod conflict;
 pub(super) mod detect;
+pub(super) mod files;
 pub(super) mod options;
 
 use std::path::Path;
@@ -114,10 +115,10 @@ fn place_unit<S: SystemCtl>(
 	}
 
 	let dir = unit_dir();
-	std::fs::create_dir_all(&dir)
+	files::private_dir(&dir)
 		.map_err(|e| ComposeError::Autostart(format!("cannot create {}: {e}", dir.display())))?;
 	refuse_foreign_owner(&path, project)?;
-	std::fs::write(&path, unit_text.as_bytes())
+	files::write_private(&path, unit_text.as_bytes())
 		.map_err(|e| ComposeError::Autostart(format!("cannot write {}: {e}", path.display())))?;
 	eprintln!("podup: wrote {}", path.display());
 
@@ -172,11 +173,11 @@ fn place_update_units<S: SystemCtl>(
 
 	refuse_foreign_owner(&service_path, project)?;
 	refuse_foreign_owner(&timer_path, project)?;
-	std::fs::write(&service_path, service_text.as_bytes()).map_err(|e| {
+	files::write_private(&service_path, service_text.as_bytes()).map_err(|e| {
 		ComposeError::Autostart(format!("cannot write {}: {e}", service_path.display()))
 	})?;
 	eprintln!("podup: wrote {}", service_path.display());
-	std::fs::write(&timer_path, timer_text.as_bytes()).map_err(|e| {
+	files::write_private(&timer_path, timer_text.as_bytes()).map_err(|e| {
 		ComposeError::Autostart(format!("cannot write {}: {e}", timer_path.display()))
 	})?;
 	eprintln!("podup: wrote {}", timer_path.display());

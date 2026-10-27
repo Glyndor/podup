@@ -1,4 +1,75 @@
 use super::*;
+use std::os::unix::fs::PermissionsExt;
+
+/// The unit directory and the units inside it are private to their owner.
+///
+/// `create_dir_all` and `fs::write` take their permissions from the process
+/// umask, so a permissive umask leaves the directory and the units in it
+/// writable by any local user, and a unit another user can rewrite is a
+/// command that user can run at boot.
+///
+/// The modes are set explicitly, so they hold whatever the umask is: a umask
+/// can only take bits away, and `0700`/`0600` survive every umask that
+/// leaves the files usable.
+#[test]
+fn autostart_creates_a_private_unit_directory_and_private_units() {
+	with_env(|root| {
+		let sc = FakeCtl::new();
+		install(&sc, &opts_with_interval(root, "app", false, true, "daily")).unwrap();
+		let dir = root.join("systemd/user");
+		let dir_mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o7777;
+		assert_eq!(
+			dir_mode, 0o700,
+			"the unit directory must be private: {:04o}",
+			dir_mode
+		);
+		for name in [
+			"podup-app.service",
+			"podup-app.update.service",
+			"podup-app.update.timer",
+		] {
+			let path = dir.join(name);
+			let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777;
+			assert_eq!(mode, 0o600, "{name} must be private: {:04o}", mode);
+		}
+	});
+}
+
+/// A unit written earlier under a permissive umask does not stay writable
+/// after a re-install: the mode is applied again, not only at creation.
+#[test]
+fn autostart_tightens_the_mode_of_a_unit_that_already_existed() {
+	with_env(|root| {
+		let dir = root.join("systemd/user");
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("podup-app.service");
+		std::fs::write(
+			&path,
+			"\
+[Unit]
+Description=podup app
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app up -d --no-build --pull never
+ExecStop=/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app stop
+",
+		)
+		.unwrap();
+		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+
+		let sc = FakeCtl::new();
+		install(&sc, &opts(root, "app", false, true)).unwrap();
+
+		let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777;
+		assert_eq!(
+			mode, 0o600,
+			"the re-installed unit must be private: {:04o}",
+			mode
+		);
+	});
+}
 
 #[test]
 fn install_writes_unit_and_enables() {
