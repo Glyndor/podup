@@ -147,10 +147,16 @@ impl Engine {
 		};
 		// Distinguish "absent" from "present but unparseable": a malformed
 		// `shm_size` must be rejected, not silently dropped to the default.
+		//
+		// The byte count stays `i64`, the width libpod's `shmsize` query takes
+		// and the width the container spec uses. It used to be narrowed to
+		// `i32` on the way into the query, so any size above 2 GiB was
+		// truncated: 4 GiB became 0 and 3 GiB became a negative number, and
+		// the container was built with the wrong shared-memory size.
 		let shmsize = match build.shm_size() {
 			Some(raw) => Some(size::parse_memory(raw).ok_or_else(|| {
 				ComposeError::Build(format!("invalid build.shm_size value '{raw}'"))
-			})? as i32),
+			})?),
 			None => None,
 		};
 		let extrahosts_str = build.extra_hosts().join(",");

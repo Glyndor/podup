@@ -125,12 +125,11 @@ impl crate::engine::Engine {
 		rm_path: &str,
 	) -> Result<()> {
 		let outcome = self.run_attached(run_name).await;
-		if rm {
-			let _ = self.client.delete_ok(rm_path).await;
-		}
-		match outcome? {
-			0 => Ok(()),
-			code => Err(ComposeError::RunExited(code)),
-		}
+		let cleanup = if rm {
+			self.client.delete_ok(rm_path).await
+		} else {
+			Ok(())
+		};
+		super::finish_run(run_name, outcome, cleanup)
 	}
 }
