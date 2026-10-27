@@ -378,8 +378,8 @@ fn no_grace_period_emits_no_stop_timeout() {
 }
 
 // ---------------------------------------------------------------------------
-// --auto-update: the sibling `<unit>-update.service` oneshot and `<unit>
-// -update.timer` schedule (render-only; install/uninstall are exercised in
+// --auto-update: the sibling `<unit>.update.service` oneshot and `<unit>
+// .update.timer` schedule (render-only; install/uninstall are exercised in
 // `tests.rs`).
 // ---------------------------------------------------------------------------
 

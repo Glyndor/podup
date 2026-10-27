@@ -1,13 +1,13 @@
 use super::*;
 
 // ---------------------------------------------------------------------------
-// --auto-update: the sibling `<unit>-update.service` oneshot and `<unit>
-// -update.timer` schedule. Install/uninstall behaviour.
+// --auto-update: the sibling `<unit>.update.service` oneshot and `<unit>
+// .update.timer` schedule. Install/uninstall behaviour.
 // ---------------------------------------------------------------------------
 
 /// #1656: `autostart install --mode service --auto-update <interval>` writes
-/// the main unit, the `<unit>-update.service` oneshot, and the
-/// `<unit>-update.timer` schedule; enables the timer; reloads systemd once.
+/// the main unit, the `<unit>.update.service` oneshot, and the
+/// `<unit>.update.timer` schedule; enables the timer; reloads systemd once.
 #[test]
 fn autostart_auto_update_renders_the_timer_and_the_oneshot_unit() {
 	with_env(|root| {

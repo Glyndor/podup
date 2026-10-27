@@ -35,8 +35,8 @@ use options::InstallOptions;
 /// unit. Writes only under `${XDG_CONFIG_HOME:-~/.config}/systemd/user/`.
 ///
 /// With `opts.auto_update_interval` set, also installs the sibling
-/// `<unit>-update.service` (oneshot that runs `podup up -d`) and
-/// `<unit>-update.timer` (the schedule that fires it). Removal takes all
+/// `<unit>.update.service` (oneshot that runs `podup up -d`) and
+/// `<unit>.update.timer` (the schedule that fires it). Removal takes all
 /// three down together, see [`uninstall`].
 pub fn install<S: SystemCtl>(sc: &S, opts: &InstallOptions) -> crate::Result<()> {
 	let project = &opts.unit.project;
@@ -298,7 +298,7 @@ fn unit_is_known<S: SystemCtl>(sc: &S, unit: &str) -> bool {
 /// command cannot claim success while the service is still enabled and running.
 ///
 /// When the auto-update timer pair is present, this removes both: the
-/// `<unit>-update.service` oneshot and the `<unit>-update.timer` schedule that
+/// `<unit>.update.service` oneshot and the `<unit>.update.timer` schedule that
 /// fires it. Without that, the timer would keep firing `up -d` against a stack
 /// whose main unit had been uninstalled, the exact inconsistency the issue
 /// calls out.
