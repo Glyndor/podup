@@ -84,7 +84,13 @@ async fn upload(ignore: &[&str], include: &[&str]) -> Vec<String> {
 	};
 	let mut done = HashSet::new();
 	engine
-		.dispatch_batch(&file, &[sub.clone()], &rules, &mut state, &mut done)
+		.dispatch_batch(
+			&file,
+			std::slice::from_ref(&sub),
+			&rules,
+			&mut state,
+			&mut done,
+		)
 		.await;
 	uploaded_names(&fake)
 }
