@@ -97,11 +97,12 @@ pub(crate) async fn run_update(check: bool, force: bool) -> podup::Result<()> {
 ///
 /// Handle `audit --list-checks`. Renders the check registry directly without
 /// reading a compose file.
-pub(crate) fn render_audit_list_checks(format: AuditFormat) {
-	match format {
+pub(crate) fn render_audit_list_checks(format: AuditFormat) -> podup::Result<()> {
+	let output = match format {
 		AuditFormat::Table => audit::render_list_checks_table(),
 		AuditFormat::Json => audit::render_list_checks_json(),
-	}
+	};
+	audit::output_complete(output).map(|_| ())
 }
 
 /// Handle `ls`. Connects to Podman without touching the compose file.

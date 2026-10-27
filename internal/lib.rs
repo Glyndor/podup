@@ -146,6 +146,13 @@ pub fn ports_published_on_wildcard_in(
 pub fn effective_memory_limit(service: &crate::compose::types::Service) -> Option<i64> {
 	crate::engine::effective_memory_limit(service)
 }
+/// The PID cap the engine forwards into `LinuxPids.limit`. Top-level
+/// `pids_limit` wins over deploy, including the unlimited sentinel `-1`.
+/// Shared with the binary's audit; not a supported library interface.
+#[doc(hidden)]
+pub fn effective_pids_limit(service: &crate::compose::types::Service) -> Option<i64> {
+	crate::engine::effective_pids_limit(service)
+}
 /// The CFS CPU quota the engine will forward into `LinuxCPU.quota`, in
 /// microseconds over `cpu_period` (default 100_000). `cpu_quota:` wins
 /// when present, including `-1` (Docker's "unlimited" sentinel) and

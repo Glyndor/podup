@@ -163,8 +163,7 @@ async fn run(error_context: &mut startup::exit_status::ErrorContext) -> podup::R
 		..
 	} = &cli.command
 	{
-		main_runner::short_circuits::render_audit_list_checks(*format);
-		return Ok(());
+		return main_runner::short_circuits::render_audit_list_checks(*format);
 	}
 
 	// `ls` discovers projects across the host by container label; it needs a

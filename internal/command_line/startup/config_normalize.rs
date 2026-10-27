@@ -1,12 +1,11 @@
-//! Output-fidelity normalizers for the `config` render path: resolving relative
-//! bind-mount sources to absolute paths, and quoting YAML 1.1 boolean-like
-//! scalars. Split out of `config_render` so each file stays within the source
-//! line limit. None of this changes runtime behaviour; it only shapes the
-//! rendered `config` output to match `docker compose config`.
+//! Path preparation for config and audit, plus YAML 1.1 scalar quoting.
+//! Config folds relative bind paths for display; audit preserves parent
+//! components so its checks can identify ambiguous symlink traversal.
+//! These views do not change runtime mount behaviour.
 
 use std::path::{Component, Path, PathBuf};
 
-use podup::compose::types::{ComposeFile, VolumeMount, VolumeType};
+use podup::compose::types::{ComposeFile, Service, VolumeMount, VolumeType};
 
 /// Rewrite each service's relative bind-mount source to an absolute path,
 /// resolved against the project directory (matching `docker compose config`).
@@ -16,24 +15,63 @@ use podup::compose::types::{ComposeFile, VolumeMount, VolumeType};
 /// affects the rendered output's source field.
 pub(crate) fn resolve_bind_sources(file: &mut ComposeFile, base_dir: &Path) {
 	for svc in file.services_and_jobs_mut() {
-		for mount in &mut svc.volumes {
-			match mount {
-				VolumeMount::Short(s) => {
-					if let Some(rewritten) = rewrite_short_bind(s, base_dir) {
-						*s = rewritten;
-					}
-				}
-				VolumeMount::Long {
-					volume_type: VolumeType::Bind,
-					source: Some(src),
-					..
-				} => {
-					if let Some(abs) = absolute_bind_source(src, base_dir) {
-						*src = abs;
-					}
-				}
-				VolumeMount::Long { .. } => {}
+		resolve_service_bind_sources(svc, base_dir);
+	}
+}
+
+/// Resolve bind sources on one container for config output.
+fn resolve_service_bind_sources(service: &mut Service, base_dir: &Path) {
+	rewrite_service_bind_sources(
+		service,
+		|spec| rewrite_short_bind(spec, base_dir),
+		|src| absolute_bind_source(src, base_dir),
+	);
+}
+
+/// Anchor audit paths without collapsing `..`: symlinks can change its meaning.
+/// The sensitive-bind check separately evaluates the lexically folded path.
+pub(crate) fn anchor_service_bind_sources(service: &mut Service, base_dir: &Path) {
+	rewrite_service_bind_sources(
+		service,
+		|spec| {
+			let (src, rest) = spec.split_once(':')?;
+			let absolute = anchored_bind_source(src, base_dir)?;
+			Some(format!("{absolute}:{rest}"))
+		},
+		|src| {
+			// Long-form binds explicitly identify a host path, so a bare
+			// relative source is a path rather than a named volume.
+			if src.is_empty() || src.starts_with('~') || Path::new(src).is_absolute() {
+				None
+			} else {
+				Some(anchor_relative_path(src, base_dir))
 			}
+		},
+	);
+}
+
+fn rewrite_service_bind_sources(
+	service: &mut Service,
+	short: impl Fn(&str) -> Option<String>,
+	long: impl Fn(&str) -> Option<String>,
+) {
+	for mount in &mut service.volumes {
+		match mount {
+			VolumeMount::Short(s) => {
+				if let Some(rewritten) = short(s) {
+					*s = rewritten;
+				}
+			}
+			VolumeMount::Long {
+				volume_type: VolumeType::Bind,
+				source: Some(src),
+				..
+			} => {
+				if let Some(abs) = long(src) {
+					*src = abs;
+				}
+			}
+			VolumeMount::Long { .. } => {}
 		}
 	}
 }
@@ -51,16 +89,25 @@ fn rewrite_short_bind(spec: &str, base_dir: &Path) -> Option<String> {
 /// Resolve a relative (`.`-prefixed) bind source to a lexically-normalized
 /// absolute path against `base_dir`; return `None` for anything else.
 fn absolute_bind_source(src: &str, base_dir: &Path) -> Option<String> {
+	let anchored = anchored_bind_source(src, base_dir)?;
+	Some(normalize_lexically(Path::new(&anchored)))
+}
+
+fn anchored_bind_source(src: &str, base_dir: &Path) -> Option<String> {
 	if !src.starts_with('.') {
 		return None;
 	}
+	Some(anchor_relative_path(src, base_dir))
+}
+
+fn anchor_relative_path(src: &str, base_dir: &Path) -> String {
 	let joined = base_dir.join(src);
 	let absolute = if joined.is_absolute() {
 		joined
 	} else {
 		std::env::current_dir().unwrap_or_default().join(joined)
 	};
-	Some(normalize_lexically(&absolute))
+	absolute.to_string_lossy().into_owned()
 }
 
 /// Lexically clean a path: drop `.` components and collapse `..` against the

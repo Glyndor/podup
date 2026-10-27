@@ -44,7 +44,7 @@ pub use project::ProjectLock;
 
 pub(crate) use container_config::build_log_config;
 pub(crate) use container_config::resources::{
-	effective_cpu_quota, effective_memory_limit, is_known_ulimit,
+	effective_cpu_quota, effective_memory_limit, effective_pids_limit, is_known_ulimit,
 };
 pub(crate) use network::apply_default_isolation;
 /// Re-exported so `startup::config_render` (in the binary crate) can call the

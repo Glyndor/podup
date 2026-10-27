@@ -32,6 +32,19 @@ pub(crate) fn effective_memory_limit(service: &Service) -> Option<i64> {
 	top.or(deploy)
 }
 
+/// The PID cap forwarded into `LinuxPids.limit`. Top-level `pids_limit`
+/// wins, including `-1` (unlimited); deploy only fills an absent value.
+pub(crate) fn effective_pids_limit(service: &Service) -> Option<i64> {
+	service.pids_limit.or_else(|| {
+		service
+			.deploy
+			.as_ref()
+			.and_then(|d| d.resources.as_ref())
+			.and_then(|r| r.limits.as_ref())
+			.and_then(|l| l.pids.map(|p| p as i64))
+	})
+}
+
 /// The CFS CPU quota the engine will forward into `LinuxCPU.quota`, in
 /// microseconds over `cpu_period` (default 100_000). `cpu_quota:` wins
 /// when present, including `-1` (Docker's "unlimited" sentinel) and
@@ -96,15 +109,10 @@ pub(crate) fn build_resource_limits(service: &Service) -> Option<LinuxResources>
 		.and_then(size::parse_memory);
 	let cpu_quota = effective_cpu_quota(service);
 	let cpu_period = service.cpu_period;
-	let mut pids_limit = service.pids_limit;
+	let pids_limit = effective_pids_limit(service);
 
 	if let Some(deploy) = &service.deploy {
 		if let Some(res) = &deploy.resources {
-			if let Some(limits) = &res.limits {
-				if pids_limit.is_none() {
-					pids_limit = limits.pids.map(|p| p as i64);
-				}
-			}
 			if let Some(reserv) = &res.reservations {
 				if mem_reservation.is_none() {
 					mem_reservation = reserv.memory.as_deref().and_then(size::parse_memory);
