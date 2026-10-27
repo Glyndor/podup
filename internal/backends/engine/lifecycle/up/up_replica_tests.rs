@@ -54,7 +54,13 @@ fn host(inspects: &[(&str, &str)]) -> FakePodman {
 				.and_then(|rest| rest.split('/').next())
 				.unwrap_or_default();
 			return match map.get(name) {
-				Some(json) => (200, json.clone()),
+				// A container left by an earlier `up` carries the project's
+				// label; without it `up` would refuse to replace the container.
+				Some(json) => {
+					let mut value: serde_json::Value = serde_json::from_str(json).unwrap();
+					value["Config"]["Labels"]["podup.project"] = "proj".into();
+					(200, value.to_string())
+				}
 				None => (404, r#"{"message":"no such container"}"#.to_string()),
 			};
 		}
