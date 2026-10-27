@@ -68,9 +68,7 @@ fn restore_from_backup_round_trips_the_old_binary() {
 	);
 }
 
-/// #1360 (L5): a fresh-deploy install (no previous binary) leaves no
-/// `.old` behind and the rollback path is a no-op. Simulates the
-/// `install_binary` first-run on a machine that has never had podup.
+/// No previous file means no backup; a caller requiring rollback must fail.
 #[test]
 fn move_target_aside_is_a_no_op_when_the_target_does_not_exist() {
 	let dir = tempfile::tempdir().unwrap();
@@ -83,8 +81,17 @@ fn move_target_aside_is_a_no_op_when_the_target_does_not_exist() {
 		"no .old is created when there was no target"
 	);
 	assert!(!target.exists(), "a non-existent target stays non-existent");
-	// The rollback is a no-op too: there is nothing to roll back to.
-	restore_from_backup(&target, &backup).expect("a no-op rollback must succeed");
+	assert!(restore_from_backup(&target, &backup).is_err());
+}
+
+#[test]
+fn a_missing_backup_does_not_claim_to_restore_the_previous_binary() {
+	let dir = tempfile::tempdir().unwrap();
+	let target = dir.path().join("podup");
+	std::fs::write(&target, b"failed update").unwrap();
+	let err = restore_from_backup(&target, &target.with_extension("old")).unwrap_err();
+	assert!(err.to_string().contains("roll back"), "{err}");
+	assert_eq!(std::fs::read(&target).unwrap(), b"failed update");
 }
 
 /// The Unix backup is a hard link of the original: the inode survives at

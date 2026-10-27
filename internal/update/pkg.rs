@@ -12,7 +12,8 @@ use crate::ComposeError;
 ///
 /// Three are detected: apt on Linux, Homebrew on macOS and Linux, and Scoop on
 /// Windows. cargo-install layouts (`~/.cargo/bin`, `/usr/local/bin`) belong to
-/// none of them and update normally, and a path no manager owns returns `None`.
+/// none of them and update normally, and a path no manager owns returns `Ok(None)`.
+/// If ownership cannot be determined, return an error rather than permit replacement.
 ///
 /// apt is asked; the other two are read off the path. That asymmetry is not
 /// laziness. `dpkg-query` is a real database lookup with an authoritative
@@ -27,21 +28,27 @@ use crate::ComposeError;
 /// missing a managed install, silently rewrites a file whose manager still
 /// believes it knows the contents. These heuristics are shaped to fail the
 /// first way.
-pub fn managing_package_manager() -> Option<&'static str> {
-	let exe = std::env::current_exe().ok()?;
-	let path = std::fs::canonicalize(&exe).unwrap_or(exe);
+pub fn managing_package_manager() -> crate::Result<Option<&'static str>> {
+	let exe = std::env::current_exe()
+		.map_err(|e| ComposeError::Update(format!("cannot determine package ownership: {e}")))?;
+	let path = std::fs::canonicalize(&exe).map_err(|e| {
+		ComposeError::Update(format!(
+			"cannot determine package ownership of {}: {e}",
+			exe.display()
+		))
+	})?;
 
 	#[cfg(target_os = "linux")]
-	if dpkg_owns(&path) {
-		return Some("apt");
+	if dpkg_owns(&path)? {
+		return Ok(Some("apt"));
 	}
 	if homebrew_owns(&path) {
-		return Some("Homebrew");
+		return Ok(Some("Homebrew"));
 	}
 	if scoop_owns(&path) {
-		return Some("Scoop");
+		return Ok(Some("Scoop"));
 	}
-	None
+	Ok(None)
 }
 
 /// Whether `path` sits inside a Homebrew Cellar.
@@ -91,39 +98,34 @@ fn scoop_owns_under(path: &Path, root: Option<&Path>) -> bool {
 	})
 }
 
-/// Whether dpkg's database records `path` as belonging to an installed package.
-///
-/// The primary check is `dpkg-query -S <path>`. Crucially this must not *fail
-/// open*: if the helper cannot be spawned (missing, not executable, or denied)
-/// we do not fall back to scanning dpkg's on-disk file lists directly
-/// (`/var/lib/dpkg/info/*.list`): that directory is owned by another package
-/// and we have no guarantee of its mode, ownership, or the validity of its
-/// contents. Reading it opens a window where a tampered target file's path
-/// could be planted inside the listing directory to make self-update refuse
-/// on an unmanaged binary, or, more worryingly, where the listing could be
-/// truncated or replaced to hide the path of an apt-owned binary we are about
-/// to clobber. Until `dpkg-query` is gone entirely (which is itself the
-/// unambiguous signal that this is not a Debian-managed host) we report
-/// `false` and let the update proceed.
+/// Ask dpkg for ownership. Missing/denied helpers and fatal database errors
+/// leave ownership unknown, so the caller must refuse self-replacement.
+/// Never infer ownership by scanning package lists ourselves.
 #[cfg(target_os = "linux")]
-fn dpkg_owns(path: &Path) -> bool {
+fn dpkg_owns(path: &Path) -> crate::Result<bool> {
 	let query = std::process::Command::new("dpkg-query")
 		.arg("-S")
 		.arg(path)
 		.output();
-	// dpkg-query ran to completion: trust its verdict (success == owned).
-	// A non-zero exit (path not in the database) is the common case and is
-	// the same as a deploy from a cargo install or `/usr/local/bin`: report
-	// `false` and let the update proceed.
-	match query {
-		Ok(output) => output.status.success(),
-		// dpkg-query is missing, not executable, or denied: this is not a
-		// host dpkg controls, so report `false` rather than consulting a
-		// directory we do not own. The previous fallback that read the
-		// `.list` files directly was the surface that prompted #1360: any
-		// ownership/mode assumption about `/var/lib/dpkg/info` is a
-		// privilege-confusion hypothesis, not a fact.
-		Err(_) => false,
+	dpkg_query_result(query)
+}
+
+/// dpkg-query reserves status 1 for a search with no matches, and 2 for fatal
+/// errors. Only the former is evidence that the file is unmanaged.
+#[cfg(target_os = "linux")]
+fn dpkg_query_result(query: std::io::Result<std::process::Output>) -> crate::Result<bool> {
+	let output = query.map_err(|e| {
+		ComposeError::Update(format!(
+			"cannot determine package ownership using dpkg-query: {e}; refusing to replace the binary"
+		))
+	})?;
+	match output.status.code() {
+		Some(0) => Ok(true),
+		Some(1) => Ok(false),
+		_ => Err(ComposeError::Update(format!(
+			"cannot determine package ownership: dpkg-query exited with {}; refusing to replace the binary",
+			output.status
+		))),
 	}
 }
 
