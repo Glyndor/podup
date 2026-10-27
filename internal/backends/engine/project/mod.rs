@@ -10,5 +10,5 @@ pub use lock::{is_safe_project_name, ProjectLock};
 pub(in crate::backends::engine) mod names;
 pub(in crate::backends::engine) mod profiles;
 mod profiles_jobs;
-pub use profiles::{retain_active_profiles, retain_active_profiles_with_targets};
+pub use profiles::{retain_active_profiles, retain_active_profiles_with_targets, retain_up_scope};
 pub(in crate::backends::engine) mod replicas;

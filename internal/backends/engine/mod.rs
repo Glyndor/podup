@@ -53,7 +53,7 @@ pub use network::resolve_network_name;
 pub(crate) use pod::pod_network_mode;
 pub use project::is_safe_project_name;
 pub use project::{list_projects, list_projects_filtered, LsOptions};
-pub use project::{retain_active_profiles, retain_active_profiles_with_targets};
+pub use project::{retain_active_profiles, retain_active_profiles_with_targets, retain_up_scope};
 pub use query::{
 	AttachOptions, AttachOutcome, AttachSummary, ExecOptions, ImagesOptions, LogsDisplay,
 	LogsOptions, PsDisplayOptions, PsFilterOptions, PsOptions, DEFAULT_LOG_TAIL,

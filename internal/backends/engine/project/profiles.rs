@@ -34,6 +34,35 @@ pub fn retain_active_profiles_with_targets(
 	file.services.retain(|name, _| enabled.contains(name));
 }
 
+/// Narrow `file` to what `up` touched: the services the profiles enable and,
+/// when `targets` names some, those and their dependencies (all of them
+/// unless `no_deps`). `up` starts exactly this set, so waiting on it, attaching
+/// to it and stopping it afterwards must use it too, rather than the whole
+/// project.
+pub fn retain_up_scope(
+	file: &mut ComposeFile,
+	active: &[String],
+	targets: &[String],
+	no_deps: bool,
+) {
+	retain_active_profiles_with_targets(file, active, targets);
+	if targets.is_empty() {
+		return;
+	}
+	let mut keep: HashSet<String> = HashSet::new();
+	let mut stack: Vec<String> = targets.to_vec();
+	while let Some(name) = stack.pop() {
+		if !keep.insert(name.clone()) || no_deps {
+			continue;
+		}
+		if let Some(service) = file.services.get(&name) {
+			let deps = crate::compose::dependencies::effective_depends_on(service, &file.services);
+			stack.extend(deps.service_names());
+		}
+	}
+	file.services.retain(|name, _| keep.contains(name));
+}
+
 /// The set of service names that should run under the active profile set.
 ///
 /// A service is enabled when it is unprofiled, matches an active profile (or the

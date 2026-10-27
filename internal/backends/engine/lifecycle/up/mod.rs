@@ -67,6 +67,33 @@ impl Engine {
 		force_recreate: bool,
 		no_deps: bool,
 	) -> Result<()> {
+		self.create_with_build(
+			file,
+			active_profiles,
+			target_services,
+			no_recreate,
+			force_recreate,
+			no_deps,
+			false,
+		)
+		.await
+	}
+
+	/// [`Self::create_with_options`] that also honours `--build`: the images of
+	/// the services with a `build:` block are rebuilt before their containers
+	/// are created, as `up --build` does.
+	// The booleans are the flags of `up --no-start`; a struct would only rename the list.
+	#[allow(clippy::too_many_arguments)]
+	pub async fn create_with_build(
+		&self,
+		file: &ComposeFile,
+		active_profiles: &[String],
+		target_services: &[String],
+		no_recreate: bool,
+		force_recreate: bool,
+		no_deps: bool,
+		build: bool,
+	) -> Result<()> {
 		self.run_up(
 			file,
 			active_profiles,
@@ -75,7 +102,7 @@ impl Engine {
 			force_recreate,
 			no_deps,
 			false,
-			false,
+			build,
 		)
 		.await
 	}

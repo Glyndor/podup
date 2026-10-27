@@ -176,13 +176,32 @@ fn service_config_hash(svc: &podup::compose::types::Service) -> podup::Result<St
 	// Not `unwrap_or_default()`: an empty vec hashes to the SHA-256 of the empty
 	// string, which looks like a perfectly stable hash. A deploy pipeline keyed
 	// on `config --hash` would quietly stop noticing that the service changed.
-	let json = serde_json::to_vec(svc)
+	let value = serde_json::to_value(svc)
+		.map_err(|e| podup::ComposeError::Build(format!("could not hash service config: {e}")))?;
+	// The service holds hash maps, whose iteration order changes from one run to
+	// the next; hashing them as they come made the same file print different
+	// hashes. Sort every object by key first.
+	let json = serde_json::to_vec(&sorted_keys(value))
 		.map_err(|e| podup::ComposeError::Build(format!("could not hash service config: {e}")))?;
 	let hash = Sha256::digest(&json)
 		.iter()
 		.map(|b| format!("{b:02x}"))
 		.collect();
 	Ok(hash)
+}
+
+/// `value` with the keys of every object in sorted order.
+fn sorted_keys(value: serde_json::Value) -> serde_json::Value {
+	use serde_json::Value;
+	match value {
+		Value::Object(map) => {
+			let sorted: std::collections::BTreeMap<String, Value> =
+				map.into_iter().map(|(k, v)| (k, sorted_keys(v))).collect();
+			Value::Object(sorted.into_iter().collect())
+		}
+		Value::Array(items) => Value::Array(items.into_iter().map(sorted_keys).collect()),
+		other => other,
+	}
 }
 
 /// `config --hash`: print `SERVICE HASH` for all services ("*") or the given
