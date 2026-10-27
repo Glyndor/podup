@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::compose::types::{WatchAction, WatchRule};
+#[cfg(unix)]
 use crate::engine::fake_podman;
 use crate::engine::Engine;
 
@@ -216,6 +217,7 @@ fn a_repeated_rebuild_collapses_while_the_other_rules_still_run() {
 /// changed file. The dispatch stopped at the first matching rule, so the
 /// second service's container never saw the change.
 #[tokio::test]
+#[cfg(unix)]
 async fn two_services_watching_the_same_path_both_sync() {
 	let dir = tempfile::tempdir().unwrap();
 	let src = dir.path().join("src");

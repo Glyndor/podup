@@ -358,10 +358,10 @@ impl Engine {
 #[path = "actions_umask_tests.rs"]
 mod actions_umask_tests;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[path = "actions_removal_tests.rs"]
 mod actions_removal_tests;
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 #[path = "actions_rebuild_tests.rs"]
 mod actions_rebuild_tests;
