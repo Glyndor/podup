@@ -140,6 +140,56 @@ pub struct ContainerInspect {
 	/// Runtime network settings, including resolved host port bindings.
 	#[serde(rename = "NetworkSettings")]
 	pub network_settings: Option<NetworkSettings>,
+
+	/// The mounts the container has, as the runtime resolved them.
+	#[serde(rename = "Mounts", default, deserialize_with = "null_default")]
+	pub mounts: Vec<ContainerMount>,
+}
+
+impl ContainerInspect {
+	/// The volume mounts the container has, keyed by the in-container path
+	/// they are attached to.
+	///
+	/// Only the volume mounts are returned: a bind mount has no volume to
+	/// inherit, and the mounts a container carries are what a replacement has
+	/// to be given back.
+	pub fn volumes_by_destination(&self) -> HashMap<String, ContainerMount> {
+		self.mounts
+			.iter()
+			.filter(|m| m.mount_type == "volume" && !m.name.is_empty())
+			.map(|m| (m.destination.clone(), m.clone()))
+			.collect()
+	}
+}
+
+/// A mount of a container, as `GET /libpod/containers/{name}/json` reports it.
+#[derive(Deserialize, Default, Clone)]
+pub struct ContainerMount {
+	/// `"volume"` for a named or anonymous volume, `"bind"` for a host path.
+	#[serde(rename = "Type", default)]
+	pub mount_type: String,
+
+	/// The volume's name. Empty for a bind mount.
+	#[serde(rename = "Name", default)]
+	pub name: String,
+
+	/// The in-container path the mount is attached to.
+	#[serde(rename = "Destination", default)]
+	pub destination: String,
+
+	/// Whether the mount is read-write.
+	///
+	/// libpod always sends the field. An older server that left it out is
+	/// read as read-write, the ordinary case: reading it as read-only would
+	/// turn the replacement's mount into a `ro` one the operator never asked
+	/// for.
+	#[serde(rename = "RW", default = "rw_by_default")]
+	pub rw: bool,
+}
+
+/// The default for a mount's read-write flag when the field is absent.
+fn rw_by_default() -> bool {
+	true
 }
 
 /// Container config sub-object from inspect.

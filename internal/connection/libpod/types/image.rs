@@ -1,5 +1,7 @@
 //! Podman libpod image API request and response types.
 
+use std::collections::HashMap;
+
 use serde::Deserialize;
 
 /// Streaming JSON line emitted during image pull (`POST /libpod/images/pull`).
@@ -74,4 +76,21 @@ pub struct ImageInspect {
 	/// yields a parse failure and a blank column.
 	#[serde(rename = "Created", default)]
 	pub created: String,
+	/// The image's runtime configuration.
+	#[serde(rename = "Config", default)]
+	pub config: Option<ImageConfig>,
+}
+
+/// The image's runtime configuration, as the image inspect reports it.
+#[derive(Deserialize, Default)]
+pub struct ImageConfig {
+	/// The paths the image declares a `VOLUME` directive for.
+	///
+	/// The runtime mounts an anonymous volume at each of them unless the
+	/// container's own spec covers the path, so this is what tells a
+	/// replacement container which paths it is expected to carry a volume at.
+	/// The map's values are empty objects; only the keys matter. Absent when
+	/// the image declares no volume directive at all.
+	#[serde(rename = "Volumes", default)]
+	pub volumes: Option<HashMap<String, serde_json::Value>>,
 }
