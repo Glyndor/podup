@@ -133,12 +133,32 @@ fn interpolate_value(
 	spent: &mut usize,
 	warned: &mut HashSet<String>,
 ) -> Result<()> {
+	interpolate_in(value, vars, spent, warned, false)
+}
+
+/// [`interpolate_value`] with `text` set when the value sits under a key whose
+/// schema type is a string: its interpolated result stays text instead of
+/// being read back as a number or a boolean (`user: ${UID}` with `UID=1000`
+/// is the string `"1000"`, as in docker compose).
+fn interpolate_in(
+	value: &mut serde_yaml::Value,
+	vars: &HashMap<String, String>,
+	spent: &mut usize,
+	warned: &mut HashSet<String>,
+	text: bool,
+) -> Result<()> {
 	match value {
 		serde_yaml::Value::String(s) if s.contains('$') => {
-			*value = interpolate_scalar(s, vars, spent, warned)?;
+			*value = if text {
+				serde_yaml::Value::String(crate::substitute::substitute_budgeted(
+					s, vars, spent, warned,
+				)?)
+			} else {
+				interpolate_scalar(s, vars, spent, warned)?
+			};
 		}
 		serde_yaml::Value::Tagged(tagged) => {
-			interpolate_value(&mut tagged.value, vars, spent, warned)?;
+			interpolate_in(&mut tagged.value, vars, spent, warned, text)?;
 		}
 		serde_yaml::Value::Sequence(seq) => {
 			// Skip the recursion when no element carries a `$`: a 100-service file
@@ -149,7 +169,7 @@ fn interpolate_value(
 				return Ok(());
 			}
 			for item in seq.iter_mut() {
-				interpolate_value(item, vars, spent, warned)?;
+				interpolate_in(item, vars, spent, warned, text)?;
 			}
 		}
 		serde_yaml::Value::Mapping(map) => {
@@ -166,7 +186,8 @@ fn interpolate_value(
 			let mut rebuilt = serde_yaml::Mapping::with_capacity(taken.len());
 			for (key, mut val) in taken {
 				let key = interpolate_key(key, vars, warned)?;
-				interpolate_value(&mut val, vars, spent, warned)?;
+				let value_is_text = text || key.as_str().is_some_and(super::textual::is_string_key);
+				interpolate_in(&mut val, vars, spent, warned, value_is_text)?;
 				rebuilt.insert(key, val);
 			}
 			*map = rebuilt;

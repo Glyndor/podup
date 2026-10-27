@@ -17,10 +17,7 @@ fn bare_numbers_and_booleans_load_into_text_fields() {
 		"services:
   web:
     image: x
-    user: 1000
-    container_name: 123
     mem_limit: 512
-    command: [serve, 8080]
     ports: [8080]
     expose: [3000]
     labels:
@@ -29,10 +26,7 @@ fn bare_numbers_and_booleans_load_into_text_fields() {
 ",
 		&[],
 	);
-	let web = &file.services["web"];
-	assert_eq!(web.user.as_deref(), Some("1000"));
-	assert_eq!(web.container_name.as_deref(), Some("123"));
-	assert_eq!(web.expose, vec!["3000".to_string()]);
+	assert_eq!(file.services["web"].expose, vec!["3000".to_string()]);
 }
 
 #[test]
@@ -41,7 +35,15 @@ fn an_interpolated_number_loads_into_a_text_field() {
 		"services:\n  web:\n    image: x\n    command: [serve, \"${PORT}\"]\n    user: ${UID}\n",
 		&[("PORT", "8080"), ("UID", "1000")],
 	);
-	assert_eq!(file.services["web"].user.as_deref(), Some("1000"));
+	let web = &file.services["web"];
+	assert_eq!(web.user.as_deref(), Some("1000"));
+}
+
+#[test]
+fn a_bare_number_in_a_string_only_key_is_still_refused() {
+	let err =
+		deserialize_with_merge_interp("services:\n  web:\n    image: x\n    user: 1000\n", None);
+	assert!(err.is_err(), "the schema types user as a string");
 }
 
 #[test]

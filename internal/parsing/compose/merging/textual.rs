@@ -1,17 +1,22 @@
 //! Scalars that a compose file writes as numbers or booleans in fields podup
 //! models as text.
 //!
-//! `user: 1000`, `ports: [8080]`, `labels: {replicas: 3}` and `mem_limit: 512`
-//! are valid compose, and so is a `${PORT}` that interpolates to `8080`. The
-//! YAML parser types those as numbers, and a field declared as a string refuses
-//! a number, so the whole file failed to parse without naming the field. This
-//! turns the scalar back into its text before the document is typed, for the
-//! keys that are text, and leaves every key that is really numeric alone.
+//! `ports: [8080]`, `expose: [3000]`, `labels: {replicas: 3}` and
+//! `mem_limit: 512` are valid compose: the schema types them "string or
+//! number". The YAML parser types them as numbers, and a field declared as a
+//! string refuses a number, so the whole file failed to parse without naming
+//! the field. This turns the scalar back into its text before the document is
+//! typed. A key the schema types as a plain string, like `user`, keeps
+//! rejecting a bare number.
 
 use serde_yaml::Value;
 
-/// Service keys whose value is one string.
-const TEXT_SCALARS: &[&str] = &[
+/// Service keys the compose schema types as a plain string (or a list of
+/// strings). A bare number written there is a type error and stays one; only
+/// an interpolated value is kept as text, see [`is_string_key`].
+const STRING_KEYS: &[&str] = &[
+	"command",
+	"entrypoint",
 	"user",
 	"container_name",
 	"hostname",
@@ -25,41 +30,25 @@ const TEXT_SCALARS: &[&str] = &[
 	"stop_signal",
 	"pull_policy",
 	"runtime",
-	"cgroup",
 	"cgroup_parent",
 	"userns_mode",
 	"uts",
 	"isolation",
-	"mem_limit",
-	"memswap_limit",
-	"mem_reservation",
-	"shm_size",
 	"mac_address",
 ];
 
-/// Service keys whose value is a string, a list of strings or a map of strings.
-const TEXT_COLLECTIONS: &[&str] = &[
-	"command",
-	"entrypoint",
-	"ports",
-	"expose",
-	"dns",
-	"dns_search",
-	"dns_opt",
-	"cap_add",
-	"cap_drop",
-	"security_opt",
-	"tmpfs",
-	"volumes",
-	"profiles",
-	"devices",
-	"extra_hosts",
-	"external_links",
-	"links",
-	"volumes_from",
-	"labels",
-	"annotations",
-];
+/// Whether the interpolated value under `key` is text (see [`STRING_KEYS`]).
+pub(super) fn is_string_key(key: &str) -> bool {
+	STRING_KEYS.contains(&key)
+}
+
+/// Service keys whose schema type is "string or number": a bare number is valid
+/// compose there and loads as its text.
+const TEXT_SCALARS: &[&str] = &["mem_limit", "memswap_limit", "mem_reservation", "shm_size"];
+
+/// Service keys that hold a list of "string or number" items, or a map whose
+/// values are string, number or boolean.
+const TEXT_COLLECTIONS: &[&str] = &["ports", "expose", "labels", "annotations"];
 
 /// Turn the number and boolean scalars of the text-typed keys of every service
 /// and job in `document` into strings.
