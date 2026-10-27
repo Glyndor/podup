@@ -1,6 +1,11 @@
 //! `exec` command: run a command inside a service container.
 
+mod input;
 mod interactive;
+mod output;
+mod piped;
+
+pub(crate) use input::InputSource;
 
 use std::io::Write;
 
@@ -11,7 +16,7 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::types::exec::{
 	ExecCreateConfig, ExecCreateResponse, ExecInspect, ExecStartConfig,
 };
-use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
+use crate::libpod::{urlencoded, API_PREFIX};
 
 use crate::backends::engine::observe::query::Engine;
 
@@ -257,14 +262,22 @@ impl Engine {
 		// `-i` flag, because a TTY on both ends is the default and `-T` is how you
 		// say no. A non-terminal stdin (a script, a pipeline) takes the
 		// unchanged streaming path, so nothing about scripted `exec` moves.
-		let interactive = interactive_exec(&opts);
+		let stdin_is_tty = self.input.is_terminal();
+		let interactive = interactive_exec(&opts, stdin_is_tty);
+		// Standard input is a separate decision from the pseudo-terminal: a pty
+		// merges stdout and stderr and rewrites line endings, while stdin is
+		// just the bytes the command reads. `exec -T db psql < dump.sql` feeds
+		// the file to the command without a pty, and that combination never
+		// worked: the session was created with no stdin attached and the file
+		// never arrived.
+		let attach_stdin = interactive || wants_stdin(&opts, stdin_is_tty);
 
 		let env = expand_exec_env(&opts.env);
 		let exec_cfg = ExecCreateConfig {
 			cmd: Some(cmd),
 			attach_stdout: Some(true),
 			attach_stderr: Some(true),
-			attach_stdin: interactive.then_some(true),
+			attach_stdin: attach_stdin.then_some(true),
 			tty: interactive.then_some(true),
 			user: opts.user.clone(),
 			working_dir: opts.workdir.clone(),
@@ -330,6 +343,15 @@ impl Engine {
 			return self.exec_exit_status(&exec_id).await;
 		}
 
+		// A session with the caller's stdin attached needs the same thing: the
+		// input goes up the connection the output comes down on. The request /
+		// response client cannot carry that, so this path hijacks the
+		// connection too and demultiplexes the frames itself.
+		if attach_stdin {
+			self.exec_piped(&exec_id).await?;
+			return self.exec_exit_status(&exec_id).await;
+		}
+
 		let start_cfg = ExecStartConfig {
 			detach: false,
 			tty: false,
@@ -351,27 +373,37 @@ impl Engine {
 		{
 			let mut out = std::io::stdout().lock();
 			while let Some(msg) = stream.next().await {
-				match msg.map_err(ComposeError::Podman)? {
-					LogOutput::StdOut { message } => {
-						let _ = out.write_all(String::from_utf8_lossy(&message).as_bytes());
-						let _ = out.flush();
-					}
-					LogOutput::StdErr { message } => {
-						let text = String::from_utf8_lossy(&message);
-						// Drop the spurious connection-reset teardown frame an OCI
-						// exec launch-failure emits, so only the real diagnostic shows.
-						if is_exec_teardown_noise(&text) {
-							continue;
-						}
-						let mut err = std::io::stderr().lock();
-						let _ = err.write_all(text.as_bytes());
-						let _ = err.flush();
-					}
-				}
+				let frame = msg.map_err(ComposeError::Podman)?;
+				let mut err = std::io::stderr().lock();
+				let _ = output::write_exec_frame(&mut out, &mut err, frame);
+				let _ = out.flush();
 			}
 		}
 
 		self.exec_exit_status(&exec_id).await
+	}
+
+	/// Run a session that carries the caller's stdin and no pseudo-terminal.
+	///
+	/// The connection is hijacked, so the caller's input and the command's
+	/// output share it: what is written to it after the response head is the
+	/// command's stdin, and what comes back is its multiplexed output.
+	/// Measured against Podman 5.7.0.
+	async fn exec_piped(&self, exec_id: &str) -> Result<()> {
+		let start_path = format!("{API_PREFIX}/exec/{}/start", urlencoded(exec_id));
+		let body = br#"{"Detach":false,"Tty":false}"#;
+		let hijacked = self
+			.client
+			.post_hijack(&start_path, body)
+			.await
+			.map_err(ComposeError::Podman)?;
+		piped::pump_piped(
+			hijacked.stream,
+			self.input.reader(),
+			tokio::io::stdout(),
+			tokio::io::stderr(),
+		)
+		.await
 	}
 
 	/// Read the session's exit code and turn a non-zero one into
@@ -403,13 +435,13 @@ impl Engine {
 ///
 /// Pure except for the `isatty` probe, which is behind `stdin_is_terminal` so
 /// the decision itself is unit-testable.
-fn interactive_exec(opts: &ExecOptions) -> bool {
+fn interactive_exec(opts: &ExecOptions, stdin_is_tty: bool) -> bool {
 	// Both ends, not just stdin. A pty merges stdout and stderr and writes
 	// CRLF, so `podup exec db psql > out.txt` typed at a shell (stdin still a
 	// terminal, stdout a file) wrote pty bytes with stderr folded in where it
 	// used to write clean demultiplexed output. Measured against
 	// `docker compose`, which keeps that redirect clean.
-	wants_interactive(opts, stdin_is_terminal() && stdout_is_terminal())
+	wants_interactive(opts, stdin_is_tty && stdout_is_terminal())
 }
 
 /// The decision itself, with the environment passed in.
@@ -418,6 +450,25 @@ fn interactive_exec(opts: &ExecOptions) -> bool {
 /// assertion depend on how `cargo test` happened to be invoked.
 fn wants_interactive(opts: &ExecOptions, stdin_is_tty: bool) -> bool {
 	!opts.no_tty && !opts.detach && stdin_is_tty
+}
+
+/// Whether the exec session should carry the caller's standard input.
+///
+/// A separate decision from the pseudo-terminal: a pty merges stdout and
+/// stderr and rewrites line endings, while stdin is just the bytes the
+/// command reads. `exec -T db psql < dump.sql` feeds the file to the
+/// command without a pty, and that combination never worked: the session
+/// was created with no stdin attached and the file never arrived.
+///
+/// A terminal on stdin is deliberately not enough to attach it. With a
+/// terminal the command would wait for input that a redirected run never
+/// provides, and a session that used to answer at once (`exec -T app cat`
+/// at a shell) would hang until the operator typed an EOF. So the rule is
+/// the narrow one: stdin is attached when it is not a terminal, which is
+/// exactly the case where the caller piped or redirected something into
+/// the command.
+fn wants_stdin(opts: &ExecOptions, stdin_is_tty: bool) -> bool {
+	!opts.detach && !stdin_is_tty
 }
 
 /// Whether stdout is a terminal.

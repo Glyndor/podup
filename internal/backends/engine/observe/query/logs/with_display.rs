@@ -34,6 +34,23 @@ enum StreamOneOutcome {
 	Streamed,
 }
 
+/// Outcome of streaming one container on the concurrent path.
+///
+/// The two failure classes have to stay apart, because the parent treats them
+/// differently: a container that would not open a stream is tolerated while
+/// a sibling streams, and a stream that died while its container kept
+/// running means output was lost, which no sibling can excuse.
+enum ConcurrentOutcome {
+	/// The stream opened and ran to its end, cleanly.
+	Streamed,
+	/// The stream never opened. The container may be missing or not yet
+	/// created; the parent records it as a tolerated failure.
+	OpenFailed(crate::libpod::PodmanError),
+	/// The stream died while the container was still running, so live output
+	/// was truncated (#1104).
+	Truncated(crate::libpod::PodmanError),
+}
+
 impl Engine {
 	/// Stream logs with `docker compose logs` options plus the prefix-display
 	/// controls (`--no-color`, `--no-log-prefix`).
@@ -89,7 +106,6 @@ impl Engine {
 		// (#1104).
 		let mut truncated_err: Option<ComposeError> = None;
 		let mut streamed_any = false;
-		let target_count = targets.len();
 
 		// When follow=true, streams never end until containers stop. Run them
 		// concurrently so multiple containers don't block each other.
@@ -100,7 +116,7 @@ impl Engine {
 					&query,
 					prefix,
 					allow_color,
-					target_count,
+					&mut truncated_err,
 					&mut streamed_err,
 				)
 				.await;
@@ -207,14 +223,21 @@ impl Engine {
 	}
 
 	/// Stream every target concurrently under `join_all`, returning
-	/// `streamed_any` (true iff at least one container succeeded).
+	/// `streamed_any` (true iff at least one container streamed).
+	///
+	/// The two failure classes are kept apart here and handed to the parent
+	/// separately: a container that would not open a stream is tolerated
+	/// while a sibling streams, while a stream that died while its container
+	/// kept running truncated live output and no sibling can excuse that.
+	/// Recording both as one error is what let a cleanly finished sibling
+	/// cover the loss and report success.
 	async fn stream_concurrent_targets(
 		&self,
 		targets: Vec<String>,
 		query: &str,
 		prefix: bool,
 		allow_color: bool,
-		target_count: usize,
+		truncated_err: &mut Option<ComposeError>,
 		streamed_err: &mut Option<ComposeError>,
 	) -> bool {
 		let futs: Vec<_> = targets
@@ -231,7 +254,7 @@ impl Engine {
 						Ok(r) => r,
 						Err(e) => {
 							tracing::warn!("logs {container_name}: {e}");
-							return Some(e);
+							return ConcurrentOutcome::OpenFailed(e);
 						}
 					};
 					// The libpod `/logs` endpoint always frames its body with
@@ -255,6 +278,9 @@ impl Engine {
 					let label = display_label(&container_name, &self.project);
 					let mut out_pfx = LinePrefixer::new(&label, prefix, allow_color);
 					let mut err_pfx = LinePrefixer::new(&label, prefix, allow_color);
+					// Set when the stream ends with the container still
+					// running: live output was truncated.
+					let mut truncated: Option<crate::libpod::PodmanError> = None;
 					while let Some(msg) = stream.next().await {
 						let wrote = match msg {
 							Ok(LogOutput::StdOut { message }) => {
@@ -291,7 +317,7 @@ impl Engine {
 											"logs {container_name}: stream ended while the \
 											 container was still running [{kind}]: {e}"
 										);
-										return Some(e);
+										truncated = Some(e);
 									}
 									false => {
 										tracing::warn!(
@@ -309,20 +335,30 @@ impl Engine {
 					}
 					out_pfx.flush_tail(&mut std::io::stdout().lock());
 					err_pfx.flush_tail(&mut std::io::stderr().lock());
-					None
+					match truncated {
+						Some(e) => ConcurrentOutcome::Truncated(e),
+						None => ConcurrentOutcome::Streamed,
+					}
 				}
 			})
 			.collect();
-		let mut failures = 0usize;
-		for e in futures_util::future::join_all(futs)
-			.await
-			.into_iter()
-			.flatten()
-		{
-			failures += 1;
-			streamed_err.get_or_insert(ComposeError::Podman(e));
+		let mut streamed_any = false;
+		for outcome in futures_util::future::join_all(futs).await {
+			match outcome {
+				ConcurrentOutcome::Streamed => streamed_any = true,
+				ConcurrentOutcome::OpenFailed(e) => {
+					streamed_err.get_or_insert(ComposeError::Podman(e));
+				}
+				ConcurrentOutcome::Truncated(e) => {
+					// Output was lost. The container did stream, so it counts as
+					// one, and the loss is recorded where the caller checks it
+					// before the `streamed_any` shortcut.
+					truncated_err.get_or_insert(ComposeError::Podman(e));
+					streamed_any = true;
+				}
+			}
 		}
-		failures < target_count
+		streamed_any
 	}
 
 	/// Stream one container on the sequential (single or first) path. Returns

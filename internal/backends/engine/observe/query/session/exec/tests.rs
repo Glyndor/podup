@@ -133,3 +133,86 @@ fn exec_start_real_api_error_passes_through() {
 		other => panic!("expected Podman passthrough, got {other:?}"),
 	}
 }
+
+/// The caller's standard input has to reach the command.
+///
+/// `exec -T db psql < dump.sql` never worked: the session was created with
+/// no stdin attached, and the path that reads the response never wrote to
+/// the session, so the file stayed on the host and the command saw an empty
+/// stdin. The session is created with its stdin attached and the connection
+/// is hijacked, so the bytes travel up the same connection the output comes
+/// down on.
+#[cfg(unix)]
+#[tokio::test]
+async fn exec_sends_the_callers_stdin_to_the_session() {
+	use std::sync::{Arc, Mutex};
+
+	use crate::compose::types::{ComposeFile, Service};
+	use crate::engine::fake_podman::{self, FakeReply};
+	use crate::engine::query::InputSource;
+	use crate::engine::Engine;
+
+	let received = Arc::new(Mutex::new(Vec::new()));
+	let received_for_fake = received.clone();
+	let fake = fake_podman::start_replying(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			FakeReply::Body(
+				200,
+				r#"[{"Names":["/proj-box-1"],"Labels":{"podup.service":"box"},"State":"running"}]"#
+					.to_string(),
+			)
+		} else if method == "POST" && target.contains("/exec/exec-1/start") {
+			// The hijacked session: the head, then the command's output.
+			FakeReply::Hijacked {
+				head: "HTTP/1.1 200 OK\r\n\
+				       Content-Type: application/vnd.docker.multiplexed-stream\r\n\
+				       \r\n"
+					.to_string(),
+				frames: vec![{
+					let mut frame = vec![1u8, 0, 0, 0, 0, 0, 0, 2];
+					frame.extend_from_slice(b"ok");
+					frame
+				}],
+				received: received_for_fake.clone(),
+			}
+		} else if method == "POST" && target.contains("/containers/proj-box-1/exec") {
+			FakeReply::Body(201, r#"{"Id":"exec-1"}"#.to_string())
+		} else if method == "GET" && target.contains("/exec/exec-1/json") {
+			FakeReply::Body(200, r#"{"ExitCode":0}"#.to_string())
+		} else {
+			FakeReply::Body(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+
+	let mut e = Engine::with_base_dir(fake.client(), "proj".into(), std::env::temp_dir());
+	// The caller's input, as a redirected file would be.
+	e.input = InputSource::Buffer(b"SELECT 1;\n".to_vec());
+
+	let mut file = ComposeFile::default();
+	file.services.insert("box".into(), Service::default());
+
+	e.exec_with_options(
+		&file,
+		"box",
+		vec!["psql".to_string()],
+		ExecOptions::default().with_no_tty_for_test(true),
+	)
+	.await
+	.expect("the exec session should end cleanly");
+
+	assert_eq!(
+		*received.lock().unwrap(),
+		b"SELECT 1;\n",
+		"the caller's input must reach the session"
+	);
+
+	// And the session has to be created with its stdin attached, or the
+	// command never gets a reader for the bytes.
+	let bodies = fake.bodies.lock().unwrap();
+	assert!(
+		bodies
+			.iter()
+			.any(|b| String::from_utf8_lossy(b).contains("\"AttachStdin\":true")),
+		"the session must be created with its stdin attached: {bodies:?}"
+	);
+}

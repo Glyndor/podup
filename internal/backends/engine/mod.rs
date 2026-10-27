@@ -117,6 +117,13 @@ pub struct Engine {
 	pub(crate) run_labels: Vec<String>,
 	/// CLI `run -T/--no-TTY`: opt out of the pseudo-TTY.
 	pub(crate) run_no_tty: bool,
+	/// Where an attached session reads the caller's standard input from.
+	///
+	/// The process's own stdin, unless an embedder (or a test) supplies its
+	/// own. A session that forwards its stdin cannot be tested against the
+	/// terminal attached to the test runner: the read would block, or steal
+	/// the developer's keystrokes.
+	pub(crate) input: crate::engine::query::InputSource,
 	/// CLI `up -V/--renew-anon-volumes`: when recreating a container, also remove
 	/// its old anonymous volumes instead of leaving them orphaned.
 	pub(crate) renew_anon_volumes: bool,

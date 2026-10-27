@@ -58,10 +58,26 @@ pub(super) enum FakeReply {
 	/// A status line and the given headers, with no body. What a `HEAD` gets.
 	///
 	/// The container-archive stat lives entirely in a response header
-	/// (`X-Docker-Container-Path-Stat`), which `Body` has no way to send, so the
-	/// re-verification that follows a dropped archive PUT could not be answered
-	/// from here until this existed.
+	/// (`X-Docker-Container-Path-Stat`), which `Body` has no way to send, so
+	/// the re-verification that follows a dropped archive PUT could not be
+	/// answered from here until this existed.
 	Headers(u16, Vec<(&'static str, String)>),
+	/// A 200 whose connection is hijacked: the head is written, then the
+	/// frames, and the connection stays open so the client can keep sending
+	/// on it. That is what an exec session with an attached stdin is: the
+	/// client's bytes travel up the same connection its output comes down
+	/// (measured against Podman 5.7.0, `POST /libpod/exec/{id}/start`).
+	///
+	/// The bytes the client sends after the head are recorded, so a test can
+	/// assert that the caller's input really reached the session.
+	Hijacked {
+		/// The response head, written verbatim before the frames.
+		head: String,
+		/// The bytes written after the head, as the session's output.
+		frames: Vec<Vec<u8>>,
+		/// Where the bytes the client sends after the head are recorded.
+		received: Arc<Mutex<Vec<u8>>>,
+	},
 }
 
 /// A test's routing rule: `(method, target) -> reply`, where `target` is the
@@ -283,9 +299,49 @@ async fn serve_one(
 			response.push_str("\r\n");
 			stream.write_all(response.as_bytes()).await?;
 		}
+		FakeReply::Hijacked {
+			head,
+			frames,
+			received,
+		} => {
+			stream.write_all(head.as_bytes()).await?;
+			for frame in frames {
+				stream.write_all(&frame).await?;
+			}
+			stream.flush().await?;
+			// The client may still be sending: an exec session's stdin travels
+			// on this connection, and the client closes its half when its own
+			// input ends. Read what arrives until it does, bounded so a client
+			// that never closes cannot pin the fake.
+			let _ = tokio::time::timeout(
+				HIJACK_READ_BUDGET,
+				read_client_bytes(&mut stream, &received),
+			)
+			.await;
+		}
 	}
 	stream.shutdown().await?;
 	Ok(())
+}
+
+/// How long the fake waits for the client to finish sending on a hijacked
+/// connection before giving up on it.
+const HIJACK_READ_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Read what the client sends on a hijacked connection into `received`, until
+/// the client closes its half of it.
+async fn read_client_bytes(
+	stream: &mut UnixStream,
+	received: &Arc<Mutex<Vec<u8>>>,
+) -> std::io::Result<()> {
+	let mut buf = [0u8; 4096];
+	loop {
+		let n = stream.read(&mut buf).await?;
+		if n == 0 {
+			return Ok(());
+		}
+		received.lock().unwrap().extend_from_slice(&buf[..n]);
+	}
 }
 
 /// Reason phrase for the statuses this harness's tests use; anything else
