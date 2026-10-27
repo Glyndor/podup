@@ -39,6 +39,7 @@ use fields::{build_blkio_config, warn_swarm_only_deploy};
 // valid path inside the crate (lib.rs's `effective_no_new_privileges`
 // wrapper reaches it for the audit module, #1743). Private here would shadow
 // the `pub(crate)` visibility into private.
+pub(crate) use security::parse_bool_value;
 pub(crate) use security::parse_security_opts;
 
 impl Engine {
