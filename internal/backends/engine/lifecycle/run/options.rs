@@ -35,7 +35,6 @@ impl RunOptions {
 	/// in CLI order. A constructor rather than a struct literal because the
 	/// type is `#[non_exhaustive]`, so the next field to land is not a
 	/// breaking change for anyone building one.
-	#[allow(clippy::too_many_arguments)]
 	pub fn new(
 		cmd: Vec<String>,
 		rm: bool,
@@ -84,7 +83,6 @@ impl RunOverrides {
 	/// Every `docker compose run` override, in CLI order. A constructor rather
 	/// than a struct literal because the type is `#[non_exhaustive]`, so the
 	/// next flag to land is not a breaking change for anyone building one.
-	#[allow(clippy::too_many_arguments)]
 	pub fn new(
 		user: Option<String>,
 		workdir: Option<String>,

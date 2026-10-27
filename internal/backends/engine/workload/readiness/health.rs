@@ -113,7 +113,12 @@ fn health_poll_plan(
 		.unwrap_or_default();
 	// Same budget as before, expressed as time rather than as a probe count: a
 	// count stopped meaning a duration once the wait polls at two cadences.
-	let budget = run_interval.saturating_mul(retries.unwrap_or(30)) + start;
+	// Saturating all the way: `interval` and `retries` come from the compose file,
+	// and a product that saturates to `Duration::MAX` must not then overflow
+	// when `start_period` is added to it.
+	let budget = run_interval
+		.saturating_mul(retries.unwrap_or(30))
+		.saturating_add(start);
 	(run_interval, budget)
 }
 
@@ -136,9 +141,23 @@ fn effective_budget(
 		// Two extra run intervals so this wait outlasts the outer deadline,
 		// ensuring an exhausted wait surfaces as the `--wait-timeout` error
 		// rather than a spurious health-check timeout that fired just early.
-		Some(wt) => plan_budget.max(wt + run_interval.saturating_mul(2)),
+		// `--wait-timeout` is a bare `u64` of seconds, so `wt` can be `Duration::MAX`
+		// for the cost of typing a number; the sum saturates instead of panicking.
+		Some(wt) => plan_budget.max(wt.saturating_add(run_interval.saturating_mul(2))),
 		None => plan_budget,
 	}
+}
+
+/// How far ahead a deadline is put when the budget is too large for the clock
+/// to represent. Thirty years, the same stand-in tokio uses internally: no wait
+/// outlives it, and it is far from the clock's own limit.
+const FAR_FUTURE: Duration = Duration::from_secs(60 * 60 * 24 * 365 * 30);
+
+/// The instant `budget` from now. `Instant + Duration` panics when the sum does
+/// not fit, and `budget` can be `Duration::MAX` (see [`effective_budget`]).
+fn deadline_after(budget: Duration) -> tokio::time::Instant {
+	let now = tokio::time::Instant::now();
+	now.checked_add(budget).unwrap_or(now + FAR_FUTURE)
 }
 
 impl Engine {
@@ -267,7 +286,7 @@ impl Engine {
 			"{API_PREFIX}/containers/{}/json",
 			crate::libpod::urlencoded(container_name),
 		);
-		let deadline = tokio::time::Instant::now() + budget;
+		let deadline = deadline_after(budget);
 		let mut next_run = tokio::time::Instant::now();
 		while tokio::time::Instant::now() < deadline {
 			if tokio::time::Instant::now() >= next_run {

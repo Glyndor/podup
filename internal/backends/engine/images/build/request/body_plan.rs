@@ -40,7 +40,6 @@ pub(in crate::backends::engine) struct BuildPlan {
 /// here, with the resolved path, rather than as a bare `io error`
 /// from the tar walk; resolve `build.secrets` to in-tar files so the
 /// libpod endpoint sees the form it expects.
-#[allow(clippy::too_many_arguments)]
 pub(in crate::backends::engine) fn plan_build(
 	engine: &Engine,
 	service_name: &str,

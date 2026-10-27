@@ -39,7 +39,10 @@ pub fn parse_memory(s: &str) -> Option<i64> {
 	};
 
 	let bytes = num * multiplier as f64;
-	if bytes > i64::MAX as f64 {
+	// `i64::MAX as f64` rounds up to 2^63, which is not an `i64`: `>=`, so the
+	// cast below never saturates to `i64::MAX` and hands back a limit the
+	// input did not ask for.
+	if bytes >= i64::MAX as f64 {
 		return None;
 	}
 	Some(bytes as i64)
@@ -52,7 +55,8 @@ pub fn parse_memory(s: &str) -> Option<i64> {
 /// values instead of silently saturating or wrapping the cast.
 pub fn parse_cpus(s: &str) -> Option<i64> {
 	let nanos = s.trim().parse::<f64>().ok()? * 1e9;
-	if !nanos.is_finite() || nanos < 0.0 || nanos > i64::MAX as f64 {
+	// `>=` for the same reason as in `parse_memory`.
+	if !nanos.is_finite() || nanos < 0.0 || nanos >= i64::MAX as f64 {
 		return None;
 	}
 	Some(nanos as i64)
@@ -83,7 +87,8 @@ pub fn parse_duration_secs(s: &str) -> Option<u64> {
 	};
 	// Reject non-finite or out-of-range results rather than saturating the cast
 	// (e.g. `1e24s` would otherwise become u64::MAX and emit a garbage timeout).
-	if !secs.is_finite() || secs < 0.0 || secs > u64::MAX as f64 {
+	// `u64::MAX as f64` is 2^64, one past the largest `u64`, so `>=`.
+	if !secs.is_finite() || secs < 0.0 || secs >= u64::MAX as f64 {
 		return None;
 	}
 	Some(secs as u64)
@@ -114,7 +119,8 @@ pub fn parse_duration_nanos(s: &str) -> Option<i64> {
 		_ => return None,
 	};
 	// Reject non-finite or out-of-range results rather than saturating the cast.
-	if !nanos.is_finite() || nanos < 0.0 || nanos > i64::MAX as f64 {
+	// `>=`, as in `parse_memory`: 2^63 is already out of range.
+	if !nanos.is_finite() || nanos < 0.0 || nanos >= i64::MAX as f64 {
 		return None;
 	}
 	Some(nanos as i64)

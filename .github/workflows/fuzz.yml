@@ -13,7 +13,7 @@ jobs:
     name: cargo fuzz (smoke)
     uses: ./.github/workflows/reusable-rust-fuzz.yml
     with:
-      targets: '["parse_compose", "substitute", "size", "dotenv", "stream_frame", "stream_ndjson", "extract_tar"]'
+      targets: '["parse_compose", "substitute", "size", "dotenv", "stream_frame", "stream_ndjson", "extract_tar", "ports", "duration", "ignore_glob", "cron_calendar", "audit_bind_path", "sanitize", "libpod_json"]'
       max-total-time: "60"
       timeout: "10"
       rss-limit-mb: "2048"

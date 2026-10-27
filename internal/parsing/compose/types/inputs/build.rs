@@ -81,6 +81,7 @@ impl ExtendsConfig {
 /// Compose `build:` directive: either a bare context path or a full build-config block.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
+// The long form is far larger than the bare path. Boxing it would change a public type and every match on it, for one value per service.
 #[allow(clippy::large_enum_variant)]
 pub enum BuildConfig {
 	/// Short form: a bare build context path.

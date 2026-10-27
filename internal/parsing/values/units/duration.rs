@@ -57,6 +57,7 @@ pub(crate) enum DurationFormat {
 	/// Python today (`bench/report/aggregate.py`). Exercised by this module's tests
 	/// meanwhile; the allow is on this variant alone so anything else going dead
 	/// here still warns.
+	// No caller yet (see the doc comment above); only the tests use it.
 	#[allow(dead_code)]
 	Millis { decimals: usize },
 }

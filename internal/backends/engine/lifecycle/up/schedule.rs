@@ -18,6 +18,7 @@ impl Engine {
 	/// Start every scheduled service, each as soon as its own dependencies are
 	/// up. `levels` is used only for its membership and validation, not as a
 	/// barrier.
+	// The per-run state is passed as separate values from its one caller; a struct would only rename the list.
 	#[allow(clippy::too_many_arguments)]
 	pub(in crate::backends::engine::lifecycle) async fn start_services_by_dependency(
 		&self,

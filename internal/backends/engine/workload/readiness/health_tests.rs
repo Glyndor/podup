@@ -125,3 +125,39 @@ fn health_exited_zero_is_satisfied() {
 		HealthVerdict::NoHealthcheck
 	));
 }
+
+// --- budgets that do not fit a Duration ----------------------------------
+//
+// `interval`, `retries` and `start_period` come from the compose file and
+// `--wait-timeout` from the command line. Each was added or multiplied with a
+// plain operator somewhere on the way to `Instant::now() + budget`, so a large
+// enough value aborted the process instead of waiting a very long time.
+
+#[test]
+fn poll_plan_with_the_largest_interval_and_retries_does_not_overflow() {
+	// 9223372036 s is the longest interval `parse_duration_nanos` accepts;
+	// times 4294967295 retries already saturates, and `start_period` is added.
+	let (run, budget) = super::health_poll_plan(Some("9223372036s"), Some("1s"), Some(u32::MAX));
+	assert_eq!(run, Duration::from_nanos(9_223_372_036_000_000_000));
+	assert_eq!(budget, Duration::MAX);
+}
+
+#[test]
+fn budget_with_the_largest_wait_timeout_does_not_overflow() {
+	let b = super::effective_budget(
+		Duration::from_secs(2),
+		Duration::from_secs(60),
+		Some(Duration::from_secs(u64::MAX)),
+	);
+	assert_eq!(b, Duration::MAX);
+}
+
+#[test]
+fn a_deadline_that_does_not_fit_the_clock_is_far_away_not_a_panic() {
+	let now = tokio::time::Instant::now();
+	let deadline = super::deadline_after(Duration::MAX);
+	assert!(deadline > now + Duration::from_secs(60 * 60 * 24 * 365));
+	// An ordinary budget is exactly that far ahead, not rounded to the stand-in.
+	let near = super::deadline_after(Duration::from_secs(5));
+	assert!(near < now + Duration::from_secs(60));
+}

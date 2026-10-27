@@ -267,3 +267,20 @@ fn the_fractional_part_is_ignored_at_any_length() {
 	assert_eq!(parse_rfc3339("2026-05-07T17:41:42.866453985Z"), whole);
 	assert_eq!(parse_rfc3339("2026-05-07T17:41:42.000000000000Z"), whole);
 }
+
+/// The daemon's timestamp string is cut by byte offset. A multi-byte character
+/// anywhere in it put an offset inside that character and aborted the process
+/// (`ps` and `images` parse `Created` from the response). A wrong string is
+/// `None`, wherever the character sits.
+#[test]
+fn a_multibyte_character_anywhere_is_none_not_a_panic() {
+	let good = "2026-05-07T17:41:42.866453985Z";
+	assert!(parse_rfc3339(good).is_some());
+	for (at, _) in good.char_indices() {
+		let mut bad = good.to_string();
+		bad.replace_range(at..at + 1, "é");
+		assert_eq!(parse_rfc3339(&bad), None, "{bad:?}");
+	}
+	assert_eq!(parse_rfc3339("202é-01-01T12:00:00Z"), None);
+	assert_eq!(parse_rfc3339("2026-01-01T12:00:00+0é:00"), None);
+}

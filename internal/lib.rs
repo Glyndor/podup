@@ -205,4 +205,25 @@ pub mod fuzz_api {
 		parse_frame, record_stream_bytes, take_json_line, MAX_STREAM_BUF,
 	};
 	pub use crate::libpod::PodmanError;
+
+	/// The `.dockerignore` matcher.
+	pub use crate::engine::context::fuzz_hooks::{
+		evaluate, glob_match, is_ignored, pattern_matches,
+	};
+	/// The whole-second interval syntax of the pull policies.
+	pub fn parse_interval(value: &str) -> Option<u32> {
+		crate::engine::build::fuzz_parse_interval(value)
+	}
+	/// The daemon's JSON response types.
+	pub use crate::libpod::types::fuzz_hook::decode as libpod_json_decode;
+	/// The cron to `OnCalendar=` conversion.
+	pub use crate::quadlet::fuzz_hook::{convert as cron_convert, Converted as CronConverted};
+
+	/// `sanitize_name`, as an owned string plus whether it returned the input
+	/// untouched (`true`) or had to escape something (`false`).
+	pub fn sanitize_name(s: &str) -> (String, bool) {
+		let out = crate::error::sanitize_name(s);
+		let borrowed = matches!(out, std::borrow::Cow::Borrowed(_));
+		(out.into_owned(), borrowed)
+	}
 }

@@ -66,14 +66,11 @@ pub(in crate::connection::libpod::client) const DEFAULT_POOL_SIZE: usize = 0;
 /// `send_request`, a body-read error) so the next release drops it instead of
 /// handing a broken socket to the next acquirer.
 struct PooledConn {
-	// The fields are accessed through `PoolGuard` once the connection is
-	// moved out of the idle queue, which the borrow checker does not track
-	// across the `Option<PooledConn>` boundary.
-	#[allow(dead_code)]
 	sender: http1::SendRequest<BoxBody>,
+	// Never read: the handle is held so the task that pumps the socket is owned
+	// by the connection for as long as it is pooled.
 	#[allow(dead_code)]
 	driver: JoinHandle<()>,
-	#[allow(dead_code)]
 	poisoned: bool,
 }
 
@@ -508,6 +505,7 @@ impl Client {
 	/// Test-only access to the underlying [`ConnPool`]. Lets the pool's tests
 	/// exercise `acquire` / `poison` directly without routing a real request.
 	#[cfg(any(test, feature = "test-helpers"))]
+	// Only the pool's own tests call it; a build with `test-helpers` compiles it and never uses it.
 	#[allow(dead_code)]
 	pub(crate) fn pool_for_tests(&self) -> &Arc<ConnPool> {
 		&self.pool

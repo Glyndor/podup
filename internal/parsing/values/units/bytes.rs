@@ -75,6 +75,7 @@ pub(crate) enum SizeShape {
 	/// accounting in #1304. Exercised by this module's tests meanwhile, which is
 	/// what the allow covers; it is scoped to the three composite items rather
 	/// than the module, so anything else going dead here still warns.
+	// No caller yet (see the doc comment above); only the tests use it.
 	#[allow(dead_code)]
 	Composite { parts: usize },
 }
@@ -115,6 +116,7 @@ impl SizeFormat {
 	}
 
 	/// Same ladder, up to `parts` whole components.
+	// No caller yet (see the doc comment above); only the tests use it.
 	#[allow(dead_code)]
 	pub(crate) const fn with_parts(self, parts: usize) -> Self {
 		Self {
@@ -142,6 +144,7 @@ impl SizeFormat {
 	/// three is what a caller gets when it does not choose, never padding.
 	///
 	/// [`DurationFormat::default_parts`]: super::DurationFormat::default_parts
+	// No caller yet (see the doc comment above); only the tests use it.
 	#[allow(dead_code)]
 	pub(crate) const fn default_parts(self) -> Self {
 		self.with_parts(DEFAULT_PARTS)

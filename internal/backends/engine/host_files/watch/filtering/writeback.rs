@@ -267,6 +267,7 @@ impl Engine {
 	/// a removal whose container path maps back to a different host file
 	/// (the rule `target: /app` plus `"./src:/app"` would `rm /app/b.txt`
 	/// and erase the unrelated host file `src/b.txt`).
+	// Each argument is a separate input of one sync step; a struct would only rename the list.
 	#[allow(clippy::too_many_arguments)]
 	pub(in crate::backends::engine::host_files::watch) async fn dispatch_sync(
 		&self,

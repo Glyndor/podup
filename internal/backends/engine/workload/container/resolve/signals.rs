@@ -88,11 +88,14 @@ fn realtime_signal_number(name: &str) -> Option<i64> {
 	} else {
 		// An offset must be `+N` (only valid after RTMIN) or `-N` (only valid
 		// after RTMAX), matching POSIX/glibc's `SIGRTMIN+n` / `SIGRTMAX-n`.
-		let (sign, digits) = rest.split_at(1);
+		// `split_at_checked`: the byte after `RTMIN`/`RTMAX` comes from the compose
+		// file and may be the first byte of a multi-byte character, where
+		// `split_at(1)` would panic.
+		let (sign, digits) = rest.split_at_checked(1)?;
 		let offset: i64 = digits.parse().ok()?;
 		match (base == SIGRTMIN, sign) {
-			(true, "+") => base + offset,
-			(false, "-") => base - offset,
+			(true, "+") => base.checked_add(offset)?,
+			(false, "-") => base.checked_sub(offset)?,
 			_ => return None,
 		}
 	};

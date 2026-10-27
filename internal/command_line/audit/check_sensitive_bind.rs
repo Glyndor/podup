@@ -3,6 +3,8 @@
 //! short-form volume parser, which together would push `check_fns` past
 //! the line limit.
 
+// The four path functions below are `pub(crate)` only so `fuzz/fuzz_targets/audit_bind_path.rs`,
+// which compiles this file into its own crate, can call them; nothing else widens.
 use podup::compose::types::{ComposeFile, Service, VolumeMount, VolumeType};
 
 use super::super::Finding;
@@ -174,7 +176,7 @@ pub fn check_sensitive_bind_mount(
 /// component as written. The sensitive list's exact entry for `/` then catches
 /// each spelling of the root without the prefix loop firing on every absolute
 /// path.
-fn normalize_slashes(source: &str) -> String {
+pub(crate) fn normalize_slashes(source: &str) -> String {
 	let stripped = source.trim_end_matches('/').trim_start_matches('/');
 	if stripped.is_empty() || stripped == "." {
 		return "/".to_string();
@@ -183,7 +185,7 @@ fn normalize_slashes(source: &str) -> String {
 }
 
 /// Whether any component of `source` is `..`.
-fn has_parent_component(source: &str) -> bool {
+pub(crate) fn has_parent_component(source: &str) -> bool {
 	source.split('/').any(|part| part == "..")
 }
 
@@ -197,7 +199,7 @@ fn has_parent_component(source: &str) -> bool {
 /// Every spelling of the host root folds to a single `/`, which the exact
 /// entry for `/` then catches without the prefix loop firing on every
 /// absolute path.
-fn normalize_host_path(source: &str) -> String {
+pub(crate) fn normalize_host_path(source: &str) -> String {
 	let mut parts: Vec<&str> = Vec::new();
 	for part in source.split('/') {
 		match part {
@@ -297,7 +299,7 @@ fn rootless_podman_path(path: &str) -> Option<RootlessPodman> {
 /// a directory the container can walk, not a single file that grants
 /// a daemon verb; prefix matches follow with a capability hint that
 /// names what the attacker gains.
-fn sensitive_bind_reason(normalized_path: &str, mode: &str) -> Option<String> {
+pub(crate) fn sensitive_bind_reason(normalized_path: &str, mode: &str) -> Option<String> {
 	let rootless = rootless_podman_path(normalized_path);
 	if normalized_path == "/" {
 		// The whole host filesystem is a superset of every path on the

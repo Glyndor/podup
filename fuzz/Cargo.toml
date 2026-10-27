@@ -63,3 +63,52 @@ path = "fuzz_targets/extract_tar.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "ports"
+path = "fuzz_targets/ports.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "duration"
+path = "fuzz_targets/duration.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ignore_glob"
+path = "fuzz_targets/ignore_glob.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cron_calendar"
+path = "fuzz_targets/cron_calendar.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "audit_bind_path"
+path = "fuzz_targets/audit_bind_path.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sanitize"
+path = "fuzz_targets/sanitize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "libpod_json"
+path = "fuzz_targets/libpod_json.rs"
+test = false
+doc = false
+bench = false

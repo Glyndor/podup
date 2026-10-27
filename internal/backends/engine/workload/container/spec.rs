@@ -108,7 +108,6 @@ pub(crate) struct NamespaceInputs {
 /// `POST /libpod/containers/create`. Pure over its inputs: no HTTP, no
 /// logging, no Podman client. The orchestrator in `super::mod` is
 /// responsible for the warn-then-call ordering.
-#[allow(clippy::too_many_arguments, dead_code)]
 pub(crate) fn build_spec_generator(
 	project: &str,
 	service: &Service,
