@@ -379,6 +379,9 @@ mod up_build_board_tests;
 #[cfg(test)]
 mod keep_id_create_tests;
 
+#[cfg(all(test, unix))]
+mod optional_dependency_tests;
+
 #[cfg(test)]
 mod up_validation_tests;
 
