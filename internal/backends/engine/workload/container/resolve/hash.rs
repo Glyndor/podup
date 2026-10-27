@@ -6,7 +6,9 @@ use crate::compose::types::{ComposeFile, Service};
 use crate::engine::secrets::scoped_name;
 use crate::error::{ComposeError, Result};
 
+use super::volumes::default_volume_name;
 use super::volumes::resolve_bind_source;
+use super::volumes::resolve_volume_name;
 
 /// Stable content hash of a service definition, stored as the
 /// `podup.config-hash` label. On `up`, comparing this against the label on an
@@ -65,6 +67,17 @@ pub(crate) fn config_hash(
 		.and_then(|v| serde_json::to_vec(&v))
 		.map_err(|e| ComposeError::Unsupported(format!("cannot hash service config: {e}")))?;
 	hasher.update(&serialized);
+	// The effective identity of every network and named volume the service
+	// references: the container is attached to the *resolved* network name and
+	// mounts the *resolved* volume name, and those names are decided by the
+	// top-level `networks:`/`volumes:` blocks, which are not part of the
+	// serialized service. Renaming one of them changes the container's spec,
+	// so the hash has to change with it: otherwise `up` creates the new
+	// network and still finds the container "unchanged", leaving it attached
+	// to the old one.
+	for (kind, key, resolved) in overridden_resource_identities(service, file, project) {
+		hash_resource_identity(&mut hasher, kind, &key, &resolved);
+	}
 	for secret_ref in &service.secrets {
 		if let Some(def) = file.secrets.get(secret_ref.source()) {
 			hash_inline_payload(
@@ -124,6 +137,70 @@ pub(crate) fn config_hash(
 		.iter()
 		.map(|b| format!("{b:02x}"))
 		.collect())
+}
+
+/// The effective identities of the resources a service references, as
+/// `(kind, key, resolved name)` records for the config hash to fold in.
+///
+/// A service names a network or a volume by its *compose key*; what the
+/// container is really attached to (or mounts) is the *resolved* name, and
+/// that is what the top-level `networks:`/`volumes:` blocks decide. Those
+/// blocks are not part of the serialized service, so a rename of the real name
+/// would otherwise leave the hash — and therefore the recreate-on-change
+/// decision — untouched.
+///
+/// Only an *overridden* name is reported. The default (`{project}_{key}`) is
+/// derived from the key the service already carries, so it is already in the
+/// hash; folding it in as well would change the hash of every existing
+/// container with a network or a named volume on the first `up` after the
+/// upgrade, recreating containers whose writable layer would be lost (the
+/// same reason `compose::dependencies::effective_depends_on` computes the
+/// effective dependency list instead of rewriting the parsed one).
+///
+/// The resolution is the very one the create path uses
+/// (`network::resolve_network_name` and `resolve_volume_name`), so the hash
+/// and the container spec cannot describe two different resources.
+pub(super) fn overridden_resource_identities(
+	service: &Service,
+	file: &ComposeFile,
+	project: &str,
+) -> Vec<(&'static [u8], String, String)> {
+	let mut out: Vec<(&'static [u8], String, String)> = Vec::new();
+	for key in service.networks.names() {
+		let resolved = crate::engine::network::resolve_network_name(&key, file, project);
+		if resolved != crate::engine::network::default_network_name(&key, project) {
+			out.push((b"network", key, resolved));
+		}
+	}
+	for reference in crate::engine::volume_mounts::named_volume_refs(service) {
+		// A reference the file does not declare has no resolved name: the
+		// create path rejects it on its own, and hashing must not turn a
+		// `config --hash` of such a file into an error.
+		if !file.volumes.contains_key(&reference) {
+			continue;
+		}
+		let Ok(resolved) = resolve_volume_name(&reference, project, file) else {
+			continue;
+		};
+		if resolved != default_volume_name(&reference, project) {
+			out.push((b"volume", reference, resolved));
+		}
+	}
+	out
+}
+
+/// Fold the effective identity of a referenced resource (the name the
+/// container is really attached to or mounts) into the config hasher.
+///
+/// The framing is the same shape the secret/config payloads use — kind, key,
+/// length-prefixed value — with its own kind tags, so a network named like a
+/// secret cannot produce the same bytes as one.
+fn hash_resource_identity(hasher: &mut sha2::Sha256, kind: &[u8], key: &str, resolved: &str) {
+	use sha2::Digest;
+	hasher.update(kind);
+	hasher.update(key.as_bytes());
+	hasher.update((resolved.len() as u64).to_le_bytes());
+	hasher.update(resolved.as_bytes());
 }
 
 /// Fold an inline secret/config's resolved bytes into the config hasher. Inline
