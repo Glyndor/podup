@@ -62,6 +62,7 @@ pub(in super::super) fn deserialize_with_merge_interp(
 	super::super::tags::strip(&mut value);
 	super::super::types::service::umask::apply_resets(&mut value, &umask_resets);
 	super::super::types::service::umask::validate(&value)?;
+	super::textual::stringify_text_fields(&mut value);
 	// Jobs are typed first and on their own, so a bad job is reported by name
 	// instead of as a file that failed to parse.
 	let jobs = super::super::jobs::extract_jobs(&mut value)?;
@@ -232,7 +233,14 @@ fn interpolate_scalar(
 	}
 	guard_alias_expansion(&resolved)?;
 	match serde_yaml::from_str::<serde_yaml::Value>(&resolved) {
-		Ok(v @ (serde_yaml::Value::Bool(_) | serde_yaml::Value::Number(_))) => Ok(v),
+		Ok(v @ serde_yaml::Value::Bool(_)) => Ok(v),
+		// A number is adopted only when printing it gives back the text that was
+		// resolved: `1.10`, `0x1F`, `1e3` and `+1` would otherwise come out as
+		// `1.1`, `31`, `1000.0` and `1`, which silently rewrites a value that
+		// was meant as text (a version tag, a build id).
+		Ok(serde_yaml::Value::Number(n)) if n.to_string() == resolved => {
+			Ok(serde_yaml::Value::Number(n))
+		}
 		_ => Ok(serde_yaml::Value::String(resolved)),
 	}
 }
