@@ -195,6 +195,13 @@ impl Engine {
 				Some(svc) if svc == service_name => Some(name.clone()),
 				_ => None,
 			})
+			// A one-off container (`run`) carries the service label but is not
+			// a replica of it: its name carries the run's PID instead of a
+			// replica index, so it is never in the desired set. Reading it as
+			// a surplus replica stopped and deleted a task that was still
+			// running, taking its writable layer with it. The label says so
+			// explicitly; the name does not.
+			.filter(|name| !existing[name].oneoff)
 			.filter(|name| !desired.contains(name))
 			.collect();
 		// Scaling down removes surplus replicas but keeps their data volumes
