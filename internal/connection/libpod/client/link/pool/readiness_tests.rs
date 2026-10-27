@@ -1,6 +1,6 @@
 // The pool's connection-reuse semantics ride on `UnixListener`, which is
 // only available on Unix. The pool itself is cross-platform (Windows uses
-// a named pipe; see `internal/connection/libpod/client/link/stream.rs`); the integration
+// a named pipe; see `internal/connection/libpod/client/link/stream/`); the integration
 // tests in this file that prove keep-alive reuses a single socket are
 // Unix-only by necessity. The `#[cfg(unix)]` here skips the tests on
 // Windows CI; the pool's other unit tests (which don't bind a socket)

@@ -1,7 +1,7 @@
 //! The `deploy:` block: restart_policy, update_config, rollback_config,
 //! placement and the mode pair.
 //!
-//! Split out of `tests/compose/parsing/parse/coverage/deploy_build/mod.rs`; the imports are
+//! Split out of `tests/compose/parsing/parse/schema/coverage/deploy_build/mod.rs`; the imports are
 //! inherited via `use super::*`.
 
 use super::*;

@@ -1,6 +1,6 @@
 //! The `uts` and `cgroup` namespace fields.
 //!
-//! Split out of `tests/compose/parsing/parse/coverage/network_volume/mod.rs`; the imports are
+//! Split out of `tests/compose/parsing/parse/schema/coverage/network_volume/mod.rs`; the imports are
 //! inherited via `use super::*`.
 
 use super::*;

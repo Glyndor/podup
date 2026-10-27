@@ -1,6 +1,6 @@
 //! Merging and overriding inside one file.
 //!
-//! Split out of `tests/compose/parsing/parse/extends/mod.rs`; the imports are inherited via
+//! Split out of `tests/compose/parsing/parse/reuse/extends/mod.rs`; the imports are inherited via
 //! `use super::*`.
 
 use super::*;

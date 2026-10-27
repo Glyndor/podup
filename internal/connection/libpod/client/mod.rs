@@ -8,7 +8,7 @@
 //! drops. See [`Client`] for the full contract.
 //!
 //! This file owns the [`Client`] struct, the [`MIN_LIBPOD_API_MAJOR`] floor
-//! (read off the source by `tests/podman_floor.rs`), the crate-internal
+//! (read off the source by `tests/repository/packaging/podman_floor.rs`), the crate-internal
 //! [`Result`] alias, and the `mod` declarations that wire the rest of the
 //! client together. The supporting code is grouped one concern per folder:
 //!
@@ -78,7 +78,7 @@ pub struct Client {
 /// Lowest libpod API major version podup supports. Podman 5.x reports `5.x.y`;
 /// anything below `5.0` lacks SpecGenerator fields podup relies on.
 ///
-/// `tests/podman_floor.rs` reads this declaration out of `mod.rs` as text and
+/// `tests/repository/packaging/podman_floor.rs` reads this declaration out of `mod.rs` as text and
 /// asserts the value stays in lockstep with `install.sh` and
 /// `debian/control`, so the constant stays in this file even though most of
 /// the rest of the module split out.

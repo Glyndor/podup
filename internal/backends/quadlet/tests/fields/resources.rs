@@ -1,6 +1,6 @@
 //! Resource-limit and `deploy:` rendering tests for the Quadlet export.
 //!
-//! `internal/backends/quadlet/tests/fields.rs` carries the rest of the field-mapping
+//! `internal/backends/quadlet/tests/fields/` carries the rest of the field-mapping
 //! coverage. These are pulled out for the same reason `logging.rs` was
 //! (#1354): the file was 481 code lines against a 500-line hard limit, which
 //! means the pull request that broke it would have been whichever one next

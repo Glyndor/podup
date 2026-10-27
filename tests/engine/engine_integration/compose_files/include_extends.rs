@@ -1,7 +1,7 @@
 //! `include:` and `extends:` run end to end.
 //!
-//! Both are covered thoroughly at the parser level (`tests/compose/parsing/parse/include.rs`,
-//! `tests/compose/parsing/parse/extends.rs`), which proves the merged model is right. Nothing
+//! Both are covered thoroughly at the parser level (`tests/compose/parsing/parse/reuse/include.rs`,
+//! `tests/compose/parsing/parse/reuse/extends/mod.rs`), which proves the merged model is right. Nothing
 //! proved a project using either actually comes **up**; the 2026-06-25 empirical
 //! sweep listed them among the surfaces it never reached.
 //!
@@ -127,7 +127,7 @@ async fn extends_across_files_anchors_relative_paths_to_the_extended_file() {
 	let dir = tempdir().unwrap();
 	// The base lives in a subdirectory and names its env_file relatively. The
 	// compose spec anchors that path to the file the base is defined in, not to
-	// the one extending it, the runtime half of what tests/compose/parsing/parse/extends.rs
+	// the one extending it, the runtime half of what tests/compose/parsing/parse/reuse/extends/mod.rs
 	// checks on the parsed model.
 	let sub = dir.path().join("common");
 	fs::create_dir(&sub).unwrap();

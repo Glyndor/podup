@@ -1,6 +1,6 @@
 //! `deploy.resources.reservations.devices`, the GPU reservation.
 //!
-//! Split out of `tests/compose/parsing/parse/coverage/resources_secrets/mod.rs`; the imports
+//! Split out of `tests/compose/parsing/parse/schema/coverage/resources_secrets/mod.rs`; the imports
 //! are inherited via `use super::*`.
 
 use super::*;

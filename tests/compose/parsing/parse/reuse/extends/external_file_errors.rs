@@ -1,7 +1,7 @@
 //! The rejections an external `extends` can earn: a base service the file does
 //! not define, a cycle spanning two files, and a chain past the depth guard.
 //!
-//! Split out of `tests/compose/parsing/parse/extends/mod.rs`; the imports are inherited via
+//! Split out of `tests/compose/parsing/parse/reuse/extends/mod.rs`; the imports are inherited via
 //! `use super::*`.
 
 use std::io::Write;

@@ -1,7 +1,7 @@
 //! The per-service network configuration block: gw_priority, mac_address,
 //! link_local_ips and interface_name.
 //!
-//! Split out of `tests/compose/parsing/parse/coverage/network_volume/mod.rs`; the imports are
+//! Split out of `tests/compose/parsing/parse/schema/coverage/network_volume/mod.rs`; the imports are
 //! inherited via `use super::*`.
 
 use super::*;

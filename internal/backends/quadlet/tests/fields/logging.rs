@@ -1,6 +1,6 @@
 //! Log-rotation rendering tests for the Quadlet export.
 //!
-//! `internal/backends/quadlet/tests/fields.rs` carries the rest of the field-mapping
+//! `internal/backends/quadlet/tests/fields/` carries the rest of the field-mapping
 //! coverage; the log-rotation tests are pulled out into this file because
 //! `fields.rs` was already near the per-file line cap and these two tests
 //! alone were enough to push it over (#1354).

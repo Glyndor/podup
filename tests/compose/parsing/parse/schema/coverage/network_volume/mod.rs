@@ -1,6 +1,6 @@
 //! Parse tests for features present in the type system but not previously covered.
 //!
-//! Split out of `tests/compose/parsing/parse/coverage/network_volume.rs` so each file stays
+//! Split out of `tests/compose/parsing/parse/schema/coverage/network_volume/mod.rs` so each file stays
 //! under the repository line limit; this file holds the shared imports and the
 //! `mod` lines, and the scenario files inherit the imports with
 //! `use super::*`.

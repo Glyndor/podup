@@ -24,7 +24,7 @@ fn guard_suppresses_only_while_held() {
 	// forward; the only observable property here is that the guard compiles
 	// and obeys its drop semantics (covered by the nested-guards test
 	// below). The end-to-end behaviour is pinned by the integration tests
-	// in `tests/host_binding_warnings.rs`.
+	// in `tests/cli/warnings/host_binding_warnings.rs`.
 	let _g = SuppressPortExposureGuard::new();
 	emit_diagnostic("service 'web': port 5432 is published on every interface");
 }

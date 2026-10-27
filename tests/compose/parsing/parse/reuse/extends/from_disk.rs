@@ -1,7 +1,7 @@
 //! The same-file cases again, parsed from disk, so the on-disk resolver's
 //! in-file recursion and merge path runs rather than the in-memory one.
 //!
-//! Split out of `tests/compose/parsing/parse/extends/mod.rs`; the imports are inherited via
+//! Split out of `tests/compose/parsing/parse/reuse/extends/mod.rs`; the imports are inherited via
 //! `use super::*`.
 
 use super::*;

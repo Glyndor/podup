@@ -5,7 +5,7 @@
 //! `internal/parsing/compose/diagnostics/port_exposure.rs` accepts or rejects
 //! has a test here. The opt-in gate is exercised by `list_checks_tests
 //! ::opt_in_check_does_not_fire_when_its_flag_is_absent` and the binary
-//! test `tests/audit_exit_codes.rs`; this file owns the per-shape
+//! test `tests/cli/audit/audit_exit_codes.rs`; this file owns the per-shape
 //! `#1881` matrix itself.
 
 use podup::parse_str;

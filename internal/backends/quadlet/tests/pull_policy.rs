@@ -73,7 +73,7 @@ fn a_time_based_pull_policy_emits_newer() {
 	}
 }
 
-/// The same gate covers both paths: `internal/generate.rs` runs
+/// The same gate covers both paths: `internal/command_line/main_runner/commands/generate.rs` runs
 /// `validate_for_quadlet` ahead of `generate_at`, and `install_quadlet`
 /// runs it ahead of `generate_for_autostart`. A typo on a buildable service
 /// (the place the prebuilt-mode `Pull=never` override would otherwise mask

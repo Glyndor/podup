@@ -1,7 +1,7 @@
 //! One test per compose key, asserting the key reaches the typed field the
 //! rest of the code reads.
 //!
-//! Split out of `tests/compose/parsing/parse/basic.rs` so each file stays under the repository
+//! Split out of `tests/compose/parsing/parse/schema/basic/mod.rs` so each file stays under the repository
 //! line limit; this file holds the shared imports and the `mod` lines, and the
 //! scenario files inherit the imports with `use super::*`.
 

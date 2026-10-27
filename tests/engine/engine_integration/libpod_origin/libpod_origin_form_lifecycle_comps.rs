@@ -254,7 +254,7 @@ async fn down_v_removes_anonymous_volumes() {
 /// reliably make this live test fail (the race is too short for a
 /// `podman inspect` round-trip). The wire-shape unit test
 /// `kill_with_sigkill_sends_follow_up_wait` in
-/// `internal/backends/engine/lifecycle/libpod_endpoint_query_tests.rs:282`
+/// `internal/backends/engine/lifecycle/libpod_endpoint_query_tests/kill.rs:12`
 /// is what pins the actual compensation (follow-up
 /// `/wait?condition=stopped`); this live test pins the user-visible
 /// behaviour the wire shape exists to keep.

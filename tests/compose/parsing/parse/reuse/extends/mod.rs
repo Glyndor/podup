@@ -1,7 +1,7 @@
 //! `extends`: how a base service's keys reach the service that extends it,
 //! within one file and across files.
 //!
-//! Split out of `tests/compose/parsing/parse/extends.rs` so each file stays under the
+//! Split out of `tests/compose/parsing/parse/reuse/extends/mod.rs` so each file stays under the
 //! repository line limit; this file holds the shared imports and the `mod`
 //! lines, and the scenario files inherit the imports with `use super::*`.
 

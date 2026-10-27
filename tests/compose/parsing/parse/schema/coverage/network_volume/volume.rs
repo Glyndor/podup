@@ -1,7 +1,7 @@
 //! The long-form volume mount: consistency, and the `volume:` options block
 //! with its driver_config, subpath and labels.
 //!
-//! Split out of `tests/compose/parsing/parse/coverage/network_volume/mod.rs`; the imports are
+//! Split out of `tests/compose/parsing/parse/schema/coverage/network_volume/mod.rs`; the imports are
 //! inherited via `use super::*`.
 
 use super::*;

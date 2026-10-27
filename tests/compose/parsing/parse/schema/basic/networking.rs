@@ -1,6 +1,6 @@
 //! `ports`, `networks` and `expose`.
 //!
-//! Split out of `tests/compose/parsing/parse/basic/mod.rs`; the imports are inherited via
+//! Split out of `tests/compose/parsing/parse/schema/basic/mod.rs`; the imports are inherited via
 //! `use super::*`.
 
 use super::*;

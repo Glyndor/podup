@@ -114,7 +114,7 @@ async fn a_failed_pull_still_closes_the_board() {
 /// renderers share). `cargo test` redirects stderr, which is the same
 /// condition a pipe puts podup in; the end-to-end version of this, with the
 /// real binary and its stderr piped, is
-/// `a_piped_pull_keeps_the_plain_lines` in `tests/reporting_contract.rs`.
+/// `a_piped_pull_keeps_the_plain_lines` in `tests/cli/output/reporting_contract.rs`.
 #[tokio::test]
 async fn a_pull_off_a_terminal_opens_no_live_region() {
 	let (_fake, engine) = engine();

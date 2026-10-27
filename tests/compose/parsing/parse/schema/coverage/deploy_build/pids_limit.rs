@@ -1,6 +1,6 @@
 //! The top-level service `pids_limit` field.
 //!
-//! Split out of `tests/compose/parsing/parse/coverage/deploy_build/mod.rs`; the imports are
+//! Split out of `tests/compose/parsing/parse/schema/coverage/deploy_build/mod.rs`; the imports are
 //! inherited via `use super::*`.
 
 use super::*;
