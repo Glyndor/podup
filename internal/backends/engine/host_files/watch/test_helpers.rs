@@ -36,7 +36,8 @@ impl crate::engine::Engine {
 		src: &std::path::Path,
 		target: &str,
 	) -> crate::error::Result<()> {
-		let placement = super::placement::plan_remove_placement(src, src, target);
+		let shape = super::placement::rule_shape(src);
+		let placement = super::placement::plan_remove_placement(shape, src, src, target);
 		self.remove_from_container(container, placement, src).await
 	}
 

@@ -81,7 +81,7 @@ Every rule that watches a changed path runs, so two services watching the same d
 
 Patterns use `.dockerignore` syntax. Context ignore files match paths relative to the build context; rule include/ignore patterns match relative to the rule's path, with last match winning. Legacy project-relative patterns may apply when no rule pattern matches, with a warning; fallback never overrides a re-include.
 
-Sync copies paths that exist and removes deleted ones; watching starts before initial sync. Copies into a writable bind of the watched path are skipped with a warning, while more-specific mounts and restart/exec actions still apply. Symlinks remain links; file-to-directory replacements remain directories.
+Sync copies paths that exist and removes deleted ones, a deleted directory with the entries under it; watching starts before initial sync. Copies into a writable bind of the watched path are skipped with a warning, while more-specific mounts and restart/exec actions still apply. Symlinks remain links; file-to-directory replacements remain directories.
 
 On queue overflow, watch resyncs `initial_sync` rules and warns about work it could not replay. Save those files again to retry.
 

@@ -54,7 +54,7 @@ use crate::error::{ComposeError, Result};
 use crate::backends::engine::host_files::watch::actions::entry_is_unsyncable;
 use crate::backends::engine::host_files::watch::events;
 use crate::backends::engine::host_files::watch::placement::{
-	join_container_path, normalise_container_path, plan_remove_placement,
+	join_container_path, normalise_container_path, plan_remove_placement, RuleShape,
 };
 use crate::backends::engine::host_files::watch::Engine;
 
@@ -243,6 +243,7 @@ impl Engine {
 			ensured,
 			&entry.mounts,
 			&entry.abs_path,
+			entry.shape,
 			events::sync_op_for(path),
 		)
 		.await
@@ -278,6 +279,7 @@ impl Engine {
 		ensured: &mut HashSet<(String, String)>,
 		mounts: &[EffectiveMount],
 		watched_root: &Path,
+		shape: RuleShape,
 		op: std::result::Result<events::SyncOp, std::io::Error>,
 	) -> Result<()> {
 		match op {
@@ -300,7 +302,7 @@ impl Engine {
 				// `plan_sync_placement` and the `rm` from
 				// `plan_remove_placement` would let a future divergence
 				// between the two slip an unsafe `rm` through.
-				let placement = plan_remove_placement(root, changed, target);
+				let placement = plan_remove_placement(shape, root, changed, target);
 				let container_path = join_container_path(&placement);
 				if let Some(host) = writes_back(mounts, &container_path, watched_root) {
 					debug!(

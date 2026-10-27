@@ -16,7 +16,7 @@ use crate::compose::types::{WatchAction, WatchRule};
 use crate::engine::fake_podman;
 use crate::engine::Engine;
 
-use super::super::{RuleEntry, WatchState};
+use super::super::{RuleEntry, RuleShape, WatchState};
 
 /// A rule entry as the watch loop builds it: a service, its container, and
 /// the rule that says what to do with a change.
@@ -40,6 +40,7 @@ fn entry(
 		build_context_abs: None,
 		build_context_patterns: Vec::new(),
 		mounts: Arc::new(Vec::new()),
+		shape: RuleShape::Directory,
 	}
 }
 

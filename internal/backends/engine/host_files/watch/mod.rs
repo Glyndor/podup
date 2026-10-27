@@ -42,7 +42,7 @@ use crate::error::{ComposeError, Result};
 
 use placement::{
 	is_dispatch_event, join_container_path, plan_sync_placement, read_only_target_warning,
-	validate_sync_target,
+	rule_shape, validate_sync_target, RuleShape,
 };
 
 use writeback::{effective_mounts, writes_back, EffectiveMount};
@@ -80,6 +80,11 @@ struct RuleEntry {
 	/// flags), shared across every rule of the same service. The per-path
 	/// write-back check runs against this vector.
 	mounts: Arc<Vec<EffectiveMount>>,
+	/// The shape of the rule's path, read when the session starts while the
+	/// path still exists. A removal cannot read it from the filesystem (the
+	/// entry is gone by then), and a rule whose whole root was deleted with
+	/// it would read as a single file.
+	shape: RuleShape,
 }
 
 /// The state a watch session carries across its batches: which
@@ -145,6 +150,10 @@ impl Engine {
 						.get(name)
 						.cloned()
 						.unwrap_or_else(|| Arc::new(Vec::new()));
+					// The rule's shape is read here, while the path still
+					// exists: a removal dispatched later cannot read it from
+					// the filesystem.
+					let shape = rule_shape(&abs);
 					rule_entries.push(RuleEntry {
 						service_name: name.clone(),
 						container_name: self.first_replica_name(name, service),
@@ -153,6 +162,7 @@ impl Engine {
 						build_context_abs,
 						build_context_patterns,
 						mounts,
+						shape,
 					});
 				}
 			}

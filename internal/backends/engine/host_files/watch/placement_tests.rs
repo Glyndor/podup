@@ -1,7 +1,7 @@
 use super::{
 	container_rel, is_dispatch_event, join_container_path, mark_dir_ensured, mkdir_p_argv,
 	normalise_container_path, plan_remove_placement, plan_sync_placement, read_only_target_warning,
-	target_is_on_a_mount, validate_sync_target,
+	rule_shape, target_is_on_a_mount, validate_sync_target, RuleShape,
 };
 use crate::compose::types::{Service, WatchAction, WatchRule};
 use std::collections::HashSet;
@@ -139,7 +139,7 @@ fn remove_placement_directory_rule_preserves_subpath() {
 	let removed = dir.path().join("sub/b.txt");
 	fs::write(&removed, b"b").unwrap();
 
-	let p = plan_remove_placement(dir.path(), &removed, "/app");
+	let p = plan_remove_placement(RuleShape::Directory, dir.path(), &removed, "/app");
 	assert_eq!(p.entry_name, "sub/b.txt");
 	assert_eq!(p.dest_dir, "/app");
 }
@@ -153,9 +153,24 @@ fn remove_placement_single_file_rule_honours_renaming_target() {
 	let src = dir.path().join("settings.yml");
 	fs::write(&src, b"k: v").unwrap();
 
-	let p = plan_remove_placement(&src, &src, "/app/config.yml");
+	let p = plan_remove_placement(RuleShape::File, &src, &src, "/app/config.yml");
 	assert_eq!(p.entry_name, "config.yml");
 	assert_eq!(p.dest_dir, "/app");
+}
+
+#[test]
+fn rule_shape_reads_the_filesystem() {
+	// The shape of a rule is read when the session starts, while the path
+	// still exists: a directory rule mirrors a tree, a single-file rule
+	// mirrors one file.
+	let dir = tempdir().unwrap();
+	let file = dir.path().join("f.txt");
+	fs::write(&file, b"x").unwrap();
+	assert_eq!(rule_shape(dir.path()), RuleShape::Directory);
+	assert_eq!(rule_shape(&file), RuleShape::File);
+	// A path that is not there yet is not a directory; the watcher warns
+	// about it and never watches it.
+	assert_eq!(rule_shape(&dir.path().join("missing")), RuleShape::File);
 }
 
 #[test]
@@ -165,11 +180,13 @@ fn join_container_path_combines_dir_and_entry() {
 	let placement = super::SyncPlacement {
 		entry_name: "config.yml".into(),
 		dest_dir: "/app".into(),
+		shape: super::RuleShape::File,
 	};
 	assert_eq!(join_container_path(&placement), "/app/config.yml");
 	let root = super::SyncPlacement {
 		entry_name: "config.yml".into(),
 		dest_dir: "/".into(),
+		shape: super::RuleShape::File,
 	};
 	assert_eq!(join_container_path(&root), "/config.yml");
 	// An empty entry yields just the directory (the target-dir guard above
@@ -177,6 +194,7 @@ fn join_container_path_combines_dir_and_entry() {
 	let empty = super::SyncPlacement {
 		entry_name: String::new(),
 		dest_dir: "/app".into(),
+		shape: super::RuleShape::Directory,
 	};
 	assert_eq!(join_container_path(&empty), "/app");
 }
