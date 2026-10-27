@@ -24,7 +24,7 @@ use crate::engine::copy;
 
 use super::placement::{
 	container_rel, join_container_path, mark_dir_ensured, mkdir_p_argv, plan_sync_placement,
-	SyncPlacement,
+	RuleShape, SyncPlacement,
 };
 use super::sync::has_permitted_entry;
 use super::writeback::{writes_back, EffectiveMount};
@@ -67,6 +67,7 @@ impl Engine {
 		let SyncPlacement {
 			entry_name,
 			dest_dir,
+			shape,
 		} = plan_sync_placement(root, changed, target);
 		// Per-entry filter: any descendant of this upload whose container
 		// path lands in a deeper writable bind that maps back into the
@@ -95,6 +96,7 @@ impl Engine {
 				let container_path = join_container_path(&SyncPlacement {
 					dest_dir: dest_dir.clone(),
 					entry_name: entry,
+					shape,
 				});
 				writes_back(&mounts, &container_path, &watched_root).is_some()
 			})
@@ -194,14 +196,23 @@ impl Engine {
 				"sync: refusing to remove the rule target directory {container_path}"
 			)));
 		}
-		// `rm -f` (not `rm -rf`): the path is bounded by the rule's
-		// `path`/`target` so it cannot reach outside the destination, and
-		// refusing to recurse keeps the operation scoped to the single
-		// removed entry. `rm -f` swallows the missing-file case (the file
-		// was already gone inside the container, which is fine).
+		// A directory rule mirrors a tree, so the removed entry can be a
+		// directory: `rm -f` refuses one ("Is a directory"), the removal
+		// never happened, and the directory stayed inside the container.
+		// `rm -rf` removes the entry and the subtree under it, and the
+		// path is bounded by the rule's `path`/`target` (the entry name is
+		// relative to the rule's root and carries no `..`), so the
+		// recursion cannot leave the mapped area. It also swallows the
+		// missing-entry case (the entry was already gone inside the
+		// container, which is fine).
+		//
+		// A single-file rule mirrors one file, and `rm -f` is enough
+		// there: the target is a file, and a directory sitting at that
+		// path is not the rule's to delete.
+		let recursive = matches!(placement.shape, RuleShape::Directory);
 		let argv = vec![
 			"rm".to_string(),
-			"-f".to_string(),
+			if recursive { "-rf" } else { "-f" }.to_string(),
 			"--".to_string(),
 			container_path.clone(),
 		];
@@ -240,8 +251,12 @@ impl Engine {
 		// per-container path; ensure they exist before recreating the container.
 		self.create_project_secrets(file).await?;
 		let container_name = self.first_replica_name(service_name, service);
-		self.create_and_start(&container_name, service_name, service, file, true)
-			.await
+		// The rebuild recreates the container, so it runs the same
+		// initialization `up` runs: the `pre_start` steps before the
+		// container exists, the `post_start` hooks inside it once it is up.
+		self.recreate_service(&container_name, service_name, service, file, true)
+			.await?;
+		self.run_post_start_hooks(&container_name, service).await
 	}
 
 	pub(in crate::backends::engine::host_files::watch) async fn watch_restart(
@@ -342,3 +357,11 @@ impl Engine {
 #[cfg(test)]
 #[path = "actions_umask_tests.rs"]
 mod actions_umask_tests;
+
+#[cfg(all(test, unix))]
+#[path = "actions_removal_tests.rs"]
+mod actions_removal_tests;
+
+#[cfg(all(test, unix))]
+#[path = "actions_rebuild_tests.rs"]
+mod actions_rebuild_tests;

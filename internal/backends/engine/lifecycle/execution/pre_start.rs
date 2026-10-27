@@ -74,6 +74,31 @@ impl Engine {
 		self.ensure_started(container_name).await
 	}
 
+	/// Recreate the service container the way `up` does: the `pre_start`
+	/// steps run before the container exists, and the container is then
+	/// created (and started).
+	///
+	/// `up` and `watch` recreate the same container, and sharing the
+	/// sequence is what keeps a watch rebuild from starting a container
+	/// without the initialization `up` gives it.
+	///
+	/// The `post_start` hooks are not part of this: they write their output
+	/// to the terminal, so the caller closes its progress row before
+	/// running them (see `Engine::run_post_start_hooks`).
+	pub(in crate::backends::engine) async fn recreate_service(
+		&self,
+		container_name: &str,
+		service_name: &str,
+		service: &Service,
+		file: &ComposeFile,
+		start: bool,
+	) -> Result<()> {
+		self.run_pre_start(container_name, service_name, service, file)
+			.await?;
+		self.create_and_start(container_name, service_name, service, file, start)
+			.await
+	}
+
 	/// Finish init work before a caller may create or start the service container.
 	pub(in crate::backends::engine) async fn run_pre_start(
 		&self,

@@ -19,10 +19,48 @@ pub(super) struct SyncPlacement {
 	pub(super) entry_name: String,
 	/// Container directory the archive is PUT (extracted) at.
 	pub(super) dest_dir: String,
+	/// The shape of the rule this placement belongs to. A directory rule
+	/// mirrors a tree, so a removed entry under it can be a directory and
+	/// the removal has to recurse; a single-file rule mirrors one file.
+	pub(super) shape: RuleShape,
+}
+
+/// The shape of a watch rule's `path`.
+///
+/// A directory rule mirrors a tree of entries into the container; a
+/// single-file rule mirrors exactly one file, under the target's own
+/// name.
+///
+/// The shape is read when the watch session starts, while the rule's path
+/// still exists. A removal cannot read it from the filesystem: the removed
+/// entry is gone by the time the removal is dispatched, and a rule whose
+/// whole root was deleted with it would read as a single file, which is how
+/// a removal of the rule's own target directory used to slip past the guard
+/// that refuses it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RuleShape {
+	/// The rule's `path` is a directory: the entries under it are copied
+	/// as a tree.
+	Directory,
+	/// The rule's `path` is a single file.
+	File,
+}
+
+/// The shape of the rule rooted at `root`, read from the filesystem.
+pub(super) fn rule_shape(root: &Path) -> RuleShape {
+	if root.is_dir() {
+		RuleShape::Directory
+	} else {
+		RuleShape::File
+	}
 }
 
 /// Resolve the container-side path a removed host entry should be deleted
 /// from, mirroring [`plan_sync_placement`] for a `Remove` event.
+///
+/// `shape` is the rule's shape as it was when the watch session started,
+/// not a fresh look at the filesystem: the removed entry is already gone,
+/// and a rule whose root was deleted with it would read as a single file.
 ///
 /// A `sync` rule's `target` is, in the container, where the changed entries
 /// live. A removal on the host has to be reflected by a `DELETE` against the
@@ -35,8 +73,13 @@ pub(super) struct SyncPlacement {
 /// container directory itself (rather than an entry inside it): a removal of
 /// the target directory is a different operation, never an entry delete, and
 /// letting it through would `rm -rf` the container's destination.
-pub(super) fn plan_remove_placement(root: &Path, removed: &Path, target: &str) -> SyncPlacement {
-	plan_sync_placement(root, removed, target)
+pub(super) fn plan_remove_placement(
+	shape: RuleShape,
+	root: &Path,
+	removed: &Path,
+	target: &str,
+) -> SyncPlacement {
+	plan_placement(shape, root, removed, target)
 }
 
 /// Map a changed host path to its container archive placement, matching
@@ -52,44 +95,56 @@ pub(super) fn plan_remove_placement(root: &Path, removed: &Path, target: &str) -
 /// `basename(target)` and extracted into `target`'s parent, so a renaming
 /// target is honoured.
 pub(super) fn plan_sync_placement(root: &Path, changed: &Path, target: &str) -> SyncPlacement {
-	if root.is_dir() {
-		// Directory rule: preserve the changed file's subpath under `target`,
-		// which is treated as a directory. The host path is re-rooted to
-		// POSIX before becoming the entry name so the container side parses
-		// it with `/` even when the host built the path with `\` (Windows).
-		let rel = changed.strip_prefix(root).unwrap_or(changed);
-		let entry_name = container_rel(rel);
-		let dest_dir = target.trim_end_matches('/').to_string();
-		let dest_dir = if dest_dir.is_empty() {
-			"/".to_string()
-		} else {
-			dest_dir
-		};
-		SyncPlacement {
-			entry_name,
-			dest_dir,
+	plan_placement(rule_shape(root), root, changed, target)
+}
+
+/// The shared placement: the rule's shape decides whether the entry keeps
+/// its path under the rule's root or is stored under the target's own name.
+fn plan_placement(shape: RuleShape, root: &Path, changed: &Path, target: &str) -> SyncPlacement {
+	match shape {
+		RuleShape::Directory => {
+			// Directory rule: preserve the changed file's subpath under `target`,
+			// which is treated as a directory. The host path is re-rooted to
+			// POSIX before becoming the entry name so the container side parses
+			// it with `/` even when the host built the path with `\` (Windows).
+			let rel = changed.strip_prefix(root).unwrap_or(changed);
+			let entry_name = container_rel(rel);
+			let dest_dir = target.trim_end_matches('/').to_string();
+			let dest_dir = if dest_dir.is_empty() {
+				"/".to_string()
+			} else {
+				dest_dir
+			};
+			SyncPlacement {
+				entry_name,
+				dest_dir,
+				shape,
+			}
 		}
-	} else {
-		// Single-file rule: store under the target basename so a renaming target
-		// is honoured, and extract into the target's parent directory.
-		let target_path = Path::new(target);
-		let entry_name = target_path
-			.file_name()
-			.map(|n| n.to_string_lossy().into_owned())
-			.or_else(|| {
-				changed
-					.file_name()
-					.map(|n| n.to_string_lossy().into_owned())
-			})
-			.unwrap_or_default();
-		let dest_dir = target_path
-			.parent()
-			.map(|p| p.to_string_lossy().into_owned())
-			.filter(|s| !s.is_empty())
-			.unwrap_or_else(|| "/".to_string());
-		SyncPlacement {
-			entry_name,
-			dest_dir,
+		RuleShape::File => {
+			// Single-file rule: store under the target basename so a renaming
+			// target is honoured, and extract into the target's parent
+			// directory.
+			let target_path = Path::new(target);
+			let entry_name = target_path
+				.file_name()
+				.map(|n| n.to_string_lossy().into_owned())
+				.or_else(|| {
+					changed
+						.file_name()
+						.map(|n| n.to_string_lossy().into_owned())
+				})
+				.unwrap_or_default();
+			let dest_dir = target_path
+				.parent()
+				.map(|p| p.to_string_lossy().into_owned())
+				.filter(|s| !s.is_empty())
+				.unwrap_or_else(|| "/".to_string());
+			SyncPlacement {
+				entry_name,
+				dest_dir,
+				shape,
+			}
 		}
 	}
 }

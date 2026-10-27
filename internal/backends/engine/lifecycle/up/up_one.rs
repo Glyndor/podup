@@ -254,17 +254,15 @@ impl Engine {
 			(false, false) => ("Creating", "Created"),
 		};
 		crate::ui::progress::start("Container", &container_name, doing);
-		self.run_pre_start(&container_name, name, service, file)
-			.await?;
-		self.create_and_start(&container_name, name, service, file, start)
+		self.recreate_service(&container_name, name, service, file, start)
 			.await?;
 		crate::ui::progress_line("Container", &container_name, done);
 
 		// `post_start` hooks run inside a running container, so only on `up`.
+		// They write to the terminal, so they run once the row above is
+		// closed.
 		if start {
-			for hook in &service.post_start {
-				self.run_lifecycle_hook(&container_name, hook).await?;
-			}
+			self.run_post_start_hooks(&container_name, service).await?;
 		}
 
 		Ok(())

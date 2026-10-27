@@ -232,6 +232,7 @@ fn make_entry(service: &str, path: &str, action: WatchAction, initial_sync: bool
 		build_context_abs: None,
 		build_context_patterns: Vec::new(),
 		mounts: std::sync::Arc::new(Vec::new()),
+		shape: crate::backends::engine::host_files::watch::RuleShape::Directory,
 	}
 }
 
