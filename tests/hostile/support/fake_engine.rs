@@ -1,7 +1,7 @@
 //! A Unix socket that answers like a Podman engine, for tests that need podup
 //! to get past its first request without a real engine.
 //!
-//! It answers `_ping` with a supported API version, a missing secret with a
+//! It answers `_ping` with a supported API version, a missing secret or inspected object with a
 //! 404, a `GET` with an empty list and anything else with an object holding an
 //! id. A [`Handler`] overrides any request it recognises, and every request
 //! (head and body) is recorded so a test can check what was sent.
@@ -149,6 +149,13 @@ fn default_reply(line: &str) -> Reply {
 			404,
 			"{\"cause\":\"no such secret\",\"message\":\"no such secret\",\"response\":404}",
 		)
+	} else if line.starts_with("GET") && is_object_inspect(line) {
+		// A real engine answers an inspect of an object that does not exist with
+		// a 404; an empty list there would read as an object without a label.
+		(
+			404,
+			"{\"cause\":\"no such object\",\"message\":\"no such object\",\"response\":404}",
+		)
 	} else if line.starts_with("GET") {
 		(200, "[]")
 	} else {
@@ -158,4 +165,18 @@ fn default_reply(line: &str) -> Reply {
 		status,
 		body: body.to_string(),
 	}
+}
+
+/// Whether the request line is the inspect of one container, pod, volume or
+/// network (`/<kind>/<name>/json`), not a list (`/<kind>/json`).
+fn is_object_inspect(line: &str) -> bool {
+	let target = line.split_whitespace().nth(1).unwrap_or("");
+	let path = target.split('?').next().unwrap_or("");
+	["/containers/", "/pods/", "/volumes/", "/networks/"]
+		.iter()
+		.any(|kind| {
+			path.contains(kind)
+				&& path.ends_with("/json")
+				&& !path.ends_with(&format!("{}json", kind))
+		})
 }
