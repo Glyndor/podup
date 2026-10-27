@@ -139,3 +139,90 @@ async fn logs_tolerates_one_container_that_will_not_stream() {
 	.await
 	.expect("one container failing to stream must not blank the other");
 }
+
+/// A `logs -f` over two containers must not report success when one of them
+/// lost its stream while its container kept running.
+///
+/// The transport cannot tell an open failure from a stream that died
+/// mid-output, so the engine re-checks the container out of band: still
+/// running means live output was truncated (#1104). What it must not do is
+/// let a sibling that finished cleanly cover that loss. The operator read
+/// exit 0 and never learned that a container's output was cut.
+#[cfg(unix)]
+#[tokio::test]
+async fn logs_follow_reports_a_truncated_stream_even_when_a_sibling_finished_cleanly() {
+	// One multiplexed stdout frame, the shape libpod frames its log body in.
+	let frame = "\u{1}\0\0\0\0\0\0\u{5}hello".to_string();
+	let containers = r#"[
+		{"Names":["/proj-web-1"],"Labels":{"podup.service":"web"},"State":"running"},
+		{"Names":["/proj-worker-1"],"Labels":{"podup.service":"worker"},"State":"running"}
+	]"#;
+	let fake = fake_podman::start_replying(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			fake_podman::FakeReply::Body(200, containers.to_string())
+		} else if method == "GET" && target.contains("/proj-web-1/logs") {
+			// The stream dies where the chunk terminator should be, and the
+			// container keeps running: live output was truncated.
+			fake_podman::FakeReply::ChunkedTruncated(vec![frame.clone()])
+		} else if method == "GET" && target.contains("/proj-worker-1/logs") {
+			// The sibling ends the way it should.
+			fake_podman::FakeReply::ChunkedEnd(vec![frame.clone()])
+		} else {
+			fake_podman::FakeReply::Body(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+
+	let mut file = ComposeFile::default();
+	file.services.insert("web".into(), Service::default());
+	file.services.insert("worker".into(), Service::default());
+
+	let out = e
+		.logs_with_options(
+			&file,
+			&["web".to_string(), "worker".to_string()],
+			LogsOptions::new(true, None, None, None, false),
+		)
+		.await;
+	assert!(
+		out.is_err(),
+		"a truncated stream must not be covered by a sibling that finished cleanly"
+	);
+}
+
+/// The other side of the same rule, and the reason the truncation is
+/// reported at all: a container that stopped takes its stream down with it,
+/// which is a finished read and not a lost one.
+#[cfg(unix)]
+#[tokio::test]
+async fn logs_follow_accepts_a_stream_that_ended_with_its_container() {
+	let frame = "\u{1}\0\0\0\0\0\0\u{5}hello".to_string();
+	let containers = r#"[
+		{"Names":["/proj-web-1"],"Labels":{"podup.service":"web"},"State":"exited"},
+		{"Names":["/proj-worker-1"],"Labels":{"podup.service":"worker"},"State":"running"}
+	]"#;
+	let fake = fake_podman::start_replying(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			fake_podman::FakeReply::Body(200, containers.to_string())
+		} else if method == "GET" && target.contains("/proj-web-1/logs") {
+			fake_podman::FakeReply::ChunkedTruncated(vec![frame.clone()])
+		} else if method == "GET" && target.contains("/proj-worker-1/logs") {
+			fake_podman::FakeReply::ChunkedEnd(vec![frame.clone()])
+		} else {
+			fake_podman::FakeReply::Body(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+
+	let mut file = ComposeFile::default();
+	file.services.insert("web".into(), Service::default());
+	file.services.insert("worker".into(), Service::default());
+
+	e.logs_with_options(
+		&file,
+		&["web".to_string(), "worker".to_string()],
+		LogsOptions::new(true, None, None, None, false),
+	)
+	.await
+	.expect("a stream that ended with its container is a finished read");
+}
