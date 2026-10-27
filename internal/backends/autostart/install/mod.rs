@@ -40,6 +40,21 @@ use options::InstallOptions;
 /// three down together, see [`uninstall`].
 pub fn install<S: SystemCtl>(sc: &S, opts: &InstallOptions) -> crate::Result<()> {
 	let project = &opts.unit.project;
+	// The destinations are checked before anything is read or written: a unit
+	// at a symbolic link is refused here rather than read through, and a
+	// refused install leaves no unit behind.
+	let dir = unit_dir();
+	files::check_destination(&unit_path(project))
+		.map_err(|e| ComposeError::Autostart(e.to_string()))?;
+	if opts.auto_update_interval.is_some() {
+		for name in [
+			update_service_file_name(project),
+			update_timer_file_name(project),
+		] {
+			files::check_destination(&dir.join(&name))
+				.map_err(|e| ComposeError::Autostart(e.to_string()))?;
+		}
+	}
 	conflict::refuse_if_quadlet_present(project)?;
 	conflict::refuse_if_other_single_unit_mode(project, conflict::SingleUnitMode::Service)?;
 
@@ -79,6 +94,10 @@ pub fn install_start<S: SystemCtl>(
 	no_start: bool,
 ) -> crate::Result<()> {
 	let project = &opts.project;
+	// The destination is checked before anything is read or written: a unit
+	// at a symbolic link is refused here rather than read through.
+	files::check_destination(&unit_path(project))
+		.map_err(|e| ComposeError::Autostart(e.to_string()))?;
 	conflict::refuse_if_quadlet_present(project)?;
 	conflict::refuse_if_other_single_unit_mode(project, conflict::SingleUnitMode::Start)?;
 	validate_start_unit_opts(opts).map_err(ComposeError::Autostart)?;
@@ -118,7 +137,7 @@ fn place_unit<S: SystemCtl>(
 	files::private_dir(&dir)
 		.map_err(|e| ComposeError::Autostart(format!("cannot create {}: {e}", dir.display())))?;
 	refuse_foreign_owner(&path, project)?;
-	files::write_private(&path, unit_text.as_bytes())
+	files::publish_unit(&path, unit_text.as_bytes())
 		.map_err(|e| ComposeError::Autostart(format!("cannot write {}: {e}", path.display())))?;
 	eprintln!("podup: wrote {}", path.display());
 
@@ -173,11 +192,11 @@ fn place_update_units<S: SystemCtl>(
 
 	refuse_foreign_owner(&service_path, project)?;
 	refuse_foreign_owner(&timer_path, project)?;
-	files::write_private(&service_path, service_text.as_bytes()).map_err(|e| {
+	files::publish_unit(&service_path, service_text.as_bytes()).map_err(|e| {
 		ComposeError::Autostart(format!("cannot write {}: {e}", service_path.display()))
 	})?;
 	eprintln!("podup: wrote {}", service_path.display());
-	files::write_private(&timer_path, timer_text.as_bytes()).map_err(|e| {
+	files::publish_unit(&timer_path, timer_text.as_bytes()).map_err(|e| {
 		ComposeError::Autostart(format!("cannot write {}: {e}", timer_path.display()))
 	})?;
 	eprintln!("podup: wrote {}", timer_path.display());
