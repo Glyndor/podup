@@ -11,8 +11,19 @@
 
 use std::path::Path;
 
+#[cfg(not(unix))]
 use super::destination::{destination_metadata, destination_refusal};
 use crate::error::{ComposeError, Result};
+
+#[cfg(unix)]
+pub(in crate::backends::engine::host_files::copy) use super::unix::extract_archive;
+
+/// Extract an archive through a pinned directory, without following symlinks.
+#[cfg(unix)]
+pub fn extract_tar_guarded<R: std::io::Read>(src: R, dst_dir: &Path) -> Result<()> {
+	let root = super::unix::directory::Directory::open_host(dst_dir).map_err(ComposeError::Io)?;
+	super::unix::extract(src, &root)
+}
 
 /// Route a container archive to the host destination.
 ///
@@ -25,6 +36,7 @@ use crate::error::{ComposeError, Result};
 ///   `.bashrc`/`authorized_keys` into the destination directory).
 /// - `dst` does not exist and the source is a directory: `dst` is created and the
 ///   source's *contents* are copied into it (matching `docker cp`).
+#[cfg(not(unix))]
 pub(in crate::backends::engine::host_files::copy) fn extract_archive(
 	tar_bytes: &[u8],
 	dst: &Path,
@@ -102,7 +114,7 @@ pub(in crate::backends::engine::host_files::copy) fn extract_archive(
 /// True when the destination path was written with a trailing path separator
 /// (e.g. `./newdir/`), which `docker cp` treats as an explicit *directory*
 /// destination; it must already exist.
-fn has_trailing_separator(p: &Path) -> bool {
+pub(super) fn has_trailing_separator(p: &Path) -> bool {
 	p.as_os_str()
 		.to_string_lossy()
 		.chars()
@@ -113,7 +125,7 @@ fn has_trailing_separator(p: &Path) -> bool {
 /// True if any entry in `tar_bytes` is a directory, the signal that the source
 /// of a container→host copy was a directory (libpod tars it under its basename),
 /// as opposed to a single file.
-fn archive_contains_dir(tar_bytes: &[u8]) -> Result<bool> {
+pub(super) fn archive_contains_dir(tar_bytes: &[u8]) -> Result<bool> {
 	let cursor = std::io::Cursor::new(tar_bytes);
 	let mut archive = tar::Archive::new(cursor);
 	for entry in archive.entries().map_err(ComposeError::Io)? {
@@ -137,6 +149,7 @@ fn archive_contains_dir(tar_bytes: &[u8]) -> Result<bool> {
 /// compromised container can plant such an entry: following the symlink would
 /// read the target's contents and rename them into `dst`, emptying an
 /// out-of-archive directory (#1736). The wrapper is left in place.
+#[cfg(not(unix))]
 fn flatten_single_wrapper_dir(dst: &Path) -> Result<()> {
 	let mut children: Vec<std::path::PathBuf> = std::fs::read_dir(dst)
 		.map_err(ComposeError::Io)?
@@ -178,6 +191,7 @@ fn flatten_single_wrapper_dir(dst: &Path) -> Result<()> {
 ///
 /// Returns `None` when no normal component survives (`/`, `..`, `.`), which is
 /// nothing to chmod.
+#[cfg(any(test, not(unix)))]
 fn unpacked_path(dst_dir: &Path, rel: &Path) -> Option<std::path::PathBuf> {
 	let mut out = dst_dir.to_path_buf();
 	let mut pushed = false;
@@ -204,6 +218,7 @@ fn unpacked_path(dst_dir: &Path, rel: &Path) -> Option<std::path::PathBuf> {
 /// `engine` (which is `pub(crate)`) keeps the function off the public API, and
 /// the fuzz harness behind the `test-helpers` feature reaches it through
 /// `crate::fuzz_api`.
+#[cfg(not(unix))]
 pub fn extract_tar_guarded<R: std::io::Read>(src: R, dst_dir: &Path) -> Result<()> {
 	let mut archive = tar::Archive::new(src);
 	for entry in archive.entries().map_err(ComposeError::Io)? {
@@ -236,6 +251,7 @@ pub fn extract_tar_guarded<R: std::io::Read>(src: R, dst_dir: &Path) -> Result<(
 /// honouring the user's destination filename rather than the daemon's. Errors
 /// if the archive is empty, holds more than one entry, or the entry is not a
 /// regular file (those cases only make sense against a directory destination).
+#[cfg(not(unix))]
 fn write_single_entry_to(tar_bytes: &[u8], dst: &Path) -> Result<()> {
 	use std::io::Read;
 
@@ -275,27 +291,6 @@ fn write_single_entry_to(tar_bytes: &[u8], dst: &Path) -> Result<()> {
 		));
 	}
 	Ok(())
-}
-
-/// Strip group/other-write and setuid/setgid/sticky bits from a file or
-/// directory extracted from an untrusted container, keeping the owner and
-/// read/execute bits. No-op on anything else (e.g. symlinks) and on non-unix
-/// platforms.
-#[cfg(unix)]
-fn sanitize_extracted_mode(path: &Path, mode: u32) {
-	use std::os::unix::fs::PermissionsExt;
-	let Ok(meta) = std::fs::symlink_metadata(path) else {
-		return;
-	};
-	// Directories too: the extractor keeps the low nine bits of the stored
-	// mode, so a `0777` directory entry would otherwise land world-writable.
-	if !meta.is_file() && !meta.is_dir() {
-		return;
-	}
-	let masked = mode & 0o7777 & !0o022 & !0o7000;
-	if let Err(e) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(masked)) {
-		tracing::warn!("cp: could not set permissions on {}: {e}", path.display());
-	}
 }
 
 #[cfg(not(unix))]

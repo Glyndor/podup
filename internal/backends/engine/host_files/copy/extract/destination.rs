@@ -62,28 +62,13 @@
 //! trust them. This exception is narrower (root-level only, no group or
 //! other write on the root) so that case stays refused.
 //!
-//! # What this does not close
+//! # Enforcement during extraction
 //!
-//! This is a check on a path, and everything after it (`write`, `read_dir`,
-//! `rename`, `set_permissions`, `tar`'s `unpack_in`) walks the path again. A
-//! process that can write in one of the destination's ancestors can swap a
-//! directory for a symlink between the two. Closing that needs a directory
-//! handle opened component by component with `O_NOFOLLOW` and every later
-//! operation made relative to it, and `tar::Entry::unpack_in` takes a path,
-//! not a handle, so it means replacing the extractor.
-//!
-//! Who can win that race: a local process that already writes where the
-//! operator is copying to, which has cheaper options there, and a container
-//! that has a writable bind mount over one of the destination's ancestors
-//! (`cp svc:/x ./data/out` with `./data` mounted into `svc`). The second is
-//! the untrusted party of this module, so the race is a known limit and not
-//! a closed one. A container without such a mount cannot touch the host
-//! filesystem between the check and the use.
-//!
-//! Do not describe this guard as race-free, and do not replace it with a
-//! canonicalised path passed downstream: a canonical string is re-walked
-//! exactly like the original, and it hides the link that should have been
-//! refused.
+//! This path check supplies routing and diagnostic information. On Unix, the
+//! extractor separately opens every directory component with `O_NOFOLLOW` and
+//! performs writes, chmods and renames relative to pinned descriptors. Never
+//! replace that enforcement with a canonicalized path: later path lookups can
+//! still encounter replacement links. Other platforms retain the path checks.
 
 use std::io::ErrorKind;
 use std::path::{Component, Path, PathBuf};
