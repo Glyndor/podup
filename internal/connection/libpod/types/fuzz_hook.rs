@@ -9,7 +9,7 @@ use super::image::{BuildOutput, ImageInspect, ImagePullProgress};
 use super::pod::PodInspect;
 use super::volume::SystemDf;
 
-/// How many response types [`decode`] knows.
+/// How many response types `decode` knows.
 pub const KINDS: u8 = 10;
 
 fn parses<T: DeserializeOwned>(bytes: &[u8]) -> bool {
@@ -17,7 +17,7 @@ fn parses<T: DeserializeOwned>(bytes: &[u8]) -> bool {
 }
 
 /// Decode `bytes` as the response type numbered `kind` (taken modulo
-/// [`KINDS`]), returning whether it was accepted. A refusal is an ordinary
+/// `KINDS`), returning whether it was accepted. A refusal is an ordinary
 /// outcome; the harness only cares that nothing panics.
 pub fn decode(kind: u8, bytes: &[u8]) -> bool {
 	match kind % KINDS {
