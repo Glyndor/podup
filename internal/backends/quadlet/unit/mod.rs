@@ -24,7 +24,7 @@ pub(super) use volume::volume_unit;
 pub(super) use super::render::quote_podman_arg_value;
 use super::render::{
 	render_command, render_publish_port, render_restart, render_tmpfs_mount, render_volume,
-	safe_unit_stem, sorted_label_pairs, sorted_pairs, unit_stem, Section,
+	safe_unit_stem, sorted_label_pairs, sorted_pairs, unit_stem, ExternalNames, Section,
 };
 use super::warnings::{collect_build_warnings, collect_warnings};
 use super::QuadletUnit;

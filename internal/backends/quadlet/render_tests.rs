@@ -127,12 +127,18 @@ fn base() -> std::path::PathBuf {
 	std::path::PathBuf::from("/srv/app")
 }
 
+/// The external volumes the compose file declares, keyed by their compose key.
+fn external_volumes() -> ExternalNames<'static> {
+	ExternalNames::from([("data", "shared_data")])
+}
+
 #[test]
 fn render_volume_short_declared_uses_dot_volume_with_options() {
 	let out = render_volume(
 		&VolumeMount::Short("data:/app:ro".into()),
 		"proj",
 		&["data"],
+		&external_volumes(),
 		&base(),
 	);
 	// A declared named volume becomes `<project>-<name>.volume:<target>:<opts>`.
@@ -145,6 +151,7 @@ fn render_volume_short_declared_uses_dot_volume_with_options() {
 			&VolumeMount::Short("./host:/app".into()),
 			"proj",
 			&["data"],
+			&external_volumes(),
 			&base()
 		),
 		"/srv/app/./host:/app"
@@ -152,11 +159,32 @@ fn render_volume_short_declared_uses_dot_volume_with_options() {
 }
 
 #[test]
+fn render_volume_external_source_uses_the_name_it_really_has() {
+	// An external volume is named by the name it really has on the host,
+	// which a compose `name:` may have changed. The compose key would
+	// point at a resource that does not exist.
+	let out = render_volume(
+		&VolumeMount::Short("data:/app".into()),
+		"proj",
+		&[],
+		&external_volumes(),
+		&base(),
+	);
+	assert_eq!(out, "shared_data:/app");
+}
+
+#[test]
 fn render_volume_short_colonless_entry_is_an_anonymous_volume() {
 	// A colon-less entry names an in-container path, not a host source, so
 	// there is nothing to resolve against the base directory.
 	assert_eq!(
-		render_volume(&VolumeMount::Short("/data".into()), "proj", &[], &base()),
+		render_volume(
+			&VolumeMount::Short("/data".into()),
+			"proj",
+			&[],
+			&external_volumes(),
+			&base()
+		),
 		"/data"
 	);
 }
@@ -180,7 +208,7 @@ fn render_volume_long_collects_options_and_handles_empty_source() {
 	// Declared → project-prefixed `.volume` suffix; ro + nocopy folded into
 	// the options field.
 	assert_eq!(
-		render_volume(&nocopy, "proj", &["vol"], &base()),
+		render_volume(&nocopy, "proj", &["vol"], &external_volumes(), &base()),
 		"proj-vol.volume:/data:ro,nocopy"
 	);
 
@@ -202,7 +230,7 @@ fn render_volume_long_collects_options_and_handles_empty_source() {
 		consistency: None,
 	};
 	assert_eq!(
-		render_volume(&hardened, "proj", &["vol"], &base()),
+		render_volume(&hardened, "proj", &["vol"], &external_volumes(), &base()),
 		"proj-vol.volume:/data:noexec,nosuid,nodev"
 	);
 
@@ -217,7 +245,10 @@ fn render_volume_long_collects_options_and_handles_empty_source() {
 		tmpfs: None,
 		consistency: None,
 	};
-	assert_eq!(render_volume(&anon, "proj", &[], &base()), "/scratch");
+	assert_eq!(
+		render_volume(&anon, "proj", &[], &external_volumes(), &base()),
+		"/scratch"
+	);
 }
 
 // --- render_tmpfs_mount ---

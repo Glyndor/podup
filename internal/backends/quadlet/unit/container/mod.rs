@@ -15,7 +15,7 @@ use super::pod::PodFields;
 use super::{
 	abs_against, collect_warnings, owner_marker, quote_podman_arg_value, render_command,
 	render_publish_port, render_restart, render_tmpfs_mount, render_volume, safe_unit_stem,
-	sorted_label_pairs, sorted_pairs, unit_stem, QuadletUnit, Section,
+	sorted_label_pairs, sorted_pairs, unit_stem, ExternalNames, QuadletUnit, Section,
 };
 
 mod confinement;
@@ -55,6 +55,14 @@ pub(crate) struct UnitContext<'a> {
 	pub declared_volumes: &'a [&'a str],
 	/// Networks the compose file declares (external ones excluded).
 	pub declared_networks: &'a [&'a str],
+	/// The names the external networks really have on the host, keyed by the
+	/// compose key that refers to them. An external network is named by its
+	/// own name, not by the key: the key is only how the compose file
+	/// refers to it.
+	pub external_networks: &'a ExternalNames<'a>,
+	/// The names the external volumes really have on the host, keyed by the
+	/// compose key that refers to them.
+	pub external_volumes: &'a ExternalNames<'a>,
 	/// Top-level `secrets:` definitions, for resolving a service's secret refs.
 	pub secrets: &'a IndexMap<String, SecretConfig>,
 	/// Directory compose resolves relative paths against: the compose file's
@@ -165,6 +173,8 @@ fn render_container_unit(
 		project,
 		declared_volumes,
 		declared_networks,
+		external_networks,
+		external_volumes,
 		secrets,
 		base_dir,
 		services,
@@ -200,8 +210,22 @@ fn render_container_unit(
 	emit_runtime(name, service, in_pod, pod_fields, &mut container);
 	emit_ports(service, in_pod, &mut container);
 	emit_environment(service, &mut container);
-	emit_volumes(service, project, declared_volumes, base_dir, &mut container);
-	emit_networks(service, project, declared_networks, in_pod, &mut container);
+	emit_volumes(
+		service,
+		project,
+		declared_volumes,
+		external_volumes,
+		base_dir,
+		&mut container,
+	);
+	emit_networks(
+		service,
+		project,
+		declared_networks,
+		external_networks,
+		in_pod,
+		&mut container,
+	);
 	emit_labels(name, project, service, &mut container, warnings);
 	emit_capabilities(service, &mut container);
 	emit_command(service, &mut container);

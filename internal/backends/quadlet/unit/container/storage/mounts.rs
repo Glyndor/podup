@@ -4,7 +4,7 @@ use std::path::Path;
 
 use crate::compose::types::Service;
 
-use super::super::{render_tmpfs_mount, render_volume, Section};
+use super::super::{render_tmpfs_mount, render_volume, ExternalNames, Section};
 
 /// Emit a `Volume=` line per `volumes:` entry, or `Tmpfs=` for a long-form
 /// `type: tmpfs` mount.
@@ -12,6 +12,7 @@ pub(in super::super) fn emit_volumes(
 	service: &Service,
 	project: &str,
 	declared_volumes: &[&str],
+	external_volumes: &ExternalNames<'_>,
 	base_dir: &Path,
 	container: &mut Section,
 ) {
@@ -23,7 +24,7 @@ pub(in super::super) fn emit_volumes(
 		} else {
 			container.add(
 				"Volume",
-				render_volume(vol, project, declared_volumes, base_dir),
+				render_volume(vol, project, declared_volumes, external_volumes, base_dir),
 			);
 		}
 	}

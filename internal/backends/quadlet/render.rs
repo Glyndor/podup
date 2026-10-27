@@ -44,18 +44,27 @@ fn bracket_ipv6(host_ip: &str) -> String {
 	}
 }
 
+/// The names the external networks and volumes really have on the host, keyed
+/// by the compose key that refers to them.
+///
+/// A compose `name:` overrides the key, so the unit has to name the resource
+/// by that name: referring to it by the compose key would point the container
+/// at a resource that does not exist, or at one that is not the external one.
+pub(super) type ExternalNames<'a> = std::collections::HashMap<&'a str, &'a str>;
+
 /// Render a volume mount into a Quadlet `Volume=` value. A source naming a
 /// declared volume gets a project-prefixed `.volume` suffix (so Quadlet wires it
 /// to the generated unit, whose file name is also project-prefixed); an
-/// undeclared source that names a host path is made absolute against the
-/// compose base directory; any other source passes through verbatim. An empty
-/// source renders as just the target. Long-form `read_only`, SELinux relabel
-/// (`z`/`Z`), bind propagation, and `nocopy` opts are folded into the trailing
-/// `:opt,opt` field.
+/// external volume is named by the name it really has; an undeclared source
+/// that names a host path is made absolute against the compose base directory;
+/// any other source passes through verbatim. An empty source renders as just
+/// the target. Long-form `read_only`, SELinux relabel (`z`/`Z`), bind
+/// propagation, and `nocopy` opts are folded into the trailing `:opt,opt` field.
 pub(super) fn render_volume(
 	vol: &VolumeMount,
 	project: &str,
 	declared_volumes: &[&str],
+	external_volumes: &ExternalNames<'_>,
 	base_dir: &std::path::Path,
 ) -> String {
 	match vol {
@@ -67,6 +76,8 @@ pub(super) fn render_volume(
 			};
 			if declared_volumes.contains(&src) {
 				format!("{}.volume:{}", unit_stem(project, src), rest)
+			} else if let Some(name) = external_volumes.get(src) {
+				format!("{name}:{rest}")
 			} else {
 				format!("{}:{}", resolve_source_path(src, base_dir), rest)
 			}
@@ -82,6 +93,8 @@ pub(super) fn render_volume(
 			let src = source.clone().unwrap_or_default();
 			let src = if declared_volumes.contains(&src.as_str()) {
 				format!("{}.volume", unit_stem(project, &src))
+			} else if let Some(name) = external_volumes.get(src.as_str()) {
+				name.to_string()
 			} else {
 				resolve_source_path(&src, base_dir)
 			};

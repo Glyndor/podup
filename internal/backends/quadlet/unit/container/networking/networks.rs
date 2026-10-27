@@ -7,7 +7,7 @@ use crate::quadlet::is_no_warn_set;
 
 use super::super::super::pod::{PodField, PodFields};
 use super::super::super::shared_values::network_values;
-use super::super::{quote_podman_arg_value, unit_stem, Section};
+use super::super::{quote_podman_arg_value, unit_stem, ExternalNames, Section};
 
 /// Emit a `Network=` line per declared network the service attaches to, unless
 /// the pod carries the attachment instead.
@@ -15,6 +15,7 @@ pub(in super::super) fn emit_networks(
 	service: &Service,
 	project: &str,
 	declared_networks: &[&str],
+	external_networks: &ExternalNames<'_>,
 	in_pod: bool,
 	container: &mut Section,
 ) {
@@ -31,7 +32,13 @@ pub(in super::super) fn emit_networks(
 			if declared_networks.contains(&net.as_str()) {
 				container.add("Network", format!("{}.network", unit_stem(project, &net)));
 			} else {
-				container.add("Network", net.clone());
+				// An external network carries the name it really has, which a
+				// compose `name:` may have changed.
+				let name = external_networks
+					.get(net.as_str())
+					.copied()
+					.unwrap_or(net.as_str());
+				container.add("Network", name.to_string());
 			}
 		}
 	}
