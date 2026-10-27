@@ -176,7 +176,8 @@ pub fn render_start_unit(opts: &StartUnitOpts) -> String {
 		None => String::new(),
 	};
 	format!(
-		"[Unit]\n\
+		"{marker}\n\
+		 [Unit]\n\
 		 Description=podup {project}\n\
 		 Wants=podman-user-wait-network-online.service\n\
 		 After=podman-user-wait-network-online.service\n\
@@ -190,6 +191,7 @@ pub fn render_start_unit(opts: &StartUnitOpts) -> String {
 		 \n\
 		 [Install]\n\
 		 WantedBy=default.target\n",
+		marker = super::owner::marker(&opts.project),
 	)
 }
 

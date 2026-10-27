@@ -238,13 +238,38 @@ pub fn validate_auto_update_interval(interval: &str) -> Result<(), String> {
 	}
 }
 
-/// The `<unit-name>-update.service` filename.
+/// The auto-update oneshot filename: `podup-<project>.update.service`.
+///
+/// The role sits between the project name and the suffix, separated by a
+/// dot, and a project name cannot contain one (`is_safe_project_name` allows
+/// only lowercase letters, digits, `-` and `_`). The old spelling,
+/// `podup-<project>-update.service`, put the role after the project name, so
+/// the auto-update pair of project `demo` and the main unit of project
+/// `demo-update` were the same file: installing or removing one silently
+/// overwrote, stopped or deleted the other.
 pub fn update_service_file_name(project: &str) -> String {
+	format!("podup-{project}.update.service")
+}
+
+/// The auto-update timer filename: `podup-<project>.update.timer`.
+pub fn update_timer_file_name(project: &str) -> String {
+	format!("podup-{project}.update.timer")
+}
+
+/// The auto-update oneshot filename releases before the rename wrote:
+/// `podup-<project>-update.service`.
+///
+/// Kept so the leftover pair of an older install can be recognised and
+/// retired. It cannot be recognised by name alone: it is also the main unit's
+/// name for a project called `<project>-update`, so the file's own contents
+/// decide who owns it.
+pub fn legacy_update_service_file_name(project: &str) -> String {
 	format!("podup-{project}-update.service")
 }
 
-/// The `<unit-name>-update.timer` filename.
-pub fn update_timer_file_name(project: &str) -> String {
+/// The auto-update timer filename releases before the rename wrote:
+/// `podup-<project>-update.timer`.
+pub fn legacy_update_timer_file_name(project: &str) -> String {
 	format!("podup-{project}-update.timer")
 }
 
@@ -260,7 +285,8 @@ pub fn render_update_service_unit(opts: &ServiceUnitOpts) -> String {
 	let workdir = workdir_value(&opts.working_dir);
 	let project = opts.project.replace('%', "%%");
 	format!(
-		"[Unit]\n\
+		"{marker}\n\
+		 [Unit]\n\
 		 Description=podup {project} auto-update\n\
 		 Wants=podman-user-wait-network-online.service\n\
 		 After=podman-user-wait-network-online.service\n\
@@ -269,6 +295,7 @@ pub fn render_update_service_unit(opts: &ServiceUnitOpts) -> String {
 		 Type=oneshot\n\
 		 WorkingDirectory={workdir}\n\
 		 ExecStart={start}\n",
+		marker = super::owner::marker(&opts.project),
 		project = project,
 		workdir = workdir,
 		start = start,
@@ -279,6 +306,9 @@ pub fn render_update_service_unit(opts: &ServiceUnitOpts) -> String {
 /// missed fires (the host was off) catch up on next boot, and
 /// `WantedBy=timers.target` so the standard timer enable path takes it.
 pub fn render_update_timer_unit(project: &str, interval: &str) -> String {
+	// The marker carries the project name as it is: it is a comment systemd
+	// never expands, and podup reads it back to decide who owns the file.
+	let marker = super::owner::marker(project);
 	let project = project.replace('%', "%%");
 	let interval_word = if let Err(e) = validate_auto_update_interval(interval) {
 		// clap rejects unknown values before reaching here; this is the
@@ -290,7 +320,8 @@ pub fn render_update_timer_unit(project: &str, interval: &str) -> String {
 		interval
 	};
 	format!(
-		"[Unit]\n\
+		"{marker}\n\
+		 [Unit]\n\
 		 Description=podup {project} auto-update timer\n\
 		 \n\
 		 [Timer]\n\
@@ -299,6 +330,7 @@ pub fn render_update_timer_unit(project: &str, interval: &str) -> String {
 		 \n\
 		 [Install]\n\
 		 WantedBy=timers.target\n",
+		marker = marker,
 		project = project,
 		interval_word = interval_word,
 	)
@@ -377,7 +409,8 @@ pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
 		None => String::new(),
 	};
 	format!(
-		"[Unit]\n\
+		"{marker}\n\
+		 [Unit]\n\
 		 Description=podup {project}\n\
 		 Wants=podman-user-wait-network-online.service\n\
 		 After=podman-user-wait-network-online.service\n\
@@ -392,6 +425,7 @@ pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
 		 \n\
 		 [Install]\n\
 		 WantedBy=default.target\n",
+		marker = super::owner::marker(&opts.project),
 		project = project,
 		workdir = workdir,
 		start = start,

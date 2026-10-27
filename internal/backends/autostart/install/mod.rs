@@ -16,14 +16,18 @@ pub(super) mod conflict;
 pub(super) mod detect;
 pub(super) mod options;
 
+use std::path::Path;
+
 use super::guards::emit_guards;
 use super::paths::{unit_dir, unit_file_name, unit_path};
 use super::service::{
-	render_service_unit, render_update_service_unit, render_update_timer_unit,
-	update_service_file_name, update_timer_file_name,
+	legacy_update_service_file_name, legacy_update_timer_file_name, render_service_unit,
+	render_update_service_unit, render_update_timer_unit, update_service_file_name,
+	update_timer_file_name,
 };
 use super::start::{render_start_unit, validate_start_unit_opts, StartUnitOpts};
 use super::systemctl::{checked, SystemCtl};
+use super::unit_files::owner::{legacy_role, owner_of_file, Role};
 use options::InstallOptions;
 
 /// Install (and, unless `no_start`, enable + start) the service-mode autostart
@@ -112,6 +116,7 @@ fn place_unit<S: SystemCtl>(
 	let dir = unit_dir();
 	std::fs::create_dir_all(&dir)
 		.map_err(|e| ComposeError::Autostart(format!("cannot create {}: {e}", dir.display())))?;
+	refuse_foreign_owner(&path, project)?;
 	std::fs::write(&path, unit_text.as_bytes())
 		.map_err(|e| ComposeError::Autostart(format!("cannot write {}: {e}", path.display())))?;
 	eprintln!("podup: wrote {}", path.display());
@@ -165,6 +170,8 @@ fn place_update_units<S: SystemCtl>(
 		return Ok(());
 	}
 
+	refuse_foreign_owner(&service_path, project)?;
+	refuse_foreign_owner(&timer_path, project)?;
 	std::fs::write(&service_path, service_text.as_bytes()).map_err(|e| {
 		ComposeError::Autostart(format!("cannot write {}: {e}", service_path.display()))
 	})?;
@@ -173,6 +180,11 @@ fn place_update_units<S: SystemCtl>(
 		ComposeError::Autostart(format!("cannot write {}: {e}", timer_path.display()))
 	})?;
 	eprintln!("podup: wrote {}", timer_path.display());
+
+	// The pair an older release wrote under the legacy names is retired here,
+	// so the timer that used to fire `up -d` against the default socket and
+	// the default project directory does not keep firing beside the new one.
+	retire_legacy_update_units(sc, project)?;
 
 	checked(sc.systemctl(&["daemon-reload"]), "daemon-reload")?;
 	if !no_start {
@@ -183,6 +195,57 @@ fn place_update_units<S: SystemCtl>(
 		eprintln!("podup: enabled and started {timer_name}");
 	} else {
 		eprintln!("podup: installed {service_name} and {timer_name} (not enabled; --no-start)");
+	}
+	Ok(())
+}
+
+/// Refuse to write a unit over a file that belongs to another project.
+///
+/// The unit names are derived from the project name, and a project name can
+/// be a prefix of another project's (`demo` and `demo-update`), so the name
+/// alone never proves who owns the file. The owner marker does: a unit
+/// carrying another project's marker is left alone rather than overwritten.
+fn refuse_foreign_owner(path: &Path, project: &str) -> crate::Result<()> {
+	let Some(owner) = owner_of_file(path) else {
+		return Ok(());
+	};
+	let owner_project = owner.project();
+	if owner_project == project {
+		return Ok(());
+	}
+	Err(ComposeError::Autostart(format!(
+		"refusing to write {}: it belongs to project '{owner_project}', not '{project}'",
+		path.display()
+	)))
+}
+
+/// Retire the auto-update pair an older release wrote under the legacy names,
+/// when the files themselves prove they are this project's pair.
+///
+/// The legacy names are also the main unit's name for a project called
+/// `<project>-update`, so the name proves nothing: only a file whose
+/// `Description=` says it is this project's auto-update pair is touched.
+fn retire_legacy_update_units<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
+	let dir = unit_dir();
+	let service_name = legacy_update_service_file_name(project);
+	let timer_name = legacy_update_timer_file_name(project);
+	for (name, path, role) in [
+		(&timer_name, dir.join(&timer_name), Role::UpdateTimer),
+		(&service_name, dir.join(&service_name), Role::UpdateService),
+	] {
+		if legacy_role(&path) != Some(role) {
+			continue;
+		}
+		if unit_is_known(sc, name) {
+			checked(
+				sc.systemctl(&["disable", "--now", name]),
+				&format!("disable --now {name}"),
+			)?;
+		}
+		std::fs::remove_file(&path).map_err(|e| {
+			ComposeError::Autostart(format!("cannot remove {}: {e}", path.display()))
+		})?;
+		eprintln!("podup: removed the legacy unit {}", path.display());
 	}
 	Ok(())
 }
@@ -249,6 +312,8 @@ pub fn uninstall<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
 
 	// The auto-update pair, when present. Run independently of the main unit's
 	// outcome: the timer pair is its own install and uninstalls the same way.
+	// The names carry the role behind a dot, which a project name cannot
+	// hold, so they cannot be another project's unit.
 	let update_service_name = update_service_file_name(project);
 	let update_timer_name = update_timer_file_name(project);
 	let update_service_path = unit_dir().join(&update_service_name);
@@ -277,6 +342,13 @@ pub fn uninstall<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
 			eprintln!("podup: removed {}", path.display());
 		}
 	}
+
+	// The pair an older release wrote under the legacy names. Those names are
+	// also the main unit's name for a project called `<project>-update`, so
+	// nothing is disabled or removed unless the file itself says it is this
+	// project's auto-update pair: another project's main unit must survive
+	// this project's uninstall.
+	retire_legacy_update_units(sc, project)?;
 
 	checked(sc.systemctl(&["daemon-reload"]), "daemon-reload")?;
 	Ok(())

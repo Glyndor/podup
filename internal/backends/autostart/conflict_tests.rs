@@ -89,8 +89,8 @@ fn install_start_refuses_over_a_service_install_with_auto_update() {
 		let sc = FakeCtl::new();
 		install(&sc, &opts_with_interval(root, "app", false, false, "daily")).unwrap();
 		let main = root.join("systemd/user/podup-app.service");
-		let oneshot = root.join("systemd/user/podup-app-update.service");
-		let timer = root.join("systemd/user/podup-app-update.timer");
+		let oneshot = root.join("systemd/user/podup-app.update.service");
+		let timer = root.join("systemd/user/podup-app.update.timer");
 		let before_main = std::fs::read(&main).unwrap();
 		let before_oneshot = std::fs::read(&oneshot).unwrap();
 		let before_timer = std::fs::read(&timer).unwrap();

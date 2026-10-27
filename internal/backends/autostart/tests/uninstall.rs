@@ -24,16 +24,16 @@ fn uninstall_disables_removes_and_reloads() {
 		// unconditionally so a half-installed pair still gets cleaned up.
 		assert_eq!(
 			calls[2],
-			vec!["is-active", "--quiet", "podup-app-update.timer"]
+			vec!["is-active", "--quiet", "podup-app.update.timer"]
 		);
-		assert_eq!(calls[3], vec!["disable", "--now", "podup-app-update.timer"]);
+		assert_eq!(calls[3], vec!["disable", "--now", "podup-app.update.timer"]);
 		assert_eq!(
 			calls[4],
-			vec!["is-active", "--quiet", "podup-app-update.service"]
+			vec!["is-active", "--quiet", "podup-app.update.service"]
 		);
 		assert_eq!(
 			calls[5],
-			vec!["disable", "--now", "podup-app-update.service"]
+			vec!["disable", "--now", "podup-app.update.service"]
 		);
 		assert_eq!(calls[6], vec!["daemon-reload"]);
 	});
