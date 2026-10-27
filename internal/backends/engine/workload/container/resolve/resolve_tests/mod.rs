@@ -1,3 +1,4 @@
+use super::hash::overridden_resource_identities;
 use super::resolve_bind_source;
 use super::{
 	config_hash, resolve_links, resolve_stop_signal, resolve_volume_name, resolve_volumes_from,
@@ -7,6 +8,7 @@ use crate::parse_str;
 mod bind_source;
 mod config_hash;
 mod config_hash_file_refs;
+mod config_hash_resources;
 mod links;
 mod stop_signal;
 mod volume_name;

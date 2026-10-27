@@ -17,11 +17,21 @@ pub fn resolve_network_name(network: &str, file: &ComposeFile, project: &str) ->
 			} else if cfg.external.unwrap_or(false) {
 				network.to_string()
 			} else {
-				format!("{project}_{network}")
+				default_network_name(network, project)
 			}
 		}
-		None => format!("{project}_{network}"),
+		None => default_network_name(network, project),
 	}
+}
+
+/// The project-prefixed name a compose network key resolves to when its
+/// top-level definition does not override it with `name:` or `external: true`.
+///
+/// The one place the rule is written down, so a caller that needs to know
+/// whether a resolved name was overridden (the config hash) does not have to
+/// repeat the `{project}_{key}` shape and risk drifting from it.
+pub(in crate::backends::engine) fn default_network_name(network: &str, project: &str) -> String {
+	format!("{project}_{network}")
 }
 
 #[cfg(test)]

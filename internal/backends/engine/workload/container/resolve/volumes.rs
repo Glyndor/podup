@@ -28,7 +28,7 @@ pub(in crate::backends::engine::workload::container) fn resolve_volume_name(
 			} else if cfg.as_ref().and_then(|c| c.external).unwrap_or(false) {
 				reference.to_string()
 			} else {
-				format!("{project}_{reference}")
+				default_volume_name(reference, project)
 			},
 		),
 		None => Err(ComposeError::Unsupported(format!(
@@ -36,6 +36,19 @@ pub(in crate::backends::engine::workload::container) fn resolve_volume_name(
 			 top-level `volumes:` key, or use a bind mount or anonymous volume instead"
 		))),
 	}
+}
+
+/// The project-prefixed name a named-volume reference resolves to when its
+/// top-level definition does not override it with `name:` or `external: true`.
+///
+/// The one place the rule is written down, so a caller that needs to know
+/// whether a resolved name was overridden (the config hash) does not have to
+/// repeat the `{project}_{reference}` shape and risk drifting from it.
+pub(in crate::backends::engine::workload::container) fn default_volume_name(
+	reference: &str,
+	project: &str,
+) -> String {
+	format!("{project}_{reference}")
 }
 
 /// Resolve a bind-mount source path: expand a leading `~`, then make a relative

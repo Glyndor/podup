@@ -193,6 +193,33 @@ pub(crate) fn build_mounts_all(
 	(mounts, named)
 }
 
+/// The named-volume *references* a service declares, in declaration order.
+///
+/// The source is returned as written (a compose key like `datos`, or the
+/// empty string for an anonymous volume); the caller resolves it to the name
+/// the volume actually has on the host. Unlike [`build_mounts_all`] this has
+/// no side effects: it never creates a missing bind source, so it can be
+/// called from the config-hash computation, which must not touch the host.
+pub(crate) fn named_volume_refs(service: &Service) -> Vec<String> {
+	let mut out = Vec::new();
+	for v in &service.volumes {
+		match v {
+			VolumeMount::Short(s) => {
+				if let Some((_, Some(named))) = parse_volume_string(s) {
+					out.push(named.name);
+				}
+			}
+			VolumeMount::Long {
+				volume_type: VolumeType::Volume,
+				source,
+				..
+			} => out.push(source.clone().unwrap_or_default()),
+			_ => {}
+		}
+	}
+	out
+}
+
 /// A bind mount referenced from the watcher's bind-mount feedback check.
 ///
 /// `source` is the host path as written (relative paths still need to be
