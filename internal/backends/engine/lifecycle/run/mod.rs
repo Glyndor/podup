@@ -15,6 +15,7 @@ use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 
 use crate::engine::lifecycle::RunOptions;
+use crate::engine::write_frame;
 use crate::engine::Engine;
 use crate::libpod::API_PREFIX;
 
@@ -397,14 +398,6 @@ impl Engine {
 		}
 
 		Ok(())
-	}
-}
-
-/// Write one log frame without creating a lossy `Cow` for valid UTF-8.
-fn write_frame<W: std::io::Write>(out: &mut W, bytes: &[u8]) -> std::io::Result<()> {
-	match std::str::from_utf8(bytes) {
-		Ok(text) => out.write_all(text.as_bytes()),
-		Err(_) => out.write_all(String::from_utf8_lossy(bytes).as_bytes()),
 	}
 }
 

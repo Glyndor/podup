@@ -1,6 +1,7 @@
 //! `exec` command: run a command inside a service container.
 
 mod interactive;
+mod output;
 
 use std::io::Write;
 
@@ -11,7 +12,7 @@ use crate::error::{ComposeError, Result};
 use crate::libpod::types::exec::{
 	ExecCreateConfig, ExecCreateResponse, ExecInspect, ExecStartConfig,
 };
-use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
+use crate::libpod::{urlencoded, API_PREFIX};
 
 use crate::backends::engine::observe::query::Engine;
 
@@ -351,23 +352,10 @@ impl Engine {
 		{
 			let mut out = std::io::stdout().lock();
 			while let Some(msg) = stream.next().await {
-				match msg.map_err(ComposeError::Podman)? {
-					LogOutput::StdOut { message } => {
-						let _ = out.write_all(String::from_utf8_lossy(&message).as_bytes());
-						let _ = out.flush();
-					}
-					LogOutput::StdErr { message } => {
-						let text = String::from_utf8_lossy(&message);
-						// Drop the spurious connection-reset teardown frame an OCI
-						// exec launch-failure emits, so only the real diagnostic shows.
-						if is_exec_teardown_noise(&text) {
-							continue;
-						}
-						let mut err = std::io::stderr().lock();
-						let _ = err.write_all(text.as_bytes());
-						let _ = err.flush();
-					}
-				}
+				let frame = msg.map_err(ComposeError::Podman)?;
+				let mut err = std::io::stderr().lock();
+				let _ = output::write_exec_frame(&mut out, &mut err, frame);
+				let _ = out.flush();
 			}
 		}
 

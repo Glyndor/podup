@@ -1,4 +1,4 @@
-use crate::engine::lifecycle::run::{merge_run_environment, write_frame};
+use crate::engine::lifecycle::run::merge_run_environment;
 use std::collections::HashMap;
 
 fn lookup<'a>(list: &'a [String], key: &str) -> Option<&'a str> {
@@ -43,22 +43,6 @@ fn distinct_keys_from_each_layer_are_kept() {
 	assert_eq!(lookup(&list, "A"), Some("a"));
 	assert_eq!(lookup(&list, "B"), Some("b"));
 	assert_eq!(lookup(&list, "C"), Some("c"));
-}
-
-// `write_frame` (#1364)
-
-#[test]
-fn write_frame_valid_utf8_writes_bytes_verbatim() {
-	let mut buf = Vec::new();
-	write_frame(&mut buf, b"hello\nworld\n").unwrap();
-	assert_eq!(buf, b"hello\nworld\n");
-}
-
-#[test]
-fn write_frame_invalid_utf8_substitutes_replacement() {
-	let mut buf = Vec::new();
-	write_frame(&mut buf, b"ok\xFF!\n").unwrap();
-	assert_eq!(buf, "ok�!\n".as_bytes());
 }
 
 // `init_service`: what a `run` hands to its init steps.
