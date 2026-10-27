@@ -81,17 +81,22 @@ impl Engine {
 				{
 					continue;
 				}
-				let container = self.first_replica_name(&dep, dep_service);
-				map.entry(container.clone()).or_insert_with(|| {
-					let c = container.clone();
-					async move {
-						self.wait_healthy(&c, dep_service, None)
-							.await
-							.map_err(Arc::new)
-					}
-					.boxed()
-					.shared()
-				});
+				// One shared poller per replica of the dependency: every
+				// replica has to be healthy before the dependent starts, and
+				// a container N services wait on keeps its healthcheck run
+				// once per interval.
+				for container in self.replica_names(&dep, dep_service) {
+					map.entry(container.clone()).or_insert_with(|| {
+						let c = container.clone();
+						async move {
+							self.wait_healthy(&c, dep_service, None)
+								.await
+								.map_err(Arc::new)
+						}
+						.boxed()
+						.shared()
+					});
+				}
 			}
 		}
 		map

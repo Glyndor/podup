@@ -135,3 +135,34 @@ services:
 		"a disabled healthcheck must not be shared or polled"
 	);
 }
+
+#[test]
+fn shares_one_poller_per_replica_of_the_dependency() {
+	// A dependency with three replicas has three containers, and every one of
+	// them has to be healthy before the dependent starts. One shared poller
+	// for the first replica alone left the other two unchecked.
+	let yaml = "\
+services:
+  db:
+    image: x
+    healthcheck:
+      test: [\"CMD\", \"true\"]
+    deploy:
+      replicas: 3
+  web:
+    image: x
+    depends_on:
+      db:
+        condition: service_healthy
+";
+	let file = crate::compose::parse_str(yaml).unwrap();
+	let e = engine("proj");
+	let map = e.build_readiness_map(&file, &enabled_all(&file), &None, true);
+	let mut keys: Vec<&String> = map.keys().collect();
+	keys.sort();
+	assert_eq!(
+		keys,
+		vec!["proj-db-1", "proj-db-2", "proj-db-3"],
+		"one shared poller per replica, got {keys:?}"
+	);
+}

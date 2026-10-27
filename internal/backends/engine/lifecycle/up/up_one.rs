@@ -73,51 +73,60 @@ impl Engine {
 			if !enabled.contains(&dep) {
 				continue;
 			}
-			// Scaled dep has no base-named container; wait on its first replica.
-			let dep_container = self.first_replica_name(&dep, dep_service);
+			// Every replica of the dependency is waited on, not just the first
+			// one: a healthy first replica says nothing about the others. A
+			// dependency scaled to zero has no container at all, so there is
+			// nothing to wait for and no name to wait on either.
+			let dep_containers = self.replica_names(&dep, dep_service);
+			if dep_containers.is_empty() {
+				tracing::debug!("{dep} has no replicas; skipping {name} readiness wait");
+				continue;
+			}
 
-			let wait = match condition {
-				ServiceCondition::ServiceStarted => Ok(()),
-				ServiceCondition::ServiceHealthy => {
-					// Wait unless the healthcheck is explicitly disabled in
-					// compose. With no compose healthcheck we still wait:
-					// `wait_healthy` consults the container's effective
-					// healthcheck, so image-inherited ones are honored and
-					// the wait short-circuits when none exists.
-					let disabled = dep_service
-						.healthcheck
-						.as_ref()
-						.is_some_and(|h| h.is_disabled());
-					if disabled {
-						tracing::debug!(
-							"{dep} healthcheck disabled; skipping service_healthy wait"
-						);
-						Ok(())
-					} else {
-						// Await the one shared poller for this container instead of
-						// starting our own, so a container N services wait on has its
-						// healthcheck run once per interval, not N times. Fall back to
-						// a direct wait if the map somehow lacks this container.
-						match readiness.get(&dep_container) {
-							Some(shared) => shared
-								.clone()
-								.await
-								.map_err(|e| super::readiness::unshare_readiness_error(&e)),
-							None => self.wait_healthy(&dep_container, dep_service, None).await,
+			for dep_container in &dep_containers {
+				let wait = match condition {
+					ServiceCondition::ServiceStarted => Ok(()),
+					ServiceCondition::ServiceHealthy => {
+						// Wait unless the healthcheck is explicitly disabled in
+						// compose. With no compose healthcheck we still wait:
+						// `wait_healthy` consults the container's effective
+						// healthcheck, so image-inherited ones are honored and
+						// the wait short-circuits when none exists.
+						let disabled = dep_service
+							.healthcheck
+							.as_ref()
+							.is_some_and(|h| h.is_disabled());
+						if disabled {
+							tracing::debug!(
+								"{dep} healthcheck disabled; skipping service_healthy wait"
+							);
+							Ok(())
+						} else {
+							// Await the one shared poller for this container instead of
+							// starting our own, so a container N services wait on has its
+							// healthcheck run once per interval, not N times. Fall back to
+							// a direct wait if the map somehow lacks this container.
+							match readiness.get(dep_container) {
+								Some(shared) => shared
+									.clone()
+									.await
+									.map_err(|e| super::readiness::unshare_readiness_error(&e)),
+								None => self.wait_healthy(dep_container, dep_service, None).await,
+							}
 						}
 					}
+					ServiceCondition::ServiceCompletedSuccessfully => {
+						self.wait_completed(dep_container).await
+					}
+				};
+				match wait {
+					Ok(()) => {}
+					Err(e) if !required => {
+						tracing::debug!("optional dependency {dep} (required: false) did not satisfy its condition: {e}"
+						);
+					}
+					Err(e) => return Err(e),
 				}
-				ServiceCondition::ServiceCompletedSuccessfully => {
-					self.wait_completed(&dep_container).await
-				}
-			};
-			match wait {
-				Ok(()) => {}
-				Err(e) if !required => {
-					tracing::debug!("optional dependency {dep} (required: false) did not satisfy its condition: {e}"
-					);
-				}
-				Err(e) => return Err(e),
 			}
 		}
 
