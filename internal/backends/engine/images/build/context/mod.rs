@@ -19,6 +19,22 @@ use crate::engine::context::ignore_patterns::{
 use crate::engine::context::walk;
 use crate::error::{ComposeError, Result};
 
+/// Every directory that contains `path`, outermost first: `a/b/c.txt` yields
+/// `a` and `a/b`. The file itself is not one of them.
+fn ancestor_dirs(path: &str) -> Vec<String> {
+	let mut out = Vec::new();
+	let mut acc = String::new();
+	for segment in path.split('/') {
+		if !acc.is_empty() {
+			acc.push('/');
+		}
+		acc.push_str(segment);
+		out.push(acc.clone());
+	}
+	out.pop();
+	out
+}
+
 /// Append the build context to `tar`, honoring `.dockerignore`.
 ///
 /// `skip_names` are context-relative paths to omit even when not ignored (used to
@@ -35,6 +51,15 @@ fn append_context<W: std::io::Write>(
 	// an SSH key, into the image. Store the link itself instead, matching the
 	// watch-sync and cp paths.
 	tar.follow_symlinks(false);
+	// The directories that hold a force-included path. The force-include is
+	// applied per entry, but the walk prunes an ignored directory before it
+	// looks at what is inside, so a Dockerfile under an ignored directory
+	// never reached that check: the tar came out without it and the build
+	// failed with "stat .../docker/Dockerfile: no such file or directory".
+	let force_dirs: std::collections::HashSet<String> = force_include
+		.iter()
+		.flat_map(|p| ancestor_dirs(p))
+		.collect();
 	// Skip directories the ignore patterns would drop wholesale, so the
 	// walk does not enumerate every entry under an excluded subtree just
 	// to filter each one out (#1746 entry 6). The closure runs once per
@@ -56,6 +81,13 @@ fn append_context<W: std::io::Write>(
 		// list, so the builder can rewrite it).
 		if skip_names.iter().any(|n| rel_str == *n) {
 			return true;
+		}
+		// A directory that holds a force-included path is never pruned. The
+		// force-include is applied per entry further down, and pruning takes
+		// the entries with it, so the Dockerfile the builder needs would be
+		// dropped before that check ever saw it.
+		if force_dirs.contains(&rel_str) {
+			return false;
 		}
 		// Pruning is only sound when nothing under this directory can be
 		// re-included. `.dockerignore` negation does exactly that:

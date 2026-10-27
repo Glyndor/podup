@@ -32,6 +32,76 @@ fn dockerfile_is_force_included_despite_dockerignore() {
 
 // (matcher cases live in engine::context::ignore_patterns_tests) -----------------
 
+/// The active Dockerfile must reach the builder even when the ignore file
+/// drops the directory it lives in.
+///
+/// The force-include is checked per entry, but the walk prunes an ignored
+/// directory before it ever looks at what is inside, so a Dockerfile under
+/// `docker/` never reached that check: the tar came out without it and the
+/// build failed with "stat .../docker/Dockerfile: no such file or directory"
+/// although the file was there all along.
+#[test]
+fn dockerfile_in_an_ignored_directory_is_force_included() {
+	use flate2::read::GzDecoder;
+	use std::io::Read;
+
+	let dir = tempdir().unwrap();
+	fs::create_dir(dir.path().join("docker")).unwrap();
+	fs::write(dir.path().join("docker/Dockerfile"), b"FROM alpine\n").unwrap();
+	fs::write(dir.path().join(".dockerignore"), b"docker/\n").unwrap();
+
+	let bytes = build_context_tar(dir.path(), "docker/Dockerfile", &[]).unwrap();
+	let mut raw = Vec::new();
+	GzDecoder::new(bytes.as_slice())
+		.read_to_end(&mut raw)
+		.unwrap();
+	let names: Vec<String> = tar::Archive::new(raw.as_slice())
+		.entries()
+		.unwrap()
+		.filter_map(|e| e.ok())
+		.filter_map(|e| e.path().ok().map(|p| p.to_string_lossy().into_owned()))
+		.collect();
+	assert!(
+		names.iter().any(|n| n == "docker/Dockerfile"),
+		"the Dockerfile must survive a `.dockerignore` that drops its directory: {names:?}"
+	);
+}
+
+/// The same, with the blanket `*` pattern: the Dockerfile inside a
+/// subdirectory has to reach the builder while the rest of that directory
+/// stays out of the context.
+#[test]
+fn dockerfile_in_a_subdirectory_survives_a_blanket_ignore() {
+	use flate2::read::GzDecoder;
+	use std::io::Read;
+
+	let dir = tempdir().unwrap();
+	fs::create_dir(dir.path().join("docker")).unwrap();
+	fs::write(dir.path().join("docker/Dockerfile"), b"FROM alpine\n").unwrap();
+	fs::write(dir.path().join("docker/notes.txt"), b"notes").unwrap();
+	fs::write(dir.path().join(".dockerignore"), b"*\n").unwrap();
+
+	let bytes = build_context_tar(dir.path(), "docker/Dockerfile", &[]).unwrap();
+	let mut raw = Vec::new();
+	GzDecoder::new(bytes.as_slice())
+		.read_to_end(&mut raw)
+		.unwrap();
+	let names: Vec<String> = tar::Archive::new(raw.as_slice())
+		.entries()
+		.unwrap()
+		.filter_map(|e| e.ok())
+		.filter_map(|e| e.path().ok().map(|p| p.to_string_lossy().into_owned()))
+		.collect();
+	assert!(
+		names.iter().any(|n| n == "docker/Dockerfile"),
+		"the Dockerfile must survive a blanket `*` .dockerignore: {names:?}"
+	);
+	assert!(
+		!names.iter().any(|n| n == "docker/notes.txt"),
+		"the rest of the ignored directory must stay out of the context: {names:?}"
+	);
+}
+
 // build_context_tar ----------------------------------------------------
 
 #[test]
