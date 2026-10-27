@@ -76,7 +76,7 @@ pub(crate) fn parse_security_opts(service: &Service) -> SecurityOptions {
 					// A value Podman does not read as a boolean is not one it
 					// would accept either, so the hardening stays off and the
 					// operator is told which entry to fix.
-					warn!("security_opt 'no-new-privileges={val}' is not a boolean Podman reads");
+					warn!("security_opt 'no-new-privileges' has a value Podman does not read as a boolean");
 					false
 				});
 			}
