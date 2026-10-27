@@ -34,6 +34,11 @@ impl Engine {
 	/// [`ComposeError::RunExited`](crate::ComposeError::RunExited), carrying its
 	/// code.
 	///
+	/// A `--rm` cleanup that failed surfaces as a Podman error when the command
+	/// itself succeeded: the removal was asked for, and the container is still
+	/// there. When the command failed, its own error is the one reported and the
+	/// incomplete cleanup is warned about.
+	///
 	/// A stream that dies while the container is still running is a failed read,
 	/// not a finished command: it returns the transport error and never reaches
 	/// the exit-code wait, so there is no code to carry. A stream that ends after
@@ -288,7 +293,12 @@ impl Engine {
 			.await
 		{
 			if rm {
-				let _ = self.client.delete_ok(&rm_path).await;
+				if let Err(cleanup_err) = self.client.delete_ok(&rm_path).await {
+					tracing::warn!(
+						"run {run_name}: the container could not be removed after the start \
+						 failed: {cleanup_err}"
+					);
+				}
 			}
 			return Err(e);
 		}
@@ -385,18 +395,48 @@ impl Engine {
 		}
 		.await;
 
-		if rm {
-			if let Err(e) = self.client.delete_ok(&rm_path).await {
-				tracing::debug!("run cleanup delete {run_name}: {e}");
-			}
-		}
+		let cleanup = if rm {
+			self.client.delete_ok(&rm_path).await
+		} else {
+			Ok(())
+		};
 
-		let exit_code = outcome?;
-		if exit_code != 0 {
-			return Err(crate::error::ComposeError::RunExited(exit_code));
-		}
+		finish_run(&run_name, outcome, cleanup)
+	}
+}
 
-		Ok(())
+/// Combine the outcome of a one-off command with the outcome of its `--rm`
+/// cleanup.
+///
+/// The cleanup is something the operator asked for explicitly, so a container
+/// that could not be removed fails the run when the command itself succeeded:
+/// the container is still there, with its writable layer and with whatever
+/// the command wrote in it. When the command failed, its own error is the one
+/// reported, and the incomplete cleanup is warned about next to it.
+///
+/// A container that is already gone is the idempotent success the flag
+/// implies, so it is not a failure: `delete_ok` answers a 404 that way.
+fn finish_run(
+	run_name: &str,
+	outcome: Result<i64>,
+	cleanup: std::result::Result<(), crate::libpod::PodmanError>,
+) -> Result<()> {
+	match (outcome, cleanup) {
+		(Ok(0), Ok(())) => Ok(()),
+		(Ok(0), Err(e)) => Err(ComposeError::Podman(e)),
+		(Ok(code), Ok(())) => Err(ComposeError::RunExited(code)),
+		(Ok(code), Err(e)) => {
+			tracing::warn!("run {run_name}: the container could not be removed: {e}");
+			Err(ComposeError::RunExited(code))
+		}
+		(Err(e), Ok(())) => Err(e),
+		(Err(e), Err(cleanup_err)) => {
+			tracing::warn!(
+				"run {run_name}: the container could not be removed after the command failed: \
+				 {cleanup_err}"
+			);
+			Err(e)
+		}
 	}
 }
 
@@ -451,6 +491,11 @@ mod stream_end_tests;
 /// container's own output takes over (#1671).
 #[cfg(all(test, unix))]
 mod board_tests;
+
+/// The `--rm` cleanup of a one-off container: what a removal that fails does
+/// to the run's own result.
+#[cfg(all(test, unix))]
+mod cleanup_tests;
 
 impl Engine {
 	/// True when a container with this exact name exists (any project). Used to
