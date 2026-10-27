@@ -53,6 +53,7 @@ use crate::error::{ComposeError, Result};
 
 use crate::backends::engine::host_files::watch::actions::entry_is_unsyncable;
 use crate::backends::engine::host_files::watch::events;
+use crate::backends::engine::host_files::watch::filtering::ignore_filter::RuleFilter;
 use crate::backends::engine::host_files::watch::placement::{
 	join_container_path, normalise_container_path, plan_remove_placement, RuleShape,
 };
@@ -245,6 +246,7 @@ impl Engine {
 			&entry.abs_path,
 			entry.shape,
 			events::sync_op_for(path),
+			Some(&RuleFilter::for_rule(entry, &self.base_dir)),
 		)
 		.await
 	}
@@ -281,6 +283,7 @@ impl Engine {
 		watched_root: &Path,
 		shape: RuleShape,
 		op: std::result::Result<events::SyncOp, std::io::Error>,
+		filter: Option<&RuleFilter>,
 	) -> Result<()> {
 		match op {
 			Ok(events::SyncOp::Upload) => {
@@ -292,6 +295,7 @@ impl Engine {
 					ensured,
 					mounts,
 					watched_root,
+					filter,
 				)
 				.await
 			}

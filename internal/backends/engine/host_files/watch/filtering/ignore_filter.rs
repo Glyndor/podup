@@ -236,3 +236,64 @@ pub(in crate::backends::engine) fn legacy_include_fallback(
 	}
 	matched
 }
+
+/// The ignore and include decision of one watch rule, owned so the upload
+/// packer can carry it into its blocking task and apply it to every file of
+/// a directory it uploads, not only to the path that raised the event.
+///
+/// The event loop filters the path that changed; an upload of a directory
+/// (a new directory, a directory event, `initial_sync`) walks the whole
+/// subtree, and without this the files the rule says to ignore went along.
+#[derive(Clone)]
+pub(in crate::backends::engine::host_files::watch) struct RuleFilter {
+	rule_abs: PathBuf,
+	ctx_abs: Option<PathBuf>,
+	base_dir: PathBuf,
+	service_name: String,
+	rule_path: String,
+	ctx_patterns: Vec<String>,
+	ignore: Vec<String>,
+	include: Vec<String>,
+}
+
+impl RuleFilter {
+	/// The filter for `entry`, reading patterns the way the event loop does.
+	pub(in crate::backends::engine::host_files::watch) fn for_rule(
+		entry: &crate::backends::engine::host_files::watch::RuleEntry,
+		base_dir: &Path,
+	) -> Self {
+		Self {
+			rule_abs: entry.abs_path.clone(),
+			ctx_abs: entry.build_context_abs.clone(),
+			base_dir: base_dir.to_path_buf(),
+			service_name: entry.service_name.clone(),
+			rule_path: entry.rule.path.clone(),
+			ctx_patterns: entry.build_context_patterns.clone(),
+			ignore: entry.rule.ignore.clone(),
+			include: entry.rule.include.clone(),
+		}
+	}
+
+	/// Whether the rule keeps `path` (absolute, on the host) out of a sync.
+	/// An `include` list names files, so a directory it does not match is
+	/// still walked for the files inside it that it does.
+	pub(in crate::backends::engine::host_files::watch) fn excludes(&self, path: &Path) -> bool {
+		let mut warned = HashSet::new();
+		let mut ctx = RuleContext {
+			rule_abs: &self.rule_abs,
+			ctx_abs: self.ctx_abs.as_deref(),
+			base_dir: &self.base_dir,
+			service_name: &self.service_name,
+			rule_path: &self.rule_path,
+			ctx_patterns: &self.ctx_patterns,
+			warned: &mut warned,
+		};
+		if ignored_with_fallback(path, &self.ignore, &mut ctx) {
+			return true;
+		}
+		if path.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false) {
+			return false;
+		}
+		!included_with_fallback(path, &self.include, &mut ctx)
+	}
+}
