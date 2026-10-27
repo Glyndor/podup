@@ -100,6 +100,50 @@ async fn invalid_shm_size_is_rejected() {
 	);
 }
 
+/// A `shm_size` larger than 2 GiB does not fit an `i32`. The build query
+/// carried the size through `as i32`, so 4 GiB reached libpod as `0` and 3 GiB
+/// as a negative number: the container was built with the wrong shared-memory
+/// size, silently. The byte count has to reach the query intact.
+#[tokio::test]
+async fn a_large_shm_size_reaches_the_build_query_intact() {
+	for (declared, expected_bytes) in [("3g", 3_221_225_472i64), ("4g", 4_294_967_296i64)] {
+		let dir = tempfile::tempdir().unwrap();
+		std::fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
+		let yaml = format!(
+			"services:\n  app:\n    build:\n      context: .\n      shm_size: \"{declared}\"\n"
+		);
+		let file = crate::compose::parse_str(&yaml).unwrap();
+		let fake = crate::engine::fake_podman::start(|_method, target| {
+			if target.contains("/build?") {
+				(200, String::new())
+			} else {
+				(404, r#"{"message":"not found"}"#.to_string())
+			}
+		});
+		let e = Engine::with_base_dir(fake.client(), "proj".into(), dir.path().to_path_buf());
+
+		let _ = e
+			.build_service(
+				"app",
+				&file.services["app"],
+				&file,
+				&super::BuildOptions::default(),
+			)
+			.await;
+
+		let requests = fake.requests.lock().unwrap().clone();
+		let build_request = requests
+			.iter()
+			.find(|r| r.contains("/build?"))
+			.unwrap_or_else(|| panic!("the build endpoint was not called: {requests:?}"));
+		assert!(
+			build_request.contains(&format!("shmsize={expected_bytes}")),
+			"a shm_size of {declared} must reach the query as {expected_bytes} bytes, got: \
+			 {build_request}"
+		);
+	}
+}
+
 #[test]
 fn build_secret_undefined_errors() {
 	let yaml =
