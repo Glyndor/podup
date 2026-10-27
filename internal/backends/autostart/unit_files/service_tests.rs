@@ -11,6 +11,7 @@ fn opts_single() -> ServiceUnitOpts {
 		env_files: Vec::new(),
 		max_stop_grace_secs: None,
 		socket: None,
+		project_directory: None,
 	}
 }
 
@@ -44,6 +45,25 @@ fn the_selected_socket_travels_into_the_auto_update_command() {
 	let s = super::render_update_service_unit(&o);
 	assert!(
 		s.contains("-p app --socket /run/user/1000/podman/podman.sock up -d"),
+		"{s}"
+	);
+}
+
+/// The project directory must travel into the command: podup resolves
+/// relative paths against the compose file's own directory, so without the
+/// flag the boot path resolves them somewhere else than the operator's own
+/// run did.
+#[test]
+fn the_selected_project_directory_travels_into_the_command() {
+	let mut o = opts_single();
+	o.project_directory = Some(PathBuf::from("/srv/data"));
+	let s = render_service_unit(&o);
+	assert!(
+		s.contains("-p app --project-directory /srv/data up -d --no-build --pull never"),
+		"{s}"
+	);
+	assert!(
+		s.contains("-p app --project-directory /srv/data stop"),
 		"{s}"
 	);
 }
@@ -373,6 +393,7 @@ fn opts_single_for_timer() -> super::ServiceUnitOpts {
 		env_files: Vec::new(),
 		max_stop_grace_secs: None,
 		socket: None,
+		project_directory: None,
 	}
 }
 

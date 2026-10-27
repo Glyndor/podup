@@ -44,6 +44,14 @@ pub struct ServiceUnitOpts {
 	/// Without it the boot path talks to the default instance, which is a
 	/// different one whenever `--socket` pointed somewhere else.
 	pub socket: Option<String>,
+	/// The project directory, passed through as `--project-directory`.
+	///
+	/// The unit already carries it as its `WorkingDirectory`, but podup
+	/// resolves relative paths against the compose file's own directory, not
+	/// against the working directory the unit runs in. Without the flag the
+	/// boot path resolves them somewhere else than the operator's own run
+	/// did.
+	pub project_directory: Option<PathBuf>,
 }
 
 impl ServiceUnitOpts {
@@ -64,6 +72,7 @@ impl ServiceUnitOpts {
 			env_files: Vec::new(),
 			max_stop_grace_secs: None,
 			socket: None,
+			project_directory: None,
 		}
 	}
 
@@ -91,6 +100,13 @@ impl ServiceUnitOpts {
 	/// Builder-style.
 	pub fn with_socket(mut self, socket: Option<String>) -> Self {
 		self.socket = socket;
+		self
+	}
+
+	/// The project directory, passed through as `--project-directory`.
+	/// Builder-style.
+	pub fn with_project_directory(mut self, dir: Option<PathBuf>) -> Self {
+		self.project_directory = dir;
 		self
 	}
 }
@@ -198,12 +214,16 @@ pub fn validate_unit_opts(opts: &ServiceUnitOpts) -> Result<(), String> {
 		// is watching, rather than at boot with nothing to say why.
 		super::socket::for_podup(socket)?;
 	}
+	if let Some(dir) = &opts.project_directory {
+		check("project directory", &dir.to_string_lossy())?;
+	}
 	Ok(())
 }
 
 /// The leading `podup` arguments shared by both the start and stop commands:
-/// `-f <file>...  -p <project>  [--socket S]  [--profile P]...  [--env-file E]...`.
-/// These must precede the subcommand (`-f`/`-p` are not global flags).
+/// `-f <file>...  -p <project>  [--socket S]  [--project-directory D]
+/// [--profile P]...  [--env-file E]...`. These must precede the subcommand
+/// (`-f`/`-p` are not global flags).
 fn leading_args(opts: &ServiceUnitOpts) -> Vec<String> {
 	let mut args = Vec::new();
 	for f in &opts.compose_files {
@@ -215,6 +235,10 @@ fn leading_args(opts: &ServiceUnitOpts) -> Vec<String> {
 	if let Some(socket) = &opts.socket {
 		args.push("--socket".to_string());
 		args.push(socket.clone());
+	}
+	if let Some(dir) = &opts.project_directory {
+		args.push("--project-directory".to_string());
+		args.push(dir.to_string_lossy().into_owned());
 	}
 	for p in &opts.profiles {
 		args.push("--profile".to_string());

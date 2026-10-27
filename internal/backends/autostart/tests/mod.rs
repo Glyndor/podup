@@ -112,6 +112,7 @@ pub(super) fn opts(dir: &Path, project: &str, dry_run: bool, no_start: bool) -> 
 			env_files: Vec::new(),
 			max_stop_grace_secs: None,
 			socket: None,
+			project_directory: None,
 		},
 		no_start,
 		dry_run,

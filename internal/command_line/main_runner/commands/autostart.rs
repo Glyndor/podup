@@ -21,6 +21,13 @@ pub(crate) struct AutostartEnv<'a> {
 	/// Connection-pool cap forwarded to [`Client::with_pool_size`]. `None`
 	/// means use [`Client::DEFAULT_POOL_SIZE`].
 	pub connection_pool_size: Option<usize>,
+	/// The project directory the operator selected, if any.
+	///
+	/// It is the base directory for relative paths, so the unit has to carry
+	/// it: podup resolves those paths against the compose file's own
+	/// directory otherwise, and the boot path would resolve them somewhere
+	/// else than the operator's own run did.
+	pub project_directory: Option<PathBuf>,
 }
 
 /// Handle the `autostart` command group. `install` and `status` never contact
@@ -196,6 +203,14 @@ fn service_unit_opts(
 		})?);
 	}
 	let working_dir = std::fs::canonicalize(base_dir).unwrap_or_else(|_| base_dir.to_path_buf());
+	// The project directory, absolute, when the operator selected one. The
+	// unit carries it as its working directory, and podup needs the flag too:
+	// it resolves relative paths against the compose file's own directory
+	// otherwise.
+	let project_directory = env
+		.project_directory
+		.as_ref()
+		.map(|dir| std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf()));
 	// The longest stop_grace_period in the project. systemd bounds the whole
 	// ExecStop independently of what podup does inside it, and its default
 	// is 90s, so without this a stack whose slowest container needs longer
@@ -206,7 +221,8 @@ fn service_unit_opts(
 			.with_profiles(env.profile.to_vec())
 			.with_env_files(env.env_files.to_vec())
 			.with_max_stop_grace_secs(max_grace)
-			.with_socket(env.socket.clone()),
+			.with_socket(env.socket.clone())
+			.with_project_directory(project_directory),
 	)
 }
 
@@ -295,6 +311,18 @@ mod tests {
 			env_files: &[],
 			socket: socket.map(str::to_string),
 			connection_pool_size: None,
+			project_directory: None,
+		}
+	}
+
+	/// The CLI's own values, with the project directory the operator selected.
+	fn env_with_dir(dir: PathBuf) -> AutostartEnv<'static> {
+		AutostartEnv {
+			profile: &[],
+			env_files: &[],
+			socket: None,
+			connection_pool_size: None,
+			project_directory: Some(dir),
 		}
 	}
 
@@ -355,5 +383,42 @@ mod tests {
 		);
 		let unit = podup::autostart::render_start_unit(&opts);
 		assert!(!unit.contains("--url"), "{unit}");
+	}
+
+	/// The project directory must reach the unit: podup resolves relative
+	/// paths against the compose file's own directory, so without the flag
+	/// the boot path resolves them somewhere else than the operator's own run
+	/// did.
+	#[test]
+	fn the_selected_project_directory_reaches_the_service_unit() {
+		let dir = tempfile::tempdir().expect("a temp dir");
+		let compose = dir.path().join("compose.yml");
+		std::fs::write(&compose, "services:\n  web:\n    image: nginx\n").expect("the file");
+		let opts = service_unit_opts(
+			&env_with_dir(dir.path().to_path_buf()),
+			&[compose],
+			"app",
+			dir.path(),
+			&compose_file(),
+		)
+		.expect("the options build");
+		let unit = podup::autostart::render_service_unit(&opts);
+		assert!(
+			unit.contains(&format!("--project-directory {}", dir.path().display())),
+			"the selected project directory must travel into the unit:\n{unit}"
+		);
+	}
+
+	/// Without one selected there is nothing to carry: podup derives the base
+	/// from the compose file, as it does for the operator's own run.
+	#[test]
+	fn no_selected_project_directory_leaves_the_unit_without_one() {
+		let dir = tempfile::tempdir().expect("a temp dir");
+		let compose = dir.path().join("compose.yml");
+		std::fs::write(&compose, "services:\n  web:\n    image: nginx\n").expect("the file");
+		let opts = service_unit_opts(&env(None), &[compose], "app", dir.path(), &compose_file())
+			.expect("the options build");
+		let unit = podup::autostart::render_service_unit(&opts);
+		assert!(!unit.contains("--project-directory"), "{unit}");
 	}
 }

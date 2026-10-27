@@ -147,16 +147,16 @@ pub(in super::super) fn classify_exec_start(line: &str) -> DetectedSingleUnitMod
 		return DetectedSingleUnitMode::Start;
 	}
 	// Service mode renders `<podup>`, then `-f`, `-p`, `--socket`,
-	// `--profile` and `--env-file` each with a value, then `up -d` and
-	// whatever flags that release put after it (plain `up -d`, `up -d --build`
-	// in 1.9.x, and `up -d --no-build --pull never` now). Skipping the option
-	// pairs means a project or file literally named `up` is read as a value,
-	// not as the verb.
+	// `--project-directory`, `--profile` and `--env-file` each with a value,
+	// then `up -d` and whatever flags that release put after it (plain `up
+	// -d`, `up -d --build` in 1.9.x, and `up -d --no-build --pull never`
+	// now). Skipping the option pairs means a project or file literally named
+	// `up` is read as a value, not as the verb.
 	let mut i = 1;
 	while i + 1 < n
 		&& matches!(
 			tokens[i].as_str(),
-			"-f" | "-p" | "--socket" | "--profile" | "--env-file"
+			"-f" | "-p" | "--socket" | "--project-directory" | "--profile" | "--env-file"
 		) {
 		i += 2;
 	}
