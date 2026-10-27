@@ -353,8 +353,8 @@ pub(super) fn quote_podman_arg_value(value: &str) -> String {
 
 /// Keys whose value Quadlet/systemd splits on whitespace (a `KEY=VALUE` option
 /// list): an unquoted space would split a single value into a truncated value
-/// plus bogus extra entries, so such values are quoted when they contain
-/// whitespace.
+/// plus bogus extra entries, so such values are quoted when they carry
+/// anything the reader would otherwise consume.
 ///
 /// `Secret` belongs to the set because Quadlet reads it the same way: it takes
 /// the value apart with an exec-like split, so a secret whose path holds a
@@ -364,6 +364,43 @@ fn key_is_word_split(key: &str) -> bool {
 		key,
 		"Environment" | "Label" | "Annotation" | "Sysctl" | "Secret"
 	)
+}
+
+/// Whether a word-split value carries a character that would end the word or
+/// change its content if it were written unquoted.
+///
+/// The reader splits these values on whitespace and honours quotes and
+/// C-style escapes inside them, so a `"`, a `'` or a `\` in the middle of the
+/// value is consumed: the quotes disappear, the escape eats the character
+/// after it, and a quote that never closes costs the whole entry.
+fn value_needs_quoting(value: &str) -> bool {
+	value
+		.chars()
+		.any(|c| c.is_whitespace() || c.is_control() || matches!(c, '"' | '\'' | '\\'))
+}
+
+/// Escape the body of a quoted unit value: the characters the reader would
+/// otherwise consume (`\` and `"`), plus the control characters a multi-line
+/// value carries, which become the C escapes the reader decodes back into the
+/// character they stand for.
+///
+/// A control character the reader has no escape for is dropped, the same rule
+/// [`sanitize_value`] applies: a value never carries a raw newline onto the
+/// unit file, where it would split the directive.
+fn quote_unit_value(value: &str) -> String {
+	let mut out = String::with_capacity(value.len());
+	for c in value.chars() {
+		match c {
+			'\\' => out.push_str("\\\\"),
+			'"' => out.push_str("\\\""),
+			'\n' => out.push_str("\\n"),
+			'\r' => out.push_str("\\r"),
+			'\t' => out.push_str("\\t"),
+			c if c.is_control() => {}
+			_ => out.push(c),
+		}
+	}
+	out
 }
 
 /// Keys whose value is an argument line we render (and quote) ourselves
@@ -384,25 +421,32 @@ fn key_is_arg_line(key: &str) -> bool {
 /// * a value ending in a backslash, which would otherwise fold the next
 ///   physical line (and the directive on it) into this value, is quoted and the
 ///   backslash escaped, closing the line-continuation hole;
-/// * for word-split keys (`Environment`, `Label`, …) a value containing
-///   whitespace is double-quoted so systemd keeps it as one value rather than
-///   splitting it into bogus extra entries.
+/// * for word-split keys (`Environment`, `Label`, …) a value carrying
+///   whitespace, a quote, an apostrophe, a backslash or a control character is
+///   double-quoted and escaped, so the reader keeps it as one value with the
+///   content the compose file declared instead of splitting it into bogus
+///   extra entries, eating the quotes, consuming an escape or dropping the
+///   entry on an unclosed quote.
 ///
 /// Argument-line keys keep their own rendering (they encode whitespace splitting
 /// deliberately) and only have control characters stripped.
 pub(super) fn escape_unit_value(key: &str, value: &str) -> String {
-	let stripped = sanitize_value(value);
 	if key_is_arg_line(key) {
-		return stripped;
+		return sanitize_value(value);
 	}
-	let escaped = stripped.replace('%', "%%");
-	let needs_quote = (key_is_word_split(key) && escaped.contains(char::is_whitespace))
-		|| escaped.ends_with('\\')
-		|| escaped.starts_with('"');
-	if needs_quote {
-		format!("\"{}\"", escaped.replace('\\', "\\\\").replace('"', "\\\""))
+	let needs_quote = (key_is_word_split(key) && value_needs_quoting(value))
+		|| value.ends_with('\\')
+		|| value.starts_with('"');
+	let body = if needs_quote {
+		quote_unit_value(value)
 	} else {
-		escaped
+		sanitize_value(value)
+	};
+	let body = body.replace('%', "%%");
+	if needs_quote {
+		format!("\"{}\"", body)
+	} else {
+		body
 	}
 }
 

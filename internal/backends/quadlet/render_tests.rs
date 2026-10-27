@@ -261,6 +261,49 @@ fn escape_trailing_backslash_is_quoted_and_escaped() {
 }
 
 #[test]
+fn word_split_value_keeps_quotes_backslashes_and_apostrophes() {
+	// A word-split value is read back with the quotes and the escapes
+	// honoured, so a `"`, a `'` or a `\` in the middle of it has to be
+	// written escaped: written raw, the reader eats the quote, swallows the
+	// character after the backslash, or leaves the entry with an unclosed
+	// quote and drops it.
+	for (key, value) in [
+		("Environment", r#"APP_CONFIG={"a":1}"#),
+		("Environment", "NAME=O'Brien"),
+		("Environment", r"REGEX=^\d+$"),
+		("Label", r#"note={"x":"y"}"#),
+		("Annotation", r#"org.example={"a":1}"#),
+		("Sysctl", r#"net.ipv4.conf.all.rp_filter="1""#),
+		("Secret", r#"tok={"a":1}"#),
+	] {
+		let out = escape_unit_value(key, value);
+		let (words, closed) = exec_words(&out);
+		assert!(closed, "{key} value {value:?} left a quote open: {out}");
+		assert_eq!(
+			words,
+			vec![value.to_string()],
+			"{key} value {value:?} was rewritten to {out}"
+		);
+	}
+}
+
+#[test]
+fn word_split_value_keeps_newlines_as_escapes() {
+	// A multi-line value (a PEM key, a script) has to reach the container with
+	// its line breaks intact, and it must stay on one physical line of the
+	// unit file: a raw newline there would split the directive.
+	let value = "-----BEGIN KEY-----\nsecond line\n-----END KEY-----";
+	let out = escape_unit_value("Environment", &format!("TLS_KEY={value}"));
+	assert!(
+		!out.contains('\n'),
+		"the rendered value must stay on one line: {out}"
+	);
+	let (words, closed) = exec_words(&out);
+	assert!(closed, "the rendered value left a quote open: {out}");
+	assert_eq!(words, vec![format!("TLS_KEY={value}")], "got: {out}");
+}
+
+#[test]
 fn escape_percent_is_doubled_for_literal() {
 	// systemd specifiers like %h must be passed through literally, not
 	// expanded at unit-activation time, matching docker-compose semantics.
