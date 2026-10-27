@@ -14,14 +14,20 @@
 //! `cron` and `on_calendar` hold the conversion, `timer` the unit text and
 //! the checks it repeats, `schedule` the decision per entry.
 
+#[path = "calendar/cron.rs"]
 mod cron;
+#[path = "calendar/field.rs"]
 mod field;
 /// Entry point for the fuzz harness, compiled only under `test-helpers`.
 #[cfg(feature = "test-helpers")]
 pub(crate) mod fuzz_hook;
+#[path = "calendar/on_calendar.rs"]
 mod on_calendar;
+#[path = "calendar/schedule.rs"]
 mod schedule;
+#[path = "stale/stale.rs"]
 mod stale;
+#[path = "timer/timer.rs"]
 mod timer;
 
 pub use self::stale::stale_timers;
@@ -312,5 +318,5 @@ mod hostile_tests;
 mod policy_tests;
 
 #[cfg(test)]
-#[path = "systemd_tests.rs"]
+#[path = "calendar/systemd_tests.rs"]
 mod systemd_tests;
