@@ -288,9 +288,18 @@ pub fn load_dotenv(dir: &Path) -> HashMap<String, String> {
 	map
 }
 
+/// The process environment as text. A variable whose name or value is not
+/// valid UTF-8 cannot be interpolated into a compose file, so it is left out
+/// instead of making `std::env::vars` panic.
+fn process_vars() -> HashMap<String, String> {
+	std::env::vars_os()
+		.filter_map(|(k, v)| Some((k.into_string().ok()?, v.into_string().ok()?)))
+		.collect()
+}
+
 /// Build the full variable map: process env + dotenv (process env wins).
 pub fn build_vars(dir: &Path) -> HashMap<String, String> {
-	let mut vars: HashMap<String, String> = std::env::vars().collect();
+	let mut vars = process_vars();
 	for (k, v) in load_dotenv(dir) {
 		vars.entry(k).or_insert(v);
 	}
@@ -372,7 +381,7 @@ fn build_vars_with_env_files_inner(
 	}
 
 	// Process env wins over every file value.
-	let mut vars: HashMap<String, String> = std::env::vars().collect();
+	let mut vars = process_vars();
 	for (k, v) in file_vars {
 		vars.entry(k).or_insert(v);
 	}
