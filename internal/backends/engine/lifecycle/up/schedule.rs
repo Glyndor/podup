@@ -63,10 +63,22 @@ impl Engine {
 		let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(
 			crate::engine::lifecycle::parallel::MAX_LIFECYCLE_CONCURRENCY,
 		));
-		let done: std::collections::HashMap<&str, tokio::sync::watch::Sender<bool>> = scheduled
+		// `None` while the service is still starting, `Some(true)` once it is up
+		// and `Some(false)` when it failed and `up` carries on without it.
+		let done: std::collections::HashMap<&str, tokio::sync::watch::Sender<Option<bool>>> =
+			scheduled
+				.iter()
+				.map(|name| (*name, tokio::sync::watch::channel(None).0))
+				.collect();
+		// A service whose failure does not stop `up`: something in this run
+		// depends on it and every such dependent declares it `required: false`.
+		// A failure anywhere else still cancels the run, as before.
+		let tolerated: HashSet<&str> = scheduled
 			.iter()
-			.map(|name| (*name, tokio::sync::watch::channel(false).0))
+			.copied()
+			.filter(|name| optional_for_every_dependent(name, &scheduled, file))
 			.collect();
+		let tolerated = &tolerated;
 
 		// Borrow the shared inputs once so the closure captures references
 		// rather than trying to move them per service.
@@ -80,7 +92,7 @@ impl Engine {
 			// Only the dependencies this service actually declares, and only
 			// those that are in this run's scheduled set; a service excluded by
 			// profiles or an explicit target list is not going to signal.
-			let deps: Vec<tokio::sync::watch::Receiver<bool>> = file
+			let deps: Vec<tokio::sync::watch::Receiver<Option<bool>>> = file
 				.services
 				.get(*name)
 				.map(|s| effective_depends_on(s, &file.services).service_names())
@@ -93,7 +105,7 @@ impl Engine {
 					// `changed()` errors only when every sender is gone, which
 					// here means the run is being torn down; treat it as done and
 					// let `try_join_all` surface the real error.
-					while !*rx.borrow_and_update() {
+					while rx.borrow_and_update().is_none() {
 						if rx.changed().await.is_err() {
 							break;
 						}
@@ -115,15 +127,47 @@ impl Engine {
 						readiness,
 					)
 					.await;
-				if result.is_ok() {
-					if let Some(tx) = done.get(*name) {
-						let _ = tx.send(true);
+				match result {
+					Ok(()) => {
+						if let Some(tx) = done.get(*name) {
+							let _ = tx.send(Some(true));
+						}
+						Ok(())
 					}
+					// Every dependent of this service declared it optional, so
+					// its failure is a warning and the dependents are released.
+					Err(e) if tolerated.contains(*name) => {
+						tracing::warn!("optional service {name} did not start: {e}");
+						crate::ui::progress_line("Container", name, "Failed");
+						if let Some(tx) = done.get(*name) {
+							let _ = tx.send(Some(false));
+						}
+						Ok(())
+					}
+					Err(e) => Err(e),
 				}
-				result
 			}
 		});
 		futures_util::future::try_join_all(started).await?;
 		Ok(())
 	}
+}
+
+/// Whether `name` has at least one dependent among the `scheduled` services
+/// and every one of them declares it `required: false`.
+fn optional_for_every_dependent(name: &str, scheduled: &[&str], file: &ComposeFile) -> bool {
+	let mut has_dependent = false;
+	for other in scheduled {
+		let Some(service) = file.services.get(*other) else {
+			continue;
+		};
+		let depends_on = effective_depends_on(service, &file.services);
+		if depends_on.service_names().iter().any(|d| d == name) {
+			has_dependent = true;
+			if depends_on.required_for(name) {
+				return false;
+			}
+		}
+	}
+	has_dependent
 }
