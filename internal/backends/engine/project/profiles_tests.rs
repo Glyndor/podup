@@ -228,3 +228,44 @@ fn named_target_keeps_inactive_profile_service() {
 	assert!(file.services.contains_key("web"));
 	assert!(file.services.contains_key("debugger"));
 }
+
+fn scope_names(yaml: &str, active: &[&str], targets: &[&str], no_deps: bool) -> Vec<String> {
+	let mut file = crate::parse_str(yaml).unwrap();
+	let active: Vec<String> = active.iter().map(|s| s.to_string()).collect();
+	let targets: Vec<String> = targets.iter().map(|s| s.to_string()).collect();
+	super::retain_up_scope(&mut file, &active, &targets, no_deps);
+	let mut names: Vec<String> = file.services.keys().cloned().collect();
+	names.sort();
+	names
+}
+
+const SCOPE_FILE: &str = "services:
+  db:
+    image: x
+  web:
+    image: x
+    depends_on: [db]
+  cache:
+    image: x
+  debug:
+    image: x
+    profiles: [debug]
+";
+
+#[test]
+fn the_up_scope_of_a_named_service_is_it_and_its_dependencies() {
+	assert_eq!(scope_names(SCOPE_FILE, &[], &["web"], false), ["db", "web"]);
+}
+
+#[test]
+fn the_up_scope_without_dependencies_is_only_the_named_service() {
+	assert_eq!(scope_names(SCOPE_FILE, &[], &["web"], true), ["web"]);
+}
+
+#[test]
+fn the_up_scope_of_everything_leaves_out_inactive_profiles() {
+	assert_eq!(
+		scope_names(SCOPE_FILE, &[], &[], false),
+		["cache", "db", "web"]
+	);
+}
