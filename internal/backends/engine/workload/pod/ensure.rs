@@ -5,6 +5,7 @@ use crate::compose::types::ComposeFile;
 use crate::error::Result;
 use crate::libpod::API_PREFIX;
 
+use crate::backends::engine::objects::ownership::Owner;
 use crate::engine::Engine;
 
 impl Engine {
@@ -39,6 +40,13 @@ impl Engine {
 			// a mismatch means the pod's port/network/host surface drifted
 			// and the pod must be recreated.
 			Ok(inspect) => {
+				// A pod that merely shares the project's name is not ours to reuse
+				// or to remove with `force=true`: that takes every container in it.
+				let owner = inspect
+					.labels
+					.get("podup.project")
+					.map_or(Owner::Unlabelled, |p| Owner::Project(p.clone()));
+				self.require_owned("pod", &self.project, &owner)?;
 				let recorded = inspect.labels.get(super::POD_HASH_LABEL).cloned();
 				if recorded.as_deref() == Some(desired_hash.as_str()) {
 					return Ok(false);
@@ -93,6 +101,14 @@ impl Engine {
 	/// Remove the project's pod, if it exists. Called by `down` after the
 	/// project's containers are removed.
 	pub(crate) async fn remove_pod(&self) -> Result<()> {
+		let owner = self
+			.object_owner("pods", &self.project, &["/Labels", "/labels"])
+			.await?;
+		if owner == Owner::Absent {
+			crate::ui::progress_line("Pod", &self.project, "Absent");
+			return Ok(());
+		}
+		self.require_owned("pod", &self.project, &owner)?;
 		let path = format!(
 			"{API_PREFIX}/pods/{}?force=true",
 			crate::libpod::urlencoded(&self.project),
@@ -115,27 +131,27 @@ impl Engine {
 	/// Sweep every pod carrying the project's `podup.project` label, a pod
 	/// left behind by a crashed `up`, or any other pod the project owns.
 	/// Mirrors the network/volume sweeps `down` already does by label.
-	pub(crate) async fn remove_project_pods_by_label(&self) {
+	pub(crate) async fn remove_project_pods_by_label(&self) -> Option<crate::error::ComposeError> {
 		let list_path = format!(
 			"{API_PREFIX}/pods/json?filters={}",
 			self.project_label_filter_encoded(),
 		);
-		let Ok(pods) = self
+		let pods = match self
 			.client
 			.get_json::<Vec<serde_json::Value>>(&list_path)
 			.await
-		else {
-			return;
+		{
+			Ok(pods) => pods,
+			// A daemon with nothing to list may answer 404; that is empty,
+			// not a failure.
+			Err(e) if e.is_status(404) => return None,
+			Err(e) => return Some(crate::error::ComposeError::Podman(e)),
 		};
+		let mut first_err = None;
 		for pod in pods {
 			let Some(name) = pod.get("Name").and_then(|n| n.as_str()) else {
 				continue;
 			};
-			if name == self.project {
-				// The current project's pod was already handled (or attempted)
-				// by `remove_pod`; do not double-report its removal here.
-				continue;
-			}
 			let del = format!(
 				"{API_PREFIX}/pods/{}?force=true",
 				crate::libpod::urlencoded(name),
@@ -143,9 +159,13 @@ impl Engine {
 			match self.client.delete_existed(&del).await {
 				Ok(true) => crate::ui::progress_line("Pod", name, "Removed"),
 				Ok(false) => {}
-				Err(e) => tracing::warn!("could not remove pod {name}: {e}"),
+				Err(e) => {
+					tracing::warn!("could not remove pod {name}: {e}");
+					first_err.get_or_insert(crate::error::ComposeError::Podman(e));
+				}
 			}
 		}
+		first_err
 	}
 }
 

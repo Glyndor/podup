@@ -4,7 +4,8 @@ use super::*;
 #[tokio::test]
 #[cfg(unix)]
 async fn down_removes_the_pod_after_the_containers() {
-	let fake = pod_up_fake();
+	// The pod exists and is the project's own, as it is after an `up`.
+	let fake = pod_up_fake_with_existing(Some("wrong-hash"));
 	let engine = engine_for(&fake, "proj");
 	let yaml = r#"
 x-podman-pod: true
@@ -19,7 +20,7 @@ services:
 	let requests = fake.requests.lock().unwrap().clone();
 	let pod_del_pos = requests
 		.iter()
-		.position(|r| r.starts_with("DELETE") && r.contains("/pods/proj"))
+		.rposition(|r| r.starts_with("DELETE") && r.contains("/pods/proj"))
 		.expect("down must DELETE the pod");
 	let container_del_positions: Vec<usize> = requests
 		.iter()

@@ -52,6 +52,8 @@ pub(super) fn route(method: &str, target: &str, existing_hash: Option<&str>) -> 
 		(404, r#"{"message":"no such container"}"#.to_string())
 	} else if method == "POST" && target.contains("/pods/create") {
 		(200, r#"{"Id":"pod-id"}"#.to_string())
+	} else if method == "GET" && target.contains("/pods/json") {
+		(200, "[]".to_string())
 	} else if method == "GET" && target.contains("/pods/") && target.contains("/json") {
 		if existing_hash.is_none() {
 			// Pod does not exist.
@@ -61,7 +63,7 @@ pub(super) fn route(method: &str, target: &str, existing_hash: Option<&str>) -> 
 			(
 				200,
 				format!(
-					r#"{{"Name":"proj","Labels":{{"podup.pod-config-hash":"{hash_label}"}},"NumContainers":2}}"#
+					r#"{{"Name":"proj","Labels":{{"podup.project":"proj","podup.pod-config-hash":"{hash_label}"}},"NumContainers":2}}"#
 				),
 			)
 		}
@@ -70,12 +72,20 @@ pub(super) fn route(method: &str, target: &str, existing_hash: Option<&str>) -> 
 		(
 			200,
 			format!(
-				r#"{{"Name":"proj","Labels":{{"podup.pod-config-hash":"{hash_label}"}},"NumContainers":2}}"#
+				r#"{{"Name":"proj","Labels":{{"podup.project":"proj","podup.pod-config-hash":"{hash_label}"}},"NumContainers":2}}"#
 			),
+		)
+	} else if method == "GET" && target.contains("/containers/") && target.ends_with("/json") {
+		// A container left by an earlier `up` carries the project's label.
+		(
+			200,
+			r#"{"Config":{"Labels":{"podup.project":"proj"}}}"#.to_string(),
 		)
 	} else if method == "DELETE" && target.contains("/pods/") {
 		(200, String::new())
-	} else if method == "GET" && target.contains("/networks/json") {
+	} else if method == "GET"
+		&& (target.contains("/networks/json") || target.ends_with("/secrets/json"))
+	{
 		(200, "[]".to_string())
 	} else if method == "GET" && target.contains("/secrets/") && target.contains("/json") {
 		// External-secret inspect: pretend every external secret exists.

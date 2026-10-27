@@ -315,16 +315,25 @@ impl Engine {
 			},
 		)?;
 
-		// Remove any existing container (idempotent restart). `up
+		// Remove this project's existing container (idempotent restart). `up
 		// -V/--renew-anon-volumes` also drops its old anonymous volumes (v=true)
-		// so they are recreated fresh instead of orphaned.
-		let rm_path = format!(
-			"{API_PREFIX}/containers/{}?force=true&v={}",
-			urlencoded(container_name),
-			self.renew_anon_volumes,
-		);
-		if let Err(e) = self.client.delete_ok(&rm_path).await {
-			tracing::debug!("pre-create delete {container_name}: {e}");
+		// so they are recreated fresh instead of orphaned. Only a container
+		// carrying this project's label is replaced: one that is absent needs no
+		// delete, and one that is not ours is refused rather than force-removed
+		// with whatever it wrote to its layer.
+		let owner = self
+			.object_owner("containers", container_name, &["/Config/Labels"])
+			.await?;
+		self.require_owned("container", container_name, &owner)?;
+		if owner != crate::backends::engine::objects::ownership::Owner::Absent {
+			let rm_path = format!(
+				"{API_PREFIX}/containers/{}?force=true&v={}",
+				urlencoded(container_name),
+				self.renew_anon_volumes,
+			);
+			if let Err(e) = self.client.delete_ok(&rm_path).await {
+				tracing::debug!("pre-create delete {container_name}: {e}");
+			}
 		}
 
 		// Only the create is serialised (`Engine::keep_id_create`); the guard

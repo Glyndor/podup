@@ -207,3 +207,6 @@ mod stream_end_tests;
 #[cfg(unix)]
 #[cfg(test)]
 mod wait_timeout_tests;
+
+#[cfg(all(test, unix))]
+mod ownership_tests;

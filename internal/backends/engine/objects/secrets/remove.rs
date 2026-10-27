@@ -16,7 +16,7 @@
 //! actually happened.
 
 use crate::compose::types::ComposeFile;
-use crate::error::Result;
+use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
 use super::plan::{is_podup_created_source, scoped_name};
@@ -50,8 +50,9 @@ impl Engine {
 		// which secrets were removed (#1360 L6). The per-secret `info` lines
 		// stay; the summary is the closure the user is actually looking for
 		// when the teardown finishes.
+		let mut first_err: Option<ComposeError> = None;
 		match self.list_project_secret_names().await {
-			Some(owned) => {
+			Ok(owned) => {
 				// Ownership is already established by the label on each entry, so
 				// these deletes are not re-inspected. The window between the list
 				// and the last delete is wider than the old per-secret one; `down`
@@ -60,7 +61,7 @@ impl Engine {
 				// created by podup moments earlier.
 				let mut removed = Vec::with_capacity(owned.len());
 				for name in owned {
-					if self.delete_listed_secret(&name).await {
+					if self.delete_listed_secret(&name, &mut first_err).await {
 						removed.push(name);
 					}
 				}
@@ -72,7 +73,10 @@ impl Engine {
 			// #1263, only reached when the cheap route is unavailable. The orphan
 			// sweep is not possible without a list, which is also how it behaved
 			// before.
-			None => {
+			Err(list_err) => {
+				if !list_err.is_status(404) {
+					first_err.get_or_insert(ComposeError::Podman(list_err));
+				}
 				let mut removed = Vec::new();
 				for (name, def) in &file.secrets {
 					if is_podup_created_source(
@@ -82,7 +86,7 @@ impl Engine {
 						def.file.as_deref(),
 					) {
 						let scoped = scoped_name(&self.project, "secret", name);
-						if self.delete_secret(&scoped).await {
+						if self.delete_secret(&scoped, &mut first_err).await {
 							removed.push(scoped);
 						}
 					}
@@ -95,7 +99,7 @@ impl Engine {
 						def.file.as_deref(),
 					) {
 						let scoped = scoped_name(&self.project, "config", name);
-						if self.delete_secret(&scoped).await {
+						if self.delete_secret(&scoped, &mut first_err).await {
 							removed.push(scoped);
 						}
 					}
@@ -103,7 +107,10 @@ impl Engine {
 				log_removed_secrets(&self.project, &removed);
 			}
 		}
-		Ok(())
+		match first_err {
+			Some(e) => Err(e),
+			None => Ok(()),
+		}
 	}
 
 	/// Names of all native secrets labelled `podup.project=<proj>`, the secrets
@@ -111,38 +118,39 @@ impl Engine {
 	/// filter (HTTP 500 `invalid filter "label"`), so the full list is fetched and
 	/// filtered client-side by the `podup.project` label.
 	///
-	/// `None` means the list could not be fetched, and is deliberately not the
-	/// same value as `Some(vec![])`. Since #1263 this list *is* the ownership
+	/// An `Err` means the list could not be fetched, and is deliberately not the
+	/// same value as an empty list. Since #1263 this list *is* the ownership
 	/// check for teardown, so collapsing a failure into "no secrets are ours"
 	/// would delete nothing and call it a clean `down`. The caller falls back to
 	/// inspecting each compose-named secret instead.
-	async fn list_project_secret_names(&self) -> Option<Vec<String>> {
+	async fn list_project_secret_names(
+		&self,
+	) -> std::result::Result<Vec<String>, crate::libpod::PodmanError> {
 		let path = format!("{API_PREFIX}/secrets/json");
 		match self.client.get_json::<Vec<serde_json::Value>>(&path).await {
-			Ok(list) => Some(
-				list.iter()
-					.filter_map(|s| {
-						let spec = s.get("Spec")?;
-						let owned = spec
-							.get("Labels")
-							.and_then(|l| l.get("podup.project"))
-							.and_then(|v| v.as_str())
-							== Some(self.project.as_str());
-						if owned {
-							spec.get("Name")
-								.and_then(|n| n.as_str())
-								.map(str::to_string)
-						} else {
-							None
-						}
-					})
-					.collect(),
-			),
+			Ok(list) => Ok(list
+				.iter()
+				.filter_map(|s| {
+					let spec = s.get("Spec")?;
+					let owned = spec
+						.get("Labels")
+						.and_then(|l| l.get("podup.project"))
+						.and_then(|v| v.as_str())
+						== Some(self.project.as_str());
+					if owned {
+						spec.get("Name")
+							.and_then(|n| n.as_str())
+							.map(str::to_string)
+					} else {
+						None
+					}
+				})
+				.collect()),
 			Err(e) => {
 				tracing::debug!(
 					"could not list project secrets, falling back to per-secret inspection: {e}"
 				);
-				None
+				Err(e)
 			}
 		}
 	}
@@ -156,7 +164,7 @@ impl Engine {
 	/// Returns `true` when the secret was actually removed (or was already
 	/// absent; a 404 still counts as teardown success). The caller collects
 	/// the names for the summary log line.
-	async fn delete_listed_secret(&self, name: &str) -> bool {
+	async fn delete_listed_secret(&self, name: &str, first_err: &mut Option<ComposeError>) -> bool {
 		let path = format!("{API_PREFIX}/secrets/{}", urlencoded(name));
 		match self.client.delete_ok(&path).await {
 			Ok(()) => {
@@ -165,6 +173,7 @@ impl Engine {
 			}
 			Err(e) => {
 				tracing::warn!("could not remove secret {name}: {e}");
+				first_err.get_or_insert(ComposeError::Podman(e));
 				false
 			}
 		}
@@ -178,7 +187,7 @@ impl Engine {
 	/// Returns `true` when the secret was actually removed, `false` when the
 	/// inspect failed (404, transport error, or a foreign label) and the
 	/// caller should not count it as teardown.
-	async fn delete_secret(&self, name: &str) -> bool {
+	async fn delete_secret(&self, name: &str, first_err: &mut Option<ComposeError>) -> bool {
 		let inspect = format!("{API_PREFIX}/secrets/{}/json", urlencoded(name));
 		match self.client.get_json::<serde_json::Value>(&inspect).await {
 			Ok(info) => {
@@ -200,6 +209,7 @@ impl Engine {
 			Err(e) if e.is_status(404) => return false,
 			Err(e) => {
 				tracing::warn!("could not inspect secret {name} before removal: {e}");
+				first_err.get_or_insert(ComposeError::Podman(e));
 				return false;
 			}
 		}
@@ -211,6 +221,7 @@ impl Engine {
 			}
 			Err(e) => {
 				tracing::warn!("could not remove secret {name}: {e}");
+				first_err.get_or_insert(ComposeError::Podman(e));
 				false
 			}
 		}
