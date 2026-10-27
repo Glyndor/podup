@@ -19,6 +19,21 @@ use crate::libpod::types::exec::{ExecCreateConfig, ExecStartConfig};
 use crate::libpod::{LogOutput, API_PREFIX};
 
 impl Engine {
+	/// Run the service's `post_start` hooks inside a running container.
+	///
+	/// The hooks write their output to the terminal, so the caller closes
+	/// its progress row before calling this.
+	pub(in crate::backends::engine) async fn run_post_start_hooks(
+		&self,
+		container_name: &str,
+		service: &crate::compose::types::Service,
+	) -> Result<()> {
+		for hook in &service.post_start {
+			self.run_lifecycle_hook(container_name, hook).await?;
+		}
+		Ok(())
+	}
+
 	pub(in crate::backends::engine) async fn run_lifecycle_hook(
 		&self,
 		container_name: &str,

@@ -251,8 +251,12 @@ impl Engine {
 		// per-container path; ensure they exist before recreating the container.
 		self.create_project_secrets(file).await?;
 		let container_name = self.first_replica_name(service_name, service);
-		self.create_and_start(&container_name, service_name, service, file, true)
-			.await
+		// The rebuild recreates the container, so it runs the same
+		// initialization `up` runs: the `pre_start` steps before the
+		// container exists, the `post_start` hooks inside it once it is up.
+		self.recreate_service(&container_name, service_name, service, file, true)
+			.await?;
+		self.run_post_start_hooks(&container_name, service).await
 	}
 
 	pub(in crate::backends::engine::host_files::watch) async fn watch_restart(
@@ -357,3 +361,7 @@ mod actions_umask_tests;
 #[cfg(test)]
 #[path = "actions_removal_tests.rs"]
 mod actions_removal_tests;
+
+#[cfg(test)]
+#[path = "actions_rebuild_tests.rs"]
+mod actions_rebuild_tests;

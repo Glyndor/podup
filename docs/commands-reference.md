@@ -79,6 +79,8 @@ Watch for file changes and react per each service's `develop.watch` rules. (`up 
 
 Every rule that watches a changed path runs, so two services watching the same directory each get their own copy of the change. A rebuild or a restart runs once per service or container per batch of changes.
 
+A rebuild recreates the container the way `up` does: the service's `pre_start` steps run before it exists and its `post_start` hooks run inside it once it is up.
+
 Patterns use `.dockerignore` syntax. Context ignore files match paths relative to the build context; rule include/ignore patterns match relative to the rule's path, with last match winning. Legacy project-relative patterns may apply when no rule pattern matches, with a warning; fallback never overrides a re-include.
 
 Sync copies paths that exist and removes deleted ones, a deleted directory with the entries under it; watching starts before initial sync. Copies into a writable bind of the watched path are skipped with a warning, while more-specific mounts and restart/exec actions still apply. Symlinks remain links; file-to-directory replacements remain directories.
