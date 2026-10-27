@@ -52,6 +52,72 @@ fn collect_status_reports_absent_unit() {
 	});
 }
 
+/// A project installed in quadlet mode has one unit per service, not the
+/// single `podup-<project>.service` the status used to ask about. The status
+/// has to find the install and ask about the units the project owns.
+#[test]
+fn collect_status_sees_a_quadlet_install() {
+	with_env(|root| {
+		let qdir = root.join("containers/systemd");
+		std::fs::create_dir_all(&qdir).unwrap();
+		std::fs::write(
+			qdir.join("proj-web.container"),
+			"# podup-owner: proj\n[Container]\nImage=nginx\n",
+		)
+		.unwrap();
+		std::fs::write(
+			qdir.join("proj-web.network"),
+			"# podup-owner: proj\n[Network]\n",
+		)
+		.unwrap();
+
+		let sc = FakeCtl::new();
+		let r = collect_status(&sc, "proj");
+		assert!(
+			r.unit_exists,
+			"a quadlet install must be reported as installed"
+		);
+		assert_eq!(r.unit_count, 2, "both own units must be counted");
+		assert_eq!(r.is_active, "active");
+		assert_eq!(r.is_enabled, "enabled");
+		let calls = sc.systemctl_log();
+		assert!(
+			calls
+				.iter()
+				.any(|c| c.contains(&"proj-web.service".to_string())),
+			"the status must ask about the project's own services: {calls:?}"
+		);
+		assert!(
+			!calls
+				.iter()
+				.any(|c| c.contains(&"podup-proj.service".to_string())),
+			"the status must not ask about a unit the project does not have: {calls:?}"
+		);
+	});
+}
+
+/// A unit of another project is not this project's install: the ownership
+/// marker decides, the same way it does for the uninstall.
+#[test]
+fn collect_status_ignores_a_quadlet_unit_of_another_project() {
+	with_env(|root| {
+		let qdir = root.join("containers/systemd");
+		std::fs::create_dir_all(&qdir).unwrap();
+		std::fs::write(
+			qdir.join("proj-web.container"),
+			"# podup-owner: other\n[Container]\nImage=nginx\n",
+		)
+		.unwrap();
+
+		let sc = FakeCtl::new();
+		let r = collect_status(&sc, "proj");
+		assert!(
+			!r.unit_exists,
+			"a unit that belongs to another project is not an install"
+		);
+	});
+}
+
 // --- the network shim (#1616's ordering is only real if the unit loads) ---
 
 /// The trap, pinned. Real `systemctl show` exits **0** for a unit that does not

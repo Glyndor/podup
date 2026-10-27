@@ -126,7 +126,7 @@ fn unit_owner(path: &Path) -> Option<String> {
 /// unmarked units are expected in the field; leaving one stale file behind
 /// for a user to clean up once is a far smaller cost than deleting a
 /// sibling project's unit.
-fn installed_units(project: &str) -> Vec<PathBuf> {
+pub(in super::super) fn installed_units(project: &str) -> Vec<PathBuf> {
 	let dir = quadlet_dir();
 	let prefix = format!("{project}-");
 	let mut found = Vec::new();
