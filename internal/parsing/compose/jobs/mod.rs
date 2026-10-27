@@ -20,12 +20,19 @@
 //! `podup up` starts services only. A job runs when `podup run` names it, or
 //! when a job that is being run depends on it.
 
+#[path = "messages/label.rs"]
 mod label;
+#[path = "merging/merge.rs"]
 mod merge;
+#[path = "parsing/parse.rs"]
 mod parse;
+#[path = "parsing/triggers.rs"]
 mod triggers;
+#[path = "validation/validate.rs"]
 mod validate;
+#[path = "views/view.rs"]
 mod view;
+#[path = "messages/warn.rs"]
 mod warn;
 
 pub(crate) use label::{check_job_dependencies, relabel, relabel_error};
@@ -39,4 +46,5 @@ pub(crate) use view::{
 pub use warn::warn_unscheduled_jobs;
 
 #[cfg(test)]
+#[path = "parsing/hostile_tests.rs"]
 mod hostile_tests;
