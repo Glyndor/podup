@@ -119,9 +119,9 @@ impl ConnPool {
 	pub(in crate::connection::libpod::client) fn new(socket_path: String, cap: usize) -> Arc<Self> {
 		Arc::new(Self {
 			socket_path,
-			cap,
+			cap: cap.min(Client::MAX_POOL_SIZE),
 			inner: Mutex::new(PoolInner {
-				idle: VecDeque::with_capacity(cap.max(1)),
+				idle: VecDeque::new(),
 				live_count: 0,
 				closed: false,
 			}),
@@ -319,7 +319,9 @@ impl ConnPool {
 	/// Hand a buffered connection back to the pool.
 	fn release(&self, conn: PooledConn) {
 		let mut inner = self.inner.lock().unwrap();
-		if conn.poisoned {
+		// Reuse is optional: under memory pressure discard the connection
+		// rather than let push_back perform an infallible allocation in Drop.
+		if conn.poisoned || inner.idle.try_reserve(1).is_err() {
 			inner.live_count -= 1;
 		} else {
 			inner.idle.push_back(conn);
@@ -451,6 +453,9 @@ async fn open_one_streaming(
 #[cfg(test)]
 mod tests;
 
+#[cfg(test)]
+mod capacity_tests;
+
 // ---------------------------------------------------------------------------
 // Client construction / introspection
 // ---------------------------------------------------------------------------
@@ -466,6 +471,10 @@ impl Client {
 	/// [`Client::with_pool_size`](Self::with_pool_size) to tune.
 	pub const DEFAULT_POOL_SIZE: usize = DEFAULT_POOL_SIZE;
 
+	/// Largest supported number of reusable buffered connections per socket.
+	/// This bounds retained resources; callers above the cap remain transient.
+	pub const MAX_POOL_SIZE: usize = 1024;
+
 	/// Create a client bound to the given Podman socket path (or named pipe),
 	/// using the default connection pool size
 	/// ([`Client::DEFAULT_POOL_SIZE`](Self::DEFAULT_POOL_SIZE)).
@@ -477,8 +486,8 @@ impl Client {
 	/// `pool_size` concurrent HTTP/1.1 connections for reuse. Streaming
 	/// endpoints always take a dedicated connection outside this cap.
 	///
-	/// `pool_size` is floored at 1; a zero value would deadlock the first
-	/// acquire rather than fail loud.
+	/// Zero disables reuse. Values above [`Self::MAX_POOL_SIZE`] are clamped
+	/// to that maximum; idle slots are allocated only as connections return.
 	pub fn with_pool_size(socket_path: impl Into<String>, pool_size: usize) -> Self {
 		let socket_path = socket_path.into();
 		let pool = ConnPool::new(socket_path.clone(), pool_size);
