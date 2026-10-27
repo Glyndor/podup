@@ -1,5 +1,17 @@
 //! Argument value parsers for the CLI.
 
+/// Bound both the flag and its environment-variable spelling before startup.
+pub(crate) fn parse_pool_size(value: &str) -> Result<usize, String> {
+	let max = podup::Client::MAX_POOL_SIZE;
+	let size: usize = value
+		.parse()
+		.map_err(|_| format!("connection pool size must be an integer between 0 and {max}"))?;
+	if size > max {
+		return Err(format!("connection pool size must be between 0 and {max}"));
+	}
+	Ok(size)
+}
+
 /// Parse a `SERVICE=N` scale argument into a `(service, replicas)` pair.
 ///
 /// Rejects a missing `=`, an empty service name, a non-numeric count, and `N=0`

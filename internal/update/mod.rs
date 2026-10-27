@@ -38,10 +38,8 @@ pub trait ReleaseSource {
 /// Run an update against GitHub for the version compiled into this binary.
 pub fn run(opts: UpdateOptions) -> crate::Result<()> {
 	// Best-effort cleanup of a `.old` backup a prior Windows swap could not
-	// delete immediately (the old process still held it open). By the time
-	// any updater run starts, that process has exited, so this is the
-	// earliest point the leftover can go - see the module doc on
-	// `install::swap_into_place`.
+	// delete immediately (the old process still held it open). Cleanup takes
+	// the install lock so an overlapping run cannot lose its rollback backup.
 	#[cfg(windows)]
 	install::cleanup_stale_backup();
 
@@ -64,7 +62,7 @@ fn run_with_guard(
 	source: &dyn ReleaseSource,
 	current: &str,
 	opts: UpdateOptions,
-	managed_by: Option<&str>,
+	managed_by: crate::Result<Option<&str>>,
 ) -> crate::Result<()> {
 	let current_v = verify::parse_version(current)?;
 	let latest_tag = source.latest_version()?;
@@ -87,7 +85,7 @@ fn run_with_guard(
 
 	// Refuse to self-replace a package-manager-managed binary (even with
 	// --force): overwriting it would desync the package manager's records.
-	if let Some(pm) = managed_by {
+	if let Some(pm) = managed_by? {
 		return Err(pkg::package_managed_error(pm));
 	}
 

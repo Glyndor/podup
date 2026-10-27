@@ -190,34 +190,42 @@ fn package_managed_error_names_the_manager() {
 	}
 }
 
+/// An unavailable query is uncertainty, not proof that apt does not own the file.
+#[cfg(all(unix, target_os = "linux"))]
 #[test]
-fn test_binary_is_not_package_managed() {
-	// The test runner binary lives under target/, which no package owns, so
-	// detection must not false-positive and block updates for normal builds.
-	assert_eq!(managing_package_manager(), None);
-}
-
-/// #1360 (L10): `dpkg-query` is the only source of truth for whether apt
-/// owns the running binary. The previous implementation fell back to
-/// reading `/var/lib/dpkg/info/*.list` directly when `dpkg-query` could
-/// not be spawned: a directory owned by another package, with no mode
-/// or ownership guarantees. The fix is fail-closed: when `dpkg-query` is
-/// unavailable, report `false` and skip the scan entirely. We exercise
-/// the `Err` arm by removing `dpkg-query` from PATH via
-/// [`temp_env::with_var`]; `Command::new` resolves through PATH, so an
-/// empty / nonexistent path guarantees the spawn fails.
-#[cfg(target_os = "linux")]
-#[test]
-fn dpkg_owns_returns_false_when_dpkg_query_is_missing_from_path() {
-	// /nonexistent is a directory that does not exist, so PATH cannot
-	// resolve `dpkg-query` from it. The previous code would have
-	// consulted the real `/var/lib/dpkg/info` directory (if present)
-	// and might have answered `true` for a target whose path happened
-	// to match. We pin the new behaviour: with `dpkg-query` unavailable,
-	// the answer is unconditionally `false`.
+fn dpkg_owns_errors_when_dpkg_query_is_missing_from_path() {
 	let empty_path = std::path::PathBuf::from("/nonexistent-empty-path-for-dpkg-test");
 	let fake_target = Path::new("/usr/bin/podup");
 	temp_env::with_var("PATH", Some(empty_path.display().to_string()), || {
-		assert!(!dpkg_owns(fake_target));
+		assert!(dpkg_owns(fake_target).is_err());
 	});
+}
+
+#[cfg(all(unix, target_os = "linux"))]
+#[test]
+fn dpkg_query_distinguishes_absent_ownership_from_query_failure() {
+	use std::os::unix::process::ExitStatusExt;
+	use std::process::{ExitStatus, Output};
+	for (status, owned) in [
+		(0, Some(true)),
+		(1 << 8, Some(false)),
+		(2 << 8, None),
+		(9, None),
+	] {
+		let result = dpkg_query_result(Ok(Output {
+			status: ExitStatus::from_raw(status),
+			stdout: Vec::new(),
+			stderr: b"query diagnostic".to_vec(),
+		}));
+		match owned {
+			Some(owned) => assert_eq!(result.unwrap(), owned),
+			None => assert!(result.is_err()),
+		}
+	}
+	for kind in [
+		std::io::ErrorKind::NotFound,
+		std::io::ErrorKind::PermissionDenied,
+	] {
+		assert!(dpkg_query_result(Err(std::io::Error::from(kind))).is_err());
+	}
 }

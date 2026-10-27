@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use crate::ComposeError;
 
 mod backup;
+mod lock;
 mod platform;
 mod self_test;
 mod swap;
@@ -48,21 +49,32 @@ pub fn install_binary(new_bytes: &[u8], expected_version: &str) -> crate::Result
 			exe.display()
 		))
 	})?;
+	install_verified_at(&target, new_bytes, |path| self_test(path, expected_version))?;
+	Ok(target)
+}
+
+/// Hold exclusive ownership of the backup through staging, verification and rollback.
+fn install_verified_at(
+	target: &Path,
+	new_bytes: &[u8],
+	check: impl FnOnce(&Path) -> crate::Result<()>,
+) -> crate::Result<()> {
+	let _lock = lock::acquire(target)?;
 	// Hard-link the current binary into `.old` BEFORE the swap so a failed
 	// self-test always has a rollback target on disk. On Unix the target
 	// stays in place (its mode is read by `write_temp`); on Windows the
 	// running `.exe` is renamed aside (`#1898`).
-	let backup = move_target_aside(&target)?;
-	if let Err(e) = install_at(&target, new_bytes) {
+	let backup = move_target_aside(target)?;
+	if let Err(e) = install_at(target, new_bytes) {
 		// The swap itself failed: restore the old binary before reporting.
-		let _ = restore_from_backup(&target, &backup);
+		restore_from_backup(target, &backup)?;
 		return Err(e);
 	}
-	if let Err(e) = self_test(&target, expected_version) {
+	if let Err(e) = check(target) {
 		// Roll back to the original binary. The backup is on disk, so a
 		// kill inside `restore_from_backup` would still leave the user
 		// with a recoverable `.old` to fall back on.
-		restore_from_backup(&target, &backup)?;
+		restore_from_backup(target, &backup)?;
 		return Err(ComposeError::Update(format!(
 			"the updated binary failed its self-test ({e}); rolled back to the \
 			 previous version"
@@ -71,7 +83,7 @@ pub fn install_binary(new_bytes: &[u8], expected_version: &str) -> crate::Result
 	// Best-effort remove the `.old`; a kill here just leaves a recoverable
 	// sibling that the next run will tidy up.
 	let _ = std::fs::remove_file(&backup);
-	Ok(target)
+	Ok(())
 }
 
 /// Write `new_bytes` to a sibling temp file and atomically move it onto
@@ -110,6 +122,9 @@ mod platform_tests;
 
 #[cfg(test)]
 mod backup_tests;
+
+#[cfg(test)]
+mod transaction_tests;
 
 #[cfg(test)]
 mod self_test_tests;

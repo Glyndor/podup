@@ -68,18 +68,9 @@ pub(crate) fn move_target_aside(target: &Path) -> crate::Result<PathBuf> {
 	Ok(backup)
 }
 
-/// Restore the `.old` sibling back onto `target`. Best-effort: the rollback
-/// path reports the original error to the user regardless, but a failure
-/// here is logged at debug so the next-run cleanup can pick up where this
-/// left off (the `.old` is still on disk and the self-test has already
-/// failed).
+/// Restore the required `.old` sibling back onto `target`.
+/// A missing backup is a rollback failure, never a successful restoration.
 pub(crate) fn restore_from_backup(target: &Path, backup: &Path) -> crate::Result<()> {
-	if !backup.exists() {
-		// Nothing to restore from (the install was a fresh deploy onto a
-		// path that did not exist before). The swap that already ran
-		// stands.
-		return Ok(());
-	}
 	#[cfg(unix)]
 	{
 		use std::os::unix::fs::MetadataExt;
@@ -110,14 +101,15 @@ pub(crate) fn restore_from_backup(target: &Path, backup: &Path) -> crate::Result
 }
 /// Best-effort removal of a `.old` backup [`swap_into_place`](super::swap_into_place) could not delete
 /// immediately because the old process still held the file open. Call once at
-/// the start of every updater run ([`crate::update::run`]): by then the
-/// process that produced the backup has exited, so the file is no longer
-/// locked and the leftover clears on this run rather than lingering until the
-/// user happens to run another update. Silently does nothing if there is no
-/// leftover, or if removal still fails for some other reason.
+/// the start of every updater run ([`crate::update::run`]), under the same
+/// exclusion as installation. Skip cleanup while another transaction owns
+/// the backup. Silently does nothing if there is no leftover or removal fails.
 #[cfg(windows)]
 pub(crate) fn cleanup_stale_backup() {
 	if let Ok(exe) = std::env::current_exe() {
-		let _ = std::fs::remove_file(exe.with_extension("old"));
+		// A different updater may still need its backup for rollback.
+		if let Ok(_lock) = super::lock::acquire(&exe) {
+			let _ = std::fs::remove_file(exe.with_extension("old"));
+		}
 	}
 }

@@ -135,18 +135,19 @@ fn original_inode() -> u64 {
 		.ino()
 }
 
-/// The path still names the binary it started as, and nothing was left behind.
+/// The path still names the original binary; only the persistent lock may remain.
 fn assert_untouched(scratch: &Scratch, mode: &str) {
 	assert_eq!(
 		scratch.inode(),
 		original_inode(),
 		"{mode}: the target was replaced and not restored"
 	);
-	assert_eq!(
-		scratch.entries(),
-		vec!["podup".to_string()],
-		"{mode}: files left beside the binary"
-	);
+	let expected = if mode == "readonly_dir" {
+		vec!["podup".to_string()]
+	} else {
+		vec!["podup".to_string(), "podup.old.lock".to_string()]
+	};
+	assert_eq!(scratch.entries(), expected, "{mode}: unexpected leftovers");
 }
 
 fn assert_rolled_back(mode: &str) {

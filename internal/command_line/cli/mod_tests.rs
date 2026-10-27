@@ -1,4 +1,5 @@
 use super::{ansi_from_argv, AnsiMode};
+use clap::Parser;
 
 fn argv(args: &[&str]) -> impl Iterator<Item = String> + use<> {
 	args.iter()
@@ -71,4 +72,22 @@ fn ansi_before_a_double_dash_is_ours() {
 		])),
 		Some(AnsiMode::Never)
 	);
+}
+
+#[test]
+fn connection_pool_size_rejects_excessive_values_at_parse_time() {
+	for bad in ["1025".to_string(), usize::MAX.to_string()] {
+		let result =
+			super::Cli::try_parse_from(["podup", "--connection-pool-size", &bad, "version"]);
+		assert!(result.is_err(), "pool size {bad} must be rejected");
+	}
+}
+
+#[test]
+fn connection_pool_size_accepts_zero_and_the_upper_boundary() {
+	for value in ["0", "1", "1024"] {
+		let cli = super::Cli::try_parse_from(["podup", "--connection-pool-size", value, "version"])
+			.unwrap();
+		assert_eq!(cli.connection_pool_size, Some(value.parse().unwrap()));
+	}
 }
