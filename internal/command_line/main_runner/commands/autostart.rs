@@ -68,31 +68,7 @@ pub(crate) async fn dispatch(
 			dry_run,
 			auto_update,
 		} => {
-			// systemd has no relative-path context, so resolve the exe, every compose
-			// file, and the working directory to absolute paths the unit can embed.
-			let exe = std::env::current_exe().map_err(|e| {
-				ComposeError::Autostart(format!("cannot locate the podup executable: {e}"))
-			})?;
-			let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
-			let mut abs_files = Vec::with_capacity(compose_files.len());
-			for f in compose_files {
-				abs_files.push(std::fs::canonicalize(f).map_err(|e| {
-					ComposeError::Autostart(format!(
-						"cannot resolve compose file {}: {e}",
-						f.display()
-					))
-				})?);
-			}
-			let working_dir = std::fs::canonicalize(&base_dir).unwrap_or(base_dir);
-			// The longest stop_grace_period in the project. systemd bounds the whole
-			// ExecStop independently of what podup does inside it, and its default
-			// is 90s, so without this a stack whose slowest container needs longer
-			// is killed mid-stop at reboot, while a manual `podup stop` honours it.
-			let max_grace = podup::autostart::max_stop_grace_secs(file);
-			let unit = podup::autostart::ServiceUnitOpts::new(exe, abs_files, project, working_dir)
-				.with_profiles(env.profile.to_vec())
-				.with_env_files(env.env_files.to_vec())
-				.with_max_stop_grace_secs(max_grace);
+			let unit = service_unit_opts(env, compose_files, &project, &base_dir, file)?;
 			let opts = podup::autostart::InstallOptions::new(unit)
 				.with_no_start(*no_start)
 				.with_dry_run(*dry_run)
@@ -122,8 +98,7 @@ pub(crate) async fn dispatch(
 			// systemd resolves an exec line with no PATH of its own, so the unit
 			// needs podman by absolute path rather than by name.
 			let podman = resolve_podman()?;
-			let opts = podup::autostart::StartUnitOpts::new(podman, project.clone(), container)
-				.with_stop_grace_secs(podup::autostart::max_stop_grace_secs(file));
+			let opts = start_unit_opts(env, &project, &container, podman, file);
 
 			// The one check that needs a live Podman. Start mode restores what
 			// the store holds and deliberately does not reconcile, so a
@@ -196,6 +171,61 @@ pub(crate) async fn dispatch(
 	}
 }
 
+/// The service-mode unit options for what the CLI resolved: the executable,
+/// the compose files, the project, the base directory and the globals that
+/// travel with the unit.
+///
+/// Split out of [`dispatch`] so the wiring between the CLI's flags and the
+/// generated unit can be checked without installing anything.
+fn service_unit_opts(
+	env: &AutostartEnv<'_>,
+	compose_files: &[PathBuf],
+	project: &str,
+	base_dir: &std::path::Path,
+	file: &ComposeFile,
+) -> podup::Result<podup::autostart::ServiceUnitOpts> {
+	// systemd has no relative-path context, so resolve the exe, every compose
+	// file, and the working directory to absolute paths the unit can embed.
+	let exe = std::env::current_exe()
+		.map_err(|e| ComposeError::Autostart(format!("cannot locate the podup executable: {e}")))?;
+	let exe = std::fs::canonicalize(&exe).unwrap_or(exe);
+	let mut abs_files = Vec::with_capacity(compose_files.len());
+	for f in compose_files {
+		abs_files.push(std::fs::canonicalize(f).map_err(|e| {
+			ComposeError::Autostart(format!("cannot resolve compose file {}: {e}", f.display()))
+		})?);
+	}
+	let working_dir = std::fs::canonicalize(base_dir).unwrap_or_else(|_| base_dir.to_path_buf());
+	// The longest stop_grace_period in the project. systemd bounds the whole
+	// ExecStop independently of what podup does inside it, and its default
+	// is 90s, so without this a stack whose slowest container needs longer
+	// is killed mid-stop at reboot, while a manual `podup stop` honours it.
+	let max_grace = podup::autostart::max_stop_grace_secs(file);
+	Ok(
+		podup::autostart::ServiceUnitOpts::new(exe, abs_files, project.to_string(), working_dir)
+			.with_profiles(env.profile.to_vec())
+			.with_env_files(env.env_files.to_vec())
+			.with_max_stop_grace_secs(max_grace)
+			.with_socket(env.socket.clone()),
+	)
+}
+
+/// The start-mode unit options: the podman binary, the container, the grace
+/// period and the socket the unit must talk to.
+///
+/// Split out of [`dispatch`] for the same reason as [`service_unit_opts`].
+fn start_unit_opts(
+	env: &AutostartEnv<'_>,
+	project: &str,
+	container: &str,
+	podman: PathBuf,
+	file: &ComposeFile,
+) -> podup::autostart::StartUnitOpts {
+	podup::autostart::StartUnitOpts::new(podman, project.to_string(), container.to_string())
+		.with_stop_grace_secs(podup::autostart::max_stop_grace_secs(file))
+		.with_socket(env.socket.clone())
+}
+
 /// The absolute path to `podman`, looked up on `PATH`. A systemd exec line has
 /// no `PATH` of its own, so a bare name in the unit would fail at boot with
 /// nothing to point at.
@@ -251,5 +281,79 @@ async fn precheck_start_mode(
 			 install."
 		))),
 		Some(_) => Ok(()),
+	}
+}
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	/// The CLI's own values, with the socket the operator selected.
+	fn env(socket: Option<&str>) -> AutostartEnv<'static> {
+		AutostartEnv {
+			profile: &[],
+			env_files: &[],
+			socket: socket.map(str::to_string),
+			connection_pool_size: None,
+		}
+	}
+
+	fn compose_file() -> ComposeFile {
+		podup::parse_str("services:\n  web:\n    image: nginx\n").expect("the file parses")
+	}
+
+	/// The socket the operator selected must reach the generated unit: the
+	/// unit runs with no environment of the operator's, so without it the boot
+	/// path would talk to the default instance instead of the selected one.
+	#[test]
+	fn the_selected_socket_reaches_the_service_unit() {
+		let dir = tempfile::tempdir().expect("a temp dir");
+		let compose = dir.path().join("compose.yml");
+		std::fs::write(&compose, "services:\n  web:\n    image: nginx\n").expect("the file");
+		let opts = service_unit_opts(
+			&env(Some("/run/user/1000/podman/podman.sock")),
+			&[compose],
+			"app",
+			dir.path(),
+			&compose_file(),
+		)
+		.expect("the options build");
+		let unit = podup::autostart::render_service_unit(&opts);
+		assert!(
+			unit.contains("--socket /run/user/1000/podman/podman.sock"),
+			"the selected socket must travel into the unit:\n{unit}"
+		);
+	}
+
+	/// The same for start mode, whose unit runs `podman` directly.
+	#[test]
+	fn the_selected_socket_reaches_the_start_unit() {
+		let opts = start_unit_opts(
+			&env(Some("/run/user/1000/podman/podman.sock")),
+			"app",
+			"app-web-1",
+			PathBuf::from("/usr/bin/podman"),
+			&compose_file(),
+		);
+		let unit = podup::autostart::render_start_unit(&opts);
+		assert!(
+			unit.contains("--url unix:///run/user/1000/podman/podman.sock"),
+			"the selected socket must travel into the unit:\n{unit}"
+		);
+	}
+
+	/// With no socket selected, the unit carries none: the boot path then
+	/// talks to the default instance, exactly as the operator's own run would.
+	#[test]
+	fn no_selected_socket_leaves_the_unit_without_one() {
+		let opts = start_unit_opts(
+			&env(None),
+			"app",
+			"app-web-1",
+			PathBuf::from("/usr/bin/podman"),
+			&compose_file(),
+		);
+		let unit = podup::autostart::render_start_unit(&opts);
+		assert!(!unit.contains("--url"), "{unit}");
 	}
 }

@@ -343,6 +343,20 @@ fn every_released_service_line_classifies_as_service() {
 	}
 }
 
+/// A unit that names the socket it talks to is still a service unit: the
+/// option pair is skipped like every other, so the same-mode reinstall is
+/// not refused as an unrecognised shape.
+#[test]
+fn a_service_line_naming_the_socket_still_classifies_as_service() {
+	let line = "/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app --socket \
+	                /run/user/1000/podman/podman.sock up -d --no-build --pull never";
+	assert_eq!(
+		classify_exec_start(line),
+		DetectedSingleUnitMode::Service,
+		"{line}"
+	);
+}
+
 /// A unit file with no `ExecStart=` is refused too, not treated as absent.
 #[test]
 fn a_unit_without_exec_start_is_refused() {

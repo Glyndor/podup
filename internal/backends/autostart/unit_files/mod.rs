@@ -4,6 +4,7 @@
 pub(super) mod owner;
 pub(super) mod paths;
 pub(super) mod service;
+pub(super) mod socket;
 pub(super) mod start;
 
 #[cfg(test)]

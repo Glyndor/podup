@@ -168,3 +168,42 @@ fn a_file_with_no_services_is_refused() {
 		StartModeRefusal::NoServices
 	);
 }
+
+/// The socket the operator selected must travel into the unit: the boot path
+/// runs with no environment of the operator's, so without it `podman` would
+/// talk to the default instance, which is a different one whenever
+/// `--socket` pointed somewhere else.
+#[test]
+fn the_selected_socket_travels_into_the_command() {
+	let o = opts().with_socket(Some("/run/user/1000/podman/podman.sock".to_string()));
+	let s = render_start_unit(&o);
+	assert!(
+		s.contains("ExecStart=/usr/bin/podman --url unix:///run/user/1000/podman/podman.sock start -- app-web-1"),
+		"{s}"
+	);
+	assert!(
+		s.contains("ExecStop=/usr/bin/podman --url unix:///run/user/1000/podman/podman.sock stop -- app-web-1"),
+		"{s}"
+	);
+}
+
+/// A socket that already carries its scheme is passed through as it is.
+#[test]
+fn a_socket_with_a_scheme_is_passed_through() {
+	let o = opts().with_socket(Some("unix:///run/podman/podman.sock".to_string()));
+	let s = render_start_unit(&o);
+	assert!(
+		s.contains("--url unix:///run/podman/podman.sock start -- app-web-1"),
+		"{s}"
+	);
+}
+
+/// A socket the unit cannot carry is refused where the operator is watching,
+/// not at boot with nothing to say why.
+#[test]
+fn a_socket_the_unit_cannot_carry_is_refused() {
+	let o = opts().with_socket(Some("tcp://example.invalid:2375".to_string()));
+	let err = validate_start_unit_opts(&o).expect_err("a remote socket must be refused");
+	assert!(err.contains("local socket"), "{err}");
+	assert!(validate_start_unit_opts(&opts()).is_ok());
+}

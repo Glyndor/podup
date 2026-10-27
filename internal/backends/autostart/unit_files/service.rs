@@ -37,6 +37,13 @@ pub struct ServiceUnitOpts {
 	/// honours it. `None` leaves `TimeoutStopSec=` off, which is right when no
 	/// service asks for anything unusual.
 	pub max_stop_grace_secs: Option<u64>,
+	/// The Podman socket the unit must talk to, passed through as `--socket`.
+	///
+	/// A unit runs with no environment of the operator's, so the socket
+	/// selected at install time has to be written into the command itself.
+	/// Without it the boot path talks to the default instance, which is a
+	/// different one whenever `--socket` pointed somewhere else.
+	pub socket: Option<String>,
 }
 
 impl ServiceUnitOpts {
@@ -56,6 +63,7 @@ impl ServiceUnitOpts {
 			profiles: Vec::new(),
 			env_files: Vec::new(),
 			max_stop_grace_secs: None,
+			socket: None,
 		}
 	}
 
@@ -76,6 +84,13 @@ impl ServiceUnitOpts {
 	/// slower stack off mid-shutdown. Builder-style.
 	pub fn with_max_stop_grace_secs(mut self, secs: Option<u64>) -> Self {
 		self.max_stop_grace_secs = secs;
+		self
+	}
+
+	/// The Podman socket the unit must talk to, passed through as `--socket`.
+	/// Builder-style.
+	pub fn with_socket(mut self, socket: Option<String>) -> Self {
+		self.socket = socket;
 		self
 	}
 }
@@ -177,12 +192,18 @@ pub fn validate_unit_opts(opts: &ServiceUnitOpts) -> Result<(), String> {
 	for e in &opts.env_files {
 		check("env file path", e)?;
 	}
+	if let Some(socket) = &opts.socket {
+		check("socket", socket)?;
+		// A socket the unit cannot carry is refused here, where the operator
+		// is watching, rather than at boot with nothing to say why.
+		super::socket::for_podup(socket)?;
+	}
 	Ok(())
 }
 
 /// The leading `podup` arguments shared by both the start and stop commands:
-/// `-f <file>...  -p <project>  [--profile P]...  [--env-file E]...`. These must
-/// precede the subcommand (`-f`/`-p` are not global flags).
+/// `-f <file>...  -p <project>  [--socket S]  [--profile P]...  [--env-file E]...`.
+/// These must precede the subcommand (`-f`/`-p` are not global flags).
 fn leading_args(opts: &ServiceUnitOpts) -> Vec<String> {
 	let mut args = Vec::new();
 	for f in &opts.compose_files {
@@ -191,6 +212,10 @@ fn leading_args(opts: &ServiceUnitOpts) -> Vec<String> {
 	}
 	args.push("-p".to_string());
 	args.push(opts.project.clone());
+	if let Some(socket) = &opts.socket {
+		args.push("--socket".to_string());
+		args.push(socket.clone());
+	}
 	for p in &opts.profiles {
 		args.push("--profile".to_string());
 		args.push(p.clone());
