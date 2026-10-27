@@ -33,7 +33,9 @@ pub(crate) fn effective_memory_limit(service: &Service) -> Option<i64> {
 }
 
 /// The PID cap forwarded into `LinuxPids.limit`. Top-level `pids_limit`
-/// wins, including `-1` (unlimited); deploy only fills an absent value.
+/// wins, including `-1` (unlimited); deploy only fills an absent value. A deploy
+/// value too large for `i64` saturates instead of wrapping to a negative number,
+/// which would read as `-1`.
 pub(crate) fn effective_pids_limit(service: &Service) -> Option<i64> {
 	service.pids_limit.or_else(|| {
 		service
@@ -41,7 +43,7 @@ pub(crate) fn effective_pids_limit(service: &Service) -> Option<i64> {
 			.as_ref()
 			.and_then(|d| d.resources.as_ref())
 			.and_then(|r| r.limits.as_ref())
-			.and_then(|l| l.pids.map(|p| p as i64))
+			.and_then(|l| l.pids.map(|p| i64::try_from(p).unwrap_or(i64::MAX)))
 	})
 }
 

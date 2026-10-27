@@ -138,3 +138,23 @@ fn audit_no_pids_limit_uses_the_effective_cap() {
 		);
 	}
 }
+
+/// A deploy value that does not fit a signed 64-bit integer used to wrap to a
+/// negative number, which the check read as the `-1` of "unlimited".
+#[test]
+fn audit_no_pids_limit_does_not_wrap_an_oversized_deploy_value() {
+	let yaml = r#"
+services:
+  web:
+    image: alpine:3.20
+    deploy:
+      resources:
+        limits:
+          pids: 18446744073709551615
+"#;
+	let findings = report_for(yaml);
+	assert!(
+		!findings.iter().any(|f| f.check == "no_pids_limit"),
+		"a huge finite cap is not the unlimited sentinel: {findings:#?}"
+	);
+}
