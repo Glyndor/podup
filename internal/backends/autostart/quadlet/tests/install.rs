@@ -135,3 +135,102 @@ fn install_refuses_when_service_mode_is_present() {
 		assert!(format!("{err}").contains("service-mode autostart unit"));
 	});
 }
+
+/// A service removed from the compose file must lose its unit when the
+/// project is installed again. The unit keeps its container, which then
+/// starts at every boot even though the project no longer has that service.
+#[test]
+fn reinstall_retires_the_units_of_services_the_compose_file_no_longer_has() {
+	with_env(|root| {
+		let two = "services:\n  web:\n    image: nginx\n  db:\n    image: postgres\n";
+		install_quadlet(
+			&FakeCtl::new(),
+			&parse_str(two).unwrap(),
+			"proj",
+			Path::new(BASE),
+			true,
+			false,
+		)
+		.unwrap();
+		let web = root.join("containers/systemd/proj-web.container");
+		let db = root.join("containers/systemd/proj-db.container");
+		assert!(web.is_file() && db.is_file());
+
+		let sc = FakeCtl::new();
+		install_quadlet(
+			&sc,
+			&parse_str(IMG).unwrap(),
+			"proj",
+			Path::new(BASE),
+			true,
+			false,
+		)
+		.unwrap();
+
+		assert!(
+			web.is_file(),
+			"the unit of the service that stayed must remain"
+		);
+		assert!(
+			!db.exists(),
+			"the unit of the removed service must be retired"
+		);
+		assert!(
+			sc.log()
+				.contains(&vec!["stop".to_string(), "proj-db.service".to_string()]),
+			"the retired service must be stopped: {:?}",
+			sc.log()
+		);
+	});
+}
+
+/// Only the units this project owns are retired: a sibling project's unit
+/// that shares the prefix is left alone, exactly as the uninstall leaves it.
+#[test]
+fn reinstall_does_not_retire_a_sibling_projects_unit() {
+	with_env(|root| {
+		install_quadlet(
+			&FakeCtl::new(),
+			&parse_str(IMG).unwrap(),
+			"app",
+			Path::new(BASE),
+			true,
+			false,
+		)
+		.unwrap();
+		install_quadlet(
+			&FakeCtl::new(),
+			&parse_str(IMG).unwrap(),
+			"app-extra",
+			Path::new(BASE),
+			true,
+			false,
+		)
+		.unwrap();
+
+		let sc = FakeCtl::new();
+		install_quadlet(
+			&sc,
+			&parse_str("services:\n  api:\n    image: nginx\n").unwrap(),
+			"app",
+			Path::new(BASE),
+			true,
+			false,
+		)
+		.unwrap();
+
+		assert!(
+			root.join("containers/systemd/app-extra-web.container")
+				.is_file(),
+			"the sibling project's unit must survive"
+		);
+		assert!(
+			!sc.log().contains(&vec![
+				"stop".to_string(),
+				"app-extra-web.service".to_string()
+			]),
+			"the sibling project's service must not be stopped: {:?}",
+			sc.log()
+		);
+	});
+}

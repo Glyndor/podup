@@ -158,6 +158,43 @@ fn installed_units(project: &str) -> Vec<PathBuf> {
 	found
 }
 
+/// Retire the units a previous install left behind that the new set does not
+/// contain.
+///
+/// A service removed from the compose file keeps its unit, and with it its
+/// container, which then starts again at every boot even though the project no
+/// longer has that service.
+///
+/// Only the units this project owns are retired: the ownership marker decides
+/// it, exactly as it does for the uninstall, so a sibling project's unit that
+/// happens to share the prefix is left alone.
+fn retire_obsolete_units<S: SystemCtl>(
+	sc: &S,
+	project: &str,
+	current: &[quadlet::QuadletUnit],
+) -> crate::Result<()> {
+	let current_names: Vec<&str> = current.iter().map(|u| u.filename.as_str()).collect();
+	for path in installed_units(project) {
+		let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+			continue;
+		};
+		if current_names.contains(&name) {
+			continue;
+		}
+		// Stop the service while its unit still exists, so the container it
+		// runs does not stay up with nothing left to manage it.
+		if let Some(stem) = name.strip_suffix(".container") {
+			let service = format!("{stem}.service");
+			checked(sc.systemctl(&["stop", &service]), "stop")?;
+		}
+		std::fs::remove_file(&path).map_err(|e| {
+			ComposeError::Autostart(format!("cannot remove {}: {e}", path.display()))
+		})?;
+		eprintln!("podup: removed the obsolete unit {}", path.display());
+	}
+	Ok(())
+}
+
 /// Install quadlet-mode autostart: render the stack's units in the prebuilt
 /// shape, write them under `~/.config/containers/systemd/`, reload the user
 /// manager, restart every `.build` service in one `systemctl --user restart
@@ -245,6 +282,11 @@ pub fn install_quadlet<S: SystemCtl>(
 	for path in &written {
 		eprintln!("podup: wrote {}", path.display());
 	}
+
+	// The units of the services the compose file no longer has are retired
+	// here, so a re-install leaves no unit behind that would start a
+	// container the project does not have any more.
+	retire_obsolete_units(sc, project, &result.units)?;
 
 	checked(sc.systemctl(&["daemon-reload"]), "daemon-reload")?;
 	// Build the images before the container services start. Building is not
