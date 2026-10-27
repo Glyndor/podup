@@ -1,7 +1,7 @@
 //! The top-level `configs:` section: `content`, `environment`, and the
 //! long-form service reference with its `uid`, `gid` and `mode`.
 //!
-//! Split out of `tests/compose/parsing/parse/coverage/deploy_build/mod.rs`; the imports are
+//! Split out of `tests/compose/parsing/parse/schema/coverage/deploy_build/mod.rs`; the imports are
 //! inherited via `use super::*`.
 
 use super::*;

@@ -1,7 +1,7 @@
 //! The three rejections a same-file `extends` can earn: a cycle, a service
 //! extending itself, and a target that does not exist.
 //!
-//! Split out of `tests/compose/parsing/parse/extends/mod.rs`; the imports are inherited via
+//! Split out of `tests/compose/parsing/parse/reuse/extends/mod.rs`; the imports are inherited via
 //! `use super::*`.
 
 use super::*;

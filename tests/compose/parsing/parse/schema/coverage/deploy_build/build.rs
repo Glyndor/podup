@@ -1,7 +1,7 @@
 //! The long-form `build:` block: no_cache, pull, tags, privileged,
 //! extra_hosts, additional_contexts, dockerfile_inline, ssh and secrets.
 //!
-//! Split out of `tests/compose/parsing/parse/coverage/deploy_build/mod.rs`; the imports are
+//! Split out of `tests/compose/parsing/parse/schema/coverage/deploy_build/mod.rs`; the imports are
 //! inherited via `use super::*`.
 
 use super::*;

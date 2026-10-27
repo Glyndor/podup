@@ -125,7 +125,7 @@ try {
 	# provenance (the manifest and the asset are both legitimately signed),
 	# but its --version still reports the old release. The self-test refuses
 	# such an install the same way the Rust `podup update` does
-	# (internal/update/install.rs:152-205).
+	# (internal/update/install/self_test.rs:64-120).
 	#
 	# Strict equality, with one optional leading 'v'. Each whitespace-
 	# delimited token in the staged binary's --version output is compared
@@ -323,7 +323,7 @@ sys.exit(1)
 	}
 	$target = Join-Path $InstallDir 'podup.exe'
 	# A running .exe cannot be overwritten, but it can be renamed. Unify
-	# with the Rust updater (internal/update/install.rs:307-325): rename
+	# with the Rust updater (internal/update/install/backup.rs:17-122): rename
 	# the in-use target aside to *.old, move the staged binary in, then
 	# best-effort remove the leftover. If the staged → target rename
 	# fails, the old binary is restored from *.old so the user is never
@@ -344,7 +344,7 @@ sys.exit(1)
 	# signed binary and matching SHA256SUMS - both still verify. The
 	# staged binary's --version still reports the old release, and we
 	# refuse. Mirrors the Rust self_test at
-	# internal/update/install.rs:152-205.
+	# internal/update/install/self_test.rs:64-120.
 	Test-StagedVersion -StagedPath $staged -ResolvedTag $ResolvedTag
 
 	# Move the in-use target aside. Drop any stale leftover from a prior

@@ -1,6 +1,6 @@
 //! The document itself: a minimal service, an empty map, malformed YAML.
 //!
-//! Split out of `tests/compose/parsing/parse/basic/mod.rs`; the imports are inherited via
+//! Split out of `tests/compose/parsing/parse/schema/basic/mod.rs`; the imports are inherited via
 //! `use super::*`.
 
 use super::*;

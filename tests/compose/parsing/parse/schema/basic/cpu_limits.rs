@@ -1,7 +1,7 @@
 //! `cpu_shares`, `cpuset`, `mem_limit` and `cpus`, in the spellings the compose
 //! spec writes them.
 //!
-//! Split out of `tests/compose/parsing/parse/basic/mod.rs`; the imports are inherited via
+//! Split out of `tests/compose/parsing/parse/schema/basic/mod.rs`; the imports are inherited via
 //! `use super::*`.
 
 use super::*;

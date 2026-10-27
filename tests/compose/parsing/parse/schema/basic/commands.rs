@@ -1,7 +1,7 @@
 //! `command` and `entrypoint`, in the shell string form and in the exec list
 //! form, both reaching the same exec vector.
 //!
-//! Split out of `tests/compose/parsing/parse/basic/mod.rs`; the imports are inherited via
+//! Split out of `tests/compose/parsing/parse/schema/basic/mod.rs`; the imports are inherited via
 //! `use super::*`.
 
 use super::*;

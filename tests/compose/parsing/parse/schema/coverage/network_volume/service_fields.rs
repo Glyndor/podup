@@ -2,7 +2,7 @@
 //! device layer: `label_file` in both shapes, `attach`, `dns_search` as a list
 //! and `device_cgroup_rules`.
 //!
-//! Split out of `tests/compose/parsing/parse/coverage/network_volume/mod.rs`; the imports are
+//! Split out of `tests/compose/parsing/parse/schema/coverage/network_volume/mod.rs`; the imports are
 //! inherited via `use super::*`.
 
 use super::*;

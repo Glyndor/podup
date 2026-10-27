@@ -1,6 +1,6 @@
 //! `environment`, written as a list and as a map.
 //!
-//! Split out of `tests/compose/parsing/parse/basic/mod.rs`; the imports are inherited via
+//! Split out of `tests/compose/parsing/parse/schema/basic/mod.rs`; the imports are inherited via
 //! `use super::*`.
 
 use super::*;

@@ -1,6 +1,6 @@
 //! Healthcheck disable, explicit and through `test: ["NONE"]`.
 //!
-//! Split out of `tests/compose/parsing/parse/fields/extends_build/mod.rs`; the imports are
+//! Split out of `tests/compose/parsing/parse/schema/fields/extends_build/mod.rs`; the imports are
 //! inherited via `use super::*`.
 
 use super::*;

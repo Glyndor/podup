@@ -1,7 +1,7 @@
 //! Resolving a base service out of another file, and anchoring its relative
 //! paths to that file's directory.
 //!
-//! Split out of `tests/compose/parsing/parse/extends/mod.rs`; the imports are inherited via
+//! Split out of `tests/compose/parsing/parse/reuse/extends/mod.rs`; the imports are inherited via
 //! `use super::*`.
 
 use std::io::Write;

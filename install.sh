@@ -268,7 +268,7 @@ PYEOF
 # provenance (the manifest and the asset are both legitimately signed),
 # but its --version still reports the old release. The self-test refuses
 # such an install the same way the Rust `podup update` does
-# (internal/update/install.rs:152-205).
+# (internal/update/install/self_test.rs:64-120).
 #
 # Strict equality, with one optional leading `v`. Each whitespace-
 # delimited token in the staged binary's --version output is compared
@@ -434,7 +434,7 @@ or python3 with the 'cryptography' package, or set PODUP_RELEASE_PUBKEY_B64, the
 	# is then applied explicitly, masked with ~0o777 so a setuid/setgid/
 	# sticky bit on the target (planted or inherited) cannot ride onto the
 	# freshly installed binary, the same discipline the Rust updater
-	# follows at internal/update/install.rs:237-298. Mirrors what the
+	# follows at internal/update/install/swap.rs:6-97. Mirrors what the
 	# Rust `install_at` does, with `install` swapped for the equivalent
 	# `cp + chmod` because `-m` only sets the mode of the *new* file and
 	# cannot start private then widen.
@@ -466,7 +466,7 @@ or python3 with the 'cryptography' package, or set PODUP_RELEASE_PUBKEY_B64, the
 	# during the window before the chmod applies the target's mode. The
 	# chmod then widens the file to the target's ordinary permission bits,
 	# with the special bits stripped, the same discipline the Rust updater
-	# follows at internal/update/install.rs:237-298.
+	# follows at internal/update/install/swap.rs:6-97.
 	local copy_cmd=(install -m 0600 "${TMP_DIR}/${ARTIFACT}" "$staged")
 	local perms_cmd=(chmod "$target_mode" "$staged")
 	local move_cmd=(mv -f "$staged" "$target")

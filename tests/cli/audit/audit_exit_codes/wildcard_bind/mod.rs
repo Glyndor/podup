@@ -3,7 +3,7 @@
 //! `podup` binary so the parse-time wiring, the registry gate, and
 //! the exit-code flip are exercised the same way an operator runs it.
 //!
-//! Split out of `tests/cli/audit/audit_exit_codes/wildcard_bind.rs` so each file stays
+//! Split out of `tests/cli/audit/audit_exit_codes/wildcard_bind/mod.rs` so each file stays
 //! under the repository line limit; this file holds the helpers and the `mod`
 //! lines, and the scenario files inherit them with `use super::*`.
 

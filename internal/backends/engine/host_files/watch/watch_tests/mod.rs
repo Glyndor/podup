@@ -5,7 +5,7 @@
 //!
 //! These unit tests exercise the per-rule evaluator directly, not the
 //! full watch loop with the notify watcher; the loop integration is
-//! pinned by the live test in `tests/engine_integration/host_files/watch/watch.rs`.
+//! pinned by the live test in `tests/engine/engine_integration/host_files/watch/watch.rs`.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};

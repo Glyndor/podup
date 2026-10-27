@@ -5,7 +5,7 @@
 //! need the same archive dialect, and the way to guarantee that is to have a
 //! single constructor rather than three that agree today.
 //!
-//! `tests/tar_builder_single_site.rs` keeps it single.
+//! `tests/repository/repo_rules/tar_builder_single_site.rs` keeps it single.
 
 /// A `tar::Builder` writing the dialect Podman's archive reader accepts.
 ///

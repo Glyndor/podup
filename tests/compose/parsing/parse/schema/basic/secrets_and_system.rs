@@ -2,7 +2,7 @@
 //! `security_opt`, `devices`, `group_add`, `userns_mode`, `shm_size` and
 //! `cgroup_parent`.
 //!
-//! Split out of `tests/compose/parsing/parse/basic/mod.rs`; the imports are inherited via
+//! Split out of `tests/compose/parsing/parse/schema/basic/mod.rs`; the imports are inherited via
 //! `use super::*`.
 
 use super::*;
