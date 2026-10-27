@@ -77,6 +77,8 @@ Each entry that is not exported gets a warning that names the job, the position 
 ### `watch`
 Watch for file changes and react per each service's `develop.watch` rules. (`up --watch` does the same after starting the stack.) Actions: `sync`, `rebuild`, `restart`, `sync+restart`, `sync+exec`.
 
+Every rule that watches a changed path runs, so two services watching the same directory each get their own copy of the change. A rebuild or a restart runs once per service or container per batch of changes.
+
 Patterns use `.dockerignore` syntax. Context ignore files match paths relative to the build context; rule include/ignore patterns match relative to the rule's path, with last match winning. Legacy project-relative patterns may apply when no rule pattern matches, with a warning; fallback never overrides a re-include.
 
 Sync copies paths that exist and removes deleted ones; watching starts before initial sync. Copies into a writable bind of the watched path are skipped with a warning, while more-specific mounts and restart/exec actions still apply. Symlinks remain links; file-to-directory replacements remain directories.

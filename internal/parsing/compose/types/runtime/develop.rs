@@ -10,8 +10,9 @@ use serde::{Deserialize, Serialize};
 /// `develop:` service key: holds file-watch rules for the `watch` command.
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
 pub struct DevelopConfig {
-	/// The rules in declaration order. `watch` evaluates them in order and the
-	/// first matching path wins, so order is meaningful rather than cosmetic.
+	/// The rules in declaration order. `watch` evaluates them in order, and
+	/// every rule that watches a changed path runs, so order is meaningful
+	/// rather than cosmetic.
 	#[serde(default, skip_serializing_if = "Vec::is_empty")]
 	pub watch: Vec<WatchRule>,
 }

@@ -16,6 +16,7 @@
 
 mod actions;
 mod filtering;
+mod matching;
 mod placement;
 pub(in crate::backends::engine) mod sync;
 #[cfg(feature = "test-helpers")]
@@ -79,6 +80,16 @@ struct RuleEntry {
 	/// flags), shared across every rule of the same service. The per-path
 	/// write-back check runs against this vector.
 	mounts: Arc<Vec<EffectiveMount>>,
+}
+
+/// The state a watch session carries across its batches: which
+/// (container, dest) directories were already ensured with `mkdir -p`, and
+/// which (service, pattern) pairs already produced a legacy-pattern
+/// warning.
+struct WatchState {
+	ensured: HashSet<(String, String)>,
+	legacy_ignored_warned: HashSet<(String, String)>,
+	legacy_included_warned: HashSet<(String, String)>,
 }
 
 // ---------------------------------------------------------------------------
@@ -183,9 +194,18 @@ impl Engine {
 			}
 		}
 
-		// Track which (container, dest) directories have been ensured so the
-		// best-effort `mkdir -p` exec runs once per target rather than per event.
-		let mut ensured: HashSet<(String, String)> = HashSet::new();
+		// The state the session carries across its batches: which
+		// (container, dest) directories have been ensured so the best-effort
+		// `mkdir -p` exec runs once per target rather than per event, and
+		// which (service, pattern) tuples already triggered a legacy
+		// warning. The warning is informational, not per-event: a pattern
+		// that matches a hundred files across a long session should produce
+		// one warning, not a hundred.
+		let mut state = WatchState {
+			ensured: HashSet::new(),
+			legacy_ignored_warned: HashSet::new(),
+			legacy_included_warned: HashSet::new(),
+		};
 
 		// Warn once per (service, target) when a sync target sits on a
 		// `read_only: true` root filesystem with no volume or tmpfs covering it:
@@ -250,24 +270,18 @@ impl Engine {
 			}
 		}
 
-		self.sync_all(&rule_entries, &mut ensured, "initial sync")
+		self.sync_all(&rule_entries, &mut state.ensured, "initial sync")
 			.await;
 
 		info!("watching {} rule(s); Ctrl+C to stop", rule_entries.len());
 
 		let debounce = Duration::from_millis(100);
-		// Track which (service, pattern) tuples already triggered a legacy
-		// warning. The warning is informational, not per-event: a pattern
-		// that matches a hundred files across a long session should produce
-		// one warning, not a hundred.
-		let mut legacy_ignored_warned: HashSet<(String, String)> = HashSet::new();
-		let mut legacy_included_warned: HashSet<(String, String)> = HashSet::new();
 
 		loop {
 			// Overflow check has to run before the `recv` so a flag set by an
 			// `enqueue` racing this iteration does not sit until the next
 			// event; it runs again after dispatch for the same reason.
-			self.recover_from_overflow(&overflow, &rule_entries, &mut ensured)
+			self.recover_from_overflow(&overflow, &rule_entries, &mut state.ensured)
 				.await;
 
 			let event = tokio::select! {
@@ -318,15 +332,41 @@ impl Engine {
 			// A debounce batch may hold many files that map to the same whole-
 			// container action; rebuild/restart each container at most once per
 			// batch. Sync-type actions stay per-file (each changed file is synced).
-			let mut done: std::collections::HashSet<(u8, String)> =
-				std::collections::HashSet::new();
+			let mut done: HashSet<matching::DoneKey> = HashSet::new();
 
-			'outer: for path in &paths {
-				for entry in &rule_entries {
-					if !path.starts_with(&entry.abs_path) {
-						continue;
-					}
+			self.dispatch_batch(file, &paths, &rule_entries, &mut state, &mut done)
+				.await;
 
+			// The recovery check ran before this batch started; an overflow
+			// signal that came in while the batch was being dispatched
+			// would otherwise wait out the next `recv`. The helper is a
+			// no-op when the flag is false.
+			self.recover_from_overflow(&overflow, &rule_entries, &mut state.ensured)
+				.await;
+		}
+
+		Ok(())
+	}
+
+	/// Dispatch one debounce batch: every changed path against every rule
+	/// that watches it.
+	///
+	/// A path can be watched by more than one rule: two services may sync
+	/// the same directory into their own targets, and one service may
+	/// declare two rules over the same path. Every one of them has to run,
+	/// so the scan does not stop at the first match; only the whole-container
+	/// actions collapse, and only for the rule that would repeat them.
+	async fn dispatch_batch(
+		&self,
+		file: &ComposeFile,
+		paths: &[PathBuf],
+		rule_entries: &[RuleEntry],
+		state: &mut WatchState,
+		done: &mut HashSet<matching::DoneKey>,
+	) {
+		for path in paths {
+			let matched =
+				matching::matching_rules(path, rule_entries, done, &mut |entry: &RuleEntry| {
 					let mut ctx = ignore_filter::RuleContext {
 						rule_abs: &entry.abs_path,
 						ctx_abs: entry.build_context_abs.as_deref(),
@@ -334,49 +374,26 @@ impl Engine {
 						service_name: &entry.service_name,
 						rule_path: &entry.rule.path,
 						ctx_patterns: &entry.build_context_patterns,
-						warned: &mut legacy_ignored_warned,
+						warned: &mut state.legacy_ignored_warned,
 					};
 					if ignore_filter::ignored_with_fallback(path, &entry.rule.ignore, &mut ctx) {
-						continue;
+						return false;
 					}
-					ctx.warned = &mut legacy_included_warned;
-					if !ignore_filter::included_with_fallback(path, &entry.rule.include, &mut ctx) {
-						continue;
-					}
+					ctx.warned = &mut state.legacy_included_warned;
+					ignore_filter::included_with_fallback(path, &entry.rule.include, &mut ctx)
+				});
 
-					// Collapse repeated rebuild/restart of the same container within
-					// this batch into one; the action's effect is whole-container, so
-					// a second run is pure waste.
-					let dedup_key = match &entry.rule.action {
-						WatchAction::Rebuild => Some((0, entry.service_name.clone())),
-						WatchAction::Restart => Some((1, entry.container_name.clone())),
-						_ => None,
-					};
-					if let Some(key) = dedup_key {
-						if !done.insert(key) {
-							continue 'outer;
-						}
-					}
+			for entry in matched {
+				debug!("dispatch {:?} for {}", entry.rule.action, path.display());
 
-					debug!("dispatch {:?} for {}", entry.rule.action, path.display());
-
-					if let Err(e) = self.dispatch_action(file, path, entry, &mut ensured).await {
-						warn!("watch action failed: {e}");
-					}
-
-					continue 'outer;
+				if let Err(e) = self
+					.dispatch_action(file, path, entry, &mut state.ensured)
+					.await
+				{
+					warn!("watch action failed: {e}");
 				}
 			}
-
-			// The recovery check ran before this batch started; an overflow
-			// signal that came in while the batch was being dispatched
-			// would otherwise wait out the next `recv`. The helper is a
-			// no-op when the flag is false.
-			self.recover_from_overflow(&overflow, &rule_entries, &mut ensured)
-				.await;
 		}
-
-		Ok(())
 	}
 
 	async fn dispatch_action(
