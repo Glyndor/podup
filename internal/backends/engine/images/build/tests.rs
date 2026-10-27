@@ -105,6 +105,7 @@ async fn invalid_shm_size_is_rejected() {
 /// as a negative number: the container was built with the wrong shared-memory
 /// size, silently. The byte count has to reach the query intact.
 #[tokio::test]
+#[cfg(unix)]
 async fn a_large_shm_size_reaches_the_build_query_intact() {
 	for (declared, expected_bytes) in [("3g", 3_221_225_472i64), ("4g", 4_294_967_296i64)] {
 		let dir = tempfile::tempdir().unwrap();
