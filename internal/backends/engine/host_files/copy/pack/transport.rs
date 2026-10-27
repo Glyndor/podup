@@ -212,6 +212,7 @@ pub(in crate::backends::engine::host_files::copy) fn pack_path_stream(
 /// to drop entries that would land in a deeper bind that maps back into the
 /// watched tree, the only place the packer can detect the loop because the
 /// rule-wide check looks at the rule root, not at every descendant.
+#[cfg(feature = "watch")]
 pub(in crate::backends::engine) fn build_sync_tar_stream(
 	src: &Path,
 	entry_name: &Path,
