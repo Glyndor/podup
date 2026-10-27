@@ -13,7 +13,7 @@ use crate::ports::ParsedPort;
 pub(super) fn render_publish_port(p: &ParsedPort) -> String {
 	let mut s = String::new();
 	if !p.host_ip.is_empty() {
-		s.push_str(&p.host_ip);
+		s.push_str(&bracket_ipv6(&p.host_ip));
 		s.push(':');
 	}
 	// A host port of None/0 means "let Podman pick"; omit it so the published
@@ -28,6 +28,20 @@ pub(super) fn render_publish_port(p: &ParsedPort) -> String {
 		s.push_str(&p.protocol);
 	}
 	s
+}
+
+/// Wrap an IPv6 host address in the brackets Podman expects in a
+/// `PublishPort=` value.
+///
+/// The address carries colons, so without the brackets Podman reads the
+/// first of them as the separator between the address and the port. An
+/// address that already carries the brackets is left alone.
+fn bracket_ipv6(host_ip: &str) -> String {
+	if host_ip.contains(':') && !(host_ip.starts_with('[') && host_ip.ends_with(']')) {
+		format!("[{host_ip}]")
+	} else {
+		host_ip.to_string()
+	}
 }
 
 /// Render a volume mount into a Quadlet `Volume=` value. A source naming a
