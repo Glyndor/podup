@@ -136,3 +136,26 @@ async fn a_run_refuses_a_missing_external_volume() {
 		"no container is created when the volume it mounts does not exist"
 	);
 }
+
+/// Another service's external volume, absent from the host, is not something a
+/// `run` of a service that does not mount it needs. It must neither fail the
+/// run nor be created.
+#[tokio::test]
+async fn a_run_ignores_the_volumes_of_other_services() {
+	let (fake, engine) = engine(false);
+	let file = crate::parse_str(
+		"services:\n  tool:\n    image: img\n  other:\n    image: img\n    volumes:\n      - shared:/data\n    profiles: [never]\nvolumes:\n  shared:\n    external: true\n    name: shared_data\n  mine:\n",
+	)
+	.expect("the fixture parses");
+
+	engine
+		.run(&file, "tool", options())
+		.await
+		.expect("an unrelated missing external volume must not fail the run");
+
+	assert!(first(&fake, "/volumes/shared_data").is_none());
+	assert!(
+		volume_create_body(&fake).is_none(),
+		"a volume nothing in the run mounts was created"
+	);
+}

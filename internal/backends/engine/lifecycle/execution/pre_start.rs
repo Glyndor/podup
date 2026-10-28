@@ -96,6 +96,16 @@ impl Engine {
 	) -> Result<()> {
 		self.run_pre_start(container_name, service_name, service, file)
 			.await?;
+		// A `pre_start` step may write the very `env_file` the service reads, so
+		// the environment captured before it ran can be stale. Read it again once
+		// the steps are done; the label and the payload then describe one snapshot.
+		let refreshed;
+		let env = if service.pre_start.is_empty() {
+			env
+		} else {
+			refreshed = self.effective_env(service)?;
+			&refreshed
+		};
 		self.create_and_start(container_name, service_name, service, file, start, env)
 			.await
 	}
