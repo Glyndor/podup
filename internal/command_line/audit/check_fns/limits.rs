@@ -5,16 +5,15 @@ use super::{finding, Finding};
 // Shared with the engine's `build_resource_limits` (#1894): the audit reads
 // the same memory cap the engine forwards into the OCI spec, applying the
 // top-level/deploy precedence `build_resource_limits` does.
-use podup::effective_memory_limit;
+use podup::{effective_memory_limit, effective_pids_limit};
 
-/// `pids_limit` unset, no ceiling on the number of processes the container
-/// can fork, so a runaway loop can starve the host out of PIDs.
+/// An absent or unlimited effective PID cap lets a runaway loop exhaust PIDs.
 pub fn check_no_pids_limit(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
-	if service.pids_limit.is_none() {
+	if effective_pids_limit(service).is_none_or(|limit| limit == -1) {
 		vec![finding(
 			name,
 			"no_pids_limit",
-			"pids_limit is not set: a fork bomb can exhaust the host's process table",
+			"no finite pids_limit is set: a fork bomb can exhaust the host's process table",
 		)]
 	} else {
 		Vec::new()

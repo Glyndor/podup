@@ -115,30 +115,42 @@ pub fn materialize_env_files(
 	base_dir: &Path,
 ) -> Result<()> {
 	for service in file.services_and_jobs_mut() {
-		let entries = service.env_file.to_entries();
-		if entries.is_empty() {
-			continue;
-		}
-		let from_files = load_env_file_entries(&entries, base_dir)?;
-		let mut merged = service.environment.to_map();
-		for (k, v) in from_files {
-			merged.entry(k).or_insert(Some(v));
-		}
-		let mut keys: Vec<String> = merged.keys().cloned().collect();
-		keys.sort();
-		let map = keys
-			.into_iter()
-			.map(|k| {
-				let value = merged
-					.get(&k)
-					.and_then(|v| v.clone())
-					.map(serde_yaml::Value::String);
-				(k, value)
-			})
-			.collect();
-		service.environment = crate::compose::types::EnvVars::Map(map);
-		service.env_file = crate::compose::types::EnvFile::Empty;
+		materialize_service_env_files(service, base_dir)?;
 	}
+	Ok(())
+}
+
+/// Fold one effective container's env files into its explicit environment.
+/// Call after inheritance so file values do not become explicit overrides
+/// before a pre-start step is merged. Explicit keys win, including bare keys.
+#[doc(hidden)]
+pub fn materialize_service_env_files(
+	service: &mut crate::compose::types::Service,
+	base_dir: &Path,
+) -> Result<()> {
+	let entries = service.env_file.to_entries();
+	if entries.is_empty() {
+		return Ok(());
+	}
+	let from_files = load_env_file_entries(&entries, base_dir)?;
+	let mut merged = service.environment.to_map();
+	for (k, v) in from_files {
+		merged.entry(k).or_insert(Some(v));
+	}
+	let mut keys: Vec<String> = merged.keys().cloned().collect();
+	keys.sort();
+	let map = keys
+		.into_iter()
+		.map(|k| {
+			let value = merged
+				.get(&k)
+				.and_then(|v| v.clone())
+				.map(serde_yaml::Value::String);
+			(k, value)
+		})
+		.collect();
+	service.environment = crate::compose::types::EnvVars::Map(map);
+	service.env_file = crate::compose::types::EnvFile::Empty;
 	Ok(())
 }
 

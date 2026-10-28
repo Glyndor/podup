@@ -170,3 +170,21 @@ fn resolve_bind_sources_rewrites_short_and_long_binds() {
 		other => panic!("expected short, got {other:?}"),
 	}
 }
+
+/// A source that starts with a separator is an absolute host path on every
+/// platform. On Windows `Path::is_absolute` says no to a bare `/`, which made
+/// the audit anchor the host root under the project directory and stop seeing
+/// it as the host root.
+#[test]
+fn a_long_form_bind_of_the_host_root_stays_the_host_root() {
+	let mut file = podup::compose::parse_str(
+		"services:\n  web:\n    image: x\n    volumes:\n      - type: bind\n        source: /\n        target: /host\n",
+	)
+	.unwrap();
+	let service = file.services.get_mut("web").unwrap();
+	anchor_service_bind_sources(service, Path::new("/srv/app"));
+	match &service.volumes[0] {
+		VolumeMount::Long { source, .. } => assert_eq!(source.as_deref(), Some("/")),
+		other => panic!("expected the long form, got {other:?}"),
+	}
+}

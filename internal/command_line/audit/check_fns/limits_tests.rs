@@ -109,3 +109,52 @@ fn audit_no_memory_limit_flags_an_unparseable_limit() {
 		"a mem_limit the runtime cannot parse must still fire: {report:#?}"
 	);
 }
+
+#[test]
+fn audit_no_pids_limit_uses_the_effective_cap() {
+	for (top, deploy, expected) in [
+		(None, None, true),
+		(Some(-1), None, true),
+		(None, Some(64), false),
+		(Some(-1), Some(64), true),
+		(Some(32), Some(64), false),
+		(Some(32), None, false),
+	] {
+		let top = top
+			.map(|v| format!("    pids_limit: {v}\n"))
+			.unwrap_or_default();
+		let deploy = deploy
+			.map(|v| {
+				format!("    deploy:\n      resources:\n        limits:\n          pids: {v}\n")
+			})
+			.unwrap_or_default();
+		let findings = report_for(&format!(
+			"services:\n  web:\n    image: alpine:3.20\n{top}{deploy}"
+		));
+		assert_eq!(
+			findings.iter().any(|f| f.check == "no_pids_limit"),
+			expected,
+			"top={top:?}, deploy={deploy:?}: {findings:#?}"
+		);
+	}
+}
+
+/// A deploy value that does not fit a signed 64-bit integer used to wrap to a
+/// negative number, which the check read as the `-1` of "unlimited".
+#[test]
+fn audit_no_pids_limit_does_not_wrap_an_oversized_deploy_value() {
+	let yaml = r#"
+services:
+  web:
+    image: alpine:3.20
+    deploy:
+      resources:
+        limits:
+          pids: 18446744073709551615
+"#;
+	let findings = report_for(yaml);
+	assert!(
+		!findings.iter().any(|f| f.check == "no_pids_limit"),
+		"a huge finite cap is not the unlimited sentinel: {findings:#?}"
+	);
+}

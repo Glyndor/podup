@@ -4,7 +4,7 @@
 //!
 //! Checks live as a flat list of pure functions over the parsed
 //! [`podup::compose::types::Service`]. Each check returns the list of
-//! [`Finding`]s it raised; [`audit_file`] walks the file and the
+//! [`Finding`]s it raised; [`audit_containers`] walks the file and the
 //! [`render_table`]/[`render_json`] functions translate the result into the
 //! `--format table|json` output the CLI asked for. `audit --list-checks` does
 //! not walk a compose file at all: it enumerates the same registry the audit
@@ -59,7 +59,7 @@ impl AuditReport {
 	}
 
 	/// Group every finding by container name, preserving the container order
-	/// ([`audit_file`] visits the services in YAML order). The findings
+	/// ([`audit_containers`] visits the services in YAML order). The findings
 	/// inside each group stay as refs into `self` so the renderer can pull
 	/// the check id and reason without cloning.
 	fn by_service<'a, 'b>(
@@ -95,9 +95,19 @@ impl AuditReport {
 ///
 /// Pure: no I/O, no logging, no global state. The callers wire the result
 /// into whichever renderer matches `--format`.
+#[cfg(test)]
 pub fn audit_file(file: &ComposeFile, opt_in: &[&'static str]) -> AuditReport {
+	audit_containers(file, &audited_containers(file), opt_in)
+}
+
+/// Check already prepared containers without repeating inheritance or file I/O.
+pub fn audit_containers(
+	file: &ComposeFile,
+	containers: &[AuditedContainer],
+	opt_in: &[&'static str],
+) -> AuditReport {
 	let mut report = AuditReport::default();
-	for container in audited_containers(file) {
+	for container in containers {
 		let findings = checks::run_checks(&container.name, &container.service, file, opt_in);
 		report.findings.extend(findings);
 	}
@@ -132,6 +142,30 @@ pub fn audited_containers(file: &ComposeFile) -> Vec<AuditedContainer> {
 	out
 }
 
+/// Expand effective containers before materializing env files or resolving binds.
+/// This preserves the runtime's file/environment precedence for init steps.
+pub fn prepare_containers(
+	file: &ComposeFile,
+	base_dir: &std::path::Path,
+) -> podup::Result<Vec<AuditedContainer>> {
+	let mut containers = audited_containers(file);
+	for container in &mut containers {
+		podup::env_file::materialize_service_env_files(&mut container.service, base_dir)?;
+		crate::startup::anchor_service_bind_sources(&mut container.service, base_dir);
+	}
+	Ok(containers)
+}
+
+/// Whether the full output reached its sink. A closed pipe ends the command
+/// silently; other I/O failures propagate instead of hiding a truncated report.
+pub fn output_complete(result: io::Result<()>) -> podup::Result<bool> {
+	match result {
+		Ok(()) => Ok(true),
+		Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Ok(false),
+		Err(e) => Err(e.into()),
+	}
+}
+
 /// Render `report` for `containers` in `table` form to stdout.
 ///
 /// Layout: header `SERVICE FINDINGS`, one row per service with the check ids
@@ -146,10 +180,11 @@ pub fn audited_containers(file: &ComposeFile) -> Vec<AuditedContainer> {
 /// a malicious compose file injects raw ESC bytes into the operator's
 /// terminal, and the bytes survive a pipe because `println!` is just a
 /// byte stream.
-pub fn render_table(containers: &[AuditedContainer], report: &AuditReport) {
+pub fn render_table(containers: &[AuditedContainer], report: &AuditReport) -> io::Result<()> {
 	let stdout = io::stdout();
 	let mut out = stdout.lock();
-	let _ = render_table_to(&mut out, containers, report);
+	render_table_to(&mut out, containers, report)?;
+	out.flush()
 }
 
 /// [`render_table`] writing to `w`, factored out so tests can capture the
@@ -197,10 +232,11 @@ pub fn render_table_to<W: Write>(
 ///
 /// Empty finding lists emit `{"findings":[]}`, never `null`, so an empty
 /// body is still valid JSON without the consumer having to special-case it.
-pub fn render_json(report: &AuditReport) {
+pub fn render_json(report: &AuditReport) -> io::Result<()> {
 	let stdout = io::stdout();
 	let mut out = stdout.lock();
-	render_json_to(&mut out, report).expect("write to stdout");
+	render_json_to(&mut out, report)?;
+	out.flush()
 }
 
 /// [`render_json`] writing to `w`. JSON output is already safe from terminal
@@ -230,10 +266,11 @@ pub fn render_json_to<W: Write>(w: &mut W, report: &AuditReport) -> io::Result<(
 /// description is the prose summary drift detection diffs between releases.
 /// `--list-checks` runs without a compose file, so the listing comes straight
 /// from the registry rather than from any parsed input.
-pub fn render_list_checks_table() {
+pub fn render_list_checks_table() -> io::Result<()> {
 	let stdout = io::stdout();
 	let mut out = stdout.lock();
-	let _ = render_list_checks_table_to(&mut out);
+	render_list_checks_table_to(&mut out)?;
+	out.flush()
 }
 
 /// [`render_list_checks_table`] writing to `w`. The id and description are
@@ -261,10 +298,11 @@ pub fn render_list_checks_table_to<W: Write>(w: &mut W) -> io::Result<()> {
 /// `audit --format json` (`findings` is `[]`, `checks` is the listing), so a
 /// JSON parser treats the two as siblings of the same envelope rather than
 /// two unrelated shapes.
-pub fn render_list_checks_json() {
+pub fn render_list_checks_json() -> io::Result<()> {
 	let stdout = io::stdout();
 	let mut out = stdout.lock();
-	render_list_checks_json_to(&mut out).expect("write to stdout");
+	render_list_checks_json_to(&mut out)?;
+	out.flush()
 }
 
 /// [`render_list_checks_json`] writing to `w`. `serde_json` orders the
@@ -297,3 +335,11 @@ mod pre_start_tests;
 #[cfg(test)]
 #[path = "audit_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "pre_start_resolution_tests.rs"]
+mod pre_start_resolution_tests;
+
+#[cfg(test)]
+#[path = "output_tests.rs"]
+mod output_tests;

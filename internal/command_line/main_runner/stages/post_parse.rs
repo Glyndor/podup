@@ -113,10 +113,7 @@ pub(crate) fn render_audit(
 	podup::ui::set_services(&file.services.keys().cloned().collect::<Vec<_>>());
 	let mut resolved = file.clone();
 	podup::retain_active_profiles(&mut resolved, &cli.profile);
-	podup::env_file::materialize_env_files(&mut resolved, &base_dir)?;
-	// Judge a relative bind source by where it lands, the way `config` shows it
-	// and the engine mounts it, not by the text that was written.
-	crate::startup::resolve_bind_sources(&mut resolved, &base_dir);
+	let containers = audit::prepare_containers(&resolved, &base_dir)?;
 	// `--wildcard-binds` is opt-in; collect the enabled flags into the slice
 	// the registry reads so a future opt-in check only needs a new
 	// `opt_in: Some("--new-flag")` here (#1881).
@@ -124,10 +121,13 @@ pub(crate) fn render_audit(
 	if *wildcard_binds {
 		opt_in.push("--wildcard-binds");
 	}
-	let report = audit::audit_file(&resolved, &opt_in);
-	match format {
-		AuditFormat::Table => audit::render_table(&audit::audited_containers(&resolved), &report),
+	let report = audit::audit_containers(&resolved, &containers, &opt_in);
+	let output = match format {
+		AuditFormat::Table => audit::render_table(&containers, &report),
 		AuditFormat::Json => audit::render_json(&report),
+	};
+	if !audit::output_complete(output)? {
+		return Ok(());
 	}
 	if *strict && report.has_findings() {
 		std::process::exit(1);
