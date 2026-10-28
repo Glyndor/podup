@@ -12,7 +12,9 @@ use std::path::PathBuf;
 use crate::compose::types::{BuildConfig, ComposeFile, Service};
 use crate::error::{ComposeError, Result};
 
-use super::super::context::INLINE_DOCKERFILE_NAME;
+use super::super::context::{
+	dockerfile_leaves_context, INLINE_DOCKERFILE_NAME, OUTSIDE_DOCKERFILE_NAME,
+};
 use super::super::is_remote_context;
 use super::super::{BodyPlan, Engine};
 use super::stream::ContextSource;
@@ -94,7 +96,32 @@ pub(in crate::backends::engine) fn plan_build(
 				}
 				None => "Dockerfile".to_string(),
 			};
-			(ContextSource::Dockerfile(df.clone()), df)
+			if dockerfile_leaves_context(&context_path, &df) {
+				// A Dockerfile outside the context never reaches the daemon
+				// on its own: the `dockerfile` parameter is resolved against
+				// the extracted context, where a path that leaves it is not
+				// there. Compose allows it (its illustrative example uses
+				// `dockerfile: ../backend.Dockerfile` with `context:
+				// backend`), so the file is read here and shipped inside the
+				// tar under a name the build reserves.
+				let path = context_path.join(&df);
+				let bytes = crate::filesystem::read_capped(&path).map_err(|e| {
+					ComposeError::BuildContext {
+						service: service_name.to_string(),
+						path: path.display().to_string(),
+						source: e,
+					}
+				})?;
+				(
+					ContextSource::OutsideContext {
+						name: OUTSIDE_DOCKERFILE_NAME.to_string(),
+						bytes,
+					},
+					OUTSIDE_DOCKERFILE_NAME.to_string(),
+				)
+			} else {
+				(ContextSource::Dockerfile(df.clone()), df)
+			}
 		}
 	};
 	Ok(BuildPlan {

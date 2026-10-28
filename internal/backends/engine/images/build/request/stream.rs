@@ -31,13 +31,26 @@ const CHANNEL_CAP: usize = 8;
 /// is a handful of sizeable chunks rather than thousands of tiny ones.
 const CHUNK_BYTES: usize = 64 * 1024;
 
-/// Which Dockerfile the context ships: one synthesized from an inline string, or
-/// a named file already inside the context directory.
+/// Which Dockerfile the context ships: one synthesized from an inline string, a
+/// named file already inside the context directory, or a file that lives
+/// outside the context and travels inside the tar.
 pub(in crate::backends::engine::images::build) enum ContextSource {
 	/// `build.dockerfile_inline` content.
 	Inline(String),
 	/// The resolved Dockerfile/Containerfile name within the context.
 	Dockerfile(String),
+	/// A Dockerfile that lives outside the build context.
+	///
+	/// The daemon resolves the `dockerfile` request parameter against the
+	/// extracted context, where a path that leaves the context is not there.
+	/// The file is read on the client and shipped inside the tar under
+	/// `name`, a name the build reserves.
+	OutsideContext {
+		/// The reserved tar entry name.
+		name: String,
+		/// The Dockerfile's bytes.
+		bytes: Vec<u8>,
+	},
 }
 
 /// A [`Write`] sink that forwards the tar bytes to an async channel as `Bytes`
@@ -105,6 +118,14 @@ pub(in crate::backends::engine::images::build) fn context_body(
 			}
 			ContextSource::Dockerfile(dockerfile) => {
 				stream_build_context(&mut writer, &context, &dockerfile, &secret_files)
+			}
+			ContextSource::OutsideContext { name, bytes } => {
+				// The Dockerfile travels inside the tar under a reserved
+				// name, so the context tree must not carry a file with that
+				// name: the daemon extracts the entries in order.
+				let mut files = secret_files;
+				files.push((name.clone(), bytes));
+				stream_build_context(&mut writer, &context, &name, &files)
 			}
 		}
 	});

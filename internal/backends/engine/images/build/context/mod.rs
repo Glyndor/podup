@@ -8,7 +8,7 @@
 //! both exist; exactly one applies, never the union. The matcher itself lives
 //! in [`crate::engine::context::ignore_patterns`] so the watch engine can share it.
 
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use flate2::write::GzEncoder;
 use flate2::Compression;
@@ -163,6 +163,47 @@ fn append_extra_files<W: std::io::Write>(
 /// The `.dockerfile-inline` entry name synthesized for an inline Dockerfile.
 pub(super) const INLINE_DOCKERFILE_NAME: &str = ".dockerfile-inline";
 
+/// The tar entry name reserved for a Dockerfile that lives outside the build
+/// context.
+///
+/// The daemon resolves the `dockerfile` request parameter against the
+/// extracted context, so a path that leaves the context names a file that is
+/// not there. Such a Dockerfile is read on the client and shipped inside the
+/// tar under this name instead.
+pub(super) const OUTSIDE_DOCKERFILE_NAME: &str = ".podup-build-dockerfile";
+
+/// Whether `dockerfile` names a path that leaves `context`.
+///
+/// The comparison is lexical: `.` and `..` components are folded away and the
+/// two paths are compared component by component, so a path that stays inside
+/// the context is recognised as such without touching the filesystem. An
+/// absolute path is left to the daemon, which reads it from its own
+/// filesystem.
+pub(super) fn dockerfile_leaves_context(context: &Path, dockerfile: &str) -> bool {
+	let candidate = Path::new(dockerfile);
+	if candidate.is_absolute() {
+		return false;
+	}
+	let context = fold_dot_segments(context);
+	let candidate = fold_dot_segments(&context.join(candidate));
+	!candidate.starts_with(&context)
+}
+
+/// Fold `.` and `..` components away, without touching the filesystem.
+fn fold_dot_segments(path: &Path) -> PathBuf {
+	let mut out = PathBuf::new();
+	for component in path.components() {
+		match component {
+			Component::CurDir => {}
+			Component::ParentDir => {
+				out.pop();
+			}
+			other => out.push(other.as_os_str()),
+		}
+	}
+	out
+}
+
 /// Assemble the gzipped build-context tar and write it straight to `writer`.
 ///
 /// This is the shared core of context assembly. `build_context_tar` wraps it
@@ -179,22 +220,31 @@ pub(super) fn stream_build_context<W: std::io::Write>(
 	let encoder = GzEncoder::new(writer, Compression::default());
 	let mut tar = crate::engine::context::tar_stream::builder(encoder);
 
+	// The names podup synthesizes are reserved: a file in the context
+	// carrying one of them would land in the tar next to the synthesized
+	// entry, and the daemon extracts the entries in order, so the context
+	// file could replace the Dockerfile or the secret the build was asked to
+	// use.
+	let mut skip: Vec<&str> = extra_files.iter().map(|(n, _)| n.as_str()).collect();
 	// Force-include the active Dockerfile so an ignore file that matches it
 	// cannot drop it from the context the builder receives (Docker parity).
+	// A Dockerfile that ships inside the tar under a reserved name is not
+	// force-included: the synthesized entry is the one that must survive.
+	let force: Vec<&str> = if extra_files.iter().any(|(n, _)| n.as_str() == dockerfile) {
+		Vec::new()
+	} else {
+		vec![dockerfile]
+	};
+
 	if extra_files.is_empty() {
-		append_context(&mut tar, context, &ignore_patterns, &[], &[dockerfile])?;
+		append_context(&mut tar, context, &ignore_patterns, &skip, &force)?;
 	} else {
 		// Skip the user's ignore file; it is rewritten with an exclusion per
 		// synthesized entry so a `COPY .` in the build cannot bake secret bytes
 		// into image layers. It must be skipped and re-emitted under the same
 		// name the server will read, or the exclusions never apply.
-		append_context(
-			&mut tar,
-			context,
-			&ignore_patterns,
-			&[ignore_name],
-			&[dockerfile],
-		)?;
+		skip.push(ignore_name);
+		append_context(&mut tar, context, &ignore_patterns, &skip, &force)?;
 		let synthesized: Vec<&str> = extra_files.iter().map(|(n, _)| n.as_str()).collect();
 		append_ignore_file(
 			&mut tar,
@@ -232,14 +282,11 @@ pub(super) fn stream_build_context_with_inline<W: std::io::Write>(
 	// The inline Dockerfile's own name is reserved: a file in the context
 	// carrying it would land in the tar after the synthesized entry, and the
 	// daemon extracts the entries in order, so that file would replace the
-	// Dockerfile the build was asked to use.
-	append_context(
-		&mut tar,
-		context,
-		&ignore_patterns,
-		&[ignore_name, INLINE_DOCKERFILE_NAME],
-		&[],
-	)?;
+	// Dockerfile the build was asked to use. The synthesized extra files are
+	// reserved for the same reason.
+	let mut skip: Vec<&str> = vec![ignore_name, INLINE_DOCKERFILE_NAME];
+	skip.extend(extra_files.iter().map(|(n, _)| n.as_str()));
+	append_context(&mut tar, context, &ignore_patterns, &skip, &[])?;
 
 	let mut synthesized: Vec<&str> = vec![INLINE_DOCKERFILE_NAME];
 	synthesized.extend(extra_files.iter().map(|(n, _)| n.as_str()));
