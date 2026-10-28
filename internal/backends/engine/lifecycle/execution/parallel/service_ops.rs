@@ -10,6 +10,15 @@ use crate::engine::Engine;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
+/// How long the wait that follows a kill may block before podup gives up on
+/// it.
+///
+/// The signal has already been delivered and acknowledged by the daemon, so
+/// the wait only observes the exit. A container that was SIGKILLed is reaped
+/// in milliseconds, so this is generous; it is here so that a daemon that
+/// takes the request and never answers it cannot pin the CLI.
+const KILL_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 impl Engine {
 	/// Stop a single service's live containers, as one unit of work in a
 	/// concurrent level. See [`Engine::stop`]. Takes its container names from
@@ -126,7 +135,8 @@ impl Engine {
 				Ok(true) => {
 					acted.store(true, std::sync::atomic::Ordering::Relaxed);
 					if wait_for_exit {
-						self.wait_after_kill(&container_name).await;
+						self.wait_after_kill(&container_name, KILL_WAIT_TIMEOUT)
+							.await;
 					}
 				}
 				Ok(false) => {}
@@ -139,20 +149,31 @@ impl Engine {
 	}
 
 	/// Block until `container` is exited or stopped, the way the Docker
-	/// compat `/kill` handler did for SIGKILL/0. Capped by [`READ_TIMEOUT`]
-	/// so a stuck wait cannot pin the CLI forever; the kill itself
-	/// already succeeded, so a timeout here is logged at warn and not
-	/// promoted to an error.
-	async fn wait_after_kill(&self, container: &str) {
+	/// compat `/kill` handler did for SIGKILL/0.
+	///
+	/// Bounded by `budget`: the kill itself has already been delivered and
+	/// acknowledged, so this wait only observes the exit. A daemon that takes
+	/// the request and never answers it must not pin the CLI forever. A
+	/// timeout here is logged at warn and not promoted to an error, because
+	/// the signal was delivered and the container is left to settle on its
+	/// own.
+	async fn wait_after_kill(&self, container: &str, budget: std::time::Duration) {
 		let path = format!(
 			"{API_PREFIX}/containers/{}/wait?condition=stopped",
 			urlencoded(container),
 		);
-		match self.client.post_empty_json_unbounded::<i64>(&path).await {
-			Ok(_code) => {}
-			Err(e) => {
+		let wait = self.client.post_empty_json_unbounded::<i64>(&path);
+		match tokio::time::timeout(budget, wait).await {
+			Ok(Ok(_code)) => {}
+			Ok(Err(e)) => {
 				tracing::warn!(
 					"kill {container}: wait for exited/stopped did not complete [{e}]; \
+					 the container is left to settle on its own"
+				);
+			}
+			Err(_elapsed) => {
+				tracing::warn!(
+					"kill {container}: wait for exited/stopped did not complete in time; \
 					 the container is left to settle on its own"
 				);
 			}
@@ -232,3 +253,7 @@ impl Engine {
 		first_err.map_or(Ok(()), Err)
 	}
 }
+
+#[cfg(all(test, unix))]
+#[path = "service_ops_tests.rs"]
+mod tests;

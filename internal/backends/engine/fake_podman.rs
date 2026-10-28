@@ -55,6 +55,15 @@ pub(super) enum FakeReply {
 	/// band, and until this existed neither discriminator had a test that could
 	/// reach it.
 	ClosedWithoutResponse,
+	/// The request is read and accepted, and the connection is **held open with
+	/// no response at all**, for a bounded time.
+	///
+	/// This is the shape of a daemon that takes a request and never answers it:
+	/// the client blocks on the read until its own deadline ends the wait.
+	/// Nothing on the wire tells it apart from a daemon that is merely slow,
+	/// which is exactly why the client needs a deadline rather than trusting the
+	/// peer to answer.
+	Silent,
 	/// A status line and the given headers, with no body. What a `HEAD` gets.
 	///
 	/// The container-archive stat lives entirely in a response header
@@ -309,6 +318,13 @@ async fn serve_one(
 		FakeReply::ClosedWithoutResponse => {
 			// Write nothing. The shutdown below is the entire reply.
 		}
+		FakeReply::Silent => {
+			// The request was read; the connection stays open without a
+			// response, so the client blocks on the read until its own
+			// deadline ends the wait. The hold is bounded so a client that
+			// never times out cannot pin the fake.
+			tokio::time::sleep(SILENT_HOLD).await;
+		}
 		FakeReply::Headers(status, headers) => {
 			let mut response = format!(
 				"HTTP/1.1 {status} {reason}\r\ncontent-length: 0\r\nconnection: close\r\n",
@@ -348,6 +364,13 @@ async fn serve_one(
 /// How long the fake waits for the client to finish sending on a hijacked
 /// connection before giving up on it.
 const HIJACK_READ_BUDGET: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long the fake holds a silent connection open before letting it go.
+///
+/// The hold is longer than any client deadline the engine uses, so the client
+/// is the one that gives up; the fake only needs to keep the peer from
+/// answering for that long.
+const SILENT_HOLD: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// Read what the client sends on a hijacked connection into `received`, until
 /// the client closes its half of it.
