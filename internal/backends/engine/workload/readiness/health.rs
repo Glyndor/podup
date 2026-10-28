@@ -45,19 +45,24 @@ enum HealthVerdict {
 /// behaviour can be unit-tested without a live Podman socket.
 fn classify_health(info: &ContainerInspect) -> HealthVerdict {
 	if let Some(state) = &info.state {
-		if let Some(health) = &state.health {
-			if health.status.as_deref() == Some("healthy") {
-				return HealthVerdict::Healthy;
-			}
-		}
 		// A container that has already exited can never become healthy. If it
 		// exited non-zero the service failed to start, so fail the wait instead of
 		// reporting it satisfied (which would mask the failure in `up --wait`/CI).
 		// An exit code of 0 is a one-shot that completed; let it fall through.
+		//
+		// This is read before the health status, because the status is the last
+		// one the daemon recorded and it is not cleared when the container dies:
+		// a container that was healthy and then exited with a failure still says
+		// "healthy", and that stale answer must not hide the failure.
 		if state.status.as_deref() == Some("exited") {
 			let code = state.exit_code.unwrap_or(0);
 			if code != 0 {
 				return HealthVerdict::Failed(code);
+			}
+		}
+		if let Some(health) = &state.health {
+			if health.status.as_deref() == Some("healthy") {
+				return HealthVerdict::Healthy;
 			}
 		}
 	}

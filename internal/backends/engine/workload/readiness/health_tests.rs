@@ -117,6 +117,17 @@ fn health_exited_nonzero_fails() {
 }
 
 #[test]
+fn an_earlier_health_does_not_hide_a_failed_exit() {
+	// The health status is the last one the daemon recorded, and it is not
+	// cleared when the container dies. A container that was healthy and then
+	// exited with a failure still says "healthy", and reporting it as ready
+	// masked the failure the wait exists to catch.
+	let info =
+		inspect(r#"{"State":{"Status":"exited","ExitCode":7,"Health":{"Status":"healthy"}}}"#);
+	assert!(matches!(classify_health(&info), HealthVerdict::Failed(7)));
+}
+
+#[test]
 fn health_exited_zero_is_satisfied() {
 	// A one-shot that completed cleanly with no healthcheck is still satisfied.
 	let info = inspect(r#"{"State":{"Status":"exited","ExitCode":0}}"#);
