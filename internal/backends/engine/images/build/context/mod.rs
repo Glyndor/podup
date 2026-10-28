@@ -256,6 +256,19 @@ pub(super) fn stream_build_context<W: std::io::Write>(
 	finish_tar(tar)
 }
 
+/// Pack a directory into a gzipped tar, with no ignore rules.
+///
+/// The additional build contexts are separate trees the build names as
+/// `name`; each one travels in its own part of the request body, and the
+/// daemon extracts it on its own. The ignore file of the main context does
+/// not apply to them.
+pub(super) fn stream_directory_tar<W: std::io::Write>(writer: W, dir: &Path) -> Result<()> {
+	let encoder = GzEncoder::new(writer, Compression::default());
+	let mut tar = crate::engine::context::tar_stream::builder(encoder);
+	append_context(&mut tar, dir, &[], &[], &[])?;
+	finish_tar(tar)
+}
+
 /// As [`stream_build_context`], but injects an inline Dockerfile as
 /// [`INLINE_DOCKERFILE_NAME`] instead of shipping one from the context.
 pub(super) fn stream_build_context_with_inline<W: std::io::Write>(
@@ -380,18 +393,41 @@ fn synthesized_ignore_file(context: &Path, name: &str, names: &[&str]) -> String
 	out
 }
 
-/// Map a compose `additional_contexts` value to the libpod
-/// `additionalbuildcontexts` form: `image:`, `url:`, or `localpath:`.
-pub(super) fn map_additional_context(base_dir: &Path, value: &str) -> String {
+/// How a compose `additional_contexts` value reaches the daemon.
+pub(super) enum AdditionalKind {
+	/// An image the daemon pulls itself.
+	Image(String),
+	/// A URL the daemon downloads itself.
+	Url(String),
+	/// A directory the client reads and sends in the request body.
+	Local(PathBuf),
+}
+
+/// Classify a compose `additional_contexts` value.
+///
+/// The daemon fetches the image and the URL forms itself. A directory is
+/// the client's to read: the endpoint reads a local context from the
+/// request body, not from the query.
+pub(super) fn additional_context_kind(base_dir: &Path, value: &str) -> AdditionalKind {
 	if let Some(img) = value.strip_prefix("docker-image://") {
-		format!("image:{img}")
+		AdditionalKind::Image(img.to_string())
 	} else if value.starts_with("http://")
 		|| value.starts_with("https://")
 		|| value.starts_with("git://")
 	{
-		format!("url:{value}")
+		AdditionalKind::Url(value.to_string())
 	} else {
-		format!("localpath:{}", base_dir.join(value).display())
+		AdditionalKind::Local(base_dir.join(value))
+	}
+}
+
+/// Map a compose `additional_contexts` value to the libpod
+/// `additionalbuildcontexts` form: `image:`, `url:`, or `localpath:`.
+pub(super) fn map_additional_context(base_dir: &Path, value: &str) -> String {
+	match additional_context_kind(base_dir, value) {
+		AdditionalKind::Image(img) => format!("image:{img}"),
+		AdditionalKind::Url(url) => format!("url:{url}"),
+		AdditionalKind::Local(path) => format!("localpath:{}", path.display()),
 	}
 }
 

@@ -98,6 +98,11 @@ pub(super) struct FakePodman {
 	/// JSON payload of a `POST` (e.g. the `SpecGenerator` sent to
 	/// `/containers/create`) read this.
 	pub(super) bodies: Arc<Mutex<Vec<Vec<u8>>>>,
+	/// The `Content-Type` header of every request answered so far, in the same
+	/// order as [`requests`](Self::requests). Empty when the request carried
+	/// no such header. The build request is the one that needs it: the
+	/// endpoint reads a multipart body only when the header says so.
+	pub(super) content_types: Arc<Mutex<Vec<String>>>,
 	_dir: tempfile::TempDir,
 	task: JoinHandle<()>,
 }
@@ -143,9 +148,11 @@ where
 	let respond: Arc<Responder> = Arc::new(respond);
 	let requests: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 	let bodies: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
+	let content_types: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
 
 	let task_requests = requests.clone();
 	let task_bodies = bodies.clone();
+	let task_content_types = content_types.clone();
 	let task = tokio::spawn(async move {
 		loop {
 			let Ok((stream, _)) = listener.accept().await else {
@@ -154,8 +161,10 @@ where
 			let respond = respond.clone();
 			let requests = task_requests.clone();
 			let bodies = task_bodies.clone();
+			let content_types = task_content_types.clone();
 			tokio::spawn(async move {
-				let _ = serve_one(stream, respond.as_ref(), &requests, &bodies).await;
+				let _ =
+					serve_one(stream, respond.as_ref(), &requests, &bodies, &content_types).await;
 			});
 		}
 	});
@@ -164,6 +173,7 @@ where
 		sock_path,
 		requests,
 		bodies,
+		content_types,
 		_dir: dir,
 		task,
 	}
@@ -177,6 +187,7 @@ async fn serve_one(
 	respond: &Responder,
 	requests: &Mutex<Vec<String>>,
 	bodies: &Mutex<Vec<Vec<u8>>>,
+	content_types: &Mutex<Vec<String>>,
 ) -> std::io::Result<()> {
 	let mut buf = Vec::new();
 	let mut chunk = [0u8; 1024];
@@ -255,6 +266,16 @@ async fn serve_one(
 
 	requests.lock().unwrap().push(format!("{method} {target}"));
 	bodies.lock().unwrap().push(body);
+	content_types.lock().unwrap().push(
+		head.lines()
+			.find_map(|l| {
+				l.strip_prefix("Content-Type: ")
+					.or_else(|| l.strip_prefix("content-type: "))
+			})
+			.unwrap_or_default()
+			.trim()
+			.to_string(),
+	);
 
 	match respond(&method, &target) {
 		FakeReply::Body(status, body) => {

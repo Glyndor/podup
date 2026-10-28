@@ -7,8 +7,8 @@
 //! here. The body-plan decision lives in [`super::request::body_plan`]; the
 //! `apply_extra_tags` follow-up lives in [`super::names::extra_tags`].
 
-mod capture;
 mod cache;
+mod capture;
 mod steps;
 mod upload;
 
@@ -25,11 +25,11 @@ use crate::libpod::validate::pre_validate_build;
 use crate::libpod::{urlencoded, API_PREFIX};
 use crate::size;
 
-use self::capture::BuildCapture;
 use self::cache::{references, CacheField};
+use self::capture::BuildCapture;
 use self::steps::{parse_image_id_line, BuildStreamProgress};
 use super::names::looks_like_secret;
-use super::request::{context_body, plan_build};
+use super::request::{context_body, multipart, plan_build};
 use super::{context::map_additional_context, BodyPlan, BuildOptions, Engine};
 
 impl Engine {
@@ -65,6 +65,7 @@ impl Engine {
 		let body_plan = plan.body;
 		let dockerfile_name = plan.dockerfile;
 		let secret_specs = plan.secrets;
+		let additional_contexts = plan.additional;
 
 		let arg_map = build.args().to_map();
 		let mut build_args: std::collections::HashMap<String, String> =
@@ -322,16 +323,37 @@ impl Engine {
 		let path = format!("{API_PREFIX}/build?{qs}");
 		let mut producer = None;
 		let resp = match body_plan {
-			BodyPlan::Empty => self
+			BodyPlan::Empty if additional_contexts.is_empty() => self
 				.client
 				.post_bytes_stream(&path, Bytes::new(), "application/x-tar")
 				.await
 				.map_err(ComposeError::Podman)?,
+			BodyPlan::Empty => {
+				// The daemon fetches the main context itself, but the local
+				// additional contexts are the client's to send: each one
+				// travels in a part of the body.
+				let boundary = multipart::boundary();
+				let (writer, body) =
+					multipart::multipart_body(boundary.clone(), None, additional_contexts);
+				producer = Some(writer);
+				let content_type = format!("multipart/form-data; boundary={boundary}");
+				let sent = self
+					.client
+					.post_stream_body(&path, body, &content_type)
+					.await;
+				match sent {
+					Ok(resp) => resp,
+					Err(e) => {
+						let _ = upload::finish_upload(producer).await;
+						return Err(ComposeError::Podman(e));
+					}
+				}
+			}
 			BodyPlan::Stream {
 				context,
 				source,
 				secrets,
-			} => {
+			} if additional_contexts.is_empty() => {
 				// A response head can arrive before the request body is sent.
 				// Keep the producer until response polling has driven the HTTP
 				// connection, then drop the body before joining or cancelling it.
@@ -340,6 +362,33 @@ impl Engine {
 				let sent = self
 					.client
 					.post_stream_body(&path, body, "application/x-tar")
+					.await;
+				match sent {
+					Ok(resp) => resp,
+					Err(e) => {
+						let _ = upload::finish_upload(producer).await;
+						return Err(ComposeError::Podman(e));
+					}
+				}
+			}
+			BodyPlan::Stream {
+				context,
+				source,
+				secrets,
+			} => {
+				// The endpoint reads the main context from the `MainContext` part and
+				// each local additional context from a part of its own, so the body is
+				// a multipart document. Same upload discipline as above: the producer
+				// is kept until the response has been polled, then stopped.
+				let boundary = multipart::boundary();
+				let main = Some((context, source, secrets));
+				let (writer, body) =
+					multipart::multipart_body(boundary.clone(), main, additional_contexts);
+				producer = Some(writer);
+				let content_type = format!("multipart/form-data; boundary={boundary}");
+				let sent = self
+					.client
+					.post_stream_body(&path, body, &content_type)
 					.await;
 				match sent {
 					Ok(resp) => resp,

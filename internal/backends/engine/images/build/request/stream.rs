@@ -20,16 +20,16 @@ use crate::error::Result;
 
 /// Items handed to the request body: a data frame, or a terminal error that
 /// aborts the upload.
-type BodyItem = io::Result<Frame<Bytes>>;
+pub(in crate::backends::engine::images::build) type BodyItem = io::Result<Frame<Bytes>>;
 
 /// How many pending chunks the channel buffers. Bounds peak memory to about
 /// `CHANNEL_CAP * CHUNK_BYTES` while still decoupling the blocking tar writer
 /// from the async socket writer so both run concurrently.
-const CHANNEL_CAP: usize = 8;
+pub(in crate::backends::engine::images::build) const CHANNEL_CAP: usize = 8;
 
 /// Coalesce the tar writer's many small writes into ~64 KiB frames, so the body
 /// is a handful of sizeable chunks rather than thousands of tiny ones.
-const CHUNK_BYTES: usize = 64 * 1024;
+pub(in crate::backends::engine::images::build) const CHUNK_BYTES: usize = 64 * 1024;
 
 /// Which Dockerfile the context ships: one synthesized from an inline string, a
 /// named file already inside the context directory, or a file that lives
@@ -56,7 +56,7 @@ pub(in crate::backends::engine::images::build) enum ContextSource {
 /// A [`Write`] sink that forwards the tar bytes to an async channel as `Bytes`
 /// frames, coalescing small writes to `CHUNK_BYTES`. Blocks (backpressure) when
 /// the consumer is behind; errors if the consumer has gone away.
-struct ChannelWriter {
+pub(in crate::backends::engine::images::build) struct ChannelWriter {
 	tx: mpsc::Sender<BodyItem>,
 	buf: BytesMut,
 }
@@ -73,6 +73,16 @@ impl ChannelWriter {
 				"build-context receiver dropped before the tar finished",
 			)
 		})
+	}
+}
+
+/// A [`ChannelWriter`] feeding the given sender, with an empty buffer.
+pub(in crate::backends::engine::images::build) fn channel_writer(
+	tx: mpsc::Sender<BodyItem>,
+) -> ChannelWriter {
+	ChannelWriter {
+		tx,
+		buf: BytesMut::with_capacity(CHUNK_BYTES),
 	}
 }
 

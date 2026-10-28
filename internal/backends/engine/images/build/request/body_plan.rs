@@ -13,7 +13,8 @@ use crate::compose::types::{BuildConfig, ComposeFile, Service};
 use crate::error::{ComposeError, Result};
 
 use super::super::context::{
-	dockerfile_leaves_context, INLINE_DOCKERFILE_NAME, OUTSIDE_DOCKERFILE_NAME,
+	additional_context_kind, dockerfile_leaves_context, AdditionalKind, INLINE_DOCKERFILE_NAME,
+	OUTSIDE_DOCKERFILE_NAME,
 };
 use super::super::is_remote_context;
 use super::super::{BodyPlan, Engine};
@@ -30,6 +31,12 @@ pub(in crate::backends::engine) struct BuildPlan {
 	pub(in crate::backends::engine) dockerfile: String,
 	/// In-tar secret specs the build endpoint should mount.
 	pub(in crate::backends::engine) secrets: Vec<String>,
+	/// The local additional build contexts, each with the name the build
+	/// refers to it by.
+	///
+	/// The daemon reads a local context from the request body, not from
+	/// the query, so each one travels in a part of its own.
+	pub(in crate::backends::engine) additional: Vec<(String, PathBuf)>,
 }
 
 /// Decide the build request body and the Dockerfile name.
@@ -41,7 +48,9 @@ pub(in crate::backends::engine) struct BuildPlan {
 /// pre-validate the directory exists so a missing context surfaces
 /// here, with the resolved path, rather than as a bare `io error`
 /// from the tar walk; resolve `build.secrets` to in-tar files so the
-/// libpod endpoint sees the form it expects.
+/// libpod endpoint sees the form it expects. The local additional
+/// contexts are resolved here too: they are the client's to read, and
+/// each one travels in a part of the request body.
 pub(in crate::backends::engine) fn plan_build(
 	engine: &Engine,
 	service_name: &str,
@@ -50,6 +59,7 @@ pub(in crate::backends::engine) fn plan_build(
 	build: &BuildConfig,
 	context_str: &str,
 ) -> Result<BuildPlan> {
+	let additional = local_additional_contexts(engine, build)?;
 	if is_remote_context(context_str) {
 		tracing::info!("building from remote context {context_str}");
 		if build.dockerfile_inline().is_some() {
@@ -63,6 +73,7 @@ pub(in crate::backends::engine) fn plan_build(
 			body: BodyPlan::Empty,
 			dockerfile,
 			secrets: Vec::new(),
+			additional,
 		});
 	}
 	let context_path: PathBuf = engine.base_dir.join(context_str);
@@ -132,5 +143,32 @@ pub(in crate::backends::engine) fn plan_build(
 		},
 		dockerfile,
 		secrets,
+		additional,
 	})
+}
+
+/// The local additional build contexts, resolved against the project
+/// directory.
+///
+/// A context the daemon fetches itself (an image or a URL) is left out: the
+/// query carries those. A directory is the client's to read, so it is
+/// resolved here and checked to exist, before the build starts.
+fn local_additional_contexts(
+	engine: &Engine,
+	build: &BuildConfig,
+) -> Result<Vec<(String, PathBuf)>> {
+	let mut out = Vec::new();
+	for (name, value) in build.additional_contexts() {
+		let AdditionalKind::Local(path) = additional_context_kind(&engine.base_dir, &value) else {
+			continue;
+		};
+		if let Err(e) = std::fs::metadata(&path) {
+			return Err(ComposeError::IoPath {
+				path: path.display().to_string(),
+				source: e,
+			});
+		}
+		out.push((name, path));
+	}
+	Ok(out)
 }

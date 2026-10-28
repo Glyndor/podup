@@ -8,12 +8,15 @@
 //! assembles them into the `POST /libpod/build?` call.
 
 mod body_plan;
+pub(in crate::backends::engine::images::build) mod multipart;
 mod secrets;
 mod stream;
 
 pub(in crate::backends::engine::images::build) use body_plan::plan_build;
 pub(in crate::backends::engine::images::build) use stream::{context_body, ContextSource};
 
+#[cfg(all(test, unix))]
+mod additional_context_tests;
 #[cfg(all(test, unix))]
 mod outside_dockerfile_tests;
 #[cfg(all(test, unix))]
