@@ -7,15 +7,17 @@
 //! in `attach.rs`; this file keeps the smaller surface that doesn't share
 //! those types.
 
+mod attach_stream;
 mod helpers;
 
 use futures_util::StreamExt;
 
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
-use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
+use crate::libpod::{urlencoded, API_PREFIX};
 
 use crate::backends::engine::observe::query::Engine;
+use attach_stream::write_attach_frame;
 use helpers::{
 	dedup_preserving_order, is_running_status, parse_port_proto, process_table, select_replica,
 };
@@ -323,13 +325,19 @@ impl Engine {
 		// for the hijacked attach/exec stream in
 		// `attach.rs`, which goes to `/attach_websocket`, not `/logs`.
 		let mut stream = crate::libpod::parse_multiplexed(resp.into_body());
+		// The two streams are locked once, for the whole attach: stdout is ours
+		// exclusively here, and stderr is locked per frame by the tracing
+		// subscriber, so holding it across the loop would starve the log lines
+		// a reader expects to see next to the output.
+		let mut out = std::io::stdout().lock();
+		let mut err = std::io::stderr().lock();
 		while let Some(msg) = stream.next().await {
 			match msg {
-				Ok(LogOutput::StdOut { message }) => {
-					print!("{}", String::from_utf8_lossy(&message));
-				}
-				Ok(LogOutput::StdErr { message }) => {
-					eprint!("{}", String::from_utf8_lossy(&message));
+				Ok(frame) => {
+					// The payload is bytes, not text: what the container
+					// printed is what the caller gets. A write that fails is a
+					// failed attach, not a line to drop.
+					write_attach_frame(&mut out, &mut err, frame).map_err(ComposeError::Io)?;
 				}
 				Err(_) => break,
 			}
