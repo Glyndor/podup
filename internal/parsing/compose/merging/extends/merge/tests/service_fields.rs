@@ -232,3 +232,82 @@ services:
 		"the extending service's window must win"
 	);
 }
+
+fn merged(yaml: &str) -> crate::compose::types::ComposeFile {
+	parse_str(yaml).unwrap()
+}
+
+#[test]
+fn an_override_that_sets_one_resource_limit_keeps_the_other() {
+	let file = merged(
+		r#"
+services:
+  base:
+    image: alpine
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+  app:
+    extends: base
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+"#,
+	);
+	let limits = file.services["app"]
+		.deploy
+		.as_ref()
+		.and_then(|d| d.resources.as_ref())
+		.and_then(|r| r.limits.as_ref())
+		.expect("limits");
+	assert!(limits.cpus.is_some(), "the base cpus limit was lost");
+	assert!(
+		limits.memory.is_some(),
+		"the override memory limit was lost"
+	);
+}
+
+#[test]
+fn an_override_that_sets_one_healthcheck_field_keeps_the_test() {
+	let file = merged(
+		r#"
+services:
+  base:
+    image: alpine
+    healthcheck:
+      test: ["CMD", "true"]
+  app:
+    extends: base
+    healthcheck:
+      interval: 5s
+"#,
+	);
+	let health = file.services["app"]
+		.healthcheck
+		.as_ref()
+		.expect("healthcheck");
+	assert!(health.test.is_some(), "the base test was lost");
+	assert!(health.interval.is_some(), "the override interval was lost");
+}
+
+#[test]
+fn an_override_that_sets_build_args_keeps_the_context() {
+	let file = merged(
+		r#"
+services:
+  base:
+    build:
+      context: ./app
+  app:
+    extends: base
+    build:
+      args:
+        MODE: release
+"#,
+	);
+	let build = file.services["app"].build.as_ref().expect("build");
+	assert_eq!(build.context(), "./app", "the base context was lost");
+	assert!(!build.args().is_empty(), "the override args were lost");
+}

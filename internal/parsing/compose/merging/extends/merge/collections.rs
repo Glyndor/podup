@@ -87,3 +87,48 @@ pub(super) fn merge_sysctls(base: Sysctls, over: Sysctls) -> Sysctls {
 	}
 	Sysctls::Map(out)
 }
+
+/// Merge two nested blocks (`build`, `healthcheck`, `logging`, `deploy`,
+/// `develop`) key by key instead of replacing the base with the override.
+///
+/// Compose merges mappings recursively: an override that sets only
+/// `deploy.resources.limits.memory` keeps the base's `cpus`, and one that sets
+/// only a healthcheck `interval` keeps the base's `test`. A value the override
+/// does set wins, and a list in the override replaces the base's list (the
+/// blocks merged here have no list that compose concatenates). A null in the
+/// override is "not set". If the merged value cannot be typed again the
+/// override is used as it is, which is what a plain replacement did before.
+pub(super) fn merge_block<T>(base: Option<T>, over: Option<T>) -> Option<T>
+where
+	T: serde::Serialize + serde::de::DeserializeOwned,
+{
+	use serde_json::Value;
+
+	fn deep(base: Value, over: Value) -> Value {
+		match (base, over) {
+			(Value::Object(mut b), Value::Object(o)) => {
+				for (key, value) in o {
+					let merged = match b.remove(&key) {
+						Some(existing) => deep(existing, value),
+						None => value,
+					};
+					b.insert(key, merged);
+				}
+				Value::Object(b)
+			}
+			(base, Value::Null) => base,
+			(_, over) => over,
+		}
+	}
+
+	match (base, over) {
+		(None, over) => over,
+		(base, None) => base,
+		(Some(base), Some(over)) => {
+			let merged = serde_json::to_value(&base)
+				.and_then(|b| serde_json::to_value(&over).map(|o| deep(b, o)))
+				.and_then(serde_json::from_value::<T>);
+			Some(merged.unwrap_or(over))
+		}
+	}
+}
