@@ -101,6 +101,36 @@ fn line_prefixer_no_prefix_emits_bare_lines() {
 	assert_eq!(out, b"hello\ntail\n");
 }
 
+/// The label is the container's name, which the daemon supplies, so it is not
+/// ours to trust: a raw escape in it repainted the reader's terminal. The
+/// prefix is written as bytes straight to stdout, and turning colour off does
+/// not take the escape with it.
+///
+/// The payload is a clear-screen, not an SGR: podup's own styling is always
+/// `ESC [ … m`, so this sequence cannot be confused with it.
+#[test]
+fn line_prefixer_escapes_the_label() {
+	let mut p = LinePrefixer::new("web\u{1b}[2J\r", true, false);
+	let mut out: Vec<u8> = Vec::new();
+	p.write(&mut out, b"hello\n").unwrap();
+	let text = String::from_utf8_lossy(&out);
+	assert!(!text.contains("\u{1b}[2J"), "{text:?}");
+	assert!(!text.contains('\r'), "{text:?}");
+	// Escaped, not dropped: the label is still readable.
+	assert!(text.contains("\\u{1b}[2J"), "{text:?}");
+	assert!(text.contains("web"), "{text:?}");
+}
+
+/// Only the label is escaped. The payload is the container's own output and is
+/// handed over byte for byte, so a binary line arrives whole.
+#[test]
+fn line_prefixer_leaves_the_payload_bytes_alone() {
+	let mut p = LinePrefixer::new("web", true, false);
+	let mut out: Vec<u8> = Vec::new();
+	p.write(&mut out, &[0xff, 0xfe, b'\n']).unwrap();
+	assert_eq!(out, b"web | \xff\xfe\n");
+}
+
 /// #1102: a sink that has gone away must surface as an error, not be
 /// swallowed. Every write here used to be `let _ =`, so `logs -f | head`
 /// streamed into a closed pipe forever instead of exiting.
