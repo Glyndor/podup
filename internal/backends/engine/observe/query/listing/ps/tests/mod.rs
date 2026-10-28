@@ -48,5 +48,6 @@ mod filters;
 mod json;
 mod ports;
 mod request;
+mod service_filter;
 mod size;
 mod table_status;

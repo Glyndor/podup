@@ -1,3 +1,4 @@
+use super::super::filters::status_matches;
 use super::*;
 
 #[test]

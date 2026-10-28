@@ -21,7 +21,7 @@ pub use options::{PsDisplayOptions, PsFilterOptions, PsOptions};
 // halves on the same clock without widening it to the whole crate.
 pub(in crate::backends::engine) use format::now_unix;
 
-use filters::{split_ps_filters, status_matches};
+use filters::{select_containers, split_ps_filters, ServiceFilter};
 use format::{containers_path, name_of, table_created, table_service, table_size, table_status};
 use json::ps_json_row;
 use ports::format_ports;
@@ -94,21 +94,9 @@ impl Engine {
 		}
 		status_filter.extend(filters.status.iter().cloned());
 
-		// A positional `SERVICE` filter restricts to those services' container
-		// names (across replicas).
-		let allowed_names: Option<std::collections::HashSet<String>> =
-			if filters.services.is_empty() {
-				None
-			} else {
-				Some(
-					filters
-						.services
-						.iter()
-						.filter_map(|n| file.services.get(n).map(|s| (n, s)))
-						.flat_map(|(n, s)| self.replica_names(n, s))
-						.collect(),
-				)
-			};
+		// A positional `SERVICE` filter restricts to those services'
+		// containers (across replicas).
+		let service_filter = self.service_filter(file, &filters.services);
 
 		// A status filter (`--status exited`, `--filter status=exited`) implies
 		// querying every container regardless of state: libpod's list endpoint
@@ -125,26 +113,12 @@ impl Engine {
 			.await
 			.map_err(ComposeError::Podman)?;
 
-		let containers: Vec<ContainerListEntry> = all_containers
-			.into_iter()
-			.filter(|c| {
-				// `x-podman-pod`: hide the infra container Podman creates
-				// inside the project pod. The pod addresses itself by name
-				// (`podman pod`), so the infra container has no user-facing
-				// role.
-				if c.is_infra {
-					return false;
-				}
-				let name = name_of(c);
-				allowed_names.as_ref().is_none_or(|set| {
-					c.names
-						.iter()
-						.any(|n| set.contains(n.trim_start_matches('/')))
-				}) && (status_matches(&c.state, &status_filter)
-					|| status_matches(&c.status, &status_filter))
-					&& (name_filter.is_empty() || name_filter.iter().any(|nf| name.contains(nf)))
-			})
-			.collect();
+		let containers = select_containers(
+			all_containers,
+			service_filter.as_ref(),
+			&status_filter,
+			&name_filter,
+		);
 
 		if opts.quiet {
 			// Full 64-char IDs, like `docker compose ps -q` (and podup's JSON),
@@ -203,6 +177,31 @@ impl Engine {
 	}
 }
 
+impl Engine {
+	/// The service filter a positional `SERVICE` argument asks for: the
+	/// services it named, and the container names the compose file predicts
+	/// for them.
+	///
+	/// The names are only the fallback for a container that carries no
+	/// service label; the label itself is what says which service owns a
+	/// container, and it survives a runtime scale that the compose file knows
+	/// nothing about.
+	fn service_filter(&self, file: &ComposeFile, services: &[String]) -> Option<ServiceFilter> {
+		if services.is_empty() {
+			return None;
+		}
+		let names = services
+			.iter()
+			.filter_map(|n| file.services.get(n).map(|s| (n, s)))
+			.flat_map(|(n, s)| self.replica_names(n, s))
+			.collect();
+		Some(ServiceFilter::new(
+			services.iter().cloned().collect(),
+			names,
+		))
+	}
+}
+
 /// Test-only: returns the JSON row map a `ps` invocation would render, so
 /// the unit tests can introspect the filtered container set without going
 /// through stdout.
@@ -210,9 +209,9 @@ impl Engine {
 pub(crate) async fn ps_rows_for_test(
 	engine: &Engine,
 	file: &ComposeFile,
+	filters: &PsFilterOptions,
 ) -> Result<Vec<serde_json::Value>> {
 	let opts = PsOptions::new(true, false, true);
-	let filters = PsFilterOptions::default();
 	let display = PsDisplayOptions::default();
 	// Re-run the same filter the production path runs, but capture the
 	// resulting rows instead of printing them.
@@ -222,35 +221,14 @@ pub(crate) async fn ps_rows_for_test(
 		.get_json::<Vec<ContainerListEntry>>(&path)
 		.await
 		.map_err(ComposeError::Podman)?;
-	let allowed_names: Option<std::collections::HashSet<String>> = if filters.services.is_empty() {
-		None
-	} else {
-		Some(
-			filters
-				.services
-				.iter()
-				.filter_map(|n| file.services.get(n).map(|s| (n, s)))
-				.flat_map(|(n, s)| engine.replica_names(n, s))
-				.collect(),
-		)
-	};
+	let service_filter = engine.service_filter(file, &filters.services);
 	let (status_filter, name_filter, _) = split_ps_filters(&filters.filters);
-	let containers: Vec<ContainerListEntry> = all_containers
-		.into_iter()
-		.filter(|c| {
-			if c.is_infra {
-				return false;
-			}
-			let name = name_of(c);
-			allowed_names.as_ref().is_none_or(|set| {
-				c.names
-					.iter()
-					.any(|n| set.contains(n.trim_start_matches('/')))
-			}) && (status_matches(&c.state, &status_filter)
-				|| status_matches(&c.status, &status_filter))
-				&& (name_filter.is_empty() || name_filter.iter().any(|nf| name.contains(nf)))
-		})
-		.collect();
+	let containers = select_containers(
+		all_containers,
+		service_filter.as_ref(),
+		&status_filter,
+		&name_filter,
+	);
 	Ok(containers.iter().map(ps_json_row).collect())
 }
 
