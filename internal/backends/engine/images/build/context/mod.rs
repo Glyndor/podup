@@ -228,7 +228,18 @@ pub(super) fn stream_build_context_with_inline<W: std::io::Write>(
 	// Skip the user's ignore file here; it is rewritten below with extra rules
 	// excluding every synthesized entry (inline Dockerfile, build secrets), under
 	// the same name the server will read.
-	append_context(&mut tar, context, &ignore_patterns, &[ignore_name], &[])?;
+	//
+	// The inline Dockerfile's own name is reserved: a file in the context
+	// carrying it would land in the tar after the synthesized entry, and the
+	// daemon extracts the entries in order, so that file would replace the
+	// Dockerfile the build was asked to use.
+	append_context(
+		&mut tar,
+		context,
+		&ignore_patterns,
+		&[ignore_name, INLINE_DOCKERFILE_NAME],
+		&[],
+	)?;
 
 	let mut synthesized: Vec<&str> = vec![INLINE_DOCKERFILE_NAME];
 	synthesized.extend(extra_files.iter().map(|(n, _)| n.as_str()));
