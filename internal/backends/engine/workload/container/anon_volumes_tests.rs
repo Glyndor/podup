@@ -58,7 +58,14 @@ async fn created_volumes(
 		.clone();
 
 	engine
-		.create_and_start("proj-web-1", "web", &service, &file, true)
+		.create_and_start(
+			"proj-web-1",
+			"web",
+			&service,
+			&file,
+			true,
+			&std::collections::BTreeMap::new(),
+		)
 		.await
 		.expect("create_and_start must succeed against the fake socket");
 
