@@ -58,6 +58,7 @@ networks:
 		.contains("NetworkName=proj_frontend"));
 }
 
+#[cfg(unix)]
 #[test]
 fn bind_path_volume_is_resolved_against_the_compose_directory() {
 	let yaml = r#"
@@ -81,6 +82,7 @@ services:
 	);
 }
 
+#[cfg(unix)]
 #[test]
 fn long_form_bind_source_is_resolved_against_the_compose_directory() {
 	let yaml = r#"

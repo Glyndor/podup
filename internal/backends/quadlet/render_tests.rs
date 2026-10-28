@@ -132,6 +132,8 @@ fn external_volumes() -> ExternalNames<'static> {
 	ExternalNames::from([("data", "shared_data")])
 }
 
+// The expected paths are POSIX paths joined with a POSIX base.
+#[cfg(unix)]
 #[test]
 fn render_volume_short_declared_uses_dot_volume_with_options() {
 	let out = render_volume(
