@@ -8,6 +8,7 @@
 //! `apply_extra_tags` follow-up lives in [`super::names::extra_tags`].
 
 mod capture;
+mod cache;
 mod steps;
 mod upload;
 
@@ -25,6 +26,7 @@ use crate::libpod::{urlencoded, API_PREFIX};
 use crate::size;
 
 use self::capture::BuildCapture;
+use self::cache::{references, CacheField};
 use self::steps::{parse_image_id_line, BuildStreamProgress};
 use super::names::looks_like_secret;
 use super::request::{context_body, plan_build};
@@ -173,12 +175,17 @@ impl Engine {
 				&build.extra_hosts(),
 			)?)
 		};
-		let cachefrom = if build.cache_from().is_empty() {
+		// The endpoint reads the caches as a JSON array of image references.
+		// Compose writes them with the global cache syntax, so a registry
+		// cache travels as its reference and a cache type with no libpod
+		// equivalent is left out.
+		let cache_from = references(CacheField::From, build.cache_from());
+		let cachefrom = if cache_from.is_empty() {
 			None
 		} else {
 			Some(crate::engine::to_query_json(
 				"build.cache_from",
-				&build.cache_from(),
+				&cache_from,
 			)?)
 		};
 		let buildargs_json = if build_args.is_empty() {
@@ -289,8 +296,9 @@ impl Engine {
 			let json = crate::engine::to_query_json("build.secrets", &secret_specs)?;
 			qs.push_str(&format!("&secrets={}", urlencoded(&json)));
 		}
-		if !build.cache_to().is_empty() {
-			let json = crate::engine::to_query_json("build.cache_to", &build.cache_to())?;
+		let cache_to = references(CacheField::To, build.cache_to());
+		if !cache_to.is_empty() {
+			let json = crate::engine::to_query_json("build.cache_to", &cache_to)?;
 			qs.push_str(&format!("&cacheto={}", urlencoded(&json)));
 		}
 		for (name, value) in build.additional_contexts() {

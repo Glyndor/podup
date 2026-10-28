@@ -115,4 +115,58 @@ mod tests {
 			"extrahosts= must carry every entry of build.extra_hosts"
 		);
 	}
+
+	/// Compose writes the caches with the global
+	/// `[NAME|type=TYPE[,KEY=VALUE]]` syntax, where a bare name is a shortcut
+	/// for `type=registry,ref=NAME`. The endpoint reads a JSON array of image
+	/// references, so a registry cache travels as its reference.
+	#[tokio::test]
+	async fn a_registry_cache_reaches_the_build_query_as_an_image_reference() {
+		let (_dir, fake, engine) = start_capture("proj");
+
+		let query = build_query(
+			&engine,
+			&fake,
+			"services:\n  app:\n    image: proj/img:1\n    build:\n      context: .\n      \
+			 cache_from:\n        - type=registry,ref=example/app:cache\n        - \
+			 other.example/cache:latest\n",
+		)
+		.await;
+
+		let raw = param(&query, "cachefrom=").expect("cachefrom= is sent");
+		let value: serde_json::Value =
+			serde_json::from_str(&raw).expect("cachefrom= must be a JSON array");
+		assert_eq!(
+			value,
+			serde_json::json!(["example/app:cache", "other.example/cache:latest"]),
+			"cachefrom= must carry the image reference of every registry cache"
+		);
+	}
+
+	/// A cache type with no libpod equivalent is ignored: the Compose
+	/// contract says unsupported caches do not prevent the build.
+	#[tokio::test]
+	async fn a_cache_type_without_an_equivalent_is_ignored() {
+		let (_dir, fake, engine) = start_capture("proj");
+
+		let query = build_query(
+			&engine,
+			&fake,
+			"services:\n  app:\n    image: proj/img:1\n    build:\n      context: .\n      \
+			 cache_from:\n        - type=local,src=path/to/cache\n      cache_to:\n        - \
+			 type=local,dest=path/to/cache\n",
+		)
+		.await;
+
+		assert_eq!(
+			param(&query, "cachefrom="),
+			None,
+			"a cache source with no libpod equivalent must not reach the query: {query}"
+		);
+		assert_eq!(
+			param(&query, "cacheto="),
+			None,
+			"a cache target with no libpod equivalent must not reach the query: {query}"
+		);
+	}
 }
