@@ -30,6 +30,7 @@ services:
 		"proj",
 		std::env::current_dir().unwrap().as_path(),
 		&std::collections::HashMap::new(),
+		&std::collections::BTreeMap::new(),
 	)
 	.unwrap();
 	let listing = format!(

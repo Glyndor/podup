@@ -229,6 +229,12 @@ impl Engine {
 			// `up` does); the service may reference the synthesized `default`
 			// network, which is created here as `{project}_default`.
 			self.create_networks(file).await?;
+			// The declared volumes are created here for the same reason `up`
+			// creates them: the container mounts a volume that carries the
+			// project's label and the declared driver options, and an
+			// `external: true` volume is checked for existence instead of
+			// being left to fail later with an opaque mount error.
+			self.create_volumes(file).await?;
 			// Inline secrets/configs are created up front (no longer in the
 			// per-container build path), so materialise them here too before the run
 			// container is created.
@@ -289,8 +295,12 @@ impl Engine {
 		// between: a container started before anything is listening loses
 		// whatever it printed in that gap, and for `run`, a one-shot command,
 		// that gap is often the entire output.
+		// The environment the one-off container runs with, resolved once and
+		// handed to the create so the label it carries and the environment it
+		// is created with describe the same snapshot.
+		let env = self.effective_env(&run_service)?;
 		if let Err(e) = self
-			.create_and_start(&run_name, service_name, &run_service, file, !want_tty)
+			.create_and_start(&run_name, service_name, &run_service, file, !want_tty, &env)
 			.await
 		{
 			if rm {
@@ -489,6 +499,10 @@ mod board_tests;
 /// to the run's own result.
 #[cfg(all(test, unix))]
 mod cleanup_tests;
+
+/// The volumes a one-off `run` creates and checks before its container.
+#[cfg(all(test, unix))]
+mod volumes_tests;
 
 impl Engine {
 	/// True when a container with this exact name exists (any project). Used to

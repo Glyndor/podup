@@ -76,7 +76,14 @@ async fn engine_create_body(mode: Option<&str>, in_pod: bool) -> serde_json::Val
 	.unwrap();
 	file.services.get_mut("web").unwrap().userns_mode = mode.map(str::to_string);
 	engine
-		.create_and_start("userns-web-1", "web", &file.services["web"], &file, false)
+		.create_and_start(
+			"userns-web-1",
+			"web",
+			&file.services["web"],
+			&file,
+			false,
+			&std::collections::BTreeMap::new(),
+		)
 		.await
 		.unwrap();
 	let requests = fake.requests.lock().unwrap();

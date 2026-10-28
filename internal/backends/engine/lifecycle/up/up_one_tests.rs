@@ -34,8 +34,9 @@ fn running(file: &ComposeFile, bound_to: impl Fn(&str) -> &'static str) -> Strin
 			.uploaded_file_digests
 			.lock()
 			.expect("uploaded_file_digests mutex poisoned");
-		let hash =
-			config_hash(service, file, &e.project, &e.base_dir, &digests).expect("config hash");
+		let env = e.effective_env(service).expect("the environment resolves");
+		let hash = config_hash(service, file, &e.project, &e.base_dir, &digests, &env)
+			.expect("config hash");
 		for container in e.replica_names(name, service) {
 			entries.push(serde_json::json!({
 				"Id": container,

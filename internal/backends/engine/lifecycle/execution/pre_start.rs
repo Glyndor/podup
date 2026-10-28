@@ -92,10 +92,11 @@ impl Engine {
 		service: &Service,
 		file: &ComposeFile,
 		start: bool,
+		env: &std::collections::BTreeMap<String, String>,
 	) -> Result<()> {
 		self.run_pre_start(container_name, service_name, service, file)
 			.await?;
-		self.create_and_start(container_name, service_name, service, file, start)
+		self.create_and_start(container_name, service_name, service, file, start, env)
 			.await
 	}
 
@@ -142,7 +143,8 @@ impl Engine {
 							self.client
 								.init_cleanup(format!("{path}?force=true&v=true")),
 						);
-						self.create_and_start(name, &step_name, step, file, true)
+						let env = self.effective_env(step)?;
+						self.create_and_start(name, &step_name, step, file, true, &env)
 							.await?;
 						self.client
 							.post_empty_json_unbounded::<i64>(&format!(

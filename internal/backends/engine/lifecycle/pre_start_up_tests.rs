@@ -27,6 +27,7 @@ async fn pre_start_up_failure_preserves_the_previous_service() {
 			false,
 			true,
 			true,
+			&std::collections::BTreeMap::new(),
 		)
 		.await
 		.unwrap_err();
@@ -73,6 +74,7 @@ async fn pre_start_up_initializes_stopped_reused_containers_only() {
 					no_recreate,
 					false,
 					true,
+					&std::collections::BTreeMap::new(),
 				)
 				.await
 				.unwrap();

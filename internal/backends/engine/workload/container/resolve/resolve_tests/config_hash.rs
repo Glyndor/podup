@@ -12,6 +12,7 @@ fn config_hash_is_stable_and_sensitive() {
 		PROJECT,
 		base.path(),
 		&empty_digests(),
+		&empty_env(),
 	)
 	.unwrap();
 	let hb = config_hash(
@@ -20,6 +21,7 @@ fn config_hash_is_stable_and_sensitive() {
 		PROJECT,
 		base.path(),
 		&empty_digests(),
+		&empty_env(),
 	)
 	.unwrap();
 	let hc = config_hash(
@@ -28,6 +30,7 @@ fn config_hash_is_stable_and_sensitive() {
 		PROJECT,
 		base.path(),
 		&empty_digests(),
+		&empty_env(),
 	)
 	.unwrap();
 	assert_eq!(ha, hb, "same config produces the same hash");
@@ -54,7 +57,8 @@ fn config_hash_tracks_inline_secret_content() {
 			&a,
 			PROJECT,
 			base.path(),
-			&empty_digests()
+			&empty_digests(),
+			&empty_env()
 		)
 		.unwrap(),
 		config_hash(
@@ -62,7 +66,8 @@ fn config_hash_tracks_inline_secret_content() {
 			&b,
 			PROJECT,
 			base.path(),
-			&empty_digests()
+			&empty_digests(),
+			&empty_env()
 		)
 		.unwrap(),
 		"changed inline secret content must change the hash",
@@ -90,7 +95,8 @@ fn config_hash_ignores_external_secret_identity() {
 			&a,
 			PROJECT,
 			base.path(),
-			&empty_digests()
+			&empty_digests(),
+			&empty_env()
 		)
 		.unwrap(),
 		config_hash(
@@ -98,7 +104,8 @@ fn config_hash_ignores_external_secret_identity() {
 			&b,
 			PROJECT,
 			base.path(),
-			&empty_digests()
+			&empty_digests(),
+			&empty_env()
 		)
 		.unwrap(),
 	);
@@ -123,7 +130,8 @@ fn config_hash_tracks_inline_config_content() {
 			&a,
 			PROJECT,
 			base.path(),
-			&empty_digests()
+			&empty_digests(),
+			&empty_env()
 		)
 		.unwrap(),
 		config_hash(
@@ -131,7 +139,8 @@ fn config_hash_tracks_inline_config_content() {
 			&b,
 			PROJECT,
 			base.path(),
-			&empty_digests()
+			&empty_digests(),
+			&empty_env()
 		)
 		.unwrap(),
 		"changed inline config content must change the hash",
@@ -154,6 +163,7 @@ fn config_hash_tracks_environment_sourced_secret() {
 			PROJECT,
 			base.path(),
 			&empty_digests(),
+			&empty_env(),
 		)
 		.unwrap()
 	});
@@ -164,6 +174,7 @@ fn config_hash_tracks_environment_sourced_secret() {
 			PROJECT,
 			base.path(),
 			&empty_digests(),
+			&empty_env(),
 		)
 		.unwrap()
 	});
@@ -192,7 +203,8 @@ fn config_hash_stable_despite_map_field_order() {
 			&a,
 			PROJECT,
 			base.path(),
-			&empty_digests()
+			&empty_digests(),
+			&empty_env()
 		)
 		.unwrap(),
 		config_hash(
@@ -200,9 +212,88 @@ fn config_hash_stable_despite_map_field_order() {
 			&b,
 			PROJECT,
 			base.path(),
-			&empty_digests()
+			&empty_digests(),
+			&empty_env()
 		)
 		.unwrap(),
 		"hash must be independent of storage_opt key order",
+	);
+}
+
+#[test]
+fn config_hash_tracks_env_file_contents() {
+	// The service definition carries the *name* of the `env_file:` file, not
+	// what is in it. An edit to the file is therefore invisible to the hash
+	// unless the effective environment is folded in, and `up` would keep the
+	// container running with the environment it had before the edit.
+	let base = temp_base();
+	let file = parse_str("services:\n  web:\n    image: x\n    env_file: [app.env]\n").unwrap();
+	std::fs::write(base.path().join("app.env"), "COLOR=azul\n").expect("write the env file");
+	let with_azul = {
+		let env = resolved_env(&file.services["web"], base.path());
+		config_hash(
+			&file.services["web"],
+			&file,
+			PROJECT,
+			base.path(),
+			&empty_digests(),
+			&env,
+		)
+		.unwrap()
+	};
+	std::fs::write(base.path().join("app.env"), "COLOR=rojo\n").expect("rewrite the env file");
+	let with_rojo = {
+		let env = resolved_env(&file.services["web"], base.path());
+		config_hash(
+			&file.services["web"],
+			&file,
+			PROJECT,
+			base.path(),
+			&empty_digests(),
+			&env,
+		)
+		.unwrap()
+	};
+	assert_ne!(
+		with_azul, with_rojo,
+		"a changed env file must change the hash",
+	);
+}
+
+#[test]
+fn config_hash_tracks_passthrough_environment_value() {
+	// A bare `KEY` in `environment:` takes its value from podup's own
+	// environment, so the value is invisible to the service definition too.
+	// Changing it must change the hash.
+	let base = temp_base();
+	let file = parse_str("services:\n  web:\n    image: x\n    environment: [PODUP_TEST_COLOR]\n")
+		.unwrap();
+	let with_blue = temp_env::with_var("PODUP_TEST_COLOR", Some("azul"), || {
+		let env = resolved_env(&file.services["web"], base.path());
+		config_hash(
+			&file.services["web"],
+			&file,
+			PROJECT,
+			base.path(),
+			&empty_digests(),
+			&env,
+		)
+		.unwrap()
+	});
+	let with_red = temp_env::with_var("PODUP_TEST_COLOR", Some("rojo"), || {
+		let env = resolved_env(&file.services["web"], base.path());
+		config_hash(
+			&file.services["web"],
+			&file,
+			PROJECT,
+			base.path(),
+			&empty_digests(),
+			&env,
+		)
+		.unwrap()
+	});
+	assert_ne!(
+		with_blue, with_red,
+		"a changed passthrough value must change the hash",
 	);
 }

@@ -161,7 +161,7 @@ fn deadline_after(budget: Duration) -> tokio::time::Instant {
 }
 
 impl Engine {
-	/// Wait until every targeted service's first replica is healthy (`up
+	/// Wait until every targeted service's replicas are healthy (`up
 	/// --wait`). A service with no effective healthcheck is treated as ready
 	/// once started. All services when `target_services` is empty.
 	pub async fn wait_services_healthy(
@@ -176,9 +176,9 @@ impl Engine {
 	/// As [`wait_services_healthy`](Self::wait_services_healthy), but a
 	/// `Some(wait_timeout)` extends each service's poll budget to cover the
 	/// supplied `--wait-timeout` (rather than only capping it). The caller still
-	/// wraps the whole wait in a hard `--wait-timeout` deadline, which becomes the
-	/// authoritative limit; this just stops the per-service poll plan from giving
-	/// up early and reporting a misleading health-check timeout.
+	/// wraps the whole wait in a hard `--wait-timeout` deadline, which becomes
+	/// the authoritative limit; this just stops the per-service poll plan from
+	/// giving up early and reporting a misleading health-check timeout.
 	pub async fn wait_services_healthy_within(
 		&self,
 		file: &ComposeFile,
@@ -193,9 +193,15 @@ impl Engine {
 			.filter(|(name, _)| {
 				target_services.is_empty() || target_services.iter().any(|t| t == *name)
 			})
-			.map(|(name, service)| {
-				let container = self.first_replica_name(name, service);
-				async move { self.wait_healthy(&container, service, wait_timeout).await }
+			.flat_map(|(name, service)| {
+				// Every replica of the service is waited on, not just the first
+				// one: a healthy first replica says nothing about the others,
+				// and a service scaled to zero has no container to ask about.
+				self.replica_names(name, service)
+					.into_iter()
+					.map(move |container| async move {
+						self.wait_healthy(&container, service, wait_timeout).await
+					})
 			});
 		futures_util::future::try_join_all(waits).await?;
 		Ok(())
@@ -357,3 +363,8 @@ impl Engine {
 #[cfg(test)]
 #[path = "health_tests.rs"]
 mod tests;
+
+/// The replicas a wait has to cover.
+#[cfg(all(test, unix))]
+#[path = "replica_tests.rs"]
+mod replica_tests;

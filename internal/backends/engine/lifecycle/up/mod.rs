@@ -433,3 +433,9 @@ mod readiness_tests;
 
 #[cfg(all(test, unix))]
 mod up_one_tests;
+
+#[cfg(all(test, unix))]
+mod up_env_hash_tests;
+
+#[cfg(all(test, unix))]
+mod up_replica_tests;

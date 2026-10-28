@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
 use std::path::Path;
 
@@ -41,12 +41,23 @@ use super::volumes::resolve_volume_name;
 /// `base_dir` is the project directory `file:` paths are resolved against:
 /// the same anchor `bind` mounts and the secret creator use, so a path that
 /// the engine can read at `up` is the same path the engine hashes now.
+///
+/// `env` is the environment the container will actually run with, already
+/// resolved (see [`super::environment::effective_env`]). The service
+/// definition carries only the *names* of the `env_file:` files and the bare
+/// passthrough keys, so without this the values were invisible to the hash:
+/// editing an `env_file:` or changing the host's value of a passthrough
+/// variable left the hash equal and `up` kept the container running with the
+/// environment it had before the change. The caller passes the same map it
+/// puts in the create payload, so the hash and the payload describe one
+/// snapshot rather than two.
 pub(crate) fn config_hash(
 	service: &Service,
 	file: &ComposeFile,
 	project: &str,
 	base_dir: &Path,
 	file_digests: &HashMap<String, [u8; 32]>,
+	env: &BTreeMap<String, String>,
 ) -> Result<String> {
 	use sha2::{Digest, Sha256};
 	let mut hasher = Sha256::new();
@@ -131,6 +142,15 @@ pub(crate) fn config_hash(
 				}
 			}
 		}
+	}
+	// The effective environment, folded in the same way the other payloads
+	// are: kind, name, length-prefixed value. A `BTreeMap` iterates in key
+	// order, so the fold is stable across runs.
+	for (key, value) in env {
+		hasher.update(b"env");
+		hasher.update(key.as_bytes());
+		hasher.update((value.len() as u64).to_le_bytes());
+		hasher.update(value.as_bytes());
 	}
 	Ok(hasher
 		.finalize()
