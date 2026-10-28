@@ -162,11 +162,16 @@ impl Engine {
 			})?),
 			None => None,
 		};
-		let extrahosts_str = build.extra_hosts().join(",");
-		let extrahosts = if extrahosts_str.is_empty() {
+		// The libpod endpoint reads `extrahosts` as a JSON array of
+		// `host:ip` entries. A comma-separated list is not that shape: the
+		// daemon rejects the build before it starts.
+		let extrahosts = if build.extra_hosts().is_empty() {
 			None
 		} else {
-			Some(extrahosts_str)
+			Some(crate::engine::to_query_json(
+				"build.extra_hosts",
+				&build.extra_hosts(),
+			)?)
 		};
 		let cachefrom = if build.cache_from().is_empty() {
 			None

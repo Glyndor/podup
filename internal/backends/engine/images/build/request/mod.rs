@@ -17,4 +17,6 @@ pub(in crate::backends::engine::images::build) use stream::{context_body, Contex
 #[cfg(all(test, unix))]
 mod outside_dockerfile_tests;
 #[cfg(all(test, unix))]
+mod query_params_tests;
+#[cfg(all(test, unix))]
 mod query_tests;
