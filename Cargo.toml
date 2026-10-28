@@ -306,6 +306,7 @@ path = "tests/cli/jobs/jobs_section.rs"
 name = "env_not_utf8"
 path = "tests/cli/environment/env_not_utf8.rs"
 
+[[test]]
 name = "up_selection"
 path = "tests/cli/up/up_selection.rs"
 
