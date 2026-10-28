@@ -38,6 +38,7 @@ async fn remove_surplus_replicas_propagates_a_real_rm_failure_after_completing_t
 				config_hash: None,
 				image_id: String::new(),
 				service: Some("web".to_string()),
+				oneoff: false,
 			},
 		);
 	}
@@ -88,6 +89,7 @@ async fn remove_surplus_replicas_tolerates_already_gone() {
 			config_hash: None,
 			image_id: String::new(),
 			service: Some("web".to_string()),
+			oneoff: false,
 		},
 	);
 	let fake = fake_podman::start(move |method, target| {

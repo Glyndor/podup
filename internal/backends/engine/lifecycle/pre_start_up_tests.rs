@@ -13,6 +13,7 @@ async fn pre_start_up_failure_preserves_the_previous_service() {
 			config_hash: None,
 			image_id: String::new(),
 			service: Some("web".into()),
+			oneoff: false,
 		},
 	)]);
 	let error = engine
@@ -60,6 +61,7 @@ async fn pre_start_up_initializes_stopped_reused_containers_only() {
 					config_hash: Some("same".into()),
 					image_id: "same-image".into(),
 					service: Some("web".into()),
+					oneoff: false,
 				},
 			)]);
 			engine

@@ -6,8 +6,8 @@ mod spec;
 // Re-exports the response types under one path; the crate does not name every one of them.
 #[allow(unused_imports)]
 pub use response::{
-	ContainerInspect, ContainerListEntry, ContainerPort, ContainerSize, ContainerState,
-	HealthState, HostBinding, NetworkSettings, TopResponse,
+	ContainerInspect, ContainerListEntry, ContainerMount, ContainerPort, ContainerSize,
+	ContainerState, HealthState, HostBinding, NetworkSettings, TopResponse,
 };
 pub use spec::{
 	HealthCheckOnFailureAction, HealthConfig, LinuxBlockIO, LinuxCPU, LinuxDevice,

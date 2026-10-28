@@ -65,6 +65,10 @@ async fn engine_create_body(mode: Option<&str>, in_pod: bool) -> serde_json::Val
 			(201, r#"{"Id":"userns","Warnings":[]}"#.into())
 		} else if method == "DELETE" || (method == "GET" && target.ends_with("/json")) {
 			(404, r#"{"message":"no such container"}"#.into())
+		} else if method == "GET" && target.contains("/containers/") && target.ends_with("/json") {
+			// The inspect of the container the create would replace: there
+			// is none, so there is no volume to inherit.
+			(404, r#"{"message":"no such container"}"#.into())
 		} else {
 			(200, "[]".into())
 		}

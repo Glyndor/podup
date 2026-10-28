@@ -93,6 +93,7 @@ async fn stop_and_remove_opens_the_row_before_the_stop_and_closes_it_removed() {
 				config_hash: None,
 				image_id: String::new(),
 				service: Some("web".to_string()),
+				oneoff: false,
 			},
 		);
 	}

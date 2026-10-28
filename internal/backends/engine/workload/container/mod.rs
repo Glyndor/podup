@@ -11,6 +11,7 @@ use crate::libpod::validate::pre_validate_spec;
 use crate::libpod::API_PREFIX;
 use crate::size;
 
+mod anon_volumes;
 mod fields;
 mod inputs;
 mod resolve;
@@ -111,6 +112,16 @@ impl Engine {
 		// create_volumes (project-prefixed, custom `name:`, or external).
 		for nv in &mut named_volumes {
 			nv.name = self.resolved_volume_name(&nv.name, file)?;
+		}
+		// The container this one replaces may carry anonymous volumes: one
+		// per compose `volumes:` entry declared without a source, and one per
+		// `VOLUME` directive of the image. The replacement inherits them by
+		// destination, so the data they hold survives the recreate instead
+		// of staying behind in a volume nothing points at. `-V/--renew-anon-
+		// volumes` is the way to ask for fresh ones instead.
+		if !self.renew_anon_volumes {
+			self.inherit_anonymous_volumes(container_name, image, &mut named_volumes, &mounts)
+				.await?;
 		}
 
 		// --- Port mappings ---
@@ -372,3 +383,7 @@ mod tests;
 // on Windows, like every other test that starts it.
 #[cfg(all(test, unix))]
 mod spec_body_tests;
+
+#[cfg(all(test, unix))]
+#[path = "anon_volumes_tests.rs"]
+mod anon_volumes_tests;

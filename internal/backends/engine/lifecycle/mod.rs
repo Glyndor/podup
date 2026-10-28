@@ -51,6 +51,51 @@ pub(crate) struct ExistingContainer {
 	/// per-service `/containers/json` against an already-fetched data set
 	/// (#1747).
 	service: Option<String>,
+	/// The `podup.oneoff=true` label, set on every container `run` creates.
+	///
+	/// A one-off container shares the service label with the service's
+	/// replicas but is not one of them: its name carries the run's PID
+	/// instead of a replica index, so the scale reconciliation would read it
+	/// as a surplus replica and stop and delete it, taking its writable layer
+	/// with it. The label is the only reliable marker; the name is not
+	///.
+	oneoff: bool,
+}
+
+impl ExistingContainer {
+	/// The bulk project snapshot, built from one container-list response.
+	///
+	/// Every container the project owns is keyed by its name, carrying the
+	/// three facts the rest of `up` needs: the config hash that decides
+	/// whether it can be left in place, the image it is bound to, and the
+	/// service it belongs to. The `podup.oneoff` label rides along so the
+	/// scale reconciliation can tell a one-off `run` container apart from a
+	/// replica of the same service.
+	pub(crate) fn snapshot(
+		entries: &[crate::libpod::types::container::ContainerListEntry],
+	) -> HashMap<String, ExistingContainer> {
+		let mut existing: HashMap<String, ExistingContainer> = HashMap::new();
+		for entry in entries {
+			let config_hash = entry.labels.get("podup.config-hash").cloned();
+			let service = entry.labels.get("podup.service").cloned();
+			let oneoff = entry
+				.labels
+				.get("podup.oneoff")
+				.is_some_and(|v| v == "true");
+			for raw in &entry.names {
+				existing.insert(
+					raw.trim_start_matches('/').to_string(),
+					ExistingContainer {
+						config_hash: config_hash.clone(),
+						image_id: entry.image_id.clone(),
+						service: service.clone(),
+						oneoff,
+					},
+				);
+			}
+		}
+		existing
+	}
 }
 
 /// What one service's image tag resolves to, asked at most once for all of that
@@ -174,6 +219,9 @@ mod libpod_endpoint_query_tests;
 
 #[cfg(test)]
 mod umask_tests;
+
+#[cfg(test)]
+mod snapshot_tests;
 
 #[cfg(all(test, unix))]
 mod pre_start_image_tests;

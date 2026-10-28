@@ -182,7 +182,7 @@ impl Engine {
 			}
 
 			// Prefetch the project's containers once (instead of one API call per
-			// replica): which names already exist, and for each the two facts
+			// replica): which names already exist, and for each the facts
 			// that decide whether it is kept or replaced (see
 			// [`crate::engine::lifecycle::ExistingContainer`]).
 			//
@@ -190,9 +190,7 @@ impl Engine {
 			// consulted there, but membership is what tells the progress stream
 			// that a container was replaced rather than created (#1619), and a
 			// forced recreate is exactly the case where that word matters.
-			let mut existing: HashMap<String, crate::engine::lifecycle::ExistingContainer> =
-				HashMap::new();
-			{
+			let mut existing: HashMap<String, crate::engine::lifecycle::ExistingContainer> = {
 				let path = format!(
 					"{API_PREFIX}/containers/json?all=true&filters={}",
 					self.project_label_filter_encoded(),
@@ -202,21 +200,8 @@ impl Engine {
 					.get_json::<Vec<crate::libpod::types::container::ContainerListEntry>>(&path)
 					.await
 					.map_err(crate::error::ComposeError::Podman)?;
-				for entry in entries {
-					let config_hash = entry.labels.get("podup.config-hash").cloned();
-					let service = entry.labels.get("podup.service").cloned();
-					for raw in entry.names {
-						existing.insert(
-							raw.trim_start_matches('/').to_string(),
-							crate::engine::lifecycle::ExistingContainer {
-								config_hash: config_hash.clone(),
-								image_id: entry.image_id.clone(),
-								service: service.clone(),
-							},
-						);
-					}
-				}
-			}
+				crate::engine::lifecycle::ExistingContainer::snapshot(&entries)
+			};
 
 			// Seed the board before any work starts. This is the whole point of
 			// the phase: the resource set is knowable here, since `levels` is already
