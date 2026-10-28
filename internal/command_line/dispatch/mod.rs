@@ -58,6 +58,22 @@ pub(crate) async fn dispatch(
 			// `up` starts services and never a job. A job with a schedule is
 			// reported here so it is not taken for one that runs on time.
 			podup::warn_unscheduled_jobs(&profile_filtered(file, profile, &[]));
+			// What this `up` touches. Waiting, attaching and the stop at the end
+			// act on this set and not on the whole project, so `up web` does not
+			// attach to, or stop, services outside its selection, and `--wait`
+			// does not wait for a service of an inactive profile.
+			let scope = {
+				let mut scoped = file.clone();
+				podup::retain_up_scope(&mut scoped, profile, &services, no_deps);
+				scoped
+			};
+			// A name `--exit-code-from` cannot match is an input error: say so
+			// before anything is started.
+			if let Some(name) = &exit_code_from {
+				if !scope.services.contains_key(name) {
+					return Err(podup::ComposeError::ServiceNotFound(name.clone()));
+				}
+			}
 			if remove_orphans {
 				engine.remove_orphans(file).await?;
 			} else {
@@ -73,13 +89,14 @@ pub(crate) async fn dispatch(
 			// wait/watch/attach steps below do not apply.
 			if no_start {
 				engine
-					.create_with_options(
+					.create_with_build(
 						file,
 						profile,
 						&services,
 						no_recreate,
 						force_recreate,
 						no_deps,
+						build,
 					)
 					.await?;
 				return Ok(());
@@ -98,7 +115,7 @@ pub(crate) async fn dispatch(
 				.await?;
 			if wait {
 				// `--wait-timeout` bounds the health wait, like `start --wait`.
-				let fut = engine.wait_services_healthy(file, &services);
+				let fut = engine.wait_services_healthy(&scope, &services);
 				match wait_timeout {
 					Some(secs) => tokio::time::timeout(std::time::Duration::from_secs(secs), fut)
 						.await
@@ -113,11 +130,11 @@ pub(crate) async fn dispatch(
 			// --wait` exits 0, and `podup up --wait` hung until killed, which is
 			// the canonical health-gated CI idiom, so it hung the job.
 			if watch {
-				engine.watch(file).await?;
+				engine.watch(&scope).await?;
 			} else if !detach && !wait {
 				let summary = engine
 					.attach_logs_with(
-						file,
+						&scope,
 						&podup::AttachOptions::new()
 							.with_timestamps(timestamps)
 							.with_abort_on_container_exit(abort_on_container_exit)
@@ -146,7 +163,7 @@ pub(crate) async fn dispatch(
 					_ => {
 						// A failed teardown must surface as a non-zero exit, not
 						// be swallowed after the log streams end.
-						engine.stop(file, &[]).await?;
+						engine.stop(&scope, &[]).await?;
 					}
 				}
 				// Same ordering rule as the abort above: reported after the

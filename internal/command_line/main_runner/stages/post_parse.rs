@@ -58,7 +58,11 @@ pub(crate) async fn run_config(
 		parsed
 	};
 	// Honor active profiles so `config` prints the same services `up` starts.
-	podup::retain_active_profiles(&mut resolved, &cli.profile);
+	// `--profiles` lists every profile the file declares, active or not, so it
+	// reads the model before the inactive ones are dropped.
+	if !*profiles {
+		podup::retain_active_profiles(&mut resolved, &cli.profile);
+	}
 	// Fold `env_file:` into `environment:` the way docker compose does, so a
 	// service whose whole environment comes from a file does not render with no
 	// environment at all (#1184). `config` is the command you reach for to ask

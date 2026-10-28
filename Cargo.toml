@@ -307,6 +307,10 @@ name = "env_not_utf8"
 path = "tests/cli/environment/env_not_utf8.rs"
 
 [[test]]
+name = "up_selection"
+path = "tests/cli/up/up_selection.rs"
+
+[[test]]
 name = "quadlet_jobs"
 path = "tests/quadlet/quadlet_jobs.rs"
 
