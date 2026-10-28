@@ -111,36 +111,38 @@ fn append_context<W: std::io::Write>(
 		}
 		!negation_could_reach(&rel_str, ignore_patterns)
 	};
-	for abs in walk::walk_dir_skipping(context, skip_dir).map_err(ComposeError::Io)? {
+	let include_entry = |abs: &Path| {
+		let Ok(rel) = abs.strip_prefix(context) else {
+			return false;
+		};
+		let name = to_ignore_path(rel);
+		!skip_names.contains(&name.as_str())
+			&& (force_include.contains(&name.as_str()) || !is_ignored(&name, ignore_patterns))
+	};
+	walk::visit_dir_skipping(context, skip_dir, include_entry, |abs, entry| {
 		let rel = abs
 			.strip_prefix(context)
-			.map_err(|_| ComposeError::Build("path strip error".into()))?;
-		let rel_str = to_ignore_path(rel);
-		if skip_names.iter().any(|n| rel_str == *n) {
-			continue;
+			.map_err(|_| std::io::Error::other("build context path strip error"))?;
+		match entry {
+			walk::Entry::File(mut file) => tar.append_file(rel, &mut file)?,
+			walk::Entry::Directory(metadata) => {
+				let mut header = tar::Header::new_gnu();
+				header.set_metadata(&metadata);
+				header.set_entry_type(tar::EntryType::Directory);
+				header.set_size(0);
+				tar.append_data(&mut header, rel, std::io::empty())?;
+			}
+			walk::Entry::Symlink(target) => {
+				let mut header = tar::Header::new_gnu();
+				header.set_entry_type(tar::EntryType::Symlink);
+				header.set_mode(0o777);
+				header.set_size(0);
+				tar.append_link(&mut header, rel, target)?;
+			}
 		}
-		// The active Dockerfile is always sent to the builder even when
-		// `.dockerignore` would match it: Docker keeps the Dockerfile (and
-		// `.dockerignore`) available for the build itself; they just can't be
-		// COPY'd into the image. Without this, a `.dockerignore` listing
-		// `Dockerfile` (or a blanket `*`) drops it from the context tar and the
-		// build fails with "stat .../Dockerfile: no such file or directory".
-		let forced = force_include.iter().any(|n| rel_str == *n);
-		if !forced && is_ignored(&rel_str, ignore_patterns) {
-			continue;
-		}
-		// Classify without following symlinks so a symlink-to-dir is stored as a
-		// link rather than walked and dereferenced.
-		let is_dir = abs.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
-		if is_dir {
-			tar.append_dir(rel, &abs)
-				.map_err(|e| ComposeError::Build(e.to_string()))?;
-		} else {
-			tar.append_path_with_name(&abs, rel)
-				.map_err(|e| ComposeError::Build(e.to_string()))?;
-		}
-	}
-	Ok(())
+		Ok(())
+	})
+	.map_err(ComposeError::Io)
 }
 
 fn append_extra_files<W: std::io::Write>(

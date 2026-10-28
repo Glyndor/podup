@@ -17,6 +17,8 @@
 
 use std::path::Path;
 
+mod glob;
+
 /// Read the patterns from `context`'s active ignore file.
 ///
 /// Returns the same `(name, patterns)` pair the build tar loop has always
@@ -29,9 +31,11 @@ pub(in crate::backends::engine) fn read_patterns(context: &Path) -> (&'static st
 			continue;
 		};
 		let patterns = content
+			.trim_start_matches('\u{feff}')
 			.lines()
+			.filter(|l| !l.starts_with('#'))
 			.map(|l| l.trim().to_string())
-			.filter(|l| !l.is_empty() && !l.starts_with('#'))
+			.filter(|l| !l.is_empty())
 			.collect();
 		return (name, patterns);
 	}
@@ -64,15 +68,21 @@ pub(in crate::backends::engine) fn to_ignore_path(rel: &std::path::Path) -> Stri
 ///
 /// Conservative on purpose: a `true` costs a descent that the leaf filter
 /// then throws away, while a wrong `false` silently drops a file the user
-/// asked to keep. A negation whose path starts at `dir`, or that begins
-/// with a wildcard and so could match at any depth, counts as reaching it.
+/// asked to keep. Normalize literal exceptions before comparing their paths;
+/// wildcard or escaped exceptions conservatively keep descent enabled.
 pub(in crate::backends::engine) fn negation_could_reach(dir: &str, patterns: &[String]) -> bool {
 	patterns
 		.iter()
-		.filter_map(|p| p.strip_prefix('!'))
+		.filter_map(|p| p.trim().strip_prefix('!'))
 		.any(|p| {
-			let p = p.trim_start_matches("./");
-			p.starts_with('*') || p.starts_with(dir) || dir.is_empty()
+			let p = normalize(p);
+			!p.is_empty()
+				&& (dir.is_empty()
+					|| p.contains(['*', '?', '[', '\\'])
+					|| p == dir || p.strip_prefix(dir).is_some_and(|s| s.starts_with('/'))
+					|| dir
+						.strip_prefix(p.as_str())
+						.is_some_and(|s| s.starts_with('/')))
 		})
 }
 
@@ -87,9 +97,10 @@ pub(in crate::backends::engine) fn negation_could_reach(dir: &str, patterns: &[S
 pub(in crate::backends::engine) fn evaluate(path: &str, patterns: &[String]) -> Option<bool> {
 	let mut last: Option<bool> = None;
 	for pattern in patterns {
+		let pattern = pattern.trim();
 		let (negated, pat) = match pattern.strip_prefix('!') {
-			Some(rest) => (true, rest),
-			None => (false, pattern.as_str()),
+			Some(rest) => (true, rest.trim()),
+			None => (false, pattern),
 		};
 		if pattern_matches(pat, path) {
 			last = Some(!negated);
@@ -105,20 +116,42 @@ pub(in crate::backends::engine) fn is_ignored(path: &str, patterns: &[String]) -
 
 /// Match a single (already de-negated) `.dockerignore` pattern against `path`.
 pub(in crate::backends::engine) fn pattern_matches(pattern: &str, path: &str) -> bool {
+	let pattern = normalize(pattern);
 	if pattern.is_empty() {
 		return false;
 	}
-	// Directory pattern (`foo/`): match the directory and everything beneath it.
-	if let Some(dir) = pattern.strip_suffix('/') {
-		return path == dir || path.starts_with(&format!("{dir}/"));
+	let wildcard = pattern.contains(['*', '?', '[', '\\']);
+	let matches = |candidate: &str| {
+		if wildcard {
+			glob_match(&pattern, candidate)
+		} else {
+			candidate == pattern
+		}
+	};
+	if matches(path) {
+		return true;
 	}
-	if pattern.contains('*') || pattern.contains('?') {
-		return glob_match(pattern, path);
+	// A matched directory excludes its descendants, including when its name
+	// was matched by a glob. Each later negation gets the same parent checks.
+	path.match_indices('/')
+		.any(|(end, _)| matches(&path[..end]))
+}
+
+fn normalize(pattern: &str) -> String {
+	let pattern = pattern.trim();
+	let absolute = pattern.starts_with('/');
+	let mut parts = Vec::new();
+	for part in pattern.split('/') {
+		match part {
+			"" | "." => {}
+			".." if parts.last().is_some_and(|p| *p != "..") => {
+				parts.pop();
+			}
+			".." if absolute => {}
+			_ => parts.push(part),
+		}
 	}
-	// Plain pattern: exact match, or a path segment prefix (`vendor` matches
-	// `vendor/lib.rs`).
-	path == pattern
-		|| (path.starts_with(pattern) && path.as_bytes().get(pattern.len()) == Some(&b'/'))
+	parts.join("/")
 }
 
 /// Match path against a glob pattern.
@@ -144,6 +177,9 @@ pub(in crate::backends::engine) fn glob_match(pattern: &str, path: &str) -> bool
 /// earlier recursive matcher retried every split of every wildcard and took
 /// exponential time on inputs such as `*a*a*a*a*a*a*b` against a run of `a`.
 pub(in crate::backends::engine) fn glob_rec(pat: &[u8], s: &[u8]) -> bool {
+	if !pat.is_ascii() || !s.is_ascii() || pat.contains(&b'[') || pat.contains(&b'\\') {
+		return glob::matches(pat, s);
+	}
 	let n = pat.len();
 	let mut cur = vec![false; n + 1];
 	let mut stay = vec![false; n + 1];
