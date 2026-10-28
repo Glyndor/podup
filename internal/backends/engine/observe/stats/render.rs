@@ -4,6 +4,7 @@
 //! sees, so the column layout can be checked without a terminal and the header
 //! can be pinned against the rows it labels.
 
+use crate::error::{ComposeError, Result};
 use crate::units::SizeFormat;
 
 use super::model::ContainerStat;
@@ -31,10 +32,25 @@ pub(super) fn format_bytes(bytes: u64) -> String {
 }
 
 /// Sum a container's per-interface network counters into one `(rx, tx)` pair.
-fn net_totals(s: &ContainerStat) -> (u64, u64) {
-	s.network
-		.values()
-		.fold((0u64, 0u64), |(rx, tx), n| (rx + n.rx, tx + n.tx))
+///
+/// Checked, because the daemon chooses both the numbers and how many
+/// interfaces there are: each counter is a `u64`, so two of them can add up to
+/// more than a `u64` holds. The sum was unchecked, and an overflow panics in a
+/// debug build and wraps in a release one, so the total the table (and the
+/// JSON) showed was not the traffic that happened. A sum that does not fit is
+/// reported instead of guessed.
+fn net_totals(s: &ContainerStat) -> Result<(u64, u64)> {
+	let mut rx = 0u64;
+	let mut tx = 0u64;
+	for n in s.network.values() {
+		rx = rx
+			.checked_add(n.rx)
+			.ok_or_else(|| ComposeError::StatsOverflow(s.name.clone()))?;
+		tx = tx
+			.checked_add(n.tx)
+			.ok_or_else(|| ComposeError::StatsOverflow(s.name.clone()))?;
+	}
+	Ok((rx, tx))
 }
 
 /// The NAME cell for the table: the full name when `no_trunc`, otherwise
@@ -86,9 +102,9 @@ pub(super) fn load_style(pct: f64) -> crate::ui::Style {
 /// Each cell is padded to its width *before* being painted: the ANSI codes are
 /// zero-width, so padding afterwards would count them and knock every later
 /// column out of alignment.
-pub(super) fn format_row_with(s: &ContainerStat, no_trunc: bool, colour: bool) -> String {
+pub(super) fn format_row_with(s: &ContainerStat, no_trunc: bool, colour: bool) -> Result<String> {
 	use crate::ui::{identity_style, paint};
-	let (rx, tx) = net_totals(s);
+	let (rx, tx) = net_totals(s)?;
 	let dim = crate::ui::Style::new().dimmed();
 
 	// The name arrives from the daemon, so it is not ours to trust: a raw
@@ -145,15 +161,15 @@ pub(super) fn format_row_with(s: &ContainerStat, no_trunc: bool, colour: bool) -
 	// the absolute byte figures beside it, so it takes the same dim treatment
 	// rather than a colour of its own.
 	let pids = paint(dim, &format!("{:>PIDS_WIDTH$}", s.pids), colour);
-	format!("{name} {cpu} {mem} {mem_pct} {net} {block} {pids}")
+	Ok(format!("{name} {cpu} {mem} {mem_pct} {net} {block} {pids}"))
 }
 
 /// Build one `stats --format json` row with numeric values (raw bytes/percent),
 /// so machine consumers get exact figures rather than the table's rounded,
 /// human-formatted cells. Pure so it can be unit-tested.
-pub(super) fn stat_json_row(s: &ContainerStat) -> serde_json::Value {
-	let (rx, tx) = net_totals(s);
-	serde_json::json!({
+pub(super) fn stat_json_row(s: &ContainerStat) -> Result<serde_json::Value> {
+	let (rx, tx) = net_totals(s)?;
+	Ok(serde_json::json!({
 		"Name": s.name,
 		"CPUPerc": s.cpu,
 		"MemUsage": s.mem_usage,
@@ -164,7 +180,7 @@ pub(super) fn stat_json_row(s: &ContainerStat) -> serde_json::Value {
 		"BlockInput": s.block_in,
 		"BlockOutput": s.block_out,
 		"PIDs": s.pids,
-	})
+	}))
 }
 
 /// Width of each column after NAME, in the order they are printed.

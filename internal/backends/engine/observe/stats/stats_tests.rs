@@ -92,7 +92,7 @@ fn format_row_sums_network_and_shows_name() {
 		pids: 3,
 		network,
 	};
-	let row = format_row_with(&s, false, false);
+	let row = format_row_with(&s, false, false).expect("the row renders");
 	assert!(row.contains("proj-web"));
 	assert!(row.contains("12.50%"));
 	assert!(row.contains("1.0MiB"));
@@ -122,11 +122,11 @@ fn format_row_truncates_long_name_but_no_trunc_keeps_it() {
 		..Default::default()
 	};
 	// Default: the long name is truncated (ellipsis present, full name gone).
-	let row = format_row_with(&s, false, false);
+	let row = format_row_with(&s, false, false).expect("the row renders");
 	assert!(row.contains('…'));
 	assert!(!row.contains(&s.name));
 	// `--no-trunc`: the full name survives intact.
-	let row_full = format_row_with(&s, true, false);
+	let row_full = format_row_with(&s, true, false).expect("the row renders");
 	assert!(row_full.contains(&s.name));
 }
 
@@ -141,7 +141,7 @@ fn a_container_name_cannot_drive_the_terminal() {
 		name: "proj-web\u{1b}[31m\u{7}1".into(),
 		..Default::default()
 	};
-	let row = format_row_with(&s, false, false);
+	let row = format_row_with(&s, false, false).expect("the row renders");
 	assert!(!row.contains('\u{1b}'), "{row:?}");
 	assert!(!row.contains('\u{7}'), "{row:?}");
 	// The name is still there, as text.
@@ -157,16 +157,70 @@ fn the_escaped_name_is_measured_before_the_row_is_padded() {
 		name: "proj-web\u{1b}1".into(),
 		..Default::default()
 	};
-	let row = format_row_with(&s, false, false);
+	let row = format_row_with(&s, false, false).expect("the row renders");
 	// The escaped name is 8 + 6 + 1 = 15 columns, well inside NAME_WIDTH, so
 	// the row is padded to the same width as any other name.
 	assert_eq!(
 		row.chars().count(),
 		format_row_with(&sample_stat(), false, false)
+			.expect("the row renders")
 			.chars()
 			.count(),
 		"a name with escapes must not change the row's width: {row:?}"
 	);
+}
+
+/// The network counters come from the daemon, and each interface's counter is
+/// a `u64`, so two of them can add up to more than a `u64` holds. The sum was
+/// unchecked: it panicked in a debug build and wrapped in a release one, so
+/// the total the table (and the JSON) reported was not the traffic that
+/// happened. A sum that does not fit is reported instead.
+#[test]
+fn network_counters_that_do_not_fit_are_reported() {
+	let mut network = HashMap::new();
+	network.insert(
+		"eth0".to_string(),
+		NetStat {
+			rx: u64::MAX,
+			tx: 0,
+		},
+	);
+	network.insert("eth1".to_string(), NetStat { rx: 1, tx: 0 });
+	let s = ContainerStat {
+		name: "proj-web-1".into(),
+		network,
+		..Default::default()
+	};
+	let err = format_row_with(&s, false, false).expect_err("the sum does not fit");
+	assert!(
+		matches!(err, crate::error::ComposeError::StatsOverflow(_)),
+		"the table must report the overflow: {err:?}"
+	);
+	// The machine path reports it too: a JSON row with a wrapped counter is
+	// worse than no row, because the consumer cannot tell it apart from the
+	// real number.
+	let err = stat_json_row(&s).expect_err("the sum does not fit");
+	assert!(
+		matches!(err, crate::error::ComposeError::StatsOverflow(_)),
+		"the JSON path must report the overflow: {err:?}"
+	);
+}
+
+/// A sum that does fit is still the sum of every interface, and the two
+/// counters are added independently.
+#[test]
+fn network_counters_that_fit_are_summed() {
+	let mut network = HashMap::new();
+	network.insert("eth0".to_string(), NetStat { rx: 10, tx: 100 });
+	network.insert("eth1".to_string(), NetStat { rx: 20, tx: 200 });
+	let s = ContainerStat {
+		name: "proj-web-1".into(),
+		network,
+		..Default::default()
+	};
+	let row = stat_json_row(&s).expect("the row renders");
+	assert_eq!(row["NetInput"], 30);
+	assert_eq!(row["NetOutput"], 300);
 }
 
 #[test]
@@ -184,7 +238,7 @@ fn stat_json_row_emits_numeric_fields() {
 		pids: 7,
 		network,
 	};
-	let row = stat_json_row(&s);
+	let row = stat_json_row(&s).expect("the row renders");
 	assert_eq!(row["Name"], "proj-db-1");
 	assert_eq!(row["CPUPerc"], 5.5);
 	assert_eq!(row["MemUsage"], 2048);
@@ -328,7 +382,7 @@ fn first_unknown_service_flags_typos() {
 /// data stopped, so the label was entirely off the column it named.
 #[test]
 fn the_header_lines_up_with_the_rows() {
-	let row = format_row_with(&sample_stat(), false, false);
+	let row = format_row_with(&sample_stat(), false, false).expect("the row renders");
 	let header = header();
 	assert_eq!(
 		header.chars().count(),
@@ -355,7 +409,7 @@ fn the_pids_label_sits_over_the_pids_column() {
 		header.trim_end().ends_with("PIDS"),
 		"PIDS is the trailing column: {header:?}"
 	);
-	let row = format_row_with(&sample_stat(), false, false);
+	let row = format_row_with(&sample_stat(), false, false).expect("the row renders");
 	assert_eq!(
 		header.rfind("PIDS").unwrap() + "PIDS".len(),
 		row.chars().count(),

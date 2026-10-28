@@ -75,7 +75,7 @@ pub(super) fn print_frame(
 	let rows = frame_rows(report, running, stopped);
 
 	if opts.json {
-		let json: Vec<_> = rows.iter().map(stat_json_row).collect();
+		let json: Vec<_> = rows.iter().map(stat_json_row).collect::<Result<Vec<_>>>()?;
 		// While streaming, one compact array per line: NDJSON, the shape
 		// `events` already emits. A pretty-printed array per frame, concatenated,
 		// is neither a single JSON document nor NDJSON, so no parser accepts it:
@@ -101,10 +101,9 @@ pub(super) fn print_frame(
 
 	let colour = crate::ui::stdout_colored();
 	let mut lines = vec![crate::ui::paint(crate::ui::bold(), &header(), colour)];
-	lines.extend(
-		rows.iter()
-			.map(|s| format_row_with(s, opts.no_trunc, colour)),
-	);
+	for s in &rows {
+		lines.push(format_row_with(s, opts.no_trunc, colour)?);
+	}
 
 	// A live region only while streaming. `--no-stream` prints one frame and
 	// exits, so there is nothing to repaint over and a region would only hide

@@ -85,6 +85,11 @@ pub enum ComposeError {
 	/// (`Unsupported`) or a stream that ended early (`StreamTruncated`)
 	/// (#1697).
 	PortNotPublished(String),
+	/// The daemon reported per-interface network counters whose sum does not
+	/// fit in the counter's own type, so the total `stats` reports is not a
+	/// number the client can hold. Carries the container's name so the reader
+	/// knows which sample it was.
+	StatsOverflow(String),
 	/// `podup update` (self-update) failed.
 	Update(String),
 	/// An `external: true` secret/config/network/volume is absent.
@@ -286,6 +291,11 @@ impl fmt::Display for ComposeError {
 			Self::Interrupted => write!(f, "interrupted"),
 			Self::StreamTruncated(what) => write!(f, "{what}"),
 			Self::PortNotPublished(what) => write!(f, "{what}"),
+			Self::StatsOverflow(name) => write!(
+				f,
+				"network counters for container '{}' exceed the range podup can report",
+				sanitize_name(name)
+			),
 			Self::Update(s) => write!(f, "update error: {s}"),
 			Self::ExternalNotFound(s) => write!(f, "external resource not found: {s}"),
 			Self::ScalePortConflict {
