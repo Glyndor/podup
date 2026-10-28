@@ -7,7 +7,9 @@
 //! here. The body-plan decision lives in [`super::request::body_plan`]; the
 //! `apply_extra_tags` follow-up lives in [`super::names::extra_tags`].
 
+mod capture;
 mod steps;
+mod upload;
 
 use std::io::IsTerminal;
 
@@ -22,6 +24,7 @@ use crate::libpod::validate::pre_validate_build;
 use crate::libpod::{urlencoded, API_PREFIX};
 use crate::size;
 
+use self::capture::BuildCapture;
 use self::steps::{parse_image_id_line, BuildStreamProgress};
 use super::names::looks_like_secret;
 use super::request::{context_body, plan_build};
@@ -304,6 +307,7 @@ impl Engine {
 		}
 
 		let path = format!("{API_PREFIX}/build?{qs}");
+		let mut producer = None;
 		let resp = match body_plan {
 			BodyPlan::Empty => self
 				.client
@@ -315,25 +319,21 @@ impl Engine {
 				source,
 				secrets,
 			} => {
-				// The tar writer runs on a blocking thread feeding the request
-				// body; drain the body first, then join the writer, since joining
-				// before the body is drained would deadlock on the bounded
-				// channel. If the request itself failed, that transport error is
-				// the real cause; otherwise surface any context-assembly error.
-				let (producer, body) = context_body(context, source, secrets);
+				// A response head can arrive before the request body is sent.
+				// Keep the producer until response polling has driven the HTTP
+				// connection, then drop the body before joining or cancelling it.
+				let (writer, body) = context_body(context, source, secrets);
+				producer = Some(writer);
 				let sent = self
 					.client
 					.post_stream_body(&path, body, "application/x-tar")
 					.await;
-				let produced = producer
-					.await
-					.map_err(|e| ComposeError::Build(e.to_string()))?;
 				match sent {
-					Ok(resp) => {
-						produced?;
-						resp
+					Ok(resp) => resp,
+					Err(e) => {
+						let _ = upload::finish_upload(producer).await;
+						return Err(ComposeError::Podman(e));
 					}
-					Err(e) => return Err(ComposeError::Podman(e)),
 				}
 			}
 		};
@@ -361,12 +361,9 @@ impl Engine {
 			}
 		}
 
-		// The captured stream of this image: needed on a terminal failure
-		// path, where the notes buffer only kept the last 4 lines and the
-		// rest has to be replayed as scrollback so the reason is on screen.
-		// Off a terminal, every line is already in stderr through `note_for`,
-		// so this stays empty in the test runs.
-		let mut capture: Vec<String> = Vec::new();
+		// Keep only a bounded tail for terminal failure replay. In a pipe,
+		// note_for already printed the output; quiet builds need no replay.
+		let mut capture = BuildCapture::new(!opts.quiet && std::io::stderr().is_terminal());
 		// Track the last image id the stream emitted, so the success path
 		// can put it on stdout when stdout is not a terminal. Buildah
 		// closes with a `--> sha256:<64-hex>` line, which is what a script
@@ -375,7 +372,10 @@ impl Engine {
 		let mut last_image_id: Option<String> = None;
 		let mut progress = BuildStreamProgress::new();
 
-		while let Some(result) = stream.next().await {
+		let stream_result = loop {
+			let Some(result) = stream.next().await else {
+				break Ok(());
+			};
 			match result {
 				Ok(output) => {
 					if !output.stream.is_empty() {
@@ -401,16 +401,29 @@ impl Engine {
 						capture.push(trimmed);
 					}
 					if let Some(err) = output.error_detail.and_then(|e| e.message) {
-						return Err(self.fail_build(&tag, err, capture, opts.quiet).await);
+						break Err(ComposeError::Build(err));
 					}
 					if let Some(err) = output.error {
 						if !err.is_empty() {
-							return Err(self.fail_build(&tag, err, capture, opts.quiet).await);
+							break Err(ComposeError::Build(err));
 						}
 					}
 				}
-				Err(e) => return Err(ComposeError::Podman(e)),
+				Err(e) => break Err(ComposeError::Podman(e)),
 			}
+		};
+		// DrivenBody owns the connection and the request's channel receiver.
+		// Release both before waiting for a writer stopped by an early reply.
+		drop(stream);
+		let produced = upload::finish_upload(producer).await;
+		match stream_result {
+			Err(ComposeError::Build(err)) => {
+				return Err(self
+					.fail_build(&tag, err, capture.into_lines(), opts.quiet)
+					.await);
+			}
+			Err(err) => return Err(err),
+			Ok(()) => produced?,
 		}
 
 		// Success: close the row with `Built`. The trailing image id goes to
@@ -438,6 +451,9 @@ impl Engine {
 		Ok(())
 	}
 }
+
+#[cfg(test)]
+mod tests;
 
 #[cfg(all(test, unix))]
 mod board_tests;

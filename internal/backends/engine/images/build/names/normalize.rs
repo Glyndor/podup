@@ -18,7 +18,7 @@
 //! 1. Look the name up in local storage via
 //!    `GET /libpod/images/{name}/json`. When the input resolves to
 //!    a local image, return its canonical `RepoTags` entry that
-//!    matches the input's tag (the upstream helper returns the
+//!    matches the input's repository and tag (the upstream helper returns the
 //!    candidate resolved by the daemon, which carries the same
 //!    shape).
 //! 2. Otherwise apply the pure normalisation rule
@@ -68,20 +68,37 @@ impl Engine {
 /// canonical name podup has to keep: the user tagged it themselves
 /// and a fresh normalisation would land on a different name.
 ///
-/// "Matches" means: same tag suffix when the input carries one, or
-/// any entry when the input is a bare name. The first hit wins so
-/// the result is deterministic across runs on the same local
-/// storage state.
+/// Preserve qualified references exactly. For short names with a tag,
+/// accept a registry-resolved alias only for the same repository and tag.
+/// Keep the historical first-alias fallback for untagged short names.
 fn match_repo_tag<'a>(repo_tags: &'a [String], input: &str) -> Option<&'a str> {
-	let wanted_suffix = input.split_once(':').map(|(_, tag)| tag);
-	for tag in repo_tags {
-		if let Some(suffix) = wanted_suffix {
-			if tag.ends_with(&format!(":{suffix}")) {
-				return Some(tag.as_str());
-			}
-		} else if !tag.contains(':') {
-			return Some(tag.as_str());
-		}
+	let canonical = normalize_docker_reference(input);
+	if canonical == input {
+		return repo_tags
+			.iter()
+			.find(|tag| tag.as_str() == input)
+			.map(String::as_str);
+	}
+	if input
+		.rsplit('/')
+		.next()
+		.is_some_and(|name| name.contains(':'))
+	{
+		return repo_tags
+			.iter()
+			.find(|tag| {
+				tag.as_str() == canonical
+					|| tag.split_once('/').is_some_and(|(registry, repository)| {
+						(registry == "localhost"
+							|| registry.contains('.')
+							|| registry.contains(':'))
+							&& repository == input
+					})
+			})
+			.map(String::as_str);
+	}
+	if let Some(tag) = repo_tags.iter().find(|tag| !tag.contains(':')) {
+		return Some(tag.as_str());
 	}
 	repo_tags.first().map(String::as_str)
 }

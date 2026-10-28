@@ -63,3 +63,47 @@ fn picks_first_matching_tag_when_multiple_match() {
 		"the first matching RepoTag wins; the wire-shape contract is deterministic"
 	);
 }
+
+#[test]
+fn qualified_reference_does_not_select_another_repository_with_the_same_tag() {
+	let tags = vec![
+		"a.example/other/app:v1".to_string(),
+		"z.example/team/app:v1".to_string(),
+	];
+	assert_eq!(
+		match_repo_tag(&tags, "z.example/team/app:v1"),
+		Some("z.example/team/app:v1")
+	);
+}
+
+#[test]
+fn qualified_reference_does_not_fall_back_to_an_unrelated_alias() {
+	let tags = vec!["a.example/other/app:v1".to_string()];
+	assert_eq!(match_repo_tag(&tags, "z.example/team/app:v1"), None);
+}
+
+#[test]
+fn short_tagged_reference_matches_the_repository_too() {
+	let tags = vec![
+		"a.example/other/app:v1".to_string(),
+		"localhost/team/app:v1".to_string(),
+	];
+	assert_eq!(
+		match_repo_tag(&tags, "team/app:v1"),
+		Some("localhost/team/app:v1")
+	);
+	assert_eq!(match_repo_tag(&tags, "missing/app:v1"), None);
+}
+
+#[test]
+fn registry_port_is_not_a_tag_separator() {
+	let tags = vec![
+		"host:5000/other/app:v1".to_string(),
+		"host:5000/team/app:v1".to_string(),
+	];
+	assert_eq!(
+		match_repo_tag(&tags, "host:5000/team/app:v1"),
+		Some("host:5000/team/app:v1")
+	);
+	assert_eq!(match_repo_tag(&tags, "host:5000/team/app"), None);
+}

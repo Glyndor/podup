@@ -229,9 +229,30 @@ where
 	T: serde::de::DeserializeOwned + Send + 'static,
 	B: hyper::body::Body<Data = Bytes, Error = hyper::Error> + Send + Unpin + 'static,
 {
+	parse_json_lines_inner(body, None)
+}
+
+/// Parse NDJSON with a maximum wait for each transport frame, renewed even
+/// when a frame contains only part of a JSON record. Timeout drops the body.
+pub(crate) fn parse_json_lines_with_idle_timeout<T, B>(
+	body: B,
+	idle: std::time::Duration,
+) -> BoxStream<T>
+where
+	T: serde::de::DeserializeOwned + Send + 'static,
+	B: hyper::body::Body<Data = Bytes, Error = hyper::Error> + Send + Unpin + 'static,
+{
+	parse_json_lines_inner(body, Some(idle))
+}
+
+fn parse_json_lines_inner<T, B>(body: B, idle: Option<std::time::Duration>) -> BoxStream<T>
+where
+	T: serde::de::DeserializeOwned + Send + 'static,
+	B: hyper::body::Body<Data = Bytes, Error = hyper::Error> + Send + Unpin + 'static,
+{
 	Box::pin(futures_util::stream::try_unfold(
 		(body, BytesMut::new(), 0u64),
-		|(mut body, mut buf, mut total_received)| async move {
+		move |(mut body, mut buf, mut total_received)| async move {
 			loop {
 				if let Some(line) = take_json_line(&mut buf) {
 					// A line plus its trailing newline are no longer buffered
@@ -247,7 +268,17 @@ where
 					return Ok(Some((item, (body, buf, total_received))));
 				}
 
-				match body.frame().await {
+				let frame = match idle {
+					Some(idle) => tokio::time::timeout(idle, body.frame())
+						.await
+						.map_err(|_| PodmanError::Api {
+							status: 0,
+							message: "timed out waiting for pull data: transport inactivity"
+								.to_string(),
+						})?,
+					None => body.frame().await,
+				};
+				match frame {
 					Some(Ok(frame)) => {
 						if let Ok(data) = frame.into_data() {
 							record_stream_bytes(&mut total_received, data.len())?;
