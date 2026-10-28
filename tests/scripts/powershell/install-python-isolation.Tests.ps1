@@ -87,17 +87,17 @@ Invoke-Expression $probeFn.Extent.Text
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ([System.IO.Path]::GetRandomFileName())
 [System.IO.Directory]::CreateDirectory($tmp) | Out-Null
 try {
-	$isWindows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
+	$onWindows = [System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform(
 		[System.Runtime.InteropServices.OSPlatform]::Windows)
 	# On Windows the stub has to be a .cmd, because that is what the
 	# command lookup resolves `python3` to. On the other platforms the
 	# name has to carry no extension and be executable, for the same
 	# reason.
-	$stubName = if ($isWindows) { 'python3.cmd' } else { 'python3' }
+	$stubName = if ($onWindows) { 'python3.cmd' } else { 'python3' }
 	$stubPath = Join-Path $tmp $stubName
 	$logPath = Join-Path $tmp 'probe-args.log'
 
-	if ($isWindows) {
+	if ($onWindows) {
 		# The stub writes the arguments it was called with, on one line.
 		# A single-quoted here-string keeps the batch syntax literal:
 		# nothing in it is a PowerShell escape. No labels and no loops,
