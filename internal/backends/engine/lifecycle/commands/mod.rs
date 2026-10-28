@@ -10,6 +10,7 @@ pub(super) use signals::kill_signal;
 use crate::engine::lifecycle::drop_recheck::LifecycleGoal;
 use crate::engine::Engine;
 use crate::error::{ComposeError, Result};
+use crate::libpod::client::READ_TIMEOUT;
 
 /// Say so when a command finished having done nothing.
 ///
@@ -68,8 +69,27 @@ impl Engine {
 		done: &str,
 		goal: LifecycleGoal,
 	) -> Result<bool> {
+		self.run_lifecycle_op_within(path, container, done, goal, Some(READ_TIMEOUT))
+			.await
+	}
+
+	/// As [`Self::run_lifecycle_op`], but the call carries its own deadline.
+	///
+	/// `None` leaves the call uncapped, which is what a `-1` shutdown grace
+	/// asks for: the user asked to wait indefinitely, so the client must not
+	/// be the one that gives up first. A deadline the caller names is the
+	/// one that applies; the default read timeout is what the calls that name
+	/// no deadline of their own get.
+	pub(super) async fn run_lifecycle_op_within(
+		&self,
+		path: &str,
+		container: &str,
+		done: &str,
+		goal: LifecycleGoal,
+		deadline: Option<std::time::Duration>,
+	) -> Result<bool> {
 		crate::ui::progress::start("Container", container, working_verb(done));
-		match self.client.post_empty_ok(path).await {
+		match self.client.post_empty_ok_within(path, deadline).await {
 			Ok(()) => {
 				crate::ui::progress_line("Container", container, done);
 				Ok(true)

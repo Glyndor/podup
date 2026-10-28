@@ -51,7 +51,11 @@ pub(crate) use send::hijack::Hijacked;
 // Re-exports for `super::X` from the folders below. Kept here so the
 // `super::full`, `super::READ_TIMEOUT`, `super::meets_minimum`, etc.
 // paths continue to resolve at the parent without touching the verb files.
-use request::transport::{full, BoxBody, READ_TIMEOUT};
+use request::transport::{full, BoxBody};
+// The default bound every buffered call carries. It is crate-visible so a
+// caller that imposes its own deadline can keep this one for the calls it
+// does not.
+pub(crate) use request::transport::READ_TIMEOUT;
 use response::status::meets_minimum;
 pub use stream::stream_body::DrivenBody;
 

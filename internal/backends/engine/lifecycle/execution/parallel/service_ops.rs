@@ -5,7 +5,7 @@
 //! works per container rather than per service, lives in [`super::teardown`].
 
 use crate::engine::lifecycle::drop_recheck::LifecycleGoal;
-use crate::engine::lifecycle::targets::stop_timeout_param;
+use crate::engine::lifecycle::targets::{stop_deadline, stop_timeout_param};
 use crate::engine::Engine;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
@@ -91,8 +91,20 @@ impl Engine {
 				urlencoded(&container_name),
 				stop_timeout_param(grace),
 			);
+			// The daemon is told how long it may take to stop the container, so
+			// the client has to be willing to wait at least that long: the
+			// default read timeout would cut a restart that is still inside the
+			// grace the user or the service asked for. `stop_deadline` derives
+			// the bound from the same grace, and leaves the call uncapped for
+			// the `-1` that means "wait indefinitely".
 			match self
-				.run_lifecycle_op(&restart_path, &container_name, done, LifecycleGoal::Running)
+				.run_lifecycle_op_within(
+					&restart_path,
+					&container_name,
+					done,
+					LifecycleGoal::Running,
+					stop_deadline(grace),
+				)
 				.await
 			{
 				Ok(true) => acted.store(true, std::sync::atomic::Ordering::Relaxed),

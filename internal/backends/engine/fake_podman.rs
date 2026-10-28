@@ -370,7 +370,7 @@ const HIJACK_READ_BUDGET: std::time::Duration = std::time::Duration::from_secs(5
 /// The hold is longer than any client deadline the engine uses, so the client
 /// is the one that gives up; the fake only needs to keep the peer from
 /// answering for that long.
-const SILENT_HOLD: std::time::Duration = std::time::Duration::from_secs(120);
+const SILENT_HOLD: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// Read what the client sends on a hijacked connection into `received`, until
 /// the client closes its half of it.
