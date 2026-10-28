@@ -106,8 +106,20 @@ fn the_selected_project_directory_reaches_the_service_unit() {
 	)
 	.expect("the options build");
 	let unit = podup::autostart::render_service_unit(&opts);
+	// The path is written as the platform spells it once resolved (macOS maps
+	// `/var` to `/private/var`, Windows writes a quoted verbatim path), so the
+	// test looks for the flag and for the directory's own name.
+	let name = dir
+		.path()
+		.file_name()
+		.and_then(|n| n.to_str())
+		.expect("a temp dir has a name");
+	let flag_line = unit
+		.lines()
+		.find(|l| l.starts_with("ExecStart=") && l.contains("--project-directory"))
+		.unwrap_or_else(|| panic!("no ExecStart carries the flag:\n{unit}"));
 	assert!(
-		unit.contains(&format!("--project-directory {}", dir.path().display())),
+		flag_line.contains(name),
 		"the selected project directory must travel into the unit:\n{unit}"
 	);
 }
