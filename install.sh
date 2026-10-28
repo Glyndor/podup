@@ -169,11 +169,22 @@ PUBKEYS=()
 #       3 the configured release key is malformed (a configuration problem,
 #         not a release-tampering problem - kept distinct from rc=1 so the
 #         caller can report it without scaring the user about the release).
+#
+# Every python call below runs with -I, the isolated mode. `python3 -c` and
+# `python3 -` put the current directory at the front of sys.path, so a
+# `cryptography/` package planted in the directory the installer was started
+# from is imported instead of the real one - and a fake `cryptography` whose
+# verify() always succeeds turns the signature check into a no-op that the
+# script then trusts on the strength of its exit code. -I removes the
+# current directory (and the user site directory) from the search path, so
+# the interpreter can only import what the system installed. The cost is
+# that a cryptography installed with `pip install --user` stops being
+# visible; the installer says so when it cannot verify.
 ed25519_verify() {
 	[[ ${#PUBKEYS[@]} -gt 0 ]] || return 2
 	command -v python3 >/dev/null 2>&1 || return 2
-	python3 -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey" 2>/dev/null || return 2
-	python3 - "$1" "$2" "${PUBKEYS[@]}" <<'PYEOF'
+	python3 -I -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey" 2>/dev/null || return 2
+	python3 -I - "$1" "$2" "${PUBKEYS[@]}" <<'PYEOF'
 import base64, binascii, sys
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.exceptions import InvalidSignature
@@ -242,6 +253,11 @@ run_root() {
 # release follows). python3 is already required for the Ed25519
 # signature check, so leaning on it for JSON parsing here does not add
 # a new dependency.
+#
+# The parse runs in isolated mode (-I), like the signature check: a
+# `json.py` planted in the current directory would shadow the standard
+# library module and could hand back the tag of an older release, which
+# is exactly the rollback the self-test below exists to refuse.
 resolve_release_tag() {
 	local api_url="https://api.github.com/repos/${REPO}/releases/latest"
 	local body
@@ -249,7 +265,7 @@ resolve_release_tag() {
 		--max-time 60 -fsSL \
 		-H 'Accept: application/vnd.github+json' \
 		"$api_url")" || fail "Cannot resolve latest release tag from ${api_url}"
-	python3 - "$body" <<'PYEOF' || fail "Malformed GitHub releases JSON from /releases/latest"
+	python3 -I - "$body" <<'PYEOF' || fail "Malformed GitHub releases JSON from /releases/latest"
 import json, sys
 try:
     data = json.loads(sys.argv[1])

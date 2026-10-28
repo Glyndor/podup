@@ -15,6 +15,7 @@ on:
       - ".github/workflows/reusable-powershell-ci.yml"
       - ".github/scripts/hardening/check-hardening.ps1"
       - "tests/scripts/powershell/check-hardening.Tests.ps1"
+      - "tests/scripts/powershell/install-python-isolation.Tests.ps1"
       # The rustflags that give the Windows binary Control Flow Guard live
       # here; a change to them is what this workflow builds and reads.
       - ".cargo/**"
@@ -34,6 +35,7 @@ on:
       - ".github/workflows/reusable-powershell-ci.yml"
       - ".github/scripts/hardening/check-hardening.ps1"
       - "tests/scripts/powershell/check-hardening.Tests.ps1"
+      - "tests/scripts/powershell/install-python-isolation.Tests.ps1"
       # The rustflags that give the Windows binary Control Flow Guard live
       # here; a change to them is what this workflow builds and reads.
       - ".cargo/**"
@@ -85,6 +87,12 @@ jobs:
       - name: Run the PE hardening fixture
         shell: pwsh
         run: pwsh -NoProfile -File tests/scripts/powershell/check-hardening.Tests.ps1
+      # The installer fixture proves the Windows installer's python probe
+      # runs isolated from the current directory. It needs no toolchain
+      # and no network, so it runs before the build step.
+      - name: Run the installer fixture
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/scripts/powershell/install-python-isolation.Tests.ps1
       # The fixture proves the script; this proves the binary. The release
       # runs the same script over the same target before signing, and the
       # Control Flow Guard bit rests on a rustflag in .cargo/config.toml,
