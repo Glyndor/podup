@@ -150,3 +150,31 @@ fn a_synthesized_entry_cannot_name_a_path_outside_the_archive() {
 		}
 	}
 }
+
+/// An ignore file that exists and cannot be used must stop the build. Carrying
+/// on without its rules would ship every file it was meant to keep out.
+#[test]
+fn an_ignore_file_that_cannot_be_read_stops_the_build() {
+	let dir = tempdir().unwrap();
+	fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
+	fs::write(dir.path().join("secret.env"), b"TOKEN=1").unwrap();
+	// Not valid UTF-8, so it cannot be read as text. (A mode of 000 would not
+	// stop root, which is who builds the package.)
+	fs::write(dir.path().join(".dockerignore"), b"secret.env\n\xff\xfe\n").unwrap();
+	let err = tar_within_budget(dir.path(), Vec::new())
+		.expect_err("an unreadable ignore file must not become an empty one");
+	let text = err.to_string();
+	assert!(text.contains("ignore file"), "{text}");
+	assert!(
+		!text.contains("secret.env"),
+		"the error must not echo content: {text}"
+	);
+}
+
+/// A missing ignore file is not an error: most contexts have none.
+#[test]
+fn a_missing_ignore_file_is_not_an_error() {
+	let dir = tempdir().unwrap();
+	fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
+	assert!(tar_within_budget(dir.path(), Vec::new()).is_ok());
+}
