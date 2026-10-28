@@ -22,7 +22,10 @@ async fn created_volumes(
 ) -> Vec<serde_json::Value> {
 	use crate::engine::fake_podman;
 
-	let inspect = format!(r#"{{"Mounts":{mounts}}}"#);
+	// The container being replaced was created by this project, so it carries
+	// the project label; a container without it is refused, not replaced.
+	let inspect =
+		format!(r#"{{"Mounts":{mounts},"Config":{{"Labels":{{"podup.project":"proj"}}}}}}"#);
 	let image = format!(r#"{{"Id":"sha256:abc","Config":{{"Volumes":{image_volumes}}}}}"#);
 	let fake = fake_podman::start(move |method, target| {
 		if method == "GET" && target.contains("/containers/proj-web-1/json") {
