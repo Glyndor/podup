@@ -123,6 +123,40 @@ fn sort_replica_names(names: &mut [String]) {
 	});
 }
 
+/// Whether a listed container is a one-off container, i.e. one that `run`
+/// created.
+///
+/// The `podup.oneoff=true` label is the only reliable marker: the name
+/// carries the run's PID where a replica carries an index, and a name is not
+/// a contract.
+fn is_one_off(entry: &crate::libpod::types::container::ContainerListEntry) -> bool {
+	entry
+		.labels
+		.get("podup.oneoff")
+		.is_some_and(|value| value == "true")
+}
+
+/// Group listed containers by their `podup.service` label, keeping the first
+/// name each carries.
+fn group_by_service(
+	entries: Vec<crate::libpod::types::container::ContainerListEntry>,
+) -> std::collections::HashMap<String, Vec<String>> {
+	let mut by_service: std::collections::HashMap<String, Vec<String>> =
+		std::collections::HashMap::new();
+	for entry in entries {
+		let Some(service) = entry.labels.get("podup.service") else {
+			continue;
+		};
+		if let Some(raw) = entry.names.first() {
+			by_service
+				.entry(service.clone())
+				.or_default()
+				.push(raw.trim_start_matches('/').to_string());
+		}
+	}
+	by_service
+}
+
 impl Engine {
 	/// Set the number of running containers for the named services (docker
 	/// `compose scale SERVICE=N`). Creates missing replicas and removes any
@@ -305,34 +339,48 @@ impl Engine {
 	/// `kill`/`rm`/`pause`/`unpause` need to act on (#1363 validation).
 	/// Callers fall back to the static [`Engine::replica_names`] for a service
 	/// absent from the map.
+	///
+	/// The one-off containers `run` creates are in this listing: they carry the
+	/// project label like every other container of the project, and the
+	/// teardown commands reclaim them with the rest. A command that acts on a
+	/// service's *replicas* reads [`Self::live_service_replicas`] instead.
 	pub(crate) async fn live_project_replicas(
 		&self,
 	) -> Result<std::collections::HashMap<String, Vec<String>>> {
+		Ok(group_by_service(self.project_container_entries().await?))
+	}
+
+	/// The project's containers grouped by their `podup.service` label, without
+	/// the one-off containers `run` creates.
+	///
+	/// A one-off container carries the service label of the service it ran, so
+	/// the plain listing counts it as one of that service's containers. It is
+	/// not one of its replicas: the name carries the run's PID where a replica
+	/// carries an index, and the container exists to be run once. A `start` or
+	/// a `restart` that acts on it runs the task a second time, so the
+	/// commands that act on a service's replicas read this listing instead.
+	pub(crate) async fn live_service_replicas(
+		&self,
+	) -> Result<std::collections::HashMap<String, Vec<String>>> {
+		let mut entries = self.project_container_entries().await?;
+		entries.retain(|entry| !is_one_off(entry));
+		Ok(group_by_service(entries))
+	}
+
+	/// Every container the project owns, in one listing.
+	async fn project_container_entries(
+		&self,
+	) -> Result<Vec<crate::libpod::types::container::ContainerListEntry>> {
 		// Reuse the per-engine URL-encoded filter (#1364); see
 		// [`Engine::project_label_filter_encoded`].
 		let path = format!(
 			"{API_PREFIX}/containers/json?all=true&filters={}",
 			self.project_label_filter_encoded(),
 		);
-		let entries = self
-			.client
+		self.client
 			.get_json::<Vec<crate::libpod::types::container::ContainerListEntry>>(&path)
 			.await
-			.map_err(ComposeError::Podman)?;
-		let mut by_service: std::collections::HashMap<String, Vec<String>> =
-			std::collections::HashMap::new();
-		for entry in entries {
-			let Some(service) = entry.labels.get("podup.service") else {
-				continue;
-			};
-			if let Some(raw) = entry.names.first() {
-				by_service
-					.entry(service.clone())
-					.or_default()
-					.push(raw.trim_start_matches('/').to_string());
-			}
-		}
-		Ok(by_service)
+			.map_err(ComposeError::Podman)
 	}
 
 	/// The bulk project listing ([`Self::live_project_replicas`]) with each

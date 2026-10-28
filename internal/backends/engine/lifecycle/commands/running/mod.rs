@@ -4,3 +4,6 @@ mod pause;
 mod restart;
 mod start;
 mod stop;
+
+#[cfg(all(test, unix))]
+mod tests;

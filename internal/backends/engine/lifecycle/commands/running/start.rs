@@ -22,7 +22,11 @@ impl Engine {
 		// created, 404 (swallowed as a no-op), and exit 0 silently, masking that
 		// the project was never created. Attempt every live container and
 		// aggregate errors rather than aborting on the first.
-		let live_by_service = self.live_project_replicas().await?;
+		//
+		// The service's replicas, without the one-off containers `run` creates:
+		// a one-off shares the service label but is not a replica, and starting
+		// it would run the task a second time.
+		let live_by_service = self.live_service_replicas().await?;
 
 		let any_live = std::sync::atomic::AtomicBool::new(false);
 		// The board over the containers Podman actually has, in the dependency
