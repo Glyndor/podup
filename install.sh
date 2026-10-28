@@ -331,6 +331,7 @@ install_apt() {
 	[[ "$OS" == "linux" ]] || fail "--apt is only supported on Debian/Ubuntu Linux"
 	command -v apt-get >/dev/null 2>&1 || fail "--apt requires apt-get (Debian/Ubuntu)"
 	command -v dpkg >/dev/null 2>&1 || fail "--apt requires dpkg"
+	command -v dpkg-deb >/dev/null 2>&1 || fail "--apt requires dpkg-deb (Debian/Ubuntu)"
 
 	# Bootstrap the repository over HTTPS by installing the glyndor-archive-keyring
 	# package, which registers the signing key and source list. The package is
@@ -354,6 +355,19 @@ install_apt() {
 		2) fail "Cannot verify keyring signature: install python3 with the 'cryptography' package (and a configured release key) - aborting" ;;
 		3) fail "Configured release key is malformed - check PODUP_RELEASE_PUBKEY_B64 / _PUBKEY2_B64 values and re-run" ;;
 	esac
+
+	# The signature proves the bytes carry the release key's signature, not
+	# that the bytes are the keyring package. One key signs every artifact
+	# the release publishes, so any .deb already published under it - an
+	# older keyring, another package entirely - passes the signature check.
+	# The package is installed as root, so the name it declares is checked
+	# before it goes in.
+	local kr_pkg=""
+	kr_pkg="$(dpkg-deb -f "${TMP_DIR}/${kr}" Package 2>/dev/null)" || kr_pkg=""
+	if [[ "$kr_pkg" != "glyndor-archive-keyring" ]]; then
+		fail "Refusing to install ${kr}: its Package field is '${kr_pkg:-<unreadable>}', expected glyndor-archive-keyring - aborting"
+	fi
+	log_ok "Keyring package name verified"
 
 	run_root dpkg -i "${TMP_DIR}/${kr}"
 	run_root apt-get update
