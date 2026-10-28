@@ -81,9 +81,9 @@ impl Write for ChannelWriter {
 ///
 /// The producer's `JoinHandle` yields the context-assembly `Result` (a tar/IO
 /// error surfaces here with its descriptive message); the `body` is the stream
-/// the client sends as the request body. Await the body request first, then the
-/// producer; awaiting the producer before draining the body would deadlock on
-/// the bounded channel.
+/// the client sends as the request body. Poll the response body before joining
+/// the producer: an early response head transfers the HTTP driver to that body.
+/// Drop the response before joining on failure, to release the channel receiver.
 pub(in crate::backends::engine::images::build) fn context_body(
 	context: PathBuf,
 	source: ContextSource,

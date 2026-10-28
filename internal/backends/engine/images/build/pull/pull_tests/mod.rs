@@ -16,4 +16,6 @@ mod in_band_error;
 mod policy_windows;
 mod pull_policy;
 mod targets;
+#[cfg(unix)]
+mod truncated;
 mod window_pull;

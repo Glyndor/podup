@@ -259,6 +259,7 @@ podup validates a schedule and does not fire it. `run`, `up` and `config` print 
 | `DOCKER_HOST` | Docker-compatible fallback for the Podman socket, used only when `PODMAN_SOCKET` is unset. Must be a local `unix://` socket (or `npipe://` on Windows). |
 | `PODUP_LIBPOD_POOL` | HTTP/1.1 connection-pool size for the libpod client (`--connection-pool-size`). Connection-pool size; see `--connection-pool-size`. `PODUP_LIBCOD_POOL` is read as a fallback when the new name is unset. |
 | `PODUP_MAX_REPLICAS` | Per-service replica cap (default 256). A positive integer overrides it; zero or invalid values use the default. |
+| `PODUP_PULL_IDLE_TIMEOUT` | Maximum seconds without a response frame during an image pull (default 300). Each received frame renews the limit, including partial JSON records. Set a positive integer; invalid values reject the pull. Active downloads have no overall time limit. |
 
 ### Runtime, colour, config
 

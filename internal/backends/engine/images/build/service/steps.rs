@@ -22,7 +22,7 @@ use crate::error::ComposeError;
 use crate::libpod::API_PREFIX;
 
 impl Engine {
-	/// Close the row as `Failed`, then on a terminal replay the full stream
+	/// Close the row as `Failed`, then on a terminal replay the bounded tail
 	/// as scrollback so the failure reason is on screen. In a pipe every line
 	/// has already been written by `note_for` and no replay is needed.
 	///

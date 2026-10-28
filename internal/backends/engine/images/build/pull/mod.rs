@@ -13,6 +13,7 @@ use crate::libpod::{urlencoded, API_PREFIX};
 
 use crate::engine::Engine;
 
+mod idle;
 mod images;
 mod interval;
 mod options;
@@ -337,6 +338,7 @@ impl Engine {
 			Some(img) => img.clone(),
 			None => return Ok(()),
 		};
+		let idle_timeout = idle::pull_idle_timeout()?;
 
 		// Through the progress layer, not a bare `eprintln!`. This was the one
 		// user-facing line in the binary that bypassed `ui` entirely, so it
@@ -364,7 +366,10 @@ impl Engine {
 			.post_empty_stream(&path)
 			.await
 			.map_err(ComposeError::Podman)?;
-		let mut stream = crate::libpod::parse_json_lines::<ImagePullProgress, _>(resp.into_body());
+		let mut stream = crate::libpod::types::stream::parse_json_lines_with_idle_timeout::<
+			ImagePullProgress,
+			_,
+		>(resp.into_body(), idle_timeout);
 
 		// Gate the per-blob `start` calls on the same condition the live region
 		// itself is gated on (#1674). The plain sink writes one line per `start`,
@@ -380,9 +385,8 @@ impl Engine {
 		// returned. It used to be warned about and dropped, which made every
 		// caller believe the pull had succeeded.
 		//
-		// A transport error mid-stream stays a warning: the same
-		// finished-stream-looks-like-an-error ambiguity that #1104 is about, and
-		// unlike the in-band line it is not libpod telling us the pull failed.
+		// A parser or transport error cannot prove completion, even if a stale
+		// copy of the image is already present in local storage.
 		let mut pull_err: Option<String> = None;
 		let mut progress = PullStreamProgress::new();
 		while let Some(result) = stream.next().await {
@@ -404,7 +408,12 @@ impl Engine {
 						pull_err.get_or_insert_with(|| progress_line.error.clone());
 					}
 				}
-				Err(e) => warn!("pull warning: {e}"),
+				Err(e) => {
+					if !quiet {
+						crate::ui::progress_line("Image", &image, "Failed");
+					}
+					return Err(ComposeError::Podman(e));
+				}
 			}
 		}
 
@@ -448,6 +457,9 @@ fn pull_dep_closure(file: &ComposeFile, services: &[String]) -> HashSet<String> 
 	}
 	set
 }
+
+#[cfg(test)]
+mod tests;
 
 #[cfg(test)]
 mod pull_tests;
