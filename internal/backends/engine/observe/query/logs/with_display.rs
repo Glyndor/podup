@@ -20,7 +20,7 @@ use super::super::options::{LogsDisplay, LogsOptions};
 use super::super::Engine;
 use super::filters::validate_log_filters;
 use super::prefix::LinePrefixer;
-use super::stream::{display_label, log_query, stop_on_write_error, stream_broke_mid_output};
+use super::stream::{display_label, log_query, stop_on_write_error, stream_lost_output};
 
 /// Outcome of streaming one container on the sequential path.
 enum StreamOneOutcome {
@@ -68,8 +68,6 @@ impl Engine {
 		let follow = opts.follow;
 		// `--no-log-prefix` drops the `{service} | ` tag; `--no-color` forces a
 		// monochrome prefix even on a colour-capable stdout.
-		let prefix = !display.no_log_prefix;
-		let allow_color = !display.no_color;
 		let query = log_query(&opts);
 		for svc in target_services {
 			if !file.services.contains_key(svc) {
@@ -114,8 +112,7 @@ impl Engine {
 				.stream_concurrent_targets(
 					targets,
 					&query,
-					prefix,
-					allow_color,
+					&display,
 					&mut truncated_err,
 					&mut streamed_err,
 				)
@@ -129,8 +126,8 @@ impl Engine {
 					.stream_one_target(
 						&container_name,
 						&query,
-						prefix,
-						allow_color,
+						&display,
+						follow,
 						&mut truncated_err,
 						&mut streamed_err,
 					)
@@ -235,11 +232,12 @@ impl Engine {
 		&self,
 		targets: Vec<String>,
 		query: &str,
-		prefix: bool,
-		allow_color: bool,
+		display: &LogsDisplay,
 		truncated_err: &mut Option<ComposeError>,
 		streamed_err: &mut Option<ComposeError>,
 	) -> bool {
+		let prefix = !display.no_log_prefix;
+		let allow_color = !display.no_color;
 		let futs: Vec<_> = targets
 			.into_iter()
 			.map(|container_name| {
@@ -309,22 +307,26 @@ impl Engine {
 							// them and the container is gone either way.
 							Err(e) => {
 								let kind = e.stream_end_kind();
-								match stream_broke_mid_output(
-									self.container_still_running(&container_name).await,
-								) {
-									true => {
-										tracing::warn!(
-											"logs {container_name}: stream ended while the \
-											 container was still running [{kind}]: {e}"
-										);
-										truncated = Some(e);
-									}
-									false => {
-										tracing::warn!(
-											"logs {container_name}: stream ended as the \
-											 container stopped [{kind}]"
-										);
-									}
+								// The stream ended with an error. A frame the
+								// daemon sent that does not parse is a failed
+								// read whatever the container was doing; a
+								// transport that died under a container that
+								// keeps running lost live output (#1104). The
+								// container's own state tells those two
+								// apart.
+								let still_running =
+									self.container_still_running(&container_name).await;
+								if stream_lost_output(&e, false, still_running) {
+									tracing::warn!(
+										"logs {container_name}: the stream ended before the \
+										 output was complete [{kind}]: {e}"
+									);
+									truncated = Some(e);
+								} else {
+									tracing::warn!(
+										"logs {container_name}: the stream ended as the \
+										 container stopped [{kind}]"
+									);
 								}
 								break;
 							}
@@ -370,11 +372,13 @@ impl Engine {
 		&self,
 		container_name: &str,
 		query: &str,
-		prefix: bool,
-		allow_color: bool,
+		display: &LogsDisplay,
+		follow: bool,
 		truncated_err: &mut Option<ComposeError>,
 		streamed_err: &mut Option<ComposeError>,
 	) -> StreamOneOutcome {
+		let prefix = !display.no_log_prefix;
+		let allow_color = !display.no_color;
 		let path = format!(
 			"{API_PREFIX}/containers/{}/logs?{query}",
 			urlencoded(container_name),
@@ -426,22 +430,29 @@ impl Engine {
 				// truncated live output (#1104).
 				Err(e) => {
 					let kind = e.stream_end_kind();
-					match stream_broke_mid_output(
-						self.container_still_running(container_name).await,
-					) {
-						true => {
-							tracing::warn!(
-								"logs {container_name}: stream ended while the container \
-								 was still running [{kind}]: {e}"
-							);
-							ended_truncated = Some(ComposeError::Podman(e));
-						}
-						false => {
-							tracing::warn!(
-								"logs {container_name}: stream ended as the container \
-								 stopped [{kind}]"
-							);
-						}
+					// Same out-of-band resolution as the concurrent path
+					// above: a stream that ends while its container is still
+					// running truncated live output (#1104). A bounded read
+					// has no ambiguity to resolve: the history was supposed
+					// to arrive in full, so a transport that dies under it
+					// lost output, and a frame that does not parse is a
+					// failed read whatever the container was doing.
+					let still_running = if follow {
+						self.container_still_running(container_name).await
+					} else {
+						None
+					};
+					if stream_lost_output(&e, !follow, still_running) {
+						tracing::warn!(
+							"logs {container_name}: the stream ended before the output \
+							 was complete [{kind}]: {e}"
+						);
+						ended_truncated = Some(ComposeError::Podman(e));
+					} else {
+						tracing::warn!(
+							"logs {container_name}: the stream ended as the container \
+							 stopped [{kind}]"
+						);
 					}
 					break;
 				}
