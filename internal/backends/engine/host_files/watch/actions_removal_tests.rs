@@ -145,3 +145,74 @@ fn a_removal_of_the_rule_root_is_refused_after_the_root_is_gone() {
 		"the removal of the rule's own target directory resolves to the target"
 	);
 }
+
+/// A recursive removal must not descend into an independent host bind,
+/// including one outside the watched tree.
+#[tokio::test]
+async fn removing_a_directory_containing_a_mount_is_refused() {
+	use super::super::writeback::EffectiveMount;
+
+	let dir = tempfile::tempdir().unwrap();
+	let src = dir.path().join("src");
+	std::fs::create_dir(&src).unwrap();
+	let removed = src.join("removed");
+	let fake = fake_podman();
+	let engine = Engine::with_base_dir(fake.client(), "proj".into(), dir.path().to_path_buf());
+	let mounts = vec![EffectiveMount {
+		target: "/app/removed/./nested/".into(),
+		bind_source: Some(dir.path().join("unwatched")),
+		read_only: false,
+	}];
+	let error = engine
+		.dispatch_sync(
+			"proj-web-1",
+			&src,
+			&removed,
+			"/app",
+			&mut HashSet::new(),
+			&mounts,
+			&src,
+			RuleShape::Directory,
+			Ok(SyncOp::Remove),
+			None,
+		)
+		.await
+		.expect_err("a recursive delete must not reach a descendant mount");
+	assert!(matches!(error, crate::error::ComposeError::Watch(_)));
+	assert!(exec_argvs(&fake).is_empty());
+}
+
+#[tokio::test]
+async fn a_sibling_mount_does_not_block_directory_removal() {
+	use super::super::writeback::EffectiveMount;
+
+	let dir = tempfile::tempdir().unwrap();
+	let src = dir.path().join("src");
+	std::fs::create_dir(&src).unwrap();
+	let fake = fake_podman();
+	let engine = Engine::with_base_dir(fake.client(), "proj".into(), dir.path().to_path_buf());
+	let mounts = vec![EffectiveMount {
+		target: "/app/removed-other/nested".into(),
+		bind_source: Some(dir.path().join("unwatched")),
+		read_only: false,
+	}];
+	engine
+		.dispatch_sync(
+			"proj-web-1",
+			&src,
+			&src.join("removed"),
+			"/app",
+			&mut HashSet::new(),
+			&mounts,
+			&src,
+			RuleShape::Directory,
+			Ok(SyncOp::Remove),
+			None,
+		)
+		.await
+		.unwrap();
+	assert_eq!(
+		exec_argvs(&fake),
+		vec![vec!["rm", "-rf", "--", "/app/removed"]]
+	);
+}

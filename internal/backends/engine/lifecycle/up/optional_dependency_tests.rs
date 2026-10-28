@@ -55,3 +55,90 @@ async fn a_required_dependency_that_fails_still_stops_up() {
 		.expect_err("a required dependency failing must fail up");
 	assert!(err.to_string().contains("address already in use"), "{err}");
 }
+
+/// An excluded dependent cannot make an explicitly requested target optional.
+#[tokio::test]
+async fn an_explicit_optional_dependency_target_still_fails_up() {
+	let fake = metrics_cannot_start();
+	let file = crate::parse_str(OPTIONAL).unwrap();
+	let err = engine(&fake)
+		.up_with_options(
+			&file,
+			false,
+			&[],
+			&["metrics".into()],
+			false,
+			false,
+			false,
+			false,
+		)
+		.await
+		.expect_err("failure of an explicitly requested target must fail up");
+	assert!(matches!(err, crate::error::ComposeError::Podman(ref e) if e.is_status(500)));
+	let seen = fake.requests.lock().unwrap();
+	assert!(seen.iter().any(|r| r.contains("/proj-metrics-1/start")));
+	assert!(!seen.iter().any(|r| r.contains("/proj-web-1/start")));
+}
+
+#[tokio::test]
+async fn an_explicit_target_is_required_even_when_its_optional_dependent_is_selected() {
+	let fake = metrics_cannot_start();
+	let file = crate::parse_str(OPTIONAL).unwrap();
+	let err = engine(&fake)
+		.up_with_options(
+			&file,
+			false,
+			&[],
+			&["metrics".into(), "web".into()],
+			false,
+			false,
+			false,
+			false,
+		)
+		.await
+		.expect_err("an explicit target must not become optional");
+	assert!(matches!(err, crate::error::ComposeError::Podman(ref e) if e.is_status(500)));
+}
+
+#[tokio::test]
+async fn an_optional_dependency_of_the_only_explicit_target_may_fail() {
+	let fake = metrics_cannot_start();
+	let file = crate::parse_str(OPTIONAL).unwrap();
+	engine(&fake)
+		.up_with_options(
+			&file,
+			false,
+			&[],
+			&["web".into()],
+			false,
+			false,
+			false,
+			false,
+		)
+		.await
+		.expect("an implicit optional dependency remains optional");
+	assert!(fake
+		.requests
+		.lock()
+		.unwrap()
+		.iter()
+		.any(|r| r.contains("/proj-web-1/start")));
+}
+
+#[tokio::test]
+async fn a_profile_excluded_optional_dependent_does_not_hide_a_default_target_failure() {
+	let fake = metrics_cannot_start();
+	let mut file = crate::parse_str(OPTIONAL).unwrap();
+	file.services.get_mut("web").unwrap().profiles = vec!["monitoring".into()];
+	let err = engine(&fake)
+		.up_with_options(&file, false, &[], &[], false, false, false, false)
+		.await
+		.expect_err("an inactive dependent cannot tolerate another service's failure");
+	assert!(matches!(err, crate::error::ComposeError::Podman(ref e) if e.is_status(500)));
+	assert!(!fake
+		.requests
+		.lock()
+		.unwrap()
+		.iter()
+		.any(|r| r.contains("/proj-web-1/start")));
+}

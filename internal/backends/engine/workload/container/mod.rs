@@ -53,6 +53,31 @@ impl Engine {
 		start: bool,
 		env: &std::collections::BTreeMap<String, String>,
 	) -> Result<()> {
+		self.create_container(container_name, service_name, service, file, env)
+			.await?;
+		if start {
+			let start_path = format!(
+				"{API_PREFIX}/containers/{}/start",
+				urlencoded(container_name)
+			);
+			self.client
+				.post_empty_ok(&start_path)
+				.await
+				.map_err(ComposeError::Podman)?;
+		}
+		Ok(())
+	}
+
+	/// Create a container without starting it, retaining the daemon's response
+	/// so a one-off run can clean up its own creation by ID after a failed start.
+	pub(in crate::backends::engine) async fn create_container(
+		&self,
+		container_name: &str,
+		service_name: &str,
+		service: &Service,
+		file: &ComposeFile,
+		env: &std::collections::BTreeMap<String, String>,
+	) -> Result<serde_json::Value> {
 		// Reject an invalid container name client-side (podman would otherwise
 		// answer with an opaque HTTP 500 from its name-regex check). Covers the
 		// ad-hoc `run --name` path too, which never passes through the up-time
@@ -352,26 +377,14 @@ impl Engine {
 		} else {
 			None
 		};
-		self.client
+		let created = self
+			.client
 			.post_json::<_, serde_json::Value>(&format!("{API_PREFIX}/containers/create"), &spec)
 			.await
 			.map_err(ComposeError::Podman)?;
 		drop(keep_id_guard);
 
-		// `create` (docker compose create) creates the container but leaves it
-		// stopped; `up`/`run`/`watch` start it.
-		if start {
-			let start_path = format!(
-				"{API_PREFIX}/containers/{}/start",
-				urlencoded(container_name)
-			);
-			self.client
-				.post_empty_ok(&start_path)
-				.await
-				.map_err(ComposeError::Podman)?;
-		}
-
-		Ok(())
+		Ok(created)
 	}
 }
 
