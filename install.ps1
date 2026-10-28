@@ -198,6 +198,17 @@ try {
 
 	# Locate a python interpreter that has the 'cryptography' package. Each
 	# candidate carries any leading args (the 'py' launcher needs '-3').
+	#
+	# The probe runs with -I, the isolated mode. `python -c` puts the
+	# current directory at the front of sys.path, so a `cryptography/`
+	# package planted in the directory the installer was started from is
+	# imported instead of the real one: the probe then reports a usable
+	# interpreter that cannot verify anything, and the planted code runs
+	# with the installer's privileges. -I removes the current directory
+	# (and the user site directory) from the search path, so only what the
+	# system installed can be imported. The verification script itself is
+	# read from $TmpDir, not from the current directory, so it never had
+	# that exposure.
 	function Find-Python {
 		$candidates = @(
 			@{ Exe = 'python3'; Pre = @() },
@@ -206,7 +217,7 @@ try {
 		)
 		foreach ($c in $candidates) {
 			if (-not (Get-Command $c.Exe -ErrorAction SilentlyContinue)) { continue }
-			$probeArgs = $c.Pre + @('-c', 'from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey')
+			$probeArgs = $c.Pre + @('-I', '-c', 'from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey')
 			& $c.Exe @probeArgs 2>$null
 			if ($LASTEXITCODE -eq 0) { return $c }
 		}
