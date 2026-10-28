@@ -47,6 +47,22 @@ pub(crate) fn note_lines_for_tests(line: &str) -> Vec<&str> {
 	note_lines(line).collect()
 }
 
+/// The line the plain sink writes for one stream line: the row's name, the
+/// `|` separator and the line itself.
+///
+/// Both parts are escaped. The name is the row's identifier (an image tag, a
+/// container name) and the line is the daemon's own output, so neither is
+/// ours to trust: a raw escape in either repaints the reader's terminal.
+///
+/// Pure, so the rule is testable without capturing stderr.
+pub(crate) fn plain_line(name: &str, line: &str) -> String {
+	format!(
+		"{} | {}",
+		crate::ui::sanitize_cell(name),
+		crate::ui::sanitize_cell(line)
+	)
+}
+
 /// Hand one line of a row's stream output to the renderer.
 ///
 /// On a live terminal the line is appended to the per-row tail kept under the
@@ -111,7 +127,7 @@ pub fn note_for(kind: &str, name: &str, line: &str) {
 					return;
 				}
 				use std::io::Write;
-				let _ = writeln!(anstream::stderr(), "{name} | {trimmed}");
+				let _ = writeln!(anstream::stderr(), "{}", plain_line(name, trimmed));
 			}
 		}
 	}

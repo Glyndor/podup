@@ -220,7 +220,14 @@ pub fn render_note(line: &str, width: usize) -> String {
 	// the wrong lines (#1733). `note_for` splits at ingestion; this catches a
 	// future path that does not.
 	debug_assert!(!line.contains('\n'), "a note must be one line: {line:?}");
-	let indented = format!(" {line}");
+	// The note is a line of the daemon's own stream, so it is not ours to
+	// trust: a raw escape in it repaints the reader's terminal, and the region
+	// counts one row per entry, so a control sequence that moves the cursor
+	// desynchronises every repaint after it. Escaping happens before the
+	// truncation, so the width the region counts is the width the terminal
+	// draws.
+	let safe = crate::ui::sanitize_cell(line);
+	let indented = format!(" {safe}");
 	let trimmed = if width > 0 && indented.chars().count() > width {
 		indented.chars().take(width).collect::<String>()
 	} else {
