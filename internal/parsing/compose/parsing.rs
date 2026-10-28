@@ -10,6 +10,18 @@ pub(super) fn is_stdin(path: &Path) -> bool {
 	path == Path::new("-")
 }
 
+/// The directory a compose file's own paths resolve against.
+///
+/// `-f -` reads the document from stdin, which has no directory of its own,
+/// so the working directory stands in for it.
+fn dir_of(path: &Path) -> PathBuf {
+	if is_stdin(path) {
+		return std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+	}
+	let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+	abs.parent().unwrap_or(Path::new(".")).to_path_buf()
+}
+
 /// Parse one compose file from disk, applying variable substitution and
 /// resolving `extends:` / `include:` directives, with `env_files` (the global
 /// `--env-file` flag) loaded into the variable map used for interpolation. These take
@@ -48,6 +60,7 @@ pub fn parse_file_with_env_files_interp(
 		env_files,
 		interpolate,
 		stdin.as_deref(),
+		None,
 	)?;
 	// A single file stands alone, so its jobs have to declare their triggers.
 	// With several `-f` files the check waits for the merge.
@@ -65,19 +78,25 @@ pub(crate) fn parse_file_with_env_files_interp_with_stdin(
 	env_files: &[String],
 	interpolate: bool,
 	stdin_content: Option<&str>,
+	project_dir: Option<&Path>,
 ) -> Result<ComposeFile> {
 	// `-f -` reads the compose document from stdin (like `docker compose`); there
 	// is no file to canonicalize, so relative paths and `.env` resolve against the
 	// working directory.
 	let (abs, dir) = if is_stdin(path) {
-		let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-		(PathBuf::from("-"), cwd)
+		(PathBuf::from("-"), dir_of(path))
 	} else {
 		let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 		let dir = abs.parent().unwrap_or(Path::new(".")).to_path_buf();
 		(abs, dir)
 	};
-	let mut file = parse_file_inner_with_stdin(&abs, &dir, env_files, interpolate, stdin_content)?;
+	// The variables of a project come from the project directory, not from the
+	// directory of each file: with several `-f` files in different directories,
+	// the `.env` of the project is the one of the first file (or the one
+	// `--project-directory` names), and every file is interpolated with it.
+	let vars_dir = project_dir.unwrap_or(&dir);
+	let mut file =
+		parse_file_inner_with_stdin(&abs, vars_dir, env_files, interpolate, stdin_content)?;
 
 	// The `include:` list of the file, and the list of every file it names in
 	// turn: the compose specification applies `include` recursively.
@@ -112,6 +131,23 @@ pub fn parse_files_with_env_files_interp(
 	env_files: &[String],
 	interpolate: bool,
 ) -> Result<ComposeFile> {
+	parse_files_with_env_files_interp_in(paths, env_files, interpolate, None)
+}
+
+/// Like [`parse_files_with_env_files_interp`] but with the project directory
+/// the variables are read from.
+///
+/// The compose specification reads the `.env` of the project, not one per
+/// file: with several `-f` files in different directories the variables come
+/// from the directory of the first file, or from the directory
+/// `--project-directory` names, and every file is interpolated with them.
+/// `None` means the directory of the first file.
+pub fn parse_files_with_env_files_interp_in(
+	paths: &[PathBuf],
+	env_files: &[String],
+	interpolate: bool,
+	project_dir: Option<&Path>,
+) -> Result<ComposeFile> {
 	let mut iter = paths.iter();
 	let first = iter
 		.next()
@@ -125,11 +161,15 @@ pub fn parse_files_with_env_files_interp(
 	} else {
 		None
 	};
+	let project_dir = project_dir
+		.map(Path::to_path_buf)
+		.or_else(|| Some(dir_of(first)));
 	let mut merged = parse_file_with_env_files_interp_with_stdin(
 		first,
 		env_files,
 		interpolate,
 		stdin.as_deref(),
+		project_dir.as_deref(),
 	)?;
 	for path in iter {
 		let other = parse_file_with_env_files_interp_with_stdin(
@@ -137,6 +177,7 @@ pub fn parse_files_with_env_files_interp(
 			env_files,
 			interpolate,
 			stdin.as_deref(),
+			project_dir.as_deref(),
 		)?;
 		// `!override`/`!reset` are attached to keys in the raw document and are
 		// gone by the time it is a typed `ComposeFile`, so they are collected
@@ -167,9 +208,13 @@ pub fn parse_files_with_env_files_interp(
 	// (pre-merge): an unknown key in ANY `-f` file should warn, including the
 	// stdin compose, whose bytes the parse above already consumed and are
 	// re-fed through the same diagnostic path here (#1746 entry 7).
-	for warning in
-		diagnostics::collect_raw_nested_warnings(paths, env_files, interpolate, stdin.as_deref())
-	{
+	for warning in diagnostics::collect_raw_nested_warnings(
+		paths,
+		env_files,
+		interpolate,
+		stdin.as_deref(),
+		project_dir.as_deref(),
+	) {
 		diagnostics::emit_diagnostic(&warning);
 	}
 	Ok(merged)
@@ -184,6 +229,7 @@ pub(super) fn interpolated_yaml_text(
 	path: &Path,
 	env_files: &[String],
 	interpolate: bool,
+	project_dir: Option<&Path>,
 ) -> Result<String> {
 	let abs = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
 	let dir = abs.parent().unwrap_or(Path::new(".")).to_path_buf();
@@ -194,7 +240,12 @@ pub(super) fn interpolated_yaml_text(
 			ComposeError::Io(e)
 		}
 	})?;
-	interpolated_yaml_text_from_content(&content, &dir, env_files, interpolate)
+	interpolated_yaml_text_from_content(
+		&content,
+		project_dir.unwrap_or(&dir),
+		env_files,
+		interpolate,
+	)
 }
 
 /// [`interpolated_yaml_text`] with the content already in memory, which the
@@ -319,11 +370,11 @@ pub fn parse_str_raw(content: &str) -> Result<ComposeFile> {
 
 pub(crate) fn parse_file_inner_with_env(
 	path: &Path,
-	dir: &Path,
+	vars_dir: &Path,
 	extra_env_files: &[String],
 	interpolate: bool,
 ) -> Result<ComposeFile> {
-	parse_file_inner_with_stdin(path, dir, extra_env_files, interpolate, None)
+	parse_file_inner_with_stdin(path, vars_dir, extra_env_files, interpolate, None)
 }
 
 /// [`parse_file_inner_with_env`] with the stdin content pre-read. When
@@ -336,7 +387,7 @@ pub(crate) fn parse_file_inner_with_env(
 /// (#1746 entry 7).
 pub(crate) fn parse_file_inner_with_stdin(
 	path: &Path,
-	dir: &Path,
+	vars_dir: &Path,
 	extra_env_files: &[String],
 	interpolate: bool,
 	stdin_content: Option<&str>,
@@ -361,9 +412,9 @@ pub(crate) fn parse_file_inner_with_stdin(
 	// raw text, so resolved values cannot alter the document structure.
 	if interpolate {
 		let vars = if extra_env_files.is_empty() {
-			substitute::build_vars(dir)
+			substitute::build_vars(vars_dir)
 		} else {
-			substitute::build_vars_with_env_files_strict(dir, extra_env_files)?
+			substitute::build_vars_with_env_files_strict(vars_dir, extra_env_files)?
 		};
 		merge::deserialize_with_merge_interp(&content, Some(&vars))
 	} else {

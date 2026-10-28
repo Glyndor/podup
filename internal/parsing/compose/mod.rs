@@ -26,7 +26,8 @@ pub(crate) use parsing::parse_file_inner_with_env;
 use parsing::{interpolated_yaml_text, is_stdin};
 pub use parsing::{
 	parse_file_with_env_files, parse_file_with_env_files_interp, parse_files_with_env_files,
-	parse_files_with_env_files_interp, parse_str, parse_str_raw,
+	parse_files_with_env_files_interp, parse_files_with_env_files_interp_in, parse_str,
+	parse_str_raw,
 };
 #[cfg(test)]
 use types::ComposeFile;
