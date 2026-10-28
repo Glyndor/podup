@@ -697,6 +697,7 @@ dependencies = [
  "indexmap",
  "libc",
  "notify",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

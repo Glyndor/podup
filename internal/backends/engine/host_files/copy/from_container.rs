@@ -60,7 +60,7 @@ pub(in crate::backends::engine) enum CpDestinationKind {
 /// `symlink_metadata` alone only answers for the last component, so the
 /// whole path goes through
 /// [`destination::destination_refusal`] first (#1764). That module
-/// also records what the check does not close.
+/// describes the descriptor-based enforcement the Unix extractor performs.
 ///
 /// After the walk accepted the destination, the metadata is read through
 /// [`destination::destination_metadata`] so a trusted root link whose
@@ -127,6 +127,9 @@ impl Engine {
 		// rather than the directory it points at; the streaming branch would
 		// otherwise extract into the link target. Same class of bug #1736
 		// closed inside `extract_archive`, mirrored here at the routing site.
+		// Classification only selects streaming versus buffering. The Unix
+		// extractor pins the destination before consuming archive bytes; it
+		// never relies on this earlier path check to authorize a later write.
 		match cp_destination_kind(&dst) {
 			CpDestinationKind::Symlink => {
 				return Err(destination::refusal_for(&dst));

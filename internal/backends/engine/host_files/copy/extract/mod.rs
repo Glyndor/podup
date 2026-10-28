@@ -8,6 +8,8 @@
 pub(crate) mod archive;
 pub(in crate::backends::engine::host_files::copy) mod destination;
 pub(in crate::backends::engine::host_files::copy) mod stream;
+#[cfg(unix)]
+mod unix;
 
 #[cfg(test)]
 mod destination_tests;
@@ -23,3 +25,6 @@ mod hostile_header_tests;
 
 #[cfg(test)]
 mod destination_trusted_tests;
+
+#[cfg(all(test, unix))]
+mod race_tests;
