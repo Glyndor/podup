@@ -20,30 +20,43 @@ use crate::error::Result;
 
 /// Items handed to the request body: a data frame, or a terminal error that
 /// aborts the upload.
-type BodyItem = io::Result<Frame<Bytes>>;
+pub(in crate::backends::engine::images::build) type BodyItem = io::Result<Frame<Bytes>>;
 
 /// How many pending chunks the channel buffers. Bounds peak memory to about
 /// `CHANNEL_CAP * CHUNK_BYTES` while still decoupling the blocking tar writer
 /// from the async socket writer so both run concurrently.
-const CHANNEL_CAP: usize = 8;
+pub(in crate::backends::engine::images::build) const CHANNEL_CAP: usize = 8;
 
 /// Coalesce the tar writer's many small writes into ~64 KiB frames, so the body
 /// is a handful of sizeable chunks rather than thousands of tiny ones.
-const CHUNK_BYTES: usize = 64 * 1024;
+pub(in crate::backends::engine::images::build) const CHUNK_BYTES: usize = 64 * 1024;
 
-/// Which Dockerfile the context ships: one synthesized from an inline string, or
-/// a named file already inside the context directory.
+/// Which Dockerfile the context ships: one synthesized from an inline string, a
+/// named file already inside the context directory, or a file that lives
+/// outside the context and travels inside the tar.
 pub(in crate::backends::engine::images::build) enum ContextSource {
 	/// `build.dockerfile_inline` content.
 	Inline(String),
 	/// The resolved Dockerfile/Containerfile name within the context.
 	Dockerfile(String),
+	/// A Dockerfile that lives outside the build context.
+	///
+	/// The daemon resolves the `dockerfile` request parameter against the
+	/// extracted context, where a path that leaves the context is not there.
+	/// The file is read on the client and shipped inside the tar under
+	/// `name`, a name the build reserves.
+	OutsideContext {
+		/// The reserved tar entry name.
+		name: String,
+		/// The Dockerfile's bytes.
+		bytes: Vec<u8>,
+	},
 }
 
 /// A [`Write`] sink that forwards the tar bytes to an async channel as `Bytes`
 /// frames, coalescing small writes to `CHUNK_BYTES`. Blocks (backpressure) when
 /// the consumer is behind; errors if the consumer has gone away.
-struct ChannelWriter {
+pub(in crate::backends::engine::images::build) struct ChannelWriter {
 	tx: mpsc::Sender<BodyItem>,
 	buf: BytesMut,
 }
@@ -60,6 +73,16 @@ impl ChannelWriter {
 				"build-context receiver dropped before the tar finished",
 			)
 		})
+	}
+}
+
+/// A [`ChannelWriter`] feeding the given sender, with an empty buffer.
+pub(in crate::backends::engine::images::build) fn channel_writer(
+	tx: mpsc::Sender<BodyItem>,
+) -> ChannelWriter {
+	ChannelWriter {
+		tx,
+		buf: BytesMut::with_capacity(CHUNK_BYTES),
 	}
 }
 
@@ -105,6 +128,14 @@ pub(in crate::backends::engine::images::build) fn context_body(
 			}
 			ContextSource::Dockerfile(dockerfile) => {
 				stream_build_context(&mut writer, &context, &dockerfile, &secret_files)
+			}
+			ContextSource::OutsideContext { name, bytes } => {
+				// The Dockerfile travels inside the tar under a reserved
+				// name, so the context tree must not carry a file with that
+				// name: the daemon extracts the entries in order.
+				let mut files = secret_files;
+				files.push((name.clone(), bytes));
+				stream_build_context(&mut writer, &context, &name, &files)
 			}
 		}
 	});
