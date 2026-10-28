@@ -1,5 +1,17 @@
 use super::*;
 
+#[test]
+fn dockerignore_accepts_bom_and_only_column_one_comments() {
+	let dir = tempdir().unwrap();
+	fs::write(
+		dir.path().join(".dockerignore"),
+		"\u{feff}/.env\n# comment\n  #literal\n",
+	)
+	.unwrap();
+	let (_, patterns) = read_patterns(dir.path());
+	assert_eq!(patterns, vec!["/.env", "#literal"]);
+}
+
 // read_patterns ----------------------------------------------------------
 
 #[test]

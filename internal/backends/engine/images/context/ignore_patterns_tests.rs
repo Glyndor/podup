@@ -7,6 +7,47 @@
 
 use crate::engine::context::ignore_patterns::*;
 
+#[test]
+fn dockerignore_normalizes_patterns_and_matches_ancestor_directories() {
+	for (pattern, path, ignored) in [
+		("/.env", ".env", true),
+		("/.env/", ".env", true),
+		("./private/../.env", ".env", true),
+		("/secrets//./", "secrets/key", true),
+		("cache*/", "cache-prod/key", true),
+		("build/*", "build/private/key", true),
+		("**/private", "a/private/key", true),
+		("secrets/[a-c]?.key", "secrets/b1.key", true),
+		("secrets/[^a-c].key", "secrets/z.key", true),
+		("secrets/[^a-c].key", "secrets/b.key", false),
+		(r"literal\*.key", "literal*.key", true),
+		(r"literal\*.key", "literal-other.key", false),
+		("file?.key", "fileé.key", true),
+		(".", "a/b", false),
+		("/secrets/", "notsecrets/key", false),
+	] {
+		assert_eq!(
+			is_ignored(path, &[pattern.to_string()]),
+			ignored,
+			"pattern {pattern:?} against {path:?}"
+		);
+	}
+}
+
+#[test]
+fn normalized_negations_remain_authoritative_under_nested_globs() {
+	let patterns = vec![
+		"/secrets/".into(),
+		"! /secrets/keep[0-9]/".into(),
+		"/secrets/keep[0-9]/private".into(),
+	];
+	assert!(is_ignored("secrets/drop/key", &patterns));
+	assert_eq!(evaluate("secrets/keep1/key", &patterns), Some(false));
+	assert!(is_ignored("secrets/keep1/private/key", &patterns));
+	assert!(negation_could_reach("secrets", &patterns));
+	assert!(negation_could_reach("secrets", &["!s?crets/keep".into()]));
+}
+
 // --- string-only cases, moved from ignore_patterns_tests.rs -----------
 
 #[test]

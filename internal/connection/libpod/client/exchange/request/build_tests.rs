@@ -6,6 +6,26 @@
 use super::transport::full;
 use super::Client;
 
+#[test]
+fn invalid_request_targets_never_disclose_build_arg_values() {
+	let oversized = format!(
+		"/libpod/build?buildargs=%7B%22TOKEN%22%3A%22PRIVATE-MARKER%22%7D&padding={}",
+		"x".repeat(70_000)
+	);
+	for path in [
+		oversized.as_str(),
+		"/libpod/build?buildargs=PRIVATE-MARKER\u{7f}",
+		"http://localhost/libpod/build?buildargs=PRIVATE-MARKER",
+	] {
+		let err = Client::build_request(hyper::Method::POST, path, full(bytes::Bytes::new()), None)
+			.unwrap_err();
+		let message = err.to_string();
+		assert!(message.contains("invalid API path"));
+		assert!(!message.contains("PRIVATE-MARKER"));
+		assert!(!message.contains("padding="));
+	}
+}
+
 // ---------------------------------------------------------------------------
 // build_request tests
 // ---------------------------------------------------------------------------

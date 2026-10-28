@@ -7,6 +7,9 @@
 
 use std::path::{Path, PathBuf};
 
+mod opened;
+pub(in crate::backends::engine) use opened::{visit_dir_skipping, Entry};
+
 // Thread-local counter for `read_dir` calls inside the walk, used by the
 // unit tests to assert that an ignored subtree is pruned before
 // enumeration rather than walked and then filtered (#1746 entry 6).
@@ -66,27 +69,10 @@ fn walk_collect(dir: &Path, out: &mut Vec<PathBuf>) -> std::io::Result<()> {
 	Ok(())
 }
 
-/// Recursive walk that prunes any directory for which `skip_dir` returns
-/// `true` before descending. The skipped directory is still recorded in
-/// the output list (callers ship empty directories to the builder
-/// regardless), but its contents are not enumerated. This is the shape
-/// the build-context tar loop needed: `.dockerignore` patterns can drop
-/// a whole `target/` or `node_modules/` subtree, and reading every file
-/// under it just to filter each one out wastes a `#read_dir` plus a
-/// per-entry stat per ignored entry (#1746 entry 6).
-///
-/// `skip_dir` is called once per directory the walk would otherwise
-/// recurse into. Returning `true` means "no entry under this directory
-/// will survive the filter, skip the descent"; the call site is
-/// responsible for the same answer the per-file filter would give for
-/// every child, so the two cannot disagree about what ends up in the
-/// result. In practice the call site mirrors the existing
-/// `is_ignored` check: if the directory is in a pattern, the contents
-/// are too, with the negation edge case left for
-/// the call site to handle (the engine currently has no negation
-/// patterns in the wild that would re-include a child of an ignored
-/// directory; if one is added the fix is to return `false` here for
-/// the parent and let the leaf filter carry the negation).
+/// Collect the descriptor walk's paths for pruning and race regressions.
+/// Production packing consumes entries directly through `visit_dir_skipping`
+/// so it never reopens the collected names.
+#[cfg(test)]
 pub(in crate::backends::engine) fn walk_dir_skipping<F>(
 	root: &Path,
 	skip_dir: F,
@@ -95,27 +81,16 @@ where
 	F: Fn(&Path) -> bool,
 {
 	let mut out = Vec::new();
-	walk_collect_skipping(root, &mut out, &skip_dir)?;
+	visit_dir_skipping(
+		root,
+		skip_dir,
+		|_| true,
+		|path, _entry| {
+			out.push(path.to_path_buf());
+			Ok(())
+		},
+	)?;
 	Ok(out)
-}
-
-fn walk_collect_skipping<F>(dir: &Path, out: &mut Vec<PathBuf>, skip_dir: &F) -> std::io::Result<()>
-where
-	F: Fn(&Path) -> bool,
-{
-	let mut entries: Vec<_> = std::fs::read_dir(dir)?.collect::<std::io::Result<Vec<_>>>()?;
-	entries.sort_by_key(|e| e.file_name());
-	for entry in entries {
-		let path = entry.path();
-		let file_type = entry.file_type()?;
-		out.push(path.clone());
-		#[cfg(test)]
-		bump_walk_counter();
-		if file_type.is_dir() && !skip_dir(&path) {
-			walk_collect_skipping(&path, out, skip_dir)?;
-		}
-	}
-	Ok(())
 }
 
 #[cfg(test)]

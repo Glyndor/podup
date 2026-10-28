@@ -1,6 +1,39 @@
 use super::*;
 
 #[test]
+fn normalized_rules_exclude_bytes_and_keep_nested_exceptions_in_the_tar() {
+	use flate2::read::GzDecoder;
+	use std::io::Read;
+	let dir = tempdir().unwrap();
+	fs::create_dir_all(dir.path().join("secrets/keep1")).unwrap();
+	fs::write(dir.path().join(".env"), b"PRIVATE-MARKER").unwrap();
+	fs::write(dir.path().join("secrets/drop"), b"PRIVATE-MARKER").unwrap();
+	fs::write(dir.path().join("secrets/keep1/public"), b"public").unwrap();
+	fs::write(
+		dir.path().join(".dockerignore"),
+		b"/.env\n/secrets/\n! /secrets/keep[0-9]/\n",
+	)
+	.unwrap();
+	let (gz, _) = build_context_tar_with_inline(dir.path(), "FROM scratch\n", &[]).unwrap();
+	let mut archive = tar::Archive::new(GzDecoder::new(gz.as_slice()));
+	let mut found_public = false;
+	for entry in archive.entries().unwrap() {
+		let mut entry = entry.unwrap();
+		let name = entry.path().unwrap().to_string_lossy().into_owned();
+		let mut body = Vec::new();
+		entry.read_to_end(&mut body).unwrap();
+		assert!(!body
+			.windows(b"PRIVATE-MARKER".len())
+			.any(|w| w == b"PRIVATE-MARKER"));
+		if name == "secrets/keep1/public" {
+			assert_eq!(body, b"public");
+			found_public = true;
+		}
+	}
+	assert!(found_public);
+}
+
+#[test]
 fn dockerfile_is_force_included_despite_dockerignore() {
 	use flate2::read::GzDecoder;
 	use std::io::Read;

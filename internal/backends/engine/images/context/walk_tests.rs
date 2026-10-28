@@ -1,6 +1,89 @@
 use super::{walk_dir, walk_dir_skipping};
 use std::path::PathBuf;
 
+#[cfg(unix)]
+#[test]
+fn replacing_a_classified_directory_with_a_symlink_is_rejected() {
+	let dir = tempfile::tempdir().unwrap();
+	let outside = tempfile::tempdir().unwrap();
+	let child = dir.path().join("child");
+	std::fs::create_dir(&child).unwrap();
+	std::fs::write(outside.path().join("private"), b"OUTSIDE-MARKER").unwrap();
+	let result = walk_dir_skipping(dir.path(), |path| {
+		if path == child {
+			std::fs::remove_dir(&child).unwrap();
+			std::os::unix::fs::symlink(outside.path(), &child).unwrap();
+		}
+		false
+	});
+	assert!(result.is_err(), "a changed directory must not be followed");
+}
+
+#[cfg(unix)]
+#[test]
+fn packing_an_opened_file_never_reopens_a_replacement_symlink() {
+	use std::io::Read;
+	let dir = tempfile::tempdir().unwrap();
+	let outside = tempfile::tempdir().unwrap();
+	std::fs::write(dir.path().join("file"), b"inside").unwrap();
+	std::fs::write(outside.path().join("private"), b"OUTSIDE-MARKER").unwrap();
+	let mut tar = crate::engine::context::tar_stream::builder(Vec::new());
+	super::visit_dir_skipping(
+		dir.path(),
+		|_| false,
+		|_| true,
+		|path, entry| {
+			if let super::Entry::File(mut file) = entry {
+				std::fs::remove_file(path)?;
+				std::os::unix::fs::symlink(outside.path().join("private"), path)?;
+				tar.append_file("file", &mut file)?;
+			}
+			Ok(())
+		},
+	)
+	.unwrap();
+	let bytes = tar.into_inner().unwrap();
+	let mut archive = tar::Archive::new(bytes.as_slice());
+	let mut entries = archive.entries().unwrap();
+	let mut entry = entries.next().unwrap().unwrap();
+	let mut body = Vec::new();
+	entry.read_to_end(&mut body).unwrap();
+	assert_eq!(body, b"inside");
+}
+
+#[cfg(unix)]
+#[test]
+fn replacing_an_opened_directory_cannot_redirect_its_children() {
+	use std::io::Read;
+	let dir = tempfile::tempdir().unwrap();
+	let outside = tempfile::tempdir().unwrap();
+	let child = dir.path().join("child");
+	std::fs::create_dir(&child).unwrap();
+	std::fs::write(child.join("file"), b"inside").unwrap();
+	std::fs::write(outside.path().join("file"), b"OUTSIDE-MARKER").unwrap();
+	let mut contents = Vec::new();
+	super::visit_dir_skipping(
+		dir.path(),
+		|_| false,
+		|_| true,
+		|path, entry| {
+			match entry {
+				super::Entry::Directory(_) => {
+					std::fs::rename(path, dir.path().join("saved"))?;
+					std::os::unix::fs::symlink(outside.path(), path)?;
+				}
+				super::Entry::File(mut file) => {
+					file.read_to_end(&mut contents)?;
+				}
+				_ => {}
+			}
+			Ok(())
+		},
+	)
+	.unwrap();
+	assert_eq!(contents, b"inside");
+}
+
 #[test]
 fn walk_dir_returns_every_entry_in_sorted_order() {
 	let dir = tempfile::tempdir().unwrap();

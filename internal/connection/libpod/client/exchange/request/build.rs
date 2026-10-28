@@ -35,18 +35,21 @@ impl Client {
 		body: BoxBody,
 		content_type: Option<&str>,
 	) -> Result<Request<BoxBody>> {
-		let uri: hyper::Uri =
-			path.parse()
-				.map_err(|e: hyper::http::uri::InvalidUri| PodmanError::Api {
-					status: 0,
-					message: format!("invalid API path '{path}': {e}"),
-				})?;
+		// The request target can contain resolved buildargs. Never include it
+		// (or parser diagnostics that might quote it) in an error.
+		let uri: hyper::Uri = path.parse().map_err(|_: hyper::http::uri::InvalidUri| {
+			PodmanError::Api {
+				status: 0,
+				message: "invalid API path: invalid or oversized request target; buildargs values omitted"
+					.into(),
+			}
+		})?;
 		if uri.scheme().is_some() || uri.authority().is_some() {
 			return Err(PodmanError::Api {
 				status: 0,
-				message: format!(
-					"invalid API path '{path}': path must start with '/' and contain no scheme or authority"
-				),
+				message:
+					"invalid API path: path must start with '/' and contain no scheme or authority"
+						.into(),
 			});
 		}
 
