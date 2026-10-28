@@ -185,24 +185,50 @@ impl Engine {
 		target_services: &[String],
 		wait_timeout: Option<Duration>,
 	) -> Result<()> {
-		// Poll services concurrently: each `wait_healthy` is its own poll loop, so
-		// total `--wait` latency is the slowest service, not the sum of all.
-		let waits = file
+		// The containers a wait has to cover come from the runtime, not from
+		// the compose file: a `scale` from an earlier command created
+		// replicas the file does not name, and a one-off container carries
+		// the service label without being one of the service's replicas. The
+		// file's own names are the fallback for a service the runtime knows
+		// nothing about, so a never-created service is still asked about by
+		// name.
+		let plans: Vec<(&String, &Service, Vec<String>)> = file
 			.services
 			.iter()
 			.filter(|(name, _)| {
 				target_services.is_empty() || target_services.iter().any(|t| t == *name)
 			})
-			.flat_map(|(name, service)| {
-				// Every replica of the service is waited on, not just the first
-				// one: a healthy first replica says nothing about the others,
-				// and a service scaled to zero has no container to ask about.
-				self.replica_names(name, service)
-					.into_iter()
-					.map(move |container| async move {
-						self.wait_healthy(&container, service, wait_timeout).await
-					})
-			});
+			.map(|(name, service)| (name, service, self.replica_names(name, service)))
+			.collect();
+		// A service the file gives no replicas has nothing to wait for, so
+		// the runtime is asked only when there is something to ask about.
+		let live = if plans.iter().any(|(_, _, names)| !names.is_empty()) {
+			match self.live_service_replicas().await {
+				Ok(live) => Some(live),
+				Err(_) => {
+					tracing::debug!(
+						"the project listing failed; the compose file's replicas are used instead"
+					);
+					None
+				}
+			}
+		} else {
+			None
+		};
+		// Poll services concurrently: each `wait_healthy` is its own poll loop, so
+		// total `--wait` latency is the slowest service, not the sum of all.
+		let waits = plans.into_iter().flat_map(|(name, service, static_names)| {
+			let names = match live.as_ref().and_then(|live| live.get(name)) {
+				Some(names) if !names.is_empty() => names.clone(),
+				_ => static_names,
+			};
+			// Every replica of the service is waited on, not just the first
+			// one: a healthy first replica says nothing about the others,
+			// and a service scaled to zero has no container to ask about.
+			names.into_iter().map(move |container| async move {
+				self.wait_healthy(&container, service, wait_timeout).await
+			})
+		});
 		futures_util::future::try_join_all(waits).await?;
 		Ok(())
 	}
