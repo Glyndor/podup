@@ -21,7 +21,8 @@ fn config_hash_tracks_the_resolved_network_name() {
 			&a,
 			PROJECT,
 			base.path(),
-			&empty_digests()
+			&empty_digests(),
+			&empty_env()
 		)
 		.unwrap(),
 		config_hash(
@@ -29,7 +30,8 @@ fn config_hash_tracks_the_resolved_network_name() {
 			&b,
 			PROJECT,
 			base.path(),
-			&empty_digests()
+			&empty_digests(),
+			&empty_env()
 		)
 		.unwrap(),
 		"renaming the network the service attaches to must change the hash",
@@ -55,7 +57,8 @@ fn config_hash_tracks_the_resolved_volume_name() {
 			&a,
 			PROJECT,
 			base.path(),
-			&empty_digests()
+			&empty_digests(),
+			&empty_env()
 		)
 		.unwrap(),
 		config_hash(
@@ -63,7 +66,8 @@ fn config_hash_tracks_the_resolved_volume_name() {
 			&b,
 			PROJECT,
 			base.path(),
-			&empty_digests()
+			&empty_digests(),
+			&empty_env()
 		)
 		.unwrap(),
 		"renaming the volume the service mounts must change the hash",
@@ -92,7 +96,8 @@ fn config_hash_ignores_resources_the_service_does_not_reference() {
 			&a,
 			PROJECT,
 			base.path(),
-			&empty_digests()
+			&empty_digests(),
+			&empty_env()
 		)
 		.unwrap(),
 		config_hash(
@@ -100,7 +105,8 @@ fn config_hash_ignores_resources_the_service_does_not_reference() {
 			&b,
 			PROJECT,
 			base.path(),
-			&empty_digests()
+			&empty_digests(),
+			&empty_env()
 		)
 		.unwrap(),
 		"a rename of a resource the service never references must not change the hash",
