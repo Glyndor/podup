@@ -200,6 +200,15 @@ pub struct Service {
 	/// Retain the scalar directive until extends has combined the two services.
 	#[serde(skip)]
 	pub(crate) umask_merge_tag: Option<crate::compose::tags::MergeTag>,
+	/// The `!override`/`!reset` tags this service's keys carry, kept until the
+	/// merges that act on them have run.
+	///
+	/// The tag lives on the raw document and is gone by the time the file is
+	/// typed, so it travels with the service it belongs to: the merge that
+	/// combines this service with a base (an `extends:`) and the merge that
+	/// combines it with an earlier `-f` file both read it from here.
+	#[serde(skip)]
+	pub(crate) merge_tags: std::collections::HashMap<String, crate::compose::tags::MergeTag>,
 	/// `working_dir:` is the working directory for the process; overrides the image
 	/// `WORKDIR`.
 	#[serde(skip_serializing_if = "Option::is_none")]

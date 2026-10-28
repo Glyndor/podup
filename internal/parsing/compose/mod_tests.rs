@@ -204,8 +204,13 @@ fn stdin_compose_path_emits_raw_nested_unknown_warning() {
 	// content the test owns, so no process-level stdin redirect is
 	// needed.
 	let yaml = "services:\n  web:\n    image: pg\n    deploy:\n      resources:\n        limits:\n          cpus: '0.5'\n          memroy: 512M\n";
-	let warnings =
-		collect_raw_nested_warnings(&[std::path::PathBuf::from("-")], &[], true, Some(yaml));
+	let warnings = collect_raw_nested_warnings(
+		&[std::path::PathBuf::from("-")],
+		&[],
+		true,
+		Some(yaml),
+		None,
+	);
 	let warning = warnings
 		.iter()
 		.find(|m| m.contains("memroy"))

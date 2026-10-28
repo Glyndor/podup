@@ -120,3 +120,60 @@ fn long_form_invalid_published_string_rejected() {
 	};
 	assert!(parse_ports(&[mapping]).is_err());
 }
+
+/// The compose specification lists `127.0.0.1::80` among the valid forms:
+/// the port is published on that address, on a host port the runtime picks.
+#[test]
+fn an_ip_with_no_host_port() {
+	let ports = parse_ports(&[short("127.0.0.1::80")]).unwrap();
+	assert_eq!(ports.len(), 1);
+	assert_eq!(ports[0].container_port, 80);
+	assert_eq!(ports[0].host_ip, "127.0.0.1");
+	assert!(ports[0].host_port.is_none());
+}
+
+/// The compose specification lists `8000-9000:80` among the valid forms: a
+/// range of host ports published on a single container port.
+#[test]
+fn a_host_range_with_a_single_container_port() {
+	let ports = parse_ports(&[short("8000-9000:80")]).unwrap();
+	assert_eq!(ports.len(), 1001);
+	assert_eq!(ports[0].host_port, Some(8000));
+	assert_eq!(ports[0].container_port, 80);
+	assert_eq!(ports[1000].host_port, Some(9000));
+	assert_eq!(ports[1000].container_port, 80);
+}
+
+/// The same form with an address: every port of the range is published on
+/// that address.
+#[test]
+fn a_host_range_with_an_ip_and_a_single_container_port() {
+	let ports = parse_ports(&[short("127.0.0.1:8000-8002:80")]).unwrap();
+	assert_eq!(ports.len(), 3);
+	assert_eq!(ports[0].host_port, Some(8000));
+	assert_eq!(ports[0].container_port, 80);
+	assert_eq!(ports[0].host_ip, "127.0.0.1");
+	assert_eq!(ports[2].host_port, Some(8002));
+	assert_eq!(ports[2].container_port, 80);
+}
+
+/// The long form accepts a range of published ports.
+#[test]
+fn a_published_range_in_the_long_form() {
+	use podup::compose::types::StringOrU16;
+	let mapping = podup::compose::types::PortMapping::Long {
+		target: 80,
+		published: Some(StringOrU16::String("8080-8081".to_string())),
+		protocol: None,
+		host_ip: None,
+		mode: None,
+		app_protocol: None,
+		name: None,
+	};
+	let ports = parse_ports(&[mapping]).unwrap();
+	assert_eq!(ports.len(), 2);
+	assert_eq!(ports[0].host_port, Some(8080));
+	assert_eq!(ports[0].container_port, 80);
+	assert_eq!(ports[1].host_port, Some(8081));
+	assert_eq!(ports[1].container_port, 80);
+}

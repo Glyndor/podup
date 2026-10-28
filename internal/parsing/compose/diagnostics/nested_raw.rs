@@ -111,6 +111,7 @@ pub(crate) fn collect_raw_nested_warnings(
 	env_files: &[String],
 	interpolate: bool,
 	stdin: Option<&str>,
+	project_dir: Option<&Path>,
 ) -> Vec<String> {
 	let mut out = Vec::new();
 	for path in paths {
@@ -118,7 +119,7 @@ pub(crate) fn collect_raw_nested_warnings(
 			match stdin {
 				Some(c) => match interpolated_yaml_text_from_content(
 					c,
-					&dir_for_path(path),
+					project_dir.unwrap_or(&dir_for_path(path)),
 					env_files,
 					interpolate,
 				) {
@@ -128,7 +129,7 @@ pub(crate) fn collect_raw_nested_warnings(
 				None => continue,
 			}
 		} else {
-			match super::super::interpolated_yaml_text(path, env_files, interpolate) {
+			match super::super::interpolated_yaml_text(path, env_files, interpolate, project_dir) {
 				Ok(y) => y,
 				Err(_) => continue,
 			}

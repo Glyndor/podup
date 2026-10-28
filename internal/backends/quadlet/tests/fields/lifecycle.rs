@@ -105,3 +105,36 @@ services:
 	assert!(c.contains("Wants=proj-cache.service"));
 	assert!(!c.contains("Requires=proj-cache.service"));
 }
+
+/// A grace period written as more than one number and unit, the way the
+/// compose specification writes it, reaches the unit as seconds.
+#[test]
+fn a_compound_stop_grace_period_reaches_the_unit() {
+	let yaml = r#"
+services:
+  app:
+    image: x
+    stop_grace_period: 1m30s
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-app.container").contents;
+	assert!(c.contains("StopTimeout=90"), "{c}");
+}
+
+/// A grace period of half a second is half a second, not an instant kill: the
+/// timeout is rounded up, never down to nothing.
+#[test]
+fn a_fractional_stop_grace_period_is_rounded_up() {
+	let yaml = r#"
+services:
+  app:
+    image: x
+    stop_grace_period: 500ms
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-app.container").contents;
+	assert!(c.contains("StopTimeout=1"), "{c}");
+	assert!(!c.contains("StopTimeout=0"), "{c}");
+}

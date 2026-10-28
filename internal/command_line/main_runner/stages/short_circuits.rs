@@ -161,7 +161,12 @@ pub(crate) async fn run_ps(
 	// deploy gate reads as "nothing running, no error". `docker compose ps`
 	// exits non-zero there, and so does every other podup command on the same
 	// file.
-	let parsed = match podup::parse_files_with_env_files(&compose_files, &cli.env_file) {
+	let parsed = match podup::parse_files_with_env_files_interp_in(
+		&compose_files,
+		&cli.env_file,
+		true,
+		cli.project_directory.as_deref(),
+	) {
 		Ok(f) => Some(f),
 		Err(e) if compose_files.iter().any(|p| p.exists()) => return Err(e),
 		Err(_) => None,

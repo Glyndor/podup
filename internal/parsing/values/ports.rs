@@ -66,26 +66,50 @@ fn parse_one(mapping: &PortMapping) -> Result<Vec<ParsedPort>> {
 			let proto = protocol.clone().unwrap_or_else(|| "tcp".into());
 			validate_protocol(&proto, &format!("{target}/{proto}"))?;
 			let hip = host_ip.clone().unwrap_or_default();
-			let host_port = published
+			let host_ports = published
 				.as_ref()
 				.map(|p| match p {
-					StringOrU16::Number(n) => port_in_range(*n, &n.to_string()),
-					StringOrU16::String(s) => {
-						let n: u32 = s.parse().map_err(|_| {
-							ComposeError::InvalidPort(format!("invalid published port: {s}"))
-						})?;
-						port_in_range(n, s)
-					}
+					StringOrU16::Number(n) => Ok(vec![port_in_range(*n, &n.to_string())?]),
+					StringOrU16::String(s) => published_ports(s),
 				})
 				.transpose()?;
-			Ok(vec![ParsedPort {
-				container_port: *target,
-				protocol: proto,
-				host_ip: hip,
-				host_port,
-			}])
+			let Some(host_ports) = host_ports else {
+				// No published port: the container port is exposed and the
+				// runtime picks the host port.
+				return Ok(vec![ParsedPort {
+					container_port: *target,
+					protocol: proto,
+					host_ip: hip,
+					host_port: None,
+				}]);
+			};
+			Ok(host_ports
+				.into_iter()
+				.map(|host_port| ParsedPort {
+					container_port: *target,
+					protocol: proto.clone(),
+					host_ip: hip.clone(),
+					host_port: Some(host_port),
+				})
+				.collect())
 		}
 	}
+}
+
+/// The host ports of a long-form `published` value.
+///
+/// The compose specification lets `published` be a range (`"8080-8090"`), so
+/// the value is read as a range when it is one and as a single port
+/// otherwise.
+fn published_ports(published: &str) -> Result<Vec<u16>> {
+	let trimmed = published.trim();
+	if trimmed.contains('-') {
+		return expand_port_range(trimmed);
+	}
+	let n: u32 = trimmed
+		.parse()
+		.map_err(|_| ComposeError::InvalidPort(format!("invalid published port: {published}")))?;
+	Ok(vec![port_in_range(n, published)?])
 }
 
 /// Parse a short-form port string.
@@ -97,7 +121,10 @@ fn parse_one(mapping: &PortMapping) -> Result<Vec<ParsedPort>> {
 /// - `host:container/proto`
 /// - `ip:host:container` (ip may be IPv4 or `[ipv6]`)
 /// - `ip:host:container/proto`
+/// - `ip::container` (the host port is picked by the runtime)
 /// - `host_start-host_end:container_start-container_end`
+/// - `host_start-host_end:container` (every host port publishes that container
+///   port)
 fn parse_short(s: &str) -> Result<Vec<ParsedPort>> {
 	// Split off protocol suffix.
 	let (rest, proto) = if let Some(idx) = s.rfind('/') {
@@ -139,6 +166,13 @@ fn parse_short(s: &str) -> Result<Vec<ParsedPort>> {
 			let (left, right) = split_last_colon(rest);
 			let host_ports = expand_port_range(left)?;
 			let container_ports = expand_port_range(right)?;
+			// A range of host ports with a single container port: every port of
+			// the range is published on that container port (`8000-9000:80`).
+			let container_ports = if container_ports.len() == 1 && host_ports.len() > 1 {
+				vec![container_ports[0]; host_ports.len()]
+			} else {
+				container_ports
+			};
 			let host_ports = expand_single_host_port(host_ports, container_ports.len(), s)?;
 			if host_ports.len() != container_ports.len() {
 				return Err(ComposeError::InvalidPort(format!(
@@ -169,8 +203,29 @@ fn parse_short(s: &str) -> Result<Vec<ParsedPort>> {
 /// Parse the `host[:container]` portion when an explicit IP prefix is present.
 fn parse_with_ip(ip: &str, after: &str, proto: &str, full: &str) -> Result<Vec<ParsedPort>> {
 	if let Some((left, right)) = after.split_once(':') {
-		let host_ports = expand_port_range(left)?;
 		let container_ports = expand_port_range(right)?;
+		// An empty host side means the host port is not given: the port is
+		// published on that address, on a port the runtime picks
+		// (`127.0.0.1::80`).
+		if left.is_empty() {
+			return Ok(container_ports
+				.into_iter()
+				.map(|cp| ParsedPort {
+					container_port: cp,
+					protocol: proto.to_string(),
+					host_ip: ip.to_string(),
+					host_port: None,
+				})
+				.collect());
+		}
+		let host_ports = expand_port_range(left)?;
+		// A range of host ports with a single container port: every port of
+		// the range is published on that container port (`8000-9000:80`).
+		let container_ports = if container_ports.len() == 1 && host_ports.len() > 1 {
+			vec![container_ports[0]; host_ports.len()]
+		} else {
+			container_ports
+		};
 		let host_ports = expand_single_host_port(host_ports, container_ports.len(), full)?;
 		if host_ports.len() != container_ports.len() {
 			return Err(ComposeError::InvalidPort(format!(
