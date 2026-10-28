@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::{anchor, diagnostics, extends, include, jobs, merge, tags, types, validate};
+use super::{diagnostics, extends, include, jobs, merge, tags, types, validate};
 use crate::error::{ComposeError, Result};
 use crate::substitute;
 use types::{ComposeFile, ServiceNetworks};
@@ -79,59 +79,9 @@ pub(crate) fn parse_file_with_env_files_interp_with_stdin(
 	};
 	let mut file = parse_file_inner_with_stdin(&abs, &dir, env_files, interpolate, stdin_content)?;
 
-	let mut included_env_files = std::collections::HashMap::new();
-	let includes = std::mem::take(&mut file.include);
-	for inc in includes {
-		let (extra_env_files, project_dir_override) = match &inc {
-			types::IncludeConfig::Long {
-				env_file,
-				project_directory,
-				..
-			} => (
-				env_file.as_ref().map(|ef| ef.to_list()).unwrap_or_default(),
-				project_directory.as_ref().map(|pd| dir.join(pd)),
-			),
-			_ => (vec![], None),
-		};
-		for rel in inc.paths() {
-			let rel_path = std::path::Path::new(&rel);
-			// The Compose Specification resolves `include` paths relative to the
-			// including file and treats `../` as canonical (monorepos routinely use
-			// `include: ../shared/compose.yaml`). An absolute path is used as given.
-			// This matches docker-compose and the trusted-input policy already
-			// applied to `extends.file` and `env_file`: the compose file is
-			// trusted input, like a Makefile.
-			let inc_path = if rel_path.is_absolute() {
-				rel_path.to_path_buf()
-			} else {
-				dir.join(&rel)
-			};
-			let inc_dir = project_dir_override.clone().unwrap_or_else(|| {
-				inc_path
-					.parent()
-					.map(|p| p.to_path_buf())
-					.unwrap_or_else(|| dir.clone())
-			});
-			let mut combined_env_files = env_files.to_vec();
-			combined_env_files.extend(extra_env_files.iter().cloned());
-			let mut included = include::parse_included_file(
-				&inc_path,
-				&inc_dir,
-				&combined_env_files,
-				interpolate,
-			)?;
-			for name in included.services.keys().chain(included.jobs.keys()) {
-				if !file.services.contains_key(name) && !file.jobs.contains_key(name) {
-					included_env_files.insert(
-						name.clone(),
-						include::absolute_env_files(&inc_dir, &combined_env_files),
-					);
-				}
-			}
-			anchor::anchor_compose_file(&mut included, &inc_dir);
-			include::merge_compose_file(&mut file, included);
-		}
-	}
+	// The `include:` list of the file, and the list of every file it names in
+	// turn: the compose specification applies `include` recursively.
+	let included_env_files = include::merge_includes(&mut file, &dir, env_files, interpolate)?;
 
 	let env_files = include::absolute_env_files(&dir, env_files);
 	// Jobs and services share a namespace and keep their `extends` to their

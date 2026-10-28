@@ -2,7 +2,7 @@ use podup::compose::types::ComposeFile;
 use podup::{parse_files_with_env_files, ComposeError, Result};
 use std::io::Write;
 
-fn parse_one(path: &std::path::Path) -> Result<ComposeFile> {
+pub(super) fn parse_one(path: &std::path::Path) -> Result<ComposeFile> {
 	parse_files_with_env_files(&[path.to_path_buf()], &[])
 }
 

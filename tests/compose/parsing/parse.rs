@@ -10,6 +10,8 @@ mod extends;
 mod fields;
 #[path = "parse/reuse/include.rs"]
 mod include;
+#[path = "parse/reuse/include_nested.rs"]
+mod include_nested;
 #[path = "parse/schema/new_keys.rs"]
 mod new_keys;
 #[path = "parse/order.rs"]
