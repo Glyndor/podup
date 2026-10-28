@@ -130,6 +130,45 @@ fn format_row_truncates_long_name_but_no_trunc_keeps_it() {
 	assert!(row_full.contains(&s.name));
 }
 
+/// The container name arrives from the daemon, so it is not ours: a raw escape
+/// in it repaints the reader's terminal and desynchronises the table's own
+/// resets. `stats` painted the name as it came, so the escape reached stdout
+/// unchanged. The name has to be escaped before it is measured, truncated or
+/// painted, so the width the column reserves is the width actually printed.
+#[test]
+fn a_container_name_cannot_drive_the_terminal() {
+	let s = ContainerStat {
+		name: "proj-web\u{1b}[31m\u{7}1".into(),
+		..Default::default()
+	};
+	let row = format_row_with(&s, false, false);
+	assert!(!row.contains('\u{1b}'), "{row:?}");
+	assert!(!row.contains('\u{7}'), "{row:?}");
+	// The name is still there, as text.
+	assert!(row.contains("proj-web"), "{row:?}");
+}
+
+/// Escaping happens before the truncation, so the column keeps its width: a
+/// name whose escape sequences expanded past the column must not push the
+/// numbers that follow it sideways.
+#[test]
+fn the_escaped_name_is_measured_before_the_row_is_padded() {
+	let s = ContainerStat {
+		name: "proj-web\u{1b}1".into(),
+		..Default::default()
+	};
+	let row = format_row_with(&s, false, false);
+	// The escaped name is 8 + 6 + 1 = 15 columns, well inside NAME_WIDTH, so
+	// the row is padded to the same width as any other name.
+	assert_eq!(
+		row.chars().count(),
+		format_row_with(&sample_stat(), false, false)
+			.chars()
+			.count(),
+		"a name with escapes must not change the row's width: {row:?}"
+	);
+}
+
 #[test]
 fn stat_json_row_emits_numeric_fields() {
 	let mut network = HashMap::new();

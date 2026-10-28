@@ -91,8 +91,14 @@ pub(super) fn format_row_with(s: &ContainerStat, no_trunc: bool, colour: bool) -
 	let (rx, tx) = net_totals(s);
 	let dim = crate::ui::Style::new().dimmed();
 
-	let name = format!("{:<NAME_WIDTH$}", truncate_name(&s.name, no_trunc));
-	let name = paint(identity_style(s.name.trim()), &name, colour);
+	// The name arrives from the daemon, so it is not ours to trust: a raw
+	// escape in it repaints the reader's terminal and desynchronises the
+	// resets of the colours painted beside it. Escaping happens before the
+	// truncation and the padding, so the width the column reserves is the
+	// width actually printed.
+	let safe_name = crate::ui::sanitize_cell(s.name.trim());
+	let name = format!("{:<NAME_WIDTH$}", truncate_name(&safe_name, no_trunc));
+	let name = paint(identity_style(&safe_name), &name, colour);
 	let cpu = paint(
 		load_style(s.cpu),
 		&format!("{:>width$.2}%", s.cpu, width = CPU_WIDTH - 1),
