@@ -14,7 +14,7 @@ use flate2::write::GzEncoder;
 use flate2::Compression;
 
 use crate::engine::context::ignore_patterns::{
-	is_ignored, negation_could_reach, read_patterns, to_ignore_path,
+	is_ignored, negation_could_reach, to_ignore_path, try_read_patterns,
 };
 use crate::engine::context::walk;
 use crate::error::{ComposeError, Result};
@@ -175,7 +175,7 @@ pub(super) fn stream_build_context<W: std::io::Write>(
 	dockerfile: &str,
 	extra_files: &[(String, Vec<u8>)],
 ) -> Result<()> {
-	let (ignore_name, ignore_patterns) = read_patterns(context);
+	let (ignore_name, ignore_patterns) = try_read_patterns(context).map_err(ignore_file_error)?;
 	let encoder = GzEncoder::new(writer, Compression::default());
 	let mut tar = crate::engine::context::tar_stream::builder(encoder);
 
@@ -199,7 +199,7 @@ pub(super) fn stream_build_context<W: std::io::Write>(
 		append_ignore_file(
 			&mut tar,
 			ignore_name,
-			&synthesized_ignore_file(context, ignore_name, &synthesized),
+			&synthesized_ignore_file(context, ignore_name, &synthesized)?,
 		)?;
 	}
 	append_extra_files(&mut tar, extra_files)?;
@@ -214,7 +214,7 @@ pub(super) fn stream_build_context_with_inline<W: std::io::Write>(
 	inline: &str,
 	extra_files: &[(String, Vec<u8>)],
 ) -> Result<()> {
-	let (ignore_name, ignore_patterns) = read_patterns(context);
+	let (ignore_name, ignore_patterns) = try_read_patterns(context).map_err(ignore_file_error)?;
 	let encoder = GzEncoder::new(writer, Compression::default());
 	let mut tar = crate::engine::context::tar_stream::builder(encoder);
 
@@ -235,7 +235,7 @@ pub(super) fn stream_build_context_with_inline<W: std::io::Write>(
 	append_ignore_file(
 		&mut tar,
 		ignore_name,
-		&synthesized_ignore_file(context, ignore_name, &synthesized),
+		&synthesized_ignore_file(context, ignore_name, &synthesized)?,
 	)?;
 
 	append_extra_files(&mut tar, extra_files)?;
@@ -309,8 +309,15 @@ fn append_ignore_file<W: std::io::Write>(
 /// `name` is the ignore file the server will read (see
 /// [`crate::engine::context::ignore_patterns::read_patterns`]); the
 /// user rules are carried over from that same file, never from the other one.
-fn synthesized_ignore_file(context: &Path, name: &str, names: &[&str]) -> String {
-	let existing = crate::filesystem::read_to_string_capped(context.join(name)).unwrap_or_default();
+fn synthesized_ignore_file(context: &Path, name: &str, names: &[&str]) -> Result<String> {
+	// A file that was there a moment ago and cannot be read now is an error, not
+	// an empty list: the rewritten file replaces the user's rules, so an empty
+	// read would ship what they excluded.
+	let existing = match crate::filesystem::read_to_string_capped(context.join(name)) {
+		Ok(content) => content,
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+		Err(e) => return Err(ignore_file_error(e)),
+	};
 	let mut out = existing.trim_end_matches(['\n', '\r']).to_string();
 	for name in names {
 		if !out.is_empty() {
@@ -319,7 +326,16 @@ fn synthesized_ignore_file(context: &Path, name: &str, names: &[&str]) -> String
 		out.push_str(name);
 	}
 	out.push('\n');
-	out
+	Ok(out)
+}
+
+/// The error for an ignore file that exists and cannot be used. It names the
+/// problem and never the file's content.
+fn ignore_file_error(e: std::io::Error) -> ComposeError {
+	ComposeError::Build(format!(
+		"cannot read the build context's ignore file ({}); fix it or remove it so the build does not ship files it was meant to exclude",
+		e.kind()
+	))
 }
 
 /// Map a compose `additional_contexts` value to the libpod

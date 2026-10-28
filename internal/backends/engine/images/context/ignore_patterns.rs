@@ -25,10 +25,26 @@ mod glob;
 /// used: `name` is `.containerignore` or `.dockerignore` (the file podman
 /// reads), `patterns` is the trimmed, comment-stripped, non-empty line list.
 /// Exactly one file applies, never the union, matching podman-build(1).
-pub(in crate::backends::engine) fn read_patterns(context: &Path) -> (&'static str, Vec<String>) {
+///
+/// A file that is missing, or that is not a regular file (a link out of the
+/// tree is not followed), is skipped. Any other failure, such as a file that is
+/// unreadable, too large or not text, is an error: carrying on without the
+/// rules would ship the files the operator meant to keep out.
+pub(in crate::backends::engine) fn try_read_patterns(
+	context: &Path,
+) -> std::io::Result<(&'static str, Vec<String>)> {
 	for name in [".containerignore", ".dockerignore"] {
-		let Ok(content) = crate::filesystem::read_to_string_capped(context.join(name)) else {
-			continue;
+		let content = match crate::filesystem::read_to_string_capped(context.join(name)) {
+			Ok(content) => content,
+			Err(e)
+				if matches!(
+					e.kind(),
+					std::io::ErrorKind::NotFound | std::io::ErrorKind::InvalidInput
+				) =>
+			{
+				continue;
+			}
+			Err(e) => return Err(e),
 		};
 		let patterns = content
 			.trim_start_matches('\u{feff}')
@@ -37,9 +53,15 @@ pub(in crate::backends::engine) fn read_patterns(context: &Path) -> (&'static st
 			.map(|l| l.trim().to_string())
 			.filter(|l| !l.is_empty())
 			.collect();
-		return (name, patterns);
+		return Ok((name, patterns));
 	}
-	(".containerignore", Vec::new())
+	Ok((".containerignore", Vec::new()))
+}
+
+/// [`try_read_patterns`] for callers that can only act on a list: a failure
+/// reads as no patterns. The build does not use it.
+pub(in crate::backends::engine) fn read_patterns(context: &Path) -> (&'static str, Vec<String>) {
+	try_read_patterns(context).unwrap_or((".containerignore", Vec::new()))
 }
 
 /// Decide whether `path` is excluded from the build context.
