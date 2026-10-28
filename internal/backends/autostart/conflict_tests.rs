@@ -89,8 +89,8 @@ fn install_start_refuses_over_a_service_install_with_auto_update() {
 		let sc = FakeCtl::new();
 		install(&sc, &opts_with_interval(root, "app", false, false, "daily")).unwrap();
 		let main = root.join("systemd/user/podup-app.service");
-		let oneshot = root.join("systemd/user/podup-app-update.service");
-		let timer = root.join("systemd/user/podup-app-update.timer");
+		let oneshot = root.join("systemd/user/podup-app.update.service");
+		let timer = root.join("systemd/user/podup-app.update.timer");
 		let before_main = std::fs::read(&main).unwrap();
 		let before_oneshot = std::fs::read(&oneshot).unwrap();
 		let before_timer = std::fs::read(&timer).unwrap();
@@ -341,6 +341,20 @@ fn every_released_service_line_classifies_as_service() {
 			"{legacy}"
 		);
 	}
+}
+
+/// A unit that names the socket it talks to is still a service unit: the
+/// option pair is skipped like every other, so the same-mode reinstall is
+/// not refused as an unrecognised shape.
+#[test]
+fn a_service_line_naming_the_socket_still_classifies_as_service() {
+	let line = "/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app --socket \
+	                /run/user/1000/podman/podman.sock up -d --no-build --pull never";
+	assert_eq!(
+		classify_exec_start(line),
+		DetectedSingleUnitMode::Service,
+		"{line}"
+	);
 }
 
 /// A unit file with no `ExecStart=` is refused too, not treated as absent.

@@ -114,8 +114,8 @@ pub(crate) enum AutostartCommands {
 		/// Print the unit and the actions that would run, but change nothing.
 		#[arg(long)]
 		dry_run: bool,
-		/// In service mode, install a sibling `<unit>-update.service` /
-		/// `<unit>-update.timer` pair that runs `podup up -d` on a schedule so
+		/// In service mode, install a sibling `<unit>.update.service` /
+		/// `<unit>.update.timer` pair that runs `podup up -d` on a schedule so
 		/// the stack stays fresh without human action. Accepted only with
 		/// `--mode service`; quadlet mode already drives auto-update through
 		/// `podman-auto-update.timer`, and start mode has no compose front-end

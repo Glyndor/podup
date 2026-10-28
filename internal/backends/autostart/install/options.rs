@@ -15,8 +15,8 @@ pub struct InstallOptions {
 	pub no_start: bool,
 	/// Print the unit and the actions that would run, but change nothing.
 	pub dry_run: bool,
-	/// When set, also render and install the sibling `<unit>-update.service`
-	/// oneshot and `<unit>-update.timer`. The string is the `OnCalendar=`
+	/// When set, also render and install the sibling `<unit>.update.service`
+	/// oneshot and `<unit>.update.timer`. The string is the `OnCalendar=`
 	/// word (`hourly`/`daily`/`weekly`).
 	pub auto_update_interval: Option<String>,
 }

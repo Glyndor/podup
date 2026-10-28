@@ -10,7 +10,73 @@ fn opts_single() -> ServiceUnitOpts {
 		profiles: Vec::new(),
 		env_files: Vec::new(),
 		max_stop_grace_secs: None,
+		socket: None,
+		project_directory: None,
 	}
+}
+
+/// The socket the operator selected must travel into the unit: the boot path
+/// runs with no environment of the operator's, so without it `podup` would
+/// talk to the default instance, which is a different one whenever
+/// `--socket` pointed somewhere else.
+#[test]
+fn the_selected_socket_travels_into_the_command() {
+	let mut o = opts_single();
+	o.socket = Some("/run/user/1000/podman/podman.sock".to_string());
+	let s = render_service_unit(&o);
+	assert!(
+		s.contains(
+			"-p app --socket /run/user/1000/podman/podman.sock up -d --no-build --pull never"
+		),
+		"{s}"
+	);
+	assert!(
+		s.contains("-p app --socket /run/user/1000/podman/podman.sock stop"),
+		"{s}"
+	);
+}
+
+/// The auto-update oneshot talks to the same instance as the boot unit, so
+/// the socket travels into it too.
+#[test]
+fn the_selected_socket_travels_into_the_auto_update_command() {
+	let mut o = opts_single();
+	o.socket = Some("/run/user/1000/podman/podman.sock".to_string());
+	let s = super::render_update_service_unit(&o);
+	assert!(
+		s.contains("-p app --socket /run/user/1000/podman/podman.sock up -d"),
+		"{s}"
+	);
+}
+
+/// The project directory must travel into the command: podup resolves
+/// relative paths against the compose file's own directory, so without the
+/// flag the boot path resolves them somewhere else than the operator's own
+/// run did.
+#[test]
+fn the_selected_project_directory_travels_into_the_command() {
+	let mut o = opts_single();
+	o.project_directory = Some(PathBuf::from("/srv/data"));
+	let s = render_service_unit(&o);
+	assert!(
+		s.contains("-p app --project-directory /srv/data up -d --no-build --pull never"),
+		"{s}"
+	);
+	assert!(
+		s.contains("-p app --project-directory /srv/data stop"),
+		"{s}"
+	);
+}
+
+/// A socket the unit cannot carry is refused where the operator is watching,
+/// not at boot with nothing to say why.
+#[test]
+fn a_socket_the_unit_cannot_carry_is_refused() {
+	let mut o = opts_single();
+	o.socket = Some("tcp://example.invalid:2375".to_string());
+	let err = validate_unit_opts(&o).expect_err("a remote socket must be refused");
+	assert!(err.contains("local socket"), "{err}");
+	assert!(validate_unit_opts(&opts_single()).is_ok());
 }
 
 #[test]
@@ -312,8 +378,8 @@ fn no_grace_period_emits_no_stop_timeout() {
 }
 
 // ---------------------------------------------------------------------------
-// --auto-update: the sibling `<unit>-update.service` oneshot and `<unit>
-// -update.timer` schedule (render-only; install/uninstall are exercised in
+// --auto-update: the sibling `<unit>.update.service` oneshot and `<unit>
+// .update.timer` schedule (render-only; install/uninstall are exercised in
 // `tests.rs`).
 // ---------------------------------------------------------------------------
 
@@ -326,6 +392,8 @@ fn opts_single_for_timer() -> super::ServiceUnitOpts {
 		profiles: Vec::new(),
 		env_files: Vec::new(),
 		max_stop_grace_secs: None,
+		socket: None,
+		project_directory: None,
 	}
 }
 

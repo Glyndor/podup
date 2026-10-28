@@ -146,13 +146,18 @@ pub(in super::super) fn classify_exec_start(line: &str) -> DetectedSingleUnitMod
 	if (n == 3 && tokens[1] == "start") || (n == 4 && tokens[1] == "start" && tokens[2] == "--") {
 		return DetectedSingleUnitMode::Start;
 	}
-	// Service mode renders `<podup>`, then `-f`, `-p`, `--profile` and
-	// `--env-file` each with a value, then `up -d` and whatever flags that
-	// release put after it (plain `up -d`, `up -d --build` in 1.9.x, and
-	// `up -d --no-build --pull never` now). Skipping the option pairs means a
-	// project or file literally named `up` is read as a value, not as the verb.
+	// Service mode renders `<podup>`, then `-f`, `-p`, `--socket`,
+	// `--project-directory`, `--profile` and `--env-file` each with a value,
+	// then `up -d` and whatever flags that release put after it (plain `up
+	// -d`, `up -d --build` in 1.9.x, and `up -d --no-build --pull never`
+	// now). Skipping the option pairs means a project or file literally named
+	// `up` is read as a value, not as the verb.
 	let mut i = 1;
-	while i + 1 < n && matches!(tokens[i].as_str(), "-f" | "-p" | "--profile" | "--env-file") {
+	while i + 1 < n
+		&& matches!(
+			tokens[i].as_str(),
+			"-f" | "-p" | "--socket" | "--project-directory" | "--profile" | "--env-file"
+		) {
 		i += 2;
 	}
 	if i + 1 < n && tokens[i] == "up" && tokens[i + 1] == "-d" {

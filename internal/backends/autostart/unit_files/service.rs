@@ -37,6 +37,21 @@ pub struct ServiceUnitOpts {
 	/// honours it. `None` leaves `TimeoutStopSec=` off, which is right when no
 	/// service asks for anything unusual.
 	pub max_stop_grace_secs: Option<u64>,
+	/// The Podman socket the unit must talk to, passed through as `--socket`.
+	///
+	/// A unit runs with no environment of the operator's, so the socket
+	/// selected at install time has to be written into the command itself.
+	/// Without it the boot path talks to the default instance, which is a
+	/// different one whenever `--socket` pointed somewhere else.
+	pub socket: Option<String>,
+	/// The project directory, passed through as `--project-directory`.
+	///
+	/// The unit already carries it as its `WorkingDirectory`, but podup
+	/// resolves relative paths against the compose file's own directory, not
+	/// against the working directory the unit runs in. Without the flag the
+	/// boot path resolves them somewhere else than the operator's own run
+	/// did.
+	pub project_directory: Option<PathBuf>,
 }
 
 impl ServiceUnitOpts {
@@ -56,6 +71,8 @@ impl ServiceUnitOpts {
 			profiles: Vec::new(),
 			env_files: Vec::new(),
 			max_stop_grace_secs: None,
+			socket: None,
+			project_directory: None,
 		}
 	}
 
@@ -76,6 +93,20 @@ impl ServiceUnitOpts {
 	/// slower stack off mid-shutdown. Builder-style.
 	pub fn with_max_stop_grace_secs(mut self, secs: Option<u64>) -> Self {
 		self.max_stop_grace_secs = secs;
+		self
+	}
+
+	/// The Podman socket the unit must talk to, passed through as `--socket`.
+	/// Builder-style.
+	pub fn with_socket(mut self, socket: Option<String>) -> Self {
+		self.socket = socket;
+		self
+	}
+
+	/// The project directory, passed through as `--project-directory`.
+	/// Builder-style.
+	pub fn with_project_directory(mut self, dir: Option<PathBuf>) -> Self {
+		self.project_directory = dir;
 		self
 	}
 }
@@ -177,12 +208,22 @@ pub fn validate_unit_opts(opts: &ServiceUnitOpts) -> Result<(), String> {
 	for e in &opts.env_files {
 		check("env file path", e)?;
 	}
+	if let Some(socket) = &opts.socket {
+		check("socket", socket)?;
+		// A socket the unit cannot carry is refused here, where the operator
+		// is watching, rather than at boot with nothing to say why.
+		super::socket::for_podup(socket)?;
+	}
+	if let Some(dir) = &opts.project_directory {
+		check("project directory", &dir.to_string_lossy())?;
+	}
 	Ok(())
 }
 
 /// The leading `podup` arguments shared by both the start and stop commands:
-/// `-f <file>...  -p <project>  [--profile P]...  [--env-file E]...`. These must
-/// precede the subcommand (`-f`/`-p` are not global flags).
+/// `-f <file>...  -p <project>  [--socket S]  [--project-directory D]
+/// [--profile P]...  [--env-file E]...`. These must precede the subcommand
+/// (`-f`/`-p` are not global flags).
 fn leading_args(opts: &ServiceUnitOpts) -> Vec<String> {
 	let mut args = Vec::new();
 	for f in &opts.compose_files {
@@ -191,6 +232,14 @@ fn leading_args(opts: &ServiceUnitOpts) -> Vec<String> {
 	}
 	args.push("-p".to_string());
 	args.push(opts.project.clone());
+	if let Some(socket) = &opts.socket {
+		args.push("--socket".to_string());
+		args.push(socket.clone());
+	}
+	if let Some(dir) = &opts.project_directory {
+		args.push("--project-directory".to_string());
+		args.push(dir.to_string_lossy().into_owned());
+	}
 	for p in &opts.profiles {
 		args.push("--profile".to_string());
 		args.push(p.clone());
@@ -238,13 +287,38 @@ pub fn validate_auto_update_interval(interval: &str) -> Result<(), String> {
 	}
 }
 
-/// The `<unit-name>-update.service` filename.
+/// The auto-update oneshot filename: `podup-<project>.update.service`.
+///
+/// The role sits between the project name and the suffix, separated by a
+/// dot, and a project name cannot contain one (`is_safe_project_name` allows
+/// only lowercase letters, digits, `-` and `_`). The old spelling,
+/// `podup-<project>-update.service`, put the role after the project name, so
+/// the auto-update pair of project `demo` and the main unit of project
+/// `demo-update` were the same file: installing or removing one silently
+/// overwrote, stopped or deleted the other.
 pub fn update_service_file_name(project: &str) -> String {
+	format!("podup-{project}.update.service")
+}
+
+/// The auto-update timer filename: `podup-<project>.update.timer`.
+pub fn update_timer_file_name(project: &str) -> String {
+	format!("podup-{project}.update.timer")
+}
+
+/// The auto-update oneshot filename releases before the rename wrote:
+/// `podup-<project>-update.service`.
+///
+/// Kept so the leftover pair of an older install can be recognised and
+/// retired. It cannot be recognised by name alone: it is also the main unit's
+/// name for a project called `<project>-update`, so the file's own contents
+/// decide who owns it.
+pub fn legacy_update_service_file_name(project: &str) -> String {
 	format!("podup-{project}-update.service")
 }
 
-/// The `<unit-name>-update.timer` filename.
-pub fn update_timer_file_name(project: &str) -> String {
+/// The auto-update timer filename releases before the rename wrote:
+/// `podup-<project>-update.timer`.
+pub fn legacy_update_timer_file_name(project: &str) -> String {
 	format!("podup-{project}-update.timer")
 }
 
@@ -260,7 +334,8 @@ pub fn render_update_service_unit(opts: &ServiceUnitOpts) -> String {
 	let workdir = workdir_value(&opts.working_dir);
 	let project = opts.project.replace('%', "%%");
 	format!(
-		"[Unit]\n\
+		"{marker}\n\
+		 [Unit]\n\
 		 Description=podup {project} auto-update\n\
 		 Wants=podman-user-wait-network-online.service\n\
 		 After=podman-user-wait-network-online.service\n\
@@ -269,6 +344,7 @@ pub fn render_update_service_unit(opts: &ServiceUnitOpts) -> String {
 		 Type=oneshot\n\
 		 WorkingDirectory={workdir}\n\
 		 ExecStart={start}\n",
+		marker = super::owner::marker(&opts.project),
 		project = project,
 		workdir = workdir,
 		start = start,
@@ -279,6 +355,9 @@ pub fn render_update_service_unit(opts: &ServiceUnitOpts) -> String {
 /// missed fires (the host was off) catch up on next boot, and
 /// `WantedBy=timers.target` so the standard timer enable path takes it.
 pub fn render_update_timer_unit(project: &str, interval: &str) -> String {
+	// The marker carries the project name as it is: it is a comment systemd
+	// never expands, and podup reads it back to decide who owns the file.
+	let marker = super::owner::marker(project);
 	let project = project.replace('%', "%%");
 	let interval_word = if let Err(e) = validate_auto_update_interval(interval) {
 		// clap rejects unknown values before reaching here; this is the
@@ -290,7 +369,8 @@ pub fn render_update_timer_unit(project: &str, interval: &str) -> String {
 		interval
 	};
 	format!(
-		"[Unit]\n\
+		"{marker}\n\
+		 [Unit]\n\
 		 Description=podup {project} auto-update timer\n\
 		 \n\
 		 [Timer]\n\
@@ -299,6 +379,7 @@ pub fn render_update_timer_unit(project: &str, interval: &str) -> String {
 		 \n\
 		 [Install]\n\
 		 WantedBy=timers.target\n",
+		marker = marker,
 		project = project,
 		interval_word = interval_word,
 	)
@@ -377,7 +458,8 @@ pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
 		None => String::new(),
 	};
 	format!(
-		"[Unit]\n\
+		"{marker}\n\
+		 [Unit]\n\
 		 Description=podup {project}\n\
 		 Wants=podman-user-wait-network-online.service\n\
 		 After=podman-user-wait-network-online.service\n\
@@ -392,6 +474,7 @@ pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
 		 \n\
 		 [Install]\n\
 		 WantedBy=default.target\n",
+		marker = super::owner::marker(&opts.project),
 		project = project,
 		workdir = workdir,
 		start = start,

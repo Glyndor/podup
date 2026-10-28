@@ -177,6 +177,7 @@ pub(crate) async fn run_autostart(
 		env_files: &cli.env_file,
 		socket: resolve_socket(cli.socket.as_deref()),
 		connection_pool_size: cli.connection_pool_size,
+		project_directory: cli.project_directory.clone(),
 	};
 	crate::main_runner::autostart::dispatch(&env, compose_files, project, base_dir, file, kind)
 		.await

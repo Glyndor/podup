@@ -122,6 +122,12 @@ fn shape_problems(unit: &str) -> Vec<String> {
 		if line.is_empty() || line.starts_with('[') {
 			continue;
 		}
+		// systemd ignores a line whose first character is `#` or `;`: they
+		// are comments. podup stamps its ownership marker as one, so the
+		// parser has to skip them the way systemd does.
+		if line.starts_with('#') || line.starts_with(';') {
+			continue;
+		}
 		let key = line.split('=').next().unwrap_or("");
 		if key.is_empty() || !key.chars().all(|c| c.is_ascii_alphanumeric()) || !line.contains('=')
 		{

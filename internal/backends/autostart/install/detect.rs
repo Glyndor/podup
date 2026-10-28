@@ -11,6 +11,7 @@ use crate::autostart::conflict;
 /// it reports as `Service`.
 /// `uninstall` uses this to remove whichever is there without the caller naming a
 /// mode (and mistakenly no-op'ing against the wrong one).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstalledMode {
 	/// The service-mode `podup-<project>.service` unit is present.
 	Service,

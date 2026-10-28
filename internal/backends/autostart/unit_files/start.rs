@@ -32,6 +32,13 @@ pub struct StartUnitOpts {
 	pub container: String,
 	/// The service's `stop_grace_period`, in seconds, when it set one.
 	pub stop_grace_secs: Option<u64>,
+	/// The Podman socket the unit must talk to.
+	///
+	/// Start mode runs `podman` directly, so the socket selected at install
+	/// time has to be written into the command as a URL. Without it the boot
+	/// path talks to the default instance, which is a different one whenever
+	/// `--socket` pointed somewhere else.
+	pub socket: Option<String>,
 }
 
 impl StartUnitOpts {
@@ -42,6 +49,7 @@ impl StartUnitOpts {
 			project,
 			container,
 			stop_grace_secs: None,
+			socket: None,
 		}
 	}
 
@@ -50,6 +58,12 @@ impl StartUnitOpts {
 	/// mid-shutdown. Builder-style.
 	pub fn with_stop_grace_secs(mut self, secs: Option<u64>) -> Self {
 		self.stop_grace_secs = secs;
+		self
+	}
+
+	/// The Podman socket the unit must talk to. Builder-style.
+	pub fn with_socket(mut self, socket: Option<String>) -> Self {
+		self.socket = socket;
 		self
 	}
 }
@@ -69,7 +83,14 @@ pub fn validate_start_unit_opts(opts: &StartUnitOpts) -> Result<(), String> {
 	}
 	check("podman path", &opts.podman.to_string_lossy())?;
 	check("project name", &opts.project)?;
-	check("container name", &opts.container)
+	check("container name", &opts.container)?;
+	if let Some(socket) = &opts.socket {
+		check("socket", socket)?;
+		// A socket the unit cannot carry is refused here, where the operator
+		// is watching, rather than at boot with nothing to say why.
+		super::socket::for_podman(socket)?;
+	}
+	Ok(())
 }
 
 /// Why a project cannot use start mode. Carried as a distinct type so the
@@ -168,6 +189,17 @@ pub fn render_start_unit(opts: &StartUnitOpts) -> String {
 	let podman = quote_arg(&opts.podman.to_string_lossy());
 	let container = quote_arg(&opts.container);
 	let project = opts.project.replace('%', "%%");
+	// The socket the operator selected, as the URL podman takes. Without it
+	// the boot path would talk to the default instance, which is a different
+	// one whenever `--socket` pointed somewhere else.
+	let socket = match &opts.socket {
+		Some(socket) => {
+			let url = super::socket::for_podman(socket)
+				.expect("validate_start_unit_opts rejected every socket that cannot be rendered");
+			format!("--url {} ", quote_arg(&url))
+		}
+		None => String::new(),
+	};
 	// systemd bounds ExecStop at DefaultTimeoutStopUSec (90s) regardless of what
 	// `podman stop` honours inside it. Give it headroom over the container's own
 	// grace period rather than the exact value, matching service mode.
@@ -176,7 +208,8 @@ pub fn render_start_unit(opts: &StartUnitOpts) -> String {
 		None => String::new(),
 	};
 	format!(
-		"[Unit]\n\
+		"{marker}\n\
+		 [Unit]\n\
 		 Description=podup {project}\n\
 		 Wants=podman-user-wait-network-online.service\n\
 		 After=podman-user-wait-network-online.service\n\
@@ -184,12 +217,13 @@ pub fn render_start_unit(opts: &StartUnitOpts) -> String {
 		 [Service]\n\
 		 Type=oneshot\n\
 		 RemainAfterExit=yes\n\
-		 ExecStart={podman} start -- {container}\n\
-		 ExecStop={podman} stop -- {container}\n\
+		 ExecStart={podman} {socket}start -- {container}\n\
+		 ExecStop={podman} {socket}stop -- {container}\n\
 		 {stop_timeout}\
 		 \n\
 		 [Install]\n\
 		 WantedBy=default.target\n",
+		marker = super::owner::marker(&opts.project),
 	)
 }
 

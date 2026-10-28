@@ -5,7 +5,9 @@
 use std::path::PathBuf;
 
 use super::super::guards::{current_user, linger_enabled};
+use super::super::install::detect::{installed_mode, InstalledMode};
 use super::super::paths::{file_mode, unit_file_name, unit_path};
+use super::super::quadlet::{installed_units, quadlet_dir};
 
 /// Whether the network-ordering the generated units declare is real.
 ///
@@ -28,10 +30,18 @@ pub enum NetworkWait {
 
 /// A snapshot of the autostart unit's state, gathered for `status`.
 pub struct StatusReport {
-	/// Absolute path to where the unit file would live.
+	/// Which autostart mode is installed: the single service-mode unit, the
+	/// per-service quadlet units, or nothing.
+	pub mode: InstalledMode,
+	/// Absolute path to where the unit file would live (service mode), or the
+	/// directory the project's quadlet units live in (quadlet mode).
 	pub unit_path: PathBuf,
-	/// Whether the unit file exists on disk.
+	/// Whether the unit file (service mode) or any unit the project owns
+	/// (quadlet mode) exists on disk.
 	pub unit_exists: bool,
+	/// How many units the project owns. One in service mode, one per service
+	/// (plus the networks and volumes) in quadlet mode.
+	pub unit_count: usize,
 	/// The unit file's permission bits (Unix only), when it exists.
 	pub unit_mode: Option<u32>,
 	/// `systemctl --user is-active` output (e.g. `active`, `inactive`, `failed`).
@@ -98,9 +108,49 @@ fn network_wait_state<S: super::super::systemctl::SystemCtl>(sc: &S) -> NetworkW
 	}
 }
 
+/// Fold the answers of several units into one word.
+///
+/// Every unit answering the same is that word; units that disagree are
+/// `mixed`, which is what a project with some services up and some down is.
+fn aggregate(values: &[String]) -> String {
+	match values.split_first() {
+		None => "unknown".to_string(),
+		Some((first, rest)) if rest.iter().all(|v| v == first) => first.clone(),
+		Some(_) => "mixed".to_string(),
+	}
+}
+
+/// The systemd services a project's own quadlet units derive: one per
+/// `.container` unit.
+fn quadlet_services(units: &[PathBuf]) -> Vec<String> {
+	units
+		.iter()
+		.filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+		.filter_map(|n| n.strip_suffix(".container"))
+		.map(|stem| format!("{stem}.service"))
+		.collect()
+}
+
 /// Gather the autostart status for a project, going through the [`SystemCtl`](crate::autostart::SystemCtl) seam
 /// so it is testable without a live systemd.
+///
+/// The installed mode decides what is asked about: service mode has one unit
+/// named after the project, quadlet mode has one unit per service. Asking only
+/// about the service-mode unit reported a quadlet install as not installed at
+/// all, however healthy it was.
 pub fn collect_status<S: super::super::systemctl::SystemCtl>(
+	sc: &S,
+	project: &str,
+) -> StatusReport {
+	match installed_mode(project) {
+		InstalledMode::Quadlet => collect_quadlet_status(sc, project),
+		_ => collect_service_status(sc, project),
+	}
+}
+
+/// The status of a service-mode (or absent) install: one unit, named after the
+/// project.
+fn collect_service_status<S: super::super::systemctl::SystemCtl>(
 	sc: &S,
 	project: &str,
 ) -> StatusReport {
@@ -108,11 +158,47 @@ pub fn collect_status<S: super::super::systemctl::SystemCtl>(
 	let path = unit_path(project);
 	let unit_exists = path.exists();
 	StatusReport {
+		mode: if unit_exists {
+			InstalledMode::Service
+		} else {
+			InstalledMode::None
+		},
+		unit_count: usize::from(unit_exists),
 		unit_mode: if unit_exists { file_mode(&path) } else { None },
 		unit_exists,
 		unit_path: path,
 		is_active: query(sc, "is-active", &unit_name),
 		is_enabled: query(sc, "is-enabled", &unit_name),
+		linger: current_user().is_some_and(|u| linger_enabled(sc, &u)),
+		runtime_dir: std::env::var_os("XDG_RUNTIME_DIR").is_some_and(|s| !s.is_empty()),
+		network_wait: network_wait_state(sc),
+	}
+}
+
+/// The status of a quadlet-mode install: the units this project owns, and the
+/// services they derive.
+fn collect_quadlet_status<S: super::super::systemctl::SystemCtl>(
+	sc: &S,
+	project: &str,
+) -> StatusReport {
+	let units = installed_units(project);
+	let services = quadlet_services(&units);
+	let actives: Vec<String> = services
+		.iter()
+		.map(|service| query(sc, "is-active", service))
+		.collect();
+	let enabled: Vec<String> = services
+		.iter()
+		.map(|service| query(sc, "is-enabled", service))
+		.collect();
+	StatusReport {
+		mode: InstalledMode::Quadlet,
+		unit_path: quadlet_dir(),
+		unit_exists: !units.is_empty(),
+		unit_count: units.len(),
+		unit_mode: units.first().and_then(|p| file_mode(p)),
+		is_active: aggregate(&actives),
+		is_enabled: aggregate(&enabled),
 		linger: current_user().is_some_and(|u| linger_enabled(sc, &u)),
 		runtime_dir: std::env::var_os("XDG_RUNTIME_DIR").is_some_and(|s| !s.is_empty()),
 		network_wait: network_wait_state(sc),
@@ -129,7 +215,16 @@ pub fn status<S: super::super::systemctl::SystemCtl>(sc: &S, project: &str) -> c
 	let row = |label: &str, value: &str| {
 		crate::ui::print_labelled(label, value);
 	};
-	row("unit", &r.unit_path.display().to_string());
+	match r.mode {
+		// Quadlet mode has no unit named after the project: the units live in
+		// the quadlet directory, one per service, and the count is what says
+		// how much of the project is installed.
+		InstalledMode::Quadlet => row(
+			"units",
+			&format!("{} ({} file(s))", r.unit_path.display(), r.unit_count),
+		),
+		_ => row("unit", &r.unit_path.display().to_string()),
+	}
 	row("installed", if r.unit_exists { "yes" } else { "no" });
 	if let Some(mode) = r.unit_mode {
 		row("mode", &format!("{:04o}", mode & 0o7777));

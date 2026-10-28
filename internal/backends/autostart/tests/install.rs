@@ -1,4 +1,153 @@
 use super::*;
+use std::os::unix::fs::PermissionsExt;
+
+/// The unit directory and the units inside it are private to their owner.
+///
+/// `create_dir_all` and `fs::write` take their permissions from the process
+/// umask, so a permissive umask leaves the directory and the units in it
+/// writable by any local user, and a unit another user can rewrite is a
+/// command that user can run at boot.
+///
+/// The modes are set explicitly, so they hold whatever the umask is: a umask
+/// can only take bits away, and `0700`/`0600` survive every umask that
+/// leaves the files usable.
+#[test]
+fn autostart_creates_a_private_unit_directory_and_private_units() {
+	with_env(|root| {
+		let sc = FakeCtl::new();
+		install(&sc, &opts_with_interval(root, "app", false, true, "daily")).unwrap();
+		let dir = root.join("systemd/user");
+		let dir_mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o7777;
+		assert_eq!(
+			dir_mode, 0o700,
+			"the unit directory must be private: {:04o}",
+			dir_mode
+		);
+		for name in [
+			"podup-app.service",
+			"podup-app.update.service",
+			"podup-app.update.timer",
+		] {
+			let path = dir.join(name);
+			let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777;
+			assert_eq!(mode, 0o600, "{name} must be private: {:04o}", mode);
+		}
+	});
+}
+
+/// The auxiliary units are written over a destination that may be a symbolic
+/// link. The link points at a file podup did not write, so writing through it
+/// would change that file instead of the unit.
+#[test]
+fn autostart_refuses_to_write_an_auxiliary_unit_through_a_symlink() {
+	with_env(|root| {
+		let dir = root.join("systemd/user");
+		std::fs::create_dir_all(&dir).unwrap();
+		let target = root.join("elsewhere.txt");
+		std::fs::write(&target, "untouched").unwrap();
+		std::os::unix::fs::symlink(&target, dir.join("podup-app.update.service")).unwrap();
+
+		let sc = FakeCtl::new();
+		let err = install(&sc, &opts_with_interval(root, "app", false, true, "daily"))
+			.expect_err("a symlinked unit must be refused");
+		assert!(matches!(err, ComposeError::Autostart(_)), "got {err:?}");
+		assert!(
+			err.to_string().contains("symbolic link"),
+			"the refusal must name the reason: {err}"
+		);
+		assert_eq!(
+			std::fs::read_to_string(&target).unwrap(),
+			"untouched",
+			"the link target must not be written through"
+		);
+	});
+}
+
+/// The same for the main unit: a link at its name is refused rather than
+/// followed.
+#[test]
+fn autostart_refuses_to_write_the_main_unit_through_a_symlink() {
+	with_env(|root| {
+		let dir = root.join("systemd/user");
+		std::fs::create_dir_all(&dir).unwrap();
+		let target = root.join("elsewhere.txt");
+		std::fs::write(&target, "untouched").unwrap();
+		std::os::unix::fs::symlink(&target, dir.join("podup-app.service")).unwrap();
+
+		let sc = FakeCtl::new();
+		let err = install(&sc, &opts(root, "app", false, true))
+			.expect_err("a symlinked unit must be refused");
+		assert!(
+			err.to_string().contains("symbolic link"),
+			"the refusal must name the reason: {err}"
+		);
+		assert_eq!(
+			std::fs::read_to_string(&target).unwrap(),
+			"untouched",
+			"the link target must not be written through"
+		);
+	});
+}
+
+/// The unit is published through a temporary file and a rename, so the
+/// directory holds the units and nothing else once the install is done.
+#[test]
+fn autostart_leaves_no_temporary_file_behind() {
+	with_env(|root| {
+		let sc = FakeCtl::new();
+		install(&sc, &opts_with_interval(root, "app", false, true, "daily")).unwrap();
+		let mut names: Vec<String> = std::fs::read_dir(root.join("systemd/user"))
+			.unwrap()
+			.flatten()
+			.map(|e| e.file_name().to_string_lossy().into_owned())
+			.collect();
+		names.sort();
+		assert_eq!(
+			names,
+			vec![
+				"podup-app.service".to_string(),
+				"podup-app.update.service".to_string(),
+				"podup-app.update.timer".to_string(),
+			]
+		);
+	});
+}
+
+/// A unit written earlier under a permissive umask does not stay writable
+/// after a re-install: the mode is applied again, not only at creation.
+#[test]
+fn autostart_tightens_the_mode_of_a_unit_that_already_existed() {
+	with_env(|root| {
+		let dir = root.join("systemd/user");
+		std::fs::create_dir_all(&dir).unwrap();
+		let path = dir.join("podup-app.service");
+		std::fs::write(
+			&path,
+			"\
+[Unit]
+Description=podup app
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app up -d --no-build --pull never
+ExecStop=/usr/local/bin/podup -f /srv/app/docker-compose.yml -p app stop
+",
+		)
+		.unwrap();
+		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o666)).unwrap();
+
+		let sc = FakeCtl::new();
+		install(&sc, &opts(root, "app", false, true)).unwrap();
+
+		let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777;
+		assert_eq!(
+			mode, 0o600,
+			"the re-installed unit must be private: {:04o}",
+			mode
+		);
+	});
+}
 
 #[test]
 fn install_writes_unit_and_enables() {
