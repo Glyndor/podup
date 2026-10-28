@@ -98,8 +98,10 @@ fn scoop_owns_under(path: &Path, root: Option<&Path>) -> bool {
 	})
 }
 
-/// Ask dpkg for ownership. Missing/denied helpers and fatal database errors
-/// leave ownership unknown, so the caller must refuse self-replacement.
+/// Ask dpkg for ownership. A helper that is denied, or that fails, leaves
+/// ownership unknown, so the caller must refuse self-replacement. A machine
+/// with no dpkg at all (Fedora, Arch, Alpine) cannot have a dpkg-managed file,
+/// so there the binary is not managed.
 /// Never infer ownership by scanning package lists ourselves.
 #[cfg(target_os = "linux")]
 fn dpkg_owns(path: &Path) -> crate::Result<bool> {
@@ -107,18 +109,31 @@ fn dpkg_owns(path: &Path) -> crate::Result<bool> {
 		.arg("-S")
 		.arg(path)
 		.output();
-	dpkg_query_result(query)
+	dpkg_query_result(query, Path::new("/var/lib/dpkg/status").exists())
 }
 
 /// dpkg-query reserves status 1 for a search with no matches, and 2 for fatal
 /// errors. Only the former is evidence that the file is unmanaged.
+///
+/// The program missing is evidence only on a machine that has no dpkg
+/// database (`dpkg_database_present` is false). Where the database exists but
+/// the tool cannot be run, the answer is unknown and the update is refused.
 #[cfg(target_os = "linux")]
-fn dpkg_query_result(query: std::io::Result<std::process::Output>) -> crate::Result<bool> {
-	let output = query.map_err(|e| {
-		ComposeError::Update(format!(
-			"cannot determine package ownership using dpkg-query: {e}; refusing to replace the binary"
-		))
-	})?;
+fn dpkg_query_result(
+	query: std::io::Result<std::process::Output>,
+	dpkg_database_present: bool,
+) -> crate::Result<bool> {
+	let output = match query {
+		Ok(output) => output,
+		Err(e) if e.kind() == std::io::ErrorKind::NotFound && !dpkg_database_present => {
+			return Ok(false);
+		}
+		Err(e) => {
+			return Err(ComposeError::Update(format!(
+				"cannot determine package ownership using dpkg-query: {e}; refusing to replace the binary"
+			)));
+		}
+	};
 	match output.status.code() {
 		Some(0) => Ok(true),
 		Some(1) => Ok(false),

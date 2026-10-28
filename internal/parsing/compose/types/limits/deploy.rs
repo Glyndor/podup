@@ -113,10 +113,25 @@ pub struct DeviceReservation {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum CountOrAll {
-	/// String form, `"all"`.
-	Named(String),
+	/// String form: only `"all"` is a count.
+	Named(#[serde(deserialize_with = "only_all")] String),
 	/// Numeric device count.
 	N(i64),
+}
+
+/// Accept the literal `all` and nothing else. Any other string used to read as
+/// `all` devices, so a typo in a GPU selector reserved every GPU of the host.
+pub(super) fn only_all<'de, D>(deserializer: D) -> Result<String, D::Error>
+where
+	D: serde::Deserializer<'de>,
+{
+	use serde::de::Error;
+	let text = String::deserialize(deserializer)?;
+	if text == "all" {
+		Ok(text)
+	} else {
+		Err(D::Error::custom("a GPU selector is `all` or a number"))
+	}
 }
 
 impl CountOrAll {

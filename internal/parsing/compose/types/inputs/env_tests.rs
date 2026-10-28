@@ -106,3 +106,17 @@ fn env_file_is_empty_variants() {
 	assert!(EnvFile::List(vec![]).is_empty());
 	assert!(!EnvFile::Single(EnvFileEntry::Path(".env".into())).is_empty());
 }
+
+/// A list or a mapping as the value of an environment entry used to read as "no
+/// value", which means "inherit from the host", so a malformed entry quietly
+/// took whatever the host had under that name.
+#[test]
+fn an_environment_value_that_is_not_a_scalar_is_refused() {
+	for bad in ["[bad]", "{a: 1}"] {
+		let yaml =
+			format!("services:\n  web:\n    image: x\n    environment:\n      SAMPLE: {bad}\n");
+		assert!(crate::parse_str(&yaml).is_err(), "{bad} was accepted");
+	}
+	let ok = "services:\n  web:\n    image: x\n    environment:\n      A: 1\n      B: true\n      C: text\n      D:\n";
+	assert!(crate::parse_str(ok).is_ok());
+}
