@@ -41,7 +41,9 @@ pub(crate) fn anchor_service_bind_sources(service: &mut Service, base_dir: &Path
 		|src| {
 			// Long-form binds explicitly identify a host path, so a bare
 			// relative source is a path rather than a named volume.
-			if src.is_empty() || src.starts_with('~') || Path::new(src).is_absolute() {
+			// A leading separator is an absolute host path on every platform; on
+			// Windows `Path::is_absolute` says no to a bare `/`.
+			if src.is_empty() || src.starts_with(['~', '/', '\\']) || Path::new(src).is_absolute() {
 				None
 			} else {
 				Some(anchor_relative_path(src, base_dir))
