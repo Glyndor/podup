@@ -168,3 +168,36 @@ fn missing_cells_render_blank() {
 	// No panic; the absent B cell is blank (the line is the padded A plus a gap).
 	assert!(lines[1].starts_with("only-a"));
 }
+
+/// The header of a table follows the same colour choice as the rest of the
+/// output.
+///
+/// It is written to a raw sink, so nothing strips the styling for it: `ps`,
+/// `images` and `top` kept their bold escapes even with `--ansi never`,
+/// with `NO_COLOR` set, or with their output redirected. The body of the
+/// table already asked the colour question; the header did not.
+///
+/// No column marker is set, so the body is plain whatever the choice says
+/// and the header is the only thing that could carry an escape.
+#[test]
+fn the_table_header_follows_the_colour_choice() {
+	let mut t = Table::new(&["NAME", "STATUS"]);
+	t.push(vec!["web".into(), "running".into()]);
+	let mut buf: Vec<u8> = Vec::new();
+	t.print_to(&mut buf).expect("the table prints");
+	let text = String::from_utf8_lossy(&buf);
+	if crate::ui::stdout_colored() {
+		assert!(
+			text.contains('\u{1b}'),
+			"a colour sink keeps the bold header: {text:?}"
+		);
+	} else {
+		assert!(
+			!text.contains('\u{1b}'),
+			"a plain sink must carry no escapes: {text:?}"
+		);
+	}
+	// The labels are there either way.
+	assert!(text.contains("NAME"), "{text:?}");
+	assert!(text.contains("web"), "{text:?}");
+}

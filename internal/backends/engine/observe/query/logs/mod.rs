@@ -12,3 +12,4 @@ mod stream;
 mod with_display;
 
 pub(in crate::backends::engine) use stream::stream_broke_mid_output;
+pub(in crate::backends::engine) use stream::stream_lost_output;

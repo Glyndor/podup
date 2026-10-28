@@ -2,6 +2,27 @@ use crate::ui::progress::{
 	note_lines_for_tests, push_note_live_for_tests, Kind, MAX_NOTES_PER_ROW_FOR_TESTS,
 };
 
+use super::plain_line;
+
+/// The plain sink writes the row's name and the daemon's line to stderr, and
+/// neither is ours to trust: the name is the image tag or container name, the
+/// line is the stream the daemon sent. A raw escape in either repainted the
+/// reader's terminal.
+///
+/// The payload is a clear-screen, not an SGR: podup's own styling is always
+/// `ESC [ … m`, so this sequence cannot be confused with it.
+#[test]
+fn the_plain_sink_line_escapes_the_name_and_the_line() {
+	let out = plain_line("evil\u{1b}[2Jname", "line\u{7}");
+	assert!(!out.contains("\u{1b}[2J"), "{out:?}");
+	assert!(!out.contains('\u{7}'), "{out:?}");
+	assert!(out.contains("\\u{1b}[2J"), "{out:?}");
+	// Both parts are still there, and the separator is unchanged.
+	assert!(out.contains("name"), "{out:?}");
+	assert!(out.contains("line"), "{out:?}");
+	assert!(out.contains(" | "), "{out:?}");
+}
+
 /// A row's stream tail keeps only the last four lines. Five lines pushed in
 /// leaves the tail holding lines 2..=5, in arrival order. That is the
 /// shape the live region paints dimmed under the row (#1681): four is the

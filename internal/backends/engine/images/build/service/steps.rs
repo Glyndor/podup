@@ -21,6 +21,23 @@ use crate::engine::Engine;
 use crate::error::ComposeError;
 use crate::libpod::API_PREFIX;
 
+/// The line the failure replay writes for one captured build line: the image
+/// tag, the `|` separator and the line itself.
+///
+/// Both parts are escaped. The tag comes from the compose file (or the image
+/// name) and the line is buildah's own output, so neither is ours to trust: a
+/// raw escape in either repaints the reader's terminal, and this replay is the
+/// one that puts the failure reason in front of them.
+///
+/// Pure, so the rule is testable without a terminal.
+pub(super) fn replay_line(tag: &str, line: &str) -> String {
+	format!(
+		"{} | {}",
+		crate::ui::sanitize_cell(tag),
+		crate::ui::sanitize_cell(line)
+	)
+}
+
 impl Engine {
 	/// Close the row as `Failed`, then on a terminal replay the full stream
 	/// as scrollback so the failure reason is on screen. In a pipe every line
@@ -49,7 +66,7 @@ impl Engine {
 			use std::io::Write;
 			let mut out = std::io::stderr().lock();
 			for line in &capture {
-				let _ = writeln!(out, "{tag} | {line}");
+				let _ = writeln!(out, "{}", replay_line(tag, line));
 			}
 		}
 		let mut msg = err;

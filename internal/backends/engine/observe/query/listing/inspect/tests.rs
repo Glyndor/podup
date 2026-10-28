@@ -124,3 +124,83 @@ async fn top_issues_one_container_list_for_the_whole_project() {
 		fake.requests.lock().unwrap()
 	);
 }
+
+/// `attach` streams a running container's output until the container stops. A
+/// stream that dies while the container keeps running lost output, and the
+/// command has to say so: it used to break out of the loop and report
+/// success, so a script could not tell a finished attach from a lost one.
+#[tokio::test]
+#[cfg(unix)]
+async fn attach_reports_a_stream_that_died_under_a_running_container() {
+	// One multiplexed stdout frame, the shape libpod frames its log body in.
+	let frame = "\u{1}\0\0\0\0\0\0\u{5}hello".to_string();
+	let containers =
+		r#"[{"Names":["/proj-web-1"],"State":"running","Labels":{"podup.service":"web"}}]"#;
+	let fake = fake_podman::start_replying(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			fake_podman::FakeReply::Body(200, containers.to_string())
+		} else if method == "GET" && target.contains("/proj-web-1/json") {
+			fake_podman::FakeReply::Body(200, r#"{"State":{"Status":"running"}}"#.to_string())
+		} else if method == "GET" && target.contains("/proj-web-1/logs") {
+			// The stream dies where the chunk terminator should be, and the
+			// container keeps running: live output was lost.
+			fake_podman::FakeReply::ChunkedTruncated(vec![frame.clone()])
+		} else {
+			fake_podman::FakeReply::Body(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+	let mut file = ComposeFile::default();
+	file.services.insert("web".into(), Service::default());
+
+	let out = e.attach_with_index(&file, "web", None).await;
+	assert!(
+		out.is_err(),
+		"an attach that lost its output must not report success"
+	);
+}
+
+/// The other side of the same rule: a container that stops takes its stream
+/// down with it, which is a finished read and not a lost one. The container is
+/// running when the attach starts and stopped when the stream ends, which is
+/// what the two listings below say.
+#[tokio::test]
+#[cfg(unix)]
+async fn attach_accepts_a_stream_that_ended_with_its_container() {
+	use std::sync::atomic::{AtomicUsize, Ordering};
+	use std::sync::Arc;
+
+	// The first listing resolves the replica to attach to; the second one is
+	// the out-of-band re-check that asks whether the container is still up.
+	let calls = Arc::new(AtomicUsize::new(0));
+	let seen = calls.clone();
+	let frame = "\u{1}\0\0\0\0\0\0\u{5}hello".to_string();
+	let fake = fake_podman::start_replying(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			let state = if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+				"running"
+			} else {
+				"exited"
+			};
+			fake_podman::FakeReply::Body(
+				200,
+				format!(
+					r#"[{{"Names":["/proj-web-1"],"State":"{state}","Labels":{{"podup.service":"web"}}}}]"#
+				),
+			)
+		} else if method == "GET" && target.contains("/proj-web-1/json") {
+			fake_podman::FakeReply::Body(200, r#"{"State":{"Status":"running"}}"#.to_string())
+		} else if method == "GET" && target.contains("/proj-web-1/logs") {
+			fake_podman::FakeReply::ChunkedTruncated(vec![frame.clone()])
+		} else {
+			fake_podman::FakeReply::Body(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+	let mut file = ComposeFile::default();
+	file.services.insert("web".into(), Service::default());
+
+	e.attach_with_index(&file, "web", None)
+		.await
+		.expect("a stream that ended with its container is a finished read");
+}

@@ -226,3 +226,76 @@ async fn logs_follow_accepts_a_stream_that_ended_with_its_container() {
 	.await
 	.expect("a stream that ended with its container is a finished read");
 }
+
+/// The history of a stopped container, read to its end, must not report
+/// success when the frames the daemon sent do not add up.
+///
+/// A frame that was cut short is a failed read whatever the container was
+/// doing: the corruption is in the data, not in the timing. The container's
+/// state used to decide it, and a stopped container's state said "the stream
+/// ended because the container stopped", so the command reported a complete
+/// history it had not received.
+#[cfg(unix)]
+#[tokio::test]
+async fn logs_report_a_truncated_frame_from_a_stopped_container() {
+	// A frame header that promises five bytes and delivers two.
+	let frame = "\u{1}\0\0\0\0\0\0\u{5}he".to_string();
+	let containers =
+		r#"[{"Names":["/proj-web-1"],"Labels":{"podup.service":"web"},"State":"exited"}]"#;
+	let fake = fake_podman::start_replying(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			fake_podman::FakeReply::Body(200, containers.to_string())
+		} else if method == "GET" && target.contains("/proj-web-1/logs") {
+			// The body ends where it should, but the last frame inside it
+			// was cut short.
+			fake_podman::FakeReply::ChunkedEnd(vec![frame.clone()])
+		} else {
+			fake_podman::FakeReply::Body(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+
+	let mut file = ComposeFile::default();
+	file.services.insert("web".into(), Service::default());
+
+	let out = e
+		.logs_with_options(&file, &["web".to_string()], LogsOptions::default())
+		.await;
+	assert!(
+		out.is_err(),
+		"a history whose frames do not add up must not be reported as read"
+	);
+}
+
+/// The same rule for a frame the daemon sent over the limit: the read failed,
+/// so the command failed.
+#[cfg(unix)]
+#[tokio::test]
+async fn logs_report_an_oversized_frame_from_a_stopped_container() {
+	// A frame header announcing four gigabytes, which is over the limit the
+	// client accepts.
+	let frame = "\u{1}\0\0\0\u{ff}\u{ff}\u{ff}\u{ff}".to_string();
+	let containers =
+		r#"[{"Names":["/proj-web-1"],"Labels":{"podup.service":"web"},"State":"exited"}]"#;
+	let fake = fake_podman::start_replying(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			fake_podman::FakeReply::Body(200, containers.to_string())
+		} else if method == "GET" && target.contains("/proj-web-1/logs") {
+			fake_podman::FakeReply::ChunkedEnd(vec![frame.clone()])
+		} else {
+			fake_podman::FakeReply::Body(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+
+	let mut file = ComposeFile::default();
+	file.services.insert("web".into(), Service::default());
+
+	let out = e
+		.logs_with_options(&file, &["web".to_string()], LogsOptions::default())
+		.await;
+	assert!(
+		out.is_err(),
+		"a history with a frame over the limit must not be reported as read"
+	);
+}

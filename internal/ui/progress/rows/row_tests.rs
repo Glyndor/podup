@@ -218,6 +218,24 @@ fn the_summary_counts_done_over_total() {
 	assert_eq!(summary(3, 6, 0), "[+] Running 3/6");
 }
 
+/// A note is a line of the daemon's own stream, so it is not ours to trust: a
+/// raw escape in it repaints the reader's terminal, and the region that paints
+/// it counts one row per entry, so a control sequence that moves the cursor
+/// desynchronises every repaint after it.
+///
+/// The payload is a clear-screen (not an SGR): podup's own styling is always
+/// `ESC [ … m`, so this sequence cannot be confused with the dimming the
+/// renderer adds, and the assertion holds whether or not colour is on.
+#[test]
+fn a_note_cannot_drive_the_terminal() {
+	let line = render_note("evil\u{1b}[2J\u{7}note", 80);
+	assert!(!line.contains("\u{1b}[2J"), "{line:?}");
+	assert!(!line.contains('\u{7}'), "{line:?}");
+	// Escaped, not dropped: the note is still readable.
+	assert!(line.contains("\\u{1b}[2J"), "{line:?}");
+	assert!(line.contains("note"), "{line:?}");
+}
+
 /// Stripped styling does not strip the spinner: `row::render` on a Working row
 /// still emits the braille marker, with the marker style omitted when the
 /// colour choice says so. NO_COLOR=1 keeps the mark and the verb, drops the

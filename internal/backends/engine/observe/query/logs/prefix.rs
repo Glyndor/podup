@@ -73,9 +73,17 @@ impl LinePrefixer {
 		// `{prefix} | ` with one, so the same container was tagged two different
 		// ways by two commands in the same binary, and anything parsing the
 		// prefix had to accept both. docker compose uses one space too.
+		//
+		// The label is the container's name, which the daemon supplies, so it is
+		// not ours to trust: a raw escape in it repainted the reader's terminal,
+		// and the prefix is written as bytes. Turning colour off does not take
+		// the escape with it, so the label is escaped here rather than by the
+		// colour gate. Only the label is escaped; the payload is the
+		// container's own output and is handed over byte for byte.
+		let label = crate::ui::sanitize_cell(label);
 		let plain = format!("{label} | ");
 		let label = crate::ui::paint(
-			prefix_style(label),
+			prefix_style(&label),
 			&plain,
 			allow_color && crate::ui::stdout_colored(),
 		);

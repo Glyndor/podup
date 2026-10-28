@@ -443,3 +443,5 @@ impl Engine {
 mod board_tests;
 #[cfg(all(test, unix))]
 mod cgroup_hint_tests;
+#[cfg(test)]
+mod steps_tests;

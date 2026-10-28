@@ -61,6 +61,41 @@ pub(in crate::backends::engine) fn stream_broke_mid_output(still_running: Option
 	!matches!(still_running, Some(false))
 }
 
+/// Whether a stream that ended with `e` lost output.
+///
+/// `bounded` says whether the read was a bounded one (the whole history, the
+/// default) rather than an open-ended follow of a container's live output.
+/// `still_running` is the out-of-band re-check, read only for an open-ended
+/// stream.
+///
+/// Three cases, and they are not the same case:
+///
+/// - A frame the daemon sent that does not parse, or that is over the limit,
+///   is a failed read whatever the container was doing. The corruption is in
+///   the data, not in the timing.
+/// - A bounded read has no ambiguity to resolve: the history was supposed to
+///   arrive in full, so a transport that dies under it lost output. The
+///   container's state says nothing about that, because a stopped container's
+///   history is read exactly like a running one's.
+/// - An open-ended stream ends either with the container, which is a finished
+///   read, or with the transport, which is not. The container's state tells
+///   those two apart.
+///
+/// Pure so the rule is pinned without a live socket.
+pub(in crate::backends::engine) fn stream_lost_output(
+	e: &crate::libpod::PodmanError,
+	bounded: bool,
+	still_running: Option<bool>,
+) -> bool {
+	if e.is_stream_fault() {
+		return true;
+	}
+	if bounded {
+		return true;
+	}
+	stream_broke_mid_output(still_running)
+}
+
 /// Build the libpod `containers/{}/logs` query string from the options.
 pub(super) fn log_query(opts: &LogsOptions) -> String {
 	let mut q = format!(

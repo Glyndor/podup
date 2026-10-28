@@ -32,6 +32,7 @@ pub use attach::{AttachOptions, AttachOutcome, AttachSummary};
 // `logs/stream.rs`; the re-export documents the reach and keeps `mod.rs` as
 // the canonical place to look for engine query commands.
 pub(in crate::backends::engine) use logs::stream_broke_mid_output;
+pub(in crate::backends::engine) use logs::stream_lost_output;
 
 impl Engine {
 	/// Stream logs. When `service_name` is `None`, streams from all services. When `follow` is true, tails indefinitely.

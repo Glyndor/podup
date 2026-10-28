@@ -1,4 +1,5 @@
 use super::*;
+use crate::engine::query::PsFilterOptions;
 
 /// `ps` hides the infra container (`IsInfra: true` on the list response).
 #[tokio::test]
@@ -23,9 +24,10 @@ async fn ps_hides_the_infra_container() {
 	let file = parse_str("services:\n  web:\n    image: nginx\n").unwrap();
 	// Use the test-only row helper so the test can introspect the rows
 	// directly without going through stdout.
-	let json_rows = crate::engine::query::ps_rows_for_test(&engine, &file)
-		.await
-		.expect("ps must succeed");
+	let json_rows =
+		crate::engine::query::ps_rows_for_test(&engine, &file, &PsFilterOptions::default())
+			.await
+			.expect("ps must succeed");
 	let names: Vec<&str> = json_rows
 		.iter()
 		.map(|r| r["Name"].as_str().unwrap_or(""))
