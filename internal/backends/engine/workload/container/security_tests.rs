@@ -44,6 +44,29 @@ fn no_new_privileges_bare_is_true_and_false_parses() {
 }
 
 #[test]
+fn no_new_privileges_reads_every_boolean_podman_reads() {
+	// Podman reads the value with Go's `strconv.ParseBool`, so `1` and `True`
+	// enable it. Reading them as false disables a hardening the compose file
+	// asked for.
+	for value in ["1", "t", "T", "TRUE", "true", "True"] {
+		assert_eq!(
+			parse_security_opts(&svc_with_security(&[&format!("no-new-privileges:{value}")]))
+				.no_new_privileges,
+			Some(true),
+			"value {value} must enable it"
+		);
+	}
+	for value in ["0", "f", "F", "FALSE", "false", "False"] {
+		assert_eq!(
+			parse_security_opts(&svc_with_security(&[&format!("no-new-privileges:{value}")]))
+				.no_new_privileges,
+			Some(false),
+			"value {value} must disable it"
+		);
+	}
+}
+
+#[test]
 fn unknown_security_opt_is_skipped_not_panicked() {
 	let s = parse_security_opts(&svc_with_security(&["proc-opts=nosuid"]));
 	assert!(s.selinux_opts.is_empty() && s.apparmor_profile.is_none());

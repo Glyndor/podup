@@ -103,21 +103,91 @@ fn render_publish_port_full_and_partial_forms() {
 	assert_eq!(render_publish_port(&port("", Some(0), 53, "udp")), "53/udp");
 }
 
+#[test]
+fn render_publish_port_brackets_an_ipv6_host_address() {
+	let port = |host_ip: &str| ParsedPort {
+		container_port: 80,
+		protocol: "tcp".to_string(),
+		host_ip: host_ip.to_string(),
+		host_port: Some(8080),
+	};
+	// An IPv6 address carries colons, so Podman needs the brackets to tell
+	// the address from the port.
+	assert_eq!(render_publish_port(&port("::1")), "[::1]:8080:80");
+	// An address that already carries the brackets is left alone.
+	assert_eq!(render_publish_port(&port("[::1]")), "[::1]:8080:80");
+	// An IPv4 address is written as it stands.
+	assert_eq!(render_publish_port(&port("127.0.0.1")), "127.0.0.1:8080:80");
+}
+
 // --- render_volume ---
 
+/// The compose base directory the renderer resolves a relative source against.
+fn base() -> std::path::PathBuf {
+	std::path::PathBuf::from("/srv/app")
+}
+
+/// The external volumes the compose file declares, keyed by their compose key.
+fn external_volumes() -> ExternalNames<'static> {
+	ExternalNames::from([("data", "shared_data")])
+}
+
+// The expected paths are POSIX paths joined with a POSIX base.
+#[cfg(unix)]
 #[test]
 fn render_volume_short_declared_uses_dot_volume_with_options() {
 	let out = render_volume(
 		&VolumeMount::Short("data:/app:ro".into()),
 		"proj",
 		&["data"],
+		&external_volumes(),
+		&base(),
 	);
 	// A declared named volume becomes `<project>-<name>.volume:<target>:<opts>`.
 	assert_eq!(out, "proj-data.volume:/app:ro");
-	// An undeclared source is passed through verbatim.
+	// An undeclared source is a host path, and is made absolute against the
+	// compose base directory: systemd would resolve it against the unit
+	// file's own directory instead.
 	assert_eq!(
-		render_volume(&VolumeMount::Short("./host:/app".into()), "proj", &["data"]),
-		"./host:/app"
+		render_volume(
+			&VolumeMount::Short("./host:/app".into()),
+			"proj",
+			&["data"],
+			&external_volumes(),
+			&base()
+		),
+		"/srv/app/./host:/app"
+	);
+}
+
+#[test]
+fn render_volume_external_source_uses_the_name_it_really_has() {
+	// An external volume is named by the name it really has on the host,
+	// which a compose `name:` may have changed. The compose key would
+	// point at a resource that does not exist.
+	let out = render_volume(
+		&VolumeMount::Short("data:/app".into()),
+		"proj",
+		&[],
+		&external_volumes(),
+		&base(),
+	);
+	assert_eq!(out, "shared_data:/app");
+}
+
+#[test]
+fn render_volume_short_colonless_entry_is_an_anonymous_volume() {
+	// A colon-less entry names an in-container path, not a host source, so
+	// there is nothing to resolve against the base directory.
+	assert_eq!(
+		render_volume(
+			&VolumeMount::Short("/data".into()),
+			"proj",
+			&[],
+			&external_volumes(),
+			&base()
+		),
+		"/data"
 	);
 }
 
@@ -140,7 +210,7 @@ fn render_volume_long_collects_options_and_handles_empty_source() {
 	// Declared → project-prefixed `.volume` suffix; ro + nocopy folded into
 	// the options field.
 	assert_eq!(
-		render_volume(&nocopy, "proj", &["vol"]),
+		render_volume(&nocopy, "proj", &["vol"], &external_volumes(), &base()),
 		"proj-vol.volume:/data:ro,nocopy"
 	);
 
@@ -162,7 +232,7 @@ fn render_volume_long_collects_options_and_handles_empty_source() {
 		consistency: None,
 	};
 	assert_eq!(
-		render_volume(&hardened, "proj", &["vol"]),
+		render_volume(&hardened, "proj", &["vol"], &external_volumes(), &base()),
 		"proj-vol.volume:/data:noexec,nosuid,nodev"
 	);
 
@@ -177,7 +247,10 @@ fn render_volume_long_collects_options_and_handles_empty_source() {
 		tmpfs: None,
 		consistency: None,
 	};
-	assert_eq!(render_volume(&anon, "proj", &[]), "/scratch");
+	assert_eq!(
+		render_volume(&anon, "proj", &[], &external_volumes(), &base()),
+		"/scratch"
+	);
 }
 
 // --- render_tmpfs_mount ---
@@ -258,6 +331,49 @@ fn escape_trailing_backslash_is_quoted_and_escaped() {
 	let out = escape_unit_value("Environment", "WINPATH=C:\\tmp\\");
 	assert!(!out.ends_with('\\') || out.ends_with("\\\""));
 	assert_eq!(out, "\"WINPATH=C:\\\\tmp\\\\\"");
+}
+
+#[test]
+fn word_split_value_keeps_quotes_backslashes_and_apostrophes() {
+	// A word-split value is read back with the quotes and the escapes
+	// honoured, so a `"`, a `'` or a `\` in the middle of it has to be
+	// written escaped: written raw, the reader eats the quote, swallows the
+	// character after the backslash, or leaves the entry with an unclosed
+	// quote and drops it.
+	for (key, value) in [
+		("Environment", r#"APP_CONFIG={"a":1}"#),
+		("Environment", "NAME=O'Brien"),
+		("Environment", r"REGEX=^\d+$"),
+		("Label", r#"note={"x":"y"}"#),
+		("Annotation", r#"org.example={"a":1}"#),
+		("Sysctl", r#"net.ipv4.conf.all.rp_filter="1""#),
+		("Secret", r#"tok={"a":1}"#),
+	] {
+		let out = escape_unit_value(key, value);
+		let (words, closed) = exec_words(&out);
+		assert!(closed, "{key} value {value:?} left a quote open: {out}");
+		assert_eq!(
+			words,
+			vec![value.to_string()],
+			"{key} value {value:?} was rewritten to {out}"
+		);
+	}
+}
+
+#[test]
+fn word_split_value_keeps_newlines_as_escapes() {
+	// A multi-line value (a PEM key, a script) has to reach the container with
+	// its line breaks intact, and it must stay on one physical line of the
+	// unit file: a raw newline there would split the directive.
+	let value = "-----BEGIN KEY-----\nsecond line\n-----END KEY-----";
+	let out = escape_unit_value("Environment", &format!("TLS_KEY={value}"));
+	assert!(
+		!out.contains('\n'),
+		"the rendered value must stay on one line: {out}"
+	);
+	let (words, closed) = exec_words(&out);
+	assert!(closed, "the rendered value left a quote open: {out}");
+	assert_eq!(words, vec![format!("TLS_KEY={value}")], "got: {out}");
 }
 
 #[test]

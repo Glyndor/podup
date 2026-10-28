@@ -36,6 +36,40 @@ volumes:
 }
 
 #[test]
+fn external_network_and_volume_with_a_name_use_that_name() {
+	// An external resource lives under the name the compose file gives it,
+	// not under the key that refers to it: naming the key would point the
+	// container at a resource that does not exist.
+	let yaml = r#"
+services:
+  web:
+    image: nginx
+    networks:
+      - proxy
+    volumes:
+      - data:/data
+networks:
+  proxy:
+    external: true
+    name: traefik_proxy
+volumes:
+  data:
+    external: true
+    name: shared_data
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
+	// No unit is generated for external resources.
+	assert!(!out.units.iter().any(|u| u.filename == "proj-proxy.network"));
+	assert!(!out.units.iter().any(|u| u.filename == "proj-data.volume"));
+	let c = &unit_named(&out, "proj-web.container").contents;
+	assert!(c.contains("Network=traefik_proxy"), "in:\n{c}");
+	assert!(!c.contains("Network=proxy"), "in:\n{c}");
+	assert!(c.contains("Volume=shared_data:/data"), "in:\n{c}");
+	assert!(!c.contains("Volume=data:/data"), "in:\n{c}");
+}
+
+#[test]
 fn long_form_bind_selinux_and_propagation_preserved() {
 	let yaml = r#"
 services:

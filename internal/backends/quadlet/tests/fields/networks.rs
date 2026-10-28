@@ -19,6 +19,41 @@ services:
 }
 
 #[test]
+fn ipv6_published_port_carries_brackets() {
+	// An IPv6 address carries colons, so Podman needs the brackets to tell
+	// the address from the port: `PublishPort=::1:8080:80` names a host it
+	// cannot read.
+	let yaml = r#"
+services:
+  s:
+    image: x
+    ports:
+      - "[::1]:8080:80"
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-s.container").contents;
+	assert!(c.contains("PublishPort=[::1]:8080:80"), "in:\n{c}");
+}
+
+#[test]
+fn ipv6_published_port_from_the_long_form_carries_brackets() {
+	let yaml = r#"
+services:
+  s:
+    image: x
+    ports:
+      - target: 80
+        published: "8080"
+        host_ip: "::1"
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "p-s.container").contents;
+	assert!(c.contains("PublishPort=[::1]:8080:80"), "in:\n{c}");
+}
+
+#[test]
 fn static_ips_render_as_ip_keys() {
 	// `networks.<n>.ipv4_address`/`ipv6_address` must reach the unit as IP=/IP6=,
 	// not be silently dropped.

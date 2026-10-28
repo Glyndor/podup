@@ -369,10 +369,34 @@ fn generate_with_mode(
 		.filter(|(_, cfg)| cfg.as_ref().is_none_or(|c| c.external != Some(true)))
 		.map(|(name, _)| name.as_str())
 		.collect();
+	// The names the external networks and volumes really have on the host.
+	// A compose `name:` overrides the key, and the unit has to name the
+	// resource by that name: the key is only how the compose file refers
+	// to it.
+	let external_networks: render::ExternalNames<'_> = file
+		.networks
+		.iter()
+		.filter_map(|(key, cfg)| {
+			let cfg = cfg.as_ref()?;
+			(cfg.external == Some(true))
+				.then_some((key.as_str(), cfg.name.as_deref().unwrap_or(key.as_str())))
+		})
+		.collect();
+	let external_volumes: render::ExternalNames<'_> = file
+		.volumes
+		.iter()
+		.filter_map(|(key, cfg)| {
+			let cfg = cfg.as_ref()?;
+			(cfg.external == Some(true))
+				.then_some((key.as_str(), cfg.name.as_deref().unwrap_or(key.as_str())))
+		})
+		.collect();
 	let ctx = UnitContext {
 		project,
 		declared_volumes: &declared_volumes,
 		declared_networks: &declared_networks,
+		external_networks: &external_networks,
+		external_volumes: &external_volumes,
 		secrets: &file.secrets,
 		base_dir,
 		services: &file.services,

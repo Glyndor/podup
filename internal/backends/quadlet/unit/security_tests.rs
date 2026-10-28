@@ -80,6 +80,43 @@ fn maps_no_new_privileges_bare_and_explicit() {
 }
 
 #[test]
+fn maps_no_new_privileges_with_every_boolean_podman_reads() {
+	// Podman reads the value with Go's `strconv.ParseBool`, so every value
+	// in that set has to reach the unit as the boolean it stands for. A
+	// value read as false disables a hardening the compose file asked for.
+	for value in ["1", "t", "T", "TRUE", "true", "True"] {
+		let (body, warnings) = map_one(&format!("no-new-privileges:{value}"));
+		assert!(
+			body.contains("NoNewPrivileges=true"),
+			"value {value} must enable it; got: {body}"
+		);
+		assert!(warnings.is_empty(), "value {value} warned: {warnings:?}");
+	}
+	for value in ["0", "f", "F", "FALSE", "false", "False"] {
+		let (body, warnings) = map_one(&format!("no-new-privileges:{value}"));
+		assert!(
+			body.contains("NoNewPrivileges=false"),
+			"value {value} must disable it; got: {body}"
+		);
+		assert!(warnings.is_empty(), "value {value} warned: {warnings:?}");
+	}
+}
+
+#[test]
+fn no_new_privileges_with_an_unknown_value_warns_and_emits_no_key() {
+	// A value Podman would not read as a boolean is not a boolean the unit
+	// can carry: the entry is reported and skipped rather than turned into
+	// `false`, which would disable the hardening without saying so.
+	let (body, warnings) = map_one("no-new-privileges:maybe");
+	assert_eq!(body, "[Container]\n");
+	assert_eq!(warnings.len(), 1);
+	assert!(
+		warnings[0].contains("no-new-privileges:maybe"),
+		"{warnings:?}"
+	);
+}
+
+#[test]
 fn maps_seccomp_and_apparmor() {
 	assert!(map_one("seccomp=/etc/seccomp.json")
 		.0

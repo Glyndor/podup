@@ -13,7 +13,7 @@ use crate::ports::ParsedPort;
 pub(super) fn render_publish_port(p: &ParsedPort) -> String {
 	let mut s = String::new();
 	if !p.host_ip.is_empty() {
-		s.push_str(&p.host_ip);
+		s.push_str(&bracket_ipv6(&p.host_ip));
 		s.push(':');
 	}
 	// A host port of None/0 means "let Podman pick"; omit it so the published
@@ -30,25 +30,56 @@ pub(super) fn render_publish_port(p: &ParsedPort) -> String {
 	s
 }
 
+/// Wrap an IPv6 host address in the brackets Podman expects in a
+/// `PublishPort=` value.
+///
+/// The address carries colons, so without the brackets Podman reads the
+/// first of them as the separator between the address and the port. An
+/// address that already carries the brackets is left alone.
+fn bracket_ipv6(host_ip: &str) -> String {
+	if host_ip.contains(':') && !(host_ip.starts_with('[') && host_ip.ends_with(']')) {
+		format!("[{host_ip}]")
+	} else {
+		host_ip.to_string()
+	}
+}
+
+/// The names the external networks and volumes really have on the host, keyed
+/// by the compose key that refers to them.
+///
+/// A compose `name:` overrides the key, so the unit has to name the resource
+/// by that name: referring to it by the compose key would point the container
+/// at a resource that does not exist, or at one that is not the external one.
+pub(super) type ExternalNames<'a> = std::collections::HashMap<&'a str, &'a str>;
+
 /// Render a volume mount into a Quadlet `Volume=` value. A source naming a
 /// declared volume gets a project-prefixed `.volume` suffix (so Quadlet wires it
 /// to the generated unit, whose file name is also project-prefixed); an
-/// undeclared source passes through verbatim. An empty source renders as just the
-/// target. Long-form `read_only`, SELinux relabel (`z`/`Z`), bind propagation,
-/// and `nocopy` opts are folded into the trailing `:opt,opt` field.
-pub(super) fn render_volume(vol: &VolumeMount, project: &str, declared_volumes: &[&str]) -> String {
+/// external volume is named by the name it really has; an undeclared source
+/// that names a host path is made absolute against the compose base directory;
+/// any other source passes through verbatim. An empty source renders as just
+/// the target. Long-form `read_only`, SELinux relabel (`z`/`Z`), bind
+/// propagation, and `nocopy` opts are folded into the trailing `:opt,opt` field.
+pub(super) fn render_volume(
+	vol: &VolumeMount,
+	project: &str,
+	declared_volumes: &[&str],
+	external_volumes: &ExternalNames<'_>,
+	base_dir: &std::path::Path,
+) -> String {
 	match vol {
 		VolumeMount::Short(s) => {
-			let parts: Vec<&str> = s.splitn(3, ':').collect();
-			if parts.len() >= 2 && declared_volumes.contains(&parts[0]) {
-				let mut out = format!("{}.volume:{}", unit_stem(project, parts[0]), parts[1]);
-				if let Some(opts) = parts.get(2) {
-					out.push(':');
-					out.push_str(opts);
-				}
-				out
+			// A colon-less entry is a single in-container path (an anonymous
+			// volume), not a `src:dst` pair, so there is no source to resolve.
+			let Some((src, rest)) = s.split_once(':') else {
+				return s.clone();
+			};
+			if declared_volumes.contains(&src) {
+				format!("{}.volume:{}", unit_stem(project, src), rest)
+			} else if let Some(name) = external_volumes.get(src) {
+				format!("{name}:{rest}")
 			} else {
-				s.clone()
+				format!("{}:{}", resolve_source_path(src, base_dir), rest)
 			}
 		}
 		VolumeMount::Long {
@@ -62,8 +93,10 @@ pub(super) fn render_volume(vol: &VolumeMount, project: &str, declared_volumes: 
 			let src = source.clone().unwrap_or_default();
 			let src = if declared_volumes.contains(&src.as_str()) {
 				format!("{}.volume", unit_stem(project, &src))
+			} else if let Some(name) = external_volumes.get(src.as_str()) {
+				name.to_string()
 			} else {
-				src
+				resolve_source_path(&src, base_dir)
 			};
 			// Collect mount options into the trailing `:opt,opt` field so nothing
 			// is dropped: SELinux relabel (`z`/`Z`) and bind propagation are
@@ -109,6 +142,26 @@ pub(super) fn render_volume(vol: &VolumeMount, project: &str, declared_volumes: 
 			out
 		}
 	}
+}
+
+/// Resolve a volume source that names a host path into the absolute path the
+/// unit has to carry.
+///
+/// systemd resolves a relative `Volume=` against the unit file's own
+/// directory, which is not the compose file's, so a relative source would
+/// mount a directory that does not exist once the unit is installed under
+/// `~/.config/containers/systemd`. A `~` is not expanded by Quadlet either.
+/// Both are resolved here, against the compose base directory, with the same
+/// rule the live engine applies to a bind source, so the unit mounts the
+/// directory `up` would mount.
+///
+/// An absolute source, and a bare name (a volume reference, not a path), are
+/// returned unchanged.
+fn resolve_source_path(src: &str, base_dir: &std::path::Path) -> String {
+	if !(src.starts_with('.') || src.starts_with('~')) {
+		return src.to_string();
+	}
+	crate::engine::container::resolve_bind_source(src, base_dir)
 }
 
 /// If `vol` is a long-form `type: tmpfs` mount, render it as a Quadlet `Tmpfs=`
@@ -353,8 +406,8 @@ pub(super) fn quote_podman_arg_value(value: &str) -> String {
 
 /// Keys whose value Quadlet/systemd splits on whitespace (a `KEY=VALUE` option
 /// list): an unquoted space would split a single value into a truncated value
-/// plus bogus extra entries, so such values are quoted when they contain
-/// whitespace.
+/// plus bogus extra entries, so such values are quoted when they carry
+/// anything the reader would otherwise consume.
 ///
 /// `Secret` belongs to the set because Quadlet reads it the same way: it takes
 /// the value apart with an exec-like split, so a secret whose path holds a
@@ -364,6 +417,43 @@ fn key_is_word_split(key: &str) -> bool {
 		key,
 		"Environment" | "Label" | "Annotation" | "Sysctl" | "Secret"
 	)
+}
+
+/// Whether a word-split value carries a character that would end the word or
+/// change its content if it were written unquoted.
+///
+/// The reader splits these values on whitespace and honours quotes and
+/// C-style escapes inside them, so a `"`, a `'` or a `\` in the middle of the
+/// value is consumed: the quotes disappear, the escape eats the character
+/// after it, and a quote that never closes costs the whole entry.
+fn value_needs_quoting(value: &str) -> bool {
+	value
+		.chars()
+		.any(|c| c.is_whitespace() || c.is_control() || matches!(c, '"' | '\'' | '\\'))
+}
+
+/// Escape the body of a quoted unit value: the characters the reader would
+/// otherwise consume (`\` and `"`), plus the control characters a multi-line
+/// value carries, which become the C escapes the reader decodes back into the
+/// character they stand for.
+///
+/// A control character the reader has no escape for is dropped, the same rule
+/// [`sanitize_value`] applies: a value never carries a raw newline onto the
+/// unit file, where it would split the directive.
+fn quote_unit_value(value: &str) -> String {
+	let mut out = String::with_capacity(value.len());
+	for c in value.chars() {
+		match c {
+			'\\' => out.push_str("\\\\"),
+			'"' => out.push_str("\\\""),
+			'\n' => out.push_str("\\n"),
+			'\r' => out.push_str("\\r"),
+			'\t' => out.push_str("\\t"),
+			c if c.is_control() => {}
+			_ => out.push(c),
+		}
+	}
+	out
 }
 
 /// Keys whose value is an argument line we render (and quote) ourselves
@@ -384,25 +474,32 @@ fn key_is_arg_line(key: &str) -> bool {
 /// * a value ending in a backslash, which would otherwise fold the next
 ///   physical line (and the directive on it) into this value, is quoted and the
 ///   backslash escaped, closing the line-continuation hole;
-/// * for word-split keys (`Environment`, `Label`, …) a value containing
-///   whitespace is double-quoted so systemd keeps it as one value rather than
-///   splitting it into bogus extra entries.
+/// * for word-split keys (`Environment`, `Label`, …) a value carrying
+///   whitespace, a quote, an apostrophe, a backslash or a control character is
+///   double-quoted and escaped, so the reader keeps it as one value with the
+///   content the compose file declared instead of splitting it into bogus
+///   extra entries, eating the quotes, consuming an escape or dropping the
+///   entry on an unclosed quote.
 ///
 /// Argument-line keys keep their own rendering (they encode whitespace splitting
 /// deliberately) and only have control characters stripped.
 pub(super) fn escape_unit_value(key: &str, value: &str) -> String {
-	let stripped = sanitize_value(value);
 	if key_is_arg_line(key) {
-		return stripped;
+		return sanitize_value(value);
 	}
-	let escaped = stripped.replace('%', "%%");
-	let needs_quote = (key_is_word_split(key) && escaped.contains(char::is_whitespace))
-		|| escaped.ends_with('\\')
-		|| escaped.starts_with('"');
-	if needs_quote {
-		format!("\"{}\"", escaped.replace('\\', "\\\\").replace('"', "\\\""))
+	let needs_quote = (key_is_word_split(key) && value_needs_quoting(value))
+		|| value.ends_with('\\')
+		|| value.starts_with('"');
+	let body = if needs_quote {
+		quote_unit_value(value)
 	} else {
-		escaped
+		sanitize_value(value)
+	};
+	let body = body.replace('%', "%%");
+	if needs_quote {
+		format!("\"{}\"", body)
+	} else {
+		body
 	}
 }
 

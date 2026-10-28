@@ -90,9 +90,22 @@ pub(super) fn map_security_opt(
 	warnings: &mut Vec<String>,
 ) {
 	if let Some(rest) = opt.strip_prefix("no-new-privileges") {
-		let val = rest.trim_start_matches([':', '=']);
-		let enabled = val.is_empty() || val == "true";
-		container.add("NoNewPrivileges", enabled.to_string());
+		// The value starts after the first separator, the way the engine reads
+		// the same entry, so both paths read one compose file the same way.
+		let val = rest.strip_prefix([':', '=']).unwrap_or(rest);
+		if val.is_empty() {
+			container.add("NoNewPrivileges", "true".to_string());
+		} else if let Some(enabled) = crate::engine::container::parse_bool_value(val) {
+			container.add("NoNewPrivileges", enabled.to_string());
+		} else {
+			// A value Podman does not read as a boolean is not one it would
+			// accept either. Turning it into `false` would disable the
+			// hardening without saying so, so the entry is reported and
+			// skipped instead.
+			warnings.push(format!(
+				"{name}: security_opt '{opt}' carries a value Podman does not read as a boolean and is skipped"
+			));
+		}
 	} else if let Some(profile) = opt.strip_prefix("seccomp=") {
 		container.add("SeccompProfile", profile.to_string());
 	} else if let Some(profile) = opt

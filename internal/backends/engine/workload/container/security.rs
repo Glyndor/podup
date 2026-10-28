@@ -40,6 +40,21 @@ pub(crate) struct SecurityOptions {
 	pub unmask: Vec<String>,
 }
 
+/// Whether a `no-new-privileges` value means "on", over the set of values
+/// Podman reads as a boolean.
+///
+/// Podman parses the value with Go's `strconv.ParseBool`, which takes `1`,
+/// `t`, `T`, `TRUE`, `true` and `True` for on, and `0`, `f`, `F`, `FALSE`,
+/// `false` and `False` for off. A value outside that set is not a boolean
+/// Podman would read, so it is reported rather than guessed at.
+pub(crate) fn parse_bool_value(value: &str) -> Option<bool> {
+	match value {
+		"1" | "t" | "T" | "TRUE" | "true" | "True" => Some(true),
+		"0" | "f" | "F" | "FALSE" | "false" | "False" => Some(false),
+		_ => None,
+	}
+}
+
 /// Split each compose `security_opt:` entry onto the dedicated SpecGenerator
 /// field Podman expects. Compose accepts both `:` and `=` separators; the value
 /// is taken after the first one. Mirrors Podman's own `--security-opt` parser:
@@ -53,7 +68,17 @@ pub(crate) fn parse_security_opts(service: &Service) -> SecurityOptions {
 		};
 		match key {
 			"no-new-privileges" => {
-				out.no_new_privileges = Some(val.is_empty() || val.eq_ignore_ascii_case("true"));
+				out.no_new_privileges = Some(if val.is_empty() {
+					true
+				} else if let Some(enabled) = parse_bool_value(val) {
+					enabled
+				} else {
+					// A value Podman does not read as a boolean is not one it
+					// would accept either, so the hardening stays off and the
+					// operator is told which entry to fix.
+					warn!("security_opt 'no-new-privileges' has a value Podman does not read as a boolean");
+					false
+				});
 			}
 			"label" => out.selinux_opts.push(val.to_string()),
 			"apparmor" => out.apparmor_profile = Some(val.to_string()),
