@@ -6,6 +6,10 @@
 //! and the runtime directory point at temp dirs, so the real HOME is never
 //! touched, and the fake `podman` on `PATH` is a file the command only looks
 //! up: it is never run.
+//!
+//! `autostart` writes systemd units, so these checks run on unix only.
+
+#![cfg(unix)]
 
 use std::fs;
 use std::path::Path;
