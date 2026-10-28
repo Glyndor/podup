@@ -55,7 +55,7 @@ pub fn max_stop_grace_secs(file: &ComposeFile) -> Option<u64> {
 	file.services
 		.values()
 		.filter_map(|s| s.stop_grace_period.as_deref())
-		.filter_map(crate::size::parse_duration_secs)
+		.filter_map(crate::size::parse_duration_secs_rounded_up)
 		.max()
 }
 

@@ -13,9 +13,11 @@ use std::cell::Cell;
 use super::types::{ComposeFile, Service};
 
 mod client_address;
+mod durations;
 mod ignored_fields;
 mod nested_raw;
 mod port_exposure;
+use durations::untranslatable_durations;
 use ignored_fields::{
 	ignored_build_fields, ignored_models, ignored_network_fields, ignored_port_fields,
 	ignored_restart_policy_fields, ignored_secret_config_drivers, ignored_service_fields,
@@ -175,6 +177,7 @@ pub(super) fn collect(file: &ComposeFile) -> Vec<String> {
 	unknown_service_keys(&units, &mut out);
 	nested_unknown_keys(file, &units, &mut out);
 	ignored_service_fields(&units, &mut out);
+	untranslatable_durations(&units, &mut out);
 	ignored_port_fields(&units, &mut out);
 	port_published_on_all_interfaces(&units, &mut out);
 	client_address::ports_hide_client_address(file, &mut out);

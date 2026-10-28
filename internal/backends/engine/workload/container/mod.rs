@@ -217,7 +217,7 @@ impl Engine {
 		let stop_timeout = service
 			.stop_grace_period
 			.as_deref()
-			.and_then(size::parse_duration_secs);
+			.and_then(size::parse_duration_secs_rounded_up);
 
 		if service.mac_address.is_some() {
 			tracing::warn!(

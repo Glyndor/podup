@@ -2,7 +2,7 @@
 //! and the restart policy.
 
 use crate::compose::types::{RestartPolicy, Service};
-use crate::size::parse_duration_secs;
+use crate::size::parse_duration_secs_rounded_up;
 
 use super::super::{quote_podman_arg_value, render_restart, Section};
 
@@ -32,7 +32,9 @@ pub(in super::super) fn emit_stop(service: &Service, container: &mut Section) {
 		}
 	}
 	if let Some(grace) = &service.stop_grace_period {
-		if let Some(secs) = parse_duration_secs(grace) {
+		// Rounded up: a grace period of half a second is a grace period, not an
+		// instant kill.
+		if let Some(secs) = parse_duration_secs_rounded_up(grace) {
 			container.add("StopTimeout", secs.to_string());
 		}
 	}
@@ -66,7 +68,11 @@ pub(in super::super) fn emit_restart(service: &Service, svc: &mut Section) {
 		svc.add("Restart", restart.to_string());
 		if let Some(n) = rp.max_attempts {
 			svc.add("StartLimitBurst", n.to_string());
-			if let Some(secs) = rp.window.as_deref().and_then(parse_duration_secs) {
+			if let Some(secs) = rp
+				.window
+				.as_deref()
+				.and_then(parse_duration_secs_rounded_up)
+			{
 				svc.add("StartLimitIntervalSec", secs.to_string());
 			}
 		}

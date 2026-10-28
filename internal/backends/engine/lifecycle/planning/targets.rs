@@ -21,7 +21,7 @@ pub(in crate::backends::engine::lifecycle) fn service_grace_period_secs(service:
 	service
 		.stop_grace_period
 		.as_deref()
-		.and_then(crate::size::parse_duration_secs)
+		.and_then(crate::size::parse_duration_secs_rounded_up)
 		.and_then(|s| i32::try_from(s).ok())
 		.unwrap_or(10)
 }

@@ -119,6 +119,77 @@ fn duration_secs_milliseconds_truncates() {
 	assert_eq!(parse_duration_secs("500ms"), Some(0));
 }
 
+// A duration written as more than one number and unit, the way the compose
+// specification writes them (`stop_grace_period: 1m30s`).
+
+#[test]
+fn duration_secs_compound_minutes_and_seconds() {
+	assert_eq!(parse_duration_secs("1m30s"), Some(90));
+}
+
+#[test]
+fn duration_secs_compound_hours_and_minutes() {
+	assert_eq!(parse_duration_secs("1h30m"), Some(5400));
+}
+
+#[test]
+fn duration_nanos_compound_minutes_and_seconds() {
+	assert_eq!(parse_duration_nanos("1m30s"), Some(90 * 1_000_000_000));
+}
+
+#[test]
+fn duration_nanos_compound_hours_minutes_and_seconds() {
+	assert_eq!(
+		parse_duration_nanos("1h30m15s"),
+		Some(5_415 * 1_000_000_000)
+	);
+}
+
+#[test]
+fn duration_compound_with_a_fraction() {
+	assert_eq!(parse_duration_nanos("1.5m30s"), Some(120 * 1_000_000_000));
+}
+
+#[test]
+fn duration_compound_rejects_an_unknown_unit() {
+	assert_eq!(parse_duration_secs("1m30d"), None);
+}
+
+#[test]
+fn duration_compound_ends_with_a_number_without_a_unit() {
+	// A number without a unit is a number of seconds wherever it appears, the
+	// way a lone one has always been read.
+	assert_eq!(parse_duration_secs("1m30s5"), Some(95));
+}
+
+// The rounding-up variant, for the timeouts that must not become shorter
+// than what was asked for.
+
+#[test]
+fn duration_secs_rounded_up_keeps_half_a_second() {
+	assert_eq!(parse_duration_secs_rounded_up("500ms"), Some(1));
+}
+
+#[test]
+fn duration_secs_rounded_up_leaves_a_whole_second_alone() {
+	assert_eq!(parse_duration_secs_rounded_up("30s"), Some(30));
+}
+
+#[test]
+fn duration_secs_rounded_up_rounds_a_fraction_up() {
+	assert_eq!(parse_duration_secs_rounded_up("1.5s"), Some(2));
+}
+
+#[test]
+fn duration_secs_rounded_up_reads_a_compound_duration() {
+	assert_eq!(parse_duration_secs_rounded_up("1m30s"), Some(90));
+}
+
+#[test]
+fn duration_secs_rounded_up_rejects_what_it_cannot_read() {
+	assert_eq!(parse_duration_secs_rounded_up("5d"), None);
+}
+
 #[test]
 fn duration_secs_bare_number() {
 	assert_eq!(parse_duration_secs("10"), Some(10));
