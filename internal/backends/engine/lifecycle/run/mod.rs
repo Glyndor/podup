@@ -283,11 +283,6 @@ impl Engine {
 		)
 		.await?;
 
-		let rm_path = format!(
-			"{API_PREFIX}/containers/{}?force=true",
-			crate::libpod::urlencoded(&run_name),
-		);
-
 		// On a start failure (bad --workdir/--user/--entrypoint), the container is
 		// created but never starts; with --rm, remove it here so repeated failures
 		// don't accumulate orphaned 'Created' containers.
@@ -299,19 +294,33 @@ impl Engine {
 		// handed to the create so the label it carries and the environment it
 		// is created with describe the same snapshot.
 		let env = self.effective_env(&run_service)?;
-		if let Err(e) = self
-			.create_and_start(&run_name, service_name, &run_service, file, !want_tty, &env)
-			.await
-		{
-			if rm {
-				if let Err(cleanup_err) = self.client.delete_ok(&rm_path).await {
+		let created = self
+			.create_container(&run_name, service_name, &run_service, file, &env)
+			.await?;
+		// A rejected ownership check or failed create grants no cleanup rights.
+		// Never delete by name: another container may have taken it meanwhile.
+		let created_id = created
+			.get("Id")
+			.and_then(serde_json::Value::as_str)
+			.filter(|id| !id.is_empty())
+			.ok_or_else(|| ComposeError::Unsupported("container creation returned no ID".into()))?;
+		let rm_path = format!(
+			"{API_PREFIX}/containers/{}?force=true",
+			crate::libpod::urlencoded(created_id),
+		);
+		let start_path = format!(
+			"{API_PREFIX}/containers/{}/start",
+			crate::libpod::urlencoded(&run_name),
+		);
+		if !want_tty {
+			if let Err(e) = self.client.post_empty_ok(&start_path).await {
+				if rm && self.client.delete_ok(&rm_path).await.is_err() {
 					tracing::warn!(
-						"run {run_name}: the container could not be removed after the start \
-						 failed: {cleanup_err}"
+						"run: the container could not be removed after the start failed"
 					);
 				}
+				return Err(ComposeError::Podman(e));
 			}
-			return Err(e);
 		}
 
 		if detach {

@@ -46,77 +46,86 @@ where
 	E: AsyncWrite + Unpin,
 {
 	let (mut session_read, mut session_write) = tokio::io::split(session);
-	let mut buffered = BytesMut::new();
-	let mut to_session = [0u8; 8 * 1024];
-	let mut from_session = [0u8; 32 * 1024];
-	// The caller's stdin has ended (or the command stopped reading it); the
-	// session keeps streaming its output either way.
-	let mut stdin_done = false;
-	loop {
-		tokio::select! {
-			read = session_read.read(&mut from_session) => {
-				match read {
-					// The command finished and the session ended with it.
-					Ok(0) => break,
-					Ok(n) => {
-						// The same bound the multiplexed parser applies to an
-						// HTTP body: it caps what a daemon-controlled stream
-						// can make the client allocate while a frame is still
-						// incomplete. The extra eight bytes are the frame
-						// header, which may sit ahead of its payload.
-						if buffered.len() + n > MAX_STREAM_BUF + 8 {
-							return Err(ComposeError::Podman(PodmanError::StreamTooLarge));
-						}
-						buffered.extend_from_slice(&from_session[..n]);
-						while let Some((stream_type, payload)) = parse_frame(&mut buffered)? {
-							let frame = match stream_type {
-								1 => LogOutput::StdOut { message: payload },
-								2 => LogOutput::StdErr { message: payload },
-								_ => continue,
-							};
-							match frame_action(frame) {
-								FrameAction::StdOut(bytes) => {
-									stdout.write_all(&bytes).await.map_err(ComposeError::Io)?
-								}
-								FrameAction::StdErr(bytes) => {
-									stderr.write_all(&bytes).await.map_err(ComposeError::Io)?
-								}
-								FrameAction::Drop => {}
-							}
-						}
-					}
-					Err(e) => {
-						return Err(ComposeError::Podman(PodmanError::Connect(e)));
+	// Each direction owns its entire read/write loop. An await inside one
+	// pump must not prevent the other from relieving backpressure.
+	let input = async {
+		let mut to_session = [0u8; 8 * 1024];
+		loop {
+			match stdin.read(&mut to_session).await {
+				Ok(0) => {
+					let _ = session_write.shutdown().await;
+					break;
+				}
+				Ok(n) => {
+					if session_write.write_all(&to_session[..n]).await.is_err() {
+						// A command may finish without consuming all its input.
+						tracing::debug!("exec: the command stopped reading its stdin");
+						break;
 					}
 				}
-			}
-			read = stdin.read(&mut to_session), if !stdin_done => {
-				match read {
-					// The caller's input ended: the command sees EOF.
-					Ok(0) => {
-						stdin_done = true;
-						let _ = session_write.shutdown().await;
-					}
-					Ok(n) => {
-						if let Err(e) = session_write.write_all(&to_session[..n]).await {
-							// The command stopped reading its input (it exited
-							// without consuming it). That is not a failure of
-							// the session: its output is still on the way.
-							tracing::debug!("exec: the command stopped reading its stdin: {e}");
-							stdin_done = true;
-						}
-					}
-					Err(e) => {
-						tracing::debug!("exec: reading the caller's stdin failed: {e}");
-						stdin_done = true;
-					}
+				Err(_) => {
+					tracing::debug!("exec: reading the caller's stdin failed");
+					break;
 				}
 			}
 		}
+	};
+	let output = async {
+		let mut buffered = BytesMut::new();
+		let mut from_session = [0u8; 32 * 1024];
+		loop {
+			let n = session_read
+				.read(&mut from_session)
+				.await
+				.map_err(|e| ComposeError::Podman(PodmanError::Connect(e)))?;
+			if n == 0 {
+				if !buffered.is_empty() {
+					return Err(ComposeError::Podman(PodmanError::StreamEndedEarly));
+				}
+				break;
+			}
+			// Bound daemon-controlled buffering while a frame is incomplete;
+			// the extra eight bytes are its header.
+			if buffered.len() + n > MAX_STREAM_BUF + 8 {
+				return Err(ComposeError::Podman(PodmanError::StreamTooLarge));
+			}
+			buffered.extend_from_slice(&from_session[..n]);
+			while let Some((stream_type, payload)) = parse_frame(&mut buffered)? {
+				let frame = match stream_type {
+					1 => LogOutput::StdOut { message: payload },
+					2 => LogOutput::StdErr { message: payload },
+					_ => continue,
+				};
+				match frame_action(frame) {
+					FrameAction::StdOut(bytes) => {
+						stdout.write_all(&bytes).await.map_err(ComposeError::Io)?
+					}
+					FrameAction::StdErr(bytes) => {
+						stderr.write_all(&bytes).await.map_err(ComposeError::Io)?
+					}
+					FrameAction::Drop => {}
+				}
+			}
+		}
+		// Tokio's stdio writers may finish write_all before the blocking
+		// write completes. Flush both channels and surface deferred failures.
+		stdout.flush().await.map_err(ComposeError::Io)?;
+		stderr.flush().await.map_err(ComposeError::Io)?;
+		Ok(())
+	};
+	tokio::pin!(output);
+	// EOF on stdin only half-closes the session; keep draining output. EOF
+	// or failure on output ends the session and drops any blocked input pump.
+	tokio::select! {
+		result = &mut output => result,
+		() = input => output.await,
 	}
-	Ok(())
 }
 
 #[cfg(test)]
 #[path = "piped_tests.rs"]
 mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "piped_regression_tests.rs"]
+mod regression_tests;

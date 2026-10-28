@@ -15,6 +15,8 @@ pub(super) fn peer(code: i64, running: bool) -> Peer {
 			)
 		} else if method == "GET" && path.contains("/images/") {
 			(200, r#"{"Id":"same-image"}"#.into())
+		} else if method == "POST" && path.ends_with("/containers/create") {
+			(200, r#"{"Id":"created-container"}"#.into())
 		} else if method == "GET" && path.contains("/containers/") && path.ends_with("/json") {
 			// A container the project created carries its label; replacing one
 			// without it is refused.

@@ -315,6 +315,20 @@ impl Engine {
 					);
 					return Ok(());
 				}
+				// Recursive deletion must not cross a mount boundary, even when
+				// that mount's host source is outside the watched tree. Compare
+				// container components, not host Path syntax (also on Windows).
+				let normalised = normalise_container_path("/", &container_path);
+				let removed_parts = path_components(&normalised);
+				if matches!(shape, RuleShape::Directory)
+					&& mounts.iter().any(|mount| {
+						let target = normalise_container_path("/", &mount.target);
+						path_components(&target).starts_with(&removed_parts)
+					}) {
+					return Err(ComposeError::Watch(
+						"sync: refusing to remove a directory containing a mount".into(),
+					));
+				}
 				self.remove_from_container(container, placement, changed)
 					.await
 			}

@@ -26,6 +26,7 @@ impl Engine {
 		file: &ComposeFile,
 		enabled: &HashSet<String>,
 		target_set: &Option<HashSet<String>>,
+		explicit_targets: &[String],
 		existing: &HashMap<String, ExistingContainer>,
 		no_recreate: bool,
 		force_recreate: bool,
@@ -59,7 +60,13 @@ impl Engine {
 		// A failure cancels the rest: `try_join_all` drops the other futures on
 		// the first error, so a service still waiting on a dependency that will
 		// now never come up is dropped rather than hanging.
-		let scheduled: Vec<&str> = levels.iter().flatten().map(String::as_str).collect();
+		let scheduled: Vec<&str> = levels
+			.iter()
+			.flatten()
+			.filter(|name| enabled.contains(*name))
+			.filter(|name| target_set.as_ref().is_none_or(|set| set.contains(*name)))
+			.map(String::as_str)
+			.collect();
 		let permits = std::sync::Arc::new(tokio::sync::Semaphore::new(
 			crate::engine::lifecycle::parallel::MAX_LIFECYCLE_CONCURRENCY,
 		));
@@ -76,7 +83,12 @@ impl Engine {
 		let tolerated: HashSet<&str> = scheduled
 			.iter()
 			.copied()
-			.filter(|name| optional_for_every_dependent(name, &scheduled, file))
+			.filter(|name| {
+				!explicit_targets
+					.iter()
+					.any(|target| target.as_str() == *name)
+					&& optional_for_every_dependent(name, &scheduled, file)
+			})
 			.collect();
 		let tolerated = &tolerated;
 
@@ -136,8 +148,8 @@ impl Engine {
 					}
 					// Every dependent of this service declared it optional, so
 					// its failure is a warning and the dependents are released.
-					Err(e) if tolerated.contains(*name) => {
-						tracing::warn!("optional service {name} did not start: {e}");
+					Err(_) if tolerated.contains(*name) => {
+						tracing::warn!("an optional service did not start");
 						crate::ui::progress_line("Container", name, "Failed");
 						if let Some(tx) = done.get(*name) {
 							let _ = tx.send(Some(false));

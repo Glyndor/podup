@@ -303,6 +303,7 @@ impl Engine {
 				file,
 				&enabled,
 				&target_set,
+				target_services,
 				&existing,
 				no_recreate,
 				force_recreate,
