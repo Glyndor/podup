@@ -138,6 +138,18 @@ fn collect_trigger_tags(raw: &Value, out: &mut Directives) {
 	}
 }
 
+/// The merge tags of one service or job, ready to travel with it.
+///
+/// The keys that carry their own channel (`umask`, `pull_refresh_after`) are
+/// left out: they are decided while the document is typed, and repeating them
+/// here would apply the same directive twice.
+pub(crate) fn service_tags(directives: &Directives, name: &str) -> HashMap<String, MergeTag> {
+	let mut tags = directives.get(name).cloned().unwrap_or_default();
+	tags.remove("umask");
+	tags.remove("pull_refresh_after");
+	tags
+}
+
 /// Remove every `!override`/`!reset` tag from a document, keeping the value it
 /// wraps.
 ///

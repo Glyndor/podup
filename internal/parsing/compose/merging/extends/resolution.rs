@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use super::super::super::parse_file_inner_with_env;
 use super::super::super::types::ComposeFile;
-use super::merge_service;
+use super::merge_service_tagged;
 use crate::error::{sanitize_name, ComposeError, Result};
 
 /// Which namespace an `extends:` pass resolves in. A service extends a
@@ -274,7 +274,10 @@ fn resolve_one_extends_in_memory(
 		.ok_or_else(|| ComposeError::Extends(base_name.clone()))?;
 
 	if let Some(svc) = file.services.get_mut(name) {
-		let merged = merge_service(base, svc.clone());
+		// The tags this service carries decide how it combines with its base:
+		// `!override` replaces the base's key instead of merging with it, and
+		// `!reset` drops it.
+		let merged = merge_service_tagged(base, svc.clone(), Some(&svc.merge_tags));
 		*svc = merged;
 		svc.extends = None;
 	}
@@ -374,7 +377,10 @@ fn resolve_one_extends(
 	};
 
 	if let Some(svc) = file.services.get_mut(name) {
-		let merged = merge_service(base_service, svc.clone());
+		// The tags this service carries decide how it combines with its base:
+		// `!override` replaces the base's key instead of merging with it, and
+		// `!reset` drops it.
+		let merged = merge_service_tagged(base_service, svc.clone(), Some(&svc.merge_tags));
 		*svc = merged;
 		svc.extends = None;
 	}

@@ -20,6 +20,9 @@ mod external_file;
 // The rejections an external `extends` can earn.
 mod external_file_errors;
 
+// The `!override`/`!reset` tags in an extends merge.
+mod merge_tags;
+
 // The chain-depth guard.
 mod depth_limit;
 

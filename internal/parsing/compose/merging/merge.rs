@@ -73,12 +73,14 @@ pub(in super::super) fn deserialize_with_merge_interp(
 			.get(name)
 			.and_then(|keys| keys.get("umask"))
 			.copied();
+		service.merge_tags = super::super::tags::service_tags(&directives, name);
 	}
 	for (name, job) in &mut file.jobs {
 		job.service.umask_merge_tag = directives
 			.get(name)
 			.and_then(|keys| keys.get("umask"))
 			.copied();
+		job.service.merge_tags = super::super::tags::service_tags(&directives, name);
 	}
 	for name in refresh_clears {
 		if let Some(service) = file.services.get_mut(&name) {

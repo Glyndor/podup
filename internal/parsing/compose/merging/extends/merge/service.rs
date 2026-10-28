@@ -198,6 +198,9 @@ pub(in crate::parsing::compose) fn merge_service(
 		user: override_svc.user.or(base.user),
 		umask: override_svc.umask.or(base.umask),
 		umask_merge_tag: None,
+		// The tags travel with the service: a merge that has not acted on them
+		// yet (the `-f` merge that follows this one) still has to.
+		merge_tags: override_svc.merge_tags,
 		working_dir: override_svc.working_dir.or(base.working_dir),
 		group_add: merge_vec(base.group_add, override_svc.group_add),
 		platform: override_svc.platform.or(base.platform),
