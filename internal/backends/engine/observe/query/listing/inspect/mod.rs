@@ -339,7 +339,36 @@ impl Engine {
 					// failed attach, not a line to drop.
 					write_attach_frame(&mut out, &mut err, frame).map_err(ComposeError::Io)?;
 				}
-				Err(_) => break,
+				Err(e) => {
+					// The stream ended with an error, which is two different
+					// things: the container stopped and took its output down
+					// with it (a finished read), or the transport died under a
+					// container that keeps running (output lost). The
+					// container's own state tells them apart, the same way
+					// `logs` resolves it; a frame the daemon sent that does
+					// not parse is a failed read either way.
+					//
+					// The error used to be dropped without even a warning,
+					// so an attach that lost its connection to the engine
+					// still reported success.
+					let kind = e.stream_end_kind();
+					let still_running = self.container_still_running(&container).await;
+					if crate::backends::engine::observe::query::stream_lost_output(
+						&e,
+						false,
+						still_running,
+					) {
+						tracing::warn!(
+							"attach {container}: the stream ended before the output was \
+							 complete [{kind}]: {e}"
+						);
+						return Err(ComposeError::Podman(e));
+					}
+					tracing::warn!(
+						"attach {container}: the stream ended as the container stopped [{kind}]"
+					);
+					break;
+				}
 			}
 		}
 		Ok(())

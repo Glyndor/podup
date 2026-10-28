@@ -247,6 +247,27 @@ impl PodmanError {
 		}
 	}
 
+	/// Whether this error is a fault in the *framing* of the stream rather than
+	/// an ambiguous end of it.
+	///
+	/// A stream that ends because the daemon closed it (or because the
+	/// connection dropped) is ambiguous: the same shape arrives when a
+	/// container stops and takes its output with it, and when the socket dies
+	/// under a container that keeps running. Only the container's own state can
+	/// tell those apart, and the caller asks for it.
+	///
+	/// A frame the daemon sent that does not parse, or that is larger than the
+	/// client accepts, is not ambiguous at all: the read failed whatever the
+	/// container was doing. Those are reported instead of being resolved out of
+	/// band, because resolving them with the container's state would swallow a
+	/// corrupted read whenever the container happened to be stopped.
+	pub fn is_stream_fault(&self) -> bool {
+		matches!(
+			self,
+			Self::StreamTooLarge | Self::StreamEndedEarly | Self::Json(_)
+		)
+	}
+
 	/// True if this is a client-side timeout (the request was aborted because the
 	/// socket never responded within the deadline). These carry a synthetic
 	/// status `0` and a `timed out` message; lifecycle callers use this to
