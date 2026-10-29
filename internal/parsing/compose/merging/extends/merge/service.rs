@@ -150,7 +150,7 @@ pub(in crate::parsing::compose) fn merge_service(
 		|| (override_svc.pull_refresh_after.is_none() && base.pull_refresh_after_reset);
 	Service {
 		image: opt(override_svc.image, base.image),
-		build: merge_block(base.build, override_svc.build),
+		build: merge_block(base.build, override_svc.build, Some("context")),
 		extends: override_svc.extends.or(base.extends),
 		command: override_svc.command.or(base.command),
 		entrypoint: override_svc.entrypoint.or(base.entrypoint),
@@ -180,7 +180,7 @@ pub(in crate::parsing::compose) fn merge_service(
 		dns_opt: merge_sol(base.dns_opt, override_svc.dns_opt),
 		network_mode: override_svc.network_mode.or(base.network_mode),
 		depends_on: merge_depends_on(base.depends_on, override_svc.depends_on),
-		healthcheck: merge_block(base.healthcheck, override_svc.healthcheck),
+		healthcheck: merge_block(base.healthcheck, override_svc.healthcheck, None),
 		restart: override_svc.restart.or(base.restart),
 		stop_signal: override_svc.stop_signal.or(base.stop_signal),
 		stop_grace_period: override_svc.stop_grace_period.or(base.stop_grace_period),
@@ -247,7 +247,7 @@ pub(in crate::parsing::compose) fn merge_service(
 		oom_kill_disable: override_svc.oom_kill_disable.or(base.oom_kill_disable),
 		oom_score_adj: override_svc.oom_score_adj.or(base.oom_score_adj),
 		blkio_config: override_svc.blkio_config.or(base.blkio_config),
-		logging: merge_block(base.logging, override_svc.logging),
+		logging: merge_block(base.logging, override_svc.logging, None),
 		// Merged per key, like `environment` and `labels`, not replaced.
 		sysctls: merge_sysctls(base.sysctls, override_svc.sysctls),
 		ulimits: {
@@ -266,8 +266,8 @@ pub(in crate::parsing::compose) fn merge_service(
 			override_svc.pull_refresh_after.or(base.pull_refresh_after)
 		},
 		pull_refresh_after_reset,
-		deploy: merge_block(base.deploy, override_svc.deploy),
-		develop: merge_block(base.develop, override_svc.develop),
+		deploy: merge_block(base.deploy, override_svc.deploy, None),
+		develop: merge_block(base.develop, override_svc.develop, None),
 		gpus: override_svc.gpus.or(base.gpus),
 		credential_spec: override_svc.credential_spec.or(base.credential_spec),
 		isolation: override_svc.isolation.or(base.isolation),

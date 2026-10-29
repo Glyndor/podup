@@ -311,3 +311,55 @@ services:
 	assert_eq!(build.context(), "./app", "the base context was lost");
 	assert!(!build.args().is_empty(), "the override args were lost");
 }
+
+/// `build: ./app` is the short form of `build: {context: ./app}`. Next to a long
+/// form it has to be read that way, or the context is lost.
+#[test]
+fn a_short_form_build_keeps_its_context_next_to_a_long_form() {
+	let file = merged(
+		r#"
+services:
+  base:
+    build: ./app
+  app:
+    extends: base
+    build:
+      args:
+        MODE: release
+"#,
+	);
+	let build = file.services["app"].build.as_ref().expect("build");
+	assert_eq!(build.context(), "./app", "the short form context was lost");
+	assert!(!build.args().is_empty(), "the override args were lost");
+}
+
+/// Build arguments written as a list on one side and as a map on the other
+/// merge key by key; the override wins on a shared key.
+#[test]
+fn build_args_as_a_list_and_as_a_map_merge_by_key() {
+	let file = merged(
+		r#"
+services:
+  base:
+    build:
+      context: .
+      args:
+        - KEEP=base
+        - MODE=debug
+  app:
+    extends: base
+    build:
+      args:
+        MODE: release
+"#,
+	);
+	let args = file.services["app"]
+		.build
+		.as_ref()
+		.expect("build")
+		.args()
+		.to_map();
+	let get = |k: &str| args.get(k).cloned().flatten();
+	assert_eq!(get("KEEP").as_deref(), Some("base"), "a base arg was lost");
+	assert_eq!(get("MODE").as_deref(), Some("release"));
+}

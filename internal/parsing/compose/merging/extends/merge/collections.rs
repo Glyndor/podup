@@ -98,14 +98,40 @@ pub(super) fn merge_sysctls(base: Sysctls, over: Sysctls) -> Sysctls {
 /// blocks merged here have no list that compose concatenates). A null in the
 /// override is "not set". If the merged value cannot be typed again the
 /// override is used as it is, which is what a plain replacement did before.
-pub(super) fn merge_block<T>(base: Option<T>, over: Option<T>) -> Option<T>
+pub(super) fn merge_block<T>(
+	base: Option<T>,
+	over: Option<T>,
+	short_form_key: Option<&str>,
+) -> Option<T>
 where
 	T: serde::Serialize + serde::de::DeserializeOwned,
 {
 	use serde_json::Value;
 
+	/// A list of `KEY=VALUE` entries as the map it stands for (a bare `KEY` has
+	/// no value), so a list on one side and a map on the other merge key by key.
+	fn list_as_map(items: &[Value]) -> Option<serde_json::Map<String, Value>> {
+		let mut map = serde_json::Map::new();
+		for item in items {
+			let entry = item.as_str()?;
+			match entry.split_once('=') {
+				Some((key, value)) => map.insert(key.to_string(), Value::String(value.to_string())),
+				None => map.insert(entry.to_string(), Value::Null),
+			};
+		}
+		Some(map)
+	}
+
 	fn deep(base: Value, over: Value) -> Value {
 		match (base, over) {
+			(Value::Array(list), Value::Object(o)) => match list_as_map(&list) {
+				Some(b) => deep(Value::Object(b), Value::Object(o)),
+				None => Value::Object(o),
+			},
+			(Value::Object(b), Value::Array(list)) => match list_as_map(&list) {
+				Some(o) => deep(Value::Object(b), Value::Object(o)),
+				None => Value::Array(list),
+			},
 			(Value::Object(mut b), Value::Object(o)) => {
 				for (key, value) in o {
 					let merged = match b.remove(&key) {
@@ -125,8 +151,24 @@ where
 		(None, over) => over,
 		(base, None) => base,
 		(Some(base), Some(over)) => {
+			// The short form (`build: ./app`) stands for `{context: ./app}`; read it
+			// that way next to a long form so the context is not lost.
+			let long = |value: Value| match (short_form_key, value) {
+				(Some(key), Value::String(text)) => Value::Object(serde_json::Map::from_iter([(
+					key.to_string(),
+					Value::String(text),
+				)])),
+				(_, value) => value,
+			};
 			let merged = serde_json::to_value(&base)
-				.and_then(|b| serde_json::to_value(&over).map(|o| deep(b, o)))
+				.and_then(|b| serde_json::to_value(&over).map(|o| (b, o)))
+				.map(|(b, o)| {
+					if b.is_object() || o.is_object() {
+						deep(long(b), long(o))
+					} else {
+						deep(b, o)
+					}
+				})
 				.and_then(serde_json::from_value::<T>);
 			Some(merged.unwrap_or(over))
 		}
