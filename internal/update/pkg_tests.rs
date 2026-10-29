@@ -197,7 +197,11 @@ fn dpkg_owns_errors_when_dpkg_query_is_missing_from_path() {
 	let empty_path = std::path::PathBuf::from("/nonexistent-empty-path-for-dpkg-test");
 	let fake_target = Path::new("/usr/bin/podup");
 	temp_env::with_var("PATH", Some(empty_path.display().to_string()), || {
-		assert!(dpkg_owns(fake_target).is_err());
+		// Refused where a dpkg database exists, allowed where there is no dpkg.
+		assert_eq!(
+			dpkg_owns(fake_target).is_err(),
+			Path::new("/var/lib/dpkg/status").exists()
+		);
 	});
 }
 
@@ -212,20 +216,38 @@ fn dpkg_query_distinguishes_absent_ownership_from_query_failure() {
 		(2 << 8, None),
 		(9, None),
 	] {
-		let result = dpkg_query_result(Ok(Output {
-			status: ExitStatus::from_raw(status),
-			stdout: Vec::new(),
-			stderr: b"query diagnostic".to_vec(),
-		}));
+		let result = dpkg_query_result(
+			Ok(Output {
+				status: ExitStatus::from_raw(status),
+				stdout: Vec::new(),
+				stderr: b"query diagnostic".to_vec(),
+			}),
+			true,
+		);
 		match owned {
 			Some(owned) => assert_eq!(result.unwrap(), owned),
 			None => assert!(result.is_err()),
 		}
 	}
+	// Denied, or missing where a dpkg database exists: unknown, so refuse.
 	for kind in [
 		std::io::ErrorKind::NotFound,
 		std::io::ErrorKind::PermissionDenied,
 	] {
-		assert!(dpkg_query_result(Err(std::io::Error::from(kind))).is_err());
+		assert!(dpkg_query_result(Err(std::io::Error::from(kind)), true).is_err());
 	}
+	assert!(dpkg_query_result(
+		Err(std::io::Error::from(std::io::ErrorKind::PermissionDenied)),
+		false
+	)
+	.is_err());
+}
+
+/// A machine with no dpkg at all (Fedora, Arch) has no dpkg-managed binary, so
+/// the update must not be blocked there.
+#[cfg(all(unix, target_os = "linux"))]
+#[test]
+fn a_machine_without_dpkg_does_not_block_the_update() {
+	let missing = Err(std::io::Error::from(std::io::ErrorKind::NotFound));
+	assert!(!dpkg_query_result(missing, false).unwrap());
 }

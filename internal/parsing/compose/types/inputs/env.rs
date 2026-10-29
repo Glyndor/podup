@@ -17,7 +17,35 @@ pub enum EnvVars {
 	/// List form: `KEY=VAL` or bare `KEY` entries.
 	List(Vec<String>),
 	/// Map form: keys to optional values (a null value inherits from the host).
-	Map(IndexMap<String, Option<serde_yaml::Value>>),
+	Map(#[serde(deserialize_with = "scalar_env_map")] IndexMap<String, Option<serde_yaml::Value>>),
+}
+
+/// Read the map form and refuse a value that is not a scalar or null. A list or
+/// a mapping used to turn into "no value", which means "inherit from the host",
+/// so a malformed entry quietly took whatever the host had under that name.
+fn scalar_env_map<'de, D>(
+	deserializer: D,
+) -> Result<IndexMap<String, Option<serde_yaml::Value>>, D::Error>
+where
+	D: serde::Deserializer<'de>,
+{
+	use serde::de::Error;
+	let map = IndexMap::<String, Option<serde_yaml::Value>>::deserialize(deserializer)?;
+	let bad = map.values().flatten().any(|v| {
+		!matches!(
+			v,
+			serde_yaml::Value::String(_)
+				| serde_yaml::Value::Number(_)
+				| serde_yaml::Value::Bool(_)
+				| serde_yaml::Value::Null
+		)
+	});
+	if bad {
+		return Err(D::Error::custom(
+			"an environment value must be a string, a number, a boolean or null",
+		));
+	}
+	Ok(map)
 }
 
 impl EnvVars {

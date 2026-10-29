@@ -29,3 +29,23 @@ fn gpu_to_count_covers_every_variant() {
 	// The device-list form is treated as "all" (-1); previously untested.
 	assert_eq!(GpuSpec::Devices(vec![]).to_count(), -1);
 }
+
+/// Any string other than `all` used to read as "every device", so a typo in
+/// the selector reserved every GPU of the host.
+#[test]
+fn a_gpu_selector_other_than_all_is_refused() {
+	for bad in ["typo", "ALL", "1", ""] {
+		let yaml = format!("services:\n  web:\n    image: x\n    gpus: \"{bad}\"\n");
+		assert!(crate::parse_str(&yaml).is_err(), "`{bad}` was accepted");
+	}
+	let yaml = "services:\n  web:\n    image: x\n    gpus: all\n";
+	assert!(crate::parse_str(yaml).is_ok());
+}
+
+#[test]
+fn a_gpu_reservation_count_other_than_all_is_refused() {
+	let yaml = "services:\n  web:\n    image: x\n    deploy:\n      resources:\n        reservations:\n          devices:\n            - capabilities: [gpu]\n              count: typo\n";
+	assert!(crate::parse_str(yaml).is_err());
+	let ok = "services:\n  web:\n    image: x\n    deploy:\n      resources:\n        reservations:\n          devices:\n            - capabilities: [gpu]\n              count: all\n";
+	assert!(crate::parse_str(ok).is_ok());
+}

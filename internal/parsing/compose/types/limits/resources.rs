@@ -98,8 +98,8 @@ impl BlkioRateDevice {
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum GpuSpec {
-	/// Shorthand string form, e.g. `"all"`.
-	Named(String),
+	/// Shorthand string form: only `"all"` is a selector.
+	Named(#[serde(deserialize_with = "super::deploy::only_all")] String),
 	/// Number of GPUs to expose.
 	Count(u32),
 	/// Explicit device reservation list.
