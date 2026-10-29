@@ -156,3 +156,27 @@ fn walk_dir_skipping_prunes_ignored_subtrees() {
 		"src/ is not skipped, full descent expected"
 	);
 }
+
+/// A file another process holds open for writing (a log in append mode) is
+/// still part of the build context. Opening it without write sharing made the
+/// whole build fail with a sharing violation.
+#[cfg(windows)]
+#[test]
+fn a_file_held_open_for_writing_is_still_walked() {
+	use std::io::Write;
+	let dir = tempfile::tempdir().unwrap();
+	let log = dir.path().join("server.log");
+	let mut writer = std::fs::OpenOptions::new()
+		.create(true)
+		.append(true)
+		.open(&log)
+		.unwrap();
+	writer.write_all(b"line\n").unwrap();
+	let seen = walk_dir_skipping(dir.path(), |_| false)
+		.expect("a file held open for writing must not stop the walk");
+	assert!(
+		seen.iter().any(|p| p.ends_with("server.log")),
+		"the log was not walked: {seen:?}"
+	);
+	drop(writer);
+}
