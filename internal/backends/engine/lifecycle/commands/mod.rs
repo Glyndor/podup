@@ -2,6 +2,7 @@
 
 mod rm;
 mod running;
+pub use running::ContainerSnapshot;
 mod signals;
 mod wait;
 
