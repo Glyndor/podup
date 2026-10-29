@@ -49,6 +49,48 @@ fn requests(fake: &FakePodman) -> Vec<String> {
 	fake.requests.lock().unwrap().clone()
 }
 
+/// A fake that answers the project listing with the given replicas of
+/// `service`, and the inspect of each with the given fixture.
+///
+/// The listing is what a `scale` from an earlier command leaves behind: the
+/// runtime holds replicas the compose file does not name.
+fn host_with_service_replicas(service: &str, replicas: &[(&str, &str)]) -> FakePodman {
+	let listing = format!(
+		"[{}]",
+		replicas
+			.iter()
+			.map(|(name, _)| {
+				format!(r#"{{"Names":["/{name}"],"Labels":{{"podup.service":"{service}"}}}}"#)
+			})
+			.collect::<Vec<_>>()
+			.join(",")
+	);
+	let map: HashMap<String, String> = replicas
+		.iter()
+		.map(|(name, json)| (name.to_string(), json.to_string()))
+		.collect();
+	fake_podman::start(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			return (200, listing.clone());
+		}
+		if method == "GET" && target.contains("/healthcheck") {
+			return (200, r#"{"Status":"healthy"}"#.to_string());
+		}
+		if method == "GET" && target.contains("/containers/") && target.ends_with("/json") {
+			let name = target
+				.split("/containers/")
+				.nth(1)
+				.and_then(|rest| rest.split('/').next())
+				.unwrap_or_default();
+			return match map.get(name) {
+				Some(json) => (200, json.clone()),
+				None => (404, r#"{"message":"no such container"}"#.to_string()),
+			};
+		}
+		(404, r#"{"message":"not found"}"#.to_string())
+	})
+}
+
 fn engine(fake: &FakePodman) -> Engine {
 	Engine::with_base_dir(fake.client(), "proj".into(), std::env::temp_dir())
 }
@@ -129,5 +171,39 @@ async fn a_service_with_no_replicas_is_not_waited_on() {
 		requests(&fake).is_empty(),
 		"no container is inspected: {requests:?}",
 		requests = requests(&fake)
+	);
+}
+
+/// The wait covers the replicas the runtime holds, not only the ones the
+/// compose file names.
+///
+/// A service scaled to three in an earlier command has three replicas, and
+/// the compose file still declares one. The second replica had already
+/// crashed: a wait that looked only at the first reported the service
+/// ready.
+#[tokio::test]
+async fn the_wait_covers_the_replicas_the_runtime_holds() {
+	let file = crate::parse_str("services:\n  web:\n    image: x\n").expect("the fixture parses");
+	let fake = host_with_service_replicas(
+		"web",
+		&[
+			("proj-web-1", HEALTHY),
+			("proj-web-2", CRASHED),
+			("proj-web-3", HEALTHY),
+		],
+	);
+
+	let error = engine(&fake)
+		.wait_services_healthy(&file, &[])
+		.await
+		.expect_err("a crashed replica must fail the wait");
+
+	assert!(
+		matches!(
+			&error,
+			crate::error::ComposeError::WaitServiceExited { container, code }
+				if container == "proj-web-2" && *code == 7
+		),
+		"the crashed replica must be the reported cause, got {error:?}"
 	);
 }

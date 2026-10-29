@@ -40,7 +40,11 @@ impl Engine {
 		// one container-list round-trip per service (S+1 → 1 for the level walk;
 		// #1363). The bulk helper returns all project containers, not just the
 		// running ones, so a restart that lands on a stopped replica starts it.
-		let live_by_service = self.live_project_replicas().await?;
+		//
+		// The service's replicas, without the one-off containers `run` creates:
+		// a one-off shares the service label but is not a replica, and
+		// restarting it would run the task a second time.
+		let live_by_service = self.live_service_replicas().await?;
 
 		// Attempt every service and surface the first error (in service order) at
 		// the end rather than aborting mid-batch and leaving later services
