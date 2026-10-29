@@ -371,6 +371,7 @@ fn guard_alias_expansion(content: &str) -> Result<()> {
 			 allowed; inline the repeated content instead"
 		)));
 	}
+	super::alias_budget::within_limit(content, super::alias_budget::MAX_EXPANDED_NODES)?;
 	let expansion = refs.saturating_mul(content.len());
 	if expansion > MAX_ALIAS_EXPANSION_BYTES {
 		return Err(ComposeError::Unsupported(format!(
