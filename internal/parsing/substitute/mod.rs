@@ -116,25 +116,12 @@ pub(crate) const MAX_INTERP_DOCUMENT_BYTES: usize = 16 * 1024 * 1024;
 /// its own dedup set, so a single input with `${X}` three times emits one
 /// warning; if a caller wants to share a dedup set across many inputs (so a
 /// `${X}` referenced once in input A and twice in input B yields one
-/// warning, not two), use `substitute_with_warned` and pass the same set
+/// warning, not two), use `substitute_budgeted` and pass the same set
 /// to every call.
 pub fn substitute(input: &str, vars: &HashMap<String, String>) -> Result<String> {
 	let mut spent = 0usize;
 	let mut warned = HashSet::new();
 	substitute_depth(input, vars, 0, &mut spent, &mut warned)
-}
-
-/// [`substitute`] with a dedup set supplied by the caller. Used by the
-/// document-level interpolator ([`crate::compose::merge`]) so every scalar
-/// in the same compose document shares one dedup set: three references to
-/// `${X}` across the document warn once.
-pub(crate) fn substitute_with_warned(
-	input: &str,
-	vars: &HashMap<String, String>,
-	warned: &mut HashSet<String>,
-) -> Result<String> {
-	let mut spent = 0usize;
-	substitute_depth(input, vars, 0, &mut spent, warned)
 }
 
 /// [`substitute`] with a budget that outlives the call, so a caller
