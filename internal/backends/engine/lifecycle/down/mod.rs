@@ -126,7 +126,11 @@ impl Engine {
 			.podman_pod()
 			.map_err(crate::error::ComposeError::Unsupported)?
 		{
-			self.remove_pod().await?;
+			if let Err(e) = self.remove_pod().await {
+				// Carry on: the networks and volumes below are still this
+				// project's to remove, and the failure is reported at the end.
+				first_err.get_or_insert(e);
+			}
 		}
 
 		for (key, config) in &file.networks {
@@ -150,10 +154,20 @@ impl Engine {
 			// delete from). A 404 below means there was nothing to remove
 			// in the first place, so the guard is moot and the row is
 			// reported `Absent`.
-			let owner = self.inspect_network_owner(&network_name).await?;
+			let owner = match self.inspect_network_owner(&network_name).await {
+				Ok(owner) => owner,
+				Err(e) => {
+					crate::ui::progress_line("Network", &network_name, "Failed");
+					first_err.get_or_insert(e);
+					continue;
+				}
+			};
 			if let Err(e) = self.require_owned("network", &network_name, &owner) {
+				// Refuse this network, not the rest of the teardown: the volumes and
+				// the other networks below are still the project's to remove.
 				crate::ui::progress_line("Network", &network_name, "Failed");
-				return Err(e);
+				first_err.get_or_insert(e);
+				continue;
 			}
 			// `delete_existed`, not `delete_ok`: this loop walks the networks the
 			// compose file *declares*, which is not the same set as the networks
@@ -214,9 +228,17 @@ impl Engine {
 				// gone.
 				// Project boundary, as for networks: a volume this project did not
 				// label is not removed, even when its name matches a declared one.
-				let owner = self
+				let owner = match self
 					.object_owner("volumes", &volume_name, &["/Labels", "/labels"])
-					.await?;
+					.await
+				{
+					Ok(owner) => owner,
+					Err(e) => {
+						crate::ui::progress_line("Volume", &volume_name, "Failed");
+						first_err.get_or_insert(e);
+						continue;
+					}
+				};
 				if let Err(refused) = self.require_owned("volume", &volume_name, &owner) {
 					crate::ui::progress_line("Volume", &volume_name, "Failed");
 					first_err.get_or_insert(refused);

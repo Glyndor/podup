@@ -287,6 +287,12 @@ impl Engine {
 
 		let debounce = Duration::from_millis(100);
 
+		// One Ctrl+C future for the whole session. Creating it again in every
+		// pass of the loop left a window while a batch was being dispatched in
+		// which the signal had nothing waiting for it and was lost.
+		let interrupt = tokio::signal::ctrl_c();
+		tokio::pin!(interrupt);
+
 		loop {
 			// Overflow check has to run before the `recv` so a flag set by an
 			// `enqueue` racing this iteration does not sit until the next
@@ -301,7 +307,7 @@ impl Engine {
 					None => break,
 				},
 				_ = overflow_wake.notified() => continue,
-				_ = tokio::signal::ctrl_c() => break,
+				_ = &mut interrupt => break,
 			};
 
 			// The channel is filtered upstream by `events::enqueue`, so only
