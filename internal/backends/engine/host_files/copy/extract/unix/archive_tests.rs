@@ -354,3 +354,37 @@ fn extracting_many_files_does_not_keep_a_descriptor_for_each() {
 		watched.last
 	);
 }
+
+/// The name of a hard link is opened again to give it its mode. If another
+/// regular file has been put under that name by then, the mode must not be
+/// applied to it: the file may have other names outside the destination.
+#[cfg(unix)]
+#[test]
+fn a_hard_link_replaced_before_its_mode_is_applied_is_not_changed() {
+	use super::super::hostile_support::raw;
+	let tmp = tempfile::tempdir().unwrap();
+	let dst = tmp.path().join("dest");
+	std::fs::create_dir(&dst).unwrap();
+	let outside = tmp.path().join("outside");
+	std::fs::write(&outside, b"private").unwrap();
+	std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o600)).unwrap();
+	let root = Directory::open_host(&dst).unwrap();
+	let linked = dst.join("b");
+	let (swap_from, swap_to) = (outside.clone(), linked.clone());
+	super::directory::before_reopen::set(move || {
+		std::fs::remove_file(&swap_to).unwrap();
+		std::fs::hard_link(&swap_from, &swap_to).unwrap();
+	});
+	let bytes = archive(&[
+		file("a", b"content", 0o600),
+		raw(b"b", tar::EntryType::Link, b"a", 0o644, b""),
+	]);
+	let result = extract(&bytes[..], &root);
+	assert_eq!(
+		std::fs::metadata(&outside).unwrap().permissions().mode() & 0o7777,
+		0o600,
+		"the mode of a file the extraction did not create was changed"
+	);
+	let error = result.expect_err("a replaced link must stop the extraction");
+	assert!(error.to_string().contains("changed"), "{error}");
+}
