@@ -90,3 +90,42 @@ fn a_tagged_services_section_keeps_its_fields_typed() {
 	);
 	assert_eq!(file.services["web"].user.as_deref(), Some("1000"));
 }
+
+/// Numbers are valid where the schema says "string or number": a group id, a
+/// logging option, a driver option, a health-check argument that is only a
+/// substitution. They used to stop the whole file from loading.
+#[test]
+fn numbers_load_as_text_in_the_remaining_text_fields() {
+	let file = parse_with(
+		"services:
+  web:
+    image: x
+    group_add: [999, \"${DOCKER_GID}\"]
+    healthcheck:
+      test: [CMD, nc, -z, localhost, \"${PORT}\"]
+    logging:
+      driver: json-file
+      options:
+        max-file: 3
+        max-size: 10
+    build:
+      context: .
+      shm_size: 67108864
+      args:
+        N: 4
+networks:
+  net:
+    driver_opts:
+      mtu: 1450
+volumes:
+  vol:
+    driver_opts:
+      size: 100
+",
+		&[("DOCKER_GID", "998"), ("PORT", "8080")],
+	);
+	let web = &file.services["web"];
+	assert_eq!(web.group_add, ["999", "998"]);
+	let test = web.healthcheck.as_ref().unwrap().test.clone();
+	assert!(format!("{test:?}").contains("8080"), "{test:?}");
+}

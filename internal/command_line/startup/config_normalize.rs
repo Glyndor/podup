@@ -139,8 +139,11 @@ fn normalize_lexically(path: &Path) -> String {
 }
 
 /// Quote any plain (unquoted) YAML scalar value that a strict YAML 1.1 reader
-/// would misparse as a boolean (`yes`/`no`/`on`/`off`/`y`/`n`/`true`/`false`),
-/// leaving already-quoted scalars, keys, and everything else untouched. Works on
+/// would misparse as a boolean (`yes`/`no`/`on`/`off`/`y`/`n`), leaving
+/// already-quoted scalars, keys, and everything else untouched. `true` and
+/// `false` are not in the list: serde_yaml already quotes a string that reads
+/// as one, so a plain `true` in its output is a real boolean and quoting it
+/// would turn `privileged: true` into the string `'true'`. Works on
 /// yaml_serde's block output, where each scalar value sits after a `: `
 /// mapping separator or a `- ` sequence marker on its own line.
 ///
@@ -245,11 +248,12 @@ fn is_quoted(s: &str) -> bool {
 
 /// Whether a scalar matches a YAML 1.1 boolean token (case-insensitive) that a
 /// 1.1 reader would resolve to true/false. The YAML 1.2 core schema serde_yaml
-/// emits leaves these as plain strings.
+/// emits leaves these as plain strings. `true`/`false` are real booleans in 1.2
+/// too, so they are not matched.
 fn looks_like_yaml11_bool(s: &str) -> bool {
 	matches!(
 		s.to_ascii_lowercase().as_str(),
-		"y" | "yes" | "n" | "no" | "true" | "false" | "on" | "off"
+		"y" | "yes" | "n" | "no" | "on" | "off"
 	)
 }
 
