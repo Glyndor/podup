@@ -49,11 +49,14 @@ pub(in crate::backends::engine) fn builder<W: std::io::Write>(writer: W) -> tar:
 /// and the reader takes the extra bytes for the next header: the whole archive
 /// is corrupt. Here the body is cut at the stated size, and padded with zeroes
 /// if the file shrank, so the archive stays well formed either way.
+///
+/// Returns that size. The caller that records what it sent uses it and does not
+/// ask the file again, since a second answer can differ from the first.
 pub(in crate::backends::engine) fn append_pinned_file<W: std::io::Write>(
 	tar: &mut tar::Builder<W>,
 	name: &std::path::Path,
 	file: &mut std::fs::File,
-) -> std::io::Result<()> {
+) -> std::io::Result<u64> {
 	let metadata = file.metadata()?;
 	append_exact(tar, name, &metadata, file)
 }
@@ -63,12 +66,13 @@ fn append_exact<W: std::io::Write, R: std::io::Read>(
 	name: &std::path::Path,
 	metadata: &std::fs::Metadata,
 	body: R,
-) -> std::io::Result<()> {
+) -> std::io::Result<u64> {
 	let size = metadata.len();
 	let mut header = tar::Header::new_gnu();
 	header.set_metadata(metadata);
 	header.set_size(size);
-	tar.append_data(&mut header, name, Exact(body.take(size)))
+	tar.append_data(&mut header, name, Exact(body.take(size)))?;
+	Ok(size)
 }
 
 /// Yields exactly the bytes its inner `Take` allows: the source's own, then

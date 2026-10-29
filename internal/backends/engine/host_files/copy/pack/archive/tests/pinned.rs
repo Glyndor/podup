@@ -153,3 +153,68 @@ fn replacing_a_visited_directory_with_a_link_does_not_redirect_its_children() {
 		"the entry must carry the bytes of the file the directory held when it was opened"
 	);
 }
+
+/// A writer that makes a file grow the first time the archive is written to,
+/// which is when the header of its entry has just been written with the size
+/// the file had.
+struct GrowOnFirstWrite<W> {
+	inner: W,
+	grow: Option<PathBuf>,
+}
+
+impl<W: Write> Write for GrowOnFirstWrite<W> {
+	fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+		if let Some(path) = self.grow.take() {
+			let mut file = std::fs::OpenOptions::new().append(true).open(path)?;
+			file.write_all(&vec![b'z'; 700])?;
+		}
+		self.inner.write(buf)
+	}
+
+	fn flush(&mut self) -> std::io::Result<()> {
+		self.inner.flush()
+	}
+}
+
+/// A single file named on the command line, copied without `-L`, that grows
+/// after its header was written: the entry keeps the size of its header, the
+/// archive stays readable, and the recorder holds that size.
+#[cfg(unix)]
+#[test]
+fn a_single_file_that_grows_while_it_is_packed_keeps_the_archive_well_formed() {
+	let dir = tempfile::tempdir().expect("tempdir");
+	let path = dir.path().join("log");
+	let original = vec![b'a'; 600];
+	std::fs::write(&path, &original).expect("write");
+
+	let mut buf = Vec::new();
+	let mut sent = Vec::new();
+	{
+		let sink = GrowOnFirstWrite {
+			inner: &mut buf,
+			grow: Some(path.clone()),
+		};
+		let mut tar = tar::Builder::new(sink);
+		super::super::pack_path(&path, false, None, false, &mut tar, &mut sent).expect("pack_path");
+	}
+
+	let mut archive = tar::Archive::new(&buf[..]);
+	let mut entries = archive.entries().expect("entries");
+	let mut first = entries.next().expect("one entry").expect("well formed");
+	let mut body = Vec::new();
+	std::io::Read::read_to_end(&mut first, &mut body).expect("read entry");
+	assert_eq!(
+		body, original,
+		"the entry carries the size its header states"
+	);
+	drop(first);
+	assert!(
+		entries.next().is_none(),
+		"the grown bytes were taken for the next header"
+	);
+	assert_eq!(
+		sent.iter().map(|e| e.kind.clone()).collect::<Vec<_>>(),
+		vec![crate::engine::copy::verify::SentKind::File(600)],
+		"the recorder holds the size the header announced"
+	);
+}
