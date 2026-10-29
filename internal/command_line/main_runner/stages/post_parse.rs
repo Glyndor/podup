@@ -250,8 +250,8 @@ pub(crate) async fn run_engine_command(
 	// the same project. Read-only / follow commands (ps, logs, top, port,
 	// images, exec, pull, cp, config, watch) take no lock so they don't block
 	// or get blocked. The guard is held until `run` returns, except that a
-	// foreground `up` lets go of it while it only follows logs or watches and takes
-	// it again for the final stop (see `dispatch`). A foreground `run` keeps it:
+	// foreground `up` lets go of it while it only follows logs and takes it again
+	// for the final stop (see `dispatch`). A foreground `run` keeps it:
 	// the engine creates the container and attaches to it in one call.
 	let mut lock = if crate::startup::is_mutating(&cli.command) {
 		Some(engine.lock_project()?)
