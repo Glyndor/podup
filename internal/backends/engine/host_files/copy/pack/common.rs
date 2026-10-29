@@ -101,7 +101,6 @@ where
 				})?;
 				let ft = meta.file_type();
 				if ft.is_file() {
-					let size = meta.len();
 					// Open the target through the link. `File::open` follows
 					// symlinks, so the file handle and its metadata are the
 					// target's; `append_file` writes the body the handle
@@ -110,7 +109,7 @@ where
 					// not guaranteed at every call site.
 					let mut file =
 						std::fs::File::open(path).map_err(|e| map_err(&e.to_string()))?;
-					crate::engine::context::tar_stream::append_pinned_file(
+					let size = crate::engine::context::tar_stream::append_pinned_file(
 						tar,
 						std::path::Path::new(name),
 						&mut file,
@@ -204,11 +203,27 @@ where
 						.map_err(|e| map_err(&e.to_string()))?;
 					push_entry(sent, name, SentKind::Link(target_str.to_string()))?;
 				} else if file_type.is_file() {
-					let size = std::fs::metadata(path)
+					// One open handle for the header, the body and the size that is
+					// recorded; the leaf is not followed, so a link put under the
+					// name after the classification above is refused, not read.
+					let mut file =
+						open_without_following(path).map_err(|e| map_err(&e.to_string()))?;
+					if !file
+						.metadata()
 						.map_err(|e| map_err(&e.to_string()))?
-						.len();
-					tar.append_path_with_name(path, name)
-						.map_err(|e| map_err(&e.to_string()))?;
+						.is_file()
+					{
+						return Err(map_err(&format!(
+							"{} is no longer a regular file",
+							path.display()
+						)));
+					}
+					let size = crate::engine::context::tar_stream::append_pinned_file(
+						tar,
+						std::path::Path::new(name),
+						&mut file,
+					)
+					.map_err(|e| map_err(&e.to_string()))?;
 					push_entry(sent, name, SentKind::File(size))?;
 				} else {
 					// FIFO, char/block device, socket, hard link, anything else
@@ -283,20 +298,11 @@ pub(in crate::backends::engine) fn append_pinned<W: Write>(
 	};
 	match entry {
 		walk::Entry::File(mut file) => {
-			// The size comes from the descriptor that is about to be read, so
-			// the recorder and the header cannot describe two different files.
-			let size = file
-				.metadata()
-				.map_err(|e| {
-					map_err(&format!(
-						"{} when getting metadata for {}",
-						e,
-						abs.display()
-					))
-				})?
-				.len();
-			crate::engine::context::tar_stream::append_pinned_file(tar, &name, &mut file)
-				.map_err(|e| map_err(&e.to_string()))?;
+			// The size the header announces is the size that is recorded: the
+			// helper reports it, so the two cannot come from separate answers.
+			let size =
+				crate::engine::context::tar_stream::append_pinned_file(tar, &name, &mut file)
+					.map_err(|e| map_err(&e.to_string()))?;
 			push_entry(sent, &name, SentKind::File(size))?;
 		}
 		walk::Entry::Directory(metadata) => {
@@ -330,4 +336,20 @@ pub(in crate::backends::engine) fn append_pinned<W: Write>(
 		}
 	}
 	Ok(())
+}
+
+/// Open `path` for reading without following a link in the last component.
+fn open_without_following(path: &Path) -> std::io::Result<std::fs::File> {
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::OpenOptionsExt;
+		std::fs::OpenOptions::new()
+			.read(true)
+			.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+			.open(path)
+	}
+	#[cfg(not(unix))]
+	{
+		std::fs::File::open(path)
+	}
 }
