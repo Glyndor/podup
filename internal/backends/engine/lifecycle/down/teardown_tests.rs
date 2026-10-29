@@ -398,3 +398,51 @@ async fn remove_service_images_reports_a_real_failure_after_trying_them_all() {
 		"the sweep must finish before reporting: both images are attempted"
 	);
 }
+
+/// A network the project does not own is refused, but the volumes below it are
+/// still the project's to remove. The refusal used to return at once, so
+/// `down -v` stopped before reaching them and left the data it was asked to
+/// delete.
+#[tokio::test]
+#[cfg(unix)]
+async fn a_refused_network_does_not_stop_the_volumes_being_removed() {
+	let fake = fake_podman::start(move |method, target| {
+		if method == "GET"
+			&& (target.contains("/containers/json") || target.contains("/networks/json"))
+		{
+			(200, "[]".to_string())
+		} else if method == "GET" && target.contains("/networks/") {
+			// Exists, carries no ownership label.
+			(200, r#"{"name":"proj_net"}"#.to_string())
+		} else if method == "GET" && target.contains("/volumes/") {
+			(200, r#"{"Labels":{"podup.project":"proj"}}"#.to_string())
+		} else if method == "DELETE" && target.contains("/volumes/proj_vol") {
+			(200, String::new())
+		} else {
+			(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+	let file =
+		crate::parse_str("services:\n  web:\n    image: x\nnetworks:\n  net:\nvolumes:\n  vol:\n")
+			.unwrap();
+
+	let err = e
+		.down_with_options(&file, true)
+		.await
+		.expect_err("the refusal is still reported");
+	assert!(err.to_string().contains("proj_net"), "{err}");
+
+	let seen = fake.requests.lock().unwrap();
+	assert!(
+		seen.iter()
+			.any(|r| r.contains("DELETE") && r.contains("/volumes/proj_vol")),
+		"the volume was not removed after the network was refused: {seen:?}"
+	);
+	assert!(
+		!seen
+			.iter()
+			.any(|r| r.contains("DELETE") && r.contains("/networks/proj_net")),
+		"a network the project does not own was removed: {seen:?}"
+	);
+}
