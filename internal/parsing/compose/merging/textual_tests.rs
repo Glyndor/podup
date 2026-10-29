@@ -57,3 +57,15 @@ fn an_interpolated_value_keeps_its_text_when_a_number_would_change_it() {
 		assert!(env.contains(text), "{text} was rewritten: {env}");
 	}
 }
+
+/// The string-only keys apply to the keys of a service, not to any key that
+/// happens to carry the same name. A service called `user` still gets its
+/// boolean typed, and a label called `command` is not a string-only field.
+#[test]
+fn a_service_named_like_a_string_key_keeps_its_fields_typed() {
+	let file = parse_with(
+		"services:\n  user:\n    image: x\n    privileged: \"${FLAG:-false}\"\n",
+		&[],
+	);
+	assert_eq!(file.services["user"].privileged, Some(false));
+}

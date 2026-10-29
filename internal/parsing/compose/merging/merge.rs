@@ -135,7 +135,53 @@ fn interpolate_value(
 	spent: &mut usize,
 	warned: &mut HashSet<String>,
 ) -> Result<()> {
-	interpolate_in(value, vars, spent, warned, false)
+	// A key is a "string key" (see `textual::is_string_key`) only as a direct key
+	// of a service or job. Applying that by name at any depth made a service
+	// called `user`, or a label called `command`, change how its whole subtree
+	// is typed.
+	let serde_yaml::Value::Mapping(root) = value else {
+		return interpolate_in(value, vars, spent, warned, false, false);
+	};
+	if !mapping_needs_interp(root) {
+		return Ok(());
+	}
+	let taken = std::mem::take(root);
+	let mut rebuilt = serde_yaml::Mapping::with_capacity(taken.len());
+	for (key, mut section) in taken {
+		let key = interpolate_key(key, vars, warned)?;
+		let holds_services = matches!(key.as_str(), Some("services" | "jobs"));
+		match &mut section {
+			serde_yaml::Value::Mapping(entries) if holds_services => {
+				let taken_entries = std::mem::take(entries);
+				let mut rebuilt_entries = serde_yaml::Mapping::with_capacity(taken_entries.len());
+				for (name, mut service) in taken_entries {
+					let name = interpolate_key(name, vars, warned)?;
+					interpolate_service(&mut service, vars, spent, warned)?;
+					rebuilt_entries.insert(name, service);
+				}
+				*entries = rebuilt_entries;
+			}
+			other => interpolate_in(other, vars, spent, warned, false, false)?,
+		}
+		rebuilt.insert(key, section);
+	}
+	*root = rebuilt;
+	Ok(())
+}
+
+/// Interpolate one service (or job): its direct keys may be string keys.
+fn interpolate_service(
+	service: &mut serde_yaml::Value,
+	vars: &HashMap<String, String>,
+	spent: &mut usize,
+	warned: &mut HashSet<String>,
+) -> Result<()> {
+	match service {
+		serde_yaml::Value::Tagged(tagged) => {
+			interpolate_service(&mut tagged.value, vars, spent, warned)
+		}
+		other => interpolate_in(other, vars, spent, warned, false, true),
+	}
 }
 
 /// [`interpolate_value`] with `text` set when the value sits under a key whose
@@ -148,6 +194,7 @@ fn interpolate_in(
 	spent: &mut usize,
 	warned: &mut HashSet<String>,
 	text: bool,
+	service_keys: bool,
 ) -> Result<()> {
 	match value {
 		serde_yaml::Value::String(s) if s.contains('$') => {
@@ -160,7 +207,7 @@ fn interpolate_in(
 			};
 		}
 		serde_yaml::Value::Tagged(tagged) => {
-			interpolate_in(&mut tagged.value, vars, spent, warned, text)?;
+			interpolate_in(&mut tagged.value, vars, spent, warned, text, service_keys)?;
 		}
 		serde_yaml::Value::Sequence(seq) => {
 			// Skip the recursion when no element carries a `$`: a 100-service file
@@ -171,7 +218,7 @@ fn interpolate_in(
 				return Ok(());
 			}
 			for item in seq.iter_mut() {
-				interpolate_in(item, vars, spent, warned, text)?;
+				interpolate_in(item, vars, spent, warned, text, false)?;
 			}
 		}
 		serde_yaml::Value::Mapping(map) => {
@@ -188,8 +235,9 @@ fn interpolate_in(
 			let mut rebuilt = serde_yaml::Mapping::with_capacity(taken.len());
 			for (key, mut val) in taken {
 				let key = interpolate_key(key, vars, warned)?;
-				let value_is_text = text || key.as_str().is_some_and(super::textual::is_string_key);
-				interpolate_in(&mut val, vars, spent, warned, value_is_text)?;
+				let value_is_text = text
+					|| (service_keys && key.as_str().is_some_and(super::textual::is_string_key));
+				interpolate_in(&mut val, vars, spent, warned, value_is_text, false)?;
 				rebuilt.insert(key, val);
 			}
 			*map = rebuilt;
