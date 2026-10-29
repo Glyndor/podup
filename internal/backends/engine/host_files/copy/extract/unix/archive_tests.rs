@@ -197,3 +197,160 @@ fn hardlinks_preserve_files_without_read_or_write_permission() {
 	.unwrap();
 	assert_eq!(std::fs::read(tmp.path().join("hard")).unwrap(), b"data");
 }
+
+#[cfg(unix)]
+#[test]
+fn hardlinks_to_preexisting_files_are_rejected_without_changing_permissions() {
+	use super::super::hostile_support::raw;
+	let tmp = tempfile::tempdir().unwrap();
+	let dst = tmp.path().join("dest");
+	std::fs::create_dir(&dst).unwrap();
+	let credential = dst.join("credencial");
+	let outside = tmp.path().join("another-name");
+	std::fs::write(&credential, b"original").unwrap();
+	std::fs::set_permissions(&credential, std::fs::Permissions::from_mode(0o600)).unwrap();
+	std::fs::hard_link(&credential, &outside).unwrap();
+	let root = Directory::open_host(&dst).unwrap();
+	let bytes = archive(&[raw(
+		b"copia",
+		tar::EntryType::Link,
+		b"credencial",
+		0o644,
+		b"",
+	)]);
+	let result = extract(&bytes[..], &root);
+	for path in [&credential, &outside] {
+		let metadata = std::fs::metadata(path).unwrap();
+		assert_eq!(metadata.permissions().mode() & 0o7777, 0o600);
+		assert_eq!(metadata.nlink(), 2);
+		assert_eq!(std::fs::read(path).unwrap(), b"original");
+	}
+	assert!(std::fs::symlink_metadata(dst.join("copia")).is_err());
+	let error = result.expect_err("a hard link requires a file from this extraction");
+	assert!(error.to_string().contains("credencial"), "{error}");
+}
+
+#[cfg(unix)]
+#[test]
+fn hardlinks_to_files_created_by_the_current_extraction_share_the_inode() {
+	use super::super::hostile_support::raw;
+	let tmp = tempfile::tempdir().unwrap();
+	let root = Directory::open_host(tmp.path()).unwrap();
+	let bytes = archive(&[
+		file("a", b"content", 0o600),
+		raw(b"b", tar::EntryType::Link, b"a", 0o644, b""),
+	]);
+	extract(&bytes[..], &root).unwrap();
+	let original = std::fs::metadata(tmp.path().join("a")).unwrap();
+	let linked = std::fs::metadata(tmp.path().join("b")).unwrap();
+	assert_eq!(original.dev(), linked.dev());
+	assert_eq!(original.ino(), linked.ino());
+	assert_eq!(original.permissions().mode() & 0o7777, 0o644);
+	assert_eq!(linked.permissions().mode() & 0o7777, 0o644);
+	assert_eq!(std::fs::read(tmp.path().join("b")).unwrap(), b"content");
+}
+
+#[cfg(unix)]
+#[test]
+fn readonly_directories_receive_their_final_mode_after_their_contents() {
+	let tmp = tempfile::tempdir().unwrap();
+	let root = Directory::open_host(tmp.path()).unwrap();
+	let bytes = archive(&[
+		dir("datos/", 0o555),
+		file("datos/contenido", b"content", 0o644),
+	]);
+	let result = extract(&bytes[..], &root);
+	let metadata = std::fs::metadata(tmp.path().join("datos")).unwrap();
+	let content = std::fs::read(tmp.path().join("datos/contenido"));
+	std::fs::set_permissions(
+		tmp.path().join("datos"),
+		std::fs::Permissions::from_mode(0o755),
+	)
+	.unwrap();
+	result.unwrap();
+	assert_eq!(metadata.permissions().mode() & 0o7777, 0o555);
+	assert_eq!(content.unwrap(), b"content");
+}
+
+#[cfg(unix)]
+#[test]
+fn repeated_directory_headers_keep_the_last_mode_with_nested_contents() {
+	let tmp = tempfile::tempdir().unwrap();
+	let root = Directory::open_host(tmp.path()).unwrap();
+	let bytes = archive(&[
+		dir("datos/sub/", 0o500),
+		dir("datos/", 0o555),
+		file("datos/sub/first", b"first", 0o600),
+		dir("datos/sub/", 0o555),
+		dir("datos/", 0o500),
+		file("datos/sub/second", b"second", 0o644),
+	]);
+	let result = extract(&bytes[..], &root);
+	let outer = std::fs::metadata(tmp.path().join("datos")).unwrap();
+	let inner = std::fs::metadata(tmp.path().join("datos/sub")).unwrap();
+	let content = std::fs::read(tmp.path().join("datos/sub/second"));
+	for path in ["datos", "datos/sub"] {
+		std::fs::set_permissions(
+			tmp.path().join(path),
+			std::fs::Permissions::from_mode(0o755),
+		)
+		.unwrap();
+	}
+	result.unwrap();
+	assert_eq!(outer.permissions().mode() & 0o7777, 0o500);
+	assert_eq!(inner.permissions().mode() & 0o7777, 0o555);
+	assert_eq!(content.unwrap(), b"second");
+}
+
+/// Open descriptors of this process, counted from /proc.
+fn open_descriptors() -> usize {
+	std::fs::read_dir("/proc/self/fd")
+		.map(|d| d.count())
+		.unwrap_or(0)
+}
+
+/// A reader that notes how many descriptors were open at its first and its last
+/// read, which bracket the extraction.
+struct WatchDescriptors<R> {
+	inner: R,
+	first: Option<usize>,
+	last: usize,
+}
+
+impl<R: std::io::Read> std::io::Read for WatchDescriptors<R> {
+	fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+		let open = open_descriptors();
+		self.first.get_or_insert(open);
+		self.last = open;
+		self.inner.read(buf)
+	}
+}
+
+/// Extraction keeps what it has to know about the files and directories it
+/// created as identities, not as open descriptors: with one descriptor kept per
+/// file, a tree of a few thousand files runs into the limit of a process.
+#[cfg(target_os = "linux")]
+#[test]
+fn extracting_many_files_does_not_keep_a_descriptor_for_each() {
+	let tmp = tempfile::tempdir().unwrap();
+	let root = Directory::open_host(tmp.path()).unwrap();
+	let mut parts = vec![dir("tree/", 0o755)];
+	for i in 0..1500 {
+		parts.push(file(&format!("tree/f{i}"), b"x", 0o644));
+	}
+	let bytes = archive(&parts);
+	let mut watched = WatchDescriptors {
+		inner: &bytes[..],
+		first: None,
+		last: 0,
+	};
+	extract(&mut watched, &root).unwrap();
+	let first = watched.first.expect("the archive was read");
+	// Other tests open and close descriptors while this one runs, so the bound
+	// is far below the 1500 a descriptor per file would add.
+	assert!(
+		watched.last < first + 300,
+		"descriptors grew from {first} to {} while extracting",
+		watched.last
+	);
+}

@@ -209,8 +209,11 @@ fn garbage_and_truncated_archives_return_without_panicking() {
 	arena.assert_outside_untouched("garbage archives");
 }
 
+/// A directory whose mode allows no access is still extracted with its contents,
+/// and ends with that mode: its mode is applied once everything inside it is
+/// there. Nothing is written outside the destination either way.
 #[test]
-fn an_unreadable_directory_entry_stops_the_copy_and_nothing_leaves_the_destination() {
+fn a_directory_without_access_receives_its_contents_and_then_its_mode() {
 	let arena = Arena::new();
 	let tar = archive(&[
 		dir("locked/", 0o000),
@@ -218,13 +221,18 @@ fn an_unreadable_directory_entry_stops_the_copy_and_nothing_leaves_the_destinati
 		file("after", b"x", 0o644),
 	]);
 	let result = run(&arena, &tar);
-	// Root keeps CAP_DAC_OVERRIDE and writes into the directory anyway, so
-	// the precondition is checked on the process, not guessed from the uid.
-	let probe = std::fs::File::create(arena.dest.join("locked/probe"));
+	let mode = std::fs::metadata(arena.dest.join("locked"))
+		.expect("stat")
+		.mode()
+		& 0o7777;
 	set_mode(&arena.dest.join("locked"), 0o700);
-	if probe.is_err() {
-		assert!(result.is_err(), "a write into a mode 000 directory passed");
-	}
+	result.expect("a valid archive extracts");
+	assert_eq!(mode, 0o000, "the directory must end with its own mode");
+	assert_eq!(
+		std::fs::read(arena.dest.join("locked/inside")).expect("inside"),
+		b"x"
+	);
+	assert!(arena.dest.join("after").exists());
 	arena.assert_outside_untouched("mode 000 directory");
 }
 

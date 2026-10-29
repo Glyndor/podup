@@ -1,10 +1,11 @@
 //! Filesystem operations relative to directory descriptors, never path prefixes.
 
+use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 
 use rustix::fs::{self, AtFlags, Mode, OFlags};
 use rustix::io::Errno;
@@ -38,6 +39,83 @@ const DIRECTORY_FLAGS: OFlags = READ_DIRECTORY_FLAGS;
 
 /// A directory whose identity survives replacement of its path components.
 pub(crate) struct Directory(File);
+
+type FileIdentity = (u64, u64);
+
+// Device and inode fields have platform-dependent integer types.
+#[allow(clippy::unnecessary_cast)]
+fn file_identity(stat: &fs::Stat) -> FileIdentity {
+	(stat.st_dev as u64, stat.st_ino as u64)
+}
+
+/// What an extraction has created so far, kept as identities and not as open
+/// descriptors: a tree of thousands of files would otherwise run out of them.
+#[derive(Default)]
+pub(super) struct ExtractionState {
+	/// Regular files this extraction created. A hard link may only point at one.
+	files: HashSet<FileIdentity>,
+	/// Directories in the order they were first visited, with the mode each is
+	/// to end up with once everything inside it has been extracted.
+	directories: Vec<PendingDirectory>,
+	directory_indices: HashMap<FileIdentity, usize>,
+}
+
+struct PendingDirectory {
+	path: PathBuf,
+	identity: FileIdentity,
+	mode: Option<u32>,
+}
+
+impl ExtractionState {
+	pub(super) fn record_file(&mut self, file: &File) -> io::Result<()> {
+		self.files.insert(file_identity(&fs::fstat(file)?));
+		Ok(())
+	}
+
+	/// Note a directory seen at `path` (relative to the extraction root). A
+	/// repeated header only updates the mode it is to end up with.
+	pub(super) fn record_directory(
+		&mut self,
+		dir: &Directory,
+		path: &Path,
+		mode: Option<u32>,
+	) -> io::Result<()> {
+		let identity = file_identity(&fs::fstat(&dir.0)?);
+		if let Some(&index) = self.directory_indices.get(&identity) {
+			if mode.is_some() {
+				self.directories[index].mode = mode;
+			}
+		} else {
+			self.directory_indices
+				.insert(identity, self.directories.len());
+			self.directories.push(PendingDirectory {
+				path: path.to_path_buf(),
+				identity,
+				mode,
+			});
+		}
+		Ok(())
+	}
+
+	/// Give every directory its final mode, the ones inside first. Each is
+	/// reached again from the pinned root without following links and must be
+	/// the directory that was recorded.
+	pub(super) fn finish_directory_modes(self, root: &Directory) -> io::Result<()> {
+		for pending in self.directories.into_iter().rev() {
+			let Some(mode) = pending.mode else { continue };
+			let (parent, name) = root.parent(&pending.path, false)?;
+			let dir = parent.child(&name, false)?;
+			if file_identity(&fs::fstat(&dir.0)?) != pending.identity {
+				return Err(io::Error::other(format!(
+					"cp: directory changed while it was being extracted: {}",
+					pending.path.display()
+				)));
+			}
+			dir.chmod(mode)?;
+		}
+		Ok(())
+	}
+}
 
 impl Directory {
 	/// Open each host component separately, preserving physical `..` semantics.
@@ -109,14 +187,27 @@ impl Directory {
 
 	/// Resolve only archive-normalized names, rooted at this descriptor.
 	pub(crate) fn parent(&self, path: &Path, create: bool) -> io::Result<(Self, OsString)> {
+		self.parent_with(path, create, |_, _| Ok(()))
+	}
+
+	/// Visit each parent in traversal order while its descriptor is pinned.
+	pub(super) fn parent_with(
+		&self,
+		path: &Path,
+		create: bool,
+		mut visit: impl FnMut(&Self, &Path) -> io::Result<()>,
+	) -> io::Result<(Self, OsString)> {
 		let mut parts = path.iter().collect::<Vec<_>>();
 		let name = parts
 			.pop()
 			.ok_or_else(|| io::Error::other("cp: archive entry has no name"))?
 			.to_owned();
 		let mut dir = self.child(OsStr::new("."), false)?;
+		let mut walked = PathBuf::new();
 		for part in parts {
 			dir = dir.child(part, create)?;
+			walked.push(part);
+			visit(&dir, &walked)?;
 		}
 		Ok((dir, name))
 	}
@@ -177,27 +268,45 @@ impl Directory {
 		)?)
 	}
 
-	/// Link a regular source within the pinned root, without following its leaf.
-	pub(crate) fn hardlink(
+	/// Link a regular file created by this extraction within the pinned root.
+	///
+	/// A source that existed before the extraction is refused: its inode may
+	/// have other names outside the destination, and the mode in the archive
+	/// is never applied to an inode the extraction did not create.
+	pub(super) fn hardlink(
 		&self,
 		name: &OsStr,
 		root: &Self,
 		target: &Path,
 		mode: Option<u32>,
+		state: &ExtractionState,
 	) -> io::Result<Option<File>> {
 		let (source, leaf) = root.parent(target, false)?;
 		let stat = fs::statat(&source.0, &leaf, AtFlags::SYMLINK_NOFOLLOW)?;
 		if fs::FileType::from_raw_mode(stat.st_mode) != fs::FileType::RegularFile {
-			return Err(io::Error::other(
-				"cp: hard link source is not a regular file",
-			));
+			return Err(io::Error::other(format!(
+				"cp: hard link source is not a regular file: {}",
+				target.display()
+			)));
+		}
+		let identity = file_identity(&stat);
+		if !state.files.contains(&identity) {
+			return Err(io::Error::other(format!(
+				"cp: hard link source was not created by this extraction: {}",
+				target.display()
+			)));
 		}
 		// No SYMLINK_FOLLOW: a leaf changed after stat can only link the
-		// symlink itself, never its target. Later writes replace the inode.
+		// symlink itself, never its target.
 		fs::linkat(&source.0, &leaf, &self.0, name, AtFlags::empty())?;
 		let linked = fs::statat(&self.0, name, AtFlags::SYMLINK_NOFOLLOW)?;
-		if fs::FileType::from_raw_mode(linked.st_mode) != fs::FileType::RegularFile {
-			return Err(io::Error::other("cp: hard link source changed type"));
+		if fs::FileType::from_raw_mode(linked.st_mode) != fs::FileType::RegularFile
+			|| file_identity(&linked) != identity
+		{
+			return Err(io::Error::other(format!(
+				"cp: hard link source identity changed: {}",
+				target.display()
+			)));
 		}
 		if mode.is_none_or(|mode| linked.st_mode & 0o7777 == masked_mode(mode).bits()) {
 			return Ok(None);
