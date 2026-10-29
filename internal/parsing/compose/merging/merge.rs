@@ -110,6 +110,10 @@ pub(in super::super) fn interpolated_value(
 	let mut value: serde_yaml::Value = serde_yaml::from_str(content).map_err(|error| {
 		super::super::types::service::umask::number_error(content).unwrap_or(error.into())
 	})?;
+	// Merge keys first: a service built from `<<: *base` has its keys only after
+	// they are resolved, and the typing of an interpolated value depends on the
+	// key being a direct key of the service.
+	apply_merge_keys(&mut value);
 	if let Some(vars) = vars {
 		// One budget for the whole document. The per-scalar cap cannot see
 		// repetition spread across scalars, which is the shape that reached
@@ -120,7 +124,6 @@ pub(in super::super) fn interpolated_value(
 		let mut warned = HashSet::new();
 		interpolate_value(&mut value, vars, &mut spent, &mut warned)?;
 	}
-	apply_merge_keys(&mut value);
 	Ok(value)
 }
 
@@ -150,7 +153,12 @@ fn interpolate_value(
 	for (key, mut section) in taken {
 		let key = interpolate_key(key, vars, warned)?;
 		let holds_services = matches!(key.as_str(), Some("services" | "jobs"));
-		match &mut section {
+		// `services: !override {...}` is a tagged mapping; look through the tag.
+		let mut inner = &mut section;
+		while let serde_yaml::Value::Tagged(tagged) = inner {
+			inner = &mut tagged.value;
+		}
+		match inner {
 			serde_yaml::Value::Mapping(entries) if holds_services => {
 				let taken_entries = std::mem::take(entries);
 				let mut rebuilt_entries = serde_yaml::Mapping::with_capacity(taken_entries.len());
