@@ -71,3 +71,29 @@ async fn finding_3_label_down_removes_main_pod_before_networks() {
 		"pod infra container must release networks first: {seen:?}"
 	);
 }
+
+/// A pod the project owns that cannot be removed is a failed `down`, not a
+/// warning: the pod is still there, and the exit status said otherwise.
+#[tokio::test]
+async fn a_pod_that_cannot_be_removed_fails_the_removal() {
+	let fake = fake_podman::start(|method, target| {
+		if method == "GET" && target.ends_with("/pods/proj/json") {
+			(
+				200,
+				serde_json::json!({"Id":"pod-id","Labels":{"podup.project":"proj"}}).to_string(),
+			)
+		} else if method == "DELETE" && target.contains("/pods/proj") {
+			(500, r#"{"message":"device or resource busy"}"#.to_string())
+		} else {
+			empty_lists(method, target)
+		}
+	});
+	let error = engine(&fake)
+		.remove_pod()
+		.await
+		.expect_err("a pod that stays must fail the removal");
+	assert!(
+		matches!(error, crate::error::ComposeError::Podman(ref e) if e.is_status(500)),
+		"{error:?}"
+	);
+}

@@ -119,6 +119,8 @@ impl Engine {
 			Err(e) => {
 				tracing::warn!("could not remove pod {}: {e}", self.project);
 				crate::ui::progress_line("Pod", &self.project, "Failed");
+				// The pod is still there. `down` must not report success for it.
+				return Err(crate::error::ComposeError::Podman(e));
 			}
 		}
 		// `down --remove-orphans` sweeps by the `podup.project` label and is
