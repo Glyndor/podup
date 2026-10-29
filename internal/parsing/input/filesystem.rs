@@ -57,6 +57,12 @@ pub(crate) fn read_capped(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
 	read_capped_with(path.as_ref(), MAX_FILE_BYTES)
 }
 
+/// [`read_capped`] with a limit of the caller's choosing, for a file that has a
+/// stricter limit of its own than the general one.
+pub(crate) fn read_capped_up_to(path: impl AsRef<Path>, max: u64) -> io::Result<Vec<u8>> {
+	read_capped_with(path.as_ref(), max)
+}
+
 fn read_capped_with(path: &Path, max: u64) -> io::Result<Vec<u8>> {
 	reject_non_regular(path)?;
 	// Same single-handle, cap-on-the-read strategy as the string variant: the

@@ -10,7 +10,7 @@ use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
 
-use super::plan::{check_secret_size, Payload};
+use super::plan::{check_secret_size, Payload, MAX_SECRET_BYTES, MAX_SECRET_TOTAL_BYTES};
 use super::secret_bytes::SecretBytes;
 use super::{collect_payload_union, Engine};
 
@@ -34,6 +34,7 @@ impl Engine {
 		file: &ComposeFile,
 	) -> Result<()> {
 		let mut work: Vec<(String, SecretBytes)> = Vec::new();
+		let mut retained = 0usize;
 		// SHA-256 of every `file:` source we upload this pass, keyed by the
 		// project-scoped Podman secret name we will create it under. The
 		// per-container label built later reads this map instead of touching
@@ -50,12 +51,17 @@ impl Engine {
 				// same bounded read the compose-adjacent files get; Podman's own
 				// 512 kB secret limit is enforced right after, in `create_secret`.
 				Payload::File(path) => {
-					let raw = crate::filesystem::read_capped(&path).map_err(|e| {
-						ComposeError::Unsupported(format!(
-							"secret/config source {} could not be read: {e}",
-							path.display()
-						))
-					})?;
+					// Read with the secret limit, not the general one, and check
+					// the size before the bytes are kept: a payload Podman would
+					// refuse is not worth holding while the rest are read.
+					let raw = crate::filesystem::read_capped_up_to(&path, MAX_SECRET_BYTES as u64)
+						.map_err(|e| {
+							ComposeError::Unsupported(format!(
+								"secret/config source {} could not be read: {e}",
+								path.display()
+							))
+						})?;
+					check_secret_size(&name, raw.len())?;
 					// Hash the bytes we just read (no second read of the same
 					// path, no change to what is uploaded): the label build
 					// runs later, after image acquisition and `depends_on`
@@ -65,6 +71,13 @@ impl Engine {
 					SecretBytes::new(raw)
 				}
 			};
+			retained += bytes.byte_len();
+			if retained > MAX_SECRET_TOTAL_BYTES {
+				return Err(ComposeError::Unsupported(format!(
+					"the secrets and configs of this project hold more than \
+					 {MAX_SECRET_TOTAL_BYTES} bytes together"
+				)));
+			}
 			work.push((name, bytes));
 		}
 		// Publish what was actually uploaded so `config_hash` (called from the
