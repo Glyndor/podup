@@ -250,3 +250,54 @@ fn included_path_is_directory_becomes_include_variant() {
 		"expected Include, got {err:?}"
 	);
 }
+
+/// The depth is bounded, but a few small files that each include the next one
+/// several times would still cost that many reads to the power of the depth.
+/// The reads are counted for the whole project, and the file in the message is
+/// repeated, not new.
+#[test]
+fn files_included_again_and_again_hit_a_budget_of_reads() {
+	let dir = tempfile::tempdir().expect("tempdir");
+	for i in 0..9 {
+		let next = format!("f{}.yml", i + 1);
+		let body = if i == 8 {
+			"services:\n  leaf:\n    image: x\n".to_string()
+		} else {
+			format!("include: [{next}, {next}, {next}]\nservices:\n  s{i}:\n    image: x\n")
+		};
+		write_file(&dir.path().join(format!("f{i}.yml")), &body);
+	}
+	let main = dir.path().join("docker-compose.yml");
+	write_file(
+		&main,
+		"include: [f0.yml]\nservices:\n  app:\n    image: x\n",
+	);
+	let started = std::time::Instant::now();
+	let err = parse_main(&main).expect_err("an include tree this repetitive must be refused");
+	assert!(
+		matches!(err, ComposeError::Include(_)) && err.to_string().contains("again and again"),
+		"{err}"
+	);
+	assert!(
+		started.elapsed() < std::time::Duration::from_secs(20),
+		"refusing took {:?}",
+		started.elapsed()
+	);
+}
+
+/// A project that includes a handful of files, even the same one twice, is far
+/// below the budget.
+#[test]
+fn a_few_includes_stay_within_the_budget() {
+	let dir = tempfile::tempdir().expect("tempdir");
+	write_file(
+		&dir.path().join("shared.yml"),
+		"services:\n  helper:\n    image: x\n",
+	);
+	let main = dir.path().join("docker-compose.yml");
+	write_file(
+		&main,
+		"include: [shared.yml, shared.yml]\nservices:\n  app:\n    image: x\n",
+	);
+	assert!(parse_main(&main).is_ok());
+}

@@ -16,6 +16,11 @@ use crate::error::{ComposeError, Result};
 /// includes itself from being read forever.
 const MAX_INCLUDE_DEPTH: usize = 16;
 
+/// The most included files one project reads, counting a file every time it is
+/// included. The depth bound alone allows a handful of files that each include
+/// the next ten times to cost ten to the power of the depth in reads.
+const MAX_INCLUDE_VISITS: usize = 512;
+
 /// Read and parse a file referenced by `include:`, wrapping every failure in
 /// [`ComposeError::Include`] so a consumer matching on the variant can tell the
 /// failure originated from an included file rather than the top-level compose
@@ -112,9 +117,19 @@ pub(in super::super) fn merge_includes(
 	interpolate: bool,
 ) -> Result<HashMap<String, Vec<String>>> {
 	let mut added: HashMap<String, Vec<String>> = HashMap::new();
-	let mut chain: Vec<PathBuf> = Vec::new();
-	merge_includes_in(file, dir, env_files, interpolate, &mut added, 0, &mut chain)?;
+	let mut walk = Walk::default();
+	merge_includes_in(file, dir, env_files, interpolate, &mut added, 0, &mut walk)?;
 	Ok(added)
+}
+
+/// What the whole resolution of one project's includes has seen so far.
+#[derive(Default)]
+struct Walk {
+	/// The files being read right now, outermost first: a file met again here
+	/// is a cycle.
+	chain: Vec<PathBuf>,
+	/// Every inclusion so far, counted each time, against [`MAX_INCLUDE_VISITS`].
+	visits: usize,
 }
 
 /// [`merge_includes`] over one file: its `include:` list, and the includes of
@@ -126,7 +141,7 @@ fn merge_includes_in(
 	interpolate: bool,
 	added: &mut HashMap<String, Vec<String>>,
 	depth: usize,
-	chain: &mut Vec<PathBuf>,
+	walk: &mut Walk,
 ) -> Result<()> {
 	if depth > MAX_INCLUDE_DEPTH {
 		return Err(ComposeError::Include(format!(
@@ -170,13 +185,20 @@ fn merge_includes_in(
 			// A file that is already being read is a cycle: `a.yml` includes
 			// `b.yml`, which includes `a.yml` again.
 			let key = inc_path.canonicalize().unwrap_or_else(|_| inc_path.clone());
-			if chain.contains(&key) {
+			if walk.chain.contains(&key) {
 				return Err(ComposeError::Include(format!(
 					"circular include: {} is already being included",
 					inc_path.display()
 				)));
 			}
-			chain.push(key);
+			walk.visits += 1;
+			if walk.visits > MAX_INCLUDE_VISITS {
+				return Err(ComposeError::Include(format!(
+					"include: more than {MAX_INCLUDE_VISITS} included files read for this project; \
+					 the same files are included again and again"
+				)));
+			}
+			walk.chain.push(key);
 			let mut included =
 				parse_included_file(&inc_path, &inc_dir, &combined_env_files, interpolate)?;
 			// The names this file declares, before its own includes add more.
@@ -195,7 +217,7 @@ fn merge_includes_in(
 				interpolate,
 				&mut nested,
 				depth + 1,
-				chain,
+				walk,
 			)?;
 			// The services this file contributes to the parent.
 			let mut own: HashMap<String, Vec<String>> = HashMap::new();
@@ -217,7 +239,7 @@ fn merge_includes_in(
 			for (name, files) in own {
 				added.entry(name).or_insert(files);
 			}
-			chain.pop();
+			walk.chain.pop();
 		}
 	}
 	Ok(())
