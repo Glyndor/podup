@@ -65,3 +65,26 @@ fn a_plain_scalar_that_hides_the_aliases_from_the_scan_does_not_hide_the_expansi
 		"the document expands to ten million nodes"
 	);
 }
+
+/// A large anchored scalar repeated by aliases is few nodes and a lot of bytes:
+/// the node count alone lets it through. The poisoning prefix keeps the lexical
+/// caps out of it, so the count of replayed bytes is the only thing that acts.
+#[test]
+fn a_large_scalar_repeated_by_aliases_is_counted_by_its_bytes() {
+	let big = "a".repeat(100_000);
+	let refs = vec!["*big"; 200].join(", ");
+	let yaml = format!(
+		"note: x 'y\nx-big: &big \"{big}\"\nx-use: [{refs}]\nservices:\n  web:\n    image: x\n"
+	);
+	assert!(
+		super::super::merge::interpolated_value(&yaml, None).is_err(),
+		"twenty megabytes of replayed scalar were accepted"
+	);
+}
+
+#[test]
+fn the_byte_limit_is_what_acts_when_the_nodes_are_few() {
+	let yaml = "a: &s \"xxxxxxxxxx\"\nb: [*s, *s, *s, *s]\n";
+	assert!(within_limits(yaml, 1_000, 1_000).is_ok());
+	assert!(within_limits(yaml, 1_000, 30).is_err());
+}

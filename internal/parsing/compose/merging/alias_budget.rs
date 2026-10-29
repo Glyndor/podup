@@ -5,8 +5,11 @@
 //! anchor that holds aliases to another anchor, which multiplies: forty
 //! references in thirteen kilobytes can replay to forty million nodes.
 //!
-//! Here the nodes are counted as the parser replays them, and the count stops
-//! the parse the moment it passes the limit, so the expansion is never built.
+//! Here the nodes, and the bytes of the scalars among them, are counted as the
+//! parser replays them, and the count stops the parse the moment it passes
+//! either limit, so the expansion is never built. Both are needed: forty
+//! references to a large anchored scalar are forty nodes and still hundreds of
+//! megabytes.
 //! The count is only a bound: a failure that is not the limit (a tag in a shape
 //! the counter does not follow, a syntax error) is left to the real parse to
 //! report.
@@ -24,23 +27,35 @@ use crate::error::{ComposeError, Result};
 /// large compose file is thousands, not millions.
 pub(super) const MAX_EXPANDED_NODES: usize = 2_000_000;
 
-/// What the counter's own error says when the limit is passed.
+/// The most bytes of scalars (values and keys) a document may expand to. The
+/// same bound the interpolation of a whole document is held to.
+pub(super) const MAX_EXPANDED_BYTES: usize = 16 * 1024 * 1024;
+
+/// What the counter's own error says when a limit is passed.
 const OVERRUN: &str = "podup: alias expansion limit";
 
-/// Refuse a document whose aliases expand to more than `limit` nodes.
+/// Refuse a document whose aliases expand to more than `limit` nodes, or to more
+/// than [`MAX_EXPANDED_BYTES`] bytes of scalars.
 pub(super) fn within_limit(content: &str, limit: usize) -> Result<()> {
+	within_limits(content, limit, MAX_EXPANDED_BYTES)
+}
+
+fn within_limits(content: &str, limit: usize, byte_limit: usize) -> Result<()> {
 	let nodes = Cell::new(0usize);
+	let bytes = Cell::new(0usize);
 	for document in serde_yaml::Deserializer::from_str(content) {
 		let counted = Count {
 			nodes: &nodes,
 			limit,
+			bytes: &bytes,
+			byte_limit,
 		}
 		.deserialize(document);
 		if let Err(e) = counted {
 			if e.to_string().contains(OVERRUN) {
 				return Err(ComposeError::Unsupported(format!(
-					"compose document uses YAML aliases that expand to more than {limit} nodes; \
-					 inline the repeated content instead"
+					"compose document uses YAML aliases that expand to more than {limit} nodes \
+					 or {byte_limit} bytes; inline the repeated content instead"
 				)));
 			}
 			// Anything else is for the real parse to report.
@@ -54,6 +69,8 @@ pub(super) fn within_limit(content: &str, limit: usize) -> Result<()> {
 struct Count<'a> {
 	nodes: &'a Cell<usize>,
 	limit: usize,
+	bytes: &'a Cell<usize>,
+	byte_limit: usize,
 }
 
 impl Count<'_> {
@@ -102,7 +119,12 @@ impl<'de> Visitor<'de> for Count<'_> {
 		self.tick()
 	}
 
-	fn visit_str<E: de::Error>(self, _: &str) -> std::result::Result<(), E> {
+	fn visit_str<E: de::Error>(self, text: &str) -> std::result::Result<(), E> {
+		let bytes = self.bytes.get().saturating_add(text.len());
+		self.bytes.set(bytes);
+		if bytes > self.byte_limit {
+			return Err(E::custom(OVERRUN));
+		}
 		self.tick()
 	}
 
