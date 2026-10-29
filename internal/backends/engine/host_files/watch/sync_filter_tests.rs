@@ -285,3 +285,52 @@ fn entry_is_unsyncable_false_for_utf8_path() {
 		"a UTF-8 path must not be reported unsyncable"
 	);
 }
+
+/// The body of the entry named `path` in a gzipped tar.
+fn tar_body(gz: &[u8], path: &str) -> Vec<u8> {
+	let mut decoder = GzDecoder::new(gz);
+	let mut raw = Vec::new();
+	decoder.read_to_end(&mut raw).unwrap();
+	let mut archive = tar::Archive::new(&raw[..]);
+	for entry in archive.entries().unwrap() {
+		let mut entry = entry.unwrap();
+		if entry.path().unwrap().to_string_lossy() == path {
+			let mut body = Vec::new();
+			entry.read_to_end(&mut body).unwrap();
+			return body;
+		}
+	}
+	panic!("no entry named {path}");
+}
+
+/// A directory of the watched tree that is replaced by a link while the sync is
+/// being packed does not redirect what goes out under its name: the sync walks
+/// through descriptors, so the entry carries the file the directory held when
+/// it was opened.
+#[cfg(unix)]
+#[test]
+fn replacing_a_visited_directory_with_a_link_does_not_redirect_the_sync() {
+	let dir = tempdir().unwrap();
+	let outside = tempdir().unwrap();
+	let tree = dir.path().join("tree");
+	let sub = tree.join("sub");
+	fs::create_dir_all(&sub).unwrap();
+	fs::write(sub.join("credencial"), b"INSIDE").unwrap();
+	fs::write(outside.path().join("credencial"), b"OUTSIDE-MARKER").unwrap();
+
+	let swap_sub = sub.clone();
+	let target = outside.path().to_path_buf();
+	let swapped = std::cell::Cell::new(false);
+	// The filter is asked about every entry, which is the moment to swap.
+	let skip = |name: &Path| {
+		if name.ends_with("sub") && !swapped.replace(true) {
+			let moved = swap_sub.with_extension("moved");
+			fs::rename(&swap_sub, &moved).unwrap();
+			std::os::unix::fs::symlink(&target, &swap_sub).unwrap();
+		}
+		false
+	};
+	let (gz, _) = sync_to_gz_with_sent(&tree, Path::new("tree"), &skip).unwrap();
+	assert!(swapped.get(), "the swap never happened");
+	assert_eq!(tar_body(&gz, "tree/sub/credencial"), b"INSIDE");
+}

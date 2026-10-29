@@ -20,7 +20,7 @@ use std::path::Path;
 use crate::error::{ComposeError, Result};
 
 use crate::engine::context::walk::walk_dir;
-use crate::engine::copy::pack_common::{record_one, walk, KindDispatch};
+use crate::engine::copy::pack_common::{append_pinned, record_one, walk, KindDispatch};
 use crate::engine::copy::verify::SentEntry;
 
 /// Pack `src` into a gzipped tar, storing its top-level entry under
@@ -84,37 +84,36 @@ pub(in crate::backends::engine) fn build_sync_tar<W: Write>(
 				watch_tar,
 			)?;
 		}
-		for abs in walk::walk_dir(src).map_err(watch_io)? {
-			let rel = abs
-				.strip_prefix(src)
-				.map_err(|_| watch_err(format!("path strip: {}", abs.display())))?;
-			// Re-root each descendant under `entry_name` so the directory lands at
-			// the rule target with its in-tree layout preserved.
-			let name = entry_name.join(rel);
-			// The filter is the gate the watch loop uses to refuse entries that
-			// would land in a deeper writable bind that maps back into the
-			// watched tree. A directory the filter drops is still walked: a
-			// safe deeper mount may sit below it.
-			if skip(&name) {
-				continue;
-			}
-			// Classify without following symlinks so a symlink-to-dir is stored as
-			// a link, not dereferenced.
-			let is_dir = abs.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
-			if is_dir {
-				record_one(tar, sent, &name, &abs, KindDispatch::Dir, false, watch_tar)?;
-			} else {
-				record_one(
-					tar,
-					sent,
-					&name,
-					&abs,
-					KindDispatch::FileOrLink,
-					false,
-					watch_tar,
-				)?;
-			}
+		// Walked through descriptors, so the bytes of an entry are those of the
+		// file the walk opened, not of whatever its name points at by the time
+		// it is read. A directory the filter drops is still walked: a safe
+		// deeper mount may sit below it.
+		let mut failure: Option<ComposeError> = None;
+		let walked = walk::visit_dir_skipping(
+			src,
+			|_| false,
+			|_| true,
+			|abs, entry| {
+				let rel = abs
+					.strip_prefix(src)
+					.map_err(|_| std::io::Error::other("path strip"))?;
+				// Re-root each descendant under `entry_name` so the directory lands
+				// at the rule target with its in-tree layout preserved.
+				if skip(&entry_name.join(rel)) {
+					return Ok(());
+				}
+				append_pinned(tar, sent, src, Some(entry_name), abs, entry, &watch_tar).map_err(
+					|e| {
+						failure = Some(e);
+						std::io::Error::other("sync: the entry could not be packed")
+					},
+				)
+			},
+		);
+		if let Some(e) = failure {
+			return Err(e);
 		}
+		walked.map_err(watch_io)?;
 	} else if !skip(entry_name) {
 		record_one(
 			tar,
