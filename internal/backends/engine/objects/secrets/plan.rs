@@ -5,10 +5,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::compose::types::{ComposeFile, Service, ServiceConfigRef, ServiceSecretRef};
-use crate::error::{ComposeError, Result};
-
-use super::secret_bytes::SecretBytes;
 use crate::engine::project::lock::staging;
+use crate::error::{ComposeError, Result};
 
 /// Podman's hard limit on secret payload size (from `containers/common`): the
 /// payload must be larger than 0 and strictly smaller than this many bytes.
@@ -19,15 +17,12 @@ pub(super) const MAX_SECRET_BYTES: usize = 512_000;
 /// can name thousands of them, and they are all read before the first upload.
 pub(super) const MAX_SECRET_TOTAL_BYTES: usize = 32 * 1024 * 1024;
 
-/// Where the bytes of a podup-created secret come from.
-///
-/// A `file:` source carries the resolved host path rather than its contents:
-/// this module maps compose to plans with no I/O at all, which is what keeps the
-/// mapping unit-testable, so the read happens in the effectful layer that creates
-/// the secret.
-pub(super) enum Payload {
-	/// Inline `content:`/`environment:`: the bytes, already resolved.
-	Inline(SecretBytes),
+/// Sources are materialized only after the project-wide union is deduplicated.
+pub(super) enum Payload<'a> {
+	/// Borrow compose content until creation checks its size and budget.
+	Inline(&'a str),
+	/// Resolve the variable during creation, under the shared budget.
+	Environment(&'a str),
 	/// `file:` is the resolved host path to read at creation time.
 	File(PathBuf),
 }
@@ -36,13 +31,13 @@ pub(super) enum Payload {
 /// the in-container `target`, optional permissions, and, for every source podup
 /// creates itself, the `payload` to create under `source`. `external: true`
 /// references carry no payload (the secret must pre-exist).
-pub(super) struct NativePlan {
+pub(super) struct NativePlan<'a> {
 	pub(super) source: String,
 	pub(super) target: String,
 	pub(super) mode: Option<u32>,
 	pub(super) uid: Option<u32>,
 	pub(super) gid: Option<u32>,
-	pub(super) payload: Option<Payload>,
+	pub(super) payload: Option<Payload<'a>>,
 }
 
 /// The fields of a `secrets:`/`configs:` definition that decide where its bytes
@@ -57,9 +52,11 @@ struct SourceDef<'a> {
 }
 
 /// Where a secret/config's bytes come from once the compose def is resolved.
-enum Source {
-	/// Inline `content:`/`environment:`: `(scoped podman name, payload bytes)`.
-	Inline(String, SecretBytes),
+enum Source<'a> {
+	/// `content:`: `(scoped podman name, borrowed content)`.
+	Inline(String, &'a str),
+	/// `environment:`: `(scoped podman name, variable name)`.
+	Environment(String, &'a str),
 	/// `file:`: `(scoped podman name, resolved host path)`.
 	File(String, PathBuf),
 	/// `external: true`: name of the pre-existing podman secret.
@@ -69,12 +66,12 @@ enum Source {
 /// Collect the native-secret plans for a service without touching the daemon. A
 /// dangerous `mode:` (execute/setuid/setgid/sticky) is rejected here so a
 /// hostile mode never reaches Podman.
-pub(super) fn collect_native_plans(
+pub(super) fn collect_native_plans<'a>(
 	project: &str,
 	service: &Service,
-	file: &ComposeFile,
+	file: &'a ComposeFile,
 	base_dir: &Path,
-) -> Result<Vec<NativePlan>> {
+) -> Result<Vec<NativePlan<'a>>> {
 	let mut plans = Vec::new();
 
 	for secret_ref in &service.secrets {
@@ -140,13 +137,13 @@ pub(super) fn collect_native_plans(
 /// wins (it may also carry a custom `name:`); every other populated source,
 /// inline `content:`/`environment:` and `file:` alike, becomes a project-scoped
 /// native secret. An empty def yields `None` and contributes no plan.
-fn resolve_source(
+fn resolve_source<'a>(
 	project: &str,
 	kind: &str,
 	name: &str,
-	def: SourceDef<'_>,
+	def: SourceDef<'a>,
 	base_dir: &Path,
-) -> Result<Option<Source>> {
+) -> Result<Option<Source<'a>>> {
 	let SourceDef {
 		content,
 		environment,
@@ -172,18 +169,13 @@ fn resolve_source(
 	if let Some(content) = content {
 		return Ok(Some(Source::Inline(
 			scoped_name(project, kind, name),
-			SecretBytes::new(content.as_bytes().to_vec()),
+			content,
 		)));
 	}
 	if let Some(env_var) = environment {
-		let value = std::env::var(env_var).map_err(|_| {
-			ComposeError::Unsupported(format!(
-				"{kind} '{name}' references env var '{env_var}' which is not set"
-			))
-		})?;
-		return Ok(Some(Source::Inline(
+		return Ok(Some(Source::Environment(
 			scoped_name(project, kind, name),
-			SecretBytes::new(value.into_bytes()),
+			env_var,
 		)));
 	}
 	if let Some(host_path) = file_source {
@@ -204,9 +196,9 @@ fn resolve_source(
 /// rejecting a dangerous `mode:` before the spec is built. `uid`/`gid` are
 /// numeric in libpod, so a non-numeric value (a user/group name) is dropped to
 /// the default rather than erroring.
-fn push_plan(
-	plans: &mut Vec<NativePlan>,
-	source: Option<Source>,
+fn push_plan<'a>(
+	plans: &mut Vec<NativePlan<'a>>,
+	source: Option<Source<'a>>,
 	target: String,
 	mode: Option<u32>,
 	uid: Option<String>,
@@ -215,6 +207,7 @@ fn push_plan(
 	let (source, payload, from_file) = match source {
 		None => return Ok(()),
 		Some(Source::Inline(s, p)) => (s, Some(Payload::Inline(p)), false),
+		Some(Source::Environment(s, p)) => (s, Some(Payload::Environment(p)), false),
 		Some(Source::File(s, p)) => (s, Some(Payload::File(p)), true),
 		Some(Source::External(s)) => (s, None, false),
 	};

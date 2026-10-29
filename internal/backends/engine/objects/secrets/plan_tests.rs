@@ -1,14 +1,13 @@
 use super::*;
 
-fn plans(yaml: &str) -> Vec<NativePlan> {
-	let file = crate::compose::parse_str_raw(yaml).unwrap();
-	collect_native_plans("proj", &file.services["web"], &file, Path::new("/base")).unwrap()
+fn plans(file: &ComposeFile) -> Vec<NativePlan<'_>> {
+	collect_native_plans("proj", &file.services["web"], file, Path::new("/base")).unwrap()
 }
 
-/// The inline bytes of a plan's payload, or `None` for an external/file source.
-fn inline_bytes(p: &NativePlan) -> Option<&[u8]> {
+/// Content bytes only; other sources remain unresolved in the plan.
+fn inline_bytes<'a>(p: &NativePlan<'a>) -> Option<&'a [u8]> {
 	match &p.payload {
-		Some(Payload::Inline(b)) => Some(b.expose_secret()),
+		Some(Payload::Inline(b)) => Some((*b).as_bytes()),
 		_ => None,
 	}
 }
@@ -18,7 +17,8 @@ fn file_secret_is_a_scoped_native_secret_carrying_its_path() {
 	// A `file:` secret is a project-scoped native secret like any other source.
 	// The plan carries the resolved path, not the bytes: this module does no I/O,
 	// so the read belongs to the layer that creates the secret.
-	let p = plans("services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    file: ./tok.txt\n");
+	let file = crate::compose::parse_str_raw("services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    file: ./tok.txt\n").unwrap();
+	let p = plans(&file);
 	assert_eq!(p.len(), 1);
 	assert_eq!(p[0].source, "proj_secret_tok");
 	assert_eq!(p[0].target, "tok");
@@ -32,19 +32,22 @@ fn file_secret_leaves_mode_unset_for_the_host_bits() {
 	// With no `mode:` the plan stays unset so the effectful layer can mirror the
 	// host file's own bits, rather than widening a 0600 secret to the 0444 the
 	// other sources default to.
-	let p = plans("services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    file: ./tok.txt\n");
+	let file = crate::compose::parse_str_raw("services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    file: ./tok.txt\n").unwrap();
+	let p = plans(&file);
 	assert_eq!(p[0].mode, None);
 }
 
 #[test]
 fn file_secret_honours_an_explicit_mode() {
-	let p = plans("services:\n  web:\n    image: nginx\n    secrets:\n      - source: tok\n        mode: 0400\nsecrets:\n  tok:\n    file: ./tok.txt\n");
+	let file = crate::compose::parse_str_raw("services:\n  web:\n    image: nginx\n    secrets:\n      - source: tok\n        mode: 0400\nsecrets:\n  tok:\n    file: ./tok.txt\n").unwrap();
+	let p = plans(&file);
 	assert_eq!(p[0].mode, Some(0o400));
 }
 
 #[test]
 fn file_config_is_native_with_absolute_default_target() {
-	let p = plans("services:\n  web:\n    image: nginx\n    configs: [cfg]\nconfigs:\n  cfg:\n    file: ./cfg.yaml\n");
+	let file = crate::compose::parse_str_raw("services:\n  web:\n    image: nginx\n    configs: [cfg]\nconfigs:\n  cfg:\n    file: ./cfg.yaml\n").unwrap();
+	let p = plans(&file);
 	assert_eq!(p.len(), 1);
 	assert_eq!(p[0].source, "proj_config_cfg");
 	assert_eq!(p[0].target, "/cfg");
@@ -67,7 +70,11 @@ fn file_secret_with_unsafe_name_is_rejected() {
 fn empty_def_contributes_no_plan() {
 	// A def with no content:, environment:, file: or external: is not a secret
 	// podup can produce anything for.
-	let p = plans("services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok: {}\n");
+	let file = crate::compose::parse_str_raw(
+		"services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok: {}\n",
+	)
+	.unwrap();
+	let p = plans(&file);
 	assert!(p.is_empty());
 }
 
@@ -75,7 +82,8 @@ fn empty_def_contributes_no_plan() {
 fn inline_content_secret_is_scoped_native_with_payload() {
 	// `content:` becomes a project-scoped native secret carrying the bytes;
 	// the mount target defaults to the bare compose name (→ /run/secrets/tok).
-	let p = plans("services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    content: supersecret\n");
+	let file = crate::compose::parse_str_raw("services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    content: supersecret\n").unwrap();
+	let p = plans(&file);
 	assert_eq!(p.len(), 1);
 	assert_eq!(p[0].source, "proj_secret_tok");
 	assert_eq!(p[0].target, "tok");
@@ -85,7 +93,8 @@ fn inline_content_secret_is_scoped_native_with_payload() {
 #[test]
 fn inline_content_config_is_scoped_native_with_absolute_target() {
 	// Configs default to an absolute container-root path.
-	let p = plans("services:\n  web:\n    image: nginx\n    configs: [cfg]\nconfigs:\n  cfg:\n    content: key=value\n");
+	let file = crate::compose::parse_str_raw("services:\n  web:\n    image: nginx\n    configs: [cfg]\nconfigs:\n  cfg:\n    content: key=value\n").unwrap();
+	let p = plans(&file);
 	assert_eq!(p.len(), 1);
 	assert_eq!(p[0].source, "proj_config_cfg");
 	assert_eq!(p[0].target, "/cfg");
@@ -93,22 +102,28 @@ fn inline_content_config_is_scoped_native_with_absolute_target() {
 }
 
 #[test]
-fn env_secret_payload_comes_from_environment() {
+fn env_secret_plan_keeps_the_variable_name() {
 	temp_env::with_var("PODUP_TEST_SECRET", Some("env-value"), || {
-		let p = plans("services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    environment: PODUP_TEST_SECRET\n");
+		let file = crate::compose::parse_str_raw("services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    environment: PODUP_TEST_SECRET\n").unwrap();
+		let p = plans(&file);
 		assert_eq!(p.len(), 1);
 		assert_eq!(p[0].source, "proj_secret_tok");
-		assert_eq!(inline_bytes(&p[0]), Some(b"env-value".as_slice()));
+		assert!(matches!(
+			&p[0].payload,
+			Some(Payload::Environment(variable)) if *variable == "PODUP_TEST_SECRET"
+		));
 	});
 }
 
 #[test]
-fn env_secret_missing_var_errors() {
+fn env_secret_planning_does_not_require_the_variable_to_be_set() {
 	temp_env::with_var("PODUP_TEST_MISSING", None::<&str>, || {
 		let file = crate::compose::parse_str_raw("services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    environment: PODUP_TEST_MISSING\n").unwrap();
-		assert!(
-			collect_native_plans("proj", &file.services["web"], &file, Path::new("/base")).is_err()
-		);
+		let p = plans(&file);
+		assert!(matches!(
+			&p[0].payload,
+			Some(Payload::Environment(variable)) if *variable == "PODUP_TEST_MISSING"
+		));
 	});
 }
 
@@ -117,7 +132,8 @@ fn external_secret_keeps_compose_name_unscoped_no_payload() {
 	// An `external: true` secret points at a pre-existing podman secret: the
 	// source equals the compose name (no project scoping) and carries no
 	// payload. The mount filename defaults to the compose name.
-	let p = plans("services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    external: true\n");
+	let file = crate::compose::parse_str_raw("services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    external: true\n").unwrap();
+	let p = plans(&file);
 	assert_eq!(p.len(), 1);
 	assert_eq!(p[0].source, "tok");
 	assert_eq!(p[0].target, "tok");
@@ -129,7 +145,8 @@ fn external_secret_long_form_maps_source_target_and_perms() {
 	// A long-form ref overrides the mount name, a custom top-level `name:` is
 	// the real podman secret, and numeric uid/gid/mode pass through. `mode:` is
 	// octal notation per the Compose Specification (leading-zero `0400`).
-	let p = plans("services:\n  web:\n    image: nginx\n    secrets:\n      - source: tok\n        target: app_tok\n        uid: \"100\"\n        gid: \"101\"\n        mode: 0400\nsecrets:\n  tok:\n    external: true\n    name: real_tok\n");
+	let file = crate::compose::parse_str_raw("services:\n  web:\n    image: nginx\n    secrets:\n      - source: tok\n        target: app_tok\n        uid: \"100\"\n        gid: \"101\"\n        mode: 0400\nsecrets:\n  tok:\n    external: true\n    name: real_tok\n").unwrap();
+	let p = plans(&file);
 	assert_eq!(p.len(), 1);
 	assert_eq!(p[0].source, "real_tok");
 	assert_eq!(p[0].target, "app_tok");
@@ -140,7 +157,8 @@ fn external_secret_long_form_maps_source_target_and_perms() {
 
 #[test]
 fn external_config_becomes_native_with_absolute_default_target() {
-	let p = plans("services:\n  web:\n    image: nginx\n    configs: [cfg]\nconfigs:\n  cfg:\n    external: true\n");
+	let file = crate::compose::parse_str_raw("services:\n  web:\n    image: nginx\n    configs: [cfg]\nconfigs:\n  cfg:\n    external: true\n").unwrap();
+	let p = plans(&file);
 	assert_eq!(p.len(), 1);
 	assert_eq!(p[0].source, "cfg");
 	assert_eq!(p[0].target, "/cfg");
@@ -150,7 +168,8 @@ fn external_config_becomes_native_with_absolute_default_target() {
 fn non_numeric_uid_drops_to_default() {
 	// libpod secret uid/gid are numeric; a user/group name falls back to the
 	// default rather than erroring.
-	let p = plans("services:\n  web:\n    image: nginx\n    secrets:\n      - source: tok\n        uid: appuser\nsecrets:\n  tok:\n    external: true\n");
+	let file = crate::compose::parse_str_raw("services:\n  web:\n    image: nginx\n    secrets:\n      - source: tok\n        uid: appuser\nsecrets:\n  tok:\n    external: true\n").unwrap();
+	let p = plans(&file);
 	assert_eq!(p.len(), 1);
 	assert!(p[0].uid.is_none());
 }
@@ -195,7 +214,8 @@ fn inline_secret_rejects_dangerous_mode() {
 fn native_secret_allows_world_readable_mode() {
 	// 0o444 (= 292) is the Podman/compose default for an in-container secret
 	// and must be allowed (unlike the old shared-host staging path).
-	let p = plans("services:\n  web:\n    image: nginx\n    secrets:\n      - source: tok\n        mode: 292\nsecrets:\n  tok:\n    external: true\n");
+	let file = crate::compose::parse_str_raw("services:\n  web:\n    image: nginx\n    secrets:\n      - source: tok\n        mode: 292\nsecrets:\n  tok:\n    external: true\n").unwrap();
+	let p = plans(&file);
 	assert_eq!(p[0].mode, Some(0o444));
 }
 
@@ -223,7 +243,8 @@ fn inline_secret_with_unsafe_name_is_rejected() {
 fn native_secret_without_mode_defaults_to_0444() {
 	// The Compose Specification default is world-readable 0444; a Podman-native
 	// secret otherwise mounts at 0000 and a non-root container user can't read it.
-	let p = plans("services:\n  web:\n    image: x\n    secrets: [tok]\nsecrets:\n  tok:\n    content: data\n");
+	let file = crate::compose::parse_str_raw("services:\n  web:\n    image: x\n    secrets: [tok]\nsecrets:\n  tok:\n    content: data\n").unwrap();
+	let p = plans(&file);
 	assert_eq!(p.len(), 1);
 	assert_eq!(p[0].mode, Some(0o444));
 }
@@ -232,7 +253,8 @@ fn native_secret_without_mode_defaults_to_0444() {
 fn secret_mode_leading_zero_is_octal() {
 	// `0444` (leading-zero octal, the Compose Specification spelling) parses as
 	// octal 0o444, not decimal 444 (which would fail); issue #2.
-	let p = plans("services:\n  web:\n    image: x\n    secrets:\n      - source: tok\n        mode: 0444\nsecrets:\n  tok:\n    content: data\n");
+	let file = crate::compose::parse_str_raw("services:\n  web:\n    image: x\n    secrets:\n      - source: tok\n        mode: 0444\nsecrets:\n  tok:\n    content: data\n").unwrap();
+	let p = plans(&file);
 	assert_eq!(p[0].mode, Some(0o444));
 }
 

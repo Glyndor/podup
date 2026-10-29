@@ -6,6 +6,8 @@
 //! delete-then-create. Why `file:` sources are copied into native secrets at
 //! all is in the module docs of [`super`].
 
+use std::borrow::Cow;
+
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
 use crate::libpod::{urlencoded, API_PREFIX};
@@ -46,16 +48,21 @@ impl Engine {
 		let mut uploaded_modes: std::collections::HashMap<String, u32> =
 			std::collections::HashMap::new();
 		for (name, payload) in collect_payload_union(&self.project, file, &self.base_dir)? {
-			let bytes = match payload {
-				Payload::Inline(bytes) => bytes,
-				// Read here rather than in the planner, which stays free of I/O so
-				// the compose→plan mapping remains unit-testable. The cap is the
-				// same bounded read the compose-adjacent files get; Podman's own
-				// 512 kB secret limit is enforced right after, in `create_secret`.
+			let from_file = matches!(&payload, Payload::File(_));
+			let raw: Cow<'_, [u8]> = match payload {
+				Payload::Inline(content) => Cow::Borrowed(content.as_bytes()),
+				Payload::Environment(variable) => {
+					let value = std::env::var(variable).map_err(|_| {
+						ComposeError::Unsupported(format!(
+							"secret/config '{name}' references env var '{variable}' which is not set"
+						))
+					})?;
+					Cow::Owned(value.into_bytes())
+				}
 				Payload::File(path) => {
-					// Read with the secret limit, not the general one, and check
-					// the size before the bytes are kept: a payload Podman would
-					// refuse is not worth holding while the rest are read.
+					// Read with the secret limit, not the general one. The mode comes
+					// from the same handle as the bytes: the mount uses it, not
+					// whatever the path names later.
 					let (raw, mode) =
 						crate::filesystem::read_capped_with_mode(&path, MAX_SECRET_BYTES as u64)
 							.map_err(|e| {
@@ -64,27 +71,25 @@ impl Engine {
 									path.display()
 								))
 							})?;
-					check_secret_size(&name, raw.len())?;
-					// The mode of the file that was just read, from the same handle:
-					// the mount uses this one, not whatever the path names later.
 					uploaded_modes.insert(name.clone(), mode);
-					// Hash the bytes we just read (no second read of the same
-					// path, no change to what is uploaded): the label build
-					// runs later, after image acquisition and `depends_on`
-					// waits, and the host file may have moved on by then.
-					let digest: [u8; 32] = Sha256::digest(&raw).into();
-					uploaded_digests.insert(name.clone(), digest);
-					SecretBytes::new(raw)
+					Cow::Owned(raw)
 				}
 			};
-			retained += bytes.byte_len();
-			if retained > MAX_SECRET_TOTAL_BYTES {
+			check_secret_size(&name, raw.len())?;
+			if raw.len() > MAX_SECRET_TOTAL_BYTES - retained {
 				return Err(ComposeError::Unsupported(format!(
 					"the secrets and configs of this project hold more than \
 					 {MAX_SECRET_TOTAL_BYTES} bytes together"
 				)));
 			}
-			work.push((name, bytes));
+			retained += raw.len();
+			if from_file {
+				// Labels must describe the exact bytes selected for upload.
+				let digest: [u8; 32] = Sha256::digest(raw.as_ref()).into();
+				uploaded_digests.insert(name.clone(), digest);
+			}
+			// Inline content is copied only after both limits accept it.
+			work.push((name, SecretBytes::new(raw.into_owned())));
 		}
 		// Publish what was actually uploaded so `config_hash` (called from the
 		// per-service label build) can read it without re-opening the file.

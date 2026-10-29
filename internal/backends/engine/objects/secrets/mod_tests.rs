@@ -17,7 +17,7 @@ fn only_file_path(engine: &Engine, yaml: &str) -> PathBuf {
 	assert_eq!(union.len(), 1);
 	match union.into_values().next().unwrap() {
 		Payload::File(p) => p,
-		Payload::Inline(_) => panic!("expected a file payload"),
+		Payload::Inline(_) | Payload::Environment(_) => panic!("expected a file payload"),
 	}
 }
 
@@ -54,7 +54,7 @@ fn inline_union_dedups_shared_secret_across_services() {
 	assert_eq!(union.len(), 1);
 	assert!(matches!(
 		union.get("proj_secret_tok"),
-		Some(Payload::Inline(b)) if b.expose_secret() == b"shared"
+		Some(Payload::Inline(b)) if *b == "shared"
 	));
 }
 
@@ -82,4 +82,26 @@ fn external_secret_is_never_in_the_payload_union() {
 	let file = crate::compose::parse_str_raw(yaml).unwrap();
 	let union = collect_payload_union("proj", &file, Path::new("/base")).unwrap();
 	assert!(union.is_empty());
+}
+
+/// Planning only names the source of an environment secret. The variable is read
+/// where the secret is created, under the budget of the project, so a project
+/// that names thousands of secrets from one large variable does not copy it once
+/// for each of them before any limit can act. An unset variable is therefore
+/// not an error of the plan.
+#[test]
+fn planning_an_environment_secret_does_not_read_the_variable() {
+	temp_env::with_var("PODUP_PLAN_ONLY_VARIABLE", None::<&str>, || {
+		let engine = engine_with_base("/srv/project");
+		let file = crate::compose::parse_str_raw(
+			"services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    environment: PODUP_PLAN_ONLY_VARIABLE\n",
+		)
+		.unwrap();
+		let union = collect_payload_union("proj", &file, &engine.base_dir)
+			.expect("an unset variable is not an error of the plan");
+		assert!(matches!(
+			union.get("proj_secret_tok"),
+			Some(Payload::Environment(name)) if *name == "PODUP_PLAN_ONLY_VARIABLE"
+		));
+	});
 }
