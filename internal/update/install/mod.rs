@@ -27,7 +27,7 @@ pub(crate) use platform::asset_for;
 pub use platform::{platform_asset, require_platform_asset};
 #[cfg(unix)]
 pub(crate) use self_test::is_text_file_busy;
-pub(crate) use self_test::{self_test, spawn_version_probe};
+pub(crate) use self_test::{installed_version, self_test, spawn_version_probe};
 pub(crate) use swap::{rename_error, swap_into_place, write_temp};
 
 /// Replace the currently running executable with `new_bytes`. Returns the path
@@ -38,7 +38,17 @@ pub(crate) use swap::{rename_error, swap_into_place, write_temp};
 /// manifest binds asset bytes but not the release tag, so without this check a
 /// man-in-the-middle able to spoof the release metadata could replay an older,
 /// genuinely-signed release as the "latest" one (a rollback attack).
-pub fn install_binary(new_bytes: &[u8], expected_version: &str) -> crate::Result<PathBuf> {
+///
+/// `allow_older` lets the install put an older version over a newer one (a
+/// forced update). Without it the version installed is read under the install
+/// lock and an older one is refused: the decision to update was taken against
+/// the version this process started as, and another update may have installed a
+/// newer one since.
+pub fn install_binary(
+	new_bytes: &[u8],
+	expected_version: &str,
+	allow_older: bool,
+) -> crate::Result<PathBuf> {
 	let exe = std::env::current_exe()
 		.map_err(|e| ComposeError::Update(format!("cannot locate current executable: {e}")))?;
 	// Resolve symlinks so we replace the real file, not a symlink pointing at it.
@@ -49,17 +59,51 @@ pub fn install_binary(new_bytes: &[u8], expected_version: &str) -> crate::Result
 			exe.display()
 		))
 	})?;
-	install_verified_at(&target, new_bytes, |path| self_test(path, expected_version))?;
+	install_verified_at(
+		&target,
+		new_bytes,
+		|path| {
+			if allow_older {
+				return Ok(());
+			}
+			ensure_not_older(installed_version(path), expected_version)
+		},
+		|path| self_test(path, expected_version),
+	)?;
 	Ok(target)
+}
+
+/// Refuse to put `incoming` over a newer `installed` version.
+fn ensure_not_older(
+	installed: Option<crate::update::verify::Version>,
+	incoming: &str,
+) -> crate::Result<()> {
+	let (Some(installed), Ok(incoming_v)) =
+		(installed, crate::update::verify::parse_version(incoming))
+	else {
+		return Ok(());
+	};
+	if incoming_v < installed {
+		return Err(ComposeError::Update(format!(
+			"the installed version {}.{}.{} is newer than {incoming}; another update installed it \
+			 while this one was running. Run `podup update --force` to install {incoming} anyway",
+			installed.major, installed.minor, installed.patch
+		)));
+	}
+	Ok(())
 }
 
 /// Hold exclusive ownership of the backup through staging, verification and rollback.
 fn install_verified_at(
 	target: &Path,
 	new_bytes: &[u8],
+	precheck: impl FnOnce(&Path) -> crate::Result<()>,
 	check: impl FnOnce(&Path) -> crate::Result<()>,
 ) -> crate::Result<()> {
 	let _lock = lock::acquire(target)?;
+	// Under the lock, before anything is moved: what is installed now is what
+	// the decision to install has to be taken against.
+	precheck(target)?;
 	// Hard-link the current binary into `.old` BEFORE the swap so a failed
 	// self-test always has a rollback target on disk. On Unix the target
 	// stays in place (its mode is read by `write_temp`); on Windows the
