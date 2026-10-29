@@ -319,3 +319,11 @@ fn a_resolved_value_with_brackets_is_text_and_is_not_parsed() {
 		assert_eq!(note, deep);
 	}
 }
+
+/// The premise of the node count running whenever a `*` is present: a plain
+/// scalar with a quote after a space is read by the lexical scan as an opened
+/// quote, and every alias after it is counted as text.
+#[test]
+fn a_plain_scalar_with_a_quote_hides_the_aliases_from_the_lexical_scan() {
+	assert_eq!(count_alias_refs("note: x 'y\nitems: [&a 1, *a, *a]\n"), 0);
+}

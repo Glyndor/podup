@@ -53,3 +53,15 @@ fn tagged_values_are_followed() {
 	assert!(within_limit(yaml, 100).is_ok());
 	assert!(within_limit(yaml, 4).is_err());
 }
+
+/// The lexical scan reads `x 'y` as an opened quote and counts no alias after
+/// it, so the references-and-size limits never run. The count of replayed nodes
+/// does not depend on it.
+#[test]
+fn a_plain_scalar_that_hides_the_aliases_from_the_scan_does_not_hide_the_expansion() {
+	let yaml = format!("note: x 'y\n{}", nested(1000, 4));
+	assert!(
+		super::super::merge::interpolated_value(&yaml, None).is_err(),
+		"the document expands to ten million nodes"
+	);
+}

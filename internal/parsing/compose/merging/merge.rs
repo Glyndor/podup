@@ -356,6 +356,13 @@ fn interpolate_key(
 fn guard_alias_expansion(content: &str) -> Result<()> {
 	let refs = count_alias_refs(content);
 	if refs == 0 {
+		// The scan is a lexical estimate, and a plain scalar such as `x 'y` is
+		// read by it as an opened quote, which hides every alias after it. The
+		// count of replayed nodes is the bound, so it runs whenever an alias
+		// could be there.
+		if content.contains('*') {
+			super::alias_budget::within_limit(content, super::alias_budget::MAX_EXPANDED_NODES)?;
+		}
 		return Ok(());
 	}
 	if content.len() > MAX_ALIAS_DOC_BYTES {
