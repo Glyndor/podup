@@ -35,6 +35,13 @@ on:
         description: Exact version of the tool; bumped by editing this file
         type: string
         default: "0.13.2"
+      build-only:
+        description: >-
+          Compile every fuzz target with `cargo fuzz build` and stop, without
+          running any. A pull request uses it to learn that a change broke the
+          fuzz crate (which sits outside the workspace) before the weekly run.
+        type: boolean
+        default: false
       rss-limit-mb:
         description: >-
           libfuzzer -rss_limit_mb value in MiB; empty (the default) omits the
@@ -46,8 +53,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: rust-fuzz-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working-directory }}
-  cancel-in-progress: true
+  group: rust-fuzz-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working-directory }}-${{ inputs.build-only }}
+  # A manual run on the same ref must not cancel the weekly one halfway: a fuzz
+  # run that is cut short leaves no verdict, and the freshness watcher only
+  # notices a missing success after two weeks.
+  cancel-in-progress: false
 
 jobs:
   fuzz:
@@ -92,7 +102,12 @@ jobs:
           CARGO_FUZZ_VERSION: ${{ inputs.cargo-fuzz-version }}
         run: command -v cargo-fuzz >/dev/null || cargo install cargo-fuzz --locked --version "$CARGO_FUZZ_VERSION"
 
+      - name: Build the fuzz targets
+        if: inputs.build-only
+        run: cargo fuzz build
+
       - name: Fuzz ${{ matrix.target }}
+        if: ${{ !inputs.build-only }}
         env:
           TARGET: ${{ matrix.target }}
           MAX_TOTAL_TIME: ${{ inputs.max-total-time }}
@@ -104,3 +119,14 @@ jobs:
             libfuzzer_args+=(-rss_limit_mb="$RSS_LIMIT_MB")
           fi
           cargo fuzz run "$TARGET" -- "${libfuzzer_args[@]}"
+
+      # A crash leaves its input under fuzz/artifacts. Without this the run is
+      # red and the input that caused it is gone with the runner.
+      - name: Keep the crashing input
+        if: failure() && !inputs.build-only
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: ${{ inputs.working-directory }}/fuzz/artifacts/${{ matrix.target }}
+          if-no-files-found: ignore
+          retention-days: 30
