@@ -151,7 +151,7 @@ fn interpolate_value(
 	let taken = std::mem::take(root);
 	let mut rebuilt = serde_yaml::Mapping::with_capacity(taken.len());
 	for (key, mut section) in taken {
-		let key = interpolate_key(key, vars, warned)?;
+		let key = interpolate_key(key, vars, spent, warned)?;
 		let holds_services = matches!(key.as_str(), Some("services" | "jobs"));
 		// `services: !override {...}` is a tagged mapping; look through the tag.
 		let mut inner = &mut section;
@@ -163,7 +163,7 @@ fn interpolate_value(
 				let taken_entries = std::mem::take(entries);
 				let mut rebuilt_entries = serde_yaml::Mapping::with_capacity(taken_entries.len());
 				for (name, mut service) in taken_entries {
-					let name = interpolate_key(name, vars, warned)?;
+					let name = interpolate_key(name, vars, spent, warned)?;
 					interpolate_service(&mut service, vars, spent, warned)?;
 					rebuilt_entries.insert(name, service);
 				}
@@ -242,7 +242,7 @@ fn interpolate_in(
 			let taken = std::mem::take(map);
 			let mut rebuilt = serde_yaml::Mapping::with_capacity(taken.len());
 			for (key, mut val) in taken {
-				let key = interpolate_key(key, vars, warned)?;
+				let key = interpolate_key(key, vars, spent, warned)?;
 				let value_is_text = text
 					|| (service_keys && key.as_str().is_some_and(super::textual::is_string_key));
 				interpolate_in(&mut val, vars, spent, warned, value_is_text, false)?;
@@ -311,6 +311,13 @@ fn interpolate_scalar(
 		return Ok(serde_yaml::Value::String(String::new()));
 	}
 	guard_alias_expansion(&resolved)?;
+	// The re-parse only exists to adopt a number or a boolean. Neither contains
+	// a bracket or a brace, so text that does is a string and never reaches the
+	// parser: a value from the environment cannot hand it a deeply nested
+	// collection, which the file-level nesting guard never sees.
+	if resolved.contains(['[', '{']) {
+		return Ok(serde_yaml::Value::String(resolved));
+	}
 	match serde_yaml::from_str::<serde_yaml::Value>(&resolved) {
 		Ok(v @ serde_yaml::Value::Bool(_)) => Ok(v),
 		// A number is adopted only when printing it gives back the text that was
@@ -326,14 +333,19 @@ fn interpolate_scalar(
 
 /// Interpolate a mapping key. Keys stay strings (a key is never coerced to a
 /// number/boolean) so the document shape is preserved.
+///
+/// A key spends the same document budget as a value. With its own budget per
+/// key, a thousand keys of a megabyte each stayed under every limit and the
+/// rebuilt mapping held a gigabyte.
 fn interpolate_key(
 	key: serde_yaml::Value,
 	vars: &HashMap<String, String>,
+	spent: &mut usize,
 	warned: &mut HashSet<String>,
 ) -> Result<serde_yaml::Value> {
 	match key {
 		serde_yaml::Value::String(s) if s.contains('$') => Ok(serde_yaml::Value::String(
-			crate::substitute::substitute_with_warned(&s, vars, warned)?,
+			crate::substitute::substitute_budgeted(&s, vars, spent, warned)?,
 		)),
 		other => Ok(other),
 	}

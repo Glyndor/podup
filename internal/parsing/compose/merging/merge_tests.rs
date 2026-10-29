@@ -284,3 +284,38 @@ fn a_quote_inside_the_other_quote_does_not_disable_the_alias_guard() {
 		"a quote inside the other quote must not switch the guard off"
 	);
 }
+
+/// Keys spend the document budget like values do. Each key here is far below
+/// the per-value cap, so only a shared budget notices that together they are
+/// more than the document is allowed to expand to.
+#[test]
+fn interpolated_keys_spend_the_document_budget() {
+	let pad = "x".repeat(1024 * 1024);
+	let keys: String = (0..24)
+		.map(|i| format!("      k{i:02}_${{PAD}}: ok\n"))
+		.collect();
+	let yaml = format!("services:\n  web:\n    image: x\n    labels:\n{keys}");
+	let result = interpolated_value(&yaml, Some(&vars(&[("PAD", &pad)])));
+	assert!(result.is_err(), "24 MiB of expanded keys was accepted");
+}
+
+/// A resolved value is read back as YAML only to adopt a number or a boolean,
+/// and neither holds a bracket. Text that does stays a string without being
+/// parsed, so a value from the environment cannot make the parser build a deeply
+/// nested collection. A leading quote does not change that.
+#[test]
+fn a_resolved_value_with_brackets_is_text_and_is_not_parsed() {
+	for prefix in ["", "'", "\""] {
+		let deep = format!("{prefix}{}", "[".repeat(200_000));
+		let yaml = "services:\n  web:\n    image: x\n    labels:\n      note: ${N}\n";
+		let started = std::time::Instant::now();
+		let value = interpolated_value(yaml, Some(&vars(&[("N", &deep)]))).unwrap();
+		assert!(
+			started.elapsed() < std::time::Duration::from_secs(2),
+			"a bracketed value took {:?} to interpolate",
+			started.elapsed()
+		);
+		let note = value["services"]["web"]["labels"]["note"].as_str().unwrap();
+		assert_eq!(note, deep);
+	}
+}
