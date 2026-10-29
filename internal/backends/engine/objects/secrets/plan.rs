@@ -14,6 +14,11 @@ use crate::engine::project::lock::staging;
 /// payload must be larger than 0 and strictly smaller than this many bytes.
 pub(super) const MAX_SECRET_BYTES: usize = 512_000;
 
+/// The most secret and config bytes one `up` holds in memory before it creates
+/// any of them. Each payload is bounded by [`MAX_SECRET_BYTES`], but a project
+/// can name thousands of them, and they are all read before the first upload.
+pub(super) const MAX_SECRET_TOTAL_BYTES: usize = 32 * 1024 * 1024;
+
 /// Where the bytes of a podup-created secret come from.
 ///
 /// A `file:` source carries the resolved host path rather than its contents:
