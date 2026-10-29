@@ -89,15 +89,24 @@ fn host_file_mode_masks_execute_and_special_bits() {
 	] {
 		use std::os::unix::fs::PermissionsExt;
 		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(host)).unwrap();
-		assert_eq!(host_file_secret_mode(&path), want, "host mode {host:o}");
+		assert_eq!(
+			host_file_secret_mode(&path).unwrap(),
+			want,
+			"host mode {host:o}"
+		);
 	}
 }
 
+/// Metadata that cannot be read is an error. The bytes are already loaded, so
+/// guessing `0444` would make a private secret readable by every user.
+#[cfg(unix)]
 #[test]
-fn host_file_mode_of_a_missing_file_falls_back_to_0444() {
-	assert_eq!(
-		host_file_secret_mode(Path::new("/nonexistent/secret")),
-		0o444
+fn host_file_mode_of_an_unreadable_file_is_an_error() {
+	let error = host_file_secret_mode(Path::new("/nonexistent/secret")).unwrap_err();
+	let message = error.to_string();
+	assert!(
+		message.contains("/nonexistent/secret"),
+		"the error must name the file: {message}"
 	);
 }
 
