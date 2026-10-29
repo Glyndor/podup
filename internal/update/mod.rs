@@ -110,7 +110,7 @@ fn run_with_guard(
 
 	// The self-test inside `install_binary` pins the installed binary's reported
 	// version to the resolved tag, closing the signed-release rollback window.
-	let path = install::install_binary(&binary, latest_tag.trim_start_matches('v'))?;
+	let path = install::install_binary(&binary, latest_tag.trim_start_matches('v'), opts.force)?;
 	println!("updated to {latest_tag}: {}", path.display());
 	Ok(())
 }

@@ -52,7 +52,7 @@ fn child() {
 		return;
 	};
 	let (bytes, fragment) = payload(&mode);
-	let result = install_binary(&bytes, EXPECTED);
+	let result = install_binary(&bytes, EXPECTED, true);
 	if mode == "orphan_holds_stdout" {
 		return;
 	}
