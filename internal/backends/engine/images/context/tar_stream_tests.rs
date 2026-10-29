@@ -137,3 +137,76 @@ fn the_expanded_entry_carries_every_byte_the_file_had() {
 		"the hole reads back as zeroes"
 	);
 }
+
+/// A second, ordinary entry after the one under test: if the first was written
+/// with a body longer or shorter than its header, this one cannot be read.
+fn append_next(tar: &mut tar::Builder<Vec<u8>>) -> std::io::Result<()> {
+	let mut header = tar::Header::new_gnu();
+	header.set_size(2);
+	header.set_mode(0o644);
+	tar.append_data(&mut header, "next", &b"ok"[..])
+}
+
+/// Read back what a builder wrote, as (name, bytes) in order.
+fn read_back(bytes: Vec<u8>) -> Vec<(String, Vec<u8>)> {
+	use std::io::Read;
+	let mut archive = tar::Archive::new(std::io::Cursor::new(bytes));
+	archive
+		.entries()
+		.unwrap()
+		.map(|entry| {
+			let mut entry = entry.expect("the archive is well formed");
+			let name = entry.path().unwrap().to_string_lossy().into_owned();
+			let mut body = Vec::new();
+			entry.read_to_end(&mut body).unwrap();
+			(name, body)
+		})
+		.collect()
+}
+
+/// A file that grew after its size was read: the entry keeps the size its header
+/// states and the next entry is still readable. The sizes cross a 512-byte block
+/// boundary; inside one block the padding hides the damage.
+#[test]
+fn a_file_that_grew_keeps_the_archive_well_formed() {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("log");
+	std::fs::write(&path, vec![b'a'; 600]).unwrap();
+	let metadata = std::fs::metadata(&path).unwrap();
+	let mut tar = builder(Vec::new());
+	// The body now holds 1100 bytes, not the 600 that `stat` reported.
+	super::append_exact(
+		&mut tar,
+		std::path::Path::new("log"),
+		&metadata,
+		&vec![b'a'; 1100][..],
+	)
+	.unwrap();
+	append_next(&mut tar).unwrap();
+	let entries = read_back(tar.into_inner().unwrap());
+	assert_eq!(entries[0], ("log".to_string(), vec![b'a'; 600]));
+	assert_eq!(entries[1], ("next".to_string(), b"ok".to_vec()));
+}
+
+/// A file that shrank is padded, so the entry still has the size it states.
+#[test]
+fn a_file_that_shrank_is_padded_to_its_stated_size() {
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("log");
+	std::fs::write(&path, vec![b'a'; 600]).unwrap();
+	let metadata = std::fs::metadata(&path).unwrap();
+	let mut tar = builder(Vec::new());
+	super::append_exact(
+		&mut tar,
+		std::path::Path::new("log"),
+		&metadata,
+		&vec![b'a'; 100][..],
+	)
+	.unwrap();
+	append_next(&mut tar).unwrap();
+	let entries = read_back(tar.into_inner().unwrap());
+	let mut expected = vec![b'a'; 100];
+	expected.resize(600, 0);
+	assert_eq!(entries[0], ("log".to_string(), expected));
+	assert_eq!(entries[1], ("next".to_string(), b"ok".to_vec()));
+}

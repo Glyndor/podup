@@ -97,8 +97,12 @@ where
 					// not guaranteed at every call site.
 					let mut file =
 						std::fs::File::open(path).map_err(|e| map_err(&e.to_string()))?;
-					tar.append_file(name, &mut file)
-						.map_err(|e| map_err(&e.to_string()))?;
+					crate::engine::context::tar_stream::append_pinned_file(
+						tar,
+						std::path::Path::new(name),
+						&mut file,
+					)
+					.map_err(|e| map_err(&e.to_string()))?;
 					push_entry(sent, name, SentKind::File(size))?;
 				} else if ft.is_dir() {
 					// A symlink to a directory: the walker did not descend

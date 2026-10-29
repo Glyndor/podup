@@ -118,7 +118,11 @@ fn a_fifo_in_the_context_ends_in_an_error_and_is_never_opened() {
 		.status()
 		.expect("mkfifo");
 	assert!(status.success());
-	assert!(tar_within_budget(dir.path(), Vec::new()).is_err());
+	let error = tar_within_budget(dir.path(), Vec::new()).unwrap_err();
+	assert!(
+		error.to_string().contains("pipe") && error.to_string().contains(".dockerignore"),
+		"the error must name the entry and say how to ignore it: {error}"
+	);
 }
 
 #[cfg(unix)]
@@ -127,7 +131,11 @@ fn a_socket_in_the_context_ends_in_an_error() {
 	let dir = tempdir().unwrap();
 	fs::write(dir.path().join("Dockerfile"), b"FROM alpine\n").unwrap();
 	let _listener = std::os::unix::net::UnixListener::bind(dir.path().join("sock")).unwrap();
-	assert!(tar_within_budget(dir.path(), Vec::new()).is_err());
+	let error = tar_within_budget(dir.path(), Vec::new()).unwrap_err();
+	assert!(
+		error.to_string().contains("sock") && error.to_string().contains(".dockerignore"),
+		"the error must name the entry and say how to ignore it: {error}"
+	);
 }
 
 #[test]

@@ -45,6 +45,16 @@ pub(in crate::backends::engine) fn visit_dir_skipping(
 	}
 }
 
+/// A socket, pipe or device in the context. It is refused rather than sent, and
+/// the message names it so it can be added to `.dockerignore`.
+#[cfg(unix)]
+fn special_file(path: &Path) -> io::Error {
+	io::Error::other(format!(
+		"build context entry {} is a socket, pipe or device; remove it or list it in .dockerignore",
+		path.display()
+	))
+}
+
 fn changed_type() -> io::Error {
 	io::Error::other("build context entry changed type or is not a regular file")
 }
