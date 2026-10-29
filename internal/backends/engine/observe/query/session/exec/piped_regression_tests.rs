@@ -264,3 +264,43 @@ async fn eof_between_complete_frames_including_empty_frames_is_success() {
 	assert_eq!(stdout, b"complete");
 	assert!(stderr.is_empty());
 }
+
+/// A stdin that fails to read must still end the command's input, or a command
+/// such as `cat` waits for it for ever.
+struct FailingStdin;
+
+impl tokio::io::AsyncRead for FailingStdin {
+	fn poll_read(
+		self: std::pin::Pin<&mut Self>,
+		_: &mut std::task::Context<'_>,
+		_: &mut tokio::io::ReadBuf<'_>,
+	) -> std::task::Poll<std::io::Result<()>> {
+		std::task::Poll::Ready(Err(std::io::Error::other("stdin failed")))
+	}
+}
+
+#[tokio::test]
+async fn a_failing_stdin_still_ends_the_command_input() {
+	let (session, peer) = tokio::io::duplex(1024);
+	// The command, like `cat`, answers only once its input has ended.
+	let command = tokio::spawn(async move {
+		let (mut read, mut write) = tokio::io::split(peer);
+		let mut input = Vec::new();
+		read.read_to_end(&mut input).await.unwrap();
+		write.write_all(&frame(1, b"done")).await.unwrap();
+		write.shutdown().await.unwrap();
+	});
+	let mut stdout = Vec::new();
+	let result = tokio::time::timeout(
+		Duration::from_secs(2),
+		pump_piped(session, FailingStdin, &mut stdout, tokio::io::sink()),
+	)
+	.await;
+	if result.is_err() {
+		command.abort();
+	}
+	result
+		.expect("the command never saw the end of its input")
+		.expect("a failing stdin is not a failed exec");
+	assert_eq!(stdout, b"done");
+}

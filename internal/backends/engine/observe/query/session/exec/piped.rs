@@ -64,7 +64,10 @@ where
 					}
 				}
 				Err(_) => {
+					// The caller's stdin is over either way; half-close the session
+					// so the command sees the end of its input instead of waiting.
 					tracing::debug!("exec: reading the caller's stdin failed");
+					let _ = session_write.shutdown().await;
 					break;
 				}
 			}
