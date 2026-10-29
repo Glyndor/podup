@@ -225,6 +225,9 @@ pub mod fuzz_api {
 	pub use crate::libpod::types::fuzz_hook::decode as libpod_json_decode;
 	/// The cron to `OnCalendar=` conversion.
 	pub use crate::quadlet::fuzz_hook::{convert as cron_convert, Converted as CronConverted};
+	/// The self-update parsers: the version, the digest and the release tag.
+	#[cfg(feature = "update")]
+	pub use crate::update::fuzz_hook::{expected_digest, parse_latest_tag, parse_version, Version};
 
 	/// `sanitize_name`, as an owned string plus whether it returned the input
 	/// untouched (`true`) or had to escape something (`false`).

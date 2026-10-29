@@ -21,6 +21,9 @@ Coverage-guided fuzz targets for podup's untrusted-input surfaces, built on
 | `audit_bind_path` | Host path folding behind `audit`'s sensitive bind check: idempotent, folding only adds findings |
 | `sanitize` | Terminal escaping of names and table cells: no control character survives, safe text unchanged |
 | `libpod_json` | Every daemon response type decoded from arbitrary JSON, deep nesting and huge numbers included |
+| `parse_version` | Release version parser behind the self-update comparison: no panic on a malformed tag |
+| `expected_digest` | `SHA256SUMS` manifest lookup: no panic, and the digest handed back is 64 hex characters |
+| `parse_latest_tag` | Release-metadata parser: no panic on a body that is not the expected JSON |
 
 `audit_bind_path` compiles `internal/command_line/audit/check_sensitive_bind.rs` into the fuzz crate
 (`fuzz/support/audit`), because the audit lives in the `podup` binary and a fuzz crate cannot link a binary.

@@ -8,6 +8,9 @@
 //! executable atomically replaced. Every step fails closed: a missing key,
 //! bad signature, or checksum mismatch aborts before anything is written.
 
+/// Entry point for the fuzz harness, compiled only under `test-helpers`.
+#[cfg(feature = "test-helpers")]
+pub(crate) mod fuzz_hook;
 mod github;
 mod install;
 mod pkg;

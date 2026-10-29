@@ -54,8 +54,11 @@ pub const RELEASE_PUBKEYS: [[u8; 32]; 2] = [
 /// A parsed `MAJOR.MINOR.PATCH` version, ordered for comparison.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Version {
+	/// The major component.
 	pub major: u64,
+	/// The minor component.
 	pub minor: u64,
+	/// The patch component.
 	pub patch: u64,
 }
 

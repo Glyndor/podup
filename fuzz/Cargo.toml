@@ -112,3 +112,24 @@ path = "fuzz_targets/libpod_json.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "parse_version"
+path = "fuzz_targets/parse_version.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "expected_digest"
+path = "fuzz_targets/expected_digest.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_latest_tag"
+path = "fuzz_targets/parse_latest_tag.rs"
+test = false
+doc = false
+bench = false
