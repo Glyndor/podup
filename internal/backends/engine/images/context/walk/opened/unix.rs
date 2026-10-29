@@ -5,7 +5,7 @@ use std::os::unix::ffi::OsStrExt;
 
 use rustix::fs::{self, AtFlags, Mode, OFlags};
 
-use super::{changed_type, io, Entry, File, Path};
+use super::{changed_type, io, special_file, Entry, File, Path};
 
 const DIRECTORY: OFlags = OFlags::RDONLY
 	.union(OFlags::DIRECTORY)
@@ -41,7 +41,13 @@ fn collect(
 	names.sort();
 	for name in names {
 		let child_path = path.join(&name);
-		let stat = fs::statat(dir, &name, AtFlags::SYMLINK_NOFOLLOW)?;
+		let stat = match fs::statat(dir, &name, AtFlags::SYMLINK_NOFOLLOW) {
+			Ok(stat) => stat,
+			// Listed a moment ago and gone now (an editor's temporary file): it is
+			// not part of the context any more, which is not an error.
+			Err(rustix::io::Errno::NOENT) => continue,
+			Err(e) => return Err(e.into()),
+		};
 		let kind = fs::FileType::from_raw_mode(stat.st_mode);
 		let skip = kind == fs::FileType::Directory && skip_dir(&child_path);
 		let include = include_entry(&child_path);
@@ -65,7 +71,7 @@ fn collect(
 			continue;
 		}
 		if !matches!(kind, fs::FileType::RegularFile | fs::FileType::Directory) {
-			return Err(changed_type());
+			return Err(special_file(&child_path));
 		}
 		let flags = if kind == fs::FileType::Directory {
 			DIRECTORY | OFlags::NOFOLLOW

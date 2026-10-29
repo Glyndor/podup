@@ -124,7 +124,9 @@ fn append_context<W: std::io::Write>(
 			.strip_prefix(context)
 			.map_err(|_| std::io::Error::other("build context path strip error"))?;
 		match entry {
-			walk::Entry::File(mut file) => tar.append_file(rel, &mut file)?,
+			walk::Entry::File(mut file) => {
+				crate::engine::context::tar_stream::append_pinned_file(tar, rel, &mut file)?
+			}
 			walk::Entry::Directory(metadata) => {
 				let mut header = tar::Header::new_gnu();
 				header.set_metadata(&metadata);
