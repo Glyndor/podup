@@ -41,6 +41,11 @@ pub(in crate::backends::engine::host_files::copy) const CHANNEL_CAP: usize = 8;
 /// body is a handful of sizeable chunks rather than thousands of tiny ones.
 pub(in crate::backends::engine::host_files::copy) const CHUNK_BYTES: usize = 64 * 1024;
 
+/// What the pack error says when the receiver of the body went away first. After
+/// a clean answer that is the timing of the response, not a failed pack.
+pub(in crate::backends::engine::host_files::copy) const RECEIVER_DROPPED: &str =
+	"cp: archive receiver dropped before the tar finished";
+
 /// A [`Write`] sink that forwards the tar bytes to an async channel as `Bytes`
 /// frames, coalescing small writes to `CHUNK_BYTES`. Blocks (backpressure)
 /// when the consumer is behind; errors if the consumer has gone away.
@@ -55,12 +60,9 @@ impl ChannelWriter {
 			return Ok(());
 		}
 		let chunk = self.buf.split().freeze();
-		self.tx.blocking_send(Ok(Frame::data(chunk))).map_err(|_| {
-			io::Error::new(
-				io::ErrorKind::BrokenPipe,
-				"cp: archive receiver dropped before the tar finished",
-			)
-		})
+		self.tx
+			.blocking_send(Ok(Frame::data(chunk)))
+			.map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, RECEIVER_DROPPED))
 	}
 }
 
