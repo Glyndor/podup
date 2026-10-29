@@ -62,6 +62,14 @@ pub(in crate::backends::engine::lifecycle) fn stop_deadline(grace: i32) -> Optio
 	}
 }
 
+/// Client-side deadline for a `restart` call. A restart is a stop plus a start,
+/// so it never gets less than the client's default read timeout: with a short
+/// grace the stop deadline alone (grace plus the buffer) would cut a slow start
+/// that the default allowed. `-1` stays uncapped.
+pub(in crate::backends::engine::lifecycle) fn restart_deadline(grace: i32) -> Option<Duration> {
+	stop_deadline(grace).map(|d| d.max(crate::libpod::client::READ_TIMEOUT))
+}
+
 impl crate::engine::Engine {
 	/// Shutdown grace (seconds) for a service: the CLI `-t/--timeout` override
 	/// when set, otherwise the service's `stop_grace_period`.

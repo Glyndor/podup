@@ -143,3 +143,22 @@ async fn a_restart_waits_for_the_grace_it_was_given() {
 		 timeout, got: {message}"
 	);
 }
+
+/// A restart is a stop plus a start, so a short grace must not shrink its
+/// deadline below the client's default read timeout (120s).
+#[tokio::test]
+async fn a_restart_with_a_short_grace_keeps_the_default_deadline() {
+	let fake = frozen_daemon();
+	let engine = engine(&fake);
+
+	let error = engine
+		.restart_with_options(&file(), &["web".to_string()], false)
+		.await
+		.expect_err("the daemon never answers, so the restart ends in a timeout");
+
+	let message = error.to_string();
+	assert!(
+		message.contains("120s"),
+		"a short grace cut the restart below the default deadline, got: {message}"
+	);
+}

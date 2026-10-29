@@ -1,6 +1,7 @@
 use super::{
-	expand_targets, filter_services, in_started_set, service_grace_period_secs, stop_deadline,
-	stop_timeout_param, validate_stop_timeout, validate_targets, STOP_GRACE_BUFFER_SECS,
+	expand_targets, filter_services, in_started_set, restart_deadline, service_grace_period_secs,
+	stop_deadline, stop_timeout_param, validate_stop_timeout, validate_targets,
+	STOP_GRACE_BUFFER_SECS,
 };
 use crate::compose::types::{ComposeFile, Service};
 use crate::error::ComposeError;
@@ -233,4 +234,19 @@ fn in_started_set_partial_target_includes_transitive_dep() {
 	let target_set = expand_targets(&file, &["web".to_string()], false);
 	assert!(in_started_set(&target_set, "web"));
 	assert!(in_started_set(&target_set, "db"));
+}
+
+// A restart is a stop plus a start: a short grace must not shrink its deadline
+// below the client's default read timeout.
+#[test]
+fn restart_deadline_never_drops_below_the_default_read_timeout() {
+	use crate::libpod::client::READ_TIMEOUT;
+	assert_eq!(restart_deadline(10), Some(READ_TIMEOUT));
+	assert_eq!(restart_deadline(0), Some(READ_TIMEOUT));
+	// A long grace still extends it.
+	assert_eq!(
+		restart_deadline(180),
+		Some(Duration::from_secs(180 + STOP_GRACE_BUFFER_SECS))
+	);
+	assert_eq!(restart_deadline(-1), None);
 }
