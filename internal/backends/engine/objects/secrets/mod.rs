@@ -22,7 +22,8 @@
 //! it. Reading the bytes into a native secret leaves the host untouched and puts
 //! `file:` on the path the other two sources already took. What the container
 //! sees is unchanged: the mount mode mirrors the host file's own bits (see
-//! [`plan::host_file_secret_mode`]) rather than defaulting to `0444`.
+//! [`plan::host_file_secret_mode`]) rather than defaulting to `0444`, and a
+//! file whose mode cannot be read is an error.
 //!
 //! The trade is that the payload is a copy taken at `up`, so an in-place edit of
 //! the host file no longer reaches a running container. An atomic replace never
@@ -84,7 +85,7 @@ impl Engine {
 			// own bits, so what the container sees does not change now that the file
 			// is copied into a native secret rather than bind-mounted.
 			let mode = match (&plan.payload, plan.mode) {
-				(Some(Payload::File(path)), None) => Some(host_file_secret_mode(path)),
+				(Some(Payload::File(path)), None) => Some(host_file_secret_mode(path)?),
 				_ => plan.mode,
 			};
 			secrets.push(Secret {
