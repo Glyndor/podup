@@ -13,7 +13,7 @@
 use std::io::{self, Write};
 use std::path::Path;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 
 use bytes::{Bytes, BytesMut};
@@ -41,8 +41,9 @@ pub(in crate::backends::engine::host_files::copy) const CHANNEL_CAP: usize = 8;
 /// body is a handful of sizeable chunks rather than thousands of tiny ones.
 pub(in crate::backends::engine::host_files::copy) const CHUNK_BYTES: usize = 64 * 1024;
 
-/// What the pack error says when the receiver of the body went away first. After
-/// a clean answer that is the timing of the response, not a failed pack.
+/// What the error of the writer says when the receiver of the body went away
+/// first. It is only the message: whether that happened is
+/// [`PackedStream::receiver_dropped`], never read back from this text.
 pub(in crate::backends::engine::host_files::copy) const RECEIVER_DROPPED: &str =
 	"cp: archive receiver dropped before the tar finished";
 
@@ -52,6 +53,9 @@ pub(in crate::backends::engine::host_files::copy) const RECEIVER_DROPPED: &str =
 struct ChannelWriter {
 	tx: mpsc::Sender<BodyItem>,
 	buf: BytesMut,
+	/// Set when a send fails because the receiver is gone. The one place that
+	/// knows it, so nothing has to recognise it from the text of an error.
+	dropped: Arc<AtomicBool>,
 }
 
 impl ChannelWriter {
@@ -60,9 +64,10 @@ impl ChannelWriter {
 			return Ok(());
 		}
 		let chunk = self.buf.split().freeze();
-		self.tx
-			.blocking_send(Ok(Frame::data(chunk)))
-			.map_err(|_| io::Error::new(io::ErrorKind::BrokenPipe, RECEIVER_DROPPED))
+		self.tx.blocking_send(Ok(Frame::data(chunk))).map_err(|_| {
+			self.dropped.store(true, Ordering::Relaxed);
+			io::Error::new(io::ErrorKind::BrokenPipe, RECEIVER_DROPPED)
+		})
 	}
 }
 
@@ -102,6 +107,38 @@ pub(in crate::backends::engine) struct PackedStream {
 	/// caller if packing fails (a file vanished, a permission denied), not
 	/// the generic "could not be confirmed".
 	pub(in crate::backends::engine::host_files::copy) producer: JoinHandle<PackOutcome>,
+	/// Set by the producer when the error it returns is only the receiver of the
+	/// body having gone away: after a clean answer that is the timing of the
+	/// response, not a failed pack. Any other error of the pack leaves it unset.
+	pub(in crate::backends::engine::host_files::copy) receiver_dropped: Arc<AtomicBool>,
+}
+
+/// Combine what the pack reported with what closing the archive reported.
+///
+/// The error of the pack comes first: it names the entry that was refused, and
+/// closing an archive whose receiver has gone fails with a message about the
+/// receiver, which would replace it. `dropped_during_pack` says whether the
+/// writer lost its receiver before the pack returned; only then is a pack error
+/// the consequence of that. A failure to close is always the receiver, because
+/// the writer is the only thing that can fail.
+fn conclude(
+	sent: Vec<SentEntry>,
+	packed: Result<(), ComposeError>,
+	dropped_during_pack: bool,
+	closing: Result<(), ComposeError>,
+	receiver_dropped: &AtomicBool,
+) -> PackOutcome {
+	match (packed, closing) {
+		(Err(e), _) => {
+			receiver_dropped.store(dropped_during_pack, Ordering::Relaxed);
+			(sent, Err(e))
+		}
+		(Ok(()), Err(e)) => {
+			receiver_dropped.store(true, Ordering::Relaxed);
+			(sent, Err(e))
+		}
+		(Ok(()), Ok(())) => (sent, Ok(())),
+	}
 }
 
 /// What the blocking pack task yields. The `Vec<SentEntry>` is the list the
@@ -164,11 +201,14 @@ pub(in crate::backends::engine::host_files::copy) fn pack_path_stream(
 	// requires the closure to outlive any borrow of the caller's stack.
 	let name_override: Option<String> = name_override.map(str::to_owned);
 	let (tx, rx) = mpsc::channel::<BodyItem>(CHANNEL_CAP);
+	let receiver_dropped = Arc::new(AtomicBool::new(false));
+	let flag = receiver_dropped.clone();
 
 	let producer = tokio::task::spawn_blocking(move || -> PackOutcome {
 		let mut writer = ChannelWriter {
 			tx,
 			buf: BytesMut::with_capacity(CHUNK_BYTES),
+			dropped: flag.clone(),
 		};
 		let mut tar = crate::engine::context::tar_stream::builder(&mut writer);
 		tar.follow_symlinks(follow_link);
@@ -188,19 +228,23 @@ pub(in crate::backends::engine::host_files::copy) fn pack_path_stream(
 		// way for it to fail is if the channel send fails, which means the
 		// consumer (the PUT body) has gone away, which surfaces as a
 		// different error anyway.
-		if let Err(e) = tar.into_inner() {
-			return (sent, Err(cp_err(format!("tar finish: {e}"))));
-		}
-		if let Err(e) = writer.flush() {
-			return (sent, Err(cp_err(format!("flush: {e}"))));
-		}
+		let dropped_during_pack = flag.load(Ordering::Relaxed);
+		let closing = tar
+			.into_inner()
+			.map(|_| ())
+			.map_err(|e| cp_err(format!("tar finish: {e}")))
+			.and_then(|()| writer.flush().map_err(|e| cp_err(format!("flush: {e}"))));
 
-		(sent, result)
+		conclude(sent, result, dropped_during_pack, closing, &flag)
 	});
 
 	let body = receiver_body_with_counter(rx, counter);
 
-	PackedStream { body, producer }
+	PackedStream {
+		body,
+		producer,
+		receiver_dropped,
+	}
 }
 
 /// As [`pack_path_stream`], but for the watch sync: the body is gzip-wrapped
@@ -227,11 +271,14 @@ pub(in crate::backends::engine) fn build_sync_tar_stream(
 	let src = src.to_path_buf();
 	let entry_name = entry_name.to_path_buf();
 	let (tx, rx) = mpsc::channel::<BodyItem>(CHANNEL_CAP);
+	let receiver_dropped = Arc::new(AtomicBool::new(false));
+	let flag = receiver_dropped.clone();
 
 	let producer = tokio::task::spawn_blocking(move || -> PackOutcome {
 		let mut channel_writer = ChannelWriter {
 			tx,
 			buf: BytesMut::with_capacity(CHUNK_BYTES),
+			dropped: flag.clone(),
 		};
 		let encoder = GzEncoder::new(&mut channel_writer, Compression::default());
 		let mut tar = crate::engine::context::tar_stream::builder(encoder);
@@ -252,19 +299,27 @@ pub(in crate::backends::engine) fn build_sync_tar_stream(
 		// `into_inner` runs the gzip footer; an abort along the way surfaces
 		// as a watch error so the caller's sync warning line keeps its
 		// category.
-		if let Err(e) = tar.into_inner() {
-			return (sent, Err(watch_err(format!("gzip: {e}"))));
-		}
-		if let Err(e) = channel_writer.flush() {
-			return (sent, Err(watch_err(format!("flush: {e}"))));
-		}
+		let dropped_during_pack = flag.load(Ordering::Relaxed);
+		let closing = tar
+			.into_inner()
+			.map(|_| ())
+			.map_err(|e| watch_err(format!("gzip: {e}")))
+			.and_then(|()| {
+				channel_writer
+					.flush()
+					.map_err(|e| watch_err(format!("flush: {e}")))
+			});
 
-		(sent, result)
+		conclude(sent, result, dropped_during_pack, closing, &flag)
 	});
 
 	let body = receiver_body_with_counter(rx, counter);
 
-	PackedStream { body, producer }
+	PackedStream {
+		body,
+		producer,
+		receiver_dropped,
+	}
 }
 
 /// Map a transport-level error inside the `cp` streaming path to a `cp`

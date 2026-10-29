@@ -80,3 +80,27 @@ async fn a_clean_answer_does_not_hide_a_pack_error() {
 		"an entry the packer refused was confirmed as copied: {result:?}"
 	);
 }
+
+/// What decides that a pack error was only the receiver going away is the fact,
+/// not the text: an entry whose name reads like the message of that error must
+/// not make a refused entry pass as a clean copy.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_name_that_imitates_the_receiver_error_does_not_pass_as_one() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = dir.path().join("payload");
+	std::fs::create_dir_all(&payload).unwrap();
+	std::fs::write(payload.join("a.txt"), b"ok").unwrap();
+	let status = std::process::Command::new("mkfifo")
+		.arg(payload.join("zz-cp: archive receiver dropped before the tar finished"))
+		.status()
+		.expect("mkfifo");
+	assert!(status.success());
+
+	let fake = runtime(Put::Answers(200), &[("/tmp", OnDisk::Dir)]);
+	let result = upload(&fake, &payload, "payload", None).await;
+	assert!(
+		result.is_err(),
+		"a refused entry named like the receiver error was confirmed: {result:?}"
+	);
+}
