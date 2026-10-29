@@ -55,3 +55,28 @@ async fn a_pack_error_midway_reaches_the_caller_as_an_error() {
 		"the message must carry the original cause, got: {msg}"
 	);
 }
+
+/// The receiver answers 2xx to the prefix of the archive it was given, but the
+/// packer refused an entry after it: part of what was selected was left out. The
+/// copy must report that, not confirm it.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_clean_answer_does_not_hide_a_pack_error() {
+	let dir = tempfile::tempdir().unwrap();
+	let payload = dir.path().join("payload");
+	std::fs::create_dir_all(&payload).unwrap();
+	std::fs::write(payload.join("a.txt"), b"ok").unwrap();
+	// Sorts after `a.txt`, so the prefix is packed before this is refused.
+	let status = std::process::Command::new("mkfifo")
+		.arg(payload.join("z.fifo"))
+		.status()
+		.expect("mkfifo");
+	assert!(status.success());
+
+	let fake = runtime(Put::Answers(200), &[("/tmp", OnDisk::Dir)]);
+	let result = upload(&fake, &payload, "payload", None).await;
+	assert!(
+		result.is_err(),
+		"an entry the packer refused was confirmed as copied: {result:?}"
+	);
+}

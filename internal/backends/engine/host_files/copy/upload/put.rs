@@ -32,7 +32,7 @@ use std::pin::Pin;
 
 use futures_util::Stream;
 
-use super::super::pack::transport::{BodyItem, PackedStream};
+use super::super::pack::transport::{BodyItem, PackedStream, RECEIVER_DROPPED};
 use super::super::Engine;
 use super::verify::{LandedFailure, SentKind};
 use super::{super::join_archive_path, verify};
@@ -98,11 +98,17 @@ impl Engine {
 		// `BrokenPipe` ("archive receiver dropped before the tar
 		// finished"). That is a timing artifact of the response coming back
 		// faster than the producer's final flush; the bytes that matter
-		// already went out. Drain the producer best-effort and return Ok,
-		// matching Podman 5's "answer is the confirmation" path.
+		// already went out. That one error is tolerated. Any other error of the
+		// pack (a file that vanished, one that cannot be read, an entry of a kind
+		// that is refused) means part of what was selected was left out of a
+		// tar that was still closed properly, and the receiver answered 2xx to
+		// what it was given: it is reported, not confirmed.
 		if put_result.is_ok() {
-			let _ = producer.await;
-			return Ok(());
+			return match pack_outcome(producer).await {
+				Err(e) if e.to_string().contains(RECEIVER_DROPPED) => Ok(()),
+				Err(e) => Err(e),
+				Ok(_) => Ok(()),
+			};
 		}
 
 		// The PUT errored (IncompleteMessage or something worse). Wait for
