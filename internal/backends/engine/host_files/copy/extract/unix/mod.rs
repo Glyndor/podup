@@ -9,7 +9,7 @@ use std::path::{Component, Path, PathBuf};
 
 use rustix::fs::{self, Timespec, Timestamps};
 
-use self::directory::Directory;
+use self::directory::{Directory, ExtractionState};
 use super::destination::destination_refusal;
 use crate::error::{ComposeError, Result};
 
@@ -91,6 +91,7 @@ fn single_file<R: Read>(
 /// Consume a tar stream without ever reopening the extraction root by name.
 pub(super) fn extract<R: Read>(src: R, root: &Directory) -> Result<()> {
 	let mut archive = tar::Archive::new(src);
+	let mut state = ExtractionState::default();
 	for entry in archive.entries().map_err(ComposeError::Io)? {
 		let mut entry = entry.map_err(ComposeError::Io)?;
 		let kind = entry.header().entry_type();
@@ -105,13 +106,22 @@ pub(super) fn extract<R: Read>(src: R, root: &Directory) -> Result<()> {
 		if path.as_os_str().is_empty() {
 			continue;
 		}
-		let (parent, name) = root.parent(&path, true).map_err(ComposeError::Io)?;
+		let (parent, name) = root
+			.parent_with(&path, true, |dir, walked| {
+				state.record_directory(dir, walked, None)
+			})
+			.map_err(ComposeError::Io)?;
 		let old_directory =
 			entry.header().as_ustar().is_none() && entry.path_bytes().ends_with(b"/");
 		if kind.is_dir() || (old_directory && !kind.is_symlink() && !kind.is_hard_link()) {
 			let dir = parent.child(&name, true).map_err(ComposeError::Io)?;
-			if let Ok(mode) = entry.header().mode() {
-				dir.chmod(mode).map_err(ComposeError::Io)?;
+			let mode = entry.header().mode().ok();
+			state
+				.record_directory(&dir, &path, mode)
+				.map_err(ComposeError::Io)?;
+			if let Some(mode) = mode {
+				// Owner access is needed until all descendant entries are complete.
+				dir.chmod(mode | 0o700).map_err(ComposeError::Io)?;
 			}
 		} else if kind.is_symlink() || kind.is_hard_link() {
 			let target = entry
@@ -140,6 +150,7 @@ pub(super) fn extract<R: Read>(src: R, root: &Directory) -> Result<()> {
 						root,
 						&archive_path(&target)?,
 						entry.header().mode().ok(),
+						&state,
 					)
 					.map_err(ComposeError::Io)?;
 				if let Some(linked) = linked {
@@ -169,9 +180,10 @@ pub(super) fn extract<R: Read>(src: R, root: &Directory) -> Result<()> {
 				.map_err(|e| ComposeError::Io(e.into()))?;
 			}
 			apply_mode(&output, entry.header())?;
+			state.record_file(&output).map_err(ComposeError::Io)?;
 		}
 	}
-	Ok(())
+	state.finish_directory_modes(root).map_err(ComposeError::Io)
 }
 
 fn copy_entry<R: Read>(entry: &mut tar::Entry<'_, R>, output: &mut File) -> Result<()> {
