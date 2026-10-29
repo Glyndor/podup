@@ -17,6 +17,12 @@
 //! same kind. The parity test in [`super::transport::tests`] pins this by packing
 //! to a `Vec<u8>` with the recorder on, then asserting the recorder equals
 //! what `sent_entries` reads back from the same bytes.
+//!
+//! A tree is packed through descriptors. The walk hands over each entry with
+//! the descriptor it was opened with, and the tar is written from that
+//! descriptor: a name that is replaced between the walk and the write cannot
+//! redirect the bytes that go out. The root the user named is the one path
+//! read by path, because that is the path they asked for.
 
 use std::ffi::OsStr;
 use std::io::Write;
@@ -24,8 +30,8 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{ComposeError, Result};
 
-use super::super::upload::verify::SentEntry;
-use super::common::{record_one, walk, KindDispatch};
+use super::super::upload::verify::{SentEntry, SentKind};
+use super::common::{push_entry, record_one, walk, KindDispatch};
 
 /// Pack a host file or directory into a `tar::Builder`, recording every entry
 /// appended.
@@ -79,46 +85,15 @@ pub(in crate::backends::engine::host_files::copy) fn pack_path<W: Write>(
 	};
 
 	if src.is_dir() {
-		// Descendants first, then the wrapper. `tree_landed` walks the
-		// recorded list last-to-first so a truncated upload (the tail is
-		// gone) is refused on the first stat instead of the last; putting the
-		// wrapper at the end preserves the ordering `append_dir_all` had.
-		for abs in walk::walk_dir(src).map_err(ComposeError::Io)? {
-			let rel = abs.strip_prefix(src).map_err(|_| {
-				ComposeError::Build(format!(
-					"cp: walk produced path outside source: {}",
-					abs.display()
-				))
-			})?;
-			let mut child_name = PathBuf::from(name);
-			child_name.push(rel);
-			let is_dir = abs.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
-			if is_dir {
-				record_one(
-					tar,
-					sent,
-					&child_name,
-					&abs,
-					KindDispatch::Dir,
-					follow_link,
-					cp_err,
-				)?;
-			} else {
-				record_one(
-					tar,
-					sent,
-					&child_name,
-					&abs,
-					KindDispatch::FileOrLink,
-					follow_link,
-					cp_err,
-				)?;
-			}
+		if follow_link {
+			pack_following_links(src, name, tar, sent)?;
+			// The wrapper entry: a directory named `name` whose path on disk is
+			// `src`. `append_dir_all` would emit this same entry as the last
+			// thing it did (DFS pushes children first, then the parent).
+			record_one(tar, sent, name, src, KindDispatch::Dir, follow_link, cp_err)?;
+		} else {
+			pack_pinned_tree(src, Some(name), tar, sent)?;
 		}
-		// The wrapper entry: a directory named `name` whose path on disk is
-		// `src`. `append_dir_all` would emit this same entry as the last
-		// thing it did (DFS pushes children first, then the parent).
-		record_one(tar, sent, name, src, KindDispatch::Dir, follow_link, cp_err)?;
 	} else {
 		record_one(
 			tar,
@@ -147,6 +122,27 @@ fn pack_contents<W: Write>(
 			src.display()
 		)));
 	}
+	if follow_link {
+		pack_following_links(src, Path::new(""), tar, sent)?;
+	} else {
+		pack_pinned_tree(src, None, tar, sent)?;
+	}
+	Ok(())
+}
+
+/// Pack a tree the way `-L` asks for: the walk names the entries and every
+/// link is resolved to what it points at.
+///
+/// Resolving links is the policy `-L` asks for, so this path reads the tree
+/// by name. The walk it uses is the one that follows links, and every entry
+/// it names is handed to [`record_one`], which classifies it against the
+/// path.
+fn pack_following_links<W: Write>(
+	src: &Path,
+	prefix: &Path,
+	tar: &mut tar::Builder<W>,
+	sent: &mut Vec<SentEntry>,
+) -> Result<()> {
 	for abs in walk::walk_dir(src).map_err(ComposeError::Io)? {
 		let rel = abs.strip_prefix(src).map_err(|_| {
 			ComposeError::Build(format!(
@@ -154,19 +150,161 @@ fn pack_contents<W: Write>(
 				abs.display()
 			))
 		})?;
+		let child_name = prefix.join(rel);
 		let is_dir = abs.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
 		if is_dir {
-			record_one(tar, sent, rel, &abs, KindDispatch::Dir, follow_link, cp_err)?;
+			record_one(
+				tar,
+				sent,
+				&child_name,
+				&abs,
+				KindDispatch::Dir,
+				true,
+				cp_err,
+			)?;
 		} else {
 			record_one(
 				tar,
 				sent,
-				rel,
+				&child_name,
 				&abs,
 				KindDispatch::FileOrLink,
-				follow_link,
+				true,
 				cp_err,
 			)?;
+		}
+	}
+	Ok(())
+}
+
+/// Pack a tree through the descriptors the walk opened.
+///
+/// `prefix` is the archive path the tree is stored under: the descendants land
+/// at `prefix/<relative path>`, and the wrapper entry for `prefix` closes the
+/// tree. Without a prefix (`contents` mode) the descendants land at their
+/// relative path and there is no wrapper.
+///
+/// The descendants first, then the wrapper: `tree_landed` walks the recorded
+/// list last-to-first so a truncated upload (the tail is gone) is refused on
+/// the first stat instead of the last; putting the wrapper at the end
+/// preserves the ordering `append_dir_all` had.
+fn pack_pinned_tree<W: Write>(
+	src: &Path,
+	prefix: Option<&Path>,
+	tar: &mut tar::Builder<W>,
+	sent: &mut Vec<SentEntry>,
+) -> Result<()> {
+	// The root is the path the user named, so it is read by path. Its
+	// metadata closes the tree as the wrapper entry.
+	let root = std::fs::metadata(src).map_err(|e| {
+		cp_err(&format!(
+			"{} when getting metadata for {}",
+			e,
+			src.display()
+		))
+	})?;
+	let mut failure: Option<ComposeError> = None;
+	let walked = walk::visit_dir_skipping(
+		src,
+		|_| false,
+		|_| true,
+		|abs, entry| {
+			match append_pinned(tar, sent, src, prefix, abs, entry) {
+				Ok(()) => Ok(()),
+				Err(e) => {
+					// The walk stops at the first error, so the reason is kept
+					// here and reported once the walk is over.
+					failure = Some(e);
+					Err(std::io::Error::other("cp: the entry could not be packed"))
+				}
+			}
+		},
+	);
+	if let Some(e) = failure {
+		return Err(e);
+	}
+	walked.map_err(walk_err)?;
+	if let Some(name) = prefix {
+		let mut header = tar::Header::new_gnu();
+		header.set_metadata(&root);
+		header.set_entry_type(tar::EntryType::Directory);
+		header.set_size(0);
+		tar.append_data(&mut header, name, std::io::empty())
+			.map_err(|e| cp_err(&e.to_string()))?;
+		push_entry(sent, name, SentKind::Dir)?;
+	}
+	Ok(())
+}
+
+/// Append one entry the descriptor walk handed over, and record it.
+///
+/// The bytes come from the descriptor the walk opened, never from the path
+/// the entry was found at: a name that is replaced between the walk and the
+/// write would otherwise pack whatever the path points at by then.
+fn append_pinned<W: Write>(
+	tar: &mut tar::Builder<W>,
+	sent: &mut Vec<SentEntry>,
+	src: &Path,
+	prefix: Option<&Path>,
+	abs: &Path,
+	entry: walk::Entry,
+) -> Result<()> {
+	let rel = abs.strip_prefix(src).map_err(|_| {
+		ComposeError::Build(format!(
+			"cp: walk produced path outside source: {}",
+			abs.display()
+		))
+	})?;
+	let name: PathBuf = match prefix {
+		Some(p) => p.join(rel),
+		None => rel.to_path_buf(),
+	};
+	match entry {
+		walk::Entry::File(mut file) => {
+			// The size comes from the descriptor that is about to be read, so
+			// the recorder and the header cannot describe two different files.
+			let size = file
+				.metadata()
+				.map_err(|e| {
+					cp_err(&format!(
+						"{} when getting metadata for {}",
+						e,
+						abs.display()
+					))
+				})?
+				.len();
+			crate::engine::context::tar_stream::append_pinned_file(tar, &name, &mut file)
+				.map_err(|e| cp_err(&e.to_string()))?;
+			push_entry(sent, &name, SentKind::File(size))?;
+		}
+		walk::Entry::Directory(metadata) => {
+			let mut header = tar::Header::new_gnu();
+			header.set_metadata(&metadata);
+			header.set_entry_type(tar::EntryType::Directory);
+			header.set_size(0);
+			tar.append_data(&mut header, &name, std::io::empty())
+				.map_err(|e| cp_err(&e.to_string()))?;
+			push_entry(sent, &name, SentKind::Dir)?;
+		}
+		walk::Entry::Symlink(target) => {
+			// `to_str` rejects bytes that are not valid UTF-8; mirrors the
+			// `sent_entries` rule that turns a non-UTF-8 link name into an
+			// error so the verification fails closed rather than confirming on
+			// the lossy-rewritten name.
+			let target_str = target
+				.to_str()
+				.ok_or_else(|| ComposeError::Build("cp: symlink link name is not UTF-8".into()))?;
+			// This version of the `tar` crate's `append_link` takes a
+			// pre-built Header; mirror the on-disk mode so a destination that
+			// reads the entry back from the archive sees the same shape
+			// `append_path_with_name` would have produced.
+			let mut header = tar::Header::new_gnu();
+			header.set_entry_type(tar::EntryType::Symlink);
+			header.set_size(0);
+			header.set_mode(0o777);
+			tar.append_link(&mut header, &name, &target)
+				.map_err(|e| cp_err(&e.to_string()))?;
+			push_entry(sent, &name, SentKind::Link(target_str.to_string()))?;
 		}
 	}
 	Ok(())
@@ -176,6 +314,20 @@ fn pack_contents<W: Write>(
 /// shared [`super::common::record_one`] helper.
 fn cp_err(msg: &str) -> ComposeError {
 	ComposeError::Copy(format!("cp: {msg}"))
+}
+
+/// Map a failure of the descriptor walk to a `cp`-category error.
+///
+/// The walk refuses an entry whose kind it cannot confirm (a socket, a pipe,
+/// a device) before the entry reaches the visitor. That keeps the wording the
+/// recorder uses for the same condition; any other failure (a directory that
+/// cannot be read, say) is reported as what it is.
+fn walk_err(e: std::io::Error) -> ComposeError {
+	if e.to_string().contains("socket, pipe or device") {
+		ComposeError::Build(format!("cp: source entry has unverified kind: {e}"))
+	} else {
+		ComposeError::Build(format!("cp: {e}"))
+	}
 }
 
 // ---------------------------------------------------------------------------
