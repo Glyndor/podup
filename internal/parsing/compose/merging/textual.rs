@@ -48,7 +48,22 @@ const TEXT_SCALARS: &[&str] = &["mem_limit", "memswap_limit", "mem_reservation",
 
 /// Service keys that hold a list of "string or number" items, or a map whose
 /// values are string, number or boolean.
-const TEXT_COLLECTIONS: &[&str] = &["ports", "expose", "labels", "annotations"];
+const TEXT_COLLECTIONS: &[&str] = &["ports", "expose", "labels", "annotations", "group_add"];
+
+/// Nested text-typed fields of a service: `(block, key, is_a_collection)`. The
+/// block is the service key that holds a mapping, the key the field inside it.
+const NESTED_TEXT: &[(&str, &str, bool)] = &[
+	("healthcheck", "test", true),
+	("logging", "options", true),
+	("build", "shm_size", false),
+	("build", "labels", true),
+	("build", "args", true),
+	("deploy", "labels", true),
+];
+
+/// Text-typed fields of an entry of the top-level `networks`, `volumes`,
+/// `secrets` and `configs` sections.
+const TOP_LEVEL_TEXT: &[&str] = &["driver_opts", "labels"];
 
 /// Turn the number and boolean scalars of the text-typed keys of every service
 /// and job in `document` into strings.
@@ -67,6 +82,34 @@ pub(in super::super) fn stringify_text_fields(document: &mut Value) {
 					stringify_scalar(value);
 				} else if TEXT_COLLECTIONS.contains(&key) {
 					stringify_collection(value);
+				} else if let Value::Mapping(block) = value {
+					for (name, field, collection) in NESTED_TEXT {
+						if *name != key {
+							continue;
+						}
+						if let Some(inner) = block.get_mut(*field) {
+							if *collection {
+								stringify_collection(inner);
+							} else {
+								stringify_scalar(inner);
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	for section in ["networks", "volumes", "secrets", "configs"] {
+		let Some(Value::Mapping(entries)) = document.get_mut(section) else {
+			continue;
+		};
+		for (_, entry) in entries.iter_mut() {
+			let Value::Mapping(entry) = entry else {
+				continue;
+			};
+			for field in TOP_LEVEL_TEXT {
+				if let Some(inner) = entry.get_mut(*field) {
+					stringify_collection(inner);
 				}
 			}
 		}

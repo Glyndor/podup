@@ -2,12 +2,12 @@ use super::*;
 
 #[test]
 fn yaml11_bool_detection_is_case_insensitive_and_scoped() {
-	for tok in [
-		"yes", "Yes", "YES", "no", "on", "OFF", "y", "N", "true", "False",
-	] {
+	for tok in ["yes", "Yes", "YES", "no", "on", "OFF", "y", "N"] {
 		assert!(looks_like_yaml11_bool(tok), "{tok} should match");
 	}
-	for tok in ["hello", "yess", "0", "onoff", "", "nullish"] {
+	for tok in [
+		"hello", "yess", "0", "onoff", "", "nullish", "true", "False",
+	] {
 		assert!(!looks_like_yaml11_bool(tok), "{tok} should not match");
 	}
 }
@@ -73,7 +73,7 @@ volumes:
 x:
   - - |
       - yes
-  - 'true'
+  - true
 ";
 	assert_eq!(quote_yaml11_booleans(input), expected);
 }
@@ -187,4 +187,13 @@ fn a_long_form_bind_of_the_host_root_stays_the_host_root() {
 		VolumeMount::Long { source, .. } => assert_eq!(source.as_deref(), Some("/")),
 		other => panic!("expected the long form, got {other:?}"),
 	}
+}
+
+/// A real boolean is written plain by the serializer. Quoting it turned
+/// `privileged: true` into the string `'true'`, which the file's own reader
+/// then refused, so `podup config | podup -f -` broke.
+#[test]
+fn real_booleans_are_left_plain() {
+	let input = "privileged: true\nread_only: false\nitems:\n- true\n";
+	assert_eq!(quote_yaml11_booleans(input), input);
 }
