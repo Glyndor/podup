@@ -32,7 +32,7 @@ use std::pin::Pin;
 
 use futures_util::Stream;
 
-use super::super::pack::transport::{BodyItem, PackedStream, RECEIVER_DROPPED};
+use super::super::pack::transport::{BodyItem, PackedStream};
 use super::super::Engine;
 use super::verify::{LandedFailure, SentKind};
 use super::{super::join_archive_path, verify};
@@ -83,7 +83,11 @@ impl Engine {
 		// `application/gzip` is the honest label for the gzipped tar; Podman
 		// sniffs the magic bytes and forgives either. The watch path
 		// actually gzips; the cp path uses plain tar, which libpod accepts.
-		let PackedStream { body, producer } = packed;
+		let PackedStream {
+			body,
+			producer,
+			receiver_dropped,
+		} = packed;
 		let body_for_put: Pin<Box<dyn Stream<Item = BodyItem> + Send + 'static>> = body;
 
 		let put_result = self
@@ -105,7 +109,7 @@ impl Engine {
 		// what it was given: it is reported, not confirmed.
 		if put_result.is_ok() {
 			return match pack_outcome(producer).await {
-				Err(e) if e.to_string().contains(RECEIVER_DROPPED) => Ok(()),
+				Err(_) if receiver_dropped.load(std::sync::atomic::Ordering::Relaxed) => Ok(()),
 				Err(e) => Err(e),
 				Ok(_) => Ok(()),
 			};
