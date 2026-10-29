@@ -28,6 +28,5 @@ pub(crate) struct LogsArgs {
 	#[arg(long)]
 	pub(crate) no_log_prefix: bool,
 	/// Show logs for these services (default: all).
-	#[arg(trailing_var_arg = true)]
 	pub(crate) services: Vec<String>,
 }

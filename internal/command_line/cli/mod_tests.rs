@@ -91,3 +91,39 @@ fn connection_pool_size_accepts_zero_and_the_upper_boundary() {
 		assert_eq!(cli.connection_pool_size, Some(value.parse().unwrap()));
 	}
 }
+
+/// An option written after the name of a service used to be swallowed as one
+/// more service name, so `start web --wait` waited for nothing and
+/// `stop web --timeout 0` stopped a service called `--timeout`.
+#[test]
+fn an_option_after_a_service_name_is_an_option() {
+	use super::{Cli, Commands};
+	let parse = |args: &[&str]| {
+		let mut full = vec!["podup"];
+		full.extend_from_slice(args);
+		Cli::try_parse_from(full)
+			.expect("the command line must parse")
+			.command
+	};
+	match parse(&["start", "web", "--wait"]) {
+		Commands::Start { wait, services, .. } => {
+			assert!(wait, "--wait was taken as a service");
+			assert_eq!(services, ["web"]);
+		}
+		_ => panic!("expected start"),
+	}
+	match parse(&["stop", "web", "--timeout", "0"]) {
+		Commands::Stop { timeout, services } => {
+			assert_eq!(timeout, Some(0));
+			assert_eq!(services, ["web"]);
+		}
+		_ => panic!("expected stop"),
+	}
+	match parse(&["up", "web", "-d"]) {
+		Commands::Up(args) => {
+			assert!(args.detach, "-d was taken as a service");
+			assert_eq!(args.services, ["web"]);
+		}
+		_ => panic!("expected up"),
+	}
+}

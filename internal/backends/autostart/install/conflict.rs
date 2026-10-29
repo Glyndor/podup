@@ -143,7 +143,13 @@ pub(in super::super) fn classify_exec_start(line: &str) -> DetectedSingleUnitMod
 	// would have to be three tokens long).
 	// Older releases wrote `start <container>`; current ones write
 	// `start -- <container>`. Both are start mode.
-	if (n == 3 && tokens[1] == "start") || (n == 4 && tokens[1] == "start" && tokens[2] == "--") {
+	// With an explicit socket the renderer puts `--url <socket>` before the verb:
+	// `<podman> --url <socket> start -- <container>`. Skip that pair so the unit
+	// podup wrote itself is not classified as unknown.
+	let skip = if n > 2 && tokens[1] == "--url" { 2 } else { 0 };
+	if (n == 3 + skip && tokens[1 + skip] == "start")
+		|| (n == 4 + skip && tokens[1 + skip] == "start" && tokens[2 + skip] == "--")
+	{
 		return DetectedSingleUnitMode::Start;
 	}
 	// Service mode renders `<podup>`, then `-f`, `-p`, `--socket`,

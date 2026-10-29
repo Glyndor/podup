@@ -370,3 +370,26 @@ fn a_unit_without_exec_start_is_refused() {
 		assert_eq!(std::fs::read(&path).unwrap(), b"");
 	});
 }
+
+/// The unit start mode writes with an explicit socket carries `--url <socket>`
+/// before the verb. Rendering it and classifying the result must give start
+/// mode back, or a reinstall refuses the unit podup itself wrote.
+#[test]
+fn a_start_unit_with_an_explicit_socket_is_still_start_mode() {
+	let opts = crate::autostart::StartUnitOpts::new(
+		std::path::PathBuf::from("/usr/bin/podman"),
+		"proj".to_string(),
+		"proj-web-1".to_string(),
+	)
+	.with_socket(Some("unix:///run/user/1000/podman/podman.sock".to_string()));
+	let unit = crate::autostart::render_start_unit(&opts);
+	let line = unit
+		.lines()
+		.find(|l| l.starts_with("ExecStart="))
+		.expect("the unit has an ExecStart");
+	assert!(
+		line.contains("--url"),
+		"the socket must reach the unit: {line}"
+	);
+	assert_eq!(classify_exec_start(line), DetectedSingleUnitMode::Start);
+}

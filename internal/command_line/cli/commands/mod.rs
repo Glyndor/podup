@@ -46,7 +46,6 @@ pub(crate) enum Commands {
 		#[arg(long, requires = "wait")]
 		wait_timeout: Option<u64>,
 		/// Start only these services.
-		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
 	/// Stop running containers without removing them.
@@ -55,7 +54,6 @@ pub(crate) enum Commands {
 		#[arg(short = 't', long, allow_hyphen_values = true, value_parser = parse_timeout)]
 		timeout: Option<i32>,
 		/// Stop only these services.
-		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
 	/// Set the number of running containers for services.
@@ -169,7 +167,6 @@ pub(crate) enum Commands {
 		#[arg(short = 's', long)]
 		stop: bool,
 		/// Remove only these services.
-		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
 	/// Send a signal to service containers.
@@ -186,14 +183,12 @@ pub(crate) enum Commands {
 	/// Pause running service containers.
 	Pause {
 		/// Pause only these services.
-		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
 	/// Resume paused service containers.
 	#[command(alias = "resume")]
 	Unpause {
 		/// Unpause only these services.
-		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
 	/// Run a one-off command in a new service container.
@@ -327,7 +322,6 @@ pub(crate) enum Commands {
 		#[arg(long)]
 		no_deps: bool,
 		/// Restart only these services (default: all).
-		#[arg(trailing_var_arg = true)]
 		services: Vec<String>,
 	},
 	/// Print the resolved compose file (substitution/extends/include applied).

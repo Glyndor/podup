@@ -234,7 +234,19 @@ impl Engine {
 			// project's label and the declared driver options, and an
 			// `external: true` volume is checked for existence instead of
 			// being left to fail later with an opaque mount error.
-			self.create_volumes(file).await?;
+			// Only the volumes this container (and its init steps) mounts: another
+			// service's volume, possibly an external one that is absent, is not
+			// something `run` needs, and must not make it fail.
+			let mut mounted: std::collections::HashSet<String> =
+				crate::engine::volume_mounts::named_volume_refs(&run_service)
+					.into_iter()
+					.collect();
+			for step in self.pre_start_steps(service_name, &run_service) {
+				mounted.extend(crate::engine::volume_mounts::named_volume_refs(&step));
+			}
+			let mut scoped = file.clone();
+			scoped.volumes.retain(|name, _| mounted.contains(name));
+			self.create_volumes(&scoped).await?;
 			// Inline secrets/configs are created up front (no longer in the
 			// per-container build path), so materialise them here too before the run
 			// container is created.

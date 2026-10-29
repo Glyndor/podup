@@ -96,3 +96,36 @@ async fn pre_start_up_initializes_stopped_reused_containers_only() {
 		}
 	}
 }
+
+/// A `pre_start` step can write the `env_file` the service reads. The
+/// environment resolved before it ran must not be what the container gets.
+#[tokio::test]
+async fn an_env_file_written_by_pre_start_reaches_the_container() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(dir.path().join("generated.env"), "VERSION=old\n").unwrap();
+	let file = crate::parse_str(
+		"services:\n  web:\n    image: base\n    env_file: generated.env\n    pre_start:\n      - command: init\n",
+	)
+	.unwrap();
+	let service = &file.services["web"];
+	let peer = peer(0, false);
+	let engine =
+		crate::engine::Engine::with_base_dir(peer.client(), "proj".into(), dir.path().into());
+	// What `up` resolves first, before the init step has run.
+	let before = engine.effective_env(service).unwrap();
+	assert_eq!(before["VERSION"], "old");
+	// The init step rewrites the file, as the real one would.
+	std::fs::write(dir.path().join("generated.env"), "VERSION=new\n").unwrap();
+	engine
+		.recreate_service("proj-web", "web", service, &file, true, &before)
+		.await
+		.unwrap();
+	let specs = created(&peer);
+	let web = specs.last().expect("the service container was created");
+	let env = web["env"].to_string();
+	assert!(env.contains("VERSION") && env.contains("new"), "{env}");
+	assert!(
+		!env.contains("old"),
+		"the stale value reached the container: {env}"
+	);
+}

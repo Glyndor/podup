@@ -74,6 +74,5 @@ pub(crate) struct UpArgs {
 	)]
 	pub(crate) exit_code_from: Option<String>,
 	/// Bring up only these services (and their depends_on); default: all.
-	#[arg(trailing_var_arg = true)]
 	pub(crate) services: Vec<String>,
 }
