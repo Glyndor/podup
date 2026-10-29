@@ -37,6 +37,29 @@ const DIRECTORY_FLAGS: OFlags =
 )))]
 const DIRECTORY_FLAGS: OFlags = READ_DIRECTORY_FLAGS;
 
+/// Test seam: a closure run between linking a hard link and opening it again,
+/// to put another file under its name at exactly that point.
+#[cfg(test)]
+pub(super) mod before_reopen {
+	use std::cell::RefCell;
+
+	thread_local! {
+		static HOOK: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
+	}
+
+	pub(in crate::backends::engine::host_files::copy::extract) fn set(hook: impl Fn() + 'static) {
+		HOOK.with(|h| *h.borrow_mut() = Some(Box::new(hook)));
+	}
+
+	pub(super) fn run() {
+		HOOK.with(|h| {
+			if let Some(hook) = h.borrow_mut().take() {
+				hook();
+			}
+		});
+	}
+}
+
 /// A directory whose identity survives replacement of its path components.
 pub(crate) struct Directory(File);
 
@@ -311,6 +334,8 @@ impl Directory {
 		if mode.is_none_or(|mode| linked.st_mode & 0o7777 == masked_mode(mode).bits()) {
 			return Ok(None);
 		}
+		#[cfg(test)]
+		before_reopen::run();
 		let open = |access| {
 			fs::openat(
 				&self.0,
@@ -323,6 +348,18 @@ impl Directory {
 			Err(Errno::ACCESS) => open(OFlags::WRONLY)?,
 			other => other?,
 		};
+		// The name was opened again, so what came back is checked, not assumed:
+		// a regular file with another identity is a different inode, and the mode
+		// is never applied to it.
+		let opened = fs::fstat(&fd)?;
+		if fs::FileType::from_raw_mode(opened.st_mode) != fs::FileType::RegularFile
+			|| file_identity(&opened) != identity
+		{
+			return Err(io::Error::other(format!(
+				"cp: hard link changed while its mode was being applied: {}",
+				target.display()
+			)));
+		}
 		Ok(Some(fd.into()))
 	}
 
