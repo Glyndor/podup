@@ -117,3 +117,26 @@ fn read_capped_rejects_a_fifo() {
 		"the error should explain the hang, got: {msg}"
 	);
 }
+
+/// The bytes and the mode come from one open handle, and execute and special
+/// bits are not part of the answer.
+#[cfg(unix)]
+#[test]
+fn read_with_mode_returns_the_read_and_write_bits_of_the_file_it_read() {
+	use std::os::unix::fs::PermissionsExt;
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("secret");
+	std::fs::write(&path, b"x").unwrap();
+	for (host, want) in [
+		(0o644, 0o644),
+		(0o600, 0o600),
+		(0o755, 0o644),
+		(0o4700, 0o600),
+	] {
+		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(host)).unwrap();
+		let (bytes, mode) = super::read_capped_with_mode(&path, 1024).unwrap();
+		assert_eq!(bytes, b"x");
+		assert_eq!(mode, want, "host mode {host:o}");
+	}
+	assert!(super::read_capped_with_mode(dir.path().join("missing"), 1024).is_err());
+}

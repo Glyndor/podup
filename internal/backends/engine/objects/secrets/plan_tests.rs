@@ -71,45 +71,6 @@ fn empty_def_contributes_no_plan() {
 	assert!(p.is_empty());
 }
 
-// Unix-only: `PermissionsExt` does not exist on Windows, where a host file has
-// no mode to mirror and `host_file_secret_mode` returns the 0444 default.
-#[cfg(unix)]
-#[test]
-fn host_file_mode_masks_execute_and_special_bits() {
-	// A secret holds data, never code. Mirroring a 0755 host file verbatim would
-	// trip the dangerous-mode guard and fail an `up` that used to work.
-	let dir = tempfile::tempdir().unwrap();
-	let path = dir.path().join("s.txt");
-	std::fs::write(&path, b"x").unwrap();
-	for (host, want) in [
-		(0o644, 0o644),
-		(0o600, 0o600),
-		(0o755, 0o644),
-		(0o4700, 0o600),
-	] {
-		use std::os::unix::fs::PermissionsExt;
-		std::fs::set_permissions(&path, std::fs::Permissions::from_mode(host)).unwrap();
-		assert_eq!(
-			host_file_secret_mode(&path).unwrap(),
-			want,
-			"host mode {host:o}"
-		);
-	}
-}
-
-/// Metadata that cannot be read is an error. The bytes are already loaded, so
-/// guessing `0444` would make a private secret readable by every user.
-#[cfg(unix)]
-#[test]
-fn host_file_mode_of_an_unreadable_file_is_an_error() {
-	let error = host_file_secret_mode(Path::new("/nonexistent/secret")).unwrap_err();
-	let message = error.to_string();
-	assert!(
-		message.contains("/nonexistent/secret"),
-		"the error must name the file: {message}"
-	);
-}
-
 #[test]
 fn inline_content_secret_is_scoped_native_with_payload() {
 	// `content:` becomes a project-scoped native secret carrying the bytes;

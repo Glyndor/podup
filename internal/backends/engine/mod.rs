@@ -165,6 +165,11 @@ pub struct Engine {
 	/// to its file-read behaviour in that case, which is exactly what those
 	/// callers always saw.
 	pub(crate) uploaded_file_digests: std::sync::Mutex<std::collections::HashMap<String, [u8; 32]>>,
+	/// The permission bits of every `file:` secret read this pass, by the scoped
+	/// secret name, taken from the same open handle as the bytes that were
+	/// uploaded. The mount reads this instead of asking the path again, which by
+	/// then may name another file.
+	pub(crate) uploaded_file_modes: std::sync::Mutex<std::collections::HashMap<String, u32>>,
 	/// CLI `--no-warn`: suppress the host-binding / privilege-escalation
 	/// warnings the engine emits during `up`/`create`/`run`/`exec`. The
 	/// operator wrote the compose file deliberately, so the default-warning

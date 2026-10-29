@@ -22,8 +22,9 @@
 //! it. Reading the bytes into a native secret leaves the host untouched and puts
 //! `file:` on the path the other two sources already took. What the container
 //! sees is unchanged: the mount mode mirrors the host file's own bits (see
-//! [`plan::host_file_secret_mode`]) rather than defaulting to `0444`, and a
-//! file whose mode cannot be read is an error.
+//! [`Engine::uploaded_file_mode`]) rather than defaulting to `0444`; it is taken
+//! from the handle the bytes were read from, and a file that was not read has no
+//! mode to mount with.
 //!
 //! The trade is that the payload is a copy taken at `up`, so an in-place edit of
 //! the host file no longer reaches a running container. An atomic replace never
@@ -41,10 +42,10 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::compose::types::{ComposeFile, Service};
-use crate::error::Result;
+use crate::error::{ComposeError, Result};
 use crate::libpod::types::container::Secret;
 
-use plan::{collect_native_plans, host_file_secret_mode, Payload};
+use plan::{collect_native_plans, Payload};
 // Re-exported so `container::config_hash` can build the same scoped name
 // `create_project_secrets` uses as its map key, without re-doing the
 // `format!` and risking the two views drifting. The `pub(crate)` on
@@ -85,7 +86,9 @@ impl Engine {
 			// own bits, so what the container sees does not change now that the file
 			// is copied into a native secret rather than bind-mounted.
 			let mode = match (&plan.payload, plan.mode) {
-				(Some(Payload::File(path)), None) => Some(host_file_secret_mode(path)?),
+				(Some(Payload::File(path)), None) => {
+					Some(self.uploaded_file_mode(&plan.source, path)?)
+				}
 				_ => plan.mode,
 			};
 			secrets.push(Secret {
@@ -97,6 +100,25 @@ impl Engine {
 			});
 		}
 		Ok(secrets)
+	}
+}
+
+impl Engine {
+	/// The mode a `file:` secret is mounted with: the one recorded when its bytes
+	/// were read. A secret with no record was not read in this pass, and guessing
+	/// its mode from the path could widen it, so that is an error.
+	fn uploaded_file_mode(&self, source: &str, path: &Path) -> Result<u32> {
+		self.uploaded_file_modes
+			.lock()
+			.expect("uploaded_file_modes mutex poisoned")
+			.get(source)
+			.copied()
+			.ok_or_else(|| {
+				ComposeError::Unsupported(format!(
+					"secret file {} was not read for this run, so its mode is not known",
+					path.display()
+				))
+			})
 	}
 }
 
