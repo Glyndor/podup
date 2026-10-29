@@ -129,3 +129,27 @@ volumes:
 	let test = web.healthcheck.as_ref().unwrap().test.clone();
 	assert!(format!("{test:?}").contains("8080"), "{test:?}");
 }
+
+/// A merge key inside a tagged section: the tag hides the mapping from the
+/// merge-key pass, so the service lost what it inherited.
+#[test]
+fn a_service_built_from_a_merge_key_inside_a_tagged_section_keeps_what_it_inherits() {
+	let file = parse_with(
+		"x-base: &base\n  image: x\n  user: ${UID}\nservices: !override\n  web:\n    <<: *base\n",
+		&[("UID", "1000")],
+	);
+	let web = &file.services["web"];
+	assert_eq!(web.image.as_deref(), Some("x"));
+	assert_eq!(web.user.as_deref(), Some("1000"));
+}
+
+#[test]
+fn a_tagged_service_built_from_a_merge_key_keeps_what_it_inherits() {
+	let file = parse_with(
+		"x-base: &base\n  image: x\n  user: ${UID}\nservices:\n  web: !override\n    <<: *base\n",
+		&[("UID", "1000")],
+	);
+	let web = &file.services["web"];
+	assert_eq!(web.image.as_deref(), Some("x"));
+	assert_eq!(web.user.as_deref(), Some("1000"));
+}

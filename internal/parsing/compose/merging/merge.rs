@@ -536,6 +536,9 @@ fn apply_merge_keys(value: &mut serde_yaml::Value) {
 				apply_merge_keys(v);
 			}
 		}
+		// A tagged section or service (`services: !override {...}`) holds its
+		// mapping behind the tag; the tag stays for the override semantics.
+		serde_yaml::Value::Tagged(tagged) => apply_merge_keys(&mut tagged.value),
 		_ => {}
 	}
 }
