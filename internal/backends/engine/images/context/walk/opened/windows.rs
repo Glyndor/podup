@@ -9,12 +9,17 @@ use super::{changed_type, io, Entry, File, Path};
 const DIRECTORY: u32 = 0x0200_0000;
 const NOFOLLOW: u32 = 0x0020_0000;
 const SHARE_READ: u32 = 1;
+const SHARE_WRITE: u32 = 2;
 const REPARSE_POINT: u32 = 0x400;
 
-fn open(path: &Path, flags: u32) -> io::Result<File> {
+/// `share` is what other handles may do while this one is open. A directory is
+/// pinned against writers and deleters so a path lookup cannot be redirected; a
+/// file is read while others may still hold it open for writing (a log in
+/// append mode), which is how the build context always read it.
+fn open(path: &Path, flags: u32, share: u32) -> io::Result<File> {
 	OpenOptions::new()
 		.read(true)
-		.share_mode(SHARE_READ)
+		.share_mode(share)
 		.custom_flags(flags)
 		.open(path)
 }
@@ -37,7 +42,7 @@ pub(super) fn walk(
 		.into_iter()
 		.rev()
 	{
-		let file = open(path, DIRECTORY | NOFOLLOW)?;
+		let file = open(path, DIRECTORY | NOFOLLOW, SHARE_READ)?;
 		let metadata = file.metadata()?;
 		if !metadata.is_dir() || metadata.file_attributes() & REPARSE_POINT != 0 {
 			return Err(changed_type());
@@ -87,7 +92,12 @@ fn collect(
 			visit(&path, Entry::Symlink(target))?;
 			continue;
 		}
-		let file = open(&path, DIRECTORY | NOFOLLOW)?;
+		let share = if kind.is_dir() {
+			SHARE_READ
+		} else {
+			SHARE_READ | SHARE_WRITE
+		};
+		let file = open(&path, DIRECTORY | NOFOLLOW, share)?;
 		let meta = file.metadata()?;
 		if meta.file_type() != kind
 			|| meta.file_attributes() & REPARSE_POINT != 0
