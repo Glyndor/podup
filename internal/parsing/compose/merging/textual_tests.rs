@@ -69,3 +69,24 @@ fn a_service_named_like_a_string_key_keeps_its_fields_typed() {
 	);
 	assert_eq!(file.services["user"].privileged, Some(false));
 }
+
+/// A service built from a merge key has its fields only once the key is
+/// resolved. Typing them before that left `user: "${UID}"` read as a number.
+#[test]
+fn a_service_built_from_a_merge_key_keeps_its_fields_typed() {
+	let file = parse_with(
+		"x-base: &base\n  image: x\n  user: ${UID}\nservices:\n  web:\n    <<: *base\n",
+		&[("UID", "1000")],
+	);
+	assert_eq!(file.services["web"].user.as_deref(), Some("1000"));
+}
+
+/// `services: !override` is a tagged mapping and must be typed like a plain one.
+#[test]
+fn a_tagged_services_section_keeps_its_fields_typed() {
+	let file = parse_with(
+		"services: !override\n  web:\n    image: x\n    user: ${UID}\n",
+		&[("UID", "1000")],
+	);
+	assert_eq!(file.services["web"].user.as_deref(), Some("1000"));
+}
