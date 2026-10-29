@@ -19,10 +19,16 @@ use crate::error::{ComposeError, Result};
 
 use super::super::upload::verify::{SentEntry, SentKind};
 
-/// Re-export the directory walker the two walks use, so the call sites read
-/// `walk::walk_dir(src)` without reaching across modules.
+/// Re-export the walkers the packers use, so the call sites read
+/// `walk::walk_dir(src)` and `walk::visit_dir_skipping(src, ..)` without
+/// reaching across modules.
+///
+/// `walk_dir` names the entries of a tree; `visit_dir_skipping` hands over
+/// each entry with the descriptor it was opened with, so the caller never has
+/// to reopen the path the entry was found at.
 pub(in crate::backends::engine) mod walk {
 	pub(in crate::backends::engine) use crate::engine::context::walk::walk_dir;
+	pub(in crate::backends::engine) use crate::engine::context::walk::{visit_dir_skipping, Entry};
 }
 
 /// What kind of entry the caller wants us to append. `Dir` writes a directory
@@ -52,6 +58,12 @@ pub(in crate::backends::engine) enum KindDispatch {
 /// Watch sync always passes `false`: a symlink inside a watched tree would
 /// otherwise copy the contents of its (possibly out-of-tree) target into the
 /// container.
+///
+/// The classification reads the path, so it answers for the path as it is at
+/// the moment of the call. That is what the root the user named asks for, and
+/// what the watch sync asks for; a `cp` tree is packed through the
+/// descriptors the walk opened instead (see
+/// [`super::archive::pack_path`]).
 ///
 /// Non-UTF-8 paths and link names, and unverifiable kinds (FIFO, char/block
 /// device, hard link), produce errors exactly like `sent_entries` reading the
