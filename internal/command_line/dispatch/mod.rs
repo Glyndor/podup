@@ -146,6 +146,10 @@ pub(crate) async fn dispatch(
 				// runs, so the lock is let go for it. Not when the command may stop
 				// the project itself: `--abort-on-container-exit` and
 				// `--exit-code-from` stop everything from inside the attach.
+				// Note which containers this `up` is attached to while it still
+				// holds the lock: the stop at the end is for these, not for
+				// whatever the project holds by then.
+				let attached = engine.snapshot_containers().await?;
 				if !abort_on_container_exit && exit_code_from.is_none() {
 					lock.take();
 				}
@@ -184,7 +188,7 @@ pub(crate) async fn dispatch(
 						if lock.is_none() {
 							*lock = Some(engine.lock_project()?);
 						}
-						engine.stop(&scope, &[]).await?;
+						engine.stop_snapshot(&scope, &attached).await?;
 					}
 				}
 				// Same ordering rule as the abort above: reported after the

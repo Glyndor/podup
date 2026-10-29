@@ -4,6 +4,7 @@ mod pause;
 mod restart;
 mod start;
 mod stop;
+pub use stop::ContainerSnapshot;
 
 #[cfg(all(test, unix))]
 mod tests;

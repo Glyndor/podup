@@ -91,13 +91,6 @@ impl Engine {
 	/// Services are stopped in reverse dependency order. If `target_services`
 	/// is empty, all services in the compose file are stopped.
 	pub async fn stop(&self, file: &ComposeFile, target_services: &[String]) -> Result<()> {
-		// Stop in reverse dependency order (dependents before their dependencies),
-		// one level at a time, but stop every service within a level concurrently
-		// so independent grace periods overlap instead of summing (#757).
-		let mut levels = crate::compose::resolve_levels(file)?;
-		levels.reverse();
-		let levels = filter_levels(file, levels, target_services)?;
-
 		// Prefetch every project container once and group by service, instead of
 		// one container-list round-trip per service (S+1 → 1 for the level walk;
 		// #1363). The bulk helper returns every project's containers regardless
@@ -105,6 +98,73 @@ impl Engine {
 		// come from the `stop` response itself now that we no longer filter
 		// running/paused client-side.
 		let live_by_service = self.live_project_replicas().await?;
+		self.stop_replicas(file, target_services, live_by_service)
+			.await
+	}
+
+	/// Note which containers the project holds now, by name and ID, so a later
+	/// [`Engine::stop_snapshot`] can stop these and no others.
+	pub async fn snapshot_containers(&self) -> Result<ContainerSnapshot> {
+		let mut by_service: std::collections::HashMap<String, Vec<(String, String)>> =
+			std::collections::HashMap::new();
+		for entry in self.project_container_entries().await? {
+			let (Some(service), Some(name)) =
+				(entry.labels.get("podup.service"), entry.names.first())
+			else {
+				continue;
+			};
+			by_service
+				.entry(service.clone())
+				.or_default()
+				.push((name.trim_start_matches('/').to_string(), entry.id));
+		}
+		Ok(ContainerSnapshot { by_service })
+	}
+
+	/// Stop the containers of a [`ContainerSnapshot`] that are still the same
+	/// containers: a name that now belongs to a container with another ID was
+	/// replaced by someone else since the snapshot, and is left running.
+	pub async fn stop_snapshot(
+		&self,
+		file: &ComposeFile,
+		snapshot: &ContainerSnapshot,
+	) -> Result<()> {
+		let current: std::collections::HashMap<String, String> = self
+			.project_container_entries()
+			.await?
+			.into_iter()
+			.filter_map(|entry| {
+				let name = entry.names.first()?.trim_start_matches('/').to_string();
+				Some((name, entry.id))
+			})
+			.collect();
+		let live_by_service = snapshot
+			.by_service
+			.iter()
+			.map(|(service, containers)| {
+				let same: Vec<String> = containers
+					.iter()
+					.filter(|(name, id)| current.get(name) == Some(id))
+					.map(|(name, _)| name.clone())
+					.collect();
+				(service.clone(), same)
+			})
+			.collect();
+		self.stop_replicas(file, &[], live_by_service).await
+	}
+
+	async fn stop_replicas(
+		&self,
+		file: &ComposeFile,
+		target_services: &[String],
+		live_by_service: std::collections::HashMap<String, Vec<String>>,
+	) -> Result<()> {
+		// Stop in reverse dependency order (dependents before their dependencies),
+		// one level at a time, but stop every service within a level concurrently
+		// so independent grace periods overlap instead of summing (#757).
+		let mut levels = crate::compose::resolve_levels(file)?;
+		levels.reverse();
+		let levels = filter_levels(file, levels, target_services)?;
 
 		// Report "stopped" solely for containers actually running/paused:
 		// stopping a Created/Exited one is a harmless no-op and must not claim
@@ -137,4 +197,12 @@ impl Engine {
 		note_if_idle(&acted, "stop");
 		Ok(())
 	}
+}
+
+/// The containers a project held at some moment, by service, each as its name
+/// and its ID. The ID is what tells a container from a later one that took the
+/// same name.
+#[derive(Debug, Clone, Default)]
+pub struct ContainerSnapshot {
+	by_service: std::collections::HashMap<String, Vec<(String, String)>>,
 }

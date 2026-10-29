@@ -19,6 +19,7 @@ use crate::compose::types::{ComposeFile, Service};
 use crate::error::Result;
 use crate::libpod::API_PREFIX;
 
+pub use commands::ContainerSnapshot;
 pub use run::options::{RunOptions, RunOverrides};
 pub use targets::validate_stop_timeout;
 

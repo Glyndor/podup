@@ -368,7 +368,7 @@ impl Engine {
 	}
 
 	/// Every container the project owns, in one listing.
-	async fn project_container_entries(
+	pub(crate) async fn project_container_entries(
 		&self,
 	) -> Result<Vec<crate::libpod::types::container::ContainerListEntry>> {
 		// Reuse the per-engine URL-encoded filter (#1364); see

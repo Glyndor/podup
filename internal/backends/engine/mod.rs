@@ -39,7 +39,7 @@ pub use build::{BuildOptions, PullOptions, PushOptions};
 pub use copy::CpOptions;
 pub use events::EventsOptions;
 pub use image::{resolve_image_digests, CommitOptions};
-pub use lifecycle::{validate_stop_timeout, RunOptions, RunOverrides};
+pub use lifecycle::{validate_stop_timeout, ContainerSnapshot, RunOptions, RunOverrides};
 pub use project::ProjectLock;
 
 pub(crate) use container_config::build_log_config;

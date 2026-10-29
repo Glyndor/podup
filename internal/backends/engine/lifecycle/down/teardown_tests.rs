@@ -446,3 +446,58 @@ async fn a_refused_network_does_not_stop_the_volumes_being_removed() {
 		"a network the project does not own was removed: {seen:?}"
 	);
 }
+
+/// The stop at the end of a foreground `up` is for the containers it was
+/// attached to. A container that took the name since, put there by another
+/// `up`, is a different container and is left running.
+#[tokio::test]
+#[cfg(unix)]
+async fn stop_snapshot_leaves_a_container_that_replaced_one_of_the_snapshot() {
+	use std::sync::atomic::{AtomicUsize, Ordering};
+	use std::sync::Arc;
+	let listings = Arc::new(AtomicUsize::new(0));
+	let seen = listings.clone();
+	let fake = fake_podman::start(move |method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			// The first listing is the snapshot; later ones show web-1 replaced.
+			let id = if seen.fetch_add(1, Ordering::SeqCst) == 0 {
+				"aaaa"
+			} else {
+				"bbbb"
+			};
+			(
+				200,
+				format!(
+					r#"[
+						{{"Id":"{id}","Names":["/proj-web-1"],"Labels":{{"podup.service":"web"}}}},
+						{{"Id":"cccc","Names":["/proj-db-1"],"Labels":{{"podup.service":"db"}}}}
+					]"#
+				),
+			)
+		} else if method == "POST" && target.contains("/stop") {
+			(204, String::new())
+		} else {
+			(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+	let mut file = ComposeFile::default();
+	file.services.insert("web".into(), Service::default());
+	file.services.insert("db".into(), Service::default());
+
+	let snapshot = e.snapshot_containers().await.unwrap();
+	e.stop_snapshot(&file, &snapshot).await.unwrap();
+
+	let seen = fake.requests.lock().unwrap();
+	assert!(
+		!seen
+			.iter()
+			.any(|r| r.starts_with("POST") && r.contains("/proj-web-1/stop")),
+		"the container that replaced the one of the snapshot was stopped: {seen:?}"
+	);
+	assert!(
+		seen.iter()
+			.any(|r| r.starts_with("POST") && r.contains("/proj-db-1/stop")),
+		"a container that is still the same was not stopped: {seen:?}"
+	);
+}
