@@ -16,6 +16,7 @@ on:
     paths:
       - ".cargo/**"
       - "Cargo.toml"
+      - "build.rs"
       - ".github/scripts/hardening/check-hardening.sh"
       - ".github/workflows/linux-hardening.yml"
       - ".github/workflows/release.yml"
@@ -26,6 +27,7 @@ on:
     paths:
       - ".cargo/**"
       - "Cargo.toml"
+      - "build.rs"
       - ".github/scripts/hardening/check-hardening.sh"
       - ".github/workflows/linux-hardening.yml"
       - ".github/workflows/release.yml"

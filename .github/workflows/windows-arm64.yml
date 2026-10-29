@@ -18,6 +18,8 @@ on:
     paths:
       - ".cargo/**"
       - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
       - ".github/workflows/release.yml"
       - ".github/workflows/windows-arm64.yml"
   pull_request:
@@ -27,6 +29,8 @@ on:
     paths:
       - ".cargo/**"
       - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.rs"
       - ".github/workflows/release.yml"
       - ".github/workflows/windows-arm64.yml"
   workflow_dispatch:
