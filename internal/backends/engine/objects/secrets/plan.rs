@@ -276,36 +276,6 @@ pub(super) fn is_podup_created_source(
 	external != Some(true) && (content.is_some() || environment.is_some() || file_source.is_some())
 }
 
-/// The permission bits to mount a `file:` secret with when the compose file
-/// names no `mode:`: the host file's own, so the container sees what it saw
-/// when this was a bind mount.
-///
-/// Execute and the special bits are masked off: a secret holds data, never code,
-/// and letting a `0755` host file through would trip the dangerous-mode guard and
-/// fail an `up` that used to work.
-///
-/// Metadata that cannot be read is an error, not a guess. The file's bytes were
-/// loaded before this runs, so a fallback to the Compose Specification's `0444`
-/// would mount a private `0600` secret readable by every user of the container.
-pub(super) fn host_file_secret_mode(path: &Path) -> crate::Result<u32> {
-	#[cfg(unix)]
-	{
-		use std::os::unix::fs::PermissionsExt;
-		let metadata = std::fs::metadata(path).map_err(|e| {
-			ComposeError::Unsupported(format!(
-				"cannot read the permissions of secret file {}: {e}",
-				path.display()
-			))
-		})?;
-		Ok(metadata.permissions().mode() & 0o666)
-	}
-	#[cfg(not(unix))]
-	{
-		let _ = path;
-		Ok(0o444)
-	}
-}
-
 /// Decompose a secret reference into `(name, target, mode, uid, gid)`.
 fn secret_ref_parts(
 	r: &ServiceSecretRef,

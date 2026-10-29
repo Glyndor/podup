@@ -43,6 +43,8 @@ impl Engine {
 		// then carry the label of bytes it never mounted.
 		let mut uploaded_digests: std::collections::HashMap<String, [u8; 32]> =
 			std::collections::HashMap::new();
+		let mut uploaded_modes: std::collections::HashMap<String, u32> =
+			std::collections::HashMap::new();
 		for (name, payload) in collect_payload_union(&self.project, file, &self.base_dir)? {
 			let bytes = match payload {
 				Payload::Inline(bytes) => bytes,
@@ -54,14 +56,18 @@ impl Engine {
 					// Read with the secret limit, not the general one, and check
 					// the size before the bytes are kept: a payload Podman would
 					// refuse is not worth holding while the rest are read.
-					let raw = crate::filesystem::read_capped_up_to(&path, MAX_SECRET_BYTES as u64)
-						.map_err(|e| {
-							ComposeError::Unsupported(format!(
-								"secret/config source {} could not be read: {e}",
-								path.display()
-							))
-						})?;
+					let (raw, mode) =
+						crate::filesystem::read_capped_with_mode(&path, MAX_SECRET_BYTES as u64)
+							.map_err(|e| {
+								ComposeError::Unsupported(format!(
+									"secret/config source {} could not be read: {e}",
+									path.display()
+								))
+							})?;
 					check_secret_size(&name, raw.len())?;
+					// The mode of the file that was just read, from the same handle:
+					// the mount uses this one, not whatever the path names later.
+					uploaded_modes.insert(name.clone(), mode);
 					// Hash the bytes we just read (no second read of the same
 					// path, no change to what is uploaded): the label build
 					// runs later, after image acquisition and `depends_on`
@@ -89,6 +95,10 @@ impl Engine {
 			.uploaded_file_digests
 			.lock()
 			.expect("uploaded_file_digests mutex poisoned") = uploaded_digests;
+		*self
+			.uploaded_file_modes
+			.lock()
+			.expect("uploaded_file_modes mutex poisoned") = uploaded_modes;
 		// The union is a `HashMap`, so its iteration order is arbitrary and not
 		// stable between runs. Sorting by name is what makes "the first error
 		// wins" mean something: without it, which of several failing secrets got

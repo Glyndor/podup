@@ -57,10 +57,35 @@ pub(crate) fn read_capped(path: impl AsRef<Path>) -> io::Result<Vec<u8>> {
 	read_capped_with(path.as_ref(), MAX_FILE_BYTES)
 }
 
-/// [`read_capped`] with a limit of the caller's choosing, for a file that has a
-/// stricter limit of its own than the general one.
-pub(crate) fn read_capped_up_to(path: impl AsRef<Path>, max: u64) -> io::Result<Vec<u8>> {
-	read_capped_with(path.as_ref(), max)
+/// [`read_capped`] with a limit of the caller's choosing that also returns the
+/// permission bits of the file it read, taken from the same open handle as the bytes. The two cannot describe
+/// different files, whatever happens to the name afterwards.
+///
+/// The bits are the file's own read and write bits (`0o666` of its mode); where
+/// a file has no mode, the Compose Specification's `0o444`.
+pub(crate) fn read_capped_with_mode(
+	path: impl AsRef<Path>,
+	max: u64,
+) -> io::Result<(Vec<u8>, u32)> {
+	let path = path.as_ref();
+	reject_non_regular(path)?;
+	let file = std::fs::File::open(path)?;
+	#[cfg(unix)]
+	let mode = {
+		use std::os::unix::fs::PermissionsExt;
+		file.metadata()?.permissions().mode() & 0o666
+	};
+	#[cfg(not(unix))]
+	let mode = 0o444;
+	let mut buf = Vec::new();
+	let read = file.take(max + 1).read_to_end(&mut buf)?;
+	if read as u64 > max {
+		return Err(io::Error::new(
+			io::ErrorKind::InvalidData,
+			format!("{} is larger than the {max} byte limit", path.display()),
+		));
+	}
+	Ok((buf, mode))
 }
 
 fn read_capped_with(path: &Path, max: u64) -> io::Result<Vec<u8>> {
