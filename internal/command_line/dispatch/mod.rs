@@ -26,11 +26,17 @@ fn profile_filtered(
 }
 
 /// Run the command against an already-built engine and parsed compose file.
+///
+/// `lock` is the project lock the caller took for a mutating command. A foreground
+/// `up` lets go of it while it only follows logs or watches, so a `down` or a
+/// `stop` from another terminal is not held up for as long as the stack runs, and
+/// takes it again before it stops the project.
 pub(crate) async fn dispatch(
 	engine: &Engine,
 	file: &podup::compose::types::ComposeFile,
 	command: Commands,
 	profile: &[String],
+	lock: &mut Option<podup::ProjectLock>,
 ) -> podup::Result<()> {
 	match command {
 		Commands::Up(UpArgs {
@@ -130,8 +136,13 @@ pub(crate) async fn dispatch(
 			// --wait` exits 0, and `podup up --wait` hung until killed, which is
 			// the canonical health-gated CI idiom, so it hung the job.
 			if watch {
+				// Only watching from here on: nothing below changes the project.
+				lock.take();
 				engine.watch(&scope).await?;
 			} else if !detach && !wait {
+				// Following logs changes nothing, and it lasts as long as the stack
+				// runs. Hold the lock for the mutation, not for the wait.
+				lock.take();
 				let summary = engine
 					.attach_logs_with(
 						&scope,
@@ -162,7 +173,9 @@ pub(crate) async fn dispatch(
 					}
 					_ => {
 						// A failed teardown must surface as a non-zero exit, not
-						// be swallowed after the log streams end.
+						// be swallowed after the log streams end. The stop changes the
+						// project, so it takes the lock again.
+						*lock = Some(engine.lock_project()?);
 						engine.stop(&scope, &[]).await?;
 					}
 				}
