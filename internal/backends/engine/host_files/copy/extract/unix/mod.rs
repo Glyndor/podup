@@ -55,8 +55,11 @@ pub(in crate::backends::engine::host_files::copy) fn extract_archive(
 			dst.display()
 		))
 	})?;
-	extract(bytes, &root)?;
-	root.flatten().map_err(ComposeError::Io)
+	let state = extract_pending(bytes, &root)?;
+	let wrapper = root.flatten().map_err(ComposeError::Io)?;
+	state
+		.finish_directory_modes(&root, wrapper.as_deref())
+		.map_err(ComposeError::Io)
 }
 
 fn single_file<R: Read>(
@@ -90,6 +93,13 @@ fn single_file<R: Read>(
 
 /// Consume a tar stream without ever reopening the extraction root by name.
 pub(super) fn extract<R: Read>(src: R, root: &Directory) -> Result<()> {
+	extract_pending(src, root)?
+		.finish_directory_modes(root, None)
+		.map_err(ComposeError::Io)
+}
+
+/// Keep directories accessible until extraction and optional flattening finish.
+fn extract_pending<R: Read>(src: R, root: &Directory) -> Result<ExtractionState> {
 	let mut archive = tar::Archive::new(src);
 	let mut state = ExtractionState::default();
 	for entry in archive.entries().map_err(ComposeError::Io)? {
@@ -183,7 +193,7 @@ pub(super) fn extract<R: Read>(src: R, root: &Directory) -> Result<()> {
 			state.record_file(&output).map_err(ComposeError::Io)?;
 		}
 	}
-	state.finish_directory_modes(root).map_err(ComposeError::Io)
+	Ok(state)
 }
 
 fn copy_entry<R: Read>(entry: &mut tar::Entry<'_, R>, output: &mut File) -> Result<()> {

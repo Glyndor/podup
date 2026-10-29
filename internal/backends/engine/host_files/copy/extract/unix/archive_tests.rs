@@ -7,6 +7,45 @@ use super::{extract, single_file, Directory};
 
 #[cfg(unix)]
 #[test]
+fn missing_destination_flattens_a_readonly_wrapper_before_finalizing_modes() {
+	assert_missing_destination_flattens_wrapper(0o555);
+}
+
+#[cfg(unix)]
+#[test]
+fn missing_destination_flattens_a_zero_mode_wrapper_before_finalizing_modes() {
+	assert_missing_destination_flattens_wrapper(0o000);
+}
+
+#[cfg(unix)]
+fn assert_missing_destination_flattens_wrapper(wrapper_mode: u32) {
+	let tmp = tempfile::tempdir().unwrap();
+	let dst = tmp.path().join("dest");
+	assert!(!dst.exists());
+	let bytes = archive(&[
+		dir("datos/", wrapper_mode),
+		file("datos/contenido", b"content", 0o644),
+		dir("datos/sub/", 0o500),
+		file("datos/sub/nested", b"nested content", 0o600),
+	]);
+	super::super::archive::extract_archive(&bytes, &dst).unwrap();
+	let content = std::fs::read(dst.join("contenido"));
+	let nested = std::fs::read(dst.join("sub/nested"));
+	let sub_mode = std::fs::metadata(dst.join("sub"))
+		.unwrap()
+		.permissions()
+		.mode()
+		& 0o7777;
+	std::fs::set_permissions(dst.join("sub"), std::fs::Permissions::from_mode(0o700)).unwrap();
+	assert!(!dst.join("datos").exists());
+	assert_eq!(content.unwrap(), b"content");
+	assert_eq!(nested.unwrap(), b"nested content");
+	assert_eq!(sub_mode, 0o500);
+	std::fs::write(dst.join("additional"), b"destination remains writable").unwrap();
+}
+
+#[cfg(unix)]
+#[test]
 fn buffered_file_uses_its_pinned_parent_after_a_destination_swap() {
 	let tmp = tempfile::tempdir().unwrap();
 	let dst = tmp.path().join("dest");
