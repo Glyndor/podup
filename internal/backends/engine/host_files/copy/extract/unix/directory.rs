@@ -123,10 +123,25 @@ impl ExtractionState {
 	/// Give every directory its final mode, the ones inside first. Each is
 	/// reached again from the pinned root without following links and must be
 	/// the directory that was recorded.
-	pub(super) fn finish_directory_modes(self, root: &Directory) -> io::Result<()> {
+	pub(super) fn finish_directory_modes(
+		self,
+		root: &Directory,
+		flattened_wrapper: Option<&OsStr>,
+	) -> io::Result<()> {
 		for pending in self.directories.into_iter().rev() {
 			let Some(mode) = pending.mode else { continue };
-			let (parent, name) = root.parent(&pending.path, false)?;
+			let path = match flattened_wrapper {
+				Some(wrapper) => pending
+					.path
+					.strip_prefix(Path::new(wrapper))
+					.unwrap_or(&pending.path),
+				None => &pending.path,
+			};
+			// The removed wrapper contributes no mode to the destination root.
+			if path.as_os_str().is_empty() {
+				continue;
+			}
+			let (parent, name) = root.parent(path, false)?;
 			let dir = parent.child(&name, false)?;
 			if file_identity(&fs::fstat(&dir.0)?) != pending.identity {
 				return Err(io::Error::other(format!(
@@ -393,20 +408,20 @@ impl Directory {
 	}
 
 	/// Collapse the single wrapper through pinned source and target directories.
-	pub(crate) fn flatten(&self) -> io::Result<()> {
+	pub(crate) fn flatten(&self) -> io::Result<Option<OsString>> {
 		self.flatten_after_open(|| {})
 	}
 
-	fn flatten_after_open(&self, after_open: impl FnOnce()) -> io::Result<()> {
+	fn flatten_after_open(&self, after_open: impl FnOnce()) -> io::Result<Option<OsString>> {
 		let children = self.names()?;
 		if children.len() != 1 {
-			return Ok(());
+			return Ok(None);
 		}
 		let name = &children[0];
 		let wrapper = match self.child(name, false) {
 			Ok(dir) => dir,
 			Err(e) if matches!(e.raw_os_error(), Some(libc::ENOTDIR | libc::ELOOP)) => {
-				return Ok(())
+				return Ok(None)
 			}
 			Err(e) => return Err(e),
 		};
@@ -415,7 +430,8 @@ impl Directory {
 			fs::renameat(&wrapper.0, &child, &self.0, &child)?;
 		}
 		// unlinkat removes the directory entry itself; it never follows a link.
-		Ok(fs::unlinkat(&self.0, name, AtFlags::REMOVEDIR)?)
+		fs::unlinkat(&self.0, name, AtFlags::REMOVEDIR)?;
+		Ok(Some(name.clone()))
 	}
 }
 
