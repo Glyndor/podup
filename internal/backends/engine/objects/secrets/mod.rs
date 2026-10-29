@@ -127,15 +127,14 @@ impl Engine {
 ///
 /// The same secret referenced by several services resolves to one project-scoped
 /// name, so it is created once and shared. A first writer wins: every reference
-/// to a given name yields the identical payload (inline bytes and `file:` paths
-/// alike come from the single compose def), so the dedup is value-stable. No
-/// daemon access and no file reads, so the union and its dedup are unit-testable.
-fn collect_payload_union(
+/// to a given name yields the same source from its compose definition.
+/// Content is borrowed; file and environment reads belong to creation.
+fn collect_payload_union<'a>(
 	project: &str,
-	file: &ComposeFile,
+	file: &'a ComposeFile,
 	base_dir: &Path,
-) -> Result<HashMap<String, Payload>> {
-	let mut payloads: HashMap<String, Payload> = HashMap::new();
+) -> Result<HashMap<String, Payload<'a>>> {
+	let mut payloads: HashMap<String, Payload<'a>> = HashMap::new();
 	for service in file.services.values() {
 		for plan in collect_native_plans(project, service, file, base_dir)? {
 			if let Some(payload) = plan.payload {
