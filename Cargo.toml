@@ -419,3 +419,11 @@ path = "tests/hostile/podman/hostile_archive_stat.rs"
 name = "hostile_replace"
 path = "tests/hostile/update/hostile_replace.rs"
 required-features = ["update", "test-helpers"]
+
+[[test]]
+name = "hostile_env_file_budget"
+path = "tests/hostile/input/hostile_env_file_budget.rs"
+
+[[test]]
+name = "hostile_label_files"
+path = "tests/hostile/input/hostile_label_files.rs"
