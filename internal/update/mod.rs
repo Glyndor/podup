@@ -18,6 +18,10 @@ mod verify;
 
 pub use github::{GitHubSource, REPO};
 
+#[cfg(feature = "test-helpers")]
+#[doc(hidden)]
+pub use install::test_install_verified_at;
+
 use crate::ComposeError;
 
 /// Options controlling an update run.

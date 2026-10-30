@@ -410,3 +410,12 @@ path = "tests/hostile/input/hostile_secret_permissions.rs"
 [[test]]
 name = "hostile_build_secrets"
 path = "tests/hostile/input/hostile_build_secrets.rs"
+
+[[test]]
+name = "hostile_archive_stat"
+path = "tests/hostile/podman/hostile_archive_stat.rs"
+
+[[test]]
+name = "hostile_replace"
+path = "tests/hostile/update/hostile_replace.rs"
+required-features = ["update", "test-helpers"]

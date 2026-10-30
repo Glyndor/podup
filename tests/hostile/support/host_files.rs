@@ -20,9 +20,8 @@ pub struct Running {
 
 impl Running {
 	pub fn start(fake: &FakeEngine, args: &[&str]) -> Self {
-		let out = tempfile::NamedTempFile::new().unwrap();
-		let err = tempfile::NamedTempFile::new().unwrap();
-		let child = Command::new(env!("CARGO_BIN_EXE_podup"))
+		let mut command = Command::new(env!("CARGO_BIN_EXE_podup"));
+		command
 			.current_dir(fake.dir())
 			.args(["--socket", fake.dir().join("podman.sock").to_str().unwrap()])
 			.args(["-f", "compose.yaml", "-p", "hostile"])
@@ -34,6 +33,15 @@ impl Running {
 			.env("NO_COLOR", "1")
 			.env_remove("RUST_LOG")
 			.env_remove("COMPOSE_PROFILES")
+			.stdin(Stdio::null());
+		Self::command(command)
+	}
+
+	/// Capture a disposable updater with the same deadline and cleanup as the CLI.
+	pub fn command(mut command: Command) -> Self {
+		let out = tempfile::NamedTempFile::new().unwrap();
+		let err = tempfile::NamedTempFile::new().unwrap();
+		let child = command
 			.stdin(Stdio::null())
 			.stdout(Stdio::from(File::create(out.path()).unwrap()))
 			.stderr(Stdio::from(File::create(err.path()).unwrap()))
