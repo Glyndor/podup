@@ -80,14 +80,12 @@ fn a_path_through_a_missing_directory_or_a_file_is_an_error() {
 fn opening_a_pipe_that_has_no_writer_is_refused_and_does_not_wait() {
 	let dir = tempfile::tempdir().expect("tempdir");
 	let pipe = dir.path().join("pipe");
-	rustix::fs::mknodat(
-		rustix::fs::CWD,
-		&pipe,
-		rustix::fs::FileType::Fifo,
-		rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
-		0,
-	)
-	.expect("mkfifo");
+	// `mkfifo` is not in std, and rustix has no `mknodat` on macOS.
+	assert!(std::process::Command::new("mkfifo")
+		.arg(&pipe)
+		.status()
+		.expect("mkfifo")
+		.success());
 	let a = pipe.clone();
 	assert!(within_budget(move || super::open_regular(&a)).is_err());
 	// An ordinary file is still opened.
