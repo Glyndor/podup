@@ -18,3 +18,13 @@ fn execute_setuid_setgid_sticky_rejected() {
 		);
 	}
 }
+
+#[test]
+fn bits_above_the_permission_bits_rejected() {
+	for mode in [0o10000, 0o100000, 0o100400, u32::MAX] {
+		assert!(
+			reject_dangerous_secret_mode(mode, "s").is_err(),
+			"{mode:#o} must be rejected"
+		);
+	}
+}
