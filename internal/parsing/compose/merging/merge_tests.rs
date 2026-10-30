@@ -138,6 +138,18 @@ fn guard_flow_depth_counts_brackets_after_a_hash_that_starts_no_comment() {
 }
 
 #[test]
+fn guard_flow_depth_reads_the_escapes_inside_quoted_scalars() {
+	let brackets = "[".repeat(MAX_FLOW_DEPTH + 5);
+	// `''` is an escaped quote: the scalar goes on, and the quote after the
+	// space opens nothing that hides the brackets that follow.
+	assert!(guard_flow_depth(&format!("a: ['x'' ', {brackets}\n")).is_err());
+	// `\"` does not end a double-quoted scalar, and `\\"` does.
+	assert!(guard_flow_depth(&format!("a: [\"x\\\" y \", {brackets}\n")).is_err());
+	// A `#` that follows a colon with no space starts no comment.
+	assert!(guard_flow_depth(&format!("a: [x:#, {brackets}\n")).is_err());
+}
+
+#[test]
 fn guard_rejects_large_aliased_document() {
 	let mut yaml = String::from("anchor: &a 1\nb: *a\n");
 	yaml.push_str(&format!("pad: \"{}\"\n", "p".repeat(MAX_ALIAS_DOC_BYTES)));
