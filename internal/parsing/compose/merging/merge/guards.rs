@@ -80,11 +80,21 @@ pub(super) fn guard_flow_depth(content: &str) -> Result<()> {
 	let mut depth: usize = 0;
 	for line in content.lines() {
 		let (mut in_single, mut in_double) = (false, false);
+		let mut prev: Option<char> = None;
 		for c in line.chars() {
+			// A quote opens a quoted scalar, and `#` a comment, only where a value
+			// can start, the same reading `count_alias_refs` has. An apostrophe
+			// inside a plain scalar (`a'b`) is text: taking it for an opening quote
+			// hid every bracket after it from this count and let a deeply nested
+			// line reach the tokenizer.
+			let at_value_pos = matches!(prev, None | Some(' ' | '\t' | '[' | '{' | ',' | ':'));
+			prev = Some(c);
 			match c {
-				'\'' if !in_double => in_single = !in_single,
-				'"' if !in_single => in_double = !in_double,
-				'#' if !in_single && !in_double => break,
+				'\'' if in_single => in_single = false,
+				'"' if in_double => in_double = false,
+				'\'' if !in_double && at_value_pos => in_single = true,
+				'"' if !in_single && at_value_pos => in_double = true,
+				'#' if !in_single && !in_double && at_value_pos => break,
 				'[' | '{' if !in_single && !in_double => {
 					depth += 1;
 					if depth > MAX_FLOW_DEPTH {

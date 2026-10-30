@@ -124,6 +124,20 @@ fn guard_flow_depth_ignores_brackets_in_quotes_and_comments() {
 }
 
 #[test]
+fn guard_flow_depth_counts_brackets_after_an_apostrophe_inside_a_plain_scalar() {
+	// `a'b` is text, not an opening quote: the brackets after it still count.
+	let deep = format!("a: x'y {}\n", "[".repeat(MAX_FLOW_DEPTH + 5));
+	assert!(guard_flow_depth(&deep).is_err());
+}
+
+#[test]
+fn guard_flow_depth_counts_brackets_after_a_hash_that_starts_no_comment() {
+	// `#` starts a comment only after whitespace; inside `a#b` it is text.
+	let deep = format!("a: x#y {}\n", "[".repeat(MAX_FLOW_DEPTH + 5));
+	assert!(guard_flow_depth(&deep).is_err());
+}
+
+#[test]
 fn guard_rejects_large_aliased_document() {
 	let mut yaml = String::from("anchor: &a 1\nb: *a\n");
 	yaml.push_str(&format!("pad: \"{}\"\n", "p".repeat(MAX_ALIAS_DOC_BYTES)));

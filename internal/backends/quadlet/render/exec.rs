@@ -1,3 +1,4 @@
+use super::sanitize_value;
 use crate::compose::types::Command;
 
 /// Render a compose `command:`/`entrypoint:` into a single-line systemd `Exec=`
@@ -51,7 +52,11 @@ fn escape_exec_control(s: &str) -> String {
 /// rules Quadlet applies to it, so the shell form and the exec form share one
 /// reading and the check cannot disagree with the parser that matters.
 pub(crate) fn has_lone_semicolon_word(command: &Command) -> bool {
-	let (words, closed) = exec_words(&render_command(command));
+	// The text that is written is the rendered one with its control characters
+	// stripped (`escape_unit_value` does that for `Exec=`), so that is the text to
+	// read: a word like `;` plus a control character is not a lone `;` before the
+	// strip and becomes one after it.
+	let (words, closed) = exec_words(&sanitize_value(&render_command(command)));
 	!closed || words.iter().any(|w| w == ";")
 }
 
