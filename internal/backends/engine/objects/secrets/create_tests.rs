@@ -286,17 +286,21 @@ async fn a_file_secret_that_was_not_read_has_no_mode_to_mount_with() {
 	assert!(error.to_string().contains("credential"), "{error}");
 }
 
+// The variables of these tests stay under 128 KiB: the kernel refuses to start a
+// process when a single string of its environment is longer, and a test that
+// runs a child (`mkfifo`) at the same time would fail with "Argument list too
+// long". The joint limit is reached with more names instead.
 #[test]
 #[cfg(unix)]
 fn environment_secrets_exceeding_the_shared_budget_are_refused_before_any_upload() {
-	let big = "x".repeat(500_000);
+	let big = "x".repeat(120_000);
 	temp_env::with_var("BIG", Some(big.as_str()), || {
 		tokio::runtime::Builder::new_current_thread()
 			.enable_all()
 			.build()
 			.unwrap()
 			.block_on(async {
-				let names: Vec<String> = (0..80).map(|i| format!("s{i}")).collect();
+				let names: Vec<String> = (0..300).map(|i| format!("s{i}")).collect();
 				let mut yaml = format!(
 					"services:\n  web:\n    image: x\n    secrets: [{}]\nsecrets:\n",
 					names.join(", ")
@@ -342,7 +346,7 @@ fn an_unset_environment_secret_is_refused_before_any_upload() {
 #[test]
 #[cfg(unix)]
 fn a_shared_environment_secret_is_budgeted_and_uploaded_once() {
-	let big = "x".repeat(500_000);
+	let big = "x".repeat(120_000);
 	temp_env::with_var("PODUP_TEST_SHARED_SECRET", Some(big.as_str()), || {
 		tokio::runtime::Builder::new_current_thread()
 			.enable_all()
@@ -399,4 +403,60 @@ async fn invalid_inline_secret_sizes_are_refused_before_any_upload() {
 		assert!(error.to_string().contains("bytes"), "{error}");
 		assert!(fake.requests.lock().unwrap().is_empty());
 	}
+}
+
+/// The mode a file secret is mounted with is part of what decides whether the
+/// container is recreated. Two runs over the same bytes under a narrower mode
+/// must not hash alike, or the container keeps mounting the secret as it was.
+#[tokio::test]
+#[cfg(unix)]
+async fn the_same_bytes_under_a_narrower_mode_change_the_hash_of_the_container() {
+	use std::os::unix::fs::PermissionsExt;
+	let dir = tempfile::tempdir().unwrap();
+	let path = dir.path().join("credential");
+	std::fs::write(&path, b"private").unwrap();
+	std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+	let fake = fake_podman::start(|method, target| {
+		if method == "GET" && target.contains("/secrets/") {
+			(404, r#"{"message":"no such secret"}"#.to_string())
+		} else {
+			(201, r#"{"ID":"abc"}"#.to_string())
+		}
+	});
+	let e = crate::engine::Engine::with_base_dir(fake.client(), "proj".into(), dir.path().into());
+	let file = crate::parse_str(
+		"services:\n  web:\n    image: x\n    secrets: [cred]\nsecrets:\n  cred:\n    file: ./credential\n",
+	)
+	.unwrap();
+	let hash = |e: &crate::engine::Engine| {
+		crate::engine::container::config_hash(
+			&file.services["web"],
+			&file,
+			"proj",
+			dir.path(),
+			&e.uploaded_file_digests.lock().unwrap(),
+			&Default::default(),
+		)
+		.unwrap()
+	};
+
+	e.create_project_secrets(&file).await.unwrap();
+	let wide = hash(&e);
+	std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+	e.create_project_secrets(&file).await.unwrap();
+	let narrow = hash(&e);
+	assert_ne!(wide, narrow, "only the mode changed, and the hash did not");
+
+	// The hash a command computes without uploading anything, from the file as it
+	// is, is the one the upload records.
+	let without_upload = crate::engine::container::config_hash(
+		&file.services["web"],
+		&file,
+		"proj",
+		dir.path(),
+		&Default::default(),
+		&Default::default(),
+	)
+	.unwrap();
+	assert_eq!(without_upload, narrow);
 }

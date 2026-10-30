@@ -69,14 +69,8 @@ pub(crate) fn read_capped_with_mode(
 ) -> io::Result<(Vec<u8>, u32)> {
 	let path = path.as_ref();
 	reject_non_regular(path)?;
-	let file = std::fs::File::open(path)?;
-	#[cfg(unix)]
-	let mode = {
-		use std::os::unix::fs::PermissionsExt;
-		file.metadata()?.permissions().mode() & 0o666
-	};
-	#[cfg(not(unix))]
-	let mode = 0o444;
+	let file = open_regular(path)?;
+	let mode = mode_bits(&file.metadata()?);
 	let mut buf = Vec::new();
 	let read = file.take(max + 1).read_to_end(&mut buf)?;
 	if read as u64 > max {
@@ -86,6 +80,46 @@ pub(crate) fn read_capped_with_mode(
 		));
 	}
 	Ok((buf, mode))
+}
+
+/// The read and write permission bits of a file, which is what a secret or a
+/// config is mounted with; `0o444` where a file has no mode.
+pub(crate) fn mode_bits(metadata: &std::fs::Metadata) -> u32 {
+	#[cfg(unix)]
+	{
+		use std::os::unix::fs::PermissionsExt;
+		metadata.permissions().mode() & 0o666
+	}
+	#[cfg(not(unix))]
+	{
+		let _ = metadata;
+		0o444
+	}
+}
+
+/// Open `path` and confirm, from the handle, that it is a regular file. On Unix
+/// the open cannot block on a pipe that was put under the name after the check
+/// of its type, and does not follow a link, since the type was checked without
+/// following one. The check of the type before the open gives the better message;
+/// this is the one that holds.
+fn open_regular(path: &Path) -> io::Result<std::fs::File> {
+	#[cfg(unix)]
+	let file = {
+		use std::os::unix::fs::OpenOptionsExt;
+		std::fs::OpenOptions::new()
+			.read(true)
+			.custom_flags(libc::O_NONBLOCK | libc::O_NOFOLLOW)
+			.open(path)?
+	};
+	#[cfg(not(unix))]
+	let file = std::fs::File::open(path)?;
+	if !file.metadata()?.is_file() {
+		return Err(io::Error::new(
+			io::ErrorKind::InvalidInput,
+			format!("{} is not a regular file", path.display()),
+		));
+	}
+	Ok(file)
 }
 
 fn read_capped_with(path: &Path, max: u64) -> io::Result<Vec<u8>> {
