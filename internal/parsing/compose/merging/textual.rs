@@ -42,6 +42,14 @@ pub(super) fn is_string_key(key: &str) -> bool {
 	STRING_KEYS.contains(&key)
 }
 
+/// Direct string fields shared by top-level config and secret entries.
+pub(super) fn is_resource_string_key(key: &str) -> bool {
+	matches!(
+		key,
+		"content" | "environment" | "file" | "name" | "driver" | "template_driver"
+	)
+}
+
 /// Service keys whose schema type is "string or number": a bare number is valid
 /// compose there and loads as its text.
 const TEXT_SCALARS: &[&str] = &["mem_limit", "memswap_limit", "mem_reservation", "shm_size"];
