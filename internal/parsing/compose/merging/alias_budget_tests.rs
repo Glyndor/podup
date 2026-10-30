@@ -88,3 +88,18 @@ fn the_byte_limit_is_what_acts_when_the_nodes_are_few() {
 	assert!(within_limits(yaml, 1_000, 1_000).is_ok());
 	assert!(within_limits(yaml, 1_000, 30).is_err());
 }
+
+/// The name of a tag is copied into every replay of the value it tags. A long
+/// one behind an anchor is bytes the scalar's own length does not show.
+#[test]
+fn a_long_tag_repeated_by_aliases_is_counted_by_its_bytes() {
+	let tag = "t".repeat(100_000);
+	let refs = vec!["*big"; 200].join(", ");
+	let yaml = format!(
+		"note: x 'y\nx-big: &big !{tag} v\nx-use: [{refs}]\nservices:\n  web:\n    image: x\n"
+	);
+	assert!(
+		super::super::merge::interpolated_value(&yaml, None).is_err(),
+		"twenty megabytes of replayed tag name were accepted"
+	);
+}

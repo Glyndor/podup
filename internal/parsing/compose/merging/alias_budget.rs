@@ -15,11 +15,8 @@
 //! report.
 
 use std::cell::Cell;
-use std::marker::PhantomData;
 
-use serde::de::{
-	self, DeserializeSeed, EnumAccess, IgnoredAny, MapAccess, SeqAccess, VariantAccess, Visitor,
-};
+use serde::de::{self, DeserializeSeed, EnumAccess, MapAccess, SeqAccess, VariantAccess, Visitor};
 
 use crate::error::{ComposeError, Result};
 
@@ -160,7 +157,9 @@ impl<'de> Visitor<'de> for Count<'_> {
 
 	fn visit_enum<A: EnumAccess<'de>>(self, data: A) -> std::result::Result<(), A::Error> {
 		self.tick()?;
-		let (_, variant) = data.variant_seed(PhantomData::<IgnoredAny>)?;
+		// The name of the tag is read by the counter too: it is copied into every
+		// replay of the value it tags, and a long one is bytes like any scalar.
+		let ((), variant) = data.variant_seed(self)?;
 		variant.newtype_variant_seed(self)
 	}
 }
