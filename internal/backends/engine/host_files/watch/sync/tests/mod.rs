@@ -11,10 +11,24 @@ fn pats(v: &[&str]) -> Vec<String> {
 	v.iter().map(|s| s.to_string()).collect()
 }
 
+/// `src` with the directory above it resolved. Only the last component is left
+/// alone, since a test may hand the sync a link on purpose.
+fn resolved_parent(src: &Path) -> std::path::PathBuf {
+	match (src.parent(), src.file_name()) {
+		(Some(parent), Some(name)) => parent
+			.canonicalize()
+			.map_or_else(|_| src.to_path_buf(), |p| p.join(name)),
+		_ => src.to_path_buf(),
+	}
+}
+
 /// Drive the unified `build_sync_tar` into a `Vec<u8>` and return the bytes.
 /// Mirrors the streaming path: the writer is a gzip encoder over the `Vec`,
 /// exactly the way `build_sync_tar_stream` wraps the channel writer.
 fn sync_to_gz(src: &Path, entry_name: &Path) -> std::io::Result<Vec<u8>> {
+	// On macOS the temporary directory sits under a link, and the sync refuses a
+	// link in any component of the path it is given.
+	let src = &resolved_parent(src);
 	let buf = Vec::new();
 	let encoder = GzEncoder::new(buf, Compression::default());
 	let mut tar = tar::Builder::new(encoder);
@@ -32,6 +46,9 @@ fn sync_to_gz_with(
 	entry_name: &Path,
 	skip: &dyn Fn(&Path) -> bool,
 ) -> std::io::Result<Vec<u8>> {
+	// On macOS the temporary directory sits under a link, and the sync refuses a
+	// link in any component of the path it is given.
+	let src = &resolved_parent(src);
 	let buf = Vec::new();
 	let encoder = GzEncoder::new(buf, Compression::default());
 	let mut tar = tar::Builder::new(encoder);

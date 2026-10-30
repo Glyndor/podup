@@ -60,7 +60,7 @@ fn uploaded_names(fake: &fake_podman::FakePodman) -> Vec<String> {
 /// the event loop uses and return what was uploaded.
 async fn upload(ignore: &[&str], include: &[&str]) -> Vec<String> {
 	let dir = tempfile::tempdir().unwrap();
-	let src = dir.path().join("src");
+	let src = dir.path().canonicalize().unwrap().join("src");
 	let sub = src.join("sub");
 	std::fs::create_dir_all(&sub).unwrap();
 	std::fs::write(sub.join("keep.txt"), b"keep").unwrap();
@@ -113,7 +113,7 @@ async fn a_directory_upload_leaves_out_the_files_the_rule_ignores() {
 #[tokio::test]
 async fn the_initial_sync_sends_only_the_files_the_include_list_names() {
 	let dir = tempfile::tempdir().unwrap();
-	let src = dir.path().join("src");
+	let src = dir.path().canonicalize().unwrap().join("src");
 	std::fs::create_dir_all(&src).unwrap();
 	std::fs::write(src.join("keep.txt"), b"keep").unwrap();
 	std::fs::write(src.join("main.rs"), b"fn main() {}").unwrap();

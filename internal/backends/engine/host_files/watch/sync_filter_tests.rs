@@ -18,6 +18,9 @@ fn sync_to_gz_with_sent(
 	entry_name: &Path,
 	skip: &dyn Fn(&Path) -> bool,
 ) -> std::io::Result<(Vec<u8>, Vec<crate::engine::copy::verify::SentEntry>)> {
+	// On macOS the temporary directory sits under a link, and the sync refuses a
+	// link in any component of the path it is given.
+	let src = &src.canonicalize().unwrap_or_else(|_| src.to_path_buf());
 	let buf = Vec::new();
 	let encoder = GzEncoder::new(buf, Compression::default());
 	let mut tar = tar::Builder::new(encoder);
@@ -312,7 +315,7 @@ fn tar_body(gz: &[u8], path: &str) -> Vec<u8> {
 fn replacing_a_visited_directory_with_a_link_does_not_redirect_the_sync() {
 	let dir = tempdir().unwrap();
 	let outside = tempdir().unwrap();
-	let tree = dir.path().join("tree");
+	let tree = dir.path().canonicalize().unwrap().join("tree");
 	let sub = tree.join("sub");
 	fs::create_dir_all(&sub).unwrap();
 	fs::write(sub.join("credencial"), b"INSIDE").unwrap();
@@ -343,7 +346,7 @@ fn replacing_a_visited_directory_with_a_link_does_not_redirect_the_sync() {
 #[test]
 fn an_excluded_pipe_does_not_stop_the_sync() {
 	let dir = tempdir().unwrap();
-	let tree = dir.path().join("tree");
+	let tree = dir.path().canonicalize().unwrap().join("tree");
 	fs::create_dir(&tree).unwrap();
 	fs::write(tree.join("ok.txt"), b"ok").unwrap();
 	let status = std::process::Command::new("mkfifo")
@@ -394,7 +397,7 @@ impl<W: std::io::Write> std::io::Write for SwapRootOnFirstWrite<W> {
 fn a_root_replaced_by_a_link_while_the_sync_starts_is_refused() {
 	let dir = tempdir().unwrap();
 	let outside = tempdir().unwrap();
-	let tree = dir.path().join("tree");
+	let tree = dir.path().canonicalize().unwrap().join("tree");
 	fs::create_dir(&tree).unwrap();
 	fs::write(tree.join("inside.txt"), b"INSIDE").unwrap();
 	fs::write(outside.path().join("outside.txt"), b"OUTSIDE-MARKER").unwrap();
@@ -423,7 +426,7 @@ fn a_root_replaced_by_a_link_while_the_sync_starts_is_refused() {
 fn an_ancestor_replaced_by_a_link_while_the_sync_starts_is_refused() {
 	let dir = tempdir().unwrap();
 	let outside = tempdir().unwrap();
-	let ancestor = dir.path().join("a");
+	let ancestor = dir.path().canonicalize().unwrap().join("a");
 	let root = ancestor.join("b");
 	fs::create_dir_all(&root).unwrap();
 	fs::write(root.join("inside.txt"), b"INSIDE").unwrap();
