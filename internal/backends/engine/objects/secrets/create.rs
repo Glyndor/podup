@@ -85,7 +85,15 @@ impl Engine {
 			retained += raw.len();
 			if from_file {
 				// Labels must describe the exact bytes selected for upload.
-				let digest: [u8; 32] = Sha256::digest(raw.as_ref()).into();
+				// The mode the file is mounted with is part of what the digest
+				// describes: the same bytes under a narrower mode must recreate
+				// the container that mounted them with the wider one.
+				let mode = uploaded_modes.get(&name).copied().unwrap_or(0o444);
+				let digest: [u8; 32] = Sha256::new()
+					.chain_update(mode.to_be_bytes())
+					.chain_update(raw.as_ref())
+					.finalize()
+					.into();
 				uploaded_digests.insert(name.clone(), digest);
 			}
 			// Inline content is copied only after both limits accept it.

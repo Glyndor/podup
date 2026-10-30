@@ -298,6 +298,16 @@ fn hash_file_payload(
 		))
 	})?;
 	let mut digest_hasher = Sha256::new();
+	// The mode the file is mounted with is part of what the digest describes, as
+	// it is for the digest recorded when the file was uploaded: the same bytes
+	// under a narrower mode must recreate the container.
+	let mode = file.metadata().map_err(|e| {
+		ComposeError::Unsupported(format!(
+			"{kind_str} {name:?} from \"{}\": {e}",
+			path.display()
+		))
+	})?;
+	digest_hasher.update(crate::filesystem::mode_bits(&mode).to_be_bytes());
 	// 8 KiB mirrors what the rest of the project uses for chunked copies
 	// (`internal/backends/engine/host_files/watch/mod.rs`); aligned to a page and small enough
 	// to keep stack pressure zero on the unwinding paths.

@@ -71,3 +71,25 @@ fn a_path_through_a_missing_directory_or_a_file_is_an_error() {
 	assert!(read_capped(dir.path().join("nope/inside")).is_err());
 	assert!(read_capped("").is_err());
 }
+
+/// The type is checked from the handle that was opened, and the open does not
+/// wait for a writer. A pipe put under the name after the check of its type is
+/// refused at once instead of holding the read, and the project lock with it, for
+/// as long as nobody opens the other end.
+#[test]
+fn opening_a_pipe_that_has_no_writer_is_refused_and_does_not_wait() {
+	let dir = tempfile::tempdir().expect("tempdir");
+	let pipe = dir.path().join("pipe");
+	// `mkfifo` is not in std, and rustix has no `mknodat` on macOS.
+	assert!(std::process::Command::new("mkfifo")
+		.arg(&pipe)
+		.status()
+		.expect("mkfifo")
+		.success());
+	let a = pipe.clone();
+	assert!(within_budget(move || super::open_regular(&a)).is_err());
+	// An ordinary file is still opened.
+	let file = dir.path().join("file");
+	std::fs::write(&file, b"x").expect("write");
+	assert!(within_budget(move || super::open_regular(&file)).is_ok());
+}
