@@ -26,6 +26,7 @@ impl Engine {
 	/// longer filters by per-container state itself; the bulk container-list
 	/// helper returns names without states, so the transition bit has to come
 	/// from the response (#1363).
+	#[cfg(test)]
 	pub(in crate::backends::engine::lifecycle) async fn stop_container(
 		&self,
 		container: &str,
