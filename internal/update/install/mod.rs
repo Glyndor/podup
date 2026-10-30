@@ -130,6 +130,12 @@ fn install_verified_at(
 	Ok(())
 }
 
+/// Exercise the verified transaction on a disposable path without release downloads.
+#[cfg(feature = "test-helpers")]
+pub fn test_install_verified_at(target: &Path, bytes: &[u8], version: &str) -> crate::Result<()> {
+	install_verified_at(target, bytes, |_| Ok(()), |path| self_test(path, version))
+}
+
 /// Write `new_bytes` to a sibling temp file and atomically move it onto
 /// `target`, preserving the target's permissions. Factored out of
 /// [`install_binary`] so the swap is testable against an arbitrary path.

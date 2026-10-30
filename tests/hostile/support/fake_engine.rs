@@ -151,9 +151,16 @@ fn serve(mut stream: UnixStream, handler: Handler, log: &Mutex<Vec<Vec<u8>>>, he
 	} else {
 		""
 	};
+	// Extra response headers belong to the answer about a path, not to the ping
+	// that comes first.
+	let extra = if line.starts_with("HEAD ") {
+		headers
+	} else {
+		""
+	};
 	let wire = format!(
 		"HTTP/1.1 {} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\
-		 connection: close\r\n{version}{headers}\r\n{}",
+		 connection: close\r\n{version}{extra}\r\n{}",
 		reply.status,
 		reply.body.len(),
 		reply.body
