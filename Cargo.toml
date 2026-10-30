@@ -393,3 +393,20 @@ lto = "fat"
 codegen-units = 1
 strip = true
 panic = "abort"
+
+[[test]]
+name = "hostile_copy_upload"
+path = "tests/hostile/input/hostile_copy_upload.rs"
+
+[[test]]
+name = "hostile_watch_paths"
+path = "tests/hostile/input/hostile_watch_paths.rs"
+required-features = ["watch", "test-helpers"]
+
+[[test]]
+name = "hostile_secret_permissions"
+path = "tests/hostile/input/hostile_secret_permissions.rs"
+
+[[test]]
+name = "hostile_build_secrets"
+path = "tests/hostile/input/hostile_build_secrets.rs"
