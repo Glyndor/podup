@@ -489,15 +489,80 @@ async fn stop_snapshot_leaves_a_container_that_replaced_one_of_the_snapshot() {
 	e.stop_snapshot(&file, &snapshot).await.unwrap();
 
 	let seen = fake.requests.lock().unwrap();
-	assert!(
-		!seen
-			.iter()
-			.any(|r| r.starts_with("POST") && r.contains("/proj-web-1/stop")),
-		"the container that replaced the one of the snapshot was stopped: {seen:?}"
-	);
-	assert!(
-		seen.iter()
-			.any(|r| r.starts_with("POST") && r.contains("/proj-db-1/stop")),
-		"a container that is still the same was not stopped: {seen:?}"
-	);
+	let posts: Vec<_> = seen.iter().filter(|r| r.starts_with("POST ")).collect();
+	assert_eq!(posts.len(), 1, "{seen:?}");
+	let expected = format!("POST {}/containers/cccc/stop", crate::libpod::API_PREFIX);
+	assert_eq!(posts[0].split('?').next(), Some(expected.as_str()));
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn stop_snapshot_posts_to_the_id_even_when_the_name_changes_owner_after_the_listing() {
+	use std::sync::atomic::{AtomicUsize, Ordering};
+	use std::sync::Arc;
+
+	for replaced_at_post in [false, true] {
+		let listings = Arc::new(AtomicUsize::new(0));
+		let listed = listings.clone();
+		let fake = fake_podman::start(move |method, target| {
+			if method == "GET" && target.contains("/containers/json") {
+				listed.fetch_add(1, Ordering::SeqCst);
+				return (
+					200,
+					r#"[{"Id":"aaaa","Names":["/proj-web-1"],"Labels":{"podup.service":"web"}}]"#
+						.into(),
+				);
+			}
+			if method == "POST" && target.contains("/stop") {
+				// At POST time the old ID may be absent while the name has a new owner.
+				if replaced_at_post && target.contains("/containers/aaaa/stop?") {
+					return (404, r#"{"message":"not found"}"#.into());
+				}
+				return (204, String::new());
+			}
+			(404, r#"{"message":"not found"}"#.into())
+		});
+		let e = engine_with(fake.client(), "proj");
+		let mut file = ComposeFile::default();
+		file.services.insert("web".into(), Service::default());
+
+		let snapshot = e.snapshot_containers().await.unwrap();
+		e.stop_snapshot(&file, &snapshot).await.unwrap();
+
+		assert_eq!(listings.load(Ordering::SeqCst), 2);
+		let seen = fake.requests.lock().unwrap();
+		let posts: Vec<_> = seen.iter().filter(|r| r.starts_with("POST ")).collect();
+		assert_eq!(posts.len(), 1, "{seen:?}");
+		let expected = format!("POST {}/containers/aaaa/stop", crate::libpod::API_PREFIX);
+		assert_eq!(posts[0].split('?').next(), Some(expected.as_str()));
+	}
+}
+
+#[tokio::test]
+#[cfg(unix)]
+async fn stop_snapshot_excludes_one_off_containers_of_the_same_service() {
+	let fake = fake_podman::start(|method, target| {
+		if method == "GET" && target.contains("/containers/json") {
+			(200, r#"[
+				{"Id":"aaaa","Names":["/proj-web-1"],"Labels":{"podup.service":"web"}},
+				{"Id":"bbbb","Names":["/proj-web-run-123"],"Labels":{"podup.service":"web","podup.oneoff":"true"}}
+			]"#.into())
+		} else if method == "POST" && target.contains("/stop") {
+			(204, String::new())
+		} else {
+			(404, r#"{"message":"not found"}"#.into())
+		}
+	});
+	let e = engine_with(fake.client(), "proj");
+	let mut file = ComposeFile::default();
+	file.services.insert("web".into(), Service::default());
+
+	let snapshot = e.snapshot_containers().await.unwrap();
+	e.stop_snapshot(&file, &snapshot).await.unwrap();
+
+	let seen = fake.requests.lock().unwrap();
+	let posts: Vec<_> = seen.iter().filter(|r| r.starts_with("POST ")).collect();
+	assert_eq!(posts.len(), 1, "{seen:?}");
+	let expected = format!("POST {}/containers/aaaa/stop", crate::libpod::API_PREFIX);
+	assert_eq!(posts[0].split('?').next(), Some(expected.as_str()));
 }

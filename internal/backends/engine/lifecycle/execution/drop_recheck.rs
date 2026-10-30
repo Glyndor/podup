@@ -15,6 +15,21 @@ use crate::error::{ComposeError, Result};
 use crate::engine::Engine;
 use crate::libpod::API_PREFIX;
 
+/// The identity used for a lifecycle request and its state check.
+#[derive(Clone, Copy)]
+pub(in crate::backends::engine::lifecycle) enum ContainerTarget<'a> {
+	Name(&'a str),
+	Id(&'a str),
+}
+
+impl<'a> ContainerTarget<'a> {
+	pub(in crate::backends::engine::lifecycle) fn as_str(self) -> &'a str {
+		match self {
+			Self::Name(name) | Self::Id(name) => name,
+		}
+	}
+}
+
 /// What a lifecycle operation was trying to achieve.
 ///
 /// The transport cannot say whether a dropped response means the operation
@@ -70,7 +85,26 @@ impl Engine {
 		goal: LifecycleGoal,
 		e: crate::libpod::PodmanError,
 	) -> Result<bool> {
-		match self.container_state(container).await {
+		self.confirm_lost_response_target(
+			container,
+			ContainerTarget::Name(container),
+			done,
+			goal,
+			e,
+		)
+		.await
+	}
+
+	/// Keep the request identity separate from the progress row's name.
+	pub(in crate::backends::engine::lifecycle) async fn confirm_lost_response_target(
+		&self,
+		container: &str,
+		target: ContainerTarget<'_>,
+		done: &str,
+		goal: LifecycleGoal,
+		e: crate::libpod::PodmanError,
+	) -> Result<bool> {
+		match self.container_state(target).await {
 			Ok(state) if goal.reached(state.as_deref()) => {
 				tracing::warn!(
 					"{container}: {done} lost its response [{}] but the container reached \
@@ -103,13 +137,15 @@ impl Engine {
 	///
 	/// Listed rather than inspected: the list carries `State` directly and the
 	/// inspect response is several times the size for the one field wanted here
-	/// (#1298). libpod's `name` filter matches on substring, so the exact name is
-	/// picked out of the results rather than trusted from the query.
+	/// (#1298). Match the exact name or ID after applying the corresponding filter.
 	pub(in crate::backends::engine::lifecycle) async fn container_state(
 		&self,
-		container: &str,
+		target: ContainerTarget<'_>,
 	) -> Result<Option<String>> {
-		let filters = serde_json::json!({ "name": [container] });
+		let filters = match target {
+			ContainerTarget::Name(name) => serde_json::json!({ "name": [name] }),
+			ContainerTarget::Id(id) => serde_json::json!({ "id": [id] }),
+		};
 		let path = format!(
 			"{API_PREFIX}/containers/json?all=true&filters={}",
 			crate::libpod::urlencoded(&filters.to_string()),
@@ -121,10 +157,11 @@ impl Engine {
 			.map_err(ComposeError::Podman)?;
 		Ok(entries
 			.into_iter()
-			.find(|e| {
-				e.names
-					.iter()
-					.any(|n| n.trim_start_matches('/') == container)
+			.find(|e| match target {
+				ContainerTarget::Name(name) => {
+					e.names.iter().any(|n| n.trim_start_matches('/') == name)
+				}
+				ContainerTarget::Id(id) => e.id == id,
 			})
 			.map(|e| e.state))
 	}

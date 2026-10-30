@@ -1,6 +1,6 @@
 use super::super::note_if_idle;
 use crate::compose::types::ComposeFile;
-use crate::engine::lifecycle::drop_recheck::LifecycleGoal;
+use crate::engine::lifecycle::drop_recheck::{ContainerTarget, LifecycleGoal};
 use crate::engine::lifecycle::parallel::{filter_levels, first_error, join_bounded};
 use crate::engine::lifecycle::targets::{stop_deadline, stop_timeout_param};
 use crate::engine::Engine;
@@ -26,14 +26,26 @@ impl Engine {
 	/// longer filters by per-container state itself; the bulk container-list
 	/// helper returns names without states, so the transition bit has to come
 	/// from the response (#1363).
+	#[cfg(test)]
 	pub(in crate::backends::engine::lifecycle) async fn stop_container(
 		&self,
 		container: &str,
 		grace: i32,
 	) -> Result<bool> {
+		self.stop_container_target(container, ContainerTarget::Name(container), grace)
+			.await
+	}
+
+	/// Use the same identity for stop, escalation and state confirmation.
+	pub(in crate::backends::engine::lifecycle) async fn stop_container_target(
+		&self,
+		container: &str,
+		target: ContainerTarget<'_>,
+		grace: i32,
+	) -> Result<bool> {
 		let path = format!(
 			"{API_PREFIX}/containers/{}/stop?timeout={}",
-			crate::libpod::urlencoded(container),
+			crate::libpod::urlencoded(target.as_str()),
 			stop_timeout_param(grace),
 		);
 		crate::ui::progress::start("Container", container, "Stopping");
@@ -55,15 +67,21 @@ impl Engine {
 			// measured on (#1339), and it does not go through `run_lifecycle_op`,
 			// so it needs the re-check on its own.
 			Err(e) if e.is_incomplete_message() => {
-				self.confirm_lost_response(container, "Stopped", LifecycleGoal::NotRunning, e)
-					.await
+				self.confirm_lost_response_target(
+					container,
+					target,
+					"Stopped",
+					LifecycleGoal::NotRunning,
+					e,
+				)
+				.await
 			}
 			Err(e) if e.is_timeout() => {
 				tracing::warn!("{container}: stop did not complete within the grace window; escalating to SIGKILL"
 				);
 				let kill_path = format!(
 					"{API_PREFIX}/containers/{}/kill?signal=SIGKILL",
-					crate::libpod::urlencoded(container),
+					crate::libpod::urlencoded(target.as_str()),
 				);
 				match self.client.post_empty_ok(&kill_path).await {
 					Ok(()) => {
@@ -98,16 +116,18 @@ impl Engine {
 		// come from the `stop` response itself now that we no longer filter
 		// running/paused client-side.
 		let live_by_service = self.live_project_replicas().await?;
-		self.stop_replicas(file, target_services, live_by_service)
+		self.stop_replicas(file, target_services, live_by_service, Default::default())
 			.await
 	}
 
-	/// Note which containers the project holds now, by name and ID, so a later
-	/// [`Engine::stop_snapshot`] can stop these and no others.
+	/// Capture project replicas by display name and ID for [`Engine::stop_snapshot`].
 	pub async fn snapshot_containers(&self) -> Result<ContainerSnapshot> {
 		let mut by_service: std::collections::HashMap<String, Vec<(String, String)>> =
 			std::collections::HashMap::new();
 		for entry in self.project_container_entries().await? {
+			if crate::engine::lifecycle::scale::is_one_off(&entry) {
+				continue;
+			}
 			let (Some(service), Some(name)) =
 				(entry.labels.get("podup.service"), entry.names.first())
 			else {
@@ -121,9 +141,7 @@ impl Engine {
 		Ok(ContainerSnapshot { by_service })
 	}
 
-	/// Stop the containers of a [`ContainerSnapshot`] that are still the same
-	/// containers: a name that now belongs to a container with another ID was
-	/// replaced by someone else since the snapshot, and is left running.
+	/// Stop matching snapshot replicas by ID, using their names for progress.
 	pub async fn stop_snapshot(
 		&self,
 		file: &ComposeFile,
@@ -138,6 +156,7 @@ impl Engine {
 				Some((name, entry.id))
 			})
 			.collect();
+		let mut ids_by_name = std::collections::HashMap::new();
 		let live_by_service = snapshot
 			.by_service
 			.iter()
@@ -145,12 +164,16 @@ impl Engine {
 				let same: Vec<String> = containers
 					.iter()
 					.filter(|(name, id)| current.get(name) == Some(id))
-					.map(|(name, _)| name.clone())
+					.map(|(name, id)| {
+						ids_by_name.insert(name.clone(), id.clone());
+						name.clone()
+					})
 					.collect();
 				(service.clone(), same)
 			})
 			.collect();
-		self.stop_replicas(file, &[], live_by_service).await
+		self.stop_replicas(file, &[], live_by_service, ids_by_name)
+			.await
 	}
 
 	async fn stop_replicas(
@@ -158,6 +181,7 @@ impl Engine {
 		file: &ComposeFile,
 		target_services: &[String],
 		live_by_service: std::collections::HashMap<String, Vec<String>>,
+		ids_by_name: std::collections::HashMap<String, String>,
 	) -> Result<()> {
 		// Stop in reverse dependency order (dependents before their dependencies),
 		// one level at a time, but stop every service within a level concurrently
@@ -183,7 +207,7 @@ impl Engine {
 				let futs = level.iter().map(|name| {
 					let grace = self.grace_period_secs(&file.services[name]);
 					let names = live_by_service.get(name).cloned().unwrap_or_default();
-					self.stop_one_service(names, grace, &acted)
+					self.stop_one_service(names, &ids_by_name, grace, &acted)
 				});
 				if let Some(e) = first_error(join_bounded(futs).await) {
 					return Err(e);
@@ -199,9 +223,7 @@ impl Engine {
 	}
 }
 
-/// The containers a project held at some moment, by service, each as its name
-/// and its ID. The ID is what tells a container from a later one that took the
-/// same name.
+/// Project replicas grouped by service, each with a display name and ID.
 #[derive(Debug, Clone, Default)]
 pub struct ContainerSnapshot {
 	by_service: std::collections::HashMap<String, Vec<(String, String)>>,

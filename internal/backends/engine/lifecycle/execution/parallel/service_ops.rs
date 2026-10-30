@@ -4,7 +4,7 @@
 //! allowed to finish before the failure surfaces. The teardown path, which
 //! works per container rather than per service, lives in [`super::teardown`].
 
-use crate::engine::lifecycle::drop_recheck::LifecycleGoal;
+use crate::engine::lifecycle::drop_recheck::{ContainerTarget, LifecycleGoal};
 use crate::engine::lifecycle::targets::{restart_deadline, stop_timeout_param};
 use crate::engine::Engine;
 use crate::error::{ComposeError, Result};
@@ -25,15 +25,24 @@ impl Engine {
 	/// the bulk project listing (`live_project_replicas`); the per-container
 	/// `acted` flag still has to come from [`Self::stop_container`] itself
 	/// because the bulk helper returns names without states (#1363).
+	/// Snapshot IDs select request targets while names identify progress rows.
 	pub(in crate::backends::engine::lifecycle) async fn stop_one_service(
 		&self,
 		container_names: Vec<String>,
+		ids_by_name: &std::collections::HashMap<String, String>,
 		grace: i32,
 		acted: &std::sync::atomic::AtomicBool,
 	) -> Result<()> {
 		let mut first_err: Option<ComposeError> = None;
 		for container_name in container_names {
-			match self.stop_container(&container_name, grace).await {
+			let target = match ids_by_name.get(&container_name) {
+				Some(id) => ContainerTarget::Id(id),
+				None => ContainerTarget::Name(&container_name),
+			};
+			match self
+				.stop_container_target(&container_name, target, grace)
+				.await
+			{
 				Ok(true) => acted.store(true, std::sync::atomic::Ordering::Relaxed),
 				Ok(false) => {
 					tracing::debug!("{container_name}: not running, stop is a no-op");

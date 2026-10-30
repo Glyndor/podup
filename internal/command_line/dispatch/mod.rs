@@ -146,9 +146,7 @@ pub(crate) async fn dispatch(
 				// runs, so the lock is let go for it. Not when the command may stop
 				// the project itself: `--abort-on-container-exit` and
 				// `--exit-code-from` stop everything from inside the attach.
-				// Note which containers this `up` is attached to while it still
-				// holds the lock: the stop at the end is for these, not for
-				// whatever the project holds by then.
+				// Capture replica IDs under the lock for the final stop.
 				let attached = engine.snapshot_containers().await?;
 				if !abort_on_container_exit && exit_code_from.is_none() {
 					lock.take();
