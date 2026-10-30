@@ -85,7 +85,7 @@ fn empty_payload_is_rolled_back_without_losing_the_original_inode() {
 	let mut child = start(&target, &payload);
 	finish(&mut child, "rolled back");
 	assert!(
-		child.text().contains("could not run the updated binary"),
+		child.text().contains("failed its self-test"),
 		"{}",
 		child.text()
 	);
