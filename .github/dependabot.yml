@@ -130,5 +130,16 @@ updates:
     labels: ["type:deps", "type:ci"]
     open-pull-requests-limit: 10
     target-branch: "develop"
+    # The manifest is `--require-hashes` and holds the whole tree of
+    # `cryptography`: cffi and pycparser are pinned beside it and pycparser is
+    # cffi's own requirement. A bump of one alone can leave the file asking for
+    # a pair that does not resolve, and the signing step is the one that finds
+    # out. They arrive together, in one pull request, so the file is always a
+    # set that was installed whole. Majors stay in: nothing here ships, the
+    # question is the same as for a patch, whether the signer still installs
+    # and still signs.
+    groups:
+      release-signing:
+        patterns: ["*"]
     commit-message:
       prefix: chore
