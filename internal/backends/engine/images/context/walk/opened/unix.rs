@@ -14,12 +14,41 @@ const DIRECTORY: OFlags = OFlags::RDONLY
 /// Pin the root and resolve each descendant relative to its open parent.
 pub(super) fn walk(
 	root: &Path,
+	follow_root: bool,
 	skip_dir: &impl Fn(&Path) -> bool,
 	include_entry: &impl Fn(&Path) -> bool,
 	visit: &mut impl FnMut(&Path, Entry) -> io::Result<()>,
 ) -> io::Result<()> {
-	let dir: File = fs::open(root, DIRECTORY, Mode::empty())?.into();
+	let dir: File = if follow_root {
+		fs::open(root, DIRECTORY, Mode::empty())?.into()
+	} else {
+		open_root_pinned(root)?
+	};
 	collect(&dir, root, skip_dir, include_entry, visit)
+}
+
+/// Open `root` one component at a time, each relative to the one before and
+/// none of them followed. For a root that arrived with a file-system event: the
+/// roots of the rules are resolved when the watch starts, so there is no link
+/// in a path under one, and a link in any component, not only the last, is a
+/// directory that has been replaced.
+fn open_root_pinned(root: &Path) -> io::Result<File> {
+	use std::path::Component;
+	let no_follow = DIRECTORY.union(OFlags::NOFOLLOW);
+	let mut current: Option<File> = None;
+	for component in root.components() {
+		let next: File = match component {
+			Component::RootDir => fs::open("/", DIRECTORY, Mode::empty())?.into(),
+			Component::Normal(name) => match &current {
+				Some(parent) => fs::openat(parent, name, no_follow, Mode::empty())?.into(),
+				None => fs::open(name, no_follow, Mode::empty())?.into(),
+			},
+			Component::CurDir => continue,
+			Component::ParentDir | Component::Prefix(_) => return Err(changed_type()),
+		};
+		current = Some(next);
+	}
+	current.map_or_else(|| Ok(fs::open(".", DIRECTORY, Mode::empty())?.into()), Ok)
 }
 
 fn collect(

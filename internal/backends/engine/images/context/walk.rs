@@ -8,6 +8,8 @@
 use std::path::{Path, PathBuf};
 
 mod opened;
+#[cfg(feature = "watch")]
+pub(in crate::backends::engine) use opened::visit_dir_pinned;
 pub(in crate::backends::engine) use opened::{visit_dir_skipping, Entry};
 
 // Thread-local counter for `read_dir` calls inside the walk, used by the

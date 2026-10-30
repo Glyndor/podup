@@ -86,22 +86,21 @@ pub(in crate::backends::engine) fn build_sync_tar<W: Write>(
 		}
 		// Walked through descriptors, so the bytes of an entry are those of the
 		// file the walk opened, not of whatever its name points at by the time
-		// it is read. A directory the filter drops is still walked: a safe
-		// deeper mount may sit below it.
+		// it is read; and the root is not followed, since it is a path that came
+		// with an event and the directory may have been replaced by a link since
+		// it was looked at. The filter is the walker's own: an entry it drops is
+		// never opened or classified, so a pipe it excludes does not stop the
+		// sync. A directory it drops is still walked, since a safe deeper mount
+		// may sit below it.
 		let mut failure: Option<ComposeError> = None;
-		let walked = walk::visit_dir_skipping(
+		let walked = walk::visit_dir_pinned(
 			src,
 			|_| false,
-			|_| true,
+			|abs| {
+				abs.strip_prefix(src)
+					.is_ok_and(|rel| !skip(&entry_name.join(rel)))
+			},
 			|abs, entry| {
-				let rel = abs
-					.strip_prefix(src)
-					.map_err(|_| std::io::Error::other("path strip"))?;
-				// Re-root each descendant under `entry_name` so the directory lands
-				// at the rule target with its in-tree layout preserved.
-				if skip(&entry_name.join(rel)) {
-					return Ok(());
-				}
 				append_pinned(tar, sent, src, Some(entry_name), abs, entry, &watch_tar).map_err(
 					|e| {
 						failure = Some(e);

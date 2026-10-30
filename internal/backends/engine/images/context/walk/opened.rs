@@ -25,19 +25,43 @@ pub(in crate::backends::engine) fn visit_dir_skipping(
 	root: &Path,
 	skip_dir: impl Fn(&Path) -> bool,
 	include_entry: impl Fn(&Path) -> bool,
+	visit: impl FnMut(&Path, Entry) -> io::Result<()>,
+) -> io::Result<()> {
+	walk_from(root, true, skip_dir, include_entry, visit)
+}
+
+/// As [`visit_dir_skipping`], but the root is not followed either: a root that
+/// is a link is an error. For a root that was chosen by something other than
+/// the user, such as a path that arrived with a file-system event, where the
+/// link is whatever replaced the directory after it was looked at.
+#[cfg(feature = "watch")]
+pub(in crate::backends::engine) fn visit_dir_pinned(
+	root: &Path,
+	skip_dir: impl Fn(&Path) -> bool,
+	include_entry: impl Fn(&Path) -> bool,
+	visit: impl FnMut(&Path, Entry) -> io::Result<()>,
+) -> io::Result<()> {
+	walk_from(root, false, skip_dir, include_entry, visit)
+}
+
+fn walk_from(
+	root: &Path,
+	follow_root: bool,
+	skip_dir: impl Fn(&Path) -> bool,
+	include_entry: impl Fn(&Path) -> bool,
 	mut visit: impl FnMut(&Path, Entry) -> io::Result<()>,
 ) -> io::Result<()> {
 	#[cfg(unix)]
 	{
-		unix::walk(root, &skip_dir, &include_entry, &mut visit)
+		unix::walk(root, follow_root, &skip_dir, &include_entry, &mut visit)
 	}
 	#[cfg(windows)]
 	{
-		windows::walk(root, &skip_dir, &include_entry, &mut visit)
+		windows::walk(root, follow_root, &skip_dir, &include_entry, &mut visit)
 	}
 	#[cfg(not(any(unix, windows)))]
 	{
-		let _ = (root, skip_dir, include_entry, visit);
+		let _ = (root, follow_root, skip_dir, include_entry, visit);
 		Err(io::Error::new(
 			io::ErrorKind::Unsupported,
 			"secure build context traversal is unavailable",
