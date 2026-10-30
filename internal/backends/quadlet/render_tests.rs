@@ -467,3 +467,14 @@ fn exec_words_reads_quotes_and_escapes_like_quadlet() {
 	assert!(!exec_words(r#""a ; b"#).1);
 	assert!(exec_words(r#""a ; b""#).1);
 }
+
+#[test]
+fn a_semicolon_word_hidden_by_a_control_character_is_still_found() {
+	// `;` followed by a control character is not a lone `;` as rendered, and
+	// becomes one once the control characters are stripped from the `Exec=`
+	// line; systemd then reads it as the end of the command.
+	let cmd = Command::Exec(vec!["echo".to_string(), ";\u{1}".to_string()]);
+	assert!(has_lone_semicolon_word(&cmd));
+	let plain = Command::Exec(vec!["echo".to_string(), "a;b".to_string()]);
+	assert!(!has_lone_semicolon_word(&plain));
+}

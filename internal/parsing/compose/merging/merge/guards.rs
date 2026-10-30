@@ -80,11 +80,31 @@ pub(super) fn guard_flow_depth(content: &str) -> Result<()> {
 	let mut depth: usize = 0;
 	for line in content.lines() {
 		let (mut in_single, mut in_double) = (false, false);
-		for c in line.chars() {
+		let mut prev: Option<char> = None;
+		let mut chars = line.chars().peekable();
+		while let Some(c) = chars.next() {
+			// A quote opens a quoted scalar only where a value can start, the same
+			// reading `count_alias_refs` has: an apostrophe inside a plain scalar
+			// (`a'b`) is text, and taking it for an opening quote hid every bracket
+			// after it. Inside a quoted scalar the escapes are read too, `''` in a
+			// single-quoted one and a backslash in a double-quoted one; otherwise
+			// the closing quote is found early and the next quote opens a quoted
+			// run where there is none. `#` starts a comment only after whitespace.
+			let at_value_pos = matches!(prev, None | Some(' ' | '\t' | '[' | '{' | ',' | ':'));
+			let after_space = matches!(prev, None | Some(' ' | '\t'));
+			prev = Some(c);
 			match c {
-				'\'' if !in_double => in_single = !in_single,
-				'"' if !in_single => in_double = !in_double,
-				'#' if !in_single && !in_double => break,
+				'\'' if in_single && chars.peek() == Some(&'\'') => {
+					chars.next();
+				}
+				'\\' if in_double => {
+					chars.next();
+				}
+				'\'' if in_single => in_single = false,
+				'"' if in_double => in_double = false,
+				'\'' if !in_double && at_value_pos => in_single = true,
+				'"' if !in_single && at_value_pos => in_double = true,
+				'#' if !in_single && !in_double && after_space => break,
 				'[' | '{' if !in_single && !in_double => {
 					depth += 1;
 					if depth > MAX_FLOW_DEPTH {
