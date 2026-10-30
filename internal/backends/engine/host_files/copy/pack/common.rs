@@ -348,8 +348,31 @@ fn open_without_following(path: &Path) -> std::io::Result<std::fs::File> {
 			.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
 			.open(path)
 	}
-	#[cfg(not(unix))]
+	#[cfg(windows)]
+	{
+		use std::os::windows::fs::{MetadataExt, OpenOptionsExt};
+		// Win32 FILE_FLAG_OPEN_REPARSE_POINT: the link itself is opened, not what
+		// it points at, and the attributes of the handle say whether it is one.
+		const OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+		const REPARSE_POINT: u32 = 0x400;
+		let file = std::fs::OpenOptions::new()
+			.read(true)
+			.custom_flags(OPEN_REPARSE_POINT)
+			.open(path)?;
+		if file.metadata()?.file_attributes() & REPARSE_POINT != 0 {
+			return Err(std::io::Error::other(format!(
+				"{} is a link and not a regular file",
+				path.display()
+			)));
+		}
+		Ok(file)
+	}
+	#[cfg(not(any(unix, windows)))]
 	{
 		std::fs::File::open(path)
 	}
 }
+
+#[cfg(test)]
+#[path = "common_open_tests.rs"]
+mod open_tests;
