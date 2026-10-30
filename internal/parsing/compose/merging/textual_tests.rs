@@ -12,6 +12,94 @@ fn parse_with(yaml: &str, vars: &[(&str, &str)]) -> ComposeFile {
 }
 
 #[test]
+fn interpolated_config_content_keeps_its_exact_text() {
+	for text in ["true", "TRUE", "123", "1.10"] {
+		let file = parse_with("configs: {cfg: {content: \"${CFG}\"}}", &[("CFG", text)]);
+		assert_eq!(file.configs["cfg"].content.as_deref(), Some(text));
+	}
+}
+
+#[test]
+fn interpolated_secret_content_keeps_its_exact_text() {
+	for text in ["true", "TRUE", "123", "1.10"] {
+		let file = parse_with(
+			"secrets: {sec: {content: \"${SECRET}\"}}",
+			&[("SECRET", text)],
+		);
+		assert_eq!(file.secrets["sec"].content.as_deref(), Some(text));
+	}
+}
+
+#[test]
+fn interpolated_config_and_secret_string_fields_keep_their_exact_text() {
+	for text in ["true", "TRUE", "123", "1.10"] {
+		let file = parse_with(
+			r#"
+configs:
+  cfg_file:
+    file: "${TEXT}"
+  cfg_env:
+    environment: "${TEXT}"
+  cfg:
+    content: value
+    name: "${TEXT}"
+    driver: "${TEXT}"
+    template_driver: "${TEXT}"
+secrets:
+  sec_file:
+    file: "${TEXT}"
+  sec_env:
+    environment: "${TEXT}"
+  sec:
+    content: value
+    name: "${TEXT}"
+    driver: "${TEXT}"
+    template_driver: "${TEXT}"
+"#,
+			&[("TEXT", text)],
+		);
+		let cfg = &file.configs["cfg"];
+		let sec = &file.secrets["sec"];
+		for field in [
+			&file.configs["cfg_file"].file,
+			&file.configs["cfg_env"].environment,
+			&cfg.name,
+			&cfg.driver,
+			&cfg.template_driver,
+			&file.secrets["sec_file"].file,
+			&file.secrets["sec_env"].environment,
+			&sec.name,
+			&sec.driver,
+			&sec.template_driver,
+		] {
+			assert_eq!(field.as_deref(), Some(text));
+		}
+	}
+}
+
+#[test]
+fn tagged_resource_entries_keep_text_and_boolean_fields_typed() {
+	let file = parse_with(
+		r#"
+x-base: &base
+  content: "${TEXT}"
+  external: "${FLAG}"
+configs: !override
+  content: !override
+    <<: *base
+secrets: !override
+  name: !override
+    <<: *base
+"#,
+		&[("TEXT", "TRUE"), ("FLAG", "false")],
+	);
+	assert_eq!(file.configs["content"].content.as_deref(), Some("TRUE"));
+	assert_eq!(file.configs["content"].external, Some(false));
+	assert_eq!(file.secrets["name"].content.as_deref(), Some("TRUE"));
+	assert_eq!(file.secrets["name"].external, Some(false));
+}
+
+#[test]
 fn bare_numbers_and_booleans_load_into_text_fields() {
 	let file = parse_with(
 		"services:
