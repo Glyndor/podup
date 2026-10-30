@@ -21,6 +21,9 @@ on:
       # `test-command` below; the path filter is the other half.
       - ".github/workflows/reusable-workflow-lint.yml"
       - ".github/workflows/reusable-schedule-freshness.yml"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/binary-budget.yml"
+      - ".github/scripts/checks/check-caller-with-defaults.py"
       - ".github/workflows/podman-watch.yml"
       - ".github/workflows/dependabot-security-watch.yml"
       - ".github/scripts/checks/dependabot_security_watch.py"
@@ -67,6 +70,9 @@ on:
       # `test-command` below; the path filter is the other half.
       - ".github/workflows/reusable-workflow-lint.yml"
       - ".github/workflows/reusable-schedule-freshness.yml"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/binary-budget.yml"
+      - ".github/scripts/checks/check-caller-with-defaults.py"
       - ".github/workflows/podman-watch.yml"
       - ".github/workflows/dependabot-security-watch.yml"
       - ".github/scripts/checks/dependabot_security_watch.py"
@@ -138,7 +144,7 @@ jobs:
       # never produces the sentinel, and this check names the file that
       # did not. Without this check, a truncated test and a passing one
       # look the same to the chain: exit 0, no count line.
-      test-command: bash ./tests/scripts/shell/suite_guards/check-suite-completeness.test.sh ./tests/scripts/shell/suite_guards/locale-pinned.test.sh ./tests/scripts/shell/suite_guards/ci-runs-every-test.test.sh ./tests/scripts/shell/hardening/check-hardening.test.sh ./tests/scripts/shell/hardening/check-hardening-macos.test.sh ./tests/scripts/shell/workflow_behaviour/branch-health-conclusion.test.sh ./tests/scripts/shell/workflow_behaviour/reusable-schedule-freshness.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-tooling-isolation.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-tooling-installers.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-caller-if.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-caller-with.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-pin-length.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-merge-group.test.sh ./tests/scripts/shell/install/install-rollback-cleans-staged.test.sh ./tests/scripts/shell/install/install-help.test.sh ./tests/scripts/shell/install/install-python-isolation.test.sh ./tests/scripts/shell/install/install-apt-keyring-package.test.sh ./tests/scripts/shell/workflow_behaviour/podman-watch.test.sh ./tests/scripts/shell/workflow_behaviour/dependabot-security-watch.test.sh ./tests/scripts/shell/suite_guards/check-planning-words.test.sh ./tests/scripts/shell/fedora_image/fetch-fedora-image.test.sh ./tests/scripts/shell/fedora_image/fetch-fedora-image-records.test.sh ./tests/scripts/shell/bench/bench-leftovers.test.sh ./tests/scripts/shell/workflow_behaviour/is-version-bump.test.sh ./tests/scripts/shell/workflow_behaviour/podman-lane-paths.test.sh
+      test-command: bash ./tests/scripts/shell/suite_guards/check-suite-completeness.test.sh ./tests/scripts/shell/suite_guards/locale-pinned.test.sh ./tests/scripts/shell/suite_guards/ci-runs-every-test.test.sh ./tests/scripts/shell/hardening/check-hardening.test.sh ./tests/scripts/shell/hardening/check-hardening-macos.test.sh ./tests/scripts/shell/workflow_behaviour/branch-health-conclusion.test.sh ./tests/scripts/shell/workflow_behaviour/reusable-schedule-freshness.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-tooling-isolation.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-tooling-installers.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-caller-if.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-caller-with.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-pin-length.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-merge-group.test.sh ./tests/scripts/shell/install/install-rollback-cleans-staged.test.sh ./tests/scripts/shell/install/install-help.test.sh ./tests/scripts/shell/install/install-python-isolation.test.sh ./tests/scripts/shell/install/install-apt-keyring-package.test.sh ./tests/scripts/shell/workflow_behaviour/podman-watch.test.sh ./tests/scripts/shell/workflow_behaviour/dependabot-security-watch.test.sh ./tests/scripts/shell/suite_guards/check-planning-words.test.sh ./tests/scripts/shell/fedora_image/fetch-fedora-image.test.sh ./tests/scripts/shell/fedora_image/fetch-fedora-image-records.test.sh ./tests/scripts/shell/bench/bench-leftovers.test.sh ./tests/scripts/shell/workflow_behaviour/is-version-bump.test.sh ./tests/scripts/shell/workflow_behaviour/podman-lane-paths.test.sh ./tests/scripts/shell/workflow_behaviour/binary-budget-paths.test.sh
       # branch-health-conclusion.test.sh pipes API JSON into the
       # conclusion script and asserts exit codes. jq is the tool that
       # turns the response into shell-readable lines, and it is not in
