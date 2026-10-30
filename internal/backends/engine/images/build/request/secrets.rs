@@ -26,6 +26,20 @@ impl Engine {
 		let mut files = Vec::new();
 		let mut specs = Vec::new();
 		for name in build.secrets() {
+			// The name goes into the `id=NAME,src=ENTRY` spec and into the name of
+			// a tar entry. A comma or an equals sign would add options to the
+			// spec, a slash would walk out of the entry, and a line break would
+			// split it; compose names a secret with letters, digits, dot,
+			// underscore and dash.
+			if name.is_empty()
+				|| !name
+					.bytes()
+					.all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+			{
+				return Err(ComposeError::Unsupported(format!(
+					"build secret name {name:?} may only hold letters, digits, '.', '_' and '-'"
+				)));
+			}
 			let Some(config) = file.secrets.get(name) else {
 				return Err(ComposeError::Unsupported(format!(
 					"build secret '{name}' is not defined in the top-level secrets section"

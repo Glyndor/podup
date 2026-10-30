@@ -102,6 +102,12 @@ pub(in crate::backends::engine) fn reject_dangerous_secret_mode(
 	mode: u32,
 	ctx: &str,
 ) -> Result<()> {
+	if mode & !0o7777 != 0 {
+		return Err(ComposeError::Unsupported(format!(
+			"mode {mode:#o} for {ctx} has bits above the permission bits; \
+			 use e.g. 0o400 or 0o444"
+		)));
+	}
 	if mode & 0o111 != 0 {
 		return Err(ComposeError::Unsupported(format!(
 			"mode {mode:#o} for {ctx} sets an execute bit on a secret/config; \

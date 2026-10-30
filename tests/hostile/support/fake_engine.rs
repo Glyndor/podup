@@ -29,19 +29,31 @@ pub type Handler = fn(&str, &str) -> Option<Reply>;
 
 pub struct FakeEngine {
 	dir: TempDir,
-	seen: Arc<Mutex<Vec<String>>>,
+	seen: Arc<Mutex<Vec<Vec<u8>>>>,
 }
 
 impl FakeEngine {
 	pub fn start(handler: Handler) -> Self {
+		Self::start_with_headers(handler, "")
+	}
+
+	/// Add response headers for archive-stat protocol controls.
+	pub fn start_with_headers(handler: Handler, headers: &'static str) -> Self {
 		let dir = tempfile::tempdir().expect("temp dir");
+		// The project lock stages in this directory and refuses one that others
+		// can enter, whatever the umask of the machine running the tests.
+		std::fs::set_permissions(
+			dir.path(),
+			std::os::unix::fs::PermissionsExt::from_mode(0o700),
+		)
+		.expect("chmod");
 		let listener = UnixListener::bind(dir.path().join("podman.sock")).expect("bind socket");
 		let seen = Arc::new(Mutex::new(Vec::new()));
 		let log = seen.clone();
 		std::thread::spawn(move || {
 			for stream in listener.incoming() {
 				let Ok(stream) = stream else { break };
-				serve(stream, handler, &log);
+				serve(stream, handler, &log, headers);
 			}
 		});
 		Self { dir, seen }
@@ -54,7 +66,16 @@ impl FakeEngine {
 
 	/// Every request received so far, head and body, one entry each.
 	pub fn sent(&self) -> String {
-		self.seen.lock().unwrap().join("\n")
+		self.requests()
+			.iter()
+			.map(|r| String::from_utf8_lossy(r).into_owned())
+			.collect::<Vec<_>>()
+			.join("\n")
+	}
+
+	/// Raw requests, preserving gzip and tar bytes without UTF-8 conversion.
+	pub fn requests(&self) -> Vec<Vec<u8>> {
+		self.seen.lock().unwrap().clone()
 	}
 
 	/// Run podup against this engine and return everything it printed.
@@ -82,7 +103,7 @@ impl FakeEngine {
 }
 
 /// Read one request, answer it and close.
-fn serve(mut stream: UnixStream, handler: Handler, log: &Mutex<Vec<String>>) {
+fn serve(mut stream: UnixStream, handler: Handler, log: &Mutex<Vec<Vec<u8>>>, headers: &str) {
 	let mut data = Vec::new();
 	let mut chunk = [0u8; 4096];
 	let (head_end, length) = loop {
@@ -121,7 +142,7 @@ fn serve(mut stream: UnixStream, handler: Handler, log: &Mutex<Vec<String>>) {
 	}
 	let request = String::from_utf8_lossy(&data).into_owned();
 	let line = request.lines().next().unwrap_or_default().to_string();
-	log.lock().unwrap().push(request.clone());
+	log.lock().unwrap().push(data);
 
 	let ping = line.contains("/libpod/_ping");
 	let reply = handler(&line, &request).unwrap_or_else(|| default_reply(&line));
@@ -132,7 +153,7 @@ fn serve(mut stream: UnixStream, handler: Handler, log: &Mutex<Vec<String>>) {
 	};
 	let wire = format!(
 		"HTTP/1.1 {} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\
-		 connection: close\r\n{version}\r\n{}",
+		 connection: close\r\n{version}{headers}\r\n{}",
 		reply.status,
 		reply.body.len(),
 		reply.body
