@@ -40,8 +40,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: shell-ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working-directory }}
-  cancel-in-progress: true
+  group: shell-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ inputs.working-directory }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   shellcheck:

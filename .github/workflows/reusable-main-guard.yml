@@ -9,8 +9,8 @@ on:
 permissions: {}
 
 concurrency:
-  group: main-guard-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: main-guard-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   develop-only:

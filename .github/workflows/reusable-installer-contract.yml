@@ -44,8 +44,8 @@ concurrency:
   # install-script distinguishes two contract checks in the same repo/ref
   # (e.g. a repo with more than one installer), which would otherwise cancel
   # each other's in-flight run.
-  group: installer-contract-${{ github.workflow }}-${{ github.ref }}-${{ inputs.install-script }}
-  cancel-in-progress: true
+  group: installer-contract-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ inputs.install-script }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   check:

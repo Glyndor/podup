@@ -53,11 +53,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: rust-fuzz-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working-directory }}-${{ inputs.build-only }}
-  # A manual run on the same ref must not cancel the weekly one halfway: a fuzz
-  # run that is cut short leaves no verdict, and the freshness watcher only
-  # notices a missing success after two weeks.
-  cancel-in-progress: false
+  group: rust-fuzz-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ inputs.working-directory }}-${{ inputs.build-only }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   fuzz:

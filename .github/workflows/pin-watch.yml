@@ -28,6 +28,11 @@ on:
 permissions:
   contents: read
   issues: write
+# Serialize runs that observe or publish the same resource without interruption.
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
 jobs:
   watch:
     runs-on: ubuntu-24.04

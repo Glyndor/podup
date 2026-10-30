@@ -87,8 +87,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: rust-ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.working-directory }}
-  cancel-in-progress: true
+  group: rust-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ inputs.working-directory }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   lint:

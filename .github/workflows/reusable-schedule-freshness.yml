@@ -58,8 +58,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: schedule-freshness-${{ github.workflow }}-${{ github.ref }}-${{ inputs.workflow }}
-  cancel-in-progress: true
+  group: schedule-freshness-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ inputs.workflow }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   freshness:

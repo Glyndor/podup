@@ -86,8 +86,8 @@ permissions:
 concurrency:
   # package-name distinguishes two packages built from the same repo/ref, which
   # would otherwise cancel each other's in-flight run.
-  group: rust-debian-${{ github.workflow }}-${{ github.ref }}-${{ inputs.arch }}-${{ inputs.package-name }}
-  cancel-in-progress: true
+  group: rust-debian-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ inputs.arch }}-${{ inputs.package-name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:

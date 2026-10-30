@@ -16,6 +16,11 @@ on:
 
 permissions: {}
 
+# Serialize runs that observe or publish the same resource without interruption.
+concurrency:
+  group: release-${{ github.repository }}-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
   verify:
     name: Verify tag matches crate version
