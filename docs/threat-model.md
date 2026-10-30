@@ -75,7 +75,7 @@ Out of scope: compromise of the operator account, the engine socket or the relea
 | A systemd unit written by `autostart` injects a directive through a path | control characters are rejected in every value that lands in a unit; the unit stem is sanitised and re-checked before write | test: `autostart` unit tests |
 | Two podup invocations race on one project | a per-project advisory lock at `$XDG_RUNTIME_DIR/podup` when that path is set and valid, otherwise the platform temp directory. The lock is `flock`-based and Unix-only; on Windows no OS lock is held and two concurrent invocations on the same project can race | test: `lock` unit tests |
 | A staged self-update is swapped through a symlink | the staging file is created `O_EXCL` and opened `O_NOFOLLOW`; the target is replaced through an ordinary `rename` with its mode preserved | test: `install_binary` unit tests |
-| Debug logging leaks environment values | documented: `RUST_LOG=debug` can print them; default logging does not | no test; the boundary is stated in security-model |
+| Debug logging leaks environment values | documented: `RUST_LOG=debug` can print them; default logging does not | `tests/hostile/output/hostile_secret_engine.rs` checks that secret content is not printed at the default level or at `debug`; the `debug` boundary for environment values stays stated in security-model |
 
 ## How the evidence is kept honest
 
