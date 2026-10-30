@@ -30,7 +30,7 @@ on:
       toolchain:
         description: Rust toolchain to use (cargo-fuzz requires nightly)
         type: string
-        default: "nightly-2026-07-16"
+        default: "nightly-2026-10-22"
       cargo-fuzz-version:
         description: Exact version of the tool; bumped by editing this file
         type: string
