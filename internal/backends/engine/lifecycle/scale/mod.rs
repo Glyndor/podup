@@ -129,7 +129,9 @@ fn sort_replica_names(names: &mut [String]) {
 /// The `podup.oneoff=true` label is the only reliable marker: the name
 /// carries the run's PID where a replica carries an index, and a name is not
 /// a contract.
-fn is_one_off(entry: &crate::libpod::types::container::ContainerListEntry) -> bool {
+pub(in crate::backends::engine::lifecycle) fn is_one_off(
+	entry: &crate::libpod::types::container::ContainerListEntry,
+) -> bool {
 	entry
 		.labels
 		.get("podup.oneoff")

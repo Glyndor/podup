@@ -169,6 +169,87 @@ fn gone_needs_absence_not_merely_a_stopped_container() {
 #[cfg(unix)]
 mod stop_and_remove {
 	use super::over_the_wire::{engine_with, fake_dropping_the_op};
+	use crate::engine::fake_podman::{self, FakeReply};
+	use crate::engine::lifecycle::drop_recheck::ContainerTarget;
+	use crate::libpod::API_PREFIX;
+
+	#[tokio::test]
+	async fn a_lost_stop_response_checks_the_target_id_despite_a_shared_name_or_id_prefix() {
+		for state in [Some("running"), Some("exited"), None] {
+			let fake = fake_podman::start_replying(move |method, target| {
+				if method == "POST" && target.contains("/stop?") {
+					return FakeReply::ClosedWithoutResponse;
+				}
+				if method == "GET" && target.contains("/containers/json") {
+					let mut entries = vec![
+						serde_json::json!({"Id":"bbbb", "Names":["/proj-web-1"], "State":"exited"}),
+						serde_json::json!({"Id":"aaaa-extra", "Names":["/other"], "State":"exited"}),
+					];
+					if let Some(state) = state {
+						entries.push(serde_json::json!({
+							"Id":"aaaa", "Names":["/renamed-web"], "State":state
+						}));
+					}
+					return FakeReply::Body(200, serde_json::to_string(&entries).unwrap());
+				}
+				FakeReply::Body(404, r#"{"message":"not found"}"#.into())
+			});
+			let engine = engine_with(fake.client(), "proj");
+			let outcome = engine
+				.stop_container_target("proj-web-1", ContainerTarget::Id("aaaa"), 10)
+				.await;
+			if state == Some("running") {
+				assert!(matches!(
+					outcome,
+					Err(crate::error::ComposeError::Podman(_))
+				));
+			} else {
+				assert!(outcome.unwrap());
+			}
+
+			let seen = fake.requests.lock().unwrap();
+			assert_eq!(seen.len(), 2, "{seen:?}");
+			assert_eq!(
+				seen[0],
+				format!("POST {API_PREFIX}/containers/aaaa/stop?timeout=10")
+			);
+			assert_eq!(
+				seen[1],
+				format!(
+					"GET {API_PREFIX}/containers/json?all=true&filters={}",
+					crate::libpod::urlencoded(r#"{"id":["aaaa"]}"#),
+				)
+			);
+		}
+	}
+
+	#[tokio::test]
+	async fn a_stop_timeout_escalates_using_the_same_target_id() {
+		let fake = fake_podman::start_replying(|method, target| {
+			if method == "POST" && target.contains("/stop?") {
+				tokio::time::pause();
+				return FakeReply::Silent;
+			}
+			if method == "POST" && target.contains("/kill?") {
+				return FakeReply::Body(204, String::new());
+			}
+			FakeReply::Body(404, r#"{"message":"not found"}"#.into())
+		});
+		let engine = engine_with(fake.client(), "proj");
+		assert!(engine
+			.stop_container_target("proj-web-1", ContainerTarget::Id("aaaa"), 0)
+			.await
+			.unwrap());
+
+		let seen = fake.requests.lock().unwrap();
+		assert_eq!(
+			*seen,
+			vec![
+				format!("POST {API_PREFIX}/containers/aaaa/stop?timeout=0"),
+				format!("POST {API_PREFIX}/containers/aaaa/kill?signal=SIGKILL"),
+			]
+		);
+	}
 
 	/// `stop` does not go through `run_lifecycle_op`, so it carries the re-check
 	/// itself. A container that is no longer running confirms the stop landed.
