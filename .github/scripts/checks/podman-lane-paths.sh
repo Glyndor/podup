@@ -30,6 +30,7 @@ while IFS= read -r f; do
 		.github/workflows/binary-budget.yml) ;;
 		.github/workflows/ci.yml) ;;
 		.github/workflows/dco.yml) ;;
+		.github/workflows/dependabot-security-watch.yml) ;;
 		.github/workflows/debian-build.yml) ;;
 		.github/workflows/fuzz.yml) ;;
 		.github/workflows/line-limit.yml) ;;
