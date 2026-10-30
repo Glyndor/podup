@@ -90,9 +90,9 @@ jobs:
       # way the release does (no key needed) so a wheel that stops resolving
       # fails here, not after the tag (v5.9.0, 2026-09-04).
       - name: Use an x64 Python, as the release does on this runner
-        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v6.0.0
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          python-version: "3.12"
+          python-version: "3.15"
           architecture: x64
       - name: Install the signing dependencies the release installs
         run: |
