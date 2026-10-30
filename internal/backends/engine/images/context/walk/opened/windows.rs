@@ -27,13 +27,24 @@ fn open(path: &Path, flags: u32, share: u32) -> io::Result<File> {
 /// Pin the canonical root's ancestors before resolving descendant paths.
 pub(super) fn walk(
 	root: &Path,
+	follow_root: bool,
 	skip_dir: &impl Fn(&Path) -> bool,
 	include_entry: &impl Fn(&Path) -> bool,
 	visit: &mut impl FnMut(&Path, Entry) -> io::Result<()>,
 ) -> io::Result<()> {
 	// Resolve the explicitly selected root once, then pin all its ancestors
 	// too: otherwise replacing an ancestor could redirect a child path lookup.
-	let resolved = std::fs::canonicalize(root)?;
+	// A root that may be followed is resolved once, links included. One that may
+	// not is not resolved at all: every component of it is pinned below with the
+	// open that refuses a reparse point, so a link in any of them is refused by
+	// the same handle that would hold the directory, not by a check made on the
+	// path beforehand. The roots of the rules are resolved when the watch starts,
+	// so a path under one has no link in it.
+	let resolved = if follow_root {
+		std::fs::canonicalize(root)?
+	} else {
+		std::path::absolute(root)?
+	};
 	let mut ancestors = Vec::new();
 	for path in resolved
 		.ancestors()

@@ -367,7 +367,7 @@ async fn a_symlink_with_a_non_utf_8_target_is_refused() {
 #[tokio::test(flavor = "current_thread")]
 async fn sync_recording_includes_a_symlink() {
 	let dir = tempfile::tempdir().unwrap();
-	let src = dir.path().join("changed");
+	let src = dir.path().canonicalize().unwrap().join("changed");
 	std::fs::create_dir_all(&src).unwrap();
 	std::fs::write(src.join("a.txt"), b"hi").unwrap();
 	std::os::unix::fs::symlink("nowhere", src.join("dangling")).unwrap();

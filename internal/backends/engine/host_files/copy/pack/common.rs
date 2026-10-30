@@ -28,6 +28,8 @@ use super::super::upload::verify::{SentEntry, SentKind};
 /// each entry with the descriptor it was opened with, so the caller never has
 /// to reopen the path the entry was found at.
 pub(in crate::backends::engine) mod walk {
+	#[cfg(feature = "watch")]
+	pub(in crate::backends::engine) use crate::engine::context::walk::visit_dir_pinned;
 	pub(in crate::backends::engine) use crate::engine::context::walk::walk_dir;
 	pub(in crate::backends::engine) use crate::engine::context::walk::{visit_dir_skipping, Entry};
 }
