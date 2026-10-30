@@ -50,6 +50,22 @@ jobs:
             exit 1
           fi
 
+      - name: Refuse an already published release
+        # Publication follows asset verification. Refuse a second publication
+        # after waiting for another run of the same tag to finish. `gh release
+        # create` at the end would refuse it too, but only after every build.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          published=$(gh api --paginate "repos/$GH_REPO/releases" --jq '.[] | select(.draft == false) | .tag_name')
+          if grep -Fxq -- "$TAG" <<< "$published"; then
+            echo "::error::Release $TAG is already published; refusing to rebuild or publish it again."
+            exit 1
+          fi
+
       - name: Tag must equal Cargo.toml version
         env:
           TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
