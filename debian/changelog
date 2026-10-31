@@ -1,3 +1,33 @@
+podup (5.15.0) unstable; urgency=medium
+
+  * Twelve review rounds closed gaps in how podup reads, copies and tears down.
+    `cp` and the `watch` sync pack and extract through descriptors the walk
+    opened, so a directory swapped for a link during the copy is not followed,
+    and they bound sparse sizes, hard links and the bytes an alias expands to.
+    A file secret takes its mode from the handle it was read from, is read under
+    one budget, and fails instead of widening to 0444.
+  * `up`, `down`, `start`, `restart`, `kill` and `--wait` act only on the
+    containers they started or were attached to, keep the project lock while
+    they can change it, recreate a container when the real name of its network
+    or volume changes, and report a failed cleanup instead of hiding it.
+  * Compose files are read more faithfully: merge keys resolve inside tagged
+    sections, `!override` and `!reset` work on merged blocks, interpolations are
+    typed by position, bare numbers and booleans load into text fields, and the
+    number of included files and aliases a project may expand is bounded.
+  * The build context is walked through pinned descriptors, build output and
+    pull waits are bounded, a truncated pull is refused, and build and container
+    ulimits share one conversion where only `-1` means unlimited. A device
+    cgroup rule with a signed number is skipped.
+  * Terminal output escapes control characters in names, `logs` and `exec` keep
+    binary output, and `stats`, `top`, `images` and `push` are driven against a
+    hostile engine in the test suite. `podup update` serialises self-updates
+    and refuses to install an older version.
+  * `internal/` and `tests/` are organised into folders by concern, and CI skips
+    the MSRV, rustdoc and hardening builds when only paths they never read
+    change.
+
+ -- Glyndor <packages@glyndor.net>  Sat, 31 Oct 2026 03:00:00 -0500
+
 podup (5.14.0) unstable; urgency=medium
 
   * The top-level `jobs:` section of the compose specification works. A job is
