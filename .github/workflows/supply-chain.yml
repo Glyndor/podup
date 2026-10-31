@@ -1,14 +1,14 @@
 name: Supply chain
 
-# Pull request runs with a Cargo path filter (only supply-chain-touching PRs
-# pay the cost); push to develop runs unfiltered (every develop commit must
-# validate the supply chain, so the branch never sits with a stale audit).
+# Generate artifacts when dependency or generator inputs change.
+# Vulnerability advisories are checked independently by audit.yml.
 on:
   pull_request:
     branches:
       - main
       - develop
     paths:
+      - ".cargo/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "about.toml"
@@ -23,6 +23,14 @@ on:
   push:
     branches:
       - develop
+    paths:
+      - ".cargo/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "about.toml"
+      - "about.hbs"
+      - ".github/workflows/supply-chain.yml"
+      - ".github/workflows/reusable-rust-supply-chain.yml"
 
 permissions:
   contents: read

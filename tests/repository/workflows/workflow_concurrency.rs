@@ -152,3 +152,142 @@ fn a_workflow_that_never_runs_on_pull_request_owes_nothing() {
 	let planted = "on:\n  schedule:\n    - cron: '0 6 * * *'\njobs: {}\n";
 	assert_eq!(check(&parse(planted)), Ok(()));
 }
+
+const RUN_DISCRIMINANT: &str =
+	"${{ github.event_name == 'pull_request' && github.ref || github.run_id }}";
+const CANCEL_EXPRESSION: &str = "${{ github.event_name == 'pull_request' }}";
+
+fn check_reusable(doc: &Value, prefix: &str, suffix: &str) -> Result<(), String> {
+	let expected = format!("{prefix}-${{{{ github.workflow }}}}-{RUN_DISCRIMINANT}{suffix}");
+	if doc["concurrency"]["group"].as_str() != Some(&expected) {
+		return Err(format!("reusable group must be {expected}"));
+	}
+	if doc["concurrency"]["cancel-in-progress"].as_str() != Some(CANCEL_EXPRESSION) {
+		return Err("reusable must cancel only PR runs".into());
+	}
+	Ok(())
+}
+
+fn workflow(name: &str) -> Value {
+	let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+		.join(".github/workflows")
+		.join(format!("{name}.yml"));
+	parse(&fs::read_to_string(path).expect("read workflow"))
+}
+
+#[test]
+fn reusables_preserve_non_pr_runs_and_separate_sibling_calls() {
+	for (name, suffix) in [
+		(
+			"branch-health",
+			"-${{ inputs.workflow }}-${{ inputs.branch }}",
+		),
+		("dco", ""),
+		("dependabot-freshness", ""),
+		("installer-contract", "-${{ inputs.install-script }}"),
+		("line-limit", ""),
+		("main-guard", ""),
+		("powershell-ci", "-${{ inputs.paths }}"),
+		("rust-audit", "-${{ inputs.working-directory }}"),
+		("rust-ci", "-${{ inputs.working-directory }}"),
+		(
+			"rust-debian",
+			"-${{ inputs.arch }}-${{ inputs.package-name }}",
+		),
+		(
+			"rust-fuzz",
+			"-${{ inputs.working-directory }}-${{ inputs.build-only }}",
+		),
+		("rust-supply-chain", "-${{ inputs.working-directory }}"),
+		("schedule-freshness", "-${{ inputs.workflow }}"),
+		("shell-ci", "-${{ inputs.working-directory }}"),
+		("workflow-lint", ""),
+	] {
+		let doc = workflow(&format!("reusable-{name}"));
+		assert_eq!(check_reusable(&doc, name, suffix), Ok(()), "{name}");
+	}
+}
+
+#[test]
+fn reusable_group_cannot_collide_with_its_caller() {
+	let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows");
+	for entry in fs::read_dir(dir).unwrap() {
+		let path = entry.unwrap().path();
+		if path.extension().and_then(|s| s.to_str()) != Some("yml") {
+			continue;
+		}
+		let doc = parse(&fs::read_to_string(&path).unwrap());
+		let Some(jobs) = doc["jobs"].as_mapping() else {
+			continue;
+		};
+		for job in jobs.values() {
+			let Some(target) = job["uses"]
+				.as_str()
+				.and_then(|s| s.strip_prefix("./.github/workflows/"))
+			else {
+				continue;
+			};
+			let inner = workflow(target.trim_end_matches(".yml"));
+			assert_ne!(
+				doc["concurrency"]["group"],
+				inner["concurrency"]["group"],
+				"{} -> {target}",
+				path.display()
+			);
+		}
+	}
+}
+
+#[test]
+fn reusable_checker_rejects_each_unsafe_component() {
+	let doc = workflow("reusable-branch-health");
+	for (field, value, diagnostic) in [
+		("group", "branch-health-${{ github.workflow }}-${{ github.ref }}", "reusable group"),
+		("group", "${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}", "reusable group"),
+		("group", "branch-health-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ inputs.workflow }}", "reusable group"),
+		("cancel-in-progress", "true", "cancel only PR"),
+	] {
+		let mut planted = doc.clone();
+		planted["concurrency"][field] = Value::String(value.into());
+		let err = check_reusable(&planted, "branch-health", "-${{ inputs.workflow }}-${{ inputs.branch }}").unwrap_err();
+		assert!(err.contains(diagnostic), "{err}");
+	}
+}
+
+#[test]
+fn supply_chain_filters_match_dependency_and_generator_inputs() {
+	let doc = workflow("supply-chain");
+	let expected: Value = serde_yaml::to_value([
+		".cargo/**",
+		"Cargo.toml",
+		"Cargo.lock",
+		"about.toml",
+		"about.hbs",
+		".github/workflows/supply-chain.yml",
+		".github/workflows/reusable-rust-supply-chain.yml",
+	])
+	.unwrap();
+	for event in ["push", "pull_request"] {
+		assert_eq!(
+			doc["on"][event]["paths"], expected,
+			"{event} supply-chain paths"
+		);
+	}
+}
+
+#[test]
+fn publishers_and_watchers_serialize_without_cancelling() {
+	for (name, group) in [
+		("release", "release-${{ github.repository }}-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}"),
+		("podman-lane-develop-nightly", "${{ github.workflow }}-develop"),
+		("pin-watch", "${{ github.workflow }}"),
+		("podman-watch", "${{ github.workflow }}"),
+	] {
+		let doc = workflow(name);
+		assert_eq!(doc["concurrency"]["group"].as_str(), Some(group), "{name} serialization group");
+		assert_eq!(doc["concurrency"]["cancel-in-progress"], Value::Bool(false), "{name} must not cancel an active run");
+	}
+}
+
+#[path = "workflow_concurrency/release.rs"]
+mod release;

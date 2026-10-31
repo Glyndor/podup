@@ -19,6 +19,11 @@ on:
     - cron: "0 21 * * *"
 permissions:
   contents: read
+# Serialize runs that observe or publish the same resource without interruption.
+concurrency:
+  group: ${{ github.workflow }}-develop
+  cancel-in-progress: false
+
 jobs:
   podman-vm:
     runs-on: ubuntu-24.04

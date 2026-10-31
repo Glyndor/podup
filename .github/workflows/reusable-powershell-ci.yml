@@ -55,8 +55,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: powershell-ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.paths }}
-  cancel-in-progress: true
+  group: powershell-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ inputs.paths }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   pssa:
