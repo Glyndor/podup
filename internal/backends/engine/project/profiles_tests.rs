@@ -269,3 +269,13 @@ fn the_up_scope_of_everything_leaves_out_inactive_profiles() {
 		["cache", "db", "web"]
 	);
 }
+
+#[test]
+fn explicit_profiles_are_trimmed_and_empty_ones_dropped() {
+	// The same list reaches here from `--profile` and from `COMPOSE_PROFILES`
+	// through clap, which splits on commas and keeps the whitespace.
+	let set = active_profiles_set(&[" qa ".into(), "other\n".into(), "  ".into(), "".into()]);
+	assert_eq!(set.len(), 2);
+	assert!(set.contains("qa"));
+	assert!(set.contains("other"));
+}
