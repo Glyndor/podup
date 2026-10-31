@@ -325,6 +325,46 @@ verify_version_self_test() {
 	fail "Refusing to install: staged binary's --version does not match the resolved release tag (possible rollback) - the staged file has been removed"
 }
 
+# Compare complete release versions; print -1, 0 or 1, or fail on invalid input.
+compare_versions() {
+	local left="${1#v}" right="${2#v}" LC_ALL=C
+	[[ "$left" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ && "$right" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+	local -a lhs rhs
+	IFS=. read -r -a lhs <<< "$left"
+	IFS=. read -r -a rhs <<< "$right"
+	local i a b
+	for i in 0 1 2; do
+		a="${lhs[$i]}"; b="${rhs[$i]}"
+		# Compare decimal magnitudes without shell integer overflow or octal parsing.
+		a="${a#"${a%%[!0]*}"}"; a="${a:-0}"
+		b="${b#"${b%%[!0]*}"}"; b="${b:-0}"
+		if (( ${#a} < ${#b} )) || { (( ${#a} == ${#b} )) && [[ "$a" < "$b" ]]; }; then
+			printf '%s\n' -1
+			return 0
+		fi
+		if (( ${#a} > ${#b} )) || { (( ${#a} == ${#b} )) && [[ "$a" > "$b" ]]; }; then
+			printf '%s\n' 1
+			return 0
+		fi
+	done
+	printf '%s\n' 0
+}
+
+verify_no_downgrade() {
+	local target="$1" resolved_tag="$2" reported installed comparison
+	# An explicit tag is the operator's request, including an intentional downgrade.
+	[[ "$VERSION" == latest ]] || return 0
+	compare_versions "$resolved_tag" "$resolved_tag" >/dev/null || fail "Invalid resolved release tag: ${resolved_tag}"
+	# A broken installation must remain repairable.
+	reported="$("$target" --version 2>/dev/null)" || return 0
+	[[ "$reported" =~ ^podup[[:space:]]+(version[[:space:]]+)?(v?[0-9]+\.[0-9]+\.[0-9]+)[[:space:]]*$ ]] || return 0
+	installed="${BASH_REMATCH[2]}"
+	comparison="$(compare_versions "$resolved_tag" "$installed")" || return 0
+	if [[ "$comparison" == -1 ]]; then
+		fail "Refusing downgrade: installed ${installed} is newer than ${resolved_tag}. Set PODUP_VERSION=${resolved_tag} explicitly to install this older release."
+	fi
+}
+
 # --- apt mode ----------------------------------------------------------------
 
 install_apt() {
@@ -402,6 +442,16 @@ installed_mode() {
 }
 
 install_binary() {
+	# Resolve before fetching assets so a replay cannot downgrade a working install.
+	local resolved_tag target="${INSTALL_DIR}/podup"
+	if [[ "$VERSION" == "latest" ]]; then
+		log_info "Resolving latest release tag ..."
+		resolved_tag="$(resolve_release_tag)"
+	else
+		resolved_tag="$VERSION"
+	fi
+	verify_no_downgrade "$target" "$resolved_tag"
+
 	log_info "Downloading ${ARTIFACT} (${VERSION}) ..."
 	download "${BASE_URL}/${ARTIFACT}" "${TMP_DIR}/${ARTIFACT}"
 	download "${BASE_URL}/SHA256SUMS" "${TMP_DIR}/SHA256SUMS"
@@ -459,19 +509,8 @@ or python3 with the 'cryptography' package, or set PODUP_RELEASE_PUBKEY_B64, the
 
 	verify_checksum "$ARTIFACT"
 
-	# Resolve the actual release tag for the self-test. With an explicit
-	# PODUP_VERSION=vX.Y.Z this is just that tag; with the default
-	# "latest" we hit the GitHub releases API to discover it. The signed
-	# manifest binds asset bytes but not the release tag, so we cannot
-	# use the staged binary's --version as the source of truth - that
-	# would be the attack vector.
-	local resolved_tag
-	if [[ "$VERSION" == "latest" ]]; then
-		log_info "Resolving latest release tag ..."
-		resolved_tag="$(resolve_release_tag)"
-	else
-		resolved_tag="$VERSION"
-	fi
+	# Recheck in case another installer updated the target during the downloads.
+	verify_no_downgrade "$target" "$resolved_tag"
 
 	# Stage next to the target and rename into place, so a kill mid-install can
 	# never leave a partial yet executable binary on PATH. The version
@@ -490,7 +529,6 @@ or python3 with the 'cryptography' package, or set PODUP_RELEASE_PUBKEY_B64, the
 	# `cp + chmod` because `-m` only sets the mode of the *new* file and
 	# cannot start private then widen.
 	local staged="${INSTALL_DIR}/.podup.install-$$"
-	local target="${INSTALL_DIR}/podup"
 	# The new binary takes over the mode of what the target resolves to, so a
 	# `podup` symlink to a 0755 file installs a 0755 file, not the 0777 of the link.
 	local target_mode
