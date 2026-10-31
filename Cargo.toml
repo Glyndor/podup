@@ -211,6 +211,10 @@ name = "hostile_terminal_output"
 path = "tests/hostile/output/hostile_terminal_output.rs"
 
 [[test]]
+name = "hostile_terminal_rows"
+path = "tests/hostile/output/hostile_terminal_rows.rs"
+
+[[test]]
 name = "every_source_file_is_compiled"
 path = "tests/repository/repo_rules/every_source_file_is_compiled.rs"
 
