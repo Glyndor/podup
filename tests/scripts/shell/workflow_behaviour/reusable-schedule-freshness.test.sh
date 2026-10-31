@@ -75,6 +75,11 @@ RESP="${STUB_RESPONSES:?stub responses file required}"
 idx=$(grep -cz . "$LOG" 2>/dev/null || true)
 idx="${idx:-0}"
 idx=$((idx + 1))
+if [ -n "${STUB_FAIL_WORKFLOW:-}" ] && [[ "$*" = *"workflows/$STUB_FAIL_WORKFLOW/runs"* ]]; then
+  printf '%s\0' "$*" >> "$LOG"
+  echo "API unavailable" >&2
+  exit 1
+fi
 printf '%s\0' "$*" >> "$LOG"
 if [ -n "${STUB_JSON:-}" ]; then
 	filter=""; prev=""
@@ -346,6 +351,60 @@ check "G: emits a ::warning:: naming both the windowed emptiness and the unwindo
 	"$(printf '%s' "$out" | grep -q '::warning::' && printf '%s' "$out" | grep -q 'saw nothing 3 times' && printf '%s' "$out" | grep -q "$g_seen" && echo 1 || echo 0)"
 check "G: does not emit a ::error::" "0" \
 	"$(printf '%s' "$out" | grep -c '^::error::')"
+
+# The batch caller preserves all five observations and does not stop at the
+# first failure. Read the actual pairs so this also exercises caller wiring.
+python3 - "$HERE/.github/workflows/ci.yml" "$WORK/pairs" <<'PYCODE'
+import sys
+import yaml
+spec = yaml.safe_load(open(sys.argv[1]))
+jobs = spec["jobs"]
+watchers = [j for j in jobs.values()
+            if j.get("uses", "").endswith("reusable-schedule-freshness.yml")]
+assert len(watchers) == 1, "CI must have one schedule freshness caller"
+job = watchers[0]
+assert job["if"] == "github.event_name != 'merge_group'"
+pairs = job["with"]["workflows"]
+assert pairs.split() == ["audit.yml", "15", "fuzz.yml", "15", "podman-lane.yml", "3",
+                         "podman-watch.yml", "3", "benchmark.yml", "65"]
+open(sys.argv[2], "w").write(pairs)
+PYCODE
+rc=$?
+check "CI keeps exactly the five workflow/age pairs in one advisory caller" 0 "$rc"
+pairs="$(cat "$WORK/pairs")"
+for mode in success api-error stale missing; do
+  : > "$WORK/summary"
+  case "$mode" in
+    success|api-error)
+      recent="$(ago 1)"
+      for ((n=0; n<30; n++)); do printf '%s\n' "$recent"; done > "$WORK/batch.resp" ;;
+    stale) for ((n=0; n<30; n++)); do ago 100; done > "$WORK/batch.resp" ;;
+    missing) : > "$WORK/batch.resp" ;;
+  esac
+  bad=""
+  expected=0
+  [ "$mode" = api-error ] && bad=audit.yml
+  [ "$mode" != success ] && expected=1
+  out="$(WORKFLOWS="$pairs"$'\n' GITHUB_STEP_SUMMARY="$WORK/summary" \
+    STUB_FAIL_WORKFLOW="$bad" run_step 15 "$WORK/batch.resp")"; rc=$?
+  check "batch $mode returns aggregate result" "$expected" "$rc"
+  check "batch $mode writes five summary rows" 5 "$(grep -cE '^\| .*yml \|' "$WORK/summary")"
+  check "batch $mode still queries the last workflow" 1 \
+    "$(grep -acz 'workflows/benchmark.yml/runs' "$WORK/gh.log" | awk '{print ($1>0)}')"
+  if [ "$mode" = api-error ]; then
+    check "API error is identified in summary" 1 "$(grep -cF '| audit.yml | 15 | FAIL |' "$WORK/summary")"
+    check "later healthy workflow passes in summary" 1 "$(grep -cF '| benchmark.yml | 65 | PASS |' "$WORK/summary")"
+  fi
+done
+
+out="$(WORKFLOWS=$' \n\n' run_step 15 "$WORK/batch.resp")"; rc=$?
+check "a whitespace-only batch fails" 1 "$rc"
+check "an empty batch names the missing observations" 1 \
+  "$(printf '%s' "$out" | grep -cF 'No workflow/age pairs to check.')"
+out="$(WORKFLOWS='audit.yml invalid' run_step 15 "$WORK/batch.resp")"; rc=$?
+check "a malformed workflow/age pair fails" 1 "$rc"
+check "a malformed pair has a diagnostic" 1 \
+  "$(printf '%s' "$out" | grep -cF 'Invalid workflow/age pair:')"
 
 echo "$pass passed, $fail failed"
 printf 'DONE %s %d %d\n' "${BASH_SOURCE[0]##*/}" "$pass" "$fail"

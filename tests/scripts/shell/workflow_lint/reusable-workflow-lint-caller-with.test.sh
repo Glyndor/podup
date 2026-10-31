@@ -158,6 +158,17 @@ check "the real repository tree passes the caller-with-defaults assertion" \
 check "and the step prints the OK summary when the real tree is clean" "1" \
 	"$(said "$out" 'caller-with-defaults: every caller')"
 
+# A batched advisory caller has a multiline scalar, not overrides of any
+# required-emitting reusable. Its limits must remain independent of defaults.
+d="$(new)"
+caller_with "$d" "      workflows: |
+        audit.yml 15
+        benchmark.yml 65" "reusable-schedule-freshness.yml"
+out="$(run_in "$d" "$WORK/caller-with.sh")"; rc=$?
+check "batched freshness inputs remain advisory" 0 "$rc"
+check "batched freshness does not weaken required caller validation" 1 \
+  "$(said "$out" 'caller-with-defaults: every caller')"
+
 # ===========================================================================
 # Each negative fixture plants a caller whose `with:` value differs
 # from the reusable's declared default. The seeded reusables carry
