@@ -11,7 +11,9 @@ fn engine(project: &str) -> Engine {
 
 #[test]
 fn lock_acquire_release_reacquire() {
-	let e = engine("podup-locktest");
+	// The lock lives in a per-user directory shared by every test process of that
+	// user, so a fixed name collides with a second `cargo test` running at once.
+	let e = engine(&format!("podup-locktest-{}", std::process::id()));
 	let first = e.lock_project().expect("first acquire");
 	drop(first);
 	// Dropping the guard must release the flock so a fresh acquire succeeds.
@@ -33,7 +35,8 @@ fn second_holder_blocks_until_first_releases() {
 	// Two engines contend for the same project lock. The first holds it; the
 	// second must take the blocking `LOCK_EX` path in `acquire` and only
 	// succeed after the first guard is dropped. `released` proves the order.
-	let project = "podup-lock-contention";
+	let project = format!("podup-lock-contention-{}", std::process::id());
+	let project = project.as_str();
 	let held = engine(project).lock_project().expect("first acquire");
 
 	let released = Arc::new(AtomicBool::new(false));
