@@ -191,6 +191,10 @@ name = "hostile_podman"
 path = "tests/hostile/podman/hostile_podman.rs"
 
 [[test]]
+name = "hostile_push"
+path = "tests/hostile/podman/hostile_push.rs"
+
+[[test]]
 name = "hostile_quadlet_units"
 path = "tests/hostile/input/hostile_quadlet_units.rs"
 
