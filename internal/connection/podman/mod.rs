@@ -126,7 +126,35 @@ pub(crate) fn default_socket_path() -> String {
 fn candidate_socket_paths() -> Vec<String> {
 	// SAFETY: getuid takes no arguments, touches no memory and cannot fail.
 	let uid = unsafe { libc::getuid() };
-	runtime_candidates(uid, std::env::var("XDG_RUNTIME_DIR").ok().as_deref())
+	let xdg = std::env::var("XDG_RUNTIME_DIR").ok();
+	let trusted = xdg.as_deref().filter(|dir| trusted_runtime_dir(dir, uid));
+	if xdg.as_deref().is_some_and(|d| !d.is_empty()) && trusted.is_none() {
+		tracing::warn!(
+			"XDG_RUNTIME_DIR is not an absolute directory owned by this user that others cannot write; \
+			 not looking for the Podman socket there"
+		);
+	}
+	runtime_candidates(uid, trusted)
+}
+
+/// Whether `dir` may name the place the implicit Podman socket is looked up in:
+/// an absolute path to a real directory (not a link) that this user owns and
+/// that neither the group nor others can write to. A directory somebody else
+/// can write to lets them put a socket there that answers the ping like Podman
+/// and then receives every request, so the implicit lookup ignores it. An
+/// explicit `--socket` or `PODMAN_SOCKET` is the operator's own choice and is
+/// not checked.
+#[cfg(all(unix, not(target_os = "macos")))]
+fn trusted_runtime_dir(dir: &str, uid: u32) -> bool {
+	use std::os::unix::fs::MetadataExt;
+	let path = Path::new(dir);
+	if !path.is_absolute() {
+		return false;
+	}
+	match std::fs::symlink_metadata(path) {
+		Ok(meta) => meta.is_dir() && meta.uid() == uid && meta.mode() & 0o022 == 0,
+		Err(_) => false,
+	}
 }
 
 #[cfg(target_os = "macos")]
