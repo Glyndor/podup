@@ -51,14 +51,17 @@ services:
 	// asked for whenever the file does exist. Built with `join` so the separator
 	// matches the host (this test is not Unix-gated).
 	let c = &unit_named(&out, "p-s.container").contents;
-	let needle = format!(
-		"EnvironmentFile={}",
-		std::path::Path::new("/srv/app")
-			.join(".env.production")
-			.display()
-			.to_string()
-			.replace('\\', "\\\\")
-	);
+	// A backslash makes the value a quoted word with the backslash doubled.
+	let shown = std::path::Path::new("/srv/app")
+		.join(".env.production")
+		.display()
+		.to_string();
+	let value = if shown.contains('\\') {
+		format!("\"{}\"", shown.replace('\\', "\\\\"))
+	} else {
+		shown
+	};
+	let needle = format!("EnvironmentFile={value}");
 	assert!(c.contains(&needle), "missing `{needle}` in:\n{c}");
 }
 
