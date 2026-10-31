@@ -229,6 +229,22 @@ pub mod fuzz_api {
 	#[cfg(feature = "update")]
 	pub use crate::update::fuzz_hook::{expected_digest, parse_latest_tag, parse_version, Version};
 
+	/// The soft and hard limit a compose ulimit becomes, for `nofile`.
+	pub fn ulimit_pair(soft: i64, hard: i64) -> (u64, u64) {
+		crate::backends::engine::fuzz_converters::ulimit_pair(soft, hard)
+	}
+	/// A device cgroup rule as `(type, major, minor, access)`; `None` is a wildcard.
+	pub type CgroupRule = (Option<String>, Option<i64>, Option<i64>, Option<String>);
+	/// A `device_cgroup_rules` entry, or `None` when it is outside the grammar.
+	pub fn device_cgroup_rule(rule: &str) -> Option<CgroupRule> {
+		let r = crate::engine::container::parse_device_cgroup_rule(rule)?;
+		Some((r.device_type, r.major, r.minor, r.access))
+	}
+	/// The short-form volume split: `(is_bind, source_or_name, destination)`.
+	pub fn classify_short_volume(entry: &str) -> Option<(bool, String, String)> {
+		crate::backends::engine::fuzz_converters::classify_short_volume(entry)
+	}
+
 	/// `sanitize_name`, as an owned string plus whether it returned the input
 	/// untouched (`true`) or had to escape something (`false`).
 	pub fn sanitize_name(s: &str) -> (String, bool) {
