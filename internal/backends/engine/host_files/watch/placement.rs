@@ -1,0 +1,380 @@
+//! Pure host-path → container placement and watch-event helpers.
+//!
+//! These functions hold the side-effect-free decisions of the watch engine:
+//! mapping a changed host path to its container archive placement, filtering
+//! which notify events drive a sync, validating that sync rules carry a target,
+//! and bookkeeping for the per-target `mkdir`. Keeping them here lets the
+//! dispatch loop in [`super`] stay focused on I/O.
+
+use std::collections::HashSet;
+use std::path::Path;
+
+use crate::compose::types::{Service, WatchRule};
+use crate::error::{ComposeError, Result};
+
+/// Where a changed host path lands inside the container for a `sync` action:
+/// the archive entry name and the directory the tar is extracted at.
+pub(super) struct SyncPlacement {
+	/// Archive path the changed entry occupies inside the tar.
+	pub(super) entry_name: String,
+	/// Container directory the archive is PUT (extracted) at.
+	pub(super) dest_dir: String,
+	/// The shape of the rule this placement belongs to. A directory rule
+	/// mirrors a tree, so a removed entry under it can be a directory and
+	/// the removal has to recurse; a single-file rule mirrors one file.
+	pub(super) shape: RuleShape,
+}
+
+/// The shape of a watch rule's `path`.
+///
+/// A directory rule mirrors a tree of entries into the container; a
+/// single-file rule mirrors exactly one file, under the target's own
+/// name.
+///
+/// The shape is read when the watch session starts, while the rule's path
+/// still exists. A removal cannot read it from the filesystem: the removed
+/// entry is gone by the time the removal is dispatched, and a rule whose
+/// whole root was deleted with it would read as a single file, which is how
+/// a removal of the rule's own target directory used to slip past the guard
+/// that refuses it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RuleShape {
+	/// The rule's `path` is a directory: the entries under it are copied
+	/// as a tree.
+	Directory,
+	/// The rule's `path` is a single file.
+	File,
+}
+
+/// The shape of the rule rooted at `root`, read from the filesystem.
+pub(super) fn rule_shape(root: &Path) -> RuleShape {
+	if root.is_dir() {
+		RuleShape::Directory
+	} else {
+		RuleShape::File
+	}
+}
+
+/// Resolve the container-side path a removed host entry should be deleted
+/// from, mirroring [`plan_sync_placement`] for a `Remove` event.
+///
+/// `shape` is the rule's shape as it was when the watch session started,
+/// not a fresh look at the filesystem: the removed entry is already gone,
+/// and a rule whose root was deleted with it would read as a single file.
+///
+/// A `sync` rule's `target` is, in the container, where the changed entries
+/// live. A removal on the host has to be reflected by a `DELETE` against the
+/// matching path inside the container, so the archive `entry_name` and `dir`
+/// computed for the corresponding add/modify are the same values needed here.
+/// The single-file rule re-uses its rename mapping; the directory rule
+/// preserves the relative subpath.
+///
+/// The caller is responsible for refusing removals that target the rule's
+/// container directory itself (rather than an entry inside it): a removal of
+/// the target directory is a different operation, never an entry delete, and
+/// letting it through would `rm -rf` the container's destination.
+pub(super) fn plan_remove_placement(
+	shape: RuleShape,
+	root: &Path,
+	removed: &Path,
+	target: &str,
+) -> SyncPlacement {
+	plan_placement(shape, root, removed, target)
+}
+
+/// Map a changed host path to its container archive placement, matching
+/// docker-compose `watch` semantics.
+///
+/// `root` is the watch rule's absolute host path, `changed` the path that
+/// actually changed (equal to `root` for a single-file rule, a descendant for a
+/// directory rule), and `target` the rule's container target.
+///
+/// For a directory rule the changed entry keeps its path relative to `root`
+/// (subdirectories preserved) and is extracted under `target` treated as a
+/// directory. For a single-file rule the entry is stored under
+/// `basename(target)` and extracted into `target`'s parent, so a renaming
+/// target is honoured.
+pub(super) fn plan_sync_placement(root: &Path, changed: &Path, target: &str) -> SyncPlacement {
+	plan_placement(rule_shape(root), root, changed, target)
+}
+
+/// The shared placement: the rule's shape decides whether the entry keeps
+/// its path under the rule's root or is stored under the target's own name.
+fn plan_placement(shape: RuleShape, root: &Path, changed: &Path, target: &str) -> SyncPlacement {
+	match shape {
+		RuleShape::Directory => {
+			// Directory rule: preserve the changed file's subpath under `target`,
+			// which is treated as a directory. The host path is re-rooted to
+			// POSIX before becoming the entry name so the container side parses
+			// it with `/` even when the host built the path with `\` (Windows).
+			let rel = changed.strip_prefix(root).unwrap_or(changed);
+			let entry_name = container_rel(rel);
+			let dest_dir = target.trim_end_matches('/').to_string();
+			let dest_dir = if dest_dir.is_empty() {
+				"/".to_string()
+			} else {
+				dest_dir
+			};
+			SyncPlacement {
+				entry_name,
+				dest_dir,
+				shape,
+			}
+		}
+		RuleShape::File => {
+			// Single-file rule: store under the target basename so a renaming
+			// target is honoured, and extract into the target's parent
+			// directory.
+			let target_path = Path::new(target);
+			let entry_name = target_path
+				.file_name()
+				.map(|n| n.to_string_lossy().into_owned())
+				.or_else(|| {
+					changed
+						.file_name()
+						.map(|n| n.to_string_lossy().into_owned())
+				})
+				.unwrap_or_default();
+			let dest_dir = target_path
+				.parent()
+				.map(|p| p.to_string_lossy().into_owned())
+				.filter(|s| !s.is_empty())
+				.unwrap_or_else(|| "/".to_string());
+			SyncPlacement {
+				entry_name,
+				dest_dir,
+				shape,
+			}
+		}
+	}
+}
+
+/// True when a notify event should drive a watch action.
+///
+/// docker-compose `watch` only reacts to write/create/remove/rename changes. The
+/// vendored notify inotify backend also emits `Access` events (it sets
+/// `WatchMask::OPEN`), so merely opening/reading a watched file would otherwise
+/// fire a sync, and the sync's own read of the source re-opens the path,
+/// generating fresh `Access` events that feed back into another sync. Filtering
+/// to create/modify/remove (rename is a `Modify(Name(..))`) matches compose
+/// semantics and breaks that feedback loop. The same filter is applied at the
+/// notify callback boundary in [`super::events::enqueue`]; this check stays
+/// for defence in depth.
+pub(super) fn is_dispatch_event(kind: &notify::EventKind) -> bool {
+	use notify::EventKind;
+	matches!(
+		kind,
+		EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+	)
+}
+
+/// Reject a watch rule whose action needs a `target` but has none. docker
+/// compose treats a sync rule without a target as a configuration error rather
+/// than silently performing no sync.
+pub(super) fn validate_sync_target(rule: &WatchRule) -> Result<()> {
+	if rule.action.requires_target() && rule.target.is_none() {
+		return Err(ComposeError::Watch(format!(
+			"watch rule for '{}' uses a sync action ({}) but has no target",
+			rule.path,
+			rule.action.as_token()
+		)));
+	}
+	Ok(())
+}
+
+/// Best-effort `mkdir -p` argv for creating a sync target directory. The `--`
+/// terminates options so a target beginning with `-` (e.g. `-m0777`) is treated
+/// as a path, not parsed as a flag by busybox `mkdir`.
+pub(super) fn mkdir_p_argv(dest_dir: &str) -> Vec<String> {
+	vec![
+		"mkdir".into(),
+		"-p".into(),
+		"--".into(),
+		dest_dir.to_string(),
+	]
+}
+
+/// The full container-side path a `SyncPlacement` resolves to, suitable for
+/// `DELETE` on the libpod archive endpoint.
+///
+/// A single-file sync writes one entry (`entry_name`) into one directory
+/// (`dest_dir`); the on-disk artifact is `dest_dir/entry_name`. The directory
+/// rule's `dest_dir` may already be the final path when `entry_name` is empty
+/// (e.g. a removal of the rule root itself), which is precisely the case the
+/// delete guard upstream refuses; the joined form mirrors the same shape so
+/// the guard and the path agree.
+///
+/// Pure so the join is unit-testable without a container.
+pub(super) fn join_container_path(placement: &SyncPlacement) -> String {
+	join_archive_path(&placement.dest_dir, &placement.entry_name)
+}
+
+fn join_archive_path(dir: &str, entry: &str) -> String {
+	if entry.is_empty() {
+		return dir.to_string();
+	}
+	if dir == "/" {
+		format!("/{entry}")
+	} else if dir.ends_with('/') {
+		format!("{dir}{entry}")
+	} else {
+		format!("{dir}/{entry}")
+	}
+}
+
+/// Record that `(container, dest)` has had its directory ensured, returning
+/// `true` the first time (the caller should then issue the `mkdir`) and `false`
+/// thereafter so the per-event `mkdir` exec is issued at most once per target.
+pub(super) fn mark_dir_ensured(
+	ensured: &mut HashSet<(String, String)>,
+	container: &str,
+	dest: &str,
+) -> bool {
+	ensured.insert((container.to_string(), dest.to_string()))
+}
+
+/// Whether `target` (an absolute container path) sits under one of `mounts`
+/// (container-side mount targets), so a sync there does not hit the root
+/// filesystem. Compares whole path components: `/app` covers `/app` and
+/// `/app/src`, not `/application`. A trailing `/` on either side is ignored;
+/// a mount of `/` covers everything.
+pub(super) fn target_is_on_a_mount(target: &str, mounts: &[&str]) -> bool {
+	let target_parts = path_components(target);
+	for mount in mounts {
+		let mount_parts = path_components(mount);
+		if mount_parts.is_empty() || target_parts.starts_with(&mount_parts) {
+			return true;
+		}
+	}
+	false
+}
+
+/// The warning to print when a sync `target` of service `service_name` sits on
+/// a `read_only: true` root filesystem that no volume or tmpfs covers, or
+/// `None` when the service is writable there. Tmpfs entries are cut at their
+/// first `:` (they can carry `:size=...` options).
+///
+/// `volumes_from:` is treated as a third "covered" case even though the
+/// function does not resolve it to concrete mount paths: a sibling service's
+/// volumes are what `volumes_from` mounts into this container, and resolving
+/// them would require walking the compose graph here, which `read_only` checks
+/// do not need to do. Without this short-circuit the warning would routinely
+/// fire for a service that actually does have its target covered by a
+/// `volumes_from` reference, which is a false positive the user would have to
+/// learn to ignore.
+///
+/// The image's own `VOLUME` declarations are not inspected: podup only looks
+/// at what the compose file says, so a `VOLUME` baked into the image that
+/// happens to cover the target will still trigger this warning. Podman mounts
+/// a writable anonymous volume there at runtime, so the warning can be a
+/// false positive in that case; the message names the exception so the user
+/// knows to ignore it (#1897).
+pub(super) fn read_only_target_warning(
+	service_name: &str,
+	service: &Service,
+	target: &str,
+) -> Option<String> {
+	if service.read_only != Some(true) {
+		return None;
+	}
+	if !service.volumes_from.is_empty() {
+		return None;
+	}
+	let mut mounts: Vec<&str> = service.volumes.iter().map(|v| v.target()).collect();
+	let tmpfs_paths: Vec<String> = service
+		.tmpfs
+		.to_list()
+		.into_iter()
+		.map(|s| s.split(':').next().unwrap_or("").to_string())
+		.collect();
+	mounts.extend(tmpfs_paths.iter().map(String::as_str));
+	if target_is_on_a_mount(target, &mounts) {
+		return None;
+	}
+	Some(format!(
+		"{service_name}: sync target {target} is on the read-only root filesystem (read_only: true) and no volume or tmpfs in the compose file covers it, so syncs to it will fail unless the image declares a VOLUME there; mount a volume or tmpfs at {target}"
+	))
+}
+
+/// Split an absolute container path into its non-empty components, with any
+/// trailing slash stripped. `/` and `//` produce an empty vec, which is how
+/// `target_is_on_a_mount` recognises a root mount that covers everything.
+fn path_components(path: &str) -> Vec<&str> {
+	path.trim_end_matches('/')
+		.split('/')
+		.filter(|c| !c.is_empty())
+		.collect()
+}
+
+/// Build a POSIX container-style relative path from a host relative path.
+///
+/// On Windows the `Path` API joins components with `\`, but every container
+/// in the libpod archive is keyed with `/`. Joining the host's normal
+/// components with `/` produces a path the container side can parse. Only
+/// `Normal` components are kept: `..` and `.` are resolved into the normal
+/// chain by `Path::components` itself, which is the right behaviour here
+/// (a path the rule ever produces came from a real file, so a `.` or `..`
+/// is structurally impossible; the conservative resolution still saves a
+/// future Windows-port bug from being a loop in production).
+///
+/// Each component is rendered with `to_string_lossy()`. A non-UTF-8
+/// component would otherwise be dropped, leaving the path short of where
+/// it was on the host: `/p/<0xff>/keep.txt` would land at `keep.txt` and
+/// collide with an unrelated container file. The lossy form substitutes
+/// the Unicode replacement character (`U+FFFD`) for the non-UTF-8 bytes,
+/// so the container path keeps the same number of components and the
+/// upload lands in the same directory, just with a different name. The
+/// same lossy form the `tar` crate accepts on archive writes.
+pub(super) fn container_rel(rel: &Path) -> String {
+	let mut parts: Vec<String> = Vec::new();
+	for c in rel.components() {
+		match c {
+			std::path::Component::Normal(part) => {
+				let s = part.to_string_lossy();
+				if !s.is_empty() {
+					parts.push(s.into_owned());
+				}
+			}
+			_ => continue,
+		}
+	}
+	parts.join("/")
+}
+
+/// Join `dest_dir` and an entry-name produced by [`container_rel`] into the
+/// full container path the entry occupies, dropping `.` components and letting
+/// `..` remove the previous component. The result is always absolute: an
+/// empty `dest_dir` becomes `/`, a relative `dest_dir` is treated as
+/// root-relative (it already starts with `/`), and an entry-name of `..` or
+/// `.` does not climb above the root.
+///
+/// The normaliser is the same shape `Path::components` would give for a host
+/// path; it is applied to the joined string because the entry-name was
+/// already POSIX and the dest dir is canonical.
+pub(super) fn normalise_container_path(dest_dir: &str, entry_name: &str) -> String {
+	let joined = format!("{dest_dir}/{entry_name}");
+	let mut parts: Vec<&str> = Vec::new();
+	for raw in joined.split('/') {
+		if raw.is_empty() || raw == "." {
+			continue;
+		}
+		if raw == ".." {
+			parts.pop();
+			continue;
+		}
+		parts.push(raw);
+	}
+	if parts.is_empty() {
+		"/".to_string()
+	} else {
+		format!("/{}", parts.join("/"))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Unit tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[path = "placement_tests.rs"]
+mod tests;

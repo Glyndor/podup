@@ -150,8 +150,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: workflow-lint-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: workflow-lint-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   workflow-lint:
@@ -169,7 +169,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26"
+          go-version: "1.27"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: actionlint-cache
@@ -247,7 +247,7 @@ jobs:
           # `python -m pip install`, `python3 -m pip install`, `pipx
           # install`, and `dotnet tool install`). The release signing
           # job holds `GLYNDOR_RELEASE_ED25519_KEY` and runs `pip install
-          # --quiet --require-hashes -r .github/scripts/sign-requirements
+          # --quiet --require-hashes -r .github/scripts/release/sign-requirements
           # .txt`, which executes the cryptography package's native build
           # script; hashed, so it is exempt, and the build script runs.
           # The release target's own build-script count is 14 (cargo
@@ -768,7 +768,7 @@ jobs:
       # assertion, and deliberately so: nothing else in this repository
       # refuses one, and no workflow here uses the form, so measuring it
       # closes the gap rather than deferring it to a check that does not
-      # exist. `tests/shell/reusable-workflow-lint-pin-length.test.sh`
+      # exist. `tests/scripts/shell/workflow_lint/reusable-workflow-lint-pin-length.test.sh`
       # covers every branch of this step, including that one.
       - name: Every `uses:` pin must be 40 hex characters
         run: |
@@ -896,7 +896,7 @@ jobs:
       # emits the same `name:` either way), so the change has to be
       # deliberate and visible.
       #
-      # Lives in .github/scripts/check-caller-with-defaults.py because
+      # Lives in .github/scripts/checks/check-caller-with-defaults.py because
       # the inline heredoc would push this file over the line-limit
       # gate's 500-line hard limit, and the same shape as caller-if
       # above (static map, direct-emitter list, `reusable-*` filter)
@@ -905,13 +905,13 @@ jobs:
       # itself ignores it, and the ruleset does not gate on it.
       - name: A caller of a required check must carry `with:` equal to the reusable's declared default
         run: |
-          python3 .github/scripts/check-caller-with-defaults.py
+          python3 .github/scripts/checks/check-caller-with-defaults.py
 
       # A workflow that emits a develop-required check must trigger on
       # merge_group (with checks_requested in types:), and no other
       # workflow may carry the trigger. Logic lives in
-      # .github/scripts/check-merge-group-triggers.py because this file
+      # .github/scripts/checks/check-merge-group-triggers.py because this file
       # is near the 500-code-line hard limit already.
       - name: A workflow that emits a check required on develop must trigger on merge_group
         run: |
-          python3 .github/scripts/check-merge-group-triggers.py
+          python3 .github/scripts/checks/check-merge-group-triggers.py

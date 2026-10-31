@@ -15,7 +15,7 @@ podup [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS] [SERVICE...]
 | `-f, --file <PATH>` | `COMPOSE_FILE` | Compose file. Repeatable; later files merge over earlier ones. When unset, the compose-spec precedence list is probed: `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`. |
 | `-p, --project <NAME>` (alias `--project-name`) | `COMPOSE_PROJECT_NAME` | Project name, prefixing container/network/volume names. When unset: the top-level `name:`, then the sanitized project-directory basename. |
 | `--socket <PATH>` | `PODMAN_SOCKET` | Podman socket path; overrides auto-detection. |
-| `--connection-pool-size <N>` | `PODUP_LIBPOD_POOL` | HTTP/1.1 connections the libpod client keeps open to the Podman socket. Streaming calls each take a dedicated connection outside this cap. Default 0 disables pooling. `PODUP_LIBCOD_POOL` is read as a fallback when the new name is unset. |
+| `--connection-pool-size <N>` | `PODUP_LIBPOD_POOL` | HTTP/1.1 connections the libpod client keeps open to the Podman socket. Streaming calls each take a dedicated connection outside this cap. Valid range: 0–1024. Default 0 disables pooling. `PODUP_LIBCOD_POOL` is read as a fallback when the new name is unset. |
 | `--profile <NAMES>` | `COMPOSE_PROFILES` | Active profiles, comma-separated. |
 | `--project-directory <PATH>` | | Base directory for relative paths (env_file, build context, bind mounts, config/secret sources). Defaults to the compose file's directory. |
 | `--ansi <WHEN>` | | Colour output: `auto`, `always` or `never`. `--ansi always` forces colour even into a pipe or file and overrides `NO_COLOR`; `--ansi auto` honours `NO_COLOR` and TTY detection. |
@@ -36,7 +36,7 @@ podup [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS] [SERVICE...]
 
 ## Lifecycle
 
-`pre_start` runs one ephemeral init container per step, in list order, before the service container is created by `up`, `run` or `create`. Unset fields inherit from the service; collections are completed and explicit scalars replace inherited values. Each step must exit zero before the next step or the service proceeds. Failure names the service and step number (for example, `service 'web': pre_start step 1: exited with code 7`), blocks dependents and removes the init container. Init containers are removed after success too, regardless of `run --no-rm`. Restart policies and service lifecycle lists do not repeat init work. Steps inherit neither ports/expose nor static IP/MAC addresses; explicit step values are kept. Steps without their own image or build reuse the service image. A step that declares its own image does not inherit the service's build, and a step that declares its own build does not inherit the service's image: the step is pulled or built on its own. The one-off settings of a `run` (its command, `--entrypoint`, terminal, ad-hoc mounts and ad-hoc labels) describe the throwaway container and never reach the init steps; the user, working directory and environment do. A failed init leaves the previous service running. An already-running service is left alone; `up` runs init steps before starting an existing stopped service.
+`pre_start` runs one ephemeral init container per step, in list order, before the service container is created by `up`, `run` or `create`, and before a `watch` rebuild recreates it. Unset fields inherit from the service; collections are completed and explicit scalars replace inherited values. Each step must exit zero before the next step or the service proceeds. Failure names the service and step number (for example, `service 'web': pre_start step 1: exited with code 7`), blocks dependents and removes the init container. Init containers are removed after success too, regardless of `run --no-rm`. Restart policies and service lifecycle lists do not repeat init work. Steps inherit neither ports/expose nor static IP/MAC addresses; explicit step values are kept. Steps without their own image or build reuse the service image. A step that declares its own image does not inherit the service's build, and a step that declares its own build does not inherit the service's image: the step is pulled or built on its own. The one-off settings of a `run` (its command, `--entrypoint`, terminal, ad-hoc mounts and ad-hoc labels) describe the throwaway container and never reach the init steps; the user, working directory and environment do. A failed init leaves the previous service running. An already-running service is left alone; `up` runs init steps before starting an existing stopped service.
 
 `create` runs init steps to completion but leaves the service container stopped. Quadlet export warns that `pre_start` is not exported: `ExecStartPre=` cannot represent a separate container per step.
 
@@ -282,8 +282,11 @@ Execute a command in a running service container.
 
 `podup exec db psql` is interactive when stdin and stdout are terminals. `-T` disables TTY allocation; there are no `-i`/`-t` flags. Pipes and redirects use ordinary streams.
 
+Standard input is a separate matter from the pseudo-terminal: a pipe or a redirected file is sent to the command, which then sees the end of that input when the file is exhausted. A terminal is not sent on a non-interactive session, so a command started that way reads an empty input rather than waiting for the operator.
+
 ```bash
 podup exec -u root web sh
+podup exec -T db psql < dump.sql
 ```
 
 ### `cp <SRC> <DST>`

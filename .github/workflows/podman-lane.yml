@@ -60,13 +60,26 @@ jobs:
   # the merge with nothing saying why. So the job below always runs, and this
   # one tells it whether to boot anything.
   #
-  # The allowlist is short on purpose. Only files the VM provably never reads:
-  # prose (every *.md, which is the pull request template and CONTRIBUTING
-  # too), docs/, the issue templates, the licence, the editor config. Anything
-  # else, including
-  # every workflow file and everything under .github/scripts, keeps the lane
-  # on. Widening it to tests/** is how a broken develop went unnoticed for
-  # twenty pull requests once (#1295); do not.
+  # Path exemptions live in podman-lane-paths.sh, with behaviour tests.
+  # They cover only inputs outside the PR/merge-group integration targets;
+  # scheduled and manual runs always boot, including the full coverage suite.
+  # The classifier comes from the reviewed base commit, like the version judge.
+  # Unknown paths and missing classifiers boot the VM. Keep lane helpers active.
+  #
+  # One case is not an allowlist of names: a pure version bump. It changes
+  # Cargo.toml, Cargo.lock and debian/changelog, and a bump used to boot both
+  # VMs twice, once on the pull request and once in the merge queue. The
+  # Cargo files stay off the list, because Cargo.toml can also carry a
+  # dependency change. Instead `.github/scripts/checks/is-version-bump.sh` reads the
+  # content of the range and says yes only when the sole change is the podup
+  # version line (plain X.Y.Z) in Cargo.toml and in Cargo.lock, plus whole
+  # lines put in front of debian/changelog, with nothing else touched. Any
+  # other change, any file it cannot read and any error answers no, and no
+  # means the path classifier below decides. The script is taken from the
+  # base commit, which is already reviewed and merged, so a pull request
+  # cannot rewrite the judge of its own diff; where the base does not have it
+  # yet, the answer is no. In the merge queue the base is the group's
+  # base_sha, which is develop once the script has landed.
   decide:
     name: Decide whether the VM has anything to look at
     runs-on: ubuntu-latest
@@ -102,7 +115,7 @@ jobs:
               ;;
           esac
           # Fail closed: a diff that cannot be read boots the VM.
-          if ! changed="$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")"; then
+          if ! changed="$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA")"; then
             echo "engine=true" >> "$GITHUB_OUTPUT"
             echo "could not diff $BASE_SHA..$HEAD_SHA; booting the VM rather than guessing"
             exit 0
@@ -112,16 +125,31 @@ jobs:
             echo "empty diff; booting the VM rather than guessing"
             exit 0
           fi
-          engine=false
-          while IFS= read -r f; do
-            case "$f" in
-              *.md | docs/* | .github/ISSUE_TEMPLATE/* | LICENSE | .editorconfig) ;;
-              *) engine=true; echo "reaches the VM: $f" ;;
-            esac
-          done <<< "$changed"
+          # A pure version bump may exempt Cargo.toml and Cargo.lock, which
+          # the path classifier never admits. The version judge reads the
+          # content of the change, not the names. It is read
+          # from the base commit, not from this checkout: the checkout is the
+          # pull request's own tree, so a pull request that edited the script
+          # would be judged by its own edit. If the base has no such script
+          # (the pull request that introduces it) `git show` fails, the pipe
+          # fails under pipefail, and the path classifier below decides.
+          if git show "$BASE_SHA:.github/scripts/checks/is-version-bump.sh" \
+              | bash -s -- "$BASE_SHA" "$HEAD_SHA"; then
+            echo "engine=false" >> "$GITHUB_OUTPUT"
+            echo "a pure version bump: nothing in this range can reach the VM"
+            exit 0
+          fi
+          # Read the path classifier from the base too: an edited helper must
+          # not be able to exempt its own changes. A missing base copy boots.
+          if git show "$BASE_SHA:.github/scripts/checks/podman-lane-paths.sh" \
+              | bash -s -- "$changed"; then
+            engine=false
+          else
+            engine=true
+          fi
           echo "engine=$engine" >> "$GITHUB_OUTPUT"
           if [ "$engine" = false ]; then
-            echo "nothing in this range can reach the VM ($(printf '%s\n' "$changed" | wc -l | tr -d ' ') file(s), all prose or templates); the legs below run and boot nothing"
+            echo "nothing in this range can reach the VM; the legs below run and boot nothing"
           fi
 
   podman-vm:
@@ -161,7 +189,7 @@ jobs:
       - name: Fetch Fedora cloud image (Podman 6 = rawhide, 5 = Fedora 44)
         if: needs.decide.outputs.engine == 'true'
         run: |
-          # The script lives in .github/scripts/ so it ships with the repo;
+          # The script lives in .github/scripts/fedora_image/ so it ships with the repo;
           # its logic lives in the script (#1978, after dl.fedoraproject.org
           # answered 404 in streaks longer than the 25 s that
           # `--retry 5 --retry-delay 5` covered). It retries 8 times with a
@@ -172,7 +200,7 @@ jobs:
           # publishes before letting the step continue. Stdout is the image
           # name; the script writes the image itself to the path passed as
           # $2.
-          img=$(bash "$GITHUB_WORKSPACE/.github/scripts/fetch-fedora-image.sh" \
+          img=$(bash "$GITHUB_WORKSPACE/.github/scripts/fedora_image/fetch-fedora-image.sh" \
               "${{ matrix.podman }}" "$RUNNER_TEMP/vm.qcow2")
           echo "image: $img"
           # Carry it to the gate step. The name resolves to whatever compose is
@@ -541,10 +569,10 @@ jobs:
           # so nothing went red and it shipped. WHICH tests fail does tell you.
           # Derive the major from the Podman the VM actually booted (the matrix
           # guard above already proved they agree), so dropping in a
-          # podman-known-failures-<major> file is all it takes to gate a new
+          # known-failures-<major> file is all it takes to gate a new
           # major, no edit here.
           major="${VER%%.*}"
-          known="$GITHUB_WORKSPACE/.github/podman-known-failures-$major"
+          known="$GITHUB_WORKSPACE/.github/podman_lane/known-failures-$major"
           if [ -f "$known" ]; then
             # `comm` compares bytes while `sort` orders by locale, so pin both to
             # C. Defensive rather than observed: the first-run false red was the
@@ -569,7 +597,7 @@ jobs:
             fi
             echo "Podman $VER: every failure is on the classified list ($(wc -l < "$RUNNER_TEMP/known.txt") entries)."
           fi
-          # Gate: the core must pass the baseline in .github/podman-baseline-tests.
+          # Gate: the core must pass the baseline in .github/podman_lane/baseline-tests.
           # A real regression breaks previously-passing tests and knocks PASS
           # below the floor; the baseline is versioned so it is bumped
           # deliberately as the suite grows rather than sitting as a magic number
@@ -604,7 +632,7 @@ jobs:
           # serialising the leg removed it, and its list is now empty, so any
           # failure there is a regression. See the file's own header for the
           # evidence and for how thin it is.
-          BASELINE="$(cat "$GITHUB_WORKSPACE/.github/podman-baseline-tests")"
+          BASELINE="$(cat "$GITHUB_WORKSPACE/.github/podman_lane/baseline-tests")"
           [ "$PASS" -ge "$BASELINE" ] || { echo "::error::core suite degraded on Podman $VER ($PASS passed, baseline >= $BASELINE): a real regression, or fewer tests ran"; exit 1; }
           # Leak scan, run by the VM in a separate cargo process after
           # engine_integration exited. The marker is the only signal that the

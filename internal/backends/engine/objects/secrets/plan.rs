@@ -1,0 +1,330 @@
+//! Pure mapping from compose `secrets:`/`configs:` references to native-secret
+//! plans. No daemon access, so the mapping is unit-testable; the create and
+//! preflight side effects live in [`super`]'s `Engine` impl.
+
+use std::path::{Path, PathBuf};
+
+use crate::compose::types::{ComposeFile, Service, ServiceConfigRef, ServiceSecretRef};
+use crate::engine::project::lock::staging;
+use crate::error::{ComposeError, Result};
+
+/// Podman's hard limit on secret payload size (from `containers/common`): the
+/// payload must be larger than 0 and strictly smaller than this many bytes.
+pub(super) const MAX_SECRET_BYTES: usize = 512_000;
+
+/// The most secret and config bytes one `up` holds in memory before it creates
+/// any of them. Each payload is bounded by [`MAX_SECRET_BYTES`], but a project
+/// can name thousands of them, and they are all read before the first upload.
+pub(super) const MAX_SECRET_TOTAL_BYTES: usize = 32 * 1024 * 1024;
+
+/// Sources are materialized only after the project-wide union is deduplicated.
+pub(super) enum Payload<'a> {
+	/// Borrow compose content until creation checks its size and budget.
+	Inline(&'a str),
+	/// Resolve the variable during creation, under the shared budget.
+	Environment(&'a str),
+	/// `file:` is the resolved host path to read at creation time.
+	File(PathBuf),
+}
+
+/// A planned native secret for a service: the Podman secret `source` to attach,
+/// the in-container `target`, optional permissions, and, for every source podup
+/// creates itself, the `payload` to create under `source`. `external: true`
+/// references carry no payload (the secret must pre-exist).
+pub(super) struct NativePlan<'a> {
+	pub(super) source: String,
+	pub(super) target: String,
+	pub(super) mode: Option<u32>,
+	pub(super) uid: Option<u32>,
+	pub(super) gid: Option<u32>,
+	pub(super) payload: Option<Payload<'a>>,
+}
+
+/// The fields of a `secrets:`/`configs:` definition that decide where its bytes
+/// come from. A borrowed view, so the two distinct compose types (`SecretConfig`
+/// and `ConfigConfig`) resolve through one function.
+struct SourceDef<'a> {
+	content: Option<&'a str>,
+	environment: Option<&'a str>,
+	file_source: Option<&'a str>,
+	external: bool,
+	external_name: Option<&'a str>,
+}
+
+/// Where a secret/config's bytes come from once the compose def is resolved.
+enum Source<'a> {
+	/// `content:`: `(scoped podman name, borrowed content)`.
+	Inline(String, &'a str),
+	/// `environment:`: `(scoped podman name, variable name)`.
+	Environment(String, &'a str),
+	/// `file:`: `(scoped podman name, resolved host path)`.
+	File(String, PathBuf),
+	/// `external: true`: name of the pre-existing podman secret.
+	External(String),
+}
+
+/// Collect the native-secret plans for a service without touching the daemon. A
+/// dangerous `mode:` (execute/setuid/setgid/sticky) is rejected here so a
+/// hostile mode never reaches Podman.
+pub(super) fn collect_native_plans<'a>(
+	project: &str,
+	service: &Service,
+	file: &'a ComposeFile,
+	base_dir: &Path,
+) -> Result<Vec<NativePlan<'a>>> {
+	let mut plans = Vec::new();
+
+	for secret_ref in &service.secrets {
+		let (name, target_override, mode, uid, gid) = secret_ref_parts(secret_ref);
+		if let Some(def) = file.secrets.get(&name) {
+			let source = resolve_source(
+				project,
+				"secret",
+				&name,
+				SourceDef {
+					content: def.content.as_deref(),
+					environment: def.environment.as_deref(),
+					file_source: def.file.as_deref(),
+					external: def.external == Some(true),
+					external_name: def.name.as_deref(),
+				},
+				base_dir,
+			)?;
+			// A bare target name lands under /run/secrets/<name>, which is where
+			// Podman mounts a secret referenced by name and where a `file:` source
+			// landed back when it was a bind mount. Changing it would move every
+			// existing project's secrets.
+			push_plan(
+				&mut plans,
+				source,
+				target_override.unwrap_or(name),
+				mode,
+				uid,
+				gid,
+			)?;
+		}
+	}
+
+	for config_ref in &service.configs {
+		let (name, target_override, mode, uid, gid) = config_ref_parts(config_ref);
+		if let Some(def) = file.configs.get(&name) {
+			let source = resolve_source(
+				project,
+				"config",
+				&name,
+				SourceDef {
+					content: def.content.as_deref(),
+					environment: def.environment.as_deref(),
+					file_source: def.file.as_deref(),
+					external: def.external == Some(true),
+					external_name: def.name.as_deref(),
+				},
+				base_dir,
+			)?;
+			// Configs default to an absolute container-root path: `/name`, not
+			// `/run/secrets/name`. That is what separates a config from a secret
+			// here, and it is the path a `file:` config landed on when it was a
+			// bind mount.
+			let target = target_override.unwrap_or_else(|| format!("/{name}"));
+			push_plan(&mut plans, source, target, mode, uid, gid)?;
+		}
+	}
+
+	Ok(plans)
+}
+
+/// Resolve a secret/config definition to its native [`Source`]. `external`
+/// wins (it may also carry a custom `name:`); every other populated source,
+/// inline `content:`/`environment:` and `file:` alike, becomes a project-scoped
+/// native secret. An empty def yields `None` and contributes no plan.
+fn resolve_source<'a>(
+	project: &str,
+	kind: &str,
+	name: &str,
+	def: SourceDef<'a>,
+	base_dir: &Path,
+) -> Result<Option<Source<'a>>> {
+	let SourceDef {
+		content,
+		environment,
+		file_source,
+		external,
+		external_name,
+	} = def;
+	if external {
+		return Ok(Some(Source::External(
+			external_name.unwrap_or(name).to_string(),
+		)));
+	}
+	let podup_created = content.is_some() || environment.is_some() || file_source.is_some();
+	if podup_created && !staging::is_safe_project_name(name) {
+		// The name becomes part of the project-scoped Podman secret name and a URL
+		// query parameter, so require a bounded, well-formed identifier rather than
+		// an arbitrary (possibly huge or control-laden) YAML key.
+		return Err(ComposeError::Unsupported(format!(
+			"{kind} name {name:?} must be ASCII alphanumeric/dash/underscore/dot, \
+			 at most 128 chars, and not start with a dot"
+		)));
+	}
+	if let Some(content) = content {
+		return Ok(Some(Source::Inline(
+			scoped_name(project, kind, name),
+			content,
+		)));
+	}
+	if let Some(env_var) = environment {
+		return Ok(Some(Source::Environment(
+			scoped_name(project, kind, name),
+			env_var,
+		)));
+	}
+	if let Some(host_path) = file_source {
+		// Resolve like a bind-mount source: a relative `file:` is anchored to the
+		// project dir (not the Podman service's cwd) and `~` is expanded, the same
+		// handling `volumes:` gets, and the same this had when it was a bind.
+		return Ok(Some(Source::File(
+			scoped_name(project, kind, name),
+			PathBuf::from(crate::engine::container::resolve_bind_source(
+				host_path, base_dir,
+			)),
+		)));
+	}
+	Ok(None)
+}
+
+/// Append a [`NativePlan`] for a resolved source, dropping an empty def and
+/// rejecting a dangerous `mode:` before the spec is built. `uid`/`gid` are
+/// numeric in libpod, so a non-numeric value (a user/group name) is dropped to
+/// the default rather than erroring.
+fn push_plan<'a>(
+	plans: &mut Vec<NativePlan<'a>>,
+	source: Option<Source<'a>>,
+	target: String,
+	mode: Option<u32>,
+	uid: Option<String>,
+	gid: Option<String>,
+) -> Result<()> {
+	let (source, payload, from_file) = match source {
+		None => return Ok(()),
+		Some(Source::Inline(s, p)) => (s, Some(Payload::Inline(p)), false),
+		Some(Source::Environment(s, p)) => (s, Some(Payload::Environment(p)), false),
+		Some(Source::File(s, p)) => (s, Some(Payload::File(p)), true),
+		Some(Source::External(s)) => (s, None, false),
+	};
+	// Default to the Compose Specification's world-readable `0444` when no `mode:`
+	// is given. A Podman-native secret otherwise mounts at `0000`, which a non-root
+	// container user cannot read (only root reads it via DAC override), diverging
+	// from docker-compose where the default is readable.
+	//
+	// A `file:` source is the exception: it is left unset here so the effectful
+	// layer can mirror the host file's own permission bits. That keeps what the
+	// container sees identical to the bind this used to be: a `0600` secret stays
+	// unreadable to a non-root container user instead of being widened to `0444`.
+	let mode = if from_file {
+		mode
+	} else {
+		mode.or(Some(0o444))
+	};
+	if let Some(m) = mode {
+		staging::reject_dangerous_secret_mode(m, &source)?;
+	}
+	plans.push(NativePlan {
+		source,
+		target,
+		mode,
+		uid: uid.and_then(|s| s.parse().ok()),
+		gid: gid.and_then(|s| s.parse().ok()),
+		payload,
+	});
+	Ok(())
+}
+
+/// Project-scoped Podman secret name for an inline secret/config, namespaced by
+/// `kind` so a secret and a config sharing a compose name do not collide.
+pub(crate) fn scoped_name(project: &str, kind: &str, name: &str) -> String {
+	format!("{project}_{kind}_{name}")
+}
+
+/// Reject a payload Podman would refuse (`len == 0` or `>= MAX_SECRET_BYTES`),
+/// with a clearer message than the daemon's opaque 500.
+pub(super) fn check_secret_size(name: &str, len: usize) -> Result<()> {
+	if len == 0 || len >= MAX_SECRET_BYTES {
+		return Err(ComposeError::Unsupported(format!(
+			"secret '{name}' is {len} bytes; a Podman secret payload must be \
+			 larger than 0 and smaller than {MAX_SECRET_BYTES} bytes"
+		)));
+	}
+	Ok(())
+}
+
+/// Whether a secret/config def is one podup creates as a project-scoped native
+/// secret, inline `content:`/`environment:` or a `file:` source. `external:`
+/// wins and is never created (nor removed) by podup.
+pub(super) fn is_podup_created_source(
+	external: Option<bool>,
+	content: Option<&str>,
+	environment: Option<&str>,
+	file_source: Option<&str>,
+) -> bool {
+	external != Some(true) && (content.is_some() || environment.is_some() || file_source.is_some())
+}
+
+/// Decompose a secret reference into `(name, target, mode, uid, gid)`.
+fn secret_ref_parts(
+	r: &ServiceSecretRef,
+) -> (
+	String,
+	Option<String>,
+	Option<u32>,
+	Option<String>,
+	Option<String>,
+) {
+	match r {
+		ServiceSecretRef::Short(s) => (s.clone(), None, None, None, None),
+		ServiceSecretRef::Long {
+			source,
+			target,
+			mode,
+			uid,
+			gid,
+		} => (
+			source.clone(),
+			target.clone(),
+			*mode,
+			uid.clone(),
+			gid.clone(),
+		),
+	}
+}
+
+/// Decompose a config reference into `(name, target, mode, uid, gid)`.
+fn config_ref_parts(
+	r: &ServiceConfigRef,
+) -> (
+	String,
+	Option<String>,
+	Option<u32>,
+	Option<String>,
+	Option<String>,
+) {
+	match r {
+		ServiceConfigRef::Short(s) => (s.clone(), None, None, None, None),
+		ServiceConfigRef::Long {
+			source,
+			target,
+			mode,
+			uid,
+			gid,
+		} => (
+			source.clone(),
+			target.clone(),
+			*mode,
+			uid.clone(),
+			gid.clone(),
+		),
+	}
+}
+
+#[cfg(test)]
+#[path = "plan_tests.rs"]
+mod tests;

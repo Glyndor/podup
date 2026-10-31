@@ -33,7 +33,7 @@ use std::time::Duration;
 ///
 /// Fails on the branch with `copyUIDGID=false` reverted (i.e. the
 /// libpod default of `true` lands) at
-/// `internal/engine/copy/upload/put.rs::archive_put_path` (the asserted
+/// `internal/backends/engine/host_files/copy/upload/put.rs::archive_put_path` (the asserted
 /// `uid:gid == 1000:1000` line).
 #[tokio::test]
 async fn cp_preserves_the_host_uid_gid() {
@@ -129,7 +129,7 @@ async fn cp_preserves_the_host_uid_gid() {
 /// on the asserted header.
 ///
 /// Fails on the branch with `ps_args=-ef` reverted at
-/// `internal/engine/query/inspect/mod.rs::top_with_options` (the asserted
+/// `internal/backends/engine/observe/query/listing/inspect/mod.rs::top_with_options` (the asserted
 /// header line).
 #[tokio::test]
 async fn top_uses_the_docker_compat_column_set() {
@@ -213,7 +213,7 @@ async fn top_uses_the_docker_compat_column_set() {
 /// one CLI call, the way a real `podup logs` would.
 ///
 /// Fails on the branch with the `is_tty` parsing selector restored at
-/// `internal/engine/query/mod.rs::logs_with_options` (the two arms
+/// `internal/backends/engine/observe/query/mod.rs::logs_with_options` (the two arms
 /// around lines 349 and 450) at the asserted "the term service's line
 /// must be exactly `<prefix>tty-hello` (a trailing `\\r` is allowed)"
 /// line and at the byte-below-0x09 panic.

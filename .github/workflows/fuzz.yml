@@ -4,16 +4,45 @@ on:
   schedule:
     - cron: "0 7 * * 1"  # Every Monday at 07:00 UTC
   workflow_dispatch:
+  # The fuzz crate sits outside the workspace, so nothing else compiles it. A
+  # change to the code it links, or to its own files, would otherwise break it
+  # unseen until the Monday run. The paths are the ones `fuzz_api` is built from.
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - "fuzz/**"
+      - "internal/lib.rs"
+      - "internal/backends/engine/host_files/copy/extract/archive.rs"
+      - "internal/backends/engine/images/context/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/fuzz.yml"
+      - ".github/workflows/reusable-rust-fuzz.yml"
 
 permissions:
   contents: read
 
+# Same shape as windows-arm64.yml: only a superseded pull_request run is
+# cancelled. A scheduled or manual fuzz run is never cut short by another.
+concurrency:
+  group: fuzz-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   fuzz:
     name: cargo fuzz (smoke)
+    if: github.event_name != 'pull_request'
     uses: ./.github/workflows/reusable-rust-fuzz.yml
     with:
-      targets: '["parse_compose", "substitute", "size", "dotenv", "stream_frame", "stream_ndjson", "extract_tar"]'
+      targets: '["parse_compose", "substitute", "size", "dotenv", "stream_frame", "stream_ndjson", "extract_tar", "ports", "duration", "ignore_glob", "cron_calendar", "audit_bind_path", "sanitize", "libpod_json", "parse_version", "expected_digest", "parse_latest_tag"]'
       max-total-time: "60"
       timeout: "10"
       rss-limit-mb: "2048"
+
+  build:
+    name: cargo fuzz (build)
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/reusable-rust-fuzz.yml
+    with:
+      targets: '["all"]'
+      build-only: true

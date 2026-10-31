@@ -30,8 +30,8 @@ on:
         # difference means the package that ships was never built in an
         # environment any pull request exercised. pin-watch.yml reads both
         # and reports a disagreement every Monday, and
-        # tests/workflows/workflow_debian_image.rs asserts it on every pull request.
-        default: "debian:trixie@sha256:913f6706df59a68922d1dd08f78c2476560a8d367897200a6005b00e5f67c2d5"
+        # tests/repository/workflows/workflow_debian_image.rs asserts it on every pull request.
+        default: "debian:trixie@sha256:4c25275446ca371766b8b093c696782eabce06263fccacb8d5d813b3dc44b308"
       arch:
         description: Architecture to verify/stage (empty matches any)
         type: string
@@ -86,8 +86,8 @@ permissions:
 concurrency:
   # package-name distinguishes two packages built from the same repo/ref, which
   # would otherwise cancel each other's in-flight run.
-  group: rust-debian-${{ github.workflow }}-${{ github.ref }}-${{ inputs.arch }}-${{ inputs.package-name }}
-  cancel-in-progress: true
+  group: rust-debian-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ inputs.arch }}-${{ inputs.package-name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:

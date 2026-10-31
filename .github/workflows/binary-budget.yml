@@ -19,7 +19,11 @@ on:
       - "internal/**"
       - "Cargo.toml"
       - "Cargo.lock"
-      - "bench/binary-budget-mib"
+      - ".cargo/**"
+      - "build.rs"
+      - "rust-toolchain*"
+      - ".github/scripts/checks/binary-budget-paths.sh"
+      - "bench/budgets/binary-budget-mib"
       - ".github/workflows/binary-budget.yml"
   pull_request:
     branches:
@@ -29,11 +33,20 @@ on:
       - "internal/**"
       - "Cargo.toml"
       - "Cargo.lock"
-      - "bench/binary-budget-mib"
+      - ".cargo/**"
+      - "build.rs"
+      - "rust-toolchain*"
+      - ".github/scripts/checks/binary-budget-paths.sh"
+      - "bench/budgets/binary-budget-mib"
       - ".github/workflows/binary-budget.yml"
 
 permissions:
   contents: read
+
+# Cancels superseded pull_request runs only; see asset-contract.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   size:
@@ -46,13 +59,39 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Decide whether release inputs changed
+        id: inputs
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          build=true
+          # Read the judge from the reviewed base, never from the PR's tree.
+          # Renames expose both paths. Missing history or judge means build.
+          if [[ "$EVENT" = pull_request || "$EVENT" = push ]] &&
+             changed=$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA") &&
+             judge=$(git show "$BASE_SHA:.github/scripts/checks/binary-budget-paths.sh") &&
+             bash -c "$judge" -- "$changed"; then
+            build=false
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+
+      - name: Test-only changes
+        if: steps.inputs.outputs.build == 'false'
+        run: echo "Only proven cfg(test) modules changed; release inputs are unchanged."
 
       - name: Build the release binary
+        if: steps.inputs.outputs.build == 'true'
         # The same profile the release ships, including the strip setting: a
         # budget measured against a different profile is measuring nothing.
         run: cargo build --release --locked --bin podup
 
       - name: Compare against the budget
+        if: steps.inputs.outputs.build == 'true'
         run: |
           set -euo pipefail
           # LC_ALL=C so awk formats with a dot wherever this runs. The verdict
@@ -60,12 +99,12 @@ jobs:
           # reads 7,007 MiB on one machine and 7.007 on another is a message
           # nobody trusts.
           export LC_ALL=C
-          BUDGET_MIB="$(tr -d '[:space:]' < bench/binary-budget-mib)"
+          BUDGET_MIB="$(tr -d '[:space:]' < bench/budgets/binary-budget-mib)"
           BUDGET_BYTES="$(awk -v m="$BUDGET_MIB" 'BEGIN { printf "%d", m * 1048576 }')"
           ACTUAL="$(stat -c%s target/release/podup)"
           ACTUAL_MIB="$(awk -v b="$ACTUAL" 'BEGIN { printf "%.3f", b / 1048576 }')"
           echo "podup is ${ACTUAL} bytes (${ACTUAL_MIB} MiB); budget is ${BUDGET_MIB} MiB (${BUDGET_BYTES} bytes)."
           if [ "$ACTUAL" -gt "$BUDGET_BYTES" ]; then
-            echo "::error::the release binary is over its budget. Either the growth is explained and bench/binary-budget-mib should move with a reason in the commit message, or it is a regression to investigate."
+            echo "::error::the release binary is over its budget. Either the growth is explained and bench/budgets/binary-budget-mib should move with a reason in the commit message, or it is a regression to investigate."
             exit 1
           fi

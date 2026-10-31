@@ -1,6 +1,6 @@
 [package]
 name = "podup"
-version = "5.14.0"
+version = "5.15.0"
 edition = "2021"
 rust-version = "1.88"
 # podup is a binary that happens to build a library, not a library that ships a
@@ -72,8 +72,7 @@ required-features = ["test-helpers"]
 # Test crates that live in a folder. Cargo discovers only `tests/*.rs` and
 # `tests/*/main.rs`, so a crate under `tests/<concern>/` is named here, and
 # keeping the same `name` keeps `cargo test --test <name>`, the CI lanes and
-# every test's reported identity as they were. The crates still at the top
-# level are found by discovery and need no entry. `every_source_file_is_compiled`
+# every test's reported identity as they were. `every_source_file_is_compiled`
 # reads these paths, so a crate listed here cannot go unbuilt silently.
 [[test]]
 name = "build_contract"
@@ -82,6 +81,10 @@ path = "tests/cli/output/build_contract.rs"
 [[test]]
 name = "cli_aliases"
 path = "tests/cli/surface/cli_aliases.rs"
+
+[[test]]
+name = "autostart_contract"
+path = "tests/cli/surface/autostart_contract.rs"
 
 [[test]]
 name = "cli_diagnostics"
@@ -129,11 +132,11 @@ path = "tests/cli/output/reporting_contract.rs"
 
 [[test]]
 name = "compose_interpolation"
-path = "tests/compose/parsing/compose_interpolation.rs"
+path = "tests/compose/parsing/variables/compose_interpolation.rs"
 
 [[test]]
 name = "env_file"
-path = "tests/compose/parsing/env_file.rs"
+path = "tests/compose/parsing/variables/env_file.rs"
 
 [[test]]
 name = "parse"
@@ -141,7 +144,7 @@ path = "tests/compose/parsing/parse.rs"
 
 [[test]]
 name = "ports"
-path = "tests/compose/parsing/ports.rs"
+path = "tests/compose/parsing/values/ports.rs"
 
 [[test]]
 name = "quadlet"
@@ -149,31 +152,35 @@ path = "tests/quadlet/quadlet.rs"
 
 [[test]]
 name = "size"
-path = "tests/compose/parsing/size.rs"
+path = "tests/compose/parsing/values/size.rs"
 
 [[test]]
 name = "substitute"
-path = "tests/compose/parsing/substitute.rs"
+path = "tests/compose/parsing/variables/substitute.rs"
 
 [[test]]
 name = "audit_exit_codes"
-path = "tests/audit/audit_exit_codes.rs"
+path = "tests/cli/audit/audit_exit_codes.rs"
 
 [[test]]
 name = "audit_ignore_lists"
-path = "tests/supply_chain/audit_ignore_lists.rs"
+path = "tests/repository/supply_chain/audit_ignore_lists.rs"
 
 [[test]]
 name = "audit_list_checks"
-path = "tests/audit/audit_list_checks.rs"
+path = "tests/cli/audit/audit_list_checks.rs"
 
 [[test]]
 name = "dependabot_covers_every_lockfile"
-path = "tests/supply_chain/dependabot_covers_every_lockfile.rs"
+path = "tests/repository/supply_chain/dependabot_covers_every_lockfile.rs"
 
 [[test]]
 name = "docs_flags"
-path = "tests/docs/docs_flags.rs"
+path = "tests/repository/docs/docs_flags.rs"
+
+[[test]]
+name = "docs_links"
+path = "tests/repository/docs/docs_links.rs"
 
 [[test]]
 name = "hostile_compose"
@@ -186,6 +193,10 @@ path = "tests/hostile/input/hostile_filesystem_paths.rs"
 [[test]]
 name = "hostile_podman"
 path = "tests/hostile/podman/hostile_podman.rs"
+
+[[test]]
+name = "hostile_push"
+path = "tests/hostile/podman/hostile_push.rs"
 
 [[test]]
 name = "hostile_quadlet_units"
@@ -204,64 +215,124 @@ name = "hostile_terminal_output"
 path = "tests/hostile/output/hostile_terminal_output.rs"
 
 [[test]]
+name = "hostile_terminal_rows"
+path = "tests/hostile/output/hostile_terminal_rows.rs"
+
+[[test]]
+name = "hostile_stats"
+path = "tests/hostile/output/hostile_stats.rs"
+
+[[test]]
 name = "every_source_file_is_compiled"
-path = "tests/repo_rules/every_source_file_is_compiled.rs"
+path = "tests/repository/repo_rules/every_source_file_is_compiled.rs"
 
 [[test]]
 name = "keyring_bootstrap_order"
-path = "tests/packaging/keyring_bootstrap_order.rs"
+path = "tests/repository/packaging/keyring_bootstrap_order.rs"
 
 [[test]]
 name = "no_inline_test_modules"
-path = "tests/repo_rules/no_inline_test_modules.rs"
+path = "tests/repository/repo_rules/no_inline_test_modules.rs"
 
 [[test]]
 name = "no_system_wide_apt_policy"
-path = "tests/packaging/no_system_wide_apt_policy.rs"
+path = "tests/repository/packaging/no_system_wide_apt_policy.rs"
 
 [[test]]
 name = "package_excludes"
-path = "tests/packaging/package_excludes.rs"
+path = "tests/repository/packaging/package_excludes.rs"
 
 [[test]]
 name = "podman_floor"
-path = "tests/packaging/podman_floor.rs"
+path = "tests/repository/packaging/podman_floor.rs"
 
 [[test]]
 name = "podman_floor_at_runtime"
-path = "tests/packaging/podman_floor_at_runtime.rs"
+path = "tests/repository/packaging/podman_floor_at_runtime.rs"
 
 [[test]]
 name = "podup_is_not_published"
-path = "tests/packaging/podup_is_not_published.rs"
+path = "tests/repository/packaging/podup_is_not_published.rs"
 
 [[test]]
 name = "secret_safety"
-path = "tests/repo_rules/secret_safety.rs"
+path = "tests/repository/repo_rules/secret_safety.rs"
 
 [[test]]
 name = "tar_builder_single_site"
-path = "tests/repo_rules/tar_builder_single_site.rs"
+path = "tests/repository/repo_rules/tar_builder_single_site.rs"
 
 [[test]]
 name = "workflow_audit_strictness"
-path = "tests/workflows/workflow_audit_strictness.rs"
+path = "tests/repository/workflows/workflow_audit_strictness.rs"
 
 [[test]]
 name = "workflow_branch_health"
-path = "tests/workflows/workflow_branch_health.rs"
+path = "tests/repository/workflows/workflow_branch_health.rs"
+
+[[test]]
+name = "workflow_concurrency"
+path = "tests/repository/workflows/workflow_concurrency.rs"
 
 [[test]]
 name = "workflow_debian_image"
-path = "tests/workflows/workflow_debian_image.rs"
+path = "tests/repository/workflows/workflow_debian_image.rs"
+
+[[test]]
+name = "workflow_fuzz_targets"
+path = "tests/repository/workflows/workflow_fuzz_targets.rs"
 
 [[test]]
 name = "workflow_required_checks"
-path = "tests/workflows/workflow_required_checks.rs"
+path = "tests/repository/workflows/workflow_required_checks.rs"
 
 [[test]]
 name = "workflow_toolchain_pin"
-path = "tests/workflows/workflow_toolchain_pin.rs"
+path = "tests/repository/workflows/workflow_toolchain_pin.rs"
+
+[[test]]
+name = "audit_sensitive_bind_jobs"
+path = "tests/cli/audit/sensitive_bind/audit_sensitive_bind_jobs.rs"
+
+[[test]]
+name = "audit_sensitive_bind_paths"
+path = "tests/cli/audit/sensitive_bind/audit_sensitive_bind_paths.rs"
+
+[[test]]
+name = "hostile_autostart_units"
+path = "tests/hostile/input/hostile_autostart_units.rs"
+
+[[test]]
+name = "hostile_terminal_args"
+path = "tests/hostile/output/hostile_terminal_args.rs"
+
+[[test]]
+name = "hostile_terminal_controls"
+path = "tests/hostile/output/hostile_terminal_controls.rs"
+
+[[test]]
+name = "jobs_like_services"
+path = "tests/cli/jobs/jobs_like_services.rs"
+
+[[test]]
+name = "jobs_run_and_up"
+path = "tests/cli/jobs/jobs_run_and_up.rs"
+
+[[test]]
+name = "jobs_section"
+path = "tests/cli/jobs/jobs_section.rs"
+
+[[test]]
+name = "env_not_utf8"
+path = "tests/cli/environment/env_not_utf8.rs"
+
+[[test]]
+name = "up_selection"
+path = "tests/cli/up/up_selection.rs"
+
+[[test]]
+name = "quadlet_jobs"
+path = "tests/quadlet/quadlet_jobs.rs"
 
 [[test]]
 name = "integration_leak_scan"
@@ -299,6 +370,8 @@ base64 = "0.23"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+# Descriptor-relative host copies; the same rustix version is already locked.
+rustix = { version = "1.1.4", features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
 # Console raw mode and window size for interactive exec/run: GetConsoleMode/
@@ -320,7 +393,7 @@ tempfile = "3"
 temp-env = "0.3"
 # Only pulled in for test/bench targets (edition 2021's feature resolver keeps
 # dev-dependency features out of the shipped binary): the fake-Podman test
-# harness (`internal/engine/fake_podman.rs`) reads/writes a raw HTTP/1.1
+# harness (`internal/backends/engine/fake_podman.rs`) reads/writes a raw HTTP/1.1
 # request over a Unix socket by hand, needing `AsyncReadExt`/`AsyncWriteExt`.
 # `test-util` enables `#[tokio::test(start_paused = true)]` and
 # `tokio::time::pause()`, which the hijack-timeout tests need to verify
@@ -336,3 +409,37 @@ lto = "fat"
 codegen-units = 1
 strip = true
 panic = "abort"
+
+[[test]]
+name = "hostile_copy_upload"
+path = "tests/hostile/input/hostile_copy_upload.rs"
+
+[[test]]
+name = "hostile_watch_paths"
+path = "tests/hostile/input/hostile_watch_paths.rs"
+required-features = ["watch", "test-helpers"]
+
+[[test]]
+name = "hostile_secret_permissions"
+path = "tests/hostile/input/hostile_secret_permissions.rs"
+
+[[test]]
+name = "hostile_build_secrets"
+path = "tests/hostile/input/hostile_build_secrets.rs"
+
+[[test]]
+name = "hostile_archive_stat"
+path = "tests/hostile/podman/hostile_archive_stat.rs"
+
+[[test]]
+name = "hostile_replace"
+path = "tests/hostile/update/hostile_replace.rs"
+required-features = ["update", "test-helpers"]
+
+[[test]]
+name = "hostile_env_file_budget"
+path = "tests/hostile/input/hostile_env_file_budget.rs"
+
+[[test]]
+name = "hostile_label_files"
+path = "tests/hostile/input/hostile_label_files.rs"

@@ -8,12 +8,19 @@
 //! executable atomically replaced. Every step fails closed: a missing key,
 //! bad signature, or checksum mismatch aborts before anything is written.
 
+/// Entry point for the fuzz harness, compiled only under `test-helpers`.
+#[cfg(feature = "test-helpers")]
+pub(crate) mod fuzz_hook;
 mod github;
 mod install;
 mod pkg;
 mod verify;
 
 pub use github::{GitHubSource, REPO};
+
+#[cfg(feature = "test-helpers")]
+#[doc(hidden)]
+pub use install::test_install_verified_at;
 
 use crate::ComposeError;
 
@@ -38,10 +45,8 @@ pub trait ReleaseSource {
 /// Run an update against GitHub for the version compiled into this binary.
 pub fn run(opts: UpdateOptions) -> crate::Result<()> {
 	// Best-effort cleanup of a `.old` backup a prior Windows swap could not
-	// delete immediately (the old process still held it open). By the time
-	// any updater run starts, that process has exited, so this is the
-	// earliest point the leftover can go - see the module doc on
-	// `install::swap_into_place`.
+	// delete immediately (the old process still held it open). Cleanup takes
+	// the install lock so an overlapping run cannot lose its rollback backup.
 	#[cfg(windows)]
 	install::cleanup_stale_backup();
 
@@ -64,7 +69,7 @@ fn run_with_guard(
 	source: &dyn ReleaseSource,
 	current: &str,
 	opts: UpdateOptions,
-	managed_by: Option<&str>,
+	managed_by: crate::Result<Option<&str>>,
 ) -> crate::Result<()> {
 	let current_v = verify::parse_version(current)?;
 	let latest_tag = source.latest_version()?;
@@ -87,7 +92,7 @@ fn run_with_guard(
 
 	// Refuse to self-replace a package-manager-managed binary (even with
 	// --force): overwriting it would desync the package manager's records.
-	if let Some(pm) = managed_by {
+	if let Some(pm) = managed_by? {
 		return Err(pkg::package_managed_error(pm));
 	}
 
@@ -109,7 +114,7 @@ fn run_with_guard(
 
 	// The self-test inside `install_binary` pins the installed binary's reported
 	// version to the resolved tag, closing the signed-release rollback window.
-	let path = install::install_binary(&binary, latest_tag.trim_start_matches('v'))?;
+	let path = install::install_binary(&binary, latest_tag.trim_start_matches('v'), opts.force)?;
 	println!("updated to {latest_tag}: {}", path.display());
 	Ok(())
 }

@@ -66,46 +66,7 @@ pub(crate) fn is_text_file_busy(e: &std::io::Error) -> bool {
 /// updater. The version check closes the rollback window: a replayed older
 /// (signed) release fails here and is rolled back.
 pub(crate) fn self_test(target: &Path, expected_version: &str) -> crate::Result<()> {
-	use std::time::{Duration, Instant};
-
-	let mut child = super::spawn_version_probe(target)
-		.map_err(|e| ComposeError::Update(format!("could not run the updated binary: {e}")))?;
-
-	let deadline = Instant::now() + Duration::from_secs(10);
-	let answer = read_first_line(child.stdout.take());
-	let status = loop {
-		match child.try_wait() {
-			Ok(Some(status)) => break status,
-			Ok(None) => {
-				if Instant::now() >= deadline {
-					let _ = child.kill();
-					let _ = child.wait();
-					return Err(ComposeError::Update(
-						"updated binary did not respond to --version within 10s".to_string(),
-					));
-				}
-				std::thread::sleep(Duration::from_millis(50));
-			}
-			Err(e) => {
-				return Err(ComposeError::Update(format!(
-					"waiting on the updated binary failed: {e}"
-				)))
-			}
-		}
-	};
-	if !status.success() {
-		return Err(ComposeError::Update(format!(
-			"updated binary exited with {status} on --version"
-		)));
-	}
-	// The line is read by a thread of its own, so a descendant that outlived
-	// the binary and still holds the pipe open cannot keep the updater waiting
-	// past the deadline: the answer is the first line, not the end of the pipe.
-	let out = answer
-		.recv_timeout(deadline.saturating_duration_since(Instant::now()))
-		.map_err(|_| {
-			ComposeError::Update("updated binary did not report its version within 10s".to_string())
-		})?;
+	let out = probe_version(target, "the updated binary")?;
 	let reported_matches = out
 		.split_whitespace()
 		.any(|t| t == expected_version || t.trim_start_matches('v') == expected_version);
@@ -117,6 +78,62 @@ pub(crate) fn self_test(target: &Path, expected_version: &str) -> crate::Result<
 		)));
 	}
 	Ok(())
+}
+
+/// The version the binary at `target` reports, or `None` when it cannot be
+/// asked or answers with nothing that reads as a version.
+///
+/// Asked under the install lock to learn what is installed now, as opposed to
+/// what this process was started as: another update may have replaced the file
+/// in between. A binary that cannot answer is not a reason to refuse an update,
+/// which is also how such a binary gets repaired.
+pub(crate) fn installed_version(target: &Path) -> Option<super::super::verify::Version> {
+	let out = probe_version(target, "the installed binary").ok()?;
+	out.split_whitespace()
+		.find_map(|token| super::super::verify::parse_version(token).ok())
+}
+
+/// Run `target --version` within a deadline and return the first line it
+/// printed. `what` names the binary in the errors.
+fn probe_version(target: &Path, what: &str) -> crate::Result<String> {
+	use std::time::{Duration, Instant};
+
+	let mut child = super::spawn_version_probe(target)
+		.map_err(|e| ComposeError::Update(format!("could not run {what}: {e}")))?;
+
+	let deadline = Instant::now() + Duration::from_secs(10);
+	let answer = read_first_line(child.stdout.take());
+	let status = loop {
+		match child.try_wait() {
+			Ok(Some(status)) => break status,
+			Ok(None) => {
+				if Instant::now() >= deadline {
+					let _ = child.kill();
+					let _ = child.wait();
+					return Err(ComposeError::Update(format!(
+						"{what} did not respond to --version within 10s"
+					)));
+				}
+				std::thread::sleep(Duration::from_millis(50));
+			}
+			Err(e) => {
+				return Err(ComposeError::Update(format!(
+					"waiting on {what} failed: {e}"
+				)))
+			}
+		}
+	};
+	if !status.success() {
+		return Err(ComposeError::Update(format!(
+			"{what} exited with {status} on --version"
+		)));
+	}
+	// The line is read by a thread of its own, so a descendant that outlived
+	// the binary and still holds the pipe open cannot keep the updater waiting
+	// past the deadline: the answer is the first line, not the end of the pipe.
+	answer
+		.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+		.map_err(|_| ComposeError::Update(format!("{what} did not report its version within 10s")))
 }
 
 /// The most `--version` output the self-test will read.

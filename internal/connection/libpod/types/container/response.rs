@@ -1,0 +1,307 @@
+//! Response types for container API calls.
+
+use std::collections::HashMap;
+
+use serde::Deserialize;
+
+/// Deserialize a collection field, treating JSON `null` as the default.
+///
+/// Podman sometimes returns `null` instead of `[]`/`{}` for empty collection
+/// fields, which would otherwise fail to deserialize into a `Vec`/`HashMap`.
+fn null_default<'de, D, T>(d: D) -> Result<T, D::Error>
+where
+	D: serde::Deserializer<'de>,
+	T: Default + Deserialize<'de>,
+{
+	Option::<T>::deserialize(d).map(|v| v.unwrap_or_default())
+}
+
+/// Entry in the `GET /libpod/containers/json` response array.
+#[derive(Deserialize)]
+pub struct ContainerListEntry {
+	/// Full 64-hex container ID.
+	#[serde(rename = "Id", default)]
+	pub id: String,
+
+	/// Container names, each leading-slash-prefixed as Podman reports them
+	/// (e.g. `/web`). A container may carry multiple names/aliases.
+	#[serde(rename = "Names", default, deserialize_with = "null_default")]
+	pub names: Vec<String>,
+
+	/// Image reference the container was created from (name:tag or an ID).
+	#[serde(rename = "Image", default)]
+	pub image: String,
+
+	/// Full 64-hex ID of the image the container is bound to. This is the
+	/// image's identity; `image` above is the name it was asked for, which a
+	/// later pull, build or `podman tag` can point at a different image without
+	/// touching the container. `up` compares it against what the service's tag
+	/// resolves to now, which is how a container built from an older image gets
+	/// recreated (#1620). Measured on Podman 5.7.0: `ImageID` on the list
+	/// endpoint equals `Id` on `GET /libpod/images/{name}/json`.
+	#[serde(rename = "ImageID", default)]
+	pub image_id: String,
+
+	/// Human-readable status string for `ps` display (e.g. `Up 3 minutes`,
+	/// `Exited (0) 5 seconds ago`). Empty on libpod, which reports `State`.
+	#[serde(rename = "Status", default)]
+	pub status: String,
+
+	/// Machine-readable state (`running`, `exited`, `created`, …). Podman's
+	/// libpod list response leaves `Status` empty and reports the state here.
+	#[serde(rename = "State", default)]
+	pub state: String,
+
+	/// Published port mappings for the container.
+	#[serde(rename = "Ports", default, deserialize_with = "null_default")]
+	pub ports: Vec<ContainerPort>,
+
+	/// Exit code of the last run, present once the container has exited. libpod's
+	/// list endpoint reports it (0 while running/created), letting `ps`
+	/// distinguish a clean exit from a crash without a follow-up inspect.
+	#[serde(rename = "ExitCode", default)]
+	pub exit_code: Option<i32>,
+
+	/// Container labels (key/value), including compose project/service labels.
+	#[serde(rename = "Labels", default, deserialize_with = "null_default")]
+	pub labels: HashMap<String, String>,
+	/// When the container was last started, in Unix seconds. Zero for one that
+	/// has never run, which is why `ps` keys "how long has this been up" on the
+	/// state rather than on this being non-zero.
+	#[serde(rename = "StartedAt", default)]
+	pub started_at: i64,
+	/// On-disk size, present only when the request carried `size=true`.
+	///
+	/// `None` is the ordinary case: libpod leaves it out unless asked, because
+	/// producing it means walking the container's writable layer. Callers render
+	/// an empty cell rather than a zero, so "not asked" never reads as "empty".
+	#[serde(rename = "Size", default)]
+	pub size: Option<ContainerSize>,
+	/// When the container was created, as an RFC 3339 string.
+	///
+	/// Not the docker-compatible `CreatedAt`, which libpod also sends and leaves
+	/// **empty**, measured on Podman 5.7.0. Reading the familiar name gets a
+	/// blank column, the same trap as `Status` versus `State` above.
+	#[serde(rename = "Created", default)]
+	pub created: String,
+
+	/// `true` for the infra container Podman creates inside a pod. The
+	/// `x-podman-pod` extension does not name this container (Podman does)
+	/// and `ps` hides it from the user-facing list, so the field is the only
+	/// discriminator libpod exposes. `false` (the default) covers every
+	/// regular container.
+	#[serde(rename = "IsInfra", default)]
+	pub is_infra: bool,
+}
+
+/// A container's on-disk footprint, as `containers/json?size=true` reports it.
+#[derive(Deserialize, Clone, Copy, Debug)]
+pub struct ContainerSize {
+	/// Bytes the container has written on top of its image.
+	#[serde(rename = "rwSize", default)]
+	pub rw: u64,
+	/// The image's own size. This is what `podman ps -s` prints as `virtual`,
+	/// and it is **not** the sum of the two, verified against three containers
+	/// whose two readings differ at three significant digits.
+	#[serde(rename = "rootFsSize", default)]
+	pub root_fs: u64,
+}
+
+/// Port mapping entry in container list response.
+#[derive(Deserialize, Default)]
+pub struct ContainerPort {
+	/// Host IP the port is bound to; absent when bound to all interfaces.
+	pub host_ip: Option<String>,
+	/// Port on the host the mapping is published to; absent when not published.
+	pub host_port: Option<u16>,
+	/// Port inside the container that traffic is forwarded to.
+	pub container_port: u16,
+	/// Transport protocol of the mapping (`tcp`/`udp`/`sctp`), surfaced in `ps`.
+	#[serde(default)]
+	pub protocol: Option<String>,
+	/// Number of consecutive ports this entry covers when libpod collapses a
+	/// published range into a single record (e.g. `51251-51253->8080-8082` is one
+	/// record with `range = 3`). Rendered by `ps` so the full range is shown.
+	#[serde(default)]
+	pub range: Option<u16>,
+}
+
+/// Response from `GET /libpod/containers/{name}/json`.
+#[derive(Deserialize, Default)]
+pub struct ContainerInspect {
+	/// Runtime state (status, exit code, health).
+	#[serde(rename = "State")]
+	pub state: Option<ContainerState>,
+
+	/// Static configuration the container was created with.
+	#[serde(rename = "Config")]
+	pub config: Option<ContainerConfig>,
+
+	/// Runtime network settings, including resolved host port bindings.
+	#[serde(rename = "NetworkSettings")]
+	pub network_settings: Option<NetworkSettings>,
+
+	/// The mounts the container has, as the runtime resolved them.
+	#[serde(rename = "Mounts", default, deserialize_with = "null_default")]
+	pub mounts: Vec<ContainerMount>,
+}
+
+impl ContainerInspect {
+	/// The volume mounts the container has, keyed by the in-container path
+	/// they are attached to.
+	///
+	/// Only the volume mounts are returned: a bind mount has no volume to
+	/// inherit, and the mounts a container carries are what a replacement has
+	/// to be given back.
+	pub fn volumes_by_destination(&self) -> HashMap<String, ContainerMount> {
+		self.mounts
+			.iter()
+			.filter(|m| m.mount_type == "volume" && !m.name.is_empty())
+			.map(|m| (m.destination.clone(), m.clone()))
+			.collect()
+	}
+}
+
+/// A mount of a container, as `GET /libpod/containers/{name}/json` reports it.
+#[derive(Deserialize, Default, Clone)]
+pub struct ContainerMount {
+	/// `"volume"` for a named or anonymous volume, `"bind"` for a host path.
+	#[serde(rename = "Type", default)]
+	pub mount_type: String,
+
+	/// The volume's name. Empty for a bind mount.
+	#[serde(rename = "Name", default)]
+	pub name: String,
+
+	/// The in-container path the mount is attached to.
+	#[serde(rename = "Destination", default)]
+	pub destination: String,
+
+	/// Whether the mount is read-write.
+	///
+	/// libpod always sends the field. An older server that left it out is
+	/// read as read-write, the ordinary case: reading it as read-only would
+	/// turn the replacement's mount into a `ro` one the operator never asked
+	/// for.
+	#[serde(rename = "RW", default = "rw_by_default")]
+	pub rw: bool,
+}
+
+/// The default for a mount's read-write flag when the field is absent.
+fn rw_by_default() -> bool {
+	true
+}
+
+/// Container config sub-object from inspect.
+#[derive(Deserialize, Default)]
+pub struct ContainerConfig {
+	/// Effective healthcheck, if any; absent when the image declares none.
+	#[serde(rename = "Healthcheck")]
+	pub healthcheck: Option<HealthConfig>,
+}
+
+impl ContainerConfig {
+	/// Whether the container has an effective healthcheck that can report a
+	/// `healthy` status. Covers healthchecks inherited from the image as well
+	/// as those declared in compose. A `["NONE"]` test means it was disabled.
+	pub fn has_healthcheck(&self) -> bool {
+		self.healthcheck
+			.as_ref()
+			.is_some_and(|h| h.test.first().is_some_and(|first| first != "NONE"))
+	}
+}
+
+/// Effective healthcheck config baked into the container (image or compose).
+#[derive(Deserialize, Default)]
+pub struct HealthConfig {
+	/// Healthcheck command in Docker's `Test` form: the first element is the
+	/// mode (`NONE`, `CMD`, or `CMD-SHELL`) and the rest are its arguments.
+	/// `["NONE"]` means the healthcheck is explicitly disabled; empty means none.
+	#[serde(rename = "Test", default, deserialize_with = "null_default")]
+	pub test: Vec<String>,
+}
+
+/// Container state sub-object.
+#[derive(Deserialize, Default)]
+pub struct ContainerState {
+	/// Lifecycle status (`running`, `exited`, ...). Read while waiting to detect a
+	/// container that exited before becoming ready.
+	#[serde(rename = "Status")]
+	pub status: Option<String>,
+
+	/// Exit code once the container has exited; used to fail `--wait` when a
+	/// no-healthcheck service crashes during the wait.
+	#[serde(rename = "ExitCode")]
+	pub exit_code: Option<i64>,
+
+	/// Aggregated healthcheck state; absent when the container has no healthcheck.
+	#[serde(rename = "Health")]
+	pub health: Option<HealthState>,
+}
+
+/// Container health state sub-object.
+#[derive(Deserialize)]
+pub struct HealthState {
+	/// Current health status (`healthy`, `unhealthy`, `starting`).
+	#[serde(rename = "Status")]
+	pub status: Option<String>,
+}
+
+/// Network settings sub-object from container inspect.
+#[derive(Deserialize, Default)]
+pub struct NetworkSettings {
+	/// Resolved port bindings keyed by container port spec (`"80/tcp"`). The
+	/// value is the list of host bindings, or `None`/empty when the port is
+	/// exposed but not published.
+	#[serde(rename = "Ports", default)]
+	pub ports: HashMap<String, Option<Vec<HostBinding>>>,
+	/// Per-network attachment details, keyed by the on-host network name.
+	///
+	/// Carried for the aliases: a compose service is reachable by its service
+	/// name because podup registers that name as a network alias, and that
+	/// registration is the part podup owns. Whether a lookup for it then
+	/// *answers* is the container runtime's DNS, which is a different layer and
+	/// fails for its own reasons (#1330).
+	// Read only by the `test-helpers` inspection path (`test_container_aliases`),
+	// so a default-features build would warn that nothing reads it.
+	#[cfg_attr(not(feature = "test-helpers"), allow(dead_code))]
+	#[serde(rename = "Networks", default)]
+	pub networks: HashMap<String, NetworkAttachment>,
+}
+
+/// One network a container is attached to.
+#[derive(Deserialize, Default, Clone)]
+pub struct NetworkAttachment {
+	/// Names this container answers to on the network, when DNS is working.
+	#[cfg_attr(not(feature = "test-helpers"), allow(dead_code))]
+	#[serde(rename = "Aliases", default, deserialize_with = "null_default")]
+	pub aliases: Vec<String>,
+}
+
+/// Host port binding from container inspect network settings.
+#[derive(Deserialize, Clone)]
+pub struct HostBinding {
+	/// Host IP the port is bound to; empty/absent means all interfaces.
+	#[serde(rename = "HostIp")]
+	pub host_ip: Option<String>,
+
+	/// Host port as a string, as Podman reports it in inspect output.
+	#[serde(rename = "HostPort")]
+	pub host_port: Option<String>,
+}
+
+/// Response from `GET /libpod/containers/{name}/top`.
+#[derive(Deserialize, Default)]
+pub struct TopResponse {
+	/// Column headers for the process table (e.g. `PID`, `USER`, `COMMAND`).
+	#[serde(rename = "Titles")]
+	pub titles: Option<Vec<String>>,
+
+	/// One row per process; each row's columns align with `titles`.
+	#[serde(rename = "Processes")]
+	pub processes: Option<Vec<Vec<String>>>,
+}
+
+#[cfg(test)]
+#[path = "response_tests.rs"]
+mod tests;

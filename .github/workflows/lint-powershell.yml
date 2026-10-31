@@ -13,8 +13,9 @@ on:
       # without this line a pull request that touches only the reusable
       # merges without ever running it.
       - ".github/workflows/reusable-powershell-ci.yml"
-      - ".github/scripts/check-hardening.ps1"
-      - "tests/powershell/check-hardening.Tests.ps1"
+      - ".github/scripts/hardening/check-hardening.ps1"
+      - "tests/scripts/powershell/check-hardening.Tests.ps1"
+      - "tests/scripts/powershell/install-python-isolation.Tests.ps1"
       # The rustflags that give the Windows binary Control Flow Guard live
       # here; a change to them is what this workflow builds and reads.
       - ".cargo/**"
@@ -32,8 +33,9 @@ on:
       # without this line a pull request that touches only the reusable
       # merges without ever running it.
       - ".github/workflows/reusable-powershell-ci.yml"
-      - ".github/scripts/check-hardening.ps1"
-      - "tests/powershell/check-hardening.Tests.ps1"
+      - ".github/scripts/hardening/check-hardening.ps1"
+      - "tests/scripts/powershell/check-hardening.Tests.ps1"
+      - "tests/scripts/powershell/install-python-isolation.Tests.ps1"
       # The rustflags that give the Windows binary Control Flow Guard live
       # here; a change to them is what this workflow builds and reads.
       - ".cargo/**"
@@ -41,6 +43,11 @@ on:
 
 permissions:
   contents: read
+
+# Cancels superseded pull_request runs only; see asset-contract.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   psscriptanalyzer:
@@ -77,14 +84,42 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Decide whether the binary can have changed
+        id: inputs
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          build=true
+          # The judge is read from the reviewed base, never from the PR's tree.
+          # Anything it does not name, a merge group and a missing judge build.
+          if [[ "$EVENT" = pull_request || "$EVENT" = push ]] &&
+             changed=$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA") &&
+             judge=$(git show "$BASE_SHA:.github/scripts/checks/rust-build-inputs.sh") &&
+             bash -c "$judge" -- "$changed"; then
+            build=false
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          [ "$build" = true ] || echo "Only paths the binary never reads changed; the release build is skipped."
       - name: Run the PE hardening fixture
         shell: pwsh
-        run: pwsh -NoProfile -File tests/powershell/check-hardening.Tests.ps1
+        run: pwsh -NoProfile -File tests/scripts/powershell/check-hardening.Tests.ps1
+      # The installer fixture proves the Windows installer's python probe
+      # runs isolated from the current directory. It needs no toolchain
+      # and no network, so it runs before the build step.
+      - name: Run the installer fixture
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/scripts/powershell/install-python-isolation.Tests.ps1
       # The fixture proves the script; this proves the binary. The release
       # runs the same script over the same target before signing, and the
       # Control Flow Guard bit rests on a rustflag in .cargo/config.toml,
       # so the change that would fail the release fails here first.
       - name: Install the pinned toolchain
+        if: steps.inputs.outputs.build == 'true'
         env:
           # Keep in step with release.yml's build job.
           RUST_TOOLCHAIN: "1.99"
@@ -93,8 +128,10 @@ jobs:
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
           rustup default "$RUST_TOOLCHAIN"
       - name: Build the release binary the way the release does
+        if: steps.inputs.outputs.build == 'true'
         shell: bash
         run: cargo build --release --locked
       - name: Read the hardening off the built binary
+        if: steps.inputs.outputs.build == 'true'
         shell: pwsh
-        run: pwsh -NoProfile -File .github/scripts/check-hardening.ps1 target/release/podup.exe
+        run: pwsh -NoProfile -File .github/scripts/hardening/check-hardening.ps1 target/release/podup.exe

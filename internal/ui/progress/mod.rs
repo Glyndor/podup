@@ -11,18 +11,18 @@
 //! Everything goes to stderr. stdout stays a clean pipe, which is what lets
 //! `run -d` keep printing its container id there.
 
-mod board;
-#[cfg(test)]
-pub(crate) mod capture;
-mod live;
-mod notes;
-mod row;
+mod output;
+mod rows;
 mod session;
-mod sink;
-mod terminal;
 #[cfg(test)]
-#[path = "test_support.rs"]
-mod test_support;
+mod testing;
+
+use output::{live, sink, terminal};
+use rows::{board, notes, row};
+#[cfg(test)]
+pub(crate) use testing::capture;
+#[cfg(test)]
+use testing::test_support;
 
 pub use board::{Board, Kind, Row, State};
 pub use live::{Region, Target};

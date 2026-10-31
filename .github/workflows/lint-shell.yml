@@ -21,19 +21,34 @@ on:
       # `test-command` below; the path filter is the other half.
       - ".github/workflows/reusable-workflow-lint.yml"
       - ".github/workflows/reusable-schedule-freshness.yml"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/binary-budget.yml"
+      - ".github/scripts/checks/check-caller-with-defaults.py"
       - ".github/workflows/podman-watch.yml"
-      - ".github/scripts/check-hardening-macos.sh"
-      - ".github/scripts/check-planning-words.sh"
-      - ".github/scripts/fetch-fedora-image.sh"
-      - ".github/scripts/check-merge-group-triggers.py"
-      - "tests/shell/check-planning-words.test.sh"
-      - "tests/shell/check-hardening-macos.test.sh"
-      - "tests/shell/check-suite-completeness.test.sh"
-      - "tests/shell/install-help.test.sh"
-      - "tests/shell/install-rollback-cleans-staged.test.sh"
-      - "tests/shell/fetch-fedora-image.test.sh"
-      - "tests/shell/fetch-fedora-image-records.test.sh"
-      - "tests/shell/reusable-workflow-lint-merge-group.test.sh"
+      - ".github/workflows/dependabot-security-watch.yml"
+      - ".github/scripts/checks/dependabot_security_watch.py"
+      - "tests/scripts/shell/workflow_behaviour/dependabot-security-watch.test.sh"
+      - ".github/scripts/hardening/check-hardening-macos.sh"
+      - ".github/scripts/checks/check-planning-words.sh"
+      - ".github/scripts/fedora_image/fetch-fedora-image.sh"
+      - ".github/scripts/checks/is-version-bump.sh"
+      - ".github/scripts/checks/podman-lane-paths.sh"
+      - ".github/workflows/podman-lane.yml"
+      - ".github/scripts/checks/check-merge-group-triggers.py"
+      - "tests/scripts/shell/suite_guards/check-planning-words.test.sh"
+      - "tests/scripts/shell/hardening/check-hardening-macos.test.sh"
+      - "tests/scripts/shell/suite_guards/check-suite-completeness.test.sh"
+      - "tests/scripts/shell/install/install-help.test.sh"
+      - "tests/scripts/shell/install/install-rollback-cleans-staged.test.sh"
+      - "tests/scripts/shell/install/install-python-isolation.test.sh"
+      - "tests/scripts/shell/install/install-apt-keyring-package.test.sh"
+      - "tests/scripts/shell/fedora_image/fetch-fedora-image.test.sh"
+      - "tests/scripts/shell/workflow_behaviour/is-version-bump.test.sh"
+      - "tests/scripts/shell/workflow_behaviour/podman-lane-paths.test.sh"
+      - "tests/scripts/shell/workflow_behaviour/rust-build-inputs.test.sh"
+      - ".github/scripts/checks/rust-build-inputs.sh"
+      - "tests/scripts/shell/fedora_image/fetch-fedora-image-records.test.sh"
+      - "tests/scripts/shell/workflow_lint/reusable-workflow-lint-merge-group.test.sh"
       - ".cargo/**"
       - "Cargo.toml"
   pull_request:
@@ -57,30 +72,50 @@ on:
       # `test-command` below; the path filter is the other half.
       - ".github/workflows/reusable-workflow-lint.yml"
       - ".github/workflows/reusable-schedule-freshness.yml"
+      - ".github/workflows/ci.yml"
+      - ".github/workflows/binary-budget.yml"
+      - ".github/scripts/checks/check-caller-with-defaults.py"
       - ".github/workflows/podman-watch.yml"
-      - ".github/scripts/check-hardening-macos.sh"
-      - ".github/scripts/check-planning-words.sh"
-      - ".github/scripts/fetch-fedora-image.sh"
-      - ".github/scripts/check-merge-group-triggers.py"
-      - "tests/shell/check-planning-words.test.sh"
-      - "tests/shell/check-hardening-macos.test.sh"
-      - "tests/shell/reusable-workflow-lint-tooling-isolation.test.sh"
-      - "tests/shell/reusable-workflow-lint-tooling-installers.test.sh"
-      - "tests/shell/check-suite-completeness.test.sh"
-      - "tests/shell/reusable-workflow-lint-caller-if.test.sh"
-      - "tests/shell/reusable-workflow-lint-pin-length.test.sh"
-      - "tests/shell/reusable-workflow-lint-caller-with.test.sh"
-      - "tests/shell/reusable-workflow-lint-tooling-installers.test.sh"
-      - "tests/shell/reusable-workflow-lint-merge-group.test.sh"
-      - "tests/shell/install-help.test.sh"
-      - "tests/shell/install-rollback-cleans-staged.test.sh"
-      - "tests/shell/fetch-fedora-image.test.sh"
-      - "tests/shell/fetch-fedora-image-records.test.sh"
+      - ".github/workflows/dependabot-security-watch.yml"
+      - ".github/scripts/checks/dependabot_security_watch.py"
+      - "tests/scripts/shell/workflow_behaviour/dependabot-security-watch.test.sh"
+      - ".github/scripts/hardening/check-hardening-macos.sh"
+      - ".github/scripts/checks/check-planning-words.sh"
+      - ".github/scripts/fedora_image/fetch-fedora-image.sh"
+      - ".github/scripts/checks/is-version-bump.sh"
+      - ".github/scripts/checks/podman-lane-paths.sh"
+      - ".github/workflows/podman-lane.yml"
+      - ".github/scripts/checks/check-merge-group-triggers.py"
+      - "tests/scripts/shell/suite_guards/check-planning-words.test.sh"
+      - "tests/scripts/shell/hardening/check-hardening-macos.test.sh"
+      - "tests/scripts/shell/workflow_lint/reusable-workflow-lint-tooling-isolation.test.sh"
+      - "tests/scripts/shell/workflow_lint/reusable-workflow-lint-tooling-installers.test.sh"
+      - "tests/scripts/shell/suite_guards/check-suite-completeness.test.sh"
+      - "tests/scripts/shell/workflow_lint/reusable-workflow-lint-caller-if.test.sh"
+      - "tests/scripts/shell/workflow_lint/reusable-workflow-lint-pin-length.test.sh"
+      - "tests/scripts/shell/workflow_lint/reusable-workflow-lint-caller-with.test.sh"
+      - "tests/scripts/shell/workflow_lint/reusable-workflow-lint-tooling-installers.test.sh"
+      - "tests/scripts/shell/workflow_lint/reusable-workflow-lint-merge-group.test.sh"
+      - "tests/scripts/shell/install/install-help.test.sh"
+      - "tests/scripts/shell/install/install-rollback-cleans-staged.test.sh"
+      - "tests/scripts/shell/install/install-python-isolation.test.sh"
+      - "tests/scripts/shell/install/install-apt-keyring-package.test.sh"
+      - "tests/scripts/shell/fedora_image/fetch-fedora-image.test.sh"
+      - "tests/scripts/shell/workflow_behaviour/is-version-bump.test.sh"
+      - "tests/scripts/shell/workflow_behaviour/podman-lane-paths.test.sh"
+      - "tests/scripts/shell/workflow_behaviour/rust-build-inputs.test.sh"
+      - ".github/scripts/checks/rust-build-inputs.sh"
+      - "tests/scripts/shell/fedora_image/fetch-fedora-image-records.test.sh"
       - ".cargo/**"
       - "Cargo.toml"
 
 permissions:
   contents: read
+
+# Cancels superseded pull_request runs only; see asset-contract.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   shellcheck:
@@ -113,7 +148,7 @@ jobs:
       # never produces the sentinel, and this check names the file that
       # did not. Without this check, a truncated test and a passing one
       # look the same to the chain: exit 0, no count line.
-      test-command: bash ./tests/shell/check-suite-completeness.test.sh ./tests/shell/locale-pinned.test.sh ./tests/shell/ci-runs-every-test.test.sh ./tests/shell/check-hardening.test.sh ./tests/shell/check-hardening-macos.test.sh ./tests/shell/branch-health-conclusion.test.sh ./tests/shell/reusable-schedule-freshness.test.sh ./tests/shell/reusable-workflow-lint-tooling-isolation.test.sh ./tests/shell/reusable-workflow-lint-tooling-installers.test.sh ./tests/shell/reusable-workflow-lint-caller-if.test.sh ./tests/shell/reusable-workflow-lint-caller-with.test.sh ./tests/shell/reusable-workflow-lint-pin-length.test.sh ./tests/shell/reusable-workflow-lint-merge-group.test.sh ./tests/shell/install-rollback-cleans-staged.test.sh ./tests/shell/install-help.test.sh ./tests/shell/podman-watch.test.sh ./tests/shell/check-planning-words.test.sh ./tests/shell/fetch-fedora-image.test.sh ./tests/shell/fetch-fedora-image-records.test.sh ./tests/shell/bench-leftovers.test.sh
+      test-command: bash ./tests/scripts/shell/suite_guards/check-suite-completeness.test.sh ./tests/scripts/shell/suite_guards/locale-pinned.test.sh ./tests/scripts/shell/suite_guards/ci-runs-every-test.test.sh ./tests/scripts/shell/hardening/check-hardening.test.sh ./tests/scripts/shell/hardening/check-hardening-macos.test.sh ./tests/scripts/shell/workflow_behaviour/branch-health-conclusion.test.sh ./tests/scripts/shell/workflow_behaviour/reusable-schedule-freshness.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-tooling-isolation.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-tooling-installers.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-caller-if.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-caller-with.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-pin-length.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-merge-group.test.sh ./tests/scripts/shell/install/install-rollback-cleans-staged.test.sh ./tests/scripts/shell/install/install-help.test.sh ./tests/scripts/shell/install/install-python-isolation.test.sh ./tests/scripts/shell/install/install-apt-keyring-package.test.sh ./tests/scripts/shell/workflow_behaviour/podman-watch.test.sh ./tests/scripts/shell/workflow_behaviour/dependabot-security-watch.test.sh ./tests/scripts/shell/suite_guards/check-planning-words.test.sh ./tests/scripts/shell/fedora_image/fetch-fedora-image.test.sh ./tests/scripts/shell/fedora_image/fetch-fedora-image-records.test.sh ./tests/scripts/shell/bench/bench-leftovers.test.sh ./tests/scripts/shell/workflow_behaviour/is-version-bump.test.sh ./tests/scripts/shell/workflow_behaviour/podman-lane-paths.test.sh ./tests/scripts/shell/workflow_behaviour/binary-budget-paths.test.sh ./tests/scripts/shell/workflow_behaviour/rust-build-inputs.test.sh
       # branch-health-conclusion.test.sh pipes API JSON into the
       # conclusion script and asserts exit codes. jq is the tool that
       # turns the response into shell-readable lines, and it is not in
@@ -140,9 +175,31 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+      - name: Decide whether the binary can have changed
+        id: inputs
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          build=true
+          # The judge is read from the reviewed base, never from the PR's tree.
+          # Anything it does not name, a merge group and a missing judge build.
+          if [[ "$EVENT" = pull_request || "$EVENT" = push ]] &&
+             changed=$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA") &&
+             judge=$(git show "$BASE_SHA:.github/scripts/checks/rust-build-inputs.sh") &&
+             bash -c "$judge" -- "$changed"; then
+            build=false
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          [ "$build" = true ] || echo "Only paths the binary never reads changed; the release build is skipped."
       - name: Run the Mach-O hardening fixture
-        run: bash ./tests/shell/check-hardening-macos.test.sh
+        run: bash ./tests/scripts/shell/hardening/check-hardening-macos.test.sh
       - name: Install the pinned toolchain
+        if: steps.inputs.outputs.build == 'true'
         env:
           # Keep in step with the release workflow and reusable-rust-ci.
           RUST_TOOLCHAIN: "1.99"
@@ -150,6 +207,8 @@ jobs:
           rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
           rustup default "$RUST_TOOLCHAIN"
       - name: Build the release binary the way the release does
+        if: steps.inputs.outputs.build == 'true'
         run: cargo build --release --locked
       - name: Read the hardening off the built binary
-        run: bash .github/scripts/check-hardening-macos.sh target/release/podup
+        if: steps.inputs.outputs.build == 'true'
+        run: bash .github/scripts/hardening/check-hardening-macos.sh target/release/podup

@@ -26,7 +26,7 @@ A compose file is treated like a Makefile: running podup on one is equivalent to
 
 The compose keys that constrain a container are translated onto Podman's `SpecGenerator` and take effect on the running container. Everything below remains bounded by the rootless ceiling: a key can only tighten, never widen, what the launching user already has.
 
-A `podup audit` subcommand reads the project the same way `config` does and prints, for each service, which of those keys the file did not set. See [commands.md](commands.md#audit) for checks and exit codes; `audit` never changes runtime behavior, so it can be added to a CI gate.
+A `podup audit` subcommand reads the project the same way `config` does and prints, for each service, which of those keys the file did not set. See [commands-reference.md](commands-reference.md#audit) for checks and exit codes; `audit` never changes runtime behavior, so it can be added to a CI gate.
 
 - `security_opt` is parsed into the matching SpecGenerator fields:
   - `no-new-privileges` → `no_new_privileges`
@@ -58,7 +58,7 @@ The crate forbids `unsafe` by default (`#![deny(unsafe_code)]`). The few unavoid
 
 ## Supply chain
 
-- Dependencies are pinned in `Cargo.lock`; `cargo deny` enforces a license allowlist and bans yanked crates, and `cargo audit` runs weekly in CI.
+- Dependencies are pinned in `Cargo.lock`; `cargo deny` enforces a license allowlist and bans yanked crates, and `cargo audit` runs daily in CI.
 - No third-party CI actions are used, only GitHub-owned (SHA-pinned) actions.
 - Releases are Ed25519-signed and carry GitHub build-provenance attestations; a CycloneDX SBOM and third-party license attribution are published with each release. Verification steps are in self-update.md.
 - Release CI verifies Linux, Windows and macOS hardening before signing. Detailed gates live in threat-model.md; offline packaging stays in the Debian packaging and self-update guides.
@@ -106,7 +106,7 @@ podup is not a sandbox. The points below are documented limits an operator or au
 
 ## What the live integration lane validates
 
-The `podman-lane` workflow boots Fedora qemu VMs in the runner with full systemd, once per supported Podman major (Fedora 44 for Podman 5, rawhide for Podman 6). Each VM runs the integration suite as a rootless user. The lane is a **required status check** on every pull request; runtime-irrelevant PRs skip VM boot. Per-major `.github/podman-known-failures-<major>` files classify the failures the lane still sees; any test that fails without appearing on its major's list is reported as an unexpected regression.
+The `podman-lane` workflow boots Fedora qemu VMs in the runner with full systemd, once per supported Podman major (Fedora 44 for Podman 5, rawhide for Podman 6). Each VM runs the integration suite as a rootless user. The lane is a **required status check** on every pull request; runtime-irrelevant PRs skip VM boot. Per-major `.github/podman_lane/known-failures-<major>` files classify the failures the lane still sees; any test that fails without appearing on its major's list is reported as an unexpected regression.
 
 Unit/mocked tests cannot establish every libpod behavior; live tests and fuzzing add evidence, not exhaustive coverage.
 

@@ -95,7 +95,8 @@ fn newer_release_with_real_install_path() {
 	// The manifest is internally consistent but signed with a throwaway key,
 	// not the embedded release key, so verification must fail closed, proving
 	// the gate rejects anything not signed by the real key.
-	let err = run_with(&src, "0.6.0", UpdateOptions::default()).unwrap_err();
+	// This tests signature verification, independent of the host's package tools.
+	let err = run_with_guard(&src, "0.6.0", UpdateOptions::default(), Ok(None)).unwrap_err();
 	assert!(matches!(err, ComposeError::Update(_)));
 	assert!(src.fetched.borrow().contains(&"SHA256SUMS.sig".to_string()));
 }
@@ -114,7 +115,7 @@ fn package_managed_binary_refuses_and_does_not_download() {
 		check_only: false,
 		force: true,
 	};
-	let err = run_with_guard(&src, "0.6.0", opts, Some("apt")).unwrap_err();
+	let err = run_with_guard(&src, "0.6.0", opts, Ok(Some("apt"))).unwrap_err();
 	match err {
 		ComposeError::Update(msg) => assert!(msg.contains("apt")),
 		other => panic!("expected Update error, got {other:?}"),
@@ -138,7 +139,7 @@ fn force_reinstall_same_version_check_only_announces_reinstall() {
 		check_only: true,
 		force: true,
 	};
-	run_with_guard(&src, "0.6.0", opts, None).unwrap();
+	run_with_guard(&src, "0.6.0", opts, Ok(None)).unwrap();
 	assert!(
 		src.fetched.borrow().is_empty(),
 		"check-only must not download even when forcing a reinstall"
@@ -158,7 +159,7 @@ fn check_only_returns_before_package_manager_guard() {
 		check_only: true,
 		force: false,
 	};
-	run_with_guard(&src, "0.6.0", opts, Some("apt")).unwrap();
+	run_with_guard(&src, "0.6.0", opts, Ok(Some("apt"))).unwrap();
 	assert!(src.fetched.borrow().is_empty());
 }
 
@@ -171,4 +172,53 @@ fn exit_code_is_off_claps_reserved_two() {
 		UPDATE_FAILURE_EXIT_CODE
 	);
 	assert_ne!(UPDATE_FAILURE_EXIT_CODE, 2);
+}
+
+#[test]
+fn an_unknown_package_owner_refuses_even_a_forced_update_without_downloading() {
+	let src = MockSource {
+		latest: "v9.9.9".into(),
+		assets: HashMap::new(),
+		fetched: RefCell::new(Vec::new()),
+	};
+	let opts = UpdateOptions {
+		check_only: false,
+		force: true,
+	};
+	let err = run_with_guard(
+		&src,
+		"0.6.0",
+		opts,
+		Err(ComposeError::Update(
+			"cannot determine package ownership".into(),
+		)),
+	)
+	.unwrap_err();
+	assert!(err
+		.to_string()
+		.contains("cannot determine package ownership"));
+	assert!(src.fetched.borrow().is_empty());
+}
+
+#[test]
+fn check_only_tolerates_an_unknown_package_owner() {
+	let src = MockSource {
+		latest: "v9.9.9".into(),
+		assets: HashMap::new(),
+		fetched: RefCell::new(Vec::new()),
+	};
+	let opts = UpdateOptions {
+		check_only: true,
+		force: false,
+	};
+	run_with_guard(
+		&src,
+		"0.6.0",
+		opts,
+		Err(ComposeError::Update(
+			"cannot determine package ownership".into(),
+		)),
+	)
+	.unwrap();
+	assert!(src.fetched.borrow().is_empty());
 }

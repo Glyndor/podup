@@ -5,11 +5,14 @@
 
 use std::process;
 
-mod audit;
-mod cli;
-mod dispatch;
-mod main_runner;
-mod startup;
+// The binary's modules live in one folder; they are imported here under their
+// own names so no path inside them depends on that folder.
+mod command_line;
+use command_line::audit;
+use command_line::cli;
+use command_line::dispatch;
+use command_line::main_runner;
+use command_line::startup;
 
 use cli::*;
 use startup::exit_status::{command_failure_exit_code, interrupt_exit_code, print_error};
@@ -160,8 +163,7 @@ async fn run(error_context: &mut startup::exit_status::ErrorContext) -> podup::R
 		..
 	} = &cli.command
 	{
-		main_runner::short_circuits::render_audit_list_checks(*format);
-		return Ok(());
+		return main_runner::short_circuits::render_audit_list_checks(*format);
 	}
 
 	// `ls` discovers projects across the host by container label; it needs a
@@ -261,7 +263,12 @@ async fn run(error_context: &mut startup::exit_status::ErrorContext) -> podup::R
 	let file = if label_only && !compose_files.iter().any(|p| p.is_file()) {
 		podup::compose::types::ComposeFile::default()
 	} else {
-		podup::parse_files_with_env_files_interp(&compose_files, &cli.env_file, !no_interpolate)?
+		podup::parse_files_with_env_files_interp_in(
+			&compose_files,
+			&cli.env_file,
+			!no_interpolate,
+			cli.project_directory.as_deref(),
+		)?
 	};
 
 	if let Commands::Config(_) = &cli.command {

@@ -40,18 +40,18 @@ Run the suite before pushing. A failure must surface as a non-zero exit, so wrap
   cargo fmt --all --check || fail=1
   cargo clippy --locked --all-targets --all-features -- -D warnings || fail=1
   cargo test --locked --all-features --workspace || fail=1
-  for t in tests/shell/*.test.sh; do bash "$t" || { echo "FAILED: $t"; fail=1; }; done
+  for t in tests/scripts/shell/*/*.test.sh; do bash "$t" || { echo "FAILED: $t"; fail=1; }; done
   find . -type f \( -name '*.sh' -o -name '*.bash' \) -not -path './.git/*' \
     -print0 | xargs -0 -r shellcheck --severity=style || fail=1
   exit "$fail"
 )
 ```
 
-CI toolchain and MSRV pins live in `reusable-rust-ci.yml` and `ci.yml`. `tests/workflows/workflow_toolchain_pin` checks agreement; `pin-watch` checks stable updates weekly.
+CI toolchain and MSRV pins live in `reusable-rust-ci.yml` and `ci.yml`. `tests/repository/workflows/workflow_toolchain_pin` checks agreement; `pin-watch` checks stable updates weekly.
 
 The local `shellcheck` command scans `.sh`/`.bash` files; CI also includes extensionless scripts with shell shebangs.
 
-A shell test no workflow runs is indistinguishable from one that passes. `tests/shell/ci-runs-every-test.test.sh` checks both missing and nonexistent test paths. Rust tests are discovered by Cargo. Verify a test fails when its control is removed, and assert the expected diagnostic as well as the exit status.
+A shell test no workflow runs is indistinguishable from one that passes. `tests/scripts/shell/suite_guards/ci-runs-every-test.test.sh` checks both missing and nonexistent test paths. Rust tests are discovered by Cargo. Verify a test fails when its control is removed, and assert the expected diagnostic as well as the exit status.
 
 ## Workflows
 
@@ -63,7 +63,7 @@ CI is split by responsibility rather than gathered in one file:
 | `lint-shell.yml` | shellcheck and the shell test suite |
 | `lint-powershell.yml` | PSScriptAnalyzer on `install.ps1` |
 | `debian-build.yml` | the `.deb` builds under `debian/rules`' narrower feature set, on every change that can shift it |
-| `binary-budget.yml` | the release binary fits `bench/binary-budget-mib` |
+| `binary-budget.yml` | the release binary fits `bench/budgets/binary-budget-mib` |
 | `asset-contract.yml` | the release asset names, signing-key rotation, install self-test, and shell/PowerShell signing fixtures |
 | `podman-lane.yml` | the integration suite against live Podman 5 and Podman 6 in a Fedora qemu VM, with VM boot skipped for changes that cannot affect runtime behaviour (prose, templates) |
 | `podman-lane-develop-nightly.yml` | the coverage lane against Podman 6, fired nightly from `develop` |

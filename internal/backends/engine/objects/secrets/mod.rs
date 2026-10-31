@@ -1,0 +1,181 @@
+//! Secret and config injection.
+//!
+//! Every source is injected as a Podman-native secret attached to the container
+//! create spec:
+//!
+//! * inline `content:`/`environment:` and `file:` → created over the libpod API
+//!   (`secrets/create`, removing any prior secret of the name first so a re-`up`
+//!   is idempotent) under a project-scoped name, so nothing is written to a host
+//!   staging directory. The project's whole payload union is created once up
+//!   front by [`Engine::create_project_secrets`] (before services start
+//!   concurrently), not per-service, so a shared name is never raced.
+//! * `external: true` → mapped to a pre-existing `podman secret`, preflighted
+//!   with [`Engine::ensure_external_exists`] so a missing secret fails closed.
+//!
+//! `file:` sources used to be read-only bind mounts of the host path instead.
+//! That worked until the host enforced SELinux, where the container is denied
+//! the read outright and `up` still reports the container as started, measured
+//! on Fedora with both supported Podman majors, and reproduced by plain `podman
+//! run`, so the denial was the missing relabel and not podup. Relabelling was
+//! the other way out, but `z` rewrites the label of a file the user owns and may
+//! share with a confined host service, and compose gives them nowhere to ask for
+//! it. Reading the bytes into a native secret leaves the host untouched and puts
+//! `file:` on the path the other two sources already took. What the container
+//! sees is unchanged: the mount mode mirrors the host file's own bits (see
+//! [`Engine::uploaded_file_mode`]) rather than defaulting to `0444`; it is taken
+//! from the handle the bytes were read from, and a file that was not read has no
+//! mode to mount with.
+//!
+//! The trade is that the payload is a copy taken at `up`, so an in-place edit of
+//! the host file no longer reaches a running container. An atomic replace never
+//! did: a file bind pins the inode, so the write-new-and-rename that every
+//! careful rotation tool performs was already invisible.
+//!
+//! The pure compose→plan mapping lives in [`plan`].
+
+mod create;
+mod plan;
+mod remove;
+mod secret_bytes;
+
+use std::collections::HashMap;
+use std::path::Path;
+
+use crate::compose::types::{ComposeFile, Service};
+use crate::error::{ComposeError, Result};
+use crate::libpod::types::container::Secret;
+
+use plan::{collect_native_plans, Payload};
+// Re-exported so `container::config_hash` can build the same scoped name
+// `create_project_secrets` uses as its map key, without re-doing the
+// `format!` and risking the two views drifting. The `pub(crate)` on
+// `scoped_name` itself is the gate; this re-export just lifts it through
+// the (otherwise private) `plan` module.
+pub(crate) use plan::scoped_name;
+
+use crate::engine::Engine;
+
+impl Engine {
+	/// Build the Podman-native secret references for a service. Every source podup
+	/// creates (`content:`, `environment:` and `file:`) must already have been
+	/// created by [`Engine::create_project_secrets`] (run once up front), so this
+	/// only preflights `external: true` sources for existence, failing closed
+	/// rather than starting a container that lacks the secret, and assembles the
+	/// per-service references attached to the container spec.
+	///
+	/// Creation is deliberately *not* done here: services in the same
+	/// dependency level are brought up concurrently, and a per-service
+	/// delete-then-create on a shared secret name would race (one create could
+	/// clobber a secret another service's container is about to use). The up-front
+	/// pass creates each secret exactly once instead.
+	pub(in crate::backends::engine) async fn build_native_secrets(
+		&self,
+		service: &Service,
+		file: &ComposeFile,
+	) -> Result<Vec<Secret>> {
+		let plans = collect_native_plans(&self.project, service, file, &self.base_dir)?;
+		let mut secrets = Vec::with_capacity(plans.len());
+		for plan in plans {
+			// Payloads podup owns are created up front; only external sources need a
+			// (read-only, idempotent) existence preflight here.
+			if plan.payload.is_none() {
+				self.ensure_external_exists("secret", "secrets", &plan.source)
+					.await?;
+			}
+			// A `file:` source with no explicit `mode:` mounts with the host file's
+			// own bits, so what the container sees does not change now that the file
+			// is copied into a native secret rather than bind-mounted.
+			let mode = match (&plan.payload, plan.mode) {
+				(Some(Payload::File(path)), None) => {
+					Some(self.uploaded_file_mode(&plan.source, path)?)
+				}
+				_ => plan.mode,
+			};
+			secrets.push(Secret {
+				source: plan.source,
+				target: Some(plan.target),
+				uid: plan.uid,
+				gid: plan.gid,
+				mode,
+			});
+		}
+		Ok(secrets)
+	}
+}
+
+impl Engine {
+	/// The mode a `file:` secret is mounted with: the one recorded when its bytes
+	/// were read. A secret with no record was not read in this pass, and guessing
+	/// its mode from the path could widen it, so that is an error.
+	fn uploaded_file_mode(&self, source: &str, path: &Path) -> Result<u32> {
+		self.uploaded_file_modes
+			.lock()
+			.expect("uploaded_file_modes mutex poisoned")
+			.get(source)
+			.copied()
+			.ok_or_else(|| {
+				ComposeError::Unsupported(format!(
+					"secret file {} was not read for this run, so its mode is not known",
+					path.display()
+				))
+			})
+	}
+}
+
+/// Collect the project's podup-created secret/config payloads, deduplicated by
+/// their scoped Podman secret name.
+///
+/// The same secret referenced by several services resolves to one project-scoped
+/// name, so it is created once and shared. A first writer wins: every reference
+/// to a given name yields the same source from its compose definition.
+/// Content is borrowed; file and environment reads belong to creation.
+fn collect_payload_union<'a>(
+	project: &str,
+	file: &'a ComposeFile,
+	base_dir: &Path,
+) -> Result<HashMap<String, Payload<'a>>> {
+	let mut payloads: HashMap<String, Payload<'a>> = HashMap::new();
+	for service in file.services.values() {
+		for plan in collect_native_plans(project, service, file, base_dir)? {
+			if let Some(payload) = plan.payload {
+				payloads.entry(plan.source).or_insert(payload);
+			}
+		}
+	}
+	Ok(payloads)
+}
+
+/// Helpers the `create` and `remove` test modules share.
+#[cfg(test)]
+pub(super) mod tests_support {
+	use super::*;
+	#[cfg(unix)]
+	use crate::engine::fake_podman;
+
+	/// A compose file with `n` `content:` secrets named `s1..sn`, all on one
+	/// service, the shape the union deduplicates and then fans out over.
+	#[cfg(unix)]
+	pub(in crate::backends::engine::objects::secrets) fn file_with_content_secrets(
+		n: usize,
+	) -> ComposeFile {
+		let refs: String = (1..=n).map(|i| format!("      - s{i}\n")).collect();
+		let defs: String = (1..=n)
+			.map(|i| format!("  s{i}: {{content: \"v{i}\"}}\n"))
+			.collect();
+		crate::compose::parse_str(&format!(
+			"services:\n  app:\n    image: alpine\n    secrets:\n{refs}secrets:\n{defs}"
+		))
+		.expect("fixture compose file should parse")
+	}
+
+	#[cfg(unix)]
+	pub(in crate::backends::engine::objects::secrets) fn engine_on(
+		fake: &fake_podman::FakePodman,
+	) -> Engine {
+		Engine::with_base_dir(fake.client(), "proj".to_string(), std::env::temp_dir())
+	}
+}
+
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod tests;

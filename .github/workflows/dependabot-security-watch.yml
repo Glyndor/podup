@@ -1,0 +1,87 @@
+name: Dependabot security watch
+
+# Dependabot security updates ignore `target-branch` and open against `main`,
+# where `main-guard` refuses any pull request whose source is not `develop`.
+# The bump then sits open with one red check and nothing reports it. Keep
+# `target-branch: develop` and `main-guard` as they are, re-land each security
+# bump by hand off `develop`,
+# and make the stuck state loud. This workflow is the loud part: it lists the
+# open pull requests into `main` and fails when Dependabot authored one whose
+# head is not `develop`. The selection and the report live in
+# `.github/scripts/checks/dependabot_security_watch.py`, which has its own tests
+# under `lint-shell.yml`; this file only feeds it.
+#
+# Four triggers, each for a different reason:
+#
+# - `schedule`, daily: a stuck bump ages a day at a time, and the report has
+#   to keep appearing whether or not anyone pushes. GitHub reads `schedule:`
+#   from the default branch only, so this cron is inert until the workflow
+#   is promoted to `main`; the push trigger covers the gap until then.
+# - `push` to `develop`: the watcher proves itself alive every time work
+#   lands, which stands in for a freshness watcher. A cron that stops firing
+#   emits nothing, and "no alert" reads as "all clear"; a run that appears on
+#   every merge into `develop` is the second fact that tells the two apart.
+# - `pull_request`, path-filtered to this file, the script and its test: a
+#   workflow whose path list omits itself never runs on the pull request
+#   that changes it, so a broken edit merges without having been executed.
+#   The `gh pr list` call is real on that event too, and read-only.
+# - `workflow_dispatch`: rerun by hand after re-landing a bump, to confirm
+#   the report went quiet.
+#
+# The check this emits is `dependabot security watch`, composed from the job
+# id `dependabot-security-watch` and its `name:`. Written here so a ruleset
+# can quote the exact string; it is advisory on purpose and not required
+# anywhere. A required check that fails because a third party opened a pull
+# request would block every unrelated merge on someone else's disclosure
+# timing.
+
+on:
+  schedule:
+    # Daily, 05:37 UTC. An off-peak minute, so the run does not queue behind
+    # the on-the-hour crowd; GitHub schedules run hours late in any case.
+    - cron: "37 5 * * *"
+  workflow_dispatch:
+  push:
+    branches: [develop]
+  pull_request:
+    paths:
+      - ".github/workflows/dependabot-security-watch.yml"
+      - ".github/scripts/checks/dependabot_security_watch.py"
+      - "tests/scripts/shell/workflow_behaviour/dependabot-security-watch.test.sh"
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  dependabot-security-watch:
+    name: dependabot security watch
+    runs-on: ubuntu-latest
+    # Measurement pending: one checkout and one `gh pr list` call, and the
+    # closest sibling (`dependabot freshness` in the channel repositories)
+    # runs in under a minute. Tighten this after the first runs have been
+    # read, not before.
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Report Dependabot pull requests stuck against main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        # Bound the listing at 100 open pull requests into main, matching
+        # the watcher this workflow was ported from.
+        # `pipefail` makes a failed `gh` call fail the step; without it the
+        # script would read an empty stream, exit 2, and the step would
+        # still be red, but for a reason the log would not name.
+        run: |
+          set -euo pipefail
+          gh pr list --repo "$REPO" --base main --state open --limit 100 \
+            --json number,title,author,headRefName,createdAt \
+            | python3 -I .github/scripts/checks/dependabot_security_watch.py

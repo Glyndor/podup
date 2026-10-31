@@ -16,6 +16,11 @@ on:
 permissions:
   contents: read
 
+# Cancels superseded pull_request runs only; see asset-contract.yml.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   rust:
     uses: ./.github/workflows/reusable-rust-ci.yml
@@ -102,55 +107,26 @@ jobs:
   # max-age-days allows about two periods, so one miss is tolerated:
   # 15 for weekly, 3 for daily, 65 for the monthly benchmark.
   #
-  # These jobs are ADVISORY and must never be promoted to required status
+  # These observations are ADVISORY and must never be promoted to required status
   # checks. Each one fails because a cron somewhere else stopped firing, which
   # has nothing to do with the change under review, so requiring one would
   # block every pull request for the length of an unrelated outage. The rule
   # lives in the organisation standard, and it is repeated here because this
   # file is what somebody wiring a ruleset has open.
-  freshness-audit:
-    # Not a required check, and the freshness watchers report on OTHER
-    # workflows' runs and other branches, not about the merge group. They
-    # already run on the pull request, so in the queue they would only
-    # spend runners. The same `if:` sits on every watcher below.
+  # Monthly benchmark uses 65 days; weekly and daily limits remain per entry.
+  freshness:
     if: github.event_name != 'merge_group'
     permissions:
       contents: read
       actions: read
     uses: ./.github/workflows/reusable-schedule-freshness.yml
     with:
-      workflow: audit.yml
-      max-age-days: 15
-
-  freshness-fuzz:
-    if: github.event_name != 'merge_group'
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/reusable-schedule-freshness.yml
-    with:
-      workflow: fuzz.yml
-      max-age-days: 15
-
-  freshness-podman-lane:
-    if: github.event_name != 'merge_group'
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/reusable-schedule-freshness.yml
-    with:
-      workflow: podman-lane.yml
-      max-age-days: 3
-
-  freshness-podman-watch:
-    if: github.event_name != 'merge_group'
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/reusable-schedule-freshness.yml
-    with:
-      workflow: podman-watch.yml
-      max-age-days: 3
+      workflows: |
+        audit.yml 15
+        fuzz.yml 15
+        podman-lane.yml 3
+        podman-watch.yml 3
+        benchmark.yml 65
 
   # A newly added scheduled workflow cannot be registered here in the same pull
   # request that adds it. The guard passes only on a run with `event=schedule`
@@ -178,18 +154,6 @@ jobs:
   # guard, indistinguishable from a cron that stopped. The entry belongs here
   # once that lane is green again, not before, and #1380 is where the floor
   # itself is argued.
-
-  # Monthly (`0 4 1 * *`), so seventeen days without a run is normal and a
-  # weekly threshold here would fail on ordinary work for most of the month.
-  freshness-benchmark:
-    if: github.event_name != 'merge_group'
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/reusable-schedule-freshness.yml
-    with:
-      workflow: benchmark.yml
-      max-age-days: 65
 
   # Fails when the newest COMPLETED run of `ci.yml` on a protected branch is
   # not a success. The freshness watchers above cannot catch this: they read

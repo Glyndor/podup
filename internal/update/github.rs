@@ -154,7 +154,7 @@ fn read_capped(mut reader: impl Read, cap: u64) -> crate::Result<Vec<u8>> {
 /// Parse the `tag_name` out of a GitHub "latest release" JSON body. Split from
 /// the HTTP call so the malformed-metadata failure paths are unit-testable
 /// without a network seam.
-fn parse_latest_tag(body: &[u8]) -> crate::Result<String> {
+pub(crate) fn parse_latest_tag(body: &[u8]) -> crate::Result<String> {
 	#[derive(serde::Deserialize)]
 	struct Latest {
 		tag_name: String,

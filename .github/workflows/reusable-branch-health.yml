@@ -67,8 +67,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: branch-health-${{ github.workflow }}-${{ github.ref }}-${{ inputs.workflow }}-${{ inputs.branch }}
-  cancel-in-progress: true
+  group: branch-health-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ inputs.workflow }}-${{ inputs.branch }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   health:
@@ -131,4 +131,4 @@ jobs:
           HEAD_SHA: ${{ (github.event_name == 'push' && github.ref_name == inputs.branch) && github.sha || '' }}
         run: |
           set -euo pipefail
-          bash .github/scripts/check-branch-conclusion.sh
+          bash .github/scripts/checks/check-branch-conclusion.sh

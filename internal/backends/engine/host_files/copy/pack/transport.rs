@@ -1,0 +1,339 @@
+//! Streaming transport for the `cp` and watch-sync packers.
+//!
+//! The packers themselves live next to where they are called from:
+//! [`super::archive::pack_path`] for `cp`, and
+//! [`crate::engine::watch::sync::build_sync_tar`] for the watch sync. Both
+//! take a writer and a recorder; this module is the writer and the join of
+//! the producer task that drives the writer from a bounded channel.
+//!
+//! Memory is bounded by `CHUNK_BYTES * CHANNEL_CAP`, independent of source
+//! size: a 220 MB copy holds roughly that much plus the entry list and one
+//! chunk the writer is filling (#1844).
+
+use std::io::{self, Write};
+use std::path::Path;
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
+
+use bytes::{Bytes, BytesMut};
+use futures_util::Stream;
+use hyper::body::Frame;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+
+use crate::error::ComposeError;
+
+use super::super::upload::verify::SentEntry;
+use super::archive::pack_path;
+
+/// Frames handed to the body stream: a tar chunk, or the terminal error that
+/// aborts the upload. The same shape the build-context stream uses so a single
+/// client helper accepts both.
+pub(in crate::backends::engine::host_files::copy) type BodyItem = io::Result<Frame<Bytes>>;
+
+/// How many pending chunks the channel buffers. Bounds peak memory to about
+/// `CHUNK_BYTES * CHANNEL_CAP` regardless of source size, while still letting
+/// the blocking tar writer and the async socket writer run concurrently.
+pub(in crate::backends::engine::host_files::copy) const CHANNEL_CAP: usize = 8;
+
+/// Coalesce the tar writer's many small writes into ~64 KiB frames, so the
+/// body is a handful of sizeable chunks rather than thousands of tiny ones.
+pub(in crate::backends::engine::host_files::copy) const CHUNK_BYTES: usize = 64 * 1024;
+
+/// What the error of the writer says when the receiver of the body went away
+/// first. It is only the message: whether that happened is
+/// [`PackedStream::receiver_dropped`], never read back from this text.
+pub(in crate::backends::engine::host_files::copy) const RECEIVER_DROPPED: &str =
+	"cp: archive receiver dropped before the tar finished";
+
+/// A [`Write`] sink that forwards the tar bytes to an async channel as `Bytes`
+/// frames, coalescing small writes to `CHUNK_BYTES`. Blocks (backpressure)
+/// when the consumer is behind; errors if the consumer has gone away.
+struct ChannelWriter {
+	tx: mpsc::Sender<BodyItem>,
+	buf: BytesMut,
+	/// Set when a send fails because the receiver is gone. The one place that
+	/// knows it, so nothing has to recognise it from the text of an error.
+	dropped: Arc<AtomicBool>,
+}
+
+impl ChannelWriter {
+	fn send_pending(&mut self) -> io::Result<()> {
+		if self.buf.is_empty() {
+			return Ok(());
+		}
+		let chunk = self.buf.split().freeze();
+		self.tx.blocking_send(Ok(Frame::data(chunk))).map_err(|_| {
+			self.dropped.store(true, Ordering::Relaxed);
+			io::Error::new(io::ErrorKind::BrokenPipe, RECEIVER_DROPPED)
+		})
+	}
+}
+
+impl Write for ChannelWriter {
+	fn write(&mut self, data: &[u8]) -> io::Result<usize> {
+		self.buf.extend_from_slice(data);
+		if self.buf.len() >= CHUNK_BYTES {
+			self.send_pending()?;
+		}
+		Ok(data.len())
+	}
+
+	fn flush(&mut self) -> io::Result<()> {
+		self.send_pending()
+	}
+}
+
+/// The producer side of an in-flight streaming upload: a body stream the PUT
+/// request hands to the libpod client, and a join handle whose [`Output`] is
+/// the packing outcome (entries + result). The caller awaits the handle
+/// after the PUT to learn both what was sent and whether packing errored
+/// mid-stream.
+///
+/// The body stream is `Pin<Box<dyn Stream>>` so callers do not need to
+/// import `Pin` themselves; the producer handle is the only place the
+/// blocking tar work lives.
+pub(in crate::backends::engine) struct PackedStream {
+	/// A stream of body frames the client sends as the PUT body. Yields
+	/// `io::Result<Frame<Bytes>>` so a mid-pack error reaches hyper as a body
+	/// write error rather than truncating the archive silently. The stream
+	/// advances `counter` as it yields, so the `cp` progress row keeps
+	/// ticking even though the bytes are no longer buffered in `podup`.
+	pub(in crate::backends::engine::host_files::copy) body:
+		Pin<Box<dyn Stream<Item = BodyItem> + Send + 'static>>,
+	/// The blocking pack task. Its output is `(Vec<SentEntry>, Result<()>)`:
+	/// the entries the packer recorded, and the error that should reach the
+	/// caller if packing fails (a file vanished, a permission denied), not
+	/// the generic "could not be confirmed".
+	pub(in crate::backends::engine::host_files::copy) producer: JoinHandle<PackOutcome>,
+	/// Set by the producer when the error it returns is only the receiver of the
+	/// body having gone away: after a clean answer that is the timing of the
+	/// response, not a failed pack. Any other error of the pack leaves it unset.
+	pub(in crate::backends::engine::host_files::copy) receiver_dropped: Arc<AtomicBool>,
+}
+
+/// Combine what the pack reported with what closing the archive reported.
+///
+/// The error of the pack comes first: it names the entry that was refused, and
+/// closing an archive whose receiver has gone fails with a message about the
+/// receiver, which would replace it. `dropped_during_pack` says whether the
+/// writer lost its receiver before the pack returned; only then is a pack error
+/// the consequence of that. A failure to close is always the receiver, because
+/// the writer is the only thing that can fail.
+fn conclude(
+	sent: Vec<SentEntry>,
+	packed: Result<(), ComposeError>,
+	dropped_during_pack: bool,
+	closing: Result<(), ComposeError>,
+	receiver_dropped: &AtomicBool,
+) -> PackOutcome {
+	match (packed, closing) {
+		(Err(e), _) => {
+			receiver_dropped.store(dropped_during_pack, Ordering::Relaxed);
+			(sent, Err(e))
+		}
+		(Ok(()), Err(e)) => {
+			receiver_dropped.store(true, Ordering::Relaxed);
+			(sent, Err(e))
+		}
+		(Ok(()), Ok(())) => (sent, Ok(())),
+	}
+}
+
+/// What the blocking pack task yields. The `Vec<SentEntry>` is the list the
+/// post-PUT confirmation compares against; the `Result` is the error to
+/// surface if packing fails before the PUT body finishes. `JoinHandle`
+/// errors (the task was aborted or panicked) are mapped to `ComposeError`
+/// at the call site, keeping this type the pure outcome of the work.
+pub(in crate::backends::engine::host_files::copy) type PackOutcome =
+	(Vec<SentEntry>, Result<(), ComposeError>);
+
+/// Wrap `rx` into a stream that increments `counter` by the size of each
+/// yielded frame, so the progress row keeps advancing as bytes leave the
+/// body, not as the producer queues them.
+fn receiver_body_with_counter(
+	rx: mpsc::Receiver<BodyItem>,
+	counter: Arc<AtomicU64>,
+) -> Pin<Box<dyn Stream<Item = BodyItem> + Send + 'static>> {
+	Box::pin(futures_util::stream::unfold(rx, move |mut rx| {
+		let counter = counter.clone();
+		async move {
+			rx.recv().await.map(|item| {
+				if let Ok(ref frame) = item {
+					if let Some(data) = frame.data_ref() {
+						counter.fetch_add(data.len() as u64, Ordering::Relaxed);
+					}
+				}
+				(item, rx)
+			})
+		}
+	}))
+}
+
+/// Pack a host file or directory into a streaming archive and record every
+/// entry the tar writer appends. The body stream reads from a bounded
+/// channel; the blocking pack task does the filesystem walk, the tar
+/// assembly, and the per-entry recording on a `spawn_blocking` thread.
+///
+/// The actual packing (walking the source, classifying entries, recording
+/// each one) lives in [`super::archive::pack_path`]. This function is
+/// just the transport: a [`ChannelWriter`] behind a [`tar::Builder`], a
+/// bounded channel, and the producer task that ties them together.
+///
+/// `src`, `follow_link`, `name_override` and `contents` carry the same meaning
+/// they do for [`super::archive::pack_path`]. `counter` is the shared
+/// byte counter the body stream advances as it yields frames, so the `cp`
+/// progress row keeps ticking.
+///
+/// The body stream closes when the producer finishes (or aborts); hyper sees
+/// a clean body end and reports `Ok` if the runtime accepted the partial
+/// archive, which the verification step then either confirms or refuses.
+pub(in crate::backends::engine::host_files::copy) fn pack_path_stream(
+	src: &Path,
+	follow_link: bool,
+	name_override: Option<&str>,
+	contents: bool,
+	counter: Arc<AtomicU64>,
+) -> PackedStream {
+	let src = src.to_path_buf();
+	// Owned so the closure is `'static`: `tokio::task::spawn_blocking`
+	// requires the closure to outlive any borrow of the caller's stack.
+	let name_override: Option<String> = name_override.map(str::to_owned);
+	let (tx, rx) = mpsc::channel::<BodyItem>(CHANNEL_CAP);
+	let receiver_dropped = Arc::new(AtomicBool::new(false));
+	let flag = receiver_dropped.clone();
+
+	let producer = tokio::task::spawn_blocking(move || -> PackOutcome {
+		let mut writer = ChannelWriter {
+			tx,
+			buf: BytesMut::with_capacity(CHUNK_BYTES),
+			dropped: flag.clone(),
+		};
+		let mut tar = crate::engine::context::tar_stream::builder(&mut writer);
+		tar.follow_symlinks(follow_link);
+		let mut sent: Vec<SentEntry> = Vec::new();
+
+		let result = pack_path(
+			&src,
+			follow_link,
+			name_override.as_deref(),
+			contents,
+			&mut tar,
+			&mut sent,
+		);
+
+		// Close the tar (writes the two zero-block EOF marker) and flush the
+		// channel writer. `into_inner` returns the inner writer; the only
+		// way for it to fail is if the channel send fails, which means the
+		// consumer (the PUT body) has gone away, which surfaces as a
+		// different error anyway.
+		let dropped_during_pack = flag.load(Ordering::Relaxed);
+		let closing = tar
+			.into_inner()
+			.map(|_| ())
+			.map_err(|e| cp_err(format!("tar finish: {e}")))
+			.and_then(|()| writer.flush().map_err(|e| cp_err(format!("flush: {e}"))));
+
+		conclude(sent, result, dropped_during_pack, closing, &flag)
+	});
+
+	let body = receiver_body_with_counter(rx, counter);
+
+	PackedStream {
+		body,
+		producer,
+		receiver_dropped,
+	}
+}
+
+/// As [`pack_path_stream`], but for the watch sync: the body is gzip-wrapped
+/// (libpod's archive endpoint accepts either, but the existing sync code
+/// gzipped), the entry list is recorded by the same [`super::common`]
+/// helpers the `cp` packer uses, and the error mapping keeps the `watch`
+/// category instead of `cp`.
+///
+/// `skip` is consulted for every entry that would otherwise be recorded: the
+/// root entry and each descendant of a directory. The watch caller uses it
+/// to drop entries that would land in a deeper bind that maps back into the
+/// watched tree, the only place the packer can detect the loop because the
+/// rule-wide check looks at the rule root, not at every descendant.
+#[cfg(feature = "watch")]
+pub(in crate::backends::engine) fn build_sync_tar_stream(
+	src: &Path,
+	entry_name: &Path,
+	counter: Arc<AtomicU64>,
+	skip: Arc<dyn Fn(&Path) -> bool + Send + Sync>,
+) -> PackedStream {
+	use flate2::write::GzEncoder;
+	use flate2::Compression;
+
+	let src = src.to_path_buf();
+	let entry_name = entry_name.to_path_buf();
+	let (tx, rx) = mpsc::channel::<BodyItem>(CHANNEL_CAP);
+	let receiver_dropped = Arc::new(AtomicBool::new(false));
+	let flag = receiver_dropped.clone();
+
+	let producer = tokio::task::spawn_blocking(move || -> PackOutcome {
+		let mut channel_writer = ChannelWriter {
+			tx,
+			buf: BytesMut::with_capacity(CHUNK_BYTES),
+			dropped: flag.clone(),
+		};
+		let encoder = GzEncoder::new(&mut channel_writer, Compression::default());
+		let mut tar = crate::engine::context::tar_stream::builder(encoder);
+		// Watch sync stores symlinks as links: a symlink inside the watched
+		// tree would otherwise copy the contents of its (possibly out-of-tree)
+		// target into the container.
+		tar.follow_symlinks(false);
+		let mut sent: Vec<SentEntry> = Vec::new();
+
+		let result = crate::engine::watch::sync::build_sync_tar(
+			&src,
+			&entry_name,
+			&mut tar,
+			&mut sent,
+			&*skip,
+		);
+
+		// `into_inner` runs the gzip footer; an abort along the way surfaces
+		// as a watch error so the caller's sync warning line keeps its
+		// category.
+		let dropped_during_pack = flag.load(Ordering::Relaxed);
+		let closing = tar
+			.into_inner()
+			.map(|_| ())
+			.map_err(|e| watch_err(format!("gzip: {e}")))
+			.and_then(|()| {
+				channel_writer
+					.flush()
+					.map_err(|e| watch_err(format!("flush: {e}")))
+			});
+
+		conclude(sent, result, dropped_during_pack, closing, &flag)
+	});
+
+	let body = receiver_body_with_counter(rx, counter);
+
+	PackedStream {
+		body,
+		producer,
+		receiver_dropped,
+	}
+}
+
+/// Map a transport-level error inside the `cp` streaming path to a `cp`
+/// `ComposeError`.
+fn cp_err(msg: String) -> ComposeError {
+	ComposeError::Copy(format!("cp: {msg}"))
+}
+
+/// Map a transport-level error inside the watch streaming path to a `watch`
+/// `ComposeError`.
+fn watch_err(msg: String) -> ComposeError {
+	ComposeError::Watch(format!("sync: {msg}"))
+}
+
+#[cfg(test)]
+#[path = "transport_tests.rs"]
+mod tests;

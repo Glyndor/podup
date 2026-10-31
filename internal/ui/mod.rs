@@ -15,16 +15,12 @@ pub use anstyle::{AnsiColor, Style};
 
 pub use anstream::ColorChoice;
 
-mod colour;
-mod header;
-mod identity;
-mod labelled;
-mod lines;
-mod palette;
 pub mod progress;
-mod status;
-mod styles;
-mod table;
+mod render;
+mod style;
+
+use render::{header, labelled, lines, table};
+use style::{colour, identity, palette, status, styles};
 
 pub use colour::{set_color_choice, stderr_colored, stdout_colored};
 pub use header::{print_bold_header, write_bold_header};

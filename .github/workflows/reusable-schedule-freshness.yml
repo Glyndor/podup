@@ -32,14 +32,22 @@ on:
         description: >-
           File name of the scheduled workflow to check, e.g. "audit.yml".
         type: string
-        required: true
+        required: false
       max-age-days:
         description: >-
           Fail when the newest successful scheduled run is older than this.
           Allow about two periods, so a weekly job tolerates one miss: 15 for a
           weekly schedule, 3 for a daily one.
         type: number
-        required: true
+        required: false
+        default: 15
+      workflows:
+        description: >-
+          Optional newline-separated workflow/max-age-days pairs. When set,
+          check every pair and report each result, even after a failure.
+        type: string
+        required: false
+        default: ''
       count-any-conclusion:
         description: >-
           Measure the newest scheduled run whatever its conclusion, instead of
@@ -58,8 +66,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: schedule-freshness-${{ github.workflow }}-${{ github.ref }}-${{ inputs.workflow }}
-  cancel-in-progress: true
+  group: schedule-freshness-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ inputs.workflow }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   freshness:
@@ -67,8 +75,8 @@ jobs:
     runs-on: ubuntu-latest
     # Bound: 2 to 15s measured, and it queries the API. Ten times that,
     # rounded up, never under ten minutes; the six-hour default is what a
-    # hang would otherwise cost. The three attempts below add at most 40
-    # seconds of sleep, which the ten minutes already cover.
+    # hang would otherwise cost. Each observation adds at most 40 seconds
+    # of retry sleep; the five-entry CI batch fits inside ten minutes.
     timeout-minutes: 10
     permissions:
       actions: read # reading this repository's workflow-run history
@@ -83,8 +91,15 @@ jobs:
           REPO: ${{ github.repository }}
           WORKFLOW: ${{ inputs.workflow }}
           MAX_AGE_DAYS: ${{ inputs.max-age-days }}
+          WORKFLOWS: ${{ inputs.workflows }}
           ANY_CONCLUSION: ${{ inputs.count-any-conclusion }}
         run: |
+          set -euo pipefail
+
+          # A child shell keeps errexit active even when its result is collected.
+          # One failed API call must fail that observation and still allow the rest.
+          check_workflow() {
+            bash -euo pipefail <<'CHECK'
           set -euo pipefail
 
           # status=success is the question for a workflow watched from
@@ -183,3 +198,39 @@ jobs:
           echo "a multiple of the period is. Toggle the workflow off and on to re-register it, then check" >&2
           echo "the next scheduled fire rather than the next few minutes." >&2
           exit 1
+          CHECK
+          }
+
+          pairs="${WORKFLOWS:-}"
+          if [ -z "$pairs" ]; then
+            pairs="${WORKFLOW:?workflow or workflows is required} ${MAX_AGE_DAYS:?age is required}"
+          fi
+          summary="${GITHUB_STEP_SUMMARY:-/dev/null}"
+          printf '| Workflow | Limit (days) | Result |\n| --- | ---: | --- |\n' >> "$summary"
+          failed=0
+          checked=0
+          while read -r workflow days extra; do
+            # YAML block scalars normally carry a trailing newline.
+            [ -z "$workflow$days$extra" ] && continue
+            if [[ ! "$workflow" =~ ^[a-zA-Z0-9_-]+\.ya?ml$ ]] ||
+               [[ ! "$days" =~ ^[0-9]+$ ]] || [ -n "$extra" ]; then
+              echo "::error::Invalid workflow/age pair: $workflow $days $extra"
+              failed=1
+              continue
+            fi
+            checked=$((checked + 1))
+            export WORKFLOW="$workflow" MAX_AGE_DAYS="$days"
+            if check_workflow; then
+              result=PASS
+            else
+              result=FAIL
+              failed=1
+              echo "::error::Freshness check failed for $workflow (limit: $days days)."
+            fi
+            printf '| %s | %s | %s |\n' "$workflow" "$days" "$result" >> "$summary"
+          done <<< "$pairs"
+          if [ "$checked" -eq 0 ]; then
+            echo "::error::No workflow/age pairs to check."
+            failed=1
+          fi
+          exit "$failed"

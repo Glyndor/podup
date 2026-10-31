@@ -19,46 +19,43 @@
 // size and expensive at three hundred.
 #![deny(missing_docs)]
 
-/// `podup autostart`: render and manage a rootless `systemctl --user` unit that
-/// brings a compose stack up at boot (service mode).
-pub mod autostart;
-/// Compose-file parsing, `extends:`/`include:` resolution, and topological
-/// service ordering.
-pub mod compose;
-pub(crate) mod dotenv;
-pub(crate) mod engine;
-/// `env_file:` loading: KEY=VALUE pairs from a service's declared files.
-pub mod env_file;
-pub(crate) mod error;
-pub(crate) mod filesystem;
-pub(crate) mod libpod;
-/// Podman socket connection helpers.
-pub mod podman;
-/// Port-mapping parser for the docker-compose `ports:` format variants.
-pub mod ports;
-/// Quadlet export: translate a parsed compose file into Podman systemd units.
-pub mod quadlet;
-/// CLI diagnostics for container names passed where a service name is required.
-#[doc(hidden)]
-pub mod service_hint;
-/// Memory and CPU value parsers shared by the engine and tests.
-pub mod size;
-/// Docker Compose `${VAR}`/`$VAR` substitution over raw YAML before parsing.
-pub mod substitute;
-pub(crate) mod timestamp;
+// One folder per concern. Each module the rest of the crate (or a consumer of
+// the library) reaches by name is re-exported from here under that name, so
+// moving a module between folders never changes a path.
+mod backends;
+mod connection;
+mod errors;
+mod parsing;
 /// Terminal colour/styling, honouring `--ansi`, `NO_COLOR`, and TTY detection.
 pub mod ui;
-pub(crate) mod units;
 /// Secure self-update for the `podup` binary (signature-verified release fetch).
 #[cfg(feature = "update")]
 pub mod update;
+
+pub use backends::autostart;
+pub(crate) use backends::engine;
+pub use backends::quadlet;
+pub(crate) use connection::libpod;
+pub use connection::podman;
+pub use parsing::compose;
+use parsing::input;
+pub use parsing::substitute;
+use parsing::values;
+
+pub(crate) use errors::error;
+#[doc(hidden)]
+pub use errors::service_hint;
+pub use input::env_file;
+pub(crate) use input::{dotenv, filesystem};
+pub use values::{ports, size};
+pub(crate) use values::{timestamp, units};
 
 /// Compose entry points: the parser variants and service-ordering helpers,
 /// re-exported at the crate root for callers.
 pub use compose::{
 	parse_file_with_env_files, parse_files_with_env_files, parse_files_with_env_files_interp,
-	parse_str, parse_str_raw, resolve_levels, resolve_order, validate_config,
-	warn_unscheduled_jobs,
+	parse_files_with_env_files_interp_in, parse_str, parse_str_raw, resolve_levels, resolve_order,
+	validate_config, warn_unscheduled_jobs,
 };
 /// The lifecycle `Engine` and its per-command option/override types, plus the
 /// project-name/listing helpers: the surface a CLI drives compose operations
@@ -66,11 +63,11 @@ pub use compose::{
 pub use engine::{
 	is_safe_project_name, list_projects, list_projects_filtered, resolve_image_digests,
 	resolve_network_name, retain_active_profiles, retain_active_profiles_with_targets,
-	surface_host_modes, validate_stop_timeout, AttachOptions, AttachOutcome, AttachSummary,
-	BuildOptions, CommitOptions, CpOptions, Engine, EventsOptions, ExecOptions, ImagesOptions,
-	LogsDisplay, LogsOptions, LsOptions, ProjectLock, PsDisplayOptions, PsFilterOptions, PsOptions,
-	PullOptions, PushOptions, RunOptions, RunOverrides, StatsOptions, VolumesDisplayOptions,
-	VolumesOptions, DEFAULT_LOG_TAIL,
+	retain_up_scope, surface_host_modes, validate_stop_timeout, AttachOptions, AttachOutcome,
+	AttachSummary, BuildOptions, CommitOptions, ContainerSnapshot, CpOptions, Engine,
+	EventsOptions, ExecOptions, ImagesOptions, LogsDisplay, LogsOptions, LsOptions, ProjectLock,
+	PsDisplayOptions, PsFilterOptions, PsOptions, PullOptions, PushOptions, RunOptions,
+	RunOverrides, StatsOptions, VolumesDisplayOptions, VolumesOptions, DEFAULT_LOG_TAIL,
 };
 /// Return the runtime value of `security_opt`'s `no-new-privileges` key:
 /// `Some(true)` when the engine will apply it, `Some(false)` when an entry
@@ -149,6 +146,13 @@ pub fn ports_published_on_wildcard_in(
 pub fn effective_memory_limit(service: &crate::compose::types::Service) -> Option<i64> {
 	crate::engine::effective_memory_limit(service)
 }
+/// The PID cap the engine forwards into `LinuxPids.limit`. Top-level
+/// `pids_limit` wins over deploy, including the unlimited sentinel `-1`.
+/// Shared with the binary's audit; not a supported library interface.
+#[doc(hidden)]
+pub fn effective_pids_limit(service: &crate::compose::types::Service) -> Option<i64> {
+	crate::engine::effective_pids_limit(service)
+}
 /// The CFS CPU quota the engine will forward into `LinuxCPU.quota`, in
 /// microseconds over `cpu_period` (default 100_000). `cpu_quota:` wins
 /// when present, including `-1` (Docker's "unlimited" sentinel) and
@@ -202,10 +206,34 @@ pub use libpod::{parse_json_lines, parse_multiplexed, parse_raw, LogOutput};
 /// container→host tar extractor.
 #[cfg(feature = "test-helpers")]
 pub mod fuzz_api {
-	pub use crate::dotenv::parse as dotenv_parse;
+	pub use crate::dotenv::{parse as dotenv_parse, parse_strict as dotenv_parse_strict};
 	pub use crate::engine::copy::archive::extract_tar_guarded;
 	pub use crate::libpod::types::stream::{
 		parse_frame, record_stream_bytes, take_json_line, MAX_STREAM_BUF,
 	};
 	pub use crate::libpod::PodmanError;
+
+	/// The `.dockerignore` matcher.
+	pub use crate::engine::context::fuzz_hooks::{
+		evaluate, glob_match, is_ignored, pattern_matches,
+	};
+	/// The whole-second interval syntax of the pull policies.
+	pub fn parse_interval(value: &str) -> Option<u32> {
+		crate::engine::build::fuzz_parse_interval(value)
+	}
+	/// The daemon's JSON response types.
+	pub use crate::libpod::types::fuzz_hook::decode as libpod_json_decode;
+	/// The cron to `OnCalendar=` conversion.
+	pub use crate::quadlet::fuzz_hook::{convert as cron_convert, Converted as CronConverted};
+	/// The self-update parsers: the version, the digest and the release tag.
+	#[cfg(feature = "update")]
+	pub use crate::update::fuzz_hook::{expected_digest, parse_latest_tag, parse_version, Version};
+
+	/// `sanitize_name`, as an owned string plus whether it returned the input
+	/// untouched (`true`) or had to escape something (`false`).
+	pub fn sanitize_name(s: &str) -> (String, bool) {
+		let out = crate::error::sanitize_name(s);
+		let borrowed = matches!(out, std::borrow::Cow::Borrowed(_));
+		(out.into_owned(), borrowed)
+	}
 }

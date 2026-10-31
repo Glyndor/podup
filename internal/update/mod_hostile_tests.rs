@@ -39,7 +39,7 @@ fn update(src: &dyn ReleaseSource, current: &str, force: bool) -> crate::Result<
 		check_only: false,
 		force,
 	};
-	run_with_guard(src, current, opts, None)
+	run_with_guard(src, current, opts, Ok(None))
 }
 
 #[test]

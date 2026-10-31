@@ -169,11 +169,22 @@ PUBKEYS=()
 #       3 the configured release key is malformed (a configuration problem,
 #         not a release-tampering problem - kept distinct from rc=1 so the
 #         caller can report it without scaring the user about the release).
+#
+# Every python call below runs with -I, the isolated mode. `python3 -c` and
+# `python3 -` put the current directory at the front of sys.path, so a
+# `cryptography/` package planted in the directory the installer was started
+# from is imported instead of the real one - and a fake `cryptography` whose
+# verify() always succeeds turns the signature check into a no-op that the
+# script then trusts on the strength of its exit code. -I removes the
+# current directory (and the user site directory) from the search path, so
+# the interpreter can only import what the system installed. The cost is
+# that a cryptography installed with `pip install --user` stops being
+# visible; the installer says so when it cannot verify.
 ed25519_verify() {
 	[[ ${#PUBKEYS[@]} -gt 0 ]] || return 2
 	command -v python3 >/dev/null 2>&1 || return 2
-	python3 -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey" 2>/dev/null || return 2
-	python3 - "$1" "$2" "${PUBKEYS[@]}" <<'PYEOF'
+	python3 -I -c "from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey" 2>/dev/null || return 2
+	python3 -I - "$1" "$2" "${PUBKEYS[@]}" <<'PYEOF'
 import base64, binascii, sys
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from cryptography.exceptions import InvalidSignature
@@ -242,6 +253,11 @@ run_root() {
 # release follows). python3 is already required for the Ed25519
 # signature check, so leaning on it for JSON parsing here does not add
 # a new dependency.
+#
+# The parse runs in isolated mode (-I), like the signature check: a
+# `json.py` planted in the current directory would shadow the standard
+# library module and could hand back the tag of an older release, which
+# is exactly the rollback the self-test below exists to refuse.
 resolve_release_tag() {
 	local api_url="https://api.github.com/repos/${REPO}/releases/latest"
 	local body
@@ -249,7 +265,7 @@ resolve_release_tag() {
 		--max-time 60 -fsSL \
 		-H 'Accept: application/vnd.github+json' \
 		"$api_url")" || fail "Cannot resolve latest release tag from ${api_url}"
-	python3 - "$body" <<'PYEOF' || fail "Malformed GitHub releases JSON from /releases/latest"
+	python3 -I - "$body" <<'PYEOF' || fail "Malformed GitHub releases JSON from /releases/latest"
 import json, sys
 try:
     data = json.loads(sys.argv[1])
@@ -268,7 +284,7 @@ PYEOF
 # provenance (the manifest and the asset are both legitimately signed),
 # but its --version still reports the old release. The self-test refuses
 # such an install the same way the Rust `podup update` does
-# (internal/update/install.rs:152-205).
+# (internal/update/install/self_test.rs:64-120).
 #
 # Strict equality, with one optional leading `v`. Each whitespace-
 # delimited token in the staged binary's --version output is compared
@@ -315,6 +331,7 @@ install_apt() {
 	[[ "$OS" == "linux" ]] || fail "--apt is only supported on Debian/Ubuntu Linux"
 	command -v apt-get >/dev/null 2>&1 || fail "--apt requires apt-get (Debian/Ubuntu)"
 	command -v dpkg >/dev/null 2>&1 || fail "--apt requires dpkg"
+	command -v dpkg-deb >/dev/null 2>&1 || fail "--apt requires dpkg-deb (Debian/Ubuntu)"
 
 	# Bootstrap the repository over HTTPS by installing the glyndor-archive-keyring
 	# package, which registers the signing key and source list. The package is
@@ -338,6 +355,19 @@ install_apt() {
 		2) fail "Cannot verify keyring signature: install python3 with the 'cryptography' package (and a configured release key) - aborting" ;;
 		3) fail "Configured release key is malformed - check PODUP_RELEASE_PUBKEY_B64 / _PUBKEY2_B64 values and re-run" ;;
 	esac
+
+	# The signature proves the bytes carry the release key's signature, not
+	# that the bytes are the keyring package. One key signs every artifact
+	# the release publishes, so any .deb already published under it - an
+	# older keyring, another package entirely - passes the signature check.
+	# The package is installed as root, so the name it declares is checked
+	# before it goes in.
+	local kr_pkg=""
+	kr_pkg="$(dpkg-deb -f "${TMP_DIR}/${kr}" Package 2>/dev/null)" || kr_pkg=""
+	if [[ "$kr_pkg" != "glyndor-archive-keyring" ]]; then
+		fail "Refusing to install ${kr}: its Package field is '${kr_pkg:-<unreadable>}', expected glyndor-archive-keyring - aborting"
+	fi
+	log_ok "Keyring package name verified"
 
 	run_root dpkg -i "${TMP_DIR}/${kr}"
 	run_root apt-get update
@@ -434,7 +464,7 @@ or python3 with the 'cryptography' package, or set PODUP_RELEASE_PUBKEY_B64, the
 	# is then applied explicitly, masked with ~0o777 so a setuid/setgid/
 	# sticky bit on the target (planted or inherited) cannot ride onto the
 	# freshly installed binary, the same discipline the Rust updater
-	# follows at internal/update/install.rs:237-298. Mirrors what the
+	# follows at internal/update/install/swap.rs:6-97. Mirrors what the
 	# Rust `install_at` does, with `install` swapped for the equivalent
 	# `cp + chmod` because `-m` only sets the mode of the *new* file and
 	# cannot start private then widen.
@@ -466,7 +496,7 @@ or python3 with the 'cryptography' package, or set PODUP_RELEASE_PUBKEY_B64, the
 	# during the window before the chmod applies the target's mode. The
 	# chmod then widens the file to the target's ordinary permission bits,
 	# with the special bits stripped, the same discipline the Rust updater
-	# follows at internal/update/install.rs:237-298.
+	# follows at internal/update/install/swap.rs:6-97.
 	local copy_cmd=(install -m 0600 "${TMP_DIR}/${ARTIFACT}" "$staged")
 	local perms_cmd=(chmod "$target_mode" "$staged")
 	local move_cmd=(mv -f "$staged" "$target")

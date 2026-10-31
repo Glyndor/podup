@@ -16,7 +16,7 @@ $ErrorActionPreference = 'Stop'
 
 $RepoRoot    = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $FixtureDir  = Join-Path $RepoRoot 'tests/fixtures/releases'
-$Verifier    = Join-Path $RepoRoot '.github\scripts\verify-signing-key.py'
+$Verifier    = Join-Path $RepoRoot '.github\scripts\release\verify-signing-key.py'
 $TestKeyPath = Join-Path $FixtureDir 'test-key.b64'
 
 if (-not (Get-Command python3 -ErrorAction SilentlyContinue)) {

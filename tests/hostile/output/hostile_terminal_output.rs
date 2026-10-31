@@ -14,28 +14,14 @@
 
 use std::fs;
 
-#[path = "../../hostile_support/fake_engine.rs"]
+#[path = "../support/fake_engine.rs"]
 mod fake_engine;
 
+#[path = "../support/terminal.rs"]
+mod terminal;
+
 use fake_engine::{FakeEngine, Reply};
-
-/// Everything that starts a terminal sequence, as one string.
-const PAYLOAD: &str = "\u{1b}]0;PWNED\u{7}\u{1b}[2JRED\u{8}X";
-
-/// A compose or JSON scalar holding `s`, double-quoted.
-fn quoted(s: &str) -> String {
-	let mut out = String::from("\"");
-	for c in s.chars() {
-		match c {
-			'"' => out.push_str("\\\""),
-			'\\' => out.push_str("\\\\"),
-			c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
-			c => out.push(c),
-		}
-	}
-	out.push('"');
-	out
-}
+use terminal::{quoted, raw_control, PAYLOAD};
 
 /// One compose file per hostile field, so a refusal of one does not hide the
 /// rest. `{P}` is the quoted payload.
@@ -84,38 +70,6 @@ fn hostile_list(line: &str, _: &str) -> Option<Reply> {
 		 \"podup.service\":\"web\",\"k\":{p}}},\"Ports\":[],\"StartedAt\":1}}]"
 	);
 	Some(Reply { status: 200, body })
-}
-
-/// `text` with podup's own styling removed: `ESC [` digits and semicolons `m`.
-/// The payload has no such sequence, so what this removes is never the payload.
-fn without_own_styling(text: &str) -> String {
-	let mut out = String::new();
-	let mut rest = text;
-	while let Some(at) = rest.find("\u{1b}[") {
-		out.push_str(&rest[..at]);
-		let after = &rest[at + 2..];
-		let len = after
-			.find(|c: char| !(c.is_ascii_digit() || c == ';'))
-			.unwrap_or(after.len());
-		if after[len..].starts_with('m') {
-			rest = &after[len + 1..];
-		} else {
-			out.push_str("\u{1b}[");
-			rest = after;
-		}
-	}
-	out.push_str(rest);
-	out
-}
-
-/// The output, quoted, when it holds a byte that starts or edits a terminal
-/// sequence: ESC, BEL or backspace.
-fn raw_control(text: &str) -> Option<String> {
-	let plain = without_own_styling(text);
-	plain
-		.chars()
-		.any(|c| matches!(c, '\u{1b}' | '\u{7}' | '\u{8}'))
-		.then(|| format!("{plain:?}"))
 }
 
 const COMMANDS: &[&[&str]] = &[
