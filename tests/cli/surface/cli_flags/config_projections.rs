@@ -54,3 +54,46 @@ fn config_projections_render_lists() {
 
 	let _ = fs::remove_dir_all(&dir);
 }
+
+/// A service with only `build:` runs the image the build step tags, which carries
+/// the project name; `config --images` used to print `web:latest` for it.
+#[test]
+fn config_images_names_the_tag_a_build_only_service_gets() {
+	let dir = tempfile::tempdir().unwrap();
+	let file = dir.path().join("compose.yaml");
+	std::fs::write(
+		&file,
+		"services:\n  web:\n    build: .\n  api:\n    build:\n      context: .\n      tags: [registry.example/api:7]\n  db:\n    image: postgres:17\n",
+	)
+	.unwrap();
+	let run = |project: &str| {
+		let out = Command::new(bin())
+			.args([
+				"-f",
+				file.to_str().unwrap(),
+				"-p",
+				project,
+				"config",
+				"--images",
+			])
+			.output()
+			.unwrap();
+		assert!(
+			out.status.success(),
+			"{}",
+			String::from_utf8_lossy(&out.stderr)
+		);
+		String::from_utf8_lossy(&out.stdout)
+			.lines()
+			.map(str::to_string)
+			.collect::<Vec<_>>()
+	};
+	let lines = run("demo");
+	assert!(lines.contains(&"demo-web:latest".to_string()), "{lines:?}");
+	assert!(
+		lines.contains(&"registry.example/api:7".to_string()),
+		"{lines:?}"
+	);
+	assert!(lines.contains(&"postgres:17".to_string()), "{lines:?}");
+	assert!(run("other").contains(&"other-web:latest".to_string()));
+}
