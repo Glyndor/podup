@@ -1,6 +1,6 @@
 [package]
 name = "podup"
-version = "5.15.1"
+version = "5.15.2"
 edition = "2021"
 rust-version = "1.88"
 # podup is a binary that happens to build a library, not a library that ships a
@@ -443,3 +443,7 @@ path = "tests/hostile/input/hostile_env_file_budget.rs"
 [[test]]
 name = "hostile_label_files"
 path = "tests/hostile/input/hostile_label_files.rs"
+
+[[test]]
+name = "unit_publication"
+path = "tests/hostile/input/unit_publication.rs"

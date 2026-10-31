@@ -133,3 +133,9 @@ path = "fuzz_targets/parse_latest_tag.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "converters"
+path = "fuzz_targets/converters.rs"
+test = false
+doc = false

@@ -50,14 +50,32 @@ impl Engine {
 
 #[cfg(unix)]
 fn open_lock_file(path: &std::path::Path) -> Result<std::fs::File> {
-	use std::os::unix::fs::OpenOptionsExt;
-	std::fs::OpenOptions::new()
+	use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+	// O_NOFOLLOW so a link at the lock path is refused rather than followed to
+	// whatever it names, and O_NONBLOCK so a FIFO with no reader fails the open
+	// instead of blocking it forever before the flock is even tried. The
+	// descriptor then has to be a regular file of this user.
+	let file = std::fs::OpenOptions::new()
 		.write(true)
 		.create(true)
 		.truncate(false)
 		.mode(0o600)
+		.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
 		.open(path)
-		.map_err(ComposeError::Io)
+		.map_err(ComposeError::Io)?;
+	let meta = file.metadata().map_err(ComposeError::Io)?;
+	// SAFETY: geteuid takes no arguments and cannot fail.
+	let euid = unsafe { libc::geteuid() };
+	if !meta.file_type().is_file() || meta.uid() != euid {
+		return Err(ComposeError::Io(std::io::Error::new(
+			std::io::ErrorKind::InvalidInput,
+			format!(
+				"{} is not a regular file owned by this user; remove it to take the project lock",
+				path.display()
+			),
+		)));
+	}
+	Ok(file)
 }
 
 #[cfg(not(unix))]

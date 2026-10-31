@@ -268,7 +268,7 @@ podup validates a schedule and does not fire it. `run`, `up` and `config` print 
 | `RUST_LOG` | Log verbosity filter. Unset: warnings and errors, except `watch` which uses `info`. `RUST_LOG=podup=off` disables podup tracing. |
 | `NO_COLOR` | Disables colour output under `--ansi auto`. `--ansi always` overrides it. |
 | `TERM`, `COLORTERM` | Used to detect a colour-capable terminal; selects the wide palette on truecolor/256color terminals and Windows. |
-| `XDG_RUNTIME_DIR` | Linux socket discovery tries `XDG_RUNTIME_DIR`, then `/run/user/<uid>`. Unix locks use `XDG_RUNTIME_DIR/podup` when the absolute runtime directory passes ownership/permission checks; unset or relative values use `temp_dir()/podup-<euid>`, and unsafe absolute values abort. Windows uses `%TEMP%/podup` without OS locking. |
+| `XDG_RUNTIME_DIR` | Linux socket discovery tries `XDG_RUNTIME_DIR` only when it is an absolute directory you own that group and others cannot write to (otherwise podup warns and skips it), then `/run/user/<uid>`. Unix locks use `XDG_RUNTIME_DIR/podup` when the absolute runtime directory passes ownership/permission checks; unset or relative values use `temp_dir()/podup-<euid>`, and unsafe absolute values abort. Windows uses `%TEMP%/podup` without OS locking. |
 | `XDG_CONFIG_HOME` | Base for the `~/.config` path used by `autostart install` when writing user units. Defaults to `$HOME/.config` when unset. |
 | `HOME` | Resolves the macOS `podman machine` socket candidates and the default `XDG_CONFIG_HOME`. |
 | `USER`, `LOGNAME` | The login user for `loginctl` session and linger queries. |

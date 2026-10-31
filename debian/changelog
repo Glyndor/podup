@@ -1,3 +1,21 @@
+podup (5.15.2) unstable; urgency=medium
+
+  * The project lock refuses a FIFO, a link or a file of another user instead of
+    blocking on it or following it, so a stray entry at the lock path can no longer
+    hang every command that changes the project.
+  * `COMPOSE_PROFILES` and `--profile` values keep no stray spaces or newlines,
+    so ` qa ` selects the `qa` profile instead of silently dropping its services.
+  * The implicit Podman socket lookup uses `XDG_RUNTIME_DIR` only when it is an
+    absolute directory you own that group and others cannot write to, and warns
+    when it skips it. `--socket` and `PODMAN_SOCKET` are not checked.
+  * `autostart install` and `generate quadlet` create their directories private
+    (0700). An autostart directory that others can write to, or that another
+    user owns, is refused; a group-writable one only warns. `generate quadlet`
+    checks the type and owner of every unit before it writes the first, so a
+    conflict on the last no longer leaves the earlier ones published.
+
+ -- Glyndor <packages@glyndor.net>  Sat, 31 Oct 2026 14:30:00 -0500
+
 podup (5.15.1) unstable; urgency=medium
 
   * `install.sh` gives the installed binary the mode of what `podup` resolves

@@ -11,6 +11,8 @@ use std::path::Path;
 use crate::compose::types::{Service, VolumeMount, VolumeType};
 use crate::libpod::types::container::{Mount, NamedVolume};
 
+#[cfg(feature = "test-helpers")]
+pub(crate) mod fuzz_hook;
 mod spec;
 use spec::{access_opts, extend_bind_opts_str, extend_volume_opts_str, parse_volume_string};
 

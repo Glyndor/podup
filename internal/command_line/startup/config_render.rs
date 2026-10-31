@@ -95,11 +95,10 @@ pub(crate) fn render_config_to<W: Write>(
 	if out.images {
 		let jobs = file.jobs.iter().map(|(name, job)| (name, &job.service));
 		for (name, svc) in file.services.iter().chain(jobs) {
-			let image = svc
-				.image
-				.clone()
-				.unwrap_or_else(|| format!("{name}:latest"));
-			writeln!(w, "{}", podup::ui::sanitize_cell(&image))?;
+			// The same name `up` and `build` give a service without an `image:`.
+			if let Some(image) = podup::service_image_name(project, name, svc) {
+				writeln!(w, "{}", podup::ui::sanitize_cell(&image))?;
+			}
 		}
 		return Ok(());
 	}

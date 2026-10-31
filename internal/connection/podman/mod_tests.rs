@@ -110,3 +110,59 @@ fn remote_scheme_ignores_local_sockets() {
 	assert!(remote_scheme("unix:///run/podman.sock").is_none());
 	assert!(remote_scheme("npipe:////./pipe/podman").is_none());
 }
+
+#[cfg(all(unix, not(target_os = "macos")))]
+mod runtime_dir_trust {
+	use super::super::trusted_runtime_dir;
+	use std::os::unix::fs::PermissionsExt;
+
+	fn dir(name: &str, mode: u32) -> std::path::PathBuf {
+		let d = std::env::temp_dir().join(format!("podup-xdg-{name}-{}", std::process::id()));
+		let _ = std::fs::remove_dir_all(&d);
+		std::fs::create_dir_all(&d).unwrap();
+		std::fs::set_permissions(&d, std::fs::Permissions::from_mode(mode)).unwrap();
+		d
+	}
+
+	fn me() -> u32 {
+		// SAFETY: getuid takes no arguments and cannot fail.
+		unsafe { libc::getuid() }
+	}
+
+	#[test]
+	fn an_own_private_directory_is_trusted() {
+		let d = dir("own", 0o700);
+		assert!(trusted_runtime_dir(d.to_str().unwrap(), me()));
+		std::fs::remove_dir_all(&d).unwrap();
+	}
+
+	#[test]
+	fn a_directory_others_can_write_is_not() {
+		for mode in [0o777, 0o770, 0o707, 0o757] {
+			let d = dir("open", mode);
+			assert!(
+				!trusted_runtime_dir(d.to_str().unwrap(), me()),
+				"mode {mode:o}"
+			);
+			std::fs::remove_dir_all(&d).unwrap();
+		}
+	}
+
+	#[test]
+	fn another_owner_a_relative_path_a_link_or_a_file_is_not() {
+		let d = dir("owner", 0o700);
+		assert!(!trusted_runtime_dir(d.to_str().unwrap(), me() + 1));
+		assert!(!trusted_runtime_dir("relative/runtime", me()));
+		let link = d.join("link");
+		std::os::unix::fs::symlink(&d, &link).unwrap();
+		assert!(!trusted_runtime_dir(link.to_str().unwrap(), me()));
+		let file = d.join("file");
+		std::fs::write(&file, b"x").unwrap();
+		assert!(!trusted_runtime_dir(file.to_str().unwrap(), me()));
+		assert!(!trusted_runtime_dir(
+			d.join("missing").to_str().unwrap(),
+			me()
+		));
+		std::fs::remove_dir_all(&d).unwrap();
+	}
+}

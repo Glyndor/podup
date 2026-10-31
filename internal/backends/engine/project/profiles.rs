@@ -114,7 +114,15 @@ pub(crate) fn enabled_profile_services(
 /// Build the active-profile set, falling back to `COMPOSE_PROFILES` env var.
 pub(in crate::backends::engine) fn active_profiles_set(active: &[String]) -> HashSet<String> {
 	if !active.is_empty() {
-		return active.iter().cloned().collect();
+		// clap fills this list from `COMPOSE_PROFILES` by splitting on commas
+		// only, so ` qa ` and a trailing newline arrive as written. The env
+		// fallback below trims, and a name that kept its space matched no
+		// profile and silently dropped the service.
+		return active
+			.iter()
+			.map(|p| p.trim().to_string())
+			.filter(|p| !p.is_empty())
+			.collect();
 	}
 	std::env::var("COMPOSE_PROFILES")
 		.ok()
