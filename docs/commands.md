@@ -252,7 +252,7 @@ Run a one-off command in a new container for the service, or for a job of the sa
 | `-l, --label <KEY=VAL>` | Add a label to the one-off container. Repeatable. | none |
 | `-u, --user <NAME\|UID[:GID]>` | Run the command as this user. | service configuration, then image default |
 | `-w, --workdir <PATH>` | Working directory inside the container. | service configuration, then image default |
-| `--entrypoint <CMD>` | Override the image entrypoint. | service configuration, then image default |
+| `--entrypoint <CMD>` | Override the image entrypoint. The value is split into words the way a shell would (`sh -c` is two words, quotes group); an empty value clears the entrypoint. Given with no command, it also drops the `command:` of the service. | service configuration, then image default |
 | `-v, --volume <SPEC>` | Bind-mount an extra volume. Repeatable. | none |
 | `-p, --publish <SPEC>` | Publish an extra port. Repeatable. | none |
 | `-i, --interactive` | Keep the container's STDIN open (`stdin_open`). Whether a live terminal is attached is decided by stdin/stdout being terminals and by `-T`, not by this flag. | off |
@@ -265,7 +265,7 @@ podup run --rm web sh -c 'echo hello'
 
 > **Differs from docker on purpose.** `run` removes the container by default here; `docker compose run` keeps it unless `--rm` is passed.
 
-Attached `run` removes its container by default; use `--no-rm` to keep it. Detached `run` keeps it. TTY allocation requires both stdin and stdout to be terminals; `-T` or `-d` disables it. A PTY merges stdout/stderr and uses CRLF, so redirects and pipes use ordinary streams.
+A one-off runs once: neither `restart:` nor `deploy.restart_policy` of the service applies to it, and it does not take the service name or the network aliases of the service, so a lookup of the service does not reach it (`docker compose run` needs `--use-aliases` for that, and podup has no such flag). Attached `run` removes its container by default; use `--no-rm` to keep it. Detached `run` keeps it. TTY allocation requires both stdin and stdout to be terminals; `-T` or `-d` disables it. A PTY merges stdout/stderr and uses CRLF, so redirects and pipes use ordinary streams.
 
 ### `exec <SERVICE> <COMMAND...>`
 Execute a command in a running service container.

@@ -14,6 +14,7 @@ use crate::size;
 mod anon_volumes;
 mod fields;
 mod inputs;
+mod oneoff;
 mod resolve;
 mod security;
 mod spec;
@@ -171,11 +172,12 @@ impl Engine {
 		// service carrying `network_mode:` up front (see
 		// `validate_pod_or_refuse`), so the only branch here is "no
 		// per-container networks".
-		let (netns, networks) = if in_pod {
+		let (netns, mut networks) = if in_pod {
 			(None, HashMap::new())
 		} else {
 			resolve_network_mode(service_name, service, file, &self.project)
 		};
+		oneoff::drop_service_aliases(service, &mut networks);
 
 		// --- Labels ---
 		let labels = self.compute_container_labels(service, file, service_name, env)?;

@@ -59,5 +59,6 @@ fn decode_create_body(bodies: &[Vec<u8>]) -> serde_json::Value {
 	serde_json::from_slice(body).expect("create body must be valid JSON")
 }
 
+mod one_off;
 mod pasta_options;
 mod spec_fields;
