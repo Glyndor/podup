@@ -45,21 +45,53 @@ fail() {
 # -----------------------------------------------------------------------------
 echo "Part 1: per-asset .sig verification (3 rotation slots)"
 
-passed=0
-total=0
+# The inventory comes from the assets in the directory, not from the signatures:
+# a glob over *.sig only sees the signatures that exist, so a release that lost
+# one would compare two counters derived from the same shortened list and pass.
+# Everything that is not a signature or fixture tooling is an asset.
 shopt -s nullglob
-for sig in "$FIXTURE_DIR"/*.sig; do
-	base="${sig%.sig}"
-	name="$(basename "$base")"
-	total=$((total + 1))
-	if python3 "$VERIFIER" "$base" "$sig" "$FIXTURE_DIR/install.sh" >/dev/null; then
+assets=()
+for file in "$FIXTURE_DIR"/*; do
+	name="$(basename "$file")"
+	case "$name" in
+		*.sig | generate.py | test-key.b64 | test.sh | test.ps1 | test-sign.sh | \
+			proto-redir-test.sh | version-self-test.sh | version-self-test.ps1) continue ;;
+	esac
+	assets+=("$file")
+done
+[[ ${#assets[@]} -gt 0 ]] || fail "no release assets found in $FIXTURE_DIR"
+
+passed=0
+for asset in "${assets[@]}"; do
+	name="$(basename "$asset")"
+	sig="$asset.sig"
+	[[ -f "$sig" ]] || fail "asset $name has no .sig"
+	if python3 "$VERIFIER" "$asset" "$sig" "$FIXTURE_DIR/install.sh" >/dev/null; then
 		passed=$((passed + 1))
 		echo "  OK    $name"
 	else
-		echo "  FAIL  $name (rc=$?)"
+		fail "$name: its signature did not verify"
 	fi
 done
-[[ $passed -eq $total ]] || fail "only $passed of $total signatures verified"
+[[ $passed -eq ${#assets[@]} ]] || fail "only $passed of ${#assets[@]} signatures verified"
+
+# The same assets with one byte changed and the signature kept must be refused
+# for the right reason: the signature matches no embedded key.
+tampered_dir="$(mktemp -d)"
+for asset in "${assets[@]}"; do
+	name="$(basename "$asset")"
+	cp "$asset" "$tampered_dir/$name"
+	printf '\x00' | dd of="$tampered_dir/$name" bs=1 seek=0 conv=notrunc 2>/dev/null
+	if cmp -s "$asset" "$tampered_dir/$name"; then
+		printf '\x01' | dd of="$tampered_dir/$name" bs=1 seek=0 conv=notrunc 2>/dev/null
+	fi
+	if err="$(python3 "$VERIFIER" "$tampered_dir/$name" "$asset.sig" "$FIXTURE_DIR/install.sh" 2>&1 >/dev/null)"; then
+		fail "$name with a changed byte still verified"
+	fi
+	grep -q "verifies against NONE" <<<"$err" || fail "$name with a changed byte failed for the wrong reason: $err"
+done
+rm -rf "$tampered_dir"
+echo "  OK    a changed byte is refused as a signature mismatch for every asset"
 
 # -----------------------------------------------------------------------------
 # Part 2: third slot is the one that verifies - proves SLOT_RE picks it up.
@@ -87,10 +119,12 @@ trap 'rm -rf "$tmp_install" "$tmp_helpers" "$TMP_DIR"' EXIT
 sed "s|^PODUP_RELEASE_PUBKEY3_B64=.*|PODUP_RELEASE_PUBKEY3_B64=\"\${PODUP_RELEASE_PUBKEY3_B64:-$WRONG_PK}\"|" \
 	"$FIXTURE_DIR/install.sh" > "$tmp_install"
 
-if python3 "$VERIFIER" "$FIXTURE_DIR/podup-linux-x86_64" \
-		"$FIXTURE_DIR/podup-linux-x86_64.sig" "$tmp_install" >/dev/null 2>&1; then
+if err="$(python3 "$VERIFIER" "$FIXTURE_DIR/podup-linux-x86_64" \
+		"$FIXTURE_DIR/podup-linux-x86_64.sig" "$tmp_install" 2>&1 >/dev/null)"; then
 	fail "verifier accepted a signature with the matching key in slot 3 replaced"
 fi
+# A missing file fails too; only the mismatch proves slot 3 was the one in use.
+grep -q "verifies against NONE" <<<"$err" || fail "slot 3 replaced: failed for the wrong reason: $err"
 echo "  OK    slot 3 is recognised (its absence flips the verifier to a no-match error)"
 
 # -----------------------------------------------------------------------------
