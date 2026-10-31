@@ -20,7 +20,9 @@ name: benchmark
 # pull_request (with paths): did this PR break the harness code itself?
 # workflow_dispatch: starts the engine job on the self-hosted runner; the
 #                    `version` input picks which GitHub release asset to download.
-# monthly schedule: keeps the engine job ticking so a missed dispatch is visible.
+# monthly schedule: reruns only the smoke job, which the freshness watcher in
+#                   ci.yml reads to see that the schedule is alive. It starts
+#                   no engine run and produces no measurement.
 on:
   # The harness checks only guard anything if they run when the harness changes.
   # Until #1227 they fired on dispatch and the monthly cron alone, so a PR could
