@@ -69,6 +69,26 @@ pub use engine::{
 	PsDisplayOptions, PsFilterOptions, PsOptions, PullOptions, PushOptions, RunOptions,
 	RunOverrides, StatsOptions, VolumesDisplayOptions, VolumesOptions, DEFAULT_LOG_TAIL,
 };
+/// The image reference a service runs: its `image:`, or for a build-only service
+/// the tag the build step gives it (`build.tags[0]`, else `{project}-{service}:latest`).
+/// `config --images` prints this, and it is the same rule `up` and `build` apply, so
+/// the listing names the image that will exist. `None` for a service with neither.
+pub fn service_image_name(
+	project: &str,
+	service_name: &str,
+	service: &compose::types::Service,
+) -> Option<String> {
+	match (&service.image, &service.build) {
+		(Some(image), _) => Some(image.clone()),
+		(None, Some(build)) => Some(engine::build::primary_build_tag(
+			project,
+			service_name,
+			None,
+			build.tags(),
+		)),
+		(None, None) => None,
+	}
+}
 /// Return the runtime value of `security_opt`'s `no-new-privileges` key:
 /// `Some(true)` when the engine will apply it, `Some(false)` when an entry
 /// explicitly disables it, `None` when no entry matched. Surfaced for the
