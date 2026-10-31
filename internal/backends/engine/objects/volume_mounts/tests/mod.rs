@@ -12,6 +12,7 @@ fn svc_with_volumes(vols: Vec<VolumeMount>) -> Service {
 mod bind_mounts;
 mod create_host_path;
 mod ensure_bind_source;
+mod hostile_short_form;
 mod long_form;
 mod short_form;
 mod volume_type;

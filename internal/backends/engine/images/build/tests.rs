@@ -189,6 +189,34 @@ fn a_soft_limit_above_the_hard_one_is_clamped() {
 	assert_eq!(render_build_ulimits(&build), vec!["nofile=5:5"]);
 }
 
+/// `-1` is unlimited and the largest value there is: an unlimited hard limit
+/// leaves the soft one alone (it used to become `-1:-1` because the clamp
+/// compared the raw signed values), and any other negative is `0`, as on the
+/// container path, instead of reaching the query string.
+#[test]
+fn unlimited_is_the_largest_limit_and_other_negatives_are_zero() {
+	let cases: [(i64, i64, &str); 6] = [
+		(512, -1, "nofile=512:-1"),
+		(-1, 2048, "nofile=2048:2048"),
+		(-1, -1, "nofile=-1:-1"),
+		(i64::MIN, 7, "nofile=0:7"),
+		(7, i64::MIN, "nofile=0:0"),
+		(
+			i64::MAX,
+			i64::MAX,
+			"nofile=9223372036854775807:9223372036854775807",
+		),
+	];
+	for (soft, hard, want) in cases {
+		let build = build_with_ulimits(&[("nofile", UlimitConfig::Pair { soft, hard })]);
+		assert_eq!(
+			render_build_ulimits(&build),
+			vec![want],
+			"soft {soft} hard {hard}"
+		);
+	}
+}
+
 /// A short-form `build: .` has no options block at all.
 #[test]
 fn a_context_only_build_renders_nothing() {

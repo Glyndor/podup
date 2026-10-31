@@ -202,18 +202,7 @@ pub(crate) fn build_ulimits(service: &Service) -> Vec<Ulimit> {
 				tracing::warn!("ulimit '{name}' is not a recognized resource name and is ignored");
 				return None;
 			}
-			let soft = ulimit_value(cfg.soft(), name, "soft");
-			let hard = ulimit_value(cfg.hard(), name, "hard");
-			// POSIX requires soft <= hard; a larger soft is invalid and would
-			// produce undefined behaviour at container start. Clamp it down.
-			let soft = if soft > hard {
-				tracing::warn!(
-					"ulimit {name} soft ({soft}) exceeds hard ({hard}); clamping soft to hard"
-				);
-				hard
-			} else {
-				soft
-			};
+			let (soft, hard) = ulimit_pair(cfg.soft(), cfg.hard(), name);
 			Some(Ulimit {
 				ulimit_type: name.clone(),
 				soft,
@@ -221,6 +210,20 @@ pub(crate) fn build_ulimits(service: &Service) -> Vec<Ulimit> {
 			})
 		})
 		.collect()
+}
+
+/// Convert and order a soft/hard pair. Both sides go through `ulimit_value`, so
+/// `-1` is the largest value there is and any other negative is `0`. POSIX
+/// requires soft <= hard; a larger soft is invalid and would produce undefined
+/// behaviour at container start, so it is clamped down to the hard limit.
+pub(crate) fn ulimit_pair(soft: i64, hard: i64, name: &str) -> (u64, u64) {
+	let soft = ulimit_value(soft, name, "soft");
+	let hard = ulimit_value(hard, name, "hard");
+	if soft > hard {
+		tracing::warn!("ulimit {name} soft ({soft}) exceeds hard ({hard}); clamping soft to hard");
+		return (hard, hard);
+	}
+	(soft, hard)
 }
 
 /// The Linux rlimit resource names Podman accepts (without the `RLIMIT_`

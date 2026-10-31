@@ -59,6 +59,15 @@ fn build_ulimits_rejects_unknown_resource_name() {
 	);
 }
 
+#[test]
+fn ulimit_pair_treats_unlimited_as_the_largest_and_never_wraps() {
+	assert_eq!(ulimit_pair(512, -1, "nofile"), (512, u64::MAX));
+	assert_eq!(ulimit_pair(-1, 2048, "nofile"), (2048, 2048));
+	assert_eq!(ulimit_pair(-1, -1, "nofile"), (u64::MAX, u64::MAX));
+	assert_eq!(ulimit_pair(i64::MIN, 7, "nofile"), (0, 7));
+	assert_eq!(ulimit_pair(i64::MAX, i64::MIN, "nofile"), (0, 0));
+}
+
 // --- ulimit value conversion ---
 
 #[test]
