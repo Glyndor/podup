@@ -24,7 +24,7 @@ check() {
 # Extract production functions; only transport and cryptographic preconditions
 # are stubbed in the flow cases, which exercise the real staging and rename.
 HELPERS="$WORK/helpers.sh"
-for name in compare_versions verify_no_downgrade resolve_release_tag install_binary verify_version_self_test run_root; do
+for name in compare_versions verify_no_downgrade resolve_release_tag installed_mode install_binary verify_version_self_test run_root; do
 	awk "/^${name}\\(\\) {/,/^}$/" "$INSTALL_SH" >> "$HELPERS"
 done
 # shellcheck disable=SC1090
