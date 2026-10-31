@@ -106,14 +106,14 @@ fn valid_and_null_network_samples_print_their_row() {
 		);
 		let (code, json) = stats(case, &["--format", "json"]);
 		assert_eq!(code, Some(0), "{}: {json}", SAMPLES[case].0);
-		let line = json
-			.lines()
-			.find(|l| l.trim_start().starts_with('{') || l.trim_start().starts_with('['))
-			.unwrap_or("");
+		let values: Result<Vec<_>, _> = serde_json::Deserializer::from_str(json.trim())
+			.into_iter::<serde_json::Value>()
+			.collect();
+		let values =
+			values.unwrap_or_else(|e| panic!("{}: not JSON ({e})\n{json}", SAMPLES[case].0));
 		assert!(
-			serde_json::from_str::<serde_json::Value>(line).is_ok()
-				|| serde_json::from_str::<serde_json::Value>(json.trim()).is_ok(),
-			"{}: output is not JSON\n{json}",
+			!values.is_empty(),
+			"{}: no JSON value\n{json}",
 			SAMPLES[case].0
 		);
 	}
