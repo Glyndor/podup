@@ -339,9 +339,9 @@ These flags parse and are validated, so a script written against docker compose 
 | `126` | `run`/`exec`: the command exists but is not executable. |
 | `127` | `run`/`exec`: the command was not found. |
 | `130` | An attached `up` was ended by SIGINT or SIGTERM. |
-| other | `run` and attached `exec` propagate the command's own exit code verbatim; `wait` returns the last non-zero code it saw. `up --abort-on-container-exit` does the same with the first container to exit; `up --exit-code-from SERVICE` does the same with the named service. |
+| other | `run` and attached `exec` propagate the command's own exit code verbatim; `wait` waits concurrently and returns the code of the last container to finish, including zero (Docker Compose v2.40.3 policy). `up --abort-on-container-exit` does the same with the first container to exit; `up --exit-code-from SERVICE` does the same with the named service. |
 
-Attached `up` returns 1 if logs end while a container still runs. Abort/exit-code-from stops other containers and leaves them available for later up/down. SIGINT and SIGTERM both return 130 after stopping the project.
+Attached `up` returns 1 if logs end while a container still runs. Abort/exit-code-from returns 1 with the service name if the exit status cannot be read, after attempting to stop the project. Abort/exit-code-from stops other containers and leaves them available for later up/down. SIGINT and SIGTERM both return 130 after stopping the project.
 
 `stats --format json` differs from docker on purpose. JSON uses numeric CPU fields and separate I/O counters; Docker-formatted string consumers need adapting.
 
