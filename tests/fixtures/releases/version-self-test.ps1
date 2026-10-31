@@ -14,9 +14,9 @@ Mirrors the bash test in version-self-test.sh:
   7. A staged file that does not exist is rejected.
   8. On any failed self-test the staged file is removed.
 
-The actual Test-StagedVersion function lives in install.ps1; this
-script extracts it via AST and loads it in this scope so the regression
-runs against the real code, not a copy. (The bash test uses
+The version helpers live in install.ps1; this script extracts them via
+AST and loads them in this scope so the regression runs against the real
+code, not a copy. (The bash test uses
 `sed + source`, which PowerShell cannot mirror directly; AST parsing
 is the equivalent and stays robust to surrounding code.)
 
@@ -28,6 +28,7 @@ throws - the test catches the throw and reports a clean refusal.
 #>
 
 $ErrorActionPreference = 'Stop'
+$PSNativeCommandUseErrorActionPreference = $false
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $InstallerPath = Join-Path $RepoRoot 'install.ps1'
@@ -42,20 +43,20 @@ function Write-LogOk { param($msg) Write-Host "[ ok ] $msg" -ForegroundColor Gre
 function Write-LogError { param($msg) Write-Host "[fail] $msg" -ForegroundColor Red }
 function Fail { param($msg) throw [System.Exception]::new("Refused: $msg") }
 
-# Extract Test-StagedVersion via AST so we test the real code, not a
-# copy. Fail closed if the function is missing: a regression that
-# removes the gate from install.ps1 must break this test.
+# Extract the real helpers via AST; a missing guard must fail the fixture.
 $ast = [System.Management.Automation.Language.Parser]::ParseFile(
 	$InstallerPath, [ref]$null, [ref]$null)
-$testFn = $ast.Find({ param($n)
-	$n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
-	$n.Name -eq 'Test-StagedVersion'
-}, $true)
-if (-not $testFn) {
-	Write-Host 'FAIL: Test-StagedVersion not found in install.ps1' -ForegroundColor Red
-	exit 1
+foreach ($functionName in @('Test-StagedVersion', 'Compare-PodupVersion', 'Test-NoDowngrade')) {
+	$testFn = $ast.Find({ param($n)
+		$n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+		$n.Name -eq $functionName
+	}, $true)
+	if (-not $testFn) {
+		Write-Host "FAIL: $functionName not found in install.ps1" -ForegroundColor Red
+		exit 1
+	}
+	Invoke-Expression $testFn.Extent.Text
 }
-Invoke-Expression $testFn.Extent.Text
 
 function Assert-True {
 	param([bool] $Condition, [string] $Message)
@@ -158,6 +159,64 @@ try {
 
 	Write-Host 'Part 7: staged file does not exist' -ForegroundColor Cyan
 	Invoke-Fail -StubPath (Join-Path $stubsDir "does-not-exist$stubExt") -Tag $Tag -ExpectedInRefusal 'Authenticode'
+
+	Write-Host 'Part 8: numeric release comparison' -ForegroundColor Cyan
+	$comparisons = @(
+		@('5.9.0', '5.10.0', -1),
+		@('5.10.0', '5.9.0', 1),
+		@('5.15.0', '5.15.0', 0),
+		@('6.0.0', '5.99.99', 1),
+		@('4.99.99', '5.0.0', -1),
+		@('5.15.10', '5.15.9', 1),
+		@('5.15.9', '5.15.10', -1),
+		@('v5.9.0', '5.10.0', -1),
+		@('5.10.0', 'v5.9.0', 1),
+		@('v5.15.0', 'v5.15.0', 0),
+		@('5.09.0', '5.9.0', 0),
+		@('5.9223372036854775808.0', '5.9.0', 1)
+	)
+	foreach ($case in $comparisons) {
+		$actual = Compare-PodupVersion $case[0] $case[1]
+		Assert-True ($null -ne $actual -and $actual -eq $case[2]) "numeric comparison $($case[0]) / $($case[1])"
+	}
+	foreach ($invalid in @('5.15.0-dev', 'rubbish', '5.15', '5.15.0.1', '5.+15.0', '')) {
+		Assert-True ($null -eq (Compare-PodupVersion $invalid '5.14.0')) "invalid left version '$invalid'"
+		Assert-True ($null -eq (Compare-PodupVersion '5.14.0' $invalid)) "invalid right version '$invalid'"
+	}
+
+	# Exercise the production guard with real executable stubs, preserving the
+	# target on refusal. Full installer download/rename is covered by the shell twin.
+	function Invoke-DowngradePolicy {
+		param([string]$Name, [string]$Reported, [string]$Requested,
+			[string]$Tag, [bool]$ShouldRefuse, [string]$ExitCode = '0')
+		$targetPath = New-Stub -Name $Name -Body "echo $Reported" -ExitCode $ExitCode
+		$before = [Convert]::ToBase64String([IO.File]::ReadAllBytes($targetPath))
+		$refused = $false
+		$message = ''
+		try {
+			Test-NoDowngrade -TargetPath $targetPath -ResolvedTag $Tag -RequestedVersion $Requested
+		} catch {
+			$refused = $true
+			$message = $_.Exception.Message
+		}
+		Assert-True ($refused -eq $ShouldRefuse) "$Name downgrade policy"
+		if ($ShouldRefuse) {
+			Assert-True ($message -match 'downgrade' -and $message.Contains("PODUP_VERSION=$Tag")) "$Name explains explicit downgrade"
+			$after = [Convert]::ToBase64String([IO.File]::ReadAllBytes($targetPath))
+			Assert-True ($before -eq $after) "$Name preserves the installed bytes"
+		}
+	}
+
+	Write-Host 'Part 9: latest replay and explicit downgrade policy' -ForegroundColor Cyan
+	Invoke-DowngradePolicy 'latest_replay' 'podup 5.15.0' 'latest' 'v5.14.0' $true
+	Invoke-DowngradePolicy 'explicit_downgrade' 'podup 5.15.0' 'v5.14.0' 'v5.14.0' $false
+	Invoke-DowngradePolicy 'same_version' 'podup 5.15.0' 'latest' 'v5.15.0' $false
+	Invoke-DowngradePolicy 'upgrade' 'podup 5.9.0' 'latest' 'v5.10.0' $false
+	Invoke-DowngradePolicy 'unreadable' 'podup 5.15.0' 'latest' 'v5.14.0' $false '1'
+	Invoke-DowngradePolicy 'malformed' 'broken binary' 'latest' 'v5.14.0' $false
+	Invoke-DowngradePolicy 'dev_target' 'podup 5.15.0-dev' 'latest' 'v5.14.0' $false
+	Invoke-DowngradePolicy 'prefixed_target' 'podup version v5.15.0' 'latest' 'v5.14.0' $true
+	Test-NoDowngrade -TargetPath (Join-Path $stubsDir "missing$stubExt") -ResolvedTag 'v5.14.0' -RequestedVersion 'latest'
 
 	Write-Host ''
 	Write-Host 'All parts passed.' -ForegroundColor Green
