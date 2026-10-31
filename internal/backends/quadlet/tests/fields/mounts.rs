@@ -83,7 +83,14 @@ services:
 	// same way rather than as POSIX literals; these render tests are not
 	// Unix-gated and would otherwise fail on Windows.
 	for rel in [".env", "config/extra.env", "../shared/team.env"] {
-		let needle = format!("EnvironmentFile={}", base.join(rel).display());
+		let path = base.join(rel).display().to_string();
+		// Windows separators need quoting now that Quadlet reads this as a word.
+		let value = if cfg!(windows) {
+			format!("\"{}\"", path.replace('\\', "\\\\"))
+		} else {
+			path
+		};
+		let needle = format!("EnvironmentFile={value}");
 		assert!(c.contains(&needle), "missing `{needle}` in:\n{c}");
 	}
 	// An already-absolute entry is passed through verbatim, separators included.
@@ -96,7 +103,10 @@ services:
 	// which on Windows demands a drive letter that a `/srv/app` base never has.
 	let base_prefix = base.display().to_string();
 	for line in c.lines().filter(|l| l.starts_with("EnvironmentFile=")) {
-		let value = line.trim_start_matches("EnvironmentFile=");
+		let value = line
+			.trim_start_matches("EnvironmentFile=")
+			.trim_matches('"')
+			.replace("\\\\", "\\");
 		assert!(
 			value.starts_with(&base_prefix) || value.starts_with("/etc/"),
 			"`{line}` was not resolved against the compose base directory"

@@ -22,6 +22,10 @@
 #[path = "../support/quadlet_cases.rs"]
 mod quadlet_cases;
 
+#[cfg(unix)]
+#[path = "../support/quadlet_env_files.rs"]
+mod quadlet_env_files;
+
 use podup::parse_str;
 use podup::quadlet::{generate_at, QuadletOutput};
 use quadlet_cases::cases;
