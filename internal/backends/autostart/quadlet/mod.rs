@@ -273,7 +273,7 @@ pub fn install_quadlet<S: SystemCtl>(
 		return Ok(());
 	}
 
-	let written = quadlet::write_units(&dir, &result.units).map_err(|e| {
+	let written = quadlet::write_autostart_units(&dir, &result.units).map_err(|e| {
 		ComposeError::Autostart(format!(
 			"cannot write quadlet units to {}: {e}",
 			dir.display()

@@ -14,28 +14,14 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// The mode a unit directory gets: private to its owner.
-#[cfg(unix)]
-const DIR_MODE: u32 = 0o700;
-
 /// The mode a unit file gets: readable by its owner only. systemd reads user
 /// units as the owning user, so nothing else needs it.
 #[cfg(unix)]
 const FILE_MODE: u32 = 0o600;
 
-/// Create `dir` when it is missing, with a private mode.
-///
-/// An existing directory keeps the mode it has: it may be one the operator
-/// arranged on purpose, and every unit inside it carries its own mode.
+/// Create missing directories privately and refuse unsafe existing unit directories.
 pub(in super::super) fn private_dir(dir: &Path) -> std::io::Result<()> {
-	let mut builder = std::fs::DirBuilder::new();
-	builder.recursive(true);
-	#[cfg(unix)]
-	{
-		use std::os::unix::fs::DirBuilderExt;
-		builder.mode(DIR_MODE);
-	}
-	builder.create(dir)
+	crate::backends::unit_directory::require_private(dir)
 }
 
 /// Refuse a destination that is not a regular file.

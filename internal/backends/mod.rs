@@ -6,3 +6,5 @@ pub mod autostart;
 pub(crate) mod engine;
 /// Quadlet export: translate a parsed compose file into Podman systemd units.
 pub mod quadlet;
+
+mod unit_directory;
