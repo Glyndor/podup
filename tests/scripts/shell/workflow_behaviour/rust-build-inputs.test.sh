@@ -50,4 +50,5 @@ check "only pull_request and push can skip" 2 \
 check "the build steps are guarded" 5 \
 	"$(grep -c "steps.inputs.outputs.build == 'true'" "$workflow")"
 echo "$pass passed, $fail failed"
+printf 'DONE %s %d %d\n' "${BASH_SOURCE[0]##*/}" "$pass" "$fail"
 [ "$fail" -eq 0 ]
