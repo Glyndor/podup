@@ -80,13 +80,21 @@ async fn cli_stop_and_start_subcommands() {
 		.args(["-f", compose.to_str().unwrap(), "-p", &proj, "stop"])
 		.output()
 		.unwrap();
-	assert!(stop.status.success(), "stop failed: {:?}", stop.stderr);
+	assert!(
+		stop.status.success(),
+		"stop failed: {}",
+		String::from_utf8_lossy(&stop.stderr)
+	);
 
 	let start = Command::new(bin())
 		.args(["-f", compose.to_str().unwrap(), "-p", &proj, "start"])
 		.output()
 		.unwrap();
-	assert!(start.status.success(), "start failed: {:?}", start.stderr);
+	assert!(
+		start.status.success(),
+		"start failed: {}",
+		String::from_utf8_lossy(&start.stderr)
+	);
 
 	Command::new(bin())
 		.args(["-f", compose.to_str().unwrap(), "-p", &proj, "down"])
@@ -132,7 +140,11 @@ async fn cli_kill_subcommand() {
 		])
 		.output()
 		.unwrap();
-	assert!(kill.status.success(), "kill failed: {:?}", kill.stderr);
+	assert!(
+		kill.status.success(),
+		"kill failed: {}",
+		String::from_utf8_lossy(&kill.stderr)
+	);
 
 	Command::new(bin())
 		.args(["-f", compose.to_str().unwrap(), "-p", &proj, "down"])

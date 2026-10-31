@@ -20,7 +20,11 @@ async fn cli_up_wait_returns_when_healthy() {
 	let c = compose.to_str().unwrap();
 
 	let up = run(&["-f", c, "-p", &proj, "up", "-d", "--wait"]);
-	assert!(up.status.success(), "up --wait failed: {:?}", up.stderr);
+	assert!(
+		up.status.success(),
+		"up --wait failed: {}",
+		String::from_utf8_lossy(&up.stderr)
+	);
 	run(&["-f", c, "-p", &proj, "down"]);
 }
 

@@ -33,7 +33,11 @@ async fn cli_top_subcommand() {
 		.args(["-f", compose.to_str().unwrap(), "-p", &proj, "top"])
 		.output()
 		.unwrap();
-	assert!(top.status.success(), "top failed: {:?}", top.stderr);
+	assert!(
+		top.status.success(),
+		"top failed: {}",
+		String::from_utf8_lossy(&top.stderr)
+	);
 	// The exit code was the whole check, and passing `top.stderr` into the failure
 	// message made it look like the output was being read when nothing asserted
 	// anything about it. `top` exists to print processes: the container it belongs

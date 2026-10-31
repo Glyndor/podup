@@ -22,7 +22,11 @@ async fn cli_wait_names_the_container_and_its_exit_code() {
 
 	run_ok(&["-f", c, "-p", &proj, "up", "-d"]);
 	let out = run(&["-f", c, "-p", &proj, "wait", "job"]);
-	assert!(out.status.success(), "wait failed: {:?}", out.stderr);
+	assert!(
+		out.status.success(),
+		"wait failed: {}",
+		String::from_utf8_lossy(&out.stderr)
+	);
 	// One line per container, naming it (#1248). This used to assert a line
 	// that was exactly `"0"`, a bare code with nothing saying whose it was,
 	// which is what the change replaced.
@@ -64,7 +68,11 @@ async fn cli_export_writes_tar() {
 		"web",
 	]);
 	run(&["-f", c, "-p", &proj, "down"]);
-	assert!(out.status.success(), "export failed: {:?}", out.stderr);
+	assert!(
+		out.status.success(),
+		"export failed: {}",
+		String::from_utf8_lossy(&out.stderr)
+	);
 	let meta = fs::metadata(&tar).expect("export must create the tar file");
 	assert!(meta.len() > 0, "exported tar must be non-empty");
 }
@@ -97,7 +105,11 @@ async fn cli_commit_creates_image() {
 	let _ = std::process::Command::new("podman")
 		.args(["rmi", "-f", &img])
 		.output();
-	assert!(out.status.success(), "commit failed: {:?}", out.stderr);
+	assert!(
+		out.status.success(),
+		"commit failed: {}",
+		String::from_utf8_lossy(&out.stderr)
+	);
 	assert!(exists, "commit must create the target image");
 }
 
@@ -125,7 +137,11 @@ async fn cli_attach_streams_output_until_exit() {
 	run_ok(&["-f", c, "-p", &proj, "up", "-d"]);
 	let out = run(&["-f", c, "-p", &proj, "attach", "web"]);
 	run(&["-f", c, "-p", &proj, "down"]);
-	assert!(out.status.success(), "attach failed: {:?}", out.stderr);
+	assert!(
+		out.status.success(),
+		"attach failed: {}",
+		String::from_utf8_lossy(&out.stderr)
+	);
 	assert!(
 		String::from_utf8_lossy(&out.stdout).contains("attached-hi"),
 		"attach must stream the container's live output"

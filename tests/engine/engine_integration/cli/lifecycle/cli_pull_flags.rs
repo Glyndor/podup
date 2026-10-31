@@ -38,5 +38,9 @@ async fn cli_pull_quiet_succeeds() {
 	let compose = dir.path().join("docker-compose.yml");
 	fs::write(&compose, "services:\n  web:\n    image: alpine:latest\n").unwrap();
 	let pull = run(&["-f", compose.to_str().unwrap(), "-p", &proj, "pull", "-q"]);
-	assert!(pull.status.success(), "pull -q failed: {:?}", pull.stderr);
+	assert!(
+		pull.status.success(),
+		"pull -q failed: {}",
+		String::from_utf8_lossy(&pull.stderr)
+	);
 }

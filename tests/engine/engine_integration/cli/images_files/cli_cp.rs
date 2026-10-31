@@ -42,7 +42,11 @@ async fn cli_cp_from_container() {
 		])
 		.output()
 		.unwrap();
-	assert!(cp.status.success(), "cp failed: {:?}", cp.stderr);
+	assert!(
+		cp.status.success(),
+		"cp failed: {}",
+		String::from_utf8_lossy(&cp.stderr)
+	);
 
 	Command::new(bin())
 		.args(["-f", compose.to_str().unwrap(), "-p", &proj, "down"])
