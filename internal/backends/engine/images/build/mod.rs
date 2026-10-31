@@ -30,7 +30,7 @@ pub(crate) use pull::{
 pub use push::PushOptions;
 
 use crate::compose::types::BuildConfig;
-use crate::engine::container_config::resources::is_known_ulimit;
+use crate::engine::container_config::resources::{is_known_ulimit, ulimit_pair};
 use crate::error::Result;
 
 use request::ContextSource;
@@ -119,10 +119,18 @@ fn render_build_ulimits(build: &BuildConfig) -> Vec<String> {
 				);
 				return None;
 			}
-			let (soft, hard) = (cfg.soft(), cfg.hard());
 			// Podman rejects a soft limit above the hard one; the container
-			// path clamps rather than failing the build, so match it.
-			let soft = soft.min(hard);
+			// path clamps rather than failing the build, so this shares its
+			// conversion. The build endpoint spells unlimited `-1`.
+			let (soft, hard) = ulimit_pair(cfg.soft(), cfg.hard(), name);
+			let spell = |v: u64| {
+				if v == u64::MAX {
+					"-1".to_string()
+				} else {
+					v.to_string()
+				}
+			};
+			let (soft, hard) = (spell(soft), spell(hard));
 			Some(format!("{name}={soft}:{hard}"))
 		})
 		.collect()
