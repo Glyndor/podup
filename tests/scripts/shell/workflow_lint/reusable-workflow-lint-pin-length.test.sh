@@ -18,9 +18,8 @@
 #
 # Local reusable calls (`uses: ./.github/workflows/x.yml`) carry no
 # `@` and so carry no pin to measure; they are out of scope by shape
-# rather than by exception. An unpinned third-party reference
-# (`uses: owner/repo@v4`) is a separate defect with its own control,
-# and this assertion is about length only.
+# rather than by exception. Remote actions require a SHA-1 pin; Docker
+# references require a SHA-256 digest, regardless of YAML encoding.
 #
 # The step's `run:` body is extracted from the workflow and executed
 # as it ships, in a temporary tree shaped like a repository, so the
@@ -28,7 +27,7 @@
 # WHICH message fired, and each refusal is paired with an acceptance
 # of the same shape just inside the line.
 #
-# Requires: python3 (the step under test is a python3 heredoc).
+# Requires: python3 with PyYAML, matching the workflow step.
 #
 # Several assertions match against text the step prints verbatim,
 # backticks and all. Those needles are single-quoted so the characters
@@ -346,6 +345,74 @@ if [ "$(id -u)" -ne 0 ]; then
 else
 	echo "skip  but is reported as skipped (running as root)"
 fi
+
+# Equivalent YAML encodings must apply the same policy at both call sites.
+semantic_fixture() { # $1=dir $2=shape $3=site $4=reference
+	python3 - "$1" "$2" "$3" "$4" <<'PY'
+import pathlib
+import sys
+
+root, shape, site, reference = sys.argv[1:]
+if site == "job" and not reference.startswith(("./", "docker://")):
+    reference = reference.replace("actions/checkout", "owner/repo/.github/workflows/ci.yml")
+key = '"uses"' if shape.startswith("quoted") else "uses"
+if shape in ("flow", "quoted-flow"):
+    entry = f'{{ {key}: "{reference}" }}'
+elif shape == "flow-named":
+    entry = f'{{ name: checkout, {key}: "{reference}" }}'
+elif shape == "scalar-alias":
+    entry = f'{key}: *reference'
+elif shape == "mapping-alias":
+    entry = '*call'
+elif shape == "merge-alias":
+    entry = '<<: *call'
+else:
+    entry = f'{key}: "{reference}"'
+prefix = "name: Tests\non: pull_request\n"
+if shape == "scalar-alias":
+    prefix += f'env:\n  REFERENCE: &reference "{reference}"\n'
+elif shape in ("mapping-alias", "merge-alias"):
+    prefix += f'env: &call {{ uses: "{reference}" }}\n'
+if site == "step":
+    body = f'jobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - {entry}\n'
+else:
+    body = f'jobs:\n  build: {entry}\n' if entry.startswith(("{", "*")) else f'jobs:\n  build:\n    {entry}\n'
+pathlib.Path(root, ".github/workflows/tests.yml").write_text(prefix + body)
+PY
+}
+
+for shape in block flow flow-named quoted-block quoted-flow scalar-alias mapping-alias merge-alias; do
+	for site in step job; do
+		for kind in sha tag branch short long nonhex local docker-tag docker-bare docker-sha docker-short docker-nonhex; do
+			expected=1
+			case "$kind" in
+				sha) ref="actions/checkout@$GOOD_PIN"; expected=0 ;;
+				tag) ref='actions/checkout@v7' ;;
+				branch) ref='actions/checkout@main' ;;
+				short) ref="actions/checkout@$BAD_PIN" ;;
+				long) ref="actions/checkout@${GOOD_PIN}f" ;;
+				nonhex) ref="actions/checkout@${GOOD_PIN:0:39}z" ;;
+				local) ref='./.github/workflows/local.yml'; expected=0 ;;
+				docker-tag) ref='docker://alpine:latest' ;;
+				docker-bare) ref='docker://alpine' ;;
+				docker-sha) ref="docker://alpine@sha256:$(printf '%064d' 0)"; expected=0 ;;
+				docker-short) ref="docker://alpine@sha256:$(printf '%063d' 0)" ;;
+				docker-nonhex) ref="docker://alpine@sha256:$(printf '%063d' 0)z" ;;
+			esac
+			d="$(new)"; semantic_fixture "$d" "$shape" "$site" "$ref"
+			out="$(run_in "$d" "$WORK/pin-length.sh")"; rc=$?
+			check "semantic $shape $site $kind status" "$expected" "$rc"
+			if [ "$expected" -eq 1 ]; then
+				if [[ "$kind" == docker-* ]]; then
+					needle='Docker reference must use @sha256:'
+				else
+					needle='exactly 40 hexadecimal'
+				fi
+				check "semantic $shape $site $kind diagnostic" "1" "$(said "$out" "$needle")"
+			fi
+		done
+	done
+done
 
 echo
 echo "$pass passed, $fail failed"
