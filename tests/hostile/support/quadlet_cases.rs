@@ -3,6 +3,19 @@
 //! Declared by `hostile_quadlet_units.rs` with
 //! `#[path = "../support/quadlet_cases.rs"] mod quadlet_cases;`.
 
+/// Paths whose bytes must survive both Quadlet and systemd command parsing.
+#[cfg(unix)]
+pub const ENV_FILE_PATHS: &[&str] = &[
+	r#"a b"c\d.env"#,
+	"with space.env",
+	"dq\"quote.env",
+	r"back\slash.env",
+	"%h.env",
+	"$x.env",
+	"simple.env",
+	"line\nbreak.env",
+];
+
 /// One compose field to attack. `yaml` receives the YAML-quoted payload.
 pub struct Case {
 	pub name: &'static str,

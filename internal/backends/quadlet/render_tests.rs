@@ -305,6 +305,24 @@ fn render_tmpfs_mount_bare_decimal_mode_is_not_octal_re_encoded() {
 // --- escape_unit_value (bug: incomplete systemd value escaping) ---
 
 #[test]
+fn env_file_paths_are_single_literal_words() {
+	for (path, expected) in [
+		(r#"a b"c\d.env"#, "\"a b\\\"c\\\\d.env\""),
+		("%h", "%%h"),
+		("$x", "$$x"),
+		("simple.env", "simple.env"),
+	] {
+		let mut section = Section::new("Container");
+		section.add("EnvironmentFile", path.to_string());
+		assert_eq!(
+			section.render(),
+			format!("[Container]\nEnvironmentFile={expected}\n"),
+			"env_file path {path:?}"
+		);
+	}
+}
+
+#[test]
 fn escape_word_split_value_with_whitespace_is_quoted() {
 	// An Environment value with whitespace must be quoted so systemd keeps it
 	// as one value instead of splitting it into bogus extra entries.

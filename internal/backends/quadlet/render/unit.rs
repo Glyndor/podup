@@ -8,10 +8,11 @@ use super::sanitize_value;
 /// `Secret` belongs to the set because Quadlet reads it the same way: it takes
 /// the value apart with an exec-like split, so a secret whose path holds a
 /// space would reach `podman` as two `--secret` flags, each one broken.
+/// `EnvironmentFile` uses the same split, so each path must remain one word.
 fn key_is_word_split(key: &str) -> bool {
 	matches!(
 		key,
-		"Environment" | "Label" | "Annotation" | "Sysctl" | "Secret"
+		"Environment" | "EnvironmentFile" | "Label" | "Annotation" | "Sysctl" | "Secret"
 	)
 }
 

@@ -763,6 +763,9 @@ jobs:
       # `@` and are naturally excluded: the form has no pin to measure.
       # The third-party form (`uses: owner/repo@<hex> # vX.Y.Z`) is the
       # only one with a pin and the only one this check reaches.
+      # The check read lines that start with `uses:`, so a step written as a
+      # flow mapping (`- { uses: owner/repo@v7 }`) was never seen; it now reads
+      # the parsed YAML, and a `docker://` reference must carry a digest.
       #
       # A tag or branch reference (`uses: owner/repo@v7`) fails the same
       # assertion, and deliberately so: nothing else in this repository
@@ -770,6 +773,9 @@ jobs:
       # closes the gap rather than deferring it to a check that does not
       # exist. `tests/scripts/shell/workflow_lint/reusable-workflow-lint-pin-length.test.sh`
       # covers every branch of this step, including that one.
+      # Parse YAML so flow mappings, quoted keys and aliases share one policy.
+      # Keep source marks to locate inherited references at their definition.
+      # PyYAML is already used by the preceding workflow guards.
       - name: Every `uses:` pin must be 40 hex characters
         run: |
           python3 - <<'PY'
@@ -777,61 +783,91 @@ jobs:
           import re
           import sys
 
-          # A SHA-1 pin is exactly 40 lowercase hex characters. Anything
-          # shorter is the defect #1741 caught: a 39-character copy-paste
-          # typo GitHub answers 422 for, leaving the workflow's job never
-          # to run. Anything longer is rejected for the same reason.
-          SHA1_RE = re.compile(r"^[0-9a-f]{40}$")
+          import yaml
 
-          # `uses:` at the start of a YAML scalar value, optionally
-          # preceded by a list dash. Captures the value to end-of-line;
-          # the trailing `# vX.Y.Z` comment rides along and is stripped
-          # by the part-split below.
-          USES_LINE_RE = re.compile(
-              r"^\s*-\s+uses:\s*(\S.*?)\s*$|^\s*uses:\s*(\S.*?)\s*$"
+          SHA1_RE = re.compile(r"[0-9a-f]{40}")
+          DOCKER_RE = re.compile(r"docker://.+@sha256:[0-9a-f]{64}")
+
+
+          class MarkedMapping(dict):
+              pass
+
+
+          class WorkflowLoader(yaml.SafeLoader):
+              pass
+
+
+          def marked_mapping(loader, node):
+              # Flatten merges before recording marks so inherited uses are checked too.
+              loader.flatten_mapping(node)
+              result = MarkedMapping()
+              result.lines = {}
+              for key_node, value_node in node.value:
+                  key = loader.construct_object(key_node, deep=True)
+                  result[key] = loader.construct_object(value_node, deep=True)
+                  result.lines[key] = value_node.start_mark.line + 1
+              return result
+
+
+          WorkflowLoader.add_constructor(
+              yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, marked_mapping
           )
 
 
+          def validate_uses(mapping, location):
+              if "uses" not in mapping:
+                  return None
+              value = mapping["uses"]
+              line = mapping.lines["uses"]
+              prefix = f"line {line}: {location}: `uses:` value `{value}`"
+              if isinstance(value, str) and value.startswith("./"):
+                  return None
+              if isinstance(value, str) and value.startswith("docker://"):
+                  if DOCKER_RE.fullmatch(value):
+                      return None
+                  return (
+                      f"{prefix}: Docker reference must use @sha256: followed by "
+                      "exactly 64 hexadecimal characters."
+                  )
+              pin = value.partition("@")[2] if isinstance(value, str) else ""
+              if SHA1_RE.fullmatch(pin):
+                  return None
+              return (
+                  f"{prefix} pins to `{pin}`, which is {len(pin)} characters; "
+                  "a SHA-1 pin must be exactly 40 hexadecimal characters. "
+                  "GitHub answers 422 for any other length and the job never runs. "
+                  "A tag or branch name is refused for a second reason: it moves, "
+                  "so it is not a pin."
+              )
+
+
           def find_violations(spec_path):
-              out = []
               try:
                   with open(spec_path) as fh:
-                      lines = fh.readlines()
+                      spec = yaml.load(fh, Loader=WorkflowLoader)
               except OSError as exc:
-                  # Silent skip would hide a workflow the linter cannot
-                  # read; reporting as a warning keeps the silence
-                  # visible the way tooling-isolation does.
-                  print(
-                      f"::warning file={spec_path}::skipped: {exc}",
-                      file=sys.stderr,
-                  )
-                  return out
-              for n, raw in enumerate(lines, start=1):
-                  line = raw.rstrip("\n")
-                  if line.lstrip().startswith("#"):
+                  print(f"::warning file={spec_path}::skipped: {exc}", file=sys.stderr)
+                  return []
+              except yaml.YAMLError as exc:
+                  # A parse failure must not turn an unchecked workflow into a success.
+                  return [f"cannot parse workflow YAML: {exc}"]
+              if not isinstance(spec, dict) or not isinstance(spec.get("jobs"), dict):
+                  return []
+              out = []
+              for job_id, job in spec["jobs"].items():
+                  if not isinstance(job, dict):
                       continue
-                  m = USES_LINE_RE.match(line)
-                  if m is None:
+                  message = validate_uses(job, f"job {job_id}")
+                  if message:
+                      out.append(message)
+                  steps = job.get("steps", [])
+                  if not isinstance(steps, list):
                       continue
-                  value = m.group(1) or m.group(2)
-                  if value is None:
-                      continue
-                  # Local reusable form: `uses: ./.github/workflows/x.yml`.
-                  # No pin, no `@`, not in scope.
-                  if value.startswith("./"):
-                      continue
-                  if "@" not in value:
-                      # No `@` at all is a malformed reference GitHub
-                      # rejects before it gets as far as a pin, and it
-                      # carries nothing to measure.
-                      continue
-                  _owner_repo, _at, after = value.partition("@")
-                  # The pin is the leading whitespace-separated token of
-                  # everything after `@`; the trailing `# vX.Y.Z` rides
-                  # along but does not enter the pin.
-                  pin = after.split()[0] if after.split() else ""
-                  if not SHA1_RE.match(pin):
-                      out.append((spec_path, n, value, pin))
+                  for index, step in enumerate(steps, start=1):
+                      if isinstance(step, dict):
+                          message = validate_uses(step, f"job {job_id}, step {index}")
+                          if message:
+                              out.append(message)
               return out
 
 
@@ -842,24 +878,15 @@ jobs:
               ))
               violations = []
               for path in files:
-                  violations.extend(find_violations(path))
+                  violations.extend((path, message) for message in find_violations(path))
               if violations:
-                  for path, line_no, value, pin in violations:
-                      print(
-                          f"::error file={path}::line {line_no}: "
-                          f"`uses:` value `{value}` pins to `{pin}`, "
-                          f"which is {len(pin)} characters; a SHA-1 "
-                          f"pin must be exactly 40 hexadecimal "
-                          f"characters. GitHub answers 422 for any "
-                          f"other length and the job never runs. A tag "
-                          f"or branch name is refused for a second "
-                          f"reason: it moves, so it is not a pin."
-                      )
+                  for path, message in violations:
+                      print(f"::error file={path}::{message}")
                   sys.exit(1)
               print(
-                  "checkout-pin-length: every `uses:` pin in "
-                  ".github/workflows/ is exactly 40 hexadecimal "
-                  "characters."
+                  "checkout-pin-length: every `uses:` pin in .github/workflows/ "
+                  "is exactly 40 hexadecimal characters; Docker references use "
+                  "SHA-256 digests and local references are allowed."
               )
 
 

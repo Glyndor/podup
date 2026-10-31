@@ -172,6 +172,52 @@ try {
 		Fail "Refusing to install: staged binary's --version does not match the resolved release tag (possible rollback) - the staged file has been removed"
 	}
 
+	# Compare complete release versions without fixed-width integer overflow.
+	function Compare-PodupVersion {
+		param([string]$Left, [string]$Right)
+		if ($Left -cnotmatch '\Av?[0-9]+\.[0-9]+\.[0-9]+\z' -or
+			$Right -cnotmatch '\Av?[0-9]+\.[0-9]+\.[0-9]+\z') { return $null }
+		$lhs = ($Left -creplace '^v', '') -split '\.'
+		$rhs = ($Right -creplace '^v', '') -split '\.'
+		for ($i = 0; $i -lt 3; $i++) {
+			$a = $lhs[$i].TrimStart([char]'0')
+			$b = $rhs[$i].TrimStart([char]'0')
+			if ($a.Length -lt $b.Length) { return -1 }
+			if ($a.Length -gt $b.Length) { return 1 }
+			$order = [string]::CompareOrdinal($a, $b)
+			if ($order -ne 0) { return [Math]::Sign($order) }
+		}
+		return 0
+	}
+
+	function Test-NoDowngrade {
+		param([string]$TargetPath, [string]$ResolvedTag, [string]$RequestedVersion)
+		# An explicit tag also authorizes an intentional downgrade.
+		if ($RequestedVersion -ne 'latest') { return }
+		if ($null -eq (Compare-PodupVersion $ResolvedTag $ResolvedTag)) {
+			Fail "Invalid resolved release tag: $ResolvedTag"
+		}
+		# Unreadable or broken binaries must remain replaceable.
+		try { $reported = & $TargetPath --version 2>$null } catch { return }
+		if ($LASTEXITCODE -ne 0) { return }
+		$reportedStr = ($reported | Out-String).Trim()
+		if ($reportedStr -cnotmatch '\Apodup\s+(?:version\s+)?(v?[0-9]+\.[0-9]+\.[0-9]+)\z') { return }
+		$installed = $Matches[1]
+		if ((Compare-PodupVersion $ResolvedTag $installed) -eq -1) {
+			Fail "Refusing downgrade: installed $installed is newer than $ResolvedTag. Set PODUP_VERSION=$ResolvedTag explicitly to install this older release."
+		}
+	}
+
+	# Resolve before fetching assets so a replay cannot downgrade a working install.
+	$ResolvedTag = if ($Version -eq 'latest') {
+		Write-LogInfo 'Resolving latest release tag ...'
+		Resolve-ReleaseTag
+	} else {
+		$Version
+	}
+	$target = Join-Path $InstallDir 'podup.exe'
+	Test-NoDowngrade -TargetPath $target -ResolvedTag $ResolvedTag -RequestedVersion $Version
+
 	Write-LogInfo "Downloading $Artifact ($Version) ..."
 	$artifactPath = Get-ReleaseFile $Artifact
 	$sumsPath = Get-ReleaseFile 'SHA256SUMS'
@@ -314,25 +360,14 @@ sys.exit(1)
 	if ($expected -ne $actual) { Fail "Checksum verification failed for $Artifact" }
 	Write-LogOk 'Checksum verified'
 
-	# Resolve the actual release tag for the self-test. With an explicit
-	# PODUP_VERSION=vX.Y.Z this is just that tag; with the default 'latest'
-	# we hit the GitHub releases API to discover it. The signed manifest
-	# binds asset bytes but not the release tag, so we cannot use the
-	# staged binary's --version as the source of truth - that would be
-	# the attack vector.
-	$ResolvedTag = if ($Version -eq 'latest') {
-		Write-LogInfo 'Resolving latest release tag ...'
-		Resolve-ReleaseTag
-	} else {
-		$Version
-	}
+	# Recheck before staging if another installer changed the target during download.
+	Test-NoDowngrade -TargetPath $target -ResolvedTag $ResolvedTag -RequestedVersion $Version
 
 	# --- Install -------------------------------------------------------------
 
 	if (-not (Test-Path $InstallDir)) {
 		New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 	}
-	$target = Join-Path $InstallDir 'podup.exe'
 	# A running .exe cannot be overwritten, but it can be renamed. Unify
 	# with the Rust updater (internal/update/install/backup.rs:17-122): rename
 	# the in-use target aside to *.old, move the staged binary in, then
