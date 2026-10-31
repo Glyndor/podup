@@ -5,7 +5,7 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
-    labels: ["type:deps", "type:ci"]
+    labels: ["type:deps", "type:ci", "area:ci"]
     open-pull-requests-limit: 10
     target-branch: "develop"
     # Sixteen Glyndor reusables and five `actions/*` references across the
@@ -53,7 +53,7 @@ updates:
     directory: "/"
     schedule:
       interval: "daily"
-    labels: ["type:deps"]
+    labels: ["type:deps", "area:core"]
     open-pull-requests-limit: 10
     target-branch: "develop"
     # Grouped by the ANSWER the pull request needs, which is the split the CI
@@ -94,7 +94,7 @@ updates:
     directory: "/fuzz"
     schedule:
       interval: "daily"
-    labels: ["type:deps", "type:ci"]
+    labels: ["type:deps", "type:ci", "area:ci"]
     open-pull-requests-limit: 5
     target-branch: "develop"
     groups:
@@ -107,7 +107,7 @@ updates:
     directory: "/bench/timeit"
     schedule:
       interval: "daily"
-    labels: ["type:deps", "type:ci"]
+    labels: ["type:deps", "type:ci", "area:ci"]
     open-pull-requests-limit: 5
     target-branch: "develop"
     groups:
@@ -127,7 +127,7 @@ updates:
     # rotation that the cargo and github-actions ecosystems already have.
     schedule:
       interval: "daily"
-    labels: ["type:deps", "type:ci"]
+    labels: ["type:deps", "type:ci", "area:ci"]
     open-pull-requests-limit: 10
     target-branch: "develop"
     # The manifest is `--require-hashes` and holds the whole tree of
