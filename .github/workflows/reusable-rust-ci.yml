@@ -329,14 +329,16 @@ jobs:
         id: inputs
         env:
           EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
         run: |
           set -euo pipefail
           build=true
           # The judge is read from the reviewed base, never from the PR's tree,
-          # and a merge group, a missing history or a missing judge builds.
-          if [[ "$EVENT" = pull_request || "$EVENT" = push ]] &&
+          # and a missing history or a missing judge builds. A merge group is
+          # judged on the whole range the queue built, base to head, which holds
+          # every pull request ahead of this one, so it can only build more.
+          if [[ "$EVENT" = pull_request || "$EVENT" = push || "$EVENT" = merge_group ]] &&
              changed=$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA") &&
              judge=$(git show "$BASE_SHA:.github/scripts/checks/rust-build-inputs.sh") &&
              bash -c "$judge" -- "$changed"; then
@@ -467,14 +469,16 @@ jobs:
         id: inputs
         env:
           EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
         run: |
           set -euo pipefail
           build=true
           # The judge is read from the reviewed base, never from the PR's tree,
-          # and a merge group, a missing history or a missing judge builds.
-          if [[ "$EVENT" = pull_request || "$EVENT" = push ]] &&
+          # and a missing history or a missing judge builds. A merge group is
+          # judged on the whole range the queue built, base to head, which holds
+          # every pull request ahead of this one, so it can only build more.
+          if [[ "$EVENT" = pull_request || "$EVENT" = push || "$EVENT" = merge_group ]] &&
              changed=$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA") &&
              judge=$(git show "$BASE_SHA:.github/scripts/checks/rust-build-inputs.sh") &&
              bash -c "$judge" -- "$changed"; then
@@ -490,6 +494,17 @@ jobs:
         run: |
           rustup toolchain install "$TOOLCHAIN" --profile minimal
           rustup default "$TOOLCHAIN"
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.inputs.outputs.build == 'true'
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ${{ inputs.working-directory }}/target
+          key: rust-doc-${{ runner.os }}-${{ inputs.toolchain }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: rust-doc-${{ runner.os }}-${{ inputs.toolchain }}-
 
       - name: Build docs with warnings denied
         if: steps.inputs.outputs.build == 'true'
