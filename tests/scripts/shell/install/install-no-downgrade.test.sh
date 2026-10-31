@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # A replayed latest tag must not replace a newer working installation.
 # Production helpers are loaded dynamically, so their consumers are not visible here.
-# shellcheck disable=SC2034,SC2317
+# shellcheck disable=SC2034,SC2317,SC2329
 set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
