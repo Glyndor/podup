@@ -8,6 +8,8 @@
 mod builder;
 #[cfg(test)]
 mod fake_podman;
+#[cfg(feature = "test-helpers")]
+pub(crate) mod fuzz_converters;
 mod host_files;
 mod images;
 mod lifecycle;
