@@ -102,10 +102,12 @@ fn autostart_rejects_a_directory_owned_by_another_uid() {
 	] {
 		let w = Workspace::new();
 		let foreign = std::path::Path::new("/");
-		assert_ne!(
-			fs::metadata(foreign).unwrap().uid(),
-			fs::metadata(w.root.path()).unwrap().uid()
-		);
+		// Run as root (the Debian package build does), the workspace and `/` have the
+		// same owner and there is no foreign directory to refuse: nothing to test.
+		if fs::metadata(foreign).unwrap().uid() == fs::metadata(w.root.path()).unwrap().uid() {
+			eprintln!("skipped: the test user owns / as well");
+			return;
+		}
 		let dir = w.config.join(relative);
 		fs::create_dir_all(dir.parent().unwrap()).unwrap();
 		// A read-only fixture: root belongs to another UID and cannot be written here.
