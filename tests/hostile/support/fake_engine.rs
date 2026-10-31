@@ -80,6 +80,16 @@ impl FakeEngine {
 
 	/// Run podup against this engine and return everything it printed.
 	pub fn run(&self, log: Option<&str>, env: &[(&str, &str)], args: &[&str]) -> String {
+		self.run_with_status(log, env, args).1
+	}
+
+	/// Like `run`, with the exit code first (`None` when a signal ended it).
+	pub fn run_with_status(
+		&self,
+		log: Option<&str>,
+		env: &[(&str, &str)],
+		args: &[&str],
+	) -> (Option<i32>, String) {
 		let socket = self.dir.path().join("podman.sock");
 		let mut cmd = Command::new(env!("CARGO_BIN_EXE_podup"));
 		cmd.current_dir(self.dir.path())
@@ -94,11 +104,12 @@ impl FakeEngine {
 			cmd.env("RUST_LOG", level);
 		}
 		let out = cmd.output().expect("run podup");
-		format!(
+		let text = format!(
 			"{}\n{}",
 			String::from_utf8_lossy(&out.stdout),
 			String::from_utf8_lossy(&out.stderr)
-		)
+		);
+		(out.status.code(), text)
 	}
 }
 
