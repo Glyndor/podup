@@ -44,7 +44,11 @@ async fn cli_logs_tail_limits_output() {
 		}
 		tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 	}
-	assert!(logs.status.success(), "logs failed: {:?}", logs.stderr);
+	assert!(
+		logs.status.success(),
+		"logs failed: {}",
+		String::from_utf8_lossy(&logs.stderr)
+	);
 	let lines = String::from_utf8_lossy(&logs.stdout)
 		.lines()
 		.filter(|l| l.contains("line-"))

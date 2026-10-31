@@ -43,7 +43,11 @@ async fn cli_logs_covers_every_replica_of_a_scaled_service() {
 		.output()
 		.unwrap();
 
-	assert!(logs.status.success(), "logs failed: {:?}", logs.stderr);
+	assert!(
+		logs.status.success(),
+		"logs failed: {}",
+		String::from_utf8_lossy(&logs.stderr)
+	);
 	let out = String::from_utf8_lossy(&logs.stdout);
 	assert!(
 		out.contains("worker-1 | hello-from-worker"),
@@ -85,7 +89,11 @@ async fn cli_top_covers_every_replica_of_a_scaled_service() {
 		.output()
 		.unwrap();
 
-	assert!(top.status.success(), "top failed: {:?}", top.stderr);
+	assert!(
+		top.status.success(),
+		"top failed: {}",
+		String::from_utf8_lossy(&top.stderr)
+	);
 	let out = String::from_utf8_lossy(&top.stdout);
 	assert!(
 		out.contains(&format!("{proj}-worker-1")),
@@ -131,7 +139,11 @@ async fn cli_logs_keeps_container_stdout_and_stderr_apart() {
 		.output()
 		.unwrap();
 
-	assert!(logs.status.success(), "logs failed: {:?}", logs.stderr);
+	assert!(
+		logs.status.success(),
+		"logs failed: {}",
+		String::from_utf8_lossy(&logs.stderr)
+	);
 	let out = String::from_utf8_lossy(&logs.stdout);
 	let err = String::from_utf8_lossy(&logs.stderr);
 	assert!(
@@ -182,7 +194,11 @@ async fn cli_logs_demuxes_eight_byte_frames_from_a_real_daemon() {
 		.output()
 		.unwrap();
 
-	assert!(logs.status.success(), "logs failed: {:?}", logs.stderr);
+	assert!(
+		logs.status.success(),
+		"logs failed: {}",
+		String::from_utf8_lossy(&logs.stderr)
+	);
 	let out = String::from_utf8_lossy(&logs.stdout);
 	let err = String::from_utf8_lossy(&logs.stderr);
 	assert!(
@@ -351,7 +367,11 @@ async fn cli_attached_up_carries_the_container_output() {
 		.output()
 		.unwrap();
 
-	assert!(up.status.success(), "attached up failed: {:?}", up.stderr);
+	assert!(
+		up.status.success(),
+		"attached up failed: {}",
+		String::from_utf8_lossy(&up.stderr)
+	);
 	let out = String::from_utf8_lossy(&up.stdout);
 	assert!(
 		out.contains("chatty-1 | attached-output"),

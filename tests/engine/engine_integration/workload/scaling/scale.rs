@@ -45,7 +45,11 @@ async fn up_scale_creates_replicas_and_down_removes_them() {
 	let up = run(&[
 		"-f", c, "-p", &proj, "up", "--detach", "--scale", "worker=3",
 	]);
-	assert!(up.status.success(), "up --scale failed: {:?}", up.stderr);
+	assert!(
+		up.status.success(),
+		"up --scale failed: {}",
+		String::from_utf8_lossy(&up.stderr)
+	);
 	assert_eq!(
 		running_count(c, &proj),
 		3,
@@ -53,7 +57,11 @@ async fn up_scale_creates_replicas_and_down_removes_them() {
 	);
 
 	let down = run(&["-f", c, "-p", &proj, "down"]);
-	assert!(down.status.success(), "down failed: {:?}", down.stderr);
+	assert!(
+		down.status.success(),
+		"down failed: {}",
+		String::from_utf8_lossy(&down.stderr)
+	);
 	assert_eq!(
 		running_count(c, &proj),
 		0,
@@ -80,7 +88,11 @@ async fn scale_subcommand_scales_up_then_down() {
 	assert_eq!(running_count(c, &proj), 1);
 
 	let up = run(&["-f", c, "-p", &proj, "scale", "worker=3"]);
-	assert!(up.status.success(), "scale up failed: {:?}", up.stderr);
+	assert!(
+		up.status.success(),
+		"scale up failed: {}",
+		String::from_utf8_lossy(&up.stderr)
+	);
 	assert_eq!(running_count(c, &proj), 3, "scale up must add replicas");
 
 	let down = run(&["-f", c, "-p", &proj, "scale", "worker=1"]);
@@ -120,7 +132,11 @@ async fn scale_down_to_one_preserves_surviving_replica() {
 
 	// A single `up` already names the container `worker-1` (always-suffix).
 	let up = run(&["-f", c, "-p", &proj, "up", "--detach"]);
-	assert!(up.status.success(), "up failed: {:?}", up.stderr);
+	assert!(
+		up.status.success(),
+		"up failed: {}",
+		String::from_utf8_lossy(&up.stderr)
+	);
 	let id_before = container_id(&survivor);
 	assert!(
 		!id_before.is_empty(),

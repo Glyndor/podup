@@ -33,7 +33,11 @@ async fn cli_rm_subcommand() {
 		.args(["-f", c, "-p", proj, "rm"])
 		.output()
 		.unwrap();
-	assert!(rm.status.success(), "rm failed: {:?}", rm.stderr);
+	assert!(
+		rm.status.success(),
+		"rm failed: {}",
+		String::from_utf8_lossy(&rm.stderr)
+	);
 }
 
 #[tokio::test]
@@ -66,7 +70,11 @@ async fn cli_pause_unpause_subcommands() {
 		.args(["-f", compose.to_str().unwrap(), "-p", &proj, "pause"])
 		.output()
 		.unwrap();
-	assert!(pause.status.success(), "pause failed: {:?}", pause.stderr);
+	assert!(
+		pause.status.success(),
+		"pause failed: {}",
+		String::from_utf8_lossy(&pause.stderr)
+	);
 
 	let unpause = Command::new(bin())
 		.args(["-f", compose.to_str().unwrap(), "-p", &proj, "unpause"])

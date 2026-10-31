@@ -97,7 +97,11 @@ async fn cli_up_with_build_flag() {
 		])
 		.output()
 		.unwrap();
-	assert!(up.status.success(), "up --build failed: {:?}", up.stderr);
+	assert!(
+		up.status.success(),
+		"up --build failed: {}",
+		String::from_utf8_lossy(&up.stderr)
+	);
 
 	Command::new(bin())
 		.args(["-f", compose.to_str().unwrap(), "-p", &proj, "down"])
@@ -123,5 +127,9 @@ async fn cli_build_subcommand() {
 		.args(["-f", compose.to_str().unwrap(), "build"])
 		.output()
 		.unwrap();
-	assert!(build.status.success(), "build failed: {:?}", build.stderr);
+	assert!(
+		build.status.success(),
+		"build failed: {}",
+		String::from_utf8_lossy(&build.stderr)
+	);
 }

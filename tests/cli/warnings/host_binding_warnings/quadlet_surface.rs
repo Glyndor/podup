@@ -22,7 +22,11 @@ fn generate_quadlet_warns_on_host_network_and_privileged() {
 		.env_remove("RUST_LOG")
 		.output()
 		.expect("run podup generate quadlet");
-	assert!(out.status.success(), "{:?}", out.stderr);
+	assert!(
+		out.status.success(),
+		"{}",
+		String::from_utf8_lossy(&out.stderr)
+	);
 	let stderr = String::from_utf8_lossy(&out.stderr);
 	assert!(
 		stderr.contains("service \"net\"") && stderr.contains("network_mode: host"),
@@ -65,7 +69,11 @@ fn generate_quadlet_warns_on_container_namespace_sharing() {
 		.env_remove("RUST_LOG")
 		.output()
 		.expect("run podup generate quadlet");
-	assert!(out.status.success(), "{:?}", out.stderr);
+	assert!(
+		out.status.success(),
+		"{}",
+		String::from_utf8_lossy(&out.stderr)
+	);
 	let stderr = String::from_utf8_lossy(&out.stderr);
 	assert!(
 		stderr.contains("container:sidecar"),
@@ -93,7 +101,11 @@ fn generate_quadlet_no_warn_suppresses_the_warnings() {
 		.env_remove("RUST_LOG")
 		.output()
 		.expect("run podup --no-warn generate quadlet");
-	assert!(out.status.success(), "{:?}", out.stderr);
+	assert!(
+		out.status.success(),
+		"{}",
+		String::from_utf8_lossy(&out.stderr)
+	);
 	let stderr = String::from_utf8_lossy(&out.stderr);
 	assert!(
 		!stderr.contains("podup: warning: network_mode: host"),
@@ -138,7 +150,11 @@ fn generate_quadlet_no_warn_without_modes_is_silent() {
 		.env_remove("RUST_LOG")
 		.output()
 		.expect("run podup --no-warn generate quadlet");
-	assert!(out.status.success(), "{:?}", out.stderr);
+	assert!(
+		out.status.success(),
+		"{}",
+		String::from_utf8_lossy(&out.stderr)
+	);
 	let stderr = String::from_utf8_lossy(&out.stderr);
 	for needle in [
 		"network_mode: host",
