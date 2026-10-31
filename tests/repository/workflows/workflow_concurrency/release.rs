@@ -1,6 +1,9 @@
 use super::*;
-use std::process::Command;
 
+// The step is a bash script that the test runs against a stub of `gh`; the
+// Windows runners have no stub-friendly shell, and the step only ever runs on
+// Linux, so the behaviour is checked on Unix.
+#[cfg(unix)]
 #[test]
 fn release_rejects_published_tags_before_building() {
 	let doc = workflow("release");
@@ -24,6 +27,7 @@ fn release_rejects_published_tags_before_building() {
 		"publication lookup precedes expensive checks"
 	);
 	let script = step["run"].as_str().unwrap();
+	use std::process::Command;
 	for (tags, api_rc, expected_rc, diagnostic) in [
 		("v1.2.3\nv1.2.4", "0", 1, "already published"),
 		("", "0", 0, ""),
