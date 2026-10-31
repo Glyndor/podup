@@ -1,3 +1,21 @@
+podup (5.15.1) unstable; urgency=medium
+
+  * `install.sh` gives the installed binary the mode of what `podup` resolves
+    to. It read the mode of a symlink itself, 0777, so reinstalling over a link
+    to a regular file left a binary every local user could rewrite. macOS now
+    reads the mode with the BSD `stat` form as well.
+  * `install.sh` and `install.ps1` refuse to install an older release over a
+    newer one when asked for `latest`, before and after the downloads. An
+    explicit `PODUP_VERSION` is still honoured as a requested downgrade.
+  * `podup generate quadlet` keeps each `env_file` path as one word in the unit.
+    A path with a space, a quote or a backslash was split or altered by Quadlet.
+  * The `tracing` crate no longer builds its proc-macro, which nothing used. CI
+    checks the pins of actions through the parsed YAML, so a step written as a
+    flow mapping is covered, and the release-signature fixture fails when an
+    asset has no signature.
+
+ -- Glyndor <packages@glyndor.net>  Sat, 31 Oct 2026 08:00:00 -0500
+
 podup (5.15.0) unstable; urgency=medium
 
   * Twelve review rounds closed gaps in how podup reads, copies and tears down.
