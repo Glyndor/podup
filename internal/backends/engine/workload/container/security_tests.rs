@@ -95,6 +95,27 @@ fn malformed_device_cgroup_rule_is_none() {
 }
 
 #[test]
+fn device_cgroup_rule_with_a_non_numeric_device_number_is_none() {
+	for rule in [
+		"c -1:3 rwm", // a sign is not a digit
+		"c 1:-3 rwm",
+		"c +1:3 rwm",
+		"c 9223372036854775808:3 r", // one past i64::MAX
+		"c \u{0661}:3 r",            // Arabic-Indic digit, not ASCII
+		"c 1:3\0 rwm",
+		"",
+	] {
+		assert!(
+			parse_device_cgroup_rule(rule).is_none(),
+			"{rule:?} must be skipped"
+		);
+	}
+	let edge = parse_device_cgroup_rule("b 9223372036854775807:0 w").unwrap();
+	assert_eq!(edge.major, Some(i64::MAX));
+	assert_eq!(edge.minor, Some(0));
+}
+
+#[test]
 fn cdi_device_carries_name_as_path() {
 	let d = cdi_device("nvidia.com/gpu=all".to_string());
 	assert_eq!(d.path, "nvidia.com/gpu=all");

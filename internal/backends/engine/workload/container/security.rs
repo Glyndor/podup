@@ -108,8 +108,12 @@ pub(crate) fn parse_device_cgroup_rule(rule: &str) -> Option<LinuxDeviceCgroup> 
 	let num = |s: &str| -> Option<Option<i64>> {
 		if s == "*" {
 			Some(None)
-		} else {
+		} else if s.bytes().all(|b| b.is_ascii_digit()) {
+			// `i64::parse` alone accepts a sign, and a negative device number
+			// is no device.
 			s.parse::<i64>().ok().map(Some)
+		} else {
+			None
 		}
 	};
 	Some(LinuxDeviceCgroup {
