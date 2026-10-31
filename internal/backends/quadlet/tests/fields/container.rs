@@ -105,9 +105,14 @@ services:
 	// `EnvironmentFile=` against the unit's own directory, not the project's, so
 	// `./app.env` would never be found once installed. Built with `join` so the
 	// separator matches the host (this test is not Unix-gated).
+	// A backslash is escaped in the unit, so the host separator is doubled.
 	let env_file = format!(
 		"EnvironmentFile={}",
-		std::path::Path::new("/srv/app").join("app.env").display()
+		std::path::Path::new("/srv/app")
+			.join("app.env")
+			.display()
+			.to_string()
+			.replace('\\', "\\\\")
 	);
 	for needle in [
 		"ContainerName=custom",

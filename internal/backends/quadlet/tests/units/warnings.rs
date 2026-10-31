@@ -56,6 +56,8 @@ services:
 		std::path::Path::new("/srv/app")
 			.join(".env.production")
 			.display()
+			.to_string()
+			.replace('\\', "\\\\")
 	);
 	assert!(c.contains(&needle), "missing `{needle}` in:\n{c}");
 }
