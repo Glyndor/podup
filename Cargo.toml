@@ -443,3 +443,7 @@ path = "tests/hostile/input/hostile_env_file_budget.rs"
 [[test]]
 name = "hostile_label_files"
 path = "tests/hostile/input/hostile_label_files.rs"
+
+[[test]]
+name = "unit_publication"
+path = "tests/hostile/input/unit_publication.rs"
