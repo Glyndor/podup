@@ -49,6 +49,15 @@ check "only pull_request and push can skip" 2 \
 	"$(grep -c '\[\[ "\$EVENT" = pull_request || "\$EVENT" = push \]\]' "$workflow")"
 check "the build steps are guarded" 5 \
 	"$(grep -c "steps.inputs.outputs.build == 'true'" "$workflow")"
+# The macOS and Windows hardening jobs skip the release build with the same judge.
+for wf in lint-shell lint-powershell; do
+	file="$HERE/.github/workflows/$wf.yml"
+	# shellcheck disable=SC2016
+	check "$wf reads the judge from the base" 1 \
+		"$(grep -c 'git show "\$BASE_SHA:.github/scripts/checks/rust-build-inputs.sh"' "$file")"
+	check "$wf guards toolchain, build and read" 3 \
+		"$(grep -c "steps.inputs.outputs.build == 'true'" "$file")"
+done
 echo "$pass passed, $fail failed"
 printf 'DONE %s %d %d\n' "${BASH_SOURCE[0]##*/}" "$pass" "$fail"
 [ "$fail" -eq 0 ]
