@@ -380,6 +380,27 @@ install_apt() {
 
 # --- binary mode -------------------------------------------------------------
 
+# Print the plain permission bits (three octal digits) of the file `path`
+# resolves to, or 755 when it does not exist. `stat` follows the link (-L), since
+# the mode of a symlink itself is 777 on Linux and would make the installed
+# binary writable by everyone. GNU takes -c %a; BSD and macOS take -f %Lp. The
+# special bits (setuid, setgid, sticky) are cut off so a planted one never rides
+# onto the new binary, the same discipline as internal/update/install/swap.rs.
+installed_mode() {
+	local path="$1" mode
+	if [[ ! -e "$path" ]]; then
+		echo 755
+		return
+	fi
+	mode="$(stat -L -c '%a' "$path" 2>/dev/null || stat -L -f '%Lp' "$path" 2>/dev/null || true)"
+	mode="${mode: -3}"
+	if [[ "$mode" =~ ^[0-7]{3}$ ]]; then
+		echo "$mode"
+	else
+		echo 755
+	fi
+}
+
 install_binary() {
 	log_info "Downloading ${ARTIFACT} (${VERSION}) ..."
 	download "${BASE_URL}/${ARTIFACT}" "${TMP_DIR}/${ARTIFACT}"
@@ -470,27 +491,10 @@ or python3 with the 'cryptography' package, or set PODUP_RELEASE_PUBKEY_B64, the
 	# cannot start private then widen.
 	local staged="${INSTALL_DIR}/.podup.install-$$"
 	local target="${INSTALL_DIR}/podup"
-	# Read the target's mode if it exists, so the new binary takes over
-	# whatever mode the operator chose. A default install lands at 0755.
-	# stat -c %a prints the mode as an octal string ("755", "4755"…); strip
-	# the special bits explicitly rather than relying on arithmetic, so
-	# the value fed to chmod is always a plain permission string.
+	# The new binary takes over the mode of what the target resolves to, so a
+	# `podup` symlink to a 0755 file installs a 0755 file, not the 0777 of the link.
 	local target_mode
-	if [[ -e "$target" ]]; then
-		target_mode="$(stat -c '%a' "$target")"
-		# 4 digits → setuid/setgid/sticky + perm; 3 digits → perm only.
-		# Strip the leading digit and any special bits from the value the
-		# operator set, so a tampered planted setuid bit never propagates.
-		local perm="${target_mode: -3}"
-		# final sanity: only octal digits 0-7 survive.
-		if [[ "$perm" =~ ^[0-7]{3}$ ]]; then
-			target_mode="$perm"
-		else
-			target_mode="755"
-		fi
-	else
-		target_mode="755"
-	fi
+	target_mode="$(installed_mode "$target")"
 	# Stage next to the target: copy under a 077 umask so the verified bytes
 	# are never world-readable in a shared directory (e.g. /usr/local/bin)
 	# during the window before the chmod applies the target's mode. The
