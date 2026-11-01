@@ -19,7 +19,8 @@ pub(crate) struct UpArgs {
 	/// Remove containers for services not defined in the compose file.
 	#[arg(long)]
 	pub(crate) remove_orphans: bool,
-	/// Do not recreate containers that are already running.
+	/// Do not recreate existing containers; a stopped one is started with its
+	/// current configuration.
 	#[arg(long, conflicts_with = "force_recreate")]
 	pub(crate) no_recreate: bool,
 	/// Recreate containers even if their configuration is unchanged.

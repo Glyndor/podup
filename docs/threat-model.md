@@ -89,7 +89,7 @@ Tests should fail when their control is removed. The live lane runs rootless int
 - The organization shares its release key across products. A direct binary signature authenticates the signer, not this repository; each package channel must enforce its own product binding.
 - The cryptographic implementations are not validated modules; deployments requiring one need a validated verification path.
 - No independent security audit is recorded.
-- The live lane runs one thread per Podman major to reduce VM transport failures.
+- The live lane runs two test threads for Podman 5 and one for Podman 6 to reduce VM transport failures.
 
 ## Reporting
 
