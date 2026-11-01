@@ -7,7 +7,7 @@ use crate::cli::EventsFormat;
 
 #[derive(Args)]
 pub(crate) struct EventsArgs {
-	/// Output format: a `TYPE ACTION NAME` summary (table) or one JSON
+	/// Output format: aligned `TIME TYPE ACTION NAME` columns under a header (table) or one JSON
 	/// object per line (NDJSON, not a JSON array).
 	#[arg(long, value_enum, default_value_t = EventsFormat::Table)]
 	pub(crate) format: EventsFormat,

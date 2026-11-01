@@ -53,7 +53,7 @@ A container that already exists is left in place when two facts both hold: its r
 | `--build` | Build images before starting. | off |
 | `-w, --watch` | After starting, watch for changes per `develop.watch`. | off |
 | `--remove-orphans` | Remove containers for services no longer in the file. | off |
-| `--no-recreate` | Leave already-running containers in place. | off |
+| `--no-recreate` | Leave existing containers as they are: a stopped one is started without applying configuration changes. | off |
 | `--force-recreate` | Recreate containers even if their config is unchanged. | off |
 | `--no-deps` | Do not start the `depends_on` services of the named services. | off |
 | `-t, --timeout <SECS>` | Seconds to wait for a container to stop when recreating. | Podman default |
@@ -69,7 +69,7 @@ A container that already exists is left in place when two facts both hold: its r
 | `--abort-on-container-exit` | Stop every container as soon as any of them exits; the process exit status is that container's exit code. Cannot be combined with `-d`, `--wait`, or `--watch`. | off |
 | `--exit-code-from SERVICE` | Return the named service's exit code as podup's own. Implies `--abort-on-container-exit`; a service that does not exist in the compose file is rejected before any container is created. | off |
 
-`--wait` implies `-d` and checks only each service's first replica. Health polling retains its per-service budget (interval × retries + start_period); `--wait-timeout` does not extend this dependency budget.
+`--wait` implies `-d` and checks every replica of each selected service. Health polling retains its per-service budget (interval × retries + start_period); `--wait-timeout` does not extend this dependency budget.
 
 With `missing`, an observed local image skips redundant pulls. `always`/`newer` and platform-pinned services still pull; build services use or build their local image.
 

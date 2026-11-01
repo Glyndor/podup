@@ -8,17 +8,16 @@ pub(crate) enum OutputFormat {
 	/// Aligned columns for human reading.
 	#[default]
 	Table,
-	/// Machine-readable JSON array.
+	/// Machine-readable JSON.
 	Json,
 }
 
 /// Output rendering for `events`. Distinct from [`OutputFormat`] because the
-/// event stream is NDJSON (one object per line), not a JSON array, and the table
-/// form is a plain summary line with no header, so the help text must not claim
-/// "JSON array" / "aligned columns".
+/// event stream is NDJSON (one object per line), not a JSON array, so the help
+/// text must not claim "JSON array".
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub(crate) enum EventsFormat {
-	/// A plain `TYPE ACTION NAME` summary, one event per line (no header/alignment).
+	/// Aligned `TIME TYPE ACTION NAME` columns under a header, one event per line.
 	#[default]
 	Table,
 	/// One JSON object per line (NDJSON), not a JSON array.
@@ -72,8 +71,8 @@ pub(crate) enum AuditFormat {
 	/// Aligned columns (`SERVICE` / `FINDINGS`) followed by per-finding lines.
 	#[default]
 	Table,
-	/// One JSON object per finding, with stable keys, or `{"findings": []}`
-	/// when nothing matched.
+	/// One JSON object holding a `findings` array with stable keys; the array
+	/// is empty when nothing matched.
 	Json,
 }
 
