@@ -187,6 +187,10 @@ name = "hostile_compose"
 path = "tests/hostile/input/hostile_compose.rs"
 
 [[test]]
+name = "hostile_include_extends_cycle"
+path = "tests/hostile/input/hostile_include_extends_cycle.rs"
+
+[[test]]
 name = "hostile_filesystem_paths"
 path = "tests/hostile/input/hostile_filesystem_paths.rs"
 
