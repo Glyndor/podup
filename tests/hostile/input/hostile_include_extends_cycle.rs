@@ -117,15 +117,12 @@ fn an_external_include_and_extends_cycle_is_reported() {
 	let outcome = config(&compose);
 	assert!(outcome.code.is_some(), "cycle exceeded {BUDGET:?}");
 	assert!(outcome.took < BUDGET, "cycle took {:?}", outcome.took);
-	// A cycle through an external file is not named as a cycle: the cycle guard
-	// forgets the file once it is parsed, before its own `extends` chain is
-	// followed, so the depth limit of 16 is what stops it. Either message is a
-	// refusal; the loop must never run on.
-	let text = outcome.text.to_lowercase();
 	assert!(
-		text.contains("circular extends.file")
-			|| text.contains("extends chain exceeds maximum depth"),
-		"expected a refusal of the cycle, got:\n{}",
+		outcome
+			.text
+			.to_lowercase()
+			.contains("circular extends.file"),
+		"expected the circular extends.file diagnostic, got:\n{}",
 		outcome.text
 	);
 	assert_ne!(outcome.code, Some(0), "the cycle was accepted");
