@@ -147,13 +147,16 @@ List project containers.
 |---|---|---|
 | `-a, --all` | Include stopped containers. | running only |
 | `-q, --quiet` | Print container IDs only. | off |
-| `--format <FMT>` | `table` or `json`. | `table` |
-| `--status <STATE>` | Show only containers in this state. Repeatable; folded together with any `status=` from `--filter`. | all |
+| `--format <FMT>` | `table`, `json` (a JSON array), or `ndjson` (one Compose-shaped object per container, sorted by Name). | `table` |
+| `--status <STATE>` | Match container state/status by case-insensitive prefix. Repeatable; folded together with any `status=` from `--filter`. | all |
 | `--filter <KEY=VAL>` | `name=<NAME>` or `status=<STATE>`. An unknown key is an error. | none |
-| `--services` | Print service names only. | off |
+| `--services` | Print distinct services of the selected containers, sorted, one per line. Applies the same container filters as the table. | off |
+| `--all-services` | Print configured services in file order, one per line, restricted by positional SERVICE names. Conflicts with `--quiet`, `--format` and `--services`. | off |
 | `-s, --size` | Add a SIZE column with each container's on-disk footprint. | off |
 
 An empty result prints `no containers` on stderr and leaves stdout empty in table output. Under `--format json` an empty result is `[]`; under `-q/--quiet` neither the note nor a row is printed.
+
+Positional `SERVICE` names restrict the selected services. Services without containers are omitted by `--services`; use `--all-services` to include them. Empty NDJSON and service lists print nothing on stdout. NDJSON uses empty strings for unavailable command and network names and for an unrequested size, and `null` for Publishers when no ports exist.
 
 ### `ls`
 List podup compose projects on the host. Needs no compose file.

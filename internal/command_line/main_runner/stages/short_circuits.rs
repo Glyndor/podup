@@ -190,6 +190,7 @@ pub(crate) async fn run_ps(
 		all,
 		quiet,
 		services_only,
+		all_services,
 		size,
 		filter,
 		status,
@@ -205,13 +206,15 @@ pub(crate) async fn run_ps(
 	engine
 		.ps_filtered_with_display(
 			&file,
-			podup::PsOptions::new(*all, *quiet, *format == crate::cli::OutputFormat::Json),
+			podup::PsOptions::new(*all, *quiet, *format == crate::cli::PsFormat::Json)
+				.with_ndjson(*format == crate::cli::PsFormat::Ndjson),
 			podup::PsFilterOptions::new(
 				*services_only,
 				services.clone(),
 				status.clone(),
 				filter.clone(),
-			),
+			)
+			.with_all_services(*all_services),
 			podup::PsDisplayOptions::default().with_size(*size),
 		)
 		.await

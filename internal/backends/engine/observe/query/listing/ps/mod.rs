@@ -12,8 +12,10 @@ use crate::backends::engine::observe::query::Engine;
 mod filters;
 mod format;
 mod json;
+mod ndjson;
 mod options;
 mod ports;
+mod services;
 
 pub use options::{PsDisplayOptions, PsFilterOptions, PsOptions};
 
@@ -70,13 +72,11 @@ impl Engine {
 			}
 		}
 
-		// `--services` lists the (optionally filtered) configured service names,
+		// `--all-services` lists the (optionally filtered) configured service names,
 		// one per line, instead of the container table.
-		if filters.services_only {
-			for name in file.services.keys() {
-				if filters.services.is_empty() || filters.services.iter().any(|s| s == name) {
-					println!("{name}");
-				}
+		if filters.all_services {
+			for name in services::configured_services(file, &filters.services) {
+				println!("{name}");
 			}
 			return Ok(());
 		}
@@ -119,6 +119,18 @@ impl Engine {
 			&status_filter,
 			&name_filter,
 		);
+
+		if filters.services_only {
+			for service in services::container_services(&containers) {
+				println!("{service}");
+			}
+			return Ok(());
+		}
+
+		if opts.ndjson {
+			print!("{}", ndjson::render(&containers, now_unix())?);
+			return Ok(());
+		}
 
 		if opts.quiet {
 			// Full 64-char IDs, like `docker compose ps -q` (and podup's JSON),
