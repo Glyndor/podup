@@ -55,14 +55,32 @@ fn services_honour_name_filter_and_use_the_table_fallback() {
 			.collect::<Vec<_>>(),
 		["api"]
 	);
-	let unlabelled = entry("", "running");
-	assert_eq!(
-		container_services(std::slice::from_ref(&unlabelled))
-			.into_iter()
-			.collect::<Vec<_>>(),
-		[table_service(&unlabelled)]
-	);
 	assert!(container_services(&[]).is_empty());
+}
+
+#[test]
+fn a_container_without_a_service_label_is_not_listed_as_an_empty_service() {
+	let unlabelled = entry("", "running");
+	assert_eq!(table_service(&unlabelled), "");
+	assert!(container_services(std::slice::from_ref(&unlabelled)).is_empty());
+	let both = [unlabelled, service("web", "running")];
+	assert_eq!(
+		container_services(&both).into_iter().collect::<Vec<_>>(),
+		["web"]
+	);
+}
+
+#[test]
+fn a_service_label_cannot_drive_the_terminal_or_split_the_list() {
+	// An escape sequence and a newline in a label from the daemon: one line
+	// per service has to stay true, and nothing may reach the terminal raw.
+	let hostile = service("web\x1b[2J\nfake", "running");
+	let listed = container_services(std::slice::from_ref(&hostile));
+	assert_eq!(listed.len(), 1);
+	let line = listed.into_iter().next().unwrap();
+	assert!(!line.chars().any(char::is_control), "{line:?}");
+	assert!(!line.contains('\n'), "{line:?}");
+	assert!(line.starts_with("web"), "{line:?}");
 }
 
 #[test]
