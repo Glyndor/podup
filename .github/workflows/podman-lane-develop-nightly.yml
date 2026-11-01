@@ -44,7 +44,19 @@ jobs:
           persist-credentials: false
           ref: develop
       - name: Install qemu + cloud tools
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 qemu-utils cloud-image-utils
+        timeout-minutes: 15
+        run: |
+          # apt has hung for the whole 95 min job budget on a saturated runner, and the
+          # cancelled leg made the merge queue drop the groups behind it. Bound each
+          # attempt and retry instead.
+          for attempt in 1 2 3; do
+            if sudo timeout 240 apt-get update -qq && sudo timeout 240 apt-get install -y -qq qemu-system-x86 qemu-utils cloud-image-utils; then
+              exit 0
+            fi
+            echo "apt attempt $attempt failed or timed out"
+            sleep 10
+          done
+          exit 1
       - name: Fetch Fedora rawhide cloud image (Podman 6)
         run: |
           base="https://dl.fedoraproject.org/pub/fedora/linux/development/rawhide/Cloud/x86_64/images/"
