@@ -441,6 +441,10 @@ name = "hostile_env_file_budget"
 path = "tests/hostile/input/hostile_env_file_budget.rs"
 
 [[test]]
+name = "hostile_env_file_bytes"
+path = "tests/hostile/input/hostile_env_file_bytes.rs"
+
+[[test]]
 name = "hostile_label_files"
 path = "tests/hostile/input/hostile_label_files.rs"
 
