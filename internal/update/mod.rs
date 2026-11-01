@@ -71,6 +71,19 @@ fn run_with_guard(
 	opts: UpdateOptions,
 	managed_by: crate::Result<Option<&str>>,
 ) -> crate::Result<()> {
+	run_with_verifier(source, current, opts, managed_by, verify::verify_signature)
+}
+
+/// The whole flow with the signature check passed in, so a test can sign a
+/// manifest with a key of its own and follow the update past the signature
+/// gate. Production only ever passes [`verify::verify_signature`].
+fn run_with_verifier(
+	source: &dyn ReleaseSource,
+	current: &str,
+	opts: UpdateOptions,
+	managed_by: crate::Result<Option<&str>>,
+	verify_signature: impl Fn(&[u8], &[u8]) -> crate::Result<()>,
+) -> crate::Result<()> {
 	let current_v = verify::parse_version(current)?;
 	let latest_tag = source.latest_version()?;
 	let latest_v = verify::parse_version(&latest_tag)?;
@@ -104,7 +117,7 @@ fn run_with_guard(
 	// against the verified manifest (fail-closed).
 	let sha256sums = source.fetch("SHA256SUMS")?;
 	let signature = source.fetch("SHA256SUMS.sig")?;
-	verify::verify_signature(&sha256sums, &signature)?;
+	verify_signature(&sha256sums, &signature)?;
 	let expected = verify::expected_digest(&sha256sums, asset)?;
 
 	println!("downloading {asset} ({latest_tag}) ...");

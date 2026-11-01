@@ -130,3 +130,68 @@ fn tags_that_are_not_versions_stop_the_update_before_any_download() {
 		assert!(src.asked.borrow().is_empty(), "{tag:?}");
 	}
 }
+
+/// A release whose manifest is signed by a key the test holds, so the update
+/// goes past the signature gate and the digest gate is what is under attack.
+fn signed_release(
+	binary: Vec<u8>,
+	served: Vec<u8>,
+) -> Hostile<impl Fn(&str) -> crate::Result<Vec<u8>>> {
+	use ed25519_dalek::{Signer, SigningKey};
+	let key = SigningKey::from_bytes(&[7u8; 32]);
+	let asset = install::platform_asset().expect("a host with a release asset");
+	let sums = format!("{}  {asset}\n", verify::sha256_hex(&binary)).into_bytes();
+	let sig = key.sign(&sums).to_bytes().to_vec();
+	source("v9.9.9", move |name| match name {
+		"SHA256SUMS" => Ok(sums.clone()),
+		"SHA256SUMS.sig" => Ok(sig.clone()),
+		_ => Ok(served.clone()),
+	})
+}
+
+fn update_signed_by_test_key(src: &dyn ReleaseSource) -> crate::Result<()> {
+	use ed25519_dalek::SigningKey;
+	let verifying = SigningKey::from_bytes(&[7u8; 32]).verifying_key();
+	let opts = UpdateOptions {
+		check_only: false,
+		force: false,
+	};
+	run_with_verifier(src, "0.6.0", opts, Ok(None), |msg, sig| {
+		verify::verify_signature_with(&verifying, msg, sig)
+	})
+}
+
+#[test]
+fn a_truncated_binary_under_a_valid_signature_fails_the_digest_and_installs_nothing() {
+	if install::platform_asset().is_none() {
+		return;
+	}
+	let whole = b"the new podup binary, whole".to_vec();
+	let src = signed_release(whole.clone(), whole[..whole.len() / 2].to_vec());
+	let err = update_signed_by_test_key(&src).unwrap_err();
+	match err {
+		ComposeError::Update(msg) => assert!(msg.contains("checksum mismatch"), "{msg}"),
+		other => panic!("expected a digest failure, got {other:?}"),
+	}
+	let asked = src.asked.borrow();
+	assert_eq!(asked[..2], ["SHA256SUMS", "SHA256SUMS.sig"], "{asked:?}");
+	assert_eq!(
+		asked.len(),
+		3,
+		"the binary is asked for once, after the gate"
+	);
+}
+
+#[test]
+fn a_binary_swapped_for_another_under_a_valid_signature_fails_the_digest() {
+	if install::platform_asset().is_none() {
+		return;
+	}
+	let signed = b"the binary the manifest names".to_vec();
+	let src = signed_release(signed, b"a different binary of the same size!".to_vec());
+	let err = update_signed_by_test_key(&src).unwrap_err();
+	assert!(
+		matches!(&err, ComposeError::Update(m) if m.contains("checksum mismatch")),
+		"{err:?}"
+	);
+}
