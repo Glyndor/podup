@@ -190,8 +190,7 @@ fn an_include_loop_ends() {
 		"include: [a.yaml]\nservices:\n  b:\n    image: alpine\n",
 	);
 	let outcome = config(&dir.path().join("a.yaml"));
-	// podup reads an included file without following its own `include:`, so a
-	// loop cannot run away. It ends; it is not refused.
+	// The loader refuses a circular include, so it cannot run away.
 	assert_survived("include loop", &outcome);
 }
 

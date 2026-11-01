@@ -1,3 +1,15 @@
+podup (5.15.4) unstable; urgency=medium
+
+  * A cycle of `extends` that leaves through one external file and returns through
+    another is refused as a circular `extends.file`. It used to run until the depth
+    limit of 16 and report a depth error.
+  * The docs and the `--help` text match the code again: `up --no-recreate` also keeps
+    stopped containers, `audit --format json` is one object with a `findings` array,
+    the `events` table has a header and aligned columns, `up --wait` checks every
+    replica, and the update units are `podup-<project>.update.service` and `.timer`.
+
+ -- Glyndor <packages@glyndor.net>  Sun, 01 Nov 2026 07:15:00 -0500
+
 podup (5.15.3) unstable; urgency=medium
 
   * `up --exit-code-from` and `--abort-on-container-exit` no longer turn a failed

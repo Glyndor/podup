@@ -19,7 +19,7 @@ loginctl show-user appuser --property=Linger   # Linger=yes
 
 | Mode | What it installs | Choose it when |
 |---|---|---|
-| `service` (default) | One `Type=oneshot` unit running `podup up -d --no-build --pull never` at boot, `podman stop` on shutdown. | A simple stack: one unit to enable, one to remove. |
+| `service` (default) | One `Type=oneshot` unit running `podup up -d --no-build --pull never` at boot, `podup stop` on shutdown. | A simple stack: one unit to enable, one to remove. |
 | `quadlet` | One native Podman Quadlet unit per service (`.container`/`.build`/`.volume`/`.network`/`.pod`). Builds run at install and on `autostart rebuild`, not at boot. A service whose build is `build.dockerfile_inline` gets no `.build` unit: Quadlet has no inline-Dockerfile equivalent, so the image must come pre-built under `image:`. | Per-container supervision: systemd restarts, ordering and status for each service. |
 | `start` | One `Type=oneshot` unit running `podman start`. Single-service projects only. | Boot resumes an existing container with no compose front-end on the path. |
 
@@ -39,7 +39,7 @@ The three cannot coexist for one project. Reinstalling the same mode rewrites th
 
 ## Commands
 
-Status inspects the service/start unit. For Quadlet, use `systemctl --user status <project>-<service>.service` (Quadlet turns `<project>-<service>.container` into `<project>-<service>.service`; substitute the project's name and the service name).
+Status inspects the service/start unit, or reports the aggregated state of the services of a Quadlet install. For one Quadlet unit, use `systemctl --user status <project>-<service>.service` (Quadlet turns `<project>-<service>.container` into `<project>-<service>.service`; substitute the project's name and the service name).
 
 ```bash
 # install: pick one mode
@@ -69,7 +69,7 @@ podup autostart rebuild web                      # rebuild just one service
 | Mode | Executor | How it is installed |
 |---|---|---|
 | `quadlet` | `podman-auto-update.timer` (ships with Podman) | podup writes `AutoUpdate=<value>` on each `.container`. The user must enable `podman-auto-update.timer` on the host for it to fire. |
-| `service` | a per-project `<unit>-update.timer` (`hourly`/`daily`/`weekly`) | `podup autostart install --mode service --auto-update <hourly\|daily\|weekly>`. Adds `<unit>-update.service` (oneshot that runs `podup up -d`, which builds and pulls missing images and re-checks the registry for `x-podman-autoupdate: registry` services that have no `build:`) and the timer that fires it; uninstall removes both. |
+| `service` | a per-project `podup-<project>.update.timer` (`hourly`/`daily`/`weekly`) | `podup autostart install --mode service --auto-update <hourly\|daily\|weekly>`. Adds `podup-<project>.update.service` (oneshot that runs `podup up -d`, which builds and pulls missing images and re-checks the registry for `x-podman-autoupdate: registry` services that have no `build:`) and the timer that fires it; uninstall removes both. |
 | `start` | none | the boot path runs `podman start`, not `podup up`. `--auto-update` is rejected with `--mode start`. |
 
 For stacks not under autostart at all, schedule `podup up -d` directly:

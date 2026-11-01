@@ -90,6 +90,11 @@ struct ExtendsCache {
 	/// file's own chains resolve, so it cannot answer "is this path on the
 	/// current path" and a cycle across files would recurse forever.
 	in_progress: HashSet<PathBuf>,
+	/// The `(file, service)` pairs on the `extends.file` chain being followed.
+	/// `in_progress` is released as soon as a file is parsed, before that
+	/// file's own chain is followed, so only this set sees a cycle that goes
+	/// out through one external file and comes back through another.
+	chain: HashSet<(PathBuf, String)>,
 	/// The namespace being resolved: services first, then jobs.
 	kind: Kind,
 }
@@ -336,6 +341,13 @@ fn resolve_one_extends(
 		}
 		let ext_dir = abs.parent().unwrap_or(base_dir);
 		let mut nested_visited: HashSet<String> = HashSet::new();
+		let link = (abs.clone(), base_name.clone());
+		if !cache.chain.insert(link.clone()) {
+			return Err(ComposeError::Extends(format!(
+				"circular extends.file: {} is already being resolved",
+				abs.display()
+			)));
+		}
 		resolve_one_extends(
 			&mut other,
 			&base_name,
@@ -344,6 +356,7 @@ fn resolve_one_extends(
 			depth + 1,
 			cache,
 		)?;
+		cache.chain.remove(&link);
 		cache.env_files = env_files;
 		cache.local_env_files = local_env_files;
 		let mut base = other.services.swap_remove(&base_name).ok_or_else(|| {

@@ -137,6 +137,44 @@ fn bytes_that_are_not_http_are_refused() {
 }
 
 #[test]
+fn a_status_line_whose_code_is_not_a_status_is_refused() {
+	// Whole, well-formed lines around a code HTTP has no room for, so the
+	// status parser is what refuses them and not the framing.
+	for code in ["000", "099", "1000", "2O0", "-1", "20"] {
+		let line = format!(
+			"HTTP/1.1 {code} X\r\nLibpod-API-Version: 5.0.0\r\nContent-Length: 2\r\n\r\nOK"
+		);
+		ps_with_hostile_ping(&format!("status code {code}"), move |s| {
+			let _ = s.write_all(line.as_bytes());
+		});
+	}
+}
+
+#[test]
+fn a_listing_body_that_stops_after_its_headers_is_given_up_on() {
+	// The headers arrive in time, so the header timeout passes; the body then
+	// stalls after one byte. Only the body read timeout can end this.
+	let fake = server::start(|s, r: &Request| {
+		if r.target.contains("_ping") {
+			ping_ok(s)
+		} else {
+			let _ = s.write_all(
+				b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n[",
+			);
+			server::stall(s);
+		}
+	});
+	let home = tempfile::tempdir().unwrap();
+	let outcome = podup(&fake.sock, &home, &["ps"], Duration::from_secs(150));
+	assert_refused("body stalled after the headers", &outcome);
+	assert!(
+		outcome.took < Duration::from_secs(140),
+		"{:?}",
+		outcome.took
+	);
+}
+
+#[test]
 fn an_endless_run_of_100_continue_is_refused() {
 	ps_with_hostile_ping("100 Continue forever", |s| {
 		flood(s, b"HTTP/1.1 100 Continue\r\n\r\n", 64 * MIB);

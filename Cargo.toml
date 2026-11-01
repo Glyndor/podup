@@ -1,6 +1,6 @@
 [package]
 name = "podup"
-version = "5.15.3"
+version = "5.15.4"
 edition = "2021"
 rust-version = "1.88"
 # podup is a binary that happens to build a library, not a library that ships a
@@ -185,6 +185,10 @@ path = "tests/repository/docs/docs_links.rs"
 [[test]]
 name = "hostile_compose"
 path = "tests/hostile/input/hostile_compose.rs"
+
+[[test]]
+name = "hostile_include_extends_cycle"
+path = "tests/hostile/input/hostile_include_extends_cycle.rs"
 
 [[test]]
 name = "hostile_filesystem_paths"
@@ -439,6 +443,10 @@ required-features = ["update", "test-helpers"]
 [[test]]
 name = "hostile_env_file_budget"
 path = "tests/hostile/input/hostile_env_file_budget.rs"
+
+[[test]]
+name = "hostile_env_file_bytes"
+path = "tests/hostile/input/hostile_env_file_bytes.rs"
 
 [[test]]
 name = "hostile_label_files"
