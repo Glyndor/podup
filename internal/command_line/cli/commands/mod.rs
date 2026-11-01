@@ -14,7 +14,7 @@ mod create;
 mod inspect;
 mod interact;
 pub(crate) use create::{RunArgs, UpArgs};
-pub(crate) use inspect::{ConfigArgs, EventsArgs, LogsArgs, PsArgs};
+pub(crate) use inspect::{ConfigArgs, EventsArgs, LogsArgs, PsArgs, PsFormat};
 pub(crate) use interact::{AttachArgs, CommitArgs, ExecArgs};
 
 #[derive(Subcommand)]
