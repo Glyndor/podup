@@ -185,7 +185,19 @@ jobs:
         run: echo "this pull request changes nothing the VM can observe (see the decide job); reporting success without booting"
       - name: Install qemu + cloud tools
         if: needs.decide.outputs.engine == 'true'
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq qemu-system-x86 qemu-utils cloud-image-utils
+        timeout-minutes: 15
+        run: |
+          # apt has hung for the whole 95 min job budget on a saturated runner, and the
+          # cancelled leg made the merge queue drop the groups behind it. Bound each
+          # attempt and retry instead.
+          for attempt in 1 2 3; do
+            if sudo timeout 240 apt-get update -qq && sudo timeout 240 apt-get install -y -qq qemu-system-x86 qemu-utils cloud-image-utils; then
+              exit 0
+            fi
+            echo "apt attempt $attempt failed or timed out"
+            sleep 10
+          done
+          exit 1
       - name: Fetch Fedora cloud image (Podman 6 = rawhide, 5 = Fedora 44)
         if: needs.decide.outputs.engine == 'true'
         run: |

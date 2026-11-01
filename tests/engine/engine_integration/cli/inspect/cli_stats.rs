@@ -27,7 +27,11 @@ async fn cli_stats_no_stream_reports_running_container() {
 		.args(["-f", c, "-p", &proj, "stats", "--no-stream"])
 		.output()
 		.unwrap();
-	assert!(stats.status.success(), "stats failed: {:?}", stats.stderr);
+	assert!(
+		stats.status.success(),
+		"stats failed: {}",
+		String::from_utf8_lossy(&stats.stderr)
+	);
 	let out = String::from_utf8_lossy(&stats.stdout);
 	assert!(out.contains("CPU %"), "stats must print a header: {out}");
 	assert!(

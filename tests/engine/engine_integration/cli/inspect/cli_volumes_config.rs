@@ -20,7 +20,11 @@ async fn cli_volumes_lists_named_volumes() {
 
 	// -q prints only the resolved on-host name ({proj}_data).
 	let out = run(&["-f", c, "-p", &proj, "volumes", "-q"]);
-	assert!(out.status.success(), "volumes -q failed: {:?}", out.stderr);
+	assert!(
+		out.status.success(),
+		"volumes -q failed: {}",
+		String::from_utf8_lossy(&out.stderr)
+	);
 	let names = String::from_utf8_lossy(&out.stdout);
 	assert!(
 		names.lines().any(|l| l.trim() == format!("{proj}_data")),
@@ -94,7 +98,11 @@ fn cli_config_materialises_env_file_into_environment() {
 	let c = compose.to_str().unwrap();
 
 	let out = run(&["-f", c, "-p", &proj, "config"]);
-	assert!(out.status.success(), "config failed: {:?}", out.stderr);
+	assert!(
+		out.status.success(),
+		"config failed: {}",
+		String::from_utf8_lossy(&out.stderr)
+	);
 	let yaml = String::from_utf8_lossy(&out.stdout);
 
 	assert!(

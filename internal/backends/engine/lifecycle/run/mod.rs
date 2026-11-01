@@ -5,6 +5,7 @@ mod attached;
 mod deps_wait;
 mod init_service;
 pub(super) mod options;
+mod overrides;
 
 use std::collections::HashMap;
 use std::io::Write;
@@ -131,15 +132,9 @@ impl Engine {
 		});
 
 		let mut run_service = service.clone();
-		if !cmd.is_empty() {
-			run_service.command = Some(crate::compose::types::Command::Exec(cmd));
-		}
-		// `--entrypoint` overrides the image/service entrypoint with a single
-		// executable token (compose/`docker run` semantics); any `cmd` becomes
-		// its arguments.
-		if let Some(ep) = entrypoint {
-			run_service.entrypoint = Some(crate::compose::types::Command::Exec(vec![ep]));
-		}
+		// `--entrypoint` is split into words and, given with no command, also drops
+		// the command the service declared; both follow `docker compose run`.
+		overrides::apply_entrypoint_and_command(&mut run_service, entrypoint, cmd)?;
 		if let Some(u) = user {
 			run_service.user = Some(u);
 		}
@@ -191,7 +186,8 @@ impl Engine {
 				env_overrides,
 			));
 		}
-		run_service.restart = None;
+		// A one-off runs once, whatever the service says about restarting.
+		overrides::run_once(&mut run_service);
 		// Compose `run` does not publish the service's ports unless
 		// `--service-ports` is given; otherwise a one-off run would collide
 		// with the long-running service's host-port bindings.

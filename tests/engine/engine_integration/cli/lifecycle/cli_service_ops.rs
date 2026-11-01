@@ -48,7 +48,11 @@ async fn cli_rm_volumes_removes_container() {
 	run_ok(&["-f", c, "-p", proj, "up", "-d"]);
 	run(&["-f", c, "-p", proj, "stop"]);
 	let rm = run(&["-f", c, "-p", proj, "rm", "-v", "-f"]);
-	assert!(rm.status.success(), "rm -v failed: {:?}", rm.stderr);
+	assert!(
+		rm.status.success(),
+		"rm -v failed: {}",
+		String::from_utf8_lossy(&rm.stderr)
+	);
 	assert_eq!(ps_all_count(c, proj), 0, "rm must remove the container");
 }
 
@@ -72,7 +76,11 @@ async fn cli_rm_stop_removes_running_container() {
 
 	// `rm -s` (no -f) must stop the running container first, then remove it.
 	let rm = run(&["-f", c, "-p", &proj, "rm", "-s", "web"]);
-	assert!(rm.status.success(), "rm -s failed: {:?}", rm.stderr);
+	assert!(
+		rm.status.success(),
+		"rm -s failed: {}",
+		String::from_utf8_lossy(&rm.stderr)
+	);
 	assert_eq!(
 		ps_all_count(c, &proj),
 		0,

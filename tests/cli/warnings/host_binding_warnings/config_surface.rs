@@ -112,7 +112,11 @@ fn config_warning_is_unaffected_by_no_warn() {
 		.env_remove("RUST_LOG")
 		.output()
 		.expect("run podup --no-warn config");
-	assert!(out.status.success(), "{:?}", out.stderr);
+	assert!(
+		out.status.success(),
+		"{}",
+		String::from_utf8_lossy(&out.stderr)
+	);
 	let stderr = String::from_utf8_lossy(&out.stderr);
 	assert!(
 		stderr.contains("network_mode: host"),
@@ -131,7 +135,11 @@ fn config_with_no_active_modes_is_silent() {
 		.env_remove("RUST_LOG")
 		.output()
 		.expect("run podup config");
-	assert!(out.status.success(), "{:?}", out.stderr);
+	assert!(
+		out.status.success(),
+		"{}",
+		String::from_utf8_lossy(&out.stderr)
+	);
 	let stderr = String::from_utf8_lossy(&out.stderr);
 	assert!(
 		!stderr.contains("shares the host's"),
@@ -179,5 +187,9 @@ fn unknown_no_warn_after_subcommand_is_accepted() {
 		.env_remove("RUST_LOG")
 		.output()
 		.expect("run podup config --no-warn");
-	assert!(out.status.success(), "{:?}", out.stderr);
+	assert!(
+		out.status.success(),
+		"{}",
+		String::from_utf8_lossy(&out.stderr)
+	);
 }

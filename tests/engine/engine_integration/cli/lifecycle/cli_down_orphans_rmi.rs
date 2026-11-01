@@ -27,7 +27,11 @@ async fn cli_down_remove_orphans_drops_undeclared_containers() {
 
 	// Down against the one-service file: --remove-orphans must also drop `extra`.
 	let down = run(&["-f", one, "-p", &proj, "down", "--remove-orphans"]);
-	assert!(down.status.success(), "down failed: {:?}", down.stderr);
+	assert!(
+		down.status.success(),
+		"down failed: {}",
+		String::from_utf8_lossy(&down.stderr)
+	);
 	assert_eq!(
 		ps_all_count(one, &proj),
 		0,
@@ -118,7 +122,11 @@ async fn cli_kill_remove_orphans_drops_undeclared() {
 
 	run_ok(&["-f", two, "-p", &proj, "up", "-d"]);
 	let kill = run(&["-f", one, "-p", &proj, "kill", "--remove-orphans"]);
-	assert!(kill.status.success(), "kill failed: {:?}", kill.stderr);
+	assert!(
+		kill.status.success(),
+		"kill failed: {}",
+		String::from_utf8_lossy(&kill.stderr)
+	);
 	// The orphan `extra` is removed; the declared `web` is killed but remains.
 	run(&["-f", one, "-p", &proj, "down"]);
 }

@@ -18,7 +18,11 @@ async fn cli_run_subcommand() {
 		.args(["-f", c, "-p", proj, "run", "job", "echo", "hello"])
 		.output()
 		.unwrap();
-	assert!(run.status.success(), "run failed: {:?}", run.stderr);
+	assert!(
+		run.status.success(),
+		"run failed: {}",
+		String::from_utf8_lossy(&run.stderr)
+	);
 	let stdout = String::from_utf8_lossy(&run.stdout);
 	assert!(stdout.contains("hello"), "expected 'hello' in output");
 }
