@@ -26,7 +26,10 @@ run_case() {
 }
 # Skipped: only paths the root build and rustdoc never read.
 for path in tests/hostile/input/x.rs docs/commands.md README.md CONTRIBUTING.md \
-	bench/run.sh fuzz/fuzz_targets/a.rs debian/rules install.sh install.ps1; do
+	bench/run.sh fuzz/fuzz_targets/a.rs debian/rules install.sh install.ps1 \
+	.github/workflows/binary-budget.yml .github/workflows/reusable-rust-fuzz.yml \
+	.github/workflows/podman-lane.yml .github/scripts/checks/podman-lane-paths.sh \
+	.github/dependabot.yml; do
 	run_case 0 "$path"
 done
 run_case 0 $'tests/a.rs\ndocs/b.md'
@@ -34,6 +37,9 @@ run_case 0 $'tests/a.rs\ndocs/b.md'
 for path in internal/lib.rs internal/backends/engine/observe/stats/stats_tests.rs \
 	Cargo.toml Cargo.lock build.rs .cargo/config.toml rust-toolchain.toml about.hbs \
 	.github/workflows/reusable-rust-ci.yml .github/scripts/checks/rust-build-inputs.sh \
+	.github/workflows/ci.yml .github/workflows/lint-shell.yml .github/workflows/lint-powershell.yml \
+	.github/workflows/release.yml .github/workflows/reusable-shell-ci.yml \
+	.github/workflows/a-workflow-nobody-reviewed.yml \
 	unknown.txt; do
 	run_case 1 "$path"
 	run_case 1 $'tests/a.rs\n'"$path"
