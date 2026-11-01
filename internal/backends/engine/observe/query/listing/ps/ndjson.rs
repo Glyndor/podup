@@ -5,6 +5,23 @@ use super::ports::{format_ports, publishers};
 use super::{filters::health_from_status, ContainerListEntry};
 use crate::error::Result;
 
+/// Docker Compose declares `PublishedPort` as an integer, so a port that is not
+/// published to the host is `0`, not `null`. The podup JSON array keeps its
+/// `null`, which is why this is built here and not in `publishers`.
+fn compose_publishers(
+	ports: &[crate::libpod::types::container::ContainerPort],
+) -> Vec<serde_json::Value> {
+	publishers(ports)
+		.into_iter()
+		.map(|mut p| {
+			if p["PublishedPort"].is_null() {
+				p["PublishedPort"] = 0.into();
+			}
+			p
+		})
+		.collect()
+}
+
 fn row(c: &ContainerListEntry, now: i64) -> serde_json::Value {
 	let mut labels: Vec<_> = c.labels.iter().map(|(k, v)| format!("{k}={v}")).collect();
 	labels.sort();
@@ -24,7 +41,7 @@ fn row(c: &ContainerListEntry, now: i64) -> serde_json::Value {
 		"Networks": "",
 		"Ports": format_ports(&c.ports),
 		"Project": c.labels.get("podup.project").cloned().unwrap_or_default(),
-		"Publishers": (!c.ports.is_empty()).then(|| publishers(&c.ports)),
+		"Publishers": (!c.ports.is_empty()).then(|| compose_publishers(&c.ports)),
 		"RunningFor": table_created(c, now),
 		"Service": table_service(c),
 		"Size": table_size(c),
@@ -35,7 +52,9 @@ fn row(c: &ContainerListEntry, now: i64) -> serde_json::Value {
 
 pub(super) fn render(containers: &[ContainerListEntry], now: i64) -> Result<String> {
 	let mut sorted: Vec<_> = containers.iter().collect();
-	sorted.sort_by_key(|c| name_of(c));
+	// The id breaks a tie between two rows with the same name, so the order does
+	// not depend on the order the daemon answered in.
+	sorted.sort_by_key(|c| (name_of(c), c.id.clone()));
 	let mut output = String::new();
 	for c in sorted {
 		let line = serde_json::to_string(&row(c, now))
