@@ -35,6 +35,8 @@ for path in README.md docs/nested/page.html .github/ISSUE_TEMPLATE/bug.yml LICEN
 	fuzz/Cargo.toml fuzz/Cargo.lock fuzz/fuzz_targets/compose.rs \
 	bench/timeit/Cargo.toml bench/timeit/Cargo.lock bench/budgets/binary-budget-mib \
 	tests/scripts/shell/workflow_behaviour/example.test.sh tests/scripts/powershell/example.Tests.ps1 \
+	tests/cli/x.rs tests/compose/parsing/y.rs tests/fixtures/data.yaml tests/hostile/podman/z.rs \
+	tests/quadlet/q.rs tests/repository/workflows/w.rs \
 	deny.toml about.toml about.hbs debian/control debian/changelog install.sh install.ps1 \
 	.github/scripts/release/sign-requirements.txt; do
 	run_case 0 "$path"
@@ -46,7 +48,7 @@ for file in "$HERE"/.github/workflows/*.yml; do
 	run_case 0 "$path"
 done
 for path in internal/x.rs Cargo.toml Cargo.lock build.rs .cargo/config.toml \
-	rust-toolchain rust-toolchain.toml tests/cli/x.rs tests/fixtures/data.yaml \
+	rust-toolchain rust-toolchain.toml tests/unknown/x.rs tests/engine/x.rs tests/cli.rs \
 	tests/engine/engine_integration.rs tests/engine/integration_leak_scan.rs \
 	.github/workflows/podman-lane.yml .github/workflows/future.yml \
 	.github/podman_lane/known-failures-5 .github/podman_lane/known-failures-6 \
@@ -57,6 +59,8 @@ for path in internal/x.rs Cargo.toml Cargo.lock build.rs .cargo/config.toml \
 	run_case 1 "$path"
 done
 run_case 1 $'.github/dependabot.yml\ninternal/x.rs'
+run_case 1 $'tests/hostile/podman/z.rs\ntests/engine/engine_integration.rs'
+run_case 0 $'tests/hostile/podman/z.rs\ntests/compose/parsing/y.rs\ndocs/commands.md'
 run_case 1 $'internal/x.rs\n.github/dependabot.yml'
 run_case 0 $'.github/dependabot.yml\nfuzz/Cargo.lock\nbench/timeit/Cargo.lock'
 run_case 1 ''
@@ -115,6 +119,13 @@ decide_case pull_request '' true
 DIFF_ERROR=1 decide_case pull_request .github/dependabot.yml true
 MISSING_HELPER=1 decide_case pull_request .github/dependabot.yml true
 BUMP_RC=0 decide_case pull_request $'Cargo.toml\nCargo.lock\ndebian/changelog' false
+
+# The test folders the classifier exempts must stay out of the two binaries the
+# VM runs: a reference from tests/engine to one of them that is not a comment
+# would make the exemption unsafe.
+check "tests/engine does not use the exempt test folders" 0 \
+	"$(grep -rnE 'tests/(cli|compose|fixtures|hostile|quadlet|repository)/|\.\./(cli|compose|fixtures|hostile|quadlet|repository)/' "$HERE/tests/engine" |
+		grep -cvE ':[0-9]+:[[:space:]]*//')"
 
 # The exempt-workflow list must be reconsidered if the lane starts calling a
 # reusable workflow or a local action. Today its only uses are checkout.
