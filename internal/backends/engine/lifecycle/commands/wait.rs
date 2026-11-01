@@ -1,3 +1,6 @@
+use futures_util::stream::FuturesUnordered;
+use futures_util::StreamExt;
+
 use crate::compose::types::ComposeFile;
 use crate::engine::lifecycle::targets::filter_services;
 use crate::engine::Engine;
@@ -42,8 +45,8 @@ impl Engine {
 	/// code (`docker compose wait`). `json` emits one NDJSON object per
 	/// container instead of the table.
 	///
-	/// Returns `RunExited` with the last non-zero code so the process exit
-	/// status reflects it, mirroring docker compose.
+	/// Returns the last completed container's code, including zero, matching
+	/// Docker Compose v2.40.3. Wait failures remain errors after all waits finish.
 	///
 	/// NDJSON rather than a trailing array because `wait` blocks: a script
 	/// that only learns anything once every container has exited has been
@@ -55,9 +58,7 @@ impl Engine {
 		target_services: &[String],
 		json: bool,
 	) -> Result<()> {
-		// `docker compose wait` prints each service's exit code in the order the
-		// services were given on the command line (deduplicated). Only fall back to
-		// dependency order when no services were named (the "all" case).
+		// Validate and deduplicate targets before starting any waits.
 		let order = if target_services.is_empty() {
 			let order = crate::compose::resolve_order(file)?;
 			filter_services(file, order, &[])?
@@ -75,21 +76,7 @@ impl Engine {
 				.collect::<Vec<_>>()
 		};
 
-		// One line per container, which is the granularity the reference reports
-		// at, measured against docker compose v5.1.3 with a service scaled to 3
-		// replicas, it printed three lines, one per container id. The comment this
-		// replaces asserted the opposite ("a single exit code for each service"),
-		// and a bare `0` per service was built on it: with more than one container
-		// nothing said which code belonged to which.
-		//
-		// What is deliberately *not* copied is the rendering. The reference prints
-		// `container "<64-char hex id>" exited with status code 0`: an id nobody
-		// can map back to a service, the same sentence repeated on every line, and
-		// no machine path at all. Same information, said better: the container
-		// name podup already has, aligned columns, and the code coloured by
-		// whether it is a failure.
-		let mut last_nonzero = 0i64;
-		let mut printed_header = false;
+		let mut waits = Vec::new();
 		for name in &order {
 			// Only wait on containers Podman actually has. The static-name fallback
 			// would POST `/wait` to a never-created predicted name and surface a raw
@@ -103,34 +90,65 @@ impl Engine {
 					"{API_PREFIX}/containers/{}/wait?condition=stopped",
 					crate::libpod::urlencoded(&container_name),
 				);
-				let code = self
-					.client
-					.post_empty_json_unbounded::<i64>(&path)
-					.await
-					.map_err(ComposeError::Podman)?;
-				if code != 0 {
-					last_nonzero = code;
-				}
-				if json {
-					println!(
-						"{}",
-						serde_json::json!({ "Container": container_name, "ExitCode": code })
-					);
-				} else {
-					// The header is printed lazily, with the first result: a project
-					// where nothing was waited on stays the silent no-op it was,
-					// rather than emitting a header over an empty table.
-					if !printed_header {
-						crate::ui::print_bold_header(&wait_header());
-						printed_header = true;
-					}
-					println!("{}", wait_row(&container_name, code));
-				}
+				waits.push(async move {
+					let code = self
+						.client
+						.post_empty_json_unbounded::<i64>(&path)
+						.await
+						.map_err(ComposeError::Podman);
+					(container_name, code)
+				});
 			}
 		}
-		if last_nonzero != 0 {
-			return Err(ComposeError::RunExited(last_nonzero));
-		}
-		Ok(())
+		let mut printed_header = false;
+		wait_for_containers(waits, |container_name, code| {
+			if json {
+				println!(
+					"{}",
+					serde_json::json!({ "Container": container_name, "ExitCode": code })
+				);
+			} else {
+				if !printed_header {
+					crate::ui::print_bold_header(&wait_header());
+					printed_header = true;
+				}
+				println!("{}", wait_row(container_name, code));
+			}
+		})
+		.await
 	}
 }
+
+async fn wait_for_containers<F>(
+	waits: impl IntoIterator<Item = F>,
+	mut report: impl FnMut(&str, i64),
+) -> Result<()>
+where
+	F: std::future::Future<Output = (String, Result<i64>)>,
+{
+	let mut pending: FuturesUnordered<_> = waits.into_iter().collect();
+	let mut last_code = 0;
+	let mut first_error = None;
+	while let Some((container, result)) = pending.next().await {
+		match result {
+			Ok(code) => {
+				last_code = code;
+				report(&container, code);
+			}
+			Err(error) => {
+				first_error.get_or_insert(error);
+			}
+		}
+	}
+	if let Some(error) = first_error {
+		return Err(error);
+	}
+	if last_code != 0 {
+		return Err(ComposeError::RunExited(last_code));
+	}
+	Ok(())
+}
+
+#[cfg(test)]
+#[path = "wait_tests.rs"]
+mod tests;
