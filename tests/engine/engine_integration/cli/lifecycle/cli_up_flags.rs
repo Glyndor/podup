@@ -47,7 +47,11 @@ async fn cli_up_no_start_creates_without_starting() {
 	let c = compose.to_str().unwrap();
 
 	let up = run(&["-f", c, "-p", &proj, "up", "--no-start"]);
-	assert!(up.status.success(), "up --no-start failed: {:?}", up.stderr);
+	assert!(
+		up.status.success(),
+		"up --no-start failed: {}",
+		String::from_utf8_lossy(&up.stderr)
+	);
 	assert_eq!(ps_all_count(c, &proj), 1, "container must be created");
 	let running = String::from_utf8_lossy(&run(&["-f", c, "-p", &proj, "ps", "-q"]).stdout)
 		.lines()

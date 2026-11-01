@@ -47,7 +47,11 @@ async fn cli_port_subcommand() {
 		])
 		.output()
 		.unwrap();
-	assert!(port.status.success(), "port failed: {:?}", port.stderr);
+	assert!(
+		port.status.success(),
+		"port failed: {}",
+		String::from_utf8_lossy(&port.stderr)
+	);
 
 	Command::new(bin())
 		.args(["-f", compose.to_str().unwrap(), "-p", &proj, "down"])
