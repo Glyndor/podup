@@ -1,3 +1,16 @@
+podup (5.15.3) unstable; urgency=medium
+
+  * `up --exit-code-from` and `--abort-on-container-exit` no longer turn a failed
+    read of a container's exit code into 0, and they pick the right replica.
+    `wait` follows Docker Compose: it waits for all the services and returns the
+    exit code of the last one to finish.
+  * `run` follows Docker Compose for a one-off container: `--entrypoint` is split
+    into words, the restart policy of the service is not applied, and the container
+    does not take the service name as a network alias.
+  * `config --images` names the tag that a service with only a `build` section gets.
+
+ -- Glyndor <packages@glyndor.net>  Sat, 31 Oct 2026 23:00:00 -0500
+
 podup (5.15.2) unstable; urgency=medium
 
   * The project lock refuses a FIFO, a link or a file of another user instead of
