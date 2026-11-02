@@ -130,8 +130,8 @@ fn candidate_socket_paths() -> Vec<String> {
 	let trusted = xdg.as_deref().filter(|dir| trusted_runtime_dir(dir, uid));
 	if xdg.as_deref().is_some_and(|d| !d.is_empty()) && trusted.is_none() {
 		tracing::warn!(
-			"XDG_RUNTIME_DIR is not an absolute directory owned by this user that others cannot write; \
-			 not looking for the Podman socket there"
+			"XDG_RUNTIME_DIR is not an absolute directory owned by this user that neither its group nor \
+			 others can write; not looking for the Podman socket there"
 		);
 	}
 	runtime_candidates(uid, trusted)
