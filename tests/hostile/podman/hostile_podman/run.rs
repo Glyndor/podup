@@ -12,7 +12,15 @@ use tempfile::TempDir;
 const ADDRESS_SPACE_KIB: u32 = 8_000_000;
 
 /// Peak resident memory the child may reach while a hostile peer feeds it.
-pub const RSS_CEILING_KIB: u64 = 300 * 1024;
+///
+/// The hostile payloads that matter are 400 MiB and 512 MiB, so a client that
+/// buffered one of them whole would peak above this. The ceiling is not lower
+/// because the peak of a legitimate run is not steady: a listing the client cuts
+/// at its 64 MiB cap and then parses measured 137 to 335 MiB on the same build,
+/// depending on how the bytes arrived (on the 5.15.4 tag as well, so it is not a
+/// regression). A ceiling of 300 MiB failed at random in the Debian package
+/// build, which runs these tests.
+pub const RSS_CEILING_KIB: u64 = 384 * 1024;
 
 pub struct Outcome {
 	/// `None` when the child was killed: by the budget, or by a signal of its own.
