@@ -20,6 +20,31 @@ fn bin() -> &'static str {
 	env!("CARGO_BIN_EXE_podup")
 }
 
+/// One scratch directory per test process, removed when the process exits, so a
+/// run leaves nothing behind in the temp directory. The tests below used to make
+/// a directory per call and never delete it: 83 of them per run.
+fn scratch_root() -> &'static std::path::Path {
+	static ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+	ROOT.get_or_init(|| {
+		let dir = std::env::temp_dir().join(format!("podup-audit-{}", std::process::id()));
+		let _ = fs::remove_dir_all(&dir);
+		fs::create_dir_all(&dir).unwrap();
+		extern "C" fn cleanup() {
+			let dir = std::env::temp_dir().join(format!("podup-audit-{}", std::process::id()));
+			let _ = fs::remove_dir_all(dir);
+		}
+		// `atexit` is part of the C runtime on every platform the tests run on, so
+		// it is declared here and not taken from `libc`, which only Unix builds link.
+		extern "C" {
+			fn atexit(callback: extern "C" fn()) -> std::os::raw::c_int;
+		}
+		// SAFETY: registers a plain function that captures nothing and only
+		// removes this process's scratch directory.
+		unsafe { atexit(cleanup) };
+		dir
+	})
+}
+
 /// Render `body` to a unique tempfile under the system tempdir and return
 /// its path. The audit command is invoked with `-f <path>` so the compose
 /// file lives exactly where the operator would point `-f`. Every call gets
@@ -28,8 +53,7 @@ fn bin() -> &'static str {
 fn write_compose(body: &str) -> std::path::PathBuf {
 	static COUNTER: AtomicU64 = AtomicU64::new(0);
 	let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-	let dir = std::env::temp_dir().join(format!("podup-audit-{}-{n}", std::process::id()));
-	let _ = fs::remove_dir_all(&dir);
+	let dir = scratch_root().join(n.to_string());
 	fs::create_dir_all(&dir).unwrap();
 	let path = dir.join("compose.yaml");
 	fs::write(&path, body).unwrap();
