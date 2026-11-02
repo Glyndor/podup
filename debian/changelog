@@ -1,3 +1,23 @@
+podup (5.16.0) unstable; urgency=medium
+
+  * `ps --services` follows Docker Compose: it prints the distinct services of the
+    containers the command would list, sorted, with the same `-a`, `--status`, `--filter`
+    and `SERVICE` selection as the table. It used to print the services of the compose
+    file. A script that read the file's services from it should use the new
+    `ps --all-services`, which prints them in file order, needs no Podman socket, and
+    refuses an unknown service or `--filter` key like the table.
+  * `ps --format ndjson` prints one object per container, sorted by name, with the keys
+    Docker Compose uses (`PublishedPort` is `0` for a port that is not published).
+    `--format json` is unchanged. `ps --status` still matches by prefix, where Compose
+    compares the whole status; `docs/docker-migration.md` says so.
+  * The service names `ps` prints, and the directory a unit-directory refusal names,
+    have their control characters escaped. The `XDG_RUNTIME_DIR` warning now says that a
+    group-writable directory is refused too.
+  * CI no longer boots the Podman VM for a change that only touches test folders the VM
+    never runs.
+
+ -- Glyndor <packages@glyndor.net>  Mon, 02 Nov 2026 00:30:00 -0500
+
 podup (5.15.4) unstable; urgency=medium
 
   * A cycle of `extends` that leaves through one external file and returns through
