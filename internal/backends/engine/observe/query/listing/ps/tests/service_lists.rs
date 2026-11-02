@@ -71,6 +71,16 @@ fn a_container_without_a_service_label_is_not_listed_as_an_empty_service() {
 }
 
 #[test]
+fn two_labels_that_print_the_same_are_still_two_services() {
+	// A real newline and a backslash followed by `n` escape to the same text.
+	let containers = [
+		service("web\napi", "running"),
+		service("web\\napi", "running"),
+	];
+	assert_eq!(container_services(&containers).len(), 2);
+}
+
+#[test]
 fn a_service_label_cannot_drive_the_terminal_or_split_the_list() {
 	// An escape sequence and a newline in a label from the daemon: one line
 	// per service has to stay true, and nothing may reach the terminal raw.

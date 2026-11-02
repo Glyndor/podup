@@ -86,3 +86,40 @@ fn legacy_json_bytes_and_constructor_remain_unchanged() {
 			.ndjson
 	);
 }
+
+#[test]
+fn a_port_that_is_not_published_has_published_port_zero_and_the_json_array_keeps_null() {
+	let mut c = entry("Up 1 minute", "running");
+	c.names = vec!["/db-1".into()];
+	c.ports = vec![ContainerPort {
+		host_ip: None,
+		host_port: None,
+		container_port: 5432,
+		protocol: Some("tcp".into()),
+		range: None,
+	}];
+	let line = render(std::slice::from_ref(&c), NOW).unwrap();
+	let row: serde_json::Value = serde_json::from_str(line.trim_end()).unwrap();
+	assert_eq!(row["Publishers"][0]["PublishedPort"], 0);
+	assert!(super::super::ports::publishers(&c.ports)[0]["PublishedPort"].is_null());
+}
+
+#[test]
+fn rows_with_the_same_name_are_ordered_by_id_whatever_order_they_arrive_in() {
+	let mut a = entry("Up", "running");
+	a.id = "a".into();
+	a.names = vec![];
+	let mut b = entry("Up", "running");
+	b.id = "b".into();
+	b.names = vec![];
+	let forward = render(&[a, b], NOW).unwrap();
+	// The same two rows, built again and handed over the other way round.
+	let mut a = entry("Up", "running");
+	a.id = "a".into();
+	a.names = vec![];
+	let mut b = entry("Up", "running");
+	b.id = "b".into();
+	b.names = vec![];
+	let backward = render(&[b, a], NOW).unwrap();
+	assert_eq!(forward, backward);
+}
