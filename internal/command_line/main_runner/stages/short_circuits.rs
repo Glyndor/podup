@@ -201,6 +201,17 @@ pub(crate) async fn run_ps(
 		// The caller (top-level `run`) only routes here when the variant matches.
 		return Ok(());
 	};
+	if *all_services {
+		// The compose file is all this needs: no socket, like `config --services`.
+		return podup::PsFilterOptions::new(
+			*services_only,
+			services.clone(),
+			status.clone(),
+			filter.clone(),
+		)
+		.with_all_services(true)
+		.print_configured_services(&file);
+	}
 	let client = connect_podman(cli.socket.as_deref(), cli.connection_pool_size).await?;
 	let engine = podup::Engine::with_base_dir(client, project, base_dir);
 	engine

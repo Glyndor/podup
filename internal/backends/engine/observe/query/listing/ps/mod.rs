@@ -1,4 +1,4 @@
-//! `ps` lists this project's containers as a table or JSON. Split into one
+//! `ps` lists this project's containers as a table, JSON or NDJSON. Split into one
 //! file per responsibility: options, the cell renderers, the port formatters,
 //! the filter predicates, the JSON row builder, the Engine entry points and
 //! the test-only projection helper.
@@ -9,6 +9,7 @@ use crate::libpod::types::container::ContainerListEntry;
 
 use crate::backends::engine::observe::query::Engine;
 
+mod all_services;
 mod filters;
 mod format;
 mod json;
@@ -44,8 +45,9 @@ impl Engine {
 
 	/// List containers with `docker compose ps`-style options: `-a/--all`
 	/// (include stopped), `-q/--quiet` (full IDs only), `--format`
-	/// (table | json), `--services` (service-name list), a positional `SERVICE`
-	/// filter, and `--status`/`--filter` predicates.
+	/// (table | json | ndjson), `--services` (the services of the listed
+	/// containers), `--all-services` (the services of the compose file), a
+	/// positional `SERVICE` filter, and `--status`/`--filter` predicates.
 	pub async fn ps_filtered(
 		&self,
 		file: &ComposeFile,
@@ -73,12 +75,10 @@ impl Engine {
 		}
 
 		// `--all-services` lists the (optionally filtered) configured service names,
-		// one per line, instead of the container table.
+		// one per line, instead of the container table. The command runs it before
+		// it connects to Podman; this keeps the library entry point answering the same.
 		if filters.all_services {
-			for name in services::configured_services(file, &filters.services) {
-				println!("{name}");
-			}
-			return Ok(());
+			return filters.print_configured_services(file);
 		}
 
 		// Fold `--status` and any `status=`/`name=` from `--filter` together. An

@@ -63,3 +63,55 @@ fn config_quiet_validates_without_output() {
 		.unwrap();
 	assert!(!err.status.success(), "invalid config must fail under -q");
 }
+
+#[test]
+fn ps_all_services_lists_the_file_without_a_podman_socket() {
+	let (_dir, file) = compose_two_services();
+	let out = Command::new(bin())
+		.args(["-f", file.to_str().unwrap(), "ps", "--all-services"])
+		.env("PODMAN_SOCKET", "/nonexistent/podman.sock")
+		.output()
+		.expect("run ps --all-services");
+	assert!(
+		out.status.success(),
+		"{}",
+		String::from_utf8_lossy(&out.stderr)
+	);
+	let names: Vec<&str> = std::str::from_utf8(&out.stdout).unwrap().lines().collect();
+	assert_eq!(names, ["web", "db"]);
+}
+
+#[test]
+fn ps_all_services_refuses_what_the_table_refuses() {
+	let (_dir, file) = compose_two_services();
+	for extra in [["--filter", "bogus=1"].as_slice(), ["nope"].as_slice()] {
+		let out = Command::new(bin())
+			.args(["-f", file.to_str().unwrap(), "ps", "--all-services"])
+			.args(extra)
+			.env("PODMAN_SOCKET", "/nonexistent/podman.sock")
+			.output()
+			.expect("run ps --all-services");
+		assert!(!out.status.success(), "{extra:?} was accepted");
+		assert!(out.stdout.is_empty(), "{extra:?} printed names");
+	}
+}
+
+#[test]
+fn ps_all_services_escapes_a_name_that_would_drive_the_terminal() {
+	let (_dir, file) = compose_file(
+		"compose.yaml",
+		"services:\n  \"web\\u001b[2Jfake\": {image: alpine}\n",
+	);
+	let out = Command::new(bin())
+		.args(["-f", file.to_str().unwrap(), "ps", "--all-services"])
+		.env("PODMAN_SOCKET", "/nonexistent/podman.sock")
+		.output()
+		.expect("run ps --all-services");
+	assert!(
+		out.status.success(),
+		"{}",
+		String::from_utf8_lossy(&out.stderr)
+	);
+	assert!(!out.stdout.contains(&0x1b), "{:?}", out.stdout);
+	assert!(String::from_utf8_lossy(&out.stdout).starts_with("web"));
+}
