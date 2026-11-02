@@ -190,6 +190,7 @@ pub(crate) async fn run_ps(
 		all,
 		quiet,
 		services_only,
+		all_services,
 		size,
 		filter,
 		status,
@@ -200,18 +201,31 @@ pub(crate) async fn run_ps(
 		// The caller (top-level `run`) only routes here when the variant matches.
 		return Ok(());
 	};
+	if *all_services {
+		// The compose file is all this needs: no socket, like `config --services`.
+		return podup::PsFilterOptions::new(
+			*services_only,
+			services.clone(),
+			status.clone(),
+			filter.clone(),
+		)
+		.with_all_services(true)
+		.print_configured_services(&file);
+	}
 	let client = connect_podman(cli.socket.as_deref(), cli.connection_pool_size).await?;
 	let engine = podup::Engine::with_base_dir(client, project, base_dir);
 	engine
 		.ps_filtered_with_display(
 			&file,
-			podup::PsOptions::new(*all, *quiet, *format == crate::cli::OutputFormat::Json),
+			podup::PsOptions::new(*all, *quiet, *format == crate::cli::PsFormat::Json)
+				.with_ndjson(*format == crate::cli::PsFormat::Ndjson),
 			podup::PsFilterOptions::new(
 				*services_only,
 				services.clone(),
 				status.clone(),
 				filter.clone(),
-			),
+			)
+			.with_all_services(*all_services),
 			podup::PsDisplayOptions::default().with_size(*size),
 		)
 		.await

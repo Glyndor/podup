@@ -26,7 +26,7 @@ pub(super) fn require_private(dir: &Path) -> io::Result<()> {
 				io::ErrorKind::PermissionDenied,
 				format!(
 					"refusing unit directory {}: owned by UID {}, expected UID {}",
-					dir.display(),
+					crate::ui::sanitize_cell(&dir.display().to_string()),
 					meta.uid(),
 					effective_uid()
 				),
@@ -41,7 +41,7 @@ pub(super) fn require_private(dir: &Path) -> io::Result<()> {
 				io::ErrorKind::PermissionDenied,
 				format!(
 					"refusing unit directory {}: writable by others",
-					dir.display()
+					crate::ui::sanitize_cell(&dir.display().to_string())
 				),
 			));
 		}
@@ -73,3 +73,7 @@ fn effective_uid() -> u32 {
 	// SAFETY: geteuid takes no pointers and has no preconditions.
 	unsafe { libc::geteuid() }
 }
+
+#[cfg(test)]
+#[path = "mod_tests.rs"]
+mod tests;

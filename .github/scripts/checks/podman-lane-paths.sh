@@ -22,6 +22,11 @@ while IFS= read -r f; do
 		*.md | docs/* | .github/ISSUE_TEMPLATE/* | LICENSE | .editorconfig) ;;
 		.github/dependabot.yml | .github/CODEOWNERS) ;;
 		fuzz/* | bench/* | tests/scripts/*) ;;
+		# The VM runs two test binaries, `engine_integration` and
+		# `integration_leak_scan`, and both live in tests/engine, which includes
+		# nothing from the folders below (the shell test checks that). A change
+		# confined to them cannot change what the VM observes.
+		tests/cli/* | tests/compose/* | tests/fixtures/* | tests/hostile/* | tests/quadlet/* | tests/repository/*) ;;
 		deny.toml | about.toml | about.hbs | debian/* | install.sh | install.ps1) ;;
 		# Explicit names keep future workflows closed until their callers are reviewed.
 		.github/workflows/asset-contract.yml) ;;

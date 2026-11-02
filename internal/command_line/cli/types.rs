@@ -2,7 +2,8 @@
 
 use clap::ValueEnum;
 
-/// Output rendering for list commands (`ps`, `images`).
+/// Output rendering for list commands (`images`, `volumes`, `top`, `wait`,
+/// `stats`). `ps` has its own, [`PsFormat`], which adds NDJSON.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq, ValueEnum)]
 pub(crate) enum OutputFormat {
 	/// Aligned columns for human reading.

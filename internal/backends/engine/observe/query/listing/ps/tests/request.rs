@@ -65,3 +65,34 @@ async fn ps_without_status_filter_keeps_all_false_by_default() {
 		"no status filter must keep all=false: {seen:?}"
 	);
 }
+
+/// Service-name output must still query the daemon, using the same all/status
+/// widening as the table. Configured services without containers are not rows.
+#[tokio::test]
+#[cfg(unix)]
+async fn ps_services_uses_the_table_container_query() {
+	for (all, status, expected_all) in [
+		(false, vec![], false),
+		(true, vec![], true),
+		(false, vec!["exited".into()], true),
+	] {
+		let fake = fake_podman::start(|_, _| (200, "[]".into()));
+		let engine = engine_with(fake.client(), "proj");
+		let file = crate::compose::parse_str("services:\n  web: {image: alpine}\n").unwrap();
+		engine
+			.ps_filtered(
+				&file,
+				PsOptions::new(all, false, false),
+				PsFilterOptions::new(true, vec![], status, vec![]),
+			)
+			.await
+			.unwrap();
+		let seen = fake.requests.lock().unwrap();
+		assert!(
+			seen.iter()
+				.any(|r| r.contains("/containers/json")
+					&& r.contains(&format!("all={expected_all}"))),
+			"{seen:?}"
+		);
+	}
+}

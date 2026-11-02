@@ -1,4 +1,4 @@
-//! `ps` lists this project's containers as a table or JSON. Split into one
+//! `ps` lists this project's containers as a table, JSON or NDJSON. Split into one
 //! file per responsibility: options, the cell renderers, the port formatters,
 //! the filter predicates, the JSON row builder, the Engine entry points and
 //! the test-only projection helper.
@@ -9,11 +9,14 @@ use crate::libpod::types::container::ContainerListEntry;
 
 use crate::backends::engine::observe::query::Engine;
 
+mod all_services;
 mod filters;
 mod format;
 mod json;
+mod ndjson;
 mod options;
 mod ports;
+mod services;
 
 pub use options::{PsDisplayOptions, PsFilterOptions, PsOptions};
 
@@ -42,8 +45,9 @@ impl Engine {
 
 	/// List containers with `docker compose ps`-style options: `-a/--all`
 	/// (include stopped), `-q/--quiet` (full IDs only), `--format`
-	/// (table | json), `--services` (service-name list), a positional `SERVICE`
-	/// filter, and `--status`/`--filter` predicates.
+	/// (table | json | ndjson), `--services` (the services of the listed
+	/// containers), `--all-services` (the services of the compose file), a
+	/// positional `SERVICE` filter, and `--status`/`--filter` predicates.
 	pub async fn ps_filtered(
 		&self,
 		file: &ComposeFile,
@@ -70,15 +74,11 @@ impl Engine {
 			}
 		}
 
-		// `--services` lists the (optionally filtered) configured service names,
-		// one per line, instead of the container table.
-		if filters.services_only {
-			for name in file.services.keys() {
-				if filters.services.is_empty() || filters.services.iter().any(|s| s == name) {
-					println!("{name}");
-				}
-			}
-			return Ok(());
+		// `--all-services` lists the (optionally filtered) configured service names,
+		// one per line, instead of the container table. The command runs it before
+		// it connects to Podman; this keeps the library entry point answering the same.
+		if filters.all_services {
+			return filters.print_configured_services(file);
 		}
 
 		// Fold `--status` and any `status=`/`name=` from `--filter` together. An
@@ -119,6 +119,18 @@ impl Engine {
 			&status_filter,
 			&name_filter,
 		);
+
+		if filters.services_only {
+			for service in services::container_services(&containers) {
+				println!("{service}");
+			}
+			return Ok(());
+		}
+
+		if opts.ndjson {
+			print!("{}", ndjson::render(&containers, now_unix())?);
+			return Ok(());
+		}
 
 		if opts.quiet {
 			// Full 64-char IDs, like `docker compose ps -q` (and podup's JSON),

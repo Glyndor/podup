@@ -21,6 +21,8 @@ pub struct PsOptions {
 	pub quiet: bool,
 	/// Emit JSON instead of the table, `--format json`.
 	pub json: bool,
+	/// Emit one Compose-compatible JSON object per line, `--format ndjson`.
+	pub ndjson: bool,
 }
 
 impl PsOptions {
@@ -28,7 +30,22 @@ impl PsOptions {
 	/// a struct literal because the type is `#[non_exhaustive]`, so the next
 	/// flag to land is not a breaking change for anyone building one.
 	pub fn new(all: bool, quiet: bool, json: bool) -> Self {
-		Self { all, quiet, json }
+		Self {
+			all,
+			quiet,
+			json,
+			ndjson: false,
+		}
+	}
+
+	/// Emit NDJSON instead of the table. JSON and NDJSON builders select one format.
+	#[must_use]
+	pub fn with_ndjson(mut self, ndjson: bool) -> Self {
+		self.ndjson = ndjson;
+		if ndjson {
+			self.json = false;
+		}
+		self
 	}
 
 	/// Include stopped containers, `-a/--all` (default: running only).
@@ -50,6 +67,9 @@ impl PsOptions {
 	#[must_use]
 	pub fn with_json(mut self, json: bool) -> Self {
 		self.json = json;
+		if json {
+			self.ndjson = false;
+		}
 		self
 	}
 }
@@ -106,6 +126,8 @@ impl PsDisplayOptions {
 pub struct PsFilterOptions {
 	/// Print the service names instead of the container table, `--services`.
 	pub services_only: bool,
+	/// Print configured services in file order, `--all-services`.
+	pub all_services: bool,
 	/// Restrict to these services' containers (positional `SERVICE` filter).
 	pub services: Vec<String>,
 	/// Status filters, `--status` (e.g. running, exited); OR-combined.
@@ -126,10 +148,18 @@ impl PsFilterOptions {
 	) -> Self {
 		Self {
 			services_only,
+			all_services: false,
 			services,
 			status,
 			filters,
 		}
+	}
+
+	/// Print configured services, including services without containers. Builder-style.
+	#[must_use]
+	pub fn with_all_services(mut self, all_services: bool) -> Self {
+		self.all_services = all_services;
+		self
 	}
 
 	/// Generic `KEY=VALUE` predicates, `--filter` (supports status= and name=).

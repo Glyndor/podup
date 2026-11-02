@@ -2,17 +2,18 @@ use super::*;
 
 #[test]
 fn label_only_covers_ps_and_events() {
-	use crate::cli::{EventsFormat, OutputFormat};
+	use crate::cli::{EventsFormat, OutputFormat, PsFormat};
 	// `ps` and `events` are scoped purely by the project label, so they are
 	// label-only and may run without a compose file.
 	assert!(is_label_only(&Commands::Ps(PsArgs {
 		all: false,
 		quiet: false,
 		services_only: false,
+		all_services: false,
 		size: false,
 		filter: vec![],
 		status: vec![],
-		format: OutputFormat::Table,
+		format: PsFormat::Table,
 		services: vec![],
 	})));
 	assert!(is_label_only(&Commands::Events(EventsArgs {
@@ -37,9 +38,7 @@ fn label_only_covers_ps_and_events() {
 /// test to fail to compile until the new command is classified.
 #[test]
 fn is_label_only_classifies_every_variant() {
-	use crate::cli::{
-		AutostartCommands, ConfigFormat, EventsFormat, GenerateCommands, OutputFormat,
-	};
+	use crate::cli::{AutostartCommands, ConfigFormat, EventsFormat, GenerateCommands, PsFormat};
 	// `Commands` is not `Debug` (clap's derive doesn't add it); assert
 	// by index instead of formatting the value.
 	let cases: Vec<(&'static str, Commands, bool)> = vec![
@@ -75,10 +74,11 @@ fn is_label_only_classifies_every_variant() {
 				all: false,
 				quiet: false,
 				services_only: false,
+				all_services: false,
 				size: false,
 				filter: vec![],
 				status: vec![],
-				format: OutputFormat::Table,
+				format: PsFormat::Table,
 				services: vec![],
 			}),
 			true,
