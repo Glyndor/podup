@@ -69,9 +69,14 @@ fn scratch_root() -> &'static std::path::Path {
 				std::env::temp_dir().join(format!("podup-list-checks-dir-{}", std::process::id()));
 			let _ = fs::remove_dir_all(dir);
 		}
+		// `atexit` is part of the C runtime on every platform the tests run on, so
+		// it is declared here and not taken from `libc`, which only Unix builds link.
+		extern "C" {
+			fn atexit(callback: extern "C" fn()) -> std::os::raw::c_int;
+		}
 		// SAFETY: registers a plain function that captures nothing and only
 		// removes this process's scratch directory.
-		unsafe { libc::atexit(cleanup) };
+		unsafe { atexit(cleanup) };
 		dir
 	})
 }
