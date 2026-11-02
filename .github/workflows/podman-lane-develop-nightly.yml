@@ -59,11 +59,12 @@ jobs:
           exit 1
       - name: Fetch Fedora rawhide cloud image (Podman 6)
         run: |
-          base="https://dl.fedoraproject.org/pub/fedora/linux/development/rawhide/Cloud/x86_64/images/"
-          img=$(curl -fsSL "$base" | grep -oE 'Fedora-Cloud-Base-Generic-Rawhide-[0-9]+\.n\.[0-9]+\.x86_64\.qcow2' | sort -u | tail -1)
-          [ -n "$img" ] || { echo "::error::could not resolve a Fedora rawhide image at $base"; exit 1; }
+          # The same script the pull request lane uses: bounded transfers, a mirror
+          # fallback and a SHA-256 check. A bare curl here had no deadline, so a
+          # stalled transfer held the whole job budget.
+          img=$(bash "$GITHUB_WORKSPACE/.github/scripts/fedora_image/fetch-fedora-image.sh" \
+              "${{ matrix.podman }}" "$RUNNER_TEMP/vm.qcow2")
           echo "image: $img"
-          curl -fSL --retry 5 --retry-delay 5 --retry-all-errors -C - -o "$RUNNER_TEMP/vm.qcow2" "${base}${img}"
           qemu-img resize "$RUNNER_TEMP/vm.qcow2" 40G
       - name: Build cloud-init seed
         run: |

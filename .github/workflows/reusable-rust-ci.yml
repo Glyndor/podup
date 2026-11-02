@@ -119,7 +119,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             ${{ inputs.working-directory }}/target
-          key: rust-lint-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          key: rust-lint-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: rust-lint-${{ runner.os }}-
 
       - name: rustfmt
@@ -163,7 +163,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             ${{ inputs.working-directory }}/target
-          key: rust-test-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          key: rust-test-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: rust-test-${{ runner.os }}-
 
       - name: Tests
@@ -208,7 +208,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             ${{ inputs.working-directory }}/target
-          key: rust-test-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          key: rust-test-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: rust-test-${{ runner.os }}-
 
       - name: Tests
@@ -277,7 +277,7 @@ jobs:
           # The tool version is part of the key: a cache built under an older
           # pin must not survive a version bump via the `command -v ... ||`
           # short-circuit below, or the pin would be silently ignored.
-          key: rust-cov-${{ runner.os }}-${{ inputs.llvm-cov-version }}-${{ hashFiles('**/Cargo.lock') }}
+          key: rust-cov-${{ runner.os }}-${{ inputs.llvm-cov-version }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: rust-cov-${{ runner.os }}-${{ inputs.llvm-cov-version }}-
 
       - name: Install cargo-llvm-cov
@@ -363,7 +363,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             ${{ inputs.working-directory }}/target
-          key: rust-msrv-${{ inputs.msrv }}-${{ hashFiles('**/Cargo.lock') }}
+          key: rust-msrv-${{ inputs.msrv }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: rust-msrv-${{ inputs.msrv }}-
 
       - name: Build on the declared MSRV
@@ -503,7 +503,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             ${{ inputs.working-directory }}/target
-          key: rust-doc-${{ runner.os }}-${{ inputs.toolchain }}-${{ hashFiles('**/Cargo.lock') }}
+          key: rust-doc-${{ runner.os }}-${{ inputs.toolchain }}-${{ hashFiles('Cargo.lock') }}
           restore-keys: rust-doc-${{ runner.os }}-${{ inputs.toolchain }}-
 
       - name: Build docs with warnings denied
