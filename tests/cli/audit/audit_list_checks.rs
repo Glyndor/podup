@@ -54,15 +54,35 @@ fn write_compose(body: &str) -> std::path::PathBuf {
 	path
 }
 
+/// One scratch directory per test process, removed when the process exits, so a
+/// run leaves nothing behind in the temp directory. The tests below used to make
+/// a directory per call and never delete it: 83 of them per run.
+fn scratch_root() -> &'static std::path::Path {
+	static ROOT: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+	ROOT.get_or_init(|| {
+		let dir =
+			std::env::temp_dir().join(format!("podup-list-checks-dir-{}", std::process::id()));
+		let _ = fs::remove_dir_all(&dir);
+		fs::create_dir_all(&dir).unwrap();
+		extern "C" fn cleanup() {
+			let dir =
+				std::env::temp_dir().join(format!("podup-list-checks-dir-{}", std::process::id()));
+			let _ = fs::remove_dir_all(dir);
+		}
+		// SAFETY: registers a plain function that captures nothing and only
+		// removes this process's scratch directory.
+		unsafe { libc::atexit(cleanup) };
+		dir
+	})
+}
+
 /// Build a tempdir with no compose file in it. Returns the directory so
 /// `run_in` can `cd` there. The counter is shared with `write_compose` so
 /// every call gets a unique name.
 fn empty_dir() -> std::path::PathBuf {
 	static COUNTER: AtomicU64 = AtomicU64::new(0);
 	let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-	let dir =
-		std::env::temp_dir().join(format!("podup-list-checks-dir-{}-{n}", std::process::id()));
-	let _ = fs::remove_dir_all(&dir);
+	let dir = scratch_root().join(n.to_string());
 	fs::create_dir_all(&dir).unwrap();
 	dir
 }
