@@ -151,7 +151,7 @@ List project containers.
 | `--status <STATE>` | Match container state/status by case-insensitive prefix. Repeatable; folded together with any `status=` from `--filter`. | all |
 | `--filter <KEY=VAL>` | `name=<NAME>` or `status=<STATE>`. An unknown key is an error. | none |
 | `--services` | Print distinct services of the selected containers, sorted, one per line. Applies the same container filters as the table. | off |
-| `--all-services` | Print configured services in file order, one per line, restricted by positional SERVICE names. Conflicts with `--quiet`, `--format` and `--services`. | off |
+| `--all-services` | Print configured services in file order, one per line, restricted by positional SERVICE names. Needs no Podman socket and refuses an unknown service or `--filter` key like the table. Conflicts with `--quiet`, `--format` and `--services`. | off |
 | `-s, --size` | Add a SIZE column with each container's on-disk footprint. | off |
 
 An empty result prints `no containers` on stderr and leaves stdout empty in table output. Under `--format json` an empty result is `[]`; under `-q/--quiet` neither the note nor a row is printed.
