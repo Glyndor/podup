@@ -248,7 +248,7 @@ The long-form spelling is a podup extension (the Compose Specification defines n
 
 ### `network_mode: host`
 
-Attaches the container to your user's network namespace, not a privileged host namespace. Traffic is still limited to your user's capabilities.
+Shares the Podman host's network namespace, including access to localhost services. Rootless operation still limits process privileges; it does not provide network isolation in this mode.
 
 ### `network_mode: none`
 
