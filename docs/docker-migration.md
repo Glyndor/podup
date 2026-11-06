@@ -108,6 +108,10 @@ services:
 
 `deploy.resources.reservations.devices` and the `gpus:` shorthand are honored, but only for **NVIDIA** GPUs, and only when the host exposes them through CDI (the NVIDIA Container Toolkit must be installed and the CDI spec generated). Reservations for other drivers or capabilities are warned about and skipped.
 
+### Depth of `extends` and `include` chains
+
+An `extends` chain and an `include` tree are each followed at most 16 levels deep, and one project reads at most 512 included files; past that podup stops with an error. The limits guard against files that refer to each other and against files written to be read forever, and cycles are reported on their own. docker compose has no such limit (a chain of 60 `extends` loads), so a project that nests deeper than 16 levels loads under docker compose and not under podup.
+
 ### Interpolation across compose files
 
 `!override` and `!reset` payloads are interpolated before their merge directives are applied, including nested mappings and lists. External `extends.file` chains receive the referring compose file's interpolation mode and resolved explicit env paths, without rebasing those paths at each external directory. The root file anchors env paths to its compose directory. `config --no-interpolate` preserves placeholders in external bases too, subject to typed-field validation such as `umask` and pull policies. Included files retain their original interpolation context, including local env files, when resolving external bases. Includes are merged with parent definitions winning before same-file inheritance is resolved.
@@ -310,6 +314,14 @@ Short and long `depends_on` behave alike. For portability, give both services th
 ### `volumes_from`, `links`, and `service:` namespace references
 
 `volumes_from: [data]`, `links: [data:alias]`, and `network_mode` / `ipc` / `pid` / `uts` set to `service:data` add implicit dependencies on the named service. Dependency cycles are rejected.
+
+### Interpolation reaches the keys of top-level maps
+
+The Compose Specification says interpolation applies to YAML values and not to keys. podup interpolates keys as well, so `networks: {"${NET_NAME}": {}}` names the network from the variable and the file loads. docker compose refuses that file (`networks additional properties '${NET_NAME}' not allowed`). It is a deliberate difference: a file that depends on it runs only under podup, so for portability write the name out and keep variables in values.
+
+### `content:` on a secret
+
+A top-level secret can take `content:` (inline text), as a config can. The specification defines it for configs only, and docker compose refuses it on a secret (`secrets.mysec additional properties 'content' not allowed`). podup accepts it and stores the text as a Podman secret, one of the places compose is extended with what Podman does. A file that uses it does not load under docker compose.
 
 ### Jobs and schedules
 
