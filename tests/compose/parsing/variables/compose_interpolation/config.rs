@@ -54,3 +54,24 @@ fn ordinary_config_output_matches_original_bytes() {
 		expected.as_bytes()
 	);
 }
+
+/// `config` prints a literal `$` as `$$`, as Docker Compose does, so its output
+/// is a compose file that means the same thing: printing it back through
+/// `config` changes nothing.
+#[test]
+fn config_output_reads_back_to_the_same_output() {
+	let dir = tempdir().unwrap();
+	fs::write(
+		dir.path().join("compose.yml"),
+		"services:\n  web:\n    image: alpine\n    command: ['echo', '$$HOME', 'cost $$5']\n    environment:\n      LIT: '$$X'\n",
+	)
+	.unwrap();
+	let first = config_output(dir.path(), &["compose.yml"]);
+	assert!(
+		String::from_utf8_lossy(&first).contains("- cost $$5"),
+		"{}",
+		String::from_utf8_lossy(&first)
+	);
+	fs::write(dir.path().join("again.yml"), &first).unwrap();
+	assert_eq!(config_output(dir.path(), &["again.yml"]), first);
+}

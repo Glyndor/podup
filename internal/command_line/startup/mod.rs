@@ -12,6 +12,7 @@ use tracing_subscriber::EnvFilter;
 
 use crate::cli::{Cli, Commands, RunArgs};
 
+mod config_dollar;
 mod config_normalize;
 mod config_render;
 mod control_escape;

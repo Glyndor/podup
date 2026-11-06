@@ -30,6 +30,7 @@ pub(crate) async fn run_config(
 		hash,
 		quiet,
 		resolve_image_digests,
+		no_interpolate,
 		..
 	}) = &cli.command
 	else {
@@ -83,6 +84,7 @@ pub(crate) async fn run_config(
 			profiles: *profiles,
 			hash: hash.clone(),
 			quiet: *quiet,
+			no_interpolate: *no_interpolate,
 		},
 		&project,
 		&base_dir,
