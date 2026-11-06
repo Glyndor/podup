@@ -72,6 +72,20 @@ impl Command {
 			Command::Exec(v) => v.clone(),
 		}
 	}
+
+	/// The vector sent as a container's `command:` or `entrypoint:`.
+	///
+	/// As [`Command::to_exec`], except that a blank string is the empty vector,
+	/// the same as `[]`: the Compose Specification says `''` and `[]` both mean
+	/// "no value" here (`entrypoint:` "overridden to be empty"), and Docker
+	/// Compose splits `""` into no words. Wrapping it in `sh -c ""` ran a shell
+	/// that exits at once instead of the image's own command.
+	pub fn to_container_override(&self) -> Vec<String> {
+		match self {
+			Command::Shell(s) if s.trim().is_empty() => Vec::new(),
+			other => other.to_exec(),
+		}
+	}
 }
 
 /// A field that accepts either a single string or a list of strings.
