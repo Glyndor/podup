@@ -10,7 +10,7 @@ sequence. The script only reads up to DllCharacteristics (offset 70 of the
 optional header), so the rest of the image does not need to be a runnable
 PE: the bytes past DllCharacteristics are simply not read.
 
-Shape mirrors tests/fixtures/releases/test.ps1: a function-based harness
+Shape mirrors tests/fixtures/releases/scripts/test.ps1: a function-based harness
 with explicit Assert-* helpers and exit codes, rather than Pester, since
 this repository's PowerShell fixtures all use the same shape.
 

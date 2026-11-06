@@ -30,7 +30,7 @@ throws - the test catches the throw and reports a clean refusal.
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
 
-$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
+$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..\..')).Path
 $InstallerPath = Join-Path $RepoRoot 'install.ps1'
 
 # Override the helpers Test-StagedVersion calls: route the refusal to a

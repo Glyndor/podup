@@ -15,12 +15,12 @@
 #      unpadded length is a multiple of four (issue #1359 M3 and L7).
 #
 # Run from the repo root:
-#   bash tests/fixtures/releases/test.sh
+#   bash tests/fixtures/releases/scripts/test.sh
 set -euo pipefail
 
-# __file__ is tests/fixtures/releases/test.sh; walk three levels up to land
-# on the repo root regardless of where the script is invoked from.
-REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+# __file__ is tests/fixtures/releases/scripts/test.sh; walk four levels up to
+# land on the repo root regardless of where the script is invoked from.
+REPO_ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
 FIXTURE_DIR="$REPO_ROOT/tests/fixtures/releases"
 VERIFIER="$REPO_ROOT/.github/scripts/release/verify-signing-key.py"
 INSTALL_SH="$REPO_ROOT/install.sh"
@@ -54,8 +54,7 @@ assets=()
 for file in "$FIXTURE_DIR"/*; do
 	name="$(basename "$file")"
 	case "$name" in
-		*.sig | generate.py | test-key.b64 | test.sh | test.ps1 | test-sign.sh | \
-			proto-redir-test.sh | version-self-test.sh | version-self-test.ps1) continue ;;
+		*.sig | generate.py | test-key.b64 | scripts) continue ;;
 	esac
 	assets+=("$file")
 done
