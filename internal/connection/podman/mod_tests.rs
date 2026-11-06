@@ -104,11 +104,44 @@ fn connect_rejects_remote_schemes() {
 	}
 }
 
+/// RFC 3986 defines the scheme as case-insensitive, so `TCP://host` is
+/// the same scheme as `tcp://host` and must be refused as remote rather
+/// than taken for a socket path.
+#[test]
+fn connect_rejects_remote_schemes_whatever_the_case() {
+	for raw in [
+		"TCP://127.0.0.1:2375",
+		"Tcp://127.0.0.1:2375",
+		"SSH://user@host/run/podman.sock",
+		"HTTP://localhost:8080",
+		"HTTPS://localhost:8080",
+		"FD://3",
+	] {
+		assert!(
+			matches!(connect(Some(raw)), Err(ComposeError::Unsupported(_))),
+			"{raw} should be rejected as unsupported"
+		);
+	}
+}
+
 #[test]
 fn remote_scheme_ignores_local_sockets() {
 	assert!(remote_scheme("/run/podman.sock").is_none());
 	assert!(remote_scheme("unix:///run/podman.sock").is_none());
 	assert!(remote_scheme("npipe:////./pipe/podman").is_none());
+}
+
+#[test]
+fn remote_scheme_ignores_scheme_case() {
+	assert_eq!(remote_scheme("TCP://127.0.0.1:2375"), Some("tcp://"));
+	assert_eq!(remote_scheme("Tcp://127.0.0.1:2375"), Some("tcp://"));
+	assert_eq!(
+		remote_scheme("SSH://user@host/run/podman.sock"),
+		Some("ssh://")
+	);
+	assert_eq!(remote_scheme("HTTP://localhost:8080"), Some("http://"));
+	assert_eq!(remote_scheme("HTTPS://localhost:8080"), Some("https://"));
+	assert_eq!(remote_scheme("FD://3"), Some("fd://"));
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]

@@ -83,9 +83,18 @@ pub(crate) fn connect_with_pool_size(
 
 /// Detect a non-local socket scheme (`tcp://`, `ssh://`, `http(s)://`, `fd://`).
 /// `unix://`/`npipe://` and plain paths are local and return `None`.
+///
+/// The scheme is matched case-insensitively, as RFC 3986 defines it:
+/// `TCP://host` is the same scheme as `tcp://host`, so it is rejected as
+/// remote instead of being taken for a socket path. The canonical
+/// lowercase scheme is returned, so the error names it the same way
+/// regardless of how it was written.
 fn remote_scheme(raw: &str) -> Option<&'static str> {
 	const REMOTE: [&str; 5] = ["tcp://", "ssh://", "http://", "https://", "fd://"];
-	REMOTE.into_iter().find(|s| raw.starts_with(s))
+	REMOTE.into_iter().find(|s| {
+		raw.get(..s.len())
+			.is_some_and(|p| p.eq_ignore_ascii_case(s))
+	})
 }
 
 /// Read the Podman socket from the environment (`PODMAN_SOCKET`, then
