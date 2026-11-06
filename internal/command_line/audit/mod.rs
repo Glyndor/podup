@@ -333,7 +333,7 @@ mod list_checks_tests;
 #[path = "pre_start_tests.rs"]
 mod pre_start_tests;
 #[cfg(test)]
-#[path = "audit_tests.rs"]
+#[path = "audit_tests/mod.rs"]
 mod tests;
 
 #[cfg(test)]
