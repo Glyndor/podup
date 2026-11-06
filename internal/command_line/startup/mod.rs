@@ -343,7 +343,15 @@ pub(crate) fn parse_cli() -> Cli {
 		podup::ui::set_color_choice(mode.into());
 	}
 	match Cli::try_parse() {
-		Ok(cli) => cli,
+		Ok(mut cli) => {
+			// `-p ""` and an exported-but-empty `COMPOSE_PROJECT_NAME` mean "not
+			// set", as in docker compose; every later reader of `cli.project`
+			// (the label-only `down` among them) then sees no name at all.
+			if cli.project.as_deref() == Some("") {
+				cli.project = None;
+			}
+			cli
+		}
 		Err(e) => match e.kind() {
 			clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
 				// `--help`/`--version` are handled by clap before `--ansi` is parsed,

@@ -49,14 +49,40 @@ pub(crate) fn resolve_compose_files(explicit: &[PathBuf]) -> Vec<PathBuf> {
 			return env.split(sep).map(PathBuf::from).collect();
 		}
 	}
-	for candidate in COMPOSE_FILE_CANDIDATES {
-		if Path::new(candidate).is_file() {
-			let mut files = vec![PathBuf::from(candidate)];
-			files.extend(override_for(Path::new(candidate)));
-			return files;
+	let present = candidates_in(Path::new(""));
+	if let Some(first) = present.first() {
+		static WARNED: std::sync::Once = std::sync::Once::new();
+		if present.len() > 1 {
+			// Two of the supported names side by side: the one used is the first
+			// by precedence, and the person who edited the other one would not
+			// otherwise find out. docker compose says so too.
+			WARNED.call_once(|| tracing::warn!("{}", multiple_candidates_message(&present)));
 		}
+		let mut files = vec![first.clone()];
+		files.extend(override_for(first));
+		return files;
 	}
 	vec![PathBuf::from("docker-compose.yml")]
+}
+
+/// The compose files of the precedence list that exist in `dir`, highest first.
+pub(super) fn candidates_in(dir: &Path) -> Vec<PathBuf> {
+	COMPOSE_FILE_CANDIDATES
+		.iter()
+		.map(|name| dir.join(name))
+		.filter(|path| path.is_file())
+		.collect()
+}
+
+/// The warning for more than one candidate present: what was found, and which
+/// of them is used.
+pub(super) fn multiple_candidates_message(present: &[PathBuf]) -> String {
+	let names: Vec<String> = present.iter().map(|p| p.display().to_string()).collect();
+	format!(
+		"found several compose files with supported names ({}); using {}",
+		names.join(", "),
+		names[0]
+	)
 }
 
 /// Override-file names, in the compose-spec precedence order. Only the first one
@@ -127,7 +153,11 @@ pub(crate) fn resolve_project_name(
 	compose_name: Option<&str>,
 	base_dir: &Path,
 ) -> String {
-	if let Some(name) = explicit {
+	// An empty `-p ""` or `COMPOSE_PROJECT_NAME=` is "not set", as in docker
+	// compose: a script that exports the variable empty falls through to the
+	// `name:` of the file and then the directory, instead of failing on a name
+	// that cannot be valid.
+	if let Some(name) = explicit.filter(|n| !n.is_empty()) {
 		return name;
 	}
 	if let Some(name) = compose_name {
