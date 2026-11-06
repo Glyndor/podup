@@ -62,6 +62,19 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 			return Err(ComposeError::NoImageOrBuild(name.clone()));
 		}
 		parse_ports(&svc.ports)?;
+		// The same refusal as `up`: Podman has no `uid=`/`gid=` for a tmpfs, and a
+		// unit that carried one would fail when it starts.
+		for entry in svc.tmpfs.to_list() {
+			crate::libpod::validate::translate_entry(&entry, svc.user.as_deref()).map_err(
+				|why| {
+					ComposeError::Unsupported(format!(
+						"service '{}': tmpfs '{}': {why}",
+						crate::error::sanitize_name(name),
+						crate::error::sanitize_name(&entry)
+					))
+				},
+			)?;
+		}
 		for (field, cmd) in [("command", &svc.command), ("entrypoint", &svc.entrypoint)] {
 			if cmd.as_ref().is_some_and(render::has_lone_semicolon_word) {
 				return Err(ComposeError::Unsupported(format!(

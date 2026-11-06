@@ -195,7 +195,15 @@ pub(crate) fn build_mounts_all(
 
 	// Top-level `tmpfs:` shorthand, equivalent to volumes with type=tmpfs.
 	for entry in service.tmpfs.to_list() {
-		mounts.push(spec::parse_tmpfs_string(&entry));
+		let mut mount = spec::parse_tmpfs_string(&entry);
+		// `uid=`/`gid=` become `U` when they name `user:`; pre_validate_spec has
+		// already refused the entries that cannot, so a refusal here keeps them.
+		if let Ok(options) =
+			crate::libpod::validate::translate_owner(&mount.options, service.user.as_deref())
+		{
+			mount.options = options;
+		}
+		mounts.push(mount);
 	}
 
 	(mounts, named)

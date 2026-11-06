@@ -250,6 +250,10 @@ services:
 
 The long-form spelling is a podup extension (the Compose Specification defines no per-mount hardening flags there), so a compose file using it is not portable back to `docker compose`, which rejects the unknown keys. `generate quadlet` carries the options into the exported unit.
 
+### `tmpfs:` with `uid=` and `gid=`
+
+Podman has no `uid=` or `gid=` option for a tmpfs (`unknown mount option "uid=1000"`). It can give the tmpfs to the user the container runs as, and podup uses that when the pair names the service's own `user:` (`user: "1000:1000"` with `/t:uid=1000,gid=1000`): the options become Podman's `U`. In every other case `up` stops before creating anything and says what to set. A `user:` that is a name, or a number with no group when `gid=` is asked for, is not accepted, because podup cannot tell which group it stands for. `generate quadlet` applies the same rule: the pair becomes `U` in the `Tmpfs=` line or the command stops before writing a unit.
+
 ### `network_mode: host`
 
 Shares the Podman host's network namespace, including access to localhost services. Rootless operation still limits process privileges; it does not provide network isolation in this mode.
