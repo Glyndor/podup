@@ -179,9 +179,9 @@ Two report tables, by intent:
   each stack sees, and the engines differ, so it is not a pure tool
   comparison. Only rendered when `docker-compose-docker` has rows.
 
-The harness is reviewed by `podup-benchmark-fairness-auditor` (the harness is
-equitable) and `podup-benchmark-results-reviewer` (the published claims are
-supported and honest).
+The harness and the published claims are reviewed separately: one review checks
+that the harness is equitable, the other that the published claims are
+supported and honest.
 
 ## Budgets
 
