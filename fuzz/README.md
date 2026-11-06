@@ -8,6 +8,7 @@ Coverage-guided fuzz targets for podup's untrusted-input surfaces, built on
 | Target | Surface |
 |--------|---------|
 | `parse_compose` | Full compose parse: substitution, YAML, anchor/alias merge keys, type coercion (`parse_str` / `parse_str_raw`) |
+| `compose_tree` | Up to six compose files and two env files that include, extend and `env_file` each other (cycles and missing files too), loaded through the public file API: the project interpolation budget, the include and extends caps |
 | `substitute` | Variable substitution and its modifiers (`${VAR:-default}`, `${VAR:?err}`, escapes) |
 | `size` | Memory / CPU / duration parsers (f64 → integer casts) |
 | `dotenv` | dotenv quote/escape/comment/multi-line handling |
