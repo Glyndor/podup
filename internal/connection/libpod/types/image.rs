@@ -79,6 +79,36 @@ pub struct ImageInspect {
 	/// The image's runtime configuration.
 	#[serde(rename = "Config", default)]
 	pub config: Option<ImageConfig>,
+	/// The healthcheck the image declares (`HEALTHCHECK`), `null` when it has
+	/// none. libpod reports it at the top level of the image inspect, not in
+	/// `Config`; measured on Podman 5.7.0 for an image built in the docker
+	/// format (an OCI-format image cannot carry one).
+	#[serde(rename = "Healthcheck", default)]
+	pub healthcheck: Option<ImageHealthcheck>,
+}
+
+/// The `HEALTHCHECK` of an image, as the image inspect reports it. Durations are
+/// nanoseconds; a value of zero means the image left it unset.
+#[derive(Deserialize, Default, Clone)]
+pub struct ImageHealthcheck {
+	/// The probe in Docker's `Test` form (`CMD`, `CMD-SHELL` or `NONE`, then arguments).
+	#[serde(rename = "Test", default)]
+	pub test: Option<Vec<String>>,
+	/// Time between probes.
+	#[serde(rename = "Interval", default)]
+	pub interval: Option<i64>,
+	/// Time a probe may run before it counts as failed.
+	#[serde(rename = "Timeout", default)]
+	pub timeout: Option<i64>,
+	/// Time after the start during which a failing probe is not counted.
+	#[serde(rename = "StartPeriod", default)]
+	pub start_period: Option<i64>,
+	/// Time between probes during the start period.
+	#[serde(rename = "StartInterval", default)]
+	pub start_interval: Option<i64>,
+	/// Consecutive failures before the container is unhealthy.
+	#[serde(rename = "Retries", default)]
+	pub retries: Option<i64>,
 }
 
 /// The image's runtime configuration, as the image inspect reports it.
