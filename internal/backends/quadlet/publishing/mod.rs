@@ -2,6 +2,11 @@
 
 use super::{unit_file, QuadletUnit};
 
+#[cfg(all(test, unix))]
+mod write_guard_tests;
+#[cfg(test)]
+mod write_names_tests;
+
 /// The `# podup-owner: <project>` marker a unit carries as its literal first
 /// line, if present.
 fn marker_owner(contents: &str) -> Option<&str> {

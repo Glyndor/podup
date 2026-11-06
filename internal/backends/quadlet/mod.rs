@@ -18,7 +18,9 @@ mod jobs;
 pub(crate) use jobs::fuzz_hook;
 pub use jobs::stale_timers;
 #[cfg(test)]
-mod min_podman;
+mod floor;
+#[cfg(test)]
+pub(crate) use floor::min_podman;
 mod publishing;
 pub(crate) use publishing::write_autostart_units;
 pub use publishing::write_units;
@@ -396,14 +398,6 @@ mod exported_names_tests;
 #[cfg(test)]
 #[path = "no_warn_tests.rs"]
 mod no_warn_tests;
-
-#[cfg(all(test, unix))]
-#[path = "write_guard_tests.rs"]
-mod write_guard_tests;
-
-#[cfg(test)]
-#[path = "write_names_tests.rs"]
-mod write_names_tests;
 
 #[cfg(all(test, unix))]
 #[path = "unit_file_tests.rs"]
