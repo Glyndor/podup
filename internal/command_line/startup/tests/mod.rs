@@ -22,6 +22,7 @@ use std::path::Path;
 
 mod apparmor_hint;
 mod bridge;
+mod config_hash;
 mod config_normalize;
 mod config_render;
 mod control_escape;

@@ -230,17 +230,23 @@ fn render_config_hash_to<W: Write>(
 			.filter(|s| !s.is_empty())
 			.collect()
 	};
+	// Every name is checked and hashed before a line is written: an unknown
+	// name used to fail after the lines for the names before it had gone to
+	// stdout, leaving a partial answer behind an error.
+	let mut lines = Vec::with_capacity(names.len());
 	for name in names {
 		let svc = file
 			.services
 			.get(&name)
 			.ok_or_else(|| podup::ComposeError::ServiceNotFound(name.clone()))?;
-		writeln!(
-			w,
+		lines.push(format!(
 			"{} {}",
 			podup::ui::sanitize_cell(&name),
 			service_config_hash(svc)?
-		)?;
+		));
+	}
+	for line in lines {
+		writeln!(w, "{line}")?;
 	}
 	Ok(())
 }
