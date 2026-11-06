@@ -275,6 +275,10 @@ name = "tar_builder_single_site"
 path = "tests/repository/repo_rules/tar_builder_single_site.rs"
 
 [[test]]
+name = "asset_contract_uses_the_signing_manifest"
+path = "tests/repository/workflows/asset_contract_uses_the_signing_manifest.rs"
+
+[[test]]
 name = "workflow_audit_strictness"
 path = "tests/repository/workflows/workflow_audit_strictness.rs"
 

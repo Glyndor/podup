@@ -17,6 +17,9 @@ on:
       - ".github/workflows/reusable-installer-contract.yml"
       - ".github/scripts/release/verify-signing-key.py"
       - ".github/scripts/release/sign.py"
+      # The fixture installs from this file, so a bump of it has to run the
+      # fixture: that is the pull request Dependabot opens for `cryptography`.
+      - ".github/scripts/release/sign-requirements.txt"
       - "internal/update/install/**"
       - "tests/fixtures/releases/**"
   pull_request:
@@ -36,6 +39,9 @@ on:
       - ".github/workflows/reusable-installer-contract.yml"
       - ".github/scripts/release/verify-signing-key.py"
       - ".github/scripts/release/sign.py"
+      # The fixture installs from this file, so a bump of it has to run the
+      # fixture: that is the pull request Dependabot opens for `cryptography`.
+      - ".github/scripts/release/sign-requirements.txt"
       - "internal/update/install/**"
       - "tests/fixtures/releases/**"
 
@@ -99,17 +105,17 @@ jobs:
           echo "Every package entry starts its own requirement."
 
       - name: Install pinned cryptography
-        # The fixture only imports `cryptography` to exercise the verifier -
-        # the release-side version pin lives in sign-requirements.txt. We
-        # don't use --require-hashes here because the fixture is verification
-        # only, not signing: the cryptographic risk of skipping the hash
-        # check is a wrong-version cryptography doing the wrong thing, which
-        # the fixture would notice immediately (a wrong key would not verify
-        # the test signatures). The release.yml signing step keeps the
-        # stricter --require-hashes mode for the actual publish path.
+        # The fixture installs the same set the release signs with, from the
+        # same file: sign-requirements.txt carries the versions and the hashes,
+        # and pip checks the hashes whenever a file has them. Two pins written
+        # here had already drifted from it (cryptography 50.0.0 against 50.0.2,
+        # pycparser 3.0 against 3.12) with nothing to say so. Dependabot keeps
+        # that file current, and the repository test
+        # `asset_contract_uses_the_signing_manifest` fails if a version is
+        # written here again.
         run: |
           python3 -m venv "$RUNNER_TEMP/fixturevenv"
-          "$RUNNER_TEMP/fixturevenv/bin/python" -m pip install --quiet 'cryptography==50.0.0' cffi==2.1.1 pycparser==3.0
+          "$RUNNER_TEMP/fixturevenv/bin/python" -m pip install --quiet -r .github/scripts/release/sign-requirements.txt
       - name: Run the release-signing shell fixture
         run: |
           export PATH="$RUNNER_TEMP/fixturevenv/bin:$PATH"
@@ -147,10 +153,10 @@ jobs:
         with:
           python-version: "3.15"
       - name: Install pinned cryptography
-        # See the shell fixture for the rationale on --require-hashes.
+        # See the shell fixture: the versions and hashes come from the manifest.
         run: |
           python -m venv "$env:RUNNER_TEMP\fixturevenv"
-          & "$env:RUNNER_TEMP\fixturevenv\Scripts\python.exe" -m pip install --quiet 'cryptography==50.0.0' cffi==2.1.1 pycparser==3.0
+          & "$env:RUNNER_TEMP\fixturevenv\Scripts\python.exe" -m pip install --quiet -r .github/scripts/release/sign-requirements.txt
       - name: Run the release-signing PowerShell fixture
         # `pwsh` is installed by default on `windows-latest`; the explicit
         # shell keeps the runner off the Windows cmd default and matches
