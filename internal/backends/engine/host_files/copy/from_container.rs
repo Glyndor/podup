@@ -150,21 +150,7 @@ impl Engine {
 			}
 		}
 
-		// Cap the buffered archive so a huge/hostile container path cannot OOM
-		// the CLI (the streaming `get_stream` path bypasses the client's own
-		// cap). Kept as `Bytes` rather than `.to_vec()`: the extractor takes
-		// `&[u8]`, which `Bytes` derefs to, and a `.to_vec()` here would hold a
-		// second copy alive beside the first.
-		let tar_bytes: Bytes = Limited::new(resp.into_body(), MAX_CP_ARCHIVE_BYTES)
-			.collect()
-			.await
-			.map_err(|_| {
-				ComposeError::Unsupported(format!(
-					"cp: container archive exceeds {MAX_CP_ARCHIVE_BYTES} bytes; \
-					 copy fewer files or use `podman cp` for very large transfers"
-				))
-			})?
-			.to_bytes();
+		let tar_bytes = buffer_archive(resp.into_body(), MAX_CP_ARCHIVE_BYTES).await?;
 		progress.add(tar_bytes.len() as u64);
 
 		tokio::task::spawn_blocking(move || extract_archive(&tar_bytes, &dst))
@@ -174,3 +160,28 @@ impl Engine {
 		Ok(())
 	}
 }
+
+/// Collect an archive body into memory, refusing one longer than `cap` bytes.
+///
+/// Caps the buffered archive so a huge/hostile container path cannot OOM the
+/// CLI (the streaming `get_stream` path bypasses the client's own cap). Kept as
+/// `Bytes` rather than `.to_vec()`: the extractor takes `&[u8]`, which `Bytes`
+/// derefs to, and a `.to_vec()` would hold a second copy alive beside the first.
+/// The cap is a parameter so a test can reach the refusal without 1 GiB.
+async fn buffer_archive<B>(body: B, cap: usize) -> Result<Bytes>
+where
+	B: hyper::body::Body<Data = Bytes>,
+	B::Error: Into<Box<dyn std::error::Error + Send + Sync>>,
+{
+	let collected = Limited::new(body, cap).collect().await.map_err(|_| {
+		ComposeError::Unsupported(format!(
+			"cp: container archive exceeds {cap} bytes; \
+			 copy fewer files or use `podman cp` for very large transfers"
+		))
+	})?;
+	Ok(collected.to_bytes())
+}
+
+#[cfg(test)]
+#[path = "from_container_cap_tests.rs"]
+mod cap_tests;
