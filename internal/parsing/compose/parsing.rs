@@ -366,6 +366,10 @@ pub(super) fn merge_override(
 /// `extends: { file: ... }` and `include:` directives are not resolved;
 /// use [`parse_file_with_env_files`] for that.
 pub fn parse_str(content: &str) -> Result<ComposeFile> {
+	// A document of its own: it counts against a budget of its own, not against
+	// a project that happens to be loading on this thread when a callback calls
+	// this.
+	let _budget = substitute::project_budget::Scope::open();
 	let vars = substitute::build_vars(Path::new("."));
 	let mut file = merge::deserialize_with_merge_interp(content, Some(&vars))?;
 	jobs::check_structure(&file)?;

@@ -56,10 +56,9 @@ fn parse_file_with_env_files_interp_shares_the_budget_across_includes() {
 	);
 }
 
-/// A subscriber that, on its first event, loads another project through the
-/// public API. That is a synchronous callback running in the middle of a load.
+/// A subscriber that, on its first event, runs `action`, which loads something
+/// through the public API. That is a synchronous callback in the middle of a load.
 mod reentrant {
-	use std::path::PathBuf;
 	use std::sync::atomic::{AtomicBool, Ordering};
 	use std::sync::{Arc, Mutex};
 
@@ -67,7 +66,7 @@ mod reentrant {
 	use tracing::{Event, Metadata, Subscriber};
 
 	pub struct Loads {
-		pub path: PathBuf,
+		pub action: Box<dyn Fn() -> Result<(), String> + Send + Sync>,
 		pub fired: AtomicBool,
 		pub result: Arc<Mutex<Option<Result<(), String>>>>,
 	}
@@ -85,8 +84,7 @@ mod reentrant {
 		fn exit(&self, _: &Id) {}
 		fn event(&self, _: &Event<'_>) {
 			if !self.fired.swap(true, Ordering::SeqCst) {
-				let loaded = super::parse_file_with_env_files(&self.path, &[]);
-				*self.result.lock().unwrap() = Some(loaded.map(|_| ()).map_err(|e| e.to_string()));
+				*self.result.lock().unwrap() = Some((self.action)());
 			}
 		}
 	}
@@ -108,6 +106,25 @@ fn project_that_warns_late() -> (tempfile::TempDir, PathBuf) {
 	(dir, root)
 }
 
+/// Load the project in `outer` with `action` running from its late warning, and
+/// return what `action` got.
+fn loaded_from_a_callback(
+	outer: &std::path::Path,
+	action: impl Fn() -> Result<(), String> + Send + Sync + 'static,
+) -> Result<(), String> {
+	let result = std::sync::Arc::new(std::sync::Mutex::new(None));
+	let subscriber = reentrant::Loads {
+		action: Box::new(action),
+		fired: std::sync::atomic::AtomicBool::new(false),
+		result: result.clone(),
+	};
+	let loaded =
+		tracing::subscriber::with_default(subscriber, || parse_file_with_env_files(outer, &[]));
+	loaded.expect("15 MiB fits alone");
+	let inner_result = result.lock().unwrap().take().expect("the callback ran");
+	inner_result
+}
+
 /// Two projects that each fit, the second loaded from a callback of the first.
 /// A load that starts through the public API has a budget of its own.
 #[test]
@@ -115,19 +132,33 @@ fn a_load_started_from_a_callback_has_its_own_budget() {
 	let (_inner_dir, inner) = project(2);
 	parse_file_with_env_files(&inner, &[]).expect("2 MiB fits alone");
 	let (_outer_dir, outer) = project_that_warns_late();
-	let result = std::sync::Arc::new(std::sync::Mutex::new(None));
-	let subscriber = reentrant::Loads {
-		path: inner,
-		fired: std::sync::atomic::AtomicBool::new(false),
-		result: result.clone(),
-	};
-	let loaded =
-		tracing::subscriber::with_default(subscriber, || parse_file_with_env_files(&outer, &[]));
-	loaded.expect("15 MiB fits alone");
-	let inner_result = result.lock().unwrap().take().expect("the callback ran");
+	let got = loaded_from_a_callback(&outer, move || {
+		parse_file_with_env_files(&inner, &[])
+			.map(|_| ())
+			.map_err(|e| e.to_string())
+	});
 	assert_eq!(
-		inner_result,
+		got,
 		Ok(()),
 		"the second project borrowed the first one's budget"
 	);
+}
+
+/// The same for a document handed over as text, which has no files to read.
+#[test]
+fn a_document_parsed_from_a_callback_has_its_own_budget() {
+	// Two defaults of 1 MiB each, written in the document itself because the
+	// text entry point reads the variables of the process, not of a project.
+	let big = "y".repeat(MIB);
+	let document = format!(
+		"services:\n  s:\n    image: alpine\n    command: [\"${{NOPE:-{big}}}\", \"${{NOPE:-{big}}}\"]\n"
+	);
+	podup::compose::parse_str(&document).expect("2 MiB fits alone");
+	let (_outer_dir, outer) = project_that_warns_late();
+	let got = loaded_from_a_callback(&outer, move || {
+		podup::compose::parse_str(&document)
+			.map(|_| ())
+			.map_err(|e| e.to_string())
+	});
+	assert_eq!(got, Ok(()), "the document borrowed the project's budget");
 }
