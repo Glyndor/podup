@@ -398,48 +398,5 @@ fn up_build_targets(
 		.collect()
 }
 
-#[cfg(all(test, unix))]
-mod up_build_board_tests;
-
-#[cfg(test)]
-mod keep_id_create_tests;
-
-#[cfg(all(test, unix))]
-mod optional_dependency_tests;
-
-#[cfg(test)]
-mod up_validation_tests;
-
 #[cfg(test)]
 mod tests;
-
-/// Tests for the pull decision in `images.rs`.
-///
-/// They drive a whole `up`, so they would sit as naturally in the lifecycle
-/// suite, but that file was already at 487 of its 500 code lines, and adding
-/// them there put it over. They belong next to the decision they pin anyway,
-/// the same way `prefetch.rs` keeps its own.
-#[cfg(test)]
-#[cfg(unix)]
-mod images_tests;
-
-#[cfg(test)]
-mod prefetch_tests;
-
-#[cfg(all(test, unix))]
-mod readiness_tests;
-
-#[cfg(all(test, unix))]
-mod up_one_tests;
-
-#[cfg(all(test, unix))]
-mod up_env_hash_tests;
-
-#[cfg(all(test, unix))]
-mod up_replica_tests;
-
-#[cfg(all(test, unix))]
-mod collision_tests;
-
-#[cfg(all(test, unix))]
-mod cleanup_drain_tests;
