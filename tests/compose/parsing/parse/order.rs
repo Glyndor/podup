@@ -89,7 +89,7 @@ services:
 }
 
 #[test]
-fn depends_on_with_required_false_skipped() {
+fn depends_on_with_required_false_on_an_undefined_service_is_an_error() {
 	let yaml = r#"
 services:
   app:
@@ -99,10 +99,28 @@ services:
         condition: service_started
         required: false
 "#;
-	// Without `required: false` this would fail; with it, the missing dep is ignored.
+	// It used to be skipped. Docker Compose refuses it (`service "app" depends on
+	// undefined service "missing"`): `required: false` is for a dependency that
+	// exists and may be unavailable, and a name defined nowhere is a typo.
 	let file = parse_str(yaml).unwrap();
-	let order = resolve_order(&file);
-	assert!(order.is_ok());
+	assert!(resolve_order(&file).is_err());
+}
+
+#[test]
+fn depends_on_with_required_false_on_a_defined_service_is_ordered() {
+	let yaml = r#"
+services:
+  app:
+    image: alpine
+    depends_on:
+      db:
+        condition: service_started
+        required: false
+  db:
+    image: alpine
+"#;
+	let order = resolve_order(&parse_str(yaml).unwrap()).unwrap();
+	assert_eq!(order, vec!["db", "app"]);
 }
 
 // ---------------------------------------------------------------------------

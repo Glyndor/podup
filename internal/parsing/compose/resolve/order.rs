@@ -16,8 +16,8 @@ use crate::error::{ComposeError, Result};
 /// Compute a topological start order for all services (Kahn's algorithm).
 ///
 /// Returns service names dependencies-first.
-/// Errors on cycles ([`ComposeError::CircularDependency`]) or missing required
-/// dependencies ([`ComposeError::ServiceNotFound`]).
+/// Errors on cycles ([`ComposeError::CircularDependency`]) or a dependency that is
+/// not defined, required or not ([`ComposeError::ServiceNotFound`]).
 pub fn resolve_order(file: &ComposeFile) -> Result<Vec<String>> {
 	let services: Vec<&str> = file.services.keys().map(|s| s.as_str()).collect();
 	let mut in_degree: HashMap<&str, usize> = services.iter().map(|&s| (s, 0)).collect();
@@ -27,9 +27,9 @@ pub fn resolve_order(file: &ComposeFile) -> Result<Vec<String>> {
 		let deps = effective_depends_on(service, &file.services);
 		for dep in deps.service_names() {
 			if !file.services.contains_key(&dep) {
-				if !deps.required_for(&dep) {
-					continue;
-				}
+				// Required or not: a name defined nowhere is a typo, and
+				// `required: false` is for a dependency that exists and may be
+				// unavailable (Docker Compose refuses it too).
 				return Err(ComposeError::ServiceNotFound(dep));
 			}
 			if let Some(neighbors) = graph.get_mut(dep.as_str()) {
@@ -96,7 +96,7 @@ fn cycle_message(in_degree: &HashMap<&str, usize>) -> String {
 /// levels, so the services within one level have no `depends_on` relationship to
 /// each other and can be started concurrently. Levels are ordered
 /// dependencies-first; names within a level are sorted for deterministic
-/// dispatch. Errors on cycles or missing required dependencies, matching
+/// dispatch. Errors on cycles or undefined dependencies, matching
 /// [`resolve_order`].
 pub fn resolve_levels(file: &ComposeFile) -> Result<Vec<Vec<String>>> {
 	let services: Vec<&str> = file.services.keys().map(|s| s.as_str()).collect();
@@ -107,9 +107,9 @@ pub fn resolve_levels(file: &ComposeFile) -> Result<Vec<Vec<String>>> {
 		let deps = effective_depends_on(service, &file.services);
 		for dep in deps.service_names() {
 			if !file.services.contains_key(&dep) {
-				if !deps.required_for(&dep) {
-					continue;
-				}
+				// Required or not: a name defined nowhere is a typo, and
+				// `required: false` is for a dependency that exists and may be
+				// unavailable (Docker Compose refuses it too).
 				return Err(ComposeError::ServiceNotFound(dep));
 			}
 			if let Some(neighbors) = graph.get_mut(dep.as_str()) {
