@@ -280,18 +280,42 @@ impl Engine {
 		self.run_post_start_hooks(&container_name, service).await
 	}
 
+	/// The grace a rule's restart gives its container: `-t/--timeout` when the
+	/// command has one, else what the service declares, else 10 seconds, as for
+	/// every other restart.
+	pub(in crate::backends::engine::host_files::watch) fn watch_grace(
+		&self,
+		file: &ComposeFile,
+		service_name: &str,
+	) -> i32 {
+		// The `-t/--timeout` of the command wins over the service, as it does for
+		// every other stop.
+		file.services
+			.get(service_name)
+			.map_or(self.stop_timeout.unwrap_or(10), |service| {
+				self.grace_period_secs(service)
+			})
+	}
+
 	pub(in crate::backends::engine::host_files::watch) async fn watch_restart(
 		&self,
 		container_name: &str,
+		grace: i32,
 	) -> Result<()> {
 		info!("restarting {container_name}");
 		// Single atomic restart (no visible stopped window) instead of stop+start.
+		// The container gets the grace its service declares, as `restart` does,
+		// and the client waits at least that long for the answer.
 		let restart_path = format!(
-			"{API_PREFIX}/containers/{}/restart?timeout=5",
-			urlencoded(container_name)
+			"{API_PREFIX}/containers/{}/restart?timeout={}",
+			urlencoded(container_name),
+			crate::engine::lifecycle::stop_timeout_param(grace),
 		);
 		self.client
-			.post_empty_ok(&restart_path)
+			.post_empty_ok_within(
+				&restart_path,
+				crate::engine::lifecycle::restart_deadline(grace),
+			)
 			.await
 			.map_err(ComposeError::Podman)?;
 		Ok(())
@@ -386,3 +410,7 @@ mod actions_removal_tests;
 #[cfg(all(test, unix))]
 #[path = "actions_rebuild_tests.rs"]
 mod actions_rebuild_tests;
+
+#[cfg(all(test, unix))]
+#[path = "actions_grace_tests.rs"]
+mod actions_grace_tests;

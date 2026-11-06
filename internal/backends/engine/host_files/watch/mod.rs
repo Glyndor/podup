@@ -427,11 +427,19 @@ impl Engine {
 				self.watch_rebuild(file, &entry.service_name).await?;
 			}
 			WatchAction::Restart => {
-				self.watch_restart(&entry.container_name).await?;
+				self.watch_restart(
+					&entry.container_name,
+					self.watch_grace(file, &entry.service_name),
+				)
+				.await?;
 			}
 			WatchAction::SyncAndRestart => {
 				self.maybe_sync(entry, path, ensured).await?;
-				self.watch_restart(&entry.container_name).await?;
+				self.watch_restart(
+					&entry.container_name,
+					self.watch_grace(file, &entry.service_name),
+				)
+				.await?;
 			}
 			WatchAction::SyncAndExec => {
 				self.maybe_sync(entry, path, ensured).await?;
