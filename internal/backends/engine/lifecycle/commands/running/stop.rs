@@ -203,6 +203,11 @@ impl Engine {
 			&live_by_service,
 		));
 		let outcome = async {
+			// A level that fails does not spare the next one: the containers a
+			// service depends on are still told to stop, and the first error is
+			// what the command reports, as `down` and `restart` do. Returning at
+			// the first failed level left every service below it running.
+			let mut first_err = None;
 			for level in &levels {
 				let futs = level.iter().map(|name| {
 					let grace = self.grace_period_secs(&file.services[name]);
@@ -210,10 +215,10 @@ impl Engine {
 					self.stop_one_service(names, &ids_by_name, grace, &acted)
 				});
 				if let Some(e) = first_error(join_bounded(futs).await) {
-					return Err(e);
+					first_err.get_or_insert(e);
 				}
 			}
-			Ok(())
+			first_err.map_or(Ok(()), Err)
 		}
 		.await;
 		crate::ui::progress::end();
