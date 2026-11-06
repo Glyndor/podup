@@ -57,8 +57,8 @@ pub fn check_host_mode(service_name: &str, service: &Service) -> Vec<ModeWarning
 	if let Some(mode) = service.network_mode.as_deref() {
 		if mode == "host" {
 			out.push(inherit(service_name, "network_mode", "host"));
-		} else if let Some(id) = mode.strip_prefix("container:") {
-			out.push(shared_namespace(service_name, "network_mode", id));
+		} else if let Some((scheme, id)) = shared_target(mode) {
+			out.push(shared_namespace(service_name, "network_mode", scheme, id));
 		}
 	}
 
@@ -83,8 +83,8 @@ pub fn check_host_mode(service_name: &str, service: &Service) -> Vec<ModeWarning
 	if let Some(mode) = service.userns_mode.as_deref() {
 		if mode == "host" {
 			out.push(inherit(service_name, "userns_mode", "host"));
-		} else if let Some(id) = mode.strip_prefix("container:") {
-			out.push(shared_namespace(service_name, "userns_mode", id));
+		} else if let Some((scheme, id)) = shared_target(mode) {
+			out.push(shared_namespace(service_name, "userns_mode", scheme, id));
 		}
 	}
 
@@ -105,13 +105,27 @@ fn inherit(service_name: &str, field: &'static str, mode: &str) -> ModeWarning {
 	}
 }
 
-fn shared_namespace(service_name: &str, field: &'static str, target: &str) -> ModeWarning {
+/// The other container a mode joins: `container:<id>`, or `service:<name>`,
+/// which the engine turns into the container of that service. Both share a
+/// namespace the same way, so both are warned on and audited.
+fn shared_target(mode: &str) -> Option<(&'static str, &str)> {
+	mode.strip_prefix("container:")
+		.map(|id| ("container", id))
+		.or_else(|| mode.strip_prefix("service:").map(|name| ("service", name)))
+}
+
+fn shared_namespace(
+	service_name: &str,
+	field: &'static str,
+	scheme: &str,
+	target: &str,
+) -> ModeWarning {
 	ModeWarning {
 		service: service_name.to_string(),
 		field,
-		value: Some(format!("container:{target}")),
+		value: Some(format!("{scheme}:{target}")),
 		message: format!(
-			"service \"{service_name}\": {field}: container:{target} shares another container's \
+			"service \"{service_name}\": {field}: {scheme}:{target} shares another container's \
 			{layout} namespace; both containers see the same {subject}",
 			layout = label_for(field),
 			subject = subject_for(field),
@@ -128,8 +142,8 @@ fn attach_namespace(
 	if let Some(mode) = value {
 		if mode == "host" {
 			out.push(inherit(service_name, field, mode));
-		} else if let Some(id) = mode.strip_prefix("container:") {
-			out.push(shared_namespace(service_name, field, id));
+		} else if let Some((scheme, id)) = shared_target(mode) {
+			out.push(shared_namespace(service_name, field, scheme, id));
 		}
 	}
 }

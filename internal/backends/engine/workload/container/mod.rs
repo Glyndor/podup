@@ -33,7 +33,7 @@ pub(crate) use security::parse_device_cgroup_rule;
 use crate::engine::container_config::{
 	build_healthcheck, build_log_config, build_resource_limits, build_restart_policy, build_ulimits,
 };
-use crate::engine::network::resolve_network_mode;
+use crate::engine::network::{resolve_network_mode, resolve_service_namespace};
 use crate::engine::volume_mounts::build_mounts_all;
 use crate::engine::Engine;
 use fields::{build_blkio_config, warn_swarm_only_deploy};
@@ -217,8 +217,14 @@ impl Engine {
 		pre_validate_spec(service_name, service)?;
 
 		// --- Namespace modes, platform, links, volumes_from ---
-		let pidns = service.pid.as_deref().map(Namespace::parse);
-		let ipcns = service.ipc.as_deref().map(Namespace::parse);
+		let pidns = service
+			.pid
+			.as_deref()
+			.map(|m| Namespace::parse(resolve_service_namespace(m, file, &self.project)));
+		let ipcns = service
+			.ipc
+			.as_deref()
+			.map(|m| Namespace::parse(resolve_service_namespace(m, file, &self.project)));
 		let utsns = service.uts.as_deref().map(Namespace::parse);
 		let cgroupns = service.cgroup.as_deref().map(Namespace::parse);
 		// In pod mode the user namespace is the pod's; a member must not set

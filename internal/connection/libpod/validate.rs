@@ -48,8 +48,8 @@ const CGROUP_FIELD: &str = "cgroup";
 /// allow-list.
 ///
 /// `container:<id>` joins another container's namespace (compose's
-/// `container:NAME` and `service:NAME` forms; podup rewrites service→container
-/// before this list sees it). The `ns:<path>` form joins a namespace by an
+/// `container:NAME` form, and `service:NAME` on `pid` and `ipc`, which the engine
+/// rewrites to `container:` at the create and this list lets through). The `ns:<path>` form joins a namespace by an
 /// absolute filesystem path, directly user-facing on the compose side, so it
 /// has to be allowed.
 ///
@@ -141,6 +141,16 @@ fn is_valid_namespace_mode(field: &str, mode: &str) -> bool {
 			return mode.len() > p.len();
 		}
 	}
+	// `service:<name>` is a compose form, not a libpod one: the engine turns it
+	// into `container:<that service's container>` before the create (as it does
+	// for `network_mode`), so here it only has to name a service. The
+	// Compose Specification asks for it on `ipc` and Docker Compose accepts it on
+	// `pid` too.
+	if matches!(field, IPC_FIELD | PID_FIELD) {
+		return mode
+			.strip_prefix("service:")
+			.is_some_and(|name| !name.is_empty());
+	}
 	false
 }
 
@@ -160,6 +170,10 @@ fn allowed_namespace_modes(field: &str) -> String {
 	for p in NS_PREFIX_MODES.iter().chain(extra_prefixes(field)) {
 		sep(&mut s, &mut first);
 		write!(&mut s, "`{p}<id-or-path>`").expect("writing to String never fails");
+	}
+	if matches!(field, IPC_FIELD | PID_FIELD) {
+		sep(&mut s, &mut first);
+		s.push_str("`service:<name>`");
 	}
 	s
 }

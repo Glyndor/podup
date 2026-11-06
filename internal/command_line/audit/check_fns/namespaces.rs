@@ -2,6 +2,14 @@ use podup::compose::types::{ComposeFile, Service};
 
 use super::{finding, Finding};
 
+/// The other container a mode joins: `container:<id>`, or `service:<name>`, which
+/// the engine turns into the container of that service. Same as the runtime detector.
+fn shared_target(mode: &str) -> Option<(&'static str, &str)> {
+	mode.strip_prefix("container:")
+		.map(|id| ("container", id))
+		.or_else(|| mode.strip_prefix("service:").map(|name| ("service", name)))
+}
+
 /// Host-binding namespacing modes: `pid`, `ipc`, `uts`, `cgroup`, `userns_mode`
 /// set to `host` or `container:<id>`, or `network_mode` carrying the same. One
 /// finding per active mode. The `container:<id>` form is the share-another-
@@ -18,12 +26,12 @@ pub fn check_host_namespace(name: &str, service: &Service, _file: &ComposeFile) 
 				"host_namespace",
 				"network_mode: host shares the host's network namespace",
 			));
-		} else if let Some(target) = mode.strip_prefix("container:") {
+		} else if let Some((scheme, target)) = shared_target(mode) {
 			out.push(finding(
 				name,
 				"host_namespace",
 				&format!(
-					"network_mode: container:{target} shares another container's network namespace"
+					"network_mode: {scheme}:{target} shares another container's network namespace"
 				),
 			));
 		}
@@ -44,12 +52,12 @@ pub fn check_host_namespace(name: &str, service: &Service, _file: &ComposeFile) 
 					"host_namespace",
 					&format!("{field}: host shares the host's {field} namespace"),
 				));
-			} else if let Some(target) = mode.strip_prefix("container:") {
+			} else if let Some((scheme, target)) = shared_target(mode) {
 				out.push(finding(
 					name,
 					"host_namespace",
 					&format!(
-						"{field}: container:{target} shares another container's {field} namespace"
+						"{field}: {scheme}:{target} shares another container's {field} namespace"
 					),
 				));
 			}

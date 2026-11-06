@@ -178,10 +178,6 @@ fn non_host_values_do_not_warn() {
 			..Service::default()
 		},
 		Service {
-			network_mode: Some("service:db".into()),
-			..Service::default()
-		},
-		Service {
 			network_mode: Some("none".into()),
 			..Service::default()
 		},
@@ -253,4 +249,45 @@ fn build_only_service_resolves_a_name() {
 	let warnings = check_host_mode("worker", &svc);
 	assert_eq!(warnings.len(), 1);
 	assert!(warnings[0].message.contains("service \"worker\""));
+}
+
+#[test]
+fn service_namespaces_are_warned_on_like_container_ones() {
+	// The engine turns `service:<name>` into `container:<name>` when it creates
+	// the container, so the isolation it collapses is the same one.
+	for (field, svc) in [
+		(
+			"network_mode",
+			Service {
+				network_mode: Some("service:db".into()),
+				..Service::default()
+			},
+		),
+		(
+			"pid",
+			Service {
+				pid: Some("service:db".into()),
+				..Service::default()
+			},
+		),
+		(
+			"ipc",
+			Service {
+				ipc: Some("service:db".into()),
+				..Service::default()
+			},
+		),
+	] {
+		let warnings = check_host_mode("web", &svc);
+		assert_eq!(warnings.len(), 1, "{field}: {warnings:?}");
+		assert_eq!(warnings[0].field, field);
+		assert_eq!(warnings[0].value.as_deref(), Some("service:db"));
+		assert!(
+			warnings[0]
+				.message
+				.contains("service:db shares another container's"),
+			"{}",
+			warnings[0].message
+		);
+	}
 }

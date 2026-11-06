@@ -100,17 +100,11 @@ services:
 		!findings.iter().any(|f| f.check == "host_namespace"),
 		"baseline must not flag host_namespace: {findings:#?}"
 	);
-	// And a service that names a non-host namespace value is also clean.
-	let yaml_service = r#"
-services:
-  web:
-    image: alpine:3.20
-    pid: service:sidecar
-"#;
-	let findings = report_for(yaml_service);
+	// And a private namespace is clean too.
+	let findings = report_for("services:\n  web:\n    image: alpine:3.20\n    pid: private\n");
 	assert!(
 		!findings.iter().any(|f| f.check == "host_namespace"),
-		"service:<name> share must not flag host_namespace: {findings:#?}"
+		"{findings:#?}"
 	);
 }
 
@@ -145,4 +139,22 @@ services:
 		!findings.iter().any(|f| f.check == "no_userns"),
 		"userns_mode: keep-id must pass: {findings:#?}"
 	);
+}
+
+#[test]
+fn audit_host_namespace_flags_a_namespace_shared_with_a_service() {
+	// `service:<name>` becomes `container:<name>` at create, so it shares the
+	// namespace exactly as `container:` does and must be reported like it.
+	for field in ["network_mode", "pid", "ipc"] {
+		let yaml = format!(
+			"services:\n  web:\n    image: alpine:3.20\n    {field}: \"service:other\"\n  other:\n    image: alpine:3.20\n"
+		);
+		let findings = report_for(&yaml);
+		assert!(
+			findings.iter().any(|f| f.check == "host_namespace"
+				&& f.reason.contains(field)
+				&& f.reason.contains("service:other")),
+			"{field}: {findings:#?}"
+		);
+	}
 }
