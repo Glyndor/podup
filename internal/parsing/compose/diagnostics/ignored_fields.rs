@@ -51,10 +51,14 @@ pub(super) fn ignored_service_fields(units: &ContainerUnits<'_>, out: &mut Vec<S
 				format: Some(fmt), ..
 			} = entry
 			{
-				out.push(format!(
-					"service '{service}': env_file format '{fmt}' is not honored; podup \
-					 always parses env files as dotenv"
-				));
+				// `dotenv` and `raw` are the two formats the specification defines
+				// and both are read as written.
+				if !matches!(fmt.as_str(), "dotenv" | "raw") {
+					out.push(format!(
+						"service '{service}': env_file format '{fmt}' is not honored; podup \
+						 parses it as dotenv"
+					));
+				}
 			}
 		}
 	}

@@ -21,7 +21,9 @@ use crate::error::{ComposeError, Result};
 /// does: `${VAR}`, `$VAR`, `${VAR:-default}` and `$$` are resolved against the
 /// project environment (the process environment and the project's `.env`), and
 /// then against the keys the env files before them in the list, and this one
-/// above the value, set. A single-quoted value stays literal.
+/// above the value, set. A single-quoted value stays literal. An entry written with
+/// `format: raw` is read line by line, every value kept as written and none
+/// interpolated.
 ///
 /// Returns [`ComposeError::FileNotFound`] when an env file does not exist.
 pub fn load_env_files(paths: &[String], base_dir: &Path) -> Result<HashMap<String, String>> {
@@ -69,18 +71,19 @@ pub fn load_env_file_entries_for(
 	let mut warned = std::collections::HashSet::new();
 
 	for entry in entries {
-		if let EnvFileEntry::Config {
-			format: Some(fmt), ..
-		} = entry
-		{
-			if fmt != "dotenv" {
-				// compose-go logs a warning and falls back to dotenv parsing
-				// rather than failing the file; match that lenient behaviour.
-				tracing::warn!(
-					"env_file format '{fmt}' is not supported; parsing '{}' as dotenv",
-					entry.path()
-				);
-			}
+		let format = match entry {
+			EnvFileEntry::Config {
+				format: Some(fmt), ..
+			} => fmt.as_str(),
+			_ => "dotenv",
+		};
+		if !matches!(format, "dotenv" | "raw") {
+			// compose-go logs a warning and falls back to dotenv parsing
+			// rather than failing the file; match that lenient behaviour.
+			tracing::warn!(
+				"env_file format '{format}' is not supported; parsing '{}' as dotenv",
+				entry.path()
+			);
 		}
 
 		let abs = base_dir.join(entry.path());
@@ -99,7 +102,16 @@ pub fn load_env_file_entries_for(
 		// A service `env_file:` is explicitly requested, so a malformed entry
 		// (e.g. an unterminated quoted value that would otherwise swallow the
 		// following keys) is a hard error rather than silent data loss.
-		for (key, value, literal) in crate::dotenv::parse_strict_marked(&content)? {
+		let pairs: Vec<(String, String, bool)> = if format == "raw" {
+			// Raw: every value as written, so none is interpolated.
+			crate::dotenv::parse_raw(&content)?
+				.into_iter()
+				.map(|(key, value)| (key, value, true))
+				.collect()
+		} else {
+			crate::dotenv::parse_strict_marked(&content)?
+		};
+		for (key, value, literal) in pairs {
 			let value = if literal {
 				value
 			} else {
@@ -206,3 +218,7 @@ mod tests;
 #[cfg(test)]
 #[path = "env_file_interpolation_tests.rs"]
 mod interpolation_tests;
+
+#[cfg(test)]
+#[path = "env_file_raw_tests.rs"]
+mod raw_tests;

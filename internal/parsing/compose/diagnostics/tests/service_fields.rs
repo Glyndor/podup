@@ -10,15 +10,25 @@ fn warns_on_windows_only_cpu_fields() {
 }
 
 #[test]
-fn warns_on_env_file_format() {
+fn warns_on_an_unknown_env_file_format() {
 	let msgs = diagnostics_for(
-			"services:\n  web:\n    image: nginx\n    env_file:\n      - path: ./a.env\n        format: raw\n",
+			"services:\n  web:\n    image: nginx\n    env_file:\n      - path: ./a.env\n        format: yaml\n",
 		);
 	assert!(
 		msgs.iter()
 			.any(|m| m.contains("env_file format") && m.contains("dotenv")),
 		"got: {msgs:?}"
 	);
+}
+
+#[test]
+fn raw_and_dotenv_env_file_formats_are_honored_and_say_nothing() {
+	for format in ["raw", "dotenv"] {
+		let msgs = diagnostics_for(&format!(
+			"services:\n  web:\n    image: nginx\n    env_file:\n      - path: ./a.env\n        format: {format}\n"
+		));
+		assert!(msgs.is_empty(), "{format}: {msgs:?}");
+	}
 }
 
 #[test]

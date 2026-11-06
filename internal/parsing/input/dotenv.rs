@@ -38,6 +38,48 @@ pub fn parse_strict_marked(content: &str) -> crate::error::Result<Vec<(String, S
 	parse_inner(content, true)
 }
 
+/// Parse `content` in the `raw` format of an `env_file:` entry: one `KEY=value`
+/// per line with the value exactly as written, quotes, `$` signs, spaces and a
+/// trailing `# comment` included, and no interpolation (the Compose
+/// Specification: "without any attempt from Compose to parse the value").
+/// Blank lines and lines that start with `#` are skipped; a line without `=` is a
+/// bare key that passes through from the host if it is set there, as in dotenv.
+/// A key that contains whitespace (an `export KEY=value` line, say) is an error,
+/// which is what Docker Compose does.
+pub fn parse_raw(content: &str) -> crate::error::Result<Vec<(String, String)>> {
+	let content = content.strip_prefix('\u{feff}').unwrap_or(content);
+	let mut out = Vec::new();
+	for line in content.lines() {
+		if line.trim().is_empty() || line.trim_start().starts_with('#') {
+			continue;
+		}
+		let Some((key, value)) = line.split_once('=') else {
+			let key = line.trim();
+			if let Ok(val) = std::env::var(key) {
+				out.push((key.to_string(), val));
+			}
+			continue;
+		};
+		// Leading blanks are dropped; a key with none left is an error, and so is
+		// one with whitespace anywhere after that (`KEY = v`), as in Docker Compose.
+		let key = key.trim_start();
+		if key.is_empty() {
+			return Err(crate::error::ComposeError::EnvFile(format!(
+				"no variable name on line '{}'",
+				crate::error::sanitize_name(line)
+			)));
+		}
+		if key.contains(char::is_whitespace) {
+			return Err(crate::error::ComposeError::EnvFile(format!(
+				"variable '{}' contains whitespace",
+				crate::error::sanitize_name(key)
+			)));
+		}
+		out.push((key.to_string(), value.to_string()));
+	}
+	Ok(out)
+}
+
 fn parse_inner(content: &str, strict: bool) -> crate::error::Result<Vec<(String, String, bool)>> {
 	// Strip a leading UTF-8 BOM so the first key is not captured as
 	// `\u{feff}KEY` (which would silently lose that variable). Matches
