@@ -270,14 +270,49 @@ impl Engine {
 		// Inline secrets/configs are materialised up front rather than in the
 		// per-container path; ensure they exist before recreating the container.
 		self.create_project_secrets(file).await?;
-		let container_name = self.first_replica_name(service_name, service);
-		// The rebuild recreates the container, so it runs the same
+		// The rebuild recreates the containers, so it runs the same
 		// initialization `up` runs: the `pre_start` steps before the
 		// container exists, the `post_start` hooks inside it once it is up.
+		// Every replica gets the new image, one after the other in index order so
+		// the service is never down all at once, and the first failure stops the
+		// walk: the replicas after it keep the code they had.
 		let env = self.effective_env(service)?;
-		self.recreate_service(&container_name, service_name, service, file, true, &env)
-			.await?;
-		self.run_post_start_hooks(&container_name, service).await
+		for container_name in self.watched_replicas(service_name, service) {
+			self.recreate_service(&container_name, service_name, service, file, true, &env)
+				.await?;
+			self.run_post_start_hooks(&container_name, service).await?;
+		}
+		Ok(())
+	}
+
+	/// The entries of one rule, one per container it acts on.
+	pub(in crate::backends::engine::host_files::watch) fn per_replica(
+		&self,
+		template: super::RuleEntry,
+		service: &crate::compose::types::Service,
+	) -> Vec<super::RuleEntry> {
+		self.watched_replicas(&template.service_name, service)
+			.into_iter()
+			.map(|container_name| super::RuleEntry {
+				container_name,
+				..template.clone()
+			})
+			.collect()
+	}
+
+	/// The containers a watch rule of `service` acts on: every replica at the
+	/// scale in effect, or the single base name when that scale is zero.
+	pub(in crate::backends::engine::host_files::watch) fn watched_replicas(
+		&self,
+		service_name: &str,
+		service: &crate::compose::types::Service,
+	) -> Vec<String> {
+		let replicas = self.replica_names(service_name, service);
+		if replicas.is_empty() {
+			vec![self.first_replica_name(service_name, service)]
+		} else {
+			replicas
+		}
 	}
 
 	/// The grace a rule's restart gives its container: `-t/--timeout` when the
@@ -414,3 +449,7 @@ mod actions_rebuild_tests;
 #[cfg(all(test, unix))]
 #[path = "actions_grace_tests.rs"]
 mod actions_grace_tests;
+
+#[cfg(all(test, unix))]
+#[path = "replicas_tests.rs"]
+mod replicas_tests;
