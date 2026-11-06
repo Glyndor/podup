@@ -144,7 +144,7 @@ upstream_version() { # <repo> <prefix>
 		[ -n "$tag" ] || continue
 		candidate=$(tag_version "$tag" "$2") || continue
 		is_version "$candidate" || continue
-		if [ -z "$best" ] || [ "$(printf '%s\n%s\n' "$best" "$candidate" | sort -V | tail -n1)" = "$candidate" ]; then
+		if [ -z "$best" ] || [ "$(printf '%s\n%s\n' "$best" "$candidate" | LC_ALL=C sort -V | tail -n1)" = "$candidate" ]; then
 			best=$candidate
 		fi
 	done <<EOF
@@ -198,6 +198,23 @@ TOOLS
 declare -A sites_of=()
 site_count=0
 
+sites_table=$(cat <<'SITES'
+cargo-llvm-cov|.github/workflows/reusable-rust-ci.yml|input|llvm-cov-version
+cargo-semver-checks|.github/workflows/reusable-rust-ci.yml|input|semver-checks-version
+cargo-audit|.github/workflows/reusable-rust-audit.yml|input|cargo-audit-version
+cargo-deny|.github/workflows/reusable-rust-audit.yml|input|cargo-deny-version
+cargo-fuzz|.github/workflows/reusable-rust-fuzz.yml|input|cargo-fuzz-version
+cargo-cyclonedx|.github/workflows/reusable-rust-supply-chain.yml|input|cyclonedx-version
+cargo-about|.github/workflows/reusable-rust-supply-chain.yml|input|cargo-about-version
+cargo-about|.github/workflows/release.yml|install|cargo-about
+cargo-audit|.github/workflows/release.yml|install|cargo-audit
+cargo-cyclonedx|.github/workflows/release.yml|install|cargo-cyclonedx
+shellcheck|.github/workflows/reusable-shell-ci.yml|input|shellcheck-version
+shellcheck|.github/workflows/reusable-workflow-lint.yml|input|shellcheck-version
+actionlint|.github/workflows/reusable-workflow-lint.yml|env|ACTIONLINT_VERSION
+PSScriptAnalyzer|.github/workflows/reusable-powershell-ci.yml|input|pssa-version
+SITES
+)
 while IFS='|' read -r tool file shape key; do
 	[ -n "$tool" ] || continue
 	if [ -z "${repo_of[$tool]:-}" ]; then
@@ -216,22 +233,7 @@ while IFS='|' read -r tool file shape key; do
 	esac
 	sites_of["$tool"]="${sites_of[$tool]:-}$file"$'\t'"$label"$'\t'"$pinned"$'\n'
 	site_count=$((site_count + 1))
-done <<'SITES'
-cargo-llvm-cov|.github/workflows/reusable-rust-ci.yml|input|llvm-cov-version
-cargo-semver-checks|.github/workflows/reusable-rust-ci.yml|input|semver-checks-version
-cargo-audit|.github/workflows/reusable-rust-audit.yml|input|cargo-audit-version
-cargo-deny|.github/workflows/reusable-rust-audit.yml|input|cargo-deny-version
-cargo-fuzz|.github/workflows/reusable-rust-fuzz.yml|input|cargo-fuzz-version
-cargo-cyclonedx|.github/workflows/reusable-rust-supply-chain.yml|input|cyclonedx-version
-cargo-about|.github/workflows/reusable-rust-supply-chain.yml|input|cargo-about-version
-cargo-about|.github/workflows/release.yml|install|cargo-about
-cargo-audit|.github/workflows/release.yml|install|cargo-audit
-cargo-cyclonedx|.github/workflows/release.yml|install|cargo-cyclonedx
-shellcheck|.github/workflows/reusable-shell-ci.yml|input|shellcheck-version
-shellcheck|.github/workflows/reusable-workflow-lint.yml|input|shellcheck-version
-actionlint|.github/workflows/reusable-workflow-lint.yml|env|ACTIONLINT_VERSION
-PSScriptAnalyzer|.github/workflows/reusable-powershell-ci.yml|input|pssa-version
-SITES
+done <<<"$sites_table"
 
 echo "watched ${#tool_order[@]} tools over $site_count pin sites" >&2
 
@@ -241,6 +243,31 @@ for tool in "${tool_order[@]}"; do
 	if [ -z "${sites_of[$tool]:-}" ]; then
 		die "$tool is declared as watched but no pin site reads it"
 	fi
+done
+
+# The tables above are carried here, so a pin written in a workflow and never
+# added to them would be watched by nobody and reported as no drift. Every pin
+# of the shapes below that the workflows hold has to be a site listed above:
+# a `*-version` input of a workflow, a `*_VERSION` environment entry with a
+# literal version, and a `cargo install` line with a literal `--version "="`.
+known_sites=$'\n'$(printf '%s\n' "$sites_table" | cut -d'|' -f2,4)$'\n'
+for file in .github/workflows/*.yml; do
+	while IFS= read -r key; do
+		[ -n "$key" ] || continue
+		case "$known_sites" in
+			*$'\n'"$file|$key"$'\n'*) ;;
+			*) die "$file has the pin $key, which no site above reads: add it to the tables" ;;
+		esac
+	done < <(grep -oE '^[[:space:]]+[a-z0-9-]+-version:[[:space:]]*$|^[[:space:]]+[A-Z_]+_VERSION:[[:space:]]*"?v?[0-9]' "$file" \
+		| sed -E 's/^[[:space:]]+//; s/:.*$//')
+	while IFS= read -r line; do
+		[ -n "$line" ] || continue
+		found=""
+		for tool in "${tool_order[@]}"; do
+			case "$line" in *"$tool"*) found=1 ;; esac
+		done
+		[ -n "$found" ] || die "$file installs a tool at an exact version that no tool above names: $line"
+	done < <(grep -E '^[[:space:]]*cargo install .*--version[[:space:]]*"=' "$file" || true)
 done
 
 # ---- the comparison --------------------------------------------------------
@@ -253,10 +280,10 @@ for tool in "${tool_order[@]}"; do
 	# derives one site from another, so "the sites disagree" is a drift in
 	# its own right and is reported before the upstream comparison, the way
 	# the Rust toolchain sites are.
-	mapfile -t distinct < <(printf '%s' "${sites_of[$tool]}" | cut -f3 | sed 's/^v//' | sort -u)
+	mapfile -t distinct < <(printf '%s' "${sites_of[$tool]}" | cut -f3 | sed 's/^v//' | LC_ALL=C sort -u)
 	if [ "${#distinct[@]}" -gt 1 ]; then
-		files=$(printf '%s' "${sites_of[$tool]}" | cut -f1 | sort -u | paste -sd, - | sed 's/,/, /g')
-		values=$(printf '%s' "${sites_of[$tool]}" | cut -f3 | sort -u | paste -sd, - | sed 's/,/, /g')
+		files=$(printf '%s' "${sites_of[$tool]}" | cut -f1 | LC_ALL=C sort -u | paste -sd, - | sed 's/,/, /g')
+		values=$(printf '%s' "${sites_of[$tool]}" | cut -f3 | LC_ALL=C sort -u | paste -sd, - | sed 's/,/, /g')
 		emit "$tool (${#distinct[@]} sites disagree)" "$files" "$values" "(they must agree)"
 	fi
 	while IFS=$'\t' read -r file label pinned; do
