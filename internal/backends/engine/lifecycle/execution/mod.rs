@@ -3,3 +3,6 @@
 pub(in crate::backends::engine::lifecycle) mod drop_recheck;
 pub(in crate::backends::engine) mod parallel;
 pub(in crate::backends::engine::lifecycle) mod pre_start;
+
+#[cfg(test)]
+mod tests;

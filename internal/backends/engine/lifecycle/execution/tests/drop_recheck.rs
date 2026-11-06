@@ -10,7 +10,7 @@
 //! These pin the three answers: the container reached the goal, it did not, and
 //! the re-check itself could not be read. Only the first is success.
 
-use super::drop_recheck::LifecycleGoal;
+use super::super::drop_recheck::LifecycleGoal;
 
 #[test]
 fn a_goal_is_reached_only_by_the_state_that_satisfies_it() {
@@ -27,7 +27,7 @@ fn a_goal_is_reached_only_by_the_state_that_satisfies_it() {
 
 #[cfg(unix)]
 mod over_the_wire {
-	use super::super::drop_recheck::LifecycleGoal;
+	use super::super::super::drop_recheck::LifecycleGoal;
 	use crate::engine::fake_podman::{self, FakeReply};
 	use crate::engine::Engine;
 	use crate::libpod::API_PREFIX;

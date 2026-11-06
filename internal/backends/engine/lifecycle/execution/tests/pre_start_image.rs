@@ -1,4 +1,4 @@
-use super::pre_start_test_support::{created, engine, peer};
+use super::support::{created, engine, peer};
 
 #[tokio::test]
 async fn pre_start_reuses_the_service_build_image() {
