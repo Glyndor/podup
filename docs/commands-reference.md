@@ -112,9 +112,9 @@ Print the resolved compose file (after substitution, extends, include, and `env_
 ### `audit`
 Print one row per container listing every hardening gap the compose file leaves open. Read-only; never contacts Podman or changes runtime behavior.
 
-Every service is one container, and so is every `pre_start` step: an init step runs its own container and is reported under `<service>/pre_start[i]`, so a step that asks for `privileged: true` or mounts a host path is a finding about that step. A file without `pre_start` has one row per service, as before.
+Services and jobs are audited, along with each `pre_start` step. An init step is reported under `<name>/pre_start[i]`, so a step that asks for `privileged: true` or mounts a host path is a finding about that step.
 
-Default output is a table. Services without findings show `-`; a project with no findings prints `no findings`. `--format json` emits a findings array (empty as `[]`). `--strict` exits 1 when findings are present, 0 otherwise.
+Default output is a table. Services without findings show `-`; a project with no findings prints `no findings`. `--format json` emits an object with a `findings` array (`{"findings":[]}` when empty). `--strict` exits 1 when findings are present, 0 otherwise.
 
 ```sh
 podup audit --list-checks --format json | jq -r '.checks[].id'
@@ -130,7 +130,7 @@ podup audit --list-checks --format json | jq -r '.checks[].id'
 | `writable_root` | `read_only` is not `true` | Compose's default is writable. |
 | `no_cap_drop_all` | `cap_drop` does not contain `ALL` | Without it the runtime's default capability set stays. |
 | `no_new_privileges_off` | `security_opt` lacks `no-new-privileges:true` | Both spellings (`no-new-privileges:true` and `no-new-privileges` alone, the Podman form) are accepted. |
-| `no_pids_limit` | `pids_limit` unset | A fork bomb can exhaust the host's process table. |
+| `no_pids_limit` | Effective PID cap is missing or unlimited (`-1`) | Reads `pids_limit`, then `deploy.resources.limits.pids` as a fallback. |
 | `no_memory_limit` | The effective memory limit is missing, unparseable, or negative | A top-level `mem_limit` takes precedence over `deploy.resources.limits.memory`. |
 | `no_userns` | `userns_mode` unset | Set `auto` explicitly for a private subordinate UID range; see the migration guide. |
 | `secret_in_environment` | `environment:` key whose name contains a secret-bearing segment (`PASSWORD`, `SECRET`, `TOKEN`, `KEY`, case-insensitive) and a value is set | Every set value is flagged, including resolved `${VAR}` interpolations and empty strings. Bare inherited keys (no value) are not. A name ending in `FILE` is exempt only when its value starts with `/`, `./`, or `../`. |
@@ -142,7 +142,7 @@ podup audit --list-checks --format json | jq -r '.checks[].id'
 | `no_init` | `init:` is not `true` | PID 1 is the app; orphans become zombies. |
 | `no_health_action` | A non-disabled `healthcheck:` has no `x-podman-on-failure` extension | An unhealthy container stays unhealthy. |
 | `swap_unbounded` | A memory limit is in effect but `memswap_limit` is absent, `-1`, or differs from the memory limit | The service can page to disk. |
-| `no_cpu_limit` | Neither `cpus:`, `deploy.resources.limits.cpus:`, nor `cpu_quota:` gives a limit | One service can take every core of the host. |
+| `no_cpu_limit` | No positive effective CPU quota and no nonblank `cpuset` | Quota comes from `cpus:`, `deploy.resources.limits.cpus:` or `cpu_quota:`. |
 
 | Flag | Description | Default |
 |---|---|---|
@@ -306,9 +306,9 @@ The infra container stays running when the last service exits, in both API and Q
 
 What is refused, before anything is created:
 
-- `network_mode` on any service;
-- a service whose `networks:` set differs from another service's;
-- two services publishing the same host port;
+- `network_mode` other than identical `pasta` or `slirp4netns` (including options) on every service;
+- service `networks:` combined with that shared `network_mode`, or differing nonempty service network sets;
+- two services publishing the same host port with the same protocol;
 - services that disagree on `userns_mode`.
 
 ### Healthcheck timing on a `service_healthy` gate

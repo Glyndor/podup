@@ -14,7 +14,7 @@ Runtime privileges, trust boundaries and validation. The [threat model](threat-m
 |----------|----------|-------|
 | Podman socket (`PODMAN_SOCKET`/`DOCKER_HOST`) | Trusted, local-only | Whoever can reach it controls the engine; this is the primary boundary. Only `unix://`/`npipe://` are accepted from `--socket`, `PODMAN_SOCKET`, `DOCKER_HOST`, or auto-detection; remote schemes are rejected fail-closed. |
 | Compose file and its referenced files | **Trusted input** | Treated like a Makefile (see below). |
-| Release artifacts (`podup update`, installer) | Untrusted transport | Verified against an embedded Ed25519 key. Per-asset `.sig` checks run in the release workflow and (via apt keyring) at install. Provenance attestation in the shell installers is defence-in-depth and only runs when a `gh` capable of verifying is present. |
+| Release artifacts (`podup update`, installer) | Untrusted transport | Binary installs verify a signed manifest and the selected digest against an embedded Ed25519 key; release CI also checks per-asset `.sig` files. The apt bootstrap verifies the keyring package's signature; apt then verifies the signed archive metadata and package hashes. Provenance attestation in the shell installers is defence-in-depth and only runs when a `gh` capable of verifying is present. |
 | Container filesystem (e.g. `cp` archives) | Untrusted | Tar extraction refuses path-traversal (zip-slip) entries; the host-side `cp` destination is also walked component by component and any symlink at any component of the path is refused. |
 | Network/TLS to GitHub/crates.io | Untrusted | Integrity comes from signatures, not transport. |
 
@@ -26,7 +26,7 @@ A compose file is treated like a Makefile: running podup on one is equivalent to
 
 The compose keys that constrain a container are translated onto Podman's `SpecGenerator` and take effect on the running container. Everything below remains bounded by the rootless ceiling: a key can only tighten, never widen, what the launching user already has.
 
-A `podup audit` subcommand reads the project the same way `config` does and prints, for each service, which of those keys the file did not set. See [commands-reference.md](commands-reference.md#audit) for checks and exit codes; `audit` never changes runtime behavior, so it can be added to a CI gate.
+A `podup audit` subcommand reads the project the same way `config` does and reports hardening gaps in services, jobs and their `pre_start` steps. See [commands-reference.md](commands-reference.md#audit) for checks and exit codes; `audit` never changes runtime behavior, so it can be added to a CI gate.
 
 - `security_opt` is parsed into the matching SpecGenerator fields:
   - `no-new-privileges` → `no_new_privileges`
