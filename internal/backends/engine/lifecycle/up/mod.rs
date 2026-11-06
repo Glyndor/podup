@@ -425,3 +425,6 @@ mod up_env_hash_tests;
 
 #[cfg(all(test, unix))]
 mod up_replica_tests;
+
+#[cfg(all(test, unix))]
+mod collision_tests;
