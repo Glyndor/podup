@@ -195,9 +195,6 @@ pub fn parse_files_with_env_files_interp_in(
 		merge_override(&mut merged, other, &directives);
 	}
 	drop(budget);
-	// The diagnostics below re-read each input file on its own budget, whatever
-	// load this one runs inside of.
-	let _alone = substitute::project_budget::Scope::none();
 	// Each file passed on its own; a service in one `-f` file and a job of the
 	// same name in another only meet here.
 	jobs::check_structure(&merged)?;

@@ -18,6 +18,8 @@ thread_local! {
 /// when it is dropped, on `Err` and on unwind too. So a project loaded from a
 /// synchronous callback in the middle of another load (a `tracing` subscriber,
 /// say) counts for itself and leaves the outer count as it found it.
+/// A scope puts back the state it found, so scopes must be dropped in the reverse
+/// of the order they were opened; every use here is a local guard that does.
 pub(crate) struct Scope {
 	previous: Option<usize>,
 }
