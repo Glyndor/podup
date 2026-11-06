@@ -212,7 +212,13 @@ impl Engine {
 				let futs = level.iter().map(|name| {
 					let grace = self.grace_period_secs(&file.services[name]);
 					let names = live_by_service.get(name).cloned().unwrap_or_default();
-					self.stop_one_service(names, &ids_by_name, grace, &acted)
+					self.stop_one_service(
+						names,
+						&ids_by_name,
+						grace,
+						&file.services[name].pre_stop,
+						&acted,
+					)
 				});
 				if let Some(e) = first_error(join_bounded(futs).await) {
 					first_err.get_or_insert(e);

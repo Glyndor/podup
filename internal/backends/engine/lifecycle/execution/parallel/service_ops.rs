@@ -31,6 +31,7 @@ impl Engine {
 		container_names: Vec<String>,
 		ids_by_name: &std::collections::HashMap<String, String>,
 		grace: i32,
+		pre_stop: &[crate::compose::types::LifecycleHook],
 		acted: &std::sync::atomic::AtomicBool,
 	) -> Result<()> {
 		let mut first_err: Option<ComposeError> = None;
@@ -39,6 +40,8 @@ impl Engine {
 				Some(id) => ContainerTarget::Id(id),
 				None => ContainerTarget::Name(&container_name),
 			};
+			self.run_pre_stop(&container_name, target.as_str(), pre_stop)
+				.await;
 			match self
 				.stop_container_target(&container_name, target, grace)
 				.await
@@ -88,11 +91,14 @@ impl Engine {
 		&self,
 		container_names: Vec<String>,
 		grace: i32,
+		pre_stop: &[crate::compose::types::LifecycleHook],
 		done: &str,
 		acted: &std::sync::atomic::AtomicBool,
 	) -> Result<()> {
 		let mut first_err: Option<ComposeError> = None;
 		for container_name in container_names {
+			self.run_pre_stop(&container_name, &container_name, pre_stop)
+				.await;
 			// Single atomic restart (no visible stopped window) instead of a
 			// stop+start round-trip.
 			let restart_path = format!(
