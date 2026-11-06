@@ -11,23 +11,32 @@ pub const CAP: usize = 16 * 1024 * 1024;
 
 pub struct Outcome {
 	pub success: bool,
+	/// Exit code, `None` when the process was killed by a signal or the deadline.
+	pub code: Option<i32>,
 	pub timed_out: bool,
 	pub text: String,
 	pub rss_kib: u64,
 }
 
 pub fn command(dir: &Path, args: &[&str]) -> Command {
+	let mut cmd = isolated(dir);
+	cmd.args([
+		"--socket",
+		"unix:///nonexistent/h3.sock",
+		"-p",
+		"h3",
+		"-f",
+		"compose.yaml",
+	])
+	.args(args);
+	cmd
+}
+
+/// `podup` run from `dir` with its home, XDG directories and the variables that
+/// steer a compose load pointed at `dir` or removed, and no arguments.
+pub fn isolated(dir: &Path) -> Command {
 	let mut cmd = Command::new(env!("CARGO_BIN_EXE_podup"));
 	cmd.current_dir(dir)
-		.args([
-			"--socket",
-			"unix:///nonexistent/h3.sock",
-			"-p",
-			"h3",
-			"-f",
-			"compose.yaml",
-		])
-		.args(args)
 		.env("HOME", dir)
 		.env("XDG_CONFIG_HOME", dir.join("config"))
 		.env("XDG_DATA_HOME", dir.join("data"))
@@ -61,23 +70,24 @@ pub fn run(mut cmd: Command) -> Outcome {
 	);
 	let start = Instant::now();
 	let mut rss_kib = 0;
-	let (success, timed_out) = loop {
+	let (success, code, timed_out) = loop {
 		if let Ok(status) = fs::read_to_string(format!("/proc/{}/status", child.0.id())) {
 			for line in status.lines().filter(|s| s.starts_with("VmHWM:")) {
 				rss_kib = rss_kib.max(line.split_whitespace().nth(1).unwrap().parse().unwrap());
 			}
 		}
 		if let Some(status) = child.0.try_wait().unwrap() {
-			break (status.success(), false);
+			break (status.success(), status.code(), false);
 		}
 		if start.elapsed() > Duration::from_secs(15) {
-			break (false, true);
+			break (false, None, true);
 		}
 		std::thread::sleep(Duration::from_millis(5));
 	};
 	drop(child);
 	Outcome {
 		success,
+		code,
 		timed_out,
 		rss_kib,
 		text: fs::read_to_string(out.path()).unwrap() + &fs::read_to_string(err.path()).unwrap(),
