@@ -16,7 +16,7 @@ use std::path::Path;
 
 use indexmap::IndexMap;
 
-use crate::compose::types::{BuildConfig, SecretConfig, UlimitConfig};
+use crate::compose::types::{BuildConfig, BuildSecret, SecretConfig, UlimitConfig};
 
 use super::super::{abs_against, quote_podman_arg_value, Section};
 
@@ -121,13 +121,14 @@ fn emit_pull(pull: Option<bool>, section: &mut Section) {
 /// build would refuse.
 fn emit_secrets(
 	name: &str,
-	secret_names: &[String],
+	build_secrets: &[BuildSecret],
 	secrets: &IndexMap<String, SecretConfig>,
 	base_dir: &Path,
 	section: &mut Section,
 	warnings: &mut Vec<String>,
 ) {
-	for secret_name in secret_names {
+	for build_secret in build_secrets {
+		let (secret_name, id) = (build_secret.source(), build_secret.id());
 		let Some(def) = secrets.get(secret_name) else {
 			warnings.push(format!(
 				"{name}: build.secrets names {secret_name:?}, which the top-level secrets section \
@@ -143,14 +144,14 @@ fn emit_secrets(
 			continue;
 		};
 		let src = abs_against(base_dir, file);
-		if secret_name.contains(',') || src.contains(',') {
+		if id.contains(',') || src.contains(',') {
 			warnings.push(format!(
 				"{name}: build secret {secret_name:?} is skipped: `Secret=` is a comma-separated \
 				 option list, so a comma in its id or in its path would break it apart"
 			));
 			continue;
 		}
-		section.add("Secret", format!("id={secret_name},src={src}"));
+		section.add("Secret", format!("id={id},src={src}"));
 	}
 }
 

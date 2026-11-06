@@ -154,6 +154,18 @@ fn build_secret_undefined_errors() {
 	assert!(e.resolve_build_secrets(build_of(&file), &file).is_err());
 }
 
+#[test]
+fn a_control_character_in_a_build_secret_name_does_not_reach_the_message() {
+	let yaml = "services:\n  app:\n    build:\n      context: .\n      secrets:\n        - \"to\\e[31mk\"\n";
+	let file = crate::compose::parse_str(yaml).unwrap();
+	let e = engine(std::env::temp_dir());
+	let message = e
+		.resolve_build_secrets(build_of(&file), &file)
+		.unwrap_err()
+		.to_string();
+	assert!(!message.contains('\u{1b}'), "{message:?}");
+}
+
 /// `build.ulimits` was reported as having no libpod mapping. It has one:
 /// measured on podman 5.7.0, a build with `ulimits=["nofile=1234:1234"]` saw
 /// 1234 where the same build without it saw 524288.
@@ -235,4 +247,28 @@ fn build_with_ulimits(entries: &[(&str, UlimitConfig)]) -> BuildConfig {
 		})
 		.collect::<String>();
 	serde_yaml::from_str(&format!("context: .\nulimits:\n{yaml}")).expect("build config parses")
+}
+
+#[test]
+fn a_long_form_build_secret_is_exposed_under_its_target_id() {
+	// The Dockerfile reads `--mount=type=secret,id=mytarget`; the secret is the
+	// top-level `mysecret`, so the spec carries the target as id.
+	let yaml = "services:\n  app:\n    build:\n      context: .\n      secrets:\n        - source: mysecret\n          target: mytarget\nsecrets:\n  mysecret:\n    content: v\n";
+	let file = crate::compose::parse_str(yaml).unwrap();
+	let e = engine(std::path::PathBuf::from("."));
+	let (files, specs) = e.resolve_build_secrets(build_of(&file), &file).unwrap();
+	assert_eq!(
+		specs,
+		vec!["id=mytarget,src=.podup-build-secret-mytarget".to_string()]
+	);
+	assert_eq!(files[0].1, b"v");
+}
+
+#[test]
+fn a_long_form_build_secret_id_is_held_to_the_name_charset() {
+	let yaml = "services:\n  app:\n    build:\n      context: .\n      secrets:\n        - source: mysecret\n          target: \"a,src=/etc/shadow\"\nsecrets:\n  mysecret:\n    content: v\n";
+	let file = crate::compose::parse_str(yaml).unwrap();
+	assert!(engine(std::path::PathBuf::from("."))
+		.resolve_build_secrets(build_of(&file), &file)
+		.is_err());
 }
