@@ -19,7 +19,7 @@ fn run_bridge(new: Option<&str>, legacy: Option<&str>) -> Option<String> {
 	if let Some(v) = legacy {
 		std::env::set_var("PODUP_LIBCOD_POOL", v);
 	}
-	super::bridge_legacy_pool_env();
+	super::super::bridge_legacy_pool_env();
 	let after = std::env::var("PODUP_LIBPOD_POOL").ok();
 	std::env::remove_var("PODUP_LIBPOD_POOL");
 	std::env::remove_var("PODUP_LIBCOD_POOL");

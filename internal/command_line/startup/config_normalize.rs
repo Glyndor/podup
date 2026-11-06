@@ -82,7 +82,7 @@ fn rewrite_service_bind_sources(
 /// returning the rewritten spec when the source is a relative host path. A spec
 /// with no `:` separator is a single in-container target (anonymous volume), and
 /// a non-`.` source is absolute or a named volume; both are left as-is.
-fn rewrite_short_bind(spec: &str, base_dir: &Path) -> Option<String> {
+pub(super) fn rewrite_short_bind(spec: &str, base_dir: &Path) -> Option<String> {
 	let (src, rest) = spec.split_once(':')?;
 	let abs = absolute_bind_source(src, base_dir)?;
 	Some(format!("{abs}:{rest}"))
@@ -179,7 +179,7 @@ pub(super) fn quote_yaml11_booleans(yaml: &str) -> String {
 /// past: the key's column for a mapping entry, the last `-` or `?` indicator's
 /// for a sequence item or an explicit key. The block ends at the first
 /// non-blank line that is not indented past it.
-fn block_scalar_parent(line: &str) -> Option<usize> {
+pub(super) fn block_scalar_parent(line: &str) -> Option<usize> {
 	let (head, header) = line.rsplit_once(' ')?;
 	let mut indicator = header.chars();
 	if !matches!(indicator.next(), Some('|' | '>'))
@@ -250,13 +250,9 @@ fn is_quoted(s: &str) -> bool {
 /// 1.1 reader would resolve to true/false. The YAML 1.2 core schema serde_yaml
 /// emits leaves these as plain strings. `true`/`false` are real booleans in 1.2
 /// too, so they are not matched.
-fn looks_like_yaml11_bool(s: &str) -> bool {
+pub(super) fn looks_like_yaml11_bool(s: &str) -> bool {
 	matches!(
 		s.to_ascii_lowercase().as_str(),
 		"y" | "yes" | "n" | "no" | "on" | "off"
 	)
 }
-
-#[cfg(test)]
-#[path = "config_normalize_tests.rs"]
-mod tests;

@@ -171,7 +171,7 @@ pub(crate) fn render_config_to<W: Write>(
 /// SHA-256 of a service's resolved configuration, hex-encoded. Used by
 /// `config --hash` so a deploy pipeline can detect a changed service. Pure so it
 /// is unit-tested.
-fn service_config_hash(svc: &podup::compose::types::Service) -> podup::Result<String> {
+pub(super) fn service_config_hash(svc: &podup::compose::types::Service) -> podup::Result<String> {
 	// Not `unwrap_or_default()`: an empty vec hashes to the SHA-256 of the empty
 	// string, which looks like a perfectly stable hash. A deploy pipeline keyed
 	// on `config --hash` would quietly stop noticing that the service changed.
@@ -245,7 +245,10 @@ fn render_config_hash_to<W: Write>(
 /// The resolution rule is `Engine::resolve_network_name`, called the same way
 /// `up` calls it. Sharing the function is the point: a copy of the rule in this
 /// module would silently disagree the day someone adds a fourth branch.
-fn inject_resolved_network_names(file: &mut podup::compose::types::ComposeFile, project: &str) {
+pub(super) fn inject_resolved_network_names(
+	file: &mut podup::compose::types::ComposeFile,
+	project: &str,
+) {
 	// Resolve every name against an immutable borrow of the file first, then
 	// apply under a mutable borrow: `resolve_network_name` reads the file via
 	// shared refs while the loop mutates each network slot.
@@ -273,7 +276,7 @@ fn inject_resolved_network_names(file: &mut podup::compose::types::ComposeFile, 
 /// `docker compose config`) instead of a wall of `field: null` and empty
 /// `field: {}` sections. Recurses first so a section that becomes empty once its
 /// own nulls are dropped is itself dropped.
-fn prune_json_nulls(v: &mut serde_json::Value) {
+pub(super) fn prune_json_nulls(v: &mut serde_json::Value) {
 	prune_json(v, false);
 }
 
@@ -316,7 +319,7 @@ fn is_empty_json(v: &serde_json::Value) -> bool {
 }
 
 /// The YAML counterpart of [`prune_json_nulls`].
-fn prune_yaml_nulls(v: &mut serde_yaml::Value) {
+pub(super) fn prune_yaml_nulls(v: &mut serde_yaml::Value) {
 	prune_yaml(v, false);
 }
 
@@ -367,7 +370,3 @@ fn is_empty_yaml(v: &serde_yaml::Value) -> bool {
 fn surface_host_modes(file: &podup::compose::types::ComposeFile) {
 	podup::surface_host_modes(file);
 }
-
-#[cfg(test)]
-#[path = "config_render_tests.rs"]
-mod tests;
