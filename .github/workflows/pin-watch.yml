@@ -8,6 +8,16 @@ name: pin-watch
 #   - `debhelper-compat` in debian/control
 #   - the Rust toolchain, which is written in fifteen places across eight
 #     workflow files and carries the same agreement rule as python-version
+#
+# The tools CI installs at an exact version are watched here too, and their
+# reading lives in .github/scripts/checks/pin-watch-tools.sh: the crates the
+# workflows install with `cargo install --version`, and the binaries they
+# download by tag. Dependabot watches neither, because a `cargo install`
+# line and a downloaded tarball are not a manifest it can bump, and the
+# drift that followed from that was already there when the watcher was
+# written: three of those tools were behind their upstream release, and one
+# of them carried two different pins.
+#
 # Podman is watched by this repository's podman-watch.yml, so it is not
 # repeated here.
 #
@@ -37,7 +47,9 @@ jobs:
   watch:
     runs-on: ubuntu-24.04
     # Bound: worst of the last three successful runs on 2026-09-02 was 9s. Ten times that, rounded up, never under ten
-    # minutes; the six-hour default is what a hang would otherwise cost.
+    # minutes; the six-hour default is what a hang would otherwise cost. The tool pins add eleven release lookups, one
+    # per watched repository plus the release list cargo-audit needs, each a single call that answers in about a second;
+    # the bound does not move for that.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -121,8 +133,12 @@ jobs:
           [ "${PY_COUNT:-0}" -gt 0 ] \
             || { echo "::error::no python-version line found in asset-contract.yml"; exit 1; }
           if [ "$PY_COUNT" -gt 1 ]; then
+            # `paste -sd` CYCLES the delimiter list instead of using it whole, so
+            # a two-character ", " joins three values as "a,b c". The separator
+            # is spelled out here and in the tool pins below, so the table
+            # reads the same whichever row it is looking at.
             add_drift "python-version (entries disagree)" ".github/workflows/asset-contract.yml" \
-              "$(printf '%s' "$PY_DISTINCT" | paste -sd ', ' -)" "(they must agree)"
+              "$(printf '%s' "$PY_DISTINCT" | paste -sd, - | sed 's/,/, /g')" "(they must agree)"
           else
             LATEST_PY=$(curl -fsSL https://endoflife.date/api/python.json \
               | python3 -c 'import sys,json; print(json.load(sys.stdin)[0]["cycle"])')
@@ -363,6 +379,27 @@ jobs:
                      ".github/workflows/" "$RUST_STABLE_V" "$LATEST_RUST"
               ;;
           esac
+
+          # ---- 6. Pinned tool versions ---------------------------------------
+          # The crates the workflows install at an exact version, and the
+          # binaries they download by tag. Nothing watched them until now:
+          # Dependabot bumps manifests, and neither a `cargo install` line
+          # nor a downloaded tarball is a manifest. Three of them had already
+          # drifted when this section was written, and one of those carried
+          # two different pins.
+          #
+          # The reading lives in .github/scripts/checks/pin-watch-tools.sh,
+          # which prints the same TSV rows this script accumulates, so the
+          # table above needs no second shape. It fails the run when a pin
+          # cannot be read, which is the rule the five sections above
+          # follow: a watcher that skips what it cannot parse reports
+          # success over a smaller set than it claims, and the pin it
+          # skipped is often the one that drifted.
+          TOOL_DRIFTS=$(bash .github/scripts/checks/pin-watch-tools.sh) || {
+            echo "::error::could not read the pinned tool versions"; exit 1; }
+          if [ -n "$TOOL_DRIFTS" ]; then
+            printf '%s\n' "$TOOL_DRIFTS" >> "$DRIFTS"
+          fi
 
           # ---- Report ----------------------------------------------------------
           if [ ! -s "$DRIFTS" ]; then echo "No drift in any pinned tool version."; exit 0; fi
