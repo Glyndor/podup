@@ -123,7 +123,11 @@ updates:
   - package-ecosystem: "docker"
     directory: "/bench/scenarios/build"
     # The base image of the build benchmark is pinned by digest. Nothing else
-    # carries an Alpine security fix into it.
+    # carries an Alpine security fix into it. The same digest is written out in
+    # every other scenario's compose file, which this entry does not read: the
+    # pull request for this Dockerfile fails `bench_pins_one_image_digest` until
+    # `bench/lib/sync-image-digest.sh` is run on its branch, and that is the
+    # whole manual step.
     schedule:
       interval: "daily"
     labels: ["type:deps", "type:ci", "area:ci"]

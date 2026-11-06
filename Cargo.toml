@@ -175,6 +175,10 @@ name = "lockfile_podup_versions_agree"
 path = "tests/repository/supply_chain/lockfile_podup_versions_agree.rs"
 
 [[test]]
+name = "bench_pins_one_image_digest"
+path = "tests/repository/supply_chain/bench_pins_one_image_digest.rs"
+
+[[test]]
 name = "dependabot_covers_every_lockfile"
 path = "tests/repository/supply_chain/dependabot_covers_every_lockfile.rs"
 
