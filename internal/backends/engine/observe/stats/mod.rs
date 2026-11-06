@@ -277,5 +277,5 @@ fn stats_stream_broke_mid_sample(
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-#[path = "stats_tests.rs"]
+#[path = "stats_tests/mod.rs"]
 mod tests;
