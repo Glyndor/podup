@@ -139,3 +139,10 @@ name = "converters"
 path = "fuzz_targets/converters.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "compose_tree"
+path = "fuzz_targets/compose_tree.rs"
+test = false
+doc = false
+bench = false
