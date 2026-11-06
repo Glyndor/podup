@@ -1,3 +1,24 @@
+podup (5.16.1) unstable; urgency=medium
+
+  * A remote socket written with its scheme in capital letters (`TCP://host`,
+    `SSH://...`, `HTTP://...`, `FD://3`) in `DOCKER_HOST` or `--socket` is refused as
+    remote, like the lowercase form. It used to be taken for a socket path and failed
+    with a confusing error.
+  * The 16 MiB interpolation budget now covers the whole project: the `-f` files and
+    everything they bring in with `include:` or `extends:` add up to one total. A large
+    project that passed by spreading its weight over many files can now be refused with
+    the same error a single file already gave.
+  * `generate quadlet` and `autostart --mode quadlet` refuse an image that starts with
+    `-`, and an external network or volume whose name Quadlet would read as a unit, a
+    mode or a path (`x.network`, `x.volume`, a name with `:` or `/`). `up` already
+    refused them; the export used to write a unit that did not convert.
+  * `autostart` in Quadlet mode (`status`, `uninstall`, `rebuild`) no longer hangs on a
+    FIFO under the name of a project unit, and no longer fails on drop-ins, symbolic
+    links or files that are not the project's. A FIFO, device or socket with a unit's
+    name is refused with an error that names the path.
+
+ -- Glyndor <packages@glyndor.net>  Fri, 06 Nov 2026 17:20:00 -0500
+
 podup (5.16.0) unstable; urgency=medium
 
   * `ps --services` follows Docker Compose: it prints the distinct services of the
