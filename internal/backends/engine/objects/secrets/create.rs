@@ -273,7 +273,7 @@ impl Engine {
 }
 
 #[cfg(test)]
-#[path = "create_tests.rs"]
+#[path = "create_tests/mod.rs"]
 mod tests;
 
 /// The payload of a secret must never reach an error message.
