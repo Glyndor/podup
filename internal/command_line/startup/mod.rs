@@ -399,7 +399,11 @@ pub(crate) fn parse_cli() -> Cli {
 			// `format_clap_error` and exit with the same code clap would have
 			// used.
 			_ => {
-				eprintln!("{}", format_clap_error(&e));
+				// Through the colour-aware stream, as `print_error` writes: the
+				// text carries the error style, and `eprintln!` would print its
+				// escape bytes whatever `--ansi`, `NO_COLOR` or a pipe say.
+				use std::io::Write;
+				let _ = writeln!(anstream::stderr(), "{}", format_clap_error(&e));
 				process::exit(e.exit_code());
 			}
 		},
