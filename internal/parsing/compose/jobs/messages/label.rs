@@ -34,6 +34,7 @@ pub(crate) fn relabel_error(name: &str, error: ComposeError) -> ComposeError {
 	};
 	match error {
 		ComposeError::Unsupported(text) => ComposeError::Unsupported(swap(text)),
+		ComposeError::Invalid(text) => ComposeError::Invalid(swap(text)),
 		ComposeError::InvalidPort(text) => ComposeError::InvalidPort(swap(text)),
 		ComposeError::NoImageOrBuild(_) => ComposeError::Job(format!(
 			"job '{}' has neither an image nor a build",

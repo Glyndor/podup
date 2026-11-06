@@ -45,7 +45,7 @@ pub fn validate_config(file: &ComposeFile) -> Result<()> {
 	// project; `docker compose config` errors with "no service selected". A file
 	// that declares only jobs has something to run, so it passes.
 	if everything.services.is_empty() {
-		return Err(ComposeError::Unsupported(
+		return Err(ComposeError::Invalid(
 			"no services defined in compose file".to_string(),
 		));
 	}
@@ -117,7 +117,7 @@ fn validate_service_name(name: &str) -> Result<()> {
 	if ok {
 		Ok(())
 	} else {
-		Err(ComposeError::Unsupported(format!(
+		Err(ComposeError::Invalid(format!(
 			"service name {name:?} is invalid: use only ASCII letters, digits, '.', '_', '-'"
 		)))
 	}

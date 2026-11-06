@@ -176,3 +176,51 @@ fn explicit_files_suppress_override_discovery() {
 	let explicit = vec![std::path::PathBuf::from("only.yaml")];
 	assert_eq!(resolve_compose_files(&explicit), explicit);
 }
+
+#[test]
+fn a_project_directory_that_is_not_there_is_invalid_not_unsupported() {
+	let error =
+		validate_project_directory(Some(Path::new("/nonexistent/dir/for/podup"))).unwrap_err();
+	assert!(
+		matches!(error, podup::ComposeError::Invalid(_)),
+		"{error:?}"
+	);
+	assert!(
+		!error.to_string().contains("unsupported feature"),
+		"{error}"
+	);
+}
+
+#[test]
+fn an_unsafe_project_name_is_invalid_not_unsupported() {
+	let error = super::validate_project_name("UPPER").unwrap_err();
+	assert!(
+		matches!(error, podup::ComposeError::Invalid(_)),
+		"{error:?}"
+	);
+	assert!(
+		error.to_string().starts_with("project name \"UPPER\""),
+		"{error}"
+	);
+}
+
+#[test]
+fn a_control_character_in_the_project_directory_does_not_reach_the_message() {
+	let error =
+		validate_project_directory(Some(Path::new("/nonexistent/\u{1b}[31mdir"))).unwrap_err();
+	assert!(
+		!error.to_string().contains('\u{1b}'),
+		"{:?}",
+		error.to_string()
+	);
+}
+
+#[test]
+fn a_control_character_in_the_project_name_does_not_reach_the_message() {
+	let error = super::validate_project_name("a\u{1b}[31mb").unwrap_err();
+	assert!(
+		!error.to_string().contains('\u{1b}'),
+		"{:?}",
+		error.to_string()
+	);
+}

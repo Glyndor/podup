@@ -53,7 +53,7 @@ pub(crate) fn validate_project_name(project: &str) -> podup::Result<()> {
 	if podup::is_safe_project_name(project) {
 		Ok(())
 	} else {
-		Err(podup::ComposeError::Unsupported(format!(
+		Err(podup::ComposeError::Invalid(format!(
 			"project name {project:?} is not a safe path component: must be \
 			 lowercase ASCII, starting with a letter or digit, followed only by \
 			 lowercase letters, digits, '-' or '_', max 128 chars"
