@@ -44,19 +44,86 @@ fn a_pipe_under_the_project_name_is_an_error_naming_it() {
 		let err = within_budget(|| installed_units("proj")).expect_err("a pipe is not a unit");
 		let text = err.to_string();
 		assert!(text.contains("proj-front.container"), "{text}");
-		assert!(text.contains("FIFO"), "{text}");
+		assert!(text.contains("not a regular file"), "{text}");
 	});
 }
 
 #[test]
-fn a_link_to_a_pipe_is_refused_without_being_followed() {
+fn a_link_to_a_pipe_is_left_alone_without_being_followed() {
 	with_env(|root| {
 		let dir = unit_dir(root);
 		let pipe = root.join("elsewhere");
 		mkfifo(&pipe);
 		std::os::unix::fs::symlink(&pipe, dir.join("proj-link.container")).unwrap();
-		let err = within_budget(|| installed_units("proj")).expect_err("a link is not a unit");
-		assert!(err.to_string().contains("proj-link.container"), "{err}");
+		let found = within_budget(|| installed_units("proj")).expect("a link is not a failure");
+		assert!(found.is_empty(), "{found:?}");
+	});
+}
+
+const OWN: &str = "# podup-owner: proj\n[Container]\nImage=nginx\n";
+
+/// Entries a user legitimately keeps next to the units: a drop-in directory of
+/// this project, one of a sibling project that shares the prefix, a sibling's
+/// unit that is not text, and a link to a unit (a dotfiles manager). None of
+/// them may stop the scan, and the project's own unit is still found.
+fn plant_neighbours(dir: &Path, root: &Path) {
+	std::fs::write(dir.join("proj-web.container"), OWN).unwrap();
+	std::fs::create_dir(dir.join("proj-web.container.d")).unwrap();
+	std::fs::create_dir(dir.join("proj-extra-web.container.d")).unwrap();
+	std::fs::write(dir.join("proj-extra-x.container"), [0xff, 0xfe, 0x00, 0xc3]).unwrap();
+	std::fs::write(root.join("dotfile.container"), OWN).unwrap();
+	std::os::unix::fs::symlink(
+		root.join("dotfile.container"),
+		dir.join("proj-stowed.container"),
+	)
+	.unwrap();
+	std::fs::write(dir.join("proj-notes.txt"), "not a unit").unwrap();
+	mkfifo(&dir.join("proj-socket.fifo"));
+}
+
+#[test]
+fn neighbours_that_are_not_units_do_not_stop_the_scan() {
+	with_env(|root| {
+		let dir = unit_dir(root);
+		plant_neighbours(&dir, root);
+		let found = within_budget(|| installed_units("proj")).expect("neighbours are no failure");
+		assert_eq!(found, vec![dir.join("proj-web.container")]);
+	});
+}
+
+#[test]
+fn status_and_uninstall_go_through_the_neighbours() {
+	with_env(|root| {
+		let dir = unit_dir(root);
+		plant_neighbours(&dir, root);
+		within_budget(|| collect_status(&FakeCtl::new(), "proj").map(|_| ()))
+			.expect("status must report");
+		within_budget(|| uninstall_quadlet(&FakeCtl::new(), "proj")).expect("uninstall must run");
+		assert!(
+			!dir.join("proj-web.container").exists(),
+			"own unit not removed"
+		);
+		assert!(
+			dir.join("proj-web.container.d").is_dir(),
+			"a drop-in was removed"
+		);
+		assert!(
+			dir.join("proj-stowed.container").exists(),
+			"a link was removed"
+		);
+	});
+}
+
+#[test]
+fn a_pipe_with_a_drop_in_directory_beside_it_still_names_the_pipe() {
+	with_env(|root| {
+		let dir = unit_dir(root);
+		plant_neighbours(&dir, root);
+		mkfifo(&dir.join("proj-front.container"));
+		let err = within_budget(|| installed_units("proj")).expect_err("a pipe is not a unit");
+		let text = err.to_string();
+		assert!(text.contains("proj-front.container"), "{text}");
+		assert!(!text.contains(".container.d"), "{text}");
 	});
 }
 

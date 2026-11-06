@@ -169,25 +169,28 @@ fn reject_non_regular(path: &Path) -> io::Result<()> {
 	if ty.is_file() {
 		return Ok(());
 	}
-	let kind_label = if ty.is_fifo() {
-		"FIFO (named pipe)"
+	let (kind_label, blocks) = if ty.is_fifo() {
+		("FIFO (named pipe)", true)
 	} else if ty.is_char_device() {
-		"character device"
+		("character device", true)
 	} else if ty.is_block_device() {
-		"block device"
+		("block device", true)
 	} else if ty.is_socket() {
-		"socket"
+		("socket", false)
 	} else if ty.is_dir() {
-		"directory"
+		("directory", false)
+	} else if ty.is_symlink() {
+		("link", false)
 	} else {
-		"non-regular file"
+		("non-regular file", false)
 	};
+	// Only the kinds that can wait for a writer or never end get the reason; a
+	// directory or a link is refused for what it is, and saying it would block
+	// would send the reader looking for a pipe that is not there.
+	let reason = if blocks { ": would block forever" } else { "" };
 	Err(io::Error::new(
 		io::ErrorKind::InvalidInput,
-		format!(
-			"refusing to read {kind_label} {}: would block forever",
-			path.display()
-		),
+		format!("refusing to read {kind_label} {}{reason}", path.display()),
 	))
 }
 

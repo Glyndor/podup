@@ -14,6 +14,9 @@ use std::path::{Path, PathBuf};
 use crate::compose::types::ComposeFile;
 use crate::{quadlet, ComposeError};
 
+mod installed;
+pub(in super::super) use installed::installed_units;
+
 use super::guards::emit_guards;
 use super::paths::{config_home, unit_path};
 use super::systemctl::{checked, SystemCtl};
@@ -78,100 +81,6 @@ pub(super) fn dry_run_plan(
 		}
 	}
 	lines
-}
-
-/// The project name recorded in a generated unit file's `# podup-owner:`
-/// marker, or `None` if the file carries no such marker.
-///
-/// This deliberately does NOT read the `Label=podup.project=<project>` line
-/// every unit builder in `crate::quadlet` also stamps (that label stays, but
-/// only for its original purpose; Podman uses `podup.project` for
-/// container/secret scoping at runtime). A compose service's user-supplied
-/// `labels:` renders into the very same `[Section]`, in the very same
-/// `Key=Value` shape, so a service declaring `labels: {podup.project:
-/// other}` produces a forged `Label=podup.project=other` line that is
-/// textually indistinguishable from the real one, and would be the FIRST
-/// such line if it precedes the trusted stamp, defeating a scan that takes
-/// the first match. The `# podup-owner: <project>` marker every unit builder
-/// emits as its literal first line cannot be forged the same way: systemd
-/// treats `#`-prefixed lines as comments, and compose labels only ever
-/// render as `Label=key=value` entries, never as a comment line. So this is
-/// the one place ownership is decided.
-///
-/// The read goes through the capped reader, which opens without following a
-/// link and without waiting for a writer, and refuses what is not a regular
-/// file: the entry lives in a directory whose contents podup does not control,
-/// and a FIFO there would block a plain read forever. An error when the file
-/// cannot be read at all.
-fn unit_owner(path: &Path) -> std::io::Result<Option<String>> {
-	let contents = crate::filesystem::read_to_string_capped(path)?;
-	Ok(contents
-		.lines()
-		.find_map(|line| line.strip_prefix("# podup-owner: ").map(str::to_string)))
-}
-
-/// This project's installed quadlet unit files, sorted. Drives uninstall
-/// (remove) and rebuild (find `.build` units).
-///
-/// A file name starting with `<project>-` is only a candidate: project names
-/// may themselves contain `-`, so `app-extra-web.container` also starts with
-/// `app-`. Matching on that prefix alone (the old behaviour) meant
-/// `uninstall -p app` matched (and `uninstall_quadlet` then stopped and
-/// deleted) the sibling project `app-extra`'s units. Each candidate is
-/// therefore opened and kept only when its `# podup-owner:` marker equals
-/// `project` EXACTLY (see `unit_owner` above); the marker is exact by
-/// construction and, unlike the `Label=podup.project=` line, cannot be
-/// pre-empted by a forged line from the compose file's own `labels:`.
-///
-/// A candidate with no marker at all (installed before this ownership check
-/// existed) cannot be proven to belong to `project`: treating "no marker" as
-/// "assume it's ours" would just reopen the same hole for those legacy
-/// installs. So it is left in place, not deleted, and reported via
-/// `tracing::warn!` so the user can re-install (which re-marks it) or remove
-/// it by hand. Quadlet-mode autostart is recent, so few if any pre-existing
-/// unmarked units are expected in the field; leaving one stale file behind
-/// for a user to clean up once is a far smaller cost than deleting a
-/// sibling project's unit.
-///
-/// A candidate that cannot be read at all (a FIFO, a device, a socket, a
-/// directory, a link) is an error naming its path, not a skip: podup writes
-/// only regular files, so it is never one of its own.
-pub(in super::super) fn installed_units(project: &str) -> crate::Result<Vec<PathBuf>> {
-	let dir = quadlet_dir();
-	let prefix = format!("{project}-");
-	let mut found = Vec::new();
-	if let Ok(entries) = std::fs::read_dir(&dir) {
-		for entry in entries.flatten() {
-			let path = entry.path();
-			if !entry.file_name().to_string_lossy().starts_with(&prefix) {
-				continue;
-			}
-			match unit_owner(&path) {
-				Ok(Some(owner)) if owner == project => found.push(path),
-				// A sibling project's unit that happens to share this filename
-				// prefix (e.g. `app-extra-web.container` when `project` is `app`);
-				// the marker proves it is not ours, so it is left untouched.
-				Ok(Some(_)) => {}
-				Ok(None) => {
-					tracing::warn!(
-						"quadlet unit {} has no podup-owner ownership marker and cannot be \
-						 proven to belong to '{project}'; skipping it rather than risking a \
-						 sibling project's unit; re-run `podup autostart install --mode quadlet` \
-						 to re-mark it, or remove it by hand if it is stale",
-						path.display()
-					);
-				}
-				Err(e) => {
-					return Err(ComposeError::Autostart(format!(
-						"cannot read the quadlet unit {}: {e}",
-						path.display()
-					)));
-				}
-			}
-		}
-	}
-	found.sort();
-	Ok(found)
 }
 
 /// Retire the units a previous install left behind that the new set does not
