@@ -279,6 +279,10 @@ name = "asset_contract_uses_the_signing_manifest"
 path = "tests/repository/workflows/asset_contract_uses_the_signing_manifest.rs"
 
 [[test]]
+name = "workflow_apt_resilience"
+path = "tests/repository/workflows/workflow_apt_resilience.rs"
+
+[[test]]
 name = "workflow_audit_strictness"
 path = "tests/repository/workflows/workflow_audit_strictness.rs"
 
