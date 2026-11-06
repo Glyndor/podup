@@ -56,7 +56,7 @@ fn timeout_of(lines: &[String], verb: &str) -> u64 {
 		.iter()
 		.find(|l| l.contains("apt-get") && l.contains(&format!(" {verb}")))
 		.unwrap_or_else(|| panic!("no apt-get {verb} in {lines:?}"));
-	let at = line.find(&format!("{verb}")).unwrap();
+	let at = line.find(verb).unwrap();
 	let before = &line[..at];
 	let tail = before.rsplit("timeout ").next().expect("a timeout");
 	tail.split_whitespace()
