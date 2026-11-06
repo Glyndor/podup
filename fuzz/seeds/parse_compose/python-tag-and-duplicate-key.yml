@@ -1,0 +1,4 @@
+services:
+  a:
+    image: !!python/object/apply:os.system [id]
+    image: y

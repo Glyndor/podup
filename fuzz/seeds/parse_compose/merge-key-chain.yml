@@ -1,0 +1,5 @@
+x-b: &b {image: x}
+x-c: &c {<<: *b}
+x-d: &d {<<: [*c, *b]}
+services:
+  a: {<<: [*d, *c, *b]}
