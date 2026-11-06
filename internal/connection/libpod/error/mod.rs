@@ -81,10 +81,19 @@ impl fmt::Display for PodmanError {
 				value,
 				message,
 			} => {
-				if service.is_empty() {
-					write!(f, "{field}: {message} (value: {value})")
+				// An empty value is a field whose value the error deliberately does
+				// not repeat (umask: after interpolation it can be anything the
+				// environment held), so no `(value: )` is printed for it.
+				let shown = if value.is_empty() {
+					String::new()
 				} else {
-					write!(f, "service.{service}: {field}: {message} (value: {value})")
+					format!(" (value: {value})")
+				};
+				if service.is_empty() {
+					write!(f, "{field}: {message}{shown}")
+				} else {
+					let service = crate::error::sanitize_name(service);
+					write!(f, "service.{service}: {field}: {message}{shown}")
 				}
 			}
 			Self::IncompatibleApiVersion { reported } => {

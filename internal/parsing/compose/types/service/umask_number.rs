@@ -23,11 +23,11 @@ struct Mask {
 pub(crate) fn number_error(content: &str) -> Option<ComposeError> {
 	let document: Document = serde_yaml::from_str(content).ok()?;
 	for (name, mask) in document.services {
-		if let Some(value) = mask.umask {
+		if mask.umask.is_some() {
 			return Some(spec_field_error(
 				&name,
 				"umask",
-				value,
+				"",
 				"umask must be a quoted octal string; quote the value (only integer 0 is accepted)",
 			).into());
 		}
