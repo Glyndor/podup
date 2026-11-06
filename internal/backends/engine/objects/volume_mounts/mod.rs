@@ -136,15 +136,21 @@ pub(crate) fn build_mounts_all(
 				VolumeType::Bind => {
 					let src = source.as_deref().unwrap_or("");
 
-					if let Some(b) = bind {
-						if b.create_host_path.unwrap_or(false) && !src.is_empty() {
-							// Resolve exactly like the mount source (expand `~`, anchor a
-							// relative path to the project dir) so the directory is created
-							// at the path actually bind-mounted, not a literal `~` dir.
-							let abs = crate::engine::container::resolve_bind_source(src, base_dir);
-							if let BindSource::Failed(msg) = ensure_bind_source(&abs) {
-								tracing::warn!("{msg}");
-							}
+					// `create_host_path` defaults to `true` in the Compose
+					// Specification (services, volumes, long syntax), with or
+					// without a `bind:` block. Only an explicit `false` leaves a
+					// missing source to fail at the daemon, as Docker Compose does.
+					let create = bind
+						.as_ref()
+						.and_then(|b| b.create_host_path)
+						.unwrap_or(true);
+					if create && !src.is_empty() {
+						// Resolve exactly like the mount source (expand `~`, anchor a
+						// relative path to the project dir) so the directory is created
+						// at the path actually bind-mounted, not a literal `~` dir.
+						let abs = crate::engine::container::resolve_bind_source(src, base_dir);
+						if let BindSource::Failed(msg) = ensure_bind_source(&abs) {
+							tracing::warn!("{msg}");
 						}
 					}
 
