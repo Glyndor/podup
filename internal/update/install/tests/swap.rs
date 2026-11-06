@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 /// A special bit on the target is never propagated onto the new binary.
 ///
@@ -28,7 +28,7 @@ fn write_temp_never_propagates_a_special_bit_from_the_target() {
 		return;
 	}
 	let tmp = dir.path().join("podup.tmp");
-	super::write_temp(&tmp, b"freshly downloaded", &target).unwrap();
+	super::super::write_temp(&tmp, b"freshly downloaded", &target).unwrap();
 	let mode = std::fs::metadata(&tmp).unwrap().permissions().mode();
 	assert_eq!(
 		mode & 0o7000,

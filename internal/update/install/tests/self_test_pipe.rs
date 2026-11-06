@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use super::self_test;
+use super::super::self_test;
 
 fn write_stub(dir: &Path, name: &str, body: &str) -> PathBuf {
 	use std::os::unix::fs::PermissionsExt;

@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 /// `move_target_aside` always leaves a recoverable `.old` sibling on disk so
 /// the self-test can roll back if it fails. On Unix the target itself is

@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 #[test]
 fn install_at_replaces_contents() {
 	let dir = tempfile::tempdir().unwrap();

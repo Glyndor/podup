@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 /// Write an executable stub script and return its path.
 #[cfg(unix)]
