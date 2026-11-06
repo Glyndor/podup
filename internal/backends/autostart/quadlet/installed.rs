@@ -23,17 +23,24 @@ use crate::ComposeError;
 /// render as `Label=key=value` entries, never as a comment line. So this is
 /// the one place ownership is decided.
 ///
-/// The read goes through the capped reader, which opens without following a
-/// link and without waiting for a writer, and refuses what is not a regular
-/// file: the entry lives in a directory whose contents podup does not control,
-/// and a FIFO there would block a plain read forever. An error when the file
-/// cannot be read at all.
+/// Only the head of the file is read, through a reader that opens without
+/// following a link and without waiting for a writer, and refuses what is not a
+/// regular file: the entry lives in a directory whose contents podup does not
+/// control, and a FIFO there would block a plain read forever. An error when the
+/// file cannot be read at all.
 fn unit_owner(path: &Path) -> std::io::Result<Option<String>> {
-	let contents = crate::filesystem::read_to_string_capped(path)?;
-	Ok(contents
+	// The marker is the first line of the unit, so only the head is read: the
+	// size of the whole unit (an escaped label can double a long value) and the
+	// bytes after the header decide nothing about who owns it.
+	let head = crate::filesystem::read_head_capped(path, OWNER_HEAD_BYTES)?;
+	let head = String::from_utf8_lossy(&head);
+	Ok(head
 		.lines()
 		.find_map(|line| line.strip_prefix("# podup-owner: ").map(str::to_string)))
 }
+
+/// How much of a unit is read to find its ownership marker.
+const OWNER_HEAD_BYTES: usize = 4096;
 
 /// The suffixes of the files Quadlet reads as units.
 const UNIT_SUFFIXES: [&str; 8] = [

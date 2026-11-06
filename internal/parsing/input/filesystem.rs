@@ -31,6 +31,21 @@ fn read_to_string_capped_with(path: &Path, max: u64) -> io::Result<String> {
 	read_capped_from(file, max, &path.display().to_string())
 }
 
+/// Read at most the first `max` bytes of a regular file, however long it is.
+///
+/// For a caller that only needs the head of a file it did not write (a marker
+/// on the first line) and must not be made to refuse the whole file because it
+/// is large. The type is checked on the descriptor that was opened and the open
+/// does not wait on a pipe or follow a link, as in [`read_to_string_capped`].
+pub(crate) fn read_head_capped(path: impl AsRef<Path>, max: usize) -> io::Result<Vec<u8>> {
+	let path = path.as_ref();
+	reject_non_regular(path)?;
+	let file = open_regular(path)?;
+	let mut buf = Vec::new();
+	file.take(max as u64).read_to_end(&mut buf)?;
+	Ok(buf)
+}
+
 /// Read the compose document from standard input, refusing input larger than
 /// [`MAX_FILE_BYTES`]. Backs the `-f -` form (`cat compose.yaml | podup config
 /// -f -`), which `docker compose` supports by reading the file from stdin.

@@ -196,3 +196,47 @@ fn a_pipe_at_the_service_unit_path_is_not_waited_on() {
 		assert!(owner.is_none(), "a pipe has no owner");
 	});
 }
+
+/// An own unit past the 16 MiB input limit: an escaped label can double a long
+/// value, so podup can write a unit larger than any file it reads as input. The
+/// marker is on the first line, so it must still be found, and the unit stopped
+/// and removed.
+fn write_large_own_unit(dir: &Path) -> PathBuf {
+	let path = dir.join("proj-web.container");
+	let mut text = OWN.as_bytes().to_vec();
+	let line = b"# padding\n";
+	while text.len() < 17 * 1024 * 1024 {
+		text.extend_from_slice(line);
+	}
+	std::fs::write(&path, text).unwrap();
+	path
+}
+
+#[test]
+fn an_own_unit_longer_than_the_input_limit_is_still_found() {
+	with_env(|root| {
+		let unit = write_large_own_unit(&unit_dir(root));
+		let found = within_budget(|| installed_units("proj")).expect("a large unit is no failure");
+		assert_eq!(found, vec![unit]);
+	});
+}
+
+#[test]
+fn status_and_uninstall_handle_an_own_unit_longer_than_the_input_limit() {
+	with_env(|root| {
+		let unit = write_large_own_unit(&unit_dir(root));
+		let report = within_budget(|| collect_status(&FakeCtl::new(), "proj")).expect("status");
+		assert_eq!(report.unit_count, 1, "the large unit was not counted");
+		let ctl = FakeCtl::new();
+		let (done, ctl) = within_budget(move || (uninstall_quadlet(&ctl, "proj"), ctl));
+		done.expect("uninstall must run");
+		assert!(!unit.exists(), "the large unit was left behind");
+		assert!(
+			ctl.systemctl_log()
+				.iter()
+				.any(|c| c.iter().any(|a| a == "proj-web.service")),
+			"its service was not stopped: {:?}",
+			ctl.systemctl_log()
+		);
+	});
+}

@@ -115,3 +115,23 @@ fn the_open_itself_does_not_wait_on_a_pipe_put_under_the_name_after_the_check() 
 	let err = within_budget(move || open_regular(&pipe)).expect_err("a pipe is not a regular file");
 	assert!(err.to_string().contains("not a regular file"), "{err}");
 }
+
+#[test]
+fn the_head_of_a_file_longer_than_the_limit_is_read_and_a_pipe_is_not_waited_on() {
+	use super::read_head_capped;
+	let dir = tempfile::tempdir().expect("tempdir");
+	let big = dir.path().join("big");
+	let mut text = b"# podup-owner: proj\n".to_vec();
+	text.resize(super::MAX_FILE_BYTES as usize + 1024, b'#');
+	std::fs::write(&big, &text).expect("write");
+	let head = read_head_capped(&big, 64).expect("the head of a long file");
+	assert_eq!(head.len(), 64);
+	assert!(head.starts_with(b"# podup-owner: proj\n"));
+	let pipe = dir.path().join("pipe");
+	assert!(std::process::Command::new("mkfifo")
+		.arg(&pipe)
+		.status()
+		.expect("mkfifo")
+		.success());
+	assert!(within_budget(move || read_head_capped(&pipe, 64)).is_err());
+}
