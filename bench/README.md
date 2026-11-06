@@ -31,6 +31,9 @@ A podup loss is published exactly like a podup win.
 
 - **Identical inputs.** The same compose file per scenario for every tool; images
   are **pinned by digest and pre-pulled**, so image download is never timed.
+  The alpine digest is written out in every scenario and must be the one in
+  `scenarios/build/Dockerfile`, which Dependabot updates; after that bump, run
+  `bench/lib/sync-image-digest.sh` (a repository test fails until you do).
 - **Statistics, not single runs.** N iterations per cell, warm-up discarded,
   reported as **median + p95 + stdev**. A single number is never published.
 - **Refuse to publish silent failures.** A cell with even one failed iteration
