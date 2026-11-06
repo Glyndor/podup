@@ -192,6 +192,29 @@ jobs:
         working-directory: .
         run: bash .github/scripts/checks/check-planning-words.sh
 
+      # Same job and for the same reason: a new one would block nothing until a
+      # ruleset named it. Both read git's index in about a quarter of a second.
+      - name: no vetoed vocabulary
+        working-directory: .
+        run: bash .github/scripts/checks/check-banned-vocabulary.sh
+
+      # BASE is the commit the change is measured against, so a pull request
+      # cannot raise a ceiling in .github/folder-limit-exceptions.txt.
+      - name: folders hold at most twenty files
+        working-directory: .
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$BASE_SHA" ]; then
+            if git fetch --no-tags --depth=1 origin "$BASE_SHA"; then
+              export BASE="$BASE_SHA"
+            else
+              echo "::warning::could not fetch the base commit; the ceilings are checked but not against it"
+            fi
+          fi
+          bash .github/scripts/checks/folder-limit.sh
+
   test:
     name: Test
     runs-on: ubuntu-latest
