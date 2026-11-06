@@ -69,3 +69,25 @@ async fn f8_other_service_selects_stopped_replica_or_first() {
 		assert_eq!(selected, stopped.unwrap_or("proj-web-1"));
 	}
 }
+
+fn refused() -> ComposeError {
+	ComposeError::Io(std::io::Error::other("stop refused"))
+}
+
+#[tokio::test]
+async fn f3_a_failed_stop_after_a_zero_exit_is_the_result() {
+	let result = finish_abort(async { Ok(0) }, async { Err(refused()) }).await;
+	assert!(result.is_err(), "exit 0 would say the project is down");
+}
+
+#[tokio::test]
+async fn f3_a_failed_stop_keeps_a_nonzero_code_or_error_that_was_already_a_failure() {
+	let result = finish_abort(async { Ok(7) }, async { Err(refused()) }).await;
+	assert_eq!(result.unwrap(), 7);
+	let result = finish_abort(
+		async { Err(ComposeError::Io(std::io::Error::other("wait failed"))) },
+		async { Err(refused()) },
+	)
+	.await;
+	assert!(result.unwrap_err().to_string().contains("wait failed"));
+}

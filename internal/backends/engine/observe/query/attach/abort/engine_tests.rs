@@ -89,3 +89,32 @@ async fn f8_engine_exit_code_from_uses_second_replica() {
 	assert!(requests.iter().any(|r| r.contains("proj-web-2/wait?")));
 	assert!(!requests.iter().any(|r| r.contains("proj-web-1/wait?")));
 }
+
+/// The container that ended the run exited 0 and the rest could not be stopped:
+/// the project is still up, so `up --abort-on-container-exit` must not say 0.
+#[tokio::test]
+async fn f3_engine_a_failed_stop_after_a_zero_exit_is_an_error() {
+	let fake = fake_podman::start_replying(|method, target| {
+		if target.contains("proj-web-1/logs") {
+			FakeReply::Body(500, r#"{"message":"logs unavailable"}"#.into())
+		} else if target.contains("/logs") {
+			FakeReply::ChunkedEnd(vec![])
+		} else if target.contains("/wait?") {
+			FakeReply::Body(200, "0".into())
+		} else if target.contains("/containers/json") {
+			FakeReply::Body(200, r#"[{"Names":["proj-web-1"],"State":"running","Labels":{"podup.project":"proj","podup.service":"web"}},{"Names":["proj-web-2"],"State":"exited","Labels":{"podup.project":"proj","podup.service":"web"}}]"#.into())
+		} else if method == "POST" && target.contains("/stop?") {
+			FakeReply::Body(500, r#"{"message":"stop refused"}"#.into())
+		} else if method == "POST" {
+			FakeReply::Body(204, String::new())
+		} else {
+			FakeReply::Body(404, r#"{"message":"not found"}"#.into())
+		}
+	});
+	let options = AttachOptions::new().with_abort_on_container_exit(true);
+	let error = engine(&fake)
+		.attach_logs_with(&file(), &options)
+		.await
+		.expect_err("the stop failed, so the project is not down");
+	assert!(error.to_string().contains("stop refused"), "{error}");
+}

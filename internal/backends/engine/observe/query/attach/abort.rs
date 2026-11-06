@@ -103,10 +103,19 @@ pub(super) async fn finish_abort(
 	// Cleanup must run even when the status is unknown. Poll concurrently so
 	// a running fallback replica can exit as a result of this very stop.
 	let (code, stopped) = futures_util::future::join(wait, stop).await;
-	if let Err(error) = stopped {
-		tracing::warn!("abort-on-container-exit: stop after container exited: {error}");
+	match (code, stopped) {
+		// The command that ended the run succeeded, so a stop that left the rest
+		// running is the failure to report: exiting 0 would tell a script the
+		// project is down when it is not.
+		(Ok(0), Err(error)) => Err(error),
+		// Any other ending is already a failure to report, and its code or error
+		// is the more useful one; the incomplete stop is told apart.
+		(code, Err(error)) => {
+			tracing::warn!("abort-on-container-exit: stop after container exited: {error}");
+			code
+		}
+		(code, Ok(())) => code,
 	}
-	code
 }
 
 #[cfg(test)]
