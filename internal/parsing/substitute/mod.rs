@@ -344,7 +344,7 @@ fn build_vars_with_env_files_inner(
 		let content = crate::filesystem::read_to_string_capped(&abs).map_err(|e| {
 			crate::error::ComposeError::EnvFile(format!(
 				"env file not found: {} ({e})",
-				abs.display()
+				crate::error::sanitize_name(&abs.display().to_string())
 			))
 		})?;
 		let pairs = crate::dotenv::parse_strict(&content)?;
