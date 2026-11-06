@@ -171,6 +171,10 @@ name = "audit_list_checks"
 path = "tests/cli/audit/audit_list_checks.rs"
 
 [[test]]
+name = "lockfile_podup_versions_agree"
+path = "tests/repository/supply_chain/lockfile_podup_versions_agree.rs"
+
+[[test]]
 name = "dependabot_covers_every_lockfile"
 path = "tests/repository/supply_chain/dependabot_covers_every_lockfile.rs"
 
