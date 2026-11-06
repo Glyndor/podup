@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::compose::dependencies::effective_depends_on;
 use crate::compose::types::{ComposeFile, ServiceCondition};
-use crate::error::Result;
+use crate::error::{ComposeError, Result};
 
 use crate::engine::lifecycle::up::readiness::SharedReady;
 
@@ -224,6 +224,33 @@ impl Engine {
 		start: bool,
 		env: &std::collections::BTreeMap<String, String>,
 	) -> Result<()> {
+		// A name is a replica of this service only when the container carrying it
+		// is one. Another service of the project can hold the name of a replica
+		// that is missing (`container_name: proj-web-2` on a worker), and a
+		// one-off `run` container is not a replica either: leaving it as the
+		// replica reports a replica that is not there, and replacing it would
+		// delete a container that belongs to something else.
+		if let Some(held) = existing.get(&container_name) {
+			if held.oneoff || held.service.as_deref().is_some_and(|owner| owner != name) {
+				return Err(ComposeError::Unsupported(format!(
+					"container name '{}' is already taken by {} in this project, so service '{}' \
+					 cannot use it for a replica; rename the container of the other service or \
+					 keep this one at fewer replicas",
+					crate::error::sanitize_name(&container_name),
+					if held.oneoff {
+						"a one-off run container".to_string()
+					} else {
+						format!(
+							"service '{}'",
+							crate::error::sanitize_name(
+								held.service.as_deref().unwrap_or_default()
+							)
+						)
+					},
+					crate::error::sanitize_name(name),
+				)));
+			}
+		}
 		let present = existing.contains_key(&container_name);
 		if !force_recreate {
 			if no_recreate && present {

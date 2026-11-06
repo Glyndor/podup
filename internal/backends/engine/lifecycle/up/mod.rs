@@ -181,6 +181,10 @@ impl Engine {
 				crate::libpod::validate::pre_validate_spec(name, service)?;
 			}
 
+			// And that no two of them resolve to the same container name, before
+			// the first create of either.
+			self.check_distinct_container_names(file, &enabled)?;
+
 			// Prefetch the project's containers once (instead of one API call per
 			// replica): which names already exist, and for each the facts
 			// that decide whether it is kept or replaced (see
@@ -425,3 +429,6 @@ mod up_env_hash_tests;
 
 #[cfg(all(test, unix))]
 mod up_replica_tests;
+
+#[cfg(all(test, unix))]
+mod collision_tests;
