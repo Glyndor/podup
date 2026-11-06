@@ -23,7 +23,11 @@ fn read_to_string_capped_with(path: &Path, max: u64) -> io::Result<String> {
 	// rather than stat-then-read closes the TOCTOU window: a writer that grows
 	// the file (or swaps in a symlink) after a size check cannot make podup
 	// read past the cap, because the limit is enforced on the read itself.
-	let file = std::fs::File::open(path)?;
+	//
+	// The handle comes from `open_regular`, so the type is confirmed on the
+	// descriptor that was opened and the open cannot block on a pipe: a FIFO
+	// planted between the check above and the open is refused, not waited on.
+	let file = open_regular(path)?;
 	read_capped_from(file, max, &path.display().to_string())
 }
 
@@ -127,7 +131,7 @@ fn read_capped_with(path: &Path, max: u64) -> io::Result<Vec<u8>> {
 	// Same single-handle, cap-on-the-read strategy as the string variant: the
 	// limit is enforced on the read itself, so a file that grows (or a symlink
 	// swapped in) after any size check cannot push podup past the cap.
-	let file = std::fs::File::open(path)?;
+	let file = open_regular(path)?;
 	let mut buf = Vec::new();
 	let read = file.take(max + 1).read_to_end(&mut buf)?;
 	if read as u64 > max {

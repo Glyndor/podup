@@ -97,11 +97,17 @@ pub(super) fn dry_run_plan(
 /// treats `#`-prefixed lines as comments, and compose labels only ever
 /// render as `Label=key=value` entries, never as a comment line. So this is
 /// the one place ownership is decided.
-fn unit_owner(path: &Path) -> Option<String> {
-	let contents = std::fs::read_to_string(path).ok()?;
-	contents
+///
+/// The read goes through the capped reader, which opens without following a
+/// link and without waiting for a writer, and refuses what is not a regular
+/// file: the entry lives in a directory whose contents podup does not control,
+/// and a FIFO there would block a plain read forever. An error when the file
+/// cannot be read at all.
+fn unit_owner(path: &Path) -> std::io::Result<Option<String>> {
+	let contents = crate::filesystem::read_to_string_capped(path)?;
+	Ok(contents
 		.lines()
-		.find_map(|line| line.strip_prefix("# podup-owner: ").map(str::to_string))
+		.find_map(|line| line.strip_prefix("# podup-owner: ").map(str::to_string)))
 }
 
 /// This project's installed quadlet unit files, sorted. Drives uninstall
@@ -126,7 +132,11 @@ fn unit_owner(path: &Path) -> Option<String> {
 /// unmarked units are expected in the field; leaving one stale file behind
 /// for a user to clean up once is a far smaller cost than deleting a
 /// sibling project's unit.
-pub(in super::super) fn installed_units(project: &str) -> Vec<PathBuf> {
+///
+/// A candidate that cannot be read at all (a FIFO, a device, a socket, a
+/// directory, a link) is an error naming its path, not a skip: podup writes
+/// only regular files, so it is never one of its own.
+pub(in super::super) fn installed_units(project: &str) -> crate::Result<Vec<PathBuf>> {
 	let dir = quadlet_dir();
 	let prefix = format!("{project}-");
 	let mut found = Vec::new();
@@ -137,12 +147,12 @@ pub(in super::super) fn installed_units(project: &str) -> Vec<PathBuf> {
 				continue;
 			}
 			match unit_owner(&path) {
-				Some(owner) if owner == project => found.push(path),
+				Ok(Some(owner)) if owner == project => found.push(path),
 				// A sibling project's unit that happens to share this filename
 				// prefix (e.g. `app-extra-web.container` when `project` is `app`);
 				// the marker proves it is not ours, so it is left untouched.
-				Some(_) => {}
-				None => {
+				Ok(Some(_)) => {}
+				Ok(None) => {
 					tracing::warn!(
 						"quadlet unit {} has no podup-owner ownership marker and cannot be \
 						 proven to belong to '{project}'; skipping it rather than risking a \
@@ -151,11 +161,17 @@ pub(in super::super) fn installed_units(project: &str) -> Vec<PathBuf> {
 						path.display()
 					);
 				}
+				Err(e) => {
+					return Err(ComposeError::Autostart(format!(
+						"cannot read the quadlet unit {}: {e}",
+						path.display()
+					)));
+				}
 			}
 		}
 	}
 	found.sort();
-	found
+	Ok(found)
 }
 
 /// Retire the units a previous install left behind that the new set does not
@@ -174,7 +190,7 @@ fn retire_obsolete_units<S: SystemCtl>(
 	current: &[quadlet::QuadletUnit],
 ) -> crate::Result<()> {
 	let current_names: Vec<&str> = current.iter().map(|u| u.filename.as_str()).collect();
-	for path in installed_units(project) {
+	for path in installed_units(project)? {
 		let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
 			continue;
 		};
@@ -244,6 +260,10 @@ pub fn install_quadlet<S: SystemCtl>(
 	}
 
 	let dir = quadlet_dir();
+	// Refuse an entry of the unit directory that is not a regular file before
+	// anything is written, so the install stops and names the path instead of
+	// writing its units and failing afterwards.
+	installed_units(project)?;
 	let services = container_services(&result.units);
 	// `podup autostart rebuild` is what restarts a `.build` unit to rebuild an
 	// image, so the install path only has to build once. List the `.build`
@@ -350,7 +370,7 @@ pub fn install_quadlet<S: SystemCtl>(
 /// is returned, so uninstall cannot report success while a container keeps
 /// running.
 pub fn uninstall_quadlet<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
-	let units = installed_units(project);
+	let units = installed_units(project)?;
 	let mut first_err: Option<ComposeError> = None;
 	// Stop the container services first, while their units still exist.
 	for path in &units {
@@ -409,7 +429,7 @@ pub fn rebuild_quadlet<S: SystemCtl>(
 	service: Option<&str>,
 ) -> crate::Result<()> {
 	let prefix = format!("{project}-");
-	let builds: Vec<String> = installed_units(project)
+	let builds: Vec<String> = installed_units(project)?
 		.iter()
 		.filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
 		.filter_map(|n| n.strip_suffix(".build").map(String::from))
