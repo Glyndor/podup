@@ -1,6 +1,6 @@
 .TH PODUP 1 "July 2026" "podup 3.3.0" "User Commands"
 .SH NAME
-podup \- run docker-compose files on rootless Podman
+podup \- run Compose projects on rootless Podman
 .SH SYNOPSIS
 .B podup
 [\fIGLOBAL OPTIONS\fR]
@@ -9,10 +9,10 @@ podup \- run docker-compose files on rootless Podman
 [\fISERVICE\fR...]
 .SH DESCRIPTION
 .B podup
-reads a Compose file (\fBdocker-compose.yml\fR or the compose-spec precedence
-list) and translates it into rootless Podman operations over Podman's native
+reads a Compose file (\fBcompose.yaml\fR or the rest of the compose-spec
+precedence list) and translates it into rootless Podman operations over Podman's native
 libpod REST API. It is a single static binary with no daemon and no Python
-runtime, usable both as a standalone docker-compose replacement and as a Rust
+runtime, usable both as a standalone Compose replacement and as a Rust
 library.
 .PP
 .B podup
