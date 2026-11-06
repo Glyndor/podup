@@ -43,6 +43,14 @@ pub struct GitHubSource {
 	api_base: String,
 	/// Base for asset downloads (`https://github.com`). Overridable in tests.
 	dl_base: String,
+	/// Cap on the release-metadata body: [`MAX_METADATA_BYTES`], lowered in tests
+	/// so the refusal is reached without a megabyte of traffic.
+	metadata_cap: u64,
+	/// Cap on a downloaded asset: [`MAX_ASSET_BYTES`], lowered in tests.
+	asset_cap: u64,
+	/// Wait before the first retry; doubled before each next one. Zero in tests,
+	/// which must not sleep.
+	first_delay: std::time::Duration,
 }
 
 impl GitHubSource {
@@ -64,7 +72,36 @@ impl GitHubSource {
 			agent,
 			api_base: "https://api.github.com".to_string(),
 			dl_base: "https://github.com".to_string(),
+			metadata_cap: MAX_METADATA_BYTES,
+			asset_cap: MAX_ASSET_BYTES,
+			first_delay: std::time::Duration::from_secs(1),
 		}
+	}
+
+	/// Source that talks plain http to `base` on the loopback, with small caps
+	/// and no backoff. Tests only. The real source cannot be pointed at a local
+	/// server because it refuses anything but HTTPS and none can speak TLS to a
+	/// client that trusts only the public roots; this one lifts that refusal, so
+	/// what it cannot show is the refusal itself, including the one for a
+	/// redirect that leaves HTTPS.
+	#[cfg(test)]
+	fn loopback(base: &str, metadata_cap: u64, asset_cap: u64) -> Self {
+		let mut s = Self::new(REPO);
+		s.agent = ureq::Agent::config_builder()
+			.timeout_global(Some(std::time::Duration::from_secs(20)))
+			.https_only(false)
+			.proxy(None)
+			// A status code is an error in the real source, and the retry logic
+			// reads it as one.
+			.http_status_as_error(true)
+			.build()
+			.into();
+		s.api_base = base.to_string();
+		s.dl_base = base.to_string();
+		s.metadata_cap = metadata_cap;
+		s.asset_cap = asset_cap;
+		s.first_delay = std::time::Duration::ZERO;
+		s
 	}
 
 	/// Construct with overridden host bases: test seam for the transport-error
@@ -105,7 +142,7 @@ impl GitHubSource {
 		url: &str,
 		accept: Option<&str>,
 	) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
-		let mut delay = std::time::Duration::from_secs(1);
+		let mut delay = self.first_delay;
 		let mut attempt = 1;
 		loop {
 			let mut req = self.agent.get(url);
@@ -170,7 +207,7 @@ impl ReleaseSource for GitHubSource {
 		let resp = self
 			.get_with_retry(&url, Some("application/vnd.github+json"))
 			.map_err(|e| ComposeError::Update(format!("cannot reach GitHub releases API: {e}")))?;
-		let body = read_capped(resp.into_body().into_reader(), MAX_METADATA_BYTES)?;
+		let body = read_capped(resp.into_body().into_reader(), self.metadata_cap)?;
 		parse_latest_tag(&body)
 	}
 
@@ -184,7 +221,7 @@ impl ReleaseSource for GitHubSource {
 		let resp = self
 			.get_with_retry(&url, None)
 			.map_err(|e| ComposeError::Update(format!("download failed for {asset}: {e}")))?;
-		read_capped(resp.into_body().into_reader(), MAX_ASSET_BYTES)
+		read_capped(resp.into_body().into_reader(), self.asset_cap)
 	}
 }
 
@@ -195,3 +232,7 @@ mod tests;
 #[cfg(test)]
 #[path = "github_hostile_tests.rs"]
 mod hostile_tests;
+
+#[cfg(test)]
+#[path = "github_wire_tests.rs"]
+mod wire_tests;
