@@ -6,7 +6,7 @@ use std::os::unix::net::UnixListener;
 use std::sync::mpsc;
 use std::time::Duration;
 
-use super::{read_capped, read_to_string_capped};
+use super::{open_regular, read_capped, read_to_string_capped};
 
 /// Run `f` on a thread and fail when it has not returned in 10 seconds: the
 /// failure under test is a read that never ends.
@@ -51,7 +51,12 @@ fn a_symlink_to_an_ordinary_file_is_refused_so_the_reader_never_follows_one() {
 	std::fs::write(dir.path().join("real"), "A=1\n").expect("write");
 	std::os::unix::fs::symlink(dir.path().join("real"), dir.path().join("link")).expect("link");
 	let err = read_to_string_capped(dir.path().join("link")).expect_err("a link must be refused");
-	assert!(err.to_string().contains("non-regular file"), "{err}");
+	let text = err.to_string();
+	assert!(text.contains("refusing to read link"), "{text}");
+	assert!(
+		!text.contains("block forever"),
+		"a link does not block: {text}"
+	);
 }
 
 #[test]
@@ -92,4 +97,41 @@ fn opening_a_pipe_that_has_no_writer_is_refused_and_does_not_wait() {
 	let file = dir.path().join("file");
 	std::fs::write(&file, b"x").expect("write");
 	assert!(within_budget(move || super::open_regular(&file)).is_ok());
+}
+
+/// The refusal before the open (`reject_non_regular`) catches a pipe that is
+/// already there. The open itself has to hold for one put under the name in
+/// the gap after that check, so it is called here without the check: without
+/// `O_NONBLOCK` it waits for a writer that never comes.
+#[test]
+fn the_open_itself_does_not_wait_on_a_pipe_put_under_the_name_after_the_check() {
+	let dir = tempfile::tempdir().expect("tempdir");
+	let pipe = dir.path().join("late");
+	assert!(std::process::Command::new("mkfifo")
+		.arg(&pipe)
+		.status()
+		.expect("mkfifo")
+		.success());
+	let err = within_budget(move || open_regular(&pipe)).expect_err("a pipe is not a regular file");
+	assert!(err.to_string().contains("not a regular file"), "{err}");
+}
+
+#[test]
+fn the_head_of_a_file_longer_than_the_limit_is_read_and_a_pipe_is_not_waited_on() {
+	use super::read_head_capped;
+	let dir = tempfile::tempdir().expect("tempdir");
+	let big = dir.path().join("big");
+	let mut text = b"# podup-owner: proj\n".to_vec();
+	text.resize(super::MAX_FILE_BYTES as usize + 1024, b'#');
+	std::fs::write(&big, &text).expect("write");
+	let head = read_head_capped(&big, 64).expect("the head of a long file");
+	assert_eq!(head.len(), 64);
+	assert!(head.starts_with(b"# podup-owner: proj\n"));
+	let pipe = dir.path().join("pipe");
+	assert!(std::process::Command::new("mkfifo")
+		.arg(&pipe)
+		.status()
+		.expect("mkfifo")
+		.success());
+	assert!(within_budget(move || read_head_capped(&pipe, 64)).is_err());
 }

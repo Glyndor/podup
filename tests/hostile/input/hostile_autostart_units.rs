@@ -14,6 +14,13 @@
 
 use std::path::PathBuf;
 
+#[cfg(unix)]
+#[path = "../support/file_process.rs"]
+mod file_process;
+#[cfg(unix)]
+#[path = "hostile_autostart_units/unit_dir.rs"]
+mod unit_dir;
+
 use podup::autostart::{
 	render_service_unit, render_start_unit, render_update_service_unit, ServiceUnitOpts,
 	StartUnitOpts,

@@ -151,3 +151,4 @@ mod auto_update;
 mod install;
 mod status;
 mod uninstall;
+mod unit_dir_pipe;
