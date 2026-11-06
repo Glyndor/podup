@@ -15,7 +15,8 @@
 /// behaviour) rather than erroring.
 pub fn parse(content: &str) -> Vec<(String, String)> {
 	// `strict = false` can never produce an error.
-	parse_inner(content, false).unwrap_or_default()
+	let marked = parse_inner(content, false).unwrap_or_default();
+	marked.into_iter().map(|(k, v, _)| (k, v)).collect()
 }
 
 /// Like [`parse`] but rejects malformed input.
@@ -25,10 +26,19 @@ pub fn parse(content: &str) -> Vec<(String, String)> {
 /// variables, matching docker compose, which hard-errors on an unterminated
 /// quoted value.
 pub fn parse_strict(content: &str) -> crate::error::Result<Vec<(String, String)>> {
+	let marked = parse_inner(content, true)?;
+	Ok(marked.into_iter().map(|(k, v, _)| (k, v)).collect())
+}
+
+/// Like [`parse_strict`], with a third element per pair: `true` when the value
+/// is literal and must not be interpolated (it was single-quoted, or it is a
+/// bare key passed through from the host). Unquoted and double-quoted values
+/// are `false`, which is where the Compose Specification applies interpolation.
+pub fn parse_strict_marked(content: &str) -> crate::error::Result<Vec<(String, String, bool)>> {
 	parse_inner(content, true)
 }
 
-fn parse_inner(content: &str, strict: bool) -> crate::error::Result<Vec<(String, String)>> {
+fn parse_inner(content: &str, strict: bool) -> crate::error::Result<Vec<(String, String, bool)>> {
 	// Strip a leading UTF-8 BOM so the first key is not captured as
 	// `\u{feff}KEY` (which would silently lose that variable). Matches
 	// docker/godotenv, which drop a leading BOM before parsing.
@@ -54,7 +64,7 @@ fn parse_inner(content: &str, strict: bool) -> crate::error::Result<Vec<(String,
 			let key = line.trim();
 			if !key.is_empty() {
 				if let Ok(val) = std::env::var(key) {
-					out.push((key.to_string(), val));
+					out.push((key.to_string(), val, true));
 				}
 			}
 			continue;
@@ -64,8 +74,10 @@ fn parse_inner(content: &str, strict: bool) -> crate::error::Result<Vec<(String,
 		if key.is_empty() {
 			continue;
 		}
-		let value = parse_value(line[eq + 1..].trim_start(), &mut lines, key, strict)?;
-		out.push((key.to_string(), value));
+		let rest = line[eq + 1..].trim_start();
+		let literal = rest.starts_with('\'');
+		let value = parse_value(rest, &mut lines, key, strict)?;
+		out.push((key.to_string(), value, literal));
 	}
 
 	Ok(out)

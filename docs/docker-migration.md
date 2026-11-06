@@ -31,7 +31,7 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 |---|---|
 | Images / build | `image`, `build` (context, dockerfile, args, target, cache_from, cache_to, secrets, labels, network), `pull_policy` (time policies map to `newer`), `pull_refresh_after` (strict syntax only) |
 | Execution | `command`, `entrypoint`, `working_dir`, `user`, `umask`, `platform`, `tty`, `stdin_open` |
-| Environment | `environment`, `env_file` (dotenv format), variable substitution (`${VAR:-default}`) |
+| Environment | `environment`, `env_file` (dotenv format; unquoted and double-quoted values are interpolated), variable substitution (`${VAR:-default}`) |
 | Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `domainname`, `dns`, `dns_opt`, `dns_search`, `extra_hosts` |
 | Volumes | `volumes` (bind, named, tmpfs, npipe), `tmpfs`, `volumes_from` |
 | Secrets / configs | `secrets`, `configs` (file, inline content, environment source, and `external: true` Podman-native secrets) |
