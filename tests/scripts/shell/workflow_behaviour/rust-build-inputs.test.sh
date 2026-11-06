@@ -51,9 +51,10 @@ check "no argument builds" 1 "$(bash "$script" >/dev/null 2>&1; echo $?)"
 check "msrv and doc both read the judge from the base" 2 \
 	"$(grep -c 'git show "\$BASE_SHA:.github/scripts/checks/rust-build-inputs.sh"' "$workflow")"
 # shellcheck disable=SC2016
-check "only pull_request, push and merge_group can skip" 2 \
+check "only pull_request, push and merge_group can skip" 5 \
 	"$(grep -c '\[\[ "\$EVENT" = pull_request || "\$EVENT" = push || "\$EVENT" = merge_group \]\]' "$workflow")"
-check "the build steps are guarded" 6 \
+# 6 behind this judge (msrv, doc) plus 11 behind rust-test-inputs.sh.
+check "the build steps are guarded" 17 \
 	"$(grep -c "steps.inputs.outputs.build == 'true'" "$workflow")"
 # The macOS and Windows hardening jobs skip the release build with the same judge.
 for wf in lint-shell lint-powershell; do

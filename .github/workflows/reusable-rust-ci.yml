@@ -148,8 +148,34 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Decide whether the root test inputs changed
+        id: inputs
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          build=true
+          # Same shape as the MSRV job, with a narrower judge: the tests read
+          # docs, installers, packaging and workflows, so almost nothing is
+          # exempt. The judge is read from the reviewed base, never from the
+          # PR's tree, and a missing history or a missing judge runs the tests.
+          # The job still ends green when it skips, so its required check name
+          # is emitted; a path filter on the workflow would leave it pending.
+          if [[ "$EVENT" = pull_request || "$EVENT" = push || "$EVENT" = merge_group ]] &&
+             changed=$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA") &&
+             judge=$(git show "$BASE_SHA:.github/scripts/checks/rust-test-inputs.sh") &&
+             bash -c "$judge" -- "$changed"; then
+            build=false
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          [ "$build" = true ] || echo "Only paths the root tests never read changed; the tests are skipped."
 
       - name: Install toolchain
+        if: steps.inputs.outputs.build == 'true'
         env:
           TOOLCHAIN: ${{ inputs.toolchain }}
         run: |
@@ -157,6 +183,7 @@ jobs:
           rustup default "$TOOLCHAIN"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.inputs.outputs.build == 'true'
         with:
           path: |
             ~/.cargo/registry/index
@@ -167,6 +194,7 @@ jobs:
           restore-keys: rust-test-${{ runner.os }}-
 
       - name: Tests
+        if: steps.inputs.outputs.build == 'true'
         run: cargo test --locked --all-features --workspace
 
   test-extra:
@@ -193,8 +221,34 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Decide whether the root test inputs changed
+        id: inputs
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          build=true
+          # Same shape as the MSRV job, with a narrower judge: the tests read
+          # docs, installers, packaging and workflows, so almost nothing is
+          # exempt. The judge is read from the reviewed base, never from the
+          # PR's tree, and a missing history or a missing judge runs the tests.
+          # The job still ends green when it skips, so its required check name
+          # is emitted; a path filter on the workflow would leave it pending.
+          if [[ "$EVENT" = pull_request || "$EVENT" = push || "$EVENT" = merge_group ]] &&
+             changed=$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA") &&
+             judge=$(git show "$BASE_SHA:.github/scripts/checks/rust-test-inputs.sh") &&
+             bash -c "$judge" -- "$changed"; then
+            build=false
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          [ "$build" = true ] || echo "Only paths the root tests never read changed; the tests are skipped."
 
       - name: Install toolchain
+        if: steps.inputs.outputs.build == 'true'
         env:
           TOOLCHAIN: ${{ inputs.toolchain }}
         run: |
@@ -202,6 +256,7 @@ jobs:
           rustup default "$TOOLCHAIN"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.inputs.outputs.build == 'true'
         with:
           path: |
             ~/.cargo/registry/index
@@ -212,6 +267,7 @@ jobs:
           restore-keys: rust-test-${{ runner.os }}-
 
       - name: Tests
+        if: steps.inputs.outputs.build == 'true'
         run: cargo test --locked --all-features --workspace
 
   extra-platforms-gate:
@@ -258,8 +314,34 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
+
+      - name: Decide whether the root test inputs changed
+        id: inputs
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          build=true
+          # Same shape as the MSRV job, with a narrower judge: the tests read
+          # docs, installers, packaging and workflows, so almost nothing is
+          # exempt. The judge is read from the reviewed base, never from the
+          # PR's tree, and a missing history or a missing judge runs the tests.
+          # The job still ends green when it skips, so its required check name
+          # is emitted; a path filter on the workflow would leave it pending.
+          if [[ "$EVENT" = pull_request || "$EVENT" = push || "$EVENT" = merge_group ]] &&
+             changed=$(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA") &&
+             judge=$(git show "$BASE_SHA:.github/scripts/checks/rust-test-inputs.sh") &&
+             bash -c "$judge" -- "$changed"; then
+            build=false
+          fi
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          [ "$build" = true ] || echo "Only paths the root tests never read changed; the tests are skipped."
 
       - name: Install toolchain
+        if: steps.inputs.outputs.build == 'true'
         env:
           TOOLCHAIN: ${{ inputs.toolchain }}
         run: |
@@ -267,6 +349,7 @@ jobs:
           rustup default "$TOOLCHAIN"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.inputs.outputs.build == 'true'
         with:
           path: |
             ~/.cargo/registry/index
@@ -281,12 +364,13 @@ jobs:
           restore-keys: rust-cov-${{ runner.os }}-${{ inputs.llvm-cov-version }}-
 
       - name: Install cargo-llvm-cov
+        if: steps.inputs.outputs.build == 'true'
         env:
           LLVM_COV_VERSION: ${{ inputs.llvm-cov-version }}
         run: command -v cargo-llvm-cov >/dev/null || cargo install cargo-llvm-cov --locked --version "$LLVM_COV_VERSION"
 
       - name: Start Podman socket
-        if: inputs.podman
+        if: inputs.podman && steps.inputs.outputs.build == 'true'
         id: podman-socket
         run: |
           systemctl --user start podman.socket
@@ -294,6 +378,7 @@ jobs:
           echo "path=unix:///run/user/$(id -u)/podman/podman.sock" >> "$GITHUB_OUTPUT"
 
       - name: Coverage gate
+        if: steps.inputs.outputs.build == 'true'
         env:
           PODMAN_SOCKET: ${{ steps.podman-socket.outputs.path }}
           COVERAGE_IGNORE_REGEX: ${{ inputs.coverage-ignore-regex }}
