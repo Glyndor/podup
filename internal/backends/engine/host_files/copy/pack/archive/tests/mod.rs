@@ -91,5 +91,7 @@ mod archive_shape;
 #[cfg(unix)]
 mod hostile;
 #[cfg(unix)]
+mod linked_dir_chain;
+#[cfg(unix)]
 mod pinned;
 mod symlinks;
