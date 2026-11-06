@@ -34,6 +34,8 @@ use types::ComposeFile;
 pub use validate::validate_config;
 
 #[cfg(test)]
+mod diagnostics_budget_tests;
+#[cfg(test)]
 mod pull_refresh_tests;
 
 #[cfg(test)]

@@ -14,8 +14,12 @@ use std::path::{Path, PathBuf};
 
 use tempfile::TempDir;
 
+#[path = "hostile_compose/budget_entry_points.rs"]
+mod budget_entry_points;
 #[path = "hostile_compose/caps.rs"]
 mod caps;
+#[path = "hostile_compose/cross_file_budget.rs"]
+mod cross_file_budget;
 #[path = "../support/file_process.rs"]
 mod file_process;
 use file_process::{isolated, run, Outcome};

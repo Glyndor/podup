@@ -40,6 +40,7 @@ thread_local! {
 	static WARN_ENABLED: Cell<bool> = const { Cell::new(true) };
 }
 
+pub(crate) mod project_budget;
 pub(crate) mod warnings {
 	use super::WARN_ENABLED;
 
@@ -230,7 +231,8 @@ fn check_document_budget(spent: &mut usize, value: &str, var: &str) -> Result<()
 		return Err(ComposeError::InvalidSubstitution(format!(
 			"interpolating '{var}' pushes this document past {MAX_INTERP_DOCUMENT_BYTES} \
 			 bytes of substituted output; at most that much is allowed across the whole \
-			 file; the value may repeat across many fields"
+			 project, the compose files together with every file they include or extend; \
+			 the value may repeat across many fields"
 		)));
 	}
 	Ok(())
