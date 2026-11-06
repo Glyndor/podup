@@ -55,3 +55,79 @@ fn parse_file_with_env_files_interp_shares_the_budget_across_includes() {
 		parse_file_with_env_files_interp(&root, &[], true).expect_err("17 MiB is over"),
 	);
 }
+
+/// A subscriber that, on its first event, loads another project through the
+/// public API. That is a synchronous callback running in the middle of a load.
+mod reentrant {
+	use std::path::PathBuf;
+	use std::sync::atomic::{AtomicBool, Ordering};
+	use std::sync::{Arc, Mutex};
+
+	use tracing::span::{Attributes, Id, Record};
+	use tracing::{Event, Metadata, Subscriber};
+
+	pub struct Loads {
+		pub path: PathBuf,
+		pub fired: AtomicBool,
+		pub result: Arc<Mutex<Option<Result<(), String>>>>,
+	}
+
+	impl Subscriber for Loads {
+		fn enabled(&self, _: &Metadata<'_>) -> bool {
+			true
+		}
+		fn new_span(&self, _: &Attributes<'_>) -> Id {
+			Id::from_u64(1)
+		}
+		fn record(&self, _: &Id, _: &Record<'_>) {}
+		fn record_follows_from(&self, _: &Id, _: &Id) {}
+		fn enter(&self, _: &Id) {}
+		fn exit(&self, _: &Id) {}
+		fn event(&self, _: &Event<'_>) {
+			if !self.fired.swap(true, Ordering::SeqCst) {
+				let loaded = super::parse_file_with_env_files(&self.path, &[]);
+				*self.result.lock().unwrap() = Some(loaded.map(|_| ()).map_err(|e| e.to_string()));
+			}
+		}
+	}
+}
+
+/// 15 MiB in `a.yaml`, then a variable nobody defined in `b.yaml`: the warning
+/// for it is emitted while the 15 MiB are still counted.
+fn project_that_warns_late() -> (tempfile::TempDir, PathBuf) {
+	let (dir, root) = project(0);
+	let item = "\"${BIG}\", ";
+	let body = format!(
+		"services:\n  a:\n    image: alpine\n    command: [{}]\n",
+		item.repeat(15)
+	);
+	fs::write(dir.path().join("a.yaml"), body).unwrap();
+	let late = "services:\n  b:\n    image: alpine\n    command: [\"${UNDEFINED_ON_PURPOSE}\"]\n";
+	fs::write(dir.path().join("b.yaml"), late).unwrap();
+	fs::write(&root, "include: [a.yaml, b.yaml]\n").unwrap();
+	(dir, root)
+}
+
+/// Two projects that each fit, the second loaded from a callback of the first.
+/// A load that starts through the public API has a budget of its own.
+#[test]
+fn a_load_started_from_a_callback_has_its_own_budget() {
+	let (_inner_dir, inner) = project(2);
+	parse_file_with_env_files(&inner, &[]).expect("2 MiB fits alone");
+	let (_outer_dir, outer) = project_that_warns_late();
+	let result = std::sync::Arc::new(std::sync::Mutex::new(None));
+	let subscriber = reentrant::Loads {
+		path: inner,
+		fired: std::sync::atomic::AtomicBool::new(false),
+		result: result.clone(),
+	};
+	let loaded =
+		tracing::subscriber::with_default(subscriber, || parse_file_with_env_files(&outer, &[]));
+	loaded.expect("15 MiB fits alone");
+	let inner_result = result.lock().unwrap().take().expect("the callback ran");
+	assert_eq!(
+		inner_result,
+		Ok(()),
+		"the second project borrowed the first one's budget"
+	);
+}

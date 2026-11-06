@@ -55,13 +55,19 @@ pub fn parse_file_with_env_files_interp(
 	} else {
 		None
 	};
+	// This entry point starts a project: the file and everything it pulls in
+	// share one interpolation budget, and a load running inside a callback of
+	// another one does not borrow that one's count.
+	let budget = substitute::project_budget::Scope::open();
 	let file = parse_file_with_env_files_interp_with_stdin(
 		path,
 		env_files,
 		interpolate,
 		stdin.as_deref(),
 		None,
-	)?;
+	);
+	drop(budget);
+	let file = file?;
 	// A single file stands alone, so its jobs have to declare their triggers.
 	// With several `-f` files the check waits for the merge.
 	jobs::check_triggers_declared(&file)?;
@@ -80,8 +86,6 @@ pub(crate) fn parse_file_with_env_files_interp_with_stdin(
 	stdin_content: Option<&str>,
 	project_dir: Option<&Path>,
 ) -> Result<ComposeFile> {
-	// Everything this file pulls in shares one interpolation budget with it.
-	let _budget = substitute::project_budget::Scope::open();
 	// `-f -` reads the compose document from stdin (like `docker compose`); there
 	// is no file to canonicalize, so relative paths and `.env` resolve against the
 	// working directory.
@@ -191,6 +195,9 @@ pub fn parse_files_with_env_files_interp_in(
 		merge_override(&mut merged, other, &directives);
 	}
 	drop(budget);
+	// The diagnostics below re-read each input file on its own budget, whatever
+	// load this one runs inside of.
+	let _alone = substitute::project_budget::Scope::none();
 	// Each file passed on its own; a service in one `-f` file and a job of the
 	// same name in another only meet here.
 	jobs::check_structure(&merged)?;

@@ -128,9 +128,34 @@ fn a_project_scope_makes_files_draw_on_one_budget() {
 		assert!(file().is_ok(), "15 MiB in total fits");
 	}
 	assert!(file().is_err(), "the sixth 3 MiB is past 16 MiB in total");
-	// A nested scope joins the outer one instead of starting over.
-	let _inner = project_budget::Scope::open();
-	assert!(file().is_err());
+	// A scope opened inside it is a new project: it starts over, and the outer
+	// count is back when it closes.
+	{
+		let _inner = project_budget::Scope::open();
+		assert!(file().is_ok(), "a new project has its own budget");
+	}
+	assert!(
+		file().is_err(),
+		"the outer project is still over its budget"
+	);
+}
+
+#[test]
+fn a_scope_restores_the_outer_count_when_the_load_fails_or_unwinds() {
+	let _outer = project_budget::Scope::open();
+	project_budget::record(7);
+	let result = std::panic::catch_unwind(|| {
+		let _inner = project_budget::Scope::open();
+		project_budget::record(99);
+		panic!("a load that unwinds");
+	});
+	assert!(result.is_err());
+	assert_eq!(project_budget::spent(), 7);
+	{
+		let _alone = project_budget::Scope::none();
+		assert_eq!(project_budget::spent(), 0);
+	}
+	assert_eq!(project_budget::spent(), 7);
 }
 
 #[test]

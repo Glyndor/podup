@@ -8,32 +8,42 @@ thread_local! {
 
 /// RAII scope for the interpolation budget of one project.
 ///
-/// While it is open, every file the loader reads on this thread (the `-f`
-/// files, what they `include:` and what they `extends:`) draws on one
-/// [`super::MAX_INTERP_DOCUMENT_BYTES`] instead of getting that much each.
-/// A nested scope joins the outer one and leaves it open.
+/// A public entry point that loads a project opens one. While it is open, every
+/// file that load reads on this thread (the `-f` files, what they `include:` and
+/// what they `extends:`) draws on one [`super::MAX_INTERP_DOCUMENT_BYTES`]
+/// instead of getting that much each. Those internal steps do not open a scope;
+/// they share the one their entry point opened.
+///
+/// Opening a scope always starts a fresh budget and puts back whatever was there
+/// when it is dropped, on `Err` and on unwind too. So a project loaded from a
+/// synchronous callback in the middle of another load (a `tracing` subscriber,
+/// say) counts for itself and leaves the outer count as it found it.
 pub(crate) struct Scope {
-	owner: bool,
+	previous: Option<usize>,
 }
 
 impl Scope {
+	/// A fresh budget for a project loaded from here.
 	pub(crate) fn open() -> Self {
-		let owner = PROJECT_SPENT.with(|c| {
-			let fresh = c.get().is_none();
-			if fresh {
-				c.set(Some(0));
-			}
-			fresh
-		});
-		Scope { owner }
+		Self::replace(Some(0))
+	}
+
+	/// No project budget: each file counts alone, as for `parse_str`. Used for
+	/// the diagnostic pass that re-reads input files after a load.
+	pub(crate) fn none() -> Self {
+		Self::replace(None)
+	}
+
+	fn replace(next: Option<usize>) -> Self {
+		Scope {
+			previous: PROJECT_SPENT.with(|c| c.replace(next)),
+		}
 	}
 }
 
 impl Drop for Scope {
 	fn drop(&mut self) {
-		if self.owner {
-			PROJECT_SPENT.with(|c| c.set(None));
-		}
+		PROJECT_SPENT.with(|c| c.set(self.previous));
 	}
 }
 
