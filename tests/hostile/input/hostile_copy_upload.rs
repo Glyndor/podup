@@ -10,6 +10,9 @@ mod fake_engine;
 #[path = "../support/host_files.rs"]
 mod host_files;
 
+#[path = "hostile_copy_upload/download.rs"]
+mod download;
+
 use fake_engine::{FakeEngine, Reply};
 use host_files::{entries, Running, MARKER, SAFE};
 

@@ -68,6 +68,9 @@ pub struct CpOptions {
 	/// container→host extraction always applies podup's security-hardened mode
 	/// sanitization, so this flag has no effect on the copied bytes.
 	pub archive: bool,
+	/// The most a container→host `cp` reads of the archive: `None` is the
+	/// default, 1 GiB. Tests set a small one to reach the refusal.
+	pub(crate) archive_cap: Option<usize>,
 }
 
 impl CpOptions {
@@ -79,6 +82,7 @@ impl CpOptions {
 			index,
 			follow_link,
 			archive,
+			archive_cap: None,
 		}
 	}
 }
