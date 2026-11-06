@@ -99,11 +99,43 @@ pub fn parse_frame(buf: &mut BytesMut) -> Result<Option<(u8, Bytes)>, PodmanErro
 /// in O(1) (no tail memmove) and the line is returned as a zero-copy [`Bytes`]
 /// sharing the original allocation. Returns `None` (leaving `buf` untouched)
 /// when no complete line is buffered yet.
+#[cfg(any(test, feature = "test-helpers"))]
 pub fn take_json_line(buf: &mut BytesMut) -> Option<Bytes> {
-	let nl = buf.iter().position(|&b| b == b'\n')?;
+	take_json_line_from(buf, &mut 0)
+}
+
+/// [`take_json_line`] for a buffer that grows between calls: `scanned` is how
+/// much of the front of `buf` an earlier call already searched without
+/// finding a newline, so a line that arrives in many small pieces is searched
+/// once, not once per piece. It is reset when a line is taken, and the caller
+/// must not shrink the buffer from the front between calls except through this
+/// function.
+fn take_json_line_from(buf: &mut BytesMut, scanned: &mut usize) -> Option<Bytes> {
+	let start = (*scanned).min(buf.len());
+	let found = buf[start..].iter().position(|&b| b == b'\n');
+	#[cfg(test)]
+	count_examined(found.map_or(buf.len() - start, |at| at + 1));
+	let Some(at) = found else {
+		*scanned = buf.len();
+		return None;
+	};
+	*scanned = 0;
+	let nl = start + at;
 	let mut line = buf.split_to(nl + 1);
 	line.truncate(nl); // drop the trailing newline byte
 	Some(line.freeze())
+}
+
+#[cfg(test)]
+thread_local! {
+	/// Bytes the newline search has looked at, for the test that holds the
+	/// search to a linear cost.
+	static EXAMINED: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn count_examined(n: usize) {
+	EXAMINED.with(|c| c.set(c.get() + n as u64));
 }
 
 // ---------------------------------------------------------------------------
@@ -251,10 +283,10 @@ where
 	B: hyper::body::Body<Data = Bytes, Error = hyper::Error> + Send + Unpin + 'static,
 {
 	Box::pin(futures_util::stream::try_unfold(
-		(body, BytesMut::new(), 0u64),
-		move |(mut body, mut buf, mut total_received)| async move {
+		(body, BytesMut::new(), 0u64, 0usize),
+		move |(mut body, mut buf, mut total_received, mut scanned)| async move {
 			loop {
-				if let Some(line) = take_json_line(&mut buf) {
+				if let Some(line) = take_json_line_from(&mut buf, &mut scanned) {
 					// A line plus its trailing newline are no longer buffered
 					// once the line is parsed; account for the freed space so
 					// the cumulative counter reflects what the daemon still
@@ -265,7 +297,7 @@ where
 						continue;
 					}
 					let item: T = serde_json::from_slice(&line).map_err(PodmanError::Json)?;
-					return Ok(Some((item, (body, buf, total_received))));
+					return Ok(Some((item, (body, buf, total_received, scanned))));
 				}
 
 				let frame = match idle {
@@ -294,9 +326,10 @@ where
 						// serde error whose cause is the daemon's cut.
 						let line = std::mem::take(&mut buf);
 						total_received = 0;
+						scanned = 0;
 						let item: T = serde_json::from_slice(&line)
 							.map_err(|_| PodmanError::StreamEndedEarly)?;
-						return Ok(Some((item, (body, buf, total_received))));
+						return Ok(Some((item, (body, buf, total_received, scanned))));
 					}
 				}
 			}
@@ -307,3 +340,7 @@ where
 #[cfg(test)]
 #[path = "stream_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "stream_fragment_tests.rs"]
+mod fragment_tests;
