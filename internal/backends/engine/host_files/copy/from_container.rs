@@ -77,6 +77,11 @@ pub(in crate::backends::engine) fn cp_destination_kind(dst: &Path) -> CpDestinat
 	}
 }
 
+/// The limit this copy applies to the archive it reads.
+fn archive_cap(opts: &CpOptions) -> usize {
+	opts.archive_cap.unwrap_or(MAX_CP_ARCHIVE_BYTES)
+}
+
 impl Engine {
 	pub(super) async fn cp_from_container(
 		&self,
@@ -138,7 +143,7 @@ impl Engine {
 				return stream::extract_streamed(
 					resp,
 					dst,
-					MAX_CP_ARCHIVE_BYTES as u64,
+					archive_cap(opts) as u64,
 					Some(progress),
 				)
 				.await;
@@ -150,7 +155,7 @@ impl Engine {
 			}
 		}
 
-		let tar_bytes = buffer_archive(resp.into_body(), MAX_CP_ARCHIVE_BYTES).await?;
+		let tar_bytes = buffer_archive(resp.into_body(), archive_cap(opts)).await?;
 		progress.add(tar_bytes.len() as u64);
 
 		tokio::task::spawn_blocking(move || extract_archive(&tar_bytes, &dst))

@@ -42,7 +42,7 @@ fn engine() -> (fake_podman::FakePodman, Engine) {
 /// A minimal tar archive holding one regular file with the given name
 /// and content. The header layout is what libpod's archive GET
 /// produces; a hand-rolled tar is enough to drive the extractor.
-fn build_tar(entries: &[(&str, &[u8])]) -> String {
+pub(super) fn build_tar(entries: &[(&str, &[u8])]) -> String {
 	let mut out = Vec::new();
 	for (name, content) in entries {
 		let name_bytes = name.as_bytes();
