@@ -82,6 +82,24 @@ on:
         # `rust / Doc warnings`. The configured value lives here so
         # callers omit `with:`.
         default: true
+      # The Debian package is built from a DIFFERENT crate than the one
+      # `--all-features` compiles: debian/rules pins
+      # `--no-default-features --features watch,completions`, so `update`
+      # is off in the artifact that ships and the code behind it is never
+      # compiled by the lint. A defect that only exists when `update` is
+      # off is invisible to a lint that only ever sees `--all-features`,
+      # and the .deb is what a Debian user installs.
+      #
+      # The value lives here as the reusable's declared default, and the
+      # caller passes the same string: the caller-with-defaults lint
+      # (reusable-workflow-lint.yml) refuses a `with:` value that differs
+      # from the declared default, so a pull request that dropped this
+      # second pass would have to move the default on the reusable's own
+      # diff, where the required check name stays fixed.
+      extra-clippy-args:
+        description: Extra cargo clippy arguments for a second lint pass over another feature set (e.g. '--no-default-features --features watch,completions')
+        type: string
+        default: "--no-default-features --features watch,completions"
 
 permissions:
   contents: read
@@ -126,7 +144,18 @@ jobs:
         run: cargo fmt --all --check
 
       - name: clippy
-        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+        env:
+          EXTRA_CLIPPY_ARGS: ${{ inputs.extra-clippy-args }}
+        run: |
+          set -euo pipefail
+          cargo clippy --locked --all-targets --all-features -- -D warnings
+          # The second pass lints the feature set the Debian package is
+          # built from, which is not a subset of the one above: `update` is
+          # off there and its code is never compiled by the first pass.
+          if [ -n "$EXTRA_CLIPPY_ARGS" ]; then
+            read -ra extra_args <<< "$EXTRA_CLIPPY_ARGS"
+            cargo clippy --locked --all-targets "${extra_args[@]}" -- -D warnings
+          fi
 
       # In this job rather than one of its own because this job is already a
       # required check: a new job would report and block nothing until a

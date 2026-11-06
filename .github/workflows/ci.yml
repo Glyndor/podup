@@ -97,6 +97,13 @@ jobs:
       # A semver promise needs somebody to make it to. There is nobody.
       semver-check: false
       doc-warnings: true
+      # The Debian package is built with `--no-default-features --features
+      # watch,completions` (debian/rules), and the lint above only ever saw
+      # `--all-features`, so the configuration that ships was never linted.
+      # This string must stay equal to the reusable's declared default: the
+      # caller-with-defaults lint refuses a `with:` value that differs from
+      # it, so changing the feature set means changing the reusable too.
+      extra-clippy-args: "--no-default-features --features watch,completions"
 
   # A cron that stops firing emits nothing, and "no alert" is indistinguishable
   # from "all clear". Every scheduled workflow in this org went dark on

@@ -393,6 +393,9 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 
 [features]
 default = ["watch", "completions", "update"]
+# Compiling without `watch` is not supported: the crate does not compile
+# cleanly without it. The configuration that ships is `watch,completions`
+# (debian/rules), and that is the set CI lints.
 watch = ["notify"]
 completions = ["dep:clap_complete"]
 # Self-update over HTTPS with Ed25519 verification. Off for package-manager
