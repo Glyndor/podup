@@ -201,32 +201,36 @@ impl Engine {
 		// is not labelled as ours, refuse rather than clobber a foreign secret.
 		// Our own secret (or a 404) is replaced fresh, keeping re-`up` idempotent.
 		let inspect = format!("{API_PREFIX}/secrets/{}/json", urlencoded(name));
-		let existed = match self.client.get_json::<serde_json::Value>(&inspect).await {
-			Ok(info) => {
-				let owned = info
-					.get("Spec")
-					.and_then(|spec| spec.get("Labels"))
-					.and_then(|labels| labels.get("podup.project"))
-					.and_then(|v| v.as_str())
-					== Some(self.project.as_str());
-				if !owned {
-					return Err(ComposeError::Unsupported(format!(
-						"a secret named '{name}' already exists and is not labelled \
+		let existing: Option<String> =
+			match self.client.get_json::<serde_json::Value>(&inspect).await {
+				Ok(info) => {
+					let owned = info
+						.get("Spec")
+						.and_then(|spec| spec.get("Labels"))
+						.and_then(|labels| labels.get("podup.project"))
+						.and_then(|v| v.as_str())
+						== Some(self.project.as_str());
+					if !owned {
+						return Err(ComposeError::Unsupported(format!(
+							"a secret named '{name}' already exists and is not labelled \
 						 podup.project={}; refusing to overwrite a secret podup did \
 						 not create",
-						self.project
-					)));
+							self.project
+						)));
+					}
+					Some(super::remove::removal_key(&info, name))
 				}
-				true
-			}
-			Err(e) if e.is_status(404) => false,
-			Err(e) => return Err(ComposeError::Podman(e)),
-		};
+				Err(e) if e.is_status(404) => None,
+				Err(e) => return Err(ComposeError::Podman(e)),
+			};
 		// Only delete something that is actually there (#1219). On a first `up`
 		// every secret is a 404, so this was a round trip per secret spent
 		// removing nothing.
-		if existed {
-			let delete_path = format!("{API_PREFIX}/secrets/{}", urlencoded(name));
+		let existed = existing.is_some();
+		if let Some(key) = existing {
+			// By the ID that was inspected: a name taken by another secret since
+			// then answers 404 and is not removed.
+			let delete_path = format!("{API_PREFIX}/secrets/{}", urlencoded(&key));
 			self.client
 				.delete_ok(&delete_path)
 				.await
