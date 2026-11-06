@@ -119,7 +119,8 @@ pub(crate) fn build_log_config(
 
 /// Translate a user-supplied `logging:` block into libpod's [`LogConfig`].
 ///
-/// `max-size` is moved into the typed `size` field. `max-file` is dropped
+/// `max-size` is moved into the typed `size` field. `tag` is dropped with a
+/// warning for the `json-file`/`k8s-file` drivers, which refuse it. `max-file` is dropped
 /// with a warning: libpod does not implement it and would silently ignore
 /// it if forwarded. The user-supplied value of `max-size` is parsed with the
 /// same memory parser used elsewhere in the engine (`10m`, `1g`, plain
@@ -177,6 +178,20 @@ fn translate_user_logging(
 			"{service_name}: logging.options.max-file is ignored; \
 			 Podman keeps a single log file (truncated at max-size when one is set) \
 			 with no rotated history"
+		);
+	}
+	// `json-file` is the name Docker gives the driver, and Podman maps it to its
+	// `k8s-file` logger, which refuses a `tag` when the container starts
+	// (`k8s-file doesn't support --log-tag`, then `conmon failed`, measured on
+	// Podman 5.7.0 with its own CLI too). Docker accepts and applies the tag.
+	// Forwarding it would keep a working compose file from starting, so, like
+	// `max-file`, it is dropped with a warning. Other drivers keep theirs.
+	if matches!(driver.as_deref(), Some("json-file" | "k8s-file"))
+		&& options.remove("tag").is_some()
+	{
+		tracing::warn!(
+			"{service_name}: logging.options.tag is ignored; \
+			 Podman's json-file (k8s-file) log driver does not support a tag"
 		);
 	}
 	Ok(LogConfig {
@@ -283,3 +298,7 @@ mod tests;
 #[cfg(test)]
 #[path = "log_config_tests.rs"]
 mod log_config_tests;
+
+#[cfg(test)]
+#[path = "log_tag_tests.rs"]
+mod log_tag_tests;
