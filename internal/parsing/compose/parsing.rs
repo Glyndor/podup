@@ -80,6 +80,8 @@ pub(crate) fn parse_file_with_env_files_interp_with_stdin(
 	stdin_content: Option<&str>,
 	project_dir: Option<&Path>,
 ) -> Result<ComposeFile> {
+	// Everything this file pulls in shares one interpolation budget with it.
+	let _budget = substitute::project_budget::Scope::open();
 	// `-f -` reads the compose document from stdin (like `docker compose`); there
 	// is no file to canonicalize, so relative paths and `.env` resolve against the
 	// working directory.
@@ -164,6 +166,9 @@ pub fn parse_files_with_env_files_interp_in(
 	let project_dir = project_dir
 		.map(Path::to_path_buf)
 		.or_else(|| Some(dir_of(first)));
+	// One interpolation budget for every `-f` file and what they pull in. It
+	// closes before the diagnostics below, which re-read each file on their own.
+	let budget = substitute::project_budget::Scope::open();
 	let mut merged = parse_file_with_env_files_interp_with_stdin(
 		first,
 		env_files,
@@ -185,6 +190,7 @@ pub fn parse_files_with_env_files_interp_in(
 		let directives = tags::collect_from_file(path);
 		merge_override(&mut merged, other, &directives);
 	}
+	drop(budget);
 	// Each file passed on its own; a service in one `-f` file and a job of the
 	// same name in another only meet here.
 	jobs::check_structure(&merged)?;

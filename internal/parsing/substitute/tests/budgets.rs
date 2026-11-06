@@ -107,3 +107,38 @@ fn the_document_budget_bounds_repetition_spread_across_scalars() {
 		"the refusal must name the variable and the budget, got: {msg}"
 	);
 }
+
+#[test]
+fn a_project_scope_makes_files_draw_on_one_budget() {
+	let big = "x".repeat(3 * 1024 * 1024);
+	let vars = vars(&[("BIG", &big)]);
+	let file = || {
+		let mut spent = project_budget::spent();
+		let mut warned = HashSet::new();
+		let out = substitute_budgeted("${BIG}", &vars, &mut spent, &mut warned);
+		project_budget::record(spent);
+		out
+	};
+	// Outside a scope each file has the whole budget to itself.
+	for _ in 0..6 {
+		assert!(file().is_ok());
+	}
+	let _scope = project_budget::Scope::open();
+	for _ in 0..5 {
+		assert!(file().is_ok(), "15 MiB in total fits");
+	}
+	assert!(file().is_err(), "the sixth 3 MiB is past 16 MiB in total");
+	// A nested scope joins the outer one instead of starting over.
+	let _inner = project_budget::Scope::open();
+	assert!(file().is_err());
+}
+
+#[test]
+fn closing_a_project_scope_resets_the_budget() {
+	{
+		let _scope = project_budget::Scope::open();
+		project_budget::record(MAX_INTERP_DOCUMENT_BYTES);
+		assert_eq!(project_budget::spent(), MAX_INTERP_DOCUMENT_BYTES);
+	}
+	assert_eq!(project_budget::spent(), 0);
+}

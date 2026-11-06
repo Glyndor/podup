@@ -103,14 +103,18 @@ pub(in super::super) fn interpolated_value(
 	// key being a direct key of the service.
 	apply_merge_keys(&mut value);
 	if let Some(vars) = vars {
-		// One budget for the whole document. The per-scalar cap cannot see
+		// One budget for the whole project. The per-scalar cap cannot see
 		// repetition spread across scalars, which is the shape that reached
-		// 5.27 GB with no single substitution over 1 MiB.
-		let mut spent = 0usize;
+		// 5.27 GB with no single substitution over 1 MiB, and a per-file
+		// budget cannot see it spread across files: 40 included files of
+		// 14 MiB held 4 GB. Inside a project scope the files draw on one
+		// total; outside one, as for `parse_str`, the file stands alone.
+		let mut spent = crate::substitute::project_budget::spent();
 		// One dedup set for the whole pass: three references to `${X}` in
 		// the same document share one warning, not three.
 		let mut warned = HashSet::new();
 		interpolate_value(&mut value, vars, &mut spent, &mut warned)?;
+		crate::substitute::project_budget::record(spent);
 	}
 	Ok(value)
 }
