@@ -143,3 +143,26 @@ fn sysctls_map_string_value() {
 	let m = Sysctls::Map(im).to_map();
 	assert_eq!(m.get("net.core.somaxconn").map(|s| s.as_str()), Some("128"));
 }
+
+#[test]
+fn a_blank_shell_string_is_the_empty_override_and_a_word_string_is_not() {
+	for blank in ["", "  ", "\t"] {
+		assert!(Command::Shell(blank.into())
+			.to_container_override()
+			.is_empty());
+	}
+	assert_eq!(
+		Command::Shell("echo hi".into()).to_container_override(),
+		vec!["sh", "-c", "echo hi"]
+	);
+	assert_eq!(
+		Command::Exec(vec!["ls".into()]).to_container_override(),
+		vec!["ls"]
+	);
+	// `to_exec` is unchanged: a hook or healthcheck given a blank string still
+	// gets a shell.
+	assert_eq!(
+		Command::Shell(String::new()).to_exec(),
+		vec!["sh", "-c", ""]
+	);
+}

@@ -584,3 +584,6 @@ mod umask_directive_tests;
 
 #[cfg(test)]
 mod umask_regression_tests;
+
+#[cfg(test)]
+mod umask_value_tests;

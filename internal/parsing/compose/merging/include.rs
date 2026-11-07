@@ -34,12 +34,14 @@ pub(in super::super) fn parse_included_file(
 	env_files: &[String],
 	interpolate: bool,
 ) -> Result<ComposeFile> {
-	let display = path.display().to_string();
+	// Printed escaped: the path is what the file wrote.
+	let display = crate::error::sanitize_name(&path.display().to_string()).into_owned();
 	super::super::parse_file_inner_with_env(path, dir, env_files, interpolate).map_err(
 		|e| match e {
-			ComposeError::FileNotFound(p) => {
-				ComposeError::Include(format!("included compose file not found: {p}"))
-			}
+			ComposeError::FileNotFound(p) => ComposeError::Include(format!(
+				"included compose file not found: {}",
+				crate::error::sanitize_name(&p)
+			)),
 			ComposeError::Parse(yaml_err) => {
 				let msg = match yaml_err.location() {
 					Some(loc) => format!(
@@ -156,7 +158,23 @@ fn merge_includes_in(
 				project_directory,
 				..
 			} => (
-				env_file.as_ref().map(|ef| ef.to_list()).unwrap_or_default(),
+				// An `env_file` written on the `include:` is a path of the file
+				// that includes, so it is anchored to that file's directory here,
+				// before `project_directory` (which is the base of the included
+				// file's own paths) can change what a relative path means.
+				// Docker Compose does the same.
+				env_file
+					.as_ref()
+					.map(|ef| {
+						ef.to_list()
+							.into_iter()
+							// `/dev/null` is how an include says "no env file" (it keeps
+							// the including project's `.env` out); Docker Compose skips it.
+							.filter(|f| f != "/dev/null")
+							.map(|f| dir.join(f).to_string_lossy().into_owned())
+							.collect()
+					})
+					.unwrap_or_default(),
 				project_directory.as_ref().map(|pd| dir.join(pd)),
 			),
 			_ => (vec![], None),

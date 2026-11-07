@@ -58,7 +58,9 @@ pub(crate) fn normalized(text: &str) -> String {
 /// Check the final text before any existing container can be removed.
 pub(crate) fn validate_runtime(service: &str, text: &str) -> Result<()> {
 	if !valid(text) {
-		return Err(spec_field_error(service, "umask", text, diagnostic(text)).into());
+		// The value is not repeated: a umask that did not resolve to digits
+		// can be whatever the environment held (a service reads `${VAR}` too).
+		return Err(spec_field_error(service, "umask", "", diagnostic(text)).into());
 	}
 	Ok(())
 }
@@ -87,7 +89,7 @@ pub(crate) fn validate(value: &Value) -> Result<()> {
 					spec_field_error(
 						name.as_str().unwrap_or_default(),
 						"umask",
-						format!("{raw:?}"),
+						"",
 						error.to_string(),
 					)
 				})?;

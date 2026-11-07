@@ -342,8 +342,11 @@ impl Engine {
 				},
 				restart: (restart_policy, restart_tries),
 				stop_signal_timeout: (stop_signal, stop_timeout),
-				command: service.command.as_ref().map(|c| c.to_exec()),
-				entrypoint: service.entrypoint.as_ref().map(|c| c.to_exec()),
+				command: service.command.as_ref().map(|c| c.to_container_override()),
+				entrypoint: service
+					.entrypoint
+					.as_ref()
+					.map(|c| c.to_container_override()),
 				env: spec_env,
 				links,
 				image_platform: (image_os, image_arch),
