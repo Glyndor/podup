@@ -72,14 +72,22 @@ pub struct Region {
 	/// Rows painted by the previous repaint, to be walked back over.
 	painted: usize,
 	target: Target,
+	/// The interrupt handler that restores the cursor, when this region owns
+	/// it. Dropped with the region, so it cannot outlive the board and answer
+	/// the Ctrl-C of whatever the command does next.
+	_interrupt: Option<Handler>,
 }
 
 impl Region {
 	/// Start a region on `target`, hiding the cursor.
 	pub fn new(target: Target) -> Self {
 		target.write(HIDE_CURSOR);
-		restore_cursor_on_interrupt(target);
-		Self { painted: 0, target }
+		let _interrupt = restore_cursor_on_interrupt(target);
+		Self {
+			painted: 0,
+			target,
+			_interrupt,
+		}
 	}
 
 	/// Walk the cursor back over the live region and clear below, without
@@ -145,32 +153,53 @@ impl Drop for Region {
 /// same hole.
 ///
 /// Exits 130 (128 + SIGINT), the shell convention this binary already documents
-/// for an interrupted command. Installed per region rather than globally, so it
-/// cannot disturb the commands that handle their own interrupt (attached `up`,
-/// `exec`, `watch`) none of which open one.
-fn restore_cursor_on_interrupt(target: Target) {
-	if !claim_install() {
-		return;
-	}
-	// A tokio signal task, not a raw handler: the same shape `attach` and
-	// `watch` already use, and it runs ordinary code rather than being bound by
-	// async-signal-safety.
-	tokio::spawn(async move {
-		wait_for_interrupt().await;
+/// for an interrupted command. The handler belongs to the region and ends with
+/// it: `up` closes its board when the containers are created and then attaches,
+/// and a handler that outlived the board would exit the process on the Ctrl-C
+/// that attach is waiting for, before the stop it starts could finish.
+fn restore_cursor_on_interrupt(target: Target) -> Option<Handler> {
+	install(&INSTALLED, wait_for_interrupt(), move || {
 		target.write(SHOW_CURSOR);
 		std::process::exit(130);
-	});
+	})
 }
 
-/// Take the right to install the interrupt handler, once per process.
-///
-/// Two regions in one invocation (a `stats` after an `up` inside an embedding
-/// crate) must not stack handlers, since each would race to call
-/// `process::exit`. Split out of the installer so the latch is testable without
-/// spawning anything.
-fn claim_install() -> bool {
-	static INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-	!INSTALLED.swap(true, std::sync::atomic::Ordering::Relaxed)
+/// Whether a handler is installed. At most one at a time: two regions open
+/// together (a `stats` inside an embedding crate that is also showing a board)
+/// must not stack handlers, since each would race to call `process::exit`.
+static INSTALLED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// A running interrupt handler; dropping it stops the task and frees the latch.
+struct Handler {
+	task: tokio::task::JoinHandle<()>,
+	latch: &'static std::sync::atomic::AtomicBool,
+}
+
+impl Drop for Handler {
+	fn drop(&mut self) {
+		self.task.abort();
+		self.latch
+			.store(false, std::sync::atomic::Ordering::Relaxed);
+	}
+}
+
+/// Spawn `then` to run once `wait` resolves, unless `latch` says one is already
+/// installed. A tokio task, not a raw handler: the same shape `attach` and
+/// `watch` already use, and it runs ordinary code rather than being bound by
+/// async-signal-safety. Split out so the lifetime is testable without signals.
+fn install(
+	latch: &'static std::sync::atomic::AtomicBool,
+	wait: impl std::future::Future<Output = ()> + Send + 'static,
+	then: impl FnOnce() + Send + 'static,
+) -> Option<Handler> {
+	if latch.swap(true, std::sync::atomic::Ordering::Relaxed) {
+		return None;
+	}
+	let task = tokio::spawn(async move {
+		wait.await;
+		then();
+	});
+	Some(Handler { task, latch })
 }
 
 /// Resolve when the process is asked to stop.
