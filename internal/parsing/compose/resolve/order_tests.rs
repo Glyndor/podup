@@ -129,21 +129,25 @@ fn resolve_levels_missing_required_dep_is_error() {
 }
 
 #[test]
-fn resolve_order_optional_missing_dep_is_ignored() {
-	// A `required: false` dependency that is not defined is skipped, not an
-	// error; the dependent still resolves.
+fn resolve_order_optional_undefined_dep_is_an_error() {
+	// It used to be skipped. Docker Compose refuses a dependency defined
+	// nowhere whether or not it is `required: false`.
 	let yaml = "services:\n  web:\n    image: nginx\n    depends_on:\n      ghost:\n        condition: service_started\n        required: false\n";
 	let file = parse_str_raw(yaml).unwrap();
-	let order = resolve_order(&file).unwrap();
-	assert_eq!(order, vec!["web".to_string()]);
+	assert!(matches!(
+		resolve_order(&file),
+		Err(ComposeError::ServiceNotFound(name)) if name == "ghost"
+	));
 }
 
 #[test]
-fn resolve_levels_optional_missing_dep_is_ignored() {
+fn resolve_levels_optional_undefined_dep_is_an_error() {
 	let yaml = "services:\n  web:\n    image: nginx\n    depends_on:\n      ghost:\n        condition: service_started\n        required: false\n";
 	let file = parse_str_raw(yaml).unwrap();
-	let levels = resolve_levels(&file).unwrap();
-	assert_eq!(levels, vec![vec!["web".to_string()]]);
+	assert!(matches!(
+		resolve_levels(&file),
+		Err(ComposeError::ServiceNotFound(name)) if name == "ghost"
+	));
 }
 
 // Implicit dependencies: docker compose derives these from references that

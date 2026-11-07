@@ -34,6 +34,7 @@ pub(crate) fn relabel_error(name: &str, error: ComposeError) -> ComposeError {
 	};
 	match error {
 		ComposeError::Unsupported(text) => ComposeError::Unsupported(swap(text)),
+		ComposeError::Invalid(text) => ComposeError::Invalid(swap(text)),
 		ComposeError::InvalidPort(text) => ComposeError::InvalidPort(swap(text)),
 		ComposeError::NoImageOrBuild(_) => ComposeError::Job(format!(
 			"job '{}' has neither an image nor a build",
@@ -43,14 +44,15 @@ pub(crate) fn relabel_error(name: &str, error: ComposeError) -> ComposeError {
 	}
 }
 
-/// A job whose required `depends_on` names neither a service nor a job.
+/// A job whose `depends_on` names neither a service nor a job, `required: false`
+/// or not: a name defined nowhere is a typo, as for a service.
 pub(crate) fn check_job_dependencies(file: &ComposeFile) -> Result<(), ComposeError> {
 	let everything = super::with_jobs_as_services(file);
 	for (name, job) in &file.jobs {
 		let deps =
 			crate::compose::dependencies::effective_depends_on(&job.service, &everything.services);
 		for dep in deps.service_names() {
-			if deps.required_for(&dep) && !everything.services.contains_key(&dep) {
+			if !everything.services.contains_key(&dep) {
 				return Err(dependency_error(name, &dep));
 			}
 		}

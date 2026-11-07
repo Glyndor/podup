@@ -11,9 +11,8 @@ use podup::ComposeError;
 pub(crate) fn validate_project_directory(dir: Option<&Path>) -> podup::Result<()> {
 	if let Some(dir) = dir {
 		if !dir.is_dir() {
-			return Err(ComposeError::Unsupported(format!(
-				"--project-directory {} does not exist or is not a directory",
-				dir.display()
+			return Err(ComposeError::Invalid(format!(
+				"--project-directory {dir:?} does not exist or is not a directory"
 			)));
 		}
 	}

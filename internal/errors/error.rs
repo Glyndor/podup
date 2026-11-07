@@ -60,6 +60,11 @@ pub enum ComposeError {
 	Watch(String),
 	/// A compose feature is recognized but unsupported on Podman/podup.
 	Unsupported(String),
+	/// Something the user wrote is not valid: a name that breaks the rules, a
+	/// directory that is not there, a file with nothing in it. It is not a
+	/// feature podup lacks, so it is printed without the `unsupported feature:`
+	/// label that [`ComposeError::Unsupported`] carries.
+	Invalid(String),
 	/// A top-level `jobs:` entry is malformed, collides with a service, or
 	/// cannot be launched the way it was asked for. The text names the job.
 	Job(String),
@@ -285,6 +290,7 @@ impl fmt::Display for ComposeError {
 			Self::Include(s) => write!(f, "include error: {s}"),
 			Self::Watch(s) => write!(f, "watch error: {s}"),
 			Self::Unsupported(s) => write!(f, "unsupported feature: {s}"),
+			Self::Invalid(s) => write!(f, "{s}"),
 			Self::Job(s) => write!(f, "job error: {s}"),
 			Self::RunExited(code) => write!(f, "run container exited with code {code}"),
 			Self::PreStart(message) => write!(f, "{message}"),

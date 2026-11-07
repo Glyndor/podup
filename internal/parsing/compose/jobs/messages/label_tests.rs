@@ -76,9 +76,12 @@ fn validation_errors_about_a_job_say_job() {
 }
 
 #[test]
-fn an_optional_dependency_that_is_missing_is_not_an_error() {
+fn an_optional_dependency_that_is_not_defined_is_an_error_like_a_required_one() {
+	// It used to pass. `required: false` is for a dependency that exists and may
+	// be unavailable; a name defined nowhere is a typo, as for a service.
 	let yaml = "jobs:\n  a:\n    image: x\n    depends_on:\n      ghost:\n        condition: service_started\n        required: false\n    triggers: {manual: true}\n";
-	validate_config(&parse_str(yaml).unwrap()).expect("optional dependency");
+	let error = validate_config(&parse_str(yaml).unwrap()).expect_err("undefined dependency");
+	assert!(error.to_string().contains("ghost"), "{error}");
 }
 
 #[test]

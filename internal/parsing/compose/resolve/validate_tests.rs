@@ -249,3 +249,29 @@ fn invalid_port_protocol_is_rejected() {
 	let yaml = "services:\n  web:\n    image: x\n    ports: ['80/banana']\n";
 	assert!(validate_str(yaml).is_err());
 }
+
+#[test]
+fn an_empty_file_and_a_bad_service_name_are_invalid_not_unsupported() {
+	for yaml in ["services: {}\n", "services:\n  'a b':\n    image: x\n"] {
+		let error = validate_config(&file(yaml)).expect_err(yaml);
+		assert!(
+			matches!(error, ComposeError::Invalid(_)),
+			"{yaml}: {error:?}"
+		);
+		assert!(
+			!error.to_string().contains("unsupported feature"),
+			"{error}"
+		);
+	}
+}
+
+#[test]
+fn a_control_character_in_a_service_name_does_not_reach_the_message() {
+	let error = validate_config(&file("services:\n  \"a\\e[31mb\":\n    image: x\n"))
+		.expect_err("the name is invalid");
+	assert!(
+		!error.to_string().contains('\u{1b}'),
+		"{:?}",
+		error.to_string()
+	);
+}
