@@ -30,10 +30,15 @@ import yaml
 # insensitive in GitHub Actions: `SECRETS.release_ed25519_key`, `tojson(secrets)`
 # and `Secrets['Release_Ed25519_Key']` read the same secret as the canonical
 # spelling, so the match has to be case insensitive too.
-KEY = re.compile(
-    r"secrets(?:\.|\[\s*['\"])\w*RELEASE_ED25519_KEY|toJSON\(\s*secrets\s*\)|secrets\s*\[\s*(?!['\"])",
-    re.IGNORECASE,
-)
+# Any use of the `secrets` context in an expression counts as reaching for the
+# key, except the job token, which is not the signing key. The earlier pattern
+# listed spellings of the key (`secrets.NAME`, `secrets['NAME']`,
+# `toJSON(secrets)`) and every spelling it did not list got through, such as
+# `toJSON((secrets))` or `secrets . NAME`. A job that has no business with the
+# key has no business with the context either, so the pattern names the context
+# and allows only the token. Names are matched without regard to case because
+# GitHub Actions reads them that way.
+KEY = re.compile(r"\bsecrets\b(?!\s*\.\s*GITHUB_TOKEN\b)", re.IGNORECASE)
 EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 PINNED = ("sign", "attest", "release")
 KEY_JOBS = ("sign", "release")

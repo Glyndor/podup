@@ -146,6 +146,9 @@ refused "tojson(secrets) in lower case" "step('build-deb', 'Build the package')[
 refused "the key by an upper case context" "step('build-deb', 'Build the package')['env'] = {'K': '\${{ SECRETS.RELEASE_ED25519_KEY }}'}"
 refused "the key by a lower case name" "step('build-deb', 'Build the package')['env'] = {'K': '\${{ secrets.release_ed25519_key }}'}"
 refused "the key by a mixed case index" "step('build-deb', 'Build the package')['env'] = {'K': '\${{ Secrets[\"Release_Ed25519_Key\"] }}'}"
+refused "toJSON in parentheses" "step('build-deb', 'Build the package')['env'] = {'ALL': '\${{ toJSON((secrets)) }}'}"
+refused "the context with spaces around the dot" "step('build-deb', 'Build the package')['env'] = {'K': '\${{ secrets . ANY_NAME }}'}"
+refused "the context through a function" "step('build-deb', 'Build the package')['env'] = {'K': '\${{ format(\"{0}\", secrets) }}'}"
 refused "secrets: inherit on a job" "spec['jobs']['build-deb']['secrets'] = 'inherit'"
 refused "the key in the environment of the workflow" "spec['env'] = KEY"
 refused "the signing step moved into the build job" "spec['jobs']['build']['steps'].append({'name': 'Sign', 'env': KEY, 'run': 'python3 .github/scripts/release/sign.py x'})"
@@ -168,6 +171,7 @@ accepted "a build step with its own variables in the build job" "spec['jobs']['b
 accepted "a change in the Debian build job" "spec['jobs']['build-deb']['timeout-minutes'] = 99"
 accepted "a change in the SBOM job" "spec['jobs']['sbom']['steps'].append({'name': 'x', 'run': 'echo hi'})"
 accepted "a defaults block on a job that is not pinned" "spec['jobs']['build']['defaults'] = {'run': {'shell': 'bash'}}"
+accepted "the job token in a build job" "step('build-deb', 'Build the package')['env'] = {'GH_TOKEN': '\${{ secrets.GITHUB_TOKEN }}'}"
 
 echo
 echo "$pass passed, $fail failed"
