@@ -19,7 +19,7 @@ pub(crate) fn effective_env(
 ) -> Result<BTreeMap<String, String>> {
 	let entries = service.env_file.to_entries();
 	let env_file_vars = if !entries.is_empty() {
-		env_file::load_env_file_entries(&entries, base_dir)?
+		env_file::load_env_file_entries_for(&entries, base_dir, &service.environment.to_map())?
 	} else {
 		HashMap::new()
 	};

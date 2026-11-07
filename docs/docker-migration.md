@@ -31,7 +31,7 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 |---|---|
 | Images / build | `image`, `build` (context, dockerfile, args, target, cache_from, cache_to, secrets, labels, network), `pull_policy` (time policies map to `newer`), `pull_refresh_after` (strict syntax only) |
 | Execution | `command`, `entrypoint`, `working_dir`, `user`, `umask`, `platform`, `tty`, `stdin_open` |
-| Environment | `environment`, `env_file` (dotenv format), variable substitution (`${VAR:-default}`) |
+| Environment | `environment`, `env_file` (dotenv format; unquoted and double-quoted values are interpolated), variable substitution (`${VAR:-default}`) |
 | Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `domainname`, `dns`, `dns_opt`, `dns_search`, `extra_hosts` |
 | Volumes | `volumes` (bind, named, tmpfs, npipe), `tmpfs`, `volumes_from` |
 | Secrets / configs | `secrets`, `configs` (file, inline content, environment source, and `external: true` Podman-native secrets) |
@@ -378,7 +378,7 @@ The `[Build]` keys `Annotation=`, `Volume=` and `DNS=` have no compose `build:` 
 
 | Feature | Status |
 |---|---|
-| `env_file.format` other than `dotenv` | Any explicit `env_file.format` (including dotenv) emits a warning; the file is still read as dotenv |
+| `env_file.format` other than `dotenv` and `raw` | Emits a warning; the file is still read as dotenv |
 | `provider:` / model-runner services (`provider`, top-level `models`) | Modeled and parsed, but not honored; a not-honored warning is emitted |
 | Top-level `jobs:` `schedule` trigger | The structure is validated and each job with a schedule is reported once. podup does not fire schedules; `generate quadlet` exports them as systemd timers where it can, see [Jobs and schedules](#jobs-and-schedules). `podup run` starts a job by hand (a `manual: false` job is refused, also as a dependency), `podup up` never does. `!reset`/`!override` work on triggers, a job never activates a service behind an inactive profile, and `down` removes job containers; see [Jobs](commands-reference.md#jobs) |
 | Configurable pod exit policy and stop timeout | The pod exit policy stays fixed at `continue`; no pod-level Compose source maps to stop timeout |
