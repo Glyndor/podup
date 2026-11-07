@@ -23,6 +23,11 @@ on:
       # without this line a pull request that touches only the reusable
       # merges without ever running it.
       - ".github/workflows/reusable-rust-debian.yml"
+      # The classifier that decides whether this lane builds at all. It is
+      # read from the base commit, so a pull request that edits it is judged
+      # by the previous version, which builds the package; naming it here
+      # keeps that rule reachable instead of dead.
+      - ".github/scripts/checks/debian-ci-inputs.sh"
       # The release job builds the .deb too, in its own container, and until
       # this line a change to it triggered nothing. That is the shape of #1295:
       # the filter left tests/** out, and a broken develop rode twenty pull
@@ -53,6 +58,11 @@ on:
       # without this line a pull request that touches only the reusable
       # merges without ever running it.
       - ".github/workflows/reusable-rust-debian.yml"
+      # The classifier that decides whether this lane builds at all. It is
+      # read from the base commit, so a pull request that edits it is judged
+      # by the previous version, which builds the package; naming it here
+      # keeps that rule reachable instead of dead.
+      - ".github/scripts/checks/debian-ci-inputs.sh"
       # The release job builds the .deb too, in its own container, and until
       # this line a change to it triggered nothing. That is the shape of #1295:
       # the filter left tests/** out, and a broken develop rode twenty pull

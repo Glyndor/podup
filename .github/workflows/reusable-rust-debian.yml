@@ -89,6 +89,14 @@ concurrency:
   group: rust-debian-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ inputs.arch }}-${{ inputs.package-name }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# The range the classifier judges and the event that produced it. Every job
+# that asks the classifier whether the package has to be built reads these, so
+# the range is named once instead of in each job.
+env:
+  EVENT: ${{ github.event_name }}
+  BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+
 jobs:
   build:
     name: dpkg-buildpackage
@@ -108,7 +116,33 @@ jobs:
       # package is allowed to declare a shared-library dependency.
       RUST_TARGET: ${{ inputs.rust-target }}
     steps:
+      # The Debian image carries no git, and the classifier needs it: it reads
+      # the judge from the reviewed base commit and diffs the whole range. A
+      # checkout without git falls back to a source archive with no history,
+      # and there is nothing to judge.
+      - name: Install git for the classifier
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends git
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The classifier reads the judge from the reviewed base commit and
+          # diffs the whole range, so the history has to be here.
+          fetch-depth: 0
+
+      # The judge is read from the base, never from this checkout: a pull
+      # request that edited the classifier must not be judged by its own edit.
+      # A base without the judge leaves the output empty, and an empty output
+      # builds the package, because the only safe reading of a missing answer
+      # is "build".
+      - name: Decide whether the Debian package must be built
+        id: decide
+        run: git show "$BASE_SHA:.github/scripts/checks/debian-ci-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
+
       - name: Install build tooling
+        if: steps.decide.outputs.run != 'false'
         env:
           DEBIAN_FRONTEND: noninteractive
           RUST_TOOLCHAIN: ${{ inputs.rust-toolchain }}
@@ -131,7 +165,7 @@ jobs:
         # Only when the caller asked for one. rustup goes on PATH for every
         # later step, and the target is added against the pinned toolchain
         # rather than the default, because rustup targets are per-toolchain.
-        if: inputs.rust-toolchain != ''
+        if: steps.decide.outputs.run != 'false' && inputs.rust-toolchain != ''
         env:
           RUST_TOOLCHAIN: ${{ inputs.rust-toolchain }}
           RUST_TARGET: ${{ inputs.rust-target }}
@@ -145,17 +179,16 @@ jobs:
           fi
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
       - name: Confirm build dependencies are satisfiable
+        if: steps.decide.outputs.run != 'false'
         run: dpkg-checkbuilddeps
 
       - name: Build the package
+        if: steps.decide.outputs.run != 'false'
         run: dpkg-buildpackage -us -uc -b
 
       - name: Confirm the .deb was produced
+        if: steps.decide.outputs.run != 'false'
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -212,7 +245,7 @@ jobs:
           cp "$deb" "$(basename "$deb")"
 
       - name: Upload artifact
-        if: ${{ inputs.upload-artifact }}
+        if: ${{ inputs.upload-artifact && steps.decide.outputs.run != 'false' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ${{ inputs.artifact-name }}
@@ -236,7 +269,33 @@ jobs:
       PKG: ${{ inputs.package-name }}
       OFFLINE_ARGS: ${{ inputs.offline-cargo-args }}
     steps:
+      # The Debian image carries no git, and the classifier needs it: it reads
+      # the judge from the reviewed base commit and diffs the whole range. A
+      # checkout without git falls back to a source archive with no history,
+      # and there is nothing to judge.
+      - name: Install git for the classifier
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends git
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The classifier reads the judge from the reviewed base commit and
+          # diffs the whole range, so the history has to be here.
+          fetch-depth: 0
+
+      # The judge is read from the base, never from this checkout: a pull
+      # request that edited the classifier must not be judged by its own edit.
+      # A base without the judge leaves the output empty, and an empty output
+      # builds the package, because the only safe reading of a missing answer
+      # is "build".
+      - name: Decide whether the Debian package must be built
+        id: decide
+        run: git show "$BASE_SHA:.github/scripts/checks/debian-ci-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
+
       - name: Install build tooling
+        if: steps.decide.outputs.run != 'false'
         env:
           DEBIAN_FRONTEND: noninteractive
           RUST_TOOLCHAIN: ${{ inputs.rust-toolchain }}
@@ -254,7 +313,7 @@ jobs:
         # Only when the caller asked for one. rustup goes on PATH for every
         # later step, and the target is added against the pinned toolchain
         # rather than the default, because rustup targets are per-toolchain.
-        if: inputs.rust-toolchain != ''
+        if: steps.decide.outputs.run != 'false' && inputs.rust-toolchain != ''
         env:
           RUST_TOOLCHAIN: ${{ inputs.rust-toolchain }}
           RUST_TARGET: ${{ inputs.rust-target }}
@@ -268,11 +327,8 @@ jobs:
           fi
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Vendor dependencies (the only step allowed network access)
+      - name: Vendor dependencies (the only build step allowed network access)
+        if: steps.decide.outputs.run != 'false'
         run: |
           cargo vendor vendor
           # Appended, not written: .cargo/config.toml is tracked and carries
@@ -282,6 +338,7 @@ jobs:
           printf '\n[source.crates-io]\nreplace-with = "vendored-sources"\n\n[source.vendored-sources]\ndirectory = "vendor"\n' >> .cargo/config.toml
 
       - name: Build offline from the vendored tree
+        if: steps.decide.outputs.run != 'false'
         env:
           CARGO_NET_OFFLINE: "true"
         run: |
