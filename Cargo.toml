@@ -323,6 +323,10 @@ name = "workflow_required_checks"
 path = "tests/repository/workflows/workflow_required_checks.rs"
 
 [[test]]
+name = "workflow_rust_ci_classifier"
+path = "tests/repository/workflows/workflow_rust_ci_classifier.rs"
+
+[[test]]
 name = "workflow_toolchain_pin"
 path = "tests/repository/workflows/workflow_toolchain_pin.rs"
 
