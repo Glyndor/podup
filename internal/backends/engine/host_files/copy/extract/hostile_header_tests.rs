@@ -7,7 +7,10 @@ use std::os::unix::fs::MetadataExt;
 use tar::EntryType;
 
 use super::archive::extract_tar_guarded;
-use super::hostile_support::{archive, dir, file, pax, raw, set_mode, symlink, Arena};
+use super::hostile_support::{archive, dir, file, pax, raw, set_mode, Arena};
+
+#[path = "hostile_header_tests/pax_paths.rs"]
+mod pax_paths;
 
 fn run(arena: &Arena, bytes: &[u8]) -> crate::error::Result<()> {
 	extract_tar_guarded(bytes, &arena.dest)
@@ -90,23 +93,6 @@ fn a_nul_inside_a_name_cannot_hide_a_traversal() {
 }
 
 #[test]
-fn pax_path_and_linkpath_cannot_smuggle_a_traversal_past_the_header_name() {
-	let arena = Arena::new();
-	let out = arena.outside_str();
-	let tar = archive(&[
-		pax(&[("path", b"../outside/pwn")]),
-		file("innocent", b"pwn", 0o644),
-		pax(&[("path", format!("{out}/secret").as_bytes())]),
-		file("innocent2", b"pwn", 0o666),
-		pax(&[("linkpath", out.as_bytes())]),
-		symlink("lnk", "x"),
-		file("lnk/pwn", b"pwn", 0o644),
-	]);
-	let _ = run(&arena, &tar);
-	arena.assert_outside_untouched("pax path override");
-}
-
-#[test]
 fn malformed_pax_records_end_in_an_error_or_a_skip_never_a_panic() {
 	let bodies: [&[u8]; 7] = [
 		b"999999999 path=../outside/pwn\n",
@@ -128,26 +114,6 @@ fn malformed_pax_records_end_in_an_error_or_a_skip_never_a_panic() {
 		assert_eq!(names, ["f"], "pax body {body:?} renamed or added an entry");
 		arena.assert_outside_untouched(&format!("pax body {body:?}"));
 	}
-}
-
-#[test]
-fn very_long_and_very_deep_names_are_handled() {
-	let arena = Arena::new();
-	let long = "a".repeat(300);
-	let deep = "d/".repeat(3000) + "f";
-	let tar = archive(&[
-		pax(&[("path", long.as_bytes())]),
-		file("x", b"x", 0o644),
-		pax(&[("path", deep.as_bytes())]),
-		file("y", b"y", 0o644),
-		pax(&[("path", "../".repeat(5000).as_bytes())]),
-		file("z", b"z", 0o644),
-	]);
-	assert!(
-		run(&arena, &tar).is_err(),
-		"a 300 byte component cannot be created"
-	);
-	arena.assert_outside_untouched("long and deep names");
 }
 
 #[test]
