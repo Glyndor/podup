@@ -238,8 +238,8 @@ service-name prefix and \fB\-\-no\-log\-prefix\fR drops the prefix.
 Execute a command in a running service container. Options:
 \fB\-e\fR/\fB\-\-env\fR KEY=VAL (repeatable), \fB\-u\fR/\fB\-\-user\fR,
 \fB\-w\fR/\fB\-\-workdir\fR, \fB\-\-privileged\fR, \fB\-d\fR/\fB\-\-detach\fR,
-\fB\-T\fR/\fB\-\-no\-tty\fR, \fB\-\-index\fR \fIN\fR. Like
-\fBdocker compose exec\fR, a pseudo-TTY with live stdin is allocated by default
+\fB\-T\fR/\fB\-\-no\-tty\fR, \fB\-\-index\fR \fIN\fR. A pseudo-TTY
+with live stdin is allocated by default
 when both stdin and stdout are terminals (\fB\-T\fR opts out), on Linux, macOS
 and Windows.
 .TP
@@ -306,7 +306,7 @@ quadlet-mode install).
 .TP
 .B version
 Print podup's version. \fB\-\-short\fR prints just the number;
-\fB\-\-format json\fR emits it as JSON. Mirrors \fBdocker compose version\fR.
+\fB\-\-format json\fR emits it as JSON.
 .TP
 .B completions \fISHELL\fR
 Print a shell completion script to stdout for \fBbash\fR, \fBzsh\fR, \fBfish\fR,
@@ -361,8 +361,8 @@ A usage error (invalid arguments or flags).
 \fBrun\fR/\fBexec\fR: the command was not found.
 .TP
 .B 130
-An attached \fBup\fR was ended by SIGINT or SIGTERM. 130 for both, matching
-\fBdocker compose\fR; the project is still torn down before the code is
+An attached \fBup\fR was ended by SIGINT or SIGTERM. 130 for both;
+the project is still torn down before the code is
 returned.
 .PP
 \fBrun\fR propagates the container's own exit code verbatim, so any other
