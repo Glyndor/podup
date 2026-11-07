@@ -140,8 +140,12 @@ pub(in crate::backends::engine::lifecycle) fn restart_service_set(
 	}
 }
 
+mod pre_stop;
 mod service_ops;
 mod teardown;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(all(test, unix))]
+mod pre_stop_tests;

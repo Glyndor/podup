@@ -70,7 +70,7 @@ impl Engine {
 						"Restarted (dependency)"
 					};
 					let names = live_by_service.get(name).cloned().unwrap_or_default();
-					self.restart_one_service(names, grace, done, &acted)
+					self.restart_one_service(names, grace, &service.pre_stop, done, &acted)
 				});
 				if let Some(e) = first_error(join_bounded(futs).await) {
 					first_err.get_or_insert(e);
