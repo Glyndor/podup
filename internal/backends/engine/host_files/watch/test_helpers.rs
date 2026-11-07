@@ -52,7 +52,16 @@ impl crate::engine::Engine {
 
 	/// Test seam: run the watch restart action against `container_name`.
 	pub async fn test_watch_restart(&self, container_name: &str) -> crate::error::Result<()> {
-		self.watch_restart(container_name).await
+		self.watch_restart(container_name, 10).await
+	}
+
+	/// Test seam: the same with the grace the service declares.
+	pub async fn test_watch_restart_with_grace(
+		&self,
+		container_name: &str,
+		grace: i32,
+	) -> crate::error::Result<()> {
+		self.watch_restart(container_name, grace).await
 	}
 
 	/// Test seam: run the watch exec action (`cmd`) against `container_name`.

@@ -12,6 +12,7 @@ use execution::drop_recheck;
 pub(in crate::backends::engine) use execution::parallel;
 use planning::seed;
 use planning::targets;
+pub(in crate::backends::engine) use targets::{restart_deadline, stop_timeout_param};
 
 use std::collections::HashMap;
 

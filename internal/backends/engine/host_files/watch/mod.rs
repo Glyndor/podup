@@ -59,6 +59,7 @@ const WATCH_MAX_BATCH_PATHS: usize = 4096;
 // Rule tracking
 // ---------------------------------------------------------------------------
 
+#[derive(Clone)]
 struct RuleEntry {
 	service_name: String,
 	container_name: String,
@@ -154,16 +155,21 @@ impl Engine {
 					// exists: a removal dispatched later cannot read it from
 					// the filesystem.
 					let shape = rule_shape(&abs);
-					rule_entries.push(RuleEntry {
-						service_name: name.clone(),
-						container_name: self.first_replica_name(name, service),
-						rule: rule.clone(),
-						abs_path: abs,
-						build_context_abs,
-						build_context_patterns,
-						mounts,
-						shape,
-					});
+					// One entry per replica: a sync, restart or exec has to reach every
+					// container of the service, not only the first one.
+					rule_entries.extend(self.per_replica(
+						RuleEntry {
+							service_name: name.clone(),
+							container_name: String::new(),
+							rule: rule.clone(),
+							abs_path: abs,
+							build_context_abs,
+							build_context_patterns,
+							mounts,
+							shape,
+						},
+						service,
+					));
 				}
 			}
 		}
@@ -427,11 +433,19 @@ impl Engine {
 				self.watch_rebuild(file, &entry.service_name).await?;
 			}
 			WatchAction::Restart => {
-				self.watch_restart(&entry.container_name).await?;
+				self.watch_restart(
+					&entry.container_name,
+					self.watch_grace(file, &entry.service_name),
+				)
+				.await?;
 			}
 			WatchAction::SyncAndRestart => {
 				self.maybe_sync(entry, path, ensured).await?;
-				self.watch_restart(&entry.container_name).await?;
+				self.watch_restart(
+					&entry.container_name,
+					self.watch_grace(file, &entry.service_name),
+				)
+				.await?;
 			}
 			WatchAction::SyncAndExec => {
 				self.maybe_sync(entry, path, ensured).await?;
