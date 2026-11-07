@@ -8,8 +8,11 @@ updates:
     labels: ["type:deps", "type:ci", "area:ci"]
     open-pull-requests-limit: 10
     target-branch: "develop"
-    # Sixteen Glyndor reusables and five `actions/*` references across the
-    # workflows, all SHA-pinned. Without grouping, one upstream release day
+    # Seven distinct `actions/*` actions across the workflows (attest-build-
+    # provenance, cache, checkout, download-artifact, setup-go, setup-python,
+    # upload-artifact), all SHA-pinned. The fifteen reusables the workflows
+    # call are local `./.github/workflows/` files, which this ecosystem has
+    # nothing to bump. Without grouping, one upstream release day
     # means near-identical pull requests and full CI runs per action. One pull
     # request per day is enough to review the same information.
     # Grouped into two, not one. The Glyndor reusables and the actions/* get
@@ -27,8 +30,9 @@ updates:
     #
     # The second group is named `github-owned`, not `third-party` as in apt.
     # apt's comment calls it "third-party" but in this repository every
-    # non-Glyndor `uses:` is in the `actions/*` namespace (checkout, setup-python,
-    # upload-artifact, download-artifact, attest-build-provenance) -- all
+    # non-Glyndor `uses:` is in the `actions/*` namespace (checkout, cache,
+    # setup-python, setup-go, upload-artifact, download-artifact,
+    # attest-build-provenance) -- all
     # GitHub-owned, all runner primitives per the org CI standard. `third-party`
     # is the wrong word here: it implies an external maintainer I need to
     # audit, when in fact this group is GitHub's own primitives. The name
@@ -126,10 +130,12 @@ updates:
     # (`alpine:3.24@sha256:...`): a digest alone gives this ecosystem no release
     # stream to follow, and the pin had sat five months behind. Nothing else
     # carries an Alpine security fix into it. The same digest is written out in
-    # every other scenario's compose file, which this entry does not read: the
-    # pull request for this Dockerfile fails `bench_pins_one_image_digest` until
-    # `bench/lib/sync-image-digest.sh` is run on its branch, and that is the
-    # whole manual step.
+    # every other scenario's compose file that uses Alpine (nine of the other
+    # thirteen), which this entry does not read. The remaining four pin busybox,
+    # nginx or redis by digest alone, and nothing follows those: they move by
+    # hand. The pull request for this Dockerfile fails
+    # `bench_pins_one_image_digest` until `bench/lib/sync-image-digest.sh` is
+    # run on its branch, and that is the whole manual step.
     schedule:
       interval: "daily"
     labels: ["type:deps", "type:ci", "area:ci"]
@@ -152,7 +158,9 @@ updates:
     labels: ["type:deps", "type:ci", "area:ci"]
     open-pull-requests-limit: 10
     target-branch: "develop"
-    # The manifest is `--require-hashes` and holds the whole tree of
+    # The manifest carries a hash for every package, and the `pip install`
+    # that reads it passes `--require-hashes` on its command line (the file
+    # does not hold the flag). It holds the whole tree of
     # `cryptography`: cffi and pycparser are pinned beside it and pycparser is
     # cffi's own requirement. A bump of one alone can leave the file asking for
     # a pair that does not resolve, and the signing step is the one that finds
