@@ -61,39 +61,85 @@ fn flags_in_help(help: &str) -> BTreeSet<String> {
 	out
 }
 
-/// The subcommands whose flag tables the reference documents. Aliases are
-/// excluded: they resolve to the same command and share its table.
-const COMMANDS: [&str; 29] = [
-	"up", "down", "create", "start", "stop", "restart", "build", "ps", "ls", "logs", "events",
-	"top", "stats", "port", "images", "volumes", "run", "exec", "cp", "attach", "kill", "rm",
-	"wait", "scale", "commit", "export", "pull", "push", "config",
-];
+/// The first word of each line under `Commands:`, `help` left out.
+fn subcommands(help: &str) -> Vec<String> {
+	help.lines()
+		.skip_while(|line| line.trim_end() != "Commands:")
+		.skip(1)
+		.take_while(|line| line.starts_with("  "))
+		.filter_map(|line| line.split_whitespace().next())
+		.filter(|name| *name != "help")
+		.map(str::to_string)
+		.collect()
+}
 
-/// The lines of `docs/commands.md` documenting one command: from its `###`
-/// heading to the next heading of any level.
+fn help_of(path: &[String]) -> String {
+	let out = Command::new(bin())
+		.args(path)
+		.arg("--help")
+		.output()
+		.unwrap_or_else(|e| panic!("run {path:?} --help: {e}"));
+	assert!(out.status.success(), "`{path:?} --help` failed");
+	String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Every command the binary lists, nested ones included, as the words that
+/// reach it (`["generate", "quadlet"]`). Read from `--help` so a command added
+/// later is checked without anyone remembering to list it here: the list this
+/// replaced was written by hand and left nine commands out. Aliases are never
+/// listed there, so they are excluded: they share the table.
+fn commands() -> Vec<Vec<String>> {
+	fn walk(prefix: &[String], out: &mut Vec<Vec<String>>) {
+		for name in subcommands(&help_of(prefix)) {
+			let mut path = prefix.to_vec();
+			path.push(name);
+			out.push(path.clone());
+			walk(&path, out);
+		}
+	}
+	let mut out = Vec::new();
+	walk(&[], &mut out);
+	out
+}
+
+/// The lines of the reference documenting one command: from its `###` heading
+/// to the next heading of any level.
 ///
 /// Headings carry their positional arguments (``### `cp <SRC> <DST>` ``) so a
-/// command matches when the first backticked word of the heading is its name.
+/// command matches when the first backticked words of the heading are its path.
 /// `pause` and `unpause` share one heading, which the `/`-separated form covers.
-fn section_for(docs: &str, cmd: &str) -> Option<String> {
-	let mut lines = docs.lines();
-	let heading = lines.by_ref().find(|line| {
-		line.strip_prefix("### ").is_some_and(|rest| {
-			rest.split('/').any(|part| {
-				part.trim().trim_start_matches('`').split(['`', ' ']).next() == Some(cmd)
+/// A subcommand with no heading of its own (`autostart install`) falls back to
+/// its parent's section.
+fn section_for(docs: &str, path: &[String]) -> Option<String> {
+	for len in (1..=path.len()).rev() {
+		let want = &path[..len];
+		let mut lines = docs.lines();
+		let heading = lines.by_ref().find(|line| {
+			line.strip_prefix("### ").is_some_and(|rest| {
+				rest.split('/').any(|part| {
+					let words: Vec<&str> = part
+						.trim()
+						.trim_start_matches('`')
+						.split(['`', ' '])
+						.collect();
+					words.len() >= len && words[..len].iter().zip(want).all(|(a, b)| a == b)
+				})
 			})
-		})
-	});
-	heading?;
-	Some(
-		lines
-			// Both levels, and not a bare `#` test: a fenced bash block starts its
-			// comments with `#` at column zero, and stopping there would truncate
-			// the section early and fail a documented flag.
-			.take_while(|line| !line.starts_with("## ") && !line.starts_with("### "))
-			.collect::<Vec<_>>()
-			.join("\n"),
-	)
+		});
+		if heading.is_none() {
+			continue;
+		}
+		return Some(
+			lines
+				// Both levels, and not a bare `#` test: a fenced bash block starts
+				// its comments with `#` at column zero, and stopping there would
+				// truncate the section early and fail a documented flag.
+				.take_while(|line| !line.starts_with("## ") && !line.starts_with("### "))
+				.collect::<Vec<_>>()
+				.join("\n"),
+		);
+	}
+	None
 }
 
 #[test]
@@ -107,7 +153,7 @@ fn every_cli_flag_is_documented() {
 	// clap marks the compose-wide options `global`, so every command's `--help`
 	// reprints them, but they are documented once, in the global table, not in
 	// each command's own. Subtract them or the per-command check demands that
-	// `--socket` be listed under all twenty-nine.
+	// `--socket` be listed under every command.
 	let global = Command::new(bin())
 		.arg("--help")
 		.output()
@@ -115,15 +161,17 @@ fn every_cli_flag_is_documented() {
 	let globals = flags_in_help(&String::from_utf8_lossy(&global.stdout));
 
 	let mut missing: Vec<String> = Vec::new();
-	for cmd in COMMANDS {
-		let out = Command::new(bin())
-			.args([cmd, "--help"])
-			.output()
-			.unwrap_or_else(|e| panic!("run {cmd} --help: {e}"));
-		assert!(out.status.success(), "`{cmd} --help` failed");
-		let help = String::from_utf8_lossy(&out.stdout);
-		let section = section_for(&docs, cmd)
-			.unwrap_or_else(|| panic!("docs/commands.md has no `### {cmd}` section"));
+	let all = commands();
+	assert!(
+		all.len() >= 38,
+		"found only {} commands: {all:?}",
+		all.len()
+	);
+	for path in &all {
+		let cmd = path.join(" ");
+		let help = help_of(path);
+		let section = section_for(&docs, path)
+			.unwrap_or_else(|| panic!("the command reference has no `### {cmd}` section"));
 		for flag in flags_in_help(&help) {
 			if globals.contains(&flag) {
 				continue;
@@ -202,12 +250,8 @@ fn the_cli_help_names_no_other_vendor() {
 		.output()
 		.expect("run --help");
 	check("(top level)", &String::from_utf8_lossy(&out.stdout));
-	for cmd in COMMANDS {
-		let out = Command::new(bin())
-			.args([cmd, "--help"])
-			.output()
-			.unwrap_or_else(|e| panic!("run {cmd} --help: {e}"));
-		check(cmd, &String::from_utf8_lossy(&out.stdout));
+	for path in commands() {
+		check(&path.join(" "), &help_of(&path));
 	}
 
 	assert!(
