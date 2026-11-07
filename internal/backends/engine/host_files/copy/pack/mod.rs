@@ -7,4 +7,5 @@
 
 pub(in crate::backends::engine::host_files::copy) mod archive;
 pub(in crate::backends::engine) mod common;
+mod linked_dir;
 pub(in crate::backends::engine) mod transport;

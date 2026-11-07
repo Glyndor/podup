@@ -32,6 +32,7 @@ use crate::error::{ComposeError, Result};
 
 use super::super::upload::verify::{SentEntry, SentKind};
 use super::common::{append_pinned, push_entry, record_one, walk, KindDispatch};
+use super::linked_dir::pack_linked_dir;
 
 /// Pack a host file or directory into a `tar::Builder`, recording every entry
 /// appended.
@@ -143,6 +144,7 @@ fn pack_following_links<W: Write>(
 	tar: &mut tar::Builder<W>,
 	sent: &mut Vec<SentEntry>,
 ) -> Result<()> {
+	let root = std::fs::canonicalize(src).map_err(ComposeError::Io)?;
 	for abs in walk::walk_dir(src).map_err(ComposeError::Io)? {
 		let rel = abs.strip_prefix(src).map_err(|_| {
 			ComposeError::Build(format!(
@@ -152,7 +154,19 @@ fn pack_following_links<W: Write>(
 		})?;
 		let child_name = prefix.join(rel);
 		let is_dir = abs.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
-		if is_dir {
+		let links_to_dir = !is_dir && std::fs::metadata(&abs).is_ok_and(|m| m.is_dir());
+		if links_to_dir {
+			// A link to a directory is read with the tree it sits in above it,
+			// so a link that leads back to the source is refused.
+			pack_linked_dir(
+				tar,
+				sent,
+				&child_name,
+				&abs,
+				&mut vec![root.clone()],
+				cp_err,
+			)?;
+		} else if is_dir {
 			record_one(
 				tar,
 				sent,
