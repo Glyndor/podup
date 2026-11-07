@@ -62,6 +62,10 @@ impl Case {
 		let mut names: Vec<_> = fs::read_dir(self.dir.path())
 			.unwrap()
 			.map(|entry| entry.unwrap().file_name())
+			// An instrumented run (cargo llvm-cov) drops a `.profraw` file in the
+			// working directory of every child it spawns; it is not a write by
+			// podup.
+			.filter(|name| !name.to_string_lossy().ends_with(".profraw"))
 			.collect();
 		names.sort();
 		let mut expected = vec!["compose.yaml", "sentinel"];
