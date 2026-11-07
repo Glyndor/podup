@@ -283,6 +283,10 @@ name = "workflow_apt_resilience"
 path = "tests/repository/workflows/workflow_apt_resilience.rs"
 
 [[test]]
+name = "workflow_advisory_observations"
+path = "tests/repository/workflows/workflow_advisory_observations.rs"
+
+[[test]]
 name = "workflow_audit_strictness"
 path = "tests/repository/workflows/workflow_audit_strictness.rs"
 

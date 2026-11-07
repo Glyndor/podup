@@ -21,6 +21,13 @@ on:
       # `test-command` below; the path filter is the other half.
       - ".github/workflows/reusable-workflow-lint.yml"
       - ".github/workflows/reusable-schedule-freshness.yml"
+      # The monitoring logic the observations in `repository-health.yml` run
+      # on. The shell suite drives the conclusion script and the freshness
+      # step, and reads the caller's wiring, so a change to any of these
+      # has to run it.
+      - ".github/workflows/reusable-branch-health.yml"
+      - ".github/workflows/reusable-dependabot-freshness.yml"
+      - ".github/workflows/repository-health.yml"
       - ".github/workflows/ci.yml"
       - ".github/workflows/binary-budget.yml"
       - ".github/scripts/checks/check-caller-with-defaults.py"
@@ -76,6 +83,13 @@ on:
       # `test-command` below; the path filter is the other half.
       - ".github/workflows/reusable-workflow-lint.yml"
       - ".github/workflows/reusable-schedule-freshness.yml"
+      # The monitoring logic the observations in `repository-health.yml` run
+      # on. The shell suite drives the conclusion script and the freshness
+      # step, and reads the caller's wiring, so a change to any of these
+      # has to run it.
+      - ".github/workflows/reusable-branch-health.yml"
+      - ".github/workflows/reusable-dependabot-freshness.yml"
+      - ".github/workflows/repository-health.yml"
       - ".github/workflows/ci.yml"
       - ".github/workflows/binary-budget.yml"
       - ".github/scripts/checks/check-caller-with-defaults.py"
