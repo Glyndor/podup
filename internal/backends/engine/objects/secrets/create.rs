@@ -226,13 +226,14 @@ impl Engine {
 		// Only delete something that is actually there (#1219). On a first `up`
 		// every secret is a 404, so this was a round trip per secret spent
 		// removing nothing.
-		let existed = existing.is_some();
+		let mut removed = false;
 		if let Some(key) = existing {
 			// By the ID that was inspected: a name taken by another secret since
 			// then answers 404 and is not removed.
 			let delete_path = format!("{API_PREFIX}/secrets/{}", urlencoded(&key));
-			self.client
-				.delete_ok(&delete_path)
+			removed = self
+				.client
+				.delete_existed(&delete_path)
 				.await
 				.map_err(ComposeError::Podman)?;
 		}
@@ -257,11 +258,12 @@ impl Engine {
 				// fails there instead of clobbering whatever arrived, the better
 				// outcome, but only if it is legible. Podman's own message for this
 				// is an opaque 500, so it is named here rather than passed through.
-				if !existed {
+				if !removed {
 					ComposeError::Unsupported(format!(
-						"secret '{name}' did not exist when podup checked but could not \
-						 be created: {e}. Something else created a secret of that name \
-						 in between. Re-run `up`, or remove it if it is not wanted."
+						"secret '{name}' was not there to replace when podup checked but \
+						 could not be created: {e}. Something else created a secret of \
+						 that name in between. Re-run `up`, or remove it if it is not \
+						 wanted."
 					))
 				} else {
 					ComposeError::Podman(e)

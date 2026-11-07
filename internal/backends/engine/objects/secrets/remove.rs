@@ -165,9 +165,10 @@ impl Engine {
 	/// `key` is the ID the list reported, not the name: a name that was handed
 	/// to another secret after the list answers 404 here and is left alone.
 	///
-	/// Returns `true` when the secret was actually removed (or was already
-	/// absent; a 404 still counts as teardown success). The caller collects
-	/// the names for the summary log line.
+	/// Returns `true` when the secret was actually removed. A 404 is not a
+	/// failure of the teardown, but by ID it no longer means "the name is free":
+	/// the name may now belong to another secret, so it is not reported as
+	/// removed. The caller collects the names for the summary log line.
 	async fn delete_listed_secret(
 		&self,
 		key: &str,
@@ -175,10 +176,16 @@ impl Engine {
 		first_err: &mut Option<ComposeError>,
 	) -> bool {
 		let path = format!("{API_PREFIX}/secrets/{}", urlencoded(key));
-		match self.client.delete_ok(&path).await {
-			Ok(()) => {
+		match self.client.delete_existed(&path).await {
+			Ok(true) => {
 				tracing::info!("removed secret {name}");
 				true
+			}
+			Ok(false) => {
+				tracing::debug!(
+					"secret {name} was already gone, or its name now belongs to another"
+				);
+				false
 			}
 			Err(e) => {
 				tracing::warn!("could not remove secret {name}: {e}");
@@ -224,10 +231,16 @@ impl Engine {
 			}
 		};
 		let path = format!("{API_PREFIX}/secrets/{}", urlencoded(&key));
-		match self.client.delete_ok(&path).await {
-			Ok(()) => {
+		match self.client.delete_existed(&path).await {
+			Ok(true) => {
 				tracing::info!("removed secret {name}");
 				true
+			}
+			Ok(false) => {
+				tracing::debug!(
+					"secret {name} was already gone, or its name now belongs to another"
+				);
+				false
 			}
 			Err(e) => {
 				tracing::warn!("could not remove secret {name}: {e}");

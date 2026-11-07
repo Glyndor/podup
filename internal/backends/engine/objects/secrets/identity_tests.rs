@@ -175,3 +175,82 @@ async fn up_does_not_remove_a_secret_that_took_the_name_after_the_inspect() {
 
 	assert_eq!(store.survivor_ids(), ["new"], "the replacement was removed");
 }
+
+/// The log lines of whatever runs on this thread until the guard is dropped.
+struct Logs {
+	bytes: Arc<Mutex<Vec<u8>>>,
+	_guard: tracing::subscriber::DefaultGuard,
+}
+
+struct Sink(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for Sink {
+	fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+		self.0.lock().unwrap().extend_from_slice(bytes);
+		Ok(bytes.len())
+	}
+	fn flush(&mut self) -> std::io::Result<()> {
+		Ok(())
+	}
+}
+
+impl Logs {
+	fn start() -> Self {
+		let bytes = Arc::new(Mutex::new(Vec::new()));
+		let writer = bytes.clone();
+		let subscriber = tracing_subscriber::fmt()
+			.without_time()
+			.with_ansi(false)
+			.with_writer(move || Sink(writer.clone()))
+			.finish();
+		Self {
+			bytes,
+			_guard: tracing::subscriber::set_default(subscriber),
+		}
+	}
+
+	fn text(&self) -> String {
+		String::from_utf8(self.bytes.lock().unwrap().clone()).unwrap()
+	}
+}
+
+#[tokio::test]
+async fn down_does_not_say_it_removed_a_secret_that_it_left_in_place() {
+	for list_fails in [false, true] {
+		let store = Store::new();
+		let seen = store.clone();
+		let fake = fake_podman::start(move |m, t| seen.respond(m, t, list_fails));
+		let e = engine_on(&fake);
+		let logs = Logs::start();
+
+		let _ = e
+			.remove_internal_secrets(&file_with_content_secrets(1))
+			.await;
+
+		let text = logs.text();
+		assert_eq!(store.survivor_ids(), ["new"], "list_fails={list_fails}");
+		assert!(
+			!text.contains("removed secret") && !text.contains("podup-created secret(s)"),
+			"list_fails={list_fails}: the log claims a removal that did not happen:\n{text}"
+		);
+	}
+}
+
+#[tokio::test]
+async fn up_names_the_race_when_the_name_was_taken_after_the_inspect() {
+	let store = Store::new();
+	let seen = store.clone();
+	let fake = fake_podman::start(move |m, t| seen.respond(m, t, false));
+	let e = engine_on(&fake);
+
+	let error = e
+		.create_project_secrets(&file_with_content_secrets(1))
+		.await
+		.expect_err("the name was taken, the create has to fail");
+
+	assert!(
+		error.to_string().contains("in between"),
+		"the operator is given Podman's opaque 500: {error}"
+	);
+	assert_eq!(store.survivor_ids(), ["new"], "the replacement was removed");
+}
