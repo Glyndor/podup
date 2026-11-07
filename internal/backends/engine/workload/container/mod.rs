@@ -13,6 +13,7 @@ use crate::size;
 
 mod anon_volumes;
 mod fields;
+mod host_log_driver;
 mod inputs;
 mod oneoff;
 mod resolve;
@@ -164,7 +165,9 @@ impl Engine {
 		let (restart_policy, restart_tries) = build_restart_policy(service);
 
 		// --- Logging ---
-		let log_configuration = build_log_config(service_name, service.logging.as_ref())?;
+		let mut log_configuration = build_log_config(service_name, service.logging.as_ref())?;
+		self.drop_tag_for_host_default(service_name, log_configuration.as_mut())
+			.await;
 
 		// --- Networks ---
 		// In pod mode the container joins the pod's shared namespace, so its

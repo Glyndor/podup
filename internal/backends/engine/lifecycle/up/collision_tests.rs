@@ -145,14 +145,37 @@ async fn a_replica_of_the_same_service_is_still_reused() {
 }
 
 #[tokio::test]
-async fn a_control_character_in_the_other_service_name_does_not_reach_the_message() {
-	let fake = fake(
-		"[{\"Names\":[\"/proj-web-1\"],\"Labels\":{\"podup.service\":\"web\"}},\
-		{\"Names\":[\"/proj-web-2\"],\"Labels\":{\"podup.service\":\"wo\\u001b[31mrker\"}}]",
-	);
+async fn a_container_of_a_service_the_file_no_longer_defines_is_replaced_as_before() {
+	// `web` was renamed `frontend` and kept its container_name: the old container
+	// is an orphan holding the name, and there is no other service to rename.
+	let fake = fake(r#"[{"Names":["/app"],"Labels":{"podup.service":"web"}}]"#);
 	let e = engine_with(fake.client());
+	let file =
+		crate::parse_str("services:\n  frontend:\n    image: img\n    container_name: app\n")
+			.unwrap();
+	e.up_with_options(
+		&file,
+		false,
+		&[],
+		&["frontend".to_string()],
+		false,
+		false,
+		false,
+		false,
+	)
+	.await
+	.expect("an orphan does not block the name");
+	assert!(touched(&fake, "app"), "the orphan is replaced");
+}
+
+#[tokio::test]
+async fn the_advice_fits_who_holds_the_name() {
+	let one_off = fake(
+		r#"[{"Names":["/proj-web-1"],"Labels":{"podup.service":"web"}},
+		{"Names":["/proj-web-2"],"Labels":{"podup.service":"web","podup.oneoff":"true"}}]"#,
+	);
 	let file = crate::parse_str("services:\n  web:\n    image: img\n    scale: 2\n").unwrap();
-	let text = e
+	let text = engine_with(one_off.client())
 		.up_with_options(
 			&file,
 			false,
@@ -164,7 +187,34 @@ async fn a_control_character_in_the_other_service_name_does_not_reach_the_messag
 			false,
 		)
 		.await
-		.expect_err("proj-web-2 belongs to another service")
+		.unwrap_err()
 		.to_string();
-	assert!(!text.contains('\u{1b}'), "{text:?}");
+	assert!(
+		text.contains("podman rm") && !text.contains("rename"),
+		"{text}"
+	);
+
+	let other = fake(WEB_AND_WORKER);
+	let file = crate::parse_str(
+		"services:\n  web:\n    image: img\n    scale: 2\n  worker:\n    image: other\n",
+	)
+	.unwrap();
+	let text = engine_with(other.client())
+		.up_with_options(
+			&file,
+			false,
+			&[],
+			&["web".to_string()],
+			true,
+			false,
+			false,
+			false,
+		)
+		.await
+		.unwrap_err()
+		.to_string();
+	assert!(
+		text.contains("service 'worker'") && text.contains("container_name"),
+		"{text}"
+	);
 }

@@ -158,12 +158,12 @@ fn log_config_max_size_malformed_returns_field_error() {
 
 #[test]
 fn log_config_unsupported_options_pass_through() {
-	// `path` and `tag` are the only options libpod honours for the
-	// built-in drivers (see `man podman-run`); they must reach the wire
-	// unchanged when the user sets them.
+	// `path` reaches the wire unchanged. `tag` does too, but not for json-file:
+	// this test used to pin `tag` there on the strength of `man podman-run`, and
+	// Podman 5.7.0 refuses it for that driver at start (see `log_tag_tests`),
+	// so it travels with `journald`, where it is a real option.
 	let mut opts = std::collections::HashMap::new();
 	opts.insert("path".into(), "/var/log/app.log".into());
-	opts.insert("tag".into(), "{{.Name}}".into());
 	let logging = LoggingConfig {
 		driver: Some("json-file".into()),
 		options: opts,
@@ -171,6 +171,14 @@ fn log_config_unsupported_options_pass_through() {
 	let cfg = build_log_config("web", Some(&logging)).unwrap().unwrap();
 	let v = serde_json::to_value(&cfg).unwrap();
 	assert_eq!(v["options"]["path"], "/var/log/app.log");
+	let mut opts = std::collections::HashMap::new();
+	opts.insert("tag".into(), "{{.Name}}".into());
+	let logging = LoggingConfig {
+		driver: Some("journald".into()),
+		options: opts,
+	};
+	let cfg = build_log_config("web", Some(&logging)).unwrap().unwrap();
+	let v = serde_json::to_value(&cfg).unwrap();
 	assert_eq!(v["options"]["tag"], "{{.Name}}");
 }
 

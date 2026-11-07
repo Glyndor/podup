@@ -229,25 +229,31 @@ impl Engine {
 		// that is missing (`container_name: proj-web-2` on a worker), and a
 		// one-off `run` container is not a replica either: leaving it as the
 		// replica reports a replica that is not there, and replacing it would
-		// delete a container that belongs to something else.
+		// delete a container that belongs to something else. A container of a
+		// service the file no longer defines is an orphan and keeps being replaced
+		// as before: there is no other service to rename.
 		if let Some(held) = existing.get(&container_name) {
-			if held.oneoff || held.service.as_deref().is_some_and(|owner| owner != name) {
+			let live_owner = held.service.as_deref().filter(|owner| {
+				*owner != name
+					&& (file.services.contains_key(*owner) || file.jobs.contains_key(*owner))
+			});
+			let (container, service) = (
+				crate::error::sanitize_name(&container_name),
+				crate::error::sanitize_name(name),
+			);
+			if held.oneoff {
 				return Err(ComposeError::Unsupported(format!(
-					"container name '{}' is already taken by {} in this project, so service '{}' \
-					 cannot use it for a replica; rename the container of the other service or \
-					 keep this one at fewer replicas",
-					crate::error::sanitize_name(&container_name),
-					if held.oneoff {
-						"a one-off run container".to_string()
-					} else {
-						format!(
-							"service '{}'",
-							crate::error::sanitize_name(
-								held.service.as_deref().unwrap_or_default()
-							)
-						)
-					},
-					crate::error::sanitize_name(name),
+					"container name '{container}' is held by a one-off run container, so service \
+					 '{service}' cannot use it for a replica; remove that container with \
+					 `podman rm` or run it under another --name"
+				)));
+			}
+			if let Some(owner) = live_owner {
+				return Err(ComposeError::Unsupported(format!(
+					"container name '{container}' is held by service '{}' of this project, so \
+					 service '{service}' cannot use it for a replica; change the container_name \
+					 of one of the two or keep '{service}' at fewer replicas",
+					crate::error::sanitize_name(owner),
 				)));
 			}
 		}
