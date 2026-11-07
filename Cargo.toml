@@ -327,6 +327,10 @@ name = "workflow_fuzz_seeds"
 path = "tests/repository/workflows/workflow_fuzz_seeds.rs"
 
 [[test]]
+name = "workflow_lint_classifier"
+path = "tests/repository/workflows/workflow_lint_classifier.rs"
+
+[[test]]
 name = "workflow_required_checks"
 path = "tests/repository/workflows/workflow_required_checks.rs"
 
