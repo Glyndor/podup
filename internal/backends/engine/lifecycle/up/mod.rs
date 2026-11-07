@@ -354,6 +354,14 @@ impl Engine {
 		// above would otherwise leave the terminal without a caret. `end` is
 		// idempotent and a no-op when no board was opened.
 		crate::ui::progress::end();
+
+		// A service cancelled while its `pre_start` ran, because a sibling failed,
+		// left a removal of its init container running in the background. The
+		// error is about to end the process, so wait for the removal first, and
+		// after the board is closed so a slow daemon does not leave the terminal
+		// frozen with the cursor hidden while this waits.
+		self.client.drain_init_cleanups().await;
+
 		result
 	}
 }
@@ -432,3 +440,6 @@ mod up_replica_tests;
 
 #[cfg(all(test, unix))]
 mod collision_tests;
+
+#[cfg(all(test, unix))]
+mod cleanup_drain_tests;

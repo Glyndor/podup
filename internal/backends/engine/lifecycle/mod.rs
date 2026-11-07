@@ -227,6 +227,8 @@ mod snapshot_tests;
 #[cfg(all(test, unix))]
 mod pre_start_image_tests;
 #[cfg(all(test, unix))]
+mod pre_start_run_cleanup_tests;
+#[cfg(all(test, unix))]
 mod pre_start_run_tests;
 #[cfg(all(test, unix))]
 mod pre_start_test_support;

@@ -275,13 +275,19 @@ impl Engine {
 		crate::ui::progress::end();
 		prepared?;
 
-		self.run_pre_start(
-			&run_name,
-			service_name,
-			&init_service(service, &run_service),
-			file,
-		)
-		.await?;
+		let pre_start = self
+			.run_pre_start(
+				&run_name,
+				service_name,
+				&init_service(service, &run_service),
+				file,
+			)
+			.await;
+		// A removal that failed in the step leaves its container to the guard,
+		// which finishes it in the background; the error below ends the process,
+		// so wait for it first.
+		self.client.drain_init_cleanups().await;
+		pre_start?;
 
 		// On a start failure (bad --workdir/--user/--entrypoint), the container is
 		// created but never starts; with --rm, remove it here so repeated failures
