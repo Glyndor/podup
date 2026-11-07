@@ -141,3 +141,32 @@ fn the_man_page_and_the_cli_list_the_same_commands() {
 		"commands only the CLI has: {only_cli:?}; only debian/podup.1 has: {only_page:?}"
 	);
 }
+
+/// The page names the Compose Spec, not another vendor's tool, the way the CLI
+/// help does. A literal file name (`docker-compose.yaml`) and the variable
+/// `DOCKER_HOST` are data a reader has to be able to find, so lines carrying
+/// them are allowed; any other mention of the other product is not.
+#[test]
+fn the_man_page_names_no_other_vendor() {
+	let plain = MAN_PAGE
+		.replace("\\fB", "")
+		.replace("\\fR", "")
+		.replace("\\fI", "")
+		.replace("\\-", "-");
+	let offenders: Vec<&str> = plain
+		.lines()
+		.filter(|line| {
+			let lower = line.to_ascii_lowercase();
+			lower.contains("docker")
+				&& !lower.contains("docker-compose.y")
+				&& !lower.contains("docker-compose.override.")
+				&& !line.contains("DOCKER_HOST")
+				&& !lower.contains("docker-compatible")
+		})
+		.collect();
+	assert!(
+		offenders.is_empty(),
+		"debian/podup.1 names another vendor's product:\n  {}",
+		offenders.join("\n  ")
+	);
+}
