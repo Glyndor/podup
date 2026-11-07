@@ -122,7 +122,9 @@ updates:
 
   - package-ecosystem: "docker"
     directory: "/bench/scenarios/build"
-    # The base image of the build benchmark is pinned by digest. Nothing else
+    # The base image of the build benchmark is pinned by tag and digest
+    # (`alpine:3.24@sha256:...`): a digest alone gives this ecosystem no release
+    # stream to follow, and the pin had sat five months behind. Nothing else
     # carries an Alpine security fix into it. The same digest is written out in
     # every other scenario's compose file, which this entry does not read: the
     # pull request for this Dockerfile fails `bench_pins_one_image_digest` until

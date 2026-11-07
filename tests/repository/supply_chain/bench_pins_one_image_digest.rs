@@ -15,21 +15,49 @@ use std::path::{Path, PathBuf};
 
 const SOURCE: &str = "bench/scenarios/build/Dockerfile";
 
-/// Every `alpine@sha256:<64 hex>` in `text`, as the part after `alpine@`.
+/// Every `alpine@sha256:<64 hex>` or `alpine:<tag>@sha256:<64 hex>` in `text`,
+/// as the `sha256:<64 hex>` part.
 fn digests_in(text: &str) -> Vec<String> {
 	let mut found = Vec::new();
 	let mut rest = text;
-	while let Some(at) = rest.find("alpine@sha256:") {
-		let tail = &rest[at + "alpine@".len()..];
-		let digest: String = tail.chars().take("sha256:".len() + 64).collect();
-		if digest.len() == "sha256:".len() + 64
-			&& digest[7..].chars().all(|c| c.is_ascii_hexdigit())
-		{
-			found.push(digest);
+	while let Some(at) = rest.find("alpine") {
+		let mut tail = &rest[at + "alpine".len()..];
+		if let Some(after_colon) = tail.strip_prefix(':') {
+			if let Some((tag, _)) = after_colon.split_once('@') {
+				if !tag.is_empty()
+					&& tag
+						.chars()
+						.all(|c| c.is_ascii_alphanumeric() || ".-_".contains(c))
+				{
+					tail = &tail[1 + tag.len()..];
+				}
+			}
 		}
-		rest = &rest["alpine@".len() + at..];
+		if let Some(tail) = tail.strip_prefix('@') {
+			let digest: String = tail.chars().take("sha256:".len() + 64).collect();
+			if digest.starts_with("sha256:")
+				&& digest.len() == "sha256:".len() + 64
+				&& digest[7..].chars().all(|c| c.is_ascii_hexdigit())
+			{
+				found.push(digest);
+			}
+		}
+		rest = &rest[at + "alpine".len()..];
 	}
 	found
+}
+
+/// Dependabot's docker ecosystem reads a `FROM` line as `image:tag@digest`.
+/// A digest with no tag gives it no release stream to follow, so the pin goes
+/// stale without a pull request ever being opened for it.
+fn from_line_has_a_tag(dockerfile: &str) -> bool {
+	dockerfile.lines().any(|line| {
+		line.strip_prefix("FROM ").is_some_and(|image| {
+			image
+				.split_once('@')
+				.is_some_and(|(name, _)| name.rsplit('/').next().is_some_and(|n| n.contains(':')))
+		})
+	})
 }
 
 fn files_under(dir: &Path, out: &mut Vec<PathBuf>) {
@@ -77,6 +105,10 @@ fn every_scenario_pins_the_digest_of_the_build_dockerfile() {
 		return;
 	}
 	let dockerfile = fs::read_to_string(&source_path).unwrap();
+	assert!(
+		from_line_has_a_tag(&dockerfile),
+		"{SOURCE} pins a digest with no tag (`alpine:<tag>@sha256:...`), so Dependabot cannot bump it"
+	);
 	let sources = digests_in(&dockerfile);
 	assert_eq!(
 		sources.len(),
@@ -116,4 +148,24 @@ fn a_different_digest_and_an_empty_scan_are_both_reported() {
 	assert!(found.iter().any(|l| l.contains("x/compose.yaml pins")));
 	assert!(found.last().unwrap().contains("sync-image-digest.sh"));
 	assert!(!problems(&a, &BTreeMap::new()).is_empty());
+}
+
+#[test]
+fn a_tag_beside_the_digest_is_read_and_a_bare_digest_is_refused() {
+	let d = format!("sha256:{}", "c".repeat(64));
+	assert_eq!(
+		digests_in(&format!("FROM x/alpine:3.24@{d}\n")),
+		std::slice::from_ref(&d)
+	);
+	assert_eq!(
+		digests_in(&format!("image: x/alpine@{d}\n")),
+		std::slice::from_ref(&d)
+	);
+	assert!(digests_in("FROM x/alpine:3.24\n").is_empty());
+	assert!(from_line_has_a_tag(&format!("FROM x/alpine:3.24@{d}\n")));
+	assert!(!from_line_has_a_tag(&format!("FROM x/alpine@{d}\n")));
+	// A port in the registry host is not a tag.
+	assert!(!from_line_has_a_tag(&format!(
+		"FROM host:5000/alpine@{d}\n"
+	)));
 }
