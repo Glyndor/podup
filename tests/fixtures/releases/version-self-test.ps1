@@ -18,7 +18,7 @@ The version helpers live in install.ps1; this script extracts them via
 AST and loads them in this scope so the regression runs against the real
 code, not a copy. (The bash test uses
 `sed + source`, which PowerShell cannot mirror directly; AST parsing
-is the equivalent and stays robust to surrounding code.)
+is the equivalent and keeps working when the surrounding code changes.)
 
 Test-StagedVersion calls the top-level `Fail` helper on a mismatch.
 `Fail` does `exit 1` and that would terminate the whole test process.

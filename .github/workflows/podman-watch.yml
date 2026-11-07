@@ -128,7 +128,7 @@ jobs:
           - [ ] Run the nested-virt Podman-$LATEST lane (Fedora rawhide / a distro that ships it): command-by-command + the integration suite
           - [ ] If a new MAJOR: re-probe wire fields (healthcheck / secrets / quadlet) and check the upstream breaking-changes notes
           - [ ] File issues for any regressions
-          - [ ] If green: bump \`.github/podman_lane/baseline\` to **$LATEST** and refresh the README badge + ai-context
+          - [ ] If green: bump \`.github/podman_lane/baseline\` to **$LATEST** and record the validated version
           - [ ] Close this issue
 
           _Auto-filed by \`podman-version-watch\`. To stop nagging for this version without validating, bump the baseline._"

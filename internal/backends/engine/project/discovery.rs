@@ -160,7 +160,7 @@ pub async fn list_projects_filtered(
 			}
 		}
 		// Podman's libpod list leaves `Status` empty and uses `State`; accept
-		// either so the roll-up is robust across response shapes. A paused
+		// either so the roll-up holds across response shapes. A paused
 		// container is counted separately so it is neither hidden nor mislabelled
 		// as exited.
 		if is_running(&c.state) || is_running(&c.status) {

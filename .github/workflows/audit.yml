@@ -7,10 +7,9 @@ name: Security audit
 # there belongs to a third party: RustSec published something today
 # about a crate nobody here touched. That must not be able to block a
 # pull request, which is why this workflow kept pull requests off the
-# third-party-timing lane, and `standards/testing` says so in as many
-# words: "a finding that belongs to a third party must NOT fail the run,
-# or someone else's disclosure timing blocks every pull request in the
-# organisation".
+# third-party-timing lane: a finding that belongs to a third party must NOT
+# fail the run, or someone else's disclosure timing blocks every pull request
+# in the organisation.
 #
 # The pull-request trigger asks the other question: does THIS change
 # introduce a dependency with a known advisory? That finding belongs to

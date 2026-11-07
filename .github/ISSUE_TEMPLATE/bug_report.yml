@@ -45,8 +45,8 @@ body:
     id: install-method
     attributes:
       label: How did you install podup?
-      description: "Source matters for self-update, signing and packaging issues: only the install.sh / install.ps1 / cargo install paths carry the `update` feature; apt, Homebrew and Scoop own upgrades."
-      placeholder: 'apt · brew · scoop · cargo install · install.sh · install.ps1'
+      description: "Source matters for self-update, signing and packaging issues: only the install.sh / install.ps1 paths carry the `update` feature; apt, Homebrew and Scoop own upgrades."
+      placeholder: 'apt · brew · scoop · install.sh · install.ps1'
     validations:
       required: true
   - type: input
