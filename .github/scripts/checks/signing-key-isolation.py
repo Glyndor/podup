@@ -26,7 +26,14 @@ import sys
 
 import yaml
 
-KEY = re.compile(r"secrets(?:\.|\[\s*['\"])\w*RELEASE_ED25519_KEY|toJSON\(\s*secrets\s*\)|secrets\s*\[\s*(?!['\"])")
+# Expression context names, function names and secret names are all case
+# insensitive in GitHub Actions: `SECRETS.release_ed25519_key`, `tojson(secrets)`
+# and `Secrets['Release_Ed25519_Key']` read the same secret as the canonical
+# spelling, so the match has to be case insensitive too.
+KEY = re.compile(
+    r"secrets(?:\.|\[\s*['\"])\w*RELEASE_ED25519_KEY|toJSON\(\s*secrets\s*\)|secrets\s*\[\s*(?!['\"])",
+    re.IGNORECASE,
+)
 EXPR = re.compile(r"\$\{\{(.*?)\}\}", re.S)
 PINNED = ("sign", "attest", "release")
 KEY_JOBS = ("sign", "release")
