@@ -100,3 +100,13 @@ mod config_projections;
 
 #[path = "cli_flags/machine_output.rs"]
 mod machine_output;
+
+// --- The label of a usage error follows `--ansi`, `NO_COLOR` and the sink --
+
+#[path = "cli_flags/usage_error_colour.rs"]
+mod usage_error_colour;
+
+// --- Compose file discovery and an empty project name --------------------------
+
+#[path = "cli_flags/discovery_and_project_name.rs"]
+mod discovery_and_project_name;

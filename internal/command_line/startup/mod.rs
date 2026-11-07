@@ -343,7 +343,15 @@ pub(crate) fn parse_cli() -> Cli {
 		podup::ui::set_color_choice(mode.into());
 	}
 	match Cli::try_parse() {
-		Ok(cli) => cli,
+		Ok(mut cli) => {
+			// `-p ""` and an exported-but-empty `COMPOSE_PROJECT_NAME` mean "not
+			// set", as in docker compose; every later reader of `cli.project`
+			// (the label-only `down` among them) then sees no name at all.
+			if cli.project.as_deref() == Some("") {
+				cli.project = None;
+			}
+			cli
+		}
 		Err(e) => match e.kind() {
 			clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
 				// `--help`/`--version` are handled by clap before `--ansi` is parsed,
@@ -399,7 +407,11 @@ pub(crate) fn parse_cli() -> Cli {
 			// `format_clap_error` and exit with the same code clap would have
 			// used.
 			_ => {
-				eprintln!("{}", format_clap_error(&e));
+				// Through the colour-aware stream, as `print_error` writes: the
+				// text carries the error style, and `eprintln!` would print its
+				// escape bytes whatever `--ansi`, `NO_COLOR` or a pipe say.
+				use std::io::Write;
+				let _ = writeln!(anstream::stderr(), "{}", format_clap_error(&e));
 				process::exit(e.exit_code());
 			}
 		},

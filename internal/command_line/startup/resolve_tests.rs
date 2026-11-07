@@ -192,6 +192,20 @@ fn a_project_directory_that_is_not_there_is_invalid_not_unsupported() {
 }
 
 #[test]
+fn an_empty_explicit_project_name_is_not_set() {
+	// docker compose: `-p ""` and `COMPOSE_PROJECT_NAME=` fall through to the
+	// file's `name:`, then to the directory.
+	assert_eq!(
+		resolve_project_name(Some(String::new()), Some("fromfile"), Path::new("/x")),
+		"fromfile"
+	);
+	assert_eq!(
+		resolve_project_name(Some("given".into()), Some("fromfile"), Path::new("/x")),
+		"given"
+	);
+}
+
+#[test]
 fn an_unsafe_project_name_is_invalid_not_unsupported() {
 	let error = super::validate_project_name("UPPER").unwrap_err();
 	assert!(
@@ -222,5 +236,29 @@ fn a_control_character_in_the_project_name_does_not_reach_the_message() {
 		!error.to_string().contains('\u{1b}'),
 		"{:?}",
 		error.to_string()
+	);
+}
+
+#[test]
+fn several_supported_names_are_listed_in_precedence_order_and_the_first_is_named() {
+	let dir = tempfile::tempdir().unwrap();
+	assert!(super::resolve::candidates_in(dir.path()).is_empty());
+	std::fs::write(dir.path().join("docker-compose.yml"), "services: {}\n").unwrap();
+	assert_eq!(super::resolve::candidates_in(dir.path()).len(), 1);
+	std::fs::write(dir.path().join("compose.yaml"), "services: {}\n").unwrap();
+	let present = super::resolve::candidates_in(dir.path());
+	let names: Vec<&str> = present
+		.iter()
+		.map(|p| p.file_name().unwrap().to_str().unwrap())
+		.collect();
+	assert_eq!(names, ["compose.yaml", "docker-compose.yml"]);
+	let message = super::resolve::multiple_candidates_message(&present);
+	assert!(
+		message.contains("compose.yaml") && message.contains("docker-compose.yml"),
+		"{message}"
+	);
+	assert!(
+		message.contains(&format!("using {}", present[0].display())),
+		"{message}"
 	);
 }
