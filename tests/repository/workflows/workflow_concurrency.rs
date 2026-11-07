@@ -4,9 +4,8 @@
 //! Measured on 2026-10-25: 3 of the 21 non-reusable workflows had a
 //! `concurrency:` block and 13 more ran on pull requests or pushes without
 //! one, so a new push to a pull request left the run for the old commit
-//! consuming runners. The standard (`ai-context/standards/ci`, "A check costs
-//! what it learns", rule 1) allows `cancel-in-progress` for `pull_request`
-//! only and never for a `merge_group`.
+//! consuming runners. The rule is to allow `cancel-in-progress` for
+//! `pull_request` only and never for a `merge_group`.
 //!
 //! Two properties are enforced per workflow, because either one alone is a
 //! trap:

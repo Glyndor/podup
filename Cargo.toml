@@ -247,6 +247,10 @@ name = "no_inline_test_modules"
 path = "tests/repository/repo_rules/no_inline_test_modules.rs"
 
 [[test]]
+name = "no_private_document_references"
+path = "tests/repository/repo_rules/no_private_document_references.rs"
+
+[[test]]
 name = "no_system_wide_apt_policy"
 path = "tests/repository/packaging/no_system_wide_apt_policy.rs"
 

@@ -85,7 +85,7 @@ fn the_pull_request_audit_is_scoped_to_the_manifest() {
 		body.contains("paths:"),
 		"audit.yml runs on every pull request with no paths filter. An upstream \
 		 advisory published today would then block every open pull request, \
-		 which is the case standards/testing rules out by name."
+		 which this repository rules out."
 	);
 }
 
