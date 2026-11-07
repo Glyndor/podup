@@ -199,6 +199,10 @@ name = "hostile_compose"
 path = "tests/hostile/input/parsing/hostile_compose.rs"
 
 [[test]]
+name = "hostile_yaml_contracts"
+path = "tests/hostile/input/hostile_yaml_contracts.rs"
+
+[[test]]
 name = "hostile_include_extends_cycle"
 path = "tests/hostile/input/parsing/hostile_include_extends_cycle.rs"
 
