@@ -45,7 +45,7 @@ pub fn validate_config(file: &ComposeFile) -> Result<()> {
 	// project; `docker compose config` errors with "no service selected". A file
 	// that declares only jobs has something to run, so it passes.
 	if everything.services.is_empty() {
-		return Err(ComposeError::Unsupported(
+		return Err(ComposeError::Invalid(
 			"no services defined in compose file".to_string(),
 		));
 	}
@@ -117,7 +117,7 @@ fn validate_service_name(name: &str) -> Result<()> {
 	if ok {
 		Ok(())
 	} else {
-		Err(ComposeError::Unsupported(format!(
+		Err(ComposeError::Invalid(format!(
 			"service name {name:?} is invalid: use only ASCII letters, digits, '.', '_', '-'"
 		)))
 	}
@@ -237,6 +237,36 @@ fn validate_services(file: &ComposeFile) -> Result<()> {
 			validate_service_consistency(&step_name, file, step)?;
 		}
 	}
+	for (name, service) in &file.services {
+		validate_depends_on_defined(name, file, service)?;
+	}
+	// The same for a job, in every command and not only in `config`.
+	crate::compose::jobs::check_job_dependencies(file)?;
+	Ok(())
+}
+
+/// Every service a service `depends_on` must be defined in the file, whether the
+/// dependency is required or not. Docker Compose refuses the project when it is
+/// not (`service "app" depends on undefined service "nope": invalid compose
+/// project`), and a name that is defined nowhere cannot be "not available": it is
+/// a typo, which `required: false` would otherwise hide. A service that is defined
+/// but left out of the run by an inactive profile is defined, and is not touched
+/// here. (A service cannot depend on a job: that is refused when the file is read.)
+fn validate_depends_on_defined(
+	name: &str,
+	file: &ComposeFile,
+	service: &crate::compose::types::Service,
+) -> Result<()> {
+	for dep in service.depends_on.service_names() {
+		if !file.services.contains_key(&dep) {
+			return Err(ComposeError::Invalid(format!(
+				"service '{}' depends on undefined service '{}'; define it, or remove \
+				 it from 'depends_on'",
+				crate::error::sanitize_name(name),
+				crate::error::sanitize_name(&dep)
+			)));
+		}
+	}
 	Ok(())
 }
 
@@ -327,3 +357,7 @@ fn validate_networks(file: &ComposeFile) -> Result<()> {
 #[cfg(test)]
 #[path = "validate_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "validate_depends_on_tests.rs"]
+mod depends_on_tests;

@@ -236,3 +236,16 @@ fn sanitize_name_escapes_cr_nul_del_and_c1_controls() {
 		std::borrow::Cow::Borrowed(_)
 	));
 }
+
+#[test]
+fn invalid_prints_without_the_unsupported_feature_label() {
+	// `Unsupported` is for compose features podup lacks and says so; what the
+	// user wrote wrongly is `Invalid`, printed as it is.
+	assert_eq!(
+		ComposeError::Invalid("project name \"X\" is bad".into()).to_string(),
+		"project name \"X\" is bad"
+	);
+	assert!(ComposeError::Unsupported("u".into())
+		.to_string()
+		.starts_with("unsupported feature: "));
+}
