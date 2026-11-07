@@ -44,8 +44,27 @@ PINNED = ("sign", "attest", "release")
 KEY_JOBS = ("sign", "release")
 
 
+def strings(value):
+    """Every string in the parsed object, keys and values, as loaded.
+
+    The check used to read a YAML dump of the job, and the dump writes a tab
+    or a newline before `secrets` as the two characters backslash and t, which
+    glues them to the word and hides it from a word boundary. The strings are
+    read as the parser gives them instead.
+    """
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            yield from strings(k)
+            yield from strings(v)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from strings(item)
+
+
 def holds_key(value):
-    return bool(KEY.search(" ".join(EXPR.findall(yaml.safe_dump(value, width=10**6)))))
+    return any(KEY.search(e) for text in strings(value) for e in EXPR.findall(text))
 
 
 def digest(spec, job):
