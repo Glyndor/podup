@@ -2,9 +2,10 @@
 //! newest COMPLETED run, and stay advisory rather than required.
 //!
 //! The reusable lives next to `reusable-schedule-freshness.yml` and is
-//! called from `ci.yml` for `main` and `develop`. The freshness watchers
-//! cannot catch this defect: they read the newest SUCCESSFUL scheduled
-//! run, so a failing run is missing from their answer by construction.
+//! called from `repository-health.yml` for `main` and `develop`. The
+//! freshness watchers cannot catch this defect: they read the newest
+//! SUCCESSFUL scheduled run, so a failing run is missing from their answer
+//! by construction.
 //! On 2026-09-06 three distribution channels sat with `main` red for
 //! twenty minutes after a pull request merged while its suite was still
 //! reporting, and the only reason anybody knew is that somebody went
@@ -51,20 +52,33 @@ fn read(name: &str) -> String {
 	fs::read_to_string(&path).unwrap_or_else(|e| panic!("{name} is readable: {e}"))
 }
 
+/// The workflow that calls the branch-health reusable.
+///
+/// The callers moved out of `caller.yml` into `repository-health.yml` so the
+/// observations about the repository stop running on every pull request
+/// update. The job ids below are the wire format of the check names, and
+/// they travel with the file.
+const CALLER: &str = "repository-health.yml";
+
+/// The caller workflow, read.
+fn read_caller() -> String {
+	read(CALLER)
+}
+
 /// Pull the value of a `branch:` input out of a job's `with:` block in
-/// `ci.yml`. Scoped to the named job so a future drift between the two
+/// the caller. Scoped to the named job so a future drift between the two
 /// `health-*` jobs is not papered over.
 ///
 /// Same shape as `tests/repository/workflows/workflow_toolchain_pin/deb_pair.rs`'s scoped
 /// parsers: the scan starts at the `with:` block under the named job
-/// (jobs live at the same indent in `ci.yml`) and stops when a sibling
+/// (jobs live at the same indent in the caller) and stops when a sibling
 /// key at the same or lower indent appears.
-fn ci_yml_health_branch(workflow: &str, job_id: &str) -> String {
+fn caller_health_branch(workflow: &str, job_id: &str) -> String {
 	let lines: Vec<&str> = workflow.lines().collect();
 	let job_idx = lines
 		.iter()
 		.position(|l| l.trim_start_matches(' ').trim_start() == format!("{job_id}:"))
-		.unwrap_or_else(|| panic!("ci.yml has a `{job_id}` job"));
+		.unwrap_or_else(|| panic!("{CALLER} has a `{job_id}` job"));
 	let job_indent = lines[job_idx].len() - lines[job_idx].trim_start().len();
 	let job_end = lines[job_idx + 1..]
 		.iter()
@@ -82,7 +96,7 @@ fn ci_yml_health_branch(workflow: &str, job_id: &str) -> String {
 	let with_idx = lines[job_idx + 1..job_end]
 		.iter()
 		.position(|l| l.trim() == "with:")
-		.unwrap_or_else(|| panic!("`{job_id}` in ci.yml has a `with:` block"));
+		.unwrap_or_else(|| panic!("`{job_id}` in {CALLER} has a `with:` block"));
 	let with_abs = job_idx + 1 + with_idx;
 
 	for line in &lines[with_abs + 1..job_end] {
@@ -94,16 +108,16 @@ fn ci_yml_health_branch(workflow: &str, job_id: &str) -> String {
 			return rest.trim().trim_matches('"').to_string();
 		}
 	}
-	panic!("`{job_id}` in ci.yml passes a `branch:` input");
+	panic!("`{job_id}` in {CALLER} passes a `branch:` input");
 }
 
 /// Pull the workflow file name out of the same `with:` block.
-fn ci_yml_health_workflow(workflow: &str, job_id: &str) -> String {
+fn caller_health_workflow(workflow: &str, job_id: &str) -> String {
 	let lines: Vec<&str> = workflow.lines().collect();
 	let job_idx = lines
 		.iter()
 		.position(|l| l.trim_start_matches(' ').trim_start() == format!("{job_id}:"))
-		.unwrap_or_else(|| panic!("ci.yml has a `{job_id}` job"));
+		.unwrap_or_else(|| panic!("{CALLER} has a `{job_id}` job"));
 	let job_indent = lines[job_idx].len() - lines[job_idx].trim_start().len();
 	let job_end = lines[job_idx + 1..]
 		.iter()
@@ -121,7 +135,7 @@ fn ci_yml_health_workflow(workflow: &str, job_id: &str) -> String {
 	let with_idx = lines[job_idx + 1..job_end]
 		.iter()
 		.position(|l| l.trim() == "with:")
-		.unwrap_or_else(|| panic!("`{job_id}` in ci.yml has a `with:` block"));
+		.unwrap_or_else(|| panic!("`{job_id}` in {CALLER} has a `with:` block"));
 	let with_abs = job_idx + 1 + with_idx;
 
 	for line in &lines[with_abs + 1..job_end] {
@@ -133,7 +147,7 @@ fn ci_yml_health_workflow(workflow: &str, job_id: &str) -> String {
 			return rest.trim().trim_matches('"').to_string();
 		}
 	}
-	panic!("`{job_id}` in ci.yml passes a `workflow:` input");
+	panic!("`{job_id}` in {CALLER} passes a `workflow:` input");
 }
 
 /// Job ids that have to keep their name. A required check is matched by

@@ -354,23 +354,36 @@ check "G: does not emit a ::error::" "0" \
 
 # The batch caller preserves all five observations and does not stop at the
 # first failure. Read the actual pairs so this also exercises caller wiring.
-python3 - "$HERE/.github/workflows/ci.yml" "$WORK/pairs" <<'PYCODE'
+#
+# The caller is `repository-health.yml`, not `ci.yml`: the observations
+# answer questions about the repository, not about the change under
+# review, so they run on protected-branch pushes, on a schedule and on a
+# manual dispatch, and never on a pull request. The `if:` on the job is
+# the second half of that: it refuses the event even if the workflow ever
+# grows the trigger.
+python3 - "$HERE/.github/workflows/repository-health.yml" "$WORK/pairs" <<'PYCODE'
 import sys
 import yaml
 spec = yaml.safe_load(open(sys.argv[1]))
+on = spec.get("on", spec.get(True))
+assert "pull_request" not in on, (
+    "the observations must not be triggered by a pull request"
+)
 jobs = spec["jobs"]
 watchers = [j for j in jobs.values()
             if j.get("uses", "").endswith("reusable-schedule-freshness.yml")]
-assert len(watchers) == 1, "CI must have one schedule freshness caller"
+assert len(watchers) == 1, "the observer must have one schedule freshness caller"
 job = watchers[0]
-assert job["if"] == "github.event_name != 'merge_group'"
+assert job["if"] == (
+    "github.event_name != 'pull_request' && github.event_name != 'merge_group'"
+), job["if"]
 pairs = job["with"]["workflows"]
 assert pairs.split() == ["audit.yml", "15", "fuzz.yml", "15", "podman-lane.yml", "3",
                          "podman-watch.yml", "3", "benchmark.yml", "65"]
 open(sys.argv[2], "w").write(pairs)
 PYCODE
 rc=$?
-check "CI keeps exactly the five workflow/age pairs in one advisory caller" 0 "$rc"
+check "the observer keeps exactly the five workflow/age pairs in one advisory caller" 0 "$rc"
 pairs="$(cat "$WORK/pairs")"
 for mode in success api-error stale missing; do
   : > "$WORK/summary"
