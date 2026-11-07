@@ -11,6 +11,32 @@ use std::process::Command;
 
 const MAN_PAGE: &str = include_str!("../../../debian/podup.1");
 
+/// The page as the binary under test can honour it. `update` is a Cargo
+/// feature that package-manager builds leave off (`debian/rules` builds
+/// `--no-default-features --features watch,completions`), so that build has no
+/// `update` command and no `--check`, and the page still documents both. The
+/// section of the page that belongs to `update` is left out when the feature is
+/// off, which keeps the comparison honest for both builds.
+fn page() -> String {
+	if cfg!(feature = "update") {
+		return MAN_PAGE.to_string();
+	}
+	let mut out = String::new();
+	let mut skipping = false;
+	for line in MAN_PAGE.lines() {
+		if line == ".B update" || line.starts_with(".B update ") {
+			skipping = true;
+		} else if skipping && (line.starts_with(".B ") || line.starts_with(".SH ")) {
+			skipping = false;
+		}
+		if !skipping {
+			out.push_str(line);
+			out.push('\n');
+		}
+	}
+	out
+}
+
 /// Flags `--help` never prints: clap's own `--version`, and `events --json`, a
 /// hidden alias the page mentions as deprecated.
 const NOT_IN_HELP: [&str; 2] = ["--version", "--json"];
@@ -75,7 +101,7 @@ fn cli_flags() -> (BTreeSet<String>, Vec<String>) {
 /// The page with the roff escapes that split a flag or a word taken out, so
 /// `\fB\-\-no\-start\fR` reads `--no-start`.
 fn man_text() -> String {
-	let mut text = MAN_PAGE.replace("\\-", "-").replace("\\&", "");
+	let mut text = page().replace("\\-", "-").replace("\\&", "");
 	for font in ["\\fB", "\\fI", "\\fR", "\\fP"] {
 		text = text.replace(font, "");
 	}
@@ -84,7 +110,7 @@ fn man_text() -> String {
 
 /// The command names the `.SH COMMANDS` section introduces with `.B`.
 fn man_commands() -> BTreeSet<String> {
-	MAN_PAGE
+	page()
 		.lines()
 		.skip_while(|line| *line != ".SH COMMANDS")
 		.skip(1)
