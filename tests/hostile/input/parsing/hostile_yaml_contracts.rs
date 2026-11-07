@@ -10,7 +10,7 @@ use std::fs;
 use serde_yaml::Value;
 use tempfile::TempDir;
 
-#[path = "../support/file_process.rs"]
+#[path = "../../support/file_process.rs"]
 mod file_process;
 use file_process::{command, run, Outcome};
 
