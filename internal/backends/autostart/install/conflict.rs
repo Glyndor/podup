@@ -175,6 +175,10 @@ pub(in super::super) fn classify_exec_start(line: &str) -> DetectedSingleUnitMod
 /// Detect the installed single-unit mode for `project` from the unit file on
 /// disk. `None` only when no file exists: one that cannot be read, or has no
 /// `ExecStart=`, is `Unknown`, so it is refused rather than overwritten.
+///
+/// The read goes through the capped reader, which opens the file without
+/// following a link and without waiting for a writer: a FIFO at this path
+/// would block the read forever.
 pub(in super::super) fn installed_single_unit_mode(
 	project: &str,
 ) -> Option<DetectedSingleUnitMode> {
@@ -182,7 +186,7 @@ pub(in super::super) fn installed_single_unit_mode(
 	if !path.exists() {
 		return None;
 	}
-	let mode = std::fs::read_to_string(&path)
+	let mode = crate::filesystem::read_to_string_capped(&path)
 		.ok()
 		.and_then(|body| {
 			body.lines()

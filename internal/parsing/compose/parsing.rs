@@ -55,13 +55,19 @@ pub fn parse_file_with_env_files_interp(
 	} else {
 		None
 	};
+	// This entry point starts a project: the file and everything it pulls in
+	// share one interpolation budget, and a load running inside a callback of
+	// another one does not borrow that one's count.
+	let budget = substitute::project_budget::Scope::open();
 	let file = parse_file_with_env_files_interp_with_stdin(
 		path,
 		env_files,
 		interpolate,
 		stdin.as_deref(),
 		None,
-	)?;
+	);
+	drop(budget);
+	let file = file?;
 	// A single file stands alone, so its jobs have to declare their triggers.
 	// With several `-f` files the check waits for the merge.
 	jobs::check_triggers_declared(&file)?;
@@ -164,6 +170,9 @@ pub fn parse_files_with_env_files_interp_in(
 	let project_dir = project_dir
 		.map(Path::to_path_buf)
 		.or_else(|| Some(dir_of(first)));
+	// One interpolation budget for every `-f` file and what they pull in. It
+	// closes before the diagnostics below, which re-read each file on their own.
+	let budget = substitute::project_budget::Scope::open();
 	let mut merged = parse_file_with_env_files_interp_with_stdin(
 		first,
 		env_files,
@@ -185,6 +194,7 @@ pub fn parse_files_with_env_files_interp_in(
 		let directives = tags::collect_from_file(path);
 		merge_override(&mut merged, other, &directives);
 	}
+	drop(budget);
 	// Each file passed on its own; a service in one `-f` file and a job of the
 	// same name in another only meet here.
 	jobs::check_structure(&merged)?;
@@ -353,6 +363,10 @@ pub(super) fn merge_override(
 /// `extends: { file: ... }` and `include:` directives are not resolved;
 /// use [`parse_file_with_env_files`] for that.
 pub fn parse_str(content: &str) -> Result<ComposeFile> {
+	// A document of its own: it counts against a budget of its own, not against
+	// a project that happens to be loading on this thread when a callback calls
+	// this.
+	let _budget = substitute::project_budget::Scope::open();
 	let vars = substitute::build_vars(Path::new("."));
 	let mut file = merge::deserialize_with_merge_interp(content, Some(&vars))?;
 	jobs::check_structure(&file)?;

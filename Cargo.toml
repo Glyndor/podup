@@ -1,6 +1,6 @@
 [package]
 name = "podup"
-version = "5.16.0"
+version = "5.16.1"
 edition = "2021"
 rust-version = "1.88"
 # podup is a binary that happens to build a library, not a library that ships a
@@ -171,6 +171,14 @@ name = "audit_list_checks"
 path = "tests/cli/audit/audit_list_checks.rs"
 
 [[test]]
+name = "lockfile_podup_versions_agree"
+path = "tests/repository/supply_chain/lockfile_podup_versions_agree.rs"
+
+[[test]]
+name = "bench_pins_one_image_digest"
+path = "tests/repository/supply_chain/bench_pins_one_image_digest.rs"
+
+[[test]]
 name = "dependabot_covers_every_lockfile"
 path = "tests/repository/supply_chain/dependabot_covers_every_lockfile.rs"
 
@@ -267,6 +275,10 @@ name = "tar_builder_single_site"
 path = "tests/repository/repo_rules/tar_builder_single_site.rs"
 
 [[test]]
+name = "asset_contract_uses_the_signing_manifest"
+path = "tests/repository/workflows/asset_contract_uses_the_signing_manifest.rs"
+
+[[test]]
 name = "workflow_audit_strictness"
 path = "tests/repository/workflows/workflow_audit_strictness.rs"
 
@@ -285,6 +297,10 @@ path = "tests/repository/workflows/workflow_debian_image.rs"
 [[test]]
 name = "workflow_fuzz_targets"
 path = "tests/repository/workflows/workflow_fuzz_targets.rs"
+
+[[test]]
+name = "workflow_fuzz_seeds"
+path = "tests/repository/workflows/workflow_fuzz_seeds.rs"
 
 [[test]]
 name = "workflow_required_checks"
@@ -385,6 +401,9 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_
 
 [features]
 default = ["watch", "completions", "update"]
+# Compiling without `watch` is not supported: the crate does not compile
+# cleanly without it. The configuration that ships is `watch,completions`
+# (debian/rules), and that is the set CI lints.
 watch = ["notify"]
 completions = ["dep:clap_complete"]
 # Self-update over HTTPS with Ed25519 verification. Off for package-manager

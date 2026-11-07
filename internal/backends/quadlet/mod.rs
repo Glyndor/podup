@@ -11,6 +11,7 @@
 //! every field that is set but has no Quadlet equivalent yet, so generated
 //! units never quietly drop configuration.
 
+mod exported_names;
 mod jobs;
 /// Entry point for the fuzz harness, compiled only under `test-helpers`.
 #[cfg(feature = "test-helpers")]
@@ -49,6 +50,7 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 		&with_jobs
 	};
 	crate::engine::build::validate_pull_fields(file)?;
+	exported_names::validate_exported_names(file)?;
 	if let Err(e @ ComposeError::CircularDependency(_)) = crate::compose::resolve_order(file) {
 		return Err(e);
 	}
@@ -386,6 +388,10 @@ fn generate_with_mode(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "exported_names_tests.rs"]
+mod exported_names_tests;
 
 #[cfg(test)]
 #[path = "no_warn_tests.rs"]

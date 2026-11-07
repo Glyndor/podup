@@ -11,6 +11,8 @@ use crate::libpod::{urlencoded, API_PREFIX};
 use crate::engine::lifecycle::parallel::first_error;
 use crate::engine::lifecycle::targets::{stop_deadline, stop_timeout_param};
 
+mod distinct_names;
+
 /// Whether a container in this state is currently active, i.e. `stop` would
 /// actually transition it. A `running` or `paused` container is stopped; a
 /// `created`/`exited`/`dead`/… one is already not running, so stopping it is a

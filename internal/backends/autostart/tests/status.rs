@@ -32,7 +32,7 @@ fn collect_status_reports_installed_and_state() {
 	with_env(|root| {
 		let sc = FakeCtl::new();
 		install(&sc, &opts(root, "app", false, true)).unwrap();
-		let r = collect_status(&sc, "app");
+		let r = collect_status(&sc, "app").expect("status");
 		assert!(r.unit_exists);
 		assert!(r.unit_mode.is_some());
 		assert_eq!(r.is_active, "active");
@@ -46,7 +46,7 @@ fn collect_status_reports_installed_and_state() {
 fn collect_status_reports_absent_unit() {
 	with_env(|_root| {
 		let sc = FakeCtl::new();
-		let r = collect_status(&sc, "nope");
+		let r = collect_status(&sc, "nope").expect("status");
 		assert!(!r.unit_exists);
 		assert!(r.unit_mode.is_none());
 	});
@@ -72,7 +72,7 @@ fn collect_status_sees_a_quadlet_install() {
 		.unwrap();
 
 		let sc = FakeCtl::new();
-		let r = collect_status(&sc, "proj");
+		let r = collect_status(&sc, "proj").expect("status");
 		assert!(
 			r.unit_exists,
 			"a quadlet install must be reported as installed"
@@ -110,7 +110,7 @@ fn collect_status_ignores_a_quadlet_unit_of_another_project() {
 		.unwrap();
 
 		let sc = FakeCtl::new();
-		let r = collect_status(&sc, "proj");
+		let r = collect_status(&sc, "proj").expect("status");
 		assert!(
 			!r.unit_exists,
 			"a unit that belongs to another project is not an install"
@@ -128,7 +128,7 @@ fn collect_status_ignores_a_quadlet_unit_of_another_project() {
 fn a_missing_shim_is_read_from_load_state_not_from_the_exit_code() {
 	let mut sc = FakeCtl::new();
 	sc.show_load_state = "LoadState=not-found\n".to_string();
-	let r = collect_status(&sc, "app");
+	let r = collect_status(&sc, "app").expect("status");
 	assert_eq!(r.network_wait, NetworkWait::NotFound);
 	// The call really did succeed, so nothing about the status distinguished
 	// these two cases except the string.
@@ -144,7 +144,10 @@ fn a_missing_shim_is_read_from_load_state_not_from_the_exit_code() {
 #[test]
 fn a_loaded_shim_reads_as_loaded() {
 	let sc = FakeCtl::new();
-	assert_eq!(collect_status(&sc, "app").network_wait, NetworkWait::Loaded);
+	assert_eq!(
+		collect_status(&sc, "app").expect("status").network_wait,
+		NetworkWait::Loaded
+	);
 }
 
 /// "We could not tell" is not "it is not there". Collapsing the two would report
@@ -154,14 +157,14 @@ fn an_unrecognised_answer_is_unknown_rather_than_missing() {
 	let mut sc = FakeCtl::new();
 	sc.show_load_state = "LoadState=masked\n".to_string();
 	assert!(matches!(
-		collect_status(&sc, "app").network_wait,
+		collect_status(&sc, "app").expect("status").network_wait,
 		NetworkWait::Unknown(s) if s == "masked"
 	));
 
 	let mut sc = FakeCtl::new();
 	sc.show_load_state = String::new();
 	assert!(matches!(
-		collect_status(&sc, "app").network_wait,
+		collect_status(&sc, "app").expect("status").network_wait,
 		NetworkWait::Unknown(_)
 	));
 }
@@ -171,7 +174,7 @@ fn an_unrecognised_answer_is_unknown_rather_than_missing() {
 #[test]
 fn the_status_asks_about_the_unit_the_units_actually_name() {
 	let sc = FakeCtl::new();
-	let _ = collect_status(&sc, "app");
+	let _ = collect_status(&sc, "app").expect("status");
 	assert!(
 		sc.systemctl_log()
 			.iter()

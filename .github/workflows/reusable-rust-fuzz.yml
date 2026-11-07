@@ -115,7 +115,14 @@ jobs:
           if [ -n "$RSS_LIMIT_MB" ]; then
             libfuzzer_args+=(-rss_limit_mb="$RSS_LIMIT_MB")
           fi
-          cargo fuzz run "$TARGET" -- "${libfuzzer_args[@]}"
+          # Committed seeds (fuzz/seeds/<target>/) join the generated corpus, so
+          # each smoke run starts from the hostile shapes already known instead
+          # of rediscovering them inside the time box.
+          corpus=()
+          if [ -d "fuzz/seeds/$TARGET" ]; then
+            corpus=("fuzz/corpus/$TARGET" "fuzz/seeds/$TARGET")
+          fi
+          cargo fuzz run "$TARGET" "${corpus[@]}" -- "${libfuzzer_args[@]}"
 
       # A crash leaves its input under fuzz/artifacts. Without this the run is
       # red and the input that caused it is gone with the runner.

@@ -23,8 +23,27 @@ fn read_to_string_capped_with(path: &Path, max: u64) -> io::Result<String> {
 	// rather than stat-then-read closes the TOCTOU window: a writer that grows
 	// the file (or swaps in a symlink) after a size check cannot make podup
 	// read past the cap, because the limit is enforced on the read itself.
-	let file = std::fs::File::open(path)?;
+	//
+	// The handle comes from `open_regular`, so the type is confirmed on the
+	// descriptor that was opened and the open cannot block on a pipe: a FIFO
+	// planted between the check above and the open is refused, not waited on.
+	let file = open_regular(path)?;
 	read_capped_from(file, max, &path.display().to_string())
+}
+
+/// Read at most the first `max` bytes of a regular file, however long it is.
+///
+/// For a caller that only needs the head of a file it did not write (a marker
+/// on the first line) and must not be made to refuse the whole file because it
+/// is large. The type is checked on the descriptor that was opened and the open
+/// does not wait on a pipe or follow a link, as in [`read_to_string_capped`].
+pub(crate) fn read_head_capped(path: impl AsRef<Path>, max: usize) -> io::Result<Vec<u8>> {
+	let path = path.as_ref();
+	reject_non_regular(path)?;
+	let file = open_regular(path)?;
+	let mut buf = Vec::new();
+	file.take(max as u64).read_to_end(&mut buf)?;
+	Ok(buf)
 }
 
 /// Read the compose document from standard input, refusing input larger than
@@ -127,7 +146,7 @@ fn read_capped_with(path: &Path, max: u64) -> io::Result<Vec<u8>> {
 	// Same single-handle, cap-on-the-read strategy as the string variant: the
 	// limit is enforced on the read itself, so a file that grows (or a symlink
 	// swapped in) after any size check cannot push podup past the cap.
-	let file = std::fs::File::open(path)?;
+	let file = open_regular(path)?;
 	let mut buf = Vec::new();
 	let read = file.take(max + 1).read_to_end(&mut buf)?;
 	if read as u64 > max {
@@ -165,25 +184,28 @@ fn reject_non_regular(path: &Path) -> io::Result<()> {
 	if ty.is_file() {
 		return Ok(());
 	}
-	let kind_label = if ty.is_fifo() {
-		"FIFO (named pipe)"
+	let (kind_label, blocks) = if ty.is_fifo() {
+		("FIFO (named pipe)", true)
 	} else if ty.is_char_device() {
-		"character device"
+		("character device", true)
 	} else if ty.is_block_device() {
-		"block device"
+		("block device", true)
 	} else if ty.is_socket() {
-		"socket"
+		("socket", false)
 	} else if ty.is_dir() {
-		"directory"
+		("directory", false)
+	} else if ty.is_symlink() {
+		("link", false)
 	} else {
-		"non-regular file"
+		("non-regular file", false)
 	};
+	// Only the kinds that can wait for a writer or never end get the reason; a
+	// directory or a link is refused for what it is, and saying it would block
+	// would send the reader looking for a pipe that is not there.
+	let reason = if blocks { ": would block forever" } else { "" };
 	Err(io::Error::new(
 		io::ErrorKind::InvalidInput,
-		format!(
-			"refusing to read {kind_label} {}: would block forever",
-			path.display()
-		),
+		format!("refusing to read {kind_label} {}{reason}", path.display()),
 	))
 }
 

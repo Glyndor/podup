@@ -90,13 +90,12 @@ pub(in super::super) fn owner_of_text(text: &str) -> Option<Owner> {
 /// The owner of the unit file at `path`, when the file proves one.
 ///
 /// A link is never followed: the file it points at is not the unit at this
-/// path, so it says nothing about who owns the name.
+/// path, so it says nothing about who owns the name. The read goes through
+/// the capped reader, which opens the file without following a link and
+/// without waiting for a writer, and confirms on the descriptor that it is a
+/// regular file: a FIFO at this path would block the read forever.
 pub(in super::super) fn owner_of_file(path: &Path) -> Option<Owner> {
-	let meta = std::fs::symlink_metadata(path).ok()?;
-	if !meta.file_type().is_file() {
-		return None;
-	}
-	let text = std::fs::read_to_string(path).ok()?;
+	let text = crate::filesystem::read_to_string_capped(path).ok()?;
 	owner_of_text(&text)
 }
 

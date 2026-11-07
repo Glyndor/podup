@@ -138,13 +138,17 @@ fn quadlet_services(units: &[PathBuf]) -> Vec<String> {
 /// named after the project, quadlet mode has one unit per service. Asking only
 /// about the service-mode unit reported a quadlet install as not installed at
 /// all, however healthy it was.
+///
+/// An error when the unit directory holds an entry for this project that is
+/// not a regular file: the scan cannot read it, and reporting a unit list the
+/// scan never established would be a worse answer than the refusal.
 pub fn collect_status<S: super::super::systemctl::SystemCtl>(
 	sc: &S,
 	project: &str,
-) -> StatusReport {
+) -> crate::Result<StatusReport> {
 	match installed_mode(project) {
 		InstalledMode::Quadlet => collect_quadlet_status(sc, project),
-		_ => collect_service_status(sc, project),
+		_ => Ok(collect_service_status(sc, project)),
 	}
 }
 
@@ -180,8 +184,8 @@ fn collect_service_status<S: super::super::systemctl::SystemCtl>(
 fn collect_quadlet_status<S: super::super::systemctl::SystemCtl>(
 	sc: &S,
 	project: &str,
-) -> StatusReport {
-	let units = installed_units(project);
+) -> crate::Result<StatusReport> {
+	let units = installed_units(project)?;
 	let services = quadlet_services(&units);
 	let actives: Vec<String> = services
 		.iter()
@@ -191,7 +195,7 @@ fn collect_quadlet_status<S: super::super::systemctl::SystemCtl>(
 		.iter()
 		.map(|service| query(sc, "is-enabled", service))
 		.collect();
-	StatusReport {
+	Ok(StatusReport {
 		mode: InstalledMode::Quadlet,
 		unit_path: quadlet_dir(),
 		unit_exists: !units.is_empty(),
@@ -202,12 +206,12 @@ fn collect_quadlet_status<S: super::super::systemctl::SystemCtl>(
 		linger: current_user().is_some_and(|u| linger_enabled(sc, &u)),
 		runtime_dir: std::env::var_os("XDG_RUNTIME_DIR").is_some_and(|s| !s.is_empty()),
 		network_wait: network_wait_state(sc),
-	}
+	})
 }
 
 /// Print the autostart status for a project.
 pub fn status<S: super::super::systemctl::SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
-	let r = collect_status(sc, project);
+	let r = collect_status(sc, project)?;
 	// Every line here is a yes/no an operator is scanning for, and the whole
 	// screen was one colour, so "is it actually running?" meant reading six
 	// labels to find the one word that answers it. The label is scaffolding

@@ -5,18 +5,19 @@
 # Exit 0 only when BASE..HEAD is exclusively a podup version bump, so the
 # podman lane can skip the VM. Exit 1 for anything else, including every
 # error: this answer lets a pull request past an expensive gate, so it
-# fails closed. A version bump touches `Cargo.toml`, `Cargo.lock` and
+# fails closed. A version bump touches `Cargo.toml`, `Cargo.lock`,
+# `fuzz/Cargo.lock` (which records podup's own version too) and
 # `debian/changelog` and nothing else, and the script checks the CONTENT
 # of each change, not only the names, because a file called Cargo.toml can
 # carry a dependency change that the VM must see.
 #
 # Every condition is mandatory:
-#   a. at least one file changed, and every one is Cargo.toml, Cargo.lock
-#      or debian/changelog.
+#   a. at least one file changed, and every one is Cargo.toml, Cargo.lock,
+#      fuzz/Cargo.lock or debian/changelog.
 #   b. Cargo.toml: the first `version = ...` line must sit inside
 #      [package] and match `version = "X.Y.Z"` exactly in both revisions,
 #      and the two files must be identical once that line is normalised.
-#   c. Cargo.lock: the same, for the `version` line right after
+#   c. Cargo.lock and fuzz/Cargo.lock: the same, for the `version` line right after
 #      `name = "podup"`, which must occur exactly once.
 #   d. debian/changelog: HEAD is BASE with whole lines put in front of it
 #      (nothing earlier is edited or removed) and starts with `podup (`.
@@ -44,7 +45,7 @@ changed="$(git diff --name-only --no-renames "$base" "$head")" \
 [ -n "$changed" ] || no "empty range"
 while IFS= read -r f; do
 	case "$f" in
-		Cargo.toml | Cargo.lock | debian/changelog) ;;
+		Cargo.toml | Cargo.lock | fuzz/Cargo.lock | debian/changelog) ;;
 		*) no "$f is not part of a version bump" ;;
 	esac
 done <<<"$changed"
@@ -98,6 +99,7 @@ has() { printf '%s\n' "$changed" | grep -Fxq "$1"; }
 if has Cargo.toml; then same_but_version toml Cargo.toml; fi
 # c.
 if has Cargo.lock; then same_but_version lock Cargo.lock; fi
+if has fuzz/Cargo.lock; then same_but_version lock fuzz/Cargo.lock; fi
 
 # d. and e.
 if has debian/changelog; then

@@ -89,6 +89,21 @@ dependencies = [
 ]
 EOF
 	fi
+	if [ -n "${seed_fuzz_lock:-}" ]; then
+		mkdir -p fuzz
+		cat >fuzz/Cargo.lock <<EOF
+version = 4
+
+[[package]]
+name = "podup"
+version = "$BASE_VER"
+
+[[package]]
+name = "podup-fuzz"
+version = "0.0.0"
+checksum = "1111111111111111111111111111111111111111111111111111111111111111"
+EOF
+	fi
 	if [ -n "${seed_empty_changelog:-}" ]; then
 		: >debian/changelog
 	elif [ -z "${seed_no_changelog:-}" ]; then
@@ -123,6 +138,10 @@ new_entry() {
 bump_toml() { pkg_version Cargo.toml 5.14.0; }
 bump_lock() { pkg_version Cargo.lock 5.14.0; }
 bump_all() { bump_toml; bump_lock; new_entry; }
+bump_fuzz_lock() { pkg_version fuzz/Cargo.lock 5.14.0; }
+bump_all_and_fuzz_lock() { bump_all; bump_fuzz_lock; }
+fuzz_lock_other_change() { bump_all_and_fuzz_lock; sed -i 's/^checksum = "1/checksum = "2/' fuzz/Cargo.lock; }
+fuzz_lock_other_package() { bump_all_and_fuzz_lock; sed -i 's/^version = "0.0.0"$/version = "0.0.1"/' fuzz/Cargo.lock; }
 bump_lock_and_toml() { bump_toml; bump_lock; }
 adds_lock() {
 	bump_toml; new_entry
@@ -192,6 +211,9 @@ run_case() {
 
 run_case "a pure bump of Cargo.toml, Cargo.lock and the changelog passes" 0 "" bump_all
 run_case "a bump of Cargo.toml and Cargo.lock without a changelog passes" 0 "" bump_lock_and_toml
+seed_fuzz_lock=1 run_case "a bump that also moves fuzz/Cargo.lock to the same version passes" 0 "a pure version bump: Cargo.lock Cargo.toml debian/changelog fuzz/Cargo.lock" bump_all_and_fuzz_lock
+seed_fuzz_lock=1 run_case "a bump that changes a checksum in fuzz/Cargo.lock is refused" 1 "fuzz/Cargo.lock changes more than the version" fuzz_lock_other_change
+seed_fuzz_lock=1 run_case "a bump that changes another package's version in fuzz/Cargo.lock is refused" 1 "fuzz/Cargo.lock changes more than the version" fuzz_lock_other_package
 run_case "a bump with a source file touched is refused" 1 "src/main.rs is not part of a version bump" bump_and_rs
 run_case "a bump that also changes a dependency in Cargo.toml is refused" 1 "Cargo.toml changes more than the version" bump_and_dep
 run_case "a bump that also changes the edition is refused" 1 "Cargo.toml changes more than the version" bump_and_edition

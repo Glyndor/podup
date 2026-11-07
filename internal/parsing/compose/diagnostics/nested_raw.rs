@@ -113,6 +113,9 @@ pub(crate) fn collect_raw_nested_warnings(
 	stdin: Option<&str>,
 	project_dir: Option<&Path>,
 ) -> Vec<String> {
+	// This pass interpolates each file again, on its own budget: it must not be
+	// charged to a project that happens to be loading on this thread.
+	let _alone = crate::substitute::project_budget::Scope::none();
 	let mut out = Vec::new();
 	for path in paths {
 		let yaml = if super::super::is_stdin(path) {

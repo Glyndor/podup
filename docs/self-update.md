@@ -28,7 +28,7 @@ Binary installers require Python 3 with `cryptography` and verify the signed man
 
 ### Version self-test (rollback gate)
 
-The signed manifest binds the asset bytes but **not** the release tag. Both `install.sh` and `install.ps1` run the staged binary's `--version` and pin it to the resolved tag (one optional `v` prefix). The comparison is strict equality; mismatch deletes the stage and exits 1. This establishes tag/bytes consistency, not freshness: coherent old metadata/bytes passes. The updater separately rejects non-newer versions unless forced, and tests after replacement with attempted rollback.
+The signed manifest binds the asset bytes but **not** the release tag. Both `install.sh` and `install.ps1` run the staged binary's `--version` and pin it to the resolved tag (one optional `v` prefix). The comparison is strict equality; mismatch deletes the stage and exits 1. This establishes tag/bytes consistency, not freshness: coherent old metadata/bytes passes that check. When resolving `latest`, both installers also refuse a downgrade from a working installed version; an explicit `PODUP_VERSION` permits one. A fresh install has no installed version to compare. The updater separately rejects non-newer versions unless forced, and tests after replacement with attempted rollback.
 
 ```
 [fail] Staged binary reports 'podup version v3.6.0', expected v3.7.0
@@ -45,7 +45,7 @@ The embedded Python classifies verification failures into two exit codes:
 
 ## The embedded public keys
 
-Consumers have two key slots: one active and one empty for rotation. Trust succeeds under any accepted nonempty key; no usable keys fails closed. Keys live in `RELEASE_PUBKEYS`, `install.sh`'s two `PODUP_RELEASE_PUBKEY` variables and `install.ps1`'s `PubKeyB64`/`PubKey2B64`. A third slot requires changes to every consumer, not just the CI regex.
+Consumers have two key slots: one active and one empty for rotation. Trust succeeds under any accepted nonempty key; no usable keys fails closed. Keys live in `RELEASE_PUBKEYS`, `install.sh`'s `PODUP_RELEASE_PUBKEY_B64`/`PODUP_RELEASE_PUBKEY2_B64` and `install.ps1`'s `PubKeyB64`/`PubKey2B64`. A third slot requires changes to every consumer, not just the CI regex.
 
 ### Key rotation
 
@@ -78,12 +78,11 @@ key = Ed25519PublicKey.from_public_bytes(
 key.verify(open("SHA256SUMS.sig", "rb").read(), open("SHA256SUMS", "rb").read())
 print("SHA256SUMS signature OK")
 PY
-  test -f podup-linux-x86_64
-  sha256sum --check --ignore-missing SHA256SUMS
+  awk '$2 == "podup-linux-x86_64" { print }' SHA256SUMS | sha256sum --check --strict
 )
 ```
 
-`--ignore-missing` skips files not present locally; ensure `podup-linux-x86_64` is in the current directory so the selected digest row is checked.
+This checks only `podup-linux-x86_64` and fails if its manifest row or local file is missing, or its digest differs. On macOS, replace `sha256sum --check --strict` with `shasum -a 256 -c`.
 
 Each artifact has a signed CycloneDX SBOM; `NOTICES.html` is also signed. Debian package SBOMs currently use GNU targets although the packaged binaries use musl, so their target-specific dependency lists do not match.
 
