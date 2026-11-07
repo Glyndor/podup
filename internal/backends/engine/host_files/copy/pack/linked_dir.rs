@@ -15,6 +15,27 @@ use crate::error::{sanitize_name, ComposeError, Result};
 use super::super::upload::verify::{SentEntry, SentKind};
 use super::common::{push_entry, record_one, walk, KindDispatch};
 
+/// Pack the link `path` to a directory under `name` when no caller holds the
+/// directories above it: the one it sits in is the one being read.
+pub(super) fn pack_linked_dir_entry<W, F>(
+	tar: &mut tar::Builder<W>,
+	sent: &mut Vec<SentEntry>,
+	name: &Path,
+	path: &Path,
+	map_err: F,
+) -> Result<()>
+where
+	W: Write,
+	F: Fn(&str) -> ComposeError + Copy,
+{
+	let parent = path.parent().filter(|p| !p.as_os_str().is_empty());
+	let mut ancestors = match parent {
+		Some(dir) => vec![std::fs::canonicalize(dir).map_err(|e| map_err(&e.to_string()))?],
+		None => Vec::new(),
+	};
+	pack_linked_dir(tar, sent, name, path, &mut ancestors, map_err)
+}
+
 /// Pack the directory `path` points at under `name`, then the directory entry
 /// itself. `ancestors` holds the real directories being read above this one.
 pub(super) fn pack_linked_dir<W, F>(

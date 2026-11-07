@@ -120,15 +120,10 @@ where
 					push_entry(sent, name, SentKind::File(size))?;
 				} else if ft.is_dir() {
 					// A symlink to a directory: the walker did not descend, so
-					// it is read here, links inside it included.
-					super::linked_dir::pack_linked_dir(
-						tar,
-						sent,
-						name,
-						path,
-						&mut Vec::new(),
-						map_err,
-					)?;
+					// it is read here, links inside it included. The directory
+					// the link sits in is being read, so a link back to it is
+					// refused at the first step.
+					super::linked_dir::pack_linked_dir_entry(tar, sent, name, path, map_err)?;
 				} else {
 					// FIFO, char/block device, socket, hard link, anything
 					// else the destination cannot ask about: refuse up front,

@@ -132,3 +132,35 @@ fn a_link_that_leads_back_is_refused_with_an_error() {
 	let err = pack(&root.join("tree"), true).expect_err("a loop must stop the copy");
 	assert!(err.to_string().contains("loop"), "{err}");
 }
+
+/// A link to a directory handed straight to `record_one`, the way the arm for a
+/// link to a directory reads it, is read with the directory it sits in above it:
+/// `src/loop -> src` is refused before one entry is sent, not after the first
+/// level was copied.
+#[test]
+fn a_link_back_to_its_own_directory_is_refused_before_anything_is_sent() {
+	use super::super::super::common::{record_one, KindDispatch};
+
+	let dir = tempfile::tempdir().expect("tempdir");
+	let src = dir.path().join("src");
+	std::fs::create_dir(&src).expect("mkdir");
+	std::fs::write(src.join("file.txt"), b"x").expect("write");
+	std::os::unix::fs::symlink(&src, src.join("loop")).expect("symlink");
+
+	let mut buf = Vec::new();
+	let mut sent = Vec::new();
+	let mut tar = tar::Builder::new(&mut buf);
+	let error = record_one(
+		&mut tar,
+		&mut sent,
+		Path::new("loop"),
+		&src.join("loop"),
+		KindDispatch::FileOrLink,
+		true,
+		|msg| crate::error::ComposeError::Copy(msg.to_string()),
+	)
+	.expect_err("a link back to its own directory has to be refused");
+
+	assert!(error.to_string().contains("symlink loop"), "{error}");
+	assert!(sent.is_empty(), "entries were sent first: {sent:?}");
+}
