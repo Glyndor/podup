@@ -15,7 +15,7 @@
 use std::path::PathBuf;
 
 #[cfg(unix)]
-#[path = "../support/file_process.rs"]
+#[path = "../../support/file_process.rs"]
 mod file_process;
 #[cfg(unix)]
 #[path = "hostile_autostart_units/unit_dir.rs"]

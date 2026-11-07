@@ -4,9 +4,9 @@
 use std::fs;
 use std::process::Command;
 
-#[path = "../support/fake_engine.rs"]
+#[path = "../../support/fake_engine.rs"]
 mod fake_engine;
-#[path = "../support/host_files.rs"]
+#[path = "../../support/host_files.rs"]
 mod host_files;
 
 use fake_engine::FakeEngine;

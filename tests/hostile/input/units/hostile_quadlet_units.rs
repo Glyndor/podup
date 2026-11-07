@@ -19,11 +19,11 @@
 //!
 //! A field the parser or the exporter refuses outright counts as handled.
 
-#[path = "../support/quadlet_cases.rs"]
+#[path = "../../support/quadlet_cases.rs"]
 mod quadlet_cases;
 
 #[cfg(unix)]
-#[path = "../support/quadlet_env_files.rs"]
+#[path = "../../support/quadlet_env_files.rs"]
 mod quadlet_env_files;
 
 use podup::parse_str;
