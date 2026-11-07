@@ -17,7 +17,7 @@ use crate::error::{ComposeError, Result};
 const STOP_GRACE_BUFFER_SECS: u64 = 30;
 
 /// The per-service shutdown grace from `stop_grace_period` (default 10s).
-pub(in crate::backends::engine::lifecycle) fn service_grace_period_secs(service: &Service) -> i32 {
+pub(in crate::backends::engine) fn service_grace_period_secs(service: &Service) -> i32 {
 	service
 		.stop_grace_period
 		.as_deref()
@@ -43,7 +43,7 @@ pub fn validate_stop_timeout(timeout: Option<i32>) -> Result<Option<i32>> {
 /// passes through; `-1` ("wait indefinitely") maps to the largest value
 /// libpod accepts so podman does not escalate to `SIGKILL` on its own,
 /// matching `docker stop -t -1`. Pure.
-pub(in crate::backends::engine::lifecycle) fn stop_timeout_param(grace: i32) -> i64 {
+pub(in crate::backends::engine) fn stop_timeout_param(grace: i32) -> i64 {
 	if grace < 0 {
 		i64::from(i32::MAX)
 	} else {
@@ -66,17 +66,14 @@ pub(in crate::backends::engine::lifecycle) fn stop_deadline(grace: i32) -> Optio
 /// so it never gets less than the client's default read timeout: with a short
 /// grace the stop deadline alone (grace plus the buffer) would cut a slow start
 /// that the default allowed. `-1` stays uncapped.
-pub(in crate::backends::engine::lifecycle) fn restart_deadline(grace: i32) -> Option<Duration> {
+pub(in crate::backends::engine) fn restart_deadline(grace: i32) -> Option<Duration> {
 	stop_deadline(grace).map(|d| d.max(crate::libpod::client::READ_TIMEOUT))
 }
 
 impl crate::engine::Engine {
 	/// Shutdown grace (seconds) for a service: the CLI `-t/--timeout` override
 	/// when set, otherwise the service's `stop_grace_period`.
-	pub(in crate::backends::engine::lifecycle) fn grace_period_secs(
-		&self,
-		service: &Service,
-	) -> i32 {
+	pub(in crate::backends::engine) fn grace_period_secs(&self, service: &Service) -> i32 {
 		self.stop_timeout
 			.unwrap_or_else(|| service_grace_period_secs(service))
 	}
