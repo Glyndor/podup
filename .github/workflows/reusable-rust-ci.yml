@@ -108,6 +108,14 @@ concurrency:
   group: rust-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ inputs.working-directory }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# The range the classifier judges and the event that produced it. Every job
+# that asks the classifier whether the Rust lanes have anything to do reads
+# these, so the range is named once instead of in each job.
+env:
+  EVENT: ${{ github.event_name }}
+  BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+
 jobs:
   lint:
     name: Format & lint
@@ -122,8 +130,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The classifier reads the judge from the reviewed base commit and
+          # diffs the whole range, so the history has to be here.
+          fetch-depth: 0
+
+      # The judge is read from the base, never from this checkout: a pull
+      # request that edited the classifier must not be judged by its own
+      # edit. A base without the judge leaves the output empty, and an empty
+      # output runs the lanes, because the only safe reading of a missing
+      # answer is "run".
+      - name: Decide whether the Rust lanes must run
+        id: decide
+        run: git show "$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
 
       - name: Install toolchain
+        if: steps.decide.outputs.run != 'false'
         env:
           TOOLCHAIN: ${{ inputs.toolchain }}
         run: |
@@ -131,6 +152,7 @@ jobs:
           rustup default "$TOOLCHAIN"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.decide.outputs.run != 'false'
         with:
           path: |
             ~/.cargo/registry/index
@@ -141,9 +163,11 @@ jobs:
           restore-keys: rust-lint-${{ runner.os }}-
 
       - name: rustfmt
+        if: steps.decide.outputs.run != 'false'
         run: cargo fmt --all --check
 
       - name: clippy
+        if: steps.decide.outputs.run != 'false'
         env:
           EXTRA_CLIPPY_ARGS: ${{ inputs.extra-clippy-args }}
         run: |
@@ -160,6 +184,10 @@ jobs:
       # In this job rather than one of its own because this job is already a
       # required check: a new job would report and block nothing until a
       # ruleset named it. The rule and why it exists live in the script.
+      #
+      # Not gated by the classifier: it is a `git grep` over the tree and it
+      # reads the very prose a documentation-only pull request changes, which
+      # is the one change that can introduce the word it looks for.
       - name: no planning-note references
         working-directory: .
         run: bash .github/scripts/checks/check-planning-words.sh
@@ -177,8 +205,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The classifier reads the judge from the reviewed base commit and
+          # diffs the whole range, so the history has to be here.
+          fetch-depth: 0
+
+      - name: Decide whether the Rust lanes must run
+        id: decide
+        run: git show "$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
 
       - name: Install toolchain
+        if: steps.decide.outputs.run != 'false'
         env:
           TOOLCHAIN: ${{ inputs.toolchain }}
         run: |
@@ -186,6 +222,7 @@ jobs:
           rustup default "$TOOLCHAIN"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.decide.outputs.run != 'false'
         with:
           path: |
             ~/.cargo/registry/index
@@ -196,6 +233,7 @@ jobs:
           restore-keys: rust-test-${{ runner.os }}-
 
       - name: Tests
+        if: steps.decide.outputs.run != 'false'
         run: cargo test --locked --all-features --workspace
 
   test-extra:
@@ -222,8 +260,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The classifier reads the judge from the reviewed base commit and
+          # diffs the whole range, so the history has to be here.
+          fetch-depth: 0
+
+      - name: Decide whether the Rust lanes must run
+        id: decide
+        run: git show "$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
 
       - name: Install toolchain
+        if: steps.decide.outputs.run != 'false'
         env:
           TOOLCHAIN: ${{ inputs.toolchain }}
         run: |
@@ -231,6 +277,7 @@ jobs:
           rustup default "$TOOLCHAIN"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.decide.outputs.run != 'false'
         with:
           path: |
             ~/.cargo/registry/index
@@ -241,6 +288,7 @@ jobs:
           restore-keys: rust-test-${{ runner.os }}-
 
       - name: Tests
+        if: steps.decide.outputs.run != 'false'
         run: cargo test --locked --all-features --workspace
 
   extra-platforms-gate:
@@ -287,8 +335,16 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The classifier reads the judge from the reviewed base commit and
+          # diffs the whole range, so the history has to be here.
+          fetch-depth: 0
+
+      - name: Decide whether the Rust lanes must run
+        id: decide
+        run: git show "$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
 
       - name: Install toolchain
+        if: steps.decide.outputs.run != 'false'
         env:
           TOOLCHAIN: ${{ inputs.toolchain }}
         run: |
@@ -296,6 +352,7 @@ jobs:
           rustup default "$TOOLCHAIN"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.decide.outputs.run != 'false'
         with:
           path: |
             ~/.cargo/registry/index
@@ -310,12 +367,13 @@ jobs:
           restore-keys: rust-cov-${{ runner.os }}-${{ inputs.llvm-cov-version }}-
 
       - name: Install cargo-llvm-cov
+        if: steps.decide.outputs.run != 'false'
         env:
           LLVM_COV_VERSION: ${{ inputs.llvm-cov-version }}
         run: command -v cargo-llvm-cov >/dev/null || cargo install cargo-llvm-cov --locked --version "$LLVM_COV_VERSION"
 
       - name: Start Podman socket
-        if: inputs.podman
+        if: inputs.podman && steps.decide.outputs.run != 'false'
         id: podman-socket
         run: |
           systemctl --user start podman.socket
@@ -323,6 +381,7 @@ jobs:
           echo "path=unix:///run/user/$(id -u)/podman/podman.sock" >> "$GITHUB_OUTPUT"
 
       - name: Coverage gate
+        if: steps.decide.outputs.run != 'false'
         env:
           PODMAN_SOCKET: ${{ steps.podman-socket.outputs.path }}
           COVERAGE_IGNORE_REGEX: ${{ inputs.coverage-ignore-regex }}
@@ -356,10 +415,6 @@ jobs:
 
       - name: Decide whether the root build inputs changed
         id: inputs
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
         run: |
           set -euo pipefail
           build=true
@@ -496,10 +551,6 @@ jobs:
 
       - name: Decide whether the root build inputs changed
         id: inputs
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
         run: |
           set -euo pipefail
           build=true
