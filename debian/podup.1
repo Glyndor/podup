@@ -56,7 +56,8 @@ mounts, config and secret sources). Defaults to the compose file's directory.
 .BR \-\-connection\-pool\-size " " \fIN\fR
 Maximum number of HTTP/1.1 connections the libpod client keeps open to the
 Podman socket for reuse, from 0 to 1024. Default 0 means no pool. May also be
-set via \fBPODUP_LIBPOD_POOL\fR.
+set via \fBPODUP_LIBPOD_POOL\fR; the older misspelling \fBPODUP_LIBCOD_POOL\fR
+is still read when the new name is unset.
 .TP
 .BR \-\-ansi " " \fIWHEN\fR
 When to colour output: \fIauto\fR (terminals only, and \fBNO_COLOR\fR forces
@@ -205,7 +206,7 @@ narrows the report.
 .TP
 .B port \fISERVICE\fR \fIPRIVATE_PORT\fR
 Print the public binding for a container port. \fB\-\-proto\fR sets the protocol
-(default \fBtcp\fR) and \fB\-\-index\fR selects a replica (1-based).
+(\fB\-\-protocol\fR is an alias; default \fBtcp\fR) and \fB\-\-index\fR selects a replica (1-based).
 .TP
 .B events
 Stream Podman events for this project's containers.
@@ -296,8 +297,12 @@ closed. \fB\-\-check\fR only reports whether a newer release exists;
 Manage a boot-time autostart unit for this project, rootless and user-scope via
 \fBsystemctl \-\-user\fR (units under \fB${XDG_CONFIG_HOME:-~/.config}\fR).
 Subcommands: \fBinstall\fR (\fB\-\-mode\fR \fIservice\fR|\fIquadlet\fR|\fIstart\fR,
-\fB\-\-no\-start\fR, \fB\-\-dry\-run\fR), \fBuninstall\fR, \fBstatus\fR, and
-\fBrebuild\fR (for a quadlet-mode install).
+\fB\-\-no\-start\fR, \fB\-\-dry\-run\fR, and \fB\-\-auto\-update\fR
+\fIhourly\fR|\fIdaily\fR|\fIweekly\fR, which installs a timer that runs
+\fBpodup up \-d\fR on that schedule and is accepted only with
+\fB\-\-mode service\fR), \fBuninstall\fR (\fB\-\-purge\fR also tears the stack
+down and removes its named volumes), \fBstatus\fR, and \fBrebuild\fR (for a
+quadlet-mode install).
 .TP
 .B version
 Print podup's version. \fB\-\-short\fR prints just the number;
@@ -317,6 +322,11 @@ Default project name (see \fB\-\-project\fR).
 .TP
 .B COMPOSE_PROFILES
 Default active profiles (see \fB\-\-profile\fR).
+.TP
+.B PODUP_LIBPOD_POOL
+Size of the libpod connection pool (see \fB\-\-connection\-pool\-size\fR).
+\fBPODUP_LIBCOD_POOL\fR, a misspelling of the name, is read when this one is
+unset.
 .TP
 .B PODMAN_SOCKET
 Podman socket path (see \fB\-\-socket\fR).
@@ -368,7 +378,11 @@ needs \fB--since\fR and \fB--until\fR together, both already elapsed.
 .B compose.yaml
 Default compose file when none is given. The compose-spec precedence list is
 probed in the current directory: \fBcompose.yaml\fR, \fBcompose.yml\fR,
-\fBdocker-compose.yaml\fR, then \fBdocker-compose.yml\fR.
+\fBdocker-compose.yaml\fR, then \fBdocker-compose.yml\fR. When the file is
+found this way, and not named with \fB\-f\fR or \fBCOMPOSE_FILE\fR, the first
+override file next to it is merged on top: \fBcompose.override.yaml\fR,
+\fBcompose.override.yml\fR, \fBdocker-compose.override.yaml\fR or
+\fBdocker-compose.override.yml\fR.
 .TP
 .B .env
 Project environment file, loaded for variable interpolation.
