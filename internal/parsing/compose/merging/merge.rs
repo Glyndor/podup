@@ -101,7 +101,7 @@ pub(in super::super) fn interpolated_value(
 	// Merge keys first: a service built from `<<: *base` has its keys only after
 	// they are resolved, and the typing of an interpolated value depends on the
 	// key being a direct key of the service.
-	apply_merge_keys(&mut value);
+	apply_merge_keys(&mut value)?;
 	if let Some(vars) = vars {
 		// One budget for the whole project. The per-scalar cap cannot see
 		// repetition spread across scalars, which is the shape that reached
