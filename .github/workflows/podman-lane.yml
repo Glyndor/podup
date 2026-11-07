@@ -185,13 +185,30 @@ jobs:
         run: echo "this pull request changes nothing the VM can observe (see the decide job); reporting success without booting"
       - name: Install qemu + cloud tools
         if: needs.decide.outputs.engine == 'true'
-        timeout-minutes: 15
+        timeout-minutes: 18
         run: |
           # apt has hung for the whole 95 min job budget on a saturated runner, and the
           # cancelled leg made the merge queue drop the groups behind it. Bound each
           # attempt and retry instead.
+          #
+          # What was measured (podman-vm legs on 2026-11-06): the step failed four
+          # times with all three attempts ending at the 240 s `timeout`, and with
+          # `-qq` nothing said which host held it. A host that does not answer is
+          # waited for without limit by apt's own defaults, and `apt-get update`
+          # ignores an index it could not fetch, so the useful behaviour is to give
+          # up on a connection that is silent for 20 s instead of waiting out the
+          # whole `timeout`. The output is no longer silenced, so the next failure
+          # names the host. From the second attempt the Ubuntu archive mirror is the
+          # canonical one instead of the Azure copy.
+          export DEBIAN_FRONTEND=noninteractive
+          apt_opts=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::ForceIPv4=true)
+          echo "apt sources:"
+          grep -rhoE 'https?://[^/ ]+' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null | LC_ALL=C sort -u
           for attempt in 1 2 3; do
-            if sudo timeout 240 apt-get update -qq && sudo timeout 240 apt-get install -y -qq qemu-system-x86 qemu-utils cloud-image-utils; then
+            if [ "$attempt" -gt 1 ]; then
+              sudo sed -i 's#azure.archive.ubuntu.com#archive.ubuntu.com#g' /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+            fi
+            if sudo timeout 90 apt-get -q "${apt_opts[@]}" update && sudo timeout 210 apt-get -q "${apt_opts[@]}" install -y qemu-system-x86 qemu-utils cloud-image-utils; then
               exit 0
             fi
             echo "apt attempt $attempt failed or timed out"
