@@ -1,7 +1,7 @@
 //! Multi-file accumulation and a large malformed final dotenv file.
 #![cfg(unix)]
 use std::fs;
-#[path = "../support/file_process.rs"]
+#[path = "../../support/file_process.rs"]
 mod file_process;
 use file_process::{command, run, CAP, MARKER};
 

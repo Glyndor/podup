@@ -20,7 +20,7 @@ mod budget_entry_points;
 mod caps;
 #[path = "hostile_compose/cross_file_budget.rs"]
 mod cross_file_budget;
-#[path = "../support/file_process.rs"]
+#[path = "../../support/file_process.rs"]
 mod file_process;
 use file_process::{isolated, run, Outcome};
 

@@ -5,9 +5,9 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-#[path = "../support/fake_engine.rs"]
+#[path = "../../support/fake_engine.rs"]
 mod fake_engine;
-#[path = "../support/host_files.rs"]
+#[path = "../../support/host_files.rs"]
 mod host_files;
 
 #[path = "hostile_copy_upload/download.rs"]

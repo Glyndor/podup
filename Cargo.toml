@@ -196,15 +196,15 @@ path = "tests/repository/docs/man_page_flags.rs"
 
 [[test]]
 name = "hostile_compose"
-path = "tests/hostile/input/hostile_compose.rs"
+path = "tests/hostile/input/parsing/hostile_compose.rs"
 
 [[test]]
 name = "hostile_include_extends_cycle"
-path = "tests/hostile/input/hostile_include_extends_cycle.rs"
+path = "tests/hostile/input/parsing/hostile_include_extends_cycle.rs"
 
 [[test]]
 name = "hostile_filesystem_paths"
-path = "tests/hostile/input/hostile_filesystem_paths.rs"
+path = "tests/hostile/input/host_files/hostile_filesystem_paths.rs"
 
 [[test]]
 name = "hostile_podman"
@@ -216,7 +216,7 @@ path = "tests/hostile/podman/hostile_push.rs"
 
 [[test]]
 name = "hostile_quadlet_units"
-path = "tests/hostile/input/hostile_quadlet_units.rs"
+path = "tests/hostile/input/units/hostile_quadlet_units.rs"
 
 [[test]]
 name = "hostile_secret_engine"
@@ -336,7 +336,7 @@ path = "tests/cli/audit/sensitive_bind/audit_sensitive_bind_paths.rs"
 
 [[test]]
 name = "hostile_autostart_units"
-path = "tests/hostile/input/hostile_autostart_units.rs"
+path = "tests/hostile/input/units/hostile_autostart_units.rs"
 
 [[test]]
 name = "hostile_terminal_args"
@@ -451,20 +451,20 @@ panic = "abort"
 
 [[test]]
 name = "hostile_copy_upload"
-path = "tests/hostile/input/hostile_copy_upload.rs"
+path = "tests/hostile/input/host_files/hostile_copy_upload.rs"
 
 [[test]]
 name = "hostile_watch_paths"
-path = "tests/hostile/input/hostile_watch_paths.rs"
+path = "tests/hostile/input/host_files/hostile_watch_paths.rs"
 required-features = ["watch", "test-helpers"]
 
 [[test]]
 name = "hostile_secret_permissions"
-path = "tests/hostile/input/hostile_secret_permissions.rs"
+path = "tests/hostile/input/host_files/hostile_secret_permissions.rs"
 
 [[test]]
 name = "hostile_build_secrets"
-path = "tests/hostile/input/hostile_build_secrets.rs"
+path = "tests/hostile/input/host_files/hostile_build_secrets.rs"
 
 [[test]]
 name = "hostile_archive_stat"
@@ -477,16 +477,16 @@ required-features = ["update", "test-helpers"]
 
 [[test]]
 name = "hostile_env_file_budget"
-path = "tests/hostile/input/hostile_env_file_budget.rs"
+path = "tests/hostile/input/parsing/hostile_env_file_budget.rs"
 
 [[test]]
 name = "hostile_env_file_bytes"
-path = "tests/hostile/input/hostile_env_file_bytes.rs"
+path = "tests/hostile/input/parsing/hostile_env_file_bytes.rs"
 
 [[test]]
 name = "hostile_label_files"
-path = "tests/hostile/input/hostile_label_files.rs"
+path = "tests/hostile/input/parsing/hostile_label_files.rs"
 
 [[test]]
 name = "unit_publication"
-path = "tests/hostile/input/unit_publication.rs"
+path = "tests/hostile/input/units/unit_publication.rs"

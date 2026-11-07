@@ -4,7 +4,7 @@
 use file_process::{command, run, CAP};
 use std::fs;
 
-#[path = "../support/file_process.rs"]
+#[path = "../../support/file_process.rs"]
 mod file_process;
 
 #[derive(Clone, Copy, Debug)]

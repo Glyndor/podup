@@ -25,7 +25,7 @@ run_case() {
 	fi
 }
 # Skipped: only paths the root build and rustdoc never read.
-for path in tests/hostile/input/x.rs docs/commands.md README.md CONTRIBUTING.md \
+for path in tests/hostile/input/parsing/x.rs docs/commands.md README.md CONTRIBUTING.md \
 	bench/run.sh fuzz/fuzz_targets/a.rs debian/rules install.sh install.ps1 \
 	.github/workflows/binary-budget.yml .github/workflows/reusable-rust-fuzz.yml \
 	.github/workflows/podman-lane.yml .github/scripts/checks/podman-lane-paths.sh \
