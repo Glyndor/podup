@@ -12,14 +12,14 @@ podup [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS] [SERVICE...]
 
 | Flag | Env | Description |
 |---|---|---|
-| `-f, --file <PATH>` | `COMPOSE_FILE` | Compose file. Repeatable; later files merge over earlier ones. When unset, the compose-spec precedence list is probed: `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`. |
+| `-f, --file <PATH>` | `COMPOSE_FILE` | Compose file. Repeatable; later files merge over earlier ones. When unset, the compose-spec precedence list is probed: `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`. Only the current directory is probed: unlike docker compose, podup does not look in the parent directories, so from a subdirectory of a project pass `-f` or `--project-directory`. |
 | `-p, --project <NAME>` (alias `--project-name`) | `COMPOSE_PROJECT_NAME` | Project name, prefixing container/network/volume names. When unset: the top-level `name:`, then the sanitized project-directory basename. |
 | `--socket <PATH>` | `PODMAN_SOCKET` | Podman socket path; overrides auto-detection. |
 | `--connection-pool-size <N>` | `PODUP_LIBPOD_POOL` | HTTP/1.1 connections the libpod client keeps open to the Podman socket. Streaming calls each take a dedicated connection outside this cap. Valid range: 0–1024. Default 0 disables pooling. `PODUP_LIBCOD_POOL` is read as a fallback when the new name is unset. |
 | `--profile <NAMES>` | `COMPOSE_PROFILES` | Active profiles, comma-separated. |
 | `--project-directory <PATH>` | | Base directory for relative paths (env_file, build context, bind mounts, config/secret sources). Defaults to the compose file's directory. |
 | `--ansi <WHEN>` | | Colour output: `auto`, `always` or `never`. `--ansi always` forces colour even into a pipe or file and overrides `NO_COLOR`; `--ansi auto` honours `NO_COLOR` and TTY detection. |
-| `--env-file <PATH>` | | Env file(s) for interpolation. External extends chains retain the root compose file's resolved env paths. Repeatable; later files win. Replaces `.env` rather than adding to it. Process environment takes precedence. With `run`, also seeds the one-off container's environment below service `environment:` and `-e`. |
+| `--env-file <PATH>` | | Env file(s) for interpolation. External extends chains retain the root compose file's resolved env paths. Repeatable; later files win. Replaces `.env` rather than adding to it. Process environment takes precedence. With `run`, also seeds the one-off container's environment below service `environment:` and `-e`. The variables it defines interpolate the compose file; they do not reach the `env_file:` of a service. |
 | `--no-warn` | | Suppress host-binding / privilege-escalation warnings during `up`/`create`/`run`/`exec`. The port-exposure warning is shown only by `up`/`create`/`run`/`scale`/`watch`/`generate quadlet`/`autostart` unless `--no-warn` is set, and by `config` regardless of `--no-warn`. `config` still surfaces the active modes at the default log level. |
 | `-h, --help` | | Per-command help, including inherited global options. `help [COMMAND]` shows command-specific help without those global options. |
 | `-V, --version` | | Print `podup version vX.Y.Z`. Same as `podup version`. |

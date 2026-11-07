@@ -315,6 +315,8 @@ What is refused, before anything is created:
 
 When `up` waits on `depends_on: {condition: service_healthy}`, podup runs healthchecks itself so hosts without systemd timers can progress. It runs at the parsed interval (minimum 100ms, otherwise 2s), reads status every 150ms, and waits `interval × retries + start_period`. `--wait-timeout` does not extend this dependency budget.
 
+docker compose fails the moment the dependency reports `unhealthy`; podup keeps waiting for the whole budget above and then reports a health check timeout. The dependent is not started and the exit status is non-zero in both, so only the time and the message differ. This is deliberate and is not changed.
+
 For an unhealthy container that should recover, use `x-podman-on-failure: restart`. The reported Podman kill/unless-stopped combination leaves it exited; service-mode autostart does not supervise container exits. Invalid values error in `up`/`create`; Quadlet generation warns and omits them.
 
 ## Accepted for compatibility
