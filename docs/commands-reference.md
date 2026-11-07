@@ -16,7 +16,7 @@ Pull images for the named services, or all services if none are given.
 
 Service `pull_policy` values `daily`, `weekly`, `every_<n>[wdhms]` and the podup extension `refresh` map to `newer`, including Quadlet `Pull=newer`. Podup checks the registry and keeps the local image when current, potentially using more network than the interval implies. It emits one warning per service: `pull_policy "<value>" is treated as "newer": podup does not track when an image was last pulled`.
 
-Warnings name the effective policy after an engine override. Fixed overrides and registry autoupdate suppress the time-policy warning. Build services use or build their local image; Quadlet prebuilt services use `Pull=never` and emit no time-policy warning.
+Warnings name the effective policy after an engine override. Fixed overrides, and `x-podman-autoupdate: registry` on `pull` and `up`, suppress the time-policy warning; `config` and `generate quadlet` still emit it for such a service. Build services use or build their local image. In the Quadlet export only services with a `build:` get `Pull=never` and no time-policy warning; an `image:`-only service keeps its own policy (`Pull=newer` for `daily`) and still warns.
 
 The podup extension `pull_refresh_after` is an optional string, validated and otherwise unused, with no extra warning for `refresh` and no warning under fixed policies. The accepted grammar is `([0-9]+[wdhms])+`, or `every_([0-9]+[wdhms])+` for a policy, using ASCII digits and lowercase units with a checked total of at most 4294967295 seconds. Empty numbers, malformed values, fractions, subsecond units, signs, whitespace and overflow are refused with the service, value and accepted values. `up`, `run`, `create`, `pull`, `build`, standalone `watch`, watch rebuilds and pod recreation validate before mutation; `config` and the Quadlet export gate validate too. `config --no-interpolate` also validates these two fields strictly and refuses unresolved variables. CLI policy options retain the fixed choices in the table above.
 
@@ -125,7 +125,7 @@ podup audit --list-checks --format json | jq -r '.checks[].id'
 | Check id | Fires when | Notes |
 |---|---|---|
 | `privileged` | `privileged: true` | Grants extended host privileges; under rootless Podman reduced but never incidental. |
-| `host_namespace` | `network_mode: host`, or `pid`/`ipc`/`uts`/`cgroup`/`userns_mode: host` | One finding per active mode. |
+| `host_namespace` | `network_mode: host`, or `pid`/`ipc`/`uts`/`cgroup`/`userns_mode: host`; also the `container:<id>` form of `network_mode` and `ipc` | One finding per active mode. |
 | `dangerous_capability` | `cap_add` carries a capability from the dangerous list | The list includes `SYS_ADMIN`, `ALL`, `SYS_MODULE`, `DAC_READ_SEARCH`, `SYS_RAWIO`, `SYS_PTRACE`, `NET_ADMIN`, `SYS_BOOT`, `MKNOD`, `SYSLOG`, `AUDIT_CONTROL`, `AUDIT_WRITE`, `SETFCAP`; names are matched case-insensitively with a `CAP_` prefix stripped. |
 | `writable_root` | `read_only` is not `true` | Compose's default is writable. |
 | `no_cap_drop_all` | `cap_drop` does not contain `ALL` | Without it the runtime's default capability set stays. |
@@ -136,7 +136,7 @@ podup audit --list-checks --format json | jq -r '.checks[].id'
 | `secret_in_environment` | `environment:` key whose name contains a secret-bearing segment (`PASSWORD`, `SECRET`, `TOKEN`, `KEY`, case-insensitive) and a value is set | Every set value is flagged, including resolved `${VAR}` interpolations and empty strings. Bare inherited keys (no value) are not. A name ending in `FILE` is exempt only when its value starts with `/`, `./`, or `../`. |
 | `port_published_on_all_interfaces` | A port is published without a host IP | The bind falls on every host interface. |
 | `sensitive_bind_mount` | A bind mount exposes a sensitive host path: a container runtime socket, or `/proc`, `/sys`, `/dev`, `/etc`, `/boot`, `/root`, or a runtime directory holding a socket | |
-| `unpinned_image` | `image:` with no tag, with tag `latest`, or `latest` without a digest | An `@sha256:` digest counts as pinning regardless of the tag. |
+| `unpinned_image` | `image:` with no tag, with tag `latest`, or `latest` without a digest | An `@sha256:` digest counts as pinning regardless of the tag. A service with `build:` and `pull_policy: build` or `never` is skipped. |
 | `port_published_on_wildcard` | A port is published with an explicit wildcard host IP (`0.0.0.0` or `::`) | Off by default; enable with `--wildcard-binds`. |
 | `no_restart_policy` | Neither `restart:` nor `deploy.restart_policy:` is set | An explicit `restart: "no"` is a deliberate choice and stays silent. |
 | `no_init` | `init:` is not `true` | PID 1 is the app; orphans become zombies. |
