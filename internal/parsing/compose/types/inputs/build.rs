@@ -149,9 +149,9 @@ pub enum BuildConfig {
 		/// SSH agent sockets or keys exposed to the build.
 		#[serde(default, skip_serializing_if = "Vec::is_empty")]
 		ssh: Vec<String>,
-		/// Names of top-level secrets exposed to the build.
+		/// Top-level secrets exposed to the build, by name or in the long form.
 		#[serde(default, skip_serializing_if = "Vec::is_empty")]
-		secrets: Vec<String>,
+		secrets: Vec<BuildSecret>,
 		/// Resource limits applied to the build container.
 		#[serde(default, skip_serializing_if = "IndexMap::is_empty")]
 		ulimits: IndexMap<String, UlimitConfig>,
@@ -291,8 +291,8 @@ impl BuildConfig {
 		}
 	}
 
-	/// `build.secrets`: names of top-level secrets exposed to the build.
-	pub fn secrets(&self) -> &[String] {
+	/// `build.secrets`: the top-level secrets exposed to the build.
+	pub fn secrets(&self) -> &[BuildSecret] {
 		match self {
 			BuildConfig::Context(_) => &[],
 			BuildConfig::Config { secrets, .. } => secrets,
@@ -317,6 +317,54 @@ impl BuildConfig {
 // ---------------------------------------------------------------------------
 // Unit tests
 // ---------------------------------------------------------------------------
+
+/// One entry of `build.secrets`: the name of a top-level secret, or the long
+/// form that also names the id the Dockerfile reads it by.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(untagged)]
+pub enum BuildSecret {
+	/// Short form: the secret's name, which is also its id in the build.
+	Short(String),
+	/// Long form: the secret, and what to call it inside the build.
+	Long {
+		/// Name of the top-level secret.
+		source: String,
+		/// The id the Dockerfile's `--mount=type=secret,id=...` uses; the
+		/// source name when absent.
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		target: Option<String>,
+		/// Owner of the file in the build (a build secret has none to set).
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		uid: Option<String>,
+		/// Group of the file in the build.
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		gid: Option<String>,
+		/// Permission bits of the file in the build.
+		#[serde(default, skip_serializing_if = "Option::is_none")]
+		mode: Option<serde_yaml::Value>,
+	},
+}
+
+impl BuildSecret {
+	/// The name of the top-level secret.
+	pub fn source(&self) -> &str {
+		match self {
+			BuildSecret::Short(name) => name,
+			BuildSecret::Long { source, .. } => source,
+		}
+	}
+
+	/// The id the build reads it by: `target` in the long form, else the name.
+	pub fn id(&self) -> &str {
+		match self {
+			BuildSecret::Long {
+				target: Some(target),
+				..
+			} => target,
+			other => other.source(),
+		}
+	}
+}
 
 #[cfg(test)]
 #[path = "build_tests.rs"]
