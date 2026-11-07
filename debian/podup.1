@@ -1,6 +1,6 @@
 .TH PODUP 1 "July 2026" "podup 3.3.0" "User Commands"
 .SH NAME
-podup \- run docker-compose files on rootless Podman
+podup \- run Compose projects on rootless Podman
 .SH SYNOPSIS
 .B podup
 [\fIGLOBAL OPTIONS\fR]
@@ -9,10 +9,10 @@ podup \- run docker-compose files on rootless Podman
 [\fISERVICE\fR...]
 .SH DESCRIPTION
 .B podup
-reads a Compose file (\fBdocker-compose.yml\fR or the compose-spec precedence
-list) and translates it into rootless Podman operations over Podman's native
+reads a Compose file (\fBcompose.yaml\fR or the rest of the compose-spec
+precedence list) and translates it into rootless Podman operations over Podman's native
 libpod REST API. It is a single static binary with no daemon and no Python
-runtime, usable both as a standalone docker-compose replacement and as a Rust
+runtime, usable both as a standalone Compose replacement and as a Rust
 library.
 .PP
 .B podup
@@ -39,7 +39,7 @@ unset, the compose-spec precedence list is probed in the current directory
 \fBdocker-compose.yml\fR).
 .TP
 .BR \-p ", " \-\-project " " \fINAME\fR
-Project name, used as a prefix for container, network and volume names. May
+Project name (also spelled \fB\-\-project\-name\fR), used as a prefix for container, network and volume names. May
 also be set via \fBCOMPOSE_PROJECT_NAME\fR. When unset, the top-level
 \fBname:\fR field is used, then the sanitized basename of the project directory.
 .TP
@@ -52,6 +52,20 @@ Active profiles, comma-separated. May also be set via \fBCOMPOSE_PROFILES\fR.
 .BR \-\-project\-directory " " \fIPATH\fR
 Base directory for resolving relative paths (env_file, build context, bind
 mounts, config and secret sources). Defaults to the compose file's directory.
+.TP
+.BR \-\-connection\-pool\-size " " \fIN\fR
+Maximum number of HTTP/1.1 connections the libpod client keeps open to the
+Podman socket for reuse, from 0 to 1024. Default 0 means no pool. May also be
+set via \fBPODUP_LIBPOD_POOL\fR; the older misspelling \fBPODUP_LIBCOD_POOL\fR
+is still read when the new name is unset.
+.TP
+.BR \-\-ansi " " \fIWHEN\fR
+When to colour output: \fIauto\fR (terminals only, and \fBNO_COLOR\fR forces
+plain output), \fIalways\fR or \fInever\fR.
+.TP
+.BR \-\-no\-warn
+Suppress the host-binding and privilege-escalation warnings printed during
+\fBup\fR, \fBcreate\fR, \fBrun\fR and \fBexec\fR.
 .TP
 .BR \-\-env\-file " " \fIPATH\fR
 Additional env file loaded into the variable map used for interpolation. May be
@@ -67,8 +81,10 @@ Create and start all services. Options: \fB\-d\fR/\fB\-\-detach\fR,
 \fB\-\-no\-build\fR, \fB\-\-quiet\-pull\fR, \fB\-\-wait\fR,
 \fB\-\-wait\-timeout\fR \fISECONDS\fR, \fB\-t\fR/\fB\-\-timeout\fR \fISECONDS\fR,
 \fB\-V\fR/\fB\-\-renew\-anon\-volumes\fR, \fB\-\-timestamps\fR,
-\fB\-\-no\-start\fR. Accepts a trailing list of services to bring up (with their
-transitive depends_on).
+\fB\-\-no\-start\fR, \fB\-\-abort\-on\-container\-exit\fR,
+\fB\-\-exit\-code\-from\fR \fISERVICE\fR (implies the previous one). The last two
+cannot be combined with \fB\-d\fR, \fB\-\-wait\fR or \fB\-\-watch\fR. Accepts a
+trailing list of services to bring up (with their transitive depends_on).
 .TP
 .B scale \fISERVICE=N\fR...
 Set the number of running containers for services, creating missing replicas and
@@ -77,39 +93,45 @@ one replica and the command fails with guidance.
 .TP
 .B create
 Create the containers for services without starting them. Options:
-\fB\-\-build\fR, \fB\-\-force\-recreate\fR, \fB\-\-no\-recreate\fR, and a trailing
-service list.
+\fB\-\-build\fR, \fB\-\-force\-recreate\fR, \fB\-\-no\-recreate\fR,
+\fB\-\-no\-deps\fR, \fB\-\-pull\fR \fIpolicy\fR, and a trailing service list.
 .TP
 .B ls
 List podup compose projects on the host. \fB\-a\fR/\fB\-\-all\fR includes stopped
 projects, \fB\-q\fR/\fB\-\-quiet\fR prints names only, \fB\-\-format\fR selects
-\fItable\fR or \fIjson\fR. Requires no compose file.
+\fItable\fR or \fIjson\fR, and \fB\-\-filter\fR \fIname=NAME\fR or
+\fIstatus=running|exited\fR is repeatable. Requires no compose file.
 .TP
 .B down
 Stop and remove containers. \fB\-v\fR/\fB\-\-volumes\fR also removes named
 volumes declared in the compose file; \fB\-\-remove\-orphans\fR also removes
 containers for services no longer in the file; \fB\-\-rmi\fR \fIall\fR|\fIlocal\fR
-also removes the service images.
+also removes the service images; \fB\-t\fR/\fB\-\-timeout\fR \fISECONDS\fR is the
+grace period before containers are killed.
 .TP
 .B start
-Start existing stopped containers.
+Start existing stopped containers. \fB\-\-wait\fR waits until services are
+running or healthy, bounded by \fB\-\-wait\-timeout\fR \fISECONDS\fR.
 .TP
 .B stop
-Stop running containers without removing them.
+Stop running containers without removing them. \fB\-t\fR/\fB\-\-timeout\fR
+\fISECONDS\fR is the grace period before containers are killed.
 .TP
 .B build
-Build or rebuild service images.
+Build or rebuild service images. Options: \fB\-\-no\-cache\fR, \fB\-\-pull\fR,
+\fB\-\-build\-arg\fR \fIKEY=VAL\fR (repeatable), \fB\-\-progress\fR \fIstyle\fR
+(validated, inert), \fB\-\-push\fR, \fB\-q\fR/\fB\-\-quiet\fR.
 .TP
 .B push
 Push each service's image to its registry (imageless services are skipped).
 Credentials come from \fBpodman login\fR. \fB\-\-ignore\-push\-failures\fR
-continues after a failure; \fB\-\-tls\-verify false\fR allows an insecure
+continues after a failure; \fB\-q\fR/\fB\-\-quiet\fR suppresses progress; \fB\-\-tls\-verify false\fR allows an insecure
 registry.
 .TP
 .B rm
 Remove stopped service containers. \fB\-f\fR/\fB\-\-force\fR removes running
 containers (stopping them first); \fB\-v\fR/\fB\-\-volumes\fR also removes
-anonymous volumes attached to them.
+anonymous volumes attached to them; \fB\-s\fR/\fB\-\-stop\fR stops them first.
 .TP
 .B kill
 Send a signal to service containers. \fB\-s\fR/\fB\-\-signal\fR sets the signal
@@ -136,38 +158,55 @@ terminals (\fB\-T\fR opts out, \fB\-d\fR never allocates one), so
 .TP
 .B cp \fISRC\fR \fIDST\fR
 Copy files between a service container and the host. Use \fBSERVICE:PATH\fR for
-the container side.
+the container side. \fB\-\-index\fR selects a replica (1-based) of a scaled
+service, \fB\-L\fR/\fB\-\-follow\-link\fR follows symlinks in the host source, and
+\fB\-a\fR/\fB\-\-archive\fR is accepted for compatibility and has no effect.
 .TP
 .B attach \fISERVICE\fR
 Attach to a service container's output (stdout/stderr), streaming it until the
-container exits.
+container exits. \fB\-\-index\fR selects a replica (1-based);
+\fB\-\-no\-stdin\fR, \fB\-\-sig\-proxy\fR and \fB\-\-detach\-keys\fR are accepted for
+compatibility.
 .TP
 .B wait \fR[\fISERVICE\fR...]
 Block until the named service containers (default: all) stop, printing each
-container's exit code.
+container's exit code. \fB\-\-format json\fR emits one JSON object per
+container as it exits.
 .TP
 .B commit \fISERVICE\fR \fIIMAGE\fR
 Commit a service container to a new image reference (\fBrepo[:tag]\fR).
-\fB\-\-index\fR selects a replica (1-based) of a scaled service.
+\fB\-\-index\fR selects a replica (1-based) of a scaled service,
+\fB\-m\fR/\fB\-\-message\fR, \fB\-a\fR/\fB\-\-author\fR and \fB\-c\fR/\fB\-\-change\fR
+\fIINSTRUCTION\fR (repeatable) set image metadata, and \fB\-p\fR/\fB\-\-pause\fR
+pauses the container during the commit (default on).
 .TP
 .B export \fISERVICE\fR
 Export a service container's filesystem as a tar archive. \fB\-o\fR/\fB\-\-output\fR
 writes to a file instead of stdout; \fB\-\-index\fR selects a replica (1-based).
 .TP
 .B ps
-List project containers.
+List project containers. \fB\-a\fR/\fB\-\-all\fR includes stopped ones,
+\fB\-q\fR/\fB\-\-quiet\fR prints IDs only, \fB\-s\fR/\fB\-\-size\fR adds each
+container's on-disk size, \fB\-\-format\fR selects \fItable\fR, \fIjson\fR or
+\fIndjson\fR, \fB\-\-services\fR prints service names, \fB\-\-all\-services\fR
+prints every configured service name including those without containers, and
+\fB\-\-filter\fR \fIstatus=...\fR or \fIname=...\fR and \fB\-\-status\fR \fISTATUS\fR
+are repeatable.
 .TP
 .B top
-Display the running processes of service containers.
+Display the running processes of service containers. \fB\-\-format\fR selects
+\fItable\fR or \fIjson\fR.
 .TP
 .B stats
 Live resource usage (CPU, memory, network, block I/O, PIDs) for service
-containers. \fB\-\-no\-stream\fR prints a single snapshot; a trailing service
-list narrows the report.
+containers. \fB\-\-no\-stream\fR prints a single snapshot; \fB\-a\fR/\fB\-\-all\fR
+includes non-running containers, \fB\-\-no\-trunc\fR keeps long names whole,
+\fB\-\-format\fR selects \fItable\fR or \fIjson\fR; a trailing service list
+narrows the report.
 .TP
 .B port \fISERVICE\fR \fIPRIVATE_PORT\fR
 Print the public binding for a container port. \fB\-\-proto\fR sets the protocol
-(default \fBtcp\fR).
+(\fB\-\-protocol\fR is an alias; default \fBtcp\fR) and \fB\-\-index\fR selects a replica (1-based).
 .TP
 .B events
 Stream Podman events for this project's containers.
@@ -179,18 +218,21 @@ together to end the feed \- either alone, or an \fB\-\-until\fR in the future,
 leaves it following indefinitely.
 .TP
 .B images
-List images used by services.
+List images used by services. \fB\-q\fR/\fB\-\-quiet\fR prints image IDs only,
+\fB\-\-format\fR selects \fItable\fR or \fIjson\fR.
 .TP
 .B volumes \fR[\fISERVICE\fR...]
 List the project's named volumes. \fB\-q\fR/\fB\-\-quiet\fR prints names only,
 \fB\-\-format\fR selects \fItable\fR or \fIjson\fR, and a trailing service list
-narrows the report to volumes those services mount.
+narrows the report to volumes those services mount. \fB\-s\fR/\fB\-\-size\fR adds
+each volume's size (slow).
 .TP
 .B logs \fR[\fISERVICE\fR]
 View container output. \fB\-f\fR/\fB\-\-follow\fR streams new output,
 \fB\-n\fR/\fB\-\-tail\fR \fIN\fR limits to the last N lines, \fB\-\-since\fR and
 \fB\-\-until\fR bound by time, and \fB\-t\fR/\fB\-\-timestamps\fR prefixes each
-line with an RFC3339 timestamp.
+line with an RFC3339 timestamp. \fB\-\-no\-color\fR drops the colour from the
+service-name prefix and \fB\-\-no\-log\-prefix\fR drops the prefix.
 .TP
 .B exec \fISERVICE\fR \fICOMMAND\fR...
 Execute a command in a running service container. Options:
@@ -203,11 +245,16 @@ and Windows.
 .TP
 .B pull
 Pull images for all services. \fB\-q\fR/\fB\-\-quiet\fR suppresses progress
-output.
+output, \fB\-\-policy\fR \fIpolicy\fR (always, missing, never, newer, build)
+overrides each service's \fBpull_policy\fR, \fB\-\-ignore\-pull\-failures\fR
+continues after a failure and \fB\-\-include\-deps\fR also pulls the
+\fBdepends_on\fR services of the named ones.
 .TP
 .B restart \fR[\fISERVICE\fR]
 Restart services, or one named service. \fB\-\-no\-deps\fR skips
-cascade-restarting dependents with a \fBdepends_on\fR restart condition.
+cascade-restarting dependents with a \fBdepends_on\fR restart condition;
+\fB\-t\fR/\fB\-\-timeout\fR \fISECONDS\fR is the grace period before containers are
+killed.
 .TP
 .B config
 Print the resolved compose file after substitution, extends and include.
@@ -215,7 +262,21 @@ Print the resolved compose file after substitution, extends and include.
 service names, \fB\-q\fR/\fB\-\-quiet\fR only validates (no output),
 \fB\-\-no\-interpolate\fR leaves \fB${VAR}\fR placeholders literal, and
 \fB\-\-resolve\-image\-digests\fR rewrites each service \fBimage:\fR to its
-registry digest (\fBrepo@sha256:...\fR).
+registry digest (\fBrepo@sha256:...\fR). \fB\-\-volumes\fR, \fB\-\-images\fR and
+\fB\-\-profiles\fR list the named volumes, image references or profile names,
+\fB\-\-hash\fR \fIS1,S2\fR (or \fB*\fR) prints the config hash of services, and
+\fB\-\-no\-normalize\fR is accepted for compatibility.
+.TP
+.B audit
+Audit the compose file for hardening gaps (writable root filesystem, kept
+capabilities, missing memory and PID limits, wildcard host binds, secret-shaped
+environment variables, unpinned images and similar) and print one row per
+service. Read-only: it never contacts Podman and changes nothing that \fBup\fR
+does. \fB\-\-format\fR selects \fItable\fR or \fIjson\fR, \fB\-\-strict\fR exits 1
+when any finding is present so it can fail CI, \fB\-\-wildcard\-binds\fR enables
+the opt-in \fBport_published_on_wildcard\fR check, and \fB\-\-list\-checks\fR
+prints the checks this build carries and exits without reading a compose file
+(it conflicts with \fB\-\-strict\fR and \fB\-\-wildcard\-binds\fR).
 .TP
 .B generate quadlet \fR[\fB\-o\fR \fIDIR\fR]
 Translate the compose file into Podman Quadlet unit files (one \fB.container\fR
@@ -235,9 +296,13 @@ closed. \fB\-\-check\fR only reports whether a newer release exists;
 .B autostart \fISUBCOMMAND\fR
 Manage a boot-time autostart unit for this project, rootless and user-scope via
 \fBsystemctl \-\-user\fR (units under \fB${XDG_CONFIG_HOME:-~/.config}\fR).
-Subcommands: \fBinstall\fR (\fB\-\-mode\fR \fIservice\fR|\fIquadlet\fR,
-\fB\-\-no\-start\fR, \fB\-\-dry\-run\fR), \fBuninstall\fR, \fBstatus\fR, and
-\fBrebuild\fR (for a quadlet-mode install).
+Subcommands: \fBinstall\fR (\fB\-\-mode\fR \fIservice\fR|\fIquadlet\fR|\fIstart\fR,
+\fB\-\-no\-start\fR, \fB\-\-dry\-run\fR, and \fB\-\-auto\-update\fR
+\fIhourly\fR|\fIdaily\fR|\fIweekly\fR, which installs a timer that runs
+\fBpodup up \-d\fR on that schedule and is accepted only with
+\fB\-\-mode service\fR), \fBuninstall\fR (\fB\-\-purge\fR also tears the stack
+down and removes its named volumes), \fBstatus\fR, and \fBrebuild\fR (for a
+quadlet-mode install).
 .TP
 .B version
 Print podup's version. \fB\-\-short\fR prints just the number;
@@ -257,6 +322,11 @@ Default project name (see \fB\-\-project\fR).
 .TP
 .B COMPOSE_PROFILES
 Default active profiles (see \fB\-\-profile\fR).
+.TP
+.B PODUP_LIBPOD_POOL
+Size of the libpod connection pool (see \fB\-\-connection\-pool\-size\fR).
+\fBPODUP_LIBCOD_POOL\fR, a misspelling of the name, is read when this one is
+unset.
 .TP
 .B PODMAN_SOCKET
 Podman socket path (see \fB\-\-socket\fR).
@@ -305,8 +375,14 @@ For \fBevents\fR, an unbounded feed that ends at all exits 1; bounding one
 needs \fB--since\fR and \fB--until\fR together, both already elapsed.
 .SH FILES
 .TP
-.B docker-compose.yml
-Default compose file when none is given.
+.B compose.yaml
+Default compose file when none is given. The compose-spec precedence list is
+probed in the current directory: \fBcompose.yaml\fR, \fBcompose.yml\fR,
+\fBdocker-compose.yaml\fR, then \fBdocker-compose.yml\fR. When the file is
+found this way, and not named with \fB\-f\fR or \fBCOMPOSE_FILE\fR, the first
+override file next to it is merged on top: \fBcompose.override.yaml\fR,
+\fBcompose.override.yml\fR, \fBdocker-compose.override.yaml\fR or
+\fBdocker-compose.override.yml\fR.
 .TP
 .B .env
 Project environment file, loaded for variable interpolation.

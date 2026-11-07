@@ -191,6 +191,10 @@ name = "docs_links"
 path = "tests/repository/docs/docs_links.rs"
 
 [[test]]
+name = "man_page_flags"
+path = "tests/repository/docs/man_page_flags.rs"
+
+[[test]]
 name = "hostile_compose"
 path = "tests/hostile/input/hostile_compose.rs"
 
