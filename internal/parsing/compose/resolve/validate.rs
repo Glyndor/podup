@@ -323,6 +323,8 @@ fn validate_service_consistency(
 		}
 	}
 
+	super::validate_memory::validate_memory_amounts(name, service)?;
+
 	// Surface a malformed/out-of-range port at config time rather than letting
 	// it slip through to a podman create error at run time.
 	parse_ports(&service.ports)?;

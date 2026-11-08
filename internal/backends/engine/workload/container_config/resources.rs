@@ -13,7 +13,8 @@ use crate::size;
 /// bytes. Top-level `mem_limit:` wins; the modern
 /// `deploy.resources.limits.memory:` block only fills in a value the top
 /// level left unset. An unparseable value is `None` (`parse_memory`
-/// returns `None`, #1743). The literal `"-1"` parses to `Some(-1)` and
+/// returns `None`, #1743); loading the file refuses such a value first, so
+/// this only sees it when validation was skipped (`--no-interpolate`). The literal `"-1"` parses to `Some(-1)` and
 /// is forwarded verbatim; Podman interprets `-1` as "no cap" at the
 /// API layer, and the engine does not second-guess it.
 ///
