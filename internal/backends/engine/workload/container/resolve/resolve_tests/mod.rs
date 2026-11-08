@@ -9,6 +9,7 @@ mod bind_source;
 mod config_hash;
 mod config_hash_file_refs;
 mod config_hash_resources;
+mod environment;
 mod links;
 mod stop_signal;
 mod volume_name;
@@ -46,5 +47,5 @@ fn resolved_env(
 	service: &crate::compose::types::Service,
 	base: &std::path::Path,
 ) -> std::collections::BTreeMap<String, String> {
-	super::effective_env(service, base).expect("the environment resolves")
+	super::effective_env(service, base, &[]).expect("the environment resolves")
 }

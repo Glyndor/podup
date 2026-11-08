@@ -129,3 +129,23 @@ pub(super) fn override_for(base: &Path) -> Option<PathBuf> {
 pub(crate) fn absolute(path: &Path) -> PathBuf {
 	std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
+
+/// Anchor relative `--env-file` paths at `cwd`.
+///
+/// Like every other path given on the command line, an `--env-file` is
+/// relative to where the command is run, not to the compose file's directory,
+/// so `cd envs && podup --env-file x.env -f ../compose.yaml config` reads
+/// `envs/x.env`. Absolute paths are left as they are.
+pub(crate) fn anchor_env_files(files: &[String], cwd: &Path) -> Vec<String> {
+	files
+		.iter()
+		.map(|f| {
+			let path = Path::new(f);
+			if path.is_absolute() {
+				f.clone()
+			} else {
+				cwd.join(path).to_string_lossy().into_owned()
+			}
+		})
+		.collect()
+}

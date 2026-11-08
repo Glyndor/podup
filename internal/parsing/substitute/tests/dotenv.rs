@@ -63,3 +63,21 @@ fn load_dotenv_missing_file_returns_empty() {
 	let map = load_dotenv(dir.path());
 	assert!(map.is_empty());
 }
+
+#[cfg(unix)]
+#[test]
+fn load_dotenv_follows_a_link_to_the_file() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(dir.path().join("real.env"), "LINKED_ENV_KEY=3.19\n").unwrap();
+	std::os::unix::fs::symlink("real.env", dir.path().join(".env")).unwrap();
+	let map = load_dotenv(dir.path());
+	assert_eq!(map.get("LINKED_ENV_KEY").map(|s| s.as_str()), Some("3.19"));
+}
+
+#[cfg(unix)]
+#[test]
+fn load_dotenv_ignores_a_link_that_leads_nowhere() {
+	let dir = tempfile::tempdir().unwrap();
+	std::os::unix::fs::symlink("missing.env", dir.path().join(".env")).unwrap();
+	assert!(load_dotenv(dir.path()).is_empty());
+}

@@ -1,5 +1,5 @@
 use super::super::resolve::{
-	override_for, resolve_base_dir, resolve_compose_files, resolve_project_name,
+	anchor_env_files, override_for, resolve_base_dir, resolve_compose_files, resolve_project_name,
 	validate_project_directory,
 };
 use podup::compose::sanitize_project_name;
@@ -262,4 +262,18 @@ fn several_supported_names_are_listed_in_precedence_order_and_the_first_is_named
 		message.contains(&format!("using {}", present[0].display())),
 		"{message}"
 	);
+}
+
+#[test]
+fn env_file_paths_are_anchored_at_the_working_directory() {
+	let cwd = Path::new("/work/envs");
+	let anchored = anchor_env_files(
+		&["my-env".into(), "sub/x.env".into(), "/abs/y.env".into()],
+		cwd,
+	);
+	assert_eq!(
+		anchored,
+		["/work/envs/my-env", "/work/envs/sub/x.env", "/abs/y.env"]
+	);
+	assert!(anchor_env_files(&[], cwd).is_empty());
 }

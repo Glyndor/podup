@@ -69,6 +69,11 @@ pub(crate) async fn run_config(
 	// environment at all (#1184). `config` is the command you reach for to ask
 	// what will actually run; leaving the key unresolved pointed away from the
 	// answer rather than merely omitting it.
+	// A bare `KEY` under `environment:` reads the project environment (process,
+	// plus `.env` or `--env-file`), the same one `up` resolves it from.
+	let project_vars =
+		podup::substitute::build_vars_with_env_files_strict(&base_dir, &cli.env_file)?;
+	podup::env_file::resolve_bare_environment(&mut resolved, &project_vars);
 	podup::env_file::materialize_env_files(&mut resolved, &base_dir)?;
 	// Render the resolved project name (already settled above from -p /
 	// COMPOSE_PROJECT_NAME, the top-level `name:`, then the directory

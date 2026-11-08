@@ -78,6 +78,34 @@ impl EnvVars {
 		}
 	}
 
+	/// Give every bare `KEY` the value `vars` holds for it, leaving the keys
+	/// `vars` does not define as they are (still bare).
+	///
+	/// `vars` is the project environment: the process, plus `.env` or the
+	/// `--env-file` files. An entry that already carries a value, even an
+	/// empty one, is never touched.
+	pub fn resolve_bare(&mut self, vars: &HashMap<String, String>) {
+		match self {
+			EnvVars::Empty => {}
+			EnvVars::List(list) => {
+				for entry in list.iter_mut().filter(|e| !e.contains('=')) {
+					if let Some(value) = vars.get(entry.as_str()) {
+						*entry = format!("{entry}={value}");
+					}
+				}
+			}
+			EnvVars::Map(map) => {
+				for (key, slot) in map.iter_mut() {
+					if matches!(slot, None | Some(serde_yaml::Value::Null)) {
+						if let Some(value) = vars.get(key) {
+							*slot = Some(serde_yaml::Value::String(value.clone()));
+						}
+					}
+				}
+			}
+		}
+	}
+
 	/// Returns whether no environment variables are defined.
 	pub fn is_empty(&self) -> bool {
 		match self {

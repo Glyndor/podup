@@ -21,7 +21,7 @@ use crate::engine::Engine;
 impl Engine {
 	/// The environment a service's container will run with: its own
 	/// `environment:` entries, the values its `env_file:` files carry, and the
-	/// host's value for every bare passthrough key.
+	/// project environment's value for every bare passthrough key.
 	///
 	/// Resolved once per service and then shared by the create payload and the
 	/// config hash, so the two cannot describe different snapshots of the same
@@ -30,7 +30,7 @@ impl Engine {
 		&self,
 		service: &Service,
 	) -> Result<std::collections::BTreeMap<String, String>> {
-		effective_env(service, &self.base_dir)
+		effective_env(service, &self.base_dir, &self.run_env_files)
 	}
 
 	/// Resolve a service's named-volume reference to the actual volume name
