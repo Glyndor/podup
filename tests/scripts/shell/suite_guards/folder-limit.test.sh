@@ -78,16 +78,13 @@ git rm -qrf -- leaf
 expect 'exception for removed folder' 1 $'leaf\t0\t22\tdead exception' bash "$script"
 
 new_repo exclusions
-files testdata 21
-files testdata/deep 21
-files auth/testdata/deep 21
 files .github/workflows 21
-expect 'testdata at any depth and flat workflows' 0 'folder-limit: OK' bash "$script"
+expect 'flat workflows' 0 'folder-limit: OK' bash "$script"
 files .github/workflows/nested 21
 expect 'workflow exclusion applies only to flat folder' 1 $'.github/workflows/nested\t21\t20' bash "$script"
 git rm -qrf -- .github/workflows/nested
-files not-testdata 21
-expect 'testdata exclusion matches a complete component' 1 $'not-testdata\t21\t20' bash "$script"
+files testdata 21
+expect 'testdata is counted like any other folder' 1 $'testdata\t21\t20' bash "$script"
 
 new_repo spaces
 files 'folder with spaces' 20
