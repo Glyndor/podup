@@ -150,17 +150,22 @@ check "a workflow dispatch runs the lanes" true "$(judge workflow_dispatch "$bas
 check "an empty range runs the lanes" true "$(judge pull_request "$base" "$base" | sed -n 1p)"
 
 # The workflow reads the judge from the reviewed base, never from the pull
-# request's own tree, and every governed job asks it.
+# request's own tree. Two jobs ask it: `classify`, whose answer the jobs
+# skipped whole read, and `lint`, which skips only its heavy steps.
 # shellcheck disable=SC2016
-check "four jobs read the judge from the base" 4 \
+check "two jobs read the judge from the base" 2 \
 	"$(grep -c 'git show "\$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh"' "$workflow")"
 check "the judge is never read from the working tree" 0 \
 	"$(grep -c 'bash .github/scripts/checks/rust-ci-inputs.sh' "$workflow")"
 # shellcheck disable=SC2016
 check "the range comes from the event" 1 \
 	"$(grep -c '^  BASE_SHA: \${{ github.event.pull_request.base.sha' "$workflow")"
-check "a missing decision runs the lanes" 15 \
+check "a missing step decision runs the lanes" 4 \
 	"$(grep -c "steps.decide.outputs.run != 'false'" "$workflow")"
+check "a missing job decision runs the lanes" 3 \
+	"$(grep -c "needs.classify.outputs.run != 'false'" "$workflow")"
+check "a classifier that failed runs the lanes" 3 \
+	"$(grep -c "needs.classify.result != 'success'" "$workflow")"
 
 echo "$pass passed, $fail failed"
 printf 'DONE %s %d %d\n' "${BASH_SOURCE[0]##*/}" "$pass" "$fail"
