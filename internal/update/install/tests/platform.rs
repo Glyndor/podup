@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 #[test]
 fn platform_asset_matches_known_targets() {

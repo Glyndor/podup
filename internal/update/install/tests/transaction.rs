@@ -1,4 +1,4 @@
-use super::*;
+use super::super::*;
 
 // Independent opens must contend on the same lock throughout the self-test.
 #[test]

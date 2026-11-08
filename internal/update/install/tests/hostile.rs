@@ -17,7 +17,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use super::install_binary;
+use super::super::install_binary;
 
 /// Environment variable that tells the child which payload to install.
 const MODE: &str = "PODUP_HOSTILE_INSTALL_MODE";
@@ -112,7 +112,7 @@ impl Drop for Scratch {
 fn run_child(scratch: &Scratch, mode: &str) -> (Result<(), String>, Duration) {
 	let start = Instant::now();
 	let out = Command::new(&scratch.link)
-		.args(["--exact", "update::install::hostile_tests::child"])
+		.args(["--exact", "update::install::tests::hostile::child"])
 		.args(["--test-threads=1", "--nocapture"])
 		.env(MODE, mode)
 		.output()

@@ -1,4 +1,4 @@
-use super::control_escape::{escape_json_controls, escape_log_controls};
+use super::super::control_escape::{escape_json_controls, escape_log_controls};
 
 #[test]
 fn log_text_without_controls_is_borrowed_unchanged() {

@@ -215,8 +215,6 @@ pub(super) fn container_rm_path(name: &str, remove_volumes: bool, force: bool) -
 }
 
 #[cfg(test)]
-mod drop_recheck_tests;
-#[cfg(test)]
 mod libpod_endpoint_query_tests;
 
 #[cfg(test)]
@@ -224,14 +222,3 @@ mod umask_tests;
 
 #[cfg(test)]
 mod snapshot_tests;
-
-#[cfg(all(test, unix))]
-mod pre_start_image_tests;
-#[cfg(all(test, unix))]
-mod pre_start_run_cleanup_tests;
-#[cfg(all(test, unix))]
-mod pre_start_run_tests;
-#[cfg(all(test, unix))]
-mod pre_start_test_support;
-#[cfg(all(test, unix))]
-mod pre_start_up_tests;

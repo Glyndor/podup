@@ -7,7 +7,7 @@
 
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 
-use super::{install_at, write_temp};
+use super::super::{install_at, write_temp};
 
 fn victim(dir: &std::path::Path) -> std::path::PathBuf {
 	let victim = dir.join("victim");

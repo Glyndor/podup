@@ -15,9 +15,6 @@ use crate::cli::{Cli, Commands, RunArgs};
 mod config_normalize;
 mod config_render;
 mod control_escape;
-#[cfg(test)]
-#[path = "control_escape_tests.rs"]
-mod control_escape_tests;
 pub(crate) use config_normalize::anchor_service_bind_sources;
 #[cfg(test)]
 pub(crate) use config_render::render_config_to;
@@ -447,17 +444,8 @@ fn format_clap_error(err: &clap::error::Error) -> String {
 }
 
 #[cfg(test)]
-#[path = "bridge_tests.rs"]
-mod bridge_tests;
-#[cfg(test)]
 mod tests;
 
 pub(crate) mod apparmor_hint;
-#[cfg(test)]
-mod apparmor_hint_tests;
 pub(crate) mod exit_status;
-#[cfg(test)]
-mod exit_status_exit_code_tests;
 pub(crate) mod resolve;
-#[cfg(test)]
-mod resolve_tests;

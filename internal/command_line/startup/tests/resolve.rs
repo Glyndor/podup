@@ -1,4 +1,4 @@
-use super::resolve::{
+use super::super::resolve::{
 	override_for, resolve_base_dir, resolve_compose_files, resolve_project_name,
 	sanitize_project_name, validate_project_directory,
 };
@@ -242,17 +242,17 @@ fn a_control_character_in_the_project_name_does_not_reach_the_message() {
 #[test]
 fn several_supported_names_are_listed_in_precedence_order_and_the_first_is_named() {
 	let dir = tempfile::tempdir().unwrap();
-	assert!(super::resolve::candidates_in(dir.path()).is_empty());
+	assert!(super::super::resolve::candidates_in(dir.path()).is_empty());
 	std::fs::write(dir.path().join("docker-compose.yml"), "services: {}\n").unwrap();
-	assert_eq!(super::resolve::candidates_in(dir.path()).len(), 1);
+	assert_eq!(super::super::resolve::candidates_in(dir.path()).len(), 1);
 	std::fs::write(dir.path().join("compose.yaml"), "services: {}\n").unwrap();
-	let present = super::resolve::candidates_in(dir.path());
+	let present = super::super::resolve::candidates_in(dir.path());
 	let names: Vec<&str> = present
 		.iter()
 		.map(|p| p.file_name().unwrap().to_str().unwrap())
 		.collect();
 	assert_eq!(names, ["compose.yaml", "docker-compose.yml"]);
-	let message = super::resolve::multiple_candidates_message(&present);
+	let message = super::super::resolve::multiple_candidates_message(&present);
 	assert!(
 		message.contains("compose.yaml") && message.contains("docker-compose.yml"),
 		"{message}"
