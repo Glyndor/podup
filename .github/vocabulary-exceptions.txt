@@ -1,0 +1,4 @@
+# path<TAB>text on the line<TAB>reason. Read by .github/scripts/checks/check-banned-vocabulary.sh.
+# An entry matches the text on the line, so it survives the line moving, and one that
+# matches nothing fails the check. Add one only for a legitimate use, with the reason.
+internal/ui/progress/rows/board.rs	the seed is the best guess available	An idiom for an estimate, not a superlative claim.
