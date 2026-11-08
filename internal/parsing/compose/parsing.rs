@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use super::{diagnostics, extends, include, jobs, merge, project_name, tags, types, validate};
+use super::{
+	diagnostics, extends, include, jobs, merge, nested_resets, project_name, tags, types, validate,
+};
 use crate::error::{ComposeError, Result};
 use crate::substitute;
 use types::{ComposeFile, ServiceNetworks};
@@ -216,7 +218,9 @@ pub fn parse_files_with_project_in(
 		// gone by the time it is a typed `ComposeFile`, so they are collected
 		// from the file itself and passed alongside.
 		let directives = tags::collect_from_file(path);
-		merge_override(&mut merged, other, &directives);
+		let resets = tags::entry_resets_from_file(path);
+		let nested = nested_resets::nested_resets_from_file(path);
+		merge_override(&mut merged, other, &directives, &resets, &nested);
 	}
 	drop(budget);
 	// Each file passed on its own; a service in one `-f` file and a job of the
@@ -339,6 +343,19 @@ pub(crate) fn normalize_default_network(file: &mut ComposeFile) {
 	}
 }
 
+/// Remove the top-level entry a later file reset with `!reset`.
+fn drop_entry(target: &mut ComposeFile, section: &str, name: &str) {
+	match section {
+		"services" => drop(target.services.shift_remove(name)),
+		"networks" => drop(target.networks.shift_remove(name)),
+		"volumes" => drop(target.volumes.shift_remove(name)),
+		"secrets" => drop(target.secrets.shift_remove(name)),
+		"configs" => drop(target.configs.shift_remove(name)),
+		"models" => drop(target.models.shift_remove(name)),
+		_ => {}
+	}
+}
+
 /// Merge `other` into `target` with `other` winning (compose `-f` override
 /// semantics): services are merged field-by-field, other top-level maps replace
 /// on key conflict.
@@ -346,7 +363,12 @@ pub(super) fn merge_override(
 	target: &mut ComposeFile,
 	other: ComposeFile,
 	directives: &tags::Directives,
+	resets: &tags::EntryResets,
+	nested: &nested_resets::NestedResets,
 ) {
+	for (section, name) in resets {
+		drop_entry(target, section, name);
+	}
 	// The project name is a single value, and the last file that sets one wins.
 	if other.name.is_some() {
 		target.name = other.name.clone();
@@ -355,6 +377,9 @@ pub(super) fn merge_override(
 		if let Some(base) = target.services.get_mut(&name) {
 			let tagged = directives.get(&name);
 			*base = extends::merge_service_tagged(std::mem::take(base), svc, tagged);
+			if let Some(paths) = nested.get(&name) {
+				nested_resets::apply_nested_resets(base, paths);
+			}
 		} else {
 			target.services.insert(name, svc);
 		}

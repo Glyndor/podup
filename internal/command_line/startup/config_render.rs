@@ -135,6 +135,9 @@ pub(crate) fn render_config_to<W: Write>(
 	// what the next `up` would do. The resolution rule is the same `up` uses:
 	// sharing the function keeps the two views from drifting.
 	inject_resolved_network_names(&mut redacted, project);
+	// A bare volume has nothing to print, so it vanished and the output no
+	// longer declared what its services mount. Name it like `up` will.
+	super::config_volumes::inject_resolved_volume_names(&mut redacted, project);
 	// Don't echo keys the diagnostics pass warned were ignored: the rendered
 	// config should reflect what podup actually applies, and re-feeding it must
 	// not re-trigger the same warning. `x-*` extensions are kept.
