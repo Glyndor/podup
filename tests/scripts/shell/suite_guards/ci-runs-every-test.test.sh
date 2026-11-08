@@ -43,7 +43,7 @@ check() { # <description> <expected> <actual>
 # What the workflows actually run, with comment lines removed first.
 # The leading `./` is OPTIONAL. It was required until #1595, and that made
 # this function blind to how the fixtures are actually called: asset-contract
-# invokes them as `bash tests/fixtures/releases/test.sh`, with no `./`,
+# invokes them as `bash tests/fixtures/releases/scripts/test.sh`, with no `./`,
 # following the convention that names the interpreter rather than relying on
 # an executable bit. Requiring the prefix meant the watcher saw an invocation
 # only when it took the form it happened to have been written against.
@@ -56,7 +56,7 @@ invoked() {
 # What exists, from git rather than the working tree, so an untracked scratch
 # file does not fail the run for someone mid-edit.
 # Three naming conventions live here and all of them are shell tests.
-# `tests/scripts/shell/<concern>/` uses `*.test.sh`. `tests/fixtures/releases/` uses `test.sh`,
+# `tests/scripts/shell/<concern>/` uses `*.test.sh`. `tests/fixtures/releases/scripts/` uses `test.sh`,
 # `test-sign.sh` and `version-self-test.sh`, because they are fixtures a
 # workflow drives rather than suites cargo could ever find.
 #

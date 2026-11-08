@@ -65,7 +65,7 @@ name: Workflow lint (reusable)
 #     promoted: delete one of the seed signature files in the fixture
 #     tree, push a PR, confirm the fixture's loop falls through to the
 #     missing-file branch and exits red with the L7 class of error
-#     pinned in tests/fixtures/releases/test.sh. Pin the job's name
+#     pinned in tests/fixtures/releases/scripts/test.sh. Pin the job's name
 #     once the failure is reproducible.
 #
 #   asset-contract.yml:powershell-signing-fixture

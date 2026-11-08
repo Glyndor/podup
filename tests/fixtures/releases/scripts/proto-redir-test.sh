@@ -26,10 +26,10 @@
 # got that far). That is the trap the valid payload closes.
 #
 # Run from the repo root:
-#   bash tests/fixtures/releases/proto-redir-test.sh
+#   bash tests/fixtures/releases/scripts/proto-redir-test.sh
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
 INSTALL_SH="$REPO_ROOT/install.sh"
 FIXTURE_DIR="$REPO_ROOT/tests/fixtures/releases"
 

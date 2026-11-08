@@ -1,5 +1,4 @@
 # path<TAB>ceiling<TAB>reason. Read by .github/scripts/checks/folder-limit.sh; use . for the root.
-# Measured 2026-11-06: tests/fixtures/releases 24, the only folder over 20 apart from the
-# flat .github/workflows. Keep ceilings at or below their base-commit values and remove an
-# entry once the folder is at 20 or fewer; the check fails on one that is.
-tests/fixtures/releases	24	One file per release fixture the asset-contract and update tests read by name; they cannot move into subfolders without changing every path the tests and the fixture generators use. The refactor that splits them into folders removes this entry.
+# No folder is over twenty files at the moment (the flat .github/workflows is ignored by the check).
+# Add an entry only with a ceiling and a reason; keep ceilings at or below their base-commit
+# values and remove an entry once the folder is at 20 or fewer: the check fails on one that is.

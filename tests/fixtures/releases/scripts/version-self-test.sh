@@ -21,13 +21,13 @@
 #   8. On any failed self-test the staged file is removed.
 #
 # Run from the repo root:
-#   bash tests/fixtures/releases/version-self-test.sh
+#   bash tests/fixtures/releases/scripts/version-self-test.sh
 set -euo pipefail
 
-# __file__ is tests/fixtures/releases/version-self-test.sh; walk three
+# __file__ is tests/fixtures/releases/scripts/version-self-test.sh; walk four
 # levels up to land on the repo root regardless of where the script is
 # invoked from.
-REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
 INSTALL_SH="$REPO_ROOT/install.sh"
 
 # Source the helpers (verify_version_self_test, fail, log_info, log_ok,

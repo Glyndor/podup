@@ -8,12 +8,12 @@
 # different guard does not silently satisfy it.
 #
 # Run from the repo root:
-#	bash tests/fixtures/releases/test-sign.sh
+#	bash tests/fixtures/releases/scripts/test-sign.sh
 set -euo pipefail
 
-# __file__ is tests/fixtures/releases/test-sign.sh; walk three levels up to
-# land on the repo root regardless of where the script is invoked from.
-REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
+# __file__ is tests/fixtures/releases/scripts/test-sign.sh; walk four levels
+# up to land on the repo root regardless of where the script is invoked from.
+REPO_ROOT="$(cd "$(dirname "$0")/../../../.." && pwd)"
 # SIGN_PY_OVERRIDE lets a sabotage run point the test at a copy of
 # sign.py in a tmpdir (see findings/02-red-runs.md). Production runs and
 # CI never set it; the test defaults to the in-tree script.
