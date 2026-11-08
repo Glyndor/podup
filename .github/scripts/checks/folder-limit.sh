@@ -15,9 +15,8 @@ declare -A counts=() ceilings=() parsed=()
 
 ignored() {
 	# GitHub only registered flat workflows in the 2026-10-25 authcore probe.
-	# Keep fixtures and fuzz corpora under any testdata/ component out of the gate.
 	case "/$1/" in
-	/.github/workflows/ | */testdata/*) return 0 ;;
+	/.github/workflows/) return 0 ;;
 	esac
 	return 1
 }
