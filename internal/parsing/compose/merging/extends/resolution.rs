@@ -124,7 +124,14 @@ impl ExtendsCache {
 			.map(|p| p.to_path_buf())
 			.unwrap_or_else(|| base_dir.to_path_buf());
 		let other = parse_file_inner_with_env(abs, &dir, &self.env_files, self.interpolate)
-			.map_err(|error| ComposeError::Extends(format!("{}: {error}", abs.display())))?;
+			.map_err(|error| match error {
+				// The inner error already names the file; repeating the path in
+				// front of it printed it twice.
+				ComposeError::FileNotFound(_) => {
+					ComposeError::Extends(format!("compose file not found: {}", abs.display()))
+				}
+				other => ComposeError::Extends(format!("{}: {other}", abs.display())),
+			})?;
 		// Resolve the external file's own `extends:` chains before
 		// caching, so a later `swap_remove` of the requested base
 		// service gives a fully-merged value. The cached entry is the

@@ -96,7 +96,14 @@ pub fn load_env_file_entries_for(
 					continue;
 				}
 			}
-			Err(e) => return Err(ComposeError::Io(e)),
+			// Name the file: a bare "Permission denied (os error 13)" does not say
+			// which of the files of the project it is.
+			Err(e) => {
+				return Err(ComposeError::EnvFile(format!(
+					"cannot read env file {}: {e}",
+					abs.display()
+				)))
+			}
 		};
 
 		// A service `env_file:` is explicitly requested, so a malformed entry

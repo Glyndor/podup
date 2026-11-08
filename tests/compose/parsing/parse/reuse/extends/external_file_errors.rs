@@ -79,3 +79,25 @@ fn extends_external_chain_exceeds_max_depth_errors() {
 
 	assert!(parse_files_with_env_files(&[main_path], &[]).is_err());
 }
+
+#[test]
+fn extends_of_a_missing_file_names_the_file_once() {
+	// The error used to read `extends error: <path>: compose file not found:
+	// <path>`, the same path twice under two prefixes.
+	let dir = tempfile::tempdir().unwrap();
+	let main_path = dir.path().join("docker-compose.yml");
+	std::fs::write(
+		&main_path,
+		"services:\n  app:\n    extends:\n      service: base\n      file: ./missing.yml\n",
+	)
+	.unwrap();
+
+	let text = parse_files_with_env_files(&[main_path], &[])
+		.unwrap_err()
+		.to_string();
+	assert!(
+		text.starts_with("extends error: compose file not found: "),
+		"{text}"
+	);
+	assert_eq!(text.matches("missing.yml").count(), 1, "{text}");
+}

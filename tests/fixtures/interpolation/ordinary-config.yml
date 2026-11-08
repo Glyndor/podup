@@ -4,7 +4,7 @@ services:
     image: alpine:3.20
     command:
     - echo
-    - $HOME
+    - $$HOME
     environment:
       GREETING: hello
     networks:

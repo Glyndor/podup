@@ -30,6 +30,9 @@ pub(crate) struct ConfigOutput {
 	pub hash: Option<String>,
 	/// `--quiet`: validate only, print nothing.
 	pub quiet: bool,
+	/// `--no-interpolate`: the model still holds the text as written, so it is
+	/// printed as written. Without it every `$` in a value is printed as `$$`.
+	pub no_interpolate: bool,
 }
 
 /// Render `config`: validate-only (`--quiet`), a list projection (`--services`,
@@ -147,6 +150,9 @@ pub(crate) fn render_config_to<W: Write>(
 				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
 			})?;
 			prune_json_nulls(&mut v);
+			if !out.no_interpolate {
+				super::config_dollar::escape_json(&mut v);
+			}
 			let json = serde_json::to_string_pretty(&v).map_err(|e| {
 				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
 			})?;
@@ -156,6 +162,9 @@ pub(crate) fn render_config_to<W: Write>(
 			let mut v: serde_yaml::Value =
 				serde_yaml::to_value(&redacted).map_err(podup::ComposeError::Parse)?;
 			prune_yaml_nulls(&mut v);
+			if !out.no_interpolate {
+				super::config_dollar::escape_yaml(&mut v);
+			}
 			let yaml = serde_yaml::to_string(&v).map_err(podup::ComposeError::Parse)?;
 			// yaml_serde emits YAML 1.2, where `yes`/`no`/`on`/`off` are plain
 			// strings and stay unquoted. A strict YAML 1.1 reader (docker compose's
@@ -221,17 +230,23 @@ fn render_config_hash_to<W: Write>(
 			.filter(|s| !s.is_empty())
 			.collect()
 	};
+	// Every name is checked and hashed before a line is written: an unknown
+	// name used to fail after the lines for the names before it had gone to
+	// stdout, leaving a partial answer behind an error.
+	let mut lines = Vec::with_capacity(names.len());
 	for name in names {
 		let svc = file
 			.services
 			.get(&name)
 			.ok_or_else(|| podup::ComposeError::ServiceNotFound(name.clone()))?;
-		writeln!(
-			w,
+		lines.push(format!(
 			"{} {}",
 			podup::ui::sanitize_cell(&name),
 			service_config_hash(svc)?
-		)?;
+		));
+	}
+	for line in lines {
+		writeln!(w, "{line}")?;
 	}
 	Ok(())
 }

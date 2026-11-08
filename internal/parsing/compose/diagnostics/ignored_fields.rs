@@ -225,6 +225,23 @@ pub(super) fn ignored_service_network_fields(units: &ContainerUnits<'_>, out: &m
 	}
 }
 
+/// What a `driver:` that podup does not invoke costs the definition it is on.
+///
+/// The warning used to say the secret or config "will not be staged" whatever
+/// the definition held. One with a `file`, `content` or `environment` source is
+/// staged from that source and mounted with its content (measured on Podman
+/// 5.7.0), the driver being the only thing ignored; only one with no source at
+/// all has nothing to stage.
+fn driver_consequence(kind: &str, has_source: bool) -> String {
+	if has_source {
+		format!("the {kind} is staged from its file, content or environment source and the driver is ignored")
+	} else {
+		format!(
+			"the {kind} has no file, content or environment source, so there is nothing to stage"
+		)
+	}
+}
+
 /// Top-level secret/config driver fields. An external secret-store driver
 /// (Vault, AWS SM, etc.) on a non-`external` definition is not honored: podup
 /// only stages `file`/`content`/`environment` sources and routes `external:
@@ -235,7 +252,11 @@ pub(super) fn ignored_secret_config_drivers(file: &ComposeFile, out: &mut Vec<St
 			if cfg.driver.is_some() {
 				out.push(format!(
 					"secret '{name}': driver is an external secret-store plugin that podup \
-					 does not invoke; the secret will not be staged"
+					 does not invoke; {}",
+					driver_consequence(
+						"secret",
+						cfg.file.is_some() || cfg.content.is_some() || cfg.environment.is_some()
+					)
 				));
 			}
 			if cfg.template_driver.is_some() {
@@ -250,7 +271,11 @@ pub(super) fn ignored_secret_config_drivers(file: &ComposeFile, out: &mut Vec<St
 			if cfg.driver.is_some() {
 				out.push(format!(
 					"config '{name}': driver is an external plugin that podup does not \
-					 invoke; the config will not be staged"
+					 invoke; {}",
+					driver_consequence(
+						"config",
+						cfg.file.is_some() || cfg.content.is_some() || cfg.environment.is_some()
+					)
 				));
 			}
 			if cfg.template_driver.is_some() {

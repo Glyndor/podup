@@ -262,3 +262,16 @@ fn a_service_without_env_file_is_left_alone() {
 		"a service with no env_file must not be rewritten"
 	);
 }
+
+#[test]
+fn an_env_file_that_cannot_be_read_is_named_in_the_error() {
+	// A directory where the file should be: the read is refused, and the error
+	// has to say which file, not only "Permission denied" or the OS text.
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::create_dir(dir.path().join("secret.env")).unwrap();
+	let entries = vec![EnvFileEntry::Path("secret.env".into())];
+	let error = load_env_file_entries(&entries, dir.path()).expect_err("a directory is not a file");
+	let text = error.to_string();
+	assert!(text.contains("cannot read env file"), "{text}");
+	assert!(text.contains("secret.env"), "{text}");
+}

@@ -399,7 +399,7 @@ The `[Build]` keys `Annotation=`, `Volume=` and `DNS=` have no compose `build:` 
 | `networks.*.ipam.config[].aux_addresses` | not supported by Podman |
 | service `networks.*.gw_priority` | not supported by Podman |
 | `logging.options.tag` with `json-file` or `k8s-file` | Podman's file logger refuses a tag when the container starts; podup drops it with a warning, as it does `max-file` |
-| `secrets`/`configs` `driver` / `template_driver` (on non-`external` defs) | external secret-store plugins (Vault, AWS SM, …) podup does not invoke; the secret/config is not staged |
+| `secrets`/`configs` `driver` / `template_driver` (on non-`external` defs) | external secret-store plugins (Vault, AWS SM, …) podup does not invoke; the secret/config is still staged from its `file`, `content` or `environment` source, and only a definition with none has nothing to stage |
 
 ## Not yet supported
 
