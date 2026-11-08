@@ -316,3 +316,27 @@ fn cap_add_and_drop() {
 		.contains(&"NET_ADMIN".to_string()));
 	assert!(file.services["app"].cap_drop.contains(&"ALL".to_string()));
 }
+
+#[test]
+fn extra_hosts_equals_form_normalizes_to_host_colon_ip() {
+	let yaml = r#"
+services:
+  app:
+    image: alpine
+    extra_hosts:
+      - "one.internal=127.0.0.9"
+      - "two.internal:127.0.0.8"
+      - "six.internal=::1"
+      - "gw.internal=host-gateway"
+"#;
+	let hosts = &parse_str(yaml).unwrap().services["app"].extra_hosts;
+	assert_eq!(
+		hosts,
+		&[
+			"one.internal:127.0.0.9",
+			"two.internal:127.0.0.8",
+			"six.internal:::1",
+			"gw.internal:host-gateway"
+		]
+	);
+}
