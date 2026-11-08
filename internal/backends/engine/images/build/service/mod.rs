@@ -19,8 +19,9 @@ use crate::error::Result;
 use crate::libpod::{urlencoded, API_PREFIX};
 
 use self::execution::PreparedBuild;
+use super::names::resolve_additional_contexts;
 use super::request::plan_build;
-use super::{BodyPlan, BuildOptions, Engine};
+use super::{BuildOptions, Engine};
 
 impl Engine {
 	pub(in crate::backends::engine) async fn build_service(
@@ -51,19 +52,21 @@ impl Engine {
 			build.tags(),
 		);
 
-		let plan = plan_build(self, service_name, service, file, build, &context_str)?;
+		let contexts = resolve_additional_contexts(&self.project, file, service_name, build)?;
+		let plan = plan_build(
+			self,
+			service_name,
+			service,
+			file,
+			build,
+			&context_str,
+			&contexts,
+		)?;
 		let (mut qs, wire_tag) = self
-			.service_build_query(
-				service_name,
-				build,
-				opts,
-				&tag,
-				&plan.dockerfile,
-				&plan.secrets,
-			)
+			.service_build_query(service_name, service, build, opts, &tag, &plan)
 			.await?;
-		if matches!(plan.body, BodyPlan::Empty) {
-			qs.push_str(&format!("&remote={}", urlencoded(&context_str)));
+		if let Some(remote) = &plan.remote {
+			qs.push_str(&format!("&remote={}", urlencoded(remote)));
 		}
 		let prepared = PreparedBuild {
 			body: plan.body,

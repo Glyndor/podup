@@ -357,7 +357,9 @@ impl Engine {
 			pull_policy.libpod()
 		);
 		if let Some(platform) = &service.platform {
-			query.push_str(&format!("&platform={}", urlencoded(platform)));
+			query.push_str(
+				&crate::backends::engine::images::platform::Platform::parse(platform).pull_query(),
+			);
 		}
 
 		let path = format!("{API_PREFIX}/images/pull?{query}");

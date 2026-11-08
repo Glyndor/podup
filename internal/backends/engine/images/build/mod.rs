@@ -19,6 +19,9 @@ pub(in crate::backends::engine) use names::is_remote_context;
 /// Shared with the container-create path so an `up`/`create` references the same
 /// image tag the build step produced for a build-only service.
 pub(crate) use names::primary_build_tag;
+/// The order `up --build` builds in: the services other builds take a
+/// `service:` context from come first.
+pub(crate) use names::with_context_builds as order_context_builds;
 /// Same reason as the re-export in `pull`: the fuzz harness needs the interval
 /// parser and nothing else of this module.
 #[cfg(feature = "test-helpers")]
@@ -33,6 +36,7 @@ use crate::compose::types::BuildConfig;
 use crate::engine::container_config::resources::{is_known_ulimit, ulimit_pair};
 use crate::error::Result;
 
+use names::with_context_builds;
 use request::ContextSource;
 
 use crate::engine::Engine;
@@ -141,19 +145,25 @@ fn render_build_ulimits(build: &BuildConfig) -> Vec<String> {
 /// after validating each name is defined. Returning `Vec<String>` keeps the
 /// `build_all_with_options` and `build_images_in_session` paths identical at
 /// the top, which is what lets `up --build` share the build's loop body.
+///
+/// The list also holds the services the targets take `service:` contexts from.
 fn build_target_names(
 	file: &crate::compose::types::ComposeFile,
 	target_services: &[String],
 ) -> Result<Vec<String>> {
-	if target_services.is_empty() {
-		return Ok(file.services.keys().cloned().collect());
-	}
 	for name in target_services {
 		if !file.services.contains_key(name) {
 			return Err(crate::error::ComposeError::ServiceNotFound(name.clone()));
 		}
 	}
-	Ok(target_services.to_vec())
+	let names: Vec<String> = if target_services.is_empty() {
+		file.services.keys().cloned().collect()
+	} else {
+		target_services.to_vec()
+	};
+	// A service another one takes a `service:` context from is built first,
+	// even when it was not asked for.
+	with_context_builds(file, &names)
 }
 
 /// The image tags `build_images_in_session` will build, in order, deduped.
