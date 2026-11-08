@@ -70,6 +70,21 @@ fn no_workflow_owned_here_runs_cargo_publish() {
 	);
 }
 
+/// Every `.md` file under `dir`, at any depth, so a document in `docs/sub/` is
+/// scanned like one at the top.
+fn markdown_under(dir: &Path) -> Vec<std::path::PathBuf> {
+	let mut out = Vec::new();
+	for entry in fs::read_dir(dir).expect("directory is readable") {
+		let path = entry.expect("entry is readable").path();
+		if path.is_dir() {
+			out.extend(markdown_under(&path));
+		} else if path.extension().is_some_and(|e| e == "md") {
+			out.push(path);
+		}
+	}
+	out
+}
+
 /// The claim that helmly-agent consumed the library lived in `README.md` **and**
 /// `CONTRIBUTING.md`, and fixing the first did not fix the second. Prose does not
 /// have one home, so grepping the file you happen to be editing is not a check.
@@ -90,12 +105,7 @@ fn no_document_still_says_the_library_is_published_or_consumed() {
 		vec![root.join("README.md"), root.join("CONTRIBUTING.md")];
 	// `fs::read_dir` rather than `git ls-files`: the Debian package build has no
 	// git binary, and a test that cannot run there is a test that fails there.
-	for entry in fs::read_dir(root.join("docs")).expect("docs/ is readable") {
-		let path = entry.expect("entry is readable").path();
-		if path.extension().is_some_and(|e| e == "md") {
-			files.push(path);
-		}
-	}
+	files.extend(markdown_under(&root.join("docs")));
 	assert!(
 		files.len() > 3,
 		"too few documents found; the scan is reading the wrong tree"
@@ -117,4 +127,21 @@ fn no_document_still_says_the_library_is_published_or_consumed() {
 		offenders.is_empty(),
 		"podup is not published, so these read as promises it no longer keeps: {offenders:#?}"
 	);
+}
+
+#[test]
+fn the_document_scan_descends_into_subfolders() {
+	let dir = std::env::temp_dir().join(format!("podup-published-scan-{}", std::process::id()));
+	let sub = dir.join("sub");
+	fs::create_dir_all(&sub).unwrap();
+	fs::write(dir.join("top.md"), "# Top\n").unwrap();
+	fs::write(sub.join("nested.md"), "# Nested\n").unwrap();
+	fs::write(sub.join("ignored.txt"), "not markdown\n").unwrap();
+	let mut names: Vec<String> = markdown_under(&dir)
+		.iter()
+		.map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+		.collect();
+	let _ = fs::remove_dir_all(&dir);
+	names.sort();
+	assert_eq!(names, ["nested.md", "top.md"]);
 }

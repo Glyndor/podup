@@ -6,20 +6,34 @@
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 fn root() -> PathBuf {
 	PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn markdown_files() -> Vec<PathBuf> {
-	let mut files = vec![root().join("README.md"), root().join("CONTRIBUTING.md")];
-	for entry in fs::read_dir(root().join("docs")).unwrap() {
-		let path = entry.unwrap().path();
-		if path.extension().is_some_and(|e| e == "md") {
-			files.push(path);
+/// Every `.md` file under `dir`, at any depth. Plain `std` recursion: a
+/// document one level down is read like one at the top.
+fn markdown_under(dir: &Path) -> Vec<PathBuf> {
+	let mut out = Vec::new();
+	let mut entries: Vec<PathBuf> = fs::read_dir(dir)
+		.unwrap()
+		.map(|entry| entry.unwrap().path())
+		.collect();
+	entries.sort();
+	for path in entries {
+		if path.is_dir() {
+			out.extend(markdown_under(&path));
+		} else if path.extension().is_some_and(|e| e == "md") {
+			out.push(path);
 		}
 	}
+	out
+}
+
+fn markdown_files() -> Vec<PathBuf> {
+	let mut files = vec![root().join("README.md"), root().join("CONTRIBUTING.md")];
+	files.extend(markdown_under(&root().join("docs")));
 	files.retain(|p| p.exists());
 	files
 }
@@ -143,6 +157,23 @@ fn the_check_catches_a_wrong_file_and_a_wrong_anchor() {
 	assert_eq!(found.len(), 2, "{found:?}");
 	assert!(found[0].contains("missing.md"), "{found:?}");
 	assert!(found[1].contains("#audit)"), "{found:?}");
+}
+
+/// A `.md` one level under the scanned directory is found, and its broken link
+/// is reported, so a document in `docs/sub/` cannot escape the check.
+#[test]
+fn a_broken_link_one_level_down_is_caught() {
+	let dir = std::env::temp_dir().join(format!("podup-docs-nested-{}", std::process::id()));
+	let sub = dir.join("sub");
+	fs::create_dir_all(&sub).unwrap();
+	let _guard = Cleanup(dir.clone());
+	fs::write(dir.join("top.md"), "# Top\n").unwrap();
+	fs::write(sub.join("nested.md"), "[gone](missing.md)\n").unwrap();
+	let files = markdown_under(&dir);
+	assert_eq!(files.len(), 2, "{files:?}");
+	let found = broken_links(&files);
+	assert_eq!(found.len(), 1, "{found:?}");
+	assert!(found[0].contains("missing.md"), "{found:?}");
 }
 
 struct Cleanup(PathBuf);
