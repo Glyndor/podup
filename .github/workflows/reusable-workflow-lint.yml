@@ -162,26 +162,47 @@ jobs:
     timeout-minutes: 10
     env:
       ACTIONLINT_VERSION: v1.7.12
+      # The range the classifier judges and the event that produced it. Every
+      # step that installs a tool or reads a workflow reads these, so the
+      # range is named once instead of in each step.
+      EVENT: ${{ github.event_name }}
+      BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The classifier reads the judge from the reviewed base commit and
+          # diffs the whole range, so the history has to be here.
+          fetch-depth: 0
+
+      # The judge is read from the base, never from this checkout: a pull
+      # request that edited the classifier must not be judged by its own
+      # edit. A base without the judge leaves the output empty, and an empty
+      # output runs the lint, because the only safe reading of a missing
+      # answer is "run".
+      - name: Decide whether the workflow lint must run
+        id: decide
+        run: git show "$BASE_SHA:.github/scripts/checks/workflow-lint-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: steps.decide.outputs.run != 'false'
         with:
           go-version: "1.27"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         id: actionlint-cache
+        if: steps.decide.outputs.run != 'false'
         with:
           path: ~/go/bin/actionlint
           key: actionlint-${{ runner.os }}-${{ env.ACTIONLINT_VERSION }}
 
       - name: Install actionlint
-        if: steps.actionlint-cache.outputs.cache-hit != 'true'
+        if: steps.actionlint-cache.outputs.cache-hit != 'true' && steps.decide.outputs.run != 'false'
         run: go install "github.com/rhysd/actionlint/cmd/actionlint@${ACTIONLINT_VERSION}"
 
       - name: Install shellcheck
+        if: steps.decide.outputs.run != 'false'
         env:
           SHELLCHECK_VERSION: ${{ inputs.shellcheck-version }}
           SHELLCHECK_SHA256: ${{ inputs.shellcheck-sha256 }}
@@ -202,6 +223,7 @@ jobs:
           echo "SHELLCHECK_BIN=$dir/shellcheck" >> "$GITHUB_ENV"
 
       - name: Run actionlint over the caller's workflows
+        if: steps.decide.outputs.run != 'false'
         env:
           SHELLCHECK_BIN: ${{ env.SHELLCHECK_BIN }}
         run: actionlint -color "-shellcheck=${SHELLCHECK_BIN}"
@@ -215,7 +237,7 @@ jobs:
       # hash-pinned install resolves nothing, since the artifacts are fixed by
       # the lockfile, so no surprise tree appears.
       - name: A job holding a secret must not install third-party tooling
-        if: ${{ inputs.tooling-isolation }}
+        if: ${{ inputs.tooling-isolation && steps.decide.outputs.run != 'false' }}
         run: |
           python3 - <<'PY'
           import glob
@@ -401,101 +423,17 @@ jobs:
       # No input guards it. `tooling-isolation` above takes one because it was
       # written to be adopted repository by repository; this rule has one
       # consumer, and a switch that turns a check off is a way for the check to
-      # report success without looking.
+      # report success without looking. The `if:` below is not such a switch:
+      # it is the classifier, and it skips the check only when the files the
+      # check reads did not change.
+      #
+      # Lives in .github/scripts/checks/check-local-reusables.py because the
+      # inline heredoc would push this file over the line-limit gate's
+      # 500-line hard limit, the same reason the two steps below it live in
+      # scripts beside it.
       - name: A path-filtered workflow must watch the reusables it calls
-        run: |
-          python3 - <<'PY'
-          import glob
-          import os
-          import re
-          import sys
-
-          import yaml
-
-          # Only a local call is affected. A remote `uses:` carries its own
-          # SHA, and bumping it edits the caller.
-          LOCAL_USES_RE = re.compile(
-              r"uses:\s*\./(\.github/workflows/[A-Za-z0-9._-]+\.ya?ml)"
-          )
-
-
-          def triggers(spec):
-              # `on:` parses as the boolean True under the YAML 1.1 rules
-              # PyYAML follows, so read both spellings rather than assuming
-              # which one this file produced.
-              on = spec.get("on", spec.get(True))
-              return on if isinstance(on, dict) else {}
-
-
-          def main():
-              files = sorted(set(
-                  glob.glob(".github/workflows/*.yml")
-                  + glob.glob(".github/workflows/*.yaml")
-              ))
-              violations = []
-              for path in files:
-                  try:
-                      with open(path) as fh:
-                          text = fh.read()
-                      spec = yaml.safe_load(text)
-                  except (OSError, yaml.YAMLError) as e:
-                      print(f"::warning file={path}::skipped: {e}")
-                      continue
-                  if not isinstance(spec, dict):
-                      continue
-                  called = sorted(set(LOCAL_USES_RE.findall(text)))
-                  if not called:
-                      continue
-                  for event, cfg in triggers(spec).items():
-                      if not isinstance(cfg, dict):
-                          continue
-                      # Refusing to reason about a filter shape this check
-                      # does not model is the point. Reporting "no violation"
-                      # over a filter it could not read would be a pass that
-                      # never looked.
-                      if "paths-ignore" in cfg:
-                          violations.append((
-                              path, event,
-                              "uses `paths-ignore:`, which this check does not model; "
-                              "state the trigger as `paths:` instead",
-                          ))
-                          continue
-                      patterns = cfg.get("paths")
-                      if not patterns:
-                          continue
-                      for reusable in called:
-                          # A literal entry, or a glob that covers it. Both
-                          # make the workflow run when the reusable changes,
-                          # which is the property being asserted.
-                          if any(
-                              p == reusable
-                              or re.fullmatch(
-                                  re.escape(p).replace(r"\*\*", ".*").replace(r"\*", "[^/]*"),
-                                  reusable,
-                              )
-                              for p in patterns
-                              if isinstance(p, str)
-                          ):
-                              continue
-                          violations.append((
-                              path, event,
-                              f"calls `./{reusable}` but its `on.{event}.paths` does not "
-                              f"match it, so a pull request that edits only that reusable "
-                              f"does not run this workflow",
-                          ))
-              if violations:
-                  for path, event, msg in violations:
-                      print(f"::error file={path}::`{os.path.basename(path)}` {msg}")
-                  sys.exit(1)
-              print(
-                  "local-reusables: every path-filtered workflow matches the reusables it calls."
-              )
-              sys.exit(0)
-
-
-          if __name__ == "__main__":
-              sys.exit(main())
-          PY
+        if: steps.decide.outputs.run != 'false'
+        run: python3 .github/scripts/checks/check-local-reusables.py
 
       # A caller-level `if:` on a job that emits a required check name is a
       # switch, not a filter. GitHub reports a SKIPPED required check as
@@ -532,6 +470,7 @@ jobs:
       # to gate, and any other required job is the one whose `if:` is the
       # defect being caught.
       - name: A caller of a required check must not carry a switchable `if:`
+        if: steps.decide.outputs.run != 'false'
         run: |
           python3 - <<'PY'
           import glob
@@ -777,6 +716,7 @@ jobs:
       # Keep source marks to locate inherited references at their definition.
       # PyYAML is already used by the preceding workflow guards.
       - name: Every `uses:` pin must be 40 hex characters
+        if: steps.decide.outputs.run != 'false'
         run: |
           python3 - <<'PY'
           import glob
@@ -931,6 +871,7 @@ jobs:
       # (the reusable does not declare it) is silently allowed: GitHub
       # itself ignores it, and the ruleset does not gate on it.
       - name: A caller of a required check must carry `with:` equal to the reusable's declared default
+        if: steps.decide.outputs.run != 'false'
         run: |
           python3 .github/scripts/checks/check-caller-with-defaults.py
 
@@ -940,5 +881,6 @@ jobs:
       # .github/scripts/checks/check-merge-group-triggers.py because this file
       # is near the 500-code-line hard limit already.
       - name: A workflow that emits a check required on develop must trigger on merge_group
+        if: steps.decide.outputs.run != 'false'
         run: |
           python3 .github/scripts/checks/check-merge-group-triggers.py
