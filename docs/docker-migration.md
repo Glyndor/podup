@@ -25,13 +25,17 @@ podup up
 
 Quadlet export reports `pre_start is not exported; each init step requires its own container`. No `ExecStartPre=` substitute is emitted, since it cannot preserve the per-step container specifications.
 
+`pre_stop` hooks run inside each running container of the service, in order, before the container is stopped. That happens on `stop`, on `restart`, on `down` and on the final stop of `up` (Ctrl-C, or `--abort-on-container-exit`). A hook is best effort: one that fails, or that cannot run because the container is not running, is logged at debug level and the stop goes ahead. When one level of services cannot be stopped, the levels below it are still told to stop and the first error is what the command reports.
+
+`build.secrets` takes the short form (the name of a top-level secret, also its id in the build) and the long form with `source`, `target`, `uid`, `gid` and `mode`. `target` is the id the Dockerfile reads with `RUN --mount=type=secret,id=...`; it defaults to `source`. `uid`, `gid` and `mode` are accepted and have no effect, because a build secret has no owner or mode to set. Both names may hold only letters, digits, `.`, `_` and `-`.
+
 The following Compose fields are translated onto Podman's libpod API. Fields outside this list still parse (an unknown key never errors, per the Compose spec's forward-compatibility rule) and podup reports any it cannot honor during `up`; see the accepted-but-has-no-effect section.
 
 | Category | Keys |
 |---|---|
 | Images / build | `image`, `build` (context, dockerfile, args, target, cache_from, cache_to, secrets, labels, network), `pull_policy` (time policies map to `newer`), `pull_refresh_after` (strict syntax only) |
 | Execution | `command`, `entrypoint`, `working_dir`, `user`, `umask`, `platform`, `tty`, `stdin_open` |
-| Environment | `environment`, `env_file` (dotenv format; unquoted and double-quoted values are interpolated), variable substitution (`${VAR:-default}`) |
+| Environment | `environment`, `env_file` (dotenv format, or `format: raw`; see the note below the table), variable substitution (`${VAR:-default}`) |
 | Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `domainname`, `dns`, `dns_opt`, `dns_search`, `extra_hosts` |
 | Volumes | `volumes` (bind, named, tmpfs, npipe), `tmpfs`, `volumes_from` |
 | Secrets / configs | `secrets`, `configs` (file, inline content, environment source, and `external: true` Podman-native secrets) |
@@ -50,6 +54,8 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 | Compose features | `extends`, `include`, YAML anchors, x-extensions, `develop.watch` |
 
 A memory amount that cannot be used (`mem_limit`, `memswap_limit`, `mem_reservation`, `shm_size`, `deploy.resources.limits.memory`, `deploy.resources.reservations.memory`) is an error that names the service and the key, for example `service 'web': mem_limit "1e100" is not a valid memory amount`. Docker Compose drops such a value and runs the container without the limit; podup refuses to start it. An empty value (`mem_limit: ${MEM:-}` with `MEM` unset) means no limit and is not an error. Valid amounts are a byte count or a number with `b`, `k`, `m`, `g` or `t` (optionally followed by `b`), and `-1` where the engine takes it.
+
+An `env_file` entry is read as dotenv by default. Unquoted and double-quoted values are interpolated, looking each name up in the project environment first, then in the service's `environment:`, then in the keys set by the env files before it and by the file itself; a single-quoted value stays literal. `format: raw` reads the file line by line with every value kept as written, quotes included, and none interpolated.
 
 `umask` sets the initial process permission mask. Use a string of one to four octal digits, such as `"0022"`, `"022"` or `"22"` (range `0000` to `7777`). Only integer `0` is accepted; quote every other numeric value to avoid YAML radix ambiguity. Validation follows normal interpolation and refuses leftover variables with the service name and a quote hint before container or pod replacement. Normal interpolation can turn numeric text into a YAML integer, so use a leading-zero value such as `0022`. With `config --no-interpolate`, a placeholder in `umask` is refused because the typed field still requires a valid mask. Valid output is padded to four digits. Omitted or null leaves the runtime default; explicit zero sends `"0000"` and masks no permission bits. The quadlet export uses `PodmanArgs=--umask=<value>`, compatible with Podman 5.0. Scalar inheritance, `!reset` and `!override` apply. Explicit `umask: null` changes the configuration hash once on upgrade because the previously unknown null key is now omitted. Tagged payloads use normal interpolation before merge tags are stripped; unresolved masks still fail validation.
 
@@ -317,6 +323,8 @@ services:
 
 Short and long `depends_on` behave alike. For portability, give both services the same profile; with neither selected, both remain inactive.
 
+A `depends_on` that names a service the file does not define is refused, with its own message (`service 'web' depends on undefined service 'db'; define it, or remove it from 'depends_on'`). That holds whether or not the dependency is `required`, because a name defined nowhere is a typo and not a service that is unavailable. A service that is defined but left out of the run by an inactive profile is not affected by this rule.
+
 ### `volumes_from`, `links`, and `service:` namespace references
 
 `volumes_from: [data]`, `links: [data:alias]`, and `network_mode` / `ipc` / `pid` / `uts` set to `service:data` add implicit dependencies on the named service. Dependency cycles are rejected.
@@ -397,7 +405,7 @@ The `[Build]` keys `Annotation=`, `Volume=` and `DNS=` have no compose `build:` 
 
 | Feature | Status |
 |---|---|
-| `env_file.format` other than `dotenv` and `raw` | Emits a warning; the file is still read as dotenv |
+| `env_file.format` other than `dotenv` and `raw` | Emits a warning; the file is still read as dotenv. `raw` is supported and is read verbatim |
 | `provider:` / model-runner services (`provider`, top-level `models`) | Modeled and parsed, but not honored; a not-honored warning is emitted |
 | Top-level `jobs:` `schedule` trigger | The structure is validated and each job with a schedule is reported once. podup does not fire schedules; `generate quadlet` exports them as systemd timers where it can, see [Jobs and schedules](#jobs-and-schedules). `podup run` starts a job by hand (a `manual: false` job is refused, also as a dependency), `podup up` never does. `!reset`/`!override` work on triggers, a job never activates a service behind an inactive profile, and `down` removes job containers; see [Jobs](commands-reference.md#jobs) |
 | Configurable pod exit policy and stop timeout | The pod exit policy stays fixed at `continue`; no pod-level Compose source maps to stop timeout |
