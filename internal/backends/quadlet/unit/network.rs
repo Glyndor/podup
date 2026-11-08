@@ -32,7 +32,12 @@ pub(crate) fn network_unit(
 			net.add("IPv6", "true".to_string());
 		}
 		if let Some(ipam) = &cfg.ipam {
-			if let Some(ipam_driver) = &ipam.driver {
+			// `default` and empty mean the engine's own IPAM; Quadlet rejects them.
+			if let Some(ipam_driver) = ipam
+				.driver
+				.as_ref()
+				.filter(|d| !matches!(d.trim(), "" | "default"))
+			{
 				net.add("IPAMDriver", ipam_driver.clone());
 			}
 			// Each `ipam.config` pool maps to a Subnet=/Gateway=/IPRange= triple;

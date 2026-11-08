@@ -307,3 +307,23 @@ fn a_control_character_in_a_service_namespace_name_does_not_reach_the_message() 
 		.to_string();
 	assert!(!text.contains('\u{1b}'), "{text:?}");
 }
+
+#[test]
+fn explicit_default_network_next_to_others_is_accepted() {
+	let yaml = "services:\n  a:\n    image: x\n    networks: [back, default]\nnetworks:\n  back:\n    internal: true\n";
+	assert!(validate_str(yaml).is_ok());
+}
+
+#[test]
+fn explicit_default_network_alone_is_accepted() {
+	assert!(validate_str("services:\n  a:\n    image: x\n    networks: [default]\n").is_ok());
+	let map =
+		"services:\n  a:\n    image: x\n    networks:\n      default:\n        aliases: [web]\n";
+	assert!(validate_str(map).is_ok());
+}
+
+#[test]
+fn undefined_network_next_to_default_is_still_rejected() {
+	let yaml = "services:\n  a:\n    image: x\n    networks: [default, nope]\n";
+	assert!(validate_str(yaml).is_err());
+}

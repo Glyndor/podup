@@ -21,10 +21,17 @@ pub(super) fn build_subnets(ipam: &IpamConfig) -> Vec<Subnet> {
 /// Translate `ipam.driver` and `ipam.options` into Podman's `ipam_options` map.
 pub(super) fn build_ipam_options(ipam: &IpamConfig) -> HashMap<String, String> {
 	let mut opts = ipam.options.clone();
-	if let Some(driver) = &ipam.driver {
+	// `default` (or empty) means "the engine's own IPAM", which is what omitting
+	// the key already selects; Podman rejects it as a driver name.
+	if let Some(driver) = ipam.driver.as_ref().filter(|d| is_explicit_ipam_driver(d)) {
 		opts.insert("driver".to_string(), driver.clone());
 	}
 	opts
+}
+
+/// Whether an `ipam.driver` value names a real driver rather than the engine default.
+fn is_explicit_ipam_driver(driver: &str) -> bool {
+	!matches!(driver.trim(), "" | "default")
 }
 
 /// Convert a compose `ip_range` CIDR into a Podman lease range (the usable
