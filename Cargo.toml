@@ -95,6 +95,10 @@ name = "cli_flags"
 path = "tests/cli/surface/cli_flags.rs"
 
 [[test]]
+name = "impossible_memory_limit"
+path = "tests/cli/surface/impossible_memory_limit.rs"
+
+[[test]]
 name = "cli_service_hint"
 path = "tests/cli/surface/cli_service_hint.rs"
 

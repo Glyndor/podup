@@ -69,7 +69,7 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 				)));
 			}
 		}
-		if let Some(mem) = &svc.mem_limit {
+		if let Some(mem) = svc.mem_limit.as_ref().filter(|m| !m.trim().is_empty()) {
 			if crate::size::parse_memory(mem).is_none() {
 				return Err(ComposeError::Unsupported(format!(
 					"service '{name}': mem_limit '{mem}' is not a valid memory size"
