@@ -132,6 +132,14 @@ jobs:
           # diffs the whole range, so the history has to be here.
           fetch-depth: 0
 
+      # The container runs as root and the workspace belongs to another user,
+      # so git refuses it with "dubious ownership". The checkout action trusts
+      # the directory only inside its own temporary HOME. Now that this image
+      # has git, the Rust tests that ask git for the tracked files run here
+      # instead of returning early, and they fail without this line.
+      - name: Trust the workspace for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
       # The judge is read from the base, never from this checkout: a pull
       # request that edited the classifier must not be judged by its own edit.
       # A base without the judge leaves the output empty, and an empty output
@@ -284,6 +292,14 @@ jobs:
           # The classifier reads the judge from the reviewed base commit and
           # diffs the whole range, so the history has to be here.
           fetch-depth: 0
+
+      # The container runs as root and the workspace belongs to another user,
+      # so git refuses it with "dubious ownership". The checkout action trusts
+      # the directory only inside its own temporary HOME. Now that this image
+      # has git, the Rust tests that ask git for the tracked files run here
+      # instead of returning early, and they fail without this line.
+      - name: Trust the workspace for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       # The judge is read from the base, never from this checkout: a pull
       # request that edited the classifier must not be judged by its own edit.

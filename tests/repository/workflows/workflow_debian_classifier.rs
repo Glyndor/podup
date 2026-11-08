@@ -229,6 +229,14 @@ fn the_image_gets_git_and_the_certificates_before_the_checkout() {
 			})
 			.unwrap_or_else(|| panic!("{id} checks the repository out"));
 		assert!(install < checkout, "{id} installs git after the checkout");
+		let trusted = all
+			.iter()
+			.position(|s| run_text(s).contains("safe.directory"))
+			.unwrap_or_else(|| panic!("{id} trusts the workspace for git"));
+		assert!(
+			trusted > checkout,
+			"{id} trusts the workspace before the checkout, which then replaces the global config"
+		);
 		assert!(
 			run_text(&all[install]).contains("ca-certificates"),
 			"{id} installs git without ca-certificates, so the checkout fails with an SSL CA error"
