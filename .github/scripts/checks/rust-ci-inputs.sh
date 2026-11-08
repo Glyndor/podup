@@ -43,7 +43,9 @@
 # What may be skipped is what no Rust lane and no Rust test reads: the
 # licence, the editor settings, the cargo-about licence templates, the issue
 # templates, the images under docs/assets, and the shell test suite under
-# tests/scripts, which the shell lane owns and the Rust lane never reads.
+# tests/scripts, which the shell lane owns. The one Rust test that lists every
+# tracked file (no_private_document_references) does read them, so a change
+# there that only touches such a script skips that test.
 #
 # The documentation is on the list above, and that is not an oversight:
 # `tests/repository/docs/docs_links.rs` reads every markdown file under

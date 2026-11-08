@@ -40,8 +40,8 @@
 # tests/scripts: cargo compiles no .sh and no .ps1, debian/rules reads none of
 # them, and the one Rust test that reads a tracked file whatever it is
 # (no_private_document_references, which scans the tree for a private document
-# tree) reports the same thing in the Rust lane, which runs on every pull
-# request anyway.
+# tree) belongs to the Rust lane, which runs only when rust-ci-inputs.sh says
+# the change is one of its inputs.
 #
 # The policy is deliberately narrower than what cannot reach the package. A
 # licence, a README or an image under docs/assets cannot reach it either, and

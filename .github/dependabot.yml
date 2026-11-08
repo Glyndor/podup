@@ -79,7 +79,7 @@ updates:
     # The limit is what makes this more than tidiness. It is 10, and once it is
     # full Dependabot stops proposing anything at all, including the security
     # bump the queue exists to deliver. Twenty-three direct dependencies and a
-    # 164-crate lockfile can reach that on an ordinary week.
+    # lockfile of about 150 packages can reach that on an ordinary week.
     groups:
       cargo-patch-and-minor:
         patterns: ["*"]
@@ -149,10 +149,11 @@ updates:
     # The release-signing scripts (`.github/scripts/release/sign.py`,
     # `verify-signing-key.py`) pull `cryptography` from this manifest. Without
     # this entry, Dependabot only surfaces the ecosystem via the manual
-    # GitHub security-scan alert -- GitHub found `cryptography 48.0.1` only
-    # because CVE-2026-69247 matched a fingerprint, not because Dependabot
-    # tracks the file. Adding the ecosystem here brings it in the daily
-    # rotation that the cargo and github-actions ecosystems already have.
+    # GitHub security-scan alert -- GitHub found the then-pinned
+    # `cryptography 48.0.1` only because CVE-2026-69247 matched a fingerprint,
+    # not because Dependabot tracks the file (the pin has moved since). Adding
+    # the ecosystem here brings it in the daily rotation that the cargo and
+    # github-actions ecosystems already have.
     schedule:
       interval: "daily"
     labels: ["type:deps", "type:ci", "area:ci"]
