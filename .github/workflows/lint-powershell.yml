@@ -16,6 +16,7 @@ on:
       - ".github/scripts/hardening/check-hardening.ps1"
       - "tests/scripts/powershell/check-hardening.Tests.ps1"
       - "tests/scripts/powershell/install-python-isolation.Tests.ps1"
+      - "tests/scripts/powershell/install-https-redirects.Tests.ps1"
       # The rustflags that give the Windows binary Control Flow Guard live
       # here; a change to them is what this workflow builds and reads.
       - ".cargo/**"
@@ -36,6 +37,7 @@ on:
       - ".github/scripts/hardening/check-hardening.ps1"
       - "tests/scripts/powershell/check-hardening.Tests.ps1"
       - "tests/scripts/powershell/install-python-isolation.Tests.ps1"
+      - "tests/scripts/powershell/install-https-redirects.Tests.ps1"
       # The rustflags that give the Windows binary Control Flow Guard live
       # here; a change to them is what this workflow builds and reads.
       - ".cargo/**"
@@ -114,6 +116,11 @@ jobs:
       - name: Run the installer fixture
         shell: pwsh
         run: pwsh -NoProfile -File tests/scripts/powershell/install-python-isolation.Tests.ps1
+      # The redirect fixture proves the installer refuses a hop that leaves
+      # https. It stubs the web call, so it needs no network either.
+      - name: Run the installer redirect fixture
+        shell: pwsh
+        run: pwsh -NoProfile -File tests/scripts/powershell/install-https-redirects.Tests.ps1
       # The fixture proves the script; this proves the binary. The release
       # runs the same script over the same target before signing, and the
       # Control Flow Guard bit rests on a rustflag in .cargo/config.toml,
