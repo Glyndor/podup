@@ -62,4 +62,5 @@ fn decode_create_body(bodies: &[Vec<u8>]) -> serde_json::Value {
 mod empty_exec;
 mod one_off;
 mod pasta_options;
+mod service_namespaces;
 mod spec_fields;

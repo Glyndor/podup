@@ -277,6 +277,23 @@ fn validate_service_consistency(
 	file: &ComposeFile,
 	service: &crate::compose::types::Service,
 ) -> Result<()> {
+	// `service:<name>` joins that service's container, so the service has to be
+	// in the file; a name defined nowhere is a typo, not a container to look up.
+	for (field, mode) in [
+		("network_mode", &service.network_mode),
+		("pid", &service.pid),
+		("ipc", &service.ipc),
+	] {
+		let target = mode.as_deref().and_then(|m| m.strip_prefix("service:"));
+		if let Some(target) = target.filter(|t| !file.services.contains_key(*t)) {
+			return Err(ComposeError::Unsupported(format!(
+				"service '{}': {field}: service:{} refers to a service the file does not \
+				 define; define it, or name a container with `container:`",
+				crate::error::sanitize_name(name),
+				crate::error::sanitize_name(target)
+			)));
+		}
+	}
 	let attached = service.networks.names();
 	if service.network_mode.is_some() {
 		// docker-compose: "network_mode" and "networks" cannot be combined.

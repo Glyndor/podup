@@ -16,7 +16,8 @@ mod per_network_options;
 
 pub(crate) use isolation::apply_default_isolation;
 pub(in crate::backends::engine) use mode::{
-	network_mode_options, resolve_network_mode, split_network_mode_options,
+	network_mode_options, resolve_network_mode, resolve_service_namespace,
+	split_network_mode_options,
 };
 pub(in crate::backends::engine) use names::default_network_name;
 pub use names::resolve_network_name;

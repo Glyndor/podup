@@ -105,6 +105,28 @@ pub(in crate::backends::engine) fn resolve_network_mode(
 	(netns, networks)
 }
 
+/// A `pid:` or `ipc:` value with `service:<name>` turned into
+/// `container:<name of that service's container>`, as `network_mode` is above.
+/// Any other value is returned as written. A name the file does not define is
+/// left to the runtime, which reports it, like an unknown `network_mode` target.
+pub(in crate::backends::engine) fn resolve_service_namespace(
+	mode: &str,
+	file: &ComposeFile,
+	project: &str,
+) -> String {
+	match mode.strip_prefix("service:") {
+		Some(name) => {
+			let cname = file
+				.services
+				.get(name)
+				.map(|s| resolve_target_container_name(name, s, project))
+				.unwrap_or_else(|| name.to_string());
+			format!("container:{cname}")
+		}
+		None => mode.to_string(),
+	}
+}
+
 /// Resolve the container name that a `network_mode: service:<name>` reference
 /// should attach to.
 ///

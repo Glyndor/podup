@@ -265,6 +265,20 @@ fn an_empty_file_and_a_bad_service_name_are_invalid_not_unsupported() {
 	}
 }
 
+// `service:<name>` in network_mode, pid and ipc
+
+#[test]
+fn a_service_namespace_naming_a_service_the_file_does_not_define_is_refused() {
+	for field in ["network_mode", "pid", "ipc"] {
+		let yaml = format!("services:\n  web:\n    image: x\n    {field}: \"service:ghost\"\n");
+		let text = validate_str(&yaml).expect_err(field).to_string();
+		assert!(
+			text.contains("'web'") && text.contains("service:ghost") && text.contains(field),
+			"{field}: {text}"
+		);
+	}
+}
+
 #[test]
 fn a_control_character_in_a_service_name_does_not_reach_the_message() {
 	let error = validate_config(&file("services:\n  \"a\\e[31mb\":\n    image: x\n"))
@@ -274,4 +288,22 @@ fn a_control_character_in_a_service_name_does_not_reach_the_message() {
 		"{:?}",
 		error.to_string()
 	);
+}
+
+#[test]
+fn a_service_namespace_naming_a_defined_service_passes() {
+	for field in ["network_mode", "pid", "ipc"] {
+		let yaml = format!(
+			"services:\n  web:\n    image: x\n    {field}: \"service:other\"\n  other:\n    image: x\n"
+		);
+		validate_str(&yaml).unwrap_or_else(|e| panic!("{field}: {e}"));
+	}
+}
+
+#[test]
+fn a_control_character_in_a_service_namespace_name_does_not_reach_the_message() {
+	let text = validate_str("services:\n  web:\n    image: x\n    pid: \"service:gh\\e[31most\"\n")
+		.expect_err("undefined")
+		.to_string();
+	assert!(!text.contains('\u{1b}'), "{text:?}");
 }
