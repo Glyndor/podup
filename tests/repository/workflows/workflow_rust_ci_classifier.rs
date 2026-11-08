@@ -2,26 +2,34 @@
 //!
 //! `reusable-rust-ci.yml` asks `.github/scripts/checks/rust-ci-inputs.sh`
 //! whether the range touches anything the lint, test, coverage and
-//! extra-platform lanes read, and skips the heavy steps when it does not.
+//! extra-platform lanes read, and skips what it does not need to run.
 //!
-//! The decision happens INSIDE each job, because the names the ruleset
-//! requires are reported by those jobs: `rust / Format & lint`, `rust / Test`,
+//! The names the ruleset requires are `rust / Format & lint`, `rust / Test`,
 //! `rust / Coverage`, `rust / Doc warnings`, `rust / MSRV` and
-//! `rust / Extra platforms`. A workflow that never starts leaves its check
-//! pending and blocks the pull request for good, so the classifier skips
-//! STEPS and never jobs.
+//! `rust / Extra platforms`. A skipped job reports `skipped`, which a required
+//! check accepts, so the jobs whose own name is required (`Test`, `Coverage`)
+//! are skipped whole by an `if:` on the `classify` job's output. Two shapes
+//! are never skipped that way:
 //!
-//! Three properties make the skip safe, and all three are asserted here:
+//! - `lint` also runs checks that must see a documentation-only change, so it
+//!   skips only its heavy STEPS, behind a decision of its own.
+//! - the macOS and Windows matrix is not required by name (`Test (${{
+//!   matrix.os }})` moves with the matrix), `Extra platforms` is, so the
+//!   matrix is skipped whole while the aggregate gate always runs.
 //!
-//! 1. Every step that builds something is behind the guard. A heavy step
-//!    outside it would run on a pull request the classifier judged
-//!    irrelevant, and the classification would be a claim instead of a fact.
-//! 2. The guard fails closed. It reads `run != 'false'`, so a decision that
-//!    never arrived - no classifier in the base, a checkout without history,
-//!    a crash - runs the lanes instead of skipping them.
+//! Properties asserted here:
+//!
+//! 1. Every heavy step of `lint` is behind the guard.
+//! 2. Every guard fails closed. A decision that never arrived - no classifier
+//!    in the base, a checkout without history, a crash, a `classify` job that
+//!    itself failed - runs the lanes instead of skipping them. This matters
+//!    more for job-level skips: a job whose `needs` failed is skipped by
+//!    default, and a skipped job is a pass to a required check.
 //! 3. The judge is read from the reviewed base commit, never from the pull
 //!    request's own tree, so a pull request cannot rewrite the judge of its
 //!    own diff.
+//! 4. The aggregate gates keep running and fail on anything but success or
+//!    skipped.
 //!
 //! The policy itself is exercised by the shell suite in
 //! `tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh`. This file
@@ -32,19 +40,22 @@ use std::path::Path;
 
 use serde_yaml::Value;
 
-/// The jobs the classifier governs, and the check name each one reports.
+/// The jobs that keep running and skip only their heavy steps.
+const STEP_GOVERNED: [(&str, &str); 1] = [("lint", "Format & lint")];
+
+/// The jobs skipped whole when the classifier says nothing here is read, and
+/// the check name each one reports.
 ///
 /// The names are the ones the rulesets require; `tests/repository/workflows/
 /// workflow_required_checks/shape.rs` holds the same list against the whole
 /// tree, and this one covers only the jobs this change touches.
-const GOVERNED: [(&str, &str); 4] = [
-	("lint", "Format & lint"),
+const JOB_GOVERNED: [(&str, &str); 3] = [
 	("test", "Test"),
 	("test-extra", "Test (${{ matrix.os }})"),
 	("coverage", "Coverage"),
 ];
 
-/// The guard every heavy step carries.
+/// The guard every heavy step of a step-governed job carries.
 const GUARD: &str = "steps.decide.outputs.run != 'false'";
 
 fn reusable() -> Value {
@@ -80,7 +91,7 @@ fn is_heavy(step: &Value) -> bool {
 #[test]
 fn every_step_that_builds_something_is_behind_the_guard() {
 	let spec = reusable();
-	for (id, _) in GOVERNED {
+	for (id, _) in STEP_GOVERNED {
 		let mut heavy = 0;
 		let mut guarded = 0;
 		for step in steps(&job(&spec, id)) {
@@ -108,7 +119,7 @@ fn every_step_that_builds_something_is_behind_the_guard() {
 #[test]
 fn the_guard_runs_the_lanes_when_the_decision_never_arrived() {
 	let spec = reusable();
-	for (id, _) in GOVERNED {
+	for (id, _) in STEP_GOVERNED {
 		for step in steps(&job(&spec, id)) {
 			let cond = if_text(&step);
 			if !cond.contains("steps.decide.outputs.run") {
@@ -126,7 +137,7 @@ fn the_guard_runs_the_lanes_when_the_decision_never_arrived() {
 #[test]
 fn the_judge_is_read_from_the_base_and_never_from_the_working_tree() {
 	let spec = reusable();
-	for (id, _) in GOVERNED {
+	for id in ["classify", "lint"] {
 		let job = job(&spec, id);
 		let asked: Vec<String> = steps(&job)
 			.iter()
@@ -153,9 +164,81 @@ fn the_judge_is_read_from_the_base_and_never_from_the_working_tree() {
 }
 
 #[test]
+fn the_jobs_skipped_whole_take_their_decision_from_classify_and_ask_nothing_themselves() {
+	let spec = reusable();
+	for (id, _) in JOB_GOVERNED {
+		let job = job(&spec, id);
+		assert_eq!(
+			job["needs"].as_str(),
+			Some("classify"),
+			"{id} does not wait for the classifier"
+		);
+		for step in steps(&job) {
+			assert!(
+				!run_text(&step).contains("rust-ci-inputs.sh")
+					&& !if_text(&step).contains("steps.decide"),
+				"{id} still asks the classifier itself ({:?}); the answer comes \
+				 from `classify`",
+				step["name"]
+			);
+		}
+	}
+}
+
+#[test]
+fn the_job_guard_runs_the_job_when_the_classifier_did_not_answer() {
+	let spec = reusable();
+	for (id, _) in JOB_GOVERNED {
+		let cond = job(&spec, id)["if"]
+			.as_str()
+			.unwrap_or_default()
+			.to_string();
+		for needle in [
+			"needs.classify.outputs.run != 'false'",
+			"needs.classify.result != 'success'",
+			"!cancelled()",
+		] {
+			assert!(
+				cond.contains(needle),
+				"{id} is guarded by {cond:?}, which lacks {needle:?}. A classifier \
+				 that failed would skip the job, a skipped job is a pass to a \
+				 required check, and a broken checkout would turn the suite green."
+			);
+		}
+		assert!(
+			!cond.contains("always()") && !cond.contains("== 'false'"),
+			"{id} is guarded by {cond:?}; the guard must skip only on an explicit \
+			 `false`"
+		);
+	}
+}
+
+#[test]
+fn classify_exposes_the_decision_and_the_job_that_must_not_be_skipped_stays_whole() {
+	let spec = reusable();
+	assert_eq!(
+		job(&spec, "classify")["outputs"]["run"].as_str(),
+		Some("${{ steps.decide.outputs.run }}"),
+		"classify no longer exposes the answer the other jobs read"
+	);
+	for id in ["lint", "msrv-gate", "doc"] {
+		let cond = job(&spec, id)["if"]
+			.as_str()
+			.unwrap_or_default()
+			.to_string();
+		assert!(
+			!cond.contains("classify"),
+			"{id} reads the classifier at job level. `lint` runs checks a \
+			 documentation-only change must see, and the other two have their own \
+			 judge: {cond:?}"
+		);
+	}
+}
+
+#[test]
 fn the_governed_jobs_check_out_the_history_the_classifier_reads() {
 	let spec = reusable();
-	for (id, _) in GOVERNED {
+	for id in ["classify", "lint"] {
 		let checkout = steps(&job(&spec, id))
 			.into_iter()
 			.find(|s| {
@@ -221,7 +304,7 @@ fn the_check_names_the_ruleset_requires_are_unchanged() {
 			"{id} no longer reports the name the ruleset requires"
 		);
 	}
-	for (id, name) in GOVERNED {
+	for (id, name) in STEP_GOVERNED.into_iter().chain(JOB_GOVERNED) {
 		assert_eq!(
 			job(&spec, id)["name"].as_str(),
 			Some(name),
@@ -231,20 +314,33 @@ fn the_check_names_the_ruleset_requires_are_unchanged() {
 }
 
 /// The gate that stands in for the extra-platform matrix treats a skipped
-/// dependency as a pass, so a matrix leg that never ran still leaves
-/// `rust / Extra platforms` reported.
+/// dependency as a pass, so a matrix that never ran still leaves
+/// `rust / Extra platforms` reported, and it fails on anything else.
 #[test]
-fn the_extra_platform_gate_accepts_a_matrix_that_did_not_run() {
+fn the_extra_platform_gate_accepts_a_matrix_that_did_not_run_and_rejects_the_rest() {
 	let spec = reusable();
-	let body: String = steps(&job(&spec, "extra-platforms-gate"))
+	let gate = job(&spec, "extra-platforms-gate");
+	assert_eq!(gate["needs"].as_str(), Some("test-extra"));
+	assert_eq!(
+		gate["if"].as_str(),
+		Some("always()"),
+		"the gate must run whatever the matrix did, or a skipped matrix leaves \
+		 the required check missing"
+	);
+	let body: String = steps(&gate)
 		.iter()
 		.map(run_text)
 		.collect::<Vec<_>>()
 		.join("\n");
 	assert!(
 		body.contains("success | skipped)"),
-		"the extra-platform gate no longer accepts a skipped matrix leg, so \
+		"the extra-platform gate no longer accepts a skipped matrix, so \
 		 `rust / Extra platforms` stops being reported when the matrix did \
 		 not run: {body}"
+	);
+	assert!(
+		body.contains("*) echo") && body.contains("exit 1"),
+		"the extra-platform gate no longer fails on a failed or cancelled \
+		 matrix: {body}"
 	);
 }
