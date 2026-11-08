@@ -14,7 +14,7 @@ trap 'rm -rf "$tmp"' EXIT
 declare -A counts=() ceilings=() parsed=()
 
 ignored() {
-	# GitHub only registered flat workflows in the 2026-10-25 authcore probe.
+	# GitHub requires workflows to sit flat in this folder, so it is not split.
 	case "/$1/" in
 	/.github/workflows/) return 0 ;;
 	esac

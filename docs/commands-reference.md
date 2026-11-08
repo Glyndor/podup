@@ -77,7 +77,7 @@ Each entry that is not exported gets a warning that names the job, the position 
 ### `watch`
 Watch for file changes and react per each service's `develop.watch` rules. (`up --watch` does the same after starting the stack.) Actions: `sync`, `rebuild`, `restart`, `sync+restart`, `sync+exec`.
 
-Every rule that watches a changed path runs, so two services watching the same directory each get their own copy of the change. A rebuild or a restart runs once per service or container per batch of changes.
+Every rule that watches a changed path runs, so two services watching the same directory each get their own copy of the change. The action runs once per container per batch of changes, so a scaled service gets it on every replica. A restart uses the service's own `stop_grace_period`.
 
 A rebuild recreates the container the way `up` does: the service's `pre_start` steps run before it exists and its `post_start` hooks run inside it once it is up.
 
@@ -222,7 +222,7 @@ Progress is on stderr. A stderr terminal gets an animated board; other sinks get
 
 ## Diagnostics
 
-Warnings/errors go to stderr with a `podup:` prefix. Unsupported-field warnings are on by default; `RUST_LOG=debug` enables tracing. Internal errors request a bug report with secrets redacted. Invalid `umask` values name the service and advise quoting an octal string. Values containing `$` also report that the variable did not resolve. `config --no-interpolate` refuses an unresolved `umask` placeholder. `build.no_cache_filter` produces one warning per service: podup cannot filter the build cache per stage through the libpod build API, so the setting is ignored.
+Warnings/errors go to stderr with a `podup:` prefix. A value taken from the compose file, such as the text of a `ports:` entry, is shown in an error clipped to 80 characters, control characters escaped, followed by the number of characters left out. Unsupported-field warnings are on by default; `RUST_LOG=debug` enables tracing. Internal errors request a bug report with secrets redacted. Invalid `umask` values name the service and advise quoting an octal string. Values containing `$` also report that the variable did not resolve. `config --no-interpolate` refuses an unresolved `umask` placeholder. `build.no_cache_filter` produces one warning per service: podup cannot filter the build cache per stage through the libpod build API, so the setting is ignored.
 
 ## Jobs
 
