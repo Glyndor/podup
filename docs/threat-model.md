@@ -59,6 +59,14 @@ Out of scope: compromise of the operator account, the engine socket or the relea
 | libpod reports a failed pull on a `200` and podup starts a stale image | in-band `error` lines are read and surfaced; presence is verified after a pull | test: `pull` unit tests, `pull_ignore_failures_continues_past_bad_image` |
 | A recreate destroys a writable layer without telling the operator | a replaced container is reported as `Recreating`/`Recreated`, never as `Starting` | test: `recreate_vocabulary.rs`, `recreate_on_image.rs` |
 
+### Images Podman treats as checkpoints (CVE-2026-94603)
+
+GHSA-2cvf-wqm6-wr9g (CVE-2026-94603, critical, CVSS 10.0) says that Podman treats any image carrying the annotation `io.podman.annotations.checkpoint.runtime.name` as a checkpoint. In `podman run`, it then ignores the creation options the user passed and applies the settings stored in the image, so a hostile image can disable the sandbox, for example by granting all capabilities despite `--cap-drop=ALL`. The advisory lists Podman 4.4.0 and later as affected, 5.8.8 (v5 line) and 6.1.3 (v6 line) as patched, and says rootless containers are not affected because they do not support checkpoint and restore. Its workaround is to scan pulled images for the annotation and reject them.
+
+| Threat | Control | Evidence |
+|---|---|---|
+| A hostile image carrying the checkpoint annotation overrides the sandbox options a compose file asked for | none in podup. podup sends `cap_drop` and `security_opt` to Podman unchanged and does not read image annotations, so it inherits the behaviour of the engine it talks to: the issue applies to a rootful Podman older than 5.8.8 (v5) or 6.1.3 (v6) running an untrusted image. Update Podman to a patched version, or scan pulled images for the annotation and reject them, as the advisory says | no test; residual risk, stated here |
+
 ### Secrets and configs
 
 | Threat | Control | Evidence |
