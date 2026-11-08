@@ -165,5 +165,5 @@ pub(super) fn safe_unit_stem(name: &str) -> String {
 }
 
 #[cfg(test)]
-#[path = "render_tests.rs"]
+#[path = "render_tests/mod.rs"]
 mod tests;

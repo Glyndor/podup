@@ -484,5 +484,5 @@ pub fn render_service_unit(opts: &ServiceUnitOpts) -> String {
 }
 
 #[cfg(test)]
-#[path = "service_tests.rs"]
+#[path = "service_tests/mod.rs"]
 mod tests;
