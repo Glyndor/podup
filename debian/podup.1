@@ -316,12 +316,20 @@ fish scripts automatically.
 .TP
 .B COMPOSE_FILE
 Path-separator-delimited list of compose files (see \fB\-\-file\fR).
+Like the next three variables, it can also be set in the project's \fB.env\fR.
+.TP
+.B COMPOSE_PATH_SEPARATOR
+Separator of the \fBCOMPOSE_FILE\fR list; \fB:\fR (\fB;\fR on Windows) when unset.
 .TP
 .B COMPOSE_PROJECT_NAME
 Default project name (see \fB\-\-project\fR).
 .TP
 .B COMPOSE_PROFILES
 Default active profiles (see \fB\-\-profile\fR).
+.TP
+.B COMPOSE_ENV_FILES
+Comma-separated env files, the same as repeating \fB\-\-env\-file\fR. Read from
+the process environment only.
 .TP
 .B PODUP_LIBPOD_POOL
 Size of the libpod connection pool (see \fB\-\-connection\-pool\-size\fR).

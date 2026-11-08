@@ -252,9 +252,11 @@ podup validates a schedule and does not fire it. `run`, `up` and `config` print 
 
 | Variable | Description |
 |---|---|
-| `COMPOSE_FILE` | Path-separator-delimited list of compose files (`--file`). |
-| `COMPOSE_PROJECT_NAME` | Default project name (`--project`). |
-| `COMPOSE_PROFILES` | Default active profiles (`--profile`). |
+| `COMPOSE_FILE` | Path-separator-delimited list of compose files (`--file`). Also read from the project's `.env`. |
+| `COMPOSE_PATH_SEPARATOR` | Separator of the `COMPOSE_FILE` list: `:`, or `;` on Windows, when unset. Also read from the project's `.env`. |
+| `COMPOSE_PROJECT_NAME` | Default project name (`--project`). Also read from the project's `.env`. |
+| `COMPOSE_PROFILES` | Default active profiles (`--profile`). Also read from the project's `.env`. |
+| `COMPOSE_ENV_FILES` | Comma-separated env files, as repeated `--env-file` flags. Read from the process environment only. |
 | `PODMAN_SOCKET` | Podman socket path (`--socket`). |
 | `DOCKER_HOST` | Docker-compatible fallback for the Podman socket, used only when `PODMAN_SOCKET` is unset. Must be a local `unix://` socket (or `npipe://` on Windows). |
 | `PODUP_LIBPOD_POOL` | HTTP/1.1 connection-pool size for the libpod client (`--connection-pool-size`). Connection-pool size; see `--connection-pool-size`. `PODUP_LIBCOD_POOL` is read as a fallback when the new name is unset. |

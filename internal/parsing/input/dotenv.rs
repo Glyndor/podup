@@ -13,10 +13,17 @@
 /// used for the optional default `.env`: it never fails, so an unterminated
 /// quoted value degrades to consuming the rest of the file (historical
 /// behaviour) rather than erroring.
+#[cfg(any(test, feature = "test-helpers"))]
 pub fn parse(content: &str) -> Vec<(String, String)> {
 	// `strict = false` can never produce an error.
 	let marked = parse_inner(content, false).unwrap_or_default();
 	marked.into_iter().map(|(k, v, _)| (k, v)).collect()
+}
+
+/// Like [`parse`], with the third element of [`parse_strict_marked`]: `true`
+/// for a value that must not be interpolated. Lenient like [`parse`].
+pub fn parse_marked(content: &str) -> Vec<(String, String, bool)> {
+	parse_inner(content, false).unwrap_or_default()
 }
 
 /// Like [`parse`] but rejects malformed input.
@@ -25,6 +32,7 @@ pub fn parse(content: &str) -> Vec<(String, String)> {
 /// where a typo'd or truncated file must fail loudly rather than silently drop
 /// variables, matching docker compose, which hard-errors on an unterminated
 /// quoted value.
+#[cfg(any(test, feature = "test-helpers"))]
 pub fn parse_strict(content: &str) -> crate::error::Result<Vec<(String, String)>> {
 	let marked = parse_inner(content, true)?;
 	Ok(marked.into_iter().map(|(k, v, _)| (k, v)).collect())
