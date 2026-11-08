@@ -206,6 +206,44 @@ fn the_governed_jobs_check_out_the_history_the_classifier_reads() {
 	}
 }
 
+/// The Debian image carries neither git nor the certificates git needs to talk
+/// to GitHub over https. The first version of this step installed git alone
+/// with `--no-install-recommends`, the checkout then failed with "Problem with
+/// the SSL CA cert", and every pull request had a red Debian lane.
+#[test]
+fn the_image_gets_git_and_the_certificates_before_the_checkout() {
+	let spec = reusable();
+	for (id, _) in GOVERNED {
+		let all = steps(&job(&spec, id));
+		let install = all
+			.iter()
+			.position(|s| run_text(s).contains("apt-get install") && run_text(s).contains("git"))
+			.unwrap_or_else(|| panic!("{id} installs git before the checkout"));
+		let checkout = all
+			.iter()
+			.position(|s| {
+				s["uses"]
+					.as_str()
+					.unwrap_or_default()
+					.starts_with("actions/checkout")
+			})
+			.unwrap_or_else(|| panic!("{id} checks the repository out"));
+		assert!(install < checkout, "{id} installs git after the checkout");
+		let trusted = all
+			.iter()
+			.position(|s| run_text(s).contains("safe.directory"))
+			.unwrap_or_else(|| panic!("{id} trusts the workspace for git"));
+		assert!(
+			trusted > checkout,
+			"{id} trusts the workspace before the checkout, which then replaces the global config"
+		);
+		assert!(
+			run_text(&all[install]).contains("ca-certificates"),
+			"{id} installs git without ca-certificates, so the checkout fails with an SSL CA error"
+		);
+	}
+}
+
 #[test]
 fn the_range_comes_from_the_event() {
 	let spec = reusable();

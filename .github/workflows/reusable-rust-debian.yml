@@ -123,7 +123,7 @@ jobs:
       - name: Install git for the classifier
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends git
+          apt-get install -y --no-install-recommends git ca-certificates
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -131,6 +131,14 @@ jobs:
           # The classifier reads the judge from the reviewed base commit and
           # diffs the whole range, so the history has to be here.
           fetch-depth: 0
+
+      # The container runs as root and the workspace belongs to another user,
+      # so git refuses it with "dubious ownership". The checkout action trusts
+      # the directory only inside its own temporary HOME. Now that this image
+      # has git, the Rust tests that ask git for the tracked files run here
+      # instead of returning early, and they fail without this line.
+      - name: Trust the workspace for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       # The judge is read from the base, never from this checkout: a pull
       # request that edited the classifier must not be judged by its own edit.
@@ -276,7 +284,7 @@ jobs:
       - name: Install git for the classifier
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends git
+          apt-get install -y --no-install-recommends git ca-certificates
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -284,6 +292,14 @@ jobs:
           # The classifier reads the judge from the reviewed base commit and
           # diffs the whole range, so the history has to be here.
           fetch-depth: 0
+
+      # The container runs as root and the workspace belongs to another user,
+      # so git refuses it with "dubious ownership". The checkout action trusts
+      # the directory only inside its own temporary HOME. Now that this image
+      # has git, the Rust tests that ask git for the tracked files run here
+      # instead of returning early, and they fail without this line.
+      - name: Trust the workspace for git
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
 
       # The judge is read from the base, never from this checkout: a pull
       # request that edited the classifier must not be judged by its own edit.
