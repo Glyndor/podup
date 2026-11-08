@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use super::{diagnostics, extends, include, jobs, merge, tags, types, validate};
+use super::{diagnostics, extends, include, jobs, merge, project_name, tags, types, validate};
 use crate::error::{ComposeError, Result};
 use crate::substitute;
 use types::{ComposeFile, ServiceNetworks};
@@ -14,7 +14,7 @@ pub(super) fn is_stdin(path: &Path) -> bool {
 ///
 /// `-f -` reads the document from stdin, which has no directory of its own,
 /// so the working directory stands in for it.
-fn dir_of(path: &Path) -> PathBuf {
+pub(super) fn dir_of(path: &Path) -> PathBuf {
 	if is_stdin(path) {
 		return std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 	}
@@ -154,6 +154,22 @@ pub fn parse_files_with_env_files_interp_in(
 	interpolate: bool,
 	project_dir: Option<&Path>,
 ) -> Result<ComposeFile> {
+	parse_files_with_project_in(paths, env_files, interpolate, project_dir, None)
+}
+
+/// Like [`parse_files_with_env_files_interp_in`] but with the project name the
+/// operator gave (`-p`, or the `COMPOSE_PROJECT_NAME` variable), if any.
+///
+/// The files may refer to the name of the project as `${COMPOSE_PROJECT_NAME}`.
+/// It is the explicit one when there is one, else the top-level `name:`, else
+/// the name of the project directory, and it reaches every file the load reads.
+pub fn parse_files_with_project_in(
+	paths: &[PathBuf],
+	env_files: &[String],
+	interpolate: bool,
+	project_dir: Option<&Path>,
+	explicit_project: Option<&str>,
+) -> Result<ComposeFile> {
 	let mut iter = paths.iter();
 	let first = iter
 		.next()
@@ -167,6 +183,14 @@ pub fn parse_files_with_env_files_interp_in(
 	} else {
 		None
 	};
+	let _name = project_name::expose(
+		interpolate,
+		paths,
+		env_files,
+		project_dir,
+		explicit_project,
+		stdin.as_deref(),
+	);
 	let project_dir = project_dir
 		.map(Path::to_path_buf)
 		.or_else(|| Some(dir_of(first)));
@@ -323,6 +347,10 @@ pub(super) fn merge_override(
 	other: ComposeFile,
 	directives: &tags::Directives,
 ) {
+	// The project name is a single value, and the last file that sets one wins.
+	if other.name.is_some() {
+		target.name = other.name.clone();
+	}
 	for (name, svc) in other.services {
 		if let Some(base) = target.services.get_mut(&name) {
 			let tagged = directives.get(&name);

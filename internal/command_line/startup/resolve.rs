@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 
 use podup::ComposeError;
 
+// The project name is also needed while the compose file is read, because the
+// file may interpolate it, so its resolution lives with the parser.
+pub(crate) use podup::compose::{resolve_base_dir, resolve_project_name};
+
 /// Validate an explicit `--project-directory`: it must exist and be a directory.
 /// A `None` (unset) directory is always fine: it is derived from the compose
 /// file's location. Matches `docker compose`, which errors on a missing working
@@ -124,75 +128,4 @@ pub(super) fn override_for(base: &Path) -> Option<PathBuf> {
 /// resolve it; a best-effort label must never fail the command that sets it.
 pub(crate) fn absolute(path: &Path) -> PathBuf {
 	std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
-}
-
-/// Resolve the base directory for relative-path resolution. An explicit
-/// `--project-directory` wins; otherwise it is the directory containing the
-/// compose file (compose-spec default), or the current directory when the
-/// compose file has no parent component.
-pub(crate) fn resolve_base_dir(project_directory: Option<&Path>, file: &Path) -> PathBuf {
-	if let Some(dir) = project_directory {
-		return dir.to_path_buf();
-	}
-	match file.parent() {
-		Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
-		// A bare compose filename (e.g. `docker-compose.yml`) has an empty parent
-		// component. Anchor relative paths to the working directory so a relative
-		// `file:` secret/config or bind source resolves against the project
-		// directory, not the working directory the Podman service later runs in.
-		_ => std::env::current_dir().unwrap_or_default(),
-	}
-}
-
-/// Resolve the project name following the compose-spec precedence: an explicit
-/// `-p` / `COMPOSE_PROJECT_NAME` value, then the top-level `name:` field, then
-/// the sanitized basename of the project directory. Explicit values are taken
-/// verbatim; only the directory basename is sanitized.
-pub(crate) fn resolve_project_name(
-	explicit: Option<String>,
-	compose_name: Option<&str>,
-	base_dir: &Path,
-) -> String {
-	// An empty `-p ""` or `COMPOSE_PROJECT_NAME=` is "not set", as in docker
-	// compose: a script that exports the variable empty falls through to the
-	// `name:` of the file and then the directory, instead of failing on a name
-	// that cannot be valid.
-	if let Some(name) = explicit.filter(|n| !n.is_empty()) {
-		return name;
-	}
-	if let Some(name) = compose_name {
-		return name.to_string();
-	}
-	// An empty base dir means a bare compose filename in the current directory;
-	// canonicalize `.` so the basename comes from the working directory.
-	let probe = if base_dir.as_os_str().is_empty() {
-		Path::new(".")
-	} else {
-		base_dir
-	};
-	let basename = probe
-		.canonicalize()
-		.unwrap_or_else(|_| probe.to_path_buf())
-		.file_name()
-		.map(|n| n.to_string_lossy().into_owned())
-		.unwrap_or_default();
-	sanitize_project_name(&basename)
-}
-
-/// Normalize a raw directory name into a valid compose project name: lowercase,
-/// keep only `[a-z0-9_-]`, then strip any leading `_`/`-`. Falls back to the
-/// `podup` literal when nothing valid remains, so the project name is never
-/// empty.
-pub(crate) fn sanitize_project_name(raw: &str) -> String {
-	let kept: String = raw
-		.to_lowercase()
-		.chars()
-		.filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_' || *c == '-')
-		.collect();
-	let trimmed = kept.trim_start_matches(['_', '-']);
-	if trimmed.is_empty() {
-		"podup".to_string()
-	} else {
-		trimmed.to_string()
-	}
 }

@@ -41,6 +41,7 @@ thread_local! {
 }
 
 pub(crate) mod project_budget;
+pub(crate) mod project_name;
 pub(crate) mod warnings {
 	use super::WARN_ENABLED;
 
@@ -292,6 +293,7 @@ pub fn build_vars(dir: &Path) -> HashMap<String, String> {
 	for (k, v) in load_dotenv(dir) {
 		vars.entry(k).or_insert(v);
 	}
+	project_name::apply(&mut vars);
 	vars
 }
 
@@ -374,6 +376,7 @@ fn build_vars_with_env_files_inner(
 	for (k, v) in file_vars {
 		vars.entry(k).or_insert(v);
 	}
+	project_name::apply(&mut vars);
 	Ok(vars)
 }
 
