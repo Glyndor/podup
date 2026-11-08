@@ -430,7 +430,7 @@ jobs:
                     # Say so here rather than letting cargo-llvm-cov fail with its
                     # own wording several minutes and one full build later.
                     echo "PODUP_COVERAGE=llvm-tools-missing"
-                  elif cargo install cargo-llvm-cov --locked; then
+                  elif cargo install cargo-llvm-cov --locked --version "=0.9.1"; then
                     # Same thread cap as the gating run above. cargo-llvm-cov
                     # drives its own `cargo test` and does NOT inherit it, which
                     # is measurable rather than theoretical: on the Podman 6 leg

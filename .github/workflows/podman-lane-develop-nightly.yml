@@ -112,7 +112,7 @@ jobs:
                 export LLVM_PROFDATA=/usr/bin/llvm-profdata
                 DROPPED='IncompleteMessage|connection closed before message completed|channel closed|Connection reset|error reading a body from connection|unexpected EOF during chunk size line|IncompleteBody|body-unexpected-eof'
                 for attempt in 1 2; do
-                  RUST_LOG=podup=warn cargo install cargo-llvm-cov --locked >/tmp/covinstall.log 2>&1
+                  RUST_LOG=podup=warn cargo install cargo-llvm-cov --locked --version "=0.9.1" >/tmp/covinstall.log 2>&1
                   cargo llvm-cov --all-features --summary-only \
                     -- --test-threads=1 >/tmp/cov.log 2>&1
                   RC=$?
