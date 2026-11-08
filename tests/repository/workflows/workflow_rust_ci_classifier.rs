@@ -31,6 +31,12 @@
 //! 4. The aggregate gates keep running and fail on anything but success or
 //!    skipped.
 //!
+//! 5. The classifier lets files skip the Rust lanes that the Rust test
+//!    `no_private_document_references` still reads (a shell test, the
+//!    licence, a template). The skip is sound only while `lint` runs the same
+//!    scan with no guard of its own, so that step has to stay and stay
+//!    ungated.
+//!
 //! The policy itself is exercised by the shell suite in
 //! `tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh`. This file
 //! is about the wiring.
@@ -342,5 +348,35 @@ fn the_extra_platform_gate_accepts_a_matrix_that_did_not_run_and_rejects_the_res
 		body.contains("*) echo") && body.contains("exit 1"),
 		"the extra-platform gate no longer fails on a failed or cancelled \
 		 matrix: {body}"
+	);
+}
+
+/// The classifier skips files that `no_private_document_references` reads.
+/// The step that repeats the scan outside the Rust lanes must exist and must
+/// carry no condition, or a shell-only pull request is checked by nothing.
+#[test]
+fn the_private_document_scan_runs_in_lint_whatever_the_classifier_says() {
+	let spec = reusable();
+	let scans: Vec<Value> = steps(&job(&spec, "lint"))
+		.into_iter()
+		.filter(|s| run_text(s).contains("check-private-document-references.sh"))
+		.collect();
+	assert_eq!(
+		scans.len(),
+		1,
+		"lint must run the private-document scan exactly once, found {}. The \
+		 classifier lets a shell test, the licence or a template skip the Rust \
+		 lanes, and this scan is the only thing left that reads them.",
+		scans.len()
+	);
+	assert!(
+		scans[0].get("if").is_none(),
+		"the private-document scan is guarded by {:?}; guarded by the \
+		 classifier it stops reading exactly the files the classifier skips",
+		scans[0]["if"]
+	);
+	assert!(
+		scans[0].get("continue-on-error").is_none(),
+		"the private-document scan must be able to fail the job"
 	);
 }

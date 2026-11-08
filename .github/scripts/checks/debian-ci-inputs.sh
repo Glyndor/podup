@@ -40,8 +40,10 @@
 # tests/scripts: cargo compiles no .sh and no .ps1, debian/rules reads none of
 # them, and the one Rust test that reads a tracked file whatever it is
 # (no_private_document_references, which scans the tree for a private document
-# tree) belongs to the Rust lane, which runs only when rust-ci-inputs.sh says
-# the change is one of its inputs.
+# tree) cannot see one in a source tarball anyway, because the package build
+# has no git index to list. The same scan runs in the `lint` job of
+# reusable-rust-ci.yml on every pull request, with no classifier in front of
+# it (check-private-document-references.sh), so this skip hides nothing from it.
 #
 # The policy is deliberately narrower than what cannot reach the package. A
 # licence, a README or an image under docs/assets cannot reach it either, and
