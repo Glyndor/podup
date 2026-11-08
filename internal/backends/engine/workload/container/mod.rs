@@ -14,6 +14,7 @@ use crate::size;
 mod anon_volumes;
 mod fields;
 mod host_log_driver;
+mod image_healthcheck;
 mod inputs;
 mod oneoff;
 mod resolve;
@@ -32,7 +33,8 @@ pub(crate) use host_mode::check_host_mode;
 pub(crate) use security::parse_device_cgroup_rule;
 
 use crate::engine::container_config::{
-	build_healthcheck, build_log_config, build_resource_limits, build_restart_policy, build_ulimits,
+	build_healthcheck, build_healthcheck_inheriting, build_log_config, build_resource_limits,
+	build_restart_policy, build_ulimits,
 };
 use crate::engine::network::{resolve_network_mode, resolve_service_namespace};
 use crate::engine::volume_mounts::build_mounts_all;
@@ -284,10 +286,21 @@ impl Engine {
 			.map(resolve_stop_signal)
 			.transpose()?;
 
+		// Only a healthcheck that sends something can leave a value out for the
+		// image to fill, so only then is the image asked.
+		let image_healthcheck = match service.healthcheck.as_ref() {
+			Some(hc) if !hc.is_disabled() && build_healthcheck(hc).is_some() => {
+				self.image_healthcheck(image).await
+			}
+			_ => None,
+		};
 		let spec = build_spec_generator(
 			&self.project,
 			service,
-			service.healthcheck.as_ref().and_then(build_healthcheck),
+			service
+				.healthcheck
+				.as_ref()
+				.and_then(|hc| build_healthcheck_inheriting(hc, image_healthcheck.as_ref())),
 			log_configuration,
 			match service
 				.healthcheck

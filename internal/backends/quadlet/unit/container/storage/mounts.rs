@@ -33,6 +33,9 @@ pub(in super::super) fn emit_volumes(
 /// Emit a `Tmpfs=` line per `tmpfs:` entry.
 pub(in super::super) fn emit_tmpfs(service: &Service, container: &mut Section) {
 	for t in service.tmpfs.to_list() {
+		// `uid=`/`gid=` that name the service's `user:` are Podman's `U`; any other
+		// was refused by `validate_for_quadlet`, and is written as it came.
+		let t = crate::libpod::validate::translate_entry(&t, service.user.as_deref()).unwrap_or(t);
 		container.add("Tmpfs", t);
 	}
 }

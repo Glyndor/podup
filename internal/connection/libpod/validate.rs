@@ -358,6 +358,25 @@ pub(crate) fn pre_validate_spec(
 		)));
 	}
 
+	// 1b. `uid=`/`gid=` in a `tmpfs:` entry: honoured as `U` when they name the
+	//     service's `user:`, a clear refusal otherwise (Podman has no such option).
+	for entry in service.tmpfs.to_list() {
+		let (_, options) = entry.split_once(':').unwrap_or((&entry, ""));
+		let options: Vec<String> = options
+			.split(',')
+			.filter(|o| !o.is_empty())
+			.map(str::to_string)
+			.collect();
+		if let Err(msg) = translate_owner(&options, service.user.as_deref()) {
+			return Err(ComposeError::Podman(spec_field_error(
+				service_name,
+				"tmpfs",
+				&entry,
+				msg,
+			)));
+		}
+	}
+
 	// 2. device_cgroup_rule access strings. The engine's parsers
 	//    (`parse_device_cgroup_rule` for `device_cgroup_rules:`, and
 	//    `device_spec_parts` for `devices:`) are the source of truth for
@@ -451,6 +470,9 @@ impl LabelKeys for std::collections::BTreeMap<String, String> {
 		self.keys()
 	}
 }
+
+mod tmpfs_owner;
+pub(crate) use tmpfs_owner::{translate_entry, translate_owner};
 
 #[cfg(test)]
 mod tests;

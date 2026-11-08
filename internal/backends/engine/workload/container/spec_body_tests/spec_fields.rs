@@ -216,13 +216,16 @@ async fn create_sends_every_compose_field_in_the_spec_generator() {
 		.expect("tmpfs entry must appear under mounts");
 	assert_eq!(tmpfs["destination"], "/tmp");
 	// tmpfs options were split on the first colon: everything after the
-	// destination's colon is options. `"size=64m,uid=1000"` was passed
-	// through verbatim by parse_tmpfs_string.
+	// destination's colon is options. `"size=64m,uid=1000"` is passed
+	// through except that `uid=1000`, the fixture's own `user: "1000:1000"`,
+	// becomes Podman's `U`: Podman rejects `uid=` on a tmpfs (this assertion
+	// used to expect it verbatim, which could never start a container).
 	let opts = tmpfs["options"]
 		.as_array()
 		.expect("options must be an array");
 	assert!(opts.iter().any(|o| o == "size=64m"));
-	assert!(opts.iter().any(|o| o == "uid=1000"));
+	assert!(opts.iter().any(|o| o == "U"));
+	assert!(!opts.iter().any(|o| o == "uid=1000"));
 	assert!(tmpfs["source"].is_null(), "tmpfs source must be absent");
 
 	let bind = mounts

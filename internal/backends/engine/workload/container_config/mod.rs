@@ -10,6 +10,7 @@ use crate::compose::types::{
 };
 use crate::error::ComposeError;
 use crate::libpod::types::container::{HealthConfig, LogConfig};
+use crate::libpod::types::image::ImageHealthcheck;
 use crate::size;
 
 pub(crate) mod resources;
@@ -206,6 +207,28 @@ fn translate_user_logging(
 // ---------------------------------------------------------------------------
 
 pub(in crate::backends::engine) fn build_healthcheck(hc: &HealthCheck) -> Option<HealthConfig> {
+	build_healthcheck_inheriting(hc, None)
+}
+
+/// The healthcheck of a service, with every value its compose file leaves out
+/// taken from the healthcheck its image declares.
+///
+/// The Compose Specification says a service's healthcheck "has the same default
+/// values as the HEALTHCHECK Dockerfile instruction set by the service's Docker
+/// image" and that the compose file can override them. Declaring only a `test`
+/// therefore overrides the test and nothing else: the interval, timeout, start
+/// period and retries stay the image's. libpod does not merge them for a request
+/// that carries a `test`, so they are filled in here from `image`, the
+/// `Healthcheck` of the image inspect. Only what neither the compose file nor the
+/// image gives falls back to the specification's 30s / 30s / 3.
+///
+/// A compose file that gives timings and no `test` also takes the image's test,
+/// so the probe survives on a libpod that replaces the image healthcheck with
+/// any non-empty request (Podman 5.4.2).
+pub(in crate::backends::engine) fn build_healthcheck_inheriting(
+	hc: &HealthCheck,
+	image: Option<&ImageHealthcheck>,
+) -> Option<HealthConfig> {
 	if hc.is_disabled() {
 		return Some(HealthConfig {
 			test: Some(vec!["NONE".to_string()]),
@@ -216,7 +239,7 @@ pub(in crate::backends::engine) fn build_healthcheck(hc: &HealthCheck) -> Option
 	// empty Test as absent and inherits the image probe. An empty shell string
 	// stays an explicit `["CMD-SHELL", ""]` probe, as it always was, because
 	// Podman runs it (#1893).
-	let test = hc.test.as_ref().and_then(|cmd| match cmd {
+	let mut test = hc.test.as_ref().and_then(|cmd| match cmd {
 		ComposeCommand::Shell(s) => Some(vec!["CMD-SHELL".to_string(), s.clone()]),
 		ComposeCommand::Exec(v) if !v.is_empty() => Some(v.clone()),
 		_ => None,
@@ -229,61 +252,40 @@ pub(in crate::backends::engine) fn build_healthcheck(hc: &HealthCheck) -> Option
 	// Podman 5.4.2 (still supported) inherits the image HEALTHCHECK only when
 	// the whole `healthconfig` is absent from the request, so we must omit the
 	// field entirely, not just leave every value `None`, when there is no
-	// test and the user set no timing. Podman 5.7+ merges field-by-field and
-	// would still inherit with a `None`-filled config, but emitting one anyway
-	// would 30s/30s/3-overwrite older runtimes (#1893).
+	// test and the user set no timing (#1893).
 	if test.is_none() && !has_timings {
 		return None;
 	}
-	// Apply the compose-spec defaults (interval 30s, timeout 30s, retries 3)
-	// only when the user wrote a `test`. With a `test`, libpod would otherwise
-	// leave the timings at 0s and the probe would fail with "exceeded timeout
-	// of 0s".
-	//
-	// A timing-only override (no test, some timing set) is sent as a
-	// `healthconfig` with `test == None` and the user-set timing. On Podman
-	// 5.7+ libpod merges field-by-field and the unset fields are inherited
-	// from the image, so the user override survives. On Podman 5.4.2 a
-	// non-nil `healthconfig` without a `test` REPLACES the image healthcheck
-	// rather than inheriting it, so the image probe is lost there. That was
-	// already the case before #1893 and is not handled here.
-	const DEFAULT_NANOS: i64 = 30 * 1_000_000_000;
-	let (interval, timeout, retries) = if test.is_some() {
-		(
-			Some(
-				hc.interval
-					.as_deref()
-					.and_then(size::parse_duration_nanos)
-					.unwrap_or(DEFAULT_NANOS),
-			),
-			Some(
-				hc.timeout
-					.as_deref()
-					.and_then(size::parse_duration_nanos)
-					.unwrap_or(DEFAULT_NANOS),
-			),
-			Some(hc.retries.map(|r| r as i64).unwrap_or(3)),
-		)
-	} else {
-		(
-			hc.interval.as_deref().and_then(size::parse_duration_nanos),
-			hc.timeout.as_deref().and_then(size::parse_duration_nanos),
-			hc.retries.map(|r| r as i64),
-		)
-	};
+	let from_image =
+		|pick: fn(&ImageHealthcheck) -> Option<i64>| image.and_then(pick).filter(|v| *v > 0);
+	if test.is_none() {
+		test = image
+			.and_then(|i| i.test.clone())
+			.filter(|t| t.first().is_some_and(|mode| mode != "NONE"));
+	}
+	let nanos = |value: &Option<String>| value.as_deref().and_then(size::parse_duration_nanos);
+	let mut interval = nanos(&hc.interval).or_else(|| from_image(|i| i.interval));
+	let mut timeout = nanos(&hc.timeout).or_else(|| from_image(|i| i.timeout));
+	let mut retries = hc
+		.retries
+		.map(|r| r as i64)
+		.or_else(|| from_image(|i| i.retries));
+	// The specification's defaults, only for what the file and the image both
+	// leave out, and only with a test: libpod would otherwise leave the timings
+	// at 0s and the probe would fail with "exceeded timeout of 0s".
+	if test.is_some() {
+		const DEFAULT_NANOS: i64 = 30 * 1_000_000_000;
+		interval = interval.or(Some(DEFAULT_NANOS));
+		timeout = timeout.or(Some(DEFAULT_NANOS));
+		retries = retries.or(Some(3));
+	}
 	Some(HealthConfig {
 		test,
 		interval,
 		timeout,
 		retries,
-		start_period: hc
-			.start_period
-			.as_deref()
-			.and_then(size::parse_duration_nanos),
-		start_interval: hc
-			.start_interval
-			.as_deref()
-			.and_then(size::parse_duration_nanos),
+		start_period: nanos(&hc.start_period).or_else(|| from_image(|i| i.start_period)),
+		start_interval: nanos(&hc.start_interval).or_else(|| from_image(|i| i.start_interval)),
 	})
 }
 
@@ -302,3 +304,7 @@ mod log_config_tests;
 #[cfg(test)]
 #[path = "log_tag_tests.rs"]
 mod log_tag_tests;
+
+#[cfg(test)]
+#[path = "healthcheck_inherit_tests.rs"]
+mod healthcheck_inherit_tests;
