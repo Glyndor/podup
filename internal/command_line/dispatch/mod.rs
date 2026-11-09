@@ -50,7 +50,7 @@ pub(crate) async fn dispatch(
 			force_recreate,
 			no_deps,
 			timeout: _,
-			scale: _,
+			scale,
 			pull: _,
 			no_build: _,
 			quiet_pull: _,
@@ -66,6 +66,15 @@ pub(crate) async fn dispatch(
 			// `up` starts services and never a job. A job with a schedule is
 			// reported here so it is not taken for one that runs on time.
 			podup::warn_unscheduled_jobs(&profile_filtered(file, profile, &[]));
+			// A service the file does not declare, named as a target or as a
+			// `--scale` override, is an input error. It is refused here, before
+			// the orphan check below puts the first request to the engine.
+			let named = services.iter().chain(scale.iter().map(|(name, _)| name));
+			for name in named {
+				if !file.services.contains_key(name) {
+					return Err(podup::ComposeError::ServiceNotFound(name.clone()));
+				}
+			}
 			// What this `up` touches. Waiting, attaching and the stop at the end
 			// act on this set and not on the whole project, so `up web` does not
 			// attach to, or stop, services outside its selection, and `--wait`
