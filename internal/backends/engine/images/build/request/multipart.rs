@@ -95,6 +95,18 @@ pub(in crate::backends::engine::images::build) fn multipart_body(
 /// The header of one part: the boundary, the part's name, and the type of
 /// the payload it carries.
 fn write_part_header<W: Write>(writer: &mut W, boundary: &str, name: &str) -> Result<()> {
+	// The name goes between quotes in a header line. A quote would end it, a
+	// backslash would escape it, and a line break or another control character
+	// would start a header of the caller's choosing. The name is a free key of
+	// `build.additional_contexts`, so it is refused here instead of written.
+	if name
+		.chars()
+		.any(|c| c.is_control() || c == '"' || c == '\\')
+	{
+		return Err(ComposeError::Invalid(format!(
+			"build context name {name:?} may not hold a quote, a backslash or a control character"
+		)));
+	}
 	write!(
 		writer,
 		"--{boundary}\r\nContent-Disposition: form-data; name=\"{name}\"\r\n\
