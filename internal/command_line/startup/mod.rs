@@ -360,10 +360,19 @@ pub(crate) fn parse_cli() -> Cli {
 				// so colour the rendered text by clap's own styling only when stdout
 				// is a colour sink (TTY + no NO_COLOR); piped output stays plain and
 				// byte-identical to before.
-				print!(
+				// The help text is the whole answer here. A write that fails
+				// for a reason other than a closed pipe is a real failure,
+				// and the command says so instead of exiting as if the help
+				// had printed.
+				if podup::ui::out!(
 					"\n{}\n",
 					render_help(&e.render(), podup::ui::stdout_colored())
-				);
+				)
+				.is_err()
+				{
+					let _ = podup::ui::errln!("podup: cannot write the help text");
+					process::exit(1);
+				}
 				process::exit(0);
 			}
 			// `MissingSubcommand` is the same situation wearing a different hat.
@@ -397,7 +406,10 @@ pub(crate) fn parse_cli() -> Cli {
 				// which is what `generate` accepts. Their own `--help` already
 				// answers that correctly; this path did not.
 				let help = help_for_argv(<Cli as clap::CommandFactory>::command());
-				eprint!("\n{}\n", render_help(&help, podup::ui::stderr_colored()));
+				// The status stays 2 even when the text could not be
+				// written: the command failed, and that is what the caller
+				// needs to know.
+				let _ = podup::ui::err!("\n{}\n", render_help(&help, podup::ui::stderr_colored()));
 				process::exit(2);
 			}
 			// A real argument-parsing failure: unknown flag, missing required

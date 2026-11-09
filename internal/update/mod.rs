@@ -89,17 +89,17 @@ fn run_with_verifier(
 	let latest_v = verify::parse_version(&latest_tag)?;
 
 	if latest_v <= current_v && !opts.force {
-		println!("podup is up to date (v{current})");
+		crate::ui::outln!("podup is up to date (v{current})")?;
 		return Ok(());
 	}
 
 	if latest_v > current_v {
-		println!("update available: v{current} -> {latest_tag}");
+		crate::ui::outln!("update available: v{current} -> {latest_tag}")?;
 	} else {
-		println!("reinstalling {latest_tag} (--force)");
+		crate::ui::outln!("reinstalling {latest_tag} (--force)")?;
 	}
 	if opts.check_only {
-		println!("run `podup update` to install it");
+		crate::ui::outln!("run `podup update` to install it")?;
 		return Ok(());
 	}
 
@@ -120,15 +120,15 @@ fn run_with_verifier(
 	verify_signature(&sha256sums, &signature)?;
 	let expected = verify::expected_digest(&sha256sums, asset)?;
 
-	println!("downloading {asset} ({latest_tag}) ...");
+	crate::ui::outln!("downloading {asset} ({latest_tag}) ...")?;
 	let binary = source.fetch(asset)?;
 	verify::verify_digest(&binary, &expected)?;
-	println!("signature and checksum verified");
+	crate::ui::outln!("signature and checksum verified")?;
 
 	// The self-test inside `install_binary` pins the installed binary's reported
 	// version to the resolved tag, closing the signed-release rollback window.
 	let path = install::install_binary(&binary, latest_tag.trim_start_matches('v'), opts.force)?;
-	println!("updated to {latest_tag}: {}", path.display());
+	crate::ui::outln!("updated to {latest_tag}: {}", path.display())?;
 	Ok(())
 }
 

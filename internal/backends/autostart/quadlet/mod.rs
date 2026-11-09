@@ -115,7 +115,7 @@ fn retire_obsolete_units<S: SystemCtl>(
 		std::fs::remove_file(&path).map_err(|e| {
 			ComposeError::Autostart(format!("cannot remove {}: {e}", path.display()))
 		})?;
-		eprintln!("podup: removed the obsolete unit {}", path.display());
+		crate::ui::errln!("podup: removed the obsolete unit {}", path.display())?;
 	}
 	Ok(())
 }
@@ -197,7 +197,7 @@ pub fn install_quadlet<S: SystemCtl>(
 	if dry_run {
 		let plan = dry_run_plan(&result.units, &dir, &services, &build_services, no_start);
 		for line in &plan {
-			println!("{line}");
+			crate::ui::outln!("{line}")?;
 		}
 		return Ok(());
 	}
@@ -209,7 +209,7 @@ pub fn install_quadlet<S: SystemCtl>(
 		))
 	})?;
 	for path in &written {
-		eprintln!("podup: wrote {}", path.display());
+		crate::ui::errln!("podup: wrote {}", path.display())?;
 	}
 
 	// The units of the services the compose file no longer has are retired
@@ -239,16 +239,16 @@ pub fn install_quadlet<S: SystemCtl>(
 			sc.systemctl(&build_args),
 			&format!("restart {}", build_services.join(" ")),
 		)?;
-		eprintln!(
+		crate::ui::errln!(
 			"podup: built {} image(s) for '{project}'",
 			build_services.len()
-		);
+		)?;
 	}
 	if no_start {
-		eprintln!(
+		crate::ui::errln!(
 			"podup: installed {} quadlet unit(s) for '{project}' (not started; --no-start)",
 			written.len()
-		);
+		)?;
 	} else {
 		// One `systemctl --user start svc1 svc2 ...` call instead of one fork
 		// per service: systemd serializes the starts whether they were the
@@ -262,10 +262,10 @@ pub fn install_quadlet<S: SystemCtl>(
 			sc.systemctl(&args),
 			&format!("start {}", services.join(" ")),
 		)?;
-		eprintln!(
+		crate::ui::errln!(
 			"podup: started {} container service(s) for '{project}'",
 			services.len()
-		);
+		)?;
 	}
 	Ok(())
 }
@@ -311,11 +311,11 @@ pub fn uninstall_quadlet<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<(
 		std::fs::remove_file(path).map_err(|e| {
 			ComposeError::Autostart(format!("cannot remove {}: {e}", path.display()))
 		})?;
-		eprintln!("podup: removed {}", path.display());
+		crate::ui::errln!("podup: removed {}", path.display())?;
 		removed += 1;
 	}
 	if removed == 0 {
-		eprintln!("podup: no quadlet autostart units for '{project}' (already removed)");
+		crate::ui::errln!("podup: no quadlet autostart units for '{project}' (already removed)")?;
 	}
 	checked(sc.systemctl(&["daemon-reload"]), "daemon-reload")?;
 	first_err.map_or(Ok(()), Err)
@@ -376,7 +376,7 @@ pub fn rebuild_quadlet<S: SystemCtl>(
 			sc.systemctl(&["restart", &format!("{stem}.service")]),
 			&format!("restart {stem}.service"),
 		)?;
-		eprintln!("podup: rebuilt {stem}");
+		crate::ui::errln!("podup: rebuilt {stem}")?;
 	}
 	Ok(())
 }

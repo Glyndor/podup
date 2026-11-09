@@ -31,7 +31,7 @@ impl PsFilterOptions {
 			)));
 		}
 		for name in configured_services(file, &self.services) {
-			println!("{}", crate::ui::sanitize_cell(name));
+			crate::ui::outln!("{}", crate::ui::sanitize_cell(name))?;
 		}
 		Ok(())
 	}

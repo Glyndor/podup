@@ -49,9 +49,9 @@ pub(crate) fn command_help(commands: &[String]) -> clap::builder::StyledStr {
 pub(crate) fn print_command_help(commands: &[String]) -> podup::Result<()> {
 	let rendered = command_help(commands);
 	if podup::ui::stdout_colored() {
-		print!("\n{}\n", rendered.ansi());
+		podup::ui::out!("\n{}\n", rendered.ansi())?;
 	} else {
-		print!("\n{rendered}\n");
+		podup::ui::out!("\n{rendered}\n")?;
 	}
 	Ok(())
 }

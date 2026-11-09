@@ -152,7 +152,7 @@ impl Engine {
 			let mut seen = std::collections::HashSet::new();
 			for row in &rows {
 				if !row.id.is_empty() && seen.insert(row.id.as_str()) {
-					println!("{}", row.id);
+					crate::ui::outln!("{}", row.id)?;
 				}
 			}
 			return Ok(());
@@ -176,7 +176,7 @@ impl Engine {
 					})
 				})
 				.collect();
-			println!("{}", crate::engine::to_pretty_json("images.row", &json)?);
+			crate::ui::outln!("{}", crate::engine::to_pretty_json("images.row", &json)?)?;
 			return Ok(());
 		}
 
@@ -212,7 +212,7 @@ impl Engine {
 			crate::ui::progress_note("no images");
 			return Ok(());
 		}
-		table.print();
+		table.print()?;
 		Ok(())
 	}
 }

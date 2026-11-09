@@ -119,6 +119,10 @@ name = "output_contract"
 path = "tests/cli/output/output_contract.rs"
 
 [[test]]
+name = "pipe_contract"
+path = "tests/cli/output/pipe_contract.rs"
+
+[[test]]
 name = "port_warning_scope"
 path = "tests/cli/warnings/port_warning_scope.rs"
 
@@ -287,6 +291,10 @@ name = "secret_safety"
 path = "tests/repository/repo_rules/secret_safety.rs"
 
 [[test]]
+name = "serialization_errors"
+path = "tests/repository/repo_rules/serialization_errors.rs"
+
+[[test]]
 name = "tar_builder_single_site"
 path = "tests/repository/repo_rules/tar_builder_single_site.rs"
 
@@ -438,6 +446,15 @@ rustix = { version = "1.1.4", features = ["fs"] }
 # SetConsoleMode and the screen-buffer query. Already in the tree transitively
 # (tokio pulls the same version), so this adds features, not a crate.
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Time"] }
+
+# The writing macros are denied in the two crate roots that ship, so the rule
+# cannot be lost by deleting one attribute. The package default is `allow`
+# because the rest of the package is not the shipped output path: a test's
+# diagnostics are read by the test runner, and cargo's own `cargo:` directives
+# are read by cargo. Neither is piped into a reader that closes early, which
+# is the case the rule is about.
+[lints.clippy]
+disallowed_macros = "allow"
 
 [features]
 default = ["watch", "completions", "update"]

@@ -38,6 +38,11 @@ pub(crate) struct ConfigOutput {
 /// Render `config`: validate-only (`--quiet`), a list projection (`--services`,
 /// `--volumes`, `--images`, `--profiles`, `--hash`), or the resolved compose file
 /// in YAML/JSON with inline secret content redacted.
+///
+/// The rendered bytes go through the writer in `podup::ui::print`, so a failed
+/// write reaches the caller: a reader that closed the pipe ends the process
+/// quietly, and any other failure is handed back so the command can fail
+/// instead of printing half a document.
 pub(crate) fn render_config(
 	file: &podup::compose::types::ComposeFile,
 	format: &ConfigFormat,
@@ -45,8 +50,13 @@ pub(crate) fn render_config(
 	project: &str,
 	base_dir: &Path,
 ) -> podup::Result<()> {
+	// The render is collected before it is written, so the compose-level
+	// failures (an invalid config, a value that cannot be serialised) are
+	// reported without a half-written document already on stdout.
+	let mut rendered = Vec::new();
+	render_config_to(&mut rendered, file, format, out, project, base_dir)?;
 	let mut stdout = io::stdout().lock();
-	render_config_to(&mut stdout, file, format, out, project, base_dir)
+	podup::ui::print::settle(stdout.write_all(&rendered)).map_err(podup::ComposeError::Io)
 }
 
 /// [`render_config`] writing to `w`. The list-projection branches

@@ -14,9 +14,12 @@ async fn f8_last_completion_zero_wins_in_both_argument_orders() {
 			waits.reverse();
 		}
 		let mut rows = Vec::new();
-		wait_for_containers(waits, |name, code| rows.push((name.to_string(), code)))
-			.await
-			.unwrap();
+		wait_for_containers(waits, |name, code| {
+			rows.push((name.to_string(), code));
+			Ok(())
+		})
+		.await
+		.unwrap();
 		assert_eq!(rows, [("a".into(), 7), ("b".into(), 0)]);
 	}
 }
@@ -29,9 +32,12 @@ async fn f8_last_completion_failure_wins_in_both_argument_orders() {
 			waits.reverse();
 		}
 		let mut rows = Vec::new();
-		let error = wait_for_containers(waits, |name, code| rows.push((name.to_string(), code)))
-			.await
-			.unwrap_err();
+		let error = wait_for_containers(waits, |name, code| {
+			rows.push((name.to_string(), code));
+			Ok(())
+		})
+		.await
+		.unwrap_err();
 		assert!(matches!(error, ComposeError::RunExited(7)), "{error}");
 		assert_eq!(rows, [("b".into(), 9), ("a".into(), 7)]);
 	}
@@ -52,7 +58,7 @@ async fn f8_waits_start_concurrently() {
 	];
 	tokio::time::timeout(
 		Duration::from_secs(1),
-		wait_for_containers(waits, |_, _| {}),
+		wait_for_containers(waits, |_, _| Ok(())),
 	)
 	.await
 	.expect("both waits must start before either finishes")
@@ -72,9 +78,12 @@ async fn f8_wait_error_survives_later_zero_and_drains_waits() {
 		}
 	});
 	let mut rows = Vec::new();
-	let error = wait_for_containers(waits, |name, code| rows.push((name.to_string(), code)))
-		.await
-		.unwrap_err();
+	let error = wait_for_containers(waits, |name, code| {
+		rows.push((name.to_string(), code));
+		Ok(())
+	})
+	.await
+	.unwrap_err();
 	assert!(error.to_string().contains("wait failed"));
 	assert_eq!(rows, [("b".into(), 0)]);
 }

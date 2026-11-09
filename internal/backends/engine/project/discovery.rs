@@ -189,7 +189,7 @@ pub async fn list_projects_filtered(
 
 	if opts.quiet {
 		for (name, _) in &rows {
-			println!("{name}");
+			crate::ui::outln!("{name}")?;
 		}
 		return Ok(());
 	}
@@ -199,7 +199,7 @@ pub async fn list_projects_filtered(
 			.iter()
 			.map(|(name, t)| project_row(name, t, &t.config_files))
 			.collect();
-		println!("{}", crate::engine::to_pretty_json("ls.row", &arr)?);
+		crate::ui::outln!("{}", crate::engine::to_pretty_json("ls.row", &arr)?)?;
 		return Ok(());
 	}
 
@@ -227,7 +227,7 @@ pub async fn list_projects_filtered(
 		crate::ui::progress_note("no projects");
 		return Ok(());
 	}
-	table.print();
+	table.print()?;
 	Ok(())
 }
 
