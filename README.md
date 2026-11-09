@@ -13,7 +13,7 @@ of its own, no Python.
 - 🔁 **The Compose commands you know**, with `depends_on` ordering and healthcheck conditions.
 - 🧩 **`extends`, profiles, `include` and `develop.watch`** file sync.
 - 🔐 **Podman-native secrets and configs**, including inline `content:`.
-- ⚙️ **systemd integration**: export a project as Quadlet units, or start it at boot with `podup autostart`.
+- ⚙️ **systemd integration**: export a project as Quadlet units, or start it at boot with `podup autostart install`.
 - 🛡️ **`podup audit`** flags risky settings in a Compose file before you run it.
 
 ## Install

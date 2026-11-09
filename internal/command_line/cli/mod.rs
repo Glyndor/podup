@@ -133,8 +133,8 @@ pub(crate) struct Cli {
 	pub(crate) project: Option<String>,
 
 	/// Podman socket path (overrides auto-detection and PODMAN_SOCKET env).
-	/// `global` so it can appear before or after the subcommand (it has no
-	/// short flag, so there is no collision).
+	// `global` so it can appear before or after the subcommand (it has no
+	// short flag, so there is no collision).
 	#[arg(long, env = "PODMAN_SOCKET", global = true)]
 	pub(crate) socket: Option<String>,
 

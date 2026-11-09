@@ -12,7 +12,7 @@ podup [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS] [SERVICE...]
 
 | Flag | Env | Description |
 |---|---|---|
-| `-f, --file <PATH>` | `COMPOSE_FILE` | Compose file. Repeatable; later files merge over earlier ones. When unset, the compose-spec precedence list is probed: `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`. Only the current directory is probed: unlike docker compose, podup does not look in the parent directories, so from a subdirectory of a project pass `-f` or `--project-directory`. |
+| `-f, --file <PATH>` | `COMPOSE_FILE` | Compose file. Repeatable; later files merge over earlier ones. When unset, the compose-spec precedence list is probed: `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`. Only the current directory is probed: unlike docker compose, podup does not look in the parent directories, so from a subdirectory of a project pass `-f` or `--project-directory`. When the file is found by probing, a `compose.override.yaml` (or `.yml`) next to it is merged over it, as docker compose does. |
 | `-p, --project <NAME>` (alias `--project-name`) | `COMPOSE_PROJECT_NAME` | Project name, prefixing container/network/volume names. When unset: the top-level `name:`, then the sanitized project-directory basename. The result is also available to the file as `${COMPOSE_PROJECT_NAME}`. |
 | `--socket <PATH>` | `PODMAN_SOCKET` | Podman socket path; overrides auto-detection. |
 | `--connection-pool-size <N>` | `PODUP_LIBPOD_POOL` | HTTP/1.1 connections the libpod client keeps open to the Podman socket. Streaming calls each take a dedicated connection outside this cap. Valid range: 0–1024. Default 0 disables pooling. `PODUP_LIBCOD_POOL` is read as a fallback when the new name is unset. |
@@ -58,7 +58,7 @@ A container that already exists is left in place when two facts both hold: its r
 | `--no-deps` | Do not start the `depends_on` services of the named services. | off |
 | `-t, --timeout <SECS>` | Seconds to wait for a container to stop when recreating. | Podman default |
 | `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable. | from file |
-| `--pull <POLICY>` | Pull policy before starting: `always`, `missing`, `never`, `newer`, `build`. (`newer` is Podman's extension.) | per service |
+| `--pull <POLICY>` | Pull policy before starting: `always`, `missing`, `never`, `newer`, `build`. (`newer` is Podman's extension.) | per service; otherwise `missing` |
 | `--no-build` | Do not build images, even for services with a `build:` section. | off |
 | `--quiet-pull` | Suppress image-pull progress output. | off |
 | `--wait` | Wait until services are running/healthy before returning. | off |
@@ -130,7 +130,7 @@ Build or rebuild service images (optionally only the named services).
 | `--no-cache` | Do not use the build cache. | off |
 | `--pull` | Always attempt to pull a newer base image. | off |
 | `--build-arg <KEY=VAL>` | Set a build-time variable. Repeatable. | none |
-| `--progress <STYLE>` | `auto`, `plain` or `tty`. Validated but inert; see [accepted for compatibility](#accepted-for-compatibility). | `auto` |
+| `--progress <STYLE>` | `auto`, `plain` or `tty`. Validated but inert; see [accepted for compatibility](#accepted-for-compatibility). | none |
 | `--push` | Push each built image to its registry after a successful build. | off |
 | `-q, --quiet` | Suppress the build output. | off |
 
@@ -146,7 +146,7 @@ List project containers.
 | Flag | Description | Default |
 |---|---|---|
 | `-a, --all` | Include stopped containers. | running only |
-| `-q, --quiet` | Print container IDs only. | off |
+| `-q, --quiet` | Print container IDs only. Conflicts with `--format`. | off |
 | `--format <FMT>` | `table`, `json` (a JSON array), or `ndjson` (one Compose-shaped object per container, sorted by Name). | `table` |
 | `--status <STATE>` | Match container state/status by case-insensitive prefix. Repeatable; folded together with any `status=` from `--filter`. | all |
 | `--filter <KEY=VAL>` | `name=<NAME>` or `status=<STATE>`. An unknown key is an error. | none |
@@ -164,7 +164,7 @@ List podup compose projects on the host. Needs no compose file.
 | Flag | Description | Default |
 |---|---|---|
 | `-a, --all` | Include stopped projects. | running only |
-| `-q, --quiet` | Print project names only. | off |
+| `-q, --quiet` | Print project names only. Conflicts with `--format`. | off |
 | `--format <FMT>` | `table` or `json`. | `table` |
 | `--filter <FILTER>` | Keep only projects matching a predicate: `name=<NAME>` or `status=<running\|exited>`. Repeatable. | none |
 
@@ -225,7 +225,7 @@ List images used by services.
 
 | Flag | Description | Default |
 |---|---|---|
-| `-q, --quiet` | Print image IDs only. | off |
+| `-q, --quiet` | Print image IDs only. Conflicts with `--format`. | off |
 | `--format <FMT>` | `table` or `json`. | `table` |
 
 An empty result (no services with `image:` or `build:`) prints `no images` on stderr and leaves stdout empty in table output. Under `--format json` an empty result is `[]`; under `-q/--quiet` neither the note nor a row is printed.
@@ -235,7 +235,7 @@ List the project's named volumes. `EXTERNAL` is highlighted when it reads `yes`:
 
 | Flag | Description | Default |
 |---|---|---|
-| `-q, --quiet` | Print volume names only. | off |
+| `-q, --quiet` | Print volume names only. Conflicts with `--format`. | off |
 | `-s, --size` | Add SIZE and RECLAIMABLE columns. | off |
 | `--format <FMT>` | `table` or `json`. | `table` |
 
