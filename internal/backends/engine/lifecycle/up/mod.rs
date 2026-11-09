@@ -221,7 +221,10 @@ impl Engine {
 			// build's `Building`/`Built` verbs land on the same rows the rest
 			// of `up` is drawing on.
 			let build_names = if build && !self.no_build {
-				up_build_targets(file, &enabled, &target_set)
+				crate::engine::build::order_context_builds(
+					file,
+					&up_build_targets(file, &enabled, &target_set),
+				)?
 			} else {
 				Vec::new()
 			};

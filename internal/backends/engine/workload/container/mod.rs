@@ -247,9 +247,8 @@ impl Engine {
 		let (image_os, image_arch) = service
 			.platform
 			.as_deref()
-			.and_then(|p| p.split_once('/'))
-			.map(|(os, arch)| (Some(os.to_string()), Some(arch.to_string())))
-			.unwrap_or((None, None));
+			.map(crate::backends::engine::images::platform::Platform::parse)
+			.map_or((None, None), |p| (p.os, p.arch));
 		let links = resolve_links(service, file, &self.project);
 		let volumes_from = resolve_volumes_from(service, file, &self.project);
 		let stop_timeout = service

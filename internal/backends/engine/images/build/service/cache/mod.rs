@@ -5,6 +5,9 @@
 //! the global `[NAME|type=TYPE[,KEY=VALUE]]` syntax, where a bare name is
 //! the shortcut for `type=registry,ref=NAME`.
 //!
+//! The endpoint refuses a reference that carries a tag or a digest, so the
+//! entries travel as the repository they name.
+//!
 //! A cache type with no libpod equivalent is dropped, as the Compose
 //! contract asks: unsupported caches are ignored and do not prevent the
 //! build.
@@ -30,7 +33,7 @@ pub(in crate::backends::engine::images::build) fn references(
 	let mut out = Vec::new();
 	for entry in entries {
 		match image_reference(entry) {
-			Some(reference) => out.push(reference),
+			Some(reference) => out.push(repository(&reference)),
 			None => match field {
 				CacheField::From => warn!(
 					"a build.cache_from entry uses a cache type with no libpod equivalent; \
@@ -44,6 +47,22 @@ pub(in crate::backends::engine::images::build) fn references(
 		}
 	}
 	out
+}
+
+/// The repository part of an image reference: the tag and the digest cut.
+///
+/// The endpoint takes a repository for a cache and refuses a reference that
+/// carries a tag or a digest. A port after the host is not a tag, so only a
+/// colon in the last path segment counts.
+fn repository(reference: &str) -> String {
+	let without_digest = reference
+		.split_once('@')
+		.map_or(reference, |(name, _)| name);
+	let last_segment = without_digest.rfind('/').map_or(0, |slash| slash + 1);
+	match without_digest[last_segment..].find(':') {
+		Some(colon) => without_digest[..last_segment + colon].to_string(),
+		None => without_digest.to_string(),
+	}
 }
 
 /// The image reference one compose cache entry names, when it names one.

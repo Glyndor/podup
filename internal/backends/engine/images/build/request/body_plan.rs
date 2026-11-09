@@ -17,6 +17,7 @@ use super::super::context::{
 	OUTSIDE_DOCKERFILE_NAME,
 };
 use super::super::is_remote_context;
+use super::super::names::fold_dockerfile_folder;
 use super::super::{BodyPlan, Engine};
 use super::stream::ContextSource;
 
@@ -27,10 +28,16 @@ pub(in crate::backends::engine) struct BuildPlan {
 	/// Either `Empty` (remote context, no body) or `Stream { ... }`
 	/// for the local-directory tar path.
 	pub(in crate::backends::engine) body: BodyPlan,
+	/// The remote context URL for the `remote` query parameter, when the
+	/// context is remote.
+	pub(in crate::backends::engine) remote: Option<String>,
 	/// Dockerfile name as the libpod endpoint should see it.
 	pub(in crate::backends::engine) dockerfile: String,
 	/// In-tar secret specs the build endpoint should mount.
 	pub(in crate::backends::engine) secrets: Vec<String>,
+	/// Every additional build context, `service:` references already
+	/// resolved to the image that service builds.
+	pub(in crate::backends::engine) contexts: Vec<(String, String)>,
 	/// The local additional build contexts, each with the name the build
 	/// refers to it by.
 	///
@@ -58,8 +65,9 @@ pub(in crate::backends::engine) fn plan_build(
 	file: &ComposeFile,
 	build: &BuildConfig,
 	context_str: &str,
+	contexts: &[(String, String)],
 ) -> Result<BuildPlan> {
-	let additional = local_additional_contexts(engine, build)?;
+	let additional = local_additional_contexts(engine, contexts)?;
 	if is_remote_context(context_str) {
 		tracing::info!("building from remote context {context_str}");
 		if build.dockerfile_inline().is_some() {
@@ -68,12 +76,20 @@ pub(in crate::backends::engine) fn plan_build(
 		if !build.secrets().is_empty() {
 			tracing::warn!("build.secrets are ignored for a remote build context");
 		}
-		let dockerfile = build.dockerfile().unwrap_or("Dockerfile").to_string();
+		let remote =
+			fold_dockerfile_folder(context_str, build.dockerfile().unwrap_or("Dockerfile"));
+		if let Some(folder) = &remote.moved_folder {
+			tracing::warn!(
+				"the daemon finds the Dockerfile of a Git context by its file name only, so the build context is the '{folder}' folder of the repository"
+			);
+		}
 		return Ok(BuildPlan {
 			body: BodyPlan::Empty,
-			dockerfile,
+			remote: Some(remote.context),
+			dockerfile: remote.dockerfile,
 			secrets: Vec::new(),
 			additional,
+			contexts: contexts.to_vec(),
 		});
 	}
 	let context_path: PathBuf = engine.base_dir.join(context_str);
@@ -136,6 +152,7 @@ pub(in crate::backends::engine) fn plan_build(
 		}
 	};
 	Ok(BuildPlan {
+		remote: None,
 		body: BodyPlan::Stream {
 			context: context_path,
 			source,
@@ -144,6 +161,7 @@ pub(in crate::backends::engine) fn plan_build(
 		dockerfile,
 		secrets,
 		additional,
+		contexts: contexts.to_vec(),
 	})
 }
 
@@ -155,11 +173,11 @@ pub(in crate::backends::engine) fn plan_build(
 /// resolved here and checked to exist, before the build starts.
 fn local_additional_contexts(
 	engine: &Engine,
-	build: &BuildConfig,
+	contexts: &[(String, String)],
 ) -> Result<Vec<(String, PathBuf)>> {
 	let mut out = Vec::new();
-	for (name, value) in build.additional_contexts() {
-		let AdditionalKind::Local(path) = additional_context_kind(&engine.base_dir, &value) else {
+	for (name, value) in contexts {
+		let AdditionalKind::Local(path) = additional_context_kind(&engine.base_dir, value) else {
 			continue;
 		};
 		if let Err(e) = std::fs::metadata(&path) {
@@ -168,7 +186,7 @@ fn local_additional_contexts(
 				source: e,
 			});
 		}
-		out.push((name, path));
+		out.push((name.clone(), path));
 	}
 	Ok(out)
 }
