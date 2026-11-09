@@ -228,3 +228,15 @@ fn build_secrets_in_the_long_form_name_the_id_the_dockerfile_reads() {
 		]
 	);
 }
+
+#[test]
+fn build_extra_hosts_equals_form_normalizes_to_host_colon_ip() {
+	let b: BuildConfig = serde_yaml::from_str(
+		"context: .\nextra_hosts:\n  - a.internal=127.0.0.9\n  - b.internal:127.0.0.8\n",
+	)
+	.unwrap();
+	assert_eq!(
+		b.extra_hosts(),
+		&["a.internal:127.0.0.9", "b.internal:127.0.0.8"]
+	);
+}

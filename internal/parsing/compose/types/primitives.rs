@@ -12,7 +12,8 @@ use std::collections::HashMap;
 
 /// Deserialize `extra_hosts` accepting either the list form (`["host:ip"]`) or
 /// the mapping form (`{host: ip}`), normalizing both to `host:ip` strings so
-/// the rest of the pipeline sees a single shape. Docker Compose accepts both.
+/// the rest of the pipeline sees a single shape. Docker Compose accepts both,
+/// and in the list form it takes `host=ip` as well as `host:ip`.
 pub(crate) fn deserialize_extra_hosts<'de, D>(de: D) -> Result<Vec<String>, D::Error>
 where
 	D: serde::Deserializer<'de>,
@@ -24,12 +25,23 @@ where
 		Map(IndexMap<String, String>),
 	}
 	Ok(match ListOrMap::deserialize(de)? {
-		ListOrMap::List(v) => v,
+		ListOrMap::List(v) => v.into_iter().map(|e| normalize_extra_host(&e)).collect(),
 		ListOrMap::Map(m) => m
 			.into_iter()
 			.map(|(host, ip)| format!("{host}:{ip}"))
 			.collect(),
 	})
+}
+
+/// Rewrite a `host=ip` entry as `host:ip`, the only spelling the engine and the
+/// build endpoint read. The first separator decides: a host name holds neither
+/// character, so everything after it, including the colons of an IPv6 address,
+/// belongs to the address. An entry already in `host:ip` form is returned as is.
+fn normalize_extra_host(entry: &str) -> String {
+	match entry.find([':', '=']) {
+		Some(i) if entry.as_bytes()[i] == b'=' => format!("{}:{}", &entry[..i], &entry[i + 1..]),
+		_ => entry.to_string(),
+	}
 }
 
 /// Deserialize a field that the compose spec allows as either a YAML number or a
