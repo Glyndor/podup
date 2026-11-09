@@ -148,8 +148,10 @@ fn validate_network_refs(
 	for net in svc.networks.names() {
 		if !file.networks.contains_key(&net) {
 			return Err(ComposeError::Unsupported(format!(
-				"service '{service}' refers to undefined network '{net}'; declare it under the \
-				 top-level 'networks:' key"
+				"service '{}' refers to undefined network '{}'; declare it under the \
+				 top-level 'networks:' key",
+				crate::error::sanitize_name(service),
+				crate::error::sanitize_name(&net)
 			)));
 		}
 	}
@@ -219,6 +221,7 @@ fn is_windows_drive(src: &str) -> bool {
 /// still contain literal `${VAR}` placeholders, which cannot be meaningfully
 /// range- or reference-checked.
 pub(in super::super) fn validate(file: &ComposeFile) -> Result<()> {
+	super::validate_names::validate_resource_names(file)?;
 	validate_services(file)?;
 	validate_networks(file)?;
 	Ok(())
@@ -316,8 +319,10 @@ fn validate_service_consistency(
 			// top-level entry; everything else must be declared.
 			if net != "default" && !file.networks.contains_key(net) {
 				return Err(ComposeError::Unsupported(format!(
-					"service '{name}' refers to undefined network '{net}'; declare it \
-					 under the top-level 'networks:' or mark it external"
+					"service '{}' refers to undefined network '{}'; declare it \
+					 under the top-level 'networks:' or mark it external",
+					crate::error::sanitize_name(name),
+					crate::error::sanitize_name(net)
 				)));
 			}
 		}
