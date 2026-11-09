@@ -263,11 +263,12 @@ async fn run(error_context: &mut startup::exit_status::ErrorContext) -> podup::R
 	let file = if label_only && !compose_files.iter().any(|p| p.is_file()) {
 		podup::compose::types::ComposeFile::default()
 	} else {
-		podup::parse_files_with_env_files_interp_in(
+		podup::compose::parse_files_with_project_in(
 			&compose_files,
 			&cli.env_file,
 			!no_interpolate,
 			cli.project_directory.as_deref(),
+			cli.project.as_deref(),
 		)?
 	};
 

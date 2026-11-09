@@ -124,6 +124,10 @@ An `extends` chain and an `include` tree are each followed at most 16 levels dee
 
 `!override` and `!reset` payloads are interpolated before their merge directives are applied, including nested mappings and lists. External `extends.file` chains receive the referring compose file's interpolation mode and resolved explicit env paths, without rebasing those paths at each external directory. The root file anchors env paths to its compose directory. `config --no-interpolate` preserves placeholders in external bases too, subject to typed-field validation such as `umask` and pull policies. Included files retain their original interpolation context, including local env files, when resolving external bases. Includes are merged with parent definitions winning before same-file inheritance is resolved.
 
+### The project name as a variable
+
+The name the project runs under is available to the file as `${COMPOSE_PROJECT_NAME}`, in every file the project reads (the `-f` files, `include:`, `extends:` and `env_file:`). It is the first of these that supplies one: the `-p` / `--project-name` flag, the `COMPOSE_PROJECT_NAME` environment variable, the top-level `name:`, then the sanitized name of the project directory. With several `-f` files the `name:` of the last file that sets one wins. The top-level `name:` is interpolated before the project name exists, so `name: ${COMPOSE_PROJECT_NAME:-fallback}` takes the flag or the variable when there is one and the default otherwise, and `name: ${COMPOSE_PROJECT_NAME}` with none of them is the same error docker gives, an empty project name. A `COMPOSE_PROJECT_NAME` set only in `.env` or an `--env-file` is read by interpolation but does not name the project; use `-p` or the process environment for that. `config --no-interpolate` leaves the placeholder as written.
+
 ### External secrets and configs
 
 A secret or config declared `external: true` is mounted from an existing Podman secret rather than from a value in the project tree, the recommended pattern for production credentials. Create the secret before running:

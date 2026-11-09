@@ -6,6 +6,8 @@ mod config;
 mod external;
 #[path = "compose_interpolation/project_env.rs"]
 mod project_env;
+#[path = "compose_interpolation/project_name.rs"]
+mod project_name;
 
 #[path = "compose_interpolation/review_tests.rs"]
 mod review_tests;

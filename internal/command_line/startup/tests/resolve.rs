@@ -1,7 +1,8 @@
 use super::super::resolve::{
 	override_for, resolve_base_dir, resolve_compose_files, resolve_project_name,
-	sanitize_project_name, validate_project_directory,
+	validate_project_directory,
 };
+use podup::compose::sanitize_project_name;
 use std::path::{Path, PathBuf};
 
 #[test]
