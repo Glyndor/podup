@@ -351,6 +351,10 @@ name = "workflow_rust_ci_classifier"
 path = "tests/repository/workflows/workflow_rust_ci_classifier.rs"
 
 [[test]]
+name = "workflow_rust_build_env"
+path = "tests/repository/workflows/workflow_rust_build_env.rs"
+
+[[test]]
 name = "workflow_toolchain_pin"
 path = "tests/repository/workflows/workflow_toolchain_pin.rs"
 

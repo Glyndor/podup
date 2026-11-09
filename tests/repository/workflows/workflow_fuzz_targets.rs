@@ -21,14 +21,24 @@ fn root() -> &'static Path {
 	Path::new(env!("CARGO_MANIFEST_DIR"))
 }
 
-/// File stems of the `.rs` files in `dir`.
+/// File stems of the `.rs` files under `dir`, whatever subfolder groups them.
 fn target_files(dir: &Path) -> BTreeSet<String> {
-	fs::read_dir(dir)
-		.unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
-		.filter_map(|entry| entry.ok().map(|e| e.path()))
-		.filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
-		.filter_map(|path| path.file_stem().map(|s| s.to_string_lossy().into_owned()))
-		.collect()
+	let mut stems = BTreeSet::new();
+	let mut pending = vec![dir.to_path_buf()];
+	while let Some(folder) = pending.pop() {
+		let entries =
+			fs::read_dir(&folder).unwrap_or_else(|e| panic!("read {}: {e}", folder.display()));
+		for path in entries.filter_map(|entry| entry.ok().map(|e| e.path())) {
+			if path.is_dir() {
+				pending.push(path);
+			} else if path.extension().is_some_and(|ext| ext == "rs") {
+				if let Some(stem) = path.file_stem() {
+					stems.insert(stem.to_string_lossy().into_owned());
+				}
+			}
+		}
+	}
+	stems
 }
 
 /// The `name` of every `[[bin]]` table in a Cargo manifest.
@@ -119,6 +129,18 @@ fn every_fuzz_target_is_built_and_scheduled() {
 	);
 	let problems = differences(&files, &bins, &listed);
 	assert!(problems.is_empty(), "\n{}\n", problems.join("\n"));
+}
+
+#[test]
+fn every_bin_path_names_an_existing_file() {
+	let manifest = fs::read_to_string(root().join("fuzz/Cargo.toml")).expect("read manifest");
+	let missing: Vec<&str> = manifest
+		.lines()
+		.filter_map(|line| line.trim().strip_prefix("path = \"fuzz_targets/"))
+		.filter_map(|rest| rest.strip_suffix('"'))
+		.filter(|rel| !root().join("fuzz/fuzz_targets").join(rel).is_file())
+		.collect();
+	assert!(missing.is_empty(), "no such fuzz target file: {missing:?}");
 }
 
 fn set(names: &[&str]) -> BTreeSet<String> {

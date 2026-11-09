@@ -54,7 +54,7 @@ assets=()
 for file in "$FIXTURE_DIR"/*; do
 	name="$(basename "$file")"
 	case "$name" in
-		*.sig | generate.py | test-key.b64 | scripts) continue ;;
+		generate.py | test-key.b64 | scripts | signatures) continue ;;
 	esac
 	assets+=("$file")
 done
@@ -63,7 +63,7 @@ done
 passed=0
 for asset in "${assets[@]}"; do
 	name="$(basename "$asset")"
-	sig="$asset.sig"
+	sig="$FIXTURE_DIR/signatures/$name.sig"
 	[[ -f "$sig" ]] || fail "asset $name has no .sig"
 	if python3 "$VERIFIER" "$asset" "$sig" "$FIXTURE_DIR/install.sh" >/dev/null; then
 		passed=$((passed + 1))
@@ -84,7 +84,7 @@ for asset in "${assets[@]}"; do
 	if cmp -s "$asset" "$tampered_dir/$name"; then
 		printf '\x01' | dd of="$tampered_dir/$name" bs=1 seek=0 conv=notrunc 2>/dev/null
 	fi
-	if err="$(python3 "$VERIFIER" "$tampered_dir/$name" "$asset.sig" "$FIXTURE_DIR/install.sh" 2>&1 >/dev/null)"; then
+	if err="$(python3 "$VERIFIER" "$tampered_dir/$name" "$FIXTURE_DIR/signatures/$name.sig" "$FIXTURE_DIR/install.sh" 2>&1 >/dev/null)"; then
 		fail "$name with a changed byte still verified"
 	fi
 	grep -q "verifies against NONE" <<<"$err" || fail "$name with a changed byte failed for the wrong reason: $err"
@@ -119,7 +119,7 @@ sed "s|^PODUP_RELEASE_PUBKEY3_B64=.*|PODUP_RELEASE_PUBKEY3_B64=\"\${PODUP_RELEAS
 	"$FIXTURE_DIR/install.sh" > "$tmp_install"
 
 if err="$(python3 "$VERIFIER" "$FIXTURE_DIR/podup-linux-x86_64" \
-		"$FIXTURE_DIR/podup-linux-x86_64.sig" "$tmp_install" 2>&1 >/dev/null)"; then
+		"$FIXTURE_DIR/signatures/podup-linux-x86_64.sig" "$tmp_install" 2>&1 >/dev/null)"; then
 	fail "verifier accepted a signature with the matching key in slot 3 replaced"
 fi
 # A missing file fails too; only the mismatch proves slot 3 was the one in use.

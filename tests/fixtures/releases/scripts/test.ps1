@@ -47,7 +47,7 @@ function Assert-True {
 Write-Host 'Part 1: per-asset .sig verification (3 rotation slots)' -ForegroundColor Cyan
 
 $InstallerPath = Join-Path $FixtureDir 'install.sh'
-$sigs = Get-ChildItem -Path $FixtureDir -Filter '*.sig'
+$sigs = Get-ChildItem -Path (Join-Path $FixtureDir 'signatures') -Filter '*.sig'
 $passed = 0
 $total = 0
 foreach ($sig in $sigs) {
@@ -86,7 +86,7 @@ $installLines = Get-Content -LiteralPath (Join-Path $FixtureDir 'install.sh') | 
 }
 Set-Content -LiteralPath $tmpInstall -Value $installLines -Encoding UTF8
 
-$podupSig = Join-Path $FixtureDir 'podup-linux-x86_64.sig'
+$podupSig = Join-Path $FixtureDir 'signatures/podup-linux-x86_64.sig'
 $podupAsset = Join-Path $FixtureDir 'podup-linux-x86_64'
 & python3 $Verifier $podupAsset $podupSig $tmpInstall *> $null
 Assert-True ($LASTEXITCODE -ne 0) 'verifier accepted a signature with the matching key in slot 3 replaced'

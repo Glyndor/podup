@@ -1,10 +1,36 @@
 version: 2
 
+# Cadence. Every ecosystem runs once a week, each on its own weekday, so the
+# pull requests of one week do not all land on the same CI queue: actions on
+# Monday, the workspace crates on Tuesday, the fuzz crate on Wednesday, the
+# timing helper on Thursday, the benchmark image and the release-signing
+# requirements on Friday. Security updates ignore both the schedule and the
+# cooldown, so a vulnerable dependency is still proposed the day it is
+# published. The cooldown keeps a release from becoming a pull request until it
+# has been out a few days: a yanked or quickly superseded version never costs a
+# full CI run, and a major waits longer than a patch.
+#
+# What this config cannot do: Dependabot has no per-group label, so a major
+# arrives in its own pull request (the `-major` group, visible in the branch
+# and the title) with the same labels as everything else in its entry. Base
+# images named inside workflow files (`container:`, `image:`) are outside every
+# ecosystem it offers; `pin-watch.yml` compares the `debian:trixie` digest
+# pinned in `release.yml` and in `reusable-rust-debian.yml`.
+
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
-      interval: "daily"
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    # A major waits one week, not two: `reusable-dependabot-freshness.yml` fails
+    # when the newest Dependabot pull request is over 15 days old and a pin is
+    # behind, and a weekly run plus a longer wait would cross that line.
+    cooldown:
+      default-days: 3
+      semver-major-days: 7
     labels: ["type:deps", "type:ci", "area:ci"]
     open-pull-requests-limit: 10
     target-branch: "develop"
@@ -46,10 +72,13 @@ updates:
     groups:
       github-owned:
         patterns: ["*"]
-        # A major is left out of the group on purpose, so it arrives alone: it is
+        # A major is left out of the group on purpose, so it arrives in a pull request of its own: it is
         # the bump that can change what an action does, and the one worth reading
         # line by line. The cargo entry below follows the same rule.
         update-types: ["minor", "patch"]
+      github-owned-major:
+        patterns: ["*"]
+        update-types: ["major"]
     # Dependabot infers a prefix from the commit history when this is absent,
     # and the inference has been unstable across repositories (build(deps):
     # Bump ... in some, chore(deps): bump ... in others). Set it so the
@@ -60,7 +89,13 @@ updates:
   - package-ecosystem: "cargo"
     directory: "/"
     schedule:
-      interval: "daily"
+      interval: "weekly"
+      day: "tuesday"
+      time: "06:00"
+      timezone: "UTC"
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
     labels: ["type:deps", "area:core"]
     open-pull-requests-limit: 10
     target-branch: "develop"
@@ -70,7 +105,7 @@ updates:
     # CI still pass. Nineteen of them arrived one per pull request before this,
     # each carrying the same answer and the same review.
     #
-    # A major is left OUT of the group deliberately, so it arrives alone. It is
+    # A major is left OUT of the group deliberately, so it arrives in a pull request of its own. It is
     # the one that can change behaviour, and the reason to split is the same
     # reason the org splits its reusable bumps: a pull request that mixes a
     # question needing thought with several that do not is answered by the
@@ -84,6 +119,12 @@ updates:
       cargo-patch-and-minor:
         patterns: ["*"]
         update-types: ["patch", "minor"]
+      # Majors share one pull request of their own, apart from the group above,
+      # so the bump that can change behaviour is never closed together with
+      # the routine ones and its title says what it is.
+      cargo-major:
+        patterns: ["*"]
+        update-types: ["major"]
     commit-message:
       prefix: chore
 
@@ -101,7 +142,13 @@ updates:
   - package-ecosystem: "cargo"
     directory: "/fuzz"
     schedule:
-      interval: "daily"
+      interval: "weekly"
+      day: "wednesday"
+      time: "06:00"
+      timezone: "UTC"
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
     labels: ["type:deps", "type:ci", "area:ci"]
     open-pull-requests-limit: 5
     target-branch: "develop"
@@ -114,7 +161,13 @@ updates:
   - package-ecosystem: "cargo"
     directory: "/bench/timeit"
     schedule:
-      interval: "daily"
+      interval: "weekly"
+      day: "thursday"
+      time: "06:00"
+      timezone: "UTC"
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
     labels: ["type:deps", "type:ci", "area:ci"]
     open-pull-requests-limit: 5
     target-branch: "develop"
@@ -137,7 +190,13 @@ updates:
     # `bench_pins_one_image_digest` until `bench/lib/sync-image-digest.sh` is
     # run on its branch, and that is the whole manual step.
     schedule:
-      interval: "daily"
+      interval: "weekly"
+      day: "friday"
+      time: "06:00"
+      timezone: "UTC"
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
     labels: ["type:deps", "type:ci", "area:ci"]
     open-pull-requests-limit: 5
     target-branch: "develop"
@@ -152,10 +211,16 @@ updates:
     # GitHub security-scan alert -- GitHub found the then-pinned
     # `cryptography 48.0.1` only because CVE-2026-69247 matched a fingerprint,
     # not because Dependabot tracks the file (the pin has moved since). Adding
-    # the ecosystem here brings it in the daily rotation that the cargo and
+    # the ecosystem here brings it in the rotation that the cargo and
     # github-actions ecosystems already have.
     schedule:
-      interval: "daily"
+      interval: "weekly"
+      day: "friday"
+      time: "09:00"
+      timezone: "UTC"
+    cooldown:
+      default-days: 3
+      semver-major-days: 14
     labels: ["type:deps", "type:ci", "area:ci"]
     open-pull-requests-limit: 10
     target-branch: "develop"
