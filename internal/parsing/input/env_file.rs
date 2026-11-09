@@ -154,6 +154,20 @@ pub fn merge_env(
 		.collect()
 }
 
+/// Give every bare `KEY` of every service's `environment:` the value the
+/// project environment holds for it, so `config` prints what the container
+/// will run with. A key the project environment does not define stays bare and
+/// renders as `KEY: null`, as in docker compose. Run it before
+/// [`materialize_env_files`] so a file value can refer to the resolved key.
+pub fn resolve_bare_environment(
+	file: &mut crate::compose::types::ComposeFile,
+	vars: &HashMap<String, String>,
+) {
+	for service in file.services_and_jobs_mut() {
+		service.environment.resolve_bare(vars);
+	}
+}
+
 /// Fold every service's `env_file:` into its `environment:` and drop the key.
 ///
 /// `config` is meant to render the canonical, fully-resolved model, and docker

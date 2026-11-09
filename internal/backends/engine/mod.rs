@@ -110,7 +110,7 @@ pub struct Engine {
 	/// Global `--env-file` paths that double as `docker compose run --env-file`:
 	/// their contents seed a one-off `run` container's environment at the lowest
 	/// precedence (env-file < service `environment:` < `-e`). Resolved relative
-	/// to `base_dir`; empty by default. Kept off the frozen public
+	/// to `base_dir` (the CLI passes absolute paths); empty by default. Kept off the frozen public
 	/// [`lifecycle::RunOverrides`] struct so the library API stays stable.
 	pub(crate) run_env_files: Vec<String>,
 	/// CLI `docker compose run -l/--label KEY=VAL` ad-hoc labels for the one-off

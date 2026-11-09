@@ -275,3 +275,19 @@ fn an_env_file_that_cannot_be_read_is_named_in_the_error() {
 	assert!(text.contains("cannot read env file"), "{text}");
 	assert!(text.contains("secret.env"), "{text}");
 }
+
+// resolve_bare_environment
+
+#[test]
+fn config_resolves_bare_keys_from_the_project_environment() {
+	let mut file = crate::compose::parse_str_raw(
+		"services:\n  web:\n    image: x\n    environment: [FROM_DOTENV, ABSENT, FIXED=a]\n",
+	)
+	.unwrap();
+	let vars = std::collections::HashMap::from([("FROM_DOTENV".to_string(), "18081".to_string())]);
+	resolve_bare_environment(&mut file, &vars);
+	let env = file.services["web"].environment.to_map();
+	assert_eq!(env["FROM_DOTENV"].as_deref(), Some("18081"));
+	assert_eq!(env["ABSENT"], None);
+	assert_eq!(env["FIXED"].as_deref(), Some("a"));
+}

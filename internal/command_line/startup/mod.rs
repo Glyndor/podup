@@ -348,6 +348,9 @@ pub(crate) fn parse_cli() -> Cli {
 			if cli.project.as_deref() == Some("") {
 				cli.project = None;
 			}
+			if let Ok(cwd) = std::env::current_dir() {
+				cli.env_file = resolve::anchor_env_files(&cli.env_file, &cwd);
+			}
 			cli
 		}
 		Err(e) => match e.kind() {

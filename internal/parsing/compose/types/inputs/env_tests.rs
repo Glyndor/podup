@@ -120,3 +120,59 @@ fn an_environment_value_that_is_not_a_scalar_is_refused() {
 	let ok = "services:\n  web:\n    image: x\n    environment:\n      A: 1\n      B: true\n      C: text\n      D:\n";
 	assert!(crate::parse_str(ok).is_ok());
 }
+
+// EnvVars::resolve_bare
+
+fn project_vars(pairs: &[(&str, &str)]) -> std::collections::HashMap<String, String> {
+	pairs
+		.iter()
+		.map(|(k, v)| (k.to_string(), v.to_string()))
+		.collect()
+}
+
+#[test]
+fn resolve_bare_fills_list_entries_from_the_project_environment() {
+	let mut env = EnvVars::List(vec![
+		"SET".into(),
+		"UNSET".into(),
+		"FIXED=a".into(),
+		"EMPTY=".into(),
+	]);
+	env.resolve_bare(&project_vars(&[
+		("SET", "1"),
+		("FIXED", "other"),
+		("EMPTY", "x"),
+	]));
+	assert_eq!(
+		env.to_map(),
+		std::collections::HashMap::from([
+			("SET".to_string(), Some("1".to_string())),
+			("UNSET".to_string(), None),
+			("FIXED".to_string(), Some("a".to_string())),
+			("EMPTY".to_string(), Some(String::new())),
+		])
+	);
+}
+
+#[test]
+fn resolve_bare_fills_null_map_values_and_keeps_explicit_ones() {
+	let mut map = IndexMap::new();
+	map.insert("SET".to_string(), None);
+	map.insert("NULLED".to_string(), Some(serde_yaml::Value::Null));
+	map.insert("UNSET".to_string(), None);
+	map.insert(
+		"FIXED".to_string(),
+		Some(serde_yaml::Value::String("a".into())),
+	);
+	let mut env = EnvVars::Map(map);
+	env.resolve_bare(&project_vars(&[
+		("SET", "1"),
+		("NULLED", "2"),
+		("FIXED", "other"),
+	]));
+	let got = env.to_map();
+	assert_eq!(got["SET"].as_deref(), Some("1"));
+	assert_eq!(got["NULLED"].as_deref(), Some("2"));
+	assert_eq!(got["UNSET"], None);
+	assert_eq!(got["FIXED"].as_deref(), Some("a"));
+}

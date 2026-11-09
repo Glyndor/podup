@@ -261,7 +261,11 @@ fn check_output_cap(out: &str, value: &str, var: &str) -> Result<()> {
 /// - Process environment variables take precedence: if a key already exists in
 ///   the current process env it will *not* be overridden by the `.env` file.
 pub fn load_dotenv(dir: &Path) -> HashMap<String, String> {
+	// A `.env` that is a link is read through it, like docker compose does; the
+	// file it points to is still checked to be a regular file when it is read.
+	// A link that cannot be resolved is read as given and fails there.
 	let path = dir.join(".env");
+	let path = std::fs::canonicalize(&path).unwrap_or(path);
 	let Ok(content) = crate::filesystem::read_to_string_capped(&path) else {
 		return HashMap::new();
 	};
