@@ -559,3 +559,19 @@ path = "tests/hostile/input/parsing/hostile_label_files.rs"
 [[test]]
 name = "unit_publication"
 path = "tests/hostile/input/units/unit_publication.rs"
+
+[[test]]
+name = "hostile_terminal_bidi"
+path = "tests/hostile/output/hostile_terminal_bidi.rs"
+
+[[test]]
+name = "hostile_names_unicode"
+path = "tests/hostile/input/parsing/hostile_names_unicode.rs"
+
+[[test]]
+name = "hostile_copy_race"
+path = "tests/hostile/concurrency/hostile_copy_race.rs"
+
+[[test]]
+name = "hostile_project_race"
+path = "tests/hostile/concurrency/hostile_project_race.rs"
