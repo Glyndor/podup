@@ -48,6 +48,9 @@ pub enum ComposeError {
 	InvalidSignal(String),
 	/// Image build failed (context assembly or the Podman build step).
 	Build(String),
+	/// Downloading an image from a registry failed. Not a build failure: the
+	/// service may have no `build:` section at all.
+	ImagePull(String),
 	/// A `cp` (copy between a container and the host) operation failed: a missing
 	/// destination directory, a non-directory path component, an unsupported
 	/// endpoint, or a host-side packing/extraction error.
@@ -285,6 +288,7 @@ impl fmt::Display for ComposeError {
 			Self::InvalidPort(s) => write!(f, "invalid port mapping: {s}"),
 			Self::InvalidSignal(s) => write!(f, "invalid signal: {s}"),
 			Self::Build(s) => write!(f, "build error: {s}"),
+			Self::ImagePull(s) => write!(f, "failed to pull image {s}"),
 			Self::Copy(s) => write!(f, "cp error: {s}"),
 			Self::Extends(s) => write!(f, "extends error: {s}"),
 			Self::Include(s) => write!(f, "include error: {s}"),

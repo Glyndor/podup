@@ -165,6 +165,19 @@ fn parse_short(s: &str) -> Result<Vec<ParsedPort>> {
 		}
 		1 => {
 			let (left, right) = split_last_colon(rest);
+			// An empty host side (`":80"`, or `"${PORT}:80"` with `PORT`
+			// unset) leaves the host port to the runtime, like `"80"`.
+			if left.is_empty() {
+				return Ok(expand_port_range(right)?
+					.into_iter()
+					.map(|cp| ParsedPort {
+						container_port: cp,
+						protocol: proto.clone(),
+						host_ip: String::new(),
+						host_port: None,
+					})
+					.collect());
+			}
 			let host_ports = expand_port_range(left)?;
 			let container_ports = expand_port_range(right)?;
 			// A range of host ports with a single container port: every port of

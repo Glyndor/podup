@@ -48,6 +48,10 @@ fn display_covers_all_variants() {
 			ComposeError::InvalidSubstitution("bad".into()),
 		),
 		("build error: b", ComposeError::Build("b".into())),
+		(
+			"failed to pull image img:1: refused",
+			ComposeError::ImagePull("img:1: refused".into()),
+		),
 		("cp error: c", ComposeError::Copy("c".into())),
 		("extends error: e", ComposeError::Extends("e".into())),
 		("include error: i", ComposeError::Include("i".into())),

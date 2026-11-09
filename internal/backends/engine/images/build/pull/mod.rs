@@ -1,7 +1,7 @@
 //! Image pull from a registry (the non-build half of image acquisition).
 
 use futures_util::StreamExt;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use std::collections::{HashMap, HashSet};
 
@@ -234,8 +234,8 @@ impl Engine {
 				}
 			} else {
 				let detail = pull_err.map(|e| format!(": {e}")).unwrap_or_default();
-				return Err(ComposeError::Build(format!(
-					"failed to pull image {image} for service {name}{detail}"
+				return Err(ComposeError::ImagePull(format!(
+					"{image} for service {name}{detail}"
 				)));
 			}
 		}
@@ -406,7 +406,10 @@ impl Engine {
 						}
 					}
 					if !progress_line.error.is_empty() {
-						warn!("pull error: {}", progress_line.error);
+						// Reported once, by the error this pull returns (or by
+						// the `--ignore-pull-failures` warning); warning here too
+						// printed every failure twice.
+						debug!("pull error: {}", progress_line.error);
 						pull_err.get_or_insert_with(|| progress_line.error.clone());
 					}
 				}
@@ -427,7 +430,7 @@ impl Engine {
 				if !quiet {
 					crate::ui::progress_line("Image", &image, "Failed");
 				}
-				Err(ComposeError::Build(format!("pull {image} failed: {e}")))
+				Err(ComposeError::ImagePull(format!("{image}: {e}")))
 			}
 			None => {
 				if !quiet {
