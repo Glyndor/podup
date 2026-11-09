@@ -14,7 +14,7 @@
 use libfuzzer_sys::fuzz_target;
 use podup::compose::types::{ComposeFile, Service, VolumeMount, VolumeType};
 
-#[path = "../support/audit/mod.rs"]
+#[path = "../../support/audit/mod.rs"]
 mod audit;
 
 use audit::checks::check_sensitive_bind::{

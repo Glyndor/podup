@@ -53,6 +53,8 @@ def main() -> int:
 	repo = Path(__file__).resolve().parents[3]
 	out = repo / "tests" / "fixtures" / "releases"
 	out.mkdir(parents=True, exist_ok=True)
+	sigs = out / "signatures"
+	sigs.mkdir(exist_ok=True)
 
 	slot1 = pubkey_b64(SLOT1_SEED)
 	slot2 = pubkey_b64(SLOT2_SEED)
@@ -84,7 +86,7 @@ def main() -> int:
 
 	for name, body in assets.items():
 		(out / name).write_bytes(body)
-		(out / f"{name}.sig").write_bytes(sign(TEST_SEED, body))
+		(sigs / f"{name}.sig").write_bytes(sign(TEST_SEED, body))
 
 	# install.sh is the special case: it's a *fixture* install.sh with three
 	# rotation slots, NOT a copy of the real install.sh. The verifier reads
@@ -109,7 +111,7 @@ def main() -> int:
 		'[[ -n "$PODUP_RELEASE_PUBKEY3_B64" ]] && PUBKEYS+=("$PODUP_RELEASE_PUBKEY3_B64")\n'
 	)
 	(out / "install.sh").write_text(fixture_install, encoding="utf-8")
-	(out / "install.sh.sig").write_bytes(sign(TEST_SEED, fixture_install.encode("utf-8")))
+	(sigs / "install.sh.sig").write_bytes(sign(TEST_SEED, fixture_install.encode("utf-8")))
 
 	# Persist the test-key fingerprint so a reviewer can confirm the fixture
 	# really uses the seed documented at the top of this file.

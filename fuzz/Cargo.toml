@@ -17,132 +17,132 @@ features = ["test-helpers"]
 
 [[bin]]
 name = "parse_compose"
-path = "fuzz_targets/parse_compose.rs"
+path = "fuzz_targets/compose/parse_compose.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "substitute"
-path = "fuzz_targets/substitute.rs"
+path = "fuzz_targets/compose/substitute.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "size"
-path = "fuzz_targets/size.rs"
+path = "fuzz_targets/values/size.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "dotenv"
-path = "fuzz_targets/dotenv.rs"
+path = "fuzz_targets/compose/dotenv.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "stream_frame"
-path = "fuzz_targets/stream_frame.rs"
+path = "fuzz_targets/wire/stream_frame.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "stream_ndjson"
-path = "fuzz_targets/stream_ndjson.rs"
+path = "fuzz_targets/wire/stream_ndjson.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "extract_tar"
-path = "fuzz_targets/extract_tar.rs"
+path = "fuzz_targets/host/extract_tar.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "ports"
-path = "fuzz_targets/ports.rs"
+path = "fuzz_targets/values/ports.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "duration"
-path = "fuzz_targets/duration.rs"
+path = "fuzz_targets/values/duration.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "ignore_glob"
-path = "fuzz_targets/ignore_glob.rs"
+path = "fuzz_targets/host/ignore_glob.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "cron_calendar"
-path = "fuzz_targets/cron_calendar.rs"
+path = "fuzz_targets/values/cron_calendar.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "audit_bind_path"
-path = "fuzz_targets/audit_bind_path.rs"
+path = "fuzz_targets/host/audit_bind_path.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "sanitize"
-path = "fuzz_targets/sanitize.rs"
+path = "fuzz_targets/host/sanitize.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "libpod_json"
-path = "fuzz_targets/libpod_json.rs"
+path = "fuzz_targets/wire/libpod_json.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "parse_version"
-path = "fuzz_targets/parse_version.rs"
+path = "fuzz_targets/update/parse_version.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "expected_digest"
-path = "fuzz_targets/expected_digest.rs"
+path = "fuzz_targets/update/expected_digest.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "parse_latest_tag"
-path = "fuzz_targets/parse_latest_tag.rs"
+path = "fuzz_targets/update/parse_latest_tag.rs"
 test = false
 doc = false
 bench = false
 
 [[bin]]
 name = "converters"
-path = "fuzz_targets/converters.rs"
+path = "fuzz_targets/compose/converters.rs"
 test = false
 doc = false
 
 [[bin]]
 name = "compose_tree"
-path = "fuzz_targets/compose_tree.rs"
+path = "fuzz_targets/compose/compose_tree.rs"
 test = false
 doc = false
 bench = false

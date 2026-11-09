@@ -115,6 +115,14 @@ env:
   EVENT: ${{ github.event_name }}
   BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
   HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+  # Build settings for every job that compiles. Each run starts from a cold or
+  # restored `target/` and builds once, so incremental state is written and
+  # never read, and it only makes the cache bigger. Debug info for the dev and
+  # test profiles is cut to line tables: panics and backtraces keep file and
+  # line, which is all a failing CI log is read for, and the many test binaries
+  # stop linking full DWARF. Release builds are not touched.
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
 
 jobs:
   # The one place the classifier is asked for the jobs that can be skipped
