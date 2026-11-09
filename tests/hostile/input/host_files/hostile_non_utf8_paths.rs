@@ -3,7 +3,9 @@
 //! them nor fail without naming what it could not use. The engine is a fake
 //! Unix socket, so nothing here touches Podman.
 
-#![cfg(unix)]
+// macOS file systems refuse a name that is not valid UTF-8 (the write fails with
+// EILSEQ), so the fixtures below cannot exist there. Linux allows them.
+#![cfg(all(unix, not(target_os = "macos")))]
 
 use std::ffi::OsStr;
 use std::os::unix::ffi::OsStrExt;
