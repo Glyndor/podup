@@ -127,3 +127,81 @@ fn an_option_after_a_service_name_is_an_option() {
 		_ => panic!("expected up"),
 	}
 }
+
+fn color_for(args: &[&str]) -> anstream::ColorChoice {
+	super::color_choice(&super::Cli::try_parse_from(args).unwrap())
+}
+
+#[test]
+fn up_no_color_turns_colour_off_whatever_ansi_says() {
+	assert_eq!(
+		color_for(&["podup", "up", "--no-color"]),
+		anstream::ColorChoice::Never
+	);
+	assert_eq!(
+		color_for(&["podup", "--ansi", "always", "up", "--no-color"]),
+		anstream::ColorChoice::Never
+	);
+}
+
+#[test]
+fn without_no_color_the_ansi_choice_stands() {
+	assert_eq!(
+		color_for(&["podup", "--ansi", "always", "up"]),
+		anstream::ColorChoice::Always
+	);
+	assert_eq!(
+		color_for(&["podup", "--ansi", "always", "logs", "--no-color"]),
+		anstream::ColorChoice::Always
+	);
+}
+
+fn parses(args: &[&str]) -> bool {
+	super::Cli::try_parse_from(args).is_ok()
+}
+
+#[test]
+fn up_accepts_the_attach_and_output_options() {
+	assert!(parses(&[
+		"podup",
+		"up",
+		"--no-color",
+		"--no-log-prefix",
+		"--attach",
+		"web",
+		"--attach",
+		"db",
+		"--no-attach",
+		"cache",
+		"--quiet-build",
+		"--always-recreate-deps",
+		"-y",
+		"--abort-on-container-failure",
+	]));
+	assert!(parses(&["podup", "up", "--yes", "--attach-dependencies"]));
+}
+
+#[test]
+fn up_option_combinations_docker_compose_refuses_are_refused() {
+	assert!(!parses(&[
+		"podup",
+		"up",
+		"--attach",
+		"web",
+		"--attach-dependencies"
+	]));
+	assert!(!parses(&[
+		"podup",
+		"up",
+		"--always-recreate-deps",
+		"--no-recreate"
+	]));
+	for other in ["-d", "--wait", "--watch"] {
+		assert!(!parses(&[
+			"podup",
+			"up",
+			"--abort-on-container-failure",
+			other
+		]));
+	}
+}

@@ -241,7 +241,18 @@ pub(crate) async fn run_engine_command(
 			..
 		})
 	);
+	// `up --quiet-build` and `--always-recreate-deps`.
+	let (quiet_build, always_recreate_deps) = match &cli.command {
+		Commands::Up(UpArgs {
+			quiet_build,
+			always_recreate_deps,
+			..
+		}) => (*quiet_build, *always_recreate_deps),
+		_ => (false, false),
+	};
 	let engine = podup::Engine::with_base_dir(client, project, base_dir)
+		.with_quiet_build(quiet_build)
+		.with_always_recreate_deps(always_recreate_deps)
 		.with_compose_files(compose_files.iter().map(|f| absolute(f)).collect())
 		.with_stop_timeout(stop_timeout)
 		.with_scale_overrides(scale_overrides)

@@ -9,6 +9,9 @@ mod readiness;
 mod schedule;
 mod up_one;
 
+#[cfg(test)]
+mod option_tests;
+
 use std::collections::HashMap;
 
 use crate::compose::types::ComposeFile;
@@ -247,12 +250,8 @@ impl Engine {
 			// as a standalone `build`. Only the surrounding board is now the
 			// one `up` already opened.
 			if !build_names.is_empty() {
-				self.build_images_in_session(
-					file,
-					&build_names,
-					&crate::engine::BuildOptions::default(),
-				)
-				.await?;
+				self.build_images_in_session(file, &build_names, &self.up_build_options())
+					.await?;
 			}
 
 			self.create_networks(file).await?;

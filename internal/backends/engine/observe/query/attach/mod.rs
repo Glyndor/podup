@@ -1,8 +1,10 @@
 //! Attached up: public options, stream monitoring and abort cleanup.
 
 mod abort;
+mod follow;
 mod phase;
 mod printer;
+mod select;
 mod streams;
 
 use crate::compose::types::ComposeFile;
@@ -75,6 +77,20 @@ pub struct AttachOptions {
 	/// (matching `docker compose` v5.1.3): the abort has to fire to learn a
 	/// later exit code, so passing only `--exit-code-from` is enough.
 	pub exit_code_from: Option<String>,
+	/// Stop the rest of the project as soon as a container exits with a
+	/// non-zero status (`up --abort-on-container-failure`). A container that
+	/// exits cleanly does not end the run. The failing container's exit code
+	/// is reported like it is for `abort_on_container_exit`, which takes
+	/// precedence when both are set.
+	pub abort_on_container_failure: bool,
+	/// Print streamed lines without the `{service} | ` prefix
+	/// (`up --no-log-prefix`).
+	pub no_log_prefix: bool,
+	/// When not empty, follow only these services (`up --attach`). A service
+	/// that opted out with `attach: false` stays out.
+	pub attach: Vec<String>,
+	/// Services whose output is not followed (`up --no-attach`).
+	pub no_attach: Vec<String>,
 }
 
 impl AttachOptions {
@@ -106,6 +122,34 @@ impl AttachOptions {
 	#[must_use]
 	pub fn with_exit_code_from(mut self, exit_code_from: Option<String>) -> Self {
 		self.exit_code_from = exit_code_from;
+		self
+	}
+
+	/// Set [`AttachOptions::abort_on_container_failure`]. Builder-style.
+	#[must_use]
+	pub fn with_abort_on_container_failure(mut self, abort: bool) -> Self {
+		self.abort_on_container_failure = abort;
+		self
+	}
+
+	/// Set [`AttachOptions::no_log_prefix`]. Builder-style.
+	#[must_use]
+	pub fn with_no_log_prefix(mut self, no_log_prefix: bool) -> Self {
+		self.no_log_prefix = no_log_prefix;
+		self
+	}
+
+	/// Set [`AttachOptions::attach`]. Builder-style.
+	#[must_use]
+	pub fn with_attach(mut self, services: Vec<String>) -> Self {
+		self.attach = services;
+		self
+	}
+
+	/// Set [`AttachOptions::no_attach`]. Builder-style.
+	#[must_use]
+	pub fn with_no_attach(mut self, services: Vec<String>) -> Self {
+		self.no_attach = services;
 		self
 	}
 }
@@ -157,16 +201,9 @@ impl Engine {
 		// Delegate with the abort set fully off, so the call path the rest of
 		// the 4.0.0 callers still take is exercised by the wrapper itself,
 		// not just by the underlying method when the new flags are turned on.
-		self.attach_logs_with(
-			file,
-			&AttachOptions {
-				timestamps,
-				abort_on_container_exit: false,
-				exit_code_from: None,
-			},
-		)
-		.await
-		.map(|summary| summary.outcome)
+		self.attach_logs_with(file, &AttachOptions::new().with_timestamps(timestamps))
+			.await
+			.map(|summary| summary.outcome)
 	}
 }
 

@@ -45,6 +45,8 @@ impl Engine {
 			pull_policy_override: None,
 			no_build: false,
 			quiet_pull: false,
+			quiet_build: false,
+			always_recreate_deps: false,
 			run_overrides: RunOverrides::default(),
 			run_env_files: Vec::new(),
 			run_labels: Vec::new(),
@@ -73,6 +75,8 @@ impl Engine {
 			pull_policy_override: None,
 			no_build: false,
 			quiet_pull: false,
+			quiet_build: false,
+			always_recreate_deps: false,
 			run_overrides: RunOverrides::default(),
 			run_env_files: Vec::new(),
 			run_labels: Vec::new(),
@@ -115,6 +119,21 @@ impl Engine {
 		self.pull_policy_override = pull_policy;
 		self.no_build = no_build;
 		self.quiet_pull = quiet_pull;
+		self
+	}
+
+	/// Set the CLI `up --quiet-build` flag: the builds `up` runs print nothing
+	/// but their failure. Builder-style.
+	pub fn with_quiet_build(mut self, quiet_build: bool) -> Self {
+		self.quiet_build = quiet_build;
+		self
+	}
+
+	/// Set the CLI `up --always-recreate-deps` flag: services that were not
+	/// named on the command line are recreated even when unchanged.
+	/// Builder-style.
+	pub fn with_always_recreate_deps(mut self, always_recreate_deps: bool) -> Self {
+		self.always_recreate_deps = always_recreate_deps;
 		self
 	}
 

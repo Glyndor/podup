@@ -10,6 +10,8 @@ use super::super::utf8::Utf8Chunks;
 /// across the two channels, but each channel's frames can split one.
 pub(super) struct ChunkPrinter<'a> {
 	prefix: &'a str,
+	/// Print the text alone, without the `{prefix} | ` tag (`--no-log-prefix`).
+	plain: bool,
 	out: Utf8Chunks,
 	err: Utf8Chunks,
 }
@@ -18,13 +20,20 @@ impl<'a> ChunkPrinter<'a> {
 	pub(super) fn new(prefix: &'a str) -> Self {
 		Self {
 			prefix,
+			plain: false,
 			out: Utf8Chunks::default(),
 			err: Utf8Chunks::default(),
 		}
 	}
 
+	/// Print the text without the service tag.
+	pub(super) fn plain(mut self, plain: bool) -> Self {
+		self.plain = plain;
+		self
+	}
+
 	fn tagged(&self, text: String) -> Option<String> {
-		(!text.is_empty()).then(|| format!("{} | {text}", self.prefix))
+		(!text.is_empty()).then(|| super::follow::render_line(self.prefix, self.plain, &text))
 	}
 
 	/// The text to print for a stdout frame, or `None` while the frame holds

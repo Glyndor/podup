@@ -10,6 +10,9 @@ pub(super) enum StreamEnd {
 	/// The container is stopped (clean end or transport died *because* the
 	/// container stopped). The abort path treats this as the trigger.
 	ContainerStopped,
+	/// The container stopped with a non-zero exit status. Only produced when
+	/// failures are being watched for (`--abort-on-container-failure`).
+	Failed,
 }
 
 /// What the multi-stream wait returned before the outer code acts on it.
@@ -32,6 +35,7 @@ pub(super) enum Phase {
 pub(super) async fn wait_for_phase(
 	mut streams: FuturesUnordered<impl futures_util::Future<Output = (String, String, StreamEnd)>>,
 	abort_on_container_exit: bool,
+	abort_on_container_failure: bool,
 ) -> Phase {
 	let mut saw_break = false;
 	#[cfg(unix)]
@@ -56,11 +60,17 @@ pub(super) async fn wait_for_phase(
 								trigger_container: cname,
 							};
 						}
+						StreamEnd::Failed if abort_on_container_exit || abort_on_container_failure => {
+							return Phase::FirstExited {
+								trigger_service: svc,
+								trigger_container: cname,
+							};
+						}
 						// Without `--abort-on-container-exit` a container stopping
 						// mid-stream is not an event: we keep waiting for the
 						// others, and the loop terminates with `AllEnded` when
 						// they all finish on their own.
-						StreamEnd::ContainerStopped => {}
+						StreamEnd::ContainerStopped | StreamEnd::Failed => {}
 					},
 				},
 			}
@@ -77,7 +87,13 @@ pub(super) async fn wait_for_phase(
 							trigger_container: cname,
 						};
 					}
-					StreamEnd::ContainerStopped => {}
+					StreamEnd::Failed if abort_on_container_exit || abort_on_container_failure => {
+						return Phase::FirstExited {
+							trigger_service: svc,
+							trigger_container: cname,
+						};
+					}
+					StreamEnd::ContainerStopped | StreamEnd::Failed => {}
 				},
 			}
 		}

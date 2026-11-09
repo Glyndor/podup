@@ -65,6 +65,12 @@ pub(crate) struct UpArgs {
 	/// applies to.
 	#[arg(long, conflicts_with_all = ["detach", "wait", "watch"])]
 	pub(crate) abort_on_container_exit: bool,
+	/// Stop every container as soon as one exits with a non-zero status; the
+	/// process exit status is that container's exit code. A container that
+	/// exits cleanly does not end the run. Same combination rule as
+	/// `--abort-on-container-exit`.
+	#[arg(long, conflicts_with_all = ["detach", "wait", "watch"])]
+	pub(crate) abort_on_container_failure: bool,
 	/// Return the exit code of the named service's container as podup's own
 	/// exit status. Implies `--abort-on-container-exit`, and is rejected
 	/// with the same combination rule as that flag.
@@ -74,6 +80,34 @@ pub(crate) struct UpArgs {
 		conflicts_with_all = ["detach", "wait", "watch"]
 	)]
 	pub(crate) exit_code_from: Option<String>,
+	/// Produce monochrome output: no colour anywhere in what `up` prints.
+	#[arg(long)]
+	pub(crate) no_color: bool,
+	/// Print attached log lines without the `service |` prefix.
+	#[arg(long)]
+	pub(crate) no_log_prefix: bool,
+	/// Follow the logs of only this service (repeatable). Replaces the
+	/// default of following the named services.
+	#[arg(long, value_name = "SERVICE", conflicts_with = "attach_dependencies")]
+	pub(crate) attach: Vec<String>,
+	/// Do not follow the logs of this service (repeatable).
+	#[arg(long, value_name = "SERVICE")]
+	pub(crate) no_attach: Vec<String>,
+	/// Also follow the logs of the dependencies of the named services; by
+	/// default only the named services are followed.
+	#[arg(long)]
+	pub(crate) attach_dependencies: bool,
+	/// Suppress the output of the builds `up` runs.
+	#[arg(long)]
+	pub(crate) quiet_build: bool,
+	/// Recreate the containers of the services that were not named, even when
+	/// they are unchanged.
+	#[arg(long, conflicts_with = "no_recreate")]
+	pub(crate) always_recreate_deps: bool,
+	/// Accepted for compatibility: `up` never asks for confirmation, so there
+	/// is nothing to answer.
+	#[arg(short = 'y', long)]
+	pub(crate) yes: bool,
 	/// Bring up only these services (and their depends_on); default: all.
 	pub(crate) services: Vec<String>,
 }
