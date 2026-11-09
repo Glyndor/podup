@@ -108,7 +108,13 @@ fn unclean_endings(commands: &[&[&str]]) -> Vec<String> {
 			.stderr(Stdio::piped())
 			.output()
 			.expect("run podup");
-		let stderr = String::from_utf8_lossy(&closed.stderr);
+		// Off Linux, `generate quadlet` warns that the units will not run on this
+		// host. That is a notice about the platform, not a report of the pipe.
+		let stderr: String = String::from_utf8_lossy(&closed.stderr)
+			.lines()
+			.filter(|line| !line.contains("quadlet units require systemd"))
+			.map(|line| format!("{line}\n"))
+			.collect();
 		if let Some(signal) = closed.status.signal() {
 			problems.push(format!("`{name}` was ended by signal {signal}"));
 		} else if closed.status.code() != Some(0) {
