@@ -243,13 +243,14 @@ impl Table {
 
 	/// Print the table to stdout: a bold header followed by the rows, with the
 	/// status column (if any) colourised when stdout is a colour sink.
-	pub fn print(&self) {
-		let stdout = std::io::stdout();
-		let mut out = stdout.lock();
-		if self.print_to(&mut out).is_err() {
-			// The terminal is gone; nothing to do. The CLI's own stdout writer
-			// also swallows broken-pipe exits, so the live behaviour matches.
-		}
+	///
+	/// The write goes through the writer in [`crate::ui::print`], so a failure
+	/// reaches the caller instead of losing the row: a reader that closed the
+	/// pipe ends the process quietly, and any other failure is handed back so
+	/// the command can fail instead of printing a table with rows missing.
+	pub fn print(&self) -> std::io::Result<()> {
+		let mut out = std::io::stdout().lock();
+		crate::ui::print::settle(self.print_to(&mut out))
 	}
 
 	/// [`Table::print`] writing to `w`, factored out so tests can capture the

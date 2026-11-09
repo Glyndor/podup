@@ -122,13 +122,13 @@ fn place_unit<S: SystemCtl>(
 	emit_guards(sc);
 
 	if dry_run {
-		print!("{unit_text}");
-		println!("\n# would write {}", path.display());
-		println!("# would run: systemctl --user daemon-reload");
+		crate::ui::out!("{unit_text}")?;
+		crate::ui::outln!("\n# would write {}", path.display())?;
+		crate::ui::outln!("# would run: systemctl --user daemon-reload")?;
 		if no_start {
-			println!("# (--no-start) would not enable or start the unit");
+			crate::ui::outln!("# (--no-start) would not enable or start the unit")?;
 		} else {
-			println!("# would run: systemctl --user enable --now {unit_name}");
+			crate::ui::outln!("# would run: systemctl --user enable --now {unit_name}")?;
 		}
 		return Ok(());
 	}
@@ -139,17 +139,17 @@ fn place_unit<S: SystemCtl>(
 	refuse_foreign_owner(&path, project)?;
 	files::publish_unit(&path, unit_text.as_bytes())
 		.map_err(|e| ComposeError::Autostart(format!("cannot write {}: {e}", path.display())))?;
-	eprintln!("podup: wrote {}", path.display());
+	crate::ui::errln!("podup: wrote {}", path.display())?;
 
 	checked(sc.systemctl(&["daemon-reload"]), "daemon-reload")?;
 	if no_start {
-		eprintln!("podup: installed {unit_name} (not enabled; --no-start)");
+		crate::ui::errln!("podup: installed {unit_name} (not enabled; --no-start)")?;
 	} else {
 		checked(
 			sc.systemctl(&["enable", "--now", &unit_name]),
 			&format!("enable --now {unit_name}"),
 		)?;
-		eprintln!("podup: enabled and started {unit_name}");
+		crate::ui::errln!("podup: enabled and started {unit_name}")?;
 	}
 	Ok(())
 }
@@ -177,15 +177,17 @@ fn place_update_units<S: SystemCtl>(
 	let timer_path = dir.join(&timer_name);
 
 	if dry_run {
-		print!("{service_text}");
-		print!("{timer_text}");
-		println!("\n# would write {}", service_path.display());
-		println!("# would write {}", timer_path.display());
-		println!("# would run: systemctl --user daemon-reload");
+		crate::ui::out!("{service_text}")?;
+		crate::ui::out!("{timer_text}")?;
+		crate::ui::outln!("\n# would write {}", service_path.display())?;
+		crate::ui::outln!("# would write {}", timer_path.display())?;
+		crate::ui::outln!("# would run: systemctl --user daemon-reload")?;
 		if no_start {
-			println!("# (--no-start) would not enable or start {service_name} or {timer_name}");
+			crate::ui::outln!(
+				"# (--no-start) would not enable or start {service_name} or {timer_name}"
+			)?;
 		} else {
-			println!("# would run: systemctl --user enable --now {timer_name}");
+			crate::ui::outln!("# would run: systemctl --user enable --now {timer_name}")?;
 		}
 		return Ok(());
 	}
@@ -195,11 +197,11 @@ fn place_update_units<S: SystemCtl>(
 	files::publish_unit(&service_path, service_text.as_bytes()).map_err(|e| {
 		ComposeError::Autostart(format!("cannot write {}: {e}", service_path.display()))
 	})?;
-	eprintln!("podup: wrote {}", service_path.display());
+	crate::ui::errln!("podup: wrote {}", service_path.display())?;
 	files::publish_unit(&timer_path, timer_text.as_bytes()).map_err(|e| {
 		ComposeError::Autostart(format!("cannot write {}: {e}", timer_path.display()))
 	})?;
-	eprintln!("podup: wrote {}", timer_path.display());
+	crate::ui::errln!("podup: wrote {}", timer_path.display())?;
 
 	// The pair an older release wrote under the legacy names is retired here,
 	// so the timer that used to fire `up -d` against the default socket and
@@ -212,9 +214,11 @@ fn place_update_units<S: SystemCtl>(
 			sc.systemctl(&["enable", "--now", &timer_name]),
 			&format!("enable --now {timer_name}"),
 		)?;
-		eprintln!("podup: enabled and started {timer_name}");
+		crate::ui::errln!("podup: enabled and started {timer_name}")?;
 	} else {
-		eprintln!("podup: installed {service_name} and {timer_name} (not enabled; --no-start)");
+		crate::ui::errln!(
+			"podup: installed {service_name} and {timer_name} (not enabled; --no-start)"
+		)?;
 	}
 	Ok(())
 }
@@ -265,7 +269,7 @@ fn retire_legacy_update_units<S: SystemCtl>(sc: &S, project: &str) -> crate::Res
 		std::fs::remove_file(&path).map_err(|e| {
 			ComposeError::Autostart(format!("cannot remove {}: {e}", path.display()))
 		})?;
-		eprintln!("podup: removed the legacy unit {}", path.display());
+		crate::ui::errln!("podup: removed the legacy unit {}", path.display())?;
 	}
 	Ok(())
 }
@@ -322,12 +326,12 @@ pub fn uninstall<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
 		std::fs::remove_file(&path).map_err(|e| {
 			ComposeError::Autostart(format!("cannot remove {}: {e}", path.display()))
 		})?;
-		eprintln!("podup: removed {}", path.display());
+		crate::ui::errln!("podup: removed {}", path.display())?;
 	} else {
-		eprintln!(
+		crate::ui::errln!(
 			"podup: no unit file at {} (already removed)",
 			path.display()
-		);
+		)?;
 	}
 
 	// The auto-update pair, when present. Run independently of the main unit's
@@ -359,7 +363,7 @@ pub fn uninstall<S: SystemCtl>(sc: &S, project: &str) -> crate::Result<()> {
 			std::fs::remove_file(path).map_err(|e| {
 				ComposeError::Autostart(format!("cannot remove {}: {e}", path.display()))
 			})?;
-			eprintln!("podup: removed {}", path.display());
+			crate::ui::errln!("podup: removed {}", path.display())?;
 		}
 	}
 

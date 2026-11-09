@@ -402,14 +402,21 @@ impl Engine {
 		let mut stream = crate::libpod::parse_multiplexed(start_resp.into_body());
 
 		while let Some(msg) = stream.next().await {
-			match msg {
+			// A write that fails for a reason other than a closed pipe means
+			// the output cannot be delivered: the stream ends here rather
+			// than looping over a sink that will not take the bytes.
+			let written = match msg {
 				Ok(LogOutput::StdOut { message }) => {
-					print!("{}", String::from_utf8_lossy(&message));
+					crate::ui::out!("{}", String::from_utf8_lossy(&message)).is_ok()
 				}
 				Ok(LogOutput::StdErr { message }) => {
-					eprint!("{}", String::from_utf8_lossy(&message));
+					crate::ui::err!("{}", String::from_utf8_lossy(&message)).is_ok()
 				}
 				Err(_) => break,
+			};
+			if !written {
+				tracing::warn!("watch exec {container_name}: cannot write the output");
+				break;
 			}
 		}
 

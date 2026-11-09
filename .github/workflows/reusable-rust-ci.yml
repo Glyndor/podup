@@ -240,6 +240,13 @@ jobs:
         working-directory: .
         run: bash .github/scripts/checks/check-private-document-references.sh
 
+      # A serialisation error turned into an empty string is invisible: the
+      # command prints an empty document and exits zero, and a script reading
+      # it sees no rows where the truth is a failure. That rule is a test now,
+      # `serialization_errors`, and the test job runs it: it reads the tree's
+      # Rust sources the way the shell check did, so a change in any of them
+      # still reaches the rule.
+      #
       # BASE is the commit the change is measured against, so a pull request
       # cannot raise a ceiling in .github/folder-limit-exceptions.txt.
       - name: folders hold at most twenty files

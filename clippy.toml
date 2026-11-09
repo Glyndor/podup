@@ -1,0 +1,17 @@
+# The output of the binary goes through the writer in `podup::ui`, which
+# decides what a closed pipe means: the reader of `podup ps | head -1` is
+# gone, so the output stops there and the process ends quietly. A direct
+# `println!` panics instead, and Rust ignores SIGPIPE, so a closed pipe used
+# to reach the panic hook in `main` as a crash.
+#
+# The lint is denied in the two crate roots that ship (`internal/lib.rs` and
+# `internal/main.rs`), and the package default is `allow`: the rest of the
+# package is not the shipped output path, and a test's diagnostics belong to
+# the test runner. The `[lints.clippy]` table in Cargo.toml says the same
+# thing where Cargo reads it.
+disallowed-macros = [
+    { path = "std::println", reason = "write through podup::ui::outln!, which handles a closed pipe" },
+    { path = "std::print", reason = "write through podup::ui::out!, which handles a closed pipe" },
+    { path = "std::eprintln", reason = "write through podup::ui::errln!, which handles a closed pipe" },
+    { path = "std::eprint", reason = "write through podup::ui::err!, which handles a closed pipe" },
+]

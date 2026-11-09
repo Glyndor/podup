@@ -122,13 +122,13 @@ impl Engine {
 
 		if filters.services_only {
 			for service in services::container_services(&containers) {
-				println!("{service}");
+				crate::ui::outln!("{service}")?;
 			}
 			return Ok(());
 		}
 
 		if opts.ndjson {
-			print!("{}", ndjson::render(&containers, now_unix())?);
+			crate::ui::out!("{}", ndjson::render(&containers, now_unix())?)?;
 			return Ok(());
 		}
 
@@ -136,14 +136,14 @@ impl Engine {
 			// Full 64-char IDs, like `docker compose ps -q` (and podup's JSON),
 			// so scripts consuming the IDs are not handed truncated values.
 			for c in &containers {
-				println!("{}", c.id);
+				crate::ui::outln!("{}", c.id)?;
 			}
 			return Ok(());
 		}
 
 		if opts.json {
 			let rows: Vec<_> = containers.iter().map(ps_json_row).collect();
-			println!("{}", crate::engine::to_pretty_json("ps.row", &rows)?);
+			crate::ui::outln!("{}", crate::engine::to_pretty_json("ps.row", &rows)?)?;
 			return Ok(());
 		}
 
@@ -183,7 +183,7 @@ impl Engine {
 			crate::ui::progress_note("no containers");
 			return Ok(());
 		}
-		table.print();
+		table.print()?;
 
 		Ok(())
 	}

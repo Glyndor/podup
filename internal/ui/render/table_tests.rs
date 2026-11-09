@@ -61,6 +61,39 @@ fn a_dim_only_table_still_colours() {
 	assert!(!Table::new(&["PID", "CMD"]).colours_any_column());
 }
 
+/// A sink that fails every write, like a disk with no room left.
+struct FullDisk;
+
+impl std::io::Write for FullDisk {
+	fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+		Err(std::io::Error::new(
+			std::io::ErrorKind::StorageFull,
+			"no space left on device",
+		))
+	}
+
+	fn flush(&mut self) -> std::io::Result<()> {
+		Ok(())
+	}
+}
+
+/// A table that cannot be written is a failure the caller has to see.
+///
+/// `Table::print` dropped the write error on the floor, so a full disk left
+/// the table half-printed and the command still exited zero: the reader saw
+/// fewer rows than there were, and nothing said why. The write now goes
+/// through the writer that decides what a failed write means, and the failure
+/// reaches the caller.
+#[test]
+fn a_failed_write_reaches_the_caller_instead_of_losing_the_row() {
+	let mut t = Table::new(&["NAME", "STATUS"]);
+	t.push(vec!["web".into(), "running".into()]);
+	let mut disk = FullDisk;
+	let err = crate::ui::print::settle(t.print_to(&mut disk))
+		.expect_err("a failed write must reach the caller");
+	assert_eq!(err.kind(), std::io::ErrorKind::StorageFull);
+}
+
 /// Printable text is untouched.
 #[test]
 fn a_printable_cell_passes_through() {

@@ -113,10 +113,23 @@ impl Engine {
 					while let Some(msg) = stream.next().await {
 						match msg {
 							Ok(LogOutput::StdOut { message }) => {
-								print!("{prefix} | {}", String::from_utf8_lossy(&message));
+								// A write that fails for a reason other than a
+								// closed pipe means the output cannot be
+								// delivered: the stream ends here rather than
+								// looping over a sink that will not take the
+								// bytes.
+								let text = String::from_utf8_lossy(&message);
+								if crate::ui::out!("{prefix} | {text}").is_err() {
+									tracing::warn!("attach {prefix}: cannot write the output");
+									return (svc, cname, StreamEnd::Broke);
+								}
 							}
 							Ok(LogOutput::StdErr { message }) => {
-								eprint!("{prefix} | {}", String::from_utf8_lossy(&message));
+								let text = String::from_utf8_lossy(&message);
+								if crate::ui::err!("{prefix} | {text}").is_err() {
+									tracing::warn!("attach {prefix}: cannot write the output");
+									return (svc, cname, StreamEnd::Broke);
+								}
 							}
 							// An attach stream lives as long as its container and
 							// ends when the container stops, so a lost chunked

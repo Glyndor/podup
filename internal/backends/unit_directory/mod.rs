@@ -47,7 +47,7 @@ pub(super) fn require_private(dir: &Path) -> io::Result<()> {
 		}
 		if meta.mode() & 0o020 != 0 {
 			let shown = crate::ui::sanitize_cell(&dir.display().to_string());
-			eprintln!("podup: warning: unit directory {shown} is writable by its group; members of the group can replace the units");
+			crate::ui::errln!("podup: warning: unit directory {shown} is writable by its group; members of the group can replace the units")?;
 		}
 	}
 	Ok(())
@@ -59,7 +59,7 @@ pub(super) fn warn_if_shared(dir: &Path) -> io::Result<()> {
 		use std::os::unix::fs::MetadataExt;
 		if std::fs::metadata(dir)?.mode() & 0o022 != 0 {
 			let shown = crate::ui::sanitize_cell(&dir.display().to_string());
-			eprintln!("podup: warning: output directory {shown} is writable by group or others; unit files can be replaced by other users");
+			crate::ui::errln!("podup: warning: output directory {shown} is writable by group or others; unit files can be replaced by other users")?;
 		}
 	}
 	#[cfg(not(unix))]

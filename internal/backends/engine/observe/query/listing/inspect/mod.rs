@@ -97,10 +97,10 @@ impl Engine {
 						// The container name is the only navigation aid when several
 						// are listed, so it carries the same identity colour it has in
 						// `ps` and `logs` rather than being merely bold.
-						crate::ui::print_identity_header(container_name);
+						crate::ui::print_identity_header(container_name)?;
 						let titles = result.titles.clone().unwrap_or_default();
 						let processes = result.processes.clone().unwrap_or_default();
-						Self::print_process_table(&titles, &processes);
+						Self::print_process_table(&titles, &processes)?;
 					}
 					// A container removed between the listing above and this call
 					// (404) is tolerated; any other failure (an unreachable socket,
@@ -115,7 +115,7 @@ impl Engine {
 			}
 		}
 		if json {
-			println!("{}", crate::engine::to_pretty_json("top.row", &json_rows)?);
+			crate::ui::outln!("{}", crate::engine::to_pretty_json("top.row", &json_rows)?)?;
 		}
 		Ok(())
 	}
@@ -131,10 +131,11 @@ impl Engine {
 	/// The bookkeeping columns are dimmed so the command line is what the eye
 	/// lands on. Before this, `top` styled its two header lines and left every
 	/// process row flat, which on a busy container is the whole output.
-	fn print_process_table(titles: &[String], processes: &[Vec<String>]) {
+	fn print_process_table(titles: &[String], processes: &[Vec<String>]) -> Result<()> {
 		if let Some(table) = process_table(titles, processes) {
-			table.print();
+			table.print()?;
 		}
+		Ok(())
 	}
 
 	/// Print the public port for a given private port of a service container.
@@ -210,7 +211,7 @@ impl Engine {
 			Some(b) => {
 				let host = b.host_ip.as_deref().unwrap_or("0.0.0.0");
 				let port = b.host_port.as_deref().unwrap_or("");
-				println!("{host}:{port}");
+				crate::ui::outln!("{host}:{port}")?;
 				Ok(())
 			}
 			// No binding is a failure, not an empty answer. Printing a blank line

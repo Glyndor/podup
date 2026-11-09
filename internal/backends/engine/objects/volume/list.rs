@@ -138,7 +138,7 @@ impl Engine {
 
 		if opts.quiet {
 			for (_, name, _, _) in &rows {
-				println!("{name}");
+				crate::ui::outln!("{name}")?;
 			}
 			return Ok(());
 		}
@@ -174,7 +174,7 @@ impl Engine {
 					})
 				})
 				.collect();
-			println!("{}", crate::engine::to_pretty_json("volumes.row", &arr)?);
+			crate::ui::outln!("{}", crate::engine::to_pretty_json("volumes.row", &arr)?)?;
 			return Ok(());
 		}
 
@@ -230,7 +230,7 @@ impl Engine {
 			crate::ui::progress_note("no volumes");
 			return Ok(());
 		}
-		table.print();
+		table.print()?;
 		Ok(())
 	}
 
