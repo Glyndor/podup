@@ -271,9 +271,14 @@ fn env_file_paths_are_anchored_at_the_working_directory() {
 		&["my-env".into(), "sub/x.env".into(), "/abs/y.env".into()],
 		cwd,
 	);
+	let joined = |tail: &str| cwd.join(tail).to_string_lossy().into_owned();
 	assert_eq!(
 		anchored,
-		["/work/envs/my-env", "/work/envs/sub/x.env", "/abs/y.env"]
+		[
+			joined("my-env"),
+			joined("sub/x.env"),
+			"/abs/y.env".to_string()
+		]
 	);
 	assert!(anchor_env_files(&[], cwd).is_empty());
 }
