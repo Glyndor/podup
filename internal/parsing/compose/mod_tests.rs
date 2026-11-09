@@ -70,7 +70,13 @@ fn merge_override_adds_models_and_override_wins() {
 	let mut other = ComposeFile::default();
 	other.models.insert("llm".to_string(), model("over/m"));
 	other.models.insert("extra".to_string(), model("e/m"));
-	merge_override(&mut target, other, &tags::Directives::new());
+	merge_override(
+		&mut target,
+		other,
+		&tags::Directives::new(),
+		&Vec::new(),
+		&Default::default(),
+	);
 	// Override file wins on conflict; the override-only model is added.
 	assert_eq!(target.models["llm"].model.as_deref(), Some("over/m"));
 	assert_eq!(target.models["extra"].model.as_deref(), Some("e/m"));
@@ -117,7 +123,13 @@ fn merge_override_unions_top_level_resource_maps() {
 		.configs
 		.insert("extra".to_string(), ConfigConfig::default());
 
-	merge_override(&mut target, other, &tags::Directives::new());
+	merge_override(
+		&mut target,
+		other,
+		&tags::Directives::new(),
+		&Vec::new(),
+		&Default::default(),
+	);
 
 	assert!(target.volumes.contains_key("data"));
 	assert!(target.volumes.contains_key("cache"));

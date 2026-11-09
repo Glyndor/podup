@@ -114,6 +114,8 @@ services:
 
 `!reset`, `!override null` and plain null clear an inherited `pull_refresh_after` through `extends` and multiple `-f` files. Services omitting the field retain their serialized configuration. An explicit `pull_refresh_after: null` may change the configuration hash once on upgrade.
 
+`!reset null` on a top-level entry of `services`, `networks`, `volumes`, `secrets`, `configs` or `models` removes that entry from the files merged before it, as it does for a key inside a service. `!reset` on one entry or sub-key inside a service, such as `depends_on: {db: !reset {}}`, `labels: {x: !reset null}`, `networks: {n1: !reset null}`, `healthcheck: {interval: !reset null}` or `deploy: {resources: !reset {}}`, removes just that part and keeps the rest. `config` prints every declared volume with the name `up` will create, so its output declares each volume a service mounts and reads back as the same project.
+
 ### GPU reservations are host-dependent
 
 `deploy.resources.reservations.devices` and the `gpus:` shorthand are honored, but only for **NVIDIA** GPUs, and only when the host exposes them through CDI (the NVIDIA Container Toolkit must be installed and the CDI spec generated). Reservations for other drivers or capabilities are warned about and skipped.

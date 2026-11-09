@@ -60,3 +60,41 @@ fn strip_preserves_an_untagged_document_verbatim() {
 	strip(&mut v);
 	assert_eq!(serde_yaml::to_string(&v).unwrap(), before);
 }
+
+#[test]
+fn entry_resets_list_every_section() {
+	let raw: Value = serde_yaml::from_str(
+		"services:\n  t: !reset null\n  keep:\n    image: x\nnetworks:\n  n1: !reset null\nvolumes:\n  v1: !reset null\nsecrets:\n  s1: !reset null\n",
+	)
+	.unwrap();
+	let mut found = entry_resets(&raw);
+	found.sort();
+	assert_eq!(
+		found,
+		vec![
+			("networks", "n1".to_string()),
+			("secrets", "s1".to_string()),
+			("services", "t".to_string()),
+			("volumes", "v1".to_string()),
+		]
+	);
+}
+
+#[test]
+fn a_tag_inside_an_entry_is_not_an_entry_reset() {
+	let raw: Value = serde_yaml::from_str("services:\n  web:\n    ports: !reset []\n").unwrap();
+	assert!(entry_resets(&raw).is_empty());
+}
+
+#[test]
+fn drop_entry_resets_leaves_the_other_entries() {
+	let mut raw: Value = serde_yaml::from_str(
+		"networks:\n  n1: !reset null\n  n2: {}\nservices:\n  a: !reset null\n  b:\n    image: x\n",
+	)
+	.unwrap();
+	drop_entry_resets(&mut raw);
+	assert!(raw["networks"].get("n1").is_none());
+	assert!(raw["networks"].get("n2").is_some());
+	assert!(raw["services"].get("a").is_none());
+	assert!(raw["services"].get("b").is_some());
+}

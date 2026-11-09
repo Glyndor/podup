@@ -188,6 +188,60 @@ pub(crate) fn strip(value: &mut Value) {
 	}
 }
 
+/// The top-level sections whose entries `!reset` can remove by name.
+///
+/// `jobs` is not among them: a job that is not a mapping is refused by name.
+const ENTRY_SECTIONS: [&str; 6] = [
+	"services", "networks", "volumes", "secrets", "configs", "models",
+];
+
+/// `(section, name)` of a top-level entry written with `!reset`.
+pub(crate) type EntryResets = Vec<(&'static str, String)>;
+
+/// The top-level entries a raw document removes with `!reset`, such as
+/// `networks: { n1: !reset null }` or `services: { web: !reset null }`.
+///
+/// Those are not keys of a service, so [`collect`] never sees them, and the
+/// typed model cannot hold them: a reset entry is a null, which is an
+/// ordinary default-configured network or volume. They are read from the raw
+/// document so the merge can drop the entry from the earlier files.
+pub(crate) fn entry_resets(raw: &Value) -> EntryResets {
+	let mut found = Vec::new();
+	for section in ENTRY_SECTIONS {
+		let Some(entries) = raw.get(section).and_then(Value::as_mapping) else {
+			continue;
+		};
+		for (name, entry) in entries {
+			let reset = matches!(entry, Value::Tagged(t) if t.tag == "!reset");
+			if let (true, Some(name)) = (reset, name.as_str()) {
+				found.push((section, name.to_string()));
+			}
+		}
+	}
+	found
+}
+
+/// Remove the entries [`entry_resets`] lists from the document, so a reset
+/// entry is never typed as if it were a definition.
+pub(crate) fn drop_entry_resets(raw: &mut Value) {
+	for (section, name) in entry_resets(raw) {
+		if let Some(entries) = raw.get_mut(section).and_then(Value::as_mapping_mut) {
+			entries.remove(name.as_str());
+		}
+	}
+}
+
+/// [`entry_resets`] of a compose file on disk; empty when it cannot be read or
+/// parsed, for the same reason as [`collect_from_file`].
+pub(crate) fn entry_resets_from_file(path: &std::path::Path) -> EntryResets {
+	let Ok(text) = std::fs::read_to_string(path) else {
+		return EntryResets::new();
+	};
+	serde_yaml::from_str::<Value>(&text)
+		.map(|raw| entry_resets(&raw))
+		.unwrap_or_default()
+}
+
 /// Read a compose file's merge tags, or an empty set when it cannot be read or
 /// parsed.
 ///

@@ -15,6 +15,7 @@ use crate::cli::{Cli, Commands, RunArgs};
 mod config_dollar;
 mod config_normalize;
 mod config_render;
+mod config_volumes;
 mod control_escape;
 pub(crate) use config_normalize::anchor_service_bind_sources;
 #[cfg(test)]

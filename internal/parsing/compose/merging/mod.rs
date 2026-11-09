@@ -7,5 +7,6 @@ pub(super) mod anchor;
 pub(super) mod extends;
 pub(super) mod include;
 pub(super) mod merge;
+pub(super) mod nested_resets;
 pub(super) mod tags;
 pub(super) mod textual;

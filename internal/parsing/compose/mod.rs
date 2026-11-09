@@ -8,7 +8,7 @@ pub(crate) mod jobs;
 mod merging;
 mod resolve;
 
-use merging::{anchor, extends, include, merge, tags};
+use merging::{anchor, extends, include, merge, nested_resets, tags};
 pub(crate) use resolve::dependencies;
 pub use resolve::pre_start;
 use resolve::{order, validate};
@@ -37,6 +37,10 @@ pub use validate::validate_config;
 
 #[cfg(test)]
 mod diagnostics_budget_tests;
+#[cfg(test)]
+mod entry_reset_tests;
+#[cfg(test)]
+mod nested_reset_tests;
 #[cfg(test)]
 mod pull_refresh_tests;
 

@@ -47,6 +47,8 @@ pub(in super::super) fn deserialize_with_merge_interp(
 	// merge (see `compose::tags`), not by which type happens to be behind a key.
 	let directives = super::super::tags::collect(&value);
 	let umask_resets = super::super::tags::umask_resets(&value);
+	super::super::tags::drop_entry_resets(&mut value);
+	super::super::nested_resets::drop_nested_resets(&mut value);
 	super::super::tags::strip(&mut value);
 	super::super::types::service::umask::apply_resets(&mut value, &umask_resets);
 	super::super::types::service::umask::validate(&value)?;
