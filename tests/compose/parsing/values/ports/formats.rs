@@ -132,6 +132,33 @@ fn an_ip_with_no_host_port() {
 	assert!(ports[0].host_port.is_none());
 }
 
+/// A short port whose host part is empty (a `"${PORT}:80"` entry with `PORT`
+/// unset) publishes the container port on a host port the runtime picks.
+#[test]
+fn an_empty_host_part_publishes_on_an_ephemeral_port() {
+	let ports = parse_ports(&[short(":80")]).unwrap();
+	assert_eq!(ports.len(), 1);
+	assert_eq!(ports[0].container_port, 80);
+	assert_eq!(ports[0].protocol, "tcp");
+	assert!(ports[0].host_ip.is_empty());
+	assert!(ports[0].host_port.is_none());
+}
+
+#[test]
+fn an_empty_host_part_keeps_the_protocol_and_range() {
+	let ports = parse_ports(&[short(":80-81/udp")]).unwrap();
+	assert_eq!(ports.len(), 2);
+	assert_eq!(ports[1].container_port, 81);
+	assert_eq!(ports[1].protocol, "udp");
+	assert!(ports.iter().all(|p| p.host_port.is_none()));
+}
+
+#[test]
+fn an_empty_container_part_is_still_rejected() {
+	assert!(parse_ports(&[short("8080:")]).is_err());
+	assert!(parse_ports(&[short(":")]).is_err());
+}
+
 /// The compose specification lists `8000-9000:80` among the valid forms: a
 /// range of host ports published on a single container port.
 #[test]

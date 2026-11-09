@@ -142,7 +142,7 @@ async fn pull_failure_on_a_shared_image_aborts_without_ignore_failures() {
 		.await
 		.expect_err("a shared image that fails to pull must abort the pull");
 	assert!(
-		matches!(err, crate::error::ComposeError::Build(ref msg) if msg.contains("shared")),
+		matches!(err, crate::error::ComposeError::ImagePull(ref msg) if msg.contains("shared")),
 		"unexpected error: {err:?}"
 	);
 }
