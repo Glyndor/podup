@@ -2,6 +2,8 @@
 
 use std::io::Write;
 
+use super::super::utf8::incomplete_tail_len;
+
 /// Cap on the buffered partial line. A container that emits a very long run
 /// with no newline (a `\r`-updated progress bar, binary output, a pathological
 /// single line) must not grow `pending` without bound. At this size the
@@ -113,10 +115,15 @@ impl LinePrefixer {
 		// data) would otherwise grow `pending` without limit. Break the
 		// over-long partial into its own prefixed line and start fresh.
 		if self.pending.len() >= MAX_PENDING {
+			//
+			// The cut must not land inside a multibyte character: the two halves
+			// would each read as invalid text. The unfinished tail (at most three
+			// bytes) stays pending and leads the next line.
+			let cut = self.pending.len() - incomplete_tail_len(&self.pending);
 			out.write_all(self.label.as_bytes())?;
-			out.write_all(&self.pending)?;
+			out.write_all(&self.pending[..cut])?;
 			out.write_all(b"\n")?;
-			self.pending.clear();
+			self.pending.drain(..cut);
 		}
 		out.flush()
 	}

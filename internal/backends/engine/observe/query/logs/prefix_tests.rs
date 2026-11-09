@@ -156,3 +156,42 @@ fn line_prefixer_surfaces_a_broken_pipe() {
 		.expect_err("a closed sink must be reported");
 	assert_eq!(err.kind(), std::io::ErrorKind::BrokenPipe);
 }
+
+/// A flood with no newline is cut into prefixed lines at the size bound. The
+/// cut must never land inside a multibyte character, and every byte the
+/// container wrote must come back.
+#[test]
+fn line_prefixer_bound_never_splits_a_multibyte_character() {
+	use super::MAX_PENDING;
+	for ch in ["\u{e9}", "\u{20ac}", "\u{1f600}"] {
+		// Offset the run so the bound falls on each position inside the
+		// character in turn.
+		for lead in 0..ch.len() {
+			let mut p = LinePrefixer::new("s", true, false);
+			let mut out: Vec<u8> = Vec::new();
+			let mut payload = vec![b'a'; lead];
+			let reps = (MAX_PENDING * 3) / ch.len() + 5;
+			for _ in 0..reps {
+				payload.extend_from_slice(ch.as_bytes());
+			}
+			// Frames that do not line up with the character size, as the
+			// engine's own framing does not.
+			for frame in payload.chunks(8191) {
+				p.write(&mut out, frame).unwrap();
+			}
+			p.flush_tail(&mut out);
+
+			let text = String::from_utf8(out).expect("output must be valid UTF-8");
+			assert!(!text.contains('\u{fffd}'));
+			let body: String = text
+				.lines()
+				.map(|l| l.strip_prefix("s | ").expect("every line is tagged"))
+				.collect();
+			assert_eq!(
+				body.as_bytes(),
+				payload.as_slice(),
+				"{ch:?} with lead {lead}: bytes lost or altered"
+			);
+		}
+	}
+}

@@ -3,6 +3,7 @@ use futures_util::StreamExt;
 
 use super::abort::finish_abort;
 use super::phase::{wait_for_phase, Phase, StreamEnd};
+use super::printer::ChunkPrinter;
 use super::{AttachOptions, AttachOutcome, AttachSummary, Engine};
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
@@ -110,6 +111,7 @@ impl Engine {
 						}
 					};
 					let mut stream = crate::libpod::parse_multiplexed(resp.into_body());
+					let mut printer = ChunkPrinter::new(&prefix);
 					while let Some(msg) = stream.next().await {
 						match msg {
 							Ok(LogOutput::StdOut { message }) => {
@@ -118,15 +120,13 @@ impl Engine {
 								// delivered: the stream ends here rather than
 								// looping over a sink that will not take the
 								// bytes.
-								let text = String::from_utf8_lossy(&message);
-								if crate::ui::out!("{prefix} | {text}").is_err() {
+								if printer.stdout(&message).is_err() {
 									tracing::warn!("attach {prefix}: cannot write the output");
 									return (svc, cname, StreamEnd::Broke);
 								}
 							}
 							Ok(LogOutput::StdErr { message }) => {
-								let text = String::from_utf8_lossy(&message);
-								if crate::ui::err!("{prefix} | {text}").is_err() {
+								if printer.stderr(&message).is_err() {
 									tracing::warn!("attach {prefix}: cannot write the output");
 									return (svc, cname, StreamEnd::Broke);
 								}
@@ -142,6 +142,7 @@ impl Engine {
 							// warning, so `up` in the foreground could lose its
 							// connection to the engine and still exit 0.
 							Err(e) => {
+								let _ = printer.finish();
 								let kind = e.stream_end_kind();
 								let still_running = self.container_still_running(&cname).await;
 								if super::super::stream_broke_mid_output(still_running) {
@@ -158,6 +159,7 @@ impl Engine {
 							}
 						}
 					}
+					let _ = printer.finish();
 					// Clean end of the stream: the container stopped and the
 					// transport delivered its terminator.
 					(svc, cname, StreamEnd::ContainerStopped)
