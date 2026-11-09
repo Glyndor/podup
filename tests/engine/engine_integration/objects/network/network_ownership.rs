@@ -346,11 +346,18 @@ async fn unlabelled_existing_network_is_refused_without_external_true() {
 	);
 
 	// Reap the unlabelled network the test created by hand, so the host
-	// is not littered with `_test-{pid}-unlabelled-{pid}` bridges. The
-	// `podman` CLI's netns view differs from podup's, so use the libpod
-	// socket to remove it.
+	// is not littered with `podup-unlabelled-{pid}` bridges. The `podman`
+	// CLI's netns view differs from podup's, so use the libpod socket to
+	// remove it. The external project's container is still attached to the
+	// network until its guard runs `down`, and a network in use cannot be
+	// removed, so both projects are taken down first.
+	drop(no_external);
+	drop(external);
 	let path = format!("/v5.0.0/libpod/networks/{}", netname_encode(&shared));
-	let _ = client.delete_ok(&path).await;
+	client
+		.delete_ok(&path)
+		.await
+		.expect("remove the unlabelled network the test created");
 }
 
 /// Tiny helper so the `run_ok_fn(|| ...)` closure can `expect` on a
