@@ -12,7 +12,7 @@ Pull images for the named services, or all services if none are given.
 | `-q, --quiet` | Suppress image-pull progress output. | off |
 | `--ignore-pull-failures` | Continue pulling the remaining services after a failure. | off |
 | `--include-deps` | Also pull images for the named services' `depends_on` services. | off |
-| `--policy <POLICY>` | Pull policy, overriding per-service `pull_policy`: `always`, `missing`, `never`, `newer`, `build`. | per service |
+| `--policy <POLICY>` | Pull policy, overriding per-service `pull_policy`: `always`, `missing`, `never`, `newer`, `build`. | per service; an unset or `missing` policy still asks the registry, except for a service that builds its own image |
 
 Service `pull_policy` values `daily`, `weekly`, `every_<n>[wdhms]` and the podup extension `refresh` map to `newer`, including Quadlet `Pull=newer`. Podup checks the registry and keeps the local image when current, potentially using more network than the interval implies. It emits one warning per service: `pull_policy "<value>" is treated as "newer": podup does not track when an image was last pulled`.
 
