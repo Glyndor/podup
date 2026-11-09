@@ -133,7 +133,6 @@ fn a_closed_stdout_ends_each_command_without_a_signal_a_panic_or_a_report() {
 }
 
 #[test]
-#[ignore = "config reports a closed pipe as an io error and exits 1; fixed on its own"]
 fn a_closed_stdout_ends_config_without_a_report() {
 	let problems = unclean_endings(CONFIG_COMMANDS);
 	assert!(problems.is_empty(), "{}", problems.join("\n"));
