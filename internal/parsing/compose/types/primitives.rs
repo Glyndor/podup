@@ -1,11 +1,11 @@
 //! Primitive compose field types shared across multiple service keys.
 //!
-//! [`Command`] is a shell string or exec list for `command:`/`entrypoint:`.
 //! [`StringOrList`] is a single string or list of strings (used in `dns:`, `cap_add:`, etc.).
 //! [`Labels`] is the list or map form for `labels:`.
 //! [`LoggingConfig`] is the `logging:` driver and options.
 //! [`Sysctls`] is the list or map form for `sysctls:`.
 
+pub use super::command::Command;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -52,40 +52,6 @@ where
 		StringOrNumber::Int(i) => i.to_string(),
 		StringOrNumber::Float(fl) => fl.to_string(),
 	}))
-}
-
-/// Container entrypoint / command: either a shell string or exec list.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum Command {
-	/// Shell form: a single string run via `sh -c`.
-	Shell(String),
-	/// Exec form: an explicit argument vector run without a shell.
-	Exec(Vec<String>),
-}
-
-impl Command {
-	/// Returns the command as an exec argument vector, wrapping a shell string in `sh -c`.
-	pub fn to_exec(&self) -> Vec<String> {
-		match self {
-			Command::Shell(s) => vec!["sh".into(), "-c".into(), s.clone()],
-			Command::Exec(v) => v.clone(),
-		}
-	}
-
-	/// The vector sent as a container's `command:` or `entrypoint:`.
-	///
-	/// As [`Command::to_exec`], except that a blank string is the empty vector,
-	/// the same as `[]`: the Compose Specification says `''` and `[]` both mean
-	/// "no value" here (`entrypoint:` "overridden to be empty"), and Docker
-	/// Compose splits `""` into no words. Wrapping it in `sh -c ""` ran a shell
-	/// that exits at once instead of the image's own command.
-	pub fn to_container_override(&self) -> Vec<String> {
-		match self {
-			Command::Shell(s) if s.trim().is_empty() => Vec::new(),
-			other => other.to_exec(),
-		}
-	}
 }
 
 /// A field that accepts either a single string or a list of strings.

@@ -36,13 +36,15 @@ pub struct Service {
 	/// another file); merged before this service's own keys are applied.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub extends: Option<ExtendsConfig>,
-	/// `command:` overrides the image `CMD`; string (shell-parsed) or list (exec
-	/// form, no shell).
-	#[serde(skip_serializing_if = "Option::is_none")]
+	/// `command:` overrides the image `CMD`; a string is split into words
+	/// at load the way Docker Compose does (no shell), or a list (exec form).
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	#[serde(deserialize_with = "super::command::deserialize_split")]
 	pub command: Option<Command>,
 	/// `entrypoint:` overrides the image `ENTRYPOINT` and resets any image
-	/// `CMD`; string (shell form) or list (exec form).
-	#[serde(skip_serializing_if = "Option::is_none")]
+	/// `CMD`; string (split into words at load) or list (exec form).
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	#[serde(deserialize_with = "super::command::deserialize_split")]
 	pub entrypoint: Option<Command>,
 
 	/// `ports:` lists published host↔container port mappings (`[host:]container[/proto]`

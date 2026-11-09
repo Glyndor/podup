@@ -53,7 +53,7 @@ async fn pre_start_run_step_keeps_the_service_command_and_entrypoint() {
 	let specs = created(&peer);
 	assert_eq!(specs.len(), 2);
 	assert_eq!(specs[0]["entrypoint"], serde_json::json!(["/app"]));
-	assert_eq!(specs[0]["command"], serde_json::json!(["sh", "-c", "init"]));
+	assert_eq!(specs[0]["command"], serde_json::json!(["init"]));
 	assert_eq!(specs[1]["entrypoint"], serde_json::json!(["sh"]));
 	assert_eq!(specs[1]["command"], serde_json::json!(["echo"]));
 }

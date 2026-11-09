@@ -52,7 +52,8 @@ async fn an_empty_string_command_is_the_empty_list_and_not_an_empty_shell() {
 
 #[tokio::test]
 #[cfg(unix)]
-async fn a_command_with_words_still_runs_through_sh_c() {
-	let body = create_body("    command: echo hi\n").await;
-	assert_eq!(body["command"], serde_json::json!(["sh", "-c", "echo hi"]));
+async fn a_command_with_words_is_sent_as_those_words_with_no_shell() {
+	let body = create_body("    command: echo 'hi there'\n    entrypoint: printf\n").await;
+	assert_eq!(body["command"], serde_json::json!(["echo", "hi there"]));
+	assert_eq!(body["entrypoint"], serde_json::json!(["printf"]));
 }

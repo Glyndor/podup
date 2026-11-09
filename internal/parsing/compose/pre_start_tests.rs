@@ -49,8 +49,9 @@ services:
 		.as_sequence()
 		.unwrap()
 		.iter()
-		.map(|s| s["command"].as_str().unwrap())
+		.map(|s| s["command"][0].as_str().unwrap())
 		.collect();
+	// A step's string command is split into words at load, so it serializes as a list.
 	assert_eq!(commands, ["one", "two", "two"]);
 }
 

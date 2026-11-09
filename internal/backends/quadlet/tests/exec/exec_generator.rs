@@ -55,38 +55,33 @@ fn quadlet_hands_systemd_a_command_line_with_no_specifier_or_variable() {
 	assert!(!rest.contains('%') && !rest.contains('$'), "{line}");
 }
 
-fn shell_form_yaml(command: &str) -> String {
+fn words_yaml(words: &[&str]) -> String {
 	format!(
-		"services:\n  web:\n    image: docker.io/library/nginx\n    command: '{}'\n",
-		command.replace('\'', "''")
+		"services:\n  web:\n    image: docker.io/library/nginx\n    command: {}\n",
+		serde_json::to_string(words).unwrap()
 	)
 }
 
-/// Shell-form commands whose words never include a bare `;` once Quadlet has
-/// read them: a `;` inside a word, escaped, or in text that never closes.
-const KEPT: &[&str] = &[
-	r#"a;b"#,
-	r#"a ;b"#,
-	r#""a;b""#,
-	r#"a\;b"#,
-	r#"'a;b'"#,
-	r#"a"b;c"d"#,
-	r#"\\;"#,
-	r#"\x3b"#,
-	r#"\073"#,
-	r#"x; y"#,
-	r#"a ';'x"#,
+/// Commands whose words never include a bare `;` once Quadlet has read them: a
+/// `;` inside a word, escaped, or inside quotes the word itself carries. A
+/// string `command:` cannot hold a bare `;` at all, since Compose splits it
+/// there, so these are lists.
+const KEPT: &[&[&str]] = &[
+	&["a;b"],
+	&["a ;b"],
+	&["\"a;b\""],
+	&["a\\;b"],
+	&["'a;b'"],
+	&["a\"b;c\"d"],
+	&["\\\\;"],
+	&["\\x3b"],
+	&["\\073"],
+	&["x;", "y"],
+	&["a ';'x"],
 ];
 
-/// Shell-form commands in which Quadlet hands systemd a bare `;` word.
-const REFUSED: &[&str] = &[
-	r#"a ; b"#,
-	r#";"#,
-	r#"";""#,
-	r#"';'"#,
-	r#"a ";" b"#,
-	r#";"""#,
-];
+/// Commands in which Quadlet hands systemd a bare `;` word.
+const REFUSED: &[&[&str]] = &[&["a", ";", "b"], &[";"], &["find", "{}", ";"]];
 
 #[test]
 fn the_semicolon_check_agrees_with_what_quadlet_emits() {
@@ -97,7 +92,7 @@ fn the_semicolon_check_agrees_with_what_quadlet_emits() {
 		exec_start(&generator, yaml).is_some_and(|l| l.split_whitespace().any(|w| w == ";"))
 	};
 	for command in KEPT {
-		let yaml = shell_form_yaml(command);
+		let yaml = words_yaml(command);
 		let file = parse_str(&yaml).unwrap();
 		assert!(
 			validate_for_quadlet(&file).is_ok(),
@@ -106,7 +101,7 @@ fn the_semicolon_check_agrees_with_what_quadlet_emits() {
 		assert!(!bare(&yaml), "{command:?} reaches systemd with a bare ;");
 	}
 	for command in REFUSED {
-		let yaml = shell_form_yaml(command);
+		let yaml = words_yaml(command);
 		let file = parse_str(&yaml).unwrap();
 		assert!(
 			validate_for_quadlet(&file).is_err(),

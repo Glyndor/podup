@@ -255,7 +255,7 @@ Run a one-off command in a new container for the service, or for a job of the sa
 | `-l, --label <KEY=VAL>` | Add a label to the one-off container. Repeatable. | none |
 | `-u, --user <NAME\|UID[:GID]>` | Run the command as this user. | service configuration, then image default |
 | `-w, --workdir <PATH>` | Working directory inside the container. | service configuration, then image default |
-| `--entrypoint <CMD>` | Override the image entrypoint. The value is split into words the way a shell would (`sh -c` is two words, quotes group); an empty value clears the entrypoint. Given with no command, it also drops the `command:` of the service. | service configuration, then image default |
+| `--entrypoint <CMD>` | Override the image entrypoint. The value is split into words the way Compose splits a string `entrypoint:` (`sh -c` is two words, quotes group; see [Migrating](docker-migration.md)); an empty value clears the entrypoint. Given with no command, it also drops the `command:` of the service. | service configuration, then image default |
 | `-v, --volume <SPEC>` | Bind-mount an extra volume. Repeatable. | none |
 | `-p, --publish <SPEC>` | Publish an extra port. Repeatable. | none |
 | `-i, --interactive` | Keep the container's STDIN open (`stdin_open`). Whether a live terminal is attached is decided by stdin/stdout being terminals and by `-T`, not by this flag. | off |
