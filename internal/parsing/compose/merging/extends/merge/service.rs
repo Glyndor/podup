@@ -3,7 +3,9 @@ use crate::compose::types::{
 	StringOrList,
 };
 
-use super::collections::{merge_block, merge_networks, merge_sysctls, merge_volumes};
+use super::collections::{
+	merge_block, merge_devices, merge_networks, merge_sysctls, merge_volumes,
+};
 
 pub(in crate::parsing::compose) fn merge_service(
 	mut base: Service,
@@ -224,7 +226,7 @@ pub(in crate::parsing::compose) fn merge_service(
 		uts: override_svc.uts.or(base.uts),
 		cgroup_parent: override_svc.cgroup_parent.or(base.cgroup_parent),
 		cgroup: override_svc.cgroup.or(base.cgroup),
-		devices: merge_vec(base.devices, override_svc.devices),
+		devices: merge_devices(base.devices, override_svc.devices),
 		device_cgroup_rules: merge_vec(base.device_cgroup_rules, override_svc.device_cgroup_rules),
 		storage_opt: {
 			let mut m = base.storage_opt;

@@ -363,3 +363,32 @@ services:
 	assert_eq!(get("KEEP").as_deref(), Some("base"), "a base arg was lost");
 	assert_eq!(get("MODE").as_deref(), Some("release"));
 }
+
+#[test]
+fn devices_with_the_same_container_path_are_replaced_not_repeated() {
+	let yaml = r#"
+services:
+  base:
+    image: alpine
+    devices:
+      - /dev/null:/dev/a
+      - /dev/null:/dev/b
+      - /dev/zero
+  app:
+    extends: base
+    devices:
+      - /dev/random:/dev/c
+      - /dev/zero:/dev/a:rwm
+      - /dev/zero:/dev/zero:r
+"#;
+	let file = parse_str(yaml).unwrap();
+	assert_eq!(
+		file.services["app"].devices,
+		[
+			"/dev/zero:/dev/a:rwm",
+			"/dev/null:/dev/b",
+			"/dev/zero:/dev/zero:r",
+			"/dev/random:/dev/c",
+		]
+	);
+}

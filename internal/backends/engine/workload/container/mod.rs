@@ -12,6 +12,7 @@ use crate::libpod::API_PREFIX;
 use crate::size;
 
 mod anon_volumes;
+mod daemon_rootless;
 mod fields;
 mod host_log_driver;
 mod image_healthcheck;
@@ -205,7 +206,7 @@ impl Engine {
 		let ulimits = build_ulimits(service);
 
 		// --- Devices ---
-		let (devices, device_cgroup_rule) = self.compute_devices_and_rules(service);
+		let (devices, device_cgroup_rule) = self.compute_devices_and_rules(service).await;
 
 		// --- Security options (decomposed onto SpecGenerator fields) ---
 		let security = parse_security_opts(service);
