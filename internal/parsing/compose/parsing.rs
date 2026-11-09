@@ -102,7 +102,8 @@ pub(crate) fn parse_file_with_env_files_interp_with_stdin(
 	// `--project-directory` names), and every file is interpolated with it.
 	let vars_dir = project_dir.unwrap_or(&dir);
 	let mut file =
-		parse_file_inner_with_stdin(&abs, vars_dir, env_files, interpolate, stdin_content)?;
+		parse_file_inner_with_stdin(&abs, vars_dir, env_files, interpolate, stdin_content)
+			.map_err(|e| name_file_in_parse_error(e, &abs))?;
 
 	// The `include:` list of the file, and the list of every file it names in
 	// turn: the compose specification applies `include` recursively.
@@ -116,6 +117,28 @@ pub(crate) fn parse_file_with_env_files_interp_with_stdin(
 	extends::resolve_all_extends(&mut file, &dir, &env_files, included_env_files, interpolate)?;
 	jobs::check_relations(&file)?;
 	Ok(file)
+}
+
+/// Put the file name on a YAML syntax error. The parser reports only a line and
+/// column, so with several `-f` files there was no telling which one held the
+/// mistake. The parser's own message stays out, as it echoes the file content.
+fn name_file_in_parse_error(error: ComposeError, path: &Path) -> ComposeError {
+	let ComposeError::Parse(yaml) = error else {
+		return error;
+	};
+	let shown = if is_stdin(path) {
+		"(stdin)".to_string()
+	} else {
+		crate::error::sanitize_name(&path.display().to_string()).into_owned()
+	};
+	ComposeError::Invalid(match yaml.location() {
+		Some(loc) => format!(
+			"failed to parse compose file '{shown}' at line {}, column {}",
+			loc.line(),
+			loc.column()
+		),
+		None => format!("failed to parse compose file '{shown}'"),
+	})
 }
 
 /// Parse and merge multiple compose files (the `-f`/`COMPOSE_FILE` list).

@@ -78,6 +78,15 @@ fn bare_filename_resolves_to_current_dir() {
 }
 
 #[test]
+fn relative_inputs_resolve_to_an_absolute_base() {
+	let cwd = std::env::current_dir().unwrap();
+	let from_file = resolve_base_dir(None, Path::new("subdir/c.yml"));
+	assert_eq!(from_file, cwd.join("subdir"));
+	let from_flag = resolve_base_dir(Some(Path::new("other")), Path::new("subdir/c.yml"));
+	assert_eq!(from_flag, cwd.join("other"));
+}
+
+#[test]
 fn explicit_project_name_wins() {
 	let name = resolve_project_name(
 		Some("explicit".to_string()),

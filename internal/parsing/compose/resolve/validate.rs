@@ -231,6 +231,7 @@ fn validate_services(file: &ComposeFile) -> Result<()> {
 	let jobs = file.jobs.iter().map(|(name, job)| (name, &job.service));
 	for (name, service) in file.services.iter().chain(jobs) {
 		validate_service_consistency(name, file, service)?;
+		validate_volume_targets(name, service)?;
 		// An init step is a container of its own, so the same consistency
 		// rules apply to the step the operator wrote.
 		for (step_name, step) in crate::parsing::compose::pre_start::declared_steps(name, service) {
@@ -242,6 +243,25 @@ fn validate_services(file: &ComposeFile) -> Result<()> {
 	}
 	// The same for a job, in every command and not only in `config`.
 	crate::compose::jobs::check_job_dependencies(file)?;
+	Ok(())
+}
+
+/// A short-form mount with an empty container path is refused before anything is
+/// created. It usually comes from an unset variable (`./data:${DEST}`), and the
+/// engine's own error for it names neither the service nor the mount.
+fn validate_volume_targets(service: &str, svc: &crate::compose::types::Service) -> Result<()> {
+	for (index, mount) in svc.volumes.iter().enumerate() {
+		let VolumeMount::Short(spec) = mount else {
+			continue;
+		};
+		if spec.split(':').nth(1).is_some_and(str::is_empty) {
+			let spec = crate::error::sanitize_name(spec);
+			return Err(ComposeError::Invalid(format!(
+				"service '{service}' has an empty target in services.{service}.volumes[{index}] \
+				 ('{spec}'); check that the variable it uses is set"
+			)));
+		}
+	}
 	Ok(())
 }
 
@@ -380,3 +400,7 @@ mod tests;
 #[cfg(test)]
 #[path = "validate_depends_on_tests.rs"]
 mod depends_on_tests;
+
+#[cfg(test)]
+#[path = "validate_targets_tests.rs"]
+mod targets_tests;
