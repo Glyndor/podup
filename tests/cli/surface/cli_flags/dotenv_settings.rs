@@ -74,7 +74,9 @@ fn env_file_values_refer_to_earlier_keys_and_the_process() {
 
 #[test]
 fn compose_file_comes_from_the_env_file_and_skips_the_override() {
-	let dir = project("COMPOSE_FILE=other.yaml:compose.yaml\n");
+	// The default separator is `:` on Unix and `;` on Windows.
+	let sep = if cfg!(windows) { ';' } else { ':' };
+	let dir = project(&format!("COMPOSE_FILE=other.yaml{sep}compose.yaml\n"));
 	fs::write(
 		dir.path().join("compose.override.yaml"),
 		OTHER.replace("other", "over"),
