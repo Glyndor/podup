@@ -232,6 +232,14 @@ jobs:
         working-directory: .
         run: bash .github/scripts/checks/check-banned-vocabulary.sh
 
+      # The Rust test of the same name reads every tracked file, and the
+      # classifier lets a shell test, the licence or a template skip the Rust
+      # lanes. This is the same scan without the toolchain, so the skip loses
+      # nothing. Not gated by the classifier, for that reason.
+      - name: no private document references
+        working-directory: .
+        run: bash .github/scripts/checks/check-private-document-references.sh
+
       # BASE is the commit the change is measured against, so a pull request
       # cannot raise a ceiling in .github/folder-limit-exceptions.txt.
       - name: folders hold at most twenty files

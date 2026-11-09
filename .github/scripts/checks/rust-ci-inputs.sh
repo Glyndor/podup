@@ -40,12 +40,16 @@
 #   fuzz/, bench/               read by the repository's own tests
 #   .github/dependabot.yml      read by the supply-chain test
 #
-# What may be skipped is what no Rust lane and no Rust test reads: the
+# What may be skipped is what no Rust lane and no Rust test needs to see: the
 # licence, the editor settings, the cargo-about licence templates, the issue
 # templates, the images under docs/assets, and the shell test suite under
-# tests/scripts, which the shell lane owns. The one Rust test that lists every
-# tracked file (no_private_document_references) does read them, so a change
-# there that only touches such a script skips that test.
+# tests/scripts, which the shell lane owns.
+#
+# One Rust test does read those files: `no_private_document_references` lists
+# every tracked file with `git ls-files` and reads it, the skippable ones
+# included. The skip is safe only because `lint` runs the same scan as
+# `check-private-document-references.sh` on every pull request, ungated, in
+# `reusable-rust-ci.yml`. Take that step away and these rules become holes.
 #
 # The documentation is on the list above, and that is not an oversight:
 # `tests/repository/docs/docs_links.rs` reads every markdown file under
@@ -90,10 +94,11 @@ while IFS= read -r path; do
 		internal/*) answer true "$path changes the crate" ;;
 		build.rs) answer true "$path changes the build script" ;;
 		rustfmt.toml | .cargo/*) answer true "$path changes what fmt and clippy do" ;;
-		# The test suite and the fixtures it reads. The shell suite under
-		# tests/scripts scripts are the shell lane's, and no Rust test reads them;
-		# any other file there, a stray .rs among them, is still walked by the Rust
-		# tests and so runs the lanes.
+		# The test suite and the fixtures it reads. The shell and PowerShell
+		# scripts under tests/scripts are the shell lane's, and the only Rust
+		# test that reads them scans for a private document tree, which `lint`
+		# repeats outside this classifier; any other file there, a stray .rs
+		# among them, is still walked by the Rust tests and so runs the lanes.
 		tests/scripts/*.sh | tests/scripts/*.ps1) ;;
 		tests/*) answer true "$path changes the test suite" ;;
 		debian/*) answer true "$path changes the packaging" ;;

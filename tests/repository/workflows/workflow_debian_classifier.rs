@@ -293,6 +293,49 @@ fn the_check_names_are_unchanged() {
 	);
 }
 
+/// Every path the classifier says forces a build has to start the lane, or the
+/// rule is dead: a pull request that changes only that path never reaches the
+/// classifier. `build.rs` in particular supplies the link arguments the
+/// package build uses. The workflows are not listed here; the caller names
+/// the three it needs and leaves the rest to the Rust lanes.
+#[test]
+fn the_caller_starts_the_lane_for_every_path_the_classifier_forces_a_build_on() {
+	let caller = caller();
+	for event in ["push", "pull_request"] {
+		assert!(
+			caller["on"][event].get("paths-ignore").is_none(),
+			"{event} has a paths-ignore, which changes what the filter below means"
+		);
+		let paths: Vec<String> = caller["on"][event]["paths"]
+			.as_sequence()
+			.map(|items| {
+				items
+					.iter()
+					.filter_map(|v| v.as_str().map(str::to_string))
+					.collect()
+			})
+			.unwrap_or_default();
+		for needed in [
+			"Cargo.toml",
+			"Cargo.lock",
+			"internal/**",
+			"build.rs",
+			"debian/**",
+			"tests/**",
+			"install.sh",
+			"install.ps1",
+			".github/scripts/**",
+		] {
+			assert!(
+				paths.iter().any(|p| p == needed),
+				"{event} does not watch {needed}, which \
+				 debian-ci-inputs.sh says forces the package to be built. A change \
+				 to only that path never starts the lane."
+			);
+		}
+	}
+}
+
 /// The lane still watches the whole test tree, and the classifier is watched
 /// too, so the rule that names the classifier is reachable.
 #[test]

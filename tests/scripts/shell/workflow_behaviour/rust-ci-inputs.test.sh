@@ -167,6 +167,14 @@ check "a missing job decision runs the lanes" 3 \
 check "a classifier that failed runs the lanes" 3 \
 	"$(grep -c "needs.classify.result != 'success'" "$workflow")"
 
+# Files that may skip the lanes are still read by the Rust test that scans
+# every tracked file for a private document tree, so `lint` runs the same scan
+# with no classifier in front of it.
+check "lint runs the private-document scan once" 1 \
+	"$(grep -c 'bash .github/scripts/checks/check-private-document-references.sh' "$workflow")"
+check "the private-document scan carries no condition" 0 \
+	"$(grep -B3 'check-private-document-references.sh' "$workflow" | grep -c ' if:')"
+
 echo "$pass passed, $fail failed"
 printf 'DONE %s %d %d\n' "${BASH_SOURCE[0]##*/}" "$pass" "$fail"
 [ "$fail" -eq 0 ]
