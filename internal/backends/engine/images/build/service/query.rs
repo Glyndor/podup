@@ -211,7 +211,7 @@ impl Engine {
 		);
 		qs.push_str(&format!("&dockerfile={}", urlencoded(&plan.dockerfile)));
 		if build.pull() || opts.pull {
-			qs.push_str("&pull=true");
+			qs.push_str("&pullpolicy=always");
 		}
 		if let Some(p) = &platform {
 			qs.push_str(&format!("&platform={}", urlencoded(p)));

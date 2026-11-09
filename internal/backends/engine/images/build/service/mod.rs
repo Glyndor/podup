@@ -7,6 +7,7 @@
 //! here. The body-plan decision lives in [`super::request::body_plan`]; the
 //! `apply_extra_tags` follow-up lives in [`super::names::extra_tags`].
 
+mod base_pull;
 mod cache;
 mod capture;
 mod execution;
@@ -52,6 +53,8 @@ impl Engine {
 			build.tags(),
 		);
 
+		let refreshed = self.refreshing_opts(service_name, service, opts);
+		let opts = &refreshed;
 		let contexts = resolve_additional_contexts(&self.project, file, service_name, build)?;
 		let plan = plan_build(
 			self,
