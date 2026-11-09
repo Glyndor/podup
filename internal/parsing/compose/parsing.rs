@@ -103,7 +103,7 @@ pub(crate) fn parse_file_with_env_files_interp_with_stdin(
 	let vars_dir = project_dir.unwrap_or(&dir);
 	let mut file =
 		parse_file_inner_with_stdin(&abs, vars_dir, env_files, interpolate, stdin_content)
-			.map_err(|e| name_file_in_parse_error(e, &abs))?;
+			.map_err(|e| name_file_in_parse_error(e, path))?;
 
 	// The `include:` list of the file, and the list of every file it names in
 	// turn: the compose specification applies `include` recursively.

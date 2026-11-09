@@ -24,7 +24,8 @@ pub fn resolve_base_dir(project_directory: Option<&Path>, file: &Path) -> PathBu
 	// relative bind source and be resolved against the service's own working
 	// directory, so `-f deploy/compose.yml` mounted `$HOME/deploy/data`.
 	let anchor = |dir: &Path| {
-		if dir.is_absolute() {
+		// On Windows `/srv/app` has a root but no drive: it is anchored already.
+		if dir.is_absolute() || dir.has_root() {
 			dir.to_path_buf()
 		} else {
 			std::env::current_dir().unwrap_or_default().join(dir)
