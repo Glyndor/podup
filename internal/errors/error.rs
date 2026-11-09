@@ -221,16 +221,18 @@ impl ComposeError {
 	}
 }
 
-/// Escape control characters (tabs, newlines, ESC, …) in an interpolated,
+/// Escape control characters (tabs, newlines, ESC, …) and bidirectional or
+/// zero-width characters in an interpolated,
 /// possibly-untrusted name before it reaches a terminal, so a crafted
 /// service/container name cannot emit raw escape sequences. Printable characters
 /// (including non-ASCII) pass through unchanged; only borrows when nothing needs
 /// escaping.
 pub(crate) fn sanitize_name(s: &str) -> std::borrow::Cow<'_, str> {
-	if s.chars().any(char::is_control) {
+	use crate::ui::is_terminal_unsafe;
+	if s.chars().any(is_terminal_unsafe) {
 		s.chars()
 			.flat_map(|c| {
-				if c.is_control() {
+				if is_terminal_unsafe(c) {
 					c.escape_default().collect::<Vec<_>>()
 				} else {
 					vec![c]

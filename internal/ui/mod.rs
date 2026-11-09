@@ -47,4 +47,4 @@ pub use lines::{progress_enabled, progress_line, progress_note, result_line, set
 pub use status::action_or_status_style;
 pub(crate) use status::paint_status_cell;
 pub use styles::{bold, error_style, paint};
-pub use table::{fit_cell, sanitize_cell, Table};
+pub use table::{fit_cell, is_terminal_unsafe, sanitize_cell, Table};
