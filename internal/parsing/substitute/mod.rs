@@ -4,6 +4,7 @@
 //! parsed compose document (compose-spec value-level interpolation).
 //! Handles all compose-spec modifier forms: `:-`, `-`, `:+`, `+`, `:?`, `?`.
 
+mod file_values;
 mod parse;
 
 use std::cell::Cell;
@@ -12,6 +13,7 @@ use std::path::Path;
 
 use crate::error::{ComposeError, Result};
 
+pub use file_values::dotenv_layer;
 use parse::{collect_var_name, is_var_start, parse_braced_var, resolve_modifier};
 
 // ---------------------------------------------------------------------------
@@ -257,28 +259,15 @@ fn check_output_cap(out: &str, value: &str, var: &str) -> Result<()> {
 /// - Empty / whitespace-only lines are skipped.
 /// - `KEY=VALUE` sets KEY to VALUE; surrounding quotes are stripped and
 ///   dotenv escapes/inline comments are handled.
+/// - A value may refer to the process environment and to earlier keys of the
+///   file (`B=${A} World`); a single-quoted value stays literal.
 /// - `KEY` without `=` sets KEY to empty string.
 /// - Process environment variables take precedence: if a key already exists in
 ///   the current process env it will *not* be overridden by the `.env` file.
 pub fn load_dotenv(dir: &Path) -> HashMap<String, String> {
-	// A `.env` that is a link is read through it, like docker compose does; the
-	// file it points to is still checked to be a regular file when it is read.
-	// A link that cannot be resolved is read as given and fails there.
-	let path = dir.join(".env");
-	let path = std::fs::canonicalize(&path).unwrap_or(path);
-	let Ok(content) = crate::filesystem::read_to_string_capped(&path) else {
-		return HashMap::new();
-	};
-
-	let mut map = HashMap::new();
-	for (key, value) in crate::dotenv::parse(&content) {
-		// Process environment variables take precedence over the `.env` file.
-		if std::env::var(&key).is_ok() {
-			continue;
-		}
-		map.insert(key, value);
-	}
-
+	let mut map = dotenv_layer(dir, &[]).unwrap_or_default();
+	// Process environment variables take precedence over the `.env` file.
+	map.retain(|key, _| std::env::var(key).is_err());
 	map
 }
 
@@ -340,40 +329,7 @@ fn build_vars_with_env_files_inner(
 	}
 
 	// Explicit `--env-file`s replace `.env`; a later file overrides an earlier one.
-	let mut file_vars: HashMap<String, String> = HashMap::new();
-	for path in extra {
-		let abs = if std::path::Path::new(path).is_absolute() {
-			std::path::PathBuf::from(path)
-		} else {
-			dir.join(path)
-		};
-		let content = crate::filesystem::read_to_string_capped(&abs).map_err(|e| {
-			crate::error::ComposeError::EnvFile(format!(
-				"env file not found: {} ({e})",
-				crate::error::sanitize_name(&abs.display().to_string())
-			))
-		})?;
-		let pairs = crate::dotenv::parse_strict(&content)?;
-		for (key, value) in pairs {
-			// A disallowed control character (e.g. NUL) in a value would be
-			// interpolated verbatim into a compose scalar, where it is meaningless
-			// at best and corrupts the container's config at worst. Reject it here,
-			// at load time, with an error that names the originating env file and
-			// key, instead of letting it surface later as a compose-file parse
-			// error at a meaningless post-substitution offset. Only the explicit
-			// `--env-file`/`env_file:` path errors; the `.env` fallback
-			// (`build_vars`) keeps its historical pass-through behaviour.
-			if let Some(bad) = first_disallowed_control_char(&value) {
-				return Err(crate::error::ComposeError::EnvFile(format!(
-					"env file {}: value of '{key}' contains a disallowed control \
-					 character ({}); remove it before use",
-					abs.display(),
-					bad.escape_default(),
-				)));
-			}
-			file_vars.insert(key, value);
-		}
-	}
+	let file_vars = dotenv_layer(dir, extra)?;
 
 	// Process env wins over every file value.
 	let mut vars = process_vars();

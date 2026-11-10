@@ -17,6 +17,7 @@ mod config_normalize;
 mod config_render;
 mod config_volumes;
 mod control_escape;
+mod project_env;
 pub(crate) use config_normalize::anchor_service_bind_sources;
 #[cfg(test)]
 pub(crate) use config_render::render_config_to;
@@ -360,6 +361,7 @@ pub(crate) fn parse_cli() -> Cli {
 			if let Ok(cwd) = std::env::current_dir() {
 				cli.env_file = resolve::anchor_env_files(&cli.env_file, &cwd);
 			}
+			project_env::apply(&mut cli);
 			cli
 		}
 		Err(e) => match e.kind() {

@@ -43,14 +43,29 @@ pub(crate) fn compose_files_were_named(explicit: &[PathBuf]) -> bool {
 	!explicit.is_empty() || std::env::var("COMPOSE_FILE").is_ok_and(|v| !v.is_empty())
 }
 
+/// The separator of the `COMPOSE_FILE` list: `COMPOSE_PATH_SEPARATOR` when it is
+/// set and not empty, otherwise `:` (`;` on Windows).
+pub(crate) fn path_separator(custom: Option<&str>) -> String {
+	match custom {
+		Some(sep) if !sep.is_empty() => sep.to_string(),
+		_ if cfg!(windows) => ";".to_string(),
+		_ => ":".to_string(),
+	}
+}
+
 pub(crate) fn resolve_compose_files(explicit: &[PathBuf]) -> Vec<PathBuf> {
 	if !explicit.is_empty() {
 		return explicit.to_vec();
 	}
 	if let Ok(env) = std::env::var("COMPOSE_FILE") {
 		if !env.is_empty() {
-			let sep = if cfg!(windows) { ';' } else { ':' };
-			return env.split(sep).map(PathBuf::from).collect();
+			let custom = std::env::var("COMPOSE_PATH_SEPARATOR").ok();
+			let sep = path_separator(custom.as_deref());
+			return env
+				.split(sep.as_str())
+				.filter(|part| !part.is_empty())
+				.map(PathBuf::from)
+				.collect();
 		}
 	}
 	let present = candidates_in(Path::new(""));

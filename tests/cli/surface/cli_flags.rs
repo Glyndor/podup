@@ -110,3 +110,6 @@ mod usage_error_colour;
 
 #[path = "cli_flags/discovery_and_project_name.rs"]
 mod discovery_and_project_name;
+
+#[path = "cli_flags/dotenv_settings.rs"]
+mod dotenv_settings;
