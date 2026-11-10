@@ -2,6 +2,7 @@
 
 mod abort;
 mod phase;
+mod printer;
 mod streams;
 
 use crate::compose::types::ComposeFile;
