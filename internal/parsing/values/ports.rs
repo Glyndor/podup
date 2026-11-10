@@ -28,9 +28,22 @@ pub fn parse_ports(ports: &[PortMapping]) -> Result<Vec<ParsedPort>> {
 	let mut result = Vec::new();
 	for mapping in ports {
 		result.extend(parse_one(mapping)?);
+		// Each range is capped on its own, but a service can list thousands of
+		// ranges: ten thousand `1-1024` entries fit in a small file and expand to
+		// ten million mappings. A port number has sixteen bits, so a service that
+		// publishes more mappings than there are ports is refused as soon as it
+		// crosses the line, before the rest is expanded.
+		if result.len() > MAX_EXPANDED_PORTS {
+			return Err(ComposeError::InvalidPort(format!(
+				"too many published ports (more than {MAX_EXPANDED_PORTS} once ranges are expanded)"
+			)));
+		}
 	}
 	Ok(result)
 }
+
+/// The most mappings one service may publish once its ranges are expanded.
+pub(crate) const MAX_EXPANDED_PORTS: usize = 65_536;
 
 /// Convert parsed ports into libpod `PortMapping` entries for `SpecGenerator`.
 pub fn to_libpod(ports: &[ParsedPort]) -> Vec<LibpodPortMapping> {

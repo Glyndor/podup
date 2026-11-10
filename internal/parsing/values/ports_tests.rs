@@ -117,6 +117,24 @@ fn range_too_large_is_error() {
 }
 
 #[test]
+fn the_total_of_expanded_ports_is_capped() {
+	// 100 entries of 1024 ports each is 102 400 mappings, past the cap; ten
+	// thousand of them used to expand to ten million before anything checked.
+	let many: Vec<_> = (0..10_000).map(|_| short("1-1024")).collect();
+	let error = parse_ports(&many).expect_err("ten million mappings must be refused");
+	assert!(
+		error.to_string().contains("too many published ports"),
+		"{error}"
+	);
+}
+
+#[test]
+fn a_service_under_the_cap_still_expands_every_range() {
+	let some: Vec<_> = (0..8).map(|_| short("1-1024")).collect();
+	assert_eq!(parse_ports(&some).unwrap().len(), 8 * 1024);
+}
+
+#[test]
 fn invalid_port_string_is_error() {
 	assert!(parse_ports(&[short("abc")]).is_err());
 }
