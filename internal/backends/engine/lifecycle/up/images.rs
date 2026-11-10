@@ -8,6 +8,13 @@ use crate::error::Result;
 use crate::engine::lifecycle::Engine;
 
 impl Engine {
+	/// The options of the builds `up` runs: `--quiet-build` silences them.
+	pub(in crate::backends::engine::lifecycle) fn up_build_options(
+		&self,
+	) -> crate::engine::BuildOptions {
+		crate::engine::BuildOptions::default().with_quiet(self.quiet_build)
+	}
+
 	/// The image tag a service resolves to: its explicit `image:` when set,
 	/// otherwise the tag its build produces (`build.tags[0]`, else the
 	/// project-scoped `{project}-{service}:latest`).
@@ -67,7 +74,7 @@ impl Engine {
 		};
 		match (needs_build, policy) {
 			(true, _) => {
-				self.build_service(name, service, file, &crate::engine::BuildOptions::default())
+				self.build_service(name, service, file, &self.up_build_options())
 					.await?
 			}
 			// A service with a `build:` whose image is already present needs no

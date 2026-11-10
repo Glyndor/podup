@@ -25,6 +25,18 @@ fn profile_filtered(
 	filtered
 }
 
+/// The services an attached `up` follows, as docker compose decides it:
+/// `--attach` when given; otherwise the services named on the command line,
+/// whose dependencies are followed only with `--attach-dependencies`. Empty
+/// means every service of the run.
+fn attached_names(attach: Vec<String>, named: &[String], dependencies: bool) -> Vec<String> {
+	if attach.is_empty() && !dependencies {
+		named.to_vec()
+	} else {
+		attach
+	}
+}
+
 /// Run the command against an already-built engine and parsed compose file.
 ///
 /// `lock` is the project lock the caller took for a mutating command. A foreground
@@ -61,6 +73,15 @@ pub(crate) async fn dispatch(
 			renew_anon_volumes: _,
 			abort_on_container_exit,
 			exit_code_from,
+			abort_on_container_failure,
+			no_color: _,
+			no_log_prefix,
+			attach,
+			no_attach,
+			attach_dependencies,
+			quiet_build: _,
+			always_recreate_deps: _,
+			yes: _,
 			services,
 		}) => {
 			// `up` starts services and never a job. A job with a schedule is
@@ -87,6 +108,12 @@ pub(crate) async fn dispatch(
 			// A name `--exit-code-from` cannot match is an input error: say so
 			// before anything is started.
 			if let Some(name) = &exit_code_from {
+				if !scope.services.contains_key(name) {
+					return Err(podup::ComposeError::ServiceNotFound(name.clone()));
+				}
+			}
+			// Same for the services `--attach` and `--no-attach` name.
+			for name in attach.iter().chain(&no_attach) {
 				if !scope.services.contains_key(name) {
 					return Err(podup::ComposeError::ServiceNotFound(name.clone()));
 				}
@@ -157,7 +184,10 @@ pub(crate) async fn dispatch(
 				// `--exit-code-from` stop everything from inside the attach.
 				// Capture replica IDs under the lock for the final stop.
 				let attached = engine.snapshot_containers().await?;
-				if !abort_on_container_exit && exit_code_from.is_none() {
+				if !abort_on_container_exit
+					&& !abort_on_container_failure
+					&& exit_code_from.is_none()
+				{
 					lock.take();
 				}
 				let summary = engine
@@ -166,6 +196,10 @@ pub(crate) async fn dispatch(
 						&podup::AttachOptions::new()
 							.with_timestamps(timestamps)
 							.with_abort_on_container_exit(abort_on_container_exit)
+							.with_abort_on_container_failure(abort_on_container_failure)
+							.with_no_log_prefix(no_log_prefix)
+							.with_attach(attached_names(attach, &services, attach_dependencies))
+							.with_no_attach(no_attach)
 							// `--exit-code-from` implies `--abort-on-container-exit`
 							// in docker compose (measured against v5.1.3); the
 							// underlying call applies that implication itself, so

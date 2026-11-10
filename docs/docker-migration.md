@@ -13,6 +13,10 @@ podup up
 
 `up --exit-code-from SERVICE` uses the triggering container when it belongs to that service. If another service triggers the abort, podup chooses the first observed stopped replica of SERVICE before teardown, with replica order breaking ties; if none has stopped it uses the first replica. This is a minimal approximation of Compose's exit-event ordering: it does not reconstruct the historical order of multiple replicas already stopped when inspected, or monitor later exits during teardown. An unreadable exit status fails with the service name after attempting to stop the project.
 
+## Which logs `up` follows
+
+Like Docker Compose, an attached `up` with services named on the command line follows the logs of those services only. Their `depends_on` services are still started, but their logs are followed only with `--attach-dependencies`. With no service named every service is followed. `--attach SERVICE` replaces the named services as the followed set, `--no-attach SERVICE` removes a service from it, and a service with `attach: false` is never followed. Earlier podup versions followed the dependencies as well; add `--attach-dependencies` to keep that output. `--abort-on-container-exit` reacts to the followed services only.
+
 ## Container status filters
 
 `podup ps --status` matches the state or status by case-insensitive prefix: `--status run` matches `running`. Docker Compose compares the whole status. This also applies to podup's `--filter status=...`.

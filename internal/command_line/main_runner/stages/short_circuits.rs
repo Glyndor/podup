@@ -273,7 +273,7 @@ pub(crate) async fn run_down_by_label(cli: &Cli, compose_files: &[PathBuf]) -> p
 pub(crate) fn setup_output(cli: &Cli) {
 	// Resolve the colour choice before any output (including tracing setup below)
 	// so `--ansi`/`NO_COLOR`/TTY detection apply consistently everywhere.
-	podup::ui::set_color_choice(cli.ansi.into());
+	podup::ui::set_color_choice(crate::cli::color_choice(cli));
 	// Enable user-facing lifecycle progress for the CLI: per-container
 	// Started/Stopped/Removed lines on stderr (and the `run -d` id on stdout),
 	// matching docker compose. The library leaves this off so embedders stay

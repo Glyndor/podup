@@ -82,8 +82,18 @@ Create and start all services. Options: \fB\-d\fR/\fB\-\-detach\fR,
 \fB\-\-wait\-timeout\fR \fISECONDS\fR, \fB\-t\fR/\fB\-\-timeout\fR \fISECONDS\fR,
 \fB\-V\fR/\fB\-\-renew\-anon\-volumes\fR, \fB\-\-timestamps\fR,
 \fB\-\-no\-start\fR, \fB\-\-abort\-on\-container\-exit\fR,
-\fB\-\-exit\-code\-from\fR \fISERVICE\fR (implies the previous one). The last two
-cannot be combined with \fB\-d\fR, \fB\-\-wait\fR or \fB\-\-watch\fR. Accepts a
+\fB\-\-exit\-code\-from\fR \fISERVICE\fR (implies the previous one),
+\fB\-\-abort\-on\-container\-failure\fR (stops only on a non-zero exit). These
+three cannot be combined with \fB\-d\fR, \fB\-\-wait\fR or \fB\-\-watch\fR.
+Output: \fB\-\-no\-color\fR, \fB\-\-no\-log\-prefix\fR,
+\fB\-\-quiet\-build\fR, \fB\-\-attach\fR \fISERVICE\fR and
+\fB\-\-no\-attach\fR \fISERVICE\fR (both repeatable; \fB\-\-attach\fR cannot be
+combined with \fB\-\-attach\-dependencies\fR, which also follows the logs of the
+dependencies of the named services; by default only the named services are
+followed). \fB\-\-always\-recreate\-deps\fR
+recreates the services that were not named, and cannot be combined with
+\fB\-\-no\-recreate\fR. \fB\-y\fR/\fB\-\-yes\fR is accepted and changes nothing,
+because \fBup\fR never asks for confirmation. Accepts a
 trailing list of services to bring up (with their transitive depends_on).
 .TP
 .B scale \fISERVICE=N\fR...

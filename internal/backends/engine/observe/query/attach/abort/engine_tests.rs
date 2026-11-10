@@ -118,3 +118,58 @@ async fn f3_engine_a_failed_stop_after_a_zero_exit_is_an_error() {
 		.expect_err("the stop failed, so the project is not down");
 	assert!(error.to_string().contains("stop refused"), "{error}");
 }
+
+/// Two replicas of one service: the first to end exits cleanly, the second
+/// fails. Every stream ends at once, so which ends first is not up to the test.
+fn failing_second_replica() -> fake_podman::FakePodman {
+	fake_podman::start_replying(|method, target| {
+		if target.contains("/logs") {
+			FakeReply::ChunkedEnd(vec![])
+		} else if target.contains("proj-web-2/wait?") {
+			FakeReply::Body(200, "7".into())
+		} else if target.contains("/wait?") {
+			FakeReply::Body(200, "0".into())
+		} else if target.contains("/containers/json") {
+			FakeReply::Body(200, "[]".into())
+		} else if method == "POST" {
+			FakeReply::Body(204, String::new())
+		} else {
+			FakeReply::Body(404, r#"{"message":"not found"}"#.into())
+		}
+	})
+}
+
+#[tokio::test]
+async fn abort_on_container_failure_skips_clean_exits_and_stops_on_the_failure() {
+	let fake = failing_second_replica();
+	let options = AttachOptions::new().with_abort_on_container_failure(true);
+	let summary = engine(&fake)
+		.attach_logs_with(&file(), &options)
+		.await
+		.unwrap();
+	assert_eq!(summary.outcome, super::super::AttachOutcome::Aborted);
+	assert_eq!(summary.exit_code, Some(7));
+	assert_eq!(summary.service.as_deref(), Some("web"));
+}
+
+#[tokio::test]
+async fn abort_on_container_failure_lets_an_all_clean_run_finish() {
+	let fake = fake_podman::start_replying(|method, target| {
+		if target.contains("/logs") {
+			FakeReply::ChunkedEnd(vec![])
+		} else if target.contains("/wait?") {
+			FakeReply::Body(200, "0".into())
+		} else if method == "POST" {
+			FakeReply::Body(204, String::new())
+		} else {
+			FakeReply::Body(404, r#"{"message":"not found"}"#.into())
+		}
+	});
+	let options = AttachOptions::new().with_abort_on_container_failure(true);
+	let summary = engine(&fake)
+		.attach_logs_with(&file(), &options)
+		.await
+		.unwrap();
+	assert_eq!(summary.outcome, super::super::AttachOutcome::StreamsEnded);
+	assert_eq!(summary.exit_code, None);
+}

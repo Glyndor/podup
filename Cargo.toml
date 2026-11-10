@@ -423,6 +423,10 @@ name = "scale_duplicate_pairs"
 path = "tests/cli/up/scale_duplicate_pairs.rs"
 
 [[test]]
+name = "up_attach_options"
+path = "tests/cli/up/up_attach_options.rs"
+
+[[test]]
 name = "quadlet_jobs"
 path = "tests/quadlet/quadlet_jobs.rs"
 

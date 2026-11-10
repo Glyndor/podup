@@ -68,6 +68,15 @@ A container that already exists is left in place when two facts both hold: its r
 | `-V, --renew-anon-volumes` | Recreate anonymous volumes instead of keeping the previous ones. | off |
 | `--abort-on-container-exit` | Stop every container as soon as any of them exits; the process exit status is that container's exit code. Cannot be combined with `-d`, `--wait`, or `--watch`. | off |
 | `--exit-code-from SERVICE` | Return the named service's exit code as podup's own. Implies `--abort-on-container-exit`; a service that does not exist in the compose file is rejected before any container is created. | off |
+| `--abort-on-container-failure` | Stop every container as soon as one exits with a non-zero status; the process exit status is that container's exit code. A container that exits cleanly does not end the run. Cannot be combined with `-d`, `--wait`, or `--watch`. | off |
+| `--no-color` | Monochrome output: no colour in anything `up` prints, whatever `--ansi` says. | off |
+| `--no-log-prefix` | Print attached log lines without the `service \|` prefix. | off |
+| `--attach SERVICE` | Follow the logs of only this service, instead of the named services. Repeatable; a name that is not a service is rejected before anything starts. A service with `attach: false` stays unattached. Cannot be combined with `--attach-dependencies`. | named services |
+| `--no-attach SERVICE` | Do not follow the logs of this service. Repeatable; wins over `--attach`. | none |
+| `--attach-dependencies` | Also follow the logs of the dependencies of the named services. Without it only the named services are followed; with no service named every service is. Cannot be combined with `--attach`. | off |
+| `--quiet-build` | Suppress the output of the builds `up` runs; a failed build still reports its error. | off |
+| `--always-recreate-deps` | Recreate the containers of the services that were not named on the command line even when they are unchanged. With no service named there is nothing to single out. Cannot be combined with `--no-recreate`. | off |
+| `-y, --yes` | Accepted for compatibility. `up` never asks for confirmation, so there is nothing to answer. | off |
 
 `--wait` implies `-d` and checks every replica of each selected service. Health polling retains its per-service budget (interval × retries + start_period); `--wait-timeout` does not extend this dependency budget.
 

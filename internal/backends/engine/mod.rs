@@ -104,6 +104,11 @@ pub struct Engine {
 	pub(crate) no_build: bool,
 	/// CLI `up --quiet-pull`: suppress image-pull progress output.
 	pub(crate) quiet_pull: bool,
+	/// CLI `up --quiet-build`: suppress the output of the builds `up` runs.
+	pub(crate) quiet_build: bool,
+	/// CLI `up --always-recreate-deps`: replace the containers of services
+	/// that were not named on the command line even when they are unchanged.
+	pub(crate) always_recreate_deps: bool,
 	/// CLI `run`-only flag overrides (user/workdir/entrypoint/volume/publish/
 	/// interactive/no-deps); empty by default.
 	pub(crate) run_overrides: lifecycle::RunOverrides,
