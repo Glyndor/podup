@@ -53,6 +53,7 @@ pub(in super::super) fn deserialize_with_merge_interp(
 	super::super::types::service::umask::apply_resets(&mut value, &umask_resets);
 	super::super::types::service::umask::validate(&value)?;
 	super::textual::stringify_text_fields(&mut value);
+	super::scalars::coerce_quoted_scalars(&mut value);
 	// Jobs are typed first and on their own, so a bad job is reported by name
 	// instead of as a file that failed to parse.
 	let jobs = super::super::jobs::extract_jobs(&mut value)?;

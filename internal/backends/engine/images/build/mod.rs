@@ -264,6 +264,8 @@ impl Engine {
 	}
 }
 
+#[cfg(all(test, unix))]
+mod base_pull_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
