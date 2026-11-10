@@ -81,7 +81,19 @@ PY
 }
 
 WORKFLOW="$HERE/.github/workflows/reusable-workflow-lint.yml"
-step_script "$WORKFLOW" "A job holding a secret must not install" > "$WORK/tooling.sh"
+# The step calls the checker as a script; the checks below read its text, so
+# put it back where the call is.
+inline_checker() {
+	python3 -c '
+import sys
+call = "python3 .github/scripts/checks/check-tooling-isolation.py"
+text = sys.stdin.read()
+body = open(sys.argv[1]).read()
+print(text.replace(call, "python3 - <<\x27PY\x27\n" + body + "PY"))
+' "$HERE/.github/scripts/checks/check-tooling-isolation.py"
+}
+
+step_script "$WORKFLOW" "A job holding a secret must not install" | inline_checker > "$WORK/tooling.sh"
 check "the tooling assertion was extracted from the workflow" "1" \
 	"$(grep -c 'INSTALL_PATTERNS' "$WORK/tooling.sh" | awk '{print ($1>0)}')"
 

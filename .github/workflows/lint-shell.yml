@@ -79,6 +79,21 @@ on:
       - ".github/scripts/checks/workflow-lint-inputs.sh"
       - "tests/scripts/shell/fedora_image/fetch-fedora-image-records.test.sh"
       - "tests/scripts/shell/workflow_lint/reusable-workflow-lint-merge-group.test.sh"
+      - "tests/scripts/shell/workflow_lint/release-least-privilege.test.sh"
+      - "tests/scripts/shell/workflow_lint/release-gate.test.sh"
+      - "tests/scripts/shell/workflow_lint/release-wiring.test.sh"
+      - "tests/scripts/shell/workflow_lint/release_wiring/wiring.py"
+      - "tests/scripts/shell/workflow_lint/release_wiring/mutants.py"
+      - ".github/scripts/release/check-tag.sh"
+      - ".github/scripts/release/verify-provenance.sh"
+      - ".github/scripts/checks/signing-key-isolation.py"
+      - ".github/scripts/checks/release-pinned.txt"
+      - ".github/scripts/release/check-artifact-dir.sh"
+      - ".github/scripts/release/sign.py"
+      - ".github/scripts/release/sign-requirements.txt"
+      - ".github/scripts/release/verify-signing-key.py"
+      - ".github/scripts/checks/check-tooling-isolation.py"
+      - ".github/workflows/release.yml"
       - ".cargo/**"
       - "Cargo.toml"
   pull_request:
@@ -140,6 +155,21 @@ on:
       - "tests/scripts/shell/workflow_lint/reusable-workflow-lint-caller-with.test.sh"
       - "tests/scripts/shell/workflow_lint/reusable-workflow-lint-tooling-installers.test.sh"
       - "tests/scripts/shell/workflow_lint/reusable-workflow-lint-merge-group.test.sh"
+      - "tests/scripts/shell/workflow_lint/release-least-privilege.test.sh"
+      - "tests/scripts/shell/workflow_lint/release-gate.test.sh"
+      - "tests/scripts/shell/workflow_lint/release-wiring.test.sh"
+      - "tests/scripts/shell/workflow_lint/release_wiring/wiring.py"
+      - "tests/scripts/shell/workflow_lint/release_wiring/mutants.py"
+      - ".github/scripts/release/check-tag.sh"
+      - ".github/scripts/release/verify-provenance.sh"
+      - ".github/scripts/checks/signing-key-isolation.py"
+      - ".github/scripts/checks/release-pinned.txt"
+      - ".github/scripts/release/check-artifact-dir.sh"
+      - ".github/scripts/release/sign.py"
+      - ".github/scripts/release/sign-requirements.txt"
+      - ".github/scripts/release/verify-signing-key.py"
+      - ".github/scripts/checks/check-tooling-isolation.py"
+      - ".github/workflows/release.yml"
       - "tests/scripts/shell/install/install-help.test.sh"
       - "tests/scripts/shell/install/install-rollback-cleans-staged.test.sh"
       - "tests/scripts/shell/install/install-mode-follows-symlink.test.sh"
@@ -208,7 +238,7 @@ jobs:
       # never produces the sentinel, and this check names the file that
       # did not. Without this check, a truncated test and a passing one
       # look the same to the chain: exit 0, no count line.
-      test-command: bash ./tests/scripts/shell/suite_guards/check-suite-completeness.test.sh ./tests/scripts/shell/suite_guards/locale-pinned.test.sh ./tests/scripts/shell/suite_guards/ci-runs-every-test.test.sh ./tests/scripts/shell/hardening/check-hardening.test.sh ./tests/scripts/shell/hardening/check-hardening-macos.test.sh ./tests/scripts/shell/workflow_behaviour/branch-health-conclusion.test.sh ./tests/scripts/shell/workflow_behaviour/reusable-schedule-freshness.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-tooling-isolation.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-tooling-installers.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-caller-if.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-caller-with.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-pin-length.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-merge-group.test.sh ./tests/scripts/shell/install/install-rollback-cleans-staged.test.sh ./tests/scripts/shell/install/install-mode-follows-symlink.test.sh ./tests/scripts/shell/install/install-help.test.sh ./tests/scripts/shell/install/install-python-isolation.test.sh ./tests/scripts/shell/install/install-apt-keyring-package.test.sh ./tests/scripts/shell/workflow_behaviour/podman-watch.test.sh ./tests/scripts/shell/workflow_behaviour/dependabot-security-watch.test.sh ./tests/scripts/shell/suite_guards/check-planning-words.test.sh ./tests/scripts/shell/suite_guards/check-banned-vocabulary.test.sh ./tests/scripts/shell/suite_guards/check-private-document-references.test.sh ./tests/scripts/shell/suite_guards/folder-limit.test.sh ./tests/scripts/shell/fedora_image/fetch-fedora-image.test.sh ./tests/scripts/shell/fedora_image/fetch-fedora-image-records.test.sh ./tests/scripts/shell/bench/bench-leftovers.test.sh ./tests/scripts/shell/workflow_behaviour/is-version-bump.test.sh ./tests/scripts/shell/workflow_behaviour/podman-lane-paths.test.sh ./tests/scripts/shell/workflow_behaviour/binary-budget-paths.test.sh ./tests/scripts/shell/workflow_behaviour/rust-build-inputs.test.sh ./tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh ./tests/scripts/shell/workflow_behaviour/debian-ci-inputs.test.sh ./tests/scripts/shell/install/install-no-downgrade.test.sh ./tests/scripts/shell/workflow_behaviour/pin-watch-tools.test.sh ./tests/scripts/shell/install/install-checksum-mismatch.test.sh ./tests/scripts/shell/install/install-download-hostile.test.sh ./tests/scripts/shell/install/install-linked-destination.test.sh ./tests/scripts/shell/workflow_behaviour/workflow-lint-inputs.test.sh
+      test-command: bash ./tests/scripts/shell/suite_guards/check-suite-completeness.test.sh ./tests/scripts/shell/suite_guards/locale-pinned.test.sh ./tests/scripts/shell/suite_guards/ci-runs-every-test.test.sh ./tests/scripts/shell/hardening/check-hardening.test.sh ./tests/scripts/shell/hardening/check-hardening-macos.test.sh ./tests/scripts/shell/workflow_behaviour/branch-health-conclusion.test.sh ./tests/scripts/shell/workflow_behaviour/reusable-schedule-freshness.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-tooling-isolation.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-tooling-installers.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-caller-if.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-caller-with.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-pin-length.test.sh ./tests/scripts/shell/workflow_lint/reusable-workflow-lint-merge-group.test.sh ./tests/scripts/shell/install/install-rollback-cleans-staged.test.sh ./tests/scripts/shell/install/install-mode-follows-symlink.test.sh ./tests/scripts/shell/install/install-help.test.sh ./tests/scripts/shell/install/install-python-isolation.test.sh ./tests/scripts/shell/install/install-apt-keyring-package.test.sh ./tests/scripts/shell/workflow_behaviour/podman-watch.test.sh ./tests/scripts/shell/workflow_behaviour/dependabot-security-watch.test.sh ./tests/scripts/shell/suite_guards/check-planning-words.test.sh ./tests/scripts/shell/suite_guards/check-banned-vocabulary.test.sh ./tests/scripts/shell/suite_guards/check-private-document-references.test.sh ./tests/scripts/shell/suite_guards/folder-limit.test.sh ./tests/scripts/shell/fedora_image/fetch-fedora-image.test.sh ./tests/scripts/shell/fedora_image/fetch-fedora-image-records.test.sh ./tests/scripts/shell/bench/bench-leftovers.test.sh ./tests/scripts/shell/workflow_behaviour/is-version-bump.test.sh ./tests/scripts/shell/workflow_behaviour/podman-lane-paths.test.sh ./tests/scripts/shell/workflow_behaviour/binary-budget-paths.test.sh ./tests/scripts/shell/workflow_behaviour/rust-build-inputs.test.sh ./tests/scripts/shell/workflow_behaviour/rust-ci-inputs.test.sh ./tests/scripts/shell/workflow_behaviour/debian-ci-inputs.test.sh ./tests/scripts/shell/install/install-no-downgrade.test.sh ./tests/scripts/shell/workflow_behaviour/pin-watch-tools.test.sh ./tests/scripts/shell/install/install-checksum-mismatch.test.sh ./tests/scripts/shell/install/install-download-hostile.test.sh ./tests/scripts/shell/install/install-linked-destination.test.sh ./tests/scripts/shell/workflow_behaviour/workflow-lint-inputs.test.sh ./tests/scripts/shell/workflow_lint/release-least-privilege.test.sh ./tests/scripts/shell/workflow_lint/release-gate.test.sh ./tests/scripts/shell/workflow_lint/release-wiring.test.sh
       # branch-health-conclusion.test.sh pipes API JSON into the
       # conclusion script and asserts exit codes. jq is the tool that
       # turns the response into shell-readable lines, and it is not in
