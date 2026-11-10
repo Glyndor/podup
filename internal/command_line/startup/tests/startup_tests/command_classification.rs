@@ -110,6 +110,7 @@ fn is_label_only_classifies_every_variant() {
 				format: ConfigFormat::Yaml,
 				services: false,
 				volumes: false,
+				networks: false,
 				images: false,
 				profiles: false,
 				hash: None,

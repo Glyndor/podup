@@ -83,6 +83,11 @@ fn hostile_compose() -> podup::compose::types::ComposeFile {
 	web.image = Some(format!("{HOSTILE}:latest"));
 	web.cap_add = vec![HOSTILE.to_string()];
 	web.profiles = vec![HOSTILE.to_string()];
+	// The hostile volume has to be mounted: `config --volumes` lists only
+	// the volumes a service uses.
+	web.volumes = vec![podup::compose::types::VolumeMount::Short(format!(
+		"{HOSTILE}:/data"
+	))];
 	// The named volume reaches the `config --volumes` projection
 	// directly. Volumes are not validated against control characters;
 	// a hostile env interpolation would land here.

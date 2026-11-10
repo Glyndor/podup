@@ -14,13 +14,16 @@ use podup::resolve_network_name;
 
 /// Output selectors for `config`, mirroring the mutually-exclusive `docker
 /// compose config` list modes. The first set selector wins, in the order
-/// services, volumes, images, profiles, hash.
+/// services, volumes, networks, images, profiles, hash.
 #[derive(Default)]
 pub(crate) struct ConfigOutput {
 	/// `--services`: print the service names.
 	pub services: bool,
-	/// `--volumes`: print the named-volume keys.
+	/// `--volumes`: print the keys of the named volumes a service mounts.
 	pub volumes: bool,
+	/// `--networks`: print the keys of the networks a service attaches to,
+	/// `default` included when a service uses the implicit one.
+	pub networks: bool,
 	/// `--images`: print each service's image reference.
 	pub images: bool,
 	/// `--profiles`: print the declared profile names.
@@ -100,7 +103,22 @@ pub(crate) fn render_config_to<W: Write>(
 		return Ok(());
 	}
 	if out.volumes {
-		for name in file.volumes.keys() {
+		// Only the volumes a service mounts: one nothing refers to is dropped.
+		let used: std::collections::HashSet<String> = all_services(file)
+			.flat_map(podup::service_named_volume_refs)
+			.collect();
+		for name in file.volumes.keys().filter(|k| used.contains(*k)) {
+			writeln!(w, "{}", podup::ui::sanitize_cell(name))?;
+		}
+		return Ok(());
+	}
+	if out.networks {
+		// Only the networks a service attaches to, the implicit `default`
+		// included; a declared network nothing uses is dropped.
+		let used: std::collections::HashSet<String> = all_services(file)
+			.flat_map(|svc| svc.networks.names())
+			.collect();
+		for name in file.networks.keys().filter(|k| used.contains(*k)) {
 			writeln!(w, "{}", podup::ui::sanitize_cell(name))?;
 		}
 		return Ok(());
@@ -190,6 +208,15 @@ pub(crate) fn render_config_to<W: Write>(
 	};
 	writeln!(w, "{rendered}")?;
 	Ok(())
+}
+
+/// Every service and every job's service, the set a reference can come from.
+fn all_services(
+	file: &podup::compose::types::ComposeFile,
+) -> impl Iterator<Item = &podup::compose::types::Service> {
+	file.services
+		.values()
+		.chain(file.jobs.values().map(|job| &job.service))
 }
 
 /// SHA-256 of a service's resolved configuration, hex-encoded. Used by

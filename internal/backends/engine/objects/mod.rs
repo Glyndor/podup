@@ -4,4 +4,4 @@ pub(in crate::backends::engine) mod network;
 pub(in crate::backends::engine) mod ownership;
 pub(in crate::backends::engine) mod secrets;
 pub(in crate::backends::engine) mod volume;
-pub(in crate::backends::engine) mod volume_mounts;
+pub(crate) mod volume_mounts;
