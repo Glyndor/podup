@@ -46,14 +46,7 @@ fn a_dangling_link_is_an_error() {
 fn a_link_to_a_fifo_with_no_writer_is_refused_without_waiting() {
 	let dir = tempfile::tempdir().unwrap();
 	let fifo = dir.path().join("fifo");
-	rustix::fs::mknodat(
-		rustix::fs::CWD,
-		&fifo,
-		rustix::fs::FileType::Fifo,
-		rustix::fs::Mode::from_raw_mode(0o600),
-		0,
-	)
-	.unwrap();
+	mkfifo(&fifo);
 	let link = dir.path().join("link");
 	std::os::unix::fs::symlink(&fifo, &link).unwrap();
 
@@ -70,15 +63,14 @@ fn a_link_to_a_fifo_with_no_writer_is_refused_without_waiting() {
 	assert_eq!(answer.expect("the open waited for a writer"), "other");
 }
 
+/// Plant a FIFO with the `mkfifo` tool: rustix has no `mknodat` on macOS, std has
+/// no `mkfifo`, and the crate forbids `unsafe`.
 fn mkfifo(path: &std::path::Path) {
-	rustix::fs::mknodat(
-		rustix::fs::CWD,
-		path,
-		rustix::fs::FileType::Fifo,
-		rustix::fs::Mode::from_raw_mode(0o600),
-		0,
-	)
-	.unwrap();
+	assert!(std::process::Command::new("mkfifo")
+		.arg(path)
+		.status()
+		.expect("mkfifo")
+		.success());
 }
 
 #[test]
