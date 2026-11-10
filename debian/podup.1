@@ -257,8 +257,9 @@ and Windows.
 Pull images for all services. \fB\-q\fR/\fB\-\-quiet\fR suppresses progress
 output, \fB\-\-policy\fR \fIpolicy\fR (always, missing, never, newer, build)
 overrides each service's \fBpull_policy\fR, \fB\-\-ignore\-pull\-failures\fR
-continues after a failure and \fB\-\-include\-deps\fR also pulls the
-\fBdepends_on\fR services of the named ones.
+continues after a failure, \fB\-\-include\-deps\fR also pulls the
+\fBdepends_on\fR services of the named ones and \fB\-\-ignore\-buildable\fR
+skips services that declare a \fBbuild:\fR section.
 .TP
 .B restart \fR[\fISERVICE\fR]
 Restart services, or one named service. \fB\-\-no\-deps\fR skips

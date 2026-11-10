@@ -17,6 +17,8 @@ pub struct PullOptions {
 	pub ignore_failures: bool,
 	/// Also pull each named service's transitive `depends_on`, `--include-deps`.
 	pub include_deps: bool,
+	/// Skip services that declare a `build:` section, `--ignore-buildable`.
+	pub ignore_buildable: bool,
 }
 
 impl PullOptions {
@@ -27,6 +29,7 @@ impl PullOptions {
 		Self {
 			ignore_failures,
 			include_deps,
+			ignore_buildable: false,
 		}
 	}
 
@@ -35,6 +38,14 @@ impl PullOptions {
 	#[must_use]
 	pub fn with_ignore_failures(mut self, ignore_failures: bool) -> Self {
 		self.ignore_failures = ignore_failures;
+		self
+	}
+
+	/// Skip services that declare a `build:` section, `--ignore-buildable`.
+	/// Builder-style.
+	#[must_use]
+	pub fn with_ignore_buildable(mut self, ignore_buildable: bool) -> Self {
+		self.ignore_buildable = ignore_buildable;
 		self
 	}
 }

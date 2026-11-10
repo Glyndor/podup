@@ -267,6 +267,7 @@ pub(super) async fn dispatch_rest(
 			quiet: _,
 			ignore_pull_failures,
 			include_deps,
+			ignore_buildable,
 			policy: _,
 			services,
 		} => {
@@ -275,7 +276,8 @@ pub(super) async fn dispatch_rest(
 				.pull_services_with_options(
 					file,
 					&services,
-					podup::PullOptions::new(ignore_pull_failures, include_deps),
+					podup::PullOptions::new(ignore_pull_failures, include_deps)
+						.with_ignore_buildable(ignore_buildable),
 				)
 				.await?
 		}

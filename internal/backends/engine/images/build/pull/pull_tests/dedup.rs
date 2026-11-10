@@ -103,6 +103,7 @@ async fn pull_failure_on_a_shared_image_is_still_only_pulled_once() {
 	let opts = crate::engine::PullOptions {
 		ignore_failures: true,
 		include_deps: false,
+		..Default::default()
 	};
 	e.pull_services_with_options(&file, &[], opts)
 		.await

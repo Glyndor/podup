@@ -307,6 +307,9 @@ pub(crate) enum Commands {
 		/// Also pull images for the named services' depends_on services.
 		#[arg(long)]
 		include_deps: bool,
+		/// Skip services that have a `build:` section.
+		#[arg(long)]
+		ignore_buildable: bool,
 		/// Pull policy: always, missing, never, newer, build (overrides per-service pull_policy).
 		#[arg(long, value_parser = parse_pull_policy)]
 		policy: Option<String>,

@@ -124,6 +124,7 @@ impl Engine {
 			.iter()
 			.filter(|(name, s)| {
 				s.image.is_some()
+					&& !(opts.ignore_buildable && s.build.is_some())
 					&& wanted
 						.as_ref()
 						.is_none_or(|set| set.contains(name.as_str()))
