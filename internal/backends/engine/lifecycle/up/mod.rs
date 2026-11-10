@@ -9,7 +9,8 @@ mod readiness;
 mod schedule;
 mod up_one;
 
-#[cfg(test)]
+// The fake Podman it talks to is a Unix socket server.
+#[cfg(all(test, unix))]
 mod option_tests;
 
 use std::collections::HashMap;
