@@ -259,6 +259,7 @@ pub(crate) async fn run_engine_command(
 		.with_up_overrides(pull_override, no_build, quiet_pull)
 		.with_run_overrides(crate::startup::run_overrides_for(&cli.command))
 		.with_run_env_files(cli.env_file.clone())
+		.with_run_env_from_files(crate::startup::run_env_from_files_for(&cli.command))
 		.with_run_labels(crate::startup::run_labels_for(&cli.command))
 		.with_run_no_tty(crate::startup::run_no_tty_for(&cli.command))
 		.with_renew_anon_volumes(renew_anon_volumes)

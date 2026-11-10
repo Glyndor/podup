@@ -42,6 +42,7 @@ pub(super) async fn dispatch_rest(
 			no_rm,
 			detach,
 			env_overrides,
+			env_from_file: _,
 			name,
 			service_ports,
 			user: _,

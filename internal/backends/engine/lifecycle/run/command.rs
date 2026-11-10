@@ -171,6 +171,11 @@ impl Engine {
 		} else {
 			crate::env_file::load_env_files(&env_files, &self.base_dir)?
 		};
+		// `--env-from-file` values sit above the service's `environment:` and
+		// below `-e`, so they go ahead of the `-e` entries, where a later
+		// duplicate wins.
+		let env_overrides =
+			super::environment::with_env_from_files(&self.run_env_from_files, env_overrides)?;
 		if !env_file_vars.is_empty() || !env_overrides.is_empty() {
 			run_service.environment = crate::compose::types::EnvVars::List(merge_run_environment(
 				env_file_vars,

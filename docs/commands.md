@@ -259,6 +259,7 @@ Run a one-off command in a new container for the service, or for a job of the sa
 | `--no-rm` | Keep the one-off container after it exits. | off |
 | `-d, --detach` | Run in the background. | off |
 | `-e, --env <KEY=VAL>` | Set an environment variable. Repeatable. | none |
+| `--env-from-file <FILE>` | Load environment variables from a `KEY=VALUE` file into the one-off container. Repeatable; later files win. A relative path is read from the working directory. Applied over the service's `environment:` and under `-e`. A missing or malformed file is an error that names it. | none |
 | `--name <NAME>` | Override the container name. | generated |
 | `-P, --service-ports` | Publish the service's declared ports. | off |
 | `-l, --label <KEY=VAL>` | Add a label to the one-off container. Repeatable. | none |

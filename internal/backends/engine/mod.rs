@@ -118,6 +118,10 @@ pub struct Engine {
 	/// to `base_dir` (the CLI passes absolute paths); empty by default. Kept off the frozen public
 	/// [`lifecycle::RunOverrides`] struct so the library API stays stable.
 	pub(crate) run_env_files: Vec<String>,
+	/// CLI `run --env-from-file FILE` paths; empty by default. Kept off the
+	/// frozen public [`lifecycle::RunOverrides`] struct so the library API
+	/// stays stable.
+	pub(crate) run_env_from_files: Vec<String>,
 	/// CLI `docker compose run -l/--label KEY=VAL` ad-hoc labels for the one-off
 	/// `run` container; empty by default. Kept off the frozen public
 	/// [`lifecycle::RunOverrides`] struct so the library API stays stable.
