@@ -33,6 +33,26 @@ pub(super) fn merge_volumes(
 	out
 }
 
+/// Merge `devices:` by **container path**, with the override winning.
+///
+/// docker compose keeps one entry per path a device appears at, so remapping a
+/// device in an override replaces the base entry instead of adding a second one
+/// at the same path. Base order is kept; a new path appends.
+pub(super) fn merge_devices(base: Vec<String>, over: Vec<String>) -> Vec<String> {
+	use crate::compose::types::service::devices::container_path;
+	let mut out = base;
+	for item in over {
+		match out
+			.iter()
+			.position(|d| container_path(d) == container_path(&item))
+		{
+			Some(i) => out[i] = item,
+			None => out.push(item),
+		}
+	}
+	out
+}
+
 /// Union two `networks:` declarations, keeping the base's attachments and adding
 /// the override's. For a network both declare, the override's per-network config
 /// wins; a bare-list entry contributes no config, so it never erases one.

@@ -18,6 +18,7 @@ use super::{
 	UlimitConfig,
 };
 
+pub(crate) mod devices;
 pub(crate) mod umask;
 
 /// A single service definition.
@@ -291,7 +292,13 @@ pub struct Service {
 
 	/// `devices:` lists host devices exposed to the container
 	/// (`host[:container[:perms]]`, perms a subset of `rwm`).
-	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	/// The long `{source, target, permissions}` spelling is read into the same
+	/// short strings.
+	#[serde(
+		default,
+		deserialize_with = "devices::deserialize",
+		skip_serializing_if = "Vec::is_empty"
+	)]
 	pub devices: Vec<String>,
 	/// `device_cgroup_rules:` lists explicit device cgroup allow/deny rules (e.g.
 	/// `c 1:3 mr`).
