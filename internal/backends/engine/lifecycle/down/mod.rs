@@ -30,7 +30,7 @@ impl Engine {
 	/// removed. Networks, the pod, volumes and internal secrets are shared with
 	/// the services left running, so a partial teardown never touches them; the
 	/// caller refuses `remove_volumes` together with a selection. A name the
-	/// file does not declare is [`ComposeError::ServiceNotFound`], raised before
+	/// file does not declare is [`crate::error::ComposeError::ServiceNotFound`], raised before
 	/// the engine is asked anything.
 	pub async fn down_selected(
 		&self,
