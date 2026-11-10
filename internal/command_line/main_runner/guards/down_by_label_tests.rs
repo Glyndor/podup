@@ -7,6 +7,7 @@ fn down() -> Commands {
 		remove_orphans: false,
 		rmi: None,
 		timeout: None,
+		services: Vec::new(),
 	}
 }
 

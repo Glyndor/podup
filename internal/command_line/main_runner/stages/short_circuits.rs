@@ -239,11 +239,20 @@ pub(crate) async fn run_down_by_label(cli: &Cli, compose_files: &[PathBuf]) -> p
 		volumes,
 		rmi,
 		timeout,
+		services,
 		..
 	} = &cli.command
 	else {
 		return Ok(());
 	};
+	// Without a compose file there is no way to tell which containers belong
+	// to the named services, and tearing down the whole project instead would
+	// remove more than was asked for.
+	if !services.is_empty() {
+		return Err(podup::ComposeError::Unsupported(
+			"naming services for `down` needs a compose file; none was found".to_string(),
+		));
+	}
 	let project = cli.project.clone().expect("checked by down_by_label_path");
 	validate_project_name(&project)?;
 	// Identity colours key on the project-stripped label, so every command

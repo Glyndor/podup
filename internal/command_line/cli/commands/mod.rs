@@ -24,8 +24,10 @@ pub(crate) enum Commands {
 	Up(UpArgs),
 	/// Stop and remove containers.
 	Down {
-		/// Also remove named volumes declared in the compose file.
-		#[arg(short = 'v', long)]
+		/// Also remove named volumes declared in the compose file. Cannot be
+		/// combined with service names: the volumes are shared with the
+		/// services that stay.
+		#[arg(short = 'v', long, conflicts_with = "services")]
 		volumes: bool,
 		/// Remove containers for services not defined in the compose file.
 		#[arg(long)]
@@ -36,6 +38,8 @@ pub(crate) enum Commands {
 		/// Seconds to wait for containers to stop before killing them.
 		#[arg(short = 't', long, allow_hyphen_values = true, value_parser = parse_timeout)]
 		timeout: Option<i32>,
+		/// Stop and remove only these services; networks and volumes stay.
+		services: Vec<String>,
 	},
 	/// Start existing stopped containers.
 	Start {

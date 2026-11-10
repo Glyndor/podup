@@ -22,6 +22,22 @@ impl Engine {
 
 	/// Stop and remove services in reverse dependency order. Optionally removes named volumes and orphaned containers.
 	pub async fn down_with_options(&self, file: &ComposeFile, remove_volumes: bool) -> Result<()> {
+		self.down_selected(file, remove_volumes, &[]).await
+	}
+
+	/// Like [`Engine::down_with_options`], limited to `services` when the slice
+	/// is not empty: only the containers of those services are stopped and
+	/// removed. Networks, the pod, volumes and internal secrets are shared with
+	/// the services left running, so a partial teardown never touches them; the
+	/// caller refuses `remove_volumes` together with a selection. A name the
+	/// file does not declare is [`ComposeError::ServiceNotFound`], raised before
+	/// the engine is asked anything.
+	pub async fn down_selected(
+		&self,
+		file: &ComposeFile,
+		remove_volumes: bool,
+		services: &[String],
+	) -> Result<()> {
 		// The containers of a job (a `run` of it, or one started for a job that
 		// depends on it) carry the project label and the job's name as their
 		// service, so they are swept like a service's: the teardown works on the
@@ -33,7 +49,17 @@ impl Engine {
 			with_jobs = crate::compose::jobs::with_jobs_as_services(file);
 			&with_jobs
 		};
+		let whole_project = services.is_empty();
+		if let Some(missing) = services.iter().find(|s| !file.services.contains_key(*s)) {
+			return Err(crate::error::ComposeError::ServiceNotFound(missing.clone()));
+		}
 		let mut levels = crate::compose::resolve_levels(file)?;
+		if !whole_project {
+			for level in &mut levels {
+				level.retain(|name| services.contains(name));
+			}
+			levels.retain(|level| !level.is_empty());
+		}
 		// Teardown inverts startup: a dependent must stop before the service it
 		// depends on, so the dependency levels `up` would walk front-to-back are
 		// walked back-to-front here (the same inversion the other lifecycle
@@ -56,7 +82,14 @@ impl Engine {
 			.flatten()
 			.cloned()
 			.collect();
-		crate::ui::progress::begin(self.down_resources(file, &live_order, remove_volumes));
+		crate::ui::progress::begin(if whole_project {
+			self.down_resources(file, &live_order, remove_volumes)
+		} else {
+			live_order
+				.iter()
+				.map(|name| (crate::ui::progress::Kind::Container, name.clone()))
+				.collect()
+		});
 
 		// Best-effort across every level/container/network/volume so one failure
 		// never leaves the rest of the teardown undone, but the first real
@@ -122,9 +155,10 @@ impl Engine {
 		// `x-podman-pod`: remove the pod (and its infra container) after the
 		// project's containers are gone and before the network sweep. `down`
 		// without the extension is unchanged.
-		if file
-			.podman_pod()
-			.map_err(crate::error::ComposeError::Unsupported)?
+		if whole_project
+			&& file
+				.podman_pod()
+				.map_err(crate::error::ComposeError::Unsupported)?
 		{
 			if let Err(e) = self.remove_pod().await {
 				// Carry on: the networks and volumes below are still this
@@ -133,7 +167,13 @@ impl Engine {
 			}
 		}
 
-		for (key, config) in &file.networks {
+		let no_networks = Default::default();
+		let networks = if whole_project {
+			&file.networks
+		} else {
+			&no_networks
+		};
+		for (key, config) in networks {
 			let external = config.as_ref().and_then(|c| c.external).unwrap_or(false);
 			if external {
 				continue;
@@ -203,11 +243,13 @@ impl Engine {
 		// This is a catch-all on top of the file-driven network loop above, and
 		// nothing else walks these networks: a listing or removal failure here
 		// is a real teardown failure, so it joins `first_err` too.
-		if let Some(e) = self.remove_project_networks_by_label().await {
-			first_err.get_or_insert(e);
+		if whole_project {
+			if let Some(e) = self.remove_project_networks_by_label().await {
+				first_err.get_or_insert(e);
+			}
 		}
 
-		if remove_volumes {
+		if remove_volumes && whole_project {
 			for (key, config) in &file.volumes {
 				let external = config.as_ref().and_then(|c| c.external).unwrap_or(false);
 				if external {
@@ -264,7 +306,11 @@ impl Engine {
 
 		// Internal native secrets are podup-owned (not user data), so remove
 		// them unconditionally, independent of `remove_volumes`.
-		let secrets = self.remove_internal_secrets(file).await;
+		let secrets = if whole_project {
+			self.remove_internal_secrets(file).await
+		} else {
+			Ok(())
+		};
 
 		// Close the board before returning, on every path: the region hides the
 		// cursor and an early `?` would leave the terminal without one.

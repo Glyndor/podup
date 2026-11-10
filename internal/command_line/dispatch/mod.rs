@@ -259,14 +259,21 @@ pub(crate) async fn dispatch(
 			remove_orphans,
 			rmi,
 			timeout: _,
+			services,
 		} => {
 			if remove_orphans {
 				engine.remove_orphans(file).await?;
 			}
-			engine.down_with_options(file, volumes).await?;
+			engine.down_selected(file, volumes, &services).await?;
 			if let Some(scope) = rmi {
+				// With names, `--rmi` reaches only the images of those services.
+				let mut selected = file.clone();
+				if !services.is_empty() {
+					selected.services.retain(|name, _| services.contains(name));
+					selected.jobs.clear();
+				}
 				engine
-					.remove_service_images(file, scope == RmiScope::Local)
+					.remove_service_images(&selected, scope == RmiScope::Local)
 					.await?;
 			}
 		}

@@ -112,8 +112,10 @@ projects, \fB\-q\fR/\fB\-\-quiet\fR prints names only, \fB\-\-format\fR selects
 \fItable\fR or \fIjson\fR, and \fB\-\-filter\fR \fIname=NAME\fR or
 \fIstatus=running|exited\fR is repeatable. Requires no compose file.
 .TP
-.B down
-Stop and remove containers. \fB\-v\fR/\fB\-\-volumes\fR also removes named
+.B down \fR[\fISERVICE\fR...]
+Stop and remove containers. With service names only those services are removed,
+and the networks, the pod and the volumes are left alone; \fB\-v\fR cannot be
+combined with names. \fB\-v\fR/\fB\-\-volumes\fR also removes named
 volumes declared in the compose file; \fB\-\-remove\-orphans\fR also removes
 containers for services no longer in the file; \fB\-\-rmi\fR \fIall\fR|\fIlocal\fR
 also removes the service images; \fB\-t\fR/\fB\-\-timeout\fR \fISECONDS\fR is the

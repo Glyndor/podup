@@ -86,8 +86,8 @@ With `missing`, an observed local image skips redundant pulls. `always`/`newer` 
 podup up -d --build
 ```
 
-### `down`
-Stop and remove containers, networks, and (with `-v`) volumes. With `-v`, podup removes the project's named volumes and the data in them; volumes declared `external: true` are left alone (measured on 2026-09-19).
+### `down [SERVICE...]`
+Stop and remove containers, networks, and (with `-v`) volumes. With service names, only the containers of those services are stopped and removed: the networks, the pod and the volumes are shared with the services that stay, so they are left alone, `-v` is refused, and `--rmi` removes only the images of the named services. A name the file does not declare is an error raised before anything is removed, and naming services needs a compose file (`down -p NAME` by label alone refuses it). With `-v`, podup removes the project's named volumes and the data in them; volumes declared `external: true` are left alone (measured on 2026-09-19).
 
 | Flag | Description | Default |
 |---|---|---|
