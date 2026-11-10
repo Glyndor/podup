@@ -106,6 +106,10 @@ Create the containers for services without starting them. Accepts a trailing ser
 | `--no-recreate` | Leave existing containers in place. | off |
 | `--no-deps` | Do not create the `depends_on` services of the named ones. | off |
 | `--pull <POLICY>` | Pull policy before creating: `always`, `missing`, `never`, `newer`, `build`. | per service; otherwise `missing` |
+| `--no-build` | Do not build images, even for services with a `build:` section. Cannot be combined with `--build`. | off |
+| `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable; a service the file does not declare is rejected before anything is created. | from file |
+| `--remove-orphans` | Remove containers for services no longer in the file. | off |
+| `--quiet-pull` | Suppress image-pull progress output. | off |
 
 ### `start`
 Start existing stopped containers. Accepts a trailing service list. `start --wait` extends the readiness wait by the timeout given; a `depends_on: {condition: service_healthy}` wait inside an `up` is not.
