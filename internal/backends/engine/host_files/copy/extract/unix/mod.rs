@@ -186,7 +186,8 @@ fn extract_limited<R: Read>(
 			// Match tar's POSIX fallback: unrecognized entry kinds are files.
 			let mut output = parent.file(&name).map_err(ComposeError::Io)?;
 			if kind.is_gnu_sparse() {
-				sparse::copy(&mut entry, &mut output).map_err(ComposeError::Io)?;
+				sparse::copy(&mut entry, &mut output, &mut limits.sparse_bytes)
+					.map_err(ComposeError::Io)?;
 			} else {
 				copy_entry(&mut entry, &mut output)?;
 			}

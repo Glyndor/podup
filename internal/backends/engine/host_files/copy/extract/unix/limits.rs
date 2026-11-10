@@ -7,15 +7,22 @@
 /// bring out of a container.
 const MAX_ENTRIES: u64 = 1 << 20;
 
+/// The most logical bytes all the sparse entries of one archive may declare
+/// together. Each entry is bounded by itself; without this a stream of entries
+/// that each stay under that bound costs unbounded time and apparent disk size.
+pub(super) const MAX_SPARSE_BYTES: u64 = 64 * 1024 * 1024 * 1024;
+
 /// The room left for an extraction, spent as entries are met.
 pub(super) struct Limits {
 	pub(super) entries: u64,
+	pub(super) sparse_bytes: u64,
 }
 
 impl Default for Limits {
 	fn default() -> Self {
 		Self {
 			entries: MAX_ENTRIES,
+			sparse_bytes: MAX_SPARSE_BYTES,
 		}
 	}
 }
