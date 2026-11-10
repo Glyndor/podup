@@ -209,3 +209,16 @@ fn an_empty_build_scalar_emits_no_flag() {
 		"an empty isolation must not emit --isolation=; got:\n{unit}"
 	);
 }
+
+#[test]
+fn build_ssh_mapping_form_writes_one_flag_per_id_with_its_key_path() {
+	let unit = build_unit_for("ssh:\n  default:\n  mykey: /path/key");
+	assert!(
+		unit.contains("PodmanArgs=--ssh \"default\""),
+		"got:\n{unit}"
+	);
+	assert!(
+		unit.contains("PodmanArgs=--ssh \"mykey=/path/key\""),
+		"got:\n{unit}"
+	);
+}

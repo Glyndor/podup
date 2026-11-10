@@ -147,7 +147,11 @@ pub enum BuildConfig {
 		#[serde(default, skip_serializing_if = "Option::is_none")]
 		privileged: Option<bool>,
 		/// SSH agent sockets or keys exposed to the build.
-		#[serde(default, skip_serializing_if = "Vec::is_empty")]
+		#[serde(
+			default,
+			deserialize_with = "super::build_ssh::deserialize_ssh",
+			skip_serializing_if = "Vec::is_empty"
+		)]
 		ssh: Vec<String>,
 		/// Top-level secrets exposed to the build, by name or in the long form.
 		#[serde(default, skip_serializing_if = "Vec::is_empty")]

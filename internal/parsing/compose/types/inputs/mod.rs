@@ -3,5 +3,6 @@
 //! volume, secret and config mounts.
 
 pub mod build;
+mod build_ssh;
 pub mod env;
 pub mod volume;
