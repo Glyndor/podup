@@ -15,10 +15,19 @@ pub(super) fn merge_volumes(
 	over: Vec<crate::compose::types::VolumeMount>,
 ) -> Vec<crate::compose::types::VolumeMount> {
 	let mut out = base;
+	// The first position of each target, so a long list is not rescanned for
+	// every entry of the other.
+	let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+	for (i, m) in out.iter().enumerate() {
+		at.entry(m.target().to_string()).or_insert(i);
+	}
 	for item in over {
-		match out.iter().position(|m| m.target() == item.target()) {
-			Some(i) => out[i] = item,
-			None => out.push(item),
+		match at.get(item.target()) {
+			Some(&i) => out[i] = item,
+			None => {
+				at.insert(item.target().to_string(), out.len());
+				out.push(item);
+			}
 		}
 	}
 	out

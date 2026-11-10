@@ -6,5 +6,6 @@ use crate::parse_str;
 
 mod dependencies;
 mod directives;
+mod long_lists;
 mod networks;
 mod service_fields;
