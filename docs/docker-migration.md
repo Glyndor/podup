@@ -41,7 +41,7 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 | Execution | `command`, `entrypoint`, `working_dir`, `user`, `umask`, `platform`, `tty`, `stdin_open` |
 | Environment | `environment`, `env_file` (dotenv format, or `format: raw`; see the note below the table), variable substitution (`${VAR:-default}`) |
 | Networking | `ports`, `expose`, `networks`, `network_mode`, `hostname`, `domainname`, `dns`, `dns_opt`, `dns_search`, `extra_hosts` |
-| Volumes | `volumes` (bind, named, tmpfs, npipe), `tmpfs`, `volumes_from` |
+| Volumes | `volumes` (bind, named, tmpfs, npipe; a long-form bind with `create_host_path: false` fails `up` naming the service and the missing path instead of creating it), `tmpfs`, `volumes_from` |
 | Secrets / configs | `secrets`, `configs` (file, inline content, environment source, and `external: true` Podman-native secrets) |
 | Dependencies | `depends_on` (with `condition:` set to `service_started`, `service_healthy` or `service_completed_successfully`) |
 | Health checks | `healthcheck` (test, interval, timeout, retries, start_period, disable) |
@@ -388,7 +388,7 @@ These modeled fields parse but have no effect. The examples are not exhaustive; 
 
 `build.privileged`, `build.entitlements`, `build.provenance` and `build.sbom` have no `podman build` equivalent: the live build ignores them and the Quadlet export reports them. `build.no_cache_filter` is ignored too. It cannot filter the cache per stage because libpod exposes only the all-or-nothing `nocache` parameter.
 
-`build.ssh` is honored by the Quadlet export, which runs `podman build` directly (`PodmanArgs=--ssh`); the live build cannot forward it over the libpod build API and ignores it. `build.ulimits` is honored by both.
+`build.ssh` is accepted as a list (`[default, mykey=/path/key]`) or a mapping (`{default: , mykey: /path/key}`), both read as `id[=path]` entries, and is honored by the Quadlet export, which runs `podman build` directly (`PodmanArgs=--ssh`); the live build cannot forward it over the libpod build API and ignores it. `build.ulimits` is honored by both.
 
 `build.isolation` names a container isolation technology (`default`, `process`, `hyperv`), which `podman build` refuses, so the Quadlet export writes `PodmanArgs=--isolation` only for the buildah isolation types (`oci`, `rootless`, `chroot`) and reports any other value; the live build ignores the field.
 

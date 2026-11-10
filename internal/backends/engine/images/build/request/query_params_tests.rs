@@ -294,4 +294,21 @@ mod tests {
 			Some("basectx=image:proj/base:1")
 		);
 	}
+
+	/// `build.network: none` is a network mode like any other: it reaches the
+	/// build query as written, so the build runs with no network.
+	#[tokio::test]
+	async fn build_network_none_reaches_the_build_query_as_written() {
+		let (_dir, fake, engine) = start_capture("proj");
+
+		let query = build_query(
+			&engine,
+			&fake,
+			"services:\n  app:\n    image: proj/img:1\n    build:\n      context: .\n      \
+			 network: none\n",
+		)
+		.await;
+
+		assert_eq!(param(&query, "networkmode=").as_deref(), Some("none"));
+	}
 }

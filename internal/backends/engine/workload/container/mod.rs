@@ -38,7 +38,7 @@ use crate::engine::container_config::{
 	build_restart_policy, build_ulimits,
 };
 use crate::engine::network::{resolve_network_mode, resolve_service_namespace};
-use crate::engine::volume_mounts::build_mounts_all;
+use crate::engine::volume_mounts::{build_mounts_all, ensure_required_bind_sources};
 use crate::engine::Engine;
 use fields::{build_blkio_config, warn_swarm_only_deploy};
 // Re-exported at the container root so `crate::engine::container::*` is a
@@ -127,6 +127,7 @@ impl Engine {
 		// owns are created up front by `create_project_secrets`; here we only build
 		// the references and preflight external ones for existence.
 		let native_secrets = self.build_native_secrets(service, file).await?;
+		ensure_required_bind_sources(service_name, service, &self.base_dir)?;
 		let (mut mounts, mut named_volumes) = build_mounts_all(service, &self.base_dir);
 		// Resolve relative bind sources against the project base directory (and
 		// expand a leading `~`) so they don't depend on Podman's working
