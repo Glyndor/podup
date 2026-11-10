@@ -79,6 +79,10 @@ name = "build_contract"
 path = "tests/cli/output/build_contract.rs"
 
 [[test]]
+name = "closed_pipe"
+path = "tests/cli/output/closed_pipe.rs"
+
+[[test]]
 name = "cli_aliases"
 path = "tests/cli/surface/cli_aliases.rs"
 
@@ -129,6 +133,10 @@ path = "tests/cli/warnings/port_warning_scope.rs"
 [[test]]
 name = "project_name_safety"
 path = "tests/cli/surface/project_name_safety.rs"
+
+[[test]]
+name = "printed_names_round_trip"
+path = "tests/cli/surface/printed_names_round_trip.rs"
 
 [[test]]
 name = "recreate_vocabulary"
@@ -217,6 +225,10 @@ path = "tests/hostile/input/parsing/hostile_include_extends_cycle.rs"
 [[test]]
 name = "hostile_filesystem_paths"
 path = "tests/hostile/input/host_files/hostile_filesystem_paths.rs"
+
+[[test]]
+name = "hostile_non_utf8_paths"
+path = "tests/hostile/input/host_files/hostile_non_utf8_paths.rs"
 
 [[test]]
 name = "hostile_podman"
@@ -401,6 +413,14 @@ path = "tests/cli/environment/env_resolution.rs"
 [[test]]
 name = "up_selection"
 path = "tests/cli/up/up_selection.rs"
+
+[[test]]
+name = "unknown_service"
+path = "tests/cli/up/unknown_service.rs"
+
+[[test]]
+name = "scale_duplicate_pairs"
+path = "tests/cli/up/scale_duplicate_pairs.rs"
 
 [[test]]
 name = "quadlet_jobs"

@@ -261,6 +261,14 @@ fn render_help(rendered: &clap::builder::StyledStr, colour: bool) -> String {
 	}
 }
 
+/// The process arguments as text. `std::env::args` panics on the first argument
+/// that is not valid Unicode, which a file name on Unix may well not be, so the
+/// bytes that are not text are replaced here. These two readers only look for
+/// words (`--ansi`, subcommand names); clap reads the real bytes itself.
+fn lossy_args() -> impl Iterator<Item = String> {
+	std::env::args_os().map(|arg| arg.to_string_lossy().into_owned())
+}
+
 /// The help of the deepest subcommand the arguments actually reached.
 ///
 /// Walks the given command tree along the non-flag arguments, following aliases,
@@ -268,7 +276,7 @@ fn render_help(rendered: &clap::builder::StyledStr, colour: bool) -> String {
 /// With no subcommand at all it returns the root's help, which is what bare
 /// `podup` should print.
 fn help_for_argv(root: clap::Command) -> clap::builder::StyledStr {
-	help_for(root, std::env::args().skip(1))
+	help_for(root, lossy_args().skip(1))
 }
 
 /// The tree walk, separated from the process environment so it is testable.
@@ -338,7 +346,7 @@ pub(crate) fn parse_cli() -> Cli {
 	// Apply `--ansi` before clap renders anything: `--help` and clap's own
 	// errors are produced inside the parse call below, so a choice applied
 	// afterwards arrives too late for them.
-	if let Some(mode) = crate::cli::ansi_from_argv(std::env::args()) {
+	if let Some(mode) = crate::cli::ansi_from_argv(lossy_args()) {
 		podup::ui::set_color_choice(mode.into());
 	}
 	match Cli::try_parse() {
