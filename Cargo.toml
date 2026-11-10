@@ -419,6 +419,14 @@ name = "unknown_service"
 path = "tests/cli/up/unknown_service.rs"
 
 [[test]]
+name = "pull_ignore_buildable"
+path = "tests/cli/up/pull_ignore_buildable.rs"
+
+[[test]]
+name = "run_env_from_file"
+path = "tests/cli/up/run_env_from_file.rs"
+
+[[test]]
 name = "scale_duplicate_pairs"
 path = "tests/cli/up/scale_duplicate_pairs.rs"
 

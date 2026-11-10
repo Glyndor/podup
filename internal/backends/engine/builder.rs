@@ -49,6 +49,7 @@ impl Engine {
 			always_recreate_deps: false,
 			run_overrides: RunOverrides::default(),
 			run_env_files: Vec::new(),
+			run_env_from_files: Vec::new(),
 			run_labels: Vec::new(),
 			run_no_tty: false,
 			input: Default::default(),
@@ -79,6 +80,7 @@ impl Engine {
 			always_recreate_deps: false,
 			run_overrides: RunOverrides::default(),
 			run_env_files: Vec::new(),
+			run_env_from_files: Vec::new(),
 			run_labels: Vec::new(),
 			run_no_tty: false,
 			input: Default::default(),
@@ -159,6 +161,15 @@ impl Engine {
 	/// [`Engine::run`]. Resolved relative to the engine's base dir.
 	pub fn with_run_env_files(mut self, env_files: Vec<String>) -> Self {
 		self.run_env_files = env_files;
+		self
+	}
+
+	/// Set the CLI `run --env-from-file FILE` paths: files whose variables seed
+	/// the one-off `run` container above the service's `environment:` and below
+	/// `-e`. Builder-style; consumed by [`Engine::run`]. Relative paths resolve
+	/// against the current directory.
+	pub fn with_run_env_from_files(mut self, files: Vec<String>) -> Self {
+		self.run_env_from_files = files;
 		self
 	}
 

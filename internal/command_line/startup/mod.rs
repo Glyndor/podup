@@ -225,6 +225,16 @@ pub(crate) fn run_labels_for(command: &Commands) -> Vec<String> {
 	}
 }
 
+/// The `run --env-from-file FILE` paths, for the engine builder
+/// ([`podup::Engine::with_run_env_from_files`]). Carried on the engine for the
+/// same reason as [`run_labels_for`].
+pub(crate) fn run_env_from_files_for(command: &Commands) -> Vec<String> {
+	match command {
+		Commands::Run(RunArgs { env_from_file, .. }) => env_from_file.clone(),
+		_ => Vec::new(),
+	}
+}
+
 /// Bridge the legacy `PODUP_LIBCOD_POOL` env to the corrected
 /// `PODUP_LIBPOD_POOL` before clap parses the CLI. The new var is the one
 /// clap reads (`#[arg(env = "PODUP_LIBPOD_POOL")]` on
