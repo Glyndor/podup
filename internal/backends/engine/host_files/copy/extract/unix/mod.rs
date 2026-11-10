@@ -1,6 +1,7 @@
 //! Unix extraction keeps every filesystem operation relative to open directories.
 
 pub(super) mod directory;
+mod limits;
 mod sparse;
 
 use std::fs::File;
@@ -10,6 +11,7 @@ use std::path::{Component, Path, PathBuf};
 use rustix::fs::{self, Timespec, Timestamps};
 
 use self::directory::{Directory, ExtractionState};
+use self::limits::Limits;
 use super::destination::destination_refusal;
 use crate::error::{ComposeError, Result};
 
@@ -100,6 +102,14 @@ pub(super) fn extract<R: Read>(src: R, root: &Directory) -> Result<()> {
 
 /// Keep directories accessible until extraction and optional flattening finish.
 fn extract_pending<R: Read>(src: R, root: &Directory) -> Result<ExtractionState> {
+	extract_limited(src, root, Limits::default())
+}
+
+fn extract_limited<R: Read>(
+	src: R,
+	root: &Directory,
+	mut limits: Limits,
+) -> Result<ExtractionState> {
 	let mut archive = tar::Archive::new(src);
 	let mut state = ExtractionState::default();
 	for entry in archive.entries().map_err(ComposeError::Io)? {
@@ -111,6 +121,11 @@ fn extract_pending<R: Read>(src: R, root: &Directory) -> Result<ExtractionState>
 			|| kind.is_gnu_longlink()
 		{
 			continue;
+		}
+		if !limits.take_entry() {
+			return Err(ComposeError::Build(
+				"cp: container archive holds too many entries".into(),
+			));
 		}
 		let path = archive_path(&entry.path().map_err(ComposeError::Io)?)?;
 		if path.as_os_str().is_empty() {
@@ -171,7 +186,8 @@ fn extract_pending<R: Read>(src: R, root: &Directory) -> Result<ExtractionState>
 			// Match tar's POSIX fallback: unrecognized entry kinds are files.
 			let mut output = parent.file(&name).map_err(ComposeError::Io)?;
 			if kind.is_gnu_sparse() {
-				sparse::copy(&mut entry, &mut output).map_err(ComposeError::Io)?;
+				sparse::copy(&mut entry, &mut output, &mut limits.sparse_bytes)
+					.map_err(ComposeError::Io)?;
 			} else {
 				copy_entry(&mut entry, &mut output)?;
 			}

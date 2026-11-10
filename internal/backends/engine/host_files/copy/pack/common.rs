@@ -92,47 +92,42 @@ where
 		}
 		KindDispatch::FileOrLink => {
 			if follow_link {
-				// `metadata()` follows the symlink chain to its target, so
-				// the classification is the target's kind, not the link's.
-				let meta = std::fs::metadata(path).map_err(|e| {
+				// One open follows the symlink chain and says what is at the end
+				// of it; the handle that answered is the one a file is read
+				// through, so the kind and the bytes are those of the same file.
+				let followed = super::follow::open_following(path).map_err(|e| {
 					map_err(&format!(
 						"{} when getting metadata for {}",
 						e,
 						path.display()
 					))
 				})?;
-				let ft = meta.file_type();
-				if ft.is_file() {
-					// Open the target through the link. `File::open` follows
-					// symlinks, so the file handle and its metadata are the
-					// target's; `append_file` writes the body the handle
-					// reads. `append_path_with_name` would only follow when
-					// the builder's `follow_symlinks` flag is set, which is
-					// not guaranteed at every call site.
-					let mut file =
-						std::fs::File::open(path).map_err(|e| map_err(&e.to_string()))?;
-					let size = crate::engine::context::tar_stream::append_pinned_file(
-						tar,
-						std::path::Path::new(name),
-						&mut file,
-					)
-					.map_err(|e| map_err(&e.to_string()))?;
-					push_entry(sent, name, SentKind::File(size))?;
-				} else if ft.is_dir() {
+				match followed {
+					super::follow::Followed::File(mut file) => {
+						let size = crate::engine::context::tar_stream::append_pinned_file(
+							tar,
+							std::path::Path::new(name),
+							&mut file,
+						)
+						.map_err(|e| map_err(&e.to_string()))?;
+						push_entry(sent, name, SentKind::File(size))?;
+					}
 					// A symlink to a directory: the walker did not descend, so
 					// it is read here, links inside it included. The directory
 					// the link sits in is being read, so a link back to it is
 					// refused at the first step.
-					super::linked_dir::pack_linked_dir_entry(tar, sent, name, path, map_err)?;
-				} else {
-					// FIFO, char/block device, socket, hard link, anything
-					// else the destination cannot ask about: refuse up front,
-					// the same way `sent_entries` would refuse on the
-					// read-back side.
-					return Err(ComposeError::Build(format!(
-						"cp: source entry {} has unverified kind",
-						path.display()
-					)));
+					super::follow::Followed::Directory => {
+						super::linked_dir::pack_linked_dir_entry(tar, sent, name, path, map_err)?;
+					}
+					// FIFO, char/block device, socket, anything else the
+					// destination cannot ask about: refuse up front, the same
+					// way `sent_entries` would refuse on the read-back side.
+					super::follow::Followed::Other => {
+						return Err(ComposeError::Build(format!(
+							"cp: source entry {} has unverified kind",
+							path.display()
+						)));
+					}
 				}
 			} else {
 				// Classify without following symlinks: the entry is recorded
