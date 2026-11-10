@@ -431,6 +431,10 @@ name = "create_up_flags"
 path = "tests/cli/create/create_up_flags.rs"
 
 [[test]]
+name = "run_remove_orphans"
+path = "tests/cli/run/run_remove_orphans.rs"
+
+[[test]]
 name = "down_services"
 path = "tests/cli/down/down_services.rs"
 

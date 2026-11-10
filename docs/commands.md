@@ -274,6 +274,7 @@ Run a one-off command in a new container for the service, or for a job of the sa
 | `-i, --interactive` | Keep the container's STDIN open (`stdin_open`). Whether a live terminal is attached is decided by stdin/stdout being terminals and by `-T`, not by this flag. | off |
 | `-T, --no-TTY` (alias `--no-tty`) | Disable pseudo-TTY allocation. | off |
 | `--no-deps` | Do not start the `depends_on` services before running. | off |
+| `--remove-orphans` | Remove containers for services no longer in the file before running. A service name the file does not declare is refused before anything is removed. | off |
 
 ```bash
 podup run --rm web sh -c 'echo hello'

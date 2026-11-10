@@ -165,7 +165,8 @@ Run a one-off command in a new service container. Options: \fB\-\-rm\fR
 \fB\-u\fR/\fB\-\-user\fR, \fB\-w\fR/\fB\-\-workdir\fR, \fB\-\-entrypoint\fR,
 \fB\-v\fR/\fB\-\-volume\fR (repeatable), \fB\-p\fR/\fB\-\-publish\fR (repeatable),
 \fB\-l\fR/\fB\-\-label\fR KEY=VAL (repeatable),
-\fB\-i\fR/\fB\-\-interactive\fR, \fB\-T\fR/\fB\-\-no\-TTY\fR, \fB\-\-no\-deps\fR.
+\fB\-i\fR/\fB\-\-interactive\fR, \fB\-T\fR/\fB\-\-no\-TTY\fR, \fB\-\-no\-deps\fR,
+\fB\-\-remove\-orphans\fR (removes the containers of services no longer in the file first).
 A pseudo-TTY with live stdin is allocated when both stdin and stdout are
 terminals (\fB\-T\fR opts out, \fB\-d\fR never allocates one), so
 \fBpodup run -it app sh\fR is an interactive session on Linux, macOS and Windows.
