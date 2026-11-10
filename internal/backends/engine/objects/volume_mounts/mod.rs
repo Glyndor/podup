@@ -13,7 +13,9 @@ use crate::libpod::types::container::{Mount, NamedVolume};
 
 #[cfg(feature = "test-helpers")]
 pub(crate) mod fuzz_hook;
+mod required_source;
 mod spec;
+pub(crate) use required_source::ensure_required_bind_sources;
 use spec::{access_opts, extend_bind_opts_str, extend_volume_opts_str, parse_volume_string};
 
 /// What `ensure_bind_source` decided at the host-source path.

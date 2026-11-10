@@ -102,3 +102,36 @@ fn a_long_form_bind_on_an_existing_directory_is_left_as_it_is() {
 	build_mounts_all(&svc, dir.path());
 	assert!(existing.join("keep").exists());
 }
+
+#[test]
+fn a_required_bind_source_that_is_missing_fails_naming_service_and_path() {
+	let dir = tempfile::tempdir().unwrap();
+	let svc = svc_with_volumes(vec![long_bind("absent", bind_options(Some(false)))]);
+	let err = ensure_required_bind_sources("web", &svc, dir.path())
+		.expect_err("a missing source with create_host_path false must fail");
+	let msg = err.to_string();
+	let expected = dir.path().join("absent");
+	assert!(msg.contains("\"web\""), "service not named: {msg}");
+	assert!(
+		msg.contains(&expected.to_string_lossy().into_owned()),
+		"path not named: {msg}"
+	);
+	assert!(!expected.exists(), "the directory must not be created");
+}
+
+#[test]
+fn a_required_bind_source_that_exists_passes() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::create_dir(dir.path().join("here")).unwrap();
+	let svc = svc_with_volumes(vec![long_bind("here", bind_options(Some(false)))]);
+	assert!(ensure_required_bind_sources("web", &svc, dir.path()).is_ok());
+}
+
+#[test]
+fn a_bind_source_that_may_be_created_is_not_required_to_exist() {
+	let dir = tempfile::tempdir().unwrap();
+	for opts in [None, bind_options(None), bind_options(Some(true))] {
+		let svc = svc_with_volumes(vec![long_bind("later", opts)]);
+		assert!(ensure_required_bind_sources("web", &svc, dir.path()).is_ok());
+	}
+}

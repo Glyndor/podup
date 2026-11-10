@@ -16,6 +16,9 @@
 mod images;
 
 #[cfg(all(test, unix))]
+mod bind_required;
+
+#[cfg(all(test, unix))]
 mod cleanup_drain;
 
 #[cfg(all(test, unix))]
