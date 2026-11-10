@@ -97,6 +97,40 @@ fn explicit_project_name_wins() {
 }
 
 #[test]
+fn the_name_field_is_normalized_like_docker_compose() {
+	let dir = Path::new("/srv/myapp");
+	// Values measured with `docker compose config` (v5.7.0).
+	for (written, expected) in [
+		("MyApp_X", "myapp_x"),
+		("My.App v2", "myappv2"),
+		("  x  ", "x"),
+		("_lead", "lead"),
+		("-lead", "lead"),
+		("already-fine_1", "already-fine_1"),
+	] {
+		assert_eq!(
+			resolve_project_name(None, Some(written), dir),
+			expected,
+			"name: {written:?}"
+		);
+	}
+}
+
+#[test]
+fn a_name_field_with_nothing_usable_is_kept_so_the_check_refuses_it() {
+	let dir = Path::new("/srv/myapp");
+	for written in ["!!!", "___", "-", "ééé", "é-app", "x\u{202e}y", "p\u{430}y"] {
+		assert_eq!(resolve_project_name(None, Some(written), dir), written);
+	}
+}
+
+#[test]
+fn an_explicit_name_is_not_normalized() {
+	let name = resolve_project_name(Some("MyApp".into()), Some("x"), Path::new("/srv/a"));
+	assert_eq!(name, "MyApp", "docker compose rejects an uppercase -p");
+}
+
+#[test]
 fn compose_name_used_when_no_explicit() {
 	let name = resolve_project_name(None, Some("from-compose"), Path::new("/srv/myapp"));
 	assert_eq!(name, "from-compose");

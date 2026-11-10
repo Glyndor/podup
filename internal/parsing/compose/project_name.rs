@@ -47,7 +47,7 @@ pub fn resolve_base_dir(project_directory: Option<&Path>, file: &Path) -> PathBu
 /// Resolve the project name following the compose-spec precedence: an explicit
 /// `-p` / `COMPOSE_PROJECT_NAME` value, then the top-level `name:` field, then
 /// the sanitized basename of the project directory. Explicit values are taken
-/// verbatim; only the directory basename is sanitized.
+/// verbatim; the `name:` field and the directory basename are normalized.
 pub fn resolve_project_name(
 	explicit: Option<String>,
 	compose_name: Option<&str>,
@@ -61,7 +61,19 @@ pub fn resolve_project_name(
 		return name;
 	}
 	if let Some(name) = compose_name {
-		return name.to_string();
+		// The `name:` of the file is normalized the way docker compose does it:
+		// lowercase, anything outside `[a-z0-9_-]` dropped, leading `_` and `-`
+		// stripped (`My.App v2` is `myappv2`). A name with nothing left is kept
+		// as written so the check that follows refuses it with its own message,
+		// as docker compose refuses an empty one. An explicit `-p` is not
+		// normalized: docker compose rejects an uppercase one.
+		let kept = sanitize_project_name(name);
+		// A name with a character outside ASCII is not normalized either: docker
+		// compose drops such a character, but a look-alike letter or an invisible
+		// bidirectional control would turn into a different name without a word,
+		// so it is refused (the hostile-name tests pin this).
+		let unusable = !name.is_ascii() || !name.chars().any(|c| c.is_ascii_alphanumeric());
+		return if unusable { name.to_string() } else { kept };
 	}
 	// An empty base dir means a bare compose filename in the current directory;
 	// canonicalize `.` so the basename comes from the working directory.
