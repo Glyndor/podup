@@ -95,7 +95,7 @@ pub(super) fn print_frame(
 			serde_json::to_string(&json)
 		}
 		.map_err(|e| ComposeError::Build(format!("invalid stats frame: {e}")))?;
-		println!("{text}");
+		crate::ui::outln!("{text}")?;
 		return Ok(());
 	}
 
@@ -113,9 +113,9 @@ pub(super) fn print_frame(
 		return Ok(());
 	}
 	for line in lines {
-		println!("{line}");
+		crate::ui::outln!("{line}")?;
 	}
-	println!();
+	crate::ui::outln!()?;
 
 	Ok(())
 }

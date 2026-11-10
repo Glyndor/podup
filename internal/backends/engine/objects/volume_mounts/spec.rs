@@ -16,7 +16,7 @@ pub(super) fn parse_volume_string(s: &str) -> Option<(Option<Mount>, Option<Name
 	let opts: Vec<String> = opts_str
 		.split(',')
 		.map(|o| o.trim().to_string())
-		.filter(|o| !o.is_empty())
+		.filter(|o| !o.is_empty() && !is_consistency_hint(o))
 		.collect();
 	// A colon-less entry (`/data`, `cache`) is a single in-container target, not
 	// a `src:dst` pair: per the compose-spec it provisions an anonymous volume at
@@ -58,6 +58,14 @@ pub(super) fn parse_volume_string(s: &str) -> Option<(Option<Mount>, Option<Name
 			}),
 		))
 	}
+}
+
+/// Whether a short-form option is one of the consistency hints `cached`,
+/// `delegated` and `consistent`. They tune file sharing on macOS and Windows and
+/// mean nothing on Linux, where Docker accepts and discards them; handed to
+/// Podman they fail the container with `unknown mount option`.
+fn is_consistency_hint(opt: &str) -> bool {
+	matches!(opt, "cached" | "delegated" | "consistent")
 }
 
 /// Whether `s` begins with a Windows drive-letter prefix (e.g. `C:`), so the

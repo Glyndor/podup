@@ -21,7 +21,7 @@ use crate::engine::Engine;
 impl Engine {
 	/// The environment a service's container will run with: its own
 	/// `environment:` entries, the values its `env_file:` files carry, and the
-	/// host's value for every bare passthrough key.
+	/// project environment's value for every bare passthrough key.
 	///
 	/// Resolved once per service and then shared by the create payload and the
 	/// config hash, so the two cannot describe different snapshots of the same
@@ -30,7 +30,7 @@ impl Engine {
 		&self,
 		service: &Service,
 	) -> Result<std::collections::BTreeMap<String, String>> {
-		effective_env(service, &self.base_dir)
+		effective_env(service, &self.base_dir, &self.run_env_files)
 	}
 
 	/// Resolve a service's named-volume reference to the actual volume name
@@ -151,7 +151,7 @@ impl Engine {
 	/// the per-device OCI nodes (with the cgroup rule split off), the
 	/// CDI device names, and the structured `device_cgroup_rules:` entries
 	/// (malformed entries are warned and dropped).
-	pub(super) fn compute_devices_and_rules(
+	pub(super) async fn compute_devices_and_rules(
 		&self,
 		service: &Service,
 	) -> (Vec<LinuxDevice>, Vec<LinuxDeviceCgroup>) {
@@ -167,6 +167,13 @@ impl Engine {
 				device_cgroup_rule.push(rule);
 			}
 			devices.push(parsed.device);
+		}
+		// Rootless Podman refuses any cgroup rule, and there is no device
+		// cgroup to restrict there, so the derived rules are only sent to a
+		// daemon that can apply them.
+		if !device_cgroup_rule.is_empty() && self.daemon_is_rootless().await {
+			tracing::debug!("device permissions are not applied under rootless Podman");
+			device_cgroup_rule.clear();
 		}
 		// CDI device names ride in the same array; Podman pulls them out by path.
 		devices.extend(cdi_devices(service).into_iter().map(cdi_device));

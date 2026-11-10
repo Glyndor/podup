@@ -54,14 +54,14 @@ impl Engine {
 		match self.list_project_secret_names().await {
 			Ok(owned) => {
 				// Ownership is already established by the label on each entry, so
-				// these deletes are not re-inspected. The window between the list
-				// and the last delete is wider than the old per-secret one; `down`
+				// these deletes are not re-inspected. They go by the ID the list
+				// reported, so a secret that took the name inside the window
+				// between the list and the delete is not the one removed; `down`
 				// is best-effort here either way (a delete failure is logged, not
-				// fatal), and a secret that changed hands inside it would have been
-				// created by podup moments earlier.
+				// fatal).
 				let mut removed = Vec::with_capacity(owned.len());
-				for name in owned {
-					if self.delete_listed_secret(&name, &mut first_err).await {
+				for (key, name) in owned {
+					if self.delete_listed_secret(&key, &name, &mut first_err).await {
 						removed.push(name);
 					}
 				}
@@ -113,8 +113,10 @@ impl Engine {
 		}
 	}
 
-	/// Names of all native secrets labelled `podup.project=<proj>`, the secrets
-	/// podup created for this project. libpod's `/secrets/json` rejects a `label`
+	/// The `(key, name)` of every native secret labelled `podup.project=<proj>`,
+	/// the secrets podup created for this project. `key` is what to remove the
+	/// secret by: its ID, which belongs to the secret that carried the label,
+	/// where the name could by then belong to another one. libpod's `/secrets/json` rejects a `label`
 	/// filter (HTTP 500 `invalid filter "label"`), so the full list is fetched and
 	/// filtered client-side by the `podup.project` label.
 	///
@@ -125,7 +127,7 @@ impl Engine {
 	/// inspecting each compose-named secret instead.
 	async fn list_project_secret_names(
 		&self,
-	) -> std::result::Result<Vec<String>, crate::libpod::PodmanError> {
+	) -> std::result::Result<Vec<(String, String)>, crate::libpod::PodmanError> {
 		let path = format!("{API_PREFIX}/secrets/json");
 		match self.client.get_json::<Vec<serde_json::Value>>(&path).await {
 			Ok(list) => Ok(list
@@ -138,9 +140,8 @@ impl Engine {
 						.and_then(|v| v.as_str())
 						== Some(self.project.as_str());
 					if owned {
-						spec.get("Name")
-							.and_then(|n| n.as_str())
-							.map(str::to_string)
+						let name = spec.get("Name").and_then(|n| n.as_str())?;
+						Some((removal_key(s, name), name.to_string()))
 					} else {
 						None
 					}
@@ -159,17 +160,32 @@ impl Engine {
 	/// by [`Self::list_project_secret_names`], so it carries no inspect of its
 	/// own. Kept separate from [`Self::delete_secret`] rather than adding a flag,
 	/// so that a call site can never accidentally skip a check it was supposed to
-	/// make: this one is only reachable from a name the list vouched for.
+	/// make: this one is only reachable from a secret the list vouched for.
 	///
-	/// Returns `true` when the secret was actually removed (or was already
-	/// absent; a 404 still counts as teardown success). The caller collects
-	/// the names for the summary log line.
-	async fn delete_listed_secret(&self, name: &str, first_err: &mut Option<ComposeError>) -> bool {
-		let path = format!("{API_PREFIX}/secrets/{}", urlencoded(name));
-		match self.client.delete_ok(&path).await {
-			Ok(()) => {
+	/// `key` is the ID the list reported, not the name: a name that was handed
+	/// to another secret after the list answers 404 here and is left alone.
+	///
+	/// Returns `true` when the secret was actually removed. A 404 is not a
+	/// failure of the teardown, but by ID it no longer means "the name is free":
+	/// the name may now belong to another secret, so it is not reported as
+	/// removed. The caller collects the names for the summary log line.
+	async fn delete_listed_secret(
+		&self,
+		key: &str,
+		name: &str,
+		first_err: &mut Option<ComposeError>,
+	) -> bool {
+		let path = format!("{API_PREFIX}/secrets/{}", urlencoded(key));
+		match self.client.delete_existed(&path).await {
+			Ok(true) => {
 				tracing::info!("removed secret {name}");
 				true
+			}
+			Ok(false) => {
+				tracing::debug!(
+					"secret {name} was already gone, or its name now belongs to another"
+				);
+				false
 			}
 			Err(e) => {
 				tracing::warn!("could not remove secret {name}: {e}");
@@ -189,7 +205,7 @@ impl Engine {
 	/// caller should not count it as teardown.
 	async fn delete_secret(&self, name: &str, first_err: &mut Option<ComposeError>) -> bool {
 		let inspect = format!("{API_PREFIX}/secrets/{}/json", urlencoded(name));
-		match self.client.get_json::<serde_json::Value>(&inspect).await {
+		let key = match self.client.get_json::<serde_json::Value>(&inspect).await {
 			Ok(info) => {
 				let owned = info
 					.get("Spec")
@@ -205,6 +221,7 @@ impl Engine {
 					);
 					return false;
 				}
+				removal_key(&info, name)
 			}
 			Err(e) if e.is_status(404) => return false,
 			Err(e) => {
@@ -212,12 +229,18 @@ impl Engine {
 				first_err.get_or_insert(ComposeError::Podman(e));
 				return false;
 			}
-		}
-		let path = format!("{API_PREFIX}/secrets/{}", urlencoded(name));
-		match self.client.delete_ok(&path).await {
-			Ok(()) => {
+		};
+		let path = format!("{API_PREFIX}/secrets/{}", urlencoded(&key));
+		match self.client.delete_existed(&path).await {
+			Ok(true) => {
 				tracing::info!("removed secret {name}");
 				true
+			}
+			Ok(false) => {
+				tracing::debug!(
+					"secret {name} was already gone, or its name now belongs to another"
+				);
+				false
 			}
 			Err(e) => {
 				tracing::warn!("could not remove secret {name}: {e}");
@@ -243,6 +266,18 @@ fn log_removed_secrets(project: &str, removed: &[String]) {
 		removed.len(),
 		removed.join(", ")
 	);
+}
+
+/// What to remove a secret by once it has been checked: the ID in its
+/// inspect or list entry, so the removal reaches that secret and not whatever
+/// holds the name by then. An entry with no ID is removed by name, as before.
+pub(super) fn removal_key(entry: &serde_json::Value, name: &str) -> String {
+	entry
+		.get("ID")
+		.and_then(|id| id.as_str())
+		.filter(|id| !id.is_empty())
+		.unwrap_or(name)
+		.to_string()
 }
 
 #[cfg(test)]

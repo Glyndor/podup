@@ -15,8 +15,37 @@ pub(super) fn merge_volumes(
 	over: Vec<crate::compose::types::VolumeMount>,
 ) -> Vec<crate::compose::types::VolumeMount> {
 	let mut out = base;
+	// The first position of each target, so a long list is not rescanned for
+	// every entry of the other.
+	let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+	for (i, m) in out.iter().enumerate() {
+		at.entry(m.target().to_string()).or_insert(i);
+	}
 	for item in over {
-		match out.iter().position(|m| m.target() == item.target()) {
+		match at.get(item.target()) {
+			Some(&i) => out[i] = item,
+			None => {
+				at.insert(item.target().to_string(), out.len());
+				out.push(item);
+			}
+		}
+	}
+	out
+}
+
+/// Merge `devices:` by **container path**, with the override winning.
+///
+/// docker compose keeps one entry per path a device appears at, so remapping a
+/// device in an override replaces the base entry instead of adding a second one
+/// at the same path. Base order is kept; a new path appends.
+pub(super) fn merge_devices(base: Vec<String>, over: Vec<String>) -> Vec<String> {
+	use crate::compose::types::service::devices::container_path;
+	let mut out = base;
+	for item in over {
+		match out
+			.iter()
+			.position(|d| container_path(d) == container_path(&item))
+		{
 			Some(i) => out[i] = item,
 			None => out.push(item),
 		}

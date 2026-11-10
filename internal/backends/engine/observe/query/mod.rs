@@ -10,6 +10,7 @@ mod listing;
 mod logs;
 mod options;
 mod session;
+mod utf8;
 
 use listing::inspect;
 use listing::ps;

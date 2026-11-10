@@ -13,8 +13,16 @@
 /// used for the optional default `.env`: it never fails, so an unterminated
 /// quoted value degrades to consuming the rest of the file (historical
 /// behaviour) rather than erroring.
+#[cfg(any(test, feature = "test-helpers"))]
 pub fn parse(content: &str) -> Vec<(String, String)> {
 	// `strict = false` can never produce an error.
+	let marked = parse_inner(content, false).unwrap_or_default();
+	marked.into_iter().map(|(k, v, _)| (k, v)).collect()
+}
+
+/// Like [`parse`], with the third element of [`parse_strict_marked`]: `true`
+/// for a value that must not be interpolated. Lenient like [`parse`].
+pub fn parse_marked(content: &str) -> Vec<(String, String, bool)> {
 	parse_inner(content, false).unwrap_or_default()
 }
 
@@ -24,11 +32,63 @@ pub fn parse(content: &str) -> Vec<(String, String)> {
 /// where a typo'd or truncated file must fail loudly rather than silently drop
 /// variables, matching docker compose, which hard-errors on an unterminated
 /// quoted value.
+#[cfg(any(test, feature = "test-helpers"))]
 pub fn parse_strict(content: &str) -> crate::error::Result<Vec<(String, String)>> {
+	let marked = parse_inner(content, true)?;
+	Ok(marked.into_iter().map(|(k, v, _)| (k, v)).collect())
+}
+
+/// Like [`parse_strict`], with a third element per pair: `true` when the value
+/// is literal and must not be interpolated (it was single-quoted, or it is a
+/// bare key passed through from the host). Unquoted and double-quoted values
+/// are `false`, which is where the Compose Specification applies interpolation.
+pub fn parse_strict_marked(content: &str) -> crate::error::Result<Vec<(String, String, bool)>> {
 	parse_inner(content, true)
 }
 
-fn parse_inner(content: &str, strict: bool) -> crate::error::Result<Vec<(String, String)>> {
+/// Parse `content` in the `raw` format of an `env_file:` entry: one `KEY=value`
+/// per line with the value exactly as written, quotes, `$` signs, spaces and a
+/// trailing `# comment` included, and no interpolation (the Compose
+/// Specification: "without any attempt from Compose to parse the value").
+/// Blank lines and lines that start with `#` are skipped; a line without `=` is a
+/// bare key that passes through from the host if it is set there, as in dotenv.
+/// A key that contains whitespace (an `export KEY=value` line, say) is an error,
+/// which is what Docker Compose does.
+pub fn parse_raw(content: &str) -> crate::error::Result<Vec<(String, String)>> {
+	let content = content.strip_prefix('\u{feff}').unwrap_or(content);
+	let mut out = Vec::new();
+	for line in content.lines() {
+		if line.trim().is_empty() || line.trim_start().starts_with('#') {
+			continue;
+		}
+		let Some((key, value)) = line.split_once('=') else {
+			let key = line.trim();
+			if let Ok(val) = std::env::var(key) {
+				out.push((key.to_string(), val));
+			}
+			continue;
+		};
+		// Leading blanks are dropped; a key with none left is an error, and so is
+		// one with whitespace anywhere after that (`KEY = v`), as in Docker Compose.
+		let key = key.trim_start();
+		if key.is_empty() {
+			return Err(crate::error::ComposeError::EnvFile(format!(
+				"no variable name on line '{}'",
+				crate::error::sanitize_name(line)
+			)));
+		}
+		if key.contains(char::is_whitespace) {
+			return Err(crate::error::ComposeError::EnvFile(format!(
+				"variable '{}' contains whitespace",
+				crate::error::sanitize_name(key)
+			)));
+		}
+		out.push((key.to_string(), value.to_string()));
+	}
+	Ok(out)
+}
+
+fn parse_inner(content: &str, strict: bool) -> crate::error::Result<Vec<(String, String, bool)>> {
 	// Strip a leading UTF-8 BOM so the first key is not captured as
 	// `\u{feff}KEY` (which would silently lose that variable). Matches
 	// docker/godotenv, which drop a leading BOM before parsing.
@@ -54,7 +114,7 @@ fn parse_inner(content: &str, strict: bool) -> crate::error::Result<Vec<(String,
 			let key = line.trim();
 			if !key.is_empty() {
 				if let Ok(val) = std::env::var(key) {
-					out.push((key.to_string(), val));
+					out.push((key.to_string(), val, true));
 				}
 			}
 			continue;
@@ -64,8 +124,10 @@ fn parse_inner(content: &str, strict: bool) -> crate::error::Result<Vec<(String,
 		if key.is_empty() {
 			continue;
 		}
-		let value = parse_value(line[eq + 1..].trim_start(), &mut lines, key, strict)?;
-		out.push((key.to_string(), value));
+		let rest = line[eq + 1..].trim_start();
+		let literal = rest.starts_with('\'');
+		let value = parse_value(rest, &mut lines, key, strict)?;
+		out.push((key.to_string(), value, literal));
 	}
 
 	Ok(out)

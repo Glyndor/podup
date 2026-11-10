@@ -12,12 +12,12 @@ use tracing_subscriber::EnvFilter;
 
 use crate::cli::{Cli, Commands, RunArgs};
 
+mod config_dollar;
 mod config_normalize;
 mod config_render;
+mod config_volumes;
 mod control_escape;
-#[cfg(test)]
-#[path = "control_escape_tests.rs"]
-mod control_escape_tests;
+mod project_env;
 pub(crate) use config_normalize::anchor_service_bind_sources;
 #[cfg(test)]
 pub(crate) use config_render::render_config_to;
@@ -53,7 +53,7 @@ pub(crate) fn validate_project_name(project: &str) -> podup::Result<()> {
 	if podup::is_safe_project_name(project) {
 		Ok(())
 	} else {
-		Err(podup::ComposeError::Unsupported(format!(
+		Err(podup::ComposeError::Invalid(format!(
 			"project name {project:?} is not a safe path component: must be \
 			 lowercase ASCII, starting with a letter or digit, followed only by \
 			 lowercase letters, digits, '-' or '_', max 128 chars"
@@ -225,6 +225,16 @@ pub(crate) fn run_labels_for(command: &Commands) -> Vec<String> {
 	}
 }
 
+/// The `run --env-from-file FILE` paths, for the engine builder
+/// ([`podup::Engine::with_run_env_from_files`]). Carried on the engine for the
+/// same reason as [`run_labels_for`].
+pub(crate) fn run_env_from_files_for(command: &Commands) -> Vec<String> {
+	match command {
+		Commands::Run(RunArgs { env_from_file, .. }) => env_from_file.clone(),
+		_ => Vec::new(),
+	}
+}
+
 /// Bridge the legacy `PODUP_LIBCOD_POOL` env to the corrected
 /// `PODUP_LIBPOD_POOL` before clap parses the CLI. The new var is the one
 /// clap reads (`#[arg(env = "PODUP_LIBPOD_POOL")]` on
@@ -262,6 +272,14 @@ fn render_help(rendered: &clap::builder::StyledStr, colour: bool) -> String {
 	}
 }
 
+/// The process arguments as text. `std::env::args` panics on the first argument
+/// that is not valid Unicode, which a file name on Unix may well not be, so the
+/// bytes that are not text are replaced here. These two readers only look for
+/// words (`--ansi`, subcommand names); clap reads the real bytes itself.
+fn lossy_args() -> impl Iterator<Item = String> {
+	std::env::args_os().map(|arg| arg.to_string_lossy().into_owned())
+}
+
 /// The help of the deepest subcommand the arguments actually reached.
 ///
 /// Walks the given command tree along the non-flag arguments, following aliases,
@@ -269,7 +287,7 @@ fn render_help(rendered: &clap::builder::StyledStr, colour: bool) -> String {
 /// With no subcommand at all it returns the root's help, which is what bare
 /// `podup` should print.
 fn help_for_argv(root: clap::Command) -> clap::builder::StyledStr {
-	help_for(root, std::env::args().skip(1))
+	help_for(root, lossy_args().skip(1))
 }
 
 /// The tree walk, separated from the process environment so it is testable.
@@ -339,21 +357,42 @@ pub(crate) fn parse_cli() -> Cli {
 	// Apply `--ansi` before clap renders anything: `--help` and clap's own
 	// errors are produced inside the parse call below, so a choice applied
 	// afterwards arrives too late for them.
-	if let Some(mode) = crate::cli::ansi_from_argv(std::env::args()) {
+	if let Some(mode) = crate::cli::ansi_from_argv(lossy_args()) {
 		podup::ui::set_color_choice(mode.into());
 	}
 	match Cli::try_parse() {
-		Ok(cli) => cli,
+		Ok(mut cli) => {
+			// `-p ""` and an exported-but-empty `COMPOSE_PROJECT_NAME` mean "not
+			// set", as in docker compose; every later reader of `cli.project`
+			// (the label-only `down` among them) then sees no name at all.
+			if cli.project.as_deref() == Some("") {
+				cli.project = None;
+			}
+			if let Ok(cwd) = std::env::current_dir() {
+				cli.env_file = resolve::anchor_env_files(&cli.env_file, &cwd);
+			}
+			project_env::apply(&mut cli);
+			cli
+		}
 		Err(e) => match e.kind() {
 			clap::error::ErrorKind::DisplayHelp | clap::error::ErrorKind::DisplayVersion => {
 				// `--help`/`--version` are handled by clap before `--ansi` is parsed,
 				// so colour the rendered text by clap's own styling only when stdout
 				// is a colour sink (TTY + no NO_COLOR); piped output stays plain and
 				// byte-identical to before.
-				print!(
+				// The help text is the whole answer here. A write that fails
+				// for a reason other than a closed pipe is a real failure,
+				// and the command says so instead of exiting as if the help
+				// had printed.
+				if podup::ui::out!(
 					"\n{}\n",
 					render_help(&e.render(), podup::ui::stdout_colored())
-				);
+				)
+				.is_err()
+				{
+					let _ = podup::ui::errln!("podup: cannot write the help text");
+					process::exit(1);
+				}
 				process::exit(0);
 			}
 			// `MissingSubcommand` is the same situation wearing a different hat.
@@ -387,7 +426,10 @@ pub(crate) fn parse_cli() -> Cli {
 				// which is what `generate` accepts. Their own `--help` already
 				// answers that correctly; this path did not.
 				let help = help_for_argv(<Cli as clap::CommandFactory>::command());
-				eprint!("\n{}\n", render_help(&help, podup::ui::stderr_colored()));
+				// The status stays 2 even when the text could not be
+				// written: the command failed, and that is what the caller
+				// needs to know.
+				let _ = podup::ui::err!("\n{}\n", render_help(&help, podup::ui::stderr_colored()));
 				process::exit(2);
 			}
 			// A real argument-parsing failure: unknown flag, missing required
@@ -399,7 +441,11 @@ pub(crate) fn parse_cli() -> Cli {
 			// `format_clap_error` and exit with the same code clap would have
 			// used.
 			_ => {
-				eprintln!("{}", format_clap_error(&e));
+				// Through the colour-aware stream, as `print_error` writes: the
+				// text carries the error style, and `eprintln!` would print its
+				// escape bytes whatever `--ansi`, `NO_COLOR` or a pipe say.
+				use std::io::Write;
+				let _ = writeln!(anstream::stderr(), "{}", format_clap_error(&e));
 				process::exit(e.exit_code());
 			}
 		},
@@ -435,17 +481,8 @@ fn format_clap_error(err: &clap::error::Error) -> String {
 }
 
 #[cfg(test)]
-#[path = "bridge_tests.rs"]
-mod bridge_tests;
-#[cfg(test)]
 mod tests;
 
 pub(crate) mod apparmor_hint;
-#[cfg(test)]
-mod apparmor_hint_tests;
 pub(crate) mod exit_status;
-#[cfg(test)]
-mod exit_status_exit_code_tests;
 pub(crate) mod resolve;
-#[cfg(test)]
-mod resolve_tests;

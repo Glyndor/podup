@@ -75,13 +75,80 @@ try {
 	$MaxDownloadBytes = 209715200
 	$DownloadTimeoutSec = 300
 
+	# One request with redirects switched off, so the caller sees the 3xx and
+	# decides. Windows PowerShell 5.1 throws a WebException for a 3xx here and
+	# carries the response on the exception (headers are a WebHeaderCollection);
+	# PowerShell 7 either throws an HttpResponseException carrying an
+	# HttpResponseMessage (Location is a Uri) or returns the 3xx outright, so
+	# all three shapes are read. Any other failure is rethrown unchanged.
+	# Returns StatusCode, Location (the raw header text, or $null) and Content.
+	function Invoke-HttpHop {
+		param([string]$Uri, [string]$OutFile, [hashtable]$Headers, [int]$TimeoutSec)
+		$request = @{ Uri = $Uri; UseBasicParsing = $true; TimeoutSec = $TimeoutSec; MaximumRedirection = 0 }
+		if ($OutFile) { $request.OutFile = $OutFile }
+		if ($Headers) { $request.Headers = $Headers }
+		$threw = $false
+		try {
+			$response = Invoke-WebRequest @request
+		} catch {
+			$response = $_.Exception.Response
+			if ($null -eq $response) { throw }
+			$threw = $true
+		}
+		$code = [int]$response.StatusCode
+		if ($code -lt 300 -or $code -ge 400) {
+			if ($threw) { throw "HTTP status $code from $Uri" }
+			$content = if ($OutFile) { $null } else { $response.Content }
+			return [pscustomobject]@{ StatusCode = $code; Location = $null; Content = $content }
+		}
+		$location = $null
+		$respHeaders = $response.Headers
+		if ($respHeaders -is [System.Net.WebHeaderCollection]) {
+			$location = $respHeaders['Location']
+		} elseif ($respHeaders -is [System.Collections.IDictionary]) {
+			if ($respHeaders.Contains('Location')) { $location = @($respHeaders['Location'])[0] }
+		} elseif ($null -ne $respHeaders.Location) {
+			$location = $respHeaders.Location.OriginalString
+		}
+		return [pscustomobject]@{ StatusCode = $code; Location = [string]$location; Content = $null }
+	}
+
+	# Fetch a URL, following redirects by hand so every hop can be checked: the
+	# request URL and each Location must be https, and a relative Location is
+	# resolved against the URL that returned it. Invoke-WebRequest follows
+	# redirects on its own with no scheme restriction, which would let a hop to
+	# http:// carry a download in the clear. install.sh pins curl to https for
+	# redirects and the Rust updater refuses them too; this is the same rule.
+	# More than $MaxRedirects hops is refused as a loop.
+	function Invoke-HttpsRequest {
+		param([string]$Uri, [string]$OutFile, [hashtable]$Headers, [int]$TimeoutSec, [int]$MaxRedirects = 5)
+		$current = $Uri
+		for ($hop = 0; $hop -le $MaxRedirects; $hop++) {
+			if (-not $current.StartsWith('https://', [System.StringComparison]::OrdinalIgnoreCase)) {
+				throw "Refusing a non-https URL: $current"
+			}
+			$result = Invoke-HttpHop -Uri $current -OutFile $OutFile -Headers $Headers -TimeoutSec $TimeoutSec
+			if ($result.StatusCode -lt 300) { return $result }
+			if (@(301, 302, 303, 307, 308) -notcontains $result.StatusCode) {
+				throw "Unexpected HTTP status $($result.StatusCode) from $current"
+			}
+			if (-not $result.Location) { throw "Redirect from $current has no Location" }
+			$next = $null
+			if (-not [System.Uri]::TryCreate([System.Uri]$current, [string]$result.Location, [ref]$next)) {
+				throw "Redirect from $current has an invalid Location"
+			}
+			$current = $next.AbsoluteUri
+		}
+		throw "Too many redirects (over $MaxRedirects) from $Uri"
+	}
+
 	function Get-ReleaseFile($name) {
 		$dest = Join-Path $TmpDir $name
 		$url = "$BaseUrl/$name"
 		try {
-			Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -TimeoutSec $DownloadTimeoutSec
+			$null = Invoke-HttpsRequest -Uri $url -OutFile $dest -TimeoutSec $DownloadTimeoutSec
 		} catch {
-			Fail "Download failed: $url"
+			Fail "Download failed: $url ($($_.Exception.Message))"
 		}
 		if ((Get-Item -Path $dest).Length -gt $MaxDownloadBytes) {
 			Fail "Download too large (over 200 MB): $url"
@@ -102,9 +169,9 @@ try {
 	function Resolve-ReleaseTag {
 		$apiUrl = "https://api.github.com/repos/$Repo/releases/latest"
 		try {
-			$resp = Invoke-WebRequest -Uri $apiUrl -Headers @{ 'Accept' = 'application/vnd.github+json' } -UseBasicParsing -TimeoutSec 60
+			$resp = Invoke-HttpsRequest -Uri $apiUrl -Headers @{ 'Accept' = 'application/vnd.github+json' } -TimeoutSec 60
 		} catch {
-			Fail "Cannot resolve latest release tag from $apiUrl"
+			Fail "Cannot resolve latest release tag from $apiUrl ($($_.Exception.Message))"
 		}
 		# Use ErrorAction to surface a bad response as a fatal condition rather
 		# than silently emitting $null and moving on.

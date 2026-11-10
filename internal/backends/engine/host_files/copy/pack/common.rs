@@ -119,49 +119,11 @@ where
 					.map_err(|e| map_err(&e.to_string()))?;
 					push_entry(sent, name, SentKind::File(size))?;
 				} else if ft.is_dir() {
-					// A symlink to a directory: the walker did not descend
-					// (it does not follow `DirEntry::file_type()`), so we
-					// walk the target here and append each descendant at
-					// `name/<rel>`. Then the wrapper entry so the archive
-					// has a directory at `name` matching what `cp -L` puts
-					// in the container.
-					let entries = walk::walk_dir(path).map_err(|e| map_err(&e.to_string()))?;
-					for abs in entries {
-						let rel = abs.strip_prefix(path).map_err(|_| {
-							ComposeError::Build(format!(
-								"cp: walk produced path outside target: {}",
-								abs.display()
-							))
-						})?;
-						let child_name = name.join(rel);
-						let child_ft = std::fs::metadata(&abs)
-							.map_err(|e| map_err(&e.to_string()))?
-							.file_type();
-						if child_ft.is_dir() {
-							record_one(
-								tar,
-								sent,
-								&child_name,
-								&abs,
-								KindDispatch::Dir,
-								true,
-								map_err,
-							)?;
-						} else {
-							record_one(
-								tar,
-								sent,
-								&child_name,
-								&abs,
-								KindDispatch::FileOrLink,
-								true,
-								map_err,
-							)?;
-						}
-					}
-					tar.append_dir(name, path)
-						.map_err(|e| map_err(&e.to_string()))?;
-					push_entry(sent, name, SentKind::Dir)?;
+					// A symlink to a directory: the walker did not descend, so
+					// it is read here, links inside it included. The directory
+					// the link sits in is being read, so a link back to it is
+					// refused at the first step.
+					super::linked_dir::pack_linked_dir_entry(tar, sent, name, path, map_err)?;
 				} else {
 					// FIFO, char/block device, socket, hard link, anything
 					// else the destination cannot ask about: refuse up front,

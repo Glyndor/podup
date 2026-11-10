@@ -9,9 +9,9 @@ use super::*;
 
 #[test]
 fn both_protected_branches_have_their_own_health_job() {
-	let ci = read("ci.yml");
-	let main = ci_yml_health_branch(&ci, "health-main");
-	let develop = ci_yml_health_branch(&ci, "health-develop");
+	let caller = read_caller();
+	let main = caller_health_branch(&caller, "health-main");
+	let develop = caller_health_branch(&caller, "health-develop");
 
 	assert_eq!(
 		main, "main",
@@ -28,9 +28,9 @@ fn both_protected_branches_have_their_own_health_job() {
 
 #[test]
 fn both_jobs_watch_the_same_workflow() {
-	let ci = read("ci.yml");
-	let main = ci_yml_health_workflow(&ci, "health-main");
-	let develop = ci_yml_health_workflow(&ci, "health-develop");
+	let caller = read_caller();
+	let main = caller_health_workflow(&caller, "health-main");
+	let develop = caller_health_workflow(&caller, "health-develop");
 	assert_eq!(
 		main, develop,
 		"health-main watches {main:?} but health-develop watches \
@@ -41,47 +41,53 @@ fn both_jobs_watch_the_same_workflow() {
 }
 
 /// The parser is what the structural tests trust. Pin it on input that
-/// differs from today's `ci.yml`, including a job whose `with:` block
-/// lists `workflow:` and `branch:` in the wrong order and a comment that
-/// names them out of scope. A parser that always returned the same
+/// differs from today's caller workflow, including a job whose `with:`
+/// block lists `workflow:` and `branch:` in the wrong order and a comment
+/// that names them out of scope. A parser that always returned the same
 /// string would pass every assertion above and prove nothing.
 #[test]
 fn the_branch_parser_reads_what_it_claims() {
 	// Both keys in the order the file happens to use.
-	let ci_a = "\
+	let caller_a = "\
 jobs:
   health-main:
     uses: ./.github/workflows/reusable-branch-health.yml
     with:
-      workflow: ci.yml
+      workflow: caller.yml
       branch: main
   health-develop:
     uses: ./.github/workflows/reusable-branch-health.yml
     with:
-      workflow: ci.yml
+      workflow: caller.yml
       branch: develop
 ";
-	assert_eq!(ci_yml_health_branch(ci_a, "health-main"), "main");
-	assert_eq!(ci_yml_health_workflow(ci_a, "health-main"), "ci.yml");
-	assert_eq!(ci_yml_health_branch(ci_a, "health-develop"), "develop");
+	assert_eq!(caller_health_branch(caller_a, "health-main"), "main");
+	assert_eq!(
+		caller_health_workflow(caller_a, "health-main"),
+		"caller.yml"
+	);
+	assert_eq!(caller_health_branch(caller_a, "health-develop"), "develop");
 
 	// Reversed order. The parser walks the `with:` block and stops on
 	// the first matching key, so the test it backs must be order-blind.
-	let ci_b = "\
+	let caller_b = "\
 jobs:
   health-main:
     uses: ./.github/workflows/reusable-branch-health.yml
     with:
       branch: main
-      workflow: ci.yml
+      workflow: caller.yml
 ";
-	assert_eq!(ci_yml_health_branch(ci_b, "health-main"), "main");
-	assert_eq!(ci_yml_health_workflow(ci_b, "health-main"), "ci.yml");
+	assert_eq!(caller_health_branch(caller_b, "health-main"), "main");
+	assert_eq!(
+		caller_health_workflow(caller_b, "health-main"),
+		"caller.yml"
+	);
 
 	// A sibling job that also names `branch:` and `workflow:` in its
 	// own `with:` block must not contaminate the answer for the one
 	// being asked about.
-	let ci_c = "\
+	let caller_c = "\
 jobs:
   freshness-benchmark:
     uses: ./.github/workflows/reusable-schedule-freshness.yml
@@ -91,24 +97,24 @@ jobs:
   health-main:
     uses: ./.github/workflows/reusable-branch-health.yml
     with:
-      workflow: ci.yml
+      workflow: caller.yml
       branch: main
   health-develop:
     uses: ./.github/workflows/reusable-branch-health.yml
     with:
-      workflow: ci.yml
+      workflow: caller.yml
       branch: develop
 ";
 	assert_eq!(
-		ci_yml_health_workflow(ci_c, "health-main"),
-		"ci.yml",
+		caller_health_workflow(caller_c, "health-main"),
+		"caller.yml",
 		"the parser took the sibling's value"
 	);
-	assert_eq!(ci_yml_health_branch(ci_c, "health-main"), "main");
+	assert_eq!(caller_health_branch(caller_c, "health-main"), "main");
 
 	// A comment that names `branch:` and `workflow:` with fake values
 	// must not be returned.
-	let ci_d = "\
+	let caller_d = "\
 jobs:
   health-main:
     # with:
@@ -116,9 +122,12 @@ jobs:
     #   branch: nonsense
     uses: ./.github/workflows/reusable-branch-health.yml
     with:
-      workflow: ci.yml
+      workflow: caller.yml
       branch: main
 ";
-	assert_eq!(ci_yml_health_workflow(ci_d, "health-main"), "ci.yml");
-	assert_eq!(ci_yml_health_branch(ci_d, "health-main"), "main");
+	assert_eq!(
+		caller_health_workflow(caller_d, "health-main"),
+		"caller.yml"
+	);
+	assert_eq!(caller_health_branch(caller_d, "health-main"), "main");
 }

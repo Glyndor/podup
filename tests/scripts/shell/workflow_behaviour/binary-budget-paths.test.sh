@@ -26,10 +26,10 @@ import re
 import sys
 root = Path(sys.argv[1])
 pairs = {
-    "objects/secrets/create.rs": "create_tests.rs",
-    "host_files/copy/pack/transport.rs": "transport_tests.rs",
-    "host_files/watch/sync.rs": "sync_filter_tests.rs",
-    "observe/stats/mod.rs": "stats_tests.rs",
+    "objects/secrets/create.rs": "create_tests/mod.rs",
+    "host_files/copy/pack/transport.rs": "transport_tests/mod.rs",
+    "host_files/watch/sync.rs": "sync_filter_tests/mod.rs",
+    "observe/stats/mod.rs": "stats_tests/mod.rs",
     "host_files/watch/filtering/events.rs": "events_tests.rs",
 }
 paths = []
@@ -48,7 +48,11 @@ for parent, name in pairs.items():
             if name in value and (source.parent / value).resolve() == target.resolve():
                 references.append(source)
     assert references == [parent], f"additional consumers of {target}: {references}"
-    paths.append(str(target.relative_to(root)))
+    if name.endswith("/mod.rs"):
+        # A folder of tests: every file in it is part of the reviewed module.
+        paths.extend(str(p.relative_to(root)) for p in sorted(target.parent.glob("*.rs")))
+    else:
+        paths.append(str(target.relative_to(root)))
 Path(sys.argv[2]).write_text("\n".join(paths) + "\n")
 PY
 rc=$?

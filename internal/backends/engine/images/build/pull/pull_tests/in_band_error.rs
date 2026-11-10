@@ -67,3 +67,27 @@ async fn ignore_pull_failures_still_exits_zero_on_an_in_band_error() {
 	.await
 	.expect("--ignore-pull-failures must stay exit 0");
 }
+
+/// A service that only has `image:` has no build to fail, so a failed download
+/// must not be reported as a build error.
+#[tokio::test]
+#[cfg(unix)]
+async fn a_failed_download_is_not_called_a_build_error() {
+	let fake = fake_podman::start(|method, target| {
+		if method == "POST" && target.contains("/images/pull") {
+			(200, r#"{"error":"connection refused"}"#.to_string())
+		} else {
+			(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = crate::engine::Engine::new(fake.client(), "proj".into());
+	let file = crate::parse_str("services:\n  a:\n    image: gone:v1\n").unwrap();
+
+	let err = e.pull_services(&file, &[]).await.unwrap_err();
+	let text = err.to_string();
+	assert!(!text.contains("build"), "wrong operation named: {text}");
+	assert!(
+		text.contains("gone:v1") && text.contains("connection refused"),
+		"{text}"
+	);
+}

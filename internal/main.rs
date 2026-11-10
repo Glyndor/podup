@@ -2,6 +2,12 @@
 
 // The binary carries no `unsafe`; deny it so any future addition is caught.
 #![deny(unsafe_code)]
+// The output of the binary goes through the writer in `podup::ui`, which
+// decides what a closed pipe means. A direct `println!` panics instead, and
+// Rust ignores SIGPIPE, so a reader that closed the pipe early used to reach
+// the panic hook below as a crash. The rule is denied here, in the crate that
+// ships, and left off in the test build.
+#![cfg_attr(not(test), deny(clippy::disallowed_macros))]
 
 use std::process;
 
@@ -27,10 +33,11 @@ fn main() {
 	// the reminder to redact secrets first.
 	std::panic::set_hook(Box::new(|info| {
 		// A broken pipe (a downstream reader closed early, e.g. `podup ls | head`)
-		// surfaces as a panic from the failing `println!`/`eprintln!` because Rust
-		// ignores SIGPIPE. With `panic = "abort"` that would escalate to SIGABRT
-		// (exit 134) and a misleading bug-report notice; instead exit quietly with
-		// success like any well-behaved Unix tool.
+		// surfaces as a panic from a write that did not go through the writer
+		// in `podup::ui`, because Rust ignores SIGPIPE. With `panic = "abort"`
+		// that would escalate to SIGABRT (exit 134) and a misleading
+		// bug-report notice; instead exit quietly with success like any
+		// well-behaved Unix tool.
 		// Match the panic PAYLOAD, not `info.to_string()`: the latter also carries
 		// the source location, widening a substring search to text the panic
 		// itself never chose.
@@ -43,8 +50,7 @@ fn main() {
 		if startup::is_broken_pipe_panic(message) {
 			std::process::exit(0);
 		}
-		eprintln!("podup: internal error: {info}");
-		eprintln!("{}", internal_error_notice());
+		report_panic(info);
 	}));
 
 	// Drive the runtime on a worker thread with a large stack. Clap's
@@ -58,6 +64,22 @@ fn main() {
 		.expect("spawn podup worker thread")
 		.join()
 		.expect("podup worker thread panicked");
+}
+
+/// Say that the binary crashed, and what to send.
+///
+/// This is the one place that keeps the raw writing macro. The writer in
+/// `podup::ui` ends the process when the pipe is closed, and this notice is
+/// what a real crash has to say: a writer that swallowed the failure would
+/// turn the crash into a silent success, and the reader of the notice is the
+/// one person who can report the bug.
+#[allow(
+	clippy::disallowed_macros,
+	reason = "the panic hook has to report the panic itself, and the writer would swallow a failed write"
+)]
+fn report_panic(info: &std::panic::PanicHookInfo<'_>) {
+	eprintln!("podup: internal error: {info}");
+	eprintln!("{}", internal_error_notice());
 }
 
 /// Build the Tokio runtime and drive [`run`], mapping its result onto the
@@ -263,11 +285,12 @@ async fn run(error_context: &mut startup::exit_status::ErrorContext) -> podup::R
 	let file = if label_only && !compose_files.iter().any(|p| p.is_file()) {
 		podup::compose::types::ComposeFile::default()
 	} else {
-		podup::parse_files_with_env_files_interp_in(
+		podup::compose::parse_files_with_project_in(
 			&compose_files,
 			&cli.env_file,
 			!no_interpolate,
 			cli.project_directory.as_deref(),
+			cli.project.as_deref(),
 		)?
 	};
 

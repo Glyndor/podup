@@ -1,12 +1,12 @@
 use futures_util::stream::FuturesUnordered;
-use futures_util::StreamExt;
 
 use super::abort::finish_abort;
-use super::phase::{wait_for_phase, Phase, StreamEnd};
+use super::follow::Follow;
+use super::phase::{wait_for_phase, Phase};
+use super::select;
 use super::{AttachOptions, AttachOutcome, AttachSummary, Engine};
 use crate::compose::types::ComposeFile;
 use crate::error::{ComposeError, Result};
-use crate::libpod::{urlencoded, LogOutput, API_PREFIX};
 
 impl Engine {
 	/// Like [`Engine::attach_logs`] but with `up --timestamps` and
@@ -53,22 +53,14 @@ impl Engine {
 		let timestamps = options.timestamps;
 		let abort_on_container_exit =
 			options.abort_on_container_exit || options.exit_code_from.is_some();
+		let abort_on_container_failure = options.abort_on_container_failure;
+		let no_log_prefix = options.no_log_prefix;
 
 		// Carry (service, display_name, container_name) so the abort path can map
 		// a stream end back to the compose service that owns it without
-		// re-deriving the project prefix. The libpod `/logs` endpoint always
-		// frames its body with 8-byte multiplexed headers (stdout/stderr
-		// channel byte + payload length + payload), including for containers
-		// that were started with a TTY; the Docker compat handler used raw
-		// bytes for TTY containers, so per-service `is_tty` here is the
-		// docker-compat shape and would strip the leading channel byte off
-		// every line. The raw path is reserved for hijacked attach/exec
-		// streams (`/attach_websocket`, `/exec/{id}/start`), not the logs
-		// endpoint.
-		let attached: Vec<(String, String, String)> = file
-			.services
-			.iter()
-			.filter(|(_, s)| s.attach.unwrap_or(true))
+		// re-deriving the project prefix.
+		let attached: Vec<(String, String, String)> = select::attached_services(file, options)?
+			.into_iter()
 			.flat_map(|(name, s)| {
 				let proj_prefix = format!("{}-", self.project);
 				self.replica_names(name, s).into_iter().map(move |cname| {
@@ -76,7 +68,7 @@ impl Engine {
 						.strip_prefix(proj_prefix.as_str())
 						.map(|s| s.to_string())
 						.unwrap_or_else(|| cname.clone());
-					(name.clone(), display, cname)
+					(name.to_string(), display, cname)
 				})
 			})
 			.collect();
@@ -93,62 +85,14 @@ impl Engine {
 		let streams: FuturesUnordered<_> = attached
 			.iter()
 			.map(|(svc, display, cname)| {
-				let prefix = display.clone();
-				let path = format!(
-					"{API_PREFIX}/containers/{}/logs?stdout=true&stderr=true&follow=true&timestamps={timestamps}",
-					urlencoded(cname),
-				);
-				let client = &self.client;
-				let cname = cname.clone();
-				let svc = svc.clone();
-				async move {
-					let resp = match client.get_stream(&path).await {
-						Ok(r) => r,
-						Err(e) => {
-							tracing::warn!("attach_logs {prefix}: {e}");
-							return (svc, cname, StreamEnd::Broke);
-						}
-					};
-					let mut stream = crate::libpod::parse_multiplexed(resp.into_body());
-					while let Some(msg) = stream.next().await {
-						match msg {
-							Ok(LogOutput::StdOut { message }) => {
-								print!("{prefix} | {}", String::from_utf8_lossy(&message));
-							}
-							Ok(LogOutput::StdErr { message }) => {
-								eprint!("{prefix} | {}", String::from_utf8_lossy(&message));
-							}
-							// An attach stream lives as long as its container and
-							// ends when the container stops, so a lost chunked
-							// terminator is indistinguishable at the transport
-							// layer from a real mid-stream break (#1104). The
-							// container answers what the transport cannot: still
-							// running means live output was truncated.
-							//
-							// This arm used to discard the error without even a
-							// warning, so `up` in the foreground could lose its
-							// connection to the engine and still exit 0.
-							Err(e) => {
-								let kind = e.stream_end_kind();
-								let still_running = self.container_still_running(&cname).await;
-								if super::super::stream_broke_mid_output(still_running) {
-									tracing::warn!(
-										"attach {prefix}: stream ended while the container was \
-										 still running [{kind}]: {e}"
-									);
-									return (svc, cname, StreamEnd::Broke);
-								}
-								tracing::warn!(
-									"attach {prefix}: stream ended as the container stopped [{kind}]"
-								);
-								return (svc, cname, StreamEnd::ContainerStopped);
-							}
-						}
-					}
-					// Clean end of the stream: the container stopped and the
-					// transport delivered its terminator.
-					(svc, cname, StreamEnd::ContainerStopped)
-				}
+				self.follow_container(Follow {
+					service: svc,
+					display,
+					container: cname,
+					timestamps,
+					no_log_prefix,
+					check_failure: abort_on_container_failure && !abort_on_container_exit,
+				})
 			})
 			.collect();
 
@@ -164,7 +108,8 @@ impl Engine {
 		// `join_all` we would have to wait for every container, and a service
 		// that exits cleanly could not trigger an abort while others were still
 		// running.
-		let phase = wait_for_phase(streams, abort_on_container_exit).await;
+		let phase =
+			wait_for_phase(streams, abort_on_container_exit, abort_on_container_failure).await;
 
 		match phase {
 			Phase::Interrupted => Ok(AttachSummary {

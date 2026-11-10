@@ -18,7 +18,9 @@ mod jobs;
 pub(crate) use jobs::fuzz_hook;
 pub use jobs::stale_timers;
 #[cfg(test)]
-mod min_podman;
+mod floor;
+#[cfg(test)]
+pub(crate) use floor::min_podman;
 mod publishing;
 pub(crate) use publishing::write_autostart_units;
 pub use publishing::write_units;
@@ -62,6 +64,19 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 			return Err(ComposeError::NoImageOrBuild(name.clone()));
 		}
 		parse_ports(&svc.ports)?;
+		// The same refusal as `up`: Podman has no `uid=`/`gid=` for a tmpfs, and a
+		// unit that carried one would fail when it starts.
+		for entry in svc.tmpfs.to_list() {
+			crate::libpod::validate::translate_entry(&entry, svc.user.as_deref()).map_err(
+				|why| {
+					ComposeError::Unsupported(format!(
+						"service '{}': tmpfs '{}': {why}",
+						crate::error::sanitize_name(name),
+						crate::error::sanitize_name(&entry)
+					))
+				},
+			)?;
+		}
 		for (field, cmd) in [("command", &svc.command), ("entrypoint", &svc.entrypoint)] {
 			if cmd.as_ref().is_some_and(render::has_lone_semicolon_word) {
 				return Err(ComposeError::Unsupported(format!(
@@ -69,7 +84,7 @@ pub fn validate_for_quadlet(file: &ComposeFile) -> Result<()> {
 				)));
 			}
 		}
-		if let Some(mem) = &svc.mem_limit {
+		if let Some(mem) = svc.mem_limit.as_ref().filter(|m| !m.trim().is_empty()) {
 			if crate::size::parse_memory(mem).is_none() {
 				return Err(ComposeError::Unsupported(format!(
 					"service '{name}': mem_limit '{mem}' is not a valid memory size"
@@ -396,14 +411,6 @@ mod exported_names_tests;
 #[cfg(test)]
 #[path = "no_warn_tests.rs"]
 mod no_warn_tests;
-
-#[cfg(all(test, unix))]
-#[path = "write_guard_tests.rs"]
-mod write_guard_tests;
-
-#[cfg(test)]
-#[path = "write_names_tests.rs"]
-mod write_names_tests;
 
 #[cfg(all(test, unix))]
 #[path = "unit_file_tests.rs"]

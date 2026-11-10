@@ -357,3 +357,23 @@ volumes:
 	let c = &unit_named(&out, "p-s.container").contents;
 	assert!(c.contains("[Install]") && c.contains("WantedBy=default.target"));
 }
+
+#[test]
+fn network_unit_omits_the_default_ipam_driver() {
+	let yaml = r#"
+services:
+  s:
+    image: x
+networks:
+  net:
+    ipam:
+      driver: default
+      config:
+        - subnet: 10.8.0.0/16
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "p", std::path::Path::new("/srv/app"));
+	let net = &unit_named(&out, "p-net.network").contents;
+	assert!(!net.contains("IPAMDriver"), "in:\n{net}");
+	assert!(net.contains("Subnet=10.8.0.0/16"), "in:\n{net}");
+}

@@ -42,6 +42,7 @@ pub(super) async fn dispatch_rest(
 			no_rm,
 			detach,
 			env_overrides,
+			env_from_file: _,
 			name,
 			service_ports,
 			user: _,
@@ -54,9 +55,18 @@ pub(super) async fn dispatch_rest(
 			interactive: _,
 			no_tty: _,
 			no_deps: _,
+			remove_orphans,
 			label: _,
 			cmd,
 		}) => {
+			// Swept before the one-off exists, and only once the target is known
+			// to be declared: a mistyped name must not cost the project its
+			// containers before the engine refuses it.
+			if remove_orphans
+				&& (file.services.contains_key(&service) || file.jobs.contains_key(&service))
+			{
+				engine.remove_orphans(file).await?;
+			}
 			engine
 				.run(
 					file,
@@ -267,6 +277,7 @@ pub(super) async fn dispatch_rest(
 			quiet: _,
 			ignore_pull_failures,
 			include_deps,
+			ignore_buildable,
 			policy: _,
 			services,
 		} => {
@@ -275,7 +286,8 @@ pub(super) async fn dispatch_rest(
 				.pull_services_with_options(
 					file,
 					&services,
-					podup::PullOptions::new(ignore_pull_failures, include_deps),
+					podup::PullOptions::new(ignore_pull_failures, include_deps)
+						.with_ignore_buildable(ignore_buildable),
 				)
 				.await?
 		}

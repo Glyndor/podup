@@ -48,14 +48,13 @@ fn head_sha_expression_compares_pushed_branch_with_branch_under_test() {
 		expr,
 		expected_head_sha_expression(),
 		"the `HEAD_SHA:` line no longer compares `github.ref_name` \
-		 against `inputs.branch`. The two callers in `ci.yml` run \
-		 cross-branch on purpose: a push to `develop` fires \
-		 `health-main`, which would then look for a run on `main` \
-		 whose `head_sha` is `develop`'s commit. No such run exists, \
-		 so the poll loop exhausts itself and the run fails. The \
-		 branch comparison gates `HEAD_SHA` to the branch under \
-		 test; without it the script receives a commit no run on \
-		 the watched branch carries."
+		 against `inputs.branch`. The two callers run cross-branch on \
+		 purpose: a push to `develop` fires `health-main`, which would \
+		 then look for a run on `main` whose `head_sha` is `develop`'s \
+		 commit. No such run exists, so the poll loop exhausts itself \
+		 and the run fails. The branch comparison gates `HEAD_SHA` to \
+		 the branch under test; without it the script receives a \
+		 commit no run on the watched branch carries."
 	);
 }
 

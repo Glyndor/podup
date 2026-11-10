@@ -3,74 +3,12 @@
 use crate::compose::types::{Command, Service};
 use crate::error::{ComposeError, Result};
 
-/// Split a `--entrypoint` value into words the way Compose does with
-/// `shellwords.Parse`: whitespace separates words, single quotes keep everything,
-/// double quotes keep everything except a backslash escape, and a backslash
-/// outside quotes escapes the next character. `Ok(vec![])` for an empty string.
+/// Split a `--entrypoint` value into words with the rules Compose uses for a
+/// string `command:` or `entrypoint:` (see [`split_words`](crate::compose::types::command::split_words)).
+/// `Ok(vec![])` for an empty string.
 pub(super) fn split_words(text: &str) -> Result<Vec<String>> {
-	let mut words = Vec::new();
-	let mut word = String::new();
-	let mut in_word = false;
-	let mut chars = text.chars();
-	while let Some(c) = chars.next() {
-		match c {
-			c if c.is_whitespace() => {
-				if in_word {
-					words.push(std::mem::take(&mut word));
-					in_word = false;
-				}
-			}
-			'\'' => {
-				in_word = true;
-				loop {
-					match chars.next() {
-						Some('\'') => break,
-						Some(q) => word.push(q),
-						None => return Err(unterminated(text)),
-					}
-				}
-			}
-			'"' => {
-				in_word = true;
-				loop {
-					match chars.next() {
-						Some('"') => break,
-						Some('\\') => match chars.next() {
-							Some(e @ ('"' | '\\' | '$' | '`')) => word.push(e),
-							Some(e) => {
-								word.push('\\');
-								word.push(e);
-							}
-							None => return Err(unterminated(text)),
-						},
-						Some(q) => word.push(q),
-						None => return Err(unterminated(text)),
-					}
-				}
-			}
-			'\\' => {
-				in_word = true;
-				match chars.next() {
-					Some(e) => word.push(e),
-					None => return Err(unterminated(text)),
-				}
-			}
-			c => {
-				in_word = true;
-				word.push(c);
-			}
-		}
-	}
-	if in_word {
-		words.push(word);
-	}
-	Ok(words)
-}
-
-fn unterminated(text: &str) -> ComposeError {
-	ComposeError::Unsupported(format!(
-		"--entrypoint {text:?}: unterminated quote or trailing backslash"
-	))
+	crate::compose::types::command::split_words(text)
+		.map_err(|why| ComposeError::Unsupported(format!("--entrypoint {text:?}: {why}")))
 }
 
 /// Apply `run`'s `--entrypoint` and trailing command to the one-off's copy of

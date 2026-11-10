@@ -27,7 +27,7 @@ use images::image;
 use objects::network;
 use objects::secrets;
 use objects::volume;
-use objects::volume_mounts;
+pub(crate) use objects::volume_mounts;
 pub(crate) use observe::events;
 pub(crate) use observe::query;
 use observe::stats;
@@ -104,15 +104,24 @@ pub struct Engine {
 	pub(crate) no_build: bool,
 	/// CLI `up --quiet-pull`: suppress image-pull progress output.
 	pub(crate) quiet_pull: bool,
+	/// CLI `up --quiet-build`: suppress the output of the builds `up` runs.
+	pub(crate) quiet_build: bool,
+	/// CLI `up --always-recreate-deps`: replace the containers of services
+	/// that were not named on the command line even when they are unchanged.
+	pub(crate) always_recreate_deps: bool,
 	/// CLI `run`-only flag overrides (user/workdir/entrypoint/volume/publish/
 	/// interactive/no-deps); empty by default.
 	pub(crate) run_overrides: lifecycle::RunOverrides,
 	/// Global `--env-file` paths that double as `docker compose run --env-file`:
 	/// their contents seed a one-off `run` container's environment at the lowest
 	/// precedence (env-file < service `environment:` < `-e`). Resolved relative
-	/// to `base_dir`; empty by default. Kept off the frozen public
+	/// to `base_dir` (the CLI passes absolute paths); empty by default. Kept off the frozen public
 	/// [`lifecycle::RunOverrides`] struct so the library API stays stable.
 	pub(crate) run_env_files: Vec<String>,
+	/// CLI `run --env-from-file FILE` paths; empty by default. Kept off the
+	/// frozen public [`lifecycle::RunOverrides`] struct so the library API
+	/// stays stable.
+	pub(crate) run_env_from_files: Vec<String>,
 	/// CLI `docker compose run -l/--label KEY=VAL` ad-hoc labels for the one-off
 	/// `run` container; empty by default. Kept off the frozen public
 	/// [`lifecycle::RunOverrides`] struct so the library API stays stable.

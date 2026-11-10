@@ -5,6 +5,8 @@ Coverage-guided fuzz targets for podup's untrusted-input surfaces, built on
 
 ## Targets
 
+The sources sit in `fuzz_targets/<group>/` (`compose`, `values`, `wire`, `host`, `update`) so no folder grows past the twenty-entry limit; a target is still named by its `[[bin]]`, and `fuzz/seeds/<target>/` keeps the flat names.
+
 | Target | Surface |
 |--------|---------|
 | `parse_compose` | Full compose parse: substitution, YAML, anchor/alias merge keys, type coercion (`parse_str` / `parse_str_raw`) |

@@ -47,10 +47,13 @@ pub(in super::super) fn deserialize_with_merge_interp(
 	// merge (see `compose::tags`), not by which type happens to be behind a key.
 	let directives = super::super::tags::collect(&value);
 	let umask_resets = super::super::tags::umask_resets(&value);
+	super::super::tags::drop_entry_resets(&mut value);
+	super::super::nested_resets::drop_nested_resets(&mut value);
 	super::super::tags::strip(&mut value);
 	super::super::types::service::umask::apply_resets(&mut value, &umask_resets);
 	super::super::types::service::umask::validate(&value)?;
 	super::textual::stringify_text_fields(&mut value);
+	super::scalars::coerce_quoted_scalars(&mut value);
 	// Jobs are typed first and on their own, so a bad job is reported by name
 	// instead of as a file that failed to parse.
 	let jobs = super::super::jobs::extract_jobs(&mut value)?;
@@ -101,7 +104,7 @@ pub(in super::super) fn interpolated_value(
 	// Merge keys first: a service built from `<<: *base` has its keys only after
 	// they are resolved, and the typing of an interpolated value depends on the
 	// key being a direct key of the service.
-	apply_merge_keys(&mut value);
+	apply_merge_keys(&mut value)?;
 	if let Some(vars) = vars {
 		// One budget for the whole project. The per-scalar cap cannot see
 		// repetition spread across scalars, which is the shape that reached

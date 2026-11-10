@@ -7,6 +7,7 @@ use serde::Serialize;
 
 use crate::compose::types::{PortMapping, StringOrU16};
 use crate::error::{ComposeError, Result};
+use crate::errors::clip::clip_for_message as shown;
 use crate::libpod::types::container::PortMapping as LibpodPortMapping;
 
 /// A parsed, normalized port binding.
@@ -27,9 +28,22 @@ pub fn parse_ports(ports: &[PortMapping]) -> Result<Vec<ParsedPort>> {
 	let mut result = Vec::new();
 	for mapping in ports {
 		result.extend(parse_one(mapping)?);
+		// Each range is capped on its own, but a service can list thousands of
+		// ranges: ten thousand `1-1024` entries fit in a small file and expand to
+		// ten million mappings. A port number has sixteen bits, so a service that
+		// publishes more mappings than there are ports is refused as soon as it
+		// crosses the line, before the rest is expanded.
+		if result.len() > MAX_EXPANDED_PORTS {
+			return Err(ComposeError::InvalidPort(format!(
+				"too many published ports (more than {MAX_EXPANDED_PORTS} once ranges are expanded)"
+			)));
+		}
 	}
 	Ok(result)
 }
+
+/// The most mappings one service may publish once its ranges are expanded.
+pub(crate) const MAX_EXPANDED_PORTS: usize = 65_536;
 
 /// Convert parsed ports into libpod `PortMapping` entries for `SpecGenerator`.
 pub fn to_libpod(ports: &[ParsedPort]) -> Vec<LibpodPortMapping> {
@@ -106,9 +120,9 @@ fn published_ports(published: &str) -> Result<Vec<u16>> {
 	if trimmed.contains('-') {
 		return expand_port_range(trimmed);
 	}
-	let n: u32 = trimmed
-		.parse()
-		.map_err(|_| ComposeError::InvalidPort(format!("invalid published port: {published}")))?;
+	let n: u32 = trimmed.parse().map_err(|_| {
+		ComposeError::InvalidPort(format!("invalid published port: {}", shown(published)))
+	})?;
 	Ok(vec![port_in_range(n, published)?])
 }
 
@@ -138,7 +152,7 @@ fn parse_short(s: &str) -> Result<Vec<ParsedPort>> {
 	if let Some(rest) = rest.strip_prefix('[') {
 		let close = rest
 			.find(']')
-			.ok_or_else(|| ComposeError::InvalidPort(format!("unclosed `[` in {s}")))?;
+			.ok_or_else(|| ComposeError::InvalidPort(format!("unclosed `[` in {}", shown(s))))?;
 		let ip = &rest[..close];
 		let after = &rest[close + 1..];
 		let after = after.strip_prefix(':').unwrap_or(after);
@@ -164,6 +178,19 @@ fn parse_short(s: &str) -> Result<Vec<ParsedPort>> {
 		}
 		1 => {
 			let (left, right) = split_last_colon(rest);
+			// An empty host side (`":80"`, or `"${PORT}:80"` with `PORT`
+			// unset) leaves the host port to the runtime, like `"80"`.
+			if left.is_empty() {
+				return Ok(expand_port_range(right)?
+					.into_iter()
+					.map(|cp| ParsedPort {
+						container_port: cp,
+						protocol: proto.clone(),
+						host_ip: String::new(),
+						host_port: None,
+					})
+					.collect());
+			}
 			let host_ports = expand_port_range(left)?;
 			let container_ports = expand_port_range(right)?;
 			// A range of host ports with a single container port: every port of
@@ -176,7 +203,8 @@ fn parse_short(s: &str) -> Result<Vec<ParsedPort>> {
 			let host_ports = expand_single_host_port(host_ports, container_ports.len(), s)?;
 			if host_ports.len() != container_ports.len() {
 				return Err(ComposeError::InvalidPort(format!(
-					"port range mismatch: {s}"
+					"port range mismatch: {}",
+					shown(s)
 				)));
 			}
 			Ok(host_ports
@@ -193,7 +221,10 @@ fn parse_short(s: &str) -> Result<Vec<ParsedPort>> {
 		_ => {
 			let parts: Vec<&str> = rest.splitn(3, ':').collect();
 			if parts.len() < 3 {
-				return Err(ComposeError::InvalidPort(format!("invalid port spec: {s}")));
+				return Err(ComposeError::InvalidPort(format!(
+					"invalid port spec: {}",
+					shown(s)
+				)));
 			}
 			parse_with_ip(parts[0], &format!("{}:{}", parts[1], parts[2]), &proto, s)
 		}
@@ -229,7 +260,8 @@ fn parse_with_ip(ip: &str, after: &str, proto: &str, full: &str) -> Result<Vec<P
 		let host_ports = expand_single_host_port(host_ports, container_ports.len(), full)?;
 		if host_ports.len() != container_ports.len() {
 			return Err(ComposeError::InvalidPort(format!(
-				"port range mismatch: {full}"
+				"port range mismatch: {}",
+				shown(full)
 			)));
 		}
 		Ok(host_ports
@@ -244,7 +276,7 @@ fn parse_with_ip(ip: &str, after: &str, proto: &str, full: &str) -> Result<Vec<P
 			.collect())
 	} else {
 		let cp = parse_port_num(after)
-			.map_err(|_| ComposeError::InvalidPort(format!("bad port: {full}")))?;
+			.map_err(|_| ComposeError::InvalidPort(format!("bad port: {}", shown(full))))?;
 		Ok(vec![ParsedPort {
 			container_port: cp,
 			protocol: proto.to_string(),
@@ -276,7 +308,7 @@ fn expand_single_host_port(
 		let end = start
 			.checked_add((container_count - 1) as u16)
 			.ok_or_else(|| {
-				ComposeError::InvalidPort(format!("host port range overflow: {spec}"))
+				ComposeError::InvalidPort(format!("host port range overflow: {}", shown(spec)))
 			})?;
 		Ok((start..=end).collect())
 	} else {
@@ -297,7 +329,9 @@ fn validate_protocol(proto: &str, full: &str) -> Result<()> {
 		Ok(())
 	} else {
 		Err(ComposeError::InvalidPort(format!(
-			"unsupported protocol '{proto}' in '{full}'; use tcp, udp, or sctp"
+			"unsupported protocol '{}' in '{}'; use tcp, udp, or sctp",
+			shown(proto),
+			shown(full)
 		)))
 	}
 }
@@ -306,15 +340,16 @@ fn validate_protocol(proto: &str, full: &str) -> Result<()> {
 /// value (e.g. `99999`) as a clear config error so the short and long port forms
 /// fail the same way instead of overflowing or leaking a serde enum message.
 fn port_in_range(n: u32, label: &str) -> Result<u16> {
-	u16::try_from(n)
-		.map_err(|_| ComposeError::InvalidPort(format!("port out of range (1-65535): {label}")))
+	u16::try_from(n).map_err(|_| {
+		ComposeError::InvalidPort(format!("port out of range (1-65535): {}", shown(label)))
+	})
 }
 
 /// Parse a single port number, range-checked against 1-65535.
 fn parse_port_num(s: &str) -> Result<u16> {
 	let n: u32 = s
 		.parse()
-		.map_err(|_| ComposeError::InvalidPort(format!("bad port: {s}")))?;
+		.map_err(|_| ComposeError::InvalidPort(format!("bad port: {}", shown(s))))?;
 	port_in_range(n, s)
 }
 
@@ -326,13 +361,15 @@ fn expand_port_range(s: &str) -> Result<Vec<u16>> {
 		let end = parse_port_num(&s[idx + 1..])?;
 		if start > end {
 			return Err(ComposeError::InvalidPort(format!(
-				"start > end in range: {s}"
+				"start > end in range: {}",
+				shown(s)
 			)));
 		}
 		let count = (end as usize) - (start as usize) + 1;
 		if count > MAX_PORT_RANGE {
 			return Err(ComposeError::InvalidPort(format!(
-				"port range too large ({count} ports, max {MAX_PORT_RANGE}): {s}"
+				"port range too large ({count} ports, max {MAX_PORT_RANGE}): {}",
+				shown(s)
 			)));
 		}
 		Ok((start..=end).collect())
@@ -348,3 +385,7 @@ fn expand_port_range(s: &str) -> Result<Vec<u16>> {
 #[cfg(test)]
 #[path = "ports_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ports_clip_tests.rs"]
+mod clip_tests;

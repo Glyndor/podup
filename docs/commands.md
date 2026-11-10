@@ -12,14 +12,14 @@ podup [GLOBAL OPTIONS] <COMMAND> [COMMAND OPTIONS] [SERVICE...]
 
 | Flag | Env | Description |
 |---|---|---|
-| `-f, --file <PATH>` | `COMPOSE_FILE` | Compose file. Repeatable; later files merge over earlier ones. When unset, the compose-spec precedence list is probed: `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`. |
-| `-p, --project <NAME>` (alias `--project-name`) | `COMPOSE_PROJECT_NAME` | Project name, prefixing container/network/volume names. When unset: the top-level `name:`, then the sanitized project-directory basename. |
+| `-f, --file <PATH>` | `COMPOSE_FILE` | Compose file. Repeatable; later files merge over earlier ones. When unset, the compose-spec precedence list is probed: `compose.yaml`, `compose.yml`, `docker-compose.yaml`, `docker-compose.yml`. Only the current directory is probed: unlike docker compose, podup does not look in the parent directories, so from a subdirectory of a project pass `-f` or `--project-directory`. When the file is found by probing, a `compose.override.yaml` (or `.yml`) next to it is merged over it, as docker compose does. |
+| `-p, --project <NAME>` (alias `--project-name`) | `COMPOSE_PROJECT_NAME` | Project name, prefixing container/network/volume names. When unset: the top-level `name:`, then the sanitized project-directory basename. The result is also available to the file as `${COMPOSE_PROJECT_NAME}`. |
 | `--socket <PATH>` | `PODMAN_SOCKET` | Podman socket path; overrides auto-detection. |
 | `--connection-pool-size <N>` | `PODUP_LIBPOD_POOL` | HTTP/1.1 connections the libpod client keeps open to the Podman socket. Streaming calls each take a dedicated connection outside this cap. Valid range: 0–1024. Default 0 disables pooling. `PODUP_LIBCOD_POOL` is read as a fallback when the new name is unset. |
 | `--profile <NAMES>` | `COMPOSE_PROFILES` | Active profiles, comma-separated. |
 | `--project-directory <PATH>` | | Base directory for relative paths (env_file, build context, bind mounts, config/secret sources). Defaults to the compose file's directory. |
 | `--ansi <WHEN>` | | Colour output: `auto`, `always` or `never`. `--ansi always` forces colour even into a pipe or file and overrides `NO_COLOR`; `--ansi auto` honours `NO_COLOR` and TTY detection. |
-| `--env-file <PATH>` | | Env file(s) for interpolation. External extends chains retain the root compose file's resolved env paths. Repeatable; later files win. Replaces `.env` rather than adding to it. Process environment takes precedence. With `run`, also seeds the one-off container's environment below service `environment:` and `-e`. |
+| `--env-file <PATH>` | | Env file(s) for interpolation. External extends chains retain the root compose file's resolved env paths. Repeatable; later files win. A relative path is read from the working directory, not the compose file's. Replaces `.env` rather than adding to it. Process environment takes precedence. `COMPOSE_ENV_FILES` (comma-separated) is the same list. A value in an env file can refer to the process environment and to the keys before it (`B=${A} World`, `${X:-fallback}`); a single-quoted value stays literal. `COMPOSE_FILE`, `COMPOSE_PATH_SEPARATOR`, `COMPOSE_PROJECT_NAME` and `COMPOSE_PROFILES` can be set in these files too: a flag wins over the process environment, and that over the file. With `run`, also seeds the one-off container's environment below service `environment:` and `-e`. The variables it defines interpolate the compose file; they do not reach the `env_file:` of a service. |
 | `--no-warn` | | Suppress host-binding / privilege-escalation warnings during `up`/`create`/`run`/`exec`. The port-exposure warning is shown only by `up`/`create`/`run`/`scale`/`watch`/`generate quadlet`/`autostart` unless `--no-warn` is set, and by `config` regardless of `--no-warn`. `config` still surfaces the active modes at the default log level. |
 | `-h, --help` | | Per-command help, including inherited global options. `help [COMMAND]` shows command-specific help without those global options. |
 | `-V, --version` | | Print `podup version vX.Y.Z`. Same as `podup version`. |
@@ -58,7 +58,7 @@ A container that already exists is left in place when two facts both hold: its r
 | `--no-deps` | Do not start the `depends_on` services of the named services. | off |
 | `-t, --timeout <SECS>` | Seconds to wait for a container to stop when recreating. | Podman default |
 | `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable. | from file |
-| `--pull <POLICY>` | Pull policy before starting: `always`, `missing`, `never`, `newer`, `build`. (`newer` is Podman's extension.) | per service |
+| `--pull <POLICY>` | Pull policy before starting: `always`, `missing`, `never`, `newer`, `build`. (`newer` is Podman's extension.) | per service; otherwise `missing` |
 | `--no-build` | Do not build images, even for services with a `build:` section. | off |
 | `--quiet-pull` | Suppress image-pull progress output. | off |
 | `--wait` | Wait until services are running/healthy before returning. | off |
@@ -68,6 +68,15 @@ A container that already exists is left in place when two facts both hold: its r
 | `-V, --renew-anon-volumes` | Recreate anonymous volumes instead of keeping the previous ones. | off |
 | `--abort-on-container-exit` | Stop every container as soon as any of them exits; the process exit status is that container's exit code. Cannot be combined with `-d`, `--wait`, or `--watch`. | off |
 | `--exit-code-from SERVICE` | Return the named service's exit code as podup's own. Implies `--abort-on-container-exit`; a service that does not exist in the compose file is rejected before any container is created. | off |
+| `--abort-on-container-failure` | Stop every container as soon as one exits with a non-zero status; the process exit status is that container's exit code. A container that exits cleanly does not end the run. Cannot be combined with `-d`, `--wait`, or `--watch`. | off |
+| `--no-color` | Monochrome output: no colour in anything `up` prints, whatever `--ansi` says. | off |
+| `--no-log-prefix` | Print attached log lines without the `service \|` prefix. | off |
+| `--attach SERVICE` | Follow the logs of only this service, instead of the named services. Repeatable; a name that is not a service is rejected before anything starts. A service with `attach: false` stays unattached. Cannot be combined with `--attach-dependencies`. | named services |
+| `--no-attach SERVICE` | Do not follow the logs of this service. Repeatable; wins over `--attach`. | none |
+| `--attach-dependencies` | Also follow the logs of the dependencies of the named services. Without it only the named services are followed; with no service named every service is. Cannot be combined with `--attach`. | off |
+| `--quiet-build` | Suppress the output of the builds `up` runs; a failed build still reports its error. | off |
+| `--always-recreate-deps` | Recreate the containers of the services that were not named on the command line even when they are unchanged. With no service named there is nothing to single out. Cannot be combined with `--no-recreate`. | off |
+| `-y, --yes` | Accepted for compatibility. `up` never asks for confirmation, so there is nothing to answer. | off |
 
 `--wait` implies `-d` and checks every replica of each selected service. Health polling retains its per-service budget (interval × retries + start_period); `--wait-timeout` does not extend this dependency budget.
 
@@ -77,8 +86,8 @@ With `missing`, an observed local image skips redundant pulls. `always`/`newer` 
 podup up -d --build
 ```
 
-### `down`
-Stop and remove containers, networks, and (with `-v`) volumes. With `-v`, podup removes the project's named volumes and the data in them; volumes declared `external: true` are left alone (measured on 2026-09-19).
+### `down [SERVICE...]`
+Stop and remove containers, networks, and (with `-v`) volumes. With service names, only the containers of those services are stopped and removed: the networks, the pod and the volumes are shared with the services that stay, so they are left alone, `-v` is refused, and `--rmi` removes only the images of the named services. A name the file does not declare is an error raised before anything is removed, and naming services needs a compose file (`down -p NAME` by label alone refuses it). With `-v`, podup removes the project's named volumes and the data in them; volumes declared `external: true` are left alone (measured on 2026-09-19).
 
 | Flag | Description | Default |
 |---|---|---|
@@ -97,6 +106,10 @@ Create the containers for services without starting them. Accepts a trailing ser
 | `--no-recreate` | Leave existing containers in place. | off |
 | `--no-deps` | Do not create the `depends_on` services of the named ones. | off |
 | `--pull <POLICY>` | Pull policy before creating: `always`, `missing`, `never`, `newer`, `build`. | per service; otherwise `missing` |
+| `--no-build` | Do not build images, even for services with a `build:` section. Cannot be combined with `--build`. | off |
+| `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable; a service the file does not declare is rejected before anything is created. | from file |
+| `--remove-orphans` | Remove containers for services no longer in the file. | off |
+| `--quiet-pull` | Suppress image-pull progress output. | off |
 
 ### `start`
 Start existing stopped containers. Accepts a trailing service list. `start --wait` extends the readiness wait by the timeout given; a `depends_on: {condition: service_healthy}` wait inside an `up` is not.
@@ -130,7 +143,7 @@ Build or rebuild service images (optionally only the named services).
 | `--no-cache` | Do not use the build cache. | off |
 | `--pull` | Always attempt to pull a newer base image. | off |
 | `--build-arg <KEY=VAL>` | Set a build-time variable. Repeatable. | none |
-| `--progress <STYLE>` | `auto`, `plain` or `tty`. Validated but inert; see [accepted for compatibility](#accepted-for-compatibility). | `auto` |
+| `--progress <STYLE>` | `auto`, `plain` or `tty`. Validated but inert; see [accepted for compatibility](#accepted-for-compatibility). | none |
 | `--push` | Push each built image to its registry after a successful build. | off |
 | `-q, --quiet` | Suppress the build output. | off |
 
@@ -146,7 +159,7 @@ List project containers.
 | Flag | Description | Default |
 |---|---|---|
 | `-a, --all` | Include stopped containers. | running only |
-| `-q, --quiet` | Print container IDs only. | off |
+| `-q, --quiet` | Print container IDs only. Conflicts with `--format`. | off |
 | `--format <FMT>` | `table`, `json` (a JSON array), or `ndjson` (one Compose-shaped object per container, sorted by Name). | `table` |
 | `--status <STATE>` | Match container state/status by case-insensitive prefix. Repeatable; folded together with any `status=` from `--filter`. | all |
 | `--filter <KEY=VAL>` | `name=<NAME>` or `status=<STATE>`. An unknown key is an error. | none |
@@ -164,7 +177,7 @@ List podup compose projects on the host. Needs no compose file.
 | Flag | Description | Default |
 |---|---|---|
 | `-a, --all` | Include stopped projects. | running only |
-| `-q, --quiet` | Print project names only. | off |
+| `-q, --quiet` | Print project names only. Conflicts with `--format`. | off |
 | `--format <FMT>` | `table` or `json`. | `table` |
 | `--filter <FILTER>` | Keep only projects matching a predicate: `name=<NAME>` or `status=<running\|exited>`. Repeatable. | none |
 
@@ -225,7 +238,7 @@ List images used by services.
 
 | Flag | Description | Default |
 |---|---|---|
-| `-q, --quiet` | Print image IDs only. | off |
+| `-q, --quiet` | Print image IDs only. Conflicts with `--format`. | off |
 | `--format <FMT>` | `table` or `json`. | `table` |
 
 An empty result (no services with `image:` or `build:`) prints `no images` on stderr and leaves stdout empty in table output. Under `--format json` an empty result is `[]`; under `-q/--quiet` neither the note nor a row is printed.
@@ -235,7 +248,7 @@ List the project's named volumes. `EXTERNAL` is highlighted when it reads `yes`:
 
 | Flag | Description | Default |
 |---|---|---|
-| `-q, --quiet` | Print volume names only. | off |
+| `-q, --quiet` | Print volume names only. Conflicts with `--format`. | off |
 | `-s, --size` | Add SIZE and RECLAIMABLE columns. | off |
 | `--format <FMT>` | `table` or `json`. | `table` |
 
@@ -250,17 +263,19 @@ Run a one-off command in a new container for the service, or for a job of the sa
 | `--no-rm` | Keep the one-off container after it exits. | off |
 | `-d, --detach` | Run in the background. | off |
 | `-e, --env <KEY=VAL>` | Set an environment variable. Repeatable. | none |
+| `--env-from-file <FILE>` | Load environment variables from a `KEY=VALUE` file into the one-off container. Repeatable; later files win. A relative path is read from the working directory. Applied over the service's `environment:` and under `-e`. A missing or malformed file is an error that names it. | none |
 | `--name <NAME>` | Override the container name. | generated |
 | `-P, --service-ports` | Publish the service's declared ports. | off |
 | `-l, --label <KEY=VAL>` | Add a label to the one-off container. Repeatable. | none |
 | `-u, --user <NAME\|UID[:GID]>` | Run the command as this user. | service configuration, then image default |
 | `-w, --workdir <PATH>` | Working directory inside the container. | service configuration, then image default |
-| `--entrypoint <CMD>` | Override the image entrypoint. The value is split into words the way a shell would (`sh -c` is two words, quotes group); an empty value clears the entrypoint. Given with no command, it also drops the `command:` of the service. | service configuration, then image default |
+| `--entrypoint <CMD>` | Override the image entrypoint. The value is split into words the way Compose splits a string `entrypoint:` (`sh -c` is two words, quotes group; see [Migrating](docker-migration.md)); an empty value clears the entrypoint. Given with no command, it also drops the `command:` of the service. | service configuration, then image default |
 | `-v, --volume <SPEC>` | Bind-mount an extra volume. Repeatable. | none |
 | `-p, --publish <SPEC>` | Publish an extra port. Repeatable. | none |
 | `-i, --interactive` | Keep the container's STDIN open (`stdin_open`). Whether a live terminal is attached is decided by stdin/stdout being terminals and by `-T`, not by this flag. | off |
 | `-T, --no-TTY` (alias `--no-tty`) | Disable pseudo-TTY allocation. | off |
 | `--no-deps` | Do not start the `depends_on` services before running. | off |
+| `--remove-orphans` | Remove containers for services no longer in the file before running. A service name the file does not declare is refused before anything is removed. | off |
 
 ```bash
 podup run --rm web sh -c 'echo hello'

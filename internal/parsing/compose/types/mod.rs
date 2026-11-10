@@ -1,5 +1,6 @@
 //! Docker Compose file type definitions.
 
+pub mod command;
 pub mod inputs;
 pub mod limits;
 pub mod networking;

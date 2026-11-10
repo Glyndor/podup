@@ -49,6 +49,15 @@ const HELP_STYLES: clap::builder::Styles = clap::builder::Styles::plain()
 	.invalid(clap::builder::styling::AnsiColor::Red.on_default())
 	.context(clap::builder::styling::Style::new());
 
+/// The colour choice for this run: `--ansi`, unless `up --no-color` asks for
+/// monochrome output, which wins over `--ansi always`.
+pub(crate) fn color_choice(cli: &Cli) -> anstream::ColorChoice {
+	match &cli.command {
+		Commands::Up(UpArgs { no_color: true, .. }) => anstream::ColorChoice::Never,
+		_ => cli.ansi.into(),
+	}
+}
+
 /// Read `--ansi` straight off argv, before clap parses anything.
 ///
 /// clap renders `--help` inside the parse call, and the colour choice was only
@@ -133,8 +142,8 @@ pub(crate) struct Cli {
 	pub(crate) project: Option<String>,
 
 	/// Podman socket path (overrides auto-detection and PODMAN_SOCKET env).
-	/// `global` so it can appear before or after the subcommand (it has no
-	/// short flag, so there is no collision).
+	// `global` so it can appear before or after the subcommand (it has no
+	// short flag, so there is no collision).
 	#[arg(long, env = "PODMAN_SOCKET", global = true)]
 	pub(crate) socket: Option<String>,
 

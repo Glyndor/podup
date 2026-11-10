@@ -12,7 +12,10 @@ use crate::libpod::API_PREFIX;
 use crate::size;
 
 mod anon_volumes;
+mod daemon_rootless;
 mod fields;
+mod host_log_driver;
+mod image_healthcheck;
 mod inputs;
 mod oneoff;
 mod resolve;
@@ -31,10 +34,11 @@ pub(crate) use host_mode::check_host_mode;
 pub(crate) use security::parse_device_cgroup_rule;
 
 use crate::engine::container_config::{
-	build_healthcheck, build_log_config, build_resource_limits, build_restart_policy, build_ulimits,
+	build_healthcheck, build_healthcheck_inheriting, build_log_config, build_resource_limits,
+	build_restart_policy, build_ulimits,
 };
-use crate::engine::network::resolve_network_mode;
-use crate::engine::volume_mounts::build_mounts_all;
+use crate::engine::network::{resolve_network_mode, resolve_service_namespace};
+use crate::engine::volume_mounts::{build_mounts_all, ensure_required_bind_sources};
 use crate::engine::Engine;
 use fields::{build_blkio_config, warn_swarm_only_deploy};
 // Re-exported at the container root so `crate::engine::container::*` is a
@@ -123,6 +127,7 @@ impl Engine {
 		// owns are created up front by `create_project_secrets`; here we only build
 		// the references and preflight external ones for existence.
 		let native_secrets = self.build_native_secrets(service, file).await?;
+		ensure_required_bind_sources(service_name, service, &self.base_dir)?;
 		let (mut mounts, mut named_volumes) = build_mounts_all(service, &self.base_dir);
 		// Resolve relative bind sources against the project base directory (and
 		// expand a leading `~`) so they don't depend on Podman's working
@@ -164,7 +169,9 @@ impl Engine {
 		let (restart_policy, restart_tries) = build_restart_policy(service);
 
 		// --- Logging ---
-		let log_configuration = build_log_config(service_name, service.logging.as_ref())?;
+		let mut log_configuration = build_log_config(service_name, service.logging.as_ref())?;
+		self.drop_tag_for_host_default(service_name, log_configuration.as_mut())
+			.await;
 
 		// --- Networks ---
 		// In pod mode the container joins the pod's shared namespace, so its
@@ -200,7 +207,7 @@ impl Engine {
 		let ulimits = build_ulimits(service);
 
 		// --- Devices ---
-		let (devices, device_cgroup_rule) = self.compute_devices_and_rules(service);
+		let (devices, device_cgroup_rule) = self.compute_devices_and_rules(service).await;
 
 		// --- Security options (decomposed onto SpecGenerator fields) ---
 		let security = parse_security_opts(service);
@@ -217,8 +224,14 @@ impl Engine {
 		pre_validate_spec(service_name, service)?;
 
 		// --- Namespace modes, platform, links, volumes_from ---
-		let pidns = service.pid.as_deref().map(Namespace::parse);
-		let ipcns = service.ipc.as_deref().map(Namespace::parse);
+		let pidns = service
+			.pid
+			.as_deref()
+			.map(|m| Namespace::parse(resolve_service_namespace(m, file, &self.project)));
+		let ipcns = service
+			.ipc
+			.as_deref()
+			.map(|m| Namespace::parse(resolve_service_namespace(m, file, &self.project)));
 		let utsns = service.uts.as_deref().map(Namespace::parse);
 		let cgroupns = service.cgroup.as_deref().map(Namespace::parse);
 		// In pod mode the user namespace is the pod's; a member must not set
@@ -236,9 +249,8 @@ impl Engine {
 		let (image_os, image_arch) = service
 			.platform
 			.as_deref()
-			.and_then(|p| p.split_once('/'))
-			.map(|(os, arch)| (Some(os.to_string()), Some(arch.to_string())))
-			.unwrap_or((None, None));
+			.map(crate::backends::engine::images::platform::Platform::parse)
+			.map_or((None, None), |p| (p.os, p.arch));
 		let links = resolve_links(service, file, &self.project);
 		let volumes_from = resolve_volumes_from(service, file, &self.project);
 		let stop_timeout = service
@@ -275,10 +287,21 @@ impl Engine {
 			.map(resolve_stop_signal)
 			.transpose()?;
 
+		// Only a healthcheck that sends something can leave a value out for the
+		// image to fill, so only then is the image asked.
+		let image_healthcheck = match service.healthcheck.as_ref() {
+			Some(hc) if !hc.is_disabled() && build_healthcheck(hc).is_some() => {
+				self.image_healthcheck(image).await
+			}
+			_ => None,
+		};
 		let spec = build_spec_generator(
 			&self.project,
 			service,
-			service.healthcheck.as_ref().and_then(build_healthcheck),
+			service
+				.healthcheck
+				.as_ref()
+				.and_then(|hc| build_healthcheck_inheriting(hc, image_healthcheck.as_ref())),
 			log_configuration,
 			match service
 				.healthcheck
@@ -342,8 +365,11 @@ impl Engine {
 				},
 				restart: (restart_policy, restart_tries),
 				stop_signal_timeout: (stop_signal, stop_timeout),
-				command: service.command.as_ref().map(|c| c.to_exec()),
-				entrypoint: service.entrypoint.as_ref().map(|c| c.to_exec()),
+				command: service.command.as_ref().map(|c| c.to_container_override()),
+				entrypoint: service
+					.entrypoint
+					.as_ref()
+					.map(|c| c.to_container_override()),
 				env: spec_env,
 				links,
 				image_platform: (image_os, image_arch),

@@ -4,6 +4,10 @@ use std::path::{Path, PathBuf};
 
 use podup::ComposeError;
 
+// The project name is also needed while the compose file is read, because the
+// file may interpolate it, so its resolution lives with the parser.
+pub(crate) use podup::compose::{resolve_base_dir, resolve_project_name};
+
 /// Validate an explicit `--project-directory`: it must exist and be a directory.
 /// A `None` (unset) directory is always fine: it is derived from the compose
 /// file's location. Matches `docker compose`, which errors on a missing working
@@ -11,9 +15,8 @@ use podup::ComposeError;
 pub(crate) fn validate_project_directory(dir: Option<&Path>) -> podup::Result<()> {
 	if let Some(dir) = dir {
 		if !dir.is_dir() {
-			return Err(ComposeError::Unsupported(format!(
-				"--project-directory {} does not exist or is not a directory",
-				dir.display()
+			return Err(ComposeError::Invalid(format!(
+				"--project-directory {dir:?} does not exist or is not a directory"
 			)));
 		}
 	}
@@ -40,24 +43,65 @@ pub(crate) fn compose_files_were_named(explicit: &[PathBuf]) -> bool {
 	!explicit.is_empty() || std::env::var("COMPOSE_FILE").is_ok_and(|v| !v.is_empty())
 }
 
+/// The separator of the `COMPOSE_FILE` list: `COMPOSE_PATH_SEPARATOR` when it is
+/// set and not empty, otherwise `:` (`;` on Windows).
+pub(crate) fn path_separator(custom: Option<&str>) -> String {
+	match custom {
+		Some(sep) if !sep.is_empty() => sep.to_string(),
+		_ if cfg!(windows) => ";".to_string(),
+		_ => ":".to_string(),
+	}
+}
+
 pub(crate) fn resolve_compose_files(explicit: &[PathBuf]) -> Vec<PathBuf> {
 	if !explicit.is_empty() {
 		return explicit.to_vec();
 	}
 	if let Ok(env) = std::env::var("COMPOSE_FILE") {
 		if !env.is_empty() {
-			let sep = if cfg!(windows) { ';' } else { ':' };
-			return env.split(sep).map(PathBuf::from).collect();
+			let custom = std::env::var("COMPOSE_PATH_SEPARATOR").ok();
+			let sep = path_separator(custom.as_deref());
+			return env
+				.split(sep.as_str())
+				.filter(|part| !part.is_empty())
+				.map(PathBuf::from)
+				.collect();
 		}
 	}
-	for candidate in COMPOSE_FILE_CANDIDATES {
-		if Path::new(candidate).is_file() {
-			let mut files = vec![PathBuf::from(candidate)];
-			files.extend(override_for(Path::new(candidate)));
-			return files;
+	let present = candidates_in(Path::new(""));
+	if let Some(first) = present.first() {
+		static WARNED: std::sync::Once = std::sync::Once::new();
+		if present.len() > 1 {
+			// Two of the supported names side by side: the one used is the first
+			// by precedence, and the person who edited the other one would not
+			// otherwise find out. docker compose says so too.
+			WARNED.call_once(|| tracing::warn!("{}", multiple_candidates_message(&present)));
 		}
+		let mut files = vec![first.clone()];
+		files.extend(override_for(first));
+		return files;
 	}
 	vec![PathBuf::from("docker-compose.yml")]
+}
+
+/// The compose files of the precedence list that exist in `dir`, highest first.
+pub(super) fn candidates_in(dir: &Path) -> Vec<PathBuf> {
+	COMPOSE_FILE_CANDIDATES
+		.iter()
+		.map(|name| dir.join(name))
+		.filter(|path| path.is_file())
+		.collect()
+}
+
+/// The warning for more than one candidate present: what was found, and which
+/// of them is used.
+pub(super) fn multiple_candidates_message(present: &[PathBuf]) -> String {
+	let names: Vec<String> = present.iter().map(|p| p.display().to_string()).collect();
+	format!(
+		"found several compose files with supported names ({}); using {}",
+		names.join(", "),
+		names[0]
+	)
 }
 
 /// Override-file names, in the compose-spec precedence order. Only the first one
@@ -101,69 +145,22 @@ pub(crate) fn absolute(path: &Path) -> PathBuf {
 	std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-/// Resolve the base directory for relative-path resolution. An explicit
-/// `--project-directory` wins; otherwise it is the directory containing the
-/// compose file (compose-spec default), or the current directory when the
-/// compose file has no parent component.
-pub(crate) fn resolve_base_dir(project_directory: Option<&Path>, file: &Path) -> PathBuf {
-	if let Some(dir) = project_directory {
-		return dir.to_path_buf();
-	}
-	match file.parent() {
-		Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
-		// A bare compose filename (e.g. `docker-compose.yml`) has an empty parent
-		// component. Anchor relative paths to the working directory so a relative
-		// `file:` secret/config or bind source resolves against the project
-		// directory, not the working directory the Podman service later runs in.
-		_ => std::env::current_dir().unwrap_or_default(),
-	}
-}
-
-/// Resolve the project name following the compose-spec precedence: an explicit
-/// `-p` / `COMPOSE_PROJECT_NAME` value, then the top-level `name:` field, then
-/// the sanitized basename of the project directory. Explicit values are taken
-/// verbatim; only the directory basename is sanitized.
-pub(crate) fn resolve_project_name(
-	explicit: Option<String>,
-	compose_name: Option<&str>,
-	base_dir: &Path,
-) -> String {
-	if let Some(name) = explicit {
-		return name;
-	}
-	if let Some(name) = compose_name {
-		return name.to_string();
-	}
-	// An empty base dir means a bare compose filename in the current directory;
-	// canonicalize `.` so the basename comes from the working directory.
-	let probe = if base_dir.as_os_str().is_empty() {
-		Path::new(".")
-	} else {
-		base_dir
-	};
-	let basename = probe
-		.canonicalize()
-		.unwrap_or_else(|_| probe.to_path_buf())
-		.file_name()
-		.map(|n| n.to_string_lossy().into_owned())
-		.unwrap_or_default();
-	sanitize_project_name(&basename)
-}
-
-/// Normalize a raw directory name into a valid compose project name: lowercase,
-/// keep only `[a-z0-9_-]`, then strip any leading `_`/`-`. Falls back to the
-/// `podup` literal when nothing valid remains, so the project name is never
-/// empty.
-pub(crate) fn sanitize_project_name(raw: &str) -> String {
-	let kept: String = raw
-		.to_lowercase()
-		.chars()
-		.filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_' || *c == '-')
-		.collect();
-	let trimmed = kept.trim_start_matches(['_', '-']);
-	if trimmed.is_empty() {
-		"podup".to_string()
-	} else {
-		trimmed.to_string()
-	}
+/// Anchor relative `--env-file` paths at `cwd`.
+///
+/// Like every other path given on the command line, an `--env-file` is
+/// relative to where the command is run, not to the compose file's directory,
+/// so `cd envs && podup --env-file x.env -f ../compose.yaml config` reads
+/// `envs/x.env`. Absolute paths are left as they are.
+pub(crate) fn anchor_env_files(files: &[String], cwd: &Path) -> Vec<String> {
+	files
+		.iter()
+		.map(|f| {
+			let path = Path::new(f);
+			if path.is_absolute() {
+				f.clone()
+			} else {
+				cwd.join(path).to_string_lossy().into_owned()
+			}
+		})
+		.collect()
 }

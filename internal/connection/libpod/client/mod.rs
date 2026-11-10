@@ -77,6 +77,9 @@ pub type Result<T> = std::result::Result<T, PodmanError>;
 pub struct Client {
 	socket_path: String,
 	pool: Arc<ConnPool>,
+	/// The removals of init containers whose owner was cancelled, still running
+	/// in the background; see [`Client::drain_init_cleanups`].
+	init_cleanups: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 /// Lowest libpod API major version podup supports. Podman 5.x reports `5.x.y`;

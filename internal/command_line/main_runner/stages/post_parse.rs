@@ -25,11 +25,13 @@ pub(crate) async fn run_config(
 		format,
 		services,
 		volumes,
+		networks,
 		images,
 		profiles,
 		hash,
 		quiet,
 		resolve_image_digests,
+		no_interpolate,
 		..
 	}) = &cli.command
 	else {
@@ -68,6 +70,11 @@ pub(crate) async fn run_config(
 	// environment at all (#1184). `config` is the command you reach for to ask
 	// what will actually run; leaving the key unresolved pointed away from the
 	// answer rather than merely omitting it.
+	// A bare `KEY` under `environment:` reads the project environment (process,
+	// plus `.env` or `--env-file`), the same one `up` resolves it from.
+	let project_vars =
+		podup::substitute::build_vars_with_env_files_strict(&base_dir, &cli.env_file)?;
+	podup::env_file::resolve_bare_environment(&mut resolved, &project_vars);
 	podup::env_file::materialize_env_files(&mut resolved, &base_dir)?;
 	// Render the resolved project name (already settled above from -p /
 	// COMPOSE_PROJECT_NAME, the top-level `name:`, then the directory
@@ -79,10 +86,12 @@ pub(crate) async fn run_config(
 		&crate::startup::ConfigOutput {
 			services: *services,
 			volumes: *volumes,
+			networks: *networks,
 			images: *images,
 			profiles: *profiles,
 			hash: hash.clone(),
 			quiet: *quiet,
+			no_interpolate: *no_interpolate,
 		},
 		&project,
 		&base_dir,
@@ -209,7 +218,9 @@ pub(crate) async fn run_engine_command(
 	// `--scale SERVICE=N` (on `up`) and the `scale` subcommand both feed the
 	// engine's replica overrides so `resolve_replicas` reports the target count.
 	let scale_overrides: std::collections::HashMap<String, u32> = match &cli.command {
-		Commands::Up(UpArgs { scale, .. }) => scale.iter().cloned().collect(),
+		Commands::Up(UpArgs { scale, .. }) | Commands::Create { scale, .. } => {
+			scale.iter().cloned().collect()
+		}
 		Commands::Scale { pairs } => pairs.iter().cloned().collect(),
 		_ => std::collections::HashMap::new(),
 	};
@@ -222,7 +233,12 @@ pub(crate) async fn run_engine_command(
 			..
 		}) => (pull.clone(), *no_build, *quiet_pull),
 		Commands::Pull { quiet, policy, .. } => (policy.clone(), false, *quiet),
-		Commands::Create { pull, .. } => (pull.clone(), false, false),
+		Commands::Create {
+			pull,
+			no_build,
+			quiet_pull,
+			..
+		} => (pull.clone(), *no_build, *quiet_pull),
 		_ => (None, false, false),
 	};
 	// `up -V/--renew-anon-volumes`: recreate anonymous volumes on container
@@ -234,13 +250,25 @@ pub(crate) async fn run_engine_command(
 			..
 		})
 	);
+	// `up --quiet-build` and `--always-recreate-deps`.
+	let (quiet_build, always_recreate_deps) = match &cli.command {
+		Commands::Up(UpArgs {
+			quiet_build,
+			always_recreate_deps,
+			..
+		}) => (*quiet_build, *always_recreate_deps),
+		_ => (false, false),
+	};
 	let engine = podup::Engine::with_base_dir(client, project, base_dir)
+		.with_quiet_build(quiet_build)
+		.with_always_recreate_deps(always_recreate_deps)
 		.with_compose_files(compose_files.iter().map(|f| absolute(f)).collect())
 		.with_stop_timeout(stop_timeout)
 		.with_scale_overrides(scale_overrides)
 		.with_up_overrides(pull_override, no_build, quiet_pull)
 		.with_run_overrides(crate::startup::run_overrides_for(&cli.command))
 		.with_run_env_files(cli.env_file.clone())
+		.with_run_env_from_files(crate::startup::run_env_from_files_for(&cli.command))
 		.with_run_labels(crate::startup::run_labels_for(&cli.command))
 		.with_run_no_tty(crate::startup::run_no_tty_for(&cli.command))
 		.with_renew_anon_volumes(renew_anon_volumes)

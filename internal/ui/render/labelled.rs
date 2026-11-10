@@ -20,8 +20,13 @@ use super::super::{paint, AnsiColor, Style};
 ///
 /// Values with no status meaning (a path, a file mode) are left alone rather
 /// than given an arbitrary colour.
-pub fn print_labelled(label: &str, value: &str) {
-	print_labelled_with(label, value, None);
+///
+/// The write goes through the writer in [`crate::ui::print`], so a failed
+/// write reaches the caller: a reader that closed the pipe ends the process
+/// quietly, and any other failure is handed back so the command can fail
+/// instead of printing half the answer.
+pub fn print_labelled(label: &str, value: &str) -> std::io::Result<()> {
+	print_labelled_with(label, value, None)
 }
 
 /// [`print_labelled`] with the value's meaning stated rather than inferred.
@@ -30,7 +35,7 @@ pub fn print_labelled(label: &str, value: &str) {
 /// --user needs a user session)` is the answer to a yes/no question written as a
 /// sentence. `Some(true)`/`Some(false)` colours it green/red; `None` falls back
 /// to reading the text.
-pub fn print_labelled_with(label: &str, value: &str, good: Option<bool>) {
+pub fn print_labelled_with(label: &str, value: &str, good: Option<bool>) -> std::io::Result<()> {
 	use std::io::Write;
 	let dim = Style::new().dimmed();
 	let padded = format!("{label}:");
@@ -43,12 +48,16 @@ pub fn print_labelled_with(label: &str, value: &str, good: Option<bool>) {
 		Some(style) => paint(style, value, true),
 		None => value.to_string(),
 	};
-	let _ = writeln!(
-		anstream::stdout(),
+	// The anstream sink strips the ANSI codes itself when colour is off, which
+	// is why these lines keep emitting them; the writer decides what a failed
+	// write means.
+	let mut sink = anstream::stdout();
+	crate::ui::print::settle(writeln!(
+		sink,
 		"{}{padded:<11}{} {styled_value}",
 		dim.render(),
 		dim.render_reset()
-	);
+	))
 }
 
 /// [`print_labelled`] with the value dimmed, for an answer that is negative but
@@ -63,29 +72,31 @@ pub fn print_labelled_with(label: &str, value: &str, good: Option<bool>) {
 /// Separate from [`print_labelled_with`] rather than a third state added to its
 /// `Option<bool>`: `ui` is public API and podup is 1.0.0, so the existing
 /// signature may not move.
-pub fn print_labelled_neutral(label: &str, value: &str) {
+pub fn print_labelled_neutral(label: &str, value: &str) -> std::io::Result<()> {
 	use std::io::Write;
 	let dim = Style::new().dimmed();
 	let padded = format!("{label}:");
-	let _ = writeln!(
-		anstream::stdout(),
+	let mut sink = anstream::stdout();
+	crate::ui::print::settle(writeln!(
+		sink,
 		"{}{padded:<11}{} {}{value}{}",
 		dim.render(),
 		dim.render_reset(),
 		dim.render(),
 		dim.render_reset()
-	);
+	))
 }
 
 /// Print a bold header tinted with its identity colour, used where a block is
 /// headed by a container name rather than by column titles.
-pub fn print_identity_header(name: &str) {
+pub fn print_identity_header(name: &str) -> std::io::Result<()> {
 	use std::io::Write;
 	let style = identity_style(name).bold();
-	let _ = writeln!(
-		anstream::stdout(),
+	let mut sink = anstream::stdout();
+	crate::ui::print::settle(writeln!(
+		sink,
 		"{}{name}{}",
 		style.render(),
 		style.render_reset()
-	);
+	))
 }

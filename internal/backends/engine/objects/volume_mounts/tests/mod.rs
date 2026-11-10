@@ -1,4 +1,7 @@
-use super::{bind_mounts, build_mounts_all, ensure_bind_source, mount_targets, BindSource};
+use super::{
+	bind_mounts, build_mounts_all, ensure_bind_source, ensure_required_bind_sources, mount_targets,
+	BindSource,
+};
 use crate::compose::types::{BindOptions, Service, VolumeMount, VolumeOptions, VolumeType};
 use std::path::Path;
 

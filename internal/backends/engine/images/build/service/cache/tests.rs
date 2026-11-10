@@ -46,3 +46,56 @@ fn an_empty_entry_is_dropped() {
 	assert_eq!(reference(""), None);
 	assert_eq!(reference("   "), None);
 }
+
+#[test]
+fn a_tag_is_cut_from_the_repository() {
+	assert_eq!(repository("example/app:cache"), "example/app");
+	assert_eq!(repository("example/app"), "example/app");
+}
+
+#[test]
+fn a_digest_is_cut_from_the_repository() {
+	let digest = "a".repeat(64);
+	assert_eq!(
+		repository(&format!("example/app@sha256:{digest}")),
+		"example/app"
+	);
+	assert_eq!(
+		repository(&format!("example/app:cache@sha256:{digest}")),
+		"example/app"
+	);
+}
+
+#[test]
+fn a_registry_port_is_not_a_tag() {
+	assert_eq!(
+		repository("registry.example:5000/team/app:cache"),
+		"registry.example:5000/team/app"
+	);
+	assert_eq!(
+		repository("registry.example:5000/team/app"),
+		"registry.example:5000/team/app"
+	);
+}
+
+#[test]
+fn references_travel_without_tag_or_digest() {
+	let entries = vec![
+		"example/app:cache".to_string(),
+		"type=registry,ref=registry.example:5000/app:v2,mode=max".to_string(),
+	];
+	assert_eq!(
+		references(CacheField::From, &entries),
+		vec![
+			"example/app".to_string(),
+			"registry.example:5000/app".to_string()
+		]
+	);
+	assert_eq!(
+		references(CacheField::To, &entries),
+		vec![
+			"example/app".to_string(),
+			"registry.example:5000/app".to_string()
+		]
+	);
+}

@@ -18,6 +18,7 @@ use super::{
 	UlimitConfig,
 };
 
+pub(crate) mod devices;
 pub(crate) mod umask;
 
 /// A single service definition.
@@ -36,13 +37,15 @@ pub struct Service {
 	/// another file); merged before this service's own keys are applied.
 	#[serde(skip_serializing_if = "Option::is_none")]
 	pub extends: Option<ExtendsConfig>,
-	/// `command:` overrides the image `CMD`; string (shell-parsed) or list (exec
-	/// form, no shell).
-	#[serde(skip_serializing_if = "Option::is_none")]
+	/// `command:` overrides the image `CMD`; a string is split into words
+	/// at load the way Docker Compose does (no shell), or a list (exec form).
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	#[serde(deserialize_with = "super::command::deserialize_split")]
 	pub command: Option<Command>,
 	/// `entrypoint:` overrides the image `ENTRYPOINT` and resets any image
-	/// `CMD`; string (shell form) or list (exec form).
-	#[serde(skip_serializing_if = "Option::is_none")]
+	/// `CMD`; string (split into words at load) or list (exec form).
+	#[serde(default, skip_serializing_if = "Option::is_none")]
+	#[serde(deserialize_with = "super::command::deserialize_split")]
 	pub entrypoint: Option<Command>,
 
 	/// `ports:` lists published host↔container port mappings (`[host:]container[/proto]`
@@ -289,7 +292,13 @@ pub struct Service {
 
 	/// `devices:` lists host devices exposed to the container
 	/// (`host[:container[:perms]]`, perms a subset of `rwm`).
-	#[serde(default, skip_serializing_if = "Vec::is_empty")]
+	/// The long `{source, target, permissions}` spelling is read into the same
+	/// short strings.
+	#[serde(
+		default,
+		deserialize_with = "devices::deserialize",
+		skip_serializing_if = "Vec::is_empty"
+	)]
 	pub devices: Vec<String>,
 	/// `device_cgroup_rules:` lists explicit device cgroup allow/deny rules (e.g.
 	/// `c 1:3 mr`).
@@ -584,3 +593,6 @@ mod umask_directive_tests;
 
 #[cfg(test)]
 mod umask_regression_tests;
+
+#[cfg(test)]
+mod umask_value_tests;

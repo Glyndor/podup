@@ -7,8 +7,13 @@
 
 mod extra_tags;
 mod normalize;
+mod remote;
+mod service_contexts;
 mod tags;
 
+pub(in crate::backends::engine::images::build) use remote::fold_dockerfile_folder;
+pub(in crate::backends::engine::images::build) use service_contexts::resolve_additional_contexts;
+pub(crate) use service_contexts::with_context_builds;
 pub(in crate::backends::engine) use tags::is_remote_context;
 pub(in crate::backends::engine::images::build) use tags::looks_like_secret;
 pub(crate) use tags::primary_build_tag;

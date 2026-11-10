@@ -148,7 +148,7 @@ additional_contexts:
 	assert_eq!(b.extra_hosts(), &["host.example:10.0.0.1"]);
 	assert_eq!(b.tags(), &["example.com/app:1.0", "example.com/app:latest"]);
 	assert_eq!(b.ssh(), &["default"]);
-	assert_eq!(b.secrets(), &["db_password"]);
+	assert_eq!(b.secrets(), &[BuildSecret::Short("db_password".into())]);
 	let extra = b.additional_contexts();
 	assert_eq!(extra.len(), 1);
 	assert_eq!(
@@ -203,5 +203,40 @@ fn service_without_no_cache_filter_keeps_its_json_and_hash() {
 	assert_eq!(
 		hash,
 		"acfc414e035978e46aa89f307c8f23f9216d457085c708af435e9a128db3d6b0"
+	);
+}
+
+#[test]
+fn build_secrets_in_the_long_form_name_the_id_the_dockerfile_reads() {
+	// Compose Specification, build > secrets: the long syntax has `source`,
+	// `target`, `uid`, `gid` and `mode`. Docker Compose accepts it; the id the
+	// build reads the secret by is the `target`.
+	let yaml = "services:\n  a:\n    build:\n      context: .\n      secrets:\n        - source: mysecret\n          target: mytarget\n          uid: \"103\"\n          mode: 0440\n        - plain\n        - source: only_source\n";
+	let file = crate::parse_str_raw(yaml).unwrap();
+	let build = file.services["a"].build.as_ref().unwrap();
+	let ids: Vec<(&str, &str)> = build
+		.secrets()
+		.iter()
+		.map(|s| (s.source(), s.id()))
+		.collect();
+	assert_eq!(
+		ids,
+		vec![
+			("mysecret", "mytarget"),
+			("plain", "plain"),
+			("only_source", "only_source")
+		]
+	);
+}
+
+#[test]
+fn build_extra_hosts_equals_form_normalizes_to_host_colon_ip() {
+	let b: BuildConfig = serde_yaml::from_str(
+		"context: .\nextra_hosts:\n  - a.internal=127.0.0.9\n  - b.internal:127.0.0.8\n",
+	)
+	.unwrap();
+	assert_eq!(
+		b.extra_hosts(),
+		&["a.internal:127.0.0.9", "b.internal:127.0.0.8"]
 	);
 }

@@ -223,3 +223,40 @@ services:
 		out.warnings
 	);
 }
+
+/// Quadlet splits these lists on whitespace, so one compose entry that holds a
+/// space must not become two grants in the unit.
+#[test]
+fn a_capability_device_or_path_with_a_space_stays_one_word() {
+	let yaml = r#"
+services:
+  app:
+    image: app:1.0
+    cap_add: ["NET_RAW SYS_ADMIN"]
+    cap_drop: ["MKNOD CHOWN"]
+    devices: ["/dev/fuse /dev/mem"]
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "proj-app.container").contents;
+	assert!(c.contains("AddCapability=\"NET_RAW SYS_ADMIN\""), "{c}");
+	assert!(c.contains("DropCapability=\"MKNOD CHOWN\""), "{c}");
+	assert!(c.contains("AddDevice=\"/dev/fuse /dev/mem\""), "{c}");
+	assert!(!c.contains("AddCapability=NET_RAW SYS_ADMIN"), "{c}");
+}
+
+#[test]
+fn ordinary_capabilities_and_devices_are_written_as_before() {
+	let yaml = r#"
+services:
+  app:
+    image: app:1.0
+    cap_add: [NET_ADMIN]
+    devices: ["/dev/fuse:/dev/fuse:rwm"]
+"#;
+	let file = parse_str(yaml).unwrap();
+	let out = generate_at(&file, "proj", std::path::Path::new("/srv/app"));
+	let c = &unit_named(&out, "proj-app.container").contents;
+	assert!(c.contains("AddCapability=NET_ADMIN\n"), "{c}");
+	assert!(c.contains("AddDevice=/dev/fuse:/dev/fuse:rwm\n"), "{c}");
+}

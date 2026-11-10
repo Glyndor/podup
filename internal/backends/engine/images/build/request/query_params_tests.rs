@@ -119,7 +119,8 @@ mod tests {
 	/// Compose writes the caches with the global
 	/// `[NAME|type=TYPE[,KEY=VALUE]]` syntax, where a bare name is a shortcut
 	/// for `type=registry,ref=NAME`. The endpoint reads a JSON array of image
-	/// references, so a registry cache travels as its reference.
+	/// references without a tag or digest, so a registry cache travels as the
+	/// repository its reference names.
 	#[tokio::test]
 	async fn a_registry_cache_reaches_the_build_query_as_an_image_reference() {
 		let (_dir, fake, engine) = start_capture("proj");
@@ -138,8 +139,8 @@ mod tests {
 			serde_json::from_str(&raw).expect("cachefrom= must be a JSON array");
 		assert_eq!(
 			value,
-			serde_json::json!(["example/app:cache", "other.example/cache:latest"]),
-			"cachefrom= must carry the image reference of every registry cache"
+			serde_json::json!(["example/app", "other.example/cache"]),
+			"cachefrom= must carry the repository of every registry cache, without its tag"
 		);
 	}
 
@@ -168,5 +169,146 @@ mod tests {
 			None,
 			"a cache target with no libpod equivalent must not reach the query: {query}"
 		);
+	}
+
+	/// The daemon finds the Dockerfile of a Git context by its file name
+	/// alone, so a Dockerfile in a folder travels as the folder of the context
+	/// and a bare file name.
+	#[tokio::test]
+	async fn a_dockerfile_folder_of_a_git_context_moves_into_the_remote() {
+		let (_dir, fake, engine) = start_capture("proj");
+
+		let query = build_query(
+			&engine,
+			&fake,
+			"services:\n  app:\n    image: proj/img:1\n    build:\n      context: \
+			 \"https://example.test/org/repo.git#main\"\n      dockerfile: docker/Dockerfile\n",
+		)
+		.await;
+
+		assert_eq!(
+			param(&query, "remote=").as_deref(),
+			Some("https://example.test/org/repo.git#main:docker")
+		);
+		assert_eq!(param(&query, "dockerfile=").as_deref(), Some("Dockerfile"));
+	}
+
+	/// A Git context with a Dockerfile at its top is sent as written.
+	#[tokio::test]
+	async fn a_git_context_without_a_dockerfile_folder_is_sent_as_written() {
+		let (_dir, fake, engine) = start_capture("proj");
+
+		let query = build_query(
+			&engine,
+			&fake,
+			"services:\n  app:\n    image: proj/img:1\n    build:\n      context: \
+			 \"https://example.test/org/repo.git#main:app\"\n      dockerfile: Dockerfile.prod\n",
+		)
+		.await;
+
+		assert_eq!(
+			param(&query, "remote=").as_deref(),
+			Some("https://example.test/org/repo.git#main:app")
+		);
+		assert_eq!(
+			param(&query, "dockerfile=").as_deref(),
+			Some("Dockerfile.prod")
+		);
+	}
+
+	/// With no `build.platforms`, the build is for the platform the service
+	/// declares.
+	#[tokio::test]
+	async fn a_service_platform_is_the_build_platform_when_none_is_listed() {
+		let (_dir, fake, engine) = start_capture("proj");
+
+		let query = build_query(
+			&engine,
+			&fake,
+			"services:\n  app:\n    image: proj/img:1\n    platform: linux/arm64\n    build:\n      \
+			 context: .\n",
+		)
+		.await;
+
+		assert_eq!(param(&query, "platform=").as_deref(), Some("linux/arm64"));
+	}
+
+	/// `build.platforms` is the more specific setting and wins.
+	#[tokio::test]
+	async fn build_platforms_win_over_the_service_platform() {
+		let (_dir, fake, engine) = start_capture("proj");
+
+		let query = build_query(
+			&engine,
+			&fake,
+			"services:\n  app:\n    image: proj/img:1\n    platform: linux/arm64\n    build:\n      \
+			 context: .\n      platforms:\n        - linux/amd64\n",
+		)
+		.await;
+
+		assert_eq!(param(&query, "platform=").as_deref(), Some("linux/amd64"));
+	}
+
+	/// A `service:` context reaches the daemon as the image that service
+	/// builds, not as a path on disk.
+	#[tokio::test]
+	async fn a_service_context_reaches_the_build_query_as_an_image() {
+		let (dir, fake, engine) = start_capture("proj");
+		std::fs::create_dir(dir.path().join("base")).expect("base dir");
+		std::fs::write(
+			dir.path().join("base").join("Dockerfile"),
+			b"FROM scratch\n",
+		)
+		.expect("base Dockerfile");
+
+		let file = crate::parse_str(
+			"services:\n  base:\n    image: proj/base:1\n    build: ./base\n  app:\n    image: \
+			 proj/app:1\n    build:\n      context: .\n      additional_contexts:\n        \
+			 basectx: service:base\n",
+		)
+		.expect("the compose file parses");
+		engine
+			.build_all_with_options(
+				&file,
+				&["app".to_string()],
+				&crate::engine::BuildOptions::default(),
+			)
+			.await
+			.expect("a build the fake accepts succeeds");
+
+		let requests = fake.requests.lock().unwrap().clone();
+		let builds: Vec<&String> = requests
+			.iter()
+			.filter(|r| r.starts_with("POST ") && r.contains("/build?"))
+			.collect();
+		assert_eq!(
+			builds.len(),
+			2,
+			"the base is built before the app: {builds:?}"
+		);
+		let base_query = builds[0].split_once('?').expect("a query").1;
+		assert!(param(base_query, "t=").is_some_and(|t| t.ends_with("proj/base:1")));
+		let app_query = builds[1].split_once('?').expect("a query").1;
+		assert_eq!(
+			param(app_query, "additionalbuildcontexts=").as_deref(),
+			Some("basectx=image:proj/base:1")
+		);
+	}
+
+	/// `build.network: none` is a network mode like any other: it reaches the
+	/// build query as written, so the build runs with no network.
+	#[tokio::test]
+	async fn build_network_none_reaches_the_build_query_as_written() {
+		let (_dir, fake, engine) = start_capture("proj");
+
+		let query = build_query(
+			&engine,
+			&fake,
+			"services:\n  app:\n    image: proj/img:1\n    build:\n      context: .\n      \
+			 network: none\n",
+		)
+		.await;
+
+		assert_eq!(param(&query, "networkmode=").as_deref(), Some("none"));
 	}
 }

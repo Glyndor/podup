@@ -41,6 +41,24 @@ fn ipam_options_include_driver_and_options() {
 }
 
 #[test]
+fn ipam_options_omit_the_default_driver() {
+	use crate::compose::types::IpamConfig;
+	for name in ["default", "", " default "] {
+		let ipam = IpamConfig {
+			driver: Some(name.into()),
+			options: [("foo".to_string(), "bar".to_string())].into(),
+			..Default::default()
+		};
+		let opts = build_ipam_options(&ipam);
+		assert!(
+			!opts.contains_key("driver"),
+			"driver {name:?} must not be sent"
+		);
+		assert_eq!(opts.get("foo").map(String::as_str), Some("bar"));
+	}
+}
+
+#[test]
 fn build_subnets_maps_pool_fields_and_ip_range() {
 	use crate::compose::types::{IpamConfig, IpamPool};
 	let ipam = IpamConfig {

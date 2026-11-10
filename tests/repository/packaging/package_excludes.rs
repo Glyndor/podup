@@ -78,6 +78,13 @@ fn package_excludes(manifest: &str) -> BTreeSet<String> {
 	out
 }
 
+/// Whether a failed `git ls-tree` only means the tree is not a checkout: exit
+/// status 128 with the "not a git repository" message. Every other failure is
+/// a real one and must not be skipped.
+fn outside_a_checkout(code: Option<i32>, stderr: &str) -> bool {
+	code == Some(128) && stderr.contains("not a git repository")
+}
+
 #[test]
 fn every_top_level_directory_is_a_decision() {
 	let root = Path::new(env!("CARGO_MANIFEST_DIR"));
@@ -91,16 +98,22 @@ fn every_top_level_directory_is_a_decision() {
 	let listing = Command::new("git")
 		.args(["ls-tree", "-d", "--name-only", "HEAD"])
 		.current_dir(root)
+		// The skip decision reads git's English message; a translated one would
+		// turn a missing checkout back into a failure.
+		.env("LC_ALL", "C")
 		.output();
 	let Ok(listing) = listing else {
 		eprintln!("git is unavailable, so there is no file list to check");
 		return;
 	};
-	assert!(
-		listing.status.success(),
-		"git ls-tree failed: {}",
-		String::from_utf8_lossy(&listing.stderr)
-	);
+	let stderr = String::from_utf8_lossy(&listing.stderr);
+	if outside_a_checkout(listing.status.code(), &stderr) {
+		// A source package unpacks without `.git`, so there is no file list to
+		// ask. Any other git failure still fails the test below.
+		eprintln!("not inside a git checkout, so there is no file list to check: {stderr}");
+		return;
+	}
+	assert!(listing.status.success(), "git ls-tree failed: {stderr}");
 
 	let mut undecided = Vec::new();
 	for name in String::from_utf8_lossy(&listing.stdout).lines() {
@@ -141,4 +154,18 @@ fn the_manifest_reader_stops_at_the_next_table() {
 		!excluded.contains("bench/timeit"),
 		"the [workspace] entry must not be read as a packaging decision"
 	);
+}
+
+#[test]
+fn only_a_missing_checkout_skips_the_listing() {
+	let outside = "fatal: not a git repository (or any of the parent directories): .git";
+	assert!(outside_a_checkout(Some(128), outside));
+	// Same status, different failure: a corrupt repository is not a skip.
+	assert!(!outside_a_checkout(
+		Some(128),
+		"fatal: Not a valid object name HEAD"
+	));
+	assert!(!outside_a_checkout(Some(1), outside));
+	assert!(!outside_a_checkout(None, outside));
+	assert!(!outside_a_checkout(Some(0), ""));
 }

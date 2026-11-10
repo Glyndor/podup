@@ -166,27 +166,3 @@ pub fn install_at(target: &Path, new_bytes: &[u8]) -> crate::Result<()> {
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod platform_tests;
-
-#[cfg(test)]
-mod backup_tests;
-
-#[cfg(test)]
-mod transaction_tests;
-
-#[cfg(test)]
-mod self_test_tests;
-
-#[cfg(test)]
-mod swap_tests;
-
-#[cfg(all(test, unix))]
-mod swap_hostile_tests;
-
-#[cfg(all(test, unix))]
-mod hostile_tests;
-
-#[cfg(all(test, unix))]
-mod self_test_pipe_tests;

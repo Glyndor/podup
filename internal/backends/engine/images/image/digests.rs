@@ -19,11 +19,10 @@ use crate::libpod::{urlencoded, Client, PodmanError, API_PREFIX};
 /// **different problems**, and the suite's threshold does not transfer. On the
 /// same plain-KVM guest that produced the suite's `IncompleteMessage`
 /// dose-response table, a single `up` was driven through 2/5/10/20 services in
-/// one dependency level over three rounds with **zero drops**, recorded in
-/// `ai-context/context/podup/index.md` as the reason the suite's threshold
-/// "is not the path at risk". Twenty concurrent is the measured-clean
-/// ceiling; this cap sits a comfortable margin below it, conservative with
-/// evidence behind it.
+/// one dependency level over three rounds with **zero drops**, which is why the
+/// suite's threshold is not the path at risk. Twenty concurrent is the
+/// measured-clean ceiling; this cap sits a comfortable margin below it,
+/// conservative with evidence behind it.
 ///
 /// Shared so the remaining engine-side fan-out loops (#1519, the thirteen
 /// teardown loops in `lifecycle/parallel/mod.rs` and friends) can adopt the same

@@ -9,7 +9,7 @@ use super::*;
 #[test]
 fn the_check_is_advisory_and_the_file_says_so() {
 	let reusable = read("reusable-branch-health.yml");
-	let ci = read("ci.yml");
+	let caller = read_caller();
 
 	// The reusable carries the warning in its own header, where somebody
 	// wiring required checks against it would look first. The wording is
@@ -28,16 +28,16 @@ fn the_check_is_advisory_and_the_file_says_so() {
 		 failure this check exists to surface."
 	);
 
-	// `ci.yml` carries a matching comment beside the job ids. Without
+	// The caller carries a matching comment beside the job ids. Without
 	// both copies, a reviewer wiring the check required has to read the
 	// reusable to learn the rule, and the place they would actually look
 	// is the call site.
-	let ci_warns = ci
+	let caller_warns = caller
 		.lines()
 		.any(|l| l.contains("MUST NOT BECOME A REQUIRED STATUS CHECK"));
 	assert!(
-		ci_warns,
-		"ci.yml no longer carries the `MUST NOT BECOME A REQUIRED STATUS \
+		caller_warns,
+		"{CALLER} no longer carries the `MUST NOT BECOME A REQUIRED STATUS \
 		 CHECK` comment beside the branch-health jobs. That copy is what \
 		 stops a reviewer from marking them required at the call site, \
 		 which is where required checks are wired."
@@ -48,8 +48,8 @@ fn the_check_is_advisory_and_the_file_says_so() {
 	// below are part of the wire format.
 	for id in HEALTH_JOBS {
 		assert!(
-			ci.contains(&format!("{id}:")),
-			"ci.yml is missing the `{id}` job. Renaming a job that is \
+			caller.contains(&format!("{id}:")),
+			"{CALLER} is missing the `{id}` job. Renaming a job that is \
 			 intended as advisory is fine; the warning here is for the \
 			 branch-health pair, whose job ids are part of the file's \
 			 contract with this test."

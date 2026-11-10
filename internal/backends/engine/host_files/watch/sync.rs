@@ -269,5 +269,5 @@ pub(in crate::backends::engine) fn legacy_project_relative_included(
 mod tests;
 
 #[cfg(test)]
-#[path = "sync_filter_tests.rs"]
+#[path = "sync_filter_tests/mod.rs"]
 mod filter_tests;

@@ -6,13 +6,21 @@
 
 use super::super::bold;
 
-/// Print `cols` as a bold table header through an anstream sink, so the styling
-/// is stripped automatically when colour is off. The single place every list
-/// command renders its header, keeping them consistent.
-pub fn print_bold_header(cols: &str) {
+/// Print `cols` as a bold table header. The single place every list command
+/// renders its header, keeping them consistent.
+///
+/// The styling follows the same colour choice as the rest of the output: the
+/// header goes to a raw sink, so it asks whether stdout is a colour sink
+/// itself rather than relying on a sink that strips the escapes.
+///
+/// The write goes through the writer in [`crate::ui::print`], so a failed
+/// write reaches the caller: a reader that closed the pipe ends the process
+/// quietly, and any other failure is handed back so the command can fail
+/// instead of printing a header with no rows under it.
+pub fn print_bold_header(cols: &str) -> std::io::Result<()> {
 	let stdout = std::io::stdout();
 	let mut out = stdout.lock();
-	let _ = write_bold_header(&mut out, cols);
+	crate::ui::print::settle(write_bold_header(&mut out, cols))
 }
 
 /// [`print_bold_header`] writing to `w`, factored out so the renderer can be

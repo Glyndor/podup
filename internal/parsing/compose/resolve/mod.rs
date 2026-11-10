@@ -5,3 +5,5 @@ pub(crate) mod dependencies;
 pub(super) mod order;
 pub mod pre_start;
 pub(super) mod validate;
+mod validate_memory;
+mod validate_names;

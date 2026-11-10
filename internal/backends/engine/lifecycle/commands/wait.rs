@@ -103,17 +103,18 @@ impl Engine {
 		let mut printed_header = false;
 		wait_for_containers(waits, |container_name, code| {
 			if json {
-				println!(
+				crate::ui::outln!(
 					"{}",
 					serde_json::json!({ "Container": container_name, "ExitCode": code })
-				);
+				)?;
 			} else {
 				if !printed_header {
-					crate::ui::print_bold_header(&wait_header());
+					crate::ui::print_bold_header(&wait_header())?;
 					printed_header = true;
 				}
-				println!("{}", wait_row(container_name, code));
+				crate::ui::outln!("{}", wait_row(container_name, code))?;
 			}
+			Ok(())
 		})
 		.await
 	}
@@ -121,7 +122,7 @@ impl Engine {
 
 async fn wait_for_containers<F>(
 	waits: impl IntoIterator<Item = F>,
-	mut report: impl FnMut(&str, i64),
+	mut report: impl FnMut(&str, i64) -> Result<()>,
 ) -> Result<()>
 where
 	F: std::future::Future<Output = (String, Result<i64>)>,
@@ -133,7 +134,9 @@ where
 		match result {
 			Ok(code) => {
 				last_code = code;
-				report(&container, code);
+				// A row that cannot be written is a failure of the command,
+				// not a detail to swallow: the report is the answer.
+				report(&container, code)?;
 			}
 			Err(error) => {
 				first_error.get_or_insert(error);

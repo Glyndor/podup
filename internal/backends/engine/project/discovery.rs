@@ -160,7 +160,7 @@ pub async fn list_projects_filtered(
 			}
 		}
 		// Podman's libpod list leaves `Status` empty and uses `State`; accept
-		// either so the roll-up is robust across response shapes. A paused
+		// either so the roll-up holds across response shapes. A paused
 		// container is counted separately so it is neither hidden nor mislabelled
 		// as exited.
 		if is_running(&c.state) || is_running(&c.status) {
@@ -189,7 +189,7 @@ pub async fn list_projects_filtered(
 
 	if opts.quiet {
 		for (name, _) in &rows {
-			println!("{name}");
+			crate::ui::outln!("{name}")?;
 		}
 		return Ok(());
 	}
@@ -199,7 +199,7 @@ pub async fn list_projects_filtered(
 			.iter()
 			.map(|(name, t)| project_row(name, t, &t.config_files))
 			.collect();
-		println!("{}", crate::engine::to_pretty_json("ls.row", &arr)?);
+		crate::ui::outln!("{}", crate::engine::to_pretty_json("ls.row", &arr)?)?;
 		return Ok(());
 	}
 
@@ -227,7 +227,7 @@ pub async fn list_projects_filtered(
 		crate::ui::progress_note("no projects");
 		return Ok(());
 	}
-	table.print();
+	table.print()?;
 	Ok(())
 }
 

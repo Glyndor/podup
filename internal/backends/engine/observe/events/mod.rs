@@ -169,14 +169,14 @@ impl Engine {
 		}
 		// No header on the machine path: `--format json` is what a parser reads.
 		if !json {
-			crate::ui::print_bold_header(&events_header());
+			crate::ui::print_bold_header(&events_header())?;
 		}
 		let mut broke: Option<crate::libpod::PodmanError> = None;
 		while let Some(event) = stream.next().await {
 			match event {
 				Ok(value) => {
 					if event_in_services(&value, &opts.services) {
-						println!("{}", format_event(&value, json));
+						crate::ui::outln!("{}", format_event(&value, json))?;
 					}
 				}
 				Err(e) => {

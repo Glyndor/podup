@@ -13,6 +13,7 @@ use crate::engine::fake_podman;
 
 mod dedup;
 mod in_band_error;
+mod platform;
 mod policy_windows;
 mod pull_policy;
 mod targets;

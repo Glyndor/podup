@@ -335,5 +335,5 @@ fn watch_err(msg: String) -> ComposeError {
 }
 
 #[cfg(test)]
-#[path = "transport_tests.rs"]
+#[path = "transport_tests/mod.rs"]
 mod tests;

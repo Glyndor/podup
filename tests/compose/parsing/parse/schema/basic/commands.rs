@@ -7,7 +7,7 @@
 use super::*;
 
 #[test]
-fn command_shell() {
+fn command_string_is_split_into_words() {
 	let yaml = r#"
 services:
   app:
@@ -19,8 +19,7 @@ services:
 		.as_ref()
 		.unwrap()
 		.to_exec();
-	assert_eq!(exec[0], "sh");
-	assert_eq!(exec[1], "-c");
+	assert_eq!(exec, ["node", "server.js", "--port", "3000"]);
 }
 
 #[test]
@@ -40,7 +39,7 @@ services:
 }
 
 #[test]
-fn entrypoint_shell() {
+fn entrypoint_string_is_split_into_words() {
 	let yaml = r#"
 services:
   app:
@@ -52,9 +51,7 @@ services:
 		.as_ref()
 		.unwrap()
 		.to_exec();
-	assert_eq!(ep[0], "sh");
-	assert_eq!(ep[1], "-c");
-	assert!(ep[2].contains("init.sh"));
+	assert_eq!(ep, ["/usr/local/bin/init.sh", "--foo"]);
 }
 
 #[test]

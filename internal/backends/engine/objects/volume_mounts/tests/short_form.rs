@@ -19,3 +19,30 @@ fn short_form_named_volume() {
 	assert_eq!(named[0].name, "myvolume");
 	assert_eq!(named[0].dest, "/data");
 }
+
+fn short_opts(spec: &str) -> Vec<String> {
+	let svc = svc_with_volumes(vec![VolumeMount::Short(spec.into())]);
+	let (mounts, named) = build_mounts_all(&svc, Path::new("/base"));
+	match mounts.into_iter().next() {
+		Some(m) => m.options,
+		None => named.into_iter().next().unwrap().options,
+	}
+}
+
+#[test]
+fn short_form_consistency_hints_are_dropped() {
+	// Docker accepts these on Linux and ignores them; Podman rejects them.
+	for hint in ["cached", "delegated", "consistent"] {
+		assert!(short_opts(&format!("./x:/y:{hint}")).is_empty(), "{hint}");
+		assert_eq!(short_opts(&format!("./x:/y:ro,{hint}")), ["ro"], "{hint}");
+		assert_eq!(short_opts(&format!("./x:/y:{hint},z")), ["z"], "{hint}");
+		assert!(short_opts(&format!("vol:/y:{hint}")).is_empty(), "{hint}");
+	}
+}
+
+#[test]
+fn short_form_relabel_options_reach_the_engine() {
+	assert_eq!(short_opts("./x:/y:ro,z"), ["ro", "z"]);
+	assert_eq!(short_opts("./x:/y:Z"), ["Z"]);
+	assert_eq!(short_opts("./x:/y:cached,Z"), ["Z"]);
+}

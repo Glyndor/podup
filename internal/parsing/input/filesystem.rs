@@ -56,15 +56,25 @@ pub(crate) fn read_stdin_to_string_capped() -> io::Result<String> {
 /// Read any [`io::Read`] into a `String`, enforcing the `max`-byte cap on the
 /// read itself. `label` names the source for the over-limit error message.
 fn read_capped_from(reader: impl Read, max: u64, label: &str) -> io::Result<String> {
-	let mut buf = String::new();
-	let read = reader.take(max + 1).read_to_string(&mut buf)?;
+	let mut bytes = Vec::new();
+	let read = reader.take(max + 1).read_to_end(&mut bytes)?;
 	if read as u64 > max {
 		return Err(io::Error::new(
 			io::ErrorKind::InvalidData,
 			format!("{label} is larger than the {max} byte limit"),
 		));
 	}
-	Ok(buf)
+	// Decoded here, not by `read_to_string`, whose error says only that "the
+	// stream" was not UTF-8 and leaves the reader to guess which file it was.
+	String::from_utf8(bytes).map_err(|e| {
+		io::Error::new(
+			io::ErrorKind::InvalidData,
+			format!(
+				"{label} is not valid UTF-8 (invalid byte at offset {})",
+				e.utf8_error().valid_up_to()
+			),
+		)
+	})
 }
 
 /// Read a file to a `Vec<u8>`, refusing inputs larger than [`MAX_FILE_BYTES`].

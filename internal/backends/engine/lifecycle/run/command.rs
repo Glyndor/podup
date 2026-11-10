@@ -171,6 +171,11 @@ impl Engine {
 		} else {
 			crate::env_file::load_env_files(&env_files, &self.base_dir)?
 		};
+		// `--env-from-file` values sit above the service's `environment:` and
+		// below `-e`, so they go ahead of the `-e` entries, where a later
+		// duplicate wins.
+		let env_overrides =
+			super::environment::with_env_from_files(&self.run_env_from_files, env_overrides)?;
 		if !env_file_vars.is_empty() || !env_overrides.is_empty() {
 			run_service.environment = crate::compose::types::EnvVars::List(merge_run_environment(
 				env_file_vars,
@@ -275,13 +280,19 @@ impl Engine {
 		crate::ui::progress::end();
 		prepared?;
 
-		self.run_pre_start(
-			&run_name,
-			service_name,
-			&init_service(service, &run_service),
-			file,
-		)
-		.await?;
+		let pre_start = self
+			.run_pre_start(
+				&run_name,
+				service_name,
+				&init_service(service, &run_service),
+				file,
+			)
+			.await;
+		// A removal that failed in the step leaves its container to the guard,
+		// which finishes it in the background; the error below ends the process,
+		// so wait for it first.
+		self.client.drain_init_cleanups().await;
+		pre_start?;
 
 		// On a start failure (bad --workdir/--user/--entrypoint), the container is
 		// created but never starts; with --rm, remove it here so repeated failures

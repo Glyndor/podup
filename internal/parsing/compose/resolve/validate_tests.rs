@@ -249,3 +249,81 @@ fn invalid_port_protocol_is_rejected() {
 	let yaml = "services:\n  web:\n    image: x\n    ports: ['80/banana']\n";
 	assert!(validate_str(yaml).is_err());
 }
+
+#[test]
+fn an_empty_file_and_a_bad_service_name_are_invalid_not_unsupported() {
+	for yaml in ["services: {}\n", "services:\n  'a b':\n    image: x\n"] {
+		let error = validate_config(&file(yaml)).expect_err(yaml);
+		assert!(
+			matches!(error, ComposeError::Invalid(_)),
+			"{yaml}: {error:?}"
+		);
+		assert!(
+			!error.to_string().contains("unsupported feature"),
+			"{error}"
+		);
+	}
+}
+
+// `service:<name>` in network_mode, pid and ipc
+
+#[test]
+fn a_service_namespace_naming_a_service_the_file_does_not_define_is_refused() {
+	for field in ["network_mode", "pid", "ipc"] {
+		let yaml = format!("services:\n  web:\n    image: x\n    {field}: \"service:ghost\"\n");
+		let text = validate_str(&yaml).expect_err(field).to_string();
+		assert!(
+			text.contains("'web'") && text.contains("service:ghost") && text.contains(field),
+			"{field}: {text}"
+		);
+	}
+}
+
+#[test]
+fn a_control_character_in_a_service_name_does_not_reach_the_message() {
+	let error = validate_config(&file("services:\n  \"a\\e[31mb\":\n    image: x\n"))
+		.expect_err("the name is invalid");
+	assert!(
+		!error.to_string().contains('\u{1b}'),
+		"{:?}",
+		error.to_string()
+	);
+}
+
+#[test]
+fn a_service_namespace_naming_a_defined_service_passes() {
+	for field in ["network_mode", "pid", "ipc"] {
+		let yaml = format!(
+			"services:\n  web:\n    image: x\n    {field}: \"service:other\"\n  other:\n    image: x\n"
+		);
+		validate_str(&yaml).unwrap_or_else(|e| panic!("{field}: {e}"));
+	}
+}
+
+#[test]
+fn a_control_character_in_a_service_namespace_name_does_not_reach_the_message() {
+	let text = validate_str("services:\n  web:\n    image: x\n    pid: \"service:gh\\e[31most\"\n")
+		.expect_err("undefined")
+		.to_string();
+	assert!(!text.contains('\u{1b}'), "{text:?}");
+}
+
+#[test]
+fn explicit_default_network_next_to_others_is_accepted() {
+	let yaml = "services:\n  a:\n    image: x\n    networks: [back, default]\nnetworks:\n  back:\n    internal: true\n";
+	assert!(validate_str(yaml).is_ok());
+}
+
+#[test]
+fn explicit_default_network_alone_is_accepted() {
+	assert!(validate_str("services:\n  a:\n    image: x\n    networks: [default]\n").is_ok());
+	let map =
+		"services:\n  a:\n    image: x\n    networks:\n      default:\n        aliases: [web]\n";
+	assert!(validate_str(map).is_ok());
+}
+
+#[test]
+fn undefined_network_next_to_default_is_still_rejected() {
+	let yaml = "services:\n  a:\n    image: x\n    networks: [default, nope]\n";
+	assert!(validate_str(yaml).is_err());
+}

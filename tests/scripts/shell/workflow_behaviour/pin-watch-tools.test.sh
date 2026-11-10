@@ -82,6 +82,24 @@ build_repo() {
 	{ echo "on:"; echo "  workflow_call:"; input shellcheck-version v0.11.0 | sed 1d; } >"$w/reusable-shell-ci.yml"
 	{ echo "on:"; echo "  workflow_call:"; input shellcheck-version v0.11.0 | sed 1d; echo "env:"; echo "  ACTIONLINT_VERSION: v1.7.12"; } >"$w/reusable-workflow-lint.yml"
 	{ echo "on:"; echo "  workflow_call:"; input pssa-version 1.25.0 | sed 1d; } >"$w/reusable-powershell-ci.yml"
+	cat >"$w/podman-lane.yml" <<'YML'
+jobs:
+  x:
+    steps:
+      - run: |
+          if [ -z "$X" ]; then
+            echo none
+          elif cargo install cargo-llvm-cov --locked --version "=0.8.7"; then
+            echo ok
+          fi
+YML
+	cat >"$w/podman-lane-develop-nightly.yml" <<'YML'
+jobs:
+  x:
+    steps:
+      - run: |
+          RUST_LOG=podup=warn cargo install cargo-llvm-cov --locked --version "=0.8.7" >/tmp/log 2>&1
+YML
 	cat >"$w/release.yml" <<'YML'
 jobs:
   x:
@@ -129,7 +147,7 @@ fresh a
 run "$WORK/a" "$WORK/a.up"
 check "pins equal to the latest releases: success" 0 "$RC"
 check "...and no row on stdout" "" "$OUT"
-check "...reporting the size of what it watched" 1 "$(grep -c 'watched 10 tools over 14 pin sites' "$WORK/err")"
+check "...reporting the size of what it watched" 1 "$(grep -c 'watched 10 tools over 16 pin sites' "$WORK/err")"
 check "...through gh release view and list only, never the API" 0 "$(grep -vcE '^release (view|list) ' "$WORK/gh.log")"
 
 # --- drift, with and without a prefix on the tag ----------------------------
@@ -137,7 +155,7 @@ fresh b
 sed -i 's|^taiki-e/cargo-llvm-cov\tv0.8.7|taiki-e/cargo-llvm-cov\tv0.9.1|' "$WORK/b.up"
 run "$WORK/b" "$WORK/b.up"
 check "a tool behind its latest release is reported" 1 "$(printf '%s\n' "$OUT" | grep -c '^cargo-llvm-cov (llvm-cov-version)')"
-check "...with the pin and the latest on the row" "cargo-llvm-cov (llvm-cov-version)	.github/workflows/reusable-rust-ci.yml	0.8.7	0.9.1" "$OUT"
+check "...with the pin and the latest on the row" "cargo-llvm-cov (llvm-cov-version)	.github/workflows/reusable-rust-ci.yml	0.8.7	0.9.1" "$(printf '%s\n' "$OUT" | grep '^cargo-llvm-cov (llvm-cov-version)')"
 check "...and the run still succeeds" 0 "$RC"
 
 fresh c
@@ -159,6 +177,20 @@ sed -i 's|=0.9.2|=0.9.0|' "$WORK/e/.github/workflows/release.yml"
 run "$WORK/e" "$WORK/e.up"
 check "two sites of one tool with different versions are reported as a disagreement" 1 "$(printf '%s\n' "$OUT" | grep -c 'cargo-about (2 sites disagree)')"
 check "...and the site that is behind is reported against the latest" 1 "$(printf '%s\n' "$OUT" | grep -c 'cargo-about (install).*0.9.0.0.9.2$')"
+
+# the coverage installs of the Podman lanes sit inside a script, after `elif`
+# or an environment assignment, and are read all the same
+fresh p
+sed -i 's|^taiki-e/cargo-llvm-cov\tv0.8.7|taiki-e/cargo-llvm-cov\tv0.9.1|' "$WORK/p.up"
+run "$WORK/p" "$WORK/p.up"
+check "a coverage install behind the latest is reported on the lane that holds it" 1 "$(printf '%s\n' "$OUT" | grep -c '^cargo-llvm-cov (install).*podman-lane.yml.0.8.7.0.9.1$')"
+check "...and so is the one of the nightly lane" 1 "$(printf '%s\n' "$OUT" | grep -c '^cargo-llvm-cov (install).*podman-lane-develop-nightly.yml.0.8.7.0.9.1$')"
+
+fresh q
+sed -i 's| --version "=0.8.7"||' "$WORK/q/.github/workflows/podman-lane.yml"
+run "$WORK/q" "$WORK/q.up"
+check "a coverage install that lost its version fails the run" 1 "$RC"
+check "...naming the tool and the file" 1 "$(printf '%s\n' "$ERR" | grep -c 'could not read the cargo-llvm-cov pin (cargo-llvm-cov) from .github/workflows/podman-lane.yml')"
 
 # --- a pin that cannot be read ------------------------------------------------
 fresh f
@@ -238,8 +270,8 @@ while IFS="|" read -r _ repo prefix; do
 done <"$WORK/tools.txt"
 run "$real" "$WORK/real.up"
 check "the shipped tables read every pin of the real workflows" 0 "$RC"
-check "...all 14 sites, none skipped" 1 "$(grep -c 'watched 10 tools over 14 pin sites' "$WORK/err")"
-check "...and every site comes out behind 999.0.0" 14 "$(printf '%s\n' "$OUT" | grep -c '999.0.0$')"
+check "...all 16 sites, none skipped" 1 "$(grep -c 'watched 10 tools over 16 pin sites' "$WORK/err")"
+check "...and every site comes out behind 999.0.0" 16 "$(printf '%s\n' "$OUT" | grep -c '999.0.0$')"
 
 echo
 echo "passed: $pass  failed: $fail"

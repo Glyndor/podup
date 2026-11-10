@@ -233,12 +233,12 @@ async fn cli_logs_follow_delivers_first_line_promptly() {
 	// Container sleeps three seconds before printing its line. The line
 	// must reach podup's stdout within two seconds of being printed;
 	// the three-second silence is what the promptness half of the
-	// streaming change is meant to handle. `sh -c` keeps the command
-	// out of compose's `command:` array shape, which some compose
-	// versions route through a shell of their own.
+	// streaming change is meant to handle. The list form asks for the
+	// shell by name: Compose splits a string `command:` into words and
+	// never runs it through one.
 	fs::write(
 		&compose,
-		"services:\n  prompt:\n    image: alpine:latest\n    command: \"sleep 3; echo late-line; sleep 120\"\n",
+		"services:\n  prompt:\n    image: alpine:latest\n    command: [sh, -c, \"sleep 3; echo late-line; sleep 120\"]\n",
 	)
 	.unwrap();
 	let c = compose.to_str().unwrap();

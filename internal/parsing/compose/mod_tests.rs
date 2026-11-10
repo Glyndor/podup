@@ -70,7 +70,13 @@ fn merge_override_adds_models_and_override_wins() {
 	let mut other = ComposeFile::default();
 	other.models.insert("llm".to_string(), model("over/m"));
 	other.models.insert("extra".to_string(), model("e/m"));
-	merge_override(&mut target, other, &tags::Directives::new());
+	merge_override(
+		&mut target,
+		other,
+		&tags::Directives::new(),
+		&Vec::new(),
+		&Default::default(),
+	);
 	// Override file wins on conflict; the override-only model is added.
 	assert_eq!(target.models["llm"].model.as_deref(), Some("over/m"));
 	assert_eq!(target.models["extra"].model.as_deref(), Some("e/m"));
@@ -117,7 +123,13 @@ fn merge_override_unions_top_level_resource_maps() {
 		.configs
 		.insert("extra".to_string(), ConfigConfig::default());
 
-	merge_override(&mut target, other, &tags::Directives::new());
+	merge_override(
+		&mut target,
+		other,
+		&tags::Directives::new(),
+		&Vec::new(),
+		&Default::default(),
+	);
 
 	assert!(target.volumes.contains_key("data"));
 	assert!(target.volumes.contains_key("cache"));
@@ -161,6 +173,31 @@ fn normalize_leaves_service_with_explicit_networks_untouched() {
 	assert_eq!(file.services["web"].networks.names(), vec!["front"]);
 	// No default network is synthesized when nothing needs it.
 	assert!(!file.networks.contains_key("default"));
+}
+
+#[test]
+fn normalize_declares_default_when_a_service_lists_it_explicitly() {
+	let mut file = parse_str(
+		"services:\n  web:\n    image: nginx\n    networks: [front, default]\nnetworks:\n  front:\n",
+	)
+	.unwrap();
+	normalize_default_network(&mut file);
+	assert!(file.networks.contains_key("default"));
+	assert_eq!(
+		file.services["web"].networks.names(),
+		vec!["front", "default"]
+	);
+}
+
+#[test]
+fn normalize_keeps_a_declared_default_network_configuration() {
+	let mut file = parse_str(
+		"services:\n  web:\n    image: nginx\n    networks: [default]\nnetworks:\n  default:\n    name: shared\n",
+	)
+	.unwrap();
+	normalize_default_network(&mut file);
+	let cfg = file.networks["default"].as_ref().unwrap();
+	assert_eq!(cfg.name.as_deref(), Some("shared"));
 }
 
 #[test]
@@ -219,4 +256,23 @@ fn stdin_compose_path_emits_raw_nested_unknown_warning() {
 		warning.contains("web") && warning.contains("memroy"),
 		"warning did not name the service and the unknown key: {warning:?}"
 	);
+}
+
+#[test]
+fn a_yaml_syntax_error_names_the_file_with_line_and_column() {
+	let dir = tempfile::tempdir().unwrap();
+	let good = dir.path().join("good.yml");
+	let bad = dir.path().join("bad.yml");
+	std::fs::write(&good, "services:\n  a:\n    image: x\n").unwrap();
+	std::fs::write(
+		&bad,
+		"services:\n  a:\n    image: x\n    ports: [::]:8000:8000]\n",
+	)
+	.unwrap();
+	let err = super::parse_files_with_env_files(&[good, bad], &[]).unwrap_err();
+	let text = err.to_string();
+	assert!(text.contains("bad.yml"), "{text}");
+	assert!(!text.contains("good.yml"), "{text}");
+	assert!(text.contains("line 4"), "{text}");
+	assert!(text.contains("column"), "{text}");
 }

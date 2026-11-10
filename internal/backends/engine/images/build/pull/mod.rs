@@ -1,7 +1,7 @@
 //! Image pull from a registry (the non-build half of image acquisition).
 
 use futures_util::StreamExt;
-use tracing::{debug, warn};
+use tracing::debug;
 
 use std::collections::{HashMap, HashSet};
 
@@ -19,6 +19,7 @@ mod interval;
 mod options;
 mod policy;
 mod progress;
+mod standalone;
 
 pub use options::PullOptions;
 pub(crate) use policy::{
@@ -123,6 +124,7 @@ impl Engine {
 			.iter()
 			.filter(|(name, s)| {
 				s.image.is_some()
+					&& !(opts.ignore_buildable && s.build.is_some())
 					&& wanted
 						.as_ref()
 						.is_none_or(|set| set.contains(name.as_str()))
@@ -139,7 +141,7 @@ impl Engine {
 			// (#1450).
 			.map(|(name, s)| {
 				let image = s.image.as_deref().unwrap_or_default();
-				let policy = self.resolved_pull_policy(name.as_str(), s)?;
+				let policy = self.resolved_standalone_pull_policy(name.as_str(), s)?;
 				let key = (image, policy, s.platform.as_deref());
 				Ok((name.as_str(), s, key))
 			})
@@ -234,8 +236,8 @@ impl Engine {
 				}
 			} else {
 				let detail = pull_err.map(|e| format!(": {e}")).unwrap_or_default();
-				return Err(ComposeError::Build(format!(
-					"failed to pull image {image} for service {name}{detail}"
+				return Err(ComposeError::ImagePull(format!(
+					"{image} for service {name}{detail}"
 				)));
 			}
 		}
@@ -357,7 +359,9 @@ impl Engine {
 			pull_policy.libpod()
 		);
 		if let Some(platform) = &service.platform {
-			query.push_str(&format!("&platform={}", urlencoded(platform)));
+			query.push_str(
+				&crate::backends::engine::images::platform::Platform::parse(platform).pull_query(),
+			);
 		}
 
 		let path = format!("{API_PREFIX}/images/pull?{query}");
@@ -404,7 +408,10 @@ impl Engine {
 						}
 					}
 					if !progress_line.error.is_empty() {
-						warn!("pull error: {}", progress_line.error);
+						// Reported once, by the error this pull returns (or by
+						// the `--ignore-pull-failures` warning); warning here too
+						// printed every failure twice.
+						debug!("pull error: {}", progress_line.error);
 						pull_err.get_or_insert_with(|| progress_line.error.clone());
 					}
 				}
@@ -425,7 +432,7 @@ impl Engine {
 				if !quiet {
 					crate::ui::progress_line("Image", &image, "Failed");
 				}
-				Err(ComposeError::Build(format!("pull {image} failed: {e}")))
+				Err(ComposeError::ImagePull(format!("{image}: {e}")))
 			}
 			None => {
 				if !quiet {

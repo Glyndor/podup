@@ -166,3 +166,29 @@ fn first_invalid_namespace_passes_when_all_valid() {
 	];
 	assert!(first_invalid_namespace(&slots).is_none());
 }
+
+/// Compose Specification, `ipc`: `service:{name}` "must be implemented as
+/// described if supported"; Docker Compose takes it on `pid` as well. The engine
+/// turns it into `container:<name>` before the create, so the validator has to
+/// let it through for these two slots and for no other.
+#[test]
+fn pid_and_ipc_take_service_names_and_no_other_slot_does() {
+	for field in [PID_FIELD, IPC_FIELD] {
+		assert!(is_valid_namespace_mode(field, "service:other"), "{field}");
+		assert!(!is_valid_namespace_mode(field, "service:"), "{field}");
+		assert!(!is_valid_namespace_mode(field, "services:other"), "{field}");
+	}
+	for field in [UTS_FIELD, USERNS_FIELD, CGROUP_FIELD] {
+		assert!(!is_valid_namespace_mode(field, "service:other"), "{field}");
+	}
+}
+
+#[test]
+fn a_control_character_in_a_pid_mode_does_not_reach_the_message() {
+	let service = crate::compose::types::Service {
+		pid: Some("bo\u{1b}[31mgus".into()),
+		..Default::default()
+	};
+	let text = pre_validate_spec("web", &service).unwrap_err().to_string();
+	assert!(!text.contains('\u{1b}'), "{text:?}");
+}

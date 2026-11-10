@@ -179,3 +179,7 @@ pub(super) mod tests_support {
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(all(test, unix))]
+#[path = "identity_tests.rs"]
+mod identity_tests;

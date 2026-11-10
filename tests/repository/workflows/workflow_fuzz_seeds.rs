@@ -25,6 +25,26 @@ fn entry_names(dir: &Path) -> BTreeSet<String> {
 		.collect()
 }
 
+/// File stems of the `.rs` files under `dir`, whatever subfolder groups them.
+fn target_names(dir: &Path) -> BTreeSet<String> {
+	let mut names = BTreeSet::new();
+	for entry in fs::read_dir(dir)
+		.unwrap_or_else(|e| panic!("read {}: {e}", dir.display()))
+		.filter_map(|entry| entry.ok())
+	{
+		let path = entry.path();
+		if path.is_dir() {
+			names.extend(target_names(&path));
+		} else if let Some(stem) = path
+			.file_stem()
+			.filter(|_| path.extension().is_some_and(|e| e == "rs"))
+		{
+			names.insert(stem.to_string_lossy().into_owned());
+		}
+	}
+	names
+}
+
 /// One line per seed directory that names no target.
 fn orphan_seed_dirs(seeds: &BTreeSet<String>, targets: &BTreeSet<String>) -> Vec<String> {
 	seeds
@@ -40,7 +60,7 @@ fn set(names: &[&str]) -> BTreeSet<String> {
 #[test]
 fn every_seed_directory_names_a_fuzz_target() {
 	let seeds = entry_names(&root().join("fuzz/seeds"));
-	let targets = entry_names(&root().join("fuzz/fuzz_targets"));
+	let targets = target_names(&root().join("fuzz/fuzz_targets"));
 	assert!(!seeds.is_empty(), "fuzz/seeds holds no directory");
 	let problems = orphan_seed_dirs(&seeds, &targets);
 	assert!(problems.is_empty(), "\n{}\n", problems.join("\n"));

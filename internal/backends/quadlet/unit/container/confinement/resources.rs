@@ -32,7 +32,7 @@ pub(in super::super) fn emit_limits(
 			container.add("ShmSize", shm.to_string());
 		}
 	}
-	if let Some(mem) = &service.mem_limit {
+	if let Some(mem) = service.mem_limit.as_ref().filter(|m| !m.trim().is_empty()) {
 		// `Memory=` is not a recognised [Container] Quadlet key (Quadlet would drop
 		// the whole unit at daemon-reload), so route the limit through PodmanArgs=
 		// as `--memory`, like the CPU limits. The value is validated as a size

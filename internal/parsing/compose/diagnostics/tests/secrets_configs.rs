@@ -68,3 +68,31 @@ fn external_config_driver_produces_no_diagnostic() {
 		"unexpected: {msgs:?}"
 	);
 }
+
+/// A secret or config with a source is staged from it whatever its `driver:`
+/// says (measured: the file's content is mounted); only the plugin is ignored.
+/// The warning must not say it will not be staged.
+#[test]
+fn a_driver_on_a_definition_with_a_source_does_not_claim_nothing_is_staged() {
+	for (kind, yaml) in [
+		("secret", "services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    file: ./tok.txt\n    driver: vault\n"),
+		("config", "services:\n  web:\n    image: nginx\n    configs: [c]\nconfigs:\n  c:\n    content: x\n    driver: vault\n"),
+	] {
+		let msgs = diagnostics_for(yaml);
+		let msg = msgs.iter().find(|m| m.contains("driver")).unwrap_or_else(|| panic!("{kind}: {msgs:?}"));
+		assert!(msg.contains("is staged from its"), "{msg}");
+		assert!(!msg.contains("will not be staged"), "{msg}");
+	}
+}
+
+#[test]
+fn a_driver_on_a_definition_with_no_source_says_there_is_nothing_to_stage() {
+	let msgs = diagnostics_for(
+		"services:\n  web:\n    image: nginx\n    secrets: [tok]\nsecrets:\n  tok:\n    driver: vault\n",
+	);
+	let msg = msgs
+		.iter()
+		.find(|m| m.contains("driver"))
+		.expect("a warning");
+	assert!(msg.contains("nothing to stage"), "{msg}");
+}

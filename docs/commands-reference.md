@@ -12,11 +12,12 @@ Pull images for the named services, or all services if none are given.
 | `-q, --quiet` | Suppress image-pull progress output. | off |
 | `--ignore-pull-failures` | Continue pulling the remaining services after a failure. | off |
 | `--include-deps` | Also pull images for the named services' `depends_on` services. | off |
-| `--policy <POLICY>` | Pull policy, overriding per-service `pull_policy`: `always`, `missing`, `never`, `newer`, `build`. | per service |
+| `--ignore-buildable` | Skip services that declare a `build:` section, even when they also set `image:`. | off |
+| `--policy <POLICY>` | Pull policy, overriding per-service `pull_policy`: `always`, `missing`, `never`, `newer`, `build`. | per service; an unset or `missing` policy still asks the registry, except for a service that builds its own image |
 
 Service `pull_policy` values `daily`, `weekly`, `every_<n>[wdhms]` and the podup extension `refresh` map to `newer`, including Quadlet `Pull=newer`. Podup checks the registry and keeps the local image when current, potentially using more network than the interval implies. It emits one warning per service: `pull_policy "<value>" is treated as "newer": podup does not track when an image was last pulled`.
 
-Warnings name the effective policy after an engine override. Fixed overrides and registry autoupdate suppress the time-policy warning. Build services use or build their local image; Quadlet prebuilt services use `Pull=never` and emit no time-policy warning.
+Warnings name the effective policy after an engine override. Fixed overrides, and `x-podman-autoupdate: registry` on `pull` and `up`, suppress the time-policy warning; `config` and `generate quadlet` still emit it for such a service. Build services use or build their local image. In the Quadlet export only services with a `build:` get `Pull=never` and no time-policy warning; an `image:`-only service keeps its own policy (`Pull=newer` for `daily`) and still warns.
 
 The podup extension `pull_refresh_after` is an optional string, validated and otherwise unused, with no extra warning for `refresh` and no warning under fixed policies. The accepted grammar is `([0-9]+[wdhms])+`, or `every_([0-9]+[wdhms])+` for a policy, using ASCII digits and lowercase units with a checked total of at most 4294967295 seconds. Empty numbers, malformed values, fractions, subsecond units, signs, whitespace and overflow are refused with the service, value and accepted values. `up`, `run`, `create`, `pull`, `build`, standalone `watch`, watch rebuilds and pod recreation validate before mutation; `config` and the Quadlet export gate validate too. `config --no-interpolate` also validates these two fields strictly and refuses unresolved variables. CLI policy options retain the fixed choices in the table above.
 
@@ -77,7 +78,7 @@ Each entry that is not exported gets a warning that names the job, the position 
 ### `watch`
 Watch for file changes and react per each service's `develop.watch` rules. (`up --watch` does the same after starting the stack.) Actions: `sync`, `rebuild`, `restart`, `sync+restart`, `sync+exec`.
 
-Every rule that watches a changed path runs, so two services watching the same directory each get their own copy of the change. A rebuild or a restart runs once per service or container per batch of changes.
+Every rule that watches a changed path runs, so two services watching the same directory each get their own copy of the change. The action runs once per container per batch of changes, so a scaled service gets it on every replica. A restart uses the service's own `stop_grace_period`.
 
 A rebuild recreates the container the way `up` does: the service's `pre_start` steps run before it exists and its `post_start` hooks run inside it once it is up.
 
@@ -98,7 +99,8 @@ Print the resolved compose file (after substitution, extends, include, and `env_
 |---|---|---|
 | `--format <FMT>` | `yaml` or `json`. | `yaml` |
 | `--services` | List service names, one per line. | off |
-| `--volumes` | List named volumes, one per line. | off |
+| `--volumes` | List the named volumes a service mounts, one per line; a declared volume no service uses is not listed. | off |
+| `--networks` | List the networks a service attaches to, one per line; `default` appears when a service uses the implicit network, and a declared network no service uses is not listed. | off |
 | `--images` | List the images services use, one per line. | off |
 | `--profiles` | List the profiles the file declares, one per line. | off |
 | `--hash <SERVICES>` | Print a stable per-service config hash for the given comma-separated services, or `'*'` for all. | none |
@@ -125,18 +127,18 @@ podup audit --list-checks --format json | jq -r '.checks[].id'
 | Check id | Fires when | Notes |
 |---|---|---|
 | `privileged` | `privileged: true` | Grants extended host privileges; under rootless Podman reduced but never incidental. |
-| `host_namespace` | `network_mode: host`, or `pid`/`ipc`/`uts`/`cgroup`/`userns_mode: host` | One finding per active mode. |
+| `host_namespace` | `network_mode: host`, or `pid`/`ipc`/`uts`/`cgroup`/`userns_mode: host`; also the `container:<id>` form of `network_mode` and `ipc` | One finding per active mode. |
 | `dangerous_capability` | `cap_add` carries a capability from the dangerous list | The list includes `SYS_ADMIN`, `ALL`, `SYS_MODULE`, `DAC_READ_SEARCH`, `SYS_RAWIO`, `SYS_PTRACE`, `NET_ADMIN`, `SYS_BOOT`, `MKNOD`, `SYSLOG`, `AUDIT_CONTROL`, `AUDIT_WRITE`, `SETFCAP`; names are matched case-insensitively with a `CAP_` prefix stripped. |
 | `writable_root` | `read_only` is not `true` | Compose's default is writable. |
 | `no_cap_drop_all` | `cap_drop` does not contain `ALL` | Without it the runtime's default capability set stays. |
 | `no_new_privileges_off` | `security_opt` lacks `no-new-privileges:true` | Both spellings (`no-new-privileges:true` and `no-new-privileges` alone, the Podman form) are accepted. |
 | `no_pids_limit` | Effective PID cap is missing or unlimited (`-1`) | Reads `pids_limit`, then `deploy.resources.limits.pids` as a fallback. |
-| `no_memory_limit` | The effective memory limit is missing, unparseable, or negative | A top-level `mem_limit` takes precedence over `deploy.resources.limits.memory`. |
+| `no_memory_limit` | The effective memory limit is missing or negative (an unparseable amount never gets this far: loading the file refuses it) | A top-level `mem_limit` takes precedence over `deploy.resources.limits.memory`. |
 | `no_userns` | `userns_mode` unset | Set `auto` explicitly for a private subordinate UID range; see the migration guide. |
 | `secret_in_environment` | `environment:` key whose name contains a secret-bearing segment (`PASSWORD`, `SECRET`, `TOKEN`, `KEY`, case-insensitive) and a value is set | Every set value is flagged, including resolved `${VAR}` interpolations and empty strings. Bare inherited keys (no value) are not. A name ending in `FILE` is exempt only when its value starts with `/`, `./`, or `../`. |
 | `port_published_on_all_interfaces` | A port is published without a host IP | The bind falls on every host interface. |
 | `sensitive_bind_mount` | A bind mount exposes a sensitive host path: a container runtime socket, or `/proc`, `/sys`, `/dev`, `/etc`, `/boot`, `/root`, or a runtime directory holding a socket | |
-| `unpinned_image` | `image:` with no tag, with tag `latest`, or `latest` without a digest | An `@sha256:` digest counts as pinning regardless of the tag. |
+| `unpinned_image` | `image:` with no tag, with tag `latest`, or `latest` without a digest | An `@sha256:` digest counts as pinning regardless of the tag. A service with `build:` and `pull_policy: build` or `never` is skipped. |
 | `port_published_on_wildcard` | A port is published with an explicit wildcard host IP (`0.0.0.0` or `::`) | Off by default; enable with `--wildcard-binds`. |
 | `no_restart_policy` | Neither `restart:` nor `deploy.restart_policy:` is set | An explicit `restart: "no"` is a deliberate choice and stays silent. |
 | `no_init` | `init:` is not `true` | PID 1 is the app; orphans become zombies. |
@@ -222,7 +224,7 @@ Progress is on stderr. A stderr terminal gets an animated board; other sinks get
 
 ## Diagnostics
 
-Warnings/errors go to stderr with a `podup:` prefix. Unsupported-field warnings are on by default; `RUST_LOG=debug` enables tracing. Internal errors request a bug report with secrets redacted. Invalid `umask` values name the service and advise quoting an octal string. Values containing `$` also report that the variable did not resolve. `config --no-interpolate` refuses an unresolved `umask` placeholder. `build.no_cache_filter` produces one warning per service: podup cannot filter the build cache per stage through the libpod build API, so the setting is ignored.
+Warnings/errors go to stderr with a `podup:` prefix. A value taken from the compose file, such as the text of a `ports:` entry, is shown in an error clipped to 80 characters, control characters escaped, followed by the number of characters left out. Unsupported-field warnings are on by default; `RUST_LOG=debug` enables tracing. Internal errors request a bug report with secrets redacted. Invalid `umask` values name the service and advise quoting an octal string. Values containing `$` also report that the variable did not resolve. `config --no-interpolate` refuses an unresolved `umask` placeholder. `build.no_cache_filter` produces one warning per service: podup cannot filter the build cache per stage through the libpod build API, so the setting is ignored.
 
 ## Jobs
 
@@ -252,9 +254,11 @@ podup validates a schedule and does not fire it. `run`, `up` and `config` print 
 
 | Variable | Description |
 |---|---|
-| `COMPOSE_FILE` | Path-separator-delimited list of compose files (`--file`). |
-| `COMPOSE_PROJECT_NAME` | Default project name (`--project`). |
-| `COMPOSE_PROFILES` | Default active profiles (`--profile`). |
+| `COMPOSE_FILE` | Path-separator-delimited list of compose files (`--file`). Also read from the project's `.env`. |
+| `COMPOSE_PATH_SEPARATOR` | Separator of the `COMPOSE_FILE` list: `:`, or `;` on Windows, when unset. Also read from the project's `.env`. |
+| `COMPOSE_PROJECT_NAME` | Default project name (`--project`). Also read from the project's `.env`. |
+| `COMPOSE_PROFILES` | Default active profiles (`--profile`). Also read from the project's `.env`. |
+| `COMPOSE_ENV_FILES` | Comma-separated env files, as repeated `--env-file` flags. Read from the process environment only. |
 | `PODMAN_SOCKET` | Podman socket path (`--socket`). |
 | `DOCKER_HOST` | Docker-compatible fallback for the Podman socket, used only when `PODMAN_SOCKET` is unset. Must be a local `unix://` socket (or `npipe://` on Windows). |
 | `PODUP_LIBPOD_POOL` | HTTP/1.1 connection-pool size for the libpod client (`--connection-pool-size`). Connection-pool size; see `--connection-pool-size`. `PODUP_LIBCOD_POOL` is read as a fallback when the new name is unset. |
@@ -315,6 +319,8 @@ What is refused, before anything is created:
 
 When `up` waits on `depends_on: {condition: service_healthy}`, podup runs healthchecks itself so hosts without systemd timers can progress. It runs at the parsed interval (minimum 100ms, otherwise 2s), reads status every 150ms, and waits `interval × retries + start_period`. `--wait-timeout` does not extend this dependency budget.
 
+docker compose fails the moment the dependency reports `unhealthy`; podup keeps waiting for the whole budget above and then reports a health check timeout. The dependent is not started and the exit status is non-zero in both, so only the time and the message differ. This is deliberate and is not changed.
+
 For an unhealthy container that should recover, use `x-podman-on-failure: restart`. The reported Podman kill/unless-stopped combination leaves it exited; service-mode autostart does not supervise container exits. Invalid values error in `up`/`create`; Quadlet generation warns and omits them.
 
 ## Accepted for compatibility
@@ -339,9 +345,9 @@ These flags parse and are validated, so a script written against docker compose 
 | `126` | `run`/`exec`: the command exists but is not executable. |
 | `127` | `run`/`exec`: the command was not found. |
 | `130` | An attached `up` was ended by SIGINT or SIGTERM. |
-| other | `run` and attached `exec` propagate the command's own exit code verbatim; `wait` waits concurrently and returns the code of the last container to finish, including zero (Docker Compose v2.40.3 policy). `up --abort-on-container-exit` does the same with the first container to exit; `up --exit-code-from SERVICE` does the same with the named service. |
+| other | `run` and attached `exec` propagate the command's own exit code verbatim; `wait` waits concurrently and returns the code of the last container to finish, including zero (Docker Compose v2.40.3 policy). `up --abort-on-container-exit` does the same with the first container to exit, and `up --abort-on-container-failure` with the first one to exit non-zero; `up --exit-code-from SERVICE` does the same with the named service. |
 
-Attached `up` returns 1 if logs end while a container still runs. Abort/exit-code-from returns 1 with the service name if the exit status cannot be read, after attempting to stop the project. Abort/exit-code-from stops other containers and leaves them available for later up/down. SIGINT and SIGTERM both return 130 after stopping the project.
+Attached `up` with named services follows only those services unless `--attach-dependencies` is given; abort conditions apply to the followed services. Attached `up` returns 1 if logs end while a container still runs. Abort/exit-code-from returns 1 with the service name if the exit status cannot be read, after attempting to stop the project. Abort/exit-code-from/abort-on-container-failure stops other containers and leaves them available for later up/down. SIGINT and SIGTERM both return 130 after stopping the project. `up --watch` ended with Ctrl-C returns 0, as `watch` does: the watch loop handles the interrupt itself and leaves the project running.
 
 `stats --format json` differs from docker on purpose. JSON uses numeric CPU fields and separate I/O counters; Docker-formatted string consumers need adapting.
 

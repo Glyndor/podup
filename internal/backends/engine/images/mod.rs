@@ -3,3 +3,4 @@
 pub(crate) mod build;
 pub(crate) mod context;
 pub(in crate::backends::engine) mod image;
+pub(crate) mod platform;

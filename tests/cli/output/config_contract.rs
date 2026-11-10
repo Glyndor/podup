@@ -204,3 +204,28 @@ async fn config_hash_and_quiet_are_unaffected() {
 		"`config --quiet` prints nothing on stdout"
 	);
 }
+
+/// A service may join the implicit `default` network by name, alone or next to
+/// declared networks; `config` must accept it and print the resolved name.
+#[test]
+fn config_accepts_explicit_default_network_reference() {
+	let dir = tempdir().unwrap();
+	let compose = dir.path().join("compose.yaml");
+	std::fs::write(
+		&compose,
+		"services:\n  a:\n    image: busybox\n    networks: [back, default]\n  b:\n    image: busybox\n    networks:\n      default:\n        aliases: [bee]\nnetworks:\n  back:\n    internal: true\n",
+	)
+	.unwrap();
+	let out = Command::new(bin())
+		.args(["-f", compose.to_str().unwrap(), "-p", "cfgdef", "config"])
+		.output()
+		.expect("run podup config");
+	assert!(
+		out.status.success(),
+		"config must succeed: {}",
+		String::from_utf8_lossy(&out.stderr)
+	);
+	let text = String::from_utf8_lossy(&out.stdout);
+	assert!(text.contains("name: cfgdef_default"), "in:\n{text}");
+	assert!(text.contains("- bee"), "alias kept, in:\n{text}");
+}

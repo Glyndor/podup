@@ -45,8 +45,11 @@ impl Engine {
 			pull_policy_override: None,
 			no_build: false,
 			quiet_pull: false,
+			quiet_build: false,
+			always_recreate_deps: false,
 			run_overrides: RunOverrides::default(),
 			run_env_files: Vec::new(),
+			run_env_from_files: Vec::new(),
 			run_labels: Vec::new(),
 			run_no_tty: false,
 			input: Default::default(),
@@ -73,8 +76,11 @@ impl Engine {
 			pull_policy_override: None,
 			no_build: false,
 			quiet_pull: false,
+			quiet_build: false,
+			always_recreate_deps: false,
 			run_overrides: RunOverrides::default(),
 			run_env_files: Vec::new(),
+			run_env_from_files: Vec::new(),
 			run_labels: Vec::new(),
 			run_no_tty: false,
 			input: Default::default(),
@@ -118,6 +124,21 @@ impl Engine {
 		self
 	}
 
+	/// Set the CLI `up --quiet-build` flag: the builds `up` runs print nothing
+	/// but their failure. Builder-style.
+	pub fn with_quiet_build(mut self, quiet_build: bool) -> Self {
+		self.quiet_build = quiet_build;
+		self
+	}
+
+	/// Set the CLI `up --always-recreate-deps` flag: services that were not
+	/// named on the command line are recreated even when unchanged.
+	/// Builder-style.
+	pub fn with_always_recreate_deps(mut self, always_recreate_deps: bool) -> Self {
+		self.always_recreate_deps = always_recreate_deps;
+		self
+	}
+
 	/// Record the compose files this engine was built from, so containers it
 	/// creates carry them as a `podup.config-files` label and `ls` can report
 	/// where a project's compose file lives. Builder-style; additive, so an
@@ -140,6 +161,15 @@ impl Engine {
 	/// [`Engine::run`]. Resolved relative to the engine's base dir.
 	pub fn with_run_env_files(mut self, env_files: Vec<String>) -> Self {
 		self.run_env_files = env_files;
+		self
+	}
+
+	/// Set the CLI `run --env-from-file FILE` paths: files whose variables seed
+	/// the one-off `run` container above the service's `environment:` and below
+	/// `-e`. Builder-style; consumed by [`Engine::run`]. Relative paths resolve
+	/// against the current directory.
+	pub fn with_run_env_from_files(mut self, files: Vec<String>) -> Self {
+		self.run_env_from_files = files;
 		self
 	}
 

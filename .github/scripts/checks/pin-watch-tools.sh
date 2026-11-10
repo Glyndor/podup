@@ -87,9 +87,11 @@ read_env_value() { # <file> <key>
 
 # The line that installs a crate at an exact version. The version has to be
 # a literal: the reusables install with `--version "$VAR"`, and the pin
-# they carry is the input default this reads elsewhere.
+# they carry is the input default this reads elsewhere. Words in front of
+# `cargo install` (`elif `, `RUST_LOG=x `) are allowed, since the coverage
+# legs of the Podman lanes install inside a branch of a script.
 read_install_line() { # <file> <crate>
-	grep -m1 -E "^[[:space:]]*cargo install .*$2([^a-zA-Z0-9_-]|\$).*--version[[:space:]]*\"=" "$1"
+	grep -m1 -E "^[[:space:]]*([^#[:space:]]+[[:space:]]+)*cargo install .*$2([^a-zA-Z0-9_-]|\$).*--version[[:space:]]*\"=" "$1"
 }
 
 # The version a pin site holds, or nothing when the site cannot be read.
@@ -200,6 +202,8 @@ site_count=0
 
 sites_table=$(cat <<'SITES'
 cargo-llvm-cov|.github/workflows/reusable-rust-ci.yml|input|llvm-cov-version
+cargo-llvm-cov|.github/workflows/podman-lane.yml|install|cargo-llvm-cov
+cargo-llvm-cov|.github/workflows/podman-lane-develop-nightly.yml|install|cargo-llvm-cov
 cargo-semver-checks|.github/workflows/reusable-rust-ci.yml|input|semver-checks-version
 cargo-audit|.github/workflows/reusable-rust-audit.yml|input|cargo-audit-version
 cargo-deny|.github/workflows/reusable-rust-audit.yml|input|cargo-deny-version
@@ -267,7 +271,7 @@ for file in .github/workflows/*.yml; do
 			case "$line" in *"$tool"*) found=1 ;; esac
 		done
 		[ -n "$found" ] || die "$file installs a tool at an exact version that no tool above names: $line"
-	done < <(grep -E '^[[:space:]]*cargo install .*--version[[:space:]]*"=' "$file" || true)
+	done < <(grep -E '^[[:space:]]*([^#[:space:]]+[[:space:]]+)*cargo install .*--version[[:space:]]*"=' "$file" || true)
 done
 
 # ---- the comparison --------------------------------------------------------

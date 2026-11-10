@@ -45,7 +45,7 @@ pub fn validate_config(file: &ComposeFile) -> Result<()> {
 	// project; `docker compose config` errors with "no service selected". A file
 	// that declares only jobs has something to run, so it passes.
 	if everything.services.is_empty() {
-		return Err(ComposeError::Unsupported(
+		return Err(ComposeError::Invalid(
 			"no services defined in compose file".to_string(),
 		));
 	}
@@ -117,7 +117,7 @@ fn validate_service_name(name: &str) -> Result<()> {
 	if ok {
 		Ok(())
 	} else {
-		Err(ComposeError::Unsupported(format!(
+		Err(ComposeError::Invalid(format!(
 			"service name {name:?} is invalid: use only ASCII letters, digits, '.', '_', '-'"
 		)))
 	}
@@ -148,8 +148,10 @@ fn validate_network_refs(
 	for net in svc.networks.names() {
 		if !file.networks.contains_key(&net) {
 			return Err(ComposeError::Unsupported(format!(
-				"service '{service}' refers to undefined network '{net}'; declare it under the \
-				 top-level 'networks:' key"
+				"service '{}' refers to undefined network '{}'; declare it under the \
+				 top-level 'networks:' key",
+				crate::error::sanitize_name(service),
+				crate::error::sanitize_name(&net)
 			)));
 		}
 	}
@@ -219,6 +221,7 @@ fn is_windows_drive(src: &str) -> bool {
 /// still contain literal `${VAR}` placeholders, which cannot be meaningfully
 /// range- or reference-checked.
 pub(in super::super) fn validate(file: &ComposeFile) -> Result<()> {
+	super::validate_names::validate_resource_names(file)?;
 	validate_services(file)?;
 	validate_networks(file)?;
 	Ok(())
@@ -231,10 +234,60 @@ fn validate_services(file: &ComposeFile) -> Result<()> {
 	let jobs = file.jobs.iter().map(|(name, job)| (name, &job.service));
 	for (name, service) in file.services.iter().chain(jobs) {
 		validate_service_consistency(name, file, service)?;
+		validate_volume_targets(name, service)?;
 		// An init step is a container of its own, so the same consistency
 		// rules apply to the step the operator wrote.
 		for (step_name, step) in crate::parsing::compose::pre_start::declared_steps(name, service) {
 			validate_service_consistency(&step_name, file, step)?;
+		}
+	}
+	for (name, service) in &file.services {
+		validate_depends_on_defined(name, file, service)?;
+	}
+	// The same for a job, in every command and not only in `config`.
+	crate::compose::jobs::check_job_dependencies(file)?;
+	Ok(())
+}
+
+/// A short-form mount with an empty container path is refused before anything is
+/// created. It usually comes from an unset variable (`./data:${DEST}`), and the
+/// engine's own error for it names neither the service nor the mount.
+fn validate_volume_targets(service: &str, svc: &crate::compose::types::Service) -> Result<()> {
+	for (index, mount) in svc.volumes.iter().enumerate() {
+		let VolumeMount::Short(spec) = mount else {
+			continue;
+		};
+		if spec.split(':').nth(1).is_some_and(str::is_empty) {
+			let spec = crate::error::sanitize_name(spec);
+			return Err(ComposeError::Invalid(format!(
+				"service '{service}' has an empty target in services.{service}.volumes[{index}] \
+				 ('{spec}'); check that the variable it uses is set"
+			)));
+		}
+	}
+	Ok(())
+}
+
+/// Every service a service `depends_on` must be defined in the file, whether the
+/// dependency is required or not. Docker Compose refuses the project when it is
+/// not (`service "app" depends on undefined service "nope": invalid compose
+/// project`), and a name that is defined nowhere cannot be "not available": it is
+/// a typo, which `required: false` would otherwise hide. A service that is defined
+/// but left out of the run by an inactive profile is defined, and is not touched
+/// here. (A service cannot depend on a job: that is refused when the file is read.)
+fn validate_depends_on_defined(
+	name: &str,
+	file: &ComposeFile,
+	service: &crate::compose::types::Service,
+) -> Result<()> {
+	for dep in service.depends_on.service_names() {
+		if !file.services.contains_key(&dep) {
+			return Err(ComposeError::Invalid(format!(
+				"service '{}' depends on undefined service '{}'; define it, or remove \
+				 it from 'depends_on'",
+				crate::error::sanitize_name(name),
+				crate::error::sanitize_name(&dep)
+			)));
 		}
 	}
 	Ok(())
@@ -247,6 +300,23 @@ fn validate_service_consistency(
 	file: &ComposeFile,
 	service: &crate::compose::types::Service,
 ) -> Result<()> {
+	// `service:<name>` joins that service's container, so the service has to be
+	// in the file; a name defined nowhere is a typo, not a container to look up.
+	for (field, mode) in [
+		("network_mode", &service.network_mode),
+		("pid", &service.pid),
+		("ipc", &service.ipc),
+	] {
+		let target = mode.as_deref().and_then(|m| m.strip_prefix("service:"));
+		if let Some(target) = target.filter(|t| !file.services.contains_key(*t)) {
+			return Err(ComposeError::Unsupported(format!(
+				"service '{}': {field}: service:{} refers to a service the file does not \
+				 define; define it, or name a container with `container:`",
+				crate::error::sanitize_name(name),
+				crate::error::sanitize_name(target)
+			)));
+		}
+	}
 	let attached = service.networks.names();
 	if service.network_mode.is_some() {
 		// docker-compose: "network_mode" and "networks" cannot be combined.
@@ -269,12 +339,16 @@ fn validate_service_consistency(
 			// top-level entry; everything else must be declared.
 			if net != "default" && !file.networks.contains_key(net) {
 				return Err(ComposeError::Unsupported(format!(
-					"service '{name}' refers to undefined network '{net}'; declare it \
-					 under the top-level 'networks:' or mark it external"
+					"service '{}' refers to undefined network '{}'; declare it \
+					 under the top-level 'networks:' or mark it external",
+					crate::error::sanitize_name(name),
+					crate::error::sanitize_name(net)
 				)));
 			}
 		}
 	}
+
+	super::validate_memory::validate_memory_amounts(name, service)?;
 
 	// Surface a malformed/out-of-range port at config time rather than letting
 	// it slip through to a podman create error at run time.
@@ -327,3 +401,11 @@ fn validate_networks(file: &ComposeFile) -> Result<()> {
 #[cfg(test)]
 #[path = "validate_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "validate_depends_on_tests.rs"]
+mod depends_on_tests;
+
+#[cfg(test)]
+#[path = "validate_targets_tests.rs"]
+mod targets_tests;

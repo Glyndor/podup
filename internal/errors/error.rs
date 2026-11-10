@@ -48,6 +48,9 @@ pub enum ComposeError {
 	InvalidSignal(String),
 	/// Image build failed (context assembly or the Podman build step).
 	Build(String),
+	/// Downloading an image from a registry failed. Not a build failure: the
+	/// service may have no `build:` section at all.
+	ImagePull(String),
 	/// A `cp` (copy between a container and the host) operation failed: a missing
 	/// destination directory, a non-directory path component, an unsupported
 	/// endpoint, or a host-side packing/extraction error.
@@ -60,6 +63,11 @@ pub enum ComposeError {
 	Watch(String),
 	/// A compose feature is recognized but unsupported on Podman/podup.
 	Unsupported(String),
+	/// Something the user wrote is not valid: a name that breaks the rules, a
+	/// directory that is not there, a file with nothing in it. It is not a
+	/// feature podup lacks, so it is printed without the `unsupported feature:`
+	/// label that [`ComposeError::Unsupported`] carries.
+	Invalid(String),
 	/// A top-level `jobs:` entry is malformed, collides with a service, or
 	/// cannot be launched the way it was asked for. The text names the job.
 	Job(String),
@@ -213,16 +221,18 @@ impl ComposeError {
 	}
 }
 
-/// Escape control characters (tabs, newlines, ESC, …) in an interpolated,
+/// Escape control characters (tabs, newlines, ESC, …) and bidirectional or
+/// zero-width characters in an interpolated,
 /// possibly-untrusted name before it reaches a terminal, so a crafted
 /// service/container name cannot emit raw escape sequences. Printable characters
 /// (including non-ASCII) pass through unchanged; only borrows when nothing needs
 /// escaping.
 pub(crate) fn sanitize_name(s: &str) -> std::borrow::Cow<'_, str> {
-	if s.chars().any(char::is_control) {
+	use crate::ui::is_terminal_unsafe;
+	if s.chars().any(is_terminal_unsafe) {
 		s.chars()
 			.flat_map(|c| {
-				if c.is_control() {
+				if is_terminal_unsafe(c) {
 					c.escape_default().collect::<Vec<_>>()
 				} else {
 					vec![c]
@@ -280,11 +290,13 @@ impl fmt::Display for ComposeError {
 			Self::InvalidPort(s) => write!(f, "invalid port mapping: {s}"),
 			Self::InvalidSignal(s) => write!(f, "invalid signal: {s}"),
 			Self::Build(s) => write!(f, "build error: {s}"),
+			Self::ImagePull(s) => write!(f, "failed to pull image {s}"),
 			Self::Copy(s) => write!(f, "cp error: {s}"),
 			Self::Extends(s) => write!(f, "extends error: {s}"),
 			Self::Include(s) => write!(f, "include error: {s}"),
 			Self::Watch(s) => write!(f, "watch error: {s}"),
 			Self::Unsupported(s) => write!(f, "unsupported feature: {s}"),
+			Self::Invalid(s) => write!(f, "{s}"),
 			Self::Job(s) => write!(f, "job error: {s}"),
 			Self::RunExited(code) => write!(f, "run container exited with code {code}"),
 			Self::PreStart(message) => write!(f, "{message}"),

@@ -14,13 +14,16 @@ use podup::resolve_network_name;
 
 /// Output selectors for `config`, mirroring the mutually-exclusive `docker
 /// compose config` list modes. The first set selector wins, in the order
-/// services, volumes, images, profiles, hash.
+/// services, volumes, networks, images, profiles, hash.
 #[derive(Default)]
 pub(crate) struct ConfigOutput {
 	/// `--services`: print the service names.
 	pub services: bool,
-	/// `--volumes`: print the named-volume keys.
+	/// `--volumes`: print the keys of the named volumes a service mounts.
 	pub volumes: bool,
+	/// `--networks`: print the keys of the networks a service attaches to,
+	/// `default` included when a service uses the implicit one.
+	pub networks: bool,
 	/// `--images`: print each service's image reference.
 	pub images: bool,
 	/// `--profiles`: print the declared profile names.
@@ -30,11 +33,19 @@ pub(crate) struct ConfigOutput {
 	pub hash: Option<String>,
 	/// `--quiet`: validate only, print nothing.
 	pub quiet: bool,
+	/// `--no-interpolate`: the model still holds the text as written, so it is
+	/// printed as written. Without it every `$` in a value is printed as `$$`.
+	pub no_interpolate: bool,
 }
 
 /// Render `config`: validate-only (`--quiet`), a list projection (`--services`,
 /// `--volumes`, `--images`, `--profiles`, `--hash`), or the resolved compose file
 /// in YAML/JSON with inline secret content redacted.
+///
+/// The rendered bytes go through the writer in `podup::ui::print`, so a failed
+/// write reaches the caller: a reader that closed the pipe ends the process
+/// quietly, and any other failure is handed back so the command can fail
+/// instead of printing half a document.
 pub(crate) fn render_config(
 	file: &podup::compose::types::ComposeFile,
 	format: &ConfigFormat,
@@ -42,8 +53,13 @@ pub(crate) fn render_config(
 	project: &str,
 	base_dir: &Path,
 ) -> podup::Result<()> {
+	// The render is collected before it is written, so the compose-level
+	// failures (an invalid config, a value that cannot be serialised) are
+	// reported without a half-written document already on stdout.
+	let mut rendered = Vec::new();
+	render_config_to(&mut rendered, file, format, out, project, base_dir)?;
 	let mut stdout = io::stdout().lock();
-	render_config_to(&mut stdout, file, format, out, project, base_dir)
+	podup::ui::print::settle(stdout.write_all(&rendered)).map_err(podup::ComposeError::Io)
 }
 
 /// [`render_config`] writing to `w`. The list-projection branches
@@ -87,7 +103,22 @@ pub(crate) fn render_config_to<W: Write>(
 		return Ok(());
 	}
 	if out.volumes {
-		for name in file.volumes.keys() {
+		// Only the volumes a service mounts: one nothing refers to is dropped.
+		let used: std::collections::HashSet<String> = all_services(file)
+			.flat_map(podup::service_named_volume_refs)
+			.collect();
+		for name in file.volumes.keys().filter(|k| used.contains(*k)) {
+			writeln!(w, "{}", podup::ui::sanitize_cell(name))?;
+		}
+		return Ok(());
+	}
+	if out.networks {
+		// Only the networks a service attaches to, the implicit `default`
+		// included; a declared network nothing uses is dropped.
+		let used: std::collections::HashSet<String> = all_services(file)
+			.flat_map(|svc| svc.networks.names())
+			.collect();
+		for name in file.networks.keys().filter(|k| used.contains(*k)) {
 			writeln!(w, "{}", podup::ui::sanitize_cell(name))?;
 		}
 		return Ok(());
@@ -132,6 +163,9 @@ pub(crate) fn render_config_to<W: Write>(
 	// what the next `up` would do. The resolution rule is the same `up` uses:
 	// sharing the function keeps the two views from drifting.
 	inject_resolved_network_names(&mut redacted, project);
+	// A bare volume has nothing to print, so it vanished and the output no
+	// longer declared what its services mount. Name it like `up` will.
+	super::config_volumes::inject_resolved_volume_names(&mut redacted, project);
 	// Don't echo keys the diagnostics pass warned were ignored: the rendered
 	// config should reflect what podup actually applies, and re-feeding it must
 	// not re-trigger the same warning. `x-*` extensions are kept.
@@ -147,6 +181,9 @@ pub(crate) fn render_config_to<W: Write>(
 				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
 			})?;
 			prune_json_nulls(&mut v);
+			if !out.no_interpolate {
+				super::config_dollar::escape_json(&mut v);
+			}
 			let json = serde_json::to_string_pretty(&v).map_err(|e| {
 				podup::ComposeError::Unsupported(format!("failed to render config as JSON: {e}"))
 			})?;
@@ -156,7 +193,12 @@ pub(crate) fn render_config_to<W: Write>(
 			let mut v: serde_yaml::Value =
 				serde_yaml::to_value(&redacted).map_err(podup::ComposeError::Parse)?;
 			prune_yaml_nulls(&mut v);
+			if !out.no_interpolate {
+				super::config_dollar::escape_yaml(&mut v);
+			}
+			super::control_escape::mark_yaml_unsafe(&mut v);
 			let yaml = serde_yaml::to_string(&v).map_err(podup::ComposeError::Parse)?;
+			let yaml = super::control_escape::unmark_yaml(&yaml);
 			// yaml_serde emits YAML 1.2, where `yes`/`no`/`on`/`off` are plain
 			// strings and stay unquoted. A strict YAML 1.1 reader (docker compose's
 			// emitter among them) would misread those as booleans, so quote any
@@ -168,10 +210,19 @@ pub(crate) fn render_config_to<W: Write>(
 	Ok(())
 }
 
+/// Every service and every job's service, the set a reference can come from.
+fn all_services(
+	file: &podup::compose::types::ComposeFile,
+) -> impl Iterator<Item = &podup::compose::types::Service> {
+	file.services
+		.values()
+		.chain(file.jobs.values().map(|job| &job.service))
+}
+
 /// SHA-256 of a service's resolved configuration, hex-encoded. Used by
 /// `config --hash` so a deploy pipeline can detect a changed service. Pure so it
 /// is unit-tested.
-fn service_config_hash(svc: &podup::compose::types::Service) -> podup::Result<String> {
+pub(super) fn service_config_hash(svc: &podup::compose::types::Service) -> podup::Result<String> {
 	// Not `unwrap_or_default()`: an empty vec hashes to the SHA-256 of the empty
 	// string, which looks like a perfectly stable hash. A deploy pipeline keyed
 	// on `config --hash` would quietly stop noticing that the service changed.
@@ -221,17 +272,23 @@ fn render_config_hash_to<W: Write>(
 			.filter(|s| !s.is_empty())
 			.collect()
 	};
+	// Every name is checked and hashed before a line is written: an unknown
+	// name used to fail after the lines for the names before it had gone to
+	// stdout, leaving a partial answer behind an error.
+	let mut lines = Vec::with_capacity(names.len());
 	for name in names {
 		let svc = file
 			.services
 			.get(&name)
 			.ok_or_else(|| podup::ComposeError::ServiceNotFound(name.clone()))?;
-		writeln!(
-			w,
+		lines.push(format!(
 			"{} {}",
 			podup::ui::sanitize_cell(&name),
 			service_config_hash(svc)?
-		)?;
+		));
+	}
+	for line in lines {
+		writeln!(w, "{line}")?;
 	}
 	Ok(())
 }
@@ -245,7 +302,10 @@ fn render_config_hash_to<W: Write>(
 /// The resolution rule is `Engine::resolve_network_name`, called the same way
 /// `up` calls it. Sharing the function is the point: a copy of the rule in this
 /// module would silently disagree the day someone adds a fourth branch.
-fn inject_resolved_network_names(file: &mut podup::compose::types::ComposeFile, project: &str) {
+pub(super) fn inject_resolved_network_names(
+	file: &mut podup::compose::types::ComposeFile,
+	project: &str,
+) {
 	// Resolve every name against an immutable borrow of the file first, then
 	// apply under a mutable borrow: `resolve_network_name` reads the file via
 	// shared refs while the loop mutates each network slot.
@@ -273,7 +333,7 @@ fn inject_resolved_network_names(file: &mut podup::compose::types::ComposeFile, 
 /// `docker compose config`) instead of a wall of `field: null` and empty
 /// `field: {}` sections. Recurses first so a section that becomes empty once its
 /// own nulls are dropped is itself dropped.
-fn prune_json_nulls(v: &mut serde_json::Value) {
+pub(super) fn prune_json_nulls(v: &mut serde_json::Value) {
 	prune_json(v, false);
 }
 
@@ -316,7 +376,7 @@ fn is_empty_json(v: &serde_json::Value) -> bool {
 }
 
 /// The YAML counterpart of [`prune_json_nulls`].
-fn prune_yaml_nulls(v: &mut serde_yaml::Value) {
+pub(super) fn prune_yaml_nulls(v: &mut serde_yaml::Value) {
 	prune_yaml(v, false);
 }
 
@@ -367,7 +427,3 @@ fn is_empty_yaml(v: &serde_yaml::Value) -> bool {
 fn surface_host_modes(file: &podup::compose::types::ComposeFile) {
 	podup::surface_host_modes(file);
 }
-
-#[cfg(test)]
-#[path = "config_render_tests.rs"]
-mod tests;

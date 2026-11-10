@@ -103,6 +103,7 @@ async fn pull_failure_on_a_shared_image_is_still_only_pulled_once() {
 	let opts = crate::engine::PullOptions {
 		ignore_failures: true,
 		include_deps: false,
+		..Default::default()
 	};
 	e.pull_services_with_options(&file, &[], opts)
 		.await
@@ -142,7 +143,7 @@ async fn pull_failure_on_a_shared_image_aborts_without_ignore_failures() {
 		.await
 		.expect_err("a shared image that fails to pull must abort the pull");
 	assert!(
-		matches!(err, crate::error::ComposeError::Build(ref msg) if msg.contains("shared")),
+		matches!(err, crate::error::ComposeError::ImagePull(ref msg) if msg.contains("shared")),
 		"unexpected error: {err:?}"
 	);
 }
@@ -158,3 +159,49 @@ async fn pull_failure_on_a_shared_image_aborts_without_ignore_failures() {
 // blocking rendezvous, exactly the flakiness the testing standard rules
 // out. The dedup tests above already pin the dispatch contract (every
 // unique image is attempted, exactly once).
+
+/// A standalone `pull` must ask the registry even when the tag is already
+/// local, otherwise `pull && up -d` never moves a mutable tag.
+#[tokio::test]
+#[cfg(unix)]
+async fn pull_contacts_the_registry_when_the_image_is_already_local() {
+	let fake = fake_podman::start(|method, target| {
+		if method == "POST" && target.contains("/images/pull") {
+			(200, String::new())
+		} else if method == "GET" && target.contains("/images/") && target.contains("/json") {
+			(200, "{}".to_string())
+		} else {
+			(404, r#"{"message":"not found"}"#.to_string())
+		}
+	});
+	let e = crate::engine::Engine::new(fake.client(), "proj".into());
+	let file = crate::parse_str(
+		"services:\n  a:\n    image: moving:latest\n  b:\n    image: explicit:1\n    pull_policy: missing\n  c:\n    image: kept:1\n    pull_policy: never\n  d:\n    image: built:1\n    build: .\n",
+	)
+	.unwrap();
+
+	e.pull_services(&file, &[]).await.expect("pull succeeds");
+
+	let seen = fake.requests.lock().unwrap();
+	let policy_of = |image: &str| {
+		seen.iter()
+			.find(|r| r.contains("/images/pull") && r.contains(&format!("reference={image}")))
+			.cloned()
+	};
+	assert!(
+		policy_of("moving%3Alatest").is_some_and(|r| r.contains("policy=always")),
+		"implicit policy must refresh: {seen:?}"
+	);
+	assert!(
+		policy_of("explicit%3A1").is_some_and(|r| r.contains("policy=always")),
+		"explicit missing must refresh: {seen:?}"
+	);
+	assert!(
+		policy_of("kept%3A1").is_some_and(|r| r.contains("policy=never")),
+		"never stays never: {seen:?}"
+	);
+	assert!(
+		policy_of("built%3A1").is_some_and(|r| r.contains("policy=missing")),
+		"a built image without a policy stays missing: {seen:?}"
+	);
+}

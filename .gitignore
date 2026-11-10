@@ -33,10 +33,10 @@ debian/*.log
 # Host-specific benchmark output (published numbers live in README)
 bench/results/
 
-# Local tooling scratch directories. These are ignored on my machine by a global
-# gitignore and by .git/info/exclude, neither of which travels with the repo,
-# so on a fresh clone, on CI, or for anyone else, they were unprotected. This is
-# a public repository and a single `git add -A` would publish them permanently.
+# Local tooling scratch directories. A global gitignore and .git/info/exclude
+# cover them on the maintainer's machine, but neither travels with the repo, so
+# on a fresh clone or on CI they were unprotected: a single `git add -A` would
+# publish them. Listing them here keeps them out of the tree for everyone.
 .claude/
 .superpowers/
 .playwright-mcp/

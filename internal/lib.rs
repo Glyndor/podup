@@ -18,6 +18,13 @@
 // a year later. Turned on at 35 outstanding items; it is cheap to adopt at that
 // size and expensive at three hundred.
 #![deny(missing_docs)]
+// The output of the binary goes through the writer in `podup::ui`, which
+// decides what a closed pipe means. A direct `println!` panics instead, and
+// Rust ignores SIGPIPE, so a reader that closed the pipe early used to reach
+// the panic hook in `main` as a crash. The rule is denied here, in the crate
+// that ships, and left off in the test build, where a panic in a test is the
+// test failing loudly.
+#![cfg_attr(not(test), deny(clippy::disallowed_macros))]
 
 // One folder per concern. Each module the rest of the crate (or a consumer of
 // the library) reaches by name is re-exported from here under that name, so
@@ -88,6 +95,12 @@ pub fn service_image_name(
 		)),
 		(None, None) => None,
 	}
+}
+/// The named volumes a service mounts, as the compose keys it wrote (an
+/// anonymous volume has the empty string). `config --volumes` uses it to list
+/// only the volumes some service actually refers to.
+pub fn service_named_volume_refs(service: &compose::types::Service) -> Vec<String> {
+	engine::volume_mounts::named_volume_refs(service)
 }
 /// Return the runtime value of `security_opt`'s `no-new-privileges` key:
 /// `Some(true)` when the engine will apply it, `Some(false)` when an entry

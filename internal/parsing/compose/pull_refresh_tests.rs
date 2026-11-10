@@ -72,7 +72,8 @@ fn omitted_refresh_preserves_serialization_and_hashes() {
 			.collect::<String>(),
 		"009d2c010816915935af2cb1e2533597d2caff9262da99a74bc827f49e529b3f"
 	);
-	let env = crate::engine::container::effective_env(service, std::path::Path::new(".")).unwrap();
+	let env =
+		crate::engine::container::effective_env(service, std::path::Path::new("."), &[]).unwrap();
 	assert_eq!(
 		crate::engine::container::config_hash(
 			service,

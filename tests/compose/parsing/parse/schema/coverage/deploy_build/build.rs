@@ -143,7 +143,7 @@ services:
 		BuildConfig::Config { ssh, secrets, .. } => {
 			assert_eq!(ssh.len(), 1);
 			assert_eq!(secrets.len(), 1);
-			assert_eq!(secrets[0], "server-certificate");
+			assert_eq!(secrets[0].source(), "server-certificate");
 		}
 		_ => panic!("expected long-form build"),
 	}

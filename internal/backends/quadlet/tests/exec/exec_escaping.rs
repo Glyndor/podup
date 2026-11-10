@@ -27,9 +27,18 @@ fn a_percent_in_a_command_is_written_doubled() {
 }
 
 #[test]
-fn a_percent_in_a_shell_form_command_is_written_doubled() {
+fn a_percent_in_a_string_command_is_written_doubled() {
 	let unit = container("services:\n  web:\n    image: nginx\n    command: echo %h\n");
-	assert_eq!(line(&unit, "Exec"), "Exec=echo %%h");
+	assert_eq!(line(&unit, "Exec"), "Exec=echo \"%%h\"");
+}
+
+#[test]
+fn a_string_command_is_written_as_its_words() {
+	let unit = container(
+		"services:\n  web:\n    image: nginx\n    entrypoint: echo got\n    command: \"sh -c 'a b' \\\"c d\\\"\"\n",
+	);
+	assert_eq!(line(&unit, "Entrypoint"), "Entrypoint=echo got");
+	assert_eq!(line(&unit, "Exec"), "Exec=sh -c \"a b\" \"c d\"");
 }
 
 #[test]
@@ -63,15 +72,27 @@ fn a_lone_semicolon_argument_is_refused() {
 	for command in [
 		"command: [find, /, -exec, ls, \"{}\", \";\"]",
 		"entrypoint: [\";\"]",
-		"command: find . -exec ls {} ;",
-		// A quote that never closes is read differently by different Quadlet versions.
-		"command: \"echo 'x\"",
-		"command: 'a \"b ; c'",
+		// A string is split into words first, and a quoted `;` is a word of its own.
 		"command: \"find . -exec ls {} ';'\"",
 		"command: \"ls \\\";\\\"\"",
 	] {
 		let yaml = format!("services:\n  web:\n    image: nginx\n    {command}\n");
 		assert!(rejects(&yaml), "{command} should be refused");
+	}
+}
+
+#[test]
+fn an_unquoted_semicolon_in_a_string_command_ends_it_like_compose() {
+	let unit =
+		container("services:\n  web:\n    image: nginx\n    command: find . -exec ls {} ;\n");
+	assert_eq!(line(&unit, "Exec"), "Exec=find . -exec ls {}");
+}
+
+#[test]
+fn a_string_command_with_an_unterminated_quote_fails_to_load() {
+	for command in ["echo 'x", "a \"b ; c"] {
+		let yaml = format!("services:\n  web:\n    image: nginx\n    command: {command:?}\n");
+		assert!(parse_str(&yaml).is_err(), "{command:?} should not load");
 	}
 }
 

@@ -9,10 +9,23 @@ use super::sanitize_value;
 /// the value apart with an exec-like split, so a secret whose path holds a
 /// space would reach `podman` as two `--secret` flags, each one broken.
 /// `EnvironmentFile` uses the same split, so each path must remain one word.
+///
+/// The capability, device and path lists are read the same way: a value
+/// `NET_RAW SYS_ADMIN` under `AddCapability` would be two capabilities, so it is
+/// written as one quoted word and the engine refuses the name instead of
+/// granting both.
 fn key_is_word_split(key: &str) -> bool {
 	matches!(
 		key,
-		"Environment" | "EnvironmentFile" | "Label" | "Annotation" | "Sysctl" | "Secret"
+		"Environment"
+			| "EnvironmentFile"
+			| "Label" | "Annotation"
+			| "Sysctl"
+			| "Secret"
+			| "AddCapability"
+			| "DropCapability"
+			| "AddDevice"
+			| "Mask" | "Unmask"
 	)
 }
 

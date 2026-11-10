@@ -3,7 +3,7 @@
 //! short-form volume parser, which together would push `check_fns` past
 //! the line limit.
 
-// The four path functions below are `pub(crate)` only so `fuzz/fuzz_targets/audit_bind_path.rs`,
+// The four path functions below are `pub(crate)` only so `fuzz/fuzz_targets/host/audit_bind_path.rs`,
 // which compiles this file into its own crate, can call them; nothing else widens.
 use podup::compose::types::{ComposeFile, Service, VolumeMount, VolumeType};
 

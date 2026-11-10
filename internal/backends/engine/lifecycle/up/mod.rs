@@ -9,6 +9,10 @@ mod readiness;
 mod schedule;
 mod up_one;
 
+// The fake Podman it talks to is a Unix socket server.
+#[cfg(all(test, unix))]
+mod option_tests;
+
 use std::collections::HashMap;
 
 use crate::compose::types::ComposeFile;
@@ -221,7 +225,10 @@ impl Engine {
 			// build's `Building`/`Built` verbs land on the same rows the rest
 			// of `up` is drawing on.
 			let build_names = if build && !self.no_build {
-				up_build_targets(file, &enabled, &target_set)
+				crate::engine::build::order_context_builds(
+					file,
+					&up_build_targets(file, &enabled, &target_set),
+				)?
 			} else {
 				Vec::new()
 			};
@@ -244,12 +251,8 @@ impl Engine {
 			// as a standalone `build`. Only the surrounding board is now the
 			// one `up` already opened.
 			if !build_names.is_empty() {
-				self.build_images_in_session(
-					file,
-					&build_names,
-					&crate::engine::BuildOptions::default(),
-				)
-				.await?;
+				self.build_images_in_session(file, &build_names, &self.up_build_options())
+					.await?;
 			}
 
 			self.create_networks(file).await?;
@@ -354,6 +357,14 @@ impl Engine {
 		// above would otherwise leave the terminal without a caret. `end` is
 		// idempotent and a no-op when no board was opened.
 		crate::ui::progress::end();
+
+		// A service cancelled while its `pre_start` ran, because a sibling failed,
+		// left a removal of its init container running in the background. The
+		// error is about to end the process, so wait for the removal first, and
+		// after the board is closed so a slow daemon does not leave the terminal
+		// frozen with the cursor hidden while this waits.
+		self.client.drain_init_cleanups().await;
+
 		result
 	}
 }
@@ -390,45 +401,5 @@ fn up_build_targets(
 		.collect()
 }
 
-#[cfg(all(test, unix))]
-mod up_build_board_tests;
-
-#[cfg(test)]
-mod keep_id_create_tests;
-
-#[cfg(all(test, unix))]
-mod optional_dependency_tests;
-
-#[cfg(test)]
-mod up_validation_tests;
-
 #[cfg(test)]
 mod tests;
-
-/// Tests for the pull decision in `images.rs`.
-///
-/// They drive a whole `up`, so they would sit as naturally in the lifecycle
-/// suite, but that file was already at 487 of its 500 code lines, and adding
-/// them there put it over. They belong next to the decision they pin anyway,
-/// the same way `prefetch.rs` keeps its own.
-#[cfg(test)]
-#[cfg(unix)]
-mod images_tests;
-
-#[cfg(test)]
-mod prefetch_tests;
-
-#[cfg(all(test, unix))]
-mod readiness_tests;
-
-#[cfg(all(test, unix))]
-mod up_one_tests;
-
-#[cfg(all(test, unix))]
-mod up_env_hash_tests;
-
-#[cfg(all(test, unix))]
-mod up_replica_tests;
-
-#[cfg(all(test, unix))]
-mod collision_tests;

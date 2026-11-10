@@ -216,8 +216,8 @@ pub fn status<S: super::super::systemctl::SystemCtl>(sc: &S, project: &str) -> c
 	// screen was one colour, so "is it actually running?" meant reading six
 	// labels to find the one word that answers it. The label is scaffolding
 	// (dimmed); the value carries the meaning (tinted by what it says).
-	let row = |label: &str, value: &str| {
-		crate::ui::print_labelled(label, value);
+	let row = |label: &str, value: &str| -> crate::Result<()> {
+		Ok(crate::ui::print_labelled(label, value)?)
 	};
 	match r.mode {
 		// Quadlet mode has no unit named after the project: the units live in
@@ -226,12 +226,12 @@ pub fn status<S: super::super::systemctl::SystemCtl>(sc: &S, project: &str) -> c
 		InstalledMode::Quadlet => row(
 			"units",
 			&format!("{} ({} file(s))", r.unit_path.display(), r.unit_count),
-		),
-		_ => row("unit", &r.unit_path.display().to_string()),
+		)?,
+		_ => row("unit", &r.unit_path.display().to_string())?,
 	}
-	row("installed", if r.unit_exists { "yes" } else { "no" });
+	row("installed", if r.unit_exists { "yes" } else { "no" })?;
 	if let Some(mode) = r.unit_mode {
-		row("mode", &format!("{:04o}", mode & 0o7777));
+		row("mode", &format!("{:04o}", mode & 0o7777))?;
 	}
 	// With no unit file on disk, systemd's answers to both questions are the same
 	// negative the `installed: no` line above already gave, and neither is a
@@ -242,13 +242,13 @@ pub fn status<S: super::super::systemctl::SystemCtl>(sc: &S, project: &str) -> c
 	// A unit that *is* on disk while systemd still cannot find it stays red: that
 	// is a genuinely broken install, and the two cases must not look alike.
 	if r.unit_exists {
-		row("active", &r.is_active);
-		row("enabled", &r.is_enabled);
+		row("active", &r.is_active)?;
+		row("enabled", &r.is_enabled)?;
 	} else {
-		crate::ui::print_labelled_neutral("active", &r.is_active);
-		crate::ui::print_labelled_neutral("enabled", &r.is_enabled);
+		crate::ui::print_labelled_neutral("active", &r.is_active)?;
+		crate::ui::print_labelled_neutral("enabled", &r.is_enabled)?;
 	}
-	row("linger", if r.linger { "enabled" } else { "disabled" });
+	row("linger", if r.linger { "enabled" } else { "disabled" })?;
 	// Prose for the same reason the session line is prose: "not-found" alone
 	// would read as a broken install rather than as the ordering being inert,
 	// and the operator needs to be told what it costs and what fixes it.
@@ -257,7 +257,7 @@ pub fn status<S: super::super::systemctl::SystemCtl>(sc: &S, project: &str) -> c
 			"network wait",
 			&format!("{NETWORK_SHIM} is loaded"),
 			Some(true),
-		),
+		)?,
 		NetworkWait::NotFound => crate::ui::print_labelled_with(
 			"network wait",
 			&format!(
@@ -265,9 +265,9 @@ pub fn status<S: super::super::systemctl::SystemCtl>(sc: &S, project: &str) -> c
 				 is dropped silently (Podman ships it from 5.3.0)"
 			),
 			Some(false),
-		),
+		)?,
 		NetworkWait::Unknown(why) => {
-			crate::ui::print_labelled_neutral("network wait", &format!("unknown ({why})"))
+			crate::ui::print_labelled_neutral("network wait", &format!("unknown ({why})"))?
 		}
 	}
 	// Prose, not a state word, so the meaning is stated rather than inferred.
@@ -279,6 +279,6 @@ pub fn status<S: super::super::systemctl::SystemCtl>(sc: &S, project: &str) -> c
 			"XDG_RUNTIME_DIR unset (systemctl --user needs a user session)"
 		},
 		Some(r.runtime_dir),
-	);
+	)?;
 	Ok(())
 }

@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 
-use super::{diagnostics, extends, include, jobs, merge, tags, types, validate};
+use super::{
+	diagnostics, extends, include, jobs, merge, nested_resets, project_name, tags, types, validate,
+};
 use crate::error::{ComposeError, Result};
 use crate::substitute;
 use types::{ComposeFile, ServiceNetworks};
@@ -14,7 +16,7 @@ pub(super) fn is_stdin(path: &Path) -> bool {
 ///
 /// `-f -` reads the document from stdin, which has no directory of its own,
 /// so the working directory stands in for it.
-fn dir_of(path: &Path) -> PathBuf {
+pub(super) fn dir_of(path: &Path) -> PathBuf {
 	if is_stdin(path) {
 		return std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 	}
@@ -102,7 +104,8 @@ pub(crate) fn parse_file_with_env_files_interp_with_stdin(
 	// `--project-directory` names), and every file is interpolated with it.
 	let vars_dir = project_dir.unwrap_or(&dir);
 	let mut file =
-		parse_file_inner_with_stdin(&abs, vars_dir, env_files, interpolate, stdin_content)?;
+		parse_file_inner_with_stdin(&abs, vars_dir, env_files, interpolate, stdin_content)
+			.map_err(|e| name_file_in_parse_error(e, path))?;
 
 	// The `include:` list of the file, and the list of every file it names in
 	// turn: the compose specification applies `include` recursively.
@@ -116,6 +119,28 @@ pub(crate) fn parse_file_with_env_files_interp_with_stdin(
 	extends::resolve_all_extends(&mut file, &dir, &env_files, included_env_files, interpolate)?;
 	jobs::check_relations(&file)?;
 	Ok(file)
+}
+
+/// Put the file name on a YAML syntax error. The parser reports only a line and
+/// column, so with several `-f` files there was no telling which one held the
+/// mistake. The parser's own message stays out, as it echoes the file content.
+fn name_file_in_parse_error(error: ComposeError, path: &Path) -> ComposeError {
+	let ComposeError::Parse(yaml) = error else {
+		return error;
+	};
+	let shown = if is_stdin(path) {
+		"(stdin)".to_string()
+	} else {
+		crate::error::sanitize_name(&path.display().to_string()).into_owned()
+	};
+	ComposeError::Invalid(match yaml.location() {
+		Some(loc) => format!(
+			"failed to parse compose file '{shown}' at line {}, column {}",
+			loc.line(),
+			loc.column()
+		),
+		None => format!("failed to parse compose file '{shown}'"),
+	})
 }
 
 /// Parse and merge multiple compose files (the `-f`/`COMPOSE_FILE` list).
@@ -154,6 +179,22 @@ pub fn parse_files_with_env_files_interp_in(
 	interpolate: bool,
 	project_dir: Option<&Path>,
 ) -> Result<ComposeFile> {
+	parse_files_with_project_in(paths, env_files, interpolate, project_dir, None)
+}
+
+/// Like [`parse_files_with_env_files_interp_in`] but with the project name the
+/// operator gave (`-p`, or the `COMPOSE_PROJECT_NAME` variable), if any.
+///
+/// The files may refer to the name of the project as `${COMPOSE_PROJECT_NAME}`.
+/// It is the explicit one when there is one, else the top-level `name:`, else
+/// the name of the project directory, and it reaches every file the load reads.
+pub fn parse_files_with_project_in(
+	paths: &[PathBuf],
+	env_files: &[String],
+	interpolate: bool,
+	project_dir: Option<&Path>,
+	explicit_project: Option<&str>,
+) -> Result<ComposeFile> {
 	let mut iter = paths.iter();
 	let first = iter
 		.next()
@@ -167,6 +208,14 @@ pub fn parse_files_with_env_files_interp_in(
 	} else {
 		None
 	};
+	let _name = project_name::expose(
+		interpolate,
+		paths,
+		env_files,
+		project_dir,
+		explicit_project,
+		stdin.as_deref(),
+	);
 	let project_dir = project_dir
 		.map(Path::to_path_buf)
 		.or_else(|| Some(dir_of(first)));
@@ -192,7 +241,9 @@ pub fn parse_files_with_env_files_interp_in(
 		// gone by the time it is a typed `ComposeFile`, so they are collected
 		// from the file itself and passed alongside.
 		let directives = tags::collect_from_file(path);
-		merge_override(&mut merged, other, &directives);
+		let resets = tags::entry_resets_from_file(path);
+		let nested = nested_resets::nested_resets_from_file(path);
+		merge_override(&mut merged, other, &directives, &resets, &nested);
 	}
 	drop(budget);
 	// Each file passed on its own; a service in one `-f` file and a job of the
@@ -303,7 +354,11 @@ pub(crate) fn normalize_default_network(file: &mut ComposeFile) {
 		.services
 		.values()
 		.chain(file.jobs.values().map(|job| &job.service))
-		.any(|svc| svc.network_mode.is_none() && matches!(svc.networks, ServiceNetworks::Empty));
+		.any(|svc| {
+			svc.network_mode.is_none()
+				&& (matches!(svc.networks, ServiceNetworks::Empty)
+					|| svc.networks.names().iter().any(|net| net == "default"))
+		});
 	if !needs_default {
 		return;
 	}
@@ -315,6 +370,19 @@ pub(crate) fn normalize_default_network(file: &mut ComposeFile) {
 	}
 }
 
+/// Remove the top-level entry a later file reset with `!reset`.
+fn drop_entry(target: &mut ComposeFile, section: &str, name: &str) {
+	match section {
+		"services" => drop(target.services.shift_remove(name)),
+		"networks" => drop(target.networks.shift_remove(name)),
+		"volumes" => drop(target.volumes.shift_remove(name)),
+		"secrets" => drop(target.secrets.shift_remove(name)),
+		"configs" => drop(target.configs.shift_remove(name)),
+		"models" => drop(target.models.shift_remove(name)),
+		_ => {}
+	}
+}
+
 /// Merge `other` into `target` with `other` winning (compose `-f` override
 /// semantics): services are merged field-by-field, other top-level maps replace
 /// on key conflict.
@@ -322,11 +390,23 @@ pub(super) fn merge_override(
 	target: &mut ComposeFile,
 	other: ComposeFile,
 	directives: &tags::Directives,
+	resets: &tags::EntryResets,
+	nested: &nested_resets::NestedResets,
 ) {
+	for (section, name) in resets {
+		drop_entry(target, section, name);
+	}
+	// The project name is a single value, and the last file that sets one wins.
+	if other.name.is_some() {
+		target.name = other.name.clone();
+	}
 	for (name, svc) in other.services {
 		if let Some(base) = target.services.get_mut(&name) {
 			let tagged = directives.get(&name);
 			*base = extends::merge_service_tagged(std::mem::take(base), svc, tagged);
+			if let Some(paths) = nested.get(&name) {
+				nested_resets::apply_nested_resets(base, paths);
+			}
 		} else {
 			target.services.insert(name, svc);
 		}

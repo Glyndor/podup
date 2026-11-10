@@ -13,7 +13,9 @@ use crate::libpod::types::container::{Mount, NamedVolume};
 
 #[cfg(feature = "test-helpers")]
 pub(crate) mod fuzz_hook;
+mod required_source;
 mod spec;
+pub(crate) use required_source::ensure_required_bind_sources;
 use spec::{access_opts, extend_bind_opts_str, extend_volume_opts_str, parse_volume_string};
 
 /// What `ensure_bind_source` decided at the host-source path.
@@ -136,15 +138,21 @@ pub(crate) fn build_mounts_all(
 				VolumeType::Bind => {
 					let src = source.as_deref().unwrap_or("");
 
-					if let Some(b) = bind {
-						if b.create_host_path.unwrap_or(false) && !src.is_empty() {
-							// Resolve exactly like the mount source (expand `~`, anchor a
-							// relative path to the project dir) so the directory is created
-							// at the path actually bind-mounted, not a literal `~` dir.
-							let abs = crate::engine::container::resolve_bind_source(src, base_dir);
-							if let BindSource::Failed(msg) = ensure_bind_source(&abs) {
-								tracing::warn!("{msg}");
-							}
+					// `create_host_path` defaults to `true` in the Compose
+					// Specification (services, volumes, long syntax), with or
+					// without a `bind:` block. Only an explicit `false` leaves a
+					// missing source to fail at the daemon, as Docker Compose does.
+					let create = bind
+						.as_ref()
+						.and_then(|b| b.create_host_path)
+						.unwrap_or(true);
+					if create && !src.is_empty() {
+						// Resolve exactly like the mount source (expand `~`, anchor a
+						// relative path to the project dir) so the directory is created
+						// at the path actually bind-mounted, not a literal `~` dir.
+						let abs = crate::engine::container::resolve_bind_source(src, base_dir);
+						if let BindSource::Failed(msg) = ensure_bind_source(&abs) {
+							tracing::warn!("{msg}");
 						}
 					}
 
@@ -189,7 +197,15 @@ pub(crate) fn build_mounts_all(
 
 	// Top-level `tmpfs:` shorthand, equivalent to volumes with type=tmpfs.
 	for entry in service.tmpfs.to_list() {
-		mounts.push(spec::parse_tmpfs_string(&entry));
+		let mut mount = spec::parse_tmpfs_string(&entry);
+		// `uid=`/`gid=` become `U` when they name `user:`; pre_validate_spec has
+		// already refused the entries that cannot, so a refusal here keeps them.
+		if let Ok(options) =
+			crate::libpod::validate::translate_owner(&mount.options, service.user.as_deref())
+		{
+			mount.options = options;
+		}
+		mounts.push(mount);
 	}
 
 	(mounts, named)

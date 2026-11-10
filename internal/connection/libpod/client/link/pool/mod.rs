@@ -491,7 +491,11 @@ impl Client {
 	pub fn with_pool_size(socket_path: impl Into<String>, pool_size: usize) -> Self {
 		let socket_path = socket_path.into();
 		let pool = ConnPool::new(socket_path.clone(), pool_size);
-		Self { socket_path, pool }
+		Self {
+			socket_path,
+			pool,
+			init_cleanups: Default::default(),
+		}
 	}
 
 	/// The configured maximum number of live (idle + in-use) buffered

@@ -1,0 +1,5 @@
+# path<TAB>ceiling<TAB>reason. Read by .github/scripts/checks/folder-limit.sh; use . for the root.
+# No folder is listed here at the moment. The check ignores the flat .github/workflows folder
+# on purpose, because GitHub requires workflows to sit flat there; it holds more than twenty files.
+# Add an entry only with a ceiling and a reason; keep ceilings at or below their base-commit
+# values and remove an entry once the folder is at 20 or fewer: the check fails on one that is.

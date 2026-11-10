@@ -26,6 +26,8 @@ The one-line installer applies the same fail-closed policy. With a release publi
 
 Binary installers require Python 3 with `cryptography` and verify the signed manifest plus selected digest. If a capable `gh` is installed, installers also verify release-workflow provenance.
 
+Every download hop must be `https`, redirects included. `install.sh` pins `curl` to https. `install.ps1` follows redirects by hand: it refuses a request or a `Location` that is not https (`Refusing a non-https URL`), resolves a relative `Location` against the URL that returned it, and refuses more than five redirects. `podup update` applies the same rule: a redirect that leaves https is refused.
+
 ### Version self-test (rollback gate)
 
 The signed manifest binds the asset bytes but **not** the release tag. Both `install.sh` and `install.ps1` run the staged binary's `--version` and pin it to the resolved tag (one optional `v` prefix). The comparison is strict equality; mismatch deletes the stage and exits 1. This establishes tag/bytes consistency, not freshness: coherent old metadata/bytes passes that check. When resolving `latest`, both installers also refuse a downgrade from a working installed version; an explicit `PODUP_VERSION` permits one. A fresh install has no installed version to compare. The updater separately rejects non-newer versions unless forced, and tests after replacement with attempted rollback.

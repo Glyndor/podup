@@ -201,34 +201,39 @@ impl Engine {
 		// is not labelled as ours, refuse rather than clobber a foreign secret.
 		// Our own secret (or a 404) is replaced fresh, keeping re-`up` idempotent.
 		let inspect = format!("{API_PREFIX}/secrets/{}/json", urlencoded(name));
-		let existed = match self.client.get_json::<serde_json::Value>(&inspect).await {
-			Ok(info) => {
-				let owned = info
-					.get("Spec")
-					.and_then(|spec| spec.get("Labels"))
-					.and_then(|labels| labels.get("podup.project"))
-					.and_then(|v| v.as_str())
-					== Some(self.project.as_str());
-				if !owned {
-					return Err(ComposeError::Unsupported(format!(
-						"a secret named '{name}' already exists and is not labelled \
+		let existing: Option<String> =
+			match self.client.get_json::<serde_json::Value>(&inspect).await {
+				Ok(info) => {
+					let owned = info
+						.get("Spec")
+						.and_then(|spec| spec.get("Labels"))
+						.and_then(|labels| labels.get("podup.project"))
+						.and_then(|v| v.as_str())
+						== Some(self.project.as_str());
+					if !owned {
+						return Err(ComposeError::Unsupported(format!(
+							"a secret named '{name}' already exists and is not labelled \
 						 podup.project={}; refusing to overwrite a secret podup did \
 						 not create",
-						self.project
-					)));
+							self.project
+						)));
+					}
+					Some(super::remove::removal_key(&info, name))
 				}
-				true
-			}
-			Err(e) if e.is_status(404) => false,
-			Err(e) => return Err(ComposeError::Podman(e)),
-		};
+				Err(e) if e.is_status(404) => None,
+				Err(e) => return Err(ComposeError::Podman(e)),
+			};
 		// Only delete something that is actually there (#1219). On a first `up`
 		// every secret is a 404, so this was a round trip per secret spent
 		// removing nothing.
-		if existed {
-			let delete_path = format!("{API_PREFIX}/secrets/{}", urlencoded(name));
-			self.client
-				.delete_ok(&delete_path)
+		let mut removed = false;
+		if let Some(key) = existing {
+			// By the ID that was inspected: a name taken by another secret since
+			// then answers 404 and is not removed.
+			let delete_path = format!("{API_PREFIX}/secrets/{}", urlencoded(&key));
+			removed = self
+				.client
+				.delete_existed(&delete_path)
 				.await
 				.map_err(ComposeError::Podman)?;
 		}
@@ -253,11 +258,12 @@ impl Engine {
 				// fails there instead of clobbering whatever arrived, the better
 				// outcome, but only if it is legible. Podman's own message for this
 				// is an opaque 500, so it is named here rather than passed through.
-				if !existed {
+				if !removed {
 					ComposeError::Unsupported(format!(
-						"secret '{name}' did not exist when podup checked but could not \
-						 be created: {e}. Something else created a secret of that name \
-						 in between. Re-run `up`, or remove it if it is not wanted."
+						"secret '{name}' was not there to replace when podup checked but \
+						 could not be created: {e}. Something else created a secret of \
+						 that name in between. Re-run `up`, or remove it if it is not \
+						 wanted."
 					))
 				} else {
 					ComposeError::Podman(e)
@@ -267,7 +273,7 @@ impl Engine {
 }
 
 #[cfg(test)]
-#[path = "create_tests.rs"]
+#[path = "create_tests/mod.rs"]
 mod tests;
 
 /// The payload of a secret must never reach an error message.

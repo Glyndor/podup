@@ -4,7 +4,7 @@
 # CHANGED_FILES is the non-empty, newline-separated git diff --name-only output.
 # Exit 0 only when every path is outside the PR/merge-group VM execution.
 # Other events always boot before this classifier is called. Unknown paths,
-# malformed input and lane helpers fail closed. See INFORME-C1.md for evidence.
+# malformed input and lane helpers fail closed.
 set -uo pipefail
 
 no() {
@@ -47,6 +47,7 @@ while IFS= read -r f; do
 		.github/workflows/podman-lane-develop-nightly.yml) ;;
 		.github/workflows/podman-watch.yml) ;;
 		.github/workflows/release.yml) ;;
+		.github/workflows/repository-health.yml) ;;
 		.github/workflows/reusable-branch-health.yml) ;;
 		.github/workflows/reusable-dco.yml) ;;
 		.github/workflows/reusable-dependabot-freshness.yml) ;;

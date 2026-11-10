@@ -134,7 +134,7 @@ impl Engine {
 						target_set,
 						existing,
 						no_recreate,
-						force_recreate,
+						self.recreate_forced(name, explicit_targets, force_recreate),
 						start,
 						readiness,
 					)
@@ -162,6 +162,24 @@ impl Engine {
 		});
 		futures_util::future::try_join_all(started).await?;
 		Ok(())
+	}
+}
+
+impl Engine {
+	/// Whether `name` is replaced even when unchanged: with `--force-recreate`
+	/// every service is, and with `--always-recreate-deps` the ones that were
+	/// not named on the command line. With no service named they are all
+	/// selected, so there is no dependency left to single out.
+	pub(in crate::backends::engine::lifecycle) fn recreate_forced(
+		&self,
+		name: &str,
+		explicit_targets: &[String],
+		force_recreate: bool,
+	) -> bool {
+		force_recreate
+			|| (self.always_recreate_deps
+				&& !explicit_targets.is_empty()
+				&& !explicit_targets.iter().any(|target| target == name))
 	}
 }
 

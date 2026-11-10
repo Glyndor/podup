@@ -2,13 +2,14 @@
 
 use tracing::warn;
 
-use crate::compose::types::BuildConfig;
+use crate::compose::types::{BuildConfig, Service};
 use crate::error::{ComposeError, Result};
 use crate::libpod::urlencoded;
 use crate::libpod::validate::pre_validate_build;
 use crate::size;
 
 use super::super::names::looks_like_secret;
+use super::super::request::BuildPlan;
 use super::super::{context::map_additional_context, BuildOptions, Engine};
 use super::cache::{references, CacheField};
 
@@ -16,11 +17,11 @@ impl Engine {
 	pub(super) async fn service_build_query(
 		&self,
 		service_name: &str,
+		service: &Service,
 		build: &BuildConfig,
 		opts: &BuildOptions,
 		tag: &str,
-		dockerfile_name: &str,
-		secret_specs: &[String],
+		plan: &BuildPlan,
 	) -> Result<(String, String)> {
 		let arg_map = build.args().to_map();
 		let mut build_args: std::collections::HashMap<String, String> =
@@ -106,6 +107,9 @@ impl Engine {
 			}).cloned(),
 			_ => None,
 		};
+		// Without `build.platforms` the build is for the platform the service
+		// runs on, as in Compose.
+		let platform = platform.or_else(|| service.platform.clone());
 		// Distinguish "absent" from "present but unparseable": a malformed
 		// `shm_size` must be rejected, not silently dropped to the default.
 		//
@@ -205,9 +209,9 @@ impl Engine {
 			build.no_cache() || opts.no_cache,
 			urlencoded("application/vnd.docker.distribution.manifest.v2+json"),
 		);
-		qs.push_str(&format!("&dockerfile={}", urlencoded(dockerfile_name)));
+		qs.push_str(&format!("&dockerfile={}", urlencoded(&plan.dockerfile)));
 		if build.pull() || opts.pull {
-			qs.push_str("&pull=true");
+			qs.push_str("&pullpolicy=always");
 		}
 		if let Some(p) = &platform {
 			qs.push_str(&format!("&platform={}", urlencoded(p)));
@@ -248,8 +252,8 @@ impl Engine {
 		if let Some(target) = build.target() {
 			qs.push_str(&format!("&target={}", urlencoded(target)));
 		}
-		if !secret_specs.is_empty() {
-			let json = crate::engine::to_query_json("build.secrets", &secret_specs)?;
+		if !plan.secrets.is_empty() {
+			let json = crate::engine::to_query_json("build.secrets", &plan.secrets)?;
 			qs.push_str(&format!("&secrets={}", urlencoded(&json)));
 		}
 		let cache_to = references(CacheField::To, build.cache_to());
@@ -257,8 +261,8 @@ impl Engine {
 			let json = crate::engine::to_query_json("build.cache_to", &cache_to)?;
 			qs.push_str(&format!("&cacheto={}", urlencoded(&json)));
 		}
-		for (name, value) in build.additional_contexts() {
-			let mapped = map_additional_context(&self.base_dir, &value);
+		for (name, value) in &plan.contexts {
+			let mapped = map_additional_context(&self.base_dir, value);
 			qs.push_str(&format!(
 				"&additionalbuildcontexts={}",
 				urlencoded(&format!("{name}={mapped}"))

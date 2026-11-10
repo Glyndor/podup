@@ -69,3 +69,19 @@ fn origin_is_omitted_when_name_equals_key() {
 	let err = ensure_valid_object_name("volume", "bad name", "bad name").unwrap_err();
 	assert!(!err.to_string().contains("(from"), "got: {err}");
 }
+
+#[test]
+fn a_control_character_in_a_key_or_a_name_does_not_reach_the_message() {
+	for yaml in [
+		"services:\n  \"a\\e[31mb\":\n    image: x\n",
+		"services:\n  web:\n    image: x\n    container_name: \"a\\e[31mb\"\n",
+		"services:\n  web:\n    image: x\nvolumes:\n  \"a\\e[31mb\":\n",
+		"services:\n  web:\n    image: x\nnetworks:\n  \"a\\e[31mb\":\n",
+		"services:\n  web:\n    image: x\nvolumes:\n  data:\n    name: \"a\\e[31mb\"\n",
+	] {
+		let text = validate_object_names(&file(yaml), "proj")
+			.expect_err(yaml)
+			.to_string();
+		assert!(!text.contains('\u{1b}'), "{yaml}: {text:?}");
+	}
+}

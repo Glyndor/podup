@@ -1,6 +1,6 @@
 [package]
 name = "podup"
-version = "5.16.1"
+version = "5.17.0"
 edition = "2021"
 rust-version = "1.88"
 # podup is a binary that happens to build a library, not a library that ships a
@@ -79,6 +79,10 @@ name = "build_contract"
 path = "tests/cli/output/build_contract.rs"
 
 [[test]]
+name = "closed_pipe"
+path = "tests/cli/output/closed_pipe.rs"
+
+[[test]]
 name = "cli_aliases"
 path = "tests/cli/surface/cli_aliases.rs"
 
@@ -93,6 +97,10 @@ path = "tests/cli/surface/cli_diagnostics.rs"
 [[test]]
 name = "cli_flags"
 path = "tests/cli/surface/cli_flags.rs"
+
+[[test]]
+name = "impossible_memory_limit"
+path = "tests/cli/surface/impossible_memory_limit.rs"
 
 [[test]]
 name = "cli_service_hint"
@@ -115,12 +123,20 @@ name = "output_contract"
 path = "tests/cli/output/output_contract.rs"
 
 [[test]]
+name = "pipe_contract"
+path = "tests/cli/output/pipe_contract.rs"
+
+[[test]]
 name = "port_warning_scope"
 path = "tests/cli/warnings/port_warning_scope.rs"
 
 [[test]]
 name = "project_name_safety"
 path = "tests/cli/surface/project_name_safety.rs"
+
+[[test]]
+name = "printed_names_round_trip"
+path = "tests/cli/surface/printed_names_round_trip.rs"
 
 [[test]]
 name = "recreate_vocabulary"
@@ -191,16 +207,28 @@ name = "docs_links"
 path = "tests/repository/docs/docs_links.rs"
 
 [[test]]
+name = "man_page_flags"
+path = "tests/repository/docs/man_page_flags.rs"
+
+[[test]]
 name = "hostile_compose"
-path = "tests/hostile/input/hostile_compose.rs"
+path = "tests/hostile/input/parsing/hostile_compose.rs"
+
+[[test]]
+name = "hostile_yaml_contracts"
+path = "tests/hostile/input/parsing/hostile_yaml_contracts.rs"
 
 [[test]]
 name = "hostile_include_extends_cycle"
-path = "tests/hostile/input/hostile_include_extends_cycle.rs"
+path = "tests/hostile/input/parsing/hostile_include_extends_cycle.rs"
 
 [[test]]
 name = "hostile_filesystem_paths"
-path = "tests/hostile/input/hostile_filesystem_paths.rs"
+path = "tests/hostile/input/host_files/hostile_filesystem_paths.rs"
+
+[[test]]
+name = "hostile_non_utf8_paths"
+path = "tests/hostile/input/host_files/hostile_non_utf8_paths.rs"
 
 [[test]]
 name = "hostile_podman"
@@ -212,7 +240,7 @@ path = "tests/hostile/podman/hostile_push.rs"
 
 [[test]]
 name = "hostile_quadlet_units"
-path = "tests/hostile/input/hostile_quadlet_units.rs"
+path = "tests/hostile/input/units/hostile_quadlet_units.rs"
 
 [[test]]
 name = "hostile_secret_engine"
@@ -247,6 +275,10 @@ name = "no_inline_test_modules"
 path = "tests/repository/repo_rules/no_inline_test_modules.rs"
 
 [[test]]
+name = "no_private_document_references"
+path = "tests/repository/repo_rules/no_private_document_references.rs"
+
+[[test]]
 name = "no_system_wide_apt_policy"
 path = "tests/repository/packaging/no_system_wide_apt_policy.rs"
 
@@ -271,12 +303,24 @@ name = "secret_safety"
 path = "tests/repository/repo_rules/secret_safety.rs"
 
 [[test]]
+name = "serialization_errors"
+path = "tests/repository/repo_rules/serialization_errors.rs"
+
+[[test]]
 name = "tar_builder_single_site"
 path = "tests/repository/repo_rules/tar_builder_single_site.rs"
 
 [[test]]
 name = "asset_contract_uses_the_signing_manifest"
 path = "tests/repository/workflows/asset_contract_uses_the_signing_manifest.rs"
+
+[[test]]
+name = "workflow_apt_resilience"
+path = "tests/repository/workflows/workflow_apt_resilience.rs"
+
+[[test]]
+name = "workflow_advisory_observations"
+path = "tests/repository/workflows/workflow_advisory_observations.rs"
 
 [[test]]
 name = "workflow_audit_strictness"
@@ -291,6 +335,10 @@ name = "workflow_concurrency"
 path = "tests/repository/workflows/workflow_concurrency.rs"
 
 [[test]]
+name = "workflow_debian_classifier"
+path = "tests/repository/workflows/workflow_debian_classifier.rs"
+
+[[test]]
 name = "workflow_debian_image"
 path = "tests/repository/workflows/workflow_debian_image.rs"
 
@@ -303,8 +351,20 @@ name = "workflow_fuzz_seeds"
 path = "tests/repository/workflows/workflow_fuzz_seeds.rs"
 
 [[test]]
+name = "workflow_lint_classifier"
+path = "tests/repository/workflows/workflow_lint_classifier.rs"
+
+[[test]]
 name = "workflow_required_checks"
 path = "tests/repository/workflows/workflow_required_checks.rs"
+
+[[test]]
+name = "workflow_rust_ci_classifier"
+path = "tests/repository/workflows/workflow_rust_ci_classifier.rs"
+
+[[test]]
+name = "workflow_rust_build_env"
+path = "tests/repository/workflows/workflow_rust_build_env.rs"
 
 [[test]]
 name = "workflow_toolchain_pin"
@@ -320,7 +380,7 @@ path = "tests/cli/audit/sensitive_bind/audit_sensitive_bind_paths.rs"
 
 [[test]]
 name = "hostile_autostart_units"
-path = "tests/hostile/input/hostile_autostart_units.rs"
+path = "tests/hostile/input/units/hostile_autostart_units.rs"
 
 [[test]]
 name = "hostile_terminal_args"
@@ -347,8 +407,44 @@ name = "env_not_utf8"
 path = "tests/cli/environment/env_not_utf8.rs"
 
 [[test]]
+name = "env_resolution"
+path = "tests/cli/environment/env_resolution.rs"
+
+[[test]]
 name = "up_selection"
 path = "tests/cli/up/up_selection.rs"
+
+[[test]]
+name = "unknown_service"
+path = "tests/cli/up/unknown_service.rs"
+
+[[test]]
+name = "pull_ignore_buildable"
+path = "tests/cli/up/pull_ignore_buildable.rs"
+
+[[test]]
+name = "run_env_from_file"
+path = "tests/cli/up/run_env_from_file.rs"
+
+[[test]]
+name = "scale_duplicate_pairs"
+path = "tests/cli/up/scale_duplicate_pairs.rs"
+
+[[test]]
+name = "up_attach_options"
+path = "tests/cli/up/up_attach_options.rs"
+
+[[test]]
+name = "create_up_flags"
+path = "tests/cli/create/create_up_flags.rs"
+
+[[test]]
+name = "run_remove_orphans"
+path = "tests/cli/run/run_remove_orphans.rs"
+
+[[test]]
+name = "down_services"
+path = "tests/cli/down/down_services.rs"
 
 [[test]]
 name = "quadlet_jobs"
@@ -399,6 +495,15 @@ rustix = { version = "1.1.4", features = ["fs"] }
 # (tokio pulls the same version), so this adds features, not a crate.
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Time"] }
 
+# The writing macros are denied in the two crate roots that ship, so the rule
+# cannot be lost by deleting one attribute. The package default is `allow`
+# because the rest of the package is not the shipped output path: a test's
+# diagnostics are read by the test runner, and cargo's own `cargo:` directives
+# are read by cargo. Neither is piped into a reader that closes early, which
+# is the case the rule is about.
+[lints.clippy]
+disallowed_macros = "allow"
+
 [features]
 default = ["watch", "completions", "update"]
 # Compiling without `watch` is not supported: the crate does not compile
@@ -435,20 +540,20 @@ panic = "abort"
 
 [[test]]
 name = "hostile_copy_upload"
-path = "tests/hostile/input/hostile_copy_upload.rs"
+path = "tests/hostile/input/host_files/hostile_copy_upload.rs"
 
 [[test]]
 name = "hostile_watch_paths"
-path = "tests/hostile/input/hostile_watch_paths.rs"
+path = "tests/hostile/input/host_files/hostile_watch_paths.rs"
 required-features = ["watch", "test-helpers"]
 
 [[test]]
 name = "hostile_secret_permissions"
-path = "tests/hostile/input/hostile_secret_permissions.rs"
+path = "tests/hostile/input/host_files/hostile_secret_permissions.rs"
 
 [[test]]
 name = "hostile_build_secrets"
-path = "tests/hostile/input/hostile_build_secrets.rs"
+path = "tests/hostile/input/host_files/hostile_build_secrets.rs"
 
 [[test]]
 name = "hostile_archive_stat"
@@ -461,16 +566,32 @@ required-features = ["update", "test-helpers"]
 
 [[test]]
 name = "hostile_env_file_budget"
-path = "tests/hostile/input/hostile_env_file_budget.rs"
+path = "tests/hostile/input/parsing/hostile_env_file_budget.rs"
 
 [[test]]
 name = "hostile_env_file_bytes"
-path = "tests/hostile/input/hostile_env_file_bytes.rs"
+path = "tests/hostile/input/parsing/hostile_env_file_bytes.rs"
 
 [[test]]
 name = "hostile_label_files"
-path = "tests/hostile/input/hostile_label_files.rs"
+path = "tests/hostile/input/parsing/hostile_label_files.rs"
 
 [[test]]
 name = "unit_publication"
-path = "tests/hostile/input/unit_publication.rs"
+path = "tests/hostile/input/units/unit_publication.rs"
+
+[[test]]
+name = "hostile_terminal_bidi"
+path = "tests/hostile/output/hostile_terminal_bidi.rs"
+
+[[test]]
+name = "hostile_names_unicode"
+path = "tests/hostile/input/parsing/hostile_names_unicode.rs"
+
+[[test]]
+name = "hostile_copy_race"
+path = "tests/hostile/concurrency/hostile_copy_race.rs"
+
+[[test]]
+name = "hostile_project_race"
+path = "tests/hostile/concurrency/hostile_project_race.rs"

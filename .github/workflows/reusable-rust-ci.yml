@@ -39,7 +39,7 @@ on:
       llvm-cov-version:
         description: Exact version of the tool; bumped by editing this file
         type: string
-        default: "0.8.7"
+        default: "0.9.1"
       extra-test-os:
         description: JSON array of extra runner images to also run tests on (e.g. '["macos-latest"]')
         type: string
@@ -73,7 +73,7 @@ on:
       semver-checks-version:
         description: Exact version of the tool; bumped by editing this file
         type: string
-        default: "0.50.0"
+        default: "0.51.0"
       doc-warnings:
         description: Build the docs with -D warnings so broken doc links fail the build
         type: boolean
@@ -108,7 +108,57 @@ concurrency:
   group: rust-ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}-${{ inputs.working-directory }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# The range the classifier judges and the event that produced it. Every job
+# that asks the classifier whether the Rust lanes have anything to do reads
+# these, so the range is named once instead of in each job.
+env:
+  EVENT: ${{ github.event_name }}
+  BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+  HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
+  # Build settings for every job that compiles. Each run starts from a cold or
+  # restored `target/` and builds once, so incremental state is written and
+  # never read, and it only makes the cache bigger. Debug info for the dev and
+  # test profiles is cut to line tables: panics and backtraces keep file and
+  # line, which is all a failing CI log is read for, and the many test binaries
+  # stop linking full DWARF. Release builds are not touched.
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
 jobs:
+  # The one place the classifier is asked for the jobs that can be skipped
+  # whole. `test`, `test-extra` and `coverage` read `outputs.run` and do not
+  # even get a runner when the range touches nothing the Rust lanes read; the
+  # macOS and Windows legs are the expensive ones, and a step-level skip still
+  # paid for a runner of each just to do nothing.
+  #
+  # Skipping a job is only safe where the required name survives it. A job
+  # skipped by its own `if:` reports `skipped`, which a required check accepts,
+  # and the matrix jobs are never required themselves: `Extra platforms` is an
+  # aggregate that always runs and reads the matrix result. `lint` stays whole
+  # because it also runs the checks that must see documentation-only changes.
+  classify:
+    name: Classify the range
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      run: ${{ steps.decide.outputs.run }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The classifier reads the judge from the reviewed base commit and
+          # diffs the whole range, so the history has to be here.
+          fetch-depth: 0
+
+      # The judge is read from the base, never from this checkout: a pull
+      # request that edited the classifier must not be judged by its own
+      # edit. A base without the judge leaves the output empty, and an empty
+      # output runs the lanes, because the only safe reading of a missing
+      # answer is "run".
+      - name: Decide whether the Rust lanes must run
+        id: decide
+        run: git show "$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
+
   lint:
     name: Format & lint
     runs-on: ubuntu-latest
@@ -122,8 +172,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The classifier reads the judge from the reviewed base commit and
+          # diffs the whole range, so the history has to be here.
+          fetch-depth: 0
+
+      # The judge is read from the base, never from this checkout: a pull
+      # request that edited the classifier must not be judged by its own
+      # edit. A base without the judge leaves the output empty, and an empty
+      # output runs the lanes, because the only safe reading of a missing
+      # answer is "run".
+      - name: Decide whether the Rust lanes must run
+        id: decide
+        run: git show "$BASE_SHA:.github/scripts/checks/rust-ci-inputs.sh" | bash -s -- "$BASE_SHA" "$HEAD_SHA" || true
 
       - name: Install toolchain
+        if: steps.decide.outputs.run != 'false'
         env:
           TOOLCHAIN: ${{ inputs.toolchain }}
         run: |
@@ -131,6 +194,7 @@ jobs:
           rustup default "$TOOLCHAIN"
 
       - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        if: steps.decide.outputs.run != 'false'
         with:
           path: |
             ~/.cargo/registry/index
@@ -141,9 +205,11 @@ jobs:
           restore-keys: rust-lint-${{ runner.os }}-
 
       - name: rustfmt
+        if: steps.decide.outputs.run != 'false'
         run: cargo fmt --all --check
 
       - name: clippy
+        if: steps.decide.outputs.run != 'false'
         env:
           EXTRA_CLIPPY_ARGS: ${{ inputs.extra-clippy-args }}
         run: |
@@ -160,12 +226,61 @@ jobs:
       # In this job rather than one of its own because this job is already a
       # required check: a new job would report and block nothing until a
       # ruleset named it. The rule and why it exists live in the script.
+      #
+      # Not gated by the classifier: it is a `git grep` over the tree and it
+      # reads the very prose a documentation-only pull request changes, which
+      # is the one change that can introduce the word it looks for.
       - name: no planning-note references
         working-directory: .
         run: bash .github/scripts/checks/check-planning-words.sh
 
+      # Same job and for the same reason: a new one would block nothing until a
+      # ruleset named it. Both read git's index in about a quarter of a second.
+      - name: no vetoed vocabulary
+        working-directory: .
+        run: bash .github/scripts/checks/check-banned-vocabulary.sh
+
+      # The Rust test of the same name reads every tracked file, and the
+      # classifier lets a shell test, the licence or a template skip the Rust
+      # lanes. This is the same scan without the toolchain, so the skip loses
+      # nothing. Not gated by the classifier, for that reason.
+      - name: no private document references
+        working-directory: .
+        run: bash .github/scripts/checks/check-private-document-references.sh
+
+      # A serialisation error turned into an empty string is invisible: the
+      # command prints an empty document and exits zero, and a script reading
+      # it sees no rows where the truth is a failure. That rule is a test now,
+      # `serialization_errors`, and the test job runs it: it reads the tree's
+      # Rust sources the way the shell check did, so a change in any of them
+      # still reaches the rule.
+      #
+      # BASE is the commit the change is measured against, so a pull request
+      # cannot raise a ceiling in .github/folder-limit-exceptions.txt.
+      - name: folders hold at most twenty files
+        working-directory: .
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          if [ -n "$BASE_SHA" ]; then
+            if git fetch --no-tags --depth=1 origin "$BASE_SHA"; then
+              export BASE="$BASE_SHA"
+            else
+              echo "::warning::could not fetch the base commit; the ceilings are checked but not against it"
+            fi
+          fi
+          bash .github/scripts/checks/folder-limit.sh
+
   test:
     name: Test
+    # Skipped whole when the classifier says nothing here is read. `!cancelled()`
+    # and the `result` test are what keep a classifier that failed from skipping
+    # this job: a job whose `needs` failed is skipped by default, a skipped job
+    # reports a pass to a required check, and that would turn a broken checkout
+    # into a green suite. A classifier that did not answer runs the job.
+    needs: classify
+    if: ${{ !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 106s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -200,7 +315,8 @@ jobs:
 
   test-extra:
     name: Test (${{ matrix.os }})
-    if: inputs.extra-test-os != '[]'
+    needs: classify
+    if: ${{ inputs.extra-test-os != '[]' && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}
     runs-on: ${{ matrix.os }}
     # Bound: worst of the last three successful runs on 2026-09-02 was 205s; the slowest leg is windows-latest. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -251,6 +367,9 @@ jobs:
     # carries a name that cannot move, so a ruleset gates on "the extra-platform
     # tests passed" without naming which platforms those are. Glyndor/podup#1552.
     needs: test-extra
+    # A matrix skipped whole by the classifier arrives here as `skipped`, which is
+    # a pass below; this job is the only one of the pair a ruleset names, so it
+    # must keep running whatever the matrix did.
     # `needs` on its own SKIPS this job when the dependency fails, and a skipped
     # required check does not block a merge - which is the exact failure this job
     # exists to prevent. `if: always()` plus an explicit result check is what makes
@@ -275,7 +394,8 @@ jobs:
 
   coverage:
     name: Coverage
-    if: inputs.coverage-threshold > 0
+    needs: classify
+    if: ${{ inputs.coverage-threshold > 0 && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.run != 'false') }}
     runs-on: ubuntu-latest
     # Bound: worst of the last three successful runs on 2026-09-02 was 166s. Ten times that, rounded up, never under ten
     # minutes; the six-hour default is what a hang would otherwise cost.
@@ -356,10 +476,6 @@ jobs:
 
       - name: Decide whether the root build inputs changed
         id: inputs
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
         run: |
           set -euo pipefail
           build=true
@@ -496,10 +612,6 @@ jobs:
 
       - name: Decide whether the root build inputs changed
         id: inputs
-        env:
-          EVENT: ${{ github.event_name }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha || github.sha }}
         run: |
           set -euo pipefail
           build=true

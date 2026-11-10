@@ -16,7 +16,9 @@ set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
 source_file="$root/scenarios/build/Dockerfile"
 
-digests="$(grep -ohE 'alpine@sha256:[0-9a-f]{64}' "$source_file" | LC_ALL=C sort -u)"
+# The Dockerfile carries a tag as well (`alpine:3.24@sha256:...`) so Dependabot
+# can follow it; the scenarios keep the bare digest.
+digests="$(grep -ohE 'alpine(:[A-Za-z0-9._-]+)?@sha256:[0-9a-f]{64}' "$source_file" | sed -E 's/alpine:[^@]+@/alpine@/' | LC_ALL=C sort -u)"
 if [ "$(printf '%s\n' "$digests" | grep -c .)" -ne 1 ]; then
 	echo "expected exactly one alpine digest in $source_file, found:" >&2
 	printf '%s\n' "$digests" >&2

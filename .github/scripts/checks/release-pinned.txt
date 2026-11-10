@@ -1,0 +1,9 @@
+# SHA-256 of the canonical definition of each privileged job of release.yml
+# (job + workflow env/defaults/permissions). Regenerate in the same pull request
+# as any change to them: python3 .github/scripts/checks/signing-key-isolation.py --print-hashes
+# sign: signs each binary with the key, one job per asset
+sign 9d282a1f6ba19a5a6d0fded38406d4d2886f2e8c1b88693bd24497d6a193437c
+# attest: the only job that mints a token; attests build provenance
+attest 93aa322a2c7094341babd1bcc040d9fb7e064859a0476f154badb7a159981768
+# release: signs the checksums with the key and publishes
+release b12b4567e11edb5c3888cc3064bd1794b1d7e1f30f71538d0126828e55c89a19

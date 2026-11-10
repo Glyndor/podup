@@ -1,18 +1,19 @@
 //! Primitive compose field types shared across multiple service keys.
 //!
-//! [`Command`] is a shell string or exec list for `command:`/`entrypoint:`.
 //! [`StringOrList`] is a single string or list of strings (used in `dns:`, `cap_add:`, etc.).
 //! [`Labels`] is the list or map form for `labels:`.
 //! [`LoggingConfig`] is the `logging:` driver and options.
 //! [`Sysctls`] is the list or map form for `sysctls:`.
 
+pub use super::command::Command;
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Deserialize `extra_hosts` accepting either the list form (`["host:ip"]`) or
 /// the mapping form (`{host: ip}`), normalizing both to `host:ip` strings so
-/// the rest of the pipeline sees a single shape. Docker Compose accepts both.
+/// the rest of the pipeline sees a single shape. Docker Compose accepts both,
+/// and in the list form it takes `host=ip` as well as `host:ip`.
 pub(crate) fn deserialize_extra_hosts<'de, D>(de: D) -> Result<Vec<String>, D::Error>
 where
 	D: serde::Deserializer<'de>,
@@ -24,12 +25,23 @@ where
 		Map(IndexMap<String, String>),
 	}
 	Ok(match ListOrMap::deserialize(de)? {
-		ListOrMap::List(v) => v,
+		ListOrMap::List(v) => v.into_iter().map(|e| normalize_extra_host(&e)).collect(),
 		ListOrMap::Map(m) => m
 			.into_iter()
 			.map(|(host, ip)| format!("{host}:{ip}"))
 			.collect(),
 	})
+}
+
+/// Rewrite a `host=ip` entry as `host:ip`, the only spelling the engine and the
+/// build endpoint read. The first separator decides: a host name holds neither
+/// character, so everything after it, including the colons of an IPv6 address,
+/// belongs to the address. An entry already in `host:ip` form is returned as is.
+fn normalize_extra_host(entry: &str) -> String {
+	match entry.find([':', '=']) {
+		Some(i) if entry.as_bytes()[i] == b'=' => format!("{}:{}", &entry[..i], &entry[i + 1..]),
+		_ => entry.to_string(),
+	}
 }
 
 /// Deserialize a field that the compose spec allows as either a YAML number or a
@@ -52,26 +64,6 @@ where
 		StringOrNumber::Int(i) => i.to_string(),
 		StringOrNumber::Float(fl) => fl.to_string(),
 	}))
-}
-
-/// Container entrypoint / command: either a shell string or exec list.
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum Command {
-	/// Shell form: a single string run via `sh -c`.
-	Shell(String),
-	/// Exec form: an explicit argument vector run without a shell.
-	Exec(Vec<String>),
-}
-
-impl Command {
-	/// Returns the command as an exec argument vector, wrapping a shell string in `sh -c`.
-	pub fn to_exec(&self) -> Vec<String> {
-		match self {
-			Command::Shell(s) => vec!["sh".into(), "-c".into(), s.clone()],
-			Command::Exec(v) => v.clone(),
-		}
-	}
 }
 
 /// A field that accepts either a single string or a list of strings.

@@ -161,11 +161,12 @@ pub(crate) async fn run_ps(
 	// deploy gate reads as "nothing running, no error". `docker compose ps`
 	// exits non-zero there, and so does every other podup command on the same
 	// file.
-	let parsed = match podup::parse_files_with_env_files_interp_in(
+	let parsed = match podup::compose::parse_files_with_project_in(
 		&compose_files,
 		&cli.env_file,
 		true,
 		cli.project_directory.as_deref(),
+		cli.project.as_deref(),
 	) {
 		Ok(f) => Some(f),
 		Err(e) if compose_files.iter().any(|p| p.exists()) => return Err(e),
@@ -238,11 +239,20 @@ pub(crate) async fn run_down_by_label(cli: &Cli, compose_files: &[PathBuf]) -> p
 		volumes,
 		rmi,
 		timeout,
+		services,
 		..
 	} = &cli.command
 	else {
 		return Ok(());
 	};
+	// Without a compose file there is no way to tell which containers belong
+	// to the named services, and tearing down the whole project instead would
+	// remove more than was asked for.
+	if !services.is_empty() {
+		return Err(podup::ComposeError::Unsupported(
+			"naming services for `down` needs a compose file; none was found".to_string(),
+		));
+	}
 	let project = cli.project.clone().expect("checked by down_by_label_path");
 	validate_project_name(&project)?;
 	// Identity colours key on the project-stripped label, so every command
@@ -272,7 +282,7 @@ pub(crate) async fn run_down_by_label(cli: &Cli, compose_files: &[PathBuf]) -> p
 pub(crate) fn setup_output(cli: &Cli) {
 	// Resolve the colour choice before any output (including tracing setup below)
 	// so `--ansi`/`NO_COLOR`/TTY detection apply consistently everywhere.
-	podup::ui::set_color_choice(cli.ansi.into());
+	podup::ui::set_color_choice(crate::cli::color_choice(cli));
 	// Enable user-facing lifecycle progress for the CLI: per-container
 	// Started/Stopped/Removed lines on stderr (and the `run -d` id on stdout),
 	// matching docker compose. The library leaves this off so embedders stay

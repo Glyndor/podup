@@ -89,8 +89,31 @@ pub(crate) fn raw_nested_unknown_warnings(interpolated_yaml: &str) -> Vec<String
 		walk_volumes(service, svc, &mut out);
 		walk_networks(service, svc, &mut out);
 		walk_deploy(service, svc, &mut out);
+		walk_command_strings(service, svc, &mut out);
 	}
 	out
+}
+
+/// Warn when the string form of `command:` or `entrypoint:` holds an unquoted
+/// shell operator. The string is split into words, not run by a shell, and the
+/// words stop at the first `&`, `;`, `|`, `<` or `>`: the rest is dropped without
+/// an error, as `docker compose` does. Nothing in the loaded file shows the loss,
+/// so it is named here, with the service, the key and what was dropped.
+fn walk_command_strings(service: &str, svc: &serde_yaml::Mapping, out: &mut Vec<String>) {
+	for key in ["command", "entrypoint"] {
+		let Some(text) = svc.get(key).and_then(|v| v.as_str()) else {
+			continue;
+		};
+		let Some(tail) = crate::compose::types::command::dropped_tail(text) else {
+			continue;
+		};
+		out.push(format!(
+			"service '{service}': {key} holds an unquoted shell operator, so everything from \
+			 {tail:?} on is dropped, as docker compose does; the string is split into \
+			 words and not run by a shell. Quote the operator, use the list form, or run \
+			 `sh -c`"
+		));
+	}
 }
 
 /// Run the raw-nested-key diagnostic for every `-f` path, including the

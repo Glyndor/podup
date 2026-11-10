@@ -119,7 +119,7 @@ jobs:
       - name: Run the release-signing shell fixture
         run: |
           export PATH="$RUNNER_TEMP/fixturevenv/bin:$PATH"
-          bash tests/fixtures/releases/test.sh
+          bash tests/fixtures/releases/scripts/test.sh
 
       # sign.py is what puts the organisation's Ed25519 signature on every
       # released artifact, and until now nothing tested it. Its sibling
@@ -134,7 +134,7 @@ jobs:
       - name: Run the signing-script fixture
         run: |
           export PATH="$RUNNER_TEMP/fixturevenv/bin:$PATH"
-          bash tests/fixtures/releases/test-sign.sh
+          bash tests/fixtures/releases/scripts/test-sign.sh
   # Same fixture on Windows so the install.ps1 path (Windows PowerShell
   # 5.1 and PowerShell 7+) is covered. The PowerShell script is a thin
   # test harness: it exercises the same per-asset loop and asserts the
@@ -166,7 +166,7 @@ jobs:
         shell: pwsh
         run: |
           $env:PATH = "$env:RUNNER_TEMP\fixturevenv\Scripts;$env:PATH"
-          pwsh -NoProfile -File tests/fixtures/releases/test.ps1
+          pwsh -NoProfile -File tests/fixtures/releases/scripts/test.ps1
   # Version self-test in the shell installer (issue #1356). The Rust
   # `podup update` already pins the staged binary's --version to the
   # resolved tag (internal/update/install/self_test.rs) and refuses a
@@ -187,7 +187,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Run the version-self-test shell fixture
-        run: bash tests/fixtures/releases/version-self-test.sh
+        run: bash tests/fixtures/releases/scripts/version-self-test.sh
   # --proto-redir pin in the shell installer (issue #1722). The flag
   # restricts the protocol across redirects, so a CDN 302 to http://
   # is refused at the download rather than fetched from. Nothing
@@ -213,7 +213,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Run the proto-redir shell fixture
-        run: bash tests/fixtures/releases/proto-redir-test.sh
+        run: bash tests/fixtures/releases/scripts/proto-redir-test.sh
   # Same fixture on Windows so install.ps1's Test-StagedVersion is
   # covered. The PowerShell script extracts the function via AST and
   # runs it against .cmd stubs, so a regression in the strict-equality
@@ -229,7 +229,7 @@ jobs:
           persist-credentials: false
       - name: Run the version-self-test PowerShell fixture
         shell: pwsh
-        run: pwsh -NoProfile -File tests/fixtures/releases/version-self-test.ps1
+        run: pwsh -NoProfile -File tests/fixtures/releases/scripts/version-self-test.ps1
   # Rust reference test for the self_test in internal/update/install/self_test.rs.
   # Gates against the shell-side regression by pinning the canonical
   # behaviour: the shell installer mirrors this test token-for-token.

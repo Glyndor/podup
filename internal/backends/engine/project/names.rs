@@ -81,7 +81,9 @@ pub(in crate::backends::engine) fn ensure_valid_object_name(
 	let origin = if name == key {
 		String::new()
 	} else {
-		format!(" (from {kind} '{key}')")
+		// The key is what the file wrote, so it is printed escaped, as the name
+		// already is through `{name:?}`.
+		format!(" (from {kind} '{}')", crate::error::sanitize_name(key))
 	};
 	Err(ComposeError::Unsupported(format!(
 		"invalid {kind} name {name:?}{origin}: names must start with an ASCII letter or digit \

@@ -27,6 +27,25 @@ pub fn fit_cell(cell: &str, width: usize) -> String {
 	out
 }
 
+/// Whether a character must be shown escaped rather than printed: a control
+/// character, or one that reorders or hides the text around it. The second
+/// group is the bidirectional marks, embeddings, overrides and isolates (a
+/// right-to-left override makes `web-evil` read as something else) and the
+/// zero-width spaces, joiners and byte order mark (two names that differ only
+/// by one look identical).
+pub fn is_terminal_unsafe(c: char) -> bool {
+	c.is_control()
+		|| matches!(
+			c,
+			'\u{61c}'
+				| '\u{200b}'..='\u{200f}'
+				| '\u{202a}'..='\u{202e}'
+				| '\u{2060}'..='\u{2064}'
+				| '\u{2066}'..='\u{2069}'
+				| '\u{feff}'
+		)
+}
+
 /// Escape control characters so a cell cannot drive the terminal.
 ///
 /// Cell contents are not ours: an image tag, a container name, a volume driver
@@ -41,7 +60,7 @@ pub fn fit_cell(cell: &str, width: usize) -> String {
 pub fn sanitize_cell(s: &str) -> String {
 	s.chars()
 		.flat_map(|c| {
-			if c.is_control() {
+			if is_terminal_unsafe(c) {
 				c.escape_default().collect::<Vec<_>>()
 			} else {
 				vec![c]
@@ -243,13 +262,14 @@ impl Table {
 
 	/// Print the table to stdout: a bold header followed by the rows, with the
 	/// status column (if any) colourised when stdout is a colour sink.
-	pub fn print(&self) {
-		let stdout = std::io::stdout();
-		let mut out = stdout.lock();
-		if self.print_to(&mut out).is_err() {
-			// The terminal is gone; nothing to do. The CLI's own stdout writer
-			// also swallows broken-pipe exits, so the live behaviour matches.
-		}
+	///
+	/// The write goes through the writer in [`crate::ui::print`], so a failure
+	/// reaches the caller instead of losing the row: a reader that closed the
+	/// pipe ends the process quietly, and any other failure is handed back so
+	/// the command can fail instead of printing a table with rows missing.
+	pub fn print(&self) -> std::io::Result<()> {
+		let mut out = std::io::stdout().lock();
+		crate::ui::print::settle(self.print_to(&mut out))
 	}
 
 	/// [`Table::print`] writing to `w`, factored out so tests can capture the

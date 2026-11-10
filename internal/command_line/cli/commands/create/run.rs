@@ -18,6 +18,11 @@ pub(crate) struct RunArgs {
 	/// Set environment variables (KEY=VAL).
 	#[arg(short, long = "env")]
 	pub(crate) env_overrides: Vec<String>,
+	/// Load environment variables from this file into the one-off container
+	/// (KEY=VAL lines); repeatable. Applied over the service's `environment:`
+	/// and under `-e`.
+	#[arg(long = "env-from-file", value_name = "FILE")]
+	pub(crate) env_from_file: Vec<String>,
 	/// Override the container name.
 	#[arg(long)]
 	pub(crate) name: Option<String>,
@@ -55,6 +60,10 @@ pub(crate) struct RunArgs {
 	/// Do not start linked services (depends_on) before running.
 	#[arg(long)]
 	pub(crate) no_deps: bool,
+	/// Remove containers for services not defined in the compose file before
+	/// running.
+	#[arg(long)]
+	pub(crate) remove_orphans: bool,
 	/// Add a label to the one-off container (KEY=VAL); may be repeated.
 	#[arg(short = 'l', long = "label")]
 	pub(crate) label: Vec<String>,

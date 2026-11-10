@@ -6,7 +6,7 @@
 //! its cap for its tests. Measured on this tree on 2026-09-02: moving 103
 //! inline modules to siblings took the figure from 82.08% to 73.89% with the
 //! same 1762 unit tests. The convention is a sibling `foo_tests.rs` declared
-//! with `#[cfg(test)] #[path = "foo_tests.rs"] mod tests;` (standards/structure).
+//! with `#[cfg(test)] #[path = "foo_tests.rs"] mod tests;`.
 //!
 //! This test is what keeps the number honest after the migration: a new
 //! inline module fails it by file and line, with the fix.

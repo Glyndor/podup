@@ -3,7 +3,9 @@ use crate::compose::types::{
 	StringOrList,
 };
 
-use super::collections::{merge_block, merge_networks, merge_sysctls, merge_volumes};
+use super::collections::{
+	merge_block, merge_devices, merge_networks, merge_sysctls, merge_volumes,
+};
 
 pub(in crate::parsing::compose) fn merge_service(
 	mut base: Service,
@@ -55,16 +57,17 @@ pub(in crate::parsing::compose) fn merge_service(
 		// Compose `extends` combines sequences: base items first, then the
 		// extending service's items, dropping exact duplicates. Equality is by
 		// serialized form so the element types need not implement PartialEq.
-		let mut seen: Vec<String> = base
+		let mut seen: std::collections::HashSet<String> = base
 			.iter()
 			.filter_map(|item| serde_yaml::to_string(item).ok())
 			.collect();
 		let mut out = base;
 		for item in over {
-			match serde_yaml::to_string(&item) {
-				Ok(key) if seen.contains(&key) => continue,
-				Ok(key) => seen.push(key),
-				Err(_) => {}
+			// `insert` is false when the key was already there.
+			if let Ok(key) = serde_yaml::to_string(&item) {
+				if !seen.insert(key) {
+					continue;
+				}
 			}
 			out.push(item);
 		}
@@ -82,8 +85,9 @@ pub(in crate::parsing::compose) fn merge_service(
 			return over;
 		}
 		let mut out = base.to_list();
+		let mut seen: std::collections::HashSet<String> = out.iter().cloned().collect();
 		for item in over.to_list() {
-			if !out.contains(&item) {
+			if seen.insert(item.clone()) {
 				out.push(item);
 			}
 		}
@@ -101,8 +105,10 @@ pub(in crate::parsing::compose) fn merge_service(
 			return over;
 		}
 		let mut out = base.to_entries();
+		let mut seen: std::collections::HashSet<String> =
+			out.iter().map(|e| e.path().to_string()).collect();
 		for entry in over.to_entries() {
-			if !out.iter().any(|e| e.path() == entry.path()) {
+			if seen.insert(entry.path().to_string()) {
 				out.push(entry);
 			}
 		}
@@ -220,7 +226,7 @@ pub(in crate::parsing::compose) fn merge_service(
 		uts: override_svc.uts.or(base.uts),
 		cgroup_parent: override_svc.cgroup_parent.or(base.cgroup_parent),
 		cgroup: override_svc.cgroup.or(base.cgroup),
-		devices: merge_vec(base.devices, override_svc.devices),
+		devices: merge_devices(base.devices, override_svc.devices),
 		device_cgroup_rules: merge_vec(base.device_cgroup_rules, override_svc.device_cgroup_rules),
 		storage_opt: {
 			let mut m = base.storage_opt;

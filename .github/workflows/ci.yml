@@ -21,6 +21,12 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# The advisory observations about the repository — schedule freshness, the two
+# branch-health gates and the Dependabot freshness gate — live in
+# `repository-health.yml`. They read the state of the repository rather than
+# the change under review, so they do not belong in the pull request lane.
+# That file carries the schedule, the push fallback and the reasons.
+
 jobs:
   rust:
     uses: ./.github/workflows/reusable-rust-ci.yml
@@ -74,9 +80,9 @@ jobs:
       # lines of the files they sat in, so the old number measured test volume
       # as well as reach. One point under what CI measured is the honest floor
       # that holds today. It is a ratchet, not a target: raise it when real
-      # coverage rises, never lower it to make a red build green. See
-      # standards/testing, "An inline test module is counted as covered
-      # production code".
+      # coverage rises, never lower it to make a red build green. An
+      # inline test module counts as covered production code, so moving tests
+      # out of the production file changes the denominator.
       #
       # 76 from 72 on 2026-09-04: the Coverage job on develop at a57e846 (run
       # 33916825387) read 76.44%, after the board, pull, build and rm work of
@@ -104,125 +110,3 @@ jobs:
       # caller-with-defaults lint refuses a `with:` value that differs from
       # it, so changing the feature set means changing the reusable too.
       extra-clippy-args: "--no-default-features --features watch,completions"
-
-  # A cron that stops firing emits nothing, and "no alert" is indistinguishable
-  # from "all clear". Every scheduled workflow in this org went dark on
-  # 2026-06-29; four repos stayed dark for another four weeks while reporting
-  # `active` the whole time, and it cost a real finding. These turn the absence
-  # of a scheduled run into a red check on ordinary work.
-  #
-  # max-age-days allows about two periods, so one miss is tolerated:
-  # 15 for weekly, 3 for daily, 65 for the monthly benchmark.
-  #
-  # These observations are ADVISORY and must never be promoted to required status
-  # checks. Each one fails because a cron somewhere else stopped firing, which
-  # has nothing to do with the change under review, so requiring one would
-  # block every pull request for the length of an unrelated outage. The rule
-  # lives in the organisation standard, and it is repeated here because this
-  # file is what somebody wiring a ruleset has open.
-  # Monthly benchmark uses 65 days; weekly and daily limits remain per entry.
-  freshness:
-    if: github.event_name != 'merge_group'
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/reusable-schedule-freshness.yml
-    with:
-      workflows: |
-        audit.yml 15
-        fuzz.yml 15
-        podman-lane.yml 3
-        podman-watch.yml 3
-        benchmark.yml 65
-
-  # A newly added scheduled workflow cannot be registered here in the same pull
-  # request that adds it. The guard passes only on a run with `event=schedule`
-  # and `status=success`; GitHub fires crons solely from the default branch, and
-  # `workflow_dispatch` does not count. So a fresh entry fails with "No
-  # successful scheduled run on record" until the workflow has reached `main`
-  # and its cron has fired once. `pin-watch.yml` (#1526) is waiting for exactly
-  # that and gets its entry afterwards.
-  #
-  # `podman-lane-develop-nightly.yml` has a cron and is deliberately NOT
-  # watched here, so that its absence reads as a decision rather than an
-  # oversight. Two reasons, and the second is the blocking one.
-  #
-  # Its output is an observation, not a gate: it reports the coverage of
-  # `develop` under Podman 6 against a floor that no pull request can move,
-  # since the gate a pull request answers to is the 76 per cent threshold on
-  # `rust / Coverage`. A watcher would then report the staleness of a number
-  # nobody is required to keep fresh.
-  #
-  # And a watcher added today would be born red. The guard reads the newest
-  # scheduled run with `status=success`, and measured on 2026-09-06 the last
-  # successful nightly was 2026-09-01: five consecutive nights failed on the
-  # 88 per cent floor (85.51, then 85.38, then 85.40 on the three that print
-  # the figure). A cron that fires nightly and fails nightly is, to this
-  # guard, indistinguishable from a cron that stopped. The entry belongs here
-  # once that lane is green again, not before, and #1380 is where the floor
-  # itself is argued.
-
-  # Fails when the newest COMPLETED run of `ci.yml` on a protected branch is
-  # not a success. The freshness watchers above cannot catch this: they read
-  # the newest SUCCESSFUL scheduled run, so a failing scheduled run is
-  # missing from their answer by construction. A protected branch whose
-  # gates are red is the published state failing rather than a broken
-  # integration branch, and that is the gap this closes.
-  #
-  # Two jobs, one per branch. They MUST stay separate. Each name carries
-  # the branch it watches, and a single job that watched both would emit
-  # one check name covering two branches - and a check name that does not
-  # move is the property required checks depend on (Glyndor/podup#1552).
-  #
-  # MUST NOT BECOME A REQUIRED STATUS CHECK. A red `main` would then block
-  # the pull request that repairs it, which is the exact failure mode this
-  # check exists to surface. The reason is repeated inside the reusable,
-  # where somebody wiring required checks would look first. Do not remove
-  # either copy.
-  #
-  # The job-level `if:` below keeps this caller out of the push run of the
-  # branch it watches. The job reads the most recent run of `ci.yml` on
-  # `main` (or `develop`), and that run is itself a push run on that
-  # branch; if this job were part of it, it would read the previous run,
-  # fail on whatever was red there, and make its own run red, which is
-  # what the next push then reads. That is the latching defect measured on
-  # 2026-09-19: three pull requests merged into `develop` seconds apart, each push
-  # cancelling the CI run of the push before it, and `health-develop` was
-  # a job in each of those runs. A skipped job is fine here because this
-  # check is advisory and is not on the ruleset, so a missing run does not
-  # break a pull request.
-  health-main:
-    if: github.event_name != 'merge_group' && (github.event_name != 'push' || github.ref_name != 'main')
-    name: branch health (main)
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/reusable-branch-health.yml
-    with:
-      workflow: ci.yml
-      branch: main
-
-  health-develop:
-    if: github.event_name != 'merge_group' && (github.event_name != 'push' || github.ref_name != 'develop')
-    name: branch health (develop)
-    permissions:
-      contents: read
-      actions: read
-    uses: ./.github/workflows/reusable-branch-health.yml
-    with:
-      workflow: ci.yml
-      branch: develop
-
-  # Dependabot silently stops proposing updates when its config is not
-  # re-registered, and like a dead cron it reports nothing at all. This fails
-  # when no pull request has been opened recently enough.
-  #
-  # v1.16.0 read one page of twenty pull requests and filtered it for the bot,
-  # which measures how busy the repository is rather than whether Dependabot is
-  # running: run 32435521566 reported "no Dependabot pull request on record"
-  # while ten sat open. v1.16.1 pages the window.
-  dependabot-freshness:
-    if: github.event_name != 'merge_group'
-    uses: ./.github/workflows/reusable-dependabot-freshness.yml
-    with:
-      max-age-days: 15
