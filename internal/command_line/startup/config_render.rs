@@ -19,7 +19,7 @@ use podup::resolve_network_name;
 pub(crate) struct ConfigOutput {
 	/// `--services`: print the service names.
 	pub services: bool,
-	/// `--volumes`: print the named-volume keys.
+	/// `--volumes`: print the keys of the named volumes a service mounts.
 	pub volumes: bool,
 	/// `--networks`: print the keys of the networks a service attaches to,
 	/// `default` included when a service uses the implicit one.
@@ -103,7 +103,11 @@ pub(crate) fn render_config_to<W: Write>(
 		return Ok(());
 	}
 	if out.volumes {
-		for name in file.volumes.keys() {
+		// Only the volumes a service mounts: one nothing refers to is dropped.
+		let used: std::collections::HashSet<String> = all_services(file)
+			.flat_map(podup::service_named_volume_refs)
+			.collect();
+		for name in file.volumes.keys().filter(|k| used.contains(*k)) {
 			writeln!(w, "{}", podup::ui::sanitize_cell(name))?;
 		}
 		return Ok(());

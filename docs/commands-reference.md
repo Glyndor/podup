@@ -98,7 +98,7 @@ Print the resolved compose file (after substitution, extends, include, and `env_
 |---|---|---|
 | `--format <FMT>` | `yaml` or `json`. | `yaml` |
 | `--services` | List service names, one per line. | off |
-| `--volumes` | List named volumes, one per line. | off |
+| `--volumes` | List the named volumes a service mounts, one per line; a declared volume no service uses is not listed. | off |
 | `--networks` | List the networks a service attaches to, one per line; `default` appears when a service uses the implicit network, and a declared network no service uses is not listed. | off |
 | `--images` | List the images services use, one per line. | off |
 | `--profiles` | List the profiles the file declares, one per line. | off |

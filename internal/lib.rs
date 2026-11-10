@@ -96,6 +96,12 @@ pub fn service_image_name(
 		(None, None) => None,
 	}
 }
+/// The named volumes a service mounts, as the compose keys it wrote (an
+/// anonymous volume has the empty string). `config --volumes` uses it to list
+/// only the volumes some service actually refers to.
+pub fn service_named_volume_refs(service: &compose::types::Service) -> Vec<String> {
+	engine::volume_mounts::named_volume_refs(service)
+}
 /// Return the runtime value of `security_opt`'s `no-new-privileges` key:
 /// `Some(true)` when the engine will apply it, `Some(false)` when an entry
 /// explicitly disables it, `None` when no entry matched. Surfaced for the

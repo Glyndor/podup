@@ -15,7 +15,7 @@ fn config_projections_render_lists() {
 	// profile-aware projections are exercised when that profile is activated.
 	fs::write(
 		&compose,
-		"services:\n  web:\n    image: nginx:1.27\n  admin:\n    image: busybox:1.36\n    profiles: [frontend]\nvolumes:\n  data: {}\n",
+		"services:\n  web:\n    image: nginx:1.27\n    volumes:\n      - data:/d\n  admin:\n    image: busybox:1.36\n    profiles: [frontend]\nvolumes:\n  data: {}\n  idle: {}\n",
 	)
 	.unwrap();
 	let c = compose.to_str().unwrap();
@@ -25,9 +25,16 @@ fn config_projections_render_lists() {
 		.output()
 		.unwrap();
 	assert!(volumes.status.success());
-	assert!(String::from_utf8_lossy(&volumes.stdout)
+	let volume_lines: Vec<String> = String::from_utf8_lossy(&volumes.stdout)
 		.lines()
-		.any(|l| l == "data"));
+		.map(str::to_string)
+		.collect();
+	assert!(volume_lines.contains(&"data".to_string()));
+	// A declared volume no service mounts is not listed.
+	assert!(
+		!volume_lines.contains(&"idle".to_string()),
+		"{volume_lines:?}"
+	);
 
 	let images = Command::new(bin())
 		.args(["-f", c, "config", "--images"])
@@ -145,4 +152,32 @@ fn config_networks_prints_nothing_when_no_service_is_attached() {
 		.unwrap();
 	assert!(out.status.success());
 	assert!(out.stdout.is_empty(), "{:?}", out.stdout);
+}
+
+/// `config --volumes` lists a named volume only when some service mounts it:
+/// short and long syntax count, a bind mount does not, and a declared volume
+/// nothing refers to is left out.
+#[test]
+fn config_volumes_lists_only_volumes_a_service_mounts() {
+	let dir = tempfile::tempdir().unwrap();
+	let file = dir.path().join("compose.yaml");
+	std::fs::write(
+		&file,
+		"services:\n  web:\n    image: nginx:1.27\n    volumes:\n      - short:/a\n      - type: volume\n        source: long\n        target: /b\n      - ./host:/c\nvolumes:\n  short: {}\n  long: {}\n  idle: {}\n",
+	)
+	.unwrap();
+	let out = Command::new(bin())
+		.args(["-f", file.to_str().unwrap(), "config", "--volumes"])
+		.output()
+		.unwrap();
+	assert!(
+		out.status.success(),
+		"{}",
+		String::from_utf8_lossy(&out.stderr)
+	);
+	let lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
+		.lines()
+		.map(str::to_string)
+		.collect();
+	assert_eq!(lines, ["short", "long"]);
 }

@@ -27,7 +27,7 @@ use images::image;
 use objects::network;
 use objects::secrets;
 use objects::volume;
-use objects::volume_mounts;
+pub(crate) use objects::volume_mounts;
 pub(crate) use observe::events;
 pub(crate) use observe::query;
 use observe::stats;
