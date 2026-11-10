@@ -178,7 +178,9 @@ pub(crate) fn render_config_to<W: Write>(
 			if !out.no_interpolate {
 				super::config_dollar::escape_yaml(&mut v);
 			}
+			super::control_escape::mark_yaml_unsafe(&mut v);
 			let yaml = serde_yaml::to_string(&v).map_err(podup::ComposeError::Parse)?;
+			let yaml = super::control_escape::unmark_yaml(&yaml);
 			// yaml_serde emits YAML 1.2, where `yes`/`no`/`on`/`off` are plain
 			// strings and stay unquoted. A strict YAML 1.1 reader (docker compose's
 			// emitter among them) would misread those as booleans, so quote any
