@@ -25,6 +25,7 @@ pub(crate) async fn run_config(
 		format,
 		services,
 		volumes,
+		networks,
 		images,
 		profiles,
 		hash,
@@ -85,6 +86,7 @@ pub(crate) async fn run_config(
 		&crate::startup::ConfigOutput {
 			services: *services,
 			volumes: *volumes,
+			networks: *networks,
 			images: *images,
 			profiles: *profiles,
 			hash: hash.clone(),

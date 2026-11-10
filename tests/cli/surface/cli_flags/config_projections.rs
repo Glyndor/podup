@@ -97,3 +97,52 @@ fn config_images_names_the_tag_a_build_only_service_gets() {
 	assert!(lines.contains(&"postgres:17".to_string()), "{lines:?}");
 	assert!(run("other").contains(&"other-web:latest".to_string()));
 }
+
+/// `config --networks` prints the declared network keys, one per line, and a
+/// service that names no network brings the implicit `default` one. A network
+/// that is declared but attached to no service is not listed, and an external
+/// network a service uses is.
+#[test]
+fn config_networks_lists_declared_and_implicit_networks() {
+	let dir = tempfile::tempdir().unwrap();
+	let file = dir.path().join("compose.yaml");
+	std::fs::write(
+		&file,
+		"services:\n  web:\n    image: nginx:1.27\n    networks: [front, outside]\n  worker:\n    image: busybox:1.36\nnetworks:\n  front:\n    name: custom-front\n  outside:\n    external: true\n  idle: {}\n",
+	)
+	.unwrap();
+	let out = Command::new(bin())
+		.args(["-f", file.to_str().unwrap(), "config", "--networks"])
+		.output()
+		.unwrap();
+	assert!(
+		out.status.success(),
+		"{}",
+		String::from_utf8_lossy(&out.stderr)
+	);
+	let mut lines: Vec<String> = String::from_utf8_lossy(&out.stdout)
+		.lines()
+		.map(str::to_string)
+		.collect();
+	lines.sort();
+	assert_eq!(lines, ["default", "front", "outside"]);
+}
+
+/// A file whose only service uses `network_mode` declares no network of its
+/// own, so `config --networks` prints nothing.
+#[test]
+fn config_networks_prints_nothing_when_no_service_is_attached() {
+	let dir = tempfile::tempdir().unwrap();
+	let file = dir.path().join("compose.yaml");
+	std::fs::write(
+		&file,
+		"services:\n  web:\n    image: nginx:1.27\n    network_mode: host\n",
+	)
+	.unwrap();
+	let out = Command::new(bin())
+		.args(["-f", file.to_str().unwrap(), "config", "--networks"])
+		.output()
+		.unwrap();
+	assert!(out.status.success());
+	assert!(out.stdout.is_empty(), "{:?}", out.stdout);
+}

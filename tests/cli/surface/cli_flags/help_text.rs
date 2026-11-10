@@ -31,6 +31,7 @@ fn new_command_flags_appear_in_help() {
 	let config = help_of("config");
 	for flag in [
 		"--volumes",
+		"--networks",
 		"--images",
 		"--profiles",
 		"--hash",

@@ -16,6 +16,9 @@ pub(crate) struct ConfigArgs {
 	/// Print only the named volumes, one per line.
 	#[arg(long)]
 	pub(crate) volumes: bool,
+	/// Print only the network names, one per line.
+	#[arg(long)]
+	pub(crate) networks: bool,
 	/// Print only the service image references, one per line.
 	#[arg(long)]
 	pub(crate) images: bool,
