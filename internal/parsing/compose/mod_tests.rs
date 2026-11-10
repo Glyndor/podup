@@ -257,3 +257,22 @@ fn stdin_compose_path_emits_raw_nested_unknown_warning() {
 		"warning did not name the service and the unknown key: {warning:?}"
 	);
 }
+
+#[test]
+fn a_yaml_syntax_error_names_the_file_with_line_and_column() {
+	let dir = tempfile::tempdir().unwrap();
+	let good = dir.path().join("good.yml");
+	let bad = dir.path().join("bad.yml");
+	std::fs::write(&good, "services:\n  a:\n    image: x\n").unwrap();
+	std::fs::write(
+		&bad,
+		"services:\n  a:\n    image: x\n    ports: [::]:8000:8000]\n",
+	)
+	.unwrap();
+	let err = super::parse_files_with_env_files(&[good, bad], &[]).unwrap_err();
+	let text = err.to_string();
+	assert!(text.contains("bad.yml"), "{text}");
+	assert!(!text.contains("good.yml"), "{text}");
+	assert!(text.contains("line 4"), "{text}");
+	assert!(text.contains("column"), "{text}");
+}

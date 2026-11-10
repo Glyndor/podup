@@ -80,7 +80,11 @@ impl Case {
 	fn refused(&self, diagnostic: &str) {
 		let outcome = self.config(None);
 		assert_eq!(outcome.code, Some(1), "{}", outcome.text);
-		assert_eq!(outcome.text, format!("podup: error: {diagnostic}\n"));
+		// The message names the file that failed to parse, as it was given or
+		// found (here the file found in the working directory), right after
+		// "compose file"; the rest is the fixed diagnostic.
+		let named = diagnostic.replacen("compose file", "compose file 'compose.yaml'", 1);
+		assert_eq!(outcome.text, format!("podup: error: {named}\n"));
 	}
 
 	fn accepted(&self, overlay: Option<&str>) -> Value {

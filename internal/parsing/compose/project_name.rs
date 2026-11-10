@@ -20,11 +20,22 @@ const PROJECT_NAME_VAR: &str = "COMPOSE_PROJECT_NAME";
 /// compose file (compose-spec default), or the current directory when the
 /// compose file has no parent component.
 pub fn resolve_base_dir(project_directory: Option<&Path>, file: &Path) -> PathBuf {
+	// Always absolute: a relative base would reach the Podman service as a
+	// relative bind source and be resolved against the service's own working
+	// directory, so `-f deploy/compose.yml` mounted `$HOME/deploy/data`.
+	let anchor = |dir: &Path| {
+		// On Windows `/srv/app` has a root but no drive: it is anchored already.
+		if dir.is_absolute() || dir.has_root() {
+			dir.to_path_buf()
+		} else {
+			std::env::current_dir().unwrap_or_default().join(dir)
+		}
+	};
 	if let Some(dir) = project_directory {
-		return dir.to_path_buf();
+		return anchor(dir);
 	}
 	match file.parent() {
-		Some(parent) if !parent.as_os_str().is_empty() => parent.to_path_buf(),
+		Some(parent) if !parent.as_os_str().is_empty() => anchor(parent),
 		// A bare compose filename (e.g. `docker-compose.yml`) has an empty parent
 		// component. Anchor relative paths to the working directory so a relative
 		// `file:` secret/config or bind source resolves against the project
