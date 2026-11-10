@@ -86,8 +86,8 @@ With `missing`, an observed local image skips redundant pulls. `always`/`newer` 
 podup up -d --build
 ```
 
-### `down`
-Stop and remove containers, networks, and (with `-v`) volumes. With `-v`, podup removes the project's named volumes and the data in them; volumes declared `external: true` are left alone (measured on 2026-09-19).
+### `down [SERVICE...]`
+Stop and remove containers, networks, and (with `-v`) volumes. With service names, only the containers of those services are stopped and removed: the networks, the pod and the volumes are shared with the services that stay, so they are left alone, `-v` is refused, and `--rmi` removes only the images of the named services. A name the file does not declare is an error raised before anything is removed, and naming services needs a compose file (`down -p NAME` by label alone refuses it). With `-v`, podup removes the project's named volumes and the data in them; volumes declared `external: true` are left alone (measured on 2026-09-19).
 
 | Flag | Description | Default |
 |---|---|---|
@@ -106,6 +106,10 @@ Create the containers for services without starting them. Accepts a trailing ser
 | `--no-recreate` | Leave existing containers in place. | off |
 | `--no-deps` | Do not create the `depends_on` services of the named ones. | off |
 | `--pull <POLICY>` | Pull policy before creating: `always`, `missing`, `never`, `newer`, `build`. | per service; otherwise `missing` |
+| `--no-build` | Do not build images, even for services with a `build:` section. Cannot be combined with `--build`. | off |
+| `--scale <SERVICE=N>` | Override a service's replica count for this run. Repeatable; a service the file does not declare is rejected before anything is created. | from file |
+| `--remove-orphans` | Remove containers for services no longer in the file. | off |
+| `--quiet-pull` | Suppress image-pull progress output. | off |
 
 ### `start`
 Start existing stopped containers. Accepts a trailing service list. `start --wait` extends the readiness wait by the timeout given; a `depends_on: {condition: service_healthy}` wait inside an `up` is not.
@@ -271,6 +275,7 @@ Run a one-off command in a new container for the service, or for a job of the sa
 | `-i, --interactive` | Keep the container's STDIN open (`stdin_open`). Whether a live terminal is attached is decided by stdin/stdout being terminals and by `-T`, not by this flag. | off |
 | `-T, --no-TTY` (alias `--no-tty`) | Disable pseudo-TTY allocation. | off |
 | `--no-deps` | Do not start the `depends_on` services before running. | off |
+| `--remove-orphans` | Remove containers for services no longer in the file before running. A service name the file does not declare is refused before anything is removed. | off |
 
 ```bash
 podup run --rm web sh -c 'echo hello'

@@ -60,6 +60,10 @@ pub(crate) struct RunArgs {
 	/// Do not start linked services (depends_on) before running.
 	#[arg(long)]
 	pub(crate) no_deps: bool,
+	/// Remove containers for services not defined in the compose file before
+	/// running.
+	#[arg(long)]
+	pub(crate) remove_orphans: bool,
 	/// Add a label to the one-off container (KEY=VAL); may be repeated.
 	#[arg(short = 'l', long = "label")]
 	pub(crate) label: Vec<String>,

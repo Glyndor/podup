@@ -24,8 +24,10 @@ pub(crate) enum Commands {
 	Up(UpArgs),
 	/// Stop and remove containers.
 	Down {
-		/// Also remove named volumes declared in the compose file.
-		#[arg(short = 'v', long)]
+		/// Also remove named volumes declared in the compose file. Cannot be
+		/// combined with service names: the volumes are shared with the
+		/// services that stay.
+		#[arg(short = 'v', long, conflicts_with = "services")]
 		volumes: bool,
 		/// Remove containers for services not defined in the compose file.
 		#[arg(long)]
@@ -36,6 +38,8 @@ pub(crate) enum Commands {
 		/// Seconds to wait for containers to stop before killing them.
 		#[arg(short = 't', long, allow_hyphen_values = true, value_parser = parse_timeout)]
 		timeout: Option<i32>,
+		/// Stop and remove only these services; networks and volumes stay.
+		services: Vec<String>,
 	},
 	/// Start existing stopped containers.
 	Start {
@@ -65,7 +69,7 @@ pub(crate) enum Commands {
 	/// Create containers for services without starting them.
 	Create {
 		/// Build images before creating containers.
-		#[arg(long)]
+		#[arg(long, conflicts_with = "no_build")]
 		build: bool,
 		/// Recreate containers even if their configuration is unchanged.
 		#[arg(long)]
@@ -79,6 +83,18 @@ pub(crate) enum Commands {
 		/// Do not create linked services (depends_on) of the named services.
 		#[arg(long)]
 		no_deps: bool,
+		/// Do not build images, even for services with a build section.
+		#[arg(long)]
+		no_build: bool,
+		/// Override the replica count for a service: SERVICE=N (repeatable).
+		#[arg(long, value_parser = parse_scale_pair)]
+		scale: Vec<(String, u32)>,
+		/// Remove containers for services not defined in the compose file.
+		#[arg(long)]
+		remove_orphans: bool,
+		/// Suppress image-pull progress output.
+		#[arg(long)]
+		quiet_pull: bool,
 		/// Create only these services.
 		services: Vec<String>,
 	},

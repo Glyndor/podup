@@ -55,9 +55,18 @@ pub(super) async fn dispatch_rest(
 			interactive: _,
 			no_tty: _,
 			no_deps: _,
+			remove_orphans,
 			label: _,
 			cmd,
 		}) => {
+			// Swept before the one-off exists, and only once the target is known
+			// to be declared: a mistyped name must not cost the project its
+			// containers before the engine refuses it.
+			if remove_orphans
+				&& (file.services.contains_key(&service) || file.jobs.contains_key(&service))
+			{
+				engine.remove_orphans(file).await?;
+			}
 			engine
 				.run(
 					file,

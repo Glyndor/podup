@@ -25,6 +25,22 @@ fn profile_filtered(
 	filtered
 }
 
+/// Refuse a service name the file does not declare. Names a command takes as
+/// targets or as `--scale` overrides are input errors, raised before the first
+/// request that changes anything.
+fn require_declared<'a>(
+	file: &podup::compose::types::ComposeFile,
+	names: impl IntoIterator<Item = &'a String>,
+) -> podup::Result<()> {
+	match names
+		.into_iter()
+		.find(|name| !file.services.contains_key(*name))
+	{
+		Some(name) => Err(podup::ComposeError::ServiceNotFound(name.clone())),
+		None => Ok(()),
+	}
+}
+
 /// The services an attached `up` follows, as docker compose decides it:
 /// `--attach` when given; otherwise the services named on the command line,
 /// whose dependencies are followed only with `--attach-dependencies`. Empty
@@ -90,12 +106,10 @@ pub(crate) async fn dispatch(
 			// A service the file does not declare, named as a target or as a
 			// `--scale` override, is an input error. It is refused here, before
 			// the orphan check below puts the first request to the engine.
-			let named = services.iter().chain(scale.iter().map(|(name, _)| name));
-			for name in named {
-				if !file.services.contains_key(name) {
-					return Err(podup::ComposeError::ServiceNotFound(name.clone()));
-				}
-			}
+			require_declared(
+				file,
+				services.iter().chain(scale.iter().map(|(name, _)| name)),
+			)?;
 			// What this `up` touches. Waiting, attaching and the stop at the end
 			// act on this set and not on the whole project, so `up web` does not
 			// attach to, or stop, services outside its selection, and `--wait`
@@ -259,14 +273,21 @@ pub(crate) async fn dispatch(
 			remove_orphans,
 			rmi,
 			timeout: _,
+			services,
 		} => {
 			if remove_orphans {
 				engine.remove_orphans(file).await?;
 			}
-			engine.down_with_options(file, volumes).await?;
+			engine.down_selected(file, volumes, &services).await?;
 			if let Some(scope) = rmi {
+				// With names, `--rmi` reaches only the images of those services.
+				let mut selected = file.clone();
+				if !services.is_empty() {
+					selected.services.retain(|name, _| services.contains(name));
+					selected.jobs.clear();
+				}
 				engine
-					.remove_service_images(file, scope == RmiScope::Local)
+					.remove_service_images(&selected, scope == RmiScope::Local)
 					.await?;
 			}
 		}
@@ -307,12 +328,24 @@ pub(crate) async fn dispatch(
 			build,
 			force_recreate,
 			no_recreate,
-			// `--pull` is applied via the engine's pull-policy override, set in
-			// `main` (see `with_up_overrides`).
+			// `--pull`, `--no-build` and `--quiet-pull` are applied through the
+			// engine's up overrides, and `--scale` through its replica overrides,
+			// both set in `main` (see `with_up_overrides`).
 			pull: _,
 			no_deps,
+			no_build: _,
+			scale,
+			remove_orphans,
+			quiet_pull: _,
 			services,
 		} => {
+			require_declared(
+				file,
+				services.iter().chain(scale.iter().map(|(name, _)| name)),
+			)?;
+			if remove_orphans {
+				engine.remove_orphans(file).await?;
+			}
 			if build {
 				engine.build_all(file, &services).await?;
 			}

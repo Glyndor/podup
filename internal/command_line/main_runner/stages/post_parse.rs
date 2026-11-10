@@ -218,7 +218,9 @@ pub(crate) async fn run_engine_command(
 	// `--scale SERVICE=N` (on `up`) and the `scale` subcommand both feed the
 	// engine's replica overrides so `resolve_replicas` reports the target count.
 	let scale_overrides: std::collections::HashMap<String, u32> = match &cli.command {
-		Commands::Up(UpArgs { scale, .. }) => scale.iter().cloned().collect(),
+		Commands::Up(UpArgs { scale, .. }) | Commands::Create { scale, .. } => {
+			scale.iter().cloned().collect()
+		}
 		Commands::Scale { pairs } => pairs.iter().cloned().collect(),
 		_ => std::collections::HashMap::new(),
 	};
@@ -231,7 +233,12 @@ pub(crate) async fn run_engine_command(
 			..
 		}) => (pull.clone(), *no_build, *quiet_pull),
 		Commands::Pull { quiet, policy, .. } => (policy.clone(), false, *quiet),
-		Commands::Create { pull, .. } => (pull.clone(), false, false),
+		Commands::Create {
+			pull,
+			no_build,
+			quiet_pull,
+			..
+		} => (pull.clone(), *no_build, *quiet_pull),
 		_ => (None, false, false),
 	};
 	// `up -V/--renew-anon-volumes`: recreate anonymous volumes on container
