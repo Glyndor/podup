@@ -176,6 +176,31 @@ fn normalize_leaves_service_with_explicit_networks_untouched() {
 }
 
 #[test]
+fn normalize_declares_default_when_a_service_lists_it_explicitly() {
+	let mut file = parse_str(
+		"services:\n  web:\n    image: nginx\n    networks: [front, default]\nnetworks:\n  front:\n",
+	)
+	.unwrap();
+	normalize_default_network(&mut file);
+	assert!(file.networks.contains_key("default"));
+	assert_eq!(
+		file.services["web"].networks.names(),
+		vec!["front", "default"]
+	);
+}
+
+#[test]
+fn normalize_keeps_a_declared_default_network_configuration() {
+	let mut file = parse_str(
+		"services:\n  web:\n    image: nginx\n    networks: [default]\nnetworks:\n  default:\n    name: shared\n",
+	)
+	.unwrap();
+	normalize_default_network(&mut file);
+	let cfg = file.networks["default"].as_ref().unwrap();
+	assert_eq!(cfg.name.as_deref(), Some("shared"));
+}
+
+#[test]
 fn normalize_skips_service_with_network_mode() {
 	let mut file =
 		parse_str("services:\n  web:\n    image: nginx\n    network_mode: host\n").unwrap();

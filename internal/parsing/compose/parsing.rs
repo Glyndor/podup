@@ -331,7 +331,11 @@ pub(crate) fn normalize_default_network(file: &mut ComposeFile) {
 		.services
 		.values()
 		.chain(file.jobs.values().map(|job| &job.service))
-		.any(|svc| svc.network_mode.is_none() && matches!(svc.networks, ServiceNetworks::Empty));
+		.any(|svc| {
+			svc.network_mode.is_none()
+				&& (matches!(svc.networks, ServiceNetworks::Empty)
+					|| svc.networks.names().iter().any(|net| net == "default"))
+		});
 	if !needs_default {
 		return;
 	}
