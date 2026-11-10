@@ -59,6 +59,21 @@ impl Command {
 /// - an unquoted `(` or `)`, an unterminated quote or group and a trailing
 ///   backslash are errors.
 pub fn split_words(text: &str) -> Result<Vec<String>, &'static str> {
+	split_words_with_tail(text).map(|(words, _)| words)
+}
+
+/// The part of `text` that [`split_words`] drops, from the unquoted operator that
+/// ended the parse to the end of the string, or `None` when nothing is dropped
+/// (or the string cannot be split at all).
+pub fn dropped_tail(text: &str) -> Option<&str> {
+	let (_, tail_len) = split_words_with_tail(text).ok()?;
+	tail_len.map(|len| &text[text.len() - len..])
+}
+
+/// [`split_words`] and, when an unquoted operator ended the parse early, the
+/// length in bytes of what it dropped (the operator included).
+fn split_words_with_tail(text: &str) -> Result<(Vec<String>, Option<usize>), &'static str> {
+	let mut tail = None;
 	let mut words = Vec::new();
 	let mut word = String::new();
 	let mut in_word = false;
@@ -78,9 +93,13 @@ pub fn split_words(text: &str) -> Result<Vec<String>, &'static str> {
 				if in_word && bare && word.chars().all(|d| d.is_ascii_digit()) {
 					in_word = false;
 				}
+				tail = Some(chars.clone().map(char::len_utf8).sum::<usize>() + c.len_utf8());
 				break;
 			}
-			';' | '&' | '|' | '<' => break,
+			';' | '&' | '|' | '<' => {
+				tail = Some(chars.clone().map(char::len_utf8).sum::<usize>() + c.len_utf8());
+				break;
+			}
 			'(' | ')' => return Err("unquoted parenthesis"),
 			_ => {
 				in_word = true;
@@ -130,7 +149,7 @@ pub fn split_words(text: &str) -> Result<Vec<String>, &'static str> {
 	if in_word {
 		words.push(word);
 	}
-	Ok(words)
+	Ok((words, tail))
 }
 
 /// If `c` opens a backtick or `$(` group, copy the whole group into `word` and

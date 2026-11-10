@@ -297,3 +297,32 @@ fn null_network_attachment_is_not_a_block() {
 fn unparseable_document_yields_no_warnings() {
 	assert!(raw_nested_unknown_warnings(": : :").is_empty());
 }
+
+#[test]
+fn an_unquoted_shell_operator_in_a_command_string_is_named_with_what_is_dropped() {
+	let warnings = warnings_for(
+		"services:\n  web:\n    image: x\n    command: echo one && echo two\n    entrypoint: run > /tmp/log\n",
+	);
+	let command = warnings
+		.iter()
+		.find(|w| w.contains("command holds an unquoted shell operator"))
+		.expect("command");
+	assert!(command.contains("service 'web'"), "{command}");
+	assert!(command.contains("\"&& echo two\""), "{command}");
+	let entrypoint = warnings
+		.iter()
+		.find(|w| w.contains("entrypoint holds an unquoted shell operator"))
+		.expect("entrypoint");
+	assert!(entrypoint.contains("\"> /tmp/log\""), "{entrypoint}");
+}
+
+#[test]
+fn a_quoted_operator_or_a_list_form_command_gets_no_warning() {
+	let warnings = warnings_for(
+		"services:\n  web:\n    image: x\n    command: echo \"a && b\"\n  job:\n    image: x\n    command: [\"sh\", \"-c\", \"a && b\"]\n",
+	);
+	assert!(
+		!warnings.iter().any(|w| w.contains("shell operator")),
+		"{warnings:?}"
+	);
+}
