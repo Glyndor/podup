@@ -22,8 +22,18 @@ impl Read for Endless {
 /// numeric code that does not move with the system language, and the
 /// scheme-side rejection (`configured for https only`) carries neither
 /// fragment, so the two failure paths stay distinguishable.
+///
+/// A connect that times out is accepted too. The port is picked and given
+/// up, and the tests of this crate run in parallel: another test can bind
+/// the same ephemeral port in between, and a connect to a socket that is
+/// listening but never accepted ends in `timeout: connect` instead of a
+/// refusal (seen once in the merge queue, under coverage). It is still the
+/// transport that failed, and the scheme rejection carries none of these
+/// fragments.
 fn names_a_refused_connection(message: &str) -> bool {
-	message.contains("Connection refused") || message.contains("(os error 10061)")
+	message.contains("Connection refused")
+		|| message.contains("(os error 10061)")
+		|| message.contains("timeout: connect")
 }
 
 /// Pick a TCP port the OS just allocated, then give it up so any connect
