@@ -1,3 +1,39 @@
+podup (5.17.0) unstable; urgency=medium
+
+  * `up` follows the logs of the services it was asked for, like Docker Compose; a
+    dependency started on the way is followed only with `--attach-dependencies`. `up`
+    also takes the attach, output and recreate options Compose has, and a log line whose
+    multibyte character is split between two chunks is printed whole.
+  * `down` takes service names and stops and removes only those containers. `create`
+    takes `--no-build`, `--scale`, `--remove-orphans` and `--quiet-pull`, `run` takes
+    `--remove-orphans` and `--env-from-file`, and `pull` takes `--ignore-buildable`.
+    `config --networks` is new, and `config --volumes` lists only the volumes a service
+    mounts, as Compose does.
+  * A string `command:` or `entrypoint:` is split into words the way Compose splits it,
+    and a warning names what an unquoted `&&`, `;`, `|`, `<` or `>` drops. The top-level
+    `name:` is normalized like Compose (`My.App v2` is `myappv2`); one with a non-ASCII
+    character is refused.
+  * A bare key in `environment:` takes its value from the project environment, values in
+    an env file are interpolated, `.env` can set `COMPOSE_FILE` and the other tool
+    settings, the project name is available as `COMPOSE_PROJECT_NAME` while the file is
+    read, `!reset null` removes entries at the top level and nested, and a quoted boolean
+    or number is read in typed fields.
+  * A `depends_on` on a service defined nowhere, an impossible `mem_limit` and an empty
+    volume target are errors that name the service and the key; an error in a YAML file
+    names the file; a bind with `create_host_path: false` and a missing path stops `up`.
+  * A compose file is limited more tightly: a port list is capped at 65 536 mappings once
+    ranges are expanded, a build context name that would split a request header is
+    refused, resource names must be ASCII, and bidirectional and zero-width characters in
+    printed names are escaped.
+  * `generate quadlet` writes a capability, a device or a path that holds a space as one
+    word, and `build.ssh` accepts the mapping form. Writing to a closed pipe ends a
+    command quietly, and any other write failure now fails the command instead of losing
+    rows.
+  * `install.ps1` refuses a redirect that is not https. The release is built, signed and
+    attested in jobs of their own, with only the permissions each one needs.
+
+ -- Glyndor <packages@glyndor.net>  Tue, 10 Nov 2026 13:30:00 -0500
+
 podup (5.16.1) unstable; urgency=medium
 
   * A remote socket written with its scheme in capital letters (`TCP://host`,
