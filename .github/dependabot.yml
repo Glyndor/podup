@@ -8,7 +8,8 @@ version: 2
 # cooldown, so a vulnerable dependency is still proposed the day it is
 # published. The cooldown keeps a release from becoming a pull request until it
 # has been out a few days: a yanked or quickly superseded version never costs a
-# full CI run, and a major waits longer than a patch.
+# full CI run. For the cargo and pip entries a major waits longer than a patch;
+# Dependabot does not accept that split for actions and docker.
 #
 # What this config cannot do: Dependabot has no per-group label, so a major
 # arrives in its own pull request (the `-major` group, visible in the branch
@@ -25,12 +26,14 @@ updates:
       day: "monday"
       time: "06:00"
       timezone: "UTC"
-    # A major waits one week, not two: `reusable-dependabot-freshness.yml` fails
-    # when the newest Dependabot pull request is over 15 days old and a pin is
-    # behind, and a weekly run plus a longer wait would cross that line.
+    # No `semver-major-days` here: Dependabot accepts it only for ecosystems that
+    # read semantic versions, and refuses it for `github-actions` and `docker`
+    # (a refusal disables the whole file). The wait is the same for every update
+    # type, three days, which also keeps `reusable-dependabot-freshness.yml` (it
+    # fails when the newest Dependabot pull request is over 15 days old and a pin
+    # is behind) well clear of its line.
     cooldown:
       default-days: 3
-      semver-major-days: 7
     labels: ["type:deps", "type:ci", "area:ci"]
     open-pull-requests-limit: 10
     target-branch: "develop"
@@ -196,7 +199,6 @@ updates:
       timezone: "UTC"
     cooldown:
       default-days: 3
-      semver-major-days: 14
     labels: ["type:deps", "type:ci", "area:ci"]
     open-pull-requests-limit: 5
     target-branch: "develop"
