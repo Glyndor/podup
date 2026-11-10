@@ -19,6 +19,7 @@ mod interval;
 mod options;
 mod policy;
 mod progress;
+mod standalone;
 
 pub use options::PullOptions;
 pub(crate) use policy::{
@@ -139,7 +140,7 @@ impl Engine {
 			// (#1450).
 			.map(|(name, s)| {
 				let image = s.image.as_deref().unwrap_or_default();
-				let policy = self.resolved_pull_policy(name.as_str(), s)?;
+				let policy = self.resolved_standalone_pull_policy(name.as_str(), s)?;
 				let key = (image, policy, s.platform.as_deref());
 				Ok((name.as_str(), s, key))
 			})
