@@ -60,11 +60,9 @@ fn engine(fake: &fake_podman::FakePodman) -> Engine {
 ///
 /// Cleanup addresses the ID returned by this run's create response.
 fn delete_attempted(fake: &fake_podman::FakePodman) -> bool {
-	fake.requests
-		.lock()
-		.unwrap()
-		.iter()
-		.any(|r| r.starts_with("DELETE ") && r.ends_with("/containers/cafe?force=true"))
+	fake.requests.lock().unwrap().iter().any(|r| {
+		r.starts_with("DELETE ") && r.ends_with("/containers/cafe?force=true&volumes=true")
+	})
 }
 
 /// A command that ran fine but whose container could not be removed is not a
@@ -225,7 +223,7 @@ async fn a_failed_start_removes_only_the_id_returned_by_this_creation() {
 	assert_eq!(
 		deletes,
 		vec![format!(
-			"DELETE {}/containers/own-id?force=true",
+			"DELETE {}/containers/own-id?force=true&volumes=true",
 			crate::libpod::API_PREFIX
 		)]
 	);
@@ -249,8 +247,26 @@ async fn successful_run_cleanup_uses_its_creation_id_instead_of_its_name() {
 	assert_eq!(
 		deletes,
 		vec![format!(
-			"DELETE {}/containers/cafe?force=true",
+			"DELETE {}/containers/cafe?force=true&volumes=true",
 			crate::libpod::API_PREFIX
 		)]
 	);
+}
+
+/// The one-off container's anonymous volumes go with it, as with
+/// `docker compose run --rm`; otherwise every `run --rm` of a service that
+/// declares one leaves a volume behind.
+#[tokio::test]
+async fn a_removed_one_off_container_takes_its_anonymous_volumes_with_it() {
+	let fake = fake(204, 0);
+	engine(&fake)
+		.run(&compose(), "app", options())
+		.await
+		.unwrap();
+	let seen = fake.requests.lock().unwrap();
+	let delete = seen
+		.iter()
+		.find(|r| r.starts_with("DELETE "))
+		.expect("the container is removed");
+	assert!(delete.contains("volumes=true"), "got: {delete}");
 }
