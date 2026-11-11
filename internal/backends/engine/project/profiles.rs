@@ -137,7 +137,8 @@ pub(in crate::backends::engine) fn active_profiles_set(active: &[String]) -> Has
 
 /// True if the service should be started given the active profile set.
 ///
-/// Services with no profiles always start. A literal `*` in the active set is a
+/// Services with no profiles always start, and so does one whose profile list
+/// holds an empty name while no profile is active. A literal `*` in the active set is a
 /// wildcard that enables every profiled service (docker compose's
 /// "enable all profiles").
 pub(in crate::backends::engine) fn service_in_profiles(
@@ -148,6 +149,12 @@ pub(in crate::backends::engine) fn service_in_profiles(
 		return true;
 	}
 	if active.contains("*") {
+		return true;
+	}
+	// docker compose treats the empty profile name as the default profile:
+	// with no profile active, a service listing `""` starts like an
+	// unprofiled one, and any other active profile switches that off.
+	if active.is_empty() && service.profiles.iter().any(String::is_empty) {
 		return true;
 	}
 	service.profiles.iter().any(|p| active.contains(p))
