@@ -158,14 +158,9 @@ impl Engine {
 					// Raw byte counts, and absent entirely when the size was not
 					// requested, so a consumer can tell "not asked" from "empty",
 					// the same distinction the table draws.
-					let size = display.size.then(|| {
-						let u = usage.get(name.as_str());
-						serde_json::json!({
-							"Size": u.map(|u| u.size).unwrap_or(0),
-							"ReclaimableSize": u.map(|u| u.reclaimable).unwrap_or(0),
-							"Links": u.map(|u| u.links).unwrap_or(0),
-						})
-					});
+					let size = display
+						.size
+						.then(|| super::usage_json::usage_json(usage.get(name.as_str())));
 					serde_json::json!({
 						"Name": name,
 						"Driver": driver,
