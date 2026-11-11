@@ -328,11 +328,7 @@ fn interpolated_yaml_text_from_content(
 	// converges to the same count as config.
 	let _silence = substitute::warnings::Guard::new(false);
 	let value = if interpolate {
-		let vars = if env_files.is_empty() {
-			substitute::build_vars(dir)
-		} else {
-			substitute::build_vars_with_env_files_strict(dir, env_files)?
-		};
+		let vars = substitute::build_vars_with_env_files_strict(dir, env_files)?;
 		merge::interpolated_value(content, Some(&vars))?
 	} else {
 		merge::interpolated_value(content, None)?
@@ -505,11 +501,7 @@ pub(crate) fn parse_file_inner_with_stdin(
 	// on the parsed YAML scalars (see `deserialize_with_merge_interp`), not the
 	// raw text, so resolved values cannot alter the document structure.
 	if interpolate {
-		let vars = if extra_env_files.is_empty() {
-			substitute::build_vars(vars_dir)
-		} else {
-			substitute::build_vars_with_env_files_strict(vars_dir, extra_env_files)?
-		};
+		let vars = substitute::build_vars_with_env_files_strict(vars_dir, extra_env_files)?;
 		merge::deserialize_with_merge_interp(&content, Some(&vars))
 	} else {
 		merge::deserialize_with_merge(&content)

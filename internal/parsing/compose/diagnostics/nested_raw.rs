@@ -190,11 +190,7 @@ fn interpolated_yaml_text_from_content(
 	// reuses this same code converges to the same count.
 	let _silence = substitute::warnings::Guard::new(false);
 	let value = if interpolate {
-		let vars = if env_files.is_empty() {
-			substitute::build_vars(dir)
-		} else {
-			substitute::build_vars_with_env_files_strict(dir, env_files)?
-		};
+		let vars = substitute::build_vars_with_env_files_strict(dir, env_files)?;
 		merge::interpolated_value(content, Some(&vars))?
 	} else {
 		merge::interpolated_value(content, None)?

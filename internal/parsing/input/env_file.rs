@@ -53,7 +53,7 @@ pub fn load_env_file_entries_for(
 	base_dir: &Path,
 	service_env: &HashMap<String, Option<String>>,
 ) -> Result<HashMap<String, String>> {
-	let project_vars = crate::substitute::build_vars(base_dir);
+	let project_vars = crate::substitute::build_vars_with_env_files_strict(base_dir, &[])?;
 	load_env_file_entries_with(entries, base_dir, service_env, &project_vars)
 }
 
@@ -201,7 +201,7 @@ pub fn materialize_env_files(
 ) -> Result<()> {
 	// One interpolation budget for the env files of every service.
 	let _budget = crate::substitute::project_budget::Scope::open();
-	let project_vars = crate::substitute::build_vars(base_dir);
+	let project_vars = crate::substitute::build_vars_with_env_files_strict(base_dir, &[])?;
 	for service in file.services_and_jobs_mut() {
 		materialize_with_vars(service, base_dir, &project_vars)?;
 	}
@@ -219,7 +219,7 @@ pub fn materialize_service_env_files(
 	if service.env_file.to_entries().is_empty() {
 		return Ok(());
 	}
-	let project_vars = crate::substitute::build_vars(base_dir);
+	let project_vars = crate::substitute::build_vars_with_env_files_strict(base_dir, &[])?;
 	materialize_with_vars(service, base_dir, &project_vars)
 }
 

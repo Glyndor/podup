@@ -139,3 +139,42 @@ fn strict_build_vars_allows_multiline_and_tab_values() {
 	);
 	assert_eq!(vars.get("TABBED").map(String::as_str), Some("a\tb"));
 }
+
+#[test]
+fn default_dotenv_with_unterminated_quote_errors_naming_file_and_key() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(dir.path().join(".env"), "A=1\nC=\"open\nD=2\n").unwrap();
+	let err = build_vars_with_env_files_strict(dir.path(), &[]).unwrap_err();
+	let msg = err.to_string();
+	assert!(matches!(err, crate::error::ComposeError::EnvFile(_)));
+	assert!(msg.contains(".env"), "got: {msg}");
+	assert!(msg.contains("'C'"), "got: {msg}");
+	assert!(msg.contains("unterminated"), "got: {msg}");
+}
+
+#[test]
+fn default_dotenv_well_formed_is_unchanged() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(
+		dir.path().join(".env"),
+		"PODUP_T_A=1\nPODUP_T_C=\"two\nlines\"\nPODUP_T_D=2\n",
+	)
+	.unwrap();
+	let vars = build_vars_with_env_files_strict(dir.path(), &[]).unwrap();
+	assert_eq!(vars["PODUP_T_A"], "1");
+	assert_eq!(vars["PODUP_T_C"], "two\nlines");
+	assert_eq!(vars["PODUP_T_D"], "2");
+}
+
+#[test]
+fn missing_default_dotenv_is_not_an_error() {
+	let dir = tempfile::tempdir().unwrap();
+	assert!(build_vars_with_env_files_strict(dir.path(), &[]).is_ok());
+}
+
+#[test]
+fn tolerant_build_vars_still_reads_a_malformed_dotenv() {
+	let dir = tempfile::tempdir().unwrap();
+	std::fs::write(dir.path().join(".env"), "PODUP_T_A=\"oops\nB=keep\n").unwrap();
+	assert!(build_vars(dir.path()).contains_key("PODUP_T_A"));
+}
