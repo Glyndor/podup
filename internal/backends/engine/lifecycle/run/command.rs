@@ -315,10 +315,9 @@ impl Engine {
 			.and_then(serde_json::Value::as_str)
 			.filter(|id| !id.is_empty())
 			.ok_or_else(|| ComposeError::Unsupported("container creation returned no ID".into()))?;
-		let rm_path = format!(
-			"{API_PREFIX}/containers/{}?force=true",
-			crate::libpod::urlencoded(created_id),
-		);
+		// Only `--rm` ever uses this path, and a removed one-off container takes
+		// its anonymous volumes with it, as `docker compose run --rm` does.
+		let rm_path = crate::engine::lifecycle::container_rm_path(created_id, true, true);
 		let start_path = format!(
 			"{API_PREFIX}/containers/{}/start",
 			crate::libpod::urlencoded(&run_name),

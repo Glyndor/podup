@@ -46,6 +46,17 @@ pub(super) fn ignored_service_fields(units: &ContainerUnits<'_>, out: &mut Vec<S
 				 honored"
 			));
 		}
+		if def
+			.healthcheck
+			.as_ref()
+			.is_some_and(|check| check.start_interval.is_some())
+		{
+			out.push(format!(
+				"service '{service}': healthcheck.start_interval is not honored: Podman \
+				 probes at healthcheck.interval during the start period, so `up --wait` \
+				 can take that long to see the service healthy"
+			));
+		}
 		for entry in def.env_file.to_entries() {
 			if let EnvFileEntry::Config {
 				format: Some(fmt), ..
