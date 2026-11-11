@@ -182,6 +182,11 @@ pub(crate) fn substitute_depth(
 			Some('{') => {
 				chars.next();
 				let (var, modifier) = parse_braced_var(&mut chars)?;
+				// The text of the modifier was copied to be parsed, and each level
+				// of nesting copies what is inside it again: 64 levels around a
+				// 4 MiB text held 545 MiB at once. Charging it to the document
+				// budget stops the nesting after a few levels, not after 64.
+				charge_document_budget(spent, modifier.text_len(), &var)?;
 				let value = resolve_modifier(var.clone(), modifier, vars, depth, spent, warned)?;
 				check_output_cap(&out, &value, &var)?;
 				check_document_budget(spent, &value, &var)?;
@@ -229,7 +234,12 @@ fn warn_unset(var: &str, warned: &mut HashSet<String>) {
 /// refusal fires before the offending allocation, with a message naming the
 /// variable and the size it had reached.
 fn check_document_budget(spent: &mut usize, value: &str, var: &str) -> Result<()> {
-	*spent = spent.saturating_add(value.len());
+	charge_document_budget(spent, value.len(), var)
+}
+
+/// [`check_document_budget`] for `len` bytes that are not (yet) a value.
+fn charge_document_budget(spent: &mut usize, len: usize, var: &str) -> Result<()> {
+	*spent = spent.saturating_add(len);
 	if *spent > MAX_INTERP_DOCUMENT_BYTES {
 		return Err(ComposeError::InvalidSubstitution(format!(
 			"interpolating '{var}' pushes this document past {MAX_INTERP_DOCUMENT_BYTES} \
