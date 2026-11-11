@@ -9,7 +9,7 @@ use crate::engine::fake_podman;
 async fn draining_waits_for_the_removal_of_a_cancelled_init_container() {
 	let fake = fake_podman::start(|_, _| (204, String::new()));
 	let client = fake.client();
-	drop(client.init_cleanup("/libpod/containers/init-1?force=true&v=true".into()));
+	drop(client.init_cleanup("/libpod/containers/init-1?force=true&volumes=true".into()));
 	client.drain_init_cleanups().await;
 	let seen = fake.requests.lock().unwrap().clone();
 	assert!(
@@ -52,7 +52,7 @@ async fn up_finishes_the_pending_removals_before_it_returns_its_error() {
 		}
 	});
 	let client = fake.client();
-	drop(client.init_cleanup("/libpod/containers/init-3?force=true&v=true".into()));
+	drop(client.init_cleanup("/libpod/containers/init-3?force=true&volumes=true".into()));
 	let engine = crate::engine::Engine::with_base_dir(client, "proj".into(), std::env::temp_dir());
 	let file = crate::parse_str("services:\n  web:\n    image: img\n").unwrap();
 	let outcome = engine
