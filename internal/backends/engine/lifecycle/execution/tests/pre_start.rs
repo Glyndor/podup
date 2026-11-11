@@ -45,7 +45,7 @@ async fn pre_start_up_failure_preserves_the_previous_service() {
 		.any(|(path, _)| path.contains("/proj-web/start")));
 	assert!(seen.iter().any(|(path, _)| path.contains("DELETE")
 		&& path.contains("pre-start")
-		&& path.contains("v=true")));
+		&& path.contains("volumes=true")));
 }
 
 #[tokio::test]

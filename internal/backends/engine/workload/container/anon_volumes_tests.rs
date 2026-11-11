@@ -191,3 +191,66 @@ async fn a_new_container_inherits_nothing() {
 		"a brand new container must ask for a fresh anonymous volume: {volumes:?}"
 	);
 }
+
+/// The `DELETE` target a recreate sends for the container it replaces.
+#[cfg(unix)]
+async fn replaced_container_delete(renew: bool) -> String {
+	use crate::engine::fake_podman;
+
+	let inspect = r#"{"Mounts":[],"Config":{"Labels":{"podup.project":"proj"}}}"#.to_string();
+	let fake = fake_podman::start(move |method, target| {
+		if method == "GET" && target.contains("/containers/proj-web-1/json") {
+			(200, inspect.clone())
+		} else if method == "GET" && target.contains("/images/") && target.ends_with("/json") {
+			(200, r#"{"Id":"sha256:abc","Config":{}}"#.to_string())
+		} else if method == "POST" && target.contains("/containers/create") {
+			(200, r#"{"Id":"abc","Warnings":[]}"#.to_string())
+		} else if (method == "POST" && target.contains("/start"))
+			|| (method == "DELETE" && target.contains("/containers/"))
+		{
+			(200, String::new())
+		} else {
+			(200, "[]".to_string())
+		}
+	});
+	let engine = Engine::with_base_dir(fake.client(), "proj".to_string(), std::env::temp_dir())
+		.with_renew_anon_volumes(renew);
+	let file = crate::parse_str("services:\n  web:\n    image: img\n")
+		.expect("the compose file must parse");
+	let service = file.services.get("web").expect("web service").clone();
+	engine
+		.create_and_start(
+			"proj-web-1",
+			"web",
+			&service,
+			&file,
+			true,
+			&std::collections::BTreeMap::new(),
+		)
+		.await
+		.expect("create_and_start must succeed against the fake socket");
+	let seen = fake.requests.lock().unwrap().clone();
+	seen.into_iter()
+		.find(|r| r.contains("DELETE"))
+		.expect("a recreate must delete the container it replaces")
+}
+
+/// `up -V` has to drop the old container's anonymous volumes. libpod reads
+/// `volumes=true` for that: the docker spelling `v=true` is ignored there and
+/// the volume stays behind, which measured against a real Podman 5.7.0.
+#[cfg(unix)]
+#[tokio::test]
+async fn renew_anon_volumes_asks_libpod_to_remove_the_volumes() {
+	let renewed = replaced_container_delete(true).await;
+	assert!(renewed.contains("volumes=true"), "{renewed}");
+	assert!(!renewed.contains("v=true"), "{renewed}");
+}
+
+/// Without `-V` the old container's volumes are inherited, not removed.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_plain_recreate_does_not_ask_for_the_volumes_to_go() {
+	let plain = replaced_container_delete(false).await;
+	assert!(!plain.contains("volumes="), "{plain}");
+	assert!(!plain.contains("v=true"), "{plain}");
+}

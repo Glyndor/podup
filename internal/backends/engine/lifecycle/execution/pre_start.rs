@@ -151,7 +151,7 @@ impl Engine {
 						}
 						*guard.lock().unwrap() = Some(
 							self.client
-								.init_cleanup(format!("{path}?force=true&v=true")),
+								.init_cleanup(format!("{path}?force=true&volumes=true")),
 						);
 						let env = self.effective_env(step)?;
 						self.create_and_start(name, &step_name, step, file, true, &env)
@@ -166,7 +166,7 @@ impl Engine {
 					Action::Remove => {
 						match self
 							.client
-							.delete_ok(&format!("{path}?force=true&v=true"))
+							.delete_ok(&format!("{path}?force=true&volumes=true"))
 							.await
 						{
 							Ok(()) => {
