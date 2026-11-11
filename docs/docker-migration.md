@@ -308,6 +308,33 @@ services:
         mac_address: "02:42:ac:11:00:02"
 ```
 
+## Refused, and docker compose accepts
+
+These were compared against `docker compose` 5.7.0. In each one podup stops, or acts differently, where docker compose goes on.
+
+### An external network that also sets `driver`, `ipam` or other creation attributes
+
+```yaml
+networks:
+  shared:
+    external: true
+    driver: bridge
+```
+
+docker compose accepts this file. podup refuses it, naming the network and the attributes: an external network is used as it is, and podup does not apply creation attributes to a network it did not create. Remove the attributes, or drop `external: true` so that podup creates the network.
+
+### More than 64 levels of nested defaults
+
+`${A:-${A:-...}}` nested deeper than 64 levels is refused with "interpolation nesting too deep". docker compose resolves 65 levels without complaint. A file that nests defaults that deep is rare, and the cap keeps the memory of a hostile file bounded.
+
+### `--profile a,b` is two profiles
+
+podup reads a comma in `--profile` (and in `COMPOSE_PROFILES`) as a separator, as its help says. docker compose reads `--profile a,b` as one profile named `a,b`. Pass one `--profile` per profile to get the same result with both.
+
+### The exit code of a usage error
+
+A command line that does not parse (an unknown option, a missing argument) exits with 2. docker compose exits with 1. A script that tests for exactly 1 has to accept 2. Running `podup` with no subcommand exits with 2 too; docker compose exits with 0.
+
 ## Accepted, and podup is more permissive
 
 ### A `depends_on` target behind an inactive profile
