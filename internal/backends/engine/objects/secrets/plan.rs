@@ -157,7 +157,7 @@ fn resolve_source<'a>(
 		)));
 	}
 	let podup_created = content.is_some() || environment.is_some() || file_source.is_some();
-	if podup_created && !staging::is_safe_project_name(name) {
+	if podup_created && !super::secret_name::is_valid_secret_name(name) {
 		// The name becomes part of the project-scoped Podman secret name and a URL
 		// query parameter, so require a bounded, well-formed identifier rather than
 		// an arbitrary (possibly huge or control-laden) YAML key.
@@ -328,3 +328,7 @@ fn config_ref_parts(
 #[cfg(test)]
 #[path = "plan_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "secret_names_tests.rs"]
+mod secret_names_tests;

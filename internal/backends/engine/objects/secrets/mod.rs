@@ -37,6 +37,7 @@ mod create;
 mod plan;
 mod remove;
 mod secret_bytes;
+mod secret_name;
 
 use std::collections::HashMap;
 use std::path::Path;
