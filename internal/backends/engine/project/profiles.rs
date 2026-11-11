@@ -140,6 +140,11 @@ pub(in crate::backends::engine) fn active_profiles_set(active: &[String]) -> Has
 /// Services with no profiles always start. A literal `*` in the active set is a
 /// wildcard that enables every profiled service (docker compose's
 /// "enable all profiles").
+///
+/// An empty profile name is the profile that is active when no profile is: it is
+/// what `profiles: ["${PROFILE:-}"]` leaves when the variable is unset, and
+/// Docker Compose starts such a service on a plain `up` but not once any profile
+/// is named (`--profile p` leaves it out unless it also lists `p`).
 pub(in crate::backends::engine) fn service_in_profiles(
 	service: &Service,
 	active: &HashSet<String>,
@@ -148,6 +153,9 @@ pub(in crate::backends::engine) fn service_in_profiles(
 		return true;
 	}
 	if active.contains("*") {
+		return true;
+	}
+	if active.is_empty() && service.profiles.iter().any(|p| p.is_empty()) {
 		return true;
 	}
 	service.profiles.iter().any(|p| active.contains(p))
@@ -160,3 +168,7 @@ pub(in crate::backends::engine) fn service_in_profiles(
 #[cfg(test)]
 #[path = "profiles_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "profiles_empty_tests.rs"]
+mod empty_profile_tests;
