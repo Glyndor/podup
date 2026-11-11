@@ -52,27 +52,47 @@ fn expand(
 	Ok(out)
 }
 
+/// The values of the optional `.env` of `dir`. A missing or unreadable file
+/// gives an empty layer. With `strict` an unterminated quoted value is an error
+/// naming the file and the key, as in Docker Compose; without it that value
+/// swallows the rest of the file, for callers that have no project to report to.
+pub(super) fn default_layer(dir: &Path, strict: bool) -> Result<HashMap<String, String>> {
+	let process = process_vars();
+	let mut scope = process.clone();
+	let mut layer = HashMap::new();
+	// A `.env` that is a link is read through it, like docker compose does; the
+	// file it points to is still checked to be a regular file when it is read.
+	// A link that cannot be resolved is read as given and fails there.
+	let path = dir.join(".env");
+	let path = std::fs::canonicalize(&path).unwrap_or(path);
+	if let Ok(content) = crate::filesystem::read_to_string_capped(&path) {
+		let pairs = if strict {
+			crate::dotenv::parse_strict_marked(&content).map_err(|e| {
+				ComposeError::EnvFile(format!(
+					"env file {}: {e}",
+					crate::error::sanitize_name(&dir.join(".env").display().to_string())
+				))
+			})?
+		} else {
+			crate::dotenv::parse_marked(&content)
+		};
+		layer.extend(expand(pairs, &process, &mut scope, false)?);
+	}
+	Ok(layer)
+}
+
 /// The values the project's env files set, without the process environment.
 ///
 /// With no `extra` files this is the optional `.env` of `dir`; otherwise the
 /// listed files replace it, a later file overriding an earlier one and seeing
 /// its keys. A missing or malformed explicit file is an error.
 pub fn dotenv_layer(dir: &Path, extra: &[String]) -> Result<HashMap<String, String>> {
+	if extra.is_empty() {
+		return default_layer(dir, true);
+	}
 	let process = process_vars();
 	let mut scope = process.clone();
 	let mut layer = HashMap::new();
-	if extra.is_empty() {
-		// A `.env` that is a link is read through it, like docker compose does; the
-		// file it points to is still checked to be a regular file when it is read.
-		// A link that cannot be resolved is read as given and fails there.
-		let path = dir.join(".env");
-		let path = std::fs::canonicalize(&path).unwrap_or(path);
-		if let Ok(content) = crate::filesystem::read_to_string_capped(&path) {
-			let pairs = crate::dotenv::parse_marked(&content);
-			layer.extend(expand(pairs, &process, &mut scope, false)?);
-		}
-		return Ok(layer);
-	}
 	for path in extra {
 		let abs = if Path::new(path).is_absolute() {
 			std::path::PathBuf::from(path)

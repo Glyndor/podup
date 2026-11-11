@@ -275,7 +275,7 @@ fn check_output_cap(out: &str, value: &str, var: &str) -> Result<()> {
 /// - Process environment variables take precedence: if a key already exists in
 ///   the current process env it will *not* be overridden by the `.env` file.
 pub fn load_dotenv(dir: &Path) -> HashMap<String, String> {
-	let mut map = dotenv_layer(dir, &[]).unwrap_or_default();
+	let mut map = file_values::default_layer(dir, false).unwrap_or_default();
 	// Process environment variables take precedence over the `.env` file.
 	map.retain(|key, _| std::env::var(key).is_err());
 	map
@@ -304,8 +304,10 @@ pub fn build_vars(dir: &Path) -> HashMap<String, String> {
 ///
 /// Compose v2 semantics: when one or more `--env-file` are given they *replace*
 /// the default `.env` (which is therefore not loaded), and among several files
-/// the **last** one wins. With no explicit files this is just [`build_vars`]
-/// (process env + `.env`). Process env always takes precedence over file values.
+/// the **last** one wins. With no explicit files the default `.env` is read, and
+/// one with an unterminated quoted value is an error that names the file and the
+/// key (a missing or unreadable `.env` is not). Process env always takes
+/// precedence over file values.
 ///
 /// An explicitly-passed `--env-file` that is missing, unreadable, or malformed
 /// is a hard error (matching docker compose, which fails on a not-found env
@@ -334,11 +336,8 @@ fn build_vars_with_env_files_inner(
 	dir: &Path,
 	extra: &[String],
 ) -> Result<HashMap<String, String>> {
-	if extra.is_empty() {
-		return Ok(build_vars(dir));
-	}
-
 	// Explicit `--env-file`s replace `.env`; a later file overrides an earlier one.
+	// With none, the default `.env` is read and a malformed one is an error.
 	let file_vars = dotenv_layer(dir, extra)?;
 
 	// Process env wins over every file value.
