@@ -23,20 +23,30 @@ impl Engine {
 		tag: &str,
 		plan: &BuildPlan,
 	) -> Result<(String, String)> {
+		// The project environment a bare `KEY` reads from: the process, plus the
+		// project `.env` or the global `--env-file` files that replace it. It is
+		// the same environment a bare `environment: [KEY]` reads.
+		let project_vars = crate::substitute::build_vars_with_env_files_strict(
+			&self.base_dir,
+			&self.run_env_files,
+		)?;
 		let arg_map = build.args().to_map();
 		let mut build_args: std::collections::HashMap<String, String> =
 			std::collections::HashMap::new();
 		for (k, v) in arg_map {
-			let value = v.unwrap_or_else(|| std::env::var(&k).unwrap_or_default());
+			let value = v.unwrap_or_else(|| project_vars.get(&k).cloned().unwrap_or_default());
 			build_args.insert(k, value);
 		}
 		// CLI `--build-arg KEY=VAL` overrides the compose `build.args`. A bare
-		// `KEY` (no `=`) takes its value from the process environment, matching
+		// `KEY` (no `=`) takes its value from the project environment, matching
 		// docker compose.
 		for entry in &opts.build_args {
 			let (k, v) = match entry.split_once('=') {
 				Some((k, v)) => (k.to_string(), v.to_string()),
-				None => (entry.clone(), std::env::var(entry).unwrap_or_default()),
+				None => (
+					entry.clone(),
+					project_vars.get(entry).cloned().unwrap_or_default(),
+				),
 			};
 			// A bare `=value` (empty key) is a user typo Podman would silently
 			// ignore; reject it with a clear diagnostic instead.
