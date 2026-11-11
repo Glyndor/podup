@@ -78,6 +78,10 @@ pub struct BuildOptions {
 	pub build_args: Vec<String>,
 	/// Suppress build output (`-q/--quiet`).
 	pub quiet: bool,
+	/// Also build the services the named ones depend on, transitively
+	/// (`--with-dependencies`). Without service names every service is built
+	/// already, so it changes nothing there.
+	pub with_dependencies: bool,
 }
 
 impl BuildOptions {
@@ -90,7 +94,16 @@ impl BuildOptions {
 			pull,
 			build_args,
 			quiet,
+			with_dependencies: false,
 		}
+	}
+
+	/// Also build the dependencies of the named services (`--with-dependencies`).
+	/// Builder-style.
+	#[must_use]
+	pub fn with_dependencies(mut self, with_dependencies: bool) -> Self {
+		self.with_dependencies = with_dependencies;
+		self
 	}
 
 	/// Suppress build output (`-q/--quiet`). Builder-style.
@@ -150,6 +163,7 @@ fn render_build_ulimits(build: &BuildConfig) -> Vec<String> {
 fn build_target_names(
 	file: &crate::compose::types::ComposeFile,
 	target_services: &[String],
+	with_dependencies: bool,
 ) -> Result<Vec<String>> {
 	for name in target_services {
 		if !file.services.contains_key(name) {
@@ -158,6 +172,15 @@ fn build_target_names(
 	}
 	let names: Vec<String> = if target_services.is_empty() {
 		file.services.keys().cloned().collect()
+	} else if with_dependencies {
+		// `--with-dependencies`: the named services and, transitively, what
+		// they depend on, in file order so the result is deterministic.
+		let closure = pull::pull_dep_closure(file, target_services);
+		file.services
+			.keys()
+			.filter(|name| closure.contains(name.as_str()))
+			.cloned()
+			.collect()
 	} else {
 		target_services.to_vec()
 	};
@@ -220,7 +243,7 @@ impl Engine {
 		opts: &BuildOptions,
 	) -> Result<()> {
 		self.pull_preflight(file)?;
-		let names = build_target_names(file, target_services)?;
+		let names = build_target_names(file, target_services, opts.with_dependencies)?;
 		let images = build_image_tags(self, file, &names);
 
 		crate::ui::progress::begin(
@@ -270,3 +293,5 @@ mod base_pull_tests;
 mod tests;
 #[cfg(test)]
 mod walk_tests;
+#[cfg(test)]
+mod with_dependencies_tests;

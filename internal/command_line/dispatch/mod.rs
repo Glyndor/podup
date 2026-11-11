@@ -369,6 +369,7 @@ pub(crate) async fn dispatch(
 			progress: _,
 			push,
 			quiet,
+			with_dependencies,
 			services,
 		} => {
 			let file = &profile_filtered(file, profile, &services);
@@ -376,7 +377,8 @@ pub(crate) async fn dispatch(
 				.build_all_with_options(
 					file,
 					&services,
-					&podup::BuildOptions::new(no_cache, pull, build_arg, quiet),
+					&podup::BuildOptions::new(no_cache, pull, build_arg, quiet)
+						.with_dependencies(with_dependencies),
 				)
 				.await?;
 			// `--push` pushes each freshly built image to its registry.

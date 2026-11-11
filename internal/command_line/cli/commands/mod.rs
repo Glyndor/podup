@@ -167,6 +167,9 @@ pub(crate) enum Commands {
 		/// Suppress the build output.
 		#[arg(short, long)]
 		quiet: bool,
+		/// Also build the services the named ones depend on, transitively.
+		#[arg(long)]
+		with_dependencies: bool,
 		/// Build only these services.
 		services: Vec<String>,
 	},

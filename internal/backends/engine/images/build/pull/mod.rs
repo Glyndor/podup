@@ -445,8 +445,11 @@ impl Engine {
 }
 
 /// The transitive `depends_on` closure of `services` (including the services
-/// themselves), for `pull --include-deps`.
-fn pull_dep_closure(file: &ComposeFile, services: &[String]) -> HashSet<String> {
+/// themselves), for `pull --include-deps` and `build --with-dependencies`.
+pub(in crate::backends::engine::images::build) fn pull_dep_closure(
+	file: &ComposeFile,
+	services: &[String],
+) -> HashSet<String> {
 	let mut set = HashSet::new();
 	let mut stack: Vec<String> = services.to_vec();
 	while let Some(name) = stack.pop() {
