@@ -15,6 +15,7 @@ use crate::libpod::{urlencoded, API_PREFIX};
 use crate::engine::Engine;
 
 mod list;
+mod usage_json;
 pub use list::{VolumesDisplayOptions, VolumesOptions};
 
 impl Engine {
