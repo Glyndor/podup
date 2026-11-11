@@ -334,6 +334,22 @@ impl PodmanError {
 		}
 	}
 
+	/// True if this API error reports a network that cannot be removed because
+	/// a container is still attached to it, as when a container outside the
+	/// project joined it. Podman answers 500 with `has associated containers`
+	/// or `network is being used`.
+	pub fn is_network_in_use(&self) -> bool {
+		match self {
+			Self::Api { status, message } if matches!(*status, 403 | 409 | 500) => {
+				let m = message.to_ascii_lowercase();
+				m.contains("has associated containers")
+					|| m.contains("network is being used")
+					|| m.contains("has active endpoints")
+			}
+			_ => false,
+		}
+	}
+
 	/// True if this API error reports a container is in the wrong state for the
 	/// attempted lifecycle op (already paused, not paused, not running). Podman
 	/// returns these as a 409/500 with a "container state improper" cause. Lets

@@ -149,6 +149,14 @@ impl Engine {
 			// the same set `config` reports, so `up` never leaves a started
 			// service with an unsatisfied (never-created) dependency.
 			let enabled = enabled_profile_services(file, &active, target_services);
+			// Nothing to start is a usage error, as in docker compose's
+			// `no service selected`, rather than a silent success.
+			if enabled.is_empty() && file.jobs.is_empty() {
+				return Err(crate::error::ComposeError::Invalid(
+					"no service selected: the compose file has no services, or every one is behind an inactive profile"
+						.to_string(),
+				));
+			}
 
 			// Validate every `--scale SERVICE=N` override against the file before
 			// doing any work: an override naming a service the compose file does
@@ -224,10 +232,18 @@ impl Engine {
 			// follow. The loop runs below, inside this same `up` board, so the
 			// build's `Building`/`Built` verbs land on the same rows the rest
 			// of `up` is drawing on.
-			let build_names = if build && !self.no_build {
+			let build_names = if !self.no_build {
+				// `--build` rebuilds every service with a `build:` block;
+				// `pull_policy: build` makes the service its own rebuild flag.
 				crate::engine::build::order_context_builds(
 					file,
-					&up_build_targets(file, &enabled, &target_set),
+					&up_build_targets(
+						file,
+						&enabled,
+						&target_set,
+						build,
+						self.pull_policy_override.is_none(),
+					),
 				)?
 			} else {
 				Vec::new()
@@ -380,11 +396,20 @@ fn up_build_targets(
 	file: &crate::compose::types::ComposeFile,
 	enabled: &std::collections::HashSet<String>,
 	target_set: &Option<std::collections::HashSet<String>>,
+	build_all: bool,
+	policy_build_applies: bool,
 ) -> Vec<String> {
 	file.services
 		.iter()
 		.filter(|(name, service)| {
 			if service.build.is_none() {
+				return false;
+			}
+			// Without `--build`, only a service whose `pull_policy` is `build`
+			// is rebuilt; an explicit `--pull` replaces that policy.
+			if !build_all
+				&& !(policy_build_applies && service.pull_policy.as_deref() == Some("build"))
+			{
 				return false;
 			}
 			if !enabled.contains(*name) {
