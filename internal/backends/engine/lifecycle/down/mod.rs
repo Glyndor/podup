@@ -225,6 +225,13 @@ impl Engine {
 				// has to close, or the live board leaves it spinning on
 				// `Removing` forever (#1347).
 				Ok(false) => crate::ui::progress_line("Network", &network_name, "Absent"),
+				// A container outside the project still uses the network. The
+				// rest of the teardown went through, so this is a warning, not a
+				// failed `down`.
+				Err(e) if e.is_network_in_use() => {
+					tracing::warn!("network {network_name} is still in use, left in place: {e}");
+					crate::ui::progress_line("Network", &network_name, "In use");
+				}
 				Err(e) => {
 					tracing::warn!("could not remove network {network_name}: {e}");
 					// Close the row visibly: a `down` whose removal genuinely
@@ -379,3 +386,6 @@ mod label_tests;
 
 #[cfg(all(test, unix))]
 mod job_tests;
+
+#[cfg(all(test, unix))]
+mod network_in_use_tests;

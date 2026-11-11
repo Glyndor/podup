@@ -169,3 +169,17 @@ fn is_status_does_not_match_field() {
 	assert!(!e.is_status(400));
 	assert!(!e.is_status(500));
 }
+
+#[test]
+fn a_network_with_attached_containers_is_classified_as_in_use() {
+	let in_use = PodmanError::Api {
+		status: 500,
+		message: "\"n\" has associated containers with it: network is being used".into(),
+	};
+	assert!(in_use.is_network_in_use());
+	let other = PodmanError::Api {
+		status: 500,
+		message: "permission denied".into(),
+	};
+	assert!(!other.is_network_in_use());
+}

@@ -148,6 +148,11 @@ impl Engine {
 			match self.client.delete_existed(&del).await {
 				Ok(true) => crate::ui::progress_line("Network", net_name, "Removed"),
 				Ok(false) => {}
+				Err(e) if e.is_network_in_use() => {
+					// No row here: the file-driven loop already closed the row of a
+					// declared network, and a swept one is only worth the warning.
+					tracing::warn!("network {net_name} is still in use, left in place: {e}");
+				}
 				Err(e) => {
 					tracing::warn!("could not remove network {net_name}: {e}");
 					first_err.get_or_insert(crate::error::ComposeError::Podman(e));
