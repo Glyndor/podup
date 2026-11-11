@@ -2,6 +2,7 @@
 
 mod environment;
 mod hash;
+mod label_files;
 mod links;
 mod signals;
 mod volumes;
@@ -18,3 +19,6 @@ mod resolve_tests;
 
 #[cfg(test)]
 mod resolve_file_digest_tests;
+
+#[cfg(test)]
+mod label_file_hash_tests;

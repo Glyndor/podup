@@ -152,6 +152,7 @@ pub(crate) fn config_hash(
 		hasher.update((value.len() as u64).to_le_bytes());
 		hasher.update(value.as_bytes());
 	}
+	super::label_files::fold_label_files(&mut hasher, service, base_dir);
 	Ok(hasher
 		.finalize()
 		.iter()
