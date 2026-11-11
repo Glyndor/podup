@@ -75,6 +75,7 @@ pub(crate) fn config_hash(
 	// returning an empty/default hash would make distinct services hash
 	// identically and silently suppress recreation and inline-secret rotation.
 	let serialized = serde_json::to_value(service)
+		.map(without_replica_count)
 		.and_then(|v| serde_json::to_vec(&v))
 		.map_err(|e| ComposeError::Unsupported(format!("cannot hash service config: {e}")))?;
 	hasher.update(&serialized);
@@ -344,4 +345,20 @@ fn hash_recorded_file_payload(hasher: &mut sha2::Sha256, kind: &[u8], name: &str
 	// frame the same way.
 	hasher.update((digest.len() as u64).to_le_bytes());
 	hasher.update(digest);
+}
+
+/// Drop `scale` and `deploy.replicas` from the serialised service.
+///
+/// How many replicas a service runs is not a property of any one container:
+/// each replica is the same container spec. Hashing it recreated every live
+/// replica on a plain scale change, where Compose starts the missing ones (or
+/// removes the surplus) and leaves the rest running.
+fn without_replica_count(mut value: serde_json::Value) -> serde_json::Value {
+	if let Some(object) = value.as_object_mut() {
+		object.remove("scale");
+		if let Some(deploy) = object.get_mut("deploy").and_then(|d| d.as_object_mut()) {
+			deploy.remove("replicas");
+		}
+	}
+	value
 }

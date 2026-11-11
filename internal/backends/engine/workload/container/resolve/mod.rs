@@ -3,6 +3,8 @@
 mod environment;
 mod hash;
 mod links;
+#[cfg(test)]
+mod scale_hash_tests;
 mod signals;
 mod volumes;
 
