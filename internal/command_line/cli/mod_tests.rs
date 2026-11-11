@@ -205,3 +205,40 @@ fn up_option_combinations_docker_compose_refuses_are_refused() {
 		]));
 	}
 }
+
+/// A single-valued global option given twice keeps the last value, as docker
+/// compose does, instead of failing with "cannot be used multiple times", so a
+/// wrapper that always passes `-p` can be given another `-p` after it.
+#[test]
+fn a_repeated_project_name_keeps_the_last_one() {
+	let cli = super::Cli::try_parse_from(["podup", "-p", "a", "-p", "b", "ps"])
+		.expect("a repeated -p must parse");
+	assert_eq!(cli.project.as_deref(), Some("b"));
+}
+
+#[test]
+fn a_repeated_project_directory_keeps_the_last_one() {
+	let cli = super::Cli::try_parse_from([
+		"podup",
+		"--project-directory",
+		"/first",
+		"--project-directory",
+		"/second",
+		"ps",
+	])
+	.expect("a repeated --project-directory must parse");
+	assert_eq!(
+		cli.project_directory,
+		Some(std::path::PathBuf::from("/second"))
+	);
+}
+
+#[test]
+fn a_repeated_ansi_keeps_the_last_one_before_and_after_the_subcommand() {
+	let before = super::Cli::try_parse_from(["podup", "--ansi", "never", "--ansi", "always", "ps"])
+		.expect("a repeated --ansi must parse");
+	assert_eq!(before.ansi, AnsiMode::Always);
+	let after = super::Cli::try_parse_from(["podup", "ps", "--ansi", "never", "--ansi", "always"])
+		.expect("a repeated --ansi after the subcommand must parse");
+	assert_eq!(after.ansi, AnsiMode::Always);
+}
