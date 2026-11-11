@@ -53,3 +53,6 @@ mod up_replica;
 
 #[cfg(test)]
 mod up_validation;
+
+#[cfg(all(test, unix))]
+mod up_scale_down;
