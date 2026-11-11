@@ -8,3 +8,4 @@ pub(super) mod validate;
 mod validate_memory;
 mod validate_names;
 mod validate_replicas;
+mod validate_volumes;

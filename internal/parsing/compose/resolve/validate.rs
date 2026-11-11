@@ -224,6 +224,7 @@ pub(in super::super) fn validate(file: &ComposeFile) -> Result<()> {
 	super::validate_names::validate_resource_names(file)?;
 	validate_services(file)?;
 	validate_networks(file)?;
+	super::validate_volumes::validate_volumes(file)?;
 	Ok(())
 }
 
