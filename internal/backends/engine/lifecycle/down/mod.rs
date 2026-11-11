@@ -331,8 +331,9 @@ impl Engine {
 	}
 
 	/// Remove the images used by the project's services (`down --rmi`). With
-	/// `local_only`, only images of services that build locally (a `build:`
-	/// section) are removed, matching `docker compose down --rmi local`.
+	/// `local_only`, only images of services that build locally and set no
+	/// `image:` of their own are removed, matching `docker compose down --rmi
+	/// local` ("only images that don't have a custom tag").
 	pub async fn remove_service_images(&self, file: &ComposeFile, local_only: bool) -> Result<()> {
 		// `--rmi` covers the images of jobs as well as of services.
 		let with_jobs;
@@ -348,7 +349,10 @@ impl Engine {
 		let mut first_err: Option<crate::error::ComposeError> = None;
 		for (name, service) in &file.services {
 			let builds_locally = service.build.is_some();
-			if local_only && !builds_locally {
+			// `local` is the images without a custom tag: a service that builds
+			// and also sets `image:` has chosen its own tag, so it stays. Only
+			// a service that builds with no `image:` has the generated name.
+			if local_only && (!builds_locally || service.image.is_some()) {
 				continue;
 			}
 			let image = match &service.image {
@@ -389,3 +393,6 @@ mod job_tests;
 
 #[cfg(all(test, unix))]
 mod network_in_use_tests;
+
+#[cfg(all(test, unix))]
+mod rmi_local_tests;
