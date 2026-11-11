@@ -25,6 +25,9 @@ mod cleanup_drain;
 mod collision;
 
 #[cfg(all(test, unix))]
+mod nothing_selected;
+
+#[cfg(all(test, unix))]
 mod pull_policy_build;
 
 #[cfg(test)]
