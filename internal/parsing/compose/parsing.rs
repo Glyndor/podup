@@ -337,7 +337,7 @@ fn interpolated_yaml_text_from_content(
 }
 
 /// Synthesize the implicit `default` network, matching docker-compose: any
-/// service that declares neither `networks:` nor `network_mode` is attached to
+/// service that declares neither `networks:` (or declares it empty) nor `network_mode` is attached to
 /// a project `default` network. Without this, such services are created with no
 /// network namespace at all: they get no IP and cannot resolve each other by
 /// name, silently breaking the common no-`networks:`-block compose file.
@@ -352,7 +352,7 @@ pub(crate) fn normalize_default_network(file: &mut ComposeFile) {
 		.chain(file.jobs.values().map(|job| &job.service))
 		.any(|svc| {
 			svc.network_mode.is_none()
-				&& (matches!(svc.networks, ServiceNetworks::Empty)
+				&& (svc.networks.is_unset()
 					|| svc.networks.names().iter().any(|net| net == "default"))
 		});
 	if !needs_default {
@@ -360,7 +360,7 @@ pub(crate) fn normalize_default_network(file: &mut ComposeFile) {
 	}
 	file.networks.entry("default".to_string()).or_insert(None);
 	for svc in file.services_and_jobs_mut() {
-		if svc.network_mode.is_none() && matches!(svc.networks, ServiceNetworks::Empty) {
+		if svc.network_mode.is_none() && svc.networks.is_unset() {
 			svc.networks = ServiceNetworks::List(vec!["default".to_string()]);
 		}
 	}

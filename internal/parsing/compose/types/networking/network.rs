@@ -33,6 +33,16 @@ impl ServiceNetworks {
 		}
 	}
 
+	/// Whether the service names no network: the key is absent, or `[]`, or `{}`.
+	/// Docker Compose reads all three as "the project `default` network".
+	pub fn is_unset(&self) -> bool {
+		match self {
+			ServiceNetworks::Empty => true,
+			ServiceNetworks::List(v) => v.is_empty(),
+			ServiceNetworks::Map(m) => m.is_empty(),
+		}
+	}
+
 	/// Returns the attachment options for a network, if any are set.
 	pub fn config_for(&self, name: &str) -> Option<&ServiceNetworkConfig> {
 		match self {
