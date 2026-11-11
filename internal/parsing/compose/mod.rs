@@ -51,3 +51,6 @@ mod tag_interpolation_tests;
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod empty_networks_tests;
