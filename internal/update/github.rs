@@ -51,6 +51,10 @@ pub struct GitHubSource {
 	/// Wait before the first retry; doubled before each next one. Zero in tests,
 	/// which must not sleep.
 	first_delay: std::time::Duration,
+	/// The tag the metadata call resolved. Assets are downloaded from this
+	/// tag and not from "latest", which moves when a release is published
+	/// between the two calls and would pair a new manifest with an old tag.
+	resolved_tag: std::sync::OnceLock<String>,
 }
 
 impl GitHubSource {
@@ -75,6 +79,7 @@ impl GitHubSource {
 			metadata_cap: MAX_METADATA_BYTES,
 			asset_cap: MAX_ASSET_BYTES,
 			first_delay: std::time::Duration::from_secs(1),
+			resolved_tag: std::sync::OnceLock::new(),
 		}
 	}
 
@@ -208,16 +213,24 @@ impl ReleaseSource for GitHubSource {
 			.get_with_retry(&url, Some("application/vnd.github+json"))
 			.map_err(|e| ComposeError::Update(format!("cannot reach GitHub releases API: {e}")))?;
 		let body = read_capped(resp.into_body().into_reader(), self.metadata_cap)?;
-		parse_latest_tag(&body)
+		let tag = parse_latest_tag(&body)?;
+		// Only a tag that parses as a version names a download path; anything
+		// else is left for the caller to refuse and never reaches a URL.
+		if crate::update::verify::parse_version(&tag).is_ok() {
+			let _ = self.resolved_tag.set(tag.clone());
+		}
+		Ok(tag)
 	}
 
 	fn fetch(&self, asset: &str) -> crate::Result<Vec<u8>> {
-		// Pinned to the latest release; `ureq` follows GitHub's redirect to the
-		// asset host. Always HTTPS; the URL is a compile-time constant scheme.
-		let url = format!(
-			"{}/{}/releases/latest/download/{asset}",
-			self.dl_base, self.repo
-		);
+		// Pinned to the tag the metadata call resolved, or to "latest" when none
+		// was; `ureq` follows GitHub's redirect to the asset host. Always HTTPS;
+		// the URL is a compile-time constant scheme.
+		let release = match self.resolved_tag.get() {
+			Some(tag) => format!("download/{tag}"),
+			None => "latest/download".to_string(),
+		};
+		let url = format!("{}/{}/releases/{release}/{asset}", self.dl_base, self.repo);
 		let resp = self
 			.get_with_retry(&url, None)
 			.map_err(|e| ComposeError::Update(format!("download failed for {asset}: {e}")))?;
