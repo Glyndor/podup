@@ -23,6 +23,8 @@ struct Server {
 	base: String,
 	connections: Arc<AtomicUsize>,
 	sent: Arc<AtomicUsize>,
+	/// The request line of every request, in arrival order.
+	paths: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 fn head(status: &str, extra: &str, length: usize) -> String {
@@ -44,23 +46,30 @@ fn serve(script: Vec<Reply>) -> Server {
 	let base = format!("http://{}", listener.local_addr().unwrap());
 	let connections = Arc::new(AtomicUsize::new(0));
 	let sent = Arc::new(AtomicUsize::new(0));
-	let (count, bytes) = (connections.clone(), sent.clone());
+	let paths = Arc::new(std::sync::Mutex::new(Vec::new()));
+	let (count, bytes, seen) = (connections.clone(), sent.clone(), paths.clone());
 	std::thread::spawn(move || {
 		for stream in listener.incoming().flatten() {
 			let n = count.fetch_add(1, Ordering::SeqCst);
 			let reply = script[n.min(script.len() - 1)].clone();
-			let bytes = bytes.clone();
-			std::thread::spawn(move || answer(stream, reply, &bytes));
+			let (bytes, seen) = (bytes.clone(), seen.clone());
+			std::thread::spawn(move || answer(stream, reply, &bytes, &seen));
 		}
 	});
 	Server {
 		base,
 		connections,
 		sent,
+		paths,
 	}
 }
 
-fn answer(mut stream: TcpStream, reply: Reply, sent: &AtomicUsize) {
+fn answer(
+	mut stream: TcpStream,
+	reply: Reply,
+	sent: &AtomicUsize,
+	paths: &std::sync::Mutex<Vec<String>>,
+) {
 	let mut buf = [0u8; 4096];
 	let mut request = Vec::new();
 	while !request.windows(4).any(|w| w == b"\r\n\r\n") {
@@ -69,6 +78,11 @@ fn answer(mut stream: TcpStream, reply: Reply, sent: &AtomicUsize) {
 			Ok(n) => request.extend_from_slice(&buf[..n]),
 		}
 	}
+	let line = String::from_utf8_lossy(&request);
+	paths
+		.lock()
+		.unwrap()
+		.push(line.lines().next().unwrap_or_default().to_string());
 	match reply {
 		Reply::Full(head, body) => {
 			let _ = stream.write_all(head.as_bytes());
@@ -215,4 +229,35 @@ fn a_redirect_loop_ends_with_a_bounded_number_of_requests() {
 		"{} requests",
 		server.connections()
 	);
+}
+
+/// An asset is downloaded from the tag the metadata call resolved. With
+/// "latest" a release published between the two calls would pair the new
+/// manifest with the old tag, and the update would fail as a rollback.
+#[test]
+fn an_asset_is_fetched_from_the_tag_the_metadata_named() {
+	let server = serve(vec![ok(TAG.as_bytes()), ok(b"asset-bytes")]);
+	let source = GitHubSource::loopback(&server.base, 4096, 4096);
+	assert_eq!(source.latest_version().unwrap(), "v1.2.3");
+	assert_eq!(source.fetch("SHA256SUMS").unwrap(), b"asset-bytes");
+	let paths = server.paths.lock().unwrap().clone();
+	assert!(
+		paths[1].contains("/releases/download/v1.2.3/SHA256SUMS"),
+		"{paths:?}"
+	);
+	assert!(!paths[1].contains("latest"), "{paths:?}");
+}
+
+/// A tag that is not a version never reaches a URL: the fetch keeps asking
+/// for "latest" and the caller refuses the tag before it gets there.
+#[test]
+fn a_tag_that_is_not_a_version_is_not_put_in_a_download_path() {
+	let hostile = br#"{"tag_name":"v1/../../x"}"#;
+	let server = serve(vec![ok(hostile), ok(b"asset-bytes")]);
+	let source = GitHubSource::loopback(&server.base, 4096, 4096);
+	assert_eq!(source.latest_version().unwrap(), "v1/../../x");
+	source.fetch("SHA256SUMS").unwrap();
+	let paths = server.paths.lock().unwrap().clone();
+	assert!(!paths[1].contains("x/SHA256SUMS"), "{paths:?}");
+	assert!(paths[1].contains("/releases/latest/download/"), "{paths:?}");
 }
