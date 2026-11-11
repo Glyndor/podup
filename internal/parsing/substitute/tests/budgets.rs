@@ -167,3 +167,33 @@ fn closing_a_project_scope_resets_the_budget() {
 	}
 	assert_eq!(project_budget::spent(), 0);
 }
+
+/// The text of a default is copied once for every level of nesting around it.
+/// 64 levels around a 4 MiB text held 545 MiB at once, because the copies were
+/// only counted on the way back up, after all of them existed. They are charged
+/// as they are made, so the budget refuses the nesting a few levels down and
+/// the depth cap is never reached.
+#[test]
+fn nesting_that_copies_a_large_default_many_times_is_refused_on_the_way_down() {
+	let depth = MAX_INTERP_DEPTH + 5;
+	let payload = "x".repeat(4 * 1024 * 1024);
+	let mut s = "${A:-".repeat(depth);
+	s.push_str(&payload);
+	s.push_str(&"}".repeat(depth));
+	let err = substitute(&s, &vars(&[])).expect_err("the copies must be refused");
+	let message = err.to_string();
+	assert!(
+		message.contains("bytes of substituted output"),
+		"the budget must refuse it, not the depth cap: {message}"
+	);
+}
+
+/// The charge is for what the text costs, so a small default nested a few
+/// levels, the shape of a real file, still resolves.
+#[test]
+fn a_small_default_nested_a_few_levels_is_not_charged_into_a_refusal() {
+	let mut s = "${A:-".repeat(10);
+	s.push_str("small");
+	s.push_str(&"}".repeat(10));
+	assert_eq!(substitute(&s, &vars(&[])).unwrap(), "small");
+}
