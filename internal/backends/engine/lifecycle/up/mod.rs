@@ -335,31 +335,33 @@ impl Engine {
 			)
 			.await?;
 
-			// Reconcile surplus replicas for every service carrying an active
-			// `--scale` override. Replica naming is unsuffixed for one replica and
-			// suffixed (`svc-N`) for many, so scaling a service *down* on the `up`
-			// path would otherwise leave the old higher-numbered containers running
-			// (e.g. `up --scale web=3` then `up --scale web=1`). The overrides are a
-			// last-wins map, so create (above) and this prune always agree on one
-			// target count. Keyed off live container names inside
-			// `remove_surplus_replicas`, this is the same reconciliation the `scale`
-			// subcommand relies on.
-			for (svc, &target) in &self.scale_overrides {
-				let Some(service) = file.services.get(svc) else {
+			// Reconcile surplus replicas for every enabled service, against the
+			// count `resolve_replicas` gives it: a `--scale` override, else the
+			// file's `scale:`/`deploy.replicas`, else one. Replica naming is
+			// suffixed (`svc-N`), so lowering the count, on the command line or
+			// in the file, would otherwise leave the higher-numbered containers
+			// running (e.g. `up --scale web=3` then `up --scale web=1`, or
+			// `scale: 3` edited to `scale: 1`). Create (above) and this prune
+			// read the same count, so they always agree on one target. Keyed off
+			// live container names inside `remove_surplus_replicas`, this is the
+			// same reconciliation the `scale` subcommand relies on.
+			for (svc, service) in &file.services {
+				if !enabled.contains(svc) {
 					continue;
-				};
+				}
 				if let Some(set) = &target_set {
 					if !set.contains(svc) {
 						continue;
 					}
 				}
+				let target = self.resolve_replicas(svc, service) as u32;
 				// Pass the bulk snapshot fetched at the top of `run_up`. The
 				// filtered list is rebuilt from `existing` here rather than
 				// issuing a per-service `/containers/json` against the
 				// already-fetched data set (#1747): the bulk list is the same
 				// shape, has the names we want, and avoiding one round trip per
-				// `--scale` override turns a 10-service reconciliation into one
-				// rather than 11 GETs.
+				// service turns a 10-service reconciliation into one rather
+				// than 11 GETs.
 				self.remove_surplus_replicas(svc, service, target, &existing)
 					.await?;
 			}
