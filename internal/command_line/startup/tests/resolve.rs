@@ -4,6 +4,20 @@ use super::super::resolve::{
 };
 use podup::compose::sanitize_project_name;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
+
+/// The working directory is one value for the whole process, and the tests of
+/// this file run on parallel threads. A test that changes it, or that reads it
+/// twice and compares, holds this lock, so no other test can change it in
+/// between. Without it `relative_inputs_resolve_to_an_absolute_base` read a
+/// temp directory another test had moved into, and failed on Windows.
+static CWD: Mutex<()> = Mutex::new(());
+
+fn cwd_lock() -> MutexGuard<'static, ()> {
+	// A test that panicked while holding the lock poisons it, which says
+	// nothing about the working directory: take the guard anyway.
+	CWD.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 #[test]
 fn validate_project_directory_accepts_none_and_existing_dir() {
@@ -39,6 +53,7 @@ fn multiple_explicit_compose_files_preserved() {
 fn missing_compose_file_falls_back_to_default_name() {
 	// In a directory with no candidate files, the default name is returned
 	// so the resulting error names a sensible path.
+	let _cwd = cwd_lock();
 	let dir = std::env::temp_dir().join(format!("podup-cf-{}", std::process::id()));
 	std::fs::create_dir_all(&dir).unwrap();
 	let prev = std::env::current_dir().unwrap();
@@ -68,6 +83,7 @@ fn defaults_to_compose_file_parent() {
 
 #[test]
 fn bare_filename_resolves_to_current_dir() {
+	let _cwd = cwd_lock();
 	// A bare filename has no directory component, so the base directory must
 	// fall back to the working directory, never an empty path, which would
 	// leave a relative `file:` source to be resolved against the Podman
@@ -79,6 +95,7 @@ fn bare_filename_resolves_to_current_dir() {
 
 #[test]
 fn relative_inputs_resolve_to_an_absolute_base() {
+	let _cwd = cwd_lock();
 	let cwd = std::env::current_dir().unwrap();
 	let from_file = resolve_base_dir(None, Path::new("subdir/c.yml"));
 	assert_eq!(from_file, cwd.join("subdir"));
