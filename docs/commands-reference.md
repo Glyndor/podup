@@ -132,7 +132,7 @@ podup audit --list-checks --format json | jq -r '.checks[].id'
 | `writable_root` | `read_only` is not `true` | Compose's default is writable. |
 | `no_cap_drop_all` | `cap_drop` does not contain `ALL` | Without it the runtime's default capability set stays. |
 | `no_new_privileges_off` | `security_opt` lacks `no-new-privileges:true` | Both spellings (`no-new-privileges:true` and `no-new-privileges` alone, the Podman form) are accepted. |
-| `no_pids_limit` | Effective PID cap is missing or unlimited (`-1`) | Reads `pids_limit`, then `deploy.resources.limits.pids` as a fallback. |
+| `no_pids_limit` | Effective PID cap is missing or unlimited (`-1`, any other negative number, or `0`: Podman reads all of them as no limit) | Reads `pids_limit`, then `deploy.resources.limits.pids` as a fallback. |
 | `no_memory_limit` | The effective memory limit is missing or negative (an unparseable amount never gets this far: loading the file refuses it) | A top-level `mem_limit` takes precedence over `deploy.resources.limits.memory`. |
 | `no_userns` | `userns_mode` unset | Set `auto` explicitly for a private subordinate UID range; see the migration guide. |
 | `secret_in_environment` | `environment:` key whose name contains a secret-bearing segment (`PASSWORD`, `SECRET`, `TOKEN`, `KEY`, case-insensitive) and a value is set | Every set value is flagged, including resolved `${VAR}` interpolations and empty strings. Bare inherited keys (no value) are not. A name ending in `FILE` is exempt only when its value starts with `/`, `./`, or `../`. |

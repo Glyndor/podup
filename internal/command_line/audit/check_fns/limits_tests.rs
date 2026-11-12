@@ -119,6 +119,13 @@ fn audit_no_pids_limit_uses_the_effective_cap() {
 		(Some(-1), Some(64), true),
 		(Some(32), Some(64), false),
 		(Some(32), None, false),
+		// Podman reads `-1`, any other negative number and `0` as no limit: a
+		// container created with each of them has `pids.max` set to `max`.
+		(Some(0), None, true),
+		(Some(-5), None, true),
+		(None, Some(-1), true),
+		(None, Some(0), true),
+		(None, Some(-5), true),
 	] {
 		let top = top
 			.map(|v| format!("    pids_limit: {v}\n"))
