@@ -171,7 +171,7 @@ pub(super) fn merge_sysctls(base: Sysctls, over: Sysctls) -> Sysctls {
 /// blocks merged here have no list that compose concatenates). A null in the
 /// override is "not set". If the merged value cannot be typed again the
 /// override is used as it is, which is what a plain replacement did before.
-pub(super) fn merge_block<T>(
+pub(in crate::parsing::compose) fn merge_block<T>(
 	base: Option<T>,
 	over: Option<T>,
 	short_form_key: Option<&str>,

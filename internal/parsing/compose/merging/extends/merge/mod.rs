@@ -10,6 +10,7 @@ mod collections;
 mod service;
 mod tagged;
 
+pub(in crate::parsing::compose) use collections::merge_block;
 pub(in crate::parsing::compose) use service::merge_service;
 pub(in crate::parsing::compose) use tagged::merge_service_tagged;
 
