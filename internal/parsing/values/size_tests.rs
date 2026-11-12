@@ -289,3 +289,36 @@ fn duration_secs_of_exactly_two_to_the_64_is_none() {
 		Some(18_446_744_073_709_549_568)
 	);
 }
+
+/// `docker compose config` reads the `iB` spellings as the same binary
+/// multiples as `k`, `m`, `g`, `t` and `p`, in any case, fractions included.
+/// Each value below is what it printed for the same input (Compose 5.7.0).
+#[test]
+fn the_ib_suffixes_are_the_binary_multiples_docker_reads() {
+	assert_eq!(parse_memory("100KiB"), Some(102_400));
+	assert_eq!(parse_memory("512MiB"), Some(536_870_912));
+	assert_eq!(parse_memory("1gib"), Some(1_073_741_824));
+	assert_eq!(parse_memory("1.5gib"), Some(1_610_612_736));
+	assert_eq!(parse_memory("1TiB"), Some(1_099_511_627_776));
+	assert_eq!(parse_memory("1pib"), Some(1_125_899_906_842_624));
+	assert_eq!(parse_memory("1pb"), Some(1_125_899_906_842_624));
+}
+
+#[test]
+fn the_ib_suffixes_agree_with_the_short_and_b_forms() {
+	for (long, short) in [
+		("1kib", "1kb"),
+		("3mib", "3m"),
+		("2gib", "2g"),
+		("1tib", "1t"),
+	] {
+		assert_eq!(parse_memory(long), parse_memory(short), "{long} vs {short}");
+	}
+}
+
+#[test]
+fn a_suffix_that_is_none_of_these_is_still_refused() {
+	for bad in ["1ib", "1mi", "1gigabyte", "1kibb", "1 mi b"] {
+		assert_eq!(parse_memory(bad), None, "{bad}");
+	}
+}
