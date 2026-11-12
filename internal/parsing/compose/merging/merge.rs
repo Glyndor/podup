@@ -41,6 +41,8 @@ pub(in super::super) fn deserialize_with_merge_interp(
 ) -> Result<ComposeFile> {
 	let mut value = interpolated_value(content, vars)?;
 	let refresh_clears = super::super::tags::refresh_clears(&value);
+	let command_clears = super::super::tags::key_clears(&value, "command");
+	let entrypoint_clears = super::super::tags::key_clears(&value, "entrypoint");
 	// Drop the merge tags before typing: whether serde tolerates one depends on
 	// the field's Rust type, so leaving them in makes `!reset` fail the file on
 	// `dns` and do nothing on `ports`. What each tag means is decided by the
@@ -72,6 +74,23 @@ pub(in super::super) fn deserialize_with_merge_interp(
 			.and_then(|keys| keys.get("umask"))
 			.copied();
 		job.service.merge_tags = super::super::tags::service_tags(&directives, name);
+	}
+	for (names, entrypoint) in [(command_clears, false), (entrypoint_clears, true)] {
+		for name in names {
+			let service = match file.services.get_mut(&name) {
+				Some(s) => Some(s),
+				None => file.jobs.get_mut(&name).map(|j| &mut j.service),
+			};
+			if let Some(service) = service {
+				if entrypoint {
+					service.entrypoint = None;
+					service.entrypoint_reset = true;
+				} else {
+					service.command = None;
+					service.command_reset = true;
+				}
+			}
+		}
 	}
 	for name in refresh_clears {
 		if let Some(service) = file.services.get_mut(&name) {

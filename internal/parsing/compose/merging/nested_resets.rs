@@ -125,5 +125,7 @@ pub(crate) fn apply_nested_resets(service: &mut Service, paths: &[Vec<String>]) 
 	rebuilt.umask_merge_tag = service.umask_merge_tag;
 	rebuilt.merge_tags = std::mem::take(&mut service.merge_tags);
 	rebuilt.pull_refresh_after_reset = service.pull_refresh_after_reset;
+	rebuilt.command_reset = service.command_reset;
+	rebuilt.entrypoint_reset = service.entrypoint_reset;
 	*service = rebuilt;
 }
