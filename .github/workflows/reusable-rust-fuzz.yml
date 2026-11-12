@@ -118,8 +118,14 @@ jobs:
           # Committed seeds (fuzz/seeds/<target>/) join the generated corpus, so
           # each smoke run starts from the hostile shapes already known instead
           # of rediscovering them inside the time box.
+          # libFuzzer refuses a corpus directory that does not exist, and the first
+          # one is where it writes what it finds. A scheduled run starts on a clean
+          # runner with no corpus restored, so the directory is created here; without
+          # it every target that has seeds failed with "The required directory ...
+          # does not exist" (the runs of 2026-11-09 and 2026-11-12).
           corpus=()
           if [ -d "fuzz/seeds/$TARGET" ]; then
+            mkdir -p "fuzz/corpus/$TARGET"
             corpus=("fuzz/corpus/$TARGET" "fuzz/seeds/$TARGET")
           fi
           cargo fuzz run "$TARGET" "${corpus[@]}" -- "${libfuzzer_args[@]}"
