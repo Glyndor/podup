@@ -93,7 +93,7 @@ Stop and remove containers, networks, and (with `-v`) volumes. With service name
 |---|---|---|
 | `-v, --volumes` | Also remove named volumes declared in the compose file. | off |
 | `--remove-orphans` | Remove containers for services no longer in the file. | off |
-| `--rmi <SCOPE>` | Also remove service images: `all`, or `local` (only those built from a `build:` section). | keep images |
+| `--rmi <SCOPE>` | Also remove service images: `all`, or `local` (only the images built from a `build:` section that set no `image:` tag of their own). | keep images |
 | `-t, --timeout <SECS>` | Seconds to wait for containers to stop before killing them. | Podman default |
 
 ### `create`
