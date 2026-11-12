@@ -53,9 +53,48 @@ pub(super) fn merge_devices(base: Vec<String>, over: Vec<String>) -> Vec<String>
 	out
 }
 
+/// Merge the per-network config of one attachment declared in two files.
+///
+/// Docker appends the lists (`aliases`, `link_local_ips`) without repeats, lets
+/// the override win for each scalar it sets, and keeps the base's for the rest.
+fn merge_network_config(
+	base: crate::compose::types::ServiceNetworkConfig,
+	over: crate::compose::types::ServiceNetworkConfig,
+) -> crate::compose::types::ServiceNetworkConfig {
+	use crate::compose::types::ServiceNetworkConfig as Config;
+
+	fn append(mut base: Vec<String>, over: Vec<String>) -> Vec<String> {
+		for item in over {
+			if !base.contains(&item) {
+				base.push(item);
+			}
+		}
+		base
+	}
+
+	let aliases = match (base.aliases, over.aliases) {
+		(Some(b), Some(o)) => Some(append(b, o)),
+		(b, o) => o.or(b),
+	};
+	let mut driver_opts = base.driver_opts;
+	driver_opts.extend(over.driver_opts);
+	Config {
+		aliases,
+		ipv4_address: over.ipv4_address.or(base.ipv4_address),
+		ipv6_address: over.ipv6_address.or(base.ipv6_address),
+		link_local_ips: append(base.link_local_ips, over.link_local_ips),
+		priority: over.priority.or(base.priority),
+		mac_address: over.mac_address.or(base.mac_address),
+		driver_opts,
+		gw_priority: over.gw_priority.or(base.gw_priority),
+		interface_name: over.interface_name.or(base.interface_name),
+	}
+}
+
 /// Union two `networks:` declarations, keeping the base's attachments and adding
-/// the override's. For a network both declare, the override's per-network config
-/// wins; a bare-list entry contributes no config, so it never erases one.
+/// the override's. For a network both declare, the per-network config merges
+/// field by field (see [`merge_network_config`]); a bare-list entry contributes
+/// no config, so it never erases one.
 ///
 /// The short (list) and long (map) forms mix freely across `-f` and `extends`,
 /// so both collapse to the map form whenever either side carries config.
@@ -78,9 +117,14 @@ pub(super) fn merge_networks(base: ServiceNetworks, over: ServiceNetworks) -> Se
 		let cfg = over.config_for(&name).cloned();
 		match out.entry(name) {
 			indexmap::map::Entry::Occupied(mut e) => {
-				// A bare name in the override must not wipe config the base set.
-				if cfg.is_some() {
-					e.insert(cfg);
+				// A bare name in the override must not wipe config the base set,
+				// and a config in the override adds to the base's field by field.
+				if let Some(over_cfg) = cfg {
+					let merged = match e.get().clone() {
+						Some(base_cfg) => merge_network_config(base_cfg, over_cfg),
+						None => over_cfg,
+					};
+					e.insert(Some(merged));
 				}
 			}
 			indexmap::map::Entry::Vacant(e) => {
