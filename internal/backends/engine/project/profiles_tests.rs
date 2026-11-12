@@ -50,6 +50,25 @@ fn service_profile_matches_active() {
 }
 
 #[test]
+fn service_with_an_empty_profile_name_runs_only_while_no_profile_is_active() {
+	let svc = Service {
+		profiles: vec![String::new()],
+		..Default::default()
+	};
+	assert!(service_in_profiles(&svc, &HashSet::new()));
+	let other: HashSet<String> = ["prod".to_string()].into();
+	assert!(!service_in_profiles(&svc, &other));
+	let mixed = Service {
+		profiles: vec![String::new(), "debug".to_string()],
+		..Default::default()
+	};
+	let debug: HashSet<String> = ["debug".to_string()].into();
+	assert!(service_in_profiles(&mixed, &HashSet::new()));
+	assert!(service_in_profiles(&mixed, &debug));
+	assert!(!service_in_profiles(&mixed, &other));
+}
+
+#[test]
 fn service_profile_does_not_match() {
 	let svc = Service {
 		profiles: vec!["debug".to_string()],

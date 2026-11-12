@@ -50,7 +50,7 @@ async fn engine_up_renew_anon_volumes_recreates_cleanly() {
 	};
 	let proj = proj("renew");
 	// `with_renew_anon_volumes` makes the recreate delete drop old anon volumes
-	// (v=true); a forced re-up must still succeed.
+	// (volumes=true); a forced re-up must still succeed.
 	let engine = Engine::new(client, proj.clone()).with_renew_anon_volumes(true);
 	let file = parse_str(
 		"services:\n  web:\n    image: alpine:latest\n    command: [\"sleep\", \"infinity\"]\n",
@@ -58,7 +58,7 @@ async fn engine_up_renew_anon_volumes_recreates_cleanly() {
 	.unwrap();
 
 	engine.up(&file).await.unwrap();
-	// Force recreate: the v=true delete path runs for the existing container.
+	// Force recreate: the volumes=true delete path runs for the existing container.
 	let second = engine
 		.up_with_options(&file, false, &[], &[], false, true, false, false)
 		.await;

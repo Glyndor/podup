@@ -155,14 +155,21 @@ impl Engine {
 		// `x-podman-pod`: remove the pod (and its infra container) after the
 		// project's containers are gone and before the network sweep. `down`
 		// without the extension is unchanged.
-		if whole_project
-			&& file
+		if whole_project {
+			if file
 				.podman_pod()
 				.map_err(crate::error::ComposeError::Unsupported)?
-		{
-			if let Err(e) = self.remove_pod().await {
-				// Carry on: the networks and volumes below are still this
-				// project's to remove, and the failure is reported at the end.
+			{
+				if let Err(e) = self.remove_pod().await {
+					// Carry on: the networks and volumes below are still this
+					// project's to remove, and the failure is reported at the end.
+					first_err.get_or_insert(e);
+				}
+			} else if let Some(e) = self.remove_project_pods_by_label().await {
+				// The file no longer declares a pod, but one `up` made from an
+				// earlier version of it may still run, and it keeps the project
+				// network in use. The sweep is by `podup.project` label, so it
+				// only touches this project's pods.
 				first_err.get_or_insert(e);
 			}
 		}
@@ -225,6 +232,13 @@ impl Engine {
 				// has to close, or the live board leaves it spinning on
 				// `Removing` forever (#1347).
 				Ok(false) => crate::ui::progress_line("Network", &network_name, "Absent"),
+				// A container outside the project still uses the network. The
+				// rest of the teardown went through, so this is a warning, not a
+				// failed `down`.
+				Err(e) if e.is_network_in_use() => {
+					tracing::warn!("network {network_name} is still in use, left in place: {e}");
+					crate::ui::progress_line("Network", &network_name, "In use");
+				}
 				Err(e) => {
 					tracing::warn!("could not remove network {network_name}: {e}");
 					// Close the row visibly: a `down` whose removal genuinely
@@ -324,8 +338,9 @@ impl Engine {
 	}
 
 	/// Remove the images used by the project's services (`down --rmi`). With
-	/// `local_only`, only images of services that build locally (a `build:`
-	/// section) are removed, matching `docker compose down --rmi local`.
+	/// `local_only`, only images of services that build locally and set no
+	/// `image:` of their own are removed, matching `docker compose down --rmi
+	/// local` ("only images that don't have a custom tag").
 	pub async fn remove_service_images(&self, file: &ComposeFile, local_only: bool) -> Result<()> {
 		// `--rmi` covers the images of jobs as well as of services.
 		let with_jobs;
@@ -341,7 +356,10 @@ impl Engine {
 		let mut first_err: Option<crate::error::ComposeError> = None;
 		for (name, service) in &file.services {
 			let builds_locally = service.build.is_some();
-			if local_only && !builds_locally {
+			// `local` is the images without a custom tag: a service that builds
+			// and also sets `image:` has chosen its own tag, so it stays. Only
+			// a service that builds with no `image:` has the generated name.
+			if local_only && (!builds_locally || service.image.is_some()) {
 				continue;
 			}
 			let image = match &service.image {
@@ -379,3 +397,12 @@ mod label_tests;
 
 #[cfg(all(test, unix))]
 mod job_tests;
+
+#[cfg(all(test, unix))]
+mod network_in_use_tests;
+
+#[cfg(all(test, unix))]
+mod pod_sweep_tests;
+
+#[cfg(all(test, unix))]
+mod rmi_local_tests;

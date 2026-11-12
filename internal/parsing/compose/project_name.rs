@@ -148,11 +148,7 @@ pub(super) fn exposed_name(
 	}
 	let first = paths.first()?;
 	let vars_dir = project_dir.map_or_else(|| dir_of(first), Path::to_path_buf);
-	let vars = if env_files.is_empty() {
-		substitute::build_vars(&vars_dir)
-	} else {
-		substitute::build_vars_with_env_files_strict(&vars_dir, env_files).ok()?
-	};
+	let vars = substitute::build_vars_with_env_files_strict(&vars_dir, env_files).ok()?;
 	if vars.get(PROJECT_NAME_VAR).is_some_and(|v| !v.is_empty()) {
 		return None;
 	}

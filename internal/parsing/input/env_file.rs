@@ -53,10 +53,23 @@ pub fn load_env_file_entries_for(
 	base_dir: &Path,
 	service_env: &HashMap<String, Option<String>>,
 ) -> Result<HashMap<String, String>> {
+	let project_vars = crate::substitute::build_vars_with_env_files_strict(base_dir, &[])?;
+	load_env_file_entries_with(entries, base_dir, service_env, &project_vars)
+}
+
+/// As [`load_env_file_entries_for`], with the project environment already
+/// built. Building it reads and parses the project's `.env`, so a caller that
+/// loads the files of many services builds it once and passes it to each.
+fn load_env_file_entries_with(
+	entries: &[EnvFileEntry],
+	base_dir: &Path,
+	service_env: &HashMap<String, Option<String>>,
+	project_vars: &HashMap<String, String>,
+) -> Result<HashMap<String, String>> {
 	let mut result: HashMap<String, String> = HashMap::new();
 	// What a value can refer to. The project environment wins over the service's
 	// `environment:`, and that over a file's own keys, as it does in Docker Compose.
-	let mut scope = crate::substitute::build_vars(base_dir);
+	let mut scope = project_vars.clone();
 	for (key, value) in service_env {
 		if let Some(value) = value {
 			scope.entry(key.clone()).or_insert_with(|| value.clone());
@@ -188,8 +201,9 @@ pub fn materialize_env_files(
 ) -> Result<()> {
 	// One interpolation budget for the env files of every service.
 	let _budget = crate::substitute::project_budget::Scope::open();
+	let project_vars = crate::substitute::build_vars_with_env_files_strict(base_dir, &[])?;
 	for service in file.services_and_jobs_mut() {
-		materialize_service_env_files(service, base_dir)?;
+		materialize_with_vars(service, base_dir, &project_vars)?;
 	}
 	Ok(())
 }
@@ -202,12 +216,26 @@ pub fn materialize_service_env_files(
 	service: &mut crate::compose::types::Service,
 	base_dir: &Path,
 ) -> Result<()> {
+	if service.env_file.to_entries().is_empty() {
+		return Ok(());
+	}
+	let project_vars = crate::substitute::build_vars_with_env_files_strict(base_dir, &[])?;
+	materialize_with_vars(service, base_dir, &project_vars)
+}
+
+/// [`materialize_service_env_files`] with the project environment built by the
+/// caller, so the project's `.env` is read once for all the services.
+fn materialize_with_vars(
+	service: &mut crate::compose::types::Service,
+	base_dir: &Path,
+	project_vars: &HashMap<String, String>,
+) -> Result<()> {
 	let entries = service.env_file.to_entries();
 	if entries.is_empty() {
 		return Ok(());
 	}
 	let mut merged = service.environment.to_map();
-	let from_files = load_env_file_entries_for(&entries, base_dir, &merged)?;
+	let from_files = load_env_file_entries_with(&entries, base_dir, &merged, project_vars)?;
 	for (k, v) in from_files {
 		merged.entry(k).or_insert(Some(v));
 	}

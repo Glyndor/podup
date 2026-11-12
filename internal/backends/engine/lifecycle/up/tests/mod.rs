@@ -24,6 +24,12 @@ mod cleanup_drain;
 #[cfg(all(test, unix))]
 mod collision;
 
+#[cfg(all(test, unix))]
+mod nothing_selected;
+
+#[cfg(all(test, unix))]
+mod pull_policy_build;
+
 #[cfg(test)]
 mod keep_id_create;
 
@@ -53,3 +59,6 @@ mod up_replica;
 
 #[cfg(test)]
 mod up_validation;
+
+#[cfg(all(test, unix))]
+mod up_scale_down;

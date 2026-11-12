@@ -6,6 +6,8 @@
 //! [`super::extract`].
 
 pub(in crate::backends::engine::host_files::copy) mod archive;
+mod budget;
 pub(in crate::backends::engine) mod common;
+mod follow;
 mod linked_dir;
 pub(in crate::backends::engine) mod transport;

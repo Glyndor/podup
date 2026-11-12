@@ -149,6 +149,14 @@ impl Engine {
 			// the same set `config` reports, so `up` never leaves a started
 			// service with an unsatisfied (never-created) dependency.
 			let enabled = enabled_profile_services(file, &active, target_services);
+			// Nothing to start is a usage error, as in docker compose's
+			// `no service selected`, rather than a silent success.
+			if enabled.is_empty() && file.jobs.is_empty() {
+				return Err(crate::error::ComposeError::Invalid(
+					"no service selected: the compose file has no services, or every one is behind an inactive profile"
+						.to_string(),
+				));
+			}
 
 			// Validate every `--scale SERVICE=N` override against the file before
 			// doing any work: an override naming a service the compose file does
@@ -224,10 +232,18 @@ impl Engine {
 			// follow. The loop runs below, inside this same `up` board, so the
 			// build's `Building`/`Built` verbs land on the same rows the rest
 			// of `up` is drawing on.
-			let build_names = if build && !self.no_build {
+			let build_names = if !self.no_build {
+				// `--build` rebuilds every service with a `build:` block;
+				// `pull_policy: build` makes the service its own rebuild flag.
 				crate::engine::build::order_context_builds(
 					file,
-					&up_build_targets(file, &enabled, &target_set),
+					&up_build_targets(
+						file,
+						&enabled,
+						&target_set,
+						build,
+						self.pull_policy_override.is_none(),
+					),
 				)?
 			} else {
 				Vec::new()
@@ -319,31 +335,33 @@ impl Engine {
 			)
 			.await?;
 
-			// Reconcile surplus replicas for every service carrying an active
-			// `--scale` override. Replica naming is unsuffixed for one replica and
-			// suffixed (`svc-N`) for many, so scaling a service *down* on the `up`
-			// path would otherwise leave the old higher-numbered containers running
-			// (e.g. `up --scale web=3` then `up --scale web=1`). The overrides are a
-			// last-wins map, so create (above) and this prune always agree on one
-			// target count. Keyed off live container names inside
-			// `remove_surplus_replicas`, this is the same reconciliation the `scale`
-			// subcommand relies on.
-			for (svc, &target) in &self.scale_overrides {
-				let Some(service) = file.services.get(svc) else {
+			// Reconcile surplus replicas for every enabled service, against the
+			// count `resolve_replicas` gives it: a `--scale` override, else the
+			// file's `scale:`/`deploy.replicas`, else one. Replica naming is
+			// suffixed (`svc-N`), so lowering the count, on the command line or
+			// in the file, would otherwise leave the higher-numbered containers
+			// running (e.g. `up --scale web=3` then `up --scale web=1`, or
+			// `scale: 3` edited to `scale: 1`). Create (above) and this prune
+			// read the same count, so they always agree on one target. Keyed off
+			// live container names inside `remove_surplus_replicas`, this is the
+			// same reconciliation the `scale` subcommand relies on.
+			for (svc, service) in &file.services {
+				if !enabled.contains(svc) {
 					continue;
-				};
+				}
 				if let Some(set) = &target_set {
 					if !set.contains(svc) {
 						continue;
 					}
 				}
+				let target = self.resolve_replicas(svc, service) as u32;
 				// Pass the bulk snapshot fetched at the top of `run_up`. The
 				// filtered list is rebuilt from `existing` here rather than
 				// issuing a per-service `/containers/json` against the
 				// already-fetched data set (#1747): the bulk list is the same
 				// shape, has the names we want, and avoiding one round trip per
-				// `--scale` override turns a 10-service reconciliation into one
-				// rather than 11 GETs.
+				// service turns a 10-service reconciliation into one rather
+				// than 11 GETs.
 				self.remove_surplus_replicas(svc, service, target, &existing)
 					.await?;
 			}
@@ -380,11 +398,20 @@ fn up_build_targets(
 	file: &crate::compose::types::ComposeFile,
 	enabled: &std::collections::HashSet<String>,
 	target_set: &Option<std::collections::HashSet<String>>,
+	build_all: bool,
+	policy_build_applies: bool,
 ) -> Vec<String> {
 	file.services
 		.iter()
 		.filter(|(name, service)| {
 			if service.build.is_none() {
+				return false;
+			}
+			// Without `--build`, only a service whose `pull_policy` is `build`
+			// is rebuilt; an explicit `--pull` replaces that policy.
+			if !build_all
+				&& !(policy_build_applies && service.pull_policy.as_deref() == Some("build"))
+			{
 				return false;
 			}
 			if !enabled.contains(*name) {

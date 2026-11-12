@@ -46,6 +46,23 @@ pub(super) enum Modifier {
 	ErrorIfUnset(String),
 }
 
+impl Modifier {
+	/// The bytes of the text between the operator and the closing brace: the
+	/// default, the alternative or the error message. It was copied out of the
+	/// input to be parsed, and a nested reference copies its own text again.
+	pub(super) fn text_len(&self) -> usize {
+		match self {
+			Modifier::None => 0,
+			Modifier::DefaultIfUnsetOrEmpty(t)
+			| Modifier::DefaultIfUnset(t)
+			| Modifier::AltIfSetAndNonEmpty(t)
+			| Modifier::AltIfSet(t)
+			| Modifier::ErrorIfUnsetOrEmpty(t)
+			| Modifier::ErrorIfUnset(t) => t.len(),
+		}
+	}
+}
+
 /// Parse the content inside `${…}`.  The opening `{` has already been consumed.
 ///
 /// The variable name is collected with [`is_var_char`] (matching the unbraced

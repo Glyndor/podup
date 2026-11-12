@@ -182,6 +182,11 @@ pub(crate) fn substitute_depth(
 			Some('{') => {
 				chars.next();
 				let (var, modifier) = parse_braced_var(&mut chars)?;
+				// The text of the modifier was copied to be parsed, and each level
+				// of nesting copies what is inside it again: 64 levels around a
+				// 4 MiB text held 545 MiB at once. Charging it to the document
+				// budget stops the nesting after a few levels, not after 64.
+				charge_document_budget(spent, modifier.text_len(), &var)?;
 				let value = resolve_modifier(var.clone(), modifier, vars, depth, spent, warned)?;
 				check_output_cap(&out, &value, &var)?;
 				check_document_budget(spent, &value, &var)?;
@@ -229,7 +234,12 @@ fn warn_unset(var: &str, warned: &mut HashSet<String>) {
 /// refusal fires before the offending allocation, with a message naming the
 /// variable and the size it had reached.
 fn check_document_budget(spent: &mut usize, value: &str, var: &str) -> Result<()> {
-	*spent = spent.saturating_add(value.len());
+	charge_document_budget(spent, value.len(), var)
+}
+
+/// [`check_document_budget`] for `len` bytes that are not (yet) a value.
+fn charge_document_budget(spent: &mut usize, len: usize, var: &str) -> Result<()> {
+	*spent = spent.saturating_add(len);
 	if *spent > MAX_INTERP_DOCUMENT_BYTES {
 		return Err(ComposeError::InvalidSubstitution(format!(
 			"interpolating '{var}' pushes this document past {MAX_INTERP_DOCUMENT_BYTES} \
@@ -265,7 +275,7 @@ fn check_output_cap(out: &str, value: &str, var: &str) -> Result<()> {
 /// - Process environment variables take precedence: if a key already exists in
 ///   the current process env it will *not* be overridden by the `.env` file.
 pub fn load_dotenv(dir: &Path) -> HashMap<String, String> {
-	let mut map = dotenv_layer(dir, &[]).unwrap_or_default();
+	let mut map = file_values::default_layer(dir, false).unwrap_or_default();
 	// Process environment variables take precedence over the `.env` file.
 	map.retain(|key, _| std::env::var(key).is_err());
 	map
@@ -294,8 +304,10 @@ pub fn build_vars(dir: &Path) -> HashMap<String, String> {
 ///
 /// Compose v2 semantics: when one or more `--env-file` are given they *replace*
 /// the default `.env` (which is therefore not loaded), and among several files
-/// the **last** one wins. With no explicit files this is just [`build_vars`]
-/// (process env + `.env`). Process env always takes precedence over file values.
+/// the **last** one wins. With no explicit files the default `.env` is read, and
+/// one with an unterminated quoted value is an error that names the file and the
+/// key (a missing or unreadable `.env` is not). Process env always takes
+/// precedence over file values.
 ///
 /// An explicitly-passed `--env-file` that is missing, unreadable, or malformed
 /// is a hard error (matching docker compose, which fails on a not-found env
@@ -324,11 +336,8 @@ fn build_vars_with_env_files_inner(
 	dir: &Path,
 	extra: &[String],
 ) -> Result<HashMap<String, String>> {
-	if extra.is_empty() {
-		return Ok(build_vars(dir));
-	}
-
 	// Explicit `--env-file`s replace `.env`; a later file overrides an earlier one.
+	// With none, the default `.env` is read and a malformed one is an error.
 	let file_vars = dotenv_layer(dir, extra)?;
 
 	// Process env wins over every file value.

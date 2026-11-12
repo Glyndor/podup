@@ -198,15 +198,24 @@ jobs:
           # ignores an index it could not fetch, so the useful behaviour is to give
           # up on a connection that is silent for 20 s instead of waiting out the
           # whole `timeout`. The output is no longer silenced, so the next failure
-          # names the host. From the second attempt the Ubuntu archive mirror is the
-          # canonical one instead of the Azure copy.
+          # names the host. The runner image names its mirror in
+          # /etc/apt/apt-mirrors.txt (the sources point at it with mirror+file:), so
+          # the fallback rewrites that file as well as the sources: rewriting only the
+          # sources left every attempt on the Azure host. On 2026-11-11 plain HTTP to
+          # both the Azure copy and archive.ubuntu.com timed out on every leg while
+          # HTTPS to packages.microsoft.com answered, so the second attempt uses the
+          # Ubuntu archive over HTTPS and the third the kernel.org copy over HTTPS.
           export DEBIAN_FRONTEND=noninteractive
           apt_opts=(-o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 -o Acquire::ForceIPv4=true)
           echo "apt sources:"
           grep -rhoE 'https?://[^/ ]+' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null | LC_ALL=C sort -u
           for attempt in 1 2 3; do
             if [ "$attempt" -gt 1 ]; then
-              sudo sed -i 's#azure.archive.ubuntu.com#archive.ubuntu.com#g' /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+              mirror="https://archive.ubuntu.com/ubuntu/"
+              [ "$attempt" -gt 2 ] && mirror="https://mirrors.edge.kernel.org/ubuntu/"
+              echo "apt: attempt $attempt uses $mirror"
+              sudo sed -i -E "s#https?://(azure\.)?archive\.ubuntu\.com/ubuntu/?#$mirror#g" /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources 2>/dev/null || true
+              printf '%s\tpriority:1\n' "$mirror" | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
             fi
             if sudo timeout 90 apt-get -q "${apt_opts[@]}" update && sudo timeout 210 apt-get -q "${apt_opts[@]}" install -y qemu-system-x86 qemu-utils cloud-image-utils; then
               exit 0

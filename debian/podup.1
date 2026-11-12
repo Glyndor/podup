@@ -134,7 +134,8 @@ Stop running containers without removing them. \fB\-t\fR/\fB\-\-timeout\fR
 .B build
 Build or rebuild service images. Options: \fB\-\-no\-cache\fR, \fB\-\-pull\fR,
 \fB\-\-build\-arg\fR \fIKEY=VAL\fR (repeatable), \fB\-\-progress\fR \fIstyle\fR
-(validated, inert), \fB\-\-push\fR, \fB\-q\fR/\fB\-\-quiet\fR.
+(validated, inert), \fB\-\-push\fR, \fB\-q\fR/\fB\-\-quiet\fR,
+\fB\-\-with\-dependencies\fR (also build what the named services depend on).
 .TP
 .B push
 Push each service's image to its registry (imageless services are skipped).

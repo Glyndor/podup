@@ -133,11 +133,13 @@ pub(crate) struct Cli {
 	// Not `global`: its `-p` short would collide with subcommand `-p` flags
 	// (e.g. `run --publish`). Must precede the subcommand. `--project-name` is
 	// docker compose's long form; scripts written for it must work verbatim.
+	// A repeated single-valued option keeps its last value, as docker compose does.
 	#[arg(
 		short,
 		long,
 		visible_alias = "project-name",
-		env = "COMPOSE_PROJECT_NAME"
+		env = "COMPOSE_PROJECT_NAME",
+		overrides_with = "project"
 	)]
 	pub(crate) project: Option<String>,
 
@@ -169,7 +171,7 @@ pub(crate) struct Cli {
 
 	/// Base directory for relative paths (env_file, build context, bind mounts,
 	/// config/secret sources). Defaults to the compose file's directory.
-	#[arg(long, global = true)]
+	#[arg(long, global = true, overrides_with = "project_directory")]
 	pub(crate) project_directory: Option<PathBuf>,
 
 	/// Extra env file(s) for interpolation (repeatable; later `--env-file` wins, and these replace the default `.env`; process env still wins).
@@ -179,7 +181,7 @@ pub(crate) struct Cli {
 
 	/// When to colourise output: auto (TTY only), always, or never. With `auto`,
 	/// `NO_COLOR` also forces plain output; `--ansi always` overrides `NO_COLOR`.
-	#[arg(long, value_enum, default_value_t = AnsiMode::Auto, global = true)]
+	#[arg(long, value_enum, default_value_t = AnsiMode::Auto, global = true, overrides_with = "ansi")]
 	pub(crate) ansi: AnsiMode,
 
 	/// Suppress the host-binding / privilege-escalation warnings the engine

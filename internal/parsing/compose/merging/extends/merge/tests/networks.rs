@@ -88,3 +88,28 @@ networks:
 		"serialized form lost the network names: {rendered}"
 	);
 }
+
+/// Two files configure the same attachment: the aliases add up and each scalar
+/// the override sets wins, while the ones it leaves out stay (`docker compose
+/// config` 5.7.0 does the same).
+#[test]
+fn per_network_config_merges_field_by_field() {
+	let dir = tempfile::tempdir().unwrap();
+	let a = dir.path().join("a.yaml");
+	let b = dir.path().join("b.yaml");
+	std::fs::write(
+		&a,
+		"services:\n  s:\n    image: x\n    networks:\n      n: {ipv4_address: 10.5.0.5, aliases: [a1, same], priority: 1}\nnetworks:\n  n:\n",
+	)
+	.unwrap();
+	std::fs::write(
+		&b,
+		"services:\n  s:\n    networks:\n      n: {aliases: [same, a2], priority: 9}\n",
+	)
+	.unwrap();
+	let file = crate::parsing::compose::parse_files_with_env_files(&[a, b], &[]).unwrap();
+	let cfg = file.services["s"].networks.config_for("n").unwrap().clone();
+	assert_eq!(cfg.aliases.unwrap(), ["a1", "same", "a2"]);
+	assert_eq!(cfg.ipv4_address.as_deref(), Some("10.5.0.5"));
+	assert_eq!(cfg.priority, Some(9));
+}

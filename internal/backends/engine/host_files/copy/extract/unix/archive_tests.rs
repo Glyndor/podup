@@ -5,6 +5,8 @@ use std::os::unix::fs::{symlink, PermissionsExt};
 use super::super::hostile_support::{archive, dir, file};
 use super::{extract, single_file, Directory};
 
+#[path = "archive_tests/limits.rs"]
+mod limits;
 #[path = "archive_tests/links.rs"]
 mod links;
 #[path = "archive_tests/modes.rs"]

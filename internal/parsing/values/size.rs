@@ -3,8 +3,10 @@
 /// Parse a memory string like `128m`, `1G`, `1024k`, `512b`, or a bare
 /// number-of-bytes.
 ///
-/// Recognised suffixes (case-insensitive): `b`, `k`/`kb`, `m`/`mb`,
-/// `g`/`gb`, `t`/`tb`.  Returns `None` for unparseable values, and `Some(-1)`
+/// Recognised suffixes (case-insensitive): `b`, `k`/`kb`/`kib`, `m`/`mb`/`mib`,
+/// `g`/`gb`/`gib`, `t`/`tb`/`tib`, `p`/`pb`/`pib`. All are binary multiples,
+/// as `docker compose config` reads them: `512MiB` and `512m` are the same
+/// 536870912 bytes. Returns `None` for unparseable values, and `Some(-1)`
 /// for the special string `"-1"` (commonly used to disable swap limits).
 pub fn parse_memory(s: &str) -> Option<i64> {
 	let trimmed = s.trim();
@@ -31,10 +33,11 @@ pub fn parse_memory(s: &str) -> Option<i64> {
 
 	let multiplier: u64 = match suffix.as_str() {
 		"" | "b" => 1,
-		"k" | "kb" => 1024,
-		"m" | "mb" => 1024 * 1024,
-		"g" | "gb" => 1024 * 1024 * 1024,
-		"t" | "tb" => 1024_u64 * 1024 * 1024 * 1024,
+		"k" | "kb" | "kib" => 1024,
+		"m" | "mb" | "mib" => 1024 * 1024,
+		"g" | "gb" | "gib" => 1024 * 1024 * 1024,
+		"t" | "tb" | "tib" => 1024_u64 * 1024 * 1024 * 1024,
+		"p" | "pb" | "pib" => 1024_u64 * 1024 * 1024 * 1024 * 1024,
 		_ => return None,
 	};
 

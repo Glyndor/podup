@@ -57,7 +57,7 @@ The following Compose fields are translated onto Podman's libpod API. Fields out
 | Logging | `logging` (driver + options) |
 | Compose features | `extends`, `include`, YAML anchors, x-extensions, `develop.watch` |
 
-A memory amount that cannot be used (`mem_limit`, `memswap_limit`, `mem_reservation`, `shm_size`, `deploy.resources.limits.memory`, `deploy.resources.reservations.memory`) is an error that names the service and the key, for example `service 'web': mem_limit "1e100" is not a valid memory amount`. Docker Compose drops such a value and runs the container without the limit; podup refuses to start it. An empty value (`mem_limit: ${MEM:-}` with `MEM` unset) means no limit and is not an error. Valid amounts are a byte count or a number with `b`, `k`, `m`, `g` or `t` (optionally followed by `b`), and `-1` where the engine takes it.
+A memory amount that cannot be used (`mem_limit`, `memswap_limit`, `mem_reservation`, `shm_size`, `deploy.resources.limits.memory`, `deploy.resources.reservations.memory`) is an error that names the service and the key, for example `service 'web': mem_limit "1e100" is not a valid memory amount`. Docker Compose drops such a value and runs the container without the limit; podup refuses to start it. An empty value (`mem_limit: ${MEM:-}` with `MEM` unset) means no limit and is not an error. Valid amounts are a byte count or a number with `b`, `k`, `m`, `g`, `t` or `p` (optionally followed by `b`, or by `ib` as in `512MiB`; any case, all binary multiples, as Docker Compose reads them), and `-1` where the engine takes it.
 
 An `env_file` entry is read as dotenv by default. Unquoted and double-quoted values are interpolated, looking each name up in the project environment first, then in the service's `environment:`, then in the keys set by the env files before it and by the file itself; a single-quoted value stays literal. `format: raw` reads the file line by line with every value kept as written, quotes included, and none interpolated.
 
@@ -117,6 +117,8 @@ services:
 ```
 
 `!reset`, `!override null` and plain null clear an inherited `pull_refresh_after` through `extends` and multiple `-f` files. Services omitting the field retain their serialized configuration. An explicit `pull_refresh_after: null` may change the configuration hash once on upgrade.
+
+With several `-f` files the merge follows `docker compose config`. A volume, network, secret or config declared in more than one file merges key by key, so a second file that only adds a label keeps the first file's `driver`; a list the second file sets, such as `ipam.config`, replaces the first file's. Inside a service, `command: null`, `entrypoint: null` or `!reset` clears the inherited value, and an absent key keeps it. The per-network config of a service (`aliases`, `ipv4_address`, `priority`) merges field by field, with the aliases appended. `build.cache_from`, `build.tags`, `build.extra_hosts` and `deploy.resources.reservations.devices` append the second file's entries without repeats, while a `healthcheck.test` list is still replaced. A different `logging.driver` drops the previous driver's `options`; the same driver merges them. The ports `8080:80` and `8080:80/tcp`, and the mounts `/data` and `/data/`, each count as one entry.
 
 `!reset null` on a top-level entry of `services`, `networks`, `volumes`, `secrets`, `configs` or `models` removes that entry from the files merged before it, as it does for a key inside a service. `!reset` on one entry or sub-key inside a service, such as `depends_on: {db: !reset {}}`, `labels: {x: !reset null}`, `networks: {n1: !reset null}`, `healthcheck: {interval: !reset null}` or `deploy: {resources: !reset {}}`, removes just that part and keeps the rest. `config` prints every declared volume with the name `up` will create, so its output declares each volume a service mounts and reads back as the same project.
 
@@ -307,6 +309,33 @@ services:
       default:
         mac_address: "02:42:ac:11:00:02"
 ```
+
+## Refused, and docker compose accepts
+
+These were compared against `docker compose` 5.7.0. In each one podup stops, or acts differently, where docker compose goes on.
+
+### An external network that also sets `driver`, `ipam` or other creation attributes
+
+```yaml
+networks:
+  shared:
+    external: true
+    driver: bridge
+```
+
+docker compose accepts this file. podup refuses it, naming the network and the attributes: an external network is used as it is, and podup does not apply creation attributes to a network it did not create. Remove the attributes, or drop `external: true` so that podup creates the network.
+
+### More than 64 levels of nested defaults
+
+`${A:-${A:-...}}` nested deeper than 64 levels is refused with "interpolation nesting too deep". docker compose resolves 65 levels without complaint. A file that nests defaults that deep is rare, and the cap keeps the memory of a hostile file bounded.
+
+### `--profile a,b` is two profiles
+
+podup reads a comma in `--profile` (and in `COMPOSE_PROFILES`) as a separator, as its help says. docker compose reads `--profile a,b` as one profile named `a,b`. Pass one `--profile` per profile to get the same result with both.
+
+### The exit code of a usage error
+
+A command line that does not parse (an unknown option, a missing argument) exits with 2. docker compose exits with 1. A script that tests for exactly 1 has to accept 2. Running `podup` with no subcommand exits with 2 too; docker compose exits with 0.
 
 ## Accepted, and podup is more permissive
 

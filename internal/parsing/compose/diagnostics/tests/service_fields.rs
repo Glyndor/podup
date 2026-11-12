@@ -146,3 +146,24 @@ fn warns_on_top_level_models_not_honored() {
 		"got: {msgs:?}"
 	);
 }
+
+#[test]
+fn warns_that_healthcheck_start_interval_is_not_honored() {
+	let msgs = diagnostics_for(
+		"services:\n  web:\n    image: nginx\n    healthcheck:\n      test: [\"CMD\", \"true\"]\n      start_interval: 1s\n",
+	);
+	assert!(
+		msgs.iter().any(|m| m.contains("service 'web'")
+			&& m.contains("healthcheck.start_interval")
+			&& m.contains("not honored")),
+		"got: {msgs:?}"
+	);
+}
+
+#[test]
+fn a_healthcheck_without_start_interval_says_nothing() {
+	let msgs = diagnostics_for(
+		"services:\n  web:\n    image: nginx\n    healthcheck:\n      test: [\"CMD\", \"true\"]\n      start_period: 5s\n",
+	);
+	assert!(msgs.is_empty(), "got: {msgs:?}");
+}

@@ -328,11 +328,7 @@ fn interpolated_yaml_text_from_content(
 	// converges to the same count as config.
 	let _silence = substitute::warnings::Guard::new(false);
 	let value = if interpolate {
-		let vars = if env_files.is_empty() {
-			substitute::build_vars(dir)
-		} else {
-			substitute::build_vars_with_env_files_strict(dir, env_files)?
-		};
+		let vars = substitute::build_vars_with_env_files_strict(dir, env_files)?;
 		merge::interpolated_value(content, Some(&vars))?
 	} else {
 		merge::interpolated_value(content, None)?
@@ -341,7 +337,7 @@ fn interpolated_yaml_text_from_content(
 }
 
 /// Synthesize the implicit `default` network, matching docker-compose: any
-/// service that declares neither `networks:` nor `network_mode` is attached to
+/// service that declares neither `networks:` (or declares it empty) nor `network_mode` is attached to
 /// a project `default` network. Without this, such services are created with no
 /// network namespace at all: they get no IP and cannot resolve each other by
 /// name, silently breaking the common no-`networks:`-block compose file.
@@ -356,7 +352,7 @@ pub(crate) fn normalize_default_network(file: &mut ComposeFile) {
 		.chain(file.jobs.values().map(|job| &job.service))
 		.any(|svc| {
 			svc.network_mode.is_none()
-				&& (matches!(svc.networks, ServiceNetworks::Empty)
+				&& (svc.networks.is_unset()
 					|| svc.networks.names().iter().any(|net| net == "default"))
 		});
 	if !needs_default {
@@ -364,7 +360,7 @@ pub(crate) fn normalize_default_network(file: &mut ComposeFile) {
 	}
 	file.networks.entry("default".to_string()).or_insert(None);
 	for svc in file.services_and_jobs_mut() {
-		if svc.network_mode.is_none() && matches!(svc.networks, ServiceNetworks::Empty) {
+		if svc.network_mode.is_none() && svc.networks.is_unset() {
 			svc.networks = ServiceNetworks::List(vec!["default".to_string()]);
 		}
 	}
@@ -384,8 +380,8 @@ fn drop_entry(target: &mut ComposeFile, section: &str, name: &str) {
 }
 
 /// Merge `other` into `target` with `other` winning (compose `-f` override
-/// semantics): services are merged field-by-field, other top-level maps replace
-/// on key conflict.
+/// semantics): services and the volumes, networks, secrets and configs they
+/// share are merged field by field.
 pub(super) fn merge_override(
 	target: &mut ComposeFile,
 	other: ComposeFile,
@@ -411,17 +407,45 @@ pub(super) fn merge_override(
 			target.services.insert(name, svc);
 		}
 	}
+	// A resource both files declare merges key by key, as docker does: the second
+	// file's `labels` add to the first file's, and a `driver` it leaves out stays.
 	for (k, v) in other.volumes {
-		target.volumes.insert(k, v);
+		match target.volumes.get_mut(&k) {
+			Some(slot) => *slot = extends::merge_block(slot.take(), v, None),
+			None => {
+				target.volumes.insert(k, v);
+			}
+		}
 	}
 	for (k, v) in other.networks {
-		target.networks.insert(k, v);
+		match target.networks.get_mut(&k) {
+			Some(slot) => *slot = extends::merge_block(slot.take(), v, None),
+			None => {
+				target.networks.insert(k, v);
+			}
+		}
 	}
 	for (k, v) in other.secrets {
-		target.secrets.insert(k, v);
+		match target.secrets.get_mut(&k) {
+			Some(slot) => {
+				let merged = extends::merge_block(Some(slot.clone()), Some(v.clone()), None);
+				*slot = merged.unwrap_or(v);
+			}
+			None => {
+				target.secrets.insert(k, v);
+			}
+		}
 	}
 	for (k, v) in other.configs {
-		target.configs.insert(k, v);
+		match target.configs.get_mut(&k) {
+			Some(slot) => {
+				let merged = extends::merge_block(Some(slot.clone()), Some(v.clone()), None);
+				*slot = merged.unwrap_or(v);
+			}
+			None => {
+				target.configs.insert(k, v);
+			}
+		}
 	}
 	for (k, v) in other.models {
 		target.models.insert(k, v);
@@ -505,11 +529,7 @@ pub(crate) fn parse_file_inner_with_stdin(
 	// on the parsed YAML scalars (see `deserialize_with_merge_interp`), not the
 	// raw text, so resolved values cannot alter the document structure.
 	if interpolate {
-		let vars = if extra_env_files.is_empty() {
-			substitute::build_vars(vars_dir)
-		} else {
-			substitute::build_vars_with_env_files_strict(vars_dir, extra_env_files)?
-		};
+		let vars = substitute::build_vars_with_env_files_strict(vars_dir, extra_env_files)?;
 		merge::deserialize_with_merge_interp(&content, Some(&vars))
 	} else {
 		merge::deserialize_with_merge(&content)

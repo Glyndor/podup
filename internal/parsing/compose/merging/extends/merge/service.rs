@@ -4,7 +4,7 @@ use crate::compose::types::{
 };
 
 use super::collections::{
-	merge_block, merge_devices, merge_networks, merge_sysctls, merge_volumes,
+	merge_block, merge_devices, merge_networks, merge_ports, merge_sysctls, merge_volumes,
 };
 
 pub(in crate::parsing::compose) fn merge_service(
@@ -154,13 +154,27 @@ pub(in crate::parsing::compose) fn merge_service(
 
 	let pull_refresh_after_reset = override_svc.pull_refresh_after_reset
 		|| (override_svc.pull_refresh_after.is_none() && base.pull_refresh_after_reset);
+	let command_reset =
+		override_svc.command_reset || (override_svc.command.is_none() && base.command_reset);
+	let entrypoint_reset = override_svc.entrypoint_reset
+		|| (override_svc.entrypoint.is_none() && base.entrypoint_reset);
 	Service {
 		image: opt(override_svc.image, base.image),
 		build: merge_block(base.build, override_svc.build, Some("context")),
 		extends: override_svc.extends.or(base.extends),
-		command: override_svc.command.or(base.command),
-		entrypoint: override_svc.entrypoint.or(base.entrypoint),
-		ports: merge_vec(base.ports, override_svc.ports),
+		command: if override_svc.command_reset {
+			None
+		} else {
+			override_svc.command.or(base.command)
+		},
+		command_reset,
+		entrypoint: if override_svc.entrypoint_reset {
+			None
+		} else {
+			override_svc.entrypoint.or(base.entrypoint)
+		},
+		entrypoint_reset,
+		ports: merge_ports(base.ports, override_svc.ports),
 		expose: merge_vec(base.expose, override_svc.expose),
 		environment: merge_envvars(base.environment, override_svc.environment),
 		env_file: merge_env_file(base.env_file, override_svc.env_file),

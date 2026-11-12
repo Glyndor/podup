@@ -32,7 +32,8 @@ pub(crate) enum Commands {
 		/// Remove containers for services not defined in the compose file.
 		#[arg(long)]
 		remove_orphans: bool,
-		/// Also remove service images: `all` or `local` (build-section services).
+		/// Also remove service images: `all`, or `local` for the images built
+		/// from a `build:` section that set no `image:` tag of their own.
 		#[arg(long, value_enum)]
 		rmi: Option<RmiScope>,
 		/// Seconds to wait for containers to stop before killing them.
@@ -167,6 +168,9 @@ pub(crate) enum Commands {
 		/// Suppress the build output.
 		#[arg(short, long)]
 		quiet: bool,
+		/// Also build the services the named ones depend on, transitively.
+		#[arg(long)]
+		with_dependencies: bool,
 		/// Build only these services.
 		services: Vec<String>,
 	},

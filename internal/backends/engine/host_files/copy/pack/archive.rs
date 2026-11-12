@@ -31,6 +31,7 @@ use std::path::Path;
 use crate::error::{ComposeError, Result};
 
 use super::super::upload::verify::{SentEntry, SentKind};
+use super::budget::LinkBudget;
 use super::common::{append_pinned, push_entry, record_one, walk, KindDispatch};
 use super::linked_dir::pack_linked_dir;
 
@@ -145,6 +146,7 @@ fn pack_following_links<W: Write>(
 	sent: &mut Vec<SentEntry>,
 ) -> Result<()> {
 	let root = std::fs::canonicalize(src).map_err(ComposeError::Io)?;
+	let mut budget = LinkBudget::default();
 	for abs in walk::walk_dir(src).map_err(ComposeError::Io)? {
 		let rel = abs.strip_prefix(src).map_err(|_| {
 			ComposeError::Build(format!(
@@ -154,6 +156,8 @@ fn pack_following_links<W: Write>(
 		})?;
 		let child_name = prefix.join(rel);
 		let is_dir = abs.symlink_metadata().map(|m| m.is_dir()).unwrap_or(false);
+		let size = std::fs::metadata(&abs).map_or(0, |m| if m.is_dir() { 0 } else { m.len() });
+		budget.spend(size)?;
 		let links_to_dir = !is_dir && std::fs::metadata(&abs).is_ok_and(|m| m.is_dir());
 		if links_to_dir {
 			// A link to a directory is read with the tree it sits in above it,
@@ -164,6 +168,7 @@ fn pack_following_links<W: Write>(
 				&child_name,
 				&abs,
 				&mut vec![root.clone()],
+				&mut budget,
 				cp_err,
 			)?;
 		} else if is_dir {

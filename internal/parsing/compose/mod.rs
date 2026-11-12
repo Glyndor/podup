@@ -36,6 +36,8 @@ use types::ComposeFile;
 pub use validate::validate_config;
 
 #[cfg(test)]
+mod command_clear_tests;
+#[cfg(test)]
 mod diagnostics_budget_tests;
 #[cfg(test)]
 mod entry_reset_tests;
@@ -43,6 +45,8 @@ mod entry_reset_tests;
 mod nested_reset_tests;
 #[cfg(test)]
 mod pull_refresh_tests;
+#[cfg(test)]
+mod toplevel_merge_tests;
 
 #[cfg(test)]
 mod pre_start_tests;
@@ -51,3 +55,6 @@ mod tag_interpolation_tests;
 #[cfg(test)]
 #[path = "mod_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+mod empty_networks_tests;
