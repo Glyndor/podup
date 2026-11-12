@@ -1,3 +1,29 @@
+podup (5.18.0) unstable; urgency=medium
+
+  * Several `-f` files merge the way `docker compose config` does. `command: null`,
+    `entrypoint: null` and `!reset` clear the inherited value; `build.cache_from`,
+    `tags`, `extra_hosts` and the device reservations of `deploy` are appended without
+    repeats; a new `logging.driver` drops the old options; the config a service sets for
+    a network merges field by field, so a static address is no longer lost; a network,
+    volume, secret or config declared in two files merges key by key; and `8080:80` and
+    `8080:80/tcp`, or a mount at `/data` and one at `/data/`, count as one entry.
+  * `down --rmi local` keeps an image the service tags with `image:`, and a `down`
+    removes the project pod even when the file no longer declares one. Lowering `scale`
+    or `replicas` removes the surplus replicas on the next `up`, and a live replica is
+    kept when only the count changes.
+  * `build` takes `--with-dependencies`, and a build argument with no value is read from
+    the project environment, `.env` included.
+  * A service with an empty `networks:` joins the default network, a secret or config
+    name may hold capital letters and dots, memory sizes accept `kib`, `mib`, `gib`,
+    `tib` and `pib`, `deploy.resources.limits.pids` accepts `-1`, and the audit flags a
+    pids limit of zero or below. A change to `label_file:` recreates the container.
+  * `.env` with an unterminated quote fails instead of being read half, `-p`,
+    `--project-directory` and `--ansi` keep their last value when repeated, `update`
+    downloads the assets from the tag it resolved, and `cp -L` is bounded in entries and
+    bytes. The CI falls back to HTTPS mirrors when the apt step cannot reach its own.
+
+ -- Glyndor <packages@glyndor.net>  Thu, 12 Nov 2026 07:45:00 -0500
+
 podup (5.17.0) unstable; urgency=medium
 
   * `up` follows the logs of the services it was asked for, like Docker Compose; a
