@@ -241,6 +241,29 @@ fn sanitize_name_escapes_cr_nul_del_and_c1_controls() {
 	));
 }
 
+/// The weekly fuzz run found `"\u{61c};"` (the Arabic letter mark) while its
+/// oracle still believed only control characters are escaped. The escaper also
+/// hides the marks that reorder text and the zero-width characters, and each of
+/// them has to come out as an escape, never as the character itself.
+#[test]
+fn sanitize_name_escapes_the_bidirectional_and_zero_width_characters() {
+	for c in [
+		'\u{61c}', '\u{200b}', '\u{200f}', '\u{202e}', '\u{2066}', '\u{feff}',
+	] {
+		let text = format!("web{c}evil");
+		let out = super::sanitize_name(&text);
+		assert!(
+			!out.contains(c),
+			"U+{:04X} survived sanitize_name: {out:?}",
+			c as u32
+		);
+		assert!(
+			matches!(out, std::borrow::Cow::Owned(_)),
+			"{text:?} was borrowed"
+		);
+	}
+}
+
 #[test]
 fn invalid_prints_without_the_unsupported_feature_label() {
 	// `Unsupported` is for compose features podup lacks and says so; what the
