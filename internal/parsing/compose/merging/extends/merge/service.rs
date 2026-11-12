@@ -4,7 +4,7 @@ use crate::compose::types::{
 };
 
 use super::collections::{
-	merge_block, merge_devices, merge_networks, merge_sysctls, merge_volumes,
+	merge_block, merge_devices, merge_networks, merge_ports, merge_sysctls, merge_volumes,
 };
 
 pub(in crate::parsing::compose) fn merge_service(
@@ -174,7 +174,7 @@ pub(in crate::parsing::compose) fn merge_service(
 			override_svc.entrypoint.or(base.entrypoint)
 		},
 		entrypoint_reset,
-		ports: merge_vec(base.ports, override_svc.ports),
+		ports: merge_ports(base.ports, override_svc.ports),
 		expose: merge_vec(base.expose, override_svc.expose),
 		environment: merge_envvars(base.environment, override_svc.environment),
 		env_file: merge_env_file(base.env_file, override_svc.env_file),
