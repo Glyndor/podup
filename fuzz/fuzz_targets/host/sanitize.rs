@@ -3,7 +3,9 @@
 //! Fuzz the two escapers that stand between external text (service names,
 //! container names, table cells) and the terminal. Neither may panic; the
 //! output must hold no control character at all, so no ESC, CR, NUL or C1
-//! (U+0080 to U+009F) survives; text that held none must come back unchanged.
+//! (U+0080 to U+009F) survives, and none of the bidirectional or zero-width
+//! characters `is_terminal_unsafe` names; text that held none of them must come
+//! back unchanged.
 
 use libfuzzer_sys::fuzz_target;
 
@@ -26,8 +28,14 @@ fuzz_target!(|data: &[u8]| {
 		);
 	}
 	assert_eq!(name, cell, "the two escapers disagree on {text:?}");
+	assert!(
+		!name.chars().any(podup::ui::is_terminal_unsafe),
+		"sanitize_name({text:?}) kept a character that reorders or hides text: {name:?}"
+	);
 
-	if text.chars().any(char::is_control) {
+	// The escapers also hide the bidirectional marks and the zero-width characters
+	// (#2428), so "needs escaping" is the predicate they use, not `is_control`.
+	if text.chars().any(podup::ui::is_terminal_unsafe) {
 		assert!(
 			!untouched,
 			"sanitize_name({text:?}) claims it borrowed the input"
