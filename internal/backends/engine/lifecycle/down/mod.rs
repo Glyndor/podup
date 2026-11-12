@@ -155,14 +155,21 @@ impl Engine {
 		// `x-podman-pod`: remove the pod (and its infra container) after the
 		// project's containers are gone and before the network sweep. `down`
 		// without the extension is unchanged.
-		if whole_project
-			&& file
+		if whole_project {
+			if file
 				.podman_pod()
 				.map_err(crate::error::ComposeError::Unsupported)?
-		{
-			if let Err(e) = self.remove_pod().await {
-				// Carry on: the networks and volumes below are still this
-				// project's to remove, and the failure is reported at the end.
+			{
+				if let Err(e) = self.remove_pod().await {
+					// Carry on: the networks and volumes below are still this
+					// project's to remove, and the failure is reported at the end.
+					first_err.get_or_insert(e);
+				}
+			} else if let Some(e) = self.remove_project_pods_by_label().await {
+				// The file no longer declares a pod, but one `up` made from an
+				// earlier version of it may still run, and it keeps the project
+				// network in use. The sweep is by `podup.project` label, so it
+				// only touches this project's pods.
 				first_err.get_or_insert(e);
 			}
 		}
@@ -393,6 +400,9 @@ mod job_tests;
 
 #[cfg(all(test, unix))]
 mod network_in_use_tests;
+
+#[cfg(all(test, unix))]
+mod pod_sweep_tests;
 
 #[cfg(all(test, unix))]
 mod rmi_local_tests;
