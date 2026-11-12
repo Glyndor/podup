@@ -4,6 +4,7 @@
 
 use crate::parse_str;
 
+mod dedupe;
 mod dependencies;
 mod directives;
 mod long_lists;

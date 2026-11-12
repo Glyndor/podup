@@ -19,15 +19,53 @@ pub(super) fn merge_volumes(
 	// every entry of the other.
 	let mut at: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
 	for (i, m) in out.iter().enumerate() {
-		at.entry(m.target().to_string()).or_insert(i);
+		at.entry(target_key(m.target())).or_insert(i);
 	}
 	for item in over {
-		match at.get(item.target()) {
+		match at.get(&target_key(item.target())) {
 			Some(&i) => out[i] = item,
 			None => {
-				at.insert(item.target().to_string(), out.len());
+				at.insert(target_key(item.target()), out.len());
 				out.push(item);
 			}
+		}
+	}
+	out
+}
+
+/// A mount target as docker compares it: `/data/` and `/data` are one path.
+fn target_key(target: &str) -> String {
+	match target.trim_end_matches('/') {
+		"" if target.starts_with('/') => "/".to_string(),
+		trimmed => trimmed.to_string(),
+	}
+}
+
+/// Merge `ports:` dropping an entry that repeats one already there. A short
+/// entry with no protocol is TCP, so `8080:80` and `8080:80/tcp` are the same
+/// mapping; a long-form entry is compared as written, as docker does.
+pub(super) fn merge_ports(
+	base: Vec<crate::compose::types::PortMapping>,
+	over: Vec<crate::compose::types::PortMapping>,
+) -> Vec<crate::compose::types::PortMapping> {
+	use crate::compose::types::PortMapping;
+
+	/// `None` when a long entry cannot be serialised to compare: it is then kept
+	/// rather than guessed equal to another.
+	fn key(port: &PortMapping) -> Option<String> {
+		match port {
+			PortMapping::Short(text) if !text.contains('/') => Some(format!("{text}/tcp")),
+			PortMapping::Short(text) => Some(text.clone()),
+			long => serde_yaml::to_string(long).ok(),
+		}
+	}
+
+	let mut seen: std::collections::HashSet<String> = base.iter().filter_map(key).collect();
+	let mut out = base;
+	for item in over {
+		let repeated = key(&item).is_some_and(|k| !seen.insert(k));
+		if !repeated {
+			out.push(item);
 		}
 	}
 	out
