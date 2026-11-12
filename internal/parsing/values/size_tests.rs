@@ -322,3 +322,17 @@ fn a_suffix_that_is_none_of_these_is_still_refused() {
 		assert_eq!(parse_memory(bad), None, "{bad}");
 	}
 }
+
+// The fuzz target found that `0s...018446744073709551615` (the exact maximum of
+// `u64`, as a bare number of seconds) came back as `u64::MAX`, which a saturating
+// cast produces too. That one value is refused; the one just under it still reads.
+#[test]
+fn the_exact_maximum_of_u64_seconds_is_refused() {
+	assert_eq!(parse_duration_secs("18446744073709551615"), None);
+	assert_eq!(parse_duration_secs("0s0s018446744073709551615"), None);
+	assert_eq!(parse_duration_secs_rounded_up("18446744073709551615"), None);
+	assert_eq!(
+		parse_duration_secs("18446744073709551614"),
+		Some(u64::MAX - 1)
+	);
+}
