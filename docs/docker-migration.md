@@ -118,6 +118,8 @@ services:
 
 `!reset`, `!override null` and plain null clear an inherited `pull_refresh_after` through `extends` and multiple `-f` files. Services omitting the field retain their serialized configuration. An explicit `pull_refresh_after: null` may change the configuration hash once on upgrade.
 
+With several `-f` files the merge follows `docker compose config`. A volume, network, secret or config declared in more than one file merges key by key, so a second file that only adds a label keeps the first file's `driver`; a list the second file sets, such as `ipam.config`, replaces the first file's. Inside a service, `command: null`, `entrypoint: null` or `!reset` clears the inherited value, and an absent key keeps it. The per-network config of a service (`aliases`, `ipv4_address`, `priority`) merges field by field, with the aliases appended.
+
 `!reset null` on a top-level entry of `services`, `networks`, `volumes`, `secrets`, `configs` or `models` removes that entry from the files merged before it, as it does for a key inside a service. `!reset` on one entry or sub-key inside a service, such as `depends_on: {db: !reset {}}`, `labels: {x: !reset null}`, `networks: {n1: !reset null}`, `healthcheck: {interval: !reset null}` or `deploy: {resources: !reset {}}`, removes just that part and keeps the rest. `config` prints every declared volume with the name `up` will create, so its output declares each volume a service mounts and reads back as the same project.
 
 ### GPU reservations are host-dependent
