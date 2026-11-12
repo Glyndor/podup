@@ -42,6 +42,8 @@ pub(in crate::parsing::compose) fn merge_service_tagged(
 fn clear_service_key(svc: &mut Service, key: &str) {
 	match key {
 		"umask" => svc.umask = None,
+		"command" => svc.command = None,
+		"entrypoint" => svc.entrypoint = None,
 		// The blocks that merge key by key: replaced or reset as a whole.
 		"build" => svc.build = None,
 		"healthcheck" => svc.healthcheck = None,

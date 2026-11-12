@@ -422,6 +422,13 @@ pub struct Service {
 	/// Raw clear intent must survive typing until all inheritance is resolved.
 	#[serde(skip)]
 	pub(crate) pull_refresh_after_reset: bool,
+	/// `command: null` (or `!reset`) in a file clears the inherited command, as in
+	/// Docker. The typed `Option` cannot tell it from an absent key.
+	#[serde(skip)]
+	pub(crate) command_reset: bool,
+	/// The same for `entrypoint:`.
+	#[serde(skip)]
+	pub(crate) entrypoint_reset: bool,
 
 	/// `deploy:` is the deployment config (replicas, resource limits/reservations,
 	/// restart policy); a fallback for top-level `scale`/`cpus`/`mem_limit`/

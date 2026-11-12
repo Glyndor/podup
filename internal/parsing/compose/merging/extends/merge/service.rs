@@ -154,12 +154,26 @@ pub(in crate::parsing::compose) fn merge_service(
 
 	let pull_refresh_after_reset = override_svc.pull_refresh_after_reset
 		|| (override_svc.pull_refresh_after.is_none() && base.pull_refresh_after_reset);
+	let command_reset =
+		override_svc.command_reset || (override_svc.command.is_none() && base.command_reset);
+	let entrypoint_reset = override_svc.entrypoint_reset
+		|| (override_svc.entrypoint.is_none() && base.entrypoint_reset);
 	Service {
 		image: opt(override_svc.image, base.image),
 		build: merge_block(base.build, override_svc.build, Some("context")),
 		extends: override_svc.extends.or(base.extends),
-		command: override_svc.command.or(base.command),
-		entrypoint: override_svc.entrypoint.or(base.entrypoint),
+		command: if override_svc.command_reset {
+			None
+		} else {
+			override_svc.command.or(base.command)
+		},
+		command_reset,
+		entrypoint: if override_svc.entrypoint_reset {
+			None
+		} else {
+			override_svc.entrypoint.or(base.entrypoint)
+		},
+		entrypoint_reset,
 		ports: merge_vec(base.ports, override_svc.ports),
 		expose: merge_vec(base.expose, override_svc.expose),
 		environment: merge_envvars(base.environment, override_svc.environment),

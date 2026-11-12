@@ -261,9 +261,17 @@ pub(crate) fn collect_from_file(path: &std::path::Path) -> Directives {
 
 /// Preserve explicit null and reset intent for the refresh extension through typing.
 pub(crate) fn refresh_clears(raw: &Value) -> Vec<String> {
+	key_clears(raw, "pull_refresh_after")
+}
+
+/// The services whose `key` is an explicit `null`, `!reset` or a null `!override`.
+///
+/// A typed `Option` cannot tell `key: null` from an absent key, so this reads
+/// the raw document and the merge carries the answer as a flag.
+pub(crate) fn key_clears(raw: &Value, key: &str) -> Vec<String> {
 	definitions(raw)
 		.filter_map(|(name, service)| {
-			let value = service.get("pull_refresh_after")?;
+			let value = service.get(key)?;
 			let clear = match value {
 				Value::Null => true,
 				Value::Tagged(t) => {
