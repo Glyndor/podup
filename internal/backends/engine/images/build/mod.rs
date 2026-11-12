@@ -295,3 +295,6 @@ mod tests;
 mod walk_tests;
 #[cfg(test)]
 mod with_dependencies_tests;
+
+#[cfg(all(test, unix))]
+mod build_args_env_tests;
