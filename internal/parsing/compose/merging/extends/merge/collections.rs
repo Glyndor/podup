@@ -205,10 +205,12 @@ pub(super) fn merge_sysctls(base: Sysctls, over: Sysctls) -> Sysctls {
 /// Compose merges mappings recursively: an override that sets only
 /// `deploy.resources.limits.memory` keeps the base's `cpus`, and one that sets
 /// only a healthcheck `interval` keeps the base's `test`. A value the override
-/// does set wins, and a list in the override replaces the base's list (the
-/// blocks merged here have no list that compose concatenates). A null in the
-/// override is "not set". If the merged value cannot be typed again the
-/// override is used as it is, which is what a plain replacement did before.
+/// does set wins, and a list in the override replaces the base's list, except
+/// the lists compose concatenates without repeats (see [`appends`]). A new
+/// `logging.driver` drops the base's `options`, which belong to the old driver.
+/// A null in the override is "not set". If the merged value cannot be typed
+/// again the override is used as it is, which is what a plain replacement did
+/// before.
 pub(in crate::parsing::compose) fn merge_block<T>(
 	base: Option<T>,
 	over: Option<T>,
@@ -233,29 +235,57 @@ where
 		Some(map)
 	}
 
-	fn deep(base: Value, over: Value) -> Value {
+	fn deep(base: Value, over: Value, path: &mut Vec<String>) -> Value {
 		match (base, over) {
 			(Value::Array(list), Value::Object(o)) => match list_as_map(&list) {
-				Some(b) => deep(Value::Object(b), Value::Object(o)),
+				Some(b) => deep(Value::Object(b), Value::Object(o), path),
 				None => Value::Object(o),
 			},
 			(Value::Object(b), Value::Array(list)) => match list_as_map(&list) {
-				Some(o) => deep(Value::Object(b), Value::Object(o)),
+				Some(o) => deep(Value::Object(b), Value::Object(o), path),
 				None => Value::Array(list),
 			},
 			(Value::Object(mut b), Value::Object(o)) => {
+				// A different driver makes the base's options meaningless for it.
+				let new_driver = match (b.get("driver"), o.get("driver")) {
+					(Some(old), Some(new)) => old != new,
+					_ => false,
+				};
+				if new_driver && !o.contains_key("options") {
+					b.remove("options");
+				}
 				for (key, value) in o {
+					path.push(key.clone());
 					let merged = match b.remove(&key) {
-						Some(existing) => deep(existing, value),
+						Some(existing) => deep(existing, value, path),
 						None => value,
 					};
+					path.pop();
 					b.insert(key, merged);
 				}
 				Value::Object(b)
 			}
+			(Value::Array(mut b), Value::Array(o)) if appends(path) => {
+				for item in o {
+					if !b.contains(&item) {
+						b.push(item);
+					}
+				}
+				Value::Array(b)
+			}
 			(base, Value::Null) => base,
 			(_, over) => over,
 		}
+	}
+
+	/// The lists, by path from the block's root, that compose appends to instead
+	/// of replacing: measured against `docker compose config` 5.7.0.
+	fn appends(path: &[String]) -> bool {
+		let path: Vec<&str> = path.iter().map(String::as_str).collect();
+		matches!(
+			path.as_slice(),
+			["cache_from"] | ["tags"] | ["extra_hosts"] | ["resources", "reservations", "devices"]
+		)
 	}
 
 	match (base, over) {
@@ -275,9 +305,9 @@ where
 				.and_then(|b| serde_json::to_value(&over).map(|o| (b, o)))
 				.map(|(b, o)| {
 					if b.is_object() || o.is_object() {
-						deep(long(b), long(o))
+						deep(long(b), long(o), &mut Vec::new())
 					} else {
-						deep(b, o)
+						deep(b, o, &mut Vec::new())
 					}
 				})
 				.and_then(serde_json::from_value::<T>);
