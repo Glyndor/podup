@@ -380,8 +380,8 @@ fn drop_entry(target: &mut ComposeFile, section: &str, name: &str) {
 }
 
 /// Merge `other` into `target` with `other` winning (compose `-f` override
-/// semantics): services are merged field-by-field, other top-level maps replace
-/// on key conflict.
+/// semantics): services and the volumes, networks, secrets and configs they
+/// share are merged field by field.
 pub(super) fn merge_override(
 	target: &mut ComposeFile,
 	other: ComposeFile,
@@ -407,17 +407,45 @@ pub(super) fn merge_override(
 			target.services.insert(name, svc);
 		}
 	}
+	// A resource both files declare merges key by key, as docker does: the second
+	// file's `labels` add to the first file's, and a `driver` it leaves out stays.
 	for (k, v) in other.volumes {
-		target.volumes.insert(k, v);
+		match target.volumes.get_mut(&k) {
+			Some(slot) => *slot = extends::merge_block(slot.take(), v, None),
+			None => {
+				target.volumes.insert(k, v);
+			}
+		}
 	}
 	for (k, v) in other.networks {
-		target.networks.insert(k, v);
+		match target.networks.get_mut(&k) {
+			Some(slot) => *slot = extends::merge_block(slot.take(), v, None),
+			None => {
+				target.networks.insert(k, v);
+			}
+		}
 	}
 	for (k, v) in other.secrets {
-		target.secrets.insert(k, v);
+		match target.secrets.get_mut(&k) {
+			Some(slot) => {
+				let merged = extends::merge_block(Some(slot.clone()), Some(v.clone()), None);
+				*slot = merged.unwrap_or(v);
+			}
+			None => {
+				target.secrets.insert(k, v);
+			}
+		}
 	}
 	for (k, v) in other.configs {
-		target.configs.insert(k, v);
+		match target.configs.get_mut(&k) {
+			Some(slot) => {
+				let merged = extends::merge_block(Some(slot.clone()), Some(v.clone()), None);
+				*slot = merged.unwrap_or(v);
+			}
+			None => {
+				target.configs.insert(k, v);
+			}
+		}
 	}
 	for (k, v) in other.models {
 		target.models.insert(k, v);
