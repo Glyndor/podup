@@ -146,6 +146,7 @@ Build or rebuild service images (optionally only the named services).
 | `--progress <STYLE>` | `auto`, `plain` or `tty`. Validated but inert; see [accepted for compatibility](#accepted-for-compatibility). | none |
 | `--push` | Push each built image to its registry after a successful build. | off |
 | `-q, --quiet` | Suppress the build output. | off |
+| `--with-dependencies` | Also build the services the named ones depend on, transitively. | off |
 
 Build progress goes to stderr. A terminal board shows each image's step and recent output; failure prints the full stream. `up --build` shares that board. Other stderr sinks receive stream lines prefixed by image tag. Image IDs go to non-terminal stdout only.
 
