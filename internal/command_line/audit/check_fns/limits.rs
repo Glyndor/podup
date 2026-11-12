@@ -9,7 +9,9 @@ use podup::{effective_memory_limit, effective_pids_limit};
 
 /// An absent or unlimited effective PID cap lets a runaway loop exhaust PIDs.
 pub fn check_no_pids_limit(name: &str, service: &Service, _file: &ComposeFile) -> Vec<Finding> {
-	if effective_pids_limit(service).is_none_or(|limit| limit == -1) {
+	// Podman reads `-1`, any other negative number and `0` as no limit (the
+	// container's `pids.max` is `max`), so none of them is a finite cap.
+	if effective_pids_limit(service).is_none_or(|limit| limit <= 0) {
 		vec![finding(
 			name,
 			"no_pids_limit",
